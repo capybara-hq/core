@@ -1,0 +1,805 @@
+# Review package: 19c18918..3beed5bc
+
+## Commits
+3beed5bc feat(kernel): prompt files, joined into the versioned instructions
+
+## Files changed
+ .changeset/agent-prompt-files.md                   |   8 +
+ packages/kernel/src/agents/agents.controller.ts    |   9 +-
+ packages/kernel/src/agents/agents.service.ts       |  32 ++-
+ packages/kernel/src/agents/definition.ts           |  10 +
+ packages/kernel/src/agents/instruction-files.ts    | 127 +++++++++
+ packages/kernel/src/errors.ts                      |   2 +
+ .../kernel/test/agents/instruction-files.test.ts   | 285 +++++++++++++++++++++
+ 7 files changed, 460 insertions(+), 13 deletions(-)
+
+## Diff
+diff --git a/.changeset/agent-prompt-files.md b/.changeset/agent-prompt-files.md
+new file mode 100644
+index 00000000..3bd5a1da
+--- /dev/null
++++ b/.changeset/agent-prompt-files.md
+@@ -0,0 +1,8 @@
++---
++"@capybara-hq/kernel": patch
++---
++
++Agent definitions take the system prompt as named `.md` files (`instructionFiles`, 1–20 unique
++names, at most 100 000 characters joined). The kernel joins them into `instructions`, which stays
++the model-visible field (400 `agent.instructions_mismatch` when both are given and differ); a
++definition without files reads as one `AGENTS.md`, and a new agent with no prompt gets a starter.
+diff --git a/packages/kernel/src/agents/agents.controller.ts b/packages/kernel/src/agents/agents.controller.ts
+index 4685f81f..03eced22 100644
+--- a/packages/kernel/src/agents/agents.controller.ts
++++ b/packages/kernel/src/agents/agents.controller.ts
+@@ -27,23 +27,30 @@ import {
+   type AgentView,
+   type AgentWarning,
+ } from "./agents.service.js";
+ import { AgentDefinitionSchema, AgentToolRef, DEFAULT_AGENT_TOOLS } from "./definition.js";
+ import { type AgentProfile, ProfileInputSchema } from "./profile.js";
+ 
+ const MemberIds = z.array(z.string().min(1).max(100)).max(1000);
+ const OwnerBody = z.object({ accountId: z.string().min(1).max(100) }).strict();
+ 
+ /** 创建时未给 `tools` → 默认工具（Ruling P7）；修改请求不注入默认值，版本里总是存显式的 tools。 */
++/**
++ * `instructions` has no default in a request: with `instructionFiles` the kernel derives it, and a
++ * new agent given neither gets the `AGENTS.md` starter (`deriveInstructions`).
++ */
++const RequestInstructions = z.string().max(100_000).optional();
+ const CreateDefinition = AgentDefinitionSchema.extend({
++  instructions: RequestInstructions,
+   tools: z.array(AgentToolRef).default(() => structuredClone(DEFAULT_AGENT_TOOLS)),
+ });
++const UpdateDefinition = AgentDefinitionSchema.extend({ instructions: RequestInstructions });
+ 
+ const CreateBody = z
+   .object({
+     definition: CreateDefinition,
+     visibility: z.enum(AGENT_VISIBILITIES),
+     memberIds: MemberIds.optional(),
+     /** Without an avatar the agent gets a random preset. */
+     profile: ProfileInputSchema.optional(),
+   })
+   .strict();
+@@ -57,21 +64,21 @@ const AvatarUploadBody = z
+       .string()
+       .min(1)
+       .max(MEDIA_NAME_MAX_CHARS)
+       .refine((s) => !hasControlChars(s), "name must not contain control characters"),
+     contentType: z.enum(AGENT_AVATAR_CONTENT_TYPES),
+     size: z.number().int().min(1).max(AGENT_AVATAR_MAX_BYTES),
+   })
+   .strict();
+ const UpdateBody = z
+   .object({
+-    definition: AgentDefinitionSchema.optional(),
++    definition: UpdateDefinition.optional(),
+     visibility: z.enum(AGENT_VISIBILITIES).optional(),
+     memberIds: MemberIds.optional(),
+     /**
+      * 乐观并发：编辑页打开时读到的 `currentVersion`。给出且与当前版本不同（别人已保存过）→ 409
+      * `agent.version_conflict`，不覆盖别人的改动。不给时不检查（旧客户端）。
+      */
+     expectedVersion: z.number().int().positive().optional(),
+   })
+   .strict();
+ 
+diff --git a/packages/kernel/src/agents/agents.service.ts b/packages/kernel/src/agents/agents.service.ts
+index e35f27a4..c93863bb 100644
+--- a/packages/kernel/src/agents/agents.service.ts
++++ b/packages/kernel/src/agents/agents.service.ts
+@@ -25,20 +25,21 @@ import {
+   isAgentVisibleTo,
+   visibleTo,
+ } from "./agent-lookup.js";
+ import {
+   type AgentDefinition,
+   normalizeStoredDefinition,
+   paramIssues,
+   SUBAGENT_NAME_RE,
+   SUBAGENT_ROSTER_MAX,
+ } from "./definition.js";
++import { type AgentDefinitionInput, deriveInstructions } from "./instruction-files.js";
+ import { type ProfileInput, randomPreset } from "./profile.js";
+ 
+ export {
+   AGENT_VISIBILITIES,
+   type AgentView,
+   type AgentVisibility,
+   isAgentVisibleTo,
+   visibleTo,
+ } from "./agent-lookup.js";
+ export { paramIssues, SUBAGENT_ROSTER_MAX } from "./definition.js";
+@@ -274,42 +275,42 @@ export class AgentsService {
+     @Inject(TransactionHost) readonly txHost: TransactionHost,
+     /** Cancels the deleted agent's running eval runs (in the delete's transaction). */
+     @Inject(EvalBudget) private readonly evalBudget: Pick<EvalBudget, "cancelRuns">,
+   ) {}
+ 
+   /**
+    * 校验工具引用与工具策略：引用的内置 / 插件 / 连接器工具必须存在（见 `ToolRegistry.checkRefs`）；
+    * `toolPolicies` 的键必须是这些引用产生的工具 key（取值只能收紧，已由 schema 保证）。
+    * 不合法 → `validation_failed`，path 为 `tools.<i>` / `toolPolicies.<key>`。
+    */
+-  private async checkTools(orgId: string, def: AgentDefinition): Promise<Set<string>> {
++  private async checkTools(orgId: string, def: AgentDefinitionInput): Promise<Set<string>> {
+     const { keys, issues } = await this.tools.checkRefs(orgId, def.tools);
+     const details = [...issues];
+     for (const key of Object.keys(def.toolPolicies)) {
+       if (!keys.has(key)) {
+         details.push({
+           path: `toolPolicies.${key}`,
+           message: `"${key}" is not a tool of this agent`,
+         });
+       }
+     }
+     if (details.length > 0) {
+       throw new ApiError("validation_failed", "Invalid tool references", details);
+     }
+     return keys;
+   }
+ 
+   /**
+    * 校验主模型与兜底都可解析，并用各自模型的参数声明严格校验 `modelParams` / `fallbackParams`
+    * （没有兜底时 `fallbackParams` 必须为空）；不合法 → `validation_failed`，details 逐键点名。返回提示。
+    */
+-  private async checkModels(def: AgentDefinition): Promise<AgentWarning[]> {
++  private async checkModels(def: AgentDefinitionInput): Promise<AgentWarning[]> {
+     const registry = this.providers;
+     const main = await registry.resolve(def.model);
+     const fallback = def.fallback === null ? null : await registry.resolve(def.fallback);
+     const details = [
+       ...paramIssues("modelParams", main.info.parameters, def.modelParams),
+       ...paramIssues("fallbackParams", fallback?.info.parameters ?? [], def.fallbackParams),
+     ];
+     if (details.length > 0) {
+       throw new ApiError("validation_failed", "Invalid model parameters", details);
+     }
+@@ -343,28 +344,29 @@ export class AgentsService {
+     }
+   }
+ 
+   /**
+    * 新建 agent（版本 1）：在组织行锁内授权 `agents.create`；主模型与兜底都必须可解析
+    * （`agent.model_unavailable`）；兜底与主模型同一供应商只提示 `fallback_same_provider`。
+    */
+   async create(
+     orgId: string,
+     actorAccountId: string,
+-    input: {
+-      definition: AgentDefinition;
++    request: {
++      definition: AgentDefinitionInput;
+       visibility: AgentVisibility;
+       memberIds?: string[];
+       profile?: ProfileInput;
+     },
+     actorTokenId?: string,
+   ): Promise<{ agent: AgentView; warnings: AgentWarning[] }> {
++    const input = { ...request, definition: deriveInstructions(request.definition, null) };
+     // 先解析模型（可能访问供应商），不在持有组织行锁时做
+     const warnings = await this.checkModels(input.definition);
+     const toolKeys = await this.checkTools(orgId, input.definition);
+     if (input.visibility !== "members" && (input.memberIds?.length ?? 0) > 0) {
+       throw new ApiError("validation_failed", "memberIds requires visibility 'members'");
+     }
+     assertProfileWritable(input.profile);
+     const agent = await this.createIn(orgId, actorAccountId, input, toolKeys, actorTokenId);
+     return { agent, warnings };
+   }
+@@ -469,52 +471,53 @@ export class AgentsService {
+   }
+ 
+   /**
+    * 修改 agent：`definition` 变化时写新版本（`current_version + 1`），只改 visibility / memberIds 不产生新版本。
+    * 只有负责人或组织管理员以上可改，在组织行锁内复核。
+    */
+   async update(
+     orgId: string,
+     agentId: string,
+     actorAccountId: string,
+-    patch: {
+-      definition?: AgentDefinition | undefined;
++    request: {
++      definition?: AgentDefinitionInput | undefined;
+       visibility?: AgentVisibility | undefined;
+       memberIds?: string[] | undefined;
+       /**
+        * 给出且不等于当前版本 → `agent.version_conflict`（409），在锁内判定。只比定义版本：只改可见范围 / 成员
+        * 不产生新版本，所以检测不到别人只改了可见范围（之后的保存会按本次给出的 visibility 覆盖）。
+        */
+       expectedVersion?: number | undefined;
+     },
+     actorTokenId?: string,
+   ): Promise<{ agent: AgentView; warnings: AgentWarning[] }> {
++    const patch = request;
+     const warnings = patch.definition ? await this.checkModels(patch.definition) : [];
+     const toolKeys = patch.definition ? await this.checkTools(orgId, patch.definition) : null;
+     const agent = await this.updateIn(
+       orgId,
+       agentId,
+       actorAccountId,
+       patch,
+       toolKeys,
+       actorTokenId,
+     );
+     return { agent, warnings };
+   }
+ 
+   @Transactional()
+   private async updateIn(
+     orgId: string,
+     agentId: string,
+     actorAccountId: string,
+     patch: {
+-      definition?: AgentDefinition | undefined;
++      definition?: AgentDefinitionInput | undefined;
+       visibility?: AgentVisibility | undefined;
+       memberIds?: string[] | undefined;
+       expectedVersion?: number | undefined;
+     },
+     toolKeys: Set<string> | null,
+     actorTokenId: string | undefined,
+   ): Promise<AgentView> {
+     const t = this.db.db;
+     const before = await this.lockForWrite(orgId, agentId, actorAccountId);
+     if (patch.expectedVersion !== undefined && patch.expectedVersion !== before.current_version) {
+@@ -529,46 +532,51 @@ export class AgentsService {
+     }
+ 
+     let toVersion = before.current_version;
+     if (patch.definition) {
+       const current = await t
+         .selectFrom("agent_versions")
+         .select("definition")
+         .where("agent_id", "=", agentId)
+         .where("version", "=", before.current_version)
+         .executeTakeFirstOrThrow();
++      // the prompt: instructionFiles give instructions; a save given neither keeps the current one
++      const definition = deriveInstructions(
++        patch.definition,
++        normalizeStoredDefinition(current.definition),
++      );
+       // 当前版本已有的技能引用保存时合法，不再核对（被删的技能不挡住其他改动）；新加的照常核对
+       const kept = new Set((current.definition as AgentDefinition).skills?.orgSkills ?? []);
+-      await assertOrgSkills(t, orgId, patch.definition.skills?.orgSkills ?? [], kept);
++      await assertOrgSkills(t, orgId, definition.skills?.orgSkills ?? [], kept);
+       await assertPinnedSkills(
+         t,
+         orgId,
+         agentId,
+-        patch.definition.skills,
++        definition.skills,
+         (current.definition as AgentDefinition).skills?.pinned ?? [],
+       );
+       await assertSubagents(t, {
+         orgId,
+         agentId,
+         actorAccountId,
+-        definition: patch.definition,
++        definition,
+         toolKeys: toolKeys ?? new Set(),
+         kept: (current.definition as AgentDefinition).subagents,
+       });
+-      if (canonical(current.definition) !== canonical(patch.definition)) {
++      if (canonical(current.definition) !== canonical(definition)) {
+         toVersion = before.current_version + 1;
+         await t
+           .insertInto("agent_versions")
+           .values({
+             agent_id: agentId,
+             version: toVersion,
+-            definition: JSON.stringify(patch.definition),
++            definition: JSON.stringify(definition),
+             created_by: actorAccountId,
+           })
+           .execute();
+       }
+     }
+ 
+     if (visibility !== "members") {
+       await this.setMembers(t, agentId, []);
+     } else if (patch.memberIds !== undefined) {
+       await this.setMembers(t, agentId, await this.checkMembers(t, orgId, patch.memberIds));
+diff --git a/packages/kernel/src/agents/definition.ts b/packages/kernel/src/agents/definition.ts
+index 0908fec4..426efa96 100644
+--- a/packages/kernel/src/agents/definition.ts
++++ b/packages/kernel/src/agents/definition.ts
+@@ -1,12 +1,13 @@
+ import { type ModelParameter, validateParams } from "@capybara-hq/plugin-sdk";
+ import { z } from "zod";
++import { InstructionFilesSchema } from "./instruction-files.js";
+ 
+ /** 模型引用：供应商插件名 + 模型 id。 */
+ export const ModelRef = z.object({ provider: z.string(), model: z.string() });
+ export type ModelRef = z.infer<typeof ModelRef>;
+ 
+ /**
+  * 模型参数（键为插件声明的参数键）：只接受标量；按该模型的 `parameters` 声明校验在 `AgentsService`
+  * 中进行（保存时严格，运行时宽松，见 plugin-sdk `validateParams` / `sanitizeParams`）。
+  */
+ export const ModelParams = z.record(z.string(), z.union([z.string(), z.number(), z.boolean()]));
+@@ -110,21 +111,30 @@ export const SubagentsSchema = z
+     /** Other agents may dispatch this agent (§5.5). Default false. */
+     dispatchable: z.boolean().optional(),
+   })
+   .strict();
+ export type Subagents = z.infer<typeof SubagentsSchema>;
+ 
+ /** Agent 定义：每次变化写一个新版本（`capybara.agent_versions`）。 */
+ export const AgentDefinitionSchema = z.object({
+   name: z.string().min(1).max(80),
+   avatarUrl: z.url().nullable().default(null),
++  /**
++   * The model-visible system prompt. Derived on save from `instructionFiles` when they are given
++   * (`deriveInstructions`); every reader (build.ts, the sub-agent copy, evals, replay) reads this.
++   */
+   instructions: z.string().max(100_000).default(""),
++  /**
++   * The prompt files, the authoring form of `instructions` (spec 2026-11-04 §3.3). No default:
++   * definitions without it (every older version) read as one `AGENTS.md` and gain no version.
++   */
++  instructionFiles: InstructionFilesSchema.optional(),
+   model: ModelRef,
+   fallback: ModelRef.nullable().default(null),
+   /** 主模型的参数（按主模型的声明校验）。 */
+   modelParams: ModelParams.default({}),
+   /** 兜底模型自己的参数（按兜底模型的声明校验）；兜底尝试只用这一份。 */
+   fallbackParams: ModelParams.default({}),
+   /** 引用的工具（M2 保存的 `tools: []` 仍然合法）；保存时校验引用存在，运行时由注册表解析。 */
+   tools: z.array(AgentToolRef).default([]),
+   /**
+    * 按工具 key 收紧策略（只能收紧：`ask` / `deny`，不接受 `allow`）；键必须是该 agent 引用的工具的 key。
+diff --git a/packages/kernel/src/agents/instruction-files.ts b/packages/kernel/src/agents/instruction-files.ts
+new file mode 100644
+index 00000000..cbf72642
+--- /dev/null
++++ b/packages/kernel/src/agents/instruction-files.ts
+@@ -0,0 +1,127 @@
++import { z } from "zod";
++import { ApiError } from "../errors.js";
++import type { AgentDefinition } from "./definition.js";
++
++/**
++ * Prompt files (spec 2026-11-04 §3.3): the authoring form of an agent's system prompt. The kernel
++ * joins them into `instructions` on save, and `instructions` stays the one model-visible field
++ * (build.ts, the sub-agent copy, eval candidates and replay keep reading it), so no log event
++ * changes shape and replay needs no new `DriftReason`.
++ */
++export type InstructionFile = { name: string; content: string };
++
++/** The default and first file. */
++export const AGENTS_MD = "AGENTS.md";
++
++export const INSTRUCTION_FILE_LIMITS = {
++  /** At most this many files, at least one. */
++  count: 20,
++  /** The joined text, the same bound as `instructions`. */
++  joinedChars: 100_000,
++} as const;
++
++/** A file name: 1–64 characters without `/` or `\`, then `.md`. */
++export const INSTRUCTION_FILE_NAME_RE = /^[^/\\]{1,64}\.md$/;
++
++/**
++ * The starter prompt of a new agent created without one (model-visible once saved; English like
++ * every model-facing text).
++ */
++export const AGENTS_MD_STARTER = [
++  "You are an assistant for this team. Help people get their work done accurately and efficiently.",
++  "",
++  "- Tone: clear, friendly and concise. Use plain language, keep answers short, and add detail when asked.",
++  "- When a request is unclear or missing key details, ask one short clarifying question before acting.",
++  "  If you go ahead anyway, say what you assumed.",
++  "- If you don't know something or can't do it, say so instead of guessing.",
++].join("\n");
++
++/**
++ * The model-visible join: one file gives exactly its content (so an old agent edited without
++ * adding files sends the same text as before); several files give `# <name>\n\n<content>` each,
++ * in order, joined by `\n\n`.
++ */
++export function joinInstructionFiles(files: readonly InstructionFile[]): string {
++  if (files.length === 1) return files[0]?.content ?? "";
++  return files.map((f) => `# ${f.name}\n\n${f.content}`).join("\n\n");
++}
++
++/** The files of a definition; a definition without them (every old version) is one `AGENTS.md`. */
++export function readInstructionFiles(
++  def: Pick<AgentDefinition, "instructions" | "instructionFiles">,
++): InstructionFile[] {
++  return def.instructionFiles ?? [{ name: AGENTS_MD, content: def.instructions }];
++}
++
++export const InstructionFileSchema = z
++  .object({
++    name: z
++      .string()
++      .regex(INSTRUCTION_FILE_NAME_RE, "a file name is 1–64 characters without / or \\, then .md"),
++    content: z.string().max(INSTRUCTION_FILE_LIMITS.joinedChars),
++  })
++  .strict();
++
++/** 1–20 files, unique names, a joined total of at most 100 000 characters. */
++export const InstructionFilesSchema = z
++  .array(InstructionFileSchema)
++  .min(1)
++  .max(INSTRUCTION_FILE_LIMITS.count)
++  .superRefine((files, ctx) => {
++    const seen = new Set<string>();
++    files.forEach((f, i) => {
++      if (seen.has(f.name)) {
++        ctx.addIssue({ code: "custom", path: [i, "name"], message: `duplicate file ${f.name}` });
++      }
++      seen.add(f.name);
++    });
++    const joined = joinInstructionFiles(files).length;
++    if (joined > INSTRUCTION_FILE_LIMITS.joinedChars) {
++      ctx.addIssue({
++        code: "custom",
++        message: `the joined files are ${joined} characters, more than ${INSTRUCTION_FILE_LIMITS.joinedChars}`,
++      });
++    }
++  });
++
++/** A definition as a save request gives it: `instructions` may be left out. */
++export type AgentDefinitionInput = Omit<AgentDefinition, "instructions"> & {
++  instructions?: string | undefined;
++};
++
++/**
++ * Derives the stored definition of a save. With `instructionFiles`, `instructions` is their join
++ * (a differing `instructions` given with them → 400 `agent.instructions_mismatch`). With only
++ * `instructions` (old clients) the definition is stored as given, without files. Given neither,
++ * an update keeps the `current` version's prompt, and a new agent (`current` null) gets the
++ * `AGENTS.md` starter.
++ */
++export function deriveInstructions(
++  def: AgentDefinitionInput,
++  current: Pick<AgentDefinition, "instructions" | "instructionFiles"> | null,
++): AgentDefinition {
++  const { instructions, instructionFiles, ...rest } = def;
++  if (instructionFiles !== undefined) {
++    const joined = joinInstructionFiles(instructionFiles);
++    if (instructions !== undefined && instructions !== joined) {
++      throw new ApiError(
++        "agent.instructions_mismatch",
++        "instructions differs from the join of instructionFiles; send only instructionFiles",
++      );
++    }
++    return { ...rest, instructions: joined, instructionFiles };
++  }
++  if (instructions !== undefined) return { ...rest, instructions };
++  if (current !== null) {
++    return {
++      ...rest,
++      instructions: current.instructions,
++      ...(current.instructionFiles !== undefined && { instructionFiles: current.instructionFiles }),
++    };
++  }
++  return {
++    ...rest,
++    instructions: AGENTS_MD_STARTER,
++    instructionFiles: [{ name: AGENTS_MD, content: AGENTS_MD_STARTER }],
++  };
++}
+diff --git a/packages/kernel/src/errors.ts b/packages/kernel/src/errors.ts
+index 1c772dd0..c575c0ac 100644
+--- a/packages/kernel/src/errors.ts
++++ b/packages/kernel/src/errors.ts
+@@ -106,20 +106,22 @@ export const ERROR_CODES = {
+   "plugin.upgrade_stale": 409,
+   "plugin.upgrade_target_invalid": 409,
+   "plugin.upgrade_failed": 502,
+   "setup.already_completed": 409,
+   "setup.token_invalid": 403,
+   "agent.not_found": 404,
+   "agent.version_conflict": 409,
+   /** The profile was changed since the client read it (`expectedUpdatedAt` is stale). */
+   "agent.profile_conflict": 409,
+   "agent.model_unavailable": 400,
++  /** A save gave `instructionFiles` and an `instructions` that is not their join. */
++  "agent.instructions_mismatch": 400,
+   /**
+    * `skills.pinned` of an agent definition is refused (details: `{ skill, reason, totalBytes? }`;
+    * reasons `not_selected`, `not_found`, `duplicate`, `too_many`, `too_large`, `manual_only`).
+    */
+   "agent.pinned_invalid": 400,
+   /** `subagents` of an agent definition is refused (details: `{ reason, path, value? }`). */
+   "agent.subagents_invalid": 400,
+   "conversation.not_found": 404,
+   "conversation.output_not_found": 404,
+   "conversation.artifact_not_found": 404,
+diff --git a/packages/kernel/test/agents/instruction-files.test.ts b/packages/kernel/test/agents/instruction-files.test.ts
+new file mode 100644
+index 00000000..51fa1103
+--- /dev/null
++++ b/packages/kernel/test/agents/instruction-files.test.ts
+@@ -0,0 +1,285 @@
++import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
++import { Redis } from "ioredis";
++import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
++import {
++  AGENTS_MD_STARTER,
++  joinInstructionFiles,
++  readInstructionFiles,
++} from "../../src/agents/instruction-files.js";
++import { KernelConfigSchema } from "../../src/config/schema.js";
++import { kernelDb } from "../../src/db/kernel-schema.js";
++import { createDb } from "../../src/db/pool.js";
++import type { Account, AccountsService } from "../../src/identity/accounts.js";
++import { createLogger } from "../../src/log.js";
++import { BEHAVIOR_RULES, buildModelRequest } from "../../src/runtime/context/build.js";
++import { truncateTables } from "../helpers/db.js";
++import { asUser, cookieJar } from "../helpers/http.js";
++import { accountsFor } from "../helpers/identity.js";
++import { MODEL_PLUGINS_CONFIG } from "../helpers/model-plugins.js";
++import { startKernel, type TestKernel } from "../helpers/runs.js";
++import { Log, MODEL } from "../runtime/context/fixtures.js";
++
++const MODEL_REF = { provider: "model-fake", model: "fake-1" };
++
++describe("joinInstructionFiles / readInstructionFiles", () => {
++  it("one AGENTS.md joins to exactly its content", () => {
++    expect(joinInstructionFiles([{ name: "AGENTS.md", content: "Be helpful.\n" }])).toBe(
++      "Be helpful.\n",
++    );
++    expect(joinInstructionFiles([{ name: "AGENTS.md", content: "" }])).toBe("");
++  });
++
++  it("several files join with # name headers in order", () => {
++    const joined = joinInstructionFiles([
++      { name: "AGENTS.md", content: "You are a helper." },
++      { name: "WORKFLOW.md", content: "1. Read.\n2. Write." },
++      { name: "STYLE.md", content: "Be terse." },
++    ]);
++    expect(joined).toBe(
++      "# AGENTS.md\n\nYou are a helper.\n\n# WORKFLOW.md\n\n1. Read.\n2. Write.\n\n# STYLE.md\n\nBe terse.",
++    );
++  });
++
++  it("an old definition reads as one AGENTS.md", () => {
++    expect(readInstructionFiles({ instructions: "Old prompt." })).toEqual([
++      { name: "AGENTS.md", content: "Old prompt." },
++    ]);
++    const files = [
++      { name: "AGENTS.md", content: "a" },
++      { name: "B.md", content: "b" },
++    ];
++    expect(readInstructionFiles({ instructions: "ignored", instructionFiles: files })).toEqual(
++      files,
++    );
++  });
++});
++
++describe("prompt files over HTTP", () => {
++  let pgc: TestContainer;
++  let rd: TestContainer;
++  let k: TestKernel;
++  let raw: ReturnType<typeof createDb>;
++  let redis: Redis;
++  let accounts: AccountsService;
++  let owner: Account;
++  const PW = "correct horse battery";
++
++  beforeAll(async () => {
++    [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
++    k = await startKernel(
++      KernelConfigSchema.parse({
++        db: { url: pgc.url, poolMax: 5 },
++        redis: { url: rd.url },
++        masterKey: Buffer.alloc(32, 7).toString("base64"),
++        marketplaces: { official: { enabled: false } },
++        http: { port: 0 },
++        ...MODEL_PLUGINS_CONFIG,
++      }),
++      { env: {}, logger: createLogger("error", { write: () => {} }) },
++    );
++    raw = createDb(pgc.url, 5);
++    redis = new Redis(rd.url);
++    accounts = accountsFor(kernelDb(raw));
++  }, 120_000);
++  afterAll(async () => {
++    await k?.close();
++    redis?.disconnect();
++    await raw?.destroy();
++    await Promise.all([pgc?.stop(), rd?.stop()]);
++  });
++  beforeEach(async () => {
++    await truncateTables(raw, "capybara.accounts, capybara.orgs, capybara.audit_events");
++    await redis.flushdb();
++    owner = await accounts.createLocal({ login: "owner", password: PW, displayName: "Owner" });
++  });
++
++  type Req = ReturnType<typeof asUser>;
++  type AgentJson = {
++    id: string;
++    currentVersion: number;
++    definition: { instructions: string; instructionFiles?: { name: string; content: string }[] };
++  };
++  const errCode = (res: { json(): unknown }) =>
++    (res.json() as { error?: { code?: string } }).error?.code;
++
++  async function setup(): Promise<{ req: Req; orgId: string }> {
++    expect(owner.id).toBeTruthy();
++    const req = asUser(k.http, cookieJar());
++    const login = await req({
++      method: "POST",
++      url: "/api/v1/auth/login",
++      payload: { login: "owner", password: PW },
++    });
++    expect(login.statusCode).toBe(200);
++    const org = await req({ method: "POST", url: "/api/v1/orgs", payload: { name: "Acme" } });
++    expect(org.statusCode).toBe(201);
++    return { req, orgId: (org.json() as { org: { id: string } }).org.id };
++  }
++
++  const create = (req: Req, orgId: string, definition: Record<string, unknown>) =>
++    req({
++      method: "POST",
++      url: `/api/v1/orgs/${orgId}/agents`,
++      payload: {
++        definition: { name: "Helper", model: MODEL_REF, ...definition },
++        visibility: "org",
++      },
++    });
++
++  const twoFiles = [
++    { name: "AGENTS.md", content: "You are a helper." },
++    { name: "WORKFLOW.md", content: "Plan, then act." },
++  ];
++
++  it("saving instructionFiles stores the join as instructions; a matching instructions is accepted", async () => {
++    const { req, orgId } = await setup();
++    const res = await create(req, orgId, { instructionFiles: twoFiles });
++    expect(res.statusCode).toBe(201);
++    const agent = (res.json() as { agent: AgentJson }).agent;
++    expect(agent.definition.instructionFiles).toEqual(twoFiles);
++    expect(agent.definition.instructions).toBe(joinInstructionFiles(twoFiles));
++
++    const same = await req({
++      method: "PATCH",
++      url: `/api/v1/orgs/${orgId}/agents/${agent.id}`,
++      payload: {
++        definition: {
++          ...agent.definition,
++          instructionFiles: twoFiles,
++          instructions: joinInstructionFiles(twoFiles),
++        },
++        expectedVersion: 1,
++      },
++    });
++    expect(same.statusCode).toBe(200);
++    expect((same.json() as { agent: AgentJson }).agent.currentVersion).toBe(1);
++  });
++
++  it("a mismatching instructions is 400 agent.instructions_mismatch", async () => {
++    const { req, orgId } = await setup();
++    const bad = await create(req, orgId, { instructionFiles: twoFiles, instructions: "Other." });
++    expect(bad.statusCode).toBe(400);
++    expect(errCode(bad)).toBe("agent.instructions_mismatch");
++
++    const ok = await create(req, orgId, { instructions: "Be helpful." });
++    expect(ok.statusCode).toBe(201);
++    const agent = (ok.json() as { agent: AgentJson }).agent;
++    const patch = await req({
++      method: "PATCH",
++      url: `/api/v1/orgs/${orgId}/agents/${agent.id}`,
++      payload: {
++        definition: {
++          ...agent.definition,
++          instructionFiles: twoFiles,
++          instructions: "Be helpful.",
++        },
++      },
++    });
++    expect(patch.statusCode).toBe(400);
++    expect(errCode(patch)).toBe("agent.instructions_mismatch");
++    const after = await req({ method: "GET", url: `/api/v1/orgs/${orgId}/agents/${agent.id}` });
++    expect((after.json() as { agent: AgentJson }).agent.currentVersion).toBe(1);
++  });
++
++  it("limits: duplicate names, 21 files, 100 001 characters, zero files, a name without .md", async () => {
++    const { req, orgId } = await setup();
++    const cases: unknown[] = [
++      [
++        { name: "AGENTS.md", content: "a" },
++        { name: "AGENTS.md", content: "b" },
++      ],
++      Array.from({ length: 21 }, (_, i) => ({ name: `F${i}.md`, content: "x" })),
++      [{ name: "AGENTS.md", content: "x".repeat(100_001) }],
++      // the join's headers count: two files whose contents alone fit
++      [
++        { name: "AGENTS.md", content: "x".repeat(50_000) },
++        { name: "B.md", content: "x".repeat(50_000) },
++      ],
++      [],
++      [{ name: "AGENTS", content: "x" }],
++      [{ name: "a/b.md", content: "x" }],
++      [{ name: `${"n".repeat(65)}.md`, content: "x" }],
++    ];
++    for (const instructionFiles of cases) {
++      const res = await create(req, orgId, { instructionFiles });
++      expect(res.statusCode, JSON.stringify(instructionFiles).slice(0, 80)).toBe(400);
++      expect(errCode(res)).toBe("validation_failed");
++    }
++    const twenty = Array.from({ length: 20 }, (_, i) => ({ name: `F${i}.md`, content: "x" }));
++    expect((await create(req, orgId, { instructionFiles: twenty })).statusCode).toBe(201);
++  });
++
++  it("a new agent with no prompt gets the AGENTS.md starter; a request with only instructions keeps working", async () => {
++    const { req, orgId } = await setup();
++    const res = await create(req, orgId, {});
++    expect(res.statusCode).toBe(201);
++    const def = (res.json() as { agent: AgentJson }).agent.definition;
++    expect(def.instructionFiles).toEqual([{ name: "AGENTS.md", content: AGENTS_MD_STARTER }]);
++    expect(def.instructions).toBe(AGENTS_MD_STARTER);
++    expect(AGENTS_MD_STARTER.length).toBeGreaterThan(0);
++
++    const old = await create(req, orgId, { instructions: "Be helpful." });
++    expect(old.statusCode).toBe(201);
++    const oldDef = (old.json() as { agent: AgentJson }).agent.definition;
++    expect(oldDef.instructions).toBe("Be helpful.");
++    expect(oldDef).not.toHaveProperty("instructionFiles");
++  });
++
++  it("an update given neither field keeps the current prompt; one AGENTS.md keeps an old agent's text", async () => {
++    const { req, orgId } = await setup();
++    const res = await create(req, orgId, { instructionFiles: twoFiles });
++    const agent = (res.json() as { agent: AgentJson }).agent;
++    const url = `/api/v1/orgs/${orgId}/agents/${agent.id}`;
++    const {
++      instructions: _i,
++      instructionFiles: _f,
++      ...rest
++    } = agent.definition as Record<string, unknown>;
++    const keep = await req({ method: "PATCH", url, payload: { definition: rest } });
++    expect(keep.statusCode).toBe(200);
++    const kept = (keep.json() as { agent: AgentJson }).agent;
++    expect(kept.currentVersion).toBe(1);
++    expect(kept.definition.instructionFiles).toEqual(twoFiles);
++
++    const old = await create(req, orgId, { instructions: "Be helpful." });
++    const oldAgent = (old.json() as { agent: AgentJson }).agent;
++    const edited = await req({
++      method: "PATCH",
++      url: `/api/v1/orgs/${orgId}/agents/${oldAgent.id}`,
++      payload: {
++        definition: {
++          ...oldAgent.definition,
++          instructions: undefined,
++          instructionFiles: [{ name: "AGENTS.md", content: "Be helpful." }],
++        },
++      },
++    });
++    expect(edited.statusCode).toBe(200);
++    expect((edited.json() as { agent: AgentJson }).agent.definition.instructions).toBe(
++      "Be helpful.",
++    );
++  });
++
++  it("instructions stays the model-visible field", async () => {
++    const { req, orgId } = await setup();
++    const res = await create(req, orgId, { instructionFiles: twoFiles });
++    expect(res.statusCode).toBe(201);
++    const id = (res.json() as { agent: AgentJson }).agent.id;
++    const got = await req({ method: "GET", url: `/api/v1/orgs/${orgId}/agents/${id}` });
++    const agent = (
++      got.json() as { agent: { definition: Parameters<typeof buildModelRequest>[0]["agent"] } }
++    ).agent.definition;
++    const log = new Log();
++    log.user("hi");
++    const { request } = buildModelRequest({
++      events: log.events,
++      agent,
++      agentVersion: 1,
++      model: MODEL,
++      step: 0,
++    });
++    expect(request.system).toEqual([
++      { text: `${BEHAVIOR_RULES}\n\n${joinInstructionFiles(twoFiles)}`, cache: true },
++    ]);
++  });
++});

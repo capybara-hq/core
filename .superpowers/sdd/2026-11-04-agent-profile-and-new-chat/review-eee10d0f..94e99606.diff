@@ -1,0 +1,1044 @@
+# Review package: eee10d0f..94e99606
+
+## Commits
+94e99606 feat(kernel): agent avatar uploads and the avatar route
+
+## Files changed
+ .../kernel/src/agents/agent-profile.service.ts     |  41 ++-
+ packages/kernel/src/agents/agents.controller.ts    |  74 ++++-
+ packages/kernel/src/agents/agents.module.ts        |   3 +
+ packages/kernel/src/agents/agents.service.ts       |  10 +-
+ .../src/conversations/attachments.service.ts       | 146 ++++++++-
+ packages/kernel/src/db/kernel-schema.ts            |   6 +-
+ .../src/migrations/0067_agent_avatar_uploads.sql   |   7 +
+ packages/kernel/test/agents/avatar.test.ts         | 336 +++++++++++++++++++++
+ packages/kernel/test/agents/profile.test.ts        |   1 -
+ 9 files changed, 608 insertions(+), 16 deletions(-)
+
+## Diff
+diff --git a/packages/kernel/src/agents/agent-profile.service.ts b/packages/kernel/src/agents/agent-profile.service.ts
+index 043b72f3..d27235dc 100644
+--- a/packages/kernel/src/agents/agent-profile.service.ts
++++ b/packages/kernel/src/agents/agent-profile.service.ts
+@@ -1,67 +1,102 @@
+ import { Inject, Injectable } from "@nestjs/common";
+ import { sql } from "kysely";
++import { AttachmentsService } from "../conversations/attachments.service.js";
+ import { ApiError } from "../errors.js";
+ import { audit } from "../identity/audit.js";
+ import { KernelDb } from "../infra/database/kernel-db.js";
+ import { TransactionHost } from "../infra/database/transaction-host.js";
+ import { Transactional } from "../infra/database/transactional.decorator.js";
+ import { AgentLookup } from "./agent-lookup.js";
+-import { AgentsService, assertProfileWritable } from "./agents.service.js";
++import { AgentsService } from "./agents.service.js";
+ import type { AgentProfile, ProfileInput } from "./profile.js";
+ 
+ /**
+  * Writes an agent's profile (avatar, description, quick actions): display data stored beside the
+  * agent, never model-visible, so a change creates no agent version. The permission is the one of
+  * `AgentsService.update` (owner or org admin, checked under the org row lock).
+  */
+ @Injectable()
+ export class AgentProfileService {
+   constructor(
+     @Inject(KernelDb) private readonly db: KernelDb,
+     @Inject(AgentLookup) private readonly lookup: AgentLookup,
+     @Inject(AgentsService) private readonly agents: Pick<AgentsService, "lockForWrite">,
++    @Inject(AttachmentsService)
++    private readonly attachments: Pick<
++      AttachmentsService,
++      "prepareAgentAvatar" | "consumeAgentAvatar"
++    >,
+     @Inject(TransactionHost) readonly txHost: TransactionHost,
+   ) {}
+ 
+   /**
+    * Applies `patch` (only the given fields) when `expectedUpdatedAt` is still the profile's
+    * `updatedAt`, else 409 `agent.profile_conflict` (never a silent overwrite). Audit
+    * `agent.profile_updated` `{ fields, channel }`: `api` for a personal access token, else `web`.
++   * An `upload` avatar must be the actor's own upload that no other agent uses (else 404
++   * `attachment.not_found`): it is finalized first (outside the transaction, it reads the object
++   * store; 503 `storage.unavailable` without one) and bound to the agent inside it.
+    */
+-  @Transactional()
+   async update(
+     orgId: string,
+     agentId: string,
+     actorAccountId: string,
+     patch: ProfileInput,
+     expectedUpdatedAt: string,
+     actorTokenId?: string,
+   ): Promise<AgentProfile> {
+-    assertProfileWritable(patch);
++    if (patch.avatar?.kind === "upload") {
++      await this.attachments.prepareAgentAvatar(
++        orgId,
++        actorAccountId,
++        patch.avatar.uploadId,
++        agentId,
++      );
++    }
++    return this.updateIn(orgId, agentId, actorAccountId, patch, expectedUpdatedAt, actorTokenId);
++  }
++
++  @Transactional()
++  private async updateIn(
++    orgId: string,
++    agentId: string,
++    actorAccountId: string,
++    patch: ProfileInput,
++    expectedUpdatedAt: string,
++    actorTokenId?: string,
++  ): Promise<AgentProfile> {
+     const t = this.db.db;
+     await this.agents.lockForWrite(orgId, agentId, actorAccountId);
+     const current = await t
+       .selectFrom("agents")
+       .select(
+         sql<string>`to_char(profile_updated_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')`.as(
+           "at",
+         ),
+       )
+       .where("id", "=", agentId)
+       .executeTakeFirstOrThrow();
+     if (current.at !== expectedUpdatedAt) {
+       throw new ApiError(
+         "agent.profile_conflict",
+         "The profile was changed by someone else; reload it and apply your changes again",
+       );
+     }
++    if (patch.avatar?.kind === "upload") {
++      await this.attachments.consumeAgentAvatar(
++        orgId,
++        actorAccountId,
++        patch.avatar.uploadId,
++        agentId,
++      );
++    }
+     const fields = (["avatar", "description", "quickActions"] as const).filter(
+       (f) => patch[f] !== undefined,
+     );
+     // nothing to write: no timestamp bump, no audit row
+     if (fields.length === 0) return (await this.lookup.view(agentId)).profile;
+     await t
+       .updateTable("agents")
+       .set({
+         ...(patch.avatar !== undefined && {
+           profile_avatar: patch.avatar === null ? sql<null>`null` : JSON.stringify(patch.avatar),
+diff --git a/packages/kernel/src/agents/agents.controller.ts b/packages/kernel/src/agents/agents.controller.ts
+index 6b88e0bb..6162db33 100644
+--- a/packages/kernel/src/agents/agents.controller.ts
++++ b/packages/kernel/src/agents/agents.controller.ts
+@@ -1,12 +1,22 @@
+-import { Controller, Delete, Get, HttpCode, Inject, Param, Patch, Post } from "@nestjs/common";
++import { hasControlChars, MEDIA_NAME_MAX_CHARS } from "@capybara-hq/plugin-sdk";
++import { Controller, Delete, Get, HttpCode, Inject, Param, Patch, Post, Res } from "@nestjs/common";
++import type { FastifyReply } from "fastify";
+ import { z } from "zod";
++import {
++  AGENT_AVATAR_CONTENT_TYPES,
++  AGENT_AVATAR_DOWNLOAD_TTL_SECONDS,
++  AGENT_AVATAR_MAX_BYTES,
++  AttachmentsService,
++  type CreatedAttachment,
++} from "../conversations/attachments.service.js";
++import { ApiError } from "../errors.js";
+ import {
+   CurrentPrincipal,
+   type Principal,
+   patTokenId,
+   requireUser,
+ } from "../identity/principal.js";
+ import { createZodDto } from "../infra/validation/create-zod-dto.js";
+ import { ZBody } from "../infra/validation/zod-params.js";
+ import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
+ import { AgentProfileService } from "./agent-profile.service.js";
+@@ -34,50 +44,63 @@ const CreateBody = z
+     visibility: z.enum(AGENT_VISIBILITIES),
+     memberIds: MemberIds.optional(),
+     /** Without an avatar the agent gets a random preset. */
+     profile: ProfileInputSchema.optional(),
+   })
+   .strict();
+ const ProfileBody = ProfileInputSchema.extend({
+   /** The `profile.updatedAt` the client read; a different one → 409 `agent.profile_conflict`. */
+   expectedUpdatedAt: z.string().min(1).max(40),
+ }).strict();
++const AvatarUploadBody = z
++  .object({
++    name: z
++      .string()
++      .min(1)
++      .max(MEDIA_NAME_MAX_CHARS)
++      .refine((s) => !hasControlChars(s), "name must not contain control characters"),
++    contentType: z.enum(AGENT_AVATAR_CONTENT_TYPES),
++    size: z.number().int().min(1).max(AGENT_AVATAR_MAX_BYTES),
++  })
++  .strict();
+ const UpdateBody = z
+   .object({
+     definition: AgentDefinitionSchema.optional(),
+     visibility: z.enum(AGENT_VISIBILITIES).optional(),
+     memberIds: MemberIds.optional(),
+     /**
+      * 乐观并发：编辑页打开时读到的 `currentVersion`。给出且与当前版本不同（别人已保存过）→ 409
+      * `agent.version_conflict`，不覆盖别人的改动。不给时不检查（旧客户端）。
+      */
+     expectedVersion: z.number().int().positive().optional(),
+   })
+   .strict();
+ 
+ /** 服务令牌没有账号：以 null 作为 viewer，只看到 visibility='org' 的 agent。 */
+ const viewerOf = (p: Principal): string | null => (p.kind === "user" ? p.account.id : null);
+ 
+ class AgentCreateBodyDto extends createZodDto(CreateBody, "AgentCreateBody") {}
+ class AgentUpdateBodyDto extends createZodDto(UpdateBody, "AgentUpdateBody") {}
+ class AgentProfileBodyDto extends createZodDto(ProfileBody, "AgentProfileBody") {}
++class AgentAvatarUploadBodyDto extends createZodDto(AvatarUploadBody, "AgentAvatarUploadBody") {}
+ class AgentOwnerBodyDto extends createZodDto(OwnerBody, "AgentOwnerBody") {}
+ 
+ /**
+  * Agent 定义（`/api/v1/orgs/:orgId/agents`）。读用 `agents.use`（访客与服务令牌可用），
+  * 写用 `agents.create`（member 以上、HUMAN_ONLY），修改 / 删除的负责人或管理员判定在服务的组织行锁内完成。
+  */
+ @Controller("api/v1/orgs/:orgId/agents")
+ export class AgentsController {
+   constructor(
+     @Inject(AgentsService) private readonly agents: AgentsService,
+     @Inject(AgentProfileService) private readonly profiles: AgentProfileService,
++    @Inject(AttachmentsService) private readonly attachments: AttachmentsService,
+   ) {}
+ 
+   @Post()
+   @OrgAction("agents.create")
+   async create(
+     @CurrentPrincipal() principal: Principal,
+     @CurrentOrg() org: OrgContext,
+     @ZBody(AgentCreateBodyDto) body: z.infer<typeof CreateBody>,
+   ): Promise<{ agent: AgentView; warnings: AgentWarning[] }> {
+     const p = requireUser(principal);
+@@ -141,20 +164,69 @@ export class AgentsController {
+         org.orgId,
+         agentId,
+         p.account.id,
+         patch,
+         expectedUpdatedAt,
+         patTokenId(p),
+       ),
+     };
+   }
+ 
++  /**
++   * Registers an avatar image upload (presigned, like chat attachments and skill packages): the
++   * browser uploads straight to the object store, then saves `{ kind: "upload", uploadId }` with
++   * the profile PATCH, which finalizes it. 503 `storage.unavailable` without an object store.
++   */
++  @Post(":agentId/avatar/uploads")
++  @OrgAction("agents.create")
++  async createAvatarUpload(
++    @CurrentPrincipal() principal: Principal,
++    @CurrentOrg() org: OrgContext,
++    @Param("agentId") agentId: string,
++    @ZBody(AgentAvatarUploadBodyDto) body: z.infer<typeof AvatarUploadBody>,
++  ): Promise<CreatedAttachment> {
++    const p = requireUser(principal);
++    // the agent must exist and be visible to the caller (writing is checked when it is saved)
++    await this.agents.get(org.orgId, agentId, viewerOf(p));
++    return this.attachments.create(org.orgId, p.account.id, body, "agent-avatar");
++  }
++
++  /**
++   * The avatar image: 302 to a short-lived presigned URL for an upload avatar, or to the stored
++   * URL of an external avatar when it is https; 404 for presets, no avatar, or an agent the
++   * reader cannot see.
++   */
++  @Get(":agentId/avatar")
++  @OrgAction("agents.use")
++  async avatar(
++    @CurrentPrincipal() principal: Principal,
++    @CurrentOrg() org: OrgContext,
++    @Param("agentId") agentId: string,
++    @Res() reply: FastifyReply,
++  ): Promise<void> {
++    const view = await this.agents.get(org.orgId, agentId, viewerOf(principal));
++    const avatar = view.profile.avatar;
++    let location: string | null = null;
++    if (avatar?.kind === "upload") {
++      location = await this.attachments.agentAvatarUrl(org.orgId, agentId, avatar.uploadId);
++    } else if (avatar?.kind === "external" && new URL(avatar.url).protocol === "https:") {
++      location = avatar.url;
++    }
++    if (location === null) throw new ApiError("agent.not_found", "The agent has no avatar image");
++    await reply
++      .header(
++        "cache-control",
++        `private, max-age=${Math.floor(AGENT_AVATAR_DOWNLOAD_TTL_SECONDS / 5)}`,
++      )
++      .redirect(location, 302);
++  }
++
+   @Delete(":agentId")
+   @HttpCode(204)
+   @OrgAction("agents.create")
+   async remove(
+     @CurrentPrincipal() principal: Principal,
+     @CurrentOrg() org: OrgContext,
+     @Param("agentId") agentId: string,
+   ): Promise<void> {
+     const p = requireUser(principal);
+     await this.agents.softDelete(org.orgId, agentId, p.account.id, patTokenId(p));
+diff --git a/packages/kernel/src/agents/agents.module.ts b/packages/kernel/src/agents/agents.module.ts
+index 7804840d..1dc0e346 100644
+--- a/packages/kernel/src/agents/agents.module.ts
++++ b/packages/kernel/src/agents/agents.module.ts
+@@ -1,30 +1,33 @@
+ import { Module } from "@nestjs/common";
++import { AttachmentsModule } from "../conversations/attachments.module.js";
+ import { EvalBudgetModule } from "../evals/budget.js";
+ import { OrgLockModule } from "../orgs/org-lock.js";
+ import { ProvidersModule } from "../runtime/providers.js";
+ import { SandboxModule } from "../sandbox/sandbox.module.js";
+ import { SkillsModule } from "../skills/skills.module.js";
+ import { ToolsModule } from "../tools/tools.module.js";
+ import { AgentLookupModule } from "./agent-lookup.js";
+ import { AgentProfileService } from "./agent-profile.service.js";
+ import { AgentsService } from "./agents.service.js";
+ import { AgentTemplatesService } from "./templates.js";
+ 
+ /**
+  * Agents: the one {@link AgentsService} (definitions, versions, visibility; writes under the org
+  * row lock) and the plugin agent templates. Reads for a viewer are {@link AgentLookupModule}'s
+  * (re-exported), which the conversations and the skill invoker use without this module.
+  */
+ @Module({
+   imports: [
+     AgentLookupModule,
++    // avatar uploads
++    AttachmentsModule,
+     OrgLockModule,
+     ProvidersModule,
+     SkillsModule,
+     ToolsModule,
+     // the producer of sandbox-destroy-for jobs after a delete
+     SandboxModule,
+     // cancels the deleted agent's eval runs
+     EvalBudgetModule,
+   ],
+   providers: [AgentsService, AgentProfileService, AgentTemplatesService],
+diff --git a/packages/kernel/src/agents/agents.service.ts b/packages/kernel/src/agents/agents.service.ts
+index 4cf6a8a9..dabcda46 100644
+--- a/packages/kernel/src/agents/agents.service.ts
++++ b/packages/kernel/src/agents/agents.service.ts
+@@ -50,26 +50,28 @@ export interface AgentVersion {
+   definition: AgentDefinition;
+   createdBy: string;
+   createdAt: Date;
+ }
+ 
+ export type AgentVersionSummary = Omit<AgentVersion, "definition">;
+ 
+ /** 创建 / 修改的提示（不拒绝）：`fallback_same_provider` = 兜底与主模型同一供应商（spec 4.5）。 */
+ export type AgentWarning = "fallback_same_provider";
+ 
+-/** Until uploads are wired (the object store), a client can only choose a preset. */
++/** A new agent has no id to bind an upload to yet: a client can only choose a preset on create. */
+ export function assertProfileWritable(profile: ProfileInput | undefined): void {
+   if (profile?.avatar?.kind === "upload") {
+-    throw new ApiError("validation_failed", "Avatar uploads are not available yet", [
+-      { path: "avatar.kind", message: "upload is not supported" },
+-    ]);
++    throw new ApiError(
++      "validation_failed",
++      "Choose a preset avatar when creating an agent; upload one afterwards",
++      [{ path: "avatar.kind", message: "upload is not supported on create" }],
++    );
+   }
+ }
+ 
+ const notFound = () => new ApiError("agent.not_found", "Agent not found");
+ 
+ /** 键排序后的 JSON：jsonb 不保留键顺序，比较定义是否变化时用。 */
+ function canonical(v: unknown): string {
+   if (Array.isArray(v)) return `[${v.map(canonical).join(",")}]`;
+   if (v !== null && typeof v === "object") {
+     const entries = Object.entries(v as Record<string, unknown>)
+diff --git a/packages/kernel/src/conversations/attachments.service.ts b/packages/kernel/src/conversations/attachments.service.ts
+index dccf518f..103ad4b2 100644
+--- a/packages/kernel/src/conversations/attachments.service.ts
++++ b/packages/kernel/src/conversations/attachments.service.ts
+@@ -35,20 +35,31 @@ export const MAX_PENDING_ATTACHMENTS = 50;
+ export const SKILL_PACKAGE_CONTENT_TYPE = "application/zip";
+ /** 技能包 zip 的大小上限（字节）。 */
+ export const SKILL_PACKAGE_UPLOAD_MAX_BYTES = 50 * 1024 * 1024;
+ /** 同一账号在一个组织里最多的未 finalize 技能包上传数（与对话附件分开计数）。 */
+ export const MAX_PENDING_SKILL_PACKAGES = 5;
+ /**
+  * 技能包上传的过期时间（小时）：没被 `POST /skills` 用掉的由清理任务删除（不跟对话附件的 `unboundTtlHours`）；
+  * `POST /skills` 开始处理时再顺延这么久，处理期间不会被清理。
+  */
+ export const SKILL_PACKAGE_TTL_HOURS = 1;
++/** The image types an agent avatar upload may have (cropped square in the browser). */
++export const AGENT_AVATAR_CONTENT_TYPES = ["image/png", "image/jpeg", "image/webp"] as const;
++/** The size limit of an agent avatar upload (bytes). */
++export const AGENT_AVATAR_MAX_BYTES = 2 * 1024 * 1024;
++/** Unfinished avatar uploads one account may have in an org (counted apart from other uploads). */
++export const MAX_PENDING_AGENT_AVATARS = 10;
++/** An avatar upload not saved into a profile expires (and is cleaned up) after this many hours. */
++export const AGENT_AVATAR_TTL_HOURS = 24;
++/** Download redirect lifetime of an avatar (seconds); also its `Cache-Control` max-age. */
++export const AGENT_AVATAR_DOWNLOAD_TTL_SECONDS = 300;
++
+ /**
+  * 技能包解出的文件在 `kernel/<orgId>/` 下的前缀：按上传 id，同一上传重试写到同一批键（幂等），
+  * 并发处理同一上传也不会互相覆盖出不同内容。版本行记下这个前缀（`skill_versions.object_prefix`）。
+  */
+ export const skillFilesPrefix = (uploadId: string) => `skills/${uploadId}/`;
+ 
+ /** 周期任务：每小时清理过期未绑定的附件（`@LockedCron`）。 */
+ export const ATTACHMENT_CLEANUP_JOB = "attachment-cleanup";
+ /** 每批认领的行数。 */
+ const CLEANUP_BATCH = 100;
+@@ -99,21 +110,25 @@ const notFound = () => new ApiError("attachment.not_found", "Attachment not foun
+ 
+ /** 去掉参数、转小写：`Text/Plain; charset=utf-8` → `text/plain`。 */
+ export const normalizeContentType = (ct: string): string =>
+   (ct.split(";")[0] ?? "").trim().toLowerCase();
+ 
+ const isImage = (ct: string): ct is ImageMediaType =>
+   (IMAGE_MEDIA_TYPES as readonly string[]).includes(ct);
+ 
+ /** 对象键：只用附件 id，用户的文件名不进键。技能包另放 `skill-packages/<id>`。 */
+ const objectKey = (id: string, purpose: AttachmentPurpose = "chat") =>
+-  purpose === "chat" ? `attachments/${id}` : `skill-packages/${id}`;
++  purpose === "chat"
++    ? `attachments/${id}`
++    : purpose === "agent-avatar"
++      ? `agent-avatars/${id}`
++      : `skill-packages/${id}`;
+ 
+ const startsWith = (b: Uint8Array, sig: readonly number[], at = 0) =>
+   sig.every((x, i) => b[at + i] === x);
+ const ascii = (s: string) => [...s].map((c) => c.charCodeAt(0));
+ 
+ /** 文件开头是否与声明的类型相符（图片与 PDF 看签名，文本不能含 NUL）。 */
+ export function sniffMatches(contentType: string, head: Uint8Array): boolean {
+   switch (contentType) {
+     case "image/png":
+       return startsWith(head, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+@@ -196,55 +211,70 @@ export class AttachmentsService {
+   async create(
+     orgId: string,
+     accountId: string,
+     input: { name: string; contentType: string; size: number },
+     purpose: AttachmentPurpose = "chat",
+   ): Promise<CreatedAttachment> {
+     this.storage.assertAvailable();
+     const cfg = this.config.get().attachments;
+     const contentType = normalizeContentType(input.contentType);
+     const skill = purpose === "skill-package";
++    const avatar = purpose === "agent-avatar";
+     if (
+       skill
+         ? contentType !== SKILL_PACKAGE_CONTENT_TYPE
+-        : !(cfg.allowedTypes as readonly string[]).includes(contentType)
++        : avatar
++          ? !(AGENT_AVATAR_CONTENT_TYPES as readonly string[]).includes(contentType)
++          : !(cfg.allowedTypes as readonly string[]).includes(contentType)
+     ) {
+       throw new ApiError(
+         "attachment.type_not_allowed",
+         `Attachment type ${JSON.stringify(contentType)} is not allowed`,
+       );
+     }
+-    const limit = skill ? SKILL_PACKAGE_UPLOAD_MAX_BYTES : this.limitFor(contentType);
++    const limit = skill
++      ? SKILL_PACKAGE_UPLOAD_MAX_BYTES
++      : avatar
++        ? AGENT_AVATAR_MAX_BYTES
++        : this.limitFor(contentType);
+     if (input.size > limit) {
+       throw new ApiError(
+         "attachment.too_large",
+         `Attachment is ${input.size} bytes, over the limit of ${limit} bytes`,
+       );
+     }
+     const pending = await this.db
+       .selectFrom("attachments")
+       .select((eb) => eb.fn.countAll<string>().as("n"))
+       .where("org_id", "=", orgId)
+       .where("account_id", "=", accountId)
+       .where("status", "=", "pending")
+       .where("purpose", "=", purpose)
+       .executeTakeFirst();
+-    const maxPending = skill ? MAX_PENDING_SKILL_PACKAGES : MAX_PENDING_ATTACHMENTS;
++    const maxPending = skill
++      ? MAX_PENDING_SKILL_PACKAGES
++      : avatar
++        ? MAX_PENDING_AGENT_AVATARS
++        : MAX_PENDING_ATTACHMENTS;
+     if (Number(pending?.n ?? 0) >= maxPending) {
+       throw new ApiError(
+         "attachment.too_many_pending",
+         `Too many unfinished uploads (at most ${maxPending}); finish or wait for them first`,
+       );
+     }
+     const id = randomUUID();
+     const key = objectKey(id, purpose);
+-    const ttlHours = skill ? SKILL_PACKAGE_TTL_HOURS : cfg.unboundTtlHours;
++    const ttlHours = skill
++      ? SKILL_PACKAGE_TTL_HOURS
++      : avatar
++        ? AGENT_AVATAR_TTL_HOURS
++        : cfg.unboundTtlHours;
+     const upload = await this.storage.kernel(orgId).presignPut(key, {
+       contentType,
+       maxSize: input.size,
+       ttlSeconds: ATTACHMENT_UPLOAD_TTL_SECONDS,
+     });
+     await this.db
+       .insertInto("attachments")
+       .values({
+         id,
+         org_id: orgId,
+@@ -665,20 +695,126 @@ export class AttachmentsService {
+       .forUpdate()
+       .executeTakeFirst();
+     if (row?.status !== "ready") throw notFound();
+     await trx
+       .updateTable("attachments")
+       .set({ status: "deleting", expires_at: sql<Date>`now()` })
+       .where("id", "=", id)
+       .execute();
+   }
+ 
++  /**
++   * Makes an agent avatar upload ready to be saved into a profile (outside any transaction: it may
++   * read the object store): only the uploader, only the `agent-avatar` purpose, an image type, not
++   * expired and not yet used by another agent, else `attachment.not_found`. An upload still
++   * `pending` is finalized first (size, type and the image signature are checked). The expiry is
++   * extended so the cleanup job cannot delete it before {@link consumeAgentAvatar} runs.
++   */
++  async prepareAgentAvatar(
++    orgId: string,
++    accountId: string,
++    id: string,
++    agentId: string,
++  ): Promise<void> {
++    this.storage.assertAvailable();
++    const row = await this.db
++      .selectFrom("attachments")
++      .select([
++        "status",
++        "purpose",
++        "content_type",
++        "agent_id",
++        sql<boolean>`expires_at is not null and expires_at <= now()`.as("expired"),
++      ])
++      .where("id", "=", id)
++      .where("org_id", "=", orgId)
++      .where("account_id", "=", accountId)
++      .executeTakeFirst();
++    if (
++      row?.purpose !== "agent-avatar" ||
++      row.status === "deleting" ||
++      row.expired ||
++      (row.agent_id !== null && row.agent_id !== agentId) ||
++      !(AGENT_AVATAR_CONTENT_TYPES as readonly string[]).includes(row.content_type)
++    ) {
++      throw notFound();
++    }
++    if (row.status === "pending") await this.finalize(orgId, accountId, id);
++    await this.db
++      .updateTable("attachments")
++      .set({ expires_at: sql<Date>`now() + make_interval(hours => ${AGENT_AVATAR_TTL_HOURS})` })
++      .where("id", "=", id)
++      .where("status", "=", "ready")
++      .where("agent_id", "is", null)
++      .where("expires_at", "is not", null)
++      .execute();
++  }
++
++  /**
++   * In the caller's transaction, binds a ready avatar upload to `agentId` (row lock; the expiry is
++   * cleared, so the cleanup job keeps it while the profile uses it). An upload another agent
++   * already uses, or one that is not the account's ready avatar → `attachment.not_found`; saving
++   * the same upload to the same agent again is fine.
++   */
++  @Transactional({ propagation: "mandatory" })
++  async consumeAgentAvatar(
++    orgId: string,
++    accountId: string,
++    id: string,
++    agentId: string,
++  ): Promise<void> {
++    const trx = this.db.db;
++    const row = await trx
++      .selectFrom("attachments")
++      .select(["status", "agent_id"])
++      .where("id", "=", id)
++      .where("org_id", "=", orgId)
++      .where("account_id", "=", accountId)
++      .where("purpose", "=", "agent-avatar")
++      .forUpdate()
++      .executeTakeFirst();
++    if (row?.status !== "ready" || (row.agent_id !== null && row.agent_id !== agentId)) {
++      throw notFound();
++    }
++    await trx
++      .updateTable("attachments")
++      .set({ agent_id: agentId, expires_at: null })
++      .where("id", "=", id)
++      .execute();
++  }
++
++  /**
++   * A short-lived presigned GET (inline, with the checked image type) of the avatar upload bound
++   * to `agentId`; `null` when there is none or its object is gone or no longer the finalized one.
++   */
++  async agentAvatarUrl(orgId: string, agentId: string, id: string): Promise<string | null> {
++    this.storage.assertAvailable();
++    const row = await this.db
++      .selectFrom("attachments")
++      .select(["content_type", "object_key", "etag"])
++      .where("id", "=", id)
++      .where("org_id", "=", orgId)
++      .where("agent_id", "=", agentId)
++      .where("purpose", "=", "agent-avatar")
++      .where("status", "=", "ready")
++      .executeTakeFirst();
++    if (!row) return null;
++    const store = this.storage.kernel(orgId);
++    const head = await store.head(row.object_key);
++    if (!head || !this.sameContent(row.etag, head.etag, { orgId, attachmentId: id })) return null;
++    return store.presignGet(row.object_key, {
++      ttlSeconds: AGENT_AVATAR_DOWNLOAD_TTL_SECONDS,
++      disposition: "inline",
++      responseContentType: row.content_type,
++    });
++  }
++
+   /**
+    * 删除过期（`expires_at < now()`）且从未绑定到会话的附件：先把行认领为 `deleting`（`FOR UPDATE SKIP LOCKED`，
+    * 多副本并发时互不重复），再删对象、删行。删对象失败的行保持 `deleting`，下次运行重试。
+    * 技能包上传（过期未用掉的，或已被 `POST /skills` 用掉、`expires_at` 置为当时的）同样由这里删 zip；
+    * 解出的文件 `skills/<id>/` 只在没有任何技能版本引用时一并删除。
+    * 没有对象存储时什么也不做。返回删除的附件数。
+    */
+   async deleteExpired(): Promise<number> {
+     if (!this.storage.available) return 0;
+     let deleted = 0;
+diff --git a/packages/kernel/src/db/kernel-schema.ts b/packages/kernel/src/db/kernel-schema.ts
+index 6ee07cd9..013e0003 100644
+--- a/packages/kernel/src/db/kernel-schema.ts
++++ b/packages/kernel/src/db/kernel-schema.ts
+@@ -606,24 +606,26 @@ export interface AttachmentsTable {
+   content_type: string;
+   size: Int8;
+   object_key: string;
+   status: "pending" | "ready" | "deleting";
+   etag: string | null;
+   pages: number | null;
+   created_at: Ts;
+   expires_at: TsNullable;
+   /** 0024：上传用途（技能包不能绑定到消息）。 */
+   purpose: ColumnType<AttachmentPurpose, AttachmentPurpose | undefined, AttachmentPurpose>;
++  /** 0067: the agent whose profile uses this avatar upload (set once, when it is saved). */
++  agent_id: ColumnType<string | null, string | null | undefined, string | null>;
+ }
+ 
+-/** 预签名上传的用途：对话附件 / 技能包 zip。 */
+-export type AttachmentPurpose = "chat" | "skill-package";
++/** 预签名上传的用途：对话附件 / 技能包 zip / agent avatar image. */
++export type AttachmentPurpose = "chat" | "skill-package" | "agent-avatar";
+ 
+ /** 技能版本的清单（`skill_versions.manifest`）。 */
+ export interface SkillManifest {
+   name: string;
+   description: string;
+   files: { path: string; size: number; sha256: string }[];
+   /**
+    * Phase D: how the version can be invoked, read from its SKILL.md when it was written. Absent
+    * means `{ model: true, user: true }` (every version written before phase D, and ordinary skills,
+    * whose manifest is unchanged). No backfill (decided 2026-10-27).
+diff --git a/packages/kernel/src/migrations/0067_agent_avatar_uploads.sql b/packages/kernel/src/migrations/0067_agent_avatar_uploads.sql
+new file mode 100644
+index 00000000..a1441de9
+--- /dev/null
++++ b/packages/kernel/src/migrations/0067_agent_avatar_uploads.sql
+@@ -0,0 +1,7 @@
++-- Agent avatar uploads reuse the presigned attachment flow: a new purpose 'agent-avatar' and the
++-- agent whose profile uses the upload (set once on save; a used upload has no expiry).
++ALTER TABLE capybara.attachments DROP CONSTRAINT IF EXISTS attachments_purpose_check;
++ALTER TABLE capybara.attachments
++  ADD CONSTRAINT attachments_purpose_check
++  CHECK (purpose IN ('chat', 'skill-package', 'agent-avatar'));
++ALTER TABLE capybara.attachments ADD COLUMN IF NOT EXISTS agent_id text;
+diff --git a/packages/kernel/test/agents/avatar.test.ts b/packages/kernel/test/agents/avatar.test.ts
+new file mode 100644
+index 00000000..3f26720e
+--- /dev/null
++++ b/packages/kernel/test/agents/avatar.test.ts
+@@ -0,0 +1,336 @@
++import {
++  fakeExtensionEntry,
++  startTestPostgres,
++  startTestRedis,
++  startTestS3,
++  type TestContainer,
++  type TestS3,
++} from "@capybara-hq/testing";
++import { sql } from "kysely";
++import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
++import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
++import { createDb } from "../../src/db/pool.js";
++import { truncateTables } from "../helpers/db.js";
++import { accountsFor } from "../helpers/identity.js";
++import { testMembers } from "../helpers/members.js";
++import { MODEL_FAKE } from "../helpers/model-plugins.js";
++import {
++  createOrg,
++  PW,
++  type Req,
++  runConfig,
++  session,
++  startKernel,
++  type TestKernel,
++} from "../helpers/runs.js";
++
++const OBJECT_STORE = fakeExtensionEntry("fake-object-store");
++
++let pgc: TestContainer;
++let rd: TestContainer;
++let s3: TestS3;
++let db: KernelSchemaDb;
++let destroyDb: () => Promise<void>;
++let k: TestKernel;
++let kNoStore: TestKernel;
++
++beforeAll(async () => {
++  [pgc, rd, s3] = await Promise.all([startTestPostgres(), startTestRedis(), startTestS3()]);
++  const raw = createDb(pgc.url, 3);
++  db = kernelDb(raw);
++  destroyDb = () => raw.destroy();
++  const urls = { pg: pgc.url, redis: rd.url };
++  k = await startKernel(
++    runConfig(urls, {
++      roles: ["api", "worker"],
++      extensions: [OBJECT_STORE, MODEL_FAKE],
++      extensionConfig: {
++        "fake-object-store": {
++          endpoint: s3.endpoint,
++          region: s3.region,
++          bucket: s3.bucket,
++          accessKeyId: s3.accessKey,
++          secretAccessKey: s3.secretKey,
++          forcePathStyle: true,
++        },
++      },
++    }),
++  );
++  // a second kernel on the same database with no object store provider
++  kNoStore = await startKernel(runConfig(urls, { roles: ["api"], extensions: [MODEL_FAKE] }));
++}, 180_000);
++afterAll(async () => {
++  await kNoStore?.close();
++  await k?.close();
++  await destroyDb?.();
++  await Promise.all([pgc?.stop(), rd?.stop(), s3?.stop()]);
++});
++
++let admin: Req;
++let member: Req;
++let orgId: string;
++
++beforeEach(async () => {
++  await truncateTables(
++    db,
++    "capybara.attachments, capybara.agent_versions, capybara.agent_members, capybara.agents, capybara.audit_events, capybara.memberships, capybara.orgs, capybara.sessions, capybara.local_passwords, capybara.identities, capybara.accounts",
++  );
++  const accounts = accountsFor(db);
++  const adminId = (await accounts.createLocal({ login: "admin", password: PW, displayName: "A" }))
++    .id;
++  const memberId = (await accounts.createLocal({ login: "mem", password: PW, displayName: "M" }))
++    .id;
++  admin = await session(k, "admin");
++  orgId = await createOrg(admin);
++  await testMembers(db).add(orgId, memberId, "member", adminId);
++  member = await session(k, "mem");
++});
++
++interface Created {
++  id: string;
++  upload: {
++    method: "PUT" | "POST";
++    url: string;
++    headers: Record<string, string>;
++    fields?: Record<string, string>;
++  };
++}
++interface AgentJson {
++  id: string;
++  profile: { updatedAt: string; avatar: { kind: string; uploadId?: string } | null };
++}
++
++const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4]);
++const code = (res: { json(): unknown }) =>
++  (res.json() as { error?: { code?: string } }).error?.code;
++
++async function putToStore(c: Created, bytes: Uint8Array, contentType: string): Promise<void> {
++  let res: Response;
++  if (c.upload.method === "PUT") {
++    res = await fetch(c.upload.url, {
++      method: "PUT",
++      headers: c.upload.headers,
++      body: Buffer.from(bytes),
++    });
++  } else {
++    const form = new FormData();
++    for (const [key, v] of Object.entries(c.upload.fields ?? {})) form.append(key, v);
++    form.append("file", new Blob([Buffer.from(bytes)], { type: contentType }));
++    res = await fetch(c.upload.url, { method: "POST", headers: c.upload.headers, body: form });
++  }
++  expect(res.status, await res.clone().text()).toBeLessThan(300);
++}
++
++async function newAgent(req: Req, visibility = "org"): Promise<AgentJson> {
++  const res = await req({
++    method: "POST",
++    url: `/api/v1/orgs/${orgId}/agents`,
++    payload: {
++      definition: {
++        name: "Helper",
++        instructions: "Be helpful.",
++        model: { provider: "model-fake", model: "fake-1" },
++        tools: [],
++      },
++      visibility,
++    },
++  });
++  expect(res.statusCode, res.body).toBe(201);
++  return (res.json() as { agent: AgentJson }).agent;
++}
++
++const avatarUrl = (agentId: string) => `/api/v1/orgs/${orgId}/agents/${agentId}/avatar`;
++
++function requestUpload(req: Req, agentId: string, payload: Record<string, unknown>) {
++  return req({ method: "POST", url: `${avatarUrl(agentId)}/uploads`, payload });
++}
++
++/** Registers and uploads a PNG; returns the upload id. */
++async function uploadPng(req: Req, agentId: string): Promise<string> {
++  const res = await requestUpload(req, agentId, {
++    name: "me.png",
++    contentType: "image/png",
++    size: PNG.byteLength,
++  });
++  expect(res.statusCode, res.body).toBe(201);
++  const c = res.json() as Created;
++  await putToStore(c, PNG, "image/png");
++  return c.id;
++}
++
++const saveAvatar = (req: Req, a: AgentJson, uploadId: string) =>
++  req({
++    method: "PATCH",
++    url: `/api/v1/orgs/${orgId}/agents/${a.id}/profile`,
++    payload: { avatar: { kind: "upload", uploadId }, expectedUpdatedAt: a.profile.updatedAt },
++  });
++
++describe("agent avatar uploads", { timeout: 60_000 }, () => {
++  it("upload registers an image attachment", async () => {
++    const a = await newAgent(admin);
++    const res = await requestUpload(admin, a.id, {
++      name: "me.png",
++      contentType: "image/png",
++      size: PNG.byteLength,
++    });
++    expect(res.statusCode, res.body).toBe(201);
++    const c = res.json() as Created & { expiresAt: string };
++    expect(c.upload.url).toContain(new URL(s3.endpoint).host);
++    expect(c.expiresAt).toBeTruthy();
++    const row = await db
++      .selectFrom("attachments")
++      .selectAll()
++      .where("id", "=", c.id)
++      .executeTakeFirstOrThrow();
++    expect(row).toMatchObject({
++      purpose: "agent-avatar",
++      status: "pending",
++      content_type: "image/png",
++      org_id: orgId,
++    });
++    expect(row.object_key).toMatch(/^agent-avatars\//);
++  });
++
++  it("a non-image or 2 MB + 1 upload is 400", async () => {
++    const a = await newAgent(admin);
++    for (const payload of [
++      { name: "a.gif", contentType: "image/gif", size: 10 },
++      { name: "a.pdf", contentType: "application/pdf", size: 10 },
++      { name: "big.png", contentType: "image/png", size: 2_097_153 },
++      { name: "none.png", contentType: "image/png", size: 0 },
++    ]) {
++      const res = await requestUpload(admin, a.id, payload);
++      expect(res.statusCode, JSON.stringify(payload)).toBe(400);
++    }
++    const ok = await requestUpload(admin, a.id, {
++      name: "max.webp",
++      contentType: "image/webp",
++      size: 2_097_152,
++    });
++    expect(ok.statusCode, ok.body).toBe(201);
++  });
++
++  it("saving an upload avatar consumes the upload; a second agent can't reuse it", async () => {
++    const a = await newAgent(admin);
++    const b = await newAgent(admin);
++    const uploadId = await uploadPng(admin, a.id);
++
++    // another account can't use the uploader's upload
++    const mine = await newAgent(member);
++    const stolen = await saveAvatar(member, mine, uploadId);
++    expect(stolen.statusCode).toBe(404);
++    expect(code(stolen)).toBe("attachment.not_found");
++
++    const res = await saveAvatar(admin, a, uploadId);
++    expect(res.statusCode, res.body).toBe(200);
++    expect((res.json() as { profile: AgentJson["profile"] }).profile.avatar).toEqual({
++      kind: "upload",
++      uploadId,
++    });
++    const row = await db
++      .selectFrom("attachments")
++      .selectAll()
++      .where("id", "=", uploadId)
++      .executeTakeFirstOrThrow();
++    expect(row).toMatchObject({ status: "ready", agent_id: a.id, expires_at: null });
++
++    const reuse = await saveAvatar(admin, b, uploadId);
++    expect(reuse.statusCode).toBe(404);
++    expect(code(reuse)).toBe("attachment.not_found");
++    const bAfter = await admin({ method: "GET", url: `/api/v1/orgs/${orgId}/agents/${b.id}` });
++    expect((bAfter.json() as { agent: AgentJson }).agent.profile.avatar?.kind).not.toBe("upload");
++
++    // the expired-attachment cleanup keeps a used avatar
++    const attachments = k.app.get(
++      (await import("../../src/conversations/attachments.service.js")).AttachmentsService,
++    );
++    await attachments.deleteExpired();
++    const kept = await db
++      .selectFrom("attachments")
++      .select("id")
++      .where("id", "=", uploadId)
++      .execute();
++    expect(kept).toHaveLength(1);
++  });
++
++  it("an upload whose bytes are not the declared image is refused", async () => {
++    const a = await newAgent(admin);
++    const res = await requestUpload(admin, a.id, {
++      name: "fake.png",
++      contentType: "image/png",
++      size: 12,
++    });
++    const c = res.json() as Created;
++    await putToStore(c, new Uint8Array(12).fill(65), "image/png");
++    const saved = await saveAvatar(admin, a, c.id);
++    expect(saved.statusCode).toBe(415);
++    expect(code(saved)).toBe("attachment.type_not_allowed");
++  });
++
++  it("GET avatar redirects for a reader who can see the agent and is 404 otherwise", async () => {
++    const shared = await newAgent(admin);
++    const uploadId = await uploadPng(admin, shared.id);
++    expect((await saveAvatar(admin, shared, uploadId)).statusCode).toBe(200);
++
++    const ok = await member({ method: "GET", url: avatarUrl(shared.id) });
++    expect(ok.statusCode, ok.body).toBe(302);
++    expect(ok.headers.location).toContain(new URL(s3.endpoint).host);
++    const img = await fetch(String(ok.headers.location));
++    expect(img.status).toBe(200);
++    expect(img.headers.get("content-type")).toBe("image/png");
++    expect(new Uint8Array(await img.arrayBuffer())).toEqual(PNG);
++
++    // a private agent is invisible to another member
++    const priv = await newAgent(admin, "private");
++    const pid = await uploadPng(admin, priv.id);
++    expect((await saveAvatar(admin, priv, pid)).statusCode).toBe(200);
++    expect((await admin({ method: "GET", url: avatarUrl(priv.id) })).statusCode).toBe(302);
++    expect((await member({ method: "GET", url: avatarUrl(priv.id) })).statusCode).toBe(404);
++    expect((await member({ method: "GET", url: avatarUrl("nope") })).statusCode).toBe(404);
++
++    // external: https redirects, http is 404; preset and null are 404
++    const set = (avatar: unknown) =>
++      sql`update capybara.agents set profile_avatar = ${JSON.stringify(avatar)}::jsonb where id = ${shared.id}`.execute(
++        db,
++      );
++    await set({ kind: "external", url: "https://cdn.example.com/a.png" });
++    const ext = await member({ method: "GET", url: avatarUrl(shared.id) });
++    expect(ext.statusCode).toBe(302);
++    expect(ext.headers.location).toBe("https://cdn.example.com/a.png");
++    await set({ kind: "external", url: "http://cdn.example.com/a.png" });
++    expect((await member({ method: "GET", url: avatarUrl(shared.id) })).statusCode).toBe(404);
++    await set({ kind: "preset", id: "fox" });
++    expect((await member({ method: "GET", url: avatarUrl(shared.id) })).statusCode).toBe(404);
++    await sql`update capybara.agents set profile_avatar = null where id = ${shared.id}`.execute(db);
++    expect((await member({ method: "GET", url: avatarUrl(shared.id) })).statusCode).toBe(404);
++  });
++
++  it("without an object store the upload is 503 storage.unavailable and a preset still saves", async () => {
++    const a = await newAgent(admin);
++    const req = await session(kNoStore, "admin");
++    const up = await requestUpload(req, a.id, {
++      name: "me.png",
++      contentType: "image/png",
++      size: 10,
++    });
++    expect(up.statusCode).toBe(503);
++    expect(code(up)).toBe("storage.unavailable");
++
++    const saveUpload = await saveAvatar(req, a, "some-upload");
++    expect(saveUpload.statusCode).toBe(503);
++    expect(code(saveUpload)).toBe("storage.unavailable");
++
++    const get = await req({ method: "GET", url: avatarUrl(a.id) });
++    expect([404, 503]).toContain(get.statusCode);
++
++    const preset = await req({
++      method: "PATCH",
++      url: `/api/v1/orgs/${orgId}/agents/${a.id}/profile`,
++      payload: {
++        avatar: { kind: "preset", id: "owl" },
++        expectedUpdatedAt: a.profile.updatedAt,
++      },
++    });
++    expect(preset.statusCode, preset.body).toBe(200);
++  });
++});
+diff --git a/packages/kernel/test/agents/profile.test.ts b/packages/kernel/test/agents/profile.test.ts
+index 234f84d0..921d4a15 100644
+--- a/packages/kernel/test/agents/profile.test.ts
++++ b/packages/kernel/test/agents/profile.test.ts
+@@ -148,21 +148,20 @@ describe("agent profile", () => {
+   });
+ 
+   it("profile limits", async () => {
+     const { req, url, agent } = await setup();
+     const bad: Record<string, unknown>[] = [
+       { description: "x".repeat(501) },
+       { quickActions: Array.from({ length: 10 }, () => ({ title: "t", body: "b" })) },
+       { quickActions: [{ title: "x".repeat(41), body: "b" }] },
+       { quickActions: [{ title: "t", body: "x".repeat(20_001) }] },
+       { avatar: { kind: "preset", id: "dragon" } },
+-      { avatar: { kind: "upload", uploadId: "u1" } },
+       { avatar: { kind: "external", url: "https://example.com/a.png" } },
+     ];
+     for (const patch of bad) {
+       const res = await req({
+         method: "PATCH",
+         url: `${url}/profile`,
+         payload: { ...patch, expectedUpdatedAt: agent.profile.updatedAt },
+       });
+       expect(res.statusCode, JSON.stringify(patch).slice(0, 60)).toBe(400);
+       expect(errCode(res)).toBe("validation_failed");

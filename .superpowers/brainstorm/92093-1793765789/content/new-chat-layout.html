@@ -1,0 +1,73 @@
+<style>
+  .cb { background:#f6f4ef; border:1px solid #e3dfd6; border-radius:8px; padding:28px 20px 22px; font-family: ui-monospace, "SF Mono", Menlo, monospace; color:#1d1b18; }
+  .cb .greet { display:flex; align-items:center; justify-content:center; gap:10px; font-family: -apple-system, "PingFang SC", sans-serif; font-size:22px; font-weight:600; margin-bottom:6px; }
+  .cb .sub { text-align:center; color:#8a857b; font-size:12px; margin-bottom:16px; font-family:-apple-system,"PingFang SC",sans-serif; }
+  .cb .px { width:28px; height:20px; background:
+      linear-gradient(#d9541e,#d9541e) 20px 0/2px 2px no-repeat,
+      linear-gradient(#d9541e,#d9541e) 18px 2px/6px 2px no-repeat,
+      linear-gradient(#d9541e,#d9541e) 6px 4px/22px 10px no-repeat,
+      linear-gradient(#d9541e,#d9541e) 4px 6px/2px 6px no-repeat,
+      linear-gradient(#d9541e,#d9541e) 6px 14px/18px 2px no-repeat,
+      linear-gradient(#d9541e,#d9541e) 6px 16px/4px 4px no-repeat,
+      linear-gradient(#d9541e,#d9541e) 12px 16px/2px 4px no-repeat,
+      linear-gradient(#d9541e,#d9541e) 16px 16px/4px 4px no-repeat; }
+  .cb .composer { background:#fff; border:1px solid #e3dfd6; border-radius:8px; box-shadow:0 2px 8px rgba(0,0,0,.05); padding:10px 12px; margin:0 auto; max-width:440px; }
+  .cb .composer .ph { color:#aaa49a; font-family:-apple-system,"PingFang SC",sans-serif; font-size:13px; margin-bottom:12px; }
+  .cb .row { display:flex; align-items:center; gap:10px; font-size:11px; color:#6f6a61; }
+  .cb .row .send { margin-left:auto; width:22px; height:22px; border-radius:4px; background:#ebe7df; }
+  .cb .chips { display:flex; flex-wrap:wrap; gap:6px; justify-content:center; max-width:460px; margin:12px auto 0; }
+  .cb .chip { border:1px solid #e3dfd6; background:#fff; border-radius:4px; padding:4px 8px; font-size:11px; color:#4a463f; font-family:-apple-system,"PingFang SC",sans-serif; }
+  .cb .chip.agent { display:flex; align-items:center; gap:6px; font-family:ui-monospace,Menlo,monospace; }
+  .cb .chip.agent i { font-style:normal; width:16px; height:16px; border-radius:3px; background:#1d1b18; color:#fff; font-size:9px; display:flex; align-items:center; justify-content:center; }
+  .cb .chip.on { border-color:#d9541e; box-shadow:0 0 0 2px rgba(217,84,30,.15); }
+  .cb .chip.more { color:#d9541e; }
+  .cb .label2 { max-width:460px; margin:18px auto 6px; font-size:10px; color:#8a857b; display:flex; justify-content:space-between; }
+  .cb .recent { max-width:460px; margin:0 auto; display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; }
+  .cb .card { background:#fff; border:1px solid #e3dfd6; border-radius:6px; padding:8px; font-size:11px; font-family:-apple-system,"PingFang SC",sans-serif; }
+  .cb .card span { display:block; color:#8a857b; font-size:10px; margin-top:3px; font-family:ui-monospace,Menlo,monospace; }
+</style>
+
+<h2>新会话页：选一个方向</h2>
+<p class="subtitle">三版都保留现在的功能（选 Agent、模型、思考强度），区别在欢迎语之外加什么。欢迎语按时间段变化，带打字效果；示例是「下午好，Grant」。</p>
+
+<div class="cards">
+  <div class="card" data-choice="a" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="cb">
+        <div class="greet"><span class="px"></span>下午好，Grant</div>
+        <div class="sub">&nbsp;</div>
+        <div class="composer"><div class="ph">想让 Grant 做什么？</div><div class="row">＋ &nbsp; Grant ⌄ &nbsp; deepseek-flash ⌄ &nbsp; 高 ⌄ <span class="send"></span></div></div>
+        <div class="chips"><span class="chip">梳理需求文档</span><span class="chip">排查一个报错</span><span class="chip">写周报</span><span class="chip">review 这段代码</span></div>
+      </div>
+    </div>
+    <div class="card-body"><h3>A · Claude 式，简洁</h3><p>水豚 + 欢迎语，输入框下面一排「当前 Agent 的快捷操作」，点一下把提示词模板放进输入框。Agent 仍在输入框里选。</p></div>
+  </div>
+
+  <div class="card" data-choice="b" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="cb">
+        <div class="greet"><span class="px"></span>下午好，Grant</div>
+        <div class="sub">选一个 agent，或从常用任务开始</div>
+        <div class="chips" style="margin-top:0;margin-bottom:8px"><span class="chip agent on"><i>G</i>Grant</span><span class="chip agent"><i>F</i>Fiona</span><span class="chip agent"><i>N</i>Navigator</span><span class="chip agent"><i>L</i>Lexi</span><span class="chip more">更多 +7</span></div>
+        <div class="chips" style="margin-top:0;margin-bottom:12px"><span class="chip">梳理需求文档</span><span class="chip">排查一个报错</span><span class="chip">写周报</span><span class="chip">review 这段代码</span></div>
+        <div class="composer"><div class="ph">想让 Grant 做什么？</div><div class="row">＋ &nbsp; deepseek-flash ⌄ &nbsp; 高 ⌄ <span class="send"></span></div></div>
+      </div>
+    </div>
+    <div class="card-body"><h3>B · Octok 式，Agent 在前</h3><p>欢迎语下一排 Agent（最近用过的在前，「更多」打开可搜索的面板：最近用过 / 全部），再一排所选 Agent 的快捷操作，然后是输入框。</p></div>
+  </div>
+
+  <div class="card" data-choice="c" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="cb">
+        <div class="greet"><span class="px"></span>下午好，Grant</div>
+        <div class="sub">&nbsp;</div>
+        <div class="composer"><div class="ph">想让 Grant 做什么？</div><div class="row">＋ &nbsp; Grant ⌄ &nbsp; deepseek-flash ⌄ &nbsp; 高 ⌄ <span class="send"></span></div></div>
+        <div class="chips"><span class="chip agent on"><i>G</i>Grant</span><span class="chip agent"><i>F</i>Fiona</span><span class="chip agent"><i>N</i>Navigator</span><span class="chip more">更多 +7</span></div>
+        <div class="chips" style="margin-top:6px"><span class="chip">梳理需求文档</span><span class="chip">排查一个报错</span><span class="chip">写周报</span></div>
+        <div class="label2"><span>接着上次</span><span>全部</span></div>
+        <div class="recent"><div class="card">三个写代码的好习惯<span>2 分钟前</span></div><div class="card">介绍 AI 助手 Grant<span>1 小时前</span></div><div class="card">上午好问候<span>3 小时前</span></div></div>
+      </div>
+    </div>
+    <div class="card-body"><h3>C · 混合，加「接着上次」</h3><p>输入框在中间，下面是 Agent 和快捷操作，最下面三张最近会话卡片（像 Claude 的「最近的 Artifacts」）。</p></div>
+  </div>
+</div>

@@ -1,0 +1,1418 @@
+# Review package: 70b80a7d..e3df7132
+
+## Commits
+e3df7132 fix(web): the agent page guards every way out and shows its save row only with changes
+
+## Files changed
+ apps/web/messages/en.json                          |   5 +-
+ apps/web/messages/zh.json                          |   5 +-
+ apps/web/src/components/AgentForm.tsx              |   3 +
+ apps/web/src/components/agent/AgentPage.tsx        |  54 +++--
+ apps/web/src/components/agent/BasicsSection.tsx    |  54 +++--
+ .../web/src/components/agent/LegacyFormSection.tsx |  27 ++-
+ .../src/components/agent/QuickActionsSection.tsx   |  29 ++-
+ apps/web/test/agent-page.test.tsx                  | 248 ++++++++++++++++++++-
+ apps/web/test/agent-skills.test.tsx                |  27 ++-
+ apps/web/test/agent-subagents.test.tsx             |  26 ++-
+ apps/web/test/roles.test.tsx                       |   4 +-
+ docs/design/spec.md                                |   2 +-
+ packages/design/src/display/avatar.tsx             |   6 +-
+ packages/design/test/avatar.test.tsx               |  15 ++
+ 14 files changed, 427 insertions(+), 78 deletions(-)
+
+## Diff
+diff --git a/apps/web/messages/en.json b/apps/web/messages/en.json
+index 17cbc2e6..ea4a9e83 100644
+--- a/apps/web/messages/en.json
++++ b/apps/web/messages/en.json
+@@ -631,21 +631,21 @@
+         "model": "Model",
+         "tools": "Tools",
+         "skills": "Skills",
+         "subagents": "Sub-agents",
+         "channels": "Channels"
+       },
+       "startChat": "Start a conversation",
+       "reassign": "Reassign owner",
+       "leave": {
+         "title": "Discard unsaved changes?",
+-        "body": "This section has changes that are not saved. Keep editing, or discard them and open the other section.",
++        "body": "This section has changes that are not saved. Keep editing, or discard them and leave.",
+         "keep": "Keep editing",
+         "discard": "Discard changes"
+       },
+       "discard": "Discard",
+       "reload": "Reload",
+       "avatarLabel": "Avatar",
+       "uploadOff": "Uploading needs object storage, which this deployment has not configured. Pick one of the animals instead.",
+       "uploadFailed": "The image could not be read. Pick a png, jpg or webp file.",
+       "descriptionLabel": "Description",
+       "descriptionHelp": "One line about what this agent is for. People see it; the model does not.",
+@@ -655,21 +655,22 @@
+       "quickActions": {
+         "hint": "Up to {max} shortcuts people see on the new conversation page. Picking one fills the composer with its text.",
+         "list": "Quick actions",
+         "add": "Add a quick action",
+         "none": "No quick actions yet.",
+         "titleLabel": "Title",
+         "titleRequired": "Enter a title.",
+         "bodyLabel": "Text",
+         "bodyHelp": "What goes into the composer.",
+         "bodyRequired": "Enter the text."
+-      }
++      },
++      "uploadType": "Pick a png, jpg or webp image."
+     }
+   },
+   "skills": {
+     "title": "Skills",
+     "listLabel": "Organization skills",
+     "empty": "No skills yet.",
+     "emptyHint": "Skills are packages of instructions and files that agents load when a task needs them. Admins upload them.",
+     "version": "v{version}",
+     "columns": {
+       "name": "Name",
+diff --git a/apps/web/messages/zh.json b/apps/web/messages/zh.json
+index e6a81f98..4024344a 100644
+--- a/apps/web/messages/zh.json
++++ b/apps/web/messages/zh.json
+@@ -631,21 +631,21 @@
+         "model": "模型",
+         "tools": "工具",
+         "skills": "技能",
+         "subagents": "子 Agent",
+         "channels": "渠道"
+       },
+       "startChat": "开始对话",
+       "reassign": "重新指派负责人",
+       "leave": {
+         "title": "放弃未保存的修改？",
+-        "body": "这个分组还有没保存的修改。可以继续编辑，或者放弃修改、打开另一个分组。",
++        "body": "这个分组还有没保存的修改。可以继续编辑，或者放弃修改并离开。",
+         "keep": "继续编辑",
+         "discard": "放弃修改"
+       },
+       "discard": "放弃",
+       "reload": "重新加载",
+       "avatarLabel": "头像",
+       "uploadOff": "上传图片需要对象存储，这个部署还没有配置。可以先选一只动物。",
+       "uploadFailed": "读不了这张图片。请选择 png、jpg 或 webp 文件。",
+       "descriptionLabel": "简介",
+       "descriptionHelp": "一句话说明这个 agent 做什么。给人看的，模型看不到。",
+@@ -655,21 +655,22 @@
+       "quickActions": {
+         "hint": "新对话页上显示的快捷入口，最多 {max} 个。点一个，输入框就填上它的内容。",
+         "list": "快捷操作",
+         "add": "添加快捷操作",
+         "none": "还没有快捷操作。",
+         "titleLabel": "标题",
+         "titleRequired": "请输入标题。",
+         "bodyLabel": "内容",
+         "bodyHelp": "填进输入框的文字。",
+         "bodyRequired": "请输入内容。"
+-      }
++      },
++      "uploadType": "请选择 png、jpg 或 webp 图片。"
+     }
+   },
+   "skills": {
+     "title": "技能",
+     "listLabel": "组织技能",
+     "empty": "还没有技能。",
+     "emptyHint": "技能是一组说明与文件，agent 在任务需要时加载。由管理员上传。",
+     "version": "v{version}",
+     "columns": {
+       "name": "名称",
+diff --git a/apps/web/src/components/AgentForm.tsx b/apps/web/src/components/AgentForm.tsx
+index 0b443fc5..e7da2b8a 100644
+--- a/apps/web/src/components/AgentForm.tsx
++++ b/apps/web/src/components/AgentForm.tsx
+@@ -219,20 +219,22 @@ export type AgentFormView = {
+   /** ActionRow：未保存改动数与错误数。 */
+   unsaved: number;
+   errors: number;
+   /** 保存成功但有警告：主操作改为「继续」（调用 onDone），不再重复创建。 */
+   saved: boolean;
+   /** The agent the last save returned (for "Continue" after warnings). */
+   savedAgent?: Agent;
+   submit(): void;
+   pending: boolean;
+   canSubmit: boolean;
++  /** The last save failed (its error shows above the sections). */
++  failed: boolean;
+ };
+ 
+ /**
+  * 新建 / 修改 agent 的表单状态与分组（给 `existing` 即修改：按其定义预填，保存发 PATCH，定义里表单不认识的
+  * 字段与工具引用原样带回）：模型下拉框来自 `GET /models`，兜底模型可选；主模型与兜底模型
+  * 各有一个参数分组，按所选模型的声明渲染（换模型时丢弃新模型没有声明的键）。保存成功且没有
+  * 警告时调用 `onDone`；有警告（如 `fallback_same_provider`）时在表单顶部以 danger 卡片列出，
+  * 由用户点「继续」再调用 `onDone`。
+  */
+ export function useAgentForm(
+@@ -844,20 +846,21 @@ export function useAgentForm(
+ 
+   return {
+     sections,
+     unsaved,
+     errors,
+     saved: warnings !== undefined,
+     ...(savedAgent ? { savedAgent } : {}),
+     submit: () => void save(),
+     pending,
+     canSubmit,
++    failed: error !== undefined,
+   };
+ }
+ 
+ /**
+  * The agent form while its reads are on the way: its static sections (basics, model, tools,
+  * skills, sub-agents, and the agent's channels when editing), each with its field layout. The
+  * checkbox groups (tools, skills, sub-agents, channels) are counted as one field each.
+  */
+ export function AgentFormLoading({ channels = false }: { channels?: boolean }) {
+   const t = useTranslations("agents");
+diff --git a/apps/web/src/components/agent/AgentPage.tsx b/apps/web/src/components/agent/AgentPage.tsx
+index 8e8c8d8a..92ed8ada 100644
+--- a/apps/web/src/components/agent/AgentPage.tsx
++++ b/apps/web/src/components/agent/AgentPage.tsx
+@@ -8,30 +8,43 @@ import { type Agent, avatarValue } from "../../lib/agents";
+ import { canUpdateOrg } from "../../lib/org-settings";
+ import { ReassignOwnerDialog } from "../ReassignOwnerDialog";
+ import { navLevelOf } from "../shell/nav";
+ import { usePagePath } from "../shell/path";
+ import { useSession } from "../shell/session";
+ import { BasicsSection } from "./BasicsSection";
+ import { AgentPageContext, type AgentPageValue, useAgentPage, useSectionNav } from "./frame";
+ import { LegacyFormSection } from "./LegacyFormSection";
+ import { ModelReadOnly } from "./ModelReadOnly";
+ import { QuickActionsSection } from "./QuickActionsSection";
+-import { type AgentSection, sectionHref, sectionOf } from "./sections";
++import { type AgentSection, sectionOf } from "./sections";
+ 
+ export { type AgentPageValue, AgentSectionFrame, useAgentPage } from "./frame";
+ 
+-/** The section a nav link opens, from its `?s=`. */
+-function linkSection(a: Element): AgentSection | null {
+-  const href = a.getAttribute("href");
+-  if (href === null) return null;
+-  const s = new URL(href, "http://x").searchParams.get("s");
+-  return s === null ? null : sectionOf(s, true);
++/**
++ * Where a click on `a` would take the page inside the app, or null when the browser should handle
++ * it as it is: a modified or non-primary click (a new tab or window), `target` other than `_self`,
++ * a download, another origin, or a link to the URL already open.
++ */
++export function guardedHref(e: MouseEvent, a: Element): string | null {
++  if (e.defaultPrevented || e.button !== 0) return null;
++  if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return null;
++  const target = a.getAttribute("target");
++  if ((target !== null && target !== "" && target !== "_self") || a.hasAttribute("download")) {
++    return null;
++  }
++  const raw = a.getAttribute("href");
++  if (raw === null) return null;
++  const here = new URL(window.location.href);
++  const url = new URL(raw, here);
++  if (url.origin !== here.origin) return null;
++  const to = `${url.pathname}${url.search}${url.hash}`;
++  return to === `${here.pathname}${here.search}${here.hash}` ? null : to;
+ }
+ 
+ /**
+  * The agent page (agent profile design §3): the head (avatar, name, description; 开始对话 for
+  * everyone, 运行记录 and 重新指派负责人 for the owner and org admins), the section nav, and the open
+  * section. Leaving a section with unsaved edits through the nav asks to keep or discard them.
+  */
+ export function AgentPage({
+   orgId,
+   agent,
+@@ -43,40 +56,51 @@ export function AgentPage({
+   section: string | undefined;
+   editable: boolean;
+ }) {
+   const scope = usePagePath("org");
+   const t = useTranslations();
+   const router = useRouter();
+   const { me } = useSession();
+   const open = sectionOf(section, editable);
+   const nav = useSectionNav(agent.id, editable);
+   const [dirty, setDirty] = useState(false);
+-  const [leaving, setLeaving] = useState<AgentSection | null>(null);
++  const [leaving, setLeaving] = useState<string | null>(null);
+   const [reassigning, setReassigning] = useState(false);
+   const describedBy = useId();
+ 
+-  // A nav click while the section holds unsaved edits: held back (before next/link sees it) and
+-  // asked about; the template's nav links are plain links.
++  // While the section holds unsaved edits, any in-app link (section nav, sidebar, path, the head's
++  // links) is held back before next/link sees it and asked about; a modified click (new tab) is
++  // left to the browser. Closing or reloading the tab gets the browser's own prompt. Back and
++  // forward are not covered (ruling).
+   useEffect(() => {
+     if (!dirty) return;
+     const onClick = (e: MouseEvent) => {
+       const target = e.target instanceof Element ? e.target : null;
+-      const a = target?.closest('[data-part="settings-nav"] a[href]');
+-      if (!a || a.getAttribute("aria-current") === "page") return;
+-      const to = linkSection(a);
++      const a = target?.closest("a[href]");
++      if (!a || a.closest('[role="dialog"]')) return;
++      const to = guardedHref(e, a);
+       if (to === null) return;
+       e.preventDefault();
+       e.stopPropagation();
+       setLeaving(to);
+     };
++    const onUnload = (e: BeforeUnloadEvent) => {
++      e.preventDefault();
++      // older browsers show the prompt only when returnValue is set
++      e.returnValue = "";
++    };
+     document.addEventListener("click", onClick, true);
+-    return () => document.removeEventListener("click", onClick, true);
++    window.addEventListener("beforeunload", onUnload);
++    return () => {
++      document.removeEventListener("click", onClick, true);
++      window.removeEventListener("beforeunload", onUnload);
++    };
+   }, [dirty]);
+ 
+   const admin = canUpdateOrg(me);
+   const level = navLevelOf(me);
+   const canViewRuns =
+     editable &&
+     (level === "admin" || (level === "member" && agent.ownerAccountId === me.account.id));
+   const name = agent.definition.name || t("agents.form.editTitle");
+   const description = agent.profile.description;
+   const header: PageHeaderProps = {
+@@ -135,21 +159,21 @@ export function AgentPage({
+             <>
+               <Button variant="ghost" onClick={() => setLeaving(null)}>
+                 {t("agents.page.leave.keep")}
+               </Button>
+               <Button
+                 variant="primary"
+                 onClick={() => {
+                   const to = leaving;
+                   setLeaving(null);
+                   setDirty(false);
+-                  router.push(sectionHref(agent.id, to));
++                  router.push(to);
+                 }}
+               >
+                 {t("agents.page.leave.discard")}
+               </Button>
+             </>
+           }
+         >
+           <span id={describedBy}>
+             <Text variant="prose">{t("agents.page.leave.body")}</Text>
+           </span>
+diff --git a/apps/web/src/components/agent/BasicsSection.tsx b/apps/web/src/components/agent/BasicsSection.tsx
+index 4ea38c81..9c6c581f 100644
+--- a/apps/web/src/components/agent/BasicsSection.tsx
++++ b/apps/web/src/components/agent/BasicsSection.tsx
+@@ -1,13 +1,14 @@
+ "use client";
+ 
+ import {
++  AVATAR_UPLOAD_ACCEPT,
+   AvatarPicker,
+   type AvatarValue,
+   Callout,
+   Card,
+   Checkbox,
+   Field,
+   FormSection,
+   Input,
+   KeyValue,
+   Select,
+@@ -155,35 +156,47 @@ function BasicsEdit() {
+     fn: (square: Blob) => uploadAvatar(orgId, agent.id, square),
+     invalidates: () => [],
+   });
+   const saveAgent = useAppMutation({
+     fn: (input: {
+       definition?: AgentDefinitionInput;
+       visibility?: AgentVisibility;
+       memberIds?: string[];
+       expectedVersion: number;
+     }) => updateAgent(orgId, agent.id, input),
+-    invalidates: () => [keys.org(orgId).agents(), keys.org(orgId).agent(agent.id)],
++    // a visibility or members change can change what the org's readiness counts
++    invalidates: (v) => [
++      keys.org(orgId).agents(),
++      keys.org(orgId).agent(agent.id),
++      ...(v.visibility !== undefined || v.memberIds !== undefined
++        ? [keys.org(orgId).readiness()]
++        : []),
++    ],
+   });
+ 
+   const editProfile = (next: Partial<ProfilePart>) => {
+     if (!profile.dirty) setProfileBase(agent.profile.updatedAt);
+     profile.set(next);
+   };
+   const editBasic = (next: Partial<AgentPart>) => {
+     if (!basic.dirty) setVersionBase(agent.currentVersion);
+     basic.set(next);
+   };
+ 
+   const uploadOff = storageOff || limits.data?.available === false;
+   async function onUpload(file: File) {
+     setUploadError(null);
++    // the picker's `accept` is a hint only: a dropped or forced file is checked here
++    if (!AVATAR_UPLOAD_ACCEPT.split(",").includes(file.type)) {
++      setUploadError(t("page.uploadType"));
++      return;
++    }
+     setUploading(true);
+     try {
+       const square = await cropAvatar(file);
+       const { uploadId } = await upload.mutateAsync(square);
+       setPreview(
+         typeof URL.createObjectURL === "function"
+           ? { uploadId, src: URL.createObjectURL(square) }
+           : null,
+       );
+       editProfile({ avatar: { kind: "upload", uploadId } });
+@@ -228,27 +241,31 @@ function BasicsEdit() {
+       // an `external` avatar is migrated data: never written back
+       ...(changed.avatar && d.avatar?.kind !== "external" ? { avatar: d.avatar } : {}),
+       ...(changed.description ? { description: d.description } : {}),
+     };
+     const sendProfile = Object.keys(profileInput).length > 0;
+     const sendAgent = changed.name || changed.visibility || changed.members;
+     setPending(true);
+     setProfileError(null);
+     setAgentError(null);
+     setWarnings([]);
+-    const [p, a] = await Promise.allSettled([
++    // The profile first, then the agent: the agent PATCH's refetch then reads the new profile, so
++    // a slow refetch can never write the old profile over the one the profile save cached.
++    const [p] = await Promise.allSettled([
+       sendProfile
+         ? updateProfile.mutateAsync({
+             ...profileInput,
+             expectedUpdatedAt: profileBase ?? agent.profile.updatedAt,
+           })
+         : Promise.resolve(null),
++    ]);
++    const [a] = await Promise.allSettled([
+       sendAgent
+         ? saveAgent.mutateAsync({
+             ...(changed.name ? { definition: definitionWithName(agent, name) } : {}),
+             ...(changed.visibility ? { visibility: b.visibility } : {}),
+             ...(b.visibility === "members" && (changed.members || changed.visibility)
+               ? { memberIds: b.memberIds }
+               : {}),
+             expectedVersion: versionBase ?? agent.currentVersion,
+           })
+         : Promise.resolve(null),
+@@ -278,96 +295,106 @@ function BasicsEdit() {
+   }
+ 
+   /** Someone else saved first: read the agent again and start over from it. */
+   async function reload() {
+     await qc.refetchQueries({ queryKey: keys.org(orgId).agent(agent.id) });
+     discard();
+   }
+ 
+   const orgMembers = (members.data?.members ?? []).filter((m) => !m.anonymous);
+   const errors = (nameError ? 1 : 0) + (profileError ? 1 : 0) + (agentError ? 1 : 0);
++  // the template's rule: the action row only with changes (or while saving, or after a failure)
++  const showRow = dirty || pending || errors > 0;
+   return (
+     <AgentSectionFrame
+       dirty={dirty}
+-      actionRow={{
+-        unsaved,
+-        errors,
+-        ...(dirty ? { cancel: { label: t("page.discard"), onSelect: discard } } : {}),
+-        primary: {
+-          label: t("form.submit"),
+-          onSelect: () => void save(),
+-          loading: pending,
+-          disabled: pending || uploading || !dirty || b.name.trim() === "",
+-        },
+-      }}
++      actionRow={
++        showRow
++          ? {
++              unsaved,
++              errors,
++              ...(dirty ? { cancel: { label: t("page.discard"), onSelect: discard } } : {}),
++              primary: {
++                label: t("form.submit"),
++                onSelect: () => void save(),
++                loading: pending,
++                disabled: pending || uploading || !dirty || b.name.trim() === "",
++              },
++            }
++          : undefined
++      }
+     >
+       <Stack gap={16}>
+         {warnings.length > 0 && (
+           <Card tone="danger" title={t("form.warningsTitle")}>
+             <Stack gap={4}>
+               {warnings.map((w) => (
+                 <Text key={w} tone="warn" icon="circle-alert">
+                   {t.has(`warnings.${w}`) ? t(`warnings.${w}`) : t("warnings.unknown", { code: w })}
+                 </Text>
+               ))}
+             </Stack>
+           </Card>
+         )}
+         {profileError ? <SaveError error={profileError} onReload={() => void reload()} /> : null}
+         {agentError ? <SaveError error={agentError} onReload={() => void reload()} /> : null}
+         <FormSection id="basics" title={t("page.sections.basics")}>
+           <Stack gap={4}>
+             <AvatarPicker
+               value={pickerValue}
+               label={t("page.avatarLabel")}
++              disabled={pending || uploading}
+               onChange={(v) => {
+                 if (v?.kind === "preset") editProfile({ avatar: v });
+               }}
+               {...(uploadOff
+                 ? { uploadOffReason: t("page.uploadOff") }
+                 : { onUpload: (f: File) => void onUpload(f) })}
+             />
+             {uploadError ? <FormError message={uploadError} /> : null}
+           </Stack>
+           <Field
+             label={t("form.nameLabel")}
+             required
+             count={{ value: b.name.length, max: NAME_MAX }}
+             {...(nameError ? { error: t("form.nameRequired") } : {})}
+           >
+             <Input
+               name="name"
++              disabled={pending}
+               maxLength={NAME_MAX}
+               value={b.name}
+               onChange={(e) => {
+                 editBasic({ name: e.target.value });
+                 if (e.target.value.trim() !== "") setNameError(false);
+               }}
+             />
+           </Field>
+           <Field
+             label={t("page.descriptionLabel")}
+             optional
+             help={t("page.descriptionHelp")}
+             count={{ value: d.description.length, max: DESCRIPTION_MAX }}
+           >
+             <Textarea
+               name="description"
++              disabled={pending}
+               rows={3}
+               maxLength={DESCRIPTION_MAX}
+               value={d.description}
+               onChange={(e) => editProfile({ description: e.target.value })}
+             />
+           </Field>
+           <Field label={t("form.visibilityLabel")}>
+             <Select
+               name="visibility"
++              disabled={pending}
+               value={b.visibility}
+               onChange={(e) => editBasic({ visibility: e.target.value as AgentVisibility })}
+               options={VISIBILITIES.map((v) => ({ value: v, label: t(`form.visibility.${v}`) }))}
+             />
+           </Field>
+           {b.visibility === "members" && (
+             // biome-ignore lint/a11y/useSemanticElements: fieldset 带浏览器默认边框与内边距，apps/web 不能写样式；用 role=group 分组
+             <div role="group" aria-label={t("page.membersLabel")}>
+               <Stack gap={4}>
+                 <Text variant="small" tone="muted">
+@@ -376,20 +403,21 @@ function BasicsEdit() {
+                 {members.data === undefined ? (
+                   <Text variant="small" tone="faint">
+                     {members.error === null ? t("page.membersLoading") : t("page.membersFailed")}
+                   </Text>
+                 ) : (
+                   orgMembers.map((m) => (
+                     <Checkbox
+                       key={m.account.id}
+                       label={m.account.displayName}
+                       checked={b.memberIds.includes(m.account.id)}
++                      disabled={pending}
+                       onChange={(on) =>
+                         editBasic({
+                           memberIds: on
+                             ? [...b.memberIds, m.account.id]
+                             : b.memberIds.filter((x) => x !== m.account.id),
+                         })
+                       }
+                     />
+                   ))
+                 )}
+diff --git a/apps/web/src/components/agent/LegacyFormSection.tsx b/apps/web/src/components/agent/LegacyFormSection.tsx
+index 3b386e16..2ccdb75c 100644
+--- a/apps/web/src/components/agent/LegacyFormSection.tsx
++++ b/apps/web/src/components/agent/LegacyFormSection.tsx
+@@ -77,27 +77,32 @@ function SectionForm({
+   const t = useTranslations();
+   const { orgId, agent } = useAgentPage();
+   const form = useAgentForm(orgId, onReset, data, agent, section);
+   const dirty = !form.saved && form.unsaved > 0;
+   return (
+     <AgentSectionFrame
+       dirty={dirty}
+       actionRow={
+         form.saved
+           ? { primary: { label: t("agents.form.continue"), onSelect: onReset } }
+-          : {
+-              unsaved: form.unsaved,
+-              errors: form.errors,
+-              ...(dirty ? { cancel: { label: t("agents.page.discard"), onSelect: onReset } } : {}),
+-              primary: {
+-                label: t("agents.form.submit"),
+-                onSelect: form.submit,
+-                loading: form.pending,
+-                disabled: !form.canSubmit,
+-              },
+-            }
++          : // the template's rule: the row only with changes (or while saving, or after a failure)
++            !dirty && !form.pending && form.errors === 0 && !form.failed
++            ? undefined
++            : {
++                unsaved: form.unsaved,
++                errors: form.errors,
++                ...(dirty
++                  ? { cancel: { label: t("agents.page.discard"), onSelect: onReset } }
++                  : {}),
++                primary: {
++                  label: t("agents.form.submit"),
++                  onSelect: form.submit,
++                  loading: form.pending,
++                  disabled: !form.canSubmit,
++                },
++              }
+       }
+     >
+       {form.sections}
+     </AgentSectionFrame>
+   );
+ }
+diff --git a/apps/web/src/components/agent/QuickActionsSection.tsx b/apps/web/src/components/agent/QuickActionsSection.tsx
+index fdfcbdcd..bcedfff5 100644
+--- a/apps/web/src/components/agent/QuickActionsSection.tsx
++++ b/apps/web/src/components/agent/QuickActionsSection.tsx
+@@ -134,84 +134,91 @@ function QuickActionsEdit() {
+ 
+   async function reload() {
+     await qc.refetchQueries({ queryKey: keys.org(orgId).agent(agent.id) });
+     discard();
+   }
+ 
+   const conflict = error instanceof ApiClientError && CONFLICT_CODES.has(error.code);
+   return (
+     <AgentSectionFrame
+       dirty={unsaved > 0}
+-      actionRow={{
+-        unsaved,
+-        errors,
+-        ...(unsaved > 0 ? { cancel: { label: t("discard"), onSelect: discard } } : {}),
+-        primary: {
+-          label: tf("submit"),
+-          onSelect: () => void save(),
+-          loading: pending,
+-          disabled: pending || unsaved === 0,
+-        },
+-      }}
++      actionRow={
++        unsaved > 0 || pending || errors > 0
++          ? {
++              unsaved,
++              errors,
++              ...(unsaved > 0 ? { cancel: { label: t("discard"), onSelect: discard } } : {}),
++              primary: {
++                label: tf("submit"),
++                onSelect: () => void save(),
++                loading: pending,
++                disabled: pending || unsaved === 0,
++              },
++            }
++          : undefined
++      }
+     >
+       <Stack gap={16}>
+         {error ? (
+           conflict ? (
+             <Callout tone="fail" action={{ label: t("reload"), onSelect: () => void reload() }}>
+               {errorMessage(error)}
+             </Callout>
+           ) : (
+             <FormError message={errorMessage(error)} />
+           )
+         ) : null}
+         <FormSection
+           id="quick-actions"
+           title={t("sections.quick-actions")}
+           description={t("quickActions.hint", { max: QUICK_ACTIONS_MAX })}
+         >
+           <Repeater
+             label={t("quickActions.list")}
+             addLabel={t("quickActions.add")}
+             max={QUICK_ACTIONS_MAX}
++            disabled={pending}
+             empty={t("quickActions.none")}
+             items={items.map((e) => {
+               const bad = checked ? invalid(e) : { title: false, body: false };
+               return {
+                 key: e.key,
+                 title: e.title,
+                 invalid: bad.title || bad.body,
+                 body: (
+                   <Stack gap={12}>
+                     <Field
+                       label={t("quickActions.titleLabel")}
+                       required
+                       count={{ value: e.title.length, max: TITLE_MAX }}
+                       {...(bad.title ? { error: t("quickActions.titleRequired") } : {})}
+                     >
+                       <Input
++                        disabled={pending}
+                         maxLength={TITLE_MAX}
+                         value={e.title}
+                         onChange={(ev) => {
+                           const title = ev.target.value;
+                           edit((d) => ({
+                             items: d.items.map((x) => (x.key === e.key ? { ...x, title } : x)),
+                           }));
+                         }}
+                       />
+                     </Field>
+                     <Field
+                       label={t("quickActions.bodyLabel")}
+                       required
+                       help={t("quickActions.bodyHelp")}
+                       {...(bad.body ? { error: t("quickActions.bodyRequired") } : {})}
+                     >
+                       <Textarea
++                        disabled={pending}
+                         rows={4}
+                         maxLength={BODY_MAX}
+                         value={e.body}
+                         onChange={(ev) => {
+                           const body = ev.target.value;
+                           edit((d) => ({
+                             items: d.items.map((x) => (x.key === e.key ? { ...x, body } : x)),
+                           }));
+                         }}
+                       />
+diff --git a/apps/web/test/agent-page.test.tsx b/apps/web/test/agent-page.test.tsx
+index 91d24bec..3330121c 100644
+--- a/apps/web/test/agent-page.test.tsx
++++ b/apps/web/test/agent-page.test.tsx
+@@ -1,11 +1,11 @@
+-import { act, cleanup, screen, within } from "@testing-library/react";
++import { act, cleanup, fireEvent, screen, within } from "@testing-library/react";
+ import userEvent from "@testing-library/user-event";
+ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+ import en from "../messages/en.json";
+ import { AGENT_SECTIONS } from "../src/components/agent/sections";
+ import { agentFormDefaults, renderEditAgent } from "./support/agents";
+ import { bodyOf, json, stubApi } from "./support/api";
+ import { resetNavigation, router } from "./support/navigation";
+ import { renderRouteEmptyCache } from "./support/query";
+ import { ME } from "./support/render";
+ import { expectNoFirstPaintFetch, sessionRoutes } from "./support/server";
+@@ -91,21 +91,21 @@ const agent = (
+ 
+ const ok = (body: unknown) => () => json(200, body);
+ const limits = (available: boolean) => ({
+   types: ["image/png"],
+   maxBytes: 1,
+   imageMaxBytes: 1,
+   maxPerMessage: 1,
+   requestMediaBytes: 1,
+   available,
+ });
+-function routes(a = agent(), over: Record<string, () => Response> = {}) {
++function routes(a = agent(), over: Record<string, () => Response | Promise<Response>> = {}) {
+   return {
+     ...sessionRoutes(),
+     ...agentFormDefaults(),
+     [`GET ${ORG}/agents/ag1`]: ok({ agent: a }),
+     [`GET ${ORG}/models`]: ok(MODELS),
+     ...over,
+   };
+ }
+ 
+ const member = (role: "member" | "guest" = "member") => ({
+@@ -278,20 +278,264 @@ describe("the agent page by section (agent profile design §3)", () => {
+     await user.click(within(dialog).getByRole("button", { name: P_.leave.keep }));
+     await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+     expect(router.push).not.toHaveBeenCalled();
+     expect(name).toHaveProperty("value", "Helper 2");
+     await user.click(within(nav()).getByRole("link", { name: P_.sections.model }));
+     dialog = await screen.findByRole("dialog", { name: P_.leave.title });
+     await user.click(within(dialog).getByRole("button", { name: P_.leave.discard }));
+     expect(router.push).toHaveBeenCalledWith("/agents/ag1?s=model");
+   });
+ 
++  it("a dirty section asks before any in-app link: discard goes to its href, keep stays", async () => {
++    stubApi(routes());
++    await renderEditAgent();
++    // a link outside the page (the sidebar's) is guarded as well
++    const outside = document.createElement("a");
++    outside.href = "/skills";
++    outside.textContent = "Skills elsewhere";
++    document.body.append(outside);
++    try {
++      const user = userEvent.setup();
++      await user.type(screen.getByRole("textbox", { name: en.agents.form.nameLabel }), " 2");
++      await user.click(outside);
++      let dialog = await screen.findByRole("dialog", { name: P_.leave.title });
++      await user.click(within(dialog).getByRole("button", { name: P_.leave.keep }));
++      await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
++      expect(router.push).not.toHaveBeenCalled();
++      // the head's links and the path too
++      await user.click(screen.getByRole("link", { name: P_.startChat }));
++      dialog = await screen.findByRole("dialog", { name: P_.leave.title });
++      await user.click(within(dialog).getByRole("button", { name: P_.leave.keep }));
++      await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
++      await user.click(outside);
++      dialog = await screen.findByRole("dialog", { name: P_.leave.title });
++      await user.click(within(dialog).getByRole("button", { name: P_.leave.discard }));
++      expect(router.push).toHaveBeenCalledWith("/skills");
++    } finally {
++      outside.remove();
++    }
++  });
++
++  it("a modified click (new tab) is not intercepted", async () => {
++    stubApi(routes());
++    await renderEditAgent();
++    const user = userEvent.setup();
++    await user.type(screen.getByRole("textbox", { name: en.agents.form.nameLabel }), " 2");
++    const link = within(nav()).getByRole("link", { name: P_.sections.model });
++    for (const mod of [{ metaKey: true }, { ctrlKey: true }, { shiftKey: true }, { button: 1 }]) {
++      const ev = new MouseEvent("click", { bubbles: true, cancelable: true, ...mod });
++      // the browser would open a tab: the page must not hold it back
++      act(() => {
++        link.dispatchEvent(ev);
++      });
++      expect(ev.defaultPrevented).toBe(false);
++      expect(screen.queryByRole("dialog")).toBeNull();
++    }
++    // a plain click is held back
++    const plain = new MouseEvent("click", { bubbles: true, cancelable: true });
++    act(() => {
++      link.dispatchEvent(plain);
++    });
++    expect(plain.defaultPrevented).toBe(true);
++    expect(await screen.findByRole("dialog", { name: P_.leave.title })).toBeTruthy();
++    expect(router.push).not.toHaveBeenCalled();
++  });
++
++  it("beforeunload asks only while the section is dirty", async () => {
++    stubApi(routes());
++    await renderEditAgent();
++    const unload = () => {
++      const ev = new Event("beforeunload", { cancelable: true });
++      window.dispatchEvent(ev);
++      return ev.defaultPrevented;
++    };
++    expect(unload()).toBe(false);
++    const user = userEvent.setup();
++    await user.type(screen.getByRole("textbox", { name: en.agents.form.nameLabel }), " 2");
++    expect(unload()).toBe(true);
++    await user.click(screen.getByRole("button", { name: P_.discard }));
++    expect(unload()).toBe(false);
++  });
++
++  it("the save row shows only with changes; a form section keeps Continue after warnings", async () => {
++    stubApi(
++      routes(agent(), {
++        [`PATCH ${ORG}/agents/ag1`]: ok({
++          agent: agent({ version: 2 }),
++          warnings: ["fallback_same_provider"],
++        }),
++      }),
++    );
++    const view = await renderEditAgent();
++    const row = () => document.querySelector('[data-part="action-row"]');
++    expect(row()).toBeNull();
++    const user = userEvent.setup();
++    await user.type(screen.getByRole("textbox", { name: en.agents.form.nameLabel }), " 2");
++    expect(row()).not.toBeNull();
++    await user.click(screen.getByRole("button", { name: P_.discard }));
++    expect(row()).toBeNull();
++    await view.navigate("/agents/ag1?s=tools");
++    expect(row()).toBeNull();
++    await user.click(screen.getByRole("checkbox", { name: en.agents.form.builtin.skill_write }));
++    expect(row()).not.toBeNull();
++    await user.click(screen.getByRole("button", { name: en.agents.form.submit }));
++    expect(await screen.findByText(en.agents.warnings.fallback_same_provider)).toBeTruthy();
++    expect(screen.getByRole("button", { name: en.agents.form.continue })).toBeTruthy();
++  });
++
++  it("a combined save shows the new profile in the head even when the agent refetch is slow", async () => {
++    let profileSaved = false;
++    let patched = false;
++    stubApi(
++      routes(agent(), {
++        [`GET ${ORG}/agents/ag1`]: () => {
++          // the server's state when the read starts; it answers late
++          const snapshot = agent({
++            name: patched ? "Helper 2" : "Helper",
++            ...(profileSaved ? { description: "New words.", updatedAt: P2 } : {}),
++          });
++          return new Promise<Response>((r) =>
++            setTimeout(() => r(json(200, { agent: snapshot })), 60),
++          );
++        },
++        [`PATCH ${ORG}/agents/ag1/profile`]: () =>
++          new Promise<Response>((r) =>
++            setTimeout(() => {
++              profileSaved = true;
++              r(
++                json(200, {
++                  profile: { ...agent().profile, description: "New words.", updatedAt: P2 },
++                }),
++              );
++            }, 20),
++          ) as unknown as Response,
++        [`PATCH ${ORG}/agents/ag1`]: () => {
++          patched = true;
++          return json(200, { agent: agent({ name: "Helper 2" }), warnings: [] });
++        },
++      }),
++    );
++    await renderEditAgent();
++    const user = userEvent.setup();
++    const description = screen.getByRole("textbox", { name: new RegExp(P_.descriptionLabel) });
++    await user.clear(description);
++    await user.type(description, "New words.");
++    await user.type(screen.getByRole("textbox", { name: en.agents.form.nameLabel }), " 2");
++    await user.click(screen.getByRole("button", { name: en.agents.form.submit }));
++    await vi.waitFor(
++      () => expect(screen.getByRole("heading", { level: 1, name: "Helper 2" })).toBeTruthy(),
++      { timeout: 2000 },
++    );
++    await settle();
++    expect(document.querySelector('[data-part="settings-description"]')?.textContent).toBe(
++      "New words.",
++    );
++  });
++
++  it("a visibility change also invalidates the org's readiness", async () => {
++    const calls = stubApi(
++      routes(agent(), {
++        [`PATCH ${ORG}/agents/ag1`]: ok({
++          agent: { ...agent(), visibility: "private" },
++          warnings: [],
++        }),
++      }),
++    );
++    await renderEditAgent();
++    const user = userEvent.setup();
++    await user.selectOptions(
++      screen.getByRole("combobox", { name: en.agents.form.visibilityLabel }),
++      "private",
++    );
++    calls.length = 0;
++    await user.click(screen.getByRole("button", { name: en.agents.form.submit }));
++    await vi.waitFor(() =>
++      expect(calls.filter((c) => c.method === "GET").map((c) => c.url)).toContain(
++        `${ORG}/readiness`,
++      ),
++    );
++    expect(bodyOf(calls.find((c) => c.method === "PATCH"))).toEqual({
++      visibility: "private",
++      expectedVersion: 1,
++    });
++  });
++
++  it("an upload of another type (gif) says so and uploads nothing", async () => {
++    const calls = stubApi(routes());
++    const { container } = await renderEditAgent();
++    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
++    // the accept attribute is a hint: a forced file still reaches the page
++    fireEvent.change(input, {
++      target: { files: [new File(["x"], "a.gif", { type: "image/gif" })] },
++    });
++    expect(await screen.findByText(P_.uploadType)).toBeTruthy();
++    await settle();
++    expect(calls.some((c) => c.method === "POST")).toBe(false);
++  });
++
++  it("while basics saves its fields are disabled", async () => {
++    let release: () => void = () => {};
++    const held = new Promise<void>((r) => {
++      release = r;
++    });
++    const saved = agent();
++    stubApi(
++      routes(saved, {
++        [`PATCH ${ORG}/agents/ag1/profile`]: async () => {
++          await held;
++          return json(200, { profile: { ...saved.profile, description: "x", updatedAt: P2 } });
++        },
++      }),
++    );
++    await renderEditAgent();
++    const user = userEvent.setup();
++    const description = screen.getByRole("textbox", { name: new RegExp(P_.descriptionLabel) });
++    await user.type(description, " more");
++    await user.click(screen.getByRole("button", { name: en.agents.form.submit }));
++    await vi.waitFor(() => expect(description).toHaveProperty("disabled", true));
++    expect(screen.getByRole("textbox", { name: en.agents.form.nameLabel })).toHaveProperty(
++      "disabled",
++      true,
++    );
++    expect(screen.getByRole("radio", { name: "Fox" })).toHaveProperty("disabled", true);
++    await act(async () => release());
++    await vi.waitFor(() => expect(description).toHaveProperty("disabled", false));
++  });
++
++  it("while quick actions save their fields are disabled", async () => {
++    let release: () => void = () => {};
++    const held = new Promise<void>((r) => {
++      release = r;
++    });
++    const saved = agent({ quickActions: [{ title: "T1", body: "B1" }] });
++    stubApi(
++      routes(saved, {
++        [`PATCH ${ORG}/agents/ag1/profile`]: async () => {
++          await held;
++          return json(200, { profile: { ...saved.profile, updatedAt: P2 } });
++        },
++      }),
++    );
++    await renderEditAgent({ section: "quick-actions" });
++    const user = userEvent.setup();
++    const title = screen.getByRole("textbox", { name: new RegExp(P_.quickActions.titleLabel) });
++    await user.type(title, "!");
++    await user.click(screen.getByRole("button", { name: en.agents.form.submit }));
++    await vi.waitFor(() => expect(title).toHaveProperty("disabled", true));
++    expect(screen.getByRole("button", { name: P_.quickActions.add })).toHaveProperty(
++      "disabled",
++      true,
++    );
++    await act(async () => release());
++    await vi.waitFor(() => expect(title).toHaveProperty("disabled", false));
++  });
++
+   it("a 409 profile conflict shows the reload action", async () => {
+     let reads = 0;
+     const calls = stubApi(
+       routes(agent(), {
+         [`GET ${ORG}/agents/ag1`]: () => {
+           reads += 1;
+           return json(200, {
+             agent: reads > 1 ? agent({ description: "Theirs.", updatedAt: P2 }) : agent(),
+           });
+         },
+diff --git a/apps/web/test/agent-skills.test.tsx b/apps/web/test/agent-skills.test.tsx
+index 367814d8..c0a4c066 100644
+--- a/apps/web/test/agent-skills.test.tsx
++++ b/apps/web/test/agent-skills.test.tsx
+@@ -262,58 +262,61 @@ describe("编辑 agent（FormPage）", () => {
+       const after = () => calls.slice(calls.findIndex((c) => c.method === "DELETE"));
+       await vi.waitFor(() =>
+         expect(after().map((c) => `${c.method} ${c.url}`)).toContain(
+           `GET ${ORG}/agents/ag1/skills`,
+         ),
+       );
+       expect(await within(list).findByText(m.agents.form.noOwnSkills)).toBeTruthy();
+     },
+   );
+ 
+-  it("不改动直接保存：工具引用保持原顺序、skills 合并（保留不认识的键）、带 expectedVersion", async () => {
++  it("a skills save keeps the tool order, merges skills (unknown keys kept) and sends expectedVersion", async () => {
+     const tools = [
+       { kind: "plugin", plugin: "todo", name: "write" },
+       { kind: "builtin", name: "read_tool_output" },
+       { kind: "builtin", name: "ask_user" },
+     ];
+     const def = agent().definition;
+     const calls = stubApi({
+       ...routes({ definition: { ...def, tools, skills: { orgSkills: ["s1"], future: 1 } } }),
+       [`PATCH ${ORG}/agents/ag1`]: () => json(200, { agent: agent(), warnings: [] }),
+     });
+     await renderEditAgent({ section: "skills" });
+     const group = await screen.findByRole("group", { name: en.agents.form.orgSkillsLabel });
+-    await within(group).findByRole("checkbox", { name: /pdf-tools/ });
+-    await userEvent.setup().click(screen.getByRole("button", { name: en.agents.form.submit }));
++    const user = userEvent.setup();
++    // the save row appears with a change: drop the one org skill
++    await user.click(await within(group).findByRole("checkbox", { name: /pdf-tools/ }));
++    await user.click(screen.getByRole("button", { name: en.agents.form.submit }));
+     await vi.waitFor(() => expect(calls.some((c) => c.method === "PATCH")).toBe(true));
+     const body = bodyOf(calls.find((c) => c.method === "PATCH")) as {
+       definition: Record<string, unknown>;
+       expectedVersion?: number;
+     };
+     expect(body.definition.tools).toEqual(tools);
+-    expect(body.definition.skills).toEqual({ orgSkills: ["s1"], future: 1 });
++    expect(body.definition.skills).toEqual({ orgSkills: [], future: 1 });
+     expect(body.expectedVersion).toBe(3);
+   });
+ 
+   it.each(["zh", "en"] as const)(
+     "别人已保存过新版本：409 agent.version_conflict 显示翻译后的文案（%s）",
+     async (locale) => {
+       stubApi({
+         ...routes(),
+         [`PATCH ${ORG}/agents/ag1`]: () =>
+           json(409, { error: { code: "agent.version_conflict", message: "changed" } }),
+       });
+       await renderEditAgent({ locale, section: "skills" });
+       const m = msgs[locale];
+       const group = await screen.findByRole("group", { name: m.agents.form.orgSkillsLabel });
+-      await within(group).findByRole("checkbox", { name: /pdf-tools/ });
+-      await userEvent.setup().click(screen.getByRole("button", { name: m.agents.form.submit }));
++      const user = userEvent.setup();
++      await user.click(await within(group).findByRole("checkbox", { name: /pdf-tools/ }));
++      await user.click(screen.getByRole("button", { name: m.agents.form.submit }));
+       expect(await screen.findByText(new RegExp(m.errors.agent.version_conflict))).toBeTruthy();
+       expect(router.push).not.toHaveBeenCalled();
+     },
+   );
+ 
+   it("「运行记录」入口：负责人与组织管理员可见，指向按该 agent 筛选的运行记录", async () => {
+     // 组织 owner（管理员）且是负责人
+     stubApi(routes());
+     await renderEditAgent({ section: "skills" });
+     const link = await screen.findByRole("link", { name: en.agents.runHistory });
+@@ -480,26 +483,28 @@ describe("pinned skills (skills.pinned)", () => {
+       within(pinned).getByRole("checkbox", {
+         name: fill(f.pinSkill, { name: "using-superpowers" }),
+       }),
+     ).toHaveProperty("checked", true);
+     await user.click(within(org).getByRole("checkbox", { name: /using-superpowers/ }));
+     expect(
+       within(pinned).queryByRole("checkbox", {
+         name: fill(f.pinSkill, { name: "using-superpowers" }),
+       }),
+     ).toBeNull();
++    // a skill that is not suggested for pinning: the save has a change but still no pins
++    await user.click(within(org).getByRole("checkbox", { name: /brainstorming/ }));
+     await user.click(screen.getByRole("button", { name: f.submit }));
+     await vi.waitFor(() => expect(calls.some((c) => c.method === "PATCH")).toBe(true));
+     const body = bodyOf(calls.find((c) => c.method === "PATCH")) as {
+       definition: Record<string, unknown>;
+     };
+-    expect(body.definition.skills).toEqual({ orgSkills: ["s3"] });
++    expect(body.definition.skills).toEqual({ orgSkills: ["s3", "s2"] });
+   });
+ 
+   it("a fourth pin is disabled with the tooMany hint; the token estimate sums the pinned skills", async () => {
+     const f = en.agents.form;
+     stubApi(editRoutes({ orgSkills: ["s1", "s2", "s3", "s4"], pinned: ["s1", "s2", "s3"] }));
+     await renderEditAgent({ section: "skills" });
+     const pinned = await screen.findByRole("group", { name: f.pinnedLabel });
+     const slides = await within(pinned).findByRole("checkbox", {
+       name: fill(f.pinSkill, { name: "slides" }),
+     });
+@@ -610,17 +615,21 @@ describe("pinned skills (skills.pinned)", () => {
+       [`PATCH ${ORG}/agents/ag1`]: () =>
+         json(400, {
+           error: {
+             code: "agent.pinned_invalid",
+             message: "x",
+             details: [{ skill: "s3", reason: "manual_only" }],
+           },
+         }),
+     });
+     await renderEditAgent({ section: "skills" });
+-    await screen.findByRole("group", { name: f.pinnedLabel });
+-    await userEvent.setup().click(screen.getByRole("button", { name: f.submit }));
++    const pinned = await screen.findByRole("group", { name: f.pinnedLabel });
++    const user = userEvent.setup();
++    await user.click(
++      within(pinned).getByRole("checkbox", { name: fill(f.pinSkill, { name: "pdf-tools" }) }),
++    );
++    await user.click(screen.getByRole("button", { name: f.submit }));
+     expect(
+       await screen.findByText(fill(f.pinnedError.manual_only, { name: "pdf-tools" })),
+     ).toBeTruthy();
+   });
+ });
+diff --git a/apps/web/test/agent-subagents.test.tsx b/apps/web/test/agent-subagents.test.tsx
+index 67c47c61..d2d2763b 100644
+--- a/apps/web/test/agent-subagents.test.tsx
++++ b/apps/web/test/agent-subagents.test.tsx
+@@ -169,23 +169,27 @@ describe("the agent page's Sub-agents section", () => {
+       inline: [{ name: "helper", description: "Helps.", instructions: "Help out.", model: "fast" }],
+       agents: [{ agentId: "ag2", as: "analyst", description: "Answers data questions." }],
+     });
+   });
+ 
+   it("an agent without sub-agent settings saves without a subagents block", async () => {
+     const calls = stubApi({
+       ...routes(),
+       [`PATCH ${ORG}/agents/ag1`]: () => json(200, { agent: LEAD, warnings: [] }),
+     });
+-    await renderEditAgent({ section: "subagents" });
+-    await section();
+-    await userEvent.setup().click(screen.getByRole("button", { name: en.agents.form.submit }));
++    // a save of another section (a tool switched on) carries no subagents block either
++    await renderEditAgent({ section: "tools" });
++    const user = userEvent.setup();
++    await user.click(
++      await screen.findByRole("checkbox", { name: en.agents.form.builtin.skill_write }),
++    );
++    await user.click(screen.getByRole("button", { name: en.agents.form.submit }));
+     await vi.waitFor(() => expect(calls.some((c) => c.method === "PATCH")).toBe(true));
+     const body = bodyOf(calls.find((c) => c.method === "PATCH")) as {
+       definition: Record<string, unknown>;
+     };
+     expect("subagents" in body.definition).toBe(false);
+   });
+ 
+   it.each(["zh", "en"] as const)(
+     "the 400 agent.subagents_invalid reasons show next to the field (%s)",
+     async (locale) => {
+@@ -208,25 +212,26 @@ describe("the agent page's Sub-agents section", () => {
+               message: "Invalid sub-agents",
+               details: [
+                 { reason: "invalid_name", path: "subagents.inline.0.name", value: "Bad Name" },
+                 { reason: "agent_not_available", path: "subagents.agents.0.agentId", value: "ag2" },
+               ],
+             },
+           }),
+       });
+       await renderEditAgent({ locale, section: "subagents" });
+       const s = await section(m.section);
+-      await userEvent
+-        .setup()
+-        .click(
+-          screen.getByRole("button", { name: (locale === "zh" ? zh : en).agents.form.submit }),
+-        );
++      const user = userEvent.setup();
++      // an edit opens the save row
++      await user.type(within(s).getByRole("textbox", { name: m.inlineDescription }), "!");
++      await user.click(
++        screen.getByRole("button", { name: (locale === "zh" ? zh : en).agents.form.submit }),
++      );
+       const nameField = within(s).getByRole("textbox", { name: m.inlineName });
+       await vi.waitFor(() => expect(nameField.getAttribute("aria-invalid")).toBe("true"));
+       expect(s.textContent).toContain(m.reasons.invalid_name.replace("{value}", "Bad Name"));
+       expect(s.textContent).toContain(m.reasons.agent_not_available.replace("{value}", "ag2"));
+     },
+   );
+ 
+   it("a validation_failed save marks the empty required fields of an inline template (batch 14 review m8)", async () => {
+     const lead = agent("ag1", "Lead", {
+       definition: {
+@@ -240,21 +245,24 @@ describe("the agent page's Sub-agents section", () => {
+         json(400, {
+           error: {
+             code: "validation_failed",
+             message: "Invalid input",
+             details: [{ path: "definition.subagents.inline.0.description", message: "Too small" }],
+           },
+         }),
+     });
+     await renderEditAgent({ section: "subagents" });
+     const s = await section();
+-    await userEvent.setup().click(screen.getByRole("button", { name: en.agents.form.submit }));
++    const user = userEvent.setup();
++    // an edit opens the save row (the instructions stay valid)
++    await user.type(within(s).getByRole("textbox", { name: S.inlineInstructions }), "!");
++    await user.click(screen.getByRole("button", { name: en.agents.form.submit }));
+     const description = within(s).getByRole("textbox", { name: S.inlineDescription });
+     await vi.waitFor(() => expect(description.getAttribute("aria-invalid")).toBe("true"));
+     expect(s.textContent).toContain(S.reasons.required);
+     const instructions = within(s).getByRole("textbox", { name: S.inlineInstructions });
+     expect(instructions.getAttribute("aria-invalid")).not.toBe("true");
+   });
+ 
+   it("the shared-more-widely warning covers a members agent whose members the target lacks (batch 14 review m9)", async () => {
+     const lead = {
+       ...agent("ag1", "Lead", {
+diff --git a/apps/web/test/roles.test.tsx b/apps/web/test/roles.test.tsx
+index df427056..843eddf6 100644
+--- a/apps/web/test/roles.test.tsx
++++ b/apps/web/test/roles.test.tsx
+@@ -426,33 +426,33 @@ describe("agents: edit, read-only and 更换负责人", () => {
+       { locale: "zh", me: meAs(role) },
+     );
+   };
+ 
+   for (const role of ROLES) {
+     const edits = role === "admin" || role === "owner";
+     it(`/agents/<id> of someone else · ${role}: ${edits ? "the form" : "read-only"}`, async () => {
+       // the read-only sections: the model shows without the providers list
+       await agentPage(role, "someone", {}, edits ? "" : "?s=model");
+       if (edits) {
+-        expect(await screen.findByRole("button", { name: zh.agents.form.submit })).toBeTruthy();
++        expect(await screen.findByRole("textbox", { name: zh.agents.form.nameLabel })).toBeTruthy();
+         expect(screen.getByRole("button", { name: zh.agents.page.reassign })).toBeTruthy();
+       } else {
+         expect(await screen.findByText("p / m")).toBeTruthy();
+         expect(screen.queryByRole("button", { name: zh.agents.form.submit })).toBeNull();
+         expect(screen.queryByRole("button", { name: zh.agents.page.reassign })).toBeNull();
+       }
+     });
+   }
+ 
+   it("a member who owns the agent edits it, without 更换负责人", async () => {
+     await agentPage("member", "a1");
+-    expect(await screen.findByRole("button", { name: zh.agents.form.submit })).toBeTruthy();
++    expect(await screen.findByRole("textbox", { name: zh.agents.form.nameLabel })).toBeTruthy();
+     expect(screen.queryByRole("button", { name: zh.agents.page.reassign })).toBeNull();
+   });
+ 
+   it("a guest who still owns an agent cannot edit it (agents.create is member up)", async () => {
+     await agentPage("guest", "a1");
+     expect(await screen.findByText(zh.agents.readOnly)).toBeTruthy();
+   });
+ 
+   it("an admin changes the owner: picks a member (no anonymous guests) and posts it", async () => {
+     await agentPage("admin", "someone");
+diff --git a/docs/design/spec.md b/docs/design/spec.md
+index 49c8af1e..335e8ebe 100644
+--- a/docs/design/spec.md
++++ b/docs/design/spec.md
+@@ -2081,21 +2081,21 @@ States: `text`, `box`, `group`
+ 
+ ### 6.30 Avatar and AvatarPicker
+ 
+ An agent's picture, everywhere an agent appears (the new conversation page, the agent picker, the agent list rows, the agent page head, the conversation title bar, the sidebar group titles; agent profile design §2.3).
+ 
+ - `Avatar({ value, name, size })`, `size` 16, 24, 28, 40 or 64, a square of that size. `value` is one of:
+   - `{ kind: "preset", id }`: one of the ten pixel animals (`AVATAR_PRESETS`): 水豚 / Capybara, 黑熊 / Black bear, 熊猫 / Panda, 大象 / Elephant, 狐狸 / Fox, 猫头鹰 / Owl, 企鹅 / Penguin, 兔子 / Rabbit, 乌龟 / Turtle, 鲸 / Whale (ids `capybara`, `black-bear`, `panda`, `elephant`, `fox`, `owl`, `penguin`, `rabbit`, `turtle`, `whale`). Each is a 12×12 bitmap drawn like the Logo (§3: solid squares, `shape-rendering: crispEdges`, no outline, no anti-aliasing), one SVG path per palette color, on its ground color. The palette values and the ground are token names (`avatar-*`, and `accent` for the capybara, §2.1), so no color literal is involved. The pixel unit is the whole number nearest to `size / 12` (16: 1, 24: 2, 28: 2, 40: 3, 64: 5), the drawing centred in the square; every size holds the whole drawing, nothing is clipped.
+   - `{ kind: "image", src }`: the uploaded image, covering the square; when it fails to load, the initial.
+   - `null`: the initial square, the avatar tile rule of §6.17: the first grapheme of `name` (`initialOf`), 600, `ink` on `selected`; `micro` at 16, `small` at 24 and 28, the h2 size at 40, the h1 size at 64.
+   - Radius `sm`, `md` at 64. The avatar is decorative (`aria-hidden`): the name is always written next to it.
+-- `AvatarPicker({ value, onChange, onUpload?, uploadOffReason?, label? })`: the ten presets as one radio group (named `label`, default "头像" / "Avatar"; each radio named by its preset's name), 48 px tiles (a 40 avatar, 3 px padding, a 1 px border, radius `md`) `space.2` apart and wrapping, then an upload tile (`upload` icon, "上传图片" / "Upload image"; `line` dashed border) that opens a file dialog for png, jpg or webp and passes the file to `onUpload` (cropping and the 2 MB limit are the caller's). A checked tile is neutral (§2.3): `selected` ground and a `line-strong` border; hover is the `hover` ground; keyboard focus the accent ring. When `value` is an image, the upload tile shows it and is the checked one; if that image fails to load, the tile shows the `upload` icon again. Without `onUpload` the upload tile is disabled (`disabled` icon color) and `uploadOffReason` (default "这里不能上传图片。" / "Uploading is not available here.") is written under the tiles in `small` `muted`, and describes the tile; presets still work.
++- `AvatarPicker({ value, onChange, onUpload?, uploadOffReason?, label?, disabled? })` (`disabled`: every tile disabled while the owner saves, the value still shown): the ten presets as one radio group (named `label`, default "头像" / "Avatar"; each radio named by its preset's name), 48 px tiles (a 40 avatar, 3 px padding, a 1 px border, radius `md`) `space.2` apart and wrapping, then an upload tile (`upload` icon, "上传图片" / "Upload image"; `line` dashed border) that opens a file dialog for png, jpg or webp and passes the file to `onUpload` (cropping and the 2 MB limit are the caller's). A checked tile is neutral (§2.3): `selected` ground and a `line-strong` border; hover is the `hover` ground; keyboard focus the accent ring. When `value` is an image, the upload tile shows it and is the checked one; if that image fails to load, the tile shows the `upload` icon again. Without `onUpload` the upload tile is disabled (`disabled` icon color) and `uploadOffReason` (default "这里不能上传图片。" / "Uploading is not available here.") is written under the tiles in `small` `muted`, and describes the tile; presets still work.
+ 
+ <!-- states: avatar -->
+ States: `presets`, `sizes`, `initial`, `picker`, `picker-upload-off`
+ 
+ <!-- size-table: avatar -->
+ | Part | State | Property | Value |
+ |---|---|---|---|
+ | avatar | presets | width | 40 |
+ | avatar | presets | height | 40 |
+ | avatar | presets | border-top-left-radius | radius.sm |
+diff --git a/packages/design/src/display/avatar.tsx b/packages/design/src/display/avatar.tsx
+index cf8bb1bb..dcb6adc5 100644
+--- a/packages/design/src/display/avatar.tsx
++++ b/packages/design/src/display/avatar.tsx
+@@ -113,33 +113,36 @@ export function Avatar({
+ 
+ export type AvatarPickerProps = {
+   value: AvatarValue;
+   onChange: (value: AvatarValue) => void;
+   /** The chosen png, jpg or webp file; absent, the upload tile is disabled with its reason. */
+   onUpload?: (file: File) => void;
+   /** Why uploading is off (shown under the tiles when `onUpload` is absent). */
+   uploadOffReason?: string;
+   /** The group's name; default 「头像」 / "Avatar". */
+   label?: string;
++  /** Every tile is disabled (the owner form is saving); the value stays shown. */
++  disabled?: boolean;
+ };
+ 
+ /**
+  * AvatarPicker (spec §6.30): the ten presets as one radio group of 40 px tiles, then an upload
+  * tile, which shows the uploaded image when that is the avatar. Without `onUpload` the upload tile
+  * is disabled and the reason is written under the tiles.
+  */
+ export function AvatarPicker({
+   value,
+   onChange,
+   onUpload,
+   uploadOffReason,
+   label,
++  disabled = false,
+ }: AvatarPickerProps) {
+   const t = useDesignT();
+   const name = useId();
+   const reasonId = useId();
+   const input = useRef<HTMLInputElement>(null);
+   // an uploaded image that fails to load shows the upload icon, never an empty initial
+   const [failedSrc, setFailedSrc] = useState<string | null>(null);
+   const onFile = (e: ChangeEvent<HTMLInputElement>) => {
+     const file = e.target.files?.[0];
+     e.target.value = "";
+@@ -163,36 +166,37 @@ export function AvatarPicker({
+                 className="cb-avatar-tile"
+                 data-part="avatar-tile"
+                 data-state={checked ? "checked" : "unchecked"}
+               >
+                 <input
+                   className="cb-avatar-radio"
+                   type="radio"
+                   name={name}
+                   value={id}
+                   checked={checked}
++                  disabled={disabled}
+                   aria-label={presetName}
+                   onChange={() => onChange({ kind: "preset", id })}
+                 />
+                 <Avatar value={{ kind: "preset", id }} name={presetName} size={40} />
+               </label>
+             );
+           })}
+         </div>
+         <button
+           type="button"
+           className="cb-avatar-tile"
+           data-part="avatar-upload"
+           data-state={image ? "checked" : "unchecked"}
+           aria-label={t("avatar.upload")}
+           aria-describedby={onUpload ? undefined : reasonId}
+-          disabled={!onUpload}
++          disabled={!onUpload || disabled}
+           onClick={() => input.current?.click()}
+         >
+           {image && failedSrc !== value.src ? (
+             <Avatar value={value} name="" size={40} onImageError={() => setFailedSrc(value.src)} />
+           ) : (
+             <Icon name="upload" size={16} />
+           )}
+         </button>
+       </div>
+       {onUpload ? (
+diff --git a/packages/design/test/avatar.test.tsx b/packages/design/test/avatar.test.tsx
+index 80d1455f..dfa10a50 100644
+--- a/packages/design/test/avatar.test.tsx
++++ b/packages/design/test/avatar.test.tsx
+@@ -138,20 +138,35 @@ describe("Avatar (spec §6.30)", () => {
+ 
+   it("is decorative: the name beside it is what is read", () => {
+     const { container } = wrap(
+       <Avatar value={{ kind: "preset", id: "owl" }} name="Owl" size={24} />,
+     );
+     expect(root(container).getAttribute("aria-hidden")).toBe("true");
+   });
+ });
+ 
+ describe("AvatarPicker (spec §6.30)", () => {
++  it("disabled: every tile is disabled and the value stays shown", () => {
++    wrap(
++      <AvatarPicker
++        value={{ kind: "preset", id: "fox" }}
++        onChange={() => {}}
++        onUpload={() => {}}
++        disabled
++      />,
++      "en",
++    );
++    for (const r of screen.getAllByRole("radio")) expect(r).toHaveProperty("disabled", true);
++    expect(screen.getByRole("radio", { name: "Fox" })).toHaveProperty("checked", true);
++    expect(screen.getByRole("button", { name: "Upload image" })).toHaveProperty("disabled", true);
++  });
++
+   it("the picker selects a preset and calls onChange", () => {
+     const onChange = vi.fn();
+     wrap(
+       <AvatarPicker
+         value={{ kind: "preset", id: "capybara" }}
+         onChange={onChange}
+         onUpload={() => {}}
+       />,
+     );
+     const group = screen.getByRole("radiogroup", { name: "头像" });

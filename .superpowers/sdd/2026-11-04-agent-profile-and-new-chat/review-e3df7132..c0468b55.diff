@@ -1,0 +1,116 @@
+# Review package: e3df7132..c0468b55
+
+## Commits
+c0468b55 fix(web): the leave guard ignores in-page hash links
+
+## Files changed
+ apps/web/src/components/agent/AgentPage.tsx |  7 +++---
+ apps/web/test/agent-page.test.tsx           | 35 +++++++++++++++++++++++++++++
+ 2 files changed, 39 insertions(+), 3 deletions(-)
+
+## Diff
+diff --git a/apps/web/src/components/agent/AgentPage.tsx b/apps/web/src/components/agent/AgentPage.tsx
+index 92ed8ada..a80ead30 100644
+--- a/apps/web/src/components/agent/AgentPage.tsx
++++ b/apps/web/src/components/agent/AgentPage.tsx
+@@ -15,36 +15,37 @@ import { AgentPageContext, type AgentPageValue, useAgentPage, useSectionNav } fr
+ import { LegacyFormSection } from "./LegacyFormSection";
+ import { ModelReadOnly } from "./ModelReadOnly";
+ import { QuickActionsSection } from "./QuickActionsSection";
+ import { type AgentSection, sectionOf } from "./sections";
+ 
+ export { type AgentPageValue, AgentSectionFrame, useAgentPage } from "./frame";
+ 
+ /**
+  * Where a click on `a` would take the page inside the app, or null when the browser should handle
+  * it as it is: a modified or non-primary click (a new tab or window), `target` other than `_self`,
+- * a download, another origin, or a link to the URL already open.
++ * a download, another origin, or a link to the page already open (whatever its hash).
+  */
+ export function guardedHref(e: MouseEvent, a: Element): string | null {
+   if (e.defaultPrevented || e.button !== 0) return null;
+   if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return null;
+   const target = a.getAttribute("target");
+   if ((target !== null && target !== "" && target !== "_self") || a.hasAttribute("download")) {
+     return null;
+   }
+   const raw = a.getAttribute("href");
+   if (raw === null) return null;
+   const here = new URL(window.location.href);
+   const url = new URL(raw, here);
+   if (url.origin !== here.origin) return null;
+-  const to = `${url.pathname}${url.search}${url.hash}`;
+-  return to === `${here.pathname}${here.search}${here.hash}` ? null : to;
++  // the same page with another hash (the shell's skip link, an anchor): it leaves nothing
++  if (url.pathname === here.pathname && url.search === here.search) return null;
++  return `${url.pathname}${url.search}${url.hash}`;
+ }
+ 
+ /**
+  * The agent page (agent profile design §3): the head (avatar, name, description; 开始对话 for
+  * everyone, 运行记录 and 重新指派负责人 for the owner and org admins), the section nav, and the open
+  * section. Leaving a section with unsaved edits through the nav asks to keep or discard them.
+  */
+ export function AgentPage({
+   orgId,
+   agent,
+diff --git a/apps/web/test/agent-page.test.tsx b/apps/web/test/agent-page.test.tsx
+index 3330121c..6b51b8f6 100644
+--- a/apps/web/test/agent-page.test.tsx
++++ b/apps/web/test/agent-page.test.tsx
+@@ -333,20 +333,55 @@ describe("the agent page by section (agent profile design §3)", () => {
+     // a plain click is held back
+     const plain = new MouseEvent("click", { bubbles: true, cancelable: true });
+     act(() => {
+       link.dispatchEvent(plain);
+     });
+     expect(plain.defaultPrevented).toBe(true);
+     expect(await screen.findByRole("dialog", { name: P_.leave.title })).toBeTruthy();
+     expect(router.push).not.toHaveBeenCalled();
+   });
+ 
++  it("a hash-only link, a target=_blank link and a download link are not intercepted", async () => {
++    stubApi(routes());
++    await renderEditAgent();
++    const user = userEvent.setup();
++    const name = screen.getByRole("textbox", { name: en.agents.form.nameLabel });
++    await user.type(name, " 2");
++    const here = `${window.location.pathname}${window.location.search}`;
++    const links = [
++      { href: "#main" },
++      { href: `${here}#section` },
++      { href: "/skills", target: "_blank" },
++      { href: "/files/report.pdf", download: "" },
++    ].map((attrs) => {
++      const a = document.createElement("a");
++      for (const [k, v] of Object.entries(attrs)) a.setAttribute(k, v);
++      a.textContent = attrs.href;
++      document.body.append(a);
++      return a;
++    });
++    try {
++      for (const a of links) {
++        const ev = new MouseEvent("click", { bubbles: true, cancelable: true });
++        act(() => {
++          a.dispatchEvent(ev);
++        });
++        expect(ev.defaultPrevented, a.outerHTML).toBe(false);
++        expect(screen.queryByRole("dialog")).toBeNull();
++      }
++      expect(router.push).not.toHaveBeenCalled();
++      expect(name).toHaveProperty("value", "Helper 2");
++    } finally {
++      for (const a of links) a.remove();
++    }
++  });
++
+   it("beforeunload asks only while the section is dirty", async () => {
+     stubApi(routes());
+     await renderEditAgent();
+     const unload = () => {
+       const ev = new Event("beforeunload", { cancelable: true });
+       window.dispatchEvent(ev);
+       return ev.defaultPrevented;
+     };
+     expect(unload()).toBe(false);
+     const user = userEvent.setup();

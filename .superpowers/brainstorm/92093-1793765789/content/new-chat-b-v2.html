@@ -1,0 +1,68 @@
+<style>
+  .cb { background:#f6f4ef; border:1px solid #e3dfd6; border-radius:8px; padding:56px 24px 48px; font-family: ui-monospace, "SF Mono", Menlo, monospace; color:#1d1b18; }
+  .cb .greet { display:flex; align-items:center; justify-content:center; gap:12px; font-family: -apple-system, "PingFang SC", sans-serif; font-size:28px; font-weight:600; margin-bottom:8px; }
+  .cb .caret { display:inline-block; width:2px; height:26px; background:#d9541e; margin-left:2px; vertical-align:middle; }
+  .cb .sub { text-align:center; color:#8a857b; font-size:13px; margin-bottom:22px; font-family:-apple-system,"PingFang SC",sans-serif; }
+  .cb .px { width:28px; height:20px; background:
+      linear-gradient(#d9541e,#d9541e) 20px 0/2px 2px no-repeat,
+      linear-gradient(#d9541e,#d9541e) 18px 2px/6px 2px no-repeat,
+      linear-gradient(#d9541e,#d9541e) 6px 4px/22px 10px no-repeat,
+      linear-gradient(#d9541e,#d9541e) 4px 6px/2px 6px no-repeat,
+      linear-gradient(#d9541e,#d9541e) 6px 14px/18px 2px no-repeat,
+      linear-gradient(#d9541e,#d9541e) 6px 16px/4px 4px no-repeat,
+      linear-gradient(#d9541e,#d9541e) 12px 16px/2px 4px no-repeat,
+      linear-gradient(#d9541e,#d9541e) 16px 16px/4px 4px no-repeat; }
+  .cb .agents { display:flex; gap:8px; justify-content:center; margin-bottom:10px; }
+  .cb .agent { display:flex; align-items:center; gap:8px; border:1px solid #e3dfd6; background:#fff; border-radius:6px; padding:6px 12px 6px 6px; font-size:13px; }
+  .cb .agent i { font-style:normal; width:22px; height:22px; border-radius:4px; background:#1d1b18; color:#fff; font-size:11px; display:flex; align-items:center; justify-content:center; }
+  .cb .agent.on { border-color:#d9541e; box-shadow:0 0 0 3px rgba(217,84,30,.15); font-weight:600; }
+  .cb .agent.more { color:#d9541e; padding-left:12px; }
+  .cb .quick { display:flex; gap:14px; justify-content:center; margin:0 auto 18px; font-family:-apple-system,"PingFang SC",sans-serif; font-size:12px; color:#8a857b; }
+  .cb .quick span::before { content:"↳ "; color:#c4beb3; }
+  .cb .quick span:hover { color:#1d1b18; }
+  .cb .composer { background:#fff; border:1px solid #e3dfd6; border-radius:8px; box-shadow:0 2px 10px rgba(0,0,0,.06); padding:12px 14px; margin:0 auto; max-width:560px; }
+  .cb .composer .ph { color:#aaa49a; font-family:-apple-system,"PingFang SC",sans-serif; font-size:14px; margin-bottom:14px; }
+  .cb .row { display:flex; align-items:center; gap:14px; font-size:12px; color:#6f6a61; }
+  .cb .row .send { margin-left:auto; width:26px; height:26px; border-radius:4px; background:#ebe7df; }
+  .cb .panel { max-width:560px; margin:14px auto 0; background:#fff; border:1px solid #e3dfd6; border-radius:8px; box-shadow:0 8px 24px rgba(0,0,0,.08); padding:10px; }
+  .cb .panel .search { border:1px solid #e3dfd6; border-radius:4px; padding:6px 10px; color:#aaa49a; font-size:12px; font-family:-apple-system,"PingFang SC",sans-serif; }
+  .cb .panel .lbl { font-size:10px; color:#8a857b; margin:10px 2px 4px; }
+  .cb .panel .grid { display:grid; grid-template-columns:1fr 1fr; gap:4px; }
+  .cb .panel .it { display:flex; gap:8px; align-items:center; padding:6px; border-radius:4px; font-size:12px; }
+  .cb .panel .it:hover, .cb .panel .it.hl { background:#f1eee8; }
+  .cb .panel .it i { font-style:normal; width:22px; height:22px; border-radius:4px; background:#1d1b18; color:#fff; font-size:11px; display:flex; align-items:center; justify-content:center; }
+  .cb .panel .it small { display:block; color:#8a857b; font-family:-apple-system,"PingFang SC",sans-serif; font-size:10px; }
+</style>
+
+<h2>B 方向，快捷操作弱化</h2>
+<p class="subtitle">左：新会话页本身。右：点「更多 +7」打开的 Agent 面板。快捷操作改成一行灰色小字链接，不再是带边框的按钮；鼠标悬停时变深色。</p>
+
+<div class="split">
+  <div class="mockup">
+    <div class="mockup-header">新会话页</div>
+    <div class="mockup-body">
+      <div class="cb">
+        <div class="greet"><span class="px"></span>下午好，Grant<span class="caret"></span></div>
+        <div class="sub">选一个 agent，或从常用任务开始</div>
+        <div class="agents"><span class="agent on"><i>G</i>Grant</span><span class="agent"><i>F</i>Fiona</span><span class="agent"><i>N</i>Navigator</span><span class="agent"><i>L</i>Lexi</span><span class="agent more">更多 +7</span></div>
+        <div class="quick"><span>梳理需求文档</span><span>排查一个报错</span><span>写周报</span><span>review 这段代码</span></div>
+        <div class="composer"><div class="ph">想让 Grant 做什么？</div><div class="row">＋ &nbsp; deepseek/deepseek-flash ⌄ &nbsp; 高 ⌄ <span class="send"></span></div></div>
+      </div>
+    </div>
+  </div>
+  <div class="mockup">
+    <div class="mockup-header">「更多」面板</div>
+    <div class="mockup-body">
+      <div class="cb" style="padding-top:24px">
+        <div class="agents"><span class="agent on"><i>G</i>Grant</span><span class="agent"><i>F</i>Fiona</span><span class="agent more" style="border-color:#d9541e">更多 +7</span></div>
+        <div class="panel">
+          <div class="search">搜索 agent（名字或描述）</div>
+          <div class="lbl">最近用过</div>
+          <div class="grid"><div class="it hl"><i>G</i><div>Grant<small>开发助手</small></div></div><div class="it"><i>F</i><div>Fiona<small>财务助手</small></div></div></div>
+          <div class="lbl">全部 11 个</div>
+          <div class="grid"><div class="it"><i>C</i><div>Chainalysis Scn<small>KYT 分析</small></div></div><div class="it"><i>L</i><div>Lexi<small>法务</small></div></div><div class="it"><i>N</i><div>Navigator<small>平台向导</small></div></div><div class="it"><i>O</i><div>Ops<small>运维</small></div></div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

@@ -1,0 +1,476 @@
+# Review package: f29c1409..HEAD
+
+## Commits
+014bbc3d test(web): compare the right edge of the header actions while loading
+77ff4077 test(web): list the loaded parts a skeleton may omit, each with its reason
+6fd35a09 test(web): skeleton alignment pairs loading parts by alias; Card and KeyValue carry data-part
+c85ecbc2 test(web): skeleton alignment requires every loaded part while loading
+
+## Files changed
+ apps/web/visual/accepted.ts                | 126 ++++++++++++++++++++----
+ apps/web/visual/skeleton-alignment.spec.ts | 153 ++++++++++++++++++++++-------
+ packages/design/src/display/key-value.tsx  |   4 +-
+ packages/design/src/layout/index.tsx       |   2 +-
+ packages/design/src/shell/page-header.tsx  |   6 +-
+ 5 files changed, 228 insertions(+), 63 deletions(-)
+
+## Diff
+diff --git a/apps/web/visual/accepted.ts b/apps/web/visual/accepted.ts
+index fc58f4f0..d998ae5e 100644
+--- a/apps/web/visual/accepted.ts
++++ b/apps/web/visual/accepted.ts
+@@ -74,60 +74,144 @@ export const ACCEPTED: string[] = [
+   // side-by-side review wait for the reference-update and visual-update workflows
+   "skeleton",
+ ];
+ 
+ /**
+  * Templates with a loading state: skeleton-alignment.spec.ts compares each loading block's part
+  * boxes with the loaded block's. `loaded` / `loading` are the reference block ids (without the
+  * `template-<name>-` prefix) that draw the same page loaded and loading; a template may have
+  * several pairs (List's objects variant, Inbox's records variant).
+  */
+-export const LOADING_TEMPLATES: { name: string; pairs: { loaded: string; loading: string }[] }[] = [
++const KV =
++  "the loaded span detail's properties; the loading trace draws the detail card's text lines (spec §5.11)";
++
++export const LOADING_TEMPLATES: {
++  name: string;
++  pairs: { loaded: string; loading: string; dataOnly?: Record<string, string> }[];
++}[] = [
+   { name: "detail", pairs: [{ loaded: "default", loading: "loading" }] },
+   { name: "overview", pairs: [{ loaded: "default", loading: "loading" }] },
+   {
+     name: "inbox",
+     pairs: [
+-      { loaded: "default", loading: "loading" },
+-      { loaded: "default-records", loading: "loading-records" },
++      {
++        loaded: "default",
++        loading: "loading",
++        dataOnly: {
++          card: "the inbox content is one card-shaped block while loading (spec §5.7); the loaded page has its own sections",
++        },
++      },
++      {
++        loaded: "default-records",
++        loading: "loading-records",
++        dataOnly: {
++          card: "the inbox content is one card-shaped block while loading (spec §5.7); the loaded page has its own sections",
++        },
++      },
+     ],
+   },
+   { name: "form", pairs: [{ loaded: "page", loading: "loading" }] },
+   { name: "settings", pairs: [{ loaded: "default", loading: "loading" }] },
+   { name: "wizard", pairs: [{ loaded: "default", loading: "loading" }] },
+   { name: "auth", pairs: [{ loaded: "default", loading: "loading" }] },
+   // the conversation's loading block is the file-panel block with every part still on its way
+   { name: "conversation", pairs: [{ loaded: "file-panel", loading: "loading" }] },
+-  { name: "trace", pairs: [{ loaded: "default", loading: "loading" }] },
++  {
++    name: "trace",
++    pairs: [
++      { loaded: "default", loading: "loading", dataOnly: { "key-value": KV, "key-value-row": KV } },
++    ],
++  },
+   { name: "list", pairs: [{ loaded: "default-objects", loading: "loading-objects" }] },
+ ];
+ 
+ /**
+- * Parts whose loaded size follows the page's content (a prose body, a table's row count, a form
+- * section's fields and help text, a title's text), so the skeleton cannot match it by design: they
+- * are compared in x, y and width only, and a later part of the same name (the second form section)
+- * is not compared in y either, because it sits below the earlier ones.
++ * Parts whose loaded height follows the fixture's data, so a skeleton cannot match it by design:
++ * the part is not compared in height, and the parts below it are compared in y after subtracting
++ * the height difference of the exempt parts above them. Each entry carries its reason.
+  */
+-export const VARIABLE_HEIGHT: string[] = [
+-  "content",
+-  "thread",
+-  "table",
+-  "form-section",
+-  "form-section-head",
+-  "form-card",
+-];
++export const VARIABLE_HEIGHT: Record<string, string> = {
++  content:
++    "the page's own sections or rows: the loading card blocks and the fixture sections differ",
++  thread: "the loaded turns' text length decides the height; the skeleton draws three fixed turns",
++  table: "the loaded table has the fixture's rows; the loading DataTable draws its own row count",
++  "form-section":
++    "the loaded fields carry help text and paired controls the placeholders cannot know",
++  "form-section-head": "stretches to the form-section's row, so it has the section's height",
++  card: "a loaded section card is as tall as its content; the loading card is the three-line shape",
++  "form-card": "the loaded fields carry help text and paired controls the placeholders cannot know",
++};
+ 
+ /**
+  * Parts that are not laid out by the page: `link-pending` is the off-screen route announcer, and
+  * `icon` / `icon-button` are numbered by position, so a loaded page with more icons than its
+  * loading block cannot pair them (the title bar and header icons are compared through their own
+  * parts).
+  */
+ export const IGNORED_PARTS: string[] = ["link-pending", "icon", "icon-button"];
+ 
+ /**
+- * Parts whose loaded width follows text or siblings the page does not know yet: a title's text
+- * (the skeleton is a bar of the bar's width), and the header description, which ends where the
+- * loaded action buttons begin (a placeholder button is 72 px, a real one is as wide as its label).
+- * Compared in x, y and height only.
++ * Loading parts that stand in for a loaded part of another name: they pair with it by that name
++ * (the box rows in the spec keep the `loading-` names).
+  */
+-export const VARIABLE_WIDTH: string[] = ["title", "page-header-description"];
++export const LOADING_ALIASES: Record<string, string> = {
++  "loading-card": "card",
++  "loading-inspector": "key-value",
++  "loading-inspector-row": "key-value-row",
++  "loading-switch-list": "switch-list",
++  "loading-switch-row": "switch-row",
++  "page-header-title-bar": "page-header-title",
++  "page-header-action-slots": "page-header-actions",
++};
++
++/**
++ * Parts of the loaded page that the loading block does not draw, by design: they exist only when
++ * the data does (real text, rows, cells, actions). Every other loaded part, by name and count, must
++ * be present while loading. Each entry carries its reason.
++ */
++export const DATA_ONLY_PARTS: Record<string, string> = {
++  button:
++    "real buttons (header actions, a submit, a panel action); loading draws placeholder slots",
++  "field-label": "the loaded form fields; loading draws field placeholders (loading-field)",
++  input: "the loaded form fields; loading draws field placeholders (loading-field)",
++  "input-control": "the loaded form fields; loading draws field placeholders (loading-field)",
++  textarea: "the loaded form fields; loading draws field placeholders (loading-field)",
++  select: "the loaded form fields; loading draws field placeholders (loading-field)",
++  segmented: "the loaded form fields; loading draws field placeholders (loading-field)",
++  segment: "the loaded form fields; loading draws field placeholders (loading-field)",
++  switch: "the loaded switches; loading draws a 32 x 20 box in the switch row (loading-switch-row)",
++  "switch-knob": "the loaded switches; loading draws a 32 x 20 box in the switch row",
++  "field-error": "a validation message exists only for typed data",
++  "action-row-unsaved":
++    "an unsaved count the page cannot know yet; the loading action row has none (spec §5.3)",
++  "action-row-errors":
++    "an error count the page cannot know yet; the loading action row has none (spec §5.3)",
++  row: "the loaded table rows; the loading DataTable draws its own skeleton rows",
++  cell: "the loaded table cells; the loading DataTable draws its own skeleton rows",
++  bubble: "the loaded user turn; loading draws loading-turn boxes (spec §5.4)",
++  prose: "the loaded assistant text; loading draws prose bars",
++  markdown: "the loaded assistant text; loading draws prose bars",
++  "tool-line": "the loaded tool rows; loading draws prose bars",
++  "file-card": "the loaded file panel content; loading draws the right panel's loading bars",
++  "file-name": "the loaded file panel content; loading draws the right panel's loading bars",
++  "type-badge": "the loaded file panel content; loading draws the right panel's loading bars",
++  "panel-meta": "the loaded file panel content; loading draws the right panel's loading bars",
++  "preview-table": "the loaded file preview; loading draws the right panel's loading bars",
++  "preview-table-head": "the loaded file preview; loading draws the right panel's loading bars",
++  "preview-table-cell": "the loaded file preview; loading draws the right panel's loading bars",
++};
++
++/**
++ * Parts whose loaded width follows text or siblings the page does not know yet.
++ */
++export const VARIABLE_WIDTH: Record<string, string> = {
++  "page-header-title":
++    "the loaded title is its text; the loading title is a bar 30% of the row wide",
++  "page-header-actions":
++    "the loaded buttons are as wide as their labels; a placeholder is 72 px (right edge compared)",
++  title: "the loaded title is its text; the skeleton is a bar of the bar's width",
++  "page-header-description":
++    "ends where the loaded action buttons begin: a placeholder button is 72 px, a real one is as wide as its label",
++};
++
++/** Variable-width parts that sit at the right edge: their right edge is compared instead of x. */
++export const RIGHT_ALIGNED: string[] = ["page-header-actions"];
+diff --git a/apps/web/visual/skeleton-alignment.spec.ts b/apps/web/visual/skeleton-alignment.spec.ts
+index 562bb9d5..ef86b30e 100644
+--- a/apps/web/visual/skeleton-alignment.spec.ts
++++ b/apps/web/visual/skeleton-alignment.spec.ts
+@@ -1,80 +1,157 @@
+ import { expect, type Page, test } from "@playwright/test";
+-import { IGNORED_PARTS, LOADING_TEMPLATES, VARIABLE_HEIGHT, VARIABLE_WIDTH } from "./accepted";
++import {
++  DATA_ONLY_PARTS,
++  IGNORED_PARTS,
++  LOADING_ALIASES,
++  LOADING_TEMPLATES,
++  RIGHT_ALIGNED,
++  VARIABLE_HEIGHT,
++  VARIABLE_WIDTH,
++} from "./accepted";
+ import { openReference, THEMES } from "./reference-page";
+ 
+ /**
+  * Skeleton alignment (web query cache design §7.1): for every template with a loading state, each
+  * `data-part` present in both the loading block and the loaded block has the same box, relative
+  * to its block: x, y and width within ±1 px, and height too except for the parts in
+  * `VARIABLE_HEIGHT`. Layout only; no screenshot comparison.
+  */
+ const ORIGIN = `http://localhost:${process.env.CAPYBARA_VISUAL_PORT ?? "3100"}`;
+ 
+-type Box = { x: number; y: number; width: number; height: number };
++/** `scroller` numbers the nearest ancestor that clips or scrolls vertically (0: none). */
++type Box = { x: number; y: number; width: number; height: number; scroller: number };
+ 
+ /** Every `[data-part]` box of a block, keyed by `<part>#<n>` (n counts the part's occurrences). */
+ async function partBoxes(page: Page, block: string): Promise<Record<string, Box>> {
+-  return page.evaluate((id) => {
+-    const b = document.querySelector(`[data-ref-block="${id}"]`);
+-    if (!b) throw new Error(`no block ${id}`);
+-    const origin = b.getBoundingClientRect();
+-    const seen: Record<string, number> = {};
+-    const out: Record<string, { x: number; y: number; width: number; height: number }> = {};
+-    for (const el of b.querySelectorAll("[data-part]")) {
+-      const part = el.getAttribute("data-part") ?? "";
+-      const n = seen[part] ?? 0;
+-      seen[part] = n + 1;
+-      const r = el.getBoundingClientRect();
+-      out[`${part}#${n}`] = {
+-        x: r.x - origin.x,
+-        y: r.y - origin.y,
+-        width: r.width,
+-        height: r.height,
++  return page.evaluate(
++    ([id, aliases]) => {
++      const b = document.querySelector(`[data-ref-block="${id}"]`);
++      if (!b) throw new Error(`no block ${id}`);
++      const origin = b.getBoundingClientRect();
++      const seen: Record<string, number> = {};
++      const out: Record<
++        string,
++        { x: number; y: number; width: number; height: number; scroller: number }
++      > = {};
++      const scrollers: Element[] = [];
++      const scrollerOf = (el: Element) => {
++        for (let p = el.parentElement; p && p !== b; p = p.parentElement) {
++          if (getComputedStyle(p).overflowY !== "visible") {
++            if (!scrollers.includes(p)) scrollers.push(p);
++            return scrollers.indexOf(p) + 1;
++          }
++        }
++        return 0;
+       };
+-    }
+-    return out;
+-  }, block);
++      for (const el of b.querySelectorAll("[data-part]")) {
++        const raw = el.getAttribute("data-part") ?? "";
++        const part = aliases[raw] ?? raw;
++        const n = seen[part] ?? 0;
++        seen[part] = n + 1;
++        const r = el.getBoundingClientRect();
++        out[`${part}#${n}`] = {
++          x: r.x - origin.x,
++          y: r.y - origin.y,
++          width: r.width,
++          height: r.height,
++          scroller: scrollerOf(el),
++        };
++      }
++      return out;
++    },
++    [block, LOADING_ALIASES] as const,
++  );
+ }
+ 
+ for (const theme of THEMES) {
+   test.describe(theme, () => {
+     for (const t of LOADING_TEMPLATES) {
+       test(`template-${t.name}`, async ({ page }) => {
+         await openReference(page, `template-${t.name}`, theme, ORIGIN);
+         const failures: string[] = [];
+         for (const pair of t.pairs) {
++          const where = `${t.name} ${pair.loading}`;
+           const loaded = await partBoxes(page, `template-${t.name}-${pair.loaded}`);
+           const loading = await partBoxes(page, `template-${t.name}-${pair.loading}`);
+-          const shared = Object.keys(loading).filter(
+-            (k) => k in loaded && !IGNORED_PARTS.includes(k.split("#")[0] ?? k),
++          const nameOf = (k: string) => k.split("#")[0] ?? k;
++          const count = (boxes: Record<string, Box>, part: string) =>
++            Object.keys(boxes).filter((k) => nameOf(k) === part).length;
++          const loadedParts = [...new Set(Object.keys(loaded).map(nameOf))].filter(
++            (p) => !IGNORED_PARTS.includes(p),
+           );
+-          // A template whose loading block shares no part with the loaded one compares nothing.
+-          expect(shared.length, `${t.name} ${pair.loading}: no shared data-part`).toBeGreaterThan(
+-            0,
++          // Every loaded part, by name and count, is drawn while loading (unless it is data only).
++          for (const part of loadedParts) {
++            if (part in DATA_ONLY_PARTS || part in (pair.dataOnly ?? {})) continue;
++            const want = count(loaded, part);
++            const got = count(loading, part);
++            if (want !== got) {
++              failures.push(`${where}: ${part} appears ${got}x while loading, ${want}x loaded`);
++            }
++          }
++          // Parts of equal count pair by name and index.
++          const paired = Object.keys(loaded).filter(
++            (k) =>
++              k in loading &&
++              !IGNORED_PARTS.includes(nameOf(k)) &&
++              count(loaded, nameOf(k)) === count(loading, nameOf(k)),
+           );
+-          for (const k of shared) {
++          expect(paired.length, `${where}: no part pairs`).toBeGreaterThan(0);
++          // The exempt parts above a part, in the same scrolling region, move it by their height
++          // difference: it is corrected for. Parts outside (the action row, the status bar, the
++          // composer) are anchored to the window and compared as they are.
++          const exempt = paired.filter((k) => nameOf(k) in VARIABLE_HEIGHT);
++          const shift = (k: string) => {
++            const a = loaded[k] as Box;
++            const above = exempt.filter((e) => {
++              const b = loaded[e] as Box;
++              const overlapsX = b.x < a.x + a.width && a.x < b.x + b.width;
++              return e !== k && b.scroller === a.scroller && overlapsX && b.y + b.height <= a.y + 1;
++            });
++            // Count each region once: a box inside (or equal to) one already counted is skipped.
++            const taken: string[] = [];
++            for (const e of [...above].sort(
++              (x, y) => (loaded[y] as Box).height - (loaded[x] as Box).height,
++            )) {
++              const b = loaded[e] as Box;
++              const inside = taken.some((o) => {
++                const c = loaded[o] as Box;
++                return (
++                  c.x <= b.x + 1 &&
++                  c.y <= b.y + 1 &&
++                  c.x + c.width >= b.x + b.width - 1 &&
++                  c.y + c.height >= b.y + b.height - 1
++                );
++              });
++              if (!inside) taken.push(e);
++            }
++            return taken.reduce(
++              (sum, e) => sum + (loading[e] as Box).height - (loaded[e] as Box).height,
++              0,
++            );
++          };
++          for (const k of paired) {
+             const a = loaded[k] as Box;
+             const b = loading[k] as Box;
+-            const part = k.split("#")[0] ?? k;
+-            const variable = VARIABLE_HEIGHT.includes(part);
+-            const later = variable && !k.endsWith("#0");
+-            const props: (keyof Box)[] = variable
+-              ? later
+-                ? ["x", "width"]
+-                : ["x", "y", "width"]
+-              : ["x", "y", "width", "height"];
+-            if (VARIABLE_WIDTH.includes(part)) props.splice(props.indexOf("width"), 1);
++            const part = nameOf(k);
++            const props = (["x", "y", "width", "height"] as const).filter(
++              (p) =>
++                !(p === "height" && part in VARIABLE_HEIGHT) &&
++                !(p === "width" && part in VARIABLE_WIDTH),
++            );
+             for (const p of props) {
+-              if (Math.abs(a[p] - b[p]) > 1) {
++              const right = p === "x" && RIGHT_ALIGNED.includes(part);
++              const want = p === "y" ? a.y + shift(k) : right ? a.x + a.width : a[p];
++              const got = right ? b.x + b.width : b[p];
++              if (Math.abs(want - got) > 1) {
+                 failures.push(
+-                  `${t.name} ${pair.loading} ${k} ${p}: loaded ${a[p].toFixed(1)}, loading ${b[p].toFixed(1)}`,
++                  `${where} ${k} ${right ? "right edge" : p}: loaded ${want.toFixed(1)}, loading ${got.toFixed(1)}`,
+                 );
+               }
+             }
+           }
+         }
+         expect(failures).toEqual([]);
+       });
+     }
+   });
+ }
+diff --git a/packages/design/src/display/key-value.tsx b/packages/design/src/display/key-value.tsx
+index 27d2bcb1..0459ba0f 100644
+--- a/packages/design/src/display/key-value.tsx
++++ b/packages/design/src/display/key-value.tsx
+@@ -8,24 +8,24 @@ export type KeyValueProps = {
+    * `2`: the pairs flow into two columns (an overview card's figures, an extension's facts): each
+    * key `space.3` from its value, the second column `space.7` (32 px) from the first (spec §6.5).
+    */
+   columns?: 1 | 2;
+ };
+ 
+ /** 属性列表：键定宽 muted，值单行省略（spec §5.2 Inspector）。 */
+ export function KeyValue({ rows, keyWidth = "8ch", columns = 1 }: KeyValueProps) {
+   const grid = columns === 2;
+   return (
+-    <dl className="cb-kv" data-columns={grid ? "2" : undefined}>
++    <dl className="cb-kv" data-part="key-value" data-columns={grid ? "2" : undefined}>
+       {rows.map((r, i) => (
+         // biome-ignore lint/suspicious/noArrayIndexKey: 行顺序由调用方给定
+-        <div key={i} className="cb-kv-row">
++        <div key={i} className="cb-kv-row" data-part="key-value-row">
+           <dt className="cb-kv-key" style={grid ? undefined : { width: keyWidth }}>
+             {r.k}
+           </dt>
+           <dd
+             className="cb-kv-value"
+             title={typeof r.v === "string" || typeof r.v === "number" ? String(r.v) : undefined}
+           >
+             {r.v}
+           </dd>
+         </div>
+diff --git a/packages/design/src/layout/index.tsx b/packages/design/src/layout/index.tsx
+index 26e4f79e..e7133ffc 100644
+--- a/packages/design/src/layout/index.tsx
++++ b/packages/design/src/layout/index.tsx
+@@ -56,21 +56,21 @@ export function Card({
+   tone = "default",
+   children,
+ }: {
+   title?: ReactNode;
+   actions?: ReactNode;
+   /** danger：危险区块；accent：待人处理的对话卡片（审批 / 提问 / 连接，spec §6.9）。 */
+   tone?: "default" | "danger" | "accent";
+   children?: ReactNode;
+ }) {
+   return (
+-    <section className="cb-card" data-tone={tone}>
++    <section className="cb-card" data-part="card" data-tone={tone}>
+       {title || actions ? (
+         <header className="cb-card-head">
+           <div className="cb-card-title">{title}</div>
+           {actions ? <div className="cb-card-actions">{actions}</div> : null}
+         </header>
+       ) : null}
+       <div className="cb-card-body">{children}</div>
+     </section>
+   );
+ }
+diff --git a/packages/design/src/shell/page-header.tsx b/packages/design/src/shell/page-header.tsx
+index 0e49f634..c05d5ecf 100644
+--- a/packages/design/src/shell/page-header.tsx
++++ b/packages/design/src/shell/page-header.tsx
+@@ -250,21 +250,25 @@ export function PageHeader(p: PageHeaderProps) {
+             <p
+               className="cb-pageheader-description"
+               data-part="page-header-description"
+               title={p.description}
+             >
+               {p.description}
+             </p>
+           ) : null}
+         </div>
+         {actions.length > 0 ? (
+-          <div className="cb-pageheader-actions" data-responsive={pre && more ? "true" : undefined}>
++          <div
++            className="cb-pageheader-actions"
++            data-part="page-header-actions"
++            data-responsive={pre && more ? "true" : undefined}
++          >
+             {drawn}
+           </div>
+         ) : actionSlots > 0 ? (
+           <div className="cb-pageheader-actions" data-part="page-header-action-slots">
+             {Array.from({ length: actionSlots }, (_, i) => (
+               // biome-ignore lint/suspicious/noArrayIndexKey: the placeholders are positional
+               <SkeletonBox key={i} part="default" width={72} />
+             ))}
+           </div>
+         ) : null}

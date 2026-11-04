@@ -1,0 +1,1747 @@
+# Review package: ac0cb752..64ffc12a
+
+## Commits
+64ffc12a feat(design): pixel-animal avatar presets and the Avatar component
+
+## Files changed
+ apps/web/reference/render.spec.ts             |   2 +
+ apps/web/reference/review-page.mjs            |   4 +
+ apps/web/src/dev/catalog/reference-blocks.tsx |  45 +++++
+ apps/web/src/dev/catalog/routes.tsx           |   2 +
+ apps/web/visual/accepted.ts                   |   3 +
+ docs/design/reference/src/avatar.html         |  34 ++++
+ docs/design/reference/src/index.html          |   2 +
+ docs/design/reference/src/reference.css       | 103 +++++++++++
+ docs/design/spec.md                           |  58 +++++-
+ docs/design/tokens.json                       |  45 ++++-
+ packages/design/src/display/avatar-presets.ts | 245 ++++++++++++++++++++++++++
+ packages/design/src/display/avatar.tsx        | 203 +++++++++++++++++++++
+ packages/design/src/display/index.ts          |  14 ++
+ packages/design/src/display/logo.tsx          |   9 +-
+ packages/design/src/i18n.ts                   |  26 +++
+ packages/design/src/styles/display.css        | 116 ++++++++++++
+ packages/design/src/styles/tokens.css         |  58 ++++++
+ packages/design/src/tokens.ts                 |  29 +++
+ packages/design/test/avatar.test.tsx          | 211 ++++++++++++++++++++++
+ 19 files changed, 1202 insertions(+), 7 deletions(-)
+
+## Diff
+diff --git a/apps/web/reference/render.spec.ts b/apps/web/reference/render.spec.ts
+index a30d6800..d1426918 100644
+--- a/apps/web/reference/render.spec.ts
++++ b/apps/web/reference/render.spec.ts
+@@ -46,20 +46,22 @@ const PAGES = [
+   // the role pass: no-access state, danger zone, secret reveal
+   "roles",
+   // unslop fixes: a failure sentence with its raw text behind a toggle
+   "error-detail",
+   // forms and flows: the one file pick
+   "file-picker",
+   // the run row: a run's model, duration, tokens and outcome
+   "run-row",
+   // the working line: the walking capybara between a send and the first output
+   "working-line",
++  // agent avatars: the ten pixel animals, the sizes, the initial and the picker
++  "avatar",
+   // config forms: arrays of objects, compact rows, records
+   "repeater",
+   "field-row",
+   "key-value-editor",
+   // loading states: the skeleton primitives
+   "skeleton",
+   "template-detail",
+   "template-overview",
+   "template-inbox",
+   "template-trace",
+diff --git a/apps/web/reference/review-page.mjs b/apps/web/reference/review-page.mjs
+index 05c46cdc..8d4e88a9 100644
+--- a/apps/web/reference/review-page.mjs
++++ b/apps/web/reference/review-page.mjs
+@@ -54,20 +54,24 @@ const GROUPS = [
+       "property-section",
+       "right-panel",
+       "file-card",
+       "file-outputs",
+       "attachment-strip",
+       "file-preview",
+       "run-row",
+       "working-line",
+     ],
+   },
++  {
++    title: "Agents: avatar presets and picker",
++    components: ["avatar"],
++  },
+   {
+     title: "Role pass: no access, danger zone, secret reveal",
+     components: ["no-access", "danger-zone", "secret-reveal"],
+   },
+   {
+     title: "Config forms: repeater, field row, key / value editor",
+     components: ["repeater", "field-row", "key-value-editor"],
+   },
+   {
+     title: "Loading states: skeleton primitives and template loading states",
+diff --git a/apps/web/src/dev/catalog/reference-blocks.tsx b/apps/web/src/dev/catalog/reference-blocks.tsx
+index 73dc8b21..94f2f55b 100644
+--- a/apps/web/src/dev/catalog/reference-blocks.tsx
++++ b/apps/web/src/dev/catalog/reference-blocks.tsx
+@@ -1,15 +1,19 @@
+ "use client";
+ 
+ import {
+   ActionRow,
+   AppShell,
++  AVATAR_PRESET_IDS,
++  AVATAR_SIZES,
++  Avatar,
++  AvatarPicker,
+   Button,
+   CellTitle,
+   type Column,
+   DangerZone,
+   DangerZoneItem,
+   DataTable,
+   DesignProvider,
+   ErrorDetail,
+   Field,
+   type FieldShape,
+@@ -1118,20 +1122,60 @@ function filePickerBlocks(): ReactNode {
+       </RefBlock>
+       <RefBlock id="file-picker-chosen" width={640} pad>
+         <FilePicker dropLabel="松开即选择" onFiles={noop}>
+           <Text>plugin-todo-0.3.1.tgz · 48 KB</Text>
+         </FilePicker>
+       </RefBlock>
+     </>
+   );
+ }
+ 
++// ── Avatar (spec §6.30) ─────────────────────────────────────────────────────
++
++function avatarBlocks(): ReactNode {
++  return (
++    <>
++      <RefBlock id="avatar-presets" width={640} pad>
++        <Stack direction="row" gap={8} wrap>
++          {AVATAR_PRESET_IDS.map((id) => (
++            <Avatar key={id} value={{ kind: "preset", id }} name={id} size={40} />
++          ))}
++        </Stack>
++      </RefBlock>
++      <RefBlock id="avatar-sizes" width={640} pad>
++        <Stack direction="row" gap={12} align="end">
++          {AVATAR_SIZES.map((size) => (
++            <Avatar key={size} value={{ kind: "preset", id: "capybara" }} name="水豚" size={size} />
++          ))}
++        </Stack>
++      </RefBlock>
++      <RefBlock id="avatar-initial" width={640} pad>
++        <Stack direction="row" gap={12} align="end">
++          {AVATAR_SIZES.map((size) => (
++            <Avatar key={size} value={null} name="研究助手" size={size} />
++          ))}
++        </Stack>
++      </RefBlock>
++      <RefBlock id="avatar-picker" width={640} pad>
++        <AvatarPicker value={{ kind: "preset", id: "capybara" }} onChange={noop} onUpload={noop} />
++      </RefBlock>
++      <RefBlock id="avatar-picker-upload-off" width={640} pad>
++        <AvatarPicker
++          value={{ kind: "preset", id: "fox" }}
++          onChange={noop}
++          uploadOffReason="未配置对象存储，无法上传图片；预设头像仍可使用。"
++        />
++      </RefBlock>
++    </>
++  );
++}
++
+ export const REFERENCE_BLOCKS = {
+   button: buttonBlocks,
+   input: inputBlocks,
+   segmented: segmentedBlocks,
+   switch: switchBlocks,
+   "filter-chip": filterChipBlocks,
+   table: tableBlocks,
+   icon: iconBlocks,
+   sidebar: sidebarBlocks,
+   "page-header": pageHeaderBlocks,
+@@ -1142,12 +1186,13 @@ export const REFERENCE_BLOCKS = {
+   "template-list": templateListBlocks,
+   "template-form": templateFormBlocks,
+   ...TEMPLATE_LOADING_BLOCKS,
+   ...CONVERSATION_BLOCKS,
+   ...CONVERSATION_PAGE_BLOCKS,
+   "no-access": noAccessBlocks,
+   "danger-zone": dangerZoneBlocks,
+   "secret-reveal": secretRevealBlocks,
+   "error-detail": errorDetailBlocks,
+   "file-picker": filePickerBlocks,
++  avatar: avatarBlocks,
+   ...CONFIG_FORM_BLOCKS,
+ } as const;
+diff --git a/apps/web/src/dev/catalog/routes.tsx b/apps/web/src/dev/catalog/routes.tsx
+index 616b6e82..688e0880 100644
+--- a/apps/web/src/dev/catalog/routes.tsx
++++ b/apps/web/src/dev/catalog/routes.tsx
+@@ -88,20 +88,22 @@ export const REFERENCE_COMPONENTS = [
+   "template-conversation",
+   // the role pass
+   "no-access",
+   "danger-zone",
+   "secret-reveal",
+   // unslop fixes
+   "error-detail",
+   "file-picker",
+   "run-row",
+   "working-line",
++  // agent avatars (agent profile design §2.3)
++  "avatar",
+   // config forms
+   "repeater",
+   "field-row",
+   "key-value-editor",
+   // loading states
+   "skeleton",
+ ] as const;
+ 
+ export type ReferenceComponent = (typeof REFERENCE_COMPONENTS)[number];
+ 
+diff --git a/apps/web/visual/accepted.ts b/apps/web/visual/accepted.ts
+index a027a743..38bc3cc1 100644
+--- a/apps/web/visual/accepted.ts
++++ b/apps/web/visual/accepted.ts
+@@ -61,20 +61,23 @@ export const ACCEPTED: string[] = [
+   // unslop fixes (2026-11-03): blocks and size table in place; the reference PNGs and the
+   // side-by-side review wait for the reference-update and visual-update workflows
+   "error-detail",
+   "file-picker",
+   // the run row (Task 9): blocks and size table in place; the reference PNGs and the side-by-side
+   // review wait for the reference-update and visual-update workflows
+   "run-row",
+   // the working line (conversation send spec §2.2): blocks and size table in place; the reference
+   // PNGs and the side-by-side review wait for the reference-update and visual-update workflows
+   "working-line",
++  // agent avatars (agent profile design §2.3): blocks and size table in place; the reference PNGs
++  // and the side-by-side review wait for the reference-update and visual-update workflows
++  "avatar",
+   // config forms (Task 6): blocks and size tables in place; the reference PNGs and the
+   // side-by-side review wait for the reference-update and visual-update workflows
+   "repeater",
+   "field-row",
+   "key-value-editor",
+   // skeleton primitives (spec §6.29): blocks and size table in place; the reference PNGs and the
+   // side-by-side review wait for the reference-update and visual-update workflows
+   "skeleton",
+ ];
+ 
+diff --git a/docs/design/reference/src/avatar.html b/docs/design/reference/src/avatar.html
+new file mode 100644
+index 00000000..1b1ed7b7
+--- /dev/null
++++ b/docs/design/reference/src/avatar.html
+@@ -0,0 +1,34 @@
++<!doctype html>
++<html lang="zh-CN" data-theme="dark">
++<head>
++<meta charset="utf-8">
++<title>Avatar · reference</title>
++<link rel="stylesheet" href="/design/styles/fonts.css">
++<link rel="stylesheet" href="/design/styles/tokens.css">
++<link rel="stylesheet" href="reference.css">
++</head>
++<body>
++<main class="r-page">
++<h1>Avatar</h1>
++<p>An agent's picture (spec §6.30): the ten pixel animals as 12×12 bitmaps on their grounds, the five sizes, the initial square, and the picker with the upload tile on and off. Generated from packages/design/src/display/avatar-presets.ts.</p>
++<div class="r-blocks">
++<section data-ref-block="avatar-presets" style="width:640px" data-pad>
++  <div class="r-avatar-row" data-gap="8"><span class="r-avatar" data-part="avatar" data-kind="preset" data-preset="capybara" data-size="40" style="background:var(--cb-avatar-capybara-ground)" aria-hidden="true"><svg width="40" height="40" viewBox="-2 -2 40 40" shape-rendering="crispEdges" aria-hidden="true"><path style="fill:var(--cb-accent)" d="M24 3h3v3h-3zM21 6h3v3h-3zM24 6h3v3h-3zM27 6h3v3h-3zM6 9h3v3h-3zM9 9h3v3h-3zM12 9h3v3h-3zM15 9h3v3h-3zM18 9h3v3h-3zM21 9h3v3h-3zM24 9h3v3h-3zM27 9h3v3h-3zM30 9h3v3h-3zM33 9h3v3h-3zM3 12h3v3h-3zM6 12h3v3h-3zM9 12h3v3h-3zM12 12h3v3h-3zM15 12h3v3h-3zM18 12h3v3h-3zM21 12h3v3h-3zM24 12h3v3h-3zM30 12h3v3h-3zM33 12h3v3h-3zM3 15h3v3h-3zM6 15h3v3h-3zM9 15h3v3h-3zM12 15h3v3h-3zM15 15h3v3h-3zM18 15h3v3h-3zM21 15h3v3h-3zM24 15h3v3h-3zM27 15h3v3h-3zM30 15h3v3h-3zM33 15h3v3h-3zM3 18h3v3h-3zM6 18h3v3h-3zM9 18h3v3h-3zM12 18h3v3h-3zM15 18h3v3h-3zM18 18h3v3h-3zM21 18h3v3h-3zM24 18h3v3h-3zM27 18h3v3h-3zM30 18h3v3h-3zM33 18h3v3h-3zM3 21h3v3h-3zM6 21h3v3h-3zM9 21h3v3h-3zM12 21h3v3h-3zM15 21h3v3h-3zM18 21h3v3h-3zM21 21h3v3h-3zM24 21h3v3h-3zM27 21h3v3h-3zM30 21h3v3h-3zM6 24h3v3h-3zM9 24h3v3h-3zM12 24h3v3h-3zM15 24h3v3h-3zM18 24h3v3h-3zM21 24h3v3h-3zM24 24h3v3h-3zM27 24h3v3h-3zM6 27h3v3h-3zM9 27h3v3h-3zM15 27h3v3h-3zM24 27h3v3h-3zM27 27h3v3h-3zM6 30h3v3h-3zM9 30h3v3h-3zM15 30h3v3h-3zM24 30h3v3h-3zM27 30h3v3h-3z"/></svg></span><span class="r-avatar" data-part="avatar" data-kind="preset" data-preset="black-bear" data-size="40" style="background:var(--cb-avatar-black-bear-ground)" aria-hidden="true"><svg width="40" height="40" viewBox="-2 -2 40 40" shape-rendering="crispEdges" aria-hidden="true"><path style="fill:var(--cb-avatar-black)" d="M3 3h3v3h-3zM6 3h3v3h-3zM9 3h3v3h-3zM24 3h3v3h-3zM27 3h3v3h-3zM30 3h3v3h-3zM3 6h3v3h-3zM9 6h3v3h-3zM12 6h3v3h-3zM15 6h3v3h-3zM18 6h3v3h-3zM21 6h3v3h-3zM24 6h3v3h-3zM30 6h3v3h-3zM3 9h3v3h-3zM6 9h3v3h-3zM9 9h3v3h-3zM12 9h3v3h-3zM15 9h3v3h-3zM18 9h3v3h-3zM21 9h3v3h-3zM24 9h3v3h-3zM27 9h3v3h-3zM30 9h3v3h-3zM0 12h3v3h-3zM3 12h3v3h-3zM6 12h3v3h-3zM9 12h3v3h-3zM12 12h3v3h-3zM15 12h3v3h-3zM18 12h3v3h-3zM21 12h3v3h-3zM24 12h3v3h-3zM27 12h3v3h-3zM30 12h3v3h-3zM33 12h3v3h-3zM0 15h3v3h-3zM3 15h3v3h-3zM6 15h3v3h-3zM12 15h3v3h-3zM15 15h3v3h-3zM18 15h3v3h-3zM21 15h3v3h-3zM27 15h3v3h-3zM30 15h3v3h-3zM33 15h3v3h-3zM0 18h3v3h-3zM3 18h3v3h-3zM6 18h3v3h-3zM9 18h3v3h-3zM12 18h3v3h-3zM15 18h3v3h-3zM18 18h3v3h-3zM21 18h3v3h-3zM24 18h3v3h-3zM27 18h3v3h-3zM30 18h3v3h-3zM33 18h3v3h-3zM3 21h3v3h-3zM6 21h3v3h-3zM9 21h3v3h-3zM24 21h3v3h-3zM27 21h3v3h-3zM30 21h3v3h-3zM3 24h3v3h-3zM6 24h3v3h-3zM15 24h3v3h-3zM18 24h3v3h-3zM27 24h3v3h-3zM30 24h3v3h-3zM6 27h3v3h-3zM27 27h3v3h-3zM9 30h3v3h-3zM12 30h3v3h-3zM15 30h3v3h-3zM18 30h3v3h-3zM21 30h3v3h-3zM24 30h3v3h-3z"/><path style="fill:var(--cb-avatar-black-bear-snout)" d="M6 6h3v3h-3zM27 6h3v3h-3zM12 21h3v3h-3zM15 21h3v3h-3zM18 21h3v3h-3zM21 21h3v3h-3zM9 24h3v3h-3zM12 24h3v3h-3zM21 24h3v3h-3zM24 24h3v3h-3zM9 27h3v3h-3zM12 27h3v3h-3zM15 27h3v3h-3zM18 27h3v3h-3zM21 27h3v3h-3zM24 27h3v3h-3z"/><path style="fill:var(--cb-avatar-white)" d="M9 15h3v3h-3zM24 15h3v3h-3z"/></svg></span><span class="r-avatar" data-part="avatar" data-kind="preset" data-preset="panda" data-size="40" style="background:var(--cb-avatar-panda-ground)" aria-hidden="true"><svg width="40" height="40" viewBox="-2 -2 40 40" shape-rendering="crispEdges" aria-hidden="true"><path style="fill:var(--cb-avatar-white)" d="M9 6h3v3h-3zM12 6h3v3h-3zM15 6h3v3h-3zM18 6h3v3h-3zM21 6h3v3h-3zM24 6h3v3h-3zM6 9h3v3h-3zM9 9h3v3h-3zM12 9h3v3h-3zM15 9h3v3h-3zM18 9h3v3h-3zM21 9h3v3h-3zM24 9h3v3h-3zM27 9h3v3h-3zM0 12h3v3h-3zM3 12h3v3h-3zM6 12h3v3h-3zM9 12h3v3h-3zM12 12h3v3h-3zM15 12h3v3h-3zM18 12h3v3h-3zM21 12h3v3h-3zM24 12h3v3h-3zM27 12h3v3h-3zM30 12h3v3h-3zM33 12h3v3h-3zM0 15h3v3h-3zM3 15h3v3h-3zM12 15h3v3h-3zM15 15h3v3h-3zM18 15h3v3h-3zM21 15h3v3h-3zM30 15h3v3h-3zM33 15h3v3h-3zM0 18h3v3h-3zM9 18h3v3h-3zM12 18h3v3h-3zM15 18h3v3h-3zM18 18h3v3h-3zM21 18h3v3h-3zM24 18h3v3h-3zM33 18h3v3h-3zM0 21h3v3h-3zM3 21h3v3h-3zM6 21h3v3h-3zM9 21h3v3h-3zM12 21h3v3h-3zM15 21h3v3h-3zM18 21h3v3h-3zM21 21h3v3h-3zM24 21h3v3h-3zM27 21h3v3h-3zM30 21h3v3h-3zM33 21h3v3h-3zM3 24h3v3h-3zM6 24h3v3h-3zM9 24h3v3h-3zM12 24h3v3h-3zM21 24h3v3h-3zM24 24h3v3h-3zM27 24h3v3h-3zM30 24h3v3h-3zM6 27h3v3h-3zM9 27h3v3h-3zM12 27h3v3h-3zM15 27h3v3h-3zM18 27h3v3h-3zM21 27h3v3h-3zM24 27h3v3h-3zM27 27h3v3h-3zM9 30h3v3h-3zM12 30h3v3h-3zM15 30h3v3h-3zM18 30h3v3h-3zM21 30h3v3h-3zM24 30h3v3h-3z"/><path style="fill:var(--cb-avatar-black)" d="M3 3h3v3h-3zM6 3h3v3h-3zM9 3h3v3h-3zM24 3h3v3h-3zM27 3h3v3h-3zM30 3h3v3h-3zM3 6h3v3h-3zM6 6h3v3h-3zM27 6h3v3h-3zM30 6h3v3h-3zM3 9h3v3h-3zM30 9h3v3h-3zM6 15h3v3h-3zM9 15h3v3h-3zM24 15h3v3h-3zM27 15h3v3h-3zM3 18h3v3h-3zM6 18h3v3h-3zM27 18h3v3h-3zM30 18h3v3h-3zM15 24h3v3h-3zM18 24h3v3h-3z"/></svg></span><span class="r-avatar" data-part="avatar" data-kind="preset" data-preset="elephant" data-size="40" style="background:var(--cb-avatar-elephant-ground)" aria-hidden="true"><svg width="40" height="40" viewBox="-2 -2 40 40" shape-rendering="crispEdges" aria-hidden="true"><path style="fill:var(--cb-avatar-elephant)" d="M12 6h3v3h-3zM15 6h3v3h-3zM18 6h3v3h-3zM21 6h3v3h-3zM24 6h3v3h-3zM9 9h3v3h-3zM12 9h3v3h-3zM15 9h3v3h-3zM18 9h3v3h-3zM21 9h3v3h-3zM24 9h3v3h-3zM27 9h3v3h-3zM30 9h3v3h-3zM6 12h3v3h-3zM9 12h3v3h-3zM12 12h3v3h-3zM15 12h3v3h-3zM18 12h3v3h-3zM24 12h3v3h-3zM27 12h3v3h-3zM30 12h3v3h-3zM33 12h3v3h-3zM3 15h3v3h-3zM6 15h3v3h-3zM9 15h3v3h-3zM12 15h3v3h-3zM15 15h3v3h-3zM18 15h3v3h-3zM24 15h3v3h-3zM30 15h3v3h-3zM33 15h3v3h-3zM3 18h3v3h-3zM6 18h3v3h-3zM9 18h3v3h-3zM12 18h3v3h-3zM15 18h3v3h-3zM18 18h3v3h-3zM24 18h3v3h-3zM27 18h3v3h-3zM30 18h3v3h-3zM33 18h3v3h-3zM3 21h3v3h-3zM6 21h3v3h-3zM9 21h3v3h-3zM12 21h3v3h-3zM15 21h3v3h-3zM18 21h3v3h-3zM21 21h3v3h-3zM24 21h3v3h-3zM27 21h3v3h-3zM33 21h3v3h-3zM3 24h3v3h-3zM6 24h3v3h-3zM9 24h3v3h-3zM12 24h3v3h-3zM15 24h3v3h-3zM18 24h3v3h-3zM21 24h3v3h-3zM24 24h3v3h-3zM27 24h3v3h-3zM33 24h3v3h-3zM3 27h3v3h-3zM6 27h3v3h-3zM12 27h3v3h-3zM15 27h3v3h-3zM21 27h3v3h-3zM24 27h3v3h-3zM33 27h3v3h-3zM3 30h3v3h-3zM6 30h3v3h-3zM12 30h3v3h-3zM15 30h3v3h-3zM21 30h3v3h-3zM24 30h3v3h-3z"/><path style="fill:var(--cb-avatar-elephant-ear)" d="M21 12h3v3h-3zM21 15h3v3h-3zM21 18h3v3h-3z"/><path style="fill:var(--cb-avatar-black)" d="M27 15h3v3h-3z"/><path style="fill:var(--cb-avatar-white)" d="M30 21h3v3h-3z"/></svg></span><span class="r-avatar" data-part="avatar" data-kind="preset" data-preset="fox" data-size="40" style="background:var(--cb-avatar-fox-ground)" aria-hidden="true"><svg width="40" height="40" viewBox="-2 -2 40 40" shape-rendering="crispEdges" aria-hidden="true"><path style="fill:var(--cb-avatar-fox)" d="M3 3h3v3h-3zM30 3h3v3h-3zM3 6h3v3h-3zM6 6h3v3h-3zM27 6h3v3h-3zM30 6h3v3h-3zM3 9h3v3h-3zM9 9h3v3h-3zM24 9h3v3h-3zM30 9h3v3h-3zM3 12h3v3h-3zM6 12h3v3h-3zM9 12h3v3h-3zM12 12h3v3h-3zM15 12h3v3h-3zM18 12h3v3h-3zM21 12h3v3h-3zM24 12h3v3h-3zM27 12h3v3h-3zM30 12h3v3h-3zM0 15h3v3h-3zM3 15h3v3h-3zM6 15h3v3h-3zM9 15h3v3h-3zM12 15h3v3h-3zM15 15h3v3h-3zM18 15h3v3h-3zM21 15h3v3h-3zM24 15h3v3h-3zM27 15h3v3h-3zM30 15h3v3h-3zM33 15h3v3h-3zM0 18h3v3h-3zM3 18h3v3h-3zM9 18h3v3h-3zM12 18h3v3h-3zM15 18h3v3h-3zM18 18h3v3h-3zM21 18h3v3h-3zM24 18h3v3h-3zM30 18h3v3h-3zM33 18h3v3h-3zM3 21h3v3h-3zM6 21h3v3h-3zM9 21h3v3h-3zM12 21h3v3h-3zM15 21h3v3h-3zM18 21h3v3h-3zM21 21h3v3h-3zM24 21h3v3h-3zM27 21h3v3h-3zM30 21h3v3h-3zM9 24h3v3h-3zM12 24h3v3h-3zM15 24h3v3h-3zM18 24h3v3h-3zM21 24h3v3h-3zM24 24h3v3h-3z"/><path style="fill:var(--cb-avatar-fox-ear)" d="M6 9h3v3h-3zM27 9h3v3h-3z"/><path style="fill:var(--cb-avatar-white)" d="M0 21h3v3h-3zM33 21h3v3h-3zM3 24h3v3h-3zM6 24h3v3h-3zM27 24h3v3h-3zM30 24h3v3h-3zM6 27h3v3h-3zM9 27h3v3h-3zM12 27h3v3h-3zM15 27h3v3h-3zM18 27h3v3h-3zM21 27h3v3h-3zM24 27h3v3h-3zM27 27h3v3h-3zM12 30h3v3h-3zM21 30h3v3h-3z"/><path style="fill:var(--cb-avatar-black)" d="M6 18h3v3h-3zM27 18h3v3h-3zM15 30h3v3h-3zM18 30h3v3h-3z"/></svg></span><span class="r-avatar" data-part="avatar" data-kind="preset" data-preset="owl" data-size="40" style="background:var(--cb-avatar-owl-ground)" aria-hidden="true"><svg width="40" height="40" viewBox="-2 -2 40 40" shape-rendering="crispEdges" aria-hidden="true"><path style="fill:var(--cb-avatar-owl)" d="M3 3h3v3h-3zM30 3h3v3h-3zM3 6h3v3h-3zM6 6h3v3h-3zM9 6h3v3h-3zM12 6h3v3h-3zM15 6h3v3h-3zM18 6h3v3h-3zM21 6h3v3h-3zM24 6h3v3h-3zM27 6h3v3h-3zM30 6h3v3h-3zM3 9h3v3h-3zM15 9h3v3h-3zM18 9h3v3h-3zM30 9h3v3h-3zM3 12h3v3h-3zM15 12h3v3h-3zM18 12h3v3h-3zM30 12h3v3h-3zM3 15h3v3h-3zM30 15h3v3h-3zM3 18h3v3h-3zM6 18h3v3h-3zM9 18h3v3h-3zM12 18h3v3h-3zM21 18h3v3h-3zM24 18h3v3h-3zM27 18h3v3h-3zM30 18h3v3h-3zM3 21h3v3h-3zM30 21h3v3h-3zM3 24h3v3h-3zM30 24h3v3h-3zM6 27h3v3h-3zM27 27h3v3h-3zM9 30h3v3h-3zM12 30h3v3h-3zM15 30h3v3h-3zM18 30h3v3h-3zM21 30h3v3h-3zM24 30h3v3h-3z"/><path style="fill:var(--cb-avatar-owl-eye)" d="M6 9h3v3h-3zM9 9h3v3h-3zM12 9h3v3h-3zM21 9h3v3h-3zM24 9h3v3h-3zM27 9h3v3h-3zM6 12h3v3h-3zM12 12h3v3h-3zM21 12h3v3h-3zM27 12h3v3h-3zM6 15h3v3h-3zM9 15h3v3h-3zM12 15h3v3h-3zM21 15h3v3h-3zM24 15h3v3h-3zM27 15h3v3h-3z"/><path style="fill:var(--cb-avatar-black)" d="M9 12h3v3h-3zM24 12h3v3h-3z"/><path style="fill:var(--cb-avatar-beak)" d="M15 15h3v3h-3zM18 15h3v3h-3zM15 18h3v3h-3zM18 18h3v3h-3zM9 33h3v3h-3zM24 33h3v3h-3z"/><path style="fill:var(--cb-avatar-owl-belly)" d="M6 21h3v3h-3zM9 21h3v3h-3zM12 21h3v3h-3zM15 21h3v3h-3zM18 21h3v3h-3zM21 21h3v3h-3zM24 21h3v3h-3zM27 21h3v3h-3zM6 24h3v3h-3zM9 24h3v3h-3zM12 24h3v3h-3zM15 24h3v3h-3zM18 24h3v3h-3zM21 24h3v3h-3zM24 24h3v3h-3zM27 24h3v3h-3zM9 27h3v3h-3zM12 27h3v3h-3zM15 27h3v3h-3zM18 27h3v3h-3zM21 27h3v3h-3zM24 27h3v3h-3z"/></svg></span><span class="r-avatar" data-part="avatar" data-kind="preset" data-preset="penguin" data-size="40" style="background:var(--cb-avatar-penguin-ground)" aria-hidden="true"><svg width="40" height="40" viewBox="-2 -2 40 40" shape-rendering="crispEdges" aria-hidden="true"><path style="fill:var(--cb-avatar-black)" d="M12 3h3v3h-3zM15 3h3v3h-3zM18 3h3v3h-3zM21 3h3v3h-3zM9 6h3v3h-3zM12 6h3v3h-3zM15 6h3v3h-3zM18 6h3v3h-3zM21 6h3v3h-3zM24 6h3v3h-3zM9 9h3v3h-3zM15 9h3v3h-3zM18 9h3v3h-3zM24 9h3v3h-3zM9 12h3v3h-3zM12 12h3v3h-3zM21 12h3v3h-3zM24 12h3v3h-3zM6 15h3v3h-3zM9 15h3v3h-3zM24 15h3v3h-3zM27 15h3v3h-3zM3 18h3v3h-3zM6 18h3v3h-3zM27 18h3v3h-3zM30 18h3v3h-3zM3 21h3v3h-3zM6 21h3v3h-3zM27 21h3v3h-3zM30 21h3v3h-3zM6 24h3v3h-3zM27 24h3v3h-3zM6 27h3v3h-3zM27 27h3v3h-3zM9 30h3v3h-3zM24 30h3v3h-3z"/><path style="fill:var(--cb-avatar-white)" d="M12 9h3v3h-3zM21 9h3v3h-3zM12 15h3v3h-3zM15 15h3v3h-3zM18 15h3v3h-3zM21 15h3v3h-3zM9 18h3v3h-3zM12 18h3v3h-3zM15 18h3v3h-3zM18 18h3v3h-3zM21 18h3v3h-3zM24 18h3v3h-3zM9 21h3v3h-3zM12 21h3v3h-3zM15 21h3v3h-3zM18 21h3v3h-3zM21 21h3v3h-3zM24 21h3v3h-3zM9 24h3v3h-3zM12 24h3v3h-3zM15 24h3v3h-3zM18 24h3v3h-3zM21 24h3v3h-3zM24 24h3v3h-3zM9 27h3v3h-3zM12 27h3v3h-3zM15 27h3v3h-3zM18 27h3v3h-3zM21 27h3v3h-3zM24 27h3v3h-3zM12 30h3v3h-3zM15 30h3v3h-3zM18 30h3v3h-3zM21 30h3v3h-3z"/><path style="fill:var(--cb-avatar-beak)" d="M15 12h3v3h-3zM18 12h3v3h-3zM9 33h3v3h-3zM12 33h3v3h-3zM21 33h3v3h-3zM24 33h3v3h-3z"/></svg></span><span class="r-avatar" data-part="avatar" data-kind="preset" data-preset="rabbit" data-size="40" style="background:var(--cb-avatar-rabbit-ground)" aria-hidden="true"><svg width="40" height="40" viewBox="-2 -2 40 40" shape-rendering="crispEdges" aria-hidden="true"><path style="fill:var(--cb-avatar-rabbit)" d="M6 0h3v3h-3zM9 0h3v3h-3zM24 0h3v3h-3zM27 0h3v3h-3zM6 3h3v3h-3zM27 3h3v3h-3zM6 6h3v3h-3zM27 6h3v3h-3zM6 9h3v3h-3zM27 9h3v3h-3zM6 12h3v3h-3zM9 12h3v3h-3zM12 12h3v3h-3zM15 12h3v3h-3zM18 12h3v3h-3zM21 12h3v3h-3zM24 12h3v3h-3zM27 12h3v3h-3zM3 15h3v3h-3zM6 15h3v3h-3zM9 15h3v3h-3zM12 15h3v3h-3zM15 15h3v3h-3zM18 15h3v3h-3zM21 15h3v3h-3zM24 15h3v3h-3zM27 15h3v3h-3zM30 15h3v3h-3zM3 18h3v3h-3zM6 18h3v3h-3zM12 18h3v3h-3zM15 18h3v3h-3zM18 18h3v3h-3zM21 18h3v3h-3zM27 18h3v3h-3zM30 18h3v3h-3zM3 21h3v3h-3zM6 21h3v3h-3zM9 21h3v3h-3zM12 21h3v3h-3zM15 21h3v3h-3zM18 21h3v3h-3zM21 21h3v3h-3zM24 21h3v3h-3zM27 21h3v3h-3zM30 21h3v3h-3zM3 24h3v3h-3zM6 24h3v3h-3zM9 24h3v3h-3zM12 24h3v3h-3zM21 24h3v3h-3zM24 24h3v3h-3zM27 24h3v3h-3zM30 24h3v3h-3zM6 27h3v3h-3zM9 27h3v3h-3zM24 27h3v3h-3zM27 27h3v3h-3zM9 30h3v3h-3zM12 30h3v3h-3zM15 30h3v3h-3zM18 30h3v3h-3zM21 30h3v3h-3zM24 30h3v3h-3z"/><path style="fill:var(--cb-avatar-rabbit-pink)" d="M9 3h3v3h-3zM24 3h3v3h-3zM9 6h3v3h-3zM24 6h3v3h-3zM9 9h3v3h-3zM24 9h3v3h-3zM15 24h3v3h-3zM18 24h3v3h-3z"/><path style="fill:var(--cb-avatar-black)" d="M9 18h3v3h-3zM24 18h3v3h-3z"/><path style="fill:var(--cb-avatar-white)" d="M12 27h3v3h-3zM15 27h3v3h-3zM18 27h3v3h-3zM21 27h3v3h-3z"/></svg></span><span class="r-avatar" data-part="avatar" data-kind="preset" data-preset="turtle" data-size="40" style="background:var(--cb-avatar-turtle-ground)" aria-hidden="true"><svg width="40" height="40" viewBox="-2 -2 40 40" shape-rendering="crispEdges" aria-hidden="true"><path style="fill:var(--cb-avatar-turtle)" d="M9 9h3v3h-3zM12 9h3v3h-3zM15 9h3v3h-3zM18 9h3v3h-3zM21 9h3v3h-3zM6 12h3v3h-3zM12 12h3v3h-3zM18 12h3v3h-3zM24 12h3v3h-3zM3 15h3v3h-3zM6 15h3v3h-3zM9 15h3v3h-3zM12 15h3v3h-3zM15 15h3v3h-3zM18 15h3v3h-3zM21 15h3v3h-3zM24 15h3v3h-3zM27 15h3v3h-3zM3 18h3v3h-3zM9 18h3v3h-3zM15 18h3v3h-3zM21 18h3v3h-3zM27 18h3v3h-3zM3 21h3v3h-3zM6 21h3v3h-3zM9 21h3v3h-3zM12 21h3v3h-3zM15 21h3v3h-3zM18 21h3v3h-3zM21 21h3v3h-3zM24 21h3v3h-3zM27 21h3v3h-3z"/><path style="fill:var(--cb-avatar-turtle-shell)" d="M9 12h3v3h-3zM15 12h3v3h-3zM21 12h3v3h-3zM6 18h3v3h-3zM12 18h3v3h-3zM18 18h3v3h-3zM24 18h3v3h-3z"/><path style="fill:var(--cb-avatar-turtle-skin)" d="M30 12h3v3h-3zM33 12h3v3h-3zM30 15h3v3h-3zM30 18h3v3h-3zM33 18h3v3h-3zM0 21h3v3h-3zM30 21h3v3h-3zM6 24h3v3h-3zM9 24h3v3h-3zM24 24h3v3h-3zM27 24h3v3h-3zM6 27h3v3h-3zM9 27h3v3h-3zM24 27h3v3h-3zM27 27h3v3h-3z"/><path style="fill:var(--cb-avatar-black)" d="M33 15h3v3h-3z"/></svg></span><span class="r-avatar" data-part="avatar" data-kind="preset" data-preset="whale" data-size="40" style="background:var(--cb-avatar-whale-ground)" aria-hidden="true"><svg width="40" height="40" viewBox="-2 -2 40 40" shape-rendering="crispEdges" aria-hidden="true"><path style="fill:var(--cb-avatar-whale)" d="M0 12h3v3h-3zM3 12h3v3h-3zM12 12h3v3h-3zM15 12h3v3h-3zM18 12h3v3h-3zM21 12h3v3h-3zM24 12h3v3h-3zM27 12h3v3h-3zM3 15h3v3h-3zM6 15h3v3h-3zM9 15h3v3h-3zM12 15h3v3h-3zM15 15h3v3h-3zM18 15h3v3h-3zM21 15h3v3h-3zM24 15h3v3h-3zM27 15h3v3h-3zM30 15h3v3h-3zM6 18h3v3h-3zM9 18h3v3h-3zM12 18h3v3h-3zM15 18h3v3h-3zM18 18h3v3h-3zM21 18h3v3h-3zM24 18h3v3h-3zM30 18h3v3h-3zM33 18h3v3h-3zM6 21h3v3h-3zM9 21h3v3h-3zM12 21h3v3h-3zM15 21h3v3h-3zM18 21h3v3h-3zM21 21h3v3h-3zM24 21h3v3h-3zM27 21h3v3h-3zM30 21h3v3h-3zM33 21h3v3h-3zM9 24h3v3h-3zM30 24h3v3h-3zM12 27h3v3h-3zM15 27h3v3h-3zM18 27h3v3h-3zM21 27h3v3h-3zM24 27h3v3h-3zM27 27h3v3h-3z"/><path style="fill:var(--cb-avatar-whale-belly)" d="M12 24h3v3h-3zM15 24h3v3h-3zM18 24h3v3h-3zM21 24h3v3h-3zM24 24h3v3h-3zM27 24h3v3h-3z"/><path style="fill:var(--cb-avatar-whale-spout)" d="M18 6h3v3h-3zM24 6h3v3h-3zM21 9h3v3h-3z"/><path style="fill:var(--cb-avatar-black)" d="M27 18h3v3h-3z"/></svg></span></div>
++</section>
++<section data-ref-block="avatar-sizes" style="width:640px" data-pad>
++  <div class="r-avatar-row" data-gap="12"><span class="r-avatar" data-part="avatar" data-kind="preset" data-preset="capybara" data-size="16" style="background:var(--cb-avatar-capybara-ground)" aria-hidden="true"><svg width="16" height="16" viewBox="-2 -2 16 16" shape-rendering="crispEdges" aria-hidden="true"><path style="fill:var(--cb-accent)" d="M8 1h1v1h-1zM7 2h1v1h-1zM8 2h1v1h-1zM9 2h1v1h-1zM2 3h1v1h-1zM3 3h1v1h-1zM4 3h1v1h-1zM5 3h1v1h-1zM6 3h1v1h-1zM7 3h1v1h-1zM8 3h1v1h-1zM9 3h1v1h-1zM10 3h1v1h-1zM11 3h1v1h-1zM1 4h1v1h-1zM2 4h1v1h-1zM3 4h1v1h-1zM4 4h1v1h-1zM5 4h1v1h-1zM6 4h1v1h-1zM7 4h1v1h-1zM8 4h1v1h-1zM10 4h1v1h-1zM11 4h1v1h-1zM1 5h1v1h-1zM2 5h1v1h-1zM3 5h1v1h-1zM4 5h1v1h-1zM5 5h1v1h-1zM6 5h1v1h-1zM7 5h1v1h-1zM8 5h1v1h-1zM9 5h1v1h-1zM10 5h1v1h-1zM11 5h1v1h-1zM1 6h1v1h-1zM2 6h1v1h-1zM3 6h1v1h-1zM4 6h1v1h-1zM5 6h1v1h-1zM6 6h1v1h-1zM7 6h1v1h-1zM8 6h1v1h-1zM9 6h1v1h-1zM10 6h1v1h-1zM11 6h1v1h-1zM1 7h1v1h-1zM2 7h1v1h-1zM3 7h1v1h-1zM4 7h1v1h-1zM5 7h1v1h-1zM6 7h1v1h-1zM7 7h1v1h-1zM8 7h1v1h-1zM9 7h1v1h-1zM10 7h1v1h-1zM2 8h1v1h-1zM3 8h1v1h-1zM4 8h1v1h-1zM5 8h1v1h-1zM6 8h1v1h-1zM7 8h1v1h-1zM8 8h1v1h-1zM9 8h1v1h-1zM2 9h1v1h-1zM3 9h1v1h-1zM5 9h1v1h-1zM8 9h1v1h-1zM9 9h1v1h-1zM2 10h1v1h-1zM3 10h1v1h-1zM5 10h1v1h-1zM8 10h1v1h-1zM9 10h1v1h-1z"/></svg></span><span class="r-avatar" data-part="avatar" data-kind="preset" data-preset="capybara" data-size="22" style="background:var(--cb-avatar-capybara-ground)" aria-hidden="true"><svg width="22" height="22" viewBox="1 1 22 22" shape-rendering="crispEdges" aria-hidden="true"><path style="fill:var(--cb-accent)" d="M16 2h2v2h-2zM14 4h2v2h-2zM16 4h2v2h-2zM18 4h2v2h-2zM4 6h2v2h-2zM6 6h2v2h-2zM8 6h2v2h-2zM10 6h2v2h-2zM12 6h2v2h-2zM14 6h2v2h-2zM16 6h2v2h-2zM18 6h2v2h-2zM20 6h2v2h-2zM22 6h2v2h-2zM2 8h2v2h-2zM4 8h2v2h-2zM6 8h2v2h-2zM8 8h2v2h-2zM10 8h2v2h-2zM12 8h2v2h-2zM14 8h2v2h-2zM16 8h2v2h-2zM20 8h2v2h-2zM22 8h2v2h-2zM2 10h2v2h-2zM4 10h2v2h-2zM6 10h2v2h-2zM8 10h2v2h-2zM10 10h2v2h-2zM12 10h2v2h-2zM14 10h2v2h-2zM16 10h2v2h-2zM18 10h2v2h-2zM20 10h2v2h-2zM22 10h2v2h-2zM2 12h2v2h-2zM4 12h2v2h-2zM6 12h2v2h-2zM8 12h2v2h-2zM10 12h2v2h-2zM12 12h2v2h-2zM14 12h2v2h-2zM16 12h2v2h-2zM18 12h2v2h-2zM20 12h2v2h-2zM22 12h2v2h-2zM2 14h2v2h-2zM4 14h2v2h-2zM6 14h2v2h-2zM8 14h2v2h-2zM10 14h2v2h-2zM12 14h2v2h-2zM14 14h2v2h-2zM16 14h2v2h-2zM18 14h2v2h-2zM20 14h2v2h-2zM4 16h2v2h-2zM6 16h2v2h-2zM8 16h2v2h-2zM10 16h2v2h-2zM12 16h2v2h-2zM14 16h2v2h-2zM16 16h2v2h-2zM18 16h2v2h-2zM4 18h2v2h-2zM6 18h2v2h-2zM10 18h2v2h-2zM16 18h2v2h-2zM18 18h2v2h-2zM4 20h2v2h-2zM6 20h2v2h-2zM10 20h2v2h-2zM16 20h2v2h-2zM18 20h2v2h-2z"/></svg></span><span class="r-avatar" data-part="avatar" data-kind="preset" data-preset="capybara" data-size="28" style="background:var(--cb-avatar-capybara-ground)" aria-hidden="true"><svg width="28" height="28" viewBox="-2 -2 28 28" shape-rendering="crispEdges" aria-hidden="true"><path style="fill:var(--cb-accent)" d="M16 2h2v2h-2zM14 4h2v2h-2zM16 4h2v2h-2zM18 4h2v2h-2zM4 6h2v2h-2zM6 6h2v2h-2zM8 6h2v2h-2zM10 6h2v2h-2zM12 6h2v2h-2zM14 6h2v2h-2zM16 6h2v2h-2zM18 6h2v2h-2zM20 6h2v2h-2zM22 6h2v2h-2zM2 8h2v2h-2zM4 8h2v2h-2zM6 8h2v2h-2zM8 8h2v2h-2zM10 8h2v2h-2zM12 8h2v2h-2zM14 8h2v2h-2zM16 8h2v2h-2zM20 8h2v2h-2zM22 8h2v2h-2zM2 10h2v2h-2zM4 10h2v2h-2zM6 10h2v2h-2zM8 10h2v2h-2zM10 10h2v2h-2zM12 10h2v2h-2zM14 10h2v2h-2zM16 10h2v2h-2zM18 10h2v2h-2zM20 10h2v2h-2zM22 10h2v2h-2zM2 12h2v2h-2zM4 12h2v2h-2zM6 12h2v2h-2zM8 12h2v2h-2zM10 12h2v2h-2zM12 12h2v2h-2zM14 12h2v2h-2zM16 12h2v2h-2zM18 12h2v2h-2zM20 12h2v2h-2zM22 12h2v2h-2zM2 14h2v2h-2zM4 14h2v2h-2zM6 14h2v2h-2zM8 14h2v2h-2zM10 14h2v2h-2zM12 14h2v2h-2zM14 14h2v2h-2zM16 14h2v2h-2zM18 14h2v2h-2zM20 14h2v2h-2zM4 16h2v2h-2zM6 16h2v2h-2zM8 16h2v2h-2zM10 16h2v2h-2zM12 16h2v2h-2zM14 16h2v2h-2zM16 16h2v2h-2zM18 16h2v2h-2zM4 18h2v2h-2zM6 18h2v2h-2zM10 18h2v2h-2zM16 18h2v2h-2zM18 18h2v2h-2zM4 20h2v2h-2zM6 20h2v2h-2zM10 20h2v2h-2zM16 20h2v2h-2zM18 20h2v2h-2z"/></svg></span><span class="r-avatar" data-part="avatar" data-kind="preset" data-preset="capybara" data-size="40" style="background:var(--cb-avatar-capybara-ground)" aria-hidden="true"><svg width="40" height="40" viewBox="-2 -2 40 40" shape-rendering="crispEdges" aria-hidden="true"><path style="fill:var(--cb-accent)" d="M24 3h3v3h-3zM21 6h3v3h-3zM24 6h3v3h-3zM27 6h3v3h-3zM6 9h3v3h-3zM9 9h3v3h-3zM12 9h3v3h-3zM15 9h3v3h-3zM18 9h3v3h-3zM21 9h3v3h-3zM24 9h3v3h-3zM27 9h3v3h-3zM30 9h3v3h-3zM33 9h3v3h-3zM3 12h3v3h-3zM6 12h3v3h-3zM9 12h3v3h-3zM12 12h3v3h-3zM15 12h3v3h-3zM18 12h3v3h-3zM21 12h3v3h-3zM24 12h3v3h-3zM30 12h3v3h-3zM33 12h3v3h-3zM3 15h3v3h-3zM6 15h3v3h-3zM9 15h3v3h-3zM12 15h3v3h-3zM15 15h3v3h-3zM18 15h3v3h-3zM21 15h3v3h-3zM24 15h3v3h-3zM27 15h3v3h-3zM30 15h3v3h-3zM33 15h3v3h-3zM3 18h3v3h-3zM6 18h3v3h-3zM9 18h3v3h-3zM12 18h3v3h-3zM15 18h3v3h-3zM18 18h3v3h-3zM21 18h3v3h-3zM24 18h3v3h-3zM27 18h3v3h-3zM30 18h3v3h-3zM33 18h3v3h-3zM3 21h3v3h-3zM6 21h3v3h-3zM9 21h3v3h-3zM12 21h3v3h-3zM15 21h3v3h-3zM18 21h3v3h-3zM21 21h3v3h-3zM24 21h3v3h-3zM27 21h3v3h-3zM30 21h3v3h-3zM6 24h3v3h-3zM9 24h3v3h-3zM12 24h3v3h-3zM15 24h3v3h-3zM18 24h3v3h-3zM21 24h3v3h-3zM24 24h3v3h-3zM27 24h3v3h-3zM6 27h3v3h-3zM9 27h3v3h-3zM15 27h3v3h-3zM24 27h3v3h-3zM27 27h3v3h-3zM6 30h3v3h-3zM9 30h3v3h-3zM15 30h3v3h-3zM24 30h3v3h-3zM27 30h3v3h-3z"/></svg></span><span class="r-avatar" data-part="avatar" data-kind="preset" data-preset="capybara" data-size="64" style="background:var(--cb-avatar-capybara-ground)" aria-hidden="true"><svg width="64" height="64" viewBox="-2 -2 64 64" shape-rendering="crispEdges" aria-hidden="true"><path style="fill:var(--cb-accent)" d="M40 5h5v5h-5zM35 10h5v5h-5zM40 10h5v5h-5zM45 10h5v5h-5zM10 15h5v5h-5zM15 15h5v5h-5zM20 15h5v5h-5zM25 15h5v5h-5zM30 15h5v5h-5zM35 15h5v5h-5zM40 15h5v5h-5zM45 15h5v5h-5zM50 15h5v5h-5zM55 15h5v5h-5zM5 20h5v5h-5zM10 20h5v5h-5zM15 20h5v5h-5zM20 20h5v5h-5zM25 20h5v5h-5zM30 20h5v5h-5zM35 20h5v5h-5zM40 20h5v5h-5zM50 20h5v5h-5zM55 20h5v5h-5zM5 25h5v5h-5zM10 25h5v5h-5zM15 25h5v5h-5zM20 25h5v5h-5zM25 25h5v5h-5zM30 25h5v5h-5zM35 25h5v5h-5zM40 25h5v5h-5zM45 25h5v5h-5zM50 25h5v5h-5zM55 25h5v5h-5zM5 30h5v5h-5zM10 30h5v5h-5zM15 30h5v5h-5zM20 30h5v5h-5zM25 30h5v5h-5zM30 30h5v5h-5zM35 30h5v5h-5zM40 30h5v5h-5zM45 30h5v5h-5zM50 30h5v5h-5zM55 30h5v5h-5zM5 35h5v5h-5zM10 35h5v5h-5zM15 35h5v5h-5zM20 35h5v5h-5zM25 35h5v5h-5zM30 35h5v5h-5zM35 35h5v5h-5zM40 35h5v5h-5zM45 35h5v5h-5zM50 35h5v5h-5zM10 40h5v5h-5zM15 40h5v5h-5zM20 40h5v5h-5zM25 40h5v5h-5zM30 40h5v5h-5zM35 40h5v5h-5zM40 40h5v5h-5zM45 40h5v5h-5zM10 45h5v5h-5zM15 45h5v5h-5zM25 45h5v5h-5zM40 45h5v5h-5zM45 45h5v5h-5zM10 50h5v5h-5zM15 50h5v5h-5zM25 50h5v5h-5zM40 50h5v5h-5zM45 50h5v5h-5z"/></svg></span></div>
++</section>
++<section data-ref-block="avatar-initial" style="width:640px" data-pad>
++  <div class="r-avatar-row" data-gap="12"><span class="r-avatar" data-part="avatar" data-kind="initial" data-size="16" aria-hidden="true">研</span><span class="r-avatar" data-part="avatar" data-kind="initial" data-size="22" aria-hidden="true">研</span><span class="r-avatar" data-part="avatar" data-kind="initial" data-size="28" aria-hidden="true">研</span><span class="r-avatar" data-part="avatar" data-kind="initial" data-size="40" aria-hidden="true">研</span><span class="r-avatar" data-part="avatar" data-kind="initial" data-size="64" aria-hidden="true">研</span></div>
++</section>
++<section data-ref-block="avatar-picker" style="width:640px" data-pad>
++  <div class="r-avatar-picker" data-part="avatar-picker"><div class="r-avatar-picker-tiles"><div class="r-avatar-picker-group" role="radiogroup" aria-label="头像"><label class="r-avatar-tile" data-part="avatar-tile" data-state="checked"><input class="r-avatar-radio" type="radio" name="p-capybara" aria-label="水豚" checked><span class="r-avatar" data-part="avatar" data-kind="preset" data-preset="capybara" data-size="40" style="background:var(--cb-avatar-capybara-ground)" aria-hidden="true"><svg width="40" height="40" viewBox="-2 -2 40 40" shape-rendering="crispEdges" aria-hidden="true"><path style="fill:var(--cb-accent)" d="M24 3h3v3h-3zM21 6h3v3h-3zM24 6h3v3h-3zM27 6h3v3h-3zM6 9h3v3h-3zM9 9h3v3h-3zM12 9h3v3h-3zM15 9h3v3h-3zM18 9h3v3h-3zM21 9h3v3h-3zM24 9h3v3h-3zM27 9h3v3h-3zM30 9h3v3h-3zM33 9h3v3h-3zM3 12h3v3h-3zM6 12h3v3h-3zM9 12h3v3h-3zM12 12h3v3h-3zM15 12h3v3h-3zM18 12h3v3h-3zM21 12h3v3h-3zM24 12h3v3h-3zM30 12h3v3h-3zM33 12h3v3h-3zM3 15h3v3h-3zM6 15h3v3h-3zM9 15h3v3h-3zM12 15h3v3h-3zM15 15h3v3h-3zM18 15h3v3h-3zM21 15h3v3h-3zM24 15h3v3h-3zM27 15h3v3h-3zM30 15h3v3h-3zM33 15h3v3h-3zM3 18h3v3h-3zM6 18h3v3h-3zM9 18h3v3h-3zM12 18h3v3h-3zM15 18h3v3h-3zM18 18h3v3h-3zM21 18h3v3h-3zM24 18h3v3h-3zM27 18h3v3h-3zM30 18h3v3h-3zM33 18h3v3h-3zM3 21h3v3h-3zM6 21h3v3h-3zM9 21h3v3h-3zM12 21h3v3h-3zM15 21h3v3h-3zM18 21h3v3h-3zM21 21h3v3h-3zM24 21h3v3h-3zM27 21h3v3h-3zM30 21h3v3h-3zM6 24h3v3h-3zM9 24h3v3h-3zM12 24h3v3h-3zM15 24h3v3h-3zM18 24h3v3h-3zM21 24h3v3h-3zM24 24h3v3h-3zM27 24h3v3h-3zM6 27h3v3h-3zM9 27h3v3h-3zM15 27h3v3h-3zM24 27h3v3h-3zM27 27h3v3h-3zM6 30h3v3h-3zM9 30h3v3h-3zM15 30h3v3h-3zM24 30h3v3h-3zM27 30h3v3h-3z"/></svg></span></label><label class="r-avatar-tile" data-part="avatar-tile" data-state="unchecked"><input class="r-avatar-radio" type="radio" name="p-capybara" aria-label="黑熊"><span class="r-avatar" data-part="avatar" data-kind="preset" data-preset="black-bear" data-size="40" style="background:var(--cb-avatar-black-bear-ground)" aria-hidden="true"><svg width="40" height="40" viewBox="-2 -2 40 40" shape-rendering="crispEdges" aria-hidden="true"><path style="fill:var(--cb-avatar-black)" d="M3 3h3v3h-3zM6 3h3v3h-3zM9 3h3v3h-3zM24 3h3v3h-3zM27 3h3v3h-3zM30 3h3v3h-3zM3 6h3v3h-3zM9 6h3v3h-3zM12 6h3v3h-3zM15 6h3v3h-3zM18 6h3v3h-3zM21 6h3v3h-3zM24 6h3v3h-3zM30 6h3v3h-3zM3 9h3v3h-3zM6 9h3v3h-3zM9 9h3v3h-3zM12 9h3v3h-3zM15 9h3v3h-3zM18 9h3v3h-3zM21 9h3v3h-3zM24 9h3v3h-3zM27 9h3v3h-3zM30 9h3v3h-3zM0 12h3v3h-3zM3 12h3v3h-3zM6 12h3v3h-3zM9 12h3v3h-3zM12 12h3v3h-3zM15 12h3v3h-3zM18 12h3v3h-3zM21 12h3v3h-3zM24 12h3v3h-3zM27 12h3v3h-3zM30 12h3v3h-3zM33 12h3v3h-3zM0 15h3v3h-3zM3 15h3v3h-3zM6 15h3v3h-3zM12 15h3v3h-3zM15 15h3v3h-3zM18 15h3v3h-3zM21 15h3v3h-3zM27 15h3v3h-3zM30 15h3v3h-3zM33 15h3v3h-3zM0 18h3v3h-3zM3 18h3v3h-3zM6 18h3v3h-3zM9 18h3v3h-3zM12 18h3v3h-3zM15 18h3v3h-3zM18 18h3v3h-3zM21 18h3v3h-3zM24 18h3v3h-3zM27 18h3v3h-3zM30 18h3v3h-3zM33 18h3v3h-3zM3 21h3v3h-3zM6 21h3v3h-3zM9 21h3v3h-3zM24 21h3v3h-3zM27 21h3v3h-3zM30 21h3v3h-3zM3 24h3v3h-3zM6 24h3v3h-3zM15 24h3v3h-3zM18 24h3v3h-3zM27 24h3v3h-3zM30 24h3v3h-3zM6 27h3v3h-3zM27 27h3v3h-3zM9 30h3v3h-3zM12 30h3v3h-3zM15 30h3v3h-3zM18 30h3v3h-3zM21 30h3v3h-3zM24 30h3v3h-3z"/><path style="fill:var(--cb-avatar-black-bear-snout)" d="M6 6h3v3h-3zM27 6h3v3h-3zM12 21h3v3h-3zM15 21h3v3h-3zM18 21h3v3h-3zM21 21h3v3h-3zM9 24h3v3h-3zM12 24h3v3h-3zM21 24h3v3h-3zM24 24h3v3h-3zM9 27h3v3h-3zM12 27h3v3h-3zM15 27h3v3h-3zM18 27h3v3h-3zM21 27h3v3h-3zM24 27h3v3h-3z"/><path style="fill:var(--cb-avatar-white)" d="M9 15h3v3h-3zM24 15h3v3h-3z"/></svg></span></label><label class="r-avatar-tile" data-part="avatar-tile" data-state="unchecked"><input class="r-avatar-radio" type="radio" name="p-capybara" aria-label="熊猫"><span class="r-avatar" data-part="avatar" data-kind="preset" data-preset="panda" data-size="40" style="background:var(--cb-avatar-panda-ground)" aria-hidden="true"><svg width="40" height="40" viewBox="-2 -2 40 40" shape-rendering="crispEdges" aria-hidden="true"><path style="fill:var(--cb-avatar-white)" d="M9 6h3v3h-3zM12 6h3v3h-3zM15 6h3v3h-3zM18 6h3v3h-3zM21 6h3v3h-3zM24 6h3v3h-3zM6 9h3v3h-3zM9 9h3v3h-3zM12 9h3v3h-3zM15 9h3v3h-3zM18 9h3v3h-3zM21 9h3v3h-3zM24 9h3v3h-3zM27 9h3v3h-3zM0 12h3v3h-3zM3 12h3v3h-3zM6 12h3v3h-3zM9 12h3v3h-3zM12 12h3v3h-3zM15 12h3v3h-3zM18 12h3v3h-3zM21 12h3v3h-3zM24 12h3v3h-3zM27 12h3v3h-3zM30 12h3v3h-3zM33 12h3v3h-3zM0 15h3v3h-3zM3 15h3v3h-3zM12 15h3v3h-3zM15 15h3v3h-3zM18 15h3v3h-3zM21 15h3v3h-3zM30 15h3v3h-3zM33 15h3v3h-3zM0 18h3v3h-3zM9 18h3v3h-3zM12 18h3v3h-3zM15 18h3v3h-3zM18 18h3v3h-3zM21 18h3v3h-3zM24 18h3v3h-3zM33 18h3v3h-3zM0 21h3v3h-3zM3 21h3v3h-3zM6 21h3v3h-3zM9 21h3v3h-3zM12 21h3v3h-3zM15 21h3v3h-3zM18 21h3v3h-3zM21 21h3v3h-3zM24 21h3v3h-3zM27 21h3v3h-3zM30 21h3v3h-3zM33 21h3v3h-3zM3 24h3v3h-3zM6 24h3v3h-3zM9 24h3v3h-3zM12 24h3v3h-3zM21 24h3v3h-3zM24 24h3v3h-3zM27 24h3v3h-3zM30 24h3v3h-3zM6 27h3v3h-3zM9 27h3v3h-3zM12 27h3v3h-3zM15 27h3v3h-3zM18 27h3v3h-3zM21 27h3v3h-3zM24 27h3v3h-3zM27 27h3v3h-3zM9 30h3v3h-3zM12 30h3v3h-3zM15 30h3v3h-3zM18 30h3v3h-3zM21 30h3v3h-3zM24 30h3v3h-3z"/><path style="fill:var(--cb-avatar-black)" d="M3 3h3v3h-3zM6 3h3v3h-3zM9 3h3v3h-3zM24 3h3v3h-3zM27 3h3v3h-3zM30 3h3v3h-3zM3 6h3v3h-3zM6 6h3v3h-3zM27 6h3v3h-3zM30 6h3v3h-3zM3 9h3v3h-3zM30 9h3v3h-3zM6 15h3v3h-3zM9 15h3v3h-3zM24 15h3v3h-3zM27 15h3v3h-3zM3 18h3v3h-3zM6 18h3v3h-3zM27 18h3v3h-3zM30 18h3v3h-3zM15 24h3v3h-3zM18 24h3v3h-3z"/></svg></span></label><label class="r-avatar-tile" data-part="avatar-tile" data-state="unchecked"><input class="r-avatar-radio" type="radio" name="p-capybara" aria-label="大象"><span class="r-avatar" data-part="avatar" data-kind="preset" data-preset="elephant" data-size="40" style="background:var(--cb-avatar-elephant-ground)" aria-hidden="true"><svg width="40" height="40" viewBox="-2 -2 40 40" shape-rendering="crispEdges" aria-hidden="true"><path style="fill:var(--cb-avatar-elephant)" d="M12 6h3v3h-3zM15 6h3v3h-3zM18 6h3v3h-3zM21 6h3v3h-3zM24 6h3v3h-3zM9 9h3v3h-3zM12 9h3v3h-3zM15 9h3v3h-3zM18 9h3v3h-3zM21 9h3v3h-3zM24 9h3v3h-3zM27 9h3v3h-3zM30 9h3v3h-3zM6 12h3v3h-3zM9 12h3v3h-3zM12 12h3v3h-3zM15 12h3v3h-3zM18 12h3v3h-3zM24 12h3v3h-3zM27 12h3v3h-3zM30 12h3v3h-3zM33 12h3v3h-3zM3 15h3v3h-3zM6 15h3v3h-3zM9 15h3v3h-3zM12 15h3v3h-3zM15 15h3v3h-3zM18 15h3v3h-3zM24 15h3v3h-3zM30 15h3v3h-3zM33 15h3v3h-3zM3 18h3v3h-3zM6 18h3v3h-3zM9 18h3v3h-3zM12 18h3v3h-3zM15 18h3v3h-3zM18 18h3v3h-3zM24 18h3v3h-3zM27 18h3v3h-3zM30 18h3v3h-3zM33 18h3v3h-3zM3 21h3v3h-3zM6 21h3v3h-3zM9 21h3v3h-3zM12 21h3v3h-3zM15 21h3v3h-3zM18 21h3v3h-3zM21 21h3v3h-3zM24 21h3v3h-3zM27 21h3v3h-3zM33 21h3v3h-3zM3 24h3v3h-3zM6 24h3v3h-3zM9 24h3v3h-3zM12 24h3v3h-3zM15 24h3v3h-3zM18 24h3v3h-3zM21 24h3v3h-3zM24 24h3v3h-3zM27 24h3v3h-3zM33 24h3v3h-3zM3 27h3v3h-3zM6 27h3v3h-3zM12 27h3v3h-3zM15 27h3v3h-3zM21 27h3v3h-3zM24 27h3v3h-3zM33 27h3v3h-3zM3 30h3v3h-3zM6 30h3v3h-3zM12 30h3v3h-3zM15 30h3v3h-3zM21 30h3v3h-3zM24 30h3v3h-3z"/><path style="fill:var(--cb-avatar-elephant-ear)" d="M21 12h3v3h-3zM21 15h3v3h-3zM21 18h3v3h-3z"/><path style="fill:var(--cb-avatar-black)" d="M27 15h3v3h-3z"/><path style="fill:var(--cb-avatar-white)" d="M30 21h3v3h-3z"/></svg></span></label><label class="r-avatar-tile" data-part="avatar-tile" data-state="unchecked"><input class="r-avatar-radio" type="radio" name="p-capybara" aria-label="狐狸"><span class="r-avatar" data-part="avatar" data-kind="preset" data-preset="fox" data-size="40" style="background:var(--cb-avatar-fox-ground)" aria-hidden="true"><svg width="40" height="40" viewBox="-2 -2 40 40" shape-rendering="crispEdges" aria-hidden="true"><path style="fill:var(--cb-avatar-fox)" d="M3 3h3v3h-3zM30 3h3v3h-3zM3 6h3v3h-3zM6 6h3v3h-3zM27 6h3v3h-3zM30 6h3v3h-3zM3 9h3v3h-3zM9 9h3v3h-3zM24 9h3v3h-3zM30 9h3v3h-3zM3 12h3v3h-3zM6 12h3v3h-3zM9 12h3v3h-3zM12 12h3v3h-3zM15 12h3v3h-3zM18 12h3v3h-3zM21 12h3v3h-3zM24 12h3v3h-3zM27 12h3v3h-3zM30 12h3v3h-3zM0 15h3v3h-3zM3 15h3v3h-3zM6 15h3v3h-3zM9 15h3v3h-3zM12 15h3v3h-3zM15 15h3v3h-3zM18 15h3v3h-3zM21 15h3v3h-3zM24 15h3v3h-3zM27 15h3v3h-3zM30 15h3v3h-3zM33 15h3v3h-3zM0 18h3v3h-3zM3 18h3v3h-3zM9 18h3v3h-3zM12 18h3v3h-3zM15 18h3v3h-3zM18 18h3v3h-3zM21 18h3v3h-3zM24 18h3v3h-3zM30 18h3v3h-3zM33 18h3v3h-3zM3 21h3v3h-3zM6 21h3v3h-3zM9 21h3v3h-3zM12 21h3v3h-3zM15 21h3v3h-3zM18 21h3v3h-3zM21 21h3v3h-3zM24 21h3v3h-3zM27 21h3v3h-3zM30 21h3v3h-3zM9 24h3v3h-3zM12 24h3v3h-3zM15 24h3v3h-3zM18 24h3v3h-3zM21 24h3v3h-3zM24 24h3v3h-3z"/><path style="fill:var(--cb-avatar-fox-ear)" d="M6 9h3v3h-3zM27 9h3v3h-3z"/><path style="fill:var(--cb-avatar-white)" d="M0 21h3v3h-3zM33 21h3v3h-3zM3 24h3v3h-3zM6 24h3v3h-3zM27 24h3v3h-3zM30 24h3v3h-3zM6 27h3v3h-3zM9 27h3v3h-3zM12 27h3v3h-3zM15 27h3v3h-3zM18 27h3v3h-3zM21 27h3v3h-3zM24 27h3v3h-3zM27 27h3v3h-3zM12 30h3v3h-3zM21 30h3v3h-3z"/><path style="fill:var(--cb-avatar-black)" d="M6 18h3v3h-3zM27 18h3v3h-3zM15 30h3v3h-3zM18 30h3v3h-3z"/></svg></span></label><label class="r-avatar-tile" data-part="avatar-tile" data-state="unchecked"><input class="r-avatar-radio" type="radio" name="p-capybara" aria-label="猫头鹰"><span class="r-avatar" data-part="avatar" data-kind="preset" data-preset="owl" data-size="40" style="background:var(--cb-avatar-owl-ground)" aria-hidden="true"><svg width="40" height="40" viewBox="-2 -2 40 40" shape-rendering="crispEdges" aria-hidden="true"><path style="fill:var(--cb-avatar-owl)" d="M3 3h3v3h-3zM30 3h3v3h-3zM3 6h3v3h-3zM6 6h3v3h-3zM9 6h3v3h-3zM12 6h3v3h-3zM15 6h3v3h-3zM18 6h3v3h-3zM21 6h3v3h-3zM24 6h3v3h-3zM27 6h3v3h-3zM30 6h3v3h-3zM3 9h3v3h-3zM15 9h3v3h-3zM18 9h3v3h-3zM30 9h3v3h-3zM3 12h3v3h-3zM15 12h3v3h-3zM18 12h3v3h-3zM30 12h3v3h-3zM3 15h3v3h-3zM30 15h3v3h-3zM3 18h3v3h-3zM6 18h3v3h-3zM9 18h3v3h-3zM12 18h3v3h-3zM21 18h3v3h-3zM24 18h3v3h-3zM27 18h3v3h-3zM30 18h3v3h-3zM3 21h3v3h-3zM30 21h3v3h-3zM3 24h3v3h-3zM30 24h3v3h-3zM6 27h3v3h-3zM27 27h3v3h-3zM9 30h3v3h-3zM12 30h3v3h-3zM15 30h3v3h-3zM18 30h3v3h-3zM21 30h3v3h-3zM24 30h3v3h-3z"/><path style="fill:var(--cb-avatar-owl-eye)" d="M6 9h3v3h-3zM9 9h3v3h-3zM12 9h3v3h-3zM21 9h3v3h-3zM24 9h3v3h-3zM27 9h3v3h-3zM6 12h3v3h-3zM12 12h3v3h-3zM21 12h3v3h-3zM27 12h3v3h-3zM6 15h3v3h-3zM9 15h3v3h-3zM12 15h3v3h-3zM21 15h3v3h-3zM24 15h3v3h-3zM27 15h3v3h-3z"/><path style="fill:var(--cb-avatar-black)" d="M9 12h3v3h-3zM24 12h3v3h-3z"/><path style="fill:var(--cb-avatar-beak)" d="M15 15h3v3h-3zM18 15h3v3h-3zM15 18h3v3h-3zM18 18h3v3h-3zM9 33h3v3h-3zM24 33h3v3h-3z"/><path style="fill:var(--cb-avatar-owl-belly)" d="M6 21h3v3h-3zM9 21h3v3h-3zM12 21h3v3h-3zM15 21h3v3h-3zM18 21h3v3h-3zM21 21h3v3h-3zM24 21h3v3h-3zM27 21h3v3h-3zM6 24h3v3h-3zM9 24h3v3h-3zM12 24h3v3h-3zM15 24h3v3h-3zM18 24h3v3h-3zM21 24h3v3h-3zM24 24h3v3h-3zM27 24h3v3h-3zM9 27h3v3h-3zM12 27h3v3h-3zM15 27h3v3h-3zM18 27h3v3h-3zM21 27h3v3h-3zM24 27h3v3h-3z"/></svg></span></label><label class="r-avatar-tile" data-part="avatar-tile" data-state="unchecked"><input class="r-avatar-radio" type="radio" name="p-capybara" aria-label="企鹅"><span class="r-avatar" data-part="avatar" data-kind="preset" data-preset="penguin" data-size="40" style="background:var(--cb-avatar-penguin-ground)" aria-hidden="true"><svg width="40" height="40" viewBox="-2 -2 40 40" shape-rendering="crispEdges" aria-hidden="true"><path style="fill:var(--cb-avatar-black)" d="M12 3h3v3h-3zM15 3h3v3h-3zM18 3h3v3h-3zM21 3h3v3h-3zM9 6h3v3h-3zM12 6h3v3h-3zM15 6h3v3h-3zM18 6h3v3h-3zM21 6h3v3h-3zM24 6h3v3h-3zM9 9h3v3h-3zM15 9h3v3h-3zM18 9h3v3h-3zM24 9h3v3h-3zM9 12h3v3h-3zM12 12h3v3h-3zM21 12h3v3h-3zM24 12h3v3h-3zM6 15h3v3h-3zM9 15h3v3h-3zM24 15h3v3h-3zM27 15h3v3h-3zM3 18h3v3h-3zM6 18h3v3h-3zM27 18h3v3h-3zM30 18h3v3h-3zM3 21h3v3h-3zM6 21h3v3h-3zM27 21h3v3h-3zM30 21h3v3h-3zM6 24h3v3h-3zM27 24h3v3h-3zM6 27h3v3h-3zM27 27h3v3h-3zM9 30h3v3h-3zM24 30h3v3h-3z"/><path style="fill:var(--cb-avatar-white)" d="M12 9h3v3h-3zM21 9h3v3h-3zM12 15h3v3h-3zM15 15h3v3h-3zM18 15h3v3h-3zM21 15h3v3h-3zM9 18h3v3h-3zM12 18h3v3h-3zM15 18h3v3h-3zM18 18h3v3h-3zM21 18h3v3h-3zM24 18h3v3h-3zM9 21h3v3h-3zM12 21h3v3h-3zM15 21h3v3h-3zM18 21h3v3h-3zM21 21h3v3h-3zM24 21h3v3h-3zM9 24h3v3h-3zM12 24h3v3h-3zM15 24h3v3h-3zM18 24h3v3h-3zM21 24h3v3h-3zM24 24h3v3h-3zM9 27h3v3h-3zM12 27h3v3h-3zM15 27h3v3h-3zM18 27h3v3h-3zM21 27h3v3h-3zM24 27h3v3h-3zM12 30h3v3h-3zM15 30h3v3h-3zM18 30h3v3h-3zM21 30h3v3h-3z"/><path style="fill:var(--cb-avatar-beak)" d="M15 12h3v3h-3zM18 12h3v3h-3zM9 33h3v3h-3zM12 33h3v3h-3zM21 33h3v3h-3zM24 33h3v3h-3z"/></svg></span></label><label class="r-avatar-tile" data-part="avatar-tile" data-state="unchecked"><input class="r-avatar-radio" type="radio" name="p-capybara" aria-label="兔子"><span class="r-avatar" data-part="avatar" data-kind="preset" data-preset="rabbit" data-size="40" style="background:var(--cb-avatar-rabbit-ground)" aria-hidden="true"><svg width="40" height="40" viewBox="-2 -2 40 40" shape-rendering="crispEdges" aria-hidden="true"><path style="fill:var(--cb-avatar-rabbit)" d="M6 0h3v3h-3zM9 0h3v3h-3zM24 0h3v3h-3zM27 0h3v3h-3zM6 3h3v3h-3zM27 3h3v3h-3zM6 6h3v3h-3zM27 6h3v3h-3zM6 9h3v3h-3zM27 9h3v3h-3zM6 12h3v3h-3zM9 12h3v3h-3zM12 12h3v3h-3zM15 12h3v3h-3zM18 12h3v3h-3zM21 12h3v3h-3zM24 12h3v3h-3zM27 12h3v3h-3zM3 15h3v3h-3zM6 15h3v3h-3zM9 15h3v3h-3zM12 15h3v3h-3zM15 15h3v3h-3zM18 15h3v3h-3zM21 15h3v3h-3zM24 15h3v3h-3zM27 15h3v3h-3zM30 15h3v3h-3zM3 18h3v3h-3zM6 18h3v3h-3zM12 18h3v3h-3zM15 18h3v3h-3zM18 18h3v3h-3zM21 18h3v3h-3zM27 18h3v3h-3zM30 18h3v3h-3zM3 21h3v3h-3zM6 21h3v3h-3zM9 21h3v3h-3zM12 21h3v3h-3zM15 21h3v3h-3zM18 21h3v3h-3zM21 21h3v3h-3zM24 21h3v3h-3zM27 21h3v3h-3zM30 21h3v3h-3zM3 24h3v3h-3zM6 24h3v3h-3zM9 24h3v3h-3zM12 24h3v3h-3zM21 24h3v3h-3zM24 24h3v3h-3zM27 24h3v3h-3zM30 24h3v3h-3zM6 27h3v3h-3zM9 27h3v3h-3zM24 27h3v3h-3zM27 27h3v3h-3zM9 30h3v3h-3zM12 30h3v3h-3zM15 30h3v3h-3zM18 30h3v3h-3zM21 30h3v3h-3zM24 30h3v3h-3z"/><path style="fill:var(--cb-avatar-rabbit-pink)" d="M9 3h3v3h-3zM24 3h3v3h-3zM9 6h3v3h-3zM24 6h3v3h-3zM9 9h3v3h-3zM24 9h3v3h-3zM15 24h3v3h-3zM18 24h3v3h-3z"/><path style="fill:var(--cb-avatar-black)" d="M9 18h3v3h-3zM24 18h3v3h-3z"/><path style="fill:var(--cb-avatar-white)" d="M12 27h3v3h-3zM15 27h3v3h-3zM18 27h3v3h-3zM21 27h3v3h-3z"/></svg></span></label><label class="r-avatar-tile" data-part="avatar-tile" data-state="unchecked"><input class="r-avatar-radio" type="radio" name="p-capybara" aria-label="乌龟"><span class="r-avatar" data-part="avatar" data-kind="preset" data-preset="turtle" data-size="40" style="background:var(--cb-avatar-turtle-ground)" aria-hidden="true"><svg width="40" height="40" viewBox="-2 -2 40 40" shape-rendering="crispEdges" aria-hidden="true"><path style="fill:var(--cb-avatar-turtle)" d="M9 9h3v3h-3zM12 9h3v3h-3zM15 9h3v3h-3zM18 9h3v3h-3zM21 9h3v3h-3zM6 12h3v3h-3zM12 12h3v3h-3zM18 12h3v3h-3zM24 12h3v3h-3zM3 15h3v3h-3zM6 15h3v3h-3zM9 15h3v3h-3zM12 15h3v3h-3zM15 15h3v3h-3zM18 15h3v3h-3zM21 15h3v3h-3zM24 15h3v3h-3zM27 15h3v3h-3zM3 18h3v3h-3zM9 18h3v3h-3zM15 18h3v3h-3zM21 18h3v3h-3zM27 18h3v3h-3zM3 21h3v3h-3zM6 21h3v3h-3zM9 21h3v3h-3zM12 21h3v3h-3zM15 21h3v3h-3zM18 21h3v3h-3zM21 21h3v3h-3zM24 21h3v3h-3zM27 21h3v3h-3z"/><path style="fill:var(--cb-avatar-turtle-shell)" d="M9 12h3v3h-3zM15 12h3v3h-3zM21 12h3v3h-3zM6 18h3v3h-3zM12 18h3v3h-3zM18 18h3v3h-3zM24 18h3v3h-3z"/><path style="fill:var(--cb-avatar-turtle-skin)" d="M30 12h3v3h-3zM33 12h3v3h-3zM30 15h3v3h-3zM30 18h3v3h-3zM33 18h3v3h-3zM0 21h3v3h-3zM30 21h3v3h-3zM6 24h3v3h-3zM9 24h3v3h-3zM24 24h3v3h-3zM27 24h3v3h-3zM6 27h3v3h-3zM9 27h3v3h-3zM24 27h3v3h-3zM27 27h3v3h-3z"/><path style="fill:var(--cb-avatar-black)" d="M33 15h3v3h-3z"/></svg></span></label><label class="r-avatar-tile" data-part="avatar-tile" data-state="unchecked"><input class="r-avatar-radio" type="radio" name="p-capybara" aria-label="鲸"><span class="r-avatar" data-part="avatar" data-kind="preset" data-preset="whale" data-size="40" style="background:var(--cb-avatar-whale-ground)" aria-hidden="true"><svg width="40" height="40" viewBox="-2 -2 40 40" shape-rendering="crispEdges" aria-hidden="true"><path style="fill:var(--cb-avatar-whale)" d="M0 12h3v3h-3zM3 12h3v3h-3zM12 12h3v3h-3zM15 12h3v3h-3zM18 12h3v3h-3zM21 12h3v3h-3zM24 12h3v3h-3zM27 12h3v3h-3zM3 15h3v3h-3zM6 15h3v3h-3zM9 15h3v3h-3zM12 15h3v3h-3zM15 15h3v3h-3zM18 15h3v3h-3zM21 15h3v3h-3zM24 15h3v3h-3zM27 15h3v3h-3zM30 15h3v3h-3zM6 18h3v3h-3zM9 18h3v3h-3zM12 18h3v3h-3zM15 18h3v3h-3zM18 18h3v3h-3zM21 18h3v3h-3zM24 18h3v3h-3zM30 18h3v3h-3zM33 18h3v3h-3zM6 21h3v3h-3zM9 21h3v3h-3zM12 21h3v3h-3zM15 21h3v3h-3zM18 21h3v3h-3zM21 21h3v3h-3zM24 21h3v3h-3zM27 21h3v3h-3zM30 21h3v3h-3zM33 21h3v3h-3zM9 24h3v3h-3zM30 24h3v3h-3zM12 27h3v3h-3zM15 27h3v3h-3zM18 27h3v3h-3zM21 27h3v3h-3zM24 27h3v3h-3zM27 27h3v3h-3z"/><path style="fill:var(--cb-avatar-whale-belly)" d="M12 24h3v3h-3zM15 24h3v3h-3zM18 24h3v3h-3zM21 24h3v3h-3zM24 24h3v3h-3zM27 24h3v3h-3z"/><path style="fill:var(--cb-avatar-whale-spout)" d="M18 6h3v3h-3zM24 6h3v3h-3zM21 9h3v3h-3z"/><path style="fill:var(--cb-avatar-black)" d="M27 18h3v3h-3z"/></svg></span></label></div><button type="button" class="r-avatar-tile" data-part="avatar-upload" data-state="unchecked" aria-label="上传图片"><i data-icon="upload" data-size="16"></i></button></div></div>
++</section>
++<section data-ref-block="avatar-picker-upload-off" style="width:640px" data-pad>
++  <div class="r-avatar-picker" data-part="avatar-picker"><div class="r-avatar-picker-tiles"><div class="r-avatar-picker-group" role="radiogroup" aria-label="头像"><label class="r-avatar-tile" data-part="avatar-tile" data-state="unchecked"><input class="r-avatar-radio" type="radio" name="p-fox" aria-label="水豚"><span class="r-avatar" data-part="avatar" data-kind="preset" data-preset="capybara" data-size="40" style="background:var(--cb-avatar-capybara-ground)" aria-hidden="true"><svg width="40" height="40" viewBox="-2 -2 40 40" shape-rendering="crispEdges" aria-hidden="true"><path style="fill:var(--cb-accent)" d="M24 3h3v3h-3zM21 6h3v3h-3zM24 6h3v3h-3zM27 6h3v3h-3zM6 9h3v3h-3zM9 9h3v3h-3zM12 9h3v3h-3zM15 9h3v3h-3zM18 9h3v3h-3zM21 9h3v3h-3zM24 9h3v3h-3zM27 9h3v3h-3zM30 9h3v3h-3zM33 9h3v3h-3zM3 12h3v3h-3zM6 12h3v3h-3zM9 12h3v3h-3zM12 12h3v3h-3zM15 12h3v3h-3zM18 12h3v3h-3zM21 12h3v3h-3zM24 12h3v3h-3zM30 12h3v3h-3zM33 12h3v3h-3zM3 15h3v3h-3zM6 15h3v3h-3zM9 15h3v3h-3zM12 15h3v3h-3zM15 15h3v3h-3zM18 15h3v3h-3zM21 15h3v3h-3zM24 15h3v3h-3zM27 15h3v3h-3zM30 15h3v3h-3zM33 15h3v3h-3zM3 18h3v3h-3zM6 18h3v3h-3zM9 18h3v3h-3zM12 18h3v3h-3zM15 18h3v3h-3zM18 18h3v3h-3zM21 18h3v3h-3zM24 18h3v3h-3zM27 18h3v3h-3zM30 18h3v3h-3zM33 18h3v3h-3zM3 21h3v3h-3zM6 21h3v3h-3zM9 21h3v3h-3zM12 21h3v3h-3zM15 21h3v3h-3zM18 21h3v3h-3zM21 21h3v3h-3zM24 21h3v3h-3zM27 21h3v3h-3zM30 21h3v3h-3zM6 24h3v3h-3zM9 24h3v3h-3zM12 24h3v3h-3zM15 24h3v3h-3zM18 24h3v3h-3zM21 24h3v3h-3zM24 24h3v3h-3zM27 24h3v3h-3zM6 27h3v3h-3zM9 27h3v3h-3zM15 27h3v3h-3zM24 27h3v3h-3zM27 27h3v3h-3zM6 30h3v3h-3zM9 30h3v3h-3zM15 30h3v3h-3zM24 30h3v3h-3zM27 30h3v3h-3z"/></svg></span></label><label class="r-avatar-tile" data-part="avatar-tile" data-state="unchecked"><input class="r-avatar-radio" type="radio" name="p-fox" aria-label="黑熊"><span class="r-avatar" data-part="avatar" data-kind="preset" data-preset="black-bear" data-size="40" style="background:var(--cb-avatar-black-bear-ground)" aria-hidden="true"><svg width="40" height="40" viewBox="-2 -2 40 40" shape-rendering="crispEdges" aria-hidden="true"><path style="fill:var(--cb-avatar-black)" d="M3 3h3v3h-3zM6 3h3v3h-3zM9 3h3v3h-3zM24 3h3v3h-3zM27 3h3v3h-3zM30 3h3v3h-3zM3 6h3v3h-3zM9 6h3v3h-3zM12 6h3v3h-3zM15 6h3v3h-3zM18 6h3v3h-3zM21 6h3v3h-3zM24 6h3v3h-3zM30 6h3v3h-3zM3 9h3v3h-3zM6 9h3v3h-3zM9 9h3v3h-3zM12 9h3v3h-3zM15 9h3v3h-3zM18 9h3v3h-3zM21 9h3v3h-3zM24 9h3v3h-3zM27 9h3v3h-3zM30 9h3v3h-3zM0 12h3v3h-3zM3 12h3v3h-3zM6 12h3v3h-3zM9 12h3v3h-3zM12 12h3v3h-3zM15 12h3v3h-3zM18 12h3v3h-3zM21 12h3v3h-3zM24 12h3v3h-3zM27 12h3v3h-3zM30 12h3v3h-3zM33 12h3v3h-3zM0 15h3v3h-3zM3 15h3v3h-3zM6 15h3v3h-3zM12 15h3v3h-3zM15 15h3v3h-3zM18 15h3v3h-3zM21 15h3v3h-3zM27 15h3v3h-3zM30 15h3v3h-3zM33 15h3v3h-3zM0 18h3v3h-3zM3 18h3v3h-3zM6 18h3v3h-3zM9 18h3v3h-3zM12 18h3v3h-3zM15 18h3v3h-3zM18 18h3v3h-3zM21 18h3v3h-3zM24 18h3v3h-3zM27 18h3v3h-3zM30 18h3v3h-3zM33 18h3v3h-3zM3 21h3v3h-3zM6 21h3v3h-3zM9 21h3v3h-3zM24 21h3v3h-3zM27 21h3v3h-3zM30 21h3v3h-3zM3 24h3v3h-3zM6 24h3v3h-3zM15 24h3v3h-3zM18 24h3v3h-3zM27 24h3v3h-3zM30 24h3v3h-3zM6 27h3v3h-3zM27 27h3v3h-3zM9 30h3v3h-3zM12 30h3v3h-3zM15 30h3v3h-3zM18 30h3v3h-3zM21 30h3v3h-3zM24 30h3v3h-3z"/><path style="fill:var(--cb-avatar-black-bear-snout)" d="M6 6h3v3h-3zM27 6h3v3h-3zM12 21h3v3h-3zM15 21h3v3h-3zM18 21h3v3h-3zM21 21h3v3h-3zM9 24h3v3h-3zM12 24h3v3h-3zM21 24h3v3h-3zM24 24h3v3h-3zM9 27h3v3h-3zM12 27h3v3h-3zM15 27h3v3h-3zM18 27h3v3h-3zM21 27h3v3h-3zM24 27h3v3h-3z"/><path style="fill:var(--cb-avatar-white)" d="M9 15h3v3h-3zM24 15h3v3h-3z"/></svg></span></label><label class="r-avatar-tile" data-part="avatar-tile" data-state="unchecked"><input class="r-avatar-radio" type="radio" name="p-fox" aria-label="熊猫"><span class="r-avatar" data-part="avatar" data-kind="preset" data-preset="panda" data-size="40" style="background:var(--cb-avatar-panda-ground)" aria-hidden="true"><svg width="40" height="40" viewBox="-2 -2 40 40" shape-rendering="crispEdges" aria-hidden="true"><path style="fill:var(--cb-avatar-white)" d="M9 6h3v3h-3zM12 6h3v3h-3zM15 6h3v3h-3zM18 6h3v3h-3zM21 6h3v3h-3zM24 6h3v3h-3zM6 9h3v3h-3zM9 9h3v3h-3zM12 9h3v3h-3zM15 9h3v3h-3zM18 9h3v3h-3zM21 9h3v3h-3zM24 9h3v3h-3zM27 9h3v3h-3zM0 12h3v3h-3zM3 12h3v3h-3zM6 12h3v3h-3zM9 12h3v3h-3zM12 12h3v3h-3zM15 12h3v3h-3zM18 12h3v3h-3zM21 12h3v3h-3zM24 12h3v3h-3zM27 12h3v3h-3zM30 12h3v3h-3zM33 12h3v3h-3zM0 15h3v3h-3zM3 15h3v3h-3zM12 15h3v3h-3zM15 15h3v3h-3zM18 15h3v3h-3zM21 15h3v3h-3zM30 15h3v3h-3zM33 15h3v3h-3zM0 18h3v3h-3zM9 18h3v3h-3zM12 18h3v3h-3zM15 18h3v3h-3zM18 18h3v3h-3zM21 18h3v3h-3zM24 18h3v3h-3zM33 18h3v3h-3zM0 21h3v3h-3zM3 21h3v3h-3zM6 21h3v3h-3zM9 21h3v3h-3zM12 21h3v3h-3zM15 21h3v3h-3zM18 21h3v3h-3zM21 21h3v3h-3zM24 21h3v3h-3zM27 21h3v3h-3zM30 21h3v3h-3zM33 21h3v3h-3zM3 24h3v3h-3zM6 24h3v3h-3zM9 24h3v3h-3zM12 24h3v3h-3zM21 24h3v3h-3zM24 24h3v3h-3zM27 24h3v3h-3zM30 24h3v3h-3zM6 27h3v3h-3zM9 27h3v3h-3zM12 27h3v3h-3zM15 27h3v3h-3zM18 27h3v3h-3zM21 27h3v3h-3zM24 27h3v3h-3zM27 27h3v3h-3zM9 30h3v3h-3zM12 30h3v3h-3zM15 30h3v3h-3zM18 30h3v3h-3zM21 30h3v3h-3zM24 30h3v3h-3z"/><path style="fill:var(--cb-avatar-black)" d="M3 3h3v3h-3zM6 3h3v3h-3zM9 3h3v3h-3zM24 3h3v3h-3zM27 3h3v3h-3zM30 3h3v3h-3zM3 6h3v3h-3zM6 6h3v3h-3zM27 6h3v3h-3zM30 6h3v3h-3zM3 9h3v3h-3zM30 9h3v3h-3zM6 15h3v3h-3zM9 15h3v3h-3zM24 15h3v3h-3zM27 15h3v3h-3zM3 18h3v3h-3zM6 18h3v3h-3zM27 18h3v3h-3zM30 18h3v3h-3zM15 24h3v3h-3zM18 24h3v3h-3z"/></svg></span></label><label class="r-avatar-tile" data-part="avatar-tile" data-state="unchecked"><input class="r-avatar-radio" type="radio" name="p-fox" aria-label="大象"><span class="r-avatar" data-part="avatar" data-kind="preset" data-preset="elephant" data-size="40" style="background:var(--cb-avatar-elephant-ground)" aria-hidden="true"><svg width="40" height="40" viewBox="-2 -2 40 40" shape-rendering="crispEdges" aria-hidden="true"><path style="fill:var(--cb-avatar-elephant)" d="M12 6h3v3h-3zM15 6h3v3h-3zM18 6h3v3h-3zM21 6h3v3h-3zM24 6h3v3h-3zM9 9h3v3h-3zM12 9h3v3h-3zM15 9h3v3h-3zM18 9h3v3h-3zM21 9h3v3h-3zM24 9h3v3h-3zM27 9h3v3h-3zM30 9h3v3h-3zM6 12h3v3h-3zM9 12h3v3h-3zM12 12h3v3h-3zM15 12h3v3h-3zM18 12h3v3h-3zM24 12h3v3h-3zM27 12h3v3h-3zM30 12h3v3h-3zM33 12h3v3h-3zM3 15h3v3h-3zM6 15h3v3h-3zM9 15h3v3h-3zM12 15h3v3h-3zM15 15h3v3h-3zM18 15h3v3h-3zM24 15h3v3h-3zM30 15h3v3h-3zM33 15h3v3h-3zM3 18h3v3h-3zM6 18h3v3h-3zM9 18h3v3h-3zM12 18h3v3h-3zM15 18h3v3h-3zM18 18h3v3h-3zM24 18h3v3h-3zM27 18h3v3h-3zM30 18h3v3h-3zM33 18h3v3h-3zM3 21h3v3h-3zM6 21h3v3h-3zM9 21h3v3h-3zM12 21h3v3h-3zM15 21h3v3h-3zM18 21h3v3h-3zM21 21h3v3h-3zM24 21h3v3h-3zM27 21h3v3h-3zM33 21h3v3h-3zM3 24h3v3h-3zM6 24h3v3h-3zM9 24h3v3h-3zM12 24h3v3h-3zM15 24h3v3h-3zM18 24h3v3h-3zM21 24h3v3h-3zM24 24h3v3h-3zM27 24h3v3h-3zM33 24h3v3h-3zM3 27h3v3h-3zM6 27h3v3h-3zM12 27h3v3h-3zM15 27h3v3h-3zM21 27h3v3h-3zM24 27h3v3h-3zM33 27h3v3h-3zM3 30h3v3h-3zM6 30h3v3h-3zM12 30h3v3h-3zM15 30h3v3h-3zM21 30h3v3h-3zM24 30h3v3h-3z"/><path style="fill:var(--cb-avatar-elephant-ear)" d="M21 12h3v3h-3zM21 15h3v3h-3zM21 18h3v3h-3z"/><path style="fill:var(--cb-avatar-black)" d="M27 15h3v3h-3z"/><path style="fill:var(--cb-avatar-white)" d="M30 21h3v3h-3z"/></svg></span></label><label class="r-avatar-tile" data-part="avatar-tile" data-state="checked"><input class="r-avatar-radio" type="radio" name="p-fox" aria-label="狐狸" checked><span class="r-avatar" data-part="avatar" data-kind="preset" data-preset="fox" data-size="40" style="background:var(--cb-avatar-fox-ground)" aria-hidden="true"><svg width="40" height="40" viewBox="-2 -2 40 40" shape-rendering="crispEdges" aria-hidden="true"><path style="fill:var(--cb-avatar-fox)" d="M3 3h3v3h-3zM30 3h3v3h-3zM3 6h3v3h-3zM6 6h3v3h-3zM27 6h3v3h-3zM30 6h3v3h-3zM3 9h3v3h-3zM9 9h3v3h-3zM24 9h3v3h-3zM30 9h3v3h-3zM3 12h3v3h-3zM6 12h3v3h-3zM9 12h3v3h-3zM12 12h3v3h-3zM15 12h3v3h-3zM18 12h3v3h-3zM21 12h3v3h-3zM24 12h3v3h-3zM27 12h3v3h-3zM30 12h3v3h-3zM0 15h3v3h-3zM3 15h3v3h-3zM6 15h3v3h-3zM9 15h3v3h-3zM12 15h3v3h-3zM15 15h3v3h-3zM18 15h3v3h-3zM21 15h3v3h-3zM24 15h3v3h-3zM27 15h3v3h-3zM30 15h3v3h-3zM33 15h3v3h-3zM0 18h3v3h-3zM3 18h3v3h-3zM9 18h3v3h-3zM12 18h3v3h-3zM15 18h3v3h-3zM18 18h3v3h-3zM21 18h3v3h-3zM24 18h3v3h-3zM30 18h3v3h-3zM33 18h3v3h-3zM3 21h3v3h-3zM6 21h3v3h-3zM9 21h3v3h-3zM12 21h3v3h-3zM15 21h3v3h-3zM18 21h3v3h-3zM21 21h3v3h-3zM24 21h3v3h-3zM27 21h3v3h-3zM30 21h3v3h-3zM9 24h3v3h-3zM12 24h3v3h-3zM15 24h3v3h-3zM18 24h3v3h-3zM21 24h3v3h-3zM24 24h3v3h-3z"/><path style="fill:var(--cb-avatar-fox-ear)" d="M6 9h3v3h-3zM27 9h3v3h-3z"/><path style="fill:var(--cb-avatar-white)" d="M0 21h3v3h-3zM33 21h3v3h-3zM3 24h3v3h-3zM6 24h3v3h-3zM27 24h3v3h-3zM30 24h3v3h-3zM6 27h3v3h-3zM9 27h3v3h-3zM12 27h3v3h-3zM15 27h3v3h-3zM18 27h3v3h-3zM21 27h3v3h-3zM24 27h3v3h-3zM27 27h3v3h-3zM12 30h3v3h-3zM21 30h3v3h-3z"/><path style="fill:var(--cb-avatar-black)" d="M6 18h3v3h-3zM27 18h3v3h-3zM15 30h3v3h-3zM18 30h3v3h-3z"/></svg></span></label><label class="r-avatar-tile" data-part="avatar-tile" data-state="unchecked"><input class="r-avatar-radio" type="radio" name="p-fox" aria-label="猫头鹰"><span class="r-avatar" data-part="avatar" data-kind="preset" data-preset="owl" data-size="40" style="background:var(--cb-avatar-owl-ground)" aria-hidden="true"><svg width="40" height="40" viewBox="-2 -2 40 40" shape-rendering="crispEdges" aria-hidden="true"><path style="fill:var(--cb-avatar-owl)" d="M3 3h3v3h-3zM30 3h3v3h-3zM3 6h3v3h-3zM6 6h3v3h-3zM9 6h3v3h-3zM12 6h3v3h-3zM15 6h3v3h-3zM18 6h3v3h-3zM21 6h3v3h-3zM24 6h3v3h-3zM27 6h3v3h-3zM30 6h3v3h-3zM3 9h3v3h-3zM15 9h3v3h-3zM18 9h3v3h-3zM30 9h3v3h-3zM3 12h3v3h-3zM15 12h3v3h-3zM18 12h3v3h-3zM30 12h3v3h-3zM3 15h3v3h-3zM30 15h3v3h-3zM3 18h3v3h-3zM6 18h3v3h-3zM9 18h3v3h-3zM12 18h3v3h-3zM21 18h3v3h-3zM24 18h3v3h-3zM27 18h3v3h-3zM30 18h3v3h-3zM3 21h3v3h-3zM30 21h3v3h-3zM3 24h3v3h-3zM30 24h3v3h-3zM6 27h3v3h-3zM27 27h3v3h-3zM9 30h3v3h-3zM12 30h3v3h-3zM15 30h3v3h-3zM18 30h3v3h-3zM21 30h3v3h-3zM24 30h3v3h-3z"/><path style="fill:var(--cb-avatar-owl-eye)" d="M6 9h3v3h-3zM9 9h3v3h-3zM12 9h3v3h-3zM21 9h3v3h-3zM24 9h3v3h-3zM27 9h3v3h-3zM6 12h3v3h-3zM12 12h3v3h-3zM21 12h3v3h-3zM27 12h3v3h-3zM6 15h3v3h-3zM9 15h3v3h-3zM12 15h3v3h-3zM21 15h3v3h-3zM24 15h3v3h-3zM27 15h3v3h-3z"/><path style="fill:var(--cb-avatar-black)" d="M9 12h3v3h-3zM24 12h3v3h-3z"/><path style="fill:var(--cb-avatar-beak)" d="M15 15h3v3h-3zM18 15h3v3h-3zM15 18h3v3h-3zM18 18h3v3h-3zM9 33h3v3h-3zM24 33h3v3h-3z"/><path style="fill:var(--cb-avatar-owl-belly)" d="M6 21h3v3h-3zM9 21h3v3h-3zM12 21h3v3h-3zM15 21h3v3h-3zM18 21h3v3h-3zM21 21h3v3h-3zM24 21h3v3h-3zM27 21h3v3h-3zM6 24h3v3h-3zM9 24h3v3h-3zM12 24h3v3h-3zM15 24h3v3h-3zM18 24h3v3h-3zM21 24h3v3h-3zM24 24h3v3h-3zM27 24h3v3h-3zM9 27h3v3h-3zM12 27h3v3h-3zM15 27h3v3h-3zM18 27h3v3h-3zM21 27h3v3h-3zM24 27h3v3h-3z"/></svg></span></label><label class="r-avatar-tile" data-part="avatar-tile" data-state="unchecked"><input class="r-avatar-radio" type="radio" name="p-fox" aria-label="企鹅"><span class="r-avatar" data-part="avatar" data-kind="preset" data-preset="penguin" data-size="40" style="background:var(--cb-avatar-penguin-ground)" aria-hidden="true"><svg width="40" height="40" viewBox="-2 -2 40 40" shape-rendering="crispEdges" aria-hidden="true"><path style="fill:var(--cb-avatar-black)" d="M12 3h3v3h-3zM15 3h3v3h-3zM18 3h3v3h-3zM21 3h3v3h-3zM9 6h3v3h-3zM12 6h3v3h-3zM15 6h3v3h-3zM18 6h3v3h-3zM21 6h3v3h-3zM24 6h3v3h-3zM9 9h3v3h-3zM15 9h3v3h-3zM18 9h3v3h-3zM24 9h3v3h-3zM9 12h3v3h-3zM12 12h3v3h-3zM21 12h3v3h-3zM24 12h3v3h-3zM6 15h3v3h-3zM9 15h3v3h-3zM24 15h3v3h-3zM27 15h3v3h-3zM3 18h3v3h-3zM6 18h3v3h-3zM27 18h3v3h-3zM30 18h3v3h-3zM3 21h3v3h-3zM6 21h3v3h-3zM27 21h3v3h-3zM30 21h3v3h-3zM6 24h3v3h-3zM27 24h3v3h-3zM6 27h3v3h-3zM27 27h3v3h-3zM9 30h3v3h-3zM24 30h3v3h-3z"/><path style="fill:var(--cb-avatar-white)" d="M12 9h3v3h-3zM21 9h3v3h-3zM12 15h3v3h-3zM15 15h3v3h-3zM18 15h3v3h-3zM21 15h3v3h-3zM9 18h3v3h-3zM12 18h3v3h-3zM15 18h3v3h-3zM18 18h3v3h-3zM21 18h3v3h-3zM24 18h3v3h-3zM9 21h3v3h-3zM12 21h3v3h-3zM15 21h3v3h-3zM18 21h3v3h-3zM21 21h3v3h-3zM24 21h3v3h-3zM9 24h3v3h-3zM12 24h3v3h-3zM15 24h3v3h-3zM18 24h3v3h-3zM21 24h3v3h-3zM24 24h3v3h-3zM9 27h3v3h-3zM12 27h3v3h-3zM15 27h3v3h-3zM18 27h3v3h-3zM21 27h3v3h-3zM24 27h3v3h-3zM12 30h3v3h-3zM15 30h3v3h-3zM18 30h3v3h-3zM21 30h3v3h-3z"/><path style="fill:var(--cb-avatar-beak)" d="M15 12h3v3h-3zM18 12h3v3h-3zM9 33h3v3h-3zM12 33h3v3h-3zM21 33h3v3h-3zM24 33h3v3h-3z"/></svg></span></label><label class="r-avatar-tile" data-part="avatar-tile" data-state="unchecked"><input class="r-avatar-radio" type="radio" name="p-fox" aria-label="兔子"><span class="r-avatar" data-part="avatar" data-kind="preset" data-preset="rabbit" data-size="40" style="background:var(--cb-avatar-rabbit-ground)" aria-hidden="true"><svg width="40" height="40" viewBox="-2 -2 40 40" shape-rendering="crispEdges" aria-hidden="true"><path style="fill:var(--cb-avatar-rabbit)" d="M6 0h3v3h-3zM9 0h3v3h-3zM24 0h3v3h-3zM27 0h3v3h-3zM6 3h3v3h-3zM27 3h3v3h-3zM6 6h3v3h-3zM27 6h3v3h-3zM6 9h3v3h-3zM27 9h3v3h-3zM6 12h3v3h-3zM9 12h3v3h-3zM12 12h3v3h-3zM15 12h3v3h-3zM18 12h3v3h-3zM21 12h3v3h-3zM24 12h3v3h-3zM27 12h3v3h-3zM3 15h3v3h-3zM6 15h3v3h-3zM9 15h3v3h-3zM12 15h3v3h-3zM15 15h3v3h-3zM18 15h3v3h-3zM21 15h3v3h-3zM24 15h3v3h-3zM27 15h3v3h-3zM30 15h3v3h-3zM3 18h3v3h-3zM6 18h3v3h-3zM12 18h3v3h-3zM15 18h3v3h-3zM18 18h3v3h-3zM21 18h3v3h-3zM27 18h3v3h-3zM30 18h3v3h-3zM3 21h3v3h-3zM6 21h3v3h-3zM9 21h3v3h-3zM12 21h3v3h-3zM15 21h3v3h-3zM18 21h3v3h-3zM21 21h3v3h-3zM24 21h3v3h-3zM27 21h3v3h-3zM30 21h3v3h-3zM3 24h3v3h-3zM6 24h3v3h-3zM9 24h3v3h-3zM12 24h3v3h-3zM21 24h3v3h-3zM24 24h3v3h-3zM27 24h3v3h-3zM30 24h3v3h-3zM6 27h3v3h-3zM9 27h3v3h-3zM24 27h3v3h-3zM27 27h3v3h-3zM9 30h3v3h-3zM12 30h3v3h-3zM15 30h3v3h-3zM18 30h3v3h-3zM21 30h3v3h-3zM24 30h3v3h-3z"/><path style="fill:var(--cb-avatar-rabbit-pink)" d="M9 3h3v3h-3zM24 3h3v3h-3zM9 6h3v3h-3zM24 6h3v3h-3zM9 9h3v3h-3zM24 9h3v3h-3zM15 24h3v3h-3zM18 24h3v3h-3z"/><path style="fill:var(--cb-avatar-black)" d="M9 18h3v3h-3zM24 18h3v3h-3z"/><path style="fill:var(--cb-avatar-white)" d="M12 27h3v3h-3zM15 27h3v3h-3zM18 27h3v3h-3zM21 27h3v3h-3z"/></svg></span></label><label class="r-avatar-tile" data-part="avatar-tile" data-state="unchecked"><input class="r-avatar-radio" type="radio" name="p-fox" aria-label="乌龟"><span class="r-avatar" data-part="avatar" data-kind="preset" data-preset="turtle" data-size="40" style="background:var(--cb-avatar-turtle-ground)" aria-hidden="true"><svg width="40" height="40" viewBox="-2 -2 40 40" shape-rendering="crispEdges" aria-hidden="true"><path style="fill:var(--cb-avatar-turtle)" d="M9 9h3v3h-3zM12 9h3v3h-3zM15 9h3v3h-3zM18 9h3v3h-3zM21 9h3v3h-3zM6 12h3v3h-3zM12 12h3v3h-3zM18 12h3v3h-3zM24 12h3v3h-3zM3 15h3v3h-3zM6 15h3v3h-3zM9 15h3v3h-3zM12 15h3v3h-3zM15 15h3v3h-3zM18 15h3v3h-3zM21 15h3v3h-3zM24 15h3v3h-3zM27 15h3v3h-3zM3 18h3v3h-3zM9 18h3v3h-3zM15 18h3v3h-3zM21 18h3v3h-3zM27 18h3v3h-3zM3 21h3v3h-3zM6 21h3v3h-3zM9 21h3v3h-3zM12 21h3v3h-3zM15 21h3v3h-3zM18 21h3v3h-3zM21 21h3v3h-3zM24 21h3v3h-3zM27 21h3v3h-3z"/><path style="fill:var(--cb-avatar-turtle-shell)" d="M9 12h3v3h-3zM15 12h3v3h-3zM21 12h3v3h-3zM6 18h3v3h-3zM12 18h3v3h-3zM18 18h3v3h-3zM24 18h3v3h-3z"/><path style="fill:var(--cb-avatar-turtle-skin)" d="M30 12h3v3h-3zM33 12h3v3h-3zM30 15h3v3h-3zM30 18h3v3h-3zM33 18h3v3h-3zM0 21h3v3h-3zM30 21h3v3h-3zM6 24h3v3h-3zM9 24h3v3h-3zM24 24h3v3h-3zM27 24h3v3h-3zM6 27h3v3h-3zM9 27h3v3h-3zM24 27h3v3h-3zM27 27h3v3h-3z"/><path style="fill:var(--cb-avatar-black)" d="M33 15h3v3h-3z"/></svg></span></label><label class="r-avatar-tile" data-part="avatar-tile" data-state="unchecked"><input class="r-avatar-radio" type="radio" name="p-fox" aria-label="鲸"><span class="r-avatar" data-part="avatar" data-kind="preset" data-preset="whale" data-size="40" style="background:var(--cb-avatar-whale-ground)" aria-hidden="true"><svg width="40" height="40" viewBox="-2 -2 40 40" shape-rendering="crispEdges" aria-hidden="true"><path style="fill:var(--cb-avatar-whale)" d="M0 12h3v3h-3zM3 12h3v3h-3zM12 12h3v3h-3zM15 12h3v3h-3zM18 12h3v3h-3zM21 12h3v3h-3zM24 12h3v3h-3zM27 12h3v3h-3zM3 15h3v3h-3zM6 15h3v3h-3zM9 15h3v3h-3zM12 15h3v3h-3zM15 15h3v3h-3zM18 15h3v3h-3zM21 15h3v3h-3zM24 15h3v3h-3zM27 15h3v3h-3zM30 15h3v3h-3zM6 18h3v3h-3zM9 18h3v3h-3zM12 18h3v3h-3zM15 18h3v3h-3zM18 18h3v3h-3zM21 18h3v3h-3zM24 18h3v3h-3zM30 18h3v3h-3zM33 18h3v3h-3zM6 21h3v3h-3zM9 21h3v3h-3zM12 21h3v3h-3zM15 21h3v3h-3zM18 21h3v3h-3zM21 21h3v3h-3zM24 21h3v3h-3zM27 21h3v3h-3zM30 21h3v3h-3zM33 21h3v3h-3zM9 24h3v3h-3zM30 24h3v3h-3zM12 27h3v3h-3zM15 27h3v3h-3zM18 27h3v3h-3zM21 27h3v3h-3zM24 27h3v3h-3zM27 27h3v3h-3z"/><path style="fill:var(--cb-avatar-whale-belly)" d="M12 24h3v3h-3zM15 24h3v3h-3zM18 24h3v3h-3zM21 24h3v3h-3zM24 24h3v3h-3zM27 24h3v3h-3z"/><path style="fill:var(--cb-avatar-whale-spout)" d="M18 6h3v3h-3zM24 6h3v3h-3zM21 9h3v3h-3z"/><path style="fill:var(--cb-avatar-black)" d="M27 18h3v3h-3z"/></svg></span></label></div><button type="button" class="r-avatar-tile" data-part="avatar-upload" data-state="unchecked" aria-label="上传图片" disabled aria-describedby="r-reason"><i data-icon="upload" data-size="16"></i></button></div><p id="r-reason" class="r-avatar-picker-reason" data-part="avatar-upload-reason">未配置对象存储，无法上传图片；预设头像仍可使用。</p></div>
++</section>
++</div>
++</main>
++<script src="fill.js"></script>
++</body>
++</html>
+diff --git a/docs/design/reference/src/index.html b/docs/design/reference/src/index.html
+index 01b7d2ac..4ad3a303 100644
+--- a/docs/design/reference/src/index.html
++++ b/docs/design/reference/src/index.html
+@@ -7,14 +7,16 @@
+ <link rel="stylesheet" href="/design/styles/tokens.css">
+ <link rel="stylesheet" href="reference.css">
+ </head>
+ <body>
+ <main class="r-page r-index">
+ <h1>Reference set</h1>
+ <p>Sources of docs/design/reference/*.png. Rendered by apps/web/reference (pnpm --filter @capybara-hq/web reference:render).</p>
+ <ul><li><a href="sidebar.html">sidebar</a> (<a href="sidebar.html?theme=light">light</a>)</li><li><a href="page-header.html">page-header</a> (<a href="page-header.html?theme=light">light</a>)</li><li><a href="stat-cards.html">stat-cards</a> (<a href="stat-cards.html?theme=light">light</a>)</li><li><a href="status-bar.html">status-bar</a> (<a href="status-bar.html?theme=light">light</a>)</li><li><a href="action-row.html">action-row</a> (<a href="action-row.html?theme=light">light</a>)</li><li><a href="controls.html">controls</a> (<a href="controls.html?theme=light">light</a>)</li><li><a href="table.html">table</a> (<a href="table.html?theme=light">light</a>)</li><li><a href="icon.html">icon</a> (<a href="icon.html?theme=light">light</a>)</li><li><a href="template-list.html">template-list</a> (<a href="template-list.html?theme=light">light</a>)</li><li><a href="template-form.html">template-form</a> (<a href="template-form.html?theme=light">light</a>)</li><li><a href="roles.html">roles</a> (<a href="roles.html?theme=light">light</a>)</li><li><a href="error-detail.html">error-detail</a> (<a href="error-detail.html?theme=light">light</a>)</li><li><a href="file-picker.html">file-picker</a> (<a href="file-picker.html?theme=light">light</a>)</li><li><a href="repeater.html">repeater</a> (<a href="repeater.html?theme=light">light</a>)</li><li><a href="field-row.html">field-row</a> (<a href="field-row.html?theme=light">light</a>)</li><li><a href="key-value-editor.html">key-value-editor</a> (<a href="key-value-editor.html?theme=light">light</a>)</li><li><a href="skeleton.html">skeleton</a> (<a href="skeleton.html?theme=light">light</a>)</li><li><a href="template-detail.html">template-detail</a> (<a href="template-detail.html?theme=light">light</a>)</li><li><a href="template-overview.html">template-overview</a> (<a href="template-overview.html?theme=light">light</a>)</li><li><a href="template-inbox.html">template-inbox</a> (<a href="template-inbox.html?theme=light">light</a>)</li><li><a href="template-trace.html">template-trace</a> (<a href="template-trace.html?theme=light">light</a>)</li><li><a href="template-settings.html">template-settings</a> (<a href="template-settings.html?theme=light">light</a>)</li><li><a href="template-wizard.html">template-wizard</a> (<a href="template-wizard.html?theme=light">light</a>)</li><li><a href="template-auth.html">template-auth</a> (<a href="template-auth.html?theme=light">light</a>)</li></ul>
+ <h2 class="r-h2">Conversation page (UI refresh B)</h2>
+ <ul><li><a href="template-conversation.html">template-conversation</a> (<a href="template-conversation.html?theme=light">light</a>)</li><li><a href="title-bar.html">title-bar</a> (<a href="title-bar.html?theme=light">light</a>)</li><li><a href="composer.html">composer</a> (<a href="composer.html?theme=light">light</a>)</li><li><a href="picker-menu.html">picker-menu</a> (<a href="picker-menu.html?theme=light">light</a>)</li><li><a href="prose.html">prose</a> (<a href="prose.html?theme=light">light</a>)</li><li><a href="thinking-row.html">thinking-row</a> (<a href="thinking-row.html?theme=light">light</a>)</li><li><a href="user-bubble.html">user-bubble</a> (<a href="user-bubble.html?theme=light">light</a>)</li><li><a href="run-divider.html">run-divider</a> (<a href="run-divider.html?theme=light">light</a>)</li><li><a href="tool-group.html">tool-group</a> (<a href="tool-group.html?theme=light">light</a>)</li><li><a href="tool-row.html">tool-row</a> (<a href="tool-row.html?theme=light">light</a>)</li><li><a href="diff-block.html">diff-block</a> (<a href="diff-block.html?theme=light">light</a>)</li><li><a href="approval-block.html">approval-block</a> (<a href="approval-block.html?theme=light">light</a>)</li><li><a href="question-block.html">question-block</a> (<a href="question-block.html?theme=light">light</a>)</li><li><a href="connect-block.html">connect-block</a> (<a href="connect-block.html?theme=light">light</a>)</li><li><a href="queued-message.html">queued-message</a> (<a href="queued-message.html?theme=light">light</a>)</li><li><a href="subagent-group.html">subagent-group</a> (<a href="subagent-group.html?theme=light">light</a>)</li><li><a href="inline-card.html">inline-card</a> (<a href="inline-card.html?theme=light">light</a>)</li><li><a href="property-section.html">property-section</a> (<a href="property-section.html?theme=light">light</a>)</li><li><a href="right-panel.html">right-panel</a> (<a href="right-panel.html?theme=light">light</a>)</li><li><a href="file-card.html">file-card</a> (<a href="file-card.html?theme=light">light</a>)</li><li><a href="file-outputs.html">file-outputs</a> (<a href="file-outputs.html?theme=light">light</a>)</li><li><a href="attachment-strip.html">attachment-strip</a> (<a href="attachment-strip.html?theme=light">light</a>)</li><li><a href="file-preview.html">file-preview</a> (<a href="file-preview.html?theme=light">light</a>)</li><li><a href="run-row.html">run-row</a> (<a href="run-row.html?theme=light">light</a>)</li><li><a href="working-line.html">working-line</a> (<a href="working-line.html?theme=light">light</a>)</li></ul>
++<h2 class="r-h2">Agents</h2>
++<ul><li><a href="avatar.html">avatar</a> (<a href="avatar.html?theme=light">light</a>)</li></ul>
+ </main>
+ <script src="fill.js"></script>
+ </body>
+ </html>
+diff --git a/docs/design/reference/src/reference.css b/docs/design/reference/src/reference.css
+index 2a65a73b..1d08aeb8 100644
+--- a/docs/design/reference/src/reference.css
++++ b/docs/design/reference/src/reference.css
+@@ -1484,20 +1484,123 @@ textarea {
+ .r-working-mark {
+   display: inline-flex;
+   flex: none;
+   align-items: center;
+   justify-content: center;
+   width: var(--cb-control-default);
+   height: var(--cb-space-5);
+   color: var(--cb-accent);
+   fill: currentColor;
+ }
++/* Avatar (§6.30): a preset on its ground or the initial square; the picker's 48 px tiles. */
++.r-avatar-row {
++  display: flex;
++  flex-wrap: wrap;
++  align-items: flex-end;
++  gap: var(--cb-space-3);
++}
++.r-avatar-row[data-gap="8"] {
++  gap: var(--cb-space-2);
++}
++.r-avatar {
++  flex: none;
++  display: inline-flex;
++  align-items: center;
++  justify-content: center;
++  overflow: hidden;
++  border-radius: var(--cb-radius-sm);
++  background: var(--cb-selected);
++  color: var(--cb-ink);
++  font-weight: 600;
++  line-height: 1;
++}
++.r-avatar svg {
++  display: block;
++}
++.r-avatar[data-size="16"] {
++  width: 16px;
++  height: 16px;
++  font-size: var(--cb-type-micro-size);
++}
++.r-avatar[data-size="22"] {
++  width: 22px;
++  height: 22px;
++  font-size: var(--cb-type-micro-size);
++}
++.r-avatar[data-size="28"] {
++  width: 28px;
++  height: 28px;
++  font-size: var(--cb-type-small-size);
++}
++.r-avatar[data-size="40"] {
++  width: 40px;
++  height: 40px;
++  font-size: var(--cb-type-h2-size);
++}
++.r-avatar[data-size="64"] {
++  width: 64px;
++  height: 64px;
++  border-radius: var(--cb-radius-md);
++  font-size: var(--cb-type-h1-size);
++}
++.r-avatar-picker {
++  display: flex;
++  flex-direction: column;
++  gap: var(--cb-space-2);
++}
++.r-avatar-picker-tiles {
++  display: flex;
++  flex-wrap: wrap;
++  gap: var(--cb-space-2);
++}
++.r-avatar-picker-group {
++  display: contents;
++}
++.r-avatar-tile {
++  position: relative;
++  display: inline-flex;
++  align-items: center;
++  justify-content: center;
++  box-sizing: border-box;
++  width: 48px;
++  height: 48px;
++  padding: 3px;
++  border: 1px solid transparent;
++  border-radius: var(--cb-radius-md);
++  background: transparent;
++  color: var(--cb-muted);
++}
++.r-avatar-tile[data-state="checked"] {
++  border-color: var(--cb-line-strong);
++  background: var(--cb-selected);
++}
++.r-avatar-radio {
++  position: absolute;
++  inset: 0;
++  width: 100%;
++  height: 100%;
++  margin: 0;
++  opacity: 0;
++}
++.r-avatar-tile[data-part="avatar-upload"] {
++  border: 1px dashed var(--cb-line);
++}
++.r-avatar-tile[data-part="avatar-upload"]:disabled {
++  border-color: var(--cb-line-soft);
++  color: var(--cb-disabled);
++}
++.r-avatar-picker-reason {
++  margin: 0;
++  color: var(--cb-muted);
++  font-size: var(--cb-type-small-size);
++  line-height: var(--cb-type-small-line);
++}
+ .r-tbox {
+   overflow: hidden;
+   border-radius: var(--cb-radius-md);
+   background: var(--cb-panel);
+   color: var(--cb-muted);
+   font-size: var(--cb-type-small-size);
+   line-height: var(--cb-type-small-line);
+ }
+ .r-trow {
+   display: flex;
+diff --git a/docs/design/spec.md b/docs/design/spec.md
+index 0377b25d..0b1f0257 100644
+--- a/docs/design/spec.md
++++ b/docs/design/spec.md
+@@ -55,20 +55,22 @@ All colors, sizes and shadows may only be used through tokens. Color literals ar
+ | `on-accent` | `#0A0A0A` | `#FFFFFF` | Text and icons on a solid accent ground |
+ | `accent-tint` | accent @ 12% | accent @ 12% | Tinted accent ground (selected row) |
+ | `focus-ring` | `rgba(255,106,19,.25)` | `rgba(204,70,9,.18)` | 3px input focus halo (§2.5) |
+ | `ok` | `#3FD483` | `#16803F` | Success (rarely shown: success is not colored, §1) |
+ | `fail` | `#FF5C52` | `#C8302A` | Failure, error, danger |
+ | `warn` | `#F2C14B` | `#8F6500` | Needs a person: pending approval, unsaved, needs authorization |
+ | `scrim` | `rgba(0,0,0,.60)` | `rgba(10,10,10,.25)` | Behind dialogs, sheets and the sidebar drawer |
+ | `diff-add` | `rgba(63,212,131,.08)` | `rgba(22,128,63,.10)` | Added lines in a diff (ground only; the text stays `ink`) |
+ | `diff-del` | `rgba(255,92,82,.08)` | `rgba(207,34,46,.08)` | Removed lines in a diff (ground only) |
+ 
++The `avatar-*` tokens (dark and light, in `tokens.json`) are the animal palettes of the agent avatars (§3, §6.30) and are used by `Avatar` only. Each preset's main color against its ground is a `contrast` pair with a floor of 3:1 (WCAG 1.4.11 for graphics), in both themes; the panda's and the penguin's white against their grounds are pairs too.
++
+ The light accent is `#CC4609`: white text on it has a contrast of 4.72:1 (WCAG AA). The original `#FF6A13` with white text is only 2.87:1 and must not be used in the light theme. The text pairs that must meet AA are listed in `tokens.json` `contrast` and checked by `check:tokens`; a translucent token (`diff-add`, `diff-del`) is composited over `bg` before its pair is checked. `muted` must reach 4.5:1 on every ground secondary text sits on (`bg`, `panel`, `panel-2`, `sidebar`, `raised`, `selected`, `hover`; dark: 6.02:1 on `bg`, 5.02:1 on `selected`) and `disabled` 3:1 on the grounds a control sits on (dark: 3.86:1 on `bg`, 3.22:1 on `selected`; light: 3.57:1 on `bg`, 3.24:1 on `selected`).
+ 
+ ### 2.2 Fonts and type
+ 
+ Two fonts, each with a job:
+ 
+ | Font | Token | Used for |
+ |---|---|---|
+ | **Sarasa Mono SC** (OFL-1.1) | `--cb-font` | The UI skeleton: navigation, labels, buttons, tables, tool rows, key names, paths, numbers, the status bar |
+ | **Inter + Source Han Sans SC** (both OFL-1.1) | `--cb-font-prose` | Prose: running text a person reads as sentences: descriptions (page headers, form sections, object rows, plugin and extension descriptions), field help, dialog bodies, callouts, empty-state text, conversation prose, rendered Markdown, table description lines |
+@@ -192,21 +194,22 @@ Every size a component uses is a step of one of these scales, stored in `tokens.
+ .XXXXXXXXXXXXX
+ .XXXXXXXXXXXXX
+ .XXXXXXXXXXXX.
+ ..XXXXXXXXXX..
+ ..XX..X..XX...
+ ..XX..X..XX...
+ ```
+ 
+ - Wordmark: `CAPYBARA`, 600, 8 away from the Logo.
+ - **Dither dot matrix**: used only for the backgrounds on both sides of auth pages and (optionally) the PageHeader corner of the overview page; 4px squares in `line`, density decreasing from one side to the other, greyscale only (no accent squares). No other page may use it.
+-- No illustrations, gradients, frosted glass or emoji.
++- **Agent avatars** (§6.30) are the one place with pictures and their own colors: the ten pixel animals, drawn like the Logo (a 12×12 bitmap of solid squares, `crispEdges`), each in its animal's palette on a soft ground (the `avatar-*` color tokens, and `accent` for the capybara). Nothing else in the UI may use the animal palettes.
++- Apart from agent avatars: no illustrations, gradients, frosted glass or emoji.
+ 
+ ---
+ 
+ ## 4. App Shell (system layout)
+ 
+ Every page (except auth pages, §5 T10) is **Sidebar | content area**. The content area holds, top to bottom, in a fixed order:
+ 
+ | Layer | Height | Required | Content |
+ |---|---|---|---|
+ | Drawer menu bar | `row.roomy` | Only below 960 | Menu button that opens the sidebar drawer, page title; below 640 its buttons are 40 px tap targets and it is padded 0 `space.1`, so their icons sit on the 16 px content edge |
+@@ -2069,20 +2072,73 @@ States: `text`, `box`, `group`
+ | skeleton-bar | text | border-radius | radius.sm |
+ | skeleton-box[data-box=dense] | box | height | control.dense |
+ | skeleton-box[data-box=default] | box | height | control.default |
+ | skeleton-box[data-box=prominent] | box | height | control.prominent |
+ | skeleton-box[data-box=mark] | box | width | 36 |
+ | skeleton-box[data-box=mark] | box | height | 36 |
+ | skeleton-box[data-box=default] | box | background-color | color.selected |
+ | skeleton-text[data-size=body] | group | height | type.body.line |
+ | skeleton-box[data-box=default] | group | height | control.default |
+ 
++### 6.30 Avatar and AvatarPicker
++
++An agent's picture, everywhere an agent appears (the new conversation page, the agent picker, the agent list rows, the agent page head, the conversation title bar, the sidebar group titles; agent profile design §2.3).
++
++- `Avatar({ value, name, size })`, `size` 16, 22, 28, 40 or 64, a square of that size. `value` is one of:
++  - `{ kind: "preset", id }`: one of the ten pixel animals (`AVATAR_PRESETS`): 水豚 / Capybara, 黑熊 / Black bear, 熊猫 / Panda, 大象 / Elephant, 狐狸 / Fox, 猫头鹰 / Owl, 企鹅 / Penguin, 兔子 / Rabbit, 乌龟 / Turtle, 鲸 / Whale (ids `capybara`, `black-bear`, `panda`, `elephant`, `fox`, `owl`, `penguin`, `rabbit`, `turtle`, `whale`). Each is a 12×12 bitmap drawn like the Logo (§3: solid squares, `shape-rendering: crispEdges`, no outline, no anti-aliasing), one SVG path per palette color, on its ground color. The palette values and the ground are token names (`avatar-*`, and `accent` for the capybara, §2.1), so no color literal is involved. The pixel unit is the whole number nearest to `size / 12` (16: 1, 22: 2, 28: 2, 40: 3, 64: 5), the drawing centred in the square; at 22 the 24 px drawing is clipped 1 px on each side (the bitmaps keep their outer ring mostly ground).
++  - `{ kind: "image", src }`: the uploaded image, covering the square; when it fails to load, the initial.
++  - `null`: the initial square, the avatar tile rule of §6.17: the first grapheme of `name` (`initialOf`), 600, `ink` on `selected`; `micro` at 16 and 22, `small` at 28, the h2 size at 40, the h1 size at 64.
++  - Radius `sm`, `md` at 64. The avatar is decorative (`aria-hidden`): the name is always written next to it.
++- `AvatarPicker({ value, onChange, onUpload?, uploadOffReason?, label? })`: the ten presets as one radio group (named `label`, default "头像" / "Avatar"; each radio named by its preset's name), 48 px tiles (a 40 avatar, 3 px padding, a 1 px border, radius `md`) `space.2` apart and wrapping, then an upload tile (`upload` icon, "上传图片" / "Upload image"; `line` dashed border) that opens a file dialog for png, jpg or webp and passes the file to `onUpload` (cropping and the 2 MB limit are the caller's). A checked tile is neutral (§2.3): `selected` ground and a `line-strong` border; hover is the `hover` ground; keyboard focus the accent ring. When `value` is an image, the upload tile shows it and is the checked one. Without `onUpload` the upload tile is disabled (`disabled` icon color) and `uploadOffReason` (default "这里不能上传图片。" / "Uploading is not available here.") is written under the tiles in `small` `muted`, and describes the tile; presets still work.
++
++<!-- states: avatar -->
++States: `presets`, `sizes`, `initial`, `picker`, `picker-upload-off`
++
++<!-- size-table: avatar -->
++| Part | State | Property | Value |
++|---|---|---|---|
++| avatar | presets | width | 40 |
++| avatar | presets | height | 40 |
++| avatar | presets | border-top-left-radius | radius.sm |
++| avatar[data-preset=capybara] | presets | background-color | color.avatar-capybara-ground |
++| avatar[data-preset=black-bear] | presets | background-color | color.avatar-black-bear-ground |
++| avatar[data-preset=panda] | presets | background-color | color.avatar-panda-ground |
++| avatar[data-preset=elephant] | presets | background-color | color.avatar-elephant-ground |
++| avatar[data-preset=fox] | presets | background-color | color.avatar-fox-ground |
++| avatar[data-preset=owl] | presets | background-color | color.avatar-owl-ground |
++| avatar[data-preset=penguin] | presets | background-color | color.avatar-penguin-ground |
++| avatar[data-preset=rabbit] | presets | background-color | color.avatar-rabbit-ground |
++| avatar[data-preset=turtle] | presets | background-color | color.avatar-turtle-ground |
++| avatar[data-preset=whale] | presets | background-color | color.avatar-whale-ground |
++| avatar[data-size=16] | sizes | width | 16 |
++| avatar[data-size=16] | sizes | height | 16 |
++| avatar[data-size=22] | sizes | width | 22 |
++| avatar[data-size=28] | sizes | width | 28 |
++| avatar[data-size=40] | sizes | width | 40 |
++| avatar[data-size=64] | sizes | width | 64 |
++| avatar[data-size=64] | sizes | height | 64 |
++| avatar[data-size=64] | sizes | border-top-left-radius | radius.md |
++| avatar | initial | background-color | color.selected |
++| avatar | initial | color | color.ink |
++| avatar[data-size=28] | initial | font-size | type.small |
++| avatar[data-size=40] | initial | font-size | type.h2 |
++| avatar-tile | picker | width | 48 |
++| avatar-tile | picker | height | 48 |
++| avatar-tile[data-state=checked] | picker | background-color | color.selected |
++| avatar-tile[data-state=checked] | picker | border-top-color | color.line-strong |
++| avatar-tile[data-state=checked] avatar | picker | width | 40 |
++| avatar-upload | picker | width | 48 |
++| avatar-upload | picker | border-top-color | color.line |
++| avatar-upload | picker-upload-off | color | color.disabled |
++| avatar-upload-reason | picker-upload-off | color | color.muted |
++| avatar-upload-reason | picker-upload-off | font-size | type.small |
++
+ ## 7. Copy and internationalization
+ - All UI text goes through next-intl, in both Chinese and English. Text shown to the model (prompts, tool descriptions) is always English, and the prompt field in a form must say so.
+ - Thousands separators for numbers; durations `6.8s` / `41.2s` / `00:00:18`; amounts `¥412.80`; relative time ("2 hours ago") for lists, absolute time (`10-18 14:02:11`) for records and logs.
+ - Error messages state the cause and give an actionable next step; include the error code and request ID for troubleshooting.
+ - **Files, not artifacts**: what an agent delivers from its sandbox is "文件" / "files" in UI copy, never "产出物" / "artifacts" (reserved for project C's Artifacts). The kernel identifiers (`artifact_created`, `/artifacts/:id/download`) stay as they are.
+ - **Untitled conversations** read "未命名会话 · MM-DD HH:mm" / "Untitled conversation · MM-DD HH:mm" (the start time) until a title exists.
+ - **Tool verbs** (§6.16.8, §6.16.9), as the signed reference set B draws them. Counts are Arabic numerals; failures append "（N 个失败）" / " (N failed)" in `fail`; mixed kinds join with "，" / ", " in the fixed order command, tools (connector, tool, search, meta), read, edit:
+ 
+   | Kind | Row verb zh / en | Group count zh / en | Running header zh / en |
+   |---|---|---|---|
+diff --git a/docs/design/tokens.json b/docs/design/tokens.json
+index 4631855b..ee76b97b 100644
+--- a/docs/design/tokens.json
++++ b/docs/design/tokens.json
+@@ -26,21 +26,50 @@
+       "dark": "color-mix(in srgb, var(--cb-accent) 12%, transparent)",
+       "light": "color-mix(in srgb, var(--cb-accent) 12%, transparent)",
+       "purpose": "Tinted accent ground"
+     },
+     "focus-ring": { "dark": "rgba(255,106,19,.25)", "light": "rgba(204,70,9,.18)", "purpose": "3px input focus halo" },
+     "ok": { "dark": "#3FD483", "light": "#16803F", "purpose": "Success (rarely shown: success is not colored, spec §4.2.2)" },
+     "fail": { "dark": "#FF5C52", "light": "#C8302A", "purpose": "Failure" },
+     "warn": { "dark": "#F2C14B", "light": "#8F6500", "purpose": "Needs a person" },
+     "scrim": { "dark": "rgba(0,0,0,.60)", "light": "rgba(10,10,10,.25)", "purpose": "Behind dialogs and sheets" },
+     "diff-add": { "dark": "rgba(63,212,131,.08)", "light": "rgba(22,128,63,.10)", "purpose": "Added lines in a diff" },
+-    "diff-del": { "dark": "rgba(255,92,82,.08)", "light": "rgba(207,34,46,.08)", "purpose": "Removed lines in a diff" }
++    "diff-del": { "dark": "rgba(255,92,82,.08)", "light": "rgba(207,34,46,.08)", "purpose": "Removed lines in a diff" },
++    "avatar-black": { "dark": "#1C1C1A", "light": "#1C1C1A", "purpose": "Agent avatars only (§3): black fur and feathers, eyes, noses" },
++    "avatar-white": { "dark": "#F2F2EE", "light": "#FFFFFF", "purpose": "Agent avatars only (§3): white faces, bellies, eyes" },
++    "avatar-capybara-ground": { "dark": "#3D2213", "light": "#FBE3D2", "purpose": "Agent avatars only (§3): the capybara's ground" },
++    "avatar-black-bear-ground": { "dark": "#9C8468", "light": "#E6D6C1", "purpose": "Agent avatars only (§3): the black bear's ground" },
++    "avatar-black-bear-snout": { "dark": "#C9A074", "light": "#C49A6C", "purpose": "Agent avatars only (§3): the black bear's snout" },
++    "avatar-panda-ground": { "dark": "#5E9168", "light": "#669D71", "purpose": "Agent avatars only (§3): the panda's ground" },
++    "avatar-elephant-ground": { "dark": "#2A2838", "light": "#E6E3F2", "purpose": "Agent avatars only (§3): the elephant's ground" },
++    "avatar-elephant": { "dark": "#9AA0A8", "light": "#757B84", "purpose": "Agent avatars only (§3): the elephant's body" },
++    "avatar-elephant-ear": { "dark": "#7D838C", "light": "#5A6068", "purpose": "Agent avatars only (§3): the elephant's ear" },
++    "avatar-fox-ground": { "dark": "#3A2414", "light": "#FCEBD9", "purpose": "Agent avatars only (§3): the fox's ground" },
++    "avatar-fox": { "dark": "#F07A2E", "light": "#D8601A", "purpose": "Agent avatars only (§3): the fox's body" },
++    "avatar-fox-ear": { "dark": "#8A3E16", "light": "#7A3310", "purpose": "Agent avatars only (§3): the fox's ear" },
++    "avatar-owl-ground": { "dark": "#2E2618", "light": "#EFE6D4", "purpose": "Agent avatars only (§3): the owl's ground" },
++    "avatar-owl": { "dark": "#B07D52", "light": "#875A36", "purpose": "Agent avatars only (§3): the owl's body" },
++    "avatar-owl-belly": { "dark": "#D9B68C", "light": "#D9B68C", "purpose": "Agent avatars only (§3): the owl's belly" },
++    "avatar-owl-eye": { "dark": "#F5C542", "light": "#F5C542", "purpose": "Agent avatars only (§3): the owl's eye" },
++    "avatar-beak": { "dark": "#EE8A2A", "light": "#EE8A2A", "purpose": "Agent avatars only (§3): the owl's and penguin's beak and feet" },
++    "avatar-penguin-ground": { "dark": "#5F8AAD", "light": "#6692B6", "purpose": "Agent avatars only (§3): the penguin's ground" },
++    "avatar-rabbit-ground": { "dark": "#3A2229", "light": "#F8DDE3", "purpose": "Agent avatars only (§3): the rabbit's ground" },
++    "avatar-rabbit": { "dark": "#B89A84", "light": "#8F725C", "purpose": "Agent avatars only (§3): the rabbit's body" },
++    "avatar-rabbit-pink": { "dark": "#F2A7B5", "light": "#F2A7B5", "purpose": "Agent avatars only (§3): the rabbit's pink" },
++    "avatar-turtle-ground": { "dark": "#2E2A18", "light": "#F2E8C9", "purpose": "Agent avatars only (§3): the turtle's ground" },
++    "avatar-turtle": { "dark": "#5FA548", "light": "#4E8F3A", "purpose": "Agent avatars only (§3): the turtle's body" },
++    "avatar-turtle-shell": { "dark": "#3B7330", "light": "#2F5E24", "purpose": "Agent avatars only (§3): the turtle's shell" },
++    "avatar-turtle-skin": { "dark": "#A8C66C", "light": "#9FBF62", "purpose": "Agent avatars only (§3): the turtle's skin" },
++    "avatar-whale-ground": { "dark": "#16283A", "light": "#DCEFF5", "purpose": "Agent avatars only (§3): the whale's ground" },
++    "avatar-whale": { "dark": "#5A92D6", "light": "#3A72B5", "purpose": "Agent avatars only (§3): the whale's body" },
++    "avatar-whale-belly": { "dark": "#DCEAF5", "light": "#FFFFFF", "purpose": "Agent avatars only (§3): the whale's belly" },
++    "avatar-whale-spout": { "dark": "#8EC3E8", "light": "#8EC3E8", "purpose": "Agent avatars only (§3): the whale's spout" }
+   },
+   "shadow": {
+     "shadow-1": { "dark": "0 8px 24px rgba(0,0,0,.40)", "light": "0 2px 8px rgba(10,10,10,.08)", "purpose": "Popovers, menus" },
+     "shadow-2": { "dark": "0 16px 48px rgba(0,0,0,.50)", "light": "0 8px 24px rgba(10,10,10,.12)", "purpose": "Dialogs" },
+     "shadow-sheet": { "dark": "-16px 0 40px rgba(0,0,0,.40)", "light": "-4px 0 16px rgba(10,10,10,.08)", "purpose": "Side sheets" },
+     "shadow-float": { "dark": "0 8px 24px rgba(0,0,0,.45)", "light": "0 8px 24px rgba(26,26,24,.08)", "purpose": "The composer, the sidebar drawer" }
+   },
+   "size": {
+     "control": { "dense": 24, "default": 28, "prominent": 32 },
+     "row": { "dense": 28, "default": 32, "roomy": 44 },
+@@ -96,13 +125,25 @@
+     ["disabled", "panel", 3],
+     ["disabled", "hover", 3],
+     ["disabled", "selected", 3],
+     ["ink", "sidebar-active", 4.5],
+     ["on-accent", "accent", 4.5],
+     ["fail", "bg", 4.5],
+     ["warn", "bg", 4.5],
+     ["accent", "bg", 3],
+     ["line", "bg", 1.0],
+     ["ink", "diff-add", 4.5],
+-    ["ink", "diff-del", 4.5]
++    ["ink", "diff-del", 4.5],
++    ["accent", "avatar-capybara-ground", 3],
++    ["avatar-black", "avatar-black-bear-ground", 3],
++    ["avatar-black", "avatar-panda-ground", 3],
++    ["avatar-elephant", "avatar-elephant-ground", 3],
++    ["avatar-fox", "avatar-fox-ground", 3],
++    ["avatar-owl", "avatar-owl-ground", 3],
++    ["avatar-black", "avatar-penguin-ground", 3],
++    ["avatar-rabbit", "avatar-rabbit-ground", 3],
++    ["avatar-turtle", "avatar-turtle-ground", 3],
++    ["avatar-whale", "avatar-whale-ground", 3],
++    ["avatar-white", "avatar-panda-ground", 3],
++    ["avatar-white", "avatar-penguin-ground", 3]
+   ]
+ }
+diff --git a/packages/design/src/display/avatar-presets.ts b/packages/design/src/display/avatar-presets.ts
+new file mode 100644
+index 00000000..a3a6f05e
+--- /dev/null
++++ b/packages/design/src/display/avatar-presets.ts
+@@ -0,0 +1,245 @@
++import type { TokenName } from "../tokens";
++
++/** The ten preset ids, in the picker's order (agent profile design §2.3). */
++export const AVATAR_PRESET_IDS = [
++  "capybara",
++  "black-bear",
++  "panda",
++  "elephant",
++  "fox",
++  "owl",
++  "penguin",
++  "rabbit",
++  "turtle",
++  "whale",
++] as const;
++
++export type PresetId = (typeof AVATAR_PRESET_IDS)[number];
++
++/**
++ * One pixel animal (spec §6.30): a 12×12 bitmap drawn like the logo (§3: solid squares,
++ * `crispEdges`), its palette (a bitmap character to a color token) and its ground token. `.` and
++ * `O` (an eye cut-out, as in the logo) are left to the ground.
++ */
++export type AvatarPreset = {
++  bitmap: readonly string[];
++  palette: Readonly<Record<string, TokenName>>;
++  ground: TokenName;
++};
++
++/** The bitmaps are 12 cells square, all ten, so they align. */
++export const AVATAR_GRID = 12;
++
++export const AVATAR_PRESETS: Readonly<Record<PresetId, AvatarPreset>> = {
++  // the logo's capybara (§3), facing right, in the brand accent
++  capybara: {
++    bitmap: [
++      "............",
++      "........X...",
++      ".......XXX..",
++      "..XXXXXXXXXX",
++      ".XXXXXXXXOXX",
++      ".XXXXXXXXXXX",
++      ".XXXXXXXXXXX",
++      ".XXXXXXXXXX.",
++      "..XXXXXXXX..",
++      "..XX.X..XX..",
++      "..XX.X..XX..",
++      "............",
++    ],
++    palette: { X: "accent" },
++    ground: "avatar-capybara-ground",
++  },
++  // round ears, white eyes, a tan snout with a black nose
++  "black-bear": {
++    bitmap: [
++      "............",
++      ".XXX....XXX.",
++      ".XSXXXXXXSX.",
++      ".XXXXXXXXXX.",
++      "XXXXXXXXXXXX",
++      "XXXWXXXXWXXX",
++      "XXXXXXXXXXXX",
++      ".XXXSSSSXXX.",
++      ".XXSSXXSSXX.",
++      "..XSSSSSSX..",
++      "...XXXXXX...",
++      "............",
++    ],
++    palette: { X: "avatar-black", S: "avatar-black-bear-snout", W: "avatar-white" },
++    ground: "avatar-black-bear-ground",
++  },
++  // a white face, black ears, eye patches and nose, on bamboo green
++  panda: {
++    bitmap: [
++      "............",
++      ".XXX....XXX.",
++      ".XXWWWWWWXX.",
++      ".XWWWWWWWWX.",
++      "WWWWWWWWWWWW",
++      "WWXXWWWWXXWW",
++      "WXXWWWWWWXXW",
++      "WWWWWWWWWWWW",
++      ".WWWWXXWWWW.",
++      "..WWWWWWWW..",
++      "...WWWWWW...",
++      "............",
++    ],
++    palette: { W: "avatar-white", X: "avatar-black" },
++    ground: "avatar-panda-ground",
++  },
++  // side view: the ear, a tusk and the trunk hanging down
++  elephant: {
++    bitmap: [
++      "............",
++      "............",
++      "....XXXXX...",
++      "...XXXXXXXX.",
++      "..XXXXXDXXXX",
++      ".XXXXXXDXKXX",
++      ".XXXXXXDXXXX",
++      ".XXXXXXXXXWX",
++      ".XXXXXXXXX.X",
++      ".XX.XX.XX..X",
++      ".XX.XX.XX...",
++      "............",
++    ],
++    palette: {
++      X: "avatar-elephant",
++      D: "avatar-elephant-ear",
++      K: "avatar-black",
++      W: "avatar-white",
++    },
++    ground: "avatar-elephant-ground",
++  },
++  // pointed ears, white cheeks and a black nose at the tip of the muzzle
++  fox: {
++    bitmap: [
++      "............",
++      ".X........X.",
++      ".XX......XX.",
++      ".XDX....XDX.",
++      ".XXXXXXXXXX.",
++      "XXXXXXXXXXXX",
++      "XXKXXXXXXKXX",
++      "WXXXXXXXXXXW",
++      ".WWXXXXXXWW.",
++      "..WWWWWWWW..",
++      "....WKKW....",
++      "............",
++    ],
++    palette: { X: "avatar-fox", D: "avatar-fox-ear", W: "avatar-white", K: "avatar-black" },
++    ground: "avatar-fox-ground",
++  },
++  // ear tufts, big yellow eyes, a beak, a pale belly and feet
++  owl: {
++    bitmap: [
++      "............",
++      ".X........X.",
++      ".XXXXXXXXXX.",
++      ".XYYYXXYYYX.",
++      ".XYKYXXYKYX.",
++      ".XYYYAAYYYX.",
++      ".XXXXAAXXXX.",
++      ".XBBBBBBBBX.",
++      ".XBBBBBBBBX.",
++      "..XBBBBBBX..",
++      "...XXXXXX...",
++      "...A....A...",
++    ],
++    palette: {
++      X: "avatar-owl",
++      Y: "avatar-owl-eye",
++      K: "avatar-black",
++      A: "avatar-beak",
++      B: "avatar-owl-belly",
++    },
++    ground: "avatar-owl-ground",
++  },
++  // a black back and flippers, the white belly, a beak and feet
++  penguin: {
++    bitmap: [
++      "............",
++      "....XXXX....",
++      "...XXXXXX...",
++      "...XWXXWX...",
++      "...XXAAXX...",
++      "..XXWWWWXX..",
++      ".XXWWWWWWXX.",
++      ".XXWWWWWWXX.",
++      "..XWWWWWWX..",
++      "..XWWWWWWX..",
++      "...XWWWWX...",
++      "...AA..AA...",
++    ],
++    palette: { X: "avatar-black", W: "avatar-white", A: "avatar-beak" },
++    ground: "avatar-penguin-ground",
++  },
++  // long ears with pink insides, a pink nose and a white muzzle
++  rabbit: {
++    bitmap: [
++      "..XX....XX..",
++      "..XP....PX..",
++      "..XP....PX..",
++      "..XP....PX..",
++      "..XXXXXXXX..",
++      ".XXXXXXXXXX.",
++      ".XXKXXXXKXX.",
++      ".XXXXXXXXXX.",
++      ".XXXXPPXXXX.",
++      "..XXWWWWXX..",
++      "...XXXXXX...",
++      "............",
++    ],
++    palette: { X: "avatar-rabbit", P: "avatar-rabbit-pink", K: "avatar-black", W: "avatar-white" },
++    ground: "avatar-rabbit-ground",
++  },
++  // side view: a patterned shell, the head, tail and legs
++  turtle: {
++    bitmap: [
++      "............",
++      "............",
++      "............",
++      "...XXXXX....",
++      "..XDXDXDX.LL",
++      ".XXXXXXXXXLK",
++      ".XDXDXDXDXLL",
++      "LXXXXXXXXXL.",
++      "..LL....LL..",
++      "..LL....LL..",
++      "............",
++      "............",
++    ],
++    palette: {
++      X: "avatar-turtle",
++      D: "avatar-turtle-shell",
++      L: "avatar-turtle-skin",
++      K: "avatar-black",
++    },
++    ground: "avatar-turtle-ground",
++  },
++  // side view: the spout, the raised tail and a pale belly
++  whale: {
++    bitmap: [
++      "............",
++      "............",
++      "......S.S...",
++      ".......S....",
++      "XX..XXXXXX..",
++      ".XXXXXXXXXX.",
++      "..XXXXXXXKXX",
++      "..XXXXXXXXXX",
++      "...XWWWWWWX.",
++      "....XXXXXX..",
++      "............",
++      "............",
++    ],
++    palette: {
++      X: "avatar-whale",
++      W: "avatar-whale-belly",
++      S: "avatar-whale-spout",
++      K: "avatar-black",
++    },
++    ground: "avatar-whale-ground",
++  },
++};
+diff --git a/packages/design/src/display/avatar.tsx b/packages/design/src/display/avatar.tsx
+new file mode 100644
+index 00000000..5d802187
+--- /dev/null
++++ b/packages/design/src/display/avatar.tsx
+@@ -0,0 +1,203 @@
++import { type ChangeEvent, useId, useRef, useState } from "react";
++import { Icon } from "../icons/icon";
++import { useDesignT } from "../provider";
++import { AVATAR_GRID, AVATAR_PRESET_IDS, AVATAR_PRESETS, type PresetId } from "./avatar-presets";
++import { initialOf } from "./initial";
++import { bitmapCells } from "./logo";
++
++export {
++  AVATAR_GRID,
++  AVATAR_PRESET_IDS,
++  AVATAR_PRESETS,
++  type AvatarPreset,
++  type PresetId,
++} from "./avatar-presets";
++
++/** The five avatar sizes (spec §6.30). */
++export const AVATAR_SIZES = [16, 22, 28, 40, 64] as const;
++export type AvatarSize = (typeof AVATAR_SIZES)[number];
++
++/** An agent's avatar: a preset animal, an uploaded image, or none (the initial). */
++export type AvatarValue = { kind: "preset"; id: PresetId } | { kind: "image"; src: string } | null;
++
++/** The formats an upload accepts (agent profile design §2.3). */
++export const AVATAR_UPLOAD_ACCEPT = "image/png,image/jpeg,image/webp";
++
++/**
++ * A preset's paths at `size`: one path per palette token, the bitmap at the nearest whole pixel
++ * unit to `size / 12`, centred by the viewBox (at 22 the 24 px drawing is clipped 1 px a side).
++ */
++function presetDrawing(id: PresetId, size: AvatarSize) {
++  const preset = AVATAR_PRESETS[id];
++  const unit = Math.round(size / AVATAR_GRID);
++  const off = (size - AVATAR_GRID * unit) / 2;
++  const byToken = new Map<string, string>();
++  for (const [cell, token] of Object.entries(preset.palette)) {
++    byToken.set(token, (byToken.get(token) ?? "") + bitmapCells(preset.bitmap, unit, 0, cell));
++  }
++  return { viewBox: `${-off} ${-off} ${size} ${size}`, paths: [...byToken] };
++}
++
++/**
++ * Avatar (spec §6.30): an agent's preset animal on its ground, its uploaded image, or the initial
++ * square (an image that fails to load falls back to the initial). Decorative: the name is always
++ * written next to it, so it is hidden from screen readers.
++ */
++export function Avatar({
++  value,
++  name,
++  size,
++}: {
++  value: AvatarValue;
++  name: string;
++  size: AvatarSize;
++}) {
++  const [failed, setFailed] = useState<string | null>(null);
++  const common = {
++    className: "cb-avatar",
++    "data-part": "avatar",
++    "data-size": String(size),
++    "aria-hidden": true,
++  } as const;
++  const preset = value?.kind === "preset" ? AVATAR_PRESETS[value.id] : undefined;
++  if (value?.kind === "preset" && preset) {
++    const { viewBox, paths } = presetDrawing(value.id, size);
++    return (
++      <span
++        {...common}
++        data-kind="preset"
++        data-preset={value.id}
++        style={{ background: `var(--cb-${preset.ground})` }}
++      >
++        <svg
++          className="cb-avatar-art"
++          width={size}
++          height={size}
++          viewBox={viewBox}
++          shapeRendering="crispEdges"
++          aria-hidden="true"
++          focusable="false"
++        >
++          {paths.map(([token, d]) => (
++            <path key={token} d={d} style={{ fill: `var(--cb-${token})` }} />
++          ))}
++        </svg>
++      </span>
++    );
++  }
++  if (value?.kind === "image" && failed !== value.src) {
++    const src = value.src;
++    return (
++      <span {...common} data-kind="image">
++        <img
++          className="cb-avatar-art cb-avatar-image"
++          src={src}
++          alt=""
++          onError={() => setFailed(src)}
++        />
++      </span>
++    );
++  }
++  return (
++    <span {...common} data-kind="initial">
++      {initialOf(name)}
++    </span>
++  );
++}
++
++export type AvatarPickerProps = {
++  value: AvatarValue;
++  onChange: (value: AvatarValue) => void;
++  /** The chosen png, jpg or webp file; absent, the upload tile is disabled with its reason. */
++  onUpload?: (file: File) => void;
++  /** Why uploading is off (shown under the tiles when `onUpload` is absent). */
++  uploadOffReason?: string;
++  /** The group's name; default 「头像」 / "Avatar". */
++  label?: string;
++};
++
++/**
++ * AvatarPicker (spec §6.30): the ten presets as one radio group of 40 px tiles, then an upload
++ * tile, which shows the uploaded image when that is the avatar. Without `onUpload` the upload tile
++ * is disabled and the reason is written under the tiles.
++ */
++export function AvatarPicker({
++  value,
++  onChange,
++  onUpload,
++  uploadOffReason,
++  label,
++}: AvatarPickerProps) {
++  const t = useDesignT();
++  const name = useId();
++  const reasonId = useId();
++  const input = useRef<HTMLInputElement>(null);
++  const onFile = (e: ChangeEvent<HTMLInputElement>) => {
++    const file = e.target.files?.[0];
++    e.target.value = "";
++    if (file) onUpload?.(file);
++  };
++  const image = value?.kind === "image";
++  return (
++    <div className="cb-avatar-picker" data-part="avatar-picker">
++      <div className="cb-avatar-picker-tiles">
++        <div
++          className="cb-avatar-picker-group"
++          role="radiogroup"
++          aria-label={label ?? t("avatar.label")}
++        >
++          {AVATAR_PRESET_IDS.map((id) => {
++            const checked = value?.kind === "preset" && value.id === id;
++            const presetName = t(`avatar.preset.${id}`);
++            return (
++              <label
++                key={id}
++                className="cb-avatar-tile"
++                data-part="avatar-tile"
++                data-state={checked ? "checked" : "unchecked"}
++              >
++                <input
++                  className="cb-avatar-radio"
++                  type="radio"
++                  name={name}
++                  value={id}
++                  checked={checked}
++                  aria-label={presetName}
++                  onChange={() => onChange({ kind: "preset", id })}
++                />
++                <Avatar value={{ kind: "preset", id }} name={presetName} size={40} />
++              </label>
++            );
++          })}
++        </div>
++        <button
++          type="button"
++          className="cb-avatar-tile"
++          data-part="avatar-upload"
++          data-state={image ? "checked" : "unchecked"}
++          aria-label={t("avatar.upload")}
++          aria-describedby={onUpload ? undefined : reasonId}
++          disabled={!onUpload}
++          onClick={() => input.current?.click()}
++        >
++          {image ? <Avatar value={value} name="" size={40} /> : <Icon name="upload" size={16} />}
++        </button>
++      </div>
++      {onUpload ? (
++        <input
++          ref={input}
++          className="cb-file-input"
++          type="file"
++          tabIndex={-1}
++          aria-hidden="true"
++          accept={AVATAR_UPLOAD_ACCEPT}
++          onChange={onFile}
++        />
++      ) : (
++        <p id={reasonId} className="cb-avatar-picker-reason" data-part="avatar-upload-reason">
++          {uploadOffReason ?? t("avatar.uploadOff")}
++        </p>
++      )}
++    </div>
++  );
++}
+diff --git a/packages/design/src/display/index.ts b/packages/design/src/display/index.ts
+index 2a7a7f58..3d3faa4e 100644
+--- a/packages/design/src/display/index.ts
++++ b/packages/design/src/display/index.ts
+@@ -6,20 +6,34 @@ export {
+   type AttachmentPreviewProps,
+   FileButton,
+   type FileButtonProps,
+   FileDrop,
+   type FileDropProps,
+   FilePicker,
+   type FilePickerProps,
+   formatBytes,
+   isSafeAttachmentHref,
+ } from "./attachments";
++export {
++  AVATAR_GRID,
++  AVATAR_PRESET_IDS,
++  AVATAR_PRESETS,
++  AVATAR_SIZES,
++  AVATAR_UPLOAD_ACCEPT,
++  Avatar,
++  AvatarPicker,
++  type AvatarPickerProps,
++  type AvatarPreset,
++  type AvatarSize,
++  type AvatarValue,
++  type PresetId,
++} from "./avatar";
+ export { Badge, Kbd, Metric, type MetricProps, StatusMark } from "./basic";
+ export { Callout, type CalloutProps } from "./callout";
+ export {
+   Checklist,
+   type ChecklistProps,
+   type ChecklistStatus,
+   CodeBlock,
+   type CodeBlockProps,
+   ImageBlock,
+   type ImageBlockProps,
+diff --git a/packages/design/src/display/logo.tsx b/packages/design/src/display/logo.tsx
+index cfb8bd6f..9047e7c4 100644
+--- a/packages/design/src/display/logo.tsx
++++ b/packages/design/src/display/logo.tsx
+@@ -9,29 +9,30 @@ export const CAPYBARA_BITMAP: readonly string[] = [
+   ".XXXXXXXXXXXX.",
+   "..XXXXXXXXXX..",
+   "..XX..X..XX...",
+   "..XX..X..XX...",
+ ];
+ 
+ const COLS = 14;
+ const ROWS = 10;
+ 
+ /**
+- * The `X` cells of bitmap `rows` as one SVG path of `scale`-sized squares, the first row drawn
+- * at row `top` (the logo, the working line's mark and its leg frames).
++ * The `cell` cells (default `X`) of bitmap `rows` as one SVG path of `scale`-sized squares, the
++ * first row drawn at row `top` (the logo, the working line's mark and its leg frames, and one path
++ * per palette colour of an avatar preset).
+  */
+-export function bitmapCells(rows: readonly string[], scale: number, top = 0): string {
++export function bitmapCells(rows: readonly string[], scale: number, top = 0, cell = "X"): string {
+   const out: string[] = [];
+   rows.forEach((row, i) => {
+     const y = top + i;
+     for (let x = 0; x < row.length; x++)
+-      if (row[x] === "X") out.push(`M${x * scale} ${y * scale}h${scale}v${scale}h${-scale}z`);
++      if (row[x] === cell) out.push(`M${x * scale} ${y * scale}h${scale}v${scale}h${-scale}z`);
+   });
+   return out.join("");
+ }
+ 
+ export function Logo({
+   scale = 3,
+   tone = "accent",
+   wordmark,
+ }: {
+   scale?: 2 | 3 | 6;
+diff --git a/packages/design/src/i18n.ts b/packages/design/src/i18n.ts
+index 771653cf..5d45c8ec 100644
+--- a/packages/design/src/i18n.ts
++++ b/packages/design/src/i18n.ts
+@@ -167,20 +167,33 @@ const zh = {
+   "conv.moreRows": "还有 {n} 行",
+   "conv.moreRow": "还有 1 行",
+   "conv.thoughtFor": "思考了 {n} 秒",
+   "conv.thoughtFor1": "思考了 1 秒",
+   "conv.thoughtUnknown": "思考过程",
+   "conv.thinking": "正在思考",
+   "working.plan": "规划中…",
+   "working.act": "执行中…",
+   "working.ponder": "斟酌中…",
+   "working.compose": "整理中…",
++  "avatar.label": "头像",
++  "avatar.upload": "上传图片",
++  "avatar.uploadOff": "这里不能上传图片。",
++  "avatar.preset.capybara": "水豚",
++  "avatar.preset.black-bear": "黑熊",
++  "avatar.preset.panda": "熊猫",
++  "avatar.preset.elephant": "大象",
++  "avatar.preset.fox": "狐狸",
++  "avatar.preset.owl": "猫头鹰",
++  "avatar.preset.penguin": "企鹅",
++  "avatar.preset.rabbit": "兔子",
++  "avatar.preset.turtle": "乌龟",
++  "avatar.preset.whale": "鲸",
+   "conv.seconds": "{n} 秒",
+   "conv.running": "进行中",
+   "conv.retry": "重试",
+   "conv.viewSummary": "查看摘要",
+   "conv.hideSummary": "收起摘要",
+   "conv.taskDone": "已完成",
+   "conv.taskTodo": "待办",
+   "tool.verb.command": "已运行",
+   "tool.verb.read": "已读取",
+   "tool.verb.edit": "已修改",
+@@ -504,20 +517,33 @@ const en: Record<DesignKey, string> = {
+   "conv.moreRows": "{n} more rows",
+   "conv.moreRow": "1 more row",
+   "conv.thoughtFor": "Thought for {n} seconds",
+   "conv.thoughtFor1": "Thought for 1 second",
+   "conv.thoughtUnknown": "Thought process",
+   "conv.thinking": "Thinking",
+   "working.plan": "Planning…",
+   "working.act": "Working…",
+   "working.ponder": "Pondering…",
+   "working.compose": "Composing…",
++  "avatar.label": "Avatar",
++  "avatar.upload": "Upload image",
++  "avatar.uploadOff": "Uploading is not available here.",
++  "avatar.preset.capybara": "Capybara",
++  "avatar.preset.black-bear": "Black bear",
++  "avatar.preset.panda": "Panda",
++  "avatar.preset.elephant": "Elephant",
++  "avatar.preset.fox": "Fox",
++  "avatar.preset.owl": "Owl",
++  "avatar.preset.penguin": "Penguin",
++  "avatar.preset.rabbit": "Rabbit",
++  "avatar.preset.turtle": "Turtle",
++  "avatar.preset.whale": "Whale",
+   "conv.seconds": "{n}s",
+   "conv.running": "In progress",
+   "conv.retry": "Retry",
+   "conv.viewSummary": "View summary",
+   "conv.hideSummary": "Hide summary",
+   "conv.taskDone": "Done",
+   "conv.taskTodo": "To do",
+   "tool.verb.command": "Ran",
+   "tool.verb.read": "Read",
+   "tool.verb.edit": "Edited",
+diff --git a/packages/design/src/styles/display.css b/packages/design/src/styles/display.css
+index 2603af8b..1c56a5a0 100644
+--- a/packages/design/src/styles/display.css
++++ b/packages/design/src/styles/display.css
+@@ -1071,10 +1071,126 @@ a.cb-attachment:hover {
+   line-height: var(--cb-type-prose-small-line);
+ }
+ 
+ /* A loading span row is the loaded row's box, without its hover and pointer. */
+ .cb-waterfall-row[data-loading="true"] {
+   cursor: default;
+ }
+ .cb-waterfall-row[data-loading="true"]:hover {
+   background: transparent;
+ }
++
++/* Avatar (spec §6.30): a preset animal on its ground, an uploaded image, or the initial square. */
++.cb-avatar {
++  flex: none;
++  display: inline-flex;
++  align-items: center;
++  justify-content: center;
++  overflow: hidden;
++  border-radius: var(--cb-radius-sm);
++  background: var(--cb-selected);
++  color: var(--cb-ink);
++  font-family: var(--cb-font);
++  font-weight: 600;
++  line-height: 1;
++}
++.cb-avatar[data-size="16"] {
++  width: 16px;
++  height: 16px;
++  font-size: var(--cb-type-micro-size);
++}
++.cb-avatar[data-size="22"] {
++  width: 22px;
++  height: 22px;
++  font-size: var(--cb-type-micro-size);
++}
++.cb-avatar[data-size="28"] {
++  width: 28px;
++  height: 28px;
++  font-size: var(--cb-type-small-size);
++}
++.cb-avatar[data-size="40"] {
++  width: 40px;
++  height: 40px;
++  font-size: var(--cb-type-h2-size);
++}
++.cb-avatar[data-size="64"] {
++  width: 64px;
++  height: 64px;
++  border-radius: var(--cb-radius-md);
++  font-size: var(--cb-type-h1-size);
++}
++.cb-avatar-art {
++  display: block;
++}
++.cb-avatar-image {
++  width: 100%;
++  height: 100%;
++  object-fit: cover;
++}
++
++/* AvatarPicker (spec §6.30): 48 px tiles (40 avatar, 3 padding, 1 border), space.2 apart. */
++.cb-avatar-picker {
++  display: flex;
++  flex-direction: column;
++  gap: var(--cb-space-2);
++}
++.cb-avatar-picker-tiles {
++  display: flex;
++  flex-wrap: wrap;
++  gap: var(--cb-space-2);
++}
++.cb-avatar-picker-group {
++  display: contents;
++}
++.cb-avatar-tile {
++  position: relative;
++  display: inline-flex;
++  align-items: center;
++  justify-content: center;
++  box-sizing: border-box;
++  width: 48px;
++  height: 48px;
++  padding: 3px;
++  border: 1px solid transparent;
++  border-radius: var(--cb-radius-md);
++  background: transparent;
++  color: var(--cb-muted);
++  cursor: pointer;
++  transition: background-color var(--cb-motion-hover);
++}
++.cb-avatar-tile:hover {
++  background: var(--cb-hover);
++}
++.cb-avatar-tile[data-state="checked"] {
++  border-color: var(--cb-line-strong);
++  background: var(--cb-selected);
++}
++.cb-avatar-tile:focus-visible,
++.cb-avatar-tile:has(.cb-avatar-radio:focus-visible) {
++  outline: 2px solid var(--cb-accent);
++  outline-offset: 2px;
++}
++.cb-avatar-radio {
++  position: absolute;
++  inset: 0;
++  width: 100%;
++  height: 100%;
++  margin: 0;
++  opacity: 0;
++  cursor: inherit;
++}
++.cb-avatar-tile[data-part="avatar-upload"][data-state="unchecked"] {
++  border: 1px dashed var(--cb-line);
++}
++.cb-avatar-tile[data-part="avatar-upload"]:disabled {
++  border-color: var(--cb-line-soft);
++  background: transparent;
++  color: var(--cb-disabled);
++  cursor: not-allowed;
++}
++.cb-avatar-picker-reason {
++  margin: 0;
++  color: var(--cb-muted);
++  font-size: var(--cb-type-small-size);
++  line-height: var(--cb-type-small-line);
++}
+diff --git a/packages/design/src/styles/tokens.css b/packages/design/src/styles/tokens.css
+index 528cc6d5..8fa85419 100644
+--- a/packages/design/src/styles/tokens.css
++++ b/packages/design/src/styles/tokens.css
+@@ -94,20 +94,49 @@
+   --cb-accent-press: #E85A08;
+   --cb-on-accent: #0A0A0A;
+   --cb-accent-tint: color-mix(in srgb, var(--cb-accent) 12%, transparent);
+   --cb-focus-ring: rgba(255,106,19,.25);
+   --cb-ok: #3FD483;
+   --cb-fail: #FF5C52;
+   --cb-warn: #F2C14B;
+   --cb-scrim: rgba(0,0,0,.60);
+   --cb-diff-add: rgba(63,212,131,.08);
+   --cb-diff-del: rgba(255,92,82,.08);
++  --cb-avatar-black: #1C1C1A;
++  --cb-avatar-white: #F2F2EE;
++  --cb-avatar-capybara-ground: #3D2213;
++  --cb-avatar-black-bear-ground: #9C8468;
++  --cb-avatar-black-bear-snout: #C9A074;
++  --cb-avatar-panda-ground: #5E9168;
++  --cb-avatar-elephant-ground: #2A2838;
++  --cb-avatar-elephant: #9AA0A8;
++  --cb-avatar-elephant-ear: #7D838C;
++  --cb-avatar-fox-ground: #3A2414;
++  --cb-avatar-fox: #F07A2E;
++  --cb-avatar-fox-ear: #8A3E16;
++  --cb-avatar-owl-ground: #2E2618;
++  --cb-avatar-owl: #B07D52;
++  --cb-avatar-owl-belly: #D9B68C;
++  --cb-avatar-owl-eye: #F5C542;
++  --cb-avatar-beak: #EE8A2A;
++  --cb-avatar-penguin-ground: #5F8AAD;
++  --cb-avatar-rabbit-ground: #3A2229;
++  --cb-avatar-rabbit: #B89A84;
++  --cb-avatar-rabbit-pink: #F2A7B5;
++  --cb-avatar-turtle-ground: #2E2A18;
++  --cb-avatar-turtle: #5FA548;
++  --cb-avatar-turtle-shell: #3B7330;
++  --cb-avatar-turtle-skin: #A8C66C;
++  --cb-avatar-whale-ground: #16283A;
++  --cb-avatar-whale: #5A92D6;
++  --cb-avatar-whale-belly: #DCEAF5;
++  --cb-avatar-whale-spout: #8EC3E8;
+   --cb-shadow-1: 0 8px 24px rgba(0,0,0,.40);
+   --cb-shadow-2: 0 16px 48px rgba(0,0,0,.50);
+   --cb-shadow-sheet: -16px 0 40px rgba(0,0,0,.40);
+   --cb-shadow-float: 0 8px 24px rgba(0,0,0,.45);
+   color-scheme: dark;
+ }
+ 
+ :root[data-theme="light"] {
+   --cb-bg: #F7F6F2;
+   --cb-panel: #FFFFFF;
+@@ -131,16 +160,45 @@
+   --cb-accent-press: #A33707;
+   --cb-on-accent: #FFFFFF;
+   --cb-accent-tint: color-mix(in srgb, var(--cb-accent) 12%, transparent);
+   --cb-focus-ring: rgba(204,70,9,.18);
+   --cb-ok: #16803F;
+   --cb-fail: #C8302A;
+   --cb-warn: #8F6500;
+   --cb-scrim: rgba(10,10,10,.25);
+   --cb-diff-add: rgba(22,128,63,.10);
+   --cb-diff-del: rgba(207,34,46,.08);
++  --cb-avatar-black: #1C1C1A;
++  --cb-avatar-white: #FFFFFF;
++  --cb-avatar-capybara-ground: #FBE3D2;
++  --cb-avatar-black-bear-ground: #E6D6C1;
++  --cb-avatar-black-bear-snout: #C49A6C;
++  --cb-avatar-panda-ground: #669D71;
++  --cb-avatar-elephant-ground: #E6E3F2;
++  --cb-avatar-elephant: #757B84;
++  --cb-avatar-elephant-ear: #5A6068;
++  --cb-avatar-fox-ground: #FCEBD9;
++  --cb-avatar-fox: #D8601A;
++  --cb-avatar-fox-ear: #7A3310;
++  --cb-avatar-owl-ground: #EFE6D4;
++  --cb-avatar-owl: #875A36;
++  --cb-avatar-owl-belly: #D9B68C;
++  --cb-avatar-owl-eye: #F5C542;
++  --cb-avatar-beak: #EE8A2A;
++  --cb-avatar-penguin-ground: #6692B6;
++  --cb-avatar-rabbit-ground: #F8DDE3;
++  --cb-avatar-rabbit: #8F725C;
++  --cb-avatar-rabbit-pink: #F2A7B5;
++  --cb-avatar-turtle-ground: #F2E8C9;
++  --cb-avatar-turtle: #4E8F3A;
++  --cb-avatar-turtle-shell: #2F5E24;
++  --cb-avatar-turtle-skin: #9FBF62;
++  --cb-avatar-whale-ground: #DCEFF5;
++  --cb-avatar-whale: #3A72B5;
++  --cb-avatar-whale-belly: #FFFFFF;
++  --cb-avatar-whale-spout: #8EC3E8;
+   --cb-shadow-1: 0 2px 8px rgba(10,10,10,.08);
+   --cb-shadow-2: 0 8px 24px rgba(10,10,10,.12);
+   --cb-shadow-sheet: -4px 0 16px rgba(10,10,10,.08);
+   --cb-shadow-float: 0 8px 24px rgba(26,26,24,.08);
+   color-scheme: light;
+ }
+diff --git a/packages/design/src/tokens.ts b/packages/design/src/tokens.ts
+index 3d38526b..a167de54 100644
+--- a/packages/design/src/tokens.ts
++++ b/packages/design/src/tokens.ts
+@@ -24,20 +24,49 @@ export const TOKEN_NAMES = [
+   "accent-press",
+   "on-accent",
+   "accent-tint",
+   "focus-ring",
+   "ok",
+   "fail",
+   "warn",
+   "scrim",
+   "diff-add",
+   "diff-del",
++  "avatar-black",
++  "avatar-white",
++  "avatar-capybara-ground",
++  "avatar-black-bear-ground",
++  "avatar-black-bear-snout",
++  "avatar-panda-ground",
++  "avatar-elephant-ground",
++  "avatar-elephant",
++  "avatar-elephant-ear",
++  "avatar-fox-ground",
++  "avatar-fox",
++  "avatar-fox-ear",
++  "avatar-owl-ground",
++  "avatar-owl",
++  "avatar-owl-belly",
++  "avatar-owl-eye",
++  "avatar-beak",
++  "avatar-penguin-ground",
++  "avatar-rabbit-ground",
++  "avatar-rabbit",
++  "avatar-rabbit-pink",
++  "avatar-turtle-ground",
++  "avatar-turtle",
++  "avatar-turtle-shell",
++  "avatar-turtle-skin",
++  "avatar-whale-ground",
++  "avatar-whale",
++  "avatar-whale-belly",
++  "avatar-whale-spout",
+   "shadow-1",
+   "shadow-2",
+   "shadow-sheet",
+   "shadow-float",
+ ] as const;
+ 
+ export type TokenName = (typeof TOKEN_NAMES)[number];
+ 
+ /**
+  * The sizing scales (spec §4.3) in px, each step also a `--cb-<group>-<step>` variable.
+diff --git a/packages/design/test/avatar.test.tsx b/packages/design/test/avatar.test.tsx
+new file mode 100644
+index 00000000..21b6ecc4
+--- /dev/null
++++ b/packages/design/test/avatar.test.tsx
+@@ -0,0 +1,211 @@
++import { cleanup, fireEvent, render, screen } from "@testing-library/react";
++import { afterEach, describe, expect, it, vi } from "vitest";
++import {
++  AVATAR_PRESET_IDS,
++  AVATAR_PRESETS,
++  AVATAR_SIZES,
++  Avatar,
++  AvatarPicker,
++  DesignProvider,
++  TOKEN_NAMES,
++} from "../src/index";
++
++afterEach(cleanup);
++
++const wrap = (ui: React.ReactElement, locale: "zh" | "en" = "zh") =>
++  render(<DesignProvider locale={locale}>{ui}</DesignProvider>);
++
++const root = (c: HTMLElement) => c.querySelector('[data-part="avatar"]') as HTMLElement;
++
++describe("Avatar (spec §6.30)", () => {
++  it("all 10 presets render with their ground", () => {
++    expect([...AVATAR_PRESET_IDS]).toEqual([
++      "capybara",
++      "black-bear",
++      "panda",
++      "elephant",
++      "fox",
++      "owl",
++      "penguin",
++      "rabbit",
++      "turtle",
++      "whale",
++    ]);
++    const tokens = new Set<string>(TOKEN_NAMES);
++    for (const id of AVATAR_PRESET_IDS) {
++      const preset = AVATAR_PRESETS[id];
++      // one bitmap size for all ten, so they align
++      expect(preset.bitmap).toHaveLength(12);
++      for (const row of preset.bitmap) expect(row).toHaveLength(12);
++      // palette values are token names, never literals
++      expect(tokens.has(preset.ground)).toBe(true);
++      for (const t of Object.values(preset.palette)) expect(tokens.has(t)).toBe(true);
++      // every drawn cell has a colour
++      const cells = new Set(preset.bitmap.join("").replace(/[.O]/g, ""));
++      expect([...cells].sort()).toEqual(Object.keys(preset.palette).sort());
++
++      const { container } = wrap(<Avatar value={{ kind: "preset", id }} name="Agent" size={40} />);
++      const box = root(container);
++      expect(box.getAttribute("data-kind")).toBe("preset");
++      expect(box.getAttribute("data-preset")).toBe(id);
++      expect(box.style.background).toBe(`var(--cb-${preset.ground})`);
++      const svg = box.querySelector("svg") as SVGElement;
++      expect(svg.getAttribute("shape-rendering")).toBe("crispEdges");
++      const fills = [...svg.querySelectorAll("path")].map((p) => p.style.fill);
++      expect(fills.sort()).toEqual(
++        [...new Set(Object.values(preset.palette))].map((t) => `var(--cb-${t})`).sort(),
++      );
++      expect(box.textContent).toBe("");
++      cleanup();
++    }
++  });
++
++  it("null draws the initial", () => {
++    const { container } = wrap(<Avatar value={null} name="研究助手" size={28} />);
++    const box = root(container);
++    expect(box.getAttribute("data-kind")).toBe("initial");
++    expect(box.textContent).toBe("研");
++    expect(box.querySelector("svg")).toBeNull();
++    cleanup();
++    const en = wrap(<Avatar value={null} name="scout" size={28} />);
++    expect(root(en.container).textContent).toBe("S");
++  });
++
++  it("an image that fails to load falls back to the initial", () => {
++    const { container } = wrap(
++      <Avatar value={{ kind: "image", src: "/api/avatar/a1" }} name="Writer" size={40} />,
++    );
++    const img = container.querySelector("img") as HTMLImageElement;
++    expect(img.getAttribute("src")).toBe("/api/avatar/a1");
++    expect(img.getAttribute("alt")).toBe("");
++    expect(root(container).getAttribute("data-kind")).toBe("image");
++    fireEvent.error(img);
++    expect(container.querySelector("img")).toBeNull();
++    expect(root(container).getAttribute("data-kind")).toBe("initial");
++    expect(root(container).textContent).toBe("W");
++  });
++
++  it("sizes 16/22/28/40/64 set the box", () => {
++    expect([...AVATAR_SIZES]).toEqual([16, 22, 28, 40, 64]);
++    // the 12×12 bitmap at the nearest whole pixel unit, centred (22 draws 24 and clips 1 a side)
++    const unit = { 16: 1, 22: 2, 28: 2, 40: 3, 64: 5 } as const;
++    for (const size of AVATAR_SIZES) {
++      const { container } = wrap(
++        <Avatar value={{ kind: "preset", id: "fox" }} name="Fox" size={size} />,
++      );
++      const box = root(container);
++      expect(box.getAttribute("data-size")).toBe(String(size));
++      const svg = box.querySelector("svg") as SVGElement;
++      expect(svg.getAttribute("width")).toBe(String(size));
++      expect(svg.getAttribute("height")).toBe(String(size));
++      const off = (size - 12 * unit[size]) / 2;
++      expect(svg.getAttribute("viewBox")).toBe(`${-off} ${-off} ${size} ${size}`);
++      // fox: row 1 has an ear tip at x = 1
++      const d = [...svg.querySelectorAll("path")].map((p) => p.getAttribute("d")).join("");
++      const u = unit[size];
++      expect(d).toContain(`M${u} ${u}h${u}v${u}h${-u}z`);
++      cleanup();
++      const initial = wrap(<Avatar value={null} name="Fox" size={size} />);
++      expect(root(initial.container).getAttribute("data-size")).toBe(String(size));
++      cleanup();
++    }
++  });
++
++  it("is decorative: the name beside it is what is read", () => {
++    const { container } = wrap(
++      <Avatar value={{ kind: "preset", id: "owl" }} name="Owl" size={22} />,
++    );
++    expect(root(container).getAttribute("aria-hidden")).toBe("true");
++  });
++});
++
++describe("AvatarPicker (spec §6.30)", () => {
++  it("the picker selects a preset and calls onChange", () => {
++    const onChange = vi.fn();
++    wrap(
++      <AvatarPicker
++        value={{ kind: "preset", id: "capybara" }}
++        onChange={onChange}
++        onUpload={() => {}}
++      />,
++    );
++    const group = screen.getByRole("radiogroup", { name: "头像" });
++    const radios = [...group.querySelectorAll('input[type="radio"]')];
++    expect(radios).toHaveLength(10);
++    expect(screen.getByRole("radio", { name: "水豚" })).toHaveProperty("checked", true);
++    expect(screen.getByRole("radio", { name: "狐狸" })).toHaveProperty("checked", false);
++    fireEvent.click(screen.getByRole("radio", { name: "狐狸" }));
++    expect(onChange).toHaveBeenCalledWith({ kind: "preset", id: "fox" });
++  });
++
++  it("names the presets in English", () => {
++    wrap(<AvatarPicker value={null} onChange={() => {}} />, "en");
++    const names = screen.getAllByRole("radio").map((r) => r.getAttribute("aria-label"));
++    expect(names).toEqual([
++      "Capybara",
++      "Black bear",
++      "Panda",
++      "Elephant",
++      "Fox",
++      "Owl",
++      "Penguin",
++      "Rabbit",
++      "Turtle",
++      "Whale",
++    ]);
++    expect(screen.getByRole("radiogroup", { name: "Avatar" })).toBeTruthy();
++  });
++
++  it("the upload tile is disabled with its reason when onUpload is absent", () => {
++    wrap(
++      <AvatarPicker
++        value={{ kind: "preset", id: "panda" }}
++        onChange={() => {}}
++        uploadOffReason="未配置对象存储，无法上传图片。"
++      />,
++    );
++    const tile = screen.getByRole("button", { name: "上传图片" });
++    expect(tile).toHaveProperty("disabled", true);
++    const reason = document.getElementById(tile.getAttribute("aria-describedby") ?? "");
++    expect(reason?.textContent).toBe("未配置对象存储，无法上传图片。");
++    cleanup();
++    // without a reason of its own, a default one
++    wrap(<AvatarPicker value={null} onChange={() => {}} />, "en");
++    const t = screen.getByRole("button", { name: "Upload image" });
++    expect(t).toHaveProperty("disabled", true);
++    expect(document.getElementById(t.getAttribute("aria-describedby") ?? "")?.textContent).toBe(
++      "Uploading is not available here.",
++    );
++  });
++
++  it("the upload tile passes the chosen png, jpg or webp to onUpload", () => {
++    const onUpload = vi.fn();
++    const { container } = wrap(
++      <AvatarPicker value={null} onChange={() => {}} onUpload={onUpload} />,
++    );
++    const tile = screen.getByRole("button", { name: "上传图片" });
++    expect(tile).toHaveProperty("disabled", false);
++    expect(tile.getAttribute("aria-describedby")).toBeNull();
++    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
++    expect(input.getAttribute("accept")).toBe("image/png,image/jpeg,image/webp");
++    const file = new File(["x"], "me.png", { type: "image/png" });
++    fireEvent.change(input, { target: { files: [file] } });
++    expect(onUpload).toHaveBeenCalledWith(file);
++  });
++
++  it("an uploaded image shows on the upload tile and no preset is checked", () => {
++    const { container } = wrap(
++      <AvatarPicker
++        value={{ kind: "image", src: "/api/avatar/a1" }}
++        onChange={() => {}}
++        onUpload={() => {}}
++      />,
++    );
++    expect(screen.getAllByRole("radio").some((r) => (r as HTMLInputElement).checked)).toBe(false);
++    const tile = screen.getByRole("button", { name: "上传图片" });
++    expect(tile.getAttribute("data-state")).toBe("checked");
++    expect(container.querySelector('[data-part="avatar-upload"] img')?.getAttribute("src")).toBe(
++      "/api/avatar/a1",
++    );
++  });
++});

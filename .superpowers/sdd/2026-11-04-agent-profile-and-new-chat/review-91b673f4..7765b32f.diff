@@ -1,0 +1,2065 @@
+# Review package: 91b673f4..7765b32f
+
+## Commits
+7765b32f feat(web): the new conversation page with greeting, agents and quick actions; avatars everywhere
+
+## Files changed
+ .agents/skills/writing-web-ui/SKILL.md             |   2 +-
+ .changeset/agent-profiles.md                       |   4 +-
+ .changeset/agent-prompt-files.md                   |   2 +-
+ .changeset/new-conversation-page.md                |   8 +
+ AGENTS.md                                          |   2 +-
+ apps/web/e2e/conversation-capabilities.spec.ts     |   9 +-
+ apps/web/e2e/conversation-send.spec.ts             |   3 +-
+ apps/web/e2e/new-conversation-page.spec.ts         |  59 ++++
+ apps/web/e2e/support/chat.ts                       |   6 +-
+ apps/web/src/components/AgentList.tsx              |   4 +-
+ .../src/components/conversation/ComposerBar.tsx    |  64 +++-
+ .../components/conversation/ConversationView.tsx   |   9 +-
+ .../components/conversation/NewConversation.tsx    | 134 +++++++--
+ apps/web/src/components/shell/conversations.tsx    |  26 +-
+ apps/web/test/app-layout.test.tsx                  |   1 +
+ apps/web/test/conversation-page.test.tsx           |  29 +-
+ apps/web/test/new-conversation-page.test.tsx       | 334 +++++++++++++++++++++
+ apps/web/test/pages.test.tsx                       |   1 +
+ apps/web/test/support/conversation.ts              |  10 +
+ docs/design/spec.md                                |   9 +-
+ packages/design/src/conversation/agent-row.tsx     |   9 +
+ packages/design/src/conversation/title-bar.tsx     |  34 ++-
+ packages/design/src/display/object-list.tsx        |  18 +-
+ .../design/src/shell/sidebar-conversations.tsx     |   6 +
+ packages/design/src/styles/conversation-page.css   |  11 +
+ packages/design/src/styles/templates.css           |   4 +
+ 26 files changed, 727 insertions(+), 71 deletions(-)
+
+## Diff
+diff --git a/.agents/skills/writing-web-ui/SKILL.md b/.agents/skills/writing-web-ui/SKILL.md
+index 79e41ec2..f644d99c 100644
+--- a/.agents/skills/writing-web-ui/SKILL.md
++++ b/.agents/skills/writing-web-ui/SKILL.md
+@@ -21,21 +21,21 @@ Tokens: `docs/design/tokens.json` is the source; `pnpm gen:tokens` writes `token
+ ## Choosing a template (spec §5)
+ 
+ | Page | Template | Notes |
+ |---|---|---|
+ | Org home, Agent summary | `OverviewPage` | Single |
+ | Agents / knowledge bases / extensions / members lists | `ListPage` | Rail (optional facet filters) + one `DataTable` |
+ | Agent / knowledge base / extension detail | `DetailPage` | Content + Inspector, with PageTabs |
+ | Create / edit an object | `FormPage` | Centered, grouped by `FormSection`, always has an ActionRow |
+ | Org / environment / security settings | `SettingsPage` | Secondary nav + Centered, ActionRow when there are changes |
+ | Human approval, alert handling | `InboxPage` | Rail + Content (+ Inspector) |
+-| The conversation page (`/chat`, `/chat/<id>`) | `ConversationPage` | Title bar + thread + composer, with the properties panel or one right panel (spec §5.4) (it replaced `PlaygroundPage`) |
++| The conversation page (`/chat`, `/chat/<id>`) | `ConversationPage` | Title bar + thread + composer, with the properties panel or one right panel (spec §5.4) (it replaced `PlaygroundPage`); a new conversation (`/chat`) passes `newConversation` with `Greeting`, `AgentRow` and `QuickActions`, and the composer has no agent picker |
+ | Single run detail | `TracePage` | Span waterfall + detail |
+ | First-time setup of a model / connector / extension | `WizardPage` | Centered + step bar, previous / next |
+ | Login, initialization, accept invitation | `AuthPage` | No Shell |
+ | 404 / 403 / under maintenance | `StatusPage` | Single, centered |
+ | New org, empty environment | `OnboardingPage` | Single, centered checklist |
+ | The workspace while the org has no model or no agent | `SetupPage` | The shell's geometry with the setup sidebar (`context.kind: "setup"`: 开始之前 and the steps as navigation) + content area + status bar; the page brings its own template; drawn by `AppFrame` (`components/shell/setup.tsx`), never by a page (web-order spec §3.8, web-SSR spec §4) |
+ 
+ ### The web order: contexts and frames (spec `docs/superpowers/specs/2026-10-31-web-order-design.md`)
+ 
+ The sidebar has three contexts (the third, setup, is drawn only by `SetupPage`): the workspace (conversations, Agents, 更多 with connectors / channels / skills / evals / catalog, org settings) and the admin console (`/admin/*`, entered from the account row, enterprise admins only). Personal settings are `/account/*` (connections, grants, IM identities), org settings `/settings/*`. Every page uses one of three frames and one page head (`PageHeader`: `path` required, `title`, optional `description` / `actions` / `tabs` + `activeTab` / `search`).
+diff --git a/.changeset/agent-profiles.md b/.changeset/agent-profiles.md
+index 7dbcbc19..0333f921 100644
+--- a/.changeset/agent-profiles.md
++++ b/.changeset/agent-profiles.md
+@@ -1,7 +1,9 @@
+ ---
+-"@capybara-hq/kernel": patch
++"@capybara-hq/kernel": minor
+ ---
+ 
+ Agents have a profile (avatar, description, quick actions) stored outside the agent versions:
+ `profile` on the agent view, `PATCH /api/v1/orgs/:orgId/agents/:agentId/profile` with
+ `expectedUpdatedAt` (409 `agent.profile_conflict`), and a random preset avatar on create.
++Avatars are a preset or an uploaded png, jpg or webp (`POST …/agents/:agentId/avatar/uploads`, at
++most 2 MB), served by `GET …/agents/:agentId/avatar`.
+diff --git a/.changeset/agent-prompt-files.md b/.changeset/agent-prompt-files.md
+index 3bd5a1da..739280b6 100644
+--- a/.changeset/agent-prompt-files.md
++++ b/.changeset/agent-prompt-files.md
+@@ -1,8 +1,8 @@
+ ---
+-"@capybara-hq/kernel": patch
++"@capybara-hq/kernel": minor
+ ---
+ 
+ Agent definitions take the system prompt as named `.md` files (`instructionFiles`, 1–20 unique
+ names, at most 100 000 characters joined). The kernel joins them into `instructions`, which stays
+ the model-visible field (400 `agent.instructions_mismatch` when both are given and differ); a
+ definition without files reads as one `AGENTS.md`, and a new agent with no prompt gets a starter.
+diff --git a/.changeset/new-conversation-page.md b/.changeset/new-conversation-page.md
+new file mode 100644
+index 00000000..c9d72f46
+--- /dev/null
++++ b/.changeset/new-conversation-page.md
+@@ -0,0 +1,8 @@
++---
++"@capybara-hq/web": patch
++---
++
++The new conversation page greets by the time of day, shows the agents row (most recent first, at
++most five, the rest in a searchable panel) and the selected agent's quick actions; a quick action
++fills the composer, and ⌘Z / Ctrl+Z brings back the text it replaced. Agent avatars show in the
++agent list, the conversation title bar and the sidebar's group titles.
+diff --git a/AGENTS.md b/AGENTS.md
+index baeffa8b..1d7e197f 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -67,21 +67,21 @@ Package names are always `@capybara-hq/<name>`.
+ - A conversation's sandbox is shared by its sub-agents under Redis leases (`sandbox/leases.ts`): commands take shared leases (up to `sandbox.maxConcurrentCommands`, `1` = serialized), lifecycle changes the exclusive one, and a takeover kills only a crashed holder's tagged commands.
+ 
+ ## Rules at a glance
+ 
+ - Migrations: plain SQL files named `NNNN_<snake_desc>.sql`; creating or dropping objects must use `IF NOT EXISTS` / `IF EXISTS`; the kernel schema is `capybara`, an extension's is `plugin_<name>` (`-` becomes `_`). See [.agents/skills/writing-migrations](.agents/skills/writing-migrations/SKILL.md).
+ - Config: env var prefix `CAPYBARA_`, nesting with double underscores (`CAPYBARA_DB__URL` -> `db.url`), env vars win; the source is chosen by `CAPYBARA_CONFIG_SOURCE` (`file` / `nacos`). See [.agents/skills/adding-config](.agents/skills/adding-config/SKILL.md). Extension deployment config can also be stored in PG by an enterprise admin from the admin console (precedence: env > file / Nacos > PG > default; fields present in the startup config are read-only; invalid config = extension pending configuration, never a kernel startup failure); see "two-level config" in [.agents/skills/writing-extensions](.agents/skills/writing-extensions/SKILL.md).
+ - Language: English is preferred for docs, code comments, identifiers and commit messages; Chinese is not required. Existing Chinese docs are migrated gradually. Code comments and test titles are not bulk-translated. When you touch a file, write new comments in English and translate the comments and test titles you edit. Model-facing text (prompts, tool descriptions, model-visible errors) is always English; UI text goes through i18n (zh and en).
+ - UI: page = template + design components; apps/web writes no styles (no className / style / .css / color literals); no characters as icons (`design-char-icon`). The conversation page (`/chat`, `/chat/<id>`) is the `ConversationPage` template: pages never group tool calls themselves (`apps/web/src/lib/timeline.ts` is the one builder), the right area (properties panel or one right panel) lives in the URL hash, and nothing is created before the first send. The sidebar has two contexts (workspace; admin console under `/admin`), pages use one of three frames (object list, detail / form, settings) with one page head whose `path` is required (`web-ui-page-path`), and personal settings live under `/account/*`. Every read goes through TanStack Query (spec `docs/superpowers/specs/2026-11-03-web-query-cache-design.md`, amending the web-SSR spec `2026-11-01-web-ssr-design.md`): a route is a thin server `page.tsx` that reads nothing (params to the view; `web-query-page-read`) plus a client `view.tsx` that reads with `usePageQuery` / `useQuery` and gates with `useWorkspace` / `useAdmin`. A first load (a document request) paints complete on the server: `(app)/layout.tsx` and the `(auth)` layout prefetch the route's queries from the route table `lib/query/routes.ts` (one entry per page, `web-query-route-table`; `then` for reads that need the first wave) and dehydrate them; a client navigation never runs the layout and reads from the query cache (fresh: no request; stale: paint, then refresh in the background; not cached: the template's `loading` state). Keys come only from `lib/query/keys.ts` and start with `"org", orgId` / `"account", id` / `"deployment"` (`web-query-keys`); every read is a `defineQuery` with a freshness class of `lib/query/freshness.ts` (`web-query-freshness`); views never call a kernel loader outside a query or `useAppMutation` (`web-query-no-direct-read`), and a mutation names the keys it invalidates. A missing object is the page's not-found state inside the shell (HTTP 200), an unknown route a 404. No `loading.tsx`, no Next `staleTimes`, never Next's internal request headers; an org switch or sign-out cancels and clears the cache, then is a full navigation (ruling R4). See [.agents/skills/writing-web-ui](.agents/skills/writing-web-ui/SKILL.md); enforced by `pnpm check:web-ui`.
+ - Extensions: see [.agents/skills/writing-extensions](.agents/skills/writing-extensions/SKILL.md); author guide and reference implementation [`example-counter`](https://github.com/capybara-hq/plugins/tree/main/plugins/example-counter) in `capybara-hq/plugins`. An extension ships inside a plugin package, an npm-pack tgz whose `.capybara-plugin/plugin.json` carries the `extension` section (`capybara-plugin pack`, in core `pnpm pack-plugin` / `pack-plugins`; single-file ESM; only the SDK and zod are provided by the host; dynamic imports must be literals); read by `packages/kernel/src/catalog/plugin-package.ts` and `packages/kernel/src/extensions/package.ts`; a tgz in the pre-0.1.0 format is refused (`extension.legacy_format` / `catalog.legacy_format`), never read.
+ - Kernel: one standard NestJS + Fastify application (spec `docs/superpowers/specs/2026-10-28-nest-kernel-design.md`, status implemented), one convention per concern, enforced by `pnpm check:kernel-conventions`: domain services are `@Injectable` providers, each provided by one module (one instance), every constructor parameter with an explicit `@Inject` (no decorator metadata); no `useFactory` / `useValue` for domain classes, no late-bound closures, no facade; config through `KernelConfigService`; DTOs are `createZodDto` classes with `@ZBody` / `@ZQuery` / `@ZParam` (route parameters too, decision R20); `roles` imports `ApiModule` / `WorkerModule` / `GatewayModule`; `KernelLifecycle` owns the start order and the stop phases, and `listen()` waits for the start. `startKernelApp` installs its own `handleShutdownSignals` instead of `enableShutdownHooks()`: a signal flips readiness to 503 and stops at once (a start in progress aborts), the stop phases and `QueueShutdown` (queues and workers, abandoned when they cannot close, e.g. Redis down) share the 30 s budget before Redis and the pool close, and a second signal exits 1 at once. `KernelAppOptions.overrides` takes only the named seam tokens of `KernelOverride`, for the kernel's own tests (decision R22: not exported, `startTestKernel` takes none). Extensions don't depend on Nest. Decisions made during the implementation are the spec's appendix "Decisions made during implementation" (R1–R26, N1–N10; code and docs cite them as "decision R<n>"). See [.agents/skills/writing-kernel-api](.agents/skills/writing-kernel-api/SKILL.md).
+-- Runtime: the conversation event log is the single source of truth; everything the model sees goes into the log (any model request can be reconstructed from the log plus the agent version), and the history sent to the model is append-only. A person's skill invocation is logged as its rendered text (`content[0]`) with the non-model-visible `user_message.skill` record; a forked skill's report is the model-visible `skill_fork_result`, rendered in the invocation's user turn unless a model call already sent that turn. Code lives in `packages/kernel/src/runtime`. Queued messages (`POST …/queue`, `capybara.conversation_queue`) are not in the log until sent: one per run, after the turn, as an ordinary `user_message`. A model / effort switch comes with a message and is logged as `model_switched` just before it (not model-visible; replays honor it through `selectionAt`, DriftReason `model_switched`); a run in progress keeps its model. Titles are generated after a completed run on queue `cap-kernel-titles` (model purpose `title`, its own `usage` event, no run, never in replays); a rename always wins; titles reject control, bidi and other format characters (ZWJ / ZWNJ allowed). See [.agents/skills/replay-evals](.agents/skills/replay-evals/SKILL.md).
++- Runtime: the conversation event log is the single source of truth; everything the model sees goes into the log (any model request can be reconstructed from the log plus the agent version), and the history sent to the model is append-only. An agent's `instructions` is derived from its `instructionFiles` on save. A person's skill invocation is logged as its rendered text (`content[0]`) with the non-model-visible `user_message.skill` record; a forked skill's report is the model-visible `skill_fork_result`, rendered in the invocation's user turn unless a model call already sent that turn. Code lives in `packages/kernel/src/runtime`. Queued messages (`POST …/queue`, `capybara.conversation_queue`) are not in the log until sent: one per run, after the turn, as an ordinary `user_message`. A model / effort switch comes with a message and is logged as `model_switched` just before it (not model-visible; replays honor it through `selectionAt`, DriftReason `model_switched`); a run in progress keeps its model. Titles are generated after a completed run on queue `cap-kernel-titles` (model purpose `title`, its own `usage` event, no run, never in replays); a rename always wins; titles reject control, bidi and other format characters (ZWJ / ZWNJ allowed). See [.agents/skills/replay-evals](.agents/skills/replay-evals/SKILL.md).
+ - Model provider extensions (including media blocks image / document: model capability declarations, limits and placeholders are owned by the kernel; extensions never receive `ref`): see [.agents/skills/writing-model-providers](.agents/skills/writing-model-providers/SKILL.md).
+ - Tools (`ctx.tools`, descriptions and error text, default policy, output archiving, `tool_search`, drift review; display-only `title` / `keyArgs` (validated by `validateToolPresentation`, excluded from `specHash`, read live by `GET …/conversations/:id/tools`, never sent to the model) and tool kinds; `sandbox_bash` requires a `description` the row shows instead of the command; display-only `tool_result.view` (exit code, diff, read range); the builtin `sandbox_*` tools and the skill tools `skill_load` / `skill_write`; manual-only skills (`disable-model-invocation: true`) never enter the model's catalog or the pinned skills, and `skill_load` is also offered, and loads the recorded version, once a person invoked a skill; keys contain no dots; `skill_write` always asks on shared agents, private agents don't ask by default and may set `skills.writePolicy: "ask"`; `skill_load` also accepts `<plugin>:<name>`; an agent pins at most 3 skills (`skills.pinned`, SKILL.md total ≤ 32 KB) whose bodies the run start writes into the `skills_catalog` snapshot with the Claude Code tool-name map, and requests render them only from the log): see [.agents/skills/writing-tools](.agents/skills/writing-tools/SKILL.md); reference implementation [`todo`](https://github.com/capybara-hq/plugins/tree/main/plugins/todo) in `capybara-hq/plugins`.
+ - Sub-agents (the builtin `agent` tool; depth 1; children run in read-only child conversations with their definition frozen in `subagent_started`, never get `agent` / `ask_user` / `sandbox_deliver` / `skill_write`, and share the parent conversation's sandbox; per-run limits `subagents.*` with org overrides `subagentLimitOverrides`, the children's tokens count against the parent run; approvals go to the person who started the parent run and show in the parent as `subagent_waiting`; org agents only behind the allowlist, `dispatchable` and visibility gates, checked at every dispatch and follow-up; stopping a parent stops its children; replays never start a child): see "The `agent` builtin tool" in [.agents/skills/writing-tools](.agents/skills/writing-tools/SKILL.md) and "Sub-agents" in [.agents/skills/replay-evals](.agents/skills/replay-evals/SKILL.md); spec `docs/superpowers/specs/2026-10-26-subagents-design.md`.
+ - Sandboxes (`sandbox@1`: abort must kill the command; throw `SandboxGoneError` only when certain the sandbox is gone; auto-start stopped instances; commands have a time limit inside the sandbox too; `killAll`; providers that declare `concurrentExec` run several holders' commands at once and must implement `killTagged`; same-name replacement; `/skills` is read-only; `open` egress requires `allowOpenEgress`; locking, suspension and destruction are owned by the kernel `SandboxService`; never publish the socket proxy on a host address): see [.agents/skills/writing-sandbox-providers](.agents/skills/writing-sandbox-providers/SKILL.md); reference implementations [`sandbox-docker`](https://github.com/capybara-hq/plugins/tree/main/plugins/sandbox-docker), [`sandbox-e2b`](https://github.com/capybara-hq/plugins/tree/main/plugins/sandbox-e2b) in `capybara-hq/plugins` (core keeps the socket proxy config `docker/sandbox-proxy/haproxy.cfg`, whose copy in the plugin's tests `check:bootstrap --network` compares, and builds the sandbox images in compose from git contexts at `marketplace.commit`).
+ - Object storage (`object-store@1` / `ctx.storage`: the key prefixes `plugins/<plugin>/<orgId>/` and `kernel/<orgId>/` are added by the kernel; presigned upload size must be enforced by the store; keys may not contain `${`; using `ctx.storage` requires declaring `permissions.storage`): see [.agents/skills/writing-object-store-providers](.agents/skills/writing-object-store-providers/SKILL.md); reference implementation [`object-store-s3`](https://github.com/capybara-hq/plugins/tree/main/plugins/object-store-s3) in `capybara-hq/plugins`.
+ - Connectors (remote service instances, formerly called "apps"; protocols are implemented by **connector extensions** providing `connector@1`, e.g. MCP / OpenAPI; stdio MCP is not supported): see [.agents/skills/writing-connectors](.agents/skills/writing-connectors/SKILL.md); reference implementations [`connector-mcp`](https://github.com/capybara-hq/plugins/tree/main/plugins/connector-mcp), [`connector-openapi`](https://github.com/capybara-hq/plugins/tree/main/plugins/connector-openapi) in `capybara-hq/plugins`.
+ - Manual skill invocation (phase D, spec `docs/superpowers/specs/2026-10-27-phase-d-manual-skills-design.md`): a person runs a skill of the conversation's agent with `/name args` (`POST …/messages` / `…/queue` `skill: { name }`, a bare or `<plugin>:<name>`; the `/` menu reads `GET …/agents/:id/invocable-skills`); the kernel resolves it at send time, renders it with the SDK's `renderSkillInvocation` (nothing executed, arguments ≤ 10 000 and the result ≤ 200 000 characters) and refuses with 400 `skill.not_invocable` / `validation_failed` or 503 without writing anything. A `context: fork` skill starts its own run that dispatches a sub-agent before any model call and waits for its report; replay never dispatches. Claude Code commands import as ordinary skills. IM channels post `/name args` (bot mention stripped) as an invocation when it names an invocable skill, else as text; `/new` stays reserved in direct messages. See [.agents/skills/writing-tools](.agents/skills/writing-tools/SKILL.md), [.agents/skills/writing-plugins](.agents/skills/writing-plugins/SKILL.md), [.agents/skills/replay-evals](.agents/skills/replay-evals/SKILL.md) and [.agents/skills/writing-channels](.agents/skills/writing-channels/SKILL.md).
+ - Channels, third-party login, directory sync (`channel@1` / `identity-source@1` / `directory@1`: identity key `<plugin>:<tenant>`, ack only after onEvent resolves, the card spec, no @everyone; inbound is a long connection by default, held only by the `gateway` role, spread across gateway replicas by share (`channels.shareSlack`), with optional webhook inbound (`Channel.webhook`: the extension verifies signatures and answers the challenge, the kernel dedupes, enqueues and acks only after every event is accepted); leader election, sharing and durable queues are owned by the kernel): see [.agents/skills/writing-channels](.agents/skills/writing-channels/SKILL.md); reference implementations [`slack`](https://github.com/capybara-hq/plugins/tree/main/plugins/slack), [`lark`](https://github.com/capybara-hq/plugins/tree/main/plugins/lark) in `capybara-hq/plugins`.
+ - Extension UI (`ctx.ui`: on the conversation page the places `panel` (a right panel from a title-bar icon; the old `conversation` means `panel`), `section` (the properties panel) and `inline` (a card under the tool result that names it with `ToolResult.card`), each block failing alone; `place: "page"` for "Extensions" pages; file previewers are the extension point `file-preview@1` (`render` with a one-file read grant, or an embed fed over the bridge; an accepting extension previewer wins over the built-ins); schema-rendered views don't gate loading, embeds require approval and are sensitive, tokens are valid only for their own extension and never for `/api`): see [.agents/skills/writing-extension-ui](.agents/skills/writing-extension-ui/SKILL.md); reference implementations [`todo`](https://github.com/capybara-hq/plugins/tree/main/plugins/todo) (views), [`example-board`](https://github.com/capybara-hq/plugins/tree/main/plugins/example-board) (embed) in `capybara-hq/plugins`.
+ - Extension hooks (`ctx.hooks`: `model.request` / `model.response` / `tool.preExecute` / `tool.postExecute` / `usage.report`; observe or deny only, never rewrite; registered only during `setup`; declared in `permissions.hooks`, and a `mode: "policy"` hook also in `permissions.policyHooks`, which makes it fail closed on a replica where the extension is not loaded; every denial is logged (`hook.denied` audit row, `hook_denied` event); payloads carry no media bytes; `usage.report` goes through the queue `cap-kernel-usage-report`, at least once, so handlers are idempotent by `eventId`; hooks never fire in eval replays): see "Hooks" in [.agents/skills/writing-extensions](.agents/skills/writing-extensions/SKILL.md).
+diff --git a/apps/web/e2e/conversation-capabilities.spec.ts b/apps/web/e2e/conversation-capabilities.spec.ts
+index 425de29d..42aee7a3 100644
+--- a/apps/web/e2e/conversation-capabilities.spec.ts
++++ b/apps/web/e2e/conversation-capabilities.spec.ts
+@@ -19,37 +19,40 @@ import { signIn } from "./support/sign-in";
+ /**
+  * The anti-goal capabilities of the conversation page (UI refresh spec §2): everything the old page
+  * could do still works on the new one. One test per capability group, each with its own agent.
+  */
+ 
+ const LONG = "Capybaras are the largest living rodents and very calm swimmers. ".repeat(4).trim();
+ 
+ async function newChat(page: Page, agentId: string) {
+   await page.goto(`/chat?agent=${agentId}`);
+   await expect(page.locator('[data-template="ConversationPage"]')).toBeVisible();
+-  // The agent is picked once the agents list loaded (the heading names it).
+-  await expect(page.locator('[data-part="new-conversation-body"] h2')).not.toHaveText("—");
++  // The agent is picked once the agents list loaded (the composer's placeholder names it).
++  await expect(composer(page)).not.toHaveAttribute("placeholder", /—/);
+ }
+ 
+ // exact: a stopped run's row is named "… 已停止 …" too
+ const stopButton = (page: Page) =>
+   page.getByRole("button", { name: designZh("composer.stop"), exact: true });
+ const statusBar = (page: Page) => page.locator('[data-part="conv-main"] .cb-statusbar');
+ 
+ test("a new conversation is created on the first send only; the title is generated; rename", async ({
+   page,
+ }) => {
+   await signIn(page);
+   const orgId = await currentOrg(page);
+   const agentId = await createAgent(page, orgId, "Cap first send");
+   await newChat(page, agentId);
+-  await expect(page.getByRole("heading", { name: "Cap first send" })).toBeVisible();
++  await expect(composer(page)).toHaveAttribute(
++    "placeholder",
++    zh.chat.newPlaceholder.replace("{agent}", "Cap first send"),
++  );
+   // Nothing exists before the first send.
+   const before = await page.request.get(`/api/v1/orgs/${orgId}/conversations?agentId=${agentId}`);
+   expect(((await before.json()) as { conversations: unknown[] }).conversations).toHaveLength(0);
+ 
+   await send(page, "echo:hello capybara");
+   await expect(replies(page).last()).toHaveText(/hello capybara/);
+   const id = conversationIdOf(page);
+   const sidebar = page.getByRole("region", { name: "会话" });
+   // The title is generated after the first run (model-fake answers "You said: …").
+   const title = page.locator('[data-part="title-bar"] [data-part="title"]');
+diff --git a/apps/web/e2e/conversation-send.spec.ts b/apps/web/e2e/conversation-send.spec.ts
+index d3ed829f..91843f5d 100644
+--- a/apps/web/e2e/conversation-send.spec.ts
++++ b/apps/web/e2e/conversation-send.spec.ts
+@@ -9,22 +9,23 @@ import { signIn } from "./support/sign-in";
+ 
+ const LONG = "Capybaras are the largest living rodents and very calm swimmers. ".repeat(4).trim();
+ 
+ test("send from /chat: the composer clears at once, the working line, then a streaming reply", async ({
+   page,
+ }) => {
+   await signIn(page);
+   const orgId = await currentOrg(page);
+   const agentId = await createAgent(page, orgId, "Cap send");
+   await page.goto(`/chat?agent=${agentId}`);
+-  await expect(page.locator('[data-part="new-conversation-body"] h2')).not.toHaveText("—");
+   const input = composer(page);
++  // the agent is picked (the composer's placeholder names it)
++  await expect(input).not.toHaveAttribute("placeholder", /—/);
+   await input.fill(`slow:200:${LONG}`);
+   await input.press("Enter");
+   // the composer is empty within 100 ms, long before the create answers
+   await expect(input).toHaveValue("", { timeout: 100 });
+   // the working line shows before the first token
+   const line = page.locator('[data-part="working-line"]');
+   await expect(line).toBeVisible();
+   await expect(replies(page)).toHaveCount(0);
+   // the reply streams: at least two growth steps before it is whole
+   const lengths = new Set<number>();
+diff --git a/apps/web/e2e/new-conversation-page.spec.ts b/apps/web/e2e/new-conversation-page.spec.ts
+new file mode 100644
+index 00000000..3413321c
+--- /dev/null
++++ b/apps/web/e2e/new-conversation-page.spec.ts
+@@ -0,0 +1,59 @@
++import { expect, test } from "@playwright/test";
++import { CSRF, composer, createAgent, currentOrg, replies, users, zh } from "./support/chat";
++import { signIn } from "./support/sign-in";
++
++/**
++ * The new conversation page (agent profile design §4): the greeting, the selected agent's quick
++ * actions filling the composer, and the first send from there (model-fake echoes).
++ */
++
++test("the new conversation page greets, a quick action fills the composer, and the send works", async ({
++  page,
++}) => {
++  await signIn(page);
++  const orgId = await currentOrg(page);
++  const agentId = await createAgent(page, orgId, "Cap quick");
++  // the quick actions are profile data, saved like the agent page saves them
++  const read = await page.request.get(`/api/v1/orgs/${orgId}/agents/${agentId}`);
++  expect(read.ok(), await read.text()).toBe(true);
++  const { agent } = (await read.json()) as { agent: { profile: { updatedAt: string } } };
++  const saved = await page.request.patch(`/api/v1/orgs/${orgId}/agents/${agentId}/profile`, {
++    headers: CSRF,
++    data: {
++      quickActions: [{ title: "Say hello", body: "echo:hello from a quick action" }],
++      expectedUpdatedAt: agent.profile.updatedAt,
++    },
++  });
++  expect(saved.ok(), await saved.text()).toBe(true);
++  const me = (await (await page.request.get("/api/v1/me")).json()) as {
++    account: { displayName: string };
++  };
++
++  await page.goto(`/chat?agent=${agentId}`);
++  // one line of the time-of-day sets, with the person's name where the line has one
++  const lines = Object.entries(zh.chat.greeting)
++    .filter(([k]) => k !== "sub")
++    .flatMap(([, v]) => v as string[])
++    .map((l) => l.replace("{name}", me.account.displayName));
++  // the heading's name is the whole line (the typed copy is hidden from assistive tech)
++  const greeting = page.locator('[data-part="new-conversation-body"] h2 .cb-sr-only');
++  await expect
++    .poll(async () => lines.includes(((await greeting.textContent()) ?? "").trim()))
++    .toBe(true);
++  await expect(page.getByText(zh.chat.greeting.sub)).toBeVisible();
++
++  const input = composer(page);
++  await expect(input).toHaveAttribute(
++    "placeholder",
++    zh.chat.newPlaceholder.replace("{agent}", "Cap quick"),
++  );
++  await input.fill("draft text");
++  await page.getByRole("button", { name: "Say hello" }).click();
++  await expect(input).toHaveValue("echo:hello from a quick action");
++  await expect(input).toBeFocused();
++
++  await input.press("Enter");
++  await expect(users(page).filter({ hasText: "hello from a quick action" }).first()).toBeVisible();
++  await expect(page).toHaveURL(/\/chat\/[^/?#]+(#.*)?$/);
++  await expect(replies(page).last()).toHaveText(/hello from a quick action/, { timeout: 30_000 });
++});
+diff --git a/apps/web/e2e/support/chat.ts b/apps/web/e2e/support/chat.ts
+index 85e074d5..90a918e0 100644
+--- a/apps/web/e2e/support/chat.ts
++++ b/apps/web/e2e/support/chat.ts
+@@ -41,21 +41,25 @@ export const toolGroup = (page: Page, key: string): Locator =>
+  */
+ export async function startChat(page: Page, agentName: string): Promise<void> {
+   if (!/\/agents$/.test(page.url())) await page.goto("/agents");
+   await page
+     .getByRole("listitem")
+     .filter({ hasText: agentName })
+     .getByRole("button", { name: zh.agents.chat, exact: true })
+     .click();
+   await expect(page).toHaveURL(/\/chat\?agent=[^&]+$/);
+   await expect(page.locator('[data-template="ConversationPage"]')).toBeVisible();
+-  await expect(page.getByRole("heading", { name: agentName })).toBeVisible();
++  // the agent is picked: the composer's placeholder names it
++  await expect(composer(page)).toHaveAttribute(
++    "placeholder",
++    zh.chat.newPlaceholder.replace("{agent}", agentName),
++  );
+   await expect(composer(page)).toBeEnabled();
+ }
+ 
+ /** Sends with ↵ and waits for the bubble (the first send also creates the conversation). */
+ export async function send(page: Page, text: string): Promise<void> {
+   const input = composer(page);
+   await input.fill(text);
+   await input.press("Enter");
+   await expect(users(page).filter({ hasText: text }).first()).toBeVisible();
+   await expect(page).toHaveURL(/\/chat\/[^/?#]+(#.*)?$/);
+diff --git a/apps/web/src/components/AgentList.tsx b/apps/web/src/components/AgentList.tsx
+index 5e195420..112b000a 100644
+--- a/apps/web/src/components/AgentList.tsx
++++ b/apps/web/src/components/AgentList.tsx
+@@ -1,17 +1,17 @@
+ "use client";
+ 
+ import { ObjectRow } from "@capybara-hq/design";
+ import { useTranslations } from "next-intl";
+ import { useContext, useState } from "react";
+ import { useRouter } from "../i18n/navigation";
+-import type { Agent } from "../lib/agents";
++import { type Agent, avatarValue } from "../lib/agents";
+ import { modelLabel } from "../lib/extension-label";
+ import { canUpdateOrg } from "../lib/org-settings";
+ import { ReassignOwnerDialog } from "./ReassignOwnerDialog";
+ import { navLevelOf } from "./shell/nav";
+ import { SessionContext } from "./shell/session";
+ 
+ export type AgentScope = "all" | "mine" | "shared";
+ 
+ /** Whether the agent belongs to the "mine" / "shared" tab (the kernel decides who can see what). */
+ export function inScope(a: Agent, scope: AgentScope, accountId: string | undefined): boolean {
+@@ -56,21 +56,21 @@ export function AgentRow({ agent }: { agent: Agent }) {
+     // The list has no providers list (it would cost a vendor call): the provider id stands in.
+     modelLabel({ name: def.model.provider }, def.model.model, "en"),
+     ...(skills > 0 ? [t("meta.skills", { n: skills })] : []),
+     ...(tools > 0 ? [t("meta.tools", { n: tools })] : []),
+   ].join(" · ");
+   const editHref = `/agents/${encodeURIComponent(agent.id)}`;
+   const start = () => router.push(`/chat?agent=${encodeURIComponent(agent.id)}`);
+   return (
+     <>
+       <ObjectRow
+-        mark={{ text: def.name }}
++        mark={{ text: def.name, avatar: avatarValue(agent, agent.orgId) }}
+         name={def.name}
+         {...(canEdit ? { href: editHref } : {})}
+         meta={meta}
+         action={{ label: t("chat"), onSelect: start }}
+         // The row action starts a conversation and the name already opens the edit page, so the
+         // menu repeats neither (spec §6.7): it holds only 更换负责人, for org admins.
+         menu={admin ? [{ label: t("reassign.action"), onSelect: () => setReassigning(true) }] : []}
+       />
+       {reassigning ? (
+         <ReassignOwnerDialog
+diff --git a/apps/web/src/components/conversation/ComposerBar.tsx b/apps/web/src/components/conversation/ComposerBar.tsx
+index 3f7a4e90..b72db3b2 100644
+--- a/apps/web/src/components/conversation/ComposerBar.tsx
++++ b/apps/web/src/components/conversation/ComposerBar.tsx
+@@ -13,21 +13,23 @@ import {
+   Input,
+   type PickerProps,
+   Stack,
+   useToast,
+ } from "@capybara-hq/design";
+ import { useQuery, useQueryClient } from "@tanstack/react-query";
+ import { useTranslations } from "next-intl";
+ import {
+   type ChangeEvent,
+   type KeyboardEvent,
++  type Ref,
+   useEffect,
++  useImperativeHandle,
+   useRef,
+   useState,
+   useSyncExternalStore,
+ } from "react";
+ import { ApiClientError } from "../../lib/api";
+ import { fileContentType } from "../../lib/attachments";
+ import {
+   type ConnectorPrompt,
+   type ConnectorResource,
+   type ConnectorUnavailable,
+@@ -100,20 +102,40 @@ export type ComposerMessage = Pick<
+ /** A composer's draft handed from one composer to the next (text, chip, resources, files, id). */
+ export type ComposerDraft = {
+   text: string;
+   skill: InvocableSkill | null;
+   attachments: DraftAttachment[];
+   files: DraftFile[];
+   /** The draft's `clientMessageId`, kept for the retry (the kernel dedupes it). */
+   id?: { key: string; id: string };
+ };
+ 
++/** What a page may do to its composer from outside (the new conversation's quick actions). */
++export type ComposerControl = {
++  /**
++   * Replaces the text with `text` and focuses the input. The text it replaced is one undo step:
++   * the next ⌘Z / Ctrl+Z, before any other edit, brings it back.
++   */
++  fill(text: string): void;
++  /** Focuses the input (a new conversation's agent was picked). */
++  focus(): void;
++};
++
++/** ⌘Z on a Mac, Ctrl+Z elsewhere (either is taken: the browser's own undo also takes both). */
++export const isUndoKey = (e: {
++  key: string;
++  metaKey: boolean;
++  ctrlKey: boolean;
++  shiftKey: boolean;
++  altKey: boolean;
++}) => (e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "z";
++
+ /** The name a picked skill is invoked by: `<plugin>:<name>` for a plugin's skill. */
+ const invokeName = (s: InvocableSkill) => (s.plugin ? `${s.plugin}:${s.name}` : s.name);
+ 
+ const isMac = () =>
+   typeof navigator !== "undefined" &&
+   /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
+ const noSubscribe = () => () => {};
+ 
+ /** Blob previews of the draft's images, revoked when the file leaves the draft or on unmount. */
+ function useObjectUrls(files: DraftFile[]): ReadonlyMap<string, string> {
+@@ -174,40 +196,44 @@ export function ComposerBar({
+   conversationId,
+   running,
+   stop,
+   onSend,
+   onQueue,
+   pickers,
+   placeholder,
+   sendDisabled,
+   initialDraft,
+   onBlocked,
++  control,
+ }: {
+   orgId: string;
+   /** The conversation's agent (the `/` menu lists its skills); undefined while loading. */
+   agentId?: string | undefined;
+   /** The conversation, once it exists and is the caller's (its trial drafts apply). */
+   conversationId?: string | undefined;
+   /** A run is going (or waiting for a person): ↵ queues, ⌘↵ interjects, send becomes stop. */
+   running: boolean;
+   stop?: { onStop(): void; stopping: boolean };
+   onSend(m: ComposerMessage): Promise<SendResult>;
+   /** Queue the message (↵ while running); absent before the conversation exists. */
+   onQueue?(m: ComposerMessage): Promise<SendResult>;
+-  pickers: { agent: PickerProps; model: PickerProps; effort?: PickerProps };
++  /** The agent picker is absent on the new conversation page (its agents row picks). */
++  pickers: { agent?: PickerProps; model: PickerProps; effort?: PickerProps };
+   placeholder: string;
+   /** Nothing can be sent yet (a new conversation whose agent, or a thread, is still loading). */
+   sendDisabled?: boolean;
+   /** A failed send's draft to start from (read at mount). */
+   initialDraft?: ComposerDraft | undefined;
+   /** ↵ with a draft while `sendDisabled` (the caller says why; the draft stays). */
+   onBlocked?(): void;
++  /** Filled with {@link ComposerControl} while this composer is mounted. */
++  control?: Ref<ComposerControl>;
+ }) {
+   const t = useTranslations("chat");
+   const tc = useTranslations("common");
+   const toast = useToast();
+   const errorMessage = useErrorMessage();
+   const mac = useSyncExternalStore(noSubscribe, isMac, () => true);
+   const [text, setText] = useState(initialDraft?.text ?? "");
+   const [attachments, setAttachments] = useState<DraftAttachment[]>(
+     initialDraft?.attachments ?? [],
+   );
+@@ -375,38 +401,50 @@ export function ComposerBar({
+         restore();
+         drafts.markFailed(r.error);
+       }
+     } catch (e) {
+       restore();
+       throw e;
+     }
+   }
+ 
+   function onKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
++    // The one undo step of a fill: only while the text is still what the fill put there.
++    const undo = undoFill.current;
++    if (undo !== null && isUndoKey(e)) {
++      undoFill.current = null;
++      if (text === undo.text) {
++        e.preventDefault();
++        setText(undo.before);
++        return;
++      }
++    }
+     if (e.key !== "Enter" || e.nativeEvent.isComposing || e.shiftKey) return;
+     e.preventDefault();
+     // While a run is going ↵ queues for after the turn and ⌘↵ / Ctrl+↵ sends now (interjects).
+     const modified = e.metaKey || e.ctrlKey;
+     void submit(!modified && running && onQueue ? "queue" : "send");
+   }
+ 
+   function openPalette(which: Exclude<Palette, null>, pos: number) {
+     trigger.current = { char: which === "prompts" ? "/" : "@", pos, picked: false };
+     setPalette(which);
+     const failed = (e: unknown) => toast.error(errorMessage(e));
+     if (which === "prompts") {
+       void loadSkills(true);
+       qc.fetchQuery(connectorPromptsQuery(orgId)).catch(failed);
+     } else qc.fetchQuery(connectorResourcesQuery(orgId)).catch(failed);
+   }
+ 
+   function onChange(next: string, el?: HTMLTextAreaElement | null) {
++    // An edit after a fill: ⌘Z is the browser's own again.
++    undoFill.current = null;
+     const caret = el?.selectionStart ?? next.length;
+     if (text === "" && next === "/" && skill === null) {
+       openPalette("prompts", 0);
+       return;
+     }
+     const typed = next.length === text.length + 1 && next[caret - 1] === "@";
+     if (typed && (caret === 1 || /\s/.test(next[caret - 2] ?? ""))) {
+       setText(next.slice(0, caret - 1) + next.slice(caret));
+       openPalette("resources", caret - 1);
+       return;
+@@ -572,20 +610,44 @@ export function ComposerBar({
+         onRemove: () =>
+           setAttachments((list) =>
+             list.filter((x) => !(x.connectorId === a.connectorId && x.uri === a.uri)),
+           ),
+       }),
+     ),
+   ];
+ 
+   const hint = running ? t(mac ? "queueHintMac" : "queueHint") : undefined;
+   const textEl = useRef<HTMLTextAreaElement>(null);
++  /**
++   * The text a fill replaced, while the fill's text is unedited. A controlled textarea's value set
++   * by React is not on the browser's undo stack, so the composer keeps this one step itself.
++   */
++  const undoFill = useRef<{ before: string; text: string } | null>(null);
++  const textNow = useRef(text);
++  textNow.current = text;
++  useImperativeHandle(
++    control,
++    () => ({
++      fill(next: string) {
++        const before = textNow.current;
++        undoFill.current = before === next ? null : { before, text: next };
++        textNow.current = next;
++        setText(next);
++        // a value set from outside puts the caret after the text
++        textEl.current?.focus();
++      },
++      focus() {
++        textEl.current?.focus();
++      },
++    }),
++    [],
++  );
+ 
+   return (
+     <>
+       <FileDrop label={t("dropFiles")} onFiles={drafts.add} disabled={!drafts.limits.available}>
+         <ComposerBox
+           value={text}
+           onChange={(v) => onChange(v, textEl.current)}
+           onKeyDown={onKeyDown}
+           placeholder={placeholder}
+           {...(hint !== undefined ? { hint } : {})}
+diff --git a/apps/web/src/components/conversation/ConversationView.tsx b/apps/web/src/components/conversation/ConversationView.tsx
+index 8ff692bd..3898c478 100644
+--- a/apps/web/src/components/conversation/ConversationView.tsx
++++ b/apps/web/src/components/conversation/ConversationView.tsx
+@@ -6,20 +6,21 @@ import {
+   type PickerProps,
+   RenameDialog,
+   Stack,
+   type TitleBarMenuItem,
+   untitledLabel,
+   useToast,
+ } from "@capybara-hq/design";
+ import { useQuery, useQueryClient } from "@tanstack/react-query";
+ import { useLocale, useTranslations } from "next-intl";
+ import { type ReactNode, useEffect, useMemo, useState } from "react";
++import { avatarValue } from "../../lib/agents";
+ import type { ModelRef } from "../../lib/conversations";
+ import { agentsQuery } from "../../lib/query/agents";
+ import { retryOnMountOf } from "../../lib/query/client";
+ import { modelsQuery, renameWithRow, sentHereOf } from "../../lib/query/conversation";
+ import { keys as queryKeys } from "../../lib/query/keys";
+ import { useAppMutation } from "../../lib/query/mutation";
+ import { runParts } from "../../lib/run-row";
+ import { usageTotal, useSubagents, useUsageWithSubagents } from "../../lib/subagents";
+ import {
+   AWAIT_RUN_MS,
+@@ -156,20 +157,26 @@ export function useConversationPage(
+   const conv = useConversation(orgId, conversationId);
+   const agentsQ = agentsQuery(orgId);
+   const agents = useQuery({ ...agentsQ, retryOnMount: retryOnMountOf(agentsQ.queryKey) }).data
+     ?.agents;
+   const agent = agents?.find((a) => a.id === conv.conversation?.agentId);
+   // The title bar path `<org slug> / <agent> /` before the title (spec §3.5).
+   const path = usePagePath(
+     "org",
+     ...(agent ? [{ label: agent.definition.name, href: `/agents/${agent.id}` }] : []),
+   );
++  // The agent's segment leads with its avatar (16, spec §6.30), from the cached agents.
++  const titlePath = agent
++    ? path.map((seg, i) =>
++        i === path.length - 1 ? { ...seg, avatar: avatarValue(agent, orgId) } : seg,
++      )
++    : path;
+   const modelsQ = modelsQuery(orgId);
+   const providers = useQuery({ ...modelsQ, retryOnMount: retryOnMountOf(modelsQ.queryKey) }).data
+     ?.providers;
+   const selection = useSelection(providers, agent, conv.conversation?.selection);
+   const keys = useMemo(() => toolKeysOf(conv.events), [conv.events]);
+   const info = useToolInfo(orgId, conversationId, keys);
+   const subagents = useSubagents(
+     orgId,
+     conversationId,
+     conv.events,
+@@ -341,21 +348,21 @@ export function useConversationPage(
+     label: t("pickAgent"),
+     value: agent?.definition.name ?? "—",
+     locked: { hint: t("agentLocked") },
+     groups: [],
+     onPick: () => {},
+   };
+ 
+   const createdAt = conv.conversation ? new Date(conv.conversation.createdAt) : new Date();
+   const page: ConversationPageProps = {
+     titleBar: {
+-      path,
++      path: titlePath,
+       title: conv.conversation?.title ?? null,
+       untitled: untitledLabel(createdAt, locale),
+       menu,
+       properties: slot?.properties ?? { pressed: false, onToggle: () => {} },
+       panels: slot?.titleBarPanels ?? [],
+     },
+     thread: (
+       <>
+         <Thread
+           orgId={orgId}
+diff --git a/apps/web/src/components/conversation/NewConversation.tsx b/apps/web/src/components/conversation/NewConversation.tsx
+index 730b5ae7..e50527a0 100644
+--- a/apps/web/src/components/conversation/NewConversation.tsx
++++ b/apps/web/src/components/conversation/NewConversation.tsx
+@@ -1,39 +1,87 @@
+ "use client";
+ 
+-import { type ConversationPageProps, Stack, Text, untitledLabel } from "@capybara-hq/design";
++import {
++  AgentRow,
++  type AgentRowItem,
++  type ConversationPageProps,
++  Greeting,
++  QuickActions,
++  Stack,
++  Text,
++  untitledLabel,
++} from "@capybara-hq/design";
+ import { useQuery, useQueryClient } from "@tanstack/react-query";
+ import { useLocale, useTranslations } from "next-intl";
+-import { useState } from "react";
++import { useEffect, useRef, useState } from "react";
+ import { useRouter } from "../../i18n/navigation";
+-import { createConversationWithMessage, type MessageInput } from "../../lib/conversations";
++import { type Agent, avatarValue } from "../../lib/agents";
++import {
++  type ConversationGroup,
++  createConversationWithMessage,
++  type MessageInput,
++} from "../../lib/conversations";
++import { type GreetingLines, greetingBucket, pickGreeting } from "../../lib/greeting";
+ import { agentsQuery } from "../../lib/query/agents";
+ import { retryOnMountOf } from "../../lib/query/client";
+ import { modelsQuery, seedNewConversation } from "../../lib/query/conversation";
+ import { keys } from "../../lib/query/keys";
+ import { useAppMutation } from "../../lib/query/mutation";
+ import { conversationGroupsQuery } from "../../lib/query/shell";
+ import { useErrorMessage } from "../../lib/use-error-message";
+ import { FormError } from "../form-error";
+ import { useSession } from "../shell/session";
+-import { ComposerBar, type ComposerDraft, type ComposerMessage } from "./ComposerBar";
++import {
++  ComposerBar,
++  type ComposerControl,
++  type ComposerDraft,
++  type ComposerMessage,
++} from "./ComposerBar";
+ import { useStatusSignature } from "./ConversationView";
+ import { PendingBubbles, usePendingSends } from "./PendingBubbles";
+ import type { SendResult } from "./useConversation";
+ import { useSelection } from "./useSelection";
+ 
+ /**
+- * A new conversation (`/chat`, spec §5.2): an empty page with the composer, the agent picker
+- * enabled. The agent is `?agent=` when usable, else the one most recently talked to, else the
+- * first. Nothing is created before the first send: it posts `POST /conversations` with the message
+- * (and any model / effort pick), then replaces the URL with the new conversation's. The agents,
+- * the most recent agent (the sidebar's first group) and the models come from the query cache.
++ * The agents in the row's order: by this person's most recent conversation with each (the sidebar's
++ * groups, most recent first), then by name. Returns the order and the ids that have a recent
++ * conversation (the panel's 「最近用过」), most recent first.
++ */
++export function orderAgents(
++  agents: Agent[],
++  groups: readonly Pick<ConversationGroup, "agent">[],
++  locale: string,
++): { ordered: Agent[]; recent: string[] } {
++  const usable = new Set(agents.map((a) => a.id));
++  const recent: string[] = [];
++  for (const g of groups) {
++    if (usable.has(g.agent.id) && !recent.includes(g.agent.id)) recent.push(g.agent.id);
++  }
++  const rank = new Map(recent.map((id, i) => [id, i]));
++  const ordered = [...agents].sort((a, b) => {
++    const ra = rank.get(a.id) ?? Number.POSITIVE_INFINITY;
++    const rb = rank.get(b.id) ?? Number.POSITIVE_INFINITY;
++    if (ra !== rb) return ra - rb;
++    return a.definition.name.localeCompare(b.definition.name, locale);
++  });
++  return { ordered, recent };
++}
++
++/**
++ * A new conversation (`/chat`, spec §5.2, agent profile design §4): the greeting, the agents row,
++ * the selected agent's quick actions and the composer (no agent picker: the row picks). The agent
++ * is `?agent=` when usable, else the one most recently talked to, else the first in the row's
++ * order. The greeting is picked after mount (the server draws its same-height placeholder, so the
++ * first paint matches). A quick action fills the composer (one ⌘Z step brings the text back).
++ * Nothing is created before the first send: it posts `POST /conversations` with the message (and
++ * any model / effort pick), then replaces the URL with the new conversation's. The agents, the
++ * most recent agent (the sidebar's first group) and the models come from the query cache.
+  *
+  * The send is instant (conversation send spec §2.1): the page switches to the conversation layout
+  * at once with the pending bubble and the working line; the create's answer seeds the new
+  * conversation's cache, and the URL changes without waiting for the sidebar's groups. A failed
+  * create goes back to the new conversation with the draft in the composer.
+  */
+ export function useNewConversationPage(
+   orgId: string,
+   preferredAgent: string | null,
+ ): ConversationPageProps {
+@@ -47,26 +95,39 @@ export function useNewConversationPage(
+   const agentsQ = agentsQuery(orgId);
+   const agents = useQuery({ ...agentsQ, retryOnMount: retryOnMountOf(agentsQ.queryKey) }).data
+     ?.agents;
+   const groupsQ = conversationGroupsQuery(orgId);
+   const groups = useQuery({ ...groupsQ, retryOnMount: retryOnMountOf(groupsQ.queryKey) });
+   // A failed groups read leaves no recent agent: the first one is picked.
+   const recent = groups.data?.groups[0]?.agent.id ?? null;
+   const recentKnown = groups.data !== undefined || groups.error !== null;
+   const [picked, setPicked] = useState<string | null>(null);
+   const [error, setError] = useState<string>();
+-  const usable = agents ?? [];
++  const { ordered: usable, recent: recentIds } = orderAgents(
++    agents ?? [],
++    groups.data?.groups ?? [],
++    locale,
++  );
+   // Until the recent agent is known, nothing is picked (the default would flip under the person).
+   const agent =
+     usable.find((a) => a.id === picked) ??
+     usable.find((a) => a.id === preferredAgent) ??
+     (recentKnown ? (usable.find((a) => a.id === recent) ?? usable[0]) : undefined);
++  const composer = useRef<ComposerControl>(null);
++  /** The greeting line, picked in the browser after mount (null: the placeholder). */
++  const [greeting, setGreeting] = useState<string | null>(null);
++  const displayName = session.me.account.displayName;
++  const lines = t.raw("greeting") as GreetingLines;
++  // biome-ignore lint/correctness/useExhaustiveDependencies: picked once per mount, not per render
++  useEffect(() => {
++    setGreeting(pickGreeting(greetingBucket(new Date().getHours()), displayName, lines));
++  }, []);
+   const modelsQ = modelsQuery(orgId);
+   const providers = useQuery({ ...modelsQ, retryOnMount: retryOnMountOf(modelsQ.queryKey) }).data
+     ?.providers;
+   // The answer seeds the new conversation's cache; the sidebar's groups are read again without
+   // the navigation waiting for them (they show the new conversation when they land).
+   const create = useAppMutation({
+     fn: async (v: { agentId: string; message: MessageInput; sentAt: number }) => {
+       const r = await createConversationWithMessage(orgId, v.agentId, v.message);
+       seedNewConversation(qc, orgId, r.conversation, r, v.sentAt);
+       return r;
+@@ -98,33 +159,67 @@ export function useNewConversationPage(
+     } catch (e) {
+       setError(errorMessage(e));
+       pending.drop(m.clientMessageId);
+       setBlocked(false);
+       setRestore((r) => ({ n: r.n + 1, ...(m.draft !== undefined ? { draft: m.draft } : {}) }));
+       return { ok: false, error: e };
+     }
+   };
+ 
+   const name = agent?.definition.name ?? "—";
++  const rowItems: AgentRowItem[] = usable.map((a) => ({
++    id: a.id,
++    name: a.definition.name,
++    description: a.profile.description,
++    avatar: avatarValue(a, orgId),
++  }));
++  const quickActions = agent?.profile.quickActions ?? [];
++  const selectAgent = (id: string) => {
++    setPicked(id);
++    composer.current?.focus();
++  };
+   // Sent: the conversation layout, the pending bubble then the working line (spec §2.1).
+   const sent = pending.shown.length > 0;
+   return {
+     titleBar: {
+       title: null,
+       untitled: sent ? untitledLabel(new Date(), locale) : "",
+       menu: [],
+       properties: { pressed: false, onToggle: () => {} },
+       panels: [],
+     },
+     ...(sent
+       ? { thread: <PendingBubbles items={pending.shown} />, working: true }
+-      : { newConversation: { agentName: name } }),
++      : {
++          newConversation: {
++            greeting: <Greeting text={greeting} sub={t("greeting.sub")} />,
++            agents: (
++              <AgentRow
++                agents={rowItems}
++                {...(agent ? { selected: agent.id } : {})}
++                recent={recentIds}
++                onSelect={selectAgent}
++              />
++            ),
++            quickActions: (
++              <QuickActions
++                // keyed by agent: another agent's line starts closed
++                key={agent?.id ?? ""}
++                items={quickActions.map((q, i) => ({ id: String(i), title: q.title }))}
++                onPick={(id) => {
++                  const body = quickActions[Number(id)]?.body;
++                  if (body !== undefined) composer.current?.fill(body);
++                }}
++              />
++            ),
++          },
++        }),
+     composer: (
+       <Stack gap={8}>
+         {error !== undefined && <FormError message={error} />}
+         {agents !== undefined && usable.length === 0 ? <FormError message={t("noAgents")} /> : null}
+         {sent && blocked ? (
+           <Text variant="small" tone="muted">
+             {t("sendAfterCreate")}
+           </Text>
+         ) : null}
+         <ComposerBar
+@@ -132,37 +227,22 @@ export function useNewConversationPage(
+           orgId={orgId}
+           agentId={agent?.id}
+           initialDraft={sent ? undefined : restore.draft}
+           running={false}
+           // one message at a time until the conversation exists (it has no queue yet)
+           sendDisabled={!agent || sent}
+           onBlocked={() => {
+             if (sent) setBlocked(true);
+           }}
+           onSend={send}
++          control={composer}
+           pickers={{
+-            agent: {
+-              label: t("pickAgent"),
+-              value: name,
+-              disabled: usable.length === 0,
+-              groups: [
+-                {
+-                  items: usable.map((a) => ({
+-                    id: a.id,
+-                    label: a.definition.name,
+-                    checked: a.id === agent?.id,
+-                  })),
+-                },
+-              ],
+-              note: t("agentLocked"),
+-              onPick: setPicked,
+-            },
+             model: selection.modelPicker,
+             ...(selection.effortPicker ? { effort: selection.effortPicker } : {}),
+           }}
+           placeholder={t("newPlaceholder", { agent: name })}
+         />
+       </Stack>
+     ),
+     status: { ...signature, version: session.version ?? "" },
+     right: "none",
+     onCloseRight: () => {},
+diff --git a/apps/web/src/components/shell/conversations.tsx b/apps/web/src/components/shell/conversations.tsx
+index 3c2f3dbb..62c90499 100644
+--- a/apps/web/src/components/shell/conversations.tsx
++++ b/apps/web/src/components/shell/conversations.tsx
+@@ -1,24 +1,26 @@
+ "use client";
+ 
+ import type { SidebarConversations, SidebarFilter, SidebarGroup } from "@capybara-hq/design";
+ import { useQuery, useQueryClient } from "@tanstack/react-query";
+ import { useEffect, useMemo, useRef, useState } from "react";
+ import { useRouter } from "../../i18n/navigation";
++import { avatarValue } from "../../lib/agents";
+ import {
+   archiveConversation,
+   type Conversation,
+   type ConversationGroup,
+   type ConversationGroupsPage,
+   type ConversationSearch,
+   deleteConversation,
+ } from "../../lib/conversations";
++import { agentsQuery } from "../../lib/query/agents";
+ import { retryOnMountOf } from "../../lib/query/client";
+ import { renameWithRow } from "../../lib/query/conversation";
+ import { keys } from "../../lib/query/keys";
+ import { useAppMutation } from "../../lib/query/mutation";
+ import {
+   conversationGroupsQuery,
+   groupsViewKey,
+   moreConversationsQuery,
+   moreGroupsQuery,
+ } from "../../lib/query/shell";
+@@ -360,28 +362,36 @@ export function useConversationGroups(
+   const activeId = activeIdFrom(pathname);
+   // Loading shows the skeleton: the first answer of this list (live or archived) is on its way.
+   const state = mine !== null ? "ready" : q.error !== null ? "error" : "loading";
+   const toRow = (c: Conversation) => ({
+     id: c.id,
+     title: c.title,
+     startedAt: new Date(c.createdAt),
+     href: `/chat/${encodeURIComponent(c.id)}`,
+     activity: c.activity ?? null,
+   });
+-  const groups: SidebarGroup[] = (mine?.groups ?? []).map((g) => ({
+-    agentId: g.agent.id,
+-    agentName: g.agent.name,
+-    conversations: g.conversations.map(toRow),
+-    more: g.more,
+-    onMore: () => void onMore(g),
+-    onNew: () => onNew(g.agent.id),
+-  }));
++  // The group titles' avatars come from the agents already cached (the sidebar reads none of its
++  // own); a group whose agent is not cached shows the initial of its name.
++  const cachedAgents = useQuery({ ...agentsQuery(orgId), enabled: false }).data?.agents;
++  const agentOf = new Map((cachedAgents ?? []).map((a) => [a.id, a]));
++  const groups: SidebarGroup[] = (mine?.groups ?? []).map((g) => {
++    const a = agentOf.get(g.agent.id);
++    return {
++      agentId: g.agent.id,
++      agentName: g.agent.name,
++      agentAvatar: a ? avatarValue(a, orgId) : null,
++      conversations: g.conversations.map(toRow),
++      more: g.more,
++      onMore: () => void onMore(g),
++      onNew: () => onNew(g.agent.id),
++    };
++  });
+   const next = mine?.next ?? null;
+   return {
+     state,
+     groups,
+     // remembered collapsed groups are per org
+     scope: orgId,
+     moreGroups: next !== null,
+     onMoreGroups: () => {
+       if (next !== null) void onMoreGroups(next);
+     },
+diff --git a/apps/web/test/app-layout.test.tsx b/apps/web/test/app-layout.test.tsx
+index 7c3468c5..c09c552c 100644
+--- a/apps/web/test/app-layout.test.tsx
++++ b/apps/web/test/app-layout.test.tsx
+@@ -207,20 +207,21 @@ describe("the (app) layout's first-load prefetch", () => {
+     req.headers = new Headers({ "x-cap-path": "/agents", "x-cap-session": "unavailable" });
+     const element = (await AppLayout({ children: <p>page body</p> })) as ReactElement;
+     expect((element.type as { name?: string }).name).toBe("KernelStarting");
+   });
+ });
+ 
+ describe("the route test helpers", () => {
+   const agent = {
+     id: "ag1",
+     definition: { name: "Helper agent", model: { provider: "model-fake", model: "fake-1" } },
++    profile: { avatar: null, description: "", quickActions: [], updatedAt: "2026-10-26T06:00:00Z" },
+   };
+   const agentsRoute = { [`GET ${O}/agents`]: () => json(200, { agents: [agent] }) };
+ 
+   it("renderRouteWithCache prefetches the route on the server and hydrates the page's cache", async () => {
+     req.headers = new Headers({ "x-cap-path": "/agents" });
+     expectNoFirstPaintFetch();
+     const { calls, client, findAllByText } = await renderRouteWithCache("/agents", agentsRoute);
+     expect(calls.map(pathOf)).toContain(`${O}/agents`);
+     expect(await findAllByText("Helper agent")).not.toHaveLength(0);
+     expect(client.getQueryData(["org", "o1", "agents"])).toEqual({ agents: [agent] });
+diff --git a/apps/web/test/conversation-page.test.tsx b/apps/web/test/conversation-page.test.tsx
+index 7cf81b72..75d6f961 100644
+--- a/apps/web/test/conversation-page.test.tsx
++++ b/apps/web/test/conversation-page.test.tsx
+@@ -100,28 +100,33 @@ describe("the conversation page (ConversationPage)", () => {
+     );
+     expect(FakeEventSource.instances.map((e) => e.url)).toEqual([`${BASE}/stream?after=2`]);
+     expect(container.querySelector('[data-template="ConversationPage"]')).not.toBeNull();
+     expect(screen.getByText("hi")).toBeTruthy();
+     expect(screen.getByText(/^未命名会话 · /)).toBeTruthy();
+     expect(screen.getByText(zh.chat.status.running)).toBeTruthy();
+     expect(screen.getByText(/第 1 轮 · 已用/)).toBeTruthy();
+     expect(screen.getByText("hi").closest("[data-entry]")?.getAttribute("data-entry")).toBe("user");
+   });
+ 
+-  it("the title bar path is <org slug> / <agent> / before the title; the agent links to its page", async () => {
++  it("the title bar path is <org slug> / <agent> / before the title; the agent links to its page with its avatar", async () => {
+     api({ [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }) });
+     const { container } = await renderChat("en");
+     await screen.findByText("hi");
+     const bar = container.querySelector('[data-part="title-bar"]') as HTMLElement;
+     const nav = await within(bar).findByRole("navigation", { name: "Path" });
+     const link = await within(nav).findByRole("link", { name: "Echo agent" });
+     expect(link.getAttribute("href")).toBe("/agents/ag1");
++    // the agent's avatar (16) leads its segment: an agent without one shows its initial
++    const avatar = link.querySelector('[data-part="avatar"]') as HTMLElement;
++    expect(avatar.getAttribute("data-size")).toBe("16");
++    expect(avatar.textContent).toBe("E");
++    avatar.remove();
+     expect(nav.textContent).toBe("acme/Echo agent/");
+   });
+ 
+   it("the status bar signs like every page: <login>@<slug>:~/chat/<id>, then version and time zone", async () => {
+     params.conversationId = "9f60c1e6-1111-4222-8333-444455556666";
+     const id = params.conversationId;
+     api(
+       { [`GET /api/v1/orgs/o1/conversations/${id}/events`]: () => json(200, { events: [] }) },
+       id,
+     );
+@@ -1190,30 +1195,34 @@ describe("switching conversations", () => {
+ });
+ 
+ /** The reads of `/chat` on the server. */
+ const NEW_CHAT = {
+   "GET /api/v1/orgs/o1/attachments/limits": () => json(200, LIMITS),
+   "GET /api/v1/orgs/o1/agents": () => json(200, AGENTS),
+   "GET /api/v1/orgs/o1/models": () => json(200, MODELS),
+   "GET /api/v1/orgs/o1/conversations/groups": () => json(200, { groups: [], next: null }),
+ };
+ 
++/** A chip of the new conversation's agents row. */
++const agentChip = (name: string) =>
++  within(screen.getByRole("group", { name: "Choose an agent" })).getByRole("button", { name });
++
+ describe("a new conversation (/chat)", () => {
+   it("?agent= picks the agent; the first send creates the conversation and replaces the URL", async () => {
+     resetNavigation("/chat");
+     const calls = stubApi({
+       "POST /api/v1/orgs/o1/conversations": () =>
+         json(201, { ...CONV("c9", { agentId: "ag2" }), event: userMsg(1, "start") }),
+     });
+     const { calls: server } = await renderRouteWithCache("/chat?agent=ag2", NEW_CHAT);
+     // the first paint is the server's: agents, the most recent agent and the models
+-    expect(screen.getByRole("heading", { name: "Second agent" })).toBeTruthy();
++    expect(agentChip("Second agent").getAttribute("aria-pressed")).toBe("true");
+     expect(server.map((c) => c.url)).toEqual(
+       expect.arrayContaining([
+         "/api/v1/orgs/o1/agents",
+         "/api/v1/orgs/o1/models",
+         "/api/v1/orgs/o1/conversations/groups",
+         "/api/v1/orgs/o1/attachments/limits",
+       ]),
+     );
+     // Nothing is fetched in the browser, and nothing is created before the first send.
+     expect(calls).toEqual([]);
+@@ -1231,43 +1240,44 @@ describe("a new conversation (/chat)", () => {
+     const { container } = await renderRouteWithCache("/chat", NEW_CHAT, {
+       session: { timeZone: "UTC+8" },
+     });
+     const bar = container.querySelector('[data-part="status-bar"]') as HTMLElement;
+     expect((bar.querySelector('[data-part="status-bar-context"]') as HTMLElement).textContent).toBe(
+       "grant@acme:~/chat",
+     );
+     expect(bar.textContent).toContain("UTC+8");
+   });
+ 
+-  it("without ?agent= the agent most recently talked to is picked, and can be changed", async () => {
++  it("without ?agent= the agent most recently talked to is picked, and the agents row changes it", async () => {
+     resetNavigation("/chat");
+     expectNoFirstPaintFetch();
+     await renderRouteWithCache("/chat", {
+       ...NEW_CHAT,
+       "GET /api/v1/orgs/o1/conversations/groups": () =>
+         json(200, {
+           groups: [
+             {
+               agent: { id: "ag2", name: "Second agent" },
+               latestAt: "x",
+               conversations: [],
+               more: false,
+             },
+           ],
+           next: null,
+         }),
+     });
+-    expect(screen.getByRole("heading", { name: "Second agent" })).toBeTruthy();
+-    const user = userEvent.setup();
+-    await user.click(screen.getByRole("button", { name: `${en.chat.pickAgent}: Second agent` }));
+-    await user.click(await screen.findByRole("menuitemradio", { name: /Echo agent/ }));
+-    expect(await screen.findByRole("heading", { name: "Echo agent" })).toBeTruthy();
++    expect(agentChip("Second agent").getAttribute("aria-pressed")).toBe("true");
++    // the agents row changes it (the composer has no agent picker here)
++    expect(screen.queryByRole("button", { name: `${en.chat.pickAgent}: Second agent` })).toBeNull();
++    await userEvent.setup().click(agentChip("Echo agent"));
++    expect(agentChip("Echo agent").getAttribute("aria-pressed")).toBe("true");
++    expect(input().getAttribute("placeholder")).toBe("What should Echo agent do?");
+   });
+ });
+ 
+ describe("the first message from /chat (conversation send spec §2.1)", () => {
+   const C9 = "/api/v1/orgs/o1/conversations/c9";
+ 
+   async function startNew() {
+     resetNavigation("/chat");
+     let answer: (r: Response) => void = () => {};
+     let cmid = "";
+@@ -1396,21 +1406,22 @@ describe("the first message from /chat (conversation send spec §2.1)", () => {
+     expect(screen.queryByText("start", { selector: '[data-part="bubble"]' })).toBeNull();
+     expect(router.replace).not.toHaveBeenCalled();
+   });
+ });
+ 
+ describe("the new conversation once the org can run", () => {
+   it("with a model and an agent the composer shows as before", async () => {
+     resetNavigation("/chat");
+     expectNoFirstPaintFetch();
+     const { container } = await renderRouteWithCache("/chat", NEW_CHAT);
+-    expect(screen.getByRole("heading", { name: /agent/i })).toBeTruthy();
++    expect(agentChip("Echo agent")).toBeTruthy();
++    expect(input()).toBeTruthy();
+     expect(container.querySelector('[data-template="OnboardingPage"]')).toBeNull();
+   });
+ 
+   it("while the org is in setup, the page renders nothing (the frame draws the setup home)", async () => {
+     resetNavigation("/chat");
+     expectNoFirstPaintFetch();
+     const { container, calls } = await renderRouteWithCache("/chat", NEW_CHAT, {
+       readiness: { modelProvider: "none", agents: 0 },
+     });
+     expect(container.querySelector('[data-template="ConversationPage"]')).toBeNull();
+diff --git a/apps/web/test/new-conversation-page.test.tsx b/apps/web/test/new-conversation-page.test.tsx
+new file mode 100644
+index 00000000..260e04f5
+--- /dev/null
++++ b/apps/web/test/new-conversation-page.test.tsx
+@@ -0,0 +1,334 @@
++import {
++  DesignProvider,
++  type LinkComponent,
++  Sidebar,
++  type SidebarProps,
++} from "@capybara-hq/design";
++import { QueryClientProvider } from "@tanstack/react-query";
++import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
++import userEvent from "@testing-library/user-event";
++import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
++import en from "../messages/en.json";
++import { useConversationGroups } from "../src/components/shell/conversations";
++import type { AgentProfile } from "../src/lib/agents";
++import { agentsQuery } from "../src/lib/query/agents";
++import { conversationGroupsQuery } from "../src/lib/query/shell";
++import { bodyOf, json, stubApi } from "./support/api";
++import {
++  CONV,
++  FakeEventSource,
++  LIMITS,
++  MODELS,
++  renderChatRoute,
++  userMsg,
++} from "./support/conversation";
++import { Link, resetNavigation, router } from "./support/navigation";
++import { renderRouteWithCache, testQueryClient } from "./support/query";
++import { expectNoFirstPaintFetch } from "./support/server";
++
++vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
++vi.mock("next/navigation", () => ({
++  useParams: () => ({ conversationId: "c1" }),
++  useSearchParams: () => new URLSearchParams(),
++  redirect: (to: string) => {
++    throw new Error(`REDIRECT ${to}`);
++  },
++  notFound: () => {
++    throw new Error("NOT_FOUND");
++  },
++}));
++
++const ORG = "/api/v1/orgs/o1";
++
++const agent = (id: string, name: string, profile: Partial<AgentProfile> = {}) => ({
++  id,
++  orgId: "o1",
++  ownerAccountId: "a1",
++  visibility: "org",
++  currentVersion: 1,
++  definition: {
++    name,
++    instructions: "x",
++    model: { provider: "model-fake", model: "fake-1" },
++    fallback: null,
++  },
++  profile: {
++    avatar: { kind: "preset", id: "fox" },
++    description: "",
++    quickActions: [],
++    updatedAt: "2026-11-01T00:00:00.000Z",
++    ...profile,
++  },
++  updatedAt: "2026-10-26T06:00:00.000Z",
++});
++
++const qa = (title: string) => ({ title, body: `${title} body` });
++
++/** Seven agents: Beta and Alpha were talked to last (in that order), the rest go by name. */
++const AGENTS = {
++  agents: [
++    agent("ag1", "Alpha", { quickActions: [qa("Summarize"), qa("Translate")] }),
++    agent("ag2", "Beta", {
++      quickActions: [qa("Plan"), qa("Review"), qa("Draft"), qa("Polish"), qa("Ship")],
++    }),
++    agent("ag3", "Gamma"),
++    agent("ag4", "Delta"),
++    agent("ag5", "Epsilon"),
++    agent("ag6", "Zeta"),
++    agent("ag7", "Eta"),
++  ],
++};
++
++const group = (id: string, name: string, latestAt: string) => ({
++  agent: { id, name },
++  latestAt,
++  conversations: [],
++  more: false,
++});
++const GROUPS = {
++  groups: [
++    group("ag2", "Beta", "2026-11-03T08:00:00.000Z"),
++    group("ag1", "Alpha", "2026-11-02T08:00:00.000Z"),
++  ],
++  next: null,
++};
++
++const routes = (agents: unknown = AGENTS, groups: unknown = GROUPS) => ({
++  [`GET ${ORG}/attachments/limits`]: () => json(200, LIMITS),
++  [`GET ${ORG}/agents`]: () => json(200, agents),
++  [`GET ${ORG}/models`]: () => json(200, MODELS),
++  [`GET ${ORG}/conversations/groups`]: () => json(200, groups),
++});
++
++const input = () => screen.getByRole("textbox", { name: en.chat.inputLabel, hidden: true });
++const row = () => screen.queryByRole("group", { name: "Choose an agent" });
++const quick = () => screen.queryByRole("group", { name: "Common tasks" });
++const titles = () =>
++  within(quick() as HTMLElement)
++    .getAllByRole("button")
++    .map((b) => b.textContent);
++
++beforeEach(() => {
++  resetNavigation("/chat");
++  vi.stubGlobal("EventSource", FakeEventSource);
++  // 09:00 local: the morning set; the first line of it
++  vi.useFakeTimers({ toFake: ["Date"] });
++  vi.setSystemTime(new Date(2026, 10, 4, 9, 0, 0));
++  vi.spyOn(Math, "random").mockReturnValue(0);
++});
++
++afterEach(() => {
++  cleanup();
++  vi.useRealTimers();
++  vi.restoreAllMocks();
++  vi.unstubAllGlobals();
++  FakeEventSource.instances = [];
++});
++
++describe("the new conversation page (agent profile design §4)", () => {
++  it("the page shows a greeting for the bucket, the agents row and the first agent's quick actions", async () => {
++    expectNoFirstPaintFetch();
++    const { container } = await renderRouteWithCache("/chat", routes());
++    // picked after mount: the morning's first line with the person's name
++    expect(
++      await screen.findByRole("heading", {
++        name: String(en.chat.greeting.morning[0]).replace("{name}", "Grant"),
++      }),
++    ).toBeTruthy();
++    expect(screen.getByText(en.chat.greeting.sub)).toBeTruthy();
++    // most recent conversation per agent first, then by name; 5 then More +2
++    const chips = within(row() as HTMLElement).getAllByRole("button");
++    expect(chips.map((c) => c.textContent?.trim())).toEqual([
++      "Beta",
++      "Alpha",
++      "Delta",
++      "Epsilon",
++      "Eta",
++      "More +2",
++    ]);
++    expect(chips[0]?.getAttribute("aria-pressed")).toBe("true");
++    // Beta's quick actions: the first four, then More
++    expect(titles()).toEqual(["Plan", "Review", "Draft", "Polish", "More"]);
++    // the composer has no agent picker; the model picker stays
++    expect(screen.queryByRole("button", { name: new RegExp(`^${en.chat.pickAgent}`) })).toBeNull();
++    expect(input().getAttribute("placeholder")).toBe("What should Beta do?");
++    // top to bottom: greeting, agents, quick actions, composer
++    const body = container.querySelector('[data-part="new-conversation-body"]') as HTMLElement;
++    const order = [body.querySelector("h2"), row(), quick(), input()] as HTMLElement[];
++    for (let i = 1; i < order.length; i++) {
++      expect(
++        (order[i - 1] as HTMLElement).compareDocumentPosition(order[i] as HTMLElement) &
++          Node.DOCUMENT_POSITION_FOLLOWING,
++      ).toBeTruthy();
++    }
++  });
++
++  it("selecting another agent switches the quick actions and the composer's agent", async () => {
++    const calls = stubApi({
++      [`POST ${ORG}/conversations`]: () =>
++        json(201, { ...CONV("c9", { agentId: "ag1" }), event: userMsg(1, "go") }),
++    });
++    await renderRouteWithCache("/chat", routes());
++    const user = userEvent.setup();
++    await user.click(within(row() as HTMLElement).getByRole("button", { name: "Alpha" }));
++    expect(titles()).toEqual(["Summarize", "Translate"]);
++    expect(input().getAttribute("placeholder")).toBe("What should Alpha do?");
++    // the composer takes the focus, ready to type
++    expect(document.activeElement).toBe(input());
++    // an agent with no quick actions hides the line; one picked in the panel focuses the composer
++    await user.click(within(row() as HTMLElement).getByRole("button", { name: "More +2" }));
++    await user.click(await screen.findByRole("option", { name: /Gamma/ }));
++    expect(quick()).toBeNull();
++    expect(input().getAttribute("placeholder")).toBe("What should Gamma do?");
++    await vi.waitFor(() => expect(document.activeElement).toBe(input()));
++    await act(() => new Promise((r) => setTimeout(r, 10)));
++    expect(document.activeElement).toBe(input());
++    // the send goes to the selected agent
++    await user.click(within(row() as HTMLElement).getByRole("button", { name: "Alpha" }));
++    await user.type(input(), "go{Enter}");
++    await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/chat/c9"));
++    expect(bodyOf(calls.find((c) => c.method === "POST"))).toMatchObject({ agentId: "ag1" });
++  });
++
++  it("one usable agent: no row", async () => {
++    expectNoFirstPaintFetch();
++    await renderRouteWithCache(
++      "/chat",
++      routes({ agents: [AGENTS.agents[0]] }, { groups: [], next: null }),
++    );
++    await screen.findByRole("heading", { name: /Grant/ });
++    expect(row()).toBeNull();
++    expect(titles()).toEqual(["Summarize", "Translate"]);
++    expect(input().getAttribute("placeholder")).toBe("What should Alpha do?");
++  });
++
++  it("picking a quick action fills the composer; ⌘Z restores the previous text", async () => {
++    expectNoFirstPaintFetch();
++    await renderRouteWithCache("/chat", routes());
++    const user = userEvent.setup();
++    await user.type(input(), "my draft");
++    await user.click(within(quick() as HTMLElement).getByRole("button", { name: "Review" }));
++    expect(input()).toHaveProperty("value", "Review body");
++    expect(document.activeElement).toBe(input());
++    // one undo step: the previous text comes back, and a second ⌘Z is the browser's own
++    fireEvent.keyDown(input(), { key: "z", metaKey: true });
++    expect(input()).toHaveProperty("value", "my draft");
++    const again = fireEvent.keyDown(input(), { key: "z", metaKey: true });
++    expect(again).toBe(true);
++    expect(input()).toHaveProperty("value", "my draft");
++    // Ctrl+Z too; an edit after the pick leaves ⌘Z to the browser
++    await user.click(within(quick() as HTMLElement).getByRole("button", { name: "Plan" }));
++    expect(input()).toHaveProperty("value", "Plan body");
++    fireEvent.keyDown(input(), { key: "z", ctrlKey: true });
++    expect(input()).toHaveProperty("value", "my draft");
++    await user.click(within(quick() as HTMLElement).getByRole("button", { name: "Plan" }));
++    await user.type(input(), "!");
++    expect(fireEvent.keyDown(input(), { key: "z", metaKey: true })).toBe(true);
++    expect(input()).toHaveProperty("value", "Plan body!");
++  });
++
++  it("an agent with avatar null shows its initial in the row, list, title bar and sidebar", async () => {
++    const plain = {
++      agents: [
++        agent("ag1", "echo agent", { avatar: null }),
++        agent("ag2", "Beta", { avatar: { kind: "preset", id: "owl" } }),
++      ],
++    };
++    const initialIn = (el: Element | null) =>
++      el?.querySelector('[data-part="avatar"][data-kind="initial"]')?.textContent;
++    // the new conversation's agents row (24)
++    expectNoFirstPaintFetch();
++    await renderRouteWithCache("/chat", routes(plain, { groups: [], next: null }));
++    const chip = within(row() as HTMLElement).getByRole("button", { name: "echo agent" });
++    expect(initialIn(chip)).toBe("E");
++    expect(
++      within(row() as HTMLElement)
++        .getByRole("button", { name: "Beta" })
++        .querySelector('[data-part="avatar"]')
++        ?.getAttribute("data-preset"),
++    ).toBe("owl");
++    cleanup();
++
++    // the agent list rows (28)
++    await renderRouteWithCache("/agents", { [`GET ${ORG}/agents`]: () => json(200, plain) });
++    const listRow = screen.getByText("echo agent").closest("li");
++    expect(initialIn(listRow)).toBe("E");
++    expect(listRow?.querySelector('[data-part="avatar"]')?.getAttribute("data-size")).toBe("28");
++    cleanup();
++
++    // the conversation title bar, next to the agent name (16)
++    stubApi({
++      [`GET ${ORG}/conversations/c1`]: () => json(200, CONV("c1")),
++      [`GET ${ORG}/conversations/c1/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
++      [`GET ${ORG}/agents`]: () => json(200, plain),
++    });
++    const { container } = await renderChatRoute({ locale: "en" });
++    await screen.findByText("hi");
++    const nav = within(container.querySelector('[data-part="title-bar"]') as HTMLElement).getByRole(
++      "navigation",
++      { name: "Path" },
++    );
++    const link = within(nav).getByRole("link", { name: "echo agent" });
++    expect(initialIn(link)).toBe("E");
++    expect(link.querySelector('[data-part="avatar"]')?.getAttribute("data-size")).toBe("16");
++    cleanup();
++
++    // the sidebar group titles (16), from the cached agents; a group with no cached agent: its name
++    const client = testQueryClient();
++    client.setQueryData(agentsQuery("o1").queryKey, plain);
++    client.setQueryData(conversationGroupsQuery("o1").queryKey, {
++      groups: [
++        { ...group("ag1", "echo agent", "2026-11-03T08:00:00.000Z") },
++        { ...group("ag2", "Beta", "2026-11-02T08:00:00.000Z") },
++        { ...group("ag9", "gone agent", "2026-11-01T08:00:00.000Z") },
++      ].map((g) => ({
++        ...g,
++        conversations: [
++          {
++            id: `c-${g.agent.id}`,
++            orgId: "o1",
++            agentId: g.agent.id,
++            title: "t",
++            lastSeq: 1,
++            createdAt: "2026-10-20T06:32:00.000Z",
++            updatedAt: "2026-10-20T06:32:00.000Z",
++          },
++        ],
++      })),
++      next: null,
++    });
++    stubApi({ [`GET ${ORG}/conversations/groups`]: () => new Promise<Response>(() => {}) });
++    render(
++      <QueryClientProvider client={client}>
++        <DesignProvider locale="en" link={Link as LinkComponent}>
++          <SidebarHarness />
++        </DesignProvider>
++      </QueryClientProvider>,
++    );
++    const head = (name: string) =>
++      screen.getByRole("button", { name }).closest('[data-part="group-label"]');
++    expect(initialIn(head("echo agent"))).toBe("E");
++    expect(
++      head("echo agent")?.querySelector('[data-part="avatar"]')?.getAttribute("data-size"),
++    ).toBe("16");
++    expect(head("Beta")?.querySelector('[data-part="avatar"]')?.getAttribute("data-preset")).toBe(
++      "owl",
++    );
++    expect(initialIn(head("gone agent"))).toBe("G");
++    // nothing read the agents for the sidebar
++    expect(client.getQueryState(agentsQuery("o1").queryKey)?.fetchStatus).toBe("idle");
++  });
++});
++
++const sidebarBase: Omit<SidebarProps, "conversations"> = {
++  context: { kind: "work", org: null, primary: [], more: [] },
++  newConversation: { href: "/agents" },
++  activeNav: "",
++  account: { name: "Grant", menu: [] },
++  onOpenCommands: () => {},
++};
++
++function SidebarHarness() {
++  const conversations = useConversationGroups("o1", "/");
++  return <Sidebar {...sidebarBase} conversations={conversations} mode="full" />;
++}
+diff --git a/apps/web/test/pages.test.tsx b/apps/web/test/pages.test.tsx
+index 48b94708..41443327 100644
+--- a/apps/web/test/pages.test.tsx
++++ b/apps/web/test/pages.test.tsx
+@@ -390,20 +390,21 @@ describe("(app) 页面模板", () => {
+   const agentRow = (id: string, name: string, over: Record<string, unknown> = {}) => ({
+     id,
+     ownerAccountId: "someone-else",
+     visibility: "org",
+     definition: {
+       name,
+       model: { provider: "model-fake", model: "fake-1" },
+       skills: { orgSkills: ["s1", "s2"] },
+       tools: [{ kind: "builtin", name: "ask_user" }],
+     },
++    profile: { avatar: null, description: "", quickActions: [], updatedAt: "2026-10-26T06:00:00Z" },
+     ...over,
+   });
+ 
+   it("Agents page: object rows with the visibility in the meta line (no chip) and the row action Chat", async () => {
+     const calls = stubApi({});
+     await renderRouteWithCache(
+       "/agents",
+       {
+         "GET /api/v1/orgs/o1/agents": () => json(200, { agents: [agentRow("ag1", "Echo agent")] }),
+       },
+diff --git a/apps/web/test/support/conversation.ts b/apps/web/test/support/conversation.ts
+index 3b5673fe..b10e7fb5 100644
+--- a/apps/web/test/support/conversation.ts
++++ b/apps/web/test/support/conversation.ts
+@@ -71,48 +71,58 @@ export const CONV = (id = "c1", extra: Record<string, unknown> = {}) => ({
+     title: null,
+     titleSource: null,
+     selection: { model: null, effort: null },
+     lastSeq: 0,
+     createdAt: "2026-10-26T06:02:00.000Z",
+     updatedAt: "2026-10-26T06:02:00.000Z",
+     ...extra,
+   },
+ });
+ 
++/** An agent's profile as the kernel answers it for an agent created before profiles existed. */
++export const PROFILE = {
++  avatar: null,
++  description: "",
++  quickActions: [],
++  updatedAt: "2026-10-26T06:00:00.000Z",
++};
++
+ export const AGENTS = {
+   agents: [
+     {
+       id: "ag1",
+       orgId: "o1",
+       ownerAccountId: "a1",
+       visibility: "org",
+       currentVersion: 1,
+       definition: {
+         name: "Echo agent",
+         instructions: "x",
+         model: { provider: "model-fake", model: "fake-1" },
+         fallback: null,
+       },
++      profile: PROFILE,
+       updatedAt: "2026-10-26T06:00:00.000Z",
+     },
+     {
+       id: "ag2",
+       orgId: "o1",
+       ownerAccountId: "a1",
+       visibility: "org",
+       currentVersion: 1,
+       definition: {
+         name: "Second agent",
+         instructions: "x",
+         model: { provider: "model-fake", model: "fake-1" },
+         fallback: null,
+       },
++      profile: PROFILE,
+       updatedAt: "2026-10-26T06:00:00.000Z",
+     },
+   ],
+ };
+ 
+ export const MODELS = {
+   providers: [
+     {
+       provider: "model-fake",
+       models: [
+diff --git a/docs/design/spec.md b/docs/design/spec.md
+index 5c464f5a..1fb17d25 100644
+--- a/docs/design/spec.md
++++ b/docs/design/spec.md
+@@ -915,21 +915,21 @@ The left sidebar replaces the TopBar on every page (UI refresh spec §4.4). Side
+   7. **Account row** (`account`): a `line-soft` divider with `space.2` above (the block gap) and below; a 24 round initial avatar on `selected` (the name's first grapheme) + the name (no org: the switcher shows it), opening the account menu (切换组织 ▸, 语言 ▸, …, sign out); its accessible name is "账户: {name}". After it, in the same row, `ThemeToggle` (light / dark icon radio, the chosen one on `selected`). The rail has no room for it, so there the theme leads the account menu ("Theme: Light"). Menu items may open a submenu (`submenu`: a `chevron-right` mark, opens on hover, click or the right arrow). The auth pages (`AuthPage`) show `PreferenceBar` (a dense language `Select` and the `ThemeToggle`) in the bottom-right corner, `space.4` (16) inside the right dither column (16 from the edge below 640, where the columns are hidden), each control at its own width. The language is a cookie (`NEXT_LOCALE`), never part of the URL.
+ - **Admin context**, top to bottom: the brand row; the **context block** (`context-block`): the switcher's size and light style but static (no chevrons): a shield in the accent tint (`accent-tint` ground, `accent` icon), "管理后台" and `整个部署 · /admin` in mono; below it a link "← 回到工作区 ~/<slug>" (`back`, `row.dense`, `small` `muted`, `arrow-left` 14); the items 概览, 账号, 组织, 扩展, 企业目录, 市场, 模型, 部署设置; no conversations, no 新会话, no search or inbox buttons (⌘K still opens the palette); the account row.
+ 
+ - **Setup context** (`kind: "setup"`, web-SSR spec §4), top to bottom: the brand row without the search and inbox buttons; the org switcher (`context.org`, as in the workspace); the navigation (`nav` "Main navigation"): **开始之前** (`nav-item`, `diamond`, the setup home `context.home`, current when `activeNav` is `home`), then the required steps, then the label **可以稍后再做** (`step-group-label`, mono `micro` `faint`, letter-spacing 0.06em, `row.dense` high with the text at its bottom; the optional steps form a `group` it names), then the optional steps; the fill; the admin entry (`context.adminHref`); the account row. No conversations, no 新会话, no command palette. A **step item** (`step-item`, `SetupStep { id, label, state, href?, reason?, optional? }`) has the nav item's box and a state mark (`step-mark`, an `Icon` 16, never a character): `done` a `check` in `ok` (still a link), `todo` a `circle` in `muted` (a link), `waiting` a `clock` in `muted`: not a link (`role="link"`, `aria-disabled="true"`, the label `muted`, no hover ground, still a roving stop so its reason can be read) with `reason` as its second line (`step-reason`, `micro` `muted`, one line with an ellipsis), which makes the item 48 high. The current step takes the nav item's current style. Its accessible name is "{label}，{state}" (已完成 / 未完成, or the reason of a waiting step; en "{label}, {state}"). In the rail the steps are their marks alone (`row.default` squares) with the accessible name in the Tooltip to the right; the group label becomes a `line-soft` divider (`step-divider`, 24 × 1). The drawer is the full setup sidebar.
+ - **Pending navigation**: every design link (nav items, steps, the admin entry, the back link, conversation rows; object rows, item lists, tabs, breadcrumbs, the settings navigation) renders `LinkPendingMark` as its last child. It calls the `DesignProvider`'s `useLinkPending` (apps/web: `() => useLinkStatus().pending` from next/link, so it must sit inside the link) and, while that navigation is pending, carries `data-pending` and draws a 2 px `accent` underline along the link's bottom that sweeps left to right in `motion.cursor` (reduced motion: a still underline). Without the hook nothing is ever pending. The reference block `sidebar-pending` is the setup sidebar with one step's navigation pending.
+ 
+   The overview (`OverviewPage`) is built from `Grid columns="main-side"` (a main column twice the side column; one column below 960), Cards, `ItemList` (rows of a tag, a linked title with a muted meta line, a status and actions, split by `line-soft`; an empty list shows its muted empty text) and the setup layout (§5.5) uses `StepList inset="card"` (the checklist OnboardingPage centers, filling a Card) until a model and an agent exist. A `StepList` row is the state mark (top-aligned), the label over a `small` `muted` description, and **one** thing at the right, centered with the row: 已完成 / Done (`small` `muted`) when done, else the step's `action` (the button this viewer can use, or the `small` `muted` reason it waits). There is no 待办 / To do label (a hidden one for screen readers when a step has neither) and never a disabled button next to its reason.
+ - **Nav items**: `row.default` high, radius `sm`, padding `pad.dense.x`, icon 16 + label (`body`, `ink`, single line with an ellipsis). The current item gets the `sidebar-active` ground, `ink` and weight 600 (§2.3); hover the `hover` ground. An item may still carry a count (`nav-count`, an `accent` pill, 18 high, radius 9, mono `micro`, `on-accent`; `99+` above 99, `n+` when truncated, the accessible name includes it); the inbox, the one item that had one, is now the brand row's button.
+ - **Conversation section**:
+   - A header: the label `会话` (mono `micro` `faint`, letter-spacing 0.06em) and a dense filter icon button (`filter`, "筛选会话", `aria-expanded`; `accent` while a filter applies). Open, it shows a dense search input ("按标题搜索", case-insensitive title substring) and a dense filled `Segmented` (全部 / 运行中 / 等待我). The filter is controlled (`conversations.filter`): the page asks the kernel with it (`?q=`, `?state=`) and the rows shown are narrowed at once; groups without a matching row hide; no match is the compact empty state "没有匹配的会话" with 清除筛选. Closing the filter (the button or Esc in the input) clears it.
+-  - **Groups** by agent, most recent first: a label row (`row.dense`): the agent name (`small`, 500, `ink`; single line with an ellipsis, full name in `title`) inside a toggle button with `aria-expanded` and a `chevron-down` / `chevron-right` 12 icon, and a dense `plus` icon button "与 {agent} 新建会话". Collapse is remembered per viewer and org in `localStorage["cap.sidebar.collapsed.<orgId>"]` (a JSON array of agent ids, read and written inside try/catch; renders expanded when storage throws).
++  - **Groups** by agent, most recent first: a label row (`row.dense`): the agent's `Avatar` 16 (§6.30; the initial when the agent is not known), then the agent name (`small`, 500, `ink`; single line with an ellipsis, full name in `title`) inside a toggle button with `aria-expanded` and a `chevron-down` / `chevron-right` 12 icon, and a dense `plus` icon button "与 {agent} 新建会话". Collapse is remembered per viewer and org in `localStorage["cap.sidebar.collapsed.<orgId>"]` (a JSON array of agent ids, read and written inside try/catch; renders expanded when storage throws).
+   - **Rows** (`conversation-row`, `row.dense`, radius `sm`): a 6 px state dot only for running (`ok`) or waiting for me (`warn`) (`state-dot`, `role="img"` named "运行中" / "等待我"), the title link (`conversation`, `ink`, single line with an ellipsis, full text in `title`), and the `⋯` menu (`row-menu`, 22 square, `more-horizontal` 14): 重命名 / 归档 / 删除 (danger, last). The menu button shows on hover, on focus within the row and on the current row; Tab reaches the menu of the row holding the list's tab stop. The current row gets the `sidebar-active` ground. An untitled conversation reads `未命名会话 · MM-DD HH:mm` / `Untitled conversation · MM-DD HH:mm` (its start time).
+   - **重命名** is inline: a dense input with the title, focused and selected; Enter saves (trimmed; empty is not allowed and marks the input invalid), Escape cancels; focus returns to the row. **删除** asks first with `Dialog` (danger; "删除会话？", the title in the body; 取消 is focused). **归档** archives at once.
+   - Each group shows its 5 most recent conversations, then "显示更多" (or "再显示 N 个" when the count is known; `small` `faint`, 26 high); the list shows 20 groups, then "更多分组".
+   - **Archived**: `已归档 · N` (`archived-entry`, `archive` 14, `small` `faint`) at the end of the list when N > 0 swaps the list **in place** for the archived conversations: a header `← 已归档 · N` (`archived-back`, `ink`, 600; accessible name "返回会话列表：已归档 · N") returns; archived rows' menu offers 取消归档 and 删除; group ＋ buttons hide; the filter applies to it too. No separate page.
+ - **States of the conversation section**: empty: the compact EmptyState (§6.18) "还没有会话" / "No conversations yet" with a 新会话 link (the archived list: "没有已归档的会话"; a filter matching nothing: "没有匹配的会话" + 清除筛选); loading: skeleton bars (`space.3` high, `selected`, radius `sm`) in three groups (3, 2, 2), `aria-busy`, no spinner; error: `circle-alert` + "会话列表加载失败" / "Couldn't load conversations" in `fail` and a dense ghost "Retry" (`refresh`).
+ - Long titles and agent names (40+ CJK characters without spaces) truncate to one line and never widen the sidebar.
+ - **Rail** (below 1280): width `layout.sidebar-rail`, icons only: the brand row is the logo alone; under it the expand button (`panel-left`, "Expand sidebar", opens the drawer), then search and the inbox as rail icons (the inbox badge as in the brand row); the org initial (a button opening the org menu, named as the switcher; the admin context shows the shield and the back arrow), 新会话, the primary items (each `row.default` square, accessible name kept, a Tooltip with the label to the right, past the rail's edge, on hover and focus), 更多 as one `more-horizontal` button opening the same flyout (on `sidebar-active` while the current page is inside), the admin entry and the account. Hover over the current item takes the `hover` ground (the signed rail reference). No conversations.
+ - **Drawer** (below 960): the full sidebar slides in from the left over a `scrim`, with `shadow-float`, opened from the menu button in the drawer menu bar; its brand row carries a close button (`x`), and the drawer menu bar carries the search button (`search`, at its right end) so the command palette stays reachable by pointer below 960. Esc, the close button and route changes close it; focus returns to the menu button. The drawer is the touch form: its rows (nav items, the back link, group heads, conversation rows, the archived entry) are 40 high and a conversation row's menu is a 40 px square.
+ - **First paint**: the full / rail / drawer variant follows the window width through CSS media queries before hydration (both panels are drawn, one shown), so the server render never draws the full 256 sidebar at a narrow width. Remembered collapsed groups apply on the first client commit (layout effects) without the height motion; the motion runs only after the viewer toggles a group. The remembered collapsed list keeps at most 100 ids and drops ids of agents no longer listed once every group of that org is loaded.
+ - Hover never replaces the current item's `sidebar-active` ground.
+@@ -1107,21 +1107,21 @@ The components of the conversation page (T7, §5.4; UI refresh spec §5), signed
+ - **Tool line**: the one-line form used by a single tool call, group headers, thinking, decided cards and captions: `row.dense` minimum height, `small` `muted`, gap `space.2`, the label on one line with an ellipsis; an expandable one is a `button` with `aria-expanded` and a `chevron-right` / `chevron-down` 12 at its end.
+ - **Floating cards** (inline cards, the question and connect cards, the composer, text and file outputs): `raised` ground, 1px `line` border, radius `md`, padding `space.3`. Only the **pending approval** has an `accent` border.
+ - **Status**: success has no mark; failure is the word "失败" / "Failed" in `fail` followed by the reason in `muted`; something running is the `spinner` (12, `accent`, one turn per `motion.spin`). Characters are never icons.
+ - **Load failure** of an extension block (inline card, properties section, right panel, previewer): `circle-alert` 14 + "<name> 加载失败" / "<name> failed to load" in `fail`, the reason in `muted`, and a "重试" / "Retry" link button with `refresh` 12, inside that block only; the stream and the composer keep working.
+ - **Link buttons** ("View full text", "Copy output", "Retry", "Open"): no ground or border, `muted` (or `fail` inside a failure), underlined in `line-strong` with a 2px offset.
+ - Names in the reference set are placeholders (示例组织, 研究助手, Acme …); copy comes from §7.
+ 
+ #### 6.16.1 Title bar
+ 
+ - Belongs to the middle column only and never spans the right panel. Height `layout.title-bar`, padding 0 `space.3` 0 `space.5`, no ground, no bottom line.
+-- Left: the path `<org slug> / <agent> /` (mono `small`, `faint`, the agent a link), spaced like the page head's path (`space.2` on both sides of every `/`), then the title button (`control.default` high, radius `sm`, padding 0 `space.2`, pulled left by `space.2`, `body` `ink`, one line with an ellipsis and the full title in `title`, then `chevron-down` 14 `muted`; `hover` ground on hover and while its menu is open). It opens a menu: Rename (`square-pen`), Copy link (`link`), a separator, Delete (`trash-2`, `fail`). Rename opens a dialog; a manual rename stops title generation for good.
++- Left: the path `<org slug> / <agent> /` (mono `small`, `faint`, the agent a link led by its `Avatar` 16 and `space.1`, §6.30; the name takes the ellipsis), spaced like the page head's path (`space.2` on both sides of every `/`), then the title button (`control.default` high, radius `sm`, padding 0 `space.2`, pulled left by `space.2`, `body` `ink`, one line with an ellipsis and the full title in `title`, then `chevron-down` 14 `muted`; `hover` ground on hover and while its menu is open). It opens a menu: Rename (`square-pen`), Copy link (`link`), a separator, Delete (`trash-2`, `fail`). Rename opens a dialog; a manual rename stops title generation for good.
+ - Untitled: the title reads "未命名会话 · MM-DD HH:mm" / "Untitled conversation · MM-DD HH:mm" (the start time) in `muted` until a generated or manual title exists. The new-conversation page shows only the `muted` label "新会话" / "New conversation".
+ - Right, two groups of ghost icon buttons (`control.default` square, radius `sm`, icon 16): group 1 is the properties toggle (`panel-right`); then a 1px × `space.4` `line` separator with `space.1` on each side; group 2 is Files (`file-text`, once the conversation has a file; it opens the newest file in the right panel, whose switcher reaches the others) and the panel icons of the extensions enabled in the org, in contribution order, then More (`more-vertical`). Icons that don't fit move into More, a menu of icon + label items; More exists only while two or more icons don't fit (one that doesn't fit takes More's slot, §6.7), and never repeats an icon on the bar. With no icon in group 2 the separator goes too. Each button's name is the panel it opens. The title and More menus hang 2px below their button. The open item's button has `aria-pressed="true"`, the `selected` ground and an `ink` icon; More is pressed while its menu is open.
+ - **Below 640** the bar is padded 0 `space.1` 0 `space.4` (the path on the 16 px content edge, the last icon's glyph near it), the title button is 40 high and the icon buttons 40 square (tap targets); fewer panel icons fit, and the rest go into More as above.
+ 
+ <!-- states: title-bar -->
+ States: `default`, `untitled`, `rename-menu`, `panel-active`, `overflow`, `long-title`, `narrow`
+ 
+ <!-- size-table: title-bar -->
+ | Part | State | Property | Value |
+ |---|---|---|---|
+@@ -1920,21 +1920,22 @@ page's order (most recent use, then name).
+ - **Search** matches name and description, case-insensitively; N counts the matching agents. No
+   match: no list, one quiet line "没有匹配的 agent" / "No matching agents" (`small` `muted`).
+ - **Keyboard**: focus goes to the search when the panel opens and stays there (a combobox with
+   `aria-activedescendant` over a listbox of grouped options; the first option is active). The
+   arrows move in two dimensions (`gridStep`): ← / → within the row, stopping at its ends; ↑ / ↓ one
+   row (two options), keeping the column, and on a row with no option below that column ↓ goes to
+   the group's last option. From a group's last row ↓ goes to the next group's first row, from its
+   first row ↑ to the previous group's last row, in the same column or the nearest one that exists
+   there; at the panel's first and last rows the active option stays. While nothing is listed ← / →
+   move the text caret. Enter selects the active option, Escape closes and gives focus back to
+-  "更多 +N"; selecting (Enter or a click) closes the panel. While an IME composes (pinyin),
++  "更多 +N"; selecting (Enter or a click) closes the panel and leaves the focus where `onSelect`
++  put it (the new conversation page moves it to the composer), not on "更多 +N". While an IME composes (pinyin),
+   Enter and the arrows belong to it: the panel ignores them.
+ 
+ <!-- states: agent-row -->
+ States: `default`, `panel`, `no-match`
+ 
+ <!-- size-table: agent-row -->
+ | Part | State | Property | Value |
+ |---|---|---|---|
+ | agent-row | default | column-gap | space.2 |
+ | agent-chip | default | height | control.prominent |
+@@ -1992,21 +1993,21 @@ States: `default`, `hover`, `menu`
+ | quick-action[data-ref-forced=true] | hover | color | color.ink |
+ | menu | menu | background-color | color.panel |
+ | menu-item | menu | height | row.default |
+ 
+ ---
+ 
+ ### 6.17 ObjectList and ObjectRow
+ 
+ `ObjectList({ label, children })` is the panel of an object list: a `ul` on the `panel` ground, 1px `line-soft` border, radius `md`, rows split by `line-soft`. `ObjectRow` is one `li`, at least 64 px high, padding `space.3` / `space.4`, `space.3` between its parts:
+ 
+-- A 36 px mark (radius `md`, `selected` ground): the one avatar-tile rule, the upper-cased first grapheme of the display name in 600 (mono like the whole UI; `initialOf`, as the org switcher and the account row), for extensions and plugins too; an icon only for rows that are steps, not objects (the setup page); `tone="warn"` tints it with `warn` at 15% when the object needs attention.
++- A 36 px mark (radius `md`, `selected` ground; an agent's row draws its `Avatar` 28 centred in that place on no ground, `mark.avatar`, §6.30): the one avatar-tile rule, the upper-cased first grapheme of the display name in 600 (mono like the whole UI; `initialOf`, as the org switcher and the account row), for extensions and plugins too; an icon only for rows that are steps, not objects (the setup page); `tone="warn"` tints it with `warn` at 15% when the object needs attention.
+ - Text column: line 1 the name (600; a link when `href`; `mono` for package names) and chips (`small`, 1px `line` border, radius `sm`; `tone="warn"` draws the warn tint without a border). A chip is a scope or an attention mark (组织共享, 敏感); plain facts such as a version or 必需 are meta text, never a chip; line 2 the description in `muted` prose, one line with an ellipsis; line 3 the meta in `faint`, `small`, one line.
+ - At the right: a state label (`state`: `ok` / `warn` / `fail` colored, `muted` in `faint`), a short `trailing` text in `faint`, one row action (`action`: a `default` dense button or link, never `primary`: the page head holds the one primary of the screen, and a row that needs attention says so in its `state`) and the `more-horizontal` overflow menu (`menu`). Below 640 the row wraps, and its action and menu buttons are at least 40 px (tap targets).
+ - **Loading** (`ObjectList.loading`, `true` for 3 rows or a row count; `ListPage.loading` on a list page): the panel draws skeleton rows in the row's shape instead of its rows (the same `.cb-object-row` box, 64 px at least, with its divider and first-row rule): a `mark` box (36 × 36, radius `md`, §6.29) and a name line and a description line in the text column, `body` bars 30% and 55% wide in the one bar look (§6.29), and the list is `aria-busy` with a hidden "正在加载 / Loading" (none of its own inside a skeleton group, which announces once). It wins over `empty`, so no empty state flashes before the first answer; a `records` ListPage draws the DataTable's loading state in the caller's table shape, else a Skeleton (§6.29), instead.
+ 
+ ### 6.18 EmptyState
+ 
+ One empty state for the whole product, in two styles only. `EmptyState({ text, hint?, action?, size? })`:
+ 
+ - **Illustration**: the pixel capybara of §3 drawn as a line (`LogoLine`: the outer edges of the bitmap's cells, the eye included, 1 px `faint` stroke, no fill), decorative, on the `page` style only. No other art or icon stands in for it (a search that matched nothing is the same style with its own sentence).
+ - **Copy**: one sentence in `ink` (prose font) saying what will be here ("还没有 agent" / "No agents yet"), an optional second line in `muted` (`small`, prose font), and at most one action, the primary next step (a `default` or `primary` button or link). A `primary` action here is the screen's one primary: `ListPage` hides the head's primary while it is shown (§5.1). Never a table header over an icon, never a sentence about the absence of data in general ("暂无数据" is only the DataTable's fallback).
+diff --git a/packages/design/src/conversation/agent-row.tsx b/packages/design/src/conversation/agent-row.tsx
+index d7150c8d..1dabc4dc 100644
+--- a/packages/design/src/conversation/agent-row.tsx
++++ b/packages/design/src/conversation/agent-row.tsx
+@@ -1,18 +1,19 @@
+ import * as RP from "@radix-ui/react-popover";
+ import {
+   type JSX,
+   type KeyboardEvent,
+   type ReactNode,
+   useEffect,
+   useId,
+   useMemo,
++  useRef,
+   useState,
+ } from "react";
+ import { Input } from "../controls/inputs";
+ import { Avatar, type AvatarValue } from "../display/avatar";
+ import { COLLISION_PADDING } from "../overlays/menus";
+ import { useDesignT } from "../provider";
+ 
+ /** An agent a person can start a conversation with (§6.16.26). */
+ export type AgentRowItem = {
+   id: string;
+@@ -62,25 +63,28 @@ export function AgentRow({
+   selected,
+   onSelect,
+   max = 5,
+   recent = [],
+   moreLabel,
+   label,
+   referenceOpen,
+ }: AgentRowProps): JSX.Element | null {
+   const t = useDesignT();
+   const [open, setOpen] = useState(false);
++  // A pick in the panel leaves the focus where `onSelect` put it (the page's composer), not on 更多.
++  const picked = useRef(false);
+   if (agents.length <= 1) return null;
+   const shown = visibleAgents(agents, Math.max(1, max), selected);
+   const hidden = agents.length - shown.length;
+   const more = moreLabel ?? t("agents.more").replace("{n}", String(hidden));
+   const pick = (id: string) => {
++    picked.current = true;
+     setOpen(false);
+     onSelect(id);
+   };
+   const panel = (
+     <AgentPanel
+       agents={agents}
+       recent={recent}
+       {...(selected !== undefined ? { selected } : {})}
+       onSelect={pick}
+       onClose={() => setOpen(false)}
+@@ -139,20 +143,25 @@ export function AgentRow({
+       <RP.Anchor asChild>{row(<RP.Trigger asChild>{moreChip}</RP.Trigger>)}</RP.Anchor>
+       <RP.Portal>
+         <RP.Content
+           className="cb-popover cb-agent-panel"
+           data-part="agent-panel-pop"
+           aria-label={t("agents.panel")}
+           side="bottom"
+           align="start"
+           sideOffset={4}
+           collisionPadding={COLLISION_PADDING}
++          onCloseAutoFocus={(e) => {
++            if (!picked.current) return;
++            picked.current = false;
++            e.preventDefault();
++          }}
+         >
+           {panel}
+         </RP.Content>
+       </RP.Portal>
+     </RP.Root>
+   );
+ }
+ 
+ export type AgentPanelProps = {
+   agents: AgentRowItem[];
+diff --git a/packages/design/src/conversation/title-bar.tsx b/packages/design/src/conversation/title-bar.tsx
+index 97b167c8..8ab1e682 100644
+--- a/packages/design/src/conversation/title-bar.tsx
++++ b/packages/design/src/conversation/title-bar.tsx
+@@ -1,13 +1,14 @@
+ import { type JSX, useEffect, useRef, useState } from "react";
+ import { Button, IconButton } from "../controls/button";
+ import { Input } from "../controls/inputs";
++import { Avatar, type AvatarValue } from "../display/avatar";
+ import { SkeletonText } from "../display/skeleton";
+ import { Icon } from "../icons/icon";
+ import type { IconName } from "../icons/paths";
+ import { Dialog } from "../overlays/dialog";
+ import { useDesignLink, useDesignT } from "../provider";
+ import { useMediaQuery } from "../shell/use-media-query";
+ import { ConvMenu, type ConvMenuEntry } from "./menu";
+ 
+ // The conversation title bar (spec §6.16.1): the middle column's own 48-high bar with the title
+ // (rename / copy link / delete), the properties toggle, a separator, Files and the extensions'
+@@ -23,40 +24,54 @@ export type TitleBarMenuItem = {
+ 
+ export type TitleBarPanel = {
+   id: string;
+   label: string;
+   icon: IconName;
+   pressed: boolean;
+   onOpen(): void;
+ };
+ 
+ export type TitleBarProps = {
+-  /** The path before the title, `<org> / <agent> /` (mono, faint); a segment with `href` links. */
+-  path?: { label: string; href?: string }[];
++  /**
++   * The path before the title, `<org> / <agent> /` (mono, faint); a segment with `href` links. A
++   * segment with `avatar` (the agent's) leads with its `Avatar` at 16 (§6.30; `null`: the initial).
++   */
++  path?: { label: string; href?: string; avatar?: AvatarValue }[];
+   /** The title; null until one is generated or given. */
+   title: string | null;
+   /** Shown while `title` is null: "未命名会话 · 10-26 14:02" (`untitledLabel`). */
+   untitled: string;
+   /** The title menu; a `separator` id draws a line (rename, copy link, separator, delete). */
+   menu: (TitleBarMenuItem | "separator")[];
+   properties: { pressed: boolean; onToggle(): void };
+   /** Files, then the extensions' panels in contribution order. */
+   panels: TitleBarPanel[];
+   /**
+    * The title is not known yet (the conversation is loading): a bar 30% of the bar's width in the
+    * title's box in place of the title menu; the path and every icon stay real.
+    */
+   loading?: boolean;
+   /** The reference set only: menus drawn open and a fixed number of visible panel icons. */
+   reference?: { titleMenu?: boolean; moreMenu?: boolean; visiblePanels?: number };
+ };
+ 
++/** A path segment's content: the label, led by the avatar when it has one. */
++function pathSegment(c: { label: string; avatar?: AvatarValue }) {
++  if (c.avatar === undefined) return c.label;
++  return (
++    <>
++      <Avatar value={c.avatar} name={c.label} size={16} />
++      <span className="cb-title-path-label">{c.label}</span>
++    </>
++  );
++}
++
+ /** Width of one title-bar icon button plus the bar's gap. */
+ const SLOT = 28 + 4;
+ /** What the bar keeps besides group 2: paddings, a readable title, the toggle, separator, More. */
+ const RESERVED = 20 + 12 + 200 + SLOT + 9 + 4 + SLOT;
+ /** Below 640 (spec §6.16.1): 40 px tap targets, 16 + 4 paddings and a shorter readable title. */
+ const TOUCH_SLOT = 40 + 4;
+ const TOUCH_RESERVED = 16 + 4 + 160 + TOUCH_SLOT + 9 + 4 + TOUCH_SLOT;
+ 
+ /**
+  * How many of `count` panel icons fit in a title bar `width` wide (the rest go into More);
+@@ -120,25 +135,34 @@ export function TitleBar({
+         },
+   );
+   return (
+     <header ref={ref} className="cb-title-bar" data-part="title-bar">
+       {path !== undefined && path.length > 0 ? (
+         <nav className="cb-title-path" data-part="title-path" aria-label={t("shell.path")}>
+           {path.map((c, i) => (
+             // biome-ignore lint/suspicious/noArrayIndexKey: segments are positional (labels may repeat)
+             <span key={`${i}-${c.label}`} className="cb-title-path-item">
+               {c.href !== undefined ? (
+-                <Link href={c.href} className="cb-title-path-seg">
+-                  {c.label}
++                <Link
++                  href={c.href}
++                  className="cb-title-path-seg"
++                  data-avatar={c.avatar !== undefined ? "true" : undefined}
++                >
++                  {pathSegment(c)}
+                 </Link>
+               ) : (
+-                <span className="cb-title-path-seg">{c.label}</span>
++                <span
++                  className="cb-title-path-seg"
++                  data-avatar={c.avatar !== undefined ? "true" : undefined}
++                >
++                  {pathSegment(c)}
++                </span>
+               )}
+               <span className="cb-title-path-sep" aria-hidden="true">
+                 /
+               </span>
+             </span>
+           ))}
+         </nav>
+       ) : null}
+       {loading ? (
+         <span className="cb-title-btn" data-part="title" data-loading="true">
+diff --git a/packages/design/src/display/object-list.tsx b/packages/design/src/display/object-list.tsx
+index 017e6a65..f34e18f0 100644
+--- a/packages/design/src/display/object-list.tsx
++++ b/packages/design/src/display/object-list.tsx
+@@ -1,26 +1,28 @@
+ import { Fragment, type ReactNode } from "react";
+ import { Button, IconButton, LinkButton } from "../controls/index";
+ import { Icon } from "../icons/icon";
+ import type { IconName } from "../icons/paths";
+ import { Menu, type MenuItem, menuActions, menuLone } from "../overlays/index";
+ import { LinkPendingMark, useDesignLink, useDesignT } from "../provider";
++import { Avatar, type AvatarValue } from "./avatar";
+ import { initialOf } from "./initial";
+ import { SkeletonBox, SkeletonText, useSkeletonAnnounces } from "./skeleton";
+ 
+ export type ObjectRowProps = {
+   /**
+    * The 36 px mark: `text` is the display name, drawn as its upper-cased first grapheme (the one
+    * avatar-tile rule); `icon` only for rows that are steps, not objects; `warn` when it needs
+-   * attention.
++   * attention. `avatar` (an agent's row): its `Avatar` at 28 (§6.30) in the mark's 36 px place;
++   * `null` draws the initial square.
+    */
+-  mark: { text?: string; icon?: IconName; tone?: "neutral" | "warn" };
++  mark: { text?: string; icon?: IconName; tone?: "neutral" | "warn"; avatar?: AvatarValue };
+   name: string;
+   /** The name links here. */
+   href?: string;
+   /** Package names and ids are mono. */
+   mono?: boolean;
+   /** Scope / kind chips and attention chips after the name. */
+   chips?: { label: string; tone?: "neutral" | "warn" }[];
+   /** One line in `muted`. */
+   description?: string;
+   /**
+@@ -109,23 +111,29 @@ export function ObjectRow({
+   const actions = menuActions(menu ?? []);
+   const lone = menuLone(menu ?? []);
+   const single: RowButton | undefined = lone && {
+     label: lone.label,
+     ...(lone.href !== undefined ? { href: lone.href } : {}),
+     ...(lone.onSelect ? { onSelect: lone.onSelect } : {}),
+   };
+   const slots: (RowButton | undefined)[] = [action, single];
+   return (
+     <li className="cb-object-row">
+-      <span className="cb-object-mark" data-tone={mark.tone ?? "neutral"} aria-hidden="true">
+-        {mark.icon ? <Icon name={mark.icon} size={16} /> : initialOf(mark.text ?? "")}
+-      </span>
++      {mark.avatar !== undefined ? (
++        <span className="cb-object-mark" data-kind="avatar" aria-hidden="true">
++          <Avatar value={mark.avatar} name={mark.text ?? name} size={28} />
++        </span>
++      ) : (
++        <span className="cb-object-mark" data-tone={mark.tone ?? "neutral"} aria-hidden="true">
++          {mark.icon ? <Icon name={mark.icon} size={16} /> : initialOf(mark.text ?? "")}
++        </span>
++      )}
+       <span className="cb-object-text">
+         <span className="cb-object-line">
+           {href ? (
+             <Link href={href} className="cb-object-name" data-mono={mono ? "true" : undefined}>
+               {name}
+               <LinkPendingMark />
+             </Link>
+           ) : (
+             <span className="cb-object-name" data-mono={mono ? "true" : undefined}>
+               {name}
+diff --git a/packages/design/src/shell/sidebar-conversations.tsx b/packages/design/src/shell/sidebar-conversations.tsx
+index 118ccb4b..aeec67b6 100644
+--- a/packages/design/src/shell/sidebar-conversations.tsx
++++ b/packages/design/src/shell/sidebar-conversations.tsx
+@@ -2,20 +2,21 @@ import {
+   type FocusEvent,
+   type KeyboardEvent,
+   type ReactNode,
+   useCallback,
+   useEffect,
+   useLayoutEffect,
+   useRef,
+   useState,
+ } from "react";
+ import { Button, IconButton, Input } from "../controls/index";
++import { Avatar, type AvatarValue } from "../display/avatar";
+ import { formatDateTime } from "../display/date-time";
+ import { EmptyState } from "../display/empty-state";
+ import { Segmented } from "../display/tabs";
+ import { type Locale, messages } from "../i18n";
+ import { Icon } from "../icons/icon";
+ import { Dialog, Menu, type MenuItem } from "../overlays/index";
+ import { LinkPendingMark, useDesignLink, useDesignLocale, useDesignT } from "../provider";
+ 
+ /** What a conversation is doing: a state dot shows only for `running` (ok) and `waiting` (warn). */
+ export type SidebarActivity = "running" | "waiting" | null;
+@@ -25,20 +26,22 @@ export type SidebarConversation = {
+   /** null until the conversation has a title: shown as `untitledLabel(startedAt)`. */
+   title: string | null;
+   startedAt: Date;
+   href: string;
+   activity: SidebarActivity;
+ };
+ 
+ export type SidebarGroup = {
+   agentId: string;
+   agentName: string;
++  /** The agent's avatar, drawn at 16 before the name (§6.30; `null`: the initial); absent, none. */
++  agentAvatar?: AvatarValue;
+   conversations: SidebarConversation[];
+   /** The group has more conversations than it shows: a "Show more" row calls `onMore`. */
+   more: boolean;
+   /** How many more there are, when known: the row reads "Show N more". */
+   moreCount?: number;
+   onMore(): void;
+   /** The group's ＋: a new conversation with this agent. */
+   onNew(): void;
+ };
+ 
+@@ -481,20 +484,23 @@ function Group({
+         <button
+           type="button"
+           className="cb-sidebar-group-toggle"
+           data-part="group-label"
+           data-rove={`t:${g.agentId}`}
+           tabIndex={tab(`t:${g.agentId}`)}
+           aria-expanded={!collapsed}
+           title={g.agentName}
+           onClick={onToggle}
+         >
++          {g.agentAvatar !== undefined ? (
++            <Avatar value={g.agentAvatar} name={g.agentName} size={16} />
++          ) : null}
+           <span className="cb-sidebar-label">{g.agentName}</span>
+           <Icon name={collapsed ? "chevron-right" : "chevron-down"} size={12} />
+         </button>
+         {archived ? null : (
+           <IconButton
+             density="dense"
+             label={t("sidebar.newWith").replace("{agent}", g.agentName)}
+             icon={<Icon name="plus" size={14} />}
+             data-rove={`n:${g.agentId}`}
+             tabIndex={tab(`n:${g.agentId}`)}
+diff --git a/packages/design/src/styles/conversation-page.css b/packages/design/src/styles/conversation-page.css
+index 1d64558a..0c587a6a 100644
+--- a/packages/design/src/styles/conversation-page.css
++++ b/packages/design/src/styles/conversation-page.css
+@@ -102,20 +102,31 @@
+   min-width: 0;
+ }
+ .cb-title-path-seg {
+   min-width: 0;
+   overflow: hidden;
+   color: var(--cb-muted);
+   text-decoration: none;
+   text-overflow: ellipsis;
+   white-space: nowrap;
+ }
++/* The agent's segment: its 16 px avatar, space.1, then the name (the name takes the ellipsis). */
++.cb-title-path-seg[data-avatar="true"] {
++  display: inline-flex;
++  align-items: center;
++  gap: var(--cb-space-1);
++}
++.cb-title-path-label {
++  min-width: 0;
++  overflow: hidden;
++  text-overflow: ellipsis;
++}
+ a.cb-title-path-seg:hover {
+   color: var(--cb-ink);
+ }
+ .cb-title-path-sep {
+   flex: none;
+   color: var(--cb-faint);
+ }
+ .cb-title-path + .cb-title-btn {
+   margin-left: var(--cb-space-1);
+ }
+diff --git a/packages/design/src/styles/templates.css b/packages/design/src/styles/templates.css
+index f8db3846..38edb047 100644
+--- a/packages/design/src/styles/templates.css
++++ b/packages/design/src/styles/templates.css
+@@ -458,20 +458,24 @@ a.cb-item-list-title:hover {
+   display: grid;
+   flex: none;
+   place-items: center;
+   width: 36px;
+   height: 36px;
+   border-radius: var(--cb-radius-md);
+   background: var(--cb-selected);
+   color: var(--cb-ink);
+   font-weight: 600;
+ }
++/* An agent's row: its 28 px avatar centred in the mark's 36 px place, on no ground of its own. */
++.cb-object-mark[data-kind="avatar"] {
++  background: transparent;
++}
+ .cb-object-mark[data-tone="warn"] {
+   background: color-mix(in srgb, var(--cb-warn) 15%, transparent);
+   color: var(--cb-warn);
+ }
+ .cb-object-text {
+   display: flex;
+   flex: 1;
+   flex-direction: column;
+   gap: 2px;
+   min-width: 0;

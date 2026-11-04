@@ -1,0 +1,1043 @@
+# Review package: 4357b25a..HEAD
+
+## Commits
+38f75303 feat(web): client-side gates and session reset on org switch and sign-out
+
+## Files changed
+ .../src/app/(app)/settings/organization/view.tsx   |   5 +-
+ apps/web/src/components/HydrateCache.tsx           |   3 +-
+ apps/web/src/components/QueryProvider.tsx          |  10 +-
+ apps/web/src/components/SessionGuard.tsx           |  35 ++++
+ apps/web/src/components/shell/AppFrame.tsx         |  24 ++-
+ apps/web/src/lib/query/agents.ts                   |  11 ++
+ apps/web/src/lib/query/client.ts                   |   8 +-
+ apps/web/src/lib/query/keys.ts                     |   2 +
+ apps/web/src/lib/query/routes.ts                   |   6 +-
+ apps/web/src/lib/query/workspace.ts                |  77 ++++++++
+ apps/web/src/lib/server/page.ts                    |   5 +-
+ apps/web/src/lib/server/query.ts                   |   8 +-
+ apps/web/src/lib/signed-out.ts                     |   8 +
+ apps/web/test/query-foundation.test.ts             |  23 +++
+ apps/web/test/query-gates.test.tsx                 | 214 +++++++++++++++++++++
+ apps/web/test/query-routes.test.ts                 |  50 +++++
+ apps/web/test/shell-ssr.test.tsx                   |   6 +-
+ 17 files changed, 471 insertions(+), 24 deletions(-)
+
+## Diff
+diff --git a/apps/web/src/app/(app)/settings/organization/view.tsx b/apps/web/src/app/(app)/settings/organization/view.tsx
+index 1a7b0414..1db9a966 100644
+--- a/apps/web/src/app/(app)/settings/organization/view.tsx
++++ b/apps/web/src/app/(app)/settings/organization/view.tsx
+@@ -21,20 +21,22 @@ import { useSession } from "../../../../components/shell/session";
+ import { navigateBrowser } from "../../../../lib/browser";
+ import { myRole } from "../../../../lib/members";
+ import {
+   canUpdateOrg,
+   type OrgSettings,
+   type OrgSettingsPatch,
+   type OrgSettingsResponse,
+   updateOrgSettings,
+ } from "../../../../lib/org-settings";
+ import { deleteOrg } from "../../../../lib/orgs";
++import { browserQueryClient } from "../../../../lib/query/client";
++import { resetSession } from "../../../../lib/query/workspace";
+ import { broadcastSession } from "../../../../lib/session-sync";
+ import { useErrorMessage } from "../../../../lib/use-error-message";
+ import { useServerState } from "../../../../lib/use-server-state";
+ 
+ /**
+  * `/settings/organization`：组织设置（SettingsPage）——工具搜索开关、IM 语言（机器人固定话术的语言）、
+  * 沙箱的设置在 `/settings/sandbox`。
+  * 成员可看，管理员可改；有改动时出现 ActionRow。Read on the server (`page.tsx`); a save replaces it locally.
+  */
+ 
+@@ -184,17 +186,18 @@ function DeleteOrg({ orgId }: { orgId: string }) {
+           try {
+             await deleteOrg(orgId);
+           } catch (e) {
+             // DangerConfirm shows the message: the localized one, never the kernel's English
+             throw new Error(errorMessage(e));
+           }
+           // The kernel cleared the current org with the org: a full navigation to `/` (the org
+           // chooser), told to the other tabs (ruling R4). The dialog stays busy until the unload.
+           toast.success(t("delete.done"));
+           broadcastSession("org-switched");
+-          navigateBrowser("/");
++          // The browser's one client (the provider's): drop the old org's cache before leaving.
++          await resetSession(browserQueryClient(), () => navigateBrowser("/"));
+           await new Promise<never>(() => {});
+         }}
+       />
+     </>
+   );
+ }
+diff --git a/apps/web/src/components/HydrateCache.tsx b/apps/web/src/components/HydrateCache.tsx
+index dfff68b3..9503b9d6 100644
+--- a/apps/web/src/components/HydrateCache.tsx
++++ b/apps/web/src/components/HydrateCache.tsx
+@@ -1,14 +1,15 @@
+ "use client";
+ 
+ import { type DehydratedState, HydrationBoundary } from "@tanstack/react-query";
+ import { type ReactNode, useMemo } from "react";
+ import { reviveDehydrated } from "../lib/query/client";
+ 
+ /**
+  * Hydrates what a layout read on the server into the browser's cache. The kernel errors are
+- * revived here, in the browser, so a server render never records them.
++ * revived here. This component also renders during SSR, so `reviveDehydrated` records the revived
++ * errors only in the browser (module state must not be written on the server).
+  */
+ export function HydrateCache({ state, children }: { state: DehydratedState; children: ReactNode }) {
+   const revived = useMemo(() => reviveDehydrated(state), [state]);
+   return <HydrationBoundary state={revived}>{children}</HydrationBoundary>;
+ }
+diff --git a/apps/web/src/components/QueryProvider.tsx b/apps/web/src/components/QueryProvider.tsx
+index 112cea0f..345d3ee3 100644
+--- a/apps/web/src/components/QueryProvider.tsx
++++ b/apps/web/src/components/QueryProvider.tsx
+@@ -1,17 +1,23 @@
+ "use client";
+ 
+ import { QueryClientProvider } from "@tanstack/react-query";
+ import { usePathname } from "next/navigation";
+ import type { ReactNode } from "react";
+ import { browserQueryClient, noteClientPath } from "../lib/query/client";
++import { SessionGuard } from "./SessionGuard";
+ 
+ /**
+  * Provides the browser's query client to the app, and tells it the pathname. That happens during
+  * render, not in an effect: the new page's observers read `isHydratedError` while they render, so
+  * a client navigation must have forgotten the document's errors by then (it only forgets on a path
+- * change, so repeated renders and StrictMode's double render are harmless).
++ * change, so repeated renders and StrictMode's double render are harmless). The session guard
++ * signs in again when a read finds the session gone.
+  */
+ export function QueryProvider({ children }: { children: ReactNode }) {
+   noteClientPath(usePathname());
+-  return <QueryClientProvider client={browserQueryClient()}>{children}</QueryClientProvider>;
++  return (
++    <QueryClientProvider client={browserQueryClient()}>
++      <SessionGuard>{children}</SessionGuard>
++    </QueryClientProvider>
++  );
+ }
+diff --git a/apps/web/src/components/SessionGuard.tsx b/apps/web/src/components/SessionGuard.tsx
+new file mode 100644
+index 00000000..1d7993e8
+--- /dev/null
++++ b/apps/web/src/components/SessionGuard.tsx
+@@ -0,0 +1,35 @@
++"use client";
++
++import { useQueryClient } from "@tanstack/react-query";
++import { type ReactNode, useEffect, useState } from "react";
++import { usePathname, useRouter } from "../i18n/navigation";
++import { loginPathFor } from "../lib/auth-sources";
++import { resetSession } from "../lib/query/workspace";
++import { isSignedOut } from "../lib/signed-out";
++
++/**
++ * The client's answer to an expired session (web query cache spec §3.2): client navigations don't
++ * run the server's gates, so a read that finds the session gone (a 401 `auth.*`, after `apiFetch`'s
++ * refresh retry) clears the cache and signs in again, back to the current page. The page below is
++ * not drawn from that error on until the path changes, so no error state flashes first.
++ */
++export function SessionGuard({ children }: { children: ReactNode }) {
++  const qc = useQueryClient();
++  const router = useRouter();
++  const pathname = usePathname();
++  // The path whose session ended; the children stay hidden while the document is still there.
++  const [endedAt, setEndedAt] = useState<string | null>(null);
++  if (endedAt !== null && endedAt !== pathname) setEndedAt(null);
++  useEffect(() => {
++    let ended = false;
++    return qc.getQueryCache().subscribe((event) => {
++      if (ended || event.type !== "updated" || event.action.type !== "error") return;
++      if (!isSignedOut(event.action.error)) return;
++      ended = true;
++      setEndedAt(pathname);
++      const back = `${pathname}${window.location.search}`;
++      void resetSession(qc, () => router.replace(loginPathFor(back)));
++    });
++  }, [qc, router, pathname]);
++  return endedAt === pathname ? null : children;
++}
+diff --git a/apps/web/src/components/shell/AppFrame.tsx b/apps/web/src/components/shell/AppFrame.tsx
+index 11bc4c73..c18cb382 100644
+--- a/apps/web/src/components/shell/AppFrame.tsx
++++ b/apps/web/src/components/shell/AppFrame.tsx
+@@ -2,21 +2,21 @@
+ 
+ import {
+   AppShell,
+   initialOf,
+   type MenuItem,
+   OverviewPage,
+   SetupPage,
+   type SidebarContext,
+   useToast,
+ } from "@capybara-hq/design";
+-import { type UseQueryOptions, useQuery } from "@tanstack/react-query";
++import { type UseQueryOptions, useQuery, useQueryClient } from "@tanstack/react-query";
+ import { useLocale, useTranslations } from "next-intl";
+ import {
+   type ReactNode,
+   useCallback,
+   useEffect,
+   useMemo,
+   useRef,
+   useState,
+   useSyncExternalStore,
+   useTransition,
+@@ -30,20 +30,21 @@ import { useConnectResultToast } from "../../lib/connect";
+ import { NoCurrentOrgError } from "../../lib/conversations";
+ import { usePreferences } from "../../lib/preferences";
+ import { retryOnMountOf } from "../../lib/query/client";
+ import {
+   conversationGroupsQuery,
+   extensionPagesQuery,
+   inboxCountQuery,
+   meQuery,
+   readinessQuery,
+ } from "../../lib/query/shell";
++import { resetSession } from "../../lib/query/workspace";
+ import type { ShellData } from "../../lib/server/session";
+ import { logout, setCurrentOrg } from "../../lib/session";
+ import { broadcastSession, useSessionSync } from "../../lib/session-sync";
+ import { useErrorMessage } from "../../lib/use-error-message";
+ import { CreateOrgDialog } from "../CreateOrgDialog";
+ import { LeaveOrgDialog } from "../LeaveOrgDialog";
+ import { useConversationGroups } from "./conversations";
+ import {
+   activeAdminOf,
+   activeNavOf,
+@@ -165,20 +166,21 @@ function ShellFrame({
+   version,
+   children,
+ }: {
+   initial: ShellInitial;
+   version: string;
+   children: ReactNode;
+ }) {
+   const t = useTranslations();
+   const locale = useLocale();
+   const router = useRouter();
++  const qc = useQueryClient();
+   const pathname = usePathname();
+   const errorMessage = useErrorMessage();
+   const toast = useToast();
+   const { me, org: currentOrg, readiness } = initial;
+   const orgId = currentOrg?.orgId ?? null;
+   const conversations = useConversationGroups(orgId, pathname, {
+     ...seeded(initial.groups),
+     onError: (e) =>
+       toast.error(e instanceof NoCurrentOrgError ? t("shell.noCurrentOrg") : errorMessage(e)),
+   });
+@@ -202,67 +204,71 @@ function ShellFrame({
+     setLeavingOrg(false);
+   }
+   const timeZone = useTimeZoneLabel();
+   useConnectResultToast();
+ 
+   const [switching, setSwitching] = useState(false);
+   const [refreshing, startRefresh] = useTransition();
+   /**
+    * The current org changed (here or in another tab): a full navigation to its home (ruling R4).
+    * The browser keeps this page until the new server-rendered document arrives, so nothing of the
+-   * new org paints inside the old org's shell; the control stays pending until the unload.
++   * new org paints inside the old org's shell; the control stays pending until the unload. The
++   * query cache is dropped first (`resetSession`), so a read of the old org cannot reach the new one.
+    */
+   const openHome = useCallback(() => {
+     setSwitching(true);
+-    navigateBrowser("/");
+-  }, []);
++    void resetSession(qc, () => navigateBrowser("/"));
++  }, [qc]);
+   const reload = useCallback(async () => startRefresh(() => router.refresh()), [router]);
+   const switchOrg = useCallback(
+     async (next: string | null) => {
+       try {
+         await setCurrentOrg(next);
+       } catch (e) {
+-        if (e instanceof ApiClientError && e.status === 401)
+-          navigateBrowser(loginPathFor(`${window.location.pathname}${window.location.search}`));
++        if (e instanceof ApiClientError && e.status === 401) {
++          await resetSession(qc, () =>
++            navigateBrowser(loginPathFor(`${window.location.pathname}${window.location.search}`)),
++          );
++        }
+         throw e;
+       }
+       broadcastSession("org-switched");
+       openHome();
+     },
+-    [openHome],
++    [openHome, qc],
+   );
+   // A failed switch from a menu says why (the menu has closed).
+   const selectOrg = (next: string) =>
+     void switchOrg(next).catch((e: unknown) => toast.error(errorMessage(e)));
+   // Another tab signed in or out: start over from `/`; it switched org: follow (the current org
+   // belongs to the session the tabs share).
+-  useSessionSync(() => navigateBrowser("/"), openHome);
++  useSessionSync(() => void resetSession(qc, () => navigateBrowser("/")), openHome);
+ 
+   const session = useMemo<Session>(
+     () => ({
+       me,
+       reload,
+       switchOrg,
+       switching,
+       refreshPending: pending.refresh,
+       version,
+       ...(timeZone === "" ? {} : { timeZone }),
+     }),
+     [me, reload, switchOrg, switching, pending.refresh, version, timeZone],
+   );
+ 
+   async function onLogout() {
+     try {
+       await logout();
+     } finally {
+       broadcastSession("signed-out");
+-      navigateBrowser("/login");
++      await resetSession(qc, () => navigateBrowser("/login"));
+     }
+   }
+ 
+   // Leaving keeps the sign-in (web order §9): the kernel already cleared the current org, so move
+   // to another org of the account, or to the org chooser when none is left. The dialog stays
+   // pending until the new document replaces the page.
+   function onLeftOrg() {
+     const left = currentOrg;
+     if (left) toast.success(t("orgLifecycle.leave.left", { name: left.name }));
+     const next = me.memberships.find((m) => m.orgId !== left?.orgId);
+diff --git a/apps/web/src/lib/query/agents.ts b/apps/web/src/lib/query/agents.ts
+new file mode 100644
+index 00000000..66a76b1b
+--- /dev/null
++++ b/apps/web/src/lib/query/agents.ts
+@@ -0,0 +1,11 @@
++import { listAgents } from "../agents";
++import { defineQuery } from "./define";
++import { keys } from "./keys";
++
++/** The org's agents list. */
++export const agentsQuery = (orgId: string) =>
++  defineQuery({
++    key: keys.org(orgId).agents(),
++    fn: () => listAgents(orgId),
++    freshness: "orgConfig",
++  });
+diff --git a/apps/web/src/lib/query/client.ts b/apps/web/src/lib/query/client.ts
+index fa63ab13..44ffda3e 100644
+--- a/apps/web/src/lib/query/client.ts
++++ b/apps/web/src/lib/query/client.ts
+@@ -30,42 +30,45 @@ export function makeQueryClient(): QueryClient {
+ 
+ let browserClient: QueryClient | undefined;
+ 
+ /** One client for the browser session; a new one per call on the server. */
+ export function browserQueryClient(): QueryClient {
+   if (isServer) return makeQueryClient();
+   browserClient ??= makeQueryClient();
+   return browserClient;
+ }
+ 
++/** Client components also render during SSR; module state must only be written in the browser. */
++const onServer = () => typeof window === "undefined";
++
+ /**
+  * Hashes of the errors revived from the server for the current document (per tab). They stay
+  * recorded until the first client navigation to another path ({@link noteClientPath}), so a first
+  * mount and a StrictMode re-mount on the document's path both skip the refetch.
+  */
+ const hydratedErrors = new Set<string>();
+ /** The path the recorded errors belong to; `null` until the first {@link noteClientPath}. */
+ let errorsPath: string | null = null;
+ 
+ /**
+  * Rebuilds `ApiClientError`s from the `{ status, code, message }` that `dehydrateFor` wrote; pass
+  * the dehydrated state through it before `hydrate` / `HydrationBoundary`, in the browser only. It
+- * also records the revived errors so mounting them does not ask the kernel again (see
++ * also records the revived errors (in the browser; on the server it records nothing) so mounting them does not ask the kernel again (see
+  * `isHydratedError`).
+  */
+ export function reviveDehydrated(state: DehydratedState): DehydratedState {
+   return {
+     ...state,
+     queries: state.queries.map((q) => {
+       const e = q.state.error as WireError | null;
+       if (!e || e instanceof Error) return q;
+-      hydratedErrors.add(q.queryHash);
++      if (!onServer()) hydratedErrors.add(q.queryHash);
+       return {
+         ...q,
+         state: { ...q.state, error: new ApiClientError(e.status, e.code, e.message) },
+       };
+     }),
+   };
+ }
+ 
+ /**
+  * Whether a query's error came from the server for this document: its observers pass
+@@ -78,18 +81,19 @@ export function isHydratedError(queryHash: string): boolean {
+ 
+ /** The observer option for a query's key: no refetch on mount for an error from the server. */
+ export const retryOnMountOf = (queryKey: readonly unknown[]): boolean =>
+   !isHydratedError(hashKey(queryKey));
+ 
+ /**
+  * Called with the browser's pathname on every render of the provider: the first call records the
+  * document's path, a different one (a client navigation away) forgets the revived errors.
+  */
+ export function noteClientPath(pathname: string): void {
++  if (onServer()) return;
+   if (errorsPath === null) {
+     errorsPath = pathname;
+     return;
+   }
+   if (pathname === errorsPath) return;
+   errorsPath = pathname;
+   hydratedErrors.clear();
+ }
+diff --git a/apps/web/src/lib/query/keys.ts b/apps/web/src/lib/query/keys.ts
+index 84506393..26347695 100644
+--- a/apps/web/src/lib/query/keys.ts
++++ b/apps/web/src/lib/query/keys.ts
+@@ -15,20 +15,22 @@ export const keys = {
+       me: (): readonly unknown[] => [...all, "me"],
+       /** `/me` on a public page: `null` when signed out; only under `keys.account("self")`. */
+       maybeMe: (): readonly unknown[] => [...all, "maybeMe"],
+     };
+   },
+   org(orgId: string) {
+     const all = ["org", orgId] as const;
+     return {
+       all: all as readonly unknown[],
+       readiness: (): readonly unknown[] => [...all, "readiness"],
++      /** The org's agents list. */
++      agents: (): readonly unknown[] => [...all, "agents"],
+       /** The sidebar's conversation groups of one view (`"default"`: what the layout reads). */
+       conversationGroups: (view: string): readonly unknown[] => [
+         ...all,
+         "conversationGroups",
+         view,
+       ],
+       inboxCount: (): readonly unknown[] => [...all, "inboxCount"],
+       extensionPages: (): readonly unknown[] => [...all, "extensionPages"],
+     };
+   },
+diff --git a/apps/web/src/lib/query/routes.ts b/apps/web/src/lib/query/routes.ts
+index 9a38c2ac..6c0564c3 100644
+--- a/apps/web/src/lib/query/routes.ts
++++ b/apps/web/src/lib/query/routes.ts
+@@ -16,21 +16,25 @@ export interface RouteCtx {
+ }
+ 
+ /**
+  * One page of the app: the queries its first paint needs (web query cache spec §3.1). The layout
+  * prefetches them on a document request; the page's view reads them by the same options.
+  */
+ export interface RouteEntry {
+   /** The app-dir form without the route group: `/chat/[conversationId]`, `/[...rest]`. */
+   pattern: string;
+   queries(ctx: RouteCtx): UseQueryOptions<unknown, ApiClientError>[];
+-  /** Reads that need the first wave's answers; run after it. */
++  /**
++   * Reads that need the first wave's answers; run after it. It only prefetches (through `qc`) and
++   * must not rely on throwing: `prefetchRoute` swallows a rejection, and what it started stays in
++   * the cache as it is.
++   */
+   then?(ctx: RouteCtx, qc: QueryClient): Promise<void>;
+   /** Why the entry prefetches nothing. */
+   none?: string;
+ }
+ 
+ /**
+  * A query of any data type as a route entry lists it (the options are not assignable to
+  * `UseQueryOptions<unknown>` as they are: their callbacks take `T`).
+  */
+ const q = <T>(o: UseQueryOptions<T, ApiClientError>) =>
+diff --git a/apps/web/src/lib/query/workspace.ts b/apps/web/src/lib/query/workspace.ts
+new file mode 100644
+index 00000000..de945ef2
+--- /dev/null
++++ b/apps/web/src/lib/query/workspace.ts
+@@ -0,0 +1,77 @@
++"use client";
++
++import { type QueryClient, useQuery } from "@tanstack/react-query";
++import { useEffect } from "react";
++import { useRouter } from "../../i18n/navigation";
++import { setupReady } from "../agents";
++import { myRole, roleAtLeast } from "../members";
++import type { Workspace } from "../server/session";
++import type { Me } from "../session";
++import { isSignedOut } from "../signed-out";
++import { meQuery, readinessQuery } from "./shell";
++
++/**
++ * The client's counterpart of the server's `workspace()` gate (web query cache spec §3.2): client
++ * navigations don't run the server's page gates, so it decides from the cache. `/me` and the
++ * org's readiness are read through the cache (prefetched by the layout, and `mine` never goes
++ * stale), so on a navigation inside the app it answers on the first render. Same semantics as the
++ * server gate: no current org is `noOrg`; while the org is not ready, a page that is no setup route
++ * (no `setup`) goes to `/` (`pending` until then); below `min` (default `guest`) it is `noAccess`.
++ * `pending` while `/me` or readiness has no answer yet. A readiness failure other than a signed-out
++ * session throws, to the route's error boundary, as the server gate does.
++ */
++export function useWorkspace(
++  opts: { min?: "guest" | "member" | "admin"; setup?: "home" | "step" } = {},
++): Workspace | { kind: "pending" } {
++  const router = useRouter();
++  const me = useQuery(meQuery()).data;
++  const orgId = me?.memberships.find((m) => m.orgId === me.currentOrgId)?.orgId ?? null;
++  // A query of no org is disabled; the key's org id is then never read.
++  const readiness = useQuery({ ...readinessQuery(orgId ?? ""), enabled: orgId !== null });
++  const notReady = readiness.data !== undefined && !setupReady(readiness.data);
++  const goHome = notReady && opts.setup === undefined;
++  useEffect(() => {
++    if (goHome) router.replace("/");
++  }, [goHome, router]);
++  if (me === undefined) return { kind: "pending" };
++  if (orgId === null) return { kind: "noOrg" };
++  if (readiness.data === undefined) {
++    if (readiness.error && !isSignedOut(readiness.error)) throw readiness.error;
++    return { kind: "pending" };
++  }
++  if (goHome) return { kind: "pending" };
++  const role = myRole(me);
++  const min = opts.min ?? "guest";
++  if (role === undefined || !roleAtLeast(role, min)) {
++    return { kind: "noAccess", need: min === "admin" ? "admin" : "member" };
++  }
++  return { kind: "ok", me, orgId, role };
++}
++
++/**
++ * The admin console's gate from the cache: enterprise admins only (the server's `admin()`).
++ * `pending` while `/me` has no answer.
++ */
++export function useAdmin():
++  | { kind: "ok"; me: Me }
++  | { kind: "noAccess"; need: "enterprise" }
++  | { kind: "pending" } {
++  const me = useQuery(meQuery()).data;
++  if (me === undefined) return { kind: "pending" };
++  return me.account.isEnterpriseAdmin
++    ? { kind: "ok", me }
++    : { kind: "noAccess", need: "enterprise" };
++}
++
++/**
++ * Ends the cache's session (an org switch or a sign-out): cancels every read in flight, then drops
++ * the whole cache, so a read of the old org or account that answers late can neither land in the
++ * cache nor paint (web query cache spec §6). `then` (the navigation) runs in the same task as the
++ * clear, with nothing awaited between them, so no render can show the empty cache under the old
++ * page.
++ */
++export async function resetSession(qc: QueryClient, then: () => void): Promise<void> {
++  await qc.cancelQueries();
++  qc.clear();
++  then();
++}
+diff --git a/apps/web/src/lib/server/page.ts b/apps/web/src/lib/server/page.ts
+index f547761c..8e7c2557 100644
+--- a/apps/web/src/lib/server/page.ts
++++ b/apps/web/src/lib/server/page.ts
+@@ -1,29 +1,28 @@
+ import "server-only";
+ // Registers the server transport (idempotent), whatever module a page loads first.
+ import "./register";
+ import { headers } from "next/headers";
+ import { notFound, redirect } from "next/navigation";
+ import { ApiClientError } from "../api";
+ import { loginPathFor } from "../auth-sources";
+ import { PATH_HEADER } from "../headers";
++import { isSignedOut } from "../signed-out";
+ 
+ export { PATH_HEADER };
+ 
+ /** The path (with its query) of the page being rendered; `/` when the proxy did not record it. */
+ export async function currentPath(): Promise<string> {
+   return (await headers()).get(PATH_HEADER) ?? "/";
+ }
+ 
+-/** A 401 `auth.*`: the session is gone, the page signs in again. */
+-export const isSignedOut = (e: unknown): e is ApiClientError =>
+-  e instanceof ApiClientError && e.status === 401 && e.code.startsWith("auth.");
++export { isSignedOut };
+ 
+ /** The kernel could not be reached (the proxy saw it down, or the read failed in transit). */
+ export const isKernelUnavailable = (e: unknown): e is ApiClientError =>
+   e instanceof ApiClientError && (e.code === "upstream_unavailable" || e.code === "network");
+ 
+ /**
+  * A page's read: a 401 `auth.*` redirects to sign-in (back to this page afterwards), a 404 is the
+  * page's not-found, anything else throws to `error.tsx`.
+  */
+ export async function read<T>(p: Promise<T>): Promise<T> {
+diff --git a/apps/web/src/lib/server/query.ts b/apps/web/src/lib/server/query.ts
+index 8b2d7780..8ea8e14e 100644
+--- a/apps/web/src/lib/server/query.ts
++++ b/apps/web/src/lib/server/query.ts
+@@ -5,21 +5,21 @@ import {
+   dehydrate,
+   type QueryClient,
+ } from "@tanstack/react-query";
+ import { redirect } from "next/navigation";
+ import { cache } from "react";
+ import { ApiClientError } from "../api";
+ import { loginPathFor } from "../auth-sources";
+ import { makeQueryClient, type WireError } from "../query/client";
+ import { matchRoute, type RouteCtx, UNKNOWN_ROUTE } from "../query/routes";
+ import type { Me } from "../session";
+-import { isSignedOut } from "./page";
++import { isSignedOut } from "../signed-out";
+ 
+ /** One query client per server request. */
+ export const serverQueryClient = cache((): QueryClient => makeQueryClient());
+ 
+ /**
+  * Dehydrates the client for a `HydrationBoundary`: successes and failures. An
+  * `ApiClientError` is stored as `{ status, code, message }` (class instances cannot cross to the
+  * client); `reviveDehydrated` rebuilds it there.
+  */
+ export function dehydrateFor(qc: QueryClient): DehydratedState {
+@@ -51,19 +51,23 @@ export async function prefetchRoute(
+   session: { me: Me | null; orgId: string | null },
+   opts: { signedOutRedirect: boolean } = { signedOutRedirect: true },
+ ): Promise<"ok" | "unknown"> {
+   const match = matchRoute(path);
+   if (match === null || match.entry.pattern === UNKNOWN_ROUTE) return "unknown";
+   const ctx: RouteCtx = { params: match.params, search: match.search, ...session };
+   const queries = match.entry.queries(ctx);
+   // A server read is not retried: the first paint waits for it, and the page's retry action or
+   // the browser reads it again.
+   await Promise.all(queries.map((q) => qc.prefetchQuery({ ...q, retry: false })));
+-  await match.entry.then?.(ctx, qc);
++  // `then` only prefetches: a failure of it must not fail the layout. The queries it started stay
++  // in the cache in whatever state they reached, and the signed-out check below still runs.
++  try {
++    await match.entry.then?.(ctx, qc);
++  } catch {}
+   if (!opts.signedOutRedirect) return "ok";
+   const signedOut = qc
+     .getQueryCache()
+     .getAll()
+     .some((q) => isSignedOut(q.state.error));
+   if (signedOut) redirect(loginPathFor(path));
+   return "ok";
+ }
+diff --git a/apps/web/src/lib/signed-out.ts b/apps/web/src/lib/signed-out.ts
+new file mode 100644
+index 00000000..929b8b18
+--- /dev/null
++++ b/apps/web/src/lib/signed-out.ts
+@@ -0,0 +1,8 @@
++import { ApiClientError } from "./api";
++
++/**
++ * A 401 `auth.*` (after `apiFetch`'s own refresh retry): the session is gone, so the page or the
++ * client signs in again. Shared by the server pages and the client's session guard.
++ */
++export const isSignedOut = (e: unknown): e is ApiClientError =>
++  e instanceof ApiClientError && e.status === 401 && e.code.startsWith("auth.");
+diff --git a/apps/web/test/query-foundation.test.ts b/apps/web/test/query-foundation.test.ts
+index b573606f..7f2c8e72 100644
+--- a/apps/web/test/query-foundation.test.ts
++++ b/apps/web/test/query-foundation.test.ts
+@@ -122,20 +122,43 @@ describe("query foundation", () => {
+       const path = openDocument();
+       const client = await hydratedClient();
+       const fn = vi.fn(failing);
+       await mount(client, fn);
+       // StrictMode mounts twice; the provider renders again with the same path
+       noteClientPath(path);
+       await mount(client, fn);
+       expect(fn).not.toHaveBeenCalled();
+     });
+ 
++    it("recording is a no-op when run as the server", async () => {
++      const path = openDocument();
++      vi.stubGlobal("window", undefined);
++      let client: QueryClient;
++      try {
++        noteClientPath("/server-render");
++        client = await hydratedClient();
++        // a render on the server revives the error but records nothing
++        expect(isHydratedError(hashKey(key))).toBe(false);
++        noteClientPath("/server-other");
++      } finally {
++        vi.unstubAllGlobals();
++      }
++      // the browser's document path was not touched either: a re-render on it keeps its own state
++      expect(client.getQueryCache().find({ queryKey: key })?.state.error).toBeInstanceOf(
++        ApiClientError,
++      );
++      const fn = vi.fn(failing);
++      await mount(client, fn);
++      expect(fn).toHaveBeenCalledTimes(1);
++      noteClientPath(path);
++    });
++
+     it("a hydrated error is refetched on a mount after a client navigation", async () => {
+       openDocument();
+       const client = await hydratedClient();
+       await mount(client, failing);
+       noteClientPath("/elsewhere");
+       const fn = vi.fn(failing);
+       await mount(client, fn);
+       expect(fn).toHaveBeenCalledTimes(1);
+     });
+ 
+diff --git a/apps/web/test/query-gates.test.tsx b/apps/web/test/query-gates.test.tsx
+new file mode 100644
+index 00000000..b8f602cf
+--- /dev/null
++++ b/apps/web/test/query-gates.test.tsx
+@@ -0,0 +1,214 @@
++// @vitest-environment jsdom
++// Client-side gates and the session reset (web query cache spec §3.2, §6).
++import { type QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
++import { act, render, renderHook, screen, waitFor } from "@testing-library/react";
++import type { ReactNode } from "react";
++import { beforeEach, describe, expect, it, vi } from "vitest";
++import { SessionGuard } from "../src/components/SessionGuard";
++import type { OrgReadiness } from "../src/lib/agents";
++import { ApiClientError } from "../src/lib/api";
++import { loginPathFor } from "../src/lib/auth-sources";
++import { agentsQuery } from "../src/lib/query/agents";
++import { makeQueryClient } from "../src/lib/query/client";
++import { keys } from "../src/lib/query/keys";
++import { usePageQuery } from "../src/lib/query/page-query";
++import { meQuery, readinessQuery } from "../src/lib/query/shell";
++import { resetSession, useAdmin, useWorkspace } from "../src/lib/query/workspace";
++import type { Me } from "../src/lib/session";
++import { isSignedOut } from "../src/lib/signed-out";
++import { json, stubApi } from "./support/api";
++import { pathname, resetNavigation, router } from "./support/navigation";
++import { ME } from "./support/render";
++import { NOT_READY, READY } from "./support/shell";
++
++vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
++
++beforeEach(() => {
++  resetNavigation("/agents");
++  vi.unstubAllGlobals();
++});
++
++const kernelError = (status: number, code: string) =>
++  json(status, { error: { code, message: code } });
++
++const asRole = (role: string): Me => ({
++  ...ME,
++  account: { ...ME.account, isEnterpriseAdmin: false },
++  memberships: [{ orgId: "o1", slug: "acme", name: "Acme", role }],
++});
++
++/** A browser client holding what the layout's prefetch would have put there. */
++function seeded(me: Me, readiness: OrgReadiness = READY): QueryClient {
++  const qc = makeQueryClient();
++  qc.setQueryData(meQuery().queryKey, me);
++  if (me.currentOrgId !== null)
++    qc.setQueryData(readinessQuery(me.currentOrgId).queryKey, readiness);
++  return qc;
++}
++
++const wrapper = (qc: QueryClient) =>
++  function Wrapper({ children }: { children: ReactNode }) {
++    return <QueryClientProvider client={qc}>{children}</QueryClientProvider>;
++  };
++
++describe("useWorkspace", () => {
++  it("a member below admin gets noAccess admin", () => {
++    const { result } = renderHook(() => useWorkspace({ min: "admin" }), {
++      wrapper: wrapper(seeded(asRole("member"))),
++    });
++    expect(result.current).toEqual({ kind: "noAccess", need: "admin" });
++  });
++
++  it("a guest below member gets noAccess member", () => {
++    const { result } = renderHook(() => useWorkspace({ min: "member" }), {
++      wrapper: wrapper(seeded(asRole("guest"))),
++    });
++    expect(result.current).toEqual({ kind: "noAccess", need: "member" });
++  });
++
++  it("an admin passes the admin gate", () => {
++    const me = asRole("admin");
++    const { result } = renderHook(() => useWorkspace({ min: "admin" }), {
++      wrapper: wrapper(seeded(me)),
++    });
++    expect(result.current).toEqual({ kind: "ok", me, orgId: "o1", role: "admin" });
++  });
++
++  it("an org that is not ready redirects to / unless the page is a setup route", async () => {
++    const qc = seeded(ME, NOT_READY);
++    const gated = renderHook(() => useWorkspace(), { wrapper: wrapper(qc) });
++    expect(gated.result.current).toEqual({ kind: "pending" });
++    await waitFor(() => expect(router.replace).toHaveBeenCalledWith("/"));
++
++    router.replace.mockClear();
++    const setup = renderHook(() => useWorkspace({ setup: "home" }), { wrapper: wrapper(qc) });
++    expect(setup.result.current.kind).toBe("ok");
++    const step = renderHook(() => useWorkspace({ setup: "step" }), { wrapper: wrapper(qc) });
++    expect(step.result.current.kind).toBe("ok");
++    expect(router.replace).not.toHaveBeenCalled();
++  });
++
++  it("no current org is noOrg, and nothing cached is pending", () => {
++    const none = renderHook(() => useWorkspace(), {
++      wrapper: wrapper(seeded({ ...ME, currentOrgId: null })),
++    });
++    expect(none.result.current).toEqual({ kind: "noOrg" });
++    stubApi({});
++    const empty = renderHook(() => useWorkspace(), { wrapper: wrapper(makeQueryClient()) });
++    expect(empty.result.current).toEqual({ kind: "pending" });
++  });
++});
++
++describe("useAdmin", () => {
++  it("only enterprise admins pass", () => {
++    const yes = renderHook(() => useAdmin(), { wrapper: wrapper(seeded(ME)) });
++    expect(yes.result.current).toEqual({ kind: "ok", me: ME });
++    const no = renderHook(() => useAdmin(), { wrapper: wrapper(seeded(asRole("owner"))) });
++    expect(no.result.current).toEqual({ kind: "noAccess", need: "enterprise" });
++  });
++});
++
++describe("a signed-out session on a client read", () => {
++  function AgentsProbe() {
++    const state = usePageQuery(agentsQuery("o1"));
++    if (state.kind === "ready") return <p>rows:{state.data.agents.length}</p>;
++    if (state.kind === "error") return <p>error:{state.code}</p>;
++    return <p>loading</p>;
++  }
++
++  it("a 401 auth.* on a client query redirects to sign-in and clears the cache", async () => {
++    stubApi({
++      "GET /api/v1/orgs/o1/agents": () => kernelError(401, "auth.required"),
++      "POST /api/v1/auth/refresh": () => kernelError(401, "auth.required"),
++    });
++    const qc = makeQueryClient();
++    const seen: string[] = [];
++    const { container } = render(
++      <QueryClientProvider client={qc}>
++        <SessionGuard>
++          <AgentsProbe />
++        </SessionGuard>
++      </QueryClientProvider>,
++    );
++    // every DOM state the page goes through
++    const watcher = new MutationObserver(() => seen.push(container.textContent ?? ""));
++    watcher.observe(container, { subtree: true, childList: true, characterData: true });
++    seen.push(container.textContent ?? "");
++    await waitFor(() => expect(router.replace).toHaveBeenCalledWith(loginPathFor("/agents")));
++    expect(loginPathFor("/agents")).toBe("/login?returnTo=%2Fagents");
++    await waitFor(() => expect(qc.getQueryCache().getAll()).toEqual([]));
++    watcher.disconnect();
++    expect(seen.filter((s) => s.includes("error"))).toEqual([]);
++    expect(container.textContent).not.toContain("error");
++    expect(router.replace).toHaveBeenCalledTimes(1);
++  });
++
++  it("other failures are left to the page", async () => {
++    stubApi({ "GET /api/v1/orgs/o1/agents": () => kernelError(403, "forbidden") });
++    render(
++      <QueryClientProvider client={makeQueryClient()}>
++        <SessionGuard>
++          <AgentsProbe />
++        </SessionGuard>
++      </QueryClientProvider>,
++    );
++    expect(await screen.findByText("error:forbidden")).toBeTruthy();
++    expect(router.replace).not.toHaveBeenCalled();
++  });
++
++  it("isSignedOut is 401 with an auth.* code only", () => {
++    expect(isSignedOut(new ApiClientError(401, "auth.token_expired", "x"))).toBe(true);
++    expect(isSignedOut(new ApiClientError(401, "other", "x"))).toBe(false);
++    expect(isSignedOut(new ApiClientError(403, "auth.forbidden", "x"))).toBe(false);
++    expect(isSignedOut(new Error("x"))).toBe(false);
++  });
++});
++
++describe("resetSession", () => {
++  function Rows({ orgId }: { orgId: string }) {
++    const q = useQuery(agentsQuery(orgId));
++    return <p>{q.data?.agents.map((a) => a.id).join(",") ?? "none"}</p>;
++  }
++
++  it("org switch drops a read of the old org that answers late", async () => {
++    let answerA: (r: Response) => void = () => {};
++    stubApi({
++      "GET /api/v1/orgs/A/agents": () => new Promise<Response>((r) => (answerA = r)),
++    });
++    const qc = makeQueryClient();
++    const view = render(
++      <QueryClientProvider client={qc}>
++        <Rows orgId="A" />
++      </QueryClientProvider>,
++    );
++    await waitFor(() => expect(qc.isFetching()).toBe(1));
++    let current = "A";
++    await resetSession(qc, () => {
++      // the cache is already empty when the navigation starts
++      expect(qc.getQueryCache().getAll()).toEqual([]);
++      current = "B";
++    });
++    expect(current).toBe("B");
++    await act(async () => {
++      answerA(json(200, { agents: [{ id: "Alpha-row" }] }));
++      await new Promise((r) => setTimeout(r, 20));
++    });
++    expect(qc.getQueryData(keys.org("A").agents())).toBeUndefined();
++    expect(qc.getQueryCache().getAll()).toEqual([]);
++    expect(view.container.textContent).not.toContain("Alpha-row");
++  });
++
++  it("clears and calls then in the same task, with nothing awaited in between", async () => {
++    const qc = seeded(ME);
++    const order: string[] = [];
++    const clear = qc.clear.bind(qc);
++    qc.clear = () => {
++      order.push("clear");
++      clear();
++    };
++    await resetSession(qc, () => order.push("then"));
++    expect(order).toEqual(["clear", "then"]);
++  });
++});
++
++void pathname;
+diff --git a/apps/web/test/query-routes.test.ts b/apps/web/test/query-routes.test.ts
+index d82cd51b..d172b130 100644
+--- a/apps/web/test/query-routes.test.ts
++++ b/apps/web/test/query-routes.test.ts
+@@ -10,20 +10,34 @@ import { apiFetch } from "../src/lib/api";
+ import { makeQueryClient, reviveDehydrated } from "../src/lib/query/client";
+ import { defineQuery } from "../src/lib/query/define";
+ import { keys } from "../src/lib/query/keys";
+ import { usePageQuery } from "../src/lib/query/page-query";
+ import { matchRoute, ROUTES } from "../src/lib/query/routes";
+ import { prefetchRoute } from "../src/lib/server/query";
+ import { json, stubApi } from "./support/api";
+ import { ME } from "./support/render";
+ 
+ vi.mock("server-only", () => ({}));
++// `entry` replaces the matched route entry while set (a test's own `then`).
++const override = vi.hoisted(() => ({
++  entry: null as null | import("../src/lib/query/routes").RouteEntry,
++}));
++vi.mock("../src/lib/query/routes", async (original) => {
++  const routes = await original<typeof import("../src/lib/query/routes")>();
++  return {
++    ...routes,
++    matchRoute: (path: string) => {
++      const m = routes.matchRoute(path);
++      return m !== null && override.entry !== null ? { ...m, entry: override.entry } : m;
++    },
++  };
++});
+ vi.mock("next/navigation", () => ({
+   redirect: (to: string) => {
+     throw new Error(`REDIRECT ${to}`);
+   },
+ }));
+ 
+ afterEach(() => vi.unstubAllGlobals());
+ 
+ const kernelError = (status: number, code: string) =>
+   json(status, { error: { code, message: code } });
+@@ -83,20 +97,56 @@ describe("the route table", () => {
+     expect(m?.entry.none).toBe("unknown route: 404");
+     await expect(prefetchRoute(makeQueryClient(), "/nope", { me: ME, orgId: "o1" })).resolves.toBe(
+       "unknown",
+     );
+     await expect(
+       prefetchRoute(makeQueryClient(), "/agents", { me: ME, orgId: "o1" }),
+     ).resolves.toBe("ok");
+   });
+ });
+ 
++describe("prefetchRoute's then", () => {
++  const key = keys.org("o1").agents();
++  const first = defineQuery({
++    key,
++    fn: () => apiFetch<{ agents: unknown[] }>("/api/v1/orgs/o1/agents"),
++    freshness: "orgConfig",
++  });
++  const entry = (then: () => Promise<void>) => ({
++    pattern: "/agents",
++    queries: () => [first as never],
++    then,
++  });
++  afterEach(() => {
++    override.entry = null;
++  });
++
++  it("a rejecting then does not fail the layout; its first wave stays cached", async () => {
++    stubApi({ "GET /api/v1/orgs/o1/agents": () => json(200, { agents: [] }) });
++    override.entry = entry(() => Promise.reject(new Error("then broke")));
++    const qc = makeQueryClient();
++    await expect(prefetchRoute(qc, "/agents", { me: ME, orgId: "o1" })).resolves.toBe("ok");
++    expect(qc.getQueryData(key)).toEqual({ agents: [] });
++  });
++
++  it("the signed-out check still runs after a rejecting then", async () => {
++    stubApi({
++      "GET /api/v1/orgs/o1/agents": () => kernelError(401, "auth.required"),
++      "POST /api/v1/auth/refresh": () => kernelError(401, "auth.required"),
++    });
++    override.entry = entry(() => Promise.reject(new Error("then broke")));
++    await expect(
++      prefetchRoute(makeQueryClient(), "/agents", { me: ME, orgId: "o1" }),
++    ).rejects.toThrow("REDIRECT /login?returnTo=%2Fagents");
++  });
++});
++
+ describe("usePageQuery", () => {
+   const key = [...keys.org("o").all, "agents", "a1"];
+   const agentQuery = defineQuery({
+     key,
+     fn: () => apiFetch<{ id: string }>("/api/v1/orgs/o/agents/a1"),
+     freshness: "orgConfig",
+   });
+ 
+   it("stale data then a 404 is notFound", async () => {
+     stubApi({ "GET /api/v1/orgs/o/agents/a1": () => kernelError(404, "agent.not_found") });
+diff --git a/apps/web/test/shell-ssr.test.tsx b/apps/web/test/shell-ssr.test.tsx
+index f32ede0e..e850fdc8 100644
+--- a/apps/web/test/shell-ssr.test.tsx
++++ b/apps/web/test/shell-ssr.test.tsx
+@@ -427,23 +427,23 @@ describe("cross-tab session sync", () => {
+     window.dispatchEvent(
+       new StorageEvent("storage", {
+         key: "capybara:session",
+         newValue: JSON.stringify({ kind: "org-switched", from: "another-tab", at: 5 }),
+       }),
+     );
+     expect(org).toHaveBeenCalledTimes(1);
+     expect(signed).not.toHaveBeenCalled();
+   });
+ 
+-  it("the frame follows: an org switch or a sign-out elsewhere reloads /", () => {
++  it("the frame follows: an org switch or a sign-out elsewhere reloads /", async () => {
+     Bus.all = [];
+     vi.stubGlobal("BroadcastChannel", Bus);
+     renderFrame(shellOf(ME));
+     const other = new Bus("capybara-session");
+     act(() => other.postMessage({ kind: "org-switched", from: "another-tab", at: 1 }));
+-    expect(navigateBrowser).toHaveBeenCalledTimes(1);
++    await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledTimes(1));
+     expect(navigateBrowser).toHaveBeenCalledWith("/");
+     expect(router.push).not.toHaveBeenCalled();
+     act(() => other.postMessage({ kind: "signed-out", from: "another-tab", at: 2 }));
+-    expect(navigateBrowser).toHaveBeenCalledTimes(2);
++    await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledTimes(2));
+   });
+ });

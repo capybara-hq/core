@@ -1,0 +1,185 @@
+# Review package: 320d6502..HEAD
+
+## Commits
+cd126041 fix(design): one loading announcement inside a skeleton group
+
+## Files changed
+ packages/design/src/table/empty.tsx             | 11 +++++--
+ packages/design/src/templates/index.ts          |  2 +-
+ packages/design/test/templates-loading.test.tsx | 40 ++++++++++++++++++++++++-
+ 3 files changed, 49 insertions(+), 4 deletions(-)
+
+## Diff
+diff --git a/packages/design/src/table/empty.tsx b/packages/design/src/table/empty.tsx
+index dc8412a7..303b2143 100644
+--- a/packages/design/src/table/empty.tsx
++++ b/packages/design/src/table/empty.tsx
+@@ -1,34 +1,41 @@
+ import { Button } from "../controls/button";
+ import { EmptyState } from "../display/empty-state";
++import { useSkeletonAnnounces } from "../display/skeleton";
+ import { Icon } from "../icons/icon";
+ import { useDesignT } from "../provider";
+ import type { DataTableProps } from "./types";
+ 
+ export function EmptyArea<T>({
+   kind,
+   error,
+   empty,
+   noResults,
+ }: {
+   kind: "loading" | "empty" | "no-results" | "error";
+   error?: DataTableProps<T>["error"] | undefined;
+   empty?: DataTableProps<T>["empty"] | undefined;
+   noResults?: DataTableProps<T>["noResults"] | undefined;
+ }) {
+   const t = useDesignT();
++  // Inside a skeleton group the group announces the load once (spec §6.29).
++  const announces = useSkeletonAnnounces();
+   if (kind === "loading") {
+     // Skeleton rows under the header, row.dense high (spec §6.6); no spinner.
+     // The bars are decorative; the status text is for assistive tech.
+     return (
+-      <div className="cb-table-empty" data-empty="loading" role="status">
+-        <span className="cb-sr-only">{t("table.loading")}</span>
++      <div
++        className="cb-table-empty"
++        data-empty="loading"
++        {...(announces ? { role: "status" } : {})}
++      >
++        {announces ? <span className="cb-sr-only">{t("table.loading")}</span> : null}
+         {[52, 40, 60, 44, 36].map((w) => (
+           <div key={w} className="cb-table-skel-row" aria-hidden="true">
+             <span className="cb-table-skel" data-part="skeleton-bar" data-width={w} />
+           </div>
+         ))}
+       </div>
+     );
+   }
+   if (kind === "error") {
+     return (
+diff --git a/packages/design/src/templates/index.ts b/packages/design/src/templates/index.ts
+index b9af403e..39f25ac1 100644
+--- a/packages/design/src/templates/index.ts
++++ b/packages/design/src/templates/index.ts
+@@ -5,20 +5,20 @@ export {
+   type ConversationPageProps,
+   type ConversationStatus,
+   clampPanelWidth,
+   PANEL_DEFAULT,
+   PANEL_MIN,
+   PANEL_STEP,
+   PANEL_WIDTH_KEY,
+ } from "./conversation-page";
+ export { DetailPage } from "./detail-page";
+ export { FormPage, FormSection } from "./form-page";
+-export { InboxPage } from "./inbox-page";
++export { type InboxLoading, InboxPage } from "./inbox-page";
+ export { ListPage } from "./list-page";
+ export { PAGE_TEMPLATES, type PageTemplateName } from "./names";
+ export { OnboardingPage } from "./onboarding-page";
+ export { OverviewPage } from "./overview-page";
+ export { SettingsPage } from "./settings-page";
+ export { SetupPage, type SetupPageProps } from "./setup-page";
+ export { StatusPage } from "./status-page";
+ export { TracePage } from "./trace-page";
+ export { WizardPage } from "./wizard-page";
+diff --git a/packages/design/test/templates-loading.test.tsx b/packages/design/test/templates-loading.test.tsx
+index e50f0025..d3314f0b 100644
+--- a/packages/design/test/templates-loading.test.tsx
++++ b/packages/design/test/templates-loading.test.tsx
+@@ -1,13 +1,21 @@
+ import { cleanup, render, screen } from "@testing-library/react";
+ import { afterEach, describe, expect, it } from "vitest";
+-import { DesignProvider, DetailPage, InboxPage, OverviewPage } from "../src/index";
++import {
++  type Column,
++  DataTable,
++  DesignProvider,
++  DetailPage,
++  type InboxLoading,
++  InboxPage,
++  OverviewPage,
++} from "../src/index";
+ 
+ afterEach(cleanup);
+ const zh = (ui: React.ReactElement) => render(<DesignProvider locale="zh">{ui}</DesignProvider>);
+ 
+ const header = { path: [{ label: "capybara" }, { label: "agents" }], title: "研究助手" };
+ const tabs = {
+   items: [
+     { id: "summary", label: "概要" },
+     { id: "runs", label: "运行" },
+   ],
+@@ -90,20 +98,36 @@ describe("OverviewPage loading", () => {
+     expect(count('[data-part="loading-card"]')).toBe(1);
+   });
+ 
+   it("known metrics render for real", () => {
+     zh(<OverviewPage header={{ ...header, metrics }} loading={{ stats: 4 }} />);
+     expect(parts("stat-card")).toHaveLength(2);
+     expect(screen.getByText("失败")).toBeTruthy();
+   });
+ });
+ 
++describe("DataTable loading announcement", () => {
++  it("announces by itself when it stands alone", () => {
++    zh(
++      <DataTable<{ id: string }>
++        label="t"
++        state="loading"
++        columns={[{ key: "a", header: "A", cell: () => null }]}
++        rows={[]}
++        rowKey={(r) => r.id}
++      />,
++    );
++    expect(screen.getAllByRole("status")).toHaveLength(1);
++    expect(screen.getByText("正在加载")).toBeTruthy();
++  });
++});
++
+ describe("InboxPage loading", () => {
+   it("InboxPage loading draws the frame and no children", () => {
+     zh(
+       <InboxPage header={header} list={<p>REAL LIST</p>} filters={<p>REAL FILTERS</p>} loading={{}}>
+         <p>REAL CONTENT</p>
+       </InboxPage>,
+     );
+     expect(screen.queryByText("REAL LIST")).toBeNull();
+     expect(screen.queryByText("REAL CONTENT")).toBeNull();
+     expect(document.querySelector('[data-template="InboxPage"]')).not.toBeNull();
+@@ -143,20 +167,34 @@ describe("InboxPage loading", () => {
+             framed: false,
+           },
+         }}
+       />,
+     );
+     expect(count('[data-part="loading-row"]')).toBe(0);
+     expect(document.querySelector('[data-empty="loading"]')).not.toBeNull();
+     expect(screen.getByText("事项")).toBeTruthy();
+     expect(screen.getByText("F")).toBeTruthy();
+     expect(document.querySelector(".cb-table-panel")).not.toBeNull();
++    // The page's group announces once; the table adds none (spec §6.29).
++    expect(screen.getAllByRole("status")).toHaveLength(1);
++    expect(screen.getAllByText("正在加载")).toHaveLength(1);
++  });
++
++  it("takes a page's own typed columns without a cast", () => {
++    type Row = { id: string; title: string };
++    const columns: Column<Row>[] = [{ key: "title", header: "事项", cell: (r) => r.title }];
++    const loading: InboxLoading = {
++      list: "records",
++      table: { label: "待处理", columns, rowHeight: "dense", framed: false },
++    };
++    zh(<InboxPage header={header} loading={loading} />);
++    expect(screen.getByText("事项")).toBeTruthy();
+   });
+ 
+   it("without loading, the filters sit above the list", () => {
+     zh(
+       <InboxPage header={header} filters={<p>F</p>} list={<p>第一项</p>}>
+         x
+       </InboxPage>,
+     );
+     expect(screen.getByText("F")).toBeTruthy();
+     expect(screen.getByText("第一项")).toBeTruthy();

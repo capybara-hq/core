@@ -1,0 +1,1269 @@
+# Review package: b94bcdd6..HEAD
+
+## Commits
+d3511d9b feat(design): detail, overview and inbox loading states
+
+## Files changed
+ apps/web/reference/render.spec.ts                  |   3 +
+ apps/web/reference/review-page.mjs                 |   4 +-
+ apps/web/src/dev/catalog/reference-blocks.tsx      |   2 +
+ apps/web/src/dev/catalog/routes.tsx                |   3 +
+ .../src/dev/catalog/template-loading-blocks.tsx    | 150 +++++++++++++++++++++
+ apps/web/visual/accepted.ts                        |   5 +
+ docs/design/reference/src/index.html               |   2 +-
+ docs/design/reference/src/reference.css            |  88 ++++++++++++
+ docs/design/reference/src/template-detail.html     |  25 ++++
+ docs/design/reference/src/template-inbox.html      |  25 ++++
+ docs/design/reference/src/template-overview.html   |  25 ++++
+ docs/design/spec.md                                |  44 +++++-
+ packages/design/src/display/skeleton.tsx           |   6 +-
+ packages/design/src/styles/display.css             |   3 +
+ packages/design/src/styles/templates.css           |  15 +++
+ packages/design/src/templates/detail-page.tsx      |  56 +++++---
+ packages/design/src/templates/frame.tsx            |  72 +++++++++-
+ packages/design/src/templates/inbox-page.tsx       |  75 +++++++++--
+ packages/design/src/templates/overview-page.tsx    |  33 ++++-
+ packages/design/test/templates-loading.test.tsx    | 122 +++++++++++++++++
+ 20 files changed, 721 insertions(+), 37 deletions(-)
+
+## Diff
+diff --git a/apps/web/reference/render.spec.ts b/apps/web/reference/render.spec.ts
+index 810bfb97..f9285c02 100644
+--- a/apps/web/reference/render.spec.ts
++++ b/apps/web/reference/render.spec.ts
+@@ -50,20 +50,23 @@ const PAGES = [
+   // forms and flows: the one file pick
+   "file-picker",
+   // the run row: a run's model, duration, tokens and outcome
+   "run-row",
+   // config forms: arrays of objects, compact rows, records
+   "repeater",
+   "field-row",
+   "key-value-editor",
+   // loading states: the skeleton primitives
+   "skeleton",
++  "template-detail",
++  "template-overview",
++  "template-inbox",
+ ];
+ const THEMES = ["dark", "light"] as const;
+ const BLOCK_ID = /^[a-z-]+-[a-z0-9-]+$/;
+ const FAMILIES = ["Sarasa Mono SC", "Inter", "Source Han Sans SC"];
+ 
+ mkdirSync(OUT, { recursive: true });
+ 
+ async function inject(page: Page) {
+   await page.addInitScript(
+     ([f, icons]) => {
+diff --git a/apps/web/reference/review-page.mjs b/apps/web/reference/review-page.mjs
+index dbebe8a9..9df246bc 100644
+--- a/apps/web/reference/review-page.mjs
++++ b/apps/web/reference/review-page.mjs
+@@ -62,22 +62,22 @@ const GROUPS = [
+   },
+   {
+     title: "Role pass: no access, danger zone, secret reveal",
+     components: ["no-access", "danger-zone", "secret-reveal"],
+   },
+   {
+     title: "Config forms: repeater, field row, key / value editor",
+     components: ["repeater", "field-row", "key-value-editor"],
+   },
+   {
+-    title: "Loading states: skeleton primitives",
+-    components: ["skeleton"],
++    title: "Loading states: skeleton primitives and template loading states",
++    components: ["skeleton", "template-detail", "template-overview", "template-inbox"],
+   },
+ ];
+ const COMPONENTS = GROUPS.flatMap((g) => g.components);
+ const esc = (s) => String(s).replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`);
+ 
+ const blocks = [
+   ...new Set(
+     readdirSync(dir)
+       .filter((f) => /-(dark|light)\.png$/.test(f))
+       .map((f) => f.replace(/-(dark|light)\.png$/, "")),
+diff --git a/apps/web/src/dev/catalog/reference-blocks.tsx b/apps/web/src/dev/catalog/reference-blocks.tsx
+index d9717dc4..4efed911 100644
+--- a/apps/web/src/dev/catalog/reference-blocks.tsx
++++ b/apps/web/src/dev/catalog/reference-blocks.tsx
+@@ -57,20 +57,21 @@ import {
+   TABLE_HOVER_ROW,
+   TABLE_SELECTED_ROW,
+ } from "@capybara-hq/design/fixtures";
+ import { createContext, type ReactNode, useContext } from "react";
+ import { CONFIG_FORM_BLOCKS } from "./config-form-blocks";
+ import { CONVERSATION_BLOCKS } from "./conversation-blocks";
+ import { CONVERSATION_PAGE_BLOCKS } from "./conversation-page-blocks";
+ import { COMMANDS } from "./fixtures";
+ import { RefBlock } from "./ref-block";
+ import { type SidebarFixture, sidebarProps, statusFixture } from "./shell-fixture";
++import { TEMPLATE_LOADING_BLOCKS } from "./template-loading-blocks";
+ import { SetupHomeBody, setupFrameProps } from "./templates/setup";
+ 
+ // The /dev/ui side of the reference set (docs/design/reference/src): one RefBlock per state, with
+ // the reference block's id, box and fixture copy. Pseudo-states are forced by the Playwright specs.
+ 
+ const LIST = SIZES.layout.content;
+ const noop = () => {};
+ const LP = [{ label: "capybara", href: "/" }, { label: "connectors" }];
+ 
+ // ── Button ──────────────────────────────────────────────────────────────────
+@@ -1083,19 +1084,20 @@ export const REFERENCE_BLOCKS = {
+   table: tableBlocks,
+   icon: iconBlocks,
+   sidebar: sidebarBlocks,
+   "page-header": pageHeaderBlocks,
+   skeleton: skeletonBlocks,
+   "stat-cards": statCardsBlocks,
+   "status-bar": statusBarBlocks,
+   "action-row": actionRowBlocks,
+   "template-list": templateListBlocks,
+   "template-form": templateFormBlocks,
++  ...TEMPLATE_LOADING_BLOCKS,
+   ...CONVERSATION_BLOCKS,
+   ...CONVERSATION_PAGE_BLOCKS,
+   "no-access": noAccessBlocks,
+   "danger-zone": dangerZoneBlocks,
+   "secret-reveal": secretRevealBlocks,
+   "error-detail": errorDetailBlocks,
+   "file-picker": filePickerBlocks,
+   ...CONFIG_FORM_BLOCKS,
+ } as const;
+diff --git a/apps/web/src/dev/catalog/routes.tsx b/apps/web/src/dev/catalog/routes.tsx
+index 3451b0b4..9d71efd0 100644
+--- a/apps/web/src/dev/catalog/routes.tsx
++++ b/apps/web/src/dev/catalog/routes.tsx
+@@ -39,20 +39,23 @@ export const CATALOG_ROUTES = [
+  * Components of the reference set (every state list in docs/design/spec.md; a unit test keeps the
+  * two equal). `/dev/ui/reference/<component>` renders one block per state with the reference ids,
+  * for the measuring spec and the side-by-side page; it is not part of the screenshot routes.
+  */
+ export const REFERENCE_COMPONENTS = [
+   "page-header",
+   "status-bar",
+   "action-row",
+   "template-list",
+   "template-form",
++  "template-detail",
++  "template-overview",
++  "template-inbox",
+   "button",
+   "input",
+   "switch",
+   "segmented",
+   "table",
+   "icon",
+   "sidebar",
+   "stat-cards",
+   "filter-chip",
+   "prose",
+diff --git a/apps/web/src/dev/catalog/template-loading-blocks.tsx b/apps/web/src/dev/catalog/template-loading-blocks.tsx
+new file mode 100644
+index 00000000..2acd1072
+--- /dev/null
++++ b/apps/web/src/dev/catalog/template-loading-blocks.tsx
+@@ -0,0 +1,150 @@
++"use client";
++
++import {
++  Card,
++  DetailPage,
++  type HeaderAction,
++  InboxPage,
++  KeyValue,
++  ObjectList,
++  ObjectRow,
++  OverviewPage,
++  Stack,
++  Text,
++} from "@capybara-hq/design";
++import type { ReactNode } from "react";
++import { RefBlock } from "./ref-block";
++
++// The loading states of the Detail, Overview and Inbox templates (spec §5.2, §5.6, §5.7). Each
++// template's `-default` and `-loading` blocks come from one fixture (the same header, tabs,
++// filters, inspector and metrics), so the part boxes of the two can be compared. The box is the
++// 1280-wide content area without the sidebar.
++
++const W = 1280;
++const H = 640;
++const noop = () => {};
++
++const PATH = [
++  { label: "capybara", href: "/" },
++  { label: "agents", href: "/" },
++  { label: "研究助手" },
++];
++const ACTIONS: HeaderAction[] = [
++  { label: "编辑", variant: "default" },
++  { label: "试运行", variant: "secondary" },
++];
++const METRICS = [
++  { label: "本周运行", value: "128" },
++  { label: "失败", value: "3", tone: "warn" as const },
++  { label: "平均耗时", value: "4.2s" },
++  { label: "令牌", value: "1.2M" },
++];
++const TABS = {
++  label: "页面",
++  value: "summary",
++  onChange: noop,
++  items: [
++    { id: "summary", label: "概要" },
++    { id: "runs", label: "运行" },
++    { id: "config", label: "配置" },
++  ],
++};
++const PROPERTIES = [
++  { k: "创建者", v: "grant" },
++  { k: "模型", v: "claude-sonnet" },
++  { k: "版本", v: "v12" },
++  { k: "可见性", v: "组织" },
++];
++
++const inspector = <KeyValue rows={PROPERTIES} />;
++
++const sections: ReactNode = (
++  <>
++    <Card title="概要">
++      <Stack gap={8}>
++        <Text>研究助手负责检索资料并整理成带出处的摘要。</Text>
++        <Text tone="muted">最近一次发布在三天前。</Text>
++      </Stack>
++    </Card>
++    <Card title="最近运行">
++      <Text>128 次运行，3 次失败。</Text>
++    </Card>
++  </>
++);
++
++const DETAIL_HEADER = { path: PATH, title: "研究助手", actions: ACTIONS };
++
++function detailBlocks(): ReactNode {
++  return (
++    <>
++      <RefBlock id="template-detail-default" width={W} height={H}>
++        <DetailPage header={DETAIL_HEADER} tabs={TABS} inspector={inspector}>
++          {sections}
++        </DetailPage>
++      </RefBlock>
++      <RefBlock id="template-detail-loading" width={W} height={H}>
++        <DetailPage
++          header={DETAIL_HEADER}
++          tabs={TABS}
++          inspector={inspector}
++          loading={{ inspector: true }}
++        />
++      </RefBlock>
++    </>
++  );
++}
++
++const OVERVIEW_HEADER = {
++  path: PATH.slice(0, 1),
++  title: "概览",
++  description: "这个组织最近的运行情况。",
++  actions: ACTIONS.slice(0, 1),
++};
++
++function overviewBlocks(): ReactNode {
++  return (
++    <>
++      <RefBlock id="template-overview-default" width={W} height={H}>
++        <OverviewPage header={{ ...OVERVIEW_HEADER, metrics: METRICS }}>{sections}</OverviewPage>
++      </RefBlock>
++      <RefBlock id="template-overview-loading" width={W} height={H}>
++        <OverviewPage header={OVERVIEW_HEADER} loading={{ stats: 4, sections: 2 }} />
++      </RefBlock>
++    </>
++  );
++}
++
++const INBOX_HEADER = { path: PATH.slice(0, 1), title: "待我处理", actions: ACTIONS.slice(0, 1) };
++const FILTERS = <Text tone="muted">全部 · 审批 · 提问</Text>;
++const ITEMS = ["删除生产分支", "发送周报邮件", "更新客户表格"];
++
++function inboxBlocks(): ReactNode {
++  return (
++    <>
++      <RefBlock id="template-inbox-default" width={W} height={H}>
++        <InboxPage
++          header={INBOX_HEADER}
++          filters={FILTERS}
++          list={
++            <ObjectList label="待处理">
++              {ITEMS.map((name) => (
++                <ObjectRow key={name} mark={{ text: name }} name={name} description="等待审批" />
++              ))}
++            </ObjectList>
++          }
++        >
++          {sections}
++        </InboxPage>
++      </RefBlock>
++      <RefBlock id="template-inbox-loading" width={W} height={H}>
++        <InboxPage header={INBOX_HEADER} filters={FILTERS} loading={{ rows: 4 }} />
++      </RefBlock>
++    </>
++  );
++}
++
++export const TEMPLATE_LOADING_BLOCKS = {
++  "template-detail": detailBlocks,
++  "template-overview": overviewBlocks,
++  "template-inbox": inboxBlocks,
++} as const;
+diff --git a/apps/web/visual/accepted.ts b/apps/web/visual/accepted.ts
+index 8dbf61b4..dff30697 100644
+--- a/apps/web/visual/accepted.ts
++++ b/apps/web/visual/accepted.ts
+@@ -11,20 +11,25 @@ export const ACCEPTED: string[] = [
+   "filter-chip",
+   "table",
+   "icon",
+   "sidebar",
+   "page-header",
+   "stat-cards",
+   "status-bar",
+   "action-row",
+   "template-list",
+   "template-form",
++  // loading states of the Detail, Overview and Inbox templates (spec §5.2, §5.6, §5.7): blocks and
++  // size tables in place; the reference PNGs wait for the reference-update workflow
++  "template-detail",
++  "template-overview",
++  "template-inbox",
+   "prose",
+   "thinking-row",
+   "user-bubble",
+   "run-divider",
+   "tool-group",
+   "tool-row",
+   "diff-block",
+   "approval-block",
+   "question-block",
+   "connect-block",
+diff --git a/docs/design/reference/src/index.html b/docs/design/reference/src/index.html
+index c2c042bf..52866851 100644
+--- a/docs/design/reference/src/index.html
++++ b/docs/design/reference/src/index.html
+@@ -4,17 +4,17 @@
+ <meta charset="utf-8">
+ <title>Reference set</title>
+ <link rel="stylesheet" href="/design/styles/fonts.css">
+ <link rel="stylesheet" href="/design/styles/tokens.css">
+ <link rel="stylesheet" href="reference.css">
+ </head>
+ <body>
+ <main class="r-page r-index">
+ <h1>Reference set</h1>
+ <p>Sources of docs/design/reference/*.png. Rendered by apps/web/reference (pnpm --filter @capybara-hq/web reference:render).</p>
+-<ul><li><a href="sidebar.html">sidebar</a> (<a href="sidebar.html?theme=light">light</a>)</li><li><a href="page-header.html">page-header</a> (<a href="page-header.html?theme=light">light</a>)</li><li><a href="stat-cards.html">stat-cards</a> (<a href="stat-cards.html?theme=light">light</a>)</li><li><a href="status-bar.html">status-bar</a> (<a href="status-bar.html?theme=light">light</a>)</li><li><a href="action-row.html">action-row</a> (<a href="action-row.html?theme=light">light</a>)</li><li><a href="controls.html">controls</a> (<a href="controls.html?theme=light">light</a>)</li><li><a href="table.html">table</a> (<a href="table.html?theme=light">light</a>)</li><li><a href="icon.html">icon</a> (<a href="icon.html?theme=light">light</a>)</li><li><a href="template-list.html">template-list</a> (<a href="template-list.html?theme=light">light</a>)</li><li><a href="template-form.html">template-form</a> (<a href="template-form.html?theme=light">light</a>)</li><li><a href="roles.html">roles</a> (<a href="roles.html?theme=light">light</a>)</li><li><a href="error-detail.html">error-detail</a> (<a href="error-detail.html?theme=light">light</a>)</li><li><a href="file-picker.html">file-picker</a> (<a href="file-picker.html?theme=light">light</a>)</li><li><a href="repeater.html">repeater</a> (<a href="repeater.html?theme=light">light</a>)</li><li><a href="field-row.html">field-row</a> (<a href="field-row.html?theme=light">light</a>)</li><li><a href="key-value-editor.html">key-value-editor</a> (<a href="key-value-editor.html?theme=light">light</a>)</li><li><a href="skeleton.html">skeleton</a> (<a href="skeleton.html?theme=light">light</a>)</li></ul>
++<ul><li><a href="sidebar.html">sidebar</a> (<a href="sidebar.html?theme=light">light</a>)</li><li><a href="page-header.html">page-header</a> (<a href="page-header.html?theme=light">light</a>)</li><li><a href="stat-cards.html">stat-cards</a> (<a href="stat-cards.html?theme=light">light</a>)</li><li><a href="status-bar.html">status-bar</a> (<a href="status-bar.html?theme=light">light</a>)</li><li><a href="action-row.html">action-row</a> (<a href="action-row.html?theme=light">light</a>)</li><li><a href="controls.html">controls</a> (<a href="controls.html?theme=light">light</a>)</li><li><a href="table.html">table</a> (<a href="table.html?theme=light">light</a>)</li><li><a href="icon.html">icon</a> (<a href="icon.html?theme=light">light</a>)</li><li><a href="template-list.html">template-list</a> (<a href="template-list.html?theme=light">light</a>)</li><li><a href="template-form.html">template-form</a> (<a href="template-form.html?theme=light">light</a>)</li><li><a href="roles.html">roles</a> (<a href="roles.html?theme=light">light</a>)</li><li><a href="error-detail.html">error-detail</a> (<a href="error-detail.html?theme=light">light</a>)</li><li><a href="file-picker.html">file-picker</a> (<a href="file-picker.html?theme=light">light</a>)</li><li><a href="repeater.html">repeater</a> (<a href="repeater.html?theme=light">light</a>)</li><li><a href="field-row.html">field-row</a> (<a href="field-row.html?theme=light">light</a>)</li><li><a href="key-value-editor.html">key-value-editor</a> (<a href="key-value-editor.html?theme=light">light</a>)</li><li><a href="skeleton.html">skeleton</a> (<a href="skeleton.html?theme=light">light</a>)</li><li><a href="template-detail.html">template-detail</a> (<a href="template-detail.html?theme=light">light</a>)</li><li><a href="template-overview.html">template-overview</a> (<a href="template-overview.html?theme=light">light</a>)</li><li><a href="template-inbox.html">template-inbox</a> (<a href="template-inbox.html?theme=light">light</a>)</li></ul>
+ <h2 class="r-h2">Conversation page (UI refresh B)</h2>
+ <ul><li><a href="template-conversation.html">template-conversation</a> (<a href="template-conversation.html?theme=light">light</a>)</li><li><a href="title-bar.html">title-bar</a> (<a href="title-bar.html?theme=light">light</a>)</li><li><a href="composer.html">composer</a> (<a href="composer.html?theme=light">light</a>)</li><li><a href="picker-menu.html">picker-menu</a> (<a href="picker-menu.html?theme=light">light</a>)</li><li><a href="prose.html">prose</a> (<a href="prose.html?theme=light">light</a>)</li><li><a href="thinking-row.html">thinking-row</a> (<a href="thinking-row.html?theme=light">light</a>)</li><li><a href="user-bubble.html">user-bubble</a> (<a href="user-bubble.html?theme=light">light</a>)</li><li><a href="run-divider.html">run-divider</a> (<a href="run-divider.html?theme=light">light</a>)</li><li><a href="tool-group.html">tool-group</a> (<a href="tool-group.html?theme=light">light</a>)</li><li><a href="tool-row.html">tool-row</a> (<a href="tool-row.html?theme=light">light</a>)</li><li><a href="diff-block.html">diff-block</a> (<a href="diff-block.html?theme=light">light</a>)</li><li><a href="approval-block.html">approval-block</a> (<a href="approval-block.html?theme=light">light</a>)</li><li><a href="question-block.html">question-block</a> (<a href="question-block.html?theme=light">light</a>)</li><li><a href="connect-block.html">connect-block</a> (<a href="connect-block.html?theme=light">light</a>)</li><li><a href="queued-message.html">queued-message</a> (<a href="queued-message.html?theme=light">light</a>)</li><li><a href="subagent-group.html">subagent-group</a> (<a href="subagent-group.html?theme=light">light</a>)</li><li><a href="inline-card.html">inline-card</a> (<a href="inline-card.html?theme=light">light</a>)</li><li><a href="property-section.html">property-section</a> (<a href="property-section.html?theme=light">light</a>)</li><li><a href="right-panel.html">right-panel</a> (<a href="right-panel.html?theme=light">light</a>)</li><li><a href="file-card.html">file-card</a> (<a href="file-card.html?theme=light">light</a>)</li><li><a href="file-outputs.html">file-outputs</a> (<a href="file-outputs.html?theme=light">light</a>)</li><li><a href="attachment-strip.html">attachment-strip</a> (<a href="attachment-strip.html?theme=light">light</a>)</li><li><a href="file-preview.html">file-preview</a> (<a href="file-preview.html?theme=light">light</a>)</li><li><a href="run-row.html">run-row</a> (<a href="run-row.html?theme=light">light</a>)</li></ul>
+ </main>
+ <script src="fill.js"></script>
+ </body>
+ </html>
+diff --git a/docs/design/reference/src/reference.css b/docs/design/reference/src/reference.css
+index 8b6847b1..ce9422bd 100644
+--- a/docs/design/reference/src/reference.css
++++ b/docs/design/reference/src/reference.css
+@@ -3498,10 +3498,98 @@ textarea {
+   height: 40px;
+ }
+ .r-ph[data-narrow] .r-ph-tabs-loading {
+   height: auto;
+ }
+ .r-ph-tabs-loading {
+   align-items: flex-end;
+   box-sizing: content-box;
+   height: calc(var(--cb-control-default) + 2 * var(--cb-space-1));
+ }
++
++/* ── Template loading states (spec §5.2, §5.6, §5.7) ─────────────────────── */
++
++.r-tpl {
++  display: flex;
++  flex-direction: column;
++  height: 100%;
++  background: var(--cb-bg);
++}
++.r-tpl-head,
++.r-tpl-body {
++  box-sizing: border-box;
++  width: 100%;
++  max-width: var(--cb-layout-content);
++  margin: 0 auto;
++}
++.r-tpl-head {
++  padding: 0 var(--cb-content-pad, 32px);
++}
++.r-tpl-body {
++  display: flex;
++  flex: 1;
++  min-height: 0;
++}
++.r-tpl-main {
++  display: flex;
++  flex: 1;
++  flex-direction: column;
++  gap: var(--cb-space-3);
++  min-width: 0;
++  padding: var(--cb-space-4) var(--cb-content-pad, 32px);
++}
++.r-tpl-rail {
++  flex: none;
++  width: 240px;
++  border-right: 1px solid var(--cb-line-soft);
++}
++.r-tpl-inspector {
++  flex: none;
++  width: 400px;
++  padding: var(--cb-space-4);
++  border-left: 1px solid var(--cb-line-soft);
++}
++.r-lcard {
++  background: var(--cb-panel);
++  border: 1px solid var(--cb-line-card);
++  border-radius: var(--cb-radius-md);
++}
++.r-lcard-head {
++  padding: var(--cb-space-2) var(--cb-space-4);
++  border-bottom: 1px solid var(--cb-line-soft);
++}
++.r-lcard-body,
++.r-lstack {
++  display: flex;
++  flex-direction: column;
++  gap: var(--cb-space-2);
++}
++.r-lcard-body {
++  padding: 16px;
++}
++.r-lrow-kv {
++  display: flex;
++  gap: var(--cb-space-3);
++  align-items: center;
++}
++.r-lstat .r-skel-text {
++  max-width: 100%;
++}
++.r-lrow {
++  display: flex;
++  align-items: center;
++  gap: var(--cb-space-3);
++  box-sizing: border-box;
++  min-height: 64px;
++  padding: var(--cb-space-3) var(--cb-space-4);
++  border-top: 1px solid var(--cb-line-soft);
++}
++.r-lrow:first-child {
++  border-top: 0;
++}
++.r-lrow-text {
++  display: flex;
++  flex: 1;
++  flex-direction: column;
++  gap: 2px;
++  min-width: 0;
++}
+diff --git a/docs/design/reference/src/template-detail.html b/docs/design/reference/src/template-detail.html
+new file mode 100644
+index 00000000..ec3c8f7d
+--- /dev/null
++++ b/docs/design/reference/src/template-detail.html
+@@ -0,0 +1,25 @@
++<!doctype html>
++<html lang="zh-CN" data-theme="dark">
++<head>
++<meta charset="utf-8">
++<title>Detail template · reference</title>
++<link rel="stylesheet" href="/design/styles/fonts.css">
++<link rel="stylesheet" href="/design/styles/tokens.css">
++<link rel="stylesheet" href="reference.css">
++</head>
++<body>
++<main class="r-page">
++<h1>Detail template</h1>
++<p>Loading state (spec §5.2): the header and tabs keep their rows, the content is card-shaped blocks, the inspector is key / value placeholders. Nothing animates.</p>
++<div class="r-blocks">
++<section data-ref-block="template-detail-loading" style="width:1280px;height:640px">
++  <div class="r-tpl" aria-busy="true">
++    <div class="r-tpl-head"><template data-fixture="page-header" data-opts='{"loading": true}'></template></div>
++    <div class="r-tpl-body"><div class="r-tpl-main"><section class="r-lcard" data-part="loading-card"><header class="r-lcard-head"><div class="r-skel-text" data-part="skeleton-text" data-size="body" style="width:30%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div></header><div class="r-lcard-body"><div class="r-skel-text" data-part="skeleton-text" data-size="body" style="width:100%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div><div class="r-skel-text" data-part="skeleton-text" data-size="body" style="width:70%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div><div class="r-skel-text" data-part="skeleton-text" data-size="body" style="width:55%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div></div></section><section class="r-lcard" data-part="loading-card"><header class="r-lcard-head"><div class="r-skel-text" data-part="skeleton-text" data-size="body" style="width:30%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div></header><div class="r-lcard-body"><div class="r-skel-text" data-part="skeleton-text" data-size="body" style="width:100%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div><div class="r-skel-text" data-part="skeleton-text" data-size="body" style="width:70%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div><div class="r-skel-text" data-part="skeleton-text" data-size="body" style="width:55%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div></div></section></div><aside class="r-tpl-inspector"><div class="r-lstack"><div class="r-skel-text" data-part="skeleton-text" data-size="small" style="width:30%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div><div class="r-lrow-kv"><div class="r-skel-text" data-part="skeleton-text" data-size="body" style="width:30%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div><div class="r-skel-text" data-part="skeleton-text" data-size="body" style="width:55%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div></div><div class="r-lrow-kv"><div class="r-skel-text" data-part="skeleton-text" data-size="body" style="width:30%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div><div class="r-skel-text" data-part="skeleton-text" data-size="body" style="width:55%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div></div><div class="r-lrow-kv"><div class="r-skel-text" data-part="skeleton-text" data-size="body" style="width:30%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div><div class="r-skel-text" data-part="skeleton-text" data-size="body" style="width:55%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div></div><div class="r-lrow-kv"><div class="r-skel-text" data-part="skeleton-text" data-size="body" style="width:30%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div><div class="r-skel-text" data-part="skeleton-text" data-size="body" style="width:55%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div></div></div></aside></div>
++  </div>
++</section>
++</div>
++</main>
++<script src="fill.js"></script>
++</body>
++</html>
+diff --git a/docs/design/reference/src/template-inbox.html b/docs/design/reference/src/template-inbox.html
+new file mode 100644
+index 00000000..0a3225a8
+--- /dev/null
++++ b/docs/design/reference/src/template-inbox.html
+@@ -0,0 +1,25 @@
++<!doctype html>
++<html lang="zh-CN" data-theme="dark">
++<head>
++<meta charset="utf-8">
++<title>Inbox template · reference</title>
++<link rel="stylesheet" href="/design/styles/fonts.css">
++<link rel="stylesheet" href="/design/styles/tokens.css">
++<link rel="stylesheet" href="reference.css">
++</head>
++<body>
++<main class="r-page">
++<h1>Inbox template</h1>
++<p>Loading state (spec §5.7): the header keeps its rows, the rail holds four 64 px placeholder rows, the content is a card-shaped block. Nothing animates.</p>
++<div class="r-blocks">
++<section data-ref-block="template-inbox-loading" style="width:1280px;height:640px">
++  <div class="r-tpl" aria-busy="true">
++    <div class="r-tpl-head"><template data-fixture="page-header" data-opts='{"loading": true}'></template></div>
++    <div class="r-tpl-body"><aside class="r-tpl-rail"><div class="r-lrow" data-part="loading-row"><div class="r-skel-box" data-part="skeleton-box" data-box="mark"></div><div class="r-lrow-text"><div class="r-skel-text" data-part="skeleton-text" data-size="body" style="width:55%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div><div class="r-skel-text" data-part="skeleton-text" data-size="small" style="width:30%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div></div></div><div class="r-lrow" data-part="loading-row"><div class="r-skel-box" data-part="skeleton-box" data-box="mark"></div><div class="r-lrow-text"><div class="r-skel-text" data-part="skeleton-text" data-size="body" style="width:55%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div><div class="r-skel-text" data-part="skeleton-text" data-size="small" style="width:30%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div></div></div><div class="r-lrow" data-part="loading-row"><div class="r-skel-box" data-part="skeleton-box" data-box="mark"></div><div class="r-lrow-text"><div class="r-skel-text" data-part="skeleton-text" data-size="body" style="width:55%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div><div class="r-skel-text" data-part="skeleton-text" data-size="small" style="width:30%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div></div></div><div class="r-lrow" data-part="loading-row"><div class="r-skel-box" data-part="skeleton-box" data-box="mark"></div><div class="r-lrow-text"><div class="r-skel-text" data-part="skeleton-text" data-size="body" style="width:55%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div><div class="r-skel-text" data-part="skeleton-text" data-size="small" style="width:30%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div></div></div></aside><div class="r-tpl-main"><section class="r-lcard" data-part="loading-card"><header class="r-lcard-head"><div class="r-skel-text" data-part="skeleton-text" data-size="body" style="width:30%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div></header><div class="r-lcard-body"><div class="r-skel-text" data-part="skeleton-text" data-size="body" style="width:100%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div><div class="r-skel-text" data-part="skeleton-text" data-size="body" style="width:70%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div><div class="r-skel-text" data-part="skeleton-text" data-size="body" style="width:55%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div></div></section></div></div>
++  </div>
++</section>
++</div>
++</main>
++<script src="fill.js"></script>
++</body>
++</html>
+diff --git a/docs/design/reference/src/template-overview.html b/docs/design/reference/src/template-overview.html
+new file mode 100644
+index 00000000..a3d2f3e3
+--- /dev/null
++++ b/docs/design/reference/src/template-overview.html
+@@ -0,0 +1,25 @@
++<!doctype html>
++<html lang="zh-CN" data-theme="dark">
++<head>
++<meta charset="utf-8">
++<title>Overview template · reference</title>
++<link rel="stylesheet" href="/design/styles/fonts.css">
++<link rel="stylesheet" href="/design/styles/tokens.css">
++<link rel="stylesheet" href="reference.css">
++</head>
++<body>
++<main class="r-page">
++<h1>Overview template</h1>
++<p>Loading state (spec §5.6): the header keeps its rows, four stat cards and two card-shaped blocks. Nothing animates.</p>
++<div class="r-blocks">
++<section data-ref-block="template-overview-loading" style="width:1280px;height:640px">
++  <div class="r-tpl" aria-busy="true">
++    <div class="r-tpl-head"><template data-fixture="page-header" data-opts='{"loading": true}'></template></div>
++    <div class="r-tpl-body"><div class="r-tpl-main"><div class="r-stats"><div class="r-stat r-lstat" data-part="stat-card"><div class="r-stat-label"><div class="r-skel-text" data-part="skeleton-text" data-size="small" style="width:55%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div></div><div class="r-stat-value"><div class="r-skel-text" data-part="skeleton-text" data-size="metric" style="width:45%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div></div></div><div class="r-stat r-lstat" data-part="stat-card"><div class="r-stat-label"><div class="r-skel-text" data-part="skeleton-text" data-size="small" style="width:55%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div></div><div class="r-stat-value"><div class="r-skel-text" data-part="skeleton-text" data-size="metric" style="width:45%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div></div></div><div class="r-stat r-lstat" data-part="stat-card"><div class="r-stat-label"><div class="r-skel-text" data-part="skeleton-text" data-size="small" style="width:55%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div></div><div class="r-stat-value"><div class="r-skel-text" data-part="skeleton-text" data-size="metric" style="width:45%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div></div></div><div class="r-stat r-lstat" data-part="stat-card"><div class="r-stat-label"><div class="r-skel-text" data-part="skeleton-text" data-size="small" style="width:55%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div></div><div class="r-stat-value"><div class="r-skel-text" data-part="skeleton-text" data-size="metric" style="width:45%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div></div></div></div><section class="r-lcard" data-part="loading-card"><header class="r-lcard-head"><div class="r-skel-text" data-part="skeleton-text" data-size="body" style="width:30%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div></header><div class="r-lcard-body"><div class="r-skel-text" data-part="skeleton-text" data-size="body" style="width:100%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div><div class="r-skel-text" data-part="skeleton-text" data-size="body" style="width:70%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div><div class="r-skel-text" data-part="skeleton-text" data-size="body" style="width:55%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div></div></section><section class="r-lcard" data-part="loading-card"><header class="r-lcard-head"><div class="r-skel-text" data-part="skeleton-text" data-size="body" style="width:30%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div></header><div class="r-lcard-body"><div class="r-skel-text" data-part="skeleton-text" data-size="body" style="width:100%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div><div class="r-skel-text" data-part="skeleton-text" data-size="body" style="width:70%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div><div class="r-skel-text" data-part="skeleton-text" data-size="body" style="width:55%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div></div></section></div></div>
++  </div>
++</section>
++</div>
++</main>
++<script src="fill.js"></script>
++</body>
++</html>
+diff --git a/docs/design/spec.md b/docs/design/spec.md
+index c92a8e3f..6c43ff25 100644
+--- a/docs/design/spec.md
++++ b/docs/design/spec.md
+@@ -358,20 +358,32 @@ States: `page`
+ |---|---|---|---|
+ | sidebar | page | width | layout.sidebar |
+ | content | page | max-width | layout.content |
+ | status-bar | page | height | layout.status-bar |
+ 
+ ### 5.2 Detail (T3)
+ - PageHeader: path ending with the object's name; name + version (faint) + status; actions: Edit (default), Trial run (secondary), `more-horizontal`.
+ - PageTabs: Summary · Runs · Config · Versions · Permissions · Audit (pick per object type), with counts following in faint.
+ - Content: sections on the `panel` ground with radius `md` (no border), section header h2 + actions on the right, `space.4` between sections.
+ - Inspector: grouped properties, group title small muted, key 8ch wide muted, value single line with ellipsis.
++- **Loading** (`DetailPage.loading`, `{ inspector?, blocks? }`; spec §7.1 of the web query cache design): every region keeps its box, so nothing moves when the data arrives. The header is the PageHeader's loading state (§4.2), the PageTabs stay real (the tabs are static per page), the content is `blocks` card-shaped blocks (default 2) in place of `children`: the `panel` card of the sections above, its head band holding a 30% `body` text slot and its body three text slots (100%, 70%, 55%) `space.2` apart. The inspector is drawn as placeholders (a `small` group title and four key / value rows of `body` slots) only when `inspector` is set; an inspector the page passes for real stays. One busy announcement for the page (§6.29). Nothing animates.
++
++<!-- states: template-detail -->
++States: `default`, `loading`
++
++<!-- size-table: template-detail -->
++| Part | State | Property | Value |
++|---|---|---|---|
++| content | default | max-width | layout.content |
++| content | loading | max-width | layout.content |
++| loading-card | loading | border-radius | radius.md |
++| skeleton-text[data-size=body] | loading | height | type.body.line |
+ 
+ ### 5.3 Form (T4)
+ - PageHeader: path ending with the object's name (`new` for a new one); title "Create X" + draft badge; only auxiliary actions on the right (such as "Import from YAML").
+ - No anchor navigation (the Centered body has none, §4.3).
+ - Sections: a two-column grid, the left column 240 wide with the section title (`h2`) and a description (`prose-small` `muted`), the right column the fields on a `panel` card with radius `md`, padding `space.4`, `space.3` between fields. Sections are separated by `space.6` of spacing, **not by lines**; rows inside a list of switches are divided by `line-soft`.
+ - Fields: label on top (`body` `ink`; required marked with an accent `*`, optional marked "Optional" in faint); controls `default` density; help text and error message below (`small`); on error the border is `fail` and the message starts with the `circle-alert` icon and gives an actionable suggestion.
+ - The ActionRow is always present: Cancel · Save draft (⌘S) · Publish.
+ - **Create forms** (`FormPage create`, a new object): focus starts on the first field; the ActionRow never says "No unsaved changes" (nothing exists yet to be unchanged; typed fields still count as unsaved and guard leaving); the primary is disabled until the form is valid (the required fields filled), as in a create dialog. A create form whose prerequisite is missing (no channel extension enabled for 新建渠道) draws only the `EmptyState` with the next step, never the form.
+ 
+ <!-- states: template-form -->
+@@ -414,20 +426,50 @@ The two `right-panel` widths of 544 hold only at the width the `template-convers
+ | right-panel | file-panel | width | 544 |
+ | title-bar | file-panel | height | layout.title-bar |
+ | thread | file-panel | max-width | layout.chat |
+ | right-panel | subagent-panel | width | 544 |
+ | title-bar | new | height | layout.title-bar |
+ | new-conversation-body | new | max-width | layout.chat |
+ | sidebar | sheet | width | layout.sidebar-rail |
+ | right-panel | sheet | width | layout.panel |
+ | status-bar | sheet | height | layout.status-bar |
+ 
++### 5.6 Overview (T1)
++- Order in the content column: PageHeader → StatCards (the header's `metrics`) → the page's sections (cards, lists), separated by `space.3`.
++- **Loading** (`OverviewPage.loading`, `{ stats?, sections? }`): the header is its loading state (§4.2); `stats` stat cards (default 4) in the loaded card's box (the `panel` card with a `small` label slot over a `metric` value slot), unless the header's own `metrics` are given, which render for real; `sections` card-shaped blocks (default 2, as in §5.2) in place of `children`. One busy announcement (§6.29). Nothing animates.
++
++<!-- states: template-overview -->
++States: `default`, `loading`
++
++<!-- size-table: template-overview -->
++| Part | State | Property | Value |
++|---|---|---|---|
++| content | default | max-width | layout.content |
++| content | loading | max-width | layout.content |
++| skeleton-text[data-size=small] | loading | height | type.small.line |
++| skeleton-text[data-size=metric] | loading | height | type.metric.line |
++
++### 5.7 Inbox (T6)
++- Rail (240): the filters above the list (`filters`, then `list`); content: the selected item; an optional inspector (400).
++- **Loading** (`InboxPage.loading`, `{ rows? }`): the header is its loading state (§4.2); the rail's `filters` stay real (they are static); the list is `rows` rows (default 4) in the 64 px row of §6.17: a 36 px mark and two text slots (a `body` one at 55%, a `small` one at 30%); the content is one card-shaped block (§5.2) in place of `children`. A real `inspector` stays. One busy announcement (§6.29). Nothing animates.
++
++<!-- states: template-inbox -->
++States: `default`, `loading`
++
++<!-- size-table: template-inbox -->
++| Part | State | Property | Value |
++|---|---|---|---|
++| content | default | max-width | layout.content |
++| content | loading | max-width | layout.content |
++| loading-row | loading | height | 64 |
++| skeleton-box[data-box=mark] | loading | height | 36 |
++
+ ---
+ 
+ ## 6. Components
+ 
+ All components provide these states where applicable: default, hover, pressed, focus, disabled and loading, in both dark and light. A component that is part of the reference set has a **state list** and a **size table** in the machine-readable formats of §9.2; `/dev/ui` renders one block per listed state with the same id.
+ 
+ Every glyph in this section is an `Icon` of §2.6 (rule `design-char-icon`).
+ 
+ ### 6.1 Button
+ 
+@@ -1852,21 +1894,21 @@ States: `default`, `empty`, `masked`
+ | input | default | height | control.dense |
+ | kv-editor-add | default | height | control.dense |
+ | kv-editor-add | empty | height | control.dense |
+ | input | masked | height | control.dense |
+ 
+ ### 6.29 Skeleton
+ 
+ The placeholder primitives every loading state is built from, so a template's loading state is shaped like its loaded page (§5): `SkeletonText`, `SkeletonBox` and `SkeletonGroup`. **Nothing here animates**, in any motion mode (no shimmer, no pulse), so the reduced-motion rule of §6.11 holds without a special case.
+ 
+ - **One bar look**: a skeleton bar is `space.3` (12 px) high on the `selected` ground, radius `sm`: the look of DataTable's (§6.6) and the sidebar's (§6.13) bars. Every bar of every loading state has it; there is no second bar.
+-- `SkeletonText({ width, size? })`: a **slot** exactly one line box of its type size high, `body` (default, `type.body.line`), `small` (`type.small.line`) or `title` (the h1 size, `type.h1.line`), so the layout is the loaded one and nothing moves when the text arrives. The slot holds one bar (the look above) centred vertically, as wide as the slot. `width` is `30%`, `45%`, `55%`, `70%`, `100%` or a pixel number.
++- `SkeletonText({ width, size? })`: a **slot** exactly one line box of its type size high, `body` (default, `type.body.line`), `small` (`type.small.line`), `title` (the h1 size, `type.h1.line`) or `metric` (the StatCard value size, `type.metric.line`), so the layout is the loaded one and nothing moves when the text arrives. The slot holds one bar (the look above) centred vertically, as wide as the slot. `width` is `30%`, `45%`, `55%`, `70%`, `100%` or a pixel number.
+ - `SkeletonBox({ part, height?, width? })`: a block shaped like a control or a mark, on the `selected` ground, radius `sm`. `part` is `dense`, `default` or `prominent` (the control height of §2.5), `mark` (36 × 36, radius `md`, the ObjectRow mark) or `block` (`height` pixels, default 96). `width` is pixels; without it the box fills its container.
+ - `SkeletonGroup({ label, children })`: the busy region: `role="status"` named by `label`, `aria-busy="true"`, and one hidden "正在加载 / Loading". A group inside a group, and a component that draws its own loading state (PageHeader, ObjectList), adds no second announcement; the bars and blocks themselves are `aria-hidden`. The group draws no box of its own (`display: contents`).
+ - Not yet reconciled with this look, and kept as they are until the templates' loading states land (ListPage, Task 9): the existing `Skeleton({ rows })` (`.cb-skeleton-row`, stacked 20 px rows on the `hover` ground, ListPage's `records` loading) and the 12 px `hover` bars of ObjectList (§6.17) and PendingState (§6.20). New loading states use the primitives above.
+ - Rule: a skeleton takes the size of what replaces it (a line of text its line box, a control its control height), so the swap moves nothing; no skeleton stands in for text whose width could change the layout of its row.
+ 
+ <!-- states: skeleton -->
+ States: `text`, `box`, `group`
+ 
+ <!-- size-table: skeleton -->
+ | Part | State | Property | Value |
+diff --git a/packages/design/src/display/skeleton.tsx b/packages/design/src/display/skeleton.tsx
+index 771dae41..744c6343 100644
+--- a/packages/design/src/display/skeleton.tsx
++++ b/packages/design/src/display/skeleton.tsx
+@@ -11,29 +11,29 @@ const InGroup = createContext(false);
+ export function useSkeletonAnnounces(): boolean {
+   return !useContext(InGroup);
+ }
+ 
+ /** The hidden "正在加载 / Loading" a busy region carries. */
+ export function SkeletonAnnouncement() {
+   const t = useDesignT();
+   return <span className="cb-sr-only">{t("table.loading")}</span>;
+ }
+ 
+-export type SkeletonTextSize = "body" | "small" | "title";
++export type SkeletonTextSize = "body" | "small" | "title" | "metric";
+ export type SkeletonTextWidth = "30%" | "45%" | "55%" | "70%" | "100%" | number;
+ 
+ const px = (w: SkeletonTextWidth) => (typeof w === "number" ? `${w}px` : w);
+ 
+ /**
+  * One text placeholder (spec §6.29): a slot exactly one line box of its type size high (`body`,
+- * `small`, or `title`, the h1 size), so the layout is the loaded one, holding a bar (`space.3`
+- * high, `selected`, radius `sm`) centred in it. `width` is the slot's and the bar's. Decorative:
++ * `small`, `title` (the h1 size) or `metric` (the StatCard value size)), so the layout is the
++ * loaded one, holding a bar (`space.3` high, `selected`, radius `sm`) centred in it. `width` is the slot's and the bar's. Decorative:
+  * the group announces.
+  */
+ export function SkeletonText({
+   width,
+   size = "body",
+ }: {
+   width: SkeletonTextWidth;
+   size?: SkeletonTextSize;
+ }) {
+   return (
+diff --git a/packages/design/src/styles/display.css b/packages/design/src/styles/display.css
+index 830a786d..2eee72a8 100644
+--- a/packages/design/src/styles/display.css
++++ b/packages/design/src/styles/display.css
+@@ -307,20 +307,23 @@
+ }
+ .cb-skeleton-text[data-size="body"] {
+   height: var(--cb-type-body-line);
+ }
+ .cb-skeleton-text[data-size="small"] {
+   height: var(--cb-type-small-line);
+ }
+ .cb-skeleton-text[data-size="title"] {
+   height: var(--cb-type-h1-line);
+ }
++.cb-skeleton-text[data-size="metric"] {
++  height: var(--cb-type-metric-line);
++}
+ .cb-skeleton-box {
+   display: block;
+   max-width: 100%;
+   border-radius: var(--cb-radius-sm);
+   background: var(--cb-selected);
+ }
+ .cb-skeleton-box[data-box="dense"] {
+   height: var(--cb-control-dense);
+ }
+ .cb-skeleton-box[data-box="default"] {
+diff --git a/packages/design/src/styles/templates.css b/packages/design/src/styles/templates.css
+index f8e58814..5f7796e5 100644
+--- a/packages/design/src/styles/templates.css
++++ b/packages/design/src/styles/templates.css
+@@ -840,10 +840,25 @@ a.cb-object-name:hover {
+   margin: 0;
+   padding-left: var(--cb-space-2);
+   border-left: 1px solid var(--cb-line);
+   color: var(--cb-muted);
+   font-family: var(--cb-font);
+   font-size: var(--cb-type-small-size);
+   line-height: var(--cb-type-small-line);
+   white-space: pre-wrap;
+   overflow-wrap: anywhere;
+ }
++
++/* Loading states of the templates (spec §5): text slots stacked in a card, inspector rows. */
++.cb-loading-stack {
++  display: flex;
++  flex-direction: column;
++  gap: var(--cb-space-2);
++}
++.cb-loading-row {
++  display: flex;
++  gap: var(--cb-space-3);
++  align-items: center;
++}
++.cb-loading-row > .cb-skeleton-text {
++  flex: none;
++}
+diff --git a/packages/design/src/templates/detail-page.tsx b/packages/design/src/templates/detail-page.tsx
+index 9d169be0..f0f9ac77 100644
+--- a/packages/design/src/templates/detail-page.tsx
++++ b/packages/design/src/templates/detail-page.tsx
+@@ -1,41 +1,61 @@
+ import type { ReactNode } from "react";
+-import type { TabsProps } from "../display/index";
++import { SkeletonGroup, type TabsProps } from "../display/index";
++import { useDesignT } from "../provider";
+ import { Body, type PageHeaderProps, PageTabs } from "../shell/index";
+-import { TemplateHead } from "./frame";
++import { LoadingCards, LoadingInspector, loadingHeader, TemplateHead } from "./frame";
+ 
+-/** T3 详情：PageTabs + Content + Inspector。 */
++/** Content blocks a loading detail page draws when it is not told how many (spec §5.2). */
++const LOADING_BLOCKS = 2;
++
++/**
++ * T3 详情：PageTabs + Content + Inspector. `loading` draws the page's frame while its data is on
++ * the way (spec §5.2): the header keeps its rows (`header.loading`), the tabs stay real (they are
++ * static per page), the content is `blocks` card-shaped blocks (default 2) in place of `children`,
++ * and the inspector is a skeleton only when `inspector` is set (a real `inspector` stays).
++ */
+ export function DetailPage({
+   header,
+   tabs,
+   inspector,
+   inspectorTitle,
+   onInspectorClose,
++  loading,
+   children,
+ }: {
+   header: PageHeaderProps;
+   tabs: TabsProps;
+   inspector?: ReactNode;
+   inspectorTitle?: string;
+   onInspectorClose?: () => void;
++  loading?: { inspector?: boolean; blocks?: number };
+   children?: ReactNode;
+ }) {
++  const t = useDesignT();
++  const inspectorNode = loading?.inspector ? <LoadingInspector /> : inspector;
++  const body = (
++    <Body
++      layout={inspectorNode != null ? "inspector" : "single"}
++      contentPadded
++      width="content"
++      head={
++        <TemplateHead header={loading ? loadingHeader(header) : header} statsInHead>
++          <PageTabs {...tabs} />
++        </TemplateHead>
++      }
++      inspector={inspectorNode}
++      {...(inspectorTitle !== undefined ? { inspectorTitle } : {})}
++      {...(onInspectorClose ? { onInspectorClose } : {})}
++    >
++      {loading ? <LoadingCards count={loading.blocks ?? LOADING_BLOCKS} /> : children}
++    </Body>
++  );
+   return (
+     <div className="cb-template" data-template="DetailPage" data-width="content">
+-      <Body
+-        layout={inspector != null ? "inspector" : "single"}
+-        contentPadded
+-        width="content"
+-        head={
+-          <TemplateHead header={header} statsInHead>
+-            <PageTabs {...tabs} />
+-          </TemplateHead>
+-        }
+-        inspector={inspector}
+-        {...(inspectorTitle !== undefined ? { inspectorTitle } : {})}
+-        {...(onInspectorClose ? { onInspectorClose } : {})}
+-      >
+-        {children}
+-      </Body>
++      {loading ? (
++        <SkeletonGroup label={header.title || t("table.loading")}>{body}</SkeletonGroup>
++      ) : (
++        body
++      )}
+     </div>
+   );
+ }
+diff --git a/packages/design/src/templates/frame.tsx b/packages/design/src/templates/frame.tsx
+index 83daf77d..7e7cb1ed 100644
+--- a/packages/design/src/templates/frame.tsx
++++ b/packages/design/src/templates/frame.tsx
+@@ -1,12 +1,12 @@
+ import type { ReactNode } from "react";
+-import { StatCards } from "../display/index";
++import { SkeletonText, StatCards } from "../display/index";
+ import { PageHeader, type PageHeaderProps } from "../shell/index";
+ 
+ /**
+  * The fixed header area of a template (spec §4.2): the PageHeader in a frame of the one content
+  * width (`layout.content`, §4.3), so it lines up with the body below it on every page. Templates
+  * without a list body (detail, trace, inbox, onboarding, status) draw the header's metrics here as
+  * StatCards (`statsInHead`); list and overview pages draw them at the top of the body (WithStats).
+  * `loose` leaves space.6 below the header for forms.
+  */
+ export function TemplateHead({
+@@ -40,10 +40,80 @@ export function TemplateHead({
+ /** The header's metrics as StatCards above the page content (spec §5.1), when there are any. */
+ export function WithStats({ header, children }: { header: PageHeaderProps; children?: ReactNode }) {
+   const metrics = header.metrics ?? [];
+   return (
+     <>
+       {metrics.length > 0 ? <StatCards metrics={metrics} /> : null}
+       {children}
+     </>
+   );
+ }
++
++/**
++ * The header of a loading template (spec §4.2): a title the page does not know yet (an empty
++ * string) is a bar; what it knows renders for real. `header.loading` wins when the page sets it.
++ */
++export function loadingHeader(header: PageHeaderProps): PageHeaderProps {
++  return { ...header, loading: header.loading ?? { title: header.title === "" } };
++}
++
++/**
++ * Stat card placeholders in the loaded card's box (spec §5): the `.cb-stat-card` frame, a `small`
++ * label slot and a `metric` value slot.
++ */
++export function LoadingStats({ count }: { count: number }) {
++  if (count <= 0) return null;
++  return (
++    <div className="cb-stat-cards" data-part="stat-cards">
++      {Array.from({ length: count }, (_, i) => (
++        // biome-ignore lint/suspicious/noArrayIndexKey: the placeholders are positional
++        <div key={i} className="cb-stat-card" data-part="stat-card">
++          <div className="cb-stat-label" data-part="stat-label">
++            <SkeletonText width="55%" size="small" />
++          </div>
++          <div className="cb-stat-value" data-part="stat-value">
++            <SkeletonText width="45%" size="metric" />
++          </div>
++        </div>
++      ))}
++    </div>
++  );
++}
++
++/**
++ * Card-shaped section placeholders (spec §5.2): the `cb-card` panel with its head band (a title
++ * slot) and three text lines in the body.
++ */
++export function LoadingCards({ count }: { count: number }) {
++  return (
++    <>
++      {Array.from({ length: count }, (_, i) => (
++        // biome-ignore lint/suspicious/noArrayIndexKey: the placeholders are positional
++        <section key={i} className="cb-card" data-part="loading-card">
++          <header className="cb-card-head">
++            <SkeletonText width="30%" />
++          </header>
++          <div className="cb-card-body cb-loading-stack">
++            <SkeletonText width="100%" />
++            <SkeletonText width="70%" />
++            <SkeletonText width="55%" />
++          </div>
++        </section>
++      ))}
++    </>
++  );
++}
++
++/** The inspector's properties as placeholders: a group title and key / value rows (spec §5.2). */
++export function LoadingInspector() {
++  return (
++    <div className="cb-loading-stack" data-part="loading-inspector">
++      <SkeletonText width="30%" size="small" />
++      {[0, 1, 2, 3].map((i) => (
++        <div key={i} className="cb-loading-row">
++          <SkeletonText width="30%" />
++          <SkeletonText width="55%" />
++        </div>
++      ))}
++    </div>
++  );
++}
+diff --git a/packages/design/src/templates/inbox-page.tsx b/packages/design/src/templates/inbox-page.tsx
+index 5662a3f0..c05fc88c 100644
+--- a/packages/design/src/templates/inbox-page.tsx
++++ b/packages/design/src/templates/inbox-page.tsx
+@@ -1,58 +1,115 @@
+ import type { ReactNode } from "react";
+-import { EmptyState, type EmptyStateProps } from "../display/index";
++import {
++  EmptyState,
++  type EmptyStateProps,
++  SkeletonBox,
++  SkeletonGroup,
++  SkeletonText,
++} from "../display/index";
++import { useDesignT } from "../provider";
+ import { ActionRow, type ActionRowProps, Body, type PageHeaderProps } from "../shell/index";
+-import { TemplateHead } from "./frame";
++import { LoadingCards, loadingHeader, TemplateHead } from "./frame";
++
++/** 64 px rows a loading inbox draws when it is not told how many (spec §5.7). */
++const LOADING_ROWS = 4;
++
++/** One inbox row as placeholders: the object row's box, a mark and two text lines. */
++function LoadingRow() {
++  return (
++    <div className="cb-object-row" data-part="loading-row">
++      <SkeletonBox part="mark" />
++      <span className="cb-object-text">
++        <SkeletonText width="55%" />
++        <SkeletonText width="30%" size="small" />
++      </span>
++    </div>
++  );
++}
+ 
+ /**
+  * T6 Inbox: Rail (the list) + Content (+ Inspector); an ActionRow while deciding. The split is
+  * capped at the content width like every page (spec §4.3), so the head and the body share one left
+  * edge. `empty` (no items, a failed load) draws one EmptyState instead of the list + detail split.
++ * `filters` sit at the top of the rail, above `list`. `loading` draws the frame while the data is
++ * on the way (spec §5.7): the filters stay real (they are static), the list is `rows` 64 px rows
++ * (default 4) in place of `list`, the content is a card-shaped block in place of `children`, and a
++ * real `inspector` stays.
+  */
+ export function InboxPage({
+   header,
+   list,
++  filters,
+   inspector,
+   inspectorTitle,
+   onInspectorClose,
+   actionRow,
+   empty,
++  loading,
+   children,
+ }: {
+   header: PageHeaderProps;
+-  list: ReactNode;
++  list?: ReactNode;
++  filters?: ReactNode;
+   inspector?: ReactNode;
+   inspectorTitle?: string;
+   onInspectorClose?: () => void;
+   actionRow?: ActionRowProps;
+   empty?: EmptyStateProps;
++  loading?: { rows?: number };
+   children?: ReactNode;
+ }) {
+-  if (empty) {
++  const t = useDesignT();
++  const rail = loading ? (
++    <>
++      {filters}
++      {Array.from({ length: loading.rows ?? LOADING_ROWS }, (_, i) => (
++        // biome-ignore lint/suspicious/noArrayIndexKey: the placeholders are positional
++        <LoadingRow key={i} />
++      ))}
++    </>
++  ) : filters != null ? (
++    <>
++      {filters}
++      {list}
++    </>
++  ) : (
++    list
++  );
++  if (empty && !loading) {
+     return (
+       <div className="cb-template" data-template="InboxPage" data-width="content">
+         <TemplateHead header={header} statsInHead />
+         <Body layout="single" width="content">
+           <EmptyState {...empty} />
+         </Body>
+       </div>
+     );
+   }
+-  return (
+-    <div className="cb-template" data-template="InboxPage" data-width="content">
+-      <TemplateHead header={header} statsInHead />
++  const page = (
++    <>
++      <TemplateHead header={loading ? loadingHeader(header) : header} statsInHead />
+       <Body
+         layout={inspector != null ? "rail-inspector" : "rail"}
+-        rail={list}
++        rail={rail}
+         railFlush
+         contentPadded
+         width="content"
+         inspector={inspector}
+         {...(inspectorTitle !== undefined ? { inspectorTitle } : {})}
+         {...(onInspectorClose ? { onInspectorClose } : {})}
+       >
+-        {children}
++        {loading ? <LoadingCards count={1} /> : children}
+       </Body>
+       {actionRow ? <ActionRow {...actionRow} /> : null}
++    </>
++  );
++  return (
++    <div className="cb-template" data-template="InboxPage" data-width="content">
++      {loading ? (
++        <SkeletonGroup label={header.title || t("table.loading")}>{page}</SkeletonGroup>
++      ) : (
++        page
++      )}
+     </div>
+   );
+ }
+diff --git a/packages/design/src/templates/overview-page.tsx b/packages/design/src/templates/overview-page.tsx
+index 27681f70..6420d432 100644
+--- a/packages/design/src/templates/overview-page.tsx
++++ b/packages/design/src/templates/overview-page.tsx
+@@ -1,21 +1,50 @@
+ import type { ReactNode } from "react";
++import { SkeletonGroup } from "../display/index";
++import { useDesignT } from "../provider";
+ import { Body, type PageHeaderProps } from "../shell/index";
+-import { TemplateHead, WithStats } from "./frame";
++import { LoadingCards, LoadingStats, loadingHeader, TemplateHead, WithStats } from "./frame";
+ 
+-/** T1 Overview: Single, list width. */
++/** What a loading overview draws when it is not told (spec §5). */
++const LOADING_STATS = 4;
++const LOADING_SECTIONS = 2;
++
++/**
++ * T1 Overview: Single, list width. `loading` draws the page's frame while its data is on the way:
++ * the header keeps its rows, `stats` stat cards (default 4; the header's own `metrics` render for
++ * real instead) and `sections` card-shaped blocks (default 2) in place of `children`.
++ */
+ export function OverviewPage({
+   header,
++  loading,
+   children,
+ }: {
+   header: PageHeaderProps;
++  loading?: { stats?: number; sections?: number };
+   children?: ReactNode;
+ }) {
++  const t = useDesignT();
++  if (loading) {
++    const known = (header.metrics?.length ?? 0) > 0;
++    return (
++      <div className="cb-template" data-template="OverviewPage" data-width="content">
++        <SkeletonGroup label={header.title || t("table.loading")}>
++          <TemplateHead header={loadingHeader(header)} />
++          <Body layout="single" width="content">
++            {known ? null : <LoadingStats count={loading.stats ?? LOADING_STATS} />}
++            <WithStats header={header}>
++              <LoadingCards count={loading.sections ?? LOADING_SECTIONS} />
++            </WithStats>
++          </Body>
++        </SkeletonGroup>
++      </div>
++    );
++  }
+   return (
+     <div className="cb-template" data-template="OverviewPage" data-width="content">
+       <TemplateHead header={header} />
+       <Body layout="single" width="content">
+         <WithStats header={header}>{children}</WithStats>
+       </Body>
+     </div>
+   );
+ }
+diff --git a/packages/design/test/templates-loading.test.tsx b/packages/design/test/templates-loading.test.tsx
+new file mode 100644
+index 00000000..2091ace0
+--- /dev/null
++++ b/packages/design/test/templates-loading.test.tsx
+@@ -0,0 +1,122 @@
++import { cleanup, render, screen } from "@testing-library/react";
++import { afterEach, describe, expect, it } from "vitest";
++import { DesignProvider, DetailPage, InboxPage, OverviewPage } from "../src/index";
++
++afterEach(cleanup);
++const zh = (ui: React.ReactElement) => render(<DesignProvider locale="zh">{ui}</DesignProvider>);
++
++const header = { path: [{ label: "capybara" }, { label: "agents" }], title: "研究助手" };
++const tabs = {
++  items: [
++    { id: "summary", label: "概要" },
++    { id: "runs", label: "运行" },
++  ],
++  value: "summary",
++  label: "页面",
++};
++const metrics = [
++  { label: "运行", value: 12 },
++  { label: "失败", value: 1 },
++];
++
++const parts = (name: string) => document.querySelectorAll(`[data-part="${name}"]`);
++const count = (selector: string) => document.querySelectorAll(selector).length;
++
++describe("DetailPage loading", () => {
++  it("DetailPage loading draws the frame and no children", () => {
++    zh(
++      <DetailPage header={header} tabs={tabs} loading={{ inspector: true }}>
++        <p>REAL CONTENT</p>
++      </DetailPage>,
++    );
++    expect(screen.queryByText("REAL CONTENT")).toBeNull();
++    expect(document.querySelector('[data-template="DetailPage"]')).not.toBeNull();
++    expect(parts("page-header")).toHaveLength(1);
++    expect(parts("content")).toHaveLength(1);
++    expect(count(".cb-body-inspector")).toBe(1);
++    // The default is two card-shaped blocks, and the group announces once.
++    expect(count('[data-part="loading-card"]')).toBe(2);
++    expect(screen.getAllByRole("status")).toHaveLength(1);
++    expect(document.querySelector('[aria-busy="true"]')).not.toBeNull();
++  });
++
++  it("takes the block count as given, and no inspector unless flagged", () => {
++    zh(<DetailPage header={header} tabs={tabs} loading={{ blocks: 3 }} />);
++    expect(count('[data-part="loading-card"]')).toBe(3);
++    expect(count(".cb-body-inspector")).toBe(0);
++  });
++
++  it("tabs stay real while loading", () => {
++    zh(<DetailPage header={header} tabs={tabs} loading={{ inspector: true }} />);
++    expect(screen.getByRole("tab", { name: "概要" })).toBeTruthy();
++    expect(screen.getByRole("tab", { name: "运行" })).toBeTruthy();
++  });
++
++  it("a real inspector stays while loading unless it is flagged", () => {
++    zh(<DetailPage header={header} tabs={tabs} inspector={<p>REAL INSPECTOR</p>} loading={{}} />);
++    expect(screen.getByText("REAL INSPECTOR")).toBeTruthy();
++  });
++});
++
++describe("OverviewPage loading", () => {
++  it("OverviewPage loading draws the frame and no children", () => {
++    zh(
++      <OverviewPage header={header} loading={{}}>
++        <p>REAL CONTENT</p>
++      </OverviewPage>,
++    );
++    expect(screen.queryByText("REAL CONTENT")).toBeNull();
++    expect(document.querySelector('[data-template="OverviewPage"]')).not.toBeNull();
++    expect(parts("page-header")).toHaveLength(1);
++    // Defaults: four stat cards and two sections.
++    expect(parts("stat-card")).toHaveLength(4);
++    expect(count('[data-part="loading-card"]')).toBe(2);
++    expect(screen.getAllByRole("status")).toHaveLength(1);
++  });
++
++  it("takes the stat and section counts as given", () => {
++    zh(<OverviewPage header={header} loading={{ stats: 3, sections: 1 }} />);
++    expect(parts("stat-card")).toHaveLength(3);
++    expect(count('[data-part="loading-card"]')).toBe(1);
++  });
++
++  it("known metrics render for real", () => {
++    zh(<OverviewPage header={{ ...header, metrics }} loading={{ stats: 4 }} />);
++    expect(parts("stat-card")).toHaveLength(2);
++    expect(screen.getByText("失败")).toBeTruthy();
++  });
++});
++
++describe("InboxPage loading", () => {
++  it("InboxPage loading draws the frame and no children", () => {
++    zh(
++      <InboxPage header={header} list={<p>REAL LIST</p>} filters={<p>REAL FILTERS</p>} loading={{}}>
++        <p>REAL CONTENT</p>
++      </InboxPage>,
++    );
++    expect(screen.queryByText("REAL LIST")).toBeNull();
++    expect(screen.queryByText("REAL CONTENT")).toBeNull();
++    expect(document.querySelector('[data-template="InboxPage"]')).not.toBeNull();
++    // The rail's filters are static: they stay; the list is four 64 px rows by default.
++    expect(screen.getByText("REAL FILTERS")).toBeTruthy();
++    expect(count(".cb-body-rail")).toBe(1);
++    expect(count('[data-part="loading-row"]')).toBe(4);
++    expect(screen.getAllByRole("status")).toHaveLength(1);
++  });
++
++  it("takes the row count as given", () => {
++    zh(<InboxPage header={header} loading={{ rows: 6 }} />);
++    expect(count('[data-part="loading-row"]')).toBe(6);
++  });
++
++  it("without loading, the filters sit above the list", () => {
++    zh(
++      <InboxPage header={header} filters={<p>F</p>} list={<p>第一项</p>}>
++        x
++      </InboxPage>,
++    );
++    expect(screen.getByText("F")).toBeTruthy();
++    expect(screen.getByText("第一项")).toBeTruthy();
++    expect(count('[data-part="loading-row"]')).toBe(0);
++  });
++});

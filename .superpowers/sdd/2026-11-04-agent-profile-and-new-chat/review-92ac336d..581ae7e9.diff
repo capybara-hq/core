@@ -1,0 +1,979 @@
+# Review package: 92ac336d..HEAD
+
+## Commits
+581ae7e9 feat(kernel): agent profiles (avatar, description, quick actions) outside the versions
+
+## Files changed
+ .changeset/agent-profiles.md                       |   7 +
+ packages/kernel/src/agents/agent-lookup.ts         |  13 ++
+ .../kernel/src/agents/agent-profile.service.ts     |  83 +++++++
+ packages/kernel/src/agents/agents.controller.ts    |  38 +++-
+ packages/kernel/src/agents/agents.module.ts        |   5 +-
+ packages/kernel/src/agents/agents.service.ts       |  32 ++-
+ packages/kernel/src/agents/profile.ts              |  71 ++++++
+ packages/kernel/src/db/kernel-schema.ts            |   9 +
+ packages/kernel/src/errors.ts                      |   2 +
+ .../kernel/src/migrations/0066_agent_profiles.sql  |  19 ++
+ packages/kernel/test/agents/profile.test.ts        | 253 +++++++++++++++++++++
+ 11 files changed, 526 insertions(+), 6 deletions(-)
+
+## Diff
+diff --git a/.changeset/agent-profiles.md b/.changeset/agent-profiles.md
+new file mode 100644
+index 00000000..7dbcbc19
+--- /dev/null
++++ b/.changeset/agent-profiles.md
+@@ -0,0 +1,7 @@
++---
++"@capybara-hq/kernel": patch
++---
++
++Agents have a profile (avatar, description, quick actions) stored outside the agent versions:
++`profile` on the agent view, `PATCH /api/v1/orgs/:orgId/agents/:agentId/profile` with
++`expectedUpdatedAt` (409 `agent.profile_conflict`), and a random preset avatar on create.
+diff --git a/packages/kernel/src/agents/agent-lookup.ts b/packages/kernel/src/agents/agent-lookup.ts
+index 4be9d630..27cab78e 100644
+--- a/packages/kernel/src/agents/agent-lookup.ts
++++ b/packages/kernel/src/agents/agent-lookup.ts
+@@ -1,28 +1,31 @@
+ import { Inject, Injectable, Module } from "@nestjs/common";
+ import { type ExpressionBuilder, sql } from "kysely";
+ import type { KernelDatabase, KernelSchemaDb } from "../db/kernel-schema.js";
+ import { ApiError } from "../errors.js";
+ import { KernelDb } from "../infra/database/kernel-db.js";
+ import { type AgentDefinition, normalizeStoredDefinition } from "./definition.js";
++import type { AgentAvatar, AgentProfile, QuickAction } from "./profile.js";
+ 
+ export const AGENT_VISIBILITIES = ["private", "org", "members"] as const;
+ export type AgentVisibility = (typeof AGENT_VISIBILITIES)[number];
+ 
+ /** 对外的 agent 视图：当前版本的定义 + 元数据；`memberIds` 只在 visibility='members' 时为数组。 */
+ export interface AgentView {
+   id: string;
+   orgId: string;
+   ownerAccountId: string;
+   visibility: AgentVisibility;
+   currentVersion: number;
+   definition: AgentDefinition;
++  /** Display data outside the versions (never model-visible). */
++  profile: AgentProfile;
+   memberIds: string[] | null;
+   /** 负责人离职后被转给组织所有者、等待管理员重新指派。 */
+   needsReassignment: boolean;
+   createdAt: Date;
+   updatedAt: Date;
+ }
+ 
+ const notFound = () => new ApiError("agent.not_found", "Agent not found");
+ 
+ /**
+@@ -148,20 +151,24 @@ export class AgentLookup {
+       )
+       .select([
+         "agents.id",
+         "agents.org_id",
+         "agents.owner_account_id",
+         "agents.visibility",
+         "agents.current_version",
+         "agents.needs_reassignment",
+         "agents.created_at",
+         "agents.updated_at",
++        "agents.profile_avatar",
++        "agents.profile_description",
++        "agents.profile_quick_actions",
++        "agents.profile_updated_at",
+         "agent_versions.definition",
+       ])
+       .where("agents.id", "in", ids)
+       .execute();
+     const memberRows = await db
+       .selectFrom("agent_members")
+       .select(["agent_id", "account_id"])
+       .where("agent_id", "in", ids)
+       .orderBy("account_id")
+       .execute();
+@@ -170,20 +177,26 @@ export class AgentLookup {
+       const r = byId.get(id);
+       if (!r) return [];
+       return [
+         {
+           id: r.id,
+           orgId: r.org_id,
+           ownerAccountId: r.owner_account_id,
+           visibility: r.visibility,
+           currentVersion: r.current_version,
+           definition: normalizeStoredDefinition(r.definition),
++          profile: {
++            avatar: r.profile_avatar as AgentAvatar,
++            description: r.profile_description,
++            quickActions: r.profile_quick_actions as QuickAction[],
++            updatedAt: r.profile_updated_at.toISOString(),
++          },
+           memberIds:
+             r.visibility === "members"
+               ? memberRows.filter((m) => m.agent_id === id).map((m) => m.account_id)
+               : null,
+           needsReassignment: r.needs_reassignment,
+           createdAt: r.created_at,
+           updatedAt: r.updated_at,
+         },
+       ];
+     });
+diff --git a/packages/kernel/src/agents/agent-profile.service.ts b/packages/kernel/src/agents/agent-profile.service.ts
+new file mode 100644
+index 00000000..5e965a03
+--- /dev/null
++++ b/packages/kernel/src/agents/agent-profile.service.ts
+@@ -0,0 +1,83 @@
++import { Inject, Injectable } from "@nestjs/common";
++import { sql } from "kysely";
++import { ApiError } from "../errors.js";
++import { audit } from "../identity/audit.js";
++import { KernelDb } from "../infra/database/kernel-db.js";
++import { TransactionHost } from "../infra/database/transaction-host.js";
++import { Transactional } from "../infra/database/transactional.decorator.js";
++import { AgentLookup } from "./agent-lookup.js";
++import { AgentsService, assertProfileWritable } from "./agents.service.js";
++import type { AgentProfile, ProfileInput } from "./profile.js";
++
++/**
++ * Writes an agent's profile (avatar, description, quick actions): display data stored beside the
++ * agent, never model-visible, so a change creates no agent version. The permission is the one of
++ * `AgentsService.update` (owner or org admin, checked under the org row lock).
++ */
++@Injectable()
++export class AgentProfileService {
++  constructor(
++    @Inject(KernelDb) private readonly db: KernelDb,
++    @Inject(AgentLookup) private readonly lookup: AgentLookup,
++    @Inject(AgentsService) private readonly agents: Pick<AgentsService, "lockForWrite">,
++    @Inject(TransactionHost) readonly txHost: TransactionHost,
++  ) {}
++
++  /**
++   * Applies `patch` (only the given fields) when `expectedUpdatedAt` is still the profile's
++   * `updatedAt`, else 409 `agent.profile_conflict` (never a silent overwrite). Audit
++   * `agent.profile_updated` `{ fields, channel }`: `api` for a personal access token, else `web`.
++   */
++  @Transactional()
++  async update(
++    orgId: string,
++    agentId: string,
++    actorAccountId: string,
++    patch: ProfileInput,
++    expectedUpdatedAt: string,
++    actorTokenId?: string,
++  ): Promise<AgentProfile> {
++    assertProfileWritable(patch);
++    const t = this.db.db;
++    await this.agents.lockForWrite(orgId, agentId, actorAccountId);
++    const current = await t
++      .selectFrom("agents")
++      .select(
++        sql<string>`to_char(profile_updated_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')`.as(
++          "at",
++        ),
++      )
++      .where("id", "=", agentId)
++      .executeTakeFirstOrThrow();
++    if (current.at !== expectedUpdatedAt) {
++      throw new ApiError(
++        "agent.profile_conflict",
++        "The profile was changed by someone else; reload it and apply your changes again",
++      );
++    }
++    const fields = (["avatar", "description", "quickActions"] as const).filter(
++      (f) => patch[f] !== undefined,
++    );
++    await t
++      .updateTable("agents")
++      .set({
++        ...(patch.avatar !== undefined && { profile_avatar: JSON.stringify(patch.avatar) }),
++        ...(patch.description !== undefined && { profile_description: patch.description }),
++        ...(patch.quickActions !== undefined && {
++          profile_quick_actions: JSON.stringify(patch.quickActions),
++        }),
++        profile_updated_at: sql`greatest(date_trunc('milliseconds', now()), profile_updated_at + interval '1 millisecond')`,
++      })
++      .where("id", "=", agentId)
++      .execute();
++    await audit(t, {
++      actorAccountId,
++      ...(actorTokenId !== undefined && { actorTokenId }),
++      orgId,
++      action: "agent.profile_updated",
++      target: agentId,
++      detail: { fields, channel: actorTokenId !== undefined ? "api" : "web" },
++    });
++    return (await this.lookup.view(agentId)).profile;
++  }
++}
+diff --git a/packages/kernel/src/agents/agents.controller.ts b/packages/kernel/src/agents/agents.controller.ts
+index 605656e6..6b88e0bb 100644
+--- a/packages/kernel/src/agents/agents.controller.ts
++++ b/packages/kernel/src/agents/agents.controller.ts
+@@ -2,87 +2,100 @@ import { Controller, Delete, Get, HttpCode, Inject, Param, Patch, Post } from "@
+ import { z } from "zod";
+ import {
+   CurrentPrincipal,
+   type Principal,
+   patTokenId,
+   requireUser,
+ } from "../identity/principal.js";
+ import { createZodDto } from "../infra/validation/create-zod-dto.js";
+ import { ZBody } from "../infra/validation/zod-params.js";
+ import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
++import { AgentProfileService } from "./agent-profile.service.js";
+ import {
+   AGENT_VISIBILITIES,
+   AgentsService,
+   type AgentVersionSummary,
+   type AgentView,
+   type AgentWarning,
+ } from "./agents.service.js";
+ import { AgentDefinitionSchema, AgentToolRef, DEFAULT_AGENT_TOOLS } from "./definition.js";
++import { type AgentProfile, ProfileInputSchema } from "./profile.js";
+ 
+ const MemberIds = z.array(z.string().min(1).max(100)).max(1000);
+ const OwnerBody = z.object({ accountId: z.string().min(1).max(100) }).strict();
+ 
+ /** 创建时未给 `tools` → 默认工具（Ruling P7）；修改请求不注入默认值，版本里总是存显式的 tools。 */
+ const CreateDefinition = AgentDefinitionSchema.extend({
+   tools: z.array(AgentToolRef).default(() => structuredClone(DEFAULT_AGENT_TOOLS)),
+ });
+ 
+ const CreateBody = z
+   .object({
+     definition: CreateDefinition,
+     visibility: z.enum(AGENT_VISIBILITIES),
+     memberIds: MemberIds.optional(),
++    /** Without an avatar the agent gets a random preset. */
++    profile: ProfileInputSchema.optional(),
+   })
+   .strict();
++const ProfileBody = ProfileInputSchema.extend({
++  /** The `profile.updatedAt` the client read; a different one → 409 `agent.profile_conflict`. */
++  expectedUpdatedAt: z.string().min(1).max(40),
++}).strict();
+ const UpdateBody = z
+   .object({
+     definition: AgentDefinitionSchema.optional(),
+     visibility: z.enum(AGENT_VISIBILITIES).optional(),
+     memberIds: MemberIds.optional(),
+     /**
+      * 乐观并发：编辑页打开时读到的 `currentVersion`。给出且与当前版本不同（别人已保存过）→ 409
+      * `agent.version_conflict`，不覆盖别人的改动。不给时不检查（旧客户端）。
+      */
+     expectedVersion: z.number().int().positive().optional(),
+   })
+   .strict();
+ 
+ /** 服务令牌没有账号：以 null 作为 viewer，只看到 visibility='org' 的 agent。 */
+ const viewerOf = (p: Principal): string | null => (p.kind === "user" ? p.account.id : null);
+ 
+ class AgentCreateBodyDto extends createZodDto(CreateBody, "AgentCreateBody") {}
+ class AgentUpdateBodyDto extends createZodDto(UpdateBody, "AgentUpdateBody") {}
++class AgentProfileBodyDto extends createZodDto(ProfileBody, "AgentProfileBody") {}
+ class AgentOwnerBodyDto extends createZodDto(OwnerBody, "AgentOwnerBody") {}
+ 
+ /**
+  * Agent 定义（`/api/v1/orgs/:orgId/agents`）。读用 `agents.use`（访客与服务令牌可用），
+  * 写用 `agents.create`（member 以上、HUMAN_ONLY），修改 / 删除的负责人或管理员判定在服务的组织行锁内完成。
+  */
+ @Controller("api/v1/orgs/:orgId/agents")
+ export class AgentsController {
+-  constructor(@Inject(AgentsService) private readonly agents: AgentsService) {}
++  constructor(
++    @Inject(AgentsService) private readonly agents: AgentsService,
++    @Inject(AgentProfileService) private readonly profiles: AgentProfileService,
++  ) {}
+ 
+   @Post()
+   @OrgAction("agents.create")
+   async create(
+     @CurrentPrincipal() principal: Principal,
+     @CurrentOrg() org: OrgContext,
+     @ZBody(AgentCreateBodyDto) body: z.infer<typeof CreateBody>,
+   ): Promise<{ agent: AgentView; warnings: AgentWarning[] }> {
+     const p = requireUser(principal);
+     return this.agents.create(
+       org.orgId,
+       p.account.id,
+       {
+         definition: body.definition,
+         visibility: body.visibility,
+         ...(body.memberIds !== undefined && { memberIds: body.memberIds }),
++        ...(body.profile !== undefined && { profile: body.profile }),
+       },
+       patTokenId(p),
+     );
+   }
+ 
+   @Get()
+   @OrgAction("agents.use")
+   async list(
+     @CurrentPrincipal() principal: Principal,
+     @CurrentOrg() org: OrgContext,
+@@ -105,20 +118,43 @@ export class AgentsController {
+   async update(
+     @CurrentPrincipal() principal: Principal,
+     @CurrentOrg() org: OrgContext,
+     @Param("agentId") agentId: string,
+     @ZBody(AgentUpdateBodyDto) body: z.infer<typeof UpdateBody>,
+   ): Promise<{ agent: AgentView; warnings: AgentWarning[] }> {
+     const p = requireUser(principal);
+     return this.agents.update(org.orgId, agentId, p.account.id, body, patTokenId(p));
+   }
+ 
++  /** Display data only: no agent version. Same permission as `PATCH :agentId`. */
++  @Patch(":agentId/profile")
++  @OrgAction("agents.create")
++  async updateProfile(
++    @CurrentPrincipal() principal: Principal,
++    @CurrentOrg() org: OrgContext,
++    @Param("agentId") agentId: string,
++    @ZBody(AgentProfileBodyDto) body: z.infer<typeof ProfileBody>,
++  ): Promise<{ profile: AgentProfile }> {
++    const p = requireUser(principal);
++    const { expectedUpdatedAt, ...patch } = body;
++    return {
++      profile: await this.profiles.update(
++        org.orgId,
++        agentId,
++        p.account.id,
++        patch,
++        expectedUpdatedAt,
++        patTokenId(p),
++      ),
++    };
++  }
++
+   @Delete(":agentId")
+   @HttpCode(204)
+   @OrgAction("agents.create")
+   async remove(
+     @CurrentPrincipal() principal: Principal,
+     @CurrentOrg() org: OrgContext,
+     @Param("agentId") agentId: string,
+   ): Promise<void> {
+     const p = requireUser(principal);
+     await this.agents.softDelete(org.orgId, agentId, p.account.id, patTokenId(p));
+diff --git a/packages/kernel/src/agents/agents.module.ts b/packages/kernel/src/agents/agents.module.ts
+index 03555ce1..7804840d 100644
+--- a/packages/kernel/src/agents/agents.module.ts
++++ b/packages/kernel/src/agents/agents.module.ts
+@@ -1,32 +1,33 @@
+ import { Module } from "@nestjs/common";
+ import { EvalBudgetModule } from "../evals/budget.js";
+ import { OrgLockModule } from "../orgs/org-lock.js";
+ import { ProvidersModule } from "../runtime/providers.js";
+ import { SandboxModule } from "../sandbox/sandbox.module.js";
+ import { SkillsModule } from "../skills/skills.module.js";
+ import { ToolsModule } from "../tools/tools.module.js";
+ import { AgentLookupModule } from "./agent-lookup.js";
++import { AgentProfileService } from "./agent-profile.service.js";
+ import { AgentsService } from "./agents.service.js";
+ import { AgentTemplatesService } from "./templates.js";
+ 
+ /**
+  * Agents: the one {@link AgentsService} (definitions, versions, visibility; writes under the org
+  * row lock) and the plugin agent templates. Reads for a viewer are {@link AgentLookupModule}'s
+  * (re-exported), which the conversations and the skill invoker use without this module.
+  */
+ @Module({
+   imports: [
+     AgentLookupModule,
+     OrgLockModule,
+     ProvidersModule,
+     SkillsModule,
+     ToolsModule,
+     // the producer of sandbox-destroy-for jobs after a delete
+     SandboxModule,
+     // cancels the deleted agent's eval runs
+     EvalBudgetModule,
+   ],
+-  providers: [AgentsService, AgentTemplatesService],
+-  exports: [AgentLookupModule, AgentsService, AgentTemplatesService],
++  providers: [AgentsService, AgentProfileService, AgentTemplatesService],
++  exports: [AgentLookupModule, AgentsService, AgentProfileService, AgentTemplatesService],
+ })
+ export class AgentsModule {}
+diff --git a/packages/kernel/src/agents/agents.service.ts b/packages/kernel/src/agents/agents.service.ts
+index a912ad68..4cf6a8a9 100644
+--- a/packages/kernel/src/agents/agents.service.ts
++++ b/packages/kernel/src/agents/agents.service.ts
+@@ -25,20 +25,21 @@ import {
+   isAgentVisibleTo,
+   visibleTo,
+ } from "./agent-lookup.js";
+ import {
+   type AgentDefinition,
+   normalizeStoredDefinition,
+   paramIssues,
+   SUBAGENT_NAME_RE,
+   SUBAGENT_ROSTER_MAX,
+ } from "./definition.js";
++import { type ProfileInput, randomPreset } from "./profile.js";
+ 
+ export {
+   AGENT_VISIBILITIES,
+   type AgentView,
+   type AgentVisibility,
+   isAgentVisibleTo,
+   visibleTo,
+ } from "./agent-lookup.js";
+ export { paramIssues, SUBAGENT_ROSTER_MAX } from "./definition.js";
+ 
+@@ -49,20 +50,29 @@ export interface AgentVersion {
+   definition: AgentDefinition;
+   createdBy: string;
+   createdAt: Date;
+ }
+ 
+ export type AgentVersionSummary = Omit<AgentVersion, "definition">;
+ 
+ /** 创建 / 修改的提示（不拒绝）：`fallback_same_provider` = 兜底与主模型同一供应商（spec 4.5）。 */
+ export type AgentWarning = "fallback_same_provider";
+ 
++/** Until uploads are wired (the object store), a client can only choose a preset. */
++export function assertProfileWritable(profile: ProfileInput | undefined): void {
++  if (profile?.avatar?.kind === "upload") {
++    throw new ApiError("validation_failed", "Avatar uploads are not available yet", [
++      { path: "avatar.kind", message: "upload is not supported" },
++    ]);
++  }
++}
++
+ const notFound = () => new ApiError("agent.not_found", "Agent not found");
+ 
+ /** 键排序后的 JSON：jsonb 不保留键顺序，比较定义是否变化时用。 */
+ function canonical(v: unknown): string {
+   if (Array.isArray(v)) return `[${v.map(canonical).join(",")}]`;
+   if (v !== null && typeof v === "object") {
+     const entries = Object.entries(v as Record<string, unknown>)
+       .filter(([, x]) => x !== undefined)
+       .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+     return `{${entries.map(([k, x]) => `${JSON.stringify(k)}:${canonical(x)}`).join(",")}}`;
+@@ -331,38 +341,49 @@ export class AgentsService {
+     }
+   }
+ 
+   /**
+    * 新建 agent（版本 1）：在组织行锁内授权 `agents.create`；主模型与兜底都必须可解析
+    * （`agent.model_unavailable`）；兜底与主模型同一供应商只提示 `fallback_same_provider`。
+    */
+   async create(
+     orgId: string,
+     actorAccountId: string,
+-    input: { definition: AgentDefinition; visibility: AgentVisibility; memberIds?: string[] },
++    input: {
++      definition: AgentDefinition;
++      visibility: AgentVisibility;
++      memberIds?: string[];
++      profile?: ProfileInput;
++    },
+     actorTokenId?: string,
+   ): Promise<{ agent: AgentView; warnings: AgentWarning[] }> {
+     // 先解析模型（可能访问供应商），不在持有组织行锁时做
+     const warnings = await this.checkModels(input.definition);
+     const toolKeys = await this.checkTools(orgId, input.definition);
+     if (input.visibility !== "members" && (input.memberIds?.length ?? 0) > 0) {
+       throw new ApiError("validation_failed", "memberIds requires visibility 'members'");
+     }
++    assertProfileWritable(input.profile);
+     const agent = await this.createIn(orgId, actorAccountId, input, toolKeys, actorTokenId);
+     return { agent, warnings };
+   }
+ 
+   @Transactional()
+   private async createIn(
+     orgId: string,
+     actorAccountId: string,
+-    input: { definition: AgentDefinition; visibility: AgentVisibility; memberIds?: string[] },
++    input: {
++      definition: AgentDefinition;
++      visibility: AgentVisibility;
++      memberIds?: string[];
++      profile?: ProfileInput;
++    },
+     toolKeys: Set<string>,
+     actorTokenId: string | undefined,
+   ): Promise<AgentView> {
+     const t = this.db.db;
+     await this.orgLock.lockAndAuthorize(orgId, actorAccountId, "agents.create");
+     await assertOrgSkills(t, orgId, input.definition.skills?.orgSkills ?? []);
+     await assertPinnedSkills(t, orgId, null, input.definition.skills);
+     await assertSubagents(t, {
+       orgId,
+       agentId: null,
+@@ -376,20 +397,25 @@ export class AgentsService {
+         : [];
+     const id = randomUUID();
+     await t
+       .insertInto("agents")
+       .values({
+         id,
+         org_id: orgId,
+         owner_account_id: actorAccountId,
+         visibility: input.visibility,
+         current_version: 1,
++        profile_avatar: JSON.stringify(
++          input.profile?.avatar ?? { kind: "preset", id: randomPreset() },
++        ),
++        profile_description: input.profile?.description ?? "",
++        profile_quick_actions: JSON.stringify(input.profile?.quickActions ?? []),
+       })
+       .execute();
+     await t
+       .insertInto("agent_versions")
+       .values({
+         agent_id: id,
+         version: 1,
+         definition: JSON.stringify(input.definition),
+         created_by: actorAccountId,
+       })
+@@ -404,21 +430,21 @@ export class AgentsService {
+       detail: { version: 1, visibility: input.visibility },
+     });
+     return this.lookup.view(id);
+   }
+ 
+   /**
+    * 锁组织行并复核发起人，再锁 agent 行：发起人须仍具备 `agents.create`（member 以上），且是负责人或组织管理员以上；
+    * 对发起人不可见的 agent（非管理员）→ `agent.not_found`，可见但无权 → `forbidden`。
+    */
+   @Transactional({ propagation: "mandatory" })
+-  private async lockForWrite(
++  async lockForWrite(
+     orgId: string,
+     agentId: string,
+     actorAccountId: string,
+   ): Promise<{ visibility: AgentVisibility; current_version: number }> {
+     const t = this.db.db;
+     const { role } = await this.orgLock.lockAndAuthorize(orgId, actorAccountId, "agents.create");
+     // NO KEY UPDATE: a soft delete then appends revert snapshots to conversations; FOR UPDATE would
+     // block the agent foreign key check of an append already holding one of them (40P01)
+     const agent = await t
+       .selectFrom("agents")
+diff --git a/packages/kernel/src/agents/profile.ts b/packages/kernel/src/agents/profile.ts
+new file mode 100644
+index 00000000..f6a06fb2
+--- /dev/null
++++ b/packages/kernel/src/agents/profile.ts
+@@ -0,0 +1,71 @@
++import { randomInt } from "node:crypto";
++import { z } from "zod";
++
++/** The ten built-in pixel-animal avatars (drawn by `@capybara-hq/design`). */
++export const PRESET_IDS = [
++  "capybara",
++  "black-bear",
++  "panda",
++  "elephant",
++  "fox",
++  "owl",
++  "penguin",
++  "rabbit",
++  "turtle",
++  "whale",
++] as const;
++export type PresetId = (typeof PRESET_IDS)[number];
++
++export const PROFILE_LIMITS = {
++  description: 500,
++  quickActions: 9,
++  title: 40,
++  body: 20_000,
++} as const;
++
++/** A random preset id: the avatar of an agent created without one. */
++export function randomPreset(): PresetId {
++  return PRESET_IDS[randomInt(PRESET_IDS.length)] as PresetId;
++}
++
++export const AgentAvatarSchema = z.discriminatedUnion("kind", [
++  z.object({ kind: z.literal("preset"), id: z.enum(PRESET_IDS) }).strict(),
++  z.object({ kind: z.literal("upload"), uploadId: z.string().min(1).max(200) }).strict(),
++  // only produced by the migration of `definition.avatarUrl`; never accepted from a client
++  z.object({ kind: z.literal("external"), url: z.url() }).strict(),
++]);
++/** `null` only for agents created before profiles existed. */
++export type AgentAvatar = z.infer<typeof AgentAvatarSchema> | null;
++
++export const QuickActionSchema = z
++  .object({
++    title: z.string().min(1).max(PROFILE_LIMITS.title),
++    body: z.string().min(1).max(PROFILE_LIMITS.body),
++  })
++  .strict();
++export type QuickAction = z.infer<typeof QuickActionSchema>;
++
++export const DescriptionSchema = z.string().max(PROFILE_LIMITS.description);
++export const QuickActionsSchema = z.array(QuickActionSchema).max(PROFILE_LIMITS.quickActions);
++
++/** What a client may write (`external` is migrated data only). */
++export const AvatarInputSchema = z.discriminatedUnion("kind", [
++  z.object({ kind: z.literal("preset"), id: z.enum(PRESET_IDS) }).strict(),
++  z.object({ kind: z.literal("upload"), uploadId: z.string().min(1).max(200) }).strict(),
++]);
++
++export const ProfileInputSchema = z
++  .object({
++    avatar: AvatarInputSchema.nullable().optional(),
++    description: DescriptionSchema.optional(),
++    quickActions: QuickActionsSchema.optional(),
++  })
++  .strict();
++export type ProfileInput = z.infer<typeof ProfileInputSchema>;
++
++export interface AgentProfile {
++  avatar: AgentAvatar;
++  description: string;
++  quickActions: QuickAction[];
++  updatedAt: string;
++}
+diff --git a/packages/kernel/src/db/kernel-schema.ts b/packages/kernel/src/db/kernel-schema.ts
+index b108707f..6ee07cd9 100644
+--- a/packages/kernel/src/db/kernel-schema.ts
++++ b/packages/kernel/src/db/kernel-schema.ts
+@@ -160,20 +160,29 @@ export interface SecretsTable {
+ 
+ /** 0005_agents.sql：agent 当前元数据（定义在 agent_versions）。 */
+ export interface AgentsTable {
+   id: string;
+   org_id: string;
+   owner_account_id: string;
+   visibility: "private" | "org" | "members";
+   org_role: Generated<"admin" | "member" | "guest">;
+   current_version: number;
+   needs_reassignment: Generated<boolean>;
++  /** 0066: the profile (display data, outside the versions). */
++  profile_avatar: ColumnType<
++    Record<string, unknown> | null,
++    string | null | undefined,
++    string | null
++  >;
++  profile_description: Generated<string>;
++  profile_quick_actions: ColumnType<unknown[], string | undefined, string>;
++  profile_updated_at: Ts;
+   created_at: Ts;
+   updated_at: Ts;
+   deleted_at: TsNullable;
+ }
+ 
+ /** 0005_agents.sql：agent 定义的版本，只追加。 */
+ export interface AgentVersionsTable {
+   agent_id: string;
+   version: number;
+   definition: Json;
+diff --git a/packages/kernel/src/errors.ts b/packages/kernel/src/errors.ts
+index 7b14dd0e..1c772dd0 100644
+--- a/packages/kernel/src/errors.ts
++++ b/packages/kernel/src/errors.ts
+@@ -103,20 +103,22 @@ export const ERROR_CODES = {
+   "plugin.already_installed": 409,
+   "plugin.install_in_progress": 409,
+   "plugin.skill_conflict": 409,
+   "plugin.upgrade_stale": 409,
+   "plugin.upgrade_target_invalid": 409,
+   "plugin.upgrade_failed": 502,
+   "setup.already_completed": 409,
+   "setup.token_invalid": 403,
+   "agent.not_found": 404,
+   "agent.version_conflict": 409,
++  /** The profile was changed since the client read it (`expectedUpdatedAt` is stale). */
++  "agent.profile_conflict": 409,
+   "agent.model_unavailable": 400,
+   /**
+    * `skills.pinned` of an agent definition is refused (details: `{ skill, reason, totalBytes? }`;
+    * reasons `not_selected`, `not_found`, `duplicate`, `too_many`, `too_large`, `manual_only`).
+    */
+   "agent.pinned_invalid": 400,
+   /** `subagents` of an agent definition is refused (details: `{ reason, path, value? }`). */
+   "agent.subagents_invalid": 400,
+   "conversation.not_found": 404,
+   "conversation.output_not_found": 404,
+diff --git a/packages/kernel/src/migrations/0066_agent_profiles.sql b/packages/kernel/src/migrations/0066_agent_profiles.sql
+new file mode 100644
+index 00000000..347ab7b3
+--- /dev/null
++++ b/packages/kernel/src/migrations/0066_agent_profiles.sql
+@@ -0,0 +1,19 @@
++-- The agent profile (avatar, description, quick actions): display data stored beside the agent,
++-- outside agent_versions, so changing it creates no version. Expand-only.
++-- updated_at is kept at millisecond precision so a client can send it back as expectedUpdatedAt.
++ALTER TABLE capybara.agents ADD COLUMN IF NOT EXISTS profile_avatar jsonb;
++ALTER TABLE capybara.agents ADD COLUMN IF NOT EXISTS profile_description text NOT NULL DEFAULT '';
++ALTER TABLE capybara.agents
++  ADD COLUMN IF NOT EXISTS profile_quick_actions jsonb NOT NULL DEFAULT '[]';
++ALTER TABLE capybara.agents
++  ADD COLUMN IF NOT EXISTS profile_updated_at timestamptz NOT NULL
++  DEFAULT date_trunc('milliseconds', now());
++
++-- A definition's avatarUrl becomes an external avatar (once: only where none is set yet).
++UPDATE capybara.agents a
++SET profile_avatar = jsonb_build_object('kind', 'external', 'url', v.definition->>'avatarUrl')
++FROM capybara.agent_versions v
++WHERE v.agent_id = a.id
++  AND v.version = a.current_version
++  AND a.profile_avatar IS NULL
++  AND v.definition->>'avatarUrl' IS NOT NULL;
+diff --git a/packages/kernel/test/agents/profile.test.ts b/packages/kernel/test/agents/profile.test.ts
+new file mode 100644
+index 00000000..6f8633dc
+--- /dev/null
++++ b/packages/kernel/test/agents/profile.test.ts
+@@ -0,0 +1,253 @@
++import { readFileSync } from "node:fs";
++import { join } from "node:path";
++import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
++import { Redis } from "ioredis";
++import { sql } from "kysely";
++import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
++import { PRESET_IDS } from "../../src/agents/profile.js";
++import { KernelConfigSchema } from "../../src/config/schema.js";
++import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
++import { createDb } from "../../src/db/pool.js";
++import type { Account, AccountsService } from "../../src/identity/accounts.js";
++import { KERNEL_MIGRATIONS_DIR } from "../../src/kernel.js";
++import { createLogger } from "../../src/log.js";
++import { truncateTables } from "../helpers/db.js";
++import { asUser, cookieJar } from "../helpers/http.js";
++import { accountsFor } from "../helpers/identity.js";
++import { MODEL_PLUGINS_CONFIG } from "../helpers/model-plugins.js";
++import { startKernel, type TestKernel } from "../helpers/runs.js";
++
++let pgc: TestContainer;
++let rd: TestContainer;
++let k: TestKernel;
++let raw: ReturnType<typeof createDb>;
++let db: KernelSchemaDb;
++let redis: Redis;
++let accounts: AccountsService;
++let owner: Account;
++
++const PW = "correct horse battery";
++
++beforeAll(async () => {
++  [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
++  k = await startKernel(
++    KernelConfigSchema.parse({
++      db: { url: pgc.url, poolMax: 5 },
++      redis: { url: rd.url },
++      masterKey: Buffer.alloc(32, 7).toString("base64"),
++      marketplaces: { official: { enabled: false } },
++      http: { port: 0 },
++      ...MODEL_PLUGINS_CONFIG,
++    }),
++    { env: {}, logger: createLogger("error", { write: () => {} }) },
++  );
++  raw = createDb(pgc.url, 5);
++  db = kernelDb(raw);
++  redis = new Redis(rd.url);
++  accounts = accountsFor(db);
++}, 120_000);
++afterAll(async () => {
++  await k?.close();
++  redis?.disconnect();
++  await raw?.destroy();
++  await Promise.all([pgc?.stop(), rd?.stop()]);
++});
++beforeEach(async () => {
++  await truncateTables(raw, "capybara.accounts, capybara.orgs, capybara.audit_events");
++  await redis.flushdb();
++  owner = await accounts.createLocal({ login: "owner", password: PW, displayName: "Owner" });
++});
++
++type Req = ReturnType<typeof asUser>;
++const errCode = (res: { json(): unknown }) =>
++  (res.json() as { error?: { code?: string } }).error?.code;
++
++async function session(login: string): Promise<Req> {
++  const req = asUser(k.http, cookieJar());
++  const res = await req({
++    method: "POST",
++    url: "/api/v1/auth/login",
++    payload: { login, password: PW },
++  });
++  expect(res.statusCode).toBe(200);
++  return req;
++}
++
++const definition = {
++  name: "Helper",
++  instructions: "Be helpful.",
++  model: { provider: "model-fake", model: "fake-1" },
++};
++
++interface Profile {
++  avatar: { kind: string; id?: string; url?: string } | null;
++  description: string;
++  quickActions: { title: string; body: string }[];
++  updatedAt: string;
++}
++type AgentJson = { id: string; currentVersion: number; profile: Profile };
++
++async function setup(body: Record<string, unknown> = {}) {
++  const req = await session("owner");
++  const org = await req({ method: "POST", url: "/api/v1/orgs", payload: { name: "Acme" } });
++  const orgId = (org.json() as { org: { id: string } }).org.id;
++  const res = await req({
++    method: "POST",
++    url: `/api/v1/orgs/${orgId}/agents`,
++    payload: { definition, visibility: "org", ...body },
++  });
++  expect(res.statusCode).toBe(201);
++  const agent = (res.json() as { agent: AgentJson }).agent;
++  const url = `/api/v1/orgs/${orgId}/agents/${agent.id}`;
++  return { req, orgId, agent, url };
++}
++
++describe("agent profile", () => {
++  it("create without a profile gets a random preset avatar", async () => {
++    const { agent } = await setup();
++    expect(agent.profile.avatar?.kind).toBe("preset");
++    expect(PRESET_IDS).toContain(agent.profile.avatar?.id);
++    expect(agent.profile.description).toBe("");
++    expect(agent.profile.quickActions).toEqual([]);
++  });
++
++  it("create keeps a given profile", async () => {
++    const { agent } = await setup({
++      profile: {
++        avatar: { kind: "preset", id: "owl" },
++        description: "hi",
++        quickActions: [{ title: "t", body: "b" }],
++      },
++    });
++    expect(agent.profile).toMatchObject({
++      avatar: { kind: "preset", id: "owl" },
++      description: "hi",
++      quickActions: [{ title: "t", body: "b" }],
++    });
++  });
++
++  it("profile changes create no agent version", async () => {
++    const { req, url, agent } = await setup();
++    const res = await req({
++      method: "PATCH",
++      url: `${url}/profile`,
++      payload: {
++        avatar: { kind: "preset", id: "fox" },
++        description: "A fox",
++        quickActions: [{ title: "Go", body: "Do it" }],
++        expectedUpdatedAt: agent.profile.updatedAt,
++      },
++    });
++    expect(res.statusCode).toBe(200);
++    const { profile } = res.json() as { profile: Profile };
++    expect(profile).toMatchObject({ avatar: { kind: "preset", id: "fox" }, description: "A fox" });
++    expect(profile.updatedAt).not.toBe(agent.profile.updatedAt);
++    const after = (await req({ method: "GET", url })).json() as { agent: AgentJson };
++    expect(after.agent.currentVersion).toBe(agent.currentVersion);
++    expect(after.agent.profile).toEqual(profile);
++  });
++
++  it("profile limits", async () => {
++    const { req, url, agent } = await setup();
++    const bad: Record<string, unknown>[] = [
++      { description: "x".repeat(501) },
++      { quickActions: Array.from({ length: 10 }, () => ({ title: "t", body: "b" })) },
++      { quickActions: [{ title: "x".repeat(41), body: "b" }] },
++      { quickActions: [{ title: "t", body: "x".repeat(20_001) }] },
++      { avatar: { kind: "preset", id: "dragon" } },
++      { avatar: { kind: "upload", uploadId: "u1" } },
++      { avatar: { kind: "external", url: "https://example.com/a.png" } },
++    ];
++    for (const patch of bad) {
++      const res = await req({
++        method: "PATCH",
++        url: `${url}/profile`,
++        payload: { ...patch, expectedUpdatedAt: agent.profile.updatedAt },
++      });
++      expect(res.statusCode, JSON.stringify(patch).slice(0, 60)).toBe(400);
++      expect(errCode(res)).toBe("validation_failed");
++    }
++    const ok = await req({
++      method: "PATCH",
++      url: `${url}/profile`,
++      payload: {
++        description: "x".repeat(500),
++        quickActions: Array.from({ length: 9 }, () => ({
++          title: "x".repeat(40),
++          body: "y".repeat(20_000),
++        })),
++        expectedUpdatedAt: agent.profile.updatedAt,
++      },
++    });
++    expect(ok.statusCode).toBe(200);
++  });
++
++  it("a stale expectedUpdatedAt is 409 agent.profile_conflict", async () => {
++    const { req, url, agent } = await setup();
++    const first = await req({
++      method: "PATCH",
++      url: `${url}/profile`,
++      payload: { description: "one", expectedUpdatedAt: agent.profile.updatedAt },
++    });
++    expect(first.statusCode).toBe(200);
++    const second = await req({
++      method: "PATCH",
++      url: `${url}/profile`,
++      payload: { description: "two", expectedUpdatedAt: agent.profile.updatedAt },
++    });
++    expect(second.statusCode).toBe(409);
++    expect(errCode(second)).toBe("agent.profile_conflict");
++    const now = (await req({ method: "GET", url })).json() as { agent: AgentJson };
++    expect(now.agent.profile.description).toBe("one");
++  });
++
++  it("a profile change writes agent.profile_updated with the fields", async () => {
++    const { req, url, agent, orgId } = await setup();
++    await req({
++      method: "PATCH",
++      url: `${url}/profile`,
++      payload: {
++        description: "d",
++        quickActions: [],
++        expectedUpdatedAt: agent.profile.updatedAt,
++      },
++    });
++    const rows = await db
++      .selectFrom("audit_events")
++      .select(["actor_account_id", "org_id", "target", "detail"])
++      .where("action", "=", "agent.profile_updated")
++      .execute();
++    expect(rows).toHaveLength(1);
++    expect(rows[0]).toMatchObject({
++      actor_account_id: owner.id,
++      org_id: orgId,
++      target: agent.id,
++      detail: { fields: ["description", "quickActions"], channel: "web" },
++    });
++  });
++
++  it("an existing definition.avatarUrl migrates once to an external avatar", async () => {
++    const { req, url, agent } = await setup();
++    const avatarUrl = "https://example.com/old.png";
++    await sql`update capybara.agent_versions
++      set definition = definition || ${JSON.stringify({ avatarUrl })}::jsonb
++      where agent_id = ${agent.id}`.execute(raw);
++    await sql`update capybara.agents set profile_avatar = null where id = ${agent.id}`.execute(raw);
++    const content = readFileSync(join(KERNEL_MIGRATIONS_DIR, "0066_agent_profiles.sql"), "utf8");
++    await raw.transaction().execute(async (t) => {
++      await sql`set local search_path to capybara, public`.execute(t);
++      await sql.raw(content).execute(t);
++    });
++    const got = (await req({ method: "GET", url })).json() as { agent: AgentJson };
++    expect(got.agent.profile.avatar).toEqual({ kind: "external", url: avatarUrl });
++  });
++
++  it("old agents read profile.avatar null, description '' and quickActions []", async () => {
++    const { req, url, agent } = await setup();
++    await sql`update capybara.agents
++      set profile_avatar = null, profile_description = '', profile_quick_actions = '[]'
++      where id = ${agent.id}`.execute(raw);
++    const got = (await req({ method: "GET", url })).json() as { agent: AgentJson };
++    expect(got.agent.profile).toMatchObject({ avatar: null, description: "", quickActions: [] });
++  });
++});

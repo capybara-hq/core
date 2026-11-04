@@ -1,0 +1,1891 @@
+# Review package: cd126041..HEAD
+
+## Commits
+0c2bc36b feat(design): form, settings, wizard and auth loading states
+
+## Files changed
+ apps/web/reference/render.spec.ts                  |   3 +
+ apps/web/reference/review-page.mjs                 |  10 +-
+ apps/web/src/dev/catalog/reference-blocks.tsx      |  20 +-
+ apps/web/src/dev/catalog/routes.tsx                |   3 +
+ .../src/dev/catalog/template-loading-blocks.tsx    | 133 ++++++++++++
+ apps/web/visual/accepted.ts                        |   3 +
+ docs/design/reference/src/fill.js                  |  21 +-
+ docs/design/reference/src/index.html               |   2 +-
+ docs/design/reference/src/reference.css            | 155 ++++++++++++++
+ docs/design/reference/src/template-auth.html       |  26 +++
+ docs/design/reference/src/template-form.html       |   5 +-
+ docs/design/reference/src/template-settings.html   |  26 +++
+ docs/design/reference/src/template-wizard.html     |  26 +++
+ docs/design/spec.md                                |  53 ++++-
+ packages/design/src/display/skeleton.tsx           |   4 +-
+ packages/design/src/shell/action-row.tsx           |   9 +-
+ packages/design/src/styles/display.css             |   3 +
+ packages/design/src/styles/templates.css           |   5 +
+ packages/design/src/templates/auth-page.tsx        |  44 +++-
+ packages/design/src/templates/form-page.tsx        | 107 +++++++++-
+ packages/design/src/templates/frame.tsx            |  40 +++-
+ packages/design/src/templates/settings-page.tsx    |  37 +++-
+ packages/design/src/templates/wizard-page.tsx      |  40 +++-
+ packages/design/test/templates-loading.test.tsx    | 222 +++++++++++++++++++++
+ 24 files changed, 949 insertions(+), 48 deletions(-)
+
+## Diff
+diff --git a/apps/web/reference/render.spec.ts b/apps/web/reference/render.spec.ts
+index f9285c02..e0f372fc 100644
+--- a/apps/web/reference/render.spec.ts
++++ b/apps/web/reference/render.spec.ts
+@@ -53,20 +53,23 @@ const PAGES = [
+   "run-row",
+   // config forms: arrays of objects, compact rows, records
+   "repeater",
+   "field-row",
+   "key-value-editor",
+   // loading states: the skeleton primitives
+   "skeleton",
+   "template-detail",
+   "template-overview",
+   "template-inbox",
++  "template-settings",
++  "template-wizard",
++  "template-auth",
+ ];
+ const THEMES = ["dark", "light"] as const;
+ const BLOCK_ID = /^[a-z-]+-[a-z0-9-]+$/;
+ const FAMILIES = ["Sarasa Mono SC", "Inter", "Source Han Sans SC"];
+ 
+ mkdirSync(OUT, { recursive: true });
+ 
+ async function inject(page: Page) {
+   await page.addInitScript(
+     ([f, icons]) => {
+diff --git a/apps/web/reference/review-page.mjs b/apps/web/reference/review-page.mjs
+index 9df246bc..e30b2d6c 100644
+--- a/apps/web/reference/review-page.mjs
++++ b/apps/web/reference/review-page.mjs
+@@ -63,21 +63,29 @@ const GROUPS = [
+   {
+     title: "Role pass: no access, danger zone, secret reveal",
+     components: ["no-access", "danger-zone", "secret-reveal"],
+   },
+   {
+     title: "Config forms: repeater, field row, key / value editor",
+     components: ["repeater", "field-row", "key-value-editor"],
+   },
+   {
+     title: "Loading states: skeleton primitives and template loading states",
+-    components: ["skeleton", "template-detail", "template-overview", "template-inbox"],
++    components: [
++      "skeleton",
++      "template-detail",
++      "template-overview",
++      "template-inbox",
++      "template-settings",
++      "template-wizard",
++      "template-auth",
++    ],
+   },
+ ];
+ const COMPONENTS = GROUPS.flatMap((g) => g.components);
+ const esc = (s) => String(s).replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`);
+ 
+ const blocks = [
+   ...new Set(
+     readdirSync(dir)
+       .filter((f) => /-(dark|light)\.png$/.test(f))
+       .map((f) => f.replace(/-(dark|light)\.png$/, "")),
+diff --git a/apps/web/src/dev/catalog/reference-blocks.tsx b/apps/web/src/dev/catalog/reference-blocks.tsx
+index 4efed911..6e0003c7 100644
+--- a/apps/web/src/dev/catalog/reference-blocks.tsx
++++ b/apps/web/src/dev/catalog/reference-blocks.tsx
+@@ -911,42 +911,45 @@ function FormFieldView({ f }: { f: FixtureFormField }) {
+             description: r.description,
+             meta: r.policy,
+             checked: r.on,
+             onChange: noop,
+           }))}
+         />
+       );
+   }
+ }
+ 
+-function FormTemplateBody() {
++function FormTemplateBody({ loading }: { loading?: boolean }) {
+   useStatusBar(F.status.pageStatus);
+   return (
+     <FormPage
+-      header={{ path: F.path, title: F.title }}
++      // Loading (spec §5.3): the page knows its path's first segment, not the object or its title.
++      header={loading ? { path: F.path.slice(0, 1), title: "" } : { path: F.path, title: F.title }}
++      {...(loading ? { loading: true } : {})}
+       actionRow={{
+         unsaved: 2,
+         errors: 1,
+         cancel: { label: F.actionRow.discard, onSelect: noop },
+         primary: { label: F.actionRow.save, onSelect: noop },
+       }}
+     >
+       {F.sections.map((sec) => {
+         const [a, b, ...rest] = sec.fields;
+         const paired = a?.kind === "select" && b?.kind === "segmented";
+         return (
+           <FormSection
+             key={sec.title}
+             id={sec.title}
+             title={sec.title}
+             description={sec.description}
+             flush={a?.kind === "switches"}
++            {...(loading ? { loading: { fields: sec.fields.length } } : {})}
+           >
+             {paired ? (
+               <Grid columns={2} gap={12}>
+                 <FormFieldView f={a} />
+                 <FormFieldView f={b} />
+               </Grid>
+             ) : null}
+             {(paired ? rest : sec.fields).map((f) => (
+               <FormFieldView key={f.id} f={f} />
+             ))}
+@@ -961,20 +964,33 @@ function templateListBlocks(): ReactNode {
+   return (
+     <RefBlock id="template-list-page" width={TEMPLATE_W} height={TEMPLATE_H}>
+       <ShellFixture active="connectors" route="/connectors">
+         <ListTemplateBody />
+       </ShellFixture>
+     </RefBlock>
+   );
+ }
+ 
+ function templateFormBlocks(): ReactNode {
++  return (
++    <>
++      <RefBlock id="template-form-loading" width={TEMPLATE_W} height={TEMPLATE_H}>
++        <ShellFixture active="agents" route="/agents/研究助手/edit">
++          <FormTemplateBody loading />
++        </ShellFixture>
++      </RefBlock>
++      {templateFormPageBlock()}
++    </>
++  );
++}
++
++function templateFormPageBlock(): ReactNode {
+   return (
+     <RefBlock
+       id="template-form-page"
+       width={TEMPLATE_W}
+       height={TEMPLATE_H}
+       force={{
+         pseudo: ["focus-within"],
+         selector: '[data-part="textarea"]:not(:has([data-code]))',
+       }}
+     >
+diff --git a/apps/web/src/dev/catalog/routes.tsx b/apps/web/src/dev/catalog/routes.tsx
+index 9d71efd0..d3a3c468 100644
+--- a/apps/web/src/dev/catalog/routes.tsx
++++ b/apps/web/src/dev/catalog/routes.tsx
+@@ -42,20 +42,23 @@ export const CATALOG_ROUTES = [
+  */
+ export const REFERENCE_COMPONENTS = [
+   "page-header",
+   "status-bar",
+   "action-row",
+   "template-list",
+   "template-form",
+   "template-detail",
+   "template-overview",
+   "template-inbox",
++  "template-settings",
++  "template-wizard",
++  "template-auth",
+   "button",
+   "input",
+   "switch",
+   "segmented",
+   "table",
+   "icon",
+   "sidebar",
+   "stat-cards",
+   "filter-chip",
+   "prose",
+diff --git a/apps/web/src/dev/catalog/template-loading-blocks.tsx b/apps/web/src/dev/catalog/template-loading-blocks.tsx
+index 2d6da64a..c81b747a 100644
+--- a/apps/web/src/dev/catalog/template-loading-blocks.tsx
++++ b/apps/web/src/dev/catalog/template-loading-blocks.tsx
+@@ -1,25 +1,32 @@
+ "use client";
+ 
+ import {
++  AuthPage,
++  Button,
+   Card,
+   type Column,
+   DataTable,
+   DetailPage,
++  Field,
++  FormSection,
+   type HeaderAction,
+   InboxPage,
++  Input,
+   KeyValue,
+   ObjectList,
+   ObjectRow,
+   OverviewPage,
++  SettingsPage,
+   Stack,
+   Text,
++  WizardPage,
+ } from "@capybara-hq/design";
+ import type { ReactNode } from "react";
+ import { RefBlock } from "./ref-block";
+ 
+ // The loading states of the Detail, Overview and Inbox templates (spec §5.2, §5.6, §5.7). Each
+ // template's `-default` and `-loading` blocks come from one fixture (the same header, tabs,
+ // filters, inspector and metrics), so the part boxes of the two can be compared. The box is the
+ // 1280-wide content area without the sidebar.
+ 
+ const W = 1280;
+@@ -190,20 +197,146 @@ function inboxRecordsBlocks(): ReactNode {
+         <InboxPage
+           header={loadingHeader(PATH.slice(0, 1), 1)}
+           filters={FILTERS}
+           loading={{ list: "records", table: TABLE }}
+         />
+       </RefBlock>
+     </>
+   );
+ }
+ 
++// Settings, Wizard and Auth (spec §5.8, §5.9, §5.10). The loading blocks are what the page draws
++// while its data is on the way; the default ones are the loaded page with the same header, nav,
++// steps and field counts.
++
++const SETTINGS_NAV = [
++  {
++    group: "组织",
++    items: [
++      { id: "org", label: "组织", href: "/" },
++      { id: "env", label: "环境", href: "/" },
++      { id: "members", label: "成员", href: "/", count: 5 },
++    ],
++  },
++  { group: "计费", items: [{ id: "billing", label: "计费", href: "/" }] },
++];
++const SETTINGS_HEADER = { path: PATH.slice(0, 1), title: "设置" };
++const SETTINGS_ROW = {
++  unsaved: 1,
++  cancel: { label: "取消", onSelect: noop },
++  primary: { label: "保存", onSelect: noop },
++};
++
++function settingsBlocks(): ReactNode {
++  return (
++    <>
++      <RefBlock id="template-settings-default" width={W} height={H}>
++        <SettingsPage
++          header={SETTINGS_HEADER}
++          nav={SETTINGS_NAV}
++          activeNav="org"
++          actionRow={SETTINGS_ROW}
++        >
++          <FormSection id="org" title="组织信息" description="名称显示在顶栏与邀请邮件中。">
++            <Field label="组织名称">
++              <Input defaultValue="示例组织" />
++            </Field>
++            <Field label="时区">
++              <Input defaultValue="UTC+8 北京" />
++            </Field>
++          </FormSection>
++          <FormSection id="security" title="安全" description="登录与会话的规则。">
++            <Field label="会话时长">
++              <Input defaultValue="12 小时" />
++            </Field>
++          </FormSection>
++        </SettingsPage>
++      </RefBlock>
++      <RefBlock id="template-settings-loading" width={W} height={H}>
++        <SettingsPage
++          header={{ ...SETTINGS_HEADER, title: "" }}
++          nav={SETTINGS_NAV}
++          activeNav="org"
++          actionRow={SETTINGS_ROW}
++          loading={{ sections: [{ fields: 2 }, { fields: 1 }] }}
++        />
++      </RefBlock>
++    </>
++  );
++}
++
++const WIZARD_HEADER = { path: PATH.slice(0, 1), title: "接入模型" };
++const WIZARD_STEPS = ["选择供应商", "填写凭据", "测试连接", "完成"];
++const WIZARD_ROW = {
++  cancel: { label: "取消", onSelect: noop },
++  secondary: { label: "上一步", onSelect: noop },
++  primary: { label: "下一步", onSelect: noop },
++};
++
++function wizardBlocks(): ReactNode {
++  return (
++    <>
++      <RefBlock id="template-wizard-default" width={W} height={H}>
++        <WizardPage header={WIZARD_HEADER} steps={WIZARD_STEPS} current={1} actionRow={WIZARD_ROW}>
++          <Card title="填写凭据">
++            <Stack gap={16}>
++              <Field label="名称">
++                <Input defaultValue="anthropic" />
++              </Field>
++              <Field label="API Key">
++                <Input type="password" defaultValue="sk-ant" />
++              </Field>
++            </Stack>
++          </Card>
++        </WizardPage>
++      </RefBlock>
++      <RefBlock id="template-wizard-loading" width={W} height={H}>
++        <WizardPage
++          header={{ ...WIZARD_HEADER, title: "" }}
++          steps={WIZARD_STEPS}
++          current={1}
++          actionRow={WIZARD_ROW}
++          loading={{ fields: 2 }}
++        />
++      </RefBlock>
++    </>
++  );
++}
++
++function authBlocks(): ReactNode {
++  return (
++    <>
++      <RefBlock id="template-auth-default" width={W} height={H}>
++        <AuthPage title="登录" subtitle="示例组织">
++          <Stack gap={16}>
++            <Field label="账号">
++              <Input defaultValue="grant" />
++            </Field>
++            <Field label="密码">
++              <Input type="password" defaultValue="" />
++            </Field>
++            <Button variant="primary" density="prominent">
++              登录
++            </Button>
++          </Stack>
++        </AuthPage>
++      </RefBlock>
++      <RefBlock id="template-auth-loading" width={W} height={H}>
++        <AuthPage title="登录" subtitle="示例组织" loading={{ fields: 2 }} />
++      </RefBlock>
++    </>
++  );
++}
++
+ export const TEMPLATE_LOADING_BLOCKS = {
++  "template-settings": settingsBlocks,
++  "template-wizard": wizardBlocks,
++  "template-auth": authBlocks,
+   "template-detail": detailBlocks,
+   "template-overview": overviewBlocks,
+   "template-inbox": () => (
+     <>
+       {inboxBlocks()}
+       {inboxRecordsBlocks()}
+     </>
+   ),
+ } as const;
+diff --git a/apps/web/visual/accepted.ts b/apps/web/visual/accepted.ts
+index dff30697..50bbb14b 100644
+--- a/apps/web/visual/accepted.ts
++++ b/apps/web/visual/accepted.ts
+@@ -16,20 +16,23 @@ export const ACCEPTED: string[] = [
+   "stat-cards",
+   "status-bar",
+   "action-row",
+   "template-list",
+   "template-form",
+   // loading states of the Detail, Overview and Inbox templates (spec §5.2, §5.6, §5.7): blocks and
+   // size tables in place; the reference PNGs wait for the reference-update workflow
+   "template-detail",
+   "template-overview",
+   "template-inbox",
++  "template-settings",
++  "template-wizard",
++  "template-auth",
+   "prose",
+   "thinking-row",
+   "user-bubble",
+   "run-divider",
+   "tool-group",
+   "tool-row",
+   "diff-block",
+   "approval-block",
+   "question-block",
+   "connect-block",
+diff --git a/docs/design/reference/src/fill.js b/docs/design/reference/src/fill.js
+index 0e3dc8c8..ec1f1d65 100644
+--- a/docs/design/reference/src/fill.js
++++ b/docs/design/reference/src/fill.js
+@@ -322,20 +322,24 @@
+   function statusBar(o) {
+     const S = F.STATUS_FIXTURE;
+     const context = o.context || S.context;
+     const page = o.noPageStatus ? "" : o.pageStatus || S.pageStatus;
+     const pageSpan = page ? `<span class="r-ellipsis">${esc(page)}</span>` : "";
+     return `<footer class="r-status" role="status"><div class="r-status-left"><span class="r-ellipsis r-status-context">${esc(context)}</span>${pageSpan}</div><div class="r-status-right"><span>${esc(S.system)}</span><span>${esc(S.version)}</span><span>${esc(S.timeZone)}</span></div></footer>`;
+   }
+ 
+   function actionRow(o) {
+     const A = F.FORM_PAGE_FIXTURE.actionRow;
++    // Loading (spec §5.3): the row stays, nothing to count, the buttons disabled.
++    if (o.loading) {
++      return `<div class="r-actionrow"><span class="r-actionrow-text"></span><button class="r-btn" data-variant="default" disabled>${esc(A.discard)}</button><button class="r-btn" data-variant="primary" disabled>${esc(A.save)}</button></div>`;
++    }
+     if (o.clean) {
+       return `<div class="r-actionrow"><span class="r-actionrow-text">${esc(A.clean)}</span><button class="r-btn" data-variant="primary" disabled>${esc(A.save)}</button></div>`;
+     }
+     return `<div class="r-actionrow"><span class="r-dot" aria-hidden="true"></span><span class="r-actionrow-text">${esc(A.unsaved)} · <span class="r-fail-text">${esc(A.errors)}</span></span><button class="r-btn" data-variant="default">${esc(A.discard)}</button><button class="r-btn" data-variant="primary">${esc(A.save)}</button></div>`;
+   }
+ 
+   // ── Table ────────────────────────────────────────────────────────────────
+ 
+   const STATUS_ICON = { "needs-auth": "circle-alert", error: "circle-x", disabled: "ban" };
+ 
+@@ -419,44 +423,55 @@
+         return `<div class="r-switch-list">${f.rows
+           .map(
+             (r) =>
+               `<div class="r-switch-row"><div class="r-min0"><div class="r-ellipsis">${esc(r.name)}</div><div class="r-cell-desc">${esc(r.description)}</div></div><span class="r-muted r-small">${esc(r.policy)}</span><button class="r-switch" role="switch" aria-checked="${r.on}" aria-label="${esc(r.name)}"><span></span></button></div>`,
+           )
+           .join("")}</div>`;
+     }
+     return "";
+   }
+ 
+-  function formSections() {
++  /** A loading field (spec §5.3): the field head holds a 30% body slot, then a control-height box. */
++  function loadingField() {
++    return '<div class="r-field" data-part="loading-field"><div class="r-field-head"><div class="r-skel-text" data-part="skeleton-text" data-size="body" style="width:30%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div></div><div class="r-skel-box" data-part="skeleton-box" data-box="default"></div></div>';
++  }
++
++  function formSections(o = {}) {
+     return F.FORM_PAGE_FIXTURE.sections
+       .map((s) => {
++        if (o.loading) {
++          return `<section class="r-form-section"><div class="r-form-intro"><h2 class="r-h2">${esc(s.title)}</h2><p class="r-prose-small r-muted">${esc(s.description)}</p></div><div class="r-form-card">${s.fields.map(loadingField).join("")}</div></section>`;
++        }
+         const pairs = [];
+         const fields = s.fields.map(field);
+         // The model select and the effort control share a row (canvas FormPage).
+         if (s.fields[0]?.kind === "select" && s.fields[1]?.kind === "segmented") {
+           pairs.push(`<div class="r-field-pair">${fields[0]}${fields[1]}</div>`, ...fields.slice(2));
+         } else pairs.push(...fields);
+         const flush = s.fields[0]?.kind === "switches" ? " r-form-card-flush" : "";
+         return `<section class="r-form-section"><div class="r-form-intro"><h2 class="r-h2">${esc(s.title)}</h2><p class="r-prose-small r-muted">${esc(s.description)}</p></div><div class="r-form-card${flush}">${pairs.join("")}</div></section>`;
+       })
+       .join("");
+   }
+ 
+   // ── Templates ────────────────────────────────────────────────────────────
+ 
+   function listPage() {
+     return `<div class="r-app">${sidebar({ active: "connectors", activeConversation: null })}<main class="r-main"><div class="r-main-scroll"><div class="r-content" data-width="content">${pageHeader({ description: true, actions: true })}${stats({})}${toolbar()}${table({})}${pagination()}</div></div>${statusBar({})}</main></div>`;
+   }
+ 
+-  function formPage() {
++  function formPage(o = {}) {
+     const P = F.FORM_PAGE_FIXTURE;
+-    return `<div class="r-app">${sidebar({ active: "agents", activeConversation: null })}<main class="r-main"><div class="r-main-scroll"><div class="r-content" data-width="content">${pageHeader({ path: true, title: P.title })}${formSections()}</div></div>${actionRow({})}${statusBar({ context: P.status.context, pageStatus: P.status.pageStatus })}</main></div>`;
++    const head = o.loading
++      ? pageHeader({ loading: { actions: 0, tabs: 0 } })
++      : pageHeader({ path: true, title: P.title });
++    return `<div class="r-app">${sidebar({ active: "agents", activeConversation: null })}<main class="r-main"><div class="r-main-scroll"><div class="r-content" data-width="content">${head}${formSections(o)}</div></div>${actionRow(o)}${statusBar({ context: P.status.context, pageStatus: P.status.pageStatus })}</main></div>`;
+   }
+ 
+   function drawer(o) {
+     return `<div class="r-drawer-stage"><div class="r-drawer-page"><div class="r-drawer-bar"><button class="r-icon-btn" aria-label="${esc(F.SIDEBAR_COPY.menu)}" aria-expanded="true">${icon("menu")}</button><span class="r-ellipsis">${esc(F.LIST_PAGE_FIXTURE.title)}</span><button class="r-icon-btn r-drawer-bar-end" aria-label="${esc(F.SIDEBAR_COPY.search)} ${esc(F.SIDEBAR_COPY.searchShortcut)}">${icon("search")}</button></div><div class="r-drawer-body">${pageHeader({ description: true })}${stats({})}</div>${statusBar({ noPageStatus: true })}</div><div class="r-scrim"></div><div class="r-drawer" role="dialog" aria-modal="true" aria-label="导航">${sidebar({ ...o, mode: "drawer" })}</div></div>`;
+   }
+ 
+   // Below 960 in the setup frame: the setup home behind the scrim, the setup drawer over it; the
+   // drawer bar has no search (no command palette in the setup frame).
+   function setupDrawer(o) {
+     const S = F.SETUP_COPY;
+diff --git a/docs/design/reference/src/index.html b/docs/design/reference/src/index.html
+index 52866851..50b98fef 100644
+--- a/docs/design/reference/src/index.html
++++ b/docs/design/reference/src/index.html
+@@ -4,17 +4,17 @@
+ <meta charset="utf-8">
+ <title>Reference set</title>
+ <link rel="stylesheet" href="/design/styles/fonts.css">
+ <link rel="stylesheet" href="/design/styles/tokens.css">
+ <link rel="stylesheet" href="reference.css">
+ </head>
+ <body>
+ <main class="r-page r-index">
+ <h1>Reference set</h1>
+ <p>Sources of docs/design/reference/*.png. Rendered by apps/web/reference (pnpm --filter @capybara-hq/web reference:render).</p>
+-<ul><li><a href="sidebar.html">sidebar</a> (<a href="sidebar.html?theme=light">light</a>)</li><li><a href="page-header.html">page-header</a> (<a href="page-header.html?theme=light">light</a>)</li><li><a href="stat-cards.html">stat-cards</a> (<a href="stat-cards.html?theme=light">light</a>)</li><li><a href="status-bar.html">status-bar</a> (<a href="status-bar.html?theme=light">light</a>)</li><li><a href="action-row.html">action-row</a> (<a href="action-row.html?theme=light">light</a>)</li><li><a href="controls.html">controls</a> (<a href="controls.html?theme=light">light</a>)</li><li><a href="table.html">table</a> (<a href="table.html?theme=light">light</a>)</li><li><a href="icon.html">icon</a> (<a href="icon.html?theme=light">light</a>)</li><li><a href="template-list.html">template-list</a> (<a href="template-list.html?theme=light">light</a>)</li><li><a href="template-form.html">template-form</a> (<a href="template-form.html?theme=light">light</a>)</li><li><a href="roles.html">roles</a> (<a href="roles.html?theme=light">light</a>)</li><li><a href="error-detail.html">error-detail</a> (<a href="error-detail.html?theme=light">light</a>)</li><li><a href="file-picker.html">file-picker</a> (<a href="file-picker.html?theme=light">light</a>)</li><li><a href="repeater.html">repeater</a> (<a href="repeater.html?theme=light">light</a>)</li><li><a href="field-row.html">field-row</a> (<a href="field-row.html?theme=light">light</a>)</li><li><a href="key-value-editor.html">key-value-editor</a> (<a href="key-value-editor.html?theme=light">light</a>)</li><li><a href="skeleton.html">skeleton</a> (<a href="skeleton.html?theme=light">light</a>)</li><li><a href="template-detail.html">template-detail</a> (<a href="template-detail.html?theme=light">light</a>)</li><li><a href="template-overview.html">template-overview</a> (<a href="template-overview.html?theme=light">light</a>)</li><li><a href="template-inbox.html">template-inbox</a> (<a href="template-inbox.html?theme=light">light</a>)</li></ul>
++<ul><li><a href="sidebar.html">sidebar</a> (<a href="sidebar.html?theme=light">light</a>)</li><li><a href="page-header.html">page-header</a> (<a href="page-header.html?theme=light">light</a>)</li><li><a href="stat-cards.html">stat-cards</a> (<a href="stat-cards.html?theme=light">light</a>)</li><li><a href="status-bar.html">status-bar</a> (<a href="status-bar.html?theme=light">light</a>)</li><li><a href="action-row.html">action-row</a> (<a href="action-row.html?theme=light">light</a>)</li><li><a href="controls.html">controls</a> (<a href="controls.html?theme=light">light</a>)</li><li><a href="table.html">table</a> (<a href="table.html?theme=light">light</a>)</li><li><a href="icon.html">icon</a> (<a href="icon.html?theme=light">light</a>)</li><li><a href="template-list.html">template-list</a> (<a href="template-list.html?theme=light">light</a>)</li><li><a href="template-form.html">template-form</a> (<a href="template-form.html?theme=light">light</a>)</li><li><a href="roles.html">roles</a> (<a href="roles.html?theme=light">light</a>)</li><li><a href="error-detail.html">error-detail</a> (<a href="error-detail.html?theme=light">light</a>)</li><li><a href="file-picker.html">file-picker</a> (<a href="file-picker.html?theme=light">light</a>)</li><li><a href="repeater.html">repeater</a> (<a href="repeater.html?theme=light">light</a>)</li><li><a href="field-row.html">field-row</a> (<a href="field-row.html?theme=light">light</a>)</li><li><a href="key-value-editor.html">key-value-editor</a> (<a href="key-value-editor.html?theme=light">light</a>)</li><li><a href="skeleton.html">skeleton</a> (<a href="skeleton.html?theme=light">light</a>)</li><li><a href="template-detail.html">template-detail</a> (<a href="template-detail.html?theme=light">light</a>)</li><li><a href="template-overview.html">template-overview</a> (<a href="template-overview.html?theme=light">light</a>)</li><li><a href="template-inbox.html">template-inbox</a> (<a href="template-inbox.html?theme=light">light</a>)</li><li><a href="template-settings.html">template-settings</a> (<a href="template-settings.html?theme=light">light</a>)</li><li><a href="template-wizard.html">template-wizard</a> (<a href="template-wizard.html?theme=light">light</a>)</li><li><a href="template-auth.html">template-auth</a> (<a href="template-auth.html?theme=light">light</a>)</li></ul>
+ <h2 class="r-h2">Conversation page (UI refresh B)</h2>
+ <ul><li><a href="template-conversation.html">template-conversation</a> (<a href="template-conversation.html?theme=light">light</a>)</li><li><a href="title-bar.html">title-bar</a> (<a href="title-bar.html?theme=light">light</a>)</li><li><a href="composer.html">composer</a> (<a href="composer.html?theme=light">light</a>)</li><li><a href="picker-menu.html">picker-menu</a> (<a href="picker-menu.html?theme=light">light</a>)</li><li><a href="prose.html">prose</a> (<a href="prose.html?theme=light">light</a>)</li><li><a href="thinking-row.html">thinking-row</a> (<a href="thinking-row.html?theme=light">light</a>)</li><li><a href="user-bubble.html">user-bubble</a> (<a href="user-bubble.html?theme=light">light</a>)</li><li><a href="run-divider.html">run-divider</a> (<a href="run-divider.html?theme=light">light</a>)</li><li><a href="tool-group.html">tool-group</a> (<a href="tool-group.html?theme=light">light</a>)</li><li><a href="tool-row.html">tool-row</a> (<a href="tool-row.html?theme=light">light</a>)</li><li><a href="diff-block.html">diff-block</a> (<a href="diff-block.html?theme=light">light</a>)</li><li><a href="approval-block.html">approval-block</a> (<a href="approval-block.html?theme=light">light</a>)</li><li><a href="question-block.html">question-block</a> (<a href="question-block.html?theme=light">light</a>)</li><li><a href="connect-block.html">connect-block</a> (<a href="connect-block.html?theme=light">light</a>)</li><li><a href="queued-message.html">queued-message</a> (<a href="queued-message.html?theme=light">light</a>)</li><li><a href="subagent-group.html">subagent-group</a> (<a href="subagent-group.html?theme=light">light</a>)</li><li><a href="inline-card.html">inline-card</a> (<a href="inline-card.html?theme=light">light</a>)</li><li><a href="property-section.html">property-section</a> (<a href="property-section.html?theme=light">light</a>)</li><li><a href="right-panel.html">right-panel</a> (<a href="right-panel.html?theme=light">light</a>)</li><li><a href="file-card.html">file-card</a> (<a href="file-card.html?theme=light">light</a>)</li><li><a href="file-outputs.html">file-outputs</a> (<a href="file-outputs.html?theme=light">light</a>)</li><li><a href="attachment-strip.html">attachment-strip</a> (<a href="attachment-strip.html?theme=light">light</a>)</li><li><a href="file-preview.html">file-preview</a> (<a href="file-preview.html?theme=light">light</a>)</li><li><a href="run-row.html">run-row</a> (<a href="run-row.html?theme=light">light</a>)</li></ul>
+ </main>
+ <script src="fill.js"></script>
+ </body>
+ </html>
+diff --git a/docs/design/reference/src/reference.css b/docs/design/reference/src/reference.css
+index 6e6083f1..33e3f412 100644
+--- a/docs/design/reference/src/reference.css
++++ b/docs/design/reference/src/reference.css
+@@ -3609,10 +3609,165 @@ textarea {
+ .r-lrow:first-child {
+   border-top: 0;
+ }
+ .r-lrow-text {
+   display: flex;
+   flex: 1;
+   flex-direction: column;
+   gap: 2px;
+   min-width: 0;
+ }
++
++/* Form, settings, wizard and auth loading states (spec §5.3, §5.8, §5.9, §5.10) */
++.r-skel-text[data-size="heading"] {
++  height: var(--cb-type-h2-line);
++}
++.r-skel-text[data-size="metric"] {
++  height: var(--cb-type-metric-line);
++}
++.r-field-head {
++  display: flex;
++  align-items: center;
++  min-height: 20px;
++}
++.r-tpl-form {
++  display: block;
++  padding: var(--cb-space-6) var(--cb-content-pad, 32px);
++}
++.r-set-grid {
++  display: grid;
++  grid-template-columns: 200px minmax(0, 1fr);
++  gap: var(--cb-space-6);
++  align-items: start;
++}
++.r-set-content {
++  display: flex;
++  flex-direction: column;
++  gap: var(--cb-space-6);
++  min-width: 0;
++}
++.r-set-nav,
++.r-set-section {
++  display: flex;
++  flex-direction: column;
++  gap: 2px;
++}
++.r-set-group {
++  padding: var(--cb-space-3) 10px 2px;
++  font-size: var(--cb-type-micro-size);
++  line-height: var(--cb-type-micro-line);
++  letter-spacing: 0.06em;
++  color: var(--cb-faint);
++}
++.r-set-section:first-child > .r-set-group {
++  padding-top: 0;
++}
++.r-set-item {
++  display: flex;
++  align-items: center;
++  justify-content: space-between;
++  height: 30px;
++  padding: 0 10px;
++  border-radius: var(--cb-radius-md);
++  color: var(--cb-muted);
++  text-decoration: none;
++}
++.r-set-item[data-current="true"] {
++  background: var(--cb-sidebar-active);
++  color: var(--cb-ink);
++  font-weight: 600;
++}
++.r-set-count {
++  font-size: var(--cb-type-micro-size);
++  font-weight: 400;
++  color: var(--cb-faint);
++}
++.r-wiz {
++  display: flex;
++  flex-direction: column;
++}
++.r-wsteps {
++  display: flex;
++  flex-wrap: wrap;
++  gap: 16px;
++  margin: 0 0 24px;
++  padding: 0;
++  list-style: none;
++}
++.r-wstep {
++  display: flex;
++  align-items: center;
++  gap: 8px;
++  color: var(--cb-faint);
++}
++.r-wstep[data-state="current"] {
++  color: var(--cb-ink);
++  font-weight: 600;
++}
++.r-wstep[data-state="done"] {
++  color: var(--cb-muted);
++}
++.r-wstep-mark {
++  display: inline-flex;
++  align-items: center;
++  justify-content: center;
++  width: 24px;
++  height: 24px;
++  border: 1px solid var(--cb-line-strong);
++}
++.r-wstep[data-state="current"] .r-wstep-mark {
++  border-color: var(--cb-accent);
++  color: var(--cb-accent);
++}
++.r-wstep[data-state="done"] .r-wstep-mark {
++  color: var(--cb-ok);
++}
++.r-lcard-fields {
++  gap: var(--cb-space-4);
++}
++.r-auth {
++  display: flex;
++  justify-content: space-between;
++  height: 100%;
++  background: var(--cb-bg);
++}
++.r-auth-side {
++  flex: none;
++  width: 96px;
++}
++.r-auth-main {
++  display: flex;
++  flex: 1;
++  flex-direction: column;
++  align-items: center;
++  justify-content: center;
++  gap: 24px;
++  min-width: 0;
++  padding: 24px 16px 72px;
++}
++.r-auth-card {
++  box-sizing: border-box;
++  width: min(400px, 100%);
++  background: var(--cb-panel);
++  border: 1px solid var(--cb-line-card);
++  border-radius: var(--cb-radius-md);
++  padding: var(--cb-space-4);
++}
++.r-auth-head {
++  display: flex;
++  flex-direction: column;
++  gap: 4px;
++  margin-bottom: 16px;
++}
++.r-auth-title {
++  margin: 0;
++  font-size: var(--cb-type-h1-size);
++  line-height: var(--cb-type-h1-line);
++}
++.r-auth-sub {
++  margin: 0;
++}
++.r-auth-body {
++  display: flex;
++  flex-direction: column;
++  gap: 16px;
++}
+diff --git a/docs/design/reference/src/template-auth.html b/docs/design/reference/src/template-auth.html
+new file mode 100644
+index 00000000..0db0923c
+--- /dev/null
++++ b/docs/design/reference/src/template-auth.html
+@@ -0,0 +1,26 @@
++<!doctype html>
++<html lang="zh-CN" data-theme="dark">
++<head>
++<meta charset="utf-8">
++<title>Auth template · reference</title>
++<link rel="stylesheet" href="/design/styles/fonts.css">
++<link rel="stylesheet" href="/design/styles/tokens.css">
++<link rel="stylesheet" href="reference.css">
++</head>
++<body>
++<main class="r-page">
++<h1>Auth template</h1>
++<p>Loading state (spec §5.10): the card keeps its place with the title and subtitle, its body is field placeholders and the prominent submit button box. The dither columns of the loaded page are drawn empty here. Nothing animates.</p>
++<div class="r-blocks">
++<section data-ref-block="template-auth-loading" style="width:1280px;height:640px">
++  <div class="r-auth" aria-busy="true">
++    <div class="r-auth-side"></div>
++    <div class="r-auth-main"><div class="r-auth-logo"><svg class="r-logo" width="84" height="60" viewBox="0 0 14 10" shape-rendering="crispEdges" aria-hidden="true"><path d="M10 0h1v1h-1zM9 1h3v1h-3zM3 2h11v1h-11zM2 3h9v1h-9zM12 3h2v1h-2zM1 4h13v1h-13zM1 5h13v1h-13zM1 6h12v1h-12zM2 7h10v1h-10zM2 8h2v1h-2zM6 8h1v1h-1zM9 8h2v1h-2zM2 9h2v1h-2zM6 9h1v1h-1zM9 9h2v1h-2z"/></svg></div><div class="r-auth-card" data-part="auth-card"><div class="r-auth-head"><h1 class="r-auth-title">登录</h1><p class="r-muted r-auth-sub">示例组织</p></div><div class="r-auth-body"><div class="r-field" data-part="loading-field"><div class="r-field-head"><div class="r-skel-text" data-part="skeleton-text" data-size="body" style="width:30%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div></div><div class="r-skel-box" data-part="skeleton-box" data-box="default"></div></div><div class="r-field" data-part="loading-field"><div class="r-field-head"><div class="r-skel-text" data-part="skeleton-text" data-size="body" style="width:30%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div></div><div class="r-skel-box" data-part="skeleton-box" data-box="default"></div></div><div class="r-skel-box" data-part="skeleton-box" data-box="prominent"></div></div></div></div>
++    <div class="r-auth-side"></div>
++  </div>
++</section>
++</div>
++</main>
++<script src="fill.js"></script>
++</body>
++</html>
+diff --git a/docs/design/reference/src/template-form.html b/docs/design/reference/src/template-form.html
+index 483d60db..cb02757f 100644
+--- a/docs/design/reference/src/template-form.html
++++ b/docs/design/reference/src/template-form.html
+@@ -3,20 +3,23 @@
+ <head>
+ <meta charset="utf-8">
+ <title>Form page template · reference</title>
+ <link rel="stylesheet" href="/design/styles/fonts.css">
+ <link rel="stylesheet" href="/design/styles/tokens.css">
+ <link rel="stylesheet" href="reference.css">
+ </head>
+ <body>
+ <main class="r-page">
+ <h1>Form page template</h1>
+-<p>Sidebar + content (content width 1120): path header, sections (intro left, field card right, no dividers); action row above the status bar.</p>
++<p>Sidebar + content (content width 1120): path header, sections (intro left, field card right, no dividers); action row above the status bar. Loading (spec §5.3): the header keeps its rows, each section keeps its title and description and draws field placeholders (a label slot and a control-height box), the action row stays with disabled buttons. Nothing animates.</p>
+ <div class="r-blocks">
+ <section data-ref-block="template-form-page" style="width:1280px;height:820px">
+   <template data-fixture="form-page"></template>
+ </section>
++<section data-ref-block="template-form-loading" style="width:1280px;height:820px">
++  <template data-fixture="form-page" data-opts='{"loading": true}'></template>
++</section>
+ </div>
+ </main>
+ <script src="fill.js"></script>
+ </body>
+ </html>
+diff --git a/docs/design/reference/src/template-settings.html b/docs/design/reference/src/template-settings.html
+new file mode 100644
+index 00000000..625d2403
+--- /dev/null
++++ b/docs/design/reference/src/template-settings.html
+@@ -0,0 +1,26 @@
++<!doctype html>
++<html lang="zh-CN" data-theme="dark">
++<head>
++<meta charset="utf-8">
++<title>Settings template · reference</title>
++<link rel="stylesheet" href="/design/styles/fonts.css">
++<link rel="stylesheet" href="/design/styles/tokens.css">
++<link rel="stylesheet" href="reference.css">
++</head>
++<body>
++<main class="r-page">
++<h1>Settings template</h1>
++<p>Loading state (spec §5.8): the header keeps its rows, the sub-nav is real, each section draws a heading slot, a description slot and field placeholders, the action row stays with disabled buttons. Nothing animates.</p>
++<div class="r-blocks">
++<section data-ref-block="template-settings-loading" style="width:1280px;height:640px">
++  <div class="r-tpl" aria-busy="true">
++    <div class="r-tpl-head"><template data-fixture="page-header" data-opts='{"loading": {"actions": 0, "tabs": 0}}'></template></div>
++    <div class="r-tpl-body r-tpl-form"><div class="r-set-grid"><nav class="r-set-nav" data-part="settings-nav" aria-label="设置导航"><div class="r-set-section"><span class="r-set-group">组织</span><a class="r-set-item" data-current="true" href="#"><span>组织</span></a><a class="r-set-item" href="#"><span>环境</span></a><a class="r-set-item" href="#"><span>成员</span><span class="r-set-count">5</span></a></div><div class="r-set-section"><span class="r-set-group">计费</span><a class="r-set-item" href="#"><span>计费</span></a></div></nav><div class="r-set-content"><section class="r-form-section"><div class="r-form-intro"><div class="r-skel-text" data-part="skeleton-text" data-size="heading" style="width:45%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div><div class="r-skel-text" data-part="skeleton-text" data-size="body" style="width:70%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div></div><div class="r-form-card"><div class="r-field" data-part="loading-field"><div class="r-field-head"><div class="r-skel-text" data-part="skeleton-text" data-size="body" style="width:30%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div></div><div class="r-skel-box" data-part="skeleton-box" data-box="default"></div></div><div class="r-field" data-part="loading-field"><div class="r-field-head"><div class="r-skel-text" data-part="skeleton-text" data-size="body" style="width:30%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div></div><div class="r-skel-box" data-part="skeleton-box" data-box="default"></div></div></div></section><section class="r-form-section"><div class="r-form-intro"><div class="r-skel-text" data-part="skeleton-text" data-size="heading" style="width:45%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div><div class="r-skel-text" data-part="skeleton-text" data-size="body" style="width:70%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div></div><div class="r-form-card"><div class="r-field" data-part="loading-field"><div class="r-field-head"><div class="r-skel-text" data-part="skeleton-text" data-size="body" style="width:30%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div></div><div class="r-skel-box" data-part="skeleton-box" data-box="default"></div></div></div></section></div></div></div>
++    <div class="r-actionrow"><span class="r-actionrow-text"></span><button class="r-btn" data-variant="default" disabled>取消</button><button class="r-btn" data-variant="primary" disabled>保存</button></div>
++  </div>
++</section>
++</div>
++</main>
++<script src="fill.js"></script>
++</body>
++</html>
+diff --git a/docs/design/reference/src/template-wizard.html b/docs/design/reference/src/template-wizard.html
+new file mode 100644
+index 00000000..15c1c726
+--- /dev/null
++++ b/docs/design/reference/src/template-wizard.html
+@@ -0,0 +1,26 @@
++<!doctype html>
++<html lang="zh-CN" data-theme="dark">
++<head>
++<meta charset="utf-8">
++<title>Wizard template · reference</title>
++<link rel="stylesheet" href="/design/styles/fonts.css">
++<link rel="stylesheet" href="/design/styles/tokens.css">
++<link rel="stylesheet" href="reference.css">
++</head>
++<body>
++<main class="r-page">
++<h1>Wizard template</h1>
++<p>Loading state (spec §5.9): the header keeps its rows, the step bar is real, the step body is one card of field placeholders, the action row stays with disabled buttons. Nothing animates.</p>
++<div class="r-blocks">
++<section data-ref-block="template-wizard-loading" style="width:1280px;height:640px">
++  <div class="r-tpl" aria-busy="true">
++    <div class="r-tpl-head"><template data-fixture="page-header" data-opts='{"loading": {"actions": 0, "tabs": 0}}'></template></div>
++    <div class="r-tpl-body r-tpl-form"><div class="r-wiz"><ol class="r-wsteps" aria-label="步骤"><li class="r-wstep" data-state="done"><span class="r-wstep-mark"><i data-icon="check" data-size="12"></i></span><span>选择供应商</span></li><li class="r-wstep" data-state="current"><span class="r-wstep-mark">2</span><span>填写凭据</span></li><li class="r-wstep" data-state="todo"><span class="r-wstep-mark">3</span><span>测试连接</span></li><li class="r-wstep" data-state="todo"><span class="r-wstep-mark">4</span><span>完成</span></li></ol><section class="r-lcard"><header class="r-lcard-head"><div class="r-skel-text" data-part="skeleton-text" data-size="body" style="width:30%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div></header><div class="r-lcard-body r-lcard-fields"><div class="r-field" data-part="loading-field"><div class="r-field-head"><div class="r-skel-text" data-part="skeleton-text" data-size="body" style="width:30%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div></div><div class="r-skel-box" data-part="skeleton-box" data-box="default"></div></div><div class="r-field" data-part="loading-field"><div class="r-field-head"><div class="r-skel-text" data-part="skeleton-text" data-size="body" style="width:30%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div></div><div class="r-skel-box" data-part="skeleton-box" data-box="default"></div></div></div></section></div></div>
++    <div class="r-actionrow"><span class="r-actionrow-text"></span><button class="r-btn" data-variant="default" disabled>取消</button><button class="r-btn" data-variant="default" disabled>上一步</button><button class="r-btn" data-variant="primary" disabled>下一步</button></div>
++  </div>
++</section>
++</div>
++</main>
++<script src="fill.js"></script>
++</body>
++</html>
+diff --git a/docs/design/spec.md b/docs/design/spec.md
+index 1874280b..6dea6841 100644
+--- a/docs/design/spec.md
++++ b/docs/design/spec.md
+@@ -380,30 +380,37 @@ States: `default`, `loading`
+ | loading-inspector-row | loading | height | type.body.line |
+ 
+ ### 5.3 Form (T4)
+ - PageHeader: path ending with the object's name (`new` for a new one); title "Create X" + draft badge; only auxiliary actions on the right (such as "Import from YAML").
+ - No anchor navigation (the Centered body has none, §4.3).
+ - Sections: a two-column grid, the left column 240 wide with the section title (`h2`) and a description (`prose-small` `muted`), the right column the fields on a `panel` card with radius `md`, padding `space.4`, `space.3` between fields. Sections are separated by `space.6` of spacing, **not by lines**; rows inside a list of switches are divided by `line-soft`.
+ - Fields: label on top (`body` `ink`; required marked with an accent `*`, optional marked "Optional" in faint); controls `default` density; help text and error message below (`small`); on error the border is `fail` and the message starts with the `circle-alert` icon and gives an actionable suggestion.
+ - The ActionRow is always present: Cancel · Save draft (⌘S) · Publish.
+ - **Create forms** (`FormPage create`, a new object): focus starts on the first field; the ActionRow never says "No unsaved changes" (nothing exists yet to be unchanged; typed fields still count as unsaved and guard leaving); the primary is disabled until the form is valid (the required fields filled), as in a create dialog. A create form whose prerequisite is missing (no channel extension enabled for 新建渠道) draws only the `EmptyState` with the next step, never the form.
+ 
++- **Loading** (`FormPage.loading`, a flag; `FormSection.loading`, `{ fields }`; spec §7.1 of the web query cache design): every region keeps its box. The header is its loading state (§4.2: the path the page knows, a title bar when the title is not known yet). Each section is the page's own `FormSection`, so the page passes its static section list and a section whose data is ready renders for real next to loading ones: a loading section keeps its title and description and draws `fields` field placeholders in its card in place of `children`. A field placeholder is the loaded `.cb-field` itself: a `body` slot (30%) in the field head where the label is, then a control-height box (`control.default`) directly in the field, so the box has whatever width the field's rule gives a control (never a width of its own). The ActionRow stays, its buttons disabled and with no unsaved or error count. A flush section (a SwitchList) draws its placeholders on the padded card. One busy announcement (§6.29); a loading section outside a loading page announces itself. Nothing animates.
++
+ <!-- states: template-form -->
+-States: `page`
++States: `page`, `loading`
+ 
+ <!-- size-table: template-form -->
+ | Part | State | Property | Value |
+ |---|---|---|---|
+ | sidebar | page | width | layout.sidebar |
+ | content | page | max-width | layout.content |
+ | action-row | page | height | layout.action-row |
+ | status-bar | page | height | layout.status-bar |
++| sidebar | loading | width | layout.sidebar |
++| content | loading | max-width | layout.content |
++| action-row | loading | height | layout.action-row |
++| skeleton-box[data-box=default] | loading | height | control.default |
++| skeleton-text[data-size=body] | loading | height | type.body.line |
+ 
+ ### 5.4 Conversation (T7)
+ 
+ `ConversationPage` (it replaced `PlaygroundPage`, which only the conversation page used; removed with UI refresh B). Signed off with reference set B on 2026-10-27; UI refresh spec §5.
+ 
+ - **Columns**: the sidebar (§4.1) | the middle column | the right area.
+   - The **middle column** holds, top to bottom: the title bar (§6.16.1), the thread (centered, at most `layout.chat` wide, gutters `layout.gutter`, padding `space.4` on top, items `space.3` apart, following the bottom while the reader is at the bottom; it reserves a classic scrollbar's gutter on both sides, `scrollbar-gutter: stable both-edges`, so it keeps the composer's center line whether or not it scrolls), the composer (§6.16.2, at most `layout.chat` plus the gutters wide, centered, `space.3` from the status bar) and the status bar (§4.4). It is never narrower than `layout.chat-min`, except **below 640**, where it fills the window and the title bar, the thread and the composer use `space.4` (16) gutters, so the composer, its send button and the user bubbles never run past the right edge.
+   - The **right area** holds one thing at a time: either the **properties panel** (§6.16.17), which sits *inside* the middle column under its title bar so the title bar spans thread and properties, or **one right panel** (§6.16.18), full height beside the middle column, whose title bar then narrows with it. Opening one closes the other; "none" is the default.
+ - **Narrow windows**: below 1280 (where the sidebar becomes the rail, §4.3) the right area is a right-side Sheet over the page (`layout.panel` wide, `shadow-sheet`, a `scrim` behind it), closed by Esc, its close button or a click on the scrim; the server render and hydration cannot know the window, so below 1280 a CSS media query hides the inline right area until the first client render makes it the Sheet (the page never scrolls sideways, no flash). At 1280 and above it sits beside the thread; with the full sidebar at exactly 1280 the panel narrows to 544 so the thread keeps `layout.chat-min` (maintainer ruling 2026-10-27).
+ - **New conversation**: nothing is created until the first send. The title bar shows "新会话" / "New conversation"; the thread is replaced by a centered column (`layout.chat` wide): the agent's name (`h2`), its description (`prose-small` `muted`) and the composer with the agent picker open for choice; the status bar shows only the context and the version.
+@@ -459,20 +466,64 @@ States: `default`, `loading`, `default-records`, `loading-records`
+ <!-- size-table: template-inbox -->
+ | Part | State | Property | Value |
+ |---|---|---|---|
+ | content | default | max-width | layout.content |
+ | content | loading | max-width | layout.content |
+ | content | default-records | max-width | layout.content |
+ | content | loading-records | max-width | layout.content |
+ | loading-row | loading | height | 64 |
+ | skeleton-box[data-box=mark] | loading | height | 36 |
+ 
++### 5.8 Settings (T5)
++- **Loading** (`SettingsPage.loading`, `{ sections? }`): the header is its loading state (§4.2); the sub-nav is real (static per page) and so is the header's `description`; an ActionRow the page passes stays with its buttons disabled. `sections` (one entry per section: `fields`, and the `title` / `description` the page already knows) draws each section in the `FormSection` frame (§5.3) in place of `children`: a title the page does not know is an h2-sized slot (`SkeletonText` `heading`, 45%), a description it does not know a `body` slot (70%), then `fields` field placeholders (§5.3). Without `sections` the children render as they are, each `FormSection` or list saying for itself whether it is loading. One busy announcement (§6.29). Nothing animates.
++
++<!-- states: template-settings -->
++States: `default`, `loading`
++
++<!-- size-table: template-settings -->
++| Part | State | Property | Value |
++|---|---|---|---|
++| content | default | max-width | layout.content |
++| content | loading | max-width | layout.content |
++| settings-nav | default | width | 200 |
++| settings-nav | loading | width | 200 |
++| skeleton-box[data-box=default] | loading | height | control.default |
++| skeleton-text[data-size=heading] | loading | height | type.h2.line |
++
++### 5.9 Wizard (T9)
++- **Loading** (`WizardPage.loading`, `{ fields }`): the header is its loading state (§4.2); the step bar is real (the steps are static); the ActionRow stays with its buttons disabled; the step's body is one card (the `panel` card of §5.2 with a 30% `body` slot as its title) holding `fields` field placeholders (§5.3) `space.4` apart, in place of `children`. One busy announcement (§6.29). Nothing animates.
++
++<!-- states: template-wizard -->
++States: `default`, `loading`
++
++<!-- size-table: template-wizard -->
++| Part | State | Property | Value |
++|---|---|---|---|
++| content | default | max-width | layout.content |
++| content | loading | max-width | layout.content |
++| action-row | loading | height | layout.action-row |
++| skeleton-box[data-box=default] | loading | height | control.default |
++
++### 5.10 Auth (T10)
++- **Loading** (`AuthPage.loading`, `{ fields }`): the page keeps its frame: the two dither columns, the logo, the 400 px card with the title and subtitle the page knows (an empty `title` is an h1-sized bar), and its `footer` and `preferences`. The card's body is `fields` field placeholders (§5.3) and the submit button's box (`prominent`, §2.5), `space.4` apart, in place of `children`. One busy announcement (§6.29). Nothing animates.
++
++<!-- states: template-auth -->
++States: `default`, `loading`
++
++<!-- size-table: template-auth -->
++| Part | State | Property | Value |
++|---|---|---|---|
++| auth-card | default | width | 400 |
++| auth-card | loading | width | 400 |
++| skeleton-box[data-box=default] | loading | height | control.default |
++| skeleton-box[data-box=prominent] | loading | height | control.prominent |
++
+ ---
+ 
+ ## 6. Components
+ 
+ All components provide these states where applicable: default, hover, pressed, focus, disabled and loading, in both dark and light. A component that is part of the reference set has a **state list** and a **size table** in the machine-readable formats of §9.2; `/dev/ui` renders one block per listed state with the same id.
+ 
+ Every glyph in this section is an `Icon` of §2.6 (rule `design-char-icon`).
+ 
+ ### 6.1 Button
+ 
+diff --git a/packages/design/src/display/skeleton.tsx b/packages/design/src/display/skeleton.tsx
+index 744c6343..01fc270f 100644
+--- a/packages/design/src/display/skeleton.tsx
++++ b/packages/design/src/display/skeleton.tsx
+@@ -11,28 +11,28 @@ const InGroup = createContext(false);
+ export function useSkeletonAnnounces(): boolean {
+   return !useContext(InGroup);
+ }
+ 
+ /** The hidden "正在加载 / Loading" a busy region carries. */
+ export function SkeletonAnnouncement() {
+   const t = useDesignT();
+   return <span className="cb-sr-only">{t("table.loading")}</span>;
+ }
+ 
+-export type SkeletonTextSize = "body" | "small" | "title" | "metric";
++export type SkeletonTextSize = "body" | "small" | "title" | "metric" | "heading";
+ export type SkeletonTextWidth = "30%" | "45%" | "55%" | "70%" | "100%" | number;
+ 
+ const px = (w: SkeletonTextWidth) => (typeof w === "number" ? `${w}px` : w);
+ 
+ /**
+  * One text placeholder (spec §6.29): a slot exactly one line box of its type size high (`body`,
+- * `small`, `title` (the h1 size) or `metric` (the StatCard value size)), so the layout is the
++ * `small`, `title` (the h1 size), `heading` (the h2 size) or `metric` (the StatCard value size)), so the layout is the
+  * loaded one, holding a bar (`space.3` high, `selected`, radius `sm`) centred in it. `width` is the slot's and the bar's. Decorative:
+  * the group announces.
+  */
+ export function SkeletonText({
+   width,
+   size = "body",
+ }: {
+   width: SkeletonTextWidth;
+   size?: SkeletonTextSize;
+ }) {
+diff --git a/packages/design/src/shell/action-row.tsx b/packages/design/src/shell/action-row.tsx
+index baaeae46..55be0ecc 100644
+--- a/packages/design/src/shell/action-row.tsx
++++ b/packages/design/src/shell/action-row.tsx
+@@ -6,21 +6,21 @@ export type ButtonSpec = {
+   onSelect(): void;
+   shortcut?: string;
+   loading?: boolean;
+   disabled?: boolean;
+ };
+ 
+ export type ActionRowProps = {
+   /** Unsaved changes; `0` reads "No unsaved changes", leaving it out shows nothing. */
+   unsaved?: number;
+   errors?: number;
+-  cancel?: { label: string; onSelect(): void };
++  cancel?: { label: string; onSelect(): void; disabled?: boolean };
+   secondary?: ButtonSpec;
+   primary: ButtonSpec;
+ };
+ 
+ function optional(b: ButtonSpec) {
+   return {
+     ...(b.shortcut !== undefined ? { shortcut: b.shortcut } : {}),
+     ...(b.loading !== undefined ? { loading: b.loading } : {}),
+     ...(b.disabled !== undefined ? { disabled: b.disabled } : {}),
+   };
+@@ -54,21 +54,26 @@ export function ActionRow({ unsaved, errors = 0, cancel, secondary, primary }: A
+                 <span className="cb-actionrow-errors" data-part="action-row-errors">
+                   {fill("shell.errors", errors)}
+                 </span>
+               ) : null}
+             </span>
+           ) : null}
+           {unsaved === 0 && errors === 0 ? <span>{t("shell.clean")}</span> : null}
+         </span>
+         <span className="cb-actionrow-actions">
+           {cancel ? (
+-            <Button variant="default" density="default" onClick={cancel.onSelect}>
++            <Button
++              variant="default"
++              density="default"
++              {...(cancel.disabled ? { disabled: true } : {})}
++              onClick={cancel.onSelect}
++            >
+               {cancel.label}
+             </Button>
+           ) : null}
+           {secondary ? (
+             <Button
+               variant="default"
+               density="default"
+               {...optional(secondary)}
+               onClick={secondary.onSelect}
+             >
+diff --git a/packages/design/src/styles/display.css b/packages/design/src/styles/display.css
+index 2eee72a8..f16aad43 100644
+--- a/packages/design/src/styles/display.css
++++ b/packages/design/src/styles/display.css
+@@ -307,20 +307,23 @@
+ }
+ .cb-skeleton-text[data-size="body"] {
+   height: var(--cb-type-body-line);
+ }
+ .cb-skeleton-text[data-size="small"] {
+   height: var(--cb-type-small-line);
+ }
+ .cb-skeleton-text[data-size="title"] {
+   height: var(--cb-type-h1-line);
+ }
++.cb-skeleton-text[data-size="heading"] {
++  height: var(--cb-type-h2-line);
++}
+ .cb-skeleton-text[data-size="metric"] {
+   height: var(--cb-type-metric-line);
+ }
+ .cb-skeleton-box {
+   display: block;
+   max-width: 100%;
+   border-radius: var(--cb-radius-sm);
+   background: var(--cb-selected);
+ }
+ .cb-skeleton-box[data-box="dense"] {
+diff --git a/packages/design/src/styles/templates.css b/packages/design/src/styles/templates.css
+index 576f768d..a39a3358 100644
+--- a/packages/design/src/styles/templates.css
++++ b/packages/design/src/styles/templates.css
+@@ -241,20 +241,25 @@
+ /* Auth：无 Shell，居中卡片 + 两侧 Dither */
+ .cb-auth {
+   position: relative;
+   flex-direction: row;
+   align-items: stretch;
+   justify-content: space-between;
+   min-height: 100vh;
+   overflow: hidden;
+   background: var(--cb-bg);
+ }
++/* Inside a reference block the page fills the block instead of the window. */
++.cb-ref-block .cb-auth {
++  height: 100%;
++  min-height: 0;
++}
+ .cb-auth-side {
+   flex: none;
+   width: 96px;
+   overflow: hidden;
+ }
+ .cb-auth-side[data-side="right"] {
+   display: flex;
+   justify-content: flex-end;
+ }
+ .cb-auth-main {
+diff --git a/packages/design/src/templates/auth-page.tsx b/packages/design/src/templates/auth-page.tsx
+index 631f41ae..f7db5c16 100644
+--- a/packages/design/src/templates/auth-page.tsx
++++ b/packages/design/src/templates/auth-page.tsx
+@@ -1,56 +1,82 @@
+ import type { ReactNode } from "react";
+ import { Dither, Logo } from "../display/index";
+-import { Card, Text } from "../layout/index";
++import { SkeletonBox, SkeletonGroup, SkeletonText } from "../display/skeleton";
++import { Card, Stack, Text } from "../layout/index";
++import { useDesignT } from "../provider";
+ import { PreferenceBar, type PreferenceBarProps } from "../shell/preference-bar";
++import { LoadingFields } from "./frame";
+ 
+ /**
+  * T10 auth: no shell, a centered 400-wide card between two dither columns (Dither is used only
+  * here), the optional `footer` under the card. `preferences` (language and theme) sit in the
+- * bottom-right corner, just inside the right dither column.
++ * bottom-right corner, just inside the right dither column. `loading` keeps the frame, the dither
++ * columns, the logo and the card, with what the page knows (the title, the subtitle) real, and
++ * draws `fields` field placeholders and the prominent submit button's box in the card in place of
++ * `children` (one busy announcement).
++ * A title the page does not know yet (an empty string) is a bar.
+  */
+ export function AuthPage({
+   title,
+   subtitle,
+   footer,
+   preferences,
++  loading,
+   children,
+ }: {
+   title: string;
+   subtitle?: string;
+   footer?: ReactNode;
+   preferences?: PreferenceBarProps;
++  loading?: { fields: number };
+   children?: ReactNode;
+ }) {
+-  return (
+-    <div className="cb-template cb-auth" data-template="AuthPage">
++  const t = useDesignT();
++  const page = (
++    <>
+       <div className="cb-auth-side" data-side="left">
+         <Dither side="left" />
+       </div>
+       <main className="cb-auth-main">
+         <div className="cb-auth-logo">
+           <Logo scale={6} wordmark />
+         </div>
+-        <div className="cb-auth-card">
++        <div className="cb-auth-card" data-part="auth-card">
+           <Card>
+             <div className="cb-auth-head">
+-              <Text variant="h1" as="h1">
+-                {title}
+-              </Text>
++              {loading && title === "" ? (
++                <SkeletonText width="45%" size="title" />
++              ) : (
++                <Text variant="h1" as="h1">
++                  {title}
++                </Text>
++              )}
+               {subtitle ? <Text tone="muted">{subtitle}</Text> : null}
+             </div>
+-            {children}
++            {loading ? (
++              <Stack gap={16}>
++                <LoadingFields count={loading.fields} />
++                <SkeletonBox part="prominent" />
++              </Stack>
++            ) : (
++              children
++            )}
+           </Card>
+         </div>
+         {footer ? <div className="cb-auth-footer">{footer}</div> : null}
+       </main>
+       {preferences ? (
+         <div className="cb-auth-prefs">
+           <PreferenceBar {...preferences} />
+         </div>
+       ) : null}
+       <div className="cb-auth-side" data-side="right">
+         <Dither side="right" seed={2} />
+       </div>
++    </>
++  );
++  return (
++    <div className="cb-template cb-auth" data-template="AuthPage">
++      {loading ? <SkeletonGroup label={title || t("table.loading")}>{page}</SkeletonGroup> : page}
+     </div>
+   );
+ }
+diff --git a/packages/design/src/templates/form-page.tsx b/packages/design/src/templates/form-page.tsx
+index 4256eaac..ad59a24c 100644
+--- a/packages/design/src/templates/form-page.tsx
++++ b/packages/design/src/templates/form-page.tsx
+@@ -1,89 +1,174 @@
+ import { type ReactNode, useEffect, useRef } from "react";
+ import { FIELDS } from "../controls/a11y";
++import {
++  SkeletonAnnouncement,
++  SkeletonGroup,
++  SkeletonText,
++  useSkeletonAnnounces,
++} from "../display/skeleton";
+ import { Text } from "../layout/index";
++import { useDesignT } from "../provider";
+ import { ActionRow, type ActionRowProps, Body, type PageHeaderProps } from "../shell/index";
+-import { TemplateHead } from "./frame";
++import { LoadingFields, loadingActionRow, loadingHeader, TemplateHead } from "./frame";
+ 
+ /**
+  * T4 Form: Centered at the form width, no anchor navigation (spec §5.3), and an ActionRow that is
+- * always there; unsaved changes guard leaving the page. A `create` form (a new object) starts on
++ * always there; unsaved changes guard leaving the page. `loading` draws the page's frame while its
++ * data is on the way (spec §5.3): the header keeps its rows, the ActionRow stays with its buttons
++ * disabled, and the sections are the page's own `children` (each `FormSection` says for itself
++ * whether it is loading, so one whose data is ready renders for real); one busy announcement. A `create` form (a new object) starts on
+  * its first field and never says "No unsaved changes": nothing exists yet to be unchanged.
+  */
+ export function FormPage({
+   header,
+   actionRow,
+   create,
++  loading,
+   children,
+ }: {
+   header: PageHeaderProps;
+   actionRow: ActionRowProps;
+   /** A form that creates an object: focus starts on the first field, no "No unsaved changes". */
+   create?: boolean;
++  /** The page's data is not here yet (spec §5.3). */
++  loading?: boolean;
+   children?: ReactNode;
+ }) {
+   const dirty = (actionRow.unsaved ?? 0) > 0;
+   const body = useRef<HTMLDivElement>(null);
++  const t = useDesignT();
+   useEffect(() => {
+-    if (!create) return;
++    // While loading there are no fields yet: focus the first one when they arrive.
++    if (!create || loading) return;
+     body.current?.querySelector<HTMLElement>(FIELDS)?.focus();
+-  }, [create]);
++  }, [create, loading]);
+   useEffect(() => {
+     if (!dirty) return;
+     const onBeforeUnload = (e: BeforeUnloadEvent) => {
+       e.preventDefault();
+       // 旧版 Chrome / Safari 只认 returnValue
+       e.returnValue = "";
+     };
+     window.addEventListener("beforeunload", onBeforeUnload);
+     return () => window.removeEventListener("beforeunload", onBeforeUnload);
+   }, [dirty]);
+-  return (
+-    <div className="cb-template" data-template="FormPage" data-width="content" ref={body}>
+-      <TemplateHead header={header} loose />
++  const page = (
++    <>
++      <TemplateHead header={loading ? loadingHeader(header) : header} loose />
+       <Body layout="centered" loose width="content">
+         {children}
+       </Body>
+-      <ActionRow {...(create && !dirty ? withoutUnsaved(actionRow) : actionRow)} />
++      <ActionRow
++        {...(loading
++          ? loadingActionRow(actionRow)
++          : create && !dirty
++            ? withoutUnsaved(actionRow)
++            : actionRow)}
++      />
++    </>
++  );
++  return (
++    <div className="cb-template" data-template="FormPage" data-width="content" ref={body}>
++      {loading ? (
++        <SkeletonGroup label={header.title || t("table.loading")}>{page}</SkeletonGroup>
++      ) : (
++        page
++      )}
+     </div>
+   );
+ }
+ 
+ /** The action row without its unsaved count (a create form with nothing typed yet). */
+ function withoutUnsaved({ unsaved: _, ...rest }: ActionRowProps): ActionRowProps {
+   return rest;
+ }
+ 
+ /**
+  * A form section (spec §5.3): two columns, the title (h2) and a prose-small muted description on
+  * the left, the fields on a `panel` card on the right. Sections are separated by spacing.
++ * `loading` keeps the title and description real and draws `fields` field placeholders in the
++ * card (a label slot and a control-height box each) in place of `children`; a section whose data
++ * is ready renders for real next to loading ones. Outside a loading page it announces itself.
+  */
+ export function FormSection({
+   id,
+   title,
+   description,
+   flush,
++  loading,
+   children,
+ }: {
+   id: string;
+   title: string;
+   description?: string;
+   /** The card without padding, for content that reaches its edges (a SwitchList). */
+   flush?: boolean;
++  /** The section's data is not here yet: this many field placeholders replace `children`. */
++  loading?: { fields: number };
+   children?: ReactNode;
+ }) {
++  const announces = useSkeletonAnnounces();
+   return (
+-    <section id={id} className="cb-form-section" data-part="form-section" aria-label={title}>
++    <section
++      id={id}
++      className="cb-form-section"
++      data-part="form-section"
++      aria-label={title}
++      aria-busy={loading && announces ? "true" : undefined}
++    >
++      {loading && announces ? <SkeletonAnnouncement /> : null}
+       <div className="cb-form-section-head" data-part="form-section-head">
+         <Text variant="h2">{title}</Text>
+         {description ? <p className="cb-form-section-description">{description}</p> : null}
+       </div>
+       <div
+         className="cb-form-section-fields"
+         data-part="form-card"
+-        data-flush={flush ? "true" : undefined}
++        data-flush={flush && !loading ? "true" : undefined}
+       >
+-        {children}
++        {loading ? <LoadingFields count={loading.fields} /> : children}
++      </div>
++    </section>
++  );
++}
++
++/**
++ * A section whose title and description are not known either (SettingsPage's loading shorthand):
++ * the `FormSection` frame with an h2-sized slot for the title and a prose-small slot for the
++ * description. What the page does know (`title`, `description`) renders for real.
++ */
++export function LoadingFormSection({
++  fields,
++  title,
++  description,
++}: {
++  fields: number;
++  title?: string;
++  description?: string;
++}) {
++  const announces = useSkeletonAnnounces();
++  return (
++    <section
++      className="cb-form-section"
++      data-part="form-section"
++      aria-busy={announces ? "true" : undefined}
++    >
++      {announces ? <SkeletonAnnouncement /> : null}
++      <div className="cb-form-section-head" data-part="form-section-head">
++        {title !== undefined ? (
++          <Text variant="h2">{title}</Text>
++        ) : (
++          <SkeletonText width="45%" size="heading" />
++        )}
++        {description !== undefined ? (
++          <p className="cb-form-section-description">{description}</p>
++        ) : (
++          <SkeletonText width="70%" />
++        )}
++      </div>
++      <div className="cb-form-section-fields" data-part="form-card">
++        <LoadingFields count={fields} />
+       </div>
+     </section>
+   );
+ }
+diff --git a/packages/design/src/templates/frame.tsx b/packages/design/src/templates/frame.tsx
+index ff35247d..25486bb9 100644
+--- a/packages/design/src/templates/frame.tsx
++++ b/packages/design/src/templates/frame.tsx
+@@ -1,13 +1,13 @@
+ import type { ReactNode } from "react";
+-import { SkeletonText, StatCards } from "../display/index";
+-import { PageHeader, type PageHeaderProps } from "../shell/index";
++import { SkeletonBox, SkeletonText, StatCards } from "../display/index";
++import { type ActionRowProps, PageHeader, type PageHeaderProps } from "../shell/index";
+ 
+ /**
+  * The fixed header area of a template (spec §4.2): the PageHeader in a frame of the one content
+  * width (`layout.content`, §4.3), so it lines up with the body below it on every page. Templates
+  * without a list body (detail, trace, inbox, onboarding, status) draw the header's metrics here as
+  * StatCards (`statsInHead`); list and overview pages draw them at the top of the body (WithStats).
+  * `loose` leaves space.6 below the header for forms.
+  */
+ export function TemplateHead({
+   header,
+@@ -116,10 +116,46 @@ export function LoadingInspector() {
+             <SkeletonText width="100%" />
+           </dt>
+           <dd className="cb-kv-value">
+             <SkeletonText width="55%" />
+           </dd>
+         </div>
+       ))}
+     </dl>
+   );
+ }
++
++/**
++ * The action row of a loading page: the row stays, nothing is known to save or cancel yet, so its
++ * buttons are disabled and it says nothing about unsaved changes (spec §5.3).
++ */
++export function loadingActionRow(row: ActionRowProps): ActionRowProps {
++  const { unsaved: _u, errors: _e, ...rest } = row;
++  return {
++    ...rest,
++    ...(row.cancel ? { cancel: { ...row.cancel, disabled: true } } : {}),
++    ...(row.secondary ? { secondary: { ...row.secondary, disabled: true } } : {}),
++    primary: { ...row.primary, disabled: true },
++  };
++}
++
++/**
++ * Field placeholders (spec §5.3): each is the loaded `.cb-field` itself, a label slot (a `body`
++ * line, 30% wide) in `.cb-field-head` where the label is, then a control-height box directly in
++ * the field, so the box takes whatever width the field's rule gives a control. Drawn in the
++ * container the loaded fields live in (a form card, a wizard card, the auth card).
++ */
++export function LoadingFields({ count }: { count: number }) {
++  return (
++    <>
++      {Array.from({ length: Math.max(0, count) }, (_, i) => (
++        // biome-ignore lint/suspicious/noArrayIndexKey: the placeholders are positional
++        <div key={i} className="cb-field" data-part="loading-field">
++          <div className="cb-field-head">
++            <SkeletonText width="30%" />
++          </div>
++          <SkeletonBox part="default" />
++        </div>
++      ))}
++    </>
++  );
++}
+diff --git a/packages/design/src/templates/settings-page.tsx b/packages/design/src/templates/settings-page.tsx
+index 2b9810ed..229c52d3 100644
+--- a/packages/design/src/templates/settings-page.tsx
++++ b/packages/design/src/templates/settings-page.tsx
+@@ -1,40 +1,51 @@
+ import { type ReactNode, useEffect, useRef } from "react";
++import { SkeletonGroup } from "../display/skeleton";
+ import { LinkPendingMark, useDesignLink, useDesignT } from "../provider";
+ import { ActionRow, type ActionRowProps, Body, type PageHeaderProps } from "../shell/index";
+-import { TemplateHead } from "./frame";
++import { LoadingFormSection } from "./form-page";
++import { loadingActionRow, loadingHeader, TemplateHead } from "./frame";
+ 
+ export type SettingsNavGroup = {
+   group: string;
+   items: { id: string; label: string; href: string; count?: number }[];
+ };
+ 
+ /**
+  * T5 Settings (spec §5, canvas "组织 · 设置"): the head (path, title, actions) across the full
+  * content width, then a 200 px sub-nav (mono group labels, 30 px items, the current one on
+  * `sidebar-active`, mono counts) beside the section content; ActionRow on changes. The header's
+  * `description` opens the content column instead of the head, so the head has one height and the
+  * sub-nav sits at the same y on every settings page, its top aligned with the content's. Below
+  * 640 the sub-nav is a compact control: one horizontally scrolling row of its items (no group
+  * labels, 40 px tap targets) above the content, the current item scrolled into view.
++ *
++ * `loading` draws the page's frame while its data is on the way (spec §5.4): the header keeps its
++ * rows, the sub-nav and the header's description stay real (they are static per page), an
++ * ActionRow stays with its buttons disabled, and `sections` (one entry per section, its field
++ * count, and the `title` / `description` the page already knows) are placeholders in the
++ * sections' own frame in place of `children`. Without `sections` the children render as they are
++ * (each `FormSection` or list says for itself whether it is loading). One busy announcement.
+  */
+ export function SettingsPage({
+   header,
+   nav,
+   activeNav,
+   actionRow,
++  loading,
+   children,
+ }: {
+   header: PageHeaderProps;
+   nav: SettingsNavGroup[];
+   activeNav: string;
+   actionRow?: ActionRowProps;
++  loading?: { sections?: { fields: number; title?: string; description?: string }[] };
+   children?: ReactNode;
+ }) {
+   const { description, ...head } = header;
+   const Link = useDesignLink();
+   const t = useDesignT();
+   // On phones the sub-nav is one scrolling row above the content: keep the current item in view.
+   const navRef = useRef<HTMLElement>(null);
+   useEffect(() => {
+     const nav = navRef.current;
+     const current = nav?.querySelector<HTMLElement>('[aria-current="page"]');
+@@ -63,30 +74,44 @@ export function SettingsPage({
+               {n.count !== undefined ? (
+                 <span className="cb-settings-nav-count">{n.count}</span>
+               ) : null}
+               <LinkPendingMark />
+             </Link>
+           ))}
+         </div>
+       ))}
+     </nav>
+   );
+-  return (
+-    <div className="cb-template" data-template="SettingsPage" data-width="content">
+-      <TemplateHead header={head} />
++  const page = (
++    <>
++      <TemplateHead header={loading ? loadingHeader(head) : head} />
+       <Body layout="single" width="content">
+         <div className="cb-settings-grid">
+           {rail}
+           <div className="cb-settings-content">
+             {description ? (
+               <p className="cb-settings-description" data-part="settings-description">
+                 {description}
+               </p>
+             ) : null}
+-            {children}
++            {loading?.sections
++              ? loading.sections.map((s, i) => (
++                  // biome-ignore lint/suspicious/noArrayIndexKey: the placeholders are positional
++                  <LoadingFormSection key={i} {...s} />
++                ))
++              : children}
+           </div>
+         </div>
+       </Body>
+-      {actionRow ? <ActionRow {...actionRow} /> : null}
++      {actionRow ? <ActionRow {...(loading ? loadingActionRow(actionRow) : actionRow)} /> : null}
++    </>
++  );
++  return (
++    <div className="cb-template" data-template="SettingsPage" data-width="content">
++      {loading ? (
++        <SkeletonGroup label={header.title || t("table.loading")}>{page}</SkeletonGroup>
++      ) : (
++        page
++      )}
+     </div>
+   );
+ }
+diff --git a/packages/design/src/templates/wizard-page.tsx b/packages/design/src/templates/wizard-page.tsx
+index c565faaa..149c4be8 100644
+--- a/packages/design/src/templates/wizard-page.tsx
++++ b/packages/design/src/templates/wizard-page.tsx
+@@ -1,34 +1,43 @@
+ import type { ReactNode } from "react";
++import { SkeletonGroup, SkeletonText } from "../display/skeleton";
+ import { Icon } from "../icons/icon";
++import { Card, Stack } from "../layout/index";
+ import { useDesignT } from "../provider";
+ import { ActionRow, type ActionRowProps, Body, type PageHeaderProps } from "../shell/index";
+-import { TemplateHead } from "./frame";
++import { LoadingFields, loadingActionRow, loadingHeader, TemplateHead } from "./frame";
+ 
+-/** T9 向导：Centered + 步骤条 + 始终存在的 ActionRow。 */
++/**
++ * T9 向导：Centered + 步骤条 + 始终存在的 ActionRow. `loading` draws the frame while the wizard's
++ * data is on the way (spec §5.5): the header keeps its rows, the step bar is real (the steps are
++ * static), the ActionRow stays with its buttons disabled, and the step's body is one card (a
++ * title slot, `fields` field placeholders) in place of `children`. One busy announcement.
++ */
+ export function WizardPage({
+   header,
+   steps,
+   current,
+   actionRow,
++  loading,
+   children,
+ }: {
+   header: PageHeaderProps;
+   steps: string[];
+   current: number;
+   actionRow: ActionRowProps;
++  loading?: { fields: number };
+   children?: ReactNode;
+ }) {
+   const t = useDesignT();
+-  return (
+-    <div className="cb-template" data-template="WizardPage" data-width="content">
+-      <TemplateHead header={header} loose />
++  const page = (
++    <>
++      <TemplateHead header={loading ? loadingHeader(header) : header} loose />
+       <Body layout="centered" loose width="content">
+         <ol className="cb-steps" aria-label={t("shell.steps")}>
+           {steps.map((label, i) => {
+             const state = i < current ? "done" : i === current ? "current" : "todo";
+             return (
+               <li
+                 // biome-ignore lint/suspicious/noArrayIndexKey: 静态步骤列表，标签可能重复，需带序号
+                 key={`${i}-${label}`}
+                 className="cb-step"
+                 data-step={i + 1}
+@@ -36,16 +45,33 @@ export function WizardPage({
+                 {...(state === "current" ? { "aria-current": "step" as const } : {})}
+               >
+                 <span className="cb-step-mark">
+                   {state === "done" ? <Icon name="check" size={12} /> : String(i + 1)}
+                 </span>
+                 <span className="cb-step-label">{label}</span>
+               </li>
+             );
+           })}
+         </ol>
+-        {children}
++        {loading ? (
++          <Card title={<SkeletonText width="30%" />}>
++            <Stack gap={16}>
++              <LoadingFields count={loading.fields} />
++            </Stack>
++          </Card>
++        ) : (
++          children
++        )}
+       </Body>
+-      <ActionRow {...actionRow} />
++      <ActionRow {...(loading ? loadingActionRow(actionRow) : actionRow)} />
++    </>
++  );
++  return (
++    <div className="cb-template" data-template="WizardPage" data-width="content">
++      {loading ? (
++        <SkeletonGroup label={header.title || t("table.loading")}>{page}</SkeletonGroup>
++      ) : (
++        page
++      )}
+     </div>
+   );
+ }
+diff --git a/packages/design/test/templates-loading.test.tsx b/packages/design/test/templates-loading.test.tsx
+index d3314f0b..043024eb 100644
+--- a/packages/design/test/templates-loading.test.tsx
++++ b/packages/design/test/templates-loading.test.tsx
+@@ -1,20 +1,25 @@
+ import { cleanup, render, screen } from "@testing-library/react";
+ import { afterEach, describe, expect, it } from "vitest";
+ import {
++  AuthPage,
+   type Column,
+   DataTable,
+   DesignProvider,
+   DetailPage,
++  FormPage,
++  FormSection,
+   type InboxLoading,
+   InboxPage,
+   OverviewPage,
++  SettingsPage,
++  WizardPage,
+ } from "../src/index";
+ 
+ afterEach(cleanup);
+ const zh = (ui: React.ReactElement) => render(<DesignProvider locale="zh">{ui}</DesignProvider>);
+ 
+ const header = { path: [{ label: "capybara" }, { label: "agents" }], title: "研究助手" };
+ const tabs = {
+   items: [
+     { id: "summary", label: "概要" },
+     { id: "runs", label: "运行" },
+@@ -194,10 +199,227 @@ describe("InboxPage loading", () => {
+     zh(
+       <InboxPage header={header} filters={<p>F</p>} list={<p>第一项</p>}>
+         x
+       </InboxPage>,
+     );
+     expect(screen.getByText("F")).toBeTruthy();
+     expect(screen.getByText("第一项")).toBeTruthy();
+     expect(count('[data-part="loading-row"]')).toBe(0);
+   });
+ });
++
++const actionRow = {
++  unsaved: 2,
++  errors: 1,
++  cancel: { label: "放弃", onSelect: () => {} },
++  secondary: { label: "存草稿", onSelect: () => {} },
++  primary: { label: "保存", onSelect: () => {} },
++};
++
++describe("FormPage / FormSection loading", () => {
++  it("FormPage loading draws the frame and no children", () => {
++    zh(
++      <FormPage header={header} actionRow={actionRow} loading>
++        <FormSection id="a" title="基本信息" description="名称与说明" loading={{ fields: 3 }}>
++          <p>REAL FIELD</p>
++        </FormSection>
++        <FormSection id="b" title="模型" loading={{ fields: 2 }} />
++      </FormPage>,
++    );
++    expect(screen.queryByText("REAL FIELD")).toBeNull();
++    expect(document.querySelector('[data-template="FormPage"]')).not.toBeNull();
++    expect(parts("page-header")).toHaveLength(1);
++    expect(parts("content")).toHaveLength(1);
++    expect(count(".cb-form-section")).toBe(2);
++    expect(count('[data-part="loading-field"]')).toBe(5);
++    expect(screen.getAllByRole("status")).toHaveLength(1);
++    expect(screen.getAllByText("正在加载")).toHaveLength(1);
++  });
++
++  it("loading form keeps the action row with disabled buttons", () => {
++    zh(<FormPage header={header} actionRow={actionRow} loading />);
++    expect(parts("action-row")).toHaveLength(1);
++    for (const name of ["放弃", "存草稿", "保存"]) {
++      expect((screen.getByRole("button", { name }) as HTMLButtonElement).disabled).toBe(true);
++    }
++    // Nothing is known to be unsaved yet.
++    expect(parts("action-row-unsaved")).toHaveLength(0);
++    expect(parts("action-row-errors")).toHaveLength(0);
++  });
++
++  it("a loading section keeps its title and description real", () => {
++    zh(
++      <FormSection id="a" title="基本信息" description="名称与说明" loading={{ fields: 2 }}>
++        <p>REAL FIELD</p>
++      </FormSection>,
++    );
++    expect(screen.getByRole("heading", { name: "基本信息" })).toBeTruthy();
++    expect(screen.getByText("名称与说明")).toBeTruthy();
++    expect(screen.queryByText("REAL FIELD")).toBeNull();
++  });
++
++  it("a field placeholder is the loaded field's own box: label slot, then a control-height box", () => {
++    zh(<FormSection id="a" title="T" loading={{ fields: 2 }} />);
++    const card = document.querySelector(".cb-form-section-fields");
++    const fields = card?.querySelectorAll(":scope > .cb-field");
++    expect(fields).toHaveLength(2);
++    const field = fields?.[0];
++    const head = field?.querySelector(":scope > .cb-field-head");
++    expect(head?.querySelector('[data-part="skeleton-text"][data-size="body"]')).not.toBeNull();
++    const box = field?.querySelector(':scope > [data-part="skeleton-box"]') as HTMLElement | null;
++    expect(box?.dataset.box).toBe("default");
++    // No width of its own: the field's rule decides, as for the loaded control.
++    expect(box?.style.width).toBe("");
++  });
++
++  it("a ready section renders for real next to a loading one", () => {
++    zh(
++      <FormPage header={header} actionRow={actionRow} loading>
++        <FormSection id="a" title="基本信息">
++          <p>READY FIELD</p>
++        </FormSection>
++        <FormSection id="b" title="模型" loading={{ fields: 1 }} />
++      </FormPage>,
++    );
++    expect(screen.getByText("READY FIELD")).toBeTruthy();
++    expect(count('[data-part="loading-field"]')).toBe(1);
++    expect(screen.getAllByRole("status")).toHaveLength(1);
++  });
++
++  it("a loading section outside a loading page announces itself, without a status role", () => {
++    zh(<FormSection id="a" title="T" loading={{ fields: 1 }} />);
++    expect(screen.getAllByText("正在加载")).toHaveLength(1);
++    expect(document.querySelector(".cb-form-section")?.getAttribute("aria-busy")).toBe("true");
++  });
++
++  it("a page that is not loading draws no placeholder and no busy mark", () => {
++    zh(
++      <FormPage header={header} actionRow={actionRow}>
++        <FormSection id="a" title="T">
++          <p>REAL FIELD</p>
++        </FormSection>
++      </FormPage>,
++    );
++    expect(screen.getByText("REAL FIELD")).toBeTruthy();
++    expect(count('[data-part="loading-field"]')).toBe(0);
++    expect(count('[aria-busy="true"]')).toBe(0);
++    expect((screen.getByRole("button", { name: "保存" }) as HTMLButtonElement).disabled).toBe(
++      false,
++    );
++  });
++});
++
++describe("SettingsPage loading", () => {
++  const nav = [
++    {
++      group: "组织",
++      items: [
++        { id: "general", label: "常规", href: "/s/general" },
++        { id: "members", label: "成员", href: "/s/members" },
++      ],
++    },
++  ];
++
++  it("SettingsPage loading draws the frame and no children", () => {
++    zh(
++      <SettingsPage
++        header={{ ...header, description: "管理组织" }}
++        nav={nav}
++        activeNav="general"
++        loading={{ sections: [{ fields: 2 }, { fields: 3, title: "安全" }] }}
++      >
++        <p>REAL CONTENT</p>
++      </SettingsPage>,
++    );
++    expect(screen.queryByText("REAL CONTENT")).toBeNull();
++    expect(document.querySelector('[data-template="SettingsPage"]')).not.toBeNull();
++    expect(parts("page-header")).toHaveLength(1);
++    expect(count(".cb-settings-content > .cb-form-section")).toBe(2);
++    expect(count('[data-part="loading-field"]')).toBe(5);
++    expect(screen.getAllByRole("status")).toHaveLength(1);
++    // What the page knows stays real: the sub-nav, the description, a known title.
++    expect(screen.getByRole("link", { name: "成员" })).toBeTruthy();
++    expect(screen.getByText("管理组织")).toBeTruthy();
++    expect(screen.getByRole("heading", { name: "安全" })).toBeTruthy();
++    // An unknown title and description are slots in the section's head.
++    const first = document.querySelectorAll(".cb-form-section-head")[0];
++    expect(first?.querySelector('[data-size="heading"]')).not.toBeNull();
++  });
++
++  it("without sections the children render as they are", () => {
++    zh(
++      <SettingsPage header={header} nav={nav} activeNav="general" loading={{}}>
++        <FormSection id="a" title="T" loading={{ fields: 1 }} />
++      </SettingsPage>,
++    );
++    expect(count('[data-part="loading-field"]')).toBe(1);
++    expect(screen.getAllByRole("status")).toHaveLength(1);
++  });
++
++  it("keeps the action row, disabled", () => {
++    zh(
++      <SettingsPage
++        header={header}
++        nav={nav}
++        activeNav="general"
++        actionRow={actionRow}
++        loading={{ sections: [{ fields: 1 }] }}
++      />,
++    );
++    expect((screen.getByRole("button", { name: "保存" }) as HTMLButtonElement).disabled).toBe(true);
++  });
++});
++
++describe("WizardPage loading", () => {
++  const steps = ["类型", "端点", "完成"];
++
++  it("WizardPage loading draws the frame and no children", () => {
++    zh(
++      <WizardPage
++        header={header}
++        steps={steps}
++        current={1}
++        actionRow={actionRow}
++        loading={{ fields: 3 }}
++      >
++        <p>REAL CONTENT</p>
++      </WizardPage>,
++    );
++    expect(screen.queryByText("REAL CONTENT")).toBeNull();
++    expect(document.querySelector('[data-template="WizardPage"]')).not.toBeNull();
++    expect(parts("page-header")).toHaveLength(1);
++    expect(parts("content")).toHaveLength(1);
++    // The step bar is real, and the fields sit in a card.
++    expect(document.querySelectorAll(".cb-step")).toHaveLength(3);
++    expect(screen.getByText("端点")).toBeTruthy();
++    expect(document.querySelector(".cb-card .cb-stack > .cb-field")).not.toBeNull();
++    expect(count('[data-part="loading-field"]')).toBe(3);
++    expect(screen.getAllByRole("status")).toHaveLength(1);
++    expect((screen.getByRole("button", { name: "保存" }) as HTMLButtonElement).disabled).toBe(true);
++  });
++});
++
++describe("AuthPage loading", () => {
++  it("AuthPage loading draws the frame and no children", () => {
++    zh(
++      <AuthPage title="登录" subtitle="欢迎回来" loading={{ fields: 2 }}>
++        <p>REAL CONTENT</p>
++      </AuthPage>,
++    );
++    expect(screen.queryByText("REAL CONTENT")).toBeNull();
++    expect(document.querySelector('[data-template="AuthPage"]')).not.toBeNull();
++    expect(count(".cb-auth-side")).toBe(2);
++    expect(count(".cb-auth-card")).toBe(1);
++    expect(screen.getByRole("heading", { name: "登录" })).toBeTruthy();
++    expect(screen.getByText("欢迎回来")).toBeTruthy();
++    expect(count('[data-part="loading-field"]')).toBe(2);
++    // The submit button is part of the loaded card: a prominent box.
++    expect(count('.cb-auth-card [data-box="prominent"]')).toBe(1);
++    expect(screen.getAllByRole("status")).toHaveLength(1);
++  });
++
++  it("an unknown title is a bar", () => {
++    zh(<AuthPage title="" loading={{ fields: 1 }} />);
++    expect(screen.queryByRole("heading")).toBeNull();
++    expect(document.querySelector('.cb-auth-head [data-size="title"]')).not.toBeNull();
++  });
++});

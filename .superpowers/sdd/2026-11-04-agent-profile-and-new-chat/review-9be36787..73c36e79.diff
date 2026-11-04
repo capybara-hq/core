@@ -1,0 +1,1468 @@
+# Review package: 9be36787..73c36e79
+
+## Commits
+73c36e79 fix(design,web): a stacked form section gives the prompt editor the full width
+fcb74476 fix(web,design): the prompt section in its own titled card, one column on phones
+
+## Files changed
+ apps/web/messages/en.json                       |   2 +-
+ apps/web/messages/zh.json                       |   2 +-
+ apps/web/src/app/(app)/agents/[id]/view.tsx     |  13 +-
+ apps/web/src/components/agent/PromptSection.tsx | 254 +++++++++++++-----------
+ apps/web/src/components/agent/frame.tsx         |  30 ++-
+ apps/web/src/components/agent/sections.ts       |  18 +-
+ apps/web/src/lib/instruction-files.ts           |  15 +-
+ apps/web/test/agent-page-sections.test.tsx      |  77 ++++++-
+ docs/design/spec.md                             |   5 +-
+ packages/design/src/layout/index.tsx            |   8 +-
+ packages/design/src/styles/controls.css         |   9 +
+ packages/design/src/styles/repeater.css         |  11 +
+ packages/design/src/styles/templates.css        |   5 +
+ packages/design/src/templates/form-page.tsx     |  12 ++
+ packages/design/src/templates/frame.tsx         |  58 +++++-
+ packages/design/src/templates/index.ts          |   2 +-
+ packages/design/src/templates/settings-page.tsx |   4 +-
+ packages/design/test/layout.test.tsx            |  12 ++
+ packages/design/test/templates-loading.test.tsx | 108 ++++++++++
+ 19 files changed, 498 insertions(+), 147 deletions(-)
+
+## Diff
+diff --git a/apps/web/messages/en.json b/apps/web/messages/en.json
+index 36cf0e1a..1d6e0479 100644
+--- a/apps/web/messages/en.json
++++ b/apps/web/messages/en.json
+@@ -658,21 +658,21 @@
+         "add": "Add a quick action",
+         "none": "No quick actions yet.",
+         "titleLabel": "Title",
+         "titleRequired": "Enter a title.",
+         "bodyLabel": "Text",
+         "bodyHelp": "What goes into the composer.",
+         "bodyRequired": "Enter the text."
+       },
+       "uploadType": "Pick a png, jpg or webp image.",
+       "prompt": {
+-        "hint": "The prompt is shown to the model: the files in this order, each under a # name line when there are several. Write it in English.",
++        "hint": "The files go to the model in this order. Write them in English.",
+         "filesLabel": "Prompt files",
+         "add": "Add a file",
+         "nameLabel": "File name",
+         "nameHelp": "Ends in .md, for example WORKFLOW.md.",
+         "nameInvalid": "Use 1–64 characters without / or \\, then .md.",
+         "nameDuplicate": "Another file already has this name.",
+         "contentLabel": "Content",
+         "contentHelp": "Markdown. Shown to the model as written.",
+         "count": "{chars, number} / {maxChars, number} characters · {files} / {maxFiles} files",
+         "tooLong": "Together the files are longer than {max, number} characters. Shorten them to save."
+diff --git a/apps/web/messages/zh.json b/apps/web/messages/zh.json
+index e1bc3fb5..248f1719 100644
+--- a/apps/web/messages/zh.json
++++ b/apps/web/messages/zh.json
+@@ -658,21 +658,21 @@
+         "add": "添加快捷操作",
+         "none": "还没有快捷操作。",
+         "titleLabel": "标题",
+         "titleRequired": "请输入标题。",
+         "bodyLabel": "内容",
+         "bodyHelp": "填进输入框的文字。",
+         "bodyRequired": "请输入内容。"
+       },
+       "uploadType": "请选择 png、jpg 或 webp 图片。",
+       "prompt": {
+-        "hint": "提示词是给模型看的：按这里的顺序拼接各个文件，有多个文件时每个文件前面加一行 # 文件名。请用英文写。",
++        "hint": "这些文件按顺序拼接后交给模型。请用英文写。",
+         "filesLabel": "提示词文件",
+         "add": "添加文件",
+         "nameLabel": "文件名",
+         "nameHelp": "以 .md 结尾，例如 WORKFLOW.md。",
+         "nameInvalid": "文件名为 1–64 个字符（不含 / 和 \\），再加上 .md。",
+         "nameDuplicate": "已经有同名的文件了。",
+         "contentLabel": "内容",
+         "contentHelp": "Markdown，原样交给模型。",
+         "count": "{chars, number} / {maxChars, number} 字符 · {files} / {maxFiles} 个文件",
+         "tooLong": "文件合计超过 {max, number} 个字符，缩短后才能保存。"
+diff --git a/apps/web/src/app/(app)/agents/[id]/view.tsx b/apps/web/src/app/(app)/agents/[id]/view.tsx
+index 9eb91385..384fc78c 100644
+--- a/apps/web/src/app/(app)/agents/[id]/view.tsx
++++ b/apps/web/src/app/(app)/agents/[id]/view.tsx
+@@ -1,16 +1,16 @@
+ "use client";
+ 
+ import { SettingsPage } from "@capybara-hq/design";
+ import { useTranslations } from "next-intl";
+ import { AgentPage } from "../../../../components/agent/AgentPage";
+-import { useSectionNav } from "../../../../components/agent/frame";
++import { loadingSection, useSectionNav } from "../../../../components/agent/frame";
+ import { READ_ONLY_FIELDS, SECTION_FIELDS, sectionOf } from "../../../../components/agent/sections";
+ import { ErrorFrame } from "../../../../components/ErrorFrame";
+ import { NoAccess } from "../../../../components/NoAccess";
+ import { usePagePath } from "../../../../components/shell/path";
+ import { useSession } from "../../../../components/shell/session";
+ import { myRole, roleAtLeast } from "../../../../lib/members";
+ import { canEditAgent } from "../../../../lib/org-settings";
+ import { agentQuery } from "../../../../lib/query/agents";
+ import { usePageQuery } from "../../../../lib/query/page-query";
+ import { useWorkspace } from "../../../../lib/query/workspace";
+@@ -67,21 +67,20 @@ function AgentPageLoading({ agentId, section }: { agentId: string; section: stri
+   const editable = roleAtLeast(myRole(me), "member");
+   const open = sectionOf(section, editable);
+   const nav = useSectionNav(agentId, editable);
+   return (
+     <SettingsPage
+       header={{ path: [...scope, { label: "agents", href: "/agents" }], title: "" }}
+       nav={nav}
+       activeNav={open}
+       loading={{
+         sections: [
+-          {
+-            fields: editable
+-              ? SECTION_FIELDS[open]
+-              : (READ_ONLY_FIELDS[open] ?? SECTION_FIELDS[open]),
+-            title: t(`sections.${open}`),
+-          },
++          loadingSection(
++            open,
++            editable ? SECTION_FIELDS[open] : (READ_ONLY_FIELDS[open] ?? SECTION_FIELDS[open]),
++            t,
++          ),
+         ],
+       }}
+     />
+   );
+ }
+diff --git a/apps/web/src/components/agent/PromptSection.tsx b/apps/web/src/components/agent/PromptSection.tsx
+index 694e7bc7..b031d302 100644
+--- a/apps/web/src/components/agent/PromptSection.tsx
++++ b/apps/web/src/components/agent/PromptSection.tsx
+@@ -1,16 +1,17 @@
+ "use client";
+ 
+ import {
+   Button,
+   Card,
+   Field,
++  FormSection,
+   Grid,
+   Input,
+   Repeater,
+   Stack,
+   Text,
+   Textarea,
+ } from "@capybara-hq/design";
+ import { useTranslations } from "next-intl";
+ import { useRef, useState } from "react";
+ import type { Agent } from "../../lib/agents";
+@@ -40,192 +41,211 @@ const filesOf = (d: Draft): InstructionFile[] =>
+ /**
+  * 提示词 Prompt (agent profile design §3.3): the agent's named `.md` files, the list on the left
+  * (add, delete but never the last one, reorder) and the open file's name and content on the
+  * right, with the joined character count against 100 000 and the file count against 20. An agent
+  * saved without files (every old version) shows one `AGENTS.md` holding its instructions. Save
+  * sends `instructionFiles` and no `instructions` (the kernel derives it; a stale one next to the
+  * files would be refused). The names and limits are checked here only as hints: the kernel judges.
+  */
+ export function PromptSection() {
+   const t = useTranslations("agents.page.prompt");
++  const tp = useTranslations("agents.page");
+   const { agent } = useAgentPage();
+   const save = useDefinitionSave();
+   const actionRow = useSectionActionRow();
+   const saved = draftOf(agent);
+   const draft = useSectionDraft(saved);
+   const [open, setOpen] = useState<string | null>(null);
+   const [checked, setChecked] = useState(false);
++  // the files whose name problems show: a name left (blur) or a save attempt shows them, and
++  // typing in a name hides its own until it is left again
++  const [shown, setShown] = useState<ReadonlySet<string>>(new Set());
+   const next = useRef(0);
+   const files = draft.draft.files;
+   const current = files.find((f) => f.key === open) ?? files[0];
+   const index = current ? files.indexOf(current) : -1;
+   const edit = (fn: (d: Draft) => Draft) => {
+     save.begin();
+     draft.set(fn);
+   };
+ 
+   const problems = fileNameProblems(files);
+   const joined = joinInstructionFiles(files).length;
+   const tooLong = joined > INSTRUCTION_FILE_LIMITS.joinedChars;
+-  // a name problem shows once the name is edited away from the saved one, or after a save attempt
+   const nameProblem = (i: number) => {
+-    const p = problems[i] ?? null;
+-    if (p === null) return null;
+     const f = files[i];
+-    return checked || saved.files.every((s) => s.name !== f?.name) ? p : null;
++    return f !== undefined && shown.has(f.key) ? (problems[i] ?? null) : null;
+   };
++  const show = (key: string, on: boolean) =>
++    setShown((cur) => {
++      if (cur.has(key) === on) return cur;
++      const nextSet = new Set(cur);
++      if (on) nextSet.add(key);
++      else nextSet.delete(key);
++      return nextSet;
++    });
+   const invalidCount = problems.filter((_, i) => nameProblem(i) !== null).length;
+   const unsaved = draft.dirty && !sameJson(filesOf(draft.draft), filesOf(saved)) ? 1 : 0;
+ 
+   async function onSave() {
+     if (save.pending) return;
+     setChecked(true);
++    setShown(new Set(files.map((f) => f.key)));
+     if (problems.some((p) => p !== null) || tooLong) return;
+     const { instructions: _derived, ...rest } = savedDefinition(agent);
+     const r = await save.send({ ...rest, instructionFiles: filesOf(draft.draft) });
+     if (r.saved) {
+       draft.reset();
+       setChecked(false);
++      setShown(new Set());
+       // the saved files are keyed by position: keep the open one open
+       setOpen(`saved-${Math.max(index, 0)}`);
+     }
+   }
+ 
+   function discard() {
+     draft.reset();
+     save.clear();
+     setChecked(false);
++    setShown(new Set());
+   }
+ 
+   const problem = index < 0 ? null : nameProblem(index);
+   return (
+     <AgentSectionFrame
+       dirty={unsaved > 0}
+       actionRow={actionRow({
+         unsaved,
+         errors: invalidCount + (checked && tooLong ? 1 : 0) + (save.error ? 1 : 0),
+         pending: save.pending,
+         onDiscard: discard,
+         onSave: () => void onSave(),
+       })}
+     >
+       <Stack gap={16}>
+         <SaveFeedback save={save} onReload={() => void save.reload(discard)} />
+-        <Text variant="small" tone="muted">
+-          {t("hint")}
+-        </Text>
+-        <Grid columns="form">
+-          <Stack gap={8}>
+-            <Repeater
+-              variant="rows"
+-              label={t("filesLabel")}
+-              addLabel={t("add")}
+-              min={1}
+-              max={INSTRUCTION_FILE_LIMITS.count}
+-              disabled={save.pending}
+-              items={files.map((f, i) => ({
+-                key: f.key,
+-                title: f.name,
+-                invalid: nameProblem(i) !== null,
+-                body: (
+-                  <Button
+-                    variant="ghost"
+-                    density="dense"
+-                    aria-pressed={f.key === current?.key}
+-                    onClick={() => setOpen(f.key)}
+-                  >
+-                    {f.name}
+-                  </Button>
+-                ),
+-              }))}
+-              onAdd={() => {
+-                next.current += 1;
+-                const key = `new-${next.current}`;
+-                edit((d) =>
+-                  d.files.length >= INSTRUCTION_FILE_LIMITS.count
+-                    ? d
+-                    : { files: [...d.files, { key, name: newFileName(d.files), content: "" }] },
+-                );
+-                setOpen(key);
+-              }}
+-              onRemove={(key) => {
+-                const before = files;
+-                edit((d) =>
+-                  d.files.length <= 1 ? d : { files: d.files.filter((f) => f.key !== key) },
+-                );
+-                return () => edit(() => ({ files: before }));
+-              }}
+-              onMove={(key, to) =>
+-                edit((d) => {
+-                  const from = d.files.findIndex((f) => f.key === key);
+-                  if (from < 0) return d;
+-                  const list = [...d.files];
+-                  const [moved] = list.splice(from, 1);
+-                  if (moved) list.splice(to, 0, moved);
+-                  return { files: list };
+-                })
+-              }
+-            />
+-            <Text variant="small" tone={tooLong ? "fail" : "muted"}>
+-              {t("count", {
+-                chars: joined,
+-                maxChars: INSTRUCTION_FILE_LIMITS.joinedChars,
+-                files: files.length,
+-                maxFiles: INSTRUCTION_FILE_LIMITS.count,
+-              })}
+-            </Text>
+-            {checked && tooLong ? (
+-              <Text variant="small" tone="fail">
+-                {t("tooLong", { max: INSTRUCTION_FILE_LIMITS.joinedChars })}
++        <FormSection
++          id="prompt"
++          layout="stacked"
++          title={tp("sections.prompt")}
++          description={t("hint")}
++        >
++          <Grid columns="list-detail">
++            <Stack gap={8}>
++              <Repeater
++                variant="rows"
++                label={t("filesLabel")}
++                addLabel={t("add")}
++                min={1}
++                max={INSTRUCTION_FILE_LIMITS.count}
++                disabled={save.pending}
++                items={files.map((f, i) => ({
++                  key: f.key,
++                  title: f.name,
++                  invalid: nameProblem(i) !== null,
++                  body: (
++                    <Button
++                      variant="ghost"
++                      aria-pressed={f.key === current?.key}
++                      onClick={() => setOpen(f.key)}
++                    >
++                      {f.name}
++                    </Button>
++                  ),
++                }))}
++                onAdd={() => {
++                  next.current += 1;
++                  const key = `new-${next.current}`;
++                  edit((d) =>
++                    d.files.length >= INSTRUCTION_FILE_LIMITS.count
++                      ? d
++                      : { files: [...d.files, { key, name: newFileName(d.files), content: "" }] },
++                  );
++                  setOpen(key);
++                }}
++                onRemove={(key) => {
++                  const before = files;
++                  edit((d) =>
++                    d.files.length <= 1 ? d : { files: d.files.filter((f) => f.key !== key) },
++                  );
++                  return () => edit(() => ({ files: before }));
++                }}
++                onMove={(key, to) =>
++                  edit((d) => {
++                    const from = d.files.findIndex((f) => f.key === key);
++                    if (from < 0) return d;
++                    const list = [...d.files];
++                    const [moved] = list.splice(from, 1);
++                    if (moved) list.splice(to, 0, moved);
++                    return { files: list };
++                  })
++                }
++              />
++              <Text variant="small" tone={tooLong ? "fail" : "muted"}>
++                {t("count", {
++                  chars: joined,
++                  maxChars: INSTRUCTION_FILE_LIMITS.joinedChars,
++                  files: files.length,
++                  maxFiles: INSTRUCTION_FILE_LIMITS.count,
++                })}
+               </Text>
++              {checked && tooLong ? (
++                <Text variant="small" tone="fail">
++                  {t("tooLong", { max: INSTRUCTION_FILE_LIMITS.joinedChars })}
++                </Text>
++              ) : null}
++            </Stack>
++            {current ? (
++              <Card title={current.name}>
++                <Stack gap={12}>
++                  <Field
++                    label={t("nameLabel")}
++                    required
++                    help={t("nameHelp")}
++                    {...(problem === "duplicate"
++                      ? { error: t("nameDuplicate") }
++                      : problem === "invalid"
++                        ? { error: t("nameInvalid") }
++                        : {})}
++                  >
++                    <Input
++                      name="file-name"
++                      disabled={save.pending}
++                      maxLength={67}
++                      value={current.name}
++                      onBlur={() => show(current.key, true)}
++                      onChange={(e) => {
++                        const name = e.target.value;
++                        show(current.key, false);
++                        edit((d) => ({
++                          files: d.files.map((f) => (f.key === current.key ? { ...f, name } : f)),
++                        }));
++                      }}
++                    />
++                  </Field>
++                  <Field label={t("contentLabel")} help={t("contentHelp")}>
++                    <Textarea
++                      code
++                      name="file-content"
++                      disabled={save.pending}
++                      rows={16}
++                      maxLength={INSTRUCTION_FILE_LIMITS.joinedChars}
++                      value={current.content}
++                      onChange={(e) => {
++                        const content = e.target.value;
++                        edit((d) => ({
++                          files: d.files.map((f) =>
++                            f.key === current.key ? { ...f, content } : f,
++                          ),
++                        }));
++                      }}
++                    />
++                  </Field>
++                </Stack>
++              </Card>
+             ) : null}
+-          </Stack>
+-          {current ? (
+-            <Card title={current.name}>
+-              <Stack gap={12}>
+-                <Field
+-                  label={t("nameLabel")}
+-                  required
+-                  help={t("nameHelp")}
+-                  {...(problem === "duplicate"
+-                    ? { error: t("nameDuplicate") }
+-                    : problem === "invalid"
+-                      ? { error: t("nameInvalid") }
+-                      : {})}
+-                >
+-                  <Input
+-                    name="file-name"
+-                    disabled={save.pending}
+-                    maxLength={67}
+-                    value={current.name}
+-                    onChange={(e) => {
+-                      const name = e.target.value;
+-                      edit((d) => ({
+-                        files: d.files.map((f) => (f.key === current.key ? { ...f, name } : f)),
+-                      }));
+-                    }}
+-                  />
+-                </Field>
+-                <Field label={t("contentLabel")} help={t("contentHelp")}>
+-                  <Textarea
+-                    code
+-                    name="file-content"
+-                    disabled={save.pending}
+-                    rows={16}
+-                    maxLength={INSTRUCTION_FILE_LIMITS.joinedChars}
+-                    value={current.content}
+-                    onChange={(e) => {
+-                      const content = e.target.value;
+-                      edit((d) => ({
+-                        files: d.files.map((f) => (f.key === current.key ? { ...f, content } : f)),
+-                      }));
+-                    }}
+-                  />
+-                </Field>
+-              </Stack>
+-            </Card>
+-          ) : null}
+-        </Grid>
++          </Grid>
++        </FormSection>
+       </Stack>
+     </AgentSectionFrame>
+   );
+ }
+diff --git a/apps/web/src/components/agent/frame.tsx b/apps/web/src/components/agent/frame.tsx
+index ad507559..56d472fe 100644
+--- a/apps/web/src/components/agent/frame.tsx
++++ b/apps/web/src/components/agent/frame.tsx
+@@ -1,20 +1,28 @@
+ "use client";
+ 
+-import { type ActionRowProps, type PageHeaderProps, SettingsPage } from "@capybara-hq/design";
++import {
++  type ActionRowProps,
++  type FieldShape,
++  type FormSectionLayout,
++  type PageHeaderProps,
++  SettingsPage,
++} from "@capybara-hq/design";
+ import { useTranslations } from "next-intl";
+ import { createContext, type ReactNode, useContext, useEffect } from "react";
+ import type { Agent } from "../../lib/agents";
+ import {
+   type AgentSection,
+   READ_ONLY_FIELDS,
++  SECTION_DESCRIPTIONS,
+   SECTION_FIELDS,
++  SECTION_LAYOUTS,
+   sectionHref,
+   sectionsFor,
+ } from "./sections";
+ 
+ /** What every section of the agent page reads: the agent, who is looking, the open section. */
+ export interface AgentPageValue {
+   orgId: string;
+   agent: Agent;
+   /** The viewer may change the agent (owner or org admin); else every section is read-only. */
+   editable: boolean;
+@@ -27,20 +35,36 @@ export interface AgentPageValue {
+ 
+ export const AgentPageContext = createContext<AgentPageValue | null>(null);
+ 
+ /** The agent page's context; only inside {@link AgentPage}. */
+ export function useAgentPage(): AgentPageValue {
+   const v = useContext(AgentPageContext);
+   if (v === null) throw new Error("useAgentPage outside AgentPage");
+   return v;
+ }
+ 
++/** A section's loading frame: its field layout, title, the description it knows and its layout. */
++export function loadingSection(
++  section: AgentSection,
++  fields: FieldShape[],
++  t: (key: string) => string,
++): { fields: FieldShape[]; title: string; description?: string; layout?: FormSectionLayout } {
++  const description = SECTION_DESCRIPTIONS[section];
++  const layout = SECTION_LAYOUTS[section];
++  return {
++    fields,
++    title: t(`sections.${section}`),
++    ...(description !== undefined ? { description: t(description) } : {}),
++    ...(layout !== undefined ? { layout } : {}),
++  };
++}
++
+ /** The nav of the sections this viewer sees. */
+ export function useSectionNav(agentId: string, editable: boolean) {
+   const t = useTranslations("agents.page");
+   return [
+     {
+       group: t("navGroup"),
+       items: sectionsFor(editable).map((s) => ({
+         id: s,
+         label: t(`sections.${s}`),
+         href: sectionHref(agentId, s),
+@@ -75,18 +99,16 @@ export function AgentSectionFrame({
+   }, [dirty, setDirty]);
+   const fields = page.editable
+     ? SECTION_FIELDS[page.section]
+     : (READ_ONLY_FIELDS[page.section] ?? SECTION_FIELDS[page.section]);
+   return (
+     <SettingsPage
+       header={page.header}
+       nav={page.nav}
+       activeNav={page.section}
+       {...(actionRow ? { actionRow } : {})}
+-      {...(loading
+-        ? { loading: { sections: [{ fields, title: t(`sections.${page.section}`) }] } }
+-        : {})}
++      {...(loading ? { loading: { sections: [loadingSection(page.section, fields, t)] } } : {})}
+     >
+       {children}
+     </SettingsPage>
+   );
+ }
+diff --git a/apps/web/src/components/agent/sections.ts b/apps/web/src/components/agent/sections.ts
+index 478951ae..8a6d067e 100644
+--- a/apps/web/src/components/agent/sections.ts
++++ b/apps/web/src/components/agent/sections.ts
+@@ -1,11 +1,11 @@
+-import type { FieldShape } from "@capybara-hq/design";
++import type { FieldShape, FormSectionLayout } from "@capybara-hq/design";
+ 
+ /**
+  * The agent page's sections (agent profile design §3.2), in nav order. The URL keeps the open one
+  * as `/agents/<id>?s=<section>`; without `s` (or with an unknown one) the page opens `basics`.
+  */
+ export const AGENT_SECTIONS = [
+   "basics",
+   "quick-actions",
+   "prompt",
+   "model",
+@@ -47,24 +47,38 @@ export const sectionHref = (agentId: string, s: AgentSection) =>
+  */
+ export const SECTION_FIELDS: Record<AgentSection, FieldShape[]> = {
+   // the avatar tiles, name, description, visibility
+   basics: [
+     { control: "radios", options: 11 },
+     { control: "input" },
+     { control: "textarea", rows: 3 },
+     { control: "select" },
+   ],
+   "quick-actions": [{ control: "card-group", options: 2 }],
+-  prompt: [{ control: "textarea", rows: 6, help: true }],
++  // the file list (one row: AGENTS.md) beside the open file's name and 16-line content
++  prompt: [{ control: "list-editor", options: 1, rows: 16 }],
+   model: [{ control: "select" }, { control: "select" }],
+   tools: [{ control: "card-group", options: 2 }],
+   skills: [{ control: "card-group", options: 2 }],
+   subagents: [{ control: "card-group", options: 1 }],
+   channels: [{ control: "card-group", options: 1 }],
+ };
+ 
+ /** The read-only variant's field layout (key-value rows, or the quick-action cards). */
+ export const READ_ONLY_FIELDS: Partial<Record<AgentSection, FieldShape[]>> = {
+   basics: [{ control: "text" }, { control: "key-value" }],
+   "quick-actions": [{ control: "card-group", options: 2 }],
+   model: [{ control: "key-value" }],
+ };
++
++/**
++ * The description a section's `FormSection` shows under its title, when it has one the page
++ * knows before the data (its loading frame draws it for real): an `agents.page` message key.
++ */
++export const SECTION_DESCRIPTIONS: Partial<Record<AgentSection, "prompt.hint">> = {
++  prompt: "prompt.hint",
++};
++
++/** Sections whose `FormSection` is stacked (the head above a full-width card): the editors. */
++export const SECTION_LAYOUTS: Partial<Record<AgentSection, FormSectionLayout>> = {
++  prompt: "stacked",
++};
+diff --git a/apps/web/src/lib/instruction-files.ts b/apps/web/src/lib/instruction-files.ts
+index bc18779d..d356243d 100644
+--- a/apps/web/src/lib/instruction-files.ts
++++ b/apps/web/src/lib/instruction-files.ts
+@@ -33,31 +33,32 @@ export function readInstructionFiles(def: {
+   instructions: string;
+   instructionFiles?: InstructionFile[] | undefined;
+ }): InstructionFile[] {
+   return def.instructionFiles ?? [{ name: AGENTS_MD, content: def.instructions }];
+ }
+ 
+ export type FileNameProblem = "invalid" | "duplicate";
+ 
+ /**
+  * What the kernel would refuse about each name: not `<1–64 characters>.md` or with a control,
+- * bidi or format character (`invalid`), or the same as an earlier file's ignoring case
+- * (`duplicate`). One entry per file, null when the name is fine.
++ * bidi or format character (`invalid`), or the same as another file's ignoring case
++ * (`duplicate`, on every file that shares it). One entry per file, null when the name is fine.
+  */
+ export function fileNameProblems(files: readonly InstructionFile[]): (FileNameProblem | null)[] {
+-  const seen = new Set<string>();
+-  return files.map((f) => {
++  const counts = new Map<string, number>();
++  for (const f of files) {
+     const key = f.name.toLowerCase();
+-    const dup = seen.has(key);
+-    seen.add(key);
++    counts.set(key, (counts.get(key) ?? 0) + 1);
++  }
++  return files.map((f) => {
+     if (!NAME_RE.test(f.name) || CONTROL_OR_HIDDEN_RE.test(f.name)) return "invalid";
+-    return dup ? "duplicate" : null;
++    return (counts.get(f.name.toLowerCase()) ?? 0) > 1 ? "duplicate" : null;
+   });
+ }
+ 
+ /** A new file's name: `untitled.md`, else `untitled-2.md`, … (unique ignoring case). */
+ export function newFileName(files: readonly InstructionFile[]): string {
+   const taken = new Set(files.map((f) => f.name.toLowerCase()));
+   for (let n = 1; ; n++) {
+     const name = n === 1 ? "untitled.md" : `untitled-${n}.md`;
+     if (!taken.has(name)) return name;
+   }
+diff --git a/apps/web/test/agent-page-sections.test.tsx b/apps/web/test/agent-page-sections.test.tsx
+index d40c0cdd..fa84da5e 100644
+--- a/apps/web/test/agent-page-sections.test.tsx
++++ b/apps/web/test/agent-page-sections.test.tsx
+@@ -224,26 +224,101 @@ describe("the agent page's sections with their own saves (agent profile design 
+     // names are compared ignoring case, as the kernel does
+     await user.type(nameBox(), "style.md");
+     await user.click(save());
+     await settle();
+     expect(patches(calls)).toEqual([]);
+     expect(nameBox().getAttribute("aria-invalid")).toBe("true");
+     expect(screen.getByText(PR.nameDuplicate)).toBeTruthy();
+     // a name without .md is refused the same way
+     await user.clear(nameBox());
+     await user.type(nameBox(), "notes.txt");
+-    expect(screen.getByText(PR.nameInvalid)).toBeTruthy();
+     await user.click(save());
+     await settle();
++    expect(screen.getByText(PR.nameInvalid)).toBeTruthy();
+     expect(patches(calls)).toEqual([]);
+   });
+ 
++  it("prompt: name errors show on blur or on save, not while typing", async () => {
++    stubApi(routes());
++    await renderEditAgent({ section: "prompt" });
++    const user = userEvent.setup();
++    await user.click(within(fileList()).getByRole("button", { name: PR.add }));
++    await user.clear(nameBox());
++    await user.type(nameBox(), "Style");
++    // mid-typing: nothing yet, though "Style" is not a valid name
++    expect(screen.queryByText(PR.nameInvalid)).toBeNull();
++    await user.type(nameBox(), ".md");
++    expect(screen.queryByText(PR.nameDuplicate)).toBeNull();
++    // leaving the field shows it: a case variant of STYLE.md
++    await user.tab();
++    expect(screen.getByText(PR.nameDuplicate)).toBeTruthy();
++    expect(nameBox().getAttribute("aria-invalid")).toBe("true");
++    // typing again hides it until the field is left
++    await user.type(nameBox(), "x");
++    expect(screen.queryByText(PR.nameInvalid)).toBeNull();
++    await user.type(nameBox(), "{Backspace}");
++    // a save shows every file's problem: STYLE.md is a duplicate of Style.md too
++    await user.click(save());
++    await user.click(within(fileList()).getByRole("button", { name: "STYLE.md" }));
++    expect(nameBox().value).toBe("STYLE.md");
++    expect(screen.getByText(PR.nameDuplicate)).toBeTruthy();
++  });
++
++  it("prompt: a titled section whose loading frame has the loaded shape", async () => {
++    stubApi(routes());
++    await renderEditAgent({ section: "prompt" });
++    const section = screen.getByRole("region", { name: en.agents.page.sections.prompt });
++    expect(within(section).getByRole("heading", { level: 2 }).textContent).toBe(
++      en.agents.page.sections.prompt,
++    );
++    expect(within(section).getByText(PR.hint)).toBeTruthy();
++    // stacked: the head above a full-width card, so the editor has the content's width
++    expect(section.getAttribute("data-layout")).toBe("stacked");
++    const grid = section.querySelector('[data-columns="list-detail"]');
++    expect(grid?.children).toHaveLength(2);
++    // the other sections keep the two columns
++    expect(document.querySelectorAll('[data-part="form-section"][data-layout]')).toHaveLength(1);
++    cleanup();
++
++    let release: () => void = () => {};
++    const held = new Promise<void>((r) => {
++      release = r;
++    });
++    await renderRouteEmptyCache("/agents/ag1?s=prompt", {
++      ...routes(),
++      [`GET ${ORG}/agents/ag1`]: async () => {
++        await held;
++        return json(200, { agent: agent() });
++      },
++    });
++    const loading = await vi.waitFor(() => {
++      const el = document.querySelector('[data-part="loading-list-editor"]');
++      if (el === null) throw new Error("no loading frame yet");
++      return el;
++    });
++    // the same title and description, the same grid: a list row beside an editor card
++    expect(screen.getByRole("heading", { level: 2 }).textContent).toBe(
++      en.agents.page.sections.prompt,
++    );
++    expect(screen.getByText(PR.hint)).toBeTruthy();
++    expect(loading.getAttribute("data-columns")).toBe("list-detail");
++    expect(loading.closest('[data-part="form-section"]')?.getAttribute("data-layout")).toBe(
++      "stacked",
++    );
++    expect(loading.querySelectorAll('[data-part="loading-repeater-item"]')).toHaveLength(1);
++    expect(loading.querySelector('[data-box="textarea"]')?.getAttribute("style")).toContain(
++      "--cb-skeleton-rows: 16",
++    );
++    await act(async () => release());
++    expect(await screen.findByRole("textbox", { name: PR.nameLabel })).toBeTruthy();
++  });
++
+   it("prompt: the counts show the joined characters against 100 000 and the files against 20", async () => {
+     stubApi(routes());
+     await renderEditAgent({ section: "prompt" });
+     expect(screen.getByText(`${JOINED.length} / 100,000 characters · 2 / 20 files`)).toBeTruthy();
+   });
+ 
+   it("prompt: editing an agent saved with prompt files sends instructionFiles only", async () => {
+     const calls = stubApi(routes());
+     await renderEditAgent({ section: "prompt" });
+     const user = userEvent.setup();
+diff --git a/docs/design/spec.md b/docs/design/spec.md
+index 335e8ebe..1491223f 100644
+--- a/docs/design/spec.md
++++ b/docs/design/spec.md
+@@ -271,20 +271,21 @@ States: `title`, `path`, `description-actions`, `long-title`, `narrow`, `loading
+ | Rail + Content + Inspector | 240 + flexible + 400 | Inbox |
+ | Centered | content max `layout.content` (1120), centered | Forms, settings, wizards |
+ 
+ - Content width: **one** width for every page template (list, overview, form, settings, wizard, detail, trace, inbox, onboarding, status), `layout.content` (1120), centered (100% wide below that), with `layout.content-pad` (32) of side padding (16 below 640) and `space.5` (20) above the header; the page head and the body (also a detail page's tabs, beside its inspector) share that container. The head and the scrolling body both reserve the scrollbar gutter (`scrollbar-gutter: stable`), so a classic (non-overlay) scrollbar never shifts the body's column against the head. The head therefore sits at the same x and y on every page and on every tab of one page. The inbox's rail + content + inspector split is capped at that width inside the same padding; the trace viewer's waterfall and detail share its one left edge (§5 T8). A form keeps its label column inside it (forms put `space.6` between sections, lists `space.3`); the conversation page has its own columns (§5.4). The Centered layout has **no anchor navigation**; a form's error count lives in the ActionRow.
+ - Content has a minimum width of 560. The Rail is collapsible; the Inspector is closable.
+ - Scrolling: the sidebar, PageHeader / PageTabs / ActionRow / StatusBar are fixed; the sidebar's conversation section, Rail, Content and Inspector scroll independently; the page must not show a horizontal scrollbar (wide tables scroll inside their own container).
+ - Responsive: < 1280 the sidebar becomes the rail and the Inspector a right-side Sheet; < 960 the sidebar becomes a drawer and the Rail a toolbar "Filter" button + Sheet; < 640 (phones, checked at 390 × 844) the header actions beyond the primary fold into `more-horizontal`, and:
+   - nothing scrolls sideways: the side padding is 16 on every template and on the conversation page (§5.4), and nothing keeps a minimum width wider than the window;
+   - tab rows scroll instead of wrapping (§6.4), and the page head's search takes its own line (§4.2);
+   - every DataTable is stacked rows (§6.6) and StatCards are two columns (§6.14);
++  - a `Grid columns="list-detail"` (a 220 px list beside a flexible detail, top-aligned: the agent page's prompt files and the open file's editor) is one column, the list above the detail;
+   - tap targets are at least 40 px: the page head's actions and tabs, row actions (ObjectRow, §6.17; the DataTable row menu), the drawer menu bar's and the conversation title bar's buttons (§6.16.1); the sidebar drawer's rows are 40 high (§6.13);
+   - type keeps its sizes: `micro` (11) stays the smallest (§2.2).
+ 
+ ### 4.4 ActionRow and StatusBar
+ 
+ - **StatusBar**: one form only. Height `layout.status-bar`, **no background**, a `line-soft` top line, `micro` type, `muted`, padding `layout.gutter`. Left: the prompt `<login>@<org slug>:~/<path>` in the workspace and `<login>@<org slug>:/admin/<path>` in the admin console (the login in lowercase and the org's slug; the same on the conversation page, `~/chat/<id>`, which also shows the time zone) and the page status (such as "Filtered 18 / 24", "Auto-refresh 15s"), `space.3` apart; right: system status, version and time zone, separated by spacing only (`space.3`, as the signed reference). No `>` prefix, no status dot (success is not colored); a failed run's status ("失败" / "Failed", the conversation page) is drawn in `fail` (`systemTone`, `ConversationStatus.tone`). **Read-only**: it never holds a clickable control and never grows into an action bar. When space runs out the left part truncates first (ellipsis), the right part stays.
+ - **ActionRow**: when the page has actions to submit (forms, bulk edits, approval decisions, wizards) it appears **above** the StatusBar; both stay fixed at the bottom of the content area. Height `layout.action-row`, `panel-2` ground across the content area, `line-soft` top line; inside a template its row is the content frame (the template's side padding, `layout.content` wide and centered, the body's scrollbar gutter), so the primary ends where the content ends; outside a template (the reference set) the padding is `layout.gutter`. Left: an accent dot + "N unsaved changes" (`muted`) `·` "N errors" (`fail` text, no icon, as the signed reference; the words carry the state), or a muted "No unsaved changes" ("没有未保存的修改", when the page passes `unsaved: 0`; never on a create form, §5.3); right: Cancel / Discard (default) · secondary action (default) · primary action (primary, rightmost), all `default` density. With no changes the primary is disabled.
+ - A page must not create its own floating / fixed bottom button bar.
+ - A page writes the "page status" text through `useStatusBar(...)` (rendered by the AppShell's StatusBar); StatusBar and ActionRow are design components, and a page does not render the StatusBar directly.
+ 
+@@ -389,20 +390,21 @@ States: `default`, `loading`, `content`, `loading-content`
+ | skeleton-text[data-size=body] | loading | height | type.body.line |
+ | loading-inspector-row | loading | height | type.body.line |
+ | content | content | max-width | layout.content |
+ | content | loading-content | max-width | layout.content |
+ | skeleton-box[data-box=default] | loading-content | height | control.default |
+ 
+ ### 5.3 Form (T4)
+ - PageHeader: path ending with the object's name (`new` for a new one); title "Create X" + draft badge; only auxiliary actions on the right (such as "Import from YAML").
+ - No anchor navigation (the Centered body has none, §4.3).
+ - Sections: a two-column grid, the left column 240 wide with the section title (`h2`) and a description (`prose-small` `muted`), the right column the fields on a `panel` card with radius `md`, padding `space.4`, `space.3` between fields. Sections are separated by `space.6` of spacing, **not by lines**; rows inside a list of switches are divided by `line-soft`.
++- **Stacked sections** (`FormSection layout="stacked"`; default `columns`): the head (the `h2` title over its description, `space.1` apart) sits above the fields card, `space.3` below it, and the card takes the content's full width. Use it only for a section whose content needs the width, such as an editor (the agent page's prompt files, §5.8 "List + editor"); every other section keeps the two columns. Below 960 every section is stacked this way already, so the narrow layout does not change. A loading section passes the same `layout` (`SettingsPage.loading.sections[].layout`), so its skeleton keeps the loaded section's boxes.
+ - Fields: label on top (`body` `ink`; required marked with an accent `*`, optional marked "Optional" in faint); controls `default` density; help text and error message below (`small`); on error the border is `fail` and the message starts with the `circle-alert` icon and gives an actionable suggestion.
+ - The ActionRow is always present: Cancel · Save draft (⌘S) · Publish.
+ - **Create forms** (`FormPage create`, a new object): focus starts on the first field; the ActionRow never says "No unsaved changes" (nothing exists yet to be unchanged; typed fields still count as unsaved and guard leaving); the primary is disabled until the form is valid (the required fields filled), as in a create dialog. A create form whose prerequisite is missing (no channel extension enabled for 新建渠道) draws only the `EmptyState` with the next step, never the form.
+ 
+ - **Loading** (`FormPage.loading`, a flag; `FormSection.loading`, `{ fields }` or `{ cards }`; spec §7.1 of the web query cache design): every region keeps its box. The header is its loading state (§4.2: the path the page knows, a title bar when the title is not known yet). Each section is the page's own `FormSection`, so the page passes its static section list and a section whose data is ready renders for real next to loading ones: a loading section keeps its title and description and draws `fields` field placeholders in its card in place of `children`; a section that lists cards passes `cards` (`CardShape[]`, §5.8) instead and draws those titled card placeholders in its card. `fields` is a count (that many default inputs) or `FieldShape[]`, the page's static field layout, which it knows before the data arrives and **must pass** whenever a field is not a plain input, so the loading card is as tall as the loaded one: `{ control?: input | textarea | select | segmented; help?: boolean; rows?: number; pair?: boolean }`. A field placeholder is the loaded `.cb-field` itself: a `body` slot (30%) in the field head where the label is, then the control's own box directly in the field (`control.default` for input, select and segmented; a textarea is `max(rows, 2)` `body` lines + `space.2` + 2 px high, `rows` default 2), so the box has whatever width the field's rule gives a control (never a width of its own), then, when `help` is set, one `small` slot (the loaded field's help text, error message or counter line). A shape with `pair` and the one after it sit in the two-column `Grid` (gap 12) the loaded section draws for paired fields. The ActionRow stays, its buttons disabled and with no unsaved or error count. A `flush` section (a SwitchList) keeps its flush card (no padding) and draws `fields` switch rows in SwitchList's own list and row (divider, padding, `row.roomy` height): a `body` name slot (30%) over a `small` description slot (55%) in the text column and a 32 × 20 box in the switch's place. One busy announcement (§6.29); a loading section outside a loading page announces itself. Nothing animates.
+ 
+ <!-- states: template-form -->
+ States: `page`, `loading`
+ 
+ <!-- size-table: template-form -->
+@@ -495,20 +497,21 @@ States: `default`, `loading`, `default-records`, `loading-records`
+ | content | loading | max-width | layout.content |
+ | content | default-records | max-width | layout.content |
+ | content | loading-records | max-width | layout.content |
+ | loading-row | loading | height | 64 |
+ | skeleton-box[data-box=mark] | loading | height | 36 |
+ 
+ ### 5.8 Settings (T5)
+ - **Loading** (`SettingsPage.loading`, `{ sections? }`): the header is its loading state (§4.2); the sub-nav is real (static per page) and so is the header's `description`; an ActionRow the page passes stays with its buttons disabled. `sections` (one entry per section: `fields`, and the `title` / `description` the page already knows) draws each section in the `FormSection` frame (§5.3) in place of `children`: a title the page does not know is an h2-sized slot (`SkeletonText` `heading`, 45%), a description it does not know a `body` slot (70%), then `fields` field placeholders (§5.3; a count or `FieldShape[]`). Without `sections` the children render as they are, each `FormSection` or list saying for itself whether it is loading. One busy announcement (§6.29). Nothing animates.
+   - **Control groups** that are no `Field` have their own `FieldShape`s, each drawn in a `Stack` (gap 8) with an optional `help` line (`small`, 55%) under it, as a settings section draws a group and its hint: `radio-cards` is the card RadioGroup's own markup (`.cb-radios[data-variant=card]`, gap 8) with `options` cards (default 2), each the card's frame (padding `space.2` `space.3`, 1 px `line` border) holding a 14 px box slot and the text column's `body` label slot (30%) over its `small` description slot (70%); `key-value` is KeyValue's own `dl` with `rows` rows (default 3), a `body` slot in the `keyWidth` key column (default 8ch) and a 55% value slot; `switch` is a row (gap 12, centred) of a 32 × 20 box (the Switch) and a 64 px `body` slot (its state word). Two shapes stand beside the groups without a stack: `text` is one `body` slot (70%: a hint is `Text variant="prose"`, whose prose-small line is the body line), a hint line the section always shows; `card-group` is a `small` label slot (30%) over a gap-12 stack of `options` untitled cards (default 2), each a `body` slot over `rows` `small` slots (default 2) in a gap-4 stack, as a labelled list of cards (an extension's permissions). A loading slot that sits in a flex row (a card radio's text column, a card's title) takes the row's free width (`flex: 1`, `min-width: 0`), so its percentage bar is never 0 px wide. Static text the page shows beside a group (a read-only note, "applies to new sandboxes") renders for real through `help` only when the page knows it is shown. States `radio-cards` / `loading-radio-cards`.
+   - **Cards**: a section that lists titled cards takes `cards: CardShape[]` instead of `fields`, and a page that is a stack of titled cards (no sections) passes `loading.cards`: `CardShape[]`, or `{ shape, count }` (one shape repeated, default 3), in a 16-gap stack as the loaded cards. A card placeholder is the `Card` frame: in its head a 45% `body` title slot and `actions` button slots (88 px wide, `control.default` high); in its body `lines` text lines (`lineSize` `body` or `small`; 70% then 55%) in a gap-8 stack, or, with a `field`, the lines in a gap-4 stack and that field's placeholder below them (gap 12), as a card that describes a setting and then edits it; `list` adds after the lines a labelled list (a `small` label slot and `list` `small` slots, gap 4), as an install card's components. States `cards` / `loading-cards`.
++  - **List + editor**: a section that edits a list of named items next to the open item (the agent page's prompt files, §3.3 of the agent profile design) is a stacked `FormSection` (§5.3), so its card has the content's full width, and lays the card out as `Grid columns="list-detail"` (gap 16; one column below 640, §4.3): on the left a gap-8 stack of a rows `Repeater` (§6.26) whose rows each hold the item's name as a default-height button, and a `small` count line under it; on the right a titled `Card` with the item's fields (gap 12). Its loading shape is `{ control: "list-editor", options?, rows? }`: the same grid and stack, the Repeater's own list of `options` rows (default 1), each a `control.default` slot, its add button slot (`control.dense`, 88 px) and a `small` 70% count slot; and the `Card` frame with a 45% title slot over a name field placeholder (an input with its help line) and a `rows`-line textarea placeholder with its help line (default 16), gap 12.
+ 
+ <!-- states: template-settings -->
+ States: `default`, `loading`, `radio-cards`, `loading-radio-cards`, `cards`, `loading-cards`
+ 
+ <!-- size-table: template-settings -->
+ | Part | State | Property | Value |
+ |---|---|---|---|
+ | content | default | max-width | layout.content |
+ | content | loading | max-width | layout.content |
+ | settings-nav | default | width | 200 |
+@@ -1969,21 +1972,21 @@ States: `default`, `chosen`
+ | file-picker-hint | default | color | color.muted |
+ | file-picker-hint | default | font-size | type.small |
+ | button | default | height | control.default |
+ | file-picker-status | chosen | row-gap | space.2 |
+ 
+ ### 6.26 Repeater
+ 
+ `Repeater({ label, items, addLabel, onAdd, presets?, onRemove, onMove?, onToggle?, min?, max?, disabled?, empty?, variant? })` with `RepeaterItem { key, title?, subtitle?, body, invalid?, collapsed? }`: an array of objects in a config form (an extension's endpoints, an endpoint's models; config forms spec §5). A `group` named by `label` around a list (`ul`) of items, `space.2` apart; each item is a `group` named by its title (an untitled item by its position, "第 2 项" / "Item 2").
+ 
+ - **Cards** (`variant="cards"`, default): a 1px `line` hairline card, radius `md`, no fill (the form card's `panel` shows through). The head is one line at least `row.default` high, split from the body by `line-soft`: the drag handle (`grip-vertical` 14, `faint`, only with `onMove`), a collapse chevron (`chevron-down` / `chevron-right`, a dense icon button with `aria-expanded`, only with `onToggle`), the title (`body`, 500, `ink`, one line with an ellipsis), the subtitle after it (`small`, `muted`, mono, one line with an ellipsis; a template such as `{baseUrl}`), and at the right the dense icon buttons move up / move down (`arrow-up` / `arrow-down`, only with `onMove`) and remove (`trash-2`), each named with the item ("上移 deepseek", "移除 deepseek"). The body holds the item's fields, padding `space.3`, `space.3` between fields. A `collapsed` card (with `onToggle`) draws only its head. An `invalid` card's border is `fail`.
+-- **Rows** (`variant="rows"`): compact items without a head, one `FieldRow` (§6.27) each, `space.2` above and below, split by `line-soft`; the handle and the actions sit at the row's ends on the inputs' line (below the first row's labels); an invalid row carries a 2px `fail` bar on its left. Titles only name the rows.
++- **Rows** (`variant="rows"`): compact items without a head, one `FieldRow` (§6.27) each, `space.2` above and below, split by `line-soft`; the handle and the actions sit at the row's ends on the inputs' line (below the first row's labels); an invalid row carries a 2px `fail` bar on its left. Titles only name the rows. A row whose body has no field labels (a list of names, each a button) keeps its handle and actions on its own line on the first row too.
+ - **Footer**: a dense `default` button with `plus` and the caller's words ("添加端点" / "Add endpoint"). With `presets` it opens a menu (§6.7) of the presets, each with its help as the item's description, then a separator and "空白" / "Blank"; the button carries a `chevron-down` after its words. `onAdd(presetId?)` gets the preset's id, or nothing for a blank item. After an add, focus goes to the new item's first empty required field (`aria-required`; a preset filled the others), else its first field, else the item.
+ - **Remove** acts at once: `onRemove(key)` removes the item and returns a restore function; the Repeater shows a success toast "已移除「deepseek」。" / `Removed "deepseek".` whose "撤销" / "Undo" action calls it (the toast stays 8 s). Focus moves to the next item (else the previous, else the add button).
+ - **Reorder** (`onMove(key, to)`): the move buttons, dragging a card by its handle, or Alt+↑ / Alt+↓ anywhere inside a focused item; focus stays on what had it (a move button that became disabled hands it to its sibling). Move up is disabled on the first item, move down on the last.
+ - **Limits and states**: remove is disabled while there are `min` items or fewer, add while there are `max` or more. Without items the list gives way to `empty` (`prose-small`, `muted`). `disabled` (a field given by the startup config) disables add, remove, move and dragging, and hides the handle.
+ 
+ <!-- states: repeater -->
+ States: `default`, `rows`, `invalid`, `empty`
+ 
+ <!-- size-table: repeater -->
+ | Part | State | Property | Value |
+diff --git a/packages/design/src/layout/index.tsx b/packages/design/src/layout/index.tsx
+index e7133ffc..031682b5 100644
+--- a/packages/design/src/layout/index.tsx
++++ b/packages/design/src/layout/index.tsx
+@@ -31,22 +31,26 @@ export function Stack({
+       {children}
+     </div>
+   );
+ }
+ 
+ export function Grid({
+   columns,
+   gap = 16,
+   children,
+ }: {
+-  /** `main-side`: a main column twice the side column's width; one column below 960. */
+-  columns: 1 | 2 | 3 | 4 | "form" | "main-side";
++  /**
++   * `main-side`: a main column twice the side column's width; one column below 960.
++   * `list-detail`: a 220 px list beside a flexible detail (a file list and the open file's
++   * editor), top-aligned; one column below 640, the list above the detail.
++   */
++  columns: 1 | 2 | 3 | 4 | "form" | "main-side" | "list-detail";
+   gap?: Gap;
+   children?: ReactNode;
+ }) {
+   return (
+     <div className="cb-grid" data-columns={columns} data-gap={gap}>
+       {children}
+     </div>
+   );
+ }
+ 
+diff --git a/packages/design/src/styles/controls.css b/packages/design/src/styles/controls.css
+index 0f6d1d07..0e2dde69 100644
+--- a/packages/design/src/styles/controls.css
++++ b/packages/design/src/styles/controls.css
+@@ -59,20 +59,29 @@
+ }
+ .cb-grid[data-columns="main-side"] {
+   grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+   align-items: start;
+ }
+ @media (max-width: 959px) {
+   .cb-grid[data-columns="main-side"] {
+     grid-template-columns: minmax(0, 1fr);
+   }
+ }
++.cb-grid[data-columns="list-detail"] {
++  grid-template-columns: 220px minmax(0, 1fr);
++  align-items: start;
++}
++@media (max-width: 639px) {
++  .cb-grid[data-columns="list-detail"] {
++    grid-template-columns: minmax(0, 1fr);
++  }
++}
+ 
+ .cb-stack[data-gap="0"],
+ .cb-grid[data-gap="0"] {
+   gap: 0;
+ }
+ .cb-stack[data-gap="4"],
+ .cb-grid[data-gap="4"] {
+   gap: 4px;
+ }
+ .cb-stack[data-gap="8"],
+diff --git a/packages/design/src/styles/repeater.css b/packages/design/src/styles/repeater.css
+index 652fa31d..cf4bd47c 100644
+--- a/packages/design/src/styles/repeater.css
++++ b/packages/design/src/styles/repeater.css
+@@ -152,16 +152,27 @@
+   align-self: flex-start;
+   min-height: var(--cb-control-default);
+ }
+ .cb-repeater[data-variant="rows"] .cb-repeater-handle {
+   align-items: center;
+ }
+ .cb-repeater[data-variant="rows"] .cb-repeater-li:first-child .cb-repeater-handle,
+ .cb-repeater[data-variant="rows"] .cb-repeater-li:first-child .cb-repeater-actions {
+   margin-top: var(--cb-space-6);
+ }
++/* A row without field labels (a list of names) keeps its ends on its own line. */
++.cb-repeater[data-variant="rows"]
++  .cb-repeater-li:first-child
++  > .cb-repeater-item:not(:has(.cb-field-head))
++  > .cb-repeater-handle,
++.cb-repeater[data-variant="rows"]
++  .cb-repeater-li:first-child
++  > .cb-repeater-item:not(:has(.cb-field-head))
++  > .cb-repeater-actions {
++  margin-top: 0;
++}
+ @media (max-width: 639px) {
+   .cb-repeater[data-variant="rows"] .cb-repeater-li:first-child .cb-repeater-handle,
+   .cb-repeater[data-variant="rows"] .cb-repeater-li:first-child .cb-repeater-actions {
+     margin-top: 0;
+   }
+ }
+diff --git a/packages/design/src/styles/templates.css b/packages/design/src/styles/templates.css
+index a95d7144..f8db3846 100644
+--- a/packages/design/src/styles/templates.css
++++ b/packages/design/src/styles/templates.css
+@@ -35,20 +35,25 @@
+   min-width: 0;
+   padding: var(--cb-space-4);
+   border-radius: var(--cb-radius-md);
+   background: var(--cb-panel);
+   box-shadow: inset 0 0 0 1px var(--cb-line-card);
+ }
+ .cb-form-section-fields[data-flush="true"] {
+   gap: 0;
+   padding: 0;
+ }
++/* Stacked: the head above a fields card across the full width (an editor), at every width. */
++.cb-form-section[data-layout="stacked"] {
++  grid-template-columns: minmax(0, 1fr);
++  gap: var(--cb-space-3);
++}
+ @media (max-width: 959px) {
+   .cb-form-section {
+     grid-template-columns: minmax(0, 1fr);
+     gap: var(--cb-space-3);
+   }
+ }
+ 
+ /* Settings: the head across the content width, then a 200px sub-nav beside the section content. */
+ .cb-settings-grid {
+   display: grid;
+diff --git a/packages/design/src/templates/form-page.tsx b/packages/design/src/templates/form-page.tsx
+index f1949a54..20051343 100644
+--- a/packages/design/src/templates/form-page.tsx
++++ b/packages/design/src/templates/form-page.tsx
+@@ -86,53 +86,62 @@ export function FormPage({
+       )}
+     </div>
+   );
+ }
+ 
+ /** The action row without its unsaved count (a create form with nothing typed yet). */
+ function withoutUnsaved({ unsaved: _, ...rest }: ActionRowProps): ActionRowProps {
+   return rest;
+ }
+ 
++/** How a form section places its head (spec §5.3). */
++export type FormSectionLayout = "columns" | "stacked";
++
+ /**
+  * A form section (spec §5.3): two columns, the title (h2) and a prose-small muted description on
+  * the left, the fields on a `panel` card on the right. Sections are separated by spacing.
+  * `loading` keeps the title and description real and draws `fields` field placeholders in the
+  * card (a count of default inputs, or the page's static `FieldShape`s) in place of `children`; a `flush` section keeps its flush card and draws `fields` switch rows instead; a section whose data
+  * is ready renders for real next to loading ones. Outside a loading page it announces itself.
++ * `layout="stacked"` puts the head above a fields card across the full width, for content that
++ * needs it (an editor); below 960 every section is stacked anyway.
+  */
+ export function FormSection({
+   id,
+   title,
+   description,
++  layout = "columns",
+   flush,
+   loading,
+   children,
+ }: {
+   id: string;
+   title: string;
+   description?: string;
++  /** `columns` (default): the head column beside the card; `stacked`: the head above it. */
++  layout?: FormSectionLayout;
+   /** The card without padding, for content that reaches its edges (a SwitchList). */
+   flush?: boolean;
+   /**
+    * The section's data is not here yet: `fields` field placeholders replace `children`, or, for a
+    * section that lists cards, `cards` titled card placeholders (spec §5.8).
+    */
+   loading?: { fields: number | FieldShape[] } | { cards: CardShape[] };
+   children?: ReactNode;
+ }) {
+   const announces = useSkeletonAnnounces();
+   return (
+     <section
+       id={id}
+       className="cb-form-section"
+       data-part="form-section"
++      data-layout={layout === "stacked" ? "stacked" : undefined}
+       aria-label={title}
+       aria-busy={loading && announces ? "true" : undefined}
+     >
+       {loading && announces ? <SkeletonAnnouncement /> : null}
+       <div className="cb-form-section-head" data-part="form-section-head">
+         <Text variant="h2">{title}</Text>
+         {description ? <p className="cb-form-section-description">{description}</p> : null}
+       </div>
+       <div
+         className="cb-form-section-fields"
+@@ -160,31 +169,34 @@ export function FormSection({
+  * the `FormSection` frame with an h2-sized slot for the title and a prose-small slot for the
+  * description. What the page does know (`title`, `description`) renders for real. The form card
+  * holds `fields` field placeholders, or `cards` titled card placeholders (a section that lists
+  * cards, spec §5.8).
+  */
+ export function LoadingFormSection({
+   fields,
+   cards,
+   title,
+   description,
++  layout = "columns",
+ }: {
++  layout?: FormSectionLayout;
+   fields?: number | FieldShape[];
+   cards?: CardShape[];
+   title?: string;
+   description?: string;
+ }) {
+   const announces = useSkeletonAnnounces();
+   return (
+     <section
+       className="cb-form-section"
+       data-part="form-section"
++      data-layout={layout === "stacked" ? "stacked" : undefined}
+       aria-busy={announces ? "true" : undefined}
+     >
+       {announces ? <SkeletonAnnouncement /> : null}
+       <div className="cb-form-section-head" data-part="form-section-head">
+         {title !== undefined ? (
+           <Text variant="h2">{title}</Text>
+         ) : (
+           <SkeletonText width="45%" size="heading" />
+         )}
+         {description !== undefined ? (
+diff --git a/packages/design/src/templates/frame.tsx b/packages/design/src/templates/frame.tsx
+index b495c092..b739fc2c 100644
+--- a/packages/design/src/templates/frame.tsx
++++ b/packages/design/src/templates/frame.tsx
+@@ -157,34 +157,39 @@ export function loadingActionRow(row: ActionRowProps): ActionRowProps {
+  *
+  * Three shapes stand for a control group that is no `Field` (spec §5.8), each in a `Stack` (gap 8)
+  * with the `help` line under it, as a settings section draws a group and its hint: `radio-cards`
+  * is a card RadioGroup of `options` cards (default 2), each with its label and description lines;
+  * `key-value` is a KeyValue of `rows` rows (default 3) with a `keyWidth` key column (default 8ch);
+  * `switch` is a switch and its state word on one row; `radios` is a plain RadioGroup of `options`
+  * rows (default 3), each its box and a label slot. Two more stand for static text and a block of
+  * cards beside the controls (no stack): `text` is one `prose` line (a hint the section always
+  * shows, the prose-small line); `card-group` is a small label line over a gap-12 stack of `options` untitled cards
+  * (default {@link LOADING_GROUP_CARDS}), each a `body` line over `rows` `small` lines (default 2),
+- * as a labelled list of cards (an extension's permissions) draws.
++ * as a labelled list of cards (an extension's permissions) draws. `list-editor` is a list beside
++ * the open item's editor (`Grid columns="list-detail"`, gap 16): on the left a rows `Repeater`'s
++ * own list of `options` rows (default 1), each a `control.default` slot, its add button slot
++ * (dense, 88 px) and a `small` count line (gap 8); on the right a titled `Card` with a name field
++ * (an input with its help line) over a `rows`-line textarea with its help line (default 16), gap 12.
+  */
+ export type FieldShape = {
+   control?:
+     | "input"
+     | "textarea"
+     | "select"
+     | "segmented"
+     | "radio-cards"
+     | "radios"
+     | "key-value"
+     | "switch"
+     | "text"
+-    | "card-group";
++    | "card-group"
++    | "list-editor";
+   help?: boolean;
+   rows?: number;
+   pair?: boolean;
+   /** `radio-cards`, `card-group`: how many cards; `radios`: how many options. */
+   options?: number;
+   /** `key-value`: the key column's width (KeyValue's `keyWidth`). */
+   keyWidth?: string;
+ };
+ 
+ /**
+@@ -305,24 +310,73 @@ function LoadingKeyValue({
+           </dt>
+           <dd className="cb-kv-value">
+             <SkeletonText width="55%" />
+           </dd>
+         </div>
+       ))}
+     </dl>
+   );
+ }
+ 
++/** A list beside the open item's editor (`list-editor`, see {@link FieldShape}). */
++function LoadingListEditor({ items, rows }: { items: number; rows: number }) {
++  return (
++    <div
++      className="cb-grid"
++      data-columns="list-detail"
++      data-gap="16"
++      data-part="loading-list-editor"
++    >
++      <Stack gap={8}>
++        <div className="cb-repeater" data-variant="rows" data-part="loading-repeater">
++          <ul className="cb-repeater-list">
++            {Array.from({ length: Math.max(1, items) }, (_, i) => (
++              // biome-ignore lint/suspicious/noArrayIndexKey: the placeholders are positional
++              <li key={i} className="cb-repeater-li">
++                <div className="cb-repeater-item" data-part="loading-repeater-item">
++                  <div className="cb-repeater-body">
++                    <SkeletonBox part="default" />
++                  </div>
++                </div>
++              </li>
++            ))}
++          </ul>
++          <div className="cb-repeater-foot">
++            <SkeletonBox part="dense" width={88} />
++          </div>
++        </div>
++        <SkeletonText width="70%" size="small" />
++      </Stack>
++      <section className="cb-card" data-part="loading-list-editor-card">
++        <header className="cb-card-head">
++          <div className="cb-card-title" data-loading="true">
++            <SkeletonText width="45%" />
++          </div>
++        </header>
++        <div className="cb-card-body">
++          <Stack gap={12}>
++            <LoadingField shape={{ help: true }} />
++            <LoadingField shape={{ control: "textarea", rows, help: true }} />
++          </Stack>
++        </div>
++      </section>
++    </div>
++  );
++}
++
+ /** One field placeholder: the loaded `.cb-field`'s own markup, with slots where the data goes. */
+ function LoadingField({ shape }: { shape: FieldShape }) {
+   // A hint is `Text variant="prose"`, whose line is prose-small's (20, the `body` line).
+   if (shape.control === "text") return <SkeletonText width="70%" />;
++  if (shape.control === "list-editor") {
++    return <LoadingListEditor items={shape.options ?? 1} rows={shape.rows ?? 16} />;
++  }
+   if (shape.control === "card-group") {
+     return <LoadingCardGroup cards={shape.options ?? LOADING_GROUP_CARDS} rows={shape.rows ?? 2} />;
+   }
+   const group =
+     shape.control === "radio-cards" ? (
+       <LoadingRadioCards options={shape.options ?? 2} />
+     ) : shape.control === "radios" ? (
+       <LoadingRadios options={shape.options ?? 3} />
+     ) : shape.control === "key-value" ? (
+       <LoadingKeyValue rows={shape.rows ?? 3} keyWidth={shape.keyWidth ?? "8ch"} />
+diff --git a/packages/design/src/templates/index.ts b/packages/design/src/templates/index.ts
+index 18fe4560..304aad8d 100644
+--- a/packages/design/src/templates/index.ts
++++ b/packages/design/src/templates/index.ts
+@@ -4,21 +4,21 @@ export {
+   ConversationPage,
+   type ConversationPageProps,
+   type ConversationStatus,
+   clampPanelWidth,
+   PANEL_DEFAULT,
+   PANEL_MIN,
+   PANEL_STEP,
+   PANEL_WIDTH_KEY,
+ } from "./conversation-page";
+ export { DetailPage } from "./detail-page";
+-export { FormPage, FormSection } from "./form-page";
++export { FormPage, FormSection, type FormSectionLayout } from "./form-page";
+ export type { BlockShape, CardShape, FieldShape } from "./frame";
+ export { type InboxLoading, InboxPage } from "./inbox-page";
+ export { type ListLoading, ListPage } from "./list-page";
+ export { PAGE_TEMPLATES, type PageTemplateName } from "./names";
+ export { OnboardingPage } from "./onboarding-page";
+ export { OverviewPage } from "./overview-page";
+ export { SettingsPage } from "./settings-page";
+ export { SetupPage, type SetupPageProps } from "./setup-page";
+ export { StatusPage } from "./status-page";
+ export { TracePage } from "./trace-page";
+diff --git a/packages/design/src/templates/settings-page.tsx b/packages/design/src/templates/settings-page.tsx
+index 3bc89eeb..4c2eceed 100644
+--- a/packages/design/src/templates/settings-page.tsx
++++ b/packages/design/src/templates/settings-page.tsx
+@@ -1,16 +1,16 @@
+ import { type ReactNode, useEffect, useRef } from "react";
+ import { SkeletonGroup } from "../display/skeleton";
+ import { Stack } from "../layout/index";
+ import { LinkPendingMark, useDesignLink, useDesignT } from "../provider";
+ import { ActionRow, type ActionRowProps, Body, type PageHeaderProps } from "../shell/index";
+-import { LoadingFormSection } from "./form-page";
++import { type FormSectionLayout, LoadingFormSection } from "./form-page";
+ import {
+   type CardShape,
+   type FieldShape,
+   LOADING_CARDS,
+   LoadingShapedCards,
+   loadingActionRow,
+   loadingHeader,
+   TemplateHead,
+ } from "./frame";
+ 
+@@ -49,20 +49,22 @@ export function SettingsPage({
+   header: PageHeaderProps;
+   nav: SettingsNavGroup[];
+   activeNav: string;
+   actionRow?: ActionRowProps;
+   loading?: {
+     sections?: {
+       fields?: number | FieldShape[];
+       cards?: CardShape[];
+       title?: string;
+       description?: string;
++      /** The loaded section's `FormSection` layout (default `columns`). */
++      layout?: FormSectionLayout;
+     }[];
+     cards?: CardShape[] | { shape?: CardShape; count?: number };
+   };
+   children?: ReactNode;
+ }) {
+   const { description, ...head } = header;
+   const Link = useDesignLink();
+   const t = useDesignT();
+   // On phones the sub-nav is one scrolling row above the content: keep the current item in view.
+   const navRef = useRef<HTMLElement>(null);
+diff --git a/packages/design/test/layout.test.tsx b/packages/design/test/layout.test.tsx
+index 705b1bca..e120f7b6 100644
+--- a/packages/design/test/layout.test.tsx
++++ b/packages/design/test/layout.test.tsx
+@@ -18,20 +18,32 @@ describe("布局原语", () => {
+     expect(el.tagName).toBe("H2");
+     expect(el.getAttribute("data-variant")).toBe("h2");
+     expect(el.getAttribute("data-tone")).toBe("muted");
+   });
+ 
+   it("Text pre 保留换行与空白（data-pre）", () => {
+     render(<Text pre>{"第一行\n第二行"}</Text>);
+     expect(screen.getByText(/第一行/).getAttribute("data-pre")).toBe("true");
+   });
+ 
++  it("Grid list-detail: the list and detail columns", () => {
++    render(
++      <Grid columns="list-detail">
++        <span>列表</span>
++        <span>详情</span>
++      </Grid>,
++    );
++    expect(screen.getByText("列表").parentElement?.getAttribute("data-columns")).toBe(
++      "list-detail",
++    );
++  });
++
+   it("Stack / Grid / Card 暴露属性", () => {
+     render(
+       <Stack gap={12} direction="row">
+         <Grid columns="form">
+           <Card title="卡片" actions={<span>操作</span>} tone="danger">
+             内容
+           </Card>
+         </Grid>
+       </Stack>,
+     );
+diff --git a/packages/design/test/templates-loading.test.tsx b/packages/design/test/templates-loading.test.tsx
+index 30e8b652..545c2be8 100644
+--- a/packages/design/test/templates-loading.test.tsx
++++ b/packages/design/test/templates-loading.test.tsx
+@@ -662,20 +662,128 @@ describe("SettingsPage loading", () => {
+     expect(group?.getAttribute("data-gap")).toBe("8");
+     expect(group?.firstElementChild?.getAttribute("data-size")).toBe("small");
+     const cards = group?.querySelectorAll('[data-part="loading-group-card"]') ?? [];
+     expect(cards).toHaveLength(2);
+     expect(cards[0]?.parentElement?.getAttribute("data-gap")).toBe("12");
+     // each card: a body line over two small lines
+     const lines = [...(cards[0]?.querySelectorAll('[data-part="skeleton-text"]') ?? [])];
+     expect(lines.map((l) => l.getAttribute("data-size"))).toEqual(["body", "small", "small"]);
+   });
+ 
++  it("list-editor shape: list rows, add and count beside a titled editor card (name, 16-line textarea)", () => {
++    zh(
++      <SettingsPage
++        header={header}
++        nav={nav}
++        activeNav="general"
++        loading={{
++          sections: [{ title: "提示词", fields: [{ control: "list-editor", options: 2 }] }],
++        }}
++      />,
++    );
++    const grid = document.querySelector('[data-part="loading-list-editor"]');
++    // the loaded layout's own grid: a 220 px list beside the editor, one column on phones
++    expect(grid?.getAttribute("data-columns")).toBe("list-detail");
++    expect(grid?.getAttribute("data-gap")).toBe("16");
++    const [list, card] = [...(grid?.children ?? [])];
++    expect(list?.getAttribute("data-gap")).toBe("8");
++    const repeater = list?.querySelector('[data-part="loading-repeater"]');
++    expect(repeater?.getAttribute("data-variant")).toBe("rows");
++    expect(repeater?.querySelectorAll('[data-part="loading-repeater-item"]')).toHaveLength(2);
++    expect(repeater?.querySelector(".cb-repeater-foot [data-box]")?.getAttribute("data-box")).toBe(
++      "dense",
++    );
++    expect(list?.lastElementChild?.getAttribute("data-size")).toBe("small");
++    expect(card?.getAttribute("data-part")).toBe("loading-list-editor-card");
++    const fields = card?.querySelectorAll('[data-part="loading-field"]') ?? [];
++    expect(fields).toHaveLength(2);
++    expect(fields[0]?.querySelector("[data-box]")?.getAttribute("data-box")).toBe("default");
++    const area = fields[1]?.querySelector('[data-box="textarea"]') as HTMLElement | null;
++    expect(area?.style.getPropertyValue("--cb-skeleton-rows")).toBe("16");
++    // both fields keep their help line
++    for (const f of fields) expect(f.lastElementChild?.getAttribute("data-size")).toBe("small");
++  });
++
++  it("FormSection layout: columns by default, stacked puts the head above a full-width card, loading too", () => {
++    zh(
++      <>
++        <FormSection id="a" title="默认">
++          <span>内容</span>
++        </FormSection>
++        <FormSection id="b" title="提示词" description="说明" layout="stacked">
++          <span>编辑器</span>
++        </FormSection>
++      </>,
++    );
++    const [plain, stacked] = [...document.querySelectorAll('[data-part="form-section"]')];
++    // an existing section renders as before: no layout attribute, the two-column rule
++    expect(plain?.hasAttribute("data-layout")).toBe(false);
++    expect(stacked?.getAttribute("data-layout")).toBe("stacked");
++    // the same parts in the same order: the head, then the card
++    expect([...(stacked?.children ?? [])].map((c) => c.getAttribute("data-part"))).toEqual([
++      "form-section-head",
++      "form-card",
++    ]);
++    cleanup();
++    zh(
++      <SettingsPage
++        header={header}
++        nav={nav}
++        activeNav="general"
++        loading={{
++          sections: [
++            {
++              title: "提示词",
++              description: "说明",
++              layout: "stacked",
++              fields: [{ control: "list-editor" }],
++            },
++            { title: "其他", fields: 1 },
++          ],
++        }}
++      />,
++    );
++    const loading = [...document.querySelectorAll('[data-part="form-section"]')];
++    expect(loading[0]?.getAttribute("data-layout")).toBe("stacked");
++    expect(loading[0]?.querySelector('[data-part="loading-list-editor"]')).not.toBeNull();
++    expect(loading[1]?.hasAttribute("data-layout")).toBe(false);
++    const css = readFileSync(resolve(import.meta.dirname, "../src/styles/templates.css"), "utf8");
++    const at = css.indexOf('.cb-form-section[data-layout="stacked"] {');
++    expect(css.slice(at, css.indexOf("}", at))).toContain("grid-template-columns: minmax(0, 1fr)");
++    // the default two-column rule is untouched
++    const base = css.indexOf(".cb-form-section {");
++    expect(css.slice(base, css.indexOf("}", base))).toContain(
++      "grid-template-columns: 240px minmax(0, 1fr)",
++    );
++  });
++
++  it("the list-detail grid collapses to one column below 640; label-less rows keep their ends on their line", () => {
++    const controls = readFileSync(
++      resolve(import.meta.dirname, "../src/styles/controls.css"),
++      "utf8",
++    );
++    const wide = controls.indexOf('.cb-grid[data-columns="list-detail"] {');
++    expect(controls.slice(wide, controls.indexOf("}", wide))).toContain(
++      "grid-template-columns: 220px minmax(0, 1fr)",
++    );
++    const narrow = controls.indexOf("@media (max-width: 639px)", wide);
++    expect(narrow).toBeGreaterThan(wide);
++    expect(controls.slice(narrow, controls.indexOf("}\n}", narrow))).toContain(
++      "grid-template-columns: minmax(0, 1fr)",
++    );
++    const repeater = readFileSync(
++      resolve(import.meta.dirname, "../src/styles/repeater.css"),
++      "utf8",
++    );
++    expect(repeater).toContain(":not(:has(.cb-field-head))");
++  });
++
+   it("a card's list: a small label and the list's small lines after the body lines", () => {
+     zh(
+       <SettingsPage
+         header={header}
+         nav={nav}
+         activeNav="general"
+         loading={{ cards: { shape: { lines: 1, list: 2, actions: 1 }, count: 1 } }}
+       />,
+     );
+     const body = document.querySelector(
