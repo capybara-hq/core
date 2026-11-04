@@ -54,6 +54,8 @@ let killFails: boolean;
 let leaveThrows: boolean;
 /** A stop claims the reservation while the launch exec runs (`claimStop`), when set. */
 let claimOnLaunch: boolean;
+/** The `changed` frames the tool published, as `[conversationId, what]`. */
+let published: [string, string][];
 
 const signal = () => AbortSignal.timeout(30_000);
 
@@ -114,6 +116,7 @@ beforeEach(async () => {
   killFails = false;
   leaveThrows = false;
   claimOnLaunch = false;
+  published = [];
   provider = fake;
   config = configWith({});
   seed = await seedConversation(raw);
@@ -166,7 +169,11 @@ function bash(): BuiltinTool {
       openForConversation: async () => null,
     } as unknown as SandboxToolDeps["attachments"],
     storage: {} as unknown as SandboxToolDeps["storage"],
-    eventLog: {} as unknown as SandboxToolDeps["eventLog"],
+    eventLog: {
+      publishChanged: async (c: string, what: string) => {
+        published.push([c, what]);
+      },
+    } as unknown as SandboxToolDeps["eventLog"],
     config: { get: () => config },
   };
   return sandboxTools(deps).find((t) => t.spec.name === "Bash") as BuiltinTool;
@@ -339,6 +346,8 @@ describe("Bash run_in_background", { timeout: 30_000 }, () => {
     expect(row?.lostReason).toContain("setsid is missing");
     expect(row?.finishedAt).not.toBeNull();
     expect(await store.countRunning(seed.conversationId)).toBe(0);
+    // a client that listed the reservation as running refreshes (M4)
+    expect(published).toEqual([[seed.conversationId, "background"]]);
   });
 
   it("a command that started but cannot be recorded is killed and the row ends failed", async () => {
@@ -350,6 +359,7 @@ describe("Bash run_in_background", { timeout: 30_000 }, () => {
     );
     const [row] = await store.listFor([seed.conversationId]);
     expect(row).toMatchObject({ status: "failed", sid: null });
+    expect(published).toEqual([[seed.conversationId, "background"]]);
     // every session the fake's setsid started is gone
     const h = handles[0] as SandboxHandle;
     const sids = await readdir(join(root, "instances", h.id, "sessions"));
@@ -366,6 +376,7 @@ describe("Bash run_in_background", { timeout: 30_000 }, () => {
     );
     const [row] = await store.listFor([seed.conversationId]);
     expect(row).toMatchObject({ status: "stopped", stoppingAt: null });
+    expect(published).toEqual([[seed.conversationId, "background"]]);
     expect(row?.sid).toMatch(/^[1-9][0-9]*$/);
     await until(async () => !(await alive(row?.sid as string)));
   });

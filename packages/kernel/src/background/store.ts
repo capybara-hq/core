@@ -213,11 +213,13 @@ export class BackgroundTaskStore {
    * (a crashed replica). A stop's claim older than {@link STOP_CLAIM_TTL_MS} does not hold it: a
    * stop only claims a reservation and leaves the rest to the launch, so a dead launch would keep
    * it (and its slot of `maxTasks`) forever. Conditional on `sid` still null, so a launch
-   * completing at that moment wins. No
-   * `background_task_finished` event: the command never started and the model never saw its id.
-   * Returns how many rows it finished.
+   * completing at that moment wins. No `background_task_finished` event: the command never
+   * started and the model never saw its id. Returns the rows it finished (their owner and sandbox
+   * conversations, for the caller's `changed: "background"` frames).
    */
-  async failAbandonedLaunches(before: Date): Promise<number> {
+  async failAbandonedLaunches(
+    before: Date,
+  ): Promise<{ id: string; conversationId: string; sandboxConversationId: string }[]> {
     const r = await this.db
       .updateTable("background_tasks")
       .set({
@@ -230,8 +232,13 @@ export class BackgroundTaskStore {
       .where("sid", "is", null)
       .where(unclaimed)
       .where("started_at", "<", before)
-      .executeTakeFirst();
-    return Number(r.numUpdatedRows);
+      .returning(["id", "conversation_id", "sandbox_conversation_id"])
+      .execute();
+    return r.map((x) => ({
+      id: x.id,
+      conversationId: x.conversation_id,
+      sandboxConversationId: x.sandbox_conversation_id,
+    }));
   }
 
   async insert(row: BackgroundTaskInsert): Promise<void> {

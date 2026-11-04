@@ -470,17 +470,19 @@ describe("polling", () => {
 
   it("fails a reservation abandoned by its launch after 2 minutes, never a younger or live-claimed one", async () => {
     const c = await conversation();
-    const reserve = async (startedAt: Date) => {
+    // only an abandoned reservation of its own: its frame comes from the abandoned path alone
+    const lone = await conversation();
+    const reserve = async (startedAt: Date, conv = c) => {
       const id = newTaskId();
       await store.reserve(
         {
           id,
-          orgId: c.orgId,
-          conversationId: c.conversationId,
-          sandboxConversationId: c.conversationId,
+          orgId: conv.orgId,
+          conversationId: conv.conversationId,
+          sandboxConversationId: conv.conversationId,
           runId: "run-x",
           callId: "call-x",
-          triggerAccountId: c.accountId,
+          triggerAccountId: conv.accountId,
           description: "d",
           command: "true",
           outputPath: taskOutputPath(id),
@@ -493,6 +495,7 @@ describe("polling", () => {
     };
     const old = new Date(Date.now() - LAUNCH_ABANDONED_AFTER_MS - 1000);
     const abandoned = await reserve(old);
+    const loneAbandoned = await reserve(old, lone);
     const young = await reserve(new Date(Date.now() - LAUNCH_ABANDONED_AFTER_MS + 30_000));
     const claimed = await reserve(old);
     expect(await store.claimStop(claimed)).toBe(true);
@@ -508,7 +511,11 @@ describe("polling", () => {
       await store.markStarted(completing, { sid: "424242", sandboxCreatedAt: new Date() }),
     ).toBe("started");
 
+    const publish = vi.spyOn(k.app.get(EventLog), "publishChanged");
     await job.pollOnce();
+    // a client that listed the reservations as running refreshes (M4)
+    expect(publish).toHaveBeenCalledWith(lone.conversationId, "background");
+    expect(await store.get(loneAbandoned)).toMatchObject({ status: "failed" });
     expect(await store.get(abandoned)).toMatchObject({
       status: "failed",
       lostReason: "launch_abandoned",

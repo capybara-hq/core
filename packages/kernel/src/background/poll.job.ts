@@ -1,4 +1,5 @@
 import { Inject, Injectable } from "@nestjs/common";
+import { EventLog } from "../conversations/event-log.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { LockService } from "../infra/lock/lock.service.js";
 import { LockedCron } from "../infra/schedule/locked-cron.decorator.js";
@@ -46,6 +47,7 @@ export class BackgroundTaskPollJob {
       "runningStarted" | "pruneFinished" | "failAbandonedLaunches"
     >,
     @Inject(BackgroundTaskFinisher) private readonly finisher: BackgroundTaskFinisher,
+    @Inject(EventLog) private readonly eventLog: Pick<EventLog, "publishChanged">,
     @Inject(SandboxService)
     private readonly sandbox: Pick<SandboxService, "available" | "ifRunning">,
     @Inject(KernelConfigService) readonly config: KernelConfigService,
@@ -63,13 +65,21 @@ export class BackgroundTaskPollJob {
    * A sandbox whose poll fails (busy, a provider error) is logged and tried again next tick.
    * First, reservations abandoned by a launch that died ({@link LAUNCH_ABANDONED_AFTER_MS}) are
    * failed, so they stop holding a slot of `sandbox.background.maxTasks` (not counted in the
-   * result: they never started).
+   * result: they never started), with a `changed: "background"` frame to their conversations.
    */
   async pollOnce(signal: AbortSignal = new AbortController().signal): Promise<number> {
     const abandoned = await this.store.failAbandonedLaunches(
       new Date(Date.now() - LAUNCH_ABANDONED_AFTER_MS),
     );
-    if (abandoned > 0) this.log.warn("abandoned background launches failed", { count: abandoned });
+    if (abandoned.length > 0) {
+      this.log.warn("abandoned background launches failed", { count: abandoned.length });
+      // a client that listed the reservation as running refreshes (the owner and, for a
+      // sub-agent's task, the conversation that owns the sandbox); a failed publish only logs
+      const conversations = new Set(
+        abandoned.flatMap((t) => [t.conversationId, t.sandboxConversationId]),
+      );
+      for (const c of conversations) await this.eventLog.publishChanged(c, "background");
+    }
     if (!this.sandbox.available) return 0;
     const groups = new Map<string, BackgroundTaskRow[]>();
     for (const t of await this.store.runningStarted()) {

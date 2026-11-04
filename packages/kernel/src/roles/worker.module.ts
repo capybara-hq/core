@@ -8,6 +8,7 @@ import { GatewayCheckJob } from "../channels/supervisor.js";
 import type { KernelConfig } from "../config/schema.js";
 import { AttachmentsModule } from "../conversations/attachments.module.js";
 import { AttachmentCleanupJob } from "../conversations/attachments.service.js";
+import { EventLogModule } from "../conversations/event-log.js";
 import { TitlesModule } from "../conversations/titles.js";
 import { EvalWorkersModule } from "../evals/evals.module.js";
 import { ExtensionsModule } from "../extensions/extensions.module.js";
@@ -59,6 +60,7 @@ export class WorkerModule {
         StorageModule,
         SandboxModule,
         BackgroundModule,
+        EventLogModule,
         ToolsModule,
         CatalogModule,
         OrgsModule,

@@ -229,6 +229,15 @@ async function runInBackground(
     );
   }
 
+  // the conversation's background panel lists the task live (a sub-agent's task shows in its
+  // parent's panel too): announced when it starts and when its launch ends it (failed, stopped),
+  // since a client may have listed the reservation as running meanwhile; a failed publish only logs
+  const announce = async (): Promise<void> => {
+    if (!deps.eventLog.publishChanged) return;
+    for (const c of new Set([ctx.conversationId, root])) {
+      await deps.eventLog.publishChanged(c, "background");
+    }
+  };
   const large =
     Math.ceil(Buffer.byteLength(input.command, "utf8") / 3) * 4 > LARGE_COMMAND_BASE64_BYTES
       ? " A very large command (over about 96 KB after base64) cannot be started in the background; write it to a script under /workspace and run that instead."
@@ -311,6 +320,7 @@ async function runInBackground(
       // did was killed above, when its session id could be read)
       const why = e instanceof Error ? e.message : String(e);
       await background.failLaunch(id, `launch failed: ${why}`).catch(() => undefined);
+      await announce();
       if (large === "" || e instanceof ToolError) throw e;
       throw new ToolError(
         `The background task was not started: ${clip(why, 500).replace(/\.$/, "")}. Check the sandbox, or call Bash without run_in_background.${large}`,
@@ -319,17 +329,20 @@ async function runInBackground(
   }
   if (launch.kind === "not_started") {
     await background.failLaunch(id, launch.why);
+    await announce();
     throw new ToolError(
       `The background task was not started: ${launch.why}. Check the sandbox, or call Bash without run_in_background.${large}`,
     );
   }
   if (launch.kind === "stopped") {
+    await announce();
     throw new ToolError(
       `Background task ${id} ("${description}") was stopped while it was starting, so nothing runs. Call Bash again if it is still needed.`,
     );
   }
   if (launch.kind === "unrecorded") {
     await background.failLaunch(id, `started but not recorded: ${launch.why}`);
+    await announce();
     if (launch.stopped) {
       throw new ToolError(
         `The background command started but could not be recorded (${launch.why}), so it was stopped. Retry, or call Bash without run_in_background.`,
@@ -339,13 +352,7 @@ async function runInBackground(
       `The background command started but could not be recorded (${launch.why}); an attempt to stop it failed, so it ends at its timeout. Check the sandbox before you retry, or call Bash without run_in_background.`,
     );
   }
-  // the conversation's background panel lists the new task live (a sub-agent's task shows in its
-  // parent's panel too); a failed publish only logs
-  if (deps.eventLog.publishChanged) {
-    for (const c of new Set([ctx.conversationId, root])) {
-      await deps.eventLog.publishChanged(c, "background");
-    }
-  }
+  await announce();
   const lowered =
     requested !== undefined && requested > maxMs
       ? `\n[timeout ${requested} ms is over the background task maximum; it was lowered to ${maxMs} ms.]`
