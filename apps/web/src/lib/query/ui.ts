@@ -48,8 +48,9 @@ const coalescing = new WeakMap<QueryClient, { inflight: Set<string>; again: Set<
 /**
  * Refreshes the extension views under `queryKey` (`keys.org(o).uiViews(...)`), coalesced (final
  * review I1): at most one read per view is in flight, and refreshes arriving meanwhile (any number)
- * cause one more read after it. A view nothing shows now (an inline card out of view) is only
- * marked stale: it is read when it shows again.
+ * cause one more read after it. A read in flight that a refresh did not start (the first read, a
+ * catch-up invalidation) may predate the change, so one more read follows it. A view nothing shows
+ * now (an inline card out of view) is only marked stale: it is read when it shows again.
  */
 export function refreshUiViews(qc: QueryClient, queryKey: readonly unknown[]): void {
   const state = coalescing.get(qc) ?? { inflight: new Set<string>(), again: new Set<string>() };
@@ -72,12 +73,18 @@ async function readUntilCurrent(
   state: { inflight: Set<string>; again: Set<string> },
 ): Promise<void> {
   state.inflight.add(q.queryHash);
+  const read = () =>
+    qc
+      .refetchQueries({ queryKey: q.queryKey, exact: true }, { cancelRefetch: false })
+      .catch(() => {});
   try {
+    // A read in flight now is not a refresh's (those are awaited below): the first read or another
+    // invalidation's, begun before the change this refresh reports, so its answer may predate it.
+    // Let it finish, then read again; joining it would keep the old view.
+    if (q.state.fetchStatus !== "idle") await read();
     do {
       state.again.delete(q.queryHash);
-      await qc
-        .refetchQueries({ queryKey: q.queryKey, exact: true }, { cancelRefetch: false })
-        .catch(() => {});
+      await read();
     } while (state.again.has(q.queryHash));
   } finally {
     state.inflight.delete(q.queryHash);
