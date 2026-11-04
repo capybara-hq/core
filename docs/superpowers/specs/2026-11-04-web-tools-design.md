@@ -395,3 +395,15 @@ Deviations from this design, accepted during implementation:
 - Giving both domain lists is a `ToolError` after approval, not a schema error.
 - `StepLog` moved to its own `StepLogModule`.
 - The web points are in `TRACKED_EXTENSION_POINTS`, so in-flight provider calls are drained.
+- `WebFetch` has its own time limit, the hot config `web.fetch.timeoutMs` (default 180 000), instead
+  of `tools.timeoutMs`: the provider's fetch and a large extraction call share it.
+- A redirect between a host and its `www.` form (one leading `www.` stripped on both sides) is the
+  same host: extracted with a `Final URL` line, not returned as a redirect. A final URL WebFetch may
+  not fetch is echoed in the error only when it parses and is at most 2 000 characters.
+- The 2 000-character URL limit applies to the normalized URL too (after the https upgrade).
+- Domain list entries are converted to ASCII (IDNA, `domainToASCII`) before matching result hosts.
+- The extraction call reads the target model's limits first (`ModelPurposesService.chatLimits`, the
+  same mapping and fallback as `chat`) and cuts the page so the estimated request plus the answer
+  cap plus headroom (10 % of the window, at least 1 024 tokens) fits the context window.
+- The page in the extraction message sits between a random per-call tag (`<page-<16 hex>>`) that
+  the system prompt names, so page text cannot fake the `Prompt:` after it.

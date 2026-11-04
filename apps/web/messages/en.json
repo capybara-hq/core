@@ -495,7 +495,7 @@
           "required": "This field is required."
         }
       },
-      "webUnavailable": "This organization has no web provider yet: enable and configure one in the extension settings before the selected web tools can be used."
+      "webUnavailable": "This organization has no usable web provider: an org admin needs to enable and configure one, or, when several are enabled, choose a default provider in the extension settings, before the selected web tools can be used."
     },
     "params": {
       "default": "Default",

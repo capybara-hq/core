@@ -7,4 +7,5 @@ enabled extensions provide (`web-search`, `web-fetch`), with a "not selected" st
 chosen; the agent form offers the builtin `WebSearch` and `WebFetch` tools (not checked by
 default) when the org has a provider for them, and keeps them listed for an agent that already
 selected them; `usage` events with `purpose: "web_fetch"` don't count as the conversation's
-context.
+context. The agent form's "no usable web provider" notice also covers several enabled providers
+with no default chosen.

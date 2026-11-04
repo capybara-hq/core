@@ -39,7 +39,17 @@ export interface WebFetchPage {
   contentType?: string;
 }
 
-/** A web fetch provider (`web-fetch@1`). */
+/**
+ * A web fetch provider (`web-fetch@1`).
+ *
+ * The kernel checks the URL it passes and the returned `finalUrl` without DNS: it refuses IP
+ * literals in private, loopback, link-local or reserved ranges and single-label or `localhost`
+ * names. A provider that fetches from inside the deployment (rather than through a remote
+ * service) must also refuse non-public addresses after DNS resolution, for the URL and for every
+ * redirect it follows. It may reuse the kernel's rules: {@link isPublicHostname} on
+ * `new URL(url).hostname` (never a hand-parsed host), and on each resolved address it connects
+ * to (an IPv6 address in brackets, as in a URL).
+ */
 export interface WebFetchProvider {
   /** False when this org's config lacks what the provider needs. */
   configured?(orgConfig: unknown): boolean;
