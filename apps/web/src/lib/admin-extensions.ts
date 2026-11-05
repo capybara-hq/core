@@ -1,5 +1,5 @@
 import { ApiClientError, apiFetch, CSRF_HEADER, ensureSession } from "./api";
-import type { LocalizedName } from "./catalog";
+import type { LocalizedName, PluginScope } from "./catalog";
 import type { PermissionGroup, PermissionItem } from "./extensions";
 import type { ConfigIssue, JsonSchema } from "./json-schema";
 
@@ -75,6 +75,12 @@ export interface AdminExtension {
    * (an enterprise admin may upgrade it).
    */
   required: boolean;
+  /** Who the plugin shipping the extension is offered to (`all` for builtin); null without a catalog item. */
+  scope?: PluginScope | null;
+  /** Orgs it is on in. */
+  enabledOrgs?: number;
+  /** Shipped with the deployment (a required bootstrap plugin). */
+  builtin?: boolean;
   sha256: string | null;
   status: ExtensionStatus;
   desired: { version: string; sha256: string; state: "enabled" | "disabled" } | null;

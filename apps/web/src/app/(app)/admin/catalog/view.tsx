@@ -16,8 +16,6 @@ import { usePageQuery } from "../../../../lib/query/page-query";
 import { useAdmin } from "../../../../lib/query/workspace";
 import NotFound from "../../not-found";
 
-const POLICY_TONE = { allow: "ok", needs_approval: "warn", disabled: "muted" } as const;
-
 /**
  * `/admin/catalog`: the catalog (enterprise admins, ListPage). Every item is a plugin, shown as
  * an object row: name, version chips (marked "new version" when the marketplace has a newer
@@ -138,7 +136,10 @@ function AdminDirectory({ all }: { all: CatalogItem[] }) {
               sourceLabel(i),
               `${t("columns.installs")} ${i.installs}`,
             ].join(" · ")}
-            state={{ label: td(`policy.${i.policy}`), tone: POLICY_TONE[i.policy] }}
+            state={{
+              label: i.disabled ? td("scope.disabled") : td(`scope.${i.scope}`),
+              tone: i.disabled ? "muted" : i.scope === "all" ? "ok" : "warn",
+            }}
           />
         );
       })}

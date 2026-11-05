@@ -2715,6 +2715,12 @@
     "goHome": "进入 Capybara"
   },
   "catalog": {
+    "scope": {
+      "all": "全部组织启用",
+      "optional": "组织自选",
+      "named": "指定组织",
+      "disabled": "已停用"
+    },
     "policy": {
       "allow": "允许",
       "needs_approval": "需审批",

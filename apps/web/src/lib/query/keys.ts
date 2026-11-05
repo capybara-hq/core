@@ -54,6 +54,13 @@ export const keys = {
       catalogItemsAll: (): readonly unknown[] => [...all, "catalogItem"],
       /** One catalog item from the org's view (its latest version's components). */
       catalogItem: (itemId: string): readonly unknown[] => [...all, "catalogItem", itemId],
+      /** The marketplace entries an org admin browses (source `""`: all; search `""`: none). */
+      marketplaceEntries: (sourceId: string, q: string): readonly unknown[] => [
+        ...all,
+        "marketplaceEntries",
+        sourceId,
+        q,
+      ],
       /** The plugins installed in the org. */
       pluginInstalls: (): readonly unknown[] => [...all, "pluginInstalls"],
       /** An upgrade preview of an installed plugin to a version. */
@@ -294,6 +301,8 @@ export const keys = {
       catalogItem: (itemId: string): readonly unknown[] => [...all, "catalogItem", itemId],
       /** A staged plugin import's review. */
       stagedImport: (stagingId: string): readonly unknown[] => [...all, "stagedImport", stagingId],
+      /** The plugins waiting for a permission confirmation (待确认). */
+      catalogPending: (): readonly unknown[] => [...all, "catalogPending"],
       /** The pending catalog requests at the deployment stage. */
       catalogRequests: (): readonly unknown[] => [...all, "catalogRequests"],
       /** The marketplaces (with the offline flag). */

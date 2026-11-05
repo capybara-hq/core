@@ -7,7 +7,7 @@ import { useOrgItemStatus } from "../../../components/CatalogInstallAction";
 import { ErrorFrame } from "../../../components/ErrorFrame";
 import { NoAccess } from "../../../components/NoAccess";
 import { usePagePath } from "../../../components/shell/path";
-import { displayNameOf, type OrgCatalogItem } from "../../../lib/catalog";
+import { displayNameOf, installableOf, type OrgCatalogItem } from "../../../lib/catalog";
 import { canUpdateOrg } from "../../../lib/org-settings";
 import { orgCatalogQuery } from "../../../lib/query/catalog";
 import { usePageQuery } from "../../../lib/query/page-query";
@@ -52,10 +52,10 @@ function Catalog({ orgId, me }: { orgId: string; me: Me }) {
         ? { label: t("action.upgrade"), href: detail }
         : undefined;
     }
-    if (i.request?.status === "pending") return undefined;
-    if (i.installable === "disabled" || i.installable === "not_deployed") return undefined;
+    if (i.request !== null) return undefined;
+    if (installableOf(i) === "disabled" || installableOf(i) === "not_deployed") return undefined;
     if (!admin) return { label: t("action.request"), href: detail };
-    if (i.installable === "needs_approval") {
+    if (installableOf(i) === "needs_approval") {
       return { label: t("action.requestApproval"), href: detail };
     }
     return { label: t("action.install"), href: `${detail}/install` };
@@ -65,7 +65,7 @@ function Catalog({ orgId, me }: { orgId: string; me: Me }) {
       ? i.installed.upgradeAvailable !== null
         ? ("warn" as const)
         : ("ok" as const)
-      : i.installable === "not_deployed"
+      : installableOf(i) === "not_deployed"
         ? ("warn" as const)
         : ("muted" as const);
 

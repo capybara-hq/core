@@ -1,4 +1,4 @@
-import type { AdminExtension, PackageWarning } from "./admin-extensions";
+import type { PackageWarning } from "./admin-extensions";
 import { ApiClientError, apiFetch, CSRF_HEADER, ensureSession, toError } from "./api";
 import type { PermissionGroup, PermissionItem } from "./extensions";
 
@@ -6,18 +6,23 @@ import type { PermissionGroup, PermissionItem } from "./extensions";
  * The enterprise catalog (kernel `catalog/*.controller.ts`). Every catalog item is a plugin: an
  * optional extension, skills, connector templates and dependencies on other plugins.
  * - deployment level (enterprise admins): `/api/v1/admin/catalog/*` items, the plugin import
- *   (prepare from a file or npm -> one review -> confirm), policy, installing an item's extension on
- *   the deployment, deployment-stage requests; `/api/v1/admin/marketplaces/*` marketplaces, browsing
+ *   (prepare from a file or npm -> one review -> confirm, which also installs the extension), scope
+ *   and disable (previewed, confirmed with `scopeHash`), permission confirmation, access / import
+ *   requests; `/api/v1/admin/marketplaces/*` marketplaces, browsing
  *   their entries, preparing an import from one;
- * - org side: `/api/v1/orgs/:orgId/catalog*` browse, detail, request, install; `plugin-installs` the
- *   installed plugins and uninstall; the inbox's `catalog_request` is decided by org admins with
- *   `catalog-requests/:id/decide`.
+ * - org side: `/api/v1/orgs/:orgId/catalog*` browse, detail, switch on / off, `enable` / `access` /
+ *   marketplace requests; `plugin-installs` the installed plugins and uninstall; the inbox's
+ *   `catalog_request` is decided by org admins with `catalog-requests/:id/decide`.
  * Item icons come only from kernel routes (nosniff + CSP sandbox); the web shows them only in `<img>`,
  * never inline.
  */
 
-export const CATALOG_POLICIES = ["allow", "needs_approval", "disabled"] as const;
-export type CatalogPolicy = (typeof CATALOG_POLICIES)[number];
+/** Who a plugin is offered to (kernel `PluginScope`); a builtin plugin is always `all`. */
+export const PLUGIN_SCOPES = ["all", "optional", "named"] as const;
+export type PluginScope = (typeof PLUGIN_SCOPES)[number];
+
+/** The effective state of a plugin in one org (kernel `OrgPluginState`). */
+export type OrgPluginState = "on" | "off" | "needs_config" | "unavailable" | "not_offered";
 
 export interface LocalizedName {
   zh: string;
@@ -31,7 +36,22 @@ export interface CatalogItem {
   publisher: string;
   displayName: LocalizedName | null;
   description: string;
-  policy: CatalogPolicy;
+  /** Who the plugin is offered to (`all` for a builtin plugin). */
+  scope: PluginScope;
+  /** The orgs of a `named` scope (empty otherwise). */
+  scopeOrgs: string[];
+  /** Shipped with the deployment (a required bootstrap plugin): scope `all`, never changed. */
+  builtin: boolean;
+  /** Stopped on the whole deployment (its scope is kept). */
+  disabled: boolean;
+  /** Orgs outside a `named` item's list see it as requestable (`not_offered`). */
+  shownToOthers: boolean;
+  /** Orgs it is on in. */
+  enabledOrgs: number;
+  /** Its extension waits for a person's confirmation (`POST items/:id/confirm`). */
+  pending: boolean;
+  /** The digest to send with the confirmation; null unless `pending` and the package is readable. */
+  permissionsHash: string | null;
   latestVersion: string;
   versions: string[];
   installs: number;
@@ -289,6 +309,8 @@ export interface PluginReviewExtension {
   sha256: string;
   /** install: not on the deployment; upgrade: another package is installed; keep: this one is. */
   action: "install" | "upgrade" | "keep";
+  /** The import is below the deployed version: confirming keeps the deployed extension. */
+  olderThanDeployed?: true;
   deployed: boolean;
   currentVersion: string | null;
   currentSha256: string | null;
@@ -503,35 +525,65 @@ export interface MarketplaceEntry {
   contentChanged: boolean;
 }
 
+/** What a request asks for (kernel `CatalogRequestKind`). */
+export type CatalogRequestKind = "access" | "import" | "enable";
+
 /** A catalog request (kernel `CatalogRequestView`). */
 export interface CatalogRequest {
   id: string;
   orgId: string;
   orgName: string;
-  item: { id: string; name: string; displayName: LocalizedName | null };
-  version: string | null;
-  stage: "org" | "deployment";
+  kind: CatalogRequestKind;
+  /** null for an `import` request until its confirm writes the item. */
+  item: { id: string; name: string; displayName: LocalizedName | null } | null;
+  /** The marketplace entry of an `import` request. */
+  entry: { marketplaceId: string | null; name: string; version: string | null } | null;
   status: "pending" | "approved" | "rejected" | "cancelled";
   note: string;
+  /** The optional reason of a rejection. */
+  reason: string | null;
   requestedBy: string | null;
   requestedByName: string | null;
   decidedBy: string | null;
   decidedAt: string | null;
-  orgDecidedBy: string | null;
-  orgDecidedAt: string | null;
+  /** The prepared import of an approved `import` request that is not confirmed yet. */
+  stagingId: string | null;
   createdAt: string;
+}
+
+/** The decision body of a request: approve, or reject with an optional reason. */
+export interface RequestDecision {
+  approve: boolean;
+  reason?: string;
 }
 
 /** A catalog item from the org's view (kernel `OrgCatalogItem`). */
 export interface OrgCatalogItem
   extends Omit<
     CatalogItem,
-    "installs" | "marketplaceId" | "latestMarketplaceVersion" | "newerInMarketplace"
+    | "installs"
+    | "marketplaceId"
+    | "latestMarketplaceVersion"
+    | "newerInMarketplace"
+    | "scopeOrgs"
+    | "enabledOrgs"
+    | "pending"
+    | "permissionsHash"
+    | "shownToOthers"
   > {
-  installable: "yes" | "needs_approval" | "granted" | "disabled" | "not_deployed";
+  /** Who the plugin is offered to (`all` for a builtin plugin). */
+  scope: PluginScope;
+  /** Shipped with the deployment: on in every org, never switchable. */
+  builtin: boolean;
+  /** The effective state in this org. */
+  state: OrgPluginState;
+  /** The org admin may switch it (never for `all` and builtin items). */
+  switchable: boolean;
+  /** The plugin's extension (or a template's connector extension) is not on the deployment. */
+  notDeployed: boolean;
   /** This org's live plugin install of the item; `upgradeAvailable` the version it can move to now. */
   installed: { pluginInstallId: string; version: string; upgradeAvailable: string | null } | null;
-  request: { id: string; stage: "org" | "deployment"; status: string } | null;
+  request: { id: string; kind: "access" | "enable"; createdAt: string } | null;
 }
 
 /** A connector template in an item's detail (kernel `OrgCatalogTemplate`). */
@@ -577,13 +629,42 @@ export interface OrgInstallBody {
   extensionConfig?: Record<string, unknown>;
 }
 
-/** Install result: installed (201) or a request was created (202, needs enterprise admin approval). */
-export type OrgInstallResult =
-  | {
-      installed: { itemId: string; version: string; pluginInstallId: string };
-      install: PluginInstall;
-    }
-  | { request: CatalogRequest };
+/** Install result (201): the install view. */
+export interface OrgInstallResult {
+  installed: { itemId: string; version: string; pluginInstallId: string };
+  install: PluginInstall;
+}
+
+/** What switching a plugin off in an org takes away (kernel `UninstallPreview`). */
+export interface UninstallPreview {
+  installId: string;
+  name: string;
+  version: string;
+  components: { kind: ComponentKind; ref: string; created: boolean }[];
+  kept: { kind: ComponentKind; ref: string; reason: KeptReason }[];
+  agents: { id: string; name: string; uses: { kind: ComponentKind; ref: string }[] }[];
+}
+
+/** The switch-off preview and the hash that confirms it (`PUT …/switch`, org extension `PUT`). */
+export interface SwitchPreview {
+  preview: UninstallPreview;
+  confirm: string;
+}
+
+/** `PUT /orgs/:orgId/catalog/:itemId/switch` body: on (with the install inputs), or off (with the hash). */
+export type OrgSwitchBody =
+  | { enabled: true; inputs?: OrgInstallBody }
+  | { enabled: false; confirm?: string };
+
+/** What a scope change or a disable would take away (kernel `ScopePreview`). */
+export interface ScopePreview {
+  affected: { orgId: string; orgName: string; agents: { id: string; name: string }[] }[];
+  needsConfig: string[];
+  scopeHash: string;
+}
+
+/** `{ scope, orgs? }` (a scope change) or `{ disabled: true }` (a disable). */
+export type ScopeTarget = { scope: PluginScope; orgs?: string[] } | { disabled: true };
 
 /** `plugin` is a dependency install (ref = its plugin install id). */
 export type ComponentKind = "extension" | "connector" | "skill" | "plugin" | "agent_template";
@@ -652,8 +733,8 @@ export interface PluginUpgradeBody extends Omit<OrgInstallBody, "version"> {
   diffHash: string;
 }
 
-/** Upgraded (200), or a request was created (202, the item needs enterprise admin approval). */
-export type PluginUpgradeResult = { install: PluginInstall } | { request: CatalogRequest };
+/** Upgraded (200). */
+export type PluginUpgradeResult = { install: PluginInstall };
 
 export const KEPT_REASONS = [
   "pre_existing",
@@ -688,18 +769,35 @@ export const listCatalogItems = () =>
 export const getCatalogItem = (id: string) =>
   apiFetch<CatalogItemDetail>(`${admin}/items/${enc(id)}`);
 
-export const setCatalogPolicy = (id: string, policy: CatalogPolicy) =>
-  apiFetch<CatalogItem>(`${admin}/items/${enc(id)}/policy`, {
-    method: "PUT",
-    body: JSON.stringify({ policy }),
-  });
+/** The items waiting for a permission confirmation (not paged). */
+export const listPendingPlugins = () =>
+  apiFetch<{ items: CatalogItem[]; nextOffset: number | null }>(`${admin}/items?pending=true`);
+
+const put = (body: unknown): RequestInit => ({ method: "PUT", body: JSON.stringify(body) });
+
+/** What a scope change or a disable would take away; `scopeHash` confirms it (409 `plugin.scope_stale`). */
+export const previewScope = (id: string, body: ScopeTarget) =>
+  apiFetch<ScopePreview>(`${admin}/items/${enc(id)}/scope/preview`, post(body));
+
+export const setScope = (
+  id: string,
+  body: { scope: PluginScope; orgs?: string[]; scopeHash: string },
+) => apiFetch<CatalogItem>(`${admin}/items/${enc(id)}/scope`, put(body));
+
+/** Disables (with the `{ disabled: true }` preview's hash) or re-enables (no hash) on the deployment. */
+export const setDisabled = (id: string, body: { disabled: boolean; scopeHash?: string }) =>
+  apiFetch<CatalogItem>(`${admin}/items/${enc(id)}/disabled`, put(body));
+
+/** Whether orgs outside a `named` item's list see it as requestable. */
+export const setShownToOthers = (id: string, shownToOthers: boolean) =>
+  apiFetch<CatalogItem>(`${admin}/items/${enc(id)}/shown`, put({ shownToOthers }));
+
+/** Confirms the item's extension permissions (`permissionsHash` from the item view). */
+export const confirmPending = (id: string, body: { permissionsHash: string }) =>
+  apiFetch<CatalogItem>(`${admin}/items/${enc(id)}/confirm`, post(body));
 
 export const removeCatalogItem = (id: string) =>
   apiFetch<void>(`${admin}/items/${enc(id)}`, { method: "DELETE" });
-
-/** Installs the extension of a version of the item on the deployment (`catalog.no_extension` without one). */
-export const installItemToDeployment = (id: string, version: string) =>
-  apiFetch<AdminExtension>(`${admin}/items/${enc(id)}/install-deployment`, post({ version }));
 
 /** Admin icon URL (only used as an `<img>` source). */
 export const adminIconUrl = (id: string) => `${admin}/items/${enc(id)}/icon`;
@@ -742,12 +840,18 @@ export const preparePluginGit = (url: string, ref: string, path: string) =>
   );
 
 /**
- * Confirms a staged import; `deployExtension` also installs and enables the plugin's extension;
- * `pinnedSuggestions` (skill names of the review) replaces the plugin's suggested pinned skills.
+ * Confirms a staged import (it also installs and enables the plugin's extension): `scope` (default
+ * `optional`) and `orgs` (only with `named`) say who the plugin is offered to; `pinnedSuggestions`
+ * (skill names of the review) replaces the plugin's suggested pinned skills.
  */
 export const confirmPluginImport = (
   stagingId: string,
-  body: { reviewHash: string; deployExtension: boolean; pinnedSuggestions?: string[] },
+  body: {
+    reviewHash: string;
+    scope?: PluginScope;
+    orgs?: string[];
+    pinnedSuggestions?: string[];
+  },
 ) => apiFetch<PluginConfirmResult>(`${admin}/imports/${enc(stagingId)}/confirm`, post(body));
 
 /**
@@ -766,8 +870,12 @@ export const importPageHref = (stagingId: string) =>
 export const listDeploymentRequests = () =>
   apiFetch<{ requests: CatalogRequest[] }>(`${admin}/requests?status=pending`);
 
-export const decideDeploymentRequest = (id: string, decision: "approve" | "reject") =>
-  apiFetch<{ request: CatalogRequest }>(`${admin}/requests/${enc(id)}/decide`, post({ decision }));
+/** Approving an `import` request returns the prepared import (confirm it on the import page). */
+export const decideDeploymentRequest = (id: string, decision: RequestDecision) =>
+  apiFetch<{ request: CatalogRequest; import?: PluginPrepared }>(
+    `${admin}/requests/${enc(id)}/decide`,
+    post(decision),
+  );
 
 // ---- Deployment level: marketplaces ----
 
@@ -837,11 +945,56 @@ export const getOrgCatalogItem = (orgId: string, itemId: string) =>
 export const orgIconUrl = (orgId: string, itemId: string) =>
   `${org(orgId)}/catalog/${enc(itemId)}/icon`;
 
-export const requestCatalogItem = (orgId: string, itemId: string, note: string) =>
-  apiFetch<{ request: CatalogRequest; created: boolean }>(
+/** `enable`: a member asks an org admin to switch an off plugin on; `access`: an org admin asks for a `named` one. */
+export const requestCatalogItem = (
+  orgId: string,
+  itemId: string,
+  kind: "access" | "enable",
+  note: string,
+) =>
+  apiFetch<{ request: CatalogRequest }>(
     `${org(orgId)}/catalog/${enc(itemId)}/requests`,
-    post(note === "" ? {} : { note }),
+    post({ kind, ...(note !== "" && { note }) }),
   );
+
+/** An org admin asks for a marketplace entry to be imported (deployment setting `orgMarketplaceBrowse`). */
+export const requestMarketplaceEntry = (
+  orgId: string,
+  e: { marketplaceId: string; name: string; version: string },
+  note: string,
+) =>
+  apiFetch<{ request: CatalogRequest }>(
+    `${org(orgId)}/marketplace-requests`,
+    post({ ...e, ...(note !== "" && { note }) }),
+  );
+
+/** The marketplaces' entries, read-only, for org admins (404 when `orgMarketplaceBrowse` is off). */
+export const listOrgMarketplaceEntries = (
+  orgId: string,
+  q: { sourceId?: string; q?: string } = {},
+) => {
+  const params = new URLSearchParams();
+  if (q.sourceId) params.set("sourceId", q.sourceId);
+  if (q.q) params.set("q", q.q);
+  const qs = params.toString();
+  return apiFetch<{ items: MarketplaceEntry[]; truncated?: boolean }>(
+    `${org(orgId)}/marketplaces/entries${qs === "" ? "" : `?${qs}`}`,
+  );
+};
+
+/**
+ * Switches a plugin on (with the install inputs), or off: the first off call answers
+ * `{ preview, confirm }`, the second one carries `confirm` and answers `{ item }`.
+ */
+export const setOrgPluginSwitch = (orgId: string, itemId: string, body: OrgSwitchBody) =>
+  apiFetch<{ item: OrgCatalogItem } | SwitchPreview>(
+    `${org(orgId)}/catalog/${enc(itemId)}/switch`,
+    put(body),
+  );
+
+/** The requester dismisses a decided request from the inbox (204). */
+export const dismissOrgRequest = (orgId: string, id: string) =>
+  apiFetch<void>(`${org(orgId)}/catalog-requests/${enc(id)}/dismiss`, post());
 
 export const installCatalogItem = (orgId: string, itemId: string, body: OrgInstallBody) =>
   apiFetch<OrgInstallResult>(`${org(orgId)}/catalog/${enc(itemId)}/install`, post(body));
@@ -849,6 +1002,7 @@ export const installCatalogItem = (orgId: string, itemId: string, body: OrgInsta
 export const listPluginInstalls = (orgId: string) =>
   apiFetch<{ installs: PluginInstall[] }>(`${org(orgId)}/plugin-installs`);
 
+/** Uninstalls a plugin install; a 409 `plugin.scope_locked` says an `all` / builtin plugin stays. */
 export const uninstallPlugin = (orgId: string, installId: string) =>
   apiFetch<UninstallReport>(`${org(orgId)}/plugin-installs/${enc(installId)}`, {
     method: "DELETE",
@@ -868,10 +1022,10 @@ export const upgradePlugin = (orgId: string, installId: string, body: PluginUpgr
     post(body),
   );
 
-export const decideOrgRequest = (orgId: string, id: string, decision: "approve" | "reject") =>
+export const decideOrgRequest = (orgId: string, id: string, decision: RequestDecision) =>
   apiFetch<{ request: CatalogRequest }>(
     `${org(orgId)}/catalog-requests/${enc(id)}/decide`,
-    post({ decision }),
+    post(decision),
   );
 
 // ---- 纯函数 ----
@@ -881,6 +1035,34 @@ export const displayNameOf = (
   i: { name: string; displayName: LocalizedName | null },
   locale: string,
 ): string => (i.displayName ? (locale === "zh" ? i.displayName.zh : i.displayName.en) : i.name);
+
+/**
+ * The pre-scope install split of the org pages (copy keys `catalog.org.status.*`), derived from the
+ * item's scope state: the pages of plugin scope phase 1 replace it with the state itself.
+ */
+export const installableOf = (
+  i: Pick<OrgCatalogItem, "state" | "notDeployed">,
+): "yes" | "needs_approval" | "disabled" | "not_deployed" =>
+  i.state === "unavailable"
+    ? "disabled"
+    : i.notDeployed
+      ? "not_deployed"
+      : i.state === "not_offered"
+        ? "needs_approval"
+        : "yes";
+
+/**
+ * What a request is about: its catalog item, or (an `import` request before its confirm) the
+ * marketplace entry's name; `id` is null while there is no item to link to.
+ */
+export const requestSubject = (
+  r: Pick<CatalogRequest, "item" | "entry">,
+): { id: string | null; name: string; displayName: LocalizedName | null } =>
+  r.item ?? { id: null, name: r.entry?.name ?? "—", displayName: null };
+
+/** The version a request names (an `import` request's entry), null when it names none. */
+export const requestVersion = (r: Pick<CatalogRequest, "entry">): string | null =>
+  r.entry?.version ?? null;
 
 /** 申请人：显示名，账号已删除时退回账号 id，都没有为「—」。 */
 export const requesterOf = (r: Pick<CatalogRequest, "requestedBy" | "requestedByName">): string =>

@@ -13,7 +13,6 @@ import { useTranslations } from "next-intl";
 import { type ReactNode, useEffect, useState } from "react";
 import {
   type CatalogItem,
-  type CatalogPolicy,
   dependencyOfError,
   errorDetailOf,
   gitLocation,
@@ -294,13 +293,14 @@ export function useOrigin(): (d: SourceDetail) => string {
   };
 }
 
-/** 策略徽标：禁用用强调色，其余普通。 */
-export function PolicyBadge({ policy }: { policy: CatalogPolicy }) {
-  const t = useTranslations("catalog.policy");
-  return policy === "allow" ? (
-    <Text variant="small">{t(policy)}</Text>
+/** The scope badge: a disabled plugin is marked, every scope is named; `all` is plain text. */
+export function ScopeBadge({ item }: { item: Pick<CatalogItem, "scope" | "disabled"> }) {
+  const t = useTranslations("catalog.scope");
+  if (item.disabled) return <Badge tone="accent">{t("disabled")}</Badge>;
+  return item.scope === "all" ? (
+    <Text variant="small">{t("all")}</Text>
   ) : (
-    <Badge tone={policy === "disabled" ? "accent" : "default"}>{t(policy)}</Badge>
+    <Badge tone="default">{t(item.scope)}</Badge>
   );
 }
 

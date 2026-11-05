@@ -5,8 +5,7 @@ import { useTranslations } from "next-intl";
 import { type ReactNode, useState } from "react";
 import { Link, useRouter } from "../i18n/navigation";
 import { issueLines } from "../lib/api";
-import { installCatalogItem, type OrgCatalogItem, requestCatalogItem } from "../lib/catalog";
-import { pluginChangeKeys } from "../lib/query/catalog";
+import { installableOf, type OrgCatalogItem, requestCatalogItem } from "../lib/catalog";
 import { keys } from "../lib/query/keys";
 import { useAppMutation } from "../lib/query/mutation";
 import { useErrorMessage } from "../lib/use-error-message";
@@ -20,8 +19,8 @@ export function useOrgItemStatus(): (item: OrgCatalogItem) => string {
   return (item) => {
     if (item.installed !== null)
       return t("installed", { version: versionLabel(item.installed.version) });
-    if (item.request?.status === "pending") return t("requested");
-    return t(item.installable);
+    if (item.request !== null) return t("requested");
+    return t(installableOf(item));
   };
 }
 
@@ -57,13 +56,8 @@ export function CatalogInstallAction({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<{ message: string; extra: string[] }>();
   const [upgrading, setUpgrading] = useState(false);
-  // Asking for approval may install at once (the kernel decides): it changes what an install does.
-  const install = useAppMutation({
-    fn: () => installCatalogItem(orgId, item.id, {}),
-    invalidates: () => pluginChangeKeys(orgId),
-  });
   const ask = useAppMutation({
-    fn: () => requestCatalogItem(orgId, item.id, ""),
+    fn: (kind: "access" | "enable") => requestCatalogItem(orgId, item.id, kind, ""),
     invalidates: () => [keys.org(orgId).catalog(), keys.org(orgId).catalogItemsAll()],
   });
 
@@ -79,14 +73,16 @@ export function CatalogInstallAction({
     }
   };
 
+  // An org admin asks the enterprise admin for access to a plugin that is not offered to the org;
+  // a member asks the org admins to switch it on.
   const askApproval = () =>
     run(async () => {
-      const r = await install.mutateAsync(undefined);
-      return "request" in r ? t("approvalRequested") : t("installed", { name: item.name });
+      await ask.mutateAsync("access");
+      return t("approvalRequested");
     });
   const request = () =>
     run(async () => {
-      await ask.mutateAsync(undefined);
+      await ask.mutateAsync("enable");
       return t("requested");
     });
 
@@ -117,17 +113,21 @@ export function CatalogInstallAction({
         {admin && <Link href="/settings/plugins">{t("openPlugins")}</Link>}
       </>
     );
-  } else if (item.request?.status === "pending") {
+  } else if (item.request !== null) {
     body = (
-      <Text tone="muted">{t("pendingHint", { stage: t(`stage.${item.request.stage}`) })}</Text>
+      <Text tone="muted">
+        {t("pendingHint", {
+          stage: t(`stage.${item.request.kind === "access" ? "deployment" : "org"}`),
+        })}
+      </Text>
     );
-  } else if (item.installable === "disabled") {
+  } else if (installableOf(item) === "disabled") {
     body = (
       <Text variant="prose" tone="muted">
         {t("disabledHint")}
       </Text>
     );
-  } else if (item.installable === "not_deployed") {
+  } else if (installableOf(item) === "not_deployed") {
     body = (
       <Text variant="prose" tone="warn">
         {t("notDeployedHint")}
@@ -139,7 +139,7 @@ export function CatalogInstallAction({
         {t("request")}
       </Button>
     );
-  } else if (item.installable === "needs_approval") {
+  } else if (installableOf(item) === "needs_approval") {
     body = (
       <Button loading={busy} disabled={busy} onClick={() => void askApproval()}>
         {t("requestApproval")}

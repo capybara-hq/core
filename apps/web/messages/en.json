@@ -2727,6 +2727,12 @@
     "goHome": "Go to Capybara"
   },
   "catalog": {
+    "scope": {
+      "all": "All organizations",
+      "optional": "Organizations choose",
+      "named": "Selected organizations",
+      "disabled": "Disabled"
+    },
     "policy": {
       "allow": "Allowed",
       "needs_approval": "Needs approval",

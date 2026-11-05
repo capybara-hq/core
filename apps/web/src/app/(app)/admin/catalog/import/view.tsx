@@ -210,7 +210,6 @@ function PluginImportWizard({ initial, orgId }: { initial: StagedImport; orgId: 
   const [fetching, setFetching] = useState(false);
   const [fetchError, setFetchError] = useState<Problem>();
   const [prepared, setPrepared] = useState<PluginPrepared | null>(loaded);
-  const [deployExtension, setDeployExtension] = useState(false);
   /** Skill names ticked "suggest pinned" (starts from the plugin's own suggestion). */
   const [pinned, setPinned] = useState<string[]>(() =>
     loaded === null ? [] : suggestedPinned(loaded.review),
@@ -248,7 +247,6 @@ function PluginImportWizard({ initial, orgId }: { initial: StagedImport; orgId: 
   const accept = (p: PluginPrepared) => {
     setPrepared(p);
     setPinned(suggestedPinned(p.review));
-    setDeployExtension(false);
     setAck(false);
     setStep(1);
   };
@@ -310,7 +308,6 @@ function PluginImportWizard({ initial, orgId }: { initial: StagedImport; orgId: 
         stagingId: prepared.stagingId,
         body: {
           reviewHash: prepared.review.reviewHash,
-          deployExtension: deployable && deployExtension,
           // only a changed choice: omitted keeps the plugin's own suggestion
           ...(!sameNames(pinned, suggestedPinned(prepared.review)) && {
             pinnedSuggestions: prepared.review.skills
@@ -479,17 +476,9 @@ function PluginImportWizard({ initial, orgId }: { initial: StagedImport; orgId: 
               })}
             </Text>
           ) : (
-            <Stack gap={4}>
-              <Checkbox
-                checked={deployExtension}
-                onChange={setDeployExtension}
-                label={t("deployExtension")}
-                disabled={result !== null}
-              />
-              <Text variant="small" tone={deployExtension ? "muted" : "warn"}>
-                {deployExtension ? t("deployOn") : t("deployOff")}
-              </Text>
-            </Stack>
+            <Text variant="small" tone="muted">
+              {t("deployOn")}
+            </Text>
           )}
           {sensitive && (
             <Stack gap={8}>

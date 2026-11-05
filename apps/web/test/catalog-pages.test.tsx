@@ -85,12 +85,16 @@ function orgItem(over: Record<string, unknown> = {}) {
     publisher: "Acme",
     displayName: null,
     description: "PDF helpers",
-    policy: "allow",
+    scope: "optional",
+    builtin: false,
+    disabled: false,
     latestVersion: "1.0.0",
     versions: ["1.0.0"],
     source: "file",
     updatedAt: "2026-10-22T00:00:00.000Z",
-    installable: "yes",
+    state: "off",
+    switchable: true,
+    notDeployed: false,
     installed: null,
     request: null,
     ...over,
@@ -123,18 +127,18 @@ async function renderHeld(path: string, routes: Routes, held: string) {
 
 const escapeRe = (x: string) => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-describe("/catalog: actions follow installable", () => {
+describe("/catalog: actions follow the plugin state", () => {
   it.each(LOCALES)(
-    "org admins: the row action and state follow installable (%s)",
+    "org admins: the row action and state follow the plugin state (%s)",
     async (locale) => {
       const a = msgs[locale].catalog.org.action;
       const st = msgs[locale].catalog.org.status;
       const items = [
         orgItem({ id: "a", name: "yes-skill" }),
-        orgItem({ id: "b", name: "approval", installable: "needs_approval" }),
-        orgItem({ id: "c", name: "granted-tpl", installable: "granted" }),
-        orgItem({ id: "d", name: "off", installable: "disabled" }),
-        orgItem({ id: "e", name: "missing", installable: "not_deployed" }),
+        orgItem({ id: "b", name: "approval", state: "not_offered" }),
+        orgItem({ id: "c", name: "granted-tpl", state: "off" }),
+        orgItem({ id: "d", name: "off", state: "unavailable" }),
+        orgItem({ id: "e", name: "missing", notDeployed: true }),
         orgItem({
           id: "f",
           name: "done",
@@ -143,8 +147,8 @@ describe("/catalog: actions follow installable", () => {
         orgItem({
           id: "g",
           name: "asked",
-          installable: "needs_approval",
-          request: { id: "r1", stage: "deployment", status: "pending" },
+          state: "not_offered",
+          request: { id: "r1", kind: "access", createdAt: "2026-10-22T00:00:00.000Z" },
         }),
         orgItem({
           id: "h",
@@ -207,42 +211,6 @@ describe("/catalog: actions follow installable", () => {
     const link = await screen.findByRole("link", { name: a.request });
     expect(link.getAttribute("href")).toBe(`/catalog/${ID}`);
     expect(screen.queryByRole("link", { name: a.install })).toBeNull();
-  });
-});
-
-describe("/catalog: dependency errors", () => {
-  it("asking for approval when a dependency cannot be resolved names it (409 catalog.dependency_unresolved)", async () => {
-    params.current = { itemId: "b" };
-    stubApi({
-      [`GET ${ORG}/catalog/b`]: () =>
-        json(200, {
-          item: orgItem({ id: "b", installable: "needs_approval" }),
-          hasIcon: false,
-          extension: null,
-          templates: [],
-          dependencies: [],
-          skills: [],
-        }),
-      [`GET ${ORG}/extensions`]: () => json(200, { extensions: [] }),
-      [`POST ${ORG}/catalog/b/install`]: () =>
-        json(409, {
-          error: {
-            code: "catalog.dependency_unresolved",
-            message: "x",
-            details: [{ dependency: "crm-core", range: "^1.0.0" }],
-          },
-        }),
-    });
-    await renderItem();
-    await userEvent
-      .setup()
-      .click(await screen.findByRole("button", { name: en.catalog.org.action.requestApproval }));
-    expect(await screen.findByText(`${en.errors.catalog.dependency_unresolved}`)).toBeTruthy();
-    expect(
-      screen.getByText(
-        `${fill(en.catalog.components.errorDependency, { dependency: "crm-core ^1.0.0" })}`,
-      ),
-    ).toBeTruthy();
   });
 });
 
@@ -358,7 +326,7 @@ describe("/admin/catalog/import (WizardPage)", () => {
   });
 
   it.each(LOCALES)(
-    "one review: extension action and sensitive items, skills, templates, resolved and unresolved dependencies; confirm needs the sensitive ack and posts { reviewHash, deployExtension } (%s)",
+    "one review: extension action and sensitive items, skills, templates, resolved and unresolved dependencies; confirm needs the sensitive ack and posts { reviewHash } (%s)",
     async (locale) => {
       const r = msgs[locale].catalog.admin.review;
       const c = msgs[locale].catalog.components;
@@ -399,9 +367,7 @@ describe("/admin/catalog/import (WizardPage)", () => {
 
       const confirm = screen.getByRole("button", { name: r.confirm }) as HTMLButtonElement;
       expect(confirm.disabled).toBe(true);
-      // Not deployed by default: says the extension is only recorded in the catalog
-      expect(screen.getByText(r.deployOff)).toBeTruthy();
-      await user.click(screen.getByRole("checkbox", { name: r.deployExtension }));
+      // Confirming always installs the extension on the deployment: no choice any more
       expect(screen.getByText(r.deployOn)).toBeTruthy();
       expect(confirm.disabled).toBe(true);
       await user.click(screen.getByRole("checkbox", { name: r.ack }));
@@ -410,12 +376,11 @@ describe("/admin/catalog/import (WizardPage)", () => {
       await waitFor(() => expect(router.push).toHaveBeenCalledWith(`/admin/catalog/${ID}`));
       expect(bodyOf(calls.find((x) => x.url.endsWith("/confirm")))).toEqual({
         reviewHash: "h1",
-        deployExtension: true,
       });
     },
   );
 
-  it("?staging=<id>: shows the review prepared on another page; a plugin without an extension confirms with deployExtension false", async () => {
+  it("?staging=<id>: shows the review prepared on another page; a plugin without an extension confirms with the review hash only", async () => {
     const r = en.catalog.admin.review;
     const review = { ...REVIEW, extension: undefined, sensitive: false, dependencies: [] };
     window.history.replaceState(null, "", "/admin/catalog/import?staging=st2");
@@ -440,12 +405,10 @@ describe("/admin/catalog/import (WizardPage)", () => {
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: en.admin.extensions.wizard.next }));
     expect(screen.getByText(r.noExtension)).toBeTruthy();
-    expect(screen.queryByRole("checkbox", { name: r.deployExtension })).toBeNull();
     await user.click(screen.getByRole("button", { name: r.confirm }));
     await waitFor(() => expect(router.push).toHaveBeenCalledWith(`/admin/catalog/${ID}`));
     expect(bodyOf(calls.find((x) => x.url.endsWith("/confirm")))).toEqual({
       reviewHash: "h1",
-      deployExtension: false,
     });
   });
 
@@ -493,7 +456,6 @@ describe("/admin/catalog/import (WizardPage)", () => {
     await renderRouteWithCache(importPath(), lastStubRoutes());
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: en.admin.extensions.wizard.next }));
-    await user.click(screen.getByRole("checkbox", { name: r.deployExtension }));
     await user.click(screen.getByRole("button", { name: r.confirm }));
     expect(
       await screen.findByText(
@@ -1063,7 +1025,14 @@ describe("/admin/catalog and marketplace entries", () => {
     publisher: "Acme",
     displayName: null,
     description: "",
-    policy: "allow",
+    scope: "optional",
+    scopeOrgs: [],
+    builtin: false,
+    disabled: false,
+    shownToOthers: true,
+    enabledOrgs: 0,
+    pending: false,
+    permissionsHash: null,
     latestVersion: "1.0.0",
     versions: ["1.0.0"],
     installs: 2,
@@ -1353,7 +1322,8 @@ describe("/admin/catalog and marketplace entries", () => {
       ),
     ).toBeTruthy();
     // A plugin with an extension can install it on the deployment
-    expect(screen.getByRole("button", { name: en.catalog.admin.detail.deploy })).toBeTruthy();
+    // (the deployment install control is gone: confirming the import installs the extension)
+    expect(screen.queryByRole("button", { name: en.catalog.admin.detail.deploy })).toBeNull();
   });
 
   it("item detail: the icon is only an <img> pointing at the kernel route, never inline", async () => {
@@ -1443,17 +1413,17 @@ describe("inbox: catalog_request", () => {
       id: "r1",
       orgId: "o1",
       orgName: "Acme",
+      kind: "enable",
       item: { id: ID, name: "pdf-tools", displayName: null },
-      version: "1.0.0",
-      stage: "org",
+      entry: null,
       status: "pending",
       note: "please",
+      reason: null,
       requestedBy: "a2",
       requestedByName: "Mia",
       decidedBy: null,
       decidedAt: null,
-      orgDecidedBy: null,
-      orgDecidedAt: null,
+      stagingId: null,
       createdAt: "2026-10-22T00:00:00.000Z",
     };
     let done = false;
@@ -1479,7 +1449,7 @@ describe("inbox: catalog_request", () => {
     expect(screen.getByText("Mia")).toBeTruthy();
     await userEvent.setup().click(screen.getByRole("button", { name: d.approve }));
     expect(await screen.findByText(d.approved)).toBeTruthy();
-    expect(bodyOf(calls.find((c) => c.method === "POST"))).toEqual({ decision: "approve" });
+    expect(bodyOf(calls.find((c) => c.method === "POST"))).toEqual({ approve: true });
   });
 });
 
@@ -1975,7 +1945,14 @@ describe("phase A1: git marketplaces, source detail and provenance", () => {
             publisher: "Acme",
             displayName: null,
             description: "",
-            policy: "allow",
+            scope: "optional",
+            scopeOrgs: [],
+            builtin: false,
+            disabled: false,
+            shownToOthers: true,
+            enabledOrgs: 0,
+            pending: false,
+            permissionsHash: null,
             latestVersion: "1.0.0",
             versions: ["1.0.0", "0.9.0"],
             installs: 0,
@@ -2034,7 +2011,14 @@ describe("phase A1: git marketplaces, source detail and provenance", () => {
               publisher: "Acme",
               displayName: null,
               description: "",
-              policy: "allow",
+              scope: "optional",
+              scopeOrgs: [],
+              builtin: false,
+              disabled: false,
+              shownToOthers: true,
+              enabledOrgs: 0,
+              pending: false,
+              permissionsHash: null,
               latestVersion: "1.0.0",
               versions: ["1.0.0"],
               installs: 0,
@@ -2743,7 +2727,6 @@ describe("phase B: Claude Code plugins on the import review", () => {
     await waitFor(() => expect(router.push).toHaveBeenCalledWith(`/admin/catalog/${ID}`));
     expect(bodyOf(calls.find((x) => x.url.endsWith("/confirm")))).toEqual({
       reviewHash: "h1",
-      deployExtension: false,
       pinnedSuggestions: ["brainstorming"],
     });
   });
@@ -2774,10 +2757,9 @@ describe("phase B: Claude Code plugins on the import review", () => {
       resetNavigation("/");
       return body;
     };
-    expect(await confirmWith(false)).toEqual({ reviewHash: "h1", deployExtension: false });
+    expect(await confirmWith(false)).toEqual({ reviewHash: "h1" });
     expect(await confirmWith(true)).toEqual({
       reviewHash: "h1",
-      deployExtension: false,
       pinnedSuggestions: [],
     });
   });
@@ -2880,7 +2862,14 @@ describe("phase B: Claude Code plugins in the catalog and marketplaces", () => {
         publisher: "Jesse Vincent",
         displayName: null,
         description: "",
-        policy: "allow",
+        scope: "optional",
+        scopeOrgs: [],
+        builtin: false,
+        disabled: false,
+        shownToOthers: true,
+        enabledOrgs: 0,
+        pending: false,
+        permissionsHash: null,
         latestVersion: "7.0.1",
         versions: ["7.0.1"],
         installs: 0,

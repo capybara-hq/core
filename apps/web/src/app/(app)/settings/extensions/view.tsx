@@ -37,6 +37,7 @@ import {
 import type { ConfigIssue } from "../../../../lib/json-schema";
 import { orgExtensionChangeKeys } from "../../../../lib/query/admin";
 import { orgExtensionsQuery } from "../../../../lib/query/channels";
+import { keys } from "../../../../lib/query/keys";
 import { useAppMutation } from "../../../../lib/query/mutation";
 import { usePageQuery } from "../../../../lib/query/page-query";
 import { useWorkspace } from "../../../../lib/query/workspace";
@@ -172,9 +173,24 @@ function ExtensionSection({ orgId, plugin }: { orgId: string; plugin: OrgExtensi
   // Enabling, disabling or configuring also changes what the extension brings to the org (its
   // readiness, UI, models and purposes); the list itself takes the answer.
   const put = useAppMutation({
-    fn: (v: { enabled?: boolean; force?: boolean; config?: Record<string, unknown> }) =>
-      putOrgExtension(orgId, plugin.plugin, v),
-    invalidates: () => orgExtensionChangeKeys(orgId),
+    // Switching the extension's plugin off answers a preview of what it takes away first; this
+    // page confirms it at once (the preview dialog is the plugin page's job).
+    fn: async (v: { enabled?: boolean; force?: boolean; config?: Record<string, unknown> }) => {
+      const r = await putOrgExtension(orgId, plugin.plugin, v);
+      const done =
+        "preview" in r
+          ? await putOrgExtension(orgId, plugin.plugin, { ...v, confirm: r.confirm })
+          : r;
+      if (!("extension" in done)) throw new Error("the switch did not complete");
+      return done;
+    },
+    // (a plugin switch also changes the catalog's view and the installed plugins)
+    invalidates: () => [
+      ...orgExtensionChangeKeys(orgId),
+      keys.org(orgId).catalog(),
+      keys.org(orgId).catalogItemsAll(),
+      keys.org(orgId).pluginInstalls(),
+    ],
     onSuccess: (r) => onSaved(r.extension),
   });
   const startSync = useAppMutation({

@@ -21,6 +21,7 @@ import {
   displayNameOf,
   endpointLeaves,
   getPath,
+  installableOf,
   installCatalogItem,
   isOAuth,
   type OrgCatalogDetail,
@@ -364,7 +365,7 @@ function Wizard({
   });
   const confirmIdx = steps.length - 1;
   const extensionIdx = hasExtensionStep ? confirmIdx - 1 : -1;
-  const installable = item.installable === "yes" || item.installable === "granted";
+  const installable = installableOf(item) === "yes";
 
   const template = step < templates.length ? templates[step] : undefined;
   const draft = template ? drafts[template.id] : undefined;

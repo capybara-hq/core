@@ -35,6 +35,8 @@ import {
   decideOrgRequest,
   requesterOf as directoryRequester,
   displayNameOf,
+  requestSubject,
+  requestVersion,
 } from "../../../lib/catalog";
 import type { InboxItem } from "../../../lib/inbox";
 import { inboxChangeKeys, inboxQuery } from "../../../lib/query/inbox";
@@ -99,7 +101,7 @@ function Inbox({
   // reads the inbox again through `handled`).
   const decideRequestMutation = useAppMutation({
     fn: (v: { id: string; decision: "approve" | "reject" }) =>
-      decideOrgRequest(orgId, v.id, v.decision),
+      decideOrgRequest(orgId, v.id, { approve: v.decision === "approve" }),
     invalidates: () => [
       keys.org(orgId).catalog(),
       keys.org(orgId).catalogItemsAll(),
@@ -125,7 +127,7 @@ function Inbox({
               ? item.approval.agent.name
               : item.type === "skill_change"
                 ? item.skillChange.agent.name
-                : item.request.item.name}
+                : requestSubject(item.request).name}
           </Text>
         </Stack>
       ),
@@ -291,7 +293,7 @@ function titleOf(
 ): string {
   if (item.type === "skill_change") return `${skillChangeLabel} · ${item.skillChange.name}`;
   if (item.type === "catalog_request") {
-    return `${requestLabel} · ${displayNameOf(item.request.item, locale)}`;
+    return `${requestLabel} · ${displayNameOf(requestSubject(item.request), locale)}`;
   }
   return toolLabelText(approvalToolLabel(item.approval, locale));
 }
@@ -451,14 +453,16 @@ function directoryRequestDetail({
   t: Translate;
   locale: string;
 }): Detail {
-  const name = displayNameOf(request.item, locale);
+  const subject = requestSubject(request);
+  const name = displayNameOf(subject, locale);
+  const version = requestVersion(request);
   return {
     inspector: (
       <KeyValue
         keyWidth="10ch"
         rows={[
           { k: td("requester"), v: directoryRequester(request) },
-          { k: td("version"), v: request.version == null ? "—" : versionLabel(request.version) },
+          { k: td("version"), v: version === null ? "—" : versionLabel(version) },
           { k: t("requested"), v: <DateTime value={request.createdAt} /> },
         ]}
       />
@@ -494,9 +498,11 @@ function directoryRequestDetail({
           <Text variant="small" tone="muted">
             {td("hint")}
           </Text>
-          <Text>
-            <Link href={`/catalog/${request.item.id}`}>{td("openItem")}</Link>
-          </Text>
+          {subject.id !== null && (
+            <Text>
+              <Link href={`/catalog/${subject.id}`}>{td("openItem")}</Link>
+            </Text>
+          )}
         </Stack>
       </Card>
     ),

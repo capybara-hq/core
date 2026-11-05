@@ -26,6 +26,8 @@ import {
   decideDeploymentRequest,
   displayNameOf,
   requesterOf,
+  requestSubject,
+  requestVersion,
 } from "../../../../../lib/catalog";
 import { deploymentRequestsQuery } from "../../../../../lib/query/admin";
 import { keys } from "../../../../../lib/query/keys";
@@ -60,7 +62,7 @@ const requestColumns = (t: T, title: (r: CatalogRequest) => string): Column<Cata
       <Stack gap={0}>
         <Text>{title(r)}</Text>
         <Text variant="small" tone="muted">
-          {r.item.name}
+          {requestSubject(r).name}
         </Text>
       </Stack>
     ),
@@ -123,14 +125,14 @@ function Requests({ rows }: { rows: CatalogRequest[] }) {
   // are read again.
   const decision = useAppMutation({
     fn: (v: { id: string; decision: "approve" | "reject" }) =>
-      decideDeploymentRequest(v.id, v.decision),
+      decideDeploymentRequest(v.id, { approve: v.decision === "approve" }),
     invalidates: () => [keys.deployment().catalogRequests(), keys.deployment().adminOverview()],
   });
   const [activeId, setActiveId] = useState<string>();
   const active = rows.find((r) => r.id === activeId) ?? rows[0];
   const [pending, setPending] = useState<"approve" | "reject">();
   const [error, setError] = useState<string>();
-  const title = (r: CatalogRequest) => `${r.orgName} · ${displayNameOf(r.item, locale)}`;
+  const title = (r: CatalogRequest) => `${r.orgName} · ${displayNameOf(requestSubject(r), locale)}`;
 
   const decide = async (r: CatalogRequest, d: "approve" | "reject") => {
     setPending(d);
@@ -185,12 +187,12 @@ function Requests({ rows }: { rows: CatalogRequest[] }) {
                   { k: t("fields.requester"), v: requesterOf(active) },
                   {
                     k: t("fields.version"),
-                    v: active.version == null ? "—" : versionLabel(active.version),
+                    v:
+                      requestVersion(active) === null
+                        ? "—"
+                        : versionLabel(requestVersion(active) ?? ""),
                   },
                   { k: t("fields.requested"), v: <DateTime value={active.createdAt} /> },
-                  ...(active.orgDecidedAt !== null
-                    ? [{ k: t("fields.orgApproved"), v: <DateTime value={active.orgDecidedAt} /> }]
-                    : []),
                 ]}
               />
             ),
@@ -217,9 +219,13 @@ function Requests({ rows }: { rows: CatalogRequest[] }) {
           <Card title={title(active)}>
             <Stack gap={8}>
               <Text>
-                <Link href={`/admin/catalog/${active.item.id}`}>
-                  {displayNameOf(active.item, locale)}
-                </Link>
+                {requestSubject(active).id === null ? (
+                  displayNameOf(requestSubject(active), locale)
+                ) : (
+                  <Link href={`/admin/catalog/${requestSubject(active).id}`}>
+                    {displayNameOf(requestSubject(active), locale)}
+                  </Link>
+                )}
               </Text>
               {active.note !== "" && (
                 <Stack gap={4}>

@@ -89,7 +89,14 @@ const catalogItem = (over: Record<string, unknown> = {}) => ({
   publisher: "Acme",
   displayName: null,
   description: "",
-  policy: "allow",
+  scope: "optional",
+  scopeOrgs: [],
+  builtin: false,
+  disabled: false,
+  shownToOthers: true,
+  enabledOrgs: 0,
+  pending: false,
+  permissionsHash: null,
   latestVersion: "1.0.0",
   versions: ["1.0.0"],
   installs: 2,
@@ -785,33 +792,6 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
       ]),
     );
     expect(client.getQueryState(["deployment", "adminOverview"])?.isInvalidated).toBe(true);
-  });
-
-  it("/admin/catalog/[itemId]: a policy change writes the answer into the cached item and invalidates the list", async () => {
-    const calls = stubApi({
-      ...ROUTES,
-      [`PUT /api/v1/admin/catalog/items/${ITEM_ID}/policy`]: () =>
-        json(200, catalogItem({ policy: "disabled" })),
-    });
-    const { client } = await renderRouteWithCache(`/admin/catalog/${ITEM_ID}`, ROUTES);
-    await userEvent.setup().click(screen.getByRole("radio", { name: en.catalog.policy.disabled }));
-    await vi.waitFor(() =>
-      expect(
-        (
-          client.getQueryData(["deployment", "catalogItem", ITEM_ID]) as {
-            item: { policy: string };
-          }
-        ).item.policy,
-      ).toBe("disabled"),
-    );
-    // the item is not read again (the answer is its row); the catalog (on screen as the dependency
-    // lookup) is
-    await vi.waitFor(() =>
-      expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([
-        `PUT /api/v1/admin/catalog/items/${ITEM_ID}/policy`,
-        "GET /api/v1/admin/catalog/items?limit=1000",
-      ]),
-    );
   });
 
   it("/admin/marketplaces: a first render from the hydrated cache makes no browser read", async () => {

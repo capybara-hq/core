@@ -9,54 +9,45 @@ import {
   DataTable,
   DateTime,
   DetailPage,
-  Field,
   formatBytes,
   KeyValue,
-  RadioGroup,
-  Select,
   Stack,
   Text,
   useToast,
   versionLabel,
 } from "@capybara-hq/design";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
 import {
   CatalogIcon,
   ComponentSection,
   LicenseView,
-  PolicyBadge,
+  ScopeBadge,
   TranslationReportView,
   useOrigin,
   useSourceLabel,
 } from "../../../../../components/CatalogParts";
 import { ErrorFrame } from "../../../../../components/ErrorFrame";
-import { FormError } from "../../../../../components/form-error";
 import { NoAccess } from "../../../../../components/NoAccess";
 import { usePagePath } from "../../../../../components/shell/path";
 import { Link, useRouter } from "../../../../../i18n/navigation";
 import {
   adminIconUrl,
   agentTemplateNameOf,
-  CATALOG_POLICIES,
   type CatalogItem,
   type CatalogItemDetail,
   type CatalogItemVersion,
-  type CatalogPolicy,
   declaredPermissions,
   displayNameOf,
-  installItemToDeployment,
   type PluginManifest,
   removeCatalogItem,
-  setCatalogPolicy,
   skillNameOf,
   templateIdOf,
 } from "../../../../../lib/catalog";
 import {
   catalogItemQuery,
   catalogItemsQuery,
-  extensionChangeKeys,
   marketplacesQuery,
 } from "../../../../../lib/query/admin";
 import { retryOnMountOf } from "../../../../../lib/query/client";
@@ -174,7 +165,7 @@ function DirectoryItemView({ detail, orgId }: { detail: CatalogItemDetail; orgId
         ],
         title: displayNameOf(item, locale),
         count: versionLabel(item.latestVersion),
-        status: <PolicyBadge policy={item.policy} />,
+        status: <ScopeBadge item={item} />,
       }}
       tabs={{
         label: t("detail.tabsLabel"),
@@ -226,71 +217,21 @@ function Overview({
   orgId: string | null;
 }) {
   const t = useTranslations("catalog.admin.detail");
-  const tp = useTranslations("catalog.policy");
   const tt = useTranslations("catalog.admin.review.translation");
   const toast = useToast();
   const router = useRouter();
   const errorMessage = useErrorMessage();
   const item = detail.item;
   const deleted = item.deletedAt !== null;
-  const [busy, setBusy] = useState<"policy" | "deploy">();
-  const [error, setError] = useState<string>();
-  // Versions whose plugin has an extension (only those can be installed on the deployment)
-  const withExtension = detail.versions.filter((v) => v.manifest.extension !== undefined);
   const latest = detail.versions.find((v) => v.version === item.latestVersion);
-  const [version, setVersion] = useState(withExtension[0]?.version ?? item.latestVersion);
-  const [deployed, setDeployed] = useState<string | null>(null);
   const [confirm, setConfirm] = useState(false);
-  const qc = useQueryClient();
-  // The answer is the item's row as it is now: it goes into the cached detail.
-  const policy = useAppMutation({
-    fn: (p: CatalogPolicy) => setCatalogPolicy(item.id, p),
-    invalidates: () => itemChangeKeys(orgId),
-    onSuccess: (next) =>
-      qc.setQueryData<CatalogItemDetail>(catalogItemQuery(item.id).queryKey, (d) =>
-        d === undefined ? d : { ...d, item: { ...d.item, ...next } },
-      ),
-  });
-  // The extension lands on the deployment (not enabled yet): the extensions are read again.
-  const install = useAppMutation({
-    fn: (v: string) => installItemToDeployment(item.id, v),
-    invalidates: () => [keys.deployment().extensions(), ...extensionChangeKeys(orgId)],
-  });
   const remove = useAppMutation({
     fn: () => removeCatalogItem(item.id),
     invalidates: () => [...itemChangeKeys(orgId), catalogItemQuery(item.id).queryKey],
   });
 
-  const changePolicy = async (p: CatalogPolicy) => {
-    setBusy("policy");
-    setError(undefined);
-    try {
-      await policy.mutateAsync(p);
-      toast.success(t("policySaved", { policy: tp(p) }));
-    } catch (e) {
-      setError(errorMessage(e));
-    } finally {
-      setBusy(undefined);
-    }
-  };
-
-  const deploy = async () => {
-    setBusy("deploy");
-    setError(undefined);
-    try {
-      const p = await install.mutateAsync(version);
-      setDeployed(p.name);
-      toast.success(t("deployed", { name: `${p.name} ${versionLabel(p.version)}` }));
-    } catch (e) {
-      setError(errorMessage(e));
-    } finally {
-      setBusy(undefined);
-    }
-  };
-
   return (
     <Stack gap={16}>
-      {error !== undefined && <FormError message={error} />}
       {item.contentChanged && <Text tone="warn">{t("contentChanged")}</Text>}
       {latest?.sourceFormat === "claude-code" && (
         <Stack direction="row">
@@ -301,50 +242,6 @@ function Overview({
       {latest?.translation != null && <TranslationReportView report={latest.translation} />}
       {latest !== undefined && (
         <LicenseView text={latest.licenseText} truncated={latest.licenseTruncated} />
-      )}
-      <Card title={t("policyTitle")}>
-        <Stack gap={8}>
-          <Text variant="small" tone="muted">
-            {t("policyHint")}
-          </Text>
-          <RadioGroup
-            label={t("policyTitle")}
-            value={item.policy}
-            onChange={(v) => void changePolicy(v as CatalogPolicy)}
-            disabled={deleted || busy !== undefined}
-            options={CATALOG_POLICIES.map((p) => ({ value: p, label: tp(p) }))}
-          />
-        </Stack>
-      </Card>
-      {withExtension.length > 0 && !deleted && (
-        <Card title={t("deployTitle")}>
-          <Stack gap={8}>
-            <Text variant="small" tone="muted">
-              {t("deployHint")}
-            </Text>
-            <Field label={t("deployVersion")}>
-              <Select
-                value={version}
-                onChange={(e) => setVersion(e.target.value)}
-                options={withExtension.map((v) => ({ value: v.version, label: v.version }))}
-              />
-            </Field>
-            <Stack direction="row" gap={8} align="center">
-              <Button
-                loading={busy === "deploy"}
-                disabled={busy !== undefined}
-                onClick={() => void deploy()}
-              >
-                {t("deploy")}
-              </Button>
-              {deployed !== null && (
-                <Link href={`/admin/extensions/${encodeURIComponent(deployed)}`}>
-                  {t("openExtension")}
-                </Link>
-              )}
-            </Stack>
-          </Stack>
-        </Card>
       )}
       {!deleted && (
         <Stack direction="row">

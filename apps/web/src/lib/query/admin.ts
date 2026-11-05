@@ -13,6 +13,7 @@ import {
   listDeploymentRequests,
   listMarketplaceEntries,
   listMarketplaces,
+  listPendingPlugins,
 } from "../catalog";
 import { getAdminModels, listAdminPurposes } from "../models";
 import { defineQuery } from "./define";
@@ -151,6 +152,14 @@ export const stagedImportQuery = (stagingId: string) =>
   defineQuery({
     key: d().stagedImport(stagingId),
     fn: () => getStagedImport(stagingId),
+    freshness: "deployment",
+  });
+
+/** The plugins waiting for a permission confirmation (`{ items }`). */
+export const pendingPluginsQuery = () =>
+  defineQuery({
+    key: d().catalogPending(),
+    fn: () => listPendingPlugins(),
     freshness: "deployment",
   });
 

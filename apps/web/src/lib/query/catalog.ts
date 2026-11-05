@@ -1,4 +1,9 @@
-import { getOrgCatalogItem, listOrgCatalog, previewPluginUpgrade } from "../catalog";
+import {
+  getOrgCatalogItem,
+  listOrgCatalog,
+  listOrgMarketplaceEntries,
+  previewPluginUpgrade,
+} from "../catalog";
 import { orgExtensionChangeKeys } from "./admin";
 import { defineQuery } from "./define";
 import { keys } from "./keys";
@@ -46,3 +51,35 @@ export const pluginUpgradePreviewQuery = (orgId: string, installId: string, vers
     fn: () => previewPluginUpgrade(orgId, installId, version),
     freshness: "live",
   });
+
+/**
+ * The marketplace entries an org admin browses to request an import (empty source: all sources,
+ * empty search: none); a 404 means the deployment turned `orgMarketplaceBrowse` off.
+ */
+export const orgMarketplaceEntriesQuery = (orgId: string, sourceId: string, q: string) =>
+  defineQuery({
+    key: keys.org(orgId).marketplaceEntries(sourceId, q),
+    fn: () =>
+      listOrgMarketplaceEntries(orgId, {
+        ...(sourceId !== "" && { sourceId }),
+        ...(q !== "" && { q }),
+      }),
+    freshness: "orgConfig",
+  });
+
+/**
+ * What a plugin's scope, disable, switch or permission confirmation changes: the catalog and the
+ * extensions on the deployment (and the 待确认 list, the overview), and in the current org the
+ * catalog, the installed plugins and what {@link pluginChangeKeys} lists.
+ */
+export const pluginScopeChangeKeys = (orgId: string | null): (readonly unknown[])[] => {
+  const d = keys.deployment();
+  return [
+    d.catalog(),
+    d.catalogItemsAll(),
+    d.catalogPending(),
+    d.extensions(),
+    d.adminOverview(),
+    ...(orgId === null ? [] : pluginChangeKeys(orgId)),
+  ];
+};

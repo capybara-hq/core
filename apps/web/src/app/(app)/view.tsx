@@ -29,6 +29,7 @@ import { useRouter } from "../../i18n/navigation";
 import { type Agent, type ProviderModels, setupReady } from "../../lib/agents";
 import type { ApiClientError } from "../../lib/api";
 import { decideApproval } from "../../lib/approvals";
+import { requestSubject } from "../../lib/catalog";
 import type { Conversation } from "../../lib/conversations";
 import type { InboxItem } from "../../lib/inbox";
 import { agentsQuery } from "../../lib/query/agents";
@@ -349,7 +350,8 @@ function DailyOverview({
       tag: { label: t("inbox.catalogRequest") },
       title: t("inbox.catalogRequestTitle", {
         item:
-          item.request.item.displayName?.[locale === "zh" ? "zh" : "en"] ?? item.request.item.name,
+          requestSubject(item.request).displayName?.[locale === "zh" ? "zh" : "en"] ??
+          requestSubject(item.request).name,
       }),
       meta: when,
       href: "/inbox",
