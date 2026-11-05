@@ -162,8 +162,13 @@ describe("ApprovalCard (design ApprovalBlock)", () => {
     },
   );
 
-  it("decided (from the log): one line naming who, the key, the scope and the reason", () => {
-    const calls = stubApi({});
+  it("decided (from the log): one line naming who, the key, the scope and the reason", async () => {
+    const calls = stubApi({
+      "GET /api/v1/orgs/o1/members": () =>
+        json(200, {
+          members: [{ account: { id: "someone", displayName: "李四" }, role: "member" }],
+        }),
+    });
     renderPage(
       <ApprovalCard
         orgId="o1"
@@ -178,9 +183,55 @@ describe("ApprovalCard (design ApprovalBlock)", () => {
       />,
       { locale: "zh", me: ME },
     );
-    expect(screen.getByText(/someone 拒绝了 Fixture \[delete_item\]/)).toBeTruthy();
+    // the decider's name, read from the member list (the approval itself is not read)
+    expect(await screen.findByText(/李四 拒绝了 Fixture \[delete_item\]/)).toBeTruthy();
     expect(screen.getByText(/「too risky」/)).toBeTruthy();
-    expect(calls).toHaveLength(0);
+    expect(calls.map((c) => c.url)).toEqual(["/api/v1/orgs/o1/members"]);
+  });
+
+  it("a viewer who can't decide is told who is awaited by name", async () => {
+    stubApi({
+      "GET /api/v1/orgs/o1/approvals/ap1": () =>
+        json(404, { error: { code: "approval.not_found", message: "x" } }),
+      "GET /api/v1/orgs/o1/members": () =>
+        json(200, {
+          members: [{ account: { id: "acc_zhang", displayName: "张三" }, role: "member" }],
+        }),
+    });
+    renderPage(
+      <ApprovalCard
+        orgId="o1"
+        item={{ ...item(), approver: { kind: "account", accountId: "acc_zhang" } }}
+        info={INFO}
+      />,
+      { locale: "zh", me: ME },
+    );
+    expect(
+      await screen.findByText(
+        "Fixture [delete_item]（mcp__fixture__delete_item）需要审批，等待 张三 处理。",
+      ),
+    ).toBeTruthy();
+  });
+
+  it("an approval escalated by role names the role, without reading the member list", async () => {
+    const calls = stubApi({
+      "GET /api/v1/orgs/o1/approvals/ap1": () =>
+        json(404, { error: { code: "approval.not_found", message: "x" } }),
+    });
+    renderPage(
+      <ApprovalCard
+        orgId="o1"
+        item={{ ...item(), approver: { kind: "role", role: "admin" } }}
+        info={INFO}
+      />,
+      { locale: "en", me: ME },
+    );
+    expect(
+      await screen.findByText(
+        "Fixture [delete_item] (mcp__fixture__delete_item) needs approval; waiting for an admin.",
+      ),
+    ).toBeTruthy();
+    expect(calls.map((c) => c.url)).toEqual(["/api/v1/orgs/o1/approvals/ap1"]);
   });
 });
 

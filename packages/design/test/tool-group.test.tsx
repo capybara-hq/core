@@ -442,6 +442,21 @@ describe("a call waiting for a person (§6.16.9)", () => {
     );
   });
 
+  it("someone else to act: the waiting word names them, on the row and the group header", () => {
+    const { container } = wrap(
+      <ToolRow row={waiting("approval", { waitingFor: "张三" })} now={18_000} />,
+    );
+    expect(container.textContent).toContain("等待 张三 批准");
+    expect(container.textContent).not.toContain("等待你");
+    cleanup();
+    const rows = [
+      row({ kind: "command" }),
+      waiting("input", { kind: "command", waitingFor: "张三" }),
+    ];
+    expect(summarizeTools(rows, "zh")).toBe("等待 张三 回答 · 已完成 1 个");
+    expect(summarizeTools(rows, "en")).toBe("Waiting for 张三 to answer · 1 done");
+  });
+
   it("a pending call waiting for its approval shows no spinner either", () => {
     const { container } = wrap(<ToolRow row={row({ status: "pending", waiting: "approval" })} />);
     expect(container.querySelector('[data-part="spinner"]')).toBeNull();

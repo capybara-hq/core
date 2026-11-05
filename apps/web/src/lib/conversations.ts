@@ -1,4 +1,5 @@
 import { apiFetch } from "./api";
+import type { OrgRole } from "./members";
 
 /**
  * 内核会话 API 的类型（浏览器端视角：只声明界面用到的字段；时间为 JSON 字符串）。
@@ -106,7 +107,10 @@ type EventBody =
         reason: "user" | "unavailable";
       };
     }
-  | { type: "run_started"; payload: { agentVersion: number; model: ModelRef } }
+  | {
+      type: "run_started";
+      payload: { agentVersion: number; model: ModelRef; triggerAccountId?: string };
+    }
   | {
       type: "model_call";
       payload: {
@@ -174,7 +178,7 @@ type EventBody =
         expiresAt: string;
         /** Which rule asked (display only; absent in older logs). */
         policy?: ApprovalPolicy;
-      };
+      } & Approver;
     }
   | {
       type: "approval_decided";
@@ -321,7 +325,7 @@ type EventBody =
         questionId?: string;
         toolKey: string;
         expiresAt?: string;
-      };
+      } & Approver;
     }
   /** Parent log: a sub-agent's run ended. */
   | {
@@ -381,6 +385,15 @@ export interface ConversationUsage {
   outputTokens: number;
   cacheReadTokens: number;
   cacheWriteTokens: number;
+}
+
+/**
+ * Who may decide an approval (display only, absent in older logs): the assigned member, else the
+ * escalation role (`approval_requested`, and a sub-agent's in `subagent_waiting`).
+ */
+export interface Approver {
+  requestedFor?: string | null;
+  approverRole?: OrgRole | null;
 }
 
 /** 已写入日志的会话事件。 */

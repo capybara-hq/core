@@ -5,7 +5,7 @@ import { useDesignLocale, useDesignT } from "../provider";
 import { useClock } from "./clock";
 import { DiffBlock, type DiffData } from "./diff-block";
 import { Spinner } from "./prose";
-import { elapsed, fillCopy, type ToolKind, type ToolWaiting } from "./tool-copy";
+import { elapsed, fillCopy, type ToolKind, type ToolWaiting, waitingText } from "./tool-copy";
 
 export type ToolRowData = {
   id: string;
@@ -31,6 +31,11 @@ export type ToolRowData = {
    * the waiting word instead of the spinner and the timer (§6.16.9). Ignored once it ends.
    */
   waiting?: ToolWaiting;
+  /**
+   * Who the call waits for when that is not the viewer: a member's name, or a role ("管理员") for
+   * an approval escalated by role; absent = the viewer ("等待你批准").
+   */
+  waitingFor?: string;
   startedAt?: number;
   durationMs?: number;
   /** Lines added / removed by an edit ("+a −b"). */
@@ -156,11 +161,11 @@ export function WaitingWord({
   row: ToolRowData;
   lead?: string;
 }): JSX.Element | null {
-  const t = useDesignT();
+  const locale = useDesignLocale();
   if (!isWaiting(row) || row.waiting === undefined) return null;
   return (
     <span className="cb-accent-word" data-part="waiting-word">
-      {`${lead ?? ""}${t(`tool.waiting.${row.waiting}`)}`}
+      {`${lead ?? ""}${waitingText(row.waiting, row.waitingFor, locale)}`}
     </span>
   );
 }

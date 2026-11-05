@@ -26,6 +26,7 @@ import { approvalQuery } from "../lib/query/conversation";
 import { inboxChangeKeys } from "../lib/query/inbox";
 import { keys } from "../lib/query/keys";
 import { useAppMutation } from "../lib/query/mutation";
+import { useWaiterWords } from "../lib/query/who-waits";
 import { shortTime } from "../lib/time";
 import type { ApprovalDecision, ApprovalItem } from "../lib/timeline";
 import { toolLabel, toolLabelOfKey, toolLabelText } from "../lib/tool-label";
@@ -193,13 +194,21 @@ export function ApprovalCard({
   const view: Approval | null | undefined =
     approval.data !== undefined ? approval.data : approval.error !== null ? null : undefined;
 
-  const who = (id: string | null) =>
-    id === null ? t("system") : id === me.account.id ? t("you") : id;
   const fromView = view ? outcomeOf(view) : null;
   const outcome: (Outcome & { at: string | null }) | null =
     decided !== null
       ? { ...decided, at: item.decidedAt }
       : (local ?? (fromView !== null && view ? { ...fromView, at: view.decidedAt } : null));
+  // Names only when someone else decided, or is awaited, so a person's own card reads nothing more
+  const by = outcome?.byAccountId ?? null;
+  const awaited = outcome === null && view === null ? item.approver : undefined;
+  const words = useWaiterWords(
+    orgId,
+    (by !== null && by !== me.account.id) ||
+      (awaited?.kind === "account" && awaited.accountId !== me.account.id),
+  );
+  const who = (id: string | null) =>
+    id === null ? t("system") : (words({ kind: "account", accountId: id }) ?? t("you"));
 
   async function onDecide(decision: "approve" | "deny", scope: ApprovalScope, reason?: string) {
     const r = await decide(item.approvalId, decision, scope, reason);
@@ -235,7 +244,9 @@ export function ApprovalCard({
     return (
       <div data-role="approval" data-approval-id={item.approvalId}>
         <Text variant="small" tone="muted">
-          {t("otherApproverFor", { tool, key: item.toolKey })}
+          {awaited !== undefined && words(awaited) !== undefined
+            ? t("otherApproverNamed", { tool, key: item.toolKey, who: words(awaited) ?? "" })
+            : t("otherApproverFor", { tool, key: item.toolKey })}
         </Text>
       </div>
     );

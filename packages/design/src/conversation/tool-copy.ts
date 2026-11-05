@@ -29,6 +29,8 @@ export type SummaryRow = {
   status: "pending" | "running" | "done" | "failed" | "cancelled";
   /** The call waits for a person (only read while it runs). */
   waiting?: ToolWaiting;
+  /** Who it waits for when that is not the viewer (a name or a role); absent = "you". */
+  waitingFor?: string;
   keyArg?: string;
   added?: number;
   removed?: number;
@@ -49,6 +51,17 @@ const lowerFirst = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);
 /** The fixed order of the header's kinds, as reference set B draws it (§7). */
 const SUMMARY_ORDER: readonly ToolVerbGroup[] = ["command", "tool", "read", "edit"];
 
+/**
+ * The waiting word (§6.16.9): "等待你批准" for the viewer, "等待 张三 批准" when someone else (a
+ * name or a role) has to act.
+ */
+export function waitingText(what: ToolWaiting, who: string | undefined, locale: Locale): string {
+  const m = messages[locale];
+  return who === undefined
+    ? m[`tool.waiting.${what}` as DesignKey]
+    : fmt(m[`tool.waiting.${what}By` as DesignKey], { who });
+}
+
 /** The group header (§6.16.8, §7) as styled runs. */
 export function summaryParts(rows: readonly SummaryRow[], locale: Locale): SummaryPart[] {
   const m = messages[locale];
@@ -60,7 +73,7 @@ export function summaryParts(rows: readonly SummaryRow[], locale: Locale): Summa
     if (running.waiting !== undefined) {
       return [
         {
-          text: m[`tool.waiting.${running.waiting}` as DesignKey],
+          text: waitingText(running.waiting, running.waitingFor, locale),
           tone: "accent",
           part: "waiting-word",
         },

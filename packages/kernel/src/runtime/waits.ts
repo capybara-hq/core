@@ -14,6 +14,7 @@ import { LockService } from "../infra/lock/lock.service.js";
 import { LockedCron } from "../infra/schedule/locked-cron.decorator.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
+import type { OrgRole } from "../orgs/roles.js";
 import { ApprovalsService } from "../tools/approvals.service.js";
 import {
   APPROVAL_CANCELLED_TEXT,
@@ -74,6 +75,9 @@ export interface WaitSweepResult {
 }
 
 const TERMINAL_RUN_STATUSES = ["completed", "failed", "aborted"] as const;
+
+/** Who may decide a sub-agent's approval, mirrored into the parent's `subagent_waiting`. */
+type Approver = { requestedFor: string | null; approverRole: OrgRole | null };
 
 /** The data of a wait timeout job; `subagents` waits also carry their run and step. */
 export interface WaitTimeoutData {
@@ -233,13 +237,24 @@ export class Waits implements OnApplicationShutdown {
         .where("child_run_id", "=", runId)
         .executeTakeFirst();
       if (!d) return;
-      const row =
+      const row: { tool_key: string; expires_at: string | Date; approver?: Approver } | undefined =
         waitingFor.kind === "approval"
           ? await this.db
               .selectFrom("approvals")
-              .select(["tool_key", "expires_at"])
+              .select(["tool_key", "expires_at", "requested_for", "approver_role"])
               .where("id", "=", waitingFor.id)
               .executeTakeFirst()
+              .then(
+                (r) =>
+                  r && {
+                    tool_key: r.tool_key,
+                    expires_at: r.expires_at,
+                    approver: {
+                      requestedFor: r.requested_for,
+                      approverRole: r.approver_role as OrgRole | null,
+                    },
+                  },
+              )
           : await this.db
               .selectFrom("questions")
               .select([sql<string>`spec->>'toolKey'`.as("tool_key"), "expires_at"])
@@ -256,7 +271,10 @@ export class Waits implements OnApplicationShutdown {
             childRunId: runId,
             kind: waitingFor.kind,
             ...(waitingFor.kind === "approval"
-              ? { approvalId: waitingFor.id }
+              ? {
+                  approvalId: waitingFor.id,
+                  ...row.approver,
+                }
               : { questionId: waitingFor.id }),
             toolKey: row.tool_key,
             expiresAt: new Date(row.expires_at).toISOString(),
