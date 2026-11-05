@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
-import type { AgentTemplate, AgentTemplateTier } from "@capybara-hq/plugin-sdk";
+import type { AgentTemplate, AgentTemplateTier, Logger } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
+import { wantedOn } from "../catalog/scope.js";
 import type { KernelSchemaDb, SourceFormat } from "../db/kernel-schema.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { canonicalJson } from "../tools/canonical-json.js";
@@ -9,19 +10,21 @@ import type { LegacyScope } from "../tools/legacy-keys.js";
 import { needsLegacyScope, normalizeToolKeys } from "./definition.js";
 
 /**
- * Agent templates installed in an org from plugins (sub-agents spec §16): `agent_templates` (one
- * live row per org, plugin and name) and `agent_template_versions` (the parsed template). Plugin
- * install, upgrade and uninstall write them through the `…In` functions in the caller's
- * transaction; the roster and the effective definition read them through {@link loadTemplates}.
- * No in-process state.
+ * Agent templates of an org (sub-agents spec §16): its own `agent_templates` (one live row per org,
+ * plugin and name) with `agent_template_versions` (the parsed template), and the platform templates
+ * (plugin scope phase 2, rulings A2, C2: `platform_agent_templates`) that are on in the org. Plugin
+ * install, upgrade and uninstall write the org rows through the `…In` functions in the caller's
+ * transaction; the roster and the effective definition read both through {@link loadTemplates}.
+ * An org copy linked to a platform template (ruling B2) resolves to the platform template's current
+ * version under the copy's own id unless pinned. No in-process state.
  */
 
-/** A live template of an org (`GET` listings, the agent page). */
+/** A usable template of an org (`GET` listings, the agent page). */
 export interface AgentTemplateView {
   id: string;
   name: string;
   plugin: string | null;
-  /** The roster type `<plugin>:<name>`. */
+  /** The roster type: `<plugin>:<name>`, or the bare `<name>` without a plugin. */
   type: string;
   description: string;
   model: AgentTemplateTier;
@@ -29,10 +32,13 @@ export interface AgentTemplateView {
   sourceFormat: SourceFormat;
   catalogItemId: string | null;
   catalogVersion: string | null;
+  /** `org`: the org's own template; `platform`: a platform template on in the org. */
+  origin: "org" | "platform";
 }
 
-/** A template row with its current definition. */
+/** A template with its current definition (an org row, a linked copy or a platform template). */
 export interface TemplateRow {
+  /** The org template's id (a linked copy keeps its own), or the platform template's. */
   id: string;
   name: string;
   plugin: string | null;
@@ -41,7 +47,18 @@ export interface TemplateRow {
   sourceFormat: SourceFormat;
   catalogItemId: string | null;
   catalogVersion: string | null;
+  /** `platform` for a platform template and for a linked copy that resolves to one. */
+  origin: "org" | "platform";
+  /** The platform template whose content this is (a platform template, or a linked copy). */
+  platformTemplateId?: string;
 }
+
+/** The roster type of a template: `<plugin>:<name>`, the bare `<name>` without a plugin. */
+export const templateTypeOf = (plugin: string | null, name: string): string =>
+  plugin ? `${plugin}:${name}` : name;
+
+/** Plugin install statuses that make a plugin on in the org (phase 1, org catalog state). */
+const LIVE_INSTALL = ["installing", "installed", "upgrading"] as const;
 
 const baseQuery = (db: KernelSchemaDb, orgId: string) =>
   db
@@ -55,6 +72,8 @@ const baseQuery = (db: KernelSchemaDb, orgId: string) =>
       "t.plugin_name",
       "t.current_version",
       "t.catalog_item_id",
+      "t.platform_template_id",
+      "t.pinned_version",
       "v.definition",
       "v.source_format",
       "v.catalog_version",
@@ -62,46 +81,248 @@ const baseQuery = (db: KernelSchemaDb, orgId: string) =>
     .where("t.org_id", "=", orgId)
     .where("t.deleted_at", "is", null);
 
-type RawRow = Awaited<ReturnType<ReturnType<typeof baseQuery>["execute"]>>[number];
+/** An org row or a platform row before its tool keys are normalized. */
+interface RawRow {
+  id: string;
+  name: string;
+  plugin: string | null;
+  version: number;
+  definition: unknown;
+  sourceFormat: SourceFormat;
+  catalogItemId: string | null;
+  catalogVersion: string | null;
+  origin: "org" | "platform";
+  platformTemplateId?: string;
+}
 
 /**
- * A stored template row; its tool keys read as current keys (tool naming spec §8.3): old builtin
- * names always, rc `<x>__<tool>` keys with `scope` (see {@link scopedRows}).
+ * Stored rows as {@link TemplateRow}s; tool keys read as current keys (tool naming spec §8.3): old
+ * builtin names always, rc `<x>__<tool>` keys with the org's legacy scope, read once when needed.
  */
-const rowOf = (r: RawRow, scope?: LegacyScope): TemplateRow => ({
-  id: r.id,
-  name: r.name,
-  plugin: r.plugin_name,
-  version: r.current_version,
-  template: normalizeToolKeys(r.definition, scope) as AgentTemplate,
-  sourceFormat: r.source_format,
-  catalogItemId: r.catalog_item_id,
-  catalogVersion: r.catalog_version,
-});
-
-/** The rows of one org as {@link TemplateRow}s, reading the org's legacy scope once when needed. */
-async function scopedRows(
+async function normalized(
   db: KernelSchemaDb,
   orgId: string,
   rows: readonly RawRow[],
 ): Promise<TemplateRow[]> {
-  const scope = rows.some((r) => needsLegacyScope(r.definition))
+  const scope: LegacyScope | undefined = rows.some((r) => needsLegacyScope(r.definition))
     ? await loadLegacyScope(db, orgId)
     : undefined;
-  return rows.map((r) => rowOf(r, scope));
+  return rows.map(({ definition, ...r }) => ({
+    ...r,
+    template: normalizeToolKeys(definition, scope) as AgentTemplate,
+  }));
 }
 
-/** The live templates of `ids` in the org (deleted and foreign ids are left out), by id. */
+const orgRaw = (r: Awaited<ReturnType<ReturnType<typeof baseQuery>["execute"]>>[number]) =>
+  ({
+    id: r.id,
+    name: r.name,
+    plugin: r.plugin_name,
+    version: r.current_version,
+    definition: r.definition,
+    sourceFormat: r.source_format,
+    catalogItemId: r.catalog_item_id,
+    catalogVersion: r.catalog_version,
+    origin: "org",
+    ...(r.platform_template_id !== null && { platformTemplateId: r.platform_template_id }),
+  }) satisfies RawRow;
+
+/**
+ * The platform templates on in the org (`ids`: only those), minus the ones whose type an org
+ * template of its own (unlinked, or pinned) already has (the org's wins; logged unless it is a copy
+ * of the same component: linked to it, or from the same catalog item). On in the org:
+ * - never when the template or its plugin is disabled (or its plugin is deleted);
+ * - `follow`: its plugin is on in the org (a live install, or builtin) and no component switch of
+ *   the org says off;
+ * - `own`: `wantedOn` over the template's own scope, the org's list membership and its switch.
+ * One query for the templates with their plugin and org state, one for the org's clashing rows.
+ */
+async function platformOn(
+  db: KernelSchemaDb,
+  orgId: string,
+  ids: readonly string[] | undefined,
+  log?: Pick<Logger, "warn">,
+): Promise<RawRow[]> {
+  if (ids !== undefined && ids.length === 0) return [];
+  let q = db
+    .selectFrom("platform_agent_templates as p")
+    .innerJoin("platform_agent_template_versions as v", (j) =>
+      j.onRef("v.template_id", "=", "p.id").onRef("v.version", "=", "p.current_version"),
+    )
+    .leftJoin("catalog_items as c", (j) =>
+      j.onRef("c.id", "=", "p.catalog_item_id").on("c.deleted_at", "is", null),
+    )
+    .select((eb) => [
+      "p.id",
+      "p.name",
+      "p.plugin_name",
+      "p.catalog_item_id",
+      "p.current_version",
+      "p.scope_mode",
+      "p.scope",
+      "v.definition",
+      "v.source_format",
+      "v.catalog_version",
+      "c.id as item_id",
+      "c.disabled as item_disabled",
+      "c.builtin as item_builtin",
+      eb
+        .exists(
+          eb
+            .selectFrom("plugin_installs as a")
+            .select("a.id")
+            .whereRef("a.item_id", "=", "p.catalog_item_id")
+            .where("a.org_id", "=", orgId)
+            .where("a.status", "in", [...LIVE_INSTALL]),
+        )
+        .as("installed"),
+      eb
+        .exists(
+          eb
+            .selectFrom("component_scope_orgs as l")
+            .select("l.org_id")
+            .where("l.kind", "=", "agent_template")
+            .whereRef("l.component_id", "=", "p.id")
+            .where("l.org_id", "=", orgId),
+        )
+        .as("listed"),
+      eb
+        .selectFrom("component_org_switches as w")
+        .select("w.enabled")
+        .where("w.kind", "=", "agent_template")
+        .whereRef("w.component_id", "=", "p.id")
+        .where("w.org_id", "=", orgId)
+        .as("switch"),
+    ])
+    .where("p.deleted_at", "is", null)
+    .where("p.disabled", "=", false);
+  if (ids !== undefined) q = q.where("p.id", "in", [...ids]);
+  const rows = (await q.execute()).filter((r) => {
+    const sw = r.switch ?? null;
+    if (r.item_disabled === true) return false;
+    if (r.scope_mode === "follow") {
+      return (
+        r.item_id !== null && (Boolean(r.installed) || r.item_builtin === true) && sw !== false
+      );
+    }
+    return wantedOn({ scope: r.scope, disabled: false, builtin: false }, Boolean(r.listed), sw);
+  });
+  if (rows.length === 0) return [];
+  const own = await db
+    .selectFrom("agent_templates")
+    .select(["id", "name", "plugin_name", "platform_template_id", "catalog_item_id"])
+    .where("org_id", "=", orgId)
+    .where("deleted_at", "is", null)
+    .where((eb) =>
+      eb.or([eb("platform_template_id", "is", null), eb("pinned_version", "is not", null)]),
+    )
+    .where("name", "in", [...new Set(rows.map((r) => r.name))])
+    .execute();
+  const ownByType = new Map(own.map((r) => [templateTypeOf(r.plugin_name, r.name), r]));
+  const out: RawRow[] = [];
+  for (const r of rows.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))) {
+    const o = ownByType.get(templateTypeOf(r.plugin_name, r.name));
+    if (o) {
+      const sameComponent =
+        o.platform_template_id === r.id ||
+        (o.catalog_item_id !== null && o.catalog_item_id === r.catalog_item_id);
+      if (!sameComponent) {
+        log?.warn("platform agent template shadowed by an org template of the same type", {
+          orgId,
+          type: templateTypeOf(r.plugin_name, r.name),
+          platformTemplateId: r.id,
+          templateId: o.id,
+        });
+      }
+      continue;
+    }
+    out.push({
+      id: r.id,
+      name: r.name,
+      plugin: r.plugin_name,
+      version: r.current_version,
+      definition: r.definition,
+      sourceFormat: r.source_format,
+      catalogItemId: r.catalog_item_id,
+      catalogVersion: r.catalog_version,
+      origin: "platform",
+      platformTemplateId: r.id,
+    });
+  }
+  return out;
+}
+
+/**
+ * The org's live templates by id (`ids`; ids that are no usable template are missing): an org
+ * template with its current version; an org copy linked to a platform template without a pin
+ * (ruling B2) as that platform template's current version under the copy's id, while the platform
+ * template is on in the org; a platform template id while it is on in the org. Deleted and
+ * foreign ids are left out. `log` receives the type-clash warnings.
+ */
 export async function loadTemplates(
   db: KernelSchemaDb,
   orgId: string,
   ids: readonly string[],
+  log?: Pick<Logger, "warn">,
 ): Promise<Map<string, TemplateRow>> {
-  if (ids.length === 0) return new Map();
-  const rows = await baseQuery(db, orgId)
-    .where("t.id", "in", [...ids])
+  const unique = [...new Set(ids)];
+  if (unique.length === 0) return new Map();
+  const rows = await baseQuery(db, orgId).where("t.id", "in", unique).execute();
+  const linked = new Set(
+    rows.filter((r) => r.platform_template_id !== null && r.pinned_version === null),
+  );
+  const known = new Set(rows.map((r) => r.id));
+  const platformIds = [
+    ...new Set([
+      ...unique.filter((id) => !known.has(id)),
+      ...[...linked].map((r) => r.platform_template_id as string),
+    ]),
+  ];
+  const platform = new Map((await platformOn(db, orgId, platformIds, log)).map((p) => [p.id, p]));
+  const raw: RawRow[] = [];
+  for (const r of rows) {
+    if (linked.has(r)) {
+      const p = platform.get(r.platform_template_id as string);
+      if (p) raw.push({ ...p, id: r.id });
+      continue;
+    }
+    raw.push(orgRaw(r));
+  }
+  for (const id of unique) {
+    const p = platform.get(id);
+    if (p && !known.has(id)) raw.push(p);
+  }
+  return new Map((await normalized(db, orgId, raw)).map((t) => [t.id, t]));
+}
+
+/**
+ * The org's usable templates, by plugin (none first), name and id: its own live templates
+ * (unlinked or pinned) and the platform templates on in the org (see {@link platformOn}). An org
+ * copy linked without a pin is not listed: its platform template is. `log` receives the type-clash
+ * warnings.
+ */
+export async function usableTemplates(
+  db: KernelSchemaDb,
+  orgId: string,
+  log?: Pick<Logger, "warn">,
+): Promise<TemplateRow[]> {
+  const own = await baseQuery(db, orgId)
+    .where((eb) =>
+      eb.or([eb("t.platform_template_id", "is", null), eb("t.pinned_version", "is not", null)]),
+    )
     .execute();
-  return new Map((await scopedRows(db, orgId, rows)).map((t) => [t.id, t]));
+  const rows = await normalized(db, orgId, [
+    ...own.map(orgRaw),
+    ...(await platformOn(db, orgId, undefined, log)),
+  ]);
+  const key = (t: TemplateRow) => [t.plugin ?? "", t.name, t.id] as const;
+  return rows.sort((a, b) => {
+    const [x, y] = [key(a), key(b)];
+    for (let i = 0; i < x.length; i++) {
+      if (x[i] !== y[i]) return (x[i] as string) < (y[i] as string) ? -1 : 1;
+    }
+    return 0;
+  });
 }
 
 /** Reads the org's agent templates (consumed by the roster, the agent page and Task 19's API). */
@@ -109,30 +330,24 @@ export async function loadTemplates(
 export class AgentTemplatesService {
   constructor(@Inject(KernelDb) private readonly db: KernelDb) {}
 
-  /** Every live template of the org, by plugin then name. */
+  /** Every usable template of the org ({@link usableTemplates}), by plugin then name. */
   async listForOrg(orgId: string): Promise<AgentTemplateView[]> {
-    const rows = await baseQuery(this.db.db, orgId)
-      .orderBy("t.plugin_name")
-      .orderBy("t.name")
-      .execute();
-    return rows.map((r) => {
-      const t = rowOf(r);
-      return {
-        id: t.id,
-        name: t.name,
-        plugin: t.plugin,
-        type: `${t.plugin}:${t.name}`,
-        description: typeof t.template.description === "string" ? t.template.description : "",
-        model: t.template.model ?? "inherit",
-        version: t.version,
-        sourceFormat: t.sourceFormat,
-        catalogItemId: t.catalogItemId,
-        catalogVersion: t.catalogVersion,
-      };
-    });
+    return (await usableTemplates(this.db.db, orgId)).map((t) => ({
+      id: t.id,
+      name: t.name,
+      plugin: t.plugin,
+      type: templateTypeOf(t.plugin, t.name),
+      description: typeof t.template.description === "string" ? t.template.description : "",
+      model: t.template.model ?? "inherit",
+      version: t.version,
+      sourceFormat: t.sourceFormat,
+      catalogItemId: t.catalogItemId,
+      catalogVersion: t.catalogVersion,
+      origin: t.origin,
+    }));
   }
 
-  /** A live template by id or by `<plugin>:<name>`; null when there is none. */
+  /** A usable template by id or by its roster type; null when there is none. */
   async resolve(
     orgId: string,
     ref: string,
@@ -142,15 +357,11 @@ export class AgentTemplatesService {
     plugin: string | null;
     template: AgentTemplate;
   } | null> {
-    const i = ref.indexOf(":");
-    let q = baseQuery(this.db.db, orgId);
-    q =
-      i < 0
-        ? q.where("t.id", "=", ref)
-        : q.where("t.plugin_name", "=", ref.slice(0, i)).where("t.name", "=", ref.slice(i + 1));
-    const r = await q.executeTakeFirst();
-    if (!r) return null;
-    const [t] = await scopedRows(this.db.db, orgId, [r]);
+    const t =
+      (await loadTemplates(this.db.db, orgId, [ref])).get(ref) ??
+      (await usableTemplates(this.db.db, orgId)).find(
+        (u) => templateTypeOf(u.plugin, u.name) === ref,
+      );
     if (!t) return null;
     return { id: t.id, version: t.version, plugin: t.plugin, template: t.template };
   }

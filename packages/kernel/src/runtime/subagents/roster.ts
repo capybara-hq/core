@@ -1,6 +1,7 @@
+import type { Logger } from "@capybara-hq/plugin-sdk";
 import type { AgentDefinition } from "../../agents/definition.js";
 import { SUBAGENT_ROSTER_MAX } from "../../agents/definition.js";
-import { loadTemplates } from "../../agents/templates.js";
+import { loadTemplates, templateTypeOf } from "../../agents/templates.js";
 import type { KernelSchemaDb } from "../../db/kernel-schema.js";
 
 /**
@@ -13,8 +14,17 @@ export interface RosterEntry {
   source: "general" | "inline" | "plugin" | "agent";
   /** When to use it (shown in the tool description), cut to {@link ROSTER_DESCRIPTION_MAX}. */
   description: string;
-  /** Plugin templates: the `agent_templates` id. */
+  /**
+   * Plugin templates: the selected id (an org template's, a linked copy's own, or a platform
+   * template's; `subagent_started.template.id`).
+   */
   templateId?: string;
+  /**
+   * Plugin templates: other selected ids skipped because they resolve to the same platform
+   * template under this type (an org copy linked since the save); a follow-up recorded under one
+   * of them finds this entry.
+   */
+  aliasTemplateIds?: string[];
   /** Org agents: the allowlisted agent id. */
   agentId?: string;
   /** Org agents: the agent's current name, when it is still a live agent of the org. */
@@ -31,21 +41,26 @@ export const GENERAL_PURPOSE_DESCRIPTION =
 
 const cut = (s: string) => s.slice(0, ROSTER_DESCRIPTION_MAX);
 
-/** Plugin template type: `<plugin>:<name>`. */
-export const templateType = (plugin: string | null, name: string) =>
-  plugin ? `${plugin}:${name}` : name;
+/** Plugin template type: `<plugin>:<name>`; the bare `<name>` for a template without a plugin. */
+export const templateType = templateTypeOf;
 
 /**
  * Resolves the roster of `parent` (spec §4.3): `general-purpose` first unless
  * `subagents.general === false`, then the plugin templates, inline templates and allowlisted org
- * agents, each in the owner's order, at most {@link SUBAGENT_ROSTER_MAX} entries. Templates deleted
- * since the save are skipped; allowlisted org agents stay listed (the dispatch checks their gates
- * and refuses with the §4.5 text), with `agentName` only while the agent is live.
+ * agents, each in the owner's order, at most {@link SUBAGENT_ROSTER_MAX} entries. Templates are
+ * the org's and the platform's ({@link loadTemplates}); ones deleted or off since the save are
+ * skipped. A template whose type is taken (`general-purpose`, an earlier template, an inline
+ * template's name; only a bare `<name>` can clash with the last two kinds, and the save refuses
+ * every clash) is skipped with a warning; when it resolves to the same platform template as the
+ * entry kept, its id becomes that entry's alias. Allowlisted org agents stay listed (the dispatch
+ * checks their gates and refuses with the §4.5 text), with `agentName` only while the agent is
+ * live.
  */
 export async function resolveRoster(
   db: KernelSchemaDb,
   orgId: string,
   parent: Pick<AgentDefinition, "subagents">,
+  log?: Pick<Logger, "warn">,
 ): Promise<RosterEntry[]> {
   const sub = parent.subagents;
   const out: RosterEntry[] = [];
@@ -57,18 +72,44 @@ export async function resolveRoster(
     });
   }
   const templateIds = sub?.templates ?? [];
-  const templates = await loadTemplates(db, orgId, templateIds);
+  const templates = await loadTemplates(db, orgId, templateIds, log);
+  const inlineNames = new Set((sub?.inline ?? []).map((t) => t.name));
+  const kept = new Map<string, { entry: RosterEntry; platformTemplateId?: string }>();
   for (const id of templateIds) {
     const r = templates.get(id);
     if (!r) continue;
+    const type = templateType(r.plugin, r.name);
+    const first = kept.get(type);
+    if (first !== undefined || type === "general-purpose" || inlineNames.has(type)) {
+      if (first?.entry.templateId === r.id) continue;
+      if (
+        first !== undefined &&
+        r.platformTemplateId !== undefined &&
+        first.platformTemplateId === r.platformTemplateId
+      ) {
+        first.entry.aliasTemplateIds = [...(first.entry.aliasTemplateIds ?? []), r.id];
+        continue;
+      }
+      log?.warn("agent template skipped in the roster: its type is taken", {
+        orgId,
+        type,
+        templateId: r.id,
+      });
+      continue;
+    }
     const description = r.template.description;
-    out.push({
-      type: templateType(r.plugin, r.name),
+    const entry: RosterEntry = {
+      type,
       source: "plugin",
       description: cut(typeof description === "string" ? description : ""),
       templateId: r.id,
       ...(r.plugin ? { plugin: r.plugin } : {}),
+    };
+    kept.set(type, {
+      entry,
+      ...(r.platformTemplateId !== undefined && { platformTemplateId: r.platformTemplateId }),
     });
+    out.push(entry);
   }
   for (const t of sub?.inline ?? []) {
     out.push({ type: t.name, source: "inline", description: cut(t.description) });

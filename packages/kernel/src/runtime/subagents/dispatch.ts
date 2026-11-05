@@ -161,7 +161,7 @@ export async function dispatchSubagent(
       ),
     );
   const fork = a.forSkill;
-  const listed = await resolveRoster(d.db, ctx.orgId, ctx.agent);
+  const listed = await resolveRoster(d.db, ctx.orgId, ctx.agent, d.log);
   const roster =
     fork !== undefined && !listed.some((e) => e.type === GENERAL_ENTRY.type)
       ? [GENERAL_ENTRY, ...listed]
@@ -195,7 +195,7 @@ export async function dispatchSubagent(
     // the template went away since the roster was read (spec §13: refuse, never fail the run);
     // the list offered instead is read again, without it
     if (e instanceof SubagentTypeGoneError) {
-      return unknown(await resolveRoster(d.db, ctx.orgId, ctx.agent));
+      return unknown(await resolveRoster(d.db, ctx.orgId, ctx.agent, d.log));
     }
     throw e;
   }
@@ -278,7 +278,8 @@ export async function dispatchSubagent(
  * A follow-up to an existing sub-agent of this conversation (§4.2 `resume`). It keeps the frozen
  * definition's instructions and model (replay), but is checked against what the parent may use
  * now (final review I1): a `general` / inline / plugin child's type must still be in the roster
- * of the dispatching run's version (a plugin template by its template id), else the call is
+ * of the dispatching run's version (a plugin template by its template id: an org template's, a
+ * linked copy's own or a platform template's, or an alias of the entry), else the call is
  * refused as an unknown type; an org agent child passes its gates. Its tools and org skills are
  * intersected with the current version ({@link narrowFollowUp}: the dispatching run's version,
  * or the org agent's current version as the gates read it under the lock), and the result is
@@ -307,10 +308,15 @@ async function resume(
     const gates = await orgAgentGates(d.db, a, template.id ?? "", agentType, true);
     if ("refused" in gates) return gates.refused;
   } else {
-    const roster = await resolveRoster(d.db, ctx.orgId, ctx.agent);
+    const roster = await resolveRoster(d.db, ctx.orgId, ctx.agent, d.log);
     const entry =
       template.source === "plugin"
-        ? roster.find((e) => e.source === "plugin" && e.templateId === template.id)
+        ? roster.find(
+            (e) =>
+              e.source === "plugin" &&
+              template.id !== undefined &&
+              (e.templateId === template.id || e.aliasTemplateIds?.includes(template.id)),
+          )
         : findType(roster, agentType);
     if (entry?.source !== template.source) {
       return refused(

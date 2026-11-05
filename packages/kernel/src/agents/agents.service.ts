@@ -35,6 +35,7 @@ import {
 } from "./definition.js";
 import { type AgentDefinitionInput, deriveInstructions } from "./instruction-files.js";
 import { type ProfileInput, randomPreset } from "./profile.js";
+import { loadTemplates, templateTypeOf } from "./templates.js";
 
 export {
   AGENT_VISIBILITIES,
@@ -98,9 +99,11 @@ export type SubagentsProblem =
 /**
  * Checks `subagents` of an agent definition in the caller's transaction (spec §5.2); throws 400
  * `agent.subagents_invalid` with one detail per problem (`{ reason, path, value? }`):
- * - `not_found`: a template id that is not a live agent template of the org;
+ * - `not_found`: a template id that is not a usable agent template of the org (its own, a linked
+ *   copy, or a platform template on in the org);
  * - `invalid_name`: an inline name or `agents[].as` outside {@link SUBAGENT_NAME_RE}, or
- *   `general-purpose`; `duplicate`: a roster type listed twice (a template id twice included);
+ *   `general-purpose`; `duplicate`: a roster type listed twice (a template id twice included, a
+ *   bare template type equal to an inline name, a template typed `general-purpose`);
  * - `tool_not_selected`: an inline template's `tools`, `disallowedTools` or `toolPolicies` key that
  *   is not a tool key of this agent (`toolKeys`, from `ToolRegistry.checkRefs`);
  * - `skill_not_selected`: an inline skill id that is neither in `skills.orgSkills` nor a live
@@ -152,28 +155,44 @@ export async function assertSubagents(
   const templates = sub.templates ?? [];
   const keptTemplates = new Set(a.kept?.templates ?? []);
   const ids = [...new Set(templates)];
-  // every listed template, deleted ones included (a kept one may have been uninstalled since)
-  const rows = new Map(
-    ids.length === 0
-      ? []
-      : (
-          await t
-            .selectFrom("agent_templates")
-            .select(["id", "name", "plugin_name", "deleted_at"])
-            .where("org_id", "=", a.orgId)
-            .where("id", "in", ids)
-            .execute()
-        ).map((r) => [r.id, r]),
-  );
+  // usable templates (the org's, linked copies, platform templates on in the org) by id
+  const usable = await loadTemplates(t, a.orgId, ids);
+  // kept ids that are no longer usable: their type from the stored row, deleted or off included
+  const gone = ids.filter((id) => !usable.has(id) && keptTemplates.has(id));
+  const goneTypes = new Map<string, string>();
+  if (gone.length > 0) {
+    const [orgRows, platformRows] = await Promise.all([
+      t
+        .selectFrom("agent_templates")
+        .select(["id", "name", "plugin_name"])
+        .where("org_id", "=", a.orgId)
+        .where("id", "in", gone)
+        .execute(),
+      t
+        .selectFrom("platform_agent_templates")
+        .select(["id", "name", "plugin_name"])
+        .where("id", "in", gone)
+        .execute(),
+    ]);
+    for (const r of [...platformRows, ...orgRows]) {
+      goneTypes.set(r.id, templateTypeOf(r.plugin_name, r.name));
+    }
+  }
   templates.forEach((id, i) => {
     const path = `subagents.templates.${i}`;
-    const row = rows.get(id);
-    if (!keptTemplates.has(id) && (row === undefined || row.deleted_at !== null)) {
+    const row = usable.get(id);
+    if (!keptTemplates.has(id) && row === undefined) {
       add("not_found", path, id);
       return;
     }
-    // claimed by its roster type (`<plugin>:<name>`, roster.ts templateType), so nothing shadows it
-    claim(row === undefined ? `template:${id}` : `${row.plugin_name}:${row.name}`, path);
+    // claimed by its roster type (`<plugin>:<name>`, or a bare `<name>` without a plugin;
+    // roster.ts templateType), so nothing shadows it; `general-purpose` is reserved
+    const type =
+      row === undefined
+        ? (goneTypes.get(id) ?? `template:${id}`)
+        : templateTypeOf(row.plugin, row.name);
+    if (type === "general-purpose" && sub.general === false) add("duplicate", path, type);
+    claim(type, path);
   });
 
   const inline = sub.inline ?? [];
