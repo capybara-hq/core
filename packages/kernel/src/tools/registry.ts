@@ -518,7 +518,8 @@ export class ToolRegistry {
         if (b.spec.name === BUILTIN.Bash) {
           for (const name of BASH_COMPANION_TOOLS) {
             const c = this.builtins.find((x) => x.spec.name === name);
-            if (c && ((await c.unavailable?.({ orgId })) ?? null) === null) add(builtinTool(c, c.spec));
+            if (c && ((await c.unavailable?.({ orgId })) ?? null) === null)
+              add(builtinTool(c, c.spec));
           }
         }
       } else if (ref.kind === "plugin") {
