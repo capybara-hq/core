@@ -67,6 +67,11 @@ export interface CatalogItemView {
   builtin: boolean;
   /** Stopped on the whole deployment by the enterprise admin (its scope is kept). */
   disabled: boolean;
+  /**
+   * Orgs outside a `named` item's list see it as requestable (`not_offered`); false hides it from
+   * them (spec §5.1 rule 1). Irrelevant for other scopes.
+   */
+  shownToOthers: boolean;
   /** Orgs it is on in: orgs with a live plugin install of it (every org for a builtin plugin). */
   enabledOrgs: number;
   /**

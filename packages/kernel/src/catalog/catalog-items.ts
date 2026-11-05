@@ -697,6 +697,7 @@ export function itemView(
     scope: PluginScope;
     builtin: boolean;
     disabled: boolean;
+    shown_to_others: boolean;
     latest_version: string;
     marketplace_id?: string | null;
     updated_at: Date;
@@ -725,6 +726,7 @@ export function itemView(
     scopeOrgs: [...facts.scopeOrgs],
     builtin: i.builtin,
     disabled: i.disabled,
+    shownToOthers: i.shown_to_others,
     enabledOrgs: facts.enabledOrgs,
     pending: facts.pending,
     latestVersion: i.latest_version,

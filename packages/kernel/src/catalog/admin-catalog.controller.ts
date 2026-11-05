@@ -78,6 +78,7 @@ const ScopePreviewBody = z
 const ScopeBody = z.object({ scope: Scope, orgs: Orgs.optional(), scopeHash: Hash }).strict();
 
 const DisabledBody = z.object({ disabled: z.boolean(), scopeHash: Hash.optional() }).strict();
+const ShownBody = z.object({ shownToOthers: z.boolean() }).strict();
 
 const ListQuery = z.object({
   includeDeleted: z.enum(["true", "false"]).optional(),
@@ -96,6 +97,7 @@ class CatalogItemsQuery extends createZodDto(ListQuery, "CatalogItemsQuery") {}
 class CatalogNpmImportBody extends createZodDto(NpmBody, "CatalogNpmImportBody") {}
 class CatalogScopePreviewBody extends createZodDto(ScopePreviewBody, "CatalogScopePreviewBody") {}
 class CatalogScopeBody extends createZodDto(ScopeBody, "CatalogScopeBody") {}
+class CatalogShownBody extends createZodDto(ShownBody, "CatalogShownBody") {}
 class CatalogDisabledBody extends createZodDto(DisabledBody, "CatalogDisabledBody") {}
 
 /**
@@ -342,6 +344,21 @@ export class AdminCatalogController {
       },
       actorOpts(actor),
     );
+  }
+
+  /**
+   * Whether orgs outside a `named` item's list see it as requestable (spec §5.1 rule 1). Hiding it
+   * keeps pending requests as they are; new requests from unlisted orgs are then 404. Never makes
+   * anything usable, so no preview and no scope sync. Audits `catalog.shown_changed`.
+   */
+  @Put("items/:id/shown")
+  setShown(
+    @CurrentPrincipal() principal: Principal,
+    @Param("id") id: string,
+    @ZBody(CatalogShownBody) body: z.infer<typeof ShownBody>,
+  ): Promise<CatalogItemView> {
+    const actor = requireUser(principal);
+    return this.scope.setShown(actor.account.id, id, body.shownToOthers, actorOpts(actor));
   }
 
   /** 删除条目（软删除，已安装的组件不受影响）。 */

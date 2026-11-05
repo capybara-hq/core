@@ -14,7 +14,7 @@ import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { createZodDto } from "../infra/validation/create-zod-dto.js";
 import { ZBody, ZQuery } from "../infra/validation/zod-params.js";
-import { OrgAction } from "../orgs/org.guard.js";
+import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
 import { CatalogService, type MarketplaceImportResult } from "./catalog.service.js";
 import {
   type ActorOpts,
@@ -22,6 +22,7 @@ import {
   MarketplacesService,
   type MarketplaceView,
 } from "./marketplaces.service.js";
+import { itemsSeenBy } from "./scope-state.js";
 
 const Url = z.string().min(1).max(2000);
 
@@ -227,7 +228,8 @@ export class MarketplacesController {
 /**
  * Org admins browse the marketplaces read-only (`GET /api/v1/orgs/:orgId/marketplaces/entries`,
  * `catalog.decide`; plugin scope spec §5.1 rule 3) to request an import. The deployment setting
- * `orgMarketplaceBrowse` off -> 404 `not_found`.
+ * `orgMarketplaceBrowse` off -> 404 `not_found`. An entry imported as an item the org can neither
+ * see nor request (a hidden `named` item) reads as not imported (`adopted: null`).
  */
 @Controller("api/v1/orgs/:orgId/marketplaces")
 export class OrgMarketplacesController {
@@ -239,14 +241,30 @@ export class OrgMarketplacesController {
   @Get("entries")
   @OrgAction("catalog.decide")
   async entries(
+    @CurrentOrg() org: OrgContext,
     @ZQuery(MarketplaceEntriesQuery) q: z.infer<typeof EntriesQuery>,
   ): Promise<{ items: MarketplaceEntryView[]; truncated: boolean }> {
     if (!(await readOrgMarketplaceBrowse(this.kdb.db))) {
       throw new ApiError("not_found", "Marketplace browsing is off for organizations");
     }
-    return this.marketplaces.entries({
+    const r = await this.marketplaces.entries({
       ...(q.sourceId !== undefined && { marketplaceId: q.sourceId }),
       ...(q.q !== undefined && { q: q.q }),
     });
+    // A hidden `named` item the org is not listed on stays unknown to it: the entry reads as not
+    // imported
+    const seen = await itemsSeenBy(
+      this.kdb.db,
+      org.orgId,
+      r.items.flatMap((e) => (e.adopted ? [e.adopted.itemId] : [])),
+    );
+    return {
+      ...r,
+      items: r.items.map((e) =>
+        e.adopted === null || seen.has(e.adopted.itemId)
+          ? e
+          : { ...e, adopted: null, newerAvailable: false, contentChanged: false },
+      ),
+    };
   }
 }

@@ -34,8 +34,12 @@ let marketplaceId: string;
 
 beforeAll(async () => {
   const tgz = await skillPlugin("mkt-tools");
+  const tgz2 = await skillPlugin("mkt-tools", { version: "2.0.0" });
   reg = await startFakeNpmRegistry({
-    packages: [{ name: "@acme/plugin-mkt-tools", version: "1.0.0", tgz }],
+    packages: [
+      { name: "@acme/plugin-mkt-tools", version: "1.0.0", tgz },
+      { name: "@acme/plugin-mkt-tools", version: "2.0.0", tgz: tgz2 },
+    ],
   });
   market = await startFakeMarketplace({
     manifest: {
@@ -48,6 +52,14 @@ beforeAll(async () => {
           minKernel: KERNEL_VERSION,
           source: {
             npm: { package: "@acme/plugin-mkt-tools", version: "1.0.0", integrity: sri(tgz) },
+          },
+        },
+        {
+          name: "mkt-tools",
+          summary: { en: "Marketplace tools" },
+          minKernel: KERNEL_VERSION,
+          source: {
+            npm: { package: "@acme/plugin-mkt-tools", version: "2.0.0", integrity: sri(tgz2) },
           },
         },
       ],
@@ -126,12 +138,53 @@ const decideAdmin = (req: Req, id: string, approve: boolean, reason?: string) =>
     payload: { approve, ...(reason !== undefined && { reason }) },
   });
 
-const marketplaceRequest = (req: Req, note?: string) =>
+const marketplaceRequest = (req: Req, note?: string, version = "1.0.0") =>
   req({
     method: "POST",
     url: `/api/v1/orgs/${env.orgId}/marketplace-requests`,
-    payload: { marketplaceId, name: "mkt-tools", version: "1.0.0", ...(note && { note }) },
+    payload: { marketplaceId, name: "mkt-tools", version, ...(note && { note }) },
   });
+
+/** The enterprise admin imports mkt-tools@version from the marketplace; returns the item id. */
+async function adminImport(version: string): Promise<string> {
+  const p = await env.root({
+    method: "POST",
+    url: `/api/v1/admin/marketplaces/${marketplaceId}/entries/mkt-tools/import`,
+    payload: { version },
+  });
+  expect(p.statusCode, p.body).toBe(200);
+  const c = await env.root({
+    method: "POST",
+    url: `/api/v1/admin/catalog/imports/${p.json().stagingId}/confirm`,
+    payload: { reviewHash: p.json().review.reviewHash },
+  });
+  expect(c.statusCode, c.body).toBe(201);
+  return c.json().item.id as string;
+}
+
+type EntryView = {
+  name: string;
+  adopted: { itemId: string } | null;
+  newerAvailable: boolean;
+  contentChanged: boolean;
+};
+async function orgEntries(): Promise<EntryView[]> {
+  const r = await env.boss({
+    method: "GET",
+    url: `/api/v1/orgs/${env.orgId}/marketplaces/entries`,
+  });
+  expect(r.statusCode, r.body).toBe(200);
+  return (r.json() as { items: EntryView[] }).items;
+}
+
+const scopeOrgsOf = async (itemId: string) =>
+  (
+    await env.db
+      .selectFrom("catalog_item_scope_orgs")
+      .select("org_id")
+      .where("item_id", "=", itemId)
+      .execute()
+  ).map((r) => r.org_id);
 
 async function orgItem(req: Req, itemId: string) {
   const r = await req({ method: "GET", url: `/api/v1/orgs/${env.orgId}/catalog` });
@@ -333,9 +386,9 @@ describe("import: org admin -> enterprise admin", { timeout: 90_000 }, () => {
       url: `/api/v1/orgs/${env.orgId}/marketplaces/entries`,
     });
     expect(entries.statusCode, entries.body).toBe(200);
-    expect((entries.json() as { items: { name: string }[] }).items.map((e) => e.name)).toEqual([
-      "mkt-tools",
-    ]);
+    expect([
+      ...new Set((entries.json() as { items: { name: string }[] }).items.map((e) => e.name)),
+    ]).toEqual(["mkt-tools"]);
     expect(
       (await env.mem({ method: "GET", url: `/api/v1/orgs/${env.orgId}/marketplaces/entries` }))
         .statusCode,
@@ -410,6 +463,101 @@ describe("import: org admin -> enterprise admin", { timeout: 90_000 }, () => {
   });
 });
 
+describe("hidden items stay unknown to unlisted orgs", { timeout: 120_000 }, () => {
+  it("entries of a hidden item read as not imported; an import request for it is accepted and approval grants access", async () => {
+    const itemId = await adminImport("1.0.0");
+    await setScope(env, itemId, "named", []);
+    // shown to others: the org sees the adoption and is told to ask for access
+    expect((await orgEntries()).every((e) => e.adopted?.itemId === itemId)).toBe(true);
+    const shown = await marketplaceRequest(env.boss);
+    expect(shown.statusCode, shown.body).toBe(409);
+    expect(shown.json().error.code).toBe("catalog.request_invalid");
+    // hidden: nothing reveals it
+    await setShown(itemId, false);
+    for (const e of await orgEntries()) {
+      expect(e).toMatchObject({ adopted: null, newerAvailable: false, contentChanged: false });
+    }
+    const r = await marketplaceRequest(env.boss);
+    expect(r.statusCode, r.body).toBe(201);
+    const id = r.json().request.id as string;
+    // the entry's version is in the catalog already: the org joins the list, nothing imported
+    const ok = await decideAdmin(env.root, id, true);
+    expect(ok.statusCode, ok.body).toBe(200);
+    expect(ok.json().import).toBeUndefined();
+    expect(ok.json().request).toMatchObject({ status: "approved", item: { id: itemId } });
+    expect(await scopeOrgsOf(itemId)).toEqual([env.orgId]);
+    expect(await env.db.selectFrom("plugin_import_staging").select("id").execute()).toEqual([]);
+  });
+
+  it("a request for a version the hidden item lacks: the confirm adds the org to the existing item", async () => {
+    const itemId = await adminImport("1.0.0");
+    await setScope(env, itemId, "named", []);
+    await setShown(itemId, false);
+    const r = await marketplaceRequest(env.boss, undefined, "2.0.0");
+    expect(r.statusCode, r.body).toBe(201);
+    const id = r.json().request.id as string;
+    const ok = await decideAdmin(env.root, id, true);
+    expect(ok.statusCode, ok.body).toBe(200);
+    const stagingId = ok.json().import.stagingId as string;
+    const c = await env.root({
+      method: "POST",
+      url: `/api/v1/admin/catalog/imports/${stagingId}/confirm`,
+      payload: { reviewHash: ok.json().import.review.reviewHash },
+    });
+    expect(c.statusCode, c.body).toBe(201);
+    expect(c.json().item.id).toBe(itemId);
+    const item = await env.db
+      .selectFrom("catalog_items")
+      .select(["scope", "latest_version"])
+      .where("id", "=", itemId)
+      .executeTakeFirstOrThrow();
+    expect(item).toEqual({ scope: "named", latest_version: "2.0.0" });
+    expect(await scopeOrgsOf(itemId)).toEqual([env.orgId]);
+    const row = await env.db
+      .selectFrom("catalog_requests")
+      .select(["status", "item_id"])
+      .where("id", "=", id)
+      .executeTakeFirstOrThrow();
+    expect(row).toEqual({ status: "approved", item_id: itemId });
+  });
+
+  it("the enterprise admin hides a not_offered item: absent, pending requests kept, new ones 404", async () => {
+    const itemId = await importSkill(env);
+    await setScope(env, itemId, "named", []);
+    const id = (await request(env.boss, itemId, "access")).json().request.id as string;
+    const put = await env.root({
+      method: "PUT",
+      url: `/api/v1/admin/catalog/items/${itemId}/shown`,
+      payload: { shownToOthers: false },
+    });
+    expect(put.statusCode, put.body).toBe(200);
+    expect(put.json()).toMatchObject({ id: itemId, shownToOthers: false });
+    expect(await auditActions(env)).toContain("catalog.shown_changed");
+    expect(
+      (
+        await env.boss({
+          method: "PUT",
+          url: `/api/v1/admin/catalog/items/${itemId}/shown`,
+          payload: { shownToOthers: true },
+        })
+      ).statusCode,
+    ).toBe(403);
+    expect(await orgItem(env.boss, itemId)).toBeUndefined();
+    const row = await env.db
+      .selectFrom("catalog_requests")
+      .select("status")
+      .where("id", "=", id)
+      .executeTakeFirstOrThrow();
+    expect(row.status).toBe("pending");
+    // a fresh org-side request (the pending one is rejected first) is 404
+    expect((await decideAdmin(env.root, id, false)).statusCode).toBe(200);
+    const again = await request(env.boss, itemId, "access");
+    expect(again.statusCode, again.body).toBe(404);
+    const detail = await env.root({ method: "GET", url: `/api/v1/admin/catalog/items/${itemId}` });
+    expect(detail.json().item.shownToOthers).toBe(false);
+  });
+});
+
 describe("concurrency", { timeout: 60_000 }, () => {
   it("two requests at once: one pending, the other 409", async () => {
     const itemId = await importSkill(env);
@@ -420,6 +568,17 @@ describe("concurrency", { timeout: 60_000 }, () => {
     expect([a.statusCode, b.statusCode].sort()).toEqual([201, 409]);
     const rows = await env.db.selectFrom("catalog_requests").select("id").execute();
     expect(rows).toHaveLength(1);
+  });
+
+  it("two approvals of one import request at once: one staging", async () => {
+    const id = (await marketplaceRequest(env.boss)).json().request.id as string;
+    const [a, b] = await Promise.all([
+      decideAdmin(env.root, id, true),
+      decideAdmin(env.root, id, true),
+    ]);
+    expect([a.statusCode, b.statusCode], `${a.body} ${b.body}`).toEqual([200, 200]);
+    expect(a.json().import.stagingId).toBe(b.json().import.stagingId);
+    expect(await env.db.selectFrom("plugin_import_staging").select("id").execute()).toHaveLength(1);
   });
 
   it("two decisions at once: one 200, the other 409", async () => {

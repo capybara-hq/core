@@ -1,5 +1,5 @@
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
-import { wantedOn } from "./scope.js";
+import { requestable, visibleTo, wantedOn } from "./scope.js";
 
 /**
  * Whether the item's own scope wants it on in the org (`wantedOn` over the item's scope, builtin
@@ -47,4 +47,42 @@ export class ScopeNoLongerWanted extends Error {
     super(`Plugin ${itemId} is no longer wanted in org ${orgId} by its scope`);
     this.name = "ScopeNoLongerWanted";
   }
+}
+
+/**
+ * The items among `itemIds` (live ones) the org can see in its catalog: offered to it (`all`,
+ * `optional`, builtin, or `named` with the org listed) or requestable (`named`, shown to other
+ * orgs). A hidden `named` item outside its list is left out, so nothing reveals it to the org.
+ */
+export async function itemsSeenBy(
+  db: KernelSchemaDb,
+  orgId: string,
+  itemIds: readonly string[],
+): Promise<Set<string>> {
+  if (itemIds.length === 0) return new Set();
+  const items = await db
+    .selectFrom("catalog_items")
+    .select(["id", "scope", "builtin", "shown_to_others"])
+    .where("id", "in", [...itemIds])
+    .where("deleted_at", "is", null)
+    .execute();
+  const listed = new Set(
+    (
+      await db
+        .selectFrom("catalog_item_scope_orgs")
+        .select("item_id")
+        .where("org_id", "=", orgId)
+        .where("item_id", "in", [...itemIds])
+        .execute()
+    ).map((r) => r.item_id),
+  );
+  return new Set(
+    items
+      .filter(
+        (i) =>
+          visibleTo({ scope: i.builtin ? "all" : i.scope }, listed.has(i.id)) ||
+          requestable(i, listed.has(i.id)),
+      )
+      .map((i) => i.id),
+  );
 }

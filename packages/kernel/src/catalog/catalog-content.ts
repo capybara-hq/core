@@ -45,6 +45,7 @@ export interface OrgCatalogItem
     | "scopeOrgs"
     | "enabledOrgs"
     | "pending"
+    | "shownToOthers"
   > {
   scope: PluginScope;
   /** Shipped with the deployment (a required bootstrap plugin): on in every org, never switchable. */

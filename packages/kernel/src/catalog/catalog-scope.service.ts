@@ -167,6 +167,50 @@ export class CatalogScopeService {
     return (await this.catalog.get(itemId)).item;
   }
 
+  /** Shows or hides the item to orgs outside its `named` list; returns the item. */
+  async setShown(
+    actor: string,
+    itemId: string,
+    shown: boolean,
+    opts: ActorOpts = {},
+  ): Promise<CatalogItemView> {
+    if (!UUID_RE.test(itemId)) throw notFound();
+    await this.writeShown(actor, itemId, shown, opts);
+    return (await this.catalog.get(itemId)).item;
+  }
+
+  @Transactional()
+  private async writeShown(
+    actor: string,
+    itemId: string,
+    shown: boolean,
+    opts: ActorOpts,
+  ): Promise<void> {
+    await this.adminLock.lockAndAuthorize(actor);
+    // A builtin item is `all`: the flag is irrelevant there but harmless, so it is not refused
+    const item = await this.db
+      .selectFrom("catalog_items")
+      .select(["name", "shown_to_others"])
+      .where("id", "=", itemId)
+      .where("deleted_at", "is", null)
+      .forUpdate()
+      .executeTakeFirst();
+    if (!item) throw notFound();
+    if (item.shown_to_others === shown) return;
+    await this.db
+      .updateTable("catalog_items")
+      .set({ shown_to_others: shown, updated_at: sql<Date>`now()` as unknown as Date })
+      .where("id", "=", itemId)
+      .execute();
+    await audit(this.db, {
+      actorAccountId: actor,
+      ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
+      action: "catalog.shown_changed",
+      target: itemId,
+      detail: { name: item.name, from: item.shown_to_others, to: shown },
+    });
+  }
+
   @Transactional()
   private async writeScope(
     actor: string,

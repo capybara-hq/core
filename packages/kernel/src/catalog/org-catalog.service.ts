@@ -193,6 +193,7 @@ export class OrgCatalogService {
         scopeOrgs: _scopeOrgs,
         enabledOrgs: _enabledOrgs,
         pending: _pending,
+        shownToOthers: _shown,
         ...view
       } = itemView(i, vs);
       const latest = vs.find((v) => v.version === i.latest_version);

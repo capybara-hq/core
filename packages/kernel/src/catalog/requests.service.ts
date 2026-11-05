@@ -11,13 +11,17 @@ import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
+import { LockService } from "../infra/lock/lock.service.js";
+import { WithLock } from "../infra/lock/with-lock.decorator.js";
 import { OrgLock } from "../orgs/org-lock.js";
 import { roleAtLeast } from "../orgs/roles.js";
 import { CatalogService, type MarketplaceImportResult } from "./catalog.service.js";
 import { CatalogScopeService } from "./catalog-scope.service.js";
 import { loadMarketplaceEntry } from "./marketplaces.service.js";
 import { OrgCatalogService } from "./org-catalog.service.js";
+import { PluginImport } from "./plugin-import.js";
 import type { RequestActorOpts } from "./request-rules.js";
+import { itemsSeenBy } from "./scope-state.js";
 
 export type CatalogRequestKind = "access" | "import" | "enable";
 export type CatalogRequestStatus = "pending" | "approved" | "rejected" | "cancelled";
@@ -108,7 +112,10 @@ export class CatalogRequestsService {
     @Inject(CatalogScopeService) private readonly scope: CatalogScopeService,
     @Inject(CatalogService) private readonly catalog: CatalogService,
     @Inject(KernelConfigService) private readonly config: KernelConfigService,
+    @Inject(PluginImport) private readonly pluginImport: PluginImport,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
+    /** Serializes the approvals of one `import` request (`@WithLock`). */
+    @Inject(LockService) readonly lockService: LockService,
   ) {}
 
   /** The kernel-schema handle of the current context (the transaction, else the pool). */
@@ -219,7 +226,8 @@ export class CatalogRequestsService {
    * marketplace-requests`, `catalog.decide`). The deployment setting `orgMarketplaceBrowse` off ->
    * `catalog.marketplace_browse_disabled`; the marketplace or the entry / version missing ->
    * `marketplace.not_found` / `marketplace.entry_not_found`; a live item of that name ->
-   * `catalog.request_invalid` (ask for access instead); a pending request for the entry ->
+   * `catalog.request_invalid` (ask for access instead) when the org can see or request that item
+   * (a hidden one is not revealed: the request is accepted); a pending request for the entry ->
    * `catalog.request_pending`. Audits `catalog.requested`.
    */
   async requestImport(
@@ -260,7 +268,9 @@ export class CatalogRequestsService {
       .where("name", "=", input.name)
       .where("deleted_at", "is", null)
       .executeTakeFirst();
-    if (live) {
+    // Only an item the org can see or request is named back to it; a hidden `named` item stays
+    // unknown and the request is accepted (approving it adds the org to that item's list)
+    if (live && (await itemsSeenBy(t, orgId, [live.id])).has(live.id)) {
       throw new ApiError(
         "catalog.request_invalid",
         `Plugin ${input.name} is already in the catalog; request access to it instead`,
@@ -370,37 +380,84 @@ export class CatalogRequestsService {
   ): Promise<{ request: CatalogRequestView; import?: MarketplaceImportResult }> {
     if (!UUID_RE.test(requestId)) throw requestNotFound();
     const row = await this.pendingDeploymentRequest(actor, requestId);
-    if (decision.approve && row.kind === "import") {
-      if (row.marketplace_id === null || row.entry_name === null) {
-        throw new ApiError(
-          "catalog.request_invalid",
-          "The marketplace of this request was deleted; reject it",
-        );
-      }
-      const prepared = await this.catalog.importFromMarketplace(
-        actor,
-        {
-          marketplaceId: row.marketplace_id,
-          name: row.entry_name,
-          ...(row.entry_version !== null && { version: row.entry_version }),
-        },
-        opts,
-      );
-      await this.linkStaging(actor, requestId, prepared.stagingId, opts);
-      return { request: await this.view(requestId), import: prepared };
-    }
+    if (decision.approve && row.kind === "import")
+      return this.approveImport(actor, requestId, opts);
     await this.writeDecision(requestId, actor, decision, opts, { deployment: true });
     return { request: await this.view(requestId) };
   }
 
+  /**
+   * Approves an `import` request, one approval of a request at a time (across replicas): an item
+   * of the entry's name that holds the requested version already (one hidden from the org, which
+   * is why the request was accepted) -> the org joins its `named` list at once, nothing imported;
+   * a staging linked by an earlier approval and not expired -> that staging again; otherwise the
+   * import is prepared and linked. The confirm of a staging adds the org to an item that exists by
+   * then (`PluginImport.commit`).
+   */
+  @WithLock({ key: "catalog-request-#{1}", ttl: 60_000, waitTimeout: 180_000 })
+  private async approveImport(
+    actor: string,
+    requestId: string,
+    opts: RequestActorOpts,
+  ): Promise<{ request: CatalogRequestView; import?: MarketplaceImportResult }> {
+    const row = await this.pendingDeploymentRequest(actor, requestId);
+    if (row.marketplace_id === null || row.entry_name === null) {
+      throw new ApiError(
+        "catalog.request_invalid",
+        "The marketplace of this request was deleted; reject it",
+      );
+    }
+    const existing = await this.db
+      .selectFrom("catalog_items as i")
+      .innerJoin("catalog_item_versions as v", "v.item_id", "i.id")
+      .select("i.id")
+      .where("i.name", "=", row.entry_name)
+      .where("i.deleted_at", "is", null)
+      .where("v.version", "=", row.entry_version ?? "")
+      .executeTakeFirst();
+    if (existing) {
+      await this.writeDecision(requestId, actor, { approve: true }, opts, {
+        deployment: true,
+        grantItem: existing.id,
+      });
+      return { request: await this.view(requestId) };
+    }
+    if (row.staging_id !== null) {
+      const staged = await this.pluginImport.staged(row.staging_id).catch(() => undefined);
+      if (staged) {
+        return {
+          request: await this.view(requestId),
+          import: {
+            stagingId: staged.stagingId,
+            review: staged.review,
+            permissionsMismatch: staged.permissionsMismatch ?? null,
+          },
+        };
+      }
+    }
+    const prepared = await this.catalog.importFromMarketplace(
+      actor,
+      {
+        marketplaceId: row.marketplace_id,
+        name: row.entry_name,
+        ...(row.entry_version !== null && { version: row.entry_version }),
+      },
+      opts,
+    );
+    await this.linkStaging(actor, requestId, prepared.stagingId, opts);
+    return { request: await this.view(requestId), import: prepared };
+  }
+
+  /** A pending `access` / `import` request (the row locked; the enterprise admin re-checked). */
   @Transactional()
   private async pendingDeploymentRequest(actor: string, requestId: string) {
     await this.adminLock.lockAndAuthorize(actor);
     const row = await this.db
       .selectFrom("catalog_requests")
-      .select(["kind", "status", "marketplace_id", "entry_name", "entry_version"])
+      .select(["kind", "status", "marketplace_id", "entry_name", "entry_version", "staging_id"])
       .where("id", "=", requestId)
       .where("kind", "in", [...DEPLOYMENT_KINDS])
+      .forUpdate()
       .executeTakeFirst();
     if (!row) throw requestNotFound();
     if (row.status !== "pending") throw alreadyDecided();
@@ -449,7 +506,7 @@ export class CatalogRequestsService {
     actor: string,
     decision: CatalogDecision,
     opts: RequestActorOpts,
-    side: { orgId: string } | { deployment: true },
+    side: { orgId: string } | { deployment: true; grantItem?: string },
   ): Promise<void> {
     const t = this.db;
     if ("orgId" in side) await this.orgLock.lockAndAuthorize(side.orgId, actor, "catalog.decide");
@@ -484,11 +541,17 @@ export class CatalogRequestsService {
       if (!org || org.deleted_at !== null) throw requestNotFound();
       await this.scope.addOrg(actor, row.item_id, row.org_id, { ...opts, requestId });
     }
+    // An `import` request whose entry is in the catalog already: the org joins that item's list
+    const grantItem = "grantItem" in side ? side.grantItem : undefined;
+    if (decision.approve && row.kind === "import" && grantItem !== undefined) {
+      await this.scope.addOrg(actor, grantItem, row.org_id, { ...opts, requestId });
+    }
     await t
       .updateTable("catalog_requests")
       .set({
         status: decision.approve ? "approved" : "rejected",
         reason: decision.approve ? null : (decision.reason ?? null),
+        ...(grantItem !== undefined && { item_id: grantItem }),
         decided_by: actor,
         decided_at: sql<Date>`now()`,
       })
