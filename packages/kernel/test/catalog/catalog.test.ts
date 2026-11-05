@@ -369,6 +369,49 @@ describe("importing an item's extension", () => {
     ).toMatchObject({ pending: true });
   });
 
+  it("confirm installs and enables a pending, never-deployed item and writes a web snapshot", async () => {
+    const list = await admin({ method: "GET", url: "/api/v1/admin/catalog/items?pending=true" });
+    const item = list.json().items.find((i: { name: string }) => i.name === "fake-tools-ui");
+    expect(item).toMatchObject({ pending: true });
+    expect(item.permissionsHash).toMatch(/^[0-9a-f]{16}$/);
+    const stale = await admin({
+      method: "POST",
+      url: `/api/v1/admin/catalog/items/${item.id}/confirm`,
+      payload: { permissionsHash: "0000000000000000" },
+    });
+    expect(stale.json().error.code).toBe("extension.approval_stale");
+    expect(
+      await db
+        .selectFrom("extension_installs")
+        .select("name")
+        .where("name", "=", "fake-tools-ui")
+        .execute(),
+    ).toEqual([]);
+    const ok = await admin({
+      method: "POST",
+      url: `/api/v1/admin/catalog/items/${item.id}/confirm`,
+      payload: { permissionsHash: item.permissionsHash },
+    });
+    expect(ok.statusCode, ok.body).toBe(200);
+    expect(ok.json()).toMatchObject({ pending: false, permissionsHash: null });
+    expect(
+      await db
+        .selectFrom("extension_installs")
+        .select(["desired_state", "catalog_item_id"])
+        .where("name", "=", "fake-tools-ui")
+        .executeTakeFirstOrThrow(),
+    ).toEqual({ desired_state: "enabled", catalog_item_id: item.id });
+    expect(
+      await db
+        .selectFrom("extension_permission_snapshots")
+        .select("source")
+        .where("plugin", "=", "fake-tools-ui")
+        .executeTakeFirstOrThrow(),
+    ).toEqual({ source: "web" });
+    const none = await admin({ method: "GET", url: "/api/v1/admin/catalog/items?pending=true" });
+    expect(none.json().items).toEqual([]);
+  });
+
   it("importing the same fake-tools-ui version from npm is 409 catalog.version_exists", async () => {
     const res = await prepareNpm(admin, { package: "@capybara-hq/test-plugin-fake-tools-ui" });
     expect(res.statusCode).toBe(409);

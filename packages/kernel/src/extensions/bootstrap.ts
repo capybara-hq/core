@@ -492,6 +492,7 @@ export class BootstrapService {
     if (!pkg.manifest.extension) {
       if (!isNew) return { name: e.name, action: "kept", version: e.version };
       const imported = await this.importOnly(e, bytes, ref, imports);
+      await this.markBuiltin(e.name, e.required);
       return { name: e.name, action: imported ? "imported" : "kept", version: e.version };
     }
     if (this.registry.declared().has(e.name)) {
@@ -546,7 +547,43 @@ export class BootstrapService {
     if (e.required && row?.desired_state === "disabled") {
       await this.ops.enable(e.name, null);
     }
+    await this.markBuiltin(e.name, e.required);
     return result;
+  }
+
+  /**
+   * The catalog item of a bootstrap entry follows `required`: a required entry is builtin, offered
+   * to every org (scope `all`) and not disabled (migration 0074 could leave a required plugin
+   * disabled); an entry that stops being required is no longer builtin and keeps scope `all` (the
+   * admin may change it from then on).
+   */
+  private async markBuiltin(name: string, required: boolean): Promise<void> {
+    const touch = { updated_at: sql<Date>`now()` as unknown as Date };
+    if (required) {
+      await this.db
+        .updateTable("catalog_items")
+        .set({
+          builtin: true,
+          scope: "all",
+          disabled: false,
+          scope_version: sql<number>`scope_version + 1`,
+          ...touch,
+        })
+        .where("name", "=", name)
+        .where("deleted_at", "is", null)
+        .where((eb) =>
+          eb.or([eb("builtin", "=", false), eb("scope", "<>", "all"), eb("disabled", "=", true)]),
+        )
+        .execute();
+      return;
+    }
+    await this.db
+      .updateTable("catalog_items")
+      .set({ builtin: false, ...touch })
+      .where("name", "=", name)
+      .where("deleted_at", "is", null)
+      .where("builtin", "=", true)
+      .execute();
   }
 
   /** A declarative plugin: catalog only. Returns false when that version is already imported. */
@@ -679,6 +716,7 @@ export class BootstrapService {
       .where("required", "=", true);
     if (names.length > 0) q = q.where("name", "not in", names);
     const rows = await q.returning(["name", "version"]).execute();
+    for (const r of rows) await this.markBuiltin(r.name, false);
     return rows.map((r) => ({ name: r.name, action: "required_cleared", version: r.version }));
   }
 }

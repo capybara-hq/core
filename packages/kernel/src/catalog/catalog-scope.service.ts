@@ -3,6 +3,8 @@ import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
+import { ExtensionAdminOps } from "../extensions/admin-ops.js";
+import { ExtensionAdmin } from "../extensions/admin-view.js";
 import { audit } from "../identity/audit.js";
 import { EnterpriseAdminLock } from "../identity/enterprise-admin.js";
 import { afterCommit } from "../infra/database/after-commit.js";
@@ -101,6 +103,8 @@ export class CatalogScopeService {
     @Inject(CatalogService) private readonly catalog: CatalogService,
     @Inject(PluginImport) private readonly pluginImport: PluginImport,
     @Inject(PluginInstaller) private readonly installer: PluginInstaller,
+    @Inject(ExtensionAdmin) private readonly extensions: ExtensionAdmin,
+    @Inject(ExtensionAdminOps) private readonly ops: ExtensionAdminOps,
     @Inject(PluginScopeSync) private readonly sync: PluginScopeSync,
     @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
@@ -124,6 +128,76 @@ export class CatalogScopeService {
     const r = await this.pluginImport.confirm(actor, stagingId, input, opts);
     if (r.item.scope !== "optional") await this.enqueue(r.item.id);
     return r;
+  }
+
+  /**
+   * Confirms the permissions of an item's extension (the admin's 待确认): approves the current
+   * permission set with snapshot source `web` (`permissionsHash` is the item view's, the extension
+   * review digest; a changed set -> 409 `extension.approval_stale`); an extension that was never
+   * deployed (no install record) is installed and enabled first (the package is in the package
+   * store from the import). Nothing waiting (a covered snapshot a person approved already, an item
+   * without an extension) -> 409 `extension.not_pending`. Enqueues the item's scope sync after.
+   */
+  async confirmPermissions(
+    actor: string,
+    itemId: string,
+    permissionsHash: string,
+    opts: ActorOpts = {},
+  ): Promise<CatalogItemView> {
+    if (!UUID_RE.test(itemId)) throw notFound();
+    const item = await this.db
+      .selectFrom("catalog_items")
+      .select(["id", "name", "latest_version"])
+      .where("id", "=", itemId)
+      .where("deleted_at", "is", null)
+      .executeTakeFirst();
+    if (!item) throw notFound();
+    const version = await this.db
+      .selectFrom("catalog_item_versions")
+      .select("extension_sha256")
+      .where("item_id", "=", itemId)
+      .where("version", "=", item.latest_version)
+      .executeTakeFirst();
+    const sha256 = version?.extension_sha256 ?? null;
+    if (sha256 === null) {
+      throw new ApiError(
+        "extension.not_pending",
+        `Plugin ${item.name} has no extension to confirm`,
+      );
+    }
+    const stale = () =>
+      new ApiError(
+        "extension.approval_stale",
+        `The permissions of ${item.name} changed since they were reviewed; review them again`,
+      );
+    const installed = await this.extensions
+      .get(item.name, { allowUnreadable: true })
+      .then(() => true)
+      .catch((e: unknown) => {
+        if (e instanceof ApiError && e.code === "extension.not_found") return false;
+        throw e;
+      });
+    if (!installed) {
+      if ((await this.extensions.packageReviewHash(sha256)) !== permissionsHash) throw stale();
+      await this.ops.install(item.name, sha256, actor, opts.actorTokenId, {
+        catalogItemId: itemId,
+      });
+    }
+    const current = await this.extensions.get(item.name);
+    try {
+      await this.extensions.approve(
+        actor,
+        item.name,
+        { sha256: current.sha256, reviewHash: permissionsHash },
+        { ...opts, confirmBootstrap: true },
+      );
+    } catch (e) {
+      // A fresh install may already be covered by a snapshot an earlier install left
+      if (installed || !(e instanceof ApiError && e.code === "extension.not_pending")) throw e;
+    }
+    if (!installed) await this.ops.enable(item.name, actor, opts.actorTokenId);
+    await this.enqueue(itemId);
+    return (await this.catalog.get(itemId)).item;
   }
 
   /** The preview of a scope change or a disable (nothing written). */

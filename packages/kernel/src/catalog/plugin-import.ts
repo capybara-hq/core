@@ -16,6 +16,7 @@ import semver from "semver";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { ExtensionAdminOps } from "../extensions/admin-ops.js";
+import { ExtensionAdmin } from "../extensions/admin-view.js";
 import { writeSnapshot } from "../extensions/approvals.js";
 import { ExtensionBlobs } from "../extensions/blobs.js";
 import { ExtensionInstalls } from "../extensions/installs.js";
@@ -68,6 +69,7 @@ import {
   assertOrgsExist,
   assertPluginNameOwner,
   catalogObjectPrefix,
+  itemConfirmations,
   itemScopeFacts,
   itemView,
   permissionsMismatch,
@@ -466,6 +468,7 @@ export class PluginImport {
     @Inject(StorageService) storage: StorageService,
     @Inject(ExtensionInstalls) private readonly installs: ExtensionInstalls,
     @Inject(ExtensionAdminOps) private readonly ops: ExtensionAdminOps,
+    @Inject(ExtensionAdmin) private readonly admin: ExtensionAdmin,
     /** Reads a package from the package store (confirm recomputes the permission set). */
     @Inject(ExtensionBlobs) private readonly blobs: ExtensionBlobs,
     /** Config-declared names, loaded connectors and extension versions (the extension registry). */
@@ -1630,7 +1633,11 @@ export class PluginImport {
       .select(["version", "source", "imported_at", "extension_sha256"])
       .where("item_id", "=", itemId)
       .execute();
-    const facts = await itemScopeFacts(this.db, [item], new Map([[item.id, versions]]));
+    const facts = await itemScopeFacts(
+      this.db,
+      [item],
+      await itemConfirmations(this.admin, [item], new Map([[item.id, versions]])),
+    );
     return itemView(item, versions, 0, undefined, facts.get(item.id));
   }
 }

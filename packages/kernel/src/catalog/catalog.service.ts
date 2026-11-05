@@ -8,6 +8,7 @@ import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
 import type { KernelSchemaDb, SourceFormat } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
+import { ExtensionAdmin } from "../extensions/admin-view.js";
 import { ExtensionInstalls } from "../extensions/installs.js";
 import { audit } from "../identity/audit.js";
 import { EnterpriseAdminLock } from "../identity/enterprise-admin.js";
@@ -16,7 +17,13 @@ import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { sameRepository } from "../packages/provenance.js";
-import { countInstalls, itemScopeFacts, itemView, marketplaceLatest } from "./catalog-items.js";
+import {
+  countInstalls,
+  itemConfirmations,
+  itemScopeFacts,
+  itemView,
+  marketplaceLatest,
+} from "./catalog-items.js";
 import type { TranslationReport } from "./claude/report.js";
 import {
   expandGitUrl,
@@ -75,10 +82,13 @@ export interface CatalogItemView {
   /** Orgs it is on in: orgs with a live plugin install of it (every org for a builtin plugin). */
   enabledOrgs: number;
   /**
-   * Its extension is not installed on the deployment, or the extension's permission snapshot is
-   * missing or of another version than the install (listed for confirmation, never installed).
+   * Its extension waits for a person's confirmation: not installed on the deployment, its
+   * permission set not covered by the approved snapshot, or (builtin) only approved by the
+   * bootstrap step. Confirm with `POST items/:id/confirm`.
    */
   pending: boolean;
+  /** The digest to send with the confirmation; null unless `pending` and the package is readable. */
+  permissionsHash: string | null;
   latestVersion: string;
   /** Every version, newest first (semver; equal but for build metadata: the later import first). */
   versions: string[];
@@ -268,6 +278,8 @@ export class CatalogService {
     @Inject(EnterpriseAdminLock) private readonly adminLock: EnterpriseAdminLock,
     @Inject(KernelConfigService) private readonly config: KernelConfigService,
     @Inject(ExtensionInstalls) private readonly installs: ExtensionInstalls,
+    /** The deployment's extensions with their approvals (what is pending confirmation). */
+    @Inject(ExtensionAdmin) private readonly admin: ExtensionAdmin,
     /** Plugin import (a marketplace entry goes through its prepare). */
     @Inject(PluginImport) private readonly pluginImport: PluginImport,
     /** The token of an enterprise marketplace (sent only to its URL's origin). */
@@ -558,15 +570,34 @@ export class CatalogService {
    * defaults to 0; use the returned array directly when only the first page is needed.
    */
   async list(
-    q: { includeDeleted?: boolean; limit?: number; offset?: number } = {},
+    q: { includeDeleted?: boolean; limit?: number; offset?: number; pending?: boolean } = {},
   ): Promise<CatalogItemView[]> {
     return (await this.page(q)).items;
   }
 
   /** Same as {@link list}, plus the offset of the next page (null when there is none). */
   async page(
-    q: { includeDeleted?: boolean; limit?: number; offset?: number } = {},
+    q: { includeDeleted?: boolean; limit?: number; offset?: number; pending?: boolean } = {},
   ): Promise<{ items: CatalogItemView[]; nextOffset: number | null }> {
+    // `pending`: every item waiting for a confirmation (one list, not paged: the pending set is small)
+    if (q.pending === true) {
+      const all = await this.page({
+        ...(q.includeDeleted && { includeDeleted: true }),
+        limit: CATALOG_LIST_MAX_LIMIT,
+      });
+      const items = [...all.items];
+      let next = all.nextOffset;
+      while (next !== null) {
+        const more = await this.page({
+          ...(q.includeDeleted && { includeDeleted: true }),
+          limit: CATALOG_LIST_MAX_LIMIT,
+          offset: next,
+        });
+        items.push(...more.items);
+        next = more.nextOffset;
+      }
+      return { items: items.filter((i) => i.pending), nextOffset: null };
+    }
     const limit = Math.min(
       Math.max(1, q.limit ?? CATALOG_LIST_DEFAULT_LIMIT),
       CATALOG_LIST_MAX_LIMIT,
@@ -610,7 +641,11 @@ export class CatalogService {
     }
     const installs = await countInstalls(this.db, items, byItem);
     const latest = await marketplaceLatest(this.db, this.config.get(), items, byItem);
-    const facts = await itemScopeFacts(this.db, items, byItem);
+    const facts = await itemScopeFacts(
+      this.db,
+      items,
+      await itemConfirmations(this.admin, items, byItem),
+    );
     return {
       items: items.map((i) =>
         itemView(
@@ -648,7 +683,11 @@ export class CatalogService {
     const byItem = new Map([[item.id, rows]]);
     const installs = await countInstalls(this.db, [item], byItem);
     const latest = await marketplaceLatest(this.db, this.config.get(), [item], byItem);
-    const facts = await itemScopeFacts(this.db, [item], byItem);
+    const facts = await itemScopeFacts(
+      this.db,
+      [item],
+      await itemConfirmations(this.admin, [item], byItem),
+    );
     return {
       item: {
         ...itemView(

@@ -12,7 +12,9 @@ import { sql } from "kysely";
 import type { KernelConfig } from "../config/schema.js";
 import type { KernelSchemaDb, SourceFormat } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
+import type { ExtensionAdmin } from "../extensions/admin-view.js";
 import { enabledExtensionsByOrg } from "../extensions/enabled.js";
+import { blockingKeys } from "../extensions/permission-set.js";
 import { audit } from "../identity/audit.js";
 import type { StorageService } from "../storage/storage.service.js";
 import { endpointCredentialIssues } from "../tools/endpoint.js";
@@ -606,24 +608,82 @@ export interface ItemScopeFacts {
   scopeOrgs: string[];
   enabledOrgs: number;
   pending: boolean;
+  /** The digest `confirm` takes (null unless pending and readable). */
+  permissionsHash: string | null;
 }
 
-const NO_FACTS: ItemScopeFacts = { scopeOrgs: [], enabledOrgs: 0, pending: false };
+const NO_FACTS: ItemScopeFacts = {
+  scopeOrgs: [],
+  enabledOrgs: 0,
+  pending: false,
+  permissionsHash: null,
+};
+
+/** What an item with an extension needs confirming (see {@link itemConfirmations}). */
+export type ItemConfirmations = ReadonlyMap<
+  string,
+  { pending: boolean; permissionsHash: string | null }
+>;
+
+/**
+ * Per item id: is its extension waiting for a person's confirmation (pending) and the permission
+ * digest to confirm. Pending when the extension is not installed on the deployment, when the
+ * installed version's permission set is not covered by the stored snapshot, or (a builtin item)
+ * when the snapshot is the bootstrap step's, never confirmed by a person. Items whose latest
+ * version has no extension are never pending.
+ */
+export async function itemConfirmations(
+  admin: ExtensionAdmin,
+  items: { id: string; name: string; builtin: boolean; latest_version: string }[],
+  versions: ReadonlyMap<string, { version: string; extension_sha256: string | null }[]>,
+): Promise<ItemConfirmations> {
+  const out = new Map<string, { pending: boolean; permissionsHash: string | null }>();
+  const withExtension = items.flatMap((i) => {
+    const sha =
+      (versions.get(i.id) ?? []).find((v) => v.version === i.latest_version)?.extension_sha256 ??
+      null;
+    return sha === null ? [] : [{ item: i, sha }];
+  });
+  if (withExtension.length === 0) return out;
+  const installed = new Map((await admin.list()).map((v) => [v.name, v]));
+  for (const { item, sha } of withExtension) {
+    const v = installed.get(item.name);
+    if (!v) {
+      out.set(item.id, { pending: true, permissionsHash: await admin.packageReviewHash(sha) });
+      continue;
+    }
+    const pending =
+      v.snapshot === null ||
+      blockingKeys(v.added).length > 0 ||
+      (item.builtin && v.snapshot.source === "bootstrap");
+    out.set(item.id, {
+      pending,
+      permissionsHash: pending && v.error === undefined ? v.reviewHash : null,
+    });
+  }
+  return out;
+}
 const LIVE_INSTALL = ["installing", "installed", "upgrading"] as const;
 
 /**
  * Per item: the orgs of its `named` list, the orgs it is on in (a live plugin install; every org for
- * a builtin item) and whether it is pending (its latest version has an extension that is not
- * installed on the deployment, or whose permission snapshot is missing or of another version than
- * the install).
+ * a builtin item) and whether it is pending (`confirmations`, see {@link itemConfirmations}).
  */
 export async function itemScopeFacts(
   db: KernelSchemaDb,
   items: { id: string; name: string; builtin: boolean; latest_version: string }[],
-  versions: ReadonlyMap<string, { version: string; extension_sha256: string | null }[]>,
+  confirmations: ItemConfirmations,
 ): Promise<Map<string, ItemScopeFacts>> {
   const out = new Map<string, ItemScopeFacts>(
-    items.map((i) => [i.id, { scopeOrgs: [], enabledOrgs: 0, pending: false }]),
+    items.map((i) => [
+      i.id,
+      {
+        scopeOrgs: [],
+        enabledOrgs: 0,
+        pending: confirmations.get(i.id)?.pending ?? false,
+        permissionsHash: confirmations.get(i.id)?.permissionsHash ?? null,
+      },
+    ]),
   );
   if (items.length === 0) return out;
   const ids = items.map((i) => i.id);
@@ -657,30 +717,6 @@ export async function itemScopeFacts(
     for (const i of items) {
       const f = out.get(i.id);
       if (i.builtin && f) f.enabledOrgs = Number(orgs.n);
-    }
-  }
-  const withExtension = items.filter(
-    (i) =>
-      (versions.get(i.id) ?? []).find((v) => v.version === i.latest_version)?.extension_sha256 !=
-      null,
-  );
-  if (withExtension.length > 0) {
-    const names = withExtension.map((i) => i.name);
-    const installs = await db
-      .selectFrom("extension_installs")
-      .select(["name", "version"])
-      .where("name", "in", names)
-      .execute();
-    const snaps = await db
-      .selectFrom("extension_permission_snapshots")
-      .select(["plugin", "version"])
-      .where("plugin", "in", names)
-      .execute();
-    for (const i of withExtension) {
-      const inst = installs.find((r) => r.name === i.name);
-      const snap = snaps.find((r) => r.plugin === i.name);
-      const f = out.get(i.id);
-      if (f) f.pending = !inst || !snap || snap.version !== inst.version;
     }
   }
   return out;
@@ -729,6 +765,7 @@ export function itemView(
     shownToOthers: i.shown_to_others,
     enabledOrgs: facts.enabledOrgs,
     pending: facts.pending,
+    permissionsHash: facts.permissionsHash,
     latestVersion: i.latest_version,
     versions: sorted.map((v) => v.version),
     installs,

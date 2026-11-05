@@ -84,7 +84,11 @@ const ListQuery = z.object({
   includeDeleted: z.enum(["true", "false"]).optional(),
   limit: z.coerce.number().int().min(1).max(CATALOG_LIST_MAX_LIMIT).optional(),
   offset: z.coerce.number().int().min(0).max(1_000_000).optional(),
+  /** `true`: only the items waiting for a permission confirmation (not paged). */
+  pending: z.enum(["true", "false"]).optional(),
 });
+
+const ConfirmPermissionsBody = z.object({ permissionsHash: Hash }).strict();
 
 const actorOpts = (actor: ReturnType<typeof requireUser>): ActorOpts => {
   const tokenId = patTokenId(actor);
@@ -97,6 +101,10 @@ class CatalogItemsQuery extends createZodDto(ListQuery, "CatalogItemsQuery") {}
 class CatalogNpmImportBody extends createZodDto(NpmBody, "CatalogNpmImportBody") {}
 class CatalogScopePreviewBody extends createZodDto(ScopePreviewBody, "CatalogScopePreviewBody") {}
 class CatalogScopeBody extends createZodDto(ScopeBody, "CatalogScopeBody") {}
+class CatalogConfirmPermissionsBody extends createZodDto(
+  ConfirmPermissionsBody,
+  "CatalogConfirmPermissionsBody",
+) {}
 class CatalogShownBody extends createZodDto(ShownBody, "CatalogShownBody") {}
 class CatalogDisabledBody extends createZodDto(DisabledBody, "CatalogDisabledBody") {}
 
@@ -254,6 +262,7 @@ export class AdminCatalogController {
   ): Promise<{ items: CatalogItemView[]; nextOffset: number | null }> {
     return this.catalog.page({
       includeDeleted: q.includeDeleted === "true",
+      ...(q.pending === "true" && { pending: true }),
       ...(q.limit !== undefined && { limit: q.limit }),
       ...(q.offset !== undefined && { offset: q.offset }),
     });
@@ -342,6 +351,28 @@ export class AdminCatalogController {
         disabled: body.disabled,
         ...(body.scopeHash !== undefined && { scopeHash: body.scopeHash }),
       },
+      actorOpts(actor),
+    );
+  }
+
+  /**
+   * Confirms the item's extension permissions (the admin's 待确认; body `{ permissionsHash }` from
+   * the item view): approves the current permission set (snapshot source `web`) and installs and
+   * enables an extension that was never deployed. A changed set -> 409 `extension.approval_stale`;
+   * nothing to confirm -> 409 `extension.not_pending`. Returns the item.
+   */
+  @Post("items/:id/confirm")
+  @HttpCode(200)
+  confirmPermissions(
+    @CurrentPrincipal() principal: Principal,
+    @Param("id") id: string,
+    @ZBody(CatalogConfirmPermissionsBody) body: z.infer<typeof ConfirmPermissionsBody>,
+  ): Promise<CatalogItemView> {
+    const actor = requireUser(principal);
+    return this.scope.confirmPermissions(
+      actor.account.id,
+      id,
+      body.permissionsHash,
       actorOpts(actor),
     );
   }

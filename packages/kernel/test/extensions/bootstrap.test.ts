@@ -244,6 +244,51 @@ describe("a fresh deployment", () => {
     ]);
   });
 
+  it("the required entry's item is builtin, scope all and pending until a person confirms it", async () => {
+    const items = async () =>
+      (await admin({ method: "GET", url: "/api/v1/admin/catalog/items" })).json().items as {
+        id: string;
+        name: string;
+        builtin: boolean;
+        scope: string;
+        disabled: boolean;
+        pending: boolean;
+        permissionsHash: string | null;
+      }[];
+    const list = await items();
+    const alpha = list.find((i) => i.name === "alpha");
+    expect(alpha).toMatchObject({ builtin: true, scope: "all", disabled: false, pending: true });
+    expect(list.find((i) => i.name === "beta")).toMatchObject({
+      builtin: false,
+      pending: false,
+    });
+    const pending = await admin({ method: "GET", url: "/api/v1/admin/catalog/items?pending=true" });
+    expect(pending.json().items.map((i: { name: string }) => i.name)).toEqual(["alpha"]);
+    const stale = await admin({
+      method: "POST",
+      url: `/api/v1/admin/catalog/items/${alpha?.id}/confirm`,
+      payload: { permissionsHash: "0000000000000000" },
+    });
+    expect(stale.statusCode, stale.body).toBe(409);
+    expect(stale.json().error.code).toBe("extension.approval_stale");
+    const ok = await admin({
+      method: "POST",
+      url: `/api/v1/admin/catalog/items/${alpha?.id}/confirm`,
+      payload: { permissionsHash: alpha?.permissionsHash },
+    });
+    expect(ok.statusCode, ok.body).toBe(200);
+    expect(ok.json()).toMatchObject({ pending: false, builtin: true });
+    expect(await snapshot("alpha")).toMatchObject({ source: "web" });
+    const again = await admin({
+      method: "POST",
+      url: `/api/v1/admin/catalog/items/${alpha?.id}/confirm`,
+      payload: { permissionsHash: alpha?.permissionsHash },
+    });
+    expect(again.json().error.code).toBe("extension.not_pending");
+    // the confirmed snapshot is kept by the next run
+    expect((await items()).find((i) => i.name === "alpha")?.pending).toBe(false);
+  });
+
   it("a second run of the same manifest does nothing", async () => {
     const writes = async () =>
       (
@@ -376,6 +421,12 @@ describe("a core upgrade (Review Focus 3)", () => {
 
     // The new core: alpha raised (with a new permission, pre-approved), beta still 1.0.0, gamma
     // gone, delta raised, epsilon unchanged, zeta new
+    // a required plugin the migration could have left disabled: the next run clears it
+    await db
+      .updateTable("catalog_items")
+      .set({ disabled: true })
+      .where("name", "=", "alpha")
+      .execute();
     const v2 = await fixture([
       { bytes: await lifePkg({ name: "alpha", version: "1.1.0", policy: true }) },
       { bytes: await lifePkg({ name: "beta", version: "1.0.0" }) },
@@ -425,6 +476,18 @@ describe("a core upgrade (Review Focus 3)", () => {
         desired_state: "enabled",
         required: false,
       },
+    ]);
+    // gamma left the manifest: no longer builtin, still scope all
+    expect(
+      await db
+        .selectFrom("catalog_items")
+        .select(["name", "builtin", "scope", "disabled"])
+        .where("name", "in", ["alpha", "gamma"])
+        .orderBy("name")
+        .execute(),
+    ).toEqual([
+      { name: "alpha", builtin: true, scope: "all", disabled: false },
+      { name: "gamma", builtin: false, scope: "all", disabled: false },
     ]);
     expect(k.app.get(ExtensionHost).current("delta")).toBeUndefined();
     expect(k.app.get(ExtensionHost).current("epsilon")).toBeUndefined();

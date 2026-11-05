@@ -153,6 +153,19 @@ export class ExtensionAdmin {
   }
 
   /**
+   * The review digest of a stored package (the `reviewHash` its extension would show once
+   * installed); null when the package cannot be read.
+   */
+  async packageReviewHash(sha256: string): Promise<string | null> {
+    try {
+      const { set, warnings } = await this.packageInfo(sha256);
+      return reviewHash(set, warnings);
+    } catch {
+      return null;
+    }
+  }
+
+  /**
    * Web approval: re-checks the enterprise admin under the lock, compares the reviewed package
    * (`sha256`) and permission digest (`reviewHash`), writes the snapshot (source web) and the
    * `extension.permissions_approved` audit; after the commit publishes `kernel.plugins.changed` (a
@@ -163,13 +176,14 @@ export class ExtensionAdmin {
    *   recomputed now -> `extension.approval_stale`; a config-declared extension's `sha256` must be
    *   null (otherwise `validation_failed`);
    * - the snapshot already covers the current permission set (nothing to approve, F-N) ->
-   *   `extension.not_pending`.
+   *   `extension.not_pending`, except with `confirmBootstrap` when the snapshot is the bootstrap
+   *   step's (the catalog's confirm re-writes it with source web).
    */
   async approve(
     actor: string,
     name: string,
     body: ApproveBody,
-    opts: { actorTokenId?: string } = {},
+    opts: { actorTokenId?: string; confirmBootstrap?: boolean } = {},
   ): Promise<AdminExtensionView> {
     const s = (await this.subjects(name))[0];
     if (!s)
@@ -192,7 +206,14 @@ export class ExtensionAdmin {
     if (s.install !== null && body.sha256 !== s.install.sha256) throw stale();
     if (body.reviewHash !== reviewHash(s.set, s.warnings)) throw stale();
 
-    await this.writeApproval(actor, name, s, opts.actorTokenId, stale);
+    await this.writeApproval(
+      actor,
+      name,
+      s,
+      opts.actorTokenId,
+      stale,
+      opts.confirmBootstrap === true,
+    );
 
     try {
       await this.bus.publish(PLUGINS_CHANGED_TOPIC, { plugin: name });
@@ -215,6 +236,7 @@ export class ExtensionAdmin {
     s: Subject,
     actorTokenId: string | undefined,
     stale: () => ApiError,
+    confirmBootstrap: boolean,
   ): Promise<void> {
     const db = this.db;
     await this.adminLock.lockAndAuthorize(actor);
@@ -231,7 +253,7 @@ export class ExtensionAdmin {
     }
     const snapRow = await db
       .selectFrom("extension_permission_snapshots")
-      .select(["version", "permissions"])
+      .select(["version", "permissions", "source"])
       .where("plugin", "=", name)
       .forUpdate()
       .executeTakeFirst();
@@ -239,7 +261,9 @@ export class ExtensionAdmin {
       version: snapRow.version,
       permissions: snapRow.permissions as PermissionSet,
     };
-    if (snapshotCovers(snap, s.set)) {
+    // `confirmBootstrap` (the catalog's confirm): a snapshot the bootstrap step wrote was never
+    // confirmed by a person, so a covered one is still taken over
+    if (snapshotCovers(snap, s.set) && !(confirmBootstrap && snapRow?.source === "bootstrap")) {
       throw new ApiError(
         "extension.not_pending",
         `Extension ${name} ${s.version} has no new permissions awaiting approval`,
