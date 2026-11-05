@@ -73,6 +73,7 @@ describe("SettingsService", () => {
       subagentLimitOverrides: {},
       customConnectors: "allow",
       customSkills: "allow",
+      orgMarketplaceBrowse: true,
     });
     expect(warns).toHaveLength(1);
     expect(warns[0]?.fields).toMatchObject({ key: "orgCreation" });

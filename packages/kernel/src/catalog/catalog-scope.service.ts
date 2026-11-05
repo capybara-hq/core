@@ -16,6 +16,7 @@ import { assertOrgsExist } from "./catalog-items.js";
 import { type PluginConfirmResult, PluginImport } from "./plugin-import.js";
 import { PluginInstaller } from "./plugin-install.js";
 import { type PluginScope, wantedOn } from "./scope.js";
+import { addScopeOrg } from "./scope-orgs.js";
 import { PluginScopeSync } from "./scope-sync.js";
 
 /**
@@ -242,6 +243,26 @@ export class CatalogScopeService {
       detail: { name: item.name, disabled: { from: item.disabled, to: disabled } },
     });
     afterCommit(() => this.enqueue(itemId));
+  }
+
+  /**
+   * Adds one org to a `named` item's list in the caller's transaction (an approved `access`
+   * request, spec §5.1 rule 2): nobody loses access, so no preview. The item row is locked; it
+   * must be live and not builtin (404 / `plugin.builtin`). Bumps `scope_version`, audits
+   * `catalog.scope_changed` and enqueues the item's scope sync after the commit. Returns whether
+   * the list changed (false: not `named`, or listed already).
+   */
+  @Transactional({ propagation: "mandatory" })
+  async addOrg(
+    actor: string,
+    itemId: string,
+    orgId: string,
+    opts: ActorOpts & { requestId?: string } = {},
+  ): Promise<boolean> {
+    const item = await this.item(itemId, true);
+    const changed = await addScopeOrg(this.db, actor, item, orgId, opts);
+    if (changed) afterCommit(() => this.enqueue(itemId));
+    return changed;
   }
 
   /** Enqueues the item's scope sync; a failure only warns (the next change or org sync converges). */

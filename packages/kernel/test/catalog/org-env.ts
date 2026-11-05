@@ -70,7 +70,13 @@ export interface OrgEnv {
   stop(): Promise<void>;
 }
 
-export async function startOrgEnv(): Promise<OrgEnv> {
+/**
+ * Starts the environment; `overrides` are merged into the kernel config (e.g. `packages` with a
+ * fake npm registry, `marketplaces`).
+ */
+export async function startOrgEnv(
+  overrides: { packages?: Record<string, unknown>; marketplaces?: Record<string, unknown> } = {},
+): Promise<OrgEnv> {
   let pgc: TestContainer | undefined;
   let rd: TestContainer | undefined;
   let s3: TestS3 | undefined;
@@ -125,6 +131,7 @@ export async function startOrgEnv(): Promise<OrgEnv> {
       },
       tools: { timeoutMs: 5_000 },
       http: { port: 0, publicUrl: "https://capybara.example.com" },
+      ...overrides,
     },
   );
   const k = await startKernel(config, { env: {} });
@@ -446,18 +453,6 @@ export const install = (
     method: "POST",
     url: `/api/v1/orgs/${env.orgId}/catalog/${itemId}/install`,
     payload: body,
-  });
-
-export const requestItem = (
-  req: Req,
-  env: OrgEnv,
-  itemId: string,
-  note?: string,
-): ReturnType<Req> =>
-  req({
-    method: "POST",
-    url: `/api/v1/orgs/${env.orgId}/catalog/${itemId}/requests`,
-    payload: note === undefined ? {} : { note },
   });
 
 export async function auditActions(env: OrgEnv): Promise<string[]> {

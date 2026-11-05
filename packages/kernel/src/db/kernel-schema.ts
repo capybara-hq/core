@@ -1114,6 +1114,8 @@ export interface CatalogItemsTable {
   disabled: ColumnType<boolean, boolean | undefined, boolean>;
   /** 0074: bumped on every scope change. */
   scope_version: ColumnType<number, number | undefined, number>;
+  /** 0076: orgs outside a `named` item's list see it as requestable (never usable). */
+  shown_to_others: ColumnType<boolean, boolean | undefined, boolean>;
 }
 
 /** 0074: the orgs a `named` item is offered to. */
@@ -1240,14 +1242,31 @@ export interface PluginImportStagingTable {
 type NullableCol<T> = ColumnType<T | null, T | null | undefined, T | null>;
 
 /**
- * 0037, renamed in 0042: an org's catalog requests (stage org = a member request; deployment =
- * waiting for enterprise admin approval).
+ * 0037, renamed in 0042, kinds since 0076: an org's catalog requests. `stage` (org / deployment) is
+ * still written (`enable` -> org, else deployment) but no longer read.
  */
 export interface CatalogRequestsTable {
   id: string;
   org_id: string;
-  item_id: string;
+  /** 0076: null for an `import` request until its confirm writes the item. */
+  item_id: NullableCol<string>;
   version: NullableCol<string>;
+  /** 0076: what the request asks for (spec §5.1). */
+  kind: ColumnType<
+    "access" | "import" | "enable",
+    "access" | "import" | "enable" | undefined,
+    "access" | "import" | "enable"
+  >;
+  /** 0076: the marketplace entry of an `import` request (null once the marketplace is deleted). */
+  marketplace_id: NullableCol<string>;
+  entry_name: NullableCol<string>;
+  entry_version: NullableCol<string>;
+  /** 0076: the optional reason of a rejection. */
+  reason: NullableCol<string>;
+  /** 0076: the prepared import of an approved `import` request. */
+  staging_id: NullableCol<string>;
+  /** 0076: the requester dismissed the decision from the inbox. */
+  dismissed_at: NullableCol<Date>;
   stage: "org" | "deployment";
   requested_by: string | null;
   note: ColumnType<string, string | undefined, string>;

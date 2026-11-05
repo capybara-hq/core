@@ -3,7 +3,7 @@ import { parseSkillMd, SKILL_ENTRY_FILE, type SkillInvocation } from "@capybara-
 import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
 import type { AgentDefinition } from "../agents/definition.js";
-import { assertItemInstallable } from "../catalog/requests.service.js";
+import { assertItemInstallable } from "../catalog/request-rules.js";
 import {
   AttachmentsService,
   type CreatedAttachment,

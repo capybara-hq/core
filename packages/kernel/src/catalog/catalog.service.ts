@@ -43,7 +43,7 @@ import {
   pluginNameFrom,
 } from "./marketplaces.service.js";
 import { PluginImport, type PluginReview, type ReviewProvenance } from "./plugin-import.js";
-import { cancelPendingRequests } from "./requests.service.js";
+import { cancelPendingRequests } from "./request-rules.js";
 import type { PluginScope } from "./scope.js";
 import { newestFirst } from "./versions.js";
 

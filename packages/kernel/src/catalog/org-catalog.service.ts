@@ -37,11 +37,16 @@ import {
   upsertOrgSwitch,
 } from "./plugin-install.js";
 import { type PluginUpgradeInput, PluginUpgrader, type UpgradePreview } from "./plugin-upgrade.js";
-import { type OrgPluginState, switchable, visibleTo, wantedOn } from "./scope.js";
+import { type OrgPluginState, requestable, switchable, visibleTo, wantedOn } from "./scope.js";
 import { upgradeInfo } from "./upgrade-targets.js";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const itemNotFound = () => new ApiError("catalog.item_not_found", "Catalog item not found");
+const notOffered = () =>
+  new ApiError(
+    "catalog.approval_required",
+    "This plugin is not offered to this organization; an org admin can request access",
+  );
 const pluginDisabled = () =>
   new ApiError(
     "plugin.disabled",
@@ -83,8 +88,9 @@ export class OrgCatalogService {
   }
 
   /**
-   * The org's view of the items: items the org may not see (`named` without it on the list) are
-   * absent; disabled ones are shown to admins as `unavailable` and absent for members.
+   * The org's view of the items: a `named` item without the org on its list is `not_offered` when
+   * shown to other orgs and absent otherwise; disabled ones are shown to admins as `unavailable`
+   * and absent for members. Each item carries the org's pending request for it.
    */
   async list(orgId: string, accountId: string, itemId?: string): Promise<OrgCatalogItem[]> {
     const m = await this.db
@@ -116,13 +122,17 @@ export class OrgCatalogService {
         .execute(),
     ]);
     const inList = new Set(listed.map((r) => r.item_id));
-    const items = all.filter((i) =>
-      visibleTo({ scope: i.builtin ? "all" : i.scope }, inList.has(i.id)),
+    // Hidden `named` items (not listed, not shown to other orgs) are absent; shown ones are
+    // `not_offered`
+    const items = all.filter(
+      (i) =>
+        visibleTo({ scope: i.builtin ? "all" : i.scope }, inList.has(i.id)) ||
+        requestable(i, inList.has(i.id)),
     );
     if (items.length === 0) return [];
     const sw = new Map(switches.map((r) => [r.item_id, r.enabled]));
     const ids = items.map((i) => i.id);
-    const [versions, pluginInstalls, configs] = await Promise.all([
+    const [versions, pluginInstalls, configs, requests] = await Promise.all([
       this.db
         .selectFrom("catalog_item_versions")
         .select(["item_id", "version", "source", "manifest", "object_prefix", "files"])
@@ -140,7 +150,22 @@ export class OrgCatalogService {
         .where("org_id", "=", orgId)
         .where("config", "is not", null)
         .execute(),
+      this.db
+        .selectFrom("catalog_requests")
+        .select(["id", "item_id", "kind", "created_at"])
+        .where("org_id", "=", orgId)
+        .where("item_id", "in", ids)
+        .where("kind", "in", ["access", "enable"])
+        .where("status", "=", "pending")
+        .orderBy("created_at")
+        .execute(),
     ]);
+    const pending = new Map(
+      requests.map((r) => [
+        r.item_id,
+        { id: r.id, kind: r.kind as "access" | "enable", createdAt: r.created_at.toISOString() },
+      ]),
+    );
     const upgrades = await upgradeInfo(
       this.db,
       this.registry,
@@ -176,6 +201,7 @@ export class OrgCatalogService {
       const wanted = wantedOn(i, inList.has(i.id), sw.get(i.id) ?? null);
       let state: OrgPluginState;
       if (i.disabled) state = "unavailable";
+      else if (requestable(i, inList.has(i.id))) state = "not_offered";
       else if (a || i.builtin) state = "on";
       else if (!wanted) state = "off";
       else {
@@ -194,7 +220,7 @@ export class OrgCatalogService {
         scope,
         builtin: i.builtin,
         state,
-        switchable: switchable({ scope, builtin: i.builtin }),
+        switchable: state !== "not_offered" && switchable({ scope, builtin: i.builtin }),
         notDeployed: latest !== undefined && undeployed.has(i.id),
         installed: a
           ? {
@@ -203,6 +229,7 @@ export class OrgCatalogService {
               upgradeAvailable: upgrades.get(`${a.item_id}@${a.version}`)?.upgradeAvailable ?? null,
             }
           : null,
+        request: pending.get(i.id) ?? null,
       });
     }
     return out;
@@ -240,10 +267,29 @@ export class OrgCatalogService {
   }
 
   /**
-   * The item's icon; members don't see disabled items (-> `catalog.item_not_found`, decided before
-   * reading storage).
+   * The item's icon; members don't see disabled items, nobody outside its list sees a hidden
+   * `named` item (-> `catalog.item_not_found`, decided before reading storage). Without `orgId`
+   * (the enterprise admin) every item.
    */
-  icon(itemId: string, isAdmin: boolean): Promise<CatalogIcon> {
+  async icon(itemId: string, isAdmin: boolean, orgId?: string): Promise<CatalogIcon> {
+    if (orgId === undefined) return readCatalogIcon(this.db, this.storage, itemId, isAdmin);
+    if (!UUID_RE.test(itemId)) throw itemNotFound();
+    // A hidden `named` item stays absent here too
+    const item = await this.db
+      .selectFrom("catalog_items")
+      .select(["scope", "builtin", "shown_to_others"])
+      .where("id", "=", itemId)
+      .where("deleted_at", "is", null)
+      .executeTakeFirst();
+    if (item && !item.builtin && item.scope === "named" && !item.shown_to_others) {
+      const listed = await this.db
+        .selectFrom("catalog_item_scope_orgs")
+        .select("item_id")
+        .where("item_id", "=", itemId)
+        .where("org_id", "=", orgId)
+        .executeTakeFirst();
+      if (listed === undefined) throw itemNotFound();
+    }
     return readCatalogIcon(this.db, this.storage, itemId, isAdmin);
   }
 
@@ -345,6 +391,8 @@ export class OrgCatalogService {
       .where("org_id", "=", orgId)
       .executeTakeFirst();
     if (!visibleTo({ scope: item.builtin ? "all" : item.scope }, listed !== undefined)) {
+      // Shown to other orgs: the org sees it and may request access, but cannot switch it on
+      if (requestable(item, false)) throw notOffered();
       throw itemNotFound();
     }
     return item;

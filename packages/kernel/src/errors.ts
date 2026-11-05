@@ -83,6 +83,12 @@ export const ERROR_CODES = {
   "catalog.approval_required": 403,
   "catalog.request_not_found": 404,
   "catalog.request_decided": 409,
+  /** A pending request of the same kind for the same item or entry exists (spec §5.1 rule 5). */
+  "catalog.request_pending": 409,
+  /** The item is not in the state the request kind asks to change (already offered, on, ...). */
+  "catalog.request_invalid": 409,
+  /** The deployment setting `orgMarketplaceBrowse` is off: no marketplace requests. */
+  "catalog.marketplace_browse_disabled": 409,
   "catalog.custom_disabled": 403,
   "catalog.not_deployed": 409,
   "catalog.icon_not_found": 404,

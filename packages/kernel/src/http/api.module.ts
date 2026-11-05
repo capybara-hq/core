@@ -13,7 +13,10 @@ import { BackgroundController } from "../background/background.controller.js";
 import { BackgroundModule } from "../background/background.module.js";
 import { AdminCatalogController } from "../catalog/admin-catalog.controller.js";
 import { CatalogModule } from "../catalog/catalog.module.js";
-import { MarketplacesController } from "../catalog/marketplaces.controller.js";
+import {
+  MarketplacesController,
+  OrgMarketplacesController,
+} from "../catalog/marketplaces.controller.js";
 import {
   AdminCatalogRequestsController,
   OrgCatalogController,
@@ -84,6 +87,7 @@ const CONTROLLERS: Type[] = [
   AdminExtensionsController,
   AdminCatalogController,
   MarketplacesController,
+  OrgMarketplacesController,
   OrgExtensionConfigsController,
   AgentsController,
   AgentTemplatesController,

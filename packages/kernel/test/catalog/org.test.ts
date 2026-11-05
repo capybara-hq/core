@@ -969,9 +969,25 @@ describe("the org switch (plugin scope)", { timeout: 60_000 }, () => {
     expect(await switchRow(itemId)).toEqual({ enabled: false });
   });
 
-  it("named: absent for an org not on the list (404), listed and switchable for one that is", async () => {
+  it("named: not_offered (shown) or absent (hidden) for an org not on the list, listed and switchable for one that is", async () => {
     const itemId = await importSkill(env);
     await setScope(env, itemId, "named", []);
+    // Shown to other orgs (the default): requestable, not switchable
+    expect((await orgList(env.boss)).find((i) => i.id === itemId)).toMatchObject({
+      state: "not_offered",
+      switchable: false,
+      installed: null,
+      request: null,
+    });
+    const shown = await put(env.boss, itemId, { enabled: true });
+    expect(shown.statusCode).toBe(403);
+    expect(shown.json().error.code).toBe("catalog.approval_required");
+    // Hidden: absent, 404
+    await env.db
+      .updateTable("catalog_items")
+      .set({ shown_to_others: false })
+      .where("id", "=", itemId)
+      .execute();
     expect(await orgList(env.boss)).toHaveLength(0);
     const r = await put(env.boss, itemId, { enabled: true });
     expect(r.statusCode).toBe(404);

@@ -51,7 +51,8 @@ export interface OrgCatalogItem
   builtin: boolean;
   /**
    * The effective state in this org: `on`, `off`, `needs_config` (wanted but not installed, and the
-   * install needs inputs) or `unavailable` (disabled by the enterprise admin; members don't see it).
+   * install needs inputs), `unavailable` (disabled by the enterprise admin; members don't see it)
+   * or `not_offered` (a `named` item shown to orgs outside its list: requestable, not usable).
    */
   state: OrgPluginState;
   /** The org admin may switch it (never for `all` and builtin items). */
@@ -63,6 +64,8 @@ export interface OrgCatalogItem
    * `upgradeAvailable` is the version it can be upgraded to now (spec §10), null when none.
    */
   installed: { pluginInstallId: string; version: string; upgradeAvailable: string | null } | null;
+  /** This org's pending request for the item (spec §5.1), null when none. */
+  request: { id: string; kind: "access" | "enable"; createdAt: string } | null;
 }
 
 /**

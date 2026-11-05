@@ -97,7 +97,9 @@ import {
   readPluginFiles,
   readPluginPackage,
 } from "./plugin-package.js";
+import { importRequestOf, resolveImportRequests } from "./request-rules.js";
 import type { PluginScope } from "./scope.js";
+import { addScopeOrg } from "./scope-orgs.js";
 import { maxSatisfying, satisfiesRange } from "./versions.js";
 
 /**
@@ -938,13 +940,18 @@ export class PluginImport {
     opts: ActorOpts = {},
   ): Promise<PluginConfirmResult> {
     if (!UUID_RE.test(stagingId)) throw notFound();
-    const scope = input.scope ?? "optional";
+    // A staging prepared by approving an org's `import` request defaults to that org (spec §5.1
+    // rule 3); the admin may still choose any scope
+    const linked =
+      input.scope === undefined ? await importRequestOf(this.db, stagingId) : undefined;
+    const scope = input.scope ?? (linked !== undefined ? "named" : "optional");
+    const orgs = input.orgs ?? (linked !== undefined ? [linked.orgId] : undefined);
     if (input.orgs !== undefined && scope !== "named") {
       throw new ApiError("validation_failed", "orgs: only allowed with scope named", [
         { path: "orgs", message: "only allowed with scope named" },
       ]);
     }
-    if (scope === "named" && (input.orgs ?? []).length === 0) {
+    if (scope === "named" && (orgs ?? []).length === 0) {
       throw new ApiError("validation_failed", "orgs: scope named needs at least one organization", [
         { path: "orgs", message: "scope named needs at least one organization" },
       ]);
@@ -969,7 +976,7 @@ export class PluginImport {
     const committed = await this.commit(
       actor,
       { stagingId, review, staged, src, manifest, objectPrefix: row.object_prefix },
-      { scope, orgs: [...new Set(input.orgs ?? [])].sort() },
+      { scope, orgs: [...new Set(orgs ?? [])].sort() },
       stored,
       opts,
     );
@@ -1108,6 +1115,18 @@ export class PluginImport {
           .onConflict((oc) => oc.doNothing())
           .execute();
       }
+    }
+    // The org requests this staging answers resolve with the confirm; on an item that existed
+    // already (imported meanwhile) a `named` scope gains their orgs
+    const requestOrgs = await resolveImportRequests(t, stagingId, itemId, actor, opts);
+    if (!created && requestOrgs.length > 0) {
+      const item = await t
+        .selectFrom("catalog_items")
+        .select(["id", "name", "scope", "builtin"])
+        .where("id", "=", itemId)
+        .forUpdate()
+        .executeTakeFirstOrThrow();
+      for (const org of requestOrgs) await addScopeOrg(t, actor, item, org, opts);
     }
     return { itemId, now, previous };
   }

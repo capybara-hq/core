@@ -7,8 +7,11 @@
 /** Who an enterprise plugin is offered to: every org, an opt-in set, or the listed orgs. */
 export type PluginScope = "all" | "optional" | "named";
 
-/** The effective state of a plugin in one org. */
-export type OrgPluginState = "on" | "off" | "needs_config" | "unavailable";
+/**
+ * The effective state of a plugin in one org. `not_offered`: a `named` item that does not list the
+ * org but is shown to other orgs, which may request access (spec §5.1).
+ */
+export type OrgPluginState = "on" | "off" | "needs_config" | "unavailable" | "not_offered";
 
 /**
  * Whether the item should be on in the org. Builtin implies `all`: it is on unless disabled and
@@ -40,4 +43,15 @@ export function visibleTo(item: { scope: PluginScope }, inList: boolean): boolea
 /** Whether the org admin may switch the item: never for `all` or builtin items. */
 export function switchable(item: { scope: PluginScope; builtin: boolean }): boolean {
   return !item.builtin && item.scope !== "all";
+}
+
+/**
+ * Whether an org outside a `named` item's list sees it as requestable: shown to other orgs and not
+ * builtin (a builtin item is `all`).
+ */
+export function requestable(
+  item: { scope: PluginScope; builtin: boolean; shown_to_others: boolean },
+  inList: boolean,
+): boolean {
+  return !item.builtin && item.scope === "named" && !inList && item.shown_to_others;
 }

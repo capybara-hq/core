@@ -517,6 +517,7 @@ describe("企业管理员端点", () => {
       subagentLimitOverrides: {},
       customConnectors: "allow",
       customSkills: "allow",
+      orgMarketplaceBrowse: true,
     });
     const put = await adminReq({
       method: "PUT",
@@ -532,6 +533,7 @@ describe("企业管理员端点", () => {
       subagentLimitOverrides: {},
       customConnectors: "allow",
       customSkills: "allow",
+      orgMarketplaceBrowse: true,
     });
     const bad = await adminReq({
       method: "PUT",
@@ -567,6 +569,7 @@ describe("企业管理员端点", () => {
       subagentLimitOverrides: {},
       customConnectors: "allow",
       customSkills: "allow",
+      orgMarketplaceBrowse: true,
     });
 
     // 配额读取部署设置：orgA 上限 1，第二个运行进不去；未覆盖的组织用 runtime.orgConcurrency
@@ -590,6 +593,7 @@ describe("企业管理员端点", () => {
       subagentLimitOverrides: {},
       customConnectors: "allow",
       customSkills: "allow",
+      orgMarketplaceBrowse: true,
     });
     expect(await limit("orgA")).toBe(k.app.get(KernelConfigService).get().runtime.orgConcurrency);
     expect(await quota.tryEnter("orgA", "r2", await limit("orgA"))).toBe(true);
@@ -614,6 +618,7 @@ describe("企业管理员端点", () => {
       subagentLimitOverrides: {},
       customConnectors: "allow",
       customSkills: "allow",
+      orgMarketplaceBrowse: true,
     });
   });
 

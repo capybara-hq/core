@@ -13,6 +13,7 @@ import { ZBody, ZQuery } from "../infra/validation/zod-params.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
 import { roleAtLeast } from "../orgs/roles.js";
 import { CredentialValue } from "../tools/connectors.controller.js";
+import type { MarketplaceImportResult } from "./catalog.service.js";
 import type {
   CatalogIcon,
   OrgCatalogDetail,
@@ -32,8 +33,18 @@ import { CatalogRequestsService, type CatalogRequestView } from "./requests.serv
 
 const RequestBody = z
   .object({
+    kind: z.enum(["access", "enable"]),
     note: z.string().max(1000).optional(),
-    version: z.string().min(1).max(256).optional(),
+  })
+  .strict();
+
+/** An org admin's request for a marketplace entry not in the catalog yet. */
+const MarketplaceRequestBody = z
+  .object({
+    marketplaceId: z.string().min(1).max(100),
+    name: z.string().min(1).max(214),
+    version: z.string().min(1).max(256),
+    note: z.string().max(1000).optional(),
   })
   .strict();
 
@@ -100,7 +111,9 @@ export async function sendCatalogIcon(reply: FastifyReply, icon: CatalogIcon): P
     .send(Buffer.from(icon.data.buffer, icon.data.byteOffset, icon.data.byteLength));
 }
 
-const DecideBody = z.object({ decision: z.enum(["approve", "reject"]) }).strict();
+const DecideBody = z
+  .object({ approve: z.boolean(), reason: z.string().max(1000).optional() })
+  .strict();
 
 const AdminListQuery = z.object({
   status: z.enum(["pending", "approved", "rejected", "cancelled"]).optional(),
@@ -111,6 +124,10 @@ class CatalogDecideBody extends createZodDto(DecideBody, "CatalogDecideBody") {}
 class OrgPluginInstallBody extends createZodDto(InstallBody, "OrgPluginInstallBody") {}
 class OrgPluginSwitchBody extends createZodDto(SwitchBody, "OrgPluginSwitchBody") {}
 class CatalogRequestBody extends createZodDto(RequestBody, "CatalogRequestBody") {}
+class CatalogMarketplaceRequestBody extends createZodDto(
+  MarketplaceRequestBody,
+  "CatalogMarketplaceRequestBody",
+) {}
 class OrgPluginUpgradeBody extends createZodDto(UpgradeBody, "OrgPluginUpgradeBody") {}
 class OrgPluginUpgradePreviewBody extends createZodDto(
   UpgradePreviewBody,
@@ -120,8 +137,9 @@ class OrgPluginUpgradePreviewBody extends createZodDto(
 /**
  * The enterprise catalog from an organization's view (`/api/v1/orgs/:orgId/...`, human users only):
  * - `GET catalog` (`catalog.read`, member and up; members do not see disabled items);
- * - `POST catalog/:itemId/requests` (`catalog.request`): a member request, into the org admins'
- *   inbox;
+ * - `POST catalog/:itemId/requests` (`catalog.request`; `access` needs an org admin): requests
+ *   under plugin scope (spec §5.1), `enable` into the org admins' inbox, `access` to the enterprise
+ *   admin; `POST marketplace-requests` (org admins): an `import` request for a marketplace entry;
  * - `PUT catalog/:itemId/switch` (scope phase 1): `{ enabled: true, inputs? }` installs -> 200 `{ item }`;
  *   `{ enabled: false, confirm? }` -> 200 `{ preview, confirm }`, then with the hash 200 `{ item }`;
  * - `POST catalog/:itemId/install` (an alias of switching on, no longer creates requests): the route only requires `catalog.read`; the service re-checks
@@ -134,7 +152,8 @@ class OrgPluginUpgradePreviewBody extends createZodDto(
  *   requires `catalog.read`, the service re-checks the component actions of both versions):
  *   preview -> 200 `{ from, to, diffHash, components, inputs, templates }`; upgrade -> 200 `{ install }`, or
  *   202 `{ request }` for a needs_approval item without a grant;
- * - `POST catalog-requests/:id/decide` (`catalog.decide`, org admins).
+ * - `POST catalog-requests/:id/decide` (`catalog.decide`, org admins; `enable` requests only,
+ *   `{ approve, reason? }`), `POST catalog-requests/:id/dismiss` (the requester, a decided request).
  */
 @Controller("api/v1/orgs/:orgId")
 export class OrgCatalogController {
@@ -180,27 +199,58 @@ export class OrgCatalogController {
     @Param("itemId") itemId: string,
     @Res() reply: FastifyReply,
   ): Promise<void> {
-    const icon = await this.catalog.icon(itemId, roleAtLeast(org.role, "admin"));
+    const icon = await this.catalog.icon(itemId, roleAtLeast(org.role, "admin"), org.orgId);
     await sendCatalogIcon(reply, icon);
   }
 
+  /**
+   * A request for an item (spec §5.1): `enable` (members and up, an item that is off) or `access`
+   * (org admins, a `named` item shown to the org) -> 201 `{ request }`.
+   */
   @Post("catalog/:itemId/requests")
+  @HttpCode(201)
   @OrgAction("catalog.request")
   async request(
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
     @Param("itemId") itemId: string,
     @ZBody(CatalogRequestBody) body: z.infer<typeof RequestBody>,
-  ): Promise<{ request: CatalogRequestView; created: boolean }> {
+  ): Promise<{ request: CatalogRequestView }> {
     const p = requireUser(principal);
     const tokenId = patTokenId(p);
-    return this.requests.request(
-      org.orgId,
-      p.account.id,
-      itemId,
-      body,
-      tokenId !== undefined ? { actorTokenId: tokenId } : {},
-    );
+    return {
+      request: await this.requests.requestItem(
+        org.orgId,
+        p.account.id,
+        itemId,
+        body,
+        tokenId !== undefined ? { actorTokenId: tokenId } : {},
+      ),
+    };
+  }
+
+  /**
+   * An org admin asks for a marketplace entry to be imported (deployment setting
+   * `orgMarketplaceBrowse`) -> 201 `{ request }`.
+   */
+  @Post("marketplace-requests")
+  @HttpCode(201)
+  @OrgAction("catalog.decide")
+  async marketplaceRequest(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @ZBody(CatalogMarketplaceRequestBody) body: z.infer<typeof MarketplaceRequestBody>,
+  ): Promise<{ request: CatalogRequestView }> {
+    const p = requireUser(principal);
+    const tokenId = patTokenId(p);
+    return {
+      request: await this.requests.requestImport(
+        org.orgId,
+        p.account.id,
+        body,
+        tokenId !== undefined ? { actorTokenId: tokenId } : {},
+      ),
+    };
   }
 
   @Put("catalog/:itemId/switch")
@@ -320,14 +370,31 @@ export class OrgCatalogController {
         org.orgId,
         p.account.id,
         id,
-        body.decision,
+        body,
         tokenId !== undefined ? { actorTokenId: tokenId } : {},
       ),
     };
   }
+
+  /** The requester dismisses a decided request from the inbox -> 204. */
+  @Post("catalog-requests/:id/dismiss")
+  @HttpCode(204)
+  @OrgAction("catalog.read")
+  async dismiss(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @Param("id") id: string,
+  ): Promise<void> {
+    const p = requireUser(principal);
+    await this.requests.dismiss(org.orgId, p.account.id, id);
+  }
 }
 
-/** Enterprise admins decide deployment-level catalog requests (`/api/v1/admin/catalog/requests`). */
+/**
+ * Enterprise admins decide `access` and `import` requests (`/api/v1/admin/catalog/requests`):
+ * approving an `import` returns the prepared import (`import: { stagingId, review, ... }`), confirmed
+ * with `POST /api/v1/admin/catalog/imports/:stagingId/confirm`.
+ */
 @Controller("api/v1/admin/catalog/requests")
 @EnterpriseAdmin()
 export class AdminCatalogRequestsController {
@@ -350,16 +417,14 @@ export class AdminCatalogRequestsController {
     @CurrentPrincipal() principal: Principal,
     @Param("id") id: string,
     @ZBody(CatalogDecideBody) body: z.infer<typeof DecideBody>,
-  ): Promise<{ request: CatalogRequestView }> {
+  ): Promise<{ request: CatalogRequestView; import?: MarketplaceImportResult }> {
     const p = requireUser(principal);
     const tokenId = patTokenId(p);
-    return {
-      request: await this.requests.decideDeployment(
-        p.account.id,
-        id,
-        body.decision,
-        tokenId !== undefined ? { actorTokenId: tokenId } : {},
-      ),
-    };
+    return this.requests.decideDeployment(
+      p.account.id,
+      id,
+      body,
+      tokenId !== undefined ? { actorTokenId: tokenId } : {},
+    );
   }
 }

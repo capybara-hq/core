@@ -59,7 +59,7 @@ import {
   type UpgradeStep,
   under,
 } from "./plugin-install.js";
-import { assertItemInstallable, CatalogRequestsService } from "./requests.service.js";
+import { assertItemInstallable, resolveRequestsByInstall } from "./request-rules.js";
 import { deployedExtension, deploymentTarget } from "./upgrade-targets.js";
 import { satisfiesRange } from "./versions.js";
 
@@ -303,7 +303,6 @@ export class PluginUpgrader {
     @Inject(ExtensionRegistry) private readonly registry: ExtensionRegistry,
     @Inject(SkillsService) private readonly skills: SkillsService,
     @Inject(OrgExtensionConfigs) private readonly orgConfigs: OrgExtensionConfigs,
-    @Inject(CatalogRequestsService) private readonly requests: CatalogRequestsService,
     /** Org connectors: installs create, upgrade and remove them. */
     @Inject(ConnectorsService) private readonly connectors: ConnectorsService,
     @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
@@ -833,7 +832,7 @@ export class PluginUpgrader {
       .set({ version: diff.to.version, status: "installed", upgrade: null, error: null })
       .where("id", "=", installId)
       .execute();
-    await this.requests.resolveByInstall(orgId, itemId, actor, opts);
+    await resolveRequestsByInstall(t, orgId, itemId, actor, opts);
     await audit(t, {
       actorAccountId: actor,
       ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),

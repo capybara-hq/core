@@ -1,6 +1,7 @@
 import { Controller, Delete, Get, HttpCode, Inject, Param, Patch, Post } from "@nestjs/common";
 import { z } from "zod";
 import { MARKETPLACE_MAX_MIRRORS } from "../config/schema.js";
+import { ApiError } from "../errors.js";
 import {
   CurrentPrincipal,
   EnterpriseAdmin,
@@ -8,9 +9,12 @@ import {
   patTokenId,
   requireUser,
 } from "../identity/principal.js";
+import { readOrgMarketplaceBrowse } from "../identity/settings.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
+import { KernelDb } from "../infra/database/kernel-db.js";
 import { createZodDto } from "../infra/validation/create-zod-dto.js";
 import { ZBody, ZQuery } from "../infra/validation/zod-params.js";
+import { OrgAction } from "../orgs/org.guard.js";
 import { CatalogService, type MarketplaceImportResult } from "./catalog.service.js";
 import {
   type ActorOpts,
@@ -217,5 +221,32 @@ export class MarketplacesController {
       { marketplaceId: id, name, ...(body.version !== undefined && { version: body.version }) },
       actorOpts(actor),
     );
+  }
+}
+
+/**
+ * Org admins browse the marketplaces read-only (`GET /api/v1/orgs/:orgId/marketplaces/entries`,
+ * `catalog.decide`; plugin scope spec §5.1 rule 3) to request an import. The deployment setting
+ * `orgMarketplaceBrowse` off -> 404 `not_found`.
+ */
+@Controller("api/v1/orgs/:orgId/marketplaces")
+export class OrgMarketplacesController {
+  constructor(
+    @Inject(MarketplacesService) private readonly marketplaces: MarketplacesService,
+    @Inject(KernelDb) private readonly kdb: KernelDb,
+  ) {}
+
+  @Get("entries")
+  @OrgAction("catalog.decide")
+  async entries(
+    @ZQuery(MarketplaceEntriesQuery) q: z.infer<typeof EntriesQuery>,
+  ): Promise<{ items: MarketplaceEntryView[]; truncated: boolean }> {
+    if (!(await readOrgMarketplaceBrowse(this.kdb.db))) {
+      throw new ApiError("not_found", "Marketplace browsing is off for organizations");
+    }
+    return this.marketplaces.entries({
+      ...(q.sourceId !== undefined && { marketplaceId: q.sourceId }),
+      ...(q.q !== undefined && { q: q.q }),
+    });
   }
 }

@@ -10,7 +10,7 @@ import {
   assertPluginSourcesInstallable,
   disabledPluginItems,
   pluginItemDisabled,
-} from "../catalog/requests.service.js";
+} from "../catalog/request-rules.js";
 import { changedPaths, configFields, getPath, secretValues } from "../config/fields.js";
 import { createSecrets, type Keyring } from "../ctx/secrets.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";

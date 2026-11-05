@@ -1,7 +1,7 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { Inject, Injectable } from "@nestjs/common";
 import { type Selectable, sql } from "kysely";
-import { cancelPendingRequests } from "../catalog/requests.service.js";
+import { cancelPendingRequests } from "../catalog/request-rules.js";
 import { PluginScopeSync } from "../catalog/scope-sync.js";
 import type { OrgsTable } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";

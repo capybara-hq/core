@@ -11,7 +11,7 @@ import {
 import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
 import { z } from "zod";
-import { assertItemInstallable } from "../catalog/requests.service.js";
+import { assertItemInstallable } from "../catalog/request-rules.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { ExtensionRegistry } from "../extensions/registry.js";

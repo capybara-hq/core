@@ -64,10 +64,10 @@ import {
 } from "./catalog-content.js";
 import {
   assertItemInstallable,
-  CatalogRequestsService,
   disabledPluginItems,
   pluginItemDisabled,
-} from "./requests.service.js";
+  resolveRequestsByInstall,
+} from "./request-rules.js";
 import { ScopeNoLongerWanted, wantedByScope } from "./scope-state.js";
 import { upgradeInfo } from "./upgrade-targets.js";
 import { maxSatisfying, satisfiesRange } from "./versions.js";
@@ -492,7 +492,6 @@ export class PluginInstaller {
     @Inject(ExtensionRegistry) private readonly registry: ExtensionRegistry,
     @Inject(SkillsService) private readonly skills: SkillsService,
     @Inject(OrgExtensionConfigs) private readonly orgConfigs: OrgExtensionConfigs,
-    @Inject(CatalogRequestsService) private readonly requests: CatalogRequestsService,
     @Inject(KernelConfigService) private readonly config: KernelConfigService,
     /** Org connectors: installs create, upgrade and remove them. */
     @Inject(ConnectorsService) private readonly connectors: ConnectorsService,
@@ -1156,7 +1155,7 @@ export class PluginInstaller {
         "The install record was cleaned up as stale while the install was running",
       );
     }
-    await this.requests.resolveByInstall(orgId, itemId, actor, opts);
+    await resolveRequestsByInstall(t, orgId, itemId, actor, opts);
     // The org switch is written with the install, in one transaction under the org lock
     if (ctx.switchOn === true && ctx.parent === undefined) {
       await upsertOrgSwitch(t, orgId, itemId, true, actor);

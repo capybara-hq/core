@@ -73,6 +73,11 @@ export const DEPLOYMENT_SETTINGS = z.object({
    * agent 级技能与共享 agent 经负责人审批的变更）不受此开关约束——那是 agent 定义的一部分，由 R3 / R4 把关。
    */
   customSkills: CustomPolicy.default("allow"),
+  /**
+   * Org admins may browse the marketplaces read-only and ask for an entry to be imported (plugin
+   * scope spec §5.1 rule 3). false hides the browse route and refuses those requests.
+   */
+  orgMarketplaceBrowse: z.boolean().default(true),
 });
 export type DeploymentSettings = z.infer<typeof DEPLOYMENT_SETTINGS>;
 
@@ -101,6 +106,7 @@ export const DEPLOYMENT_SETTINGS_PATCH = z
       .optional(),
     customConnectors: CustomPolicy.optional(),
     customSkills: CustomPolicy.optional(),
+    orgMarketplaceBrowse: z.boolean().optional(),
   })
   .strict();
 export type DeploymentSettingsPatch = z.infer<typeof DEPLOYMENT_SETTINGS_PATCH>;
@@ -175,6 +181,21 @@ export async function assertCustomAllowed(
         : "Custom skills are disabled in this deployment; install skills from the enterprise catalog",
     );
   }
+}
+
+/**
+ * The deployment setting `orgMarketplaceBrowse`, read live from PG (in the caller's transaction
+ * when there is one); missing or invalid -> the default, true.
+ */
+export async function readOrgMarketplaceBrowse(db: KernelSchemaDb): Promise<boolean> {
+  const row = await db
+    .selectFrom("deployment_settings")
+    .select("value")
+    .where("key", "=", "orgMarketplaceBrowse")
+    .executeTakeFirst();
+  if (!row) return true;
+  const parsed = z.boolean().safeParse(row.value);
+  return parsed.success ? parsed.data : true;
 }
 
 /** 按组织合并覆盖：值为 null 删除该组织，其余整项替换；未列出的组织不变。 */
@@ -257,6 +278,9 @@ export class SettingsService {
     if (patch.priceCurrency !== undefined) next.priceCurrency = patch.priceCurrency;
     if (patch.customConnectors !== undefined) next.customConnectors = patch.customConnectors;
     if (patch.customSkills !== undefined) next.customSkills = patch.customSkills;
+    if (patch.orgMarketplaceBrowse !== undefined) {
+      next.orgMarketplaceBrowse = patch.orgMarketplaceBrowse;
+    }
     const {
       runConcurrencyOverrides: runPatch,
       sandboxLimitOverrides: sandboxPatch,
