@@ -245,7 +245,7 @@ export interface FilePreviewersTable {
   disabled: ColumnType<boolean, boolean | undefined, boolean>;
 }
 
-/** 0064: an org's default provider of an `org-default` extension point. */
+/** 0073: an org's default provider of an `org-default` extension point. */
 export interface OrgExtensionPointDefaultsTable {
   org_id: string;
   /** The extension point name without the major (`web-search`). */
