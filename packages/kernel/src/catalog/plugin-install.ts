@@ -68,6 +68,7 @@ import {
   pluginItemDisabled,
   resolveRequestsByInstall,
 } from "./request-rules.js";
+import { visibleTo } from "./scope.js";
 import { ScopeNoLongerWanted, ScopeStillWanted, wantedByScope } from "./scope-state.js";
 import { upgradeInfo } from "./upgrade-targets.js";
 import { maxSatisfying, satisfiesRange } from "./versions.js";
@@ -707,11 +708,11 @@ export class PluginInstaller {
    * back). No such plugin offered by the catalog -> `connector.kind_unavailable` naming it, before
    * anything is written.
    */
-  private async impliedProviders(
+  async impliedProviders(
     orgId: string,
     manifest: PluginManifest,
     templates: { id: string; file: ConnectorTemplateFile }[],
-    declared: ResolvedDependency[],
+    declared: { name: string }[],
   ): Promise<ResolvedDependency[]> {
     const out: ResolvedDependency[] = [];
     const seen = new Set<string>([manifest.name, ...declared.map((d) => d.name)]);
@@ -722,19 +723,45 @@ export class PluginInstaller {
       // Not deployed: the not_deployed refusal of the plan's own checks says it
       if (templatePluginProblem(this.templateDeps(), ct.file.template) !== undefined) continue;
       if (await isExtensionEnabled(this.db, orgId, provider)) continue;
+      const refuse = (why: string) =>
+        new ApiError(
+          "connector.kind_unavailable",
+          `Connector template ${ct.id} needs the plugin ${provider}, which is not enabled in this organization: ${why}`,
+        );
+      let dep: ResolvedDependency;
       try {
-        const { manifest: _m, ...dep } = await resolveOne(this.db, {
+        const { manifest: _m, ...resolved } = await resolveOne(this.db, {
           name: provider,
           version: ct.file.template.pluginVersion ?? "*",
         });
-        out.push(dep);
+        dep = resolved;
       } catch (e) {
         if (!(e instanceof ApiError)) throw e;
-        throw new ApiError(
-          "connector.kind_unavailable",
-          `Connector template ${ct.id} needs the plugin ${provider}, which is not enabled in this organization and is not offered to it: ${e.message}`,
+        throw refuse(
+          e.code === "catalog.dependency_unresolved"
+            ? `${provider} is deployed but switched off here and the catalog has no entry to switch it on; ask the enterprise admin to enable it`
+            : `${provider} is not offered to this organization`,
         );
       }
+      // Scope: only a plugin offered to this org may be switched on for it (nothing more is said)
+      const item = await this.db
+        .selectFrom("catalog_items")
+        .select(["scope", "builtin"])
+        .where("id", "=", dep.itemId)
+        .executeTakeFirstOrThrow();
+      const listed = await this.db
+        .selectFrom("catalog_item_scope_orgs")
+        .select("item_id")
+        .where("item_id", "=", dep.itemId)
+        .where("org_id", "=", orgId)
+        .executeTakeFirst();
+      if (!visibleTo({ scope: item.builtin ? "all" : item.scope }, listed !== undefined)) {
+        throw refuse(`${provider} is not offered to this organization`);
+      }
+      if (await this.findLiveDependency(this.db, orgId, dep, false)) {
+        throw refuse(`${provider} is installed but switched off in this organization`);
+      }
+      out.push(dep);
     }
     return out;
   }

@@ -709,6 +709,28 @@ describe("org plugin upgrade (spec §10)", { timeout: 90_000 }, () => {
     expect(r.statusCode, r.body).toBe(200);
   });
 
+  it("an added template whose provider is off in the org: the preview is refused (connector.kind_unavailable), nothing changes", async () => {
+    const item = await seedPlugin(env, { name: "crm", skills: [], templates: { gh: {} } });
+    await seedPlugin(env, {
+      name: "crm",
+      addTo: item,
+      version: "1.1.0",
+      skills: [],
+      templates: { gh: {}, docs: {} },
+    });
+    const installId = await installOk(item, { connectors: { gh: tokenInput() } });
+    await env.db
+      .deleteFrom("extension_org_configs")
+      .where("org_id", "=", env.orgId)
+      .where("plugin", "=", "fake-connector")
+      .execute();
+    const r = await preview(installId, "1.1.0");
+    expect(r.statusCode, r.body).toBe(409);
+    expect(r.json().error.code).toBe("connector.kind_unavailable");
+    expect(r.body).toContain("fake-connector");
+    expect(await liveInstalls()).toEqual(["crm@1.0.0:installed"]);
+  });
+
   it("the preview carries the target version's templates named in its inputs, also when the latest version lacks them", async () => {
     const item = await seedPlugin(env, { name: "crm", skills: [], templates: { gh: {} } });
     await seedPlugin(env, {

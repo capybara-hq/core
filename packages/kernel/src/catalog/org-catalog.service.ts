@@ -264,14 +264,23 @@ export class OrgCatalogService {
       .executeTakeFirst();
     if (!v) throw itemNotFound();
     const m = v.manifest as PluginManifest;
+    const templates = await readCatalogTemplates(this.storage, v);
+    // Providers the install would switch on first (a refusal is the install's to report)
+    const implied = await this.pluginInstaller
+      .impliedProviders(orgId, m, templates, m.dependencies ?? [])
+      .catch((e: unknown) => {
+        if (e instanceof ApiError) return [];
+        throw e;
+      });
     return {
       item,
       hasIcon: m.icon !== undefined,
       extension: m.extension ? m.name : null,
-      templates: (await readCatalogTemplates(this.storage, v)).map((t) =>
-        orgTemplateView(t.id, t.file),
-      ),
-      dependencies: (m.dependencies ?? []).map((d) => ({ name: d.name, range: d.version })),
+      templates: templates.map((t) => orgTemplateView(t.id, t.file)),
+      dependencies: [
+        ...(m.dependencies ?? []).map((d) => ({ name: d.name, range: d.version })),
+        ...implied.map((d) => ({ name: d.name, range: d.range, implied: true as const })),
+      ],
       skills: (m.skills ?? []).map((s) => packagePath(s.path)),
       agents: (m.agents ?? []).map((a) => packagePath(a.path)),
     };

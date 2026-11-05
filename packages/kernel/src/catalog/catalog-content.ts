@@ -94,8 +94,11 @@ export interface OrgCatalogDetail {
   /** The plugin's extension (its name), null without one. */
   extension: string | null;
   templates: OrgCatalogTemplate[];
-  /** The plugin's dependencies (name and range). */
-  dependencies: { name: string; range: string }[];
+  /**
+   * The plugin's dependencies (name and range); `implied` ones are the connector extensions its
+   * templates use that the org has off: the install switches them on first.
+   */
+  dependencies: { name: string; range: string; implied?: true }[];
   /** The skill directories. */
   skills: string[];
   /** The agent template files (`agents/<name>.md`, sub-agents spec §16). */

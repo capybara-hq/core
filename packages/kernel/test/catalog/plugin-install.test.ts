@@ -502,6 +502,72 @@ describe("org plugin install: the template's connector extension is an implied d
   });
 });
 
+describe("org plugin install: implied providers, scope and state", { timeout: 60_000 }, () => {
+  const offConnector = () =>
+    env.db
+      .deleteFrom("extension_org_configs")
+      .where("org_id", "=", env.orgId)
+      .where("plugin", "=", "fake-connector")
+      .execute();
+
+  it("a named provider whose list excludes the org is not installed into it: 409, nothing written", async () => {
+    await offConnector();
+    const prov = await seedPlugin(env, {
+      name: "fake-connector",
+      extension: true,
+      skills: [],
+      templates: false,
+    });
+    await env.db
+      .updateTable("catalog_items")
+      .set({ scope: "named" })
+      .where("id", "=", prov)
+      .execute();
+    const p = await seedPlugin(env, { name: "bridge", skills: [] });
+    const r = await install(env.boss, env, p, pluginBody());
+    expect(r.statusCode, r.body).toBe(409);
+    expect(r.json().error.code).toBe("connector.kind_unavailable");
+    expect(await liveInstalls()).toEqual([]);
+    expect(await liveConnectors()).toHaveLength(0);
+    expect(await enabledPlugins(true)).toEqual([]);
+  });
+
+  it("a provider that is installed but switched off in the org: refused saying so", async () => {
+    await offConnector();
+    const prov = await seedPlugin(env, {
+      name: "fake-connector",
+      extension: true,
+      skills: [],
+      templates: false,
+    });
+    const first = await install(env.boss, env, prov);
+    expect(first.statusCode, first.body).toBe(201);
+    await offConnector();
+    const p = await seedPlugin(env, { name: "bridge", skills: [] });
+    const r = await install(env.boss, env, p, pluginBody());
+    expect(r.statusCode, r.body).toBe(409);
+    expect(r.json().error.code).toBe("connector.kind_unavailable");
+    expect(r.body).toContain("switched off");
+    expect(await liveConnectors()).toHaveLength(0);
+  });
+
+  it("the item detail lists the implied provider among the dependencies", async () => {
+    await offConnector();
+    await seedPlugin(env, {
+      name: "fake-connector",
+      extension: true,
+      skills: [],
+      templates: false,
+    });
+    const p = await seedPlugin(env, { name: "bridge", skills: [] });
+    const r = await env.boss({ method: "GET", url: `/api/v1/orgs/${env.orgId}/catalog/${p}` });
+    expect(r.statusCode, r.body).toBe(200);
+    expect(r.json().detail?.dependencies ?? r.json().dependencies).toEqual([
+      { name: "fake-connector", range: "*", implied: true },
+    ]);
+  });
+});
+
 interface UninstallBody {
   removed: { kind: string; ref: string }[];
   kept: { kind: string; ref: string; reason: string }[];

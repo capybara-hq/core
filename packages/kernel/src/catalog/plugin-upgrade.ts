@@ -1514,6 +1514,13 @@ export class PluginUpgrader {
       }
       if (!before) {
         if (problem !== undefined) throw new ApiError("catalog.not_deployed", problem);
+        // No implied install on an upgrade: the added template's provider must already be on
+        if (!(await isExtensionEnabled(db, orgId, ct.file.template.plugin))) {
+          throw new ApiError(
+            "connector.kind_unavailable",
+            `Connector template ${ct.id} needs the plugin ${ct.file.template.plugin}, which is not enabled in this organization; enable it before upgrading`,
+          );
+        }
         templates.push({ id: ct.id, change: "added", target: ct.file, credentialsChanged: false });
         continue;
       }
