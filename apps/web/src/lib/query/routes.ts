@@ -188,11 +188,6 @@ export const ROUTES: readonly RouteEntry[] = [
         : [],
   },
   {
-    pattern: "/admin/extensions/install",
-    // The installed extensions (a name clash or an upgrade); `?upgrade=` needs no read.
-    queries: ({ me }) => (enterprise(me) ? [q(adminExtensionsQuery())] : []),
-  },
-  {
     pattern: "/admin/models",
     queries: ({ me }) => (enterprise(me) ? [q(adminModelsQuery()), q(adminPurposesQuery())] : []),
   },

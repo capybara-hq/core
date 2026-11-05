@@ -1,4 +1,4 @@
-import { ApiClientError, apiFetch, CSRF_HEADER, ensureSession } from "./api";
+import { apiFetch } from "./api";
 import type { LocalizedName, PluginScope } from "./catalog";
 import type { PermissionGroup, PermissionItem } from "./extensions";
 import type { ConfigIssue, JsonSchema } from "./json-schema";
@@ -116,21 +116,6 @@ export interface PackageWarning {
   statement: string;
 }
 
-/** 上传 / npm 导入的审阅结果（内核 `PackageReview`）。 */
-export interface PackageReview {
-  sha256: string;
-  name: string;
-  version: string;
-  permissions: PermissionGroup[];
-  /** 相对该插件当前权限快照新增 / 减少的权限键（没有快照时全部算新增）。 */
-  added: string[];
-  /** `added` 逐项的敏感标记与原因码（内核判定）。 */
-  addedItems: PermissionItem[];
-  removed: string[];
-  reviewHash: string;
-  warnings: PackageWarning[];
-}
-
 /** 部署级配置的一个字段（内核 `DeploymentConfigField`）。 */
 export interface DeploymentConfigField {
   path: string;
@@ -186,15 +171,6 @@ export const getAdminExtension = (name: string) => apiFetch<AdminExtension>(one(
 export const listAdminExtensions = () =>
   apiFetch<{ extensions: AdminExtension[]; drainSeconds: number }>(base);
 
-export const ingestNpm = (pkg: string, version?: string) =>
-  apiFetch<PackageReview>(
-    `${base}/packages/npm`,
-    post({ package: pkg, ...(version !== undefined && version !== "" && { version }) }),
-  );
-
-export const installExtension = (name: string, sha256: string) =>
-  apiFetch<AdminExtension>(`${one(name)}/install`, post({ sha256 }));
-
 /** 批准权限；安装记录传审阅时的 sha256，配置声明的插件传 null。 */
 export const approveExtension = (
   name: string,
@@ -222,93 +198,6 @@ export const putExtensionConfig = (
     method: "PUT",
     body: JSON.stringify({ values, ...(secretEntries.length > 0 && { secretEntries }) }),
   });
-
-function xhrError(xhr: XMLHttpRequest): ApiClientError {
-  try {
-    const body = JSON.parse(xhr.responseText) as {
-      error?: { code?: unknown; message?: unknown; details?: unknown };
-    };
-    const e = body.error;
-    if (typeof e?.code === "string") {
-      const raw = Array.isArray(e.details) ? (e.details as unknown[]) : [];
-      const details = raw.flatMap((d) => {
-        if (typeof d !== "object" || d === null) return [];
-        const { path, message } = d as Record<string, unknown>;
-        return typeof message === "string"
-          ? [{ path: typeof path === "string" ? path : "", message }]
-          : [];
-      });
-      return new ApiClientError(
-        xhr.status,
-        e.code,
-        typeof e.message === "string" ? e.message : e.code,
-        details,
-        raw,
-      );
-    }
-  } catch {
-    // 非 JSON：落到下面的通用错误
-  }
-  return new ApiClientError(xhr.status, "http_error", `HTTP ${xhr.status}`);
-}
-
-/** 上传途中登录过期（客户端错误码，页面提示重新登录，而不是「后端不可用」）。 */
-export const UPLOAD_SESSION_EXPIRED = "extension.upload_session_expired";
-
-/**
- * 上传插件包（tgz 原始字节）并取回审阅结果。用 XMLHttpRequest 取得上传进度（fetch 没有）；`signal` 中止时
- * 抛 AbortError。代理对这个路由流式透传请求体，流无法重放：上传前先确认登录有效（必要时刷新一次）；
- * 上传遇到 401，或代理报上游不可达（流式请求体遇上游 401 时 undici 报网络错误）时，再确认一次登录，
- * 登录确实失效则抛 {@link UPLOAD_SESSION_EXPIRED}。
- */
-export async function uploadExtensionPackage(
-  file: Blob,
-  opts: { onProgress?: (fraction: number) => void; signal?: AbortSignal } = {},
-): Promise<PackageReview> {
-  await ensureSession();
-  opts.signal?.throwIfAborted();
-  try {
-    return await sendPackage(file, opts);
-  } catch (e) {
-    if (e instanceof ApiClientError && (e.status === 401 || e.code === "upstream_unavailable")) {
-      const expired = await ensureSession().then(
-        () => false,
-        (err: unknown) => err instanceof ApiClientError && err.code.startsWith("auth."),
-      );
-      if (expired) throw new ApiClientError(401, UPLOAD_SESSION_EXPIRED, "Session expired");
-    }
-    throw e;
-  }
-}
-
-function sendPackage(
-  file: Blob,
-  opts: { onProgress?: (fraction: number) => void; signal?: AbortSignal },
-): Promise<PackageReview> {
-  return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
-    xhr.open("POST", `${base}/packages/file`);
-    xhr.withCredentials = true;
-    xhr.setRequestHeader(CSRF_HEADER, "1");
-    xhr.setRequestHeader("content-type", "application/octet-stream");
-    xhr.upload.onprogress = (e) => {
-      if (e.lengthComputable && e.total > 0) opts.onProgress?.(e.loaded / e.total);
-    };
-    xhr.onload = () => {
-      if (xhr.status >= 200 && xhr.status < 300) {
-        try {
-          resolve(JSON.parse(xhr.responseText) as PackageReview);
-        } catch {
-          reject(new ApiClientError(xhr.status, "http_error", "Invalid response"));
-        }
-      } else reject(xhrError(xhr));
-    };
-    xhr.onerror = () => reject(new ApiClientError(0, "network", "Upload failed"));
-    xhr.onabort = () => reject(new DOMException("Upload aborted", "AbortError"));
-    opts.signal?.addEventListener("abort", () => xhr.abort(), { once: true });
-    xhr.send(file);
-  });
-}
 
 /**
  * Whether the replicas agree: at least one reported, and every one has the same version and state

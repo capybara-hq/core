@@ -412,7 +412,8 @@ function Overview({
             )}
             <LinkButton
               variant="secondary"
-              href={`/admin/extensions/install?upgrade=${encodeURIComponent(plugin.name)}`}
+              // An upgrade is importing the newer plugin version.
+              href="/admin/plugins/import"
             >
               {t("detail.actions.upgrade")}
             </LinkButton>

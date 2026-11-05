@@ -64,7 +64,7 @@ function AdminPluginsRead() {
         header={{
           path: [...scope, { label: "extensions" }],
           title: t("title"),
-          actions: [{ label: t("install"), variant: "primary", href: "/admin/extensions/install" }],
+          description: t("description"),
         }}
         variant="objects"
         loading
@@ -77,6 +77,7 @@ function AdminPluginsRead() {
 function AdminPlugins({ all }: { all: AdminExtension[] }) {
   const scope = usePagePath("admin");
   const t = useTranslations("admin.extensions");
+  const tScope = useTranslations("catalog.scope");
   const lang = labelLocale(useLocale());
   const [tab, setTab] = useState<TabId>("all");
   const groups: Record<Exclude<TabId, "all">, AdminExtension[]> = {
@@ -95,9 +96,7 @@ function AdminPlugins({ all }: { all: AdminExtension[] }) {
   const header = {
     path: [...scope, { label: "extensions" }],
     title: t("title"),
-    actions: [
-      { label: t("install"), variant: "primary" as const, href: "/admin/extensions/install" },
-    ],
+    description: t("description"),
     ...(tabIds.length > 0
       ? {
           tabs: [
@@ -131,14 +130,15 @@ function AdminPlugins({ all }: { all: AdminExtension[] }) {
         }
       : undefined;
 
+  // Extensions arrive with plugins: the empty state points at the plugin import page.
   const empty =
     all.length === 0
       ? {
           text: t("empty"),
           action: {
-            label: t("install"),
+            label: t("importPlugin"),
             variant: "primary" as const,
-            href: "/admin/extensions/install",
+            href: "/admin/plugins/import",
           },
         }
       : undefined;
@@ -167,7 +167,7 @@ function AdminPlugins({ all }: { all: AdminExtension[] }) {
           // The id stays visible as muted meta next to a display name.
           p.displayName ? p.name : null,
           `v${p.version}`,
-          p.required ? t("required") : null,
+          p.required && !p.builtin ? t("required") : null,
           points > 0 ? t("meta.points", { n: points }) : null,
           t(`source.${displaySource(p)}`),
           r.total > 0
@@ -177,9 +177,16 @@ function AdminPlugins({ all }: { all: AdminExtension[] }) {
               })
             : null,
           perms > 0 ? t("meta.permissions", { n: perms }) : null,
+          // Who the plugin is offered to, then how many orgs run it (null without a catalog item).
+          p.scope ? tScope(p.scope) : null,
+          p.scope && p.enabledOrgs !== undefined ? t("meta.orgs", { n: p.enabledOrgs }) : null,
         ]
           .filter((x): x is string => x !== null)
           .join(" · ");
+        const chips = [
+          ...(p.builtin ? [{ label: t("builtin") }] : []),
+          ...(p.sensitive ? [{ label: t("sensitive"), tone: "warn" as const }] : []),
+        ];
         return (
           <ObjectRow
             key={p.name}
@@ -187,7 +194,7 @@ function AdminPlugins({ all }: { all: AdminExtension[] }) {
             name={label}
             {...(p.displayName ? {} : { mono: true })}
             href={detail}
-            {...(p.sensitive ? { chips: [{ label: t("sensitive"), tone: "warn" as const }] } : {})}
+            {...(chips.length > 0 ? { chips } : {})}
             meta={meta}
             state={{ label: t(`status.${p.status}`), tone: STATE_TONE[p.status] }}
             action={{
@@ -200,7 +207,8 @@ function AdminPlugins({ all }: { all: AdminExtension[] }) {
                 ? [
                     {
                       label: t("upgrade"),
-                      href: `/admin/extensions/install?upgrade=${encodeURIComponent(p.name)}`,
+                      // An upgrade is importing the newer plugin version.
+                      href: "/admin/plugins/import",
                     },
                   ]
                 : []),

@@ -479,19 +479,6 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     expect(browser).toEqual([]);
   });
 
-  it("/admin/extensions/install: ?upgrade= comes from the query, the installed list from the cache", async () => {
-    const browser = expectNoFirstPaintFetch();
-    await renderRouteWithCache("/admin/extensions/install?upgrade=demo", ROUTES);
-    expect(
-      screen.getByText(en.admin.extensions.wizard.upgradeTitle.replace("{name}", "demo")),
-    ).toBeTruthy();
-    cleanup();
-    await renderRouteWithCache("/admin/extensions/install", ROUTES);
-    expect(screen.getByText(en.admin.extensions.wizard.title)).toBeTruthy();
-    await settle();
-    expect(browser).toEqual([]);
-  });
-
   it("/admin/extensions/[name]: the extension and its config, with no browser read", async () => {
     const browser = expectNoFirstPaintFetch();
     await renderRouteWithCache("/admin/extensions/demo", ROUTES);
@@ -546,19 +533,6 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
         .getByRole("tab", { name: en.admin.extensions.detail.tabs.config })
         .getAttribute("aria-selected"),
     ).toBe("true");
-    await release();
-  });
-
-  it("/admin/extensions/install: the source step does not wait for the list (it renders for real)", async () => {
-    const { release } = await renderHeld(
-      "/admin/extensions/install",
-      "GET /api/v1/admin/extensions",
-    );
-    expect(await screen.findByText(en.admin.extensions.wizard.title)).toBeTruthy();
-    expect(
-      screen.getByRole("radiogroup", { name: en.admin.extensions.wizard.sourceLabel }),
-    ).toBeTruthy();
-    expect(document.querySelector("[aria-busy='true']")).toBeNull();
     await release();
   });
 
@@ -891,7 +865,6 @@ const CACHED: string[] = [
   "/admin/settings",
   "/admin/models",
   "/admin/extensions",
-  "/admin/extensions/install",
   "/admin/extensions/demo",
   "/admin/plugins",
   `/admin/plugins/${ITEM_ID}`,

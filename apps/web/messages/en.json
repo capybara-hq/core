@@ -2435,8 +2435,6 @@
     },
     "extensions": {
       "title": "Extensions",
-      "install": "Install extension",
-      "hint": "Every extension on this deployment. Installing, enabling, disabling and upgrading need no restart: replicas converge within seconds of a change.",
       "empty": "No extensions yet.",
       "noResults": "No extensions match the filters.",
       "sensitive": "Sensitive",
@@ -2571,44 +2569,6 @@
           "bootstrap": "bootstrap (npm)"
         }
       },
-      "wizard": {
-        "title": "Install extension",
-        "upgradeTitle": "Upgrade “{name}”",
-        "steps": {
-          "source": "Source",
-          "review": "Review permissions",
-          "confirm": "Confirm"
-        },
-        "sourceLabel": "Source",
-        "sourceFile": "Upload an extension package (.tgz)",
-        "sourceNpm": "Fetch from npm",
-        "sourceFileHint": "An npm-pack tgz (the repository's pack-plugin tool builds one).",
-        "sourceNpmHint": "Download it from the npm registry by name and version.",
-        "choose": "Choose a .tgz file",
-        "drop": "Drop the .tgz file to choose it",
-        "npmPackage": "npm package",
-        "npmVersion": "Version",
-        "npmVersionHelp": "A version, dist-tag or range; leave empty for latest.",
-        "upload": "Upload and review",
-        "fetch": "Fetch and review",
-        "cancelled": "Upload cancelled.",
-        "next": "Next",
-        "back": "Back",
-        "cancel": "Cancel",
-        "package": "{name} {version}",
-        "sha": "Package sha256: {sha}",
-        "newInstall": "New extensions start disabled; they load once their permissions are approved and they are enabled.",
-        "upgradeFrom": "Upgrades from {from} to {to}.",
-        "upgradeMismatch": "This package is extension “{got}”, not “{want}” which you are upgrading.",
-        "conflictConfig": "“{name}” is declared in the startup config; an extension with the same name cannot be installed here.",
-        "ack": "I understand the sensitive items",
-        "ackHint": "This extension has sensitive items (highlighted). Check each one before confirming.",
-        "enableAfter": "Enable right after installing",
-        "install": "Install",
-        "done": "Installed “{name}”; replicas are converging.",
-        "failedAfterInstall": "The extension is installed but a later step did not finish. Continue on the extension's page.",
-        "sessionExpired": "Your sign-in has expired. Sign in again, then upload."
-      },
       "config": {
         "none": "This extension has no deployment config.",
         "hint": "Fields given by the startup config (config file, Nacos, environment variables) are read-only. Fields that apply immediately take effect on save; for the others the extension reloads after saving (no restart).",
@@ -2637,10 +2597,24 @@
       "upgrade": "Upgrade",
       "meta": {
         "points": "{n, plural, one {# extension point} other {# extension points}}",
-        "permissions": "{n, plural, one {# permission} other {# permissions}}"
+        "permissions": "{n, plural, one {# permission} other {# permissions}}",
+        "orgs": "Enabled in {n} organizations"
       },
       "loadFailed": "Could not load extensions.",
-      "retry": "Retry"
+      "retry": "Retry",
+      "importPlugin": "Import a plugin",
+      "builtin": "Built-in",
+      "description": "Code from plugins that runs on the deployment. Deployment config, permissions and run status live here.",
+      "wizard": {
+        "choose": "Choose a .tgz file",
+        "drop": "Drop the .tgz file to choose it",
+        "npmPackage": "npm package",
+        "npmVersion": "Version",
+        "npmVersionHelp": "A version, dist-tag or range; leave empty for latest.",
+        "next": "Next",
+        "back": "Back",
+        "cancel": "Cancel"
+      }
     }
   },
   "members": {

@@ -4,18 +4,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
 import { bodyOf, type Call, json, lastStubRoutes, stubApi } from "./support/api";
-import { resetNavigation, router } from "./support/navigation";
+import { resetNavigation } from "./support/navigation";
 import { renderRouteWithCache } from "./support/query";
-import { sessionRoutes } from "./support/server";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 const params = { current: { name: "demo" } as Record<string, string> };
-const query = { current: {} as Record<string, string> };
 const detailPage = () => `/admin/extensions/${encodeURIComponent(params.current.name ?? "")}`;
-const installPage = () => {
-  const qs = new URLSearchParams(query.current).toString();
-  return `/admin/extensions/install${qs === "" ? "" : `?${qs}`}`;
-};
 vi.mock("next/navigation", () => ({
   redirect: (to: string) => {
     throw new Error(`REDIRECT ${to}`);
@@ -128,27 +122,9 @@ const S3 = plugin({
   removable: false,
 });
 
-const REVIEW = {
-  sha256: SHA,
-  name: "demo",
-  version: "1.0.0",
-  permissions: [
-    group("provides", ["sandbox@1"], { "sandbox@1": "sandbox" }),
-    group("network", ["api.example.com"]),
-    group("tables", ["notes"]),
-  ],
-  ...addedOf(["provides:sandbox@1", "permissions.network:api.example.com"], {
-    "provides:sandbox@1": "sandbox",
-  }),
-  removed: [],
-  reviewHash: "0123456789abcdef",
-  warnings: [],
-};
-
 beforeEach(() => {
   resetNavigation("/admin/extensions");
   params.current = { name: "demo" };
-  query.current = {};
 });
 afterEach(() => {
   cleanup();
@@ -262,13 +238,54 @@ describe("/admin/extensions (ListPage, object rows)", () => {
     expect(within(list).queryByRole("button", { name: "更多操作" })).toBeNull();
     expect(within(list).queryByText("查看详情")).toBeNull();
     expect(within(row("demo")).getByRole("link", { name: p.upgrade }).getAttribute("href")).toBe(
-      "/admin/extensions/install?upgrade=demo",
+      "/admin/plugins/import",
     );
     expect(
       within(row("object-store-s3"))
         .getAllByRole("link")
         .map((l) => l.textContent),
     ).toEqual(["object-store-s3", p.configure, p.upgrade]);
+  });
+
+  it.each(LOCALES)(
+    "meta ends with the plugin scope and the org count, a builtin chip, no install action, the description (%s)",
+    async (locale) => {
+      const p = msgs[locale].admin.extensions;
+      const c = msgs[locale].catalog.scope;
+      stubApi({
+        "GET /api/v1/admin/extensions": () =>
+          json(200, {
+            extensions: [
+              plugin({ scope: "optional", enabledOrgs: 3 }),
+              plugin({ name: "core-ext", scope: "all", enabledOrgs: 6, builtin: true }),
+            ],
+            drainSeconds: 30,
+          }),
+      });
+      await renderRouteWithCache("/admin/extensions", lastStubRoutes(), { locale });
+      const list = await screen.findByRole("list", { name: p.title });
+      const row = (name: string) => within(list).getByText(name).closest("li") as HTMLElement;
+      expect(
+        within(row("demo")).getByText(
+          new RegExp(`${escapeRe(`${c.optional} · ${fill(p.meta.orgs, { n: 3 })}`)}$`),
+        ),
+      ).toBeTruthy();
+      expect(
+        within(row("core-ext")).getByText(
+          new RegExp(`${escapeRe(`${c.all} · ${fill(p.meta.orgs, { n: 6 })}`)}$`),
+        ),
+      ).toBeTruthy();
+      expect(within(row("core-ext")).getByText(p.builtin)).toBeTruthy();
+      expect(within(row("demo")).queryByText(p.builtin)).toBeNull();
+      expect(document.querySelector('a[href="/admin/extensions/install"]')).toBeNull();
+      expect(screen.getByText(p.description)).toBeTruthy();
+    },
+  );
+  it("zh copy is exactly the accepted wording", () => {
+    expect(zh.admin.extensions.description).toBe(
+      "插件里在部署上运行的代码。部署级配置、权限和运行状态在这里。",
+    );
+    expect(zh.admin.extensions.meta.orgs.replace("{n}", "3")).toBe("3 个组织启用");
   });
 
   it("nothing needs attention: no callout, no tab that equals All", async () => {
@@ -323,9 +340,7 @@ describe("/admin/extensions/[name] (DetailPage)", () => {
       expect(screen.queryByRole("button", { name: p.detail.actions.uninstall })).toBeNull();
       expect(screen.queryByText(p.detail.uninstallNeedsDisable)).toBeNull();
       const upgrade = screen.getByRole("link", { name: p.detail.actions.upgrade });
-      expect(upgrade.getAttribute("href")).toBe(
-        "/admin/extensions/install?upgrade=object-store-s3",
-      );
+      expect(upgrade.getAttribute("href")).toBe("/admin/plugins/import");
       // 升级 is a secondary button, never a browser-default blue link
       expect(upgrade.getAttribute("data-variant")).toBe("secondary");
       expect(upgrade.className).toContain("cb-btn");
@@ -436,7 +451,7 @@ describe("/admin/extensions/[name] (DetailPage)", () => {
     await screen.findByText(p.detail.uninstallNeedsDisable);
     expect(screen.queryByRole("button", { name: p.detail.actions.uninstall })).toBeNull();
     expect(screen.getByRole("link", { name: p.detail.actions.upgrade }).getAttribute("href")).toBe(
-      "/admin/extensions/install?upgrade=demo",
+      "/admin/plugins/import",
     );
   });
 
@@ -829,296 +844,3 @@ describe("/admin/extensions/[name] (DetailPage)", () => {
 function escapeRe(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
-
-describe("/admin/extensions/install (WizardPage)", () => {
-  it.each(LOCALES)(
-    "npm → 审阅（敏感项高亮并写明原因，网络标「声明，平台不拦截」）→ 勾选前确认不可用 → install → approve → enable（%s）",
-    async (locale) => {
-      const p = msgs[locale].admin.extensions;
-      const calls = stubApi({
-        "GET /api/v1/admin/extensions": () => json(200, { extensions: [S3], drainSeconds: 30 }),
-        "POST /api/v1/admin/extensions/packages/npm": () => json(200, REVIEW),
-        "POST /api/v1/admin/extensions/demo/install": () =>
-          json(
-            200,
-            plugin({
-              status: "pending_approval",
-              desired: { version: "1.0.0", sha256: SHA, state: "disabled" },
-            }),
-          ),
-        "POST /api/v1/admin/extensions/demo/approve": () =>
-          json(200, plugin({ status: "disabled" })),
-        "POST /api/v1/admin/extensions/demo/enable": () =>
-          json(200, plugin({ status: "converging" })),
-      });
-      await renderRouteWithCache(installPage(), lastStubRoutes(), { locale });
-      expect(template("WizardPage")).not.toBeNull();
-      const user = userEvent.setup();
-      await user.click(screen.getByRole("radio", { name: new RegExp(`^${p.wizard.sourceNpm}`) }));
-      await user.type(screen.getByLabelText(p.wizard.npmPackage), "@acme/plugin-demo");
-      await user.click(screen.getByRole("button", { name: p.wizard.fetch }));
-      await vi.waitFor(() =>
-        expect(bodyOf(calls.find((c) => c.url.endsWith("/packages/npm")))).toEqual({
-          package: "@acme/plugin-demo",
-        }),
-      );
-      // 审阅：敏感项高亮并写明原因；外部网络标注
-      const review = await screen.findByRole("region", {
-        name: fill(msgs[locale].extensions.permissionsLabel, { plugin: "demo" }),
-      });
-      expect(within(review).getByText(msgs[locale].extensions.review.reason.sandbox)).toBeTruthy();
-      expect(within(review).getByText(msgs[locale].extensions.review.network)).toBeTruthy();
-      const marks = within(review).getAllByText(msgs[locale].extensions.sensitive);
-      expect(marks.length).toBeGreaterThan(0);
-      // One attention style: the word in warn; the group is a hairline card, never an accent box.
-      for (const m of marks) expect(m.getAttribute("data-tone")).toBe("warn");
-      expect(review.querySelector('.cb-card[data-tone="accent"]')).toBeNull();
-      // Only the mark is yellow: reasons are secondary text, items the plain list colour.
-      for (const el of review.querySelectorAll('[data-tone="warn"]')) {
-        expect(el.textContent).toBe(msgs[locale].extensions.sensitive);
-      }
-      expect(
-        within(review)
-          .getByText(msgs[locale].extensions.review.reason.sandbox)
-          .getAttribute("data-tone"),
-      ).toBe("muted");
-      await user.click(screen.getByRole("button", { name: p.wizard.next }));
-      // 确认：勾选前不可用
-      const submit = await screen.findByRole("button", { name: p.wizard.install });
-      expect(submit.hasAttribute("disabled")).toBe(true);
-      await user.click(screen.getByRole("checkbox", { name: p.wizard.ack }));
-      expect(submit.hasAttribute("disabled")).toBe(false);
-      await user.click(submit);
-      await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/admin/extensions/demo"));
-      const posts = calls.filter((c) => c.method === "POST").map((c) => c.url);
-      expect(posts).toEqual([
-        "/api/v1/admin/extensions/packages/npm",
-        "/api/v1/admin/extensions/demo/install",
-        "/api/v1/admin/extensions/demo/approve",
-        "/api/v1/admin/extensions/demo/enable",
-      ]);
-      expect(bodyOf(calls.find((c) => c.url.endsWith("/install")))).toEqual({ sha256: SHA });
-      expect(bodyOf(calls.find((c) => c.url.endsWith("/approve")))).toEqual({
-        sha256: SHA,
-        reviewHash: "0123456789abcdef",
-      });
-    },
-  );
-
-  it("不勾「安装后立即启用」：只 install → approve；迁移警告也算敏感项", async () => {
-    const calls = stubApi({
-      "GET /api/v1/admin/extensions": () => json(200, { extensions: [], drainSeconds: 30 }),
-      "POST /api/v1/admin/extensions/packages/npm": () =>
-        json(200, {
-          ...REVIEW,
-          permissions: [group("tables", ["notes"])],
-          warnings: [
-            {
-              kind: "destructive_migration",
-              sensitive: true,
-              file: "0002_drop.sql",
-              line: 3,
-              statement: "DROP TABLE notes",
-            },
-          ],
-        }),
-      "POST /api/v1/admin/extensions/demo/install": () =>
-        json(200, plugin({ status: "pending_approval" })),
-      "POST /api/v1/admin/extensions/demo/approve": () => json(200, plugin({ status: "disabled" })),
-    });
-    await renderRouteWithCache(installPage(), lastStubRoutes());
-    const p = en.admin.extensions;
-    const user = userEvent.setup();
-    await user.click(screen.getByRole("radio", { name: new RegExp(`^${p.wizard.sourceNpm}`) }));
-    await user.type(screen.getByLabelText(p.wizard.npmPackage), "demo");
-    await user.click(screen.getByRole("button", { name: p.wizard.fetch }));
-    expect(await screen.findByText("DROP TABLE notes")).toBeTruthy();
-    await user.click(screen.getByRole("button", { name: p.wizard.next }));
-    await user.click(await screen.findByRole("checkbox", { name: p.wizard.enableAfter }));
-    const submit = screen.getByRole("button", { name: p.wizard.install });
-    expect(submit.hasAttribute("disabled")).toBe(true);
-    await user.click(screen.getByRole("checkbox", { name: p.wizard.ack }));
-    await user.click(submit);
-    await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/admin/extensions/demo"));
-    expect(calls.filter((c) => c.method === "POST").map((c) => c.url.split("/").pop())).toEqual([
-      "npm",
-      "install",
-      "approve",
-    ]);
-  });
-
-  it("升级：显示新增 / 减少的权限与在途调用的等待时限；包名不符时不能继续", async () => {
-    query.current = { upgrade: "demo" };
-    stubApi({
-      "GET /api/v1/admin/extensions": () => json(200, { extensions: [plugin()], drainSeconds: 45 }),
-      "POST /api/v1/admin/extensions/packages/npm": (c) =>
-        (bodyOf(c) as { package: string }).package === "other"
-          ? json(200, { ...REVIEW, name: "other" })
-          : json(200, {
-              ...REVIEW,
-              version: "2.0.0",
-              ...addedOf(["provides:sandbox@1"], { "provides:sandbox@1": "sandbox" }),
-              removed: ["permissions.tools:echo"],
-            }),
-    });
-    await renderRouteWithCache(installPage(), lastStubRoutes());
-    const p = en.admin.extensions;
-    expect(await screen.findByText(fill(p.wizard.upgradeTitle, { name: "demo" }))).toBeTruthy();
-    const user = userEvent.setup();
-    await user.click(screen.getByRole("radio", { name: new RegExp(`^${p.wizard.sourceNpm}`) }));
-    await user.type(screen.getByLabelText(p.wizard.npmPackage), "demo");
-    await user.click(screen.getByRole("button", { name: p.wizard.fetch }));
-    expect(
-      await screen.findByText(fill(p.wizard.upgradeFrom, { from: "v1.0.0", to: "v2.0.0" })),
-    ).toBeTruthy();
-    expect(screen.getByText(fill(p.detail.drainHint, { seconds: 45 }))).toBeTruthy();
-    expect(screen.getByText(en.extensions.review.added)).toBeTruthy();
-    expect(screen.getByText(en.extensions.review.removed)).toBeTruthy();
-    expect(screen.getByText("permissions.tools:echo")).toBeTruthy();
-
-    await user.click(screen.getByRole("button", { name: p.wizard.back }));
-    const pkg = screen.getByLabelText(p.wizard.npmPackage);
-    await user.clear(pkg);
-    await user.type(pkg, "other");
-    await user.click(screen.getByRole("button", { name: p.wizard.fetch }));
-    expect(
-      await screen.findByText(
-        new RegExp(escapeRe(fill(p.wizard.upgradeMismatch, { got: "other", want: "demo" }))),
-      ),
-    ).toBeTruthy();
-    expect(screen.getByRole("button", { name: p.wizard.next }).hasAttribute("disabled")).toBe(true);
-    window.history.replaceState(null, "", "/");
-  });
-
-  it("the source step: card radios and the 选择文件 drop zone with the chosen file in it", async () => {
-    stubApi({
-      "GET /api/v1/admin/extensions": () => json(200, { extensions: [], drainSeconds: 30 }),
-      "GET /api/v1/me": () => json(200, {}),
-    });
-    await renderRouteWithCache(
-      installPage(),
-      { ...lastStubRoutes(), ...sessionRoutes() },
-      { locale: "zh" },
-    );
-    const w = zh.admin.extensions.wizard;
-    const group = await screen.findByRole("radiogroup", { name: w.sourceLabel });
-    expect(group.getAttribute("data-variant")).toBe("card");
-    expect(within(group).getByText(w.sourceNpmHint)).toBeTruthy();
-    const zone = document.querySelector('[data-part="file-picker"]') as HTMLElement;
-    expect(within(zone).getByRole("button", { name: w.choose })).toBeTruthy();
-    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
-    await userEvent
-      .setup()
-      .upload(
-        input,
-        new File([new Uint8Array([1])], "demo-1.0.0.tgz", { type: "application/gzip" }),
-      );
-    expect(within(zone).getByText("demo-1.0.0.tgz")).toBeTruthy();
-  });
-
-  it("上传 tgz：显示进度，可取消（中止请求，回到选文件）", async () => {
-    stubApi({
-      "GET /api/v1/admin/extensions": () => json(200, { extensions: [], drainSeconds: 30 }),
-      "GET /api/v1/me": () => json(200, {}),
-    });
-    const xhrs: FakeXhr[] = [];
-    class FakeXhr {
-      upload: { onprogress: ((e: ProgressEvent) => void) | null } = { onprogress: null };
-      onload: (() => void) | null = null;
-      onerror: (() => void) | null = null;
-      onabort: (() => void) | null = null;
-      status = 0;
-      responseText = "";
-      withCredentials = false;
-      headers: Record<string, string> = {};
-      url = "";
-      aborted = false;
-      body: unknown;
-      constructor() {
-        xhrs.push(this);
-      }
-      open(_m: string, url: string) {
-        this.url = url;
-      }
-      setRequestHeader(k: string, v: string) {
-        this.headers[k.toLowerCase()] = v;
-      }
-      send(body: unknown) {
-        this.body = body;
-      }
-      abort() {
-        this.aborted = true;
-        this.onabort?.();
-      }
-    }
-    vi.stubGlobal("XMLHttpRequest", FakeXhr);
-    await renderRouteWithCache(installPage(), { ...lastStubRoutes(), ...sessionRoutes() });
-    const p = en.admin.extensions;
-    const user = userEvent.setup();
-    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
-    await user.upload(
-      input,
-      new File([new Uint8Array([1, 2, 3])], "demo-1.0.0.tgz", { type: "application/gzip" }),
-    );
-    await user.click(screen.getByRole("button", { name: p.wizard.upload }));
-    await vi.waitFor(() => expect(xhrs).toHaveLength(1));
-    const xhr = xhrs[0] as FakeXhr;
-    expect(xhr.url).toBe("/api/v1/admin/extensions/packages/file");
-    expect(xhr.headers["x-capybara-csrf"]).toBe("1");
-    expect(xhr.headers["content-type"]).toBe("application/octet-stream");
-    xhr.upload.onprogress?.({ lengthComputable: true, loaded: 1, total: 2 } as ProgressEvent);
-    const bar = await screen.findByRole("progressbar");
-    await vi.waitFor(() => expect(bar.getAttribute("aria-valuenow")).toBe("50"));
-    await user.click(screen.getByRole("button", { name: /demo-1\.0\.0\.tgz/ }));
-    expect(xhr.aborted).toBe(true);
-    expect(await screen.findByText(p.wizard.cancelled)).toBeTruthy();
-    expect(screen.queryByRole("progressbar")).toBeNull();
-  });
-
-  it("上传遇到登录过期（代理报上游不可达且 /me 401）：提示重新登录，不说后端不可用", async () => {
-    let me = 0;
-    stubApi({
-      "GET /api/v1/admin/extensions": () => json(200, { extensions: [], drainSeconds: 30 }),
-      // the browser's session checks (before and after the upload); the server's own read is
-      // served by sessionRoutes below
-      "GET /api/v1/me": () => {
-        me++;
-        return me === 1
-          ? json(200, {})
-          : json(401, { error: { code: "auth.refresh_invalid", message: "expired" } });
-      },
-      "POST /api/v1/auth/refresh": () =>
-        json(401, { error: { code: "auth.refresh_invalid", message: "expired" } }),
-    });
-    class FakeXhr {
-      upload: { onprogress: ((e: ProgressEvent) => void) | null } = { onprogress: null };
-      onload: (() => void) | null = null;
-      onerror: (() => void) | null = null;
-      onabort: (() => void) | null = null;
-      status = 502;
-      responseText = JSON.stringify({
-        error: { code: "upstream_unavailable", message: "Kernel is unreachable" },
-      });
-      withCredentials = false;
-      open() {}
-      setRequestHeader() {}
-      send() {
-        setTimeout(() => this.onload?.(), 0);
-      }
-      abort() {}
-    }
-    vi.stubGlobal("XMLHttpRequest", FakeXhr);
-    await renderRouteWithCache(
-      installPage(),
-      { ...lastStubRoutes(), ...sessionRoutes() },
-      { locale: "zh" },
-    );
-    const p = zh.admin.extensions;
-    const user = userEvent.setup();
-    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
-    await user.upload(input, new File([new Uint8Array([1])], "x.tgz"));
-    await user.click(screen.getByRole("button", { name: p.wizard.upload }));
-    expect(await screen.findByText(new RegExp(escapeRe(p.wizard.sessionExpired)))).toBeTruthy();
-    expect(screen.queryByText(new RegExp(escapeRe(zh.errors.upstream_unavailable)))).toBeNull();
-  });
-});

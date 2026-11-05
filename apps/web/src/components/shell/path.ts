@@ -57,7 +57,6 @@ export const APP_PAGES: readonly string[] = [
   "/admin/accounts",
   "/admin/extensions",
   "/admin/extensions/[name]",
-  "/admin/extensions/install",
   "/admin/models",
   "/admin/orgs",
   "/admin/plugins",
