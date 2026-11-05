@@ -29,6 +29,7 @@ import {
   templatePluginProblem,
 } from "./catalog-content.js";
 import { itemView } from "./catalog-items.js";
+import { connectorTemplatesOn, templateIdOfPath } from "./component-state.js";
 import {
   PluginInstaller,
   type UninstallPreview,
@@ -216,8 +217,10 @@ export class OrgCatalogService {
       else {
         const m = latest?.manifest as PluginManifest | undefined;
         const ext = m?.extension ? loaded.get(m.name) : undefined;
+        // only the connector templates on in the org need input (ruling P2-6)
+        const templateIds = (m?.connectorTemplates ?? []).map((t) => templateIdOfPath(t.path));
         const needsInputs =
-          (m?.connectorTemplates ?? []).length > 0 ||
+          (await connectorTemplatesOn(this.db, orgId, i.id, templateIds)).size > 0 ||
           (m?.extension !== undefined &&
             ext?.config?.org !== undefined &&
             !ext.config.org.safeParse({}).success &&

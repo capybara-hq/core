@@ -14,6 +14,7 @@ import type { OneJob } from "../infra/queue/add-job-once.js";
 import { runJob } from "../infra/queue/run-job.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
+import { connectorTemplatesOn, templateIdOfPath } from "./component-state.js";
 import { type InstallPlan, PluginInstaller } from "./plugin-install.js";
 import { wantedOn } from "./scope.js";
 import { ScopeNoLongerWanted, ScopeStillWanted } from "./scope-state.js";
@@ -319,19 +320,29 @@ export class PluginScopeSync {
       .executeTakeFirst();
     const root = v?.manifest as PluginManifest | undefined;
     if (root === undefined) return false;
-    if (await this.manifestNeedsInput(orgId, root)) return true;
+    if (await this.manifestNeedsInput(orgId, root, itemId)) return true;
     // the dependencies the install would bring (planning reads no input of the org)
     const plan = await this.installer.plan(orgId, null, itemId, version, null, "", undefined);
     const visit = async (p: InstallPlan): Promise<boolean> => {
-      if (await this.manifestNeedsInput(orgId, p.manifest)) return true;
+      if (await this.manifestNeedsInput(orgId, p.manifest, p.itemId)) return true;
       for (const d of p.dependencies) if (d.plan && (await visit(d.plan))) return true;
       return false;
     };
     return visit(plan);
   }
 
-  private async manifestNeedsInput(orgId: string, m: PluginManifest): Promise<boolean> {
-    if ((m.connectorTemplates ?? []).length > 0) return true;
+  /**
+   * Whether installing plugin `itemId` (manifest `m`) needs the org's input: a connector template
+   * on in the org (ruling P2-6: templates switched off there, outside their own scope or disabled
+   * make no connector), or a required org config of its extension not set yet.
+   */
+  private async manifestNeedsInput(
+    orgId: string,
+    m: PluginManifest,
+    itemId: string,
+  ): Promise<boolean> {
+    const ids = (m.connectorTemplates ?? []).map((t) => templateIdOfPath(t.path));
+    if ((await connectorTemplatesOn(this.db, orgId, itemId, ids)).size > 0) return true;
     if (!m.extension) return false;
     const ext = this.registry.manifests().find((x) => x.name === m.name);
     const schema = ext?.config?.org;

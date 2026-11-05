@@ -475,3 +475,94 @@ export async function offeredNamed(
     componentOffered(c, pluginFactsOf(st, c.itemId, orgId), listedIn(st, c.id, orgId)),
   );
 }
+
+/** The other platform skills named `name` that are on in the org (rule 10). */
+export async function clashingPlatformSkills(
+  db: KernelSchemaDb,
+  orgId: string,
+  component: { id: string },
+  name: string,
+): Promise<ComponentRow[]> {
+  const others = (await loadComponents(db, "skill", { name })).filter((c) => c.id !== component.id);
+  if (others.length === 0) return [];
+  const st = await loadScopeState(db, "skill", others);
+  return others.filter((c) =>
+    componentOn(
+      c,
+      pluginFactsOf(st, c.itemId, orgId),
+      listedIn(st, c.id, orgId),
+      switchOf(st, c.id, orgId),
+    ),
+  );
+}
+
+/**
+ * The skills that already use the name of platform skill `component` in the org (rule 10): the
+ * org's own ({@link clashingOrgSkills}) and other platform skills on there (`plugins`: theirs).
+ */
+export async function skillNameClashes(
+  db: KernelSchemaDb,
+  orgId: string,
+  component: { id: string; itemId: string | null },
+  name: string,
+): Promise<{ skills: string[]; plugins: string[] }> {
+  const platform = await clashingPlatformSkills(db, orgId, component, name);
+  return {
+    skills: [
+      ...(await clashingOrgSkills(db, orgId, component, name)),
+      ...platform.map((c) => c.id),
+    ],
+    plugins: platform.map((c) => c.plugin ?? "platform"),
+  };
+}
+
+/** A connector template's id from its manifest path (`./connectors/<id>.json`). */
+export const templateIdOfPath = (path: string): string =>
+  (path.split("/").pop() ?? path).replace(/\.json$/, "");
+
+/**
+ * The connector templates among `ids` (of catalog item `itemId`) that are on in the org once the
+ * plugin is on there (ruling P2-6): the component switch, its own scope and disabled flags decide;
+ * a template without a platform row counts as on. Installs create connectors only from these, and
+ * only these need the org's input (`needs_config`).
+ */
+export async function connectorTemplatesOn(
+  db: KernelSchemaDb,
+  orgId: string,
+  itemId: string,
+  ids: readonly string[],
+): Promise<Set<string>> {
+  if (ids.length === 0) return new Set();
+  const comps = await loadComponents(db, "connector_template", { itemId });
+  const st = await loadScopeState(db, "connector_template", comps);
+  const off = new Set(
+    comps
+      .filter((c) => {
+        const p = pluginFactsOf(st, c.itemId, orgId);
+        return !componentOn(
+          c,
+          p && { ...p, installed: true },
+          listedIn(st, c.id, orgId),
+          switchOf(st, c.id, orgId),
+        );
+      })
+      .map((c) => c.name),
+  );
+  return new Set(ids.filter((id) => !off.has(id)));
+}
+
+/** The org's live connectors made from platform connector template `id` (they stay its own). */
+export async function connectorsMadeFrom(
+  db: KernelSchemaDb,
+  orgId: string,
+  id: string,
+): Promise<number> {
+  const r = await db
+    .selectFrom("connectors")
+    .select((eb) => eb.fn.countAll<string>().as("n"))
+    .where("org_id", "=", orgId)
+    .where("platform_template_id", "=", id)
+    .where("deleted_at", "is", null)
+    .executeTakeFirstOrThrow();
+  return Number(r.n);
+}

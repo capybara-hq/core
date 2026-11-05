@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { usableTemplates } from "../../src/agents/templates.js";
+import { PluginScopeSync } from "../../src/catalog/scope-sync.js";
 import { SkillsService } from "../../src/skills/skills.service.js";
 import { usableSkills } from "../../src/skills/usable.js";
 import { createOrg } from "../helpers/runs.js";
@@ -246,7 +247,12 @@ describe("component scope (super admin)", { timeout: 60_000 }, () => {
     const agentId = await agentUsing(skillId);
     const pv = await previewScope("skill", skillId, { scope: "named", orgs: [org2] });
     expect(pv.affected).toEqual([
-      { orgId: env.orgId, orgName: expect.any(String), agents: [{ id: agentId, name: "Skilled" }] },
+      {
+        orgId: env.orgId,
+        orgName: expect.any(String),
+        agents: [{ id: agentId, name: "Skilled" }],
+        connectorsKept: 0,
+      },
     ]);
     expect(pv.conflicts).toEqual([]);
     const stale = await env.root({
@@ -295,7 +301,13 @@ describe("component scope (super admin)", { timeout: 60_000 }, () => {
     const p = await env.db.selectFrom("platform_skills").select("id").executeTakeFirstOrThrow();
     const pv = await previewScope("skill", p.id, { scope: "optional" });
     expect(pv.conflicts).toEqual([
-      { orgId: org2, orgName: "Beta", name: "pdf-tools", skills: [expect.any(String)] },
+      {
+        orgId: org2,
+        orgName: "Beta",
+        name: "pdf-tools",
+        skills: [expect.any(String)],
+        plugins: [],
+      },
     ]);
     const put = await env.root({
       method: "PUT",
@@ -484,5 +496,163 @@ describe("org uploads next to platform skills", { timeout: 60_000 }, () => {
     expect((await usableSkills(env.db, env.orgId)).map((s) => [s.id, s.origin])).toEqual([
       [copy, "org"],
     ]);
+  });
+});
+
+/** Fix round 1: rule 10 between platform skills; connector template state (P2-6); 404s. */
+describe("fix round 1", { timeout: 60_000 }, () => {
+  /** Plugin `a` with skill `notes` installed in org A; plugin `b` with its own skill `notes`. */
+  async function twoNotes(): Promise<{ bItem: string; bNotes: string; aNotes: string }> {
+    const aItem = await seedPlugin(env, { name: "a", skills: ["notes"], templates: false });
+    expect((await install(env.boss, env, aItem)).statusCode).toBe(201);
+    const bItem = await seedPlugin(env, { name: "b", skills: ["notes"], templates: false });
+    const ids = await env.db
+      .selectFrom("platform_skills")
+      .select(["id", "plugin_name"])
+      .where("name", "=", "notes")
+      .execute();
+    return {
+      bItem,
+      aNotes: ids.find((r) => r.plugin_name === "a")?.id as string,
+      bNotes: ids.find((r) => r.plugin_name === "b")?.id as string,
+    };
+  }
+
+  it("switching on a platform skill named like another platform skill on in the org: 409", async () => {
+    const { bNotes, aNotes } = await twoNotes();
+    await env.db
+      .updateTable("platform_skills")
+      .set({ scope_mode: "own", scope: "optional" })
+      .where("id", "=", bNotes)
+      .execute();
+    const r = await sw(env.orgId, env.boss, bNotes, { enabled: true });
+    expect(r.statusCode, r.body).toBe(409);
+    expect(r.json().error.code).toBe("plugin.skill_conflict");
+    expect(r.json().error.details[0].skills).toEqual([aNotes]);
+    expect(await env.db.selectFrom("component_org_switches").select("org_id").execute()).toEqual(
+      [],
+    );
+  });
+
+  it("a component or plugin scope change offering a skill named like a platform skill on in the org lists the conflict and is refused", async () => {
+    const { bItem, bNotes, aNotes } = await twoNotes();
+    await setScope(env, bItem, "named", []);
+    const pv = await previewScope("skill", bNotes, { scope: "optional" });
+    expect(pv.conflicts).toEqual([
+      {
+        orgId: env.orgId,
+        orgName: expect.any(String),
+        name: "notes",
+        skills: [aNotes],
+        plugins: ["a"],
+      },
+    ]);
+    const put = await env.root({
+      method: "PUT",
+      url: `/api/v1/admin/components/skill/${bNotes}/scope`,
+      payload: { scope: "optional", scopeHash: pv.scopeHash },
+    });
+    expect(put.json().error.code).toBe("plugin.skill_conflict");
+    const ppv = await env.root({
+      method: "POST",
+      url: `/api/v1/admin/catalog/items/${bItem}/scope/preview`,
+      payload: { scope: "optional" },
+    });
+    expect(ppv.json().conflicts).toEqual([
+      {
+        orgId: env.orgId,
+        orgName: expect.any(String),
+        name: "notes",
+        skills: [aNotes],
+        plugins: ["a"],
+      },
+    ]);
+    const pput = await env.root({
+      method: "PUT",
+      url: `/api/v1/admin/catalog/items/${bItem}/scope`,
+      payload: { scope: "optional", scopeHash: ppv.json().scopeHash },
+    });
+    expect(pput.json().error.code).toBe("plugin.skill_conflict");
+  });
+
+  it("a deployment-disabled component not offered to the org is 404 for its switch (nothing written)", async () => {
+    const itemId = await seedPlugin(env, { name: "crm", skills: ["pdf-tools"], templates: false });
+    await setScope(env, itemId, "named", [org2]);
+    const p = await env.db.selectFrom("platform_skills").select("id").executeTakeFirstOrThrow();
+    await env.db.updateTable("platform_skills").set({ disabled: true }).execute();
+    for (const enabled of [true, false]) {
+      const r = await sw(env.orgId, env.boss, p.id, { enabled });
+      expect(r.statusCode, r.body).toBe(404);
+    }
+    expect(await env.db.selectFrom("component_org_switches").select("org_id").execute()).toEqual(
+      [],
+    );
+  });
+
+  const templateId = () =>
+    env.db
+      .selectFrom("platform_connector_templates")
+      .select("id")
+      .executeTakeFirstOrThrow()
+      .then((r) => r.id);
+  const tplSwitch = (enabled: boolean, confirm?: string) =>
+    env.boss({
+      method: "PUT",
+      url: `/api/v1/orgs/${env.orgId}/components/connector_template/${tplId}/switch`,
+      payload: { enabled, ...(confirm !== undefined && { confirm }) },
+    });
+  let tplId = "";
+  const ghBody = {
+    connectors: { gh: { endpoint: { url: "" }, credential: { token: MCP_TOKEN } } },
+  };
+  const liveConnectors = () =>
+    env.db.selectFrom("connectors").select("id").where("deleted_at", "is", null).execute();
+
+  it("connector templates off in the org (switch, own scope, disabled) create no connector and need no input", async () => {
+    ghBody.connectors.gh.endpoint.url = env.mcp.url;
+    for (const off of ["switch", "own", "disabled"] as const) {
+      await resetOrgCatalog(env);
+      const itemId = await seedPlugin(env, { name: "github", skills: [] });
+      tplId = await templateId();
+      if (off === "switch") expect((await tplSwitch(false)).statusCode).toBe(200);
+      if (off === "own") {
+        await env.db
+          .updateTable("platform_connector_templates")
+          .set({ scope_mode: "own", scope: "named" })
+          .execute();
+      }
+      if (off === "disabled") {
+        await env.db.updateTable("platform_connector_templates").set({ disabled: true }).execute();
+      }
+      const sync = env.k.app.get(PluginScopeSync);
+      expect(await sync.needsInput(env.orgId, itemId, "1.0.0"), off).toBe(false);
+      const bare = await install(env.boss, env, itemId);
+      expect(bare.statusCode, `${off}: ${bare.body}`).toBe(201);
+      expect(await liveConnectors(), off).toEqual([]);
+    }
+  });
+
+  it("a template on in the org: needs input; switched off after the install, its connector stays and the preview counts it", async () => {
+    ghBody.connectors.gh.endpoint.url = env.mcp.url;
+    const itemId = await seedPlugin(env, { name: "github", skills: [] });
+    tplId = await templateId();
+    expect(await env.k.app.get(PluginScopeSync).needsInput(env.orgId, itemId, "1.0.0")).toBe(true);
+    expect((await install(env.boss, env, itemId, ghBody)).statusCode).toBe(201);
+    const [conn] = await liveConnectors();
+    const linked = await env.db
+      .selectFrom("connectors")
+      .select("platform_template_id")
+      .executeTakeFirstOrThrow();
+    expect(linked.platform_template_id).toBe(tplId);
+    const pv = await previewScope("connector_template", tplId, { disabled: true });
+    expect(pv.affected).toEqual([
+      expect.objectContaining({ orgId: env.orgId, agents: [], connectorsKept: 1 }),
+    ]);
+    const pre = await tplSwitch(false);
+    expect(pre.statusCode, pre.body).toBe(200);
+    expect(pre.json().preview).toEqual({ agents: [], connectorsKept: 1 });
+    const off = await tplSwitch(false, pre.json().confirm);
+    expect(off.statusCode, off.body).toBe(200);
+    expect(await liveConnectors()).toEqual([conn]);
   });
 });

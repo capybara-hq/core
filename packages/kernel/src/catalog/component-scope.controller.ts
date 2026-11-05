@@ -215,7 +215,10 @@ export class OrgComponentsController {
     @ZBody(ComponentSwitchBody) body: z.infer<typeof SwitchBody>,
   ): Promise<
     | { component: OrgComponentView }
-    | { preview: { agents: { id: string; name: string; refs: string[] }[] }; confirm: string }
+    | {
+        preview: { agents: { id: string; name: string; refs: string[] }[]; connectorsKept: number };
+        confirm: string;
+      }
   > {
     const actor = requireUser(principal);
     const r = await this.scope.setSwitch(

@@ -59,6 +59,7 @@ import {
 import {
   agentDefinitionRefs,
   componentOn,
+  connectorTemplatesOn,
   type DefinitionRefs,
   listedIn,
   loadComponents,
@@ -641,7 +642,16 @@ export class PluginInstaller {
     const manifest = v.manifest as PluginManifest;
     const declared = await resolveDependencies(this.db, manifest);
     const extension = await this.planExtension(orgId, manifest);
-    const templates = await readCatalogTemplates(this.storage, v);
+    const allTemplates = await readCatalogTemplates(this.storage, v);
+    // Only the connector templates on in the org make connectors (ruling P2-6): one switched off
+    // there, outside its own scope or disabled is skipped (input given for it is ignored)
+    const on = await connectorTemplatesOn(
+      this.db,
+      orgId,
+      itemId,
+      allTemplates.map((t) => t.id),
+    );
+    const templates = allTemplates.filter((t) => on.has(t.id));
     const deps = [
       ...declared,
       ...(await this.impliedProviders(orgId, manifest, templates, declared)),
@@ -655,7 +665,7 @@ export class PluginInstaller {
         if (problem !== undefined) throw new ApiError("catalog.not_deployed", problem);
       }
     } else {
-      this.checkInput(manifest, templates, input, at);
+      this.checkInput(manifest, allTemplates, input, at);
       for (const ct of templates) {
         // The kernel installs only what needs no org input (the scope sync's `needs_config` rule)
         if (actor === null) throw systemNeedsInput(manifest.name);

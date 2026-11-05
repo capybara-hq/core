@@ -17,16 +17,17 @@ import {
   type ComponentKind,
   type ComponentRow,
   type ComponentScopeFacts,
-  clashingOrgSkills,
   componentLocked,
   componentOffered,
   componentOn,
+  connectorsMadeFrom,
   listedIn,
   loadComponents,
   loadScopeState,
   type PluginFacts,
   pluginFactsOf,
   type ScopeState,
+  skillNameClashes,
   switchOf,
 } from "./component-state.js";
 import type { PluginScope } from "./scope.js";
@@ -39,8 +40,21 @@ import type { PluginScope } from "./scope.js";
  * confirmed with the change.
  */
 export interface ComponentScopePreview {
-  affected: { orgId: string; orgName: string; agents: { id: string; name: string }[] }[];
-  conflicts: { orgId: string; orgName: string; name: string; skills: string[] }[];
+  affected: {
+    orgId: string;
+    orgName: string;
+    agents: { id: string; name: string }[];
+    /** A connector template: the org's connectors made from it, which stay as the org's own. */
+    connectorsKept: number;
+  }[];
+  /** `skills`: the clashing skill ids (org skills, other platform skills); `plugins`: theirs. */
+  conflicts: {
+    orgId: string;
+    orgName: string;
+    name: string;
+    skills: string[];
+    plugins: string[];
+  }[];
   scopeHash: string;
 }
 
@@ -92,7 +106,7 @@ export type ComponentSwitchResult =
   | { kind: "done"; component: OrgComponentView }
   | {
       kind: "preview";
-      preview: { agents: { id: string; name: string; refs: string[] }[] };
+      preview: { agents: { id: string; name: string; refs: string[] }[]; connectorsKept: number };
       confirm: string;
     };
 
@@ -129,14 +143,17 @@ export function nameConflictError(conflicts: ComponentScopePreview["conflicts"])
     conflicts
       .map(
         (c) =>
-          `Skill "${c.name}" already exists in organization ${c.orgName} (its own); it would be offered there twice.`,
+          `Skill "${c.name}" is already used in organization ${c.orgName} (${c.plugins.length > 0 ? `plugin "${c.plugins.join('", "')}"` : "its own skill"}); it would be offered there twice.`,
       )
       .join("\n"),
     conflicts.map((c) => ({
       skill: c.name,
       orgId: c.orgId,
       skills: c.skills,
-      source: { kind: "org" },
+      source:
+        c.plugins.length > 0
+          ? { kind: "plugin", name: c.plugins[0], version: "" }
+          : { kind: "org" },
     })),
   );
 }
@@ -165,10 +182,10 @@ function previewHash(
 function switchHash(
   orgId: string,
   c: { kind: ComponentKind; id: string },
-  agents: { id: string; refs: string[] }[],
+  preview: { agents: { id: string; refs: string[] }[]; connectorsKept: number },
 ): string {
   return createHash("sha256")
-    .update(JSON.stringify({ orgId, kind: c.kind, id: c.id, agents }))
+    .update(JSON.stringify({ orgId, kind: c.kind, id: c.id, ...preview }))
     .digest("hex");
 }
 
@@ -326,9 +343,14 @@ export class ComponentScopeService {
     const sw = switchOf(st, c.id, orgId);
     const on = componentOn(c, p, listed, sw);
     // Disabled on the deployment (the component or its plugin): it keeps its scope, so the org's
-    // switch can still be turned off, never on
+    // switch can still be turned off, never on; one its scope does not offer the org is unknown
     const stopped = c.disabled || (p?.live === true && p.disabled);
-    if (!on && !stopped && !componentOffered(c, p, listed)) throw notFound();
+    const offered = componentOffered(
+      { ...c, disabled: false },
+      p && { ...p, disabled: false },
+      listed,
+    );
+    if (!on && !offered) throw notFound();
     if (body.enabled && stopped) {
       throw new ApiError(
         "plugin.disabled",
@@ -337,12 +359,10 @@ export class ComponentScopeService {
     }
     if (body.enabled) {
       if (kind === "skill" && !on) {
-        const clash = await clashingOrgSkills(this.db, orgId, c, c.name);
-        if (clash.length > 0) {
+        const clash = await skillNameClashes(this.db, orgId, c, c.name);
+        if (clash.skills.length > 0) {
           const [org] = await this.liveOrgs(orgId);
-          throw nameConflictError([
-            { orgId, orgName: org?.name ?? orgId, name: c.name, skills: clash },
-          ]);
+          throw nameConflictError([{ orgId, orgName: org?.name ?? orgId, name: c.name, ...clash }]);
         }
       }
     } else {
@@ -353,9 +373,13 @@ export class ComponentScopeService {
         );
       }
       if (on) {
-        const agents = await agentsUsing(this.db, orgId, kind, [c.id]);
-        const confirm = switchHash(orgId, c, agents);
-        if (body.confirm === undefined) return { kind: "preview", preview: { agents }, confirm };
+        const preview = {
+          agents: await agentsUsing(this.db, orgId, kind, [c.id]),
+          connectorsKept:
+            kind === "connector_template" ? await connectorsMadeFrom(this.db, orgId, c.id) : 0,
+        };
+        const confirm = switchHash(orgId, c, preview);
+        if (body.confirm === undefined) return { kind: "preview", preview, confirm };
         if (body.confirm !== confirm) {
           throw new ApiError(
             "plugin.switch_stale",
@@ -628,6 +652,8 @@ export class ComponentScopeService {
           orgId: org.id,
           orgName: org.name,
           agents: agents.map((a) => ({ id: a.id, name: a.name })),
+          connectorsKept:
+            c.kind === "connector_template" ? await connectorsMadeFrom(this.db, org.id, c.id) : 0,
         });
       }
       if (
@@ -635,9 +661,9 @@ export class ComponentScopeService {
         componentOffered(after, p, listedAfter.has(org.id)) &&
         !componentOffered(c, p, listed)
       ) {
-        const skills = await clashingOrgSkills(this.db, org.id, c, c.name);
-        if (skills.length > 0) {
-          conflicts.push({ orgId: org.id, orgName: org.name, name: c.name, skills });
+        const clash = await skillNameClashes(this.db, org.id, c, c.name);
+        if (clash.skills.length > 0) {
+          conflicts.push({ orgId: org.id, orgName: org.name, name: c.name, ...clash });
         }
       }
     }

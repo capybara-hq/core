@@ -20,13 +20,13 @@ import {
   agentsUsing,
   COMPONENT_KINDS,
   type ComponentKind,
-  clashingOrgSkills,
   componentOffered,
   componentOn,
   listedIn,
   loadComponents,
   loadScopeState,
   pluginFactsOf,
+  skillNameClashes,
   switchOf,
 } from "./component-state.js";
 import { type PluginConfirmResult, PluginImport } from "./plugin-import.js";
@@ -61,7 +61,13 @@ export interface ScopePreview {
    * The orgs the change would newly offer a skill of the plugin whose own skills already use its
    * name (rule 10): the change is refused while there are any.
    */
-  conflicts: { orgId: string; orgName: string; name: string; skills: string[] }[];
+  conflicts: {
+    orgId: string;
+    orgName: string;
+    name: string;
+    skills: string[];
+    plugins: string[];
+  }[];
   scopeHash: string;
 }
 
@@ -610,9 +616,9 @@ export class CatalogScopeService {
             componentOffered(cAfter, pAfter, listed) &&
             !componentOffered(c, pNow, listed)
           ) {
-            const skills = await clashingOrgSkills(db, org.id, c, c.name);
-            if (skills.length > 0) {
-              conflicts.push({ orgId: org.id, orgName: org.name, name: c.name, skills });
+            const clash = await skillNameClashes(db, org.id, c, c.name);
+            if (clash.skills.length > 0) {
+              conflicts.push({ orgId: org.id, orgName: org.name, name: c.name, ...clash });
             }
           }
         }
