@@ -154,7 +154,7 @@ Untested by the task-level tests, most likely to bite first:
 - Consumes: `BackgroundTaskStore.insert` / `countRunning`, and `SandboxService.currentInstance` (Tasks 1-2).
 - Produces:
   - `newTaskId(): string`, which matches `/^bt_[a-z2-7]{6}$/`.
-  - `launchScript(id: string, command: string, seconds: number): string`. It builds the shell that writes `.capybara/tasks/<id>.sh` from base64, then runs `setsid nohup sh -c 'timeout -s KILL <seconds> sh .capybara/tasks/<id>.sh; echo $? > .capybara/tasks/<id>.exit' > .capybara/tasks/<id>.out 2>&1 < /dev/null & echo $!`.
+  - `launchScript(id: string, command: string, seconds: number): string`. It builds the shell that writes `.capybara/tasks/<id>.sh` from base64, then runs `setsid nohup sh -c 'timeout -s KILL <seconds> bash .capybara/tasks/<id>.sh; echo $? > .capybara/tasks/<id>.exit' > .capybara/tasks/<id>.out 2>&1 < /dev/null &`, then writes `$!` to `.capybara/tasks/<id>.sid` and prints it.
   - `startedText(id: string, description: string): string`. It returns spec §2.1's text exactly, with the path `/workspace/.capybara/tasks/<id>.out`.
 
 - [ ] **Step 1: Write failing tests:**
@@ -280,7 +280,8 @@ Untested by the task-level tests, most likely to bite first:
   - **Idle conversation.** A finish wakes a run attributed to the task's trigger account.
   - **Two finishes in the window.** Two finishes 5 s apart give one wake run that sees both. A third finish 10 s after that wake started schedules `bg-wake-…` and runs at the window's end.
   - **No wake for:** a sub-agent's task; a paused queue; `runtime.wakeOnBackgroundTask: false`; the org override set to false; a trigger account removed from the org *(Review Focus 5)*. In each case the event is logged and nothing runs.
-  - **`reported: true`** never wakes and renders as the short line.
+  - **`reported: true`** is absorbed like any other event, never wakes and renders as the short line.
+  - **A person's stop** (`stoppedBy: "person"` on the event, fix round 1) never wakes; the next run absorbs it.
   - **Step replay** of a call after a finish rebuilds the same request with zero drift.
   - **Full-run replay** of a run that absorbed a finish feeds it at the same step and starts no task.
 - [ ] **Step 3: Run** the new tests. Expected: FAIL.

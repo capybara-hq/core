@@ -4,6 +4,9 @@ import {
   AgentRow,
   AppShell,
   AttachmentStrip,
+  type BackgroundItem,
+  type BackgroundTaskItem,
+  BackgroundTaskRow,
   BackgroundTasks,
   Button,
   CommandPalette,
@@ -34,6 +37,7 @@ import {
   type SubagentRowData,
   SubagentTask,
   TaskList,
+  TaskOutputPanel,
   TitleBar,
   type TitleBarPanel,
   type TitleBarProps,
@@ -443,21 +447,142 @@ function filesSection() {
   return <FilesSection files={fileRows} onOpen={noop} onAll={noop} />;
 }
 
+/** The fixture's running duration, "2:28". */
+const RUNNING_MS = 148_000;
+const ID = { running: "running", sandbox: "finished", event: "unavailable" } as const;
+const BG_START = NOW - RUNNING_MS;
+
 function backgroundSection() {
   return (
     <PropertySection title="后台任务">
       <BackgroundTasks
-        running={P.background.running.map((r, i) => ({
-          id: `bg${i}`,
-          name: r.name,
-          elapsed: r.duration,
-        }))}
-        completed={P.background.completed}
+        items={[
+          ...P.background.running.map(
+            (r, i): BackgroundItem => ({
+              kind: "subagent",
+              id: `bg${i}`,
+              name: r.name,
+              status: "running",
+              startedAt: NOW - RUNNING_MS,
+            }),
+          ),
+          ...Array.from(
+            { length: P.background.completed },
+            (_, i): BackgroundItem => ({
+              kind: "subagent",
+              id: `bgdone${i}`,
+              name: `已完成 ${i}`,
+              status: "completed",
+              startedAt: BG_START,
+              finishedAt: BG_START + 1000 * (i + 1),
+            }),
+          ),
+        ]}
+        now={NOW}
         onStop={noop}
         onOpen={noop}
-        onCompleted={noop}
       />
     </PropertySection>
+  );
+}
+
+const bgTask = (over: Partial<BackgroundTaskItem> = {}): BackgroundTaskItem => ({
+  kind: "task",
+  id: "bgt",
+  description: "pnpm dev --port 3000",
+  status: "running",
+  startedAt: BG_START,
+  ...over,
+});
+
+/** One finished task row inside its section, the way the section draws it. */
+function finishedTask(status: BackgroundTaskItem["status"], exitCode: number | null) {
+  return (
+    <PropertySection title="后台任务">
+      <BackgroundTaskRow
+        item={bgTask({ status, exitCode, finishedAt: BG_START + 72_000 })}
+        now={NOW}
+        onStop={noop}
+        onOpen={noop}
+      />
+    </PropertySection>
+  );
+}
+
+function backgroundTaskBlocks(): ReactNode {
+  return (
+    <>
+      <PropBlock id="background-task-running">
+        <PropertySection title="后台任务">
+          <BackgroundTasks
+            items={[
+              bgTask(),
+              bgTask({ id: "bgt2", description: "tail -f build.log", stopping: true }),
+            ]}
+            now={NOW}
+            onStop={noop}
+            onOpen={noop}
+          />
+        </PropertySection>
+      </PropBlock>
+      <PropBlock id="background-task-done">{finishedTask("completed", 0)}</PropBlock>
+      <PropBlock id="background-task-failed">{finishedTask("failed", 2)}</PropBlock>
+      <PropBlock id="background-task-stopped">{finishedTask("stopped", null)}</PropBlock>
+      <PropBlock id="background-task-lost">{finishedTask("lost", null)}</PropBlock>
+      <PropBlock id="background-task-nested">
+        <PropertySection title="后台任务">
+          <BackgroundTasks
+            items={[
+              {
+                kind: "subagent",
+                id: "sa",
+                name: "列出示例文档目录树",
+                status: "running",
+                startedAt: BG_START,
+                tasks: [bgTask({ id: "bgn", nested: true })],
+              },
+            ]}
+            now={NOW}
+            onStop={noop}
+            onOpen={noop}
+          />
+        </PropertySection>
+      </PropBlock>
+    </>
+  );
+}
+
+function taskOutputBlocks(): ReactNode {
+  const body = (
+    status: BackgroundTaskItem["status"],
+    source: "sandbox" | "event",
+    elapsed: string,
+    stopping = false,
+  ) => (
+    <RefBlock
+      id={`task-output-panel-${stopping ? "stopping" : ID[status === "running" ? "running" : source]}`}
+      width={420}
+      pad
+    >
+      <TaskOutputPanel
+        description="pnpm dev --port 3000"
+        command="pnpm dev --port 3000"
+        status={status}
+        elapsed={elapsed}
+        text={"ready in 412 ms\nlistening on http://localhost:3000"}
+        source={source}
+        stopping={stopping}
+        onStop={noop}
+      />
+    </RefBlock>
+  );
+  return (
+    <>
+      {body("running", "sandbox", "2分28秒")}
+      {body("running", "sandbox", "2分28秒", true)}
+      {body("completed", "sandbox", "1分12秒")}
+      {body("completed", "event", "1分12秒")}
+    </>
   );
 }
 
@@ -854,6 +979,8 @@ export const CONVERSATION_PAGE_BLOCKS = {
   "picker-menu": pickerMenuBlocks,
   "inline-card": inlineCardBlocks,
   "property-section": propertySectionBlocks,
+  "background-task": backgroundTaskBlocks,
+  "task-output-panel": taskOutputBlocks,
   "right-panel": rightPanelBlocks,
   "template-conversation": templateConversationBlocks,
 } as const;

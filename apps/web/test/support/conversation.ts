@@ -170,6 +170,7 @@ export function snapshotDefaults(id = "c1"): Parameters<typeof renderRouteWithCa
     [`GET ${base}/tools`]: ok({ tools: [] }),
     [`GET ${base}/files`]: ok({ files: [], next: null }),
     [`GET ${base}/subagents`]: ok({ subagents: [], next: null }),
+    [`GET ${base}/background-tasks`]: ok({ tasks: [] }),
     [`GET ${base}/usage`]: ok({
       usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
     }),

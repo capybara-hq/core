@@ -243,7 +243,7 @@ describe("tools 节点（LangGraphLoop + 执行管线）", () => {
     signal: new AbortController().signal,
     shutdown: new AbortController().signal,
     sink: () => {},
-    async pendingUserMessages(afterSeq) {
+    async pendingAbsorbable(afterSeq) {
       const evs = await eventLog.readAfter(seed.conversationId, afterSeq, 1000);
       return evs.filter((e) => e.type === "user_message");
     },

@@ -88,6 +88,17 @@ Every provider must follow these; the kernel's behaviour below assumes them. How
 - **File operations resolve as the sandbox user**: permissions and symlinks are resolved as the non-root user, never as root through the daemon.
 - Paths have already passed `validateSandboxPath` (only `/workspace`, `/skills`, `/tmp` are accepted); the working directory is `/workspace` and attachments are in
   `/workspace/attachments/`.
+- **Background tasks** (`Bash` `run_in_background`, spec `docs/superpowers/specs/2026-11-05-background-bash-design.md` §4; no contract
+  change): the kernel launches a task with one short `exec` (`cwd: /workspace`, relative paths `.capybara/tasks/<id>.*`) that runs
+  `setsid nohup sh -c 'timeout -s KILL <s> bash <id>.sh; echo $? > <id>.exit'` in the background and prints the session id; liveness is
+  `pgrep -s <sid>`, stopping is `pkill -TERM|-KILL -s <sid>`. So the sandbox needs `sh`, `bash`, `setsid`, `nohup`, `timeout`, `pkill -s`,
+  `pgrep -s` and `base64` (a provider without them fails the launch with a readable error), and `exec` must return once its own process and stdio end,
+  without waiting for a detached session. The exec wrapper's abort, timeout, `killTagged` and `killAll` don't reach a task, and a task holds
+  no lease while it runs. Tasks don't survive a Docker suspend or a rebuild (the poll marks them `lost`); a task marked lost while its
+  process may live on (an E2B pause keeps processes) is `kill_pending`, and `SandboxService` kills those sessions right after resuming that
+  instance, under the exclusive lease next to its `killAll`. The poll and `TaskOutput` / `TaskStop` use `SandboxService.ifRunning`: a shared
+  lease only on a `running` row of the task's instance, never creating or resuming one. sandbox-fake puts node shims for `setsid`,
+  `timeout`, `pkill -s` and `pgrep -s` first on its PATH (macOS has none) and kills an instance's processes on `suspend` and `destroy`.
 
 ### Limits and egress (`SandboxLimits`)
 

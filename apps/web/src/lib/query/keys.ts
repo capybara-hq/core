@@ -206,6 +206,15 @@ export const keys = {
           sandbox: (): readonly unknown[] => [...c, "sandbox"],
           subagents: (): readonly unknown[] => [...c, "subagents"],
           usage: (): readonly unknown[] => [...c, "usage"],
+          /** The background tasks (also the prefix of their outputs: a change reads both). */
+          background: (): readonly unknown[] => [...c, "background"],
+          /** One background task's output tail. */
+          backgroundOutput: (taskId: string): readonly unknown[] => [
+            ...c,
+            "background",
+            taskId,
+            "output",
+          ],
           /** Every tool-info read of the conversation (an invalidation prefix). */
           toolInfoAll: (): readonly unknown[] => [...c, "toolInfo"],
           /** Tool info for `toolKeys`, sorted (the same set is one key whatever the order). */

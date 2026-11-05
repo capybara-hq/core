@@ -3,6 +3,7 @@ import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
 import { AgentLookup, visibleTo } from "../agents/agent-lookup.js";
 import type { AgentDefinition, ModelRef } from "../agents/definition.js";
+import { BackgroundTaskStopper } from "../background/stop.js";
 import { unbindConversation } from "../channels/threads.js";
 import type { TitleSource } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
@@ -268,6 +269,9 @@ export class ConversationsService {
     private readonly attachments: Pick<AttachmentsService, "bindForMessage">,
     /** Renders a person's skill invocation (phase D). */
     @Inject(SkillInvoker) private readonly invoker: Pick<SkillInvoker, "prepare">,
+    /** Stops a deleted conversation's background tasks. */
+    @Inject(BackgroundTaskStopper)
+    private readonly background: Pick<BackgroundTaskStopper, "stopForDeletedConversation">,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
   ) {}
 
@@ -465,7 +469,12 @@ export class ConversationsService {
   /**
    * Soft-deletes a conversation (owner only; a sub-agent's conversation is `conversation.read_only`):
    * stops an active run, hides the conversation everywhere for its owner and drops its channel
-   * bindings. The event log, runs and trajectory stay (enterprise admins still see them).
+   * bindings, then stops every running background task in its sandbox (its sub-agents' too;
+   * outside the delete's transaction, a task whose sandbox cannot be reached ends `lost` with
+   * `kill_pending`). The tasks are stopped after the conversation is marked deleted, so no finish
+   * (the stops' own, or one the poller writes meanwhile) can wake a run on it: `ensureRun` refuses a
+   * deleted conversation (the stops' finishes carry `stoppedBy: "deletion"` as well). The event
+   * log, runs and trajectory stay (enterprise admins still see them).
    */
   async remove(orgId: string, conversationId: string, accountId: string): Promise<void> {
     await this.writable(orgId, conversationId, accountId);
@@ -475,6 +484,7 @@ export class ConversationsService {
       if (!(e instanceof ApiError && e.code === "run.not_active")) throw e;
     }
     await this.markDeleted(conversationId);
+    await this.background.stopForDeletedConversation(conversationId);
     await this.eventLog.publishChanged(conversationId, "deleted");
   }
 

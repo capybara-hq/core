@@ -9,7 +9,13 @@ import {
   type ToolDefinition,
 } from "@capybara-hq/plugin-sdk";
 import type { AgentDefinition } from "../../agents/definition.js";
-import type { ConversationEvent, EventPayload } from "../../conversations/events.js";
+import { renderBackgroundFinished } from "../../background/render.js";
+import {
+  type AbsorbableEvent,
+  type ConversationEvent,
+  type EventPayload,
+  isAbsorbable,
+} from "../../conversations/events.js";
 import { catalogText, isAlwaysLoaded } from "../../tools/builtins/tool-search.js";
 import type { ResolvedTool } from "../../tools/registry.js";
 import { LEGACY_CATALOG_HEADER, LEGACY_SKILL_TEXTS, usesLegacyToolNames } from "./legacy-text.js";
@@ -80,13 +86,14 @@ export interface BuildModelRequestInput {
   model: ModelInfo;
   step: number;
   /**
-   * loop 已吸收到的 user_message seq（R31）。提供时：
-   * - seq 大于它的 user_message 不进请求（运行中途到达、尚未被吸收的插话，由后续步骤吸收或触发下一轮）；
-   * - 每条 user_message 放在**吸收它的那次模型调用**的位置：日志里第一个 `request.absorbedUpToSeq`
+   * loop 已吸收到的位置（R31）：the largest seq of the absorbable events (`user_message` and
+   * `background_task_finished`, {@link isAbsorbable}) the loop took. 提供时：
+   * - seq 大于它的可吸收事件不进请求（运行中途到达、尚未被吸收的插话或后台任务结束，由后续步骤吸收或触发下一轮）；
+   * - 每个可吸收事件放在**吸收它的那次模型调用**的位置：日志里第一个 `request.absorbedUpToSeq`
    *   不小于它的 `model_call` 之前（没有该字段的旧 model_call 视为吸收了它之前的全部消息），
    *   本次请求吸收的放在末尾。于是模型看到的历史只追加（插话不会插到已发送的回复之前），
    *   且请求可由日志 + `model_call` 精确还原。
-   * 不提供时按 seq 原样回放全部 user_message。
+   * 不提供时按 seq 原样回放全部可吸收事件。
    */
   absorbedUpToSeq?: number;
   /**
@@ -527,10 +534,11 @@ export function summaryText(summary: string): string {
  * - messages：最近一条摘要（若有）作为首条 user 消息，其后按 seq 回放 `coversUpToSeq` 之后的
  *   `user_message` / `assistant_message`（content 原样，含 opaque；aborted 的也回放；媒体引用按
  *   {@link resolveMedia} 换成 base64 或文字占位）/ `reminder`
- *   （`role: "system"`，放在它所在的位置）；`tool_result` 事件还原为紧随其 assistant 消息之后的一条 user 消息
+ *   （`role: "system"`，放在它所在的位置）/ `background_task_finished`（`role: "system"`, the text of
+ *   {@link renderBackgroundFinished}, placed like a user_message）；`tool_result` 事件还原为紧随其 assistant 消息之后的一条 user 消息
  *   （同一步的多个结果合并，按该 assistant 消息里 tool_call 的顺序；找不到对应调用的结果不进请求）。
  *   其他事件不进请求。提供 `absorbedUpToSeq` 时，
- *   尚未被吸收的 user_message 不进请求，运行中途到达的插话放在吸收它的调用处（见 BuildModelRequestInput）。
+ *   尚未被吸收的可吸收事件不进请求，运行中途到达的放在吸收它的调用处（见 BuildModelRequestInput）。
  * 只追加：新事件只会在 messages 末尾追加；唯一的前缀变化来自新的压缩摘要。
  * `step` 与 `agentVersion` 不进请求内容（保证缓存前缀稳定），由调用方写入 `model_call` 事件。
  */
@@ -579,7 +587,7 @@ export function buildModelRequest(input: BuildModelRequestInput): {
     if (e.type === "model_call") lastCall = absorbedBy(e);
   }
   /**
-   * 第 i 个事件（user_message）的放置方式：
+   * 第 i 个事件（可吸收事件：user_message / background_task_finished）的放置方式：
    * - `inline`：在吸收它的调用（之后第一个 `absorbedBy ≥ seq` 的 model_call，或本次请求）之前，
    *   没有「由未吸收它的调用生成的回复」→ 按 seq 原位回放（常规情况，与不提供 absorbedUpToSeq 时一致）；
    * - `deferred`：它之后有非空 assistant_message 是由一次没有吸收它的 model_call 生成的（它在那一步
@@ -658,8 +666,13 @@ export function buildModelRequest(input: BuildModelRequestInput): {
     const blocks = blocksOf(u.payload.content);
     return report === undefined ? blocks : [...blocks, { type: "text", text: report }];
   };
-  /** 被某次模型调用跳过（运行中途到达）、尚未被吸收的 user_message，按 seq 升序。 */
-  let deferred: (ConversationEvent & { type: "user_message" })[] = [];
+  /** 被某次模型调用跳过（运行中途到达）、尚未被吸收的可吸收事件，按 seq 升序。 */
+  let deferred: AbsorbableEvent[] = [];
+  /** An absorbable event as a request message: a user turn, or a finished task's system text. */
+  const absorbableMessage = (e: AbsorbableEvent): ModelMessage =>
+    e.type === "user_message"
+      ? { role: "user", content: userBlocks(e) }
+      : { role: "system", content: renderBackgroundFinished(e.payload) };
   /**
    * 把已被吸收（seq ≤ upTo）的延后消息按 seq 顺序放进 messages，插在末尾连续的 system 提醒之前
    * （若有）。这样某一步自己写在 model_call 之前的提醒（含收尾提醒）仍排在它所跟随的用户消息之后，
@@ -671,11 +684,7 @@ export function buildModelRequest(input: BuildModelRequestInput): {
     deferred = deferred.filter((u) => u.seq > upTo);
     let at = messages.length;
     while (at > 0 && messages[at - 1]?.role === "system") at--;
-    messages.splice(
-      at,
-      0,
-      ...ready.map((u): ModelMessage => ({ role: "user", content: userBlocks(u) })),
-    );
+    messages.splice(at, 0, ...ready.map(absorbableMessage));
   };
   /** (runId, callId) → 该调用的 tool_result 事件（同一调用只取第一个）。 */
   const results = new Map<string, EventPayload<"tool_result">>();
@@ -714,21 +723,22 @@ export function buildModelRequest(input: BuildModelRequestInput): {
   }
   for (const [i, e] of events.entries()) {
     if (e.seq <= after) continue;
+    if (isAbsorbable(e)) {
+      switch (absorbed === undefined ? "inline" : placement(i, e.seq)) {
+        case "inline":
+          // seq 更小的延后事件被同一次或更早的调用吸收：先放它们，保持发送顺序。
+          flush(e.seq - 1);
+          messages.push(absorbableMessage(e));
+          break;
+        case "deferred":
+          deferred.push(e);
+          break;
+        default:
+          break;
+      }
+      continue;
+    }
     switch (e.type) {
-      case "user_message":
-        switch (absorbed === undefined ? "inline" : placement(i, e.seq)) {
-          case "inline":
-            // seq 更小的延后消息被同一次或更早的调用吸收：先放它们，保持用户消息的发送顺序。
-            flush(e.seq - 1);
-            messages.push({ role: "user", content: userBlocks(e) });
-            break;
-          case "deferred":
-            deferred.push(e);
-            break;
-          default:
-            break;
-        }
-        break;
       case "model_call":
         emitRaced(e.payload.request.toSeq);
         if (absorbed !== undefined) flush(absorbedBy(e));

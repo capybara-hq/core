@@ -106,6 +106,7 @@ Non-goals:
   invocation forks (phase D).
 - `run_in_background` for Bash, Read's `pages`, Grep's `type` and `multiline`: not accepted, and
   the descriptions do not mention them (§4.2).
+  `run_in_background` is superseded by `2026-11-05-background-bash-design.md`, which accepts it.
 - ripgrep in sandboxes. Grep keeps POSIX extended regular expressions and says so in its
   description.
 - Renaming anything that is not a tool key (routes, tables, `plugin_<name>` schemas, events).

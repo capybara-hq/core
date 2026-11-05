@@ -31,6 +31,10 @@ export const ACCEPTED: string[] = [
   "prose",
   "thinking-row",
   "user-bubble",
+  // background Bash plan Task 9 added states: run-divider `notice`, tool-group and tool-row
+  // `linked`, task-output-panel `stopping`; their blocks and size-table rows are in place, the
+  // reference PNGs and the side-by-side review wait for the reference-update and visual-update
+  // workflows
   "run-divider",
   "tool-group",
   "tool-row",
@@ -85,6 +89,11 @@ export const ACCEPTED: string[] = [
   // skeleton primitives (spec §6.29): blocks and size table in place; the reference PNGs and the
   // side-by-side review wait for the reference-update and visual-update workflows
   "skeleton",
+  // background task rows (background Bash plan Task 8): blocks and size table in place; the
+  // reference PNGs and the side-by-side review wait for the reference-update and visual-update
+  // workflows
+  "background-task",
+  "task-output-panel",
 ];
 
 /**

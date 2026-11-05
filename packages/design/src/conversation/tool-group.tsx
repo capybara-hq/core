@@ -11,6 +11,7 @@ import {
   ToolBox,
   ToolDetail,
   ToolLabel,
+  ToolLink,
   ToolRow,
   type ToolRowData,
   WaitingWord,
@@ -82,9 +83,29 @@ export function ToolGroup({
         <WaitingWord row={single} lead=" · " />
       </>
     );
+    const chevron = <Icon name={isOpen ? "chevron-down" : "chevron-right"} size={12} />;
     return (
       <div className="cb-tool-group" data-single="true">
-        {expandable ? (
+        {single.link ? (
+          // a call with a link (§6.16.9): the toggle and the link side by side, never nested
+          <div className="cb-tool-line" data-part="tool-line" data-linked="true">
+            {expandable ? (
+              <button
+                type="button"
+                className="cb-tool-toggle"
+                aria-expanded={isOpen}
+                aria-controls={isOpen ? id : undefined}
+                onClick={toggle}
+              >
+                {label}
+                {chevron}
+              </button>
+            ) : (
+              <span className="cb-tool-toggle">{label}</span>
+            )}
+            <ToolLink link={single.link} />
+          </div>
+        ) : expandable ? (
           <button
             type="button"
             className="cb-tool-line"
@@ -94,7 +115,7 @@ export function ToolGroup({
             onClick={toggle}
           >
             {label}
-            <Icon name={isOpen ? "chevron-down" : "chevron-right"} size={12} />
+            {chevron}
           </button>
         ) : (
           <div className="cb-tool-line" data-part="tool-line">

@@ -47,6 +47,9 @@ import { toolLabel, toolLabelOfKey } from "./tool-label";
  *   its `skill_fork_result` a `skill-report` entry. A plain message that a later fork's run took
  *   in, not yet sent to the model while that sub-agent works, says it waits for it (`waitsFor`).
  *   A sub-agent's task message carries the `skill` record too and stays a `task`.
+ * - Background Bash (background Bash spec §5): a `Bash` call with `run_in_background: true` is a
+ *   row with `background` (its task id from the result), `TaskOutput` / `TaskStop` rows name the
+ *   task's description, and `background_task_finished` is a `background` notice entry.
  */
 
 export type ApprovalDecision = Extract<ConversationEvent, { type: "approval_decided" }>["payload"];
@@ -102,6 +105,13 @@ export interface TimelineTool {
   outputId: string | null;
   /** A read's line range; the thread shows it as the row's extra through i18n (m10). */
   lines?: { from: number; to: number };
+  /**
+   * A background `Bash` call (`run_in_background: true`): the thread labels it "In background"
+   * through i18n, as the row's `extra` (it replaces any other extra, e.g. an extension's display
+   * summary; a line range still wins), and links its task (`#bg-<taskId>`, the row's `link`) once
+   * the result named it.
+   */
+  background?: { taskId: string | null };
 }
 
 export interface ApprovalItem {
@@ -238,6 +248,15 @@ export type TimelineEntry =
   | { kind: "card"; key: string; plugin: string; view: string; callId: string; cardKey?: string }
   | { kind: "files"; key: string; files: FileRef[] }
   | ({ kind: "divider"; key: string } & DividerData)
+  | {
+      /** A background task ended (`background_task_finished`): a one-line notice that opens it. */
+      kind: "background";
+      key: string;
+      taskId: string;
+      description: string;
+      status: Extract<ConversationEvent, { type: "background_task_finished" }>["payload"]["status"];
+      exitCode: number | null;
+    }
   | ({ kind: "run"; key: string } & RunData);
 
 /** A streaming draft (`event: delta`), not in the log yet. */
@@ -253,6 +272,12 @@ const TERMINAL = new Set<ConversationEvent["type"]>(["run_finished", "run_failed
 export const AGENT_TOOL = "Agent";
 /** The builtin question tool: its row reads "已提问 <header>" (design kind `question`, §6.16.9). */
 export const QUESTION_TOOL = "AskUserQuestion";
+/** The builtin shell tool; `run_in_background: true` makes a background task. */
+const BASH_TOOL = "Bash";
+/** The builtins that name a background task by `task_id`: their rows show its description. */
+const TASK_TOOLS = new Set(["TaskOutput", "TaskStop"]);
+/** A background launch's result starts with the task's id (kernel `background/launch.ts`). */
+const STARTED_TASK = /^Started background task (bt_[a-z0-9]+) /;
 
 /** The question row's preview: the first question's header, else its text, else the title. */
 function questionPreview(input: unknown, info: ToolInfo | undefined): string | undefined {
@@ -574,6 +599,8 @@ export function buildEventTimeline(
   let compactionUsage: number | null = null;
   /** `agent` calls by (runId, callId). */
   const agentCalls = new Map<string, { sub: TimelineSubagent; runId: string | null }>();
+  /** Background task id → its description (from its launch, else its finish). */
+  const taskDescriptions = new Map<string, string>();
   /** Sub-agent id → its latest dispatch's row and child run. */
   const subagentRows = new Map<
     string,
@@ -761,6 +788,13 @@ export function buildEventTimeline(
             },
           };
           const tool: TimelineTool = { row, callId: b.id, toolKey: b.name, input, outputId: null };
+          const base = ti?.aliasOf ?? b.name;
+          if (base === BASH_TOOL && rec.run_in_background === true)
+            tool.background = { taskId: null };
+          if (TASK_TOOLS.has(base) && typeof rec.task_id === "string") {
+            const description = taskDescriptions.get(rec.task_id);
+            if (description) row.keyArg = description;
+          }
           group.rows.push(tool);
           calls.set(callKey(e.runId, b.id), {
             tool,
@@ -844,6 +878,13 @@ export function buildEventTimeline(
           ...(failed ? { errorText: p.content } : {}),
         };
         c.tool.outputId = p.outputId ?? null;
+        if (c.tool.background && !failed) {
+          const taskId = STARTED_TASK.exec(p.content)?.[1];
+          if (taskId !== undefined) {
+            c.tool.background = { taskId };
+            taskDescriptions.set(taskId, row.description ?? taskId);
+          }
+        }
         if (p.card) {
           const list = groupCards.get(c.group) ?? [];
           list.push({
@@ -1050,6 +1091,19 @@ export function buildEventTimeline(
           );
         }
         break;
+      case "background_task_finished": {
+        const p = e.payload;
+        if (!taskDescriptions.has(p.taskId)) taskDescriptions.set(p.taskId, p.description);
+        out.push({
+          kind: "background",
+          key,
+          taskId: p.taskId,
+          description: p.description,
+          status: p.status,
+          exitCode: p.exitCode,
+        });
+        break;
+      }
       case "compaction_summary":
         out.push({
           kind: "divider",

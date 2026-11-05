@@ -45,7 +45,8 @@ type EndKind = Exclude<LoopOutcome["kind"], "interrupted" | "suspended">;
 /**
  * 图状态：只记录进度，消息每步从事件日志重建（runModelStep 自己读日志），checkpoint 很小。
  * - `step`：当前（最近一次进入的）步骤编号，prepare 节点 +1；
- * - `consumedUpToSeq`：已吸收的最大 user_message seq；
+ * - `consumedUpToSeq`：已吸收的最大可吸收事件 seq（user_message / background_task_finished; a
+ *   finish TaskOutput or TaskStop already reported is absorbed like any other, rendered short）；
  * - `lastStopReason`：最近一步模型调用的停止原因；
  * - `outcome`：图的结束方式（在决定结束的节点里写入，续跑已结束的图时直接读出，不依赖当前时间）。
  *
@@ -187,7 +188,7 @@ export class LangGraphLoop implements AgentLoop {
       let consumed = s.consumedUpToSeq;
       // the run's first prepare (also when it runs again after a suspend on its fork's sub-agent)
       const firstStep = s.step === 0;
-      const absorbed = await ctx.pendingUserMessages(consumed);
+      const absorbed = await ctx.pendingAbsorbable(consumed);
       for (const m of absorbed) consumed = Math.max(consumed, m.seq);
       // phase D: a run's own fork invocation is absorbed at step 1 (the run boundary,
       // `forkBoundary`, makes it the last message there); its sub-agent runs, and its report is

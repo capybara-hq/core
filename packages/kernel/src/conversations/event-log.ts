@@ -95,6 +95,8 @@ export const CONVERSATION_CHANGES = [
   "files",
   "archived",
   "deleted",
+  // the conversation's background tasks (or its sub-agents')
+  "background",
 ] as const;
 export type ConversationChange = (typeof CONVERSATION_CHANGES)[number];
 

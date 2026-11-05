@@ -170,6 +170,12 @@ describe("MaintenanceProcessor (the one consumer)", () => {
       },
       { runSyncJob: async (d) => void calls.push(["directory", d]) },
       {
+        ensureRun: async (id) => {
+          calls.push(["wake", id]);
+          return null;
+        },
+      },
+      {
         runNow: async (name) => {
           if (name !== "sandbox-suspend-idle") return false;
           calls.push(["periodic", name]);
@@ -186,6 +192,7 @@ describe("MaintenanceProcessor (the one consumer)", () => {
       job("drift-connector", { orgId: "o", connectorId: "k", trigger: "schedule" }),
     );
     await processor.process(job("directory-sync", { orgId: "o" }));
+    await processor.process(job("bg-wake", { conversationId: "c2" }));
     await processor.process(job("sandbox-suspend-idle", {}));
     await processor.process(job("no-such-job", {}));
     expect(calls).toEqual([
@@ -193,6 +200,7 @@ describe("MaintenanceProcessor (the one consumer)", () => {
       ["sandbox", "c1"],
       ["drift", "o", "k", "schedule"],
       ["directory", { orgId: "o" }],
+      ["wake", "c2"],
       ["periodic", "sandbox-suspend-idle"],
     ]);
     expect(warned).toEqual([

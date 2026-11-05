@@ -22,11 +22,16 @@ export const BUILTIN = {
   ReadToolOutput: "ReadToolOutput",
   ToolSearch: "ToolSearch",
   Agent: "Agent",
+  TaskOutput: "TaskOutput",
+  TaskStop: "TaskStop",
 } as const;
 
 export type BuiltinName = (typeof BUILTIN)[keyof typeof BUILTIN];
 
-/** The builtin tools that run in the conversation's sandbox. */
+/**
+ * The builtin tools that run in the conversation's sandbox. `TaskOutput` and `TaskStop` read and
+ * stop the background tasks `Bash` started (background Bash spec §2.2, §2.3).
+ */
 export const SANDBOX_TOOL_NAMES: readonly BuiltinName[] = [
   BUILTIN.Bash,
   BUILTIN.Read,
@@ -35,9 +40,21 @@ export const SANDBOX_TOOL_NAMES: readonly BuiltinName[] = [
   BUILTIN.Glob,
   BUILTIN.Grep,
   BUILTIN.Deliver,
+  BUILTIN.TaskOutput,
+  BUILTIN.TaskStop,
 ];
 
-/** Sandbox tools that need approval when the org setting `sandboxToolPolicy` is `ask` (not the read-only ones). */
+/**
+ * The tools offered with `Bash` whenever it is offered (background Bash: a model that can start a
+ * background task can read and stop it). `ToolRegistry` adds them; an explicit ref is harmless.
+ */
+export const BASH_COMPANION_TOOLS: readonly BuiltinName[] = [BUILTIN.TaskOutput, BUILTIN.TaskStop];
+
+/**
+ * Sandbox tools that need approval when the org setting `sandboxToolPolicy` is `ask` (not the
+ * read-only ones). Not `TaskOutput` or `TaskStop`: they only read or stop a task whose launch
+ * already went through `Bash`'s policy (background Bash spec §4.5).
+ */
 export const SANDBOX_ASK_TOOL_NAMES: ReadonlySet<string> = new Set<string>([
   BUILTIN.Bash,
   BUILTIN.Write,
@@ -113,6 +130,8 @@ export const BUILTIN_TOOL_KINDS: Readonly<Record<string, ToolKind>> = {
   [BUILTIN.Glob]: "search",
   [BUILTIN.Grep]: "search",
   [BUILTIN.Deliver]: "tool",
+  [BUILTIN.TaskOutput]: "read",
+  [BUILTIN.TaskStop]: "command",
   [BUILTIN.ToolSearch]: "meta",
   [BUILTIN.Skill]: "meta",
   [BUILTIN.SkillWrite]: "meta",
@@ -127,5 +146,7 @@ export const BUILTIN_TOOL_KINDS: Readonly<Record<string, ToolKind>> = {
  * with one (or a different wording) still match.
  */
 export const MATCH_IGNORED_FIELDS: Readonly<Record<string, readonly string[]>> = {
+  // `run_in_background` is matched on purpose: it changes what the call did (a launch that
+  // returns at once instead of the command's output; background Bash spec §4.4)
   [BUILTIN.Bash]: ["description"],
 };

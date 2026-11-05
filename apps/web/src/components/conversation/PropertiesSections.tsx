@@ -10,7 +10,13 @@ import {
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { useEffect, useMemo, useRef } from "react";
-import type { ConversationEvent, ModelRef, SubagentView, ToolInfo } from "../../lib/conversations";
+import type {
+  BackgroundTaskView,
+  ConversationEvent,
+  ModelRef,
+  SubagentView,
+  ToolInfo,
+} from "../../lib/conversations";
 import type { FileOutput } from "../../lib/files";
 import { retryOnMountOf } from "../../lib/query/client";
 import { connectorsQuery, sandboxQuery } from "../../lib/query/conversation";
@@ -173,7 +179,7 @@ export function FilesSection({ files, onOpen }: { files: FileOutput[]; onOpen(id
 /**
  * The properties panel (spec §6.16.17 order): Context, the extensions' sections in contribution
  * order (each failing alone), Files (when there are any, the sub-agents' deliveries included), then
- * Background tasks (hidden until there is a sub-agent).
+ * Background tasks (hidden until there is a background task or a sub-agent).
  */
 export function PropertiesSections({
   ctx,
@@ -184,7 +190,7 @@ export function PropertiesSections({
   files,
   sections,
   onOpenFile,
-  subagents,
+  background,
   total,
 }: {
   ctx: BlockContext;
@@ -195,8 +201,14 @@ export function PropertiesSections({
   files: FileOutput[];
   sections: UiContributionItem[];
   onOpenFile(id: string): void;
-  subagents?:
-    | { views: readonly SubagentView[]; onStop(id: string): void; onOpen(id: string): void }
+  background?:
+    | {
+        views: readonly SubagentView[];
+        tasks: readonly BackgroundTaskView[];
+        stopping: ReadonlySet<string>;
+        onStop(item: { kind: "task" | "subagent"; id: string }): void;
+        onOpen(item: { kind: "task" | "subagent"; id: string }): void;
+      }
     | undefined;
   total?: string | undefined;
 }) {
@@ -215,11 +227,13 @@ export function PropertiesSections({
         <ExtensionSection key={`${c.plugin}/${c.id}`} ctx={ctx} c={c} />
       ))}
       {files.length > 0 ? <FilesSection files={files} onOpen={onOpenFile} /> : null}
-      {subagents && subagents.views.length > 0 ? (
+      {background && background.views.length + background.tasks.length > 0 ? (
         <BackgroundSection
-          views={subagents.views}
-          onStop={subagents.onStop}
-          onOpen={subagents.onOpen}
+          views={background.views}
+          tasks={background.tasks}
+          stopping={background.stopping}
+          onStop={background.onStop}
+          onOpen={background.onOpen}
         />
       ) : null}
     </PropertiesPanel>

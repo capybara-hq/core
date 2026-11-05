@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -103,5 +103,152 @@ describe("sandbox-fake", () => {
     expect(r.timedOut).toBe(false);
     expect(() => process.kill(pid, 0)).toThrow();
     await expect(p.stat(h, "/workspace", ac.signal)).rejects.toThrow();
+  });
+});
+
+/** Waits until `check` holds (the fake's kills are asynchronous at the OS level). */
+async function until(check: () => Promise<boolean> | boolean, timeoutMs = 5000): Promise<void> {
+  const end = Date.now() + timeoutMs;
+  while (!(await check())) {
+    if (Date.now() > end) throw new Error("condition not met in time");
+    await new Promise((r) => setTimeout(r, 20));
+  }
+}
+
+const hostAlive = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * The shims background tasks rely on (spec 2026-11-05-background-bash-design §4.2): `setsid`,
+ * `timeout`, `pgrep -s` and `pkill -s`, on the fake's PATH so they work on macOS too.
+ */
+describe("sandbox-fake background task shims", () => {
+  const exec = (
+    p: ReturnType<typeof createFakeSandbox>,
+    h: { id: string },
+    command: string,
+    timeoutMs = 10_000,
+  ) => p.exec(h, { command, timeoutMs, maxOutputBytes: 10_000, signal: sig() });
+  /** Starts `sleep 30` in a session of its own and returns the session id. */
+  const startSession = async (p: ReturnType<typeof createFakeSandbox>, h: { id: string }) => {
+    const r = await exec(p, h, "setsid sh -c 'sleep 30' > /dev/null 2>&1 & echo $!");
+    expect(r).toMatchObject({ exitCode: 0, stderr: "" });
+    expect(r.stdout).toMatch(/^[1-9][0-9]*\n$/);
+    return r.stdout.trim();
+  };
+  /** The host pids `pgrep -s` finds in the session. */
+  const members = async (
+    p: ReturnType<typeof createFakeSandbox>,
+    h: { id: string },
+    sid: string,
+  ) => {
+    const r = await exec(p, h, `pgrep -s ${sid}`);
+    return r.exitCode === 0 ? r.stdout.trim().split("\n").map(Number) : [];
+  };
+
+  it("setsid prints nothing and returns at once; pgrep -s finds the session; pkill -s ends it", async () => {
+    const p = createFakeSandbox(root);
+    const h = await p.create({ name: "cap-s", image: "i", limits, signal: sig() });
+    const t0 = Date.now();
+    const sid = await startSession(p, h);
+    expect(Date.now() - t0).toBeLessThan(5000);
+    const pids = await members(p, h, sid);
+    expect(pids.length).toBeGreaterThan(0);
+    for (const pid of pids) expect(hostAlive(pid)).toBe(true);
+    // no exec command runs any more (the exec that started the session ended), yet it lives on
+    expect(await readdir(join(root, "instances", h.id, "procs"))).toEqual([]);
+    for (const pid of pids) expect(hostAlive(pid)).toBe(true);
+
+    expect((await exec(p, h, `pkill -s ${sid}`)).exitCode).toBe(0);
+    await until(async () => (await exec(p, h, `pgrep -s ${sid}`)).exitCode === 1);
+    for (const pid of pids) await until(() => !hostAlive(pid));
+    // nothing left to signal
+    expect((await exec(p, h, `pkill -KILL -s ${sid}`)).exitCode).toBe(1);
+  });
+
+  it("a sid without a session record matches nothing, even a live host process, at once", async () => {
+    const p = createFakeSandbox(root);
+    const h = await p.create({ name: "cap-u", image: "i", limits, signal: sig() });
+    // this test process: alive, same user, and never started by the fake's setsid
+    const t0 = Date.now();
+    expect(await exec(p, h, `pgrep -s ${process.pid}`)).toMatchObject({ exitCode: 1, stdout: "" });
+    expect((await exec(p, h, `pkill -KILL -s ${process.pid}`)).exitCode).toBe(1);
+    expect((await exec(p, h, "pkill -KILL -s 999999")).exitCode).toBe(1);
+    expect(Date.now() - t0).toBeLessThan(3000);
+    expect(hostAlive(process.pid)).toBe(true);
+  });
+
+  it("pkill takes a signal: -TERM, -KILL", async () => {
+    const p = createFakeSandbox(root);
+    const h = await p.create({ name: "cap-sig", image: "i", limits, signal: sig() });
+    const a = await startSession(p, h);
+    const b = await startSession(p, h);
+    expect((await exec(p, h, `pkill -TERM -s ${a}`)).exitCode).toBe(0);
+    expect((await exec(p, h, `pkill -KILL -s ${b}`)).exitCode).toBe(0);
+    await until(async () => (await members(p, h, a)).length === 0);
+    await until(async () => (await members(p, h, b)).length === 0);
+  });
+
+  it("timeout passes the exit status through, and ends a command that runs too long", async () => {
+    const p = createFakeSandbox(root);
+    const h = await p.create({ name: "cap-t", image: "i", limits, signal: sig() });
+    expect((await exec(p, h, "timeout 5 sh -c 'echo out; exit 3'; echo $?")).stdout).toBe(
+      "out\n3\n",
+    );
+    const t0 = Date.now();
+    expect((await exec(p, h, "timeout -s KILL 0.3 sleep 10; echo $?")).stdout).toBe("137\n");
+    expect((await exec(p, h, "timeout 0.3 sh -c 'sleep 10'; echo $?")).stdout).toBe("124\n");
+    expect(Date.now() - t0).toBeLessThan(5000);
+  });
+
+  it("a launch like the background tool's: the exit file appears when the session ends", async () => {
+    const p = createFakeSandbox(root);
+    const h = await p.create({ name: "cap-l", image: "i", limits, signal: sig() });
+    const r = await exec(
+      p,
+      h,
+      "mkdir -p .capybara/tasks && printf 'echo hello\\nexit 5\\n' > .capybara/tasks/t.sh && " +
+        "setsid nohup sh -c 'timeout -s KILL 30 sh .capybara/tasks/t.sh; echo $? > .capybara/tasks/t.exit' " +
+        "> .capybara/tasks/t.out 2>&1 < /dev/null & echo $!",
+    );
+    expect(r.stdout).toMatch(/^[1-9][0-9]*\n$/);
+    const read = async (f: string) => {
+      const d = await p.readFile(h, `/workspace/.capybara/tasks/${f}`, {
+        maxBytes: 1000,
+        signal: sig(),
+      });
+      return d ? new TextDecoder().decode(d.data) : null;
+    };
+    await until(async () => (await read("t.exit")) !== null);
+    expect(await read("t.exit")).toBe("5\n");
+    expect(await read("t.out")).toBe("hello\n");
+  });
+
+  it("suspend kills every process the instance started: sessions and exec commands", async () => {
+    const p = createFakeSandbox(root);
+    const h = await p.create({ name: "cap-sus", image: "i", limits, signal: sig() });
+    const sid = await startSession(p, h);
+    const pids = await members(p, h, sid);
+    const running = exec(p, h, "sleep 30", 60_000);
+    await until(async () => (await readdir(join(root, "instances", h.id, "procs"))).length > 0);
+    await p.suspend(h, sig());
+    expect(await running).toMatchObject({ exitCode: null });
+    for (const pid of pids) await until(() => !hostAlive(pid));
+  });
+
+  it("destroy kills every process the instance started", async () => {
+    const p = createFakeSandbox(root);
+    const h = await p.create({ name: "cap-des", image: "i", limits, signal: sig() });
+    const sid = await startSession(p, h);
+    const pids = await members(p, h, sid);
+    expect(pids.length).toBeGreaterThan(0);
+    await p.destroy(h, sig());
+    for (const pid of pids) await until(() => !hostAlive(pid));
   });
 });

@@ -337,6 +337,13 @@ function runDividerBlocks(): ReactNode {
           text={`所选模型 ${D.fallback.from} 已不可用，本条起改用 agent 的模型 ${D.fallback.to}`}
         />
       </Block>
+      <Block id="run-divider-notice">
+        <RunDivider
+          kind="notice"
+          text="后台任务「启动开发服务器」失败 · 退出码 1"
+          action={{ onClick: noop }}
+        />
+      </Block>
       <Block id="run-divider-hook-denied">
         <RunDivider
           kind="hook-denied"
@@ -409,6 +416,22 @@ const pick = (list: FixtureTool[], i: number): FixtureTool => {
   return t;
 };
 
+/** A background `Bash` call (background Bash spec §5): "后台运行" and the link to its task. */
+const BACKGROUND_ROW: ToolRowData = {
+  id: "t_bg",
+  kind: "command",
+  name: "Bash",
+  description: "启动开发服务器",
+  extra: "后台运行",
+  status: "done",
+  durationMs: 300,
+  detail: {
+    command: "pnpm dev --port 3000",
+    output: 'Started background task bt_abc234 ("启动开发服务器").',
+  },
+  link: { label: "查看「启动开发服务器」的输出", onOpen: noop },
+};
+
 function toolGroupBlocks(): ReactNode {
   return (
     <>
@@ -441,6 +464,9 @@ function toolGroupBlocks(): ReactNode {
       </Block>
       <Block id="tool-group-edited">
         <ToolGroup rows={rows(T.diff)} />
+      </Block>
+      <Block id="tool-group-linked">
+        <ToolGroup rows={[BACKGROUND_ROW]} />
       </Block>
     </>
   );
@@ -495,6 +521,7 @@ function toolRowBlocks(): ReactNode {
         open
       />
       <RowBlock id="tool-row-waiting" row={toRow(pick(T.waiting, 0))} />
+      <RowBlock id="tool-row-linked" row={BACKGROUND_ROW} />
     </>
   );
 }

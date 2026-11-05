@@ -15,6 +15,7 @@ import {
   sql,
   type UpdateObject,
 } from "kysely";
+import { BackgroundTaskStore } from "../background/store.js";
 import {
   DEFAULT_MAX_COMMAND_SECONDS,
   DEFAULT_MAX_RUN_SECONDS,
@@ -64,6 +65,10 @@ const SWEEP_BATCH = 200;
 const SWEEP_CONCURRENCY = 4;
 /** destroyFor 等锁的上限：持有者在跑命令时最多等这么久。 */
 const DESTROY_FOR_WAIT_MS = 10 * 60_000;
+/** The time limit of the exec that kills lost background tasks after a resume (ms). */
+const PENDING_KILL_TIMEOUT_MS = 30_000;
+/** A background task's session id as `echo $!` printed it; anything else is never put in a command. */
+const SID_RE = /^[1-9][0-9]{0,9}$/;
 
 /** `withSandbox` 回调的第三个参数。 */
 export interface SandboxUseInfo {
@@ -91,6 +96,23 @@ interface Instance {
   handle: SandboxHandle;
   createdAt: number;
 }
+
+/**
+ * The provider {@link SandboxService.ifRunning} passes to its callback: every `exec` carries the
+ * holder's tag, like the one `withSandbox` passes.
+ */
+export type TaggedProvider = SandboxProvider;
+
+/** What {@link SandboxService.ifRunning} did. */
+export type IfRunningResult<T> =
+  | { kind: "ran"; value: T }
+  /**
+   * No sandbox, or the instance is not running: `status` is the sandbox row's (`suspended`,
+   * `creating`, `destroyed`, or `running` recorded with another provider), `gone` without a row.
+   */
+  | { kind: "not_running"; status: SandboxesTable["status"] | "gone" }
+  /** The sandbox now records another instance (a rebuild). */
+  | { kind: "other_instance" };
 
 /** A holder ready to run `fn`: a shared lease, the running instance, the use info. */
 interface Entered {
@@ -275,6 +297,9 @@ export class SandboxService {
     private readonly providers: Pick<SandboxProviders, "current" | "lookup">,
     @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "info" | "warn">,
+    /** Background tasks lost while their process may live on (killed after a resume). */
+    @Inject(BackgroundTaskStore)
+    private readonly background: Pick<BackgroundTaskStore, "pendingKills" | "clearKill">,
   ) {}
 
   /** Poll interval while waiting for a lease (the leases' own). */
@@ -308,6 +333,89 @@ export class SandboxService {
       .executeTakeFirst();
     if (!row || (row.status !== "running" && row.status !== "suspended")) return null;
     return { status: row.status, lastUsedAt: row.last_used_at };
+  }
+
+  /**
+   * The instance the conversation's sandbox records now (its `created_at`), while it has one that
+   * runs or is suspended; null otherwise. Read without a lease: a caller inside `withSandbox`
+   * reads the instance its own lease keeps.
+   */
+  async currentInstance(conversationId: string): Promise<{ createdAt: Date } | null> {
+    const row = await this.db
+      .selectFrom("sandboxes")
+      .select(["status", "handle", "created_at"])
+      .where("conversation_id", "=", conversationId)
+      .executeTakeFirst();
+    if (!row || row.handle === null) return null;
+    if (row.status !== "running" && row.status !== "suspended") return null;
+    return { createdAt: row.created_at };
+  }
+
+  /**
+   * Runs `fn` on the conversation's sandbox only while it runs the instance created at
+   * `instance.createdAt` (background tasks, spec 2026-11-05-background-bash-design §4.3). It never
+   * creates, resumes or rebuilds a sandbox: a sandbox that is missing, suspended, being created or
+   * destroyed (or recorded with another provider) is `not_running`, one that records another
+   * instance is `other_instance`. Otherwise `fn` runs under a shared lease, as a `withSandbox`
+   * holder does (its tag on every exec, crashed holders' commands killed), and `last_used_at`
+   * moves forward when it ends. Waits for the lease up to `sandbox.lockWaitSeconds`
+   * (`sandbox.busy`); `signal` (optional) ends the wait with its abort reason. The signal passed
+   * to `fn` aborts with `signal` or when the lease is lost. Errors of `fn` (`SandboxGoneError`
+   * too) are thrown as they are.
+   */
+  async ifRunning<T>(
+    conversationId: string,
+    instance: { createdAt: Date },
+    fn: (p: TaggedProvider, h: SandboxHandle, signal: AbortSignal) => Promise<T>,
+    signal: AbortSignal = new AbortController().signal,
+  ): Promise<IfRunningResult<T>> {
+    const p = this.require();
+    const conv = conversationId;
+    const cap = this.effectiveCap(p);
+    const deadline = Date.now() + this.config.get().sandbox.lockWaitSeconds * 1000;
+    const token = randomUUID();
+    for (;;) {
+      if (signal.aborted) throw abortReason(signal);
+      const row = await this.db
+        .selectFrom("sandboxes")
+        .selectAll()
+        .where("conversation_id", "=", conv)
+        .executeTakeFirst();
+      if (!row) return { kind: "not_running", status: "gone" };
+      if (row.created_at.getTime() !== instance.createdAt.getTime()) {
+        return { kind: "other_instance" };
+      }
+      if (!this.usable(row, p, null)) return { kind: "not_running", status: row.status };
+      // the instance this check saw: its handle plus `created_at` (never `generation`, which
+      // every lease bumps)
+      const want: Instance = { handle: row.handle, createdAt: row.created_at.getTime() };
+      if (!(await this.leases.legacyMarker(conv))) {
+        const lease = await this.leases.tryShared(conv, cap, token);
+        if (lease) {
+          const e = await this.asShared(
+            { orgId: row.org_id, conversationId: conv },
+            p,
+            lease,
+            (r): r is Row & { handle: SandboxHandle } =>
+              this.usable(r, p, null) && isInstance(r, want),
+            signal,
+          );
+          if (e) {
+            try {
+              const impl = tagged(p.impl, lease.token, () => this.register(conv, lease.token));
+              const sig = AbortSignal.any([signal, lease.signal]);
+              return { kind: "ran", value: await fn(impl, e.handle, sig) };
+            } finally {
+              await this.leave(conv, e);
+            }
+          }
+          // the row changed between the check and the lease: classify it again
+          continue;
+        }
+      }
+      if (Date.now() + this.pollMs > deadline) throw sandboxBusy();
+      await sleep(this.pollMs + Math.floor(Math.random() * this.pollMs), signal);
+    }
   }
 
   /**
@@ -437,7 +545,7 @@ export class SandboxService {
           if (lease) {
             if (intent) await this.clearIntent(conv, token);
             intent = false;
-            const e = await this.asShared(ctx, p, lease, gone, signal);
+            const e = await this.asShared(ctx, p, lease, (r) => this.usable(r, p, gone), signal);
             if (e) return e;
           }
         } else {
@@ -493,20 +601,20 @@ export class SandboxService {
   }
 
   /**
-   * Under a just-taken shared lease: confirms the row is still usable (else releases and returns
-   * null), records the holder and kills crashed holders' commands.
+   * Under a just-taken shared lease: confirms the row is still `accept`ed (else releases and
+   * returns null), records the holder and kills crashed holders' commands.
    */
   private async asShared(
     ctx: { orgId: string; conversationId: string },
     p: SandboxProviderEntry,
     lease: SandboxLease,
-    gone: Instance | null,
+    accept: (row: Row | undefined) => row is Row & { handle: SandboxHandle },
     signal: AbortSignal,
   ): Promise<Entered | null> {
     const conv = ctx.conversationId;
     try {
       const row = await this.readRow(ctx);
-      if (!this.usable(row, p, gone)) {
+      if (!accept(row)) {
         await lease.release();
         return null;
       }
@@ -580,6 +688,9 @@ export class SandboxService {
           sig,
           s.resumed && !dead.legacyMarker && dead.tags.length === 0 ? "resume" : "takeover",
         );
+      }
+      if (s.resumed || s.info.fresh) {
+        await this.killPendingTasks(conv, s.handle, s.createdAt, p, lease.token, sig);
       }
       const shared = await lease.downgrade();
       await this.register(conv, shared.token);
@@ -807,6 +918,61 @@ export class SandboxService {
       return;
     }
     await this.kill(conversationId, why, () => killAll.call(p.impl, handle, signal), signal);
+  }
+
+  /**
+   * Under the exclusive lease, right after a resume or a (re)build: kills the sessions of the
+   * background tasks marked lost while their process may live on (`kill_pending`), in one exec of
+   * `pkill -KILL -s <sid>`, then clears their flags. Tasks of another instance have no process
+   * here and are only cleared. A gone instance and an abort are thrown; another failure is warned
+   * and leaves the flags of this instance's tasks for the next resume.
+   */
+  private async killPendingTasks(
+    conversationId: string,
+    handle: SandboxHandle,
+    createdAt: number,
+    p: SandboxProviderEntry,
+    tag: string,
+    signal: AbortSignal,
+  ): Promise<void> {
+    const rows = await this.background.pendingKills(conversationId);
+    if (rows.length === 0) return;
+    const mine = rows.filter(
+      (r): r is typeof r & { sid: string } =>
+        r.sandboxCreatedAt?.getTime() === createdAt && r.sid !== null && SID_RE.test(r.sid),
+    );
+    let cleared = rows;
+    if (mine.length > 0) {
+      // pkill exits 1 when the session has no process left: only a higher status is a failure
+      const command = `rc=0; for sid in ${mine.map((r) => r.sid).join(" ")}; do pkill -KILL -s "$sid"; c=$?; [ "$c" -le 1 ] || rc=$c; done; exit $rc`;
+      try {
+        const r = await p.impl.exec(handle, {
+          command,
+          timeoutMs: PENDING_KILL_TIMEOUT_MS,
+          maxOutputBytes: 4096,
+          signal,
+          tag,
+        });
+        if (r.exitCode !== 0) {
+          throw new Error(
+            `pkill exited with ${r.exitCode === null ? "no status" : r.exitCode}: ${r.stderr.slice(0, 500)}`,
+          );
+        }
+        this.log.info("lost background tasks killed after a sandbox resume", {
+          conversationId,
+          tasks: mine.map((t) => t.id),
+        });
+      } catch (err) {
+        if (signal.aborted || isSandboxGoneError(err)) throw err;
+        this.log.warn("cannot kill lost background tasks after a sandbox resume", {
+          conversationId,
+          err,
+        });
+        const kept = new Set(mine.map((r) => r.id));
+        cleared = rows.filter((r) => !kept.has(r.id));
+      }
+    }
+    await this.background.clearKill(cleared.map((r) => r.id));
   }
 
   private require(): SandboxProviderEntry {

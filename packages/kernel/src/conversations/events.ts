@@ -308,6 +308,14 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       agentVersion: z.number().int().positive(),
       model: ModelRef,
       triggerAccountId: z.string(),
+      /**
+       * What started the run (display only): absent or `message` = a person's message (or a
+       * sub-agent's task), `background_task` = a finished background task woke the conversation
+       * (spec 2026-11-05-background-bash-design §3).
+       */
+      trigger: z.enum(["message", "background_task"]).optional(),
+      /** A wake run's boundary: the seq of the finish that woke it (full-run replay seeds from it). */
+      triggerSeq: seqNo.optional(),
     }),
   ),
   ev(
@@ -742,6 +750,33 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       text: z.string(),
     }),
   ),
+  /**
+   * A background Bash task ended (spec 2026-11-05-background-bash-design §2). Model-visible: it is
+   * absorbed like an interjection and rendered as a system message (`renderBackgroundFinished`).
+   * `reported`: a TaskOutput or TaskStop in the same run already told the model; it is absorbed
+   * like any other, renders as one short line and never wakes a run. `lastLines` is the tail of
+   * the task's output.
+   */
+  ev(
+    "background_task_finished",
+    z.object({
+      taskId: z.string().min(1).max(64),
+      description: z.string(),
+      status: z.enum(["completed", "failed", "stopped", "timed_out", "lost"]),
+      exitCode: z.number().int().nullable(),
+      elapsedMs: count,
+      lastLines: z.string().max(4000),
+      outputPath: z.string(),
+      reported: z.boolean(),
+      lostReason: z.string().optional(),
+      /**
+       * The finish never wakes a run, but the next run absorbs it like any other (background
+       * Bash §3): `person`, a person stopped the task (the conversation's background section);
+       * `deletion`, the conversation was being deleted.
+       */
+      stoppedBy: z.enum(["person", "deletion"]).optional(),
+    }),
+  ),
   ev("compaction_summary", z.object({ coversUpToSeq: seqNo, text: z.string() })),
   ev("compaction_failed", z.object({ attempt: count, reason: z.string() })),
   ev(
@@ -781,6 +816,20 @@ export type ConversationEvent = ConversationEventBody & {
   runId: string | null;
   createdAt: Date;
 };
+
+/** An event a run absorbs at a step boundary: a person's message or a finished background task. */
+export type AbsorbableEvent = Extract<
+  ConversationEvent,
+  { type: "user_message" | "background_task_finished" }
+>;
+
+/**
+ * Whether `e` is absorbed like an interjection (spec 2026-11-05-background-bash-design §2.4): the
+ * loop takes it at its next step boundary, `consumed_seq` moves past it, and request building
+ * places it where the model call that absorbed it was built.
+ */
+export const isAbsorbable = (e: ConversationEvent): e is AbsorbableEvent =>
+  e.type === "user_message" || e.type === "background_task_finished";
 
 /**
  * What the person typed for a skill invocation (phase D): `/<plugin>:<name> <arguments>` (no

@@ -617,6 +617,39 @@ button.cb-tool-row {
 .cb-tool-row[data-status="pending"] .cb-tool-label {
   color: var(--cb-ink);
 }
+/* A row or line with a link (§6.16.9): the toggle (or the label) and the link side by side. */
+.cb-tool-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-2);
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+button.cb-tool-toggle {
+  cursor: pointer;
+}
+button.cb-tool-toggle:focus-visible {
+  outline: 1px solid var(--cb-accent);
+  outline-offset: 2px;
+}
+.cb-tool-line > button.cb-tool-toggle:hover {
+  color: var(--cb-ink);
+}
+.cb-tool-row > .cb-tool-toggle {
+  flex: 1;
+}
+.cb-tool-row > .cb-tool-toggle > .cb-tool-label {
+  flex: 1;
+}
+.cb-tool-link {
+  flex: none;
+  white-space: nowrap;
+}
 .cb-tool-end {
   flex: none;
   display: inline-flex;

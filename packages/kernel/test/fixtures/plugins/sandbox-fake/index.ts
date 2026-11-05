@@ -1,8 +1,9 @@
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { appendFile, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { promisify } from "node:util";
 import {
   defineExtension,
   type ExecResult,
@@ -33,6 +34,18 @@ import { z } from "zod";
  * - concurrent use is declared (`concurrentExec`, `killTagged`);
  * - `root/delays.json` (optional): `{ create?, resume?, suspend?, destroy?, exec? }` in ms, slow
  *   operations (read at each operation); `exec` holds the command open before it starts.
+ * - `root/bin`: node shims for `setsid`, `timeout`, `pgrep -s` and `pkill -s` (background tasks,
+ *   spec 2026-11-05-background-bash-design §4.2), first on every exec's PATH, so the tests also run
+ *   on macOS, which has no `setsid` or `timeout`. A shim session is a process group: `setsid` starts
+ *   its command in a new session (whose process group has the session's id) and records
+ *   `root/instances/<id>/sessions/<its own pid>` = that id, the pid `echo $!` printed; `timeout`
+ *   keeps its command in its group; `pgrep -s` / `pkill -s` resolve a session through that record
+ *   only (a sid without one matches nothing; one whose setsid shim is still starting in an exec's
+ *   group, recorded in `root/instances/<id>/groups/<pgid>`, is waited for).
+ *   The shims are written by {@link createFakeSandbox}, not shipped as files: the plugin package
+ *   carries only the entry.
+ * - `suspend` and `destroy` kill every process the instance started (exec commands and sessions),
+ *   as stopping a container does.
  * 模拟 `gone`：测试删掉 `root/instances/<id>`（{@link removeFakeSandbox}），之后 resume 返回 `gone`。
  *
  * `exec` 用 `/bin/sh -c` 在实例目录里真的执行命令：命令里的 `/workspace`、`/skills`、`/tmp` 换成实例目录下的对应目录，
@@ -60,6 +73,204 @@ export interface FakeSandboxMeta {
 }
 
 const instanceDir = (root: string, id: string) => join(root, "instances", id);
+
+/** The env var that tells the shims their instance directory (the session records). */
+const INSTANCE_ENV = "CAPYBARA_FAKE_SANDBOX_INSTANCE";
+
+/** Shared by `pgrep` and `pkill`: the live pids of the sessions named by `-s <list>`. */
+const SESSION_LOOKUP = `const { execFileSync } = process.getBuiltinModule("node:child_process");
+const { existsSync, readFileSync } = process.getBuiltinModule("node:fs");
+const { join } = process.getBuiltinModule("node:path");
+/**
+ * The process group of a session: the record of the setsid shim whose pid it is, else null (no
+ * such session: match nothing, as real \`pkill -s\` does). The shim may still be starting
+ * (\`echo $!\` returns before it runs): while that pid lives in the process group of one of this
+ * instance's execs (\`groups/<pgid>\`), wait for its record. Any other pid is never waited for.
+ */
+function resolveSession(sid) {
+  const dir = process.env.${INSTANCE_ENV};
+  if (!dir) return null;
+  const end = Date.now() + 5000;
+  const record = () => {
+    try {
+      const pgid = readFileSync(join(dir, "sessions", sid), "utf8").trim();
+      return pgid === "" ? null : pgid;
+    } catch {
+      return null;
+    }
+  };
+  for (;;) {
+    const recorded = record();
+    if (recorded !== null) return recorded;
+    let pgid = "";
+    try {
+      pgid = execFileSync("ps", ["-o", "pgid=", "-p", sid], { encoding: "utf8" }).trim();
+    } catch {}
+    // the shim may have written its record and exited since the read above
+    if (pgid === "" || !existsSync(join(dir, "groups", pgid))) return record();
+    if (Date.now() > end) return null;
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
+  }
+}
+function sessionPids(list) {
+  const groups = new Set();
+  for (const sid of list.split(",")) {
+    if (!/^[0-9]+$/.test(sid)) {
+      process.stderr.write("invalid session id: " + sid + "\\n");
+      process.exit(2);
+    }
+    const pgid = resolveSession(sid);
+    if (pgid !== null) groups.add(pgid);
+  }
+  const ps = execFileSync("ps", ["-A", "-o", "pid=,pgid=,stat="], { encoding: "utf8" });
+  const pids = [];
+  for (const line of ps.split("\\n")) {
+    const [pid, pgid, stat] = line.trim().split(/\\s+/);
+    if (!pid || Number(pid) === process.pid || (stat ?? "").startsWith("Z")) continue;
+    if (groups.has(pgid)) pids.push(Number(pid));
+  }
+  return pids;
+}
+function usage(name) {
+  process.stderr.write(name + ": the sandbox-fake shim supports only " + name + " [-SIGNAL] -s <sid>[,<sid>...]\\n");
+  process.exit(2);
+}
+`;
+
+/** The shims in `root/bin` (see the file header). */
+const SHIMS: Record<string, string> = {
+  setsid: `#!/usr/bin/env node
+const { spawn } = process.getBuiltinModule("node:child_process");
+const { mkdirSync, renameSync, writeFileSync } = process.getBuiltinModule("node:fs");
+const { join } = process.getBuiltinModule("node:path");
+const [cmd, ...args] = process.argv.slice(2);
+if (!cmd) {
+  process.stderr.write("usage: setsid program [arguments]\\n");
+  process.exit(1);
+}
+// detached: the child calls setsid(), so its session and process group take its pid
+const child = spawn(cmd, args, { detached: true, stdio: "inherit" });
+child.on("error", (e) => {
+  process.stderr.write("setsid: failed to execute " + cmd + ": " + e.message + "\\n");
+  process.exit(1);
+});
+child.on("spawn", () => {
+  const dir = process.env.${INSTANCE_ENV};
+  if (dir) {
+    mkdirSync(join(dir, "sessions"), { recursive: true });
+    // through a rename: a reader never sees an empty record
+    const record = join(dir, "sessions", String(process.pid));
+    writeFileSync(record + ".tmp", String(child.pid));
+    renameSync(record + ".tmp", record);
+  }
+  child.unref();
+  process.exit(0);
+});
+`,
+  timeout: `#!/usr/bin/env node
+const { spawn, execFileSync } = process.getBuiltinModule("node:child_process");
+const { constants } = process.getBuiltinModule("node:os");
+let argv = process.argv.slice(2);
+let signal = "SIGTERM";
+for (;;) {
+  if (argv[0] === "-s") {
+    signal = argv[1] ?? "";
+    argv = argv.slice(2);
+  } else if (argv[0]?.startsWith("--signal=")) {
+    signal = argv[0].slice(9);
+    argv = argv.slice(1);
+  } else break;
+}
+if (/^[0-9]+$/.test(signal)) {
+  signal = Object.keys(constants.signals).find((k) => constants.signals[k] === Number(signal)) ?? "";
+} else if (!signal.startsWith("SIG")) signal = "SIG" + signal;
+const m = /^([0-9]*\\.?[0-9]+)([smhd]?)$/.exec(argv[0] ?? "");
+if (!(signal in constants.signals) || !m || argv.length < 2) {
+  process.stderr.write("usage: timeout [-s SIGNAL] DURATION COMMAND [ARG]...\\n");
+  process.exit(125);
+}
+const ms = Number(m[1]) * { "": 1, s: 1, m: 60, h: 3600, d: 86400 }[m[2]] * 1000;
+// not detached: the command stays in this process group, so in the caller's session
+const child = spawn(argv[1], argv.slice(2), { stdio: "inherit" });
+let timedOut = false;
+child.on("error", (e) => {
+  process.stderr.write("timeout: failed to run command " + argv[1] + ": " + e.message + "\\n");
+  process.exit(e.code === "ENOENT" ? 127 : 126);
+});
+/** The command and every process below it. */
+function tree(root) {
+  const ps = execFileSync("ps", ["-A", "-o", "pid=,ppid="], { encoding: "utf8" });
+  const kids = new Map();
+  for (const line of ps.split("\\n")) {
+    const [pid, ppid] = line.trim().split(/\\s+/).map(Number);
+    if (!pid) continue;
+    if (!kids.has(ppid)) kids.set(ppid, []);
+    kids.get(ppid).push(pid);
+  }
+  const out = [root];
+  for (let i = 0; i < out.length; i++) out.push(...(kids.get(out[i]) ?? []));
+  return out;
+}
+const timer = ms > 0 ? setTimeout(() => {
+  timedOut = true;
+  for (const pid of tree(child.pid).reverse()) {
+    try {
+      process.kill(pid, signal);
+    } catch {}
+  }
+  // GNU timeout signals its own group too: with KILL it dies itself, so the caller sees 137
+  if (signal === "SIGKILL") process.exit(128 + constants.signals.SIGKILL);
+}, ms) : undefined;
+child.on("exit", (code, sig) => {
+  if (timer) clearTimeout(timer);
+  if (timedOut) process.exit(124);
+  process.exit(code ?? 128 + (constants.signals[sig] ?? 0));
+});
+`,
+  pgrep: `#!/usr/bin/env node
+${SESSION_LOOKUP}
+const argv = process.argv.slice(2);
+if (argv.length !== 2 || argv[0] !== "-s") usage("pgrep");
+const pids = sessionPids(argv[1]);
+if (pids.length > 0) process.stdout.write(pids.join("\\n") + "\\n");
+process.exit(pids.length > 0 ? 0 : 1);
+`,
+  pkill: `#!/usr/bin/env node
+${SESSION_LOOKUP}
+const { constants } = process.getBuiltinModule("node:os");
+let argv = process.argv.slice(2);
+let signal = "SIGTERM";
+if (argv[0] && /^-[A-Z0-9]+$/.test(argv[0])) {
+  const s = argv[0].slice(1);
+  signal = /^[0-9]+$/.test(s)
+    ? Object.keys(constants.signals).find((k) => constants.signals[k] === Number(s)) ?? ""
+    : s.startsWith("SIG") ? s : "SIG" + s;
+  argv = argv.slice(1);
+}
+if (!(signal in constants.signals) || argv.length !== 2 || argv[0] !== "-s") usage("pkill");
+let n = 0;
+for (const pid of sessionPids(argv[1])) {
+  try {
+    process.kill(pid, signal);
+    n++;
+  } catch {}
+}
+process.exit(n > 0 ? 0 : 1);
+`,
+};
+
+/**
+ * Writes the shims into `dir` (each through a rename, so a replica sharing the root never runs a
+ * half-written one).
+ */
+function writeShims(dir: string): void {
+  mkdirSync(dir, { recursive: true });
+  for (const [name, source] of Object.entries(SHIMS)) {
+    const tmp = join(dir, `.${name}.${process.pid}.${randomUUID().slice(0, 8)}`);
+    writeFileSync(tmp, source, { mode: 0o755 });
+    renameSync(tmp, join(dir, name));
+  }
+}
 
 /** 读 `ops.log`：每行拆成 `[op, id, ...rest]`。 */
 export async function readFakeSandboxOps(root: string): Promise<string[][]> {
@@ -123,6 +334,8 @@ export function createFakeSandbox(rootDir: string): SandboxProvider {
   // 用真实路径（macOS 的临时目录经符号链接），pwd 等输出才能换回沙箱路径
   mkdirSync(rootDir, { recursive: true });
   const root = realpathSync(rootDir);
+  const binDir = join(root, "bin");
+  writeShims(binDir);
   const log = (line: string) => appendFile(join(root, "ops.log"), `${line}\n`);
   const delay = async (op: keyof FakeSandboxDelays, signal: AbortSignal) => {
     const raw = await readFile(join(root, "delays.json"), "utf8").catch(() => "{}");
@@ -139,6 +352,51 @@ export function createFakeSandbox(rootDir: string): SandboxProvider {
     }
   };
   const procsDir = (h: SandboxHandle) => join(instanceDir(root, h.id), "procs");
+  const sessionsDir = (h: SandboxHandle) => join(instanceDir(root, h.id), "sessions");
+  /**
+   * This instance's setsid shims that are still starting: `echo $!` returned and the exec that
+   * started one may have ended, but the shim has not spawned its command nor written its session
+   * record yet (node starts slowly under load). Found as a process running the shim in one of the
+   * instance's exec groups (`groups/<pgid>`).
+   */
+  const startingShims = async (h: SandboxHandle): Promise<number[]> => {
+    const groups = new Set(
+      await readdir(join(instanceDir(root, h.id), "groups")).catch(() => [] as string[]),
+    );
+    if (groups.size === 0) return [];
+    const { stdout } = await promisify(execFile)("ps", ["-A", "-o", "pid=,pgid=,command="]);
+    const shim = join(binDir, "setsid");
+    const out: number[] = [];
+    for (const line of stdout.split("\n")) {
+      const m = /^\s*(\d+)\s+(\d+)\s+(.*)$/.exec(line);
+      if (m && groups.has(m[2] as string) && (m[3] as string).includes(shim))
+        out.push(Number(m[1]));
+    }
+    return out;
+  };
+  /**
+   * Kills every process the instance started: exec commands and shim sessions (by group). A shim
+   * still starting is waited for first (up to 10 s), so the session it is about to start is killed
+   * too instead of outliving the instance.
+   */
+  const killEverything = async (h: SandboxHandle) => {
+    const until = Date.now() + 10_000;
+    while (Date.now() < until && (await startingShims(h)).length > 0) {
+      await sleep(20, new AbortController().signal);
+    }
+    const groups = await readdir(procsDir(h)).catch(() => [] as string[]);
+    for (const sid of await readdir(sessionsDir(h)).catch(() => [] as string[])) {
+      const pgid = await readFile(join(sessionsDir(h), sid), "utf8").catch(() => "");
+      if (pgid !== "") groups.push(pgid);
+    }
+    for (const g of groups) {
+      try {
+        process.kill(-Number(g), "SIGKILL");
+      } catch {
+        // already exited
+      }
+    }
+  };
   const real = (h: SandboxHandle, p: string) => {
     const errors = validateSandboxPath(p);
     if (errors.length > 0) throw new Error(errors.join("; "));
@@ -176,6 +434,7 @@ export function createFakeSandbox(rootDir: string): SandboxProvider {
       await delay("suspend", signal);
       // 实例已不在：当作已停止（下一次 resume 会返回 gone）
       if ((await fakeSandboxState(root, h.id)) !== null) {
+        await killEverything(h);
         await writeFile(join(instanceDir(root, h.id), "state"), "suspended");
       }
       await log(`suspend ${h.id}`);
@@ -183,6 +442,7 @@ export function createFakeSandbox(rootDir: string): SandboxProvider {
 
     async destroy(h, signal) {
       await delay("destroy", signal);
+      await killEverything(h);
       await rm(instanceDir(root, h.id), { recursive: true, force: true });
       await log(`destroy ${h.id}`);
     },
@@ -192,6 +452,7 @@ export function createFakeSandbox(rootDir: string): SandboxProvider {
       const ids = await readdir(join(root, "instances")).catch(() => [] as string[]);
       for (const id of ids) {
         if ((await fakeSandboxMeta(root, id))?.name === name) {
+          await killEverything({ id });
           await rm(instanceDir(root, id), { recursive: true, force: true });
         }
       }
@@ -217,9 +478,10 @@ export function createFakeSandbox(rootDir: string): SandboxProvider {
         const child = spawn("/bin/sh", ["-c", command], {
           cwd,
           env: {
-            PATH: process.env.PATH ?? "/usr/bin:/bin",
             HOME: join(base, "workspace"),
             ...args.env,
+            PATH: `${binDir}:${args.env?.PATH ?? process.env.PATH ?? "/usr/bin:/bin"}`,
+            [INSTANCE_ENV]: instanceDir(root, h.id),
           },
           detached: true,
           stdio: ["ignore", "pipe", "pipe"],
@@ -252,6 +514,11 @@ export function createFakeSandbox(rootDir: string): SandboxProvider {
         if (pidFile) {
           mkdirSync(dirname(pidFile), { recursive: true });
           writeFileSync(pidFile, args.tag ?? "");
+          // kept after the command ends: a setsid shim it started in the background may still be
+          // starting in this group when pgrep / pkill ask for its session
+          const group = join(instanceDir(root, h.id), "groups", String(child.pid));
+          mkdirSync(dirname(group), { recursive: true });
+          writeFileSync(group, "");
         }
         const timer = setTimeout(() => {
           timedOut = true;

@@ -1,4 +1,6 @@
 import { type DynamicModule, Module } from "@nestjs/common";
+import { BackgroundModule } from "../background/background.module.js";
+import { BackgroundTaskPollJob } from "../background/poll.job.js";
 import { CatalogModule } from "../catalog/catalog.module.js";
 import { CatalogJobs } from "../catalog/jobs.js";
 import { ChannelsModule, ChannelWorkersModule } from "../channels/channels.module.js";
@@ -6,6 +8,7 @@ import { GatewayCheckJob } from "../channels/supervisor.js";
 import type { KernelConfig } from "../config/schema.js";
 import { AttachmentsModule } from "../conversations/attachments.module.js";
 import { AttachmentCleanupJob } from "../conversations/attachments.service.js";
+import { EventLogModule } from "../conversations/event-log.js";
 import { TitlesModule } from "../conversations/titles.js";
 import { EvalWorkersModule } from "../evals/evals.module.js";
 import { ExtensionsModule } from "../extensions/extensions.module.js";
@@ -56,6 +59,8 @@ export class WorkerModule {
         AttachmentsModule,
         StorageModule,
         SandboxModule,
+        BackgroundModule,
+        EventLogModule,
         ToolsModule,
         CatalogModule,
         OrgsModule,
@@ -68,6 +73,7 @@ export class WorkerModule {
         AttachmentCleanupJob,
         StoragePurgeJob,
         SandboxSweepJobs,
+        BackgroundTaskPollJob,
         ToolJobs,
         CatalogJobs,
         DirectoryScanJob,
