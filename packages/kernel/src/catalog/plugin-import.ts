@@ -93,6 +93,7 @@ import {
 } from "./claude/report.js";
 import { isClaudePluginTree, translateClaudePlugin } from "./claude/translate.js";
 import { CatalogItemLock } from "./locks.js";
+import { PlatformComponents } from "./platform-components.js";
 import {
   type PluginContents,
   PluginPackageError,
@@ -479,6 +480,8 @@ export class PluginImport {
     @Inject(ExtensionRegistry) private readonly registry: ExtensionRegistry,
     @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
+    /** The platform rows of a new item's components, written after the confirm's commit. */
+    @Inject(PlatformComponents) private readonly platform: PlatformComponents,
   ) {
     this.files = storage;
   }
@@ -496,6 +499,7 @@ export class PluginImport {
   useCliStorage(storage: PrefixedStorage): void {
     this.files = storage;
     this.connectorsLoaded = false;
+    this.platform.useCliStorage(storage);
   }
 
   /**
@@ -990,6 +994,10 @@ export class PluginImport {
     );
 
     const { now } = committed;
+    // A new item's skills, agent templates and connector templates become platform components
+    // (plugin scope phase 2); a new version of an existing item leaves them to the platform
+    // update. After the commit: it copies files in object storage
+    if (committed.created) await this.syncPlatform(committed.itemId, staged.version);
     const deploy =
       now && now.action !== "keep"
         ? await this.deploy(
@@ -1026,6 +1034,8 @@ export class PluginImport {
     opts: ActorOpts,
   ): Promise<{
     itemId: string;
+    /** This confirm created the catalog item (a first import of the name). */
+    created: boolean;
     now: PluginReviewExtension | undefined;
     previous: PreviousSnapshot | null | undefined;
   }> {
@@ -1158,7 +1168,24 @@ export class PluginImport {
         .executeTakeFirstOrThrow();
       for (const org of requestOrgs) await addScopeOrg(t, actor, item, org, opts);
     }
-    return { itemId, now, previous };
+    return { itemId, created, now, previous };
+  }
+
+  /**
+   * The platform components of a new item. The item is committed already, so a failure is logged
+   * and not thrown (like a failed deploy, the import itself succeeded); running
+   * `PlatformComponents.syncFromVersion` again for the version writes what is missing.
+   */
+  private async syncPlatform(itemId: string, version: string): Promise<void> {
+    try {
+      await this.platform.syncFromVersion(itemId, version, { initial: true });
+    } catch (err) {
+      this.log.error("writing the platform components of a new catalog item failed", {
+        itemId,
+        version,
+        err,
+      });
+    }
   }
 
   /**

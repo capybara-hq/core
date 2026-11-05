@@ -29,6 +29,7 @@ import { ConnectorsService } from "../tools/connectors.service.js";
 import type { ConnectorAuth } from "../tools/credentials.js";
 import {
   type CatalogVersionFiles,
+  dirDigest,
   getPath,
   lockOrgForActions,
   type OrgCatalogTemplate,
@@ -253,18 +254,6 @@ const filesDigest = (row: CatalogVersionFiles): string =>
       .sort()
       .join(""),
   );
-
-/** The digest of the files under `dir/` of a catalog version (paths relative to it). */
-function dirDigest(row: CatalogVersionFiles, dir: string): string {
-  const prefix = `${dir}/`;
-  return sha256(
-    row.files
-      .filter((f) => f.path.startsWith(prefix))
-      .map((f) => `${f.path.slice(prefix.length)}\0${f.sha256}\n`)
-      .sort()
-      .join(""),
-  );
-}
 
 /**
  * Org in-place upgrade (and, for declarative plugins, rollback) of an installed plugin (package

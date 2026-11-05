@@ -364,7 +364,7 @@ const summaryQuery = (db: KernelSchemaDb) =>
  * 字节在对象存储 `kernel/<orgId>/skills/<uploadId>/<path>`，元数据在 PG；无进程内状态，可多副本共用。
  */
 /** A validated skill package: its name, description, files and invocation. */
-interface SkillPackageInput {
+export interface SkillPackageInput {
   name: string;
   description: string;
   files: SkillPackageFile[];
@@ -372,8 +372,11 @@ interface SkillPackageInput {
   invocation?: SkillInvocation;
 }
 
-/** The stored manifest of a skill package (the invocation only when it is not the default). */
-function skillManifest(pkg: SkillPackageInput): SkillManifest {
+/**
+ * The stored manifest of a skill package (the invocation only when it is not the default); org
+ * skills and platform skills store the same shape.
+ */
+export function skillManifest(pkg: SkillPackageInput): SkillManifest {
   const invocation = pkg.invocation && storedInvocation(pkg.invocation);
   return {
     name: pkg.name,

@@ -142,6 +142,31 @@ export interface CatalogVersionFiles {
 }
 
 /**
+ * The digest of a skill's files (paths relative to the skill directory): equal digests = the same
+ * content. Shared by the org upgrade diff and the platform components.
+ */
+export function skillFilesDigest(files: { path: string; sha256: string }[]): string {
+  return createHash("sha256")
+    .update(
+      files
+        .map((f) => `${f.path}\0${f.sha256}\n`)
+        .sort()
+        .join(""),
+    )
+    .digest("hex");
+}
+
+/** The digest of the files under `dir/` of a catalog version (paths relative to it). */
+export function dirDigest(row: CatalogVersionFiles, dir: string): string {
+  const prefix = `${dir}/`;
+  return skillFilesDigest(
+    row.files
+      .filter((f) => f.path.startsWith(prefix))
+      .map((f) => ({ path: f.path.slice(prefix.length), sha256: f.sha256 })),
+  );
+}
+
+/**
  * The item's latest version row; item missing, deleted or (when `includeDisabled` is false)
  * disabled -> `catalog.item_not_found`.
  */

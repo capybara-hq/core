@@ -12,6 +12,7 @@ import { CatalogItemLock, CatalogSourceLock } from "./locks.js";
 import { MarketplacesService } from "./marketplaces.service.js";
 import { OrgCatalogService } from "./org-catalog.service.js";
 import { OrgExtensionSwitch } from "./org-extension-switch.js";
+import { PlatformComponents } from "./platform-components.js";
 import { PluginImport } from "./plugin-import.js";
 import { PluginInstaller } from "./plugin-install.js";
 import { PluginUpgrader } from "./plugin-upgrade.js";
@@ -19,8 +20,8 @@ import { CatalogRequestsService } from "./requests.service.js";
 import { PLUGIN_SCOPE_QUEUE, PluginScopeSync } from "./scope-sync.js";
 
 /**
- * The platform side of the catalog: marketplaces, the one import review (prepare -> confirm) and
- * the items. The CLI's `capybara plugins *` and `capybara bootstrap` run on this
+ * The platform side of the catalog: marketplaces, the one import review (prepare -> confirm), the
+ * items and their platform components. The CLI's `capybara plugins *` and `capybara bootstrap` run on this
  * part alone.
  */
 @Module({
@@ -30,9 +31,10 @@ import { PLUGIN_SCOPE_QUEUE, PluginScopeSync } from "./scope-sync.js";
     CatalogItemLock,
     MarketplacesService,
     PluginImport,
+    PlatformComponents,
     CatalogService,
   ],
-  exports: [MarketplacesService, PluginImport, CatalogService],
+  exports: [MarketplacesService, PluginImport, PlatformComponents, CatalogService],
 })
 export class CatalogImportModule {}
 
