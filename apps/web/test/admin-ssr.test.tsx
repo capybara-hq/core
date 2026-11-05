@@ -1,6 +1,6 @@
 // The admin console reads from the query cache the layout prefetched (web query cache spec §3):
 // first paint complete without a browser read, the loading state on an empty cache, the
-// enterprise-admin gate (only the session is read below it), R5's failures and the mutations'
+// super-admin gate (only the session is read below it), R5's failures and the mutations'
 // cache updates.
 import { act, cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -23,7 +23,7 @@ vi.mock("next/navigation", () => ({
 }));
 
 const T = "2026-10-19T12:00:00.000Z";
-const NOT_ADMIN = { ...ME, account: { ...ME.account, isEnterpriseAdmin: false } };
+const NOT_ADMIN = { ...ME, account: { ...ME.account, isSuperAdmin: false } };
 const failing = () => json(500, { error: { code: "internal", message: "x" } });
 const template = (name: string) => document.querySelector(`[data-template="${name}"]`);
 const noAccess = () => template("StatusPage")?.getAttribute("data-kind") === "no-access";
@@ -33,7 +33,7 @@ const ACCOUNT = (id: string, name: string) => ({
   displayName: name,
   email: null,
   status: "active",
-  isEnterpriseAdmin: id === "a1",
+  isSuperAdmin: id === "a1",
   createdAt: T,
 });
 const SETTINGS = {
@@ -405,7 +405,7 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     const u = userEvent.setup();
     await u.click(
       screen.getByRole("radio", {
-        name: new RegExp(`^${en.admin.settings.orgCreation.enterprise_admin}`),
+        name: new RegExp(`^${en.admin.settings.orgCreation.super_admin}`),
       }),
     );
     await u.click(screen.getByRole("button", { name: en.admin.settings.save }));
@@ -874,7 +874,7 @@ const CACHED: string[] = [
   "/admin/plugins/market",
 ];
 
-describe("the enterprise-admin gate", () => {
+describe("the super-admin gate", () => {
   it.each(CACHED)("%s: a non-admin gets no access and only the session is read", async (path) => {
     const r = await renderRouteWithCache(path, ROUTES, { me: NOT_ADMIN });
     expect(new Set(r.calls.map((c) => c.url))).toEqual(

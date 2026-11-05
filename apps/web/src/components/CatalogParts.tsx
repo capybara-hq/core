@@ -304,7 +304,7 @@ export function ScopeBadge({ item }: { item: Pick<CatalogItem, "scope" | "disabl
   );
 }
 
-/** An item's source label: manual import, the official marketplace, or the enterprise marketplace's name ("Removed marketplace" once it is gone). */
+/** An item's source label: manual import, the official marketplace, or the custom marketplace's name ("Removed marketplace" once it is gone). */
 export function useSourceLabel(
   sources: Marketplace[],
 ): (item: Pick<CatalogItem, "marketplaceId">) => string {

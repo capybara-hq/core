@@ -13,7 +13,7 @@ import { ADMIN_PAGES, type AdminPageId } from "../admin-nav";
 
 /**
  * Who sees a nav item: `all` everyone, `member` members and up (not guests), `admin` org admins
- * and owners. The admin console is for enterprise admins (`me.account.isEnterpriseAdmin`, apart
+ * and owners. The admin console is for super admins (`me.account.isSuperAdmin`, apart
  * from the org role).
  */
 type NavAudience = "all" | "member" | "admin";
@@ -24,7 +24,7 @@ export type NavLevel = "guest" | "member" | "admin";
  * The work context's navigation (web order §2.1): only routes that exist. `primary` items follow
  * New conversation; `more` items sit in the 更多 flyout (then the extension pages). Search and the
  * inbox are icon buttons in the brand row. Items are hidden by the current org role through `audience` (cosmetic only; the kernel
- * decides). The admin console is the entry above the account row, for enterprise admins.
+ * decides). The admin console is the entry above the account row, for super admins.
  */
 const NAV: readonly {
   id: string;
@@ -43,7 +43,7 @@ const NAV: readonly {
     icon: "agent",
     section: "primary",
   },
-  // Plugins (what the enterprise offers this org): members browse and ask, org admins switch them
+  // Plugins (what the platform offers this org): members browse and ask, org admins switch them
   {
     id: "plugins",
     key: "plugins",
@@ -268,14 +268,14 @@ export function activeAdminOf(pathname: string, items: { id: string; href: strin
 
 /**
  * The work context's navigation (primary items, 更多, the admin entry) and the command palette.
- * `enterpriseAdmin`: the account is an enterprise admin, so the admin entry shows (cosmetic;
+ * `superAdmin`: the account is a super admin, so the admin entry shows (cosmetic;
  * `/api/v1/admin/*` is decided by the kernel).
  */
 export function useNav(
   pending = 0,
   level: NavLevel = "guest",
   pendingMore = false,
-  enterpriseAdmin = false,
+  superAdmin = false,
 ): {
   primary: SidebarNavItem[];
   more: SidebarNavItem[];
@@ -300,7 +300,7 @@ export function useNav(
   const strip = ({ section: _, ...item }: (typeof items)[number]): SidebarNavItem => item;
   const primary = items.filter((n) => n.section === "primary").map(strip);
   const more = items.filter((n) => n.section === "more").map(strip);
-  const admin = enterpriseAdmin ? [{ id: "admin", label: t("nav.admin"), href: "/admin" }] : [];
+  const admin = superAdmin ? [{ id: "admin", label: t("nav.admin"), href: "/admin" }] : [];
   const commands: CommandGroup[] = [
     {
       label: t("nav.goto"),
@@ -340,5 +340,5 @@ export function useNav(
       ],
     },
   ].filter((g) => g.items.length > 0);
-  return { primary, more, inbox, ...(enterpriseAdmin ? { adminHref: "/admin" } : {}), commands };
+  return { primary, more, inbox, ...(superAdmin ? { adminHref: "/admin" } : {}), commands };
 }

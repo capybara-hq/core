@@ -72,7 +72,7 @@ const TABS = ["components", "orgs", "versions"] as const;
 type Tab = (typeof TABS)[number];
 
 /**
- * `/admin/plugins/[itemId]`: one plugin (enterprise admins, DetailPage; spec §9). Head: the name,
+ * `/admin/plugins/[itemId]`: one plugin (super admins, DetailPage; spec §9). Head: the name,
  * the latest version, the 内置 / Claude Code chips and the scope; actions 设置范围 (the scope
  * dialog with its impact preview), 停用 (with the same preview) or 启用, and 更新到 <version>
  * when its marketplace has a newer compatible version (stages it and opens the import review). A

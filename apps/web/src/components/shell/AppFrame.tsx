@@ -217,12 +217,12 @@ function ShellFrame({
     pending.count,
     navLevelOf(me),
     pending.more,
-    me.account.isEnterpriseAdmin,
+    me.account.isSuperAdmin,
   );
   const extensions = sections?.extensions ?? [];
-  // Under /admin (enterprise admins only) the 插件 item shows what waits in its 待确认 tab; the
+  // Under /admin (super admins only) the 插件 item shows what waits in its 待确认 tab; the
   // persistent sidebar refetches the stale counts on each path change.
-  const adminContext = me.account.isEnterpriseAdmin && under(pathname, "/admin");
+  const adminContext = me.account.isSuperAdmin && under(pathname, "/admin");
   const adminItems = useAdminItems({ plugins: usePluginPendingCount(adminContext) });
   const preferences = usePreferences();
   const [creatingOrg, setCreatingOrg] = useState(false);
@@ -435,7 +435,7 @@ function ShellFrame({
   );
 
   // Signed in without a current org: the chooser covers the whole shell (the admin console, which
-  // needs no org, stays reachable for enterprise admins).
+  // needs no org, stays reachable for super admins).
   if (currentOrg === null && !under(pathname, "/admin")) {
     return (
       <SessionContext.Provider value={session}>
@@ -459,7 +459,7 @@ function ShellFrame({
               // The org has its own menu in the switcher.
               account: { name: me.account.displayName, menu: personalMenu },
               theme: preferences.theme,
-              ...(me.account.isEnterpriseAdmin ? { adminHref: "/admin" } : {}),
+              ...(me.account.isSuperAdmin ? { adminHref: "/admin" } : {}),
             }}
             status={{
               ...status,
@@ -501,7 +501,7 @@ function ShellFrame({
   }
 
   // The admin context under /admin (web order §2.2), else the workspace of the current org. Only
-  // for an enterprise admin: anyone else gets the 403 beside the workspace sidebar.
+  // for a super admin: anyone else gets the 403 beside the workspace sidebar.
   const inAdmin = adminContext;
   const context: SidebarContext = inAdmin
     ? { kind: "admin", back: { href: "/", slug: currentOrg?.slug ?? null }, items: adminItems }

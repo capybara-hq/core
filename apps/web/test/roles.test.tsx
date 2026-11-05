@@ -64,9 +64,9 @@ vi.mock("next/navigation", () => ({
 const ROLES = ["guest", "member", "admin", "owner"] as const;
 const RANK = { guest: 0, member: 1, admin: 2, owner: 3 } as const;
 
-export const meAs = (role: OrgRole, enterprise = false): Me => ({
+export const meAs = (role: OrgRole, superAdmin = false): Me => ({
   ...ME,
-  account: { ...ME.account, isEnterpriseAdmin: enterprise },
+  account: { ...ME.account, isSuperAdmin: superAdmin },
   memberships: [{ orgId: "o1", slug: "acme", name: "Acme", role }],
 });
 

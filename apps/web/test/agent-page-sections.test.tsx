@@ -141,7 +141,7 @@ const contentBox = () =>
 const settle = () => act(() => new Promise((r) => setTimeout(r, 20)));
 const as = (role: "guest" | "member" | "admin") => ({
   ...ME,
-  account: { ...ME.account, isEnterpriseAdmin: false },
+  account: { ...ME.account, isSuperAdmin: false },
   memberships: [{ orgId: "o1", slug: "acme", name: "Acme", role }],
 });
 

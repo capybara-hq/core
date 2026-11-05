@@ -104,7 +104,7 @@ export type ThreadProps = {
   onRetry?(d: FailedRun): void;
   /**
    * The main thread's run rows link out (spec §6.16.23): 查看轨迹 for the roles the kernel lets
-   * read the trajectory (the agent's owner decides for members), 去配置模型服务 for enterprise
+   * read the trajectory (the agent's owner decides for members), 去配置模型服务 for super
    * admins. Absent (a sub-agent's record), the rows link nowhere. `trajectory: false` (a
    * sub-agent conversation, whose trajectory the kernel gates on the parent's agent) drops 查看轨迹.
    */

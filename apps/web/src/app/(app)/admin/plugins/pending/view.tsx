@@ -50,7 +50,7 @@ import { useErrorMessage } from "../../../../../lib/use-error-message";
 import NotFound from "../../../not-found";
 
 /**
- * `/admin/plugins/pending`: what waits for an enterprise admin (ListPage, tab 待确认; spec §4,
+ * `/admin/plugins/pending`: what waits for a super admin (ListPage, tab 待确认; spec §4,
  * §5.1, Ruling I). First the plugins whose extension permissions are not confirmed (a built-in
  * plugin keeps running meanwhile): 审阅权限 opens the permission set, and confirming sends the
  * item's `permissionsHash` (which also installs an extension that was never deployed). Then the

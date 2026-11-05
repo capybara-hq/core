@@ -14,7 +14,7 @@ export type SetupPageProps = {
     activeNav: string;
     account: SidebarProps["account"];
     theme?: NonNullable<SidebarProps["theme"]>;
-    /** The admin console entry (enterprise admins). */
+    /** The admin console entry (super admins). */
     adminHref?: string;
   };
   status: AppShellProps["status"];

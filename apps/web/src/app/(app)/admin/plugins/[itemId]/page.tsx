@@ -1,7 +1,7 @@
 import PluginDetailView from "./view";
 
 /**
- * `/admin/plugins/[itemId]` (enterprise admins): the plugin, the marketplaces that name its
+ * `/admin/plugins/[itemId]` (super admins): the plugin, the marketplaces that name its
  * sources, the catalog its dependencies are looked up in and the orgs of its scope. It reads nothing: the layout prefetches
  * them on a first load (`lib/query/routes.ts`).
  */

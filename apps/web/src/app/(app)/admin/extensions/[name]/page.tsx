@@ -1,7 +1,7 @@
 import ExtensionDetail from "./view";
 
 /**
- * `/admin/extensions/[name]` (enterprise admins): the extension list (the extension is found in it)
+ * `/admin/extensions/[name]` (super admins): the extension list (the extension is found in it)
  * and the deployment config for the Config tab. It reads nothing: the layout prefetches both on a
  * first load (`lib/query/routes.ts`).
  */

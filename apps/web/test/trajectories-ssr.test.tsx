@@ -41,7 +41,7 @@ const UI = `${O}/ui`;
 const T = "2026-10-22T08:00:00.000Z";
 const as = (role: string) => ({
   ...ME,
-  account: { ...ME.account, isEnterpriseAdmin: false },
+  account: { ...ME.account, isSuperAdmin: false },
   memberships: [{ orgId: "o1", slug: "acme", name: "Acme", role }],
 });
 const failing = () => json(500, { error: { code: "internal", message: "x" } });

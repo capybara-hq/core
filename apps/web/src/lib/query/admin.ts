@@ -19,7 +19,7 @@ import { getAdminModels, listAdminPurposes } from "../models";
 import { defineQuery } from "./define";
 import { keys } from "./keys";
 
-// The admin console's reads (enterprise admins): deployment data, so their keys start with
+// The admin console's reads (super admins): deployment data, so their keys start with
 // `"deployment"` and they are fresh for `deployment` (web query cache spec §5).
 
 const d = () => keys.deployment();

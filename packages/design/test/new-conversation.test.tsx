@@ -168,7 +168,7 @@ describe("Greeting (spec §6.16.25)", () => {
     // the mark is drawn already (the same on the server and the client)
     expect(line.querySelector('[data-part="greeting-mark"] svg')).not.toBeNull();
     expect(container.querySelector('[data-part="greeting-sub"]')?.textContent).toBe(
-      "选一个 agent，或从常用任务开始",
+      "选一个智能体，或从常用任务开始",
     );
     // the line keeps one height with or without text: the h1 line height, set on the line box
     const block = css.slice(css.indexOf(".cb-greeting-line {"));
@@ -258,7 +258,7 @@ describe("AgentRow and AgentPanel (spec §6.16.26)", () => {
     expect(names()).toEqual([]);
     expect(screen.queryByRole("listbox")).toBeNull();
     expect(document.querySelector('[data-part="agent-empty"]')?.textContent).toBe(
-      "没有匹配的 agent",
+      "没有匹配的智能体",
     );
     // clicking a row selects it and closes the panel
     await user.clear(search);

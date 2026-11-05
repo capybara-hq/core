@@ -42,9 +42,9 @@ const twoOrgs: Me = {
   ...ME,
   memberships: [...ME.memberships, { orgId: "o2", slug: "beta", name: "Beta", role: "member" }],
 };
-const as = (role: string, enterprise = false): Me => ({
+const as = (role: string, superAdmin = false): Me => ({
   ...ME,
-  account: { ...ME.account, isEnterpriseAdmin: enterprise },
+  account: { ...ME.account, isSuperAdmin: superAdmin },
   memberships: [{ orgId: "o1", slug: "acme", name: "Acme", role }],
 });
 
@@ -236,7 +236,7 @@ describe("the setup sidebar's steps per role (web-SSR spec §4)", () => {
     }));
   const s = sl.steps;
 
-  it("an enterprise admin who is also an org admin", () => {
+  it("a super admin who is also an org admin", () => {
     renderFrame(shellOf(ME, { readiness: NOT_READY }));
     expect(rows()).toEqual([
       { id: "model", state: "todo", href: "/admin/extensions", optional: false, text: s.model },

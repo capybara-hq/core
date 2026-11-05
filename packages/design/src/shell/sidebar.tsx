@@ -89,7 +89,7 @@ export type SidebarContext =
        * only while something is pending; current when `activeNav` is `inbox`.
        */
       inbox?: { href: string; count?: number; countMore?: boolean };
-      /** The admin console (enterprise admins): the entry above the account row. */
+      /** The admin console (super admins): the entry above the account row. */
       adminHref?: string;
     }
   | {
@@ -105,7 +105,7 @@ export type SidebarContext =
       home: { href: string };
       /** The required steps, then (after the "可以稍后再做" label) the optional ones. */
       steps: SetupStep[];
-      /** The admin console (enterprise admins): the entry above the account row. */
+      /** The admin console (super admins): the entry above the account row. */
       adminHref?: string;
     };
 

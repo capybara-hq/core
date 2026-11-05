@@ -50,18 +50,16 @@ export function useWorkspace(
 }
 
 /**
- * The admin console's gate from the cache: enterprise admins only (the server's `admin()`).
+ * The admin console's gate from the cache: super admins only (the server's `admin()`).
  * `pending` while `/me` has no answer.
  */
 export function useAdmin():
   | { kind: "ok"; me: Me }
-  | { kind: "noAccess"; need: "enterprise" }
+  | { kind: "noAccess"; need: "superAdmin" }
   | { kind: "pending" } {
   const me = useQuery(meQuery()).data;
   if (me === undefined) return { kind: "pending" };
-  return me.account.isEnterpriseAdmin
-    ? { kind: "ok", me }
-    : { kind: "noAccess", need: "enterprise" };
+  return me.account.isSuperAdmin ? { kind: "ok", me } : { kind: "noAccess", need: "superAdmin" };
 }
 
 /**

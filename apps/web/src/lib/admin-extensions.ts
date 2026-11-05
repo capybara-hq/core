@@ -5,7 +5,7 @@ import type { ConfigIssue, JsonSchema } from "./json-schema";
 
 /**
  * Deployment-level extension management (`/api/v1/admin/extensions/*`, kernel
- * `admin/extensions.controller.ts`, enterprise admins): list and detail, upload / npm import
+ * `admin/extensions.controller.ts`, super admins): list and detail, upload / npm import
  * (returns the review), install / approve / enable / disable / uninstall, deployment config.
  * Writes only set the desired state and return; replicas converge afterwards (the returned status
  * may be `converging`).
@@ -72,7 +72,7 @@ export interface AdminExtension {
   installSource: InstallSource | null;
   /**
    * A required bootstrap plugin: enabled in every organization, cannot be disabled or uninstalled
-   * (an enterprise admin may upgrade it).
+   * (a super admin may upgrade it).
    */
   required: boolean;
   /** Who the plugin shipping the extension is offered to (`all` for builtin); null without a catalog item. */

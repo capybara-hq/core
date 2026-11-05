@@ -30,9 +30,9 @@ const setupSidebar = () => document.querySelector('[data-part="sidebar"][data-co
 const workSidebar = () => document.querySelector('[data-part="sidebar"][data-context="work"]');
 const step = (label: string) =>
   within(screen.getByRole("main")).getByText(label).closest("li") as HTMLElement;
-const memberMe = (role: string, enterprise = false): Me => ({
+const memberMe = (role: string, superAdmin = false): Me => ({
   ...ME,
-  account: { ...ME.account, isEnterpriseAdmin: enterprise },
+  account: { ...ME.account, isSuperAdmin: superAdmin },
   memberships: [{ orgId: "o1", slug: "acme", name: "Acme", role }],
 });
 
@@ -167,7 +167,7 @@ describe("one step list: the setup home's card and the sidebar agree", () => {
       optional: el.getAttribute("data-optional") === "true",
     }));
   for (const [who, me, readiness] of [
-    ["enterprise admin", ME, NOT_READY],
+    ["super admin", ME, NOT_READY],
     ["org admin", memberMe("admin"), PROVIDER_ONLY],
     ["member", memberMe("member"), PROVIDER_ONLY],
     ["guest", memberMe("guest"), NOT_READY],
@@ -207,7 +207,7 @@ describe("one step list: the setup home's card and the sidebar agree", () => {
 });
 
 describe("the checklist by role", () => {
-  it("an enterprise admin configures the model in the admin console", async () => {
+  it("a super admin configures the model in the admin console", async () => {
     renderFrame();
     const model = step(sl.steps.model);
     expect(within(model).getByRole("link", { name: s.model.action }).getAttribute("href")).toBe(
@@ -315,7 +315,7 @@ describe("the checklist by role", () => {
     expect(router.refresh).not.toHaveBeenCalled();
   });
 
-  it("an enterprise admin reaches the admin console from the setup sidebar", () => {
+  it("a super admin reaches the admin console from the setup sidebar", () => {
     renderFrame();
     expect(setupSidebar()?.querySelector('a[href="/admin"]')).not.toBeNull();
     cleanup();

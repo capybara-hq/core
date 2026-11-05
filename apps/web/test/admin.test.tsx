@@ -15,7 +15,7 @@ vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 const msgs = { zh, en } as const;
 const LOCALES = ["zh", "en"] as const;
 const ROW_ACTIONS = { zh: "行操作", en: "Row actions" } as const;
-const NOT_ADMIN: Me = { ...ME, account: { ...ME.account, isEnterpriseAdmin: false } };
+const NOT_ADMIN: Me = { ...ME, account: { ...ME.account, isSuperAdmin: false } };
 const template = (name: string) => document.querySelector(`[data-template="${name}"]`);
 const fill = (s: string, vars: Record<string, string | number>) =>
   s.replace(/\{(\w+)\}/g, (_, k: string) => String(vars[k]));
@@ -44,7 +44,7 @@ describe("管理后台导航", () => {
 });
 
 describe("/admin 概览（OverviewPage）", () => {
-  it.each(LOCALES)("企业管理员：四个数字与各页入口（%s）", async (locale) => {
+  it.each(LOCALES)("超级管理员：四个数字与各页入口（%s）", async (locale) => {
     const a = msgs[locale].admin;
     stubApi({
       "GET /api/v1/admin/overview": () =>
@@ -80,14 +80,14 @@ describe("/admin 概览（OverviewPage）", () => {
     expect(screen.getByRole("note").textContent).toBe(a.overview.noConversations);
   });
 
-  it("非企业管理员：没有访问权限（需要企业管理员），不请求后台接口", async () => {
+  it("非超级管理员：没有访问权限（需要超级管理员），不请求后台接口", async () => {
     const calls = stubApi({});
     await renderRouteWithCache("/admin", lastStubRoutes(), { locale: "zh", me: NOT_ADMIN });
     expect(template("StatusPage")?.getAttribute("data-kind")).toBe("no-access");
     expect(document.querySelector('[data-part="status-need"]')?.textContent).toBe(
-      `需要：${zh.roles.need.enterprise}`,
+      `需要：${zh.roles.need.superAdmin}`,
     );
-    expect(screen.getByText(zh.roles.noAccess.askEnterprise)).toBeTruthy();
+    expect(screen.getByText(zh.roles.noAccess.askSuperAdmin)).toBeTruthy();
     expect(calls).toEqual([]);
   });
 });
@@ -98,7 +98,7 @@ const ACCOUNTS = [
     displayName: "Grant",
     email: null,
     status: "active",
-    isEnterpriseAdmin: true,
+    isSuperAdmin: true,
     createdAt: "2026-10-01T00:00:00Z",
   },
   {
@@ -106,13 +106,13 @@ const ACCOUNTS = [
     displayName: "Alice",
     email: "alice@example.com",
     status: "active",
-    isEnterpriseAdmin: false,
+    isSuperAdmin: false,
     createdAt: "2026-10-02T00:00:00Z",
   },
 ];
 
 describe("/admin/accounts（ListPage）", () => {
-  it.each(LOCALES)("授予企业管理员要先确认，确认后才 PATCH（%s）", async (locale) => {
+  it.each(LOCALES)("授予超级管理员要先确认，确认后才 PATCH（%s）", async (locale) => {
     const a = msgs[locale].admin.accounts;
     const calls = stubApi({
       "GET /api/v1/admin/accounts": () => json(200, { accounts: ACCOUNTS, next: null }),
@@ -132,18 +132,18 @@ describe("/admin/accounts（ListPage）", () => {
     expect(calls.filter((c) => c.method === "PATCH")).toEqual([]);
     await user.click(within(dialog).getByRole("button", { name: a.confirm.grant }));
     await vi.waitFor(() =>
-      expect(bodyOf(calls.find((c) => c.method === "PATCH"))).toEqual({ isEnterpriseAdmin: true }),
+      expect(bodyOf(calls.find((c) => c.method === "PATCH"))).toEqual({ isSuperAdmin: true }),
     );
     await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     // A role is plain text, not an accent badge.
-    expect(within(alice).getByText(a.enterpriseAdmin).closest(".cb-badge")).toBeNull();
+    expect(within(alice).getByText(a.superAdmin).closest(".cb-badge")).toBeNull();
   });
 
   it("取消确认：不发请求", async () => {
     const calls = stubApi({
       "GET /api/v1/admin/accounts": () =>
         json(200, {
-          accounts: [ACCOUNTS[0], { ...ACCOUNTS[1], isEnterpriseAdmin: true }],
+          accounts: [ACCOUNTS[0], { ...ACCOUNTS[1], isSuperAdmin: true }],
           next: null,
         }),
     });
@@ -160,7 +160,7 @@ describe("/admin/accounts（ListPage）", () => {
     expect(calls.filter((c) => c.method !== "GET")).toEqual([]);
   });
 
-  it("the only active enterprise admin of the full list: no 撤销, no 停用, so no row menu at all", async () => {
+  it("the only active super admin of the full list: no 撤销, no 停用, so no row menu at all", async () => {
     stubApi({
       "GET /api/v1/admin/accounts": () =>
         json(200, {
@@ -170,7 +170,7 @@ describe("/admin/accounts（ListPage）", () => {
               ...ACCOUNTS[1],
               id: "a3",
               displayName: "Old",
-              isEnterpriseAdmin: true,
+              isSuperAdmin: true,
               status: "disabled",
             },
           ],
@@ -187,7 +187,7 @@ describe("/admin/accounts（ListPage）", () => {
     expect(within(old).getByRole("button", { name: ROW_ACTIONS.zh })).toBeTruthy();
   });
 
-  it("撤销最后一个企业管理员：显示 account.last_super_admin 的文案，对话框保持打开", async () => {
+  it("撤销最后一个超级管理员：显示 account.last_super_admin 的文案，对话框保持打开", async () => {
     // a partial list (more pages) cannot tell the last admin: the kernel's refusal shows
     stubApi({
       "GET /api/v1/admin/accounts": () => json(200, { accounts: ACCOUNTS, next: "c2" }),
@@ -214,7 +214,7 @@ describe("/admin/accounts（ListPage）", () => {
       displayName: "Bob",
       email: null,
       status: "active",
-      isEnterpriseAdmin: false,
+      isSuperAdmin: false,
       createdAt: "2026-10-03T00:00:00Z",
     };
     const calls = stubApi({
@@ -239,7 +239,7 @@ describe("/admin/accounts（ListPage）", () => {
         login: "bob",
         password: "correct horse battery",
         displayName: "Bob",
-        enterpriseAdmin: false,
+        superAdmin: false,
       }),
     );
     expect(await screen.findByText("Bob")).toBeTruthy();

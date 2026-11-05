@@ -479,7 +479,7 @@ describe("渠道连接详情（DetailPage）", () => {
 describe("the channel pages read from the query cache (web query cache spec §3)", () => {
   const MEMBER = {
     ...ME,
-    account: { ...ME.account, isEnterpriseAdmin: false },
+    account: { ...ME.account, isSuperAdmin: false },
     memberships: [{ orgId: "o1", slug: "acme", name: "Acme", role: "member" }],
   };
   const routes = {

@@ -65,7 +65,7 @@ const POLL_MS = 3000;
 const POLL_MAX = 20;
 
 /**
- * `/admin/extensions/[name]`: an extension (enterprise admins, DetailPage).
+ * `/admin/extensions/[name]`: an extension (super admins, DetailPage).
  * - Overview: the desired state and each replica's state (failure reason, heartbeat); enable,
  *   disable (confirmed, with the drain time limit), upgrade (to the install wizard), uninstall (must
  *   be disabled first, confirmed by typing its name). Built-in and config-declared extensions don't

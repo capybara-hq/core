@@ -1,7 +1,7 @@
 import PluginImportView from "./view";
 
 /**
- * `/admin/plugins/import` (enterprise admins): `?staging=<id>` names a staged import (opened from
+ * `/admin/plugins/import` (super admins): `?staging=<id>` names a staged import (opened from
  * the marketplace entries, or a reload). It reads nothing: the layout prefetches the staged review
  * on a first load (`lib/query/routes.ts`). A staged import the kernel refuses (expired, already
  * confirmed) is shown as the page's own problem, never a not-found page.

@@ -202,7 +202,7 @@ function overviewBlocks(): ReactNode {
       {/* A note that does not depend on the data stays while the numbers load (spec §5.6). */}
       <RefBlock id="template-overview-keep" width={W} height={H}>
         <OverviewPage header={{ ...OVERVIEW_HEADER, metrics: METRICS }}>
-          <Callout tone="info">企业管理员看不到任何对话内容。</Callout>
+          <Callout tone="info">超级管理员看不到任何对话内容。</Callout>
         </OverviewPage>
       </RefBlock>
       <RefBlock id="template-overview-loading-keep" width={W} height={H}>
@@ -210,7 +210,7 @@ function overviewBlocks(): ReactNode {
           header={loadingHeader(PATH.slice(0, 1), 1, OVERVIEW_HEADER.description)}
           loading={{ stats: METRICS.length, keep: true }}
         >
-          <Callout tone="info">企业管理员看不到任何对话内容。</Callout>
+          <Callout tone="info">超级管理员看不到任何对话内容。</Callout>
         </OverviewPage>
       </RefBlock>
     </>

@@ -23,7 +23,7 @@ import { useWorkspace } from "../../../../lib/query/workspace";
 import NotFound from "../../not-found";
 
 /**
- * `/settings/models`：模型用途（组织管理员，SettingsPage）。每个用途显示企业管理员设的部署默认，
+ * `/settings/models`：模型用途（组织管理员，SettingsPage）。每个用途显示超级管理员设的部署默认，
  * 组织可以覆盖（选模型与参数）或恢复默认；`eval` 没有生效的映射时提示评测不能开评委（评测向导链到这里）。
  * From the query cache (the layout prefetched it on a first load): the org's purposes and the
  * models they can map to; a saved purpose is written into the cached purposes.

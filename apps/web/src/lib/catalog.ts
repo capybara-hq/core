@@ -3,9 +3,9 @@ import { ApiClientError, apiFetch, CSRF_HEADER, ensureSession, toError } from ".
 import type { PermissionGroup, PermissionItem } from "./extensions";
 
 /**
- * The enterprise catalog (kernel `catalog/*.controller.ts`). Every catalog item is a plugin: an
+ * The platform catalog (kernel `catalog/*.controller.ts`). Every catalog item is a plugin: an
  * optional extension, skills, connector templates and dependencies on other plugins.
- * - deployment level (enterprise admins): `/api/v1/admin/catalog/*` items, the plugin import
+ * - deployment level (super admins): `/api/v1/admin/catalog/*` items, the plugin import
  *   (prepare from a file or npm -> one review -> confirm, which also installs the extension), scope
  *   and disable (previewed, confirmed with `scopeHash`), permission confirmation, access / import
  *   requests; `/api/v1/admin/marketplaces/*` marketplaces, browsing
@@ -60,7 +60,7 @@ export interface CatalogItem {
   installs: number;
   /** The latest version's source: file / npm / marketplace. */
   source: string;
-  /** The marketplace it was imported from (`official` or an enterprise marketplace id), else null. */
+  /** The marketplace it was imported from (`official` or a custom marketplace id), else null. */
   marketplaceId: string | null;
   /** The highest compatible version in its marketplace (null when not from one or it is off). */
   latestMarketplaceVersion: string | null;
@@ -968,7 +968,7 @@ export const decideDeploymentRequest = (id: string, decision: RequestDecision) =
 export const listMarketplaces = () =>
   apiFetch<{ items: Marketplace[]; offline: boolean }>(marketplaces);
 
-/** Adds an enterprise marketplace; `form: "git"` with an optional `ref` for a git repository. */
+/** Adds a custom marketplace; `form: "git"` with an optional `ref` for a git repository. */
 export const addMarketplace = (body: {
   name: string;
   url: string;

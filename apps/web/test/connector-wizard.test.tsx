@@ -778,7 +778,7 @@ describe("安装向导（WizardPage）", () => {
 describe("/connectors/install reads from the query cache", () => {
   const as = (role: "member" | "admin") => ({
     ...ME,
-    account: { ...ME.account, isEnterpriseAdmin: false },
+    account: { ...ME.account, isSuperAdmin: false },
     memberships: [{ orgId: "o1", slug: "acme", name: "Acme", role }],
   });
   const ITEM = {

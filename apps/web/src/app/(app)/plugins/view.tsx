@@ -33,8 +33,8 @@ import NotFound from "../not-found";
 
 /**
  * `/plugins`: the org's 插件 page (spec §9; members up, read-only for members). The plugins the
- * enterprise offers this org, as object rows: name, chips (内置, Claude Code), components, scope,
- * the state in the org (已启用 / 未启用 / 需要配置 / 已启用 · 企业统一 / 未开放，可申请 / 已申请，
+ * platform offers this org, as object rows: name, chips (内置, Claude Code), components, scope,
+ * the state in the org (已启用 / 未启用 / 需要配置 / 已启用 · 平台统一 / 未开放，可申请 / 已申请，
  * 等待处理) and the actions of {@link usePluginActions}. Org admins also get the 市场 tab (spec
  * §5.1): the marketplaces' entries, read-only, with 申请引入; it is left out while the entries
  * cannot be read (the deployment turned `orgMarketplaceBrowse` off: a 404). From the query cache
@@ -128,7 +128,7 @@ function Plugins({ orgId, me }: { orgId: string; me: Me }) {
         }
       : undefined;
   const scopeText = (i: OrgCatalogItem) =>
-    i.builtin ? tc("scope.all") : t("meta.enterprise", { scope: tc(`scope.${i.scope}`) });
+    i.builtin ? tc("scope.all") : t("meta.platform", { scope: tc(`scope.${i.scope}`) });
   return (
     <>
       <ListPage
@@ -174,7 +174,7 @@ const keyOf = (e: MarketplaceEntry) => `${e.sourceId}/${e.name}/${e.version ?? "
 
 /**
  * The 市场 tab (org admins, spec §5.1 rule 3): the marketplaces' plugins, one row per plugin of a
- * marketplace at its latest version, read-only; 申请引入 asks the enterprise admin to bring the
+ * marketplace at its latest version, read-only; 申请引入 asks the super admin to bring the
  * latest in (approving runs the import review with this org as the scope), and the row menu's
  * 其他版本 asks for another version. A version asked for in this visit reads 已申请，等待处理 (the
  * latest) or 已申请 <version>，等待处理; a plugin the deployment has imported reads 已引入.

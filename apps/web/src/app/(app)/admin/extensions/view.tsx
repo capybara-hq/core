@@ -36,7 +36,7 @@ const STATE_TONE: Record<ExtensionStatus, "ok" | "warn" | "fail" | "muted"> = {
 };
 
 /**
- * `/admin/extensions`: every extension on the deployment as object rows (enterprise admins). A
+ * `/admin/extensions`: every extension on the deployment as object rows (super admins). A
  * warn callout above the tabs names the extensions that need attention (anything that is neither
  * enabled nor disabled, such as a required extension without config); tabs All / Needs attention /
  * Enabled / Disabled carry counts and appear only when they hold something different from All.

@@ -48,17 +48,17 @@ export const SetupContext = createContext<{
 export const useSetup = () => useContext(SetupContext);
 
 /** Who is looking at the checklist: what they may do decides each step's action. */
-type SetupRole = "enterprise" | "orgAdmin" | "member" | "guest";
+type SetupRole = "superAdmin" | "orgAdmin" | "member" | "guest";
 
 function setupRoleOf(me: Me): SetupRole {
-  if (me.account.isEnterpriseAdmin) return "enterprise";
+  if (me.account.isSuperAdmin) return "superAdmin";
   if (canUpdateOrg(me)) return "orgAdmin";
   return navLevelOf(me) === "member" ? "member" : "guest";
 }
 
 /**
  * The setup sidebar's steps (web-SSR spec §4), by what the viewer may do (cosmetic; the kernel
- * decides). The model is deployment-wide: an enterprise admin configures it in the admin console,
+ * decides). The model is deployment-wide: a super admin configures it in the admin console,
  * everyone else waits (an org admin for a deployment admin). The agent: members and up create it
  * once a model exists, guests wait for an admin. Then the optional steps: org admins invite
  * members, connect a channel and install plugins; members connect their own accounts.
@@ -73,9 +73,9 @@ export function useSetupSteps(me: Me, r: OrgReadiness): SetupStep[] {
         id: "model",
         label: t("steps.model"),
         state: "done",
-        ...(role === "enterprise" ? { href: "/admin/extensions" } : {}),
+        ...(role === "superAdmin" ? { href: "/admin/extensions" } : {}),
       }
-    : role === "enterprise"
+    : role === "superAdmin"
       ? { id: "model", label: t("steps.model"), state: "todo", href: "/admin/extensions" }
       : {
           id: "model",
@@ -165,9 +165,9 @@ export function SetupHome({
   const all = useSetupSteps(me, readiness);
   const required = all.filter((s) => !s.optional);
   const optional = all.filter((s) => s.optional);
-  const enterprise = setupRoleOf(me) === "enterprise";
+  const superAdmin = setupRoleOf(me) === "superAdmin";
   const description: Record<string, string> = {
-    model: enterprise ? t("chat.setup.model.description") : t("chat.setup.model.askAdmin"),
+    model: superAdmin ? t("chat.setup.model.description") : t("chat.setup.model.askAdmin"),
     agent: t("chat.setup.agent.description"),
   };
   const actionLabel: Record<string, string> = {

@@ -53,9 +53,9 @@ import NotFound from "../not-found";
  * agents that use it), confirmed in a dialog with the preview's hash; with the reason when a
  * dependency is missing or dependents remain (the latter can be force-disabled); the permission
  * list (read-only, sensitive categories highlighted), the org config form, and "Sync now" for
- * directory-sync extensions. An extension of an `all` or builtin plugin reads 已启用 · 企业统一
+ * directory-sync extensions. An extension of an `all` or builtin plugin reads 已启用 · 平台统一
  * and its switch is read-only (on in every org); its org config can still be set. One the
- * deployment cannot run now (e.g. stopped by an enterprise admin) shows "Unavailable": the switch is
+ * deployment cannot run now (e.g. stopped by a super admin) shows "Unavailable": the switch is
  * read-only (the org's setting is kept). Below the extensions, the org's default providers of the
  * points several extensions provide (web tools spec §6), and the org's file previewers
  * (`file-preview@1`) in order, when any is provided. From the query cache (the layout prefetched
@@ -143,9 +143,9 @@ function ExtensionSection({ orgId, plugin }: { orgId: string; plugin: OrgExtensi
   // Stopped on the deployment (or not loaded yet): only the org's enable setting is shown, read-only
   const unavailable = plugin.available === false;
   const required = plugin.required === true;
-  // On in every org (a builtin or `all` plugin): the switch is the enterprise's
-  const enterprise = required || plugin.catalogItem?.scope === "all";
-  const locked = enterprise || plugin.switchable === false;
+  // On in every org (a builtin or `all` plugin): the switch is the platform's
+  const platform = required || plugin.catalogItem?.scope === "all";
+  const locked = platform || plugin.switchable === false;
   const qc = useQueryClient();
   // The answer is the extension as it is now: it replaces that one in the cached list.
   const onSaved = (next: OrgExtension) =>
@@ -218,7 +218,7 @@ function ExtensionSection({ orgId, plugin }: { orgId: string; plugin: OrgExtensi
           kind: "other",
           message: errorMessage(e),
           extra: issueLines(e),
-          // Refused by its plugin (stopped by the enterprise, not offered to this org): link to
+          // Refused by its plugin (stopped by the platform, not offered to this org): link to
           // the 插件 page to request it
           catalog:
             e instanceof ApiClientError &&
@@ -276,13 +276,13 @@ function ExtensionSection({ orgId, plugin }: { orgId: string; plugin: OrgExtensi
           onChange={(on) => void toggle(on)}
         />
         <Text>
-          {plugin.enabled ? (enterprise ? tp("state.enterprise") : t("enabled")) : t("disabled")}
+          {plugin.enabled ? (platform ? tp("state.platform") : t("enabled")) : t("disabled")}
         </Text>
         {unavailable && <Text tone="warn">{t("unavailable")}</Text>}
       </Stack>
-      {enterprise && (
+      {platform && (
         <Text variant="prose" tone="muted">
-          {t("enterpriseHint")}
+          {t("platformHint")}
         </Text>
       )}
       {unavailable && (

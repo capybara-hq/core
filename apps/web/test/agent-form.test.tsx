@@ -74,7 +74,7 @@ describe("the agent pages render on the server (web-SSR spec §6)", () => {
   const T = "2026-10-20T08:00:00.000Z";
   const as = (role: "guest" | "member" | "admin") => ({
     ...ME,
-    account: { ...ME.account, isEnterpriseAdmin: false },
+    account: { ...ME.account, isSuperAdmin: false },
     memberships: [{ orgId: "o1", slug: "acme", name: "Acme", role }],
   });
   const agent = (id: string, name: string, owner = "a1") => ({

@@ -5,7 +5,7 @@ export interface Account {
   id: string;
   displayName: string;
   email: string | null;
-  isEnterpriseAdmin: boolean;
+  isSuperAdmin: boolean;
 }
 
 export interface Membership {

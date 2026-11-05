@@ -44,7 +44,7 @@ import { useErrorMessage } from "../../../../lib/use-error-message";
 import NotFound from "../../not-found";
 
 /**
- * `/admin/orgs`：部署上的全部组织（企业管理员，ListPage）。每个组织可以覆盖运行并发上限与沙箱
+ * `/admin/orgs`：部署上的全部组织（超级管理员，ListPage）。每个组织可以覆盖运行并发上限与沙箱
  * cpu / 内存（部署设置 `runConcurrencyOverrides` / `sandboxLimitOverrides`）；留空用部署默认。
  * 沙箱限额只对之后新建的沙箱生效。组织管理员在组织设置里只读。
  * From the query cache (the layout prefetched both reads on a first load); a saved override writes

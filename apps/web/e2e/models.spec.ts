@@ -21,7 +21,7 @@ const saveAll = (page: import("@playwright/test").Page) =>
   page.locator('[data-part="action-row"]').getByRole("button", { name: P.save }).click();
 
 /**
- * 模型、价格与用途映射（T18）：企业管理员在后台给 fake-1 定价、把评委用途 eval 的部署默认设为 fake-1；
+ * 模型、价格与用途映射（T18）：超级管理员在后台给 fake-1 定价、把评委用途 eval 的部署默认设为 fake-1；
  * 组织设置页显示部署默认，覆盖后再恢复默认。最后清掉价格与映射，不影响其他用例。
  */
 /** model-fake's display name (zh, its plugin.json): each provider's table is named by it. */

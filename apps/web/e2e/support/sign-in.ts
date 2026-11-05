@@ -7,7 +7,7 @@ const zh = JSON.parse(
   readFileSync(new URL("../../messages/zh.json", import.meta.url), "utf8"),
 ) as typeof import("../../messages/zh.json");
 
-/** 全部用例共用的企业管理员账号（`setup.spec.ts` 在初始化向导里创建；初始化的账号是企业管理员）。 */
+/** 全部用例共用的超级管理员账号（`setup.spec.ts` 在初始化向导里创建；初始化的账号是超级管理员）。 */
 export const LOGIN = "admin";
 export const PASSWORD = "correct-horse-battery";
 export const ORG_NAME = "Acme";

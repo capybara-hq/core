@@ -1625,9 +1625,9 @@ describe("run rows (spec §6.16.23)", () => {
     runStarted(2),
     ev(3, "run_failed", { error: { code: "model.auth", message: "401 Unauthorized: bad key" } }),
   ];
-  const as = (role: string, opts: { id?: string; enterprise?: boolean } = {}) => ({
+  const as = (role: string, opts: { id?: string; superAdmin?: boolean } = {}) => ({
     ...ME,
-    account: { ...ME.account, id: opts.id ?? "a9", isEnterpriseAdmin: opts.enterprise ?? false },
+    account: { ...ME.account, id: opts.id ?? "a9", isSuperAdmin: opts.superAdmin ?? false },
     memberships: [{ ...(ME.memberships[0] as (typeof ME.memberships)[number]), role }],
   });
   const row = () => document.querySelector<HTMLElement>("[data-entry='run']") as HTMLElement;
@@ -1660,7 +1660,7 @@ describe("run rows (spec §6.16.23)", () => {
     window.history.replaceState(null, "", "/");
   });
 
-  it("a failed run is open: the localized error, the raw text behind its toggle, Retry and the links (an owner who is an enterprise admin)", async () => {
+  it("a failed run is open: the localized error, the raw text behind its toggle, Retry and the links (an owner who is a super admin)", async () => {
     api({ [`GET ${BASE}/events`]: () => json(200, { events: authFailure }) });
     await renderChat();
     const region = within(row()).getByRole("region", { name: "Run details" });
@@ -1688,8 +1688,8 @@ describe("run rows (spec §6.16.23)", () => {
     ["a guest: no links", as("guest", { id: "a1" }), false, false],
     ["an org admin: the trajectory", as("admin"), true, false],
     [
-      "an enterprise admin who is a plain member: the fix entry only",
-      as("member", { enterprise: true }),
+      "a super admin who is a plain member: the fix entry only",
+      as("member", { superAdmin: true }),
       false,
       true,
     ],

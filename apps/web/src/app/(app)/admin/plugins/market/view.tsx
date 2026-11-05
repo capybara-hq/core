@@ -49,7 +49,7 @@ type Notice = { message: string; extra: string[] };
 const keyOf = (e: MarketplaceEntry) => `${e.sourceId}/${e.name}/${e.version ?? ""}`;
 
 /**
- * `/admin/plugins/market`: browse marketplace entries (enterprise admins, the 插件 tab 市场), as
+ * `/admin/plugins/market`: browse marketplace entries (super admins, the 插件 tab 市场), as
  * object rows.
  * One entry is one version of a plugin; a row is one plugin of one marketplace, at its latest
  * version (see {@link groupMarketplaceEntries}). A row: the mono name, the summary, a meta line (the

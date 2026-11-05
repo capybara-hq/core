@@ -29,7 +29,7 @@ export type PluginStateLabel = { label: string; tone: "ok" | "warn" | "muted" };
 
 /**
  * The state copy of a plugin from the org's view: a pending request first (已申请，等待处理),
- * then the state; `on` for an `all` or builtin plugin reads 已启用 · 企业统一. An extension the
+ * then the state; `on` for an `all` or builtin plugin reads 已启用 · 平台统一. An extension the
  * deployment lacks is said instead of 未启用 / 需要配置 (it cannot be switched on).
  */
 export function usePluginState(): (item: OrgCatalogItem) => PluginStateLabel {
@@ -43,7 +43,7 @@ export function usePluginState(): (item: OrgCatalogItem) => PluginStateLabel {
         return { label: t("not_offered"), tone: "muted" };
       case "on":
         return i.builtin || i.scope === "all"
-          ? { label: t("enterprise"), tone: "ok" }
+          ? { label: t("platform"), tone: "ok" }
           : { label: t("on"), tone: "ok" };
       default:
         if (i.notDeployed) return { label: t("notDeployed"), tone: "warn" };
@@ -115,7 +115,7 @@ export function rowActions(actions: PluginAction[]): {
  * extension's org config on 扩展), 停用 (previewed: what it takes away and the agents that use it;
  * confirmed with the preview's hash; never on `all` / builtin plugins), 申请 (`access`, a plugin
  * not offered to the org). Members: 申请启用 (`enable`) on an `optional` plugin that is off.
- * Nothing while a request is pending, or on a plugin the enterprise stopped. Each call invalidates
+ * Nothing while a request is pending, or on a plugin the platform stopped. Each call invalidates
  * what a plugin change touches; failures land in `error`.
  */
 export function usePluginActions({
@@ -261,7 +261,7 @@ export function usePluginActions({
           : { id: "enable", label: t("action.enable"), onSelect: () => void enable(i) },
       ];
     }
-    // On: the extension's org config when it has a form; 停用 unless the enterprise turned it on
+    // On: the extension's org config when it has a form; 停用 unless the platform turned it on
     const own = ownExtension(i, extensions);
     return [
       ...(own?.configurable === true && hasConfigFields(own.orgConfigSchema)

@@ -110,7 +110,7 @@ function routes(a = agent(), over: Record<string, () => Response | Promise<Respo
 
 const member = (role: "member" | "guest" = "member") => ({
   ...ME,
-  account: { ...ME.account, isEnterpriseAdmin: false },
+  account: { ...ME.account, isSuperAdmin: false },
   memberships: [{ orgId: "o1", slug: "acme", name: "Acme", role }],
 });
 const nav = () => {

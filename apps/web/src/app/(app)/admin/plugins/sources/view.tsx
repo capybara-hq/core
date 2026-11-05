@@ -65,11 +65,11 @@ function useProblem(): (e: unknown) => Problem {
 }
 
 /**
- * `/admin/plugins/sources`: the marketplace sources (enterprise admins, ListPage; 添加市场源 on the
+ * `/admin/plugins/sources`: the marketplace sources (super admins, ListPage; 添加市场源 on the
  * 插件 head leads here, its entries are the 插件 tab 市场). The official
  * marketplace: the enable switch (offline mode with a read-only switch when the deployment config
- * turns it off) and its read-only address; enterprise marketplaces: add, edit, remove (name,
- * address, enabled, token); each marketplace's status and "Refresh now". An enterprise marketplace
+ * turns it off) and its read-only address; custom marketplaces: add, edit, remove (name,
+ * address, enabled, token); each marketplace's status and "Refresh now". A custom marketplace
  * is a marketplace.json URL or a git repository (`owner/repo` or an https git URL, with an optional
  * branch / tag / commit; the repository holds `.capybara-plugin/marketplace.json`); a git
  * marketplace shows the ref it follows and the commit of its last refresh.
@@ -92,7 +92,7 @@ function SourcesRead() {
   if (read.kind === "error") return <ErrorFrame reset={read.retry} />;
   if (read.kind === "loading") {
     // The two static sections: the official marketplace (its switch, its address, its status)
-    // and the enterprise ones (the add form; the editors above it come with the data).
+    // and the custom ones (the add form; the editors above it come with the data).
     return (
       <ListPage
         header={{
@@ -110,9 +110,9 @@ function SourcesRead() {
           loading={{ fields: [{ control: "switch" }, {}, { control: "text" }] }}
         />
         <FormSection
-          id="enterprise"
-          title={t("enterprise")}
-          description={t("enterpriseHint")}
+          id="custom"
+          title={t("custom")}
+          description={t("customHint")}
           loading={{
             fields: [{ control: "text" }, { control: "segmented" }, {}, {}, {}],
           }}
@@ -141,8 +141,8 @@ function Sources({ data }: { data: SourceList }) {
   const matches = (s: Marketplace) =>
     needle === "" || s.name.toLowerCase().includes(needle) || s.url.toLowerCase().includes(needle);
   const official = data.items.find((s) => s.builtin);
-  const enterprise = data.items.filter((s) => !s.builtin);
-  const shownEnterprise = enterprise.filter(matches);
+  const custom = data.items.filter((s) => !s.builtin);
+  const shownCustom = custom.filter(matches);
   const officialShown = official !== undefined && matches(official);
 
   return (
@@ -154,7 +154,7 @@ function Sources({ data }: { data: SourceList }) {
         search: { label: t("search"), value: q, onChange: setQ },
       }}
     >
-      {needle !== "" && !officialShown && shownEnterprise.length === 0 && (
+      {needle !== "" && !officialShown && shownCustom.length === 0 && (
         <Text tone="muted">{t("noMatch")}</Text>
       )}
       <FormSection id="official" title={t("official")} description={t("officialHint")}>
@@ -168,10 +168,10 @@ function Sources({ data }: { data: SourceList }) {
           />
         )}
       </FormSection>
-      <FormSection id="enterprise" title={t("enterprise")} description={t("enterpriseHint")}>
+      <FormSection id="custom" title={t("custom")} description={t("customHint")}>
         <Stack gap={24}>
-          {enterprise.length === 0 && <Text tone="muted">{t("enterpriseEmpty")}</Text>}
-          {shownEnterprise.map((s) => (
+          {custom.length === 0 && <Text tone="muted">{t("customEmpty")}</Text>}
+          {shownCustom.map((s) => (
             <SourceEditor key={s.id} source={s} onChanged={replace} onRemoved={reload} />
           ))}
           <AddSource onAdded={reload} />
@@ -246,7 +246,7 @@ function StatusLine({ source }: { source: Marketplace }) {
   );
 }
 
-/** 一个来源：官方清单只能开关与刷新（地址只读）；企业清单可改名称、地址、令牌，可删除。 */
+/** 一个来源：官方清单只能开关与刷新（地址只读）；自定义清单可改名称、地址、令牌，可删除。 */
 function SourceEditor({
   source,
   onChanged,
@@ -448,7 +448,7 @@ function SourceEditor({
 }
 
 /**
- * Adding an enterprise marketplace: a marketplace.json URL, or a git repository (`form: "git"`, with
+ * Adding a custom marketplace: a marketplace.json URL, or a git repository (`form: "git"`, with
  * an optional ref; the kernel also recognises `owner/repo` and `….git` URLs by themselves).
  */
 function AddSource({ onAdded }: { onAdded(): void }) {

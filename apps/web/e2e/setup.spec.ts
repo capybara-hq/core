@@ -13,7 +13,7 @@ const zh = JSON.parse(
  * `setup` 项目（playwright.config.ts）：在全新内核上走一遍初始化向导，其余用例都依赖它先跑完
  * （之后它们用 `support/sign-in.ts` 登录）。初始化页的断言只在这里。
  */
-test("初始化向导：未初始化的部署打开首页 → 初始化页（可切换语言）→ 建企业管理员与组织 → 引导设置 → 新建 agent → 对话", async ({
+test("初始化向导：未初始化的部署打开首页 → 初始化页（可切换语言）→ 建超级管理员与组织 → 引导设置 → 新建 agent → 对话", async ({
   page,
 }) => {
   await page.goto("/");

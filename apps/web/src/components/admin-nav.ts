@@ -16,7 +16,7 @@ export const ADMIN_PAGES = [
 export type AdminPageId = (typeof ADMIN_PAGES)[number]["id"];
 
 /**
- * The admin console's (enterprise admins) navigation: overview, accounts, orgs, plugins (its
+ * The admin console's (super admins) navigation: overview, accounts, orgs, plugins (its
  * tabs hold the marketplaces and the pending confirmations), extensions, models, deployment
  * settings. It feeds the sidebar's admin context only;
  * admin pages carry no inner navigation. An org's own settings stay under `/settings/*`.

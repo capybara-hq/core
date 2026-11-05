@@ -18,7 +18,7 @@ vi.mock("../src/lib/browser", () => ({ navigateBrowser: vi.fn() }));
 const O = "/api/v1/orgs/o1";
 const meAs = (role: OrgRole): Me => ({
   ...ME,
-  account: { ...ME.account, isEnterpriseAdmin: false },
+  account: { ...ME.account, isSuperAdmin: false },
   memberships: [{ orgId: "o1", slug: "acme", name: "Acme", role }],
 });
 const member = (id: string, role: OrgRole) => ({

@@ -204,10 +204,10 @@ describe("/extensions (ListPage)", () => {
       expect(
         toggle.hasAttribute("disabled") || toggle.getAttribute("aria-disabled") === "true",
       ).toBe(true);
-      // On in every org: 已启用 · 企业统一 with the hint, no badge
-      const state = screen.getByText(msgs[locale].plugins.state.enterprise);
+      // On in every org: 已启用 · 平台统一 with the hint, no badge
+      const state = screen.getByText(msgs[locale].plugins.state.platform);
       expect(state.closest(".cb-badge")).toBeNull();
-      expect(screen.getByText(m.enterpriseHint)).toBeTruthy();
+      expect(screen.getByText(m.platformHint)).toBeTruthy();
       await userEvent.setup().click(toggle);
       expect(calls.some((c) => c.method === "PUT")).toBe(false);
     },

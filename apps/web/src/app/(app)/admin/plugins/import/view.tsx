@@ -87,7 +87,7 @@ type Staged = PluginPrepared | null | { problem: Problem };
 
 /**
  * `/admin/plugins/import` ("Upload plugin package", and the review of a marketplace entry or an approved
- * `import` request): bring a plugin in (enterprise admins, WizardPage), reviewed as a whole in one
+ * `import` request): bring a plugin in (super admins, WizardPage), reviewed as a whole in one
  * pass:
  * 1. choose the plugin package: upload a tgz, give an npm package name, or read it straight from git
  *    (a one-off import: an https git URL or `owner/repo`, an optional branch / tag / commit and

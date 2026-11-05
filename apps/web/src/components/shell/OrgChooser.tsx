@@ -12,7 +12,7 @@ import { useSession } from "./session";
  * Signed in without a current organization (setup skipped it, several orgs and none chosen yet, or
  * the remembered one is gone): this page covers the whole shell. Pick one of your orgs or create
  * one; either becomes the current org (remembered for the next sign-in) and the app opens.
- * Enterprise admins can also go to the admin console, which needs no org.
+ * Super admins can also go to the admin console, which needs no org.
  */
 export function OrgChooser({ onLogout }: { onLogout(): void }) {
   const t = useTranslations("orgChooser");
@@ -49,7 +49,7 @@ export function OrgChooser({ onLogout }: { onLogout(): void }) {
       preferences={preferences}
       footer={
         <Stack direction="row" gap={16} justify="center" wrap>
-          {me.account.isEnterpriseAdmin ? <TextLink href="/admin">{t("admin")}</TextLink> : null}
+          {me.account.isSuperAdmin ? <TextLink href="/admin">{t("admin")}</TextLink> : null}
           <Button variant="ghost" onClick={onLogout}>
             {t("logout")}
           </Button>

@@ -72,7 +72,7 @@ const LOADING_PURPOSES = [1, 1, 2, 2, 2].map((lines) => ({
 }));
 
 /**
- * `/admin/models`：模型（企业管理员，ListPage，no inner nav：the sidebar's admin context navigates）。
+ * `/admin/models`：模型（超级管理员，ListPage，no inner nav：the sidebar's admin context navigates）。
  * - 供应商与模型：每个供应商一张表（能力、上下文长度、每百万 token 的价格，行内编辑 / 清除价格）；
  *   列模型失败的供应商只显示错误，不影响其他供应商；
  * - 用途默认映射：每个用途一张卡片（部署默认，各组织可在 `/settings/models` 覆盖）；插件声明的用途旁注

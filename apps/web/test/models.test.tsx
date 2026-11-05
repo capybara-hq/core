@@ -19,7 +19,7 @@ const ROW_ACTIONS = { zh: "行操作", en: "Row actions" } as const;
 const UNSAVED = { zh: "{n} 处未保存的修改", en: "{n} unsaved changes" } as const;
 /** `models.purpose.savedAll` for one purpose (ICU plural in en). */
 const SAVED_ONE = { zh: "已保存 1 个用途。", en: "Saved 1 purpose." } as const;
-const NOT_ADMIN: Me = { ...ME, account: { ...ME.account, isEnterpriseAdmin: false } };
+const NOT_ADMIN: Me = { ...ME, account: { ...ME.account, isSuperAdmin: false } };
 const template = (name: string) => document.querySelector(`[data-template="${name}"]`);
 const fill = (s: string, vars: Record<string, string | number>) =>
   s.replace(/\{(\w+)\}/g, (_, k: string) => String(vars[k]));
@@ -355,7 +355,7 @@ describe("/admin/models（ListPage）", () => {
     expect(actionRow().getByText(fill(UNSAVED.en, { n: 1 }))).toBeTruthy();
   });
 
-  it("非企业管理员：没有访问权限，不请求后台接口", async () => {
+  it("非超级管理员：没有访问权限，不请求后台接口", async () => {
     const calls = stubApi({});
     await renderRouteWithCache("/admin/models", lastStubRoutes(), { me: NOT_ADMIN });
     expect(template("StatusPage")?.getAttribute("data-kind")).toBe("no-access");

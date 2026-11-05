@@ -35,8 +35,8 @@ async function openMore() {
   return screen.findByRole("menu", { name: "更多" });
 }
 
-function Probe({ level, enterprise }: { level: NavLevel; enterprise: boolean }) {
-  const { primary, more, adminHref } = useNav(0, level, false, enterprise);
+function Probe({ level, superAdmin }: { level: NavLevel; superAdmin: boolean }) {
+  const { primary, more, adminHref } = useNav(0, level, false, superAdmin);
   return (
     <pre data-testid="ids">
       {JSON.stringify({
@@ -48,10 +48,10 @@ function Probe({ level, enterprise }: { level: NavLevel; enterprise: boolean }) 
   );
 }
 
-function ids(level: NavLevel, enterprise: boolean) {
+function ids(level: NavLevel, superAdmin: boolean) {
   render(
     <NextIntlClientProvider locale="zh" messages={zh}>
-      <Probe level={level} enterprise={enterprise} />
+      <Probe level={level} superAdmin={superAdmin} />
     </NextIntlClientProvider>,
   );
   return JSON.parse(screen.getByTestId("ids").textContent ?? "{}") as {
@@ -77,12 +77,12 @@ describe("nav by level (role hiding is cosmetic; the kernel decides)", () => {
     ["guest", true, guest],
     ["admin", true, admin],
   ];
-  for (const [level, enterprise, more] of cases) {
-    it(`${level}${enterprise ? " + enterprise admin" : ""}`, () => {
-      expect(ids(level, enterprise)).toEqual({
+  for (const [level, superAdmin, more] of cases) {
+    it(`${level}${superAdmin ? " + super admin" : ""}`, () => {
+      expect(ids(level, superAdmin)).toEqual({
         primary,
         more,
-        adminHref: enterprise ? "/admin" : null,
+        adminHref: superAdmin ? "/admin" : null,
       });
     });
   }
@@ -109,7 +109,7 @@ describe("nav by level (role hiding is cosmetic; the kernel decides)", () => {
     expect(read("member")).toEqual({
       primary: [
         ["首页", "home", "/"],
-        ["Agents", "agent", "/agents"],
+        ["智能体", "agent", "/agents"],
       ],
       more: [
         ["插件", "catalog", "/plugins"],
@@ -148,7 +148,7 @@ describe("nav by level (role hiding is cosmetic; the kernel decides)", () => {
     expect(read("admin")).toEqual(["new-agent", "new-app"]);
   });
 
-  it("the admin context lists 概览 账号 组织 插件 扩展 模型 部署设置 (no 企业目录 or 市场)", () => {
+  it("the admin context lists 概览 账号 组织 插件 扩展 模型 部署设置 (no 平台目录 or 市场)", () => {
     function Admin() {
       const items = useAdminItems();
       return <pre data-testid="admin">{JSON.stringify(items.map((i) => [i.label, i.href]))}</pre>;
@@ -251,7 +251,7 @@ describe("AppFrame contexts", () => {
     const plugins = within(nav).getByRole("link", { name: /^插件/ });
     expect(plugins.getAttribute("href")).toBe("/admin/plugins");
     expect(plugins.getAttribute("aria-current")).toBe("page");
-    expect(within(nav).queryByRole("link", { name: /企业目录|^市场/ })).toBeNull();
+    expect(within(nav).queryByRole("link", { name: /平台目录|^市场/ })).toBeNull();
     expect(screen.getByRole("link", { name: /~\/acme/ }).getAttribute("href")).toBe("/");
     expect(screen.queryByRole("region", { name: "会话" })).toBeNull();
     expect(within(screen.getByRole("contentinfo")).getByText("grant@acme:/admin/plugins/market"));

@@ -260,7 +260,7 @@ describe("/plugins: states and actions follow the scope and the switch", () => {
     expect(actionsOf(row("off"), "off")).toEqual([p.action.enable]);
     // An `all` or builtin plugin: on for every org, no switch
     for (const name of ["builtin", "everyone"]) {
-      expect(within(row(name)).getByText(p.state.enterprise)).toBeTruthy();
+      expect(within(row(name)).getByText(p.state.platform)).toBeTruthy();
       expect(actionsOf(row(name), name)).toEqual([]);
     }
     expect(within(row("builtin")).getByText(msgs[locale].catalog.admin.chips.builtin)).toBeTruthy();
@@ -590,7 +590,7 @@ describe("/extensions: the switch follows the plugin", () => {
   });
 
   it.each(LOCALES)(
-    "an extension of an `all` plugin reads 已启用 · 企业统一 and its switch is read-only (%s)",
+    "an extension of an `all` plugin reads 已启用 · 平台统一 and its switch is read-only (%s)",
     async (locale) => {
       const calls = stubApi({
         [`GET ${ORG}/extensions`]: () =>
@@ -601,7 +601,7 @@ describe("/extensions: the switch follows the plugin", () => {
         [`GET ${ORG}/file-previewers`]: () => json(200, { items: [] }),
       });
       await renderRouteWithCache("/extensions", lastStubRoutes(), { locale });
-      expect(await screen.findByText(msgs[locale].plugins.state.enterprise)).toBeTruthy();
+      expect(await screen.findByText(msgs[locale].plugins.state.platform)).toBeTruthy();
       const toggle = screen.getByRole("switch");
       expect(
         toggle.hasAttribute("disabled") || toggle.getAttribute("aria-disabled") === "true",
@@ -1345,7 +1345,7 @@ const SOURCES = {
 
 describe("/admin/plugins/sources (ListPage)", () => {
   it.each(LOCALES)(
-    "官方地址只读、离线模式说明；企业清单可改，显示状态与刷新（%s）",
+    "官方地址只读、离线模式说明；自定义清单可改，显示状态与刷新（%s）",
     async (locale) => {
       const s = msgs[locale].catalog.admin.marketplaces;
       stubApi({
@@ -3643,7 +3643,7 @@ describe("/plugins/[itemId]/enable renders on the server (web-SSR spec §6)", ()
   };
   const as = (role: "member" | "admin"): Me => ({
     ...ME,
-    account: { ...ME.account, isEnterpriseAdmin: false },
+    account: { ...ME.account, isSuperAdmin: false },
     memberships: [{ ...ME.memberships[0], role } as Me["memberships"][number]],
   });
 
@@ -3720,7 +3720,7 @@ describe("/plugins and /plugins/[itemId] render on the server (web-SSR spec §6)
   };
   const GUEST: Me = {
     ...ME,
-    account: { ...ME.account, isEnterpriseAdmin: false },
+    account: { ...ME.account, isSuperAdmin: false },
     memberships: [{ ...ME.memberships[0], role: "guest" } as Me["memberships"][number]],
   };
 

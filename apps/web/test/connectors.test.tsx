@@ -685,7 +685,7 @@ describe("连接器详情切换组织", () => {
 describe("the connectors pages render on the server (web-SSR spec §6)", () => {
   const GUEST = {
     ...ME,
-    account: { ...ME.account, isEnterpriseAdmin: false },
+    account: { ...ME.account, isSuperAdmin: false },
     memberships: [{ orgId: "o1", slug: "acme", name: "Acme", role: "guest" }],
   };
   const routes = {

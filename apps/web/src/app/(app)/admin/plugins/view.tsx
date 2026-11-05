@@ -22,7 +22,7 @@ import { useAdmin } from "../../../../lib/query/workspace";
 import NotFound from "../../not-found";
 
 /**
- * `/admin/plugins`: the deployment's plugins (enterprise admins, ListPage, tab 已安装). A row: the
+ * `/admin/plugins`: the deployment's plugins (super admins, ListPage, tab 已安装). A row: the
  * name with the 内置 chip for a built-in plugin, the description, a meta line (version, source,
  * scope with the named orgs, how many orgs use it) and the state: 已停用, 权限待确认 (with
  * 确认权限 leading to the 待确认 tab), 可更新 <version> when its marketplace has a newer

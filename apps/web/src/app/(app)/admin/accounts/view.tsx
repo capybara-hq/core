@@ -37,8 +37,8 @@ import { useErrorMessage } from "../../../../lib/use-error-message";
 import NotFound from "../../not-found";
 
 /**
- * `/admin/accounts`：部署上的全部账号（企业管理员，ListPage）。新建账号；停用 / 启用；
- * 授予或撤销「企业管理员」。改动前一律二次确认（撤销最后一个企业管理员由内核拒绝，错误显示在确认框里）。
+ * `/admin/accounts`：部署上的全部账号（超级管理员，ListPage）。新建账号；停用 / 启用；
+ * 授予或撤销「超级管理员」。改动前一律二次确认（撤销最后一个超级管理员由内核拒绝，错误显示在确认框里）。
  * The first page comes from the query cache (the layout prefetched it on a first load); "Load
  * more" reads later pages through the cache; a change writes the answered account into them.
  */
@@ -46,8 +46,8 @@ import NotFound from "../../not-found";
 type Pending = { account: AdminAccount; action: "grant" | "revoke" | "disable" | "enable" };
 
 const PATCH: Record<Pending["action"], AccountPatch> = {
-  grant: { isEnterpriseAdmin: true },
-  revoke: { isEnterpriseAdmin: false },
+  grant: { isSuperAdmin: true },
+  revoke: { isSuperAdmin: false },
   disable: { status: "disabled" },
   enable: { status: "active" },
 };
@@ -97,7 +97,7 @@ const accountColumns = (t: T): Column<AdminAccount>[] => [
   {
     key: "role",
     header: t("columns.role"),
-    cell: (a) => (a.isEnterpriseAdmin ? t("enterpriseAdmin") : ""),
+    cell: (a) => (a.isSuperAdmin ? t("superAdmin") : ""),
   },
 ];
 
@@ -164,18 +164,15 @@ function Accounts({
           empty={{ title: t("empty") }}
           isDisabled={(a) => a.status === "disabled"}
           rowMenu={(a) => {
-            // The kernel refuses to revoke or disable the last active enterprise admin
+            // The kernel refuses to revoke or disable the last active super admin
             // (account.last_super_admin): with the whole list loaded the page knows it and
             // offers neither, so the row has no menu; a partial list leaves it to the kernel.
-            const activeAdmins = rows.filter((r) => r.isEnterpriseAdmin && r.status === "active");
+            const activeAdmins = rows.filter((r) => r.isSuperAdmin && r.status === "active");
             const last =
-              next === null &&
-              a.isEnterpriseAdmin &&
-              a.status === "active" &&
-              activeAdmins.length <= 1;
+              next === null && a.isSuperAdmin && a.status === "active" && activeAdmins.length <= 1;
             if (last) return [];
             return [
-              a.isEnterpriseAdmin
+              a.isSuperAdmin
                 ? {
                     label: t("menu.revoke"),
                     onSelect: () => setPending({ account: a, action: "revoke" }),
@@ -237,7 +234,7 @@ function Accounts({
   );
 }
 
-/** 停用 / 启用 / 授予 / 撤销企业管理员的二次确认。 */
+/** 停用 / 启用 / 授予 / 撤销超级管理员的二次确认。 */
 function ConfirmDialog({
   pending,
   onClose,
@@ -308,7 +305,7 @@ function ConfirmDialog({
   );
 }
 
-/** 新建本地账号（可同时设为企业管理员）。 */
+/** 新建本地账号（可同时设为超级管理员）。 */
 function CreateDialog({
   onClose,
   onCreated,
@@ -324,7 +321,7 @@ function CreateDialog({
   const [password, setPassword] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [email, setEmail] = useState("");
-  const [enterpriseAdmin, setEnterpriseAdmin] = useState(false);
+  const [superAdmin, setSuperAdmin] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const valid = login.trim() !== "" && password !== "" && displayName.trim() !== "";
@@ -344,7 +341,7 @@ function CreateDialog({
         password,
         displayName: displayName.trim(),
         ...(email.trim() !== "" && { email: email.trim() }),
-        enterpriseAdmin,
+        superAdmin,
       });
       toast.success(t("created", { name: account.displayName }));
       onCreated(account);
@@ -391,11 +388,7 @@ function CreateDialog({
         <Field label={t("email")} optional>
           <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
         </Field>
-        <Checkbox
-          checked={enterpriseAdmin}
-          onChange={setEnterpriseAdmin}
-          label={t("enterpriseAdmin")}
-        />
+        <Checkbox checked={superAdmin} onChange={setSuperAdmin} label={t("superAdmin")} />
         {error !== null && <FormError message={error} />}
       </Stack>
     </Dialog>

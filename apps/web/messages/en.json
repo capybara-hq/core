@@ -45,7 +45,7 @@
   },
   "setup": {
     "title": "Setup",
-    "intro": "Create the first enterprise administrator. You will be signed in when it is done.",
+    "intro": "Create the first super admin. You will be signed in when it is done.",
     "loginLabel": "Username",
     "loginHint": "3–64 characters: letters, digits and . _ @ + -",
     "passwordLabel": "Password",
@@ -147,13 +147,13 @@
     "account": {
       "login_taken": "This username is already taken.",
       "not_found": "The account does not exist.",
-      "last_super_admin": "The last enterprise admin cannot be revoked or deactivated."
+      "last_super_admin": "The last super admin cannot be revoked or deactivated."
     },
     "org": {
       "not_found": "The organization does not exist or you are no longer a member.",
       "sandbox_egress_not_allowed": "This deployment disables sandbox network access; the organization can only choose No network.",
-      "last_owner": "An organization must keep at least one owner.",
-      "owner_required": "Only an owner can do this.",
+      "last_owner": "An organization must keep at least one org owner.",
+      "owner_required": "Only an org owner can do this.",
       "creation_disabled": "Creating organizations is turned off on this deployment.",
       "slug_taken": "This slug is already used by another organization."
     },
@@ -249,18 +249,18 @@
       "version_exists": "This version has already been imported.",
       "item_not_found": "The item does not exist or you cannot see it.",
       "name_conflict": "An item with the same name comes from a different npm package.",
-      "item_disabled": "An enterprise admin disabled this catalog item (or an extension it contains), so it cannot be newly installed or enabled.",
-      "approval_required": "A catalog item that brought this in needs enterprise admin approval before this organization can install or enable it.",
+      "item_disabled": "A super admin disabled this catalog item (or an extension it contains), so it cannot be newly installed or enabled.",
+      "approval_required": "A catalog item that brought this in needs super admin approval before this organization can install or enable it.",
       "request_not_found": "The request does not exist or was already handled.",
       "request_decided": "This request has already been decided.",
-      "custom_disabled": "Enterprise admins turned off custom creation; install from the catalog instead.",
-      "not_deployed": "An extension it needs is not installed on the deployment, or not at a matching version. Contact an enterprise admin.",
+      "custom_disabled": "Super admins turned off custom creation; install from the catalog instead.",
+      "not_deployed": "An extension it needs is not installed on the deployment, or not at a matching version. Contact a super admin.",
       "icon_not_found": "No icon.",
       "invalid_manifest": "The plugin package is invalid:",
       "legacy_format": "The package uses the pre-0.1.0 package format. Repack it as a plugin with .capybara-plugin/plugin.json (pnpm pack-plugin) and import it again.",
       "no_extension": "This plugin has no extension, so there is nothing to install on the deployment.",
-      "dependency_unresolved": "A plugin this one depends on is not in the catalog at a matching version. Ask the enterprise admin to import it first.",
-      "dependency_disabled": "A plugin this one depends on is disabled by the enterprise admin.",
+      "dependency_unresolved": "A plugin this one depends on is not in the catalog at a matching version. Ask the super admin to import it first.",
+      "dependency_disabled": "A plugin this one depends on is disabled by the super admin.",
       "dependency_cycle": "The plugin's dependencies form a cycle and cannot be installed.",
       "request_pending": "A request of this kind is already pending.",
       "request_invalid": "This request can no longer be handled (its marketplace was deleted, say); reject it.",
@@ -393,7 +393,7 @@
       "upgrade_target_invalid": "This version cannot be the upgrade target (a plugin with an extension can only move to the version the deployment runs, and plugins depending on it must accept the version).",
       "upgrade_failed": "Upgrading the plugin failed.",
       "disabled": "This plugin is disabled on the whole deployment.",
-      "scope_locked": "The enterprise admin sets this plugin's scope; it cannot be switched in an organization.",
+      "scope_locked": "The super admin sets this plugin's scope; it cannot be switched in an organization.",
       "switch_stale": "What this changes moved on before you confirmed; review it again.",
       "builtin": "A built-in plugin's scope cannot be changed and it cannot be disabled.",
       "scope_stale": "The impact changed before you confirmed; preview it again."
@@ -698,7 +698,7 @@
     "title": "Skills",
     "listLabel": "Organization skills",
     "empty": "No skills yet.",
-    "emptyHint": "Skills are packages of instructions and files that agents load when a task needs them. Admins upload them.",
+    "emptyHint": "Skills are packages of instructions and files that agents load when a task needs them. Org admins upload them.",
     "version": "v{version}",
     "columns": {
       "name": "Name",
@@ -760,9 +760,9 @@
       "someone": "another member",
       "role": {
         "guest": "a guest",
-        "member": "a member",
-        "admin": "an admin",
-        "owner": "an owner"
+        "member": "an org member",
+        "admin": "an org admin",
+        "owner": "an org owner"
       }
     },
     "title": "Chat",
@@ -864,9 +864,9 @@
       "description": "A few steps are left before you can start a conversation.",
       "model": {
         "description": "Configure at least one model provider (such as the openai-compatible extension) so agents can answer.",
-        "askAdmin": "No model is available yet. Enterprise admins configure models under Admin → Extensions.",
+        "askAdmin": "No model is available yet. Super admins configure models under Admin → Extensions.",
         "action": "Set up",
-        "waiting": "Waiting for an enterprise admin"
+        "waiting": "Waiting for a super admin"
       },
       "agent": {
         "description": "An agent sets the model it uses and the tools and skills it can use.",
@@ -1156,7 +1156,7 @@
       "authTypeLabel": "Authentication",
       "ownershipLabel": "Credential",
       "ownershipHelp": {
-        "org": "One credential set by an admin is used for everyone.",
+        "org": "One credential set by an org admin is used for everyone.",
         "personal": "Every member fills in their own credential before using the connector."
       },
       "keyInLabel": "Send the key in",
@@ -1218,7 +1218,7 @@
       "missing": "Not set",
       "orgTitle": "Organization credential",
       "orgHint": "Enter a new value to replace the stored credential.",
-      "orgReadonly": "Only admins can change the organization credential.",
+      "orgReadonly": "Only org admins can change the organization credential.",
       "personalTitle": "Personal credentials",
       "personalHint": "Each member sets their own credential in My connections.",
       "openConnections": "Open My connections",
@@ -1316,7 +1316,7 @@
       "oauthClientHint": "One shared OAuth client obtains tokens for the organization; the client is verified when you install.",
       "noticeTitle": "Needs your attention",
       "dcrUnsupported": "The authorization server does not support automatic client registration. Register a client with the provider and enter its client ID and secret below.",
-      "publicUrlRequired": "OAuth connectors need http.publicUrl configured on the kernel (it builds the OAuth callback URL). Ask your deployment admin to set it, or use another authentication method.",
+      "publicUrlRequired": "OAuth connectors need http.publicUrl configured on the kernel (it builds the OAuth callback URL). Ask a super admin to set it, or use another authentication method.",
       "operationsHint": "Choose the operations agents may use. Default policies follow the HTTP method; you can change them on the connector page later.",
       "operationsLabel": "Operations",
       "noOperations": "The document has no operations.",
@@ -1422,7 +1422,7 @@
     "title": "Organization settings",
     "save": "Save",
     "saved": "Organization settings saved.",
-    "readonly": "Only admins can change organization settings.",
+    "readonly": "Only org admins can change organization settings.",
     "toolSearch": {
       "title": "Tool search",
       "description": "When an agent has many tools, the model gets a tool catalog and loads definitions on demand with ToolSearch.",
@@ -1463,7 +1463,7 @@
     },
     "limits": {
       "title": "Sandbox resources",
-      "description": "CPU and memory available to each sandbox. Enterprise admins adjust them per organization in deployment settings; organization admins can only view them.",
+      "description": "CPU and memory available to each sandbox. Super admins adjust them per organization in deployment settings; organization admins can only view them.",
       "cpu": "CPU",
       "cpuValue": "{cpu} cores",
       "memory": "Memory",
@@ -1471,7 +1471,7 @@
       "sourceLabel": "Source",
       "source": {
         "deployment": "Deployment default",
-        "override": "Set for this organization by an enterprise admin"
+        "override": "Set for this organization by a super admin"
       },
       "newOnly": "Only applies to newly created sandboxes; existing sandboxes keep the limits they were created with until they are destroyed."
     }
@@ -1708,7 +1708,7 @@
       }
     },
     "description": "The extensions this organization can use. Fill in organization-level config (such as this organization's own API key) here.",
-    "enterpriseHint": "Your enterprise turned this extension on for every organization; it cannot be turned off here. Its organization config can still be set.",
+    "platformHint": "The platform turned this extension on for every organization; it cannot be turned off here. Its organization config can still be set.",
     "openPlugins": "Open Plugins to view or request it"
   },
   "identities": {
@@ -2258,7 +2258,7 @@
     },
     "org": {
       "title": "Model purposes",
-      "description": "The kernel and extensions pick models by purpose. Each purpose uses the deployment default set by the enterprise admins; you can override it for this org or restore the default."
+      "description": "The kernel and extensions pick models by purpose. Each purpose uses the deployment default set by the super admins; you can override it for this org or restore the default."
     },
     "evalUnmapped": "The eval purpose has no model mapped, so evals cannot use a judge.",
     "capability": {
@@ -2299,7 +2299,7 @@
     },
     "overview": {
       "intro": "Manage the whole deployment: accounts, organizations, extensions and deployment settings.",
-      "noConversations": "Enterprise admins cannot read conversations.",
+      "noConversations": "Super admins cannot read conversations.",
       "metrics": {
         "extensions": "Extensions needing action",
         "catalogRequests": "Pending catalog requests",
@@ -2322,19 +2322,19 @@
         "active": "Active",
         "disabled": "Deactivated"
       },
-      "enterpriseAdmin": "Enterprise admin",
+      "superAdmin": "Super admin",
       "menu": {
-        "grant": "Grant enterprise admin",
-        "revoke": "Revoke enterprise admin",
+        "grant": "Grant super admin",
+        "revoke": "Revoke super admin",
         "disable": "Deactivate account",
         "enable": "Reactivate account"
       },
       "confirm": {
-        "grantTitle": "Make {name} an enterprise admin?",
-        "grantHint": "Enterprise admins manage the whole deployment: accounts, organizations, extensions and deployment settings.",
+        "grantTitle": "Make {name} a super admin?",
+        "grantHint": "Super admins manage the whole deployment: accounts, organizations, extensions and deployment settings.",
         "grant": "Grant",
-        "revokeTitle": "Revoke enterprise admin from {name}?",
-        "revokeHint": "The account will no longer be able to open the admin console. The last enterprise admin cannot be revoked.",
+        "revokeTitle": "Revoke super admin from {name}?",
+        "revokeHint": "The account will no longer be able to open the admin console. The last super admin cannot be revoked.",
         "revoke": "Revoke",
         "disableTitle": "Deactivate {name}?",
         "disableHint": "The account is signed out at once; its sessions and personal tokens stop working.",
@@ -2344,8 +2344,8 @@
         "enable": "Reactivate"
       },
       "done": {
-        "grant": "{name} is now an enterprise admin.",
-        "revoke": "{name} is no longer an enterprise admin.",
+        "grant": "{name} is now a super admin.",
+        "revoke": "{name} is no longer a super admin.",
         "disable": "{name} was deactivated.",
         "enable": "{name} was reactivated."
       },
@@ -2356,7 +2356,7 @@
         "passwordHelp": "At least 12 characters; ask the person to change it after signing in.",
         "displayName": "Display name",
         "email": "Email",
-        "enterpriseAdmin": "Make enterprise admin",
+        "superAdmin": "Make super admin",
         "submit": "Create",
         "created": "Created account {name}"
       }
@@ -2409,11 +2409,11 @@
       "deny": "Deny",
       "orgCreation": {
         "title": "Who can create organizations",
-        "description": "When restricted, only enterprise admins can create organizations.",
+        "description": "When restricted, only super admins can create organizations.",
         "anyone": "Anyone",
         "anyoneHint": "Any signed-in user can create an organization.",
-        "enterprise_admin": "Enterprise admins only",
-        "enterprise_adminHint": "Other users can only join organizations they are invited to."
+        "super_admin": "Super admins only",
+        "super_adminHint": "Other users can only join organizations they are invited to."
       },
       "currency": {
         "title": "Price currency",
@@ -2633,9 +2633,9 @@
     "roleOf": "Role of {name}",
     "roles": {
       "guest": "Guest",
-      "member": "Member",
-      "admin": "Admin",
-      "owner": "Owner"
+      "member": "Org member",
+      "admin": "Org admin",
+      "owner": "Org owner"
     },
     "roleChanged": "Changed {name} to {role}.",
     "empty": "No members yet.",
@@ -2648,7 +2648,7 @@
       "removeHint": "They lose access to this organization immediately: their sessions and tokens are revoked, and their agents and other resources go through offboarding.",
       "remove": "Remove",
       "transferTitle": "Transfer ownership to {name}?",
-      "transferHint": "They become an owner and you become an admin.",
+      "transferHint": "They become an org owner and you become an org admin.",
       "transfer": "Transfer"
     },
     "removed": "Removed {name}",
@@ -2706,7 +2706,7 @@
     "signup": "Create account and join",
     "backToSignIn": "Have an account? Sign in",
     "invalidTitle": "Invitation link no longer valid",
-    "invalidHint": "Ask the admin who invited you to send a new invitation.",
+    "invalidHint": "Ask the org admin who invited you to send a new invitation.",
     "goHome": "Go to Capybara"
   },
   "catalog": {
@@ -3066,9 +3066,9 @@
         },
         "refresh": "Refresh now",
         "refreshed": "Refreshed {name}",
-        "enterprise": "Enterprise marketplaces",
-        "enterpriseHint": "Only https addresses are accepted; the token is sent only to the marketplace's own origin.",
-        "enterpriseEmpty": "No enterprise marketplaces yet.",
+        "custom": "Custom marketplaces",
+        "customHint": "Only https addresses are accepted; the token is sent only to the marketplace's own origin.",
+        "customEmpty": "No custom marketplaces yet.",
         "name": "Name",
         "token": "Token",
         "tokenHelp": "Optional; leave empty to keep it unchanged.",
@@ -3083,7 +3083,7 @@
           "confirm": "Remove"
         },
         "removed": "Removed {name}",
-        "add": "Add enterprise marketplace",
+        "add": "Add custom marketplace",
         "added": "Added {name}",
         "form": "Type",
         "formHttp": "marketplace.json URL",
@@ -3306,7 +3306,7 @@
       "requester": "Requested by",
       "version": "Version",
       "note": "Note",
-      "hint": "If approved: allowed items can be installed by an organization admin; items that need approval are forwarded to an enterprise admin.",
+      "hint": "If approved: allowed items can be installed by an organization admin; items that need approval are forwarded to a super admin.",
       "approve": "Approve",
       "reject": "Reject",
       "approved": "Catalog request approved",
@@ -3340,7 +3340,7 @@
       "confirm": "Upgrade",
       "cancel": "Cancel",
       "done": "Upgraded {name} to {version}.",
-      "requested": "Enterprise admin approval is needed; a request was submitted.",
+      "requested": "Super admin approval is needed; a request was submitted.",
       "failed": "Upgrading failed at the “{step}” step ({code}); this organization's components are back at {version}.",
       "failedNoRollback": "Upgrading failed at the “{step}” step ({code}) and could not be undone right away; it is undone automatically after the timeout."
     },
@@ -3355,7 +3355,7 @@
       "sameVersion": "{version} is already installed in this organization.",
       "deploymentVersion": "The deployment runs this plugin's extension at {deploymentVersion}; this organization can upgrade only to catalog version {allowedVersion}.",
       "deploymentVersionNone": "The deployment runs this plugin's extension at {deploymentVersion}, but no imported catalog version carries it yet.",
-      "notDeployed": "The deployment does not run this plugin's extension; ask an enterprise admin to install it first.",
+      "notDeployed": "The deployment does not run this plugin's extension; ask a super admin to install it first.",
       "dependentRange": "{dependent} in this organization depends on {range}, which {version} does not satisfy.",
       "templateConnector": "Connector template {template} moves to another connector ({plugin} / {connector}); uninstall the plugin and install the new version instead."
     }
@@ -3424,16 +3424,16 @@
   },
   "setupLayout": {
     "model": {
-      "needsDeploymentAdmin": "A deployment admin needs to set up a model service",
+      "needsDeploymentAdmin": "A super admin needs to set up a model service",
       "waitingForAdmin": "Waiting for an admin to set up a model"
     },
     "agent": {
       "needsModel": "Set up a model first",
-      "waitingForAdmin": "Waiting for an admin to create an agent"
+      "waitingForAdmin": "Waiting for an org admin to create an agent"
     },
-    "waiting": "The organization is still being set up. You can start chatting once an admin finishes.",
+    "waiting": "The organization is still being set up. You can start chatting once an org admin finishes.",
     "refresh": "Refresh",
-    "waitingDeployment": "A deployment admin needs to set up a model service before you can continue.",
+    "waitingDeployment": "A super admin needs to set up a model service before you can continue.",
     "steps": {
       "model": "Configure a model",
       "agent": "Create an agent",
@@ -3448,13 +3448,13 @@
       "member": "Org member",
       "admin": "Org admin",
       "owner": "Org owner",
-      "enterprise": "Enterprise admin"
+      "superAdmin": "Super admin"
     },
     "noAccess": {
       "title": "You don't have access",
       "description": "{page} is open to {role} only.",
-      "askOrg": "To get access, ask an admin or the owner of this organization.",
-      "askEnterprise": "To get access, ask an enterprise admin to grant it, or run capybara admin grant with your login on the server."
+      "askOrg": "To get access, ask an org admin of this organization.",
+      "askSuperAdmin": "To get access, ask a super admin to grant it, or run capybara admin grant with your login on the server."
     },
     "readOnly": "Read-only for your role ({role}); changes need an org admin."
   },
@@ -3464,7 +3464,7 @@
       "title": "Leave organization",
       "description": "You lose access to this organization, and the agents you own go to its owner. Your other organizations are not affected.",
       "confirm": "Leave organization",
-      "lastOwner": "You are the only owner of this organization. Transfer ownership to someone else under Members before leaving.",
+      "lastOwner": "You are the only org owner of this organization. Transfer ownership to someone else under Members before leaving.",
       "toMembers": "Go to Members",
       "gotIt": "Got it",
       "left": "You left {name}"
@@ -3523,8 +3523,8 @@
   },
   "plugins": {
     "title": "Plugins",
-    "description": "Plugins your enterprise offers this organization, and the ones it asked for. Turning a plugin on turns on all its components.",
-    "empty": "Your enterprise has not offered any plugins to this organization yet.",
+    "description": "Plugins the platform offers this organization, and the ones it asked for. Turning a plugin on turns on all its components.",
+    "empty": "The platform has not offered any plugins to this organization yet.",
     "tabs": {
       "plugins": "Plugins",
       "market": "Marketplace"
@@ -3533,10 +3533,10 @@
       "on": "On",
       "off": "Off",
       "needs_config": "Needs configuration",
-      "enterprise": "On · set by the enterprise",
+      "platform": "On · set by the platform",
       "not_offered": "Not offered, can be requested",
       "requested": "Requested, waiting",
-      "unavailable": "Stopped by the enterprise",
+      "unavailable": "Stopped by the platform",
       "notDeployed": "Extension not deployed"
     },
     "action": {
@@ -3551,7 +3551,7 @@
       "upgrade": "Update {version}"
     },
     "meta": {
-      "enterprise": "Enterprise · {scope}"
+      "platform": "Platform · {scope}"
     },
     "toast": {
       "enabled": "{name} turned on.",

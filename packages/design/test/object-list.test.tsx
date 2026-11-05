@@ -168,10 +168,10 @@ describe("EmptyState and Callout", () => {
   });
 
   it("Callout info is a quiet note without an action", () => {
-    zh(<Callout tone="info">企业管理员不能查看对话内容。</Callout>);
+    zh(<Callout tone="info">超级管理员不能查看对话内容。</Callout>);
     const el = screen.getByRole("note");
     expect(el.getAttribute("data-tone")).toBe("info");
-    expect(el.textContent).toBe("企业管理员不能查看对话内容。");
+    expect(el.textContent).toBe("超级管理员不能查看对话内容。");
   });
 });
 

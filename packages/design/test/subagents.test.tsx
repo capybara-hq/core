@@ -77,7 +77,7 @@ const done: SubagentRowData[] = [
 describe("SubagentGroup (§6.16.15)", () => {
   it("running: a spinner header naming the count, and a spinner per running row", () => {
     wrap(<SubagentGroup rows={running} onOpen={() => {}} now={NOW} />);
-    expect(screen.getByText("正在运行 2 个子 agent")).toBeTruthy();
+    expect(screen.getByText("正在运行 2 个子智能体")).toBeTruthy();
     // header + two rows
     expect(screen.getAllByRole("img", { name: "进行中" })).toHaveLength(3);
     // 16, like the tool rows' (§6.16)
@@ -105,14 +105,14 @@ describe("SubagentGroup (§6.16.15)", () => {
   it("one row running and one waiting: the header keeps its spinner and the count", () => {
     const rows = [running[0], { ...running[1], status: "waiting", waiting: "approval" }];
     wrap(<SubagentGroup rows={rows as SubagentRowData[]} onOpen={() => {}} now={NOW} />);
-    expect(screen.getByText("正在运行 2 个子 agent")).toBeTruthy();
+    expect(screen.getByText("正在运行 2 个子智能体")).toBeTruthy();
     // the header and the running row
     expect(screen.getAllByRole("img", { name: "进行中" })).toHaveLength(2);
   });
 
   it("done: a collapsed header with the failure count in fail and the totals", async () => {
     wrap(<SubagentGroup rows={done} onOpen={() => {}} />);
-    const head = screen.getByRole("button", { name: /3 个子 agent 已完成/ });
+    const head = screen.getByRole("button", { name: /3 个子智能体已完成/ });
     expect(head.getAttribute("aria-expanded")).toBe("false");
     const fail = within(head).getByText("（1 个失败）");
     expect(fail.getAttribute("data-part")).toBe("fail-word");
@@ -231,9 +231,9 @@ describe("SubagentTask", () => {
       <SubagentTask text="列出目录树" agent="研究助手" model="opus 5.5" tools="只读工具" />,
     );
     const task = container.querySelector('[data-part="subagent-task"]');
-    expect(task?.textContent).toContain("任务 · 主 agent 派出");
+    expect(task?.textContent).toContain("任务 · 主智能体派出");
     expect(task?.textContent).toContain("列出目录树");
-    expect(screen.getByText("研究助手 · 子 agent · opus 5.5 · 只读工具")).toBeTruthy();
+    expect(screen.getByText("研究助手 · 子智能体 · opus 5.5 · 只读工具")).toBeTruthy();
   });
 
   it("an org agent's name links to the agent; a template's name is plain", () => {
@@ -249,7 +249,7 @@ describe("SubagentTask", () => {
     const link = screen.getByRole("link", { name: "研究助手" });
     expect(link.getAttribute("href")).toBe("/agents/a1");
     expect(link.closest('[data-part="subagent-meta"]')?.textContent).toBe(
-      "研究助手 · 子 agent · opus 5.5 · 只读工具",
+      "研究助手 · 子智能体 · opus 5.5 · 只读工具",
     );
     unmount();
     wrap(<SubagentTask text="t" agent="研究助手" model="m" tools="" />);

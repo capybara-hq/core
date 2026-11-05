@@ -21,7 +21,7 @@ test("keyboard: Tab enters the nav at the current item, ↓ moves, Enter follows
   // The brand row's search and inbox buttons come first, then the nav's one tab stop.
   await b.getByRole("link", { name: /^收件箱/ }).focus();
   await page.keyboard.press("Tab");
-  await expect(b.getByRole("link", { name: "Agents" })).toBeFocused();
+  await expect(b.getByRole("link", { name: "智能体" })).toBeFocused();
   // Nav order (acceptance round 2): 新会话, 首页, Agents, then the 更多 button.
   await page.keyboard.press("ArrowDown");
   await expect(b.getByRole("button", { name: "更多", exact: true })).toBeFocused();
@@ -100,7 +100,7 @@ test("long titles truncate inside the 256 sidebar", async ({ page }) => {
 test("Home / End go to the first and last nav item", async ({ page }) => {
   await open(page);
   const b = block(page, "sidebar-default");
-  await b.getByRole("link", { name: "Agents" }).focus();
+  await b.getByRole("link", { name: "智能体" }).focus();
   // 更多 is a flyout button: the nav's last item (管理后台 sits outside the nav, above the
   // account row).
   await page.keyboard.press("End");
@@ -232,7 +232,7 @@ test.describe("viewport widths (full shell)", () => {
     await page.goto("/dev/ui/templates/list");
     await expect(page.locator('[data-part="sidebar"][data-mode="rail"]')).toBeVisible();
     await expect(page.locator('[data-part="sidebar"][data-mode="full"]')).toHaveCount(0);
-    await expect(page.getByRole("navigation", { name: "主导航" }).getByText("Agents")).toHaveCount(
+    await expect(page.getByRole("navigation", { name: "主导航" }).getByText("智能体")).toHaveCount(
       0,
     );
   });

@@ -113,8 +113,8 @@ const q = <T>(o: UseQueryOptions<T, ApiClientError>) =>
 const atLeast = (me: Me | null, min: OrgRole): boolean =>
   me !== null && roleAtLeast(myRole(me), min);
 
-/** Whether the session is an enterprise admin's (the admin console reads nothing for anyone else). */
-const enterprise = (me: Me | null): boolean => me?.account.isEnterpriseAdmin === true;
+/** Whether the session is a super admin's (the admin console reads nothing for anyone else). */
+const superAdmin = (me: Me | null): boolean => me?.account.isSuperAdmin === true;
 
 /** The admin 插件 head's counts: the plugins waiting for a confirmation and the pending requests. */
 const pluginsHead = () => [q(pendingPluginsQuery()), q(deploymentRequestsQuery())];
@@ -169,41 +169,41 @@ export const ROUTES: readonly RouteEntry[] = [
   },
   {
     pattern: "/admin",
-    // Enterprise admins (no org needed): the four numbers.
-    queries: ({ me }) => (enterprise(me) ? [q(adminOverviewQuery())] : []),
+    // Super admins (no org needed): the four numbers.
+    queries: ({ me }) => (superAdmin(me) ? [q(adminOverviewQuery())] : []),
   },
   {
     pattern: "/admin/accounts",
-    queries: ({ me }) => (enterprise(me) ? [q(adminAccountsQuery())] : []),
+    queries: ({ me }) => (superAdmin(me) ? [q(adminAccountsQuery())] : []),
   },
   {
     pattern: "/admin/extensions",
-    queries: ({ me }) => (enterprise(me) ? [q(adminExtensionsQuery())] : []),
+    queries: ({ me }) => (superAdmin(me) ? [q(adminExtensionsQuery())] : []),
   },
   {
     pattern: "/admin/extensions/[name]",
     // The list (the extension is found in it) and its deployment config (the Config tab).
     queries: ({ me, params }) =>
-      enterprise(me) && params.name !== undefined
+      superAdmin(me) && params.name !== undefined
         ? [q(adminExtensionsQuery()), q(extensionConfigQuery(params.name))]
         : [],
   },
   {
     pattern: "/admin/models",
-    queries: ({ me }) => (enterprise(me) ? [q(adminModelsQuery()), q(adminPurposesQuery())] : []),
+    queries: ({ me }) => (superAdmin(me) ? [q(adminModelsQuery()), q(adminPurposesQuery())] : []),
   },
   {
     pattern: "/admin/orgs",
     // The orgs and the deployment settings (their overrides).
     queries: ({ me }) =>
-      enterprise(me) ? [q(adminOrgsQuery()), q(deploymentSettingsQuery())] : [],
+      superAdmin(me) ? [q(adminOrgsQuery()), q(deploymentSettingsQuery())] : [],
   },
   {
     pattern: "/admin/plugins",
     // The items, the head's counts (pending plugins, requests), and the marketplaces and orgs
     // that name the rows' sources and named scopes (sections).
     queries: ({ me }) =>
-      enterprise(me)
+      superAdmin(me)
         ? [q(catalogItemsQuery()), ...pluginsHead(), q(marketplacesQuery()), q(adminOrgsQuery())]
         : [],
   },
@@ -212,7 +212,7 @@ export const ROUTES: readonly RouteEntry[] = [
     // The item, the marketplaces (its source), the catalog (its dependencies, the head's count)
     // and the orgs (its named scope, the scope dialog).
     queries: ({ me, params }) =>
-      enterprise(me) && params.itemId !== undefined
+      superAdmin(me) && params.itemId !== undefined
         ? [
             q(catalogItemQuery(params.itemId)),
             q(marketplacesQuery()),
@@ -228,7 +228,7 @@ export const ROUTES: readonly RouteEntry[] = [
     // step reads nothing.
     queries: ({ me, search }) => {
       const staging = search.get("staging") ?? "";
-      return enterprise(me) && staging !== ""
+      return superAdmin(me) && staging !== ""
         ? [q(stagedImportQuery(staging)), q(deploymentRequestsQuery()), q(adminOrgsQuery())]
         : [];
     },
@@ -238,7 +238,7 @@ export const ROUTES: readonly RouteEntry[] = [
     // The entries of the address's source and search, the marketplaces (the source tabs) and the
     // head's counts.
     queries: ({ me, search }) =>
-      enterprise(me)
+      superAdmin(me)
         ? [
             q(
               marketplaceEntriesQuery(search.get("sourceId") ?? "", (search.get("q") ?? "").trim()),
@@ -253,15 +253,15 @@ export const ROUTES: readonly RouteEntry[] = [
     pattern: "/admin/plugins/pending",
     // The plugins waiting for a confirmation and the requests (the page and the head's counts),
     // the items (the head's count).
-    queries: ({ me }) => (enterprise(me) ? [...pluginsHead(), q(catalogItemsQuery())] : []),
+    queries: ({ me }) => (superAdmin(me) ? [...pluginsHead(), q(catalogItemsQuery())] : []),
   },
   {
     pattern: "/admin/plugins/sources",
-    queries: ({ me }) => (enterprise(me) ? [q(marketplacesQuery())] : []),
+    queries: ({ me }) => (superAdmin(me) ? [q(marketplacesQuery())] : []),
   },
   {
     pattern: "/admin/settings",
-    queries: ({ me }) => (enterprise(me) ? [q(deploymentSettingsQuery())] : []),
+    queries: ({ me }) => (superAdmin(me) ? [q(deploymentSettingsQuery())] : []),
   },
   {
     pattern: "/agents",

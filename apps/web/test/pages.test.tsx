@@ -188,7 +188,7 @@ describe("(app) 页面模板", () => {
       expect.stringContaining("研究助手 想调用 Bash"),
       expect.stringContaining("客服分流 想更新技能 refund-policy"),
     ]);
-    expect(screen.getByText("Acme · 所有者 · 2 件事等你处理")).toBeTruthy();
+    expect(screen.getByText("Acme · 组织所有者 · 2 件事等你处理")).toBeTruthy();
     // the conversations to pick up, newest first; the one with an approval is marked
     const recent = within(screen.getByRole("list", { name: h.recent.title })).getAllByRole(
       "listitem",
@@ -574,7 +574,7 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
     ...ME,
     memberships: [{ orgId: "o1", slug: "acme", name: "Acme", role }],
   });
-  const notEnterprise: Me = { ...ME, account: { ...ME.account, isEnterpriseAdmin: false } };
+  const notSuperAdmin: Me = { ...ME, account: { ...ME.account, isSuperAdmin: false } };
 
   it("the sidebar lists existing routes only; the status bar reads account@org:route and the version", async () => {
     resetNavigation("/agents/new");
@@ -604,7 +604,7 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
       [zh.nav.settings, "/settings/organization"],
     ]);
     await userEvent.setup().keyboard("{Escape}");
-    // 企业管理员（与组织角色无关）看得到管理后台的入口，在账户行之上
+    // 超级管理员（与组织角色无关）看得到管理后台的入口，在账户行之上
     expect(screen.getByRole("link", { name: "管理后台" }).getAttribute("href")).toBe("/admin");
     expect(
       within(nav).getByRole("link", { name: zh.nav.agents }).getAttribute("aria-current"),
@@ -652,7 +652,7 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
       expect.stringContaining("Acme"),
       expect.stringContaining("Beta"),
     ]);
-    // can create one too, and an enterprise admin can reach the admin console
+    // can create one too, and a super admin can reach the admin console
     expect(screen.getByRole("button", { name: c.create })).toBeTruthy();
     expect(screen.getByRole("link", { name: c.admin }).getAttribute("href")).toBe("/admin");
     await userEvent.click(within(orgs[1] as HTMLElement).getByRole("button", { name: c.enter }));
@@ -671,7 +671,7 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
 
   it("no org and not allowed to create one: the chooser says to ask for an invitation", () => {
     renderFrame(
-      shellOf({ ...notEnterprise, currentOrgId: null, memberships: [], canCreateOrg: false }),
+      shellOf({ ...notSuperAdmin, currentOrgId: null, memberships: [], canCreateOrg: false }),
     );
     expect(screen.getByText(zh.orgChooser.askHint)).toBeTruthy();
     expect(screen.queryByRole("button", { name: zh.orgChooser.create })).toBeNull();
@@ -710,15 +710,15 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
     await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/chat?agent=a1"));
   });
 
-  it("非企业管理员看不到一级导航「管理」（组织 owner 也不行）", async () => {
-    renderFrame(shellOf(notEnterprise));
+  it("非超级管理员看不到一级导航「管理」（组织 owner 也不行）", async () => {
+    renderFrame(shellOf(notSuperAdmin));
     const nav = screen.getByRole("navigation", { name: "主导航" });
     expect(screen.queryByRole("link", { name: "管理后台" })).toBeNull();
     const menu = await openMore(nav);
     expect(within(menu).getByRole("menuitem", { name: zh.nav.evals })).toBeTruthy();
   });
 
-  it("an enterprise admin without an org still reaches the admin console in the shell", () => {
+  it("a super admin without an org still reaches the admin console in the shell", () => {
     resetNavigation("/admin");
     renderFrame(shellOf({ ...ME, currentOrgId: null, memberships: [] }));
     expect(screen.getByText("page body")).toBeTruthy();
@@ -730,9 +730,9 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
     expect(screen.queryByRole("region", { name: "会话" })).toBeNull();
   });
 
-  it("a person who is not an enterprise admin keeps the workspace sidebar under /admin", () => {
+  it("a person who is not a super admin keeps the workspace sidebar under /admin", () => {
     resetNavigation("/admin/accounts");
-    renderFrame(shellOf(notEnterprise));
+    renderFrame(shellOf(notSuperAdmin));
     expect(screen.getByText("page body")).toBeTruthy();
     const nav = screen.getByRole("navigation", { name: "主导航" });
     // the 403 page stands beside the workspace sidebar, never the admin context

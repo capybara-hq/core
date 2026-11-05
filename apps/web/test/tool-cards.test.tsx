@@ -228,7 +228,7 @@ describe("ApprovalCard (design ApprovalBlock)", () => {
     );
     expect(
       await screen.findByText(
-        "Fixture [delete_item] (mcp__fixture__delete_item) needs approval; waiting for an admin.",
+        "Fixture [delete_item] (mcp__fixture__delete_item) needs approval; waiting for an org admin.",
       ),
     ).toBeTruthy();
     expect(calls.map((c) => c.url)).toEqual(["/api/v1/orgs/o1/approvals/ap1"]);

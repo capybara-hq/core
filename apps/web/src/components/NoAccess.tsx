@@ -7,8 +7,8 @@ import type { OrgRole } from "../lib/members";
 import { activeNavOf } from "./shell/nav";
 import { usePagePath } from "./shell/path";
 
-/** The role a page needs: an org role, or `enterprise` for the admin console. */
-export type Need = Exclude<OrgRole, "guest"> | "enterprise";
+/** The role a page needs: an org role, or `superAdmin` for the admin console. */
+export type Need = Exclude<OrgRole, "guest"> | "superAdmin";
 
 /**
  * The one no-access state (web-order spec §9, R2): what the page is, which role it needs and
@@ -17,10 +17,10 @@ export type Need = Exclude<OrgRole, "guest"> | "enterprise";
 export function NoAccess({ need }: { need: Need }) {
   const t = useTranslations();
   const pathname = usePathname();
-  const enterprise = need === "enterprise";
-  const scope = usePagePath(enterprise ? "admin" : "org");
+  const superAdmin = need === "superAdmin";
+  const scope = usePagePath(superAdmin ? "admin" : "org");
   const nav = activeNavOf(pathname);
-  const page = enterprise
+  const page = superAdmin
     ? t("nav.admin")
     : nav !== "" && !nav.startsWith("ext:") && nav !== "overview"
       ? t(`nav.${nav}`)
@@ -33,7 +33,7 @@ export function NoAccess({ need }: { need: Need }) {
       title={t("roles.noAccess.title")}
       description={t("roles.noAccess.description", { page, role })}
       need={role}
-      ask={enterprise ? t("roles.noAccess.askEnterprise") : t("roles.noAccess.askOrg")}
+      ask={superAdmin ? t("roles.noAccess.askSuperAdmin") : t("roles.noAccess.askOrg")}
     />
   );
 }
