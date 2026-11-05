@@ -57,23 +57,12 @@ const LIVE_INSTALL = ["installing", "installed", "upgrading"] as const;
 const byNameThenId = (a: UsableSkill, b: UsableSkill): number =>
   a.name < b.name ? -1 : a.name > b.name ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
 
-/**
- * The platform skills on in the org (`ids`: only those), minus the ones whose name an org skill of
- * its own already uses (rule 10: the org's wins; logged unless that skill is a copy of the same
- * component: linked to it, or carrying the same plugin's provenance before the migration linked
- * it). On in the org:
- * - never when the skill or its plugin is disabled (or its plugin is deleted);
- * - `follow`: its plugin is on in the org (a live install, or builtin) and no component switch of
- *   the org says off;
- * - `own`: `wantedOn` over the skill's own scope, the org's list membership and its switch.
- * One query for the skills with their plugin and org state, one for the org's names.
- */
-async function platformOn(
+/** The live platform skill rows on in the org (`ids`: only those), before any name clash. */
+async function platformRowsOn(
   db: KernelSchemaDb,
   orgId: string,
   ids: readonly string[] | undefined,
-  log?: Pick<Logger, "warn">,
-): Promise<SkillVersionRow[]> {
+) {
   if (ids !== undefined && ids.length === 0) return [];
   let q = db
     .selectFrom("platform_skills as p")
@@ -128,7 +117,7 @@ async function platformOn(
     .where("p.deleted_at", "is", null)
     .where("p.disabled", "=", false);
   if (ids !== undefined) q = q.where("p.id", "in", [...ids]);
-  const rows = (await q.execute()).filter((r) => {
+  return (await q.execute()).filter((r) => {
     const sw = r.switch ?? null;
     if (r.item_disabled === true) return false;
     if (r.scope_mode === "follow") {
@@ -138,6 +127,38 @@ async function platformOn(
     }
     return wantedOn({ scope: r.scope, disabled: false, builtin: false }, Boolean(r.listed), sw);
   });
+}
+
+/**
+ * The ids among `ids` of the platform skills on in the org (see {@link platformOn}), whatever the
+ * org's own skills are named: a skill of the org with the same name would clash with them.
+ */
+export async function platformSkillsOn(
+  db: KernelSchemaDb,
+  orgId: string,
+  ids: readonly string[],
+): Promise<Set<string>> {
+  return new Set((await platformRowsOn(db, orgId, ids)).map((r) => r.id));
+}
+
+/**
+ * The platform skills on in the org (`ids`: only those), minus the ones whose name an org skill of
+ * its own already uses (rule 10: the org's wins; logged unless that skill is a copy of the same
+ * component: linked to it, or carrying the same plugin's provenance before the migration linked
+ * it). On in the org:
+ * - never when the skill or its plugin is disabled (or its plugin is deleted);
+ * - `follow`: its plugin is on in the org (a live install, or builtin) and no component switch of
+ *   the org says off;
+ * - `own`: `wantedOn` over the skill's own scope, the org's list membership and its switch.
+ * One query for the skills with their plugin and org state, one for the org's names.
+ */
+async function platformOn(
+  db: KernelSchemaDb,
+  orgId: string,
+  ids: readonly string[] | undefined,
+  log?: Pick<Logger, "warn">,
+): Promise<SkillVersionRow[]> {
+  const rows = await platformRowsOn(db, orgId, ids);
   if (rows.length === 0) return [];
   const own = await db
     .selectFrom("skills")

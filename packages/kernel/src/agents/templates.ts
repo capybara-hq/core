@@ -136,25 +136,13 @@ const orgRaw = (r: Awaited<ReturnType<ReturnType<typeof baseQuery>["execute"]>>[
     origin: "org",
   }) satisfies RawRow;
 
-/**
- * The platform templates on in the org (`ids`: only those), minus the ones whose type an org
- * template of its own (unlinked, or pinned) already has (the org's wins; logged unless it is a copy
- * of the same component: linked to it, or from the same catalog item; `shadowed` maps such a
- * platform id to that org row's id). On in the org:
- * - never when the template or its plugin is disabled (or its plugin is deleted);
- * - `follow`: its plugin is on in the org (a live install, or builtin) and no component switch of
- *   the org says off;
- * - `own`: `wantedOn` over the template's own scope, the org's list membership and its switch.
- * One query for the templates with their plugin and org state, one for the org's clashing rows.
- */
-async function platformOn(
+/** The live platform template rows on in the org (`ids`: only those), before any type clash. */
+async function platformRowsOn(
   db: KernelSchemaDb,
   orgId: string,
   ids: readonly string[] | undefined,
-  log?: Pick<Logger, "warn">,
-): Promise<{ rows: RawRow[]; shadowed: Map<string, string> }> {
-  const shadowed = new Map<string, string>();
-  if (ids !== undefined && ids.length === 0) return { rows: [], shadowed };
+) {
+  if (ids !== undefined && ids.length === 0) return [];
   let q = db
     .selectFrom("platform_agent_templates as p")
     .innerJoin("platform_agent_template_versions as v", (j) =>
@@ -208,7 +196,7 @@ async function platformOn(
     .where("p.deleted_at", "is", null)
     .where("p.disabled", "=", false);
   if (ids !== undefined) q = q.where("p.id", "in", [...ids]);
-  const rows = (await q.execute()).filter((r) => {
+  return (await q.execute()).filter((r) => {
     const sw = r.switch ?? null;
     if (r.item_disabled === true) return false;
     if (r.scope_mode === "follow") {
@@ -218,6 +206,39 @@ async function platformOn(
     }
     return wantedOn({ scope: r.scope, disabled: false, builtin: false }, Boolean(r.listed), sw);
   });
+}
+
+/**
+ * The ids among `ids` of the platform templates on in the org (see {@link platformOn}), whatever
+ * the org's own templates are.
+ */
+export async function platformTemplatesOn(
+  db: KernelSchemaDb,
+  orgId: string,
+  ids: readonly string[],
+): Promise<Set<string>> {
+  return new Set((await platformRowsOn(db, orgId, ids)).map((r) => r.id));
+}
+
+/**
+ * The platform templates on in the org (`ids`: only those), minus the ones whose type an org
+ * template of its own (unlinked, or pinned) already has (the org's wins; logged unless it is a copy
+ * of the same component: linked to it, or from the same catalog item; `shadowed` maps such a
+ * platform id to that org row's id). On in the org:
+ * - never when the template or its plugin is disabled (or its plugin is deleted);
+ * - `follow`: its plugin is on in the org (a live install, or builtin) and no component switch of
+ *   the org says off;
+ * - `own`: `wantedOn` over the template's own scope, the org's list membership and its switch.
+ * One query for the templates with their plugin and org state, one for the org's clashing rows.
+ */
+async function platformOn(
+  db: KernelSchemaDb,
+  orgId: string,
+  ids: readonly string[] | undefined,
+  log?: Pick<Logger, "warn">,
+): Promise<{ rows: RawRow[]; shadowed: Map<string, string> }> {
+  const shadowed = new Map<string, string>();
+  const rows = await platformRowsOn(db, orgId, ids);
   if (rows.length === 0) return { rows: [], shadowed };
   const own = await db
     .selectFrom("agent_templates")

@@ -110,7 +110,9 @@
       "skillNew": "{agent} wants to create the skill {skill}",
       "skillUpdate": "{agent} wants to update the skill {skill}",
       "catalogRequest": "Catalog request",
-      "catalogRequestTitle": "Request to install {item}"
+      "catalogRequestTitle": "Request to install {item}",
+      "skillRenamed": "Skill renamed",
+      "skillRenamedTitle": "Skill {from} was renamed to {to}"
     },
     "recent": {
       "title": "Pick up where you left off",
@@ -321,6 +323,9 @@
       "not_found": "The skill change does not exist or you cannot see it.",
       "not_owner": "Only the agent's owner can approve or reject its skill changes.",
       "already_decided": "This skill change has already been handled."
+    },
+    "inbox": {
+      "notice_not_found": "The notice does not exist or was already dismissed."
     },
     "trajectory": {
       "not_found": "Run history not found, or you do not have access to it."
@@ -1109,6 +1114,16 @@
       "reject": "Reject",
       "approved": "Skill change approved",
       "rejected": "Skill change rejected"
+    },
+    "skillRenamed": {
+      "label": "Skill renamed",
+      "title": "Skill {from} was renamed to {to}",
+      "hint": "A platform skill named {from} is now available to this organization, so your organization's own skill {from} was renamed to {to}. Agents that use it keep it under the new name. The platform skill is switched off in this organization; an admin can switch it on on the Skills page.",
+      "from": "Old name",
+      "to": "New name",
+      "plugin": "Plugin",
+      "dismiss": "Got it",
+      "dismissed": "Notice dismissed"
     }
   },
   "connectors": {

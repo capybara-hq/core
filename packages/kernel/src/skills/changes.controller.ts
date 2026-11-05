@@ -9,7 +9,7 @@ import {
 } from "../identity/principal.js";
 import { InboxService, type InboxView } from "../inbox/inbox.service.js";
 import { createZodDto } from "../infra/validation/create-zod-dto.js";
-import { ZBody } from "../infra/validation/zod-params.js";
+import { ZBody, ZParam } from "../infra/validation/zod-params.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
 import {
   type SkillChangeDetail,
@@ -25,6 +25,9 @@ const DecideBody = z
   })
   .strict();
 class SkillChangeDecideBody extends createZodDto(DecideBody, "SkillChangeDecideBody") {}
+
+const NoticeParamsSchema = z.object({ id: z.string().min(1).max(100) });
+class NoticeParams extends createZodDto(NoticeParamsSchema, "InboxNoticeParams") {}
 
 /**
  * 共享 agent 的技能变更申请（`/api/v1/orgs/:orgId/skill-changes`，M5 T15，R4）。动作 `approvals.decide`
@@ -109,6 +112,8 @@ export class AgentSkillsController {
 /**
  * 收件箱（`GET /api/v1/orgs/:orgId/inbox`，计划取舍 C6：按类型汇总）：当前用户待处理的工具审批与
  * 能决定的技能变更，新的在前、最多 100 项（`truncated` 表示还有更多）。仅限用户主体。
+ * Org admins also see the org's open notices and dismiss them with
+ * `POST /api/v1/orgs/:orgId/inbox/notices/:id/dismiss`.
  */
 @Controller("api/v1/orgs/:orgId/inbox")
 export class InboxController {
@@ -122,5 +127,18 @@ export class InboxController {
   ): Promise<InboxView> {
     const p = requireUser(principal);
     return this.inbox.list(org.orgId, p.account.id);
+  }
+
+  /** An org admin dismisses an org notice (`skill_renamed`) -> 204. */
+  @Post("notices/:id/dismiss")
+  @HttpCode(204)
+  @OrgAction("approvals.decide")
+  async dismissNotice(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @ZParam(NoticeParams) params: z.infer<typeof NoticeParamsSchema>,
+  ): Promise<void> {
+    const p = requireUser(principal);
+    await this.inbox.dismissNotice(org.orgId, p.account.id, params.id);
   }
 }

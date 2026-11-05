@@ -3,6 +3,7 @@ import { BackgroundModule } from "../background/background.module.js";
 import { BackgroundTaskPollJob } from "../background/poll.job.js";
 import { CatalogModule } from "../catalog/catalog.module.js";
 import { CatalogJobs } from "../catalog/jobs.js";
+import { PlatformMigration } from "../catalog/platform-migration.js";
 import { PluginScopeWorkersModule } from "../catalog/scope-sync-workers.js";
 import { ChannelsModule, ChannelWorkersModule } from "../channels/channels.module.js";
 import { GatewayCheckJob } from "../channels/supervisor.js";
@@ -17,6 +18,7 @@ import { PluginsReconcileJob } from "../extensions/lifecycle.js";
 import { KernelScheduleModule } from "../infra/schedule/schedule.module.js";
 import { DirectoryScanJob } from "../orgs/directory-sync.js";
 import { OffboardSweepJob } from "../orgs/offboarding.js";
+import { OrgLockModule } from "../orgs/org-lock.js";
 import { OrgsModule } from "../orgs/orgs.module.js";
 import { MaintenanceModule } from "../runtime/maintenance.js";
 import { RuntimeWorkersModule } from "../runtime/run-processors.js";
@@ -66,6 +68,7 @@ export class WorkerModule {
         ToolsModule,
         CatalogModule,
         OrgsModule,
+        OrgLockModule,
         ExtensionsModule,
         ChannelsModule,
       ],
@@ -78,6 +81,7 @@ export class WorkerModule {
         BackgroundTaskPollJob,
         ToolJobs,
         CatalogJobs,
+        PlatformMigration,
         DirectoryScanJob,
         OffboardSweepJob,
         PluginsReconcileJob,

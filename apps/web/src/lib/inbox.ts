@@ -10,7 +10,26 @@ import type { SkillChange } from "./skills";
 export type InboxItem =
   | { type: "tool_approval"; id: string; createdAt: string; approval: Approval }
   | { type: "skill_change"; id: string; createdAt: string; skillChange: SkillChange }
-  | { type: "catalog_request"; id: string; createdAt: string; request: CatalogRequest };
+  | { type: "catalog_request"; id: string; createdAt: string; request: CatalogRequest }
+  | { type: "skill_renamed"; id: string; createdAt: string; notice: OrgNotice };
+
+/**
+ * A notice for the org's admins until one of them dismisses it: `skill_renamed`, an org skill the
+ * platform components migration renamed because a platform skill on in the org has its name
+ * (agents keep it: they select skills by id).
+ */
+export interface OrgNotice {
+  id: string;
+  kind: "skill_renamed";
+  createdAt: string;
+  skillRenamed: {
+    skillId: string;
+    from: string;
+    to: string;
+    platformSkillId: string;
+    plugin: string | null;
+  };
+}
 
 export interface InboxView {
   items: InboxItem[];
@@ -19,3 +38,10 @@ export interface InboxView {
 
 export const listInbox = (orgId: string) =>
   apiFetch<InboxView>(`/api/v1/orgs/${encodeURIComponent(orgId)}/inbox`);
+
+/** An org admin dismisses a notice from the inbox (204). */
+export const dismissNotice = (orgId: string, id: string) =>
+  apiFetch<void>(
+    `/api/v1/orgs/${encodeURIComponent(orgId)}/inbox/notices/${encodeURIComponent(id)}/dismiss`,
+    { method: "POST" },
+  );

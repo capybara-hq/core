@@ -110,7 +110,9 @@
       "skillNew": "{agent} 想新建技能 {skill}",
       "skillUpdate": "{agent} 想更新技能 {skill}",
       "catalogRequest": "目录申请",
-      "catalogRequestTitle": "申请安装 {item}"
+      "catalogRequestTitle": "申请安装 {item}",
+      "skillRenamed": "技能改名",
+      "skillRenamedTitle": "技能 {from} 已改名为 {to}"
     },
     "recent": {
       "title": "接着上次的会话",
@@ -321,6 +323,9 @@
       "not_found": "该技能改动不存在或你无权查看。",
       "not_owner": "只有该智能体的负责人可以批准或拒绝它的技能改动。",
       "already_decided": "该技能改动已被处理。"
+    },
+    "inbox": {
+      "notice_not_found": "这条通知不存在或已被移除。"
     },
     "trajectory": {
       "not_found": "没有找到这条运行记录，或你没有查看权限。"
@@ -1097,6 +1102,16 @@
       "reject": "拒绝",
       "approved": "已批准技能变更",
       "rejected": "已拒绝技能变更"
+    },
+    "skillRenamed": {
+      "label": "技能改名",
+      "title": "技能 {from} 已改名为 {to}",
+      "hint": "平台提供了同名技能 {from}，所以本组织自己的技能 {from} 已改名为 {to}。使用它的智能体会继续使用，名称变为新名称。该平台技能在本组织默认关闭，管理员可在技能页面开启。",
+      "from": "原名称",
+      "to": "新名称",
+      "plugin": "插件",
+      "dismiss": "知道了",
+      "dismissed": "已移除通知"
     }
   },
   "connectors": {

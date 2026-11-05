@@ -1083,6 +1083,31 @@ export interface KernelDatabase {
   plugin_install_components: PluginInstallComponentsTable;
   extension_catalog_sources: ExtensionCatalogSourcesTable;
   bootstrap_runs: BootstrapRunsTable;
+  platform_migration_runs: PlatformMigrationRunsTable;
+  org_notices: OrgNoticesTable;
+}
+
+/** 0081: one run of the platform components migration job (`catalog/platform-migration.ts`). */
+export interface PlatformMigrationRunsTable {
+  id: string;
+  started_at: Ts;
+  finished_at: TsNullable;
+  stats: Json<Record<string, unknown>>;
+}
+
+/** 0081: the kinds of {@link OrgNoticesTable}. */
+export type OrgNoticeKind = "skill_renamed";
+
+/** 0081: a notice for an org's admins (an inbox item), until one of them dismisses it. */
+export interface OrgNoticesTable {
+  id: string;
+  org_id: string;
+  kind: OrgNoticeKind;
+  /** `skill_renamed`: `{ skillId, from, to, platformSkillId, plugin }`. */
+  detail: Json<Record<string, unknown>>;
+  created_at: Ts;
+  dismissed_at: TsNullable;
+  dismissed_by: NullableCol<string>;
 }
 
 /** 0050: one row per bootstrap manifest the bootstrap step completed. */

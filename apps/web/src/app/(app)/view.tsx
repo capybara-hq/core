@@ -345,6 +345,16 @@ function DailyOverview({
         href: "/inbox",
       };
     }
+    if (item.type === "skill_renamed") {
+      const r = item.notice.skillRenamed;
+      return {
+        id: item.id,
+        tag: { label: t("inbox.skillRenamed") },
+        title: t("inbox.skillRenamedTitle", { from: r.from, to: r.to }),
+        meta: when,
+        href: "/inbox",
+      };
+    }
     return {
       id: item.id,
       tag: { label: t("inbox.catalogRequest") },

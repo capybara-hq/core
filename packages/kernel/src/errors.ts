@@ -82,6 +82,8 @@ export const ERROR_CODES = {
   "plugin.scope_stale": 409,
   "catalog.approval_required": 403,
   "catalog.request_not_found": 404,
+  /** No open org notice with that id for an admin of the org (inbox). */
+  "inbox.notice_not_found": 404,
   "catalog.request_decided": 409,
   /** A pending request of the same kind for the same item or entry exists (spec §5.1 rule 5). */
   "catalog.request_pending": 409,

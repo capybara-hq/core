@@ -77,6 +77,8 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   pinned set or the map, an append-only system notice (full body of each new / changed entry, names of removed ones; pinned ids are left out
   of the "Updated skills" list); after compaction the current pinned set and map are restored with the catalog. Code:
   `runtime/context/skills.ts`, `runtime/context/claude-tools.ts`, `skills/catalog.ts` (`SkillsCatalogService.record`, `loadPinnedBodies`, `fitPinned`).
+- A skill renamed under its id (the platform components migration renames an org skill whose name a platform skill on in the org has)
+  is noticed as its old name removed and its new name added; no log before phase 2 holds such a change, so old logs render as before.
 - **Old logs render byte for byte as before**: a snapshot without `plugin` / `pinned` / `toolMap` means none, and a run on such a conversation
   writes no new snapshot or notice when nothing changed. The bodies and the map are in the log, so a baseline can never miss them and they
   need no drift reason of their own.

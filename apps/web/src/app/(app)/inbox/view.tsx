@@ -38,7 +38,7 @@ import {
   requestSubject,
   requestVersion,
 } from "../../../lib/catalog";
-import type { InboxItem } from "../../../lib/inbox";
+import { dismissNotice, type InboxItem, type OrgNotice } from "../../../lib/inbox";
 import { inboxChangeKeys, inboxQuery } from "../../../lib/query/inbox";
 import { keys } from "../../../lib/query/keys";
 import { useAppMutation } from "../../../lib/query/mutation";
@@ -97,6 +97,13 @@ function Inbox({
   const td = useTranslations("catalog.inbox");
   const errorMessage = useErrorMessage();
   const [requestPending, setRequestPending] = useState<"approve" | "reject">();
+  const tn = useTranslations("inbox.skillRenamed");
+  const [noticePending, setNoticePending] = useState(false);
+  // Dismissing a notice changes only the inbox
+  const dismissMutation = useAppMutation({
+    fn: (id: string) => dismissNotice(orgId, id),
+    invalidates: () => inboxChangeKeys(orgId),
+  });
   // A catalog request decision changes the catalog's view of the item and the inbox (a failure
   // reads the inbox again through `handled`).
   const decideRequestMutation = useAppMutation({
@@ -115,19 +122,20 @@ function Inbox({
   // biome-ignore lint/correctness/useExhaustiveDependencies: 只在选中项变化时重置
   useEffect(() => setScope("once"), [active?.id]);
 
+  const labels: Labels = {
+    skillChange: t("skillChange.label"),
+    request: td("label"),
+    skillRenamed: tn("label"),
+  };
   const columns: Column<InboxItem>[] = [
     {
       key: "request",
       header: t("columns.request"),
       cell: (item) => (
         <Stack gap={0}>
-          <Text>{titleOf(item, t("skillChange.label"), td("label"), locale)}</Text>
+          <Text>{titleOf(item, labels, locale)}</Text>
           <Text variant="small" tone="muted">
-            {item.type === "tool_approval"
-              ? item.approval.agent.name
-              : item.type === "skill_change"
-                ? item.skillChange.agent.name
-                : requestSubject(item.request).name}
+            {subtitleOf(item)}
           </Text>
         </Stack>
       ),
@@ -181,37 +189,58 @@ function Inbox({
     }
   }
 
+  async function dismiss(notice: OrgNotice) {
+    setNoticePending(true);
+    try {
+      await dismissMutation.mutateAsync(notice.id);
+      handled(notice.id, tn("dismissed"));
+    } catch (e) {
+      toast.error(errorMessage(e));
+      handled(notice.id, null);
+    } finally {
+      setNoticePending(false);
+    }
+  }
+
   const detail: Detail | null =
     active === undefined
       ? null
-      : active.type === "catalog_request"
-        ? directoryRequestDetail({
-            request: active.request,
-            pending: requestPending,
-            onDecide: (d) => void decideRequest(active.request, d),
-            td,
+      : active.type === "skill_renamed"
+        ? noticeDetail({
+            notice: active.notice,
+            pending: noticePending,
+            onDismiss: () => void dismiss(active.notice),
+            tn,
             t,
-            locale,
           })
-        : active.type === "tool_approval"
-          ? toolApprovalDetail({
-              approval: active.approval,
-              scope,
-              setScope,
-              pending: approvals.pending,
-              onDecide: (d) => void decideApproval(active.approval, d),
-              openConversation: () => router.push(active.approval.conversationPath),
+        : active.type === "catalog_request"
+          ? directoryRequestDetail({
+              request: active.request,
+              pending: requestPending,
+              onDecide: (d) => void decideRequest(active.request, d),
+              td,
+              t,
               locale,
-              t,
-              ta,
             })
-          : skillChangeDetail({
-              orgId,
-              change: active.skillChange,
-              pending: changes.pending,
-              onDecide: (d) => void decideChange(active.skillChange, d),
-              t,
-            });
+          : active.type === "tool_approval"
+            ? toolApprovalDetail({
+                approval: active.approval,
+                scope,
+                setScope,
+                pending: approvals.pending,
+                onDecide: (d) => void decideApproval(active.approval, d),
+                openConversation: () => router.push(active.approval.conversationPath),
+                locale,
+                t,
+                ta,
+              })
+            : skillChangeDetail({
+                orgId,
+                change: active.skillChange,
+                pending: changes.pending,
+                onDecide: (d) => void decideChange(active.skillChange, d),
+                t,
+              });
 
   if (inbox === null) {
     return (
@@ -247,7 +276,7 @@ function Inbox({
           columns={columns}
           rows={rows}
           rowKey={(a) => a.id}
-          rowLabel={(a) => titleOf(a, t("skillChange.label"), td("label"), locale)}
+          rowLabel={(a) => titleOf(a, labels, locale)}
           {...(active ? { activeKey: active.id } : {})}
           onOpen={(a) => setActiveId(a.id)}
           state="ready"
@@ -274,28 +303,44 @@ function Inbox({
   );
 }
 
-/** The id of what an item asks to decide (the approval, the skill change, the request). */
+/** The id of what an item asks to decide (the approval, the skill change, the request, the notice). */
 const subjectOf = (i: InboxItem): string =>
   i.type === "tool_approval"
     ? i.approval.id
     : i.type === "skill_change"
       ? i.skillChange.id
-      : i.request.id;
+      : i.type === "skill_renamed"
+        ? i.notice.id
+        : i.request.id;
+
+/** The labels the row titles start with. */
+interface Labels {
+  skillChange: string;
+  request: string;
+  skillRenamed: string;
+}
 
 /**
- * 列表里的一行标题：工具审批为「连接器 · 工具」，技能变更为「技能变更 · 名称」，目录申请为「目录申请 · 条目」。
+ * 列表里的一行标题：工具审批为「连接器 · 工具」，技能变更为「技能变更 · 名称」，目录申请为「目录申请 · 条目」，
+ * 技能改名为「技能改名 · 新名称」。
  */
-function titleOf(
-  item: InboxItem,
-  skillChangeLabel: string,
-  requestLabel: string,
-  locale: string,
-): string {
-  if (item.type === "skill_change") return `${skillChangeLabel} · ${item.skillChange.name}`;
+function titleOf(item: InboxItem, labels: Labels, locale: string): string {
+  if (item.type === "skill_change") return `${labels.skillChange} · ${item.skillChange.name}`;
   if (item.type === "catalog_request") {
-    return `${requestLabel} · ${displayNameOf(requestSubject(item.request), locale)}`;
+    return `${labels.request} · ${displayNameOf(requestSubject(item.request), locale)}`;
+  }
+  if (item.type === "skill_renamed") {
+    return `${labels.skillRenamed} · ${item.notice.skillRenamed.to}`;
   }
   return toolLabelText(approvalToolLabel(item.approval, locale));
+}
+
+/** The row's second line: the agent, the requested item, or the renamed skill's old name. */
+function subtitleOf(item: InboxItem): string {
+  if (item.type === "tool_approval") return item.approval.agent.name;
+  if (item.type === "skill_change") return item.skillChange.agent.name;
+  if (item.type === "skill_renamed") return item.notice.skillRenamed.from;
+  return requestSubject(item.request).name;
 }
 
 /** 选中项的三块：内容区、Inspector、ActionRow。 */
@@ -504,6 +549,49 @@ function directoryRequestDetail({
             </Text>
           )}
         </Stack>
+      </Card>
+    ),
+  };
+}
+
+/** A renamed skill (org admins): what happened and why; dismiss. */
+function noticeDetail({
+  notice,
+  pending,
+  onDismiss,
+  tn,
+  t,
+}: {
+  notice: OrgNotice;
+  pending: boolean;
+  onDismiss(): void;
+  tn: Translate;
+  t: Translate;
+}): Detail {
+  const r = notice.skillRenamed;
+  return {
+    inspector: (
+      <KeyValue
+        keyWidth="10ch"
+        rows={[
+          { k: tn("from"), v: r.from },
+          { k: tn("to"), v: r.to },
+          ...(r.plugin !== null ? [{ k: tn("plugin"), v: r.plugin }] : []),
+          { k: t("requested"), v: <DateTime value={notice.createdAt} /> },
+        ]}
+      />
+    ),
+    actionRow: {
+      primary: {
+        label: tn("dismiss"),
+        onSelect: onDismiss,
+        loading: pending,
+        disabled: pending,
+      },
+    },
+    content: (
+      <Card title={tn("title", { from: r.from, to: r.to })}>
+        <Text variant="prose">{tn("hint", { from: r.from, to: r.to })}</Text>
       </Card>
     ),
   };
