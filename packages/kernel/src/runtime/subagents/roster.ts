@@ -32,7 +32,8 @@ export const GENERAL_PURPOSE_DESCRIPTION =
 const cut = (s: string) => s.slice(0, ROSTER_DESCRIPTION_MAX);
 
 /** Plugin template type: `<plugin>:<name>`. */
-export const templateType = (plugin: string, name: string) => `${plugin}:${name}`;
+export const templateType = (plugin: string | null, name: string) =>
+  plugin ? `${plugin}:${name}` : name;
 
 /**
  * Resolves the roster of `parent` (spec §4.3): `general-purpose` first unless
@@ -66,7 +67,7 @@ export async function resolveRoster(
       source: "plugin",
       description: cut(typeof description === "string" ? description : ""),
       templateId: r.id,
-      plugin: r.plugin,
+      ...(r.plugin ? { plugin: r.plugin } : {}),
     });
   }
   for (const t of sub?.inline ?? []) {

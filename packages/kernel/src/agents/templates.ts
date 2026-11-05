@@ -20,7 +20,7 @@ import { needsLegacyScope, normalizeToolKeys } from "./definition.js";
 export interface AgentTemplateView {
   id: string;
   name: string;
-  plugin: string;
+  plugin: string | null;
   /** The roster type `<plugin>:<name>`. */
   type: string;
   description: string;
@@ -35,7 +35,7 @@ export interface AgentTemplateView {
 export interface TemplateRow {
   id: string;
   name: string;
-  plugin: string;
+  plugin: string | null;
   version: number;
   template: AgentTemplate;
   sourceFormat: SourceFormat;
@@ -136,7 +136,12 @@ export class AgentTemplatesService {
   async resolve(
     orgId: string,
     ref: string,
-  ): Promise<{ id: string; version: number; plugin: string; template: AgentTemplate } | null> {
+  ): Promise<{
+    id: string;
+    version: number;
+    plugin: string | null;
+    template: AgentTemplate;
+  } | null> {
     const i = ref.indexOf(":");
     let q = baseQuery(this.db.db, orgId);
     q =
@@ -154,7 +159,7 @@ export class AgentTemplatesService {
 /** Where a template version comes from (a plugin version of the catalog). */
 export interface TemplateSource {
   orgId: string;
-  plugin: string;
+  plugin: string | null;
   catalogItemId: string;
   catalogVersion: string;
   sourceFormat: SourceFormat;

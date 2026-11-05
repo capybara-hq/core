@@ -406,7 +406,12 @@ export async function effectiveDefinition(
     );
     if (!row) throw new SubagentTypeGoneError(entry.type);
     template = row.template;
-    ref = { source: "plugin", id: row.id, version: row.version, plugin: row.plugin };
+    ref = {
+      source: "plugin",
+      id: row.id,
+      version: row.version,
+      ...(row.plugin ? { plugin: row.plugin } : {}),
+    };
   }
 
   const connectors = await loadConnectors(d.db, a.orgId, parent.tools);

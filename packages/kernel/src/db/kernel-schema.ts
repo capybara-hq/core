@@ -340,12 +340,16 @@ export interface AgentTemplatesTable {
   org_id: string;
   name: string;
   catalog_item_id: ColumnType<string | null, string | null | undefined, string | null>;
-  /** The plugin that installed it (`NOT NULL`, 0053): the roster type is `<plugin>:<name>`. */
-  plugin_name: string;
+  /** The plugin that installed it: the roster type is `<plugin>:<name>`; null (0080, nullable) = the bare `<name>`. */
+  plugin_name: ColumnType<string | null, string | null | undefined, string | null>;
   current_version: number;
   deleted_at: TsNullable;
   created_at: Ts;
   updated_at: Ts;
+  /** 0080: the platform template this copy links to (null = none). */
+  platform_template_id: ColumnType<string | null, string | null | undefined, string | null>;
+  /** 0080: a pin keeps the copy on its own stored version (ruling B2). */
+  pinned_version: ColumnType<number | null, number | null | undefined, number | null>;
 }
 
 /** 0053: one version of an agent template; `definition` is the parsed frontmatter and body. */
@@ -392,6 +396,8 @@ export interface ConnectorsTable {
     string | null | undefined,
     string | null
   >;
+  /** 0080: the platform connector template this connector was made from (null = none). */
+  platform_template_id: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
 /** 0010_tools.sql（0033 由 `app_tools` 改名）：连接器暴露的工具。 */
@@ -663,6 +669,10 @@ export interface SkillsTable {
    */
   catalog_item_id: ColumnType<string | null, string | null | undefined, string | null>;
   catalog_version: ColumnType<string | null, string | null | undefined, string | null>;
+  /** 0080: the platform skill this copy links to (null = none). */
+  platform_skill_id: ColumnType<string | null, string | null | undefined, string | null>;
+  /** 0080: a pin keeps the copy on its own stored version (ruling B2). */
+  pinned_version: ColumnType<number | null, number | null | undefined, number | null>;
 }
 
 /** 0024_skills.sql：技能的版本。 */
@@ -1062,6 +1072,13 @@ export interface KernelDatabase {
   catalog_org_grants: CatalogOrgGrantsTable;
   catalog_item_scope_orgs: CatalogItemScopeOrgsTable;
   catalog_item_org_switches: CatalogItemOrgSwitchesTable;
+  platform_skills: PlatformSkillsTable;
+  platform_skill_versions: PlatformSkillVersionsTable;
+  platform_agent_templates: PlatformAgentTemplatesTable;
+  platform_agent_template_versions: PlatformAgentTemplateVersionsTable;
+  platform_connector_templates: PlatformConnectorTemplatesTable;
+  component_scope_orgs: ComponentScopeOrgsTable;
+  component_org_switches: ComponentOrgSwitchesTable;
   plugin_installs: PluginInstallsTable;
   plugin_install_components: PluginInstallComponentsTable;
   extension_catalog_sources: ExtensionCatalogSourcesTable;
@@ -1127,6 +1144,106 @@ export interface CatalogItemScopeOrgsTable {
 /** 0074: an org's on / off switch of an item's components. */
 export interface CatalogItemOrgSwitchesTable {
   item_id: string;
+  org_id: string;
+  enabled: boolean;
+  updated_by: NullableCol<string>;
+  updated_at: Ts;
+}
+
+type ScopeMode = "follow" | "own";
+type ComponentScope = "all" | "optional" | "named";
+type ComponentKind = "skill" | "agent_template" | "connector_template";
+type Dflt<T> = ColumnType<T, T | undefined, T>;
+type NullableDflt<T> = ColumnType<T | null, T | null | undefined, T | null>;
+
+/** 0080: the scope columns every platform component carries (ruling C2). */
+interface PlatformScopeColumns {
+  scope_mode: Dflt<ScopeMode>;
+  scope: Dflt<ComponentScope>;
+  disabled: Dflt<boolean>;
+  shown_to_others: Dflt<boolean>;
+  scope_version: Dflt<number>;
+}
+
+/** 0080: a skill owned by the deployment (ruling A2). */
+export interface PlatformSkillsTable extends PlatformScopeColumns {
+  id: string;
+  catalog_item_id: NullableDflt<string>;
+  plugin_name: NullableDflt<string>;
+  name: string;
+  description: string;
+  description_zh: NullableDflt<string>;
+  current_version: number;
+  created_at: Ts;
+  updated_at: Ts;
+  deleted_at: TsNullable;
+}
+
+/** 0080: one version of a platform skill; files live under `object_prefix` in `deployment/`. */
+export interface PlatformSkillVersionsTable {
+  skill_id: string;
+  version: number;
+  manifest: Json<SkillManifest>;
+  object_prefix: string;
+  catalog_version: NullableDflt<string>;
+  source_format: Dflt<SourceFormat>;
+  suggest_pinned: Dflt<boolean>;
+  updated_on_own: Dflt<boolean>;
+  created_by: NullableDflt<string>;
+  created_at: Ts;
+}
+
+/** 0080: an agent template owned by the deployment. */
+export interface PlatformAgentTemplatesTable extends PlatformScopeColumns {
+  id: string;
+  catalog_item_id: NullableDflt<string>;
+  plugin_name: NullableDflt<string>;
+  name: string;
+  description: NullableDflt<string>;
+  description_zh: NullableDflt<string>;
+  current_version: number;
+  created_at: Ts;
+  updated_at: Ts;
+  deleted_at: TsNullable;
+}
+
+/** 0080: one version of a platform agent template. */
+export interface PlatformAgentTemplateVersionsTable {
+  template_id: string;
+  version: number;
+  definition: Json<unknown>;
+  object_prefix: NullableDflt<string>;
+  catalog_version: NullableDflt<string>;
+  source_format: Dflt<SourceFormat>;
+  suggest_pinned: Dflt<boolean>;
+  updated_on_own: Dflt<boolean>;
+  created_by: NullableDflt<string>;
+  created_at: Ts;
+}
+
+/** 0080: a connector template of a catalog item, with its own scope; connectors stay per org. */
+export interface PlatformConnectorTemplatesTable extends PlatformScopeColumns {
+  id: string;
+  catalog_item_id: string;
+  template_id: string;
+  current_version: string;
+  file: Json<unknown>;
+  created_at: Ts;
+  updated_at: Ts;
+  deleted_at: TsNullable;
+}
+
+/** 0080: the orgs an own-scope `named` component is offered to. */
+export interface ComponentScopeOrgsTable {
+  kind: ComponentKind;
+  component_id: string;
+  org_id: string;
+}
+
+/** 0080: an org's on / off switch of a component. */
+export interface ComponentOrgSwitchesTable {
+  kind: ComponentKind;
+  component_id: string;
   org_id: string;
   enabled: boolean;
   updated_by: NullableCol<string>;
