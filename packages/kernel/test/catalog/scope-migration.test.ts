@@ -12,12 +12,15 @@ import { KERNEL_MIGRATIONS_DIR } from "../../src/kernel.js";
  * 0074_plugin_scope.sql: catalog policy, grants, installs and the required flag become a scope, a
  * builtin and a disabled flag, an org list and per-org switches; pending requests are withdrawn.
  * Migrates to 0073, seeds one item per old situation, then migrates up to 0074. 0077 then gives
- * the granted orgs that never installed a `needs_approval` item a switch row `off`.
+ * the granted orgs that never installed a `needs_approval` item a switch row `off`, and 0078 switches
+ * on the installs that were `installing` / `upgrading` when 0074 ran.
  */
 const FILE = "0074_plugin_scope.sql";
 const ID = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const SHA = "a".repeat(64);
 const [ALLOW, APPROVAL, DISABLED, REQUIRED] = [ID(1), ID(2), ID(3), ID(4)];
+// items installed mid-flight when 0074 ran: an upgrade (allow) and an install (needs_approval)
+const [UPGRADING, INSTALLING] = [ID(5), ID(6)];
 const [A, B, C] = ["oa", "ob", "oc"];
 
 let pg: Awaited<ReturnType<typeof startTestPostgres>>;
@@ -62,6 +65,8 @@ beforeAll(async () => {
     [APPROVAL, "needs_approval"],
     [DISABLED, "disabled"],
     [REQUIRED, "allow"],
+    [UPGRADING, "allow"],
+    [INSTALLING, "needs_approval"],
   ] as const;
   for (const [id, policy] of policies) {
     await sql`insert into capybara.catalog_items
@@ -70,11 +75,16 @@ beforeAll(async () => {
       db,
     );
   }
-  const install = (n: number, org: string, id: string) =>
+  const install = (n: number, org: string, id: string, status = "installed") =>
     sql`insert into capybara.plugin_installs (id, org_id, item_id, version, status, installed_by)
-      values (${ID(100 + n)}, ${org}, ${id}, '1.0.0', 'installed', 'a1')`.execute(db);
+      values (${ID(100 + n)}, ${org}, ${id}, '1.0.0', ${status}, 'a1')`.execute(db);
   await install(1, A, ALLOW);
   await install(2, C, APPROVAL);
+  await install(3, B, UPGRADING, "upgrading");
+  // installing without a grant (e.g. as a dependency): 0074 put no org on its named list
+  await install(4, A, INSTALLING, "installing");
+  await install(5, B, INSTALLING, "failed");
+
   // B was granted and never installed; C was granted and installed it
   await sql`insert into capybara.catalog_org_grants (item_id, org_id, granted_by)
     values (${APPROVAL}, ${B}, 'a1'), (${APPROVAL}, ${C}, 'a1')`.execute(db);
@@ -163,5 +173,34 @@ describe("0077 granted but never installed", () => {
       { org: B, enabled: false },
       { org: C, enabled: true },
     ]);
+  });
+});
+
+describe("0078 installs mid-flight at the scope migration", () => {
+  beforeAll(async () => {
+    await migrate(pg.url, {
+      schema: "capybara",
+      dir: copyMigrations((f) => f <= "0078_scope_live_install_switches.sql"),
+    });
+  }, 120_000);
+
+  it("an upgrading install of an optional item gets a switch on", async () => {
+    expect((await item(UPGRADING))?.scope).toBe("optional");
+    expect(await switches(UPGRADING)).toEqual([{ org: B, enabled: true }]);
+  });
+
+  it("an installing install of a named item is listed and switched on; a failed one is not", async () => {
+    expect((await item(INSTALLING))?.scope).toBe("named");
+    expect(await scopeOrgs(INSTALLING)).toEqual([A]);
+    expect(await switches(INSTALLING)).toEqual([{ org: A, enabled: true }]);
+  });
+
+  it("leaves the other items as 0074 and 0077 left them", async () => {
+    expect(await switches(ALLOW)).toEqual([{ org: A, enabled: true }]);
+    expect(await switches(APPROVAL)).toEqual([
+      { org: B, enabled: false },
+      { org: C, enabled: true },
+    ]);
+    expect(await switches(REQUIRED)).toEqual([]);
   });
 });
