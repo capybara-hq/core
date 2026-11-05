@@ -1,5 +1,94 @@
 # @capybara-hq/testing
 
+## 0.1.0-rc.4
+
+### Minor Changes
+
+- 3455513: Kernel: an org chooses the default provider of an `org-default` extension point (`web-search`,
+  `web-fetch`): table `org_extension_point_defaults` (migration 0073), `ExtensionPointDefaults`
+  (`resolve`, `list`, `setDefault`) and the routes `GET /api/v1/orgs/:orgId/extension-points`,
+  `PUT …/extension-points/:point/default` and `GET …/extension-points/available`. Testing: the fake
+  extensions `fake-web` and `fake-web-2` (scripted `web-search@1` / `web-fetch@1` providers).
+  
+  Kernel: the `web.*` config section (`web.search.maxResults`, `web.fetch.maxPageChars`,
+  `web.fetch.maxAnswerTokens`, `web.fetch.cacheSeconds`, `web.fetch.timeoutMs`, all hot), `BuiltinTool.unavailable` may be
+  async and receives `{ orgId }`, and builtin tools get `parentRunId` in their call context.
+  
+  Kernel: `WebSearch` and `WebFetch` are builtin tool names (`BUILTIN`, `WEB_TOOL_NAMES`) with the
+  display kinds `search` / `read`; the Claude Code tool-name map lists both as same-name tools
+  (new snapshots only) and Claude agent import maps `WebFetch` / `WebSearch` to them.
+  
+  Kernel: the builtin `WebSearch` tool (default `ask`, read-only, open-world): searches with the
+  org's default `web-search@1` provider, filters the results again (absolute http(s) URLs, titled,
+  unique, within `allowed_domains` / `blocked_domains` (IDN entries matched in punycode), at most
+  `web.search.maxResults`) and heads
+  every result with `Search date: YYYY-MM-DD (UTC).`; provider errors map to fixed texts. Calls to
+  `web-search@1` and `web-fetch@1` providers are counted in flight and drained on disable / upgrade.
+  
+  Kernel: the builtin `WebFetch` tool (default `ask`, read-only, open-world): checks the URL
+  (absolute https after upgrading `http`, no credentials, at most 2000 characters after
+  normalization, a public host, also for the provider's final URL), fetches the page with the org's default `web-fetch@1`
+  provider through a Redis page cache (`cache:web_page:<orgId>:<provider>:<sha256(url)>`, TTL
+  `web.fetch.cacheSeconds`), returns the new URL for a redirect to another host (apex ↔ www is the
+  same host), cuts pages to `web.fetch.maxPageChars` with a `[truncated]` marker, and runs under its
+  own time limit `web.fetch.timeoutMs` (default 180 s) instead of `tools.timeoutMs`.
+  
+  Kernel: `WebFetch` answers the prompt from the page with one call on the new kernel model purpose
+  `web_fetch` (label "Web page extraction"; unmapped, the calling conversation's model, a
+  sub-agent's for a sub-agent's call): a fixed system prompt (`WEB_FETCH_SYSTEM_PROMPT`, plus the
+  call's random page tag the page sits between, `webFetchSystemPrompt`), no tools, output capped at
+  `web.fetch.maxAnswerTokens`; the page is cut with `[truncated]` to fit the target model's context
+  window, read with the new `ModelPurposesService.chatLimits`. The result is the answer headed by the URL, never the
+  page; a failure is a tool error and a `model.request` policy denial is the tool error "An org
+  policy blocked reading this page; continue without it or ask the user." with its `hook.denied`
+  audit row and `hook_denied` event. The call fires `model.request` / `model.response` with
+  `purpose: "web_fetch"` and logs a `usage` event with `purpose: "web_fetch"` and the call's
+  `callId` (reported through `usage.report`, counted on a sub-agent's parent run). `StepLog` has a
+  module of its own (`StepLogModule`) and builtin tools get the run's hook scope in their call
+  context.
+
+### Patch Changes
+
+- 00f36e5: `FakeChannelServer.failNext` takes an optional `chatId`: only requests to that chat count and
+  fail, so a late delivery to another chat cannot take a failure meant for the request under test.
+- 0ccc26e: `FakeChannelServer.failNext` takes a match object as its last argument: `{ chatId, textIncludes }`
+  fails only requests to that chat whose message text contains the string. A string still means a
+  chat id.
+- b3312ae: Add the fake extension `fake-config-form` (display name 表单样例 / Form sample): an
+  openai-compatible-shaped deployment config carrying config form hints, for config form tests.
+- Updated dependencies [ce0e90c]
+- Updated dependencies [9d134ee]
+- Updated dependencies [0344386]
+- Updated dependencies [1e092a6]
+- Updated dependencies [9e9ce5b]
+- Updated dependencies [0ec51d1]
+- Updated dependencies [8e43ed7]
+- Updated dependencies [9b89920]
+- Updated dependencies [258d286]
+- Updated dependencies [69b3bbe]
+- Updated dependencies [489d640]
+- Updated dependencies [58d08b1]
+- Updated dependencies [70688ca]
+- Updated dependencies [49fa38b]
+- Updated dependencies [0f1507e]
+- Updated dependencies [80f4844]
+- Updated dependencies [76da814]
+- Updated dependencies [8e928cb]
+- Updated dependencies [f015dff]
+- Updated dependencies [3455513]
+- Updated dependencies [81adaff]
+- Updated dependencies [517ca1e]
+- Updated dependencies [4ef89b8]
+- Updated dependencies [c01c117]
+- Updated dependencies [f28ed05]
+- Updated dependencies [2bd8351]
+- Updated dependencies [c9c8625]
+- Updated dependencies [8f7ba64]
+- Updated dependencies [8892d50]
+  - @capybara-hq/kernel@0.1.0-rc.4
+  - @capybara-hq/plugin-tools@0.1.0-rc.4
+  - @capybara-hq/plugin-sdk@0.1.0-rc.2
+
 ## 0.1.0-rc.3
 
 ### Patch Changes

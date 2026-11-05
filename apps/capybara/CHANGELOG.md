@@ -1,5 +1,57 @@
 # @capybara-hq/capybara
 
+## 0.1.0-rc.4
+
+### Patch Changes
+
+- 49fa38b: A kernel whose stdout reader is gone no longer spins and ignores signals. When the reader of
+  the console exits (the `tee` of `pnpm dev:kernel` stopped by Ctrl-C, a closed pipe), every log
+  write failed with EPIPE as an uncaught exception, the process guard logged it (another write,
+  another EPIPE), and the endless chain of errors held the CPU at 100% and starved the exit, the
+  stop budget and a second signal. The logger now stops writing to a console stream after its first
+  error, and the guard logs nothing more once it decided to exit. `pnpm dev:kernel`'s log file
+  writer ignores Ctrl-C, so the shutdown's records reach `/tmp/capybara-dev-kernel.log` too.
+- 4ef89b8: Readable logs in the octok layout.
+  
+  - **Pretty console:** `[2026-10-30 12:00:00.000 +0800] INFO: [pid=…] - [traceId=…] [reqId=…]
+    [queue=…] [jobId=…] [runId=…] [context=…] [plugin=…] msg`, each bracket only when present, with the
+    other fields as indented `key: value` lines below instead of trailing JSON, and an error's stack
+    below its message. The access line reads `GET /api/v1/me 401 2ms`. The process roles are no longer
+    on every line (the start line names them; JSON records keep `role`).
+  - **Context per class:** every kernel class's records carry `context` = its class name (JSON too).
+    `KernelLogger` gains `child(fields)`.
+  - **Nest's own lines** (`Mapped {/api/v1/…, GET} route` and module loading at startup) are logged at
+    `info` with Nest's context, as octok does; they were at `debug`.
+  - **Colors:** `FORCE_COLOR=1` forces colors in pretty output, `NO_COLOR=1` turns them off.
+    `pnpm dev:kernel` forces them in the terminal and strips them from `/tmp/capybara-dev-kernel.log`.
+- Updated dependencies [ce0e90c]
+- Updated dependencies [9d134ee]
+- Updated dependencies [0344386]
+- Updated dependencies [1e092a6]
+- Updated dependencies [9e9ce5b]
+- Updated dependencies [0ec51d1]
+- Updated dependencies [8e43ed7]
+- Updated dependencies [9b89920]
+- Updated dependencies [258d286]
+- Updated dependencies [69b3bbe]
+- Updated dependencies [489d640]
+- Updated dependencies [58d08b1]
+- Updated dependencies [70688ca]
+- Updated dependencies [49fa38b]
+- Updated dependencies [0f1507e]
+- Updated dependencies [80f4844]
+- Updated dependencies [76da814]
+- Updated dependencies [8e928cb]
+- Updated dependencies [3455513]
+- Updated dependencies [81adaff]
+- Updated dependencies [4ef89b8]
+- Updated dependencies [c01c117]
+- Updated dependencies [f28ed05]
+- Updated dependencies [2bd8351]
+- Updated dependencies [c9c8625]
+- Updated dependencies [8f7ba64]
+  - @capybara-hq/kernel@0.1.0-rc.4
+
 ## 0.1.0-rc.3
 
 ### Patch Changes
