@@ -301,12 +301,20 @@ describe("skill invocations from IM (phase D Task 8)", { timeout: 60_000 }, () =
   });
 
   it("the note is best-effort: a failed send of it does not fail the inbound job (batch 5 review m4)", async () => {
-    im.failNext("/send", 403, 1, undefined, "target_gone");
+    // only the note's chat: another test's late delivery must not take the failure
+    im.failNext("/send", 403, 1, undefined, "target_gone", undefined, "dm-u-owner");
+    const before = im.sent.length;
     const text = `/fix-issue ${"y".repeat(SKILL_INVOCATION_LIMITS.argumentsMaxChars + 1)}`;
     // push waits for the job to complete (a thrown non-retryable send would fail it)
     const conv = await push(dm("d-long-2", "u-owner", text));
     const m = await written(conv, "d-long-2");
     expect(firstText(m)).toBe(text);
+    // the note's send was the one that failed: no note reached the chat
+    expect(
+      im.sent
+        .slice(before)
+        .filter((s) => s.target.chatId === "dm-u-owner" && s.message.text.includes("not run")),
+    ).toEqual([]);
     // the thread is bound for the agent's reply
     const delivery = await db
       .selectFrom("channel_deliveries")
