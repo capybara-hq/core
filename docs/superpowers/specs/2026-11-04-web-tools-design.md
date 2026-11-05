@@ -407,3 +407,9 @@ Deviations from this design, accepted during implementation:
   cap plus headroom (10 % of the window, at least 1 024 tokens) fits the context window.
 - The page in the extraction message sits between a random per-call tag (`<page-<16 hex>>`) that
   the system prompt names, so page text cannot fake the `Prompt:` after it.
+- After main's agent page and query cache landed (merged 2026-11-05): agent tools moved from the
+  create form to the agent page's Tools section, so the web tools are offered there (same rules:
+  listed while the point is available or once selected); the default provider section and the
+  availability read go through TanStack Query (keys `extensionPointDefaults` /
+  `extensionPointsAvailable`, both prefetched for the first paint and invalidated by an extension
+  change); the migration is `0073_org_extension_point_defaults.sql`.
