@@ -163,6 +163,8 @@ describe("tool kinds", () => {
       SkillWrite: "meta",
       ReadToolOutput: "meta",
       AskUserQuestion: "meta",
+      WebSearch: "search",
+      WebFetch: "read",
     });
   });
 });

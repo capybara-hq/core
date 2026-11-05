@@ -29,6 +29,7 @@ import { EvalSetsController } from "../evals/sets.controller.js";
 import { TrajectoryController } from "../evals/trajectory.controller.js";
 import { ExtensionsModule } from "../extensions/extensions.module.js";
 import { OrgExtensionConfigsController } from "../extensions/org-config.controller.js";
+import { ExtensionPointDefaultsController } from "../extensions/point-defaults.controller.js";
 import { FilesModule } from "../files/files.module.js";
 import { FilePreviewersController } from "../files/previewers.controller.js";
 import { AuthController } from "../identity/auth.controller.js";
@@ -111,6 +112,7 @@ const CONTROLLERS: Type[] = [
   DirectorySyncController,
   UiController,
   FilePreviewersController,
+  ExtensionPointDefaultsController,
   TrajectoryController,
   EvalSetsController,
   EvalRunsController,

@@ -257,6 +257,11 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   and delivered with `conversationKind: "eval"`; single-step replays and judge calls are not reported.
 - The trajectory shows denials: `toolCalls[].hookDenied` and `steps[].modelHookDenied`.
 
+## Web tools and replays
+
+- `WebFetch`'s extraction logs a `usage` event with `purpose: "web_fetch"` and the call's `callId`. It is **not model-visible** (`build.ts` skips usage events), so it needs **no `DriftReason`**. Trajectory building counts it in the totals and keeps it out of step pairing, like a compaction or title call's usage (`evals/trajectory.ts`).
+- `WebSearch`'s date line is part of the recorded `tool_result`, so a replay shows the date of the original call. Full-run replay uses recorded results only: it never calls a web provider or the extraction model, and fires no hooks.
+
 ## Tests
 
 - Unit / HTTP: `packages/kernel/test/evals/` (`reconstruct`, `step-replay`, `run-replay`, `runs`, `judge`, `diff`, `sets.*`,

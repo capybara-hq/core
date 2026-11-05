@@ -21,6 +21,7 @@ import { FilePreviewersSection } from "../../../../components/FilePreviewersSect
 import { FormError } from "../../../../components/form-error";
 import { NoAccess } from "../../../../components/NoAccess";
 import { PermissionReview } from "../../../../components/PermissionReview";
+import { PointDefaultsSection } from "../../../../components/PointDefaultsSection";
 import { useOrgSettingsNav } from "../../../../components/settings-nav";
 import { usePagePath } from "../../../../components/shell/path";
 import { Link } from "../../../../i18n/navigation";
@@ -50,10 +51,11 @@ import NotFound from "../../not-found";
  * that is currently unavailable on the deployment (e.g. disabled by an enterprise admin) shows
  * "Unavailable": the switch is read-only (the org's setting is kept). A required bootstrap plugin
  * shows "Required": the switch is read-only (always on) and its org config can still be set. Below the
- * extensions, the org's file previewers (`file-preview@1`) in order, when any is provided.
- * From the query cache (the layout prefetched both on a first load); a change writes the answer
- * into the cached extensions, and enabling or disabling one also invalidates what an extension
- * brings (its UI, its pages, its file previewers).
+ * extensions, the org's default providers of the points several extensions provide (web tools spec
+ * §6), and the org's file previewers (`file-preview@1`) in order, when any is provided.
+ * From the query cache (the layout prefetched all three on a first load); a change writes the
+ * answer into the cached extensions, and enabling or disabling one also invalidates what an
+ * extension brings (its UI, its pages, its file previewers, the default providers' candidates).
  */
 export default function ExtensionsView() {
   const ws = useWorkspace({ min: "admin" });
@@ -109,6 +111,7 @@ function Plugins({ orgId }: { orgId: string }) {
       ) : (
         extensions.map((p) => <ExtensionSection key={p.plugin} orgId={orgId} plugin={p} />)
       )}
+      <PointDefaultsSection orgId={orgId} />
       <FilePreviewersSection orgId={orgId} />
     </SettingsPage>
   );

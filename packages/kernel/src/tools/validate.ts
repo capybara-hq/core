@@ -1,6 +1,6 @@
 import type { Logger, ToolSpec } from "@capybara-hq/plugin-sdk";
 import { Ajv2020, type ErrorObject, type ValidateFunction } from "ajv/dist/2020.js";
-import { canonicalJson } from "./registry.js";
+import { canonicalJson } from "./canonical-json.js";
 
 /**
  * 编译结果缓存的上限：超过后整体丢弃（工具定义每步从库里重新读出，缓存不能无限增长）。

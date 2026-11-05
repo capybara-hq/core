@@ -5,6 +5,7 @@ import {
   awaitingRun,
   buildEventTimeline,
   buildTimeline,
+  latestUsage,
   runStats,
   type TimelineEntry,
   withDrafts,
@@ -574,6 +575,80 @@ describe("final review fixes", () => {
     expect(out).toEqual(
       buildTimeline(events, [{ runId: "r1", step: 0, text: "hel", thinking: "" }], new Map(), "en"),
     );
+  });
+});
+
+describe("web tools (WebSearch / WebFetch)", () => {
+  const web = new Map<string, ToolInfo>([
+    [
+      "WebSearch",
+      {
+        key: "WebSearch",
+        title: null,
+        kind: "search",
+        sandbox: false,
+        keyArgs: ["query"],
+        tool: null,
+        source: { kind: "builtin" },
+      },
+    ],
+    [
+      "WebFetch",
+      {
+        key: "WebFetch",
+        title: null,
+        kind: "read",
+        sandbox: false,
+        keyArgs: ["url", "prompt"],
+        tool: null,
+        source: { kind: "builtin" },
+      },
+    ],
+  ]);
+
+  it("rows carry the kernel's kinds and key arguments (the query; the URL before the prompt)", () => {
+    const events = [
+      user(1, "look it up"),
+      calls(2, [
+        { id: "s", name: "WebSearch", input: { query: "capybara habitat", allowed_domains: [] } },
+        {
+          id: "f",
+          name: "WebFetch",
+          input: { prompt: "Summarize", url: "https://example.com/capybara" },
+        },
+      ]),
+      result(3, "s", "WebSearch"),
+      result(4, "f", "WebFetch"),
+    ];
+    const rows = tools(buildTimeline(events, [], web, "en"))[0]?.rows.map((r) => r.row) ?? [];
+    expect(rows[0]).toMatchObject({
+      name: "WebSearch",
+      kind: "search",
+      keyArg: "capybara habitat",
+    });
+    expect(rows[1]).toMatchObject({
+      name: "WebFetch",
+      kind: "read",
+      keyArg: "https://example.com/capybara",
+    });
+    // search rows count with tools (design §7); a single read names its URL
+    expect(summarizeTools(rows, "en")).toBe("Used 1 tool, read https://example.com/capybara");
+  });
+
+  it("a WebFetch extraction's usage (purpose web_fetch) is not the conversation's context", () => {
+    const usage = (seq: number, inputTokens: number, extra: Record<string, unknown> = {}) =>
+      ev(seq, "usage", {
+        step: 0,
+        provider: "p",
+        model: "m",
+        inputTokens,
+        outputTokens: 1,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+        ...extra,
+      });
+    const events = [usage(1, 500), usage(2, 90_000, { purpose: "web_fetch", callId: "f" })];
+    expect(latestUsage(events)?.inputTokens).toBe(500);
   });
 });
 

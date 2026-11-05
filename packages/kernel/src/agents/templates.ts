@@ -3,9 +3,9 @@ import type { AgentTemplate, AgentTemplateTier } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import type { KernelSchemaDb, SourceFormat } from "../db/kernel-schema.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
+import { canonicalJson } from "../tools/canonical-json.js";
 import { loadLegacyScope } from "../tools/legacy-data.js";
 import type { LegacyScope } from "../tools/legacy-keys.js";
-import { canonicalJson } from "../tools/registry.js";
 import { needsLegacyScope, normalizeToolKeys } from "./definition.js";
 
 /**

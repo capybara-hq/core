@@ -1488,6 +1488,7 @@ describe("组织插件：启用被目录条目拒绝", () => {
     const m = msgs[locale];
     stubApi({
       [`GET ${ORG}/file-previewers`]: () => json(200, { items: [] }),
+      [`GET ${ORG}/extension-points`]: () => json(200, { points: [] }),
       [`GET ${ORG}/extensions`]: () =>
         json(200, {
           extensions: [

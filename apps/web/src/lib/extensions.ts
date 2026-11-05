@@ -82,3 +82,32 @@ export function provides(p: OrgExtension, extensionPoint: string): boolean {
   const group = p.permissions.find((g) => g.category === "provides");
   return group?.items.some((i) => i.split("@")[0] === extensionPoint) ?? false;
 }
+
+/**
+ * One extension point whose provider the org chooses (kernel `OrgPointDefaultView`, web tools
+ * spec §6): the extensions that could serve the org now, the stored default (also when it is not
+ * a candidate now) and the provider a call would use now (null: none, or several and no default).
+ */
+export interface ExtensionPointDefault {
+  point: string;
+  candidates: string[];
+  default: string | null;
+  effective: string | null;
+}
+
+const pointsBase = (orgId: string) => `/api/v1/orgs/${encodeURIComponent(orgId)}/extension-points`;
+
+/** The org's `org-default` extension points (`org.extensions.manage`). */
+export const listExtensionPointDefaults = (orgId: string) =>
+  apiFetch<{ points: ExtensionPointDefault[] }>(pointsBase(orgId));
+
+/** Stores the org's default provider of a point (204). */
+export const putExtensionPointDefault = (orgId: string, point: string, extension: string) =>
+  apiFetch<void>(`${pointsBase(orgId)}/${encodeURIComponent(point)}/default`, {
+    method: "PUT",
+    body: JSON.stringify({ extension }),
+  });
+
+/** Whether each `org-default` point has a provider for the org now (`agents.use`; no names). */
+export const listAvailableExtensionPoints = (orgId: string) =>
+  apiFetch<{ points: { point: string; available: boolean }[] }>(`${pointsBase(orgId)}/available`);

@@ -44,6 +44,10 @@ export const keys = {
       channelSchema: (plugin: string): readonly unknown[] => [...all, "channelSchema", plugin],
       /** The org's extensions (installed plugins with an extension, enabled or not). */
       orgExtensions: (): readonly unknown[] => [...all, "orgExtensions"],
+      /** The org's `org-default` extension points: candidates, stored and effective default. */
+      extensionPointDefaults: (): readonly unknown[] => [...all, "extensionPointDefaults"],
+      /** Whether each `org-default` point has a provider for the org now (the web tools). */
+      extensionPointsAvailable: (): readonly unknown[] => [...all, "extensionPointsAvailable"],
       /** The catalog from the org's view (the items it may install). */
       catalog: (): readonly unknown[] => [...all, "catalog"],
       /** Every catalog item read (an invalidation prefix). */

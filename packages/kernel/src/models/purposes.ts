@@ -41,6 +41,11 @@ export const KERNEL_PURPOSES = [
   { purpose: "eval", kind: "chat", label: { zh: "评测评委", en: "Eval judge" } },
   /** Conversation titles (UI refresh B); unmapped → the conversation's current chat model. */
   { purpose: "title", kind: "chat", label: { zh: "会话标题", en: "Conversation titles" } },
+  /**
+   * The `WebFetch` extraction call (web tools spec §5); unmapped → the calling conversation's
+   * current chat model (a sub-agent's call: the sub-agent's).
+   */
+  { purpose: "web_fetch", kind: "chat", label: { zh: "网页提取", en: "Web page extraction" } },
   {
     purpose: "subagent_fast",
     kind: "chat",
@@ -323,6 +328,35 @@ export class ModelPurposesService {
     return view.effective;
   }
 
+  /** The target a {@link chat} call on `purpose` uses: the mapping, else `fallback` when unmapped. */
+  private async chatTarget(
+    orgId: string,
+    purpose: string,
+    fallback: PurposeTarget | undefined,
+  ): Promise<PurposeTarget> {
+    try {
+      return await this.resolve(orgId, purpose);
+    } catch (e) {
+      if (!(e instanceof ApiError && e.code === "model.unconfigured") || !fallback) throw e;
+      return fallback;
+    }
+  }
+
+  /**
+   * The limits of the model a {@link chat} call on `purpose` would use now (the same mapping and
+   * `fallback` rule): its context window and output cap, so a caller can size its request (e.g.
+   * the `WebFetch` page) before the call. Fails as `chat` does before sending.
+   */
+  async chatLimits(
+    orgId: string,
+    purpose: string,
+    opts: { fallback?: PurposeTarget } = {},
+  ): Promise<{ contextWindow: number; maxOutputTokens: number }> {
+    const target = await this.chatTarget(orgId, purpose, opts.fallback);
+    const { info } = await this.providers.resolve(target.model);
+    return { contextWindow: info.contextWindow, maxOutputTokens: info.maxOutputTokens };
+  }
+
   /**
    * 按用途发一次对话请求：解析映射、按目标模型的声明宽松处理参数（补默认值，与运行时一致），用 `consumeModelStream`
    * 收完（只有流空闲看门狗）。输出上限取 `min(req.maxOutputTokens, 目标模型的 maxOutputTokens)`。
@@ -350,13 +384,7 @@ export class ModelPurposesService {
     provider: string;
     model: string;
   }> {
-    let target: PurposeTarget;
-    try {
-      target = await this.resolve(orgId, purpose);
-    } catch (e) {
-      if (!(e instanceof ApiError && e.code === "model.unconfigured") || !opts.fallback) throw e;
-      target = opts.fallback;
-    }
+    const target = await this.chatTarget(orgId, purpose, opts.fallback);
     const { provider, info } = await this.providers.resolve(target.model);
     const request: ModelRequest = {
       ...req,

@@ -16,10 +16,14 @@ vi.mock("../src/lib/browser", () => ({ navigateBrowser }));
 const msgs = { zh, en } as const;
 const BASE = "/api/v1/orgs/o1";
 
-/** The page's server reads that a test does not care about answer empty (the previewers, the login plugins). */
+/**
+ * The page's server reads that a test does not care about answer empty (the previewers, the
+ * default providers, the login plugins).
+ */
 const api = (routes: Parameters<typeof stubApi>[0]) =>
   stubApi({
     [`GET ${BASE}/file-previewers`]: () => json(200, { items: [] }),
+    [`GET ${BASE}/extension-points`]: () => json(200, { points: [] }),
     "GET /api/v1/auth/sources": () => json(200, { sources: [] }),
     ...routes,
   });

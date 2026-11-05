@@ -24,9 +24,27 @@ export type AgentToolRef =
 export type TightenedPolicy = "ask" | "deny";
 
 /**
- * 网页可选的内置工具（内核没有列出内置工具的接口；`ToolSearch` 与 `Skill` 由内核自动加入）。
+ * 网页可选的内置工具（内核没有列出内置工具的接口；`ToolSearch` 与 `Skill` 由内核自动加入）。The web
+ * tools (`WebSearch` / `WebFetch`) are offered only while their point has a provider
+ * ({@link WEB_TOOL_POINTS}).
  */
-export const BUILTIN_TOOLS = ["AskUserQuestion", "ReadToolOutput", "SkillWrite"] as const;
+export const BUILTIN_TOOLS = [
+  "AskUserQuestion",
+  "ReadToolOutput",
+  "SkillWrite",
+  "WebSearch",
+  "WebFetch",
+] as const;
+
+/**
+ * The builtin web tools and the extension point that serves each (web tools spec §3.4): the form
+ * offers one only while `GET …/extension-points/available` reports its point available, or when
+ * the agent already selected it.
+ */
+export const WEB_TOOL_POINTS: Readonly<Record<string, string>> = {
+  WebSearch: "web-search",
+  WebFetch: "web-fetch",
+};
 
 export interface AgentDefinitionInput {
   name: string;

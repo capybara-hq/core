@@ -94,6 +94,7 @@ const ROUTES: Routes = {
   [`GET ${O}/plugin-installs`]: () => json(200, { installs: [] }),
   [`GET ${O}/extensions`]: () => json(200, { extensions: [] }),
   [`GET ${O}/file-previewers`]: () => json(200, { items: [] }),
+  [`GET ${O}/extension-points`]: () => json(200, { points: [] }),
   [`GET ${O}/service-tokens`]: () => json(200, { tokens: [] }),
   [`GET ${O}/connectors`]: () =>
     json(200, {
@@ -509,12 +510,13 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
         screen.getByRole("switch", { name: en.extensions.enableLabel.replace("{plugin}", "Todo") }),
       );
     await vi.waitFor(() => expect(screen.getByText(en.extensions.disabled)).toBeTruthy());
-    // the list is not read again (the answer is the extension); the shown readiness and
-    // previewers are, and the cached models and purposes are stale
+    // the list is not read again (the answer is the extension); the shown readiness,
+    // previewers and default providers are, and the cached models and purposes are stale
     expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([
       `PUT ${O}/extensions/todo`,
       `GET ${O}/readiness`,
       `GET ${O}/file-previewers`,
+      `GET ${O}/extension-points`,
     ]);
     expect(client.getQueryState(["org", "o1", "models"])?.isInvalidated).toBe(true);
     expect(client.getQueryState(["org", "o1", "orgPurposes"])?.isInvalidated).toBe(true);

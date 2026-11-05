@@ -19,6 +19,7 @@ export function agentFormDefaults(agentId = "ag1"): Routes {
     [`GET ${ORG}/members`]: ok({ members: [] }),
     [`GET ${ORG}/agents/${agentId}/skills`]: ok({ skills: [] }),
     [`GET ${ORG}/channels`]: ok({ channels: [] }),
+    [`GET ${ORG}/extension-points/available`]: ok({ points: [] }),
     [`GET ${ORG}/attachments/limits`]: ok({
       types: ["image/png"],
       maxBytes: 1,

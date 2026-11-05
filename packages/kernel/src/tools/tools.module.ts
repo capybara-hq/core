@@ -5,15 +5,19 @@ import { AttachmentsModule } from "../conversations/attachments.module.js";
 import { EventLogModule } from "../conversations/event-log.js";
 import { ExtensionsModule } from "../extensions/extensions.module.js";
 import { QueueModule } from "../infra/queue/queue.module.js";
+import { ModelsModule } from "../models/models.module.js";
 import { OrgLockModule } from "../orgs/org-lock.js";
 import { MAINTENANCE_QUEUE_NAME } from "../runtime/maintenance-queue.js";
+import { StepLogModule } from "../runtime/step-log.js";
 import { SubagentsModule } from "../runtime/subagents/subagents.service.js";
+import { UsageReportModule } from "../runtime/usage-report.js";
 import { SandboxModule } from "../sandbox/sandbox.module.js";
 import { SkillsModule } from "../skills/skills.module.js";
 import { StorageModule } from "../storage/storage.module.js";
 import { ApprovalsService } from "./approvals.service.js";
 import { Breaker } from "./breaker.js";
 import { BuiltinTools } from "./builtins/builtin-tools.js";
+import { WebPages } from "./builtins/web/page-cache.js";
 import { ConnectorContent } from "./connector-content.js";
 import { ConnectorsService } from "./connectors.service.js";
 import { Credentials } from "./credentials.js";
@@ -49,12 +53,17 @@ import { ToolRegistry } from "./registry.js";
     BackgroundModule,
     // the conversation page's tool metadata reads only what the viewer may see
     ConversationAccessModule,
+    // the WebFetch extraction call: its purpose, usage report and step writes
+    ModelsModule,
+    UsageReportModule,
+    StepLogModule,
     QueueModule.registerQueue(MAINTENANCE_QUEUE_NAME),
   ],
   providers: [
     Credentials,
     ToolOutputs,
     BuiltinTools,
+    WebPages,
     ToolRegistry,
     ApprovalsService,
     QuestionsService,

@@ -465,15 +465,19 @@ async function runStep(
 }
 
 /**
- * Appends a model call's events (its reply or compaction outcome with its `usage`). For a
+ * Appends a model call's events (its reply or compaction outcome with its `usage`; also the usage
+ * of a `WebFetch` extraction call, `tools/builtins/web/extract.ts`). For a
  * sub-agent's run (`input.parentRunId`) in one transaction that also adds the tokens of the usage
  * events it newly wrote to the parent run's `subagent_tokens_used` (sub-agents spec §8.3): a usage
  * event already in the log (an idempotent hit after a crash) adds nothing, so each call counts
  * exactly once.
  */
-async function appendCounted(
-  deps: Pick<ModelStepDeps, "eventLog" | "stepLog">,
-  input: Pick<ModelStepInput, "conversationId" | "parentRunId">,
+export async function appendCounted(
+  deps: {
+    eventLog: Pick<EventLog, "append" | "notify">;
+    stepLog: Pick<StepLog, "appendCounted">;
+  },
+  input: { conversationId: string; parentRunId?: string | undefined },
   events: AppendEvent[],
 ): Promise<ConversationEvent[]> {
   const { conversationId, parentRunId } = input;

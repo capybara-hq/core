@@ -804,14 +804,6 @@ describe("translateClaudePlugin", () => {
         { keys: "allowed-tools" },
       ],
       ["warnings", "command", "sh", "commands/sh.md", "skill_shell_injection", null],
-      [
-        "warnings",
-        "agent",
-        "reviewer",
-        "agents/reviewer.md",
-        "agent_tools_unmapped",
-        { tools: "WebFetch" },
-      ],
       ["warnings", "hook", "SessionStart", null, "session_start_pin_hint", null],
     ]);
     // `run` is model-invocable: its generated SKILL.md has no disable-model-invocation
@@ -1458,14 +1450,14 @@ describe("Claude agents/*.md (phase C, sub-agents spec §16.4)", () => {
     expect(t.tree.get("agents/code-reviewer.md")).toBe(files.get("agents/code-reviewer.md"));
   });
 
-  it("mixed reviewer: tools mapped, WebFetch dropped with agent_tools_unmapped, haiku -> fast, permissionMode / hooks / mcpServers not_applicable, memory / isolation agent_field_ignored", () => {
+  it("mixed reviewer: tools mapped (WebFetch included), haiku -> fast, permissionMode / hooks / mcpServers not_applicable, memory / isolation agent_field_ignored", () => {
     const t = translateClaudePlugin(loadFixture("mixed"), OPTS);
     expect(agentsOf(t.tree).map((a) => a.template)).toEqual([
       {
         name: "reviewer",
         description: "Reviews code",
         instructions: "\nYou review code.\n",
-        tools: ["Read", "Grep", "Bash", "Agent", "AskUserQuestion"],
+        tools: ["Read", "Grep", "Bash", "Agent", "AskUserQuestion", "WebFetch"],
         model: "fast",
         maxSteps: 12,
         skills: ["plain"],
@@ -1558,6 +1550,11 @@ describe("Claude agents/*.md (phase C, sub-agents spec §16.4)", () => {
       items: [["converted", "agent", "a", "agents/a.md", "agent_tools_inherited", {}]],
     });
     expect(one("tools: [Read, '*']\n").template?.tools).toBeUndefined();
+    // WebFetch and WebSearch map to the builtins, with no agent_tools_unmapped item
+    expect(one("tools: Read, WebFetch, WebSearch\n")).toMatchObject({
+      template: { tools: ["Read", "WebFetch", "WebSearch"] },
+      items: [],
+    });
     // full model ids map by family; anything else inherits; both are reported
     expect(one("model: claude-opus-4-1\n")).toMatchObject({
       template: { model: "capable" },

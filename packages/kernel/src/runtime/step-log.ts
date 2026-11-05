@@ -1,7 +1,7 @@
 import type { ToolSpec } from "@capybara-hq/plugin-sdk";
-import { Inject, Injectable } from "@nestjs/common";
+import { Inject, Injectable, Module } from "@nestjs/common";
 import { sql } from "kysely";
-import { type AppendEvent, EventLog } from "../conversations/event-log.js";
+import { type AppendEvent, EventLog, EventLogModule } from "../conversations/event-log.js";
 import type { ConversationEvent } from "../conversations/events.js";
 import { usageTokens } from "../evals/budget.js";
 import { audit } from "../identity/audit.js";
@@ -87,3 +87,14 @@ export class StepLog {
     return this.eventLog.appendIn(conversationId, events);
   }
 }
+
+/**
+ * The step writes ({@link StepLog}): a module of its own, so the tools domain (the `WebFetch`
+ * extraction's usage and denials) uses them without importing the runtime.
+ */
+@Module({
+  imports: [EventLogModule],
+  providers: [StepLog],
+  exports: [StepLog],
+})
+export class StepLogModule {}

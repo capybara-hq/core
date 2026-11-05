@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type {
   Connector,
+  HookParentScope,
   InputRequired,
   ToolAnnotations,
   ToolCallContext,
@@ -18,6 +19,7 @@ import { KernelDb } from "../infra/database/kernel-db.js";
 import type { OrgRole } from "../orgs/roles.js";
 import { readOrgSettings } from "../orgs/settings.service.js";
 import { estimateTokens } from "../runtime/context/tokens.js";
+import type { ConversationKindForHooks } from "../runtime/hook-calls.js";
 import { SUBAGENT_LIMIT_DEFAULTS, subagentLimits } from "../runtime/subagents/limits.js";
 import { resolveRoster } from "../runtime/subagents/roster.js";
 import {
@@ -61,6 +63,18 @@ export interface BuiltinCallContext extends ToolCallContext {
    * for a sub-agent's call, the conversation itself otherwise (the default when absent).
    */
   sandboxConversationId?: string;
+  /** The parent run of a sub-agent's run (absent for a top-level run). */
+  parentRunId?: string;
+  /**
+   * The rest of the run's hook scope, for a builtin that makes a model call of its own (the
+   * `WebFetch` extraction fires `model.request` / `model.response`): the step of the call, the
+   * agent version of the run, the conversation kind (hooks fire for `chat` and `subagent` only)
+   * and, for a sub-agent, where it was dispatched from.
+   */
+  step?: number;
+  agentVersion?: number;
+  conversationKind?: ConversationKindForHooks;
+  parent?: HookParentScope;
 }
 
 /**
@@ -92,8 +106,12 @@ export interface BuiltinTool {
   timeoutMs?: (input: unknown) => number;
   /** 结果转存阈值（字符）：与 `tools.outputSpillChars` 取小者。缺省只用配置。 */
   spillChars?: number;
-  /** 本部署当前不可用时返回事实原因（英文、可执行，进「工具不可用」提醒）；可用返回 null。 */
-  unavailable?: () => string | null;
+  /**
+   * The factual reason this tool is unavailable for the org right now (English, actionable; it goes
+   * into the "tool unavailable" reminder), or null when it is available. May be async (e.g. a
+   * per-org extension-point default).
+   */
+  unavailable?: (ctx: { orgId: string }) => Promise<string | null> | string | null;
 }
 
 /**
@@ -482,7 +500,7 @@ export class ToolRegistry {
           unavailable.push({ ref: ref.name, reason: "Built-in tool does not exist" });
           continue;
         }
-        const why = b.unavailable?.() ?? null;
+        const why = (await b.unavailable?.({ orgId })) ?? null;
         if (why !== null) {
           unavailable.push({ ref: ref.name, reason: why });
           continue;
@@ -500,7 +518,8 @@ export class ToolRegistry {
         if (b.spec.name === BUILTIN.Bash) {
           for (const name of BASH_COMPANION_TOOLS) {
             const c = this.builtins.find((x) => x.spec.name === name);
-            if (c && (c.unavailable?.() ?? null) === null) add(builtinTool(c, c.spec));
+            if (c && ((await c.unavailable?.({ orgId })) ?? null) === null)
+              add(builtinTool(c, c.spec));
           }
         }
       } else if (ref.kind === "plugin") {

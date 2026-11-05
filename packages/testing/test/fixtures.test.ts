@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -38,6 +38,7 @@ import {
   type FakeExtensionName,
   FakeMcpRpcError,
   type FakeMcpTool,
+  fakeExtensionDir,
   fakeExtensionEntry,
   type KernelApp,
   packFixture,
@@ -72,6 +73,8 @@ const EXPECTED: Record<FakeExtensionName, { provides: string[]; requires?: strin
   "fake-dep-provider": { provides: ["counter@1"] },
   "fake-dep-requirer": { provides: [], requires: ["counter@1"] },
   "fake-im": { provides: ["channel@1", "identity-source@1", "directory@1"] },
+  "fake-web": { provides: ["web-search@1", "web-fetch@1"] },
+  "fake-web-2": { provides: ["web-search@1", "web-fetch@1"] },
   "fake-config-form": { provides: [] },
 };
 
@@ -148,6 +151,11 @@ describe("packing", () => {
       tools: ["note", "read_note"],
       storage: true,
     });
+  });
+
+  it("fake-web and fake-web-2 share a byte-identical web.ts", async () => {
+    const src = (name: FakeExtensionName) => readFile(join(fakeExtensionDir(name), "src/web.ts"));
+    expect((await src("fake-web")).equals(await src("fake-web-2"))).toBe(true);
   });
 
   it("fake-config-form carries its display name and the hinted deployment schema", async () => {

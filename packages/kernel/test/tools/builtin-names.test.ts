@@ -6,6 +6,7 @@ import type { ConversationEvent } from "../../src/conversations/events.js";
 import { reconstructRequest } from "../../src/evals/reconstruct.js";
 import { type CaseSnapshot, toEvents } from "../../src/evals/snapshot.js";
 import { buildModelRequest, type RequestTool } from "../../src/runtime/context/build.js";
+import { CLAUDE_CODE_TOOL_MAP } from "../../src/runtime/context/claude-tools.js";
 import {
   LEGACY_CATALOG_HEADER,
   LEGACY_SKILL_TEXTS,
@@ -26,6 +27,7 @@ import {
   BUILTIN_TOOL_NAMES,
   SANDBOX_ASK_TOOL_NAMES,
   SANDBOX_TOOL_NAMES,
+  WEB_TOOL_NAMES,
 } from "../../src/tools/builtin-names.js";
 import { agentToolSpec } from "../../src/tools/builtins/agent.js";
 import { BuiltinTools } from "../../src/tools/builtins/builtin-tools.js";
@@ -38,6 +40,13 @@ import { AGENT, Log, MODEL } from "../runtime/context/fixtures.js";
 const dummy = {} as never;
 const builtins = () =>
   new BuiltinTools(
+    dummy,
+    dummy,
+    dummy,
+    dummy,
+    dummy,
+    dummy,
+    dummy,
     dummy,
     dummy,
     dummy,
@@ -140,6 +149,8 @@ describe("builtin names", () => {
       BUILTIN.AskUserQuestion,
       BUILTIN.ReadToolOutput,
       BUILTIN.SkillWrite,
+      BUILTIN.WebSearch,
+      BUILTIN.WebFetch,
     ]);
     for (const f of [
       "apps/web/src/lib/timeline.ts",
@@ -149,10 +160,25 @@ describe("builtin names", () => {
     }
   });
 
-  it("the legacy map covers the 13 old names, one per new name (the task tools never had one)", () => {
+  it("WebSearch and WebFetch are builtin names with display kinds and a Claude Code map entry", () => {
+    expect(BUILTIN.WebSearch).toBe("WebSearch");
+    expect(BUILTIN.WebFetch).toBe("WebFetch");
+    expect(WEB_TOOL_NAMES).toEqual(["WebSearch", "WebFetch"]);
+    for (const n of WEB_TOOL_NAMES) expect(BUILTIN_TOOL_NAMES).toContain(n);
+    expect(BUILTIN_TOOL_KINDS.WebSearch).toBe("search");
+    expect(BUILTIN_TOOL_KINDS.WebFetch).toBe("read");
+    expect(CLAUDE_CODE_TOOL_MAP).toContain("Agent, WebFetch and WebSearch have the same names");
+    expect(CLAUDE_CODE_TOOL_MAP).not.toMatch(/for example WebFetch/);
+  });
+
+  it("the legacy map covers the 13 old names, one per new name (the task and web tools never had one)", () => {
     expect(Object.keys(LEGACY_BUILTINS)).toHaveLength(13);
     expect(new Set(Object.values(LEGACY_BUILTINS).map((l) => l.name))).toEqual(
-      new Set(BUILTIN_TOOL_NAMES.filter((n) => n !== BUILTIN.TaskOutput && n !== BUILTIN.TaskStop)),
+      new Set(
+        BUILTIN_TOOL_NAMES.filter(
+          (n) => n !== BUILTIN.TaskOutput && n !== BUILTIN.TaskStop && !WEB_TOOL_NAMES.includes(n),
+        ),
+      ),
     );
     expect(LEGACY_BUILTINS.sandbox_bash).toEqual({
       name: "Bash",

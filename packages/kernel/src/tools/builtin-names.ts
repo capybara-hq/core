@@ -24,6 +24,8 @@ export const BUILTIN = {
   Agent: "Agent",
   TaskOutput: "TaskOutput",
   TaskStop: "TaskStop",
+  WebSearch: "WebSearch",
+  WebFetch: "WebFetch",
 } as const;
 
 export type BuiltinName = (typeof BUILTIN)[keyof typeof BUILTIN];
@@ -43,6 +45,9 @@ export const SANDBOX_TOOL_NAMES: readonly BuiltinName[] = [
   BUILTIN.TaskOutput,
   BUILTIN.TaskStop,
 ];
+
+/** The builtin tools that reach the web through the org's web-search / web-fetch providers. */
+export const WEB_TOOL_NAMES: readonly BuiltinName[] = [BUILTIN.WebSearch, BUILTIN.WebFetch];
 
 /**
  * The tools offered with `Bash` whenever it is offered (background Bash: a model that can start a
@@ -76,6 +81,7 @@ export const BUILTIN_TOOL_NAMES: readonly BuiltinName[] = [
   BUILTIN.SkillWrite,
   ...SANDBOX_TOOL_NAMES,
   BUILTIN.Agent,
+  ...WEB_TOOL_NAMES,
 ];
 
 /** The builtin that loads a skill (added by the registry when the log has a skills catalog). */
@@ -137,6 +143,8 @@ export const BUILTIN_TOOL_KINDS: Readonly<Record<string, ToolKind>> = {
   [BUILTIN.SkillWrite]: "meta",
   [BUILTIN.ReadToolOutput]: "meta",
   [BUILTIN.AskUserQuestion]: "meta",
+  [BUILTIN.WebSearch]: "search",
+  [BUILTIN.WebFetch]: "read",
 };
 
 /**

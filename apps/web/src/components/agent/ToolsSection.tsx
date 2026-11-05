@@ -1,7 +1,7 @@
 "use client";
 
 import { Checkbox, Field, FormSection, Select, Stack, Text } from "@capybara-hq/design";
-import { useQueries } from "@tanstack/react-query";
+import { useQueries, useQuery } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
 import {
@@ -9,8 +9,10 @@ import {
   type AgentToolRef,
   BUILTIN_TOOLS,
   type TightenedPolicy,
+  WEB_TOOL_POINTS,
 } from "../../lib/agents";
 import type { ConnectorDetail } from "../../lib/connectors";
+import { availableExtensionPointsQuery } from "../../lib/query/agents";
 import { retryOnMountOf } from "../../lib/query/client";
 import { connectorQuery } from "../../lib/query/conversation";
 import { toolLabel, toolLabelText } from "../../lib/tool-label";
@@ -54,6 +56,9 @@ const sorted = (xs: string[]) => [...xs].sort();
  * enabled tools) and a tightened policy per referenced tool. Its save sends the saved definition
  * with only `tools` and `toolPolicies` changed: references it does not switch (plugin tools,
  * connectors picked by name, the `Agent` tool of Sub-agents) and their policies stay as saved.
+ * A web tool (`WebSearch` / `WebFetch`) is listed only while its point has a provider for the org
+ * (`GET …/extension-points/available`) or when the agent selected it, with a hint when a selected
+ * one cannot be served now (web tools spec §3.4).
  */
 export function ToolsSection() {
   return <WithFormData>{(data) => <ToolsEdit data={data} />}</WithFormData>;
@@ -86,6 +91,30 @@ function ToolsEdit({ data }: { data: AgentFormData }) {
       return x === undefined ? [] : [[id, x]];
     }),
   );
+  // which web tools the org can serve now (unreadable: none is offered, saved ones stay listed)
+  const pointsQ = availableExtensionPointsQuery(orgId);
+  const points = useQuery({ ...pointsQ, retryOnMount: retryOnMountOf(pointsQ.queryKey) });
+  const availablePoints: ReadonlySet<string> | undefined =
+    points.data !== undefined
+      ? new Set(points.data.points.filter((p) => p.available).map((p) => p.point))
+      : points.isError
+        ? new Set()
+        : undefined;
+  /** The builtins listed: a web tool only while its point has a provider, or once selected. */
+  const listedBuiltins = BUILTIN_TOOLS.filter((name) => {
+    const point = WEB_TOOL_POINTS[name];
+    return (
+      point === undefined ||
+      saved.builtins.includes(name) ||
+      d.builtins.includes(name) ||
+      availablePoints?.has(point) === true
+    );
+  });
+  /** A selected web tool the org cannot serve now. */
+  const webUnavailable = d.builtins.some((name) => {
+    const point = WEB_TOOL_POINTS[name];
+    return point !== undefined && availablePoints !== undefined && !availablePoints.has(point);
+  });
   const edit = (fn: (cur: Draft) => Draft) => {
     save.begin();
     draft.set(fn);
@@ -174,7 +203,7 @@ function ToolsEdit({ data }: { data: AgentFormData }) {
               <Text variant="small" tone="muted">
                 {t("form.builtinLabel")}
               </Text>
-              {BUILTIN_TOOLS.map((name) => (
+              {listedBuiltins.map((name) => (
                 <Checkbox
                   key={name}
                   label={t(`form.builtin.${name}`)}
@@ -190,6 +219,11 @@ function ToolsEdit({ data }: { data: AgentFormData }) {
                   }
                 />
               ))}
+              {webUnavailable && (
+                <Text variant="small" tone="muted">
+                  {t("form.webUnavailable")}
+                </Text>
+              )}
             </Stack>
           </div>
           {/* biome-ignore lint/a11y/useSemanticElements: fieldset 带浏览器默认边框与内边距，apps/web 不能写样式；用 role=group 分组 */}

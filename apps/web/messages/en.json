@@ -451,7 +451,9 @@
       "builtin": {
         "AskUserQuestion": "Ask the user (AskUserQuestion)",
         "ReadToolOutput": "Read archived tool output (ReadToolOutput)",
-        "SkillWrite": "Write skills (SkillWrite)"
+        "SkillWrite": "Write skills (SkillWrite)",
+        "WebSearch": "Search the web (WebSearch)",
+        "WebFetch": "Read web pages (WebFetch)"
       },
       "connectorsLabel": "Connectors",
       "connectorTools": "All tools of {name}",
@@ -558,7 +560,8 @@
           "too_many": "Too many sub-agents: at most 20 in total.",
           "required": "This field is required."
         }
-      }
+      },
+      "webUnavailable": "This organization has no usable web provider: an org admin needs to enable and configure one, or, when several are enabled, choose a default provider in the extension settings, before the selected web tools can be used."
     },
     "params": {
       "default": "Default",
@@ -1684,7 +1687,19 @@
       },
       "at": "{file} line {line}"
     },
-    "openCatalog": "Open the catalog to view or request it"
+    "openCatalog": "Open the catalog to view or request it",
+    "pointDefaults": {
+      "title": "Default providers",
+      "description": "When several enabled extensions provide the same capability, choose the one this organization uses.",
+      "none": "Not selected",
+      "noneHint": "Several extensions provide {point}. Until you choose one, the tools that use it are unavailable.",
+      "unavailable": "{extension} (unavailable)",
+      "saved": "{point} now uses {extension}.",
+      "points": {
+        "webSearch": "Web search",
+        "webFetch": "Web fetch"
+      }
+    }
   },
   "identities": {
     "title": "IM identities",

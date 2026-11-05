@@ -1,11 +1,19 @@
+import type { Logger } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { BackgroundTaskFinisher } from "../../background/finish.js";
 import { BackgroundTaskStopper } from "../../background/stop.js";
 import { BackgroundTaskStore } from "../../background/store.js";
 import { AttachmentsService } from "../../conversations/attachments.service.js";
 import { EventLog } from "../../conversations/event-log.js";
+import { ExtensionHost } from "../../extensions/host.js";
+import { ExtensionPointDefaults } from "../../extensions/point-defaults.js";
 import { KernelConfigService } from "../../infra/config/kernel-config.service.js";
 import { KernelDb } from "../../infra/database/kernel-db.js";
+import { KERNEL_LOGGER } from "../../infra/tokens.js";
+import { ModelPurposesService } from "../../models/purposes.js";
+import type { HookRunner } from "../../runtime/hook-calls.js";
+import { StepLog } from "../../runtime/step-log.js";
+import { UsageReporter } from "../../runtime/usage-report.js";
 import { SandboxService } from "../../sandbox/sandbox.service.js";
 import { SkillChangesService } from "../../skills/changes.service.js";
 import { StorageService } from "../../storage/storage.service.js";
@@ -19,6 +27,7 @@ import { sandboxTools } from "./sandbox/index.js";
 import { skillLoadTool } from "./skill-load.js";
 import { skillWriteTool } from "./skill-write.js";
 import { toolSearchTool } from "./tool-search.js";
+import { extractAnswer, WebPages, webTools } from "./web/index.js";
 
 /**
  * The kernel's builtin tools, built once from the injected services (their specs: names,
@@ -39,6 +48,14 @@ export class BuiltinTools {
     @Inject(AttachmentsService) attachments: AttachmentsService,
     @Inject(EventLog) eventLog: EventLog,
     @Inject(SandboxService) sandbox: SandboxService,
+    @Inject(ExtensionPointDefaults) points: ExtensionPointDefaults,
+    @Inject(WebPages) webPages: WebPages,
+    /** The WebFetch extraction call: the `web_fetch` purpose, its hooks, usage and denials. */
+    @Inject(ModelPurposesService) purposes: ModelPurposesService,
+    @Inject(ExtensionHost) host: { readonly hooks?: HookRunner } | undefined,
+    @Inject(UsageReporter) usageReport: UsageReporter,
+    @Inject(StepLog) stepLog: StepLog,
+    @Inject(KERNEL_LOGGER) log: Logger,
     @Inject(BackgroundTaskStore) background: BackgroundTaskStore,
     @Inject(BackgroundTaskFinisher) finisher: BackgroundTaskFinisher,
     @Inject(BackgroundTaskStopper) stopper: BackgroundTaskStopper,
@@ -72,6 +89,20 @@ export class BuiltinTools {
       }),
       // 自写技能：agent 定义显式引用才可用
       skillWriteTool({ changes: skillChanges }),
+      // web search / fetch through the org's default provider (web tools spec §3); WebFetch answers
+      // from the page with one call on the `web_fetch` purpose (§5), never returning the page
+      ...webTools({
+        points,
+        config,
+        cache: webPages,
+        extract: (ctx, page, prompt) =>
+          extractAnswer(
+            { purposes, eventLog, stepLog, config, log, hooks: host?.hooks, usageReport },
+            ctx,
+            page,
+            prompt,
+          ),
+      }),
     ];
   }
 

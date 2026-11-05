@@ -451,7 +451,9 @@
       "builtin": {
         "AskUserQuestion": "向用户提问（AskUserQuestion）",
         "ReadToolOutput": "读取存档的工具结果（ReadToolOutput）",
-        "SkillWrite": "编写技能（SkillWrite）"
+        "SkillWrite": "编写技能（SkillWrite）",
+        "WebSearch": "搜索网页（WebSearch）",
+        "WebFetch": "读取网页（WebFetch）"
       },
       "connectorsLabel": "连接器",
       "connectorTools": "{name} 的全部工具",
@@ -558,7 +560,8 @@
           "too_many": "子 agent 太多：总数最多 20 个。",
           "required": "此项为必填。"
         }
-      }
+      },
+      "webUnavailable": "本组织没有可用的网页提供方：需要组织管理员在扩展设置里启用并配置一个；如果已启用多个，则选择一个默认提供方。之后选中的网页工具才能使用。"
     },
     "params": {
       "default": "默认",
@@ -1672,7 +1675,19 @@
       },
       "at": "{file} 第 {line} 行"
     },
-    "openCatalog": "去企业目录查看或申请"
+    "openCatalog": "去企业目录查看或申请",
+    "pointDefaults": {
+      "title": "默认提供方",
+      "description": "有多个已启用的扩展提供同一种能力时，选择本组织使用哪一个。",
+      "none": "未选择",
+      "noneHint": "有多个扩展提供{point}。选定之前，用到它的工具不可用。",
+      "unavailable": "{extension}（不可用）",
+      "saved": "{point}现在使用 {extension}。",
+      "points": {
+        "webSearch": "网页搜索",
+        "webFetch": "网页读取"
+      }
+    }
   },
   "identities": {
     "title": "IM 身份",

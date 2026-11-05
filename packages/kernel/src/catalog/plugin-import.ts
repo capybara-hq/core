@@ -55,8 +55,8 @@ import type { ProvenanceResult } from "../packages/provenance.js";
 import { packPackageTgz } from "../packages/tgz.js";
 import { checkSkillFiles, SkillArchiveError, type SkillPackageFile } from "../skills/package.js";
 import { type PrefixedStorage, StorageService } from "../storage/storage.service.js";
+import { canonicalJson } from "../tools/canonical-json.js";
 import { endpointCredentialIssues } from "../tools/endpoint.js";
-import { canonicalJson } from "../tools/registry.js";
 import type {
   ActorOpts,
   CatalogItemView,

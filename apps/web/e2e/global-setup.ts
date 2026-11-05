@@ -4,14 +4,16 @@
  * `@capybara-hq/testing` (`fake-connector` as connector kind `mcp`, so the web install wizard
  * drives it as an MCP connector; `fake-openapi`, connector kind `openapi`, for the wizard's OpenAPI
  * flow; `fake-tools-ui`, a tool with a conversation view; `fake-embed`, an org page and a
- * conversation tab embed; all allowing local http), `fake-config-form` (a hinted deployment config
- * form) and the fake IM test plugin `fake-im`; no official plugin except `model-fake` and the
- * bootstrap plugins; server.mjs then starts the web layer (`next dev`) pointing at it. A fake MCP
- * server (stateful sessions; the destructive tool `delete_item`, `signup` which starts an
- * elicitation, the prompt `summarize` and the resource `docs://handbook`) serves the tool /
- * approval / slash command / resource reference cases; a small pets API (an operations document
- * for `fake-openapi` and the operations behind an API key request header) serves the OpenAPI
- * install wizard case. A SeaweedFS (S3-compatible) container is the object store through the
+ * conversation tab embed; `fake-web` and `fake-web-2`, two scripted web search and web fetch
+ * providers for the web tools case; all allowing local http), `fake-config-form` (a hinted
+ * deployment config form) and the fake IM test plugin `fake-im`; no official plugin except
+ * `model-fake` and the bootstrap plugins; server.mjs then starts the web layer (`next dev`)
+ * pointing at it. A fake MCP server (stateful sessions; the destructive tool `delete_item`,
+ * `signup` which starts an elicitation, the prompt `summarize` and the resource
+ * `docs://handbook`) serves the tool / approval / slash command / resource reference cases; a
+ * small pets API (an operations document for `fake-openapi` and the operations behind an API key
+ * request header) serves the OpenAPI install wizard case. A SeaweedFS (S3-compatible) container
+ * is the object store through the
  * `object-store-s3` plugin, for the attachment upload cases (the browser posts the presigned form
  * cross-origin). object-store-s3 and openai-compatible are the bootstrap plugins: downloaded at the
  * versions packages/kernel/bootstrap.json pins from the npm registry and checked against their
@@ -74,6 +76,9 @@ const fakeToolsUi = fakeExtension("fake-tools-ui");
 const fakeEmbed = fakeExtension("fake-embed");
 /** Connector extension `fake-openapi` (kind `openapi`), for the wizard's OpenAPI flow. */
 const fakeOpenApi = fakeExtension("fake-openapi");
+/** Two scripted web providers (`web-search@1`, `web-fetch@1`), for the org default provider. */
+const fakeWeb = fakeExtension("fake-web");
+const fakeWeb2 = fakeExtension("fake-web-2");
 /**
  * `fake-config-form` (表单样例): an openai-compatible-shaped deployment config with form hints, no
  * config given here, so it starts pending configuration and the admin form fills it.
@@ -592,6 +597,8 @@ export default async function globalSetup(): Promise<Cleanup> {
         fakeIm,
         fakeToolsUi,
         fakeEmbed,
+        fakeWeb,
+        fakeWeb2,
         fakeConfigForm,
         sandboxFake,
         hooksProbe,
