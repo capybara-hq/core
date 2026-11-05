@@ -368,7 +368,7 @@ describe("组织插件配置 HTTP", () => {
         login: "root",
         password: PW,
         displayName: "Root",
-        enterpriseAdmin: true,
+        superAdmin: true,
       });
       const root = await session("root");
       const res = await root({ method: "GET", url: "/api/v1/admin/extensions" });

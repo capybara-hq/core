@@ -147,7 +147,7 @@
     "account": {
       "login_taken": "用户名已被占用。",
       "not_found": "账号不存在。",
-      "last_enterprise_admin": "不能撤销或停用最后一个企业管理员。"
+      "last_super_admin": "不能撤销或停用最后一个企业管理员。"
     },
     "org": {
       "not_found": "组织不存在或你已不是成员。",

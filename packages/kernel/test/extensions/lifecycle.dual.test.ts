@@ -147,7 +147,7 @@ describe("插件生命周期双副本验收", { timeout: 120_000 }, () => {
       login: "root",
       password: PW,
       displayName: "Root",
-      enterpriseAdmin: true,
+      superAdmin: true,
     });
     const r = await at(0, "POST", "/api/v1/auth/login", { login: "root", password: PW });
     expect(r.status, JSON.stringify(r.json)).toBe(200);

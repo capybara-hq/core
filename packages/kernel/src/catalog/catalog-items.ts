@@ -313,7 +313,7 @@ export async function precheckCatalogImport(
 
 /**
  * Writes a catalog version in the caller's transaction (`db` is its handle; the caller has
- * re-checked the enterprise admin and holds the name's {@link CatalogItemLock}): checks conflicts again (the same source; no version of
+ * re-checked the super admin and holds the name's {@link CatalogItemLock}): checks conflicts again (the same source; no version of
  * the release with the same content; `version` not taken meanwhile), creates the item when there is
  * none or adds the version (latest and display fields change only for a newer version, a version
  * equal but for build metadata being newer as the later import), and writes the version row (with

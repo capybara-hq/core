@@ -147,7 +147,7 @@
     "account": {
       "login_taken": "This username is already taken.",
       "not_found": "The account does not exist.",
-      "last_enterprise_admin": "The last enterprise admin cannot be revoked or deactivated."
+      "last_super_admin": "The last enterprise admin cannot be revoked or deactivated."
     },
     "org": {
       "not_found": "The organization does not exist or you are no longer a member.",

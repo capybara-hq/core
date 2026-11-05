@@ -12,7 +12,7 @@ import { ModelRef, paramIssues } from "../agents/definition.js";
 import { ApiError } from "../errors.js";
 import { ExtensionRegistry } from "../extensions/registry.js";
 import { audit } from "../identity/audit.js";
-import { EnterpriseAdminLock } from "../identity/enterprise-admin.js";
+import { SuperAdminLock } from "../identity/super-admin.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
@@ -26,7 +26,7 @@ import { ProviderListError, ProviderRegistry } from "../runtime/providers.js";
 /**
  * 模型用途映射（C9）：内核与插件按「用途」取模型，不在代码里写死模型。
  * - 用途 = 内核用途 {@link KERNEL_PURPOSES}（目前只有评委 `eval`），或已加载插件 `permissions.models` 声明的；
- * - 映射 = 部署默认（`org_id` 为 null，企业管理员设）+ 组织覆盖（组织管理员设，`org.models.manage`）；
+ * - 映射 = 部署默认（`org_id` 为 null，超级管理员设）+ 组织覆盖（组织管理员设，`org.models.manage`）；
  *   生效的映射先取组织覆盖、再取部署默认，都没有 → `model.unconfigured`；
  * - 目标模型按部署范围解析（与运行时一致），参数按目标模型自己的声明严格校验；不做模型白名单；
  * - 每次都查 PG，不在进程内缓存（多副本下改映射立即生效）。`ctx.models` 仍预留，插件暂不能调用。
@@ -153,7 +153,7 @@ export class ModelPurposesService {
     @Inject(KernelConfigService) private readonly config: KernelConfigService,
     @Inject(ProviderRegistry) private readonly providers: Pick<ProviderRegistry, "resolve">,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
-    @Inject(EnterpriseAdminLock) private readonly adminLock: EnterpriseAdminLock,
+    @Inject(SuperAdminLock) private readonly adminLock: SuperAdminLock,
     @Inject(OrgLock) private readonly orgLock: OrgLock,
   ) {}
 
@@ -251,7 +251,7 @@ export class ModelPurposesService {
     return view as PurposeView;
   }
 
-  /** The mapping write of {@link set}, under the enterprise admin or org lock. */
+  /** The mapping write of {@link set}, under the super admin or org lock. */
   @Transactional()
   private async write(
     orgId: string | null,
@@ -295,7 +295,7 @@ export class ModelPurposesService {
     });
   }
 
-  /** 设置（或 `null` 清除）部署默认；只有企业管理员（事务内复核）。 */
+  /** 设置（或 `null` 清除）部署默认；只有超级管理员（事务内复核）。 */
   setDefault(
     purpose: string,
     target: PurposeTarget | null,

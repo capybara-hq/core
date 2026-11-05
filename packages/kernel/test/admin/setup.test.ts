@@ -55,7 +55,7 @@ const codeOf = async (p: Promise<unknown>) =>
   );
 
 describe("SetupService", () => {
-  it("初始需要初始化；complete 后不再需要，账号是企业管理员且是组织 owner；再 complete → setup.already_completed", async () => {
+  it("初始需要初始化；complete 后不再需要，账号是超级管理员且是组织 owner；再 complete → setup.already_completed", async () => {
     expect(await setup.status()).toEqual({ needsSetup: true });
     const { account, org } = await setup.complete({
       login: "root",
@@ -63,7 +63,7 @@ describe("SetupService", () => {
       displayName: "Root",
       orgName: "Acme Inc",
     });
-    expect(account.isEnterpriseAdmin).toBe(true);
+    expect(account.isSuperAdmin).toBe(true);
     expect(org?.name).toBe("Acme Inc");
     expect(await setup.status()).toEqual({ needsSetup: false });
     const mine = await orgs.listForAccount(account.id);
@@ -87,18 +87,18 @@ describe("SetupService", () => {
     expect(await orgs.listForAccount(r.account.id)).toEqual([]);
   });
 
-  it("只有停用的企业管理员时仍需要初始化", async () => {
+  it("只有停用的超级管理员时仍需要初始化", async () => {
     const a = await accounts.createLocal({
       login: "old",
       password: PW,
       displayName: "Old",
-      enterpriseAdmin: true,
+      superAdmin: true,
     });
     await db.updateTable("accounts").set({ status: "disabled" }).where("id", "=", a.id).execute();
     expect(await setup.status()).toEqual({ needsSetup: true });
   });
 
-  it("concurrent setup：两个独立连接池并发 complete → 恰好一个成功，企业管理员恰好 1 个", async () => {
+  it("concurrent setup：两个独立连接池并发 complete → 恰好一个成功，超级管理员恰好 1 个", async () => {
     const rawA = createDb(pg.url, 2);
     const rawB = createDb(pg.url, 2);
     try {
@@ -111,7 +111,7 @@ describe("SetupService", () => {
       expect(ok).toHaveLength(1);
       expect(failed).toHaveLength(1);
       expect((failed[0] as PromiseRejectedResult).reason.code).toBe("setup.already_completed");
-      expect(await accounts.countEnterpriseAdmins()).toBe(1);
+      expect(await accounts.countSuperAdmins()).toBe(1);
       const n = await db
         .selectFrom("accounts")
         .select((eb) => eb.fn.countAll<string>().as("n"))
@@ -138,26 +138,24 @@ describe("SetupService", () => {
     expect(await setup.status()).toEqual({ needsSetup: true });
   });
 
-  it("createEnterpriseAdmin：已初始化也能建；登录名已存在 → account.login_taken", async () => {
+  it("createSuperAdmin：已初始化也能建；登录名已存在 → account.login_taken", async () => {
     await setup.complete({ login: "root", password: PW, displayName: "Root" });
-    const a = await accounts.createEnterpriseAdmin({
+    const a = await accounts.createSuperAdmin({
       login: "ops",
       password: PW,
       displayName: "Ops",
       email: "ops@example.com",
     });
-    expect(a.isEnterpriseAdmin).toBe(true);
+    expect(a.isSuperAdmin).toBe(true);
     expect(a.email).toBe("ops@example.com");
     expect(
-      await codeOf(
-        accounts.createEnterpriseAdmin({ login: "OPS", password: PW, displayName: "X" }),
-      ),
+      await codeOf(accounts.createSuperAdmin({ login: "OPS", password: PW, displayName: "X" })),
     ).toBe("account.login_taken");
   });
-  it("createEnterpriseAdminIfNone: an existing active enterprise admin → undefined, nothing created", async () => {
+  it("createSuperAdminIfNone: an existing active super admin → undefined, nothing created", async () => {
     await setup.complete({ login: "root", password: PW, displayName: "Root" });
     expect(
-      await accounts.createEnterpriseAdminIfNone({
+      await accounts.createSuperAdminIfNone({
         login: "ops",
         password: PW,
         displayName: "Ops",
@@ -166,27 +164,27 @@ describe("SetupService", () => {
     expect(await accounts.count()).toBe(1);
   });
 
-  it("createEnterpriseAdminIfNone: none yet → creates an enterprise admin", async () => {
-    const a = await accounts.createEnterpriseAdminIfNone({
+  it("createSuperAdminIfNone: none yet → creates a super admin", async () => {
+    const a = await accounts.createSuperAdminIfNone({
       login: "ops",
       password: PW,
       displayName: "Ops",
     });
-    expect(a?.isEnterpriseAdmin).toBe(true);
+    expect(a?.isSuperAdmin).toBe(true);
     expect(await setup.status()).toEqual({ needsSetup: false });
   });
 
-  it("createEnterpriseAdminIfNone: concurrent runs (and a concurrent web setup) → exactly one admin", async () => {
+  it("createSuperAdminIfNone: concurrent runs (and a concurrent web setup) → exactly one admin", async () => {
     const pools = [createDb(pg.url, 2), createDb(pg.url, 2), createDb(pg.url, 2)];
     try {
       const [a, b, c] = pools.map((r) => kernelDb(r));
       const results = await Promise.allSettled([
-        accountsFor(a as KernelSchemaDb).createEnterpriseAdminIfNone({
+        accountsFor(a as KernelSchemaDb).createSuperAdminIfNone({
           login: "first",
           password: PW,
           displayName: "A",
         }),
-        accountsFor(b as KernelSchemaDb).createEnterpriseAdminIfNone({
+        accountsFor(b as KernelSchemaDb).createSuperAdminIfNone({
           login: "second",
           password: PW,
           displayName: "B",
@@ -198,7 +196,7 @@ describe("SetupService", () => {
       for (const r of results) {
         if (r.status === "rejected") expect(r.reason.code).toBe("setup.already_completed");
       }
-      expect(await accounts.countEnterpriseAdmins()).toBe(1);
+      expect(await accounts.countSuperAdmins()).toBe(1);
       expect(await accounts.count()).toBe(1);
     } finally {
       await Promise.all(pools.map((r) => r.destroy()));

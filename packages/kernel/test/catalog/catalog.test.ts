@@ -31,7 +31,7 @@ import { PW, type Req, runConfig, session, startKernel, type TestKernel } from "
 import { skillPlugin } from "./packages.js";
 
 /**
- * The enterprise catalog's items (one kind: every item is a plugin): list and detail, scope,
+ * The platform catalog's items (one kind: every item is a plugin): list and detail, scope,
  * delete, installing an item's extension on the deployment, and the import entry points that are
  * not about the review itself (plugin-import.test.ts covers the review).
  */
@@ -113,7 +113,7 @@ beforeAll(async () => {
       login: "root",
       password: PW,
       displayName: "R",
-      enterpriseAdmin: true,
+      superAdmin: true,
     })
   ).id;
   memberId = (await accounts.createLocal({ login: "mem", password: PW, displayName: "M" })).id;
@@ -493,7 +493,7 @@ describe("scope, delete and permissions", () => {
     expect(res.json().error.code).toBe("catalog.item_not_found");
   });
 
-  it("non enterprise admins get 403 (reads and writes)", async () => {
+  it("non super admins get 403 (reads and writes)", async () => {
     const item = await db.selectFrom("catalog_items").select("id").executeTakeFirstOrThrow();
     const calls = [
       prepareFile(member, await skillPlugin("x", { version: "5.0.0" })),
@@ -525,7 +525,7 @@ describe("scope, delete and permissions", () => {
     expect(huge.statusCode, huge.body).toBe(403);
   });
 
-  it("re-checked when run: an actor no longer an enterprise admin gets forbidden on writes", async () => {
+  it("re-checked when run: an actor no longer a super admin gets forbidden on writes", async () => {
     const item = await db.selectFrom("catalog_items").select("id").executeTakeFirstOrThrow();
     await expect(
       k.app.get(CatalogScopeService).setDisabled(memberId, item.id, { disabled: false }),

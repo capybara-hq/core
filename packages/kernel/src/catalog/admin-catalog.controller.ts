@@ -15,10 +15,10 @@ import { z } from "zod";
 import { ApiError } from "../errors.js";
 import {
   CurrentPrincipal,
-  EnterpriseAdmin,
   type Principal,
   patTokenId,
   requireUser,
+  SuperAdmin,
 } from "../identity/principal.js";
 import { createZodDto } from "../infra/validation/create-zod-dto.js";
 import { ZBody, ZQuery } from "../infra/validation/zod-params.js";
@@ -109,13 +109,13 @@ class CatalogShownBody extends createZodDto(ShownBody, "CatalogShownBody") {}
 class CatalogDisabledBody extends createZodDto(DisabledBody, "CatalogDisabledBody") {}
 
 /**
- * The enterprise catalog (`/api/v1/admin/catalog/*`, enterprise admins): plugin import (upload / npm
+ * The platform catalog (`/api/v1/admin/catalog/*`, super admins): plugin import (upload / npm
  * prepare, then confirm, which installs the plugin's extension), the item list and detail, scope and
- * disable (previewed, then confirmed with `scopeHash`), delete. Writes re-check the enterprise admin inside the service's lock and are
+ * disable (previewed, then confirmed with `scopeHash`), delete. Writes re-check the super admin inside the service's lock and are
  * audited.
  */
 @Controller("api/v1/admin/catalog")
-@EnterpriseAdmin()
+@SuperAdmin()
 export class AdminCatalogController {
   constructor(
     @Inject(CatalogService) private readonly catalog: CatalogService,

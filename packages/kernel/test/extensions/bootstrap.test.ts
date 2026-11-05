@@ -136,7 +136,7 @@ async function loginAdmin(k: TestKernel): Promise<void> {
     login: "root",
     password: PW,
     displayName: "R",
-    enterpriseAdmin: true,
+    superAdmin: true,
   });
   admin = await session(k, "root");
 }
@@ -393,7 +393,7 @@ describe("a core upgrade (Review Focus 3)", () => {
     ]);
     let k = await boot(v1);
     await loginAdmin(k);
-    // The enterprise admin disables delta and uninstalls epsilon (both optional)
+    // The super admin disables delta and uninstalls epsilon (both optional)
     for (const [method, url] of [
       ["POST", "/api/v1/admin/extensions/delta/disable"],
       ["POST", "/api/v1/admin/extensions/epsilon/disable"],
@@ -402,7 +402,7 @@ describe("a core upgrade (Review Focus 3)", () => {
       const res = await admin({ method, url });
       expect(res.statusCode, `${method} ${url}: ${res.body}`).toBeLessThan(300);
     }
-    // The enterprise admin upgrades beta by hand above what core pins
+    // The super admin upgrades beta by hand above what core pins
     const beta12 = await lifePkg({ name: "beta", version: "1.2.0" });
     const up = await admin({
       method: "POST",

@@ -20,7 +20,7 @@ import { ScopeNoLongerWanted, ScopeStillWanted } from "./scope-state.js";
 
 /**
  * The plugin scope sync (plugin and component management spec §5, phase 1): converges every org
- * to each enterprise plugin's scope. In phase 1 "on in an org" is the org's plugin install, so for
+ * to each platform plugin's scope. In phase 1 "on in an org" is the org's plugin install, so for
  * each (item, org) the sync:
  * - wanted on (`wantedOn`, or a live install in the org depends on it: rule 9) and no live install
  *   -> installs it as the kernel itself (actor null, audits `via: "scope"`), unless the install

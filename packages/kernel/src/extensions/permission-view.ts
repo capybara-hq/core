@@ -80,7 +80,7 @@ export interface PermissionItem {
  * 敏感的能力（D10 + 计划扩展，F-AI）：`sandbox@1` 在部署里执行任意命令、`object-store@1` 保管全部附件与插件包（D10）；
  * `channel@1` 收到组织在 IM 里的对话内容（Ruling A33）、`directory@1` 能把人加进组织（并为其建账号、建身份）、
  * `identity-source@1` 决定谁能登录成哪个账号。插件提供其中任何一个时，「提供」一组标为敏感，
- * 后台插件列表的 `sensitive` 为真，须企业管理员批准。只影响展示，不改权限快照的键。
+ * 后台插件列表的 `sensitive` 为真，须超级管理员批准。只影响展示，不改权限快照的键。
  */
 export const SENSITIVE_EXTENSION_POINTS: readonly string[] = [
   "channel@1",
@@ -242,7 +242,7 @@ export type DeploymentExtensionStatus =
   | "legacy_format";
 
 /**
- * 需要企业管理员处理的状态（后台概览「需要处理的插件」）：待批准、待配置、失败、依赖缺失，以及副本不一致
+ * 需要超级管理员处理的状态（后台概览「需要处理的插件」）：待批准、待配置、失败、依赖缺失，以及副本不一致
  * （`converging` 收敛中、`pending_migration` 待迁移）。
  */
 export function extensionNeedsAction(status: DeploymentExtensionStatus): boolean {
@@ -300,7 +300,7 @@ export interface AdminExtensionView {
   removable: boolean;
   /**
    * A required bootstrap plugin (package ecosystem spec §7): enabled in every org, cannot be
-   * disabled or uninstalled; an enterprise admin may upgrade it.
+   * disabled or uninstalled; a super admin may upgrade it.
    */
   required: boolean;
   /** The scope of the catalog plugin the extension ships in (builtin: `all`); null without one. */

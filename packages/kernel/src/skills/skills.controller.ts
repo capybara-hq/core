@@ -49,7 +49,7 @@ class SkillCreateBody extends createZodDto(CreateBody, "SkillCreateBody") {}
  *   `DELETE /:id` soft-deletes (the web asks for confirmation, R3).
  * When the deployment setting `customSkills` is deny, registering an upload and creating both
  * return 403 `catalog.custom_disabled` (decided in the service, re-checked inside the org row lock
- * on create); installing skills from the enterprise catalog is unaffected.
+ * on create); installing skills from the platform catalog is unaffected.
  */
 @Controller("api/v1/orgs/:orgId/skills")
 export class SkillsController {

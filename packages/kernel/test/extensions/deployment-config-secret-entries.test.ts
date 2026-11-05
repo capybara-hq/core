@@ -57,7 +57,7 @@ describe("deployment config secret entries", { timeout: 120_000 }, () => {
       login: "root",
       password: PW,
       displayName: "R",
-      enterpriseAdmin: true,
+      superAdmin: true,
     });
     const cfg = {
       db: { url: pgc.url, poolMax: 5 },

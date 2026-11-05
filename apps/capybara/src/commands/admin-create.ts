@@ -97,7 +97,7 @@ export async function readPasswordFile(path: string): Promise<string> {
  * （去掉行尾换行）→ 跑内核迁移（幂等）→ 建企业管理员。
  * `ifNone`：已有活跃企业管理员时打印 `enterprise admin already exists; skipped` 并返回 0——这一检查在读密码之前，
  * 所以此时密码文件缺失也不报错；没有管理员时照常要求密码（文件缺失 → 1，P-7）。检查与插入在同一事务、
- * 同一咨询锁内（SetupService.createEnterpriseAdminIfNone），并发执行也只建一个；没有活跃管理员而登录名已占用 → 1。
+ * 同一咨询锁内（SetupService.createSuperAdminIfNone），并发执行也只建一个；没有活跃管理员而登录名已占用 → 1。
  * 只连 PG，不连 Redis。退出码：0 成功 / 1 失败（用法错误的 2 由 parseCli 负责）。
  * 错误信息不回显密码：密码登记为日志密钥，stderr 输出里出现的密码一律打码。
  */
@@ -176,14 +176,14 @@ export async function runAdminCreate(
     };
     if (opts.ifNone) {
       // Fast path without reading a password; the authoritative check runs again under the setup
-      // lock in createEnterpriseAdminIfNone, so concurrent runs create exactly one admin.
-      if ((await accounts.countEnterpriseAdmins()) > 0) {
+      // lock in createSuperAdminIfNone, so concurrent runs create exactly one admin.
+      if ((await accounts.countSuperAdmins()) > 0) {
         return skipped("enterprise admin already exists");
       }
       const err = await obtainPassword();
       if (err !== undefined) return fail(err);
       try {
-        const account = await accounts.createEnterpriseAdminIfNone({
+        const account = await accounts.createSuperAdminIfNone({
           ...input,
           password: password as string,
         });
@@ -202,7 +202,7 @@ export async function runAdminCreate(
         throw e;
       }
     }
-    const account = await accounts.createEnterpriseAdmin({
+    const account = await accounts.createSuperAdmin({
       ...input,
       password: password as string,
     });

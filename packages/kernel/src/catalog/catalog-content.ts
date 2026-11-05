@@ -52,7 +52,7 @@ export interface OrgCatalogItem
   builtin: boolean;
   /**
    * The effective state in this org: `on`, `off`, `needs_config` (wanted but not installed, and the
-   * install needs inputs), `unavailable` (disabled by the enterprise admin; members don't see it)
+   * install needs inputs), `unavailable` (disabled by the super admin; members don't see it)
    * or `not_offered` (a `named` item shown to orgs outside its list: requestable, not usable).
    */
   state: OrgPluginState;
@@ -338,12 +338,12 @@ export function templatePluginProblem(
   template: ConnectorTemplateSpec,
 ): string | undefined {
   if (!d.findConnector(template.plugin, template.connector)) {
-    return `Connector extension ${template.plugin} providing "${template.connector}" is not deployed; ask the enterprise admin to install and enable it`;
+    return `Connector extension ${template.plugin} providing "${template.connector}" is not deployed; ask the super admin to install and enable it`;
   }
   const range = template.pluginVersion;
   const version = d.pluginVersion(template.plugin);
   if (range !== undefined && version !== undefined && !satisfiesRange(version, range)) {
-    return `Connector extension ${template.plugin} is deployed at version ${version}, but the template needs ${range}; ask the enterprise admin to upgrade it`;
+    return `Connector extension ${template.plugin} is deployed at version ${version}, but the template needs ${range}; ask the super admin to upgrade it`;
   }
   return undefined;
 }

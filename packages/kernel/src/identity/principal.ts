@@ -21,7 +21,7 @@ declare module "fastify" {
 
 export const PUBLIC_KEY = "capybara:auth:public";
 export const SESSION_ONLY_KEY = "capybara:auth:session-only";
-export const ENTERPRISE_ADMIN_KEY = "capybara:auth:enterprise-admin";
+export const SUPER_ADMIN_KEY = "capybara:auth:super-admin";
 export const ALLOW_SERVICE_KEY = "capybara:auth:allow-service";
 
 /**
@@ -33,9 +33,9 @@ export const Public = (): MethodDecorator & ClassDecorator => SetMetadata(PUBLIC
 /** 仅接受 Web 会话（`via: "session"`）；个人令牌 → `auth.session_required`。 */
 export const SessionOnly = (): MethodDecorator => SetMetadata(SESSION_ONLY_KEY, true);
 
-/** 仅企业管理员（user principal 且 `isEnterpriseAdmin`）；否则 `forbidden`。 */
-export const EnterpriseAdmin = (): MethodDecorator & ClassDecorator =>
-  SetMetadata(ENTERPRISE_ADMIN_KEY, true);
+/** 仅超级管理员（user principal 且 `isSuperAdmin`）；否则 `forbidden`。 */
+export const SuperAdmin = (): MethodDecorator & ClassDecorator =>
+  SetMetadata(SUPER_ADMIN_KEY, true);
 
 /**
  * 允许服务令牌（service principal）访问。默认拒绝：未标注的路由只接受 user principal，service → `forbidden`。

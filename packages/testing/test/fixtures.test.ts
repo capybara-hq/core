@@ -281,7 +281,7 @@ describe("loaded by path in a kernel", () => {
       login: "root",
       password: PW,
       displayName: "Root",
-      enterpriseAdmin: true,
+      superAdmin: true,
     });
     root = await login(k, "root");
     const org = await root({ method: "POST", url: "/api/v1/orgs", payload: { name: "Acme" } });

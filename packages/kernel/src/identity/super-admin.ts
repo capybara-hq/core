@@ -8,37 +8,34 @@ import { XactLock } from "../infra/database/xact-lock.js";
 
 /**
  * The transaction-scoped lock (`XactLock`, `pg_advisory_xact_lock`) that serializes every
- * enterprise admin write: revoke / disable / create an admin, deployment settings, prices,
+ * super admin write: revoke / disable / create an admin, deployment settings, prices,
  * purposes, the catalog and extension admin writes, the CLI's `capybara admin grant|revoke`.
  */
-const ENTERPRISE_ADMINS_LOCK = "capybara.enterprise_admins";
+const SUPER_ADMINS_LOCK = "capybara.super_admins";
 
 /**
- * The run-time re-check of an enterprise admin write (spec 3.6 R5), under
- * {@link ENTERPRISE_ADMINS_LOCK}: the actor must still be an active enterprise admin, else
+ * The run-time re-check of a super admin write (spec 3.6 R5), under
+ * {@link SUPER_ADMINS_LOCK}: the actor must still be an active super admin, else
  * `forbidden`. The identity the auth guard read at the start of the request may be stale (another
  * admin just revoked it), so it is re-read under the lock.
  */
-async function assertActiveEnterpriseAdmin(
-  db: KernelSchemaDb,
-  actorAccountId: string,
-): Promise<void> {
+async function assertActiveSuperAdmin(db: KernelSchemaDb, actorAccountId: string): Promise<void> {
   const actor = await db
     .selectFrom("accounts")
     .select("id")
     .where("id", "=", actorAccountId)
-    .where("is_enterprise_admin", "=", true)
+    .where("is_super_admin", "=", true)
     .where("status", "=", "active")
     .executeTakeFirst();
-  if (!actor) throw new ApiError("forbidden", "Enterprise admin required");
+  if (!actor) throw new ApiError("forbidden", "Super admin required");
 }
 
 /**
- * The enterprise admin lock, the one implementation of "lock, then re-check the actor":
+ * The super admin lock, the one implementation of "lock, then re-check the actor":
  * both methods join the caller's transaction (`mandatory`), which holds the lock until it ends.
  */
 @Injectable()
-export class EnterpriseAdminLock {
+export class SuperAdminLock {
   constructor(
     @Inject(KernelDb) private readonly db: KernelDb,
     @Inject(XactLock) private readonly xactLock: XactLock,
@@ -48,17 +45,17 @@ export class EnterpriseAdminLock {
   /** Only the lock (callers without an actor: the CLI, bootstrap). */
   @Transactional({ propagation: "mandatory" })
   async lock(): Promise<void> {
-    await this.xactLock.lock(ENTERPRISE_ADMINS_LOCK);
+    await this.xactLock.lock(SUPER_ADMINS_LOCK);
   }
 
-  /** The lock, then {@link assertActiveEnterpriseAdmin} under it. */
+  /** The lock, then {@link assertActiveSuperAdmin} under it. */
   @Transactional({ propagation: "mandatory" })
   async lockAndAuthorize(actorAccountId: string): Promise<void> {
-    await this.xactLock.lock(ENTERPRISE_ADMINS_LOCK);
-    await assertActiveEnterpriseAdmin(this.db.db, actorAccountId);
+    await this.xactLock.lock(SUPER_ADMINS_LOCK);
+    await assertActiveSuperAdmin(this.db.db, actorAccountId);
   }
 }
 
-/** The one {@link EnterpriseAdminLock}: identity, models, the extensions and the catalog import it. */
-@Module({ providers: [EnterpriseAdminLock], exports: [EnterpriseAdminLock] })
-export class EnterpriseAdminLockModule {}
+/** The one {@link SuperAdminLock}: identity, models, the extensions and the catalog import it. */
+@Module({ providers: [SuperAdminLock], exports: [SuperAdminLock] })
+export class SuperAdminLockModule {}

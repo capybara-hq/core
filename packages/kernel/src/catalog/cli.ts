@@ -214,7 +214,7 @@ class CliStorage extends PrefixedStorage {
  * The CLI's plugin catalog context (`capybara plugins *`): {@link openExtensionCli} with the
  * catalog's {@link CatalogImportModule}, so {@link PluginImport} and {@link CatalogService} are the
  * kernel's providers. Imports run with actor `null` (the operator of the
- * deployment, like `capybara extensions install`: no enterprise-admin re-check, audits without an
+ * deployment, like `capybara extensions install`: no super-admin re-check, audits without an
  * actor, permission snapshots written with source `cli`). Files of the plugin (skills, connector
  * templates, icons) go to the deployment's object store, set up in-process from the declared or
  * installed object-store extension (see {@link loadCliObjectStore}; an installed package is synced

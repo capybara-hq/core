@@ -1,5 +1,5 @@
 import { Module } from "@nestjs/common";
-import { EnterpriseAdminLockModule } from "../identity/enterprise-admin.js";
+import { SuperAdminLockModule } from "../identity/super-admin.js";
 import { OrgLockModule } from "../orgs/org-lock.js";
 import { StorageModule } from "../storage/storage.module.js";
 import { EmbedTokensModule } from "../ui/embed-token.js";
@@ -28,7 +28,7 @@ import { ReplicaStatusStore } from "./sources.js";
 @Module({
   imports: [
     ExtensionRegistryModule,
-    EnterpriseAdminLockModule,
+    SuperAdminLockModule,
     OrgLockModule,
     StorageModule,
     // ctx.ui verifies embed tokens with the one provider the UI routes issue them with

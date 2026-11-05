@@ -1,6 +1,6 @@
 import { Module } from "@nestjs/common";
 import { ExtensionsModule } from "../extensions/extensions.module.js";
-import { EnterpriseAdminLockModule } from "../identity/enterprise-admin.js";
+import { SuperAdminLockModule } from "../identity/super-admin.js";
 import { QueueModule } from "../infra/queue/queue.module.js";
 import { OrgLockModule } from "../orgs/org-lock.js";
 import { SkillsModule } from "../skills/skills.module.js";
@@ -19,12 +19,12 @@ import { CatalogRequestsService } from "./requests.service.js";
 import { PLUGIN_SCOPE_QUEUE, PluginScopeSync } from "./scope-sync.js";
 
 /**
- * The enterprise side of the catalog: marketplaces, the one import review (prepare -> confirm) and
+ * The platform side of the catalog: marketplaces, the one import review (prepare -> confirm) and
  * the items. The CLI's `capybara plugins *` and `capybara bootstrap` run on this
  * part alone.
  */
 @Module({
-  imports: [ExtensionsModule, EnterpriseAdminLockModule, StorageModule],
+  imports: [ExtensionsModule, SuperAdminLockModule, StorageModule],
   providers: [
     CatalogSourceLock,
     CatalogItemLock,
@@ -47,7 +47,7 @@ export class CatalogImportModule {}
   imports: [
     CatalogImportModule,
     ExtensionsModule,
-    EnterpriseAdminLockModule,
+    SuperAdminLockModule,
     OrgLockModule,
     StorageModule,
     SkillsModule,

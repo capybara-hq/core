@@ -314,14 +314,14 @@ const unresolved = (name: string, range: string, why: string) =>
 const dependencyDisabled = (name: string) =>
   new ApiError(
     "catalog.dependency_disabled",
-    `Dependency ${name} is disabled by the enterprise admin, so this plugin cannot be installed`,
+    `Dependency ${name} is disabled by the super admin, so this plugin cannot be installed`,
     [{ dependency: name }],
   );
 
 /**
  * The dependency `d` resolved against the catalog: the highest imported version (of the live item
  * with that name) satisfying its range. No such item or version -> `catalog.dependency_unresolved`;
- * the item disabled -> `catalog.dependency_disabled` (the enterprise admin's ban is not bypassed,
+ * the item disabled -> `catalog.dependency_disabled` (the super admin's ban is not bypassed,
  * spec §10).
  */
 async function resolveOne(
@@ -338,7 +338,7 @@ async function resolveOne(
     throw unresolved(
       d.name,
       d.version,
-      "it is not in the enterprise catalog; ask the enterprise admin to import it",
+      "it is not in the platform catalog; ask the super admin to import it",
     );
   }
   if (item.disabled) throw dependencyDisabled(d.name);
@@ -355,7 +355,7 @@ async function resolveOne(
     throw unresolved(
       d.name,
       d.version,
-      "no imported version satisfies the range; ask the enterprise admin to import one",
+      "no imported version satisfies the range; ask the super admin to import one",
     );
   }
   return {
@@ -739,7 +739,7 @@ export class PluginInstaller {
         if (!(e instanceof ApiError)) throw e;
         throw refuse(
           e.code === "catalog.dependency_unresolved"
-            ? `${provider} is deployed but switched off here and the catalog has no entry to switch it on; ask the enterprise admin to enable it`
+            ? `${provider} is deployed but switched off here and the catalog has no entry to switch it on; ask the super admin to enable it`
             : `${provider} is not offered to this organization`,
         );
       }
@@ -1142,7 +1142,7 @@ export class PluginInstaller {
         .forShare()
         .executeTakeFirst();
       if (!own || own.deleted_at !== null) {
-        throw unresolved(plan.name, plan.version, "it was removed from the enterprise catalog");
+        throw unresolved(plan.name, plan.version, "it was removed from the platform catalog");
       }
       if (own.disabled) throw dependencyDisabled(plan.name);
     }
@@ -1305,7 +1305,7 @@ export class PluginInstaller {
     if (!this.registry.manifests().some((m) => m.name === name)) {
       throw new ApiError(
         "catalog.not_deployed",
-        `The extension of plugin ${name} is not deployed; ask the enterprise admin to install and enable it`,
+        `The extension of plugin ${name} is not deployed; ask the super admin to install and enable it`,
       );
     }
     const enabled = await isExtensionEnabled(this.db, orgId, name);

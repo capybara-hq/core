@@ -16,7 +16,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 const itemDisabled = () =>
   new ApiError(
     "catalog.item_disabled",
-    "This catalog item is disabled by the enterprise admin and cannot be newly installed",
+    "This catalog item is disabled by the super admin and cannot be newly installed",
   );
 
 /** Reads the item in the caller's transaction (FOR SHARE: exclusive with the admin disabling or deleting it). Missing or deleted -> undefined. */
@@ -33,7 +33,7 @@ async function lockItem(t: KernelSchemaDb, itemId: string) {
 /**
  * Before an org creates a component from the catalog (enabling an extension, creating a connector
  * from a template, importing a skill), re-checks in the caller's transaction that the item is live
- * and not disabled by the enterprise admin (`catalog.item_disabled`). A dependency's components
+ * and not disabled by the super admin (`catalog.item_disabled`). A dependency's components
  * pass `approvedBy`, the item the org is installing: the dependency's own item must still be live
  * and not disabled, and the installed item is judged too. Scope is decided by the org switch, not
  * here.
@@ -105,7 +105,7 @@ export async function disabledPluginItems(
 export function pluginItemDisabled(names: readonly string[]): ApiError {
   return new ApiError(
     "catalog.item_disabled",
-    `The enterprise admin disabled the catalog item of extension ${names.join(", ")}; it cannot be newly enabled, not even through a plugin that bundles it`,
+    `The super admin disabled the catalog item of extension ${names.join(", ")}; it cannot be newly enabled, not even through a plugin that bundles it`,
   );
 }
 

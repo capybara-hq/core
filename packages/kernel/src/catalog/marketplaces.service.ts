@@ -22,7 +22,7 @@ import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { DEPLOYMENT_SECRETS_ORG } from "../extensions/deployment-config-store.js";
 import { audit } from "../identity/audit.js";
-import { EnterpriseAdminLock } from "../identity/enterprise-admin.js";
+import { SuperAdminLock } from "../identity/super-admin.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
@@ -585,7 +585,7 @@ export async function loadMarketplaceEntry(
 }
 
 /**
- * Marketplaces (D16 / C25 / C26, `/api/v1/admin/marketplaces/*`, enterprise admins only): the official
+ * Marketplaces (D16 / C25 / C26, `/api/v1/admin/marketplaces/*`, super admins only): the official
  * marketplace (config `marketplaces.official.*`, synced at startup into the marketplace with id
  * `official`) and enterprise marketplaces (PG, optional token in secrets). A refresh (maintenance
  * job `catalogs-refresh` every `marketplaces.refreshIntervalMinutes` minutes, or manual) tries the main
@@ -598,8 +598,8 @@ export async function loadMarketplaceEntry(
 export class MarketplacesService {
   constructor(
     @Inject(KernelDb) private readonly kdb: KernelDb,
-    /** The enterprise admin lock (identity/enterprise-admin.ts): joins the caller's transaction. */
-    @Inject(EnterpriseAdminLock) private readonly adminLock: EnterpriseAdminLock,
+    /** The super admin lock (identity/super-admin.ts): joins the caller's transaction. */
+    @Inject(SuperAdminLock) private readonly adminLock: SuperAdminLock,
     @Inject(CatalogSourceLock) private readonly sourceLock: CatalogSourceLock,
     @Inject(KernelConfigService) private readonly config: KernelConfigService,
     @Inject(KEYRING) private readonly keyring: Keyring,

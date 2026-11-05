@@ -20,7 +20,7 @@ import {
 
 /**
  * `GET /api/v1/admin/models`（T18）：每个模型供应商一项（状态、模型），外加价格表与币种。
- * 某个供应商列模型失败时只把它标为 `error`，其余照常返回。只给企业管理员。
+ * 某个供应商列模型失败时只把它标为 `error`，其余照常返回。只给超级管理员。
  */
 
 const MODEL_EVAL = fileURLToPath(
@@ -69,7 +69,7 @@ beforeEach(async () => {
     login: "ent",
     password: PW,
     displayName: "E",
-    enterpriseAdmin: true,
+    superAdmin: true,
   });
   await accounts.createLocal({ login: "owner", password: PW, displayName: "O" });
   ent = await session(k, "ent");
@@ -152,7 +152,7 @@ describe("GET /admin/models", () => {
     expect(body.currency).toBe("USD");
   });
 
-  it("非企业管理员 403，未登录 401", async () => {
+  it("非超级管理员 403，未登录 401", async () => {
     expect((await get(owner)).statusCode).toBe(403);
     const anon = await k.http.inject({ method: "GET", url: "/api/v1/admin/models" });
     expect(anon.statusCode).toBe(401);

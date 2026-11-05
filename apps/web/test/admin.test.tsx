@@ -187,12 +187,12 @@ describe("/admin/accounts（ListPage）", () => {
     expect(within(old).getByRole("button", { name: ROW_ACTIONS.zh })).toBeTruthy();
   });
 
-  it("撤销最后一个企业管理员：显示 account.last_enterprise_admin 的文案，对话框保持打开", async () => {
+  it("撤销最后一个企业管理员：显示 account.last_super_admin 的文案，对话框保持打开", async () => {
     // a partial list (more pages) cannot tell the last admin: the kernel's refusal shows
     stubApi({
       "GET /api/v1/admin/accounts": () => json(200, { accounts: ACCOUNTS, next: "c2" }),
       "PATCH /api/v1/admin/accounts/a1": () =>
-        json(409, { error: { code: "account.last_enterprise_admin", message: "x" } }),
+        json(409, { error: { code: "account.last_super_admin", message: "x" } }),
     });
     await renderRouteWithCache("/admin/accounts", lastStubRoutes(), { locale: "zh" });
     const a = zh.admin.accounts;
@@ -204,7 +204,7 @@ describe("/admin/accounts（ListPage）", () => {
     const dialog = await screen.findByRole("dialog");
     await user.click(within(dialog).getByRole("button", { name: a.confirm.revoke }));
     expect(
-      await within(dialog).findByText(zh.errors.account.last_enterprise_admin, { exact: false }),
+      await within(dialog).findByText(zh.errors.account.last_super_admin, { exact: false }),
     ).toBeTruthy();
   });
 

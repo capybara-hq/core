@@ -399,7 +399,7 @@ export class SkillsService {
     accountId: string,
     input: { name: string; size: number },
   ): Promise<CreatedAttachment> {
-    // 部署设置 customSkills 为 deny：组织只能从企业目录安装技能（C22）
+    // 部署设置 customSkills 为 deny：组织只能从平台目录安装技能（C22）
     await assertCustomAllowed(this.db.db, "customSkills");
     return this.attachments.create(
       orgId,
@@ -475,7 +475,7 @@ export class SkillsService {
   }
 
   /**
-   * 用一组已校验的技能文件创建组织技能或给同名技能新增版本（上传与企业目录安装共用）：
+   * 用一组已校验的技能文件创建组织技能或给同名技能新增版本（上传与平台目录安装共用）：
    * 1. 把文件写到 `kernel/<orgId>/<prefix>`（缺省 `skills/<新 id>/`）；
    * 2. 一个事务里：锁组织行并复核 `skills.manage`（目录安装：按条目策略复核），
    *    同名未删除的组织技能存在则 `current_version + 1`，否则新建；技能与版本都记下 `directory` 来源（没有则清空：

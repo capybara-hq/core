@@ -43,7 +43,7 @@ describe("openKernelCli", () => {
       for (const token of [REDIS, KERNEL_BUS, LockService]) {
         expect(() => app.get(token), String(token)).toThrow();
       }
-      expect(await app.get(AccountsService).countEnterpriseAdmins()).toBe(0);
+      expect(await app.get(AccountsService).countSuperAdmins()).toBe(0);
     } finally {
       await app.close();
     }

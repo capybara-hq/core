@@ -21,8 +21,8 @@ import {
 import { skillPlugin } from "./packages.js";
 
 // Requests under plugin scope (spec 2026-11-05-plugin-component-management-design.md §5.1):
-// `enable` (member -> org admin, an optional item that is off), `access` (org admin -> enterprise
-// admin, a named item shown to other orgs) and `import` (org admin -> enterprise admin, a
+// `enable` (member -> org admin, an optional item that is off), `access` (org admin -> super
+// admin, a named item shown to other orgs) and `import` (org admin -> super admin, a
 // marketplace entry not imported yet).
 
 const sri = (b: Uint8Array) => `sha512-${createHash("sha512").update(b).digest("base64")}`;
@@ -145,7 +145,7 @@ const marketplaceRequest = (req: Req, note?: string, version = "1.0.0") =>
     payload: { marketplaceId, name: "mkt-tools", version, ...(note && { note }) },
   });
 
-/** The enterprise admin imports mkt-tools@version from the marketplace; returns the item id. */
+/** The super admin imports mkt-tools@version from the marketplace; returns the item id. */
 async function adminImport(version: string): Promise<string> {
   const p = await env.root({
     method: "POST",
@@ -218,7 +218,7 @@ describe("enable: member -> org admin", { timeout: 60_000 }, () => {
     expect((await inbox(env.boss, "catalog_request")).map((i) => i.id)).toEqual([req.id]);
     expect(await inbox(env.mem, "catalog_request")).toEqual([]);
     expect(await auditActions(env)).toContain("catalog.requested");
-    // a member cannot decide; enterprise admin routes do not take enable requests
+    // a member cannot decide; super admin routes do not take enable requests
     expect((await decideOrg(env.mem, req.id, true)).statusCode).toBe(403);
     expect((await decideAdmin(env.root, req.id, true)).statusCode).toBe(404);
     const ok = await decideOrg(env.boss, req.id, true);
@@ -293,7 +293,7 @@ describe("enable: member -> org admin", { timeout: 60_000 }, () => {
   });
 });
 
-describe("access: org admin -> enterprise admin", { timeout: 60_000 }, () => {
+describe("access: org admin -> super admin", { timeout: 60_000 }, () => {
   it("a named item shown to others: approved, the org is on its list and the sync installs it", async () => {
     const itemId = await importSkill(env);
     await setScope(env, itemId, "named", []);
@@ -392,7 +392,7 @@ describe("access: org admin -> enterprise admin", { timeout: 60_000 }, () => {
   });
 });
 
-describe("import: org admin -> enterprise admin", { timeout: 90_000 }, () => {
+describe("import: org admin -> super admin", { timeout: 90_000 }, () => {
   it("org admins browse entries; approval prepares the import and the confirm resolves it", async () => {
     const entries = await env.boss({
       method: "GET",
@@ -534,7 +534,7 @@ describe("hidden items stay unknown to unlisted orgs", { timeout: 120_000 }, () 
     expect(row).toEqual({ status: "approved", item_id: itemId });
   });
 
-  it("the enterprise admin hides a not_offered item: absent, pending requests kept, new ones 404", async () => {
+  it("the super admin hides a not_offered item: absent, pending requests kept, new ones 404", async () => {
     const itemId = await importSkill(env);
     await setScope(env, itemId, "named", []);
     const id = (await request(env.boss, itemId, "access")).json().request.id as string;

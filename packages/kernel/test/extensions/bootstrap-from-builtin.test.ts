@@ -84,12 +84,18 @@ beforeAll(async () => {
     INSERT INTO capybara.extension_deployment_configs (plugin, config, updated_at) VALUES
       ('fake-bootstrap-b', ${JSON.stringify({ bucket: BUCKET })}::jsonb, now())
   `.execute(db);
-  await accountsFor(db).createLocal({
-    login: "root",
-    password: PW,
-    displayName: "R",
-    enterpriseAdmin: true,
-  });
+  // Raw SQL: this schema predates 0079, which renames is_enterprise_admin to is_super_admin.
+  const hash = await accountsFor(db).hashNewPassword(PW);
+  await sql`
+    INSERT INTO capybara.accounts (id, display_name, is_enterprise_admin) VALUES ('root-id', 'R', true)
+  `.execute(db);
+  await sql`
+    INSERT INTO capybara.identities (source, external_id, account_id, linked_via)
+    VALUES ('local', 'root', 'root-id', 'local')
+  `.execute(db);
+  await sql`
+    INSERT INTO capybara.local_passwords (account_id, password_hash) VALUES ('root-id', ${hash})
+  `.execute(db);
   expect(
     (await sql<{ n: string }>`SELECT count(*) AS n FROM capybara.extension_installs`.execute(db))
       .rows[0]?.n,

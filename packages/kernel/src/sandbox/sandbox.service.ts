@@ -1178,7 +1178,7 @@ export class SandboxService {
       cfg.limits,
       (await readOrgSettings(this.db.db, ctx.orgId)).sandboxEgress,
     );
-    // cpu / 内存按企业管理员的组织覆盖（C19 / Ruling M16），同样只在创建时生效
+    // cpu / 内存按超级管理员的组织覆盖（C19 / Ruling M16），同样只在创建时生效
     const sized = effectiveSandboxLimits(
       { ...cfg.limits, ...egress },
       await readSandboxLimitOverride(this.db.db, ctx.orgId),

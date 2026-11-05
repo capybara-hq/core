@@ -363,7 +363,7 @@ describe("组织设置与 ToolSearch 启用条件", () => {
       deployment: {
         sandboxEgress: { mode: "allowlist", allowHosts: baseCfg.sandbox.limits.allowHosts },
       },
-      // 组织级沙箱限额只读（C19）：没有企业管理员的覆盖时取部署默认
+      // 组织级沙箱限额只读（C19）：没有超级管理员的覆盖时取部署默认
       sandboxLimits: {
         cpu: baseCfg.sandbox.limits.cpu,
         memoryMb: baseCfg.sandbox.limits.memoryMb,

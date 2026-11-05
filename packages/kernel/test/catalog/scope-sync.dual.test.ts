@@ -95,7 +95,7 @@ describe("plugin scope sync (dual replica)", () => {
       login: "owner",
       password: PW,
       displayName: "O",
-      enterpriseAdmin: true,
+      superAdmin: true,
     });
     expect(
       (await call(undefined, "POST", "/api/v1/auth/login", { login: "owner", password: PW }))

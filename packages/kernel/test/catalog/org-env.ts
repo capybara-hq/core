@@ -58,10 +58,10 @@ export interface OrgEnv {
   k: TestKernel;
   db: KernelSchemaDb;
   mcp: FakeMcpServer;
-  /** 企业管理员（也是组织所有者）。 */
+  /** 超级管理员（也是组织所有者）。 */
   root: Req;
   rootId: string;
-  /** 组织管理员（不是企业管理员）。 */
+  /** 组织管理员（不是超级管理员）。 */
   boss: Req;
   bossId: string;
   /** 组织成员。 */
@@ -142,7 +142,7 @@ export async function startOrgEnv(
       login: "root",
       password: PW,
       displayName: "R",
-      enterpriseAdmin: true,
+      superAdmin: true,
     })
   ).id;
   const bossId = (await accounts.createLocal({ login: "boss", password: PW, displayName: "B" })).id;
@@ -192,7 +192,7 @@ export async function resetOrgCatalog(env: OrgEnv): Promise<void> {
   await enableConnectorExtensions(env.k, env.orgId);
 }
 
-/** Imports a plugin tgz as the enterprise admin (prepare -> confirm); returns the item id. */
+/** Imports a plugin tgz as the super admin (prepare -> confirm); returns the item id. */
 export async function importPlugin(env: OrgEnv, bytes: Uint8Array): Promise<string> {
   const r = await env.root({
     method: "POST",
@@ -253,7 +253,7 @@ export async function setBuiltin(env: OrgEnv, itemId: string): Promise<void> {
 }
 
 /**
- * Imports a skills-only plugin as the enterprise admin (plugin `name`, default `pdf-tools`, with
+ * Imports a skills-only plugin as the super admin (plugin `name`, default `pdf-tools`, with
  * one skill `skillName`, default the plugin name); returns the item id.
  */
 export async function importSkill(
@@ -275,7 +275,7 @@ export async function importSkill(
 export const TEMPLATE_ID = "github-mcp";
 
 /**
- * Imports a templates-only plugin as the enterprise admin (template {@link TEMPLATE_ID}:
+ * Imports a templates-only plugin as the super admin (template {@link TEMPLATE_ID}:
  * fake-connector, endpoint url editable, bearer; plugin `name`, default `github-mcp`); returns the
  * item id.
  */

@@ -11,7 +11,7 @@ import { ApiError } from "../errors.js";
 import { ExtensionAdmin } from "../extensions/admin-view.js";
 import { ExtensionInstalls } from "../extensions/installs.js";
 import { audit } from "../identity/audit.js";
-import { EnterpriseAdminLock } from "../identity/enterprise-admin.js";
+import { SuperAdminLock } from "../identity/super-admin.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
@@ -78,7 +78,7 @@ export interface CatalogItemView {
   scopeOrgs: string[];
   /** Shipped with the deployment (a required bootstrap plugin): scope `all`, never changed. */
   builtin: boolean;
-  /** Stopped on the whole deployment by the enterprise admin (its scope is kept). */
+  /** Stopped on the whole deployment by the super admin (its scope is kept). */
   disabled: boolean;
   /**
    * Orgs outside a `named` item's list see it as requestable (`not_offered`); false hides it from
@@ -282,7 +282,7 @@ export const CATALOG_LIST_DEFAULT_LIMIT = 200;
 export const CATALOG_LIST_MAX_LIMIT = 1000;
 
 /**
- * Enterprise catalog items (D9 / C21 / C22, `/api/v1/admin/catalog/*`, enterprise admins only). One
+ * Platform catalog items (D9 / C21 / C22, `/api/v1/admin/catalog/*`, super admins only). One
  * kind: every item is a plugin (spec §4), imported through {@link PluginImport} (prepare -> confirm,
  * one review, whose confirm installs the plugin's extension); this service lists and shows items,
  * deletes, and prepares marketplace imports (scope and disable: `CatalogScopeService`). Stateless,
@@ -292,8 +292,8 @@ export const CATALOG_LIST_MAX_LIMIT = 1000;
 export class CatalogService {
   constructor(
     @Inject(KernelDb) private readonly kdb: KernelDb,
-    /** The enterprise admin lock (identity/enterprise-admin.ts): joins the caller's transaction. */
-    @Inject(EnterpriseAdminLock) private readonly adminLock: EnterpriseAdminLock,
+    /** The super admin lock (identity/super-admin.ts): joins the caller's transaction. */
+    @Inject(SuperAdminLock) private readonly adminLock: SuperAdminLock,
     @Inject(KernelConfigService) private readonly config: KernelConfigService,
     @Inject(ExtensionInstalls) private readonly installs: ExtensionInstalls,
     /** The deployment's extensions with their approvals (what is pending confirmation). */

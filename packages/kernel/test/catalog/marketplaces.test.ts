@@ -189,7 +189,7 @@ beforeAll(async () => {
     login: "root",
     password: PW,
     displayName: "R",
-    enterpriseAdmin: true,
+    superAdmin: true,
   });
   await accounts.createLocal({ login: "mem", password: PW, displayName: "M" });
   admin = await session(k, "root");
@@ -917,7 +917,7 @@ describe("从清单引入", () => {
     expect(res.statusCode).toBe(404);
   });
 
-  it("非企业管理员 403", async () => {
+  it("非超级管理员 403", async () => {
     const calls = [
       member({ method: "GET", url: "/api/v1/admin/marketplaces" }),
       addMarketplace(member, { name: "X", url: cat.url }),

@@ -4,7 +4,7 @@
  * explicit switch, and these functions decide the effective state.
  */
 
-/** Who an enterprise plugin is offered to: every org, an opt-in set, or the listed orgs. */
+/** Who a platform plugin is offered to: every org, an opt-in set, or the listed orgs. */
 export type PluginScope = "all" | "optional" | "named";
 
 /**

@@ -54,7 +54,7 @@ import {
 } from "./packages.js";
 
 /**
- * Enterprise plugin import (phase 0b, spec §4.3): every plugin goes through prepare (the whole
+ * Platform plugin import (phase 0b, spec §4.3): every plugin goes through prepare (the whole
  * plugin checked, staged with one review) and confirm (the item / version written, the extension's
  * snapshot approved, optionally deployed). Dependencies are resolved for the review, never fetched.
  */
@@ -164,7 +164,7 @@ beforeAll(async () => {
       login: "root",
       password: PW,
       displayName: "R",
-      enterpriseAdmin: true,
+      superAdmin: true,
     })
   ).id;
   await accounts.createLocal({ login: "mem", password: PW, displayName: "M" });
@@ -1112,7 +1112,7 @@ describe("staging cleanup (maintenance job app-staging-cleanup)", { timeout: 60_
 });
 
 describe("permissions", { timeout: 60_000 }, () => {
-  it("non enterprise admins get 403 on the four endpoints", async () => {
+  it("non super admins get 403 on the four endpoints", async () => {
     const id = "00000000-0000-4000-8000-000000000000";
     for (const res of [
       await prepareFile(member, await skillPlugin("x")),

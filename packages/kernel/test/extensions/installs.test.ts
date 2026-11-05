@@ -159,7 +159,7 @@ async function loginUsers(k: TestKernel): Promise<void> {
     login: "root",
     password: PW,
     displayName: "R",
-    enterpriseAdmin: true,
+    superAdmin: true,
   });
   await accounts.createLocal({ login: "mem", password: PW, displayName: "M" });
   admin = await session(k, "root");
@@ -336,14 +336,14 @@ describe("有对象存储：上传、npm 与包存储", () => {
     expect((await upload(admin, next)).statusCode).toBe(200);
   });
 
-  it("非企业管理员 403", async () => {
+  it("非超级管理员 403", async () => {
     expect((await upload(member, toolsUi)).statusCode).toBe(403);
     expect(
       (await fromNpm(member, { package: "@capybara-hq/test-plugin-fake-tools-ui" })).statusCode,
     ).toBe(403);
   });
 
-  it("上传先认证再读请求体：未登录 / 非企业管理员的超大请求体 401 / 403（不是 413）；其他内核路由不收 octet-stream", async () => {
+  it("上传先认证再读请求体：未登录 / 非超级管理员的超大请求体 401 / 403（不是 413）；其他内核路由不收 octet-stream", async () => {
     const huge = new Uint8Array(MAX_BYTES * 2);
     const anon = await k.http.inject({
       method: "POST",

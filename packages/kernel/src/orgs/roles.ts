@@ -69,7 +69,7 @@ export const ACTION_MIN_ROLE: Record<OrgAction, OrgRole> = {
   "evals.manage": "admin",
   // 本组织的模型用途映射（覆盖部署默认，如评委用途 eval）
   "org.models.manage": "admin",
-  // 企业目录（组织视角）：成员浏览（看不到 disabled）与申请；组织管理员决定成员申请（F-AF）。
+  // 平台目录（组织视角）：成员浏览（看不到 disabled）与申请；组织管理员决定成员申请（F-AF）。
   // 安装另按条目种类要求 skills.manage / connectors.manage / org.extensions.manage（服务里在组织行锁内复核）
   "catalog.read": "member",
   "catalog.request": "member",

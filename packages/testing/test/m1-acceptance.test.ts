@@ -120,7 +120,7 @@ describe("M1 双副本端到端验收", () => {
     expect(s0.status).toBe(200);
     expect(s0.json).toEqual({ needsSetup: true });
 
-    // 2. 初始化：建企业管理员 + 组织 Research，直接登录
+    // 2. 初始化：建超级管理员 + 组织 Research，直接登录
     const s1 = await call(h, admin, "POST", "/api/v1/setup", {
       login: "root",
       password: "correct horse battery staple",

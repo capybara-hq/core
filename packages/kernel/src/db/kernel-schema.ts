@@ -13,7 +13,7 @@ export interface AccountsTable {
   email: string | null;
   email_verified: Generated<boolean>;
   status: Generated<"active" | "disabled">;
-  is_enterprise_admin: Generated<boolean>;
+  is_super_admin: Generated<boolean>;
   created_at: Ts;
   updated_at: Ts;
   /** 0064: the org the account last chose as current; a new session starts in it. */
@@ -675,7 +675,7 @@ export interface SkillVersionsTable {
   created_by: string | null;
   created_at: Ts;
   /**
-   * 0037, renamed in 0042: this version's enterprise catalog source (NULL for custom uploads /
+   * 0037, renamed in 0042: this version's platform catalog source (NULL for custom uploads /
    * agent skills).
    */
   catalog_item_id: ColumnType<string | null, string | null | undefined, string | null>;
@@ -946,7 +946,7 @@ export interface ExtensionInstallsTable {
   installed_at: Ts;
   updated_by: string | null;
   updated_at: Ts;
-  /** 0034 (F-AA): the source item when installed through the enterprise catalog. */
+  /** 0034 (F-AA): the source item when installed through the platform catalog. */
   catalog_item_id: ColumnType<string | null, string | null | undefined, string | null>;
   /**
    * 0050: a required bootstrap plugin (enabled in every org without an org config row; cannot be
@@ -1076,7 +1076,7 @@ export interface BootstrapRunsTable {
   results: ColumnType<unknown, string, string>;
 }
 
-/** 0034_directory.sql, renamed in 0042, one kind (plugin) since 0044: enterprise catalog items. */
+/** 0034_directory.sql, renamed in 0042, one kind (plugin) since 0044: platform catalog items. */
 export interface CatalogItemsTable {
   id: string;
   /** The plugin name (one live item per name). */
@@ -1110,7 +1110,7 @@ export interface CatalogItemsTable {
   >;
   /** 0074: shipped with the deployment (required bootstrap plugins); always scope `all`. */
   builtin: ColumnType<boolean, boolean | undefined, boolean>;
-  /** 0074: switched off for every org by the enterprise admin. */
+  /** 0074: switched off for every org by the super admin. */
   disabled: ColumnType<boolean, boolean | undefined, boolean>;
   /** 0074: bumped on every scope change. */
   scope_version: ColumnType<number, number | undefined, number>;
@@ -1134,7 +1134,7 @@ export interface CatalogItemOrgSwitchesTable {
 }
 
 /**
- * 0034, renamed in 0042, reshaped in 0044: the versions of an enterprise catalog item. `manifest` is
+ * 0034, renamed in 0042, reshaped in 0044: the versions of a platform catalog item. `manifest` is
  * the normalized plugin.json (skills and connector templates listed explicitly); `extension_sha256`
  * the plugin's extension package in `extension_packages` (null without an extension); `files` the
  * files stored under `object_prefix` (skills, connector templates, icons).
@@ -1292,7 +1292,7 @@ export interface ExtensionCatalogSourcesTable {
   created_at: Generated<Date>;
 }
 
-/** 0037, renamed in 0042: an enterprise admin's approval for an org to install a needs_approval item. */
+/** 0037, renamed in 0042: a super admin's approval for an org to install a needs_approval item. */
 export interface CatalogOrgGrantsTable {
   item_id: string;
   org_id: string;

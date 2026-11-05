@@ -200,7 +200,7 @@ describe("M7 segment 2: plugin hooks and usage.report (dual replica)", { timeout
       login: "root",
       password: PW,
       displayName: "Root",
-      enterpriseAdmin: true,
+      superAdmin: true,
     });
     const r = await at(0, "POST", "/api/v1/auth/login", { login: "root", password: PW });
     expect(r.status, JSON.stringify(r.json)).toBe(200);

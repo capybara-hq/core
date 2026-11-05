@@ -55,7 +55,7 @@ export class SetupController {
   }
 
   /**
-   * 建首个企业管理员（可选同时建组织），成功后直接登录（设会话 Cookie）。
+   * 建首个超级管理员（可选同时建组织），成功后直接登录（设会话 Cookie）。
    * 配置了 `auth.setupToken` 时 body 中的 `setupToken` 必须与之相等，否则 `setup.token_invalid`；
    * 核对前先占用限流额度，超限 → 429 `auth.rate_limited`，核对通过后退还。
    */

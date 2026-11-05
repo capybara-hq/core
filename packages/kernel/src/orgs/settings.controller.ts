@@ -22,7 +22,7 @@ class OrgSettingsPatchBody extends createZodDto(OrgSettingsPatchSchema, "OrgSett
 /**
  * 组织设置（`/api/v1/orgs/:orgId/settings`）：成员可读，修改需 `org.update`（admin）。
  * 响应带 `deployment`（部署默认值，如沙箱出站），设置页据此展示「跟随部署」时的实际取值；
- * 以及只读的 `sandboxLimits`（组织实际生效的沙箱 cpu / 内存与来源，企业管理员在部署设置里覆盖，C19）。
+ * 以及只读的 `sandboxLimits`（组织实际生效的沙箱 cpu / 内存与来源，超级管理员在部署设置里覆盖，C19）。
  */
 type SettingsResponse = {
   settings: OrgSettings;

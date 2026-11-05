@@ -270,7 +270,7 @@ describe("migrationWarnings：越出插件 schema 的语句（foreign_schema）"
     const sql = [
       "CREATE TABLE IF NOT EXISTS notes (id int)",
       "INSERT INTO notes SELECT 1",
-      "UPDATE capybara.accounts SET is_enterprise_admin = true",
+      "UPDATE capybara.accounts SET is_super_admin = true",
       'INSERT INTO notes SELECT count(*) FROM "capybara".sessions',
       "GRANT ALL ON notes TO public",
       "REVOKE SELECT ON notes FROM public",

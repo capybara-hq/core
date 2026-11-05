@@ -50,7 +50,7 @@ const notOffered = () =>
 const pluginDisabled = () =>
   new ApiError(
     "plugin.disabled",
-    "This plugin is disabled by the enterprise admin and cannot be switched on",
+    "This plugin is disabled by the super admin and cannot be switched on",
   );
 
 /** The result of a switch: the item, or (switching off without `confirm`) the uninstall preview. */
@@ -59,7 +59,7 @@ export type SwitchResult =
   | { kind: "preview"; preview: UninstallPreview; confirm: string };
 
 /**
- * Organizations see the enterprise catalog with the plugin scope rules applied (plugin and component
+ * Organizations see the platform catalog with the plugin scope rules applied (plugin and component
  * management spec §5): a plugin is `all` (on in every org), `optional` (an org admin switches it on),
  * or `named` (offered to the listed orgs). Members get the list read-only; org admins switch a
  * plugin on (an install by {@link PluginInstaller}, with its dependencies; the union of the
@@ -289,7 +289,7 @@ export class OrgCatalogService {
   /**
    * The item's icon; members don't see disabled items, nobody outside its list sees a hidden
    * `named` item (-> `catalog.item_not_found`, decided before reading storage). Without `orgId`
-   * (the enterprise admin) every item.
+   * (the super admin) every item.
    */
   async icon(itemId: string, isAdmin: boolean, orgId?: string): Promise<CatalogIcon> {
     if (orgId === undefined) return readCatalogIcon(this.db, this.storage, itemId, isAdmin);

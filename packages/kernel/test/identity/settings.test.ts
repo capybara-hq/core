@@ -32,13 +32,13 @@ describe("SettingsService", () => {
       login: "root",
       password: "correct horse battery",
       displayName: "R",
-      enterpriseAdmin: true,
+      superAdmin: true,
     });
     expect((await s.get()).orgCreation).toBe("anyone");
-    expect((await s.update({ orgCreation: "enterprise_admin" }, admin.id)).orgCreation).toBe(
-      "enterprise_admin",
+    expect((await s.update({ orgCreation: "super_admin" }, admin.id)).orgCreation).toBe(
+      "super_admin",
     );
-    expect((await s.get()).orgCreation).toBe("enterprise_admin");
+    expect((await s.get()).orgCreation).toBe("super_admin");
     try {
       // biome-ignore lint/suspicious/noExplicitAny: 故意传非法值
       await s.update({ orgCreation: "nobody" as any }, admin.id);
@@ -83,11 +83,11 @@ describe("SettingsService", () => {
     await db.deleteFrom("deployment_settings").execute();
     await db
       .insertInto("deployment_settings")
-      .values({ key: "orgCreation", value: JSON.stringify("enterprise_admin") })
+      .values({ key: "orgCreation", value: JSON.stringify("super_admin") })
       .execute();
     const warns: string[] = [];
     const s = settingsFor(db, { warn: (msg) => warns.push(msg) });
-    expect((await s.get()).orgCreation).toBe("enterprise_admin");
+    expect((await s.get()).orgCreation).toBe("super_admin");
     expect(warns).toEqual([]);
   });
 
@@ -98,7 +98,7 @@ describe("SettingsService", () => {
       login: "limits-admin",
       password: "correct horse battery",
       displayName: "L",
-      enterpriseAdmin: true,
+      superAdmin: true,
     });
     const r1 = await s.update(
       { sandboxLimitOverrides: { orgA: { cpu: 2, memoryMb: 4096 }, orgB: { cpu: 0.25 } } },
@@ -147,7 +147,7 @@ describe("SettingsService", () => {
       login: "limits-admin-2",
       password: "correct horse battery",
       displayName: "L2",
-      enterpriseAdmin: true,
+      superAdmin: true,
     });
     for (const patch of [
       { sandboxLimitOverrides: { orgA: { cpu: 0.2 } } },

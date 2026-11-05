@@ -5,7 +5,7 @@ import { configFields } from "../config/fields.js";
 import type { Keyring } from "../ctx/secrets.js";
 import { ApiError, type ErrorCode } from "../errors.js";
 import { audit } from "../identity/audit.js";
-import { EnterpriseAdminLock } from "../identity/enterprise-admin.js";
+import { SuperAdminLock } from "../identity/super-admin.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
@@ -133,8 +133,8 @@ export class ExtensionInstalls {
   constructor(
     @Inject(KernelDb) private readonly db: KernelDb,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
-    /** The enterprise admin lock (identity/enterprise-admin.ts): joins the transaction. */
-    @Inject(EnterpriseAdminLock) private readonly adminLock: EnterpriseAdminLock,
+    /** The super admin lock (identity/super-admin.ts): joins the transaction. */
+    @Inject(SuperAdminLock) private readonly adminLock: SuperAdminLock,
     @Inject(ExtensionBlobs) private readonly blobs: ExtensionBlobs,
     @Inject(ExtensionApprovals) private readonly approvals: ExtensionApprovals,
     /** The config-declared extension names (an install cannot take them, C15). */
@@ -174,7 +174,7 @@ export class ExtensionInstalls {
    * - extension name equal to a config-declared one -> `extension.config_declared`;
    * - an install record of the same name comes from another npm package -> `extension.name_conflict`
    *   (a new version of the same package is an upgrade, handled elsewhere).
-   * `actor` null means the CLI (no enterprise admin re-check, audit without an actor).
+   * `actor` null means the CLI (no super admin re-check, audit without an actor).
    */
   async ingest(
     actor: string | null,
@@ -224,7 +224,7 @@ export class ExtensionInstalls {
       );
     }
 
-    // 写包之前在锁内复核发起人仍是企业管理员（守卫读到的身份可能已过期）；审计在写完后同样复核
+    // 写包之前在锁内复核发起人仍是超级管理员（守卫读到的身份可能已过期）；审计在写完后同样复核
     if (actor !== null) await this.authorize(actor);
     await this.blobs.put(pkg, bytes, {
       source: src.source,
@@ -257,7 +257,7 @@ export class ExtensionInstalls {
   }
 
   /**
-   * The enterprise admin re-check under its lock, in a transaction of its own (`requires_new`, as
+   * The super admin re-check under its lock, in a transaction of its own (`requires_new`, as
    * before the conversion): the package write that follows never runs inside a caller's
    * transaction holding the lock.
    */
@@ -298,7 +298,7 @@ export class ExtensionInstalls {
   /**
    * Fetches one package from the configured npm registry (verified by `dist.integrity`, see
    * packages/npm.ts), downloading only, not storing: download failure -> `packages.npm_failed` (502);
-   * over `packages.maxBytes` -> `extension.package_too_large`. Enterprise catalog npm imports use it
+   * over `packages.maxBytes` -> `extension.package_too_large`. Platform catalog npm imports use it
    * too.
    */
   async fetchNpm(

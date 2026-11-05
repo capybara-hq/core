@@ -6,7 +6,7 @@ import { ApiError } from "../errors.js";
 import { ExtensionAdminOps } from "../extensions/admin-ops.js";
 import { ExtensionAdmin } from "../extensions/admin-view.js";
 import { audit } from "../identity/audit.js";
-import { EnterpriseAdminLock } from "../identity/enterprise-admin.js";
+import { SuperAdminLock } from "../identity/super-admin.js";
 import { afterCommit } from "../infra/database/after-commit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
@@ -93,7 +93,7 @@ function scopeHash(target: Target, p: Omit<ScopePreview, "scopeHash">): string {
 }
 
 /**
- * The enterprise admin's plugin scope and deployment-level disable (plugin and component management
+ * The super admin's plugin scope and deployment-level disable (plugin and component management
  * spec §4.1, §5 rules 2-4 and 8), and the import confirm that enqueues the scope sync of the item it
  * wrote. A change is previewed, then confirmed with the preview's `scopeHash`, recomputed under the
  * item row lock (a difference -> 409 `plugin.scope_stale`); it bumps `scope_version`, audits
@@ -106,7 +106,7 @@ function scopeHash(target: Target, p: Omit<ScopePreview, "scopeHash">): string {
 export class CatalogScopeService {
   constructor(
     @Inject(KernelDb) private readonly kdb: KernelDb,
-    @Inject(EnterpriseAdminLock) private readonly adminLock: EnterpriseAdminLock,
+    @Inject(SuperAdminLock) private readonly adminLock: SuperAdminLock,
     @Inject(CatalogService) private readonly catalog: CatalogService,
     @Inject(PluginImport) private readonly pluginImport: PluginImport,
     @Inject(PluginInstaller) private readonly installer: PluginInstaller,

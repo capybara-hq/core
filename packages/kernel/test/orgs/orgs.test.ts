@@ -61,7 +61,7 @@ beforeEach(async () => {
     login: "admin",
     password: PW,
     displayName: "Admin",
-    enterpriseAdmin: true,
+    superAdmin: true,
   });
 });
 
@@ -89,8 +89,8 @@ describe("OrgsService", () => {
     expect(ev.map((e) => [e.org_id, e.actor_account_id])).toEqual([[org.id, alice.id]]);
   });
 
-  it("orgCreation = enterprise_admin：普通账号 → org.creation_disabled；企业管理员可建", async () => {
-    await settings.update({ orgCreation: "enterprise_admin" }, admin.id);
+  it("orgCreation = super_admin：普通账号 → org.creation_disabled；超级管理员可建", async () => {
+    await settings.update({ orgCreation: "super_admin" }, admin.id);
     expect(await codeOf(orgs.create({ name: "Acme" }, alice))).toBe("org.creation_disabled");
     const org = await orgs.create({ name: "Acme" }, admin);
     expect(org.slug).toBe("acme");

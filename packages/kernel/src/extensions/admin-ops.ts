@@ -6,7 +6,7 @@ import { pluginSchemaName } from "../ctx/create-ctx.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
-import { EnterpriseAdminLock } from "../identity/enterprise-admin.js";
+import { SuperAdminLock } from "../identity/super-admin.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { afterCommit } from "../infra/database/after-commit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
@@ -33,7 +33,7 @@ import { ExtensionRegistry } from "./registry.js";
  * the commit (a failure only warns; the periodic reconcile catches up); replicas converge through
  * reconcile, no restart. It does not wait for replicas: the returned view may say `converging`.
  * Stateless, shared by every replica; the CLI uses it too (`actor` is null).
- * Every write runs in a transaction: first `lockEnterpriseAdminsAndAuthorize` (skipped by the CLI),
+ * Every write runs in a transaction: first `lockSuperAdminsAndAuthorize` (skipped by the CLI),
  * then an advisory lock by extension name and a lock on the install record row.
  */
 @Injectable()
@@ -41,8 +41,8 @@ export class ExtensionAdminOps {
   constructor(
     @Inject(KernelDb) private readonly kdb: KernelDb,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
-    /** The enterprise admin lock (identity/enterprise-admin.ts): joins the transaction. */
-    @Inject(EnterpriseAdminLock) private readonly adminLock: EnterpriseAdminLock,
+    /** The super admin lock (identity/super-admin.ts): joins the transaction. */
+    @Inject(SuperAdminLock) private readonly adminLock: SuperAdminLock,
     @Inject(PluginInstallLock) private readonly installLock: PluginInstallLock,
     /**
      * The admin view after the operation, degraded when the package cannot be read
@@ -74,7 +74,7 @@ export class ExtensionAdminOps {
    * New install or version change (upgrade / downgrade): the install record points at package
    * `sha256`; the desired state is unchanged (a new install is disabled). Audit `extension.installed`.
    * - Config-declared -> `extension.config_declared`; a required bootstrap plugin may be
-   *   installed at another version (an enterprise admin upgrades it; `required` is kept);
+   *   installed at another version (a super admin upgrades it; `required` is kept);
    * - package not in the package store -> `extension.package_not_found`; the extension name in the
    *   package is not `name` -> `extension.name_mismatch`;
    * - an install record of the same name exists but comes from another npm package ->
@@ -90,7 +90,7 @@ export class ExtensionAdminOps {
    *   go back to a version whose migrations are a subset of those already run).
    * Already pointing at the same package: nothing changes (no audit; for a changed source item only,
    * see below).
-   * `opts.catalogItemId`: the source item when installing through the enterprise catalog, stored
+   * `opts.catalogItemId`: the source item when installing through the platform catalog, stored
    * in `extension_installs.catalog_item_id` (F-AA) and registered in `extension_catalog_sources`;
    * installing outside the catalog (upload / npm / CLI) **keeps** the existing source items (T26
    * fix: clearing them would let org enablement bypass catalog policy, C22). The detail of the
@@ -514,7 +514,7 @@ async function hasRetainedData(db: KernelSchemaDb, name: string): Promise<boolea
 const required = (name: string) =>
   new ApiError(
     "extension.required",
-    `Extension ${name} is required by this deployment (a bootstrap plugin): it is enabled in every organization and cannot be disabled or uninstalled; an enterprise admin can upgrade it`,
+    `Extension ${name} is required by this deployment (a bootstrap plugin): it is enabled in every organization and cannot be disabled or uninstalled; a super admin can upgrade it`,
   );
 
 const notFound = (name: string) =>

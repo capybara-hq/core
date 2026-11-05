@@ -309,7 +309,7 @@ beforeEach(async () => {
     login: "ent",
     password: PW,
     displayName: "E",
-    enterpriseAdmin: true,
+    superAdmin: true,
   });
   const mk = async (login: string) =>
     (await accounts.createLocal({ login, password: PW, displayName: login })).id;

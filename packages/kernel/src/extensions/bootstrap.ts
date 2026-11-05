@@ -63,7 +63,7 @@ import { ExtensionRegistry } from "./registry.js";
  *   manifest's sha256 (written with the audit `bootstrap.completed` only when every entry
  *   succeeded; otherwise the next start runs it again, which is idempotent).
  * - Only entries new to the manifest are installed (Ruling 5): an optional entry that the last
- *   completed run already handled and that is not installed now (an enterprise admin uninstalled
+ *   completed run already handled and that is not installed now (a super admin uninstalled
  *   it) stays uninstalled -> `kept`. A required entry is always installed.
  * - Per entry, by the installed state of its extension:
  *   - not installed (and new, or required): imported into the catalog (source `bootstrap`, ref
@@ -72,8 +72,8 @@ import { ExtensionRegistry } from "./registry.js";
  *     and enabled -> `installed`;
  *   - installed from `bootstrap` at a lower version: upgraded the same way (core's release vouched
  *     for the version, so new permissions are pre-approved and audited), keeping the desired state
- *     an enterprise admin chose (a disabled optional plugin stays disabled) -> `upgraded`;
- *   - installed at a higher version, or from another source (an enterprise admin upgraded it), or
+ *     a super admin chose (a disabled optional plugin stays disabled) -> `upgraded`;
+ *   - installed at a higher version, or from another source (a super admin upgraded it), or
  *     the name is config-declared (`declared`: config wins, no install record is created):
  *     untouched, never downgraded -> `kept`;
  *   - a declarative plugin (no extension): imported into the catalog only -> `imported` (`kept`

@@ -223,7 +223,7 @@ describe("部署级插件配置入 PG（审查重点 5）", { timeout: 120_000 }
       login: "root",
       password: PW,
       displayName: "R",
-      enterpriseAdmin: true,
+      superAdmin: true,
     });
     await accounts.createLocal({ login: "mem", password: PW, displayName: "M" });
     k = await boot({ region: "eu-file", mode: "auto" });
@@ -252,7 +252,7 @@ describe("部署级插件配置入 PG（审查重点 5）", { timeout: 120_000 }
     expect(rows.map((r) => [r.state, r.reason])).toEqual([["pending", "config"]]);
   });
 
-  it("非企业管理员 GET / PUT 403", async () => {
+  it("非超级管理员 GET / PUT 403", async () => {
     expect(
       (await member({ method: "GET", url: "/api/v1/admin/extensions/deploycfg/config" }))
         .statusCode,
@@ -261,7 +261,7 @@ describe("部署级插件配置入 PG（审查重点 5）", { timeout: 120_000 }
     expect(
       (await admin({ method: "GET", url: "/api/v1/admin/extensions/nope/config" })).statusCode,
     ).toBe(404);
-    // 守卫之后被撤销的企业管理员：事务里锁内复核（直接调服务，绕过守卫）
+    // 守卫之后被撤销的超级管理员：事务里锁内复核（直接调服务，绕过守卫）
     const mem = await db
       .selectFrom("accounts")
       .select("id")

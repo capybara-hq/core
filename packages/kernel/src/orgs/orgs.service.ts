@@ -115,11 +115,8 @@ export class OrgsService {
     // read in the context's transaction: a caller holding a connection asking the pool for a
     // second one could exhaust it under load
     const { orgCreation } = await this.settings.get();
-    if (orgCreation === "enterprise_admin" && !actor.isEnterpriseAdmin) {
-      throw new ApiError(
-        "org.creation_disabled",
-        "Only enterprise admins can create organizations",
-      );
+    if (orgCreation === "super_admin" && !actor.isSuperAdmin) {
+      throw new ApiError("org.creation_disabled", "Only super admins can create organizations");
     }
     const name = checkName(input.name);
     const slug = input.slug ?? slugFromName(name);
@@ -159,7 +156,7 @@ export class OrgsService {
     return rows.map((r) => ({ ...toOrg(r), role: r.role }));
   }
 
-  /** 全部（未软删除的）组织及成员数（企业管理员用）。 */
+  /** 全部（未软删除的）组织及成员数（超级管理员用）。 */
   async listAll(): Promise<(Org & { memberCount: number })[]> {
     const rows = await this.db
       .selectFrom("orgs")
@@ -263,7 +260,7 @@ export class OrgsService {
       { accountId: actor.id, ...(actorTokenId !== undefined && { tokenId: actorTokenId }) },
       "org_deleted",
     );
-    // pending catalog requests (including those passed to enterprise admins) are cancelled too
+    // pending catalog requests (including those passed to super admins) are cancelled too
     await cancelPendingRequests(
       this.db.db,
       { orgId },

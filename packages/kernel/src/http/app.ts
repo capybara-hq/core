@@ -7,7 +7,7 @@ import type { Route } from "../ctx/create-ctx.js";
 import { ApiError, errorBody } from "../errors.js";
 import { AccountsService } from "../identity/accounts.js";
 import { ApiTokenService } from "../identity/api-tokens.js";
-import { type AuthServices, authorizeEnterpriseAdmin } from "../identity/auth.guard.js";
+import { type AuthServices, authorizeSuperAdmin } from "../identity/auth.guard.js";
 import { SessionService } from "../identity/sessions.js";
 import { withLogContext } from "../log-context.js";
 import { redactPath } from "./error.filter.js";
@@ -58,7 +58,7 @@ export interface CreateHttpAppOptions {
   replicaId?: string | undefined;
   /**
    * The size limit for package uploads ({@link PACKAGE_UPLOAD_ROUTES}: extension packages and
-   * enterprise catalog packages, `application/octet-stream`), i.e. `packages.maxBytes`. The route
+   * platform catalog packages, `application/octet-stream`), i.e. `packages.maxBytes`. The route
    * bodyLimit is one byte more: a package exactly one byte over reaches the handler and returns
    * `extension.package_too_large`; larger ones are refused by Fastify itself (413
    * `payload_too_large`).
@@ -72,7 +72,7 @@ export const EXTENSION_PACKAGE_UPLOAD_ROUTE = "/api/v1/admin/extensions/packages
 export const CATALOG_UPLOAD_ROUTE = "/api/v1/admin/catalog/import/file";
 /**
  * The upload routes that take raw bytes (`application/octet-stream`, limit `packages.maxBytes`,
- * the enterprise admin is authenticated before the body is read).
+ * the super admin is authenticated before the body is read).
  */
 export const PACKAGE_UPLOAD_ROUTES: ReadonlySet<string> = new Set([
   EXTENSION_PACKAGE_UPLOAD_ROUTE,
@@ -156,7 +156,7 @@ export async function createHttpApp(
       r.bodyLimit = opts.packageMaxBytes + 1;
     }
   });
-  // 读请求体之前：包上传（插件包、企业目录包）先认证（未认证 / 非企业管理员的大请求体不读进内存）；其余内核路由不收
+  // 读请求体之前：包上传（插件包、平台目录包）先认证（未认证 / 非超级管理员的大请求体不读进内存）；其余内核路由不收
   // application/octet-stream（415）。插件路由 /plugins/* 在自己的作用域里收任何类型，不受影响
   let authServices: AuthServices | undefined;
   const services = (): AuthServices => {
@@ -178,7 +178,7 @@ export async function createHttpApp(
     if (!req.url.startsWith("/api/")) return;
     if (req.method === "POST" && PACKAGE_UPLOAD_ROUTES.has(req.routeOptions.url ?? "")) {
       try {
-        await authorizeEnterpriseAdmin(req, services());
+        await authorizeSuperAdmin(req, services());
       } catch (e) {
         return sendError(reply, e, req.method, req.url);
       }

@@ -3,10 +3,10 @@ import type { FastifyReply } from "fastify";
 import { z } from "zod";
 import {
   CurrentPrincipal,
-  EnterpriseAdmin,
   type Principal,
   patTokenId,
   requireUser,
+  SuperAdmin,
 } from "../identity/principal.js";
 import { createZodDto } from "../infra/validation/create-zod-dto.js";
 import { ZBody, ZQuery } from "../infra/validation/zod-params.js";
@@ -135,10 +135,10 @@ class OrgPluginUpgradePreviewBody extends createZodDto(
 ) {}
 
 /**
- * The enterprise catalog from an organization's view (`/api/v1/orgs/:orgId/...`, human users only):
+ * The platform catalog from an organization's view (`/api/v1/orgs/:orgId/...`, human users only):
  * - `GET catalog` (`catalog.read`, member and up; members do not see disabled items);
  * - `POST catalog/:itemId/requests` (`catalog.request`; `access` needs an org admin): requests
- *   under plugin scope (spec §5.1), `enable` into the org admins' inbox, `access` to the enterprise
+ *   under plugin scope (spec §5.1), `enable` into the org admins' inbox, `access` to the super
  *   admin; `POST marketplace-requests` (org admins): an `import` request for a marketplace entry;
  * - `PUT catalog/:itemId/switch` (scope phase 1): `{ enabled: true, inputs? }` installs -> 200 `{ item }`;
  *   `{ enabled: false, confirm? }` -> 200 `{ preview, confirm }`, then with the hash 200 `{ item }`;
@@ -391,12 +391,12 @@ export class OrgCatalogController {
 }
 
 /**
- * Enterprise admins decide `access` and `import` requests (`/api/v1/admin/catalog/requests`):
+ * Super admins decide `access` and `import` requests (`/api/v1/admin/catalog/requests`):
  * approving an `import` returns the prepared import (`import: { stagingId, review, ... }`), confirmed
  * with `POST /api/v1/admin/catalog/imports/:stagingId/confirm`.
  */
 @Controller("api/v1/admin/catalog/requests")
-@EnterpriseAdmin()
+@SuperAdmin()
 export class AdminCatalogRequestsController {
   constructor(@Inject(CatalogRequestsService) private readonly requests: CatalogRequestsService) {}
 

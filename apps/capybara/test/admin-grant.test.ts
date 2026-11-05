@@ -35,7 +35,7 @@ beforeAll(async () => {
     login: "root",
     password: PW,
     displayName: "Root",
-    enterpriseAdmin: true,
+    superAdmin: true,
   });
   await accounts.createLocal({ login: "alice", password: PW, displayName: "Alice" });
 }, 120_000);
@@ -84,11 +84,11 @@ const isAdmin = async (login: string) => {
   const row = await kernelDb(raw)
     .selectFrom("identities")
     .innerJoin("accounts", "accounts.id", "identities.account_id")
-    .select("accounts.is_enterprise_admin")
+    .select("accounts.is_super_admin")
     .where("identities.source", "=", "local")
     .where("identities.external_id", "=", login)
     .executeTakeFirstOrThrow();
-  return row.is_enterprise_admin;
+  return row.is_super_admin;
 };
 
 const cliAudits = () =>
@@ -110,15 +110,15 @@ describe("capybara admin grant / revoke", () => {
     expect(r.code, r.stderr).toBe(0);
     expect(await isAdmin("alice")).toBe(false);
     expect((await cliAudits()).map((e) => [e.actor_account_id, e.detail])).toEqual([
-      [null, { isEnterpriseAdmin: true, via: "cli" }],
-      [null, { isEnterpriseAdmin: false, via: "cli" }],
+      [null, { isSuperAdmin: true, via: "cli" }],
+      [null, { isSuperAdmin: false, via: "cli" }],
     ]);
   }, 60_000);
 
-  it("撤销最后一个企业管理员 → 退出码 1，stderr 含 account.last_enterprise_admin，库不变", async () => {
+  it("撤销最后一个企业管理员 → 退出码 1，stderr 含 account.last_super_admin，库不变", async () => {
     const r = await run(["admin", "revoke", "root"]);
     expect(r.code).toBe(1);
-    expect(r.stderr).toContain("account.last_enterprise_admin");
+    expect(r.stderr).toContain("account.last_super_admin");
     expect(await isAdmin("root")).toBe(true);
   }, 60_000);
 

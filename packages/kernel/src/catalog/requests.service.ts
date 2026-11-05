@@ -5,8 +5,8 @@ import { sql } from "kysely";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
-import { EnterpriseAdminLock } from "../identity/enterprise-admin.js";
 import { readOrgMarketplaceBrowse } from "../identity/settings.js";
+import { SuperAdminLock } from "../identity/super-admin.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
@@ -28,7 +28,7 @@ export type CatalogRequestStatus = "pending" | "approved" | "rejected" | "cancel
 
 /**
  * A catalog request (spec §5.1): the inbox's `catalog_request` (pending `enable` requests, for the
- * org admins) and `catalog_request_decided` (the requester's decided requests), and the enterprise
+ * org admins) and `catalog_request_decided` (the requester's decided requests), and the super
  * admin's list (`access` and `import`). `item` is null for an `import` request until its confirm
  * writes the item; `entry` is the marketplace entry of an `import` request.
  */
@@ -70,7 +70,7 @@ const itemNotFound = () => new ApiError("catalog.item_not_found", "Catalog item 
 const itemDisabled = () =>
   new ApiError(
     "catalog.item_disabled",
-    "This catalog item is disabled by the enterprise admin and cannot be requested",
+    "This catalog item is disabled by the super admin and cannot be requested",
   );
 const alreadyDecided = () =>
   new ApiError("catalog.request_decided", "This request has already been decided");
@@ -84,7 +84,7 @@ const pendingExists = () =>
 const isUniqueViolation = (e: unknown) =>
   typeof e === "object" && e !== null && (e as { code?: unknown }).code === "23505";
 
-/** The deployment-level kinds (decided by the enterprise admin). */
+/** The deployment-level kinds (decided by the super admin). */
 const DEPLOYMENT_KINDS = ["access", "import"] as const;
 
 /**
@@ -92,12 +92,12 @@ const DEPLOYMENT_KINDS = ["access", "import"] as const;
  * kind, item or entry) (partial unique indexes; org-side writes run inside the org row lock):
  * - `enable`: a member asks the org admins to switch on an item that is off in the org (an
  *   `optional` item); an org admin approving it switches the item on, as that admin;
- * - `access`: an org admin asks the enterprise admin for a `named` item shown to orgs outside its
+ * - `access`: an org admin asks the super admin for a `named` item shown to orgs outside its
  *   list; approving adds the org to the list (`CatalogScopeService.addOrg`), the scope sync then
  *   installs it;
  * - `import`: an org admin asks for a marketplace entry not in the catalog (deployment setting
  *   `orgMarketplaceBrowse`); approving prepares the import and returns its staging, the request
- *   resolves when the enterprise admin confirms it (scope default `named` = the requesting org).
+ *   resolves when the super admin confirms it (scope default `named` = the requesting org).
  * A rejection stores an optional reason. Decided requests show in the requester's inbox until
  * dismissed. No in-process state.
  */
@@ -105,9 +105,9 @@ const DEPLOYMENT_KINDS = ["access", "import"] as const;
 export class CatalogRequestsService {
   constructor(
     @Inject(KernelDb) private readonly kdb: KernelDb,
-    /** The org row and enterprise admin locks: both join the caller's transaction. */
+    /** The org row and super admin locks: both join the caller's transaction. */
     @Inject(OrgLock) private readonly orgLock: OrgLock,
-    @Inject(EnterpriseAdminLock) private readonly adminLock: EnterpriseAdminLock,
+    @Inject(SuperAdminLock) private readonly adminLock: SuperAdminLock,
     @Inject(OrgCatalogService) private readonly orgCatalog: OrgCatalogService,
     @Inject(CatalogScopeService) private readonly scope: CatalogScopeService,
     @Inject(CatalogService) private readonly catalog: CatalogService,
@@ -363,7 +363,7 @@ export class CatalogRequestsService {
   }
 
   /**
-   * An enterprise admin decides an `access` or `import` request (re-checked inside the enterprise
+   * A super admin decides an `access` or `import` request (re-checked inside the super
    * admin lock; the request row FOR UPDATE). Missing or an `enable` request ->
    * `catalog.request_not_found`; decided -> `catalog.request_decided`. Approving `access`: the item
    * deleted or disabled -> `catalog.item_disabled`, the org deleted -> not found; otherwise the org
@@ -448,7 +448,7 @@ export class CatalogRequestsService {
     return { request: await this.view(requestId), import: prepared };
   }
 
-  /** A pending `access` / `import` request (the row locked; the enterprise admin re-checked). */
+  /** A pending `access` / `import` request (the row locked; the super admin re-checked). */
   @Transactional()
   private async pendingDeploymentRequest(actor: string, requestId: string) {
     await this.adminLock.lockAndAuthorize(actor);
@@ -497,7 +497,7 @@ export class CatalogRequestsService {
 
   /**
    * Writes a decision (the request row FOR UPDATE): org side (`orgId`: the org admin re-checked,
-   * `enable` only) or deployment side (the enterprise admin re-checked, `access` / `import`). An
+   * `enable` only) or deployment side (the super admin re-checked, `access` / `import`). An
    * approval of an `enable` request may find it approved already by the install it triggered.
    */
   @Transactional()
@@ -591,7 +591,7 @@ export class CatalogRequestsService {
     if (r.numUpdatedRows === 0n) throw requestNotFound();
   }
 
-  /** 企业管理员的申请列表（`access` / `import`；`status` 缺省 pending），新的在前。 */
+  /** 超级管理员的申请列表（`access` / `import`；`status` 缺省 pending），新的在前。 */
   async listDeployment(q: { status?: CatalogRequestStatus } = {}): Promise<CatalogRequestView[]> {
     const rows = await this.baseQuery()
       .where("r.kind", "in", [...DEPLOYMENT_KINDS])
@@ -604,7 +604,7 @@ export class CatalogRequestsService {
     return rows.map(toView);
   }
 
-  /** 待企业管理员处理的申请数（后台概览）。 */
+  /** 待超级管理员处理的申请数（后台概览）。 */
   async countPendingDeployment(): Promise<number> {
     const r = await this.db
       .selectFrom("catalog_requests as r")

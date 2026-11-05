@@ -45,7 +45,7 @@ import { SKILL_MD } from "../skills/zip.js";
 import { bundlePlugin, mcpTemplate, SVG_ICON, skillPlugin, templatePlugin } from "./packages.js";
 
 /**
- * M6 segment 3 acceptance (dual replica, enterprise catalog): two kernel replicas in separate
+ * M6 segment 3 acceptance (dual replica, platform catalog): two kernel replicas in separate
  * processes (api / worker) share PG / Redis / the plugin directory, with
  * `extensionPermissions.autoApprove: false`; the core fakes of `@capybara-hq/testing` stand in for
  * official plugins: bootstrap fake-object-store (SeaweedFS), config-declared model-fake and
@@ -70,7 +70,7 @@ import { bundlePlugin, mcpTemplate, SVG_ICON, skillPlugin, templatePlugin } from
  * 3. Uninstall: the connector is referenced by an agent -> `kept` lists it (used_by_agents), the
  *    extension and the skill are removed, the agent still runs (dependency components arrive with Task 5);
  * 4. Policy and requests: the template item is needs_approval, a member request -> org admin
- *    approval (moved up) -> install possible only after enterprise admin approval; a member requests
+ *    approval (moved up) -> install possible only after super admin approval; a member requests
  *    a skill, installed after approval; with `customConnectors: deny` a custom connector gets 403;
  * 5. Private agent with `writePolicy: "ask"`: `SkillWrite` creates an approval that takes effect
  *    once approved;
@@ -159,7 +159,7 @@ const npmEntry = (
   source: { npm: { package: pkg, version, integrity: sri(tgz) } },
 });
 
-describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, () => {
+describe("M6 第三段双副本验收（平台目录）", { timeout: 240_000 }, () => {
   let pgc: TestContainer;
   let rdc: TestContainer;
   let s3: TestS3;
@@ -340,7 +340,7 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
         login: "root",
         password: PW,
         displayName: "Root",
-        enterpriseAdmin: true,
+        superAdmin: true,
       })
     ).id;
     ids.boss = (
@@ -536,7 +536,7 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
     await waitFor(
       async () => (await entriesOnA()).includes("fake-tools-ui"),
       30_000,
-      "a refresh on B updated the enterprise catalog",
+      "a refresh on B updated the platform catalog",
       200,
     );
     expect(acme.requests.length).toBeGreaterThan(before);

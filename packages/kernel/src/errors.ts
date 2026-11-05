@@ -14,7 +14,7 @@ export const ERROR_CODES = {
   rate_limited: 429,
   "account.login_taken": 409,
   "account.not_found": 404,
-  "account.last_enterprise_admin": 409,
+  "account.last_super_admin": 409,
   "auth.account_disabled": 403,
   "auth.required": 401,
   "auth.token_expired": 401,

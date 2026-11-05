@@ -1135,13 +1135,13 @@ export class PluginUpgrader {
     if (install.deleted_at !== null) {
       throw new ApiError(
         "catalog.item_not_found",
-        "This plugin is no longer in the enterprise catalog",
+        "This plugin is no longer in the platform catalog",
       );
     }
     if (install.disabled) {
       throw new ApiError(
         "catalog.item_disabled",
-        "This catalog item is disabled by the enterprise admin and cannot be upgraded",
+        "This catalog item is disabled by the super admin and cannot be upgraded",
       );
     }
     const versions = await db
@@ -1162,7 +1162,7 @@ export class PluginUpgrader {
     if (!fromRow) {
       throw new ApiError(
         "catalog.item_not_found",
-        `The installed version ${install.version} is no longer in the enterprise catalog`,
+        `The installed version ${install.version} is no longer in the platform catalog`,
       );
     }
     if (!toRow)
@@ -1184,7 +1184,7 @@ export class PluginUpgrader {
       if (allowed?.version !== to.version) {
         throw targetInvalid(
           deployed === undefined
-            ? `The deployment does not run the extension of plugin ${name}; ask the enterprise admin to install it first`
+            ? `The deployment does not run the extension of plugin ${name}; ask the super admin to install it first`
             : `The deployment runs the extension of plugin ${name} at version ${deployed.version}; this organization can upgrade only to ${allowed ? `catalog version ${allowed.version}` : "a catalog version carrying that extension, and none is imported"}`,
           [
             {

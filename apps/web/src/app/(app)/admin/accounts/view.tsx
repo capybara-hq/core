@@ -165,7 +165,7 @@ function Accounts({
           isDisabled={(a) => a.status === "disabled"}
           rowMenu={(a) => {
             // The kernel refuses to revoke or disable the last active enterprise admin
-            // (account.last_enterprise_admin): with the whole list loaded the page knows it and
+            // (account.last_super_admin): with the whole list loaded the page knows it and
             // offers neither, so the row has no menu; a partial list leaves it to the kernel.
             const activeAdmins = rows.filter((r) => r.isEnterpriseAdmin && r.status === "active");
             const last =

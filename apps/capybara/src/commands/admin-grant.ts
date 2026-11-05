@@ -20,8 +20,8 @@ export interface AdminGrantIo {
 
 /**
  * `capybara admin grant|revoke <login>`：授予或撤销本地账号的企业管理员。跑内核迁移（幂等）后，
- * 在企业管理员锁的事务里改 `is_enterprise_admin` 并写审计 `account.updated`（无发起账号，`via: "cli"`）；
- * 撤销最后一个活跃企业管理员 → `account.last_enterprise_admin`。只连 PG，不连 Redis
+ * 在企业管理员锁的事务里改 `is_super_admin` 并写审计 `account.updated`（无发起账号，`via: "cli"`）；
+ * 撤销最后一个活跃企业管理员 → `account.last_super_admin`。只连 PG，不连 Redis
  * （鉴权每次请求实时读账号，各副本无需通知）。
  * 退出码：0 成功（含已是目标状态）/ 1 失败（账号不存在、最后一个企业管理员等；用法错误的 2 由 parseCli 负责）。
  */
@@ -47,7 +47,7 @@ export async function runAdminGrant(
     app = await openKernelCli(config, { logger: log, modules: [AccountsModule], redis: false });
     const { account, changed } = await app
       .get(AccountsService)
-      .setEnterpriseAdminByLogin(opts.login, opts.grant);
+      .setSuperAdminByLogin(opts.login, opts.grant);
     const state = opts.grant ? "is now an enterprise admin" : "is no longer an enterprise admin";
     const already = opts.grant ? "is already an enterprise admin" : "is not an enterprise admin";
     io.stdout.write(`${opts.login} ${changed ? state : already}\n`);

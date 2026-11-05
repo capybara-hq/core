@@ -77,14 +77,14 @@ describe("capybara admin create", () => {
       const row = await kernelDb(raw)
         .selectFrom("identities")
         .innerJoin("accounts", "accounts.id", "identities.account_id")
-        .select(["accounts.display_name", "accounts.email", "accounts.is_enterprise_admin"])
+        .select(["accounts.display_name", "accounts.email", "accounts.is_super_admin"])
         .where("identities.source", "=", "local")
         .where("identities.external_id", "=", "admin")
         .executeTakeFirst();
       expect(row).toEqual({
         display_name: "The Admin",
         email: "a@x.io",
-        is_enterprise_admin: true,
+        is_super_admin: true,
       });
     } finally {
       await raw.destroy();

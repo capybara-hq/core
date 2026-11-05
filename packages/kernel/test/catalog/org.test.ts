@@ -720,7 +720,7 @@ describe("自建开关与权限", { timeout: 60_000 }, () => {
     expect(allowed.statusCode, allowed.body).toBe(201);
   });
 
-  it("成员不能安装（锁内按种类复核）；访客不能浏览；企业管理员看到安装数", async () => {
+  it("成员不能安装（锁内按种类复核）；访客不能浏览；超级管理员看到安装数", async () => {
     const itemId = await importSkill(env);
     const r = await install(env.mem, env, itemId);
     expect(r.statusCode).toBe(403);

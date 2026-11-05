@@ -125,7 +125,7 @@ describe("初始化向导（配置了 auth.setupToken）", () => {
     expect(setCookies(ok).length).toBeGreaterThan(0);
   });
 
-  it("缺 / 错 token → 403 setup.token_invalid 且仍需初始化；正确 token → 201 带会话 Cookie，/me 为企业管理员", async () => {
+  it("缺 / 错 token → 403 setup.token_invalid 且仍需初始化；正确 token → 201 带会话 Cookie，/me 为超级管理员", async () => {
     const anon = asUser(k.http, cookieJar());
     const status = await anon({ method: "GET", url: "/api/v1/setup" });
     expect(status.statusCode).toBe(200);
@@ -156,7 +156,7 @@ describe("初始化向导（配置了 auth.setupToken）", () => {
     });
     expect(ok.statusCode).toBe(201);
     const body = ok.json() as { account: Account; org?: { name: string } };
-    expect(body.account.isEnterpriseAdmin).toBe(true);
+    expect(body.account.isSuperAdmin).toBe(true);
     expect(body.org?.name).toBe("Acme");
     expect(setCookies(ok).map((c) => c.name)).toEqual(expect.arrayContaining(["cap_at", "cap_rt"]));
     const me = await req({ method: "GET", url: "/api/v1/me" });
@@ -166,7 +166,7 @@ describe("初始化向导（配置了 auth.setupToken）", () => {
       memberships: { orgId: string; role: string }[];
       currentOrgId: string | null;
     };
-    expect(meBody.account.isEnterpriseAdmin).toBe(true);
+    expect(meBody.account.isSuperAdmin).toBe(true);
     expect(meBody.memberships.map((m) => m.role)).toEqual(["owner"]);
     // the org named at setup is the session's current org at once
     expect(meBody.currentOrgId).toBe(meBody.memberships[0]?.orgId);
@@ -250,7 +250,7 @@ describe("初始化向导（配置了 auth.setupToken）", () => {
   }, 20_000);
 });
 
-describe("企业管理员端点", () => {
+describe("超级管理员端点", () => {
   let admin: Account;
   let user: Account;
 
@@ -259,7 +259,7 @@ describe("企业管理员端点", () => {
       login: "admin",
       password: PW,
       displayName: "Admin",
-      enterpriseAdmin: true,
+      superAdmin: true,
     });
     user = await accounts.createLocal({ login: "user", password: PW, displayName: "User" });
   });
@@ -284,7 +284,7 @@ describe("企业管理员端点", () => {
     }
   });
 
-  it("service 令牌访问 /admin/* → 403；企业管理员的 PAT 可以访问", async () => {
+  it("service 令牌访问 /admin/* → 403；超级管理员的 PAT 可以访问", async () => {
     const org = await orgs.create({ name: "Svc Org" }, admin);
     const { token } = await tokens.createService(org.id, {
       name: "svc",
@@ -319,12 +319,12 @@ describe("企业管理员端点", () => {
         password: PW,
         displayName: "Carol",
         email: "carol@example.com",
-        enterpriseAdmin: true,
+        superAdmin: true,
       },
     });
     expect(created.statusCode).toBe(201);
     const carol = (created.json() as { account: Account }).account;
-    expect(carol.isEnterpriseAdmin).toBe(true);
+    expect(carol.isSuperAdmin).toBe(true);
     expect(carol.email).toBe("carol@example.com");
     const dup = await req({
       method: "POST",
@@ -484,15 +484,15 @@ describe("企业管理员端点", () => {
     expect(errCode(viaCookie)).toBe("auth.session_revoked");
   });
 
-  it("把唯一企业管理员降级 → 409 account.last_enterprise_admin", async () => {
+  it("把唯一超级管理员降级 → 409 account.last_super_admin", async () => {
     const req = await session("admin");
     const res = await req({
       method: "PATCH",
       url: `/api/v1/admin/accounts/${admin.id}`,
-      payload: { isEnterpriseAdmin: false },
+      payload: { isSuperAdmin: false },
     });
     expect(res.statusCode).toBe(409);
-    expect(errCode(res)).toBe("account.last_enterprise_admin");
+    expect(errCode(res)).toBe("account.last_super_admin");
     const missing = await req({
       method: "PATCH",
       url: "/api/v1/admin/accounts/00000000-0000-0000-0000-000000000000",
@@ -502,7 +502,7 @@ describe("企业管理员端点", () => {
     expect(errCode(missing)).toBe("account.not_found");
   });
 
-  it("PUT /admin/settings { orgCreation: enterprise_admin } 后普通用户 POST /orgs → 403 org.creation_disabled", async () => {
+  it("PUT /admin/settings { orgCreation: super_admin } 后普通用户 POST /orgs → 403 org.creation_disabled", async () => {
     const adminReq = await session("admin");
     const userReq = await session("user");
     const canCreate = async (req: typeof userReq) =>
@@ -522,11 +522,11 @@ describe("企业管理员端点", () => {
     const put = await adminReq({
       method: "PUT",
       url: "/api/v1/admin/settings",
-      payload: { orgCreation: "enterprise_admin" },
+      payload: { orgCreation: "super_admin" },
     });
     expect(put.statusCode).toBe(200);
     expect(put.json()).toEqual({
-      orgCreation: "enterprise_admin",
+      orgCreation: "super_admin",
       runConcurrencyOverrides: {},
       priceCurrency: "USD",
       sandboxLimitOverrides: {},

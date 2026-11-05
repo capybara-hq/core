@@ -46,7 +46,7 @@ import {
 } from "../extensions/permission-view.js";
 import { ExtensionRegistry } from "../extensions/registry.js";
 import { audit } from "../identity/audit.js";
-import { EnterpriseAdminLock } from "../identity/enterprise-admin.js";
+import { SuperAdminLock } from "../identity/super-admin.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
@@ -106,7 +106,7 @@ import { addScopeOrg } from "./scope-orgs.js";
 import { maxSatisfying, satisfiesRange } from "./versions.js";
 
 /**
- * Enterprise import of a plugin (package ecosystem spec §4.3): one review for every plugin, whatever
+ * Platform import of a plugin (package ecosystem spec §4.3): one review for every plugin, whatever
  * it contains (an extension, skills, connector templates, dependencies), confirmed once.
  *
  * prepare: the tgz is always hostile input, and **nothing is written until every check passes**
@@ -116,7 +116,7 @@ import { maxSatisfying, satisfiesRange } from "./versions.js";
  * refused; name ownership; a downgrade to a version with unrun migrations is refused), each skill by
  * the skill package rules, each connector template against the connector loaded on this replica (or
  * statically when the connector is provided by the plugin's own extension or by a dependency), the
- * catalog name / version conflicts and the actor still an enterprise admin. Dependencies are only
+ * catalog name / version conflicts and the actor still a super admin. Dependencies are only
  * resolved against the imported catalog versions for the review (an unresolved one does not block
  * the import, spec §4.1); they are never fetched. Only then is the extension handed to
  * `ExtensionInstalls.ingest` (source `catalog`), the skill / template / icon files written to object
@@ -241,7 +241,7 @@ const LICENSE_FILES = ["LICENSE", "LICENSE.md", "LICENSE.txt", "LICENCE"] as con
 /** The largest license text stored (bytes); a longer one is omitted (`licenseTruncated`). */
 export const LICENSE_TEXT_MAX_BYTES = 65536;
 
-/** The one review of a plugin (the enterprise admin sees every component before confirming). */
+/** The one review of a plugin (the super admin sees every component before confirming). */
 export interface PluginReview {
   name: string;
   /** `claude-code`: translated from a Claude Code plugin (no extension; see `translation`). */
@@ -463,8 +463,8 @@ export class PluginImport {
 
   constructor(
     @Inject(KernelDb) private readonly kdb: KernelDb,
-    /** The enterprise admin lock (identity/enterprise-admin.ts): joins the caller's transaction. */
-    @Inject(EnterpriseAdminLock) private readonly adminLock: EnterpriseAdminLock,
+    /** The super admin lock (identity/super-admin.ts): joins the caller's transaction. */
+    @Inject(SuperAdminLock) private readonly adminLock: SuperAdminLock,
     @Inject(PluginInstallLock) private readonly installLock: PluginInstallLock,
     @Inject(PluginApproveLock) private readonly approveLock: PluginApproveLock,
     @Inject(CatalogItemLock) private readonly itemLock: CatalogItemLock,
@@ -499,7 +499,7 @@ export class PluginImport {
   }
 
   /**
-   * The enterprise-admin re-check under the lock, in the caller's transaction. `actor` null is the
+   * The super-admin re-check under the lock, in the caller's transaction. `actor` null is the
    * CLI (the operator of the deployment: no account to re-check, audits carry no actor), like
    * `ExtensionInstalls.ingest`.
    */
@@ -762,7 +762,7 @@ export class PluginImport {
       reviewHash: "",
     };
     review.reviewHash = pluginReviewHash(review, content.files);
-    // Re-check under the lock that the actor is still an enterprise admin before writing
+    // Re-check under the lock that the actor is still a super admin before writing
     await this.authorize(actor);
 
     // 2. Write: the extension into the package store, files into object storage, the staging row
@@ -931,7 +931,7 @@ export class PluginImport {
       /**
        * Enable the extension after installing it (default true). false keeps the install record's
        * desired state (a new install stays disabled), for the bootstrap step's upgrades of a
-       * plugin an enterprise admin may have disabled.
+       * plugin a super admin may have disabled.
        */
       enable?: boolean;
       /** The new item's scope (default `optional`). */

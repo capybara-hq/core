@@ -134,7 +134,7 @@ export interface CreateConnectorInput {
   auth: ConnectorAuth;
   credential?: unknown;
   /**
-   * Install from an enterprise catalog connector template (T26, filled in by the catalog service,
+   * Install from a platform catalog connector template (T26, filled in by the catalog service,
    * not accepted over HTTP): the connector records its source item and version, the item policy is
    * re-checked in the transaction (a template inside an app passes the app item); once the tool
    * snapshot exists, `defaultToolPolicies` set the default policies (`policy_source 'template'`).

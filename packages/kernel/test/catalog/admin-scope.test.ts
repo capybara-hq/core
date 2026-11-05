@@ -16,7 +16,7 @@ import {
 import { skillPlugin } from "./packages.js";
 
 /**
- * The enterprise admin's plugin scope and disable (plugin and component management spec §5 rules
+ * The super admin's plugin scope and disable (plugin and component management spec §5 rules
  * 2-4 and 8): `POST items/:id/scope/preview` lists the orgs that lose the plugin and their agents
  * using it, `PUT items/:id/scope` and `PUT items/:id/disabled` check the preview's `scopeHash`, bump
  * the scope version, audit `catalog.scope_changed` and let the scope sync converge the orgs.

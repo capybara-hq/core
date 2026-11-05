@@ -82,7 +82,7 @@ export interface OrgExtensionInput {
 /** `put` 的内部选项（不来自 HTTP）。 */
 export interface OrgExtensionPutOptions {
   /**
-   * Enable through this enterprise catalog item (the extension's own item, or an app item: plugins
+   * Enable through this platform catalog item (the extension's own item, or an app item: plugins
    * in an app follow the app item's policy, C22). When omitted, judged by every source item in
    * `extension_catalog_sources` (the strictest wins); an extension not installed through the catalog
    * is not bound by catalog policy.
@@ -373,7 +373,7 @@ export class OrgExtensionConfigs {
     }
     // A required plugin is enabled whatever the row said (it may predate `required`)
     const enabled = required || (input.enabled ?? row?.enabled ?? false);
-    // 新启用来自企业目录的插件：按条目策略与授予复核（C22；已启用的不受影响）
+    // 新启用来自平台目录的插件：按条目策略与授予复核（C22；已启用的不受影响）
     if (input.enabled === true && row?.enabled !== true && !required) {
       // 插件自己的条目 disabled 是总开关，任何途径都不能新启用（裁决 M-5）
       const killed = await disabledPluginItems(t, [plugin]);

@@ -3,7 +3,7 @@ import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
-import { EnterpriseAdminLock } from "../identity/enterprise-admin.js";
+import { SuperAdminLock } from "../identity/super-admin.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
@@ -94,7 +94,7 @@ function assertReadable(s: Subject): void {
 }
 
 /**
- * 部署级插件后台（企业管理员）：列表 / 详情与网页批准权限（D8）。无状态，多副本共用；
+ * 部署级插件后台（超级管理员）：列表 / 详情与网页批准权限（D8）。无状态，多副本共用；
  * 状态由 PG（安装记录、快照、各副本状态行）与本副本宿主（配置声明插件的清单）推出。
  */
 @Injectable()
@@ -107,8 +107,8 @@ export class ExtensionAdmin {
   constructor(
     @Inject(KernelDb) private readonly kdb: KernelDb,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
-    /** The enterprise admin lock (identity/enterprise-admin.ts): joins the transaction. */
-    @Inject(EnterpriseAdminLock) private readonly adminLock: EnterpriseAdminLock,
+    /** The super admin lock (identity/super-admin.ts): joins the transaction. */
+    @Inject(SuperAdminLock) private readonly adminLock: SuperAdminLock,
     @Inject(PluginApproveLock) private readonly approveLock: PluginApproveLock,
     @Inject(ExtensionBlobs) private readonly blobs: ExtensionBlobs,
     @Inject(ExtensionInstalls) private readonly installs: ExtensionInstalls,
@@ -166,7 +166,7 @@ export class ExtensionAdmin {
   }
 
   /**
-   * Web approval: re-checks the enterprise admin under the lock, compares the reviewed package
+   * Web approval: re-checks the super admin under the lock, compares the reviewed package
    * (`sha256`) and permission digest (`reviewHash`), writes the snapshot (source web) and the
    * `extension.permissions_approved` audit; after the commit publishes `kernel.plugins.changed` (a
    * failure only warns) and waits for one reconcile on this replica (other replicas converge through

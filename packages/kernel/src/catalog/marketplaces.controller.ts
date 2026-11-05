@@ -4,10 +4,10 @@ import { MARKETPLACE_MAX_MIRRORS } from "../config/schema.js";
 import { ApiError } from "../errors.js";
 import {
   CurrentPrincipal,
-  EnterpriseAdmin,
   type Principal,
   patTokenId,
   requireUser,
+  SuperAdmin,
 } from "../identity/principal.js";
 import { readOrgMarketplaceBrowse } from "../identity/settings.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
@@ -71,12 +71,12 @@ class MarketplaceImportBody extends createZodDto(ImportBody, "MarketplaceImportB
 class MarketplacePatchBody extends createZodDto(PatchBody, "MarketplacePatchBody") {}
 
 /**
- * Marketplaces (`/api/v1/admin/marketplaces/*`, enterprise admins): create, update, delete and
+ * Marketplaces (`/api/v1/admin/marketplaces/*`, super admins): create, update, delete and
  * refresh the official and enterprise marketplaces, browse entries, import from a marketplace.
- * Writes re-check the enterprise admin inside the service's lock and are audited.
+ * Writes re-check the super admin inside the service's lock and are audited.
  */
 @Controller("api/v1/admin/marketplaces")
-@EnterpriseAdmin()
+@SuperAdmin()
 export class MarketplacesController {
   constructor(
     @Inject(MarketplacesService) private readonly marketplaces: MarketplacesService,
