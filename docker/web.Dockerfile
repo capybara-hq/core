@@ -10,14 +10,15 @@
 # so the /api proxy hands the kernel the real client address. Run the kernel with
 # `http.trustProxy: 1` (CAPYBARA_HTTP__TRUST_PROXY=1) behind this tier.
 #
-# The image holds the Next build output (.next without its cache), server.mjs, src/lib/peer.ts and
-# src/lib/object-store-proxy.ts (imported by server.mjs through Node's type stripping), next.config.mjs (Next loads its config
-# again at runtime) and the web app's production dependencies. It does not contain the kernel.
+# The image holds the Next build output (.next without its cache), server.mjs, src/lib/peer.ts,
+# src/lib/object-store-proxy.ts and src/lib/keep-alive.ts (imported by server.mjs through Node's type
+# stripping), next.config.mjs (Next loads its config again at runtime) and the web app's production
+# dependencies. It does not contain the kernel.
 #
 # Runtime variables: PORT (default 3000), CAPYBARA_KERNEL_URL (default http://api:8080),
 # CAPYBARA_WEB_HOST (default 0.0.0.0), CAPYBARA_WEB_TRUST_PROXY (set it behind a TLS proxy / load
-# balancer), CAPYBARA_WEB_SHUTDOWN_GRACE_MS, CAPYBARA_WEB_MAX_BODY_BYTES,
-# CAPYBARA_WEB_MAX_PACKAGE_BYTES. See docs/config.md.
+# balancer), CAPYBARA_WEB_SHUTDOWN_GRACE_MS, CAPYBARA_WEB_KEEP_ALIVE_TIMEOUT_MS,
+# CAPYBARA_WEB_MAX_BODY_BYTES, CAPYBARA_WEB_MAX_PACKAGE_BYTES. See docs/config.md.
 # Run it with an init process (compose `init: true`) so signals reach node.
 
 # Pinned to an exact Node version plus the multi-arch index digest, so builds are reproducible
@@ -62,7 +63,7 @@ RUN --mount=type=cache,id=capybara-pnpm-store,target=/pnpm/store,sharing=locked 
     && rm -rf /out/node_modules/.tmp /out/node_modules/.pnpm/node_modules/@capybara-hq/web \
     && cd apps/web \
     && cp package.json server.mjs next.config.mjs /out/ \
-    && cp src/lib/peer.ts src/lib/object-store-proxy.ts /out/src/lib/ \
+    && cp src/lib/peer.ts src/lib/object-store-proxy.ts src/lib/keep-alive.ts /out/src/lib/ \
     && cp -R .next /out/.next \
     && if [ -d public ]; then cp -R public /out/public; fi \
     # Build cache, generated route types, traces and source maps are not needed to serve.
@@ -76,11 +77,12 @@ RUN --mount=type=cache,id=capybara-pnpm-store,target=/pnpm/store,sharing=locked 
     && rm -rf /out/node_modules/.pnpm/@next+swc-* /out/node_modules/.pnpm/@playwright+test@* \
               /out/node_modules/.pnpm/playwright@* /out/node_modules/.pnpm/playwright-core@* \
     && find /out/node_modules -xtype l -delete \
-    # Fail the build if the kernel or any TypeScript source other than the two server.mjs modules
+    # Fail the build if the kernel or any TypeScript source other than the three server.mjs modules
     # slipped in.
     && test ! -e /out/node_modules/@capybara-hq/kernel \
     && ! find /out -name "*.ts" ! -name "*.d.ts" ! -path "/out/src/lib/peer.ts" \
-         ! -path "/out/src/lib/object-store-proxy.ts" ! -path "/out/node_modules/*" | grep . \
+         ! -path "/out/src/lib/object-store-proxy.ts" ! -path "/out/src/lib/keep-alive.ts" \
+         ! -path "/out/node_modules/*" | grep . \
     && ! find /out/node_modules -path "*capybara-hq*" -name "*.ts" ! -name "*.d.ts" | grep .
 
 # ---- runtime ----
