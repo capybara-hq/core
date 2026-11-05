@@ -146,6 +146,7 @@ beforeAll(async () => {
     plugins: [
       entry("cat-a", pkgs["cat-a"] as Uint8Array, {
         permissions: { keys: ["permissions.secrets"], sensitive: ["permissions.secrets"] },
+        displayName: { zh: "甲目录", en: "Catalog A" },
       }),
       // archive sources: sha512 and sha256 SRI
       archiveEntry("cat-b", sri(pkgs["cat-b"] as Uint8Array)),
@@ -433,6 +434,16 @@ describe("企业清单：增删改与刷新", () => {
     });
     expect(byName.get("cat-b")).toMatchObject({ importable: true });
     expect(byName.get("cat-e")).toMatchObject({ compatible: false, importable: true });
+    // the entry's display name reaches the API (null without one) and is searchable
+    expect(byName.get("cat-a")).toMatchObject({ displayName: { zh: "甲目录", en: "Catalog A" } });
+    expect(byName.get("cat-b")).toMatchObject({ displayName: null });
+    for (const q of ["甲目录", "Catalog A"]) {
+      const found = await admin({
+        method: "GET",
+        url: `/api/v1/admin/marketplaces/entries?sourceId=${id}&q=${encodeURIComponent(q)}`,
+      });
+      expect(found.json().items.map((e: { name: string }) => e.name)).toEqual(["cat-a"]);
+    }
 
     const audits = await db
       .selectFrom("audit_events")

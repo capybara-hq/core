@@ -8,6 +8,7 @@ import {
   PLUGIN_MANIFEST_FILE,
   parseMarketplaceManifest,
   parsePluginManifest,
+  pluginDescription,
   SDK_VERSION,
   SEMVER_VERSION_RE,
 } from "@capybara-hq/plugin-sdk";
@@ -130,6 +131,8 @@ export interface MarketplaceEntryView {
   /** The entry's version (`version`, else the npm source's); null when it has none (the plugin's own). */
   version: string | null;
   summary: { en: string; zh?: string };
+  /** The entry's display name (copied from the plugin's `plugin.json`); null without one. */
+  displayName: { zh: string; en: string } | null;
   minKernel: string | null;
   homepage: string | null;
   permissions: { keys: string[]; sensitive: string[] } | null;
@@ -1176,9 +1179,14 @@ export class MarketplacesService {
             m.errors,
           );
         }
+        const d = pluginDescription(m.description);
         entry = {
           name: m.name,
-          summary: { en: m.description.slice(0, SUMMARY_MAX) },
+          summary: {
+            en: d.en.slice(0, SUMMARY_MAX),
+            ...(d.zh !== undefined && { zh: d.zh.slice(0, SUMMARY_MAX) }),
+          },
+          ...(m.displayName !== undefined && { displayName: m.displayName }),
           version: m.version,
           source: { path: "." },
         };
@@ -1348,6 +1356,8 @@ export class MarketplacesService {
           eb(sql<string>`coalesce(e.npm, '')`, "ilike", like),
           eb(sql<string>`e.entry->'summary'->>'en'`, "ilike", like),
           eb(sql<string>`coalesce(e.entry->'summary'->>'zh', '')`, "ilike", like),
+          eb(sql<string>`coalesce(e.entry->'displayName'->>'en', '')`, "ilike", like),
+          eb(sql<string>`coalesce(e.entry->'displayName'->>'zh', '')`, "ilike", like),
         ]),
       );
     }
@@ -1412,6 +1422,7 @@ export class MarketplacesService {
         name: r.name,
         version,
         summary: e.summary,
+        displayName: e.displayName ?? null,
         minKernel: e.minKernel ?? null,
         homepage: e.homepage ?? null,
         permissions: e.permissions ?? null,

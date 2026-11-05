@@ -18,6 +18,7 @@ let file: string;
 /** The packs of the two public plugins (name -> integrity), taken before any test runs. */
 const integrity = new Map<string, string>();
 
+const DECLARATIVE_EN = "Fixture: a plugin with skills and a connector template and no extension";
 const EMPTY = { schemaVersion: 1, name: "Test marketplace", owner: { name: "Test" }, plugins: [] };
 const writeManifest = (m: unknown) => writeFileSync(file, `${JSON.stringify(m, null, 2)}\n`);
 interface Manifest {
@@ -49,6 +50,16 @@ beforeAll(async () => {
     join(root, "node_modules/zod"),
   );
   copyPlugin(fixture("declarative"), "declarative", false);
+  // a localized description and a display name: the entry's summary and displayName come from them
+  const pj = join(root, "plugins/declarative/.capybara-plugin/plugin.json");
+  writeFileSync(
+    pj,
+    JSON.stringify({
+      ...(JSON.parse(readFileSync(pj, "utf8")) as object),
+      displayName: { zh: "声明式", en: "Declarative" },
+      description: { en: DECLARATIVE_EN, zh: "夹具：带技能和连接器模板、没有扩展的插件" },
+    }),
+  );
   copyPlugin(join(repo, "packages/testing/fixtures/extensions/fake-tools-ui"), "tools-ui", false);
   copyPlugin(fixture("declarative"), "example-private", true);
   mkdirSync(join(root, ".capybara-plugin"));
@@ -87,7 +98,7 @@ describe("capybara-plugin marketplace", () => {
     expect(readManifest()).toEqual(EMPTY);
   }, 60_000);
 
-  it("--write appends one npm entry per (name, version) with the pack's sha512 and permissions", async () => {
+  it("--write appends one npm entry per plugin with the pack's sha512, permissions, summary and displayName", async () => {
     const r = await sync(true);
     expect(r.findings).toEqual([]);
     const m = readManifest();
@@ -97,7 +108,8 @@ describe("capybara-plugin marketplace", () => {
       {
         name: "fixture-declarative",
         version: "0.1.0",
-        summary: { en: "Fixture: a plugin with skills and a connector template and no extension" },
+        summary: { en: DECLARATIVE_EN, zh: "夹具：带技能和连接器模板、没有扩展的插件" },
+        displayName: { zh: "声明式", en: "Declarative" },
         permissions: { keys: [], sensitive: [] },
         source: {
           npm: {
@@ -119,6 +131,11 @@ describe("capybara-plugin marketplace", () => {
         },
       }),
     ]);
+    // a plain string description is the English summary; no displayName in plugin.json, none here
+    expect(m.plugins[1]?.summary).toEqual({
+      en: "Test fake: an extension tool with a conversation view, a migration, a skill and a connector template",
+    });
+    expect(m.plugins[1]).not.toHaveProperty("displayName");
     const tools = m.plugins[1] as { permissions: { keys: string[]; sensitive: string[] } };
     expect(tools.permissions.keys).toContain("permissions.tools:write");
     expect(tools.permissions.sensitive).toEqual(["permissions.tools:write"]);
@@ -130,23 +147,42 @@ describe("capybara-plugin marketplace", () => {
     expect(readFileSync(file, "utf8")).toBe(before);
   }, 60_000);
 
-  it("keeps entries of versions no longer in the tree", async () => {
+  it("one entry per plugin: --write replaces an older version in place and drops extra versions", async () => {
     await sync(true);
     const m = readManifest();
-    const old = {
+    const at = (version: string) => ({
       ...(m.plugins[0] as object),
-      version: "0.0.9",
+      version,
       source: {
         npm: {
           package: "@capybara-hq/plugin-fixture-declarative",
-          version: "0.0.9",
+          version,
           integrity: `sha512-${"A".repeat(86)}==`,
         },
       },
-    };
-    writeManifest({ ...m, plugins: [old, ...m.plugins] });
+    });
+    // the version moved: the old entry is replaced where it stands; a plugin no longer in the tree
+    // keeps its entry
+    writeManifest({ ...m, plugins: [old2("gone"), at("0.0.9"), m.plugins[1]] });
+    const check = await sync(false);
+    expect(check.findings.map((f) => [f.rule, f.message.split(" ")[0]])).toEqual([
+      ["marketplace-missing", "fixture-declarative@0.1.0"],
+    ]);
+    expect(check.findings[0]?.message).toContain("0.0.9");
+    const r = await sync(true);
+    expect(r.findings).toEqual([]);
+    expect(r.added.map((e) => `${e.name}@${e.version}`)).toEqual(["fixture-declarative@0.1.0"]);
+    expect(r.removed).toEqual(["fixture-declarative@0.0.9"]);
+    expect(readManifest().plugins).toEqual([old2("gone"), m.plugins[0], m.plugins[1]]);
+
+    // several versions (the older form): the current one stays, the others go
+    writeManifest({ ...m, plugins: [at("0.0.8"), m.plugins[1], m.plugins[0], at("0.0.9")] });
+    expect((await sync(false)).findings.map((f) => f.rule)).toEqual(["marketplace-missing"]);
+    const w = await sync(true);
+    expect(w.added).toEqual([]);
+    expect(w.removed).toEqual(["fixture-declarative@0.0.8", "fixture-declarative@0.0.9"]);
+    expect(readManifest().plugins).toEqual([m.plugins[0], m.plugins[1]]);
     expect((await sync(false)).findings).toEqual([]);
-    expect(readManifest().plugins).toHaveLength(3);
   }, 60_000);
 
   it("an already listed version is not compared with the tree's pack (the publish gate owns it)", async () => {
@@ -169,7 +205,7 @@ describe("capybara-plugin marketplace", () => {
     ]);
   }, 60_000);
 
-  describe("--base: published entries are append-only", () => {
+  describe("--base: versions only increase, a published version keeps its integrity", () => {
     const git = (...args: string[]) =>
       execFileSync("git", args, { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
     let base: string;
@@ -201,29 +237,49 @@ describe("capybara-plugin marketplace", () => {
       },
     });
 
-    it("passes when entries are only appended", async () => {
+    it("passes when entries are added, reordered, edited in display fields or collapsed", async () => {
       const m = readManifest();
-      writeManifest({ ...m, plugins: [...m.plugins, old("later", "9.0.0")] });
+      writeManifest({ ...m, plugins: [m.plugins[1], m.plugins[0], old("later", "9.0.0")] });
       expect((await check()).findings).toEqual([]);
-    }, 60_000);
-
-    it("reports an edited, a removed and a reordered published entry", async () => {
-      const m = readManifest();
       const edited = structuredClone(m);
       (edited.plugins[0] as { summary: { en: string } }).summary.en = "changed";
       writeManifest(edited);
-      expect((await check()).findings.map((f) => [f.rule, f.message.split(" ")[0]])).toEqual([
-        ["marketplace-append-only", "fixture-declarative@0.1.0"],
+      expect((await check()).findings).toEqual([]);
+    }, 60_000);
+
+    it("marketplace-version-decrease: an entry's version may only increase", async () => {
+      const m = readManifest();
+      writeManifest({ ...m, plugins: [old("fixture-declarative", "0.0.1"), m.plugins[1]] });
+      const f = (await check()).findings.filter((x) => x.rule !== "marketplace-missing");
+      expect(f.map((x) => [x.rule, x.message.split(" ")[0]])).toEqual([
+        ["marketplace-version-decrease", "fixture-declarative@0.0.1"],
       ]);
-      writeManifest({ ...m, plugins: [m.plugins[1]] });
-      const removed = (await check()).findings.filter((f) => f.rule !== "marketplace-missing");
-      expect(removed.map((f) => f.rule)).toEqual([
-        "marketplace-append-only",
-        "marketplace-append-only",
+      expect(f[0]?.message).toContain("0.1.0");
+    }, 60_000);
+
+    it("marketplace-integrity: a version published at the base keeps its integrity", async () => {
+      const m = readManifest();
+      const changed = structuredClone(m);
+      (changed.plugins[0] as { source: { npm: { integrity: string } } }).source.npm.integrity =
+        `sha512-${"B".repeat(86)}==`;
+      writeManifest(changed);
+      const f = (await check()).findings;
+      expect(f.map((x) => [x.rule, x.message.split(" ")[0]])).toEqual([
+        ["marketplace-integrity", "fixture-declarative@0.1.0"],
       ]);
-      expect(removed[0]?.message).toContain("fixture-declarative@0.1.0");
-      writeManifest({ ...m, plugins: [m.plugins[1], m.plugins[0]] });
-      expect((await check()).findings.map((f) => f.rule)).toContain("marketplace-append-only");
+      expect(f[0]?.message).toContain(integrity.get("fixture-declarative"));
+    }, 60_000);
+
+    it("a base in the older form (several versions) collapses to one entry without findings", async () => {
+      const m = readManifest();
+      writeManifest({ ...m, plugins: [old("fixture-declarative", "0.0.9"), ...m.plugins] });
+      git("add", "-A");
+      git("commit", "-q", "-m", "several versions");
+      base = git("rev-parse", "HEAD").trim();
+      expect((await check()).findings.map((f) => f.rule)).toEqual(["marketplace-missing"]);
+      await sync(true);
+      expect(readManifest().plugins).toEqual(m.plugins);
+      expect((await check()).findings).toEqual([]);
     }, 60_000);
 
     it("an entry added since the base must match the tree's pack", async () => {
@@ -248,7 +304,7 @@ describe("capybara-plugin marketplace", () => {
       try {
         expect(await marketplaceCommand(["--check", "--base", base], root)).toBe(0);
         const m = readManifest();
-        writeManifest({ ...m, plugins: [m.plugins[1], m.plugins[0]] });
+        writeManifest({ ...m, plugins: [old("fixture-declarative", "0.0.1"), m.plugins[1]] });
         expect(await marketplaceCommand(["--check", "--base", base], root)).toBe(1);
         expect(await marketplaceCommand(["--write", "--base", base], root)).toBe(2);
       } finally {

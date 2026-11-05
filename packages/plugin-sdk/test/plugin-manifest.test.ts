@@ -10,6 +10,7 @@ import {
   PluginManifestSchema,
   parseConnectorTemplateFile,
   parsePluginManifest,
+  pluginDescription,
   type StaticExtensionManifest,
   validatePluginPackageJsonFor,
 } from "../src/index.js";
@@ -81,6 +82,20 @@ describe("parsePluginManifest", () => {
       agents: [],
     });
     expect(errorsOf(m)).toEqual([]);
+  });
+
+  it("description is a string (en) or { en, zh? }", () => {
+    expect(errorsOf(skillsOnly({ description: { en: "Skills for writers" } }))).toEqual([]);
+    expect(
+      errorsOf(skillsOnly({ description: { en: "Skills for writers", zh: "写作技能" } })),
+    ).toEqual([]);
+    expect(errorsOf(skillsOnly({ description: { zh: "写作技能" } }))[0]).toMatch(/^description/);
+    expect(errorsOf(skillsOnly({ description: { en: "x", fr: "y" } }))[0]).toMatch(/fr/);
+    expect(errorsOf(skillsOnly({ description: { en: "x", zh: " " } }))[0]).toMatch(
+      /^description\.zh: /,
+    );
+    expect(pluginDescription("Skills")).toEqual({ en: "Skills" });
+    expect(pluginDescription({ en: "Skills", zh: "技能" })).toEqual({ en: "Skills", zh: "技能" });
   });
 
   it("an extension-bearing manifest parses", () => {
@@ -472,6 +487,9 @@ describe("JSON Schema (ajv) agrees with zod", () => {
     ["agent path not .md", skillsOnly({ agents: [{ path: "./agents/a.json" }] })],
     ["homepage http", skillsOnly({ homepage: "http://x.example.com" })],
     ["missing publisher", { ...skillsOnly(), publisher: undefined }],
+    ["localized description", skillsOnly({ description: { en: "Skills", zh: "技能" } })],
+    ["description without en", skillsOnly({ description: { zh: "技能" } })],
+    ["description unknown language", skillsOnly({ description: { en: "x", fr: "y" } })],
   ];
   for (const [label, json] of pluginFixtures) {
     it(`plugin.v1: ${label}`, () => {

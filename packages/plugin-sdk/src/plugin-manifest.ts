@@ -105,6 +105,17 @@ export interface PluginExtensionSection {
   configSchemas?: { deployment?: JsonSchema; org?: JsonSchema };
 }
 
+/**
+ * A plugin's description: a string (English) or `{ en, zh? }`, each ≤ 1024 characters. Read it
+ * through {@link pluginDescription}.
+ */
+export type PluginDescription = string | { en: string; zh?: string };
+
+/** A plugin description as `{ en, zh? }` (a plain string is the English text). */
+export function pluginDescription(d: PluginDescription): { en: string; zh?: string } {
+  return typeof d === "string" ? { en: d } : { en: d.en, ...(d.zh !== undefined && { zh: d.zh }) };
+}
+
 /** `.capybara-plugin/plugin.json`. */
 export interface PluginManifest {
   $schema?: string;
@@ -114,8 +125,8 @@ export interface PluginManifest {
   /** Exact semver version. */
   version: string;
   publisher: string;
-  /** ≤ 1024 characters. */
-  description: string;
+  /** A string (English) or `{ en, zh? }`, each ≤ 1024 characters; see {@link pluginDescription}. */
+  description: PluginDescription;
   displayName?: LocalizedName;
   /** `./…` .svg / .png inside the plugin. */
   icon?: string;
@@ -225,7 +236,13 @@ const schema = z
       .max(256)
       .regex(SEMVER_VERSION_RE, { message: "version must be an exact semver version" }),
     publisher: text(L.publisherChars, "publisher"),
-    description: text(L.descriptionChars, "description"),
+    description: z.union([
+      text(L.descriptionChars, "description"),
+      z.strictObject({
+        en: text(L.descriptionChars, "description.en"),
+        zh: text(L.descriptionChars, "description.zh").optional(),
+      }),
+    ]),
     displayName: localized.optional(),
     icon: dotPath("icon")
       .regex(ICON_RE, { message: "icon must be a .svg or .png file" })

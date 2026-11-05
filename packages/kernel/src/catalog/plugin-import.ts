@@ -7,6 +7,7 @@ import {
   PLUGIN_MANIFEST_FILE,
   type PluginManifest,
   parseSkillMd,
+  pluginDescription,
   SDK_VERSION,
   SKILL_ENTRY_FILE,
 } from "@capybara-hq/plugin-sdk";
@@ -741,7 +742,7 @@ export class PluginImport {
       contentDigest: pkg.contentDigest,
       packageName,
       publisher: m.publisher,
-      description: m.description,
+      description: pluginDescription(m.description).en,
       ...(m.displayName !== undefined && { displayName: m.displayName }),
       ...(m.license !== undefined && { license: m.license }),
       ...(m.homepage !== undefined && { homepage: m.homepage }),
@@ -1098,7 +1099,7 @@ export class PluginImport {
       manifest: m,
       listing: {
         publisher: m.publisher,
-        description: m.description,
+        description: pluginDescription(m.description).en,
         displayName: m.displayName ?? null,
       },
       newItemId: staged.itemId,

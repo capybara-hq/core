@@ -5,24 +5,28 @@ import type { Finding } from "./source.js";
 
 const RULE = "plugin-release-metadata";
 const DISPLAY_NAME_RULE = "release-display-name";
+const DESCRIPTION_ZH_RULE = "release-description-zh";
 
 /**
- * Does the plugin's `.capybara-plugin/plugin.json` lack `displayName`? False when the file is
- * missing or not JSON: "Plugin pack" reports those.
+ * The plugin's `.capybara-plugin/plugin.json` as an object; undefined when the file is missing or
+ * not a JSON object ("Plugin pack" reports those).
  */
-function lacksDisplayName(file: string): boolean {
-  if (!existsSync(file)) return false;
+function readManifest(file: string): Record<string, unknown> | undefined {
+  if (!existsSync(file)) return undefined;
   try {
     const m = JSON.parse(readFileSync(file, "utf8").replace(/^\uFEFF/, "")) as unknown;
-    return (
-      typeof m === "object" &&
-      m !== null &&
-      (m as { displayName?: unknown }).displayName === undefined
-    );
+    return typeof m === "object" && m !== null && !Array.isArray(m)
+      ? (m as Record<string, unknown>)
+      : undefined;
   } catch {
-    return false;
+    return undefined;
   }
 }
+
+/** A description without a `zh` text: a string, or an object without `zh`. */
+const lacksZh = (d: unknown) =>
+  typeof d === "string" ||
+  (typeof d === "object" && d !== null && (d as { zh?: unknown }).zh === undefined);
 
 const readJson = (file: string) =>
   JSON.parse(readFileSync(file, "utf8")) as Record<string, unknown>;
@@ -49,6 +53,9 @@ function repositoryUrl(pkg: Record<string, unknown>): string | undefined {
  * `check:release-metadata`.
  * `release-display-name`: a published plugin's `.capybara-plugin/plugin.json` needs a
  * `displayName` (`{ zh, en }`), the name every page shows instead of the package name.
+ * `release-description-zh` (a warning, never an error, so third-party marketplaces are not
+ * blocked): a published plugin's `description` has no `zh` (`marketplace --write` copies it into
+ * the marketplace `summary`, which the Chinese UI shows).
  */
 export function checkPluginReleaseMetadata(plugins: string[], root: string): Finding[] {
   const out: Finding[] = [];
@@ -72,12 +79,22 @@ export function checkPluginReleaseMetadata(plugins: string[], root: string): Fin
     }
     if (typeof pkg.license !== "string") finding(`${label} is published and needs a "license"`);
     const manifestFile = join(dir, PLUGIN_MANIFEST_FILE);
-    if (lacksDisplayName(manifestFile)) {
+    const manifest = readManifest(manifestFile);
+    if (manifest !== undefined && manifest.displayName === undefined) {
       out.push({
         file: manifestFile,
         line: 1,
         rule: DISPLAY_NAME_RULE,
         message: `${label} is published and needs a "displayName" in ${PLUGIN_MANIFEST_FILE}: { "zh": …, "en": … }, the name pages show`,
+      });
+    }
+    if (manifest !== undefined && lacksZh(manifest.description)) {
+      out.push({
+        file: manifestFile,
+        line: 1,
+        rule: DESCRIPTION_ZH_RULE,
+        severity: "warning",
+        message: `${label} is published and its description has no zh: write "description": { "en": …, "zh": … } in ${PLUGIN_MANIFEST_FILE} (the marketplace summary the Chinese UI shows)`,
       });
     }
     if (typeof pkg.homepage !== "string" || !pkg.homepage.startsWith("https://")) {

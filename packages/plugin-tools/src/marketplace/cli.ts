@@ -9,20 +9,21 @@ export const MARKETPLACE_USAGE =
 
 /**
  * `capybara-plugin marketplace`: writes (`--write`) or checks (`--check`) the repository's
- * marketplace manifest against reproducible packs of its public plugins ({@link syncMarketplace}).
+ * marketplace manifest, one entry per public plugin at its current version, against reproducible
+ * packs of its public plugins ({@link syncMarketplace}).
  *
  * - `--root <dir>`: the repository (default: the current directory);
  * - `--file <path>`: the manifest, relative to the root (default `.capybara-plugin/marketplace.json`);
  * - `--plugins <glob>`: the plugin directories, relative to the root (default `plugins/*`, or the
  *   root itself when it is a plugin).
  *
- * - `--base <rev>` (with `--check`, on pull requests): the entries the file had at `<rev>` must be
- *   unchanged and first, in order (`marketplace-append-only`), and the entries added since must
- *   match the tree's packs (`marketplace-integrity`).
+ * - `--base <rev>` (with `--check`, on pull requests): an entry's version may only increase over the
+ *   versions `<rev>` lists (`marketplace-version-decrease`), a version `<rev>` lists keeps its
+ *   integrity, and the entries added since must match the tree's packs (`marketplace-integrity`).
  *
  * `--check` exits 1 on any finding (`marketplace-missing`, `marketplace-integrity`,
- * `marketplace-append-only`, `marketplace-invalid`); `--write` appends the missing entries and
- * exits 1 only on `marketplace-invalid`.
+ * `marketplace-version-decrease`, `marketplace-invalid`); `--write` writes each plugin's entry
+ * (replacing its other versions) and exits 1 only on `marketplace-invalid`.
  * Relative paths resolve against `cwd`. Returns the exit code.
  */
 export async function marketplaceCommand(args: string[], cwd: string): Promise<number> {
@@ -67,7 +68,9 @@ export async function marketplaceCommand(args: string[], cwd: string): Promise<n
     }
     if (values.write) {
       for (const e of r.added) console.log(`added ${e.name}@${e.version}`);
-      console.log(r.added.length === 0 ? "marketplace is up to date" : `wrote ${file}`);
+      for (const k of r.removed) console.log(`removed ${k}`);
+      const changed = r.added.length + r.removed.length > 0;
+      console.log(changed ? `wrote ${file}` : "marketplace is up to date");
     } else {
       console.log("marketplace is up to date");
     }

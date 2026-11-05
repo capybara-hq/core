@@ -175,6 +175,10 @@ describe("capybara-plugin check outside this repository", () => {
     const r = cli(solo, "check");
     expect(r.out).toContain("checking 1 plugin(s): .");
     for (const name of CHECKS) expect(r.out).toContain(`[${name}] passed`);
+    // a warning is printed but does not fail the check: the description has no zh
+    expect(r.out).toMatch(
+      /\[Plugin release metadata\] passed with 1 warning\(s\)\n\s+\.capybara-plugin\/plugin\.json:1 release-description-zh /,
+    );
     expect(r.code).toBe(0);
   }, 120_000);
 

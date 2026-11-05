@@ -55,8 +55,17 @@ describe("parseMarketplaceManifest", () => {
       minKernel: "0.1.0",
       permissions: { keys: ["network:api.example.com"], sensitive: ["network:api.example.com"] },
       homepage: "https://example.com/superpowers",
+      displayName: { zh: "超能力", en: "Superpowers" },
     });
     expect(errorsOf(manifest([e]))).toEqual([]);
+    const r = parseMarketplaceManifest(manifest([e])) as MarketplaceManifest;
+    expect(r.plugins[0]?.displayName).toEqual({ zh: "超能力", en: "Superpowers" });
+  });
+
+  it("rejects a displayName without both languages", () => {
+    expect(errorsOf(manifest([entry({ displayName: { en: "Superpowers" } })]))[0]).toMatch(
+      /^plugins\.0\.displayName\.zh: /,
+    );
   });
 
   it("git source with only a url and archive with sha512 parse", () => {
@@ -209,6 +218,8 @@ describe("JSON Schema (ajv) agrees with zod", () => {
     ["unknown fields (forward compatible)", manifest([entry({ x: 1 })], { y: 2 })],
     ["schemaVersion 2", manifest([], { schemaVersion: 2 })],
     ["bad name", manifest([entry({ name: "Bad" })])],
+    ["displayName", manifest([entry({ displayName: { zh: "超能力", en: "Superpowers" } })])],
+    ["displayName without zh", manifest([entry({ displayName: { en: "Superpowers" } })])],
     [
       "npm without integrity",
       manifest([entry({ source: { npm: { package: "a", version: "1.0.0" } } })]),

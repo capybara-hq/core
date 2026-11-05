@@ -1207,6 +1207,7 @@ export interface Logger {
 export const MARKETPLACE_LIMITS: {
     readonly nameChars: 100;
     readonly summaryChars: 280;
+    readonly displayNameChars: 100;
     readonly plugins: 5000;
     readonly permissionKeys: 500;
     readonly urlChars: 2000;
@@ -1217,6 +1218,10 @@ export const MARKETPLACE_MANIFEST_SCHEMA_VERSION = 1;
 
 // @public
 export interface MarketplaceEntry {
+    displayName?: {
+        zh: string;
+        en: string;
+    };
     homepage?: string;
     minKernel?: string;
     name: string;
@@ -1652,6 +1657,18 @@ export interface PluginDependency {
 }
 
 // @public
+export type PluginDescription = string | {
+    en: string;
+    zh?: string;
+};
+
+// @public
+export function pluginDescription(d: PluginDescription): {
+    en: string;
+    zh?: string;
+};
+
+// @public
 export interface PluginExtensionSection {
     configSchemas?: {
         deployment?: JsonSchema;
@@ -1669,7 +1686,7 @@ export interface PluginManifest {
     agents?: PluginAgentRef[];
     connectorTemplates?: PluginConnectorTemplateRef[];
     dependencies?: PluginDependency[];
-    description: string;
+    description: PluginDescription;
     displayName?: LocalizedName;
     extension?: PluginExtensionSection;
     homepage?: string;

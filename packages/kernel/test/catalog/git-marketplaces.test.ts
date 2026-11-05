@@ -503,7 +503,12 @@ describe("git marketplaces", () => {
     await srv.commit(
       "solo-repo",
       await pluginFiles({
-        manifest: { name: "solo", version: "3.1.0", description: "Solo plugin" },
+        manifest: {
+          name: "solo",
+          version: "3.1.0",
+          description: { en: "Solo plugin", zh: "独奏插件" },
+          displayName: { zh: "独奏", en: "Solo" },
+        },
         files: skill("solo"),
       }),
     );
@@ -511,7 +516,8 @@ describe("git marketplaces", () => {
     expect((await refresh(a)).json()).toMatchObject({ lastStatus: "ok", entryCount: 1 });
     expect((await entries(a)).get("solo")).toMatchObject({
       version: "3.1.0",
-      summary: { en: "Solo plugin" },
+      summary: { en: "Solo plugin", zh: "独奏插件" },
+      displayName: { zh: "独奏", en: "Solo" },
       importable: true,
     });
 

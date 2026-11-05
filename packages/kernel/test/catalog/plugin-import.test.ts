@@ -210,6 +210,7 @@ const confirm = (req: Req, stagingId: string, body: Record<string, unknown>) =>
 
 interface Review {
   name: string;
+  description: string;
   provenance?: unknown;
   version: string;
   pluginVersion?: string;
@@ -311,6 +312,22 @@ describe("one import flow for every plugin", { timeout: 60_000 }, () => {
     ]);
     const d = k.app.get(StorageService).deployment();
     expect(await d.head(`${v.object_prefix}skills/pdf-tools/SKILL.md`)).not.toBeNull();
+  });
+
+  it("a localized plugin.json description: the review and the item carry its English text", async () => {
+    const body = await imported(
+      await skillPlugin("pdf-localized", {
+        manifest: { description: { en: "Read PDFs", zh: "读取 PDF" } },
+      }),
+    );
+    expect(body.item).toMatchObject({ name: "pdf-localized", description: "Read PDFs" });
+    const s = await prepared(
+      await skillPlugin("pdf-localized", {
+        version: "1.1.0",
+        manifest: { description: { en: "Read PDFs" } },
+      }),
+    );
+    expect(s.review.description).toBe("Read PDFs");
   });
 
   it("a templates-only plugin: checked against the loaded connector, the template file and icon stored", async () => {

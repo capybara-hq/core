@@ -1,8 +1,14 @@
 {
   "schemaVersion": 1,
   "name": "good",
-  "displayName": { "zh": "好插件", "en": "Good" },
+  "displayName": {
+    "zh": "好插件",
+    "en": "Good"
+  },
   "version": "0.1.0",
   "publisher": "Capybara",
-  "description": "A plugin"
+  "description": {
+    "en": "A plugin",
+    "zh": "一个插件"
+  }
 }

@@ -3,5 +3,8 @@
   "name": "no-display-name",
   "version": "0.1.0",
   "publisher": "Capybara",
-  "description": "Published without a display name"
+  "description": {
+    "en": "Published without a display name",
+    "zh": "发布时没有显示名"
+  }
 }

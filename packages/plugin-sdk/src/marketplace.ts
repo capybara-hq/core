@@ -9,8 +9,10 @@ import {
 
 /**
  * The marketplace manifest `marketplace.json` (package ecosystem spec §5.2): a list of plugins,
- * each with one source. One entry is one version: a marketplace that offers several versions lists
- * the plugin once per version, so `(name, marketplaceEntryVersion)` is unique in a manifest.
+ * each with one source. One entry is one version. `capybara-plugin marketplace --write` lists one
+ * entry per plugin, its current version (plugin component management spec §13.2); readers still
+ * accept several versions of a plugin (marketplaces written in the older form), so
+ * `(name, marketplaceEntryVersion)` is unique in a manifest.
  *
  * Sources: a same-repo `path`, a `git` repo, an `npm` package (exact version + sha512, downloads
  * are verified against it, never npm metadata) or an `archive` URL (sha512 or sha256 SRI).
@@ -29,6 +31,8 @@ export const MARKETPLACE_MANIFEST_SCHEMA_VERSION = 1;
 export const MARKETPLACE_LIMITS = {
   nameChars: 100,
   summaryChars: 280,
+  /** Characters of each `displayName` language (as `plugin.json`'s). */
+  displayNameChars: 100,
   plugins: 5000,
   permissionKeys: 500,
   urlChars: 2000,
@@ -46,6 +50,8 @@ export interface MarketplaceEntry {
   /** Catalog item name (`^[a-z0-9][a-z0-9-]{0,63}$`). */
   name: string;
   summary: { en: string; zh?: string };
+  /** Display name (the plugin's `plugin.json` `displayName`); lists show it, else the name. */
+  displayName?: { zh: string; en: string };
   /** Exact semver; defaults to the npm source's version, otherwise the plugin's own. */
   version?: string;
   /** Exact semver. */
@@ -181,6 +187,12 @@ function buildSchema(opts: MarketplaceParseOptions) {
       en: z.string().min(1).max(M.summaryChars),
       zh: z.string().min(1).max(M.summaryChars).optional(),
     }),
+    displayName: z
+      .object({
+        zh: z.string().min(1).max(M.displayNameChars),
+        en: z.string().min(1).max(M.displayNameChars),
+      })
+      .optional(),
     version: exactVersion("version").optional(),
     minKernel: exactVersion("minKernel").optional(),
     permissions: z

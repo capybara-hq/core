@@ -7,6 +7,9 @@
   },
   "version": "0.1.0-rc.2",
   "publisher": "Capybara",
-  "description": "Deterministic scripted model provider (model-provider@2) for runtime tests, e2e tests and keyless demos",
+  "description": {
+    "en": "Deterministic scripted model provider (model-provider@2) for runtime tests, e2e tests and keyless demos",
+    "zh": "确定性的脚本化模型提供方（model-provider@2），用于运行时测试、端到端测试和无密钥演示"
+  },
   "homepage": "https://github.com/capybara-hq/core/tree/main/plugins/model-fake#readme"
 }
