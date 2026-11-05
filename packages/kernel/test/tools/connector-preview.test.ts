@@ -12,6 +12,7 @@ import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createOrg,
+  enableConnectorExtensions,
   PW,
   type Req,
   runConfig,
@@ -73,6 +74,7 @@ beforeEach(async () => {
     .id;
   req = await session(k, "owner");
   orgId = await createOrg(req);
+  await enableConnectorExtensions(k, orgId);
   const st = memState();
   st.servers = {
     docs: {

@@ -24,7 +24,14 @@ import { notLoadedText } from "../../src/tools/builtins/tool-search.js";
 import { DRIFT_CONNECTOR_JOB } from "../../src/tools/drift.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
-import { eventsOf, PW, waitFor, waitForEvent, waitForTerminal } from "../helpers/runs.js";
+import {
+  enableExtensions,
+  eventsOf,
+  PW,
+  waitFor,
+  waitForEvent,
+  waitForTerminal,
+} from "../helpers/runs.js";
 
 /**
  * M3 第二段验收（双副本）：两个独立进程的内核副本（角色都含 api / worker）共享 PG / Redis，加载
@@ -297,6 +304,7 @@ beforeAll(async () => {
   const org = await at(1, "POST", "/api/v1/orgs", { name: "Acme" });
   expect(org.status).toBe(201);
   base = `/api/v1/orgs/${(org.json.org as { id: string }).id}`;
+  await enableExtensions(raw, (org.json.org as { id: string }).id, "fake-connector");
 }, 180_000);
 
 afterAll(async () => {

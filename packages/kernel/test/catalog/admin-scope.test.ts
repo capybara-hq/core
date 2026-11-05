@@ -3,7 +3,7 @@ import { getQueueToken } from "@nestjs/bullmq";
 import type { Queue } from "bullmq";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { PLUGIN_SCOPE_QUEUE } from "../../src/catalog/scope-sync.js";
-import { createOrg, waitFor } from "../helpers/runs.js";
+import { createOrg, enableConnectorExtensions, waitFor } from "../helpers/runs.js";
 import {
   importSkill,
   MCP_TOKEN,
@@ -28,6 +28,7 @@ let orgB: string;
 beforeAll(async () => {
   env = await startOrgEnv();
   orgB = await createOrg(env.root, "Scope B");
+  await enableConnectorExtensions(env.k, orgB);
 }, 240_000);
 
 afterAll(async () => {

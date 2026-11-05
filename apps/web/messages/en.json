@@ -199,6 +199,7 @@
     "connector": {
       "not_found": "The connector does not exist or has been removed.",
       "slug_taken": "This slug is already used by another connector.",
+      "kind_unavailable": "The plugin providing this connector type is not enabled in this organization.",
       "connect_failed": "Could not connect to the connector's server. Check the URL and credential.",
       "tool_not_found": "The tool does not exist in this connector.",
       "tool_not_pending": "The tool is not waiting for review.",

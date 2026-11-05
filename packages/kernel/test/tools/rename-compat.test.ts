@@ -29,6 +29,7 @@ import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createConv,
   createOrg,
+  enableConnectorExtensions,
   eventsOf,
   PW,
   postMessage,
@@ -185,6 +186,7 @@ describe("改名后的路由与旧 agent 版本", () => {
     await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" });
     req = await session(k, "owner");
     orgId = await createOrg(req);
+    await enableConnectorExtensions(k, orgId);
   }, 180_000);
 
   afterAll(async () => {

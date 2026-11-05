@@ -776,6 +776,7 @@ describe("org plugin upgrade (spec §10)", { timeout: 90_000 }, () => {
         .select("plugin")
         .where("org_id", "=", env.orgId)
         .where("enabled", "=", true)
+        .where("plugin", "!=", "fake-connector") // on in every test org
         .execute();
     expect(await enabled()).toEqual([{ plugin: "fake-tools-ui" }]);
     const back = await previewOk(installId, "0.0.1");
@@ -894,6 +895,7 @@ describe("org plugin upgrade (spec §10)", { timeout: 90_000 }, () => {
         .select("plugin")
         .where("org_id", "=", env.orgId)
         .where("enabled", "=", true)
+        .where("plugin", "!=", "fake-connector") // on in every test org
         .execute();
     expect(await extRow()).toEqual([{ ref: "fake-tools-ui", created: true, dropped: false }]);
     // Rolling back while its connectors are in use: the extension stays enabled and this install's

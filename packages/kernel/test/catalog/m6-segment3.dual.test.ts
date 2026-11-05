@@ -40,7 +40,7 @@ import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { bootstrapFixture, packFake } from "../helpers/plugin-packages.js";
-import { eventsOf, PW, waitFor, waitForTerminal } from "../helpers/runs.js";
+import { enableExtensions, eventsOf, PW, waitFor, waitForTerminal } from "../helpers/runs.js";
 import { SKILL_MD } from "../skills/zip.js";
 import { bundlePlugin, mcpTemplate, SVG_ICON, skillPlugin, templatePlugin } from "./packages.js";
 
@@ -581,6 +581,8 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
       .insertInto("extension_org_configs")
       .values({ plugin: "fake-dep-provider", org_id: orgId, enabled: true, config: null })
       .execute();
+    // The app's connector template is for the connector extension, which the org has on
+    await enableExtensions(raw, orgId, "fake-connector");
   });
 
   it("2. 应用包：引入、一次审阅装到部署（两边不重启加载），B 上组织安装，agent 用到连接器、扩展工具与技能", async () => {
@@ -658,7 +660,11 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
       .where("enabled", "=", true)
       .orderBy("plugin")
       .execute();
-    expect(enabled.map((r) => r.plugin)).toEqual(["fake-dep-provider", "fake-tools-ui"]);
+    expect(enabled.map((r) => r.plugin)).toEqual([
+      "fake-connector",
+      "fake-dep-provider",
+      "fake-tools-ui",
+    ]);
     const conn = await db
       .selectFrom("connectors")
       .select(["id", "slug", "catalog_item_id"])
@@ -745,7 +751,7 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
       .where("org_id", "=", orgId)
       .where("enabled", "=", true)
       .execute();
-    expect(enabled.map((r) => r.plugin)).toEqual(["fake-dep-provider"]);
+    expect(enabled.map((r) => r.plugin).sort()).toEqual(["fake-connector", "fake-dep-provider"]);
     const liveSkill = await db
       .selectFrom("skills")
       .select("id")

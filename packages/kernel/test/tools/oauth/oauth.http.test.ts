@@ -20,6 +20,7 @@ import { accountsFor } from "../../helpers/identity.js";
 import { MODEL_FAKE } from "../../helpers/model-plugins.js";
 import {
   createConv,
+  enableConnectorExtensions,
   eventsOf,
   PW,
   postMessage,
@@ -92,6 +93,7 @@ beforeEach(async () => {
   req = await session(k, "owner");
   const org = await call({ method: "POST", url: "/api/v1/orgs", payload: { name: "Acme" } });
   orgId = (org.json() as { org: { id: string } }).org.id;
+  await enableConnectorExtensions(k, orgId);
 });
 
 afterEach(async () => {

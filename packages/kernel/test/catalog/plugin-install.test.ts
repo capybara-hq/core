@@ -39,12 +39,14 @@ const pluginBody = (token = MCP_TOKEN) => ({
   connectors: { gh: { endpoint: { url: env.mcp.url }, credential: { token } } },
 });
 
-async function enabledPlugins(): Promise<string[]> {
+/** The org's enabled extensions, `fake-connector` aside unless asked (every test org has it on). */
+async function enabledPlugins(withConnector = false): Promise<string[]> {
   const rows = await env.db
     .selectFrom("extension_org_configs")
     .select("plugin")
     .where("org_id", "=", env.orgId)
     .where("enabled", "=", true)
+    .$if(!withConnector, (q) => q.where("plugin", "!=", "fake-connector"))
     .orderBy("plugin")
     .execute();
   return rows.map((r) => r.plugin);
@@ -238,6 +240,12 @@ describe("org plugin uninstall", { timeout: 60_000 }, () => {
   it("keeps the connector an agent uses and the connector extension a connector still uses, removes the rest", async () => {
     const a = await seedPlugin(env, { name: "fake-connector", extension: true });
     const b = await seedPlugin(env, { name: "notes", templates: false, skills: ["notes"] });
+    // The install under test is what enables the connector extension here
+    await env.db
+      .deleteFrom("extension_org_configs")
+      .where("org_id", "=", env.orgId)
+      .where("plugin", "=", "fake-connector")
+      .execute();
     const ra = await install(env.boss, env, a, pluginBody());
     expect(ra.statusCode, ra.body).toBe(201);
     const rb = await install(env.boss, env, b);
@@ -276,7 +284,7 @@ describe("org plugin uninstall", { timeout: 60_000 }, () => {
       ]),
     );
     expect(report.kept).toHaveLength(2);
-    expect(await enabledPlugins()).toEqual(["fake-connector"]);
+    expect(await enabledPlugins(true)).toEqual(["fake-connector"]);
     expect((await liveSkills()).map((s) => s.name)).toEqual(["notes"]);
     expect(await liveConnectors()).toHaveLength(1);
     const audit = await env.db

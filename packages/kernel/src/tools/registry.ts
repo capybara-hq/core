@@ -348,6 +348,11 @@ export class ToolRegistry {
       .sort((a, b) => a.kind.localeCompare(b.kind));
   }
 
+  /** True when `kind` is one of {@link connectorKindsFor}: loaded here and enabled in the org. */
+  async connectorKindAvailable(orgId: string, kind: string): Promise<boolean> {
+    return (await this.connectorKindsFor(orgId)).some((k) => k.kind === kind);
+  }
+
   /**
    * 保存 agent 时校验工具引用（只看「存在」，停用 / 待复核 / 插件未启用等运行时状态不拒绝，由 `forAgent` 报不可用）：
    * - 内置：名字在 {@link BUILTIN_TOOL_NAMES} 中；

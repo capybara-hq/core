@@ -27,6 +27,7 @@ import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { pluginTgz } from "../helpers/plugin-packages.js";
 import {
   createOrg,
+  enableConnectorExtensions,
   PW,
   type Req,
   runConfig,
@@ -187,6 +188,8 @@ export async function resetOrgCatalog(env: OrgEnv): Promise<void> {
     "capybara.plugin_install_components, capybara.plugin_installs, capybara.agent_template_versions, capybara.agent_templates, capybara.extension_catalog_sources, capybara.catalog_requests, capybara.catalog_org_grants, capybara.catalog_item_org_switches, capybara.catalog_item_scope_orgs, capybara.plugin_import_staging, capybara.catalog_item_versions, capybara.catalog_items, capybara.skill_versions, capybara.skills, capybara.connector_tools, capybara.connectors, capybara.extension_org_configs, capybara.deployment_settings, capybara.audit_events",
   );
   await env.k.app.get(StorageService).deployment().deletePrefix("directory/");
+  // The test plugins' templates name the deployed connector extension; the org has it on
+  await enableConnectorExtensions(env.k, env.orgId);
 }
 
 /** Imports a plugin tgz as the enterprise admin (prepare -> confirm); returns the item id. */

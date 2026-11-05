@@ -28,7 +28,13 @@ import { truncateTables } from "../helpers/db.js";
 import { asUser, cookieJar } from "../helpers/http.js";
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
-import { buildKernel, startKernel, type TestKernel, waitFor } from "../helpers/runs.js";
+import {
+  buildKernel,
+  enableConnectorExtensions,
+  startKernel,
+  type TestKernel,
+  waitFor,
+} from "../helpers/runs.js";
 
 /**
  * Task 17：工具定义漂移检测与复核（spec 7.3：新增 / 变化的工具在管理员复核前不可用，防 rug-pull / 工具投毒）。
@@ -132,7 +138,9 @@ async function session(login: string): Promise<Req> {
 async function createOrg(req: Req, name = "Acme"): Promise<string> {
   const res = await req({ method: "POST", url: "/api/v1/orgs", payload: { name } });
   expect(res.statusCode).toBe(201);
-  return (res.json() as { org: { id: string } }).org.id;
+  const id = (res.json() as { org: { id: string } }).org.id;
+  await enableConnectorExtensions(k, id);
+  return id;
 }
 
 interface PendingJson {

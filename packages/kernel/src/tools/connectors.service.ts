@@ -573,6 +573,7 @@ export class ConnectorsService {
   ): Promise<{ connector: ConnectorDetail; issues: ToolIssue[] }> {
     // 自建被禁止时先拒绝（事务里再复核一次）：不该为此触发外连
     if (!input.template) await assertCustomAllowed(this.db, "customConnectors");
+    await this.assertKindAvailable(orgId, input.connector);
     const { slug, endpoint, owner, secret } = this.checkCreateInput(actorAccountId, input);
     const id = randomUUID();
     const auth = input.auth;
@@ -834,6 +835,17 @@ export class ConnectorsService {
     });
   }
 
+  /** Refuses a loaded kind whose extension is not enabled in the org (the same notion as {@link kinds}). */
+  private async assertKindAvailable(orgId: string, kind: string): Promise<void> {
+    if (!this.registry.findConnector(kind)) return; // unknown kinds fail in parseEndpoint
+    if (!(await this.registry.connectorKindAvailable(orgId, kind))) {
+      throw new ApiError(
+        "connector.kind_unavailable",
+        `Connector kind "${kind}" is not enabled for this organization; enable its plugin first`,
+      );
+    }
+  }
+
   /**
    * The connector kinds the org can create connectors of (the install wizard's protocol step): a
    * kind is listed when its `connector@1` extension is loaded and enabled in the org.
@@ -856,6 +868,7 @@ export class ConnectorsService {
   async preview(orgId: string, input: PreviewConnectorInput): Promise<ConnectorPreview> {
     // 部署禁止组织自建连接器时也不替组织去连任意端点（目录安装不走预览）
     await assertCustomAllowed(this.db, "customConnectors");
+    await this.assertKindAvailable(orgId, input.connector);
     const endpoint = this.parseEndpoint(input.connector, input.endpoint);
     const connector = this.registry.findConnector(input.connector);
     if (!connector) throw fail("connector", `Unknown connector "${input.connector}"`);

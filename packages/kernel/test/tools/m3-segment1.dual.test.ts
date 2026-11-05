@@ -21,7 +21,15 @@ import { runJobId } from "../../src/runtime/run-queue.js";
 import { MAINTENANCE_QUEUE_NAME, waitTimeoutJobId } from "../../src/runtime/waits.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
-import { eventsOf, gate, PW, waitFor, waitForEvent, waitForTerminal } from "../helpers/runs.js";
+import {
+  enableExtensions,
+  eventsOf,
+  gate,
+  PW,
+  waitFor,
+  waitForEvent,
+  waitForTerminal,
+} from "../helpers/runs.js";
 
 /**
  * M3 第一段验收（双副本）：两个独立进程的内核副本（角色都含 api / worker）共享 PG / Redis，加载
@@ -174,6 +182,7 @@ describe("M3 第一段双副本验收", () => {
     const org = await alt("POST", "/api/v1/orgs", { name: "Acme" });
     expect(org.status).toBe(201);
     const orgId = (org.json.org as { id: string }).id;
+    await enableExtensions(raw, orgId, "fake-connector");
     const base = `/api/v1/orgs/${orgId}`;
 
     // ---- 安装 MCP 连接器（bearer，组织凭据）----
