@@ -631,9 +631,13 @@ export class PluginInstaller {
       .executeTakeFirst();
     if (!v) throw new ApiError("catalog.item_not_found", "Plugin version not found");
     const manifest = v.manifest as PluginManifest;
-    const deps = await resolveDependencies(this.db, manifest);
+    const declared = await resolveDependencies(this.db, manifest);
     const extension = await this.planExtension(orgId, manifest);
     const templates = await readCatalogTemplates(this.storage, v);
+    const deps = [
+      ...declared,
+      ...(await this.impliedProviders(orgId, manifest, templates, declared)),
+    ];
     const skillNames = await catalogSkillNames(this.storage, v, manifest);
     const agentTemplates = await readCatalogAgentTemplates(this.storage, v);
     const connectors = new Map<string, CreateConnectorInput>();
@@ -694,6 +698,45 @@ export class PluginInstaller {
       agentTemplates,
       dependencies,
     };
+  }
+
+  /**
+   * The providers of the templates' connector kinds as implied dependencies: a template whose
+   * `plugin` is neither this plugin, a declared dependency nor already enabled in the org makes that
+   * plugin a dependency (installed first, recorded like a declared one, so an uninstall hands it
+   * back). No such plugin offered by the catalog -> `connector.kind_unavailable` naming it, before
+   * anything is written.
+   */
+  private async impliedProviders(
+    orgId: string,
+    manifest: PluginManifest,
+    templates: { id: string; file: ConnectorTemplateFile }[],
+    declared: ResolvedDependency[],
+  ): Promise<ResolvedDependency[]> {
+    const out: ResolvedDependency[] = [];
+    const seen = new Set<string>([manifest.name, ...declared.map((d) => d.name)]);
+    for (const ct of templates) {
+      const provider = ct.file.template.plugin;
+      if (seen.has(provider)) continue;
+      seen.add(provider);
+      // Not deployed: the not_deployed refusal of the plan's own checks says it
+      if (templatePluginProblem(this.templateDeps(), ct.file.template) !== undefined) continue;
+      if (await isExtensionEnabled(this.db, orgId, provider)) continue;
+      try {
+        const { manifest: _m, ...dep } = await resolveOne(this.db, {
+          name: provider,
+          version: ct.file.template.pluginVersion ?? "*",
+        });
+        out.push(dep);
+      } catch (e) {
+        if (!(e instanceof ApiError)) throw e;
+        throw new ApiError(
+          "connector.kind_unavailable",
+          `Connector template ${ct.id} needs the plugin ${provider}, which is not enabled in this organization and is not offered to it: ${e.message}`,
+        );
+      }
+    }
+    return out;
   }
 
   /**

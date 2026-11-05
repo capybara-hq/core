@@ -444,6 +444,64 @@ describe("org plugin uninstall", { timeout: 60_000 }, () => {
   });
 });
 
+describe("org plugin install: the template's connector extension is an implied dependency", {
+  timeout: 60_000,
+}, () => {
+  const offConnector = () =>
+    env.db
+      .deleteFrom("extension_org_configs")
+      .where("org_id", "=", env.orgId)
+      .where("plugin", "=", "fake-connector")
+      .execute();
+
+  it("switches the provider on first, records it as a dependency, and an uninstall hands it back", async () => {
+    await offConnector();
+    await seedPlugin(env, {
+      name: "fake-connector",
+      extension: true,
+      skills: [],
+      templates: false,
+    });
+    const p = await seedPlugin(env, { name: "bridge", skills: [] });
+    const r = await install(env.boss, env, p, pluginBody());
+    expect(r.statusCode, r.body).toBe(201);
+    expect(await enabledPlugins(true)).toEqual(["fake-connector"]);
+    expect(await liveConnectors()).toHaveLength(1);
+    const comps = r.json().install.components as { kind: string; ref: string }[];
+    expect(comps.map((c) => c.kind)).toContain("plugin");
+    const del = await env.boss({
+      method: "DELETE",
+      url: `/api/v1/orgs/${env.orgId}/plugin-installs/${r.json().installed.pluginInstallId}`,
+    });
+    expect(del.statusCode, del.body).toBe(200);
+    expect(await enabledPlugins(true)).toEqual([]);
+    expect(await liveConnectors()).toHaveLength(0);
+    expect(await liveInstalls()).toEqual([]);
+  });
+
+  it("a provider hidden from the org (disabled) or missing from the catalog: a clear 4xx, nothing written", async () => {
+    await offConnector();
+    const p = await seedPlugin(env, { name: "bridge", skills: [] });
+    const missing = await install(env.boss, env, p, pluginBody());
+    expect(missing.statusCode, missing.body).toBe(409);
+    expect(missing.json().error.code).toBe("connector.kind_unavailable");
+    expect(missing.body).toContain("fake-connector");
+    await seedPlugin(env, {
+      name: "fake-connector",
+      extension: true,
+      skills: [],
+      templates: false,
+      policy: "disabled",
+    });
+    const banned = await install(env.boss, env, p, pluginBody());
+    expect(banned.statusCode, banned.body).toBe(409);
+    expect(banned.json().error.code).toBe("connector.kind_unavailable");
+    expect(await liveInstalls()).toEqual([]);
+    expect(await liveConnectors()).toHaveLength(0);
+    expect(await enabledPlugins(true)).toEqual([]);
+  });
+});
+
 interface UninstallBody {
   removed: { kind: string; ref: string }[];
   kept: { kind: string; ref: string; reason: string }[];
