@@ -70,7 +70,7 @@ describe("/admin 概览（OverviewPage）", () => {
     const statLink = (label: string) =>
       within(metrics).getByText(label).closest("a")?.getAttribute("href");
     expect(statLink(a.overview.metrics.extensions)).toBe("/admin/extensions");
-    expect(statLink(a.overview.metrics.catalogRequests)).toBe("/admin/catalog/requests");
+    expect(statLink(a.overview.metrics.catalogRequests)).toBe("/admin/plugins/pending");
     expect(statLink(a.overview.metrics.orgs)).toBe("/admin/orgs");
     expect(statLink(a.overview.metrics.accounts)).toBe("/admin/accounts");
     expect(container.querySelectorAll('[data-part="link-card"]')).toHaveLength(0);

@@ -34,6 +34,7 @@ import { ErrorFrame } from "../../../../../components/ErrorFrame";
 import { FormError } from "../../../../../components/form-error";
 import { NoAccess } from "../../../../../components/NoAccess";
 import { PermissionReview } from "../../../../../components/PermissionReview";
+import { ScopeFields } from "../../../../../components/PluginScopeDialog";
 import { usePagePath } from "../../../../../components/shell/path";
 import { Link, useRouter } from "../../../../../i18n/navigation";
 import { ApiClientError, type ApiErrorDetail, issueLines } from "../../../../../lib/api";
@@ -46,6 +47,7 @@ import {
   type PluginPrepared,
   type PluginReview,
   type PluginReviewExtension,
+  type PluginScope,
   pluginReviewSensitive,
   preparePluginGit,
   preparePluginNpm,
@@ -55,6 +57,7 @@ import {
 } from "../../../../../lib/catalog";
 import {
   catalogItemsQuery,
+  deploymentRequestsQuery,
   extensionChangeKeys,
   stagedImportQuery,
 } from "../../../../../lib/query/admin";
@@ -82,13 +85,14 @@ export interface StagedFailure {
 type Staged = PluginPrepared | null | { problem: Problem };
 
 /**
- * `/admin/catalog/import`: import a plugin into the catalog (enterprise admins,
- * WizardPage), reviewed as a whole in one pass:
+ * `/admin/plugins/import` (上传插件包, and the review of a marketplace entry or an approved
+ * `import` request): bring a plugin in (enterprise admins, WizardPage), reviewed as a whole in one
+ * pass:
  * 1. choose the plugin package: upload a tgz, give an npm package name, or read it straight from git
  *    (a one-off import: an https git URL or `owner/repo`, an optional branch / tag / commit and
  *    directory; no marketplace is added) (prepare stages it for 24 hours) and the address becomes
  *    `?staging=<id>`. A marketplace entry is prepared on the
- *    entries page, which opens this page with `?staging=<id>`; the page loads that staged review
+ *    市场 tab (or by approving an org's `import` request), which opens this page with `?staging=<id>`; the page loads that staged review
  *    (and a marketplace import's permission mismatch) from the kernel
  *    (`GET admin/catalog/imports/:stagingId`) and skips this step. An expired or confirmed one
  *    says so and offers a new import;
@@ -104,8 +108,9 @@ type Staged = PluginPrepared | null | { problem: Problem };
  *    LICENSE text (collapsed), each skill's SKILL.md (collapsed) and the "suggest pinned"
  *    checkboxes (expanded by default when the plugin has a SessionStart hook); a changed choice is
  *    sent at confirm as `pinnedSuggestions`;
- * 3. confirm: "Also install the extension on the deployment" when the plugin brings an extension to
- *    install or upgrade (unchecked, it is only recorded in the catalog and orgs cannot use it yet);
+ * 3. confirm: the scope (spec §5; default 组织自选, or 指定组织 = the requesting org for a staging
+ *    prepared by approving an org's `import` request); confirming installs and enables the
+ *    extension (an import below the deployed version only joins the catalog, said as a notice);
  *    with sensitive items, "I understand the sensitive items" must be checked too.
  * The staged import comes from the query cache (the layout prefetched it on a first load); a
  * refusal (4xx: expired, already confirmed) is the page's own problem with a restart. A prepared
@@ -143,7 +148,7 @@ function StagedImportRead({ staging, orgId }: { staging: string; orgId: string |
   return (
     <WizardPage
       header={{
-        path: [...scope, { label: "catalog", href: "/admin/catalog" }, { label: "import" }],
+        path: [...scope, { label: "plugins", href: "/admin/plugins" }, { label: "import" }],
         title: t("title"),
       }}
       steps={[t("steps.source"), t("steps.review"), t("steps.confirm")]}
@@ -215,6 +220,8 @@ function PluginImportWizard({ initial, orgId }: { initial: StagedImport; orgId: 
     loaded === null ? [] : suggestedPinned(loaded.review),
   );
   const [ack, setAck] = useState(false);
+  /** The scope the admin picked; until then the default (see `defaultScope`). */
+  const [scopeChoice, setScopeChoice] = useState<{ scope: PluginScope; orgs: string[] }>();
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<Problem>();
   const [result, setResult] = useState<PluginConfirmResult | null>(null);
@@ -259,7 +266,7 @@ function PluginImportWizard({ initial, orgId }: { initial: StagedImport; orgId: 
     setSubmitError(undefined);
     setFetchError(undefined);
     setStep(0);
-    router.replace("/admin/catalog/import");
+    router.replace("/admin/plugins/import");
   };
 
   const fetchReview = async () => {
@@ -292,6 +299,25 @@ function PluginImportWizard({ initial, orgId }: { initial: StagedImport; orgId: 
   };
 
   const review = prepared?.review ?? null;
+  // The pending requests, once there is a review (a section: none while it loads or failed)
+  const rq = deploymentRequestsQuery();
+  const requests = useQuery({
+    ...rq,
+    enabled: prepared !== null,
+    retryOnMount: retryOnMountOf(rq.queryKey),
+  }).data?.requests;
+  // A staging prepared by approving an org's `import` request offers the plugin to that org by
+  // default (the kernel's default too, spec §5.1 rule 3); any other import: 组织自选.
+  const linked =
+    prepared === null
+      ? undefined
+      : requests?.find((r) => r.kind === "import" && r.stagingId === prepared.stagingId);
+  const target =
+    scopeChoice ??
+    (linked !== undefined
+      ? { scope: "named" as const, orgs: [linked.orgId] }
+      : { scope: "optional" as const, orgs: [] });
+  const scopeInvalid = target.scope === "named" && target.orgs.length === 0;
   const sensitive = review !== null && pluginReviewSensitive(review);
   const deployable = review?.extension !== undefined && review.extension.action !== "keep";
   // Loaded from the address: there is no source step to go back to
@@ -308,6 +334,8 @@ function PluginImportWizard({ initial, orgId }: { initial: StagedImport; orgId: 
         stagingId: prepared.stagingId,
         body: {
           reviewHash: prepared.review.reviewHash,
+          scope: target.scope,
+          ...(target.scope === "named" && { orgs: target.orgs }),
           // only a changed choice: omitted keeps the plugin's own suggestion
           ...(!sameNames(pinned, suggestedPinned(prepared.review)) && {
             pinnedSuggestions: prepared.review.skills
@@ -318,7 +346,7 @@ function PluginImportWizard({ initial, orgId }: { initial: StagedImport; orgId: 
       });
       toast.success(t("done", { name: r.item.name }));
       if (r.deploy === null || r.deploy.result !== "failed") {
-        router.push(`/admin/catalog/${r.item.id}`);
+        router.push(`/admin/plugins/${r.item.id}`);
       } else setResult(r);
     } catch (e) {
       setSubmitError(problem(e));
@@ -327,7 +355,7 @@ function PluginImportWizard({ initial, orgId }: { initial: StagedImport; orgId: 
     }
   };
 
-  const cancel = { label: tw("cancel"), onSelect: () => router.push("/admin/catalog") };
+  const cancel = { label: tw("cancel"), onSelect: () => router.push("/admin/plugins") };
   const back = () => {
     setSubmitError(undefined);
     setStep((s) => (s > 0 ? ((s - 1) as Step) : s));
@@ -363,14 +391,14 @@ function PluginImportWizard({ initial, orgId }: { initial: StagedImport; orgId: 
               label: t("confirm"),
               onSelect: () => void submit(),
               loading: submitting,
-              disabled: submitting || result !== null || (sensitive && !ack),
+              disabled: submitting || result !== null || scopeInvalid || (sensitive && !ack),
             },
           };
 
   return (
     <WizardPage
       header={{
-        path: [...scope, { label: "catalog", href: "/admin/catalog" }, { label: "import" }],
+        path: [...scope, { label: "plugins", href: "/admin/plugins" }, { label: "import" }],
         title: t("title"),
       }}
       steps={[t("steps.source"), t("steps.review"), t("steps.confirm")]}
@@ -468,6 +496,10 @@ function PluginImportWizard({ initial, orgId }: { initial: StagedImport; orgId: 
           <Text>{t("plugin", { name: review.name, version: versionLabel(review.version) })}</Text>
           {review.extension === undefined ? (
             <Text tone="muted">{t("noExtension")}</Text>
+          ) : review.extension.olderThanDeployed === true ? (
+            <Text variant="prose" tone="warn">
+              {t("olderThanDeployed")}
+            </Text>
           ) : !deployable ? (
             <Text tone="muted">
               {t("keepExtension", {
@@ -480,6 +512,29 @@ function PluginImportWizard({ initial, orgId }: { initial: StagedImport; orgId: 
               {t("deployOn")}
             </Text>
           )}
+          <Card title={t("scopeTitle")}>
+            <Stack gap={8}>
+              {linked !== undefined && (
+                <Text variant="small" tone="muted">
+                  {t("requestDefault", { org: linked.orgName })}
+                </Text>
+              )}
+              <ScopeFields
+                scope={target.scope}
+                orgs={target.orgs}
+                onScope={(next) =>
+                  setScopeChoice({ scope: next, orgs: next === "named" ? target.orgs : [] })
+                }
+                onOrgs={(next) => setScopeChoice({ scope: "named", orgs: next })}
+                disabled={submitting || result !== null}
+              />
+              {scopeInvalid && (
+                <Text variant="small" tone="muted">
+                  {t("namedNeedsOrg")}
+                </Text>
+              )}
+            </Stack>
+          </Card>
           {sensitive && (
             <Stack gap={8}>
               <Text variant="prose" tone="warn">
@@ -510,7 +565,7 @@ function PluginImportWizard({ initial, orgId }: { initial: StagedImport; orgId: 
                   </Text>
                 )}
                 <Text>
-                  <Link href={`/admin/catalog/${result.item.id}`}>{t("openItem")}</Link>
+                  <Link href={`/admin/plugins/${result.item.id}`}>{t("openItem")}</Link>
                 </Text>
               </Stack>
             </Card>

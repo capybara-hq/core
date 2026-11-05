@@ -25,6 +25,7 @@ import {
   extensionConfigQuery,
   marketplaceEntriesQuery,
   marketplacesQuery,
+  pendingPluginsQuery,
   stagedImportQuery,
 } from "./admin";
 import { agentConnectorQueries, agentFormQueries, agentQuery, agentsQuery } from "./agents";
@@ -114,6 +115,9 @@ const atLeast = (me: Me | null, min: OrgRole): boolean =>
 /** Whether the session is an enterprise admin's (the admin console reads nothing for anyone else). */
 const enterprise = (me: Me | null): boolean => me?.account.isEnterpriseAdmin === true;
 
+/** The admin 插件 head's counts: the plugins waiting for a confirmation and the pending requests. */
+const pluginsHead = () => [q(pendingPluginsQuery()), q(deploymentRequestsQuery())];
+
 /**
  * Every `page.tsx` under `app/(app)` and `app/(auth)`, one entry each (a test walks the app dir).
  * Patterns are string literals: the query checks read them statically.
@@ -172,31 +176,6 @@ export const ROUTES: readonly RouteEntry[] = [
     queries: ({ me }) => (enterprise(me) ? [q(adminAccountsQuery())] : []),
   },
   {
-    pattern: "/admin/catalog",
-    // The items and the marketplaces that name their sources (a section).
-    queries: ({ me }) => (enterprise(me) ? [q(catalogItemsQuery()), q(marketplacesQuery())] : []),
-  },
-  {
-    pattern: "/admin/catalog/[itemId]",
-    // The item, and the marketplaces and the catalog its dependencies are looked up in (sections).
-    queries: ({ me, params }) =>
-      enterprise(me) && params.itemId !== undefined
-        ? [q(catalogItemQuery(params.itemId)), q(marketplacesQuery()), q(catalogItemsQuery())]
-        : [],
-  },
-  {
-    pattern: "/admin/catalog/import",
-    // `?staging=<id>`: the staged import's review (no staging: the source step reads nothing).
-    queries: ({ me, search }) => {
-      const staging = search.get("staging") ?? "";
-      return enterprise(me) && staging !== "" ? [q(stagedImportQuery(staging))] : [];
-    },
-  },
-  {
-    pattern: "/admin/catalog/requests",
-    queries: ({ me }) => (enterprise(me) ? [q(deploymentRequestsQuery())] : []),
-  },
-  {
     pattern: "/admin/extensions",
     queries: ({ me }) => (enterprise(me) ? [q(adminExtensionsQuery())] : []),
   },
@@ -214,23 +193,6 @@ export const ROUTES: readonly RouteEntry[] = [
     queries: ({ me }) => (enterprise(me) ? [q(adminExtensionsQuery())] : []),
   },
   {
-    pattern: "/admin/marketplaces",
-    queries: ({ me }) => (enterprise(me) ? [q(marketplacesQuery())] : []),
-  },
-  {
-    pattern: "/admin/marketplaces/entries",
-    // The entries of the address's source and search, and the marketplaces (a section: the tabs).
-    queries: ({ me, search }) =>
-      enterprise(me)
-        ? [
-            q(
-              marketplaceEntriesQuery(search.get("sourceId") ?? "", (search.get("q") ?? "").trim()),
-            ),
-            q(marketplacesQuery()),
-          ]
-        : [],
-  },
-  {
     pattern: "/admin/models",
     queries: ({ me }) => (enterprise(me) ? [q(adminModelsQuery()), q(adminPurposesQuery())] : []),
   },
@@ -239,6 +201,67 @@ export const ROUTES: readonly RouteEntry[] = [
     // The orgs and the deployment settings (their overrides).
     queries: ({ me }) =>
       enterprise(me) ? [q(adminOrgsQuery()), q(deploymentSettingsQuery())] : [],
+  },
+  {
+    pattern: "/admin/plugins",
+    // The items, the head's counts (pending plugins, requests), and the marketplaces and orgs
+    // that name the rows' sources and named scopes (sections).
+    queries: ({ me }) =>
+      enterprise(me)
+        ? [q(catalogItemsQuery()), ...pluginsHead(), q(marketplacesQuery()), q(adminOrgsQuery())]
+        : [],
+  },
+  {
+    pattern: "/admin/plugins/[itemId]",
+    // The item, the marketplaces (its source), the catalog (its dependencies, the head's count)
+    // and the orgs (its named scope, the scope dialog).
+    queries: ({ me, params }) =>
+      enterprise(me) && params.itemId !== undefined
+        ? [
+            q(catalogItemQuery(params.itemId)),
+            q(marketplacesQuery()),
+            q(catalogItemsQuery()),
+            q(adminOrgsQuery()),
+          ]
+        : [],
+  },
+  {
+    pattern: "/admin/plugins/import",
+    // `?staging=<id>`: the staged import's review, the pending requests (a staging prepared for
+    // an org's request defaults to that org) and the orgs (the scope); no staging: the source
+    // step reads nothing.
+    queries: ({ me, search }) => {
+      const staging = search.get("staging") ?? "";
+      return enterprise(me) && staging !== ""
+        ? [q(stagedImportQuery(staging)), q(deploymentRequestsQuery()), q(adminOrgsQuery())]
+        : [];
+    },
+  },
+  {
+    pattern: "/admin/plugins/market",
+    // The entries of the address's source and search, the marketplaces (the source tabs) and the
+    // head's counts.
+    queries: ({ me, search }) =>
+      enterprise(me)
+        ? [
+            q(
+              marketplaceEntriesQuery(search.get("sourceId") ?? "", (search.get("q") ?? "").trim()),
+            ),
+            q(marketplacesQuery()),
+            q(catalogItemsQuery()),
+            ...pluginsHead(),
+          ]
+        : [],
+  },
+  {
+    pattern: "/admin/plugins/pending",
+    // The plugins waiting for a confirmation and the requests (the page and the head's counts),
+    // the items (the head's count).
+    queries: ({ me }) => (enterprise(me) ? [...pluginsHead(), q(catalogItemsQuery())] : []),
+  },
+  {
+    pattern: "/admin/plugins/sources",
+    queries: ({ me }) => (enterprise(me) ? [q(marketplacesQuery())] : []),
   },
   {
     pattern: "/admin/settings",

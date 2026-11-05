@@ -19,13 +19,12 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { useState } from "react";
-import { useCatalogErrorLines } from "../../../../components/CatalogParts";
-import { ErrorFrame } from "../../../../components/ErrorFrame";
-import { FormError } from "../../../../components/form-error";
-import { NoAccess } from "../../../../components/NoAccess";
-import { usePagePath } from "../../../../components/shell/path";
-import { marketplaceTabs } from "../../../../lib/admin-tabs";
-import { issueLines } from "../../../../lib/api";
+import { useCatalogErrorLines } from "../../../../../components/CatalogParts";
+import { ErrorFrame } from "../../../../../components/ErrorFrame";
+import { FormError } from "../../../../../components/form-error";
+import { NoAccess } from "../../../../../components/NoAccess";
+import { usePagePath } from "../../../../../components/shell/path";
+import { issueLines } from "../../../../../lib/api";
 import {
   addMarketplace,
   type Marketplace,
@@ -35,14 +34,14 @@ import {
   removeMarketplace,
   shortCommit,
   updateMarketplace,
-} from "../../../../lib/catalog";
-import { marketplacesQuery } from "../../../../lib/query/admin";
-import { keys } from "../../../../lib/query/keys";
-import { useAppMutation } from "../../../../lib/query/mutation";
-import { usePageQuery } from "../../../../lib/query/page-query";
-import { useAdmin } from "../../../../lib/query/workspace";
-import { useErrorMessage } from "../../../../lib/use-error-message";
-import NotFound from "../../not-found";
+} from "../../../../../lib/catalog";
+import { marketplacesQuery } from "../../../../../lib/query/admin";
+import { keys } from "../../../../../lib/query/keys";
+import { useAppMutation } from "../../../../../lib/query/mutation";
+import { usePageQuery } from "../../../../../lib/query/page-query";
+import { useAdmin } from "../../../../../lib/query/workspace";
+import { useErrorMessage } from "../../../../../lib/use-error-message";
+import NotFound from "../../../not-found";
 
 type SourceList = { items: Marketplace[]; offline: boolean };
 
@@ -66,7 +65,8 @@ function useProblem(): (e: unknown) => Problem {
 }
 
 /**
- * `/admin/marketplaces`: marketplaces (enterprise admins, ListPage with the tabs Browse / Sources). The official
+ * `/admin/plugins/sources`: the marketplace sources (enterprise admins, ListPage; 添加市场源 on the
+ * 插件 head leads here, its entries are the 插件 tab 市场). The official
  * marketplace: the enable switch (offline mode with a read-only switch when the deployment config
  * turns it off) and its read-only address; enterprise marketplaces: add, edit, remove (name,
  * address, enabled, token); each marketplace's status and "Refresh now". An enterprise marketplace
@@ -87,7 +87,6 @@ export default function SourcesView() {
 function SourcesRead() {
   const scope = usePagePath("admin");
   const t = useTranslations("catalog.admin.marketplaces");
-  const ta = useTranslations("catalog.admin");
   const read = usePageQuery(marketplacesQuery());
   if (read.kind === "notFound") return <NotFound />;
   if (read.kind === "error") return <ErrorFrame reset={read.retry} />;
@@ -97,11 +96,9 @@ function SourcesRead() {
     return (
       <ListPage
         header={{
-          path: [...scope, { label: "marketplaces" }],
+          path: [...scope, { label: "plugins", href: "/admin/plugins" }, { label: "sources" }],
           title: t("title"),
           description: t("description"),
-          tabs: marketplaceTabs(ta).map((tab) => ({ ...tab, pending: true })),
-          activeTab: "sources",
           search: { label: t("search"), value: "", onChange: () => {} },
         }}
         loading={{ keep: true }}
@@ -129,7 +126,6 @@ function SourcesRead() {
 function Sources({ data }: { data: SourceList }) {
   const scope = usePagePath("admin");
   const t = useTranslations("catalog.admin.marketplaces");
-  const ta = useTranslations("catalog.admin");
   const qc = useQueryClient();
   const listKey = marketplacesQuery().queryKey;
   // Added or removed: the list is read again.
@@ -152,12 +148,9 @@ function Sources({ data }: { data: SourceList }) {
   return (
     <ListPage
       header={{
-        path: [...scope, { label: "marketplaces" }],
+        path: [...scope, { label: "plugins", href: "/admin/plugins" }, { label: "sources" }],
         title: t("title"),
-        // One head for both tabs (description, tab counts, search): switching never moves the tabs
         description: t("description"),
-        tabs: marketplaceTabs(ta, data.items),
-        activeTab: "sources",
         search: { label: t("search"), value: q, onChange: setQ },
       }}
     >

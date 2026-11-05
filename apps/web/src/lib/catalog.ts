@@ -863,7 +863,7 @@ export const getStagedImport = (stagingId: string) =>
 
 /** The import page of a staged import (it loads the review with {@link getStagedImport}). */
 export const importPageHref = (stagingId: string) =>
-  `/admin/catalog/import?staging=${enc(stagingId)}`;
+  `/admin/plugins/import?staging=${enc(stagingId)}`;
 
 // ---- Deployment level: requests ----
 

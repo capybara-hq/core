@@ -163,6 +163,7 @@ const PREPARED = {
 
 const ROUTES: Routes = {
   "GET /api/v1/admin/catalog/items": () => json(200, { items: [catalogItem()], nextOffset: null }),
+  "GET /api/v1/admin/catalog/items?pending=true": () => json(200, { items: [], nextOffset: null }),
   [`GET /api/v1/admin/catalog/items/${ITEM_ID}`]: () =>
     json(200, {
       item: { ...catalogItem(), packageName: null, deletedAt: null },
@@ -196,16 +197,16 @@ const ROUTES: Routes = {
           orgId: "o1",
           orgName: "Acme",
           item: { id: ITEM_ID, name: "crm", displayName: null },
-          version: null,
-          stage: "deployment",
+          kind: "access",
+          entry: null,
           status: "pending",
           note: "",
+          reason: null,
           requestedBy: "a2",
           requestedByName: "Mia",
           decidedBy: null,
           decidedAt: null,
-          orgDecidedBy: null,
-          orgDecidedAt: null,
+          stagingId: null,
           createdAt: T,
         },
       ],
@@ -346,7 +347,7 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
 
   it.each([
     ["/admin/models", "GET /api/v1/admin/models"],
-    ["/admin/marketplaces", "GET /api/v1/admin/marketplaces"],
+    ["/admin/plugins/sources", "GET /api/v1/admin/marketplaces"],
   ])(
     "%s: the loading page announces once (its sections inside one busy region)",
     async (path, held) => {
@@ -618,44 +619,44 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     expect(browser.map((c) => c.method)).toContain("POST");
   });
 
-  it("/admin/catalog: a first render from the hydrated cache makes no browser read (sources from the marketplaces)", async () => {
+  it("/admin/plugins: a first render from the hydrated cache makes no browser read (sources from the marketplaces)", async () => {
     const browser = expectNoFirstPaintFetch();
-    await renderRouteWithCache("/admin/catalog", ROUTES);
-    expect(screen.getByText(/^v[^ ]+ · crm · .*Organizations 2$/)).toBeTruthy();
+    await renderRouteWithCache("/admin/plugins", ROUTES);
+    expect(screen.getByText(/^v[^ ]+ · .* orgs? using it$/)).toBeTruthy();
     await settle();
     expect(browser).toEqual([]);
   });
 
-  it("/admin/catalog: marketplaces the kernel fails only drop the source labels (not read again on mount)", async () => {
+  it("/admin/plugins: marketplaces the kernel fails only drop the source labels (not read again on mount)", async () => {
     const browser = expectNoFirstPaintFetch();
-    await renderRouteWithCache("/admin/catalog", {
+    await renderRouteWithCache("/admin/plugins", {
       ...ROUTES,
       "GET /api/v1/admin/marketplaces": failing,
     });
-    expect(screen.getByText(/^v[^ ]+ · crm · .*Organizations 2$/)).toBeTruthy();
+    expect(screen.getByText(/^v[^ ]+ · .* orgs? using it$/)).toBeTruthy();
     await settle();
     expect(browser).toEqual([]);
   });
 
-  it("/admin/catalog/[itemId]: a first render from the hydrated cache makes no browser read (dependencies, sources)", async () => {
+  it("/admin/plugins/[itemId]: a first render from the hydrated cache makes no browser read (dependencies, sources)", async () => {
     const browser = expectNoFirstPaintFetch();
-    await renderRouteWithCache(`/admin/catalog/${ITEM_ID}`, ROUTES);
+    await renderRouteWithCache(`/admin/plugins/${ITEM_ID}`, ROUTES);
     expect(screen.getByRole("heading", { name: "crm" })).toBeTruthy();
     expect(screen.getByText(/crm-core/)).toBeTruthy();
     await settle();
     expect(browser).toEqual([]);
   });
 
-  it("/admin/catalog/[itemId]: a missing item is the not-found state in the shell; a failing catalog only leaves dependencies unchecked", async () => {
+  it("/admin/plugins/[itemId]: a missing item is the not-found state in the shell; a failing catalog only leaves dependencies unchecked", async () => {
     expectNoFirstPaintFetch();
-    await renderRouteWithCache(`/admin/catalog/${ITEM_ID}`, {
+    await renderRouteWithCache(`/admin/plugins/${ITEM_ID}`, {
       ...ROUTES,
       [`GET /api/v1/admin/catalog/items/${ITEM_ID}`]: () =>
         json(404, { error: { code: "catalog.item_not_found", message: "x" } }),
     });
     expect(template("StatusPage")?.getAttribute("data-kind")).toBe("404");
     cleanup();
-    await renderRouteWithCache(`/admin/catalog/${ITEM_ID}`, {
+    await renderRouteWithCache(`/admin/plugins/${ITEM_ID}`, {
       ...ROUTES,
       "GET /api/v1/admin/catalog/items": failing,
     });
@@ -663,31 +664,31 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     expect(screen.queryByText(/not in the catalog/)).toBeNull();
   });
 
-  it("/admin/catalog/requests: a first render from the hydrated cache makes no browser read", async () => {
+  it("/admin/plugins/pending: a first render from the hydrated cache makes no browser read", async () => {
     const browser = expectNoFirstPaintFetch();
-    await renderRouteWithCache("/admin/catalog/requests", ROUTES);
+    await renderRouteWithCache("/admin/plugins/pending", ROUTES);
     expect(screen.getAllByText("Acme · crm").length).toBeGreaterThan(0);
     await settle();
     expect(browser).toEqual([]);
   });
 
-  it("/admin/catalog/import: no staging starts at the source step; ?staging= opens the review from the cache", async () => {
+  it("/admin/plugins/import: no staging starts at the source step; ?staging= opens the review from the cache", async () => {
     const browser = expectNoFirstPaintFetch();
-    await renderRouteWithCache("/admin/catalog/import", ROUTES);
+    await renderRouteWithCache("/admin/plugins/import", ROUTES);
     expect(
       screen.getByLabelText(en.catalog.admin.review.sourceLabel, { exact: false }),
     ).toBeTruthy();
     cleanup();
-    const { calls } = await renderRouteWithCache("/admin/catalog/import?staging=st1", ROUTES);
+    const { calls } = await renderRouteWithCache("/admin/plugins/import?staging=st1", ROUTES);
     expect(calls.map((c) => c.url)).toContain("/api/v1/admin/catalog/imports/st1");
     expect(screen.getByText("@acme/plugin-crm", { exact: false })).toBeTruthy();
     await settle();
     expect(browser).toEqual([]);
   });
 
-  it("/admin/catalog/import: an expired staging is the page's own problem with a restart, not a not-found", async () => {
+  it("/admin/plugins/import: an expired staging is the page's own problem with a restart, not a not-found", async () => {
     const browser = expectNoFirstPaintFetch();
-    await renderRouteWithCache("/admin/catalog/import?staging=gone", {
+    await renderRouteWithCache("/admin/plugins/import?staging=gone", {
       ...ROUTES,
       "GET /api/v1/admin/catalog/imports/gone": () =>
         json(404, { error: { code: "plugin.staging_not_found", message: "gone" } }),
@@ -699,16 +700,16 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
   });
 
   it.each([
-    ["/admin/catalog", "GET /api/v1/admin/catalog/items", "ListPage", "Organizations 2"],
+    ["/admin/plugins", "GET /api/v1/admin/catalog/items", "ListPage", "using it"],
     [
-      `/admin/catalog/${ITEM_ID}`,
+      `/admin/plugins/${ITEM_ID}`,
       `GET /api/v1/admin/catalog/items/${ITEM_ID}`,
       "DetailPage",
       "Acme",
     ],
-    ["/admin/catalog/requests", "GET /api/v1/admin/catalog/requests", "InboxPage", "Acme · crm"],
+    ["/admin/plugins/pending", "GET /api/v1/admin/catalog/requests", "ListPage", "Acme · crm"],
     [
-      "/admin/catalog/import?staging=st1",
+      "/admin/plugins/import?staging=st1",
       "GET /api/v1/admin/catalog/imports/st1",
       "WizardPage",
       "@acme/plugin-crm",
@@ -724,40 +725,20 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     },
   );
 
-  it("/admin/catalog/[itemId]: the loading overview is its component sections, the policy radios and the inspector's six facts", async () => {
+  it("/admin/plugins/[itemId]: the loading detail is the components and the inspector's six facts", async () => {
     const { release } = await renderHeld(
-      `/admin/catalog/${ITEM_ID}`,
+      `/admin/plugins/${ITEM_ID}`,
       `GET /api/v1/admin/catalog/items/${ITEM_ID}`,
     );
     await expectLoading("DetailPage", "Acme");
     expect(document.querySelectorAll('[data-part="loading-card"]')).toHaveLength(0);
-    expect(
-      document.querySelectorAll('[data-part="loading-plain-radios"] [data-part="loading-radio"]'),
-    ).toHaveLength(3);
-    expect(document.querySelectorAll('[data-part="loading-shaped-card"]')).toHaveLength(1);
     expect(document.querySelectorAll('[data-part="loading-inspector-row"]')).toHaveLength(6);
     await release();
   });
 
-  it("/admin/catalog/requests: the loading inbox keeps the first request's inspector and the disabled decision row", async () => {
+  it("/admin/plugins/import?staging=: the loading review is a stack (no wizard card)", async () => {
     const { release } = await renderHeld(
-      "/admin/catalog/requests",
-      "GET /api/v1/admin/catalog/requests",
-    );
-    await expectLoading("InboxPage", "Acme · crm");
-    expect(document.querySelector(".cb-body-inspector")).not.toBeNull();
-    expect(document.querySelectorAll('[data-part="loading-inspector-row"]')).toHaveLength(4);
-    expect(document.querySelectorAll('[data-part="action-row"]')).toHaveLength(1);
-    const approve = screen.getByRole("button", {
-      name: en.catalog.admin.requests.approve,
-    }) as HTMLButtonElement;
-    expect(approve.disabled).toBe(true);
-    await release();
-  });
-
-  it("/admin/catalog/import?staging=: the loading review is a stack (no wizard card)", async () => {
-    const { release } = await renderHeld(
-      "/admin/catalog/import?staging=st1",
+      "/admin/plugins/import?staging=st1",
       "GET /api/v1/admin/catalog/imports/st1",
     );
     await expectLoading("WizardPage", "@acme/plugin-crm");
@@ -766,13 +747,13 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     await release();
   });
 
-  it("/admin/catalog/requests: a decision invalidates the requests and the overview", async () => {
+  it("/admin/plugins/pending: a decision invalidates the requests and the overview", async () => {
     const calls = stubApi({
       ...ROUTES,
       "POST /api/v1/admin/catalog/requests/r1/decide": () =>
         json(200, { request: { id: "r1", status: "approved" } }),
     });
-    const { client } = await renderRouteWithCache("/admin/catalog/requests", ROUTES);
+    const { client } = await renderRouteWithCache("/admin/plugins/pending", ROUTES);
     await client.prefetchQuery({
       queryKey: ["deployment", "adminOverview"],
       queryFn: () => ({
@@ -784,28 +765,30 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     });
     await userEvent
       .setup()
-      .click(screen.getByRole("button", { name: en.catalog.admin.requests.approve }));
+      .click(screen.getByRole("button", { name: en.catalog.admin.pending.approve }));
     await vi.waitFor(() =>
-      expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([
-        "POST /api/v1/admin/catalog/requests/r1/decide",
-        "GET /api/v1/admin/catalog/requests?status=pending",
-      ]),
+      expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual(
+        expect.arrayContaining([
+          "POST /api/v1/admin/catalog/requests/r1/decide",
+          "GET /api/v1/admin/catalog/requests?status=pending",
+        ]),
+      ),
     );
     expect(client.getQueryState(["deployment", "adminOverview"])?.isInvalidated).toBe(true);
   });
 
-  it("/admin/marketplaces: a first render from the hydrated cache makes no browser read", async () => {
+  it("/admin/plugins/sources: a first render from the hydrated cache makes no browser read", async () => {
     const browser = expectNoFirstPaintFetch();
-    await renderRouteWithCache("/admin/marketplaces", ROUTES);
+    await renderRouteWithCache("/admin/plugins/sources", ROUTES);
     expect(screen.getByText("Official marketplace")).toBeTruthy();
     await settle();
     expect(browser).toEqual([]);
   });
 
-  it("/admin/marketplaces/entries: the entries for the query's source and search come from the cache", async () => {
+  it("/admin/plugins/market: the entries for the query's source and search come from the cache", async () => {
     const browser = expectNoFirstPaintFetch();
     const { calls } = await renderRouteWithCache(
-      "/admin/marketplaces/entries?sourceId=official&q=%20crm%20",
+      "/admin/plugins/market?sourceId=official&q=%20crm%20",
       ROUTES,
     );
     expect(calls.map((c) => c.url)).toContain(
@@ -817,8 +800,8 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     expect(browser).toEqual([]);
   });
 
-  it("/admin/marketplaces/entries: typing in the search reads in the browser, its own cache entry", async () => {
-    const { client } = await renderRouteWithCache("/admin/marketplaces/entries", ROUTES);
+  it("/admin/plugins/market: typing in the search reads in the browser, its own cache entry", async () => {
+    const { client } = await renderRouteWithCache("/admin/plugins/market", ROUTES);
     const browser = stubApi({
       "GET /api/v1/admin/marketplaces/entries": () => json(200, { items: [] }),
     });
@@ -834,8 +817,11 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     ).toHaveLength(1);
   });
 
-  it("/admin/marketplaces: an empty cache shows the template's loading state, then the data", async () => {
-    const { release } = await renderHeld("/admin/marketplaces", "GET /api/v1/admin/marketplaces");
+  it("/admin/plugins/sources: an empty cache shows the template's loading state, then the data", async () => {
+    const { release } = await renderHeld(
+      "/admin/plugins/sources",
+      "GET /api/v1/admin/marketplaces",
+    );
     await expectLoading("ListPage", "CRM plugin");
     // the two static sections stay, their fields placeholders
     expect(
@@ -847,9 +833,9 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
   });
 
-  it("/admin/marketplaces/entries: an empty cache shows the template's loading state, then the data", async () => {
+  it("/admin/plugins/market: an empty cache shows the template's loading state, then the data", async () => {
     const { release } = await renderHeld(
-      "/admin/marketplaces/entries",
+      "/admin/plugins/market",
       "GET /api/v1/admin/marketplaces/entries",
     );
     await expectLoading("ListPage", "CRM plugin");
@@ -858,13 +844,13 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
   });
 
-  it("/admin/marketplaces: turning a marketplace off writes the answer into the cache and invalidates the entries", async () => {
+  it("/admin/plugins/sources: turning a marketplace off writes the answer into the cache and invalidates the entries", async () => {
     const calls = stubApi({
       ...ROUTES,
       "PATCH /api/v1/admin/marketplaces/official": () =>
         json(200, { ...MARKETPLACE, enabled: false }),
     });
-    const { client } = await renderRouteWithCache("/admin/marketplaces", ROUTES);
+    const { client } = await renderRouteWithCache("/admin/plugins/sources", ROUTES);
     await client.prefetchQuery({
       queryKey: ["deployment", "marketplaceEntries", "", ""],
       queryFn: () => ({ items: [] }),
@@ -905,12 +891,12 @@ const CACHED: string[] = [
   "/admin/extensions",
   "/admin/extensions/install",
   "/admin/extensions/demo",
-  "/admin/catalog",
-  `/admin/catalog/${ITEM_ID}`,
-  "/admin/catalog/import",
-  "/admin/catalog/requests",
-  "/admin/marketplaces",
-  "/admin/marketplaces/entries",
+  "/admin/plugins",
+  `/admin/plugins/${ITEM_ID}`,
+  "/admin/plugins/import",
+  "/admin/plugins/pending",
+  "/admin/plugins/sources",
+  "/admin/plugins/market",
 ];
 
 describe("the enterprise-admin gate", () => {

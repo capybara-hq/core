@@ -56,7 +56,7 @@ function AdminOverview() {
           {
             label: t("overview.metrics.catalogRequests"),
             value: value(data.catalogRequestsPending),
-            href: "/admin/catalog/requests",
+            href: "/admin/plugins/pending",
           },
           { label: t("overview.metrics.orgs"), value: value(data.orgs), href: "/admin/orgs" },
           {

@@ -1,54 +1,30 @@
-import type { Marketplace } from "./catalog";
+type PluginTabKey = "tabs.installed" | "tabs.market" | "tabs.pending";
 
-type CatalogKey = "tabs.plugins" | "tabs.requests";
-type MarketKey = "tabs.browse" | "tabs.sources";
-
-/** The two views of the admin "Catalog" page head: the tab row links the two routes. */
-export function catalogTabs(
-  t: (key: CatalogKey) => string,
-  counts: { plugins?: number; requests?: number } = {},
-) {
-  return [
-    {
-      id: "plugins",
-      label: t("tabs.plugins"),
-      href: "/admin/catalog",
-      ...(counts.plugins !== undefined ? { count: counts.plugins } : {}),
-    },
-    {
-      id: "requests",
-      label: t("tabs.requests"),
-      href: "/admin/catalog/requests",
-      ...(counts.requests !== undefined ? { count: counts.requests } : {}),
-    },
-  ];
-}
+/** The tabs of the admin 插件 page head: 已安装, 市场, 待确认 (each its own route). */
+export type PluginTab = "installed" | "market" | "pending";
 
 /**
- * The two views of the admin "Marketplaces" page head: browse entries, manage sources. Both pages
- * pass the marketplaces, so both draw the same counts: the entries of the marketplaces the browse
- * list reads (enabled, not turned off by the deployment config) and the number of marketplaces.
- * Without them (the list failed to load) the tabs carry no counts.
+ * The three views of the admin 插件 page head. `installed` is the number of plugins, `pending` the
+ * plugins waiting for a permission confirmation plus the pending requests; without them (still
+ * loading, or the read failed) the tabs carry no count.
  */
-export function marketplaceTabs(
-  t: (key: MarketKey) => string,
-  sources?: Pick<Marketplace, "enabled" | "disabledByConfig" | "entryCount">[],
+export function pluginTabs(
+  t: (key: PluginTabKey) => string,
+  counts: { installed?: number | undefined; pending?: number | undefined } = {},
 ) {
-  const entries = sources
-    ?.filter((s) => s.enabled && !s.disabledByConfig)
-    .reduce((n, s) => n + s.entryCount, 0);
   return [
     {
-      id: "browse",
-      label: t("tabs.browse"),
-      href: "/admin/marketplaces/entries",
-      ...(entries !== undefined ? { count: entries } : {}),
+      id: "installed",
+      label: t("tabs.installed"),
+      href: "/admin/plugins",
+      ...(counts.installed !== undefined ? { count: counts.installed } : {}),
     },
+    { id: "market", label: t("tabs.market"), href: "/admin/plugins/market" },
     {
-      id: "sources",
-      label: t("tabs.sources"),
-      href: "/admin/marketplaces",
-      ...(sources !== undefined ? { count: sources.length } : {}),
+      id: "pending",
+      label: t("tabs.pending"),
+      href: "/admin/plugins/pending",
+      ...(counts.pending !== undefined ? { count: counts.pending } : {}),
     },
   ];
 }

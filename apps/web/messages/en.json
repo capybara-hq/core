@@ -260,7 +260,10 @@
       "no_extension": "This plugin has no extension, so there is nothing to install on the deployment.",
       "dependency_unresolved": "A plugin this one depends on is not in the catalog at a matching version. Ask the enterprise admin to import it first.",
       "dependency_disabled": "A plugin this one depends on is disabled by the enterprise admin.",
-      "dependency_cycle": "The plugin's dependencies form a cycle and cannot be installed."
+      "dependency_cycle": "The plugin's dependencies form a cycle and cannot be installed.",
+      "request_pending": "A request of this kind is already pending.",
+      "request_invalid": "This request can no longer be handled (its marketplace was deleted, say); reject it.",
+      "marketplace_browse_disabled": "The deployment settings turned off marketplace browsing for organizations."
     },
     "directory": {
       "not_configured": "This extension's directory is not configured. Fill in its directory settings in the organization config first."
@@ -387,7 +390,12 @@
       "skill_conflict": "A skill this plugin brings already exists in this organization (your own skill, or one from another plugin). Remove or rename it, then install again.",
       "upgrade_stale": "The upgrade preview is out of date. Preview the upgrade again.",
       "upgrade_target_invalid": "This version cannot be the upgrade target (a plugin with an extension can only move to the version the deployment runs, and plugins depending on it must accept the version).",
-      "upgrade_failed": "Upgrading the plugin failed."
+      "upgrade_failed": "Upgrading the plugin failed.",
+      "disabled": "This plugin is disabled on the whole deployment.",
+      "scope_locked": "The enterprise admin sets this plugin's scope; it cannot be switched in an organization.",
+      "switch_stale": "What this changes moved on before you confirmed; review it again.",
+      "builtin": "A built-in plugin's scope cannot be changed and it cannot be disabled.",
+      "scope_stale": "The impact changed before you confirmed; preview it again."
     },
     "lock": {
       "acquire_failed": "Another operation is in progress on this resource. Try again shortly."
@@ -2285,8 +2293,7 @@
       "settings": "Deployment settings",
       "extensions": "Extensions",
       "models": "Models",
-      "catalog": "Catalog",
-      "marketplaces": "Marketplaces"
+      "plugins": "Plugins"
     },
     "overview": {
       "intro": "Manage the whole deployment: accounts, organizations, extensions and deployment settings.",
@@ -2733,11 +2740,6 @@
       "named": "Selected organizations",
       "disabled": "Disabled"
     },
-    "policy": {
-      "allow": "Allowed",
-      "needs_approval": "Needs approval",
-      "disabled": "Disabled"
-    },
     "source": {
       "manual": "Manual import",
       "official": "Official marketplace",
@@ -2780,55 +2782,39 @@
       "agentInstructions": "Instructions of {name}"
     },
     "admin": {
-      "title": "Catalog",
-      "hint": "Plugins in the catalog can be installed by organizations; the policy decides whether they can install directly.",
-      "empty": "The catalog has no items yet.",
+      "title": "Plugins",
+      "empty": "No plugins yet. Bring one in from a marketplace or upload a plugin package.",
       "noResults": "No items match the filters.",
-      "columns": {
-        "name": "Name",
-        "version": "Version",
-        "source": "Source",
-        "policy": "Policy",
-        "installs": "Organizations"
-      },
       "filters": {
         "source": "Source",
         "allSources": "All sources"
       },
       "actions": {
-        "import": "Import",
-        "entries": "Browse marketplaces",
-        "requests": "Deployment requests"
+        "addSource": "Add marketplace source",
+        "upload": "Upload plugin package"
       },
       "detail": {
-        "tabsLabel": "Item details",
+        "tabsLabel": "Plugin",
         "tabs": {
-          "overview": "Overview",
-          "versions": "Versions"
+          "versions": "Versions",
+          "components": "Components",
+          "orgs": "Organizations"
         },
-        "deleted": "This item was deleted. Organizations can no longer see it; installed components are not affected.",
+        "deleted": "This plugin was deleted. Organizations can no longer see it; installed components are not affected.",
         "fields": {
-          "package": "npm package",
+          "package": "Package",
           "publisher": "Publisher",
-          "latest": "Latest version",
           "source": "Source",
-          "installs": "Organizations",
           "updated": "Updated",
-          "origin": "Origin"
+          "origin": "Origin",
+          "scope": "Scope",
+          "orgs": "Organizations using it",
+          "permissions": "Permissions"
         },
-        "policyTitle": "Policy",
-        "policyHint": "Allowed: organization admins install directly. Needs approval: an enterprise admin approves after the organization admin asks. Disabled: no new installs; existing installs are not affected.",
-        "policySaved": "Policy changed to “{policy}”",
-        "deployTitle": "Install to the deployment",
-        "deployHint": "Install a version of the extension on the deployment (a new install starts disabled and its permissions still need approval in the extension admin). Organizations can enable it only after that.",
-        "deployVersion": "Version",
-        "deploy": "Install to deployment",
-        "deployed": "Installed on the deployment: {name}",
-        "openExtension": "Open extension admin",
-        "delete": "Delete item",
+        "delete": "Delete plugin",
         "deleteConfirm": {
-          "title": "Delete item {name}",
-          "hint": "Organizations will no longer see this item; installed components are not affected. You can import it again later.",
+          "title": "Delete plugin {name}",
+          "hint": "Organizations will no longer see this plugin; installed components are not affected. You can bring it in again later.",
           "confirm": "Delete"
         },
         "deletedToast": "Deleted {name}",
@@ -2841,11 +2827,47 @@
           "origin": "Origin",
           "format": "Format"
         },
-        "contentChanged": "Its marketplace now has other content for a version already imported. Import it again from Browse marketplaces; it is recorded as a build of that version.",
+        "contentChanged": "Its marketplace now has other content for a version already imported. Bring it in again from the Marketplace tab; it is recorded as a build of that version.",
         "format": {
           "capybara": "Capybara",
           "claudeCode": "Claude Code"
-        }
+        },
+        "permissions": {
+          "none": "No extension",
+          "confirmed": "{n} · confirmed",
+          "pending": "{n} · to confirm"
+        },
+        "actions": {
+          "scope": "Set scope",
+          "update": "Update to {version}",
+          "disable": "Disable",
+          "enable": "Enable"
+        },
+        "componentColumns": {
+          "name": "Component",
+          "kind": "Kind",
+          "version": "Version"
+        },
+        "kind": {
+          "extension": "Extension",
+          "skill": "Skill",
+          "connectorTemplate": "Connector template",
+          "agentTemplate": "Agent template"
+        },
+        "componentsEmpty": "This version has no components.",
+        "orgsHint": {
+          "all": "All organizations: on in every organization; organization admins cannot turn it off.",
+          "optional": "Organizations choose: {n, plural, one {# organization has} other {# organizations have}} turned it on.",
+          "named": "Selected organizations: only the organizations below can use it."
+        },
+        "orgColumns": {
+          "name": "Organization",
+          "slug": "Slug"
+        },
+        "orgsEmpty": "No organizations yet.",
+        "enabledToast": "Enabled {name}",
+        "disabledToast": "Disabled {name}",
+        "disabledNote": "Disabled on the whole deployment; its scope is kept and applies again once it is enabled."
       },
       "review": {
         "title": "Import plugin",
@@ -2875,9 +2897,7 @@
         "mismatch": "The permission summary in the marketplace does not match the downloaded package (the package is what counts).",
         "mismatchMissing": "Not listed in the marketplace: {keys}",
         "mismatchExtra": "Listed in the marketplace but not requested: {keys}.",
-        "deployExtension": "Also install the extension on the deployment",
         "deployOn": "After confirming, the extension is installed (or upgraded) on the deployment and enabled.",
-        "deployOff": "If unchecked, the extension is only recorded in the catalog and is not installed. Organizations cannot use the plugin until an enterprise admin installs its extension on the deployment.",
         "noExtension": "This plugin has no extension, so nothing is installed on the deployment.",
         "keepExtension": "The extension {name} {version} is already installed on the deployment.",
         "ackHint": "The plugin has sensitive permissions or migration warnings. Review them before confirming.",
@@ -2886,7 +2906,7 @@
         "done": "Imported plugin {name}",
         "deployResult": "Deployment result",
         "deployFailed": "{name} {version}: installing on the deployment failed ({code}); the import is kept. Retry in the extension admin.",
-        "openItem": "Open item",
+        "openItem": "Open plugin",
         "gone": "The staged import has expired or was already confirmed. Start the import again.",
         "restart": "Start a new import",
         "sourceGit": "Git repository",
@@ -2995,11 +3015,15 @@
           "license": "License text",
           "licenseTruncated": "The LICENSE file is longer than 64 KiB (or not UTF-8), so its text is not stored.",
           "bidiWarning": "This text contains bidirectional or control characters: what is shown may differ from what the model reads."
-        }
+        },
+        "scopeTitle": "Scope",
+        "olderThanDeployed": "Lower than the deployed version: it is only added to the catalog; the deployment is not changed.",
+        "requestDefault": "Requested by {org}: by default only that organization gets it.",
+        "namedNeedsOrg": "Choose at least one organization."
       },
       "entries": {
         "title": "Browse marketplaces",
-        "empty": "No marketplace entries. Add or refresh a marketplace under Sources first.",
+        "empty": "No marketplace entries. Add or refresh a marketplace with Add marketplace source.",
         "noResults": "No entries match.",
         "truncated": "There are too many entries and the list is truncated. Narrow it down by marketplace or keyword.",
         "search": "Search",
@@ -3038,8 +3062,8 @@
         "retry": "Retry"
       },
       "marketplaces": {
-        "title": "Marketplaces",
-        "description": "Each entry is one version of a plugin, from the sources set up here. It becomes a catalog item only after you import it; the package is downloaded, checked against the marketplace's integrity and reviewed before it is added.",
+        "title": "Marketplace sources",
+        "description": "Plugins are listed from the sources set up here. Bringing one in from the Marketplace tab of Plugins downloads it, checks it against the marketplace's integrity and reviews it before it is added.",
         "search": "Search sources",
         "noMatch": "No matching sources.",
         "official": "Official marketplace",
@@ -3103,38 +3127,85 @@
           }
         }
       },
-      "requests": {
-        "title": "Deployment requests",
-        "listLabel": "Pending requests",
-        "empty": "No pending requests.",
-        "emptyHint": "Requests from organizations to install items that need approval appear here.",
-        "pick": "Pick an item on the left.",
-        "inspectorTitle": "Details",
-        "columns": {
-          "request": "Request",
-          "time": "Time"
+      "tabs": {
+        "installed": "Installed",
+        "market": "Marketplace",
+        "pending": "Pending"
+      },
+      "search": "Search plugins",
+      "description": "A plugin bundles an extension, skills, connector templates and agent templates. Bring one in from a marketplace or upload it; it is installed once its permissions are confirmed.",
+      "chips": {
+        "builtin": "Built-in",
+        "claudeCode": "Claude Code"
+      },
+      "meta": {
+        "orgsUsing": "{n, plural, one {# org using it} other {# orgs using it}}",
+        "named": "Selected: {orgs}"
+      },
+      "state": {
+        "running": "Running",
+        "update": "Update available {version}",
+        "pending": "Permissions to confirm",
+        "disabled": "Disabled"
+      },
+      "rowConfirm": "Confirm permissions",
+      "scopeDialog": {
+        "title": "Set the scope of {name}",
+        "scopeLabel": "Scope",
+        "hints": {
+          "all": "On in every organization, including new ones; organization admins cannot turn it off.",
+          "optional": "Off by default; each organization admin turns it on.",
+          "named": "On only in the organizations you choose."
         },
-        "fields": {
-          "org": "Organization",
-          "requester": "Requested by",
-          "version": "Version",
-          "requested": "Requested",
-          "orgApproved": "Approved by org admin",
-          "note": "Note"
+        "orgsLabel": "Organizations",
+        "orgsNone": "No organizations yet.",
+        "shown": "Show to other organizations",
+        "shownHint": "Other organizations see it and can ask for it, but cannot use it.",
+        "next": "Preview impact",
+        "back": "Back",
+        "cancel": "Cancel",
+        "confirm": "Confirm",
+        "saved": "Scope of {name} saved"
+      },
+      "impact": {
+        "none": "No organization loses access.",
+        "affected": "These organizations lose access; the agents that use it are listed:",
+        "agents": "Agents: {names}",
+        "noAgents": "No agent uses it.",
+        "needsConfig": "These organizations need to fill in its organization config first: {orgs}"
+      },
+      "disableDialog": {
+        "title": "Disable {name}",
+        "hint": "Once disabled, nobody on the deployment can use it; its scope is kept and you can enable it again later.",
+        "confirm": "Disable"
+      },
+      "pending": {
+        "listLabel": "Pending",
+        "empty": "Nothing is waiting.",
+        "emptyHint": "Plugins whose permissions need confirming and organizations' requests appear here.",
+        "permissionsDescription": "Its extension's permissions are not confirmed yet; once confirmed it runs with them.",
+        "builtinDescription": "The built-in plugin is running; the permissions of this version are not confirmed yet.",
+        "waiting": "Waiting",
+        "review": "Review permissions",
+        "confirmTitle": "Confirm the permissions of {name}",
+        "confirmHint": "The extension's code runs in the kernel process for the whole deployment, whatever its scope.",
+        "confirm": "Confirm permissions",
+        "confirmed": "Permissions of {name} confirmed",
+        "noHash": "The plugin's extension package cannot be read, so it cannot be confirmed yet.",
+        "kind": {
+          "access": "Asks for access",
+          "import": "Asks to bring in",
+          "enable": "Asks to enable"
         },
-        "hint": "Once approved, this organization can install the item (for every version).",
+        "requester": "By {name}",
         "approve": "Approve",
         "reject": "Reject",
         "approved": "Approved",
-        "rejected": "Rejected"
-      },
-      "tabs": {
-        "plugins": "Plugins",
-        "requests": "Deployment requests",
-        "browse": "Browse",
-        "sources": "Sources"
-      },
-      "search": "Search plugins"
+        "rejected": "Rejected",
+        "rejectTitle": "Reject the request of {org}",
+        "reason": "Reason",
+        "reasonHelp": "Optional; the requester sees it."
+      }
     },
     "org": {
       "title": "Plugins",
@@ -3472,10 +3543,10 @@
     "roleHelp": "At most your own role in this organization.",
     "expires": "Expires",
     "expiry": {
-      "never": "Never",
       "30": "30 days",
       "90": "90 days",
-      "365": "1 year"
+      "365": "1 year",
+      "never": "Never"
     },
     "createSubmit": "Create",
     "value": "Token",

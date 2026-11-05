@@ -10,6 +10,7 @@ import {
   useAdminItems,
   useNav,
 } from "../src/components/shell/nav";
+import { json, stubApi } from "./support/api";
 import { resetNavigation } from "./support/navigation";
 import { ME } from "./support/render";
 import { renderFrame as renderShell, shellOf } from "./support/shell";
@@ -142,7 +143,7 @@ describe("nav by level (role hiding is cosmetic; the kernel decides)", () => {
     expect(read("admin")).toEqual(["new-agent", "new-app"]);
   });
 
-  it("the admin context lists 概览 账号 组织 扩展 企业目录 市场 模型 部署设置", () => {
+  it("the admin context lists 概览 账号 组织 插件 扩展 模型 部署设置 (no 企业目录 or 市场)", () => {
     function Admin() {
       const items = useAdminItems();
       return <pre data-testid="admin">{JSON.stringify(items.map((i) => [i.label, i.href]))}</pre>;
@@ -156,9 +157,8 @@ describe("nav by level (role hiding is cosmetic; the kernel decides)", () => {
       ["概览", "/admin"],
       ["账号", "/admin/accounts"],
       ["组织", "/admin/orgs"],
+      ["插件", "/admin/plugins"],
       ["扩展", "/admin/extensions"],
-      ["企业目录", "/admin/catalog"],
-      ["市场", "/admin/marketplaces"],
       ["模型", "/admin/models"],
       ["部署设置", "/admin/settings"],
     ]);
@@ -207,16 +207,31 @@ describe("AppFrame contexts", () => {
   const renderFrame = () => renderShell(shellOf(ME));
 
   it("/admin/* renders the admin context: its items, the way back, no conversations", async () => {
-    resetNavigation("/admin/marketplaces");
+    resetNavigation("/admin/plugins/market");
     renderFrame();
     expect(screen.getByText("page body")).toBeTruthy();
     const nav = screen.getByRole("navigation", { name: "主导航" });
-    const market = within(nav).getByRole("link", { name: "市场" });
-    expect(market.getAttribute("href")).toBe("/admin/marketplaces");
-    expect(market.getAttribute("aria-current")).toBe("page");
+    const plugins = within(nav).getByRole("link", { name: /^插件/ });
+    expect(plugins.getAttribute("href")).toBe("/admin/plugins");
+    expect(plugins.getAttribute("aria-current")).toBe("page");
+    expect(within(nav).queryByRole("link", { name: /企业目录|^市场/ })).toBeNull();
     expect(screen.getByRole("link", { name: /~\/acme/ }).getAttribute("href")).toBe("/");
     expect(screen.queryByRole("region", { name: "会话" })).toBeNull();
-    expect(within(screen.getByRole("contentinfo")).getByText("grant@acme:/admin/marketplaces"));
+    expect(within(screen.getByRole("contentinfo")).getByText("grant@acme:/admin/plugins/market"));
+  });
+
+  it("/admin/*: the 插件 item counts what waits in 待确认 (pending plugins + requests)", async () => {
+    stubApi({
+      "GET /api/v1/admin/catalog/items?pending=true": () =>
+        json(200, { items: [{ id: "i1" }], nextOffset: null }),
+      "GET /api/v1/admin/catalog/requests": () =>
+        json(200, { requests: [{ id: "r1" }, { id: "r2" }] }),
+    });
+    resetNavigation("/admin");
+    renderFrame();
+    const nav = screen.getByRole("navigation", { name: "主导航" });
+    const plugins = await within(nav).findByRole("link", { name: /^插件.*3/ });
+    expect(plugins.getAttribute("href")).toBe("/admin/plugins");
   });
 
   it("the workspace status bar prompt is <login>@<slug>:~<path>", async () => {

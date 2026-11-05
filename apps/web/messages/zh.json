@@ -260,7 +260,10 @@
       "no_extension": "该插件没有扩展，部署上没有可安装的内容。",
       "dependency_unresolved": "该插件依赖的插件在目录中没有满足版本范围的版本，请先让企业管理员导入。",
       "dependency_disabled": "该插件依赖的插件已被企业管理员禁用。",
-      "dependency_cycle": "该插件的依赖形成循环，无法安装。"
+      "dependency_cycle": "该插件的依赖形成循环，无法安装。",
+      "request_pending": "已经有一个待处理的同类申请。",
+      "request_invalid": "这个申请已无法处理（例如它的市场已删除），请拒绝它。",
+      "marketplace_browse_disabled": "部署设置关闭了组织浏览市场。"
     },
     "directory": {
       "not_configured": "该扩展的通讯录尚未配置，请先在组织配置中填写通讯录设置。"
@@ -387,7 +390,12 @@
       "skill_conflict": "这个插件带的技能在本组织已有同名技能（本组织自己的，或来自别的插件）。请先删除或重命名，再安装。",
       "upgrade_stale": "升级预览已过期，请重新预览。",
       "upgrade_target_invalid": "不能升级到这个版本（带扩展的插件只能升级到部署正在运行的版本，依赖它的插件也必须接受该版本）。",
-      "upgrade_failed": "升级插件失败。"
+      "upgrade_failed": "升级插件失败。",
+      "disabled": "这个插件已在整个部署停用。",
+      "scope_locked": "这个插件的范围由企业管理员决定，组织里不能开关。",
+      "switch_stale": "影响在你确认前变了，请重新查看后再确认。",
+      "builtin": "内置插件的范围不能更改，也不能停用。",
+      "scope_stale": "影响在你确认前变了，请重新预览后再确认。"
     },
     "lock": {
       "acquire_failed": "该资源上有其他操作正在进行，请稍后再试。"
@@ -2273,8 +2281,7 @@
       "settings": "部署设置",
       "extensions": "扩展",
       "models": "模型",
-      "catalog": "企业目录",
-      "marketplaces": "市场"
+      "plugins": "插件"
     },
     "overview": {
       "intro": "管理整个部署：账号、组织、扩展与部署设置。",
@@ -2721,11 +2728,6 @@
       "named": "指定组织",
       "disabled": "已停用"
     },
-    "policy": {
-      "allow": "允许",
-      "needs_approval": "需审批",
-      "disabled": "禁用"
-    },
     "source": {
       "manual": "手动导入",
       "official": "官方市场",
@@ -2768,55 +2770,39 @@
       "agentInstructions": "{name} 的指令"
     },
     "admin": {
-      "title": "企业目录",
-      "hint": "企业目录里的插件可由组织安装；策略决定组织能否直接安装。",
-      "empty": "企业目录里还没有条目。",
+      "title": "插件",
+      "empty": "还没有插件。从市场引入，或上传插件包。",
       "noResults": "没有符合筛选条件的条目。",
-      "columns": {
-        "name": "名称",
-        "version": "版本",
-        "source": "来源",
-        "policy": "策略",
-        "installs": "安装的组织"
-      },
       "filters": {
         "source": "来源",
         "allSources": "全部来源"
       },
       "actions": {
-        "import": "导入",
-        "entries": "浏览市场",
-        "requests": "部署申请"
+        "addSource": "添加市场源",
+        "upload": "上传插件包"
       },
       "detail": {
-        "tabsLabel": "条目详情",
+        "tabsLabel": "插件",
         "tabs": {
-          "overview": "概要",
-          "versions": "版本"
+          "versions": "版本",
+          "components": "组件",
+          "orgs": "组织"
         },
-        "deleted": "这个条目已删除，组织不再能看到它；已安装的组件不受影响。",
+        "deleted": "这个插件已删除，组织不再能看到它；已安装的组件不受影响。",
         "fields": {
-          "package": "npm 包",
+          "package": "包",
           "publisher": "发布者",
-          "latest": "最新版本",
           "source": "来源",
-          "installs": "安装的组织",
           "updated": "更新时间",
-          "origin": "出处"
+          "origin": "出处",
+          "scope": "范围",
+          "orgs": "在用组织",
+          "permissions": "权限"
         },
-        "policyTitle": "策略",
-        "policyHint": "允许：组织管理员可直接安装；需审批：组织管理员提交后由企业管理员批准；禁用：不能新装，已安装的不受影响。",
-        "policySaved": "策略已改为「{policy}」",
-        "deployTitle": "装到部署",
-        "deployHint": "把扩展的某个版本装到部署上（新装为停用，权限仍需在扩展后台批准）。装好后组织才能启用它。",
-        "deployVersion": "版本",
-        "deploy": "装到部署",
-        "deployed": "已装到部署：{name}",
-        "openExtension": "去扩展后台",
-        "delete": "删除条目",
+        "delete": "删除插件",
         "deleteConfirm": {
-          "title": "删除条目 {name}",
-          "hint": "组织将不再看到这个条目，已安装的组件不受影响。之后可以重新导入。",
+          "title": "删除插件 {name}",
+          "hint": "组织将不再看到这个插件，已安装的组件不受影响。之后可以重新引入。",
           "confirm": "删除"
         },
         "deletedToast": "已删除 {name}",
@@ -2829,11 +2815,47 @@
           "origin": "出处",
           "format": "格式"
         },
-        "contentChanged": "它的市场里，一个已导入的版本现在指向了不同的内容。可在「浏览市场」再次导入，会记为该版本的一个构建。",
+        "contentChanged": "它的市场里，一个已导入的版本现在指向了不同的内容。可在「市场」再次引入，会记为该版本的一个构建。",
         "format": {
           "capybara": "Capybara",
           "claudeCode": "Claude Code"
-        }
+        },
+        "permissions": {
+          "none": "没有扩展",
+          "confirmed": "{n} 项 · 已确认",
+          "pending": "{n} 项 · 待确认"
+        },
+        "actions": {
+          "scope": "设置范围",
+          "update": "更新到 {version}",
+          "disable": "停用",
+          "enable": "启用"
+        },
+        "componentColumns": {
+          "name": "组件",
+          "kind": "类型",
+          "version": "版本"
+        },
+        "kind": {
+          "extension": "扩展",
+          "skill": "技能",
+          "connectorTemplate": "连接器模板",
+          "agentTemplate": "Agent 模板"
+        },
+        "componentsEmpty": "这个版本没有组件。",
+        "orgsHint": {
+          "all": "全部组织启用：每个组织都在用，组织管理员不能关掉。",
+          "optional": "组织自选：{n} 个组织已启用。",
+          "named": "指定组织：只有下面的组织能用。"
+        },
+        "orgColumns": {
+          "name": "组织",
+          "slug": "标识"
+        },
+        "orgsEmpty": "还没有组织。",
+        "enabledToast": "已启用 {name}",
+        "disabledToast": "已停用 {name}",
+        "disabledNote": "已在整个部署停用，范围保留；启用后按原范围恢复。"
       },
       "review": {
         "title": "导入插件",
@@ -2863,9 +2885,7 @@
         "mismatch": "市场列出的权限摘要与下载的包不一致（以包为准）。",
         "mismatchMissing": "市场没列出：{keys}",
         "mismatchExtra": "市场列了但包没有要：{keys}。",
-        "deployExtension": "同时把扩展装到部署",
         "deployOn": "确认后把扩展安装（或升级）到部署并启用。",
-        "deployOff": "不勾选时，扩展只记入企业目录，不会安装；在企业管理员把扩展装到部署之前，组织无法使用这个插件。",
         "noExtension": "这个插件没有扩展，不会在部署上安装任何东西。",
         "keepExtension": "扩展 {name} {version} 已安装在部署上。",
         "ackHint": "插件里有敏感权限或迁移警告，确认前请逐项看过。",
@@ -2874,7 +2894,7 @@
         "done": "已导入插件 {name}",
         "deployResult": "部署结果",
         "deployFailed": "{name} {version}：装到部署失败（{code}），导入已保留。可在扩展后台重试。",
-        "openItem": "查看条目",
+        "openItem": "查看插件",
         "gone": "暂存的导入已过期或已确认。请重新导入。",
         "restart": "重新导入",
         "sourceGit": "Git 仓库",
@@ -2983,11 +3003,15 @@
           "license": "许可证全文",
           "licenseTruncated": "LICENSE 文件超过 64 KiB（或不是 UTF-8），全文没有保存。",
           "bidiWarning": "这段文字含有双向控制字符或控制字符：显示的顺序可能与模型读到的不同。"
-        }
+        },
+        "scopeTitle": "范围",
+        "olderThanDeployed": "低于已部署的版本，只加入目录，不改动部署。",
+        "requestDefault": "按「{org}」的申请，默认只给这个组织。",
+        "namedNeedsOrg": "指定组织时至少选一个组织。"
       },
       "entries": {
         "title": "浏览市场",
-        "empty": "没有市场条目。先在「市场源」里添加或刷新市场。",
+        "empty": "没有市场条目。先用「添加市场源」添加或刷新市场。",
         "noResults": "没有符合条件的条目。",
         "truncated": "条目太多，只显示了前一部分；请按市场或关键词缩小范围。",
         "search": "搜索",
@@ -3026,8 +3050,8 @@
         "retry": "重试"
       },
       "marketplaces": {
-        "title": "市场",
-        "description": "每个条目是插件的一个版本，来自这里的市场源。要先「引入」才会成为企业目录条目；引入时下载、按市场的完整性校验，审阅后才加入。",
+        "title": "市场源",
+        "description": "插件从这里的市场源列出。在插件页的「市场」里引入时会下载、按市场的完整性校验，审阅后才加入。",
         "search": "搜索市场源",
         "noMatch": "没有匹配的市场源。",
         "official": "官方市场",
@@ -3091,38 +3115,85 @@
           }
         }
       },
-      "requests": {
-        "title": "部署申请",
-        "listLabel": "待处理的申请",
-        "empty": "没有待处理的申请。",
-        "emptyHint": "组织申请安装「需审批」的条目时，申请会出现在这里。",
-        "pick": "在左侧选择一项。",
-        "inspectorTitle": "详情",
-        "columns": {
-          "request": "申请",
-          "time": "时间"
+      "tabs": {
+        "installed": "已安装",
+        "market": "市场",
+        "pending": "待确认"
+      },
+      "search": "搜索插件",
+      "description": "插件是一包扩展、技能、连接器模板和 Agent 模板。从市场引入或上传，确认权限后即装好。",
+      "chips": {
+        "builtin": "内置",
+        "claudeCode": "Claude Code"
+      },
+      "meta": {
+        "orgsUsing": "{n} 个组织在用",
+        "named": "指定：{orgs}"
+      },
+      "state": {
+        "running": "运行中",
+        "update": "可更新 {version}",
+        "pending": "权限待确认",
+        "disabled": "已停用"
+      },
+      "rowConfirm": "确认权限",
+      "scopeDialog": {
+        "title": "设置 {name} 的范围",
+        "scopeLabel": "范围",
+        "hints": {
+          "all": "每个组织都启用，包括以后新建的；组织管理员不能关掉。",
+          "optional": "默认不启用，由各组织管理员自己打开。",
+          "named": "只在选中的组织里启用。"
         },
-        "fields": {
-          "org": "组织",
-          "requester": "申请人",
-          "version": "版本",
-          "requested": "提交时间",
-          "orgApproved": "组织管理员批准",
-          "note": "说明"
+        "orgsLabel": "组织",
+        "orgsNone": "还没有组织。",
+        "shown": "对其他组织显示",
+        "shownHint": "其他组织能看到它并申请使用，但不能直接用。",
+        "next": "预览影响",
+        "back": "上一步",
+        "cancel": "取消",
+        "confirm": "确认",
+        "saved": "已设置 {name} 的范围"
+      },
+      "impact": {
+        "none": "没有组织会失去访问。",
+        "affected": "这些组织会失去访问，下面列出用到它的 Agent：",
+        "agents": "Agent：{names}",
+        "noAgents": "没有 Agent 用到它。",
+        "needsConfig": "这些组织要先填写它的组织配置：{orgs}"
+      },
+      "disableDialog": {
+        "title": "停用 {name}",
+        "hint": "停用后整个部署都不能用它，范围保留，之后可以再启用。",
+        "confirm": "停用"
+      },
+      "pending": {
+        "listLabel": "待确认",
+        "empty": "没有待确认的事项。",
+        "emptyHint": "待确认权限的插件，以及组织的申请，会出现在这里。",
+        "permissionsDescription": "扩展的权限还没确认；确认后它按这些权限运行。",
+        "builtinDescription": "内置插件已经在运行，这个版本的权限还没确认。",
+        "waiting": "等待确认",
+        "review": "审阅权限",
+        "confirmTitle": "确认 {name} 的权限",
+        "confirmHint": "扩展的代码在内核进程里运行，作用于整个部署，与范围无关。",
+        "confirm": "确认权限",
+        "confirmed": "已确认 {name} 的权限",
+        "noHash": "读不出这个插件的扩展包，暂时无法确认。",
+        "kind": {
+          "access": "申请使用",
+          "import": "申请引入",
+          "enable": "申请启用"
         },
-        "hint": "批准后这个组织可以安装该条目（所有版本有效）。",
+        "requester": "申请人 {name}",
         "approve": "批准",
         "reject": "拒绝",
         "approved": "已批准",
-        "rejected": "已拒绝"
-      },
-      "tabs": {
-        "plugins": "插件",
-        "requests": "部署申请",
-        "browse": "浏览",
-        "sources": "市场源"
-      },
-      "search": "搜索插件"
+        "rejected": "已拒绝",
+        "rejectTitle": "拒绝 {org} 的申请",
+        "reason": "原因",
+        "reasonHelp": "可选；申请人会看到。"
+      }
     },
     "org": {
       "title": "插件",
@@ -3460,10 +3531,10 @@
     "roleHelp": "不能高于你在本组织的角色。",
     "expires": "有效期",
     "expiry": {
-      "never": "不过期",
       "30": "30 天",
       "90": "90 天",
-      "365": "1 年"
+      "365": "1 年",
+      "never": "不过期"
     },
     "createSubmit": "新建",
     "value": "令牌",

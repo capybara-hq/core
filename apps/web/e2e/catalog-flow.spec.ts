@@ -20,13 +20,13 @@ const entryRow = (page: Page, text: string) =>
 
 /** Imports one marketplace entry: its row action "引入 v1.0.0", then the review opens staged. */
 async function importEntry(page: Page, pkg: string): Promise<void> {
-  await page.goto("/admin/marketplaces/entries");
+  await page.goto("/admin/plugins/market");
   const row = entryRow(page, pkg);
   await expect(row).toBeVisible();
   await row
     .getByRole("button", { name: fill(D.admin.entries.importVersion, { version: "v1.0.0" }) })
     .click();
-  await expect(page).toHaveURL(/\/admin\/catalog\/import\?staging=/, { timeout: 60_000 });
+  await expect(page).toHaveURL(/\/admin\/plugins\/import\?staging=/, { timeout: 60_000 });
   await expect(page.locator('[data-template="WizardPage"]')).toBeVisible();
 }
 
@@ -36,13 +36,13 @@ test("catalog: refresh the official marketplace -> import a dependency plugin wi
   await signIn(page);
 
   // 1. Marketplaces: the official URL is read-only; refresh fetches the fake marketplace.json
-  await page.goto("/admin/marketplaces");
+  await page.goto("/admin/plugins/sources");
   await expect(page.locator('[data-template="ListPage"]')).toBeVisible();
   await page.getByRole("button", { name: D.admin.marketplaces.refresh }).first().click();
   await expect(page.getByText(/3 个条目/)).toBeVisible({ timeout: 30_000 });
 
   // 2. Entries: the git entry on github.com is listed but outside marketplaces.allowedHosts
-  await page.goto("/admin/marketplaces/entries");
+  await page.goto("/admin/plugins/market");
   const gitRow = entryRow(page, "crm-next");
   await expect(
     gitRow.getByText(fill(D.admin.entries.reason.host_not_allowed, { host: "github.com" })),
@@ -55,10 +55,11 @@ test("catalog: refresh the official marketplace -> import a dependency plugin wi
     ext.getByText(fill(D.admin.review.action.install, { version: "v1.0.0" })),
   ).toBeVisible();
   await page.getByRole("button", { name: zh.admin.extensions.wizard.next }).click();
-  await expect(page.getByText(D.admin.review.deployOff)).toBeVisible();
-  await page.getByRole("checkbox", { name: D.admin.review.deployExtension }).check();
+  // Confirming installs the extension; the scope defaults to 组织自选
+  await expect(page.getByText(D.admin.review.deployOn)).toBeVisible();
+  await expect(page.getByRole("radio", { name: new RegExp(D.scope.optional) })).toBeChecked();
   await page.getByRole("button", { name: D.admin.review.confirm }).click();
-  await expect(page).toHaveURL(/\/admin\/catalog\/[0-9a-f-]{36}$/, { timeout: 60_000 });
+  await expect(page).toHaveURL(/\/admin\/plugins\/[0-9a-f-]{36}$/, { timeout: 60_000 });
 
   // 4. Import crm: one review of its skill, template and dependency (resolved to crm-core 1.0.0)
   await importEntry(page, "@acme/plugin-crm");
@@ -79,7 +80,7 @@ test("catalog: refresh the official marketplace -> import a dependency plugin wi
   // No extension: nothing to install on the deployment
   await expect(page.getByText(D.admin.review.noExtension)).toBeVisible();
   await page.getByRole("button", { name: D.admin.review.confirm }).click();
-  await expect(page).toHaveURL(/\/admin\/catalog\/[0-9a-f-]{36}$/);
+  await expect(page).toHaveURL(/\/admin\/plugins\/[0-9a-f-]{36}$/);
   await expect(page.locator('[data-template="DetailPage"]')).toBeVisible();
   // The icon is shown as <img> through the kernel route; the components are listed
   await expect(page.getByRole("img", { name: fill(D.iconAlt, { name: "crm" }) })).toBeVisible();
@@ -143,7 +144,7 @@ test("catalog: refresh the official marketplace -> import a dependency plugin wi
 
 /** Imports `notes <version>` from the git marketplace's entries and confirms the review. */
 async function importNotes(page: Page, version: string): Promise<void> {
-  await page.goto("/admin/marketplaces/entries");
+  await page.goto("/admin/plugins/market");
   await page.getByRole("tab", { name: "Team git" }).click();
   const importIt = page.getByRole("button", {
     name: fill(D.admin.entries.importVersion, { version: `v${version}` }),
@@ -156,12 +157,12 @@ async function importNotes(page: Page, version: string): Promise<void> {
     row.getByText(new RegExp(fill(D.admin.entries.gitPinned, { commit: "[0-9a-f]{7}" }))),
   ).toBeVisible();
   await importIt.click();
-  await expect(page).toHaveURL(/\/admin\/catalog\/import\?staging=/, { timeout: 60_000 });
+  await expect(page).toHaveURL(/\/admin\/plugins\/import\?staging=/, { timeout: 60_000 });
   // The review names where it was read from (the marketplace repository at its commit)
   await expect(page.getByText(/127\.0\.0\.1/).first()).toBeVisible();
   await page.getByRole("button", { name: zh.admin.extensions.wizard.next }).click();
   await page.getByRole("button", { name: D.admin.review.confirm }).click();
-  await expect(page).toHaveURL(/\/admin\/catalog\/[0-9a-f-]{36}$/, { timeout: 60_000 });
+  await expect(page).toHaveURL(/\/admin\/plugins\/[0-9a-f-]{36}$/, { timeout: 60_000 });
 }
 
 test("git marketplace: add a repository in the admin console -> refresh -> import notes 1.0.0 -> org install -> import 1.1.0 -> upgrade from the installed plugins with a preview", async ({
@@ -172,7 +173,7 @@ test("git marketplace: add a repository in the admin console -> refresh -> impor
   await signIn(page);
 
   // 1. Add the git repository as a marketplace, then refresh it (two entries)
-  await page.goto("/admin/marketplaces");
+  await page.goto("/admin/plugins/sources");
   const add = page.getByRole("region", { name: m.add });
   await add.getByRole("radio", { name: m.formGit }).check();
   await add.getByRole("textbox", { name: m.name }).fill("Team git");

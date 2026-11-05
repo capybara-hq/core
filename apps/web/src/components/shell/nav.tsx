@@ -221,22 +221,30 @@ const ADMIN_ICONS: Record<AdminPageId, IconName> = {
   overview: "gauge",
   accounts: "user",
   orgs: "building",
+  plugins: "catalog",
   extensions: "extension",
-  catalog: "catalog",
-  marketplaces: "store",
   models: "cpu",
   settings: "sliders",
 };
 
-/** The admin context's items (web order §2.2), from the admin pages. */
-export function useAdminItems(): SidebarNavItem[] {
+/**
+ * The admin context's items (web order §2.2), from the admin pages. `counts` puts a count on an
+ * item: 插件 shows what waits in its 待确认 tab (spec §9).
+ */
+export function useAdminItems(
+  counts: Partial<Record<AdminPageId, number | undefined>> = {},
+): SidebarNavItem[] {
   const t = useTranslations("admin.nav");
-  return ADMIN_PAGES.map((p) => ({
-    id: p.id,
-    label: t(p.id),
-    href: p.href,
-    icon: ADMIN_ICONS[p.id],
-  }));
+  return ADMIN_PAGES.map((p) => {
+    const count = counts[p.id];
+    return {
+      id: p.id,
+      label: t(p.id),
+      href: p.href,
+      icon: ADMIN_ICONS[p.id],
+      ...(count !== undefined && count > 0 ? { count } : {}),
+    };
+  });
 }
 
 /** The admin item a route belongs to: the longest matching href (`/admin` only by itself). */

@@ -14,9 +14,9 @@ import { useLocale, useTranslations } from "next-intl";
 import { useEffect, useState } from "react";
 import { useCatalogErrorLines } from "../../../../../components/CatalogParts";
 import { NoAccess } from "../../../../../components/NoAccess";
+import { usePluginsHead } from "../../../../../components/PluginsHead";
 import { usePagePath } from "../../../../../components/shell/path";
 import { useRouter } from "../../../../../i18n/navigation";
-import { marketplaceTabs } from "../../../../../lib/admin-tabs";
 import { issueLines } from "../../../../../lib/api";
 import {
   entryHost,
@@ -45,7 +45,8 @@ type Notice = { message: string; extra: string[] };
 const keyOf = (e: MarketplaceEntry) => `${e.sourceId}/${e.name}/${e.version ?? ""}`;
 
 /**
- * `/admin/marketplaces/entries`: browse marketplace entries (enterprise admins), as object rows.
+ * `/admin/plugins/market`: browse marketplace entries (enterprise admins, the 插件 tab 市场), as
+ * object rows.
  * One entry is one version of a plugin. A row: the mono name, the summary, a meta line (the
  * marketplace, its source: npm package, archive URL, a git URL pinned to a commit or following a
  * branch, a path in the marketplace's repository; the version, incompatible ones marked; the
@@ -54,8 +55,8 @@ const keyOf = (e: MarketplaceEntry) => `${e.sourceId}/${e.name}/${e.version ?? "
  * entry of an http marketplace), chips for a newer version or changed content, one action and a
  * menu. The action "Import <version>" (or, when the content changed, "Import the changed content")
  * downloads, verifies and stages the plugin, then opens the import review
- * (`/admin/catalog/import?staging=<id>`); an imported entry's action opens its catalog item. The
- * search sits in the page head; the marketplaces become tabs above the list when there is more
+ * (`/admin/plugins/import?staging=<id>`); an imported entry's action opens its plugin. The
+ * search sits in the page head (the 插件 head with its tabs and counts); the marketplaces become tabs above the list when there is more
  * than one. Errors such as `marketplace.integrity_mismatch` are a fail callout (with the kernel's
  * line naming the host for network and git codes); a warn callout when the entries are truncated.
  * From the query cache (the layout prefetched the address's entries and the marketplaces on a
@@ -72,6 +73,7 @@ export default function CatalogView({ sourceId, q }: { sourceId: string; q: stri
 
 function Catalog({ initial }: { initial: { sourceId: string; q: string } }) {
   const scope = usePagePath("admin");
+  const head = usePluginsHead("market");
   const t = useTranslations("catalog.admin.entries");
   const ta = useTranslations("catalog.admin");
   const td = useTranslations("catalog");
@@ -192,7 +194,7 @@ function Catalog({ initial }: { initial: { sourceId: string; q: string } }) {
       };
     }
     if (e.adopted !== null) {
-      return { label: t("view"), href: `/admin/catalog/${encodeURIComponent(e.adopted.itemId)}` };
+      return { label: t("view"), href: `/admin/plugins/${encodeURIComponent(e.adopted.itemId)}` };
     }
     return undefined;
   };
@@ -203,7 +205,7 @@ function Catalog({ initial }: { initial: { sourceId: string; q: string } }) {
         ? [{ label: t("noCompatible"), disabled: true, onSelect: () => {} }]
         : []),
     ...(e.adopted !== null
-      ? [{ label: t("view"), href: `/admin/catalog/${encodeURIComponent(e.adopted.itemId)}` }]
+      ? [{ label: t("view"), href: `/admin/plugins/${encodeURIComponent(e.adopted.itemId)}` }]
       : []),
     ...(e.homepage !== null ? [{ label: t("homepage"), href: e.homepage }] : []),
   ];
@@ -253,16 +255,9 @@ function Catalog({ initial }: { initial: { sourceId: string; q: string } }) {
   return (
     <ListPage
       header={{
-        path: [
-          ...scope,
-          { label: "marketplaces", href: "/admin/marketplaces" },
-          { label: "entries" },
-        ],
-        title: ta("marketplaces.title"),
-        // One head for both tabs (description, tab counts, search): switching never moves the tabs
-        description: ta("marketplaces.description"),
-        tabs: marketplaceTabs(ta, sources),
-        activeTab: "browse",
+        // The 插件 head shared by its three tabs, with the search
+        ...head,
+        path: [...scope, { label: "plugins", href: "/admin/plugins" }, { label: "market" }],
         search: { label: t("search"), value: q, onChange: setQ },
       }}
       variant="objects"

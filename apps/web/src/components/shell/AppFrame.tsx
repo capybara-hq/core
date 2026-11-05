@@ -40,6 +40,7 @@ import { broadcastSession, useSessionSync } from "../../lib/session-sync";
 import { useErrorMessage } from "../../lib/use-error-message";
 import { CreateOrgDialog } from "../CreateOrgDialog";
 import { LeaveOrgDialog } from "../LeaveOrgDialog";
+import { usePluginPendingCount } from "../PluginsHead";
 import { noOrgConversations, useConversationGroups } from "./conversations";
 import {
   activeAdminOf,
@@ -219,7 +220,10 @@ function ShellFrame({
     me.account.isEnterpriseAdmin,
   );
   const extensions = sections?.extensions ?? [];
-  const adminItems = useAdminItems();
+  // Under /admin (enterprise admins only) the 插件 item shows what waits in its 待确认 tab; the
+  // persistent sidebar refetches the stale counts on each path change.
+  const adminContext = me.account.isEnterpriseAdmin && under(pathname, "/admin");
+  const adminItems = useAdminItems({ plugins: usePluginPendingCount(adminContext) });
   const preferences = usePreferences();
   const [creatingOrg, setCreatingOrg] = useState(false);
   const [leavingOrg, setLeavingOrg] = useState(false);
@@ -498,7 +502,7 @@ function ShellFrame({
 
   // The admin context under /admin (web order §2.2), else the workspace of the current org. Only
   // for an enterprise admin: anyone else gets the 403 beside the workspace sidebar.
-  const inAdmin = me.account.isEnterpriseAdmin && under(pathname, "/admin");
+  const inAdmin = adminContext;
   const context: SidebarContext = inAdmin
     ? { kind: "admin", back: { href: "/", slug: currentOrg?.slug ?? null }, items: adminItems }
     : {

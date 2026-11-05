@@ -59,11 +59,10 @@ The sidebar has three contexts (the third, setup, is drawn only by `SetupPage`):
 | Page | Route | Template |
 |---|---|---|
 | Admin console overview | `/admin` | `OverviewPage` |
-| Accounts, orgs, extensions, catalog items, marketplaces (tabs Browse / Sources), marketplace entries | `/admin/accounts`, `/admin/orgs`, `/admin/extensions`, `/admin/catalog`, `/admin/marketplaces`, `/admin/marketplaces/entries` | `ListPage` |
-| Extension detail, catalog item detail | `/admin/extensions/[name]`, `/admin/catalog/[itemId]` | `DetailPage` (summary / permissions / config etc. use PageTabs) |
-| Install an extension, plugin import review | `/admin/extensions/install`, `/admin/catalog/import` | `WizardPage` |
+| Accounts, orgs, extensions, plugins (one head with the tabs 已安装 / 市场 / 待确认: installed plugins, marketplace entries, permission confirmations and org requests), marketplace sources | `/admin/accounts`, `/admin/orgs`, `/admin/extensions`, `/admin/plugins`, `/admin/plugins/market`, `/admin/plugins/pending`, `/admin/plugins/sources` | `ListPage` |
+| Extension detail, plugin detail (tabs 组件 / 组织 / 版本; 设置范围 and 停用 open `PluginScopeDialog` / `PluginDisableDialog` with the impact preview) | `/admin/extensions/[name]`, `/admin/plugins/[itemId]` | `DetailPage` (summary / permissions / config etc. use PageTabs) |
+| Install an extension, plugin import review (上传插件包; its confirm step asks for the scope) | `/admin/extensions/install`, `/admin/plugins/import` | `WizardPage` |
 | Deployment settings, models and prices | `/admin/settings`, `/admin/models` | `SettingsPage` |
-| Catalog requests awaiting an enterprise admin decision | `/admin/catalog/requests` | `InboxPage` |
 | Trajectory list / eval set list | `/trajectories`, `/evals` | `ListPage` |
 | Trajectory detail, eval case | `/trajectories/[conversationId]`, `/evals/[setId]/cases/[caseId]` | `TracePage`: `waterfall` holds `SpanWaterfall`, `detail` holds the selected span's detail |
 | Eval set, eval run | `/evals/[setId]`, `/evals/runs/[runId]` | `DetailPage` |
