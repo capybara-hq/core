@@ -456,7 +456,7 @@ describe("Bash run_in_background", { timeout: 30_000 }, () => {
   it("without a sandbox the tool is unavailable and a call fails with the usual error", async () => {
     provider = undefined;
     const tool = bash();
-    expect(tool.unavailable?.()).toMatch(/^No sandbox is configured/);
+    expect(await tool.unavailable?.({ orgId: seed.orgId })).toMatch(/^No sandbox is configured/);
     await expect(
       tool.run({ command: "sleep 30", description: "x", run_in_background: true }, ctx()),
     ).rejects.toThrow(/No sandbox is configured in this deployment/);
