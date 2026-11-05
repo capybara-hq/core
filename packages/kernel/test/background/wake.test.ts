@@ -642,17 +642,15 @@ describe("fix round 1", { timeout: 60_000 }, () => {
       },
     ]);
     const orphan = randomUUID();
-    await db
-      .insertInto("runs")
-      .values({
-        id: orphan,
-        conversation_id: conv,
-        status: "queued",
-        agent_version: 1,
-        trigger_account_id: ownerId,
-        trigger_seq: ev?.seq ?? 0,
-      })
-      .execute();
+    // The conversation row first, as the kernel's ensureRun locks it: the run that just ended
+    // may still be in its own ensureRun, and an insert's foreign key check (KEY SHARE on the
+    // conversation) against its FOR UPDATE then a run row deadlocked (40P01)
+    await raw.transaction().execute(async (t) => {
+      await sql`SELECT id FROM capybara.conversations WHERE id = ${conv} FOR UPDATE`.execute(t);
+      await sql`INSERT INTO capybara.runs
+          (id, conversation_id, status, agent_version, trigger_account_id, trigger_seq)
+        VALUES (${orphan}, ${conv}, 'queued', 1, ${ownerId}, ${ev?.seq ?? 0})`.execute(t);
+    });
     // past the queued grace period and outside the wake window
     await sql`UPDATE capybara.runs SET created_at = now() - interval '2 minutes',
       queued_at = now() - interval '2 minutes' WHERE id = ${orphan}`.execute(raw);
