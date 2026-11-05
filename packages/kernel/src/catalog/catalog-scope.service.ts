@@ -147,7 +147,7 @@ export class CatalogScopeService {
     if (!UUID_RE.test(itemId)) throw notFound();
     const item = await this.db
       .selectFrom("catalog_items")
-      .select(["id", "name", "latest_version"])
+      .select(["id", "name", "latest_version", "builtin"])
       .where("id", "=", itemId)
       .where("deleted_at", "is", null)
       .executeTakeFirst();
@@ -184,18 +184,20 @@ export class CatalogScopeService {
       });
     }
     const current = await this.extensions.get(item.name);
+    // A disabled install is what an earlier confirm that stopped before the enable left behind
+    const disabled = current.desired?.state === "disabled";
     try {
       await this.extensions.approve(
         actor,
         item.name,
         { sha256: current.sha256, reviewHash: permissionsHash },
-        { ...opts, confirmBootstrap: true },
+        { ...opts, confirmBootstrap: item.builtin },
       );
     } catch (e) {
-      // A fresh install may already be covered by a snapshot an earlier install left
-      if (installed || !(e instanceof ApiError && e.code === "extension.not_pending")) throw e;
+      // Already approved but not enabled yet: carry on to the enable; else nothing to confirm
+      if (!disabled || !(e instanceof ApiError && e.code === "extension.not_pending")) throw e;
     }
-    if (!installed) await this.ops.enable(item.name, actor, opts.actorTokenId);
+    if (disabled) await this.ops.enable(item.name, actor, opts.actorTokenId);
     await this.enqueue(itemId);
     return (await this.catalog.get(itemId)).item;
   }

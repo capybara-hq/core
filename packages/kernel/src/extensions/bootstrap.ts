@@ -490,6 +490,7 @@ export class BootstrapService {
     // Not new to the manifest: an optional entry left out on purpose stays out (Ruling 5)
     const isNew = handled === undefined || !handled.has(e.name);
     if (!pkg.manifest.extension) {
+      await this.markBuiltin(e.name, e.required);
       if (!isNew) return { name: e.name, action: "kept", version: e.version };
       const imported = await this.importOnly(e, bytes, ref, imports);
       await this.markBuiltin(e.name, e.required);
@@ -717,6 +718,14 @@ export class BootstrapService {
     if (names.length > 0) q = q.where("name", "not in", names);
     const rows = await q.returning(["name", "version"]).execute();
     for (const r of rows) await this.markBuiltin(r.name, false);
+    // A declarative plugin has no install record: clear builtin by catalog name
+    let items = this.db
+      .updateTable("catalog_items")
+      .set({ builtin: false, updated_at: sql<Date>`now()` as unknown as Date })
+      .where("builtin", "=", true)
+      .where("deleted_at", "is", null);
+    if (names.length > 0) items = items.where("name", "not in", names);
+    await items.execute();
     return rows.map((r) => ({ name: r.name, action: "required_cleared", version: r.version }));
   }
 }

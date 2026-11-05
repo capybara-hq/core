@@ -412,6 +412,43 @@ describe("importing an item's extension", () => {
     expect(none.json().items).toEqual([]);
   });
 
+  it("a confirm that stopped before the enable is retried: installed, approved and disabled -> enabled", async () => {
+    await k.app.get(ExtensionAdminOps).disable("fake-tools-ui", null);
+    const id = (
+      await db
+        .selectFrom("catalog_items")
+        .select("id")
+        .where("name", "=", "fake-tools-ui")
+        .executeTakeFirstOrThrow()
+    ).id;
+    const hash = (
+      await admin({ method: "GET", url: "/api/v1/admin/extensions/fake-tools-ui" })
+    ).json().reviewHash;
+    const ok = await admin({
+      method: "POST",
+      url: `/api/v1/admin/catalog/items/${id}/confirm`,
+      payload: { permissionsHash: hash },
+    });
+    expect(ok.statusCode, ok.body).toBe(200);
+    expect(ok.json().pending).toBe(false);
+    expect(
+      (
+        await db
+          .selectFrom("extension_installs")
+          .select("desired_state")
+          .where("name", "=", "fake-tools-ui")
+          .executeTakeFirstOrThrow()
+      ).desired_state,
+    ).toBe("enabled");
+    // enabled and covered: nothing to confirm
+    const again = await admin({
+      method: "POST",
+      url: `/api/v1/admin/catalog/items/${id}/confirm`,
+      payload: { permissionsHash: hash },
+    });
+    expect(again.json().error.code).toBe("extension.not_pending");
+  });
+
   it("importing the same fake-tools-ui version from npm is 409 catalog.version_exists", async () => {
     const res = await prepareNpm(admin, { package: "@capybara-hq/test-plugin-fake-tools-ui" });
     expect(res.statusCode).toBe(409);
