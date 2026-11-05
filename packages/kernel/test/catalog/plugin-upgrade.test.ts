@@ -731,6 +731,60 @@ describe("org plugin upgrade (spec §10)", { timeout: 90_000 }, () => {
     expect(await liveInstalls()).toEqual(["crm@1.0.0:installed"]);
   });
 
+  it("an added template whose provider is a dependency the target declares: the preview is not refused", async () => {
+    const item = await seedPlugin(env, { name: "crm", skills: [], templates: { gh: {} } });
+    await seedPlugin(env, {
+      name: "fake-connector",
+      extension: true,
+      skills: [],
+      templates: false,
+    });
+    await seedPlugin(env, {
+      name: "crm",
+      addTo: item,
+      version: "1.1.0",
+      skills: [],
+      templates: { gh: {}, docs: {} },
+      dependencies: [{ name: "fake-connector", version: "*" }],
+    });
+    const installId = await installOk(item, { connectors: { gh: tokenInput() } });
+    await env.db
+      .deleteFrom("extension_org_configs")
+      .where("org_id", "=", env.orgId)
+      .where("plugin", "=", "fake-connector")
+      .execute();
+    const r = await preview(installId, "1.1.0");
+    expect(r.statusCode, r.body).toBe(200);
+  });
+
+  it("an added template whose provider is the plugin's own extension, first shipped in the target: the preview is not refused", async () => {
+    const item = await seedPlugin(env, {
+      name: "fake-connector",
+      skills: [],
+      templates: { gh: {} },
+      version: "0.0.9",
+    });
+    await seedPlugin(env, {
+      name: "fake-connector",
+      addTo: item,
+      version: "0.1.0",
+      extension: true,
+      skills: [],
+      templates: { gh: {}, docs: {} },
+    });
+    const installId = await installOk(item, {
+      version: "0.0.9",
+      connectors: { gh: tokenInput() },
+    });
+    await env.db
+      .deleteFrom("extension_org_configs")
+      .where("org_id", "=", env.orgId)
+      .where("plugin", "=", "fake-connector")
+      .execute();
+    const r = await preview(installId, "0.1.0");
+    expect(r.statusCode, r.body).toBe(200);
+  });
+
   it("the preview carries the target version's templates named in its inputs, also when the latest version lacks them", async () => {
     const item = await seedPlugin(env, { name: "crm", skills: [], templates: { gh: {} } });
     await seedPlugin(env, {

@@ -1515,7 +1515,12 @@ export class PluginUpgrader {
       if (!before) {
         if (problem !== undefined) throw new ApiError("catalog.not_deployed", problem);
         // No implied install on an upgrade: the added template's provider must already be on
-        if (!(await isExtensionEnabled(db, orgId, ct.file.template.plugin))) {
+        // (unless the target brings the provider: a dependency it declares, installed first, or its own extension)
+        const provider = ct.file.template.plugin;
+        const implied =
+          provider === name ||
+          dependencies.some((d) => d.name === provider && d.change !== "removed");
+        if (!implied && !(await isExtensionEnabled(db, orgId, provider))) {
           throw new ApiError(
             "connector.kind_unavailable",
             `Connector template ${ct.id} needs the plugin ${ct.file.template.plugin}, which is not enabled in this organization; enable it before upgrading`,
