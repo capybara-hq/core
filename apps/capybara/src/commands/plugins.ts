@@ -280,6 +280,8 @@ export async function runPluginsImport(
         reviewHash: prepared.review.reviewHash,
       });
       io.stdout.write(`Imported ${item.name} ${item.latestVersion} into the catalog.\n`);
+      // The orgs its scope turns it on in converge (as the admin console's confirm does)
+      await cli.enqueueScopeSync(item);
       if (deploy === null) return 0;
       if (deploy.result === "enabled") {
         await cli.publishChanged(deploy.name);

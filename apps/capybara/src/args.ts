@@ -71,7 +71,7 @@ export const USAGE = `Usage:
                                                notify running replicas over Redis (they apply
                                                the change without a restart)
   capybara plugins list                        List the plugins in the catalog (latest version,
-                                               components, policy)
+                                               components, scope)
   capybara plugins import <file.tgz | npm:<name>[@<version>] | git:<url>[#<ref>][:<path>]>
                     [--yes]
                                                Import a plugin into the catalog: shows the review

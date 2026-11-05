@@ -24,12 +24,19 @@ import { PluginScopeSync } from "./scope-sync.js";
 /**
  * What a scope change or a deployment-level disable would take away (spec §5 rule 8): the orgs
  * that have the plugin on now (a live install) and would no longer want it, each with its agents
- * that use the plugin's skills, connectors or agent templates; and the orgs that would newly want
+ * that use the plugin's skills, connectors or agent templates and the number of connectors it
+ * created there, which stay as the org's own; and the orgs that would newly want
  * it but need inputs first (connector templates, a required org config), which the sync leaves as
  * `needs_config`. `scopeHash` is confirmed with the change.
  */
 export interface ScopePreview {
-  affected: { orgId: string; orgName: string; agents: { id: string; name: string }[] }[];
+  affected: {
+    orgId: string;
+    orgName: string;
+    agents: { id: string; name: string }[];
+    /** The connectors the plugin's install created there: they stay as the org's own. */
+    connectorsKept: number;
+  }[];
   needsConfig: string[];
   scopeHash: string;
 }
@@ -475,6 +482,8 @@ export class CatalogScopeService {
           orgId: org.id,
           orgName: org.name,
           agents: p.agents.map((a) => ({ id: a.id, name: a.name })),
+          // The sync's uninstall keeps the connectors the install created as the org's own
+          connectorsKept: p.components.filter((c) => c.kind === "connector" && c.created).length,
         });
         continue;
       }
@@ -482,8 +491,10 @@ export class CatalogScopeService {
       let needs = false;
       try {
         needs = await this.sync.needsInput(org.id, item.id, item.latest_version);
-      } catch {
-        // Not installable as it is (a dependency unresolved): the sync reports it
+      } catch (e) {
+        // Not installable as it is (a dependency unresolved): the sync reports it. Anything else
+        // (a database error) propagates: inside the write's transaction it is not recoverable
+        if (!(e instanceof ApiError)) throw e;
       }
       if (needs) needsConfig.push(org.id);
     }

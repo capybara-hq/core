@@ -1066,6 +1066,28 @@ export class PluginImport {
     }
     const m = manifest;
     await this.itemLock.lock(m.name);
+    // The scope the audit records: the review's for a new item, the item's own for a new version
+    // of a live item (which keeps its scope)
+    const existing = await t
+      .selectFrom("catalog_items")
+      .select(["id", "scope"])
+      .where("name", "=", m.name)
+      .where("deleted_at", "is", null)
+      .executeTakeFirst();
+    const actual =
+      existing === undefined
+        ? scope
+        : {
+            scope: existing.scope,
+            orgs: (
+              await t
+                .selectFrom("catalog_item_scope_orgs")
+                .select("org_id")
+                .where("item_id", "=", existing.id)
+                .orderBy("org_id")
+                .execute()
+            ).map((r) => r.org_id),
+          };
     const { id: itemId, created } = await writeCatalogVersion(t, {
       actor,
       ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
@@ -1097,8 +1119,8 @@ export class PluginImport {
       licenseTruncated: staged.licenseTruncated === true,
       auditDetail: {
         stagingId,
-        scope: scope.scope,
-        ...(scope.scope === "named" && { orgs: scope.orgs }),
+        scope: actual.scope,
+        ...(actual.scope === "named" && { orgs: actual.orgs }),
         suggestedPinned: pinnedNames(manifest, review),
         ...(now && { extension: { name: now.name, version: now.version, action: now.action } }),
       },

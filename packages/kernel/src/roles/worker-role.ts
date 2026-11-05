@@ -95,6 +95,8 @@ export class WorkerRole {
     // The gate opens: from here on ticks run; the runOnStart jobs run once now, in the background
     this.scheduledRuns.open();
     this.intervals.runStartJobs();
+    // Every plugin's scope converges once per worker start (a failed or lost sync is retried)
+    this.scopeProcessor.resync();
   }
 
   /**

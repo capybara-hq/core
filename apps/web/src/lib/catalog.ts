@@ -664,7 +664,13 @@ export type OrgSwitchBody =
 
 /** What a scope change or a disable would take away (kernel `ScopePreview`). */
 export interface ScopePreview {
-  affected: { orgId: string; orgName: string; agents: { id: string; name: string }[] }[];
+  affected: {
+    orgId: string;
+    orgName: string;
+    agents: { id: string; name: string }[];
+    /** The connectors the plugin created there; they stay as the org's own. */
+    connectorsKept: number;
+  }[];
   needsConfig: string[];
   scopeHash: string;
 }
@@ -749,6 +755,7 @@ export const KEPT_REASONS = [
   "used_by_connectors",
   "used_by_plugins",
   "wanted_by_scope",
+  "org_owned",
 ] as const;
 export type KeptReason = (typeof KEPT_REASONS)[number];
 

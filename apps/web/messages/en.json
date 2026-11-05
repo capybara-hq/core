@@ -3153,6 +3153,7 @@
         "affected": "These organizations lose access; the agents that use it are listed:",
         "agents": "Agents: {names}",
         "noAgents": "No agent uses it.",
+        "connectorsKept": "{count, plural, one {The connector it created stays} other {The # connectors it created stay}} as the organization's own, with credentials.",
         "needsConfig": "These organizations need to fill in its organization config first: {orgs}"
       },
       "disableDialog": {
@@ -3282,7 +3283,8 @@
           "used_by_other_install": "used by another plugin install",
           "used_by_connectors": "still used by connectors",
           "used_by_plugins": "still required by plugins",
-          "wanted_by_scope": "kept on by its own scope"
+          "wanted_by_scope": "kept on by its own scope",
+          "org_owned": "kept as the organization's own"
         },
         "dismiss": "Got it"
       },

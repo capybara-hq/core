@@ -278,6 +278,19 @@ describe("enable: member -> org admin", { timeout: 60_000 }, () => {
     expect(row).toEqual({ status: "approved", decided_by: env.bossId });
     expect(await inbox(env.boss, "catalog_request")).toEqual([]);
   });
+
+  it("a pending request on an item hidden from the org since is left out of the org admin's inbox", async () => {
+    const itemId = await importSkill(env);
+    const id = (await request(env.mem, itemId, "enable")).json().request.id as string;
+    expect((await inbox(env.boss, "catalog_request")).map((i) => i.id)).toEqual([id]);
+    // named for other orgs only, not shown to the rest: the org may not learn its name
+    await setScope(env, itemId, "named", []);
+    await setShown(itemId, false);
+    expect(await inbox(env.boss, "catalog_request")).toEqual([]);
+    // shown again (requestable): back in the inbox
+    await setShown(itemId, true);
+    expect((await inbox(env.boss, "catalog_request")).map((i) => i.id)).toEqual([id]);
+  });
 });
 
 describe("access: org admin -> enterprise admin", { timeout: 60_000 }, () => {

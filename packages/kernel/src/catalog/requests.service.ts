@@ -636,7 +636,11 @@ export class CatalogRequestsService {
       .orderBy("r.id")
       .limit(CATALOG_REQUESTS_LIST_MAX)
       .execute();
-    return rows.map(toView);
+    // A request on an item the org can no longer see (its scope hid it since) is left out, so
+    // nothing reveals the item's name to the org
+    const ids = [...new Set(rows.flatMap((r) => (r.item_id !== null ? [r.item_id] : [])))];
+    const seen = await itemsSeenBy(this.db, orgId, ids);
+    return rows.filter((r) => r.item_id !== null && seen.has(r.item_id)).map(toView);
   }
 
   /** The inbox: the account's decided requests in the org it has not dismissed, newest first. */

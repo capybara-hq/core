@@ -994,10 +994,11 @@ describe("the org switch (plugin scope)", { timeout: 60_000 }, () => {
     expect(r.json().error.code).toBe("catalog.item_not_found");
     expect((await install(env.boss, env, itemId)).statusCode).toBe(404);
     await setScope(env, itemId, "named", [env.orgId]);
-    // Listed and not switched off: wanted on (installed by the reconcile of a later task)
+    // Listed and not switched off: wanted on, but `off` until the scope sync installs it (no
+    // sync runs here), so an org admin can switch it on meanwhile
     expect((await orgList(env.mem)).find((i) => i.id === itemId)).toMatchObject({
       scope: "named",
-      state: "on",
+      state: "off",
       switchable: true,
     });
     const off = await put(env.boss, itemId, { enabled: false });
@@ -1055,10 +1056,11 @@ describe("the org switch (plugin scope)", { timeout: 60_000 }, () => {
   it("all and builtin: not switchable, switching off is 409 plugin.scope_locked; a builtin is on without an install", async () => {
     const allId = await importSkill(env, { name: "all-skill" });
     await setScope(env, allId, "all");
+    // not installed yet (no sync runs here): `off`, not switchable off
     expect((await orgList(env.mem)).find((i) => i.id === allId)).toMatchObject({
       scope: "all",
       switchable: false,
-      state: "on",
+      state: "off",
     });
     const off = await put(env.boss, allId, { enabled: false });
     expect(off.statusCode).toBe(409);

@@ -4,7 +4,15 @@ import type { Queue } from "bullmq";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { PLUGIN_SCOPE_QUEUE } from "../../src/catalog/scope-sync.js";
 import { createOrg, waitFor } from "../helpers/runs.js";
-import { importSkill, type OrgEnv, resetOrgCatalog, setBuiltin, startOrgEnv } from "./org-env.js";
+import {
+  importSkill,
+  MCP_TOKEN,
+  type OrgEnv,
+  resetOrgCatalog,
+  seedPlugin,
+  setBuiltin,
+  startOrgEnv,
+} from "./org-env.js";
 import { skillPlugin } from "./packages.js";
 
 /**
@@ -46,7 +54,12 @@ async function idle(): Promise<void> {
 }
 
 type Preview = {
-  affected: { orgId: string; orgName: string; agents: { id: string; name: string }[] }[];
+  affected: {
+    orgId: string;
+    orgName: string;
+    agents: { id: string; name: string }[];
+    connectorsKept: number;
+  }[];
   needsConfig: string[];
   scopeHash: string;
 };
@@ -162,8 +175,9 @@ describe("plugin scope", { timeout: 90_000 }, () => {
       orgId: env.orgId,
       orgName: expect.any(String),
       agents: [{ id: agentId, name: "Helper" }],
+      connectorsKept: 0,
     });
-    expect(b).toEqual({ orgId: orgB, orgName: "Scope B", agents: [] });
+    expect(b).toEqual({ orgId: orgB, orgName: "Scope B", agents: [], connectorsKept: 0 });
   });
 
   it("PUT scope with a wrong hash is 409 plugin.scope_stale; the right one bumps the version, audits and syncs", async () => {
@@ -262,6 +276,20 @@ describe("plugin scope", { timeout: 90_000 }, () => {
     expect(await state(all)).toEqual(before.all);
     expect(before.named).toMatchObject({ row: { scope: "named" }, orgs: [orgB] });
     expect(before.all).toMatchObject({ row: { scope: "all" }, orgs: [] });
+    // the import audits record the scope the item has, not the confirm's unused default
+    const audits = await env.db
+      .selectFrom("audit_events")
+      .select(["target", "detail"])
+      .where("action", "=", "catalog.imported")
+      .where("target", "in", [named, all])
+      .orderBy("id")
+      .execute();
+    const v2 = audits.filter((a) => (a.detail as { version?: string }).version === "2.0.0");
+    expect(v2.map((a) => [a.target, (a.detail as { scope: unknown }).scope])).toEqual([
+      [named, "named"],
+      [all, "all"],
+    ]);
+    expect((v2[0]?.detail as { orgs?: string[] } | undefined)?.orgs).toEqual([orgB]);
   });
 
   it("orgs only with named, unknown orgs refused (400 validation_failed)", async () => {
@@ -327,5 +355,70 @@ describe("disable", { timeout: 90_000 }, () => {
     expect(back.json()).toMatchObject({ disabled: false });
     await idle();
     await waitFor(async () => (await liveOrgs(itemId)).length === 1, 30_000, "reinstalled");
+  });
+
+  it("disabling keeps the connectors an org's install created, with their credentials; re-enabling makes no second one", async () => {
+    const itemId = await seedPlugin(env, { name: "with-gh", skills: ["with-gh-skill"] });
+    const on = await env.boss({
+      method: "PUT",
+      url: `/api/v1/orgs/${env.orgId}/catalog/${itemId}/switch`,
+      payload: {
+        enabled: true,
+        inputs: {
+          connectors: { gh: { endpoint: { url: env.mcp.url }, credential: { token: MCP_TOKEN } } },
+        },
+      },
+    });
+    expect(on.statusCode, on.body).toBe(200);
+    const connectors = () =>
+      env.db
+        .selectFrom("connectors")
+        .select("id")
+        .where("org_id", "=", env.orgId)
+        .where("catalog_item_id", "=", itemId)
+        .where("deleted_at", "is", null)
+        .execute();
+    const [connector] = await connectors();
+    if (connector === undefined) throw new Error("no connector installed");
+    const secrets = () =>
+      env.db
+        .selectFrom("secrets")
+        .select("key")
+        .where("org_id", "=", env.orgId)
+        .where("key", "like", `%${connector.id}%`)
+        .execute();
+    expect((await secrets()).length).toBeGreaterThan(0);
+    const p = await preview(itemId, { disabled: true });
+    expect(p.affected).toEqual([expect.objectContaining({ orgId: env.orgId, connectorsKept: 1 })]);
+    const off = await putDisabled(itemId, { disabled: true, scopeHash: p.scopeHash });
+    expect(off.statusCode, off.body).toBe(200);
+    await idle();
+    await waitFor(async () => (await liveOrgs(itemId)).length === 0, 30_000, "uninstalled");
+    // the connector and its credentials stay as the org's own
+    expect(await connectors()).toEqual([{ id: connector.id }]);
+    expect((await secrets()).length).toBeGreaterThan(0);
+    const removed = await env.db
+      .selectFrom("audit_events")
+      .select("detail")
+      .where("action", "=", "plugin.org_uninstalled")
+      .where("org_id", "=", env.orgId)
+      .execute();
+    expect(removed).toHaveLength(1);
+    expect(removed[0]?.detail).toMatchObject({
+      via: "scope",
+      kept: [{ kind: "connector", ref: connector.id, reason: "org_owned" }],
+    });
+    // re-enabling: the switch is still on, but the install needs the template's input again, so
+    // the sync leaves it `needs_config` and creates no second connector
+    const back = await putDisabled(itemId, { disabled: false });
+    expect(back.statusCode, back.body).toBe(200);
+    await idle();
+    expect(await liveOrgs(itemId)).toEqual([]);
+    expect(await connectors()).toEqual([{ id: connector.id }]);
+    const list = await env.boss({ method: "GET", url: `/api/v1/orgs/${env.orgId}/catalog` });
+    const item = (list.json() as { items: { id: string; state: string }[] }).items.find(
+      (i) => i.id === itemId,
+    );
+    expect(item?.state).toBe("needs_config");
   });
 });

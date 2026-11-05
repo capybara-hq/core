@@ -10,12 +10,13 @@ import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { LockService } from "../infra/lock/lock.service.js";
+import type { OneJob } from "../infra/queue/add-job-once.js";
 import { runJob } from "../infra/queue/run-job.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import { type InstallPlan, PluginInstaller } from "./plugin-install.js";
 import { wantedOn } from "./scope.js";
-import { ScopeNoLongerWanted } from "./scope-state.js";
+import { ScopeNoLongerWanted, ScopeStillWanted } from "./scope-state.js";
 
 /**
  * The plugin scope sync (plugin and component management spec §5, phase 1): converges every org
@@ -25,14 +26,17 @@ import { ScopeNoLongerWanted } from "./scope-state.js";
  *   -> installs it as the kernel itself (actor null, audits `via: "scope"`), unless the install
  *   needs the org's input (connector templates, or a required org config of its extension not set):
  *   that is `needs_config`, derived by the org catalog, never attempted here;
- * - wanted off and a live install -> uninstalls it (the person who changed the scope or the switch
- *   confirmed the preview); a dependency install it took along that its own scope still wants on
- *   stays as a standalone install (the installer's rule), the others are synced again.
+ * - wanted off and a live install -> uninstalls it (`via: "scope"`; the person who changed the
+ *   scope or the switch confirmed the preview); the connectors the install created stay as the
+ *   org's own (spec §5 rule 8); a dependency install it took along that its own scope still wants
+ *   on stays as a standalone install (the installer's rule), the others are synced again.
  * The decision is made outside the org row lock; the installer re-checks the scope under it for a
- * `via: "scope"` install, so a person's switch-off committed meanwhile wins.
+ * `via: "scope"` install or uninstall, so a person's switch committed meanwhile wins.
  * The sync writes no switch row: those record people's choices. Builtin items are left alone (on
  * everywhere through their required extension). An install or uninstall failure is logged and
- * audited `plugin.scope_sync_failed` and not retried until the next enqueue.
+ * audited `plugin.scope_sync_failed` and not retried until the next enqueue; every worker start
+ * enqueues every live item once ({@link PluginScopeSync.enqueueAll}), which also catches a lost
+ * enqueue.
  *
  * Jobs (queue {@link PLUGIN_SCOPE_QUEUE}): one per item and scope version
  * (`scope-item-<itemId>-<scope_version>`, every org), one per org (`scope-org-<orgId>`, every item,
@@ -55,6 +59,20 @@ export const scopeOrgJobId = (orgId: string): string => `scope-org-${orgId}`;
 
 /** The job's data. */
 export type ScopeJob = { kind: "item"; itemId: string } | { kind: "org"; orgId: string };
+
+/** The item job of a scope version (what {@link PluginScopeSync.enqueueItem} adds). */
+export function scopeItemJob(itemId: string, version: number): OneJob<ScopeJob> {
+  return {
+    name: SCOPE_ITEM_JOB,
+    data: { kind: "item", itemId },
+    opts: {
+      jobId: scopeItemJobId(itemId, version),
+      attempts: 1,
+      removeOnComplete: true,
+      removeOnFail: true,
+    },
+  };
+}
 
 /** What a sync of one (item, org) did. */
 export type ScopeSyncResult = "installed" | "removed" | "needs_config" | "unchanged";
@@ -91,16 +109,24 @@ export class PluginScopeSync {
       .where("id", "=", itemId)
       .executeTakeFirst();
     if (!row) return;
-    await this.queue.add(
-      SCOPE_ITEM_JOB,
-      { kind: "item", itemId },
-      {
-        jobId: scopeItemJobId(itemId, row.scope_version),
-        attempts: 1,
-        removeOnComplete: true,
-        removeOnFail: true,
-      },
-    );
+    const job = scopeItemJob(itemId, row.scope_version);
+    await this.queue.add(job.name, job.data, job.opts);
+  }
+
+  /**
+   * Enqueues the sync of every live, not builtin item (a worker start): retries what failed or was
+   * never enqueued (a lost `afterCommit` enqueue, a migrated scope). The job ids are the items'
+   * scope versions, so replicas starting together add each one once.
+   */
+  async enqueueAll(): Promise<void> {
+    const items = await this.db
+      .selectFrom("catalog_items")
+      .select("id")
+      .where("deleted_at", "is", null)
+      .where("builtin", "=", false)
+      .orderBy("id")
+      .execute();
+    for (const i of items) await this.enqueueItem(i.id);
   }
 
   /** Enqueues the sync of every item in an org (a new org). Call after the commit. */
@@ -227,8 +253,11 @@ export class PluginScopeSync {
     if (live?.status !== "installed") return "unchanged";
     const deps = await this.createdDependencies(live.id);
     try {
-      await this.installer.uninstall(orgId, null, live.id);
+      await this.installer.uninstall(orgId, null, live.id, { via: "scope" });
     } catch (e) {
+      // A person switched it on (or the scope changed, or another install came to depend on it)
+      // after this decision: the installer's re-check under the org row lock refused it
+      if (e instanceof ScopeStillWanted) return "unchanged";
       await this.failed(orgId, itemId, "uninstall", e);
       return "unchanged";
     }
@@ -365,6 +394,16 @@ export class PluginScopeSyncProcessor extends WorkerHost<Worker<ScopeJob>> {
   /** Starts consuming (worker role, after the extensions loaded; built with `autorun: false`). */
   start(): void {
     void this.worker.run().catch((err) => this.error(err));
+  }
+
+  /**
+   * Enqueues every live item's sync once (the worker role, after the start gate opened), in the
+   * background; a failure is only logged (the next worker start, or the next change, enqueues).
+   */
+  resync(): void {
+    void this.sync
+      .enqueueAll()
+      .catch((err) => this.log.error("plugin scope resync failed", { err }));
   }
 
   /** Stops between pairs and closes the worker. */

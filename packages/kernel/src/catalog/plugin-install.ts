@@ -68,7 +68,7 @@ import {
   pluginItemDisabled,
   resolveRequestsByInstall,
 } from "./request-rules.js";
-import { ScopeNoLongerWanted, wantedByScope } from "./scope-state.js";
+import { ScopeNoLongerWanted, ScopeStillWanted, wantedByScope } from "./scope-state.js";
 import { upgradeInfo } from "./upgrade-targets.js";
 import { maxSatisfying, satisfiesRange } from "./versions.js";
 
@@ -112,7 +112,12 @@ export interface UninstallReport {
       | "used_by_connectors"
       | "used_by_plugins"
       /** A dependency install still wanted on in the org by its own scope: it stays, standalone. */
-      | "wanted_by_scope";
+      | "wanted_by_scope"
+      /**
+       * A connector the install created, kept by a scope sync uninstall (the plugin disabled or its
+       * scope narrowed, spec §5 rule 8): it stays as the org's own, with its credentials.
+       */
+      | "org_owned";
   }[];
 }
 
@@ -281,6 +286,8 @@ export interface UninstallCtx {
   authorize: boolean;
   reason?: string;
   opts: { actorTokenId?: string };
+  /** Uninstalled by the plugin scope sync: the connectors it created stay as the org's own. */
+  via?: "scope";
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -1402,24 +1409,47 @@ export class PluginInstaller {
     orgId: string,
     actor: string | null,
     installId: string,
-    opts: { actorTokenId?: string } = {},
+    opts: { actorTokenId?: string; via?: "scope" } = {},
     sw?: { expectHash?: string },
   ): Promise<UninstallReport> {
     if (!UUID_RE.test(installId)) throw installNotFound();
     return this.writeUninstall(orgId, actor, installId, opts, sw);
   }
 
-  /** The uninstall's one transaction; the extensions it disabled are notified once it commits. */
+  /**
+   * The uninstall's one transaction; the extensions it disabled are notified once it commits. A
+   * scope sync uninstall (`via: "scope"`) re-checks under the org row lock that the item is still
+   * not wanted in the org and that no other live install depends on it ({@link ScopeStillWanted},
+   * nothing written), and keeps the connectors it created as the org's own (`org_owned`).
+   */
   @Transactional()
   private async writeUninstall(
     orgId: string,
     actor: string | null,
     installId: string,
-    opts: { actorTokenId?: string },
+    opts: { actorTokenId?: string; via?: "scope" },
     sw?: { expectHash?: string },
   ): Promise<UninstallReport> {
+    const { via, ...actorOpts } = opts;
     const report: UninstallReport = { removed: [], kept: [] };
     let itemId: string | undefined;
+    if (via === "scope") {
+      // A person's switch-on (or a scope change) committed after the sync's decision wins
+      await this.orgLock.lock(orgId);
+      const row = await this.db
+        .selectFrom("plugin_installs")
+        .select("item_id")
+        .where("id", "=", installId)
+        .where("org_id", "=", orgId)
+        .executeTakeFirst();
+      if (
+        row !== undefined &&
+        ((await wantedByScope(this.db, orgId, row.item_id)) ||
+          (await this.heir(orgId, new Set([installId]), "plugin", installId)) !== undefined)
+      ) {
+        throw new ScopeStillWanted(orgId, row.item_id);
+      }
+    }
     if (sw !== undefined) {
       // Switching off: the org lock first, then the preview is re-checked and the switch row is
       // written in this same transaction
@@ -1445,7 +1475,8 @@ export class PluginInstaller {
       report,
       removing: new Set(),
       authorize: true,
-      opts,
+      opts: actorOpts,
+      ...(via !== undefined && { via }),
     });
     if (outcome === "missing") throw installNotFound();
     if (outcome === "kept") {
@@ -1666,6 +1697,12 @@ export class PluginInstaller {
         else if (outcome === "wanted_by_scope") keep("wanted_by_scope");
         continue;
       }
+      // A scope sync uninstall leaves the connectors to the org (spec §5 rule 8): the component row
+      // goes with the install row, so nothing removes them later
+      if (c.kind === "connector" && ctx.via === "scope" && !rollbackMode) {
+        keep("org_owned");
+        continue;
+      }
       const reason = rollbackMode ? "plugin_install_cleanup" : (ctx.reason ?? "plugin_uninstall");
       const outcome = await this.decideRemovalIn(orgId, actor, comp, removing, agentRefs, reason);
       if (outcome === "removed") addRemoved({ kind: c.kind, ref: c.ref });
@@ -1686,6 +1723,7 @@ export class PluginInstaller {
         removed: mine.removed,
         kept: mine.kept,
         ...(ctx.from !== undefined && { dependencyOf: ctx.from }),
+        ...(ctx.via !== undefined && { via: ctx.via }),
       },
     });
     return "removed";

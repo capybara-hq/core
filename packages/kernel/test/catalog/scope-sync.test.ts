@@ -1,10 +1,17 @@
+import { randomUUID } from "node:crypto";
 import { getQueueToken } from "@nestjs/bullmq";
 import type { Queue } from "bullmq";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { PluginInstaller } from "../../src/catalog/plugin-install.js";
-import { ScopeNoLongerWanted } from "../../src/catalog/scope-state.js";
-import { PLUGIN_SCOPE_QUEUE, PluginScopeSync } from "../../src/catalog/scope-sync.js";
+import { ScopeNoLongerWanted, ScopeStillWanted } from "../../src/catalog/scope-state.js";
+import {
+  PLUGIN_SCOPE_QUEUE,
+  PluginScopeSync,
+  PluginScopeSyncProcessor,
+} from "../../src/catalog/scope-sync.js";
+import { SkillsService } from "../../src/skills/skills.service.js";
 import { createOrg, waitFor } from "../helpers/runs.js";
+import { SKILL_MD } from "../skills/zip.js";
 import { type OrgEnv, resetOrgCatalog, seedPlugin, setScope, startOrgEnv } from "./org-env.js";
 
 /**
@@ -279,5 +286,109 @@ describe("plugin scope sync", { timeout: 90_000 }, () => {
     expect(rows).toEqual([]);
     expect(await auditRows("plugin.org_install_failed")).toEqual([]);
     expect(await auditRows("plugin.scope_sync_failed")).toEqual([]);
+  });
+
+  it("a scope uninstall after the person switched the plugin on is refused under the org lock", async () => {
+    const itemId = await skillsOnly("raced-off");
+    await setScope(env, itemId, "optional");
+    // a person switches it on; the sync decided "wanted off" before that switch committed
+    const on = await env.boss({
+      method: "PUT",
+      url: `/api/v1/orgs/${env.orgId}/catalog/${itemId}/switch`,
+      payload: { enabled: true },
+    });
+    expect(on.statusCode, on.body).toBe(200);
+    const live = await env.db
+      .selectFrom("plugin_installs")
+      .select("id")
+      .where("item_id", "=", itemId)
+      .where("org_id", "=", env.orgId)
+      .executeTakeFirstOrThrow();
+    await expect(
+      env.k.app.get(PluginInstaller).uninstall(env.orgId, null, live.id, { via: "scope" }),
+    ).rejects.toBeInstanceOf(ScopeStillWanted);
+    expect(await liveOrgs(itemId)).toEqual([env.orgId]);
+    expect(await auditRows("plugin.org_uninstalled")).toEqual([]);
+    expect(await auditRows("plugin.scope_sync_failed")).toEqual([]);
+    // and the sync itself, deciding now, leaves it
+    expect(await sync().syncPair(itemId, env.orgId)).toBe("unchanged");
+  });
+
+  it("a failed scope install leaves the plugin off in the org, and the worker start retries it", async () => {
+    // the org's own skill of the same name makes the install fail (plugin.skill_conflict)
+    const md = new TextEncoder().encode(SKILL_MD("clash-skill"));
+    const own = await env.k.app.get(SkillsService).createVersionFromFiles(env.orgId, env.bossId, {
+      name: "clash-skill",
+      description: "Mine.",
+      files: [{ path: "SKILL.md", size: md.byteLength, sha256: "x".repeat(64), data: md }],
+    });
+    const itemId = await seedPlugin(env, {
+      name: "clash",
+      skills: ["clash-skill"],
+      templates: false,
+    });
+    await setScope(env, itemId, "named", [env.orgId]);
+    await bump(itemId);
+    await sync().enqueueItem(itemId);
+    await idle();
+    expect(await liveOrgs(itemId)).toEqual([]);
+    const failed = await auditRows("plugin.scope_sync_failed");
+    expect(failed).toHaveLength(1);
+    expect(failed[0]?.detail).toMatchObject({ op: "install", code: "plugin.skill_conflict" });
+    // wanted on, not installed, needs nothing: off, so an org admin can switch it on
+    const r = await env.boss({ method: "GET", url: `/api/v1/orgs/${env.orgId}/catalog` });
+    expect(r.statusCode, r.body).toBe(200);
+    const item = (r.json() as { items: { id: string; state: string }[] }).items.find(
+      (i) => i.id === itemId,
+    );
+    expect(item?.state).toBe("off");
+    // the conflict goes away; a worker start enqueues every item again (same scope version)
+    await env.db
+      .updateTable("skills")
+      .set({ deleted_at: new Date() })
+      .where("id", "=", own.skill.id)
+      .execute();
+    env.k.app.get(PluginScopeSyncProcessor).resync();
+    await waitFor(
+      async () => (await liveOrgs(itemId)).includes(env.orgId),
+      30_000,
+      "installed by the resync",
+    );
+    await idle();
+  });
+
+  it("a failed install of an all plugin can be cleaned up; a live one stays scope-locked", async () => {
+    const itemId = await skillsOnly("all-failed");
+    await setScope(env, itemId, "all");
+    const failedId = randomUUID();
+    await env.db
+      .insertInto("plugin_installs")
+      .values({
+        id: failedId,
+        org_id: env.orgId,
+        item_id: itemId,
+        version: "1.0.0",
+        status: "failed",
+        installed_by: env.bossId,
+      })
+      .execute();
+    const del = (id: string) =>
+      env.boss({ method: "DELETE", url: `/api/v1/orgs/${env.orgId}/plugin-installs/${id}` });
+    const r = await del(failedId);
+    expect(r.statusCode, r.body).toBe(200);
+    expect(
+      await env.db.selectFrom("plugin_installs").select("id").where("id", "=", failedId).execute(),
+    ).toEqual([]);
+    // the sync installs it; that live install cannot be removed by the org
+    expect(await sync().syncPair(itemId, env.orgId)).toBe("installed");
+    const live = await env.db
+      .selectFrom("plugin_installs")
+      .select("id")
+      .where("item_id", "=", itemId)
+      .where("org_id", "=", env.orgId)
+      .executeTakeFirstOrThrow();
+    const locked = await del(live.id);
+    expect(locked.statusCode, locked.body).toBe(409);
+    expect(locked.json().error.code).toBe("plugin.scope_locked");
   });
 });

@@ -50,6 +50,22 @@ export class ScopeNoLongerWanted extends Error {
 }
 
 /**
+ * A scope sync uninstall (`via: "scope"`) found, under the org row lock, that the item is wanted
+ * in the org again (a person switched it on, or the scope changed, after the sync's decision), or
+ * that another live install of the org depends on it: nothing was written; the sync treats it as
+ * converged.
+ */
+export class ScopeStillWanted extends Error {
+  constructor(
+    readonly orgId: string,
+    readonly itemId: string,
+  ) {
+    super(`Plugin ${itemId} is still wanted in org ${orgId}`);
+    this.name = "ScopeStillWanted";
+  }
+}
+
+/**
  * The items among `itemIds` (live ones) the org can see in its catalog: offered to it (`all`,
  * `optional`, builtin, or `named` with the org listed) or requestable (`named`, shown to other
  * orgs). A hidden `named` item outside its list is left out, so nothing reveals it to the org.

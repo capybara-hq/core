@@ -1,4 +1,4 @@
-import { copyFileSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { copyFileSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startTestPostgres } from "@capybara-hq/testing";
@@ -11,7 +11,8 @@ import { KERNEL_MIGRATIONS_DIR } from "../../src/kernel.js";
 /**
  * 0074_plugin_scope.sql: catalog policy, grants, installs and the required flag become a scope, a
  * builtin and a disabled flag, an org list and per-org switches; pending requests are withdrawn.
- * Migrates to 0073, seeds one item per old situation, then migrates up to 0074.
+ * Migrates to 0073, seeds one item per old situation, then migrates up to 0074. 0077 then gives
+ * the granted orgs that never installed a `needs_approval` item a switch row `off`.
  */
 const FILE = "0074_plugin_scope.sql";
 const ID = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
@@ -74,8 +75,9 @@ beforeAll(async () => {
       values (${ID(100 + n)}, ${org}, ${id}, '1.0.0', 'installed', 'a1')`.execute(db);
   await install(1, A, ALLOW);
   await install(2, C, APPROVAL);
+  // B was granted and never installed; C was granted and installed it
   await sql`insert into capybara.catalog_org_grants (item_id, org_id, granted_by)
-    values (${APPROVAL}, ${B}, 'a1')`.execute(db);
+    values (${APPROVAL}, ${B}, 'a1'), (${APPROVAL}, ${C}, 'a1')`.execute(db);
   await sql`insert into capybara.catalog_requests (id, org_id, item_id, stage, requested_by, status)
     values (${ID(200)}, ${A}, ${DISABLED}, 'org', 'a1', 'pending'),
            (${ID(201)}, ${B}, ${DISABLED}, 'deployment', 'a1', 'approved')`.execute(db);
@@ -128,5 +130,38 @@ describe("0074 plugin scope", () => {
     await expect(
       sql`update capybara.catalog_items set scope = 'bogus' where id = ${ALLOW}`.execute(db),
     ).rejects.toThrow(/catalog_items_scope_check/);
+  });
+});
+
+describe("0077 granted but never installed", () => {
+  beforeAll(async () => {
+    await migrate(pg.url, {
+      schema: "capybara",
+      dir: copyMigrations((f) => f <= "0077_scope_grant_switches.sql"),
+    });
+  }, 120_000);
+
+  it("a granted org without a live install gets a switch off; an installed one keeps its switch on", async () => {
+    expect((await scopeOrgs(APPROVAL)).sort()).toEqual([B, C].sort());
+    expect(await switches(APPROVAL)).toEqual([
+      { org: B, enabled: false },
+      { org: C, enabled: true },
+    ]);
+    // the other items are untouched
+    expect(await switches(ALLOW)).toEqual([{ org: A, enabled: true }]);
+    expect(await switches(DISABLED)).toEqual([]);
+  });
+
+  it("is idempotent: running its statement again changes nothing", async () => {
+    const body = readFileSync(join(KERNEL_MIGRATIONS_DIR, "0077_scope_grant_switches.sql"), "utf8");
+    await db.connection().execute(async (c) => {
+      await sql`set search_path to capybara`.execute(c);
+      await sql.raw(body).execute(c);
+      await sql`reset search_path`.execute(c);
+    });
+    expect(await switches(APPROVAL)).toEqual([
+      { org: B, enabled: false },
+      { org: C, enabled: true },
+    ]);
   });
 });

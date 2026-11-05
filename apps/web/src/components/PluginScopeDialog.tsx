@@ -98,7 +98,8 @@ export function ScopeFields({
 
 /**
  * What a scope change or a disable takes away (spec §5 rule 8): each affected org with the agents
- * that use the plugin, and the orgs that must fill in its org config first.
+ * that use the plugin and the connectors it keeps as its own, and the orgs that must fill in its
+ * org config first.
  */
 export function ScopeImpact({ preview }: { preview: ScopePreview }) {
   const t = useTranslations("catalog.admin.impact");
@@ -122,6 +123,11 @@ export function ScopeImpact({ preview }: { preview: ScopePreview }) {
                   ? t("noAgents")
                   : t("agents", { names: a.agents.map((g) => g.name).join(sep) })}
               </Text>
+              {a.connectorsKept > 0 && (
+                <Text variant="small" tone="muted">
+                  {t("connectorsKept", { count: a.connectorsKept })}
+                </Text>
+              )}
             </Stack>
           ))}
         </Stack>

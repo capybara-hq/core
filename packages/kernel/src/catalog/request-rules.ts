@@ -133,7 +133,7 @@ export async function assertPluginSourcesInstallable(
   for (const r of rows) if (!(await offeredTo(t, orgId, r))) throw notOffered();
 }
 
-/** 审计里带上 PAT（个人令牌发起时）。 */
+/** The PAT recorded in the audit (when a personal access token made the call). */
 export interface RequestActorOpts {
   actorTokenId?: string;
 }

@@ -289,8 +289,9 @@ export class AdminCatalogController {
 
   /**
    * What a scope change (`{ scope, orgs? }`, `orgs` only with `named`) or a disable
-   * (`{ disabled: true }`) would take away: `{ affected: [{ orgId, orgName, agents }], needsConfig,
-   * scopeHash }` (spec §5 rule 8; nothing written). A builtin item -> 409 `plugin.builtin`; unknown
+   * (`{ disabled: true }`) would take away: `{ affected: [{ orgId, orgName, agents,
+   * connectorsKept }], needsConfig, scopeHash }` (spec §5 rule 8; nothing written; the connectors
+   * stay as the orgs' own). A builtin item -> 409 `plugin.builtin`; unknown
    * orgs -> 400 `validation_failed`.
    */
   @Post("items/:id/scope/preview")

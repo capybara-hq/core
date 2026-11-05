@@ -222,7 +222,9 @@ export class OrgCatalogService {
             ext?.config?.org !== undefined &&
             !ext.config.org.safeParse({}).success &&
             !configured.has(m.name));
-        state = needsInputs ? "needs_config" : "on";
+        // Wanted but not installed and needing nothing: the sync has not installed it (yet, or its
+        // install failed); `off`, so an org admin can switch it on (the worker start retries it)
+        state = needsInputs ? "needs_config" : "off";
       }
       out.push({
         ...view,
@@ -466,8 +468,9 @@ export class OrgCatalogService {
 
   /**
    * `DELETE plugin-installs/:installId` of a catalog plugin follows the switch-off semantics: `all`
-   * and builtin items are refused (`plugin.scope_locked`), and the switch row is written false in
-   * the uninstall's transaction.
+   * and builtin items are refused (`plugin.scope_locked`) unless the install is not live (failed,
+   * or `installing`: the installer cleans up a stale one and refuses a fresh one), and the switch
+   * row is written false in the uninstall's transaction.
    */
   async uninstall(
     orgId: string,
@@ -480,11 +483,13 @@ export class OrgCatalogService {
     const row = await this.db
       .selectFrom("plugin_installs as a")
       .innerJoin("catalog_items as i", "i.id", "a.item_id")
-      .select(["i.scope", "i.builtin"])
+      .select(["i.scope", "i.builtin", "a.status"])
       .where("a.id", "=", installId)
       .where("a.org_id", "=", orgId)
       .executeTakeFirst();
-    if (row !== undefined && !switchable({ scope: row.scope, builtin: row.builtin })) {
+    // A failed or stuck install is cleaned up whatever the scope (it is not on anyway)
+    const live = row?.status === "installed" || row?.status === "upgrading";
+    if (row !== undefined && live && !switchable({ scope: row.scope, builtin: row.builtin })) {
       throw new ApiError(
         "plugin.scope_locked",
         "This plugin is on for every organization and cannot be uninstalled here",

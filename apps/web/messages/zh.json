@@ -3141,6 +3141,7 @@
         "affected": "这些组织会失去访问，下面列出用到它的 Agent：",
         "agents": "Agent：{names}",
         "noAgents": "没有 Agent 用到它。",
+        "connectorsKept": "它创建的 {count} 个连接器会保留，归该组织所有，凭据不变。",
         "needsConfig": "这些组织要先填写它的组织配置：{orgs}"
       },
       "disableDialog": {
@@ -3270,7 +3271,8 @@
           "used_by_other_install": "另一个插件也在用",
           "used_by_connectors": "仍有连接器在用",
           "used_by_plugins": "仍有插件依赖",
-          "wanted_by_scope": "按自身范围仍启用"
+          "wanted_by_scope": "按自身范围仍启用",
+          "org_owned": "保留为组织自有"
         },
         "dismiss": "知道了"
       },
