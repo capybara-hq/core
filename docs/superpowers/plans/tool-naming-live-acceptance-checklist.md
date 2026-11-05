@@ -30,7 +30,7 @@ environment of one command only. **Never print, `cat` or paste the values**; nev
 | 4 | Continue an old conversation (history holding old tool names) | The run continues; the model uses the new names; no error from the provider | |
 | 5 | Full-run replay of an eval case recorded before the rename | Matches the recordings, no `tool_unmatched`; the result reports `legacyKeyMatch` | |
 | 6 | A Claude Code plugin whose skill names Bash / Read / Edit / Skill / TodoWrite, on an agent with a sandbox and the todo plugin | The skill runs with the shorter tool map; TodoWrite becomes `plugin__todo__write` | |
-| 7 | Each bundled provider dialect with a history holding old tool names: the live tests of `capybara-hq/plugins`, run with `CAPYBARA_TEST_*` | No provider rejects history tool names absent from the tool list (spec §15; fallback only if one does) | |
+| 7 | Each bundled provider dialect with a history holding old tool names: the live tests of `capybara-hq/plugins`, run with `CAPYBARA_TEST_*` | No provider rejects history tool names absent from the tool list (spec §15; fallback only if one does) | Pass (2026-11-05): anthropic, openai, openai-compatible `deepseek`; the other openai-compatible dialects not run |
 | 8 | Read-before-write: `Edit` without `Read`, `Edit` after a `Bash` change, `Write` to a new path | "not read yet" / "modified since" / succeeds | |
 | 9 | After pushing, run the `visual-update` workflow, then push an empty commit to rerun CI | Baselines regenerated; the conversation, approval card, inbox and an IM card show the §7 labels | |
 
@@ -38,4 +38,5 @@ environment of one command only. **Never print, `cat` or paste the values**; nev
 
 | Step | Date | Result | Notes |
 |---|---|---|---|
-| 1-9 | | | |
+| 1-6, 8, 9 | | | |
+| 7 | 2026-11-05 | Pass | `live history with renamed tools` in capybara-hq/plugins#10: a history calling `sandbox_bash` with only `Bash` in the tool list. Accepted by anthropic `claude-haiku-5-5`, openai `gpt-5-nano`, openai-compatible deepseek `deepseek-flash`; the `generic`, `qwen` and `ark` dialects were not run. No fallback needed |
