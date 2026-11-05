@@ -33,7 +33,7 @@ export const PLATFORM_MIGRATION_JOB = "platform-components-migrate";
 /** Besides every worker start, the job runs once a day (a heal: normally nothing to do). */
 const PERIOD_MS = 24 * 3600_000;
 
-/** Finished runs are kept this long (the first one always: it is the rename cutoff). */
+/** Finished runs are kept this long (the first one always: it marks the migration as done). */
 const RUNS_KEPT_MS = 30 * 24 * 3600_000;
 
 /** The run lock's lifetime without renewal (renewed while a run lasts). */
@@ -117,13 +117,12 @@ export function renamedSkillName(name: string, taken: ReadonlySet<string>): stri
  *    platform skill of its plugin and name; it is pinned to its own current version when its files
  *    differ from the platform version's, or when that platform skill is not on in its org (it keeps
  *    serving what it served: an unpinned link resolves only while the platform skill is on);
- * 3. one-shot (spec §5 rule 10: nothing is renamed outside the migration): an org skill of the
- *    org's own (no provenance) whose current version predates the first finished run (the cutoff;
- *    the current run's start while none finished) and whose name a platform skill on in its org has
- *    stays the org's: it is renamed (`<name>-org`, `-org-2`, …), the org admins get an inbox notice
+ * 3. one-shot (spec §5 rule 10, ruling P2-5: nothing is renamed outside the migration): only while
+ *    no run has finished (the first run's own execution), an org skill of the org's own (no
+ *    provenance) whose name a platform skill on in its org has stays the org's: it is renamed (`<name>-org`, `-org-2`, …), the org admins get an inbox notice
  *    (`skill_renamed`) and that platform skill is switched off in the org (a switch the org already
- *    has is kept). Agents select skills by id, so they keep it; the name changes in new runs. A clash
- *    found later (a newer version) is logged as a warning and left alone (the org's skill wins);
+ *    has is kept). Agents select skills by id, so they keep it; the name changes in new runs. Once a
+ *    run has finished, a clash is only logged as a warning and left alone (the org's skill wins);
  * 4. an org agent template links to the platform template of its plugin and name, pinned like
  *    skills (definitions compared as canonical JSON). Templates are never renamed: an org template
  *    always has its plugin's type, which is the platform template's;
@@ -132,7 +131,7 @@ export function renamedSkillName(name: string, taken: ReadonlySet<string>): stri
  * Plugin switches exist since phase 1 and new platform rows follow the plugin's scope, so nothing
  * else is written. Writes run per org under its row lock and re-check each row; nothing is deleted
  * or overwritten except the renamed skill's name. Each run is recorded in `platform_migration_runs`
- * (rows older than 30 days are pruned, except the first finished run: the rename cutoff).
+ * (rows older than 30 days are pruned, except the first finished run: it marks the renames done).
  */
 @Injectable()
 export class PlatformMigration {
@@ -162,11 +161,7 @@ export class PlatformMigration {
   /** One run of every step; returns what it changed. */
   async runOnce(): Promise<PlatformMigrationStats> {
     const runId = randomUUID();
-    const started = await this.db
-      .insertInto("platform_migration_runs")
-      .values({ id: runId })
-      .returning("started_at")
-      .executeTakeFirstOrThrow();
+    await this.db.insertInto("platform_migration_runs").values({ id: runId }).execute();
     const first = await this.db
       .selectFrom("platform_migration_runs")
       .select("started_at")
@@ -177,7 +172,7 @@ export class PlatformMigration {
     const stats = emptyStats();
     await this.syncItems(stats);
     await this.linkSkills(stats);
-    await this.renameClashes(stats, first?.started_at ?? started.started_at);
+    await this.renameClashes(stats, first === undefined);
     await this.linkTemplates(stats);
     await this.linkConnectors(stats);
     await this.db
@@ -348,23 +343,16 @@ export class PlatformMigration {
 
   /**
    * Step 3 (one-shot): org skills of the org's own whose name a platform skill on in their org has,
-   * renamed when their current version predates `cutoff`; later ones are only logged.
+   * renamed only in the first run (`rename`: no run has finished yet); later ones are only logged.
    */
-  private async renameClashes(stats: PlatformMigrationStats, cutoff: Date): Promise<void> {
+  private async renameClashes(stats: PlatformMigrationStats, rename: boolean): Promise<void> {
     const rows = await this.db
       .selectFrom("skills as s")
       .innerJoin("skill_versions as v", (j) =>
         j.onRef("v.skill_id", "=", "s.id").onRef("v.version", "=", "s.current_version"),
       )
       .innerJoin("platform_skills as p", "p.name", "s.name")
-      .select([
-        "s.id",
-        "s.org_id",
-        "s.name",
-        "v.created_at",
-        "p.id as platform_id",
-        "p.plugin_name",
-      ])
+      .select(["s.id", "s.org_id", "s.name", "p.id as platform_id", "p.plugin_name"])
       .where("s.scope", "=", "org")
       .where("s.deleted_at", "is", null)
       .where("s.platform_skill_id", "is", null)
@@ -388,7 +376,7 @@ export class PlatformMigration {
         (r) => r.id,
       )) {
         const first = pairs[0] as (typeof pairs)[number];
-        if (first.created_at >= cutoff) {
+        if (!rename) {
           this.log.warn(
             "org skill shares its name with a platform skill; not renamed after the migration",
             {

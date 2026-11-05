@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   PlatformMigration,
   type PlatformMigrationStats,
@@ -459,6 +459,34 @@ describe("platform components migration", () => {
 
     const stats = await run();
     expect(stats.skillsRenamed).toBe(0);
+    expect((await orgSkills(env.orgId)).map((s) => s.name)).toEqual(["alpha", "beta"]);
+    expect(await env.db.selectFrom("org_notices").select("id").execute()).toEqual([]);
+    expect(await env.db.selectFrom("component_org_switches").select("org_id").execute()).toEqual(
+      [],
+    );
+  });
+
+  it("a pre-existing org skill whose platform namesake is switched on after the first run is not renamed, only warned about", async () => {
+    const itemId = await importPlugin(env, await kit("1.0.0"));
+    await installIn(env.orgId, itemId, "1.0.0");
+    await resetProvenance(env.orgId, "alpha");
+    // the plugin is not on in the org during the first run: no clash then
+    await env.db.updateTable("plugin_installs").set({ status: "failed" }).execute();
+    expect((await run()).skillsRenamed).toBe(0);
+    // the platform alpha becomes on in the org after the first finished run
+    await env.db.updateTable("plugin_installs").set({ status: "installed" }).execute();
+
+    const job = env.k.app.get(PlatformMigration);
+    const warn = vi.spyOn(job.log, "warn");
+    try {
+      expect((await run()).skillsRenamed).toBe(0);
+      expect(warn).toHaveBeenCalledWith(
+        "org skill shares its name with a platform skill; not renamed after the migration",
+        expect.objectContaining({ orgId: env.orgId, name: "alpha" }),
+      );
+    } finally {
+      warn.mockRestore();
+    }
     expect((await orgSkills(env.orgId)).map((s) => s.name)).toEqual(["alpha", "beta"]);
     expect(await env.db.selectFrom("org_notices").select("id").execute()).toEqual([]);
     expect(await env.db.selectFrom("component_org_switches").select("org_id").execute()).toEqual(
