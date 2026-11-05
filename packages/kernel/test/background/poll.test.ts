@@ -11,7 +11,7 @@ import { launchScript, newTaskId, taskOutputPath } from "../../src/background/la
 import {
   BACKGROUND_PRUNE_JOB,
   BackgroundTaskPollJob,
-  LAUNCH_ABANDONED_AFTER_MS,
+  launchAbandonedAfterMs,
 } from "../../src/background/poll.job.js";
 import { BackgroundTaskStopper } from "../../src/background/stop.js";
 import {
@@ -25,6 +25,7 @@ import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
+import { sandboxBaseTimeoutMs } from "../../src/tools/builtins/sandbox/common.js";
 import type { ScriptRule } from "../fixtures/plugins/model-script/index.js";
 import { removeFakeSandbox } from "../fixtures/plugins/sandbox-fake/index.js";
 import { legacyDbFor } from "../helpers/conversations.js";
@@ -494,10 +495,15 @@ describe("polling", () => {
       );
       return id;
     };
-    const old = new Date(Date.now() - LAUNCH_ABANDONED_AFTER_MS - 1000);
+    const limit = launchAbandonedAfterMs(k.app.get(KernelConfigService).get());
+    // derived from config: twice the launch call's pipeline limit, so well over the lease wait
+    const cfg = k.app.get(KernelConfigService).get();
+    expect(limit).toBe(2 * (30_000 + sandboxBaseTimeoutMs(cfg)));
+    expect(limit).toBeGreaterThan((cfg.sandbox.lockWaitSeconds + 30) * 1000 * 2);
+    const old = new Date(Date.now() - limit - 1000);
     const abandoned = await reserve(old);
     const loneAbandoned = await reserve(old, lone);
-    const young = await reserve(new Date(Date.now() - LAUNCH_ABANDONED_AFTER_MS + 30_000));
+    const young = await reserve(new Date(Date.now() - limit + 30_000));
     const claimed = await reserve(old);
     expect(await store.claimStop(claimed)).toBe(true);
     // a stop claimed it, then its launch died: the claim expires and no longer holds the slot
