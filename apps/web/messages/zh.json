@@ -3190,6 +3190,8 @@
       },
       "install": {
         "title": "启用 {name}",
+        "alreadyOn": "{name} 已启用，无需再填写。",
+        "backToPlugin": "返回插件",
         "connectorStep": "连接器：{name}",
         "extensionStep": "扩展配置",
         "confirmStep": "确认",

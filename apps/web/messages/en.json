@@ -3202,6 +3202,8 @@
       },
       "install": {
         "title": "Turn on {name}",
+        "alreadyOn": "{name} is already on; nothing to fill in.",
+        "backToPlugin": "Back to the plugin",
         "connectorStep": "Connector: {name}",
         "extensionStep": "Extension settings",
         "confirmStep": "Confirm",

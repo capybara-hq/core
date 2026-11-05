@@ -140,7 +140,7 @@ function ExtensionSection({ orgId, plugin }: { orgId: string; plugin: OrgExtensi
   }>();
   const hasFields = hasConfigFields(schema);
   const directory = provides(plugin, "directory");
-  // 部署上停用（或尚未加载）：只显示组织的启用设置，不能修改
+  // Stopped on the deployment (or not loaded yet): only the org's enable setting is shown, read-only
   const unavailable = plugin.available === false;
   const required = plugin.required === true;
   // On in every org (a builtin or `all` plugin): the switch is the enterprise's
@@ -180,7 +180,7 @@ function ExtensionSection({ orgId, plugin }: { orgId: string; plugin: OrgExtensi
     invalidates: () => [],
   });
 
-  async function toggle(enabled: boolean, force = false, confirm?: string) {
+  async function toggle(enabled: boolean, force = false, confirm?: string, keepNotice = false) {
     setBusy("toggle");
     setProblem(undefined);
     const input: PutOrgExtensionInput = {
@@ -192,15 +192,17 @@ function ExtensionSection({ orgId, plugin }: { orgId: string; plugin: OrgExtensi
       const r = await put.mutateAsync(input);
       if ("preview" in r) {
         setOff({ input: { enabled, ...(force ? { force } : {}) }, preview: r });
+        if (!keepNotice) setOffNotice(undefined);
         return;
       }
       setOff(null);
+      setOffNotice(undefined);
       toast.success(t(enabled ? "enabledToast" : "disabledToast", { plugin: label }));
     } catch (e) {
       // The preview moved on before the confirm: read it again and show it
       if (off !== null && e instanceof ApiClientError && e.code === "plugin.switch_stale") {
         setOffNotice(tp("switchOff.stale"));
-        await toggle(enabled, force);
+        await toggle(enabled, force, undefined, true);
         return;
       }
       setOff(null);
@@ -341,7 +343,7 @@ function ExtensionSection({ orgId, plugin }: { orgId: string; plugin: OrgExtensi
             <FormError message={saveError.message} extra={saveError.extra} />
           )}
           <Stack direction="row" gap={8}>
-            {/* 每个插件一个分组：保存用次级样式，页面不出现多个主操作 */}
+            {/* One group per plugin: saving uses the secondary style, so the page has no several primary actions */}
             <Button
               variant="secondary"
               loading={busy === "save"}
@@ -389,7 +391,7 @@ function ExtensionSection({ orgId, plugin }: { orgId: string; plugin: OrgExtensi
   );
 }
 
-/** 权限清单（只读，与后台审阅共用 PermissionReview）：按类别分组，敏感类别高亮并写明原因。 */
+/** The permission list (read-only, shared with the admin review's PermissionReview): grouped by category, sensitive categories highlighted with their reason. */
 function Permissions({ groups, plugin }: { groups: PermissionGroup[]; plugin: string }) {
   const t = useTranslations("extensions");
   if (groups.length === 0) return null;

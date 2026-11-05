@@ -19,8 +19,8 @@ import NotFound from "../../not-found";
  * endpoint and docs -> auth -> tools and default policies -> done.
  * `?template=<catalog item id>`: prefilled from a connector template in the catalog (the template
  * decides the endpoint; only the fields the template allows and the credentials can change),
- * installed through the catalog (subject to the item's policy), the same wizard as
- * `/catalog/<id>/install`. The template's item comes from the query cache (the layout prefetched it
+ * installed through the catalog (the plugin's switch), the same wizard as
+ * `/plugins/<id>/enable`. The template's item comes from the query cache (the layout prefetched it
  * on a first load); a missing one is the not-found state.
  */
 export default function InstallConnectorView({ template }: { template: string | null }) {

@@ -460,6 +460,22 @@ function Wizard({
         : { label: t("next"), onSelect: next, disabled: templateIncomplete },
   };
 
+  // Already on: the kernel's switch would drop the inputs, so the wizard asks for none.
+  if (item.state === "on") {
+    return frame({
+      ...header(t("title", { name })),
+      steps: [t("confirmStep")],
+      current: 0,
+      actionRow: {
+        primary: {
+          label: t("backToPlugin"),
+          onSelect: () => router.push(`/plugins/${encodeURIComponent(item.id)}`),
+        },
+      },
+      body: <Text variant="prose">{t("alreadyOn", { name })}</Text>,
+    });
+  }
+
   return frame({
     ...header(t("title", { name })),
     steps,
