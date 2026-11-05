@@ -68,6 +68,7 @@ import {
   disabledPluginItems,
   pluginItemDisabled,
 } from "./requests.service.js";
+import { ScopeNoLongerWanted, wantedByScope } from "./scope-state.js";
 import { upgradeInfo } from "./upgrade-targets.js";
 import { maxSatisfying, satisfiesRange } from "./versions.js";
 
@@ -109,7 +110,9 @@ export interface UninstallReport {
       | "used_by_agents"
       | "used_by_other_install"
       | "used_by_connectors"
-      | "used_by_plugins";
+      | "used_by_plugins"
+      /** A dependency install still wanted on in the org by its own scope: it stays, standalone. */
+      | "wanted_by_scope";
   }[];
 }
 
@@ -634,14 +637,14 @@ export class PluginInstaller {
         if (problem !== undefined) throw new ApiError("catalog.not_deployed", problem);
       }
     } else {
-      // The kernel installs only what needs no org input (the scope sync's `needs_config` rule)
-      if (actor === null && templates.length > 0) throw systemNeedsInput(manifest.name);
       this.checkInput(manifest, templates, input, at);
       for (const ct of templates) {
+        // The kernel installs only what needs no org input (the scope sync's `needs_config` rule)
+        if (actor === null) throw systemNeedsInput(manifest.name);
         connectors.set(
           ct.id,
           this.planConnector(
-            actor ?? "",
+            actor,
             { itemId, version, name: manifest.name },
             ct,
             input,
@@ -1039,12 +1042,21 @@ export class PluginInstaller {
     orgId: string,
     actor: string | null,
     plan: InstallPlan,
-    ctx: { actions: OrgAction[]; approvedBy?: string },
+    ctx: { actions: OrgAction[]; approvedBy?: string; via?: "scope" },
     installId: string,
   ): Promise<void> {
     const { itemId, version } = plan;
     const t = this.db;
     await lockOrgForActions(this.orgLock, orgId, actor, ctx.actions);
+    // The scope sync decided outside this lock: a person's switch-off or a scope change committed
+    // since then wins (nothing written, converged)
+    if (
+      ctx.via === "scope" &&
+      ctx.approvedBy === undefined &&
+      !(await wantedByScope(t, orgId, itemId))
+    ) {
+      throw new ScopeNoLongerWanted(orgId, itemId);
+    }
     if (ctx.approvedBy !== undefined) {
       // A dependency disabled (or removed) since it was planned
       const own = await t
@@ -1499,7 +1511,7 @@ export class PluginInstaller {
     actor: string | null,
     installId: string,
     ctx: UninstallCtx,
-  ): Promise<"missing" | "kept" | "removed"> {
+  ): Promise<"missing" | "kept" | "removed" | "wanted_by_scope"> {
     const t = this.db;
     const { removing } = ctx;
     if (removing.has(installId)) return "removed";
@@ -1551,6 +1563,11 @@ export class PluginInstaller {
       .forUpdate("a")
       .executeTakeFirst();
     if (!row) return "missing";
+    // A dependency its own scope still wants on in the org stays as a standalone install (the
+    // dependent's component row goes with the dependent's install row)
+    if (ctx.from !== undefined && (await wantedByScope(t, orgId, row.item_id))) {
+      return "wanted_by_scope";
+    }
     // Another install outside this uninstall depends on it: kept (a dependency uninstall hands
     // ownership over)
     const user = await this.heir(orgId, new Set([...removing, installId]), "plugin", installId);
@@ -1647,6 +1664,7 @@ export class PluginInstaller {
         const outcome = await this.uninstallIn(orgId, actor, c.ref, { ...ctx, from: installId });
         if (outcome === "removed") addRemoved({ kind: "plugin", ref: c.ref });
         else if (outcome === "kept") keep("used_by_other_install");
+        else if (outcome === "wanted_by_scope") keep("wanted_by_scope");
         continue;
       }
       const reason = rollbackMode ? "plugin_install_cleanup" : (ctx.reason ?? "plugin_uninstall");
@@ -1894,6 +1912,18 @@ export class PluginInstaller {
     for (const c of comps) {
       if (!c.created) {
         kept.push({ kind: c.kind, ref: c.ref, reason: "pre_existing" });
+        continue;
+      }
+      if (c.kind === "plugin") {
+        const dep = await t
+          .selectFrom("plugin_installs")
+          .select("item_id")
+          .where("id", "=", c.ref)
+          .where("org_id", "=", orgId)
+          .executeTakeFirst();
+        if (dep && (await wantedByScope(t, orgId, dep.item_id))) {
+          kept.push({ kind: c.kind, ref: c.ref, reason: "wanted_by_scope" });
+        }
         continue;
       }
       const users = agents.filter((a) =>

@@ -3263,7 +3263,8 @@
           "used_by_agents": "still used by agents",
           "used_by_other_install": "used by another plugin install",
           "used_by_connectors": "still used by connectors",
-          "used_by_plugins": "still required by plugins"
+          "used_by_plugins": "still required by plugins",
+          "wanted_by_scope": "kept on by its own scope"
         },
         "dismiss": "Got it"
       },

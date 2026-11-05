@@ -3251,7 +3251,8 @@
           "used_by_agents": "仍有 agent 在用",
           "used_by_other_install": "另一个插件也在用",
           "used_by_connectors": "仍有连接器在用",
-          "used_by_plugins": "仍有插件依赖"
+          "used_by_plugins": "仍有插件依赖",
+          "wanted_by_scope": "按自身范围仍启用"
         },
         "dismiss": "知道了"
       },

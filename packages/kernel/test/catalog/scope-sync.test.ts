@@ -1,6 +1,8 @@
 import { getQueueToken } from "@nestjs/bullmq";
 import type { Queue } from "bullmq";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { PluginInstaller } from "../../src/catalog/plugin-install.js";
+import { ScopeNoLongerWanted } from "../../src/catalog/scope-state.js";
 import { PLUGIN_SCOPE_QUEUE, PluginScopeSync } from "../../src/catalog/scope-sync.js";
 import { createOrg, waitFor } from "../helpers/runs.js";
 import { type OrgEnv, resetOrgCatalog, seedPlugin, setScope, startOrgEnv } from "./org-env.js";
@@ -190,6 +192,92 @@ describe("plugin scope sync", { timeout: 90_000 }, () => {
     await sync().enqueueItem(depId);
     await idle();
     expect(await liveOrgs(depId)).toEqual([x, y].sort());
+    expect(await auditRows("plugin.scope_sync_failed")).toEqual([]);
+  });
+
+  it("a created dependency its own scope wants on survives the dependent's switch-off, untouched", async () => {
+    const depId = await skillsOnly("dep-kept");
+    const appId = await skillsOnly("app-off", [{ name: "dep-kept", version: "^1.0.0" }]);
+    await setScope(env, appId, "optional");
+    // a person switches A on (B comes along as A's dependency, created by A's install)
+    const on = await env.boss({
+      method: "PUT",
+      url: `/api/v1/orgs/${env.orgId}/catalog/${appId}/switch`,
+      payload: { enabled: true },
+    });
+    expect(on.statusCode, on.body).toBe(200);
+    const depInstall = await env.db
+      .selectFrom("plugin_installs")
+      .select("id")
+      .where("item_id", "=", depId)
+      .where("org_id", "=", env.orgId)
+      .executeTakeFirstOrThrow();
+    // B's own scope becomes all
+    await setScope(env, depId, "all");
+    // the person switches A off: preview, then confirm
+    const url = `/api/v1/orgs/${env.orgId}/catalog/${appId}/switch`;
+    const pre = await env.boss({ method: "PUT", url, payload: { enabled: false } });
+    expect(pre.statusCode, pre.body).toBe(200);
+    const body = pre.json() as {
+      preview: { kept: { kind: string; ref: string; reason: string }[] };
+      confirm: string;
+    };
+    expect(body.preview.kept).toContainEqual({
+      kind: "plugin",
+      ref: depInstall.id,
+      reason: "wanted_by_scope",
+    });
+    const off = await env.boss({
+      method: "PUT",
+      url,
+      payload: { enabled: false, confirm: body.confirm },
+    });
+    expect(off.statusCode, off.body).toBe(200);
+    expect(await liveOrgs(appId)).not.toContain(env.orgId);
+    // B is the same install, standalone, and its skill was not deleted
+    const after = await env.db
+      .selectFrom("plugin_installs")
+      .select(["id", "status"])
+      .where("item_id", "=", depId)
+      .where("org_id", "=", env.orgId)
+      .execute();
+    expect(after).toEqual([{ id: depInstall.id, status: "installed" }]);
+    const skill = await env.db
+      .selectFrom("skills")
+      .select("deleted_at")
+      .where("org_id", "=", env.orgId)
+      .where("name", "=", "dep-kept-skill")
+      .executeTakeFirstOrThrow();
+    expect(skill.deleted_at).toBeNull();
+    // the sync leaves it as it is (no reinstall)
+    expect(await sync().syncPair(depId, env.orgId)).toBe("unchanged");
+    const still = await env.db
+      .selectFrom("plugin_installs")
+      .select("id")
+      .where("item_id", "=", depId)
+      .where("org_id", "=", env.orgId)
+      .execute();
+    expect(still).toEqual([{ id: depInstall.id }]);
+  });
+
+  it("a scope install after the person switched the plugin off is refused under the org lock", async () => {
+    const itemId = await skillsOnly("raced");
+    await setScope(env, itemId, "named", [env.orgId]);
+    // the sync decided "wanted on"; the person's switch-off commits before the install row
+    await switchRow(itemId, env.orgId, false);
+    await expect(
+      env.k.app
+        .get(PluginInstaller)
+        .install(env.orgId, null, itemId, "1.0.0", {}, { via: "scope" }),
+    ).rejects.toBeInstanceOf(ScopeNoLongerWanted);
+    expect(await liveOrgs(itemId)).toEqual([]);
+    const rows = await env.db
+      .selectFrom("plugin_installs")
+      .select("id")
+      .where("item_id", "=", itemId)
+      .execute();
+    expect(rows).toEqual([]);
+    expect(await auditRows("plugin.org_install_failed")).toEqual([]);
     expect(await auditRows("plugin.scope_sync_failed")).toEqual([]);
   });
 });

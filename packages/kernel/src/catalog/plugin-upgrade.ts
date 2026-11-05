@@ -1104,6 +1104,7 @@ export class PluginUpgrader {
       for (const r of sub.removed) if (r.kind === "extension") disabled.push(r.ref);
       if (outcome === "removed") report.removed.push({ kind: "plugin", ref });
       else if (outcome === "kept") keep("plugin", ref, "used_by_other_install");
+      else if (outcome === "wanted_by_scope") keep("plugin", ref, "wanted_by_scope");
     }
     return report;
   }

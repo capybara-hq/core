@@ -15,6 +15,7 @@ import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import { type InstallPlan, PluginInstaller } from "./plugin-install.js";
 import { wantedOn } from "./scope.js";
+import { ScopeNoLongerWanted } from "./scope-state.js";
 
 /**
  * The plugin scope sync (plugin and component management spec §5, phase 1): converges every org
@@ -25,7 +26,10 @@ import { wantedOn } from "./scope.js";
  *   needs the org's input (connector templates, or a required org config of its extension not set):
  *   that is `needs_config`, derived by the org catalog, never attempted here;
  * - wanted off and a live install -> uninstalls it (the person who changed the scope or the switch
- *   confirmed the preview); dependency installs it took along are synced again.
+ *   confirmed the preview); a dependency install it took along that its own scope still wants on
+ *   stays as a standalone install (the installer's rule), the others are synced again.
+ * The decision is made outside the org row lock; the installer re-checks the scope under it for a
+ * `via: "scope"` install, so a person's switch-off committed meanwhile wins.
  * The sync writes no switch row: those record people's choices. Builtin items are left alone (on
  * everywhere through their required extension). An install or uninstall failure is logged and
  * audited `plugin.scope_sync_failed` and not retried until the next enqueue.
@@ -132,18 +136,22 @@ export class PluginScopeSync {
     for (const [itemId, orgId] of pairs) {
       if (signal?.aborted) return;
       try {
-        await this.syncPair(itemId, orgId);
+        await this.syncPair(itemId, orgId, signal);
       } catch (err) {
         this.log.warn("plugin scope sync of a pair failed", { itemId, orgId, err });
       }
     }
   }
 
-  /** Converges one (item, org), under the org's sync lock. */
-  syncPair(itemId: string, orgId: string): Promise<ScopeSyncResult> {
+  /** Converges one (item, org), under the org's sync lock; `signal` ends the wait for it. */
+  syncPair(itemId: string, orgId: string, signal?: AbortSignal): Promise<ScopeSyncResult> {
     return this.locks.run(
       `plugin-scope-org-${orgId}`,
-      { ttlMs: ORG_LOCK_TTL_MS, waitMs: ORG_LOCK_WAIT_MS },
+      {
+        ttlMs: ORG_LOCK_TTL_MS,
+        waitMs: ORG_LOCK_WAIT_MS,
+        ...(signal !== undefined && { signal }),
+      },
       () => this.syncLocked(itemId, orgId),
     );
   }
@@ -200,6 +208,9 @@ export class PluginScopeSync {
         );
         return "installed";
       } catch (e) {
+        // A person switched it off (or the scope changed) after this decision: the installer's
+        // re-check under the org row lock refused it, nothing written
+        if (e instanceof ScopeNoLongerWanted) return "unchanged";
         // Another install of this item got there first (a person, or a dependency): converged
         if (
           e instanceof ApiError &&

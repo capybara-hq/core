@@ -661,6 +661,7 @@ export const KEPT_REASONS = [
   "used_by_other_install",
   "used_by_connectors",
   "used_by_plugins",
+  "wanted_by_scope",
 ] as const;
 export type KeptReason = (typeof KEPT_REASONS)[number];
 
