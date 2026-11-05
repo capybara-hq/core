@@ -1,6 +1,6 @@
 {
   "agents": {
-    "title": "Agents",
+    "title": "智能体",
     "form": {
       "submit": "保存。",
       "confirmLabel": "确认。",
