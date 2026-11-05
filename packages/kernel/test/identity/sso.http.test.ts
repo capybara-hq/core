@@ -518,8 +518,8 @@ describe("修复波 W1", () => {
   it("本人已登录时完成同一身份的第三方登录 → 升级为 sso，之后可以直接登录", async () => {
     const bob = await loggedIn("bob");
     await bindTo(bob.req, "im-y");
-    const proved = await sso({ sub: "im-y" }, "/settings/identities", bob.jar);
-    expect(proved.location).toBe(`${PUBLIC}/settings/identities`);
+    const proved = await sso({ sub: "im-y" }, "/account/identities", bob.jar);
+    expect(proved.location).toBe(`${PUBLIC}/account/identities`);
     expect(await me(proved.jar)).toBe(bob.account.id);
     expect(await linkedVia("im-y")).toBe("sso");
     const later = await sso({ sub: "im-y" });
@@ -532,7 +532,7 @@ describe("修复波 W1", () => {
     await bindTo(bob.req, "im-z");
     // 同一个浏览器：先（未登录）发起，再登录 bob，然后完成回调
     const jar = cookieJar();
-    const s = await start(jar, "/settings/identities");
+    const s = await start(jar, "/account/identities");
     const login = await asUser(
       k.http,
       jar,

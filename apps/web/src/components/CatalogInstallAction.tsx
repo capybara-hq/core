@@ -1,11 +1,14 @@
 "use client";
 
-import { Button, Stack, Text, useToast } from "@capybara-hq/design";
+import { Button, Stack, Text, useToast, versionLabel } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
 import { type ReactNode, useState } from "react";
 import { Link, useRouter } from "../i18n/navigation";
 import { issueLines } from "../lib/api";
 import { installCatalogItem, type OrgCatalogItem, requestCatalogItem } from "../lib/catalog";
+import { pluginChangeKeys } from "../lib/query/catalog";
+import { keys } from "../lib/query/keys";
+import { useAppMutation } from "../lib/query/mutation";
 import { useErrorMessage } from "../lib/use-error-message";
 import { useCatalogErrorLines } from "./CatalogParts";
 import { FormError } from "./form-error";
@@ -15,7 +18,8 @@ import { PluginUpgradeDialog } from "./PluginUpgradeDialog";
 export function useOrgItemStatus(): (item: OrgCatalogItem) => string {
   const t = useTranslations("catalog.org.status");
   return (item) => {
-    if (item.installed !== null) return t("installed", { version: item.installed.version });
+    if (item.installed !== null)
+      return t("installed", { version: versionLabel(item.installed.version) });
     if (item.request?.status === "pending") return t("requested");
     return t(item.installable);
   };
@@ -32,17 +36,18 @@ export function useOrgItemStatus(): (item: OrgCatalogItem) => string {
  *   dependencies included, and asks for template input and the extension's org config);
  *   `needs_approval` asks an enterprise admin (the install call returns 202 and creates a request);
  * - members: "Request install" for installable items (goes to the org admins' inbox).
+ *
+ * Each action invalidates what it changes (the catalog's view of the item, and for an install or
+ * an upgrade what the plugin brings), so the page shows the new state.
  */
 export function CatalogInstallAction({
   orgId,
   item,
   admin,
-  onChanged,
 }: {
   orgId: string;
   item: OrgCatalogItem;
   admin: boolean;
-  onChanged(): void;
 }) {
   const t = useTranslations("catalog.org.action");
   const toast = useToast();
@@ -52,13 +57,21 @@ export function CatalogInstallAction({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<{ message: string; extra: string[] }>();
   const [upgrading, setUpgrading] = useState(false);
+  // Asking for approval may install at once (the kernel decides): it changes what an install does.
+  const install = useAppMutation({
+    fn: () => installCatalogItem(orgId, item.id, {}),
+    invalidates: () => pluginChangeKeys(orgId),
+  });
+  const ask = useAppMutation({
+    fn: () => requestCatalogItem(orgId, item.id, ""),
+    invalidates: () => [keys.org(orgId).catalog(), keys.org(orgId).catalogItemsAll()],
+  });
 
   const run = async (op: () => Promise<string>) => {
     setBusy(true);
     setError(undefined);
     try {
       toast.success(await op());
-      onChanged();
     } catch (e) {
       setError({ message: errorMessage(e), extra: [...issueLines(e), ...catalogLines(e)] });
     } finally {
@@ -68,12 +81,12 @@ export function CatalogInstallAction({
 
   const askApproval = () =>
     run(async () => {
-      const r = await installCatalogItem(orgId, item.id, {});
+      const r = await install.mutateAsync(undefined);
       return "request" in r ? t("approvalRequested") : t("installed", { name: item.name });
     });
   const request = () =>
     run(async () => {
-      await requestCatalogItem(orgId, item.id, "");
+      await ask.mutateAsync(undefined);
       return t("requested");
     });
 
@@ -84,9 +97,11 @@ export function CatalogInstallAction({
     body = (
       <>
         <Text tone="muted" icon="check">
-          {installed.version}
+          {versionLabel(installed.version)}
         </Text>
-        {target !== null && <Text tone="accent">{t("upgradeAvailable", { version: target })}</Text>}
+        {target !== null && (
+          <Text tone="accent">{t("upgradeAvailable", { version: versionLabel(target) })}</Text>
+        )}
         {admin && target !== null && (
           <>
             <Button onClick={() => setUpgrading(true)}>{t("upgrade")}</Button>
@@ -96,7 +111,6 @@ export function CatalogInstallAction({
               target={target}
               open={upgrading}
               onOpenChange={setUpgrading}
-              onDone={onChanged}
             />
           </>
         )}
@@ -108,9 +122,17 @@ export function CatalogInstallAction({
       <Text tone="muted">{t("pendingHint", { stage: t(`stage.${item.request.stage}`) })}</Text>
     );
   } else if (item.installable === "disabled") {
-    body = <Text tone="muted">{t("disabledHint")}</Text>;
+    body = (
+      <Text variant="prose" tone="muted">
+        {t("disabledHint")}
+      </Text>
+    );
   } else if (item.installable === "not_deployed") {
-    body = <Text tone="warn">{t("notDeployedHint")}</Text>;
+    body = (
+      <Text variant="prose" tone="warn">
+        {t("notDeployedHint")}
+      </Text>
+    );
   } else if (!admin) {
     body = (
       <Button loading={busy} disabled={busy} onClick={() => void request()}>

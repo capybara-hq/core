@@ -1,5 +1,7 @@
 // biome-ignore-all lint/correctness/useJsxKeyInIterable: 用例表是 [名称, 元素] 元组，不是渲染列表
-import { cleanup, render, screen } from "@testing-library/react";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { act, cleanup, render, screen } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as design from "../src/index";
@@ -11,11 +13,14 @@ import {
   FormPage,
   FormSection,
   InboxPage,
+  KeyValue,
   ListPage,
   OnboardingPage,
   OverviewPage,
   PAGE_TEMPLATES,
+  PendingState,
   SettingsPage,
+  SetupPage,
   StatusPage,
   TracePage,
   WizardPage,
@@ -28,7 +33,7 @@ afterEach(() => {
 
 const zh = (ui: React.ReactElement) => render(<DesignProvider locale="zh">{ui}</DesignProvider>);
 
-const header = { title: "页面标题" };
+const header = { path: [{ label: "capybara" }], title: "页面标题" };
 const row = { primary: { label: "保存", onSelect: () => {} } };
 
 function root(name: string) {
@@ -64,7 +69,7 @@ describe("页面模板根节点与页头", () => {
       "SettingsPage",
       <SettingsPage
         header={header}
-        nav={[{ id: "org", label: "组织", href: "/org" }]}
+        nav={[{ group: "g", items: [{ id: "org", label: "组织", href: "/org" }] }]}
         activeNav="org"
       >
         x
@@ -100,6 +105,12 @@ describe("页面模板根节点与页头", () => {
       zh(el);
       expect(root(name)).toBeTruthy();
       expect(screen.getByRole("heading", { level: 1, name: "页面标题" })).toBeTruthy();
+    });
+    it(`${name}: the root and the head use the one content width (no full-width template)`, () => {
+      zh(el);
+      expect(root(name)?.getAttribute("data-width")).toBe("content");
+      const head = document.querySelector(".cb-template-head-frame");
+      expect(head?.getAttribute("data-width")).toBe("content");
     });
   }
 
@@ -151,6 +162,40 @@ describe("FormPage", () => {
     expect(e.returnValue).toBe("");
   });
 
+  it("a create form never says 没有未保存的修改 and starts on its first field", () => {
+    zh(
+      <FormPage header={header} actionRow={{ ...row, unsaved: 0 }} create>
+        <FormSection id="basic" title="基本信息">
+          <input aria-label="名称" />
+          <input aria-label="描述" />
+        </FormSection>
+      </FormPage>,
+    );
+    expect(screen.queryByText("没有未保存的修改")).toBeNull();
+    expect(document.activeElement).toBe(screen.getByRole("textbox", { name: "名称" }));
+  });
+
+  it("an edit form keeps 没有未保存的修改 and does not move the focus", () => {
+    zh(
+      <FormPage header={header} actionRow={{ ...row, unsaved: 0 }}>
+        <input aria-label="名称" />
+      </FormPage>,
+    );
+    expect(screen.getByText("没有未保存的修改")).toBeTruthy();
+    expect(document.activeElement).toBe(document.body);
+  });
+
+  it("a DangerZone after form sections sits in their field column (spec §6.21)", () => {
+    const css = readFileSync(resolve(import.meta.dirname, "../src/styles/templates.css"), "utf8");
+    const rule = css.match(/\.cb-form-section ~ \.cb-danger-zone \{[^}]*\}/)?.[0] ?? "";
+    expect(rule).toContain("margin-left: calc(240px + var(--cb-space-7))");
+    const narrow =
+      css.match(
+        /@media \(max-width: 959px\) \{[^@]*\.cb-form-section ~ \.cb-danger-zone \{[^}]*\}/,
+      )?.[0] ?? "";
+    expect(narrow).toContain("margin-left: 0");
+  });
+
   it("unsaved=0 不注册 beforeunload", () => {
     const add = vi.spyOn(window, "addEventListener");
     zh(
@@ -193,28 +238,32 @@ describe("widths, stat cards and the form without anchors", () => {
   const width = () =>
     document.querySelector('[data-part="content"]')?.getAttribute("data-width") ?? null;
   const widths: [string, React.ReactElement, string][] = [
-    ["OverviewPage", <OverviewPage header={header}>x</OverviewPage>, "list"],
-    ["ListPage", <ListPage header={header}>x</ListPage>, "list"],
+    ["OverviewPage", <OverviewPage header={header}>x</OverviewPage>, "content"],
+    ["ListPage", <ListPage header={header}>x</ListPage>, "content"],
     [
       "FormPage",
       <FormPage header={header} actionRow={row}>
         x
       </FormPage>,
-      "form",
+      "content",
     ],
     [
       "SettingsPage",
-      <SettingsPage header={header} nav={[{ id: "o", label: "组织", href: "/o" }]} activeNav="o">
+      <SettingsPage
+        header={header}
+        nav={[{ group: "g", items: [{ id: "o", label: "组织", href: "/o" }] }]}
+        activeNav="o"
+      >
         x
       </SettingsPage>,
-      "form",
+      "content",
     ],
     [
       "WizardPage",
       <WizardPage header={header} steps={["一"]} current={0} actionRow={row}>
         x
       </WizardPage>,
-      "form",
+      "content",
     ],
     [
       "DetailPage",
@@ -224,32 +273,64 @@ describe("widths, stat cards and the form without anchors", () => {
       >
         x
       </DetailPage>,
-      "full",
+      "content",
     ],
     [
       "InboxPage",
       <InboxPage header={header} list={<div>l</div>}>
         x
       </InboxPage>,
-      "full",
+      "content",
     ],
     [
       "TracePage",
       <TracePage header={header} waterfall={<div>w</div>} detail={<div>d</div>} />,
-      "full",
+      "content",
+    ],
+    [
+      "StatusPage",
+      <StatusPage header={header} kind="404" title="未找到" description="页面不存在" />,
+      "content",
+    ],
+    [
+      "OnboardingPage",
+      <OnboardingPage
+        header={header}
+        steps={[{ label: "接入模型", description: "d", done: false }]}
+      />,
+      "content",
     ],
   ];
   for (const [name, el, w] of widths) {
-    it(`${name} content is data-width="${w}"`, () => {
+    it(`${name} is data-width="${w}" (frame templates share the content width)`, () => {
       zh(el);
       expect(width()).toBe(w);
     });
   }
 
+  it("DetailPage: the head and the content share one width container", () => {
+    zh(
+      <DetailPage
+        header={header}
+        tabs={{ items: [{ id: "a", label: "概要" }], value: "a", label: "t" }}
+        inspector={<div>i</div>}
+      >
+        x
+      </DetailPage>,
+    );
+    const head = document.querySelector(".cb-template-head-frame") as HTMLElement;
+    const content = document.querySelector('[data-part="content"]') as HTMLElement;
+    expect(head.getAttribute("data-width")).toBe("content");
+    expect(content.getAttribute("data-width")).toBe("content");
+    expect(head.closest(".cb-body-main")).not.toBeNull();
+    expect(head.closest(".cb-body-main")).toBe(content.closest(".cb-body-main"));
+  });
+
   it("ListPage renders StatCards after the header when metrics are given", () => {
     zh(
       <ListPage
         header={{
+          path: [{ label: "capybara" }],
           title: "连接器",
           metrics: [
             { label: "已接入", value: "24" },
@@ -283,7 +364,9 @@ describe("widths, stat cards and the form without anchors", () => {
       </FormPage>,
     );
     expect(screen.queryByRole("navigation", { name: "页内导航" })).toBeNull();
-    expect(screen.queryByRole("navigation")).toBeNull();
+    // only the path line is a navigation landmark
+    const navs = screen.queryAllByRole("navigation");
+    expect(navs.map((n) => n.getAttribute("data-part"))).toEqual(["path"]);
   });
 });
 
@@ -331,6 +414,103 @@ describe("其他模板行为", () => {
     expect(onClose).toHaveBeenCalledTimes(2);
   });
 
+  it("InboxPage with no items: one page empty state instead of the list + detail split", () => {
+    zh(
+      <InboxPage header={header} list={<div>l</div>} empty={{ text: "没有待处理的事项" }}>
+        x
+      </InboxPage>,
+    );
+    expect(screen.getByText("没有待处理的事项")).toBeTruthy();
+    expect(document.querySelector('[data-part="empty-state"]')?.getAttribute("data-size")).toBe(
+      "page",
+    );
+    expect(document.querySelector(".cb-body-rail")).toBeNull();
+    expect(screen.queryByText("l")).toBeNull();
+    expect(screen.queryByText("x")).toBeNull();
+    expect(document.querySelector(".cb-body")?.getAttribute("data-layout")).toBe("single");
+  });
+
+  it("InboxPage: the split is capped at the content width, inside the content padding", () => {
+    const css = readFileSync(resolve(import.meta.dirname, "../src/styles/shell.css"), "utf8");
+    expect(css).toMatch(
+      /\.cb-template\[data-template="InboxPage"\] \.cb-body:not\(\[data-layout="single"\]\) \{[^}]*padding: 0 var\(--cb-content-pad\);[^}]*scrollbar-gutter: stable;/,
+    );
+    expect(css).toMatch(
+      /\.cb-template\[data-template="InboxPage"\] \.cb-body-row \{[^}]*max-width: var\(--cb-layout-content\);[^}]*margin: 0 auto;/,
+    );
+  });
+
+  it("the template head has one padding rule: the content padding, no page gutter", () => {
+    const css = readFileSync(resolve(import.meta.dirname, "../src/styles/shell.css"), "utf8");
+    const head = /\.cb-template-head \{([^}]*)\}/.exec(css)?.[1] ?? "";
+    expect(head).toContain("padding: var(--cb-space-5) var(--cb-content-pad) var(--cb-space-3);");
+    expect(head).toContain("scrollbar-gutter: stable;");
+    expect(css).not.toContain('.cb-template-head[data-width="content"]');
+  });
+
+  it("TracePage: an info grid in the detail panel is one label/value pair per row", () => {
+    // The real stylesheets: the conversation's argument grid must not lay KeyValue out in pairs
+    const styles = ["display.css", "conversation.css"].map((f) => {
+      const el = document.createElement("style");
+      el.textContent = readFileSync(resolve(import.meta.dirname, `../src/styles/${f}`), "utf8");
+      document.head.append(el);
+      return el;
+    });
+    try {
+      zh(
+        <TracePage
+          header={header}
+          waterfall={<div>w</div>}
+          detail={
+            <KeyValue
+              keyWidth="16ch"
+              rows={[
+                { k: "版本", v: "v3" },
+                { k: "发起人", v: "Grant" },
+                { k: "开始", v: "10:00" },
+                { k: "结束", v: "10:01" },
+              ]}
+            />
+          }
+        />,
+      );
+      const dl = document.querySelector(".cb-trace-detail dl.cb-kv") as HTMLElement;
+      expect(getComputedStyle(dl).display).toBe("flex");
+      expect(getComputedStyle(dl).flexDirection).toBe("column");
+      const rows = [...dl.children];
+      expect(rows).toHaveLength(4);
+      for (const r of rows) {
+        expect([...r.children].map((c) => c.tagName)).toEqual(["DT", "DD"]);
+      }
+    } finally {
+      for (const el of styles) el.remove();
+    }
+    const css = readFileSync(resolve(import.meta.dirname, "../src/styles/templates.css"), "utf8");
+    // the right panel never scrolls sideways
+    expect(css).toMatch(/\.cb-trace-detail \{[^}]*overflow: hidden auto;/);
+  });
+
+  it("SettingsPage on phones: the scrolling sub-nav draws its focus ring inside the item", () => {
+    const css = readFileSync(resolve(import.meta.dirname, "../src/styles/templates.css"), "utf8");
+    const phone = css.slice(css.indexOf("@media (max-width: 639px) {\n  .cb-settings-nav {") + 1);
+    expect(phone).toMatch(/^[^@]*\.cb-settings-nav-item:focus-visible \{\s*outline-offset: -2px;/);
+  });
+
+  it("TracePage: the detail follows the waterfall in one column, a right panel from 1280", () => {
+    zh(<TracePage header={header} waterfall={<div>w</div>} detail={<div>d</div>} />);
+    const waterfall = document.querySelector(".cb-trace-waterfall") as HTMLElement;
+    const detail = document.querySelector(".cb-trace-detail") as HTMLElement;
+    expect(waterfall.parentElement).toBe(detail.parentElement);
+    expect(waterfall.nextElementSibling).toBe(detail);
+    const css = readFileSync(resolve(import.meta.dirname, "../src/styles/templates.css"), "utf8");
+    const trace = /\.cb-trace \{([^}]*)\}/.exec(css)?.[1] ?? "";
+    // no stretched waterfall pinning the detail to the bottom (the dead gap)
+    expect(trace).not.toContain("min-height: 100%");
+    expect(css).toMatch(
+      /@media \(min-width: 1280px\) \{[^@]*\.cb-trace \{[^}]*grid-template-columns: minmax\(0, 1fr\) 400px;/,
+    );
+  });
+
   it("ListPage 无 rail 时为 single", () => {
     zh(<ListPage header={header}>x</ListPage>);
     expect(document.querySelector('.cb-body[data-layout="single"]')).toBeTruthy();
@@ -341,8 +521,13 @@ describe("其他模板行为", () => {
       <SettingsPage
         header={header}
         nav={[
-          { id: "org", label: "组织", href: "/org" },
-          { id: "sec", label: "安全", href: "/sec" },
+          {
+            group: "g",
+            items: [
+              { id: "org", label: "组织", href: "/org" },
+              { id: "sec", label: "安全", href: "/sec" },
+            ],
+          },
         ]}
         activeNav="sec"
       >
@@ -353,14 +538,14 @@ describe("其他模板行为", () => {
     expect(screen.getByRole("link", { name: "组织" }).getAttribute("aria-current")).toBeNull();
   });
 
-  it("OnboardingPage 区分完成与待办，并渲染 action", () => {
+  it("OnboardingPage marks done and to-do steps; a to-do step shows only its action", () => {
     zh(
       <OnboardingPage
         header={header}
         steps={[
           { label: "接入模型", description: "d1", done: true },
           {
-            label: "创建 Agent",
+            label: "新建 agent",
             description: "d2",
             done: false,
             action: <button type="button">开始</button>,
@@ -372,7 +557,7 @@ describe("其他模板行为", () => {
     expect(Array.from(items).map((i) => i.getAttribute("data-state"))).toEqual(["done", "todo"]);
     expect(screen.getByRole("button", { name: "开始" })).toBeTruthy();
     expect(screen.getByText("已完成")).toBeTruthy();
-    expect(screen.getByText("待办")).toBeTruthy();
+    expect(screen.queryByText("待办")).toBeNull();
   });
 
   it("StatusPage 渲染标题、说明、操作与 kind", () => {
@@ -392,9 +577,10 @@ describe("其他模板行为", () => {
 });
 
 describe("PAGE_TEMPLATES", () => {
-  // 12 templates; ConversationPage replaced PlaygroundPage when the conversation page moved over.
-  it("has 12 entries, each an exported component", () => {
-    expect(PAGE_TEMPLATES.length).toBe(12);
+  // 13 templates; ConversationPage replaced PlaygroundPage when the conversation page moved over;
+  // SetupPage is the guided setup layout (acceptance round 2, D).
+  it("has 13 entries, each an exported component", () => {
+    expect(PAGE_TEMPLATES.length).toBe(13);
     for (const n of PAGE_TEMPLATES) {
       expect(typeof (design as Record<string, unknown>)[n]).toBe("function");
     }
@@ -477,10 +663,15 @@ describe("SettingsPage column (blind round 2)", () => {
   const settings = () =>
     zh(
       <SettingsPage
-        header={{ title: "组织设置" }}
+        header={{ path: [], title: "组织设置" }}
         nav={[
-          { id: "org", label: "组织", href: "/org" },
-          { id: "members", label: "成员", href: "/members" },
+          {
+            group: "g",
+            items: [
+              { id: "org", label: "组织", href: "/org" },
+              { id: "members", label: "成员", href: "/members" },
+            ],
+          },
         ]}
         activeNav="org"
       >
@@ -488,24 +679,125 @@ describe("SettingsPage column (blind round 2)", () => {
       </SettingsPage>,
     );
 
-  it("the header sits in the content column, beside the rail, not above it", () => {
+  it("the header spans the content width above the sub-nav and the content", () => {
     settings();
     const title = screen.getByRole("heading", { name: "组织设置" });
+    const nav = screen.getByRole("navigation", { name: "设置导航" });
     const content = document.querySelector('[data-part="content"]') as HTMLElement;
-    const main = title.closest(".cb-body-main");
-    expect(main).not.toBeNull();
-    expect(main?.contains(content)).toBe(true);
-    const rail = document.querySelector(".cb-body-rail") as HTMLElement;
-    expect(rail.contains(title)).toBe(false);
-    expect(rail.compareDocumentPosition(title) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    // the header frame has the form width, like the content frame
-    expect(title.closest(".cb-template-head-frame")?.getAttribute("data-width")).toBe("form");
+    expect(content.contains(nav)).toBe(true);
+    expect(content.contains(title)).toBe(false);
+    expect(title.compareDocumentPosition(nav) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(title.closest(".cb-template-head-frame")?.getAttribute("data-width")).toBe("content");
   });
 
-  it("the nav starts the rail: no collapse button above it; the nav has a name", () => {
+  it("the head's description sits at the top of the content column, so the sub-nav never moves", () => {
+    zh(
+      <SettingsPage
+        header={{ path: [], title: "服务令牌", description: "给脚本用的令牌。" }}
+        nav={[{ group: "g", items: [{ id: "tokens", label: "服务令牌", href: "/t" }] }]}
+        activeNav="tokens"
+      >
+        <p>内容</p>
+      </SettingsPage>,
+    );
+    const description = screen.getByText("给脚本用的令牌。");
+    expect(description.closest(".cb-template-head")).toBeNull();
+    const column = description.closest(".cb-settings-content") as HTMLElement;
+    expect(column).not.toBeNull();
+    expect(column.firstElementChild).toBe(description);
+    expect(document.querySelector('[data-part="page-header-description"]')).toBeNull();
+  });
+
+  it("the sub-nav has a name and no collapse button", () => {
     settings();
     expect(screen.queryByRole("button", { name: "收起侧栏" })).toBeNull();
     const nav = screen.getByRole("navigation", { name: "设置导航" });
     expect(nav.querySelector('[aria-current="page"]')?.textContent).toBe("组织");
+  });
+});
+
+describe("SetupPage (the guided setup layout)", () => {
+  const org = {
+    name: "Acme",
+    initial: "A",
+    slug: "acme",
+    role: "所有者",
+    menu: [{ label: "Beta", checked: false, onSelect: vi.fn() }],
+  };
+  const account = { name: "Grant", menu: [{ label: "退出登录", onSelect: vi.fn() }] };
+  const status = { context: "grant@acme:~/setup", version: "v1.0.0" };
+  const steps: design.SetupStep[] = [
+    { id: "model", label: "配置模型", state: "done", href: "/admin/extensions" },
+    { id: "agent", label: "创建 agent", state: "todo", href: "/agents/new" },
+    { id: "channels", label: "连接渠道", state: "todo", href: "/channels/new", optional: true },
+  ];
+  const sidebar = { org, home: { href: "/" }, steps, activeNav: "home", account };
+
+  it("the shell's geometry: the setup sidebar, the content area, the status bar; no top bar", () => {
+    zh(
+      <SetupPage sidebar={sidebar} status={status}>
+        <p>清单</p>
+      </SetupPage>,
+    );
+    const root = document.querySelector('[data-template="SetupPage"]') as HTMLElement;
+    expect(root.querySelector('[data-part="setup-top-bar"]')).toBeNull();
+    const shell = root.querySelector(".cb-shell") as HTMLElement;
+    const aside = shell.querySelector('[data-part="sidebar"]') as HTMLElement;
+    expect(aside.getAttribute("data-context")).toBe("setup");
+    const content = shell.querySelector('[data-part="shell-content"]') as HTMLElement;
+    expect(content.querySelector("main")?.textContent).toBe("清单");
+    expect(screen.getByText("grant@acme:~/setup")).toBeTruthy();
+    // the steps are the navigation; no search, no inbox, no conversations
+    const nav = screen.getAllByRole("navigation", { name: "主导航" })[0] as HTMLElement;
+    expect(nav.textContent).toContain("配置模型");
+    expect(screen.queryByRole("button", { name: /搜索/ })).toBeNull();
+    expect(screen.queryByRole("region", { name: "会话" })).toBeNull();
+  });
+
+  it("the org opens its menu; the account opens its menu", async () => {
+    zh(<SetupPage sidebar={sidebar} status={status} />);
+    const user = userEvent.setup();
+    const [orgButton] = screen.getAllByRole("button", { name: "当前组织：Acme，切换组织" });
+    if (!orgButton) throw new Error("no org switcher");
+    await user.click(orgButton);
+    await user.click(await screen.findByRole("menuitemradio", { name: "Beta" }));
+    expect(org.menu[0]?.onSelect).toHaveBeenCalledTimes(1);
+    const [accountButton] = screen.getAllByRole("button", { name: "账户: Grant" });
+    if (!accountButton) throw new Error("no account button");
+    await user.click(accountButton);
+    await user.click(await screen.findByRole("menuitem", { name: "退出登录" }));
+    expect(account.menu[0]?.onSelect).toHaveBeenCalledTimes(1);
+  });
+
+  it("⌘K opens nothing (no command palette in the setup frame)", async () => {
+    zh(<SetupPage sidebar={sidebar} status={status} />);
+    await userEvent.keyboard("{Meta>}k{/Meta}");
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("the drawer bar below 960 has the menu button and no search", () => {
+    zh(
+      <SetupPage sidebar={sidebar} status={status} reference={{ drawer: true }} title="开始之前" />,
+    );
+    const bar = document.querySelector('[data-part="drawer-bar"]') as HTMLElement;
+    expect(bar.querySelector('[aria-label="打开导航"]')).not.toBeNull();
+    expect(bar.querySelector('[aria-label^="搜索"]')).toBeNull();
+    expect(bar.textContent).toContain("开始之前");
+  });
+});
+
+describe("PendingState (the neutral loading state)", () => {
+  afterEach(() => vi.useRealTimers());
+
+  it("is empty at first and shows a quiet skeleton only after 300 ms", () => {
+    vi.useFakeTimers();
+    zh(<PendingState frame="app" />);
+    const el = screen.getByRole("status");
+    expect(el.getAttribute("aria-busy")).toBe("true");
+    expect(el.querySelectorAll('[data-part="pending-bar"]')).toHaveLength(0);
+    act(() => vi.advanceTimersByTime(299));
+    expect(el.querySelectorAll('[data-part="pending-bar"]')).toHaveLength(0);
+    act(() => vi.advanceTimersByTime(1));
+    expect(el.querySelectorAll('[data-part="pending-bar"]').length).toBeGreaterThan(0);
   });
 });

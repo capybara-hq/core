@@ -47,6 +47,16 @@ const handle = app.getRequestHandler();
 await app.prepare();
 
 const server = createServer((req, res) => {
+  // The container health check (docker/web.Dockerfile): this tier answers, without Next or the
+  // kernel, so the check never depends on the deployment's state (a fresh one redirects /login).
+  if (req.url === "/healthz") {
+    res.writeHead(200, {
+      "content-type": "text/plain; charset=utf-8",
+      "cache-control": "no-store",
+    });
+    res.end("ok");
+    return;
+  }
   if (objectStore && isObjectStorePath(objectStore, req.url ?? "/")) {
     proxyObjectStore(objectStore, req, res);
     return;

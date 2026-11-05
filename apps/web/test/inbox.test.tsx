@@ -1,15 +1,41 @@
-import { cleanup, screen, within } from "@testing-library/react";
+import { act, cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
-import InboxRoute from "../src/app/[locale]/(app)/inbox/page";
-import GrantsPage from "../src/app/[locale]/(app)/settings/grants/page";
-import { bodyOf, json, noContent, stubApi } from "./support/api";
+import { bodyOf, json, lastStubRoutes, noContent, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
-import { renderPage } from "./support/render";
+import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
+import type { renderPage } from "./support/render";
+import { expectNoFirstPaintFetch } from "./support/server";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
+// What the page writes into the status bar (the shell's bar is not rendered here).
+const statusBar = vi.hoisted(() => vi.fn());
+vi.mock("@capybara-hq/design", async (original) => ({
+  ...(await original<typeof import("@capybara-hq/design")>()),
+  useStatusBar: statusBar,
+}));
+vi.mock("next/navigation", () => ({
+  redirect: (to: string) => {
+    throw new Error(`REDIRECT ${to}`);
+  },
+  notFound: () => {
+    throw new Error("NOT_FOUND");
+  },
+}));
+
+type Routes = Parameters<typeof stubApi>[0];
+
+/**
+ * The inbox as a first load: the layout's prefetch (`server`) from `routes`; the browser answers
+ * `routes` afterwards (`calls`).
+ */
+async function renderInbox(routes: Routes, opts: Parameters<typeof renderPage>[1] = {}) {
+  const calls = stubApi(routes);
+  const r = await renderRouteWithCache("/inbox", routes, opts);
+  return { ...r, server: r.calls, calls };
+}
 
 const msgs = { zh, en } as const;
 const LOCALES = ["zh", "en"] as const;
@@ -86,7 +112,10 @@ const skillChange = (id: string, over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
-beforeEach(() => resetNavigation("/inbox"));
+beforeEach(() => {
+  resetNavigation("/inbox");
+  statusBar.mockClear();
+});
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
@@ -97,8 +126,13 @@ describe("收件箱（InboxPage）", () => {
     "Rail 为待处理列表，内容区为第一条详情，ActionRow 有批准 / 拒绝（%s）",
     async (locale) => {
       const m = msgs[locale];
-      stubApi({ [LIST]: () => json(200, inbox([approval("a"), approval("b")])) });
-      const { container } = renderPage(<InboxRoute />, { locale });
+      const { container, server, calls } = await renderInbox(
+        { [LIST]: () => json(200, inbox([approval("a"), approval("b")])) },
+        { locale },
+      );
+      // the first paint is the server's read: nothing is fetched in the browser
+      expect(server.map((c) => c.url)).toContain("/api/v1/orgs/o1/inbox");
+      expect(calls).toEqual([]);
       expect(container.querySelector('[data-template="InboxPage"]')).not.toBeNull();
       const table = await screen.findByRole("table", { name: m.inbox.listLabel });
       expect(within(table).getByText("Fixture [tool_a]")).toBeTruthy();
@@ -131,15 +165,17 @@ describe("收件箱（InboxPage）", () => {
   it.each(LOCALES)("选中第二条、选「以后都允许」批准 → POST 后重读列表（%s）", async (locale) => {
     const m = msgs[locale];
     let pending = [approval("a"), approval("b")];
-    const calls = stubApi({
-      [LIST]: () => json(200, inbox(pending)),
-      "POST /api/v1/orgs/o1/approvals/b/decision": () => {
-        pending = pending.filter((a) => a.id !== "b");
-        return json(200, { approval: { ...approval("b"), status: "approved", scope: "always" } });
-      },
-    });
     const refreshPending = vi.fn();
-    const { container } = renderPage(<InboxRoute />, { locale, session: { refreshPending } });
+    const { container, calls, server } = await renderInbox(
+      {
+        [LIST]: () => json(200, inbox(pending)),
+        "POST /api/v1/orgs/o1/approvals/b/decision": () => {
+          pending = pending.filter((a) => a.id !== "b");
+          return json(200, { approval: { ...approval("b"), status: "approved", scope: "always" } });
+        },
+      },
+      { locale, session: { refreshPending } },
+    );
     const user = userEvent.setup();
     const table = await screen.findByRole("table", { name: m.inbox.listLabel });
     await user.click(within(table).getByText("Fixture [tool_b]"));
@@ -153,40 +189,58 @@ describe("收件箱（InboxPage）", () => {
       decision: "approve",
       scope: "always",
     });
+    // the decision invalidates the inbox: it is read again in the browser, the route is not
+    // refreshed
     await vi.waitFor(() => expect(screen.queryByText("Fixture [tool_b]")).toBeNull());
-    expect(calls.filter((c) => c.url.endsWith("/inbox"))).toHaveLength(2);
+    expect(router.refresh).not.toHaveBeenCalled();
+    expect(server.filter((c) => c.url.endsWith("/inbox"))).toHaveLength(1);
+    await vi.waitFor(() =>
+      expect(calls.filter((c) => c.method === "GET").map((c) => c.url)).toEqual([
+        "/api/v1/orgs/o1/inbox",
+      ]),
+    );
     expect(await screen.findByText(m.inbox.approved)).toBeTruthy();
     // 顶栏的待处理数立即重读，不等 30 秒轮询
     expect(refreshPending).toHaveBeenCalledTimes(1);
   });
 
   it("已被别人处理：toast 显示 approval.already_decided 的文案并重读", async () => {
-    stubApi({
-      [LIST]: () => json(200, inbox([approval("a")])),
-      "POST /api/v1/orgs/o1/approvals/a/decision": () =>
-        json(409, { error: { code: "approval.already_decided", message: "x" } }),
-    });
-    renderPage(<InboxRoute />, { locale: "zh" });
+    await renderInbox(
+      {
+        [LIST]: () => json(200, inbox([approval("a")])),
+        "POST /api/v1/orgs/o1/approvals/a/decision": () =>
+          json(409, { error: { code: "approval.already_decided", message: "x" } }),
+      },
+      { locale: "zh" },
+    );
     await screen.findByRole("table", { name: zh.inbox.listLabel });
     const row = screen.getByRole("region", { name: "待提交改动" });
     await userEvent.setup().click(within(row).getByRole("button", { name: zh.approval.deny }));
     expect(await screen.findByText(zh.errors.approval.already_decided)).toBeTruthy();
   });
 
-  it.each(LOCALES)("没有待处理：DataTable 空状态，没有 ActionRow（%s）", async (locale) => {
-    const m = msgs[locale];
-    stubApi({ [LIST]: () => json(200, inbox([])) });
-    renderPage(<InboxRoute />, { locale });
-    expect(await screen.findByText(m.inbox.empty)).toBeTruthy();
-    expect(screen.queryByRole("button", { name: m.approval.approve })).toBeNull();
-  });
+  it.each(LOCALES)(
+    "nothing pending: one full-width empty state, no split, no ActionRow (%s)",
+    async (locale) => {
+      const m = msgs[locale];
+      await renderInbox({ [LIST]: () => json(200, inbox([])) }, { locale });
+      expect(await screen.findByText(m.inbox.empty)).toBeTruthy();
+      expect(screen.getByText(m.inbox.emptyHint)).toBeTruthy();
+      // no empty table header in a narrow list column
+      expect(screen.queryByRole("table")).toBeNull();
+      expect(document.querySelector(".cb-body-rail")).toBeNull();
+      expect(document.querySelector('[data-part="empty-state"]')?.getAttribute("data-size")).toBe(
+        "page",
+      );
+      expect(screen.queryByRole("button", { name: m.approval.approve })).toBeNull();
+    },
+  );
 
   it("按角色升级的审批只有「仅本次」", async () => {
-    stubApi({
+    await renderInbox({
       [LIST]: () =>
         json(200, inbox([approval("a", { requestedFor: null, approverRole: "admin" })])),
     });
-    renderPage(<InboxRoute />);
     const scopes = await screen.findByRole("radiogroup", { name: en.approval.scopeLabel });
     expect(within(scopes).getAllByRole("radio")).toHaveLength(1);
   });
@@ -214,11 +268,13 @@ describe("收件箱：技能变更", () => {
     "工具审批与技能变更同在列表；技能变更卡片显示 agent、发起人、文件与纯文本差异（%s）",
     async (locale) => {
       const m = msgs[locale];
-      stubApi({
-        [LIST]: () => json(200, inbox([approval("a")], [skillChange("sc1")])),
-        [DETAIL]: () => json(200, { skillChange: detail() }),
-      });
-      const { container } = renderPage(<InboxRoute />, { locale });
+      const { container } = await renderInbox(
+        {
+          [LIST]: () => json(200, inbox([approval("a")], [skillChange("sc1")])),
+          [DETAIL]: () => json(200, { skillChange: detail() }),
+        },
+        { locale },
+      );
       const table = await screen.findByRole("table", { name: m.inbox.listLabel });
       expect(within(table).getByText("Fixture [tool_a]")).toBeTruthy();
       await userEvent
@@ -256,16 +312,22 @@ describe("收件箱：技能变更", () => {
 
   it("批准：POST decide 后重读列表、顶栏待处理数刷新", async () => {
     let changes = [skillChange("sc1")];
-    const calls = stubApi({
-      [LIST]: () => json(200, inbox([], changes)),
-      [DETAIL]: () => json(200, { skillChange: detail() }),
-      "POST /api/v1/orgs/o1/skill-changes/sc1/decide": () => {
-        changes = [];
-        return json(200, { skillChange: { ...skillChange("sc1"), status: "approved" } });
-      },
-    });
     const refreshPending = vi.fn();
-    renderPage(<InboxRoute />, { session: { refreshPending } });
+    const { calls, client } = await renderInbox(
+      {
+        [LIST]: () => json(200, inbox([], changes)),
+        [DETAIL]: () => json(200, { skillChange: detail() }),
+        "POST /api/v1/orgs/o1/skill-changes/sc1/decide": () => {
+          changes = [];
+          return json(200, { skillChange: { ...skillChange("sc1"), status: "approved" } });
+        },
+      },
+      { session: { refreshPending } },
+    );
+    // the visible skill change's detail is prefetched by the layout too
+    expect(calls.filter((c) => c.method === "GET")).toEqual([]);
+    // the sidebar's count is cached (the shell reads it)
+    client.setQueryData(["org", "o1", "inboxCount"], { count: 1 });
     const row = await screen.findByRole("region", { name: "Pending changes" });
     await userEvent
       .setup()
@@ -274,16 +336,26 @@ describe("收件箱：技能变更", () => {
     expect(await screen.findByText(en.inbox.skillChange.approved)).toBeTruthy();
     expect(await screen.findByText(en.inbox.empty)).toBeTruthy();
     expect(refreshPending).toHaveBeenCalledTimes(1);
+    // the inbox is read again after the decision (once); the decided change is marked stale
+    // without a read (it is hidden at once), and the sidebar's count is stale too
+    expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([
+      "POST /api/v1/orgs/o1/skill-changes/sc1/decide",
+      "GET /api/v1/orgs/o1/inbox",
+    ]);
+    expect(client.getQueryState(["org", "o1", "skillChange", "sc1"])?.isInvalidated).toBe(true);
+    expect(client.getQueryState(["org", "o1", "inboxCount"])?.isInvalidated).toBe(true);
   });
 
   it("拒绝失败（已被处理）：toast 显示 skill_change.already_decided 的文案", async () => {
-    stubApi({
-      [LIST]: () => json(200, inbox([], [skillChange("sc1")])),
-      [DETAIL]: () => json(200, { skillChange: detail() }),
-      "POST /api/v1/orgs/o1/skill-changes/sc1/decide": () =>
-        json(409, { error: { code: "skill_change.already_decided", message: "x" } }),
-    });
-    renderPage(<InboxRoute />, { locale: "zh" });
+    await renderInbox(
+      {
+        [LIST]: () => json(200, inbox([], [skillChange("sc1")])),
+        [DETAIL]: () => json(200, { skillChange: detail() }),
+        "POST /api/v1/orgs/o1/skill-changes/sc1/decide": () =>
+          json(409, { error: { code: "skill_change.already_decided", message: "x" } }),
+      },
+      { locale: "zh" },
+    );
     const row = await screen.findByRole("region", { name: "待提交改动" });
     await userEvent
       .setup()
@@ -292,7 +364,7 @@ describe("收件箱：技能变更", () => {
   });
 
   it("新技能（没有当前版本）：全部文件为新增；自己发起的显示「两步确认」说明；列表被截断时提示", async () => {
-    stubApi({
+    const { container } = await renderInbox({
       [LIST]: () =>
         json(
           200,
@@ -303,7 +375,6 @@ describe("收件箱：技能变更", () => {
           skillChange: detail({ skillId: null, version: 1, requestedBy: "a1", current: null }),
         }),
     });
-    const { container } = renderPage(<InboxRoute />);
     expect(await screen.findByText(en.inbox.truncated)).toBeTruthy();
     const card = await vi.waitFor(() => {
       const el = container.querySelector('[data-skill-change-id="sc1"]') as HTMLElement | null;
@@ -317,6 +388,53 @@ describe("收件箱：技能变更", () => {
       en.inbox.skillChange.diffLabel.replace("{path}", "SKILL.md"),
     );
     expect(diff.textContent).toContain("+ # Notes");
+  });
+});
+
+describe("the inbox from the cache", () => {
+  it("a first render from the hydrated cache makes no browser read; a refused skill change detail shows its error", async () => {
+    const browser = expectNoFirstPaintFetch();
+    const { container } = await renderRouteWithCache("/inbox", {
+      [LIST]: () => json(200, inbox([], [skillChange("sc1")])),
+      "GET /api/v1/orgs/o1/skill-changes/sc1": () =>
+        json(404, { error: { code: "skill_change.not_found", message: "x" } }),
+    });
+    const card = container.querySelector('[data-skill-change-id="sc1"]') as HTMLElement;
+    expect(within(card).getByRole("alert")).toBeTruthy();
+    await act(() => new Promise((r) => setTimeout(r, 20)));
+    expect(browser).toEqual([]);
+  });
+
+  it("an empty cache shows the template's loading state, then the data", async () => {
+    let release: () => void = () => {};
+    const held = new Promise<void>((r) => {
+      release = r;
+    });
+    await renderRouteEmptyCache("/inbox", {
+      [LIST]: async () => {
+        await held;
+        return json(200, inbox([approval("a")]));
+      },
+    });
+    await vi.waitFor(() => {
+      if (document.querySelector('[data-template="InboxPage"]') === null) throw new Error("none");
+    });
+    expect(document.querySelector("[aria-busy='true']")).not.toBeNull();
+    expect(screen.queryByText("Fixture [tool_a]")).toBeNull();
+    // the loaded inbox opens its first item: the inspector's four facts and the decision row,
+    // its buttons disabled until the item is here
+    expect(document.querySelector(".cb-body-inspector")).not.toBeNull();
+    expect(document.querySelectorAll('[data-part="loading-inspector-row"]')).toHaveLength(4);
+    expect(document.querySelectorAll('[data-part="action-row"]')).toHaveLength(1);
+    const approve = screen.getByRole("button", { name: en.approval.approve }) as HTMLButtonElement;
+    expect(approve.disabled).toBe(true);
+    // the status bar draws nothing while the inbox loads (not "0 pending")
+    expect(statusBar.mock.calls.length).toBeGreaterThan(0);
+    expect(statusBar.mock.calls.every(([v]) => v === null)).toBe(true);
+    await act(async () => release());
+    expect(await screen.findAllByText("Fixture [tool_a]")).not.toHaveLength(0);
+    await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
+    expect(statusBar).toHaveBeenLastCalledWith("· 1 pending");
   });
 });
 
@@ -339,7 +457,9 @@ describe("已记住的授权（SettingsPage）", () => {
         return noContent();
       },
     });
-    const { container } = renderPage(<GrantsPage />, { locale });
+    const { container } = await renderRouteWithCache("/account/grants", lastStubRoutes(), {
+      locale,
+    });
     expect(container.querySelector('[data-template="SettingsPage"]')).not.toBeNull();
     expect(
       screen.getByRole("link", { name: m.connections.nav.grants }).getAttribute("aria-current"),

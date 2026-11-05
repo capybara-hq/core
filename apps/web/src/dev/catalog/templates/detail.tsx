@@ -72,7 +72,11 @@ function DetailBody() {
   return (
     <DetailPage
       header={{
-        breadcrumb: [{ label: "Agents", href: "/dev/ui/templates/list" }],
+        path: [
+          { label: "capybara", href: "/dev/ui" },
+          { label: "agents", href: "/dev/ui/templates/list" },
+          { label: "support-triage" },
+        ],
         title: "support-triage",
         count: "v12",
         status: <StatusMark status="success" label="已发布" />,

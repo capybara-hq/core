@@ -88,8 +88,9 @@ pnpm capybara extensions enable example-counter
 pnpm dev:kernel           # capybara start with readable logs, also written to /tmp/capybara-dev-kernel.log; listens on :8080 (change with CAPYBARA_HTTP__PORT)
 ```
 
-`pnpm dev:kernel` is `pnpm capybara start` with `CAPYBARA_LOG__FORMAT=pretty`, its output copied
-with `tee` to `/tmp/capybara-dev-kernel.log` (one line per record, no colors in the file); extra
+`pnpm dev:kernel` is `pnpm capybara start` with `CAPYBARA_LOG__FORMAT=pretty` and `FORCE_COLOR=1`,
+its output copied with `tee` to `/tmp/capybara-dev-kernel.log` (colors in the terminal, none in the
+file); extra
 arguments go to `start` (`pnpm dev:kernel --role api`). `pnpm dev:web` likewise copies the web
 app's output to `/tmp/capybara-dev-web.log`. Look there first when a local kernel misbehaves.
 Without a terminal (containers) the kernel logs JSON; see "Logs" in

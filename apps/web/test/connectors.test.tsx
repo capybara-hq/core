@@ -1,23 +1,36 @@
-import { DesignProvider, type LinkComponent, ToastProvider } from "@capybara-hq/design";
-import { act, cleanup, render, renderHook, screen, within } from "@testing-library/react";
+import { act, cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { NextIntlClientProvider } from "next-intl";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
-import NewAgentPage from "../src/app/[locale]/(app)/agents/new/page";
-import ConnectorDetailPage from "../src/app/[locale]/(app)/connectors/[connectorId]/page";
-import AppsPage from "../src/app/[locale]/(app)/connectors/page";
-import ConnectionsPage from "../src/app/[locale]/(app)/settings/connections/page";
-import { AppFrame } from "../src/components/shell/AppFrame";
+import ConnectorDetailPage from "../src/app/(app)/connectors/[connectorId]/page";
+import { navigateBrowser } from "../src/lib/browser";
 import type { Me } from "../src/lib/session";
-import { useLoad } from "../src/lib/use-load";
-import { bodyOf, json, noContent, stubApi } from "./support/api";
-import { Link, resetNavigation, router } from "./support/navigation";
-import { ME, renderPage } from "./support/render";
+import { bodyOf, json, lastStubRoutes, noContent, stubApi } from "./support/api";
+import { resetNavigation, router } from "./support/navigation";
+import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
+import { ME } from "./support/render";
+import { expectNoFirstPaintFetch, onServer, type renderRoute } from "./support/server";
+import { NOT_READY, renderFrame, shellOf } from "./support/shell";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
-vi.mock("next/navigation", () => ({ useParams: () => ({ connectorId: "app1" }) }));
+vi.mock("../src/lib/browser", () => ({ navigateBrowser: vi.fn() }));
+vi.mock("next/navigation", () => ({
+  redirect: (to: string) => {
+    throw new Error(`REDIRECT ${to}`);
+  },
+  notFound: () => {
+    throw new Error("NOT_FOUND");
+  },
+}));
+type RenderOpts = Parameters<typeof renderRoute>[2];
+/** `/connectors` as a first load: the layout prefetches from the latest `stubApi` routes. */
+const renderList = (opts: RenderOpts = {}) =>
+  renderRouteWithCache("/connectors", lastStubRoutes(), opts);
+const detailPage = () => ConnectorDetailPage({ params: Promise.resolve({ connectorId: "app1" }) });
+/** `/connectors/app1` as a first load: the layout prefetches from the latest `stubApi` routes. */
+const renderDetail = (opts: RenderOpts = {}) =>
+  renderRouteWithCache("/connectors/app1", lastStubRoutes(), opts);
 
 const msgs = { zh, en } as const;
 const LOCALES = ["zh", "en"] as const;
@@ -61,7 +74,13 @@ const detail = (over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
-beforeEach(() => resetNavigation("/connectors"));
+beforeEach(() => {
+  resetNavigation("/connectors");
+  vi.mocked(navigateBrowser).mockReset();
+});
+/** Lets pending reads and effects run (a read after mount would show up in the calls). */
+const settle = () => act(() => new Promise((r) => setTimeout(r, 20)));
+
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
@@ -71,22 +90,23 @@ describe("连接器列表（ListPage）", () => {
   it.each(LOCALES)("列出连接器；管理员有「添加连接器」，点击行进入详情（%s）", async (locale) => {
     const m = msgs[locale];
     stubApi({ "GET /api/v1/orgs/o1/connectors": () => json(200, { connectors: [summary()] }) });
-    const { container } = renderPage(<AppsPage />, { locale });
+    const { container } = await renderList({ locale });
     expect(container.querySelector('[data-template="ListPage"]')).not.toBeNull();
-    const table = await screen.findByRole("table", { name: m.connectors.title });
-    expect(table.closest("[data-framed]")?.getAttribute("data-framed")).toBe("true");
-    expect(within(table).getByText("Fixture")).toBeTruthy();
-    expect(within(table).getByText(m.connectors.auth.none)).toBeTruthy();
+    const list = await screen.findByRole("list", { name: m.connectors.title });
+    const row = within(list).getByRole("listitem");
+    expect(within(row).getByText(m.connectors.auth.none)).toBeTruthy();
+    expect(within(row).getByText(m.connectors.status.active)).toBeTruthy();
     expect(screen.getByRole("link", { name: m.connectors.new }).getAttribute("href")).toBe(
       "/connectors/install",
     );
-    await userEvent.setup().click(within(table).getByText("Fixture"));
-    expect(router.push).toHaveBeenCalledWith("/connectors/app1");
+    expect(within(row).getByRole("link", { name: "Fixture" }).getAttribute("href")).toBe(
+      "/connectors/app1",
+    );
   });
 
   it("普通成员看不到「添加连接器」；空状态", async () => {
     stubApi({ "GET /api/v1/orgs/o1/connectors": () => json(200, { connectors: [] }) });
-    renderPage(<AppsPage />, { me: MEMBER });
+    await renderList({ me: MEMBER });
     expect(await screen.findByText(en.connectors.empty)).toBeTruthy();
     expect(screen.queryByRole("link", { name: en.connectors.new })).toBeNull();
     expect(screen.queryByRole("button", { name: en.connectors.new })).toBeNull();
@@ -108,7 +128,7 @@ describe("连接器详情（DetailPage）", () => {
         });
       },
     });
-    const { container } = renderPage(<ConnectorDetailPage />, { locale });
+    const { container } = await renderDetail({ locale });
     expect(container.querySelector('[data-template="DetailPage"]')).not.toBeNull();
     const policy = await screen.findByRole("combobox", {
       name: m.connectors.tools.policyLabel.replace("{tool}", "mcp__fixture__delete_item"),
@@ -156,7 +176,7 @@ describe("连接器详情（DetailPage）", () => {
           }),
         "PUT /api/v1/orgs/o1/connectors/app1/credentials/org": () => noContent(),
       });
-      renderPage(<ConnectorDetailPage />, { locale });
+      await renderDetail({ locale });
       const user = userEvent.setup();
       await user.click(
         await screen.findByRole("tab", { name: m.connectors.detail.tabs.credentials }),
@@ -168,7 +188,12 @@ describe("连接器详情（DetailPage）", () => {
       await user.click(screen.getByRole("button", { name: m.connectors.credential.save }));
       const put = calls.find((c) => c.method === "PUT");
       expect(bodyOf(put)).toEqual({ token: "tok" });
-      expect(calls.filter((c) => c.method === "GET")).toHaveLength(2);
+      // saving a credential invalidates the connector: its status is read again
+      await vi.waitFor(() =>
+        expect(
+          calls.filter((c) => c.method === "GET" && c.url === "/api/v1/orgs/o1/connectors/app1"),
+        ).toHaveLength(1),
+      );
       // 保存成功后清空输入框（凭据值不留在页面上）
       await vi.waitFor(() =>
         expect(screen.getByLabelText(m.connectors.form.tokenLabel)).toHaveProperty("value", ""),
@@ -184,7 +209,7 @@ describe("连接器详情（DetailPage）", () => {
         "GET /api/v1/orgs/o1/connectors/app1": () => json(200, { connector: detail() }),
         "DELETE /api/v1/orgs/o1/connectors/app1": () => noContent(),
       });
-      renderPage(<ConnectorDetailPage />, { locale });
+      await renderDetail({ locale });
       const user = userEvent.setup();
       await user.click(await screen.findByRole("tab", { name: m.connectors.detail.tabs.settings }));
       await user.click(screen.getByRole("button", { name: m.connectors.settings.delete }));
@@ -200,7 +225,7 @@ describe("连接器详情（DetailPage）", () => {
 
   it("普通成员：工具策略只读，没有删除", async () => {
     stubApi({ "GET /api/v1/orgs/o1/connectors/app1": () => json(200, { connector: detail() }) });
-    renderPage(<ConnectorDetailPage />, { me: MEMBER });
+    await renderDetail({ me: MEMBER });
     expect(await screen.findByText(en.connectors.policy.allow)).toBeTruthy();
     expect(screen.queryByRole("combobox")).toBeNull();
     await userEvent
@@ -254,7 +279,7 @@ describe("连接器详情：复核页签（漂移检测）", () => {
         "POST /api/v1/orgs/o1/connectors/app1/tools/newOne/review": () =>
           json(409, { error: { code: "connector.tool_not_pending", message: "x" } }),
       });
-      renderPage(<ConnectorDetailPage />, { locale });
+      await renderDetail({ locale });
       const user = userEvent.setup();
       // 工具页签：待复核的工具显示状态而不是开关；不再提供的工具标注出来
       expect(await screen.findAllByText(`${m.connectors.tools.pendingReview}`)).toHaveLength(2);
@@ -363,7 +388,7 @@ describe("连接器详情：复核页签（漂移检测）", () => {
         "GET /api/v1/orgs/o1/connectors/app1": () =>
           json(200, { connector: detail({ tools: [legacy, rejected, broken] }) }),
       });
-      renderPage(<ConnectorDetailPage />, { locale });
+      await renderDetail({ locale });
       const user = userEvent.setup();
       expect(await screen.findByText(m.connectors.tools.neverReviewed)).toBeTruthy();
       expect(
@@ -420,7 +445,7 @@ describe("连接器详情：复核页签（漂移检测）", () => {
       "GET /api/v1/orgs/o1/connectors/app1": () =>
         json(200, { connector: detail({ tools: [added] }) }),
     });
-    renderPage(<ConnectorDetailPage />, { me: MEMBER });
+    await renderDetail({ me: MEMBER });
     const user = userEvent.setup();
     await user.click(
       await screen.findByRole("tab", { name: `${en.connectors.detail.tabs.review}1` }),
@@ -429,7 +454,7 @@ describe("连接器详情：复核页签（漂移检测）", () => {
     expect(screen.queryByRole("button", { name: en.connectors.review.approve })).toBeNull();
     cleanup();
     stubApi({ "GET /api/v1/orgs/o1/connectors/app1": () => json(200, { connector: detail() }) });
-    renderPage(<ConnectorDetailPage />);
+    await renderDetail();
     await user.click(await screen.findByRole("tab", { name: en.connectors.detail.tabs.review }));
     expect(screen.getByText(en.connectors.review.empty)).toBeTruthy();
   });
@@ -450,7 +475,7 @@ describe("连接器详情：OAuth 客户端轮换", () => {
           }),
         "PUT /api/v1/orgs/o1/connectors/app1/credentials/org": () => noContent(),
       });
-      renderPage(<ConnectorDetailPage />, { locale });
+      await renderDetail({ locale });
       const user = userEvent.setup();
       await user.click(
         await screen.findByRole("tab", { name: m.connectors.detail.tabs.credentials }),
@@ -497,7 +522,7 @@ describe("连接器详情：OAuth 客户端轮换", () => {
           }),
         "PUT /api/v1/orgs/o1/connectors/app1/credentials/org": () => noContent(),
       });
-      const { container } = renderPage(<ConnectorDetailPage />, { locale });
+      const { container } = await renderDetail({ locale });
       const user = userEvent.setup();
       await user.click(
         await screen.findByRole("tab", { name: m.connectors.detail.tabs.credentials }),
@@ -514,7 +539,7 @@ describe("连接器详情：OAuth 客户端轮换", () => {
 
       cleanup();
       client = "dcr";
-      renderPage(<ConnectorDetailPage />, { locale });
+      await renderDetail({ locale });
       await user.click(
         await screen.findByRole("tab", { name: m.connectors.detail.tabs.credentials }),
       );
@@ -550,7 +575,9 @@ describe("个人连接（SettingsPage）", () => {
           return noContent();
         },
       });
-      const { container } = renderPage(<ConnectionsPage />, { locale });
+      const { container } = await renderRouteWithCache("/account/connections", lastStubRoutes(), {
+        locale,
+      });
       expect(container.querySelector('[data-template="SettingsPage"]')).not.toBeNull();
       const section = await screen.findByRole("region", { name: "Fixture" });
       // 每个连接器一个分组：页面上没有多个主操作
@@ -587,60 +614,6 @@ describe("个人连接（SettingsPage）", () => {
   );
 });
 
-describe("新建 agent：工具选择与策略收紧", () => {
-  it.each(LOCALES)("勾选连接器（全部工具）并把其中一个工具收紧为禁止（%s）", async (locale) => {
-    const m = msgs[locale];
-    const posts: unknown[] = [];
-    stubApi({
-      "GET /api/v1/orgs/o1/models": () =>
-        json(200, {
-          providers: [
-            {
-              provider: "model-fake",
-              models: [
-                {
-                  id: "fake-1",
-                  displayName: "Fake 1",
-                  capabilities: { reasoning: false },
-                  parameters: [],
-                },
-              ],
-            },
-          ],
-        }),
-      "GET /api/v1/orgs/o1/connectors": () => json(200, { connectors: [summary()] }),
-      "GET /api/v1/orgs/o1/connectors/app1": () => json(200, { connector: detail() }),
-      "POST /api/v1/orgs/o1/agents": (c) => {
-        posts.push(bodyOf(c));
-        return json(201, { agent: { id: "ag1" }, warnings: [] });
-      },
-    });
-    renderPage(<NewAgentPage />, { locale });
-    const user = userEvent.setup();
-    expect(await screen.findByRole("region", { name: m.agents.form.toolsSection })).toBeTruthy();
-    await user.type(screen.getByRole("textbox", { name: m.agents.form.nameLabel }), "Tooly");
-    // 内置工具默认勾选；取消 ReadToolOutput
-    await user.click(screen.getByRole("checkbox", { name: m.agents.form.builtin.ReadToolOutput }));
-    await user.click(
-      await screen.findByRole("checkbox", {
-        name: m.agents.form.connectorTools.replace("{name}", "Fixture"),
-      }),
-    );
-    const policy = await screen.findByRole("combobox", { name: "Fixture [delete_item]" });
-    await user.selectOptions(policy, "deny");
-    await user.click(screen.getByRole("button", { name: m.agents.form.submit }));
-    expect(posts[0]).toMatchObject({
-      definition: {
-        tools: [
-          { kind: "builtin", name: "AskUserQuestion" },
-          { kind: "connector", connectorId: "app1", tools: "all" },
-        ],
-        toolPolicies: { mcp__fixture__delete_item: "deny" },
-      },
-    });
-  });
-});
-
 describe("连接器详情的工具栏刷新", () => {
   it("刷新期间按钮为加载中且不可再点；完成后用返回的连接器替换", async () => {
     let resolve: (r: Response) => void = () => {};
@@ -661,7 +634,7 @@ describe("连接器详情的工具栏刷新", () => {
         throw new Error(`unexpected ${method} ${String(input)}`);
       }),
     );
-    renderPage(<ConnectorDetailPage />);
+    await renderDetail();
     const button = await screen.findByRole("button", { name: en.connectors.detail.refresh });
     await userEvent.setup().click(button);
     expect(button.getAttribute("aria-busy")).toBe("true");
@@ -677,72 +650,210 @@ describe("连接器详情的工具栏刷新", () => {
   });
 });
 
-describe("useLoad", () => {
-  it("依赖变化（切换组织）立即回到加载中，不显示上一组依赖的数据；reload 保留旧数据", async () => {
-    const pending = new Map<string, (v: string) => void>();
-    const load = (org: string) =>
-      new Promise<string>((r) => {
-        pending.set(org, r);
-      });
-    const { result, rerender } = renderHook(({ org }) => useLoad(() => load(org), [org]), {
-      initialProps: { org: "o1" },
-    });
-    expect(result.current.state).toEqual({ kind: "loading" });
-    await act(async () => pending.get("o1")?.("data of o1"));
-    expect(result.current.state).toEqual({ kind: "ready", data: "data of o1" });
-
-    rerender({ org: "o2" });
-    // 同一次渲染里就不再给出 o1 的数据
-    expect(result.current.state).toEqual({ kind: "loading" });
-    await act(async () => pending.get("o2")?.("data of o2"));
-    expect(result.current.state).toEqual({ kind: "ready", data: "data of o2" });
-
-    act(() => result.current.reload());
-    expect(result.current.state).toEqual({ kind: "ready", data: "data of o2" });
-    await act(async () => pending.get("o2")?.("data of o2 v2"));
-    expect(result.current.state).toEqual({ kind: "ready", data: "data of o2 v2" });
-  });
-});
-
 describe("连接器详情切换组织", () => {
-  it("切到其他组织：跳回 /apps，且不以新组织读取旧连接器", async () => {
+  it("switching org opens the new org's home with a full navigation; the old connector is never read with the new org", async () => {
     resetNavigation("/connectors/app1");
-    let current = "o1";
-    const me = () => ({
+    const me = (current: string) => ({
       ...ME,
       currentOrgId: current,
       memberships: [...ME.memberships, { orgId: "o2", slug: "b", name: "Beta", role: "owner" }],
     });
     const calls = stubApi({
-      "GET /api/v1/me": () => json(200, me()),
-      "PUT /api/v1/me/current-org": () => {
-        current = "o2";
-        return noContent();
-      },
+      "PUT /api/v1/me/current-org": () => noContent(),
       "GET /api/v1/orgs/o1/connectors/app1": () => json(200, { connector: detail() }),
-      "GET /api/v1/orgs/o1/inbox": () => json(200, { items: [], truncated: false }),
-      "GET /api/v1/orgs/o2/inbox": () => json(200, { items: [], truncated: false }),
     });
-    render(
-      <NextIntlClientProvider locale="en" messages={en}>
-        <DesignProvider locale="en" link={Link as LinkComponent}>
-          <ToastProvider>
-            <AppFrame version="v0">
-              <ConnectorDetailPage />
-            </AppFrame>
-          </ToastProvider>
-        </DesignProvider>
-      </NextIntlClientProvider>,
-    );
+    const { element } = await onServer(detailPage, lastStubRoutes(), { me: me("o1") });
+    renderFrame(shellOf(me("o1")), element, {
+      locale: "en",
+      version: "v0",
+    });
     expect(await screen.findByRole("heading", { name: "Fixture" })).toBeTruthy();
     const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: /^Account: .* · Acme$/ }));
-    await user.click(await screen.findByRole("menuitemradio", { name: "Beta" }));
-    await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/connectors"));
-    await vi.waitFor(() =>
-      expect(screen.getByRole("button", { name: /^Account: .* · Beta$/ })).toBeTruthy(),
-    );
-    expect(screen.queryByRole("heading", { name: "Fixture" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: /^Account: / }));
+    await user.click(await screen.findByRole("menuitem", { name: "Organization" }));
+    // jsdom has no layout: pick the submenu item with the keyboard (see design menu-submenu tests)
+    (await screen.findByRole("menuitemradio", { name: "Beta" })).focus();
+    await user.keyboard("{Enter}");
+    await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledWith("/"));
+    expect(router.push).not.toHaveBeenCalled();
+    // the old org's page stays until the new document replaces it
+    expect(screen.getByRole("heading", { name: "Fixture" })).toBeTruthy();
     expect(calls.some((c) => c.url.includes("/orgs/o2/connectors"))).toBe(false);
+  });
+});
+
+describe("the connectors pages render on the server (web-SSR spec §6)", () => {
+  const GUEST = {
+    ...ME,
+    account: { ...ME.account, isEnterpriseAdmin: false },
+    memberships: [{ orgId: "o1", slug: "acme", name: "Acme", role: "guest" }],
+  };
+  const routes = {
+    "GET /api/v1/orgs/o1/connectors": () => json(200, { connectors: [summary()] }),
+    "GET /api/v1/orgs/o1/connectors/app1": () => json(200, { connector: detail() }),
+  };
+
+  it("/connectors: a first render from the hydrated cache makes no browser read (guests too)", async () => {
+    const browser = expectNoFirstPaintFetch();
+    await renderRouteWithCache("/connectors", routes, { me: GUEST });
+    expect(within(screen.getByRole("list", { name: en.connectors.title })).getByText("Fixture"));
+    await settle();
+    expect(browser).toEqual([]);
+  });
+
+  it("/connectors: an empty cache shows the template's loading state, then the data", async () => {
+    let release: () => void = () => {};
+    const held = new Promise<void>((r) => {
+      release = r;
+    });
+    await renderRouteEmptyCache("/connectors", {
+      "GET /api/v1/orgs/o1/connectors": async () => {
+        await held;
+        return json(200, { connectors: [summary()] });
+      },
+    });
+    await vi.waitFor(() => {
+      if (document.querySelector('[data-template="ListPage"]') === null) throw new Error("no page");
+    });
+    expect(document.querySelector("[aria-busy='true']")).not.toBeNull();
+    expect(screen.queryByText("Fixture")).toBeNull();
+    await act(async () => release());
+    expect(await screen.findByText("Fixture")).toBeTruthy();
+    await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
+  });
+
+  it("/connectors: no org renders nothing; setup goes home", async () => {
+    const none = await renderRouteWithCache("/connectors", routes, {
+      me: { ...ME, currentOrgId: null },
+    });
+    expect(none.calls.map((c) => c.url)).toEqual(["/api/v1/me"]);
+    expect(document.body.textContent).toBe("");
+    cleanup();
+    await renderRouteWithCache("/connectors", routes, { readiness: NOT_READY });
+    await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/"));
+  });
+
+  it("/connectors/<id>: a first render from the hydrated cache makes no browser read (guests too)", async () => {
+    const browser = expectNoFirstPaintFetch();
+    await renderRouteWithCache("/connectors/app1", routes, { me: GUEST });
+    expect(screen.getByRole("heading", { level: 1, name: "Fixture" })).toBeTruthy();
+    await settle();
+    expect(browser).toEqual([]);
+  });
+
+  it("/connectors/<id>: an empty cache shows the template's loading state, then the data", async () => {
+    let release: () => void = () => {};
+    const held = new Promise<void>((r) => {
+      release = r;
+    });
+    await renderRouteEmptyCache("/connectors/app1", {
+      "GET /api/v1/orgs/o1/connectors/app1": async () => {
+        await held;
+        return json(200, { connector: detail() });
+      },
+    });
+    await vi.waitFor(() => {
+      if (document.querySelector('[data-template="DetailPage"]') === null)
+        throw new Error("no page");
+    });
+    expect(document.querySelector("[aria-busy='true']")).not.toBeNull();
+    expect(screen.queryByRole("heading", { level: 1, name: "Fixture" })).toBeNull();
+    // the tools tab's table: its header and, for a manager, the refresh button (disabled), and
+    // the inspector's five facts; no generic cards
+    const page = document.querySelector('[data-template="DetailPage"]') as HTMLElement;
+    expect(page.querySelector('[data-empty="loading"]')).not.toBeNull();
+    expect(within(page).getByText(en.connectors.tools.columns.policy)).toBeTruthy();
+    const refresh = within(page).getByRole("button", {
+      name: en.connectors.detail.refresh,
+    }) as HTMLButtonElement;
+    expect(refresh.disabled).toBe(true);
+    expect(page.querySelectorAll('[data-part="loading-card"]')).toHaveLength(0);
+    expect(page.querySelectorAll('[data-part="loading-inspector-row"]')).toHaveLength(5);
+    await act(async () => release());
+    expect(await screen.findByRole("heading", { level: 1, name: "Fixture" })).toBeTruthy();
+    await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
+  });
+
+  it("/connectors/<id>: a connector the kernel does not find is the not-found state in the shell", async () => {
+    expectNoFirstPaintFetch();
+    await renderRouteWithCache("/connectors/app1", {
+      "GET /api/v1/orgs/o1/connectors/app1": () =>
+        json(404, { error: { code: "connector.not_found", message: "x" } }),
+    });
+    expect(screen.getByRole("heading", { level: 1, name: en.notFound.title })).toBeTruthy();
+  });
+
+  it("/connectors/<id>: no org renders nothing; setup goes home", async () => {
+    const none = await renderRouteWithCache("/connectors/app1", routes, {
+      me: { ...ME, currentOrgId: null },
+    });
+    expect(none.calls.map((c) => c.url)).toEqual(["/api/v1/me"]);
+    expect(document.body.textContent).toBe("");
+    cleanup();
+    await renderRouteWithCache("/connectors/app1", routes, { readiness: NOT_READY });
+    await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/"));
+  });
+});
+
+describe("connector mutations update the cache", () => {
+  const listState = (client: {
+    getQueryState(k: unknown[]): { isInvalidated: boolean } | undefined;
+  }) => client.getQueryState(["org", "o1", "connectors"])?.isInvalidated;
+
+  it("saving the settings sets the cached connector and invalidates connectors", async () => {
+    const calls = stubApi({
+      "GET /api/v1/orgs/o1/connectors/app1": () => json(200, { connector: detail() }),
+      "PATCH /api/v1/orgs/o1/connectors/app1": (c) =>
+        json(200, { connector: detail(bodyOf(c) as Record<string, unknown>) }),
+    });
+    const { client } = await renderDetail();
+    // the list is cached (as after a visit to /connectors)
+    client.setQueryData(["org", "o1", "connectors"], { connectors: [summary()] });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("tab", { name: en.connectors.detail.tabs.settings }));
+    const name = screen.getByRole("textbox", {
+      name: new RegExp(`^${en.connectors.form.nameLabel}`),
+    });
+    await user.clear(name);
+    await user.type(name, "Renamed");
+    await user.click(screen.getByRole("button", { name: en.connectors.settings.save }));
+    await vi.waitFor(() =>
+      expect(
+        (client.getQueryData(["org", "o1", "connector", "app1"]) as { name: string }).name,
+      ).toBe("Renamed"),
+    );
+    // the connector comes from the answer: it is not read again
+    expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([
+      "PATCH /api/v1/orgs/o1/connectors/app1",
+    ]);
+    expect(listState(client)).toBe(true);
+  });
+
+  it("deleting a connector invalidates connectors and forgets it once the page is left", async () => {
+    const calls = stubApi({
+      "GET /api/v1/orgs/o1/connectors/app1": () => json(200, { connector: detail() }),
+      "DELETE /api/v1/orgs/o1/connectors/app1": () => noContent(),
+    });
+    const { client, unmount } = await renderDetail();
+    client.setQueryData(["org", "o1", "connectors"], { connectors: [summary()] });
+    const s = en.connectors.settings;
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("tab", { name: en.connectors.detail.tabs.settings }));
+    await user.click(screen.getByRole("button", { name: s.delete }));
+    const dialog = await screen.findByRole("dialog");
+    await user.type(within(dialog).getByRole("textbox"), "Fixture");
+    await user.click(within(dialog).getByRole("button", { name: s.delete }));
+    await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/connectors"));
+    expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([
+      "DELETE /api/v1/orgs/o1/connectors/app1",
+    ]);
+    expect(listState(client)).toBe(true);
+    // still cached while the page shows (no read before the navigation), gone once it is left
+    expect(client.getQueryData(["org", "o1", "connector", "app1"])).toBeDefined();
+    unmount();
+    expect(client.getQueryState(["org", "o1", "connector", "app1"])).toBeUndefined();
+    expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([
+      "DELETE /api/v1/orgs/o1/connectors/app1",
+    ]);
   });
 });

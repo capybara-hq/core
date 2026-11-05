@@ -19,7 +19,11 @@ export function ShellSection() {
     <Section title="系统布局 App Shell" note="侧栏 | 内容区：页头、内容、操作行、状态栏">
       <Grid columns={1} gap={16}>
         <PageHeader
-          breadcrumb={[{ label: "Agents", href: "/dev/ui/templates/list" }]}
+          path={[
+            { label: "capybara", href: "/dev/ui" },
+            { label: "agents", href: "/dev/ui/templates/list" },
+            { label: "support-triage" },
+          ]}
           title="support-triage"
           count="v12"
           status={<StatusMark status="success" label="已发布" />}

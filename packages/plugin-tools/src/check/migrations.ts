@@ -81,7 +81,7 @@ export function checkSql(file: string, source: string): Finding[] {
 
 /**
  * Checks migration directories (missing ones are ignored). Rules: naming / idempotent / destructive /
- * transaction-control / do-block.
+ * transaction-control / do-block / migration-duplicate-number.
  */
 export function checkMigrations(dirs: string[]): Finding[] {
   const findings: Finding[] = [];
@@ -91,6 +91,7 @@ export function checkMigrations(dirs: string[]): Finding[] {
       .filter((e) => e.isFile())
       .map((e) => e.name)
       .sort();
+    findings.push(...duplicateNumbers(dir, entries));
     for (const name of entries) {
       const file = join(dir, name);
       if (!NAME_RE.test(name)) {
@@ -105,6 +106,34 @@ export function checkMigrations(dirs: string[]): Finding[] {
       }
       findings.push(...checkSql(file, readFileSync(file, "utf8")));
     }
+  }
+  return findings;
+}
+
+/**
+ * Two files of one directory with the same `NNNN` (rule `migration-duplicate-number`): the
+ * migrator runs files in name order and records them by name, so the pair runs in an order
+ * nobody chose, and a database that already ran one of them under that number ends up with a
+ * different numbering than a fresh one (as when a branch's `0063` met main's released `0063`).
+ * Every file after the first of a number is reported, naming the first.
+ */
+function duplicateNumbers(dir: string, sortedNames: readonly string[]): Finding[] {
+  const first = new Map<string, string>();
+  const findings: Finding[] = [];
+  for (const name of sortedNames) {
+    if (!NAME_RE.test(name)) continue;
+    const n = name.slice(0, 4);
+    const earlier = first.get(n);
+    if (earlier === undefined) {
+      first.set(n, name);
+      continue;
+    }
+    findings.push({
+      file: join(dir, name),
+      line: 1,
+      rule: "migration-duplicate-number",
+      message: `migration number ${n} is also used by ${earlier}: each number is used once per directory; renumber the file that is not applied anywhere yet to the next free number`,
+    });
   }
   return findings;
 }

@@ -1,15 +1,27 @@
+import { QueryObserver } from "@tanstack/react-query";
 import { cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
-import BindPage from "../src/app/[locale]/(auth)/bind/[token]/page";
-import { json, stubApi } from "./support/api";
+import { identitiesQuery } from "../src/lib/query/account";
+import { meQuery } from "../src/lib/query/shell";
+import { json, lastStubRoutes, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
-import { renderPage } from "./support/render";
+import { renderAuthRouteWithCache } from "./support/query";
+import { ME } from "./support/render";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
-vi.mock("next/navigation", () => ({ useParams: () => ({ token: "cap_bind_tok" }) }));
+vi.mock("next/navigation", () => ({
+  redirect: (to: string) => {
+    throw new Error(`REDIRECT ${to}`);
+  },
+  notFound: () => {
+    throw new Error("NOT_FOUND");
+  },
+}));
+
+const PAGE = "/bind/cap_bind_tok";
 
 const msgs = { zh, en } as const;
 const PATH = "/api/v1/bind/cap_bind_tok";
@@ -37,7 +49,7 @@ describe("绑定确认页（AuthPage）", () => {
         [`GET ${PATH}`]: () => json(200, { binding: BINDING }),
         [`POST ${PATH}`]: () => json(200, { binding: BINDING }),
       });
-      const { container } = renderPage(<BindPage />, { locale });
+      const { container } = await renderAuthRouteWithCache(PAGE, lastStubRoutes(), { locale });
       expect(container.querySelector('[data-template="AuthPage"]')).not.toBeNull();
       expect(await screen.findByText("Alice Wong")).toBeTruthy();
       expect(screen.getByText("fake-im")).toBeTruthy();
@@ -57,22 +69,46 @@ describe("绑定确认页（AuthPage）", () => {
 
   it("取消：不绑定，回首页", async () => {
     const calls = stubApi({ [`GET ${PATH}`]: () => json(200, { binding: BINDING }) });
-    renderPage(<BindPage />);
+    await renderAuthRouteWithCache(PAGE, lastStubRoutes());
     await userEvent.setup().click(await screen.findByRole("button", { name: en.bind.cancel }));
     expect(router.replace).toHaveBeenCalledWith("/");
     expect(calls.filter((c) => c.method === "POST")).toHaveLength(0);
   });
 
-  it("未登录：去登录页并带回本页", async () => {
+  it("a confirm that finds the session gone signs in again, back here", async () => {
     stubApi({
-      [`GET ${PATH}`]: unauthenticated,
-      "POST /api/v1/auth/refresh": () =>
-        json(401, { error: { code: "auth.refresh_invalid", message: "x" } }),
+      [`GET ${PATH}`]: () => json(200, { binding: BINDING }),
+      [`POST ${PATH}`]: unauthenticated,
+      "POST /api/v1/auth/refresh": unauthenticated,
     });
-    renderPage(<BindPage />);
+    await renderAuthRouteWithCache(PAGE, lastStubRoutes());
+    await userEvent.setup().click(await screen.findByRole("button", { name: en.bind.confirm }));
     await vi.waitFor(() =>
       expect(router.replace).toHaveBeenCalledWith("/login?returnTo=%2Fbind%2Fcap_bind_tok"),
     );
+  });
+
+  it("confirming invalidates the identities of the cached session's account", async () => {
+    const calls = stubApi({
+      [`GET ${PATH}`]: () => json(200, { binding: BINDING }),
+      [`POST ${PATH}`]: () => json(200, { binding: BINDING }),
+      "GET /api/v1/me/identities": () => json(200, { identities: [] }),
+    });
+    const { client } = await renderAuthRouteWithCache(PAGE, lastStubRoutes());
+    // what an earlier page of this tab cached: the session and its identities (observed, as a
+    // mounted identities list would be)
+    client.setQueryData(meQuery().queryKey, ME);
+    client.setQueryData(identitiesQuery(ME.account.id).queryKey, { identities: [] });
+    const observer = new QueryObserver(client, identitiesQuery(ME.account.id));
+    const unsubscribe = observer.subscribe(() => {});
+    await userEvent.setup().click(await screen.findByRole("button", { name: en.bind.confirm }));
+    expect(await screen.findByText(en.bind.doneTitle)).toBeTruthy();
+    await vi.waitFor(() =>
+      expect(calls.filter((c) => c.method === "GET").map((c) => c.url)).toEqual([
+        "/api/v1/me/identities",
+      ]),
+    );
+    unsubscribe();
   });
 
   it.each(["zh", "en"] as const)("链接无效 / 过期（bind.invalid）（%s）", async (locale) => {
@@ -80,7 +116,7 @@ describe("绑定确认页（AuthPage）", () => {
     stubApi({
       [`GET ${PATH}`]: () => json(404, { error: { code: "bind.invalid", message: "x" } }),
     });
-    renderPage(<BindPage />, { locale });
+    await renderAuthRouteWithCache(PAGE, lastStubRoutes(), { locale });
     expect(await screen.findByRole("alert")).toHaveProperty(
       "textContent",
       `${m.errors.bind.invalid}`,
@@ -94,7 +130,7 @@ describe("绑定确认页（AuthPage）", () => {
       [`GET ${PATH}`]: () => json(200, { binding: BINDING }),
       [`POST ${PATH}`]: () => json(409, { error: { code: "identity.taken", message: "x" } }),
     });
-    renderPage(<BindPage />);
+    await renderAuthRouteWithCache(PAGE, lastStubRoutes());
     await userEvent.setup().click(await screen.findByRole("button", { name: en.bind.confirm }));
     expect(await screen.findByRole("alert")).toHaveProperty(
       "textContent",

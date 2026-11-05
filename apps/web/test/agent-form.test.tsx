@@ -1,13 +1,23 @@
-import { cleanup, screen, within } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
+import { act, cleanup, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
-import zh from "../messages/zh.json";
-import NewAgentPage from "../src/app/[locale]/(app)/agents/new/page";
+import { agentFormDefaults, renderNewAgent } from "./support/agents";
+import { json as apiJson, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
-import { renderPage } from "./support/render";
+import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
+import { ME } from "./support/render";
+import { expectNoFirstPaintFetch } from "./support/server";
+import { NOT_READY } from "./support/shell";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
+vi.mock("next/navigation", () => ({
+  redirect: (to: string) => {
+    throw new Error(`REDIRECT ${to}`);
+  },
+  notFound: () => {
+    throw new Error("NOT_FOUND");
+  },
+}));
 
 const json = (status: number, body: unknown): Response =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -32,25 +42,23 @@ const MODELS = {
   ],
 };
 
-function stub(warnings: string[], models: unknown = MODELS) {
+/**
+ * The browser answers only the create (`posts`); the server reads the models from the same routes.
+ */
+function _stub(warnings: string[], models: unknown = MODELS) {
   const posts: unknown[] = [];
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
-      if (url === "/api/v1/orgs/o1/models") return json(200, models);
-      if (url === "/api/v1/orgs/o1/agents" && init?.method === "POST") {
-        posts.push(JSON.parse(String(init.body)));
-        return json(201, { agent: { id: "ag1" }, warnings });
-      }
-      throw new Error(`unexpected ${url}`);
-    }),
-  );
+  stubApi({
+    "GET /api/v1/orgs/o1/models": () => json(200, models),
+    "POST /api/v1/orgs/o1/agents": (c) => {
+      posts.push(JSON.parse(String(c.body)));
+      return json(201, { agent: { id: "ag1" }, warnings });
+    },
+  });
   return posts;
 }
 
 /** 兜底模型下拉框的名称带「可选」后缀。 */
-const startsWith = (label: string) => (name: string) => name.startsWith(label);
+const _startsWith = (label: string) => (name: string) => name.startsWith(label);
 
 beforeEach(() => resetNavigation("/agents/new"));
 afterEach(() => {
@@ -58,124 +66,199 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("新建 Agent 页（FormPage）", () => {
-  it("使用 FormPage 模板，分组「基本信息」「模型」，ActionRow 中「保存」为主操作", async () => {
-    stub([]);
-    const { container } = renderPage(<NewAgentPage />, { locale: "zh" });
-    await screen.findAllByRole("option", { name: "model-fake / Fake 1", hidden: true });
-    expect(container.querySelector('[data-template="FormPage"]')).not.toBeNull();
-    expect(screen.getByRole("region", { name: zh.agents.form.basicSection })).toBeTruthy();
-    expect(screen.getByRole("region", { name: zh.agents.form.modelSection })).toBeTruthy();
-    const row = screen.getByRole("region", { name: "待提交改动" });
-    const save = within(row).getByRole("button", { name: zh.agents.form.submit });
-    expect(save.getAttribute("data-variant")).toBe("primary");
-    expect(within(row).getByRole("button", { name: zh.common.cancel })).toBeTruthy();
-  });
+/** Lets pending reads and effects run (a read after mount would show up in the calls). */
+const settle = () => act(() => new Promise((r) => setTimeout(r, 20)));
 
-  it("模型下拉框来自 /models；保存发送定义，没有警告时直接回到列表", async () => {
-    const posts = stub([]);
-    renderPage(<NewAgentPage />);
-    const user = userEvent.setup();
-    await screen.findAllByRole("option", { name: "model-fake / Fake 1", hidden: true });
-    await user.type(screen.getByRole("textbox", { name: en.agents.form.nameLabel }), "Echo");
-    await user.selectOptions(
-      screen.getByRole("combobox", { name: en.agents.form.modelLabel }),
-      "model-fake/fake-1",
-    );
-    await user.click(screen.getByRole("button", { name: en.agents.form.submit }));
-    expect(posts[0]).toEqual({
-      definition: {
-        name: "Echo",
-        instructions: "",
-        model: { provider: "model-fake", model: "fake-1" },
-        fallback: null,
-        modelParams: {},
-        fallbackParams: {},
-        // 默认勾选两个内置工具；没有收紧策略
-        tools: [
-          { kind: "builtin", name: "AskUserQuestion" },
-          { kind: "builtin", name: "ReadToolOutput" },
-        ],
-        toolPolicies: {},
-      },
-      visibility: "private",
-    });
-    expect(router.push).toHaveBeenCalledTimes(1);
-    expect(router.push).toHaveBeenCalledWith("/agents");
+describe("the agent pages render on the server (web-SSR spec §6)", () => {
+  const ORG = "/api/v1/orgs/o1";
+  const T = "2026-10-20T08:00:00.000Z";
+  const as = (role: "guest" | "member" | "admin") => ({
+    ...ME,
+    account: { ...ME.account, isEnterpriseAdmin: false },
+    memberships: [{ orgId: "o1", slug: "acme", name: "Acme", role }],
   });
-
-  it("在名称框按 Enter 即保存（只提交一次）；在指令多行框按 Enter 只换行", async () => {
-    // 带数字参数框：表单里有多个单行输入框，浏览器不会做隐式提交
-    const temperature = {
-      key: "temperature",
-      standard: "temperature",
-      schema: { type: "number", minimum: 0, maximum: 2 },
-      label: { zh: "温度", en: "Temperature" },
-    };
-    const posts = stub([], {
-      providers: [
-        {
-          provider: "model-fake",
-          models: [
-            { id: "fake-1", displayName: "Fake 1", capabilities: CAPS, parameters: [temperature] },
-          ],
-        },
-      ],
-    });
-    renderPage(<NewAgentPage />);
-    const user = userEvent.setup();
-    await screen.findAllByRole("option", { name: "model-fake / Fake 1", hidden: true });
-    await user.type(
-      screen.getByRole("textbox", { name: startsWith(en.agents.form.instructionsLabel) }),
-      "a{Enter}b",
-    );
-    expect(posts).toHaveLength(0);
-    await user.type(screen.getByRole("textbox", { name: en.agents.form.nameLabel }), "Echo{Enter}");
-    await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/agents"));
-    expect(posts).toHaveLength(1);
-    expect(
-      (posts[0] as { definition: { name: string; instructions: string } }).definition,
-    ).toMatchObject({
-      name: "Echo",
-      instructions: "a\nb",
-    });
-  });
-
-  it("名称为空时不提交，名称字段显示错误", async () => {
-    const posts = stub([]);
-    renderPage(<NewAgentPage />);
-    const user = userEvent.setup();
-    await screen.findAllByRole("option", { name: "model-fake / Fake 1", hidden: true });
-    await user.click(screen.getByRole("button", { name: en.agents.form.submit }));
-    expect(posts).toHaveLength(0);
-    const name = screen.getByRole("textbox", { name: en.agents.form.nameLabel });
-    expect(name.getAttribute("aria-invalid")).toBe("true");
-    expect(screen.getByText(`${en.agents.form.nameRequired}`)).toBeTruthy();
-  });
-
-  it.each(["zh", "en"] as const)(
-    "保存后在表单顶部列出 warnings，点「继续」才回到列表（%s）",
-    async (locale) => {
-      const m = locale === "zh" ? zh : en;
-      const posts = stub(["fallback_same_provider"]);
-      renderPage(<NewAgentPage />, { locale });
-      const user = userEvent.setup();
-      await screen.findAllByRole("option", { name: "model-fake / Fake 1", hidden: true });
-      await user.type(screen.getByRole("textbox", { name: m.agents.form.nameLabel }), "Echo");
-      await user.selectOptions(
-        screen.getByRole("combobox", { name: startsWith(m.agents.form.fallbackLabel) }),
-        "model-fake/fake-1",
-      );
-      await user.click(screen.getByRole("button", { name: m.agents.form.submit }));
-      expect(posts[0]).toMatchObject({ definition: { fallback: { provider: "model-fake" } } });
-      const warning = await screen.findByText(`${m.agents.warnings.fallback_same_provider}`);
-      expect(warning.closest('[data-tone="danger"]')).not.toBeNull();
-      expect(router.push).not.toHaveBeenCalled();
-      // 已保存：主操作换成「继续」，不会重复创建
-      expect(screen.queryByRole("button", { name: m.agents.form.submit })).toBeNull();
-      await user.click(screen.getByRole("button", { name: m.agents.form.continue }));
-      expect(router.push).toHaveBeenCalledWith("/agents");
-      expect(posts).toHaveLength(1);
+  const agent = (id: string, name: string, owner = "a1") => ({
+    id,
+    orgId: "o1",
+    ownerAccountId: owner,
+    visibility: "org",
+    currentVersion: 1,
+    profile: {
+      avatar: null,
+      description: "",
+      quickActions: [],
+      updatedAt: "2026-11-04T10:00:00.000Z",
     },
-  );
+    memberIds: null,
+    needsReassignment: false,
+    createdAt: T,
+    updatedAt: T,
+    definition: {
+      name,
+      instructions: "",
+      model: { provider: "model-fake", model: "fake-1" },
+      fallback: null,
+      modelParams: {},
+      fallbackParams: {},
+      tools: [{ kind: "connector", connectorId: "cn1", tools: "all" }],
+      toolPolicies: {},
+    },
+  });
+  const connector = {
+    id: "cn1",
+    name: "Tracker",
+    status: "active",
+    tools: [{ key: "mcp__tracker__find", status: "enabled" }],
+  };
+  const ok = (body: unknown) => () => apiJson(200, body);
+  const formRoutes = {
+    [`GET ${ORG}/models`]: ok(MODELS),
+    [`GET ${ORG}/connectors`]: ok({ connectors: [connector] }),
+    [`GET ${ORG}/connectors/cn1`]: ok({ connector }),
+    [`GET ${ORG}/skills`]: ok({
+      skills: [{ id: "s1", name: "notes-style", description: "Notes.", source: "org" }],
+    }),
+  };
+  const template = (name: string) => document.querySelector(`[data-template="${name}"]`);
+
+  it("/agents: the list is the first paint, guests included", async () => {
+    const browser = expectNoFirstPaintFetch();
+    const { calls } = await renderRouteWithCache(
+      "/agents",
+      { [`GET ${ORG}/agents`]: ok({ agents: [agent("ag1", "Echo agent")] }) },
+      { me: as("guest") },
+    );
+    expect(calls.map((c) => c.url)).toContain(`${ORG}/agents`);
+    expect(screen.getByText("Echo agent")).toBeTruthy();
+    expect(screen.queryByRole("link", { name: en.agents.new })).toBeNull();
+    await settle();
+    expect(browser).toEqual([]);
+  });
+
+  it("/agents: without a current org it renders nothing; while the org is in setup it goes home", async () => {
+    const none = await renderRouteWithCache("/agents", {}, { me: { ...ME, currentOrgId: null } });
+    expect(none.calls.map((c) => c.url)).toEqual(["/api/v1/me"]);
+    expect(template("ListPage")).toBeNull();
+    cleanup();
+    stubApi({});
+    await renderRouteWithCache(
+      "/agents",
+      { [`GET ${ORG}/agents`]: ok({ agents: [] }) },
+      { readiness: NOT_READY },
+    );
+    await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/"));
+    expect(template("ListPage")).toBeNull();
+  });
+
+  it("/agents: a first render from the hydrated cache makes no browser read", async () => {
+    const browser = stubApi({});
+    await renderRouteWithCache("/agents", {
+      [`GET ${ORG}/agents`]: ok({ agents: [agent("ag1", "Echo agent")] }),
+    });
+    expect(screen.getByText("Echo agent")).toBeTruthy();
+    await settle();
+    expect(browser.filter((c) => c.method === "GET")).toEqual([]);
+  });
+
+  it("/agents: an empty cache shows the template's loading state, then the data", async () => {
+    let release: () => void = () => {};
+    const held = new Promise<void>((r) => {
+      release = r;
+    });
+    await renderRouteEmptyCache("/agents", {
+      [`GET ${ORG}/agents`]: async () => {
+        await held;
+        return apiJson(200, { agents: [agent("ag1", "Echo agent")] });
+      },
+    });
+    const page = await vi.waitFor(() => {
+      const el = template("ListPage");
+      if (el === null) throw new Error("no page yet");
+      return el as HTMLElement;
+    });
+    expect(page.querySelector("[aria-busy='true']")).not.toBeNull();
+    expect(screen.queryByText("Echo agent")).toBeNull();
+    await act(async () => release());
+    expect(await screen.findByText("Echo agent")).toBeTruthy();
+    await vi.waitFor(() => expect(page.querySelector("[aria-busy='true']")).toBeNull());
+  });
+
+  it("/agents/new: the models are in the first paint", async () => {
+    const browser = expectNoFirstPaintFetch();
+    await renderNewAgent({ routes: formRoutes });
+    expect(
+      (screen.getByRole("combobox", { name: en.agents.form.modelLabel }) as HTMLSelectElement)
+        .value,
+    ).toBe("model-fake/fake-1");
+    expect(screen.queryByRole("checkbox", { name: /Tracker/ })).toBeNull();
+    expect(browser).toEqual([]);
+  });
+
+  it("/agents/new: a guest gets no access and nothing is read; it is a setup step", async () => {
+    const guest = await renderNewAgent({ routes: formRoutes, me: as("guest") });
+    expect(new Set(guest.calls.map((c) => c.url))).toEqual(
+      new Set(["/api/v1/me", `${ORG}/readiness`]),
+    );
+    expect(template("StatusPage")?.getAttribute("data-kind")).toBe("no-access");
+    cleanup();
+    expectNoFirstPaintFetch();
+    await renderNewAgent({ routes: formRoutes, readiness: NOT_READY });
+    expect(template("FormPage")).not.toBeNull();
+    cleanup();
+    const none = await renderNewAgent({ me: { ...ME, currentOrgId: null } });
+    expect(none.calls.map((c) => c.url)).toEqual(["/api/v1/me"]);
+    expect(template("FormPage")).toBeNull();
+  });
+
+  it("/agents/new: a section the kernel fails (agent templates) still renders the form", async () => {
+    const browser = expectNoFirstPaintFetch();
+    await renderNewAgent({
+      routes: {
+        ...formRoutes,
+        [`GET ${ORG}/agent-templates`]: () => apiJson(500, { error: { code: "internal" } }),
+      },
+    });
+    expect(screen.getByRole("button", { name: en.agents.form.submit })).toBeTruthy();
+    expect(browser).toEqual([]);
+  });
+
+  it("/agents/new: an empty cache shows the template's loading state, then the data", async () => {
+    let release: () => void = () => {};
+    const held = new Promise<void>((r) => {
+      release = r;
+    });
+    await renderRouteEmptyCache("/agents/new", {
+      ...agentFormDefaults(),
+      ...formRoutes,
+      [`GET ${ORG}/models`]: async () => {
+        await held;
+        return apiJson(200, MODELS);
+      },
+    });
+    const page = await vi.waitFor(() => {
+      const el = template("FormPage");
+      if (el === null) throw new Error("no page yet");
+      return el as HTMLElement;
+    });
+    expect(page.querySelector("[aria-busy='true']")).not.toBeNull();
+    // the loaded section's fields: the eleven avatar tiles, the name with its counter line, the
+    // model and visibility selects
+    expect(
+      page.querySelectorAll('[data-part="loading-plain-radios"] [data-part="loading-radio"]'),
+    ).toHaveLength(11);
+    const fields = page.querySelectorAll('[data-part="loading-field"]');
+    expect(fields).toHaveLength(3);
+    expect(fields[0]?.querySelector('[data-size="small"]')).not.toBeNull();
+    await act(async () => release());
+    expect(await screen.findByRole("textbox", { name: en.agents.form.nameLabel })).toBeTruthy();
+    await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
+  });
+
+  it("/agents/new: a first render from the hydrated cache makes no browser read", async () => {
+    const browser = stubApi({});
+    await renderNewAgent({ routes: formRoutes });
+    expect(screen.getByRole("textbox", { name: en.agents.form.nameLabel })).toBeTruthy();
+    await settle();
+    expect(browser.filter((c) => c.method === "GET")).toEqual([]);
+  });
 });

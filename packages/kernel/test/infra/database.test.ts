@@ -9,7 +9,7 @@ import { DatabaseModule } from "../../src/infra/database/database.module.js";
 import { KernelDb } from "../../src/infra/database/kernel-db.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { LoggingModule } from "../../src/infra/logging/logging.module.js";
-import { KERNEL_LOGGER, KERNEL_POOL } from "../../src/infra/tokens.js";
+import { KERNEL_POOL, KERNEL_ROOT_LOGGER } from "../../src/infra/tokens.js";
 import { createLogger } from "../../src/log.js";
 
 let pgc: TestContainer;
@@ -43,7 +43,7 @@ describe("DatabaseModule", () => {
       { logger: false },
     );
     const kdb = app.get(KernelDb);
-    expect(app.get(KERNEL_LOGGER)).toBeDefined();
+    expect(app.get(KERNEL_ROOT_LOGGER)).toBeDefined();
     expect(app.get(TransactionHost)).toBeDefined();
     const r = await sql<{ n: number }>`select 1 as n`.execute(kdb.pool);
     expect(r.rows[0]?.n).toBe(1);

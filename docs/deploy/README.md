@@ -664,8 +664,12 @@ before a record reaches any output.
 
 - **Console format** (`log.format`, `CAPYBARA_LOG__FORMAT`): `auto` (default) prints JSON when stdout
   is not a terminal, which is the case in containers, and readable lines on a terminal; `json` and
-  `pretty` force one or the other. `pretty` is one line per record
-  (`[12:00:00.000] INFO: [api] [reqId=...] message {"field":1}`), colored only on a terminal.
+  `pretty` force one or the other. `pretty` puts the message on one line
+  (`[2026-10-30 12:00:00.000 +0800] INFO: [pid=4242] - [reqId=...] [context=RunWorker] message`,
+  each bracket only when present; `context` is the class that logged) and the other fields on
+  indented `key: value` lines below it, an error with its stack; the access line reads
+  `GET /api/v1/me 401 2ms`. It is colored on a terminal; `FORCE_COLOR=1` forces colors (as
+  `pnpm dev:kernel` does) and `NO_COLOR=1` turns them off. JSON records carry `context` as a field.
 - **Request and job context**: every HTTP request gets a request id, a valid incoming `x-request-id`
   (`[A-Za-z0-9._-]`, at most 128 characters) or a random one, returned in the `x-request-id`
   response header. Records logged while handling the request carry `reqId`; records logged by a
@@ -737,7 +741,7 @@ this:
   seconds (readiness turns 503 at the first SIGTERM; a repeated SIGTERM exits at once, see
   [Roles and scaling](#roles-and-scaling)).
 - **Probes:** `/readyz` and `/healthz` on port 8080 (`CAPYBARA_HTTP__PORT`) for every kernel role, and
-  `/zh/login` on port 3000 for `web`. Give the kernel pods a `startupProbe` on `/healthz` with a
+  `/login` on port 3000 for `web`. Give the kernel pods a `startupProbe` on `/healthz` with a
   generous failure threshold (minutes, not seconds): a pod that finds pending migrations doesn't listen
   until they finish, and a liveness probe must not kill it halfway.
 - **Secrets:** pass `CAPYBARA_MASTER_KEY`, the database URL and extension credentials from Kubernetes

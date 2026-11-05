@@ -21,6 +21,7 @@ import { fileURLToPath } from "node:url";
  * | `fake-bootstrap-b` | `object-store@1` kept in its own PG table; `bucket` + secret `secretKey` |
  * | `fake-dep-provider` / `fake-dep-requirer` | a dependency pair on `counter@1` (the requirer's plugin.json depends on the provider) |
  * | `fake-im` | a whole IM platform for `startFakeChannelServer`: `channel@1` (cards, edits, threads, webhook inbound), `identity-source@1`, `directory@1` (org config `url` of a directory book) and tool `post_announcement` (default policy ask, posts to the platform); deployment config `platformUrl`, `tenant`, `clientId`, secret `clientSecret`. Its `src/index.ts` also exports `makeFakeImChannel`, `fakeImIdentitySource`, `fakeImDirectory` for test extensions that need one part |
+ * | `fake-config-form` | display name 表单样例 / Form sample; no extension point: an openai-compatible-shaped deployment config (endpoints with a preset menu, an API key per endpoint in the secret record `apiKeys`, model rows, advanced fields, localized custom issues) carrying the config form hints of the extension config forms spec §6, for the web form e2e |
  */
 export const FAKE_EXTENSIONS = [
   "fake-connector",
@@ -34,6 +35,7 @@ export const FAKE_EXTENSIONS = [
   "fake-dep-provider",
   "fake-dep-requirer",
   "fake-im",
+  "fake-config-form",
 ] as const;
 
 /** The name of a fake extension (also its plugin and extension name). */

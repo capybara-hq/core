@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<title>KeyValueEditor · reference</title>
+<link rel="stylesheet" href="/design/styles/fonts.css">
+<link rel="stylesheet" href="/design/styles/tokens.css">
+<link rel="stylesheet" href="reference.css">
+</head>
+<body>
+<main class="r-page">
+<h1>KeyValueEditor</h1>
+<p>A record of scalars as rows of key / value inputs with a remove button each, and an add button (spec §6.28).</p>
+<div class="r-blocks">
+<section data-ref-block="key-value-editor-default" style="width:640px" data-pad>
+  <div class="r-kv" data-part="kv-editor">
+    <div class="r-kv-head" data-part="kv-editor-head"><span>名称</span><span>值</span></div>
+    <ul class="r-kv-rows">
+      <li class="r-kv-row" data-part="kv-editor-row"><input class="r-input" data-step="dense" data-part="input" value="X-Org"><input class="r-input" data-step="dense" value="acme"><button class="r-icon-btn" data-step="dense"><i data-icon="trash-2" data-size="14"></i></button></li>
+      <li class="r-kv-row" data-part="kv-editor-row"><input class="r-input" data-step="dense" data-part="input" value="X-Region"><input class="r-input" data-step="dense" value="cn-beijing"><button class="r-icon-btn" data-step="dense"><i data-icon="trash-2" data-size="14"></i></button></li>
+    </ul>
+    <div class="r-rep-foot"><button class="r-btn" data-variant="default" data-step="dense" data-part="kv-editor-add"><i data-icon="plus" data-size="14"></i>添加</button></div>
+  </div>
+</section>
+<section data-ref-block="key-value-editor-masked" style="width:640px" data-pad>
+  <div class="r-kv" data-part="kv-editor">
+    <div class="r-kv-head" data-part="kv-editor-head"><span>名称</span><span>密钥</span></div>
+    <ul class="r-kv-rows">
+      <li class="r-kv-row" data-part="kv-editor-row"><input class="r-input" data-step="dense" value="deepseek"><input class="r-input" data-step="dense" data-part="input" type="password" value="sk-0000000000"><button class="r-icon-btn" data-step="dense"><i data-icon="trash-2" data-size="14"></i></button></li>
+    </ul>
+    <div class="r-rep-foot"><button class="r-btn" data-variant="default" data-step="dense" data-part="kv-editor-add"><i data-icon="plus" data-size="14"></i>添加</button></div>
+  </div>
+</section>
+<section data-ref-block="key-value-editor-empty" style="width:640px" data-pad>
+  <div class="r-kv" data-part="kv-editor">
+    <div class="r-rep-foot"><button class="r-btn" data-variant="default" data-step="dense" data-part="kv-editor-add"><i data-icon="plus" data-size="14"></i>添加</button></div>
+  </div>
+</section>
+</div>
+</main>
+<script src="fill.js"></script>
+</body>
+</html>

@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<title>Wizard template · reference</title>
+<link rel="stylesheet" href="/design/styles/fonts.css">
+<link rel="stylesheet" href="/design/styles/tokens.css">
+<link rel="stylesheet" href="reference.css">
+</head>
+<body>
+<main class="r-page">
+<h1>Wizard template</h1>
+<p>Loading state (spec §5.9): the header keeps its rows, the step bar is real, the step body is one card of field placeholders, the action row stays with disabled buttons. Nothing animates.</p>
+<div class="r-blocks">
+<section data-ref-block="template-wizard-loading" style="width:1280px;height:640px">
+  <div class="r-tpl" aria-busy="true">
+    <div class="r-tpl-head"><template data-fixture="page-header" data-opts='{"loading": {"actions": 0, "tabs": 0}}'></template></div>
+    <div class="r-tpl-body r-tpl-form"><div class="r-wiz"><ol class="r-wsteps" aria-label="步骤"><li class="r-wstep" data-state="done"><span class="r-wstep-mark"><i data-icon="check" data-size="12"></i></span><span>选择供应商</span></li><li class="r-wstep" data-state="current"><span class="r-wstep-mark">2</span><span>填写凭据</span></li><li class="r-wstep" data-state="todo"><span class="r-wstep-mark">3</span><span>测试连接</span></li><li class="r-wstep" data-state="todo"><span class="r-wstep-mark">4</span><span>完成</span></li></ol><section class="r-lcard"><header class="r-lcard-head"><div class="r-skel-text" data-part="skeleton-text" data-size="body" style="width:30%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div></header><div class="r-lcard-body r-lcard-fields"><div class="r-field" data-part="loading-field"><div class="r-field-head"><div class="r-skel-text" data-part="skeleton-text" data-size="body" style="width:30%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div></div><div class="r-skel-box" data-part="skeleton-box" data-box="default"></div></div><div class="r-field" data-part="loading-field"><div class="r-field-head"><div class="r-skel-text" data-part="skeleton-text" data-size="body" style="width:30%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div></div><div class="r-skel-box" data-part="skeleton-box" data-box="default"></div></div></div></section></div></div>
+    <div class="r-actionrow"><span class="r-actionrow-text"></span><button class="r-btn" data-variant="default" disabled>取消</button><button class="r-btn" data-variant="default" disabled>上一步</button><button class="r-btn" data-variant="primary" disabled>下一步</button></div>
+  </div>
+</section>
+</div>
+</main>
+<script src="fill.js"></script>
+</body>
+</html>

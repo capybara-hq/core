@@ -33,6 +33,8 @@ import {
   SUBAGENT_NAME_RE,
   SUBAGENT_ROSTER_MAX,
 } from "./definition.js";
+import { type AgentDefinitionInput, deriveInstructions } from "./instruction-files.js";
+import { type ProfileInput, randomPreset } from "./profile.js";
 
 export {
   AGENT_VISIBILITIES,
@@ -56,6 +58,17 @@ export type AgentVersionSummary = Omit<AgentVersion, "definition">;
 
 /** 创建 / 修改的提示（不拒绝）：`fallback_same_provider` = 兜底与主模型同一供应商（spec 4.5）。 */
 export type AgentWarning = "fallback_same_provider";
+
+/** A new agent has no id to bind an upload to yet: a client can only choose a preset on create. */
+export function assertProfileWritable(profile: ProfileInput | undefined): void {
+  if (profile?.avatar?.kind === "upload") {
+    throw new ApiError(
+      "validation_failed",
+      "Choose a preset avatar when creating an agent; upload one afterwards",
+      [{ path: "avatar.kind", message: "upload is not supported on create" }],
+    );
+  }
+}
 
 const notFound = () => new ApiError("agent.not_found", "Agent not found");
 
@@ -281,7 +294,7 @@ export class AgentsService {
    * `toolPolicies` 的键必须是这些引用产生的工具 key（取值只能收紧，已由 schema 保证）。
    * 不合法 → `validation_failed`，path 为 `tools.<i>` / `toolPolicies.<key>`。
    */
-  private async checkTools(orgId: string, def: AgentDefinition): Promise<Set<string>> {
+  private async checkTools(orgId: string, def: AgentDefinitionInput): Promise<Set<string>> {
     const { keys, issues } = await this.tools.checkRefs(orgId, def.tools);
     const details = [...issues];
     for (const key of Object.keys(def.toolPolicies)) {
@@ -304,7 +317,7 @@ export class AgentsService {
    * 校验主模型与兜底都可解析，并用各自模型的参数声明严格校验 `modelParams` / `fallbackParams`
    * （没有兜底时 `fallbackParams` 必须为空）；不合法 → `validation_failed`，details 逐键点名。返回提示。
    */
-  private async checkModels(def: AgentDefinition): Promise<AgentWarning[]> {
+  private async checkModels(def: AgentDefinitionInput): Promise<AgentWarning[]> {
     const registry = this.providers;
     const main = await registry.resolve(def.model);
     const fallback = def.fallback === null ? null : await registry.resolve(def.fallback);
@@ -352,15 +365,22 @@ export class AgentsService {
   async create(
     orgId: string,
     actorAccountId: string,
-    input: { definition: AgentDefinition; visibility: AgentVisibility; memberIds?: string[] },
+    request: {
+      definition: AgentDefinitionInput;
+      visibility: AgentVisibility;
+      memberIds?: string[];
+      profile?: ProfileInput;
+    },
     actorTokenId?: string,
   ): Promise<{ agent: AgentView; warnings: AgentWarning[] }> {
+    const input = { ...request, definition: deriveInstructions(request.definition, null) };
     // 先解析模型（可能访问供应商），不在持有组织行锁时做
     const warnings = await this.checkModels(input.definition);
     const toolKeys = await this.checkTools(orgId, input.definition);
     if (input.visibility !== "members" && (input.memberIds?.length ?? 0) > 0) {
       throw new ApiError("validation_failed", "memberIds requires visibility 'members'");
     }
+    assertProfileWritable(input.profile);
     const agent = await this.createIn(orgId, actorAccountId, input, toolKeys, actorTokenId);
     return { agent, warnings };
   }
@@ -369,7 +389,12 @@ export class AgentsService {
   private async createIn(
     orgId: string,
     actorAccountId: string,
-    input: { definition: AgentDefinition; visibility: AgentVisibility; memberIds?: string[] },
+    input: {
+      definition: AgentDefinition;
+      visibility: AgentVisibility;
+      memberIds?: string[];
+      profile?: ProfileInput;
+    },
     toolKeys: Set<string>,
     actorTokenId: string | undefined,
   ): Promise<AgentView> {
@@ -397,6 +422,11 @@ export class AgentsService {
         owner_account_id: actorAccountId,
         visibility: input.visibility,
         current_version: 1,
+        profile_avatar: JSON.stringify(
+          input.profile?.avatar ?? { kind: "preset", id: randomPreset() },
+        ),
+        profile_description: input.profile?.description ?? "",
+        profile_quick_actions: JSON.stringify(input.profile?.quickActions ?? []),
       })
       .execute();
     await t
@@ -425,7 +455,7 @@ export class AgentsService {
    * 对发起人不可见的 agent（非管理员）→ `agent.not_found`，可见但无权 → `forbidden`。
    */
   @Transactional({ propagation: "mandatory" })
-  private async lockForWrite(
+  async lockForWrite(
     orgId: string,
     agentId: string,
     actorAccountId: string,
@@ -462,8 +492,8 @@ export class AgentsService {
     orgId: string,
     agentId: string,
     actorAccountId: string,
-    patch: {
-      definition?: AgentDefinition | undefined;
+    request: {
+      definition?: AgentDefinitionInput | undefined;
       visibility?: AgentVisibility | undefined;
       memberIds?: string[] | undefined;
       /**
@@ -474,6 +504,7 @@ export class AgentsService {
     },
     actorTokenId?: string,
   ): Promise<{ agent: AgentView; warnings: AgentWarning[] }> {
+    const patch = request;
     const warnings = patch.definition ? await this.checkModels(patch.definition) : [];
     const toolKeys = patch.definition ? await this.checkTools(orgId, patch.definition) : null;
     const agent = await this.updateIn(
@@ -493,7 +524,7 @@ export class AgentsService {
     agentId: string,
     actorAccountId: string,
     patch: {
-      definition?: AgentDefinition | undefined;
+      definition?: AgentDefinitionInput | undefined;
       visibility?: AgentVisibility | undefined;
       memberIds?: string[] | undefined;
       expectedVersion?: number | undefined;
@@ -522,32 +553,37 @@ export class AgentsService {
         .where("agent_id", "=", agentId)
         .where("version", "=", before.current_version)
         .executeTakeFirstOrThrow();
+      // the prompt: instructionFiles give instructions; a save given neither keeps the current one
+      const definition = deriveInstructions(
+        patch.definition,
+        normalizeStoredDefinition(current.definition),
+      );
       // 当前版本已有的技能引用保存时合法，不再核对（被删的技能不挡住其他改动）；新加的照常核对
       const kept = new Set((current.definition as AgentDefinition).skills?.orgSkills ?? []);
-      await assertOrgSkills(t, orgId, patch.definition.skills?.orgSkills ?? [], kept);
+      await assertOrgSkills(t, orgId, definition.skills?.orgSkills ?? [], kept);
       await assertPinnedSkills(
         t,
         orgId,
         agentId,
-        patch.definition.skills,
+        definition.skills,
         (current.definition as AgentDefinition).skills?.pinned ?? [],
       );
       await assertSubagents(t, {
         orgId,
         agentId,
         actorAccountId,
-        definition: patch.definition,
+        definition,
         toolKeys: toolKeys ?? new Set(),
         kept: (current.definition as AgentDefinition).subagents,
       });
-      if (canonical(current.definition) !== canonical(patch.definition)) {
+      if (canonical(current.definition) !== canonical(definition)) {
         toVersion = before.current_version + 1;
         await t
           .insertInto("agent_versions")
           .values({
             agent_id: agentId,
             version: toVersion,
-            definition: JSON.stringify(patch.definition),
+            definition: JSON.stringify(definition),
             created_by: actorAccountId,
           })
           .execute();
@@ -607,6 +643,13 @@ export class AgentsService {
       .updateTable("agents")
       .set({ deleted_at: sql`now()`, updated_at: sql`now()` })
       .where("id", "=", agentId)
+      .execute();
+    // the avatar upload is garbage now: the cleanup job deletes it (and its object) once expired
+    await t
+      .updateTable("attachments")
+      .set({ expires_at: sql<Date>`now()` })
+      .where("agent_id", "=", agentId)
+      .where("purpose", "=", "agent-avatar")
       .execute();
     await audit(t, {
       actorAccountId,

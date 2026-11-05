@@ -176,6 +176,7 @@ describe("部署级插件配置入 PG（审查重点 5）", { timeout: 120_000 }
     expect(Object.keys(res.json()).sort()).toEqual(
       [
         "configurable",
+        "displayName",
         "fields",
         "issues",
         "plugin",
@@ -323,7 +324,7 @@ describe("部署级插件配置入 PG（审查重点 5）", { timeout: 120_000 }
     expect(bad.json().error.code).toBe("extension.config_invalid");
     expect(bad.body).not.toContain("not-a-number-xyz");
     expect(bad.json().error.details).toEqual([
-      { path: "limits.burst", message: expect.any(String) },
+      { path: "limits.burst", segments: ["limits", "burst"], message: expect.any(String) },
     ]);
     // 什么都没写
     expect(await db.selectFrom("extension_deployment_configs").selectAll().execute()).toEqual([]);
@@ -510,6 +511,23 @@ describe("部署级插件配置入 PG（审查重点 5）", { timeout: 120_000 }
     const v = await svc.view("stale");
     expect(JSON.stringify(v)).not.toContain("old-secret");
     expect(v.fields.find((f) => f.path === "b")).toMatchObject({ set: true });
+  });
+
+  it("a secret field whose only value is its schema default reads as not set", async () => {
+    // e.g. openai-compatible's `apiKeys: secret(record).default({})`: the default is no secret
+    const { z } = await import("zod");
+    const { secret } = await import("@capybara-hq/plugin-sdk");
+    const schema = z.object({ keys: secret(z.record(z.string(), z.string())).default({}) });
+    const svc = schemaOverride(async () => ({
+      version: "1.0.0",
+      schema,
+      fields: [{ path: "keys", secret: true, hot: false }],
+    }));
+    const v = await svc.view("defaultsecret");
+    expect(v.fields.find((f) => f.path === "keys")).toMatchObject({
+      source: "default",
+      set: false,
+    });
   });
 
   it("引导插件同样可以在 PG 里配：待配置 → 保存后不重启即加载", async () => {

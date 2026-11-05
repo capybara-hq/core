@@ -10,8 +10,8 @@ export interface StreamDelta {
 }
 
 /** What `event: changed` names (kernel `CONVERSATION_CHANGES`). */
-export type ConversationChange = "title" | "queue" | "selection" | "files";
-const CHANGES = new Set<string>(["title", "queue", "selection", "files"]);
+export type ConversationChange = "title" | "queue" | "selection" | "files" | "archived" | "deleted";
+const CHANGES = new Set<string>(["title", "queue", "selection", "files", "archived", "deleted"]);
 
 /**
  * SSE `event: subagent_progress` on a parent's stream: a sub-agent finished a step (ephemeral, not

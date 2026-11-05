@@ -41,7 +41,7 @@ test("扩展视图（假扩展 fake-tools-ui）：plugin__fake-tools-ui__write �
   expect(conv.status(), await conv.text()).toBe(201);
   const convId = ((await conv.json()) as { conversation: { id: string } }).conversation.id;
 
-  await page.goto(`/zh/chat/${convId}`);
+  await page.goto(`/chat/${convId}`);
   await expect(page.locator('[data-template="ConversationPage"]')).toBeVisible();
   // The extension's panel (its old `place: "conversation"`) is an icon in the title bar
   const icon = page.locator('[data-part="title-bar"]').getByRole("button", { name: "条目" });

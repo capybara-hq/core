@@ -9,6 +9,7 @@ export const ADMIN_PAGES = [
   { id: "orgs", href: "/admin/orgs" },
   { id: "extensions", href: "/admin/extensions" },
   { id: "catalog", href: "/admin/catalog" },
+  { id: "marketplaces", href: "/admin/marketplaces" },
   { id: "models", href: "/admin/models" },
   { id: "settings", href: "/admin/settings" },
 ] as const;
@@ -16,18 +17,19 @@ export const ADMIN_PAGES = [
 export type AdminPageId = (typeof ADMIN_PAGES)[number]["id"];
 
 /**
- * The admin console's (enterprise admins) second-level navigation: overview, accounts, orgs,
- * extensions, catalog, models, deployment settings. Settings pages (SettingsPage) use it as the left
- * navigation; list pages go back to the overview through the header's breadcrumb. An org's own
- * settings stay under `/settings/*`.
+ * The admin console's (enterprise admins) navigation: overview, accounts, orgs, extensions,
+ * catalog, marketplaces, models, deployment settings. It feeds the sidebar's admin context only;
+ * admin pages carry no inner navigation. An org's own settings stay under `/settings/*`.
  */
-export function useAdminNav(): { id: AdminPageId; label: string; href: string }[] {
+export function useAdminNav(): {
+  group: string;
+  items: { id: AdminPageId; label: string; href: string }[];
+}[] {
   const t = useTranslations("admin.nav");
-  return ADMIN_PAGES.map((p) => ({ id: p.id, label: t(p.id), href: p.href }));
-}
-
-/** The list pages' breadcrumb: back to the admin overview. */
-export function useAdminBreadcrumb(): { label: string; href: string }[] {
-  const t = useTranslations("admin");
-  return [{ label: t("title"), href: "/admin" }];
+  return [
+    {
+      group: t("group"),
+      items: ADMIN_PAGES.map((p) => ({ id: p.id, label: t(p.id), href: p.href })),
+    },
+  ];
 }

@@ -206,7 +206,7 @@ export async function appendQueuedIn(
   eventLog: Pick<EventLog, "appendIn">,
   conversationId: string,
   r: QueueRow,
-): Promise<{ event: ConversationEvent; switched: boolean }> {
+): Promise<{ event: ConversationEvent; switched: boolean; unarchived: boolean }> {
   const events: AppendEvent[] = [];
   const pick = {
     ...(r.model !== null && { model: r.model as ModelRef }),
@@ -236,7 +236,18 @@ export async function appendQueuedIn(
       .where("id", "=", conversationId)
       .execute();
   }
-  return { event: written.at(-1) as ConversationEvent, switched: next !== null };
+  // As a direct send: the message brings an archived conversation back into the default lists
+  const unarchived = await t
+    .updateTable("conversations")
+    .set({ archived_at: null })
+    .where("id", "=", conversationId)
+    .where("archived_at", "is not", null)
+    .executeTakeFirst();
+  return {
+    event: written.at(-1) as ConversationEvent,
+    switched: next !== null,
+    unarchived: Number(unarchived.numUpdatedRows) > 0,
+  };
 }
 
 /** The model of the conversation agent's current version (inside `t`). */
@@ -340,13 +351,17 @@ export const queueFull = () =>
  * when the queue is empty. An item whose message is already in the log (a retried enqueue after it
  * was sent) is dropped and the next one is taken. A head item whose skill can no longer be invoked
  * stays queued and the queue pauses (`skill_not_invocable`): `{ paused }`. The caller notifies
- * after commit.
+ * after commit (and publishes `archived` when the send unarchived the conversation).
  */
 export async function dispatchQueuedIn(
   t: KernelTrx,
   eventLog: Pick<EventLog, "appendIn">,
   conversationId: string,
-): Promise<{ event: ConversationEvent; switched: boolean } | { paused: QueuePauseReason } | null> {
+): Promise<
+  | { event: ConversationEvent; switched: boolean; unarchived: boolean }
+  | { paused: QueuePauseReason }
+  | null
+> {
   for (;;) {
     const head = await t
       .selectFrom("conversation_queue")

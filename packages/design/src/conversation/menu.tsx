@@ -38,6 +38,8 @@ export type ConvMenuProps = {
   sideOffset?: number;
   align?: "start" | "end";
   size?: "narrow" | "default" | "wide";
+  /** At most `min(320px, 100vw − 16px)` wide, long labels cut with an ellipsis (quick actions). */
+  bounded?: boolean;
   open?: boolean;
   onOpenChange?(open: boolean): void;
   /**
@@ -57,6 +59,7 @@ export function ConvMenu({
   sideOffset = 4,
   align = "start",
   size = "default",
+  bounded,
   open,
   onOpenChange,
   inline,
@@ -69,6 +72,7 @@ export function ConvMenu({
       className="cb-cmenu"
       data-part="menu"
       data-size={size === "default" ? undefined : size}
+      data-bounded={bounded ? "true" : undefined}
       aria-label={label}
       {...(notes.length > 0 ? { "aria-describedby": notes.join(" ") } : {})}
       side={side}

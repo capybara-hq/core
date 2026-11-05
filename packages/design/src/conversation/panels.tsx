@@ -1,5 +1,6 @@
 import { type CSSProperties, type JSX, type KeyboardEvent, type ReactNode, useRef } from "react";
 import { Button, IconButton } from "../controls/button";
+import { useSkeletonAnnounces } from "../display/skeleton";
 import { Icon } from "../icons/icon";
 import type { IconName } from "../icons/paths";
 import { useDesignT } from "../provider";
@@ -14,11 +15,20 @@ import { fillCopy } from "./tool-copy";
 
 export type BlockState = "ready" | "loading" | "failed";
 
-/** Skeleton bars (`selected`, radius `sm`, `aria-busy`): loading never spins in a block. */
+/**
+ * Skeleton bars (`selected`, radius `sm`, `aria-busy`): loading never spins in a block. Inside a
+ * skeleton group (a loading page) the group announces, so the bars are only decorative.
+ */
 export function SkeletonBars({ widths = [56, 72, 48, 64] }: { widths?: number[] }): JSX.Element {
   const t = useDesignT();
+  const announces = useSkeletonAnnounces();
   return (
-    <div className="cb-skeleton-list" role="status" aria-busy="true" aria-label={t("card.loading")}>
+    <div
+      className="cb-skeleton-list"
+      {...(announces
+        ? { role: "status", "aria-busy": "true", "aria-label": t("card.loading") }
+        : { "aria-hidden": "true" })}
+    >
       {widths.map((w, i) => (
         <span
           // biome-ignore lint/suspicious/noArrayIndexKey: the bars are positional
@@ -200,6 +210,7 @@ export function ContextSection({
   model,
   sandbox,
   connectors,
+  lastRun,
   total,
 }: {
   /** Context usage in percent (0–100). */
@@ -207,6 +218,8 @@ export function ContextSection({
   model: string;
   sandbox?: string;
   connectors: string[];
+  /** The last run's line ("上次运行 · <model> · <duration> · <tokens>"), worded by the page. */
+  lastRun?: string;
   /** A last line, e.g. the conversation's tokens with its sub-agents' (the page words it). */
   total?: string;
 }): JSX.Element {
@@ -230,6 +243,11 @@ export function ContextSection({
       {connectors.length > 0 ? (
         <div className="cb-muted cb-small">
           {fillCopy(t("props.connectors"), { list: connectors.join(t("props.listJoin")) })}
+        </div>
+      ) : null}
+      {lastRun ? (
+        <div className="cb-muted cb-small" data-part="context-last-run">
+          {lastRun}
         </div>
       ) : null}
       {total ? (
@@ -311,7 +329,8 @@ export type RightPanelProps = {
   onBack?(): void;
   /** Header actions before full screen and close (icon buttons, Stop). */
   actions?: ReactNode;
-  onFullscreen(): void;
+  /** The full-screen button is left out without it (a loading panel has nothing to expand). */
+  onFullscreen?(): void;
   onClose(): void;
   state?: BlockState;
   failure?: { name?: string; reason?: string };
@@ -413,11 +432,13 @@ export function RightPanel({
         ) : null}
         <span className="cb-rpanel-grow" />
         {actions}
-        <IconButton
-          label={t("panel.fullscreen")}
-          icon={<Icon name="maximize-2" size={16} />}
-          onClick={onFullscreen}
-        />
+        {onFullscreen ? (
+          <IconButton
+            label={t("panel.fullscreen")}
+            icon={<Icon name="maximize-2" size={16} />}
+            onClick={onFullscreen}
+          />
+        ) : null}
         <IconButton
           label={t("overlay.close")}
           icon={<Icon name="x" size={16} />}

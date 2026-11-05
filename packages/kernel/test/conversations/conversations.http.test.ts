@@ -490,7 +490,11 @@ describe("工具输出存档（GET .../conversations/:id/outputs/:outputId）", 
 });
 
 describe("Create on first send and rename (UI refresh B, Task 7)", () => {
-  type Created = { conversation: ConvJson & { title: string | null }; event?: EventJson };
+  type Created = {
+    conversation: ConvJson & { title: string | null };
+    event?: EventJson;
+    events?: EventJson[];
+  };
   const create = (req: Req, orgId: string, payload: Record<string, unknown>) =>
     req({ method: "POST", url: `/api/v1/orgs/${orgId}/conversations`, payload });
   const rename = (req: Req, orgId: string, id: string, payload: Record<string, unknown>) =>
@@ -510,6 +514,8 @@ describe("Create on first send and rename (UI refresh B, Task 7)", () => {
       payload: { content: [{ type: "text", text: "hello" }], clientMessageId: "c-1" },
     });
     expect(a.conversation).toMatchObject({ agentId, lastSeq: 1, titleSource: null });
+    // every event the create wrote: here only the message
+    expect(a.events).toEqual([a.event]);
     const runs = await kernelDb(raw)
       .selectFrom("runs")
       .select("status")

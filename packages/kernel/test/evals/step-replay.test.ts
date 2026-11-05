@@ -139,6 +139,26 @@ describe("resolveCandidate", () => {
     ).toBe(false);
   });
 
+  it("an instructions override drops the prompt files it no longer matches", () => {
+    const files = [
+      { name: "AGENTS.md", content: "a" },
+      { name: "B.md", content: "b" },
+    ];
+    const withFiles = {
+      ...def,
+      instructions: "# AGENTS.md\n\na\n\n# B.md\n\nb",
+      instructionFiles: files,
+    };
+    const kept = resolveCandidate({ definition: withFiles, agentVersion: snap.agentVersion }, {});
+    expect(kept.definition.instructionFiles).toEqual(files);
+    const r = resolveCandidate(
+      { definition: withFiles, agentVersion: snap.agentVersion },
+      { instructions: "Answer in French." },
+    );
+    expect(r.definition.instructions).toBe("Answer in French.");
+    expect(r.definition).not.toHaveProperty("instructionFiles");
+  });
+
   it("an org agent child under another version with the same model takes that version's params (batch 14 review m3)", () => {
     const logged = { ...def, modelParams: { effort: "high" } };
     const v2 = { ...def, modelParams: { effort: "low" } };

@@ -8,7 +8,8 @@ export function Badge({
   tone = "default",
   children,
 }: {
-  tone?: "default" | "accent" | "count";
+  /** `warn`: an attention mark ("敏感"), the word in warn with no box (spec §2.4). */
+  tone?: "default" | "accent" | "warn" | "count";
   children?: ReactNode;
 }) {
   return (
@@ -62,6 +63,8 @@ export type MetricProps = {
    * is never colored, and the label says what the value is.
    */
   tone?: "warn" | "fail";
+  /** StatCards: the whole card links to the page the number counts (spec §6.14). */
+  href?: string;
 };
 
 export function Metric({ label, value, delta }: MetricProps) {

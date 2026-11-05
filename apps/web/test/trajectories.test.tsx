@@ -3,16 +3,25 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
-import TrajectoryPage from "../src/app/[locale]/(app)/trajectories/[conversationId]/page";
-import TrajectoriesPage from "../src/app/[locale]/(app)/trajectories/page";
 import { activeNavOf } from "../src/components/shell/nav";
 import { type SpanLabels, type TrajectoryRun, trajectorySpans } from "../src/lib/trajectories";
-import { bodyOf, json, stubApi } from "./support/api";
+import { bodyOf, json, lastStubRoutes, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
-import { ME, renderPage } from "./support/render";
+import { renderRouteWithCache } from "./support/query";
+import { ME } from "./support/render";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
-vi.mock("next/navigation", () => ({ useParams: () => ({ conversationId: "c1" }) }));
+vi.mock("next/navigation", () => ({
+  redirect: (to: string) => {
+    throw new Error(`REDIRECT ${to}`);
+  },
+  notFound: () => {
+    throw new Error("NOT_FOUND");
+  },
+}));
+
+/** The member list the detail page reads for the starter's name: none unless a test gives some. */
+const NO_MEMBERS = { "GET /api/v1/orgs/o1/members": () => json(200, { members: [] }) };
 
 const msgs = { zh, en } as const;
 
@@ -337,12 +346,16 @@ describe("轨迹详情（TracePage）", () => {
     "瀑布 + 详情：选中 span 后详情切换；审计提示与指标（%s）",
     async (locale) => {
       const m = msgs[locale].trajectories;
-      const calls = stubApi({ [`GET ${DETAIL}`]: () => json(200, detailBody([run()])) });
-      const { container } = renderPage(<TrajectoryPage />, { locale });
+      stubApi({ [`GET ${DETAIL}`]: () => json(200, detailBody([run()])) });
+      const { container, calls } = await renderRouteWithCache(
+        "/trajectories/c1",
+        { ...NO_MEMBERS, ...lastStubRoutes() },
+        { locale },
+      );
       expect(container.querySelector('[data-template="TracePage"]')).not.toBeNull();
       const list = await screen.findByRole("tree", { name: m.detail.waterfall });
-      // 按运行分页读：不一次读全对话
-      expect(calls[0]?.url).toBe(`${DETAIL}?limit=10`);
+      // By run, never the whole conversation (read on the server)
+      expect(calls.find((c) => c.url.startsWith(DETAIL))?.url).toBe(`${DETAIL}?limit=10`);
       expect(screen.getByText(m.detail.audited)).toBeTruthy();
       expect(screen.getByRole("heading", { name: "Clean up" })).toBeTruthy();
       // 页头指标：总 token、成本（估算）、调用数、耗时
@@ -425,7 +438,11 @@ describe("轨迹详情（TracePage）", () => {
         ],
       });
       stubApi({ [`GET ${DETAIL}`]: () => json(200, detailBody([denied])) });
-      renderPage(<TrajectoryPage />, { locale });
+      await renderRouteWithCache(
+        "/trajectories/c1",
+        { ...NO_MEMBERS, ...lastStubRoutes() },
+        { locale },
+      );
       const list = await screen.findByRole("tree", { name: m.detail.waterfall });
       const detail = () => screen.getByRole("region", { name: m.detail.region });
       const user = userEvent.setup();
@@ -444,10 +461,14 @@ describe("轨迹详情（TracePage）", () => {
 
   it("中文界面：瀑布的 span 名称与 kind 徽标都是中文", async () => {
     stubApi({ [`GET ${DETAIL}`]: () => json(200, detailBody([run()])) });
-    const { container } = renderPage(<TrajectoryPage />, { locale: "zh" });
+    const { container } = await renderRouteWithCache(
+      "/trajectories/c1",
+      { ...NO_MEMBERS, ...lastStubRoutes() },
+      { locale: "zh" },
+    );
     const list = await screen.findByRole("tree", { name: zh.trajectories.detail.waterfall });
-    expect(within(list).getByText("运行 · v3")).toBeTruthy();
-    expect(within(list).getByText("步骤 1")).toBeTruthy();
+    expect(within(list).getByText("v3")).toBeTruthy();
+    expect(within(list).getAllByText("步骤").length).toBeGreaterThan(0);
     expect(within(list).getByText("审批")).toBeTruthy();
     expect(within(list).queryByText("run · v3")).toBeNull();
     const kind = container.querySelector('[data-span="run:r1"] .cb-waterfall-kind');
@@ -456,7 +477,10 @@ describe("轨迹详情（TracePage）", () => {
 
   it("没有价格时成本显示「—」", async () => {
     stubApi({ [`GET ${DETAIL}`]: () => json(200, detailBody([run({}, null)])) });
-    const { container } = renderPage(<TrajectoryPage />);
+    const { container } = await renderRouteWithCache("/trajectories/c1", {
+      ...NO_MEMBERS,
+      ...lastStubRoutes(),
+    });
     const list = await screen.findByRole("tree", { name: en.trajectories.detail.waterfall });
     // 页头：合计成本未知
     const metrics = container.querySelector('[data-part="stat-cards"]') as HTMLElement;
@@ -469,19 +493,51 @@ describe("轨迹详情（TracePage）", () => {
     expect(within(row).getByText("—")).toBeTruthy();
   });
 
+  it("the run's starter shows as a name with the account id in a tooltip; the id when members are unreadable", async () => {
+    stubApi({
+      [`GET ${DETAIL}`]: () => json(200, detailBody([run()])),
+      "GET /api/v1/orgs/o1/members": () =>
+        json(200, {
+          members: [
+            {
+              account: { id: "a1", displayName: "Grace", email: null },
+              role: "member",
+              joinedAt: at(0),
+              anonymous: false,
+            },
+          ],
+        }),
+    });
+    await renderRouteWithCache("/trajectories/c1", { ...NO_MEMBERS, ...lastStubRoutes() });
+    const name = await screen.findByText("Grace");
+    expect(name.getAttribute("title")).toBe("a1");
+    cleanup();
+    // a member list the kernel refuses costs only the name
+    stubApi({
+      [`GET ${DETAIL}`]: () => json(200, detailBody([run()])),
+      "GET /api/v1/orgs/o1/members": () =>
+        json(403, { error: { code: "auth.forbidden", message: "no" } }),
+    });
+    await renderRouteWithCache("/trajectories/c1", lastStubRoutes());
+    expect(await screen.findByText("a1")).toBeTruthy();
+  });
+
   it("加载更早的运行：带 before 再读一页，拼在前面", async () => {
     const older = run({ runId: "r0", startedAt: at(-60_000), endedAt: at(-50_000) });
     const calls = stubApi({
       [`GET ${DETAIL}?limit=10`]: () => json(200, detailBody([run()], "r1")),
       [`GET ${DETAIL}?limit=10&before=r1`]: () => json(200, detailBody([older], null)),
     });
-    renderPage(<TrajectoryPage />);
+    await renderRouteWithCache("/trajectories/c1", { ...NO_MEMBERS, ...lastStubRoutes() });
     await screen.findByRole("tree");
     await userEvent
       .setup()
       .click(screen.getByRole("button", { name: en.trajectories.detail.loadEarlier }));
-    await waitFor(() => expect(screen.getAllByText(/^run · v3$/)).toHaveLength(2));
-    expect(calls.map((c) => c.url)).toEqual([`${DETAIL}?limit=10`, `${DETAIL}?limit=10&before=r1`]);
+    await waitFor(() =>
+      expect(within(screen.getByRole("tree")).getAllByText(/^v3$/)).toHaveLength(2),
+    );
+    // the first page was the server's read
+    expect(calls.map((c) => c.url)).toEqual([`${DETAIL}?limit=10&before=r1`]);
     expect(screen.queryByRole("button", { name: en.trajectories.detail.loadEarlier })).toBeNull();
   });
 
@@ -496,7 +552,11 @@ describe("轨迹详情（TracePage）", () => {
         return within(screen.getByRole("region", { name: m.trajectories.detail.region }));
       };
       ended(run({ end: { kind: "aborted", detail: "capped" } }));
-      renderPage(<TrajectoryPage />, { locale });
+      await renderRouteWithCache(
+        "/trajectories/c1",
+        { ...NO_MEMBERS, ...lastStubRoutes() },
+        { locale },
+      );
       expect(
         (await region()).getByText(
           `${m.trajectories.detail.run.end.aborted} · ${m.trajectories.endDetail.capped}`,
@@ -504,7 +564,11 @@ describe("轨迹详情（TracePage）", () => {
       ).toBeTruthy();
       cleanup();
       ended(run({ end: { kind: "failed", detail: "run.provider_error" } }));
-      renderPage(<TrajectoryPage />, { locale });
+      await renderRouteWithCache(
+        "/trajectories/c1",
+        { ...NO_MEMBERS, ...lastStubRoutes() },
+        { locale },
+      );
       expect(
         (await region()).getByText(
           `${m.trajectories.detail.run.end.failed} · ${m.errors.run.provider_error}`,
@@ -512,7 +576,11 @@ describe("轨迹详情（TracePage）", () => {
       ).toBeTruthy();
       cleanup();
       ended(run({ end: { kind: "aborted", detail: "something_new" } }));
-      renderPage(<TrajectoryPage />, { locale });
+      await renderRouteWithCache(
+        "/trajectories/c1",
+        { ...NO_MEMBERS, ...lastStubRoutes() },
+        { locale },
+      );
       expect(
         (await region()).getByText(`${m.trajectories.detail.run.end.aborted} · something_new`),
       ).toBeTruthy();
@@ -525,16 +593,38 @@ describe("轨迹详情（TracePage）", () => {
       [`GET ${DETAIL}`]: () =>
         json(200, { ...body, conversation: { ...body.conversation, kind: "eval" } }),
     });
-    renderPage(<TrajectoryPage />);
+    await renderRouteWithCache("/trajectories/c1", { ...NO_MEMBERS, ...lastStubRoutes() });
     await screen.findByRole("tree");
     expect(screen.queryByRole("button", { name: en.trajectories.addToSet.action })).toBeNull();
   });
 
   it("非管理员（agent 负责人）看不到「加入评测集」", async () => {
     stubApi({ [`GET ${DETAIL}`]: () => json(200, detailBody([run()])) });
-    renderPage(<TrajectoryPage />, { me: OWNER_MEMBER });
+    await renderRouteWithCache(
+      "/trajectories/c1",
+      { ...NO_MEMBERS, ...lastStubRoutes() },
+      { me: OWNER_MEMBER },
+    );
     await screen.findByRole("tree");
     expect(screen.queryByRole("button", { name: en.trajectories.addToSet.action })).toBeNull();
+  });
+
+  it("no eval set for the agent: the dialog offers 新建评测集 for it, not a disabled 加入", async () => {
+    stubApi({
+      [`GET ${DETAIL}`]: () => json(200, detailBody([run()])),
+      [`GET ${ORG}/eval-sets`]: () => json(200, { sets: [] }),
+    });
+    await renderRouteWithCache("/trajectories/c1", { ...NO_MEMBERS, ...lastStubRoutes() });
+    await screen.findByRole("tree");
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: en.trajectories.addToSet.action }));
+    const dialog = await screen.findByRole("dialog", { name: en.trajectories.addToSet.title });
+    expect(await within(dialog).findByText(en.trajectories.addToSet.noSets)).toBeTruthy();
+    const create = within(dialog).getByRole("link", { name: en.trajectories.addToSet.createSet });
+    expect(create.getAttribute("href")).toBe("/evals/new?agentId=ag1");
+    expect(
+      within(dialog).queryByRole("button", { name: en.trajectories.addToSet.submit }),
+    ).toBeNull();
   });
 
   it("管理员把选中的运行加入该 agent 的评测集", async () => {
@@ -565,7 +655,7 @@ describe("轨迹详情（TracePage）", () => {
         }),
       [`POST ${ORG}/eval-sets/set-1/cases`]: () => json(201, { case: { id: "case-1" } }),
     });
-    renderPage(<TrajectoryPage />);
+    await renderRouteWithCache("/trajectories/c1", { ...NO_MEMBERS, ...lastStubRoutes() });
     await screen.findByRole("tree");
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: en.trajectories.addToSet.action }));
@@ -590,13 +680,13 @@ describe("轨迹详情（TracePage）", () => {
     ).toBeTruthy();
   });
 
-  it("无权查看：内核 404 显示未找到", async () => {
+  it("a trajectory the kernel hides (404) is the not-found state in the shell", async () => {
     stubApi({
       [`GET ${DETAIL}`]: () =>
         json(404, { error: { code: "trajectory.not_found", message: "Trajectory not found" } }),
     });
-    renderPage(<TrajectoryPage />);
-    expect(await screen.findByText(`${en.errors.trajectory.not_found}`)).toBeTruthy();
+    await renderRouteWithCache("/trajectories/c1", { ...NO_MEMBERS, ...lastStubRoutes() });
+    expect(screen.getByRole("heading", { level: 1, name: en.notFound.title })).toBeTruthy();
   });
 });
 
@@ -612,9 +702,9 @@ describe("运行记录列表（ListPage）", () => {
     lastRun: status === null ? null : { runId: `run-${id}`, status, startedAt: at(0) },
   });
 
-  it("Rail 按 agent、状态筛选；打开一行进详情", async () => {
+  it("工具栏按 agent、状态筛选；页头标签链到评测集；打开一行进详情", async () => {
     resetNavigation("/trajectories");
-    const calls = stubApi({
+    stubApi({
       [`GET ${ORG}/agents`]: () =>
         json(200, {
           agents: [
@@ -632,7 +722,9 @@ describe("运行记录列表（ListPage）", () => {
       [`GET ${LIST}`]: () =>
         json(200, { items: [item("c1", "completed"), item("c2", null)], next: null }),
     });
-    const { container } = renderPage(<TrajectoriesPage />, { locale: "zh" });
+    const { container, calls } = await renderRouteWithCache("/trajectories", lastStubRoutes(), {
+      locale: "zh",
+    });
     expect(container.querySelector('[data-template="ListPage"]')).not.toBeNull();
     const table = await screen.findByRole("table", { name: zh.trajectories.title });
     expect(within(table).getByText("Clean up")).toBeTruthy();
@@ -641,15 +733,40 @@ describe("运行记录列表（ListPage）", () => {
     expect(within(table).getByText(`${zh.trajectories.status.completed}`)).toBeTruthy();
     const lastList = () => calls.filter((c) => c.url.startsWith(LIST)).at(-1)?.url;
     expect(lastList()).toBe(`${LIST}?limit=50`);
+    // One page title "评测与运行" with tabs linking the two routes; no filter rail.
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe(zh.trajectories.title);
+    expect(
+      screen
+        .getByRole("link", { name: new RegExp(zh.trajectories.tabs.sets) })
+        .getAttribute("href"),
+    ).toBe("/evals");
+    expect(
+      screen
+        .getByRole("link", { name: new RegExp(zh.trajectories.tabs.runs) })
+        .getAttribute("aria-current"),
+    ).toBe("page");
 
+    // A filter is a navigation; the server reads the list the query names
     const user = userEvent.setup();
     await user.selectOptions(
       screen.getByRole("combobox", { name: zh.trajectories.filters.agent }),
       "ag1",
     );
-    await waitFor(() => expect(lastList()).toBe(`${LIST}?limit=50&agentId=ag1`));
-    await user.click(screen.getByRole("radio", { name: zh.trajectories.status.failed }));
-    await waitFor(() => expect(lastList()).toBe(`${LIST}?limit=50&agentId=ag1&status=failed`));
+    expect(router.replace).toHaveBeenLastCalledWith("/trajectories?agentId=ag1");
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: zh.trajectories.filters.status }),
+      "failed",
+    );
+    expect(router.replace).toHaveBeenLastCalledWith("/trajectories?status=failed");
+    cleanup();
+    const filtered = await renderRouteWithCache(
+      "/trajectories?agentId=ag1&status=failed",
+      lastStubRoutes(),
+      { locale: "zh" },
+    );
+    expect(filtered.calls.filter((c) => c.url.startsWith(LIST)).at(-1)?.url).toBe(
+      `${LIST}?limit=50&agentId=ag1&status=failed`,
+    );
 
     await user.click(await screen.findByText("Clean up"));
     expect(router.push).toHaveBeenCalledWith("/trajectories/c1");
@@ -701,7 +818,7 @@ describe("sub-agent links in the trajectory (phase C)", () => {
 
   it("an agent call links to the sub-agent's trajectory", async () => {
     stubApi({ [`GET ${DETAIL}`]: () => json(200, detailBody([parentRun()])) });
-    renderPage(<TrajectoryPage />);
+    await renderRouteWithCache("/trajectories/c1", { ...NO_MEMBERS, ...lastStubRoutes() });
     const list = await screen.findByRole("tree", { name: en.trajectories.detail.waterfall });
     await userEvent.setup().click(within(list).getByText("Agent"));
     const detail = screen.getByRole("region", { name: en.trajectories.detail.region });
@@ -723,7 +840,7 @@ describe("sub-agent links in the trajectory (phase C)", () => {
           },
         }),
     });
-    renderPage(<TrajectoryPage />);
+    await renderRouteWithCache("/trajectories/c1", { ...NO_MEMBERS, ...lastStubRoutes() });
     await screen.findByRole("tree");
     const back = screen.getByRole("link", { name: en.trajectories.parentLink });
     expect(back.getAttribute("href")).toBe("/trajectories/p1");

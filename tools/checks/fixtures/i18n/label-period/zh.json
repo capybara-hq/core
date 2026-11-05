@@ -1,0 +1,13 @@
+{
+  "agents": {
+    "title": "Agents",
+    "form": {
+      "submit": "保存。",
+      "confirmLabel": "确认。",
+      "nameHint": "名称在组织内唯一。"
+    }
+  },
+  "chat": {
+    "placeholder": "输入消息…"
+  }
+}

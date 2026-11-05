@@ -10,7 +10,7 @@
 <body>
 <main class="r-page">
 <h1>Conversation page template</h1>
-<p>Sidebar + title bar (middle column only) + 720 chat column + composer + status bar; the right area holds the properties panel (300) or one right panel (560, min 520, the chat keeps 480). Below 1280 the right panel is an overlay sheet.</p>
+<p>Sidebar + title bar (middle column only) + 720 chat column + composer + status bar; the right area holds the properties panel (300) or one right panel (560, min 520, the chat keeps 480). Below 1280 the right panel is an overlay sheet. Loading (spec §5.4): the title is a bar, the thread is three placeholder turns, the composer stays and is inert, and the right panel draws its own loading state.</p>
 <div class="r-blocks">
 <section data-ref-block="template-conversation-properties" style="width:1280px;height:820px">
   <template data-fixture="conv-template" data-opts='{"state": "properties"}'></template>
@@ -26,6 +26,9 @@
 </section>
 <section data-ref-block="template-conversation-sheet" style="width:1100px;height:820px">
   <template data-fixture="conv-template" data-opts='{"state": "sheet"}'></template>
+</section>
+<section data-ref-block="template-conversation-loading" style="width:1280px;height:820px">
+  <template data-fixture="conv-template" data-opts='{"state": "loading"}'></template>
 </section>
 </div>
 </main>

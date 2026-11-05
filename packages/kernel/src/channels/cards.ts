@@ -96,7 +96,7 @@ export const conversationUrl = (base: string, conversationId: string) =>
 
 /** 个人连接页里某个连接器的位置（与网页 ConnectCard 的链接一致）。 */
 export const connectUrl = (base: string, connectorId: string) =>
-  `${base}/settings/connections#connector-${encodeURIComponent(connectorId)}`;
+  `${base}/account/connections#connector-${encodeURIComponent(connectorId)}`;
 
 /**
  * The tool as the card names it (tool naming spec §7): a builtin by its name; a connector or

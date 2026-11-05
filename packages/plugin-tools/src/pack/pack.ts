@@ -24,6 +24,7 @@ import {
   type ExtensionManifest,
   HOST_PROVIDED_PACKAGES,
   PLUGIN_MANIFEST_FILE,
+  PLUGIN_MANIFEST_LIMITS,
   type PluginExtensionSection,
   type PluginManifest,
   parseAgentTemplate,
@@ -36,6 +37,7 @@ import {
 import { init as lexerInit, parse as lexerParse } from "es-module-lexer";
 import { build, type Plugin } from "esbuild";
 import { pack as tarPack } from "tar-stream";
+import { extensionConfigSchemas, formatConfigSchemaProblem } from "./config-schemas.js";
 
 /** The extension entry the packer writes (relative to the package root). */
 const EXTENSION_ENTRY = "dist/index.mjs";
@@ -439,6 +441,66 @@ async function contentFiles(
 }
 
 /**
+ * Bundles `src/index.ts` into `<stage>/package/dist/index.mjs` (esbuild, single-file ESM), checks
+ * the bundle's imports, imports it and runs its default export through defineExtension. Returns the
+ * bundle, the defined manifest and the bundled inputs (for the notices).
+ */
+async function buildAndImport(
+  dir: string,
+  label: string,
+  stage: string,
+): Promise<{ code: Buffer; m: ExtensionManifest; inputs: string[] }> {
+  await linkHostPackages(dir, stage);
+  const entryOut = join(stage, "package", EXTENSION_ENTRY);
+  const result = await build({
+    absWorkingDir: dir,
+    entryPoints: [join(dir, "src/index.ts")],
+    outfile: entryOut,
+    bundle: true,
+    platform: "node",
+    format: "esm",
+    target: "node24",
+    external: [...HOST_PROVIDED_PACKAGES],
+    plugins: [nodeBuiltins],
+    banner: { js: BANNER },
+    define: DEFINE,
+    charset: "utf8",
+    logLevel: "silent",
+    metafile: true,
+    // Notices of bundled dependencies go to THIRD-PARTY-NOTICES.txt (built from the metafile).
+    legalComments: "none",
+  });
+  if (result.errors.length > 0) {
+    throw new Error(`${label}: esbuild failed: ${result.errors.map((e) => e.text).join("; ")}`);
+  }
+  const code = await readFile(entryOut);
+  const issues = await importIssues(code.toString("utf8"));
+  if (issues.length > 0) throw new Error(`${label}: ${issues.join("; ")}`);
+
+  const mod = await importBundle(entryOut);
+  if (typeof mod.default !== "object" || mod.default === null) {
+    throw new Error(`${label}: the bundle has no default export object`);
+  }
+  const m = defineExtension(mod.default as ExtensionManifest);
+  return { code, m, inputs: Object.keys(result.metafile?.inputs ?? {}) };
+}
+
+/**
+ * The extension a plugin directory's `src/index.ts` defines, bundled and imported the way the
+ * packer does (in a `.capybara-pack-*` staging dir under the system temp dir, removed afterwards).
+ * For checks that need the module (config forms); throws what packing would throw.
+ */
+export async function importPluginExtension(pluginDir: string): Promise<ExtensionManifest> {
+  const dir = resolve(pluginDir);
+  const stage = await realpath(await mkdtemp(join(tmpdir(), STAGING_PREFIX)));
+  try {
+    return (await buildAndImport(dir, dir, stage)).m;
+  } finally {
+    await rm(stage, { recursive: true, force: true });
+  }
+}
+
+/**
  * Bundles the extension `src/index.ts`:
  * 1. esbuild bundles it into the single-file ESM `dist/index.mjs` (platform node, target node24),
  *    with only {@link HOST_PROVIDED_PACKAGES} and Node builtins (rewritten to `node:*`) external;
@@ -446,6 +508,8 @@ async function contentFiles(
  * 2. the bundle's imports are checked (allowlist, no non-literal dynamic import), the bundle is
  *    imported and its default export goes through defineExtension; `staticManifestOf` gives the
  *    static manifest, whose version must equal the package.json version;
+ *    the config schemas become `extension.configSchemas` (`configJsonSchema`; refused when their
+ *    hints have problems, {@link extensionConfigSchemas});
  * 3. `migrations/` (when the manifest declares migrations, which must resolve to the plugin's
  *    `migrations/`), `ui/` (when present) and THIRD-PARTY-NOTICES.txt join the files.
  *
@@ -458,41 +522,16 @@ async function bundleExtension(
 ): Promise<{ files: Map<string, Buffer>; extension: PluginExtensionSection }> {
   const stage = await realpath(await mkdtemp(join(tmpdir(), STAGING_PREFIX)));
   try {
-    await linkHostPackages(dir, stage);
-    const entryOut = join(stage, "package", EXTENSION_ENTRY);
-    const result = await build({
-      absWorkingDir: dir,
-      entryPoints: [join(dir, "src/index.ts")],
-      outfile: entryOut,
-      bundle: true,
-      platform: "node",
-      format: "esm",
-      target: "node24",
-      external: [...HOST_PROVIDED_PACKAGES],
-      plugins: [nodeBuiltins],
-      banner: { js: BANNER },
-      define: DEFINE,
-      charset: "utf8",
-      logLevel: "silent",
-      metafile: true,
-      // Notices of bundled dependencies go to THIRD-PARTY-NOTICES.txt (built from the metafile).
-      legalComments: "none",
-    });
-    if (result.errors.length > 0) {
-      throw new Error(`${label}: esbuild failed: ${result.errors.map((e) => e.text).join("; ")}`);
-    }
-    const code = await readFile(entryOut);
-    const issues = await importIssues(code.toString("utf8"));
-    if (issues.length > 0) throw new Error(`${label}: ${issues.join("; ")}`);
-
-    const mod = await importBundle(entryOut);
-    if (typeof mod.default !== "object" || mod.default === null) {
-      throw new Error(`${label}: the bundle has no default export object`);
-    }
-    const m = defineExtension(mod.default as ExtensionManifest);
+    const { code, m, inputs } = await buildAndImport(dir, label, stage);
     if (m.version !== pkgVersion) {
       throw new Error(
         `${label}: manifest version ${m.version} does not match package.json version ${String(pkgVersion)}`,
+      );
+    }
+    const config = extensionConfigSchemas(m.config);
+    if (config.problems.length > 0) {
+      throw new Error(
+        `${label}: invalid config UI hints: ${config.problems.map(formatConfigSchemaProblem).join("; ")}`,
       );
     }
 
@@ -519,7 +558,10 @@ async function bundleExtension(
       }
       extension.ui = "./ui";
     }
-    const notices = await thirdPartyNotices(dir, Object.keys(result.metafile?.inputs ?? {}));
+    if (config.schemas.deployment !== undefined || config.schemas.org !== undefined) {
+      extension.configSchemas = config.schemas;
+    }
+    const notices = await thirdPartyNotices(dir, inputs);
     if (notices !== undefined) files.set(NOTICES_FILE, Buffer.from(notices));
     return { files, extension };
   } finally {
@@ -594,7 +636,17 @@ export async function packPlugin(pluginDir: string, outDir: string): Promise<Pac
   const pkgIssues = validatePluginPackageJsonFor(pkg, parsed, SDK_VERSION);
   if (pkgIssues.length > 0) throw new Error(`${label}: ${pkgIssues.join("; ")}`);
   files.set("package.json", Buffer.from(`${JSON.stringify(pkg, null, 2)}\n`));
-  files.set(PLUGIN_MANIFEST_FILE, Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`));
+  // The packed text is pretty-printed while the config schema caps measure compact JSON: the text
+  // itself must stay under the reader's limit, or the kernel would refuse the package unread.
+  const manifestText = `${JSON.stringify(manifest, null, 2)}\n`;
+  if (manifestText.length > PLUGIN_MANIFEST_LIMITS.manifestChars) {
+    throw new Error(
+      `${label}: packed ${PLUGIN_MANIFEST_FILE} is ${manifestText.length} characters, over the ` +
+        `${PLUGIN_MANIFEST_LIMITS.manifestChars} limit (PLUGIN_MANIFEST_LIMITS.manifestChars); ` +
+        "make the config schemas smaller",
+    );
+  }
+  files.set(PLUGIN_MANIFEST_FILE, Buffer.from(manifestText));
 
   const tgz = await makeTgz(files);
   await mkdir(outDir, { recursive: true });

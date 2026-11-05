@@ -1,13 +1,22 @@
 /* 导航与展示组件（spec §2.4、§3、§6.4、§6.5、§6.8） */
 
-/* Tabs：文字 + 选中下划线 */
+/* Tabs: text + the selected underline. One line at every width: tabs never wrap; when they don't
+   fit they scroll sideways (no scrollbar drawn) (spec §6.4). */
 .cb-tabs {
   display: flex;
   gap: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
   border-bottom: 1px solid var(--cb-line-soft);
+}
+.cb-tabs::-webkit-scrollbar {
+  display: none;
 }
 .cb-tab {
   display: inline-flex;
+  flex: none;
+  white-space: nowrap;
   align-items: center;
   gap: 8px;
   height: 28px;
@@ -23,6 +32,10 @@
     background-color var(--cb-motion-hover),
     color var(--cb-motion-hover);
 }
+/* The row clips (it scrolls), so the focus ring is drawn inside the tab. */
+.cb-tab:focus-visible {
+  outline-offset: -2px;
+}
 .cb-tab:hover:not(:disabled):not([aria-disabled="true"]) {
   background: var(--cb-hover);
   color: var(--cb-ink);
@@ -34,13 +47,16 @@
 }
 .cb-tab:disabled,
 .cb-tab[aria-disabled="true"] {
-  color: var(--cb-faint);
+  color: var(--cb-disabled);
   cursor: not-allowed;
 }
 .cb-tab-count {
   color: var(--cb-muted);
   font-size: var(--cb-type-small-size);
   font-variant-numeric: tabular-nums;
+}
+.cb-tab-count[data-pending="true"] {
+  color: var(--cb-faint);
 }
 .cb-tab-badge {
   padding: 0 4px;
@@ -83,6 +99,11 @@
   height: var(--cb-control-prominent);
 }
 .cb-seg {
+  /* One line: a label that does not fit is cut with an ellipsis, never wrapped (fill mode). */
+  overflow: hidden;
+  min-width: 0;
+  white-space: nowrap;
+  text-overflow: ellipsis;
   padding: 0 var(--cb-space-2);
   border: 0;
   border-radius: var(--cb-radius-sm);
@@ -142,6 +163,12 @@
   border-color: var(--cb-accent);
   color: var(--cb-accent);
 }
+/* An attention mark ("敏感"): the word in warn, no box (spec §2.4). */
+.cb-badge[data-tone="warn"] {
+  padding: 0;
+  border-color: transparent;
+  color: var(--cb-warn);
+}
 .cb-badge[data-tone="count"] {
   border-color: transparent;
   background: var(--cb-selected);
@@ -198,7 +225,7 @@
   gap: 8px;
   font-size: var(--cb-type-h2-size);
   line-height: var(--cb-type-h2-line);
-  font-weight: 700;
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
 .cb-metric-delta {
@@ -243,7 +270,7 @@
   fill: var(--cb-muted);
 }
 .cb-logo-word {
-  font-weight: 700;
+  font-weight: 600;
 }
 
 /* Dither */
@@ -255,9 +282,6 @@
 .cb-dither rect {
   fill: var(--cb-line);
 }
-.cb-dither rect[data-accent="true"] {
-  fill: var(--cb-accent);
-}
 
 /* Skeleton */
 .cb-skeleton {
@@ -265,9 +289,73 @@
   flex-direction: column;
   gap: 8px;
 }
-.cb-skeleton-row {
-  height: 20px;
-  background: var(--cb-hover);
+
+/* Skeleton primitives (spec §6.29): bars and blocks that never animate. */
+.cb-skeleton-group {
+  display: contents;
+}
+.cb-skeleton-text {
+  display: flex;
+  align-items: center;
+  max-width: 100%;
+}
+.cb-skeleton-bar {
+  display: block;
+  /* SkeletonBars (a block's loading bars) sets its own width per bar; a text bar fills its slot. */
+  width: var(--cb-skeleton-w, 100%);
+  height: var(--cb-space-3);
+  border-radius: var(--cb-radius-sm);
+  background: var(--cb-selected);
+}
+.cb-skeleton-text[data-size="body"] {
+  height: var(--cb-type-body-line);
+}
+.cb-skeleton-text[data-size="small"] {
+  height: var(--cb-type-small-line);
+}
+.cb-skeleton-text[data-size="title"] {
+  height: var(--cb-type-h1-line);
+}
+.cb-skeleton-text[data-size="heading"] {
+  height: var(--cb-type-h2-line);
+}
+.cb-skeleton-text[data-size="prose"] {
+  height: var(--cb-type-prose-line);
+}
+.cb-skeleton-text[data-size="metric"] {
+  height: var(--cb-type-metric-line);
+}
+.cb-skeleton-box {
+  display: block;
+  max-width: 100%;
+  border-radius: var(--cb-radius-sm);
+  background: var(--cb-selected);
+}
+.cb-skeleton-box[data-box="dense"] {
+  height: var(--cb-control-dense);
+}
+.cb-skeleton-box[data-box="default"] {
+  height: var(--cb-control-default);
+}
+.cb-skeleton-box[data-box="prominent"] {
+  height: var(--cb-control-prominent);
+}
+.cb-skeleton-box[data-box="mark"] {
+  border-radius: var(--cb-radius-md);
+  width: 36px;
+  height: 36px;
+}
+/* A Textarea's box: max(rows, 2) body lines + the textarea's own padding (space.1 x 2) + its border. */
+.cb-skeleton-box[data-box="textarea"] {
+  height: calc(
+    max(var(--cb-skeleton-rows, 2), 2) *
+    var(--cb-type-body-line) +
+    var(--cb-space-2) +
+    2px
+  );
+}
+.cb-skeleton-box[data-box="block"] {
+  height: 96px;
 }
 
 /* BarChart */
@@ -295,6 +383,13 @@
   fill: var(--cb-muted);
 }
 
+/* DateTime (spec §2.2): mono, tabular figures, relative age in the tooltip. */
+.cb-datetime {
+  font-family: var(--cb-font);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
 /* KeyValue：键定宽 muted，值单行省略 */
 .cb-kv {
   display: flex;
@@ -320,6 +415,28 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* Two columns of pairs (spec §6.5): key and value space.3 apart, the columns space.7 (32 px)
+   apart, each key column as wide as its widest key, so the gaps never vary from row to row. */
+.cb-kv[data-columns="2"] {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr) max-content minmax(0, 1fr);
+  column-gap: var(--cb-space-3);
+  row-gap: var(--cb-space-1);
+}
+.cb-kv[data-columns="2"] > .cb-kv-row {
+  display: contents;
+}
+.cb-kv[data-columns="2"] > .cb-kv-row:nth-child(2n) > .cb-kv-key {
+  margin-left: calc(var(--cb-space-7) - var(--cb-space-3));
+}
+@media (max-width: 639px) {
+  .cb-kv[data-columns="2"] {
+    grid-template-columns: max-content minmax(0, 1fr);
+  }
+  .cb-kv[data-columns="2"] > .cb-kv-row:nth-child(2n) > .cb-kv-key {
+    margin-left: 0;
+  }
 }
 
 @media (prefers-reduced-motion: no-preference) {
@@ -479,7 +596,7 @@
 }
 .cb-toolcall-name {
   flex: none;
-  font-weight: 700;
+  font-weight: 600;
 }
 .cb-toolcall-summary {
   min-width: 0;
@@ -528,7 +645,7 @@
   color: var(--cb-faint);
   font-size: var(--cb-type-micro-size);
   line-height: 20px;
-  font-weight: 700;
+  font-weight: 600;
 }
 .cb-io-body {
   display: flex;
@@ -584,7 +701,7 @@
 .cb-tasklist-item[data-status="in_progress"] {
   background: var(--cb-accent-tint);
   box-shadow: inset 2px 0 0 var(--cb-accent);
-  font-weight: 700;
+  font-weight: 600;
 }
 .cb-tasklist-item[data-status="in_progress"] .cb-tasklist-glyph {
   color: var(--cb-accent);
@@ -714,6 +831,40 @@
 .cb-file-input {
   display: none;
 }
+/* FilePicker (spec §6.25): a dashed drop zone with a real 选择文件 button */
+.cb-file-picker {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--cb-space-2);
+  padding: var(--cb-space-6) var(--cb-space-4);
+  border: 1px dashed var(--cb-line-strong);
+  border-radius: var(--cb-radius-md);
+  background: var(--cb-panel);
+  text-align: center;
+}
+.cb-file-picker[data-disabled="true"] {
+  border-color: var(--cb-line);
+}
+.cb-file-picker-icon {
+  display: inline-flex;
+  color: var(--cb-faint);
+}
+.cb-file-picker-hint {
+  color: var(--cb-muted);
+  font-family: var(--cb-font-prose);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.cb-file-picker-status {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--cb-space-2);
+  width: 100%;
+  min-width: 0;
+  margin-top: var(--cb-space-2);
+}
 
 /* 消息里的附件：图片缩略图 / 文件卡片 */
 .cb-attachment {
@@ -791,9 +942,10 @@ a.cb-attachment:hover {
 .cb-waterfall-row:hover {
   background: var(--cb-hover);
 }
+/* Selection is neutral (spec §2.3): a selected ground and an ink marker on the left. */
 .cb-waterfall-row[aria-selected="true"] {
-  background: var(--cb-accent-tint);
-  box-shadow: inset 2px 0 0 var(--cb-accent);
+  background: var(--cb-selected);
+  box-shadow: inset 2px 0 0 var(--cb-ink);
 }
 .cb-waterfall-name {
   display: flex;
@@ -816,7 +968,7 @@ a.cb-attachment:hover {
 }
 .cb-waterfall-row[data-kind="run"] .cb-waterfall-label,
 .cb-waterfall-row[data-kind="step"] .cb-waterfall-label {
-  font-weight: 700;
+  font-weight: 600;
 }
 .cb-waterfall-meta {
   flex: none;
@@ -907,12 +1059,13 @@ a.cb-attachment:hover {
   padding: var(--cb-space-4);
   border-radius: var(--cb-radius-md);
   background: var(--cb-panel);
+  box-shadow: inset 0 0 0 1px var(--cb-line-card);
 }
 .cb-link-card-title {
   margin: 0;
   font-size: var(--cb-type-body-size);
   line-height: var(--cb-type-body-line);
-  font-weight: 700;
+  font-weight: 500;
 }
 .cb-link-card-description {
   flex: 1;
@@ -921,4 +1074,130 @@ a.cb-attachment:hover {
   font-family: var(--cb-font-prose);
   font-size: var(--cb-type-prose-small-size);
   line-height: var(--cb-type-prose-small-line);
+}
+
+/* A loading span row is the loaded row's box, without its hover and pointer. */
+.cb-waterfall-row[data-loading="true"] {
+  cursor: default;
+}
+.cb-waterfall-row[data-loading="true"]:hover {
+  background: transparent;
+}
+
+/* Avatar (spec §6.30): a preset animal on its ground, an uploaded image, or the initial square. */
+.cb-avatar {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border-radius: var(--cb-radius-sm);
+  background: var(--cb-selected);
+  color: var(--cb-ink);
+  font-family: var(--cb-font);
+  font-weight: 600;
+  line-height: 1;
+}
+.cb-avatar[data-size="16"] {
+  width: 16px;
+  height: 16px;
+  font-size: var(--cb-type-micro-size);
+}
+.cb-avatar[data-size="24"] {
+  width: 24px;
+  height: 24px;
+  font-size: var(--cb-type-small-size);
+}
+.cb-avatar[data-size="28"] {
+  width: 28px;
+  height: 28px;
+  font-size: var(--cb-type-small-size);
+}
+.cb-avatar[data-size="40"] {
+  width: 40px;
+  height: 40px;
+  font-size: var(--cb-type-h2-size);
+}
+.cb-avatar[data-size="64"] {
+  width: 64px;
+  height: 64px;
+  border-radius: var(--cb-radius-md);
+  font-size: var(--cb-type-h1-size);
+}
+.cb-avatar-art {
+  display: block;
+}
+.cb-avatar-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* AvatarPicker (spec §6.30): 48 px tiles (40 avatar, 3 padding, 1 border), space.2 apart. */
+.cb-avatar-picker {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-2);
+}
+.cb-avatar-picker-tiles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--cb-space-2);
+}
+.cb-avatar-picker-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--cb-space-2);
+}
+.cb-avatar-tile {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 48px;
+  height: 48px;
+  padding: 3px;
+  border: 1px solid transparent;
+  border-radius: var(--cb-radius-md);
+  background: transparent;
+  color: var(--cb-muted);
+  cursor: pointer;
+  transition: background-color var(--cb-motion-hover);
+}
+.cb-avatar-tile:hover {
+  background: var(--cb-hover);
+}
+.cb-avatar-tile[data-state="checked"] {
+  border-color: var(--cb-line-strong);
+  background: var(--cb-selected);
+}
+.cb-avatar-tile:focus-visible,
+.cb-avatar-tile:has(.cb-avatar-radio:focus-visible) {
+  outline: 2px solid var(--cb-accent);
+  outline-offset: 2px;
+}
+.cb-avatar-radio {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: inherit;
+}
+.cb-avatar-tile[data-part="avatar-upload"][data-state="unchecked"] {
+  border: 1px dashed var(--cb-line);
+}
+.cb-avatar-tile[data-part="avatar-upload"]:disabled {
+  border-color: var(--cb-line-soft);
+  background: transparent;
+  color: var(--cb-disabled);
+  cursor: not-allowed;
+}
+.cb-avatar-picker-reason {
+  margin: 0;
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
 }

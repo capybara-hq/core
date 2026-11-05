@@ -25,7 +25,7 @@ import { KernelDb } from "../../src/infra/database/kernel-db.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { KernelEvents } from "../../src/infra/events/kernel-events.js";
 import { LockService } from "../../src/infra/lock/lock.service.js";
-import { KERNEL_LOGGER, REDIS } from "../../src/infra/tokens.js";
+import { KERNEL_ROOT_LOGGER, REDIS } from "../../src/infra/tokens.js";
 import { createLogger, type KernelLogger } from "../../src/log.js";
 import { DirectorySync } from "../../src/orgs/directory-sync.js";
 import { InvitationsService } from "../../src/orgs/invitations.service.js";
@@ -268,6 +268,6 @@ export function directorySyncFor(
     get(OrgLock),
     o.queue ?? get(getQueueToken(MAINTENANCE_QUEUE_NAME)),
     get(LockService),
-    get(KERNEL_LOGGER),
+    get(KERNEL_ROOT_LOGGER),
   );
 }

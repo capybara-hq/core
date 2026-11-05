@@ -3,19 +3,22 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
-import AdminModelsPage from "../src/app/[locale]/(app)/admin/models/page";
-import OrgModelsPage from "../src/app/[locale]/(app)/settings/models/page";
 import { activeNavOf } from "../src/components/shell/nav";
 import type { Me } from "../src/lib/session";
-import { bodyOf, type Call, json, stubApi } from "./support/api";
+import { bodyOf, type Call, json, lastStubRoutes, stubApi } from "./support/api";
 import { resetNavigation } from "./support/navigation";
-import { ME, renderPage } from "./support/render";
+import { renderRouteWithCache } from "./support/query";
+import { ME } from "./support/render";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 
 const msgs = { zh, en } as const;
 const LOCALES = ["zh", "en"] as const;
 const ROW_ACTIONS = { zh: "行操作", en: "Row actions" } as const;
+/** The design ActionRow's count (design i18n `shell.unsaved`). */
+const UNSAVED = { zh: "{n} 处未保存的修改", en: "{n} unsaved changes" } as const;
+/** `models.purpose.savedAll` for one purpose (ICU plural in en). */
+const SAVED_ONE = { zh: "已保存 1 个用途。", en: "Saved 1 purpose." } as const;
 const NOT_ADMIN: Me = { ...ME, account: { ...ME.account, isEnterpriseAdmin: false } };
 const template = (name: string) => document.querySelector(`[data-template="${name}"]`);
 const fill = (s: string, vars: Record<string, string | number>) =>
@@ -115,6 +118,16 @@ function adminRoutes(extra: Record<string, (c: Call) => Response> = {}) {
   });
 }
 
+/** The page's one ActionRow (spec §4.4): one save for every changed purpose. */
+const actionRow = () =>
+  within(
+    (() => {
+      const el = document.querySelector('[data-part="action-row"]');
+      if (!el) throw new Error("no action row");
+      return el as HTMLElement;
+    })(),
+  );
+
 const purposeBox = async (purpose: string) =>
   within(
     await vi.waitFor(() => {
@@ -137,19 +150,33 @@ describe("导航", () => {
   });
 });
 
-describe("/admin/models（SettingsPage）", () => {
+describe("/admin/models（ListPage）", () => {
   it.each(LOCALES)("供应商、模型的能力、上下文长度与价格（%s）", async (locale) => {
     const m = msgs[locale];
     adminRoutes();
-    const { container } = renderPage(<AdminModelsPage />, { locale });
-    expect(template("SettingsPage")).not.toBeNull();
-    const current = container.querySelector('[aria-current="page"]');
-    expect(current?.textContent).toBe(m.admin.nav.models);
-    expect(current?.getAttribute("href")).toBe("/admin/models");
+    const { container } = await renderRouteWithCache("/admin/models", lastStubRoutes(), { locale });
+    // One frame: no inner navigation (the sidebar's admin context navigates)
+    expect(template("ListPage")).not.toBeNull();
+    expect(container.querySelector(".cb-settings-nav")).toBeNull();
     const table = await screen.findByRole("table", { name: "alpha" });
     const large = within(table).getByText("Alpha Large").closest("tr") as HTMLElement;
-    expect(within(large).getByText(m.models.capability.vision)).toBeTruthy();
-    expect(within(large).getByText(m.models.capability.reasoning)).toBeTruthy();
+    // Capabilities are text, not badges (「工具 · 图片 · 推理」), one no-break unit per item
+    const caps = [m.models.capability.tools, m.models.capability.vision];
+    const capsCell = large.querySelector('td[data-wrap="true"]') as HTMLElement;
+    expect(capsCell.textContent).toBe([...caps, m.models.capability.reasoning].join(" · "));
+    expect(
+      [...capsCell.querySelectorAll('[data-part="cell-list-item"]')].map((i) => i.textContent),
+    ).toEqual([`${caps[0]} ·`, `${caps[1]} ·`, m.models.capability.reasoning]);
+    // Capabilities are never cut to 「工具 ·…」: the cell wraps instead of an ellipsis
+    expect(capsCell.getAttribute("data-wrap")).toBe("true");
+    // The price columns are narrowed to their figures so the table fits the 1120 content width
+    for (const k of ["input", "output", "cacheRead", "cacheWrite"] as const) {
+      const th = within(table).getByRole("columnheader", { name: m.models.admin.columns[k] });
+      expect(th.style.width).toBe("80px");
+    }
+    // The model column keeps a 240 px minimum so names are not cut to 「deepseek/dee」
+    const head = within(table).getByRole("columnheader", { name: m.models.admin.columns.model });
+    expect(head.style.width).toBe("240px");
     expect(within(large).getByText("200,000")).toBeTruthy();
     expect(within(large).getByText("3")).toBeTruthy();
     expect(within(large).getByText("15")).toBeTruthy();
@@ -166,7 +193,7 @@ describe("/admin/models（SettingsPage）", () => {
   it.each(LOCALES)("某个供应商出错：显示错误，不影响其他供应商（%s）", async (locale) => {
     const m = msgs[locale];
     adminRoutes();
-    renderPage(<AdminModelsPage />, { locale });
+    await renderRouteWithCache("/admin/models", lastStubRoutes(), { locale });
     expect(await screen.findByRole("table", { name: "alpha" })).toBeTruthy();
     expect(
       screen.getByText(fill(m.models.admin.providerError, { provider: "broken" }), {
@@ -194,7 +221,7 @@ describe("/admin/models（SettingsPage）", () => {
         "PUT /api/v1/admin/model-prices": () =>
           json(200, { prices: [PRICE, next], currency: "EUR" }),
       });
-      renderPage(<AdminModelsPage />, { locale });
+      await renderRouteWithCache("/admin/models", lastStubRoutes(), { locale });
       const table = await screen.findByRole("table", { name: "alpha" });
       const row = () => within(table).getByText("Alpha Small").closest("tr") as HTMLElement;
       const user = userEvent.setup();
@@ -218,7 +245,7 @@ describe("/admin/models（SettingsPage）", () => {
   it("价格不合法：保存不可用、不发请求；留空输出价也不行", async () => {
     const p = en.models.admin.price;
     const calls = adminRoutes();
-    renderPage(<AdminModelsPage />);
+    await renderRouteWithCache("/admin/models", lastStubRoutes());
     const table = await screen.findByRole("table", { name: "alpha" });
     const row = within(table).getByText("Alpha Small").closest("tr") as HTMLElement;
     const user = userEvent.setup();
@@ -238,7 +265,7 @@ describe("/admin/models（SettingsPage）", () => {
     const calls = adminRoutes({
       "PUT /api/v1/admin/model-prices": () => json(200, { prices: [], currency: "EUR" }),
     });
-    renderPage(<AdminModelsPage />);
+    await renderRouteWithCache("/admin/models", lastStubRoutes());
     const table = await screen.findByRole("table", { name: "alpha" });
     const row = () => within(table).getByText("Alpha Large").closest("tr") as HTMLElement;
     const user = userEvent.setup();
@@ -266,7 +293,7 @@ describe("/admin/models（SettingsPage）", () => {
           return json(200, { purpose: evalView({ default: t, effective: t }) });
         },
       });
-      renderPage(<AdminModelsPage />, { locale });
+      await renderRouteWithCache("/admin/models", lastStubRoutes(), { locale });
       expect(await screen.findByText(m.models.evalUnmapped)).toBeTruthy();
       const plugin = await purposeBox("notes.summarize");
       expect(plugin.getByText(m.models.purpose.pluginNote)).toBeTruthy();
@@ -275,6 +302,9 @@ describe("/admin/models（SettingsPage）", () => {
       ).toBeTruthy();
       const ev = await purposeBox("eval");
       expect(ev.queryByText(m.models.purpose.pluginNote)).toBeNull();
+      // No save per purpose: the page has one ActionRow, shown once something changed
+      expect(ev.queryByRole("button")).toBeNull();
+      expect(document.querySelector('[data-part="action-row"]')).toBeNull();
       const user = userEvent.setup();
       await user.selectOptions(
         ev.getByRole("combobox", { name: m.models.purpose.model }),
@@ -283,15 +313,18 @@ describe("/admin/models（SettingsPage）", () => {
       // 选中模型后出现它的参数（复用 ModelParams）
       const effort = ev.getByRole("radiogroup", { name: locale === "zh" ? "思考深度" : "Effort" });
       await user.click(within(effort).getByRole("radio", { name: m.agents.params.effort.high }));
-      await user.click(
-        ev.getByRole("button", { name: fill(m.models.purpose.saveLabel, { purpose: "eval" }) }),
-      );
+      expect(actionRow().getByText(fill(UNSAVED[locale], { n: 1 }))).toBeTruthy();
+      await user.click(actionRow().getByRole("button", { name: m.models.purpose.save }));
       await vi.waitFor(() =>
         expect(bodyOf(calls.find((c) => c.method === "PUT"))).toEqual({
           target: target("alpha-large", { effort: "high" }),
         }),
       );
+      // Only the changed purpose is written
+      expect(calls.filter((c) => c.method === "PUT")).toHaveLength(1);
       await vi.waitFor(() => expect(screen.queryByText(m.models.evalUnmapped)).toBeNull());
+      expect(await screen.findByText(SAVED_ONE[locale])).toBeTruthy();
+      await vi.waitFor(() => expect(document.querySelector('[data-part="action-row"]')).toBeNull());
     },
   );
 
@@ -306,7 +339,7 @@ describe("/admin/models（SettingsPage）", () => {
           },
         }),
     });
-    renderPage(<AdminModelsPage />);
+    await renderRouteWithCache("/admin/models", lastStubRoutes());
     const ev = await purposeBox("eval");
     const user = userEvent.setup();
     await user.selectOptions(
@@ -316,16 +349,16 @@ describe("/admin/models（SettingsPage）", () => {
     await user.click(
       within(ev.getByRole("radiogroup", { name: "Effort" })).getByRole("radio", { name: "Low" }),
     );
-    await user.click(
-      ev.getByRole("button", { name: fill(en.models.purpose.saveLabel, { purpose: "eval" }) }),
-    );
+    await user.click(actionRow().getByRole("button", { name: en.models.purpose.save }));
     expect(await ev.findByText(`${en.agents.params.invalid}`)).toBeTruthy();
+    // The failed purpose stays changed: the ActionRow keeps it and counts the error
+    expect(actionRow().getByText(fill(UNSAVED.en, { n: 1 }))).toBeTruthy();
   });
 
-  it("非企业管理员：StatusPage 403，不请求后台接口", () => {
+  it("非企业管理员：没有访问权限，不请求后台接口", async () => {
     const calls = stubApi({});
-    renderPage(<AdminModelsPage />, { me: NOT_ADMIN });
-    expect(template("StatusPage")?.getAttribute("data-kind")).toBe("403");
+    await renderRouteWithCache("/admin/models", lastStubRoutes(), { me: NOT_ADMIN });
+    expect(template("StatusPage")?.getAttribute("data-kind")).toBe("no-access");
     expect(calls).toEqual([]);
   });
 });
@@ -347,7 +380,7 @@ describe("sub-agent model tiers on the purposes page", () => {
         }),
       "GET /api/v1/orgs/o1/models": () => json(200, { providers: [ALPHA] }),
     });
-    renderPage(<OrgModelsPage />, { locale });
+    await renderRouteWithCache("/settings/models", lastStubRoutes(), { locale });
     const box = (p: string) =>
       vi.waitFor(() => {
         const el = document.querySelector(`[data-purpose="${p}"]`);
@@ -383,37 +416,37 @@ describe("/settings/models（组织管理员）", () => {
           });
         },
       });
-      const { container } = renderPage(<OrgModelsPage />, { locale });
+      const { container } = await renderRouteWithCache("/settings/models", lastStubRoutes(), {
+        locale,
+      });
       expect(template("SettingsPage")).not.toBeNull();
-      const current = container.querySelector('[aria-current="page"]');
+      const current = container.querySelector('.cb-settings-nav [aria-current="page"]');
       expect(current?.textContent).toBe(m.connections.nav.models);
       expect(current?.getAttribute("href")).toBe("/settings/models");
       const ev = await purposeBox("eval");
       const defText = fill(m.models.purpose.deploymentDefault, { target: "alpha / Alpha Small" });
       expect(ev.getByText(defText)).toBeTruthy();
       expect(ev.queryByText(m.models.purpose.overridden)).toBeNull();
-      expect(
-        ev.queryByRole("button", {
-          name: fill(m.models.purpose.restoreLabel, { purpose: "eval" }),
-        }),
-      ).toBeNull();
+      expect(ev.queryByRole("button")).toBeNull();
       const user = userEvent.setup();
       await user.selectOptions(
         ev.getByRole("combobox", { name: m.models.purpose.model }),
         "alpha/alpha-large",
       );
-      await user.click(
-        ev.getByRole("button", { name: fill(m.models.purpose.saveLabel, { purpose: "eval" }) }),
-      );
+      await user.click(actionRow().getByRole("button", { name: m.models.purpose.save }));
       await vi.waitFor(() =>
         expect(bodyOf(calls.find((c) => c.method === "PUT"))).toEqual({
           target: target("alpha-large"),
         }),
       );
-      expect(await ev.findByText(m.models.purpose.overridden)).toBeTruthy();
-      await user.click(
-        ev.getByRole("button", { name: fill(m.models.purpose.restoreLabel, { purpose: "eval" }) }),
-      );
+      const overridden = await ev.findByText(m.models.purpose.overridden);
+      // the answer is written into the cached purposes: nothing is read again
+      expect(calls.filter((c) => c.method === "GET")).toEqual([]);
+      // A state reads as muted text, never an accent badge
+      expect(overridden.closest(".cb-badge")).toBeNull();
+      // Restoring the default is choosing 「使用部署默认」 and saving
+      await user.selectOptions(ev.getByRole("combobox", { name: m.models.purpose.model }), "");
+      await user.click(actionRow().getByRole("button", { name: m.models.purpose.save }));
       await vi.waitFor(() =>
         expect(bodyOf(calls.filter((c) => c.method === "PUT")[1])).toEqual({ target: null }),
       );
@@ -428,7 +461,7 @@ describe("/settings/models（组织管理员）", () => {
   it("部署默认未设置、组织也未覆盖：显示 eval 未映射提示", async () => {
     resetNavigation("/settings/models");
     orgRoutes([evalView()]);
-    renderPage(<OrgModelsPage />);
+    await renderRouteWithCache("/settings/models", lastStubRoutes());
     expect(await screen.findByText(en.models.evalUnmapped)).toBeTruthy();
     const ev = await purposeBox("eval");
     expect(
@@ -439,7 +472,7 @@ describe("/settings/models（组织管理员）", () => {
   it("设置导航：管理员看到「模型用途」", async () => {
     resetNavigation("/settings/models");
     orgRoutes([evalView()]);
-    renderPage(<OrgModelsPage />);
+    await renderRouteWithCache("/settings/models", lastStubRoutes());
     expect(await screen.findByRole("link", { name: en.connections.nav.models })).toBeTruthy();
   });
 });

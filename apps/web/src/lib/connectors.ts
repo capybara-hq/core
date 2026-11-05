@@ -188,6 +188,10 @@ export const ownershipOf = (auth: ConnectorAuth): Ownership | null =>
   auth.type === "none" ? null : auth.ownership;
 
 /** 当前组织中能否管理连接器（`connectors.manage`：管理员起；只用于决定是否显示管理入口，最终由内核判定）。 */
+/** The connectors that need each person's own credential (`/account/connections` lists them). */
+export const personalConnectors = (connectors: ConnectorSummary[]): ConnectorSummary[] =>
+  connectors.filter((a) => a.auth.type !== "none" && a.auth.ownership === "personal");
+
 export function canManageConnectors(me: {
   currentOrgId: string | null;
   memberships: { orgId: string; role: string }[];

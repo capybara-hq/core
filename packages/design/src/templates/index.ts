@@ -11,13 +11,15 @@ export {
   PANEL_WIDTH_KEY,
 } from "./conversation-page";
 export { DetailPage } from "./detail-page";
-export { FormPage, FormSection } from "./form-page";
-export { InboxPage } from "./inbox-page";
-export { ListPage } from "./list-page";
+export { FormPage, FormSection, type FormSectionLayout } from "./form-page";
+export type { BlockShape, CardShape, FieldShape } from "./frame";
+export { type InboxLoading, InboxPage } from "./inbox-page";
+export { type ListLoading, ListPage } from "./list-page";
 export { PAGE_TEMPLATES, type PageTemplateName } from "./names";
 export { OnboardingPage } from "./onboarding-page";
 export { OverviewPage } from "./overview-page";
 export { SettingsPage } from "./settings-page";
+export { SetupPage, type SetupPageProps } from "./setup-page";
 export { StatusPage } from "./status-page";
 export { TracePage } from "./trace-page";
 export { WizardPage } from "./wizard-page";

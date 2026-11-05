@@ -10,7 +10,7 @@
 <body>
 <main class="r-page">
 <h1>Title bar</h1>
-<p>48 high, middle column only: the title (menu: rename, copy link, delete), the properties toggle, a divider, then built-in and extension panel icons and More. Icon buttons default 28; the open item is pressed.</p>
+<p>48 high, middle column only: the title (menu: rename, copy link, delete), the properties toggle, a divider, then built-in and extension panel icons and More. Icon buttons default 28; the open item is pressed. Below 640 (the narrow block, 390) its buttons are 40 px tap targets.</p>
 <div class="r-blocks">
 <section data-ref-block="title-bar-default" style="width:760px">
   <template data-fixture="title-bar" data-opts='{"state": "default"}'></template>
@@ -29,6 +29,9 @@
 </section>
 <section data-ref-block="title-bar-long-title" style="width:760px">
   <template data-fixture="title-bar" data-opts='{"state": "long-title"}'></template>
+</section>
+<section data-ref-block="title-bar-narrow" style="width:390px">
+  <template data-fixture="title-bar" data-opts='{"narrow": true}'></template>
 </section>
 </div>
 </main>

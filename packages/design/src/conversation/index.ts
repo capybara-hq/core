@@ -1,4 +1,13 @@
 export {
+  AGENT_PANEL_COLUMNS,
+  AgentPanel,
+  type AgentPanelProps,
+  AgentRow,
+  type AgentRowItem,
+  type AgentRowProps,
+  gridStep,
+} from "./agent-row";
+export {
   type BubbleAttachment,
   BubbleAttachments,
   BubbleSkill,
@@ -45,6 +54,7 @@ export {
   TypeBadge,
   typeBadge,
 } from "./files";
+export { GREETING_TYPE_MS, Greeting, type GreetingProps } from "./greeting";
 export {
   ApprovalBlock,
   type ApprovalBlockProps,
@@ -79,6 +89,8 @@ export {
 } from "./panels";
 export { Cursor, Prose, type ProseProps, Spinner } from "./prose";
 export { QueuedMessage, type QueuedMessageProps, QueuePaused } from "./queued";
+export { type QuickActionItem, QuickActions, type QuickActionsProps } from "./quick-actions";
+export { RunRow, type RunRowProps, type RunRowStatus, runDuration } from "./run-row";
 export {
   BackgroundTasks,
   type BackgroundTasksProps,
@@ -116,6 +128,7 @@ export {
   summaryParts,
   type ToolKind,
   type ToolVerbGroup,
+  type ToolWaiting,
   verbGroup,
 } from "./tool-copy";
 export { ToolGroup, type ToolGroupProps } from "./tool-group";
@@ -127,3 +140,4 @@ export {
   type ToolRowData,
   type ToolRowProps,
 } from "./tool-row";
+export { WorkingLine, type WorkingLineProps } from "./working-line";

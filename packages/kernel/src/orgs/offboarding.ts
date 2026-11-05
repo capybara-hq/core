@@ -108,7 +108,9 @@ export class Offboarding {
    * In the caller's transaction (`mandatory`: the caller holds the org row lock, order org row →
    * membership, and did the "last owner" checks)：
    * 1. 删除成员关系（非成员 → `member.not_found`；删后组织没有 owner → `org.last_owner`），清空指向该组织的会话当前组织；
-   * 2. 吊销该账号**全部**会话与个人令牌（令牌与会话是账号级的，无法只吊销「该组织下」的，按保守处理）；
+   * 2. Removal and directory offboarding revoke **every** session and personal token of the
+   *    account (both are account-wide, so conservatively all); a person who leaves (`left`) keeps
+   *    them, and the session's current org is cleared (the membership check ends the access);
    * 3. 删除其在该组织所有连接器上的个人凭据；
    * 4. 取消其作为处理人的 pending 审批与提问（写 cancelled 事件），记下此人在该组织进行中的运行（提交后中止）；
    * 5. 其负责的该组织 agent 转给组织所有者（最早加入的 owner）并置 `needs_reassignment = true`；
@@ -181,21 +183,29 @@ export class Offboarding {
       .where("current_org_id", "=", orgId)
       .execute();
 
-    const sessions = await this.db
-      .updateTable("sessions")
-      .set({ revoked_at: sql<Date>`now()` })
-      .where("account_id", "=", accountId)
-      .where("revoked_at", "is", null)
-      .returning("id")
-      .execute();
-    const tokens = await this.db
-      .updateTable("api_tokens")
-      .set({ revoked_at: sql<Date>`now()` })
-      .where("kind", "=", "personal")
-      .where("account_id", "=", accountId)
-      .where("revoked_at", "is", null)
-      .returning("id")
-      .execute();
+    // A person who leaves keeps their sign-in and personal tokens: the org guard reads the
+    // membership on every request, so access to this org ends with the row above, and their other
+    // orgs keep working. Removal and directory offboarding revoke both (account-wide, conservative).
+    const revoke = reason !== "left";
+    const sessions = revoke
+      ? await this.db
+          .updateTable("sessions")
+          .set({ revoked_at: sql<Date>`now()` })
+          .where("account_id", "=", accountId)
+          .where("revoked_at", "is", null)
+          .returning("id")
+          .execute()
+      : [];
+    const tokens = revoke
+      ? await this.db
+          .updateTable("api_tokens")
+          .set({ revoked_at: sql<Date>`now()` })
+          .where("kind", "=", "personal")
+          .where("account_id", "=", accountId)
+          .where("revoked_at", "is", null)
+          .returning("id")
+          .execute()
+      : [];
 
     // in this transaction (the approvals and questions services join it: `mandatory`)
     const credentials = await this.credentials.clearAccount(orgId, accountId);

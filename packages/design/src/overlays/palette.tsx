@@ -70,6 +70,7 @@ export function CommandPalette({
   groups,
   inline,
   defaultSearch,
+  emptyText,
 }: {
   open: boolean;
   onOpenChange(open: boolean): void;
@@ -78,6 +79,8 @@ export function CommandPalette({
   inline?: boolean;
   /** The query the palette opens with (`/dev/ui` and the reference set). */
   defaultSearch?: string;
+  /** What the list says when nothing matches (default: "No matches"). */
+  emptyText?: string;
 }) {
   const t = useDesignT();
   const focusReturn = useFocusReturn();
@@ -86,6 +89,7 @@ export function CommandPalette({
       groups={groups}
       onOpenChange={onOpenChange}
       {...(defaultSearch !== undefined ? { defaultSearch } : {})}
+      {...(emptyText !== undefined ? { emptyText } : {})}
     />
   );
   if (inline) {
@@ -119,10 +123,12 @@ function PaletteBody({
   groups,
   onOpenChange,
   defaultSearch,
+  emptyText,
 }: {
   groups: CommandGroup[];
   onOpenChange(open: boolean): void;
   defaultSearch?: string;
+  emptyText?: string;
 }) {
   const t = useDesignT();
   const [query, setQuery] = useState(defaultSearch ?? "");
@@ -137,7 +143,9 @@ function PaletteBody({
         />
       </div>
       <Command.List className="cb-palette-list">
-        <Command.Empty className="cb-palette-empty">{t("palette.empty")}</Command.Empty>
+        <Command.Empty className="cb-palette-empty">
+          {emptyText ?? t("palette.empty")}
+        </Command.Empty>
         {groups.map((g) => (
           <Command.Group key={g.label} heading={g.label} className="cb-palette-group">
             {g.items.map((it) => (

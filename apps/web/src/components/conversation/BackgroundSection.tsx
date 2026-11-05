@@ -1,8 +1,7 @@
 "use client";
 
-import { BackgroundTasks, PropertySection, subagentDuration } from "@capybara-hq/design";
+import { BackgroundTasks, PropertySection, subagentDuration, useNow } from "@capybara-hq/design";
 import { useLocale, useTranslations } from "next-intl";
-import { useEffect, useState } from "react";
 import type { SubagentView } from "../../lib/conversations";
 import { isActiveStatus } from "../../lib/subagents";
 
@@ -25,12 +24,7 @@ export function BackgroundSection({
   const locale = useLocale() === "zh" ? "zh" : "en";
   const running = views.filter((v) => isActiveStatus(v.status));
   const done = views.filter((v) => !isActiveStatus(v.status));
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    if (running.length === 0) return;
-    const id = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(id);
-  }, [running.length]);
+  const now = useNow(running.length > 0 ? 1000 : 0);
   return (
     <PropertySection title={t("background")}>
       <BackgroundTasks

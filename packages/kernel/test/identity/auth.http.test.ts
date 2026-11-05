@@ -82,14 +82,14 @@ async function login(jar: CookieJar, loginName = "alice", password = PW) {
 }
 
 describe("POST /api/v1/auth/login", () => {
-  it("成功：200，设 cap_at 与 cap_rt；无 Domain；cap_rt 限 Path 与 SameSite=Strict；都 HttpOnly", async () => {
+  it("成功：200，设 cap_at 与 cap_rt；无 Domain；cap_rt Path=/ and SameSite=Lax; both HttpOnly", async () => {
     const jar = cookieJar();
     const res = await login(jar);
     expect(res.statusCode).toBe(200);
     expect((res.json() as { account: Account }).account.id).toBe(alice.id);
     const cs = setCookies(res);
     const at = cs.find((c) => c.name === "cap_at");
-    const rt = cs.find((c) => c.name === "cap_rt");
+    const rt = cs.find((c) => c.name === "cap_rt" && c.attrs.path === "/");
     expect(at).toBeDefined();
     expect(rt).toBeDefined();
     for (const c of [at, rt]) {
@@ -100,8 +100,11 @@ describe("POST /api/v1/auth/login", () => {
     expect(at?.attrs.path).toBe("/");
     expect(String(at?.attrs.samesite).toLowerCase()).toBe("lax");
     expect(at?.attrs["max-age"]).toBe("900");
-    expect(rt?.attrs.path).toBe("/api/v1/auth");
-    expect(String(rt?.attrs.samesite).toLowerCase()).toBe("strict");
+    expect(rt?.attrs.path).toBe("/");
+    const legacy = cs.find((c) => c.name === "cap_rt" && c.attrs.path === "/api/v1/auth");
+    expect(legacy?.value).toBe("");
+    expect(rt?.value).not.toBe("");
+    expect(String(rt?.attrs.samesite).toLowerCase()).toBe("lax");
     expect(rt?.attrs["max-age"]).toBe(String(30 * 86400));
   });
 
@@ -154,7 +157,9 @@ describe("POST /api/v1/auth/login", () => {
     expect(codes.every((c) => c === 401 || c === 429)).toBe(true);
   });
 
-  it("成功登录不消耗 IP 额度：同一 IP 连续 60 次成功登录都 200", async () => {
+  // Each attempt runs scrypt (a dummy one for an unknown login), serially: some 60 of them take
+  // about 3 s alone and more in a loaded run, so this test gets a budget sized to that work.
+  it("成功登录不消耗 IP 额度：同一 IP 连续 60 次成功登录都 200", { timeout: 30_000 }, async () => {
     for (let i = 0; i < 60; i++) {
       expect((await login(cookieJar(), i % 2 ? "alice" : "admin")).statusCode).toBe(200);
     }
@@ -306,7 +311,13 @@ describe("refresh / logout / 改密码 / 停用", () => {
       setCookies(res)
         .map((c) => c.name)
         .sort(),
-    ).toEqual(["cap_at", "cap_rt"]);
+    ).toEqual(["cap_at", "cap_rt", "cap_rt"]);
+    expect(
+      setCookies(res)
+        .filter((c) => c.name === "cap_rt")
+        .map((c) => c.attrs.path)
+        .sort(),
+    ).toEqual(["/", "/api/v1/auth"]);
     const replay = await asUser(k.http, old)({ method: "POST", url: "/api/v1/auth/refresh" });
     expect(replay.statusCode).toBe(401);
     expect(errCode(replay)).toBe("auth.refresh_race");
@@ -712,7 +723,9 @@ describe("M2 收尾：登录限流按登录名 + IP、改密码吊销 PAT、守�
     }
   }, 60_000);
 
-  it("改密码失败 11 次 → 429，但同 IP 的登录不受影响", async () => {
+  // Each attempt runs scrypt (a dummy one for an unknown login), serially: some 60 of them take
+  // about 3 s alone and more in a loaded run, so this test gets a budget sized to that work.
+  it("改密码失败 11 次 → 429，但同 IP 的登录不受影响", { timeout: 30_000 }, async () => {
     const jar = cookieJar();
     await login(jar);
     const change = (currentPassword: string) =>
@@ -764,17 +777,102 @@ describe("M2 收尾：登录限流按登录名 + IP、改密码吊销 PAT、守�
     expect(row.created_by).toBe(alice.id);
   });
 
-  it("清 Cookie 的 set-cookie 带正确的 Path（cap_at 为 /，cap_rt 为 /api/v1/auth）", async () => {
+  it("clearing cookies uses the right Paths (cap_at on /, cap_rt on / and the legacy /api/v1/auth)", async () => {
     const jar = cookieJar();
     await login(jar);
     const res = await asUser(k.http, jar)({ method: "POST", url: "/api/v1/auth/logout" });
     const cs = setCookies(res);
     const at = cs.find((c) => c.name === "cap_at");
-    const rt = cs.find((c) => c.name === "cap_rt");
+    const rts = cs.filter((c) => c.name === "cap_rt");
     expect(at?.value).toBe("");
-    expect(rt?.value).toBe("");
     expect(at?.attrs.path).toBe("/");
-    expect(rt?.attrs.path).toBe("/api/v1/auth");
+    expect(rts.map((c) => c.attrs.path).sort()).toEqual(["/", "/api/v1/auth"]);
+    expect(rts.every((c) => c.value === "")).toBe(true);
+  });
+
+  it("refresh：cookie 头带两个 cap_rt（旧的在前、有效的在后）→ 200", async () => {
+    const jar = cookieJar();
+    await login(jar);
+    const good = jar.get("cap_rt") as string;
+    const res = await k.http.inject({
+      method: "POST",
+      url: "/api/v1/auth/refresh",
+      headers: {
+        cookie: `cap_rt=cap_rt_stale; cap_rt=${encodeURIComponent(good)}`,
+        "x-capybara-csrf": "1",
+      },
+    });
+    expect(res.statusCode).toBe(200);
+    expect((res.json() as { account: Account }).account.id).toBe(alice.id);
+  });
+
+  const rawRefresh = (cookie: string, url = "/api/v1/auth/refresh") =>
+    k.http.inject({ method: "POST", url, headers: { cookie, "x-capybara-csrf": "1" } });
+
+  it("refresh：过了宽限期的旧 cap_rt 在前、当前的在后 → 200，会话不被吊销", async () => {
+    const jar = cookieJar();
+    await login(jar);
+    const stale = jar.get("cap_rt") as string;
+    await asUser(k.http, jar)({ method: "POST", url: "/api/v1/auth/refresh" });
+    const current = jar.get("cap_rt") as string;
+    await sql`UPDATE capybara.sessions SET rotated_at = now() - interval '5 minutes'`.execute(raw);
+    const res = await rawRefresh(`cap_rt=${stale}; cap_rt=${encodeURIComponent(current)}`);
+    expect(res.statusCode).toBe(200);
+    const live = await db
+      .selectFrom("sessions")
+      .select("revoked_at")
+      .where("account_id", "=", alice.id)
+      .execute();
+    expect(live.every((r) => r.revoked_at === null)).toBe(true);
+  });
+
+  it("refresh：单独重放过了宽限期的旧 cap_rt → 401 并吊销会话", async () => {
+    const jar = cookieJar();
+    await login(jar);
+    const stale = jar.get("cap_rt") as string;
+    await asUser(k.http, jar)({ method: "POST", url: "/api/v1/auth/refresh" });
+    await sql`UPDATE capybara.sessions SET rotated_at = now() - interval '5 minutes'`.execute(raw);
+    const res = await rawRefresh(`cap_rt=${stale}`);
+    expect(res.statusCode).toBe(401);
+    expect(errCode(res)).toBe("auth.refresh_invalid");
+    const row = await db
+      .selectFrom("sessions")
+      .select("revoked_at")
+      .where("account_id", "=", alice.id)
+      .executeTakeFirstOrThrow();
+    expect(row.revoked_at).not.toBeNull();
+  });
+
+  it("logout：cookie 头带两个 cap_rt → 当前那个的会话被吊销", async () => {
+    const jar = cookieJar();
+    await login(jar);
+    const current = jar.get("cap_rt") as string;
+    const res = await rawRefresh(
+      `cap_rt=cap_rt_stale; cap_rt=${encodeURIComponent(current)}`,
+      "/api/v1/auth/logout",
+    );
+    expect(res.statusCode).toBe(204);
+    const row = await db
+      .selectFrom("sessions")
+      .select("revoked_at")
+      .where("account_id", "=", alice.id)
+      .executeTakeFirstOrThrow();
+    expect(row.revoked_at).not.toBeNull();
+  });
+
+  it("refresh：两个 cap_rt 都无效 → 401 auth.refresh_invalid 并清两个 Path", async () => {
+    const res = await k.http.inject({
+      method: "POST",
+      url: "/api/v1/auth/refresh",
+      headers: { cookie: "cap_rt=cap_rt_a; cap_rt=cap_rt_b", "x-capybara-csrf": "1" },
+    });
+    expect(errCode(res)).toBe("auth.refresh_invalid");
+    expect(
+      setCookies(res)
+        .filter((c) => c.name === "cap_rt")
+        .map((c) => c.attrs.path)
+        .sort(),
+    ).toEqual(["/", "/api/v1/auth"]);
   });
 
   it("PG 断开时访问 @Public 路由并携带 Cookie → 500（不是被当作匿名放行）", async () => {

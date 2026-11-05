@@ -7,6 +7,7 @@ import { SetupController } from "../admin/setup.controller.js";
 import { AgentsController } from "../agents/agents.controller.js";
 import { AgentsModule } from "../agents/agents.module.js";
 import { ModelsController } from "../agents/models.controller.js";
+import { ReadinessController } from "../agents/readiness.controller.js";
 import { AgentTemplatesController } from "../agents/templates.controller.js";
 import { AdminCatalogController } from "../catalog/admin-catalog.controller.js";
 import { CatalogModule } from "../catalog/catalog.module.js";
@@ -84,6 +85,7 @@ const CONTROLLERS: Type[] = [
   AgentsController,
   AgentTemplatesController,
   ModelsController,
+  ReadinessController,
   ConversationsController,
   AttachmentsController,
   SkillsController,

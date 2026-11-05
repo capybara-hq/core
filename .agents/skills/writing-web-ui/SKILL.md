@@ -1,6 +1,6 @@
 ---
 name: writing-web-ui
-description: 'Use when adding or changing UI under apps/web or packages/design: page = page template + design components, which template each page uses, the skeletons for ListPage + DataTable and FormPage + FormSection + ActionRow, what check:web-ui forbids (className / style / .css / color literals / low-level UI packages), the change flow for adding a component or template, and how to use /dev/ui and screenshot tests (visual-update).'
+description: 'Use when adding or changing UI under apps/web or packages/design: page = page template + design components, pages on the query cache (thin server page.tsx + client view.tsx, TanStack Query: keys, freshness classes, defineQuery, the route table and its prefetch, usePageQuery, useWorkspace / useAdmin, useAppMutation invalidation, renderRouteWithCache / renderRouteEmptyCache, template loading shapes), which template each page uses, the skeletons for ListPage + DataTable and FormPage + FormSection + ActionRow, what check:web-ui forbids (className / style / .css / color literals / low-level UI packages), the change flow for adding a component or template, and how to use /dev/ui and screenshot tests (visual-update).'
 ---
 
 # Writing UI
@@ -14,6 +14,8 @@ Tokens: `docs/design/tokens.json` is the source; `pnpm gen:tokens` writes `token
 
 **Page = template + design components.** `apps/web` writes no styles: no `className`, `style`, `.css` or color literals; lay out with `Stack` / `Grid` / `Card` / `Text`, and colors come only from design tokens. When a component is missing, add it to the design package first (see "Adding a component or template" below); don't improvise one in a page.
 
+**Type, figures and details** (spec §2.2, §6.5, §6.17, §6.18). A sentence is prose: `Text variant="prose"` for hints, notes, descriptions and dialog bodies (field help, object descriptions, callouts and empty states already are); mono stays for ids, paths, numbers, versions and dates. A date is `<DateTime value={iso} />` (`YYYY-MM-DD HH:mm`, the relative age on hover) or `formatDateTime(iso, form, useTimeZone())` inside a string; never `toLocaleString`. Anything that reads the clock or the zone in render takes `useNow()` / `useTimeZone()` (`formatRelative(iso, locale, useNow())`, `untitledLabel(d, locale, useTimeZone())`, a running time `useNow(1000)`), never `Date.now()` / `new Date()`: they hydrate with the server render's clock (`DesignProvider` `clock`, set by the root layout) and switch to the browser's after, so a server-rendered time never fails hydration. A version is `versionLabel(v)` ("v0.1.0"), but request bodies keep the bare version. An `ObjectRow` mark is `{ text: <display name> }` (drawn as its upper-cased initial), never an icon for an object. Plain metadata (visibility, purpose ids) is meta or muted text, never a badge. `EmptyState` has two styles, `page` (the capybara) and `compact` (words only).
+
 **Icons are components.** Use `<Icon name="search" size={14} />` (or an `IconButton` with an `Icon` and an `aria-label`) from `@capybara-hq/design`; never a character as an icon (`▾ ✓ ✕ ⋯ ⠿ ▤ ●`…; rule `design-char-icon`) and never an icon library in `apps/web`. A missing icon is added to `packages/design/scripts/gen-icons.mjs` (`pnpm --filter @capybara-hq/design gen:icons`).
 
 ## Choosing a template (spec §5)
@@ -26,22 +28,41 @@ Tokens: `docs/design/tokens.json` is the source; `pnpm gen:tokens` writes `token
 | Create / edit an object | `FormPage` | Centered, grouped by `FormSection`, always has an ActionRow |
 | Org / environment / security settings | `SettingsPage` | Secondary nav + Centered, ActionRow when there are changes |
 | Human approval, alert handling | `InboxPage` | Rail + Content (+ Inspector) |
-| The conversation page (`/chat`, `/chat/<id>`) | `ConversationPage` | Title bar + thread + composer, with the properties panel or one right panel (spec §5.4) (it replaced `PlaygroundPage`) |
+| The conversation page (`/chat`, `/chat/<id>`) | `ConversationPage` | Title bar + thread + composer, with the properties panel or one right panel (spec §5.4) (it replaced `PlaygroundPage`); a new conversation (`/chat`) passes `newConversation` with `Greeting`, `AgentRow` and `QuickActions`, and the composer has no agent picker |
 | Single run detail | `TracePage` | Span waterfall + detail |
 | First-time setup of a model / connector / extension | `WizardPage` | Centered + step bar, previous / next |
 | Login, initialization, accept invitation | `AuthPage` | No Shell |
 | 404 / 403 / under maintenance | `StatusPage` | Single, centered |
 | New org, empty environment | `OnboardingPage` | Single, centered checklist |
+| The workspace while the org has no model or no agent | `SetupPage` | The shell's geometry with the setup sidebar (`context.kind: "setup"`: 开始之前 and the steps as navigation) + content area + status bar; the page brings its own template; drawn by `AppFrame` (`components/shell/setup.tsx`), never by a page (web-order spec §3.8, web-SSR spec §4) |
+
+### The web order: contexts and frames (spec `docs/superpowers/specs/2026-10-31-web-order-design.md`)
+
+The sidebar has three contexts (the third, setup, is drawn only by `SetupPage`): the workspace (conversations, Agents, 更多 with connectors / channels / skills / evals / catalog, org settings) and the admin console (`/admin/*`, entered from the account row, enterprise admins only). Personal settings are `/account/*` (connections, grants, IM identities), org settings `/settings/*`. Every page uses one of three frames and one page head (`PageHeader`: `path` required, `title`, optional `description` / `actions` / `tabs` + `activeTab` / `search`).
+
+| Frame | Template | Use |
+|---|---|---|
+| Object list | `ListPage` with `variant="objects"`: `ObjectRow` children inside one `ObjectList` (mark, name + chips, description, mono meta, state, one action, row menu) | Things a person picks and opens: agents, skills, connectors, channels, evals, catalog, admin extensions / catalog, marketplace entries |
+| Record list | `ListPage` with `variant="records"` (default): a `DataTable` | Tabular records: members, accounts, orgs, trajectories |
+| Detail / form | `DetailPage` (Content + Inspector, `PageTabs`) / `FormPage` / `WizardPage` | One object; create or edit; multi-step setup |
+| Settings | `SettingsPage` with the grouped secondary nav | Org settings, personal settings, deployment settings |
+
+- `ListPage` takes `listLabel` (the list's accessible name), `callout` (a `Callout` between the title row and the tabs) and `empty` (an `EmptyState`, drawn instead of the rows: loading failed, nothing yet, no match). Use these instead of drawing your own notices; an object list is a `ul` (role `list` / `listitem`), not a table.
+- A failure whose cause is raw system text (a kernel message, a network error) is an `ErrorDetail`: one sentence in the reader's language mapped from the error, the raw text behind its 「原始错误」 toggle; never the raw English inline. A button that navigates is a `LinkButton` (a link drawn as the button), never a bare text link among buttons.
+- Create forms and dialogs (spec §5.3, §6.7): a new object's page is `FormPage create` (focus on the first field, no 「没有未保存的修改」), and its primary is `disabled` until the form is valid; a dialog that asks for input starts on its first field by itself. When the prerequisite is missing (no channel extension for 新建渠道) draw only the `EmptyState` with the next step, never the form. A dialog that can only explain (退出组织 as the only owner) is not `danger`: one 「知道了」; a dialog whose next step lives elsewhere offers it as a `LinkButton` primary, never a disabled dead end. Picking a file is the `FilePicker` drop zone (spec §6.25), with card radios (`RadioGroup variant="card"` in a `Card`) to choose between sources.
+- Model purposes (`components/PurposeEditor`, `usePurposeDrafts`): the cards have no save of their own; the page has one ActionRow that saves every changed purpose.
+- `ObjectRow.action` is the row's most common action (a link when it has `href`), `menu` holds the rest; the menu button is named 更多操作.
+- A header's `path` comes from `usePagePath("org" | "home" | "admin", ...)`; `web-ui-page-path` rejects a page head without it.
 
 ### Templates for the admin console, evals and the catalog (ready-made M6 examples)
 
 | Page | Route | Template |
 |---|---|---|
 | Admin console overview | `/admin` | `OverviewPage` |
-| Accounts, orgs, extensions, catalog items, marketplace entries | `/admin/accounts`, `/admin/orgs`, `/admin/extensions`, `/admin/catalog`, `/admin/marketplaces/entries` | `ListPage` |
+| Accounts, orgs, extensions, catalog items, marketplaces (tabs Browse / Sources), marketplace entries | `/admin/accounts`, `/admin/orgs`, `/admin/extensions`, `/admin/catalog`, `/admin/marketplaces`, `/admin/marketplaces/entries` | `ListPage` |
 | Extension detail, catalog item detail | `/admin/extensions/[name]`, `/admin/catalog/[itemId]` | `DetailPage` (summary / permissions / config etc. use PageTabs) |
 | Install an extension, plugin import review | `/admin/extensions/install`, `/admin/catalog/import` | `WizardPage` |
-| Deployment settings, models and prices, marketplaces | `/admin/settings`, `/admin/models`, `/admin/marketplaces` | `SettingsPage` |
+| Deployment settings, models and prices | `/admin/settings`, `/admin/models` | `SettingsPage` |
 | Catalog requests awaiting an enterprise admin decision | `/admin/catalog/requests` | `InboxPage` |
 | Trajectory list / eval set list | `/trajectories`, `/evals` | `ListPage` |
 | Trajectory detail, eval case | `/trajectories/[conversationId]`, `/evals/[setId]/cases/[caseId]` | `TracePage`: `waterfall` holds `SpanWaterfall`, `detail` holds the selected span's detail |
@@ -49,10 +70,11 @@ Tokens: `docs/design/tokens.json` is the source; `pnpm gen:tokens` writes `token
 | Create an eval set / start a run | `/evals/new`, `/evals/[setId]/run` | `FormPage` / `WizardPage` |
 | Org-side catalog, item detail, install | `/catalog`, `/catalog/[itemId]`, `/catalog/[itemId]/install` | `ListPage` / `DetailPage` / `WizardPage` |
 
-- Admin console pages are wrapped whole in `components/AdminGate`: for non-enterprise-admins it shows the `StatusPage` 403 and does not request `/api/v1/admin/*` (a UI-level block; the kernel is the final authority). The UI always says "enterprise admin".
+- Admin console views start with the gate `useAdmin()` (`lib/query/workspace.ts`): for non-enterprise-admins the view returns `<NoAccess need={gate.need} />` (`components/NoAccess`, the `StatusPage` no-access state), and the route table prefetches nothing from `/api/v1/admin/*` for them (a UI-level block; the kernel is the final authority). Org views do the same with `useWorkspace()`. The UI always says "enterprise admin".
 - **`SpanWaterfall`**(spec §6.10)takes only plain props (`spans`, `selectedId`, `onSelect`, `labels`, `label`): each span's `kind` (`run` / `step` / `model` / `tool` / `wait`), `startMs` (relative to the earliest span), `durationMs` (null if unknown), `status`, `parentId`; the caller passes them in depth-first order. The page computes time and cost from the data the kernel returns (latency is derived from event times; cost is labeled "estimated").
 - Permission review (install confirmation page, org extension settings, plugin review) shares `components/PermissionReview`; the purpose mapping shares `components/PurposeEditor`. Don't draw a second copy in a page.
 - After the main table, a `ListPage` may carry a subordinate block (an `h2` + one `DataTable`, e.g. invitations on the members page); see spec §5.1.
+- Phones (below 640, spec §4.3) are the design package's job, never a page's: every `DataTable` stacks its rows (the first column is the card's title, the others `header value` lines, so give every column a real `header`), StatCards go 2 × 2, tabs scroll, tap targets are 40 px and the conversation page loses its minimum width. Pages add no narrow variant of their own.
 
 ### The conversation page
 
@@ -64,39 +86,206 @@ Tokens: `docs/design/tokens.json` is the source; `pnpm gen:tokens` writes `token
 
 Submit actions go in the ActionRow (built into `FormPage`, `WizardPage` etc.) and **must not** go in the PageHeader; at most one `variant: "primary"` per view, and at most 5 metrics (`PageHeader` throws in development and tests).
 
-## Skeleton examples
+## Pages and the query cache (spec `docs/superpowers/specs/2026-11-03-web-query-cache-design.md`)
 
-List (`apps/web/src/app/[locale]/(app)/agents/page.tsx` is a real example):
+Every network read of the web app goes through TanStack Query (`@tanstack/react-query`). A first
+load (a document request: opening a URL, a reload) is rendered on the server with its data and
+paints complete; later navigations inside the app are client-side and read from the query cache.
+The web-SSR spec (`2026-11-01-web-ssr-design.md`) still holds for the frame, the gates and session
+changes; this spec replaces its "server page reads, view gets `initial`" model.
+
+Every route is two files:
+
+```
+app/(app)/agents/page.tsx      server, thin: reads nothing, passes the route params to the view
+app/(app)/agents/view.tsx      "use client": the gate, the reads (useQuery), the template
+```
 
 ```tsx
+// page.tsx (no "use client"; no kernel read: web-query-page-read)
+export default async function AgentPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  return <AgentView id={id} />;
+}
+
+// view.tsx
+"use client";
+export default function AgentsView() {
+  const ws = useWorkspace();                  // admin pages: useAdmin()
+  if (ws.kind === "pending" || ws.kind === "noOrg") return null;
+  if (ws.kind === "noAccess") return <NoAccess need={ws.need} />;
+  return <Agents orgId={ws.orgId} />;
+}
+
+function Agents({ orgId }: { orgId: string }) {
+  const list = usePageQuery(agentsQuery(orgId));
+  if (list.kind === "notFound") return <NotFound />;           // the segment's not-found.tsx
+  if (list.kind === "error") return <ErrorFrame reset={list.retry} />;
+  if (list.kind === "loading") return <ListPage header={header} variant="objects" loading />;
+  return <ListPage header={header} variant="objects">{/* rows of list.data */}</ListPage>;
+}
+```
+
+**The query layer** (`apps/web/src/lib/query/`):
+
+- `client.ts`: one `QueryClient` per browser tab, one per server request (`lib/server/query.ts`,
+  React `cache()`). No retry for a 4xx `ApiClientError`, at most one for `network`,
+  `upstream_unavailable` and 5xx; `refetchOnWindowFocus: false`, `refetchOnMount` and
+  `refetchOnReconnect` on; `gcTime` is TanStack's default. A signed-out 401 `auth.*` (after the
+  refresh retry) clears the cache and goes to `/login?returnTo=<path>`.
+- `keys.ts`: the only place keys are built (`web-query-keys`). Every key starts with its scope:
+  `["org", orgId, …]`, `["account", accountId, …]` (`keys.account("self")` only for `me` /
+  `maybeMe`), `["deployment", …]`. Add a builder next to its area's others; a key holds everything
+  the answer depends on (route params, search params, the UI locale), so each filter set is its
+  own entry.
+- `freshness.ts`: each read names a class, never a number (`web-query-freshness`): `mine`
+  (`Infinity`: `/me`, my tokens, identities), `orgConfig` (30 s: agents, models, connectors,
+  skills, members, settings), `live` (30 s: inbox, conversation groups, queue, files, sandbox),
+  `events` (`Infinity`: a conversation's log, which the stream appends to), `deployment` (30 s:
+  the admin console), `unclassified` (0, the default nobody should keep).
+- `define.ts`: hook-free, because server layouts import it (`next build` rejects a server
+  component that reaches a client hook; vitest and tsc do not). `defineQuery({ key, fn, freshness })` is the one way to declare a read, in
+  `lib/query/<area>.ts`, wrapping the existing `lib/<area>.ts` loader (`fn` gets `{ signal }`).
+  The same options object serves the server prefetch and the client hook; `useQuery({ ...q,
+  enabled })` / `select` are fine. Views and components never call a kernel loader outside a
+  `defineQuery` / `useAppMutation` `fn` (`web-query-no-direct-read`); pure helpers and the SSE
+  opener are allowed.
+- `routes.ts`: the route table, one entry per `page.tsx` under `(app)` / `(auth)`
+  (`web-query-route-table`; patterns are string literals): `queries(ctx)` returns what the first
+  paint needs from `ctx` (`params`, `search`, `me`, `orgId`, `locale`), gated like the view (a
+  page a guest may not open reads nothing for a guest); `then(ctx, qc)` prefetches reads that need
+  the first wave's answers (what the loaded agent's connectors name); `none: "<reason>"` for a page
+  that reads nothing. `(app)/layout.tsx` and the `(auth)` layout run `prefetchRoute` for
+  `currentPath()` beside the shell reads and dehydrate the cache (failed reads too, with their
+  kernel code, so the view draws the error or not-found state on the first paint and does not read
+  it again on mount). A client navigation never runs the layout.
+- `page-query.ts`: `usePageQuery(q)` turns a page's main read into `loading` / `ready` (with
+  `refreshing`) / `notFound` (a 404 wins even over cached data: an object deleted elsewhere is
+  not shown) / `error` (`code`, `retry`; a failed background refetch keeps the cached data).
+  Secondary sections are their own `useQuery` with their own section state (`retryOnMountOf`
+  keeps a hydrated error from being read again on mount).
+- `workspace.ts`: `useWorkspace({ min?, setup? })` / `useAdmin()` are the client gates, decided
+  from the cached `/me` and readiness (`pending` until they answer; a route without `setup` goes to
+  `/` while the org is not ready). `resetSession(qc, then)` cancels every read in flight, clears
+  the cache and navigates in the same task: an org switch, create or leave and a sign-out go
+  through it, then a full navigation (ruling R4), so nothing of the old org or account paints.
+- **Mutations** are `useAppMutation({ fn, invalidates: (v, r) => [keys…], forgetsOnLeave?, onSuccess? })`
+  from `lib/query/mutation.ts` (a `"use client"` hook module; any `lib/**` module importing a
+  `use*` hook starts with `"use client"`, `web-lib-client-hook`): the
+  listed keys are invalidated (awaited) before `onSuccess`; use `qc.setQueryData` where the answer
+  is the new object. A delete that leaves its detail page lists the detail's keys in
+  `forgetsOnLeave`: they are removed when the page unmounts (removing them earlier would read them
+  again and flash not-found before the navigation), so Back never paints the deleted object. No
+  `router.refresh()` after a mutation, except one that changes what the layout decided (org,
+  readiness, sign-in), which goes through `resetSession`.
+- **Polling** is `refetchInterval` on the query, never a hand-written timer. **Persistent
+  components** (the sidebar's groups, the inbox count) stay mounted, so they refetch their stale
+  queries on each path change themselves. The conversation's SSE stream appends to the cached
+  events (`appendEvents`, unique and ordered by `seq`) and its `changed` frames invalidate the
+  matching keys; on return it reopens from the cached last seq.
+
+**Status codes.** A missing object (a 404 read) is the page's not-found state inside the shell
+with HTTP 200; an unknown route keeps `notFound()` and its 404 (`(app)/[...rest]/page.tsx`); the
+kernel unavailable on a first load is the `KernelStarting` frame.
+
+**Recipe for a page** (what every page of the migration did):
+
+1. One `defineQuery` per kernel read in `lib/query/<area>.ts`, keys in `keys.ts`, the class from
+   the table above.
+2. The route entry: `queries(ctx)` with the first-paint reads, `then` for the dependent ones (or a
+   dependent `useQuery` with `enabled` in the view when the first paint does not need it).
+3. `page.tsx` reads nothing and passes the params; `view.tsx` gates with `useWorkspace` /
+   `useAdmin`, reads with `usePageQuery`, passes the template's `loading` shape while it is
+   `loading`, renders the segment's not-found component for `notFound` and the existing error
+   state with `retry` for `error`.
+4. Mutations through `useAppMutation` with their `invalidates`; polls as `refetchInterval`.
+5. Tests (below), then `pnpm check:web-ui` and `pnpm exec vitest run apps/web/test/<file>`.
+
+**Template loading states** (spec §7.1, `docs/design/spec.md` §5): a navigation to a page with
+nothing cached draws the page's frame with skeletons in the loaded page's own boxes, so nothing
+moves when the data lands. Pass the shape the page knows statically; a template guesses nothing:
+
+- `ListPage loading`: `true`, or `{ rows?, stats?, table?: { label, columns, rowHeight?, framed? },
+  keep? }` (`keep`: the children are the page's own sections, each loading for itself).
+- `FormPage loading` (boolean) with `FormSection loading={{ fields: n | FieldShape[] }}` or
+  `{{ cards: CardShape[] }}`; `LoadingFormSection` when the section's title is not known either.
+- `SettingsPage loading={{ sections?: [{ fields?, cards?, title?, description? }], cards? }}`.
+- `DetailPage loading={{ inspector?: true | { rows?, keyWidth? }, blocks?, content?: BlockShape[] }}`
+  and `WizardPage loading={{ fields }} | {{ content: BlockShape[] }}`.
+- `OverviewPage loading={{ stats?, sections?, mainSide?: { main, side }, keep? }}` (`mainSide`:
+  the content is a main-side grid of card stacks; `keep`: the children don't depend on the data).
+- `InboxPage loading`, `TracePage loading={{ spans?, stats? }}`, `AuthPage loading={{ fields }}`,
+  `ConversationPage loading={{ thread?, title?, rightArea? }}`, `PageHeader loading`.
+- Shapes (`templates/frame.tsx`): `FieldShape` (`control`: `input` / `textarea` / `select` /
+  `segmented` / `radio-cards` / `radios` / `key-value` / `switch` / `text` / `card-group`, plus
+  `help`, `rows`, `pair`, `options`, `keyWidth`), `CardShape` (`lines`, `lineSize`, `field`,
+  `actions`, `list`), `BlockShape` (`lines` / `list` / `key-value` / `buttons` / `table` /
+  `card`). Parts already cached render for real; only the missing parts are skeletons. One busy
+  region per page (`aria-busy`); reduced motion draws static bars. `PendingState` stays for
+  in-place loading after a person's action, never for navigation.
+
+**Rules kept from web-SSR**: no `loading.tsx` (`web-ssr-loading-file`), no `"use client"` page
+(`web-ssr-client-page`), params and query from the server props (`params`, `searchParams`, passed to the view), never
+`window.location` during render (`web-ssr-location`; `// ssr-exempt: <reason>` covers a false
+positive), a server page imports only the default export and types from `./view`
+(`web-ssr-view-value-import`). Next's `staleTimes` is not configured, and Next's internal request
+headers (`RSC`, `Next-Router-State-Tree`) are never read. `QUERY_PENDING` and `SSR_PENDING`
+(`tools/checks/src/web-ui.ts`) are empty ratchets; new pages are never added to them.
+
+**Tests** (`apps/web/test/support/query.tsx`):
+
+- `renderRouteWithCache(path, routes, opts)`: a document load: the layout's prefetch (`/me`,
+  readiness, the route's entry) runs against stubbed kernel routes on the server, the cache is
+  dehydrated through JSON and the page renders inside the hydration boundary; `navigate(to)` is a
+  client navigation under the same layout. Pair it with `expectNoFirstPaintFetch()` to assert the
+  first render makes no browser read. `renderAuthRouteWithCache` is the same for `(auth)` pages.
+- `renderRouteEmptyCache(path, routes, opts)`: a client navigation with nothing cached (or a
+  seeded `opts.client`): the views read through `stubApi`; hold a route to assert the template's
+  `aria-busy` loading state, then the data.
+- Every page has the cases "a first render from the hydrated cache makes no browser read" and
+  "an empty cache shows the template's loading state, then the data", and each mutation one
+  "<mutation> invalidates <keys>" asserting the refetch.
+- `apps/web/e2e/query-cache.spec.ts` counts the browser's `/api` GETs: back to a conversation
+  within 30 s reads only its stream, after 30 s it paints at once and refreshes in the background,
+  a rename updates the sidebar with one groups read, an org switch never shows the old org, a
+  reload paints with no skeleton and no browser read, a navigation to an uncached page shows the
+  template's loading state.
+
+## Skeleton examples
+
+List (`apps/web/src/app/(app)/agents/page.tsx` + `view.tsx` are a real example; the page, the gate
+and the reads are shown under "Pages and the query cache" above):
+
+```tsx
+// view.tsx
 "use client";
 
-import { type Column, DataTable, ListPage } from "@capybara-hq/design";
+import { ListPage } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
 
-export default function AgentsPage() {
+function Agents({ orgId }: { orgId: string }) {
+  const scope = usePagePath("org");
   const t = useTranslations("agents");
-  const columns: Column<Agent>[] = [
-    { key: "name", header: t("columns.name"), cell: (a) => a.name },
-    { key: "model", header: t("columns.model"), tone: "muted", cell: (a) => a.model },
-  ];
+  const list = usePageQuery(agentsQuery(orgId));
+  const header = {
+    path: [...scope, { label: "agents" }],
+    title: t("title"),
+    actions: [{ label: t("new"), variant: "primary" as const, href: "/agents/new" }],
+  };
+  if (list.kind === "notFound") return <NotFound />;
+  if (list.kind === "error") return <ErrorFrame reset={list.retry} />;
+  if (list.kind === "loading") return <ListPage header={header} variant="objects" loading />;
+  const agents = list.data.agents;
   return (
     <ListPage
-      header={{
-        title: t("title"),
-        count: String(agents.length),
-        actions: [{ label: t("new"), variant: "primary", href: "/agents/new" }],
-      }}
+      header={header}
+      variant="objects"
+      listLabel={t("title")}
+      {...(agents.length === 0 ? { empty: { text: t("empty") } } : {})}
     >
-      <DataTable
-        label={t("title")}
-        columns={columns}
-        rows={agents}
-        rowKey={(a) => a.id}
-        state={loading ? "loading" : "ready"}
-        empty={{ title: t("empty") }}
-        rowMenu={(a) => [{ label: t("startChat"), onSelect: () => start(a.id) }]}
-      />
+      {agents.map((a) => (
+        <AgentRow key={a.id} agent={a} />
+      ))}
     </ListPage>
   );
 }
@@ -109,7 +298,7 @@ import { Field, FormPage, FormSection, Input, Select } from "@capybara-hq/design
 
 <FormPage
   header={{
-    breadcrumb: [{ label: t("agents.title"), href: "/agents" }],
+    path: [...scope, { label: "agents", href: "/agents" }, { label: "new" }], // scope = usePagePath("org")
     title: t("agents.form.title"),
   }}
   actionRow={{
@@ -127,7 +316,7 @@ import { Field, FormPage, FormSection, Input, Select } from "@capybara-hq/design
 </FormPage>
 ```
 
-`PageHeaderProps`: `{ breadcrumb?, title, description?, count?, status?, metrics?, actions? }` (metrics become StatCards, drawn by the template). Forms have no anchor navigation; the error count lives in the ActionRow. `ActionRowProps`: `{ unsaved?, errors?, cancel?, secondary?, primary }` (`unsaved: 0` reads "No unsaved changes"); button spec `{ label, onSelect, shortcut?, loading?, disabled? }`. For the exact props of the controls in the examples, `packages/design/src/controls` and `/dev/ui` are authoritative (`Field` passes the aria associations for label, help and error to its child control). Use `useStatusBar(...)` for page status text; `useToast()` for toasts; in-app links go through the `DesignProvider` `link` (apps/web already passes next-intl's `Link`).
+`PageHeaderProps`: `{ path, title, description?, count?, status?, metrics?, actions?, tabs?, activeTab?, search? }` (`path` is required: `usePagePath("org" | "home" | "admin", ...segments)` from `components/shell/path.ts` gives the scope, then add the page and object segments; metrics become StatCards, drawn by the template; `tabs` with counts and the `search` field form the head's last row). Forms have no anchor navigation; the error count lives in the ActionRow. `ActionRowProps`: `{ unsaved?, errors?, cancel?, secondary?, primary }` (`unsaved: 0` reads "No unsaved changes"); button spec `{ label, onSelect, shortcut?, loading?, disabled? }`. For the exact props of the controls in the examples, `packages/design/src/controls` and `/dev/ui` are authoritative (`Field` passes the aria associations for label, help and error to its child control). Use `useStatusBar(...)` for page status text; `useToast()` for toasts; in-app links go through the `DesignProvider` `link` (apps/web already passes next-intl's `Link`).
 
 UI text goes through next-intl (`apps/web/messages/{zh,en}.json`); text inside design goes through design's own i18n.
 
@@ -144,16 +333,30 @@ Rule implementation: `tools/checks/src/web-ui.ts`; every rule has a violating-fi
 | `web-ui-color` | Any color notation: `#hex`, `rgb()` / `rgba()`, `hsl()` / `hsla()`, `hwb()`, `lab()` / `lch()` / `oklab()` / `oklch()`, `color()`, `color-mix()` | Colors come only from design tokens |
 | `web-ui-css-file` | a `.css` file under `apps/web/src` | Put styles in `packages/design` |
 | `web-ui-template` | a `src/app/**/page.tsx` that renders none of the 12 templates "imported from `@capybara-hq/design`" | Pick a §5 template as the skeleton |
+| `web-ui-page-path` | a `header` of a page template (all but `ConversationPage`, `AuthPage`, `OnboardingPage`, `StatusPage`, `TracePage`, `InboxPage`) in a `src/app/(app)/**/page.tsx` without a `path` property, or one the rule cannot follow (reported as "cannot be confirmed statically"): no literal `path` beside a spread, an imported or called value, a spread element without `header` | Pass `header={{ path: [...scope, { label }], title }}` inline or as a same-file const object literal; a page that builds its header elsewhere passes `path` and `title` through and writes the literal itself (see `WizardView`) |
 | `design-char-icon` | A character used as an icon (`▾ ▴ ▸ ◂ ✓ ✗ ✕ ◐ › ‹ « » ● ○ ⠿ ▤ ⋯ ↻ ↗ ↕ ▲ ▼ ‖ ⊘ ◆ □ ■ ▶ ∅ ☰ ⚙ ⌕ ▦`) in a string, template literal or JSX text of non-test code in `apps/web/src` or `packages/design/src`, or in a value of `apps/web/messages/*.json`; the message names the icon to use. Box-drawing (`─ │ └`), `⌘`, `↵`, `→`, `·` and `…` are text and allowed | `<Icon name="chevron-down">` (or an `IconButton` with an `Icon`, `Text icon="circle-x"`, `MenuItem.checked`); keep the accessible name in text or `aria-label` |
+| `web-ui-extension-label` | A provider / extension label built by hand that shows the extension id: a template literal that puts `<…>.provider` (or `provider`) before ` / `, or one holding such an expression as the value of a `label` property or JSX attribute (spaced or not), outside `lib/extension-label.ts`; option values (`value:`, encode helpers) stay allowed | `extensionLabel(x, locale)` / `modelLabel(provider, model, locale)` from `apps/web/src/lib/extension-label.ts` (the display name in the page locale, else the id) |
 | `design-color-literal` | `#hex` / `rgb()` / `hsl()` in `packages/design/src` outside `styles/tokens.css` (both CSS and TS strings are checked; `color-mix()` referencing tokens is allowed) | Define a token in `tokens.css` and use `var(--cb-…)` |
 
-`web-ui-template` has two exemptions: `app/[locale]/dev/**` (the development catalog page; the other rules still apply), and pages that only handle 404 -- containing no JSX and calling `notFound()` imported from `next/navigation` (e.g. `(app)/[...rest]/page.tsx`), where the page is rendered by the `StatusPage` in the `not-found.tsx` of the same segment. Don't use this exemption to write other pages.
+`web-ui-template` has two exemptions: `app/dev/**` (the development catalog page; the other rules still apply), and pages that only handle 404 -- containing no JSX and calling `notFound()` imported from `next/navigation` (e.g. `(app)/[...rest]/page.tsx`), where the page is rendered by the `StatusPage` in the `not-found.tsx` of the same segment. Don't use this exemption to write other pages.
 
 `web-ui-iframe` is a static check and only recognizes literals: `<iframe>` and `createElement("iframe")`. It cannot see dynamic tags (`const Tag = "iframe"; <Tag />`, `createElement(tag)`, names assembled for `document.createElement`), but the rule applies all the same -- don't work around it this way; review treats it as a violation.
 
 Test files (`*.test.*`) are not checked. The package import rule is a blacklist: when introducing a new style / UI dependency, add it to `FORBIDDEN_PKG`.
 
 **First paint follows the window through CSS.** `useMediaQuery` reads `false` on the server and during hydration, so a layout chosen only in JS (rail vs full sidebar, a Sheet vs an inline panel) is drawn in its wide form until the first client render. Below the breakpoint, CSS media queries must already give the narrow first paint (the sidebar draws both variants and shows one; the conversation page hides its inline right area below 1280 until it becomes the Sheet). A "no horizontal page scroll" check that samples before that render fails only under load; pin the first paint with a JS-off case (`test.use({ javaScriptEnabled: false })`, see `apps/web/visual/conversation.interaction.spec.ts` and `sidebar.interaction.spec.ts`).
+
+## Extension config forms
+
+Every extension config form (deployment config, org extension settings, channel connections, the
+catalog install wizard, the plugin upgrade dialog) is drawn by one renderer, the config-form module
+`apps/web/src/components/config-form` (`ConfigForm.tsx` draws a JSON Schema with its `x-ui` hints;
+`model.ts` builds the field tree and reads a draft back; `deployment.ts`, `org.ts` and
+`channel.ts` adapt each API's view and save body). Don't write another schema form. It is built
+only from design pieces: `Repeater` (arrays of objects: item titles, presets, move / remove /
+undo), `FieldRow` / `FieldRowGroup` (compact rows, e.g. an endpoint's models), `KeyValueEditor`
+(records, `maskValues` for secret records). A missing piece is added to `packages/design` through
+the steps below, never styled in `apps/web`.
 
 ## Adding a component or template
 
@@ -170,7 +373,7 @@ In order, don't skip steps (spec §10):
 ```bash
 pnpm vitest run --project design          # component tests of the design package
 pnpm check:web-ui                         # UI rule check (already part of pnpm check)
-pnpm --filter @capybara-hq/web dev        # development; /zh/dev/ui is the component catalog page
+pnpm --filter @capybara-hq/web dev        # development; /dev/ui is the component catalog page
 CAPYBARA_DEV_UI=1 pnpm --filter @capybara-hq/web start   # enable /dev/ui in a production build (off by default)
 pnpm --filter @capybara-hq/web visual     # screenshot regression (runs next build + start itself; local darwin differs from the baselines, for comparison only)
 pnpm --filter @capybara-hq/web visual fidelity      # measuring + state coverage against the spec size tables

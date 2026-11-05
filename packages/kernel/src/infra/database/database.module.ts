@@ -72,6 +72,7 @@ export class DatabaseModule {
               (err) => log.error("pg idle client error", { err }),
               {
                 connectTimeoutMs: db.connectTimeoutMs,
+                idleTimeoutMs: db.idleTimeoutMs,
                 onClientError: (err) => log.warn("pg client error", { err }),
               },
             );

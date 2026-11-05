@@ -74,10 +74,10 @@ describe("/plugin-ui/[...path] 代理", () => {
     expect(exported.sort()).toEqual(["GET", "OPTIONS", "POST"]);
   });
 
-  it("Next 的 Proxy（语言前缀）不拦截 /plugin-ui", () => {
-    const re = new RegExp(`^${proxyConfig.matcher}$`);
-    expect(re.test("/plugin-ui/example-board/board")).toBe(false);
-    expect(re.test("/zh/agents")).toBe(true);
+  it("Next's Proxy (old language-prefixed links) never sees /plugin-ui", () => {
+    expect(proxyConfig.matcher).toEqual([
+      "/((?!api(?:/|$)|plugin-ui(?:/|$)|_next(?:/|$)|dev(?:/|$)|.*\\.).*)",
+    ]);
   });
 
   it("GET 转发到内核 /plugins/<plugin>/ui/<rest>（带查询串）；不转发 Cookie 与非白名单请求头", async () => {

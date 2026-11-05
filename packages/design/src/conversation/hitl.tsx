@@ -2,6 +2,7 @@ import { type JSX, type KeyboardEvent, type ReactNode, useId, useRef, useState }
 import { Button } from "../controls/button";
 import { Input } from "../controls/inputs";
 import { Switch } from "../controls/toggles";
+import { initialOf } from "../display/initial";
 import { Icon } from "../icons/icon";
 import { useDesignT } from "../provider";
 import { fillCopy } from "./tool-copy";
@@ -775,7 +776,7 @@ export function ConnectBlock(p: ConnectBlockProps): JSX.Element {
       </div>
     );
   }
-  const initial = [...p.service.trim()][0]?.toUpperCase() ?? "?";
+  const initial = initialOf(p.service.trim()) || "?";
   return (
     // biome-ignore lint/a11y/useSemanticElements: a fieldset brings its own border and legend layout
     <div

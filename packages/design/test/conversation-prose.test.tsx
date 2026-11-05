@@ -6,6 +6,7 @@ import {
   DesignProvider,
   Prose,
   RunDivider,
+  Spinner,
   ThinkingRow,
   UserBubble,
 } from "../src/index";
@@ -200,5 +201,17 @@ describe("RunDivider (§6.16.7)", () => {
     cleanup();
     wrap(<RunDivider kind="fallback" text="x" />);
     expect(screen.getByRole("status").getAttribute("data-tone")).toBeNull();
+  });
+});
+
+describe("the thinking row's live spinner (§6.16.5)", () => {
+  it("is 16, the Spinner's default stays 12 (panel headers, background tasks)", () => {
+    const { container } = wrap(<ThinkingRow seconds={2} text="…" live />);
+    const icon = container.querySelector('[data-part="spinner"] svg') as SVGElement;
+    expect(icon.getAttribute("width")).toBe("16");
+    const tool = wrap(<Spinner />);
+    expect(tool.container.querySelector('[data-part="spinner"] svg')?.getAttribute("width")).toBe(
+      "12",
+    );
   });
 });

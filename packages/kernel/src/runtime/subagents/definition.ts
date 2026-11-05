@@ -340,7 +340,9 @@ function orgAgentDefinition(
   }
   const agentId = a.entry.agentId ?? "";
   const own = a.orgAgent.definition;
-  const { subagents: _subagents, skills, ...rest } = own;
+  // prompt files are authoring data: the child's model sees only `instructions` (their join), and
+  // `subagent_started.definition` keeps its shape (spec 2026-11-04 §3.3)
+  const { subagents: _subagents, skills, instructionFiles: _files, ...rest } = own;
   const definition: AgentDefinition = {
     ...rest,
     // its own tools, not intersected with the parent's; only the child-removed ones go

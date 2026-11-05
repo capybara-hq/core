@@ -1,18 +1,27 @@
 "use client";
 
+import { type QueryClient, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
-import { useCallback, useEffect, useReducer, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { useRouter } from "../../i18n/navigation";
 import { ApiClientError } from "../../lib/api";
 import {
   abortRun,
   type Conversation,
   type ConversationEvent,
-  getConversation,
-  listAllEvents,
   type MessageInput,
-  notifyConversationsChanged,
   postMessage,
 } from "../../lib/conversations";
+import { retryOnMountOf } from "../../lib/query/client";
+import {
+  appendEvents,
+  CONVERSATION_SIDE_KEYS,
+  conversationQuery,
+  eventsQuery,
+} from "../../lib/query/conversation";
+import { keys } from "../../lib/query/keys";
+import { useAppMutation } from "../../lib/query/mutation";
+import { refreshUiViews } from "../../lib/query/ui";
 import {
   type ChatState,
   type ConversationChange,
@@ -20,8 +29,8 @@ import {
   openConversationStream,
   reduceChat,
   type StreamDelta,
+  type SubagentProgress,
 } from "../../lib/stream";
-import { type UiRefresh, uiKey } from "../../lib/ui";
 import { useErrorMessage } from "../../lib/use-error-message";
 
 /** Consecutive reopen attempts after the browser gave up the stream (reset by any open). */
@@ -36,12 +45,41 @@ const cancelFrame = (id: number): void => {
   else clearTimeout(id);
 };
 
+/**
+ * The last seq each conversation's stream delivered (`org/id`), per query client, written by the
+ * stream's effects in the browser only. The cached log may hold a later event a send returned
+ * before the stream delivered the ones before it, so a stream resumes after the lower of this and
+ * the log's end.
+ */
+const deliveredBy = new WeakMap<QueryClient, Map<string, number>>();
+
+/**
+ * The resume points of `qc`'s conversations. A log read whole (a fetch, not a write of the
+ * stream's) is complete up to its end: its conversation's point is dropped, so the next open
+ * resumes at that end instead of replaying what the read already holds.
+ */
+function deliveredOf(qc: QueryClient): Map<string, number> {
+  const known = deliveredBy.get(qc);
+  if (known !== undefined) return known;
+  const map = new Map<string, number>();
+  deliveredBy.set(qc, map);
+  qc.getQueryCache().subscribe((event) => {
+    if (event.type !== "updated" || event.action.type !== "success" || event.action.manual) return;
+    const k = event.query.queryKey;
+    if (k[0] === "org" && k[2] === "conversation" && k[4] === "events")
+      map.delete(`${String(k[1])}/${String(k[3])}`);
+  });
+  return map;
+}
+
 /** `onSend`'s outcome: on failure the error (to mark the files it names). */
 export type SendResult = { ok: true } | { ok: false; error: unknown };
 
 export type ConversationState = {
   state: ChatState;
   events: ConversationEvent[];
+  /** The log is still on its way (nothing cached): the thread shows its loading state. */
+  loading: boolean;
   /** The conversation row (title, agent, selection); undefined while it loads. */
   conversation: Conversation | undefined;
   running: boolean;
@@ -54,72 +92,88 @@ export type ConversationState = {
   merge(events: ConversationEvent[]): void;
   error: string | undefined;
   setError(e: unknown): void;
-  /** Counters bumped by `event: changed` (queue, files) and reconnects: refetch when they move. */
-  changes: Readonly<Record<"queue" | "files" | "reconnect", number>>;
   /** Raises the sub-agents' calls from `GET …/subagents` (no step: never beats stream progress). */
   seedProgress(views: readonly { id: string; toolCalls: number }[]): void;
-  /** Extension view refresh counters: `plugin/contribution`, `*` for all (after a reconnect). */
-  uiVersions: Readonly<Record<string, number>>;
   /** Replace the conversation row (after a rename). */
   setConversation(c: Conversation): void;
 };
 
+/** The progress inputs of {@link reduceChat}, kept apart from the log (they are not events). */
+const reduceProgress = (
+  progress: ChatState["progress"],
+  input: { progress: SubagentProgress; seed?: boolean },
+): ChatState["progress"] =>
+  reduceChat({ ...initialChatState, progress }, { kind: "progress", ...input }).progress;
+
 /**
- * One conversation's live state: the history is read first, then the stream is opened from the
- * last seq; events and deltas go through {@link reduceChat}. `event: changed` refetches the row
- * (title, selection) or bumps the queue / files counters; a title change also tells the sidebar.
- * Reconnects (the browser's own, or a reopen after the browser gave up) resume from the last seq
- * the stream delivered and refetch everything outside the log.
+ * One conversation's live state (web query cache spec §6): the log is the cached `eventsQuery`
+ * (the layout's prefetch, else read here), and the stream, opened from its last seq, appends each
+ * event to it through {@link appendEvents}. {@link reduceChat} turns the cached list plus the
+ * frame's delta buffer into the thread's state; deltas and sub-agent progress are not events and
+ * stay here.
+ *
+ * `event: changed` invalidates the matching query (the row, the queue, the files) instead of
+ * reading it here; a title change and the run's phase also invalidate the sidebar's groups. When
+ * an open's catch-up delivers events, what lives outside the log (`CONVERSATION_SIDE_KEYS`) is
+ * invalidated; without one it follows its freshness class. Reconnects (the browser's own, or a
+ * reopen after the browser gave up) resume from the last seq the cache holds.
  */
 export function useConversation(orgId: string, conversationId: string): ConversationState {
   const t = useTranslations("chat");
+  const router = useRouter();
+  const qc = useQueryClient();
   const errorMessage = useErrorMessage();
-  const [state, dispatch] = useReducer(reduceChat, initialChatState);
+  const eventsQ = eventsQuery(orgId, conversationId);
+  const rowQ = conversationQuery(orgId, conversationId);
+  const log = useQuery({ ...eventsQ, retryOnMount: retryOnMountOf(eventsQ.queryKey) });
+  const row = useQuery({ ...rowQ, retryOnMount: retryOnMountOf(rowQ.queryKey) });
+  const events = log.data;
+  /** The deltas since the log last changed in a way that drops them (applied per frame). */
+  const [deltas, setDeltas] = useState<readonly StreamDelta[]>([]);
+  const [progress, dispatchProgress] = useReducer(reduceProgress, {});
+  // The log's state is rebuilt when the cached list changes; a delta frame only adds drafts (I3).
+  const base = useMemo(
+    () =>
+      events === undefined
+        ? initialChatState
+        : reduceChat(initialChatState, { kind: "events", events }),
+    [events],
+  );
+  const drafted = useMemo(
+    () => (deltas.length === 0 ? base : reduceChat(base, { kind: "deltas", deltas })),
+    [base, deltas],
+  );
+  // Deltas of a step its message replaced, or of a run that ended, are ignored for good: drop them.
+  useEffect(() => {
+    setDeltas((d) => {
+      const kept = d.filter(
+        (x) => !base.finalized[`${x.runId}:${x.step}`] && !base.closedRuns[x.runId],
+      );
+      return kept.length === d.length ? d : kept;
+    });
+  }, [base]);
+  const state = useMemo(() => ({ ...drafted, progress }), [drafted, progress]);
+
   const [error, setErrorText] = useState<string>();
   const [stopping, setStopping] = useState(false);
-  const [conversation, setConversation] = useState<Conversation>();
-  const [changes, setChanges] = useState({ queue: 0, files: 0, reconnect: 0 });
-  const [uiVersions, setUiVersions] = useState<Record<string, number>>({});
-  const bumpUi = useCallback((key: string) => {
-    setUiVersions((v) => ({ ...v, [key]: (v[key] ?? 0) + 1 }));
-  }, []);
   const setError = useCallback((e: unknown) => setErrorText(errorMessage(e)), [errorMessage]);
-
-  /** The title last read (undefined before the first read): a change tells the sidebar. */
-  const lastTitle = useRef<string | null | undefined>(undefined);
-  /** Read counter: only the latest read's answer is applied (m7; answers can arrive late). */
-  const reads = useRef(0);
-  const loadConversation = useCallback(() => {
-    const read = ++reads.current;
-    getConversation(orgId, conversationId).then(
-      ({ conversation: c }) => {
-        if (read !== reads.current) {
-          // superseded, but still a title the page saw: the baseline for the next comparison
-          lastTitle.current ??= c.title;
-          return;
-        }
-        if (lastTitle.current !== undefined && lastTitle.current !== c.title)
-          notifyConversationsChanged();
-        lastTitle.current = c.title;
-        setConversation(c);
-      },
-      () => {
-        // The thread shows the stream's error; the title stays on its placeholder.
-      },
-    );
-  }, [orgId, conversationId]);
+  const loaded = events !== undefined;
+  /**
+   * The current open has not delivered a new event yet: the first one ends its catch-up. A
+   * person's own write (a send, a queued send) ends it too: what follows answers it, live.
+   */
+  const catchingUp = useRef(true);
 
   useEffect(() => {
-    loadConversation();
-  }, [loadConversation]);
-
-  useEffect(() => {
+    if (!loaded) return;
+    const c = keys.org(orgId).conversation(conversationId);
+    const invalidate = (queryKey: readonly unknown[]) => void qc.invalidateQueries({ queryKey });
+    const groups = keys.org(orgId).conversationGroupsAll();
     let disposed = false;
     let close: (() => void) | undefined;
     let failures = 0;
-    /** The last seq the stream (and the history) delivered: reopen from here. */
-    let streamSeq = 0;
-    let connected = false;
+    /** The row was read again once for a title generated before the stream was open. */
+    let titleChecked = false;
     // Deltas are applied once per animation frame, together (final review I3): a fast stream
     // renders the page per frame, not per token. An event first flushes what is pending, so
     // deltas and events stay in stream order.
@@ -129,96 +183,138 @@ export function useConversation(orgId: string, conversationId: string): Conversa
       if (scheduled !== null) cancelFrame(scheduled);
       scheduled = null;
       if (pending.length === 0) return;
-      const deltas = pending;
+      const frameDeltas = pending;
       pending = [];
-      dispatch({ kind: "deltas", deltas });
+      setDeltas((d) => [...d, ...frameDeltas]);
     };
     const fail = (e: unknown) => {
       if (!disposed) setErrorText(errorMessage(e));
     };
     const onChanged = (what: ConversationChange) => {
-      // A new title tells the sidebar (loadConversation compares it with the last one read).
-      // The sidebar rereads on `title` itself: the row read below may be superseded by a later
-      // read (only the latest is applied), which would hide the change from the comparison.
-      if (what === "title") notifyConversationsChanged();
-      if (what === "title" || what === "selection") loadConversation();
-      else setChanges((c) => ({ ...c, [what]: c[what] + 1 }));
+      // Archived or deleted elsewhere (another tab, the CLI): the sidebar's lists change; a deleted
+      // conversation is gone, so the page goes to a new one (an archived one stays open).
+      if (what === "archived" || what === "deleted") {
+        invalidate(groups);
+        if (what === "deleted") router.push("/chat");
+        return;
+      }
+      if (what === "selection") invalidate(c.row());
+      // A new title shows in the sidebar too; a title this page already shows (the person's own
+      // rename, whose mutation reads the groups itself) reads them no second time.
+      if (what === "title") {
+        const before = qc.getQueryData<Conversation>(c.row())?.title;
+        void qc.refetchQueries({ queryKey: c.row(), exact: true }).then(() => {
+          if (!disposed && qc.getQueryData<Conversation>(c.row())?.title !== before) {
+            invalidate(groups);
+          }
+        });
+      }
+      if (what === "queue") invalidate(c.queue());
+      if (what === "files") invalidate(c.files());
     };
-    const open = (after: number) => {
-      close = openConversationStream(orgId, conversationId, after, {
+    const scope = `${orgId}/${conversationId}`;
+    const delivered = deliveredOf(qc);
+    /** Where an open resumes: after what the stream delivered, never past the cached log's end. */
+    const resumeAt = () => {
+      const end = qc.getQueryData<ConversationEvent[]>(c.events())?.at(-1)?.seq ?? 0;
+      return Math.min(delivered.get(scope) ?? end, end);
+    };
+    // A log read in full is complete up to its end (the layout's or this page's first read).
+    if (!delivered.has(scope)) delivered.set(scope, resumeAt());
+    const open = () => {
+      catchingUp.current = true;
+      close = openConversationStream(orgId, conversationId, resumeAt(), {
         onOpen: () => {
           failures = 0;
-          if (connected) {
-            // A reconnect: frames may have been missed meanwhile.
-            bumpUi("*");
-            setChanges((c) => ({
-              queue: c.queue + 1,
-              files: c.files + 1,
-              reconnect: c.reconnect + 1,
-            }));
+          // The browser's own reconnect: its catch-up follows the same rule.
+          catchingUp.current = true;
+          // An untitled conversation's title may have been generated before the stream was open
+          // (its `changed: title` reached nobody): read the row once. A named one reads nothing.
+          const row = qc.getQueryData<Conversation>(c.row());
+          if (!titleChecked && row !== undefined && row.title === null) {
+            titleChecked = true;
+            // A title found that way shows in the sidebar too (its groups missed the frame).
+            void qc.refetchQueries({ queryKey: c.row(), exact: true }).then(() => {
+              if (!disposed && qc.getQueryData<Conversation>(c.row())?.title != null) {
+                invalidate(groups);
+              }
+            });
           }
-          // A title generated before the stream was open sent its `changed` to nobody: read the
-          // row again on every open (a reconnect may have missed one too).
-          loadConversation();
-          connected = true;
         },
-        onUi: (r: UiRefresh) => bumpUi(uiKey(r.plugin, r.contribution)),
+        // An extension view changed: read again, coalesced (at most one read in flight).
+        onUi: (r) =>
+          refreshUiViews(qc, keys.org(orgId).uiViews(conversationId, r.plugin, r.contribution)),
         onChanged,
         onEvent: (e) => {
-          streamSeq = Math.max(streamSeq, e.seq);
           flush();
-          dispatch({ kind: "events", events: [e] });
+          delivered.set(scope, Math.max(delivered.get(scope) ?? 0, e.seq));
+          const { added } = appendEvents(qc, orgId, conversationId, [e]);
+          // The catch-up delivered something: what lives outside the log may have changed too.
+          if (catchingUp.current && added > 0) {
+            catchingUp.current = false;
+            for (const k of CONVERSATION_SIDE_KEYS(orgId, conversationId)) invalidate(k);
+          }
         },
         onDelta: (d) => {
           pending.push(d);
           scheduled ??= frame(flush);
         },
-        onSubagentProgress: (p) => dispatch({ kind: "progress", progress: p }),
+        onSubagentProgress: (p) => dispatchProgress({ progress: p }),
         onError: ({ code }) => {
           if (disposed) return;
           if (code !== undefined) return fail(new ApiClientError(0, code, code));
           if (++failures > MAX_REOPEN) return setErrorText(t("streamLost"));
           // Most likely the access token expired: refresh through apiFetch, then resume.
-          getConversation(orgId, conversationId).then(() => {
-            if (!disposed) open(streamSeq);
+          qc.fetchQuery({ ...conversationQuery(orgId, conversationId), staleTime: 0 }).then(() => {
+            if (!disposed) open();
           }, fail);
         },
       });
     };
-    listAllEvents(orgId, conversationId).then((events) => {
-      if (disposed) return;
-      dispatch({ kind: "events", events });
-      streamSeq = events.at(-1)?.seq ?? 0;
-      open(streamSeq);
-    }, fail);
+    open();
     return () => {
       disposed = true;
       if (scheduled !== null) cancelFrame(scheduled);
       close?.();
     };
-  }, [orgId, conversationId, errorMessage, t, bumpUi, loadConversation]);
+  }, [orgId, conversationId, loaded, qc, errorMessage, t, router]);
 
+  const sendMutation = useAppMutation({
+    fn: async (m: MessageInput) => {
+      const { event } = await postMessage(orgId, conversationId, m);
+      catchingUp.current = false;
+      appendEvents(qc, orgId, conversationId, [event]);
+      return event;
+    },
+    // A switch was logged with the message: the row's selection changed.
+    invalidates: (m) =>
+      m.model !== undefined || m.effort !== undefined
+        ? [keys.org(orgId).conversation(conversationId).row()]
+        : [],
+  });
   const send = useCallback(
     async (m: MessageInput): Promise<SendResult> => {
       try {
-        const { event } = await postMessage(orgId, conversationId, m);
-        dispatch({ kind: "events", events: [event] });
+        await sendMutation.mutateAsync(m);
         setErrorText(undefined);
-        // A switch was logged with the message: the row's selection changed.
-        if (m.model !== undefined || m.effort !== undefined) loadConversation();
         return { ok: true };
       } catch (e) {
         setErrorText(errorMessage(e));
         return { ok: false, error: e };
       }
     },
-    [orgId, conversationId, errorMessage, loadConversation],
+    [sendMutation.mutateAsync, errorMessage],
   );
 
+  // The run's terminal event arrives through the stream: nothing to invalidate.
+  const abort = useAppMutation({
+    fn: () => abortRun(orgId, conversationId),
+    invalidates: () => [],
+  });
   const stop = useCallback(async () => {
     setStopping(true);
     try {
-      await abortRun(orgId, conversationId);
+      await abort.mutateAsync(undefined);
     } catch (e) {
       // The run just ended: its terminal event arrives through the stream.
       if (!(e instanceof ApiClientError && e.code === "run.not_active"))
@@ -226,43 +322,60 @@ export function useConversation(orgId: string, conversationId: string): Conversa
     } finally {
       setStopping(false);
     }
-  }, [orgId, conversationId, errorMessage]);
+  }, [abort.mutateAsync, errorMessage]);
 
-  // A row the caller got from a write (a rename) is newer than any read still in flight.
-  const replaceConversation = useCallback((c: Conversation) => {
-    reads.current += 1;
-    setConversation(c);
-  }, []);
+  // A row the caller got from a write (a rename) is the new state: it replaces the cached one.
+  const replaceConversation = useCallback(
+    (c: Conversation) => {
+      void qc.cancelQueries({ queryKey: rowQ.queryKey });
+      qc.setQueryData(rowQ.queryKey, c);
+    },
+    [qc, rowQ.queryKey],
+  );
 
-  const merge = useCallback((events: ConversationEvent[]) => {
-    dispatch({ kind: "events", events });
-  }, []);
+  const merge = useCallback(
+    (list: ConversationEvent[]) => {
+      catchingUp.current = false;
+      appendEvents(qc, orgId, conversationId, list);
+    },
+    [qc, orgId, conversationId],
+  );
 
   const seedProgress = useCallback((views: readonly { id: string; toolCalls: number }[]) => {
-    for (const v of views) {
-      dispatch({
-        kind: "progress",
+    for (const v of views)
+      dispatchProgress({
         progress: { subagentId: v.id, step: 0, toolCalls: v.toolCalls },
         seed: true,
       });
-    }
   }, []);
 
+  // The open conversation's run started, began or stopped waiting, or ended: the sidebar's state
+  // dot for it changes. The first phase read (the history) is the baseline, not a change.
+  const phase = !loaded ? null : state.waiting ? "waiting" : state.running ? "running" : "idle";
+  const lastPhase = useRef<{ id: string; phase: string } | null>(null);
+  useEffect(() => {
+    if (phase === null) return;
+    const last = lastPhase.current;
+    lastPhase.current = { id: conversationId, phase };
+    if (last !== null && last.id === conversationId && last.phase !== phase)
+      void qc.invalidateQueries({ queryKey: keys.org(orgId).conversationGroupsAll() });
+  }, [qc, orgId, conversationId, phase]);
+
+  const logError = log.error === null ? undefined : errorMessage(log.error);
   return {
     state,
     events: state.events,
-    conversation: conversation?.id === conversationId ? conversation : undefined,
+    loading: !loaded && log.error === null,
+    conversation: row.data,
     running: state.running,
     waiting: state.waiting,
     stopping,
     stop: () => void stop(),
     send,
     merge,
-    error,
+    error: error ?? logError,
     setError,
-    changes,
     seedProgress,
-    uiVersions,
     setConversation: replaceConversation,
   };
 }

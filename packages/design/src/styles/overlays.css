@@ -67,9 +67,6 @@
 .cb-dialog[data-size="640"] {
   width: min(640px, calc(100vw - 32px));
 }
-.cb-dialog[data-danger="true"] {
-  border-color: var(--cb-fail);
-}
 .cb-dialog-head,
 .cb-sheet-head {
   display: flex;
@@ -83,10 +80,7 @@
   flex: 1;
   margin: 0;
   font-size: var(--cb-type-h2-size);
-  font-weight: 700;
-}
-.cb-dialog[data-danger="true"] .cb-dialog-title {
-  color: var(--cb-fail);
+  font-weight: 500;
 }
 .cb-dialog-body {
   flex: 1;
@@ -103,6 +97,7 @@
 }
 .cb-dialog-desc {
   color: var(--cb-muted);
+  font-family: var(--cb-font-prose);
 }
 .cb-dialog-confirm {
   display: flex;
@@ -120,7 +115,7 @@
 .cb-dialog-confirm code {
   color: var(--cb-ink);
   font-family: inherit;
-  font-weight: 700;
+  font-weight: 600;
 }
 
 /* Sheet */
@@ -177,6 +172,10 @@
 .cb-menu {
   padding: 4px 0;
 }
+/* Below its trigger a menu is at least as wide as the trigger (spec §6.7). */
+.cb-menu[data-match-trigger="true"] {
+  min-width: max(160px, var(--radix-dropdown-menu-trigger-width));
+}
 /* 悬停时也保持（与按钮变体的 :hover 规则同优先级，本文件在后） */
 [data-cb-trigger][data-active="true"],
 [data-cb-trigger][data-active="true"]:hover:not(:disabled) {
@@ -204,6 +203,17 @@
   flex: none;
   width: 14px;
 }
+.cb-menu-label > .cb-icon {
+  flex: none;
+  color: var(--cb-muted);
+}
+.cb-menu-sub-mark {
+  display: inline-flex;
+  color: var(--cb-muted);
+}
+.cb-menu-item[data-state="open"] {
+  background: var(--cb-hover);
+}
 .cb-menu-item[data-highlighted] {
   background: var(--cb-hover);
   outline: 1px solid var(--cb-accent);
@@ -221,12 +231,28 @@
   color: inherit;
   text-decoration: none;
 }
+/* The current page in a navigation menu (the sidebar's 更多 flyout). */
+.cb-menu-item[data-current="true"] {
+  background: var(--cb-selected);
+  color: var(--cb-ink);
+}
 .cb-menu-item[data-danger="true"] {
   color: var(--cb-fail);
 }
 .cb-menu-item[data-disabled] {
-  color: var(--cb-faint);
+  color: var(--cb-disabled);
   cursor: not-allowed;
+}
+/* A menu item's help (a Repeater preset): muted, one line, after the label. */
+.cb-menu-description {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .cb-menu-shortcut {
   color: var(--cb-faint);
@@ -420,11 +446,11 @@
   font-size: var(--cb-type-small-size);
   line-height: var(--cb-type-small-line);
 }
+/* Selection is neutral (spec §2.3): a selected ground and a line-strong outline. */
 .cb-palette-item[data-selected="true"] {
-  outline: 1px solid var(--cb-accent);
+  outline: 1px solid var(--cb-line-strong);
   outline-offset: -1px;
-  background: var(--cb-accent-tint);
-  border-left-color: var(--cb-accent);
+  background: var(--cb-selected);
 }
 .cb-palette-empty {
   padding: 8px 12px;

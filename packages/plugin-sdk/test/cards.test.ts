@@ -82,7 +82,7 @@ const question: Extract<ChannelCard, { kind: "question" }> = {
 const connect: ChannelCard = {
   kind: "connect",
   appName: "GitHub",
-  url: "https://capy.example.com/settings/connections#connector-gh",
+  url: "https://capy.example.com/account/connections#connector-gh",
 };
 const bind: ChannelCard = {
   kind: "bind",
@@ -401,10 +401,10 @@ describe("renderCardAsText", () => {
 
   it("connect：en / zh", () => {
     expect(renderCardAsText(connect, "en")).toBe(
-      "[Connect] GitHub needs to be connected.\nConnect: https://capy.example.com/settings/connections#connector-gh",
+      "[Connect] GitHub needs to be connected.\nConnect: https://capy.example.com/account/connections#connector-gh",
     );
     expect(renderCardAsText(connect, "zh")).toBe(
-      "【连接】需要连接 GitHub。\n连接：https://capy.example.com/settings/connections#connector-gh",
+      "【连接】需要连接 GitHub。\n连接：https://capy.example.com/account/connections#connector-gh",
     );
   });
 

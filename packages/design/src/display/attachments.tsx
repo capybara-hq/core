@@ -7,7 +7,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { IconButton } from "../controls/button";
+import { Button, IconButton } from "../controls/button";
 import { Icon } from "../icons/icon";
 import { useDesignT } from "../provider";
 
@@ -245,6 +245,81 @@ export function FileButton({
         onChange={onChange}
       />
     </>
+  );
+}
+
+export type FilePickerProps = {
+  /** The button's words; default the design i18n 「选择文件」 / "Choose file". */
+  label?: string;
+  /** The muted line under the button; default 「或拖放到这里。」 / "or drop it here.". */
+  hint?: string;
+  /** The words on the overlay while a file is dragged over the zone. */
+  dropLabel: string;
+  onFiles: (files: File[]) => void;
+  accept?: string;
+  multiple?: boolean;
+  disabled?: boolean;
+  /** What is chosen or happening (a file chip, the upload progress), drawn inside the zone. */
+  children?: ReactNode;
+};
+
+/**
+ * The file pick of a form or a flow (spec §6.25): a dashed drop zone with the `upload` icon, a
+ * real 「选择文件」 button and a muted hint, and what is chosen inside it. A click opens the system
+ * picker, a drop or paste hands the files over the same way (FileDrop); the input is cleared after
+ * each pick so the same file can be chosen again.
+ */
+export function FilePicker({
+  label,
+  hint,
+  dropLabel,
+  onFiles,
+  accept,
+  multiple,
+  disabled,
+  children,
+}: FilePickerProps) {
+  const t = useDesignT();
+  const input = useRef<HTMLInputElement>(null);
+  const onChange = (e: ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files ?? []);
+    e.target.value = "";
+    if (files.length > 0) onFiles(files);
+  };
+  return (
+    <FileDrop label={dropLabel} onFiles={onFiles} {...(disabled ? { disabled } : {})}>
+      <div
+        className="cb-file-picker"
+        data-part="file-picker"
+        data-disabled={disabled ? "true" : undefined}
+      >
+        <span className="cb-file-picker-icon" data-part="file-picker-icon" aria-hidden="true">
+          <Icon name="upload" size={16} />
+        </span>
+        <Button variant="default" disabled={disabled} onClick={() => input.current?.click()}>
+          {label ?? t("filePicker.choose")}
+        </Button>
+        <span className="cb-file-picker-hint" data-part="file-picker-hint">
+          {hint ?? t("filePicker.hint")}
+        </span>
+        <input
+          ref={input}
+          className="cb-file-input"
+          type="file"
+          tabIndex={-1}
+          aria-hidden="true"
+          accept={accept}
+          multiple={multiple}
+          disabled={disabled}
+          onChange={onChange}
+        />
+        {children ? (
+          <div className="cb-file-picker-status" data-part="file-picker-status">
+            {children}
+          </div>
+        ) : null}
+      </div>
+    </FileDrop>
   );
 }
 

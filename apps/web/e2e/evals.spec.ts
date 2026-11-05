@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { expect, type Page, test } from "@playwright/test";
-import { replies, send, startChat } from "./support/chat";
+import { newAgent, replies, send, startChat } from "./support/chat";
+import { mainNavLink } from "./support/nav";
 import { signIn } from "./support/sign-in";
 
 /** 界面文案取自 zh 文案文件，避免与实现重复硬编码。 */
@@ -22,31 +23,22 @@ test("建评测集 → 从对话抽样 → 单步运行 → 标注，汇总随�
 
   // 1. 新建 agent（model-fake），对话一轮，等运行结束
   const agentName = `Eval agent ${Date.now()}`;
-  await page.goto("/zh/agents/new");
-  await page.getByRole("textbox", { name: zh.agents.form.nameLabel, exact: true }).fill(agentName);
-  await page
-    .getByRole("combobox", { name: zh.agents.form.modelLabel, exact: true })
-    .selectOption("model-fake/fake-1");
-  await page.getByRole("button", { name: zh.agents.form.submit }).click();
-  await expect(page).toHaveURL(/\/zh\/agents$/);
+  await newAgent(page, agentName);
   await startChat(page, agentName);
   await send(page, "echo:eval me please");
   await expect(replies(page).last()).toHaveText(/eval me please/);
   await expect(page.locator('[data-streaming="true"]')).toHaveCount(0);
 
   // 2. 顶栏「评测」→ 新建评测集
-  await page
-    .getByRole("navigation", { name: "主导航" })
-    .getByRole("link", { name: zh.nav.evals })
-    .click();
-  await expect(page).toHaveURL(/\/zh\/evals$/);
+  await (await mainNavLink(page, zh.nav.evals)).click();
+  await expect(page).toHaveURL(/\/evals$/);
   await expect(page.getByRole("link", { name: E.runHistory })).toBeVisible();
   await page.getByRole("link", { name: E.new }).click();
   await expect(page.locator('[data-template="FormPage"]')).toBeVisible();
   await page.getByRole("combobox", { name: E.form.agentLabel }).selectOption({ label: agentName });
   await page.getByRole("textbox", { name: E.form.nameLabel }).fill("E2E set");
-  await page.getByRole("button", { name: E.form.submit }).click();
-  await expect(page).toHaveURL(/\/zh\/evals\/[^/]+$/);
+  await page.getByRole("button", { name: E.form.submit, exact: true }).click();
+  await expect(page).toHaveURL(/\/evals\/[^/]+$/);
   await expect(page.locator('[data-template="DetailPage"]')).toBeVisible();
   const setUrl = page.url();
 
@@ -77,7 +69,7 @@ test("建评测集 → 从对话抽样 → 单步运行 → 标注，汇总随�
     estimate.locator(".cb-kv-row").filter({ hasText: E.wizard.estimate.tokenCap }),
   ).toContainText("1,000,000");
   await actions.getByRole("button", { name: E.wizard.start }).click();
-  await expect(page).toHaveURL(/\/zh\/evals\/runs\/[^/]+$/);
+  await expect(page).toHaveURL(/\/evals\/runs\/[^/]+$/);
 
   // 5. 运行页每 5 秒轮询，直到完成
   await expect(page.getByText(`${E.runStatus.completed}`).first()).toBeVisible({

@@ -13,6 +13,7 @@ import {
   FilterChip,
   IconButton,
   Input,
+  LinkButton,
   RadioGroup,
   Segmented,
   Select,
@@ -85,6 +86,34 @@ describe("Button", () => {
   it("IconButton 以 label 命名", () => {
     zh(<IconButton label="更多" icon={<span aria-hidden>…</span>} />);
     expect(screen.getByRole("button", { name: "更多" })).toBeTruthy();
+  });
+});
+
+describe("LinkButton", () => {
+  it("is a link drawn as a button of its variant, through the provider's link", () => {
+    zh(
+      <LinkButton href="/admin/extensions/install?upgrade=demo" variant="secondary">
+        升级
+      </LinkButton>,
+    );
+    const link = screen.getByRole("link", { name: "升级" });
+    expect(link.getAttribute("href")).toBe("/admin/extensions/install?upgrade=demo");
+    expect(link.className).toContain("cb-btn");
+    expect(link.className).toContain("cb-btn-link-secondary");
+    expect(link.getAttribute("data-part")).toBe("button");
+    expect(link.getAttribute("data-variant")).toBe("secondary");
+    expect(link.getAttribute("data-density")).toBe("default");
+  });
+
+  it("defaults to the default variant and follows the density context", () => {
+    zh(
+      <DensityContext.Provider value="dense">
+        <LinkButton href="/x">打开</LinkButton>
+      </DensityContext.Provider>,
+    );
+    const link = screen.getByRole("link", { name: "打开" });
+    expect(link.getAttribute("data-variant")).toBe("default");
+    expect(link.getAttribute("data-density")).toBe("dense");
   });
 });
 

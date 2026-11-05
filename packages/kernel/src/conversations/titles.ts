@@ -62,6 +62,11 @@ export const TITLE_MAX_OUTPUT_TOKENS = 32;
 export const TITLE_MAX_CHARS = 120;
 /** Each side of the excerpt is cut to this many characters. */
 export const TITLE_EXCERPT_CHARS = 1000;
+/**
+ * Parameters of the title call where the target model declares them and the `title` purpose does
+ * not set them: no thinking, so the {@link TITLE_MAX_OUTPUT_TOKENS} budget goes to the title.
+ */
+export const TITLE_PARAM_DEFAULTS = { thinking: "off" } as const;
 /** Time limit of one title call. */
 export const TITLE_TIMEOUT_MS = 60_000;
 /** How far into the log the excerpt is looked for (events). */
@@ -261,6 +266,8 @@ export async function runTitleJob(
       signal,
       {
         ...(fallback && { fallback: { model: fallback, params: {} } }),
+        // a thinking model spends the small output budget on thinking and returns no text
+        paramDefaults: TITLE_PARAM_DEFAULTS,
         beforeSend: async (target, request) => {
           await checkTitleHooks(d, scope, target, request, signal);
           sent = { ...target, at: Date.now() };
@@ -301,6 +308,14 @@ export async function runTitleJob(
   }
   if (sent && d.hooks) observeTitle(d, scope, sent, out, null, signal);
   const title = cleanTitle(textOf(out.content));
+  if (title === null) {
+    d.log.warn("conversation title call returned no title", {
+      conversationId,
+      attempt,
+      stopReason: out.stopReason,
+      outputTokens: out.usage.outputTokens,
+    });
+  }
   const { written, usage } = await d.writes.writeResult(conversationId, attempt, out, title);
   if (usage) {
     await d.eventLog.notify(conversationId, usage.seq);

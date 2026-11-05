@@ -3,12 +3,12 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
-import ConnectionsPage from "../src/app/[locale]/(app)/settings/connections/page";
 import { ConnectCard } from "../src/components/ConnectCard";
 import { navigateBrowser } from "../src/lib/browser";
 import { parseConnectResult, useConnectResultToast } from "../src/lib/connect";
-import { bodyOf, json, noContent, stubApi } from "./support/api";
+import { bodyOf, json, lastStubRoutes, noContent, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
+import { renderRouteWithCache } from "./support/query";
 import { renderPage } from "./support/render";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
@@ -133,7 +133,7 @@ describe("回跳结果提示", () => {
   });
 
   it.each(LOCALES)("oauth_error：只显示自己的译文（%s）", async (locale) => {
-    window.history.replaceState(null, "", "/settings/connections?oauth_error=access_denied");
+    window.history.replaceState(null, "", "/account/connections?oauth_error=access_denied");
     renderPage(<ResultProbe />, { locale });
     expect(await screen.findByText(msgs[locale].connect.result.error.access_denied)).toBeTruthy();
     expect(window.location.search).toBe("");
@@ -150,7 +150,7 @@ describe("回跳结果提示", () => {
 describe("个人连接页：OAuth 连接器", () => {
   it.each(LOCALES)("连接 / 重新连接 / 断开连接（%s）", async (locale) => {
     const m = msgs[locale];
-    window.history.replaceState(null, "", `/${locale}/settings/connections`);
+    window.history.replaceState(null, "", `/${locale}/account/connections`);
     let status: "connected" | "missing" = "missing";
     const calls = stubApi({
       "GET /api/v1/orgs/o1/connectors": () =>
@@ -165,7 +165,9 @@ describe("个人连接页：OAuth 连接器", () => {
         return noContent();
       },
     });
-    const { container } = renderPage(<ConnectionsPage />, { locale });
+    const { container } = await renderRouteWithCache("/account/connections", lastStubRoutes(), {
+      locale,
+    });
     const section = await screen.findByRole("region", { name: "Docs" });
     // 没有 token 输入框；页面没有多个主操作
     expect(within(section).queryByLabelText(m.connectors.form.tokenLabel)).toBeNull();
@@ -177,13 +179,13 @@ describe("个人连接页：OAuth 连接器", () => {
     await user.click(within(section).getByRole("button", { name: m.connections.oauthConnect }));
     await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledWith(AUTH_URL));
     expect(bodyOf(calls.find((c) => c.method === "POST"))).toEqual({
-      returnTo: `/${locale}/settings/connections`,
+      returnTo: `/${locale}/account/connections`,
     });
 
     // 已连接：重新连接 + 断开连接
     cleanup();
     status = "connected";
-    renderPage(<ConnectionsPage />, { locale });
+    await renderRouteWithCache("/account/connections", lastStubRoutes(), { locale });
     const again = await screen.findByRole("region", { name: "Docs" });
     expect(within(again).getByRole("button", { name: m.connections.reconnect })).toBeTruthy();
     await user.click(within(again).getByRole("button", { name: m.connections.disconnect }));

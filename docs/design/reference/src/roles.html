@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<title>Roles · reference</title>
+<link rel="stylesheet" href="/design/styles/fonts.css">
+<link rel="stylesheet" href="/design/styles/tokens.css">
+<link rel="stylesheet" href="reference.css">
+</head>
+<body>
+<main class="r-page">
+<h1>Roles</h1>
+<p>The role pass: the no-access state (a lock, the role a page needs, who to ask), the danger zone at the bottom of a settings section, and a secret shown once.</p>
+<div class="r-blocks">
+<section data-ref-block="no-access-default" style="width:720px" data-pad>
+  <div class="r-no-access">
+    <svg class="r-logo" width="42" height="30" viewBox="0 0 14 10" shape-rendering="crispEdges" aria-hidden="true"><path d="M10 0h1v1h-1zM9 1h3v1h-3zM3 2h11v1h-11zM2 3h9v1h-9zM12 3h2v1h-2zM1 4h13v1h-13zM1 5h13v1h-13zM1 6h12v1h-12zM2 7h10v1h-10zM2 8h2v1h-2zM6 8h1v1h-1zM9 8h2v1h-2zM2 9h2v1h-2zM6 9h1v1h-1zM9 9h2v1h-2z"/></svg>
+    <span class="r-no-access-lock"><i data-icon="lock" data-size="16"></i></span>
+    <h2 class="r-no-access-title">没有访问权限</h2>
+    <p class="r-no-access-muted">「渠道」只对组织管理员开放。</p>
+    <span class="r-no-access-need">需要：组织管理员</span>
+    <p class="r-no-access-muted">如需访问，请联系本组织的管理员或所有者。</p>
+  </div>
+</section>
+<section data-ref-block="danger-zone-default" style="width:720px" data-pad>
+  <section class="r-danger-zone">
+    <h2 class="r-danger-zone-title">危险操作</h2>
+    <div class="r-danger-zone-item">
+      <div class="r-danger-zone-words"><span class="r-danger-zone-item-title">删除组织</span><span class="r-danger-zone-desc">所有成员都会失去这个组织的访问，agent、会话与设置不再可用。</span></div>
+      <button class="r-btn" data-variant="danger" data-step="dense">删除组织…</button>
+    </div>
+  </section>
+</section>
+<section data-ref-block="danger-zone-two-items" style="width:720px" data-pad>
+  <section class="r-danger-zone">
+    <h2 class="r-danger-zone-title">危险操作</h2>
+    <div class="r-danger-zone-item">
+      <div class="r-danger-zone-words"><span class="r-danger-zone-item-title">转让所有权</span><span class="r-danger-zone-desc">对方成为所有者，你成为管理员。</span></div>
+      <button class="r-btn" data-variant="danger" data-step="dense">转让…</button>
+    </div>
+    <div class="r-danger-zone-item">
+      <div class="r-danger-zone-words"><span class="r-danger-zone-item-title">删除组织</span><span class="r-danger-zone-desc">所有成员都会失去这个组织的访问，agent、会话与设置不再可用。</span></div>
+      <button class="r-btn" data-variant="danger" data-step="dense">删除组织…</button>
+    </div>
+  </section>
+</section>
+<section data-ref-block="secret-reveal-default" style="width:480px" data-pad>
+  <div class="r-secret">
+    <label class="r-label" for="s1">令牌</label>
+    <div class="r-secret-row"><input class="r-input" id="s1" readonly value="cap_svc_4f9c2a7e1b8d"><button class="r-btn" data-variant="default"><i data-icon="copy" data-size="14"></i>复制</button></div>
+    <span class="r-secret-once"><i data-icon="circle-alert" data-size="14"></i>只会显示这一次，请立即复制并妥善保存。</span>
+  </div>
+</section>
+<section data-ref-block="secret-reveal-copied" style="width:480px" data-pad>
+  <div class="r-secret">
+    <label class="r-label" for="s2">令牌</label>
+    <div class="r-secret-row"><input class="r-input" id="s2" readonly value="cap_svc_4f9c2a7e1b8d"><button class="r-btn" data-variant="default"><i data-icon="check" data-size="14"></i>已复制</button></div>
+    <span class="r-secret-once"><i data-icon="circle-alert" data-size="14"></i>只会显示这一次，请立即复制并妥善保存。</span>
+  </div>
+</section>
+</div>
+</main>
+<script src="fill.js"></script>
+</body>
+</html>

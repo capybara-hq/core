@@ -4,6 +4,7 @@ import { ChatSection } from "./chat";
 import { DisplaySection } from "./display";
 import { InputsSection } from "./inputs";
 import { NavigationSection } from "./navigation";
+import { ObjectsSection } from "./objects";
 import { ShellSection } from "./shell";
 import { TogglesSection } from "./toggles";
 
@@ -16,6 +17,7 @@ export function ComponentsCatalog() {
       <TogglesSection />
       <NavigationSection />
       <DisplaySection />
+      <ObjectsSection />
       <ChatSection />
       <ShellSection />
     </CatalogPage>

@@ -48,6 +48,8 @@ describe("tokens.css", () => {
       "--cb-motion: 120ms",
       "--cb-control-default: 28px",
       "--cb-layout-sidebar: 256px",
+      "--cb-layout-content: 1120px",
+      "--cb-layout-content-pad: 32px",
     ]) {
       expect(css).toContain(v);
     }

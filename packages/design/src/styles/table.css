@@ -39,7 +39,11 @@
   background: var(--cb-panel);
 }
 .cb-table-bulk strong {
-  font-weight: 700;
+  font-weight: 600;
+}
+/* The narrow bar (select-all, sort) exists only below 640, where the header row is hidden. */
+.cb-table-narrow-bar {
+  display: none;
 }
 .cb-table-bulk-spacer {
   flex: 1;
@@ -109,8 +113,10 @@
 .cb-table-el th[data-sorted="true"] .cb-table-arrow {
   visibility: visible;
 }
+/* The header is sticky: the hover ground (translucent in light) is laid over the table ground so
+   scrolled rows never show through it. */
 .cb-table-el th:hover:has(.cb-table-sort) {
-  background: var(--cb-hover);
+  background: linear-gradient(var(--cb-hover), var(--cb-hover)), var(--cb-table-ground);
 }
 
 /* Row grounds: the row paints its state; cells stay transparent except the sticky first column,
@@ -146,6 +152,23 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* A wrapping column (Column.wrap, spec §6.6): its text wraps onto more lines, never an ellipsis;
+   the row grows and the extra lines get space.1 above and below. */
+.cb-table-el td[data-wrap="true"],
+.cb-table-el td[data-wrap="true"] > .cb-table-cell {
+  max-width: none;
+  white-space: normal;
+  text-overflow: clip;
+  overflow-wrap: break-word;
+}
+/* A wrap column's string list: each item with its separator is one unit; lines break between. */
+.cb-table-cell-list-item {
+  white-space: nowrap;
+}
+.cb-table-el td[data-wrap="true"] {
+  padding-top: var(--cb-space-1);
+  padding-bottom: var(--cb-space-1);
 }
 .cb-table-el td.cb-table-check,
 .cb-table-el th.cb-table-check {
@@ -218,7 +241,7 @@
   --cb-row-ground: var(--cb-accent-tint);
 }
 .cb-table-el .cb-table-row[data-state~="disabled"] td {
-  color: var(--cb-faint);
+  color: var(--cb-disabled);
 }
 .cb-table-menu [data-state="open"],
 .cb-table-menu .cb-btn[aria-expanded="true"] {
@@ -257,6 +280,13 @@
   padding: var(--cb-space-8) var(--cb-space-2) var(--cb-space-8) var(--cb-space-3);
   border-top: 1px solid var(--cb-line-soft);
   color: var(--cb-muted);
+  text-align: center;
+}
+/* Empty and no results hold the compact EmptyState, centered in the table body (the area's
+   space.8 above and below gives it the page rhythm). */
+.cb-table-empty .cb-empty-state[data-size="compact"] {
+  align-items: center;
+  padding: 0;
   text-align: center;
 }
 .cb-table-empty[data-empty="loading"] {
@@ -311,6 +341,122 @@
   padding: 0;
 }
 
+/*
+ * Phones (below 640, spec §6.6 "Narrow"): every table becomes stacked rows. The header row is
+ * visually hidden (screen readers still read it), its select-all and sort move to the narrow bar;
+ * each row is a card: the first column's cell is its title line (with the checkbox before
+ * it and the row menu after it), every other cell a "label: value" line whose label is the
+ * column header (`data-label`). Nothing sticks; the selected row keeps its 2px accent bar.
+ * Selectors carry `.cb-table … tbody .cb-table-row > td` so they outrank the wide rules above.
+ */
+@media (max-width: 639px) {
+  .cb-table-toolbar {
+    flex-wrap: wrap;
+  }
+  .cb-table-toolbar .cb-input {
+    flex: 1 1 100%;
+    width: 100%;
+  }
+  /* Hidden from sight but kept for screen readers (the column headers name the cells); its
+     controls move to the narrow bar. */
+  .cb-table .cb-table-el thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  .cb-table-narrow-bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--cb-space-3);
+    min-height: var(--cb-control-default);
+    padding: 0 var(--cb-space-3);
+  }
+  .cb-table-narrow-bar .cb-select {
+    margin-left: auto;
+  }
+  .cb-table .cb-table-el,
+  .cb-table .cb-table-el tbody {
+    display: block;
+  }
+  .cb-table .cb-table-el tbody .cb-table-row {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    row-gap: var(--cb-space-1);
+    padding: var(--cb-space-2) 0;
+    border-top: 1px solid var(--cb-line-soft);
+  }
+  .cb-table .cb-table-el tbody .cb-table-row > td {
+    position: static;
+    display: flex;
+    grid-column: 2;
+    align-items: baseline;
+    gap: var(--cb-space-3);
+    min-width: 0;
+    max-width: none;
+    height: auto;
+    padding: 0 var(--cb-space-3);
+    border-top: 0;
+    background: transparent;
+    box-shadow: none;
+    text-align: left;
+  }
+  .cb-table .cb-table-el tbody .cb-table-row > td > .cb-table-cell {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  .cb-table .cb-table-el tbody .cb-table-row > td[data-label]::before {
+    content: attr(data-label);
+    flex: none;
+    width: 10ch;
+    overflow: hidden;
+    color: var(--cb-muted);
+    font-size: var(--cb-type-small-size);
+    line-height: var(--cb-type-small-line);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .cb-table .cb-table-el tbody .cb-table-row > td[data-lead="true"] {
+    min-height: var(--cb-row-dense);
+    align-items: center;
+    font-weight: 500;
+  }
+  /* The title's own description stays regular. */
+  .cb-table .cb-table-el tbody .cb-table-row > td[data-lead="true"] .cb-cell-title-desc {
+    font-weight: 400;
+  }
+  .cb-table .cb-table-el tbody .cb-table-row > td.cb-table-check {
+    grid-column: 1;
+    grid-row: 1;
+    width: auto;
+    padding-right: 0;
+  }
+  .cb-table .cb-table-el tbody .cb-table-row > td.cb-table-menu {
+    grid-column: 3;
+    grid-row: 1;
+    width: auto;
+    padding: 0 var(--cb-space-2) 0 0;
+  }
+  .cb-table .cb-table-el tbody .cb-table-row[data-state~="active"] {
+    box-shadow: inset 2px 0 0 var(--cb-accent);
+  }
+  .cb-table-menu .cb-btn {
+    min-width: 40px;
+    min-height: 40px;
+  }
+  .cb-table .cb-table-el tbody .cb-table-expand,
+  .cb-table .cb-table-el tbody .cb-table-expand > td {
+    display: block;
+  }
+  .cb-table .cb-table-el tbody .cb-table-expand > td {
+    padding: var(--cb-space-2) var(--cb-space-3) var(--cb-space-3);
+  }
+}
+
 /* CellTitle: the two-line name cell of a roomy row. */
 .cb-cell-title {
   display: flex;
@@ -329,7 +475,7 @@
   background: var(--cb-selected);
   color: var(--cb-ink);
   font-size: var(--cb-type-small-size);
-  font-weight: 700;
+  font-weight: 600;
 }
 .cb-cell-title-text {
   display: flex;

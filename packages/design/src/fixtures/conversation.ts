@@ -5,6 +5,8 @@
  * sub-agents, files, right panel); every name is a placeholder (示例组织, 研究助手, Acme…).
  */
 
+import type { PresetId } from "../display/avatar-presets";
+
 // ── Page, agent, models ─────────────────────────────────────────────────────
 
 export type FixtureModelOption = { id: string; label: string; efforts?: string[] };
@@ -69,7 +71,7 @@ export const CONV_FIXTURE: {
 export const CONV_COPY = {
   placeholder: "输入消息，/ 使用命令",
   newPlaceholder: "想让 研究助手 做什么？",
-  queueHint: "按 ↵ 立即发送，按 ⌘↵ 加入队列",
+  queueHint: "按 ↵ 加入队列，按 ⌘↵ 立即发送",
   attach: "添加附件",
   send: "发送",
   stop: "停止",
@@ -108,7 +110,7 @@ export type FixtureDiffLine = {
 
 export type FixtureTool = {
   id: string;
-  kind: "command" | "read" | "edit" | "search" | "connector" | "meta" | "tool";
+  kind: "command" | "read" | "edit" | "search" | "connector" | "meta" | "question" | "tool";
   /**
    * The bold name: a builtin's tool name ("Bash", "Read"), or the connector's / plugin's display
    * name of a connector or extension tool.
@@ -125,6 +127,8 @@ export type FixtureTool = {
   /** Extra info after the key arguments (faint). */
   extra?: string;
   status: "running" | "done" | "failed";
+  /** A running call that waits for a person (§6.16.9): no spinner, no timer. */
+  waiting?: "approval" | "input" | "connect";
   elapsed?: string;
   durationMs?: number;
   input?: [string, string][];
@@ -159,7 +163,8 @@ export const TOOL_FIXTURES: Record<
   | "expanded"
   | "diff"
   | "largeOutput"
-  | "hookDenied",
+  | "hookDenied"
+  | "waiting",
   FixtureTool[]
 > = {
   // Two separate single calls (each one line, no box).
@@ -382,6 +387,17 @@ export const TOOL_FIXTURES: Record<
         ["text", "15 条流程已逐条核对完，可以交给你试运行……"],
       ],
       output: "合规审查: 外部频道的消息需要先经过审核（policy hook tool.preExecute）",
+    },
+  ],
+  // An AskUserQuestion call waiting for the person's answer: "已提问 <header>", no timer.
+  waiting: [
+    {
+      id: "t_wait_question",
+      kind: "question",
+      name: "AskUserQuestion",
+      keyArg: "对账口径",
+      status: "running",
+      waiting: "input",
     },
   ],
 };
@@ -853,4 +869,63 @@ export const PANEL_FIXTURE: {
     { label: "对账报告.md", kind: "file", type: "MD" },
     { label: "差异行.csv", kind: "file", type: "CSV" },
   ],
+};
+
+// ── New conversation: greeting, agents row, quick actions (§6.16.25–§6.16.27) ──
+
+export type FixtureAgent = {
+  id: string;
+  name: string;
+  description: string;
+  /** A preset of the avatars (§6.30), or null for the initial. */
+  preset: PresetId | null;
+};
+
+export const NEW_CONVERSATION_FIXTURE: {
+  greeting: string;
+  agents: FixtureAgent[];
+  selected: string;
+  /** Most recent first: the panel's 最近用过 group. */
+  recent: string[];
+  quickActions: { id: string; title: string }[];
+  /** A search that matches nothing (the panel's no-match state). */
+  noMatch: string;
+} = {
+  greeting: "下午好，grant",
+  agents: [
+    {
+      id: "ag1",
+      name: "研究助手",
+      description: "检索资料、核对数据并整理成报告。",
+      preset: "capybara",
+    },
+    {
+      id: "ag2",
+      name: "财务对账",
+      description: "按月核对总账与银行流水，列出差异。",
+      preset: "owl",
+    },
+    {
+      id: "ag3",
+      name: "合同审阅",
+      description: "审合同条款，标出风险和要改的地方。",
+      preset: "elephant",
+    },
+    { id: "ag4", name: "周报整理", description: "汇总一周的进展，写成周报。", preset: "rabbit" },
+    { id: "ag5", name: "客服助手", description: "回答工单里的常见问题。", preset: "panda" },
+    { id: "ag6", name: "发布说明", description: "从合并记录写发布说明。", preset: null },
+    { id: "ag7", name: "数据看板", description: "查询指标并画成图表。", preset: "whale" },
+    { id: "ag8", name: "翻译", description: "中英互译，保留术语。", preset: "fox" },
+  ],
+  selected: "ag1",
+  recent: ["ag2", "ag1", "ag4"],
+  quickActions: [
+    { id: "q1", title: "核对上月总账与银行流水" },
+    { id: "q2", title: "整理本周进展，按项目写成周报并列出下周计划和风险" },
+    { id: "q3", title: "查一个供应商的背景" },
+    { id: "q4", title: "汇总差异明细" },
+    { id: "q5", title: "写一份会议纪要" },
+    { id: "q6", title: "翻译一份合同" },
+  ],
+  noMatch: "报销",
 };

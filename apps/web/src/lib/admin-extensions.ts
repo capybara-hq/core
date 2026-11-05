@@ -1,6 +1,7 @@
 import { ApiClientError, apiFetch, CSRF_HEADER, ensureSession } from "./api";
+import type { LocalizedName } from "./catalog";
 import type { PermissionGroup, PermissionItem } from "./extensions";
-import type { JsonSchema } from "./json-schema";
+import type { ConfigIssue, JsonSchema } from "./json-schema";
 
 /**
  * Deployment-level extension management (`/api/v1/admin/extensions/*`, kernel
@@ -63,6 +64,8 @@ export interface ExtensionReplica {
 /** One row of the admin extension list (kernel `AdminExtensionView`). */
 export interface AdminExtension {
   name: string;
+  /** The extension's display name; null when it has none (show the id). */
+  displayName?: LocalizedName | null;
   version: string;
   source: ExtensionLoadSource;
   /** An install record's package source; null for a config-declared extension. */
@@ -131,11 +134,28 @@ export interface DeploymentConfigField {
   readonly: boolean;
   value?: unknown;
   set?: boolean;
+  /**
+   * Only on a secret record some `x-ui.secrets[].path` names: the record's keys that are set (item
+   * names, never values); saved per key through `secretEntries`.
+   */
+  keys?: string[];
+}
+
+/** One operation on a secret record drawn per item (kernel `SecretEntry`). */
+export interface SecretEntry {
+  path: string;
+  key: string;
+  /** A string sets the key, `null` removes it. */
+  value?: string | null;
+  /** Moves the value at this key to `key` first. */
+  renameFrom?: string;
 }
 
 /** `GET / PUT /admin/extensions/:name/config` (kernel `DeploymentConfigView`). */
 export interface DeploymentConfigView {
   plugin: string;
+  /** The plugin's display name; null when it has none. */
+  displayName?: LocalizedName | null;
   version: string;
   configurable: boolean;
   fields: DeploymentConfigField[];
@@ -143,7 +163,7 @@ export interface DeploymentConfigView {
   valid: boolean;
   /** false：本副本没加载这个插件，`valid` 不是校验结果（加载时才校验）。 */
   validated: boolean;
-  issues: { path: string; message: string }[];
+  issues: ConfigIssue[];
 }
 
 const base = "/api/v1/admin/extensions";
@@ -184,11 +204,17 @@ export const uninstallExtension = (name: string) => apiFetch<void>(one(name), { 
 export const getExtensionConfig = (name: string) =>
   apiFetch<DeploymentConfigView>(`${one(name)}/config`);
 
-/** 保存部署级配置：键为字段点路径，`null` 清除，没给的字段不变。 */
-export const putExtensionConfig = (name: string, values: Record<string, unknown>) =>
+/**
+ * 保存部署级配置：键为字段点路径，`null` 清除，没给的字段不变；`secretEntries` 改带提示的密钥 record 的单个键。
+ */
+export const putExtensionConfig = (
+  name: string,
+  values: Record<string, unknown>,
+  secretEntries: SecretEntry[] = [],
+) =>
   apiFetch<DeploymentConfigView>(`${one(name)}/config`, {
     method: "PUT",
-    body: JSON.stringify({ values }),
+    body: JSON.stringify({ values, ...(secretEntries.length > 0 && { secretEntries }) }),
   });
 
 function xhrError(xhr: XMLHttpRequest): ApiClientError {
@@ -279,20 +305,27 @@ function sendPackage(
 }
 
 /**
- * 副本是否一致：至少一个副本上报，且全部副本的版本与状态相同、没有失败的。`failed` 为出错（失败）的副本。
+ * Whether the replicas agree: at least one reported, and every one has the same version and state
+ * with none failed (`consistent`); `inSync` counts the ones that agree (「副本一致 2/2」,
+ * 「副本不一致 1/2」); `failed` lists the failed replicas.
  */
 export function replicaSummary(p: Pick<AdminExtension, "replicas">): {
   total: number;
+  /** Replicas that agree: not failed, same version and state as the first one that is not. */
+  inSync: number;
   consistent: boolean;
   failed: ExtensionReplica[];
 } {
   const failed = p.replicas.filter((r) => r.state === "failed");
-  const first = p.replicas[0];
-  const consistent =
-    first !== undefined &&
-    failed.length === 0 &&
-    p.replicas.every((r) => r.version === first.version && r.state === first.state);
-  return { total: p.replicas.length, consistent, failed };
+  const first = p.replicas.find((r) => r.state !== "failed");
+  const inSync =
+    first === undefined
+      ? 0
+      : p.replicas.filter(
+          (r) => r.state !== "failed" && r.version === first.version && r.state === first.state,
+        ).length;
+  const total = p.replicas.length;
+  return { total, inSync, consistent: total > 0 && inSync === total, failed };
 }
 
 /** 审阅结果是否含敏感项（敏感分组或迁移警告）：确认安装 / 批准前须勾选「我已了解敏感项」。 */

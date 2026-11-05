@@ -305,6 +305,38 @@ describe("组织服务令牌", () => {
     expect(bad.statusCode).toBe(400);
   });
 
+  it("service tokens by role: guest and member can't create, list or revoke (403); owner can", async () => {
+    const ownerReq = await session("owner");
+    const id = await createOrg(ownerReq);
+    const made = await makeSvc(ownerReq, id, "admin");
+    for (const role of ["guest", "member"] as const) {
+      const { req } = await memberAs(id, role, `tok-${role}`);
+      const create = await req({
+        method: "POST",
+        url: `/api/v1/orgs/${id}/service-tokens`,
+        payload: { name: "x", role: "guest" },
+      });
+      expect(create.statusCode).toBe(403);
+      const list = await req({ method: "GET", url: `/api/v1/orgs/${id}/service-tokens` });
+      expect(list.statusCode).toBe(403);
+      const revoke = await req({
+        method: "DELETE",
+        url: `/api/v1/orgs/${id}/service-tokens/${made.record.id}`,
+      });
+      expect(revoke.statusCode).toBe(403);
+    }
+    const list = await ownerReq({ method: "GET", url: `/api/v1/orgs/${id}/service-tokens` });
+    expect(list.statusCode).toBe(200);
+    expect((list.json() as { tokens: { id: string }[] }).tokens.map((t) => t.id)).toEqual([
+      made.record.id,
+    ]);
+    const revoke = await ownerReq({
+      method: "DELETE",
+      url: `/api/v1/orgs/${id}/service-tokens/${made.record.id}`,
+    });
+    expect(revoke.statusCode).toBe(204);
+  });
+
   it("创建时实时重读角色：OrgGuard 之后被降级的发起人 → 403，不创建令牌", async () => {
     const id = await createOrg(await session("owner"));
     const { acc } = await memberAs(id, "admin", "ada");

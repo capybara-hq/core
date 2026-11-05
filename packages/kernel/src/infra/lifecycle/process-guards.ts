@@ -62,6 +62,9 @@ export function createFatalRecorder(
   let recent: number[] = [];
   let open = false;
   return (kind, err) => {
+    // Exiting already: log nothing more. A failing log write (EPIPE on a dead stdout) raises the
+    // next event itself; logging it again would keep the process busy forever and starve the exit.
+    if (open) return;
     try {
       const t = now();
       recent = recent.filter((x) => t - x < GUARD_CIRCUIT_WINDOW_MS);

@@ -38,7 +38,12 @@ export function Grid({
   gap = 16,
   children,
 }: {
-  columns: 1 | 2 | 3 | 4 | "form";
+  /**
+   * `main-side`: a main column twice the side column's width; one column below 960.
+   * `list-detail`: a 220 px list beside a flexible detail (a file list and the open file's
+   * editor), top-aligned; one column below 640, the list above the detail.
+   */
+  columns: 1 | 2 | 3 | 4 | "form" | "main-side" | "list-detail";
   gap?: Gap;
   children?: ReactNode;
 }) {
@@ -62,7 +67,7 @@ export function Card({
   children?: ReactNode;
 }) {
   return (
-    <section className="cb-card" data-tone={tone}>
+    <section className="cb-card" data-part="card" data-tone={tone}>
       {title || actions ? (
         <header className="cb-card-head">
           <div className="cb-card-title">{title}</div>
@@ -81,9 +86,14 @@ export function Text({
   truncate,
   pre,
   icon,
+  title: titleText,
   children,
 }: {
-  variant?: "h1" | "h2" | "body" | "small" | "micro";
+  /**
+   * `prose`: running text (descriptions, hints, dialog bodies) in the proportional font,
+   * `prose-small` 13 / 20 (spec §2.2); every other variant is the mono UI skeleton.
+   */
+  variant?: "h1" | "h2" | "body" | "small" | "micro" | "prose";
   tone?: "ink" | "muted" | "faint" | "accent" | "ok" | "fail" | "warn";
   as?: ElementType;
   truncate?: boolean;
@@ -91,13 +101,16 @@ export function Text({
   pre?: boolean;
   /** A leading line icon (spec §2.4: a status is an icon plus text), such as `circle-x` for a failure. */
   icon?: IconName;
+  /** A tooltip (the full value behind a short label); a truncated string already shows itself. */
+  title?: string;
   children?: ReactNode;
 }) {
   const Tag: ElementType = as ?? (variant === "h1" ? "h1" : variant === "h2" ? "h2" : "span");
   const title =
-    truncate && (typeof children === "string" || typeof children === "number")
+    titleText ??
+    (truncate && (typeof children === "string" || typeof children === "number")
       ? String(children)
-      : undefined;
+      : undefined);
   return (
     <Tag
       className="cb-text"

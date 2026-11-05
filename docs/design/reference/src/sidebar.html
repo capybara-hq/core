@@ -10,13 +10,13 @@
 <body>
 <main class="r-page">
 <h1>Sidebar</h1>
-<p>Full (256), rail (48, below 1280) and drawer (below 960). Conversations grouped by agent; group labels in muted (essential text).</p>
+<p>Sidebar v3: the work, admin and setup contexts; full (256), rail (48, below 1280) and drawer (below 960). The org switcher, 新会话 · 搜索 · primary items, 更多, conversations grouped by agent with state dots, the archived entry, 管理后台 above the account row.</p>
 <div class="r-blocks">
 <section data-ref-block="sidebar-default" style="width:var(--cb-layout-sidebar);height:820px">
   <template data-fixture="sidebar" data-opts='{"active": "agents", "activeConversation": "cnv_r2"}'></template>
 </section>
 <section data-ref-block="sidebar-item-hover" style="width:var(--cb-layout-sidebar);height:820px">
-  <template data-fixture="sidebar" data-opts='{"active": "agents", "activeConversation": "cnv_r2", "hover": "connectors"}'></template>
+  <template data-fixture="sidebar" data-opts='{"active": "agents", "activeConversation": "cnv_r2", "hover": "overview"}'></template>
 </section>
 <section data-ref-block="sidebar-item-focus" style="width:var(--cb-layout-sidebar);height:820px">
   <template data-fixture="sidebar" data-opts='{"active": "agents", "activeConversation": "cnv_r2", "focus": "inbox"}'></template>
@@ -26,6 +26,15 @@
 </section>
 <section data-ref-block="sidebar-group-collapsed" style="width:var(--cb-layout-sidebar);height:820px">
   <template data-fixture="sidebar" data-opts='{"active": "agents", "activeConversation": "cnv_r2", "collapsed": ["agt_research"]}'></template>
+</section>
+<section data-ref-block="sidebar-more-open" style="width:520px;height:820px">
+  <template data-fixture="sidebar" data-opts='{"active": "connectors", "activeConversation": "cnv_r2", "moreOpen": true}'></template>
+</section>
+<section data-ref-block="sidebar-filter" style="width:var(--cb-layout-sidebar);height:820px">
+  <template data-fixture="sidebar" data-opts='{"active": "agents", "activeConversation": "cnv_r2", "filter": "waiting"}'></template>
+</section>
+<section data-ref-block="sidebar-archived" style="width:var(--cb-layout-sidebar);height:820px">
+  <template data-fixture="sidebar" data-opts='{"active": "agents", "activeConversation": "cnv_r2", "archived": true}'></template>
 </section>
 <section data-ref-block="sidebar-empty" style="width:var(--cb-layout-sidebar);height:820px">
   <template data-fixture="sidebar" data-opts='{"active": "agents", "activeConversation": "cnv_r2", "state": "empty"}'></template>
@@ -45,11 +54,35 @@
 <section data-ref-block="sidebar-guest" style="width:var(--cb-layout-sidebar);height:820px">
   <template data-fixture="sidebar" data-opts='{"active": "agents", "activeConversation": "cnv_r2", "level": "guest"}'></template>
 </section>
+<section data-ref-block="sidebar-admin" style="width:var(--cb-layout-sidebar);height:820px">
+  <template data-fixture="sidebar" data-opts='{"context": "admin", "active": "accounts"}'></template>
+</section>
 <section data-ref-block="sidebar-rail" style="width:200px;height:820px">
-  <template data-fixture="rail" data-opts='{"active": "agents", "hover": "agents", "tooltip": "Agents", "tooltipTop": 183}'></template>
+  <template data-fixture="rail" data-opts='{"active": "agents", "hover": "agents", "tooltip": "Agents", "tooltipTop": 271}'></template>
 </section>
 <section data-ref-block="sidebar-drawer" style="width:640px;height:820px">
   <template data-fixture="drawer" data-opts='{"active": "connectors", "activeConversation": "cnv_r2"}'></template>
+</section>
+<section data-ref-block="sidebar-setup" style="width:var(--cb-layout-sidebar);height:820px">
+  <template data-fixture="sidebar" data-opts='{"context": "setup", "active": "agent"}'></template>
+</section>
+<section data-ref-block="sidebar-setup-waiting" style="width:var(--cb-layout-sidebar);height:820px">
+  <template data-fixture="sidebar" data-opts='{"context": "setup", "setup": "member", "active": "home"}'></template>
+</section>
+<section data-ref-block="sidebar-setup-hover" style="width:var(--cb-layout-sidebar);height:820px">
+  <template data-fixture="sidebar" data-opts='{"context": "setup", "active": "agent", "hover": "channels"}'></template>
+</section>
+<section data-ref-block="sidebar-setup-focus" style="width:var(--cb-layout-sidebar);height:820px">
+  <template data-fixture="sidebar" data-opts='{"context": "setup", "active": "agent", "focus": "model"}'></template>
+</section>
+<section data-ref-block="sidebar-setup-rail" style="width:240px;height:820px">
+  <template data-fixture="rail" data-opts='{"context": "setup", "setup": "member", "active": "home", "tooltip": "配置模型，等待管理员配置模型", "tooltipTop": 159}'></template>
+</section>
+<section data-ref-block="sidebar-pending" style="width:var(--cb-layout-sidebar);height:820px">
+  <template data-fixture="sidebar" data-opts='{"context": "setup", "active": "agent", "pending": "channels"}'></template>
+</section>
+<section data-ref-block="sidebar-setup-drawer" style="width:640px;height:820px">
+  <template data-fixture="setupDrawer" data-opts='{"active": "home"}'></template>
 </section>
 </div>
 </main>

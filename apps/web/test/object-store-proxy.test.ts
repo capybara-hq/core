@@ -170,7 +170,7 @@ describe("isObjectStorePath", () => {
     ["/", false],
     ["/capybarax/key", false],
     ["/api/v1/setup", false],
-    ["/zh/login", false],
+    ["/login", false],
   ])("%s -> %s", (path, expected) => {
     expect(isObjectStorePath(cfg, path)).toBe(expected);
   });

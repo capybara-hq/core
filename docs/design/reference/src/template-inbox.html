@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<title>Inbox template · reference</title>
+<link rel="stylesheet" href="/design/styles/fonts.css">
+<link rel="stylesheet" href="/design/styles/tokens.css">
+<link rel="stylesheet" href="reference.css">
+</head>
+<body>
+<main class="r-page">
+<h1>Inbox template</h1>
+<p>Loading state (spec §5.7): the header keeps its rows, the rail holds four 64 px placeholder rows, the content is a card-shaped block. Nothing animates.</p>
+<div class="r-blocks">
+<section data-ref-block="template-inbox-loading" style="width:1280px;height:640px">
+  <div class="r-tpl" aria-busy="true">
+    <div class="r-tpl-head"><template data-fixture="page-header" data-opts='{"loading": {"actions": 1, "tabs": 0}}'></template></div>
+    <div class="r-tpl-body"><aside class="r-tpl-rail"><ul class="r-llist"><li class="r-lrow" data-part="loading-row"><div class="r-skel-box" data-part="skeleton-box" data-box="mark"></div><div class="r-lrow-text"><div class="r-skel-text" data-part="skeleton-text" data-size="body" style="width:55%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div><div class="r-skel-text" data-part="skeleton-text" data-size="small" style="width:30%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div></div></li><li class="r-lrow" data-part="loading-row"><div class="r-skel-box" data-part="skeleton-box" data-box="mark"></div><div class="r-lrow-text"><div class="r-skel-text" data-part="skeleton-text" data-size="body" style="width:55%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div><div class="r-skel-text" data-part="skeleton-text" data-size="small" style="width:30%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div></div></li><li class="r-lrow" data-part="loading-row"><div class="r-skel-box" data-part="skeleton-box" data-box="mark"></div><div class="r-lrow-text"><div class="r-skel-text" data-part="skeleton-text" data-size="body" style="width:55%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div><div class="r-skel-text" data-part="skeleton-text" data-size="small" style="width:30%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div></div></li><li class="r-lrow" data-part="loading-row"><div class="r-skel-box" data-part="skeleton-box" data-box="mark"></div><div class="r-lrow-text"><div class="r-skel-text" data-part="skeleton-text" data-size="body" style="width:55%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div><div class="r-skel-text" data-part="skeleton-text" data-size="small" style="width:30%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div></div></li></ul></aside><div class="r-tpl-main"><section class="r-lcard" data-part="loading-card"><header class="r-lcard-head"><div class="r-skel-text" data-part="skeleton-text" data-size="body" style="width:30%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div></header><div class="r-lcard-body"><div class="r-skel-text" data-part="skeleton-text" data-size="body" style="width:100%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div><div class="r-skel-text" data-part="skeleton-text" data-size="body" style="width:70%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div><div class="r-skel-text" data-part="skeleton-text" data-size="body" style="width:55%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div></div></section></div></div>
+  </div>
+</section>
+</div>
+</main>
+<script src="fill.js"></script>
+</body>
+</html>

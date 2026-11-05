@@ -1,5 +1,5 @@
 import { isDeepStrictEqual } from "node:util";
-import type { PluginExtensionSection } from "@capybara-hq/plugin-sdk";
+import type { LocalizedName, PluginExtensionSection } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import type { core, z } from "zod";
 import type { KernelAppOptions } from "../app.js";
@@ -24,11 +24,18 @@ import { KERNEL_APP_OPTIONS } from "../lifecycle/tokens.js";
 import type { KernelLogger } from "../log.js";
 import type { PublishBus } from "./admin-view.js";
 import { type ConfigIssue, toIssues } from "./config-issues.js";
-import { configToJsonSchema, type JsonSchema } from "./config-json-schema.js";
+import {
+  checkConfigUi,
+  configMessages,
+  hintedSecretPaths,
+  type JsonSchema,
+  safeConfigFormSchema,
+} from "./config-json-schema.js";
 import {
   DEPLOYMENT_SECRETS_ORG,
   type DeploymentSchemaInfo,
   deleteDeep,
+  isObj,
   mergeDeploymentConfig,
   readStoredDeploymentConfig,
   SECRETS_NAMESPACE,
@@ -37,6 +44,7 @@ import {
   secretPathsOf,
   setDeep,
 } from "./deployment-config-store.js";
+import { ExtensionDisplayNames } from "./display-name.js";
 import { ExtensionHost } from "./host.js";
 import { ExtensionInstalls } from "./installs.js";
 import { ExtensionLifecycle } from "./lifecycle.js";
@@ -71,16 +79,38 @@ export interface DeploymentConfigField {
   value?: unknown;
   /** 密钥字段是否已设置（任何来源）；值永不回显。 */
   set?: boolean;
+  /**
+   * Only on a secret record some `x-ui.secrets[].path` names: the record's keys that are set, sorted
+   * (item names, not secret values; spec §4.3). Other secret fields report only `set`.
+   */
+  keys?: string[];
+}
+
+/**
+ * One operation on a secret record drawn per item (spec §4.3), only for a path some
+ * `x-ui.secrets[].path` names: `renameFrom` moves an existing value to `key` (nothing when it has
+ * none, replacing a value already at `key`), then `value` sets it (a string) or removes it (`null`).
+ */
+export interface SecretEntry {
+  path: string;
+  key: string;
+  value?: string | null | undefined;
+  renameFrom?: string | undefined;
 }
 
 /** The response of `GET / PUT /api/v1/admin/extensions/:name/config`. */
 export interface DeploymentConfigView {
   plugin: string;
+  /** The plugin's display name (`ExtensionDisplayNames`); null when it has none. */
+  displayName: LocalizedName | null;
   version: string;
   /** 插件声明了部署级配置。 */
   configurable: boolean;
   fields: DeploymentConfigField[];
-  /** 部署级 schema 的 JSON Schema（密钥字段带 `x-secret`）；本副本拿不到模块（未加载的安装记录）时为 null。 */
+  /**
+   * 部署级 schema 的 JSON Schema（密钥字段带 `x-secret`，提示 `x-ui` / `x-hot`）。本副本拿不到模块（未加载的
+   * 安装记录）时取包内的 `extension.configSchemas.deployment`（`validated` 为 false）；旧包没有它时为 null。
+   */
   schema: JsonSchema | null;
   /** 生效配置按 schema 校验通过（`validated` 为 false 时没有校验，恒为 true，界面不要据此显示「合法」）。 */
   valid: boolean;
@@ -91,17 +121,6 @@ export interface DeploymentConfigView {
   validated: boolean;
   /** 校验失败的原因（只有路径与说明，不含值）。 */
   issues: ConfigIssue[];
-}
-
-/** JSON Schema 转换按 schema 对象缓存（清单不可变）。 */
-const jsonSchemaCache = new WeakMap<object, JsonSchema>();
-function jsonSchemaOf(schema: core.$ZodType): JsonSchema {
-  let js = jsonSchemaCache.get(schema);
-  if (!js) {
-    js = configToJsonSchema(schema as z.ZodType);
-    jsonSchemaCache.set(schema, js);
-  }
-  return structuredClone(js);
 }
 
 /** 某字段 zod 叶子上的默认值（整份配置不合法、校验没能补上默认值时，视图仍按它显示）。 */
@@ -143,6 +162,7 @@ export class ExtensionDeploymentConfigService {
     @Inject(KERNEL_BUS) private readonly bus: PublishBus,
     @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
     @Inject(KERNEL_APP_OPTIONS) options: Pick<KernelAppOptions, "env" | "extensionConfigSources">,
+    @Inject(ExtensionDisplayNames) private readonly displayNames: ExtensionDisplayNames,
   ) {
     const env = options.env ?? process.env;
     this.sources =
@@ -183,8 +203,11 @@ export class ExtensionDeploymentConfigService {
   /** Admin view; an extension unknown to the deployment -> `extension.not_found`. */
   async view(plugin: string): Promise<DeploymentConfigView> {
     const info = await this.info(plugin);
-    const stored = await this.readStored(plugin, info);
-    return this.render(plugin, info, stored);
+    const [stored, displayName] = await Promise.all([
+      this.readStored(plugin, info),
+      this.displayNames.get(plugin),
+    ]);
+    return this.render(plugin, info, stored, displayName);
   }
 
   /** `REPEATABLE READ` read-only: every stored field from one snapshot. */
@@ -206,6 +229,11 @@ export class ExtensionDeploymentConfigService {
    *   invalid after merging (except a problem in a read-only startup-config field itself) ->
    *   `extension.config_invalid` (details carry only paths and messages);
    * - a field present in the startup config (file / Nacos / env) -> 409 `extension.config_readonly`.
+   * `secretEntries` change single keys of secret records some `x-ui.secrets[].path` names
+   * ({@link SecretEntry}; spec §4.3): applied under the same locks to the decrypted record, which
+   * is re-encrypted whole, then validated with `values`; the audit lists the record's path, no keys.
+   * A path no hint names -> 400 `validation_failed`; one in the startup config -> 409
+   * `extension.config_readonly`.
    * In a transaction, first `lockEnterpriseAdminsAndAuthorize` (re-checks the enterprise admin under
    * the lock), then an advisory lock per extension; audit `extension.deployment_config_updated`
    * (detail only `changedPaths`). After the commit publishes {@link PLUGIN_DEPLOYMENT_CONFIG_TOPIC} and
@@ -216,6 +244,7 @@ export class ExtensionDeploymentConfigService {
     values: Record<string, unknown>,
     actor: string,
     actorTokenId?: string,
+    secretEntries: readonly SecretEntry[] = [],
   ): Promise<DeploymentConfigView> {
     const info = await this.info(plugin);
     if (info.fields.length === 0) {
@@ -233,8 +262,12 @@ export class ExtensionDeploymentConfigService {
         unknown.map((path) => ({ path, message: "unknown field" })),
       );
     }
+    this.checkSecretEntries(plugin, info, values, secretEntries);
     const sources = this.sources[plugin];
-    const readonly = Object.keys(values).filter((p) => fieldSource(sources, p) !== undefined);
+    const entryPaths = [...new Set(secretEntries.map((e) => e.path))];
+    const readonly = [...Object.keys(values), ...entryPaths].filter(
+      (p) => fieldSource(sources, p) !== undefined,
+    );
     if (readonly.length > 0) {
       throw new ApiError(
         "extension.config_readonly",
@@ -247,6 +280,7 @@ export class ExtensionDeploymentConfigService {
     const { saved, changed } = await this.write(
       plugin,
       values,
+      secretEntries,
       actor,
       actorTokenId,
       info,
@@ -276,13 +310,49 @@ export class ExtensionDeploymentConfigService {
         });
       }
     }
-    return this.render(plugin, info, stored);
+    return this.render(plugin, info, stored, await this.displayNames.get(plugin));
+  }
+
+  /**
+   * Secret entries name a secret record field some hint names (else 400 `validation_failed`, also
+   * for a path given in `values` too, an entry with neither `value` nor `renameFrom`, or a key
+   * `__proto__`). Messages carry paths and keys only, never values.
+   */
+  private checkSecretEntries(
+    plugin: string,
+    info: DeploymentSchemaInfo,
+    values: Record<string, unknown>,
+    entries: readonly SecretEntry[],
+  ): void {
+    if (entries.length === 0) return;
+    const hinted = this.hintedPaths(plugin, info);
+    const secret = new Set(secretPathsOf(info.fields));
+    const problems: { path: string; message: string }[] = [];
+    for (const e of entries) {
+      if (!hinted.has(e.path) || !secret.has(e.path)) {
+        problems.push({ path: e.path, message: "no config UI hint draws this secret per item" });
+      } else if (Object.hasOwn(values, e.path)) {
+        problems.push({ path: e.path, message: "given both in values and in secretEntries" });
+      } else if (e.value === undefined && e.renameFrom === undefined) {
+        problems.push({ path: e.path, message: `entry ${e.key} has neither value nor renameFrom` });
+      } else if (e.key === "__proto__" || e.renameFrom === "__proto__") {
+        problems.push({ path: e.path, message: "__proto__ is not a valid key" });
+      }
+    }
+    if (problems.length > 0) {
+      throw new ApiError(
+        "validation_failed",
+        `Invalid secret entries for the deployment config of extension ${plugin}`,
+        problems,
+      );
+    }
   }
 
   @Transactional()
   private async write(
     plugin: string,
     values: Record<string, unknown>,
+    secretEntries: readonly SecretEntry[],
     actor: string,
     actorTokenId: string | undefined,
     info: DeploymentSchemaInfo,
@@ -303,13 +373,15 @@ export class ExtensionDeploymentConfigService {
       if (v === null) deleteDeep(next, path);
       else setDeep(next, path, structuredClone(v));
     }
+    applySecretEntries(next, secretEntries);
+    const touched = new Set([...Object.keys(values), ...secretEntries.map((e) => e.path)]);
     if (info.schema) {
       const r = (info.schema as z.ZodType).safeParse(
         mergeDeploymentConfig(next, fileValue, fieldPaths),
       );
       if (!r.success) {
         // 启动配置里只读字段自己的问题这里改不了（照样保存，插件保持待配置），其余拒绝
-        const issues = toIssues(r.error).filter(
+        const issues = toIssues(r.error, this.messagesOf(plugin, info)).filter(
           (i) => i.path === "" || fieldSource(sources, i.path) === undefined,
         );
         if (issues.length > 0) {
@@ -321,7 +393,7 @@ export class ExtensionDeploymentConfigService {
         }
       }
     }
-    changed = Object.keys(values)
+    changed = [...touched]
       .filter((p) => !isDeepStrictEqual(getPath(before, p), getPath(next, p)))
       .sort();
     const saved = next;
@@ -331,7 +403,7 @@ export class ExtensionDeploymentConfigService {
     for (const f of info.fields) {
       if (!f.secret) continue;
       deleteDeep(plain, f.path);
-      if (!(f.path in values)) continue;
+      if (!touched.has(f.path)) continue;
       const v = getPath(next, f.path);
       if (v === undefined) await secrets.delete(DEPLOYMENT_SECRETS_ORG, secretKey(plugin, f.path));
       else await secrets.set(DEPLOYMENT_SECRETS_ORG, secretKey(plugin, f.path), JSON.stringify(v));
@@ -368,7 +440,12 @@ export class ExtensionDeploymentConfigService {
     return info;
   }
 
-  private render(plugin: string, info: DeploymentSchemaInfo, stored: Obj): DeploymentConfigView {
+  private render(
+    plugin: string,
+    info: DeploymentSchemaInfo,
+    stored: Obj,
+    displayName: LocalizedName | null,
+  ): DeploymentConfigView {
     const fileValue = this.fileConfig()[plugin];
     const sources = this.sources[plugin];
     const raw = mergeDeploymentConfig(
@@ -384,9 +461,11 @@ export class ExtensionDeploymentConfigService {
       if (r.success) effective = r.data;
       else {
         valid = false;
-        issues = toIssues(r.error);
+        issues = toIssues(r.error, this.messagesOf(plugin, info));
       }
     }
+    const formSchema = this.formSchemaOf(plugin, info);
+    const hinted = formSchema ? hintedSecretPaths(formSchema) : new Set<string>();
     const fields = info.fields.map((f): DeploymentConfigField => {
       const from = fieldSource(sources, f.path);
       let value = getPath(effective, f.path);
@@ -405,24 +484,81 @@ export class ExtensionDeploymentConfigService {
         source,
         readonly: from !== undefined,
       };
-      if (f.secret) return { ...base, set: value !== undefined };
+      // a schema default (e.g. `secret(record).default({})`) is no secret anybody set
+      const set = value !== undefined && source !== "default";
+      if (f.secret && hinted.has(f.path)) {
+        // record keys are item names, never values
+        return { ...base, set, keys: set && isObj(value) ? Object.keys(value).sort() : [] };
+      }
+      if (f.secret) return { ...base, set };
       return value === undefined ? base : { ...base, value: structuredClone(value) };
     });
     return {
       plugin,
+      displayName,
       version: info.version,
       configurable: info.fields.length > 0,
       fields,
-      schema: info.schema ? jsonSchemaOf(info.schema) : null,
+      schema: structuredClone(formSchema ?? null),
       valid,
       validated: info.schema !== undefined,
       issues,
     };
   }
+
+  /**
+   * The form JSON Schema of the description: the zod schema's, else the package's static one. A
+   * hint conversion that throws (a hand-made package) drops the hints: the plain schema, or none
+   * when even the conversion fails; one warning per schema. Never throws.
+   */
+  private formSchemaOf(plugin: string, info: DeploymentSchemaInfo): JsonSchema | undefined {
+    if (!info.schema) return info.jsonSchema;
+    const r = safeConfigFormSchema(info.schema as z.ZodTypeAny, "deployment", (err, schema) =>
+      this.log.warn(
+        "the deployment config form schema could not be built with its UI hints; hints dropped",
+        { plugin, version: info.version, schema, err },
+      ),
+    );
+    return r?.schema;
+  }
+
+  private messagesOf(plugin: string, info: DeploymentSchemaInfo) {
+    const js = this.formSchemaOf(plugin, info);
+    return js && configMessages(js);
+  }
+
+  /** The secret record paths some hint of the form schema names. */
+  private hintedPaths(plugin: string, info: DeploymentSchemaInfo): Set<string> {
+    const js = this.formSchemaOf(plugin, info);
+    return js ? hintedSecretPaths(js) : new Set();
+  }
+}
+
+/**
+ * Applies secret entries in order to the decrypted config `next` (in place): each record is read
+ * from `next` at its path, renamed, set or removed, and put back; an empty record is removed (the
+ * field falls back to its default).
+ */
+function applySecretEntries(next: Obj, entries: readonly SecretEntry[]): void {
+  for (const e of entries) {
+    const cur = getPath(next, e.path);
+    const rec: Record<string, unknown> = isObj(cur) ? { ...cur } : {};
+    if (e.renameFrom !== undefined && e.renameFrom !== e.key && Object.hasOwn(rec, e.renameFrom)) {
+      rec[e.key] = rec[e.renameFrom];
+      delete rec[e.renameFrom];
+    }
+    if (e.value === null) delete rec[e.key];
+    else if (e.value !== undefined) rec[e.key] = e.value;
+    if (Object.keys(rec).length === 0) deleteDeep(next, e.path);
+    else setDeep(next, e.path, rec);
+  }
 }
 
 /**
  * 本副本拿不到模块时（未加载的安装记录）按包内审阅过的静态清单给出字段（没有 zod schema：不校验，加载时再校验）。
+ * The package's `extension.configSchemas.deployment` (written by the packer) is the form schema;
+ * its hints are checked like a loaded schema's (stripped when invalid, silently: a hand-made
+ * package). It is not compared with the module (not part of `manifest_mismatch`, spec §4.5).
  */
 export async function staticDeploymentSchema(
   db: KernelSchemaDb,
@@ -437,9 +573,16 @@ export async function staticDeploymentSchema(
   if (!row) return undefined;
   // new rows hold the plugin's extension section, pre-0.1.0 rows the old capybara section; both
   // carry the static manifest
-  const section = row.section as Pick<PluginExtensionSection, "manifest">;
+  const section = row.section as Pick<PluginExtensionSection, "manifest" | "configSchemas">;
+  const stored = section.configSchemas?.deployment;
+  let jsonSchema: JsonSchema | undefined;
+  if (typeof stored === "object" && stored !== null && !Array.isArray(stored)) {
+    jsonSchema = structuredClone(stored);
+    checkConfigUi(jsonSchema, "deployment");
+  }
   return {
     version: row.version,
+    ...(jsonSchema !== undefined && { jsonSchema }),
     fields: (section.manifest.config?.deployment ?? []).map((f) => ({
       path: f.path,
       secret: f.secret,

@@ -4,13 +4,14 @@ import {
   type ActionRowProps,
   Card,
   Field,
+  type FieldShape,
   Input,
   type PageHeaderProps,
-  Skeleton,
   Stack,
   Text,
   useToast,
 } from "@capybara-hq/design";
+import { useQuery } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { type ReactNode, useState } from "react";
 import { useRouter } from "../i18n/navigation";
@@ -19,7 +20,6 @@ import {
   type ConnectorInstallInput,
   displayNameOf,
   endpointLeaves,
-  getOrgCatalogItem,
   getPath,
   installCatalogItem,
   isOAuth,
@@ -30,9 +30,14 @@ import {
   showValue,
 } from "../lib/catalog";
 import type { AuthType, ConnectorAuth } from "../lib/connectors";
-import { listOrgExtensions, type OrgExtension } from "../lib/extensions";
+import { extensionLabel, labelLocale } from "../lib/extension-label";
+import type { OrgExtension } from "../lib/extensions";
+import { orgCatalogItemQuery, pluginChangeKeys } from "../lib/query/catalog";
+import { orgExtensionsQuery } from "../lib/query/channels";
+import { retryOnMountOf } from "../lib/query/client";
+import { useAppMutation } from "../lib/query/mutation";
+import { type PageState, usePageQuery } from "../lib/query/page-query";
 import { useErrorMessage } from "../lib/use-error-message";
-import { useLoad } from "../lib/use-load";
 import { useCatalogErrorLines } from "./CatalogParts";
 import {
   buildCredential,
@@ -43,14 +48,11 @@ import {
   type OAuthClientDraft,
   OAuthClientFields,
 } from "./ConnectorForm";
+import { ConfigForm } from "./config-form/ConfigForm";
+import { hasConfigFields } from "./config-form/model";
+import { orgConfig } from "./config-form/org";
 import { FormError } from "./form-error";
-import {
-  draftToConfig,
-  initialDraft,
-  type SchemaDraft,
-  SchemaForm,
-  schemaFields,
-} from "./SchemaForm";
+import { usePagePath } from "./shell/path";
 
 export type TemplateDraft = {
   name: string;
@@ -203,13 +205,46 @@ export function connectorInput(t: OrgCatalogTemplate, d: TemplateDraft): Connect
   };
 }
 
+/**
+ * What the install wizard starts from: the catalog item and the org's extensions (`null` when they
+ * could not be read: no extension config step is offered then).
+ */
+export interface CatalogInstallData {
+  detail: OrgCatalogDetail;
+  extensions: OrgExtension[] | null;
+}
+
+/**
+ * The install wizard's reads from the query cache (the layout prefetched them on a first load): the
+ * item (a 404 is the page's not-found) and the org's extensions (a section). Loading until both
+ * answered, so the steps don't change under the person.
+ */
+export function useCatalogInstall(orgId: string, itemId: string): PageState<CatalogInstallData> {
+  const item = usePageQuery(orgCatalogItemQuery(orgId, itemId));
+  const extQ = orgExtensionsQuery(orgId);
+  const ext = useQuery({ ...extQ, retryOnMount: retryOnMountOf(extQ.queryKey) });
+  if (item.kind !== "ready") return item;
+  if (ext.data === undefined && ext.error === null) return { kind: "loading" };
+  return {
+    kind: "ready",
+    data: { detail: item.data, extensions: ext.data?.extensions ?? null },
+    refreshing: item.refreshing,
+  };
+}
+
+/** A template step's fields while the item is on the way: the name, the endpoint, a credential. */
+const LOADING_FIELDS: FieldShape[] = [{}, {}, {}];
+
 /** 向导交给页面放进 WizardPage 的部分（页面文件自己渲染模板，见 check:web-ui 的 web-ui-template）。 */
 export interface WizardView {
-  header: PageHeaderProps;
+  path: PageHeaderProps["path"];
+  title: string;
   steps: string[];
   current: number;
   actionRow: ActionRowProps;
   body: ReactNode;
+  /** The item is on the way: the page passes it as WizardPage's `loading`. */
+  wizardLoading?: { fields: FieldShape[] };
 }
 
 /**
@@ -224,48 +259,44 @@ export interface WizardView {
 export function CatalogInstallWizard({
   orgId,
   itemId,
+  data,
   frame,
 }: {
   orgId: string;
   itemId: string;
+  /** The item and the org's extensions ({@link useCatalogInstall}); `null` while they load. */
+  data: CatalogInstallData | null;
   frame(view: WizardView): ReactNode;
 }) {
+  const scope = usePagePath("org");
   const t = useTranslations("catalog.org.install");
-  const to = useTranslations("catalog.org");
-  const errorMessage = useErrorMessage();
-  const detail = useLoad(() => getOrgCatalogItem(orgId, itemId), [orgId, itemId]);
-  const extensions = useLoad(
-    () =>
-      listOrgExtensions(orgId)
-        .then((r) => r.extensions)
-        .catch(() => [] as OrgExtension[]),
-    [orgId],
-  );
   const header = (title: string) => ({
-    breadcrumb: [{ label: to("title"), href: `/catalog/${itemId}` }],
+    path: [
+      ...scope,
+      { label: "catalog", href: "/catalog" },
+      { label: itemId, href: `/catalog/${itemId}` },
+      { label: "install" },
+    ],
     title,
   });
-  if (detail.state.kind !== "ready" || extensions.state.kind !== "ready") {
+  if (data === null) {
     return frame({
-      header: header(to("title")),
+      ...header(""),
       steps: [t("confirmStep")],
       current: 0,
-      actionRow: { primary: { label: t("submit"), onSelect: () => {}, disabled: true } },
-      body:
-        detail.state.kind === "error" ? (
-          <FormError
-            message={errorMessage(new ApiClientError(0, detail.state.code, detail.state.code))}
-          />
-        ) : (
-          <Skeleton rows={6} />
-        ),
+      actionRow: {
+        cancel: { label: t("cancel"), onSelect: () => {} },
+        primary: { label: t("next"), onSelect: () => {} },
+      },
+      body: null,
+      wizardLoading: { fields: LOADING_FIELDS },
     });
   }
   return (
     <Wizard
       orgId={orgId}
-      detail={detail.state.data}
-      orgExtensions={extensions.state.data}
+      detail={data.detail}
+      orgExtensions={data.extensions ?? []}
       header={header}
       frame={frame}
     />
@@ -301,9 +332,7 @@ function Wizard({
       ? undefined
       : orgExtensions.find((o) => o.plugin === detail.extension);
   const withConfig =
-    own !== undefined && !own.enabled && schemaFields(own.orgConfigSchema).length > 0
-      ? own
-      : undefined;
+    own !== undefined && !own.enabled && hasConfigFields(own.orgConfigSchema) ? own : undefined;
   const hasExtensionStep = detail.extension !== null;
   const steps = [
     ...templates.map((c) =>
@@ -320,12 +349,19 @@ function Wizard({
   const [drafts, setDrafts] = useState<Record<string, TemplateDraft>>(() =>
     Object.fromEntries(templates.map((c) => [c.id, initialTemplateDraft(c, locale, item.name)])),
   );
-  const [config, setConfig] = useState<SchemaDraft>(() =>
-    withConfig ? initialDraft(withConfig.orgConfigSchema, null) : {},
-  );
+  // The extension step's config as the form last reported it (kept across steps).
+  const [config, setConfig] = useState<{ value: Record<string, unknown>; ok: boolean }>({
+    value: {},
+    ok: true,
+  });
   const [showRequired, setShowRequired] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<{ message: string; extra: string[] }>();
+  // An install changes the catalog's view, the installed plugins and what the plugin brings.
+  const install = useAppMutation({
+    fn: (body: OrgInstallBody) => installCatalogItem(orgId, item.id, body),
+    invalidates: () => pluginChangeKeys(orgId),
+  });
   const confirmIdx = steps.length - 1;
   const extensionIdx = hasExtensionStep ? confirmIdx - 1 : -1;
   const installable = item.installable === "yes" || item.installable === "granted";
@@ -342,10 +378,7 @@ function Wizard({
     draft !== undefined &&
     (needsClient(template.auth) || template.ownership === "personal") &&
     missingInput(template, draft) !== undefined;
-  const configResult = withConfig
-    ? draftToConfig(schemaFields(withConfig.orgConfigSchema), config, "create")
-    : undefined;
-  const configErrors = configResult !== undefined && Object.keys(configResult.errors).length > 0;
+  const configErrors = withConfig !== undefined && !config.ok;
 
   const submit = async () => {
     setSubmitting(true);
@@ -357,10 +390,10 @@ function Wizard({
           templates.map((c) => [c.id, connectorInput(c, drafts[c.id] as TemplateDraft)]),
         ),
       }),
-      ...(configResult !== undefined && { extensionConfig: configResult.config }),
+      ...(withConfig !== undefined && { extensionConfig: config.value }),
     };
     try {
-      const r = await installCatalogItem(orgId, item.id, body);
+      const r = await install.mutateAsync(body);
       if ("request" in r) {
         toast.success(ta("approvalRequested"));
         router.push(`/catalog/${item.id}`);
@@ -427,7 +460,7 @@ function Wizard({
   };
 
   return frame({
-    header: header(t("title", { name })),
+    ...header(t("title", { name })),
     steps,
     current: step,
     actionRow,
@@ -438,7 +471,9 @@ function Wizard({
         )}
         {step === extensionIdx && (
           <Stack gap={16}>
-            <Text tone="muted">{t("extensionHint")}</Text>
+            <Text variant="prose" tone="muted">
+              {t("extensionHint")}
+            </Text>
             {own?.enabled === true && (
               <Text variant="small" tone="muted">
                 {t("extensionEnabled", { name: own.plugin })}
@@ -448,13 +483,19 @@ function Wizard({
               <Text tone="muted">{t("extensionNone")}</Text>
             )}
             {withConfig !== undefined && (
-              <Card title={withConfig.plugin}>
-                <SchemaForm
+              <Card
+                title={extensionLabel(
+                  { name: withConfig.plugin, displayName: withConfig.displayName },
+                  labelLocale(locale),
+                )}
+              >
+                <ConfigForm
                   schema={withConfig.orgConfigSchema}
-                  draft={config}
-                  onChange={setConfig}
-                  mode="create"
+                  value={config.value}
                   showRequired={showRequired}
+                  onChange={(value, _entries, state) =>
+                    setConfig({ value: orgConfig(value), ok: state.problems.length === 0 })
+                  }
                 />
               </Card>
             )}
@@ -463,7 +504,7 @@ function Wizard({
         {step === confirmIdx && (
           <Stack gap={12}>
             {!installable && <FormError message={t("notInstallable")} />}
-            <Text>{t("summary")}</Text>
+            <Text variant="prose">{t("summary")}</Text>
             <Text variant="small" tone="muted">
               {[
                 detail.extension !== null
@@ -514,7 +555,11 @@ export function TemplateStep({
   const oauth = isOAuth(auth);
   return (
     <Stack gap={16}>
-      {template.description !== "" && <Text tone="muted">{template.description}</Text>}
+      {template.description !== "" && (
+        <Text variant="prose" tone="muted">
+          {template.description}
+        </Text>
+      )}
       {!credentialsOnly && (
         <>
           <Field label={t("name")}>
@@ -557,7 +602,9 @@ export function TemplateStep({
       <Stack gap={8}>
         <Text>{t("credential")}</Text>
         {auth.type === "none" ? (
-          <Text tone="muted">{t("noneHint")}</Text>
+          <Text variant="prose" tone="muted">
+            {t("noneHint")}
+          </Text>
         ) : oauth ? (
           needsClient(auth) ? (
             <OAuthClientFields
@@ -566,10 +613,14 @@ export function TemplateStep({
               secretRequired={auth.type === "oauth_client"}
             />
           ) : (
-            <Text tone="muted">{t("dcrHint")}</Text>
+            <Text variant="prose" tone="muted">
+              {t("dcrHint")}
+            </Text>
           )
         ) : template.ownership === "personal" && credentialsOnly ? (
-          <Text tone="muted">{t("personalMembersHint")}</Text>
+          <Text variant="prose" tone="muted">
+            {t("personalMembersHint")}
+          </Text>
         ) : (
           <>
             <Text variant="small" tone="muted">

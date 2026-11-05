@@ -15,10 +15,10 @@ export default defineConfig({
   forbidOnly: !!process.env.CI,
   retries: 0,
   reporter: "list",
-  use: { baseURL: `http://localhost:${PORT}` },
+  use: { baseURL: `http://localhost:${PORT}`, locale: "zh-CN" },
   webServer: {
     command: `next build && next start -p ${PORT}`,
-    url: `http://localhost:${PORT}/zh/dev/ui`,
+    url: `http://localhost:${PORT}/dev/ui`,
     env: { CAPYBARA_DEV_UI: "1" },
     reuseExistingServer: !process.env.CI,
     timeout: 300_000,

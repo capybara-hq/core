@@ -23,7 +23,6 @@ import {
   AGENT_TOOL,
   BUILTIN,
   BUILTIN_TOOL_NAMES,
-  DEFAULT_AGENT_TOOLS,
   SANDBOX_ASK_TOOL_NAMES,
   SANDBOX_TOOL_NAMES,
 } from "../../src/tools/builtin-names.js";
@@ -122,9 +121,6 @@ describe("builtin names", () => {
       BUILTIN.ReadToolOutput,
       BUILTIN.SkillWrite,
     ]);
-    expect(arrayLiteral(agents, "DEFAULT_BUILTIN_TOOLS")).toEqual(
-      DEFAULT_AGENT_TOOLS.map((r) => (r.kind === "builtin" ? r.name : "")),
-    );
     for (const f of [
       "apps/web/src/lib/timeline.ts",
       "apps/web/src/components/AgentSubagents.tsx",

@@ -283,24 +283,39 @@ const isMember = async (orgId: string, accountId: string) =>
 async function expectOffboarded(reason: "removed" | "left") {
   expect(await isMember(f.orgId, f.leaver.id)).toBe(false);
   expect(await isMember(f.otherOrgId, f.leaver.id)).toBe(true);
-  // 会话（全部）与个人令牌被吊销
-  for (const req of [f.leaverReq, f.leaverReq2]) {
-    const res = await req({ method: "GET", url: "/api/v1/me" });
-    expect(res.statusCode).toBe(401);
+  const patRes = () =>
+    k.http.inject({
+      method: "GET",
+      url: "/api/v1/me",
+      headers: { authorization: `Bearer ${f.pat}` },
+    });
+  const live = () =>
+    db
+      .selectFrom("sessions")
+      .select("id")
+      .where("account_id", "=", f.leaver.id)
+      .where("revoked_at", "is", null)
+      .execute();
+  if (reason === "removed") {
+    // removal revokes every session and personal token of the account (account-level, conservative)
+    for (const req of [f.leaverReq, f.leaverReq2]) {
+      const res = await req({ method: "GET", url: "/api/v1/me" });
+      expect(res.statusCode).toBe(401);
+    }
+    expect(await live()).toEqual([]);
+    expect((await patRes()).statusCode).toBe(401);
+  } else {
+    // leaving keeps them: the other org still works, this org is gone
+    for (const req of [f.leaverReq, f.leaverReq2]) {
+      expect((await req({ method: "GET", url: "/api/v1/me" })).statusCode).toBe(200);
+      expect((await req({ method: "GET", url: `/api/v1/orgs/${f.orgId}` })).statusCode).toBe(404);
+      expect((await req({ method: "GET", url: `/api/v1/orgs/${f.otherOrgId}` })).statusCode).toBe(
+        200,
+      );
+    }
+    expect(await live()).toHaveLength(2);
+    expect((await patRes()).statusCode).toBe(200);
   }
-  const live = await db
-    .selectFrom("sessions")
-    .select("id")
-    .where("account_id", "=", f.leaver.id)
-    .where("revoked_at", "is", null)
-    .execute();
-  expect(live).toEqual([]);
-  const patRes = await k.http.inject({
-    method: "GET",
-    url: "/api/v1/me",
-    headers: { authorization: `Bearer ${f.pat}` },
-  });
-  expect(patRes.statusCode).toBe(401);
   // 只删除该组织里此人的个人凭据
   expect(await secretKeys()).toEqual(
     [

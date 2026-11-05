@@ -1,0 +1,108 @@
+import "server-only";
+import {
+  type DehydratedState,
+  defaultShouldDehydrateQuery,
+  dehydrate,
+  type QueryClient,
+  type UseQueryOptions,
+} from "@tanstack/react-query";
+import { redirect } from "next/navigation";
+import { cache } from "react";
+import { ApiClientError } from "../api";
+import { loginPathFor } from "../auth-sources";
+import { makeQueryClient, type WireError } from "../query/client";
+import { matchRoute, type RouteCtx, UNKNOWN_ROUTE } from "../query/routes";
+import type { Me } from "../session";
+import { isSignedOut } from "../signed-out";
+import { uiLocale } from "../ui";
+
+/** One query client per server request. */
+export const serverQueryClient = cache((): QueryClient => makeQueryClient());
+
+/**
+ * Dehydrates the client for a `HydrationBoundary`: successes and failures. An
+ * `ApiClientError` is stored as `{ status, code, message }` (class instances cannot cross to the
+ * client); `reviveDehydrated` rebuilds it there.
+ */
+export function dehydrateFor(qc: QueryClient): DehydratedState {
+  const state = dehydrate(qc, {
+    shouldDehydrateQuery: (q) => defaultShouldDehydrateQuery(q) || q.state.status === "error",
+    shouldRedactErrors: () => false,
+  });
+  return {
+    ...state,
+    queries: state.queries.map((q) => {
+      const e = q.state.error;
+      if (!(e instanceof ApiClientError)) return q;
+      const wire: WireError = { status: e.status, code: e.code, message: e.message };
+      return { ...q, state: { ...q.state, error: wire as unknown as Error } };
+    }),
+  };
+}
+
+/**
+ * The first-load prefetch of a route (web query cache spec §3.1): the matched entry's queries, in
+ * parallel, then its `then` (reads that need those answers). `"unknown"` when no page serves the
+ * path or it falls to `[...rest]`. With `signedOutRedirect` (the (app) pages), a read that finds the
+ * session gone redirects to sign-in, back to `path`; the public (auth) pages pass `false`. Any
+ * other failure stays in the cache (dehydrated, the page draws it).
+ */
+export async function prefetchRoute(
+  qc: QueryClient,
+  path: string,
+  session: { me: Me | null; orgId: string | null; locale?: string },
+  opts: { signedOutRedirect: boolean } = { signedOutRedirect: true },
+): Promise<"ok" | "unknown"> {
+  const match = matchRoute(path);
+  if (match === null || match.entry.pattern === UNKNOWN_ROUTE) return "unknown";
+  const ctx: RouteCtx = {
+    params: match.params,
+    search: match.search,
+    me: session.me,
+    orgId: session.orgId,
+    locale: uiLocale(session.locale ?? "en"),
+  };
+  const queries = match.entry.queries(ctx);
+  // A server read is not retried: the first paint waits for it, and the page's retry action or
+  // the browser reads it again.
+  await Promise.all(queries.map((q) => qc.prefetchQuery({ ...q, retry: false })));
+  // `then` only prefetches: a failure of it must not fail the layout. The queries it started stay
+  // in the cache in whatever state they reached, and the signed-out check below still runs.
+  try {
+    await match.entry.then?.(ctx, qc);
+  } catch {}
+  // Anything that is not a kernel refusal or failure (a fetch bug, a mapper bug) is a bug of the
+  // page, not a state it draws: it fails the render as a page's own read did.
+  const bug = qc
+    .getQueryCache()
+    .getAll()
+    .find((q) => q.state.error != null && !(q.state.error instanceof ApiClientError));
+  if (bug) throw bug.state.error;
+  if (!opts.signedOutRedirect) return "ok";
+  const signedOut = qc
+    .getQueryCache()
+    .getAll()
+    .some((q) => isSignedOut(q.state.error));
+  if (signedOut) redirect(loginPathFor(path));
+  return "ok";
+}
+
+/**
+ * A read a segment layout decides on before anything renders (a redirect: the sign-in page sends a
+ * signed-in visitor on, the binding page a signed-out one to sign-in). It goes through the
+ * request's query client, so a query the route's prefetch also lists is read once, whichever
+ * layout asks first: an answer or a failure already there is used, a read in flight is joined.
+ * Never throws: the answer or the failure.
+ */
+export async function settledQuery<T>(
+  qc: QueryClient,
+  o: UseQueryOptions<T, ApiClientError>,
+): Promise<{ data: T } | { error: unknown }> {
+  const state = qc.getQueryState(o.queryKey);
+  if (state?.status === "error") return { error: state.error };
+  try {
+    return { data: await qc.fetchQuery({ ...o, retry: false }) };
+  } catch (error) {
+    return { error };
+  }
+}

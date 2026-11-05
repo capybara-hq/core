@@ -1,13 +1,20 @@
 import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import ChatPage from "../src/app/[locale]/(app)/chat/[conversationId]/page";
+import en from "../messages/en.json";
 import { formatRightHash, parseRightHash } from "../src/lib/right-area";
 import type { UiView } from "../src/lib/ui";
 import { type Call, json, stubApi } from "./support/api";
-import { AGENTS, CONV, ev, FakeEventSource, MODELS, userMsg } from "./support/conversation";
+import {
+  AGENTS,
+  CONV,
+  ev,
+  FakeEventSource,
+  MODELS,
+  renderChatRoute,
+  userMsg,
+} from "./support/conversation";
 import { resetNavigation } from "./support/navigation";
-import { renderPage } from "./support/render";
 
 const params = { conversationId: "c1" };
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
@@ -129,7 +136,7 @@ describe("right-area hash", () => {
 describe("the right area", () => {
   it("properties and one panel exclude each other; the open icon is pressed; the hash follows", async () => {
     api();
-    renderPage(<ChatPage />, { locale: "en" });
+    await renderChatRoute();
     await screen.findByText("in c1");
     const user = userEvent.setup();
     const props = screen.getByRole("button", { name: "Properties" });
@@ -149,10 +156,54 @@ describe("the right area", () => {
     expect(window.location.hash).toBe("#panel=todo/tasks-panel");
   });
 
+  it("each title-bar toggle opens the panel its name says; nothing is listed twice", async () => {
+    api();
+    await renderChatRoute();
+    await screen.findByText("in c1");
+    const user = userEvent.setup();
+    const bar = document.querySelector('[data-part="title-bar"]') as HTMLElement;
+    const toggles = within(bar)
+      .getAllByRole("button")
+      .filter((b) => b.getAttribute("data-part") === "title-bar-button");
+    // Properties, Files and the extension's panel; all fit, so there is no More
+    expect(toggles.map((b) => b.getAttribute("aria-label"))).toEqual([
+      "Properties",
+      en.chat.files,
+      "Tasks",
+    ]);
+    const expected: Record<string, { hash: string; panel: string }> = {
+      Properties: { hash: "#properties", panel: "Properties" },
+      [en.chat.files]: { hash: "#file=f1", panel: "out.txt" },
+      Tasks: { hash: "#panel=todo/tasks-panel", panel: "Tasks" },
+    };
+    for (const [name, want] of Object.entries(expected)) {
+      const button = within(bar).getByRole("button", { name });
+      if (button.getAttribute("aria-pressed") === "true") await user.click(button);
+      await user.click(within(bar).getByRole("button", { name }));
+      expect(window.location.hash).toBe(want.hash);
+      expect(await screen.findByRole("complementary", { name: want.panel })).toBeTruthy();
+      expect(within(bar).getByRole("button", { name }).getAttribute("aria-pressed")).toBe("true");
+    }
+  });
+
+  it("without files there is no Files toggle (it would open something else)", async () => {
+    api("c1", {
+      [`GET ${conv("c1")}/files`]: () => json(200, { files: [], next: null }),
+      [`GET ${UI}/contributions`]: () => json(200, { items: [] }),
+    });
+    await renderChatRoute();
+    await screen.findByText("in c1");
+    const bar = document.querySelector('[data-part="title-bar"]') as HTMLElement;
+    expect(within(bar).queryByRole("button", { name: en.chat.files })).toBeNull();
+    expect(within(bar).queryByRole("button", { name: "More" })).toBeNull();
+    expect(bar.querySelector('[data-part="title-bar-separator"]')).toBeNull();
+    expect(within(bar).getByRole("button", { name: "Properties" })).toBeTruthy();
+  });
+
   it("a section item with an open target opens the panel with the item", async () => {
     const calls = api();
     window.history.replaceState(null, "", "/chat/c1#properties");
-    renderPage(<ChatPage />, { locale: "en" });
+    await renderChatRoute();
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: "Review" }));
     const panel = await screen.findByRole("complementary", { name: "Tasks" });
@@ -167,7 +218,7 @@ describe("the right area", () => {
   it("#file=<id> survives a reload: the file panel opens from the hash", async () => {
     api();
     window.history.replaceState(null, "", "/chat/c1#file=f1");
-    renderPage(<ChatPage />, { locale: "en" });
+    await renderChatRoute();
     const panel = await screen.findByRole("complementary", { name: "out.txt" });
     expect(await within(panel).findByText("hello")).toBeTruthy();
   });
@@ -175,7 +226,7 @@ describe("the right area", () => {
   it("another conversation never shows the previous one's panel", async () => {
     api("c1");
     window.history.replaceState(null, "", "/chat/c1#panel=todo/tasks-panel");
-    const r = renderPage(<ChatPage />, { locale: "en" });
+    const r = await renderChatRoute();
     expect(await screen.findByRole("complementary", { name: "Tasks" })).toBeTruthy();
     // Navigating to /chat/c2 (a URL without the hash) remounts the page for c2.
     cleanup();
@@ -183,7 +234,7 @@ describe("the right area", () => {
     api("c2");
     params.conversationId = "c2";
     window.history.replaceState(null, "", "/chat/c2");
-    renderPage(<ChatPage />, { locale: "en" });
+    await renderChatRoute({ id: "c2" });
     await screen.findByText("in c2");
     expect(screen.queryByRole("complementary", { name: "Tasks" })).toBeNull();
   });
@@ -214,7 +265,7 @@ describe("the right area", () => {
         }),
     });
     window.history.replaceState(null, "", "/chat/c1#properties");
-    renderPage(<ChatPage />, { locale: "en" });
+    await renderChatRoute();
     const meter = await screen.findByRole("meter", { name: "Context" });
     await vi.waitFor(() => expect(meter.getAttribute("aria-valuenow")).toBe("50"));
     // The status bar shows it too.
@@ -278,7 +329,7 @@ describe("the output panel", () => {
               },
             }),
     });
-    renderPage(<ChatPage />, { locale: "en" });
+    await renderChatRoute();
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: /Bash/ }));
     await user.click(await screen.findByRole("button", { name: "View full text" }));
@@ -312,20 +363,24 @@ describe("the Context section's sandbox status", () => {
       },
     });
     const sandboxGets = () => calls.filter((c) => c.url.endsWith("/c1/sandbox")).length;
-    const toolGets = () => calls.filter((c) => c.url.includes("/c1/tools")).length;
-    renderPage(<ChatPage />, { locale: "en" });
+    const { calls: server } = await renderChatRoute();
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: "Properties" }));
-    await waitFor(() => expect(sandboxGets()).toBe(1));
-    await waitFor(() => expect(toolGets()).toBeGreaterThan(0));
+    // the first paint has the sandbox status and the tool info from the server snapshot
+    expect(server.some((c) => c.url.endsWith("/c1/sandbox"))).toBe(true);
+    await waitFor(() =>
+      expect([...server, ...calls].some((c) => c.url.includes("/c1/tools?keys=Bash"))).toBe(true),
+    );
     await act(async () => {
       await new Promise((r) => setTimeout(r, 50));
     });
-    expect(sandboxGets()).toBe(1);
+    const before = sandboxGets();
+    // the existing Bash result is the baseline: no reread on the first load
+    expect(before).toBe(0);
 
     act(() => {
       FakeEventSource.instances[0]?.emit("event", result(3, "Deliver"));
     });
-    await waitFor(() => expect(sandboxGets()).toBe(2));
+    await waitFor(() => expect(sandboxGets()).toBe(before + 1));
   });
 });

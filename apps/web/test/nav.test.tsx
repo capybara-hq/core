@@ -1,18 +1,46 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { NextIntlClientProvider } from "next-intl";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import zh from "../messages/zh.json";
-import { activeNavOf, type NavLevel, useNav } from "../src/components/shell/nav";
+import {
+  activeNavOf,
+  type NavLevel,
+  statusPrompt,
+  useAdminItems,
+  useNav,
+} from "../src/components/shell/nav";
+import { resetNavigation } from "./support/navigation";
+import { ME } from "./support/render";
+import { renderFrame as renderShell, shellOf } from "./support/shell";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 
-afterEach(cleanup);
+beforeEach(() => {
+  resetNavigation("/");
+  localStorage.clear();
+});
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
+
+/** Opens the sidebar's 更多 flyout (a menu to the right of the sidebar). */
+async function openMore() {
+  const nav = screen.getByRole("navigation", { name: "主导航" });
+  await userEvent.setup().click(within(nav).getByRole("button", { name: "更多" }));
+  return screen.findByRole("menu", { name: "更多" });
+}
 
 function Probe({ level, enterprise }: { level: NavLevel; enterprise: boolean }) {
-  const { nav, footerNav } = useNav(0, level, false, enterprise);
+  const { primary, more, adminHref } = useNav(0, level, false, enterprise);
   return (
     <pre data-testid="ids">
-      {JSON.stringify({ nav: nav.map((n) => n.id), footer: footerNav.map((n) => n.id) })}
+      {JSON.stringify({
+        primary: primary.map((n) => n.id),
+        more: more.map((n) => n.id),
+        adminHref: adminHref ?? null,
+      })}
     </pre>
   );
 }
@@ -24,54 +52,115 @@ function ids(level: NavLevel, enterprise: boolean) {
     </NextIntlClientProvider>,
   );
   return JSON.parse(screen.getByTestId("ids").textContent ?? "{}") as {
-    nav: string[];
-    footer: string[];
+    primary: string[];
+    more: string[];
+    adminHref: string | null;
   };
 }
 
 describe("nav by level (role hiding is cosmetic; the kernel decides)", () => {
-  const guest = ["overview", "agents", "inbox", "connectors"];
-  const member = ["overview", "agents", "skills", "inbox", "connectors", "catalog"];
-  const admin = [...member.slice(0, 5), "catalog", "channels", "evals"];
-  const cases: [NavLevel, boolean, string[], string[]][] = [
-    ["guest", false, guest, ["settings"]],
-    ["member", false, member, ["settings"]],
-    ["admin", false, admin, ["settings"]],
-    ["guest", true, guest, ["settings", "admin"]],
-    ["member", true, member, ["settings", "admin"]],
-    ["admin", true, admin, ["settings", "admin"]],
+  // the inbox is the brand row's button (acceptance round 2, B2)
+  const primary = ["overview", "agents"];
+  const guest = ["connectors"];
+  // 组织设置 is shown to members too (read-only for them; user decision, role pass item 8)
+  const member = ["skills", "connectors", "catalog", "settings"];
+  const admin = ["skills", "connectors", "catalog", "channels", "evals", "settings"];
+  const cases: [NavLevel, boolean, string[]][] = [
+    ["guest", false, guest],
+    ["member", false, member],
+    ["admin", false, admin],
+    ["guest", true, guest],
+    ["admin", true, admin],
   ];
-  for (const [level, enterprise, nav, footer] of cases) {
+  for (const [level, enterprise, more] of cases) {
     it(`${level}${enterprise ? " + enterprise admin" : ""}`, () => {
-      expect(ids(level, enterprise)).toEqual({ nav, footer });
+      expect(ids(level, enterprise)).toEqual({
+        primary,
+        more,
+        adminHref: enterprise ? "/admin" : null,
+      });
     });
   }
 
-  it("every item has an icon; settings links to /settings/connections", () => {
-    function Icons() {
-      const { nav, footerNav } = useNav(0, "admin", false, true);
+  it("members see 技能 连接器 插件 组织设置 under 更多; org admins also 渠道 评测与运行", () => {
+    function Labels({ level }: { level: NavLevel }) {
+      const { primary, more } = useNav(0, level, false, false);
       return (
-        <pre data-testid="icons">
-          {JSON.stringify([...nav, ...footerNav].map((n) => [n.id, n.icon, n.href]))}
+        <pre data-testid={level}>
+          {JSON.stringify({
+            primary: primary.map((n) => [n.label, n.icon, n.href]),
+            more: more.map((n) => [n.label, n.icon, n.href]),
+          })}
         </pre>
       );
     }
     render(
       <NextIntlClientProvider locale="zh" messages={zh}>
-        <Icons />
+        <Labels level="member" />
+        <Labels level="admin" />
       </NextIntlClientProvider>,
     );
-    expect(JSON.parse(screen.getByTestId("icons").textContent ?? "[]")).toEqual([
-      ["overview", "home", "/"],
-      ["agents", "agent", "/agents"],
-      ["skills", "skills", "/skills"],
-      ["inbox", "inbox", "/inbox"],
-      ["connectors", "connector", "/connectors"],
-      ["catalog", "catalog", "/catalog"],
-      ["channels", "channel", "/channels"],
-      ["evals", "evals", "/evals"],
-      ["settings", "settings", "/settings/connections"],
-      ["admin", "admin", "/admin"],
+    const read = (id: string) => JSON.parse(screen.getByTestId(id).textContent ?? "{}");
+    expect(read("member")).toEqual({
+      primary: [
+        ["首页", "home", "/"],
+        ["Agents", "agent", "/agents"],
+      ],
+      more: [
+        ["技能", "skills", "/skills"],
+        ["连接器", "connector", "/connectors"],
+        ["插件", "catalog", "/catalog"],
+        ["组织设置", "settings", "/settings/organization"],
+      ],
+    });
+    expect(read("admin").more).toEqual([
+      ["技能", "skills", "/skills"],
+      ["连接器", "connector", "/connectors"],
+      ["插件", "catalog", "/catalog"],
+      ["渠道", "channel", "/channels"],
+      ["评测与运行", "evals", "/evals"],
+      ["组织设置", "settings", "/settings/organization"],
+    ]);
+  });
+
+  it("⌘K actions follow the role: 新建 Agent from member, 添加连接器 for org admins only", () => {
+    function Actions({ level }: { level: NavLevel }) {
+      const { commands } = useNav(0, level, false, false);
+      const actions = commands.find((g) => g.label === zh.nav.actions)?.items ?? [];
+      return <pre data-testid={level}>{JSON.stringify(actions.map((i) => i.id))}</pre>;
+    }
+    render(
+      <NextIntlClientProvider locale="zh" messages={zh}>
+        <Actions level="guest" />
+        <Actions level="member" />
+        <Actions level="admin" />
+      </NextIntlClientProvider>,
+    );
+    const read = (id: string) => JSON.parse(screen.getByTestId(id).textContent ?? "[]");
+    expect(read("guest")).toEqual([]);
+    expect(read("member")).toEqual(["new-agent"]);
+    expect(read("admin")).toEqual(["new-agent", "new-app"]);
+  });
+
+  it("the admin context lists 概览 账号 组织 扩展 企业目录 市场 模型 部署设置", () => {
+    function Admin() {
+      const items = useAdminItems();
+      return <pre data-testid="admin">{JSON.stringify(items.map((i) => [i.label, i.href]))}</pre>;
+    }
+    render(
+      <NextIntlClientProvider locale="zh" messages={zh}>
+        <Admin />
+      </NextIntlClientProvider>,
+    );
+    expect(JSON.parse(screen.getByTestId("admin").textContent ?? "[]")).toEqual([
+      ["概览", "/admin"],
+      ["账号", "/admin/accounts"],
+      ["组织", "/admin/orgs"],
+      ["扩展", "/admin/extensions"],
+      ["企业目录", "/admin/catalog"],
+      ["市场", "/admin/marketplaces"],
+      ["模型", "/admin/models"],
+      ["部署设置", "/admin/settings"],
     ]);
   });
 });
@@ -79,16 +168,83 @@ describe("nav by level (role hiding is cosmetic; the kernel decides)", () => {
 describe("activeNavOf", () => {
   it.each([
     ["/settings/members", "settings"],
-    ["/settings/connections", "settings"],
+    ["/settings/organization", "settings"],
     ["/chat/abc", ""],
     ["/agents/a1", "agents"],
     ["/connectors/c1", "connectors"],
     ["/trajectories/x", "evals"],
+    ["/account/connections", ""],
     ["/", "overview"],
     // an extension page is its sidebar item (m1), decoded like the item ids
     ["/p/example-board/board", "ext:example-board/board"],
     ["/p/%40acme%2Fboard/main%20view", "ext:@acme/board/main view"],
   ])("%s → %s", (path, id) => {
     expect(activeNavOf(path)).toBe(id);
+  });
+});
+
+describe("statusPrompt", () => {
+  it.each([
+    ["/", "grant@acme:~"],
+    ["/agents/new", "grant@acme:~/agents/new"],
+    ["/chat/9f60c1e6", "grant@acme:~/chat/9f60c1e6"],
+    ["/admin", "grant@acme:/admin"],
+    ["/admin/accounts", "grant@acme:/admin/accounts"],
+  ])("%s → %s", (path, prompt) => {
+    expect(statusPrompt("Grant", "acme", path)).toBe(prompt);
+  });
+
+  it("without a current org there is no @<slug>", () => {
+    expect(statusPrompt("Grant", null, "/admin")).toBe("grant:/admin");
+  });
+
+  it("the login is lowercase, its spaces joined by hyphens", () => {
+    expect(statusPrompt(" Grant  Wu ", "acme", "/")).toBe("grant-wu@acme:~");
+  });
+});
+
+describe("AppFrame contexts", () => {
+  const renderFrame = () => renderShell(shellOf(ME));
+
+  it("/admin/* renders the admin context: its items, the way back, no conversations", async () => {
+    resetNavigation("/admin/marketplaces");
+    renderFrame();
+    expect(screen.getByText("page body")).toBeTruthy();
+    const nav = screen.getByRole("navigation", { name: "主导航" });
+    const market = within(nav).getByRole("link", { name: "市场" });
+    expect(market.getAttribute("href")).toBe("/admin/marketplaces");
+    expect(market.getAttribute("aria-current")).toBe("page");
+    expect(screen.getByRole("link", { name: /~\/acme/ }).getAttribute("href")).toBe("/");
+    expect(screen.queryByRole("region", { name: "会话" })).toBeNull();
+    expect(within(screen.getByRole("contentinfo")).getByText("grant@acme:/admin/marketplaces"));
+  });
+
+  it("the workspace status bar prompt is <login>@<slug>:~<path>", async () => {
+    resetNavigation("/agents/new");
+    renderFrame();
+    expect(screen.getByText("page body")).toBeTruthy();
+    expect(within(screen.getByRole("contentinfo")).getByText("grant@acme:~/agents/new"));
+    // the old footer item 设置 is gone; 组织设置 is in the 更多 flyout
+    const nav = screen.getByRole("navigation", { name: "主导航" });
+    expect(within(nav).queryByRole("link", { name: "设置" })).toBeNull();
+    await openMore();
+    expect(screen.getByRole("menuitem", { name: "组织设置" })).toBeTruthy();
+    expect(screen.queryByRole("menuitem", { name: "设置" })).toBeNull();
+  });
+
+  it("account menu has 切换组织 ▸, 语言 ▸, 个人设置 → /account/connections, 退出登录", async () => {
+    resetNavigation("/");
+    renderFrame();
+    screen.getByText("page body");
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /^账户: Grant/ }));
+    expect(screen.getAllByRole("menuitem").map((i) => i.textContent)).toEqual([
+      zh.shell.orgMenu,
+      zh.common.language,
+      zh.shell.accountSettings,
+      zh.common.logout,
+    ]);
+    const item = screen.getByRole("menuitem", { name: zh.shell.accountSettings });
+    expect(item.getAttribute("href")).toBe("/account/connections");
   });
 });

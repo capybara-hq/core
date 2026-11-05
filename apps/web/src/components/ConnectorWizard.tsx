@@ -27,15 +27,19 @@ import {
   type ConnectorKind,
   type ConnectorOperation,
   type ConnectorPreview,
+  type CreateConnectorInput,
   type CredentialValue,
   createConnector,
   type Ownership,
+  type PreviewConnectorInput,
   previewConnector,
   type TokenAuthMethod,
   type ToolIssue,
   type ToolPolicy,
   type ToolPreview,
 } from "../lib/connectors";
+import { keys } from "../lib/query/keys";
+import { useAppMutation } from "../lib/query/mutation";
 import { useErrorMessage } from "../lib/use-error-message";
 import { connectionHref } from "./ConnectCard";
 import {
@@ -307,6 +311,16 @@ export function useConnectorWizard(orgId: string): ConnectorWizardView {
     return Object.keys(errs).length === 0;
   }
 
+  // A preview changes nothing; an install adds a connector to the org's list.
+  const preview = useAppMutation({
+    fn: (input: PreviewConnectorInput) => previewConnector(orgId, input),
+    invalidates: () => [],
+  });
+  const create = useAppMutation({
+    fn: (input: CreateConnectorInput) => createConnector(orgId, input),
+    invalidates: () => [keys.org(orgId).connectors()],
+  });
+
   async function run(fn: () => Promise<void>) {
     setPending(true);
     setError(undefined);
@@ -322,7 +336,7 @@ export function useConnectorWizard(orgId: string): ConnectorWizardView {
   /** 端点 → 认证：预览（只给端点）读认证提示与操作清单。 */
   const inspect = () =>
     run(async () => {
-      const res = await previewConnector(orgId, {
+      const res = await preview.mutateAsync({
         name: name.trim(),
         ...(slug.trim() !== "" ? { slug: slug.trim() } : {}),
         connector,
@@ -346,7 +360,7 @@ export function useConnectorWizard(orgId: string): ConnectorWizardView {
     run(async () => {
       const cred = authType === "oauth_code" ? undefined : credentialValue();
       try {
-        const res = await previewConnector(orgId, {
+        const res = await preview.mutateAsync({
           name: name.trim(),
           ...(slug.trim() !== "" ? { slug: slug.trim() } : {}),
           connector,
@@ -371,7 +385,7 @@ export function useConnectorWizard(orgId: string): ConnectorWizardView {
     run(async () => {
       const cred = credentialValue();
       try {
-        const res = await createConnector(orgId, {
+        const res = await create.mutateAsync({
           name: name.trim(),
           ...(slug.trim() !== "" ? { slug: slug.trim() } : {}),
           connector,
@@ -1023,7 +1037,9 @@ function ToolsStep({
     ];
     return (
       <Stack gap={12}>
-        <Text tone="muted">{t("wizard.operationsHint")}</Text>
+        <Text variant="prose" tone="muted">
+          {t("wizard.operationsHint")}
+        </Text>
         <IssuesCard issues={preview?.issues ?? []} />
         <DataTable<ConnectorOperation>
           label={t("wizard.operationsLabel")}
@@ -1077,7 +1093,9 @@ function ToolsStep({
   ];
   return (
     <Stack gap={12}>
-      <Text tone="muted">{t("wizard.toolsHint")}</Text>
+      <Text variant="prose" tone="muted">
+        {t("wizard.toolsHint")}
+      </Text>
       <IssuesCard issues={preview.issues} />
       <DataTable<ToolPreview>
         label={t("wizard.toolsTitle")}

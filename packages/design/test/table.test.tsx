@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { cleanup, render, screen, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { useState } from "react";
@@ -94,7 +96,10 @@ describe("DataTable density and parts", () => {
       "default",
     );
     expect(r.container.querySelector('[data-part="table-empty"]')).toBeTruthy();
-    expect(screen.getByText("还没有连接器").getAttribute("data-part")).toBe("table-empty-title");
+    // the one empty state, compact, inside the table's empty area (spec §6.18)
+    const es = r.container.querySelector('[data-part="table-empty"] [data-part="empty-state"]');
+    expect(es?.getAttribute("data-size")).toBe("compact");
+    expect(screen.getByText("还没有连接器").getAttribute("data-part")).toBe("empty-state-text");
     cleanup();
     const l = plain({ state: "loading" });
     expect(l.container.querySelectorAll('[data-part="skeleton-bar"]').length).toBeGreaterThan(0);
@@ -116,11 +121,14 @@ describe("DataTable density and parts", () => {
       cleanup();
     }
   });
-  it("no results shows the search-x icon", () => {
+  it("no results is the compact empty state: the sentence, no icon or art", () => {
     const r = plain({ rows: [], noResults: { description: "状态：失败", onClear: () => {} } });
-    expect(
-      r.container.querySelector('[data-empty="no-results"] [data-icon="search-x"]'),
-    ).toBeTruthy();
+    const area = r.container.querySelector('[data-empty="no-results"]') as HTMLElement;
+    expect(area.querySelector('[data-part="empty-state"]')?.getAttribute("data-size")).toBe(
+      "compact",
+    );
+    expect(area.querySelector('[data-icon="search-x"]')).toBeNull();
+    expect(area.querySelector('[data-part="empty-illustration"]')).toBeNull();
   });
   it("a CellTitle first cell names the row checkbox", () => {
     render(
@@ -190,6 +198,44 @@ describe("DataTable selection", () => {
   });
 });
 
+describe("DataTable wrapping columns", () => {
+  it("a wrap column's cells wrap onto more lines instead of an ellipsis; others stay one line", () => {
+    const { container } = plain({
+      columns: [
+        ...columns,
+        { key: "caps", header: "能力", cell: () => "工具 · 图片 · 文档 · 推理 · 缓存", wrap: true },
+      ],
+    });
+    const cell = screen.getAllByText("工具 · 图片 · 文档 · 推理 · 缓存")[0]?.closest("td");
+    expect(cell?.getAttribute("data-wrap")).toBe("true");
+    const name = screen.getByText("Alpha").closest("td");
+    expect(name?.getAttribute("data-wrap")).toBeNull();
+    // The CSS turns off nowrap and the ellipsis for data-wrap cells, at every width
+    const css = readFileSync(resolve(import.meta.dirname, "../src/styles/table.css"), "utf8");
+    expect(css).toMatch(/td\[data-wrap="true"\][^{]*\{[^}]*white-space: normal/);
+    expect(container.querySelector('td[data-wrap="true"] .cb-table-cell')).not.toBeNull();
+  });
+});
+
+describe("DataTable wrapping lists", () => {
+  it("a wrap column's string list is one no-break unit per item, so lines break only at 「 · 」", () => {
+    const { container } = plain({
+      columns: [
+        ...columns,
+        { key: "caps", header: "能力", cell: () => ["工具", "推理", "缓存"], wrap: true },
+      ],
+    });
+    const cell = container.querySelector('td[data-wrap="true"]') as HTMLElement;
+    expect(cell.textContent).toBe("工具 · 推理 · 缓存");
+    const items = [...cell.querySelectorAll('[data-part="cell-list-item"]')];
+    // each item keeps its separator, so a line never starts with 「·」 and 「缓存」 never splits
+    expect(items.map((i) => i.textContent)).toEqual(["工具 ·", "推理 ·", "缓存"]);
+    const css = readFileSync(resolve(import.meta.dirname, "../src/styles/table.css"), "utf8");
+    expect(css).toMatch(/\.cb-table-cell-list-item \{[^}]*white-space: nowrap/);
+    expect(cell.querySelector(".cb-table-cell")?.getAttribute("title")).toBe("工具 · 推理 · 缓存");
+  });
+});
+
 describe("DataTable rows", () => {
   it("activeKey 行 data-state 含 active；点击行调用 onOpen，点击复选框不调用", async () => {
     const user = userEvent.setup();
@@ -230,6 +276,19 @@ describe("DataTable rows", () => {
 
   it("某行的菜单项为空：该行不显示 ⋯（列仍保留，其他行照常）", () => {
     plain({ rowMenu: (r) => (r.id === rows[0]?.id ? [] : [{ label: "编辑", onSelect() {} }]) });
+    const [r1, r2] = screen.getAllByRole("row").slice(1) as HTMLElement[];
+    expect(within(r1 as HTMLElement).queryByRole("button", { name: "行操作" })).toBeNull();
+    expect(within(r1 as HTMLElement).getAllByRole("cell")).toHaveLength(columns.length + 1);
+    expect(within(r2 as HTMLElement).getByRole("button", { name: "行操作" })).toBeTruthy();
+  });
+
+  it("a row whose items are all disabled or separators has no action: no ⋯ either", () => {
+    plain({
+      rowMenu: (r) =>
+        r.id === rows[0]?.id
+          ? [{ label: "唯一的管理员", disabled: true, onSelect() {} }, "separator"]
+          : [{ label: "编辑", onSelect() {} }],
+    });
     const [r1, r2] = screen.getAllByRole("row").slice(1) as HTMLElement[];
     expect(within(r1 as HTMLElement).queryByRole("button", { name: "行操作" })).toBeNull();
     expect(within(r1 as HTMLElement).getAllByRole("cell")).toHaveLength(columns.length + 1);
@@ -449,6 +508,18 @@ describe("row grounds of a table inside a card", () => {
   });
 });
 
+describe("the table's empty state", () => {
+  it("is centered in the table body, with the area's space.8 above and below", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { resolve } = await import("node:path");
+    const css = readFileSync(resolve(import.meta.dirname, "../src/styles/table.css"), "utf8");
+    expect(css).not.toMatch(/data-empty="empty"\][^{]*\{[^}]*text-align: left/);
+    expect(css).toMatch(
+      /\.cb-table-empty \.cb-empty-state\[data-size="compact"\] \{[^}]*align-items: center;[^}]*text-align: center;/,
+    );
+  });
+});
+
 describe("CellTitle", () => {
   it("draws the initial tile, the name and the description, with full text in title", async () => {
     const { CellTitle } = await import("../src/index");
@@ -458,5 +529,77 @@ describe("CellTitle", () => {
     expect(container.querySelector(".cb-cell-initial")?.textContent).toBe("A");
     expect(screen.getByText("Acme Docs").getAttribute("title")).toBe("Acme Docs");
     expect(screen.getByText("检索文档").getAttribute("title")).toBe("检索文档");
+  });
+});
+
+describe("DataTable semantics and the narrow controls (spec §6.6)", () => {
+  const realMatchMedia = window.matchMedia;
+  const phone = () => {
+    window.matchMedia = ((q: string) => ({
+      matches: q === "(max-width: 639px)",
+      media: q,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    })) as unknown as typeof window.matchMedia;
+  };
+  afterEach(() => {
+    window.matchMedia = realMatchMedia;
+  });
+
+  it("carries explicit table roles, so stacked rows keep their semantics", () => {
+    const { container } = plain({ rowMenu: () => [{ label: "删除", onSelect: () => {} }] });
+    expect(container.querySelector("table.cb-table-el")?.getAttribute("role")).toBe("table");
+    for (const g of container.querySelectorAll(
+      "table.cb-table-el > thead, table.cb-table-el > tbody",
+    ))
+      expect(g.getAttribute("role")).toBe("rowgroup");
+    for (const r of container.querySelectorAll("table.cb-table-el tr"))
+      expect(r.getAttribute("role")).toBe("row");
+    for (const th of container.querySelectorAll("table.cb-table-el th"))
+      expect(th.getAttribute("role")).toBe("columnheader");
+    for (const td of container.querySelectorAll("table.cb-table-el td"))
+      expect(td.getAttribute("role")).toBe("cell");
+    expect(screen.getAllByRole("columnheader").map((h) => h.textContent)).toEqual([
+      "名称",
+      "数量",
+      "",
+    ]);
+  });
+
+  it("wide: no narrow bar; the header sorts and selects all", () => {
+    const onChange = vi.fn();
+    render(<Harness sort={{ key: "name", dir: "asc", onChange }} />);
+    expect(document.querySelector('[data-part="table-narrow-bar"]')).toBeNull();
+    expect(screen.getByRole("button", { name: /名称/ })).toBeTruthy();
+    expect(screen.getByRole("checkbox", { name: "全选" })).toBeTruthy();
+  });
+
+  it("narrow: the header is text for screen readers; sort and select-all move to a bar above the rows", async () => {
+    phone();
+    const onChange = vi.fn();
+    render(<Harness sort={{ key: "name", dir: "asc", onChange }} />);
+    const bar = document.querySelector('[data-part="table-narrow-bar"]') as HTMLElement;
+    expect(bar).not.toBeNull();
+    // the header row stays in the tree (visually hidden), with no controls of its own
+    const head = document.querySelector("table.cb-table-el > thead") as HTMLElement;
+    expect(within(head).queryByRole("button")).toBeNull();
+    expect(within(head).queryByRole("checkbox")).toBeNull();
+    expect(within(head).getByRole("columnheader", { name: "名称" })).toBeTruthy();
+    const user = userEvent.setup();
+    // select all
+    await user.click(within(bar).getByRole("checkbox", { name: "全选" }));
+    expect(screen.getByText("已选 3 项")).toBeTruthy();
+    // sort: the sortable columns, each way
+    const select = within(bar).getByRole("combobox", { name: "排序" }) as HTMLSelectElement;
+    expect([...select.options].map((o) => o.textContent)).toEqual(["名称 升序", "名称 降序"]);
+    expect(select.value).toBe("name:asc");
+    await user.selectOptions(select, "name:desc");
+    expect(onChange).toHaveBeenCalledWith("name", "desc");
+  });
+
+  it("narrow: no bar when there is nothing to sort or select", () => {
+    phone();
+    plain({});
+    expect(document.querySelector('[data-part="table-narrow-bar"]')).toBeNull();
   });
 });

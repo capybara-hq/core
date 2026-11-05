@@ -1,6 +1,14 @@
 "use client";
 
-import { Badge, CodeBlock, Disclosure, ImageBlock, Stack, Text } from "@capybara-hq/design";
+import {
+  Badge,
+  CodeBlock,
+  Disclosure,
+  ImageBlock,
+  Stack,
+  Text,
+  versionLabel,
+} from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
 import { type ReactNode, useEffect, useState } from "react";
 import {
@@ -189,7 +197,7 @@ export function useCatalogErrorLines(): (e: unknown) => string[] {
     if (x.code === "plugin.upgrade_target_invalid") {
       switch (d.reason) {
         case "same_version":
-          return [td("sameVersion", { version: d.version ?? "" })];
+          return [td("sameVersion", { version: d.version == null ? "" : versionLabel(d.version) })];
         case "deployment_version":
           if (d.deploymentVersion === undefined) return [td("notDeployed")];
           return d.allowedVersion === undefined
@@ -205,7 +213,7 @@ export function useCatalogErrorLines(): (e: unknown) => string[] {
             td("dependentRange", {
               dependent: d.dependent ?? "",
               range: d.range ?? "",
-              version: d.version ?? "",
+              version: d.version == null ? "" : versionLabel(d.version),
             }),
           ];
         case "template_connector":
@@ -256,7 +264,9 @@ export function useCatalogErrorLines(): (e: unknown) => string[] {
             skill: c.skill,
             // no trailing space when the version is unknown
             plugin:
-              c.source.version === "" ? c.source.name : `${c.source.name} ${c.source.version}`,
+              c.source.version === ""
+                ? c.source.name
+                : `${c.source.name} ${versionLabel(c.source.version)}`,
           }),
     );
     return [...dependency, ...skills, ...detailLines(e)];

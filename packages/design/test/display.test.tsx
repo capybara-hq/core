@@ -266,7 +266,7 @@ describe("Logo", () => {
 });
 
 describe("Dither", () => {
-  it("确定性、4px 方块、主色 ≤1%", () => {
+  it("is deterministic, 4px squares, greyscale only (no accent squares)", () => {
     const a = render(<Dither side="left" seed={7} />).container.innerHTML;
     cleanup();
     const b = render(<Dither side="left" seed={7} />).container.innerHTML;
@@ -276,8 +276,7 @@ describe("Dither", () => {
     expect(container.querySelector("svg")?.getAttribute("aria-hidden")).toBe("true");
     const rects = container.querySelectorAll("rect");
     expect(rects.length).toBeGreaterThan(0);
-    const accent = container.querySelectorAll('rect[data-accent="true"]').length;
-    expect(accent / rects.length).toBeLessThanOrEqual(0.01);
+    expect(container.querySelector("rect[data-accent]")).toBeNull();
     expect(rects[0]?.getAttribute("width")).toBe("4");
   });
 });
@@ -285,7 +284,7 @@ describe("Dither", () => {
 describe("Skeleton / BarChart", () => {
   it("Skeleton 行数", () => {
     const { container } = wrap(<Skeleton rows={3} />);
-    expect(container.querySelectorAll(".cb-skeleton-row").length).toBe(3);
+    expect(container.querySelectorAll('[data-part="skeleton-text"]').length).toBe(3);
   });
   it("BarChart role=img + aria-label", () => {
     wrap(

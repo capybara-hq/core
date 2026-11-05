@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   checkAppliedMigrations,
   diffAppliedMigrations,
+  diffNewMigrationNumbers,
   isMigrationFile,
 } from "../src/applied-migrations.js";
 
@@ -165,5 +166,61 @@ describe("diffAppliedMigrations (a real git repository)", () => {
     git("checkout", "-q", "feature");
     expect(base).not.toBe(mainHead);
     expect(diffAppliedMigrations(dir, mainHead)).toEqual([]);
+  });
+
+  // migration-number-behind-base: the rc2 collision, a branch's 0003.. against main's new 0003
+  const sql = "CREATE TABLE IF NOT EXISTS x (id int);\n";
+  const branchOff = () => {
+    const start = commit("base");
+    git("checkout", "-q", "-b", "feature");
+    return start;
+  };
+  const mainReleases = (name: string) => {
+    git("checkout", "-q", "main");
+    write(`packages/kernel/src/migrations/${name}`, sql);
+    const head = commit(`main releases ${name}`);
+    git("checkout", "-q", "feature");
+    return head;
+  };
+
+  it("fails when a branch adds a number the base has since released, or a lower one", () => {
+    branchOff();
+    write("packages/kernel/src/migrations/0003_branch_a.sql", sql);
+    write("packages/kernel/src/migrations/0004_branch_b.sql", sql);
+    write("plugins/demo/migrations/0002_more.sql", sql);
+    commit("feature numbers its migrations");
+    const mainHead = mainReleases("0003_main.sql");
+    expect(diffNewMigrationNumbers(dir, mainHead).map((f) => [f.file, f.rule])).toEqual([
+      ["packages/kernel/src/migrations/0003_branch_a.sql", "migration-number-behind-base"],
+    ]);
+    const behind = mainReleases("0005_main_again.sql");
+    expect(diffNewMigrationNumbers(dir, behind).map((f) => f.file)).toEqual([
+      "packages/kernel/src/migrations/0003_branch_a.sql",
+      "packages/kernel/src/migrations/0004_branch_b.sql",
+    ]);
+    expect(diffNewMigrationNumbers(dir, behind)[0]?.message).toContain("0005_main_again.sql");
+  });
+
+  it("passes when the branch's numbers follow the base's highest, also after merging the base", () => {
+    branchOff();
+    write("packages/kernel/src/migrations/0004_branch_a.sql", sql);
+    commit("feature numbers after main");
+    const mainHead = mainReleases("0003_main.sql");
+    expect(diffNewMigrationNumbers(dir, mainHead)).toEqual([]);
+    git("merge", "-q", "--no-edit", "main");
+    expect(diffNewMigrationNumbers(dir, mainHead)).toEqual([]);
+  });
+
+  it("checks a migration renamed or copied into place, not one the base already has", () => {
+    const base = commit("base");
+    renameSync(
+      join(dir, "packages/kernel/src/migrations/0002_b.sql"),
+      join(dir, "packages/kernel/src/migrations/0001_b.sql"),
+    );
+    write("plugins/fresh/migrations/0001_init.sql", sql);
+    commit("renumber down; a new plugin starts at 0001");
+    expect(diffNewMigrationNumbers(dir, base).map((f) => f.file)).toEqual([
+      "packages/kernel/src/migrations/0001_b.sql",
+    ]);
   });
 });

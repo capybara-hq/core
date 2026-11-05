@@ -1,6 +1,8 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
+import { newAgent } from "./support/chat";
+import { mainNavLink } from "./support/nav";
 import { signIn } from "./support/sign-in";
 
 /** 界面文案取自 zh 文案文件，避免与实现重复硬编码。 */
@@ -60,7 +62,7 @@ test("假渠道：启用插件 → 建渠道连接 → IM 里未绑定的人收�
   await signIn(page);
 
   // 1. 组织插件：先填组织级配置（通讯录地址），再启用；权限清单里工具与密钥被标为敏感
-  await page.goto("/zh/settings/extensions");
+  await page.goto("/settings/extensions");
   await expect(page.locator('[data-template="SettingsPage"]')).toBeVisible();
   const section = page.getByRole("region", { name: "fake-im", exact: true });
   const perms = section.getByRole("region", {
@@ -81,20 +83,11 @@ test("假渠道：启用插件 → 建渠道连接 → IM 里未绑定的人收�
   await expect(enable).toHaveAttribute("aria-checked", "true");
 
   // 2. 新建一个 agent（model-fake）
-  await page.goto("/zh/agents/new");
-  await page.getByRole("textbox", { name: zh.agents.form.nameLabel, exact: true }).fill("IM agent");
-  await page
-    .getByRole("combobox", { name: zh.agents.form.modelLabel, exact: true })
-    .selectOption("model-fake/fake-1");
-  await page.getByRole("button", { name: zh.agents.form.submit }).click();
-  await expect(page).toHaveURL(/\/zh\/agents$/);
+  await newAgent(page, "IM agent");
 
   // 3. 渠道（管理员可见的一级导航）→ 新建连接
-  await page
-    .getByRole("navigation", { name: "主导航" })
-    .getByRole("link", { name: zh.nav.channels })
-    .click();
-  await expect(page).toHaveURL(/\/zh\/channels$/);
+  await (await mainNavLink(page, zh.nav.channels)).click();
+  await expect(page).toHaveURL(/\/channels$/);
   await page.getByRole("link", { name: zh.channels.new }).click();
   await expect(page.locator('[data-template="FormPage"]')).toBeVisible();
   const f = zh.channels.form;
@@ -109,7 +102,7 @@ test("假渠道：启用插件 → 建渠道连接 → IM 里未绑定的人收�
     .getByRole("combobox", { name: new RegExp(`^${f.agentLabel}`) })
     .selectOption({ label: "IM agent" });
   await page.getByRole("button", { name: f.submit }).click();
-  await expect(page).toHaveURL(/\/zh\/channels\/[^/]+$/);
+  await expect(page).toHaveURL(/\/channels\/[^/]+$/);
   await expect(page.locator('[data-template="DetailPage"]')).toBeVisible();
   const connId = new URL(page.url()).pathname.split("/").pop() as string;
   // 密钥不回显
@@ -154,7 +147,7 @@ test("假渠道：启用插件 → 建渠道连接 → IM 里未绑定的人收�
     .toBe("hello from IM");
 
   // 7. 个人设置里能看到这条已绑定的 IM 身份
-  await visitor.goto("/zh/settings/identities");
+  await visitor.goto("/account/identities");
   await expect(visitor.getByRole("row").filter({ hasText: "u-e2e" })).toBeVisible();
   await context.close();
 });

@@ -143,6 +143,8 @@ describe("渠道连接 HTTP", () => {
     ).schema;
     expect(schema.properties.appSecret?.["x-secret"]).toBe(true);
     expect(schema.properties.appId?.["x-secret"]).toBeUndefined();
+    // config UI hints pass through
+    expect(schema.properties.appId?.["x-ui"]).toEqual({ label: { zh: "应用 ID", en: "App ID" } });
   });
 
   it("新建 → 密钥进密钥存储、GET 不回显；修改、停用、删除", async () => {

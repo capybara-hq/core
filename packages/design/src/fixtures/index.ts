@@ -18,25 +18,149 @@ export type FixtureNavItem = {
   icon: IconName;
   count?: number;
   audience: "all" | "member" | "admin" | "enterprise";
+  /**
+   * After New conversation (`primary`), inside the 更多 flyout (`more`), or an icon button in the
+   * brand row (`brand`: the inbox).
+   */
+  place: "primary" | "more" | "brand";
 };
 
-/** Top-level navigation in spec §4.4 order (the Extensions group sits between Evals and Settings). */
+/** The work context's navigation in the web-order spec §2.1 order (extension pages follow 更多's). */
 export const NAV_FIXTURE: FixtureNavItem[] = [
-  { id: "overview", label: "概览", href: "/", icon: "home", audience: "all" },
-  { id: "agents", label: "Agents", href: "/agents", icon: "agent", audience: "all" },
-  { id: "skills", label: "技能", href: "/skills", icon: "skills", audience: "member" },
-  { id: "inbox", label: "收件箱", href: "/inbox", icon: "inbox", count: 3, audience: "all" },
-  { id: "connectors", label: "连接器", href: "/connectors", icon: "connector", audience: "all" },
-  { id: "catalog", label: "企业目录", href: "/catalog", icon: "catalog", audience: "member" },
-  { id: "channels", label: "渠道", href: "/channels", icon: "channel", audience: "admin" },
-  { id: "evals", label: "评测", href: "/evals", icon: "evals", audience: "admin" },
-  { id: "settings", label: "设置", href: "/settings", icon: "settings", audience: "all" },
-  { id: "admin", label: "管理", href: "/admin", icon: "admin", audience: "enterprise" },
+  { id: "overview", label: "首页", href: "/", icon: "home", audience: "all", place: "primary" },
+  {
+    id: "inbox",
+    label: "收件箱",
+    href: "/inbox",
+    icon: "inbox",
+    count: 3,
+    audience: "all",
+    place: "brand",
+  },
+  {
+    id: "agents",
+    label: "Agents",
+    href: "/agents",
+    icon: "agent",
+    audience: "all",
+    place: "primary",
+  },
+  {
+    id: "skills",
+    label: "技能",
+    href: "/skills",
+    icon: "skills",
+    audience: "member",
+    place: "more",
+  },
+  {
+    id: "connectors",
+    label: "连接器",
+    href: "/connectors",
+    icon: "connector",
+    audience: "all",
+    place: "more",
+  },
+  {
+    id: "catalog",
+    label: "插件",
+    href: "/catalog",
+    icon: "catalog",
+    audience: "member",
+    place: "more",
+  },
+  {
+    id: "channels",
+    label: "渠道",
+    href: "/channels",
+    icon: "channel",
+    audience: "admin",
+    place: "more",
+  },
+  {
+    id: "evals",
+    label: "评测与运行",
+    href: "/evals",
+    icon: "evals",
+    audience: "admin",
+    place: "more",
+  },
+  {
+    id: "settings",
+    label: "组织设置",
+    href: "/settings/organization",
+    icon: "settings",
+    audience: "admin",
+    place: "more",
+  },
 ];
 
-export const NEW_CONVERSATION_LABEL = "新会话";
-export const EXTENSIONS_LABEL = "扩展";
+/** The org switcher: the current org, `~/<slug> · <role>`. */
+export const ORG_SWITCHER_FIXTURE = {
+  name: FIXTURE_ORG,
+  initial: "示",
+  slug: "demo",
+  role: "所有者",
+};
 
+/** The admin context's items (web-order spec §2.2). */
+export const ADMIN_NAV_FIXTURE: { id: string; label: string; href: string; icon: IconName }[] = [
+  { id: "overview", label: "概览", href: "/admin", icon: "gauge" },
+  { id: "accounts", label: "账号", href: "/admin/accounts", icon: "user" },
+  { id: "orgs", label: "组织", href: "/admin/orgs", icon: "building" },
+  { id: "extensions", label: "扩展", href: "/admin/extensions", icon: "extension" },
+  { id: "catalog", label: "企业目录", href: "/admin/catalog", icon: "catalog" },
+  { id: "marketplaces", label: "市场", href: "/admin/marketplaces", icon: "store" },
+  { id: "models", label: "模型", href: "/admin/models", icon: "cpu" },
+  { id: "settings", label: "部署设置", href: "/admin/settings", icon: "sliders" },
+];
+
+/** The archived entry's count (`已归档 · 7`). */
+export const ARCHIVED_COUNT_FIXTURE = 7;
+
+export const NEW_CONVERSATION_LABEL = "新会话";
+export const MORE_LABEL = "更多";
+export const ADMIN_LABEL = "管理后台";
+
+/** One step of the setup sidebar (web-SSR spec §4); the catalog adds the links. */
+export type FixtureSetupStep = {
+  id: string;
+  label: string;
+  state: "done" | "todo" | "waiting";
+  reason?: string;
+  optional?: boolean;
+};
+
+/**
+ * The setup sidebar's steps (web-SSR spec §4, per role): an enterprise admin who is also an org
+ * admin, after the model (done, an agent to create, the optional steps), and a member before any
+ * model (both steps waiting with their reasons, one optional step).
+ */
+export const SETUP_STEPS_FIXTURE: Record<"admin" | "member", FixtureSetupStep[]> = {
+  admin: [
+    { id: "model", label: "配置模型", state: "done" },
+    { id: "agent", label: "新建 agent", state: "todo" },
+    { id: "channels", label: "连接渠道", state: "todo", optional: true },
+    { id: "members", label: "邀请成员", state: "todo", optional: true },
+    { id: "catalog", label: "安装插件", state: "todo", optional: true },
+  ],
+  member: [
+    { id: "model", label: "配置模型", state: "waiting", reason: "等待管理员配置模型" },
+    { id: "agent", label: "新建 agent", state: "waiting", reason: "先配置模型" },
+    { id: "connections", label: "我的连接", state: "todo", optional: true },
+  ],
+};
+
+/** The setup sidebar's own copy (design i18n `sidebar.setup*`, `sidebar.step*`). */
+export const SETUP_COPY = {
+  home: "开始之前",
+  later: "可以稍后再做",
+  done: "已完成",
+  todo: "未完成",
+  waiting: "等待中",
+};
+
+/** Extension pages: the 更多 group lists them after its fixed items. */
 export const EXTENSION_PAGES_FIXTURE: { id: string; label: string; href: string }[] = [
   { id: "board", label: "任务看板", href: "/p/example-board/board" },
   { id: "todo", label: "待办清单", href: "/p/todo/list" },
@@ -47,6 +171,8 @@ export type FixtureConversation = {
   title: string | null;
   startedAt: string;
   updatedAt: string;
+  /** A state dot: running (ok) or waiting for me (warn). */
+  activity?: "running" | "waiting";
 };
 export type FixtureGroup = {
   agentId: string;
@@ -55,11 +181,17 @@ export type FixtureGroup = {
   more: boolean;
 };
 
-const conv = (id: string, title: string | null, at: string): FixtureConversation => ({
+const conv = (
+  id: string,
+  title: string | null,
+  at: string,
+  activity?: "running" | "waiting",
+): FixtureConversation => ({
   id,
   title,
   startedAt: `2026-10-${at}:00+08:00`,
   updatedAt: `2026-10-${at}:00+08:00`,
+  ...(activity ? { activity } : {}),
 });
 
 /** The default conversation section: the first group has more than it shows. */
@@ -68,9 +200,9 @@ export const GROUPS_FIXTURE: FixtureGroup[] = [
     agentId: "agt_research",
     agentName: "研究助手",
     conversations: [
-      conv("cnv_r1", "整理 Q3 竞品调研要点", "24T16:20"),
+      conv("cnv_r1", "整理 Q3 竞品调研要点", "24T16:20", "waiting"),
       conv("cnv_r2", "检索近三年的行业报告", "24T11:05"),
-      conv("cnv_r3", "对比三家云厂商的定价", "23T18:42"),
+      conv("cnv_r3", "对比三家云厂商的定价", "23T18:42", "running"),
       conv("cnv_r4", "Acme 年报摘要", "22T09:30"),
       conv("cnv_r5", "用户访谈记录归类", "21T15:12"),
     ],
@@ -79,7 +211,7 @@ export const GROUPS_FIXTURE: FixtureGroup[] = [
   {
     agentId: "agt_support",
     agentName: "客服分流",
-    conversations: [conv("cnv_s1", "退款工单自动分类规则", "24T10:18")],
+    conversations: [conv("cnv_s1", "退款工单自动分类规则", "24T10:18", "waiting")],
     more: false,
   },
   {
@@ -149,16 +281,23 @@ export const MANY_GROUPS_MORE = true;
 export const SIDEBAR_COPY = {
   search: "搜索",
   searchShortcut: "⌘K",
-  newConversationIn: "在此 agent 下新建会话",
-  more: "更多",
+  newConversationIn: "与 {agent} 新建会话",
+  more: "显示更多",
   moreGroups: "更多分组",
-  empty: "还没有会话，从 Agents 里选一个开始。",
+  empty: "还没有会话",
   error: "会话列表加载失败",
   retry: "重试",
   expand: "展开侧栏",
   collapse: "收起侧栏",
   menu: "打开导航",
-  account: `${FIXTURE_USER.name} · ${FIXTURE_ORG}`,
+  account: FIXTURE_USER.name,
+  conversations: "会话",
+  filter: "筛选会话",
+  filterQuery: "按标题搜索",
+  states: ["全部", "运行中", "等待我"],
+  archived: "已归档",
+  adminScope: "整个部署 · /admin",
+  back: "回到工作区",
 };
 
 // ── List page (connectors) ──────────────────────────────────────────────────
@@ -343,13 +482,17 @@ export type FixtureFormField =
     };
 
 export const FORM_PAGE_FIXTURE: {
-  breadcrumb: { label: string; href?: string }[];
+  path: { label: string; href?: string }[];
   title: string;
   sections: { title: string; description: string; fields: FixtureFormField[] }[];
   actionRow: { unsaved: string; errors: string; discard: string; save: string; clean: string };
   status: { context: string; pageStatus: string };
 } = {
-  breadcrumb: [{ label: "Agents", href: "/agents" }, { label: "研究助手" }],
+  path: [
+    { label: "capybara", href: "/" },
+    { label: "agents", href: "/agents" },
+    { label: "研究助手" },
+  ],
   title: "编辑 Agent",
   sections: [
     {
@@ -445,7 +588,14 @@ export const FORM_PAGE_FIXTURE: {
 
 export const PAGE_HEADER_FIXTURE = {
   title: "Agents",
-  breadcrumbTitle: "编辑 Agent",
+  pathTitle: "编辑 Agent",
+  /** The views and the search of a list page's tab row (the narrow block, spec §4.2). */
+  tabs: [
+    { id: "all", label: "全部", count: 6 },
+    { id: "mine", label: "我的", count: 3 },
+    { id: "shared", label: "组织共享", count: 3 },
+  ],
+  search: "搜索名称或模型",
   longTitle:
     "季度经营分析与预算执行跟踪复盘助手的全部历史版本与发布记录以及每个版本的变更说明和审批意见汇总页面",
 };
@@ -460,7 +610,7 @@ export const STATUS_FIXTURE = {
 
 export const CONTROLS_FIXTURE = {
   buttons: [
-    { variant: "primary", label: "新建 Agent" },
+    { variant: "primary", label: "新建 agent" },
     { variant: "secondary", label: "部署" },
     { variant: "default", label: "导出" },
     { variant: "ghost", label: "取消" },

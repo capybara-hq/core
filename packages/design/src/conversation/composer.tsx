@@ -159,13 +159,17 @@ export type ComposerBoxProps = {
   onKeyDown?(e: KeyboardEvent<HTMLTextAreaElement>): void;
   onPaste?(e: ClipboardEvent<HTMLTextAreaElement>): void;
   placeholder: string;
-  /** Replaces the placeholder while a run is going ("按 ↵ 立即发送，按 ⌘↵ 加入队列"). */
+  /** Replaces the placeholder while a run is going ("按 ↵ 加入队列，按 ⌘↵ 立即发送"). */
   hint?: string;
   /** The attachment strip, above the textarea. */
   attachments?: ReactNode;
   onAttach(): void;
   attachDisabled?: boolean;
-  pickers: { agent: PickerProps; model: PickerProps; effort?: PickerProps };
+  /**
+   * The pickers. `agent` is absent on the new conversation page, whose agents row chooses the
+   * agent (agent profile design §4.2); the model and effort pickers stay.
+   */
+  pickers: { agent?: PickerProps; model: PickerProps; effort?: PickerProps };
   send: { mode: "send" | "stop"; disabled?: boolean; busy?: boolean; onClick(): void };
   textareaRef?: Ref<HTMLTextAreaElement>;
   /** The reference set only: draw the focused frame (`:focus-within` is forced there). */
@@ -308,7 +312,7 @@ export function ComposerBox({
           disabled={attachDisabled}
           onClick={onAttach}
         />
-        <Picker {...pickers.agent} />
+        {pickers.agent ? <Picker {...pickers.agent} /> : null}
         <Picker {...pickers.model} />
         {pickers.effort ? <Picker {...pickers.effort} /> : null}
         <span className="cb-grow" />

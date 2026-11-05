@@ -8,7 +8,7 @@ import { expect, type Page, test } from "@playwright/test";
 const block = (page: Page, id: string) => page.locator(`[data-ref-block="${id}"]`);
 
 async function open(page: Page) {
-  await page.goto("/zh/dev/ui/reference/tool-group");
+  await page.goto("/dev/ui/reference/tool-group");
   await page.waitForLoadState("networkidle");
 }
 
@@ -74,7 +74,7 @@ test("reduced motion: opening is instant", async ({ page }) => {
 
 // ── The conversation template (design spec §5.4, §6.16.1, §6.16.18) ────────────────────────────
 
-const TEMPLATE = "/zh/dev/ui/templates/conversation";
+const TEMPLATE = "/dev/ui/templates/conversation";
 
 async function openTemplate(page: Page, width = 1440) {
   await page.setViewportSize({ width, height: 900 });
@@ -145,7 +145,7 @@ test("below 1280 the panel is a sheet; Esc closes it and focus returns to the ic
   await expect(files).toBeFocused();
 });
 
-for (const width of [1440, 1279, 959, 640]) {
+for (const width of [1440, 1279, 959, 640, 390]) {
   test(`no horizontal page scroll at ${width}`, async ({ page }) => {
     await openTemplate(page, width);
     const overflow = await page.evaluate(
@@ -154,6 +154,17 @@ for (const width of [1440, 1279, 959, 640]) {
     expect(overflow).toBeLessThanOrEqual(0);
   });
 }
+
+// A phone (spec §5.4): the middle column has no minimum, so the composer (and its send button)
+// sits inside the window's 16 px gutters instead of running past the right edge.
+test("390: the composer stays inside the 16 px gutters", async ({ page }) => {
+  await openTemplate(page, 390);
+  const box = await page.locator('[data-part="composer"]').first().boundingBox();
+  expect(box).not.toBeNull();
+  if (!box) return;
+  expect(box.x).toBeGreaterThanOrEqual(16 - 1);
+  expect(box.x + box.width).toBeLessThanOrEqual(390 - 16 + 1);
+});
 
 // The server render and hydration cannot know the window: `useMediaQuery` reads false there, so
 // the right area is drawn inline until the first client render makes it a sheet below 1280. The
@@ -174,7 +185,7 @@ test.describe("before hydration (JS off)", () => {
 
 test("reduced motion: opening a sub-agent group is instant", async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
-  await page.goto("/zh/dev/ui/reference/subagent-group");
+  await page.goto("/dev/ui/reference/subagent-group");
   await page.waitForLoadState("networkidle");
   const head = block(page, "subagent-group-done").locator('[data-part="tool-line"]');
   await head.click();
@@ -186,7 +197,7 @@ test("reduced motion: opening a sub-agent group is instant", async ({ page }) =>
 test("the skill bubble's disclosure chevron is muted like its label (§6.16.6)", async ({
   page,
 }) => {
-  await page.goto("/zh/dev/ui/reference/user-bubble");
+  await page.goto("/dev/ui/reference/user-bubble");
   await page.waitForLoadState("networkidle");
   const details = block(page, "user-bubble-skill").locator(".cb-bubble-details");
   // the details line is `muted` (size table); its chevron takes the same color, as in the reference

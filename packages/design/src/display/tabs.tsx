@@ -1,12 +1,14 @@
 import { type KeyboardEvent, useRef } from "react";
 import type { ControlA11y } from "../controls/a11y";
 import { type Density, useDensity } from "../controls/density";
-import { useDesignLink, useDesignT } from "../provider";
+import { LinkPendingMark, useDesignLink, useDesignT } from "../provider";
 
 export type TabItem = {
   id: string;
   label: string;
   count?: number | string;
+  /** The count is not known yet (the list is loading): a muted dash in its place. */
+  pending?: boolean;
   /** 标签名后的计数徽标（如「2/4」），比 count 更醒目。 */
   badge?: string;
   /** 提醒标记（主色方点 + 读屏文字），如有待批准的操作。 */
@@ -19,7 +21,13 @@ function TabExtras({ it }: { it: TabItem }) {
   const t = useDesignT();
   return (
     <>
-      {it.count !== undefined ? <span className="cb-tab-count">{it.count}</span> : null}
+      {it.pending ? (
+        <span className="cb-tab-count" data-pending="true">
+          –
+        </span>
+      ) : it.count !== undefined ? (
+        <span className="cb-tab-count">{it.count}</span>
+      ) : null}
       {it.badge !== undefined ? <span className="cb-tab-badge">{it.badge}</span> : null}
       {it.alert ? (
         <span className="cb-tab-alert" data-alert="true">
@@ -71,6 +79,7 @@ export function Tabs({ items, value, onChange, label }: TabsProps) {
             >
               {it.label}
               <TabExtras it={it} />
+              <LinkPendingMark />
             </Link>
           );
         })}
@@ -104,6 +113,7 @@ export function Tabs({ items, value, onChange, label }: TabsProps) {
             type="button"
             role="tab"
             className="cb-tab"
+            data-part="tab"
             data-id={it.id}
             aria-selected={selected}
             tabIndex={it.id === focusId ? 0 : -1}

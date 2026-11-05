@@ -1,0 +1,10 @@
+{
+  "chat": {
+    "placeholder": "想让 agent 做什么?",
+    "warn": "注意!先保存",
+    "colon": "状态:已停用",
+    "semi": "一;二",
+    "ok": "时间 12:30，比例 1:2，路径 a:b，agent: 名称",
+    "fullwidth": "想让 agent 做什么？"
+  }
+}

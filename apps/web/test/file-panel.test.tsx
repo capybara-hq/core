@@ -1,12 +1,18 @@
 import { cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import ChatPage from "../src/app/[locale]/(app)/chat/[conversationId]/page";
 import { builtinPreview } from "../src/lib/files";
 import { type Call, json, stubApi } from "./support/api";
-import { AGENTS, CONV, ev, FakeEventSource, MODELS, userMsg } from "./support/conversation";
+import {
+  AGENTS,
+  CONV,
+  ev,
+  FakeEventSource,
+  MODELS,
+  renderChatRoute,
+  userMsg,
+} from "./support/conversation";
 import { resetNavigation } from "./support/navigation";
-import { renderPage } from "./support/render";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 vi.mock("next/navigation", () => ({ useParams: () => ({ conversationId: "c1" }) }));
@@ -74,9 +80,9 @@ function api(extra: Record<string, (c: Call) => Response> = {}) {
   });
 }
 
-const openAt = (hash: string) => {
+const openAt = async (hash: string) => {
   window.history.replaceState(null, "", `/chat/c1${hash}`);
-  renderPage(<ChatPage />, { locale: "en" });
+  await renderChatRoute();
 };
 
 beforeEach(() => {

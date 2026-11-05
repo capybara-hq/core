@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { expect, test } from "@playwright/test";
+import { expect, type Page, test } from "@playwright/test";
 // Playwright loads TS without the @capybara-hq/source condition, so the pure parser is imported by
 // path (as reference/render.spec.ts does with the fixtures).
 import {
@@ -11,7 +11,7 @@ import {
   resolveToken,
 } from "../../../packages/design/src/reference/index";
 import { ACCEPTED } from "./accepted";
-import { blockIds, openReference, THEMES } from "./reference-page";
+import { blockIds, openReference, THEMES, type Theme } from "./reference-page";
 
 /**
  * Measuring and state coverage (design spec §9.3, §9.4): every accepted component's
@@ -42,6 +42,65 @@ test("the reference route answers", async ({ page }) => {
   expect(res.status()).toBe(200);
 });
 
+/** The phone window a `narrow` state is drawn and measured in (spec §9.3); others at 1440. */
+const NARROW = "narrow";
+/** `narrow` and the `narrow-<x>` states (page-header `narrow-loading`) are phone-window states. */
+const isNarrow = (state: string) => state === NARROW || state.startsWith(`${NARROW}-`);
+const PHONE = { width: 390, height: 844 };
+
+type Row = (typeof tables)[number]["rows"][number];
+
+/** Measures `rows` against the open reference page; returns one message per failing row. */
+async function measure(page: Page, component: string, rows: Row[], theme: Theme) {
+  const failures: string[] = [];
+  for (const r of rows) {
+    const expected = resolveToken(tokens, r.value, theme);
+    const got = await page.evaluate(
+      ({ block, selector, property, expected, isColor }) => {
+        const b = document.querySelector(`[data-ref-block="${block}"]`);
+        if (!b) return { error: `no block ${block}` };
+        const el = selector === ":scope" ? b : b.querySelector(selector);
+        if (!el) return { error: `no element ${selector}` };
+        const cs = getComputedStyle(el);
+        if (isColor) {
+          const probe = document.createElement("span");
+          probe.style.color = String(expected);
+          b.append(probe);
+          const want = getComputedStyle(probe).color;
+          probe.remove();
+          return { actual: cs.getPropertyValue(property), want };
+        }
+        if (property === "width" || property === "height") {
+          const box = el.getBoundingClientRect();
+          return { actual: String(property === "width" ? box.width : box.height) };
+        }
+        return { actual: cs.getPropertyValue(property) };
+      },
+      {
+        block: `${component}-${r.state}`,
+        selector: partSelector(r.part),
+        property: r.property,
+        expected,
+        isColor: COLOR_PROPS.test(r.property),
+      },
+    );
+    const where = `${component}-${r.state} ${r.part} ${r.property} (spec.md:${r.line})`;
+    if ("error" in got) {
+      failures.push(`${where}: ${got.error}`);
+    } else if (COLOR_PROPS.test(r.property)) {
+      if (got.actual !== got.want) {
+        failures.push(`${where}: expected ${r.value} = ${got.want}, got ${got.actual}`);
+      }
+    } else {
+      const actual = Number.parseFloat(got.actual ?? "");
+      if (!(Math.abs(actual - Number(expected)) <= 1)) {
+        failures.push(`${where}: expected ${r.value} = ${expected}px, got ${got.actual}`);
+      }
+    }
+  }
+  return failures;
+}
+
 for (const theme of THEMES) {
   test.describe(theme, () => {
     for (const component of ACCEPTED) {
@@ -54,51 +113,19 @@ for (const theme of THEMES) {
           rows.length,
           `${component} has no size table in docs/design/spec.md`,
         ).toBeGreaterThan(0);
-        const failures: string[] = [];
-        for (const r of rows) {
-          const expected = resolveToken(tokens, r.value, theme);
-          const got = await page.evaluate(
-            ({ block, selector, property, expected, isColor }) => {
-              const b = document.querySelector(`[data-ref-block="${block}"]`);
-              if (!b) return { error: `no block ${block}` };
-              const el = selector === ":scope" ? b : b.querySelector(selector);
-              if (!el) return { error: `no element ${selector}` };
-              const cs = getComputedStyle(el);
-              if (isColor) {
-                const probe = document.createElement("span");
-                probe.style.color = String(expected);
-                b.append(probe);
-                const want = getComputedStyle(probe).color;
-                probe.remove();
-                return { actual: cs.getPropertyValue(property), want };
-              }
-              if (property === "width" || property === "height") {
-                const box = el.getBoundingClientRect();
-                return { actual: String(property === "width" ? box.width : box.height) };
-              }
-              return { actual: cs.getPropertyValue(property) };
-            },
-            {
-              block: `${component}-${r.state}`,
-              selector: partSelector(r.part),
-              property: r.property,
-              expected,
-              isColor: COLOR_PROPS.test(r.property),
-            },
-          );
-          const where = `${component}-${r.state} ${r.part} ${r.property} (spec.md:${r.line})`;
-          if ("error" in got) {
-            failures.push(`${where}: ${got.error}`);
-          } else if (COLOR_PROPS.test(r.property)) {
-            if (got.actual !== got.want) {
-              failures.push(`${where}: expected ${r.value} = ${got.want}, got ${got.actual}`);
-            }
-          } else {
-            const actual = Number.parseFloat(got.actual ?? "");
-            if (!(Math.abs(actual - Number(expected)) <= 1)) {
-              failures.push(`${where}: expected ${r.value} = ${expected}px, got ${got.actual}`);
-            }
-          }
+        const failures = await measure(
+          page,
+          component,
+          rows.filter((r) => !isNarrow(r.state)),
+          theme,
+        );
+        // The phone rules are media queries below 640: a `narrow` state is measured in a phone
+        // window (its block is 390 wide).
+        const narrow = rows.filter((r) => isNarrow(r.state));
+        if (narrow.length > 0) {
+          await page.setViewportSize(PHONE);
+          await openReference(page, component, theme, ORIGIN);
+          failures.push(...(await measure(page, component, narrow, theme)));
         }
         expect(failures).toEqual([]);
       });

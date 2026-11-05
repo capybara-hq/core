@@ -330,6 +330,8 @@ export class ModelPurposesService {
    * `opts.fallback`: the target used when the purpose is not mapped (`model.unconfigured`).
    * `opts.beforeSend`: called with the resolved target and the final request just before sending;
    * what it throws is thrown as is (a pre-send failure, e.g. a denied `model.request` hook).
+   * `opts.paramDefaults`: values for parameters the target does not set, kept only where the
+   * target model declares the key and the value fits it (e.g. `thinking: "off"` for a short call).
    */
   async chat(
     orgId: string,
@@ -339,6 +341,7 @@ export class ModelPurposesService {
     opts: {
       fallback?: PurposeTarget;
       beforeSend?: (target: ModelRef, request: ModelRequest) => Promise<void>;
+      paramDefaults?: Record<string, ParamValue>;
     } = {},
   ): Promise<{
     content: ContentBlock[];
@@ -358,7 +361,8 @@ export class ModelPurposesService {
     const request: ModelRequest = {
       ...req,
       model: info.id,
-      params: sanitizeParams(info.parameters, target.params).value,
+      // undeclared or unfitting defaults are dropped like any other parameter
+      params: sanitizeParams(info.parameters, { ...opts.paramDefaults, ...target.params }).value,
       // 输出上限不超过目标模型自己的上限（与运行时 assembleModelRequest 一致）
       maxOutputTokens: Math.min(req.maxOutputTokens, info.maxOutputTokens),
     };

@@ -175,6 +175,15 @@ export class ProviderRegistry {
     }
   }
 
+  /**
+   * Whether at least one model-provider extension is loaded on this replica (enabled, configured,
+   * set up). Read from the extension host only: never calls a vendor, so a provider whose vendor
+   * is down still counts (org readiness, web-order spec §3.8).
+   */
+  hasProvider(): boolean {
+    return this.providers().length > 0;
+  }
+
   /** 每个插件取一个实现（`@2` 优先），按插件首次出现的顺序；不支持的主版本记 warn 后忽略。 */
   private providers(): ProviderEntry[] {
     const chosen = new Map<

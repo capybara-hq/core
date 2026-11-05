@@ -1,8 +1,11 @@
 import type { z } from "zod";
 
-/** 标记一个 schema 为敏感字段（Zod 4 meta `{ secret: true }`）。 */
+/**
+ * Marks a schema as a secret field (Zod 4 meta `{ secret: true }`), merging with existing meta
+ * (`ui` hints, `hot`), so `secret(ui(x, …))` and `ui(secret(x), …)` are the same.
+ */
 export function secret<T extends z.ZodTypeAny>(schema: T): T {
-  return schema.meta({ secret: true }) as T;
+  return schema.meta({ ...(schema.meta() ?? {}), secret: true }) as T;
 }
 
 /** 读取 schema 的 meta，判断是否敏感；内核 `meta({secret:true})` 同样可识别。 */

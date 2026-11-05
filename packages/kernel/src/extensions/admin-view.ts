@@ -17,6 +17,7 @@ import {
   writeSnapshot,
 } from "./approvals.js";
 import { ExtensionBlobs } from "./blobs.js";
+import { ExtensionDisplayNames } from "./display-name.js";
 import { ExtensionHost } from "./host.js";
 import { type ExtensionInstallRow, ExtensionInstalls } from "./installs.js";
 import { ExtensionLifecycle, PLUGINS_CHANGED_TOPIC, STALE_RECONCILE_PERIODS } from "./lifecycle.js";
@@ -117,6 +118,7 @@ export class ExtensionAdmin {
     @Inject(KernelConfigService) private readonly config: KernelConfigService,
     @Inject(KERNEL_BUS) private readonly bus: PublishBus,
     @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
+    @Inject(ExtensionDisplayNames) private readonly displayNames: ExtensionDisplayNames,
   ) {}
 
   private get db(): KernelSchemaDb {
@@ -345,6 +347,7 @@ export class ExtensionAdmin {
     if (subjects.length === 0) return [];
     const names = subjects.map((s) => s.name);
     const snapshots = await this.approvals.all();
+    const displayNames = await this.displayNames.many(names);
     const staleSeconds =
       STALE_RECONCILE_PERIODS * this.config.get().extensionHost.reconcileIntervalSeconds;
     const rows = await this.db
@@ -365,9 +368,11 @@ export class ExtensionAdmin {
           (r) => r.state === "pending" && r.reason === "config" && r.sha256 === target,
         );
       const install = s.install;
+      const displayName = displayNames.get(s.name) ?? null;
       if (s.broken !== undefined) {
         return {
           name: s.name,
+          displayName,
           version: s.version,
           source: s.source,
           sha256: target,
@@ -397,6 +402,7 @@ export class ExtensionAdmin {
       const permissions = permissionGroups(s.set);
       return {
         name: s.name,
+        displayName,
         version: s.version,
         source: s.source,
         sha256: target,

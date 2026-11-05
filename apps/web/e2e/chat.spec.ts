@@ -1,5 +1,14 @@
 import { expect, type Page, test } from "@playwright/test";
-import { designZh, replies, send, startChat, zh } from "./support/chat";
+import {
+  designZh,
+  interject,
+  openAgentSection,
+  replies,
+  saveSection,
+  send,
+  startChat,
+  zh,
+} from "./support/chat";
 import { signIn } from "./support/sign-in";
 
 const LONG_TEXT = "Capybaras are the largest living rodents and very calm swimmers. "
@@ -9,14 +18,19 @@ const SECOND_TEXT = "first answer arrives slowly";
 
 /** Assistant prose (`data-streaming` on its entry while it streams). */
 const assistants = replies;
-const stopButton = (page: Page) => page.getByRole("button", { name: designZh("composer.stop") });
+// exact: a stopped run's row is named "… 已停止 …" too
+const stopButton = (page: Page) =>
+  page.getByRole("button", { name: designZh("composer.stop"), exact: true });
 
 test("登录 → 新建 agent → 流式回复、停止、插话、刷新后历史完整", async ({ page }) => {
   // 1. 登录（初始化由 setup 项目完成）→ 选当前组织 → 新建 agent（model-fake / fake-1）
   await signIn(page);
   await expect(page.locator('[data-template="OverviewPage"]')).toBeVisible();
-  await page.getByRole("link", { name: zh.home.openAgents }).click();
-  await expect(page).toHaveURL(/\/zh\/agents$/);
+  await page
+    .getByRole("navigation", { name: "主导航" })
+    .getByRole("link", { name: zh.nav.agents })
+    .click();
+  await expect(page).toHaveURL(/\/agents$/);
   await expect(page.locator('[data-template="ListPage"]')).toBeVisible();
   await page.getByRole("link", { name: zh.agents.new }).click();
 
@@ -28,8 +42,9 @@ test("登录 → 新建 agent → 流式回复、停止、插话、刷新后历�
     .getByRole("combobox", { name: zh.agents.form.modelLabel, exact: true })
     .selectOption("model-fake/fake-1");
   await page.getByRole("button", { name: zh.agents.form.submit }).click();
-  await expect(page).toHaveURL(/\/zh\/agents$/);
-  await expect(page.getByText("Echo agent")).toBeVisible();
+  // a new agent lands on its page's prompt section (agent profile design §2.4)
+  await expect(page).toHaveURL(/\/agents\/[^/?#]+\?s=prompt$/);
+  await expect(page.getByRole("heading", { name: "Echo agent" })).toBeVisible();
   await startChat(page, "Echo agent");
   // 2. echo → 页面出现回复（第一条消息才创建会话）
   await send(page, "echo:hello capybara");
@@ -55,7 +70,7 @@ test("登录 → 新建 agent → 流式回复、停止、插话、刷新后历�
   await expect(draft).not.toHaveText(early); // 继续增长：逐步出现
   // 运行中「发送」变成「停止」
   await stopButton(page).click();
-  const stopped = page.locator('[data-divider="stopped"]');
+  const stopped = page.locator('[data-run-status="stopped"]');
   await expect(stopped).toHaveCount(1);
   const partial = ((await assistants(page).last().textContent()) ?? "").trim();
   expect(partial.length).toBeGreaterThan(0);
@@ -63,11 +78,11 @@ test("登录 → 新建 agent → 流式回复、停止、插话、刷新后历�
   expect(LONG_TEXT.startsWith(partial)).toBe(true);
   await expect(stopButton(page)).toHaveCount(0);
 
-  // 4. slow 回复进行中插话：两条都得到回复，插话的回复在第一条之后
+  // 4. slow 回复进行中插话（⌘↵ / Ctrl+↵；↵ 会加入队列）：两条都得到回复，插话的回复在第一条之后
   await send(page, `slow:200:${SECOND_TEXT}`);
   await expect(draft).toHaveText(/.+/);
   await expect(page.getByRole("textbox", { name: zh.chat.inputLabel })).toBeEnabled();
-  await send(page, "echo:interject");
+  await interject(page, "echo:interject");
   await expect(assistants(page).filter({ hasText: SECOND_TEXT })).toHaveCount(1);
   await expect(assistants(page).filter({ hasText: /^.*interject$/ })).toHaveCount(1);
   await expect(stopButton(page)).toHaveCount(0);
@@ -107,8 +122,8 @@ test("登录 → 新建 agent → 流式回复、停止、插话、刷新后历�
     "assistant:interject",
   ]);
 
-  // 6. 新建 agent 时按模型声明设置参数：model-fake.style = shout → 回复为大写
-  await page.goto("/zh/agents");
+  // 6. 按模型声明设置参数（agent 页面的「模型」分组）：model-fake.style = shout → 回复为大写
+  await page.goto("/agents");
   await page.getByRole("link", { name: zh.agents.new }).click();
   await page
     .getByRole("textbox", { name: zh.agents.form.nameLabel, exact: true })
@@ -116,19 +131,28 @@ test("登录 → 新建 agent → 流式回复、停止、插话、刷新后历�
   await page
     .getByRole("combobox", { name: zh.agents.form.modelLabel, exact: true })
     .selectOption("model-fake/fake-1");
+  await page.getByRole("button", { name: zh.agents.form.submit }).click();
+  await expect(page).toHaveURL(/\/agents\/[^/?#]+\?s=prompt$/);
+  await openAgentSection(page, "model");
   const params = page.getByRole("region", { name: zh.agents.form.modelParamsTitle, exact: true });
   // 文案来自插件声明（zh）
   await params.getByRole("combobox", { name: "回复风格" }).selectOption("shout");
-  await page.getByRole("button", { name: zh.agents.form.submit }).click();
-  await expect(page).toHaveURL(/\/zh\/agents$/);
+  await saveSection(page);
   await startChat(page, "Shout agent");
   await send(page, "echo:quiet please");
   await expect(assistants(page).last()).toHaveText("QUIET PLEASE");
 
   // 7. 未匹配的路径：HTTP 404，App Shell 内的 StatusPage 404
-  const missing = await page.goto("/zh/nope");
+  const missing = await page.goto("/nope");
   expect(missing?.status()).toBe(404);
   await expect(page.locator('[data-template="StatusPage"][data-kind="404"]')).toBeVisible();
   await expect(page.getByRole("navigation", { name: "主导航" })).toBeVisible();
   await expect(page.getByText(zh.notFound.title).first()).toBeVisible();
+
+  // 8. A missing object (a conversation that does not exist) is the not-found state inside the
+  //    App Shell with HTTP 200 (web query cache spec §3.3); only an unknown route is a 404
+  const gone = await page.goto("/chat/00000000-0000-4000-8000-000000000000");
+  expect(gone?.status()).toBe(200);
+  await expect(page.locator('[data-template="StatusPage"][data-kind="404"]')).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "主导航" })).toBeVisible();
 });

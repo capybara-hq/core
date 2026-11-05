@@ -16,6 +16,8 @@ import {
 import { useLocale, useTranslations } from "next-intl";
 import { type ReactElement, useState } from "react";
 import type { FormAnswer, InputForm } from "../lib/conversations";
+import { keys } from "../lib/query/keys";
+import { useAppMutation } from "../lib/query/mutation";
 import {
   answerQuestion,
   answerText,
@@ -240,6 +242,11 @@ export function QuestionCard({ orgId, item }: { orgId: string; item: QuestionIte
   const errorMessage = useErrorMessage();
   const { me } = useSession();
   const [pending, setPending] = useState(false);
+  // The answer reaches the log as `question_answered` (and the question's cache entry here).
+  const { mutateAsync: postAnswer } = useAppMutation({
+    fn: (a: FormAnswer) => answerQuestion(orgId, item.questionId, a),
+    invalidates: () => [keys.org(orgId).question(item.questionId)],
+  });
   const [submitted, setSubmitted] = useState<FormAnswer | null>(null);
   const done = item.answered;
   const fields = item.form.fields.map((f) => questionField(f, locale));
@@ -282,7 +289,7 @@ export function QuestionCard({ orgId, item }: { orgId: string; item: QuestionIte
   async function answer(a: FormAnswer) {
     setPending(true);
     try {
-      await answerQuestion(orgId, item.questionId, a);
+      await postAnswer(a);
       setSubmitted(a);
     } catch (e) {
       toast.error(errorMessage(e));

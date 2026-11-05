@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { expect, test } from "@playwright/test";
+import { hydrated } from "./support/nav";
 import { ORG_NAME, signIn } from "./support/sign-in";
 
 /** 界面文案取自 zh 文案文件，避免与实现重复硬编码。 */
@@ -16,12 +17,27 @@ test("成员页：管理员生成邀请链接 → 新用户凭链接注册加入
   browser,
 }) => {
   await signIn(page);
+  // unique per run, so the spec can run again on the same deployment (--repeat-each)
+  const run = Date.now().toString(36);
+  const login = `invitee-${run}`;
+  const invitee = `Invitee ${run}`;
 
   // 组织设置 → 二级导航「成员」
-  await page.goto("/zh/settings/organization");
+  await page.goto("/settings/organization");
   await page.getByRole("link", { name: zh.connections.nav.members }).click();
-  await expect(page).toHaveURL(/\/zh\/settings\/members$/);
-  await expect(page.locator('[data-template="ListPage"]')).toBeVisible();
+  await expect(page).toHaveURL(/\/settings\/members$/);
+  await expect(page.locator('[data-template="SettingsPage"]')).toBeVisible();
+  await hydrated(page);
+  const pending = page.getByRole("cell", {
+    name: new RegExp(`${M.invitations.status.pending}$`),
+  });
+  const accepted = page.getByRole("cell", {
+    name: new RegExp(`${M.invitations.status.accepted}$`),
+  });
+  // the tables have read their rows before they are counted
+  await expect(page.locator('[data-part="table"][aria-busy="true"]')).toHaveCount(0);
+  const pendingBefore = await pending.count();
+  const acceptedBefore = await accepted.count();
 
   // 生成邀请（成员、7 天）并取链接
   await page.getByRole("button", { name: M.invite }).click();
@@ -29,25 +45,23 @@ test("成员页：管理员生成邀请链接 → 新用户凭链接注册加入
   await dialog.getByRole("combobox", { name: M.inviteDialog.role }).selectOption("member");
   await dialog.getByRole("button", { name: M.inviteDialog.create }).click();
   const link = await dialog.getByRole("textbox", { name: M.inviteDialog.link }).inputValue();
-  expect(link).toMatch(/\/zh\/invite\/cap_inv_/);
+  expect(link).toMatch(/\/invite\/cap_inv_/);
   await dialog.getByRole("button", { name: M.inviteDialog.done }).click();
   await expect(dialog).toHaveCount(0);
-  await expect(
-    page.getByRole("cell", { name: new RegExp(`${M.invitations.status.pending}$`) }),
-  ).toBeVisible();
+  await expect(pending).toHaveCount(pendingBefore + 1);
 
-  // 另一个浏览器上下文（没有登录）：打开链接 → 创建账号并加入 → 进入首页，当前组织就是 Acme
+  // 另一个浏览器上下文（没有登录）：打开链接 → 新建账号并加入 → 进入首页，当前组织就是 Acme
   const other = await browser.newContext();
   try {
     const guestPage = await other.newPage();
     await guestPage.goto(link);
     await expect(guestPage.getByText(fill(zh.invite.subtitle, { org: ORG_NAME }))).toBeVisible();
     await guestPage.getByRole("button", { name: zh.invite.signupToggle }).click();
-    await guestPage.getByLabel(zh.invite.loginLabel).fill("invitee");
+    await guestPage.getByLabel(zh.invite.loginLabel).fill(login);
     await guestPage.getByLabel(zh.invite.passwordLabel).fill("invitee-password-123");
-    await guestPage.getByLabel(zh.invite.displayNameLabel).fill("Invitee");
+    await guestPage.getByLabel(zh.invite.displayNameLabel).fill(invitee);
     await guestPage.getByRole("button", { name: zh.invite.signup }).click();
-    await expect(guestPage).toHaveURL(/\/zh$/);
+    await expect(guestPage).toHaveURL(/\/$/);
     await expect
       .poll(async () => {
         const me = await guestPage.request.get("/api/v1/me");
@@ -67,23 +81,23 @@ test("成员页：管理员生成邀请链接 → 新用户凭链接注册加入
 
   // 管理员：邀请变成已接受，新成员出现在列表里；把他改为访客
   await page.reload();
-  await expect(
-    page.getByRole("cell", { name: new RegExp(`${M.invitations.status.accepted}$`) }),
-  ).toBeVisible();
+  // a select changed before hydration has no React handler yet: the change would be lost
+  await hydrated(page);
+  await expect(accepted).toHaveCount(acceptedBefore + 1);
   const role = page
     .getByRole("row")
-    .filter({ hasText: "Invitee" })
-    .getByRole("combobox", { name: fill(M.roleOf, { name: "Invitee" }) });
+    .filter({ hasText: invitee })
+    .getByRole("combobox", { name: fill(M.roleOf, { name: invitee }) });
   await expect(role).toHaveValue("member");
   await role.selectOption("guest");
   await expect(
-    page.getByText(fill(M.roleChanged, { name: "Invitee", role: M.roles.guest })),
+    page.getByText(fill(M.roleChanged, { name: invitee, role: M.roles.guest })),
   ).toBeVisible();
   await page.reload();
   await expect(
     page
       .getByRole("row")
-      .filter({ hasText: "Invitee" })
-      .getByRole("combobox", { name: fill(M.roleOf, { name: "Invitee" }) }),
+      .filter({ hasText: invitee })
+      .getByRole("combobox", { name: fill(M.roleOf, { name: invitee }) }),
   ).toHaveValue("guest");
 });

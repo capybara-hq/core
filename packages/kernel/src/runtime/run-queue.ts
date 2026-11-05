@@ -45,6 +45,7 @@ interface EnsureState {
   orphanRunId: string | null;
   dispatchedSeq: number | null;
   dispatchedSwitch: boolean;
+  dispatchedUnarchived: boolean;
   /** The queue paused in this transaction: the open pages hear it after the commit. */
   pausedNow: boolean;
   orphanStop: { beforeTerminal: () => Promise<void>; fire: () => void } | undefined;
@@ -123,11 +124,13 @@ export class RunQueue {
       orphanRunId: null,
       dispatchedSeq: null,
       dispatchedSwitch: false,
+      dispatchedUnarchived: false,
       pausedNow: false,
       orphanStop: undefined,
     };
     const created = await this.ensureRunIn(conversationId, st);
     const { orphanSeq, orphanRunId, dispatchedSeq, dispatchedSwitch, pausedNow, orphanStop } = st;
+    const { dispatchedUnarchived } = st;
     if (orphanSeq !== null) {
       await notifyFinished(this.eventLog, conversationId, orphanSeq, "failed");
       orphanStop?.fire();
@@ -138,6 +141,7 @@ export class RunQueue {
       await this.eventLog.notify(conversationId, dispatchedSeq);
       await this.eventLog.publishChanged(conversationId, "queue");
       if (dispatchedSwitch) await this.eventLog.publishChanged(conversationId, "selection");
+      if (dispatchedUnarchived) await this.eventLog.publishChanged(conversationId, "archived");
     }
     if (orphanRunId !== null) {
       await this.dropCheckpoints(orphanRunId);
@@ -180,12 +184,14 @@ export class RunQueue {
     const t = this.db;
     const conv = await t
       .selectFrom("conversations")
-      .select(["consumed_seq", "agent_id", "kind", "queue_paused", "account_id"])
+      .select(["consumed_seq", "agent_id", "kind", "queue_paused", "account_id", "deleted_at"])
       .where("id", "=", conversationId)
       .forUpdate()
       .executeTakeFirst();
     // 评测回放的隐藏对话：运行由评测 worker 在里面直接驱动（工具只回放记录），绝不为它起真实运行
     if (conv?.kind !== "chat") return null;
+    // A deleted conversation starts no run, whatever is still unconsumed or queued
+    if (conv.deleted_at !== null) return null;
     let last = await t
       .selectFrom("conversation_events")
       .select(["seq", "payload"])
@@ -234,6 +240,7 @@ export class RunQueue {
       }
       st.dispatchedSeq = sent.event.seq;
       st.dispatchedSwitch = sent.switched;
+      st.dispatchedUnarchived = sent.unarchived;
       last = { seq: String(sent.event.seq), payload: sent.event.payload };
     }
     const active = await this.activeRun(t, conversationId);

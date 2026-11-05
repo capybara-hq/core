@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { act, cleanup, render, screen, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -59,6 +61,19 @@ const page = (over: Partial<ConversationPageProps> = {}): ConversationPageProps 
 });
 
 describe("ConversationPage (§5.4)", () => {
+  it("the status bar shows the time zone after the version", () => {
+    wrap(
+      <ConversationPage
+        {...page({
+          status: { context: "grant@acme:~/chat/9f3a", version: "v1", timeZone: "UTC+8" },
+        })}
+      />,
+    );
+    const bar = document.querySelector('[data-part="status-bar"]') ?? document.body;
+    expect(bar.textContent).toContain("grant@acme:~/chat/9f3a");
+    expect(bar.textContent).toMatch(/v1.*UTC\+8/);
+  });
+
   it("announces the run state once, in a polite status (final review I2)", () => {
     render(
       <ConversationPage
@@ -159,7 +174,54 @@ describe("ConversationPage (§5.4)", () => {
   });
 });
 
+describe("ConversationPage composer", () => {
+  it("is a sibling of the scrolling thread, never inside it", () => {
+    const { container } = wrap(<ConversationPage {...page()} />);
+    const scroll = container.querySelector(".cb-conv-scroll") as HTMLElement;
+    const composerSlot = container.querySelector(".cb-conv-composer") as HTMLElement;
+    expect(scroll).not.toBeNull();
+    expect(composerSlot.parentElement).toBe(scroll.parentElement);
+    expect(scroll.contains(composerSlot)).toBe(false);
+    expect(scroll.contains(screen.getByTestId("composer"))).toBe(false);
+    expect(composerSlot.contains(screen.getByTestId("composer"))).toBe(true);
+  });
+});
+
 describe("TitleBar (§6.16.1)", () => {
+  it("shows the path before the title; a segment with an href links", () => {
+    wrap(
+      <TitleBar
+        {...titleBar({
+          path: [{ label: "acme" }, { label: "研究助手", href: "/agents/a1" }],
+        })}
+      />,
+    );
+    const nav = screen.getByRole("navigation", { name: "路径" });
+    expect(nav.textContent).toBe("acme/研究助手/");
+    expect(within(nav).getByRole("link", { name: "研究助手" }).getAttribute("href")).toBe(
+      "/agents/a1",
+    );
+    expect(within(nav).queryByRole("link", { name: "acme" })).toBeNull();
+    // the path precedes the title button
+    const title = screen.getByRole("button", { name: /分析 9 月示例表差异/ });
+    expect(nav.compareDocumentPosition(title) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('the path spaces every "/" like the page head: space.2 on both sides', () => {
+    const css = (f: string) =>
+      readFileSync(resolve(import.meta.dirname, "../src/styles", f), "utf8");
+    const gapOf = (text: string, selector: string) =>
+      new RegExp(`${selector.replace(".", "\\.")} \\{[^}]*gap: ([^;]+);`).exec(text)?.[1];
+    expect(gapOf(css("shell.css"), ".cb-pageheader-path")).toBe("var(--cb-space-2)");
+    expect(gapOf(css("conversation-page.css"), ".cb-title-path")).toBe("var(--cb-space-2)");
+    expect(gapOf(css("conversation-page.css"), ".cb-title-path-item")).toBe("var(--cb-space-2)");
+  });
+
+  it("without a path there is no path nav", () => {
+    wrap(<TitleBar {...titleBar()} />);
+    expect(screen.queryByRole("navigation", { name: "路径" })).toBeNull();
+  });
+
   it("the open item's icon is pressed", () => {
     wrap(<TitleBar {...titleBar({ properties: { pressed: true, onToggle: noop } })} />);
     expect(screen.getByRole("button", { name: "属性面板" }).getAttribute("aria-pressed")).toBe(
@@ -207,6 +269,48 @@ describe("TitleBar (§6.16.1)", () => {
     ).toEqual(["看板 2", "看板 3", "看板 4"]);
   });
 
+  it("with every icon shown there is no More (a menu of what is already on the bar)", () => {
+    wrap(<TitleBar {...titleBar()} />);
+    expect(screen.getByRole("button", { name: "文件" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "更多" })).toBeNull();
+  });
+
+  it("one icon that doesn't fit takes More's place: More holds two or more", () => {
+    let report: ((w: number) => void) | undefined;
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        constructor(cb: (e: { contentRect: { width: number } }[]) => void) {
+          report = (w) => cb([{ contentRect: { width: w } }]);
+        }
+        observe() {}
+        disconnect() {}
+      },
+    );
+    const panels = ["文件", "待办", "任务看板"].map((label, i) => ({
+      id: `p${i}`,
+      label,
+      icon: "extension" as const,
+      pressed: false,
+      onOpen: noop,
+    }));
+    wrap(<TitleBar {...titleBar({ panels })} />);
+    act(() => report?.(titleBarWidthFor(2)));
+    for (const name of ["文件", "待办", "任务看板"]) {
+      expect(screen.getByRole("button", { name })).toBeTruthy();
+    }
+    expect(screen.queryByRole("button", { name: "更多" })).toBeNull();
+    act(() => report?.(titleBarWidthFor(1)));
+    expect(screen.queryByRole("button", { name: "待办" })).toBeNull();
+    expect(screen.getByRole("button", { name: "更多" })).toBeTruthy();
+  });
+
+  it("without panels there is no separator and no More", () => {
+    wrap(<TitleBar {...titleBar({ panels: [] })} />);
+    expect(document.querySelector('[data-part="title-bar-separator"]')).toBeNull();
+    expect(screen.queryByRole("button", { name: "更多" })).toBeNull();
+  });
+
   it("the title menu holds rename and a fail-toned delete", async () => {
     const onRename = vi.fn();
     wrap(
@@ -226,6 +330,15 @@ describe("TitleBar (§6.16.1)", () => {
     );
     await userEvent.click(screen.getByRole("menuitem", { name: "重命名" }));
     expect(onRename).toHaveBeenCalled();
+  });
+});
+
+describe("titleBarFit on phones", () => {
+  it("counts 40 px tap targets below 640, so fewer icons fit the same width", () => {
+    // 16 + 4 padding, a 160 title, the toggle, the separator and More around 44 px slots
+    expect(titleBarFit(500, 99, true)).toBe(4);
+    expect(titleBarFit(500, 99)).toBe(5);
+    expect(titleBarFit(390, 1, true)).toBe(1);
   });
 });
 
@@ -301,10 +414,10 @@ describe("ComposerBox (§6.16.2)", () => {
   });
 
   it("send is disabled without text and the hint replaces the placeholder while running", () => {
-    wrap(<ComposerBox {...composer({ hint: "按 ↵ 立即发送，按 ⌘↵ 加入队列" })} />);
+    wrap(<ComposerBox {...composer({ hint: "按 ↵ 加入队列，按 ⌘↵ 立即发送" })} />);
     expect((screen.getByRole("button", { name: "发送" }) as HTMLButtonElement).disabled).toBe(true);
     expect(screen.getByLabelText("消息").getAttribute("placeholder")).toBe(
-      "按 ↵ 立即发送，按 ⌘↵ 加入队列",
+      "按 ↵ 加入队列，按 ⌘↵ 立即发送",
     );
   });
 

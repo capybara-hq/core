@@ -8,11 +8,19 @@ export {
   type PageHeaderProps,
 } from "./page-header";
 export { PageTabs } from "./page-tabs";
+export { PreferenceBar, type PreferenceBarProps, ThemeToggle } from "./preference-bar";
 export {
+  initialOf,
+  type SetupStep,
   Sidebar,
+  type SidebarActivity,
+  type SidebarContext,
   type SidebarConversation,
+  type SidebarConversations,
+  type SidebarFilter,
   type SidebarGroup,
   type SidebarNavItem,
+  type SidebarOrg,
   type SidebarProps,
   untitledLabel,
 } from "./sidebar";

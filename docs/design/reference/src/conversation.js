@@ -13,6 +13,11 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
   const FI = F.FILE_FIXTURE;
   const P = F.PANEL_FIXTURE;
 
+  // The template's new-conversation pieces (§6.16.25–§6.16.27), drawn from NEW_CONVERSATION_FIXTURE
+  // like greeting.html, agent-row.html and quick-actions.html (the avatars' pixel paths are
+  // precomputed from avatar-presets.ts, as the pages are).
+  const NEW_CONVERSATION = {"greeting": "<div class=\"r-greeting\" data-part=\"greeting\"><div class=\"r-greeting-line\" data-part=\"greeting-line\"><span class=\"r-greeting-mark\" data-part=\"greeting-mark\" aria-hidden=\"true\"><svg width=\"28\" height=\"20\" viewBox=\"0 0 28 20\" shape-rendering=\"crispEdges\" aria-hidden=\"true\"><path d=\"M20 0h2v2h-2zM18 2h2v2h-2zM20 2h2v2h-2zM22 2h2v2h-2zM6 4h2v2h-2zM8 4h2v2h-2zM10 4h2v2h-2zM12 4h2v2h-2zM14 4h2v2h-2zM16 4h2v2h-2zM18 4h2v2h-2zM20 4h2v2h-2zM22 4h2v2h-2zM24 4h2v2h-2zM26 4h2v2h-2zM4 6h2v2h-2zM6 6h2v2h-2zM8 6h2v2h-2zM10 6h2v2h-2zM12 6h2v2h-2zM14 6h2v2h-2zM16 6h2v2h-2zM18 6h2v2h-2zM20 6h2v2h-2zM24 6h2v2h-2zM26 6h2v2h-2zM2 8h2v2h-2zM4 8h2v2h-2zM6 8h2v2h-2zM8 8h2v2h-2zM10 8h2v2h-2zM12 8h2v2h-2zM14 8h2v2h-2zM16 8h2v2h-2zM18 8h2v2h-2zM20 8h2v2h-2zM22 8h2v2h-2zM24 8h2v2h-2zM26 8h2v2h-2zM2 10h2v2h-2zM4 10h2v2h-2zM6 10h2v2h-2zM8 10h2v2h-2zM10 10h2v2h-2zM12 10h2v2h-2zM14 10h2v2h-2zM16 10h2v2h-2zM18 10h2v2h-2zM20 10h2v2h-2zM22 10h2v2h-2zM24 10h2v2h-2zM26 10h2v2h-2zM2 12h2v2h-2zM4 12h2v2h-2zM6 12h2v2h-2zM8 12h2v2h-2zM10 12h2v2h-2zM12 12h2v2h-2zM14 12h2v2h-2zM16 12h2v2h-2zM18 12h2v2h-2zM20 12h2v2h-2zM22 12h2v2h-2zM24 12h2v2h-2zM4 14h2v2h-2zM6 14h2v2h-2zM8 14h2v2h-2zM10 14h2v2h-2zM12 14h2v2h-2zM14 14h2v2h-2zM16 14h2v2h-2zM18 14h2v2h-2zM20 14h2v2h-2zM22 14h2v2h-2zM4 16h2v2h-2zM6 16h2v2h-2zM12 16h2v2h-2zM18 16h2v2h-2zM20 16h2v2h-2zM4 18h2v2h-2zM6 18h2v2h-2zM12 18h2v2h-2zM18 18h2v2h-2zM20 18h2v2h-2z\"/></svg></span><h2 class=\"r-greeting-text\" data-part=\"greeting-text\">下午好，grant</h2></div><p class=\"r-greeting-sub\" data-part=\"greeting-sub\">选一个 agent，或从常用任务开始</p></div>", "row": "<div class=\"r-agent-row\" data-part=\"agent-row\" role=\"group\" aria-label=\"选择 agent\"><button class=\"r-agent-chip\" data-part=\"agent-chip\" aria-pressed=\"true\" title=\"检索资料、核对数据并整理成报告。\"><span class=\"r-avatar\" data-part=\"avatar\" data-kind=\"preset\" data-preset=\"capybara\" data-size=\"24\" style=\"background:var(--cb-avatar-capybara-ground)\" aria-hidden=\"true\"><svg width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" shape-rendering=\"crispEdges\" aria-hidden=\"true\"><path style=\"fill:var(--cb-accent)\" d=\"M16 2h2v2h-2zM14 4h2v2h-2zM16 4h2v2h-2zM18 4h2v2h-2zM4 6h2v2h-2zM6 6h2v2h-2zM8 6h2v2h-2zM10 6h2v2h-2zM12 6h2v2h-2zM14 6h2v2h-2zM16 6h2v2h-2zM18 6h2v2h-2zM20 6h2v2h-2zM22 6h2v2h-2zM2 8h2v2h-2zM4 8h2v2h-2zM6 8h2v2h-2zM8 8h2v2h-2zM10 8h2v2h-2zM12 8h2v2h-2zM14 8h2v2h-2zM16 8h2v2h-2zM20 8h2v2h-2zM22 8h2v2h-2zM2 10h2v2h-2zM4 10h2v2h-2zM6 10h2v2h-2zM8 10h2v2h-2zM10 10h2v2h-2zM12 10h2v2h-2zM14 10h2v2h-2zM16 10h2v2h-2zM18 10h2v2h-2zM20 10h2v2h-2zM22 10h2v2h-2zM2 12h2v2h-2zM4 12h2v2h-2zM6 12h2v2h-2zM8 12h2v2h-2zM10 12h2v2h-2zM12 12h2v2h-2zM14 12h2v2h-2zM16 12h2v2h-2zM18 12h2v2h-2zM20 12h2v2h-2zM22 12h2v2h-2zM2 14h2v2h-2zM4 14h2v2h-2zM6 14h2v2h-2zM8 14h2v2h-2zM10 14h2v2h-2zM12 14h2v2h-2zM14 14h2v2h-2zM16 14h2v2h-2zM18 14h2v2h-2zM20 14h2v2h-2zM4 16h2v2h-2zM6 16h2v2h-2zM8 16h2v2h-2zM10 16h2v2h-2zM12 16h2v2h-2zM14 16h2v2h-2zM16 16h2v2h-2zM18 16h2v2h-2zM4 18h2v2h-2zM6 18h2v2h-2zM10 18h2v2h-2zM16 18h2v2h-2zM18 18h2v2h-2zM4 20h2v2h-2zM6 20h2v2h-2zM10 20h2v2h-2zM16 20h2v2h-2zM18 20h2v2h-2z\"/></svg></span><span class=\"r-agent-chip-name\" data-part=\"agent-chip-name\">研究助手</span></button><button class=\"r-agent-chip\" data-part=\"agent-chip\" aria-pressed=\"false\" title=\"按月核对总账与银行流水，列出差异。\"><span class=\"r-avatar\" data-part=\"avatar\" data-kind=\"preset\" data-preset=\"owl\" data-size=\"24\" style=\"background:var(--cb-avatar-owl-ground)\" aria-hidden=\"true\"><svg width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" shape-rendering=\"crispEdges\" aria-hidden=\"true\"><path style=\"fill:var(--cb-avatar-owl)\" d=\"M2 2h2v2h-2zM20 2h2v2h-2zM2 4h2v2h-2zM4 4h2v2h-2zM6 4h2v2h-2zM8 4h2v2h-2zM10 4h2v2h-2zM12 4h2v2h-2zM14 4h2v2h-2zM16 4h2v2h-2zM18 4h2v2h-2zM20 4h2v2h-2zM2 6h2v2h-2zM10 6h2v2h-2zM12 6h2v2h-2zM20 6h2v2h-2zM2 8h2v2h-2zM10 8h2v2h-2zM12 8h2v2h-2zM20 8h2v2h-2zM2 10h2v2h-2zM20 10h2v2h-2zM2 12h2v2h-2zM4 12h2v2h-2zM6 12h2v2h-2zM8 12h2v2h-2zM14 12h2v2h-2zM16 12h2v2h-2zM18 12h2v2h-2zM20 12h2v2h-2zM2 14h2v2h-2zM20 14h2v2h-2zM2 16h2v2h-2zM20 16h2v2h-2zM4 18h2v2h-2zM18 18h2v2h-2zM6 20h2v2h-2zM8 20h2v2h-2zM10 20h2v2h-2zM12 20h2v2h-2zM14 20h2v2h-2zM16 20h2v2h-2z\"/><path style=\"fill:var(--cb-avatar-owl-eye)\" d=\"M4 6h2v2h-2zM6 6h2v2h-2zM8 6h2v2h-2zM14 6h2v2h-2zM16 6h2v2h-2zM18 6h2v2h-2zM4 8h2v2h-2zM8 8h2v2h-2zM14 8h2v2h-2zM18 8h2v2h-2zM4 10h2v2h-2zM6 10h2v2h-2zM8 10h2v2h-2zM14 10h2v2h-2zM16 10h2v2h-2zM18 10h2v2h-2z\"/><path style=\"fill:var(--cb-avatar-black)\" d=\"M6 8h2v2h-2zM16 8h2v2h-2z\"/><path style=\"fill:var(--cb-avatar-beak)\" d=\"M10 10h2v2h-2zM12 10h2v2h-2zM10 12h2v2h-2zM12 12h2v2h-2zM6 22h2v2h-2zM16 22h2v2h-2z\"/><path style=\"fill:var(--cb-avatar-owl-belly)\" d=\"M4 14h2v2h-2zM6 14h2v2h-2zM8 14h2v2h-2zM10 14h2v2h-2zM12 14h2v2h-2zM14 14h2v2h-2zM16 14h2v2h-2zM18 14h2v2h-2zM4 16h2v2h-2zM6 16h2v2h-2zM8 16h2v2h-2zM10 16h2v2h-2zM12 16h2v2h-2zM14 16h2v2h-2zM16 16h2v2h-2zM18 16h2v2h-2zM6 18h2v2h-2zM8 18h2v2h-2zM10 18h2v2h-2zM12 18h2v2h-2zM14 18h2v2h-2zM16 18h2v2h-2z\"/></svg></span><span class=\"r-agent-chip-name\" data-part=\"agent-chip-name\">财务对账</span></button><button class=\"r-agent-chip\" data-part=\"agent-chip\" aria-pressed=\"false\" title=\"审合同条款，标出风险和要改的地方。\"><span class=\"r-avatar\" data-part=\"avatar\" data-kind=\"preset\" data-preset=\"elephant\" data-size=\"24\" style=\"background:var(--cb-avatar-elephant-ground)\" aria-hidden=\"true\"><svg width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" shape-rendering=\"crispEdges\" aria-hidden=\"true\"><path style=\"fill:var(--cb-avatar-elephant)\" d=\"M8 4h2v2h-2zM10 4h2v2h-2zM12 4h2v2h-2zM14 4h2v2h-2zM16 4h2v2h-2zM6 6h2v2h-2zM8 6h2v2h-2zM10 6h2v2h-2zM12 6h2v2h-2zM14 6h2v2h-2zM16 6h2v2h-2zM18 6h2v2h-2zM20 6h2v2h-2zM4 8h2v2h-2zM6 8h2v2h-2zM8 8h2v2h-2zM10 8h2v2h-2zM12 8h2v2h-2zM16 8h2v2h-2zM18 8h2v2h-2zM20 8h2v2h-2zM22 8h2v2h-2zM2 10h2v2h-2zM4 10h2v2h-2zM6 10h2v2h-2zM8 10h2v2h-2zM10 10h2v2h-2zM12 10h2v2h-2zM16 10h2v2h-2zM20 10h2v2h-2zM22 10h2v2h-2zM2 12h2v2h-2zM4 12h2v2h-2zM6 12h2v2h-2zM8 12h2v2h-2zM10 12h2v2h-2zM12 12h2v2h-2zM16 12h2v2h-2zM18 12h2v2h-2zM20 12h2v2h-2zM22 12h2v2h-2zM2 14h2v2h-2zM4 14h2v2h-2zM6 14h2v2h-2zM8 14h2v2h-2zM10 14h2v2h-2zM12 14h2v2h-2zM14 14h2v2h-2zM16 14h2v2h-2zM18 14h2v2h-2zM22 14h2v2h-2zM2 16h2v2h-2zM4 16h2v2h-2zM6 16h2v2h-2zM8 16h2v2h-2zM10 16h2v2h-2zM12 16h2v2h-2zM14 16h2v2h-2zM16 16h2v2h-2zM18 16h2v2h-2zM22 16h2v2h-2zM2 18h2v2h-2zM4 18h2v2h-2zM8 18h2v2h-2zM10 18h2v2h-2zM14 18h2v2h-2zM16 18h2v2h-2zM22 18h2v2h-2zM2 20h2v2h-2zM4 20h2v2h-2zM8 20h2v2h-2zM10 20h2v2h-2zM14 20h2v2h-2zM16 20h2v2h-2z\"/><path style=\"fill:var(--cb-avatar-elephant-ear)\" d=\"M14 8h2v2h-2zM14 10h2v2h-2zM14 12h2v2h-2z\"/><path style=\"fill:var(--cb-avatar-black)\" d=\"M18 10h2v2h-2z\"/><path style=\"fill:var(--cb-avatar-white)\" d=\"M20 14h2v2h-2z\"/></svg></span><span class=\"r-agent-chip-name\" data-part=\"agent-chip-name\">合同审阅</span></button><button class=\"r-agent-chip\" data-part=\"agent-chip\" aria-pressed=\"false\" title=\"汇总一周的进展，写成周报。\"><span class=\"r-avatar\" data-part=\"avatar\" data-kind=\"preset\" data-preset=\"rabbit\" data-size=\"24\" style=\"background:var(--cb-avatar-rabbit-ground)\" aria-hidden=\"true\"><svg width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" shape-rendering=\"crispEdges\" aria-hidden=\"true\"><path style=\"fill:var(--cb-avatar-rabbit)\" d=\"M4 0h2v2h-2zM6 0h2v2h-2zM16 0h2v2h-2zM18 0h2v2h-2zM4 2h2v2h-2zM18 2h2v2h-2zM4 4h2v2h-2zM18 4h2v2h-2zM4 6h2v2h-2zM18 6h2v2h-2zM4 8h2v2h-2zM6 8h2v2h-2zM8 8h2v2h-2zM10 8h2v2h-2zM12 8h2v2h-2zM14 8h2v2h-2zM16 8h2v2h-2zM18 8h2v2h-2zM2 10h2v2h-2zM4 10h2v2h-2zM6 10h2v2h-2zM8 10h2v2h-2zM10 10h2v2h-2zM12 10h2v2h-2zM14 10h2v2h-2zM16 10h2v2h-2zM18 10h2v2h-2zM20 10h2v2h-2zM2 12h2v2h-2zM4 12h2v2h-2zM8 12h2v2h-2zM10 12h2v2h-2zM12 12h2v2h-2zM14 12h2v2h-2zM18 12h2v2h-2zM20 12h2v2h-2zM2 14h2v2h-2zM4 14h2v2h-2zM6 14h2v2h-2zM8 14h2v2h-2zM10 14h2v2h-2zM12 14h2v2h-2zM14 14h2v2h-2zM16 14h2v2h-2zM18 14h2v2h-2zM20 14h2v2h-2zM2 16h2v2h-2zM4 16h2v2h-2zM6 16h2v2h-2zM8 16h2v2h-2zM14 16h2v2h-2zM16 16h2v2h-2zM18 16h2v2h-2zM20 16h2v2h-2zM4 18h2v2h-2zM6 18h2v2h-2zM16 18h2v2h-2zM18 18h2v2h-2zM6 20h2v2h-2zM8 20h2v2h-2zM10 20h2v2h-2zM12 20h2v2h-2zM14 20h2v2h-2zM16 20h2v2h-2z\"/><path style=\"fill:var(--cb-avatar-rabbit-pink)\" d=\"M6 2h2v2h-2zM16 2h2v2h-2zM6 4h2v2h-2zM16 4h2v2h-2zM6 6h2v2h-2zM16 6h2v2h-2zM10 16h2v2h-2zM12 16h2v2h-2z\"/><path style=\"fill:var(--cb-avatar-black)\" d=\"M6 12h2v2h-2zM16 12h2v2h-2z\"/><path style=\"fill:var(--cb-avatar-white)\" d=\"M8 18h2v2h-2zM10 18h2v2h-2zM12 18h2v2h-2zM14 18h2v2h-2z\"/></svg></span><span class=\"r-agent-chip-name\" data-part=\"agent-chip-name\">周报整理</span></button><button class=\"r-agent-chip\" data-part=\"agent-chip\" aria-pressed=\"false\" title=\"回答工单里的常见问题。\"><span class=\"r-avatar\" data-part=\"avatar\" data-kind=\"preset\" data-preset=\"panda\" data-size=\"24\" style=\"background:var(--cb-avatar-panda-ground)\" aria-hidden=\"true\"><svg width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" shape-rendering=\"crispEdges\" aria-hidden=\"true\"><path style=\"fill:var(--cb-avatar-white)\" d=\"M6 4h2v2h-2zM8 4h2v2h-2zM10 4h2v2h-2zM12 4h2v2h-2zM14 4h2v2h-2zM16 4h2v2h-2zM4 6h2v2h-2zM6 6h2v2h-2zM8 6h2v2h-2zM10 6h2v2h-2zM12 6h2v2h-2zM14 6h2v2h-2zM16 6h2v2h-2zM18 6h2v2h-2zM0 8h2v2h-2zM2 8h2v2h-2zM4 8h2v2h-2zM6 8h2v2h-2zM8 8h2v2h-2zM10 8h2v2h-2zM12 8h2v2h-2zM14 8h2v2h-2zM16 8h2v2h-2zM18 8h2v2h-2zM20 8h2v2h-2zM22 8h2v2h-2zM0 10h2v2h-2zM2 10h2v2h-2zM8 10h2v2h-2zM10 10h2v2h-2zM12 10h2v2h-2zM14 10h2v2h-2zM20 10h2v2h-2zM22 10h2v2h-2zM0 12h2v2h-2zM6 12h2v2h-2zM8 12h2v2h-2zM10 12h2v2h-2zM12 12h2v2h-2zM14 12h2v2h-2zM16 12h2v2h-2zM22 12h2v2h-2zM0 14h2v2h-2zM2 14h2v2h-2zM4 14h2v2h-2zM6 14h2v2h-2zM8 14h2v2h-2zM10 14h2v2h-2zM12 14h2v2h-2zM14 14h2v2h-2zM16 14h2v2h-2zM18 14h2v2h-2zM20 14h2v2h-2zM22 14h2v2h-2zM2 16h2v2h-2zM4 16h2v2h-2zM6 16h2v2h-2zM8 16h2v2h-2zM14 16h2v2h-2zM16 16h2v2h-2zM18 16h2v2h-2zM20 16h2v2h-2zM4 18h2v2h-2zM6 18h2v2h-2zM8 18h2v2h-2zM10 18h2v2h-2zM12 18h2v2h-2zM14 18h2v2h-2zM16 18h2v2h-2zM18 18h2v2h-2zM6 20h2v2h-2zM8 20h2v2h-2zM10 20h2v2h-2zM12 20h2v2h-2zM14 20h2v2h-2zM16 20h2v2h-2z\"/><path style=\"fill:var(--cb-avatar-black)\" d=\"M2 2h2v2h-2zM4 2h2v2h-2zM6 2h2v2h-2zM16 2h2v2h-2zM18 2h2v2h-2zM20 2h2v2h-2zM2 4h2v2h-2zM4 4h2v2h-2zM18 4h2v2h-2zM20 4h2v2h-2zM2 6h2v2h-2zM20 6h2v2h-2zM4 10h2v2h-2zM6 10h2v2h-2zM16 10h2v2h-2zM18 10h2v2h-2zM2 12h2v2h-2zM4 12h2v2h-2zM18 12h2v2h-2zM20 12h2v2h-2zM10 16h2v2h-2zM12 16h2v2h-2z\"/></svg></span><span class=\"r-agent-chip-name\" data-part=\"agent-chip-name\">客服助手</span></button><button class=\"r-agent-chip\" data-part=\"agent-more\">更多 +3</button></div>", "quick": "<div class=\"r-quick-actions\" data-part=\"quick-actions\" role=\"group\" aria-label=\"常用任务\"><button class=\"r-quick-action\" data-part=\"quick-action\" title=\"核对上月总账与银行流水\">核对上月总账与银行流水</button><button class=\"r-quick-action\" data-part=\"quick-action\" title=\"整理本周进展，按项目写成周报并列出下周计划和风险\">整理本周进展，按项目写成周报并列出下周计划和风险</button><button class=\"r-quick-action\" data-part=\"quick-action\" title=\"查一个供应商的背景\">查一个供应商的背景</button><button class=\"r-quick-action\" data-part=\"quick-action\" title=\"汇总差异明细\">汇总差异明细</button><span class=\"r-quick-more-wrap\"><button class=\"r-quick-action\" data-part=\"quick-more\">更多</button></span></div>"};
+
   const spin = (size = 12) => `<span class="r-spin" role="img" aria-label="进行中">${icon("spinner", size)}</span>`;
   const chev = (open) => icon(open ? "chevron-down" : "chevron-right", 12);
   const failWord = '<span class="r-fail-word">失败</span>';
@@ -98,7 +103,8 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
 
   /** "**name [tool]** preview · extra" (design spec §6.16.9: the Claude Code look). */
   function toolLabel(t) {
-    const name = `<b class="r-em">${esc(t.tool ? `${t.name} [${t.tool}]` : t.name)}</b>`;
+    const shown = t.kind === "question" ? "已提问" : t.tool ? `${t.name} [${t.tool}]` : t.name;
+    const name = `<b class="r-em">${esc(shown)}</b>`;
     const preview = t.kind === "command" && t.description ? t.description : t.keyArg;
     const key = preview ? ` ${esc(preview)}` : "";
     const extra =
@@ -140,11 +146,16 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
     return `<div class="r-tdetail"${o.flush ? " data-flush" : ""}>${parts.join("")}</div>`;
   }
 
+  const WAITING = { input: "等待你回答", approval: "等待你批准", connect: "等待你连接" };
+
   function toolRow(t, o = {}) {
     const expandable = Boolean(t.input || t.output || t.command || t.diff);
-    const lead = t.status === "running" ? spin() : "";
-    const end =
-      t.status === "running"
+    // A call waiting for a person: no spinner, no timer, the waiting word in accent (§6.16.9).
+    const waiting = t.status === "running" && t.waiting;
+    const lead = t.status === "running" && !waiting ? spin(16) : "";
+    const end = waiting
+      ? `<span class="r-tend r-accent">${esc(WAITING[t.waiting])}</span>`
+      : t.status === "running"
         ? `<span class="r-tend r-faint">${esc(t.elapsed)}</span>`
         : expandable
           ? `<span class="r-tend">${chev(o.open)}</span>`
@@ -154,7 +165,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
     return o.open ? row + toolDetail(t) : row;
   }
 
-  const KIND_GROUP = { command: "command", connector: "tool", tool: "tool", search: "tool", meta: "tool", read: "read", edit: "edit" };
+  const KIND_GROUP = { command: "command", connector: "tool", tool: "tool", search: "tool", meta: "tool", question: "tool", read: "read", edit: "edit" };
 
   /** The group header: counts by kind with their verbs; one object is named. */
   function groupSummary(rows) {
@@ -162,7 +173,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
     if (running) {
       const what = { command: "正在运行命令", tool: "正在使用工具", read: "正在读取文件", edit: "正在修改文件" }[KIND_GROUP[running.kind]];
       const done = rows.filter((r) => r.status !== "running").length;
-      return `${spin()}<span class="r-tlabel">${what}<span class="r-faint"> · 已完成 ${done} 个</span></span>`;
+      return `${spin(16)}<span class="r-tlabel">${what}<span class="r-faint"> · 已完成 ${done} 个</span></span>`;
     }
     const by = { command: [], tool: [], read: [], edit: [] };
     for (const r of rows) by[KIND_GROUP[r.kind]].push(r);
@@ -229,7 +240,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
   function thinking(o) {
     const PR = F.PROSE_FIXTURE;
     if (o.state === "live")
-      return `<div class="r-tline">${spin()}<span class="r-tlabel">正在思考<span class="r-faint"> · 4 秒</span></span></div><div class="r-think">${esc(PR.thinking.slice(0, 22))}<span class="r-cursor" aria-hidden="true"></span></div>`;
+      return `<div class="r-tline">${spin(16)}<span class="r-tlabel">正在思考<span class="r-faint"> · 4 秒</span></span></div><div class="r-think">${esc(PR.thinking.slice(0, 22))}<span class="r-cursor" aria-hidden="true"></span></div>`;
     const open = o.state === "expanded";
     const head = `<div class="r-tline" role="button" aria-expanded="${open}"><span class="r-tlabel">思考了 ${PR.thinkingSeconds} 秒</span>${chev(open)}</div>`;
     return open ? `${head}<div class="r-think">${esc(PR.thinking)}</div>` : head;
@@ -384,7 +395,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
     const line = skill
       ? `<div class="r-composer-line"><span class="r-composer-token"><span>${esc(skill.label)}</span><button class="r-composer-token-remove" aria-label="移除 ${esc(skill.label)}">${icon("x", 12)}</button></span>${textarea}</div>`
       : textarea;
-    return `<div class="r-composer"${o.state === "focus" ? ' data-state="focus"' : ""}>${strip}<label class="r-sr" for="msg">消息</label>${line}<div class="r-composer-bar">${iconBtn("plus", K.attach)}${picker(C.agent.name, { locked: !isNew, open: o.menu === "agent" })}${picker(modelLabel(model.provider, model.model), { open: o.menu === "model" })}${effort}<span class="r-grow"></span>${action}</div></div>`;
+    return `<div class="r-composer"${o.state === "focus" ? ' data-state="focus"' : ""}>${strip}<label class="r-sr" for="msg">消息</label>${line}<div class="r-composer-bar">${iconBtn("plus", K.attach)}${o.noAgent ? "" : picker(C.agent.name, { locked: !isNew, open: o.menu === "agent" })}${picker(modelLabel(model.provider, model.model), { open: o.menu === "model" })}${effort}<span class="r-grow"></span>${action}</div></div>`;
   }
 
   function pickerMenu(o) {
@@ -478,6 +489,10 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
 
   // ── Title bar ──────────────────────────────────────────────────────────
 
+  /** A text placeholder in the one bar look (spec §6.29). */
+  const skel = (w, size) =>
+    `<div class="r-skel-text" data-part="skeleton-text" data-size="${size}" style="width:${w}"><span class="r-skel-bar" data-part="skeleton-bar"></span></div>`;
+
   function titleBar(o = {}) {
     const untitled = o.state === "untitled";
     const title = untitled
@@ -497,13 +512,13 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
     const more = o.state === "overflow"
       ? `<div class="r-menu r-more-menu" role="menu"><div class="r-menu-item" role="menuitem">${icon("list-checks", 14)}待办</div><div class="r-menu-item" role="menuitem">${icon("extension", 14)}任务看板</div></div>`
       : "";
-    return `<header class="r-titlebar"><button class="r-title"${untitled ? " data-untitled" : ""} aria-haspopup="menu" aria-expanded="${menuOpen}"${menuOpen ? ' data-state="hover"' : ""} title="${esc(title)}"><span class="r-ellipsis">${esc(title)}</span>${icon("chevron-down", 14)}</button>${iconBtn("panel-right", K.properties, { pressed: pressed === "properties" })}<span class="r-vsep" aria-hidden="true"></span>${group2}${iconBtn("more-vertical", K.more, { pressed: o.state === "overflow" })}${menu}${more}</header>`;
+    return `<header class="r-titlebar"${o.narrow ? " data-narrow" : ""}>${o.loading ? `<span class="r-title" data-loading="true" data-part="title"><span class="r-ellipsis">${skel("100%", "body")}</span></span>` : `<button class="r-title"${untitled ? " data-untitled" : ""} aria-haspopup="menu" aria-expanded="${menuOpen}"${menuOpen ? ' data-state="hover"' : ""} title="${esc(title)}"><span class="r-ellipsis">${esc(title)}</span>${icon("chevron-down", 14)}</button>`}${iconBtn("panel-right", K.properties, { pressed: pressed === "properties" })}<span class="r-vsep" aria-hidden="true"></span>${group2}${o.narrow ? "" : iconBtn("more-vertical", K.more, { pressed: o.state === "overflow" })}${menu}${more}</header>`;
   }
 
   // ── Sub-agents ─────────────────────────────────────────────────────────
 
   function subRow(s, o = {}) {
-    const lead = s.status === "running" ? spin() : "";
+    const lead = s.status === "running" ? spin(16) : "";
     const status = s.status === "failed" ? `${failWord}<span class="r-faint"> · </span>` : "";
     const meta = `<span class="r-tend r-faint">${status}${s.toolCalls} 次调用 · ${esc(s.duration)}</span>`;
     const open = o.open ? ' aria-current="true"' : "";
@@ -524,7 +539,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
       const rows = S.done.map((s, i) => subRow(s, { expanded: o.state === "expanded" && i === 0 ? true : o.state === "expanded" ? false : undefined })).join("");
       return `${head}<div class="r-tbox">${rows}</div>`;
     }
-    const head = `<div class="r-tline">${spin()}<span class="r-tlabel">正在运行 ${S.running.length} 个子 agent</span></div>`;
+    const head = `<div class="r-tline">${spin(16)}<span class="r-tlabel">正在运行 ${S.running.length} 个子 agent</span></div>`;
     const rows = S.running.map((s) => subRow(s, { open: o.state === "row-open" && s.id === S.open })).join("");
     return `${head}<div class="r-tbox">${rows}</div>`;
   }
@@ -594,7 +609,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
       ? `<span class="r-panel-title r-ellipsis">${esc(o.title)}</span>`
       : `<button class="r-panel-title r-btn" data-variant="ghost"${o.switching ? ' aria-expanded="true" data-state="hover" style="anchor-name: --r-open-trigger"' : ""}><span class="r-ellipsis">${esc(o.title)}</span>${icon("chevron-down", 14)}</button>`;
     const actions = (o.actions || []).join("");
-    return `<header class="r-panel-head">${back}${badge}${title}${meta}<span class="r-grow"></span>${actions}${iconBtn("maximize-2", K.fullscreen)}${iconBtn("x", K.close)}</header>`;
+    return `<header class="r-panel-head">${back}${badge}${title}${meta}<span class="r-grow"></span>${actions}${o.noFullscreen ? "" : iconBtn("maximize-2", K.fullscreen)}${iconBtn("x", K.close)}</header>`;
   }
 
   function todoList(big) {
@@ -625,7 +640,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
 
   function subPanelBody() {
     const SP = S.panel;
-    return `<div class="r-panel-body r-subpanel"><div class="r-task"><div class="r-task-label">任务 · 主 agent 派出</div>${esc(SP.task)}</div><div class="r-tline"><span class="r-tlabel">${esc(SP.meta)}</span></div>${toolGroup(T.expanded.slice(0, 3), { forceGroup: true })}${prose(`<p>${esc(SP.prose)}</p>`)}<div class="r-tline">${spin()}<span class="r-tlabel">已使用 Acme 文档: 搜索文件 <span class="r-em">${esc(SP.current)}</span></span></div></div><footer class="r-status r-panel-status"><div class="r-status-left"><span class="r-ellipsis">${esc(SP.footer)}</span></div><div class="r-status-right"><span>上下文 ${esc(SP.context)}</span></div></footer>`;
+    return `<div class="r-panel-body r-subpanel"><div class="r-task"><div class="r-task-label">任务 · 主 agent 派出</div>${esc(SP.task)}</div><div class="r-tline"><span class="r-tlabel">${esc(SP.meta)}</span></div>${toolGroup(T.expanded.slice(0, 3), { forceGroup: true })}${prose(`<p>${esc(SP.prose)}</p>`)}<div class="r-tline">${spin(16)}<span class="r-tlabel">已使用 Acme 文档: 搜索文件 <span class="r-em">${esc(SP.current)}</span></span></div></div><footer class="r-status r-panel-status"><div class="r-status-left"><span class="r-ellipsis">${esc(SP.footer)}</span></div><div class="r-status-right"><span>上下文 ${esc(SP.context)}</span></div></footer>`;
   }
 
   function filePanelBody(kind) {
@@ -770,14 +785,25 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
       return `<div class="r-ucol"><div class="r-bubble">有需要规整的吗？</div></div>${prose("<p>文件较多，我先让子 agent 列出完整目录树，同时对照流程实际读写的文件。</p>")}<div class="r-chatcol">${subGroup({ state: "row-open" })}</div>${prose("<p>目录树还在生成，我先整理当前版本流程引用的文件和文件夹 ID……</p>")}`;
     if (kind === "file")
       return `<div class="r-ucol"><div class="r-bubble">把差异整理成表格</div></div>${toolGroup(T.done.slice(0, 3))}${prose("<p>整理好了，一共 14 行差异，按收款人汇总在第二个工作表：</p>")}${fileCard(FI.outputs[0])}`;
-    return `<div class="r-ucol"><div class="r-bubble">${esc(C.user.text)}</div></div>${toolGroup(T.doneFailed.slice(0, 3))}${prose(`<p>${esc(F.PROSE_FIXTURE.streaming)}。明细整理成了表格：</p>`)}${fileCard(FI.outputs[0])}<div class="r-tline">${spin()}<span class="r-tlabel">正在核对总账<span class="r-faint"> · ${esc(C.stats.elapsed)}</span></span></div>`;
+    return `<div class="r-ucol"><div class="r-bubble">${esc(C.user.text)}</div></div>${toolGroup(T.doneFailed.slice(0, 3))}${prose(`<p>${esc(F.PROSE_FIXTURE.streaming)}。明细整理成了表格：</p>`)}${fileCard(FI.outputs[0])}<div class="r-tline">${spin(16)}<span class="r-tlabel">正在核对总账<span class="r-faint"> · ${esc(C.stats.elapsed)}</span></span></div>`;
   }
 
   function template(o) {
     const side = sidebar({ mode: o.state === "sheet" ? "rail" : "full", activeConversation: "cnv_r1", activeTitle: C.title });
     if (o.state === "new") {
-      const body = `<div class="r-conv-new"><h2 class="r-h2">${esc(C.agent.name)}</h2><p class="r-prose-small r-muted">检索资料、核对数据并整理成报告。</p>${composer({ state: "new" })}</div>`;
+      // The new conversation page (agent profile design §4): greeting, agents row, quick actions
+      // and the composer without its agent picker (NEW_CONVERSATION, below).
+      const body = `<div class="r-conv-new" data-start>${NEW_CONVERSATION.greeting}${NEW_CONVERSATION.row}${NEW_CONVERSATION.quick}${composer({ state: "new", noAgent: true })}</div>`;
       return `<div class="r-app">${sidebar({ mode: "full", active: "new", activeConversation: null })}<main class="r-main"><header class="r-titlebar"><span class="r-title" data-untitled>${esc(F.NEW_CONVERSATION_LABEL)}</span></header><div class="r-conv-scroll" data-center>${body}</div>${convStatus({ new: true })}</main></div>`;
+    }
+    if (o.state === "loading") {
+      // Every part on its way (spec §5.4): a title bar, three thread turns, the composer inert, and
+      // the right panel's own loading state.
+      const turns = `<div class="r-ucol" data-part="loading-turn"><div class="r-bubble-slot">${skel("100%", "prose")}</div></div><div data-part="loading-turn">${skel("100%", "prose")}</div><div data-part="loading-turn">${skel("70%", "prose")}</div>`;
+      const centerL = `<div class="r-conv-center"><div class="r-conv-scroll"><div class="r-thread">${turns}</div></div><div class="r-conv-composer">${composer({ state: "idle" })}</div></div>`;
+      const mainL = `<main class="r-main r-conv-main">${titleBar({ pressed: "files", loading: true })}<div class="r-conv-cols">${centerL}</div>${convStatus({ idle: true })}</main>`;
+      const panelL = `<aside class="r-rpanel" aria-label="右侧面板" aria-busy="true">${panelHeader({ title: "文件", switcher: false, noFullscreen: true })}<div class="r-panel-body"><div class="r-skel-list">${[56, 72, 48, 64].map((w) => `<span class="r-skel" style="width:${w}%"></span>`).join("")}</div></div></aside>`;
+      return `<div class="r-app r-conv-app" aria-busy="true">${side}${mainL}${panelL}</div>`;
     }
     const running = o.state === "properties";
     const props = o.state === "properties" ? propertiesPanel() : "";
@@ -832,6 +858,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
         "expanded-failed": [T.expanded[3], { open: true }],
         "large-output": [T.largeOutput[0], { open: true }],
         "hook-denied": [T.hookDenied[0], { open: true }],
+        waiting: [T.waiting[0], {}],
       }[o.state];
       return col(`<div class="r-tbox">${toolRow(pick[0], pick[1])}</div>`);
     },

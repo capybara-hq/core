@@ -1,13 +1,17 @@
-/* Sidebar (spec §6.13): full 256 / rail 48 / drawer. Part names follow the size table. */
+/*
+ * Sidebar v3 (spec §6.13): full 256 / rail 48 / drawer; two contexts (work, admin). Every block on
+ * an 8px rhythm: padding 12 / 8 / 8, blocks space.2 apart. Part names follow the size table.
+ */
 
 .cb-sidebar {
   display: flex;
   flex: none;
   flex-direction: column;
+  gap: var(--cb-space-2);
   width: var(--cb-layout-sidebar);
   height: 100%;
   min-height: 0;
-  padding: var(--cb-space-3) var(--cb-space-2);
+  padding: var(--cb-space-3) var(--cb-space-2) var(--cb-space-2);
   border-right: 1px solid var(--cb-line-soft);
   background: var(--cb-sidebar);
   color: var(--cb-ink);
@@ -26,8 +30,116 @@
   justify-content: space-between;
   gap: var(--cb-space-2);
   height: var(--cb-row-default);
-  margin-bottom: var(--cb-space-2);
-  padding-left: var(--cb-pad-default-x);
+  padding-left: var(--cb-pad-dense-x);
+}
+/* Search and the inbox: icon buttons at the brand row's right end (web order §2.1). */
+.cb-sidebar-top-tools {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.cb-sidebar-inbox {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+}
+.cb-sidebar-inbox[aria-current="page"] {
+  background: var(--cb-sidebar-active);
+  color: var(--cb-ink);
+}
+
+/* The org switcher and the admin context block: 40 high on bg, the 24 initial on ink. */
+.cb-sidebar-org {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--cb-space-2);
+  box-sizing: border-box;
+  width: 100%;
+  height: 40px;
+  padding: 0 var(--cb-pad-dense-x);
+  border: 1px solid var(--cb-line);
+  border-radius: var(--cb-radius-md);
+  background: var(--cb-bg);
+  color: var(--cb-ink);
+  font: inherit;
+  font-size: var(--cb-type-body-size);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color var(--cb-motion-hover);
+}
+.cb-sidebar-org[data-static="true"] {
+  cursor: default;
+}
+.cb-sidebar-org:not([data-static="true"]):hover {
+  border-color: var(--cb-line-strong);
+}
+.cb-sidebar-org > .cb-icon {
+  flex: none;
+  color: var(--cb-muted);
+}
+.cb-sidebar-org-initial {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: var(--cb-control-dense);
+  height: var(--cb-control-dense);
+  border-radius: var(--cb-radius-sm);
+  background: var(--cb-ink);
+  color: var(--cb-bg);
+  font-family: var(--cb-font);
+  font-size: var(--cb-type-small-size);
+  font-weight: 600;
+  line-height: 1;
+}
+.cb-sidebar-org-initial[data-tone="accent"] {
+  background: var(--cb-accent-tint);
+  color: var(--cb-accent);
+}
+.cb-sidebar-org-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  line-height: var(--cb-type-small-line);
+}
+.cb-sidebar-org-name,
+.cb-sidebar-org-meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cb-sidebar-org-name {
+  font-weight: 600;
+}
+.cb-sidebar-org-meta {
+  color: var(--cb-muted);
+  font-family: var(--cb-font);
+  font-size: var(--cb-type-micro-size);
+}
+.cb-sidebar-context {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: var(--cb-space-1);
+}
+.cb-sidebar-back {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-2);
+  height: var(--cb-row-dense);
+  padding: 0 var(--cb-pad-dense-x);
+  border-radius: var(--cb-radius-sm);
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+  text-decoration: none;
+}
+.cb-sidebar-back:hover {
+  background: var(--cb-hover);
+  color: var(--cb-ink);
 }
 
 /* Shared label: one line with an ellipsis; never widens the sidebar. */
@@ -43,6 +155,7 @@
   display: flex;
   flex: none;
   flex-direction: column;
+  gap: 2px;
 }
 .cb-sidebar-item,
 .cb-sidebar-conv,
@@ -64,25 +177,48 @@
     color var(--cb-motion-hover);
 }
 .cb-sidebar-item {
+  flex: none;
+  width: 100%;
   height: var(--cb-row-default);
-  padding: 0 var(--cb-pad-default-x);
+  padding: 0 var(--cb-pad-dense-x);
+  color: var(--cb-ink);
   font-size: var(--cb-type-body-size);
   line-height: var(--cb-type-body-line);
 }
-.cb-sidebar-item[data-part="new-conversation"] {
+.cb-sidebar-item[aria-current="page"] {
+  background: var(--cb-sidebar-active);
   color: var(--cb-ink);
+  font-weight: 600;
 }
-.cb-sidebar-item[aria-current="page"],
-.cb-sidebar-conv[aria-current="page"] {
+.cb-sidebar-item[data-part="more-toggle"],
+.cb-sidebar-item[data-part="admin-entry"] {
+  color: var(--cb-muted);
+}
+.cb-sidebar-item[data-part="more-toggle"][data-active="true"] {
   background: var(--cb-sidebar-active);
   color: var(--cb-ink);
 }
 /* Hover keeps the current item's ground (M12): only other rows take the hover ground. */
 .cb-sidebar-item:not([aria-current="page"]):hover,
-.cb-sidebar-conv:not([aria-current="page"]):hover,
-.cb-sidebar-more:hover {
+.cb-sidebar-more:hover,
+.cb-sidebar-archived:hover {
   background: var(--cb-hover);
   color: var(--cb-ink);
+}
+.cb-sidebar-kbd {
+  margin-left: auto;
+  color: var(--cb-faint);
+  font-family: var(--cb-font);
+  font-size: var(--cb-type-micro-size);
+  line-height: var(--cb-type-micro-line);
+}
+.cb-sidebar-admin {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+}
+.cb-sidebar-admin .cb-icon:last-child:not(:first-child) {
+  flex: none;
 }
 /* List items take the 1px inset focus line (spec §2.5). */
 .cb-sidebar-item:focus-visible,
@@ -93,34 +229,94 @@
   outline: 1px solid var(--cb-accent);
   outline-offset: -1px;
 }
+/* The inbox count: an accent pill (it needs attention), 18 high. */
 .cb-sidebar-count {
+  flex: none;
+  box-sizing: border-box;
+  min-width: 18px;
+  height: 18px;
   margin-left: auto;
-  color: var(--cb-muted);
+  padding: 0 5px;
+  border-radius: 9px;
+  background: var(--cb-accent);
+  color: var(--cb-on-accent);
+  font-family: var(--cb-font);
   font-size: var(--cb-type-micro-size);
-  line-height: var(--cb-type-micro-line);
-}
-.cb-sidebar-heading {
-  display: flex;
-  align-items: center;
-  height: var(--cb-row-dense);
-  margin-top: var(--cb-space-3);
-  padding: 0 var(--cb-pad-default-x);
-  color: var(--cb-muted);
-  font-size: var(--cb-type-small-size);
-  line-height: var(--cb-type-small-line);
-}
-.cb-sidebar-gap {
-  height: var(--cb-space-3);
+  font-weight: 400;
+  line-height: 18px;
+  text-align: center;
 }
 
-/* Conversations: the only part that scrolls. */
+/* Conversations: the only part that scrolls; a line-soft divider above. */
 .cb-sidebar-convs {
+  display: flex;
   flex: 1;
+  flex-direction: column;
+  gap: var(--cb-space-1);
   min-height: 0;
-  margin-top: var(--cb-space-4);
+  padding-top: var(--cb-space-2);
+  border-top: 1px solid var(--cb-line-soft);
   overflow-y: auto;
   scrollbar-width: thin;
-  scrollbar-color: var(--cb-line) transparent;
+  scrollbar-color: var(--cb-scroll-thumb) transparent;
+}
+.cb-sidebar-convs-head {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--cb-space-1);
+  padding: 0 var(--cb-space-1) 0 var(--cb-pad-dense-x);
+}
+.cb-sidebar-section-label {
+  flex: 1;
+  color: var(--cb-faint);
+  font-family: var(--cb-font);
+  font-size: var(--cb-type-micro-size);
+  letter-spacing: 0.06em;
+  line-height: var(--cb-type-micro-line);
+}
+.cb-sidebar .cb-icon-btn[data-active="true"] {
+  color: var(--cb-accent);
+}
+.cb-sidebar-filter {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: var(--cb-space-1);
+  padding: 0 var(--cb-space-1);
+}
+.cb-sidebar-convs-body {
+  display: flex;
+  flex-direction: column;
+}
+.cb-sidebar-archived {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--cb-space-2);
+  width: 100%;
+  height: var(--cb-row-dense);
+  padding: 0 var(--cb-pad-dense-x);
+  border: 0;
+  border-radius: var(--cb-radius-sm);
+  background: transparent;
+  color: var(--cb-faint);
+  font: inherit;
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+  text-align: left;
+  cursor: pointer;
+}
+.cb-sidebar-archived[data-part="archived-back"] {
+  color: var(--cb-ink);
+  font-weight: 600;
+}
+.cb-sidebar-archived:focus-visible,
+.cb-sidebar-row-menu:focus-visible,
+.cb-sidebar-back:focus-visible,
+.cb-sidebar-org:focus-visible {
+  outline: 1px solid var(--cb-accent);
+  outline-offset: -1px;
 }
 .cb-sidebar-group + .cb-sidebar-group {
   margin-top: var(--cb-space-2);
@@ -139,19 +335,23 @@
   gap: var(--cb-space-1);
   min-width: 0;
   height: 100%;
-  padding: 0 var(--cb-pad-default-x);
+  padding: 0 var(--cb-pad-dense-x);
   border: 0;
   border-radius: var(--cb-radius-sm);
   background: transparent;
-  color: var(--cb-muted);
+  color: var(--cb-ink);
   font: inherit;
   font-size: var(--cb-type-small-size);
+  font-weight: 500;
   line-height: var(--cb-type-small-line);
   text-align: left;
   cursor: pointer;
 }
 .cb-sidebar-group-toggle .cb-sidebar-label {
   flex: 0 1 auto;
+}
+.cb-sidebar-group-toggle .cb-icon {
+  color: var(--cb-muted);
 }
 /*
  * Collapse animates the height over motion.expand (spec §6.11) once the viewer toggles a group
@@ -173,14 +373,90 @@
   min-height: 0;
   overflow: hidden;
 }
-.cb-sidebar-conv,
+/* A row: the state dot, the title link and the ⋯ menu (on hover, focus and the current row). */
+.cb-sidebar-row {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--cb-space-1);
+  height: var(--cb-row-dense);
+  padding: 0 var(--cb-space-1) 0 var(--cb-pad-dense-x);
+  border-radius: var(--cb-radius-sm);
+  transition: background-color var(--cb-motion-hover);
+}
+.cb-sidebar-row[data-current="true"] {
+  background: var(--cb-sidebar-active);
+}
+.cb-sidebar-row:not([data-current="true"]):hover {
+  background: var(--cb-hover);
+}
+.cb-sidebar-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+.cb-sidebar-dot[data-activity="running"] {
+  background: var(--cb-ok);
+}
+.cb-sidebar-dot[data-activity="waiting"] {
+  background: var(--cb-warn);
+}
+.cb-sidebar-conv {
+  flex: 1;
+  height: 100%;
+  padding: 0;
+  background: transparent;
+  color: var(--cb-ink);
+}
+.cb-sidebar-conv:hover,
+.cb-sidebar-conv[aria-current="page"] {
+  background: transparent;
+  color: var(--cb-ink);
+}
+.cb-sidebar-row-menu {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--cb-radius-sm);
+  background: transparent;
+  color: var(--cb-muted);
+  cursor: pointer;
+  opacity: 0;
+}
+.cb-sidebar-row-menu:hover {
+  background: var(--cb-selected);
+  color: var(--cb-ink);
+}
+.cb-sidebar-row:hover .cb-sidebar-row-menu,
+.cb-sidebar-row:focus-within .cb-sidebar-row-menu,
+.cb-sidebar-row[data-current="true"] .cb-sidebar-row-menu,
+.cb-sidebar-row-menu[data-state="open"] {
+  opacity: 1;
+}
+/* Touch screens have no hover: the row menu is always shown. */
+@media (hover: none) {
+  .cb-sidebar-row-menu {
+    opacity: 1;
+  }
+}
+.cb-sidebar-rename {
+  flex: 1;
+  min-width: 0;
+}
+.cb-sidebar-dialog-text {
+  margin: 0;
+}
 .cb-sidebar-more {
   flex: none;
   width: 100%;
-  height: var(--cb-row-dense);
-  padding: 0 var(--cb-pad-default-x);
-}
-.cb-sidebar-more {
+  height: 26px;
+  padding: 0 var(--cb-pad-dense-x);
+  color: var(--cb-faint);
   font-size: var(--cb-type-small-size);
   line-height: var(--cb-type-small-line);
 }
@@ -190,6 +466,9 @@
   color: var(--cb-muted);
   font-size: var(--cb-type-small-size);
   line-height: var(--cb-type-small-line);
+}
+.cb-sidebar-empty {
+  padding: 0 var(--cb-space-1);
 }
 .cb-sidebar-loading {
   display: flex;
@@ -253,11 +532,14 @@
   margin-left: calc(-1 * var(--cb-pad-dense-x));
 }
 
-/* Account footer, pinned at the bottom. */
+/* Account row, pinned at the bottom: 8 above its divider (the gap), 8 below. */
 .cb-sidebar-foot {
   display: flex;
   flex: none;
-  margin-top: var(--cb-space-2);
+  align-items: center;
+  gap: var(--cb-space-2);
+  padding: var(--cb-space-2) var(--cb-space-1) 0;
+  border-top: 1px solid var(--cb-line-soft);
 }
 .cb-sidebar-account {
   display: flex;
@@ -266,11 +548,11 @@
   gap: var(--cb-space-2);
   min-width: 0;
   height: var(--cb-row-default);
-  padding: 0 var(--cb-pad-default-x);
+  padding: 0 var(--cb-space-1);
   border: 0;
   border-radius: var(--cb-radius-sm);
   background: transparent;
-  color: var(--cb-muted);
+  color: var(--cb-ink);
   font: inherit;
   text-align: left;
   cursor: pointer;
@@ -299,6 +581,67 @@
   line-height: var(--cb-type-micro-line);
 }
 
+/* Setup context (web-SSR spec §4): the steps are the navigation; each carries a state mark. */
+.cb-sidebar-step-mark {
+  display: inline-flex;
+  flex: none;
+  color: var(--cb-muted);
+}
+.cb-sidebar-step-mark[data-state="done"] {
+  color: var(--cb-ok);
+}
+/* A waiting step is not a link: muted, no pointer, no hover ground. */
+.cb-sidebar-item[data-part="step-item"][aria-disabled="true"] {
+  color: var(--cb-muted);
+  cursor: default;
+}
+.cb-sidebar-item[data-part="step-item"][aria-disabled="true"]:hover {
+  background: transparent;
+  color: var(--cb-muted);
+}
+/* With its reason the waiting step is two lines: 48 high. */
+.cb-sidebar-item[data-reason="true"] {
+  height: 48px;
+}
+.cb-sidebar-step-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+.cb-sidebar-step-reason {
+  overflow: hidden;
+  color: var(--cb-muted);
+  font-size: var(--cb-type-micro-size);
+  line-height: var(--cb-type-micro-line);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cb-sidebar-step-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.cb-sidebar-step-group-label {
+  display: flex;
+  align-items: flex-end;
+  height: var(--cb-row-dense);
+  padding: 0 var(--cb-pad-dense-x) var(--cb-space-1);
+  box-sizing: border-box;
+  color: var(--cb-faint);
+  font-family: var(--cb-font);
+  font-size: var(--cb-type-micro-size);
+  letter-spacing: 0.06em;
+  line-height: var(--cb-type-micro-line);
+}
+.cb-sidebar-step-divider {
+  flex: none;
+  width: var(--cb-control-dense);
+  height: 1px;
+  margin: var(--cb-space-1) 0;
+  background: var(--cb-line-soft);
+}
+
 /* Rail: icons only; conversations behind the expand button (it opens the drawer). */
 .cb-sidebar[data-mode="rail"] {
   align-items: center;
@@ -310,10 +653,31 @@
   padding: 0;
 }
 .cb-sidebar-rail-tools,
-.cb-sidebar[data-mode="rail"] .cb-sidebar-nav {
+.cb-sidebar[data-mode="rail"] .cb-sidebar-nav,
+.cb-sidebar[data-mode="rail"] .cb-sidebar-context,
+.cb-sidebar[data-mode="rail"] .cb-sidebar-admin {
   display: flex;
   flex-direction: column;
   align-items: center;
+}
+.cb-sidebar[data-mode="rail"] .cb-sidebar-org {
+  justify-content: center;
+  width: var(--cb-row-default);
+  height: var(--cb-row-default);
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+.cb-sidebar[data-mode="rail"] .cb-sidebar-back {
+  justify-content: center;
+  width: var(--cb-row-default);
+  padding: 0;
+}
+.cb-sidebar[data-mode="rail"] .cb-sidebar-foot {
+  padding: var(--cb-space-2) 0 0;
+}
+.cb-sidebar-rail-tools {
+  gap: 2px;
 }
 .cb-sidebar-rail-tools .cb-icon-btn {
   width: var(--cb-row-default);
@@ -330,7 +694,9 @@
 .cb-sidebar[data-mode="rail"] .cb-sidebar-item[aria-current="page"]:hover {
   background: var(--cb-hover);
 }
-/* The signed rail reference: the badge sits 2px inside the icon box's corner, 14 wide at least. */
+/* The signed rail reference: the badge sits 2px inside the icon box's corner, 14 wide at least.
+   It overlaps the icon, so the selected ground (translucent in light) is drawn over an opaque
+   sidebar layer; the background color stays `selected` (spec §6.13 measures it) under both. */
 .cb-sidebar-badge {
   position: absolute;
   top: 2px;
@@ -338,17 +704,14 @@
   min-width: 14px;
   padding: 0 3px;
   border-radius: var(--cb-radius-sm);
-  background: var(--cb-selected);
+  background-color: var(--cb-selected);
+  background-image:
+    linear-gradient(var(--cb-selected), var(--cb-selected)),
+    linear-gradient(var(--cb-sidebar), var(--cb-sidebar));
   color: var(--cb-ink);
   font-size: var(--cb-type-micro-size);
   line-height: var(--cb-type-micro-line);
   text-align: center;
-}
-.cb-sidebar-sep {
-  width: var(--cb-space-4);
-  height: 1px;
-  margin: var(--cb-space-2) 0;
-  background: var(--cb-line-soft);
 }
 .cb-sidebar-fill {
   flex: 1;
@@ -381,6 +744,19 @@
   box-shadow: var(--cb-shadow-float);
   outline: none;
 }
+/* The drawer is the touch form of the sidebar (below 960, phones included): its rows are 40 px
+   tap targets (spec §6.13), and a conversation row's menu is a 40 px square. */
+.cb-sidebar-drawer .cb-sidebar .cb-sidebar-item,
+.cb-sidebar-drawer .cb-sidebar .cb-sidebar-row,
+.cb-sidebar-drawer .cb-sidebar .cb-sidebar-back,
+.cb-sidebar-drawer .cb-sidebar .cb-sidebar-group-head,
+.cb-sidebar-drawer .cb-sidebar .cb-sidebar-archived {
+  height: 40px;
+}
+.cb-sidebar-drawer .cb-sidebar .cb-sidebar-row-menu {
+  width: 40px;
+  height: 40px;
+}
 @media (prefers-reduced-motion: no-preference) {
   .cb-sidebar-drawer {
     animation: cb-sidebar-in var(--cb-motion-overlay) ease-out;
@@ -410,5 +786,82 @@
 @media (min-width: 1280px), (max-width: 959px) {
   .cb-sidebar[data-responsive="true"][data-mode="rail"] {
     display: none;
+  }
+}
+
+/* Language and theme (PreferenceBar): a dense select and a two-choice icon radio (spec §6.13). */
+.cb-prefs {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-2);
+  min-width: 0;
+}
+.cb-prefs .cb-select {
+  flex: 1;
+  min-width: 0;
+}
+.cb-prefs-theme {
+  display: inline-flex;
+  flex: none;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--cb-line);
+  border-radius: var(--cb-radius-sm);
+}
+.cb-prefs-theme-option {
+  display: inline-grid;
+  place-items: center;
+  width: calc(var(--cb-control-dense) - 6px);
+  height: calc(var(--cb-control-dense) - 6px);
+  padding: 0;
+  border: 0;
+  border-radius: var(--cb-radius-sm);
+  background: transparent;
+  color: var(--cb-muted);
+  cursor: pointer;
+  transition:
+    background var(--cb-motion-hover),
+    color var(--cb-motion-hover);
+}
+.cb-prefs-theme-option:hover {
+  color: var(--cb-ink);
+}
+.cb-prefs-theme-option[data-state="checked"] {
+  background: var(--cb-selected);
+  color: var(--cb-ink);
+}
+.cb-prefs-theme-option {
+  position: relative;
+}
+.cb-prefs-theme-option input {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+.cb-prefs-theme-option:has(input:focus-visible) {
+  box-shadow: 0 0 0 3px var(--cb-focus-ring);
+}
+/* Auth pages: the bottom-right corner, just inside the right dither column (96 wide), each control
+   at its own width (not stretched); 16 from the edge when the columns are hidden. */
+.cb-auth-prefs {
+  position: absolute;
+  right: calc(96px + 16px);
+  bottom: 16px;
+  display: flex;
+}
+@media (max-width: 639px) {
+  .cb-auth-prefs {
+    right: 16px;
+  }
+}
+.cb-auth-prefs .cb-select {
+  flex: none;
+  width: auto;
+}
+@media (prefers-reduced-motion: reduce) {
+  .cb-prefs-theme-option {
+    transition: none;
   }
 }

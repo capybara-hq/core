@@ -192,7 +192,7 @@ export function SubagentRow({
   ].join(" · ");
   const inner = (
     <>
-      {active(row) ? <Spinner /> : null}
+      {active(row) ? <Spinner size={16} /> : null}
       <span className="cb-agent-tag" data-part="agent-tag">
         {row.agentType}
       </span>
@@ -317,7 +317,7 @@ export function SubagentGroup({
     return (
       <div className="cb-tool-group" data-part="subagent-group">
         <div className="cb-tool-line" data-part="tool-line">
-          <Spinner />
+          <Spinner size={16} />
           <span className="cb-tool-label">
             {fillCopy(t("subagent.running"), { n: running.length })}
             {finished > 0 ? (

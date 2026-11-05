@@ -80,6 +80,9 @@ describe("SubagentGroup (§6.16.15)", () => {
     expect(screen.getByText("正在运行 2 个子 agent")).toBeTruthy();
     // header + two rows
     expect(screen.getAllByRole("img", { name: "进行中" })).toHaveLength(3);
+    // 16, like the tool rows' (§6.16)
+    for (const s of screen.getAllByRole("img", { name: "进行中" }))
+      expect(s.querySelector("svg")?.getAttribute("width")).toBe("16");
     expect(screen.getByText("2分28秒", { exact: false })).toBeTruthy();
   });
 

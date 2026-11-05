@@ -1,5 +1,11 @@
+// Types only: the server layout imports this module, and the design root pulls in client-only
+// modules (createContext).
+import type { AvatarValue, PresetId } from "@capybara-hq/design";
 import { apiFetch } from "./api";
+import { type CreatedAttachment, uploadToStorage } from "./attachments";
+import type { LocalizedName } from "./catalog";
 import type { ModelRef } from "./conversations";
+import type { InstructionFile } from "./instruction-files";
 
 /** 内核 agent API 的类型（只声明界面用到的字段）。 */
 
@@ -19,14 +25,18 @@ export type TightenedPolicy = "ask" | "deny";
 
 /**
  * 网页可选的内置工具（内核没有列出内置工具的接口；`ToolSearch` 与 `Skill` 由内核自动加入）。
- * 新建时默认勾选 {@link DEFAULT_BUILTIN_TOOLS}（与内核的默认工具一致）。
  */
 export const BUILTIN_TOOLS = ["AskUserQuestion", "ReadToolOutput", "SkillWrite"] as const;
-export const DEFAULT_BUILTIN_TOOLS: readonly string[] = ["AskUserQuestion", "ReadToolOutput"];
 
 export interface AgentDefinitionInput {
   name: string;
+  /** The model-visible prompt: the kernel derives it from `instructionFiles` when they are saved. */
   instructions: string;
+  /**
+   * The prompt files (the authoring form of `instructions`); absent on old versions, which read
+   * as one `AGENTS.md`. A save sends these or `instructions`, never a differing pair.
+   */
+  instructionFiles?: InstructionFile[];
   model: ModelRef;
   fallback?: ModelRef | null;
   /** 主模型的参数：只含用户改动过的键，其余由内核按声明补默认值。 */
@@ -115,6 +125,32 @@ export const SUBAGENTS_INVALID_REASONS = [
 ] as const;
 export type SubagentsInvalidReason = (typeof SUBAGENTS_INVALID_REASONS)[number];
 
+/** The kernel's avatar of an agent (`null` only for agents created before profiles existed). */
+export type AgentAvatar =
+  | { kind: "preset"; id: PresetId }
+  | { kind: "upload"; uploadId: string }
+  | { kind: "external"; url: string }
+  | null;
+
+export interface QuickAction {
+  title: string;
+  body: string;
+}
+
+export interface AgentProfile {
+  avatar: AgentAvatar;
+  description: string;
+  quickActions: QuickAction[];
+  updatedAt: string;
+}
+
+/** What a client may write: `external` avatars are migrated data only. */
+export interface ProfileInput {
+  avatar?: { kind: "preset"; id: PresetId } | { kind: "upload"; uploadId: string } | null;
+  description?: string;
+  quickActions?: QuickAction[];
+}
+
 export interface Agent {
   id: string;
   orgId: string;
@@ -123,6 +159,10 @@ export interface Agent {
   /** The member list when visibility is `members` (else null; older kernels leave it out). */
   memberIds?: string[] | null;
   currentVersion: number;
+  /** Avatar, description and quick actions: not part of the definition, never model-visible. */
+  profile: AgentProfile;
+  /** The owner left the org and the agent went to an owner of the org until an admin reassigns it. */
+  needsReassignment?: boolean;
   /** 定义里可能还有界面不认识的字段：修改时原样带回。 */
   definition: AgentDefinitionInput & { fallback: ModelRef | null } & Record<string, unknown>;
   updatedAt: string;
@@ -165,6 +205,8 @@ export interface ModelInfo {
 
 export interface ProviderModels {
   provider: string;
+  /** The provider extension's display name; null when it has none (show the id). */
+  displayName?: LocalizedName | null;
   models: ModelInfo[];
 }
 
@@ -212,11 +254,37 @@ export function findModel(providers: ProviderModels[], ref: ModelRef): ModelInfo
 
 const base = (orgId: string) => `/api/v1/orgs/${encodeURIComponent(orgId)}`;
 
+/**
+ * Whether the org can run (`GET /orgs/:id/readiness`): a loaded model-provider extension (never a
+ * vendor call) and the number of agents the caller can see.
+ */
+export interface OrgReadiness {
+  modelProvider: "ready" | "none";
+  agents: number;
+}
+
+/** Whether a conversation can start: a loaded model provider and an agent the viewer can see. */
+export function setupReady(r: OrgReadiness): boolean {
+  return r.modelProvider === "ready" && r.agents > 0;
+}
+
+export const getReadiness = (orgId: string) => apiFetch<OrgReadiness>(`${base(orgId)}/readiness`);
+
 export const listAgents = (orgId: string) => apiFetch<{ agents: Agent[] }>(`${base(orgId)}/agents`);
+
+/**
+ * What the create form sends: no `instructions` and no `instructionFiles` (the kernel then starts
+ * the prompt from its default `AGENTS.md` template), no tools (the kernel's defaults apply).
+ */
+export type AgentCreateDefinition = Pick<AgentDefinitionInput, "name" | "model">;
 
 export const createAgent = (
   orgId: string,
-  input: { definition: AgentDefinitionInput; visibility: AgentVisibility },
+  input: {
+    definition: AgentCreateDefinition;
+    visibility: AgentVisibility;
+    profile?: Pick<ProfileInput, "avatar">;
+  },
 ) =>
   apiFetch<{ agent: Agent; warnings: AgentWarning[] }>(`${base(orgId)}/agents`, {
     method: "POST",
@@ -227,6 +295,18 @@ export const getAgent = (orgId: string, agentId: string) =>
   apiFetch<{ agent: Agent }>(`${base(orgId)}/agents/${encodeURIComponent(agentId)}`);
 
 /**
+ * A definition as a save sends it: with `instructions` (the prompt files left out: the kernel keeps
+ * them while it equals their join), or with `instructionFiles` and no `instructions` (the kernel
+ * derives it; a differing one is 400 `agent.instructions_mismatch`).
+ */
+export type AgentDefinitionSave =
+  | (Omit<AgentDefinitionInput, "instructionFiles"> & { instructionFiles?: never })
+  | (Omit<AgentDefinitionInput, "instructions" | "instructionFiles"> & {
+      instructions?: never;
+      instructionFiles: InstructionFile[];
+    });
+
+/**
  * 修改 agent：定义有变化时内核写新版本；`visibility` 只在改动时给。`expectedVersion` 是编辑页打开时的
  * `currentVersion`：别人已保存过新版本时内核返回 409 `agent.version_conflict`，不覆盖别人的改动。
  */
@@ -234,8 +314,9 @@ export const updateAgent = (
   orgId: string,
   agentId: string,
   input: {
-    definition?: AgentDefinitionInput;
+    definition?: AgentDefinitionSave;
     visibility?: AgentVisibility;
+    memberIds?: string[];
     expectedVersion?: number;
   },
 ) =>
@@ -244,5 +325,76 @@ export const updateAgent = (
     { method: "PATCH", body: JSON.stringify(input) },
   );
 
+/** Change the agent's owner (`agents.manage`, org admins); clears `needsReassignment`. */
+export const reassignAgentOwner = (orgId: string, agentId: string, accountId: string) =>
+  apiFetch<{ agent: Agent }>(`${base(orgId)}/agents/${encodeURIComponent(agentId)}/owner`, {
+    method: "POST",
+    body: JSON.stringify({ accountId }),
+  });
+
 export const listModels = (orgId: string) =>
   apiFetch<{ providers: ProviderModels[] }>(`${base(orgId)}/models`);
+
+/**
+ * The avatar the design `Avatar` renders. Uploads and migrated external avatars go through the
+ * kernel's redirect route; `v` busts the browser cache when the profile changes.
+ */
+export function avatarValue(agent: Pick<Agent, "id" | "profile">, orgId: string): AvatarValue {
+  const a = agent.profile.avatar;
+  if (a === null) return null;
+  if (a.kind === "preset") return { kind: "preset", id: a.id };
+  return {
+    kind: "image",
+    src: `${base(orgId)}/agents/${encodeURIComponent(agent.id)}/avatar?v=${encodeURIComponent(agent.profile.updatedAt)}`,
+  };
+}
+
+/**
+ * Save the profile (`PATCH …/profile`). `expectedUpdatedAt` is the `profile.updatedAt` the caller
+ * read: another save in between answers 409 `agent.profile_conflict`, never a silent overwrite.
+ */
+export const updateAgentProfile = (
+  orgId: string,
+  agentId: string,
+  input: ProfileInput & { expectedUpdatedAt: string },
+) =>
+  apiFetch<{ profile: AgentProfile }>(
+    `${base(orgId)}/agents/${encodeURIComponent(agentId)}/profile`,
+    {
+      method: "PATCH",
+      body: JSON.stringify(input),
+    },
+  );
+
+/** Register an avatar upload: the kernel checks type and size and returns a presigned upload. */
+export const createAvatarUpload = (
+  orgId: string,
+  agentId: string,
+  input: { name: string; contentType: string; size: number },
+) =>
+  apiFetch<CreatedAttachment>(
+    `${base(orgId)}/agents/${encodeURIComponent(agentId)}/avatar/uploads`,
+    { method: "POST", body: JSON.stringify(input) },
+  );
+
+/**
+ * Upload a cropped avatar: register, then send to object storage with the presigned upload. The
+ * returned id goes into the profile as `{ kind: "upload", uploadId }`.
+ */
+export async function uploadAvatar(
+  orgId: string,
+  agentId: string,
+  file: Blob,
+): Promise<{ uploadId: string }> {
+  const name = file instanceof File ? file.name : "avatar";
+  const created = await createAvatarUpload(orgId, agentId, {
+    name,
+    contentType: file.type,
+    size: file.size,
+  });
+  await uploadToStorage(
+    created.upload,
+    file instanceof File ? file : new File([file], name, { type: file.type }),
+  );
+  return { uploadId: created.id };
+}

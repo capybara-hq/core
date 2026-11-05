@@ -57,6 +57,36 @@ const GROUPS = [
       "file-outputs",
       "attachment-strip",
       "file-preview",
+      "run-row",
+      "working-line",
+      "greeting",
+      "agent-row",
+      "quick-actions",
+    ],
+  },
+  {
+    title: "Agents: avatar presets and picker",
+    components: ["avatar"],
+  },
+  {
+    title: "Role pass: no access, danger zone, secret reveal",
+    components: ["no-access", "danger-zone", "secret-reveal"],
+  },
+  {
+    title: "Config forms: repeater, field row, key / value editor",
+    components: ["repeater", "field-row", "key-value-editor"],
+  },
+  {
+    title: "Loading states: skeleton primitives and template loading states",
+    components: [
+      "skeleton",
+      "template-detail",
+      "template-overview",
+      "template-inbox",
+      "template-trace",
+      "template-settings",
+      "template-wizard",
+      "template-auth",
     ],
   },
 ];

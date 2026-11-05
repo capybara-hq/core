@@ -20,7 +20,11 @@ function TraceBody() {
   return (
     <TracePage
       header={{
-        breadcrumb: [{ label: "运行记录", href: "/dev/ui/table" }],
+        path: [
+          { label: "capybara", href: "/dev/ui" },
+          { label: "trajectories", href: "/dev/ui/table" },
+          { label: "A1043" },
+        ],
         title: "退款工单 A1043",
         status: <StatusMark status="running" />,
         metrics: [

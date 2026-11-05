@@ -12,10 +12,12 @@ export type BodyProps = {
   inspectorTitle?: string;
   onInspectorClose?: () => void;
   /**
-   * The content's max width (spec §4.3): `list` `layout.content-list`, `form`
-   * `layout.content-form`, centered; `full` the whole width (the default).
+   * Sections (forms, settings, wizards) sit space.6 apart instead of space.3. Every body is the
+   * one content width (`layout.content`, spec §4.3), centered.
    */
-  width?: "list" | "form" | "full";
+  loose?: boolean;
+  /** `content` (default for frame templates): the one content width; `full`: the whole width. */
+  width?: "content" | "full";
   /** Content inner padding (detail sections, cards); without it the content sits flush. */
   contentPadded?: boolean;
   /** Rail 内容贴边（自带内边距或本身是列表 / 表格时）；缺省内边距 12 16。 */
@@ -36,6 +38,7 @@ export function Body({
   inspector,
   inspectorTitle,
   onInspectorClose,
+  loose,
   width = "full",
   contentPadded,
   railFlush,
@@ -66,7 +69,12 @@ export function Body({
     return (
       <div className="cb-body" data-layout="centered">
         <div className="cb-body-content">
-          <div className="cb-body-frame" data-part="content" data-width={width}>
+          <div
+            className="cb-body-frame"
+            data-part="content"
+            data-width={width}
+            data-gap={loose ? "loose" : undefined}
+          >
             {children}
           </div>
         </div>
@@ -76,7 +84,12 @@ export function Body({
 
   const content = (
     <div className="cb-body-content" data-padded={contentPadded ? "true" : undefined}>
-      <div className="cb-body-frame" data-part="content" data-width={width}>
+      <div
+        className="cb-body-frame"
+        data-part="content"
+        data-width={width}
+        data-gap={loose ? "loose" : undefined}
+      >
         {children}
       </div>
     </div>

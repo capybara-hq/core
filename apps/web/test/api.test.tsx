@@ -103,6 +103,31 @@ describe("apiFetch", () => {
     expect(calls).toHaveLength(2);
   });
 
+  it("refresh loses the race (auth.refresh_race) -> the winner's cookies are in the jar, retry once", async () => {
+    // the proxy (or another tab) rotated the refresh token first
+    const calls = stubFetch(
+      expired(),
+      json(401, { error: { code: "auth.refresh_race", message: "race" } }),
+      json(200, { me: 1 }),
+    );
+    await expect(apiFetch("/api/v1/me")).resolves.toEqual({ me: 1 });
+    expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([
+      "GET /api/v1/me",
+      "POST /api/v1/auth/refresh",
+      "GET /api/v1/me",
+    ]);
+  });
+
+  it("refresh race, then still 401 -> retries only once and throws", async () => {
+    const calls = stubFetch(
+      expired(),
+      json(401, { error: { code: "auth.refresh_race", message: "race" } }),
+      expired(),
+    );
+    await expect(apiFetch("/api/v1/me")).rejects.toMatchObject({ code: "auth.token_expired" });
+    expect(calls).toHaveLength(3);
+  });
+
   it("重试后仍 token_expired -> 只 refresh 一次，抛错", async () => {
     const calls = stubFetch(expired(), new Response(null, { status: 204 }), expired());
     await expect(apiFetch("/api/v1/me")).rejects.toMatchObject({

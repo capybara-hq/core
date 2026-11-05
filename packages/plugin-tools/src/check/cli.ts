@@ -1,7 +1,11 @@
 import { join, relative, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { discoverPlugins, pluginsGlobOf } from "../discover.js";
-import { diffAppliedMigrations, migrationFileMatcher } from "./applied-migrations.js";
+import {
+  diffAppliedMigrations,
+  diffMigrationNumbers,
+  migrationFileMatcher,
+} from "./applied-migrations.js";
 import { type NamedCheck, pluginChecks, runChecks } from "./run.js";
 
 export const CHECK_USAGE = "capybara-plugin check [--root <dir>] [--plugins <glob>] [--base <ref>]";
@@ -14,7 +18,8 @@ export const CHECK_USAGE = "capybara-plugin check [--root <dir>] [--plugins <glo
  *   default `plugins/*` when `<root>/plugins` exists, else the root itself when it holds
  *   `.capybara-plugin/plugin.json`;
  * - `--base <ref>`: also fail when `<ref>...HEAD` edits, deletes or renames a migration of a plugin
- *   (applied migrations are immutable); for pull requests.
+ *   (applied migrations are immutable), or adds one numbered at or below the highest number of its
+ *   directory at `<ref>`; for pull requests.
  *
  * Finding no plugin is an error: an empty scan would pass without checking anything.
  *
@@ -59,7 +64,10 @@ export async function checkCommand(args: string[], cwd: string): Promise<number>
     checks.push({
       name: "Applied migrations",
       run: () =>
-        diffAppliedMigrations(root, base, isMigration).map((f) => ({
+        [
+          ...diffAppliedMigrations(root, base, isMigration),
+          ...diffMigrationNumbers(root, base, isMigration),
+        ].map((f) => ({
           ...f,
           file: join(root, f.file),
         })),

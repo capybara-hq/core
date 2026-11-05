@@ -1,6 +1,7 @@
 import type { Span, StatusMark } from "@capybara-hq/design";
 import { apiFetch } from "./api";
 import type { SubagentEndStatus } from "./conversations";
+import { extensionLabel } from "./extension-label";
 import { toolLabelOfKey, toolLabelText } from "./tool-label";
 
 /**
@@ -157,6 +158,12 @@ const query = (params: Record<string, string | number | undefined>) => {
   return s === "" ? "" : `?${s}`;
 };
 
+/**
+ * The trajectory list page size. Lives here, not in the client view: a server page that imports a
+ * value from a "use client" module gets a client reference, not the value.
+ */
+export const TRAJECTORY_PAGE = 50;
+
 export const listTrajectories = (
   orgId: string,
   q: { agentId?: string; status?: RunStatus; before?: string; limit: number },
@@ -261,7 +268,8 @@ export function indexTrajectory(
               id: `model:${run.runId}:${call.seq}`,
               parentId: stepId,
               kind: "model",
-              label: `${call.provider}/${call.model}`,
+              // A recorded call carries no providers list: the provider id stands in.
+              label: `${extensionLabel({ name: call.provider }, "en")}/${call.model}`,
               startMs: off(call.startedAt),
               durationMs: call.latencyMs,
               // 运行已结束仍没有结果的调用（没写 usage 就停了）算失败

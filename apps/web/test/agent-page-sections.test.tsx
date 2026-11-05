@@ -1,0 +1,716 @@
+import { act, cleanup, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import en from "../messages/en.json";
+import zh from "../messages/zh.json";
+import { keys } from "../src/lib/query/keys";
+import { agentFormDefaults, renderEditAgent } from "./support/agents";
+import { bodyOf, type Call, json, stubApi } from "./support/api";
+import { resetNavigation, router } from "./support/navigation";
+import { renderRouteEmptyCache } from "./support/query";
+import { ME } from "./support/render";
+import { expectNoFirstPaintFetch, sessionRoutes } from "./support/server";
+import { NOT_READY } from "./support/shell";
+
+vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
+vi.mock("next/navigation", () => ({
+  redirect: (to: string) => {
+    throw new Error(`REDIRECT ${to}`);
+  },
+  notFound: () => {
+    throw new Error("NOT_FOUND");
+  },
+}));
+
+const ORG = "/api/v1/orgs/o1";
+const T = "2026-10-20T08:00:00.000Z";
+const F = en.agents.form;
+const PR = en.agents.page.prompt;
+
+const CAPS = {
+  tools: true,
+  vision: false,
+  reasoning: false,
+  caching: false,
+  midConversationSystem: false,
+};
+const MODELS = {
+  providers: [
+    {
+      provider: "model-fake",
+      models: [{ id: "fake-1", displayName: "Fake 1", capabilities: CAPS, parameters: [] }],
+    },
+    {
+      provider: "other",
+      models: [{ id: "o-1", displayName: "O 1", capabilities: CAPS, parameters: [] }],
+    },
+  ],
+};
+
+const FILES = [
+  { name: "AGENTS.md", content: "Be helpful." },
+  { name: "STYLE.md", content: "Be brief." },
+];
+const JOINED = "# AGENTS.md\n\nBe helpful.\n\n# STYLE.md\n\nBe brief.";
+
+type Over = {
+  owner?: string;
+  visibility?: string;
+  version?: number;
+  files?: { name: string; content: string }[] | null;
+  instructions?: string;
+  definition?: Record<string, unknown>;
+};
+/** An agent saved with prompt files (`files: null`: an old agent without them). */
+const agent = (over: Over = {}) => {
+  const files = over.files === undefined ? FILES : over.files;
+  return {
+    id: "ag1",
+    orgId: "o1",
+    ownerAccountId: over.owner ?? "a1",
+    visibility: over.visibility ?? "org",
+    currentVersion: over.version ?? 1,
+    memberIds: null,
+    needsReassignment: false,
+    createdAt: T,
+    updatedAt: T,
+    profile: {
+      avatar: null,
+      description: "",
+      quickActions: [],
+      updatedAt: "2026-11-04T10:00:00.000Z",
+    },
+    definition: {
+      name: "Helper",
+      instructions: over.instructions ?? (files === null ? "Be helpful." : JOINED),
+      ...(files === null ? {} : { instructionFiles: files }),
+      model: { provider: "model-fake", model: "fake-1" },
+      fallback: null,
+      modelParams: {},
+      fallbackParams: {},
+      tools: [
+        { kind: "builtin", name: "AskUserQuestion" },
+        { kind: "plugin", plugin: "todo", name: "write" },
+      ],
+      toolPolicies: {},
+      // a field the web does not know: every section's save sends it back as it is
+      futureField: { keep: true },
+      ...over.definition,
+    },
+  };
+};
+type AgentJson = ReturnType<typeof agent>;
+/** The saved definition as every section's save starts from it: without the prompt files. */
+const sent = (a: AgentJson) => {
+  const { instructionFiles: _files, ...rest } = a.definition as Record<string, unknown>;
+  return rest;
+};
+
+const orgSkill = (id: string, name: string) => ({
+  id,
+  scope: "org",
+  agentId: null,
+  name,
+  description: `Use for ${name}.`,
+  currentVersion: 1,
+  createdBy: "a1",
+  createdAt: T,
+  updatedAt: T,
+});
+
+const ok = (body: unknown) => () => json(200, body);
+type Handler = (c: Call) => Response | Promise<Response>;
+function routes(a: AgentJson = agent(), over: Record<string, Handler> = {}) {
+  return {
+    ...sessionRoutes(),
+    ...agentFormDefaults(),
+    [`GET ${ORG}/agents/ag1`]: ok({ agent: a }),
+    [`GET ${ORG}/models`]: ok(MODELS),
+    [`GET ${ORG}/skills`]: ok({ skills: [orgSkill("s1", "pdf-tools")] }),
+    [`PATCH ${ORG}/agents/ag1`]: ok({ agent: a, warnings: [] }),
+    ...over,
+  };
+}
+const patches = (calls: Call[]) =>
+  calls.filter((c) => c.method === "PATCH" && c.url === `${ORG}/agents/ag1`).map(bodyOf);
+const save = () => screen.getByRole("button", { name: F.submit });
+const fileList = () => screen.getByRole("group", { name: PR.filesLabel });
+const nameBox = () => screen.getByRole("textbox", { name: PR.nameLabel }) as HTMLInputElement;
+const contentBox = () =>
+  screen.getByRole("textbox", { name: PR.contentLabel }) as HTMLTextAreaElement;
+const settle = () => act(() => new Promise((r) => setTimeout(r, 20)));
+const as = (role: "guest" | "member" | "admin") => ({
+  ...ME,
+  account: { ...ME.account, isEnterpriseAdmin: false },
+  memberships: [{ orgId: "o1", slug: "acme", name: "Acme", role }],
+});
+
+beforeEach(() => resetNavigation("/agents/ag1"));
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
+
+describe("the agent page's sections with their own saves (agent profile design §3.2–3.3)", () => {
+  it("prompt: an old agent without instructionFiles shows one AGENTS.md holding its instructions", async () => {
+    stubApi(routes(agent({ files: null })));
+    await renderEditAgent({ section: "prompt" });
+    expect(
+      within(fileList())
+        .getAllByRole("group")
+        .map((g) => g.getAttribute("aria-label")),
+    ).toEqual(["AGENTS.md"]);
+    expect(nameBox().value).toBe("AGENTS.md");
+    expect(contentBox().value).toBe("Be helpful.");
+    // nothing changed: no action row
+    expect(document.querySelector('[data-part="action-row"]')).toBeNull();
+  });
+
+  it("prompt: add WORKFLOW.md, reorder, save sends instructionFiles in order", async () => {
+    const calls = stubApi(routes(agent({ files: null })));
+    await renderEditAgent({ section: "prompt" });
+    const user = userEvent.setup();
+    await user.click(within(fileList()).getByRole("button", { name: PR.add }));
+    // the new file opens in the editor
+    expect(nameBox().value).toBe("untitled.md");
+    await user.clear(nameBox());
+    await user.type(nameBox(), "WORKFLOW.md");
+    await user.type(contentBox(), "Plan, then act.");
+    await user.click(within(fileList()).getByRole("button", { name: "Move WORKFLOW.md up" }));
+    expect(
+      within(fileList())
+        .getAllByRole("group")
+        .map((g) => g.getAttribute("aria-label")),
+    ).toEqual(["WORKFLOW.md", "AGENTS.md"]);
+    // the other file opens with its own content
+    await user.click(within(fileList()).getByRole("button", { name: "AGENTS.md" }));
+    expect(contentBox().value).toBe("Be helpful.");
+    await user.click(save());
+    await vi.waitFor(() => expect(patches(calls)).toHaveLength(1));
+    const { instructions: _i, ...rest } = sent(agent({ files: null }));
+    expect(patches(calls)[0]).toEqual({
+      definition: {
+        ...rest,
+        instructionFiles: [
+          { name: "WORKFLOW.md", content: "Plan, then act." },
+          { name: "AGENTS.md", content: "Be helpful." },
+        ],
+      },
+      expectedVersion: 1,
+    });
+  });
+
+  it("prompt: the last file can't be deleted", async () => {
+    stubApi(routes(agent({ files: null })));
+    await renderEditAgent({ section: "prompt" });
+    const remove = within(fileList()).getByRole("button", {
+      name: "Remove AGENTS.md",
+    }) as HTMLButtonElement;
+    expect(remove.disabled).toBe(true);
+    const user = userEvent.setup();
+    await user.click(within(fileList()).getByRole("button", { name: PR.add }));
+    expect(
+      (within(fileList()).getByRole("button", { name: "Remove AGENTS.md" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(false);
+  });
+
+  it("prompt: a duplicate name is refused before save", async () => {
+    const calls = stubApi(routes());
+    await renderEditAgent({ section: "prompt" });
+    const user = userEvent.setup();
+    await user.click(within(fileList()).getByRole("button", { name: PR.add }));
+    await user.clear(nameBox());
+    // names are compared ignoring case, as the kernel does
+    await user.type(nameBox(), "style.md");
+    await user.click(save());
+    await settle();
+    expect(patches(calls)).toEqual([]);
+    expect(nameBox().getAttribute("aria-invalid")).toBe("true");
+    expect(screen.getByText(PR.nameDuplicate)).toBeTruthy();
+    // a name without .md is refused the same way
+    await user.clear(nameBox());
+    await user.type(nameBox(), "notes.txt");
+    await user.click(save());
+    await settle();
+    expect(screen.getByText(PR.nameInvalid)).toBeTruthy();
+    expect(patches(calls)).toEqual([]);
+  });
+
+  it("prompt: name errors show on blur or on save, not while typing", async () => {
+    stubApi(routes());
+    await renderEditAgent({ section: "prompt" });
+    const user = userEvent.setup();
+    await user.click(within(fileList()).getByRole("button", { name: PR.add }));
+    await user.clear(nameBox());
+    await user.type(nameBox(), "Style");
+    // mid-typing: nothing yet, though "Style" is not a valid name
+    expect(screen.queryByText(PR.nameInvalid)).toBeNull();
+    await user.type(nameBox(), ".md");
+    expect(screen.queryByText(PR.nameDuplicate)).toBeNull();
+    // leaving the field shows it: a case variant of STYLE.md
+    await user.tab();
+    expect(screen.getByText(PR.nameDuplicate)).toBeTruthy();
+    expect(nameBox().getAttribute("aria-invalid")).toBe("true");
+    // typing again hides it until the field is left
+    await user.type(nameBox(), "x");
+    expect(screen.queryByText(PR.nameInvalid)).toBeNull();
+    await user.type(nameBox(), "{Backspace}");
+    // a save shows every file's problem: STYLE.md is a duplicate of Style.md too
+    await user.click(save());
+    await user.click(within(fileList()).getByRole("button", { name: "STYLE.md" }));
+    expect(nameBox().value).toBe("STYLE.md");
+    expect(screen.getByText(PR.nameDuplicate)).toBeTruthy();
+  });
+
+  it("prompt: a titled section whose loading frame has the loaded shape", async () => {
+    stubApi(routes());
+    await renderEditAgent({ section: "prompt" });
+    const section = screen.getByRole("region", { name: en.agents.page.sections.prompt });
+    expect(within(section).getByRole("heading", { level: 2 }).textContent).toBe(
+      en.agents.page.sections.prompt,
+    );
+    expect(within(section).getByText(PR.hint)).toBeTruthy();
+    // stacked: the head above a full-width card, so the editor has the content's width
+    expect(section.getAttribute("data-layout")).toBe("stacked");
+    const grid = section.querySelector('[data-columns="list-detail"]');
+    expect(grid?.children).toHaveLength(2);
+    // the other sections keep the two columns
+    expect(document.querySelectorAll('[data-part="form-section"][data-layout]')).toHaveLength(1);
+    cleanup();
+
+    let release: () => void = () => {};
+    const held = new Promise<void>((r) => {
+      release = r;
+    });
+    await renderRouteEmptyCache("/agents/ag1?s=prompt", {
+      ...routes(),
+      [`GET ${ORG}/agents/ag1`]: async () => {
+        await held;
+        return json(200, { agent: agent() });
+      },
+    });
+    const loading = await vi.waitFor(() => {
+      const el = document.querySelector('[data-part="loading-list-editor"]');
+      if (el === null) throw new Error("no loading frame yet");
+      return el;
+    });
+    // the same title and description, the same grid: a list row beside an editor card
+    expect(screen.getByRole("heading", { level: 2 }).textContent).toBe(
+      en.agents.page.sections.prompt,
+    );
+    expect(screen.getByText(PR.hint)).toBeTruthy();
+    expect(loading.getAttribute("data-columns")).toBe("list-detail");
+    expect(loading.closest('[data-part="form-section"]')?.getAttribute("data-layout")).toBe(
+      "stacked",
+    );
+    expect(loading.querySelectorAll('[data-part="loading-repeater-item"]')).toHaveLength(1);
+    expect(loading.querySelector('[data-box="textarea"]')?.getAttribute("style")).toContain(
+      "--cb-skeleton-rows: 16",
+    );
+    await act(async () => release());
+    expect(await screen.findByRole("textbox", { name: PR.nameLabel })).toBeTruthy();
+  });
+
+  it("prompt: the counts show the joined characters against 100 000 and the files against 20", async () => {
+    stubApi(routes());
+    await renderEditAgent({ section: "prompt" });
+    expect(screen.getByText(`${JOINED.length} / 100,000 characters · 2 / 20 files`)).toBeTruthy();
+  });
+
+  it("prompt: editing an agent saved with prompt files sends instructionFiles only", async () => {
+    const calls = stubApi(routes());
+    await renderEditAgent({ section: "prompt" });
+    const user = userEvent.setup();
+    await user.click(within(fileList()).getByRole("button", { name: "STYLE.md" }));
+    await user.type(contentBox(), " More.");
+    await user.click(save());
+    await vi.waitFor(() => expect(patches(calls)).toHaveLength(1));
+    const body = patches(calls)[0] as { definition: Record<string, unknown> };
+    // a stale instructions next to the files would be 400 agent.instructions_mismatch
+    expect(body.definition).not.toHaveProperty("instructions");
+    expect(body.definition.instructionFiles).toEqual([
+      FILES[0],
+      { name: "STYLE.md", content: "Be brief. More." },
+    ]);
+  });
+
+  it("each section's save sends only its fields", async () => {
+    const saved = agent();
+    const calls = stubApi(routes(saved));
+    const view = await renderEditAgent({ section: "model" });
+    const user = userEvent.setup();
+    const base = sent(saved);
+
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: (n) => n.startsWith(F.fallbackLabel) }),
+      "other/o-1",
+    );
+    await user.click(save());
+    await vi.waitFor(() => expect(patches(calls)).toHaveLength(1));
+    expect(patches(calls)[0]).toEqual({
+      definition: { ...base, fallback: { provider: "other", model: "o-1" }, fallbackParams: {} },
+      expectedVersion: 1,
+    });
+
+    await view.navigate("/agents/ag1?s=tools");
+    await user.click(screen.getByRole("checkbox", { name: F.builtin.SkillWrite }));
+    await user.click(save());
+    await vi.waitFor(() => expect(patches(calls)).toHaveLength(2));
+    expect(patches(calls)[1]).toEqual({
+      definition: {
+        ...base,
+        tools: [...saved.definition.tools, { kind: "builtin", name: "SkillWrite" }],
+      },
+      expectedVersion: 1,
+    });
+
+    await view.navigate("/agents/ag1?s=skills");
+    await user.click(await screen.findByRole("checkbox", { name: /pdf-tools/ }));
+    await user.click(save());
+    await vi.waitFor(() => expect(patches(calls)).toHaveLength(3));
+    expect(patches(calls)[2]).toEqual({
+      definition: { ...base, skills: { orgSkills: ["s1"] } },
+      expectedVersion: 1,
+    });
+
+    await view.navigate("/agents/ag1?s=subagents");
+    await user.click(screen.getByRole("checkbox", { name: F.subagents.agentTool }));
+    await user.click(save());
+    await vi.waitFor(() => expect(patches(calls)).toHaveLength(4));
+    expect(patches(calls)[3]).toEqual({
+      definition: {
+        ...base,
+        tools: [...saved.definition.tools, { kind: "builtin", name: "Agent" }],
+      },
+      expectedVersion: 1,
+    });
+  });
+
+  it("an unrelated section's save keeps the prompt files: their join goes as instructions", async () => {
+    // the kernel keeps the files when `instructions` equals their join (instruction-files.test.ts:
+    // "an unrelated save sending the joined text keeps the files")
+    const calls = stubApi(routes());
+    await renderEditAgent({ section: "tools" });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("checkbox", { name: F.builtin.SkillWrite }));
+    await user.click(save());
+    await vi.waitFor(() => expect(patches(calls)).toHaveLength(1));
+    const body = patches(calls)[0] as { definition: Record<string, unknown> };
+    expect(body.definition.instructions).toBe(JOINED);
+    expect(body.definition).not.toHaveProperty("instructionFiles");
+  });
+
+  it("skills writePolicy shows only for a saved private agent", async () => {
+    const confirm = { name: F.confirmSkillWrite };
+    stubApi(routes(agent({ visibility: "org" })));
+    await renderEditAgent({ section: "skills" });
+    expect(screen.queryByRole("checkbox", confirm)).toBeNull();
+    cleanup();
+    const calls = stubApi(routes(agent({ visibility: "private" })));
+    await renderEditAgent({ section: "skills" });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("checkbox", confirm));
+    await user.click(save());
+    await vi.waitFor(() => expect(patches(calls)).toHaveLength(1));
+    expect((patches(calls)[0] as { definition: { skills: unknown } }).definition.skills).toEqual({
+      orgSkills: [],
+      writePolicy: "ask",
+    });
+  });
+
+  it("a stale expectedVersion shows the reload action", async () => {
+    let current = agent();
+    const calls = stubApi(
+      routes(current, {
+        [`GET ${ORG}/agents/ag1`]: () => json(200, { agent: current }),
+        [`PATCH ${ORG}/agents/ag1`]: () =>
+          json(409, { error: { code: "agent.version_conflict", message: "x" } }),
+      }),
+    );
+    await renderEditAgent({ section: "model" });
+    const user = userEvent.setup();
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: (n) => n.startsWith(F.fallbackLabel) }),
+      "other/o-1",
+    );
+    // someone else saves version 2 meanwhile
+    current = agent({ version: 2, definition: { model: { provider: "other", model: "o-1" } } });
+    await user.click(save());
+    const reload = await screen.findByRole("button", { name: en.agents.page.reload });
+    expect(patches(calls)[0]).toMatchObject({ expectedVersion: 1 });
+    await user.click(reload);
+    // the section starts over from the newer version
+    await vi.waitFor(() =>
+      expect(
+        (screen.getByRole("combobox", { name: F.modelLabel }) as HTMLSelectElement).value,
+      ).toBe("other/o-1"),
+    );
+    expect(
+      (
+        screen.getByRole("combobox", {
+          name: (n) => n.startsWith(F.fallbackLabel),
+        }) as HTMLSelectElement
+      ).value,
+    ).toBe("");
+    expect(document.querySelector('[data-part="action-row"]')).toBeNull();
+  });
+
+  it("typed edits survive a refetch; a clean section shows the newer saved version", async () => {
+    const calls = stubApi(routes());
+    const view = await renderEditAgent({ section: "prompt" });
+    const user = userEvent.setup();
+    await user.type(contentBox(), " Typed.");
+    const newer = agent({
+      version: 2,
+      files: [{ name: "AGENTS.md", content: "Newer." }],
+      instructions: "Newer.",
+    });
+    await act(async () => view.client.setQueryData(keys.org("o1").agent("ag1"), newer));
+    expect(contentBox().value).toBe("Be helpful. Typed.");
+    // the save is over the version the edit was made on
+    await user.click(save());
+    await vi.waitFor(() => expect(patches(calls)).toHaveLength(1));
+    expect(patches(calls)[0]).toMatchObject({ expectedVersion: 1 });
+    cleanup();
+
+    stubApi(routes());
+    const clean = await renderEditAgent({ section: "model" });
+    await act(async () =>
+      clean.client.setQueryData(
+        keys.org("o1").agent("ag1"),
+        agent({ version: 2, definition: { fallback: { provider: "other", model: "o-1" } } }),
+      ),
+    );
+    expect(
+      (
+        screen.getByRole("combobox", {
+          name: (n) => n.startsWith(F.fallbackLabel),
+        }) as HTMLSelectElement
+      ).value,
+    ).toBe("other/o-1");
+  });
+
+  it("a section save shows the kernel's warnings in the section and the row goes", async () => {
+    stubApi(
+      routes(agent(), {
+        [`PATCH ${ORG}/agents/ag1`]: ok({ agent: agent(), warnings: ["fallback_same_provider"] }),
+      }),
+    );
+    await renderEditAgent({ section: "model" });
+    const user = userEvent.setup();
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: (n) => n.startsWith(F.fallbackLabel) }),
+      "model-fake/fake-1",
+    );
+    await user.click(save());
+    const warning = await screen.findByText(en.agents.warnings.fallback_same_provider);
+    expect(warning.closest('[data-tone="danger"]')).not.toBeNull();
+    await vi.waitFor(() => expect(document.querySelector('[data-part="action-row"]')).toBeNull());
+    expect(router.push).not.toHaveBeenCalled();
+  });
+});
+
+// Moved from agent-form.test.tsx: the edit page's behaviours, now on the sections.
+describe("the agent page lists its channels (spec 3.3.1)", () => {
+  const channel = (id: string, name: string, agentId: string, status = "active") => ({
+    id,
+    orgId: "o1",
+    plugin: "slack",
+    name,
+    agentId,
+    unboundPolicy: "bind",
+    status,
+    inboundMode: "long_connection",
+    webhookSupported: false,
+    webhookUrl: null,
+    lastError: null,
+    botUserId: null,
+    tenantId: null,
+    config: {},
+    secrets: [],
+    createdBy: "a1",
+    createdAt: T,
+    updatedAt: T,
+  });
+  const channelRoutes = () => ({
+    [`GET ${ORG}/agents/ag1`]: ok({ agent: agent() }),
+    [`GET ${ORG}/models`]: ok(MODELS),
+    [`GET ${ORG}/channels`]: ok({
+      channels: [
+        channel("c1", "Team Slack", "ag1"),
+        channel("c2", "Other bot", "ag2"),
+        channel("c3", "Broken bot", "ag1", "error"),
+      ],
+    }),
+  });
+
+  it("lists only this agent's connections; 接入渠道 presets the agent and the way back", async () => {
+    stubApi(channelRoutes());
+    await renderEditAgent({ locale: "zh", section: "channels" });
+    const section = await screen.findByRole("region", { name: zh.agents.channels.title });
+    const list = await within(section).findByRole("list", { name: zh.agents.channels.title });
+    expect(within(list).getByRole("link", { name: "Team Slack" }).getAttribute("href")).toBe(
+      "/channels/c1",
+    );
+    expect(within(list).getByText("Broken bot")).toBeTruthy();
+    expect(within(list).queryByText("Other bot")).toBeNull();
+    expect(within(list).getByText(zh.channels.status.error)).toBeTruthy();
+    await userEvent
+      .setup()
+      .click(within(section).getByRole("button", { name: zh.agents.channels.connect }));
+    expect(router.push).toHaveBeenCalledWith("/channels/new?agentId=ag1&returnTo=%2Fagents%2Fag1");
+  });
+
+  it("members see the list read-only: no connect button, no links", async () => {
+    stubApi(channelRoutes());
+    await renderEditAgent({ me: as("member"), section: "channels" });
+    const section = await screen.findByRole("region", { name: en.agents.channels.title });
+    await within(section).findByText("Team Slack");
+    expect(within(section).queryByRole("button", { name: en.agents.channels.connect })).toBeNull();
+    expect(within(section).queryByRole("link")).toBeNull();
+  });
+
+  it("/agents/<id>: channels the kernel fails show the section's own error to an admin", async () => {
+    const browser = expectNoFirstPaintFetch();
+    await renderEditAgent({
+      routes: {
+        [`GET ${ORG}/agents/ag1`]: ok({ agent: agent() }),
+        [`GET ${ORG}/models`]: ok(MODELS),
+        [`GET ${ORG}/channels`]: () => json(500, { error: { code: "internal" } }),
+      },
+      section: "channels",
+    });
+    expect(screen.getByText(en.agents.channels.loadFailed)).toBeTruthy();
+    expect(browser).toEqual([]);
+  });
+});
+
+describe("the agent page renders on the server (web-SSR spec §6)", () => {
+  const withConnector = () =>
+    agent({ definition: { tools: [{ kind: "connector", connectorId: "cn1", tools: "all" }] } });
+  const connector = {
+    id: "cn1",
+    name: "Tracker",
+    status: "active",
+    tools: [{ key: "mcp__tracker__find", status: "enabled" }],
+  };
+  const formRoutes = {
+    [`GET ${ORG}/models`]: ok(MODELS),
+    [`GET ${ORG}/connectors`]: ok({ connectors: [connector] }),
+    [`GET ${ORG}/connectors/cn1`]: ok({ connector }),
+    [`GET ${ORG}/skills`]: ok({ skills: [orgSkill("s1", "notes-style")] }),
+  };
+  const template = (name: string) => document.querySelector(`[data-template="${name}"]`);
+
+  it("/agents/<id>?s=tools: the section, the selected connector's tools and the channels are the first paint", async () => {
+    const browser = expectNoFirstPaintFetch();
+    const view = await renderEditAgent({
+      routes: { ...formRoutes, [`GET ${ORG}/agents/ag1`]: ok({ agent: withConnector() }) },
+      readiness: NOT_READY,
+      section: "tools",
+    });
+    expect(screen.getByRole("heading", { level: 1, name: "Helper" })).toBeTruthy();
+    expect(document.querySelector('[data-policy="mcp__tracker__find"]')).not.toBeNull();
+    // another section paints from what the first load prefetched
+    await view.navigate("/agents/ag1?s=channels");
+    expect(screen.getByRole("region", { name: en.agents.channels.title })).toBeTruthy();
+    await view.navigate("/agents/ag1?s=prompt");
+    expect(nameBox().value).toBe("AGENTS.md");
+    await settle();
+    expect(browser).toEqual([]);
+  });
+
+  it("/agents/<id>: someone who may not change it reads only the agent (read-only view)", async () => {
+    const browser = expectNoFirstPaintFetch();
+    const { calls } = await renderEditAgent({
+      routes: { [`GET ${ORG}/agents/ag1`]: ok({ agent: agent({ owner: "someone" }) }) },
+      me: as("member"),
+    });
+    expect(new Set(calls.map((c) => c.url))).toEqual(
+      new Set(["/api/v1/me", `${ORG}/readiness`, `${ORG}/agents/ag1`]),
+    );
+    expect(screen.getByText(en.agents.readOnly)).toBeTruthy();
+    expect(browser).toEqual([]);
+  });
+
+  it("/agents/<id>: an agent the kernel does not find is the not-found state in the shell", async () => {
+    const browser = expectNoFirstPaintFetch();
+    const { calls } = await renderEditAgent({
+      routes: {
+        [`GET ${ORG}/agents/ag1`]: () =>
+          json(404, { error: { code: "agent.not_found", message: "x" } }),
+      },
+    });
+    expect(screen.getByRole("heading", { level: 1, name: en.notFound.title })).toBeTruthy();
+    // nothing of the sections is read for an agent that does not exist
+    expect(calls.map((c) => c.url)).not.toContain(`${ORG}/models`);
+    await settle();
+    expect(browser).toEqual([]);
+  });
+
+  it("/agents/<id>: a first render from the hydrated cache makes no browser read", async () => {
+    const browser = stubApi({});
+    await renderEditAgent({
+      routes: { ...formRoutes, [`GET ${ORG}/agents/ag1`]: ok({ agent: withConnector() }) },
+    });
+    expect(screen.getByRole("textbox", { name: F.nameLabel })).toHaveProperty("value", "Helper");
+    await settle();
+    expect(browser.filter((c) => c.method === "GET")).toEqual([]);
+  });
+
+  it("/agents/<id>?s=tools: an empty cache shows the template's loading state, then the data", async () => {
+    let release: () => void = () => {};
+    const held = new Promise<void>((r) => {
+      release = r;
+    });
+    await renderRouteEmptyCache(`/agents/ag1?s=tools`, {
+      ...agentFormDefaults(),
+      ...formRoutes,
+      [`GET ${ORG}/agents/ag1`]: ok({ agent: withConnector() }),
+      [`GET ${ORG}/models`]: async () => {
+        await held;
+        return json(200, MODELS);
+      },
+    });
+    const page = await vi.waitFor(() => {
+      const el = template("SettingsPage");
+      if (el === null || el.querySelector("[aria-busy='true']") === null)
+        throw new Error("no loading page yet");
+      return el as HTMLElement;
+    });
+    // the open section's static frame, as a placeholder; the head is the agent's already
+    expect(page.querySelectorAll('[data-part="form-section"]').length).toBe(1);
+    expect(screen.getByRole("heading", { level: 1, name: "Helper" })).toBeTruthy();
+    expect(screen.queryByRole("group", { name: F.builtinLabel })).toBeNull();
+    await act(async () => release());
+    expect(await screen.findByRole("group", { name: F.builtinLabel })).toBeTruthy();
+    await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
+  });
+
+  it("saving basics invalidates the agents list and the agent: the open agent is read again", async () => {
+    const browser = stubApi({
+      ...routes(withConnector()),
+      ...formRoutes,
+      [`PATCH ${ORG}/agents/ag1`]: ok({ agent: withConnector(), warnings: [] }),
+    });
+    await renderEditAgent({
+      routes: { ...formRoutes, [`GET ${ORG}/agents/ag1`]: ok({ agent: withConnector() }) },
+    });
+    const user = userEvent.setup();
+    await user.type(screen.getByRole("textbox", { name: F.nameLabel }), " 2");
+    browser.length = 0;
+    await user.click(save());
+    await vi.waitFor(() =>
+      expect(browser.filter((c) => c.method === "GET").map((c) => c.url)).toContain(
+        `${ORG}/agents/ag1`,
+      ),
+    );
+    await settle();
+    // the save stays on the page; the active one is read again: the agent (the agents list is
+    // invalidated too, but nothing on Basics observes it)
+    const reads = browser.filter((c) => c.method === "GET").map((c) => c.url);
+    expect(new Set(reads)).toEqual(new Set([`${ORG}/agents/ag1`]));
+    expect(router.push).not.toHaveBeenCalled();
+  });
+});

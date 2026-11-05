@@ -21,10 +21,12 @@ export default defineConfig({
   use: {
     baseURL: `http://localhost:${PORT}`,
     trace: "retain-on-failure",
+    // the UI language follows Accept-Language when no NEXT_LOCALE cookie is set: baselines are zh
+    locale: "zh-CN",
   },
   webServer: {
     command: `next build && next start -p ${PORT}`,
-    url: `http://localhost:${PORT}/zh/dev/ui`,
+    url: `http://localhost:${PORT}/dev/ui`,
     env: { CAPYBARA_DEV_UI: "1" },
     reuseExistingServer: !process.env.CI,
     timeout: 300_000,

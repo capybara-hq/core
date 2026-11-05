@@ -1,6 +1,8 @@
 import type { ModelInfo, ModelParameter, ParamValue, ProviderModels } from "./agents";
 import { ApiClientError, apiFetch } from "./api";
+import type { LocalizedName } from "./catalog";
 import type { ModelRef } from "./conversations";
+import { modelLabel } from "./extension-label";
 
 /**
  * 模型、价格与用途映射（内核 `admin/admin.controller.ts` 与 `models/purposes.controller.ts`）：
@@ -29,6 +31,7 @@ export interface AdminModelInfo extends ModelInfo {
 /** 后台的一个供应商：供应商名即插件名；列模型失败时 `status: "error"`、`models` 为空，不影响其他供应商。 */
 export interface AdminProvider {
   provider: string;
+  displayName?: LocalizedName | null;
   plugin: string;
   status: "ok" | "error";
   /** 内核给的英文说明（不含上游错误原文）。 */
@@ -130,9 +133,14 @@ export function decodeModel(v: string): ModelRef | null {
 }
 
 /** 映射目标的显示名：`供应商 / 模型显示名`；模型不在列表里时用模型 id。 */
-export function targetName(providers: ProviderModels[], r: ModelRef): string {
-  const m = providers.find((p) => p.provider === r.provider)?.models.find((x) => x.id === r.model);
-  return `${r.provider} / ${m?.displayName ?? r.model}`;
+export function targetName(providers: ProviderModels[], r: ModelRef, locale: "zh" | "en"): string {
+  const p = providers.find((x) => x.provider === r.provider);
+  const m = p?.models.find((x) => x.id === r.model);
+  return modelLabel(
+    { name: r.provider, displayName: p?.displayName },
+    m?.displayName ?? r.model,
+    locale,
+  );
 }
 
 /**

@@ -34,9 +34,29 @@ const InstallSchema = z.object({
   sha256: z.string().regex(/^[0-9a-f]{64}$/),
 });
 
+const SecretEntrySchema = z
+  .object({
+    /** A secret record field some `x-ui.secrets[].path` names. */
+    path: z.string().min(1).max(256),
+    key: z.string().min(1).max(256),
+    /** A string sets the key, `null` removes it. */
+    value: z.string().max(65_536).nullable().optional(),
+    /** Moves the value at this key to `key` first. */
+    renameFrom: z.string().min(1).max(256).optional(),
+  })
+  .strict()
+  .refine((e) => e.value !== undefined || e.renameFrom !== undefined, {
+    message: "an entry needs value or renameFrom",
+  })
+  .refine((e) => e.key !== "__proto__" && e.renameFrom !== "__proto__", {
+    message: "__proto__ is not a valid key",
+  });
+
 const ConfigSchema = z.object({
   /** 字段点路径 → 新值（`null` 清除）。 */
   values: z.record(z.string().min(1).max(256), z.unknown()),
+  /** Single keys of hinted secret records (extension config forms spec §4.3), applied in order. */
+  secretEntries: z.array(SecretEntrySchema).max(200).optional(),
 });
 
 const NpmSchema = z.object({
@@ -104,7 +124,8 @@ export class AdminExtensionsController {
    * (a value from the startup config) does not block the PUT: it saves anyway, the extension stays
    * pending configuration and the startup config has to change. Every replica re-reads after saving:
    * hot fields are replaced in place, other fields reload the extension, and a pending extension
-   * loads (no restart).
+   * loads (no restart). `secretEntries` set, rename or remove single keys of a secret record a
+   * config UI hint draws per item (a path no hint names -> 400 `validation_failed`).
    */
   @Put(":name/config")
   putConfig(
@@ -113,7 +134,13 @@ export class AdminExtensionsController {
     @ZBody(ExtensionConfigBody) body: z.infer<typeof ConfigSchema>,
   ): Promise<DeploymentConfigView> {
     const actor = requireUser(principal);
-    return this.deploymentConfigs.put(name, body.values, actor.account.id, patTokenId(actor));
+    return this.deploymentConfigs.put(
+      name,
+      body.values,
+      actor.account.id,
+      patTokenId(actor),
+      body.secretEntries,
+    );
   }
 
   /**

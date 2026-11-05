@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { needsLegacyScope, normalizeToolKeys } from "../../src/agents/definition.js";
+import {
+  needsLegacyScope,
+  normalizeStoredDefinition,
+  normalizeToolKeys,
+} from "../../src/agents/definition.js";
+import {
+  deriveInstructions,
+  joinInstructionFiles,
+  readInstructionFiles,
+} from "../../src/agents/instruction-files.js";
 import {
   LEGACY_BUILTINS,
   legacyHint,
@@ -232,5 +241,57 @@ describe("normalizeToolKeys (stored definitions and templates)", () => {
     );
     expect(legacyKeySaveText("Read")).toBeNull();
     expect(legacyKeySaveText("mcp__docs__search")).toBeNull();
+  });
+});
+
+describe("prompt files and the stored-definition tool key normalization", () => {
+  // a stored definition from the release candidate: old tool keys and named prompt files
+  const files = [
+    { name: "AGENTS.md", content: "a" },
+    { name: "B.md", content: "b" },
+  ];
+  const stored = {
+    name: "Old",
+    instructions: joinInstructionFiles(files),
+    instructionFiles: files,
+    model: { provider: "model-fake", model: "fake-1" },
+    tools: [
+      { kind: "builtin", name: "ask_user" },
+      { kind: "connector", connectorId: "cn1", tools: "all" },
+    ],
+    toolPolicies: { sandbox_bash: "ask", tracker__find: "deny" },
+    disallowedTools: ["tracker__drop"],
+  };
+  const scope = {
+    connectorSlugs: new Set(["tracker"]),
+    extensionNames: new Set<string>(),
+    connectorSlugById: new Map([["cn1", "tracker"]]),
+  };
+
+  it("normalizing the keys keeps the prompt files and the joined instructions", () => {
+    const d = normalizeStoredDefinition(stored, scope);
+    expect(d.tools).toEqual([
+      { kind: "builtin", name: "AskUserQuestion" },
+      { kind: "connector", connectorId: "cn1", tools: "all" },
+    ]);
+    expect(d.toolPolicies).toEqual({ Bash: "ask", mcp__tracker__find: "deny" });
+    expect((d as { disallowedTools?: unknown }).disallowedTools).toEqual(["mcp__tracker__drop"]);
+    expect(d.instructionFiles).toEqual(files);
+    expect(d.instructions).toBe(stored.instructions);
+    expect(readInstructionFiles(d)).toEqual(files);
+  });
+
+  it("a save re-sending the joined text over a normalized current version keeps the files", () => {
+    const current = normalizeStoredDefinition(stored, scope);
+    const saved = deriveInstructions(
+      {
+        name: "Old",
+        instructions: stored.instructions,
+        model: { provider: "model-fake", model: "fake-1" },
+      } as Parameters<typeof deriveInstructions>[0],
+      current,
+    );
+    expect(saved.instructionFiles).toEqual(files);
+    expect(saved.instructions).toBe(stored.instructions);
   });
 });

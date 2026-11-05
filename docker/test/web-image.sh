@@ -147,20 +147,24 @@ fetch(process.env.U + process.env.P, init).then(
 );'
 }
 
-# wait_web NAME: waits until NAME answers GET /zh/login with 200.
+# wait_web NAME: waits until NAME answers GET /login with 200.
 wait_web() {
   local ok="" out=""
   for _ in $(seq 1 60); do
-    out="$(TARGET="$1" request GET /zh/login 2>/dev/null || echo 0)"
+    out="$(TARGET="$1" request GET /login 2>/dev/null || echo 0)"
     if [ "${out%% *}" = "200" ]; then ok=1; break; fi
     sleep 1
   done
-  [ -n "$ok" ] || fail "GET /zh/login on $1 never returned 200 (last: $out)"
+  [ -n "$ok" ] || fail "GET /login on $1 never returned 200 (last: $out)"
 }
 wait_web "$WEB"
-echo "    GET /zh/login 200"
+echo "    GET /login 200"
+# The image's health check: server.mjs answers /healthz itself, without Next or the kernel.
+out="$(request GET /healthz)"
+[ "$out" = "200 ok" ] || fail "GET /healthz on $WEB: $out"
+echo "    GET /healthz 200"
 # next.config.mjs is loaded at runtime (it sets poweredByHeader: false).
-POWERED="$(docker exec -e "U=http://$WEB:3000/zh/login" "$CLIENT" node -e \
+POWERED="$(docker exec -e "U=http://$WEB:3000/login" "$CLIENT" node -e \
   'fetch(process.env.U).then((r) => console.log(r.headers.get("x-powered-by") ?? "none"))')"
 [ "$POWERED" = "none" ] || fail "x-powered-by is set ($POWERED): next.config.mjs was not applied"
 
