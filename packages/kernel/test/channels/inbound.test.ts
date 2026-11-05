@@ -434,7 +434,10 @@ describe("入站持久化（Ruling A21）", () => {
       payload: { unboundPolicy: "bind" },
     });
     expect(p.statusCode).toBe(200);
-    im.failNext("/send", 403, 1, undefined, "target_gone");
+    // Only the reply to this chat fails: a delivery of an earlier test's model reply may still be
+    // on its way, and an unscoped failure would hit it instead (the reply then goes out, the job
+    // completes and this wait never sees "failed").
+    im.failNext("/send", 403, 1, undefined, "target_gone", undefined, "dm-u-gone");
     expect(im.push(connId, dm("gone-1", "u-gone", "hi"))).toBe(1);
     await waitFor(
       async () => (await queue.getJobState(inboundJobId(connId, "gone-1"))) === "failed",
