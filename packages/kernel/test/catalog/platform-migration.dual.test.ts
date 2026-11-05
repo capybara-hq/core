@@ -17,7 +17,7 @@ import { waitFor } from "../helpers/runs.js";
 /**
  * Dual replica (plugin scope phase 2, Task 5): the platform components migration runs at the
  * start of a worker (`@LockedInterval` with `runOnStart`). Two worker replicas starting together
- * run it once: one row in `platform_migration_runs`, one rename, one inbox notice.
+ * run it once: one row in `platform_migration_runs`, the org copy linked once.
  */
 
 let pgc: TestContainer;
@@ -39,10 +39,10 @@ const manifest = (name: string) =>
   JSON.stringify({ name, description: `Use for ${name}.`, files: [] });
 
 /**
- * An org with plugin `kit` on (a live install) whose platform skill `alpha` is on there, and an
- * org skill `alpha` of the org's own (no provenance): the migration renames it.
+ * An org with plugin `kit` on (a live install) whose platform skill `alpha` is on there, and the
+ * org's copy of `alpha` from that plugin, not linked yet: the migration links it.
  */
-async function seed(db: KernelSchemaDb): Promise<{ orgId: string; skillId: string }> {
+async function seed(db: KernelSchemaDb): Promise<{ skillId: string; platformId: string }> {
   const orgId = randomUUID();
   await db
     .insertInto("orgs")
@@ -59,6 +59,7 @@ async function seed(db: KernelSchemaDb): Promise<{ orgId: string; skillId: strin
       description: "Kit",
       latest_version: "1.0.0",
       policy: "allow",
+      platform_synced_version: "1.0.0",
     })
     .execute();
   await db
@@ -109,6 +110,8 @@ async function seed(db: KernelSchemaDb): Promise<{ orgId: string; skillId: strin
       description: "Our alpha.",
       current_version: 1,
       created_by: null,
+      catalog_item_id: itemId,
+      catalog_version: "1.0.0",
     })
     .execute();
   await db
@@ -119,9 +122,11 @@ async function seed(db: KernelSchemaDb): Promise<{ orgId: string; skillId: strin
       manifest: manifest("alpha"),
       object_prefix: `skills/${skillId}/1/`,
       created_by: null,
+      catalog_item_id: itemId,
+      catalog_version: "1.0.0",
     })
     .execute();
-  return { orgId, skillId };
+  return { skillId, platformId };
 }
 
 describe("platform components migration (dual replica)", () => {
@@ -143,7 +148,7 @@ describe("platform components migration (dual replica)", () => {
       30_000,
     );
     const before = (await db.selectFrom("platform_migration_runs").select("id").execute()).length;
-    const { orgId, skillId } = await seed(db);
+    const { skillId, platformId } = await seed(db);
 
     // the start marker of the base replicas' start would hold back a start within its window
     const probe = new Redis(rdc.url);
@@ -154,17 +159,17 @@ describe("platform components migration (dual replica)", () => {
     await waitFor(async () => {
       const s = await db
         .selectFrom("skills")
-        .select("name")
+        .select("platform_skill_id")
         .where("id", "=", skillId)
         .executeTakeFirstOrThrow();
-      return s.name === "alpha-org";
+      return s.platform_skill_id === platformId;
     }, 30_000);
     // a second start run, had there been one, would have written its row by now
     await new Promise((r) => setTimeout(r, 3_000));
     const runs = await db.selectFrom("platform_migration_runs").select("stats").execute();
     expect(runs).toHaveLength(before + 1);
     expect(
-      await db.selectFrom("org_notices").select("kind").where("org_id", "=", orgId).execute(),
-    ).toEqual([{ kind: "skill_renamed" }]);
+      runs.filter((r) => (r.stats as { skillsLinked?: number }).skillsLinked === 1),
+    ).toHaveLength(1);
   }, 180_000);
 });

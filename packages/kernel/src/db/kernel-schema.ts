@@ -1158,6 +1158,8 @@ export interface CatalogItemsTable {
   scope_version: ColumnType<number, number | undefined, number>;
   /** 0076: orgs outside a `named` item's list see it as requestable (never usable). */
   shown_to_others: ColumnType<boolean, boolean | undefined, boolean>;
+  /** 0081: the version its platform components were last written from (null: never). */
+  platform_synced_version: NullableCol<string>;
 }
 
 /** 0074: the orgs a `named` item is offered to. */

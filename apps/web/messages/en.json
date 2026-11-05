@@ -1118,7 +1118,7 @@
     "skillRenamed": {
       "label": "Skill renamed",
       "title": "Skill {from} was renamed to {to}",
-      "hint": "A platform skill named {from} is now available to this organization, so your organization's own skill {from} was renamed to {to}. Agents that use it keep it under the new name. The platform skill is switched off in this organization; an admin can switch it on on the Skills page.",
+      "hint": "A platform skill named {from} is now available to this organization, so your organization's own skill {from} was renamed to {to}. Agents that use it keep it under the new name. The platform skill is switched off in this organization; an admin can switch it on on the Skills page. Its stored SKILL.md still says {from}: when you upload a new version, set the name in SKILL.md to {to}.",
       "from": "Old name",
       "to": "New name",
       "plugin": "Plugin",

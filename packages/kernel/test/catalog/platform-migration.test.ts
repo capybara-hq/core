@@ -72,6 +72,7 @@ async function dropPlatformRows(): Promise<void> {
   await env.db.deleteFrom("platform_skills").execute();
   await env.db.deleteFrom("platform_agent_templates").execute();
   await env.db.deleteFrom("platform_connector_templates").execute();
+  await env.db.updateTable("catalog_items").set({ platform_synced_version: null }).execute();
 }
 
 const run = (): Promise<PlatformMigrationStats> => env.k.app.get(PlatformMigration).runOnce();
@@ -193,6 +194,12 @@ describe("platform components migration", () => {
     const alpha = await platformSkill("alpha");
     const beta = await platformSkill("beta");
     expect(alpha.catalog_version).toBe("1.0.0");
+    const item = await env.db
+      .selectFrom("catalog_items")
+      .select("platform_synced_version")
+      .where("id", "=", itemId)
+      .executeTakeFirstOrThrow();
+    expect(item.platform_synced_version).toBe("1.0.0");
     expect(await orgSkills(env.orgId)).toEqual([
       expect.objectContaining({ name: "alpha", platform_skill_id: alpha.id, pinned_version: null }),
       expect.objectContaining({ name: "beta", platform_skill_id: beta.id, pinned_version: null }),
@@ -415,5 +422,47 @@ describe("platform components migration", () => {
         .where("org_id", "=", env.orgId)
         .execute(),
     ).toEqual([{ enabled: true }]);
+  });
+
+  it("an item whose platform components were removed is not synced again", async () => {
+    const itemId = await importPlugin(env, await kit("1.0.0"));
+    // the import's sync recorded the version
+    expect(
+      (
+        await env.db
+          .selectFrom("catalog_items")
+          .select("platform_synced_version")
+          .where("id", "=", itemId)
+          .executeTakeFirstOrThrow()
+      ).platform_synced_version,
+    ).toBe("1.0.0");
+    const now = new Date();
+    await env.db.updateTable("platform_skills").set({ deleted_at: now }).execute();
+    await env.db.updateTable("platform_agent_templates").set({ deleted_at: now }).execute();
+    await env.db.updateTable("platform_connector_templates").set({ deleted_at: now }).execute();
+
+    expect(await run()).toEqual({ ...noChange, itemsSynced: [] });
+    const live = await env.db
+      .selectFrom("platform_skills")
+      .select("id")
+      .where("deleted_at", "is", null)
+      .execute();
+    expect(live).toEqual([]);
+  });
+
+  it("a clash that appears after the first run is not renamed (rename is one-shot)", async () => {
+    // the first run (nothing to do) sets the cutoff
+    await run();
+    const itemId = await importPlugin(env, await kit("1.0.0"));
+    await installIn(env.orgId, itemId, "1.0.0");
+    await resetProvenance(env.orgId, "alpha");
+
+    const stats = await run();
+    expect(stats.skillsRenamed).toBe(0);
+    expect((await orgSkills(env.orgId)).map((s) => s.name)).toEqual(["alpha", "beta"]);
+    expect(await env.db.selectFrom("org_notices").select("id").execute()).toEqual([]);
+    expect(await env.db.selectFrom("component_org_switches").select("org_id").execute()).toEqual(
+      [],
+    );
   });
 });

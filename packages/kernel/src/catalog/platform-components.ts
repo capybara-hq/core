@@ -152,7 +152,8 @@ export class PlatformComponents {
    * written (outside the transaction), so a sync that stops midway leaves at most unreferenced
    * files, and running it again is a no-op once it succeeded. `initial` is the confirm that
    * created the item. Components missing from the version are left alone (the platform update
-   * decides what a removal means).
+   * decides what a removal means). On success the item records `version` as
+   * `platform_synced_version`.
    */
   async syncFromVersion(
     itemId: string,
@@ -166,11 +167,13 @@ export class PlatformComponents {
         plan.agentTemplates.length === 0 &&
         plan.connectorTemplates.length === 0
       ) {
+        await this.markSynced(itemId, version);
         return { skills: [], agentTemplates: [], connectorTemplates: [] };
       }
       await this.writeFiles(plan);
       try {
         const r = await this.apply(plan);
+        await this.markSynced(itemId, version);
         this.log.info("platform components synced", {
           itemId,
           version,
@@ -184,6 +187,18 @@ export class PlatformComponents {
         if (!(e instanceof PlanStale) || attempt >= SYNC_ATTEMPTS) throw e;
       }
     }
+  }
+
+  /**
+   * Records that the item's platform components are written from `version`
+   * (`catalog_items.platform_synced_version`): the migration job syncs only items without it.
+   */
+  private async markSynced(itemId: string, version: string): Promise<void> {
+    await this.db
+      .updateTable("catalog_items")
+      .set({ platform_synced_version: version })
+      .where("id", "=", itemId)
+      .execute();
   }
 
   /** Reads the version's components and the live platform rows; keeps only what changed. */

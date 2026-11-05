@@ -2,8 +2,14 @@
 -- (`catalog/platform-migration.ts`, the worker job `platform-components-migrate`), and the org
 -- notices it writes for the org admins' inbox.
 
+-- The catalog version the item's platform components were last written from
+-- (`PlatformComponents.syncFromVersion`); null = never: the migration job writes them once. Removed
+-- components are not brought back, since an item with a version here is never synced by the job.
+ALTER TABLE catalog_items ADD COLUMN IF NOT EXISTS platform_synced_version text;
+
 -- One row per run of the job (at every worker start and once a day): when it ran and what it
--- changed. Nothing reads it to decide anything; every step of the job is idempotent on its own.
+-- changed; rows older than 30 days are pruned, except the first finished run, whose start is the
+-- cutoff of the one-shot rename step (only org skills whose current version predates it).
 CREATE TABLE IF NOT EXISTS platform_migration_runs (
   id uuid PRIMARY KEY,
   started_at timestamptz NOT NULL DEFAULT now(),

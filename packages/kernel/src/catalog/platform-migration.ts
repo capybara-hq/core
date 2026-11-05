@@ -33,6 +33,9 @@ export const PLATFORM_MIGRATION_JOB = "platform-components-migrate";
 /** Besides every worker start, the job runs once a day (a heal: normally nothing to do). */
 const PERIOD_MS = 24 * 3600_000;
 
+/** Finished runs are kept this long (the first one always: it is the rename cutoff). */
+const RUNS_KEPT_MS = 30 * 24 * 3600_000;
+
 /** The run lock's lifetime without renewal (renewed while a run lasts). */
 const LOCK_TTL_MS = 60_000;
 
@@ -106,17 +109,21 @@ export function renamedSkillName(name: string, taken: ReadonlySet<string>): stri
  * The platform components migration (spec §6, §13.5), a worker job (`platform-components-migrate`,
  * `@LockedInterval` with `runOnStart`: once across replicas at every worker start, then daily).
  * Steps, each on the rows that still need it:
- * 1. every live catalog item with no platform rows gets them (`syncFromVersion`) at the highest
+ * 1. every live catalog item never synced (`platform_synced_version` null) gets its platform rows
+ *    (`syncFromVersion`, which records the version) at the highest
  *    version installed in an org (spec §6: "the plugin's version becomes the highest installed
  *    one"), else its latest version;
  * 2. an org skill copy with plugin provenance (on the skill and its current version) links to the
  *    platform skill of its plugin and name; it is pinned to its own current version when its files
  *    differ from the platform version's, or when that platform skill is not on in its org (it keeps
  *    serving what it served: an unpinned link resolves only while the platform skill is on);
- * 3. an org skill of the org's own (no provenance) whose name a platform skill on in its org has
+ * 3. one-shot (spec §5 rule 10: nothing is renamed outside the migration): an org skill of the
+ *    org's own (no provenance) whose current version predates the first finished run (the cutoff;
+ *    the current run's start while none finished) and whose name a platform skill on in its org has
  *    stays the org's: it is renamed (`<name>-org`, `-org-2`, …), the org admins get an inbox notice
  *    (`skill_renamed`) and that platform skill is switched off in the org (a switch the org already
- *    has is kept). Agents select skills by id, so they keep it; the name changes in new runs;
+ *    has is kept). Agents select skills by id, so they keep it; the name changes in new runs. A clash
+ *    found later (a newer version) is logged as a warning and left alone (the org's skill wins);
  * 4. an org agent template links to the platform template of its plugin and name, pinned like
  *    skills (definitions compared as canonical JSON). Templates are never renamed: an org template
  *    always has its plugin's type, which is the platform template's;
@@ -124,7 +131,8 @@ export function renamedSkillName(name: string, taken: ReadonlySet<string>): stri
  *    platform connector template (ruling E2).
  * Plugin switches exist since phase 1 and new platform rows follow the plugin's scope, so nothing
  * else is written. Writes run per org under its row lock and re-check each row; nothing is deleted
- * or overwritten except the renamed skill's name. Each run is recorded in `platform_migration_runs`.
+ * or overwritten except the renamed skill's name. Each run is recorded in `platform_migration_runs`
+ * (rows older than 30 days are pruned, except the first finished run: the rename cutoff).
  */
 @Injectable()
 export class PlatformMigration {
@@ -154,11 +162,22 @@ export class PlatformMigration {
   /** One run of every step; returns what it changed. */
   async runOnce(): Promise<PlatformMigrationStats> {
     const runId = randomUUID();
-    await this.db.insertInto("platform_migration_runs").values({ id: runId }).execute();
+    const started = await this.db
+      .insertInto("platform_migration_runs")
+      .values({ id: runId })
+      .returning("started_at")
+      .executeTakeFirstOrThrow();
+    const first = await this.db
+      .selectFrom("platform_migration_runs")
+      .select("started_at")
+      .where("finished_at", "is not", null)
+      .orderBy("started_at")
+      .limit(1)
+      .executeTakeFirst();
     const stats = emptyStats();
     await this.syncItems(stats);
     await this.linkSkills(stats);
-    await this.renameClashes(stats);
+    await this.renameClashes(stats, first?.started_at ?? started.started_at);
     await this.linkTemplates(stats);
     await this.linkConnectors(stats);
     await this.db
@@ -166,6 +185,7 @@ export class PlatformMigration {
       .set({ finished_at: new Date(), stats: JSON.stringify(stats) })
       .where("id", "=", runId)
       .execute();
+    await this.pruneRuns(first?.started_at);
     const changed =
       stats.itemsSynced.length +
         stats.skillsLinked +
@@ -179,43 +199,27 @@ export class PlatformMigration {
     return stats;
   }
 
-  /** Step 1: the live catalog items without platform rows. */
+  /** Deletes finished runs older than {@link RUNS_KEPT_MS}, never the first one (`first`). */
+  private async pruneRuns(first: Date | undefined): Promise<void> {
+    let q = this.db
+      .deleteFrom("platform_migration_runs")
+      .where("finished_at", "is not", null)
+      .where("started_at", "<", new Date(Date.now() - RUNS_KEPT_MS));
+    if (first !== undefined) q = q.where("started_at", ">", first);
+    await q.execute();
+  }
+
+  /**
+   * Step 1: the live catalog items whose platform components were never written
+   * (`platform_synced_version` null; `syncFromVersion` sets it). An item whose components were
+   * removed since is not synced again.
+   */
   private async syncItems(stats: PlatformMigrationStats): Promise<void> {
     const items = await this.db
       .selectFrom("catalog_items as i")
       .select(["i.id", "i.name", "i.latest_version"])
       .where("i.deleted_at", "is", null)
-      .where((eb) =>
-        eb.and([
-          eb.not(
-            eb.exists(
-              eb
-                .selectFrom("platform_skills as p")
-                .select("p.id")
-                .whereRef("p.plugin_name", "=", "i.name")
-                .where("p.deleted_at", "is", null),
-            ),
-          ),
-          eb.not(
-            eb.exists(
-              eb
-                .selectFrom("platform_agent_templates as p")
-                .select("p.id")
-                .whereRef("p.plugin_name", "=", "i.name")
-                .where("p.deleted_at", "is", null),
-            ),
-          ),
-          eb.not(
-            eb.exists(
-              eb
-                .selectFrom("platform_connector_templates as p")
-                .select("p.id")
-                .whereRef("p.catalog_item_id", "=", "i.id")
-                .where("p.deleted_at", "is", null),
-            ),
-          ),
-        ]),
-      )
+      .where("i.platform_synced_version", "is", null)
       .orderBy("i.name")
       .execute();
     for (const item of items) {
@@ -342,15 +346,25 @@ export class PlatformMigration {
     return done;
   }
 
-  /** Step 3: org skills of the org's own whose name a platform skill on in their org has. */
-  private async renameClashes(stats: PlatformMigrationStats): Promise<void> {
+  /**
+   * Step 3 (one-shot): org skills of the org's own whose name a platform skill on in their org has,
+   * renamed when their current version predates `cutoff`; later ones are only logged.
+   */
+  private async renameClashes(stats: PlatformMigrationStats, cutoff: Date): Promise<void> {
     const rows = await this.db
       .selectFrom("skills as s")
       .innerJoin("skill_versions as v", (j) =>
         j.onRef("v.skill_id", "=", "s.id").onRef("v.version", "=", "s.current_version"),
       )
       .innerJoin("platform_skills as p", "p.name", "s.name")
-      .select(["s.id", "s.org_id", "s.name", "p.id as platform_id", "p.plugin_name"])
+      .select([
+        "s.id",
+        "s.org_id",
+        "s.name",
+        "v.created_at",
+        "p.id as platform_id",
+        "p.plugin_name",
+      ])
       .where("s.scope", "=", "org")
       .where("s.deleted_at", "is", null)
       .where("s.platform_skill_id", "is", null)
@@ -373,6 +387,19 @@ export class PlatformMigration {
         list.filter((r) => on.has(r.platform_id)),
         (r) => r.id,
       )) {
+        const first = pairs[0] as (typeof pairs)[number];
+        if (first.created_at >= cutoff) {
+          this.log.warn(
+            "org skill shares its name with a platform skill; not renamed after the migration",
+            {
+              orgId,
+              skillId,
+              name: first.name,
+              platformSkillIds: pairs.map((r) => r.platform_id),
+            },
+          );
+          continue;
+        }
         clashes.push({
           skillId,
           name: (pairs[0] as (typeof pairs)[number]).name,
