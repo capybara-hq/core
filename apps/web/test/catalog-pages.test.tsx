@@ -437,6 +437,51 @@ describe("/plugins: states and actions follow the scope and the switch", () => {
     expect(screen.queryByRole("tab", { name: new RegExp(p.tabs.market) })).toBeNull();
   });
 
+  it.each(LOCALES)(
+    "org admins: a 市场 row shows the display name, else the name, and the summary in the UI language (%s)",
+    async (locale) => {
+      const p = msgs[locale].plugins;
+      const entry = (over: Record<string, unknown>) => ({
+        sourceId: "official",
+        sourceName: "Official",
+        name: "jina",
+        version: "1.2.0",
+        summary: { en: "Web tools", zh: "网页工具" },
+        displayName: { zh: "吉娜", en: "Jina" },
+        minKernel: null,
+        homepage: null,
+        permissions: null,
+        source: { npm: { package: "@x/jina", version: "1.2.0", integrity: "sha512-x" } },
+        compatible: true,
+        importable: true,
+        adopted: null,
+        newerAvailable: false,
+        contentChanged: false,
+        ...over,
+      });
+      stubApi({
+        [`GET ${ORG}/catalog`]: () => json(200, { items: [orgItem()] }),
+        [`GET ${ORG}/marketplaces/entries`]: () =>
+          json(200, {
+            items: [
+              entry({}),
+              entry({ name: "exa", displayName: null, summary: { en: "Search" } }),
+            ],
+          }),
+      });
+      await renderPlugins({ locale });
+      const user = userEvent.setup();
+      await user.click(await screen.findByRole("tab", { name: new RegExp(p.tabs.market) }));
+      const list = await screen.findByRole("list", { name: p.market.title });
+      const jina = within(list)
+        .getByText(locale === "zh" ? "吉娜" : "Jina")
+        .closest("li") as HTMLElement;
+      expect(within(jina).getByText(locale === "zh" ? "网页工具" : "Web tools")).toBeTruthy();
+      const exa = within(list).getByText("exa").closest("li") as HTMLElement;
+      expect(within(exa).getByText("Search")).toBeTruthy();
+    },
+  );
+
   it("org admins: the 市场 tab has one row per plugin, the latest version; 其他版本 requests an older one", async () => {
     const p = en.plugins;
     const entry = (version: string) => ({
@@ -1586,6 +1631,37 @@ describe("/admin/plugins and marketplace entries", () => {
     );
     expect(bodyOf(calls.filter((x) => x.method === "POST").at(-1))).toEqual({ version: "2.0.0" });
   });
+
+  it.each(LOCALES)(
+    "entries: a row shows the entry's display name, else its name, and the summary in the UI language (%s)",
+    async (locale) => {
+      stubApi({
+        "GET /api/v1/admin/marketplaces": () => json(200, SOURCES),
+        "GET /api/v1/admin/marketplaces/entries": () =>
+          json(200, {
+            items: [
+              entry({
+                displayName: { zh: "甲猫", en: "Cat A" },
+                summary: { en: "Cat tools", zh: "猫工具" },
+              }),
+              entry({ name: "dog-b", displayName: null, summary: { en: "Dog tools" } }),
+            ],
+            truncated: false,
+          }),
+      });
+      await renderRouteWithCache(entriesPath(), lastStubRoutes(), { locale });
+      const list = await screen.findByRole("list", {
+        name: msgs[locale].catalog.admin.entries.title,
+      });
+      const cat = within(list)
+        .getByText(locale === "zh" ? "甲猫" : "Cat A")
+        .closest("li") as HTMLElement;
+      expect(within(cat).getByText(locale === "zh" ? "猫工具" : "Cat tools")).toBeTruthy();
+      const dog = within(list).getByText("dog-b").closest("li") as HTMLElement;
+      // no zh summary: the English one in both languages
+      expect(within(dog).getByText("Dog tools")).toBeTruthy();
+    },
+  );
 
   it("entries: one row per plugin with its latest version; an older import can be updated; 其他版本 imports another version", async () => {
     const c = en.catalog.admin.entries;

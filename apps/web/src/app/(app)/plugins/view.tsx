@@ -286,12 +286,13 @@ function Market({
       {entries.map((plugin) => {
         const e = plugin.latest;
         const state = stateOf(plugin);
+        const name = displayNameOf(e, locale);
         return (
           <ObjectRow
             key={plugin.key}
-            mark={{ text: e.name }}
-            name={e.name}
-            mono
+            mark={{ text: name }}
+            name={name}
+            mono={e.displayName === null}
             description={summaryOf(e)}
             meta={[e.sourceName, ...(e.version !== null ? [versionLabel(e.version)] : [])]}
             {...(state !== undefined ? { state } : {})}

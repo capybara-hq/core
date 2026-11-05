@@ -20,6 +20,7 @@ import { useRouter } from "../../../../../i18n/navigation";
 import { issueLines } from "../../../../../lib/api";
 import {
   compareSemver,
+  displayNameOf,
   entryHost,
   groupMarketplaceEntries,
   importMarketplaceEntry,
@@ -333,15 +334,16 @@ function Catalog({ initial }: { initial: { sourceId: string; q: string } }) {
       {rows.map((plugin) => {
         const e = plugin.latest;
         const action = actionOf(e);
+        const name = displayNameOf(e, locale);
         return (
           <ObjectRow
             key={plugin.key}
             mark={{
-              text: e.name,
+              text: name,
               ...(!e.importable ? { tone: "warn" as const } : {}),
             }}
-            name={e.name}
-            mono
+            name={name}
+            mono={e.displayName === null}
             chips={[
               // 有新版本 is the state's 可更新到; the changed content is said only here
               ...(e.contentChanged ? [{ label: td("contentChanged"), tone: "warn" as const }] : []),

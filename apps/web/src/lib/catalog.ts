@@ -519,6 +519,8 @@ export interface MarketplaceEntry {
   name: string;
   version: string | null;
   summary: { en: string; zh?: string };
+  /** The entry's display name (from the plugin's plugin.json); null without one: show the name. */
+  displayName: LocalizedName | null;
   minKernel: string | null;
   homepage: string | null;
   permissions: { keys: string[]; sensitive: string[] } | null;
