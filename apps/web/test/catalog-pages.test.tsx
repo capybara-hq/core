@@ -1067,6 +1067,8 @@ describe("/admin/plugins and marketplace entries", () => {
     latestMarketplaceVersion: "2.0.0",
     newerInMarketplace: true,
     contentChanged: false,
+    componentCounts: { extension: 0, skills: 1, connectorTemplates: 0, agentTemplates: 0 },
+    sourceFormat: "capybara",
     updatedAt: "2026-10-22T00:00:00.000Z",
     ...over,
   });
@@ -2030,6 +2032,13 @@ describe("phase A1: git marketplaces, source detail and provenance", () => {
               latestMarketplaceVersion: "1.0.0",
               newerInMarketplace: false,
               contentChanged: true,
+              componentCounts: {
+                extension: 0,
+                skills: 1,
+                connectorTemplates: 0,
+                agentTemplates: 0,
+              },
+              sourceFormat: "capybara",
               updatedAt: "2026-10-22T00:00:00.000Z",
             },
           ],
@@ -2883,6 +2892,8 @@ describe("phase B: Claude Code plugins in the catalog and marketplaces", () => {
         latestMarketplaceVersion: null,
         newerInMarketplace: false,
         contentChanged: false,
+        componentCounts: { extension: 0, skills: 1, connectorTemplates: 0, agentTemplates: 0 },
+        sourceFormat: "capybara",
         updatedAt: "2026-10-22T00:00:00.000Z",
         packageName: null,
         deletedAt: null,
@@ -3252,6 +3263,8 @@ describe("/admin/plugins: installed, detail with scope, pending", () => {
     latestMarketplaceVersion: "1.3.0",
     newerInMarketplace: true,
     contentChanged: false,
+    componentCounts: { extension: 0, skills: 1, connectorTemplates: 0, agentTemplates: 0 },
+    sourceFormat: "capybara",
     updatedAt: "2026-10-22T00:00:00.000Z",
     ...over,
   });
@@ -3333,7 +3346,22 @@ describe("/admin/plugins: installed, detail with scope, pending", () => {
   });
   const listRoutes = {
     "GET /api/v1/admin/catalog/items": () =>
-      json(200, { items: [item(), BUILTIN, PENDING], nextOffset: null }),
+      json(200, {
+        items: [
+          item({
+            componentCounts: { extension: 1, skills: 2, connectorTemplates: 0, agentTemplates: 1 },
+          }),
+          BUILTIN,
+          PENDING,
+          item({
+            id: "44444444-4444-4444-8444-444444444444",
+            name: "superpowers",
+            sourceFormat: "claude-code",
+            newerInMarketplace: false,
+          }),
+        ],
+        nextOffset: null,
+      }),
     "GET /api/v1/admin/catalog/items?pending=true": () =>
       json(200, { items: [PENDING], nextOffset: null }),
     "GET /api/v1/admin/catalog/requests": () => json(200, { requests: [REQUEST] }),
@@ -3349,7 +3377,7 @@ describe("/admin/plugins: installed, detail with scope, pending", () => {
       screen.getByRole("link", { name: new RegExp(`^${escapeRe(name)}`) });
     expect(tab(P.tabs.installed).getAttribute("href")).toBe("/admin/plugins");
     expect(tab(P.tabs.installed).getAttribute("aria-current")).toBeTruthy();
-    expect(tab(P.tabs.installed).textContent).toMatch(/3/);
+    expect(tab(P.tabs.installed).textContent).toMatch(/4/);
     expect(tab(P.tabs.market).getAttribute("href")).toBe("/admin/plugins/market");
     // pending items + pending requests
     expect(tab(P.tabs.pending).getAttribute("href")).toBe("/admin/plugins/pending");
@@ -3366,6 +3394,14 @@ describe("/admin/plugins: installed, detail with scope, pending", () => {
     expect(within(row("openai-compatible")).getByText(P.state.running)).toBeTruthy();
     expect(within(row("jina")).getByText(fill(P.state.update, { version: "v1.3.0" }))).toBeTruthy();
     expect(within(row("jina")).getByText(/3 orgs using it/)).toBeTruthy();
+    // meta: version · source · components · scope · orgs using it
+    expect(
+      within(row("jina")).getByText(
+        /^v1\.2\.0 · .+ · 1 extension · 2 skills · 1 agent template · Organizations choose · 3 orgs using it$/,
+      ),
+    ).toBeTruthy();
+    expect(within(row("superpowers")).getByText(P.chips.claudeCode)).toBeTruthy();
+    expect(within(row("jina")).queryByText(P.chips.claudeCode)).toBeNull();
     expect(within(row("object-store-s3")).getByText(P.state.pending)).toBeTruthy();
     expect(
       within(row("object-store-s3")).getByRole("link", { name: P.rowConfirm }).getAttribute("href"),
@@ -3462,6 +3498,107 @@ describe("/admin/plugins: installed, detail with scope, pending", () => {
     });
   });
 
+  it("detail: a stale 设置范围 (409 plugin.scope_stale) previews again and the second confirm sends the new hash", async () => {
+    params.current = { itemId: ID };
+    let n = 0;
+    const calls = stubApi({
+      ...listRoutes,
+      [`GET /api/v1/admin/catalog/items/${ID}`]: () => json(200, detail(item())),
+      [`POST /api/v1/admin/catalog/items/${ID}/scope/preview`]: () => {
+        n += 1;
+        return json(200, {
+          affected: n === 1 ? [] : [{ orgId: "o1", orgName: "Acme", agents: [] }],
+          needsConfig: [],
+          scopeHash: `sh${n}`,
+        });
+      },
+      [`PUT /api/v1/admin/catalog/items/${ID}/scope`]: (c) =>
+        (bodyOf(c) as { scopeHash: string }).scopeHash === "sh1"
+          ? json(409, { error: { code: "plugin.scope_stale", message: "stale" } })
+          : json(200, item({ scope: "all" })),
+    });
+    await renderRouteWithCache(adminItemPath(), lastStubRoutes());
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: P.detail.actions.scope }));
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("radio", { name: new RegExp(en.catalog.scope.all) }));
+    await user.click(within(dialog).getByRole("button", { name: P.scopeDialog.next }));
+    await user.click(await within(dialog).findByRole("button", { name: P.scopeDialog.confirm }));
+    expect(await within(dialog).findByText(P.scopeDialog.stale)).toBeTruthy();
+    expect(await within(dialog).findByText("Acme")).toBeTruthy();
+    await user.click(within(dialog).getByRole("button", { name: P.scopeDialog.confirm }));
+    await waitFor(() =>
+      expect(
+        calls.filter((c) => c.method === "PUT").map((c) => bodyOf(c) as { scopeHash: string }),
+      ).toEqual([
+        { scope: "all", scopeHash: "sh1" },
+        { scope: "all", scopeHash: "sh2" },
+      ]),
+    );
+  });
+
+  it("detail: a stale 停用 (409 plugin.scope_stale) previews again and the second confirm sends the new hash", async () => {
+    params.current = { itemId: ID };
+    let n = 0;
+    const calls = stubApi({
+      ...listRoutes,
+      [`GET /api/v1/admin/catalog/items/${ID}`]: () => json(200, detail(item())),
+      [`POST /api/v1/admin/catalog/items/${ID}/scope/preview`]: () => {
+        n += 1;
+        return json(200, {
+          affected: n === 1 ? [] : [{ orgId: "o1", orgName: "Acme", agents: [] }],
+          needsConfig: [],
+          scopeHash: `dh${n}`,
+        });
+      },
+      [`PUT /api/v1/admin/catalog/items/${ID}/disabled`]: (c) =>
+        (bodyOf(c) as { scopeHash: string }).scopeHash === "dh1"
+          ? json(409, { error: { code: "plugin.scope_stale", message: "stale" } })
+          : json(200, item({ disabled: true })),
+    });
+    await renderRouteWithCache(adminItemPath(), lastStubRoutes());
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: P.detail.actions.disable }));
+    const dialog = await screen.findByRole("dialog");
+    const confirm = () => within(dialog).getByRole("button", { name: P.disableDialog.confirm });
+    await waitFor(() => expect((confirm() as HTMLButtonElement).disabled).toBe(false));
+    await user.click(confirm());
+    expect(await within(dialog).findByText(P.scopeDialog.stale)).toBeTruthy();
+    expect(await within(dialog).findByText("Acme")).toBeTruthy();
+    await user.click(confirm());
+    await waitFor(() =>
+      expect(
+        calls.filter((c) => c.method === "PUT").map((c) => bodyOf(c) as { scopeHash: string }),
+      ).toEqual([
+        { disabled: true, scopeHash: "dh1" },
+        { disabled: true, scopeHash: "dh2" },
+      ]),
+    );
+  });
+
+  it("detail: when only 对其他组织显示 changes the scope is not sent again", async () => {
+    params.current = { itemId: ID };
+    const named = item({ scope: "named", scopeOrgs: ["o2"], shownToOthers: true });
+    const calls = stubApi({
+      ...listRoutes,
+      [`GET /api/v1/admin/catalog/items/${ID}`]: () => json(200, detail(named)),
+      [`POST /api/v1/admin/catalog/items/${ID}/scope/preview`]: () =>
+        json(200, { affected: [], needsConfig: [], scopeHash: "s0" }),
+      [`PUT /api/v1/admin/catalog/items/${ID}/shown`]: () =>
+        json(200, { ...named, shownToOthers: false }),
+    });
+    await renderRouteWithCache(adminItemPath(), lastStubRoutes());
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: P.detail.actions.scope }));
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("switch", { name: P.scopeDialog.shown }));
+    await user.click(within(dialog).getByRole("button", { name: P.scopeDialog.next }));
+    await user.click(await within(dialog).findByRole("button", { name: P.scopeDialog.confirm }));
+    await waitFor(() => expect(calls.some((c) => c.url.endsWith("/shown"))).toBe(true));
+    expect(calls.some((c) => c.method === "PUT" && c.url.endsWith("/scope"))).toBe(false);
+    expect(bodyOf(calls.find((c) => c.url.endsWith("/shown")))).toEqual({ shownToOthers: false });
+  });
+
   it("pending: confirming permissions sends the permissionsHash; rejecting a request sends the reason", async () => {
     const calls = stubApi({
       ...listRoutes,
@@ -3528,7 +3665,12 @@ describe("/admin/plugins: installed, detail with scope, pending", () => {
       "POST /api/v1/admin/catalog/imports/st8/confirm": () =>
         json(200, { item: item({ name: "crm" }), deploy: null }),
     });
-    await renderRouteWithCache(importPath(), lastStubRoutes());
+    const { client } = await renderRouteWithCache(importPath(), lastStubRoutes());
+    // the head's pending list as the nav would have it
+    await client.prefetchQuery({
+      queryKey: ["deployment", "catalogPending"],
+      queryFn: () => ({ items: [], nextOffset: null }),
+    });
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: en.admin.extensions.wizard.next }));
     expect(screen.getByText(P.review.olderThanDeployed)).toBeTruthy();
@@ -3541,6 +3683,14 @@ describe("/admin/plugins: installed, detail with scope, pending", () => {
     expect(bodyOf(calls.find((c) => c.url.endsWith("/st8/confirm")))).toMatchObject({
       scope: "named",
       orgs: ["o2"],
+    });
+    // the request it answered leaves 待确认 (and the nav count): both lists are invalidated
+    await waitFor(() => {
+      const after = calls.slice(calls.findIndex((c) => c.url.endsWith("/st8/confirm")));
+      // read on this page: read again
+      expect(after.map((c) => c.url)).toContain("/api/v1/admin/catalog/requests?status=pending");
+      // not shown here: marked stale
+      expect(client.getQueryState(["deployment", "catalogPending"])?.isInvalidated).toBe(true);
     });
   });
 

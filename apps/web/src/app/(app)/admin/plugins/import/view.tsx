@@ -56,11 +56,11 @@ import {
   uploadPluginPackage,
 } from "../../../../../lib/catalog";
 import {
-  catalogItemsQuery,
   deploymentRequestsQuery,
   extensionChangeKeys,
   stagedImportQuery,
 } from "../../../../../lib/query/admin";
+import { pluginScopeChangeKeys } from "../../../../../lib/query/catalog";
 import { retryOnMountOf } from "../../../../../lib/query/client";
 import { keys } from "../../../../../lib/query/keys";
 import { useAppMutation } from "../../../../../lib/query/mutation";
@@ -236,17 +236,16 @@ function PluginImportWizard({ initial, orgId }: { initial: StagedImport; orgId: 
     invalidates: () => [],
   });
   // A confirmed import is a new catalog item or version (and maybe an extension on the
-  // deployment); the staged import is gone.
+  // deployment), it may answer an org's request (待确认 and the nav count); the staged import is
+  // gone.
   const confirm = useAppMutation({
     fn: (v: { stagingId: string; body: Parameters<typeof confirmPluginImport>[1] }) =>
       confirmPluginImport(v.stagingId, v.body),
     invalidates: () => [
-      catalogItemsQuery().queryKey,
-      keys.deployment().catalogItemsAll(),
+      ...pluginScopeChangeKeys(orgId),
+      keys.deployment().catalogRequests(),
       keys.deployment().marketplaceEntriesAll(),
-      keys.deployment().extensions(),
       ...extensionChangeKeys(orgId),
-      ...(orgId === null ? [] : [keys.org(orgId).catalog(), keys.org(orgId).catalogItemsAll()]),
     ],
     onSuccess: (_, v) => qc.removeQueries({ queryKey: stagedImportQuery(v.stagingId).queryKey }),
   });
@@ -301,11 +300,16 @@ function PluginImportWizard({ initial, orgId }: { initial: StagedImport; orgId: 
   const review = prepared?.review ?? null;
   // The pending requests, once there is a review (a section: none while it loads or failed)
   const rq = deploymentRequestsQuery();
-  const requests = useQuery({
+  const requestsRead = useQuery({
     ...rq,
     enabled: prepared !== null,
     retryOnMount: retryOnMountOf(rq.queryKey),
-  }).data?.requests;
+  });
+  const requests = requestsRead.data?.requests;
+  // Until the requests are read the default is not known: the confirm waits for them (a failed read
+  // sends no scope, so the kernel's own default applies)
+  const requestsPending = prepared !== null && requests === undefined && !requestsRead.isError;
+  const sendScope = scopeChoice !== undefined || requests !== undefined;
   // A staging prepared by approving an org's `import` request offers the plugin to that org by
   // default (the kernel's default too, spec §5.1 rule 3); any other import: 组织自选.
   const linked =
@@ -334,8 +338,8 @@ function PluginImportWizard({ initial, orgId }: { initial: StagedImport; orgId: 
         stagingId: prepared.stagingId,
         body: {
           reviewHash: prepared.review.reviewHash,
-          scope: target.scope,
-          ...(target.scope === "named" && { orgs: target.orgs }),
+          ...(sendScope && { scope: target.scope }),
+          ...(sendScope && target.scope === "named" && { orgs: target.orgs }),
           // only a changed choice: omitted keeps the plugin's own suggestion
           ...(!sameNames(pinned, suggestedPinned(prepared.review)) && {
             pinnedSuggestions: prepared.review.skills
@@ -391,7 +395,12 @@ function PluginImportWizard({ initial, orgId }: { initial: StagedImport; orgId: 
               label: t("confirm"),
               onSelect: () => void submit(),
               loading: submitting,
-              disabled: submitting || result !== null || scopeInvalid || (sensitive && !ack),
+              disabled:
+                submitting ||
+                result !== null ||
+                requestsPending ||
+                scopeInvalid ||
+                (sensitive && !ack),
             },
           };
 

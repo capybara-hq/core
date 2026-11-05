@@ -22,6 +22,7 @@ import type {
   CatalogItemView,
   CatalogPolicy,
   CatalogVersionSource,
+  ComponentCounts,
   PermissionsMismatch,
   SourceDetail,
 } from "./catalog.service.js";
@@ -738,7 +739,14 @@ export function itemView(
     marketplace_id?: string | null;
     updated_at: Date;
   },
-  versions: { version: string; source: string; imported_at?: Date }[],
+  versions: {
+    version: string;
+    source: string;
+    imported_at?: Date;
+    /** The version's plugin.json (counted for `componentCounts`; absent: nothing counted). */
+    manifest?: unknown;
+    source_format?: SourceFormat;
+  }[],
   installs = 0,
   marketplace: MarketplaceStatus = { latest: null, contentChanged: false },
   facts: ItemScopeFacts = NO_FACTS,
@@ -751,6 +759,7 @@ export function itemView(
   );
   const top = sorted[0]?.version ?? i.latest_version;
   const latestMarketplaceVersion = marketplace.latest;
+  const current = versions.find((v) => v.version === i.latest_version);
   return {
     id: i.id,
     name: i.name,
@@ -769,12 +778,24 @@ export function itemView(
     latestVersion: i.latest_version,
     versions: sorted.map((v) => v.version),
     installs,
-    source: versions.find((v) => v.version === i.latest_version)?.source ?? "file",
+    source: current?.source ?? "file",
     marketplaceId: i.marketplace_id ?? null,
     latestMarketplaceVersion,
     newerInMarketplace:
       latestMarketplaceVersion !== null && compareVersions(latestMarketplaceVersion, top) > 0,
     contentChanged: marketplace.contentChanged,
+    componentCounts: componentCountsOf(current?.manifest as PluginManifest | undefined),
+    sourceFormat: current?.source_format ?? "capybara",
     updatedAt: i.updated_at.toISOString(),
+  };
+}
+
+/** The components a version's plugin.json brings, by kind (none without a manifest). */
+export function componentCountsOf(m: PluginManifest | undefined): ComponentCounts {
+  return {
+    extension: m?.extension === undefined ? 0 : 1,
+    skills: m?.skills?.length ?? 0,
+    connectorTemplates: m?.connectorTemplates?.length ?? 0,
+    agentTemplates: m?.agents?.length ?? 0,
   };
 }

@@ -36,7 +36,7 @@ import { useAppMutation } from "../../../../../lib/query/mutation";
 import { useAdmin } from "../../../../../lib/query/workspace";
 import { useErrorMessage } from "../../../../../lib/use-error-message";
 
-/** 搜索框的防抖时长（浏览器里的计时，不涉及服务端状态）。 */
+/** The search box debounce (a browser timer; no server state involved). */
 const SEARCH_DEBOUNCE_MS = 300;
 
 type Notice = { message: string; extra: string[] };
@@ -56,8 +56,8 @@ const keyOf = (e: MarketplaceEntry) => `${e.sourceId}/${e.name}/${e.version ?? "
  * menu. The action "Import <version>" (or, when the content changed, "Import the changed content")
  * downloads, verifies and stages the plugin, then opens the import review
  * (`/admin/plugins/import?staging=<id>`); an imported entry's action opens its plugin. The
- * search sits in the page head (the 插件 head with its tabs and counts); the marketplaces become tabs above the list when there is more
- * than one. Errors such as `marketplace.integrity_mismatch` are a fail callout (with the kernel's
+ * search sits in the page head (the 插件 head with its tabs and counts); the marketplaces become
+ * tabs above the list when there is more than one. Errors such as `marketplace.integrity_mismatch` are a fail callout (with the kernel's
  * line naming the host for network and git codes); a warn callout when the entries are truncated.
  * From the query cache (the layout prefetched the address's entries and the marketplaces on a
  * first load): each source and search is its own entry (one filter's rows never show under

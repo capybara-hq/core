@@ -105,6 +105,8 @@ const catalogItem = (over: Record<string, unknown> = {}) => ({
   latestMarketplaceVersion: "1.0.0",
   newerInMarketplace: false,
   contentChanged: false,
+  componentCounts: { extension: 0, skills: 1, connectorTemplates: 0, agentTemplates: 0 },
+  sourceFormat: "capybara",
   updatedAt: T,
   ...over,
 });

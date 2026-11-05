@@ -125,6 +125,19 @@ async function agentUsingSkill(orgId: string, itemId: string, name: string): Pro
 }
 
 describe("plugin scope", { timeout: 90_000 }, () => {
+  it("the item view counts the latest version's components and names its format (list and detail)", async () => {
+    const itemId = await importSkill(env);
+    const counts = { extension: 0, skills: 1, connectorTemplates: 0, agentTemplates: 0 };
+    expect(await itemOf(itemId)).toMatchObject({
+      componentCounts: counts,
+      sourceFormat: "capybara",
+    });
+    const list = await env.root({ method: "GET", url: base });
+    expect(list.statusCode, list.body).toBe(200);
+    const row = (list.json() as { items: { id: string }[] }).items.find((i) => i.id === itemId);
+    expect(row).toMatchObject({ componentCounts: counts, sourceFormat: "capybara" });
+  });
+
   it("all -> optional: the preview lists the orgs with installs and the agent using the skill", async () => {
     const itemId = await importSkill(env);
     expect(await itemOf(itemId)).toMatchObject({

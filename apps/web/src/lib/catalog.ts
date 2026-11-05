@@ -68,7 +68,19 @@ export interface CatalogItem {
    * (another commit or integrity): "content changed at the same version".
    */
   contentChanged: boolean;
+  /** What the latest version brings, by kind (read-only). */
+  componentCounts: ComponentCounts;
+  /** The format the latest version was read from. */
+  sourceFormat: PluginSourceFormat;
   updatedAt: string;
+}
+
+/** The components of a plugin version, by kind (kernel `ComponentCounts`). */
+export interface ComponentCounts {
+  extension: 0 | 1;
+  skills: number;
+  connectorTemplates: number;
+  agentTemplates: number;
 }
 
 /** The static manifest of a plugin's extension (SDK `StaticExtensionManifest`, the parts shown). */

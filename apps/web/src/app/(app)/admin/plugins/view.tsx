@@ -7,7 +7,12 @@ import { useState } from "react";
 import { useSourceLabel } from "../../../../components/CatalogParts";
 import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { NoAccess } from "../../../../components/NoAccess";
-import { pluginState, usePluginsHead, useScopeLabel } from "../../../../components/PluginsHead";
+import {
+  pluginState,
+  useComponentsLabel,
+  usePluginsHead,
+  useScopeLabel,
+} from "../../../../components/PluginsHead";
 import { usePagePath } from "../../../../components/shell/path";
 import { type CatalogItem, displayNameOf } from "../../../../lib/catalog";
 import { catalogItemsQuery, marketplacesQuery } from "../../../../lib/query/admin";
@@ -61,6 +66,7 @@ function AdminPlugins({ all }: { all: CatalogItem[] }) {
   const marketplaces = useQuery({ ...mq, retryOnMount: retryOnMountOf(mq.queryKey) }).data?.items;
   const sourceLabel = useSourceLabel(marketplaces ?? []);
   const scopeLabel = useScopeLabel();
+  const componentsLabel = useComponentsLabel();
   const [q, setQ] = useState("");
   const needle = q.trim().toLowerCase();
   const rows = all.filter(
@@ -106,12 +112,14 @@ function AdminPlugins({ all }: { all: CatalogItem[] }) {
             href={`/admin/plugins/${encodeURIComponent(i.id)}`}
             chips={[
               ...(i.builtin ? [{ label: t("chips.builtin") }] : []),
+              ...(i.sourceFormat === "claude-code" ? [{ label: t("chips.claudeCode") }] : []),
               ...(i.contentChanged ? [{ label: td("contentChanged"), tone: "warn" as const }] : []),
             ]}
             description={i.description}
             meta={[
               versionLabel(i.latestVersion),
               sourceLabel(i),
+              componentsLabel(i.componentCounts),
               scopeLabel(i),
               t("meta.orgsUsing", { n: i.enabledOrgs }),
             ]}

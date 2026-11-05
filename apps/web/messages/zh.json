@@ -3128,7 +3128,14 @@
       },
       "meta": {
         "orgsUsing": "{n} 个组织在用",
-        "named": "指定：{orgs}"
+        "named": "指定：{orgs}",
+        "components": {
+          "extension": "{n} 个扩展",
+          "skills": "{n} 个技能",
+          "connectorTemplates": "{n} 个连接器模板",
+          "agentTemplates": "{n} 个 Agent 模板",
+          "none": "没有组件"
+        }
       },
       "state": {
         "running": "运行中",
@@ -3153,7 +3160,8 @@
         "back": "上一步",
         "cancel": "取消",
         "confirm": "确认",
-        "saved": "已设置 {name} 的范围"
+        "saved": "已设置 {name} 的范围",
+        "stale": "影响已变化，请再看一遍后确认。"
       },
       "impact": {
         "none": "没有组织会失去访问。",

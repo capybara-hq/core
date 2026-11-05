@@ -3140,7 +3140,14 @@
       },
       "meta": {
         "orgsUsing": "{n, plural, one {# org using it} other {# orgs using it}}",
-        "named": "Selected: {orgs}"
+        "named": "Selected: {orgs}",
+        "components": {
+          "extension": "{n, plural, one {# extension} other {# extensions}}",
+          "skills": "{n, plural, one {# skill} other {# skills}}",
+          "connectorTemplates": "{n, plural, one {# connector template} other {# connector templates}}",
+          "agentTemplates": "{n, plural, one {# agent template} other {# agent templates}}",
+          "none": "No components"
+        }
       },
       "state": {
         "running": "Running",
@@ -3165,7 +3172,8 @@
         "back": "Back",
         "cancel": "Cancel",
         "confirm": "Confirm",
-        "saved": "Scope of {name} saved"
+        "saved": "Scope of {name} saved",
+        "stale": "The impact changed; review it again, then confirm."
       },
       "impact": {
         "none": "No organization loses access.",

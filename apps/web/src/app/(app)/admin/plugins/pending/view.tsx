@@ -19,7 +19,7 @@ import { useState } from "react";
 import { ErrorFrame } from "../../../../../components/ErrorFrame";
 import { FormError } from "../../../../../components/form-error";
 import { NoAccess } from "../../../../../components/NoAccess";
-import { usePluginsHead } from "../../../../../components/PluginsHead";
+import { useComponentsLabel, usePluginsHead } from "../../../../../components/PluginsHead";
 import { usePagePath } from "../../../../../components/shell/path";
 import { useRouter } from "../../../../../i18n/navigation";
 import {
@@ -103,6 +103,7 @@ function Pending({
   const head = usePluginsHead("pending");
   const t = useTranslations("catalog.admin.pending");
   const ta = useTranslations("catalog.admin");
+  const componentsLabel = useComponentsLabel();
   const locale = useLocale();
   const toast = useToast();
   const router = useRouter();
@@ -160,7 +161,7 @@ function Pending({
               href={`/admin/plugins/${encodeURIComponent(i.id)}`}
               chips={i.builtin ? [{ label: ta("chips.builtin") }] : []}
               description={i.builtin ? t("builtinDescription") : t("permissionsDescription")}
-              meta={[versionLabel(i.latestVersion), i.name]}
+              meta={[versionLabel(i.latestVersion), i.name, componentsLabel(i.componentCounts)]}
               state={{ label: t("waiting"), tone: "warn" }}
               action={{ label: t("review"), onSelect: () => setReviewing(i) }}
             />

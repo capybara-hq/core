@@ -1630,7 +1630,7 @@ export class PluginImport {
       .executeTakeFirstOrThrow();
     const versions = await this.db
       .selectFrom("catalog_item_versions")
-      .select(["version", "source", "imported_at", "extension_sha256"])
+      .select(["version", "source", "imported_at", "extension_sha256", "manifest", "source_format"])
       .where("item_id", "=", itemId)
       .execute();
     const facts = await itemScopeFacts(

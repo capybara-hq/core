@@ -13,8 +13,9 @@ import {
 } from "@capybara-hq/design";
 import { useQuery } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { AdminOrg } from "../lib/admin";
+import { ApiClientError } from "../lib/api";
 import {
   type CatalogItem,
   displayNameOf,
@@ -22,7 +23,6 @@ import {
   type PluginScope,
   previewScope,
   type ScopePreview,
-  type ScopeTarget,
   setDisabled,
   setScope,
   setShownToOthers,
@@ -135,6 +135,9 @@ export function ScopeImpact({ preview }: { preview: ScopePreview }) {
   );
 }
 
+/** A scope change (`orgs` only with 指定组织). */
+type ScopeChange = { scope: PluginScope; orgs?: string[] };
+
 const sameSet = (a: string[], b: string[]) =>
   a.length === b.length && a.every((x) => b.includes(x));
 
@@ -163,30 +166,32 @@ export function PluginScopeDialog({
   const [shown, setShown] = useState(item.shownToOthers);
   const [preview, setPreview] = useState<ScopePreview | null>(null);
   const [error, setError] = useState<string>();
-  const target = (): ScopeTarget => (scope === "named" ? { scope, orgs } : { scope });
+  const [notice, setNotice] = useState<string>();
+  /** The scope part is saved (a retry after a failed 对其他组织显示 sends only that). */
+  const [scopeSaved, setScopeSaved] = useState(false);
+  const target = (): ScopeChange => (scope === "named" ? { scope, orgs } : { scope });
   const previewIt = useAppMutation({
-    fn: (body: ScopeTarget) => previewScope(item.id, body),
+    fn: (body: ScopeChange) => previewScope(item.id, body),
     invalidates: () => [],
   });
-  const save = useAppMutation({
-    fn: async (hash: string) => {
-      const r = await setScope(item.id, { ...target(), scopeHash: hash } as Parameters<
-        typeof setScope
-      >[1]);
-      return scope === "named" && shown !== item.shownToOthers
-        ? setShownToOthers(item.id, shown)
-        : r;
-    },
+  const saveScope = useAppMutation({
+    fn: (body: ScopeChange & { scopeHash: string }) => setScope(item.id, body),
     invalidates: () => pluginScopeChangeKeys(orgId),
   });
-  const unchanged =
-    scope === item.scope &&
-    (scope !== "named" || sameSet(orgs, item.scopeOrgs)) &&
-    shown === item.shownToOthers;
+  const saveShown = useAppMutation({
+    fn: (next: boolean) => setShownToOthers(item.id, next),
+    invalidates: () => pluginScopeChangeKeys(orgId),
+  });
+  const scopeChanged =
+    scope !== item.scope || (scope === "named" && !sameSet(orgs, item.scopeOrgs));
+  const shownChanged = scope === "named" && shown !== item.shownToOthers;
+  const unchanged = !scopeChanged && !shownChanged;
   const invalid = scope === "named" && orgs.length === 0;
+  const saving = saveScope.isPending || saveShown.isPending || previewIt.isPending;
 
   const next = async () => {
     setError(undefined);
+    setNotice(undefined);
     try {
       setPreview(await previewIt.mutateAsync(target()));
     } catch (e) {
@@ -196,12 +201,21 @@ export function PluginScopeDialog({
   const confirm = async () => {
     if (preview === null) return;
     setError(undefined);
+    setNotice(undefined);
     try {
-      await save.mutateAsync(preview.scopeHash);
+      if (scopeChanged && !scopeSaved) {
+        await saveScope.mutateAsync({ ...target(), scopeHash: preview.scopeHash });
+        setScopeSaved(true);
+      }
+      if (shownChanged) await saveShown.mutateAsync(shown);
       toast.success(t("saved", { name: displayNameOf(item, locale) }));
       onClose();
     } catch (e) {
-      setError(errorMessage(e));
+      if (e instanceof ApiClientError && e.code === "plugin.scope_stale") {
+        // The impact moved on: show the new one and let the person confirm again
+        await next();
+        setNotice(t("stale"));
+      } else setError(errorMessage(e));
     }
   };
 
@@ -232,18 +246,19 @@ export function PluginScopeDialog({
           <>
             <Button
               variant="ghost"
-              disabled={save.isPending}
+              disabled={saving}
               onClick={() => {
                 setPreview(null);
                 setError(undefined);
+                setNotice(undefined);
               }}
             >
               {t("back")}
             </Button>
             <Button
               variant="primary"
-              loading={save.isPending}
-              disabled={save.isPending}
+              loading={saveScope.isPending || saveShown.isPending}
+              disabled={saving}
               onClick={() => void confirm()}
             >
               {t("confirm")}
@@ -271,7 +286,14 @@ export function PluginScopeDialog({
             )}
           </>
         ) : (
-          <ScopeImpact preview={preview} />
+          <>
+            {notice !== undefined && (
+              <Text variant="prose" tone="warn">
+                {notice}
+              </Text>
+            )}
+            <ScopeImpact preview={preview} />
+          </>
         )}
         {error !== undefined && <FormError message={error} />}
       </Stack>
@@ -299,6 +321,7 @@ export function PluginDisableDialog({
   const name = displayNameOf(item, locale);
   const [preview, setPreview] = useState<ScopePreview | null>(null);
   const [error, setError] = useState<string>();
+  const [notice, setNotice] = useState<string>();
   const asked = useRef(false);
   const previewIt = useAppMutation({
     fn: () => previewScope(item.id, { disabled: true }),
@@ -309,21 +332,34 @@ export function PluginDisableDialog({
     invalidates: () => pluginScopeChangeKeys(orgId),
   });
   const { mutateAsync: ask } = previewIt;
-  // The impact is read once, when the dialog opens
+  const load = useCallback(
+    () =>
+      ask(undefined).then(
+        (p) => setPreview(p),
+        (e: unknown) => setError(errorMessage(e)),
+      ),
+    [ask, errorMessage],
+  );
+  // The impact is read when the dialog opens (and again when it went stale)
   useEffect(() => {
     if (asked.current) return;
     asked.current = true;
-    ask(undefined).then(setPreview, (e: unknown) => setError(errorMessage(e)));
-  }, [ask, errorMessage]);
+    void load();
+  }, [load]);
   const confirm = async () => {
     if (preview === null) return;
     setError(undefined);
+    setNotice(undefined);
     try {
       await disable.mutateAsync(preview.scopeHash);
       toast.success(t("detail.disabledToast", { name }));
       onClose();
     } catch (e) {
-      setError(errorMessage(e));
+      if (e instanceof ApiClientError && e.code === "plugin.scope_stale") {
+        setPreview(null);
+        await load();
+        setNotice(t("scopeDialog.stale"));
+      } else setError(errorMessage(e));
     }
   };
   return (
@@ -353,6 +389,11 @@ export function PluginDisableDialog({
     >
       <Stack gap={12}>
         <Text variant="prose">{t("disableDialog.hint")}</Text>
+        {notice !== undefined && (
+          <Text variant="prose" tone="warn">
+            {notice}
+          </Text>
+        )}
         {preview !== null && <ScopeImpact preview={preview} />}
         {error !== undefined && <FormError message={error} />}
       </Stack>

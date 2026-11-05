@@ -4,7 +4,7 @@ import { versionLabel } from "@capybara-hq/design";
 import { useQuery } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { type PluginTab, pluginTabs } from "../lib/admin-tabs";
-import type { CatalogItem } from "../lib/catalog";
+import type { CatalogItem, ComponentCounts } from "../lib/catalog";
 import {
   adminOrgsQuery,
   catalogItemsQuery,
@@ -95,4 +95,18 @@ export function useScopeLabel(): (i: Pick<CatalogItem, "scope" | "scopeOrgs">) =
             .join(locale === "zh" ? "、" : ", "),
         })
       : t(`scope.${i.scope}`);
+}
+
+/** A plugin's components as text: 1 个扩展 · 2 个技能 · … (kinds it has none of are left out). */
+export function useComponentsLabel(): (c: ComponentCounts) => string {
+  const t = useTranslations("catalog.admin.meta.components");
+  return (c) => {
+    const parts = [
+      ...(c.extension > 0 ? [t("extension", { n: c.extension })] : []),
+      ...(c.skills > 0 ? [t("skills", { n: c.skills })] : []),
+      ...(c.connectorTemplates > 0 ? [t("connectorTemplates", { n: c.connectorTemplates })] : []),
+      ...(c.agentTemplates > 0 ? [t("agentTemplates", { n: c.agentTemplates })] : []),
+    ];
+    return parts.length === 0 ? t("none") : parts.join(" · ");
+  };
 }

@@ -120,7 +120,19 @@ export interface CatalogItemView {
    * §5.3). Importing it again records `<version>+git.<sha12>` / `+sha256.<12>`.
    */
   contentChanged: boolean;
+  /** What the latest version's plugin.json brings (read-only; dependencies are not components). */
+  componentCounts: ComponentCounts;
+  /** The format the latest version was read from (`claude-code`: translated from Claude Code). */
+  sourceFormat: SourceFormat;
   updatedAt: string;
+}
+
+/** The components of a plugin version, by kind (spec §3). */
+export interface ComponentCounts {
+  extension: 0 | 1;
+  skills: number;
+  connectorTemplates: number;
+  agentTemplates: number;
 }
 
 /**
@@ -626,6 +638,8 @@ export class CatalogService {
         "integrity",
         "source_detail",
         "imported_at",
+        "manifest",
+        "source_format",
       ])
       .where(
         "item_id",
