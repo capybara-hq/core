@@ -10,7 +10,7 @@ of the accepted mock; required bootstrap plugins become built-in and stop lookin
 lives in a new table. Phase 1 keeps today's per-org copies of skills, connectors and agent
 templates: "a plugin is on in an org" is realised by today's org install (`PluginInstaller`), run
 by the admin's action or by a worker job that converges every org to the scope. Catalog policy,
-org grants and catalog requests are replaced by scope and a deployment-level disable. Phases 2-4 of
+org grants are replaced by scope and a deployment-level disable; requests get a new meaning (Task 5b). Phases 2-4 of
 the spec (deployment-level components, org uploads, agent templates as starters) are separate plans.
 
 **Tech Stack:** NestJS kernel (Kysely on PG, BullMQ, `@Transactional`, `@Processor` + `runJob`),
@@ -152,11 +152,8 @@ extension rows of §9.
 **Files:**
 - Modify: `packages/kernel/src/catalog/org-catalog.service.ts` (`list`, `detail`; replace `installable`)
 - Modify: `packages/kernel/src/catalog/catalog-content.ts` (`OrgCatalogItem`)
-- Modify: `packages/kernel/src/catalog/org-catalog.controller.ts` (new switch route; remove the
-  request routes `POST catalog/:itemId/requests`, `POST catalog-requests/:id/decide` and the admin
-  `GET/POST admin/catalog/requests…`)
-- Delete: `packages/kernel/test/catalog/requests.test.ts` (the flow is gone); move any assertion
-  still valid (dependency of a disabled item refused) to `org.test.ts`
+- Modify: `packages/kernel/src/catalog/org-catalog.controller.ts` (new switch route; the request
+  routes stay as they are, install no longer creates requests; Task 5b reworks requests)
 - Test: `packages/kernel/test/catalog/org.test.ts`
 
 **Interfaces:**
@@ -191,7 +188,7 @@ extension rows of §9.
   - `all` item: `switchable: false`; `PUT switch {enabled:false}` → 409 `plugin.scope_locked`.
   - builtin item (seed `builtin = true`): `state: "on"` without any install row, `switchable: false`.
   - template plugin, `all`: `state: "needs_config"`; `PUT switch {enabled:true, inputs}` installs.
-  - the request routes return 404.
+  - installing a former `needs_approval` item no longer creates a request (no 202).
 - [ ] **Step 2: Run** `pnpm exec vitest run packages/kernel/test/catalog/org.test.ts` → the new cases FAIL.
 - [ ] **Step 3: Implement** `list` / `detail` with the new fields and `setSwitch`. The uninstall
   preview reuses the existing uninstall report (kept components and reasons) plus the agents that
@@ -201,7 +198,7 @@ extension rows of §9.
   old `POST catalog/:itemId/install` route stays as an alias of `switch {enabled:true}` for the CLI
   (designer's call: removing it would break `capybara` commands for no gain).
 - [ ] **Step 4: Run** → PASS; `pnpm typecheck`.
-- [ ] **Step 5: Commit** `feat(kernel): org plugin switch replaces requests`.
+- [ ] **Step 5: Commit** `feat(kernel): org plugin switch`.
 
 ### Task 4: Scope sync job
 
@@ -287,6 +284,56 @@ extension rows of §9.
 - [ ] **Step 4: Run** → PASS.
 - [ ] **Step 5: Commit** `feat(kernel): import installs; admin scope and disable with impact preview`.
 
+### Task 5b: Requests under scope (spec §5.1)
+
+**Files:**
+- Create: `packages/kernel/src/migrations/0075_scope_requests.sql`
+- Modify: `packages/kernel/src/db/kernel-schema.ts`, `packages/kernel/src/catalog/requests.service.ts`,
+  `packages/kernel/src/catalog/org-catalog.controller.ts`, `packages/kernel/src/catalog/org-catalog.service.ts`
+  (`list`), `packages/kernel/src/identity/settings.ts` (deployment setting), the marketplaces
+  controller (org read route), the inbox item for requests
+- Test: `packages/kernel/test/catalog/requests.test.ts` (rewritten)
+
+**Interfaces:**
+- Consumes: Task 3 `setSwitch`, Task 4 `enqueueItem`, Task 5 import confirm with `scope` / `orgs`.
+- Produces:
+  - `catalog_items.shown_to_others boolean NOT NULL DEFAULT true` (0075; org-owned items arrive in
+    phase 3 with default false); `catalog_requests.kind text NOT NULL DEFAULT 'access' CHECK (kind IN
+    ('access','import','enable'))`, nullable `item_id` plus `marketplace_id`, `entry_name`,
+    `entry_version` for `import`; `reason text` for rejections. One pending request per (org, kind,
+    item or entry).
+  - Deployment setting `orgMarketplaceBrowse: boolean` (default `true`).
+  - Org list: a `named` item not listing the org and `shown_to_others` appears with
+    `state: "not_offered"` (add to `OrgPluginState`) and `request` (its pending request or null);
+    hidden ones stay absent.
+  - Routes:
+    ```
+    POST /api/v1/orgs/:orgId/catalog/:itemId/requests  body { kind: "access" | "enable", note? }
+      access: org admin, item not_offered; enable: member, item optional and off
+    POST /api/v1/orgs/:orgId/marketplace-requests      body { marketplaceId, name, version, note? } (org admin)
+    GET  /api/v1/orgs/:orgId/marketplaces/entries      (org admin; 404 when orgMarketplaceBrowse is false)
+    POST /api/v1/orgs/:orgId/catalog-requests/:id/decide   body { approve, reason? }  (enable kind; org admin)
+    GET  /api/v1/admin/catalog/requests; POST …/:id/decide body { approve, reason? }  (access, import)
+    ```
+  - Approve effects: `enable` → `setSwitch(enabled:true)` for the org; `access` → insert into
+    `catalog_item_scope_orgs`, bump `scope_version`, enqueue the sync; `import` → returns the staging
+    id of a prepared import (the admin finishes it with the Task 5 confirm, whose `scope` defaults to
+    `named` = the requesting org) and the request resolves when that confirm commits. Rejection stores
+    `reason`. Each decision writes an inbox item for the requester.
+
+- [ ] **Step 1: Write the failing tests** (`requests.test.ts`, rewritten): member `enable` request on
+  an `optional` item → org admin approves → the item is `on` in the org; org admin `access` request
+  on a `named` item shown to others → enterprise approves → the org is in the list and, after the
+  sync, installed; hidden (`shown_to_others = false`) item is absent and its request → 404; marketplace
+  request → approve returns a staging id → confirm with no scope → item `named` [requesting org] and
+  the request `approved`; `orgMarketplaceBrowse = false` → entries route 404 and marketplace request
+  409; a second pending request of the same kind → 409; rejection reason visible to the requester.
+- [ ] **Step 2: Run** `pnpm exec vitest run packages/kernel/test/catalog/requests.test.ts` → FAIL.
+- [ ] **Step 3: Implement** (migration 0075 with types; expand-only: the old `stage` column stays and
+  is no longer read).
+- [ ] **Step 4: Run** → PASS; `pnpm check:kernel-conventions`.
+- [ ] **Step 5: Commit** `feat(kernel): requests under plugin scope`.
+
 ### Task 6: Extensions follow their plugin's scope
 
 **Files:**
@@ -339,7 +386,7 @@ extension rows of §9.
   `apps/web/src/lib/admin-extensions.ts` (Task 6 fields)
 - Modify: `apps/web/src/lib/query/catalog.ts`, `apps/web/src/lib/query/keys.ts` (no new key
   prefixes needed beyond `catalogPending` under the deployment prefix)
-- Delete: the request types, loaders and queries (`CatalogRequest`, `…requests…`)
+- Modify: the request types, loaders and queries for Task 5b (kinds `access` / `import` / `enable`, `reason`; `orgMarketplaceEntriesQuery`, `requestMarketplaceEntry`)
 - Test: `apps/web/test/catalog.test.tsx`
 
 **Interfaces:**
@@ -360,7 +407,7 @@ extension rows of §9.
 - Move: `apps/web/src/app/(app)/admin/catalog/**` → `apps/web/src/app/(app)/admin/plugins/**`
   (`page.tsx` list, `[itemId]`, `import` becomes the 上传插件包 flow); `admin/marketplaces/entries`
   → `admin/plugins/market`; `admin/marketplaces` → `admin/plugins/sources`; new
-  `admin/plugins/pending`; delete `admin/catalog/requests`
+  `admin/plugins/pending` (lists permission confirmations and the `access` / `import` requests with approve / reject + reason); delete `admin/catalog/requests`
 - Create: `apps/web/src/components/PluginScopeDialog.tsx`
 - Modify: `apps/web/src/components/admin-nav.ts` (`ADMIN_PAGES`: overview, accounts, orgs, plugins
   `/admin/plugins` with the pending count, extensions, models, settings), `apps/web/src/lib/query/routes.ts`,
@@ -411,6 +458,10 @@ extension rows of §9.
 - Test: `apps/web/test/catalog-pages.test.tsx`, `apps/web/test/nav.test.tsx`
 
 **Interfaces:**
+- Produces (spec §5.1): a 市场 tab on the org 插件 page for org admins (hidden when
+  `orgMarketplaceBrowse` is false) with 申请引入 per entry; `not_offered` rows show 未开放，可申请 and
+  申请 (org admins); members get 申请启用 on `optional` rows that are off; a pending request shows
+  已申请，等待处理.
 - Produces (spec §9, mock `/dev/mock/work/plugins`, `/dev/mock/work/extensions`): rows with state
   已启用 / 未启用 / 需要配置 / 已启用 · 企业统一, actions 启用 / 组织配置 / 停用 (停用 shows the
   preview from Task 3 before confirming); members see the same rows without actions. The 扩展 page

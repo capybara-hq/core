@@ -149,7 +149,8 @@ Rules:
 
 1. **Owner**: `enterprise` (brought in or uploaded by the enterprise admin, and bootstrap plugins) or
    an org (created or uploaded in that org). An org-owned item starts as `named: [owner]` and only
-   the enterprise admin can add orgs to it or change its scope (decided).
+   the enterprise admin can add orgs to it or change its scope (decided), and only when the owner
+   org marked it 可共享 (§5.1).
 2. **Plugin scope and component scope** (decided): a plugin has a scope; each component either
    follows its plugin (default) or has its own. Changing a plugin's scope applies to all its
    components, including those with their own; the confirmation lists the ones whose own setting will
@@ -160,11 +161,9 @@ Rules:
    deployment (today's extension disable, item policy `disabled`), keeping its scope for later.
 5. An org admin's switch acts on what the scope offers: on a plugin it switches all components that
    follow the plugin; on a component, only that component (designer's call).
-6. **Replaced concepts**: catalog item policy (`allow` / `needs_approval` / `disabled`), org grants
-   and catalog requests (`catalog_requests`, the 申请 flows and 部署申请 page) are replaced by scope
-   and disable. `needs_approval` with grants maps to `named` with the granted orgs; members no longer
-   request plugins (designer's call: the decided model has the enterprise admin choose who gets
-   what; a request flow can come back later).
+6. **Replaced concepts**: catalog item policy (`allow` / `needs_approval` / `disabled`) and org
+   grants are replaced by scope and disable; `needs_approval` with grants maps to `named` with the
+   granted orgs. Requests stay, with a new meaning (§5.1).
 7. Extension enablement per org becomes a function of scope plus the org's switch. `enabled.ts`
    stays the one enabled-set query and is rewritten on that basis; `required` folds into `all` +
    built-in.
@@ -189,6 +188,36 @@ Rules:
     template or agent template is offered in the org (pickers, `Skill` resolution, the roster), as an
     org-owned one is today; it is not forced onto every agent. Turning one off in an org follows rule
     8 for that org.
+
+### 5.1 Requests (decided, 2026-11-05)
+
+An org cannot ask for what it cannot see, so requests come with visibility. A request always asks
+the person who can decide for something the requester cannot use yet, and approving it takes effect
+at once (no "approved, now install it again" step).
+
+1. **Visibility to other orgs**: each plugin and component has a "对其他组织显示" flag. An
+   enterprise-owned `named` item defaults to shown: orgs outside its list see it as 未开放，可申请.
+   An org-owned item defaults to hidden; only the enterprise admin can turn it on (the owner org
+   cannot). The flag never makes anything usable; it only makes it requestable.
+   **Shareable** (decided, 2026-11-05): when an org contributes something (creates or uploads it),
+   its admin chooses whether it is 可共享 (default off; the owner org can change it later). Unless
+   it is shareable, the enterprise admin can neither show it to other orgs nor associate it with
+   them; turning shareable off later keeps existing associations and hides it from new requesters
+   (designer's call: removing existing users is rule 8's job, done explicitly by the enterprise
+   admin).
+2. **Org admin → enterprise admin, for an item shown to them**: approving adds the org to the item's
+   `named` list; the owner org (for an org-owned item) gets an inbox notice saying which org now uses
+   it.
+3. **Org admin → enterprise admin, for a marketplace entry not brought in yet**: org admins can
+   browse the marketplaces read-only (the workspace 插件 page's 市场 tab) and 申请引入. Approving
+   runs the normal import review (§4.1) with scope defaulting to `named` = the requesting org; the
+   enterprise admin may widen it. A deployment setting "组织可以浏览市场" (default on) hides the tab
+   and these requests.
+4. **Member → org admin, for an `optional` item that is off in the org**: approving turns it on in
+   the org (today's first request stage).
+5. Requests to the enterprise admin appear in the admin 插件 page's 待确认 tab and in the
+   enterprise admin's inbox; requests to an org admin in that org's inbox. A rejection carries an
+   optional reason the requester sees. One pending request per (org, item or entry, kind).
 
 ## 6. Components at deployment level
 
@@ -244,7 +273,8 @@ Migration of what exists (designer's calls; the mechanics stay the builder's, §
   becomes installed with scope `optional` and every org's switch off.
 - Catalog policies: `allow` → `optional`, `needs_approval` → `named` (granted orgs plus orgs that
   installed it), `disabled` → disabled. Orgs that had installed a plugin get its switch on.
-- Pending catalog requests are closed with a note; the 申请 flows go away (§5 rule 6).
+- Pending catalog requests are closed with a note (they asked under the old policy); requesters can
+  ask again under §5.1.
 
 ## 7. Updates
 
