@@ -8,6 +8,7 @@ import {
   RightPanel,
   type SubagentStatus,
   subagentDuration,
+  subagentWaitKind,
   TaskOutputPanel,
   useNow,
 } from "@capybara-hq/design";
@@ -77,6 +78,7 @@ export function backgroundItems(
         id: v.id,
         name: v.description || v.agentType,
         status: statusOf(v.status),
+        ...(v.status === "waiting" ? { waiting: subagentWaitKind(v) } : {}),
         startedAt: ms(v.startedAt) ?? 0,
         ...(finishedAt !== undefined ? { finishedAt } : {}),
         ...(children.length > 0 ? { tasks: children } : {}),

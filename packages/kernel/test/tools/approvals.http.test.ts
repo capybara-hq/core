@@ -496,6 +496,17 @@ describe("决定", () => {
     ]);
   });
 
+  it("approval_requested names who may decide: the assigned account, else the role", async () => {
+    const a = await request();
+    const b = await request({ requestedFor: null, approverRole: "admin" });
+    const evs = (await eventsOf(db, conversationId)).filter((e) => e.type === "approval_requested");
+    expect(evs.map((e) => [(e.payload as { approvalId: string }).approvalId, e.payload])).toEqual([
+      [a.id, expect.objectContaining({ requestedFor: a.requestedFor, approverRole: null })],
+      [b.id, expect.objectContaining({ requestedFor: null, approverRole: "admin" })],
+    ]);
+    expect(a.requestedFor).not.toBeNull();
+  });
+
   it("按角色升级的审批：admin 可批准（仅这一次）；session / always → 400", async () => {
     const a = await request({ requestedFor: null, approverRole: "admin" });
     const wide = await admin.req({

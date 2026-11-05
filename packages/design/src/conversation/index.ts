@@ -115,6 +115,7 @@ export {
   subagentRowFromView,
   subagentRowsFromViews,
   subagentStatusOfFinish,
+  subagentWaitKind,
 } from "./subagents";
 export { TaskOutputPanel, type TaskOutputPanelProps } from "./task-output-panel";
 export { ThinkingRow, type ThinkingRowProps } from "./thinking";

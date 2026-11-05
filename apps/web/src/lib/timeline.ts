@@ -4,10 +4,12 @@ import {
   type SubagentRowData,
   type SubagentWaitKind,
   subagentStatusOfFinish,
+  subagentWaitKind,
   type ToolRowData,
 } from "@capybara-hq/design";
 import type {
   ApprovalPolicy,
+  Approver,
   ContentBlock,
   ConversationEvent,
   InputForm,
@@ -15,6 +17,7 @@ import type {
   ModelRef,
   ToolInfo,
 } from "./conversations";
+import type { OrgRole } from "./members";
 import { toolLabel, toolLabelOfKey } from "./tool-label";
 
 /**
@@ -90,6 +93,27 @@ export interface SubagentLive {
     string,
     { status: string; pendingApprovalIds: string[]; pendingQuestionIds: string[] }
   >;
+  /**
+   * Who a waiting call waits for, as its row words it ("等待 张三 批准"): a name or a role, or
+   * undefined when it is the viewer (or unknown). Absent = every wait reads "你".
+   */
+  whoWaits?: (w: Waiter) => string | undefined;
+}
+
+/** Who has to act on a wait: a member (an approval's assignee, a run's starter) or a role. */
+export type Waiter = { kind: "account"; accountId: string } | { kind: "role"; role: OrgRole };
+
+/** `{ approver }` for an entry when the event names one, else nothing. */
+const approverField = (a: Approver): { approver?: Waiter } => {
+  const w = approverOf(a);
+  return w === undefined ? {} : { approver: w };
+};
+
+/** An approval's {@link Waiter} from its event; undefined in logs older than the field. */
+export function approverOf(a: Approver): Waiter | undefined {
+  if (a.requestedFor) return { kind: "account", accountId: a.requestedFor };
+  if (a.approverRole) return { kind: "role", role: a.approverRole };
+  return undefined;
 }
 
 /** Longest agent result kept as a row's in-place summary (the panel has the whole record). */
@@ -121,6 +145,8 @@ export interface ApprovalItem {
   input: unknown;
   expiresAt: string;
   policy?: ApprovalPolicy;
+  /** Who may decide it (absent in older logs). */
+  approver?: Waiter;
   decided: ApprovalDecision | null;
   decidedAt: string | null;
 }
@@ -238,6 +264,8 @@ export type TimelineEntry =
       wait: SubagentWaitKind;
       approvalId?: string;
       questionId?: string;
+      /** Who may decide the sub-agent's approval (absent in older logs). */
+      approver?: Waiter;
       toolKey: string;
       expiresAt?: string;
     }
@@ -542,16 +570,29 @@ export function buildEventTimeline(
     callId: string,
     what: NonNullable<ToolRowData["waiting"]>,
     id?: string,
+    waiter?: Waiter,
   ) => {
     const c = calls.get(callKey(runId, callId));
     if (!c || c.done) return;
     c.tool.row.waiting = what;
+    const who = waiter === undefined ? undefined : live.whoWaits?.(waiter);
+    if (who === undefined) delete c.tool.row.waitingFor;
+    else c.tool.row.waitingFor = who;
     if (id !== undefined) waitCalls.set(id, c);
   };
   const waitEnded = (id: string, what: NonNullable<ToolRowData["waiting"]>) => {
     const c = waitCalls.get(id);
-    if (c && c.tool.row.waiting === what) delete c.tool.row.waiting;
+    if (c && c.tool.row.waiting === what) {
+      delete c.tool.row.waiting;
+      delete c.tool.row.waitingFor;
+    }
     waitCalls.delete(id);
+  };
+  /** Each run's starter (`run_started.triggerAccountId`): who answers its questions and connects. */
+  const starters = new Map<string, string>();
+  const starterOf = (runId: string | null): Waiter | undefined => {
+    const id = runId === null ? undefined : starters.get(runId);
+    return id === undefined ? undefined : { kind: "account", accountId: id };
   };
   const modelDenials = new Map<string, { plugin: string; reason: string }>();
   /** Group key → files delivered by its calls / cards of its calls. */
@@ -641,6 +682,8 @@ export function buildEventTimeline(
           if (r.startedAt === null) r.startedAt = Date.parse(e.createdAt);
           if (r.model === null) r.model = e.payload.model;
           models.set(e.runId, e.payload.model);
+          if (e.payload.triggerAccountId !== undefined)
+            starters.set(e.runId, e.payload.triggerAccountId);
           const fb = fallbacks.get(e.runId);
           const d = fb === undefined ? undefined : out[fb];
           if (d?.kind === "divider" && d.divider === "fallback") d.to = e.payload.model;
@@ -843,6 +886,7 @@ export function buildEventTimeline(
           row.blockedBy !== undefined;
         row.status = failed ? "failed" : "done";
         delete row.waiting;
+        delete row.waitingFor;
         c.done = true;
         const end = Date.parse(e.createdAt);
         if (c.started !== null && !Number.isNaN(end)) row.durationMs = Math.max(0, end - c.started);
@@ -1004,12 +1048,13 @@ export function buildEventTimeline(
           toolKey: e.payload.toolKey,
           ...(e.payload.approvalId !== undefined ? { approvalId: e.payload.approvalId } : {}),
           ...(e.payload.questionId !== undefined ? { questionId: e.payload.questionId } : {}),
+          ...approverField(e.payload),
           ...(e.payload.expiresAt !== undefined ? { expiresAt: e.payload.expiresAt } : {}),
         });
         break;
       }
       case "approval_requested":
-        waitOn(e.runId, e.payload.callId, "approval", e.payload.approvalId);
+        waitOn(e.runId, e.payload.callId, "approval", e.payload.approvalId, approverOf(e.payload));
         approvals.set(e.payload.approvalId, out.length);
         out.push({
           kind: "approval",
@@ -1021,6 +1066,7 @@ export function buildEventTimeline(
             input: calls.get(callKey(e.runId, e.payload.callId))?.tool.input,
             expiresAt: e.payload.expiresAt,
             ...(e.payload.policy !== undefined ? { policy: e.payload.policy } : {}),
+            ...approverField(e.payload),
             decided: null,
             decidedAt: null,
           },
@@ -1035,7 +1081,7 @@ export function buildEventTimeline(
         break;
       }
       case "question_asked":
-        waitOn(e.runId, e.payload.callId, "input", e.payload.questionId);
+        waitOn(e.runId, e.payload.callId, "input", e.payload.questionId, starterOf(e.runId));
         questions.set(e.payload.questionId, out.length);
         out.push({
           kind: "question",
@@ -1059,7 +1105,7 @@ export function buildEventTimeline(
       }
       case "connection_required":
         // until the call's result: the run resumes the call once the person connects
-        waitOn(e.runId, e.payload.callId, "connect");
+        waitOn(e.runId, e.payload.callId, "connect", undefined, starterOf(e.runId));
         out.push({
           kind: "connect",
           key,
@@ -1183,12 +1229,7 @@ export function buildEventTimeline(
     if (v === undefined) continue;
     if (v.status === "waiting") {
       row.status = "waiting";
-      row.waiting =
-        v.pendingApprovalIds.length > 0
-          ? "approval"
-          : v.pendingQuestionIds.length > 0
-            ? "input"
-            : "connect";
+      row.waiting = subagentWaitKind(v);
     } else if (v.status === "running" || v.status === "queued") {
       row.status = v.status;
       delete row.waiting;

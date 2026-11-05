@@ -624,8 +624,18 @@ describe("fix round 1", { timeout: 60_000 }, () => {
 
   it("an orphaned wake run is repaired by ensureRun; later finishes and messages go on", async () => {
     const conv = await idleConversation("SCENARIO orphan");
-    // a finish whose wake run was queued, and whose job was lost (no job ever existed)
+    // a finish whose wake run was queued, and whose job was lost (no job ever existed). The
+    // orphan goes in first: the run that just ended may still be in its own ensureRun, which
+    // would otherwise start a wake run for the finish itself. The conversation row is locked
+    // first, as the kernel's ensureRun does (an insert's foreign key check alone deadlocked).
     const task = await runningTask(conv);
+    const orphan = randomUUID();
+    await raw.transaction().execute(async (t) => {
+      await sql`SELECT id FROM capybara.conversations WHERE id = ${conv} FOR UPDATE`.execute(t);
+      await sql`INSERT INTO capybara.runs
+          (id, conversation_id, status, agent_version, trigger_account_id, trigger_seq)
+        VALUES (${orphan}, ${conv}, 'queued', 1, ${ownerId}, 0)`.execute(t);
+    });
     const [ev] = await k.app.get(EventLog).append(conv, [
       {
         type: "background_task_finished",
@@ -641,18 +651,9 @@ describe("fix round 1", { timeout: 60_000 }, () => {
         },
       },
     ]);
-    const orphan = randomUUID();
-    await db
-      .insertInto("runs")
-      .values({
-        id: orphan,
-        conversation_id: conv,
-        status: "queued",
-        agent_version: 1,
-        trigger_account_id: ownerId,
-        trigger_seq: ev?.seq ?? 0,
-      })
-      .execute();
+    await sql`UPDATE capybara.runs SET trigger_seq = ${ev?.seq ?? 0} WHERE id = ${orphan}`.execute(
+      raw,
+    );
     // past the queued grace period and outside the wake window
     await sql`UPDATE capybara.runs SET created_at = now() - interval '2 minutes',
       queued_at = now() - interval '2 minutes' WHERE id = ${orphan}`.execute(raw);

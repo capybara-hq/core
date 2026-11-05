@@ -244,6 +244,8 @@ export class ApprovalsService {
           toolKey: rec.toolKey,
           expiresAt: rec.expiresAt,
           ...(input.policy !== undefined && { policy: input.policy }),
+          requestedFor: rec.requestedFor,
+          approverRole: rec.approverRole,
         },
       },
     ]);

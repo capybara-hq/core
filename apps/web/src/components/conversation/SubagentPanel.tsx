@@ -14,6 +14,7 @@ import { useLocale, useTranslations } from "next-intl";
 import { useMemo } from "react";
 import type { ConversationEvent, ModelRef } from "../../lib/conversations";
 import { conversationQuery } from "../../lib/query/conversation";
+import { useWhoWaits } from "../../lib/query/who-waits";
 import { toolsLine } from "../../lib/subagents";
 import {
   buildTimeline,
@@ -95,9 +96,10 @@ function ChildRecord({
   const child = useConversation(orgId, subagentId);
   const keys = useMemo(() => toolKeysOf(child.events), [child.events]);
   const info = useToolInfo(orgId, subagentId, keys);
+  const whoWaits = useWhoWaits(orgId, child.events);
   const entries = useMemo(
-    () => buildTimeline(child.events, child.state.drafts, info, locale),
-    [child.events, child.state.drafts, info, locale],
+    () => buildTimeline(child.events, child.state.drafts, info, locale, { whoWaits }),
+    [child.events, child.state.drafts, info, locale, whoWaits],
   );
   const started = child.events.find(
     (e): e is Extract<ConversationEvent, { type: "subagent_started" }> =>

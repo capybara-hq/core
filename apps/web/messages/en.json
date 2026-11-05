@@ -744,6 +744,15 @@
     }
   },
   "chat": {
+    "waitingFor": {
+      "someone": "another member",
+      "role": {
+        "guest": "a guest",
+        "member": "a member",
+        "admin": "an admin",
+        "owner": "an owner"
+      }
+    },
     "title": "Chat",
     "inputLabel": "Message",
     "placeholder": "Message, / for commands",
@@ -992,6 +1001,7 @@
     "system": "the system",
     "otherApprover": "Waiting for an approver.",
     "otherApproverFor": "{tool} ({key}) needs approval; waiting for an approver.",
+    "otherApproverNamed": "{tool} ({key}) needs approval; waiting for {who}.",
     "policy": {
       "agent": "The agent's settings ask for approval",
       "connector": "The connector's policy asks for approval",

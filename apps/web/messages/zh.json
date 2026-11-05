@@ -744,6 +744,15 @@
     }
   },
   "chat": {
+    "waitingFor": {
+      "someone": "其他成员",
+      "role": {
+        "guest": "访客",
+        "member": "成员",
+        "admin": "管理员",
+        "owner": "所有者"
+      }
+    },
     "title": "会话",
     "inputLabel": "消息",
     "placeholder": "输入消息，/ 使用命令",
@@ -980,6 +989,7 @@
     "system": "系统",
     "otherApprover": "等待审批人处理。",
     "otherApproverFor": "{tool}（{key}）需要审批，等待审批人处理。",
+    "otherApproverNamed": "{tool}（{key}）需要审批，等待 {who} 处理。",
     "policy": {
       "agent": "agent 的设置要求审批",
       "connector": "连接器的策略要求审批",

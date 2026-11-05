@@ -13,6 +13,7 @@ import {
 } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
 import { AgentDefinitionSchema, AgentToolRef, ModelRef } from "../agents/definition.js";
+import { ORG_ROLES } from "../orgs/roles.js";
 import {
   TOOL_VIEW_DIFF_MAX_LINES,
   TOOL_VIEW_LINE_MAX_CHARS,
@@ -36,6 +37,16 @@ const RefMediaSourceSchema = z.object({
   kind: z.literal("ref"),
   attachmentId: AttachmentIdSchema,
 });
+
+/**
+ * Who may decide an approval, as the approval row says (display only, absent in older logs): the
+ * assigned account (`requestedFor`), else the escalation role (`approverRole`). Pages word the
+ * waiting state with it ("等待 张三 批准") for viewers who cannot decide.
+ */
+const ApproverFields = {
+  requestedFor: z.string().nullable().optional(),
+  approverRole: z.enum(ORG_ROLES).nullable().optional(),
+};
 
 /** The longest deny reason (characters): the decision route's limit and `approval_decided.reason`'s. */
 export const APPROVAL_DENY_REASON_MAX_CHARS = 500;
@@ -492,6 +503,7 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       expiresAt: z.string(),
       /** Which rule asked (UI refresh B; display only, absent in older logs). */
       policy: z.enum(["agent", "connector", "default", "role", "org", "fixed"]).optional(),
+      ...ApproverFields,
     }),
   ),
   /** 审批已处理（批准 / 拒绝 / 超时 / 取消）；`scope` 只在批准时出现，`byAccountId` 为处理人（超时 / 取消为 null）。 */
@@ -709,6 +721,8 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       questionId: z.string().optional(),
       toolKey: z.string(),
       expiresAt: z.string().optional(),
+      /** An approval's approver (`kind: "approval"`), as in `approval_requested`. */
+      ...ApproverFields,
     }),
   ),
   /** Parent log: a sub-agent's run ended. Not model-visible (its reply is the call's tool_result). */

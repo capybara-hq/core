@@ -101,6 +101,7 @@ export function SubagentWait({
             toolKey: wait.toolKey,
             input: undefined,
             expiresAt: wait.expiresAt ?? "",
+            ...(wait.approver !== undefined ? { approver: wait.approver } : {}),
             decided: null,
             decidedAt: null,
           }}

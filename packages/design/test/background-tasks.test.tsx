@@ -37,6 +37,22 @@ const agent = (
   ...over,
 });
 
+describe("BackgroundTasks sub-agent rows", () => {
+  it("a sub-agent waiting for a person has no spinner and says what for instead of the time", () => {
+    const { container } = wrap(
+      <BackgroundTasks
+        items={[agent({ status: "waiting", waiting: "input" })]}
+        now={NOW}
+        onStop={vi.fn()}
+        onOpen={vi.fn()}
+      />,
+    );
+    expect(container.querySelector('[data-part="spinner"]')).toBeNull();
+    expect(screen.getByText("等待回答")).toBeTruthy();
+    expect(screen.queryByText("2分28秒")).toBeNull();
+  });
+});
+
 describe("BackgroundTasks task rows", () => {
   it("a running task has a spinner, the description, the elapsed time and a named stop button", async () => {
     const onStop = vi.fn();

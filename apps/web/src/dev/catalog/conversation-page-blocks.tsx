@@ -130,6 +130,13 @@ function subagentGroupBlocks(): ReactNode {
       <Block id="subagent-group-running">
         <SubagentGroup rows={S.running.map(running)} onOpen={noop} now={NOW} />
       </Block>
+      <Block id="subagent-group-waiting">
+        <SubagentGroup
+          rows={S.running.map((f) => ({ ...running(f), status: "waiting", waiting: "approval" }))}
+          onOpen={noop}
+          now={NOW}
+        />
+      </Block>
       <Block id="subagent-group-done">
         <SubagentGroup rows={finished()} onOpen={noop} now={NOW} />
       </Block>
@@ -518,6 +525,25 @@ function backgroundTaskBlocks(): ReactNode {
             items={[
               bgTask(),
               bgTask({ id: "bgt2", description: "tail -f build.log", stopping: true }),
+            ]}
+            now={NOW}
+            onStop={noop}
+            onOpen={noop}
+          />
+        </PropertySection>
+      </PropBlock>
+      <PropBlock id="background-task-waiting">
+        <PropertySection title="后台任务">
+          <BackgroundTasks
+            items={[
+              {
+                kind: "subagent",
+                id: "saw",
+                name: "列出示例文档目录树",
+                status: "waiting",
+                waiting: "approval",
+                startedAt: BG_START,
+              },
             ]}
             now={NOW}
             onStop={noop}
