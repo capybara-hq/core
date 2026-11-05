@@ -223,6 +223,34 @@ describe("plugin scope", { timeout: 90_000 }, () => {
     await waitFor(async () => (await liveOrgs(itemId)).join() === orgB, 30_000, "named install");
   });
 
+  it("a new version of a named or an all item keeps its scope, org list and scope version", async () => {
+    const named = await importSkill(env, { name: "named-v" });
+    await changeScope(named, "named", [orgB]);
+    const all = await importSkill(env, { name: "all-v" });
+    await changeScope(all, "all");
+    const state = async (id: string) => ({
+      row: await env.db
+        .selectFrom("catalog_items")
+        .select(["scope", "scope_version"])
+        .where("id", "=", id)
+        .executeTakeFirstOrThrow(),
+      orgs: (
+        await env.db
+          .selectFrom("catalog_item_scope_orgs")
+          .select("org_id")
+          .where("item_id", "=", id)
+          .execute()
+      ).map((r) => r.org_id),
+    });
+    const before = { named: await state(named), all: await state(all) };
+    expect(await importSkill(env, { name: "named-v", version: "2.0.0" })).toBe(named);
+    expect(await importSkill(env, { name: "all-v", version: "2.0.0" })).toBe(all);
+    expect(await state(named)).toEqual(before.named);
+    expect(await state(all)).toEqual(before.all);
+    expect(before.named).toMatchObject({ row: { scope: "named" }, orgs: [orgB] });
+    expect(before.all).toMatchObject({ row: { scope: "all" }, orgs: [] });
+  });
+
   it("orgs only with named, unknown orgs refused (400 validation_failed)", async () => {
     const itemId = await importSkill(env);
     for (const body of [

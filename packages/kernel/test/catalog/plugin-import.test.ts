@@ -708,47 +708,29 @@ describe("deploying the extension at confirm", { timeout: 60_000 }, () => {
     expect(restored[0]?.detail).toMatchObject({ restoredVersion: "1.0.0" });
   });
 
-  it("a downgrade to a version with unrun migrations is refused at prepare (409 extension.downgrade_unsupported), nothing written", async () => {
-    const rv = await k.app
-      .get(ExtensionInstalls)
-      .ingestFile(adminId, pkgs["zeta@2.0.0"] as Uint8Array);
-    await k.app.get(ExtensionAdminOps).install("zeta", rv.sha256, adminId);
-    const res = await prepareFile(admin, pkgs["zeta@1.0.0"] as Uint8Array);
-    expect(res.statusCode, res.body).toBe(409);
-    expect(res.json().error.code).toBe("extension.downgrade_unsupported");
-    expect(await db.selectFrom("plugin_import_staging").select("id").execute()).toEqual([]);
-    expect(
-      (await db.selectFrom("extension_packages").select("version").execute()).map((r) => r.version),
-    ).toEqual(["2.0.0"]);
-  });
-
-  it("the migration state changes after prepare: confirm refuses the downgrade before writing", async () => {
-    const rv = await k.app
-      .get(ExtensionInstalls)
-      .ingestFile(adminId, pkgs["zeta@2.0.0"] as Uint8Array);
-    await k.app.get(ExtensionAdminOps).install("zeta", rv.sha256, adminId);
-    const migrationSql = "CREATE TABLE IF NOT EXISTS notes (id int);\n";
-    await sql`CREATE SCHEMA IF NOT EXISTS plugin_zeta`.execute(db);
-    await sql`CREATE TABLE IF NOT EXISTS plugin_zeta._migrations (name text PRIMARY KEY, checksum text NOT NULL)`.execute(
-      db,
+  it("an older version than the deployed one: recorded in the catalog only, the deployment keeps v2 (ruling H)", async () => {
+    const v2 = await imported(pkgs["zeta@2.0.0"] as Uint8Array);
+    expect(v2.deploy).toMatchObject({ name: "zeta", action: "install", result: "enabled" });
+    const s = await prepared(pkgs["zeta@1.0.0"] as Uint8Array);
+    expect(s.review.extension).toMatchObject({
+      action: "keep",
+      olderThanDeployed: true,
+      deployed: true,
+      currentVersion: "2.0.0",
+    });
+    const res = await confirm(admin, s.stagingId, { reviewHash: s.review.reviewHash });
+    expect(res.statusCode, res.body).toBe(201);
+    expect(res.json().deploy).toBeNull();
+    expect(res.json().item).toMatchObject({ versions: ["2.0.0", "1.0.0"], latestVersion: "2.0.0" });
+    expect(await db.selectFrom("extension_installs").select(["name", "version"]).execute()).toEqual(
+      [{ name: "zeta", version: "2.0.0" }],
     );
-    await sql`INSERT INTO plugin_zeta._migrations VALUES ('0001_notes.sql', ${createHash("sha256").update(migrationSql).digest("hex")})`.execute(
-      db,
-    );
-    try {
-      const s = await prepared(pkgs["zeta@1.0.0"] as Uint8Array);
-      expect(s.review.extension).toMatchObject({ action: "upgrade", currentVersion: "2.0.0" });
-      await sql`DELETE FROM plugin_zeta._migrations`.execute(db);
-      const res = await confirm(admin, s.stagingId, {
-        reviewHash: s.review.reviewHash,
-      });
-      expect(res.statusCode, res.body).toBe(409);
-      expect(res.json().error.code).toBe("extension.downgrade_unsupported");
-      expect(await db.selectFrom("plugin_import_staging").select("id").execute()).toHaveLength(1);
-      expect(await db.selectFrom("catalog_items").select("id").execute()).toEqual([]);
-    } finally {
-      await sql`DROP SCHEMA IF EXISTS plugin_zeta CASCADE`.execute(db);
-    }
+    const snap = await db
+      .selectFrom("extension_permission_snapshots")
+      .select("version")
+      .where("plugin", "=", "zeta")
+      .executeTakeFirstOrThrow();
+    expect(snap.version).toBe("2.0.0");
   });
 
   it("the extension gets installed by someone else after the review -> plugin.review_stale", async () => {
@@ -819,6 +801,13 @@ describe("confirm installs the extension and stores the scope", { timeout: 60_00
     });
     expect(unknown.statusCode, unknown.body).toBe(400);
     expect(unknown.json().error.code).toBe("validation_failed");
+    const empty = await confirm(admin, s.stagingId, {
+      reviewHash: s.review.reviewHash,
+      scope: "named",
+      orgs: [],
+    });
+    expect(empty.statusCode, empty.body).toBe(400);
+    expect(empty.json().error.code).toBe("validation_failed");
     const res = await confirm(admin, s.stagingId, {
       reviewHash: s.review.reviewHash,
       scope: "named",

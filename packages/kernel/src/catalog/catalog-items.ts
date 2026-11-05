@@ -318,11 +318,12 @@ export async function precheckCatalogImport(
 export async function writeCatalogVersion(
   db: KernelSchemaDb,
   w: CatalogVersionWrite,
-): Promise<string> {
+): Promise<{ id: string; created: boolean }> {
   const t = db;
   const { name, version, listing } = w;
   const live = await liveItem(t, name);
   let id: string;
+  const created = live === undefined;
   if (live) {
     id = live.id;
     assertSameSource(live, w.packageName, sourceIdentity(w.source.detail, w.marketplaceId));
@@ -409,7 +410,7 @@ export async function writeCatalogVersion(
       ...w.auditDetail,
     },
   });
-  return id;
+  return { id, created };
 }
 
 /**

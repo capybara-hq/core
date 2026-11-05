@@ -149,10 +149,17 @@ export interface PluginReviewExtension {
   /** sha256 of the plugin tgz (the package store key). */
   sha256: string;
   /**
-   * install: not on the deployment; upgrade: installed from another package (another version), the
-   * import's package replaces it when deployed; keep: this exact package is installed.
+   * install: not on the deployment; upgrade: installed from another package whose version is not
+   * above the import's, the import's package replaces it when confirmed; keep: this exact package is
+   * installed, or the installed version is newer (`olderThanDeployed`): the confirm records the
+   * version in the catalog only and never downgrades the deployment.
    */
   action: ExtensionReviewAction;
+  /**
+   * The import's version is below the one deployed: the review warns that confirming keeps the
+   * deployed extension (action `keep`); absent otherwise.
+   */
+  olderThanDeployed?: true;
   /** Installed on the deployment (any version). */
   deployed: boolean;
   /** The installed version (null when not installed). */
@@ -937,6 +944,11 @@ export class PluginImport {
         { path: "orgs", message: "only allowed with scope named" },
       ]);
     }
+    if (scope === "named" && (input.orgs ?? []).length === 0) {
+      throw new ApiError("validation_failed", "orgs: scope named needs at least one organization", [
+        { path: "orgs", message: "scope named needs at least one organization" },
+      ]);
+    }
     const row = await this.db
       .selectFrom("plugin_import_staging")
       .selectAll()
@@ -1027,6 +1039,7 @@ export class PluginImport {
         ...actionOf(
           await this.extensionState(reviewed.name, staged.packageName as string),
           reviewed.sha256,
+          reviewed.version,
         ),
       };
       if (pluginReviewHash({ ...review, extension: now }, staged.files) !== review.reviewHash) {
@@ -1043,7 +1056,7 @@ export class PluginImport {
     }
     const m = manifest;
     await this.itemLock.lock(m.name);
-    const itemId = await writeCatalogVersion(t, {
+    const { id: itemId, created } = await writeCatalogVersion(t, {
       actor,
       ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
       name: m.name,
@@ -1080,8 +1093,9 @@ export class PluginImport {
         ...(now && { extension: { name: now.name, version: now.version, action: now.action } }),
       },
     });
-    // A new item gets the scope chosen in the review; a new version keeps the item's scope
-    if (itemId === staged.itemId) {
+    // A new item gets the scope chosen in the review; a new version keeps the item's scope, its
+    // org list and its scope version (prepare reuses the live item's id, so the id cannot tell)
+    if (created) {
       await t
         .updateTable("catalog_items")
         .set({ scope: scope.scope })
@@ -1565,7 +1579,7 @@ export class PluginImport {
       name,
       version: pkg.section.version,
       sha256: pkg.sha256,
-      ...actionOf(state, pkg.sha256),
+      ...actionOf(state, pkg.sha256, pkg.section.version),
       permissions,
       added,
       addedItems: permissionKeyItems(added),
@@ -1635,13 +1649,25 @@ function packageNameOf(pkg: PluginContents): string | null {
 function actionOf(
   s: ExtensionState,
   sha256: string,
-): Pick<PluginReviewExtension, "action" | "deployed" | "currentVersion" | "currentSha256"> {
+  version: string,
+): Pick<
+  PluginReviewExtension,
+  "action" | "deployed" | "currentVersion" | "currentSha256" | "olderThanDeployed"
+> {
   if (s.kind === "installed") {
+    // A version below the deployed one is recorded in the catalog only: an import never
+    // downgrades the deployment (ruling H)
+    const older =
+      s.sha256 !== sha256 &&
+      semver.valid(version) !== null &&
+      semver.valid(s.version) !== null &&
+      semver.lt(version, s.version);
     return {
-      action: s.sha256 === sha256 ? "keep" : "upgrade",
+      action: s.sha256 === sha256 || older ? "keep" : "upgrade",
       deployed: true,
       currentVersion: s.version,
       currentSha256: s.sha256,
+      ...(older && { olderThanDeployed: true as const }),
     };
   }
   return { action: "install", deployed: false, currentVersion: null, currentSha256: null };
