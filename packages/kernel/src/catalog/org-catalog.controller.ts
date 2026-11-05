@@ -1,4 +1,4 @@
-import { Controller, Delete, Get, HttpCode, Inject, Param, Post, Res } from "@nestjs/common";
+import { Controller, Delete, Get, HttpCode, Inject, Param, Post, Put, Res } from "@nestjs/common";
 import type { FastifyReply } from "fastify";
 import { z } from "zod";
 import {
@@ -20,8 +20,13 @@ import type {
   OrgInstallResult,
   OrgUpgradeResult,
 } from "./catalog-content.js";
-import { OrgCatalogService } from "./org-catalog.service.js";
-import { PluginInstaller, type PluginInstallView, type UninstallReport } from "./plugin-install.js";
+import { OrgCatalogService, type SwitchResult } from "./org-catalog.service.js";
+import {
+  PluginInstaller,
+  type PluginInstallView,
+  type UninstallPreview,
+  type UninstallReport,
+} from "./plugin-install.js";
 import type { PluginUpgradeInput, UpgradePreview } from "./plugin-upgrade.js";
 import { CatalogRequestsService, type CatalogRequestView } from "./requests.service.js";
 
@@ -54,6 +59,18 @@ const InstallBody = z
     version: z.string().min(1).max(256).optional(),
     connectors: z.record(z.string(), ConnectorInput).optional(),
     extensionConfig: z.record(z.string(), z.unknown()).optional(),
+  })
+  .strict();
+
+/** The switch body: on (with the install inputs), or off (with the preview's hash to confirm). */
+const SwitchBody = z
+  .object({
+    enabled: z.boolean(),
+    inputs: InstallBody.optional(),
+    confirm: z
+      .string()
+      .regex(/^[0-9a-f]{64}$/)
+      .optional(),
   })
   .strict();
 
@@ -92,6 +109,7 @@ const AdminListQuery = z.object({
 class CatalogRequestsQuery extends createZodDto(AdminListQuery, "CatalogRequestsQuery") {}
 class CatalogDecideBody extends createZodDto(DecideBody, "CatalogDecideBody") {}
 class OrgPluginInstallBody extends createZodDto(InstallBody, "OrgPluginInstallBody") {}
+class OrgPluginSwitchBody extends createZodDto(SwitchBody, "OrgPluginSwitchBody") {}
 class CatalogRequestBody extends createZodDto(RequestBody, "CatalogRequestBody") {}
 class OrgPluginUpgradeBody extends createZodDto(UpgradeBody, "OrgPluginUpgradeBody") {}
 class OrgPluginUpgradePreviewBody extends createZodDto(
@@ -104,7 +122,9 @@ class OrgPluginUpgradePreviewBody extends createZodDto(
  * - `GET catalog` (`catalog.read`, member and up; members do not see disabled items);
  * - `POST catalog/:itemId/requests` (`catalog.request`): a member request, into the org admins'
  *   inbox;
- * - `POST catalog/:itemId/install`: the route only requires `catalog.read`; the service re-checks
+ * - `PUT catalog/:itemId/switch` (scope phase 1): `{ enabled: true, inputs? }` installs -> 200 `{ item }`;
+ *   `{ enabled: false, confirm? }` -> 200 `{ preview, confirm }`, then with the hash 200 `{ item }`;
+ * - `POST catalog/:itemId/install` (an alias of switching on, no longer creates requests): the route only requires `catalog.read`; the service re-checks
  *   the plugin's component actions (`org.extensions.manage` for an extension, `connectors.manage`
  *   for templates, `skills.manage` for skills) inside the org row lock; needs_approval without a
  *   grant -> 202 `{ request }`, otherwise 201 `{ installed, install }` (the install view);
@@ -181,6 +201,32 @@ export class OrgCatalogController {
       body,
       tokenId !== undefined ? { actorTokenId: tokenId } : {},
     );
+  }
+
+  @Put("catalog/:itemId/switch")
+  @OrgAction("catalog.read")
+  async setSwitch(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @Param("itemId") itemId: string,
+    @ZBody(OrgPluginSwitchBody) body: z.infer<typeof SwitchBody>,
+  ): Promise<{ item: OrgCatalogItem } | { preview: UninstallPreview; confirm: string }> {
+    const p = requireUser(principal);
+    const r: SwitchResult = await this.catalog.setSwitch(
+      org.orgId,
+      p.account.id,
+      itemId,
+      body.enabled
+        ? {
+            enabled: true,
+            ...(body.inputs !== undefined && {
+              inputs: body.inputs as Parameters<OrgCatalogService["install"]>[3],
+            }),
+          }
+        : { enabled: false, ...(body.confirm !== undefined && { confirm: body.confirm }) },
+      patTokenId(p),
+    );
+    return r.kind === "done" ? { item: r.item } : { preview: r.preview, confirm: r.confirm };
   }
 
   @Post("catalog/:itemId/install")

@@ -961,7 +961,7 @@ describe("org plugin upgrade (spec §10)", { timeout: 90_000 }, () => {
     expect(after.installs).toEqual(before.installs);
   });
 
-  it("needs_approval without a grant: 202 with a request for the target version; after approval the upgrade runs; disabled is refused", async () => {
+  it("a disabled item refuses preview and upgrade; enabled again the upgrade runs", async () => {
     const item = await seedPlugin(env, { name: "notes", skills: ["notes"], templates: false });
     await seedPlugin(env, {
       name: "notes",
@@ -971,33 +971,18 @@ describe("org plugin upgrade (spec §10)", { timeout: 90_000 }, () => {
       templates: false,
     });
     const installId = await installOk(item);
-    await setPolicy(env, item, "needs_approval");
     const p = await previewOk(installId, "1.1.0");
-    const pend = await upgrade(installId, { version: "1.1.0", diffHash: p.diffHash });
-    expect(pend.statusCode, pend.body).toBe(202);
-    expect(pend.json().request).toMatchObject({ stage: "deployment", status: "pending" });
-    const req = await env.db
-      .selectFrom("catalog_requests")
-      .select(["id", "version"])
-      .executeTakeFirstOrThrow();
-    expect(req.version).toBe("1.1.0");
+    await setPolicy(env, item, "disabled");
+    const off = await preview(installId, "1.1.0");
+    expect(off.statusCode).toBe(403);
+    expect(off.json().error.code).toBe("catalog.item_disabled");
+    const off2 = await upgrade(installId, { version: "1.1.0", diffHash: p.diffHash });
+    expect(off2.json().error.code).toBe("catalog.item_disabled");
     expect(await liveInstalls()).toEqual(["notes@1.0.0:installed"]);
-    const d = await env.root({
-      method: "POST",
-      url: `/api/v1/admin/catalog/requests/${req.id}/decide`,
-      payload: { decision: "approve" },
-    });
-    expect(d.statusCode, d.body).toBe(200);
+    await setPolicy(env, item, "allow");
     const ok = await upgrade(installId, { version: "1.1.0", diffHash: p.diffHash });
     expect(ok.statusCode, ok.body).toBe(200);
     expect(await liveInstalls()).toEqual(["notes@1.1.0:installed"]);
-
-    await setPolicy(env, item, "disabled");
-    const off = await preview(installId, "1.0.0");
-    expect(off.statusCode).toBe(403);
-    expect(off.json().error.code).toBe("catalog.item_disabled");
-    const off2 = await upgrade(installId, { version: "1.0.0", diffHash: p.diffHash });
-    expect(off2.json().error.code).toBe("catalog.item_disabled");
   });
 
   it("members cannot preview or upgrade", async () => {

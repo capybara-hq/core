@@ -16,12 +16,13 @@ import {
   install,
   MCP_TOKEN,
   type OrgEnv,
-  requestItem,
   resetOrgCatalog,
   seedPlugin,
   seedPluginItem,
+  setBuiltin,
   setDeployment,
   setPolicy,
+  setScope,
   startOrgEnv,
   TEMPLATE_ID,
 } from "./org-env.js";
@@ -43,28 +44,18 @@ beforeEach(async () => {
 
 type Item = {
   id: string;
-  installable: string;
+  state: string;
+  scope: string;
+  builtin: boolean;
+  switchable: boolean;
+  notDeployed: boolean;
   installed: Record<string, string> | null;
-  request: { id: string; stage: string; status: string } | null;
 };
 
 async function orgList(req: OrgEnv["root"]): Promise<Item[]> {
   const r = await req({ method: "GET", url: `/api/v1/orgs/${env.orgId}/catalog` });
   expect(r.statusCode, r.body).toBe(200);
   return (r.json() as { items: Item[] }).items;
-}
-
-async function grant(itemId: string): Promise<void> {
-  const reqs = await env.root({ method: "GET", url: "/api/v1/admin/catalog/requests" });
-  const pending = (reqs.json() as { requests: { id: string; item: { id: string } }[] }).requests;
-  const r = pending.find((x) => x.item.id === itemId);
-  expect(r).toBeDefined();
-  const d = await env.root({
-    method: "POST",
-    url: `/api/v1/admin/catalog/requests/${r?.id}/decide`,
-    payload: { decision: "approve" },
-  });
-  expect(d.statusCode, d.body).toBe(200);
 }
 
 /** The install body for {@link importTemplate}'s plugin: its one template's connector input. */
@@ -105,9 +96,8 @@ const skillOfItem = (itemId: string) =>
     .executeTakeFirstOrThrow();
 
 describe("组织从目录安装：三档策略", { timeout: 60_000 }, () => {
-  it("技能：allow 直接装；disabled 拒绝且成员看不到；needs_approval 经企业管理员批准后才能装", async () => {
+  it("技能：optional 直接装；disabled 拒绝（409 plugin.disabled）、成员看不到、显示 unavailable", async () => {
     const itemId = await importSkill(env);
-    // allow
     const ok = await install(env.boss, env, itemId);
     expect(ok.statusCode, ok.body).toBe(201);
     const pluginInstallId = (ok.json() as { installed: { pluginInstallId: string } }).installed
@@ -125,35 +115,25 @@ describe("组织从目录安装：三档策略", { timeout: 60_000 }, () => {
     });
     // 已装的不受 disabled 影响，但不能新装
     await setPolicy(env, itemId, "disabled");
-    const off = await install(env.boss, env, itemId);
-    expect(off.statusCode).toBe(403);
-    expect(off.json().error.code).toBe("catalog.item_disabled");
+    const dup = await install(env.boss, env, itemId);
+    expect(dup.statusCode).toBe(409);
+    expect(dup.json().error.code).toBe("plugin.disabled");
     expect(await orgList(env.mem)).toHaveLength(0);
-    expect((await orgList(env.boss)).find((i) => i.id === itemId)?.installable).toBe("disabled");
+    expect((await orgList(env.boss)).find((i) => i.id === itemId)?.state).toBe("unavailable");
     expect(
       await env.db.selectFrom("skills").select("id").where("deleted_at", "is", null).execute(),
     ).toHaveLength(1);
-    // needs_approval：202 建部署级申请，什么都没装
-    await setPolicy(env, itemId, "needs_approval");
-    const pend = await install(env.boss, env, itemId, { version: "1.0.0" });
-    expect(pend.statusCode, pend.body).toBe(202);
-    expect(pend.json().request).toMatchObject({ stage: "deployment", status: "pending" });
-    expect((await orgList(env.mem)).find((i) => i.id === itemId)?.installable).toBe(
-      "needs_approval",
+    // Installed already: uninstall, then install again once enabled
+    await setPolicy(env, itemId, "allow");
+    expect((await install(env.boss, env, itemId)).json().error.code).toBe(
+      "plugin.already_installed",
     );
-    const versionsBefore = await env.db.selectFrom("skill_versions").select("version").execute();
-    expect(versionsBefore).toHaveLength(1);
-    await grant(itemId);
-    expect((await orgList(env.mem)).find((i) => i.id === itemId)?.installable).toBe("granted");
-    // Installed already: uninstall, then install again with the grant
-    const dup = await install(env.boss, env, itemId);
-    expect(dup.json().error.code).toBe("plugin.already_installed");
     await uninstall(itemId);
     const again = await install(env.boss, env, itemId);
     expect(again.statusCode, again.body).toBe(201);
   });
 
-  it("连接器模板：按模板建连接器，凭据进 secrets、默认策略 template；disabled 403；needs_approval 202", async () => {
+  it("连接器模板：按模板建连接器，凭据进 secrets、默认策略 template；disabled 409", async () => {
     const itemId = await importTemplate(env);
     const ok = await install(env.boss, env, itemId, connectorBody());
     expect(ok.statusCode, ok.body).toBe(201);
@@ -188,11 +168,9 @@ describe("组织从目录安装：三档策略", { timeout: 60_000 }, () => {
 
     await setPolicy(env, itemId, "disabled");
     const off = await install(env.boss, env, itemId, connectorBody({ slug: "gh2" }));
-    expect(off.json().error.code).toBe("catalog.item_disabled");
-    await setPolicy(env, itemId, "needs_approval");
-    const pend = await install(env.boss, env, itemId, connectorBody({ slug: "gh2" }));
-    expect(pend.statusCode).toBe(202);
-    await grant(itemId);
+    expect(off.statusCode).toBe(409);
+    expect(off.json().error.code).toBe("plugin.disabled");
+    await setPolicy(env, itemId, "allow");
     await uninstall(itemId);
     const again = await install(env.boss, env, itemId, connectorBody({ slug: "gh2" }));
     expect(again.statusCode, again.body).toBe(201);
@@ -323,7 +301,7 @@ describe("组织从目录安装：三档策略", { timeout: 60_000 }, () => {
     ]);
   });
 
-  it("插件条目：在本组织启用受条目策略约束", async () => {
+  it("插件条目：在本组织启用受条目 disabled 约束", async () => {
     const itemId = await seedPluginItem(env, "fake-tools-ui");
     const ok = await install(env.boss, env, itemId);
     expect(ok.statusCode, ok.body).toBe(201);
@@ -341,15 +319,13 @@ describe("组织从目录安装：三档策略", { timeout: 60_000 }, () => {
       payload: { enabled: false },
     });
     await setPolicy(env, itemId, "disabled");
-    expect((await install(env.boss, env, itemId)).json().error.code).toBe("catalog.item_disabled");
-    await setPolicy(env, itemId, "needs_approval");
-    expect((await install(env.boss, env, itemId)).statusCode).toBe(202);
-    await grant(itemId);
+    expect((await install(env.boss, env, itemId)).json().error.code).toBe("plugin.disabled");
+    await setPolicy(env, itemId, "allow");
     await uninstall(itemId);
     expect((await install(env.boss, env, itemId)).statusCode).toBe(201);
     // An extension not on the deployment
     const ghost = await seedPluginItem(env, "ghost");
-    expect((await orgList(env.boss)).find((i) => i.id === ghost)?.installable).toBe("not_deployed");
+    expect((await orgList(env.boss)).find((i) => i.id === ghost)?.notDeployed).toBe(true);
     const nd = await install(env.boss, env, ghost);
     expect(nd.statusCode).toBe(409);
     expect(nd.json().error.code).toBe("catalog.not_deployed");
@@ -359,11 +335,8 @@ describe("组织从目录安装：三档策略", { timeout: 60_000 }, () => {
     // Another item with the same extension name is irrelevant: the installed plugin's policy decides
     const appId = await seedPlugin(env, { name: "fake-tools-ui", extension: true });
     await setPolicy(env, appId, "disabled");
-    expect((await install(env.boss, env, appId)).json().error.code).toBe("catalog.item_disabled");
-    await setPolicy(env, appId, "needs_approval");
-    const pend = await install(env.boss, env, appId);
-    expect(pend.statusCode).toBe(202);
-    await grant(appId);
+    expect((await install(env.boss, env, appId)).json().error.code).toBe("plugin.disabled");
+    await setPolicy(env, appId, "allow");
     const ok = await install(env.boss, env, appId, {
       connectors: { gh: { endpoint: { url: env.mcp.url }, credential: { token: MCP_TOKEN } } },
     });
@@ -384,9 +357,7 @@ describe("组织从目录安装：三档策略", { timeout: 60_000 }, () => {
     ]);
     // The plugin's extension not on the deployment
     const ghostApp = await seedPlugin(env, { name: "ghost", extension: true, templates: false });
-    expect((await orgList(env.boss)).find((i) => i.id === ghostApp)?.installable).toBe(
-      "not_deployed",
-    );
+    expect((await orgList(env.boss)).find((i) => i.id === ghostApp)?.notDeployed).toBe(true);
     const nd = await install(env.boss, env, ghostApp);
     expect(nd.json().error.code).toBe("catalog.not_deployed");
   });
@@ -399,8 +370,8 @@ describe("组织从目录安装：三档策略", { timeout: 60_000 }, () => {
       policy: "disabled",
     });
     const r = await install(env.boss, env, appId);
-    expect(r.statusCode, r.body).toBe(403);
-    expect(r.json().error.code).toBe("catalog.item_disabled");
+    expect(r.statusCode, r.body).toBe(409);
+    expect(r.json().error.code).toBe("plugin.disabled");
     expect(await env.db.selectFrom("plugin_installs").select("id").execute()).toEqual([]);
     const enable = () =>
       env.boss({
@@ -508,13 +479,7 @@ describe("直接启用来自目录的插件（C22，按全部来源条目判定�
     const off = await enable(true);
     expect(off.statusCode).toBe(403);
     expect(off.json().error.code).toBe("catalog.item_disabled");
-    // 应用条目 needs_approval 且未授予 → approval_required；授予后可以启用
-    await setPolicy(env, appId, "needs_approval");
-    const pend = await enable(true);
-    expect(pend.statusCode).toBe(403);
-    expect(pend.json().error.code).toBe("catalog.approval_required");
-    expect((await install(env.boss, env, appId)).statusCode).toBe(202);
-    await grant(appId);
+    await setPolicy(env, appId, "allow");
     expect((await enable(true)).statusCode).toBe(200);
     expect((await enable(false)).statusCode).toBe(200);
     // 不经目录重装同一个包：来源条目保留，插件条目禁用后照样拦住
@@ -532,16 +497,14 @@ describe("直接启用来自目录的插件（C22，按全部来源条目判定�
     expect((await enable(true)).statusCode).toBe(200);
   });
 
-  it("插件从部署卸载时一并删除来源条目：之后不经目录重装不受旧条目的 needs_approval 约束（disabled 仍是总开关）", async () => {
+  it("插件从部署卸载时一并删除来源条目：之后不经目录重装不受旧条目约束（disabled 仍是总开关）", async () => {
     const { itemId, sha256 } = await importDeployedPlugin(env, "dirplug2");
-    await setPolicy(env, itemId, "needs_approval");
     const enable = () =>
       env.boss({
         method: "PUT",
         url: `/api/v1/orgs/${env.orgId}/extensions/dirplug2`,
         payload: { enabled: true },
       });
-    expect((await enable()).json().error.code).toBe("catalog.approval_required");
     expect(
       (await env.root({ method: "POST", url: "/api/v1/admin/extensions/dirplug2/disable" }))
         .statusCode,
@@ -577,7 +540,7 @@ describe("直接启用来自目录的插件（C22，按全部来源条目判定�
     // 插件自己的条目 disabled：不论有没有来源行都不能新启用（裁决 M-5）
     await setPolicy(env, itemId, "disabled");
     expect((await enable()).json().error.code).toBe("catalog.item_disabled");
-    await setPolicy(env, itemId, "needs_approval");
+    await setPolicy(env, itemId, "allow");
     const ok = await enable();
     expect(ok.statusCode, ok.body).toBe(200);
   });
@@ -859,17 +822,6 @@ describe("条目详情与图标（安装向导、网页只以 <img> 显示）", 
     expect(admin.json().error.code).toBe("catalog.icon_not_found");
   });
 
-  it("申请带申请人的显示名（收件箱卡片显示）", async () => {
-    const itemId = await importSkill(env);
-    const r = await requestItem(env.mem, env, itemId, "please");
-    expect(r.statusCode, r.body).toBe(201);
-    const inbox = await env.boss({ method: "GET", url: `/api/v1/orgs/${env.orgId}/inbox` });
-    const item = (
-      inbox.json() as { items: { type: string; request?: Record<string, unknown> }[] }
-    ).items.find((i) => i.type === "catalog_request");
-    expect(item?.request).toMatchObject({ requestedBy: env.memId, requestedByName: "M" });
-  });
-
   it("the admin detail gives hasIcon: true for a plugin with an icon, false without", async () => {
     const tplId = await importIconPlugin();
     const skillId = await importSkill(env);
@@ -887,7 +839,7 @@ describe("条目详情与图标（安装向导、网页只以 <img> 显示）", 
     expect(hidden.json().error.code).toBe("catalog.item_not_found");
     const admin = await env.boss({ method: "GET", url });
     expect(admin.statusCode).toBe(200);
-    expect(admin.json().item).toMatchObject({ id: itemId, installable: "disabled" });
+    expect(admin.json().item).toMatchObject({ id: itemId, state: "unavailable" });
   });
 
   it("detail: the templates (endpoint preset, editable paths, auth preset), the extension, dependencies and skills", async () => {
@@ -899,7 +851,7 @@ describe("条目详情与图标（安装向导、网页只以 <img> 显示）", 
     expect(r.statusCode, r.body).toBe(200);
     const tpl = mcpTemplate();
     expect(r.json()).toMatchObject({
-      item: { id: tplId, installable: "yes" },
+      item: { id: tplId, state: "off", switchable: true, scope: "optional" },
       hasIcon: true,
       extension: null,
       dependencies: [],
@@ -937,5 +889,157 @@ describe("条目详情与图标（安装向导、网页只以 <img> 显示）", 
       url: `/api/v1/orgs/${env.orgId}/catalog/${randomUUID()}`,
     });
     expect(missing.statusCode).toBe(404);
+  });
+});
+
+describe("the org switch (plugin scope)", { timeout: 60_000 }, () => {
+  const switchUrl = (itemId: string) => `/api/v1/orgs/${env.orgId}/catalog/${itemId}/switch`;
+  const put = (req: OrgEnv["root"], itemId: string, payload: Record<string, unknown>) =>
+    req({ method: "PUT", url: switchUrl(itemId), payload });
+  const switchRow = (itemId: string) =>
+    env.db
+      .selectFrom("catalog_item_org_switches")
+      .select("enabled")
+      .where("item_id", "=", itemId)
+      .where("org_id", "=", env.orgId)
+      .executeTakeFirst();
+
+  it("optional: listed off and switchable; switching on installs and records the switch", async () => {
+    const itemId = await importSkill(env);
+    const item = (await orgList(env.mem)).find((i) => i.id === itemId);
+    expect(item).toMatchObject({
+      scope: "optional",
+      state: "off",
+      switchable: true,
+      installed: null,
+    });
+    const r = await put(env.boss, itemId, { enabled: true });
+    expect(r.statusCode, r.body).toBe(200);
+    expect(r.json().item).toMatchObject({
+      id: itemId,
+      state: "on",
+      installed: { version: "1.0.0" },
+    });
+    expect(await env.db.selectFrom("plugin_installs").select("id").execute()).toHaveLength(1);
+    expect(await switchRow(itemId)).toEqual({ enabled: true });
+    // Switching on again is idempotent
+    expect((await put(env.boss, itemId, { enabled: true })).statusCode).toBe(200);
+  });
+
+  it("switching off: a preview naming the agents using its skill, then the hash uninstalls and stores false", async () => {
+    const itemId = await importSkill(env);
+    expect((await put(env.boss, itemId, { enabled: true })).statusCode).toBe(200);
+    const skill = await skillOfItem(itemId);
+    const agentId = randomUUID();
+    await env.db
+      .insertInto("agents")
+      .values({
+        id: agentId,
+        org_id: env.orgId,
+        owner_account_id: env.bossId,
+        visibility: "private",
+        current_version: 1,
+      })
+      .execute();
+    await env.db
+      .insertInto("agent_versions")
+      .values({
+        agent_id: agentId,
+        version: 1,
+        definition: JSON.stringify({ name: "Helper", skills: { orgSkills: [skill.id] } }),
+        created_by: env.bossId,
+      })
+      .execute();
+    const first = await put(env.boss, itemId, { enabled: false });
+    expect(first.statusCode, first.body).toBe(200);
+    const { preview, confirm } = first.json() as {
+      preview: { agents: { id: string; name: string }[]; kept: { reason: string }[] };
+      confirm: string;
+    };
+    expect(preview.agents).toMatchObject([{ id: agentId, name: "Helper" }]);
+    expect(preview.kept).toMatchObject([{ reason: "used_by_agents" }]);
+    expect(await env.db.selectFrom("plugin_installs").select("id").execute()).toHaveLength(1);
+    const stale = await put(env.boss, itemId, { enabled: false, confirm: "0".repeat(64) });
+    expect(stale.statusCode).toBe(409);
+    expect(stale.json().error.code).toBe("plugin.switch_stale");
+    const done = await put(env.boss, itemId, { enabled: false, confirm });
+    expect(done.statusCode, done.body).toBe(200);
+    expect(done.json().item).toMatchObject({ id: itemId, state: "off", installed: null });
+    expect(await env.db.selectFrom("plugin_installs").select("id").execute()).toHaveLength(0);
+    expect(await switchRow(itemId)).toEqual({ enabled: false });
+  });
+
+  it("named: absent for an org not on the list (404), listed and switchable for one that is", async () => {
+    const itemId = await importSkill(env);
+    await setScope(env, itemId, "named", []);
+    expect(await orgList(env.boss)).toHaveLength(0);
+    const r = await put(env.boss, itemId, { enabled: true });
+    expect(r.statusCode).toBe(404);
+    expect(r.json().error.code).toBe("catalog.item_not_found");
+    expect((await install(env.boss, env, itemId)).statusCode).toBe(404);
+    await setScope(env, itemId, "named", [env.orgId]);
+    // Listed and not switched off: wanted on (installed by the reconcile of a later task)
+    expect((await orgList(env.mem)).find((i) => i.id === itemId)).toMatchObject({
+      scope: "named",
+      state: "on",
+      switchable: true,
+    });
+    const off = await put(env.boss, itemId, { enabled: false });
+    expect(off.statusCode, off.body).toBe(200);
+    expect(off.json().item).toMatchObject({ state: "off" });
+    expect(await switchRow(itemId)).toEqual({ enabled: false });
+    expect((await put(env.boss, itemId, { enabled: true })).statusCode).toBe(200);
+  });
+
+  it("all and builtin: not switchable, switching off is 409 plugin.scope_locked; a builtin is on without an install", async () => {
+    const allId = await importSkill(env, { name: "all-skill" });
+    await setScope(env, allId, "all");
+    expect((await orgList(env.mem)).find((i) => i.id === allId)).toMatchObject({
+      scope: "all",
+      switchable: false,
+      state: "on",
+    });
+    const off = await put(env.boss, allId, { enabled: false });
+    expect(off.statusCode).toBe(409);
+    expect(off.json().error.code).toBe("plugin.scope_locked");
+    const builtinId = await importSkill(env, { name: "builtin-skill", skillName: "builtin-skill" });
+    await setBuiltin(env, builtinId);
+    expect((await orgList(env.mem)).find((i) => i.id === builtinId)).toMatchObject({
+      builtin: true,
+      state: "on",
+      switchable: false,
+      installed: null,
+    });
+    expect(await env.db.selectFrom("plugin_installs").select("id").execute()).toHaveLength(0);
+    const locked = await put(env.boss, builtinId, { enabled: false });
+    expect(locked.json().error.code).toBe("plugin.scope_locked");
+  });
+
+  it("a template plugin with scope all needs config until switched on with inputs", async () => {
+    const itemId = await importTemplate(env);
+    await setScope(env, itemId, "all");
+    expect((await orgList(env.boss)).find((i) => i.id === itemId)?.state).toBe("needs_config");
+    const r = await put(env.boss, itemId, {
+      enabled: true,
+      inputs: templateBody({
+        name: "GitHub",
+        endpoint: { url: env.mcp.url },
+        credential: { token: MCP_TOKEN },
+      }),
+    });
+    expect(r.statusCode, r.body).toBe(200);
+    expect(r.json().item).toMatchObject({ state: "on" });
+    expect(await env.db.selectFrom("connectors").select("id").execute()).toHaveLength(1);
+  });
+
+  it("members read the list but cannot switch; disabled items are refused", async () => {
+    const itemId = await importSkill(env);
+    const m = await put(env.mem, itemId, { enabled: true });
+    expect(m.statusCode).toBe(403);
+    expect(await env.db.selectFrom("plugin_installs").select("id").execute()).toHaveLength(0);
+    await setPolicy(env, itemId, "disabled");
+    const d = await put(env.boss, itemId, { enabled: true });
+    expect(d.statusCode).toBe(409);
+    expect(d.json().error.code).toBe("plugin.disabled");
   });
 });

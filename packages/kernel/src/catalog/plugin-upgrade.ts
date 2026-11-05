@@ -1124,7 +1124,7 @@ export class PluginUpgrader {
     const install = await db
       .selectFrom("plugin_installs as a")
       .innerJoin("catalog_items as i", "i.id", "a.item_id")
-      .select(["a.item_id", "a.version", "a.status", "i.name", "i.policy", "i.deleted_at"])
+      .select(["a.item_id", "a.version", "a.status", "i.name", "i.disabled", "i.deleted_at"])
       .where("a.id", "=", installId)
       .where("a.org_id", "=", orgId)
       .executeTakeFirst();
@@ -1138,7 +1138,7 @@ export class PluginUpgrader {
         "This plugin is no longer in the enterprise catalog",
       );
     }
-    if (install.policy === "disabled") {
+    if (install.disabled) {
       throw new ApiError(
         "catalog.item_disabled",
         "This catalog item is disabled by the enterprise admin and cannot be upgraded",

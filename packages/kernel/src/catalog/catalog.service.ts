@@ -683,7 +683,11 @@ export class CatalogService {
     if (row.policy === policy) return;
     await t
       .updateTable("catalog_items")
-      .set({ policy, updated_at: sql<Date>`now()` as unknown as Date })
+      .set({
+        policy,
+        disabled: policy === "disabled",
+        updated_at: sql<Date>`now()` as unknown as Date,
+      })
       .where("id", "=", itemId)
       .execute();
     await audit(t, {

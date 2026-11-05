@@ -533,7 +533,7 @@ describe("org plugin install: skill name conflicts (spec §9.2)", { timeout: 60_
     expect(await snapshot()).toEqual(before);
   });
 
-  it("another plugin's skill: the message names that plugin and its version; a needs_approval item is refused before a request", async () => {
+  it("another plugin's skill: the message names that plugin and its version; a disabled item is refused by the preflight", async () => {
     const alpha = await seedPlugin(env, { name: "alpha", templates: false, skills: ["shared"] });
     expect((await install(env.boss, env, alpha)).statusCode).toBe(201);
     const beta = await seedPlugin(env, {
@@ -549,12 +549,11 @@ describe("org plugin install: skill name conflicts (spec §9.2)", { timeout: 60_
     expect(r.json().error.details).toEqual([
       { skill: "shared", source: { kind: "plugin", name: "alpha", version: "1.0.0" } },
     ]);
-    // needs_approval: refused by the preflight before a request is created
-    await setPolicy(env, beta, "needs_approval");
-    const req = await install(env.boss, env, beta);
-    expect(req.statusCode, req.body).toBe(409);
-    expect(req.json().error.code).toBe("plugin.skill_conflict");
-    expect(await env.db.selectFrom("catalog_requests").select("id").execute()).toEqual([]);
+    // disabled: refused before the preflight
+    await setPolicy(env, beta, "disabled");
+    const off = await install(env.boss, env, beta);
+    expect(off.statusCode, off.body).toBe(409);
+    expect(off.json().error.code).toBe("plugin.disabled");
     expect(await snapshot()).toEqual(before);
   });
 
@@ -698,9 +697,9 @@ describe("org plugin install: one kind per component", { timeout: 60_000 }, () =
     const id = await seedPlugin(env, { name: "ghosted", skills: [], templatePlugin: "ghost" });
     const list = await env.boss({ method: "GET", url: `/api/v1/orgs/${env.orgId}/catalog` });
     expect(
-      (list.json().items as { id: string; installable: string }[]).find((i) => i.id === id)
-        ?.installable,
-    ).toBe("not_deployed");
+      (list.json().items as { id: string; notDeployed: boolean }[]).find((i) => i.id === id)
+        ?.notDeployed,
+    ).toBe(true);
     const r = await install(env.boss, env, id, pluginBody());
     expect(r.statusCode, r.body).toBe(409);
     expect(r.json().error.code).toBe("catalog.not_deployed");
@@ -971,40 +970,25 @@ describe("org plugin install: dependencies", { timeout: 60_000 }, () => {
     expect(await liveInstalls()).toEqual([]);
   });
 
-  it("approval follows the installed plugin only: a needs_approval plugin with dependencies goes through one request", async () => {
+  it("dependencies: a disabled dependency refuses the install, enabling it lets the plugin and its dependencies install", async () => {
     await skillsPlugin("free");
-    await skillsPlugin("gated", undefined, { policy: "needs_approval" });
-    const p = await skillsPlugin(
-      "app",
-      [
-        { name: "free", version: "*" },
-        { name: "gated", version: "*" },
-      ],
-      { policy: "needs_approval" },
-    );
-    const pend = await install(env.boss, env, p);
-    expect(pend.statusCode, pend.body).toBe(202);
-    const requests = await env.db
-      .selectFrom("catalog_requests")
-      .select(["id", "item_id"])
-      .execute();
-    expect(requests).toEqual([{ id: pend.json().request.id, item_id: p }]);
-    const d = await env.root({
-      method: "POST",
-      url: `/api/v1/admin/catalog/requests/${pend.json().request.id}/decide`,
-      payload: { decision: "approve" },
-    });
-    expect(d.statusCode, d.body).toBe(200);
+    const gated = await skillsPlugin("gated");
+    await setPolicy(env, gated, "disabled");
+    const p = await skillsPlugin("app", [
+      { name: "free", version: "*" },
+      { name: "gated", version: "*" },
+    ]);
+    const off = await install(env.boss, env, p);
+    expect(off.statusCode, off.body).toBe(409);
+    expect(off.json().error.code).toBe("catalog.dependency_disabled");
+    expect(await liveInstalls()).toEqual([]);
+    await setPolicy(env, gated, "allow");
     const ok = await install(env.boss, env, p);
     expect(ok.statusCode, ok.body).toBe(201);
     expect(await liveInstalls()).toEqual([
       "app@1.0.0:installed",
       "free@1.0.0:installed",
       "gated@1.0.0:installed",
-    ]);
-    expect(await env.db.selectFrom("catalog_requests").select("id").execute()).toHaveLength(1);
-    expect(await env.db.selectFrom("catalog_org_grants").select("item_id").execute()).toEqual([
-      { item_id: p },
     ]);
   });
 });
@@ -1113,7 +1097,7 @@ describe("org plugin install: dependency races", { timeout: 60_000 }, () => {
       if (args[2] === p && args[4] !== null) {
         await env.db
           .updateTable("catalog_items")
-          .set({ policy: "disabled" })
+          .set({ disabled: true })
           .where("id", "=", d)
           .execute();
       }

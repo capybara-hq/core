@@ -776,9 +776,9 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
     expect(dangling.isError).toBe(true);
   });
 
-  it("4. 策略与申请：模板两级审批后才能安装；成员申请技能批准后入库；customConnectors deny 时自建 403", async () => {
+  it("4. 开关与范围：disabled 的模板不能装（两个副本一样）；开启后经 switch 装入；技能经 switch 入库；customConnectors deny 时自建 403", async () => {
     await ok("root", 0, "PUT", `/api/v1/admin/catalog/items/${templateItem}/policy`, {
-      policy: "needs_approval",
+      policy: "disabled",
     });
     const connectorBody = {
       connectors: {
@@ -789,22 +789,6 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
         },
       },
     };
-    // 成员申请 → 组织管理员批准：条目需审批且本组织没有授予 → 升级到企业管理员
-    const asked = await ok("mem", 0, "POST", `${base}/catalog/${templateItem}/requests`, {
-      note: "Need GitHub",
-    });
-    const reqId = (asked.request as { id: string }).id;
-    expect(asked.request).toMatchObject({ stage: "org", status: "pending" });
-    const orgDecided = await ok("boss", 1, "POST", `${base}/catalog-requests/${reqId}/decide`, {
-      decision: "approve",
-    });
-    expect(orgDecided.request).toMatchObject({ stage: "deployment", status: "pending" });
-    // 企业管理员批准之前不能安装：202，什么都没建
-    const pending = await at("boss", 0, "POST", `${base}/catalog/${templateItem}/install`, {
-      ...connectorBody,
-    });
-    expect(pending.status, JSON.stringify(pending.json)).toBe(202);
-    expect(pending.json.request).toMatchObject({ id: reqId, stage: "deployment" });
     const liveConnectors = () =>
       db
         .selectFrom("connectors")
@@ -812,30 +796,29 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
         .where("org_id", "=", orgId)
         .where("deleted_at", "is", null)
         .execute();
+    for (const i of [0, 1] as const) {
+      const off = await at("boss", i, "PUT", `${base}/catalog/${templateItem}/switch`, {
+        enabled: true,
+        inputs: connectorBody,
+      });
+      expect(off.status, JSON.stringify(off.json)).toBe(409);
+      expect(errCode(off)).toBe("plugin.disabled");
+    }
     expect(await liveConnectors()).toHaveLength(1);
-    const inboxAdmin = (await ok("root", 1, "GET", "/api/v1/admin/catalog/requests")).requests as {
-      id: string;
-    }[];
-    expect(inboxAdmin.map((r) => r.id)).toEqual([reqId]);
-    const decided = await ok("root", 1, "POST", `/api/v1/admin/catalog/requests/${reqId}/decide`, {
-      decision: "approve",
+    await ok("root", 1, "PUT", `/api/v1/admin/catalog/items/${templateItem}/policy`, {
+      policy: "allow",
     });
-    expect(decided.request).toMatchObject({ status: "approved" });
-    const installed = await at("boss", 0, "POST", `${base}/catalog/${templateItem}/install`, {
-      ...connectorBody,
+    const installed = await at("boss", 0, "PUT", `${base}/catalog/${templateItem}/switch`, {
+      enabled: true,
+      inputs: connectorBody,
     });
-    expect(installed.status, JSON.stringify(installed.json)).toBe(201);
+    expect(installed.status, JSON.stringify(installed.json)).toBe(200);
     expect(await liveConnectors()).toHaveLength(2);
 
-    // 成员申请技能 → 组织管理员批准 → 安装入库
-    const sk = await ok("mem", 1, "POST", `${base}/catalog/${skillItem}/requests`, {});
-    const skReq = (sk.request as { id: string }).id;
-    const skDecided = await ok("boss", 0, "POST", `${base}/catalog-requests/${skReq}/decide`, {
-      decision: "approve",
+    const skInst = await at("boss", 1, "PUT", `${base}/catalog/${skillItem}/switch`, {
+      enabled: true,
     });
-    expect(skDecided.request).toMatchObject({ stage: "org", status: "approved" });
-    const skInst = await at("boss", 1, "POST", `${base}/catalog/${skillItem}/install`, {});
-    expect(skInst.status, JSON.stringify(skInst.json)).toBe(201);
+    expect(skInst.status, JSON.stringify(skInst.json)).toBe(200);
     const lib = (await ok("mem", 0, "GET", `${base}/skills`)).skills as { name: string }[];
     expect(lib.map((s) => s.name)).toContain("sql-helper");
 

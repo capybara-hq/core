@@ -113,6 +113,20 @@ export interface UninstallReport {
   }[];
 }
 
+/**
+ * What switching a plugin off would do, read without changing anything: its components, the ones the
+ * uninstall rules would keep for a reason visible beforehand (a component that pre-existed, or one an
+ * agent uses), and the agents that use the plugin's skills, connectors or agent templates.
+ */
+export interface UninstallPreview {
+  installId: string;
+  name: string;
+  version: string;
+  components: { kind: ComponentKind; ref: string; created: boolean }[];
+  kept: UninstallReport["kept"];
+  agents: { id: string; name: string; uses: { kind: ComponentKind; ref: string }[] }[];
+}
+
 /** A plugin install in an org (`GET /orgs/:orgId/plugin-installs`). */
 export interface PluginInstallView {
   id: string;
@@ -259,7 +273,7 @@ async function resolveOne(
 ): Promise<ResolvedDependency & { manifest: PluginManifest }> {
   const item = await db
     .selectFrom("catalog_items")
-    .select(["id", "policy"])
+    .select(["id", "disabled"])
     .where("name", "=", d.name)
     .where("deleted_at", "is", null)
     .executeTakeFirst();
@@ -270,7 +284,7 @@ async function resolveOne(
       "it is not in the enterprise catalog; ask the enterprise admin to import it",
     );
   }
-  if (item.policy === "disabled") throw dependencyDisabled(d.name);
+  if (item.disabled) throw dependencyDisabled(d.name);
   const versions = await db
     .selectFrom("catalog_item_versions")
     .select(["version", "manifest", "imported_at"])
@@ -975,14 +989,14 @@ export class PluginInstaller {
       // A dependency disabled (or removed) since it was planned
       const own = await t
         .selectFrom("catalog_items")
-        .select(["policy", "deleted_at"])
+        .select(["disabled", "deleted_at"])
         .where("id", "=", itemId)
         .forShare()
         .executeTakeFirst();
       if (!own || own.deleted_at !== null) {
         throw unresolved(plan.name, plan.version, "it was removed from the enterprise catalog");
       }
-      if (own.policy === "disabled") throw dependencyDisabled(plan.name);
+      if (own.disabled) throw dependencyDisabled(plan.name);
     }
     await assertItemInstallable(t, orgId, itemId, ctx.approvedBy ?? itemId);
     const live = await t
@@ -1754,6 +1768,112 @@ export class PluginInstaller {
       .filter((e) => e.plugin === plugin)
       .map((e) => (e.impl as Connector | undefined)?.kind)
       .filter((k): k is string => typeof k === "string");
+  }
+
+  /**
+   * The uninstall preview of an install (see {@link UninstallPreview}); the real uninstall may keep
+   * more (another install using a component, a connector still using an extension).
+   */
+  async previewUninstall(orgId: string, installId: string): Promise<UninstallPreview> {
+    if (!UUID_RE.test(installId)) throw installNotFound();
+    const t = this.db;
+    const row = await t
+      .selectFrom("plugin_installs as a")
+      .innerJoin("catalog_items as i", "i.id", "a.item_id")
+      .select(["a.id", "a.version", "i.name"])
+      .where("a.id", "=", installId)
+      .where("a.org_id", "=", orgId)
+      .executeTakeFirst();
+    if (!row) throw installNotFound();
+    const comps = await t
+      .selectFrom("plugin_install_components")
+      .select(["kind", "ref", "created"])
+      .where("install_id", "=", installId)
+      .orderBy("kind")
+      .orderBy("ref")
+      .execute();
+    const agents = await this.agentUsage(orgId);
+    const used = new Map<
+      string,
+      { id: string; name: string; uses: { kind: ComponentKind; ref: string }[] }
+    >();
+    const kept: UninstallReport["kept"] = [];
+    for (const c of comps) {
+      if (!c.created) {
+        kept.push({ kind: c.kind, ref: c.ref, reason: "pre_existing" });
+        continue;
+      }
+      const users = agents.filter((a) =>
+        c.kind === "skill"
+          ? a.skills.has(c.ref)
+          : c.kind === "connector"
+            ? a.connectors.has(c.ref)
+            : c.kind === "agent_template"
+              ? a.templates.has(c.ref)
+              : false,
+      );
+      if (users.length === 0) continue;
+      kept.push({ kind: c.kind, ref: c.ref, reason: "used_by_agents" });
+      for (const a of users) {
+        const e = used.get(a.id) ?? { id: a.id, name: a.name, uses: [] };
+        e.uses.push({ kind: c.kind, ref: c.ref });
+        used.set(a.id, e);
+      }
+    }
+    return {
+      installId,
+      name: row.name,
+      version: row.version,
+      components: comps.map((c) => ({ kind: c.kind, ref: c.ref, created: c.created })),
+      kept,
+      agents: [...used.values()].sort((x, y) => x.id.localeCompare(y.id)),
+    };
+  }
+
+  /** Each live agent of the org with the connectors, skills and agent templates its current definition references. */
+  private async agentUsage(orgId: string): Promise<
+    {
+      id: string;
+      name: string;
+      connectors: Set<string>;
+      skills: Set<string>;
+      templates: Set<string>;
+    }[]
+  > {
+    const rows = await this.db
+      .selectFrom("agents as a")
+      .innerJoin("agent_versions as v", (j) =>
+        j.onRef("v.agent_id", "=", "a.id").onRef("v.version", "=", "a.current_version"),
+      )
+      .select(["a.id", "v.definition"])
+      .where("a.org_id", "=", orgId)
+      .where("a.deleted_at", "is", null)
+      .orderBy("a.id")
+      .execute();
+    return rows.map((r) => {
+      const def = r.definition as {
+        name?: unknown;
+        tools?: unknown[];
+        skills?: { orgSkills?: unknown[] };
+        subagents?: { templates?: unknown[] };
+      } | null;
+      const connectors = new Set<string>();
+      for (const ref of def?.tools ?? []) {
+        const n = normalizeToolRef(ref) as { kind?: unknown; connectorId?: unknown };
+        if (n?.kind === "connector" && typeof n.connectorId === "string") {
+          connectors.add(n.connectorId);
+        }
+      }
+      const strings = (xs: unknown[] | undefined) =>
+        new Set((xs ?? []).filter((x): x is string => typeof x === "string"));
+      return {
+        id: r.id,
+        name: typeof def?.name === "string" ? def.name : r.id,
+        connectors,
+        skills: strings(def?.skills?.orgSkills),
+        templates: strings(def?.subagents?.templates),
+      };
+    });
   }
 
   /**

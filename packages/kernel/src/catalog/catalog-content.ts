@@ -31,7 +31,7 @@ import type {
   PluginInstallView,
 } from "./plugin-install.js";
 import { iconProblem } from "./plugin-package.js";
-import type { CatalogRequestView } from "./requests.service.js";
+import type { OrgPluginState, PluginScope } from "./scope.js";
 import { satisfiesRange } from "./versions.js";
 
 /** A catalog item from an organization's view (`GET /orgs/:orgId/catalog`). */
@@ -40,19 +40,23 @@ export interface OrgCatalogItem
     CatalogItemView,
     "installs" | "marketplaceId" | "latestMarketplaceVersion" | "newerInMarketplace"
   > {
+  scope: PluginScope;
+  /** Shipped with the deployment (a required bootstrap plugin): on in every org, never switchable. */
+  builtin: boolean;
   /**
-   * `yes` installable now; `needs_approval` needs enterprise admin approval (install returns 202 and
-   * creates a request); `granted` approved for this org; `disabled` disabled by the enterprise admin
-   * (members don't see it); `not_deployed` the plugin's extension is not on the deployment.
+   * The effective state in this org: `on`, `off`, `needs_config` (wanted but not installed, and the
+   * install needs inputs) or `unavailable` (disabled by the enterprise admin; members don't see it).
    */
-  installable: "yes" | "needs_approval" | "granted" | "disabled" | "not_deployed";
+  state: OrgPluginState;
+  /** The org admin may switch it (never for `all` and builtin items). */
+  switchable: boolean;
+  /** The plugin's extension (or a template's connector extension) is not on the deployment. */
+  notDeployed: boolean;
   /**
    * This org's live plugin install of the item (installing, installed or upgrading);
    * `upgradeAvailable` is the version it can be upgraded to now (spec §10), null when none.
    */
   installed: { pluginInstallId: string; version: string; upgradeAvailable: string | null } | null;
-  /** This org's latest request for the item. */
-  request: { id: string; stage: "org" | "deployment"; status: string } | null;
 }
 
 /**
@@ -202,20 +206,19 @@ export interface OrgInstallInput extends PluginInstallInput {
   version?: string;
 }
 
-/** Install result: 201 installed; 202 needs enterprise admin approval, a request was created (or escalated). */
-export type OrgInstallResult =
-  | {
-      status: 201;
-      installed: { itemId: string; version: string; pluginInstallId: string };
-      /** The install view (its components, dependency installs included). */
-      install: PluginInstallView;
-    }
-  | { status: 202; request: CatalogRequestView };
+/** Install result: 201 installed. */
+export interface OrgInstallResult {
+  status: 201;
+  installed: { itemId: string; version: string; pluginInstallId: string };
+  /** The install view (its components, dependency installs included). */
+  install: PluginInstallView;
+}
 
-/** Upgrade result: 200 upgraded (the install view); 202 needs enterprise admin approval, a request was created. */
-export type OrgUpgradeResult =
-  | { status: 200; install: PluginInstallView }
-  | { status: 202; request: CatalogRequestView };
+/** Upgrade result: 200 upgraded (the install view). */
+export interface OrgUpgradeResult {
+  status: 200;
+  install: PluginInstallView;
+}
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const itemNotFound = () => new ApiError("catalog.item_not_found", "Catalog item not found");

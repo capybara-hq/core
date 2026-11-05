@@ -51,12 +51,12 @@ const itemDisabled = () =>
     "This catalog item is disabled by the enterprise admin and cannot be newly installed",
   );
 
-/** 在调用方事务里读条目的策略（FOR SHARE：与企业管理员改策略 / 删除互斥）。不存在或已删除 → undefined。 */
+/** Reads the item in the caller's transaction (FOR SHARE: exclusive with the admin disabling or deleting it). Missing or deleted -> undefined. */
 async function lockItem(t: KernelSchemaDb, itemId: string) {
   if (!UUID_RE.test(itemId)) return undefined;
   return t
     .selectFrom("catalog_items")
-    .select(["id", "name", "policy", "deleted_at"])
+    .select(["id", "name", "policy", "disabled", "deleted_at"])
     .where("id", "=", itemId)
     .forShare()
     .executeTakeFirst();
@@ -74,37 +74,30 @@ async function hasGrant(db: KernelSchemaDb, orgId: string, itemId: string): Prom
 
 /**
  * Before an org creates a component from the catalog (enabling an extension, creating a connector
- * from a template, importing a skill), re-checks the item policy in the caller's transaction (C22):
- * deleted or disabled -> `catalog.item_disabled`; needs_approval without an enterprise admin grant
- * for this org -> `catalog.approval_required`; allow or granted -> passes. A dependency's
- * components pass `approvedBy`, the item the org is installing (spec §10: approval follows the
- * installed plugin only): the dependency's own item must still be live and not disabled, and the
- * approval is judged by `approvedBy`.
+ * from a template, importing a skill), re-checks in the caller's transaction that the item is live
+ * and not disabled by the enterprise admin (`catalog.item_disabled`). A dependency's components
+ * pass `approvedBy`, the item the org is installing: the dependency's own item must still be live
+ * and not disabled, and the installed item is judged too. Scope is decided by the org switch, not
+ * here.
  */
 export async function assertItemInstallable(
   t: KernelSchemaDb,
-  orgId: string,
+  _orgId: string,
   itemId: string,
   approvedBy: string = itemId,
 ): Promise<void> {
   if (approvedBy !== itemId) {
     const own = await lockItem(t, itemId);
-    if (!own || own.deleted_at !== null || own.policy === "disabled") throw itemDisabled();
+    if (!own || own.deleted_at !== null || own.disabled) throw itemDisabled();
   }
   const item = await lockItem(t, approvedBy);
-  if (!item || item.deleted_at !== null || item.policy === "disabled") throw itemDisabled();
-  if (item.policy === "needs_approval" && !(await hasGrant(t, orgId, approvedBy))) {
-    throw new ApiError(
-      "catalog.approval_required",
-      "This catalog item needs enterprise admin approval before this organization can install it",
-    );
-  }
+  if (!item || item.deleted_at !== null || item.disabled) throw itemDisabled();
 }
 
 /**
  * The extensions among `plugins` whose own catalog item (the non-deleted item with the same name) is
- * disabled (FOR SHARE: exclusive with policy changes). A disabled item is a master switch: no path
- * (direct enabling, its item, another plugin) can newly enable its extension (Ruling M-5).
+ * disabled (FOR SHARE: exclusive with the admin changing it). A disabled item is a master switch: no
+ * path (direct enabling, its item, another plugin) can newly enable its extension (Ruling M-5).
  */
 export async function disabledPluginItems(
   db: KernelSchemaDb,
@@ -115,7 +108,7 @@ export async function disabledPluginItems(
     .selectFrom("catalog_items")
     .select("name")
     .where("name", "in", [...plugins])
-    .where("policy", "=", "disabled")
+    .where("disabled", "=", true)
     .where("deleted_at", "is", null)
     .orderBy("name")
     .forShare()
@@ -136,36 +129,25 @@ export function pluginItemDisabled(names: readonly string[]): ApiError {
 
 /**
  * When an org enables an extension directly (not by installing from an item, e.g.
- * `PUT /orgs/:orgId/extensions/:extension`), it is judged by every catalog item that brought it into the
- * deployment (`extension_catalog_sources`), and **the strictest wins**: any source disabled ->
- * `catalog.item_disabled`; otherwise any source needs_approval without a grant of that item to the
- * org -> `catalog.approval_required`; all allow / granted -> passes. Deleted items no longer count
- * as sources (an enterprise admin deleting an item withdraws its constraint). No source (not
- * installed through the catalog) -> not bound by catalog policy.
+ * `PUT /orgs/:orgId/extensions/:extension`), every catalog item that brought it into the deployment
+ * (`extension_catalog_sources`) is consulted: any source disabled -> `catalog.item_disabled`. Deleted
+ * items no longer count as sources. No source (not installed through the catalog) -> not bound.
  */
 export async function assertPluginSourcesInstallable(
   t: KernelSchemaDb,
-  orgId: string,
+  _orgId: string,
   plugin: string,
 ): Promise<void> {
   const rows = await t
     .selectFrom("extension_catalog_sources as s")
     .innerJoin("catalog_items as i", "i.id", "s.item_id")
-    .select(["i.id", "i.policy"])
+    .select(["i.id", "i.disabled"])
     .where("s.plugin", "=", plugin)
     .where("i.deleted_at", "is", null)
     .orderBy("i.id")
     .forShare("i")
     .execute();
-  if (rows.some((r) => r.policy === "disabled")) throw itemDisabled();
-  for (const r of rows) {
-    if (r.policy === "needs_approval" && !(await hasGrant(t, orgId, r.id))) {
-      throw new ApiError(
-        "catalog.approval_required",
-        "A catalog item that brought this extension in needs enterprise admin approval before this organization can enable it",
-      );
-    }
-  }
+  if (rows.some((r) => r.disabled)) throw itemDisabled();
 }
 
 /** 审计里带上 PAT（个人令牌发起时）。 */
