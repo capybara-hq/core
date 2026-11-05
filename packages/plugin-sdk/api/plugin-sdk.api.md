@@ -1854,7 +1854,7 @@ export function sanitizeParams(decl: ModelParameter[], params: Record<string, un
 };
 
 // @public
-export const SDK_VERSION = "0.1.0-rc.1";
+export const SDK_VERSION = "0.1.0-rc.2";
 
 // @public
 export function secret<T extends z.ZodTypeAny>(schema: T): T;
