@@ -203,6 +203,66 @@ function zhBannedWords(file: string, text: string, json: unknown): Finding[] {
   });
 }
 
+/** One entry of the design system's zh object: `"key": "string literal",` on one line. */
+const DESIGN_ENTRY = /^\s*"([^"\\]+)":\s*("(?:[^"\\]|\\.)*"),?\s*$/;
+
+/**
+ * The zh strings of the design system (`packages/design/src/i18n.ts`, a `const zh = { … }` object of
+ * one-line `"key": "text"` entries) follow the same word rules as the web's zh messages
+ * (`i18n-zh-enterprise`, `i18n-zh-agent`). A line of the object that is not such an entry (a
+ * concatenation, a template literal, a value split over lines) cannot be confirmed statically and is
+ * reported as `i18n-design-unreadable`, as is a file without the object.
+ */
+export function checkDesignI18n(file: string): Finding[] {
+  if (!existsSync(file)) {
+    return [{ file, line: 1, rule: "i18n-missing-file", message: `${file} does not exist` }];
+  }
+  const lines = readFileSync(file, "utf8").split("\n");
+  const start = lines.findIndex((l) => /^const zh\b.*=\s*\{\s*$/.test(l));
+  if (start < 0) {
+    return [
+      {
+        file,
+        line: 1,
+        rule: "i18n-design-unreadable",
+        message: "no `const zh = {` object found; the zh word rules cannot be confirmed statically",
+      },
+    ];
+  }
+  const findings: Finding[] = [];
+  for (let i = start + 1; i < lines.length && !/^\}/.test(lines[i] as string); i++) {
+    const l = lines[i] as string;
+    if (/^\s*(?:\/\/.*)?$/.test(l)) continue;
+    const m = DESIGN_ENTRY.exec(l);
+    let message: string | undefined;
+    try {
+      message = m ? (JSON.parse(m[2] as string) as string) : undefined;
+    } catch {
+      message = undefined;
+    }
+    if (!m || message === undefined) {
+      findings.push({
+        file,
+        line: i + 1,
+        rule: "i18n-design-unreadable",
+        message: `${l.trim()} cannot be confirmed statically; write the entry as one "key": "text" line`,
+      });
+      continue;
+    }
+    const key = m[1] as string;
+    const visible = visibleText(message);
+    for (const b of ZH_BANNED.filter((x) => x.pattern.test(visible))) {
+      findings.push({
+        file,
+        line: i + 1,
+        rule: b.rule,
+        message: `「${key}」(${JSON.stringify(message)}): ${b.fix}`,
+      });
+    }
+  }
+  return findings;
+}
+
 type Loaded = { file: string; text: string; json: unknown; keys: Set<string> } | Finding;
 
 function load(file: string): Loaded {

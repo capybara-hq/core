@@ -58,6 +58,10 @@ describe("checkTerms", () => {
       ["terms-reference", ...at("docs/guide.md", "appBundleTgz")],
       ["terms-reference", ...at("docs/guide.md", "`sandbox_bash`")],
       ["terms-reference", ...at("docs/guide.md", "`tool_search` result")],
+      ["terms-reference", ...at("docs/guide.md", "isEnterpriseAdmin")],
+      ["terms-reference", ...at("docs/guide.md", "EnterpriseAdminLock")],
+      ["terms-reference", ...at("docs/guide.md", "is_enterprise_admin")],
+      ["terms-reference", ...at("docs/guide.md", "identity/enterprise-admin.ts")],
       ["terms-reference", ...at("packages/kernel/src/packages/tgz.ts", "definePlugin")],
     ]);
     expect(f[0]?.message).toContain('"definePlugin"');
@@ -89,6 +93,21 @@ describe("checkTerms", () => {
     expect(exempt).toEqual([]);
     // `agent` alone never matches
     expect(checkTerms(fixture("clean"))).toEqual([]);
+  });
+
+  it("an old super admin name is reported with the new names; the rename's homes pass", () => {
+    const root = fixture("violations");
+    const hits = checkTerms(root).filter((x) => /super admin/.test(x.message));
+    expect(hits.map((x) => x.file)).toEqual(Array(4).fill(join(root, "docs/guide.md")));
+    expect(hits[0]?.message).toContain('"isEnterpriseAdmin"');
+    expect(hits[0]?.message).toContain("isSuperAdmin");
+    expect(hits[3]?.message).toContain('"enterprise-admin.ts"');
+    // the rename migration, the upgrade test seeding the old column, the rename's release notes,
+    // archived changesets, changelogs and historical specs
+    const exempt = checkTerms(root).filter((x) =>
+      /0079_|bootstrap-from-builtin|\.changeset\/|CHANGELOG\.md|superpowers/.test(x.file),
+    );
+    expect(exempt).toEqual([]);
   });
 
   it("the legacy-format detector may name the old formats, and nothing else old", () => {

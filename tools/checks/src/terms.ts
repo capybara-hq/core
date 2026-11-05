@@ -207,6 +207,41 @@ export const OLD_REFERENCES: { re: RegExp; what: string; allowedIn?: RuleExempti
       },
     ],
   },
+  {
+    // The deployment-level role "enterprise admin" became "super admin" (plugin and component
+    // management spec §13.4b, migration 0079). Prose "enterprise" stays allowed (Slack Enterprise
+    // Grid, Lark `enterprise_email`); only identifier-shaped spellings of the role are matched.
+    re: /\b\w*(?:EnterpriseAdmin|enterpriseAdmin|enterprise_admin|ENTERPRISE_ADMIN)\w*\b|\benterprise-admin\.ts\b|\bauth:enterprise-admin\b/,
+    what: "an old super admin name (now SuperAdmin / superAdmin / isSuperAdmin / is_super_admin / super_admin)",
+    allowedIn: [
+      {
+        path: /^packages\/kernel\/src\/migrations\/0079_rename_enterprise_admin\.sql$/,
+        reason: "migration 0079 renames the old column and setting value",
+      },
+      {
+        path: /^packages\/kernel\/test\/extensions\/bootstrap-from-builtin\.test\.ts$/,
+        reason:
+          "seeds a pre-0079 schema with the old column on purpose (exercises 0079 on upgrade)",
+      },
+      {
+        path: /^\.changeset\/(?:pre\/)?super-admin-rename\.md$/,
+        reason:
+          "the rename's release notes map each old name to its new one; `changeset version` archives them under .changeset/pre/",
+      },
+      {
+        path: /^\.changeset\/pre\//,
+        reason: "changesets archived by `changeset version` are release history",
+      },
+      {
+        path: /(?:^|\/)CHANGELOG\.md$/,
+        reason: "changelogs are release history, generated from the reviewed changesets",
+      },
+      {
+        path: /^docs\/superpowers\/(?:specs|plans)\//,
+        reason: "design docs and plans are a historical record, including the rename's own plan",
+      },
+    ],
+  },
   { re: /\borg\.plugins\.manage\b/, what: "an old RBAC action (now org.extensions.manage)" },
   {
     re: /\b(?:assertPluginSecretsReachable|pluginDeploymentSecretValues)\b/,
@@ -297,6 +332,11 @@ export const REFERENCE_EXEMPT_LINES: { path: string; line: RegExp; reason: strin
     path: "AGENTS.md",
     line: /^\s*- `terms-tool-key`/,
     reason: "the bullet describing the rule lists the old keys it guards",
+  },
+  {
+    path: "AGENTS.md",
+    line: /^\s*- `terms-super-admin`/,
+    reason: "the bullet describing the pattern lists the old super admin names it guards",
   },
   {
     path: "docs/deploy/upgrade.md",

@@ -15,3 +15,7 @@ It returns a `CatalogIndex`.
 Tests build a bundle with `appBundleTgz()`.
 The agent can call `sandbox_bash` and `skill_load(` in a prompt.
 The `tool_search` result is archived by `read_tool_output`.
+Only accounts with `isEnterpriseAdmin` may call it.
+The `EnterpriseAdminLock` provider serializes `countEnterpriseAdmins()`.
+The column `is_enterprise_admin` and the error `account.last_enterprise_admin` are gone.
+The decorator lives in `identity/enterprise-admin.ts`.

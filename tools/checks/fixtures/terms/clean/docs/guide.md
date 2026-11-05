@@ -12,3 +12,6 @@ A plugin's manifest is `.capybara-plugin/plugin.json`; a marketplace publishes `
 (`parseMarketplaceManifest`); compose files such as `my-app.yaml` or `webapp.yaml` are not the old
 bundle manifest, and `capybara.kinds`, `PACKAGE_KINDS_V2` style names are other identifiers.
 The agent tool dispatches a sub-agent; `Bash` and `Skill` run commands and skills.
+The `SuperAdminLock` provider serializes `countSuperAdmins()` over `is_super_admin`; `isSuperAdmin`
+accounts open the admin console. Slack Enterprise Grid, a custom marketplace and an
+`enterprise_email` field are other words.

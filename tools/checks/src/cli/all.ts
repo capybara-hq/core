@@ -3,7 +3,7 @@ import { type NamedCheck, pluginChecks, runChecks } from "@capybara-hq/plugin-to
 import { BOOTSTRAP_COMPOSE_FILES, checkBootstrap } from "../bootstrap.js";
 import { checkComposeHaproxy } from "../compose-haproxy.js";
 import { checkConfigDocs } from "../config-docs.js";
-import { checkI18n } from "../i18n.js";
+import { checkDesignI18n, checkI18n } from "../i18n.js";
 import { checkKernelConventions } from "../kernel-conventions.js";
 import { checkPackageSchemas } from "../package-schemas.js";
 import { checkReleaseMetadata } from "../release-metadata.js";
@@ -31,7 +31,13 @@ const checks: NamedCheck[] = [
         composeFiles: BOOTSTRAP_COMPOSE_FILES.map((f) => join(root, f)),
       }),
   },
-  { name: "UI copy", run: () => checkI18n(join(root, "apps/web/messages")) },
+  {
+    name: "UI copy",
+    run: () => [
+      ...checkI18n(join(root, "apps/web/messages")),
+      ...checkDesignI18n(join(root, "packages/design/src/i18n.ts")),
+    ],
+  },
   { name: "Design tokens", run: () => checkTokens(root) },
   {
     name: "Web UI rules",
