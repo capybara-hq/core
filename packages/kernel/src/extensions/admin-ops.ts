@@ -476,6 +476,9 @@ function fallbackView(
     configValid: true,
     removable: true,
     required: false,
+    scope: null,
+    enabledOrgs: 0,
+    builtin: false,
     installSource: null,
     error: `the change was saved, but its current status cannot be read: ${err instanceof Error ? err.message : String(err)}`,
   };

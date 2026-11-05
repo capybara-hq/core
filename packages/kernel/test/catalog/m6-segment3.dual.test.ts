@@ -575,7 +575,12 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
     base = `/api/v1/orgs/${orgId}`;
     await testMembers(db).add(orgId, ids.boss, "admin", ids.root);
     await testMembers(db).add(orgId, ids.mem, "member", ids.root);
-    await ok("boss", 1, "PUT", `${base}/extensions/fake-dep-provider`, { enabled: true });
+    // Enabled without a plugin install (the row, as an enable before the plugin existed left it):
+    // `PUT extensions/:name {enabled}` is the plugin's switch and would install it
+    await db
+      .insertInto("extension_org_configs")
+      .values({ plugin: "fake-dep-provider", org_id: orgId, enabled: true, config: null })
+      .execute();
   });
 
   it("2. 应用包：引入、一次审阅装到部署（两边不重启加载），B 上组织安装，agent 用到连接器、扩展工具与技能", async () => {

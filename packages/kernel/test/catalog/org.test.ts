@@ -1007,6 +1007,33 @@ describe("the org switch (plugin scope)", { timeout: 60_000 }, () => {
     expect((await put(env.boss, itemId, { enabled: true })).statusCode).toBe(200);
   });
 
+  it("an extension's PUT enabled follows its plugin's switch: off previews, the hash uninstalls", async () => {
+    const { itemId } = await importDeployedPlugin(env, "scoped-ext");
+    const url = `/api/v1/orgs/${env.orgId}/extensions/scoped-ext`;
+    const on = await env.boss({ method: "PUT", url, payload: { enabled: true } });
+    expect(on.statusCode, on.body).toBe(200);
+    expect(on.json().extension).toMatchObject({
+      plugin: "scoped-ext",
+      enabled: true,
+      catalogItem: { itemId, scope: "optional" },
+      switchable: true,
+    });
+    expect(await env.db.selectFrom("plugin_installs").select("id").execute()).toHaveLength(1);
+    const preview = await env.boss({ method: "PUT", url, payload: { enabled: false } });
+    expect(preview.statusCode, preview.body).toBe(200);
+    expect(preview.json().confirm).toEqual(expect.any(String));
+    expect(await env.db.selectFrom("plugin_installs").select("id").execute()).toHaveLength(1);
+    const off = await env.boss({
+      method: "PUT",
+      url,
+      payload: { enabled: false, confirm: preview.json().confirm },
+    });
+    expect(off.statusCode, off.body).toBe(200);
+    expect(off.json().extension).toMatchObject({ plugin: "scoped-ext", enabled: false });
+    expect(await switchRow(itemId)).toEqual({ enabled: false });
+    expect(await env.db.selectFrom("plugin_installs").select("id").execute()).toHaveLength(0);
+  });
+
   it("all and builtin: not switchable, switching off is 409 plugin.scope_locked; a builtin is on without an install", async () => {
     const allId = await importSkill(env, { name: "all-skill" });
     await setScope(env, allId, "all");

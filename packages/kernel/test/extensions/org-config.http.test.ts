@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
@@ -63,7 +64,10 @@ afterAll(async () => {
   await Promise.all([pgc?.stop(), rd?.stop()]);
 });
 beforeEach(async () => {
-  await truncateTables(raw, "capybara.accounts, capybara.orgs, capybara.audit_events");
+  await truncateTables(
+    raw,
+    "capybara.accounts, capybara.orgs, capybara.audit_events, capybara.catalog_items, capybara.extension_catalog_sources",
+  );
   await redis.flushdb();
   owner = await accounts.createLocal({ login: "owner", password: PW, displayName: "Owner" });
 });
@@ -223,5 +227,134 @@ describe("组织插件配置 HTTP", () => {
     });
     expect(extra.statusCode).toBe(400);
     expect(errCode(extra)).toBe("validation_failed");
+  });
+
+  describe("plugin scope", () => {
+    /** A live catalog item of the extension (its source), with the scope and the listed orgs. */
+    async function seedItem(
+      plugin: string,
+      scope: "all" | "optional" | "named",
+      orgs: string[] = [],
+      builtin = false,
+    ): Promise<string> {
+      const id = randomUUID();
+      await db
+        .insertInto("catalog_items")
+        .values({
+          id,
+          name: plugin,
+          package_name: `@acme/plugin-${plugin}`,
+          publisher: "Acme",
+          description: "Test",
+          latest_version: "1.0.0",
+          scope,
+          builtin,
+        })
+        .execute();
+      await db.insertInto("extension_catalog_sources").values({ plugin, item_id: id }).execute();
+      if (orgs.length > 0) {
+        await db
+          .insertInto("catalog_item_scope_orgs")
+          .values(orgs.map((org_id) => ({ item_id: id, org_id })))
+          .execute();
+      }
+      return id;
+    }
+
+    it("a named plugin's extension is absent for an org not on its list, present for one that is", async () => {
+      const req = await session("owner");
+      const orgId = await createOrg(req);
+      await seedItem("orgcfg", "named", [orgId]);
+      const itemId = await seedItem("fixture", "named", []);
+      const list = async () =>
+        (
+          (await req({ method: "GET", url: `/api/v1/orgs/${orgId}/extensions` })).json() as {
+            extensions: {
+              plugin: string;
+              catalogItem: { scope: string } | null;
+              switchable: boolean;
+            }[];
+          }
+        ).extensions;
+      const out = await list();
+      expect(out.map((e) => e.plugin)).toEqual(["orgcfg"]);
+      expect(out[0]).toMatchObject({ catalogItem: { scope: "named" }, switchable: true });
+      await db
+        .updateTable("catalog_items")
+        .set({ scope: "optional" })
+        .where("id", "=", itemId)
+        .execute();
+      expect((await list()).map((e) => e.plugin)).toEqual(["fixture", "orgcfg"]);
+    });
+
+    it("enabled:false on an all plugin is plugin.scope_locked; an extension without an item is unchanged", async () => {
+      const req = await session("owner");
+      const orgId = await createOrg(req);
+      await seedItem("orgcfg", "all");
+      const locked = await req({
+        method: "PUT",
+        url: `/api/v1/orgs/${orgId}/extensions/orgcfg`,
+        payload: { enabled: false },
+      });
+      expect(locked.statusCode).toBe(409);
+      expect(errCode(locked)).toBe("plugin.scope_locked");
+      const direct = await req({
+        method: "PUT",
+        url: `/api/v1/orgs/${orgId}/extensions/fixture`,
+        payload: { enabled: true },
+      });
+      expect(direct.statusCode).toBe(200);
+      expect(direct.json()).toMatchObject({
+        extension: { plugin: "fixture", enabled: true, catalogItem: null, switchable: true },
+      });
+    });
+
+    it("optional: enabled:false records the switch off (no install to preview)", async () => {
+      const req = await session("owner");
+      const orgId = await createOrg(req);
+      const itemId = await seedItem("orgcfg", "optional");
+      const r = await req({
+        method: "PUT",
+        url: `/api/v1/orgs/${orgId}/extensions/orgcfg`,
+        payload: { enabled: false },
+      });
+      expect(r.statusCode, r.body).toBe(200);
+      expect(
+        await db
+          .selectFrom("catalog_item_org_switches")
+          .select("enabled")
+          .where("item_id", "=", itemId)
+          .executeTakeFirst(),
+      ).toEqual({ enabled: false });
+    });
+
+    it("the admin list reports scope, enabledOrgs and builtin", async () => {
+      const req = await session("owner");
+      const orgId = await createOrg(req);
+      await seedItem("orgcfg", "optional");
+      await db
+        .insertInto("extension_org_configs")
+        .values({ plugin: "orgcfg", org_id: orgId, enabled: true, config: null })
+        .execute();
+      await accounts.createLocal({
+        login: "root",
+        password: PW,
+        displayName: "Root",
+        enterpriseAdmin: true,
+      });
+      const root = await session("root");
+      const res = await root({ method: "GET", url: "/api/v1/admin/extensions" });
+      expect(res.statusCode).toBe(200);
+      const items = (res.json() as { extensions: Record<string, unknown>[] }).extensions;
+      expect(items.find((e) => e.name === "orgcfg")).toMatchObject({
+        scope: "optional",
+        enabledOrgs: 1,
+        builtin: false,
+      });
+      expect(items.find((e) => e.name === "fixture")).toMatchObject({
+        scope: null,
+        enabledOrgs: 0,
+      });
+    });
   });
 });

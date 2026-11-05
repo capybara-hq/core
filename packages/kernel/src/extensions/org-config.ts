@@ -11,6 +11,7 @@ import {
   disabledPluginItems,
   pluginItemDisabled,
 } from "../catalog/request-rules.js";
+import { type PluginScope, switchable, visibleTo } from "../catalog/scope.js";
 import { changedPaths, configFields, getPath, secretValues } from "../config/fields.js";
 import { createSecrets, type Keyring } from "../ctx/secrets.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
@@ -31,6 +32,7 @@ import { ExtensionHost } from "./host.js";
 import { ExtensionInstalls } from "./installs.js";
 import type { PermissionSet } from "./permission-set.js";
 import { type PermissionGroup, permissionGroups } from "./permission-view.js";
+import { type ExtensionPluginItem, pluginItemsOf } from "./plugin-items.js";
 
 export { type ConfigIssue, toIssues };
 
@@ -63,6 +65,10 @@ export interface OrgExtensionView {
    * disabled here (`extension.required`); its org config, when it has one, can still be set.
    */
   required: boolean;
+  /** The catalog plugin the extension ships in and its scope (builtin counts as `all`); null without one. */
+  catalogItem: { itemId: string; scope: PluginScope } | null;
+  /** The org admin can switch it (the plugin's switch): never for an `all` / builtin plugin. */
+  switchable: boolean;
 }
 
 /** `put` 的输入：`config` 中的密钥字段缺省 = 保留原值、`null` = 清除、其他值 = 新值。 */
@@ -71,6 +77,8 @@ export interface OrgExtensionInput {
   config?: Record<string, unknown> | undefined;
   /** Disable even when enabled dependents remain (default `extension.has_dependents`). */
   force?: boolean | undefined;
+  /** Confirms the uninstall preview of the plugin switch (HTTP only; read by the controller). */
+  confirm?: string | undefined;
 }
 
 /** `put` 的内部选项（不来自 HTTP）。 */
@@ -98,6 +106,19 @@ export interface OrgExtensionPutOptions {
 }
 
 type Obj = Record<string, unknown>;
+
+/** The scope part of an org view: the extension's plugin and whether the org can switch it. */
+function scopeFields(
+  item: ExtensionPluginItem | undefined,
+  required: boolean,
+): Pick<OrgExtensionView, "catalogItem" | "switchable"> {
+  if (!item) return { catalogItem: null, switchable: !required };
+  const builtin = item.builtin || required;
+  return {
+    catalogItem: { itemId: item.id, scope: builtin ? "all" : item.scope },
+    switchable: switchable({ scope: item.scope, builtin }),
+  };
+}
 
 const isObj = (v: unknown): v is Obj => typeof v === "object" && v !== null && !Array.isArray(v);
 
@@ -209,17 +230,42 @@ export class OrgExtensionConfigs {
     // Required bootstrap plugins are listed enabled (no org config row needed, spec §7)
     const required = await requiredExtensions(t);
     const loaded = this.host.manifests();
-    const views = loaded.map((m) =>
-      this.view(
-        m,
-        rows.find((r) => r.plugin === m.name),
-        setKeys,
-        required.has(m.name),
-      ),
+    const items = await pluginItemsOf(t, [
+      ...loaded.map((m) => m.name),
+      ...installed.map((i) => i.name),
+    ]);
+    // An extension whose plugin the org is not offered (a `named` plugin without it) is absent
+    const listed = new Set(
+      (
+        await t
+          .selectFrom("catalog_item_scope_orgs")
+          .select("item_id")
+          .where("org_id", "=", orgId)
+          .execute()
+      ).map((r) => r.item_id),
     );
+    const seen = (name: string) => {
+      const item = items.get(name);
+      if (!item) return true;
+      return visibleTo(
+        { scope: item.builtin || required.has(name) ? "all" : item.scope },
+        listed.has(item.id),
+      );
+    };
+    const views = loaded
+      .filter((m) => seen(m.name))
+      .map((m) =>
+        this.view(
+          m,
+          rows.find((r) => r.plugin === m.name),
+          setKeys,
+          required.has(m.name),
+          items.get(m.name),
+        ),
+      );
     const names = new Set(loaded.map((m) => m.name));
     const unavailable = installed
-      .filter((i) => !names.has(i.name))
+      .filter((i) => !names.has(i.name) && seen(i.name))
       .sort((a, b) => a.name.localeCompare(b.name))
       .map(
         (i): OrgExtensionView => ({
@@ -234,9 +280,32 @@ export class OrgExtensionConfigs {
           orgConfigSchema: null,
           available: false,
           required: required.has(i.name),
+          ...scopeFields(items.get(i.name), required.has(i.name)),
         }),
       );
     return [...views, ...unavailable];
+  }
+
+  /**
+   * The catalog plugin whose org switch an `enabled` write of this extension is: its live item, unless
+   * the extension is a required bootstrap plugin (that stays `put`'s `extension.required` rule) or
+   * has no item (config-declared: written directly) or several. Null: write through {@link put}.
+   */
+  async switchItemOf(plugin: string): Promise<string | null> {
+    const t = this.db;
+    if ((await requiredExtensions(t)).has(plugin)) return null;
+    const item = (await pluginItemsOf(t, [plugin])).get(plugin);
+    if (!item) return null;
+    // Brought in by several live items: no single plugin switch; the strictest source rules apply
+    const sources = await t
+      .selectFrom("extension_catalog_sources as s")
+      .innerJoin("catalog_items as i", "i.id", "s.item_id")
+      .select("i.id")
+      .where("s.plugin", "=", plugin)
+      .where("i.deleted_at", "is", null)
+      .where("i.id", "<>", item.id)
+      .executeTakeFirst();
+    return sources === undefined ? item.id : null;
   }
 
   /**
@@ -291,10 +360,11 @@ export class OrgExtensionConfigs {
       .where("org_id", "=", orgId)
       .executeTakeFirst();
     const required = (await requiredExtensions(t)).has(plugin);
+    const item = (await pluginItemsOf(t, [plugin])).get(plugin);
     if (required && input.enabled === false) throw requiredError(plugin);
     if (opts.ifDisabled && (row?.enabled === true || required)) {
       opts.ifDisabled.skipped = true;
-      return this.view(manifest, row, await this.setSecretKeys(t, orgId), required);
+      return this.view(manifest, row, await this.setSecretKeys(t, orgId), required, item);
     }
     // A required plugin is enabled whatever the row said (it may predate `required`)
     const enabled = required || (input.enabled ?? row?.enabled ?? false);
@@ -403,7 +473,7 @@ export class OrgExtensionConfigs {
       .where("plugin", "=", plugin)
       .where("org_id", "=", orgId)
       .executeTakeFirst();
-    const view = this.view(manifest, saved, await this.setSecretKeys(t, orgId), required);
+    const view = this.view(manifest, saved, await this.setSecretKeys(t, orgId), required, item);
     // Only once the root transaction committed (an outer caller's too): a rolled-back write
     // registers no secrets and disconnects nothing
     afterCommit(async () => {
@@ -635,6 +705,7 @@ export class OrgExtensionConfigs {
     row: { enabled: boolean; config: Obj | null } | undefined,
     setKeys: ReadonlySet<string>,
     required: boolean,
+    item: ExtensionPluginItem | undefined,
   ): OrgExtensionView {
     const schema = m.config?.org;
     const paths = schema ? secretPaths(schema) : [];
@@ -654,6 +725,7 @@ export class OrgExtensionConfigs {
       orgConfigSchema: schema ? this.formSchema(m.name, m.version, schema) : null,
       available: true,
       required,
+      ...scopeFields(item, required),
     };
   }
 

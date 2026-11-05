@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { LocalizedName } from "@capybara-hq/plugin-sdk";
+import type { PluginScope } from "../catalog/scope.js";
 import { pluginSchemaName } from "../ctx/create-ctx.js";
 import { isDestructiveSql, splitSqlStatements } from "../db/sql-statements.js";
 import { type PermissionSet, permissionKeys, WARNINGS_KEY_PREFIX } from "./permission-set.js";
@@ -302,6 +303,12 @@ export interface AdminExtensionView {
    * disabled or uninstalled; an enterprise admin may upgrade it.
    */
   required: boolean;
+  /** The scope of the catalog plugin the extension ships in (builtin: `all`); null without one. */
+  scope: PluginScope | null;
+  /** Orgs where the extension is enabled (a required plugin: every org). */
+  enabledOrgs: number;
+  /** Shipped with the deployment (a builtin plugin or a required bootstrap plugin). */
+  builtin: boolean;
   /** Where the install record came from (`bootstrap` for the bootstrap step); null for config-declared. */
   installSource: "npm" | "file" | "catalog" | "bootstrap" | null;
   /**

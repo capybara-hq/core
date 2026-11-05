@@ -18,6 +18,7 @@ import {
 } from "./approvals.js";
 import { ExtensionBlobs } from "./blobs.js";
 import { ExtensionDisplayNames } from "./display-name.js";
+import { enabledExtensionsByOrg } from "./enabled.js";
 import { ExtensionHost } from "./host.js";
 import { type ExtensionInstallRow, ExtensionInstalls } from "./installs.js";
 import { ExtensionLifecycle, PLUGINS_CHANGED_TOPIC, STALE_RECONCILE_PERIODS } from "./lifecycle.js";
@@ -33,6 +34,7 @@ import {
   permissionKeyItems,
   reviewHash,
 } from "./permission-view.js";
+import { pluginItemsOf } from "./plugin-items.js";
 import type { ExtensionSource } from "./sources.js";
 
 export { PLUGINS_CHANGED_TOPIC };
@@ -357,7 +359,27 @@ export class ExtensionAdmin {
       .where("heartbeat_at", ">", sql<Date>`now() - make_interval(secs => ${staleSeconds})`)
       .orderBy("replica_id")
       .execute();
+    const items = await pluginItemsOf(this.db, names);
+    const counts = new Map(
+      (
+        await this.db
+          .selectFrom(enabledExtensionsByOrg(this.db).as("en"))
+          .innerJoin("orgs", "orgs.id", "en.org_id")
+          .select(["en.plugin", (eb) => eb.fn.countAll<string>().as("n")])
+          .where("orgs.deleted_at", "is", null)
+          .where("en.plugin", "in", names)
+          .groupBy("en.plugin")
+          .execute()
+      ).map((r) => [r.plugin, Number(r.n)] as const),
+    );
     return subjects.map((s) => {
+      const item = items.get(s.name);
+      const builtin = item?.builtin === true || s.install?.required === true;
+      const scopeInfo = {
+        scope: item ? (builtin ? ("all" as const) : item.scope) : null,
+        enabledOrgs: counts.get(s.name) ?? 0,
+        builtin,
+      };
       const replicas = rows.filter((r) => r.plugin === s.name);
       const snap = snapshots.get(s.name);
       const { added, removed } = diffPermissions(snap?.permissions, s.set);
@@ -395,6 +417,7 @@ export class ExtensionAdmin {
           configValid,
           removable: install?.required !== true,
           required: install?.required === true,
+          ...scopeInfo,
           installSource: install?.source ?? null,
           error: s.broken,
         };
@@ -432,6 +455,7 @@ export class ExtensionAdmin {
         configValid,
         removable: s.source === "install" && install?.required !== true,
         required: install?.required === true,
+        ...scopeInfo,
         installSource: install?.source ?? null,
       };
     });
