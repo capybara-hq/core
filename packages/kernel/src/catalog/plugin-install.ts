@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   type AgentTemplate,
   type Connector,
@@ -125,6 +125,45 @@ export interface UninstallPreview {
   components: { kind: ComponentKind; ref: string; created: boolean }[];
   kept: UninstallReport["kept"];
   agents: { id: string; name: string; uses: { kind: ComponentKind; ref: string }[] }[];
+}
+
+/** The confirm hash of an uninstall preview: sha256 over its sorted JSON (the scheme of `diffHash`). */
+export function uninstallPreviewHash(p: UninstallPreview): string {
+  const by = <T extends { kind: string; ref: string }>(xs: T[]) =>
+    [...xs].sort((a, b) => `${a.kind}:${a.ref}`.localeCompare(`${b.kind}:${b.ref}`));
+  return createHash("sha256")
+    .update(
+      JSON.stringify({
+        ...p,
+        components: by(p.components),
+        kept: by(p.kept),
+        agents: [...p.agents]
+          .sort((a, b) => a.id.localeCompare(b.id))
+          .map((a) => ({ ...a, uses: by(a.uses) })),
+      }),
+    )
+    .digest("hex");
+}
+
+/** Upserts the org's switch row of an item in the caller's transaction (the org lock is held). */
+export async function upsertOrgSwitch(
+  db: KernelSchemaDb,
+  orgId: string,
+  itemId: string,
+  enabled: boolean,
+  actor: string,
+): Promise<void> {
+  await db
+    .insertInto("catalog_item_org_switches")
+    .values({ item_id: itemId, org_id: orgId, enabled, updated_by: actor })
+    .onConflict((oc) =>
+      oc.columns(["item_id", "org_id"]).doUpdateSet({
+        enabled,
+        updated_by: actor,
+        updated_at: sql<Date>`now()` as unknown as Date,
+      }),
+    )
+    .execute();
 }
 
 /** A plugin install in an org (`GET /orgs/:orgId/plugin-installs`). */
@@ -483,14 +522,16 @@ export class PluginInstaller {
     itemId: string,
     version: string,
     input: PluginInstallInput,
-    opts: { actorTokenId?: string } = {},
+    opts: { actorTokenId?: string; switchOn?: boolean } = {},
   ): Promise<PluginInstallView> {
+    const { switchOn, ...actorOpts } = opts;
     const plan = await this.plan(orgId, actor, itemId, version, input, "", undefined);
     await this.assertNoSkillConflicts(orgId, plan);
     let installId: string;
     try {
-      installId = await this.execute(orgId, actor, plan, opts, {
+      installId = await this.execute(orgId, actor, plan, actorOpts, {
         actions: planActions(plan),
+        ...(switchOn === true && { switchOn }),
       });
     } catch (e) {
       if (!(e instanceof InstallFailure)) throw e;
@@ -792,7 +833,7 @@ export class PluginInstaller {
     actor: string,
     plan: InstallPlan,
     opts: { actorTokenId?: string },
-    ctx: { actions: OrgAction[]; approvedBy?: string; parent?: string },
+    ctx: { actions: OrgAction[]; approvedBy?: string; parent?: string; switchOn?: boolean },
   ): Promise<string> {
     const { itemId, version, manifest } = plan;
     // The install row (role and item policy re-checked under the lock; one live install per org
@@ -1064,7 +1105,7 @@ export class PluginInstaller {
     installId: string,
     plan: InstallPlan,
     done: Component[],
-    ctx: { parent?: string },
+    ctx: { parent?: string; switchOn?: boolean },
     opts: { actorTokenId?: string },
   ): Promise<void> {
     const { itemId, version } = plan;
@@ -1085,6 +1126,10 @@ export class PluginInstaller {
       );
     }
     await this.requests.resolveByInstall(orgId, itemId, actor, opts);
+    // The org switch is written with the install, in one transaction under the org lock
+    if (ctx.switchOn === true && ctx.parent === undefined) {
+      await upsertOrgSwitch(t, orgId, itemId, true, actor);
+    }
     await audit(t, {
       actorAccountId: actor,
       ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
@@ -1326,9 +1371,10 @@ export class PluginInstaller {
     actor: string,
     installId: string,
     opts: { actorTokenId?: string } = {},
+    sw?: { expectHash?: string },
   ): Promise<UninstallReport> {
     if (!UUID_RE.test(installId)) throw installNotFound();
-    return this.writeUninstall(orgId, actor, installId, opts);
+    return this.writeUninstall(orgId, actor, installId, opts, sw);
   }
 
   /** The uninstall's one transaction; the extensions it disabled are notified once it commits. */
@@ -1338,8 +1384,31 @@ export class PluginInstaller {
     actor: string,
     installId: string,
     opts: { actorTokenId?: string },
+    sw?: { expectHash?: string },
   ): Promise<UninstallReport> {
     const report: UninstallReport = { removed: [], kept: [] };
+    let itemId: string | undefined;
+    if (sw !== undefined) {
+      // Switching off: the org lock first, then the preview is re-checked and the switch row is
+      // written in this same transaction
+      await this.orgLock.lock(orgId);
+      const row = await this.db
+        .selectFrom("plugin_installs")
+        .select("item_id")
+        .where("id", "=", installId)
+        .where("org_id", "=", orgId)
+        .executeTakeFirst();
+      itemId = row?.item_id;
+      if (sw.expectHash !== undefined && row !== undefined) {
+        const now = uninstallPreviewHash(await this.previewUninstall(orgId, installId));
+        if (now !== sw.expectHash) {
+          throw new ApiError(
+            "plugin.switch_stale",
+            "The uninstall preview changed; review it and confirm again",
+          );
+        }
+      }
+    }
     const outcome = await this.uninstallIn(orgId, actor, installId, {
       report,
       removing: new Set(),
@@ -1349,6 +1418,9 @@ export class PluginInstaller {
     if (outcome === "missing") throw installNotFound();
     if (outcome === "kept") {
       report.kept.push({ kind: "plugin", ref: installId, reason: "used_by_other_install" });
+    }
+    if (itemId !== undefined && outcome === "removed") {
+      await upsertOrgSwitch(this.db, orgId, itemId, false, actor);
     }
     afterCommit(async () => {
       for (const r of report.removed) {

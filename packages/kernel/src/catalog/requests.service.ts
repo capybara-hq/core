@@ -11,6 +11,7 @@ import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { OrgLock } from "../orgs/org-lock.js";
 import { roleAtLeast } from "../orgs/roles.js";
+import { visibleTo } from "./scope.js";
 
 export type CatalogRequestStage = "org" | "deployment";
 export type CatalogRequestStatus = "pending" | "approved" | "rejected" | "cancelled";
@@ -56,7 +57,7 @@ async function lockItem(t: KernelSchemaDb, itemId: string) {
   if (!UUID_RE.test(itemId)) return undefined;
   return t
     .selectFrom("catalog_items")
-    .select(["id", "name", "policy", "disabled", "deleted_at"])
+    .select(["id", "name", "policy", "disabled", "scope", "builtin", "deleted_at"])
     .where("id", "=", itemId)
     .forShare()
     .executeTakeFirst();
@@ -82,7 +83,7 @@ async function hasGrant(db: KernelSchemaDb, orgId: string, itemId: string): Prom
  */
 export async function assertItemInstallable(
   t: KernelSchemaDb,
-  _orgId: string,
+  orgId: string,
   itemId: string,
   approvedBy: string = itemId,
 ): Promise<void> {
@@ -92,6 +93,30 @@ export async function assertItemInstallable(
   }
   const item = await lockItem(t, approvedBy);
   if (!item || item.deleted_at !== null || item.disabled) throw itemDisabled();
+  if (!(await offeredTo(t, orgId, item))) throw notOffered();
+}
+
+const notOffered = () =>
+  new ApiError(
+    "catalog.approval_required",
+    "This catalog item is not offered to this organization (plugin scope)",
+  );
+
+/** Scope rule: a `named` item is offered only to the orgs on its list (builtin implies `all`). */
+async function offeredTo(
+  t: KernelSchemaDb,
+  orgId: string,
+  item: { id: string; scope: "all" | "optional" | "named"; builtin: boolean },
+): Promise<boolean> {
+  const scope = item.builtin ? "all" : item.scope;
+  if (scope !== "named") return true;
+  const listed = await t
+    .selectFrom("catalog_item_scope_orgs")
+    .select("item_id")
+    .where("item_id", "=", item.id)
+    .where("org_id", "=", orgId)
+    .executeTakeFirst();
+  return visibleTo({ scope }, listed !== undefined);
 }
 
 /**
@@ -135,19 +160,20 @@ export function pluginItemDisabled(names: readonly string[]): ApiError {
  */
 export async function assertPluginSourcesInstallable(
   t: KernelSchemaDb,
-  _orgId: string,
+  orgId: string,
   plugin: string,
 ): Promise<void> {
   const rows = await t
     .selectFrom("extension_catalog_sources as s")
     .innerJoin("catalog_items as i", "i.id", "s.item_id")
-    .select(["i.id", "i.disabled"])
+    .select(["i.id", "i.disabled", "i.scope", "i.builtin"])
     .where("s.plugin", "=", plugin)
     .where("i.deleted_at", "is", null)
     .orderBy("i.id")
     .forShare("i")
     .execute();
   if (rows.some((r) => r.disabled)) throw itemDisabled();
+  for (const r of rows) if (!(await offeredTo(t, orgId, r))) throw notOffered();
 }
 
 /** 审计里带上 PAT（个人令牌发起时）。 */

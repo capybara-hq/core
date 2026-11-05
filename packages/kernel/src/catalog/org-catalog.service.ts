@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import type { PluginManifest } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
@@ -31,7 +30,13 @@ import {
   templatePluginProblem,
 } from "./catalog-content.js";
 import { itemView } from "./catalog-items.js";
-import { PluginInstaller, type UninstallPreview } from "./plugin-install.js";
+import {
+  PluginInstaller,
+  type UninstallPreview,
+  type UninstallReport,
+  uninstallPreviewHash,
+  upsertOrgSwitch,
+} from "./plugin-install.js";
 import { type PluginUpgradeInput, PluginUpgrader, type UpgradePreview } from "./plugin-upgrade.js";
 import { type OrgPluginState, switchable, visibleTo, wantedOn } from "./scope.js";
 import { upgradeInfo } from "./upgrade-targets.js";
@@ -48,24 +53,6 @@ const pluginDisabled = () =>
 export type SwitchResult =
   | { kind: "done"; item: OrgCatalogItem }
   | { kind: "preview"; preview: UninstallPreview; confirm: string };
-
-/** The confirm hash of an uninstall preview: sha256 over its sorted JSON (the scheme of `diffHash`). */
-function previewHash(p: UninstallPreview): string {
-  const by = <T extends { kind: string; ref: string }>(xs: T[]) =>
-    [...xs].sort((a, b) => `${a.kind}:${a.ref}`.localeCompare(`${b.kind}:${b.ref}`));
-  return createHash("sha256")
-    .update(
-      JSON.stringify({
-        ...p,
-        components: by(p.components),
-        kept: by(p.kept),
-        agents: [...p.agents]
-          .sort((a, b) => a.id.localeCompare(b.id))
-          .map((a) => ({ ...a, uses: by(a.uses) })),
-      }),
-    )
-    .digest("hex");
-}
 
 /**
  * Organizations see the enterprise catalog with the plugin scope rules applied (plugin and component
@@ -327,13 +314,12 @@ export class OrgCatalogService {
       .executeTakeFirst();
     if (!v)
       throw new ApiError("catalog.item_not_found", `Version ${version} of this item not found`);
-    const opts = actorTokenId !== undefined ? { actorTokenId } : {};
+    const opts = { switchOn: true, ...(actorTokenId !== undefined && { actorTokenId }) };
     if (item.disabled) throw pluginDisabled();
     // Dependencies resolved, extensions deployed, template connectors available
     await this.pluginInstaller.preflight(orgId, actor, itemId, version);
     const { version: _version, ...input } = body;
     const view = await this.pluginInstaller.install(orgId, actor, itemId, version, input, opts);
-    await this.recordSwitch(orgId, actor, itemId, true);
     return {
       status: 201,
       installed: { itemId, version, pluginInstallId: view.id },
@@ -412,17 +398,46 @@ export class OrgCatalogService {
       return { kind: "done", item: await this.itemOf(orgId, actor, itemId) };
     }
     const preview = await this.pluginInstaller.previewUninstall(orgId, live.id);
-    const confirm = previewHash(preview);
+    const confirm = uninstallPreviewHash(preview);
     if (body.confirm === undefined) return { kind: "preview", preview, confirm };
-    if (body.confirm !== confirm) {
+    // The hash is re-checked and the switch row written inside the uninstall's transaction
+    await this.pluginInstaller.uninstall(orgId, actor, live.id, opts, { expectHash: body.confirm });
+    return { kind: "done", item: await this.itemOf(orgId, actor, itemId) };
+  }
+
+  /**
+   * `DELETE plugin-installs/:installId` of a catalog plugin follows the switch-off semantics: `all`
+   * and builtin items are refused (`plugin.scope_locked`), and the switch row is written false in
+   * the uninstall's transaction.
+   */
+  async uninstall(
+    orgId: string,
+    actor: string,
+    installId: string,
+    actorTokenId?: string,
+  ): Promise<UninstallReport> {
+    if (!UUID_RE.test(installId))
+      throw new ApiError("plugin.install_not_found", "Plugin install not found");
+    const row = await this.db
+      .selectFrom("plugin_installs as a")
+      .innerJoin("catalog_items as i", "i.id", "a.item_id")
+      .select(["i.scope", "i.builtin"])
+      .where("a.id", "=", installId)
+      .where("a.org_id", "=", orgId)
+      .executeTakeFirst();
+    if (row !== undefined && !switchable({ scope: row.scope, builtin: row.builtin })) {
       throw new ApiError(
-        "plugin.switch_stale",
-        "The uninstall preview changed; review it and confirm again",
+        "plugin.scope_locked",
+        "This plugin is on for every organization and cannot be uninstalled here",
       );
     }
-    await this.pluginInstaller.uninstall(orgId, actor, live.id, opts);
-    await this.recordSwitch(orgId, actor, itemId, false);
-    return { kind: "done", item: await this.itemOf(orgId, actor, itemId) };
+    return this.pluginInstaller.uninstall(
+      orgId,
+      actor,
+      installId,
+      actorTokenId !== undefined ? { actorTokenId } : {},
+      row !== undefined ? {} : undefined,
+    );
   }
 
   private async itemOf(orgId: string, accountId: string, itemId: string): Promise<OrgCatalogItem> {
@@ -431,7 +446,7 @@ export class OrgCatalogService {
     return item;
   }
 
-  /** Writes the org's switch row of the item. */
+  /** Writes the org's switch row of the item under the org row lock. */
   @Transactional()
   private async recordSwitch(
     orgId: string,
@@ -439,17 +454,8 @@ export class OrgCatalogService {
     itemId: string,
     enabled: boolean,
   ): Promise<void> {
-    await this.db
-      .insertInto("catalog_item_org_switches")
-      .values({ item_id: itemId, org_id: orgId, enabled, updated_by: actor })
-      .onConflict((oc) =>
-        oc.columns(["item_id", "org_id"]).doUpdateSet({
-          enabled,
-          updated_by: actor,
-          updated_at: sql<Date>`now()` as unknown as Date,
-        }),
-      )
-      .execute();
+    await this.orgLock.lock(orgId);
+    await upsertOrgSwitch(this.db, orgId, itemId, enabled, actor);
   }
 
   /** The upgrade preview of an org install (spec §10, see `PluginUpgrader`). */

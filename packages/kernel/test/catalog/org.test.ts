@@ -1042,4 +1042,51 @@ describe("the org switch (plugin scope)", { timeout: 60_000 }, () => {
     expect(d.statusCode).toBe(409);
     expect(d.json().error.code).toBe("plugin.disabled");
   });
+
+  it("DELETE plugin-installs follows switch-off semantics: optional writes switch false, all and builtin are 409 plugin.scope_locked", async () => {
+    const itemId = await importSkill(env);
+    expect((await put(env.boss, itemId, { enabled: true })).statusCode).toBe(200);
+    expect(await switchRow(itemId)).toEqual({ enabled: true });
+    await uninstall(itemId);
+    expect(await switchRow(itemId)).toEqual({ enabled: false });
+    expect((await orgList(env.boss)).find((i) => i.id === itemId)).toMatchObject({
+      state: "off",
+      installed: null,
+    });
+    // all: installed through the alias, then not removable here
+    const allId = await importSkill(env, { name: "all-skill", skillName: "all-skill" });
+    expect((await install(env.boss, env, allId)).statusCode).toBe(201);
+    await setScope(env, allId, "all");
+    const del = await env.boss({
+      method: "DELETE",
+      url: `/api/v1/orgs/${env.orgId}/plugin-installs/${await installOf(allId)}`,
+    });
+    expect(del.statusCode, del.body).toBe(409);
+    expect(del.json().error.code).toBe("plugin.scope_locked");
+    expect(await env.db.selectFrom("plugin_installs").select("id").execute()).toHaveLength(1);
+  });
+
+  it("an org outside a named item's list cannot enable its extension directly (catalog.approval_required)", async () => {
+    const itemId = await seedPlugin(env, {
+      name: "fake-tools-ui",
+      extension: true,
+      templates: false,
+    });
+    await env.db
+      .insertInto("extension_catalog_sources")
+      .values({ plugin: "fake-tools-ui", item_id: itemId })
+      .execute();
+    await setScope(env, itemId, "named", []);
+    const enable = () =>
+      env.boss({
+        method: "PUT",
+        url: `/api/v1/orgs/${env.orgId}/extensions/fake-tools-ui`,
+        payload: { enabled: true },
+      });
+    const r = await enable();
+    expect(r.statusCode, r.body).toBe(403);
+    expect(r.json().error.code).toBe("catalog.approval_required");
+    await setScope(env, itemId, "named", [env.orgId]);
+    expect((await enable()).statusCode).toBe(200);
+  });
 });

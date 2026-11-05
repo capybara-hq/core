@@ -266,12 +266,7 @@ export class OrgCatalogController {
   ): Promise<UninstallReport> {
     const p = requireUser(principal);
     const tokenId = patTokenId(p);
-    return this.pluginInstaller.uninstall(
-      org.orgId,
-      p.account.id,
-      installId,
-      tokenId !== undefined ? { actorTokenId: tokenId } : {},
-    );
+    return this.catalog.uninstall(org.orgId, p.account.id, installId, tokenId);
   }
 
   @Post("plugin-installs/:installId/upgrade/preview")
