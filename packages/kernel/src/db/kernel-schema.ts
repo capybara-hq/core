@@ -1058,6 +1058,8 @@ export interface KernelDatabase {
   plugin_import_staging: PluginImportStagingTable;
   catalog_requests: CatalogRequestsTable;
   catalog_org_grants: CatalogOrgGrantsTable;
+  catalog_item_scope_orgs: CatalogItemScopeOrgsTable;
+  catalog_item_org_switches: CatalogItemOrgSwitchesTable;
   plugin_installs: PluginInstallsTable;
   plugin_install_components: PluginInstallComponentsTable;
   extension_catalog_sources: ExtensionCatalogSourcesTable;
@@ -1098,6 +1100,33 @@ export interface CatalogItemsTable {
   deleted_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
   /** 0035, renamed in 0042: the marketplace it was imported from (null once that is deleted). */
   marketplace_id: ColumnType<string | null, string | null | undefined, string | null>;
+  /** 0074: who the plugin is offered to (`named`: the rows of `catalog_item_scope_orgs`). */
+  scope: ColumnType<
+    "all" | "optional" | "named",
+    "all" | "optional" | "named" | undefined,
+    "all" | "optional" | "named"
+  >;
+  /** 0074: shipped with the deployment (required bootstrap plugins); always scope `all`. */
+  builtin: ColumnType<boolean, boolean | undefined, boolean>;
+  /** 0074: switched off for every org by the enterprise admin. */
+  disabled: ColumnType<boolean, boolean | undefined, boolean>;
+  /** 0074: bumped on every scope change. */
+  scope_version: ColumnType<number, number | undefined, number>;
+}
+
+/** 0074: the orgs a `named` item is offered to. */
+export interface CatalogItemScopeOrgsTable {
+  item_id: string;
+  org_id: string;
+}
+
+/** 0074: an org's on / off switch of an item's components. */
+export interface CatalogItemOrgSwitchesTable {
+  item_id: string;
+  org_id: string;
+  enabled: boolean;
+  updated_by: NullableCol<string>;
+  updated_at: Ts;
 }
 
 /**
