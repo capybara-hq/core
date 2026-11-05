@@ -117,8 +117,9 @@ when `bootstrap.json` or `docker/**` changes). A change to the socket proxy conf
 `capybara-hq/plugins` first (`plugins/sandbox-docker/test/sandbox-proxy/haproxy.cfg`, with a test
 against the real proxy), then a core PR changes `docker/sandbox-proxy/haproxy.cfg` (and the copy
 inlined in `docker/compose.yaml`, `check:compose-haproxy`) and moves `marketplace.commit` and the
-compose contexts to a plugins commit that has it. The pins can keep their versions: the plugins
-repository's `marketplace.json` keeps every published version. No image bakes the proxy config (it
+compose contexts to a plugins commit that has it. The pins must be the versions that commit's
+`marketplace.json` lists (one entry per plugin, its current version), so the pins usually move
+with it. No image bakes the proxy config (it
 is a compose `configs` entry), so this needs no changeset.
 
 ### Gates that keep the order (all in code)
