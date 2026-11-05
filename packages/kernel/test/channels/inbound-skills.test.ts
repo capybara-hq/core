@@ -301,8 +301,12 @@ describe("skill invocations from IM (phase D Task 8)", { timeout: 60_000 }, () =
   });
 
   it("the note is best-effort: a failed send of it does not fail the inbound job (batch 5 review m4)", async () => {
-    // only the note's chat: another test's late delivery must not take the failure
-    im.failNext("/send", 403, 1, undefined, "target_gone", undefined, "dm-u-owner");
+    // Only the note fails: the message runs the agent before the note goes out, so the agent's own
+    // reply to the same chat (or a late one of an earlier case) can come first
+    im.failNext("/send", 403, 1, undefined, "target_gone", undefined, {
+      chatId: "dm-u-owner",
+      textIncludes: "The skill was not run",
+    });
     const before = im.sent.length;
     const text = `/fix-issue ${"y".repeat(SKILL_INVOCATION_LIMITS.argumentsMaxChars + 1)}`;
     // push waits for the job to complete (a thrown non-retryable send would fail it)
