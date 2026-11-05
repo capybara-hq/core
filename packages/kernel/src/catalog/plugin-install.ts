@@ -13,12 +13,7 @@ import {
 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
-import { normalizeToolRef } from "../agents/definition.js";
-import {
-  putTemplateVersionIn,
-  revertTemplateVersionIn,
-  softDeleteTemplateIn,
-} from "../agents/templates.js";
+import { revertTemplateVersionIn, softDeleteTemplateIn } from "../agents/templates.js";
 import type { KernelSchemaDb, SourceFormat } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { isExtensionEnabled } from "../extensions/enabled.js";
@@ -57,11 +52,21 @@ import {
   readCatalogFiles,
   readCatalogTemplates,
   requiredActions,
-  skillOf,
   type TemplateDeps,
   templateConnectorInput,
   templatePluginProblem,
 } from "./catalog-content.js";
+import {
+  agentDefinitionRefs,
+  componentOn,
+  type DefinitionRefs,
+  listedIn,
+  loadComponents,
+  loadScopeState,
+  pluginFactsOf,
+  referenceIds,
+  switchOf,
+} from "./component-state.js";
 import {
   assertItemInstallable,
   disabledPluginItems,
@@ -475,9 +480,11 @@ export function under(e: unknown, at: string): unknown {
  *    not run it; already enabled is recorded created=false);
  * 3. connectors from the templates (credentials / clients go to secrets, default policies are
  *    recorded `policy_source 'template'`);
- * 4. the skills (an org skill of the same name from the same catalog item gets a new version,
- *    recorded created=false with skill_version; one of other provenance, the org's own or another
- *    item's, refuses the install while planning with `plugin.skill_conflict`, spec §9.2).
+ * The plugin's skills and agent templates are platform components (plugin scope phase 2): stored
+ * once for the deployment and on in the org while the plugin is, so an install writes no org rows
+ * for them; a skill name the org already uses (its own skill, another plugin's) refuses the install
+ * while planning with `plugin.skill_conflict` (spec §9.2, rule 10). Uninstall leaves the org copies
+ * earlier installs wrote (linked to the platform components by the migration).
  * Approval follows the installed plugin's policy only (spec §10): dependency components are
  * re-checked against the root item's policy and their own item's disabled state. Each component is
  * recorded in `plugin_install_components` as soon as it exists; if any step fails, the components
@@ -931,7 +938,7 @@ export class PluginInstaller {
       via?: "scope";
     },
   ): Promise<string> {
-    const { itemId, version, manifest } = plan;
+    const { itemId, manifest } = plan;
     // The install row (role and item policy re-checked under the lock; one live install per org
     // and item)
     const installId = randomUUID();
@@ -1024,40 +1031,8 @@ export class PluginInstaller {
           templateId: ct.id,
         });
       }
-      step = "agent_templates";
-      for (const a of plan.agentTemplates) {
-        await this.installAgentTemplate(orgId, plan, a.template, record);
-      }
-      step = "skills";
-      for (const s of manifest.skills ?? []) {
-        const files = await readCatalogFiles(
-          this.storage,
-          plan.row.object_prefix,
-          plan.row.files,
-          packagePath(s.path),
-        );
-        const r = await this.skills.createVersionFromFiles(
-          orgId,
-          actor,
-          { ...skillOf(files), files },
-          {
-            catalog: {
-              itemId,
-              version,
-              ...(nested && { approvedBy }),
-              format: plan.sourceFormat,
-              suggestPinned: s.pinned === true,
-            },
-            ...opts,
-          },
-        );
-        await record({
-          kind: "skill",
-          ref: r.skill.id,
-          created: r.created,
-          skillVersion: r.created ? null : r.version,
-        });
-      }
+      // Skills and agent templates are platform components (plugin scope phase 2): stored once for
+      // the deployment and on in the org while the plugin is, so the install writes no org rows
       await this.markInstalled(orgId, actor, installId, plan, done, ctx, opts);
       return installId;
     } catch (e) {
@@ -1171,37 +1146,6 @@ export class PluginInstaller {
       if (isUniqueViolation(e)) throw alreadyInstalled();
       throw e;
     }
-  }
-
-  /**
-   * An agent template step: created (or a new version of the org's live template of this plugin and
-   * name) and recorded in one transaction of its own, under the org row lock.
-   */
-  @Transactional({ propagation: "requires_new" })
-  private async installAgentTemplate(
-    orgId: string,
-    plan: InstallPlan,
-    template: AgentTemplate,
-    record: (c: Component) => Promise<void>,
-  ): Promise<void> {
-    await this.orgLock.lock(orgId);
-    const r = await putTemplateVersionIn(
-      this.db,
-      {
-        orgId,
-        plugin: plan.name,
-        catalogItemId: plan.itemId,
-        catalogVersion: plan.version,
-        sourceFormat: plan.sourceFormat,
-      },
-      template,
-    );
-    await record({
-      kind: "agent_template",
-      ref: r.id,
-      created: r.created,
-      skillVersion: !r.created && r.changed ? r.version : null,
-    });
   }
 
   /** The install `installed` and its `plugin.org_installed` audit, under the org row lock (its own transaction). */
@@ -1745,6 +1689,9 @@ export class PluginInstaller {
         created = now.created;
       }
       const comp: Component = { kind: c.kind, ref: c.ref, created, skillVersion: c.skill_version };
+      // Skills and agent templates of earlier installs (org copies, now linked to the platform
+      // components, phase 2) stay: the plugin's components go off in the org with the install
+      if ((c.kind === "skill" || c.kind === "agent_template") && !rollbackMode) continue;
       if (!created) {
         // Rollback cleanup: a version this install added to an existing skill is reverted; other
         // pre-existing components are kept
@@ -1990,7 +1937,11 @@ export class PluginInstaller {
 
   /**
    * The uninstall preview of an install (see {@link UninstallPreview}); the real uninstall may keep
-   * more (another install using a component, a connector still using an extension).
+   * more (another install using a component, a connector still using an extension). The plugin's
+   * skills and agent templates are platform components (phase 2): the ones on in the org through
+   * the plugin (`follow`) go off with it, so the agents using them (by the platform id or an
+   * unpinned org copy linked to it) are listed; ledger rows of earlier installs' org copies are not
+   * removed and not listed.
    */
   async previewUninstall(orgId: string, installId: string): Promise<UninstallPreview> {
     if (!UUID_RE.test(installId)) throw installNotFound();
@@ -1998,23 +1949,30 @@ export class PluginInstaller {
     const row = await t
       .selectFrom("plugin_installs as a")
       .innerJoin("catalog_items as i", "i.id", "a.item_id")
-      .select(["a.id", "a.version", "i.name"])
+      .select(["a.id", "a.item_id", "a.version", "i.name"])
       .where("a.id", "=", installId)
       .where("a.org_id", "=", orgId)
       .executeTakeFirst();
     if (!row) throw installNotFound();
-    const comps = await t
-      .selectFrom("plugin_install_components")
-      .select(["kind", "ref", "created"])
-      .where("install_id", "=", installId)
-      .orderBy("kind")
-      .orderBy("ref")
-      .execute();
-    const agents = await this.agentUsage(orgId);
+    const comps = (
+      await t
+        .selectFrom("plugin_install_components")
+        .select(["kind", "ref", "created"])
+        .where("install_id", "=", installId)
+        .orderBy("kind")
+        .orderBy("ref")
+        .execute()
+    ).filter((c) => c.kind !== "skill" && c.kind !== "agent_template");
+    const agents = await agentDefinitionRefs(t, orgId);
     const used = new Map<
       string,
       { id: string; name: string; uses: { kind: ComponentKind; ref: string }[] }
     >();
+    const use = (a: { id: string; name: string }, kind: ComponentKind, ref: string) => {
+      const e = used.get(a.id) ?? { id: a.id, name: a.name, uses: [] };
+      e.uses.push({ kind, ref });
+      used.set(a.id, e);
+    };
     const kept: UninstallReport["kept"] = [];
     for (const c of comps) {
       if (!c.created) {
@@ -2033,21 +1991,35 @@ export class PluginInstaller {
         }
         continue;
       }
-      const users = agents.filter((a) =>
-        c.kind === "skill"
-          ? a.skills.has(c.ref)
-          : c.kind === "connector"
-            ? a.connectors.has(c.ref)
-            : c.kind === "agent_template"
-              ? a.templates.has(c.ref)
-              : false,
-      );
+      if (c.kind !== "connector") continue;
+      const users = agents.filter((a) => a.connectors.has(c.ref));
       if (users.length === 0) continue;
       kept.push({ kind: c.kind, ref: c.ref, reason: "used_by_agents" });
-      for (const a of users) {
-        const e = used.get(a.id) ?? { id: a.id, name: a.name, uses: [] };
-        e.uses.push({ kind: c.kind, ref: c.ref });
-        used.set(a.id, e);
+      for (const a of users) use(a, c.kind, c.ref);
+    }
+    for (const kind of ["skill", "agent_template"] as const) {
+      const platform = await loadComponents(t, kind, { itemId: row.item_id });
+      const st = await loadScopeState(t, kind, platform);
+      const off = platform.filter(
+        (c) =>
+          c.scopeMode === "follow" &&
+          componentOn(
+            c,
+            pluginFactsOf(st, c.itemId, orgId),
+            listedIn(st, c.id, orgId),
+            switchOf(st, c.id, orgId),
+          ),
+      );
+      const refs = await referenceIds(
+        t,
+        orgId,
+        kind,
+        off.map((c) => c.id),
+      );
+      for (const a of agents) {
+        for (const ref of kind === "skill" ? a.skills : a.templates) {
+          if (refs.has(ref)) use(a, kind, ref);
+        }
       }
     }
     return {
@@ -2056,91 +2028,25 @@ export class PluginInstaller {
       version: row.version,
       components: comps.map((c) => ({ kind: c.kind, ref: c.ref, created: c.created })),
       kept,
-      agents: [...used.values()].sort((x, y) => x.id.localeCompare(y.id)),
+      agents: [...used.values()]
+        .map((a) => ({ ...a, uses: a.uses.sort((x, y) => x.ref.localeCompare(y.ref)) }))
+        .sort((x, y) => x.id.localeCompare(y.id)),
     };
   }
 
-  /** Each live agent of the org with the connectors, skills and agent templates its current definition references. */
-  private async agentUsage(orgId: string): Promise<
-    {
-      id: string;
-      name: string;
-      connectors: Set<string>;
-      skills: Set<string>;
-      templates: Set<string>;
-    }[]
-  > {
-    const rows = await this.db
-      .selectFrom("agents as a")
-      .innerJoin("agent_versions as v", (j) =>
-        j.onRef("v.agent_id", "=", "a.id").onRef("v.version", "=", "a.current_version"),
-      )
-      .select(["a.id", "v.definition"])
-      .where("a.org_id", "=", orgId)
-      .where("a.deleted_at", "is", null)
-      .orderBy("a.id")
-      .execute();
-    return rows.map((r) => {
-      const def = r.definition as {
-        name?: unknown;
-        tools?: unknown[];
-        skills?: { orgSkills?: unknown[] };
-        subagents?: { templates?: unknown[] };
-      } | null;
-      const connectors = new Set<string>();
-      for (const ref of def?.tools ?? []) {
-        const n = normalizeToolRef(ref) as { kind?: unknown; connectorId?: unknown };
-        if (n?.kind === "connector" && typeof n.connectorId === "string") {
-          connectors.add(n.connectorId);
-        }
-      }
-      const strings = (xs: unknown[] | undefined) =>
-        new Set((xs ?? []).filter((x): x is string => typeof x === "string"));
-      return {
-        id: r.id,
-        name: typeof def?.name === "string" ? def.name : r.id,
-        connectors,
-        skills: strings(def?.skills?.orgSkills),
-        templates: strings(def?.subagents?.templates),
-      };
-    });
-  }
-
   /**
-   * The connectors, org skills and agent templates (`subagents.templates`) referenced by the
-   * current definitions of the org's live agents.
+   * The connectors, skills (selected, pinned, or in an inline sub-agent template) and agent
+   * templates (`subagents.templates`) referenced by the current definitions of the org's live
+   * agents.
    */
-  async agentRefs(
-    orgId: string,
-  ): Promise<{ connectors: Set<string>; skills: Set<string>; templates: Set<string> }> {
-    const rows = await this.db
-      .selectFrom("agents as a")
-      .innerJoin("agent_versions as v", (j) =>
-        j.onRef("v.agent_id", "=", "a.id").onRef("v.version", "=", "a.current_version"),
-      )
-      .select("v.definition")
-      .where("a.org_id", "=", orgId)
-      .where("a.deleted_at", "is", null)
-      .execute();
-    const connectors = new Set<string>();
-    const skills = new Set<string>();
-    const templates = new Set<string>();
-    for (const r of rows) {
-      const def = r.definition as {
-        tools?: unknown[];
-        skills?: { orgSkills?: unknown[] };
-        subagents?: { templates?: unknown[] };
-      } | null;
-      for (const ref of def?.tools ?? []) {
-        const n = normalizeToolRef(ref) as { kind?: unknown; connectorId?: unknown };
-        if (n?.kind === "connector" && typeof n.connectorId === "string") {
-          connectors.add(n.connectorId);
-        }
-      }
-      for (const s of def?.skills?.orgSkills ?? []) if (typeof s === "string") skills.add(s);
-      for (const x of def?.subagents?.templates ?? []) if (typeof x === "string") templates.add(x);
+  async agentRefs(orgId: string): Promise<DefinitionRefs> {
+    const out: DefinitionRefs = { connectors: new Set(), skills: new Set(), templates: new Set() };
+    for (const a of await agentDefinitionRefs(this.db, orgId)) {
+      for (const x of a.connectors) out.connectors.add(x);
+      for (const x of a.skills) out.skills.add(x);
+      for (const x of a.templates) out.templates.add(x);
     }
-    return { connectors, skills, templates };
+    return out;
   }
 }
 

@@ -10,6 +10,7 @@ import {
   PluginScopeSyncProcessor,
 } from "../../src/catalog/scope-sync.js";
 import { SkillsService } from "../../src/skills/skills.service.js";
+import { usableSkills } from "../../src/skills/usable.js";
 import { createOrg, waitFor } from "../helpers/runs.js";
 import { SKILL_MD } from "../skills/zip.js";
 import { type OrgEnv, resetOrgCatalog, seedPlugin, setScope, startOrgEnv } from "./org-env.js";
@@ -241,7 +242,7 @@ describe("plugin scope sync", { timeout: 90_000 }, () => {
     });
     expect(off.statusCode, off.body).toBe(200);
     expect(await liveOrgs(appId)).not.toContain(env.orgId);
-    // B is the same install, standalone, and its skill was not deleted
+    // B is the same install, standalone, and its (platform) skill is still on in the org
     const after = await env.db
       .selectFrom("plugin_installs")
       .select(["id", "status"])
@@ -249,13 +250,7 @@ describe("plugin scope sync", { timeout: 90_000 }, () => {
       .where("org_id", "=", env.orgId)
       .execute();
     expect(after).toEqual([{ id: depInstall.id, status: "installed" }]);
-    const skill = await env.db
-      .selectFrom("skills")
-      .select("deleted_at")
-      .where("org_id", "=", env.orgId)
-      .where("name", "=", "dep-kept-skill")
-      .executeTakeFirstOrThrow();
-    expect(skill.deleted_at).toBeNull();
+    expect((await usableSkills(env.db, env.orgId)).map((x) => x.name)).toContain("dep-kept-skill");
     // the sync leaves it as it is (no reinstall)
     expect(await sync().syncPair(depId, env.orgId)).toBe("unchanged");
     const still = await env.db

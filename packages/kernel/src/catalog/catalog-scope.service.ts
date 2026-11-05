@@ -15,6 +15,20 @@ import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import { type ActorOpts, type CatalogItemView, CatalogService } from "./catalog.service.js";
 import { assertOrgsExist } from "./catalog-items.js";
+import { nameConflictError } from "./component-scope.service.js";
+import {
+  agentsUsing,
+  COMPONENT_KINDS,
+  type ComponentKind,
+  clashingOrgSkills,
+  componentOffered,
+  componentOn,
+  listedIn,
+  loadComponents,
+  loadScopeState,
+  pluginFactsOf,
+  switchOf,
+} from "./component-state.js";
 import { type PluginConfirmResult, PluginImport } from "./plugin-import.js";
 import { PluginInstaller } from "./plugin-install.js";
 import { type PluginScope, wantedOn } from "./scope.js";
@@ -38,6 +52,16 @@ export interface ScopePreview {
     connectorsKept: number;
   }[];
   needsConfig: string[];
+  /**
+   * A scope change only: the plugin's components with their own scope, which the change replaces
+   * (they follow the plugin again, spec §5 rule 2).
+   */
+  replaced: { kind: ComponentKind; id: string; name: string }[];
+  /**
+   * The orgs the change would newly offer a skill of the plugin whose own skills already use its
+   * name (rule 10): the change is refused while there are any.
+   */
+  conflicts: { orgId: string; orgName: string; name: string; skills: string[] }[];
   scopeHash: string;
 }
 
@@ -49,6 +73,8 @@ interface Target {
   scope: PluginScope;
   orgs: string[];
   disabled: boolean;
+  /** A scope change: components with their own scope follow the plugin again (rule 2). */
+  scopeChange: boolean;
 }
 
 interface ItemRow {
@@ -87,6 +113,8 @@ function scopeHash(target: Target, p: Omit<ScopePreview, "scopeHash">): string {
             agents: [...a.agents].sort((x, y) => x.id.localeCompare(y.id)),
           })),
         needsConfig: [...p.needsConfig].sort(),
+        replaced: [...p.replaced].sort((a, b) => a.id.localeCompare(b.id)),
+        conflicts: [...p.conflicts].sort((a, b) => a.orgId.localeCompare(b.orgId)),
       }),
     )
     .digest("hex");
@@ -305,9 +333,12 @@ export class CatalogScopeService {
     await this.adminLock.lockAndAuthorize(actor);
     const item = await this.item(itemId, true);
     const t = await this.targetOf(item, target);
-    if ((await this.compute(item, t)).scopeHash !== hash) throw staleError();
+    const p = await this.compute(item, t);
+    if (p.scopeHash !== hash) throw staleError();
+    if (p.conflicts.length > 0) throw nameConflictError(p.conflicts);
     const from = await this.listed(itemId);
-    if (item.scope === t.scope && from.join() === t.orgs.join()) return;
+    if (item.scope === t.scope && from.join() === t.orgs.join() && p.replaced.length === 0) return;
+    await this.followAgain(actor, itemId, p.replaced, opts);
     await this.db
       .updateTable("catalog_items")
       .set({
@@ -348,11 +379,15 @@ export class CatalogScopeService {
   ): Promise<void> {
     await this.adminLock.lockAndAuthorize(actor);
     const item = await this.item(itemId, true);
-    if (disabled) {
-      const p = await this.compute(item, await this.targetOf(item, { disabled: true }));
-      if (p.scopeHash !== hash) throw staleError();
-    }
     if (item.disabled === disabled) return;
+    const p = await this.compute(
+      item,
+      disabled
+        ? await this.targetOf(item, { disabled: true })
+        : { scope: item.scope, orgs: await this.listed(itemId), disabled, scopeChange: false },
+    );
+    if (disabled && p.scopeHash !== hash) throw staleError();
+    if (p.conflicts.length > 0) throw nameConflictError(p.conflicts);
     await this.db
       .updateTable("catalog_items")
       .set({
@@ -430,7 +465,12 @@ export class CatalogScopeService {
   /** The state after the change: `orgs` only with `named`, each a live org. */
   private async targetOf(item: ItemRow, target: ScopeTarget): Promise<Target> {
     if ("disabled" in target) {
-      return { scope: item.scope, orgs: await this.listed(item.id), disabled: true };
+      return {
+        scope: item.scope,
+        orgs: await this.listed(item.id),
+        disabled: true,
+        scopeChange: false,
+      };
     }
     if (target.orgs !== undefined && target.scope !== "named") {
       throw new ApiError("validation_failed", "orgs: only allowed with scope named", [
@@ -439,7 +479,7 @@ export class CatalogScopeService {
     }
     const orgs = [...new Set(target.orgs ?? [])].sort();
     await assertOrgsExist(this.db, orgs);
-    return { scope: target.scope, orgs, disabled: item.disabled };
+    return { scope: target.scope, orgs, disabled: item.disabled, scopeChange: true };
   }
 
   /** The preview of moving `item` to `target` (read through the current context). */
@@ -470,13 +510,18 @@ export class CatalogScopeService {
     const after = { scope: target.scope, disabled: target.disabled, builtin: false };
     const affected: ScopePreview["affected"] = [];
     const needsConfig: string[] = [];
+    /** The orgs the plugin will be on in after the change (a live install kept or made). */
+    const onAfter = new Set<string>();
     for (const org of orgs) {
       const s = sw.get(org.id) ?? null;
       const wanted = wantedOn(after, listedAfter.has(org.id), s);
       const installId = live.get(org.id);
       if (installId !== undefined) {
         // A live install another one depends on stays (spec §5 rule 9, as the sync does)
-        if (wanted || (await this.sync.dependedOn(org.id, installId))) continue;
+        if (wanted || (await this.sync.dependedOn(org.id, installId))) {
+          onAfter.add(org.id);
+          continue;
+        }
         const p = await this.installer.previewUninstall(org.id, installId);
         affected.push({
           orgId: org.id,
@@ -497,8 +542,137 @@ export class CatalogScopeService {
         if (!(e instanceof ApiError)) throw e;
       }
       if (needs) needsConfig.push(org.id);
+      else onAfter.add(org.id);
     }
-    const p = { affected, needsConfig };
+    const { replaced, conflicts } = await this.componentChanges(
+      item,
+      target,
+      orgs,
+      onAfter,
+      affected,
+    );
+    const p = { affected, needsConfig, replaced, conflicts };
     return { ...p, scopeHash: scopeHash(target, p) };
+  }
+
+  /**
+   * The component side of a plugin scope change or disable (spec §5 rules 2, 8, 10): the
+   * components with their own scope a scope change replaces; the orgs where a skill or agent
+   * template is on now and would be off after (agents merged into `affected`: a component with its
+   * own scope that goes back to following the plugin, or one cut by the disable); and the orgs a
+   * skill would newly be offered to whose own skills use its name. `onAfter`: the orgs the plugin
+   * is on in after the change.
+   */
+  private async componentChanges(
+    item: ItemRow,
+    target: Target,
+    orgs: { id: string; name: string }[],
+    onAfter: Set<string>,
+    affected: ScopePreview["affected"],
+  ): Promise<Pick<ScopePreview, "replaced" | "conflicts">> {
+    const db = this.db;
+    const replaced: ScopePreview["replaced"] = [];
+    const conflicts: ScopePreview["conflicts"] = [];
+    const lose = new Map<string, Map<string, string>>();
+    for (const kind of COMPONENT_KINDS) {
+      const comps = await loadComponents(db, kind, { itemId: item.id });
+      if (comps.length === 0) continue;
+      if (target.scopeChange) {
+        for (const c of comps) {
+          if (c.scopeMode === "own") replaced.push({ kind, id: c.id, name: c.name });
+        }
+      }
+      if (kind === "connector_template") continue;
+      const st = await loadScopeState(db, kind, comps);
+      for (const c of comps) {
+        const cAfter = target.scopeChange ? { ...c, scopeMode: "follow" as const } : c;
+        for (const org of orgs) {
+          const pNow = pluginFactsOf(st, c.itemId, org.id);
+          const pAfter = pNow && {
+            ...pNow,
+            scope: target.scope,
+            disabled: target.disabled,
+            listed: target.orgs.includes(org.id),
+            installed: onAfter.has(org.id),
+          };
+          const listed = listedIn(st, c.id, org.id);
+          const s = switchOf(st, c.id, org.id);
+          if (componentOn(c, pNow, listed, s) && !componentOn(cAfter, pAfter, listed, s)) {
+            for (const a of await agentsUsing(db, org.id, kind, [c.id])) {
+              const m = lose.get(org.id) ?? new Map<string, string>();
+              m.set(a.id, a.name);
+              lose.set(org.id, m);
+            }
+            if (!lose.has(org.id)) lose.set(org.id, new Map());
+          }
+          if (
+            kind === "skill" &&
+            componentOffered(cAfter, pAfter, listed) &&
+            !componentOffered(c, pNow, listed)
+          ) {
+            const skills = await clashingOrgSkills(db, org.id, c, c.name);
+            if (skills.length > 0) {
+              conflicts.push({ orgId: org.id, orgName: org.name, name: c.name, skills });
+            }
+          }
+        }
+      }
+    }
+    for (const org of orgs) {
+      const m = lose.get(org.id);
+      if (!m) continue;
+      let e = affected.find((a) => a.orgId === org.id);
+      if (!e) {
+        e = { orgId: org.id, orgName: org.name, agents: [], connectorsKept: 0 };
+        affected.push(e);
+      }
+      for (const [id, name] of m) {
+        if (!e.agents.some((a) => a.id === id)) e.agents.push({ id, name });
+      }
+    }
+    return { replaced, conflicts };
+  }
+
+  /**
+   * Sends the components of the item with their own scope back to following it (a plugin scope
+   * change, spec §5 rule 2): `scope_mode = follow`, their own lists dropped, `scope_version`
+   * bumped, one `component.scope_changed` audit each. In the caller's transaction.
+   */
+  private async followAgain(
+    actor: string,
+    itemId: string,
+    replaced: ScopePreview["replaced"],
+    opts: ActorOpts,
+  ): Promise<void> {
+    for (const r of replaced) {
+      const table =
+        r.kind === "skill"
+          ? "platform_skills"
+          : r.kind === "agent_template"
+            ? "platform_agent_templates"
+            : "platform_connector_templates";
+      await this.db
+        .updateTable(table as "platform_skills")
+        .set({
+          scope_mode: "follow",
+          scope_version: sql<number>`scope_version + 1`,
+          updated_at: sql<Date>`now()` as unknown as Date,
+        })
+        .where("id", "=", r.id)
+        .where("scope_mode", "=", "own")
+        .execute();
+      await this.db
+        .deleteFrom("component_scope_orgs")
+        .where("kind", "=", r.kind)
+        .where("component_id", "=", r.id)
+        .execute();
+      await audit(this.db, {
+        actorAccountId: actor,
+        ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
+        action: "component.scope_changed",
+        target: r.id,
+        detail: { kind: r.kind, name: r.name, itemId, to: { scopeMode: "follow" }, via: "plugin" },
+      });
+    }
   }
 }

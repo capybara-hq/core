@@ -106,13 +106,12 @@ async function itemOf(itemId: string) {
   return r.json().item;
 }
 
-/** An agent of the org whose current definition selects the item's skill. */
+/** An agent of the org whose current definition selects the item's (platform) skill. */
 async function agentUsingSkill(orgId: string, itemId: string, name: string): Promise<string> {
   const skill = await env.db
-    .selectFrom("skills")
+    .selectFrom("platform_skills")
     .select("id")
     .where("catalog_item_id", "=", itemId)
-    .where("org_id", "=", orgId)
     .where("deleted_at", "is", null)
     .executeTakeFirstOrThrow();
   const agentId = randomUUID();

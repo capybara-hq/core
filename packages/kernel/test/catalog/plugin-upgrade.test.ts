@@ -3,12 +3,14 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { PluginInstaller } from "../../src/catalog/plugin-install.js";
 import type { UpgradePreview } from "../../src/catalog/plugin-upgrade.js";
 import { SkillsService } from "../../src/skills/skills.service.js";
+import { usableSkills } from "../../src/skills/usable.js";
 import { ConnectorsService } from "../../src/tools/connectors.service.js";
 import { SKILL_MD } from "../skills/zip.js";
 import {
   auditActions,
   importDeployedPlugin,
   install,
+  legacyCopies,
   MCP_TOKEN,
   type OrgEnv,
   resetOrgCatalog,
@@ -65,9 +67,14 @@ const upgrade = (installId: string, body: Record<string, unknown>) =>
 const uninstall = (installId: string) =>
   env.boss({ method: "DELETE", url: `/api/v1/orgs/${env.orgId}/plugin-installs/${installId}` });
 
+/**
+ * Installs the plugin with the org copies an install wrote before phase 2 (the per-org upgrade
+ * still versions them until the platform plugin update replaces it).
+ */
 async function installOk(itemId: string, body: Record<string, unknown> = {}): Promise<string> {
   const r = await install(env.boss, env, itemId, body);
   expect(r.statusCode, r.body).toBe(201);
+  await legacyCopies(env, env.orgId, itemId, env.bossId);
   return r.json().installed.pluginInstallId as string;
 }
 
@@ -353,11 +360,8 @@ describe("org plugin upgrade (spec §10)", { timeout: 90_000 }, () => {
       catalog_version: "2.0.0",
       deleted_at: null,
     });
-    expect(row("add")).toMatchObject({
-      current_version: 1,
-      catalog_version: "2.0.0",
-      deleted_at: null,
-    });
+    // phase 2: an added skill is a platform component; the upgrade makes no org copy of it
+    expect(row("add")).toBeUndefined();
     expect(row("drop")).toMatchObject({ id: id("drop"), deleted_at: null });
     const agent = await env.db
       .selectFrom("agents as a")
@@ -391,11 +395,14 @@ describe("org plugin upgrade (spec §10)", { timeout: 90_000 }, () => {
     expect(oldNow.deleted_at).not.toBeNull();
     const docs = await connectorOf(installId, "docs");
     expect(docs).toMatchObject({ catalog_version: "2.0.0", deleted_at: null });
-    // Dependencies: dep-b installed by the install flow, dep-a uninstalled with its skill
+    // Dependencies: dep-b installed by the install flow, dep-a uninstalled; their skills are
+    // platform components (phase 2): dep-b's is on in the org, dep-a's went off with it
     expect(await liveInstalls()).toEqual(["crm@2.0.0:installed", "dep-b@1.0.0:installed"]);
-    expect(row("dep-a-skill")?.deleted_at).not.toBeNull();
-    expect(row("dep-b-skill")?.deleted_at).toBeNull();
-    // The ledger: old and dep-a left it, add / docs / dep-b joined; drop stays, marked dropped
+    const usable = (await usableSkills(env.db, env.orgId)).map((x) => x.name);
+    expect(usable).toContain("dep-b-skill");
+    expect(usable).not.toContain("dep-a-skill");
+    // The ledger: old and dep-a left it, docs / dep-b joined (add is a platform component, no org
+    // copy); drop stays, marked dropped
     const comps = await env.db
       .selectFrom("plugin_install_components")
       .select(["kind", "ref", "created", "template_id", "dropped"])
@@ -409,7 +416,6 @@ describe("org plugin upgrade (spec §10)", { timeout: 90_000 }, () => {
         "connector:docs:true:false",
         "connector:gh:true:false",
         "plugin::true:false",
-        "skill::true:false",
         "skill::true:false",
         "skill::true:false",
         "skill::true:true",
@@ -444,12 +450,11 @@ describe("org plugin upgrade (spec §10)", { timeout: 90_000 }, () => {
       version: "2.0.0",
       upgradeAvailable: null,
     });
-    // Uninstalling: the dropped skill is still this install's (kept for the agent, not pre_existing)
+    // Uninstalling: org copies are no longer removed or reported (phase 2), the dropped skill stays
     const del = await uninstall(installId);
     expect(del.statusCode, del.body).toBe(200);
-    expect(del.json().kept).toEqual(
-      expect.arrayContaining([{ kind: "skill", ref: id("drop"), reason: "used_by_agents" }]),
-    );
+    expect((del.json().kept as { kind: string }[]).filter((k) => k.kind === "skill")).toEqual([]);
+    expect((await skillRows()).find((x) => x.id === id("drop"))?.deleted_at).toBeNull();
     expect(
       (del.json().kept as { reason: string }[]).filter((k) => k.reason === "pre_existing"),
     ).toEqual([]);
@@ -1197,12 +1202,12 @@ describe("org plugin upgrade: failure rollback (Review Focus 3)", { timeout: 90_
       .select("detail")
       .where("action", "=", "plugin.org_upgrade_failed")
       .executeTakeFirstOrThrow();
-    // What it undid: the dependency install, the skill versions and the skill it created, docs
+    // What it undid: the dependency install, the skill versions, docs (an added skill makes no
+    // org copy since phase 2)
     const undone = (failedAudit.detail as { rolledBack: { op: string; kind?: string }[] })
       .rolledBack;
     expect(undone.filter((x) => x.op === "created").map((x) => x.kind)).toEqual([
       "plugin",
-      "skill",
       "connector",
     ]);
     expect(undone.filter((x) => x.op === "skill_version")).toHaveLength(1);
@@ -1451,18 +1456,19 @@ describe("org plugin upgrade: concurrency (Review Focus 4)", { timeout: 90_000 }
     const r = await upgrade(installId, { version: "1.1.0", diffHash: p.diffHash });
     expect(r.statusCode, r.body).toBe(502);
     vi.restoreAllMocks();
-    expect((await skillRows()).map((s) => `${s.name}:${s.current_version}`)).toEqual([
-      "extra:1",
-      "notes:2",
-    ]);
+    // extra (added) is a platform component: no org copy since phase 2
+    expect((await skillRows()).map((s) => `${s.name}:${s.current_version}`)).toEqual(["notes:2"]);
     await backdateUpgrade(installId);
     const del = await uninstall(installId);
     expect(del.statusCode, del.body).toBe(200);
     expect(await liveInstalls()).toEqual([]);
-    // The upgrade's skill and version are undone, then the uninstall removed the plugin's skill
+    // The upgrade's skill and version are undone; the uninstall leaves the org copy (phase 2:
+    // the plugin's skills go off with it instead)
     const rows = await skillRows();
-    expect(rows.every((s) => s.deleted_at !== null)).toBe(true);
+    expect(rows.map((x) => `${x.name}:${x.current_version}:${x.deleted_at === null}`)).toEqual([
+      "notes:1:true",
+    ]);
     const versions = await env.db.selectFrom("skill_versions").select("version").execute();
-    expect(versions.map((v) => v.version).sort()).toEqual([1, 1]);
+    expect(versions.map((v) => v.version).sort()).toEqual([1]);
   });
 });

@@ -462,9 +462,12 @@ export class PluginUpgrader {
         );
       }
 
+      // Skills and agent templates are platform components (plugin scope phase 2): an upgrade
+      // only versions the org copies an earlier install wrote (in the ledger) and never makes new
+      // ones; the platform components move with the platform plugin update
       step = "skills";
       for (const s of diff.skills) {
-        if (s.change !== "added" && s.change !== "changed") continue;
+        if ((s.change !== "added" && s.change !== "changed") || !s.ledger) continue;
         const files = await readCatalogFiles(
           this.storage,
           diff.to.object_prefix,
@@ -490,7 +493,7 @@ export class PluginUpgrader {
 
       step = "agent_templates";
       for (const a of diff.agentTemplates) {
-        if (a.change !== "added" && a.change !== "changed") continue;
+        if ((a.change !== "added" && a.change !== "changed") || !a.ledger) continue;
         await this.upgradeAgentTemplate(orgId, diff, a.template as AgentTemplate, record, journal);
       }
 

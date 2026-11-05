@@ -3,6 +3,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { ExtensionAdminOps } from "../../src/extensions/admin-ops.js";
 import { ExtensionHost } from "../../src/extensions/host.js";
 import { SkillsService } from "../../src/skills/skills.service.js";
+import { usableSkills } from "../../src/skills/usable.js";
 import { StorageService } from "../../src/storage/storage.service.js";
 import { Credentials } from "../../src/tools/credentials.js";
 import { waitFor } from "../helpers/runs.js";
@@ -14,6 +15,7 @@ import {
   importSkill,
   importTemplate,
   install,
+  legacyCopies,
   MCP_TOKEN,
   type OrgEnv,
   resetOrgCatalog,
@@ -102,11 +104,10 @@ describe("组织从目录安装：三档策略", { timeout: 60_000 }, () => {
     expect(ok.statusCode, ok.body).toBe(201);
     const pluginInstallId = (ok.json() as { installed: { pluginInstallId: string } }).installed
       .pluginInstallId;
-    expect(await skillOfItem(itemId)).toMatchObject({
-      catalog_item_id: itemId,
-      catalog_version: "1.0.0",
-      name: "pdf-tools",
-    });
+    // phase 2: the skill is the platform's, on in the org while the plugin is (no org row)
+    expect((await usableSkills(env.db, env.orgId)).map((x) => [x.origin, x.name])).toEqual([
+      ["platform", "pdf-tools"],
+    ]);
     expect(await auditActions(env)).toContain("plugin.org_installed");
     expect((await orgList(env.boss)).find((i) => i.id === itemId)?.installed).toEqual({
       pluginInstallId,
@@ -122,7 +123,7 @@ describe("组织从目录安装：三档策略", { timeout: 60_000 }, () => {
     expect((await orgList(env.boss)).find((i) => i.id === itemId)?.state).toBe("unavailable");
     expect(
       await env.db.selectFrom("skills").select("id").where("deleted_at", "is", null).execute(),
-    ).toHaveLength(1);
+    ).toHaveLength(0);
     // Installed already: uninstall, then install again once enabled
     await setPolicy(env, itemId, "allow");
     expect((await install(env.boss, env, itemId)).json().error.code).toBe(
@@ -367,7 +368,6 @@ describe("组织从目录安装：三档策略", { timeout: 60_000 }, () => {
     expect(comps).toEqual([
       { kind: "connector", created: true },
       { kind: "extension", created: true },
-      { kind: "skill", created: true },
     ]);
     // The plugin's extension not on the deployment
     const ghostApp = await seedPlugin(env, { name: "ghost", extension: true, templates: false });
@@ -613,11 +613,6 @@ describe("skill provenance follows the latest version (a skill of the same name 
     await uninstall(itemId);
     const up = await install(env.boss, env, itemId, { version: "2.0.0" });
     expect(up.statusCode, up.body).toBe(201);
-    expect(await skillOfItem(itemId)).toMatchObject({
-      current_version: 1,
-      catalog_item_id: itemId,
-      catalog_version: "2.0.0",
-    });
     expect((await orgList(env.boss)).find((i) => i.id === itemId)?.installed).toMatchObject({
       version: "2.0.0",
     });
@@ -627,6 +622,8 @@ describe("skill provenance follows the latest version (a skill of the same name 
     const itemId = await importSkill(env);
     const first = await install(env.boss, env, itemId);
     expect(first.statusCode, first.body).toBe(201);
+    // an org copy an install wrote before phase 2 (not linked yet)
+    await legacyCopies(env, env.orgId, itemId);
     const skillId = (await skillOfItem(itemId)).id;
     const custom = await customUpload();
     expect(custom.skill.id).toBe(skillId);
@@ -943,7 +940,11 @@ describe("the org switch (plugin scope)", { timeout: 60_000 }, () => {
   it("switching off: a preview naming the agents using its skill, then the hash uninstalls and stores false", async () => {
     const itemId = await importSkill(env);
     expect((await put(env.boss, itemId, { enabled: true })).statusCode).toBe(200);
-    const skill = await skillOfItem(itemId);
+    const skill = await env.db
+      .selectFrom("platform_skills")
+      .select("id")
+      .where("catalog_item_id", "=", itemId)
+      .executeTakeFirstOrThrow();
     const agentId = randomUUID();
     await env.db
       .insertInto("agents")
@@ -970,8 +971,11 @@ describe("the org switch (plugin scope)", { timeout: 60_000 }, () => {
       preview: { agents: { id: string; name: string }[]; kept: { reason: string }[] };
       confirm: string;
     };
-    expect(preview.agents).toMatchObject([{ id: agentId, name: "Helper" }]);
-    expect(preview.kept).toMatchObject([{ reason: "used_by_agents" }]);
+    expect(preview.agents).toEqual([
+      { id: agentId, name: "Helper", uses: [{ kind: "skill", ref: skill.id }] },
+    ]);
+    // the platform skill goes off with the plugin (spec §5 rule 8): nothing is kept for it
+    expect(preview.kept).toEqual([]);
     expect(await env.db.selectFrom("plugin_installs").select("id").execute()).toHaveLength(1);
     const stale = await put(env.boss, itemId, { enabled: false, confirm: "0".repeat(64) });
     expect(stale.statusCode).toBe(409);

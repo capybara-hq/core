@@ -649,6 +649,18 @@ export class ConnectorsService {
     if (await this.slugTaken(t, orgId, slug)) {
       throw new ApiError("connector.slug_taken", "Connector slug is already taken");
     }
+    // A connector made from a platform connector template stays linked to it (ruling E2)
+    const tpl = input.template;
+    const platformTemplate =
+      tpl?.templateId !== undefined
+        ? await t
+            .selectFrom("platform_connector_templates")
+            .select("id")
+            .where("catalog_item_id", "=", tpl.itemId)
+            .where("template_id", "=", tpl.templateId)
+            .where("deleted_at", "is", null)
+            .executeTakeFirst()
+        : undefined;
     await t
       .insertInto("connectors")
       .values({
@@ -662,6 +674,7 @@ export class ConnectorsService {
         created_by: actorAccountId,
         catalog_item_id: input.template?.itemId ?? null,
         catalog_version: input.template?.version ?? null,
+        platform_template_id: platformTemplate?.id ?? null,
         // 授权码连接器安装时没有快照：模板的默认策略留到首个快照时应用
         template_tool_policies: input.template?.defaultToolPolicies
           ? JSON.stringify(input.template.defaultToolPolicies)

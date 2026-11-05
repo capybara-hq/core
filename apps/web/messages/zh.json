@@ -198,6 +198,9 @@
       "pinned_unavailable": "这次回复没有开始：读不到智能体置顶的技能。",
       "pinned_conflict": "这次回复没有开始：智能体置顶的技能在此期间被改动了。请重新发送消息。"
     },
+    "component": {
+      "not_found": "这个组件不存在或已被移除。"
+    },
     "connector": {
       "not_found": "连接器不存在或已被删除。",
       "slug_taken": "该 slug 已被其他连接器使用。",

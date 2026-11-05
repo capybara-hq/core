@@ -3,6 +3,7 @@ import { parseSkillMd, SKILL_ENTRY_FILE, type SkillInvocation } from "@capybara-
 import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
 import type { AgentDefinition } from "../agents/definition.js";
+import { offeredNamed } from "../catalog/component-state.js";
 import { assertItemInstallable } from "../catalog/request-rules.js";
 import {
   AttachmentsService,
@@ -22,7 +23,13 @@ import { textBytesTokens } from "../runtime/context/tokens.js";
 import { StorageService } from "../storage/storage.service.js";
 import { invocationOf, PINNED_SKILLS_LIMITS } from "./catalog.js";
 import { readSkillPackage, type SkillPackageFile, storedInvocation } from "./package.js";
-import { platformSource, skillFileStore, skillVersionsById, usableSkills } from "./usable.js";
+import {
+  platformSkillsOn,
+  platformSource,
+  skillFileStore,
+  skillVersionsById,
+  usableSkills,
+} from "./usable.js";
 
 /** Where an org skill came from (spec §9.2): the org's own, or a catalog plugin at a version. */
 export type SkillSource = { kind: "org" } | { kind: "plugin"; name: string; version: string };
@@ -34,10 +41,13 @@ export interface SkillConflict {
 }
 
 /**
- * The live org skills named in `skillNames` whose provenance is not catalog item `itemId` (spec
- * §9.2, Decision 8): the org's own skills (`catalog_item_id` null: uploaded or written by an
- * agent) and the skills of other catalog items. A skill of the same item (a reinstall or upgrade)
- * is not a conflict. In the order of `skillNames`.
+ * The skills named in `skillNames` an org would see twice if catalog item `itemId` brought its
+ * skills (spec §9.2, Decision 8; rule 10 of the plugin scope spec): the org's own usable skills
+ * (`catalog_item_id` null: uploaded or written by an agent; unlinked, or pinned copies of another
+ * plugin's platform skill), org skills of other catalog items, and other plugins' platform skills
+ * on in the org. A skill of the same item (an org copy of it, linked or not) is not a conflict;
+ * an unpinned copy of another plugin's platform skill counts through that platform skill. In the
+ * order of `skillNames`.
  */
 export async function skillConflicts(
   db: KernelSchemaDb,
@@ -49,33 +59,93 @@ export async function skillConflicts(
   const rows = await db
     .selectFrom("skills as s")
     .leftJoin("catalog_items as i", "i.id", "s.catalog_item_id")
-    .select(["s.name", "s.catalog_item_id", "s.catalog_version", "i.name as item_name"])
+    .leftJoin("platform_skills as p", "p.id", "s.platform_skill_id")
+    .select([
+      "s.name",
+      "s.catalog_item_id",
+      "s.catalog_version",
+      "i.name as item_name",
+      "p.catalog_item_id as platform_item_id",
+      "p.plugin_name as platform_plugin",
+    ])
     .where("s.org_id", "=", orgId)
     .where("s.scope", "=", "org")
     .where("s.deleted_at", "is", null)
     .where("s.name", "in", [...skillNames])
     .where((eb) =>
+      eb.or([eb("s.platform_skill_id", "is", null), eb("s.pinned_version", "is not", null)]),
+    )
+    .where((eb) =>
       eb.or([eb("s.catalog_item_id", "is", null), eb("s.catalog_item_id", "<>", itemId)]),
     )
+    .where((eb) =>
+      eb.or([eb("p.catalog_item_id", "is", null), eb("p.catalog_item_id", "<>", itemId)]),
+    )
     .execute();
-  const byName = new Map(rows.map((r) => [r.name, r]));
+  const byName = new Map<string, SkillSource>();
+  for (const r of rows) {
+    byName.set(
+      r.name,
+      r.catalog_item_id !== null
+        ? {
+            kind: "plugin",
+            name: r.item_name ?? r.catalog_item_id,
+            version: r.catalog_version ?? "",
+          }
+        : r.platform_plugin !== null
+          ? { kind: "plugin", name: r.platform_plugin, version: "" }
+          : { kind: "org" },
+    );
+  }
+  const platform = await db
+    .selectFrom("platform_skills as p")
+    .innerJoin("platform_skill_versions as v", (j) =>
+      j.onRef("v.skill_id", "=", "p.id").onRef("v.version", "=", "p.current_version"),
+    )
+    .select(["p.id", "p.name", "p.plugin_name", "v.catalog_version"])
+    .where("p.deleted_at", "is", null)
+    .where("p.name", "in", [...skillNames])
+    .where((eb) =>
+      eb.or([eb("p.catalog_item_id", "is", null), eb("p.catalog_item_id", "<>", itemId)]),
+    )
+    .execute();
+  const on = await platformSkillsOn(
+    db,
+    orgId,
+    platform.map((p) => p.id),
+  );
+  for (const p of platform) {
+    if (!on.has(p.id) || byName.has(p.name)) continue;
+    byName.set(
+      p.name,
+      p.plugin_name !== null
+        ? { kind: "plugin", name: p.plugin_name, version: p.catalog_version ?? "" }
+        : { kind: "plugin", name: "platform", version: "" },
+    );
+  }
   const out: SkillConflict[] = [];
   for (const name of new Set(skillNames)) {
-    const r = byName.get(name);
-    if (!r) continue;
-    out.push({
-      skill: name,
-      source:
-        r.catalog_item_id === null
-          ? { kind: "org" }
-          : {
-              kind: "plugin",
-              name: r.item_name ?? r.catalog_item_id,
-              version: r.catalog_version ?? "",
-            },
-    });
+    const source = byName.get(name);
+    if (source) out.push({ skill: name, source });
   }
   return out;
+}
+
+/**
+ * 409 `plugin.skill_conflict` for a new org skill named like platform skills offered to the org
+ * (rule 10): one detail per platform skill, its plugin as the source.
+ */
+function platformNameTaken(name: string, offered: readonly { plugin: string | null }[]): ApiError {
+  const sources = offered.map((p) => ({
+    skill: name,
+    source: { kind: "plugin" as const, name: p.plugin ?? "platform", version: "" },
+  }));
+  const by = sources.map((s) => `plugin "${s.source.name}"`).join(", ");
+  return new ApiError(
+    "plugin.skill_conflict",
+    `Skill "${name}" is offered to this organization by ${by}; skill names are unique in an organization. Rename your skill and upload it again.`,
+    sources,
+  );
 }
 
 /** One line of the conflict message (spec §9.2). */
@@ -188,19 +258,12 @@ export async function assertOrgSkills(
   });
   const toCheck = [...seen].filter((id) => !kept.has(id));
   if (toCheck.length > 0) {
-    const found = await db
-      .selectFrom("skills")
-      .select("id")
-      .where("org_id", "=", orgId)
-      .where("scope", "=", "org")
-      .where("deleted_at", "is", null)
-      .where("id", "in", toCheck)
-      .execute();
-    // phase 2: a platform skill on in the org is selectable by its id
-    const platform = [...(await skillVersionsById(db, orgId, toCheck)).values()]
-      .filter((r) => r.origin === "platform" && r.platformSkillId === r.id)
+    // The org's skills, its copies linked to a platform skill while that one is on in the org
+    // (as `assertPinnedSkills` sees them), and platform skills on in the org (phase 2)
+    const found = [...(await skillVersionsById(db, orgId, toCheck)).values()]
+      .filter((r) => r.scope === "org")
       .map((r) => r.id);
-    const live = new Set([...kept, ...found.map((r) => r.id), ...platform]);
+    const live = new Set([...kept, ...found]);
     ids.forEach((id, i) => {
       if (!live.has(id)) {
         details.push({
@@ -598,7 +661,7 @@ export class SkillsService {
     }
     const existing = await this.db
       .selectFrom("skills")
-      .select(["id", "current_version", "catalog_item_id"])
+      .select(["id", "current_version", "catalog_item_id", "platform_skill_id"])
       .where("org_id", "=", orgId)
       .where("scope", "=", "org")
       .where("name", "=", pkg.name)
@@ -611,8 +674,20 @@ export class SkillsService {
       const conflicts = await skillConflicts(this.db.db, orgId, opts.catalog.itemId, [pkg.name]);
       if (conflicts.length > 0) throw skillConflictError(conflicts);
     }
+    // Rule 10 (plugin scope phase 2, ruling P2-3): a new org skill may not take the name of a
+    // platform skill offered to the org (on, or one an org admin could switch on)
+    if (!existing && !opts.catalog) {
+      const offered = await offeredNamed(this.db.db, orgId, "skill", pkg.name);
+      if (offered.length > 0) throw platformNameTaken(pkg.name, offered);
+    }
     const id = existing?.id ?? randomUUID();
     const version = (existing?.current_version ?? 0) + 1;
+    // An org's own version of a copy linked to a platform skill pins the copy to it (ruling P2-4):
+    // the org's change takes effect, and shows as individually updated later
+    const pin =
+      existing && existing.platform_skill_id !== null && !opts.catalog
+        ? { pinned_version: version }
+        : {};
     // 来源跟着最新版本走：目录安装记条目与版本，自定义上传清掉（内容已不是目录里的那份）
     const provenance = {
       catalog_item_id: opts.catalog?.itemId ?? null,
@@ -625,6 +700,7 @@ export class SkillsService {
           current_version: version,
           description: pkg.description,
           ...provenance,
+          ...pin,
           updated_at: sql`now()`,
         })
         .where("id", "=", id)

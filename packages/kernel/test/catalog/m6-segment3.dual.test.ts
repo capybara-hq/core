@@ -740,10 +740,10 @@ describe("M6 第三段双副本验收（平台目录）", { timeout: 240_000 }, 
       { kind: "connector", ref: connectorId, reason: "used_by_agents" },
       { kind: "extension", ref: "fake-dep-provider", reason: "pre_existing" },
     ]);
+    // phase 2: the plugin's skill is a platform component; it goes off in the org with the plugin
     expect(byKey(rep.removed as { kind: string; ref: string }[])).toEqual([
       { kind: "extension", ref: "fake-tools-ui" },
       { kind: "plugin", ref: counterInstallId },
-      { kind: "skill", ref: appSkillId },
     ]);
     const enabled = await db
       .selectFrom("extension_org_configs")
@@ -752,13 +752,8 @@ describe("M6 第三段双副本验收（平台目录）", { timeout: 240_000 }, 
       .where("enabled", "=", true)
       .execute();
     expect(enabled.map((r) => r.plugin).sort()).toEqual(["fake-connector", "fake-dep-provider"]);
-    const liveSkill = await db
-      .selectFrom("skills")
-      .select("id")
-      .where("id", "=", appSkillId)
-      .where("deleted_at", "is", null)
-      .execute();
-    expect(liveSkill).toEqual([]);
+    const listed = (await ok("boss", 1, "GET", `${base}/skills`)).skills as { id: string }[];
+    expect(listed.map((x) => x.id)).not.toContain(appSkillId);
     expect((await ok("boss", 1, "GET", `${base}/plugin-installs`)).installs).toEqual([]);
     // agent 仍能运行：连接器工具照常可用
     const conv = await newConv("boss", 1, agentId);
@@ -1005,7 +1000,7 @@ describe("M6 第三段双副本验收（平台目录）", { timeout: 240_000 }, 
     expect(replicaIds.map((r) => r.replica_id).sort()).toEqual([...bootIds.values()].sort());
   });
 
-  it("7. upgrade across replicas: installed at 1.0.0 on B, upgraded to 2.0.0 through A; B sees the version, the new skill content, the new template default and the kept credential", async () => {
+  it("7. upgrade across replicas: installed at 1.0.0 on B, upgraded to 2.0.0 through A; B sees the version, the new template default and the kept credential; the platform skill keeps its version", async () => {
     const kitMd = (v: string) =>
       `---\nname: kit-notes\ndescription: Keep kit notes.\n---\n# kit-notes ${v}\n\nSteps ${v}.\n`;
     const kit = (version: string, search: "allow" | "ask") =>
@@ -1121,14 +1116,16 @@ describe("M6 第三段双副本验收（平台目录）", { timeout: 240_000 }, 
       name: string;
       currentVersion: number;
     }[];
+    // phase 2: the skill is a platform component; the per-org upgrade does not move it (the
+    // platform plugin update does)
     expect(skills.find((x) => x.name === "kit-notes")).toMatchObject({
       id: skill?.id,
-      currentVersion: 2,
+      currentVersion: 1,
     });
     const after = await conn(1);
     expect(after.tools.find((t) => t.name === "search")?.defaultPolicy).toBe("ask");
     expect(after.credential.status).toBe("connected");
-    // The agent is unchanged (same version, same selection); a run on B loads the new content
+    // The agent is unchanged (same version, same selection); a run on B loads the platform skill
     const agentNow = await ok("boss", 1, "GET", `${base}/agents/${kitAgent}`);
     expect(agentNow.agent).toMatchObject({
       currentVersion: 1,
@@ -1137,7 +1134,7 @@ describe("M6 第三段双副本验收（平台目录）", { timeout: 240_000 }, 
     const conv = await newConv("boss", 1, kitAgent);
     const r2 = await call("boss", 1, conv, "Skill", { skill: "kit-notes" }, 1);
     expect(r2.isError, String(r2.content)).toBe(false);
-    expect(String(r2.content)).toContain("Steps 2.0.0.");
+    expect(String(r2.content)).toContain("Steps 1.0.0.");
     expect([h.replicas[0].pid, h.replicas[1].pid]).toEqual(bootPids);
   });
 });

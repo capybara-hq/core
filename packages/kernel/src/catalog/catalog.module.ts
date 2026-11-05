@@ -8,6 +8,7 @@ import { StorageModule } from "../storage/storage.module.js";
 import { ToolsModule } from "../tools/tools.module.js";
 import { CatalogService } from "./catalog.service.js";
 import { CatalogScopeService } from "./catalog-scope.service.js";
+import { ComponentScopeService } from "./component-scope.service.js";
 import { CatalogItemLock, CatalogSourceLock } from "./locks.js";
 import { MarketplacesService } from "./marketplaces.service.js";
 import { OrgCatalogService } from "./org-catalog.service.js";
@@ -65,6 +66,7 @@ export class CatalogImportModule {}
     OrgExtensionSwitch,
     PluginScopeSync,
     CatalogScopeService,
+    ComponentScopeService,
   ],
   exports: [
     CatalogImportModule,
@@ -75,6 +77,7 @@ export class CatalogImportModule {}
     OrgExtensionSwitch,
     PluginScopeSync,
     CatalogScopeService,
+    ComponentScopeService,
   ],
 })
 export class CatalogModule {}

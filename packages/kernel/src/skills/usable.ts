@@ -3,7 +3,7 @@
 // to the platform skill's current version under their own id unless pinned; platform files are
 // read from `deployment/` and their snapshot `source` is `platform:<object prefix>` (ruling D2).
 import type { Logger, ObjectStore } from "@capybara-hq/plugin-sdk";
-import { wantedOn } from "../catalog/scope.js";
+import { componentOn } from "../catalog/component-state.js";
 import type { KernelSchemaDb, SkillManifest, SourceFormat } from "../db/kernel-schema.js";
 
 /** The `source` prefix of a platform skill version in a snapshot or an invocation record. */
@@ -117,16 +117,25 @@ async function platformRowsOn(
     .where("p.deleted_at", "is", null)
     .where("p.disabled", "=", false);
   if (ids !== undefined) q = q.where("p.id", "in", [...ids]);
-  return (await q.execute()).filter((r) => {
-    const sw = r.switch ?? null;
-    if (r.item_disabled === true) return false;
-    if (r.scope_mode === "follow") {
-      return (
-        r.item_id !== null && (Boolean(r.installed) || r.item_builtin === true) && sw !== false
-      );
-    }
-    return wantedOn({ scope: r.scope, disabled: false, builtin: false }, Boolean(r.listed), sw);
-  });
+  // the predicate of component scope (catalog/component-state.ts); `disabled` is filtered above
+  return (await q.execute()).filter((r) =>
+    componentOn(
+      { scopeMode: r.scope_mode, scope: r.scope, disabled: false, itemId: r.catalog_item_id },
+      r.catalog_item_id === null
+        ? null
+        : {
+            live: r.item_id !== null,
+            disabled: r.item_disabled === true,
+            builtin: r.item_builtin === true,
+            // the plugin's own scope and list do not decide whether a component is on
+            scope: "optional",
+            listed: false,
+            installed: Boolean(r.installed),
+          },
+      Boolean(r.listed),
+      r.switch ?? null,
+    ),
+  );
 }
 
 /**

@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { ConnectorTemplateSpec } from "@capybara-hq/plugin-sdk";
+import type { ConnectorTemplateSpec, PluginManifest } from "@capybara-hq/plugin-sdk";
 import {
   type FakeMcpServer,
   fakeExtensionEntry,
@@ -15,11 +15,20 @@ import {
   type TestS3,
 } from "@capybara-hq/testing";
 import { expect } from "vitest";
+import { putTemplateVersionIn } from "../../src/agents/templates.js";
+import {
+  readCatalogAgentTemplates,
+  readCatalogFiles,
+  skillOf,
+} from "../../src/catalog/catalog-content.js";
+import { PlatformComponents } from "../../src/catalog/platform-components.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import { ExtensionHost } from "../../src/extensions/host.js";
 import { KERNEL_MIGRATIONS_DIR } from "../../src/kernel.js";
+import { packagePath } from "../../src/packages/tgz.js";
+import { SkillsService } from "../../src/skills/skills.service.js";
 import { StorageService } from "../../src/storage/storage.service.js";
 import { truncateTables } from "../helpers/db.js";
 import { accountsFor } from "../helpers/identity.js";
@@ -352,6 +361,11 @@ export async function seedPlugin(
     pinned?: string[];
     /** The version's `source_format` (default capybara). */
     sourceFormat?: "capybara" | "claude-code";
+    /**
+     * Write the new item's platform components, as an import's confirm does (default true; only
+     * for a new item, `addTo` never does).
+     */
+    platform?: boolean;
   } = {},
 ): Promise<string> {
   const id = o.addTo ?? randomUUID();
@@ -444,7 +458,93 @@ export async function seedPlugin(
       ...(o.sourceFormat !== undefined && { source_format: o.sourceFormat }),
     })
     .execute();
+  if (o.addTo === undefined && o.platform !== false) {
+    await env.k.app.get(PlatformComponents).syncFromVersion(id, version, { initial: true });
+  }
   return id;
+}
+
+/**
+ * The org copies an install made before plugin scope phase 2 (installs no longer write them): the
+ * installed version's skills and agent templates as org rows with the item's provenance, recorded
+ * in the org's live install of `itemId` (created, or a version added to an existing one). For the
+ * tests of what still handles such copies (per-org upgrades, uninstalls, the migration).
+ */
+export async function legacyCopies(
+  env: OrgEnv,
+  orgId: string,
+  itemId: string,
+  actor: string | null = env.rootId,
+): Promise<void> {
+  const a = await env.db
+    .selectFrom("plugin_installs as a")
+    .innerJoin("catalog_items as i", "i.id", "a.item_id")
+    .select(["a.id", "a.version", "i.name"])
+    .where("a.org_id", "=", orgId)
+    .where("a.item_id", "=", itemId)
+    .where("a.status", "=", "installed")
+    .executeTakeFirstOrThrow();
+  const v = await env.db
+    .selectFrom("catalog_item_versions")
+    .select(["manifest", "object_prefix", "files", "version", "source_format"])
+    .where("item_id", "=", itemId)
+    .where("version", "=", a.version)
+    .executeTakeFirstOrThrow();
+  const storage = env.k.app.get(StorageService);
+  const record = (c: {
+    kind: "skill" | "agent_template";
+    ref: string;
+    created: boolean;
+    version: number | null;
+  }) =>
+    env.db
+      .insertInto("plugin_install_components")
+      .values({
+        install_id: a.id,
+        kind: c.kind,
+        ref: c.ref,
+        created: c.created,
+        skill_version: c.created ? null : c.version,
+      })
+      .onConflict((oc) => oc.columns(["install_id", "kind", "ref"]).doNothing())
+      .execute();
+  for (const t of await readCatalogAgentTemplates(storage, v)) {
+    const r = await putTemplateVersionIn(
+      env.db,
+      {
+        orgId,
+        plugin: a.name,
+        catalogItemId: itemId,
+        catalogVersion: a.version,
+        sourceFormat: v.source_format,
+      },
+      t.template,
+    );
+    await record({
+      kind: "agent_template",
+      ref: r.id,
+      created: r.created,
+      version: r.changed ? r.version : null,
+    });
+  }
+  const manifest = v.manifest as PluginManifest;
+  for (const sk of manifest.skills ?? []) {
+    const files = await readCatalogFiles(storage, v.object_prefix, v.files, packagePath(sk.path));
+    const r = await env.k.app.get(SkillsService).createVersionFromFiles(
+      orgId,
+      actor,
+      { ...skillOf(files), files },
+      {
+        catalog: {
+          itemId,
+          version: a.version,
+          format: v.source_format,
+          suggestPinned: sk.pinned === true,
+        },
+      },
+    );
+    await record({ kind: "skill", ref: r.skill.id, created: r.created, version: r.version });
+  }
 }
 
 export const install = (

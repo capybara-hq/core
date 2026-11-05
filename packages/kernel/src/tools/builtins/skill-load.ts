@@ -334,6 +334,8 @@ async function findPlatformVersion(
     .select(["v.manifest"])
     .where("v.object_prefix", "=", entry.source.slice(PLATFORM_SOURCE.length))
     .where("p.deleted_at", "is", null)
+    // a platform skill disabled on the deployment is not loaded, even from an older snapshot
+    .where("p.disabled", "=", false)
     .where((eb) =>
       eb.or([
         eb("p.id", "=", entry.id),

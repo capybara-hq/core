@@ -8,7 +8,14 @@ import { skillsChangeText } from "../../src/runtime/context/skills.js";
 import { skillVersionsById, usableSkills } from "../../src/skills/usable.js";
 import { createOrg, enableConnectorExtensions } from "../helpers/runs.js";
 import { SKILL_MD } from "../skills/zip.js";
-import { importPlugin, MCP_TOKEN, type OrgEnv, resetOrgCatalog, startOrgEnv } from "./org-env.js";
+import {
+  importPlugin,
+  legacyCopies,
+  MCP_TOKEN,
+  type OrgEnv,
+  resetOrgCatalog,
+  startOrgEnv,
+} from "./org-env.js";
 import { bundlePlugin, mcpTemplate, skillFiles } from "./packages.js";
 
 /**
@@ -65,6 +72,8 @@ async function installIn(orgId: string, itemId: string, version: string): Promis
     payload: { version, ...connectorConfig() },
   });
   expect(r.statusCode, r.body).toBe(201);
+  // the org copies an install wrote before phase 2: what the migration links
+  await legacyCopies(env, orgId, itemId);
 }
 
 /** Drops the platform rows (the state before phase 2, or an import whose sync failed). */

@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { AgentTemplate, AgentTemplateTier, Logger } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
-import { wantedOn } from "../catalog/scope.js";
+import { componentOn } from "../catalog/component-state.js";
 import type { KernelSchemaDb, SourceFormat } from "../db/kernel-schema.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { canonicalJson } from "../tools/canonical-json.js";
@@ -196,16 +196,25 @@ async function platformRowsOn(
     .where("p.deleted_at", "is", null)
     .where("p.disabled", "=", false);
   if (ids !== undefined) q = q.where("p.id", "in", [...ids]);
-  return (await q.execute()).filter((r) => {
-    const sw = r.switch ?? null;
-    if (r.item_disabled === true) return false;
-    if (r.scope_mode === "follow") {
-      return (
-        r.item_id !== null && (Boolean(r.installed) || r.item_builtin === true) && sw !== false
-      );
-    }
-    return wantedOn({ scope: r.scope, disabled: false, builtin: false }, Boolean(r.listed), sw);
-  });
+  // the predicate of component scope (catalog/component-state.ts); `disabled` is filtered above
+  return (await q.execute()).filter((r) =>
+    componentOn(
+      { scopeMode: r.scope_mode, scope: r.scope, disabled: false, itemId: r.catalog_item_id },
+      r.catalog_item_id === null
+        ? null
+        : {
+            live: r.item_id !== null,
+            disabled: r.item_disabled === true,
+            builtin: r.item_builtin === true,
+            // the plugin's own scope and list do not decide whether a component is on
+            scope: "optional",
+            listed: false,
+            installed: Boolean(r.installed),
+          },
+      Boolean(r.listed),
+      r.switch ?? null,
+    ),
+  );
 }
 
 /**

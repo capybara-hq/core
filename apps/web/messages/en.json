@@ -198,6 +198,9 @@
       "pinned_unavailable": "This reply did not start: the agent's pinned skills could not be read.",
       "pinned_conflict": "This reply did not start because the agent's pinned skills changed meanwhile. Send the message again."
     },
+    "component": {
+      "not_found": "The component does not exist or was removed."
+    },
     "connector": {
       "not_found": "The connector does not exist or has been removed.",
       "slug_taken": "This slug is already used by another connector.",

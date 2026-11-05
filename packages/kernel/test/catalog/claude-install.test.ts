@@ -1,6 +1,13 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { SKILL_MD } from "../skills/zip.js";
-import { install, type OrgEnv, resetOrgCatalog, seedPlugin, startOrgEnv } from "./org-env.js";
+import {
+  install,
+  legacyCopies,
+  type OrgEnv,
+  resetOrgCatalog,
+  seedPlugin,
+  startOrgEnv,
+} from "./org-env.js";
 
 /**
  * Org install and upgrade carry a catalog version's source format and the per-skill pinned
@@ -21,9 +28,14 @@ beforeEach(async () => {
   await resetOrgCatalog(env);
 });
 
-async function installOk(itemId: string): Promise<string> {
+/**
+ * Installs the plugin in the org; `legacy`: with the org copies an install wrote before phase 2
+ * (what the per-org upgrade still versions).
+ */
+async function installOk(itemId: string, legacy = false): Promise<string> {
   const r = await install(env.boss, env, itemId, {});
   expect(r.statusCode, r.body).toBe(201);
+  if (legacy) await legacyCopies(env, env.orgId, itemId);
   return r.json().installed.pluginInstallId as string;
 }
 
@@ -63,10 +75,16 @@ describe("org skills from a Claude Code plugin", { timeout: 90_000 }, () => {
     expect(view?.sourceFormat).toBe("claude-code");
   });
 
-  it("org install of a claude-code version records source_format and suggest_pinned per skill version", async () => {
+  it("a claude-code version's platform skills record source_format and suggest_pinned per skill version", async () => {
     const item = await seedSuperpowers();
     await installOk(item);
-    expect(await versionsOf()).toEqual([
+    const platform = await env.db
+      .selectFrom("platform_skill_versions as v")
+      .innerJoin("platform_skills as s", "s.id", "v.skill_id")
+      .select(["s.name", "v.version", "v.source_format", "v.suggest_pinned"])
+      .orderBy("s.name")
+      .execute();
+    expect(platform).toEqual([
       { name: "brainstorming", version: 1, source_format: "claude-code", suggest_pinned: false },
       { name: "using-superpowers", version: 1, source_format: "claude-code", suggest_pinned: true },
     ]);
@@ -74,7 +92,7 @@ describe("org skills from a Claude Code plugin", { timeout: 90_000 }, () => {
 
   it("upgrade to a version that unticks the suggestion clears it on the new version", async () => {
     const item = await seedSuperpowers();
-    const installId = await installOk(item);
+    const installId = await installOk(item, true);
     await seedSuperpowers({ version: "2.0.0", addTo: item, pinned: [] });
     const p = await env.boss({
       method: "POST",
@@ -103,7 +121,7 @@ describe("org skills from a Claude Code plugin", { timeout: 90_000 }, () => {
 
   it("an upgrade that only flips the suggestion updates the current version's flag; rolling back flips it back (batch-2 M7)", async () => {
     const item = await seedSuperpowers();
-    const installId = await installOk(item);
+    const installId = await installOk(item, true);
     // 1.1.0: the same files, the suggestion moved to brainstorming
     await seedSuperpowers({ version: "1.1.0", addTo: item, pinned: ["brainstorming"] });
     const move = async (version: string) => {

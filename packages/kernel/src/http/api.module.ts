@@ -14,6 +14,10 @@ import { BackgroundModule } from "../background/background.module.js";
 import { AdminCatalogController } from "../catalog/admin-catalog.controller.js";
 import { CatalogModule } from "../catalog/catalog.module.js";
 import {
+  AdminComponentsController,
+  OrgComponentsController,
+} from "../catalog/component-scope.controller.js";
+import {
   MarketplacesController,
   OrgMarketplacesController,
 } from "../catalog/marketplaces.controller.js";
@@ -86,6 +90,7 @@ const CONTROLLERS: Type[] = [
   AdminController,
   AdminExtensionsController,
   AdminCatalogController,
+  AdminComponentsController,
   MarketplacesController,
   OrgMarketplacesController,
   OrgExtensionConfigsController,
@@ -122,6 +127,7 @@ const CONTROLLERS: Type[] = [
   EvalRunsController,
   ModelPurposesController,
   OrgCatalogController,
+  OrgComponentsController,
   AdminCatalogRequestsController,
 ];
 
