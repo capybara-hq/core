@@ -682,7 +682,7 @@ export class MarketplacesService {
   }
 
   /**
-   * Adds an custom marketplace (audit `marketplace.added`). URL and mirrors must be https,
+   * Adds a custom marketplace (audit `marketplace.added`). URL and mirrors must be https,
    * without user info. The form follows {@link marketplaceForm}; a git marketplace may name a `ref`
    * (branch or tag, default the remote HEAD) and has no mirrors.
    */
@@ -759,7 +759,7 @@ export class MarketplacesService {
   }
 
   /**
-   * Updates an custom marketplace (audit `marketplace.updated`, listing the changed fields, the
+   * Updates a custom marketplace (audit `marketplace.updated`, listing the changed fields, the
    * token's value never recorded; not written when unchanged). `token: null` clears the token.
    * Official only takes `enabled`, any other field -> `marketplace.builtin`. Changing the URL, form
    * or ref clears the ETag and the last commit (the next refresh reads everything again); a new URL
@@ -897,7 +897,7 @@ export class MarketplacesService {
   }
 
   /**
-   * Deletes an custom marketplace (audit `marketplace.removed`): its cached entries and token
+   * Deletes a custom marketplace (audit `marketplace.removed`): its cached entries and token
    * are deleted; imported catalog items are kept (their marketplace becomes null). Official can
    * only be disabled -> `marketplace.builtin`.
    */
@@ -1291,7 +1291,7 @@ export class MarketplacesService {
     return out;
   }
 
-  /** The token of an custom marketplace (undefined without one; official never has one). */
+  /** The token of a custom marketplace (undefined without one; official never has one). */
   async token(id: string): Promise<string | undefined> {
     return (await this.secrets().get(DEPLOYMENT_SECRETS_ORG, tokenKey(id))) ?? undefined;
   }

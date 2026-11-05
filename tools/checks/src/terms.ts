@@ -224,7 +224,7 @@ export const OLD_REFERENCES: { re: RegExp; what: string; allowedIn?: RuleExempti
           "seeds a pre-0079 schema with the old column on purpose (exercises 0079 on upgrade)",
       },
       {
-        path: /^\.changeset\/(?:pre\/)?super-admin-rename\.md$/,
+        path: /^\.changeset\/super-admin-rename\.md$/,
         reason:
           "the rename's release notes map each old name to its new one; `changeset version` archives them under .changeset/pre/",
       },

@@ -94,7 +94,7 @@ export class MarketplacesController {
   }
 
   /**
-   * Adds an custom marketplace (https URL and mirrors; the token is kept in secrets and sent only
+   * Adds a custom marketplace (https URL and mirrors; the token is kept in secrets and sent only
    * to the URL's origin). A git URL (`…/*.git`, `owner/repo`, or any URL with `form: "git"`) is a
    * git marketplace with an optional `ref`; anything else is a marketplace.json URL.
    */
@@ -164,7 +164,7 @@ export class MarketplacesController {
   }
 
   /**
-   * Deletes an custom marketplace (imported catalog items are kept); official -> 409
+   * Deletes a custom marketplace (imported catalog items are kept); official -> 409
    * `marketplace.builtin`.
    */
   @Delete(":id")

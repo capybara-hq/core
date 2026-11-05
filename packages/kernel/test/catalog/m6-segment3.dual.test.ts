@@ -513,7 +513,7 @@ describe("M6 第三段双副本验收（平台目录）", { timeout: 240_000 }, 
     expect(confirmedDep.deploy).toMatchObject({ name: "fake-dep-provider", result: "enabled" });
     await waitFor(() => loadedOnBoth("fake-dep-provider", "0.1.0"), 30_000, "counter on both", 100);
 
-    // An custom marketplace: no entries before its first refresh; after a refresh on B, A sees
+    // A custom marketplace: no entries before its first refresh; after a refresh on B, A sees
     // them; a new entry in the manifest shows on A after the next refresh
     const added = await ok("root", 1, "POST", "/api/v1/admin/marketplaces", {
       name: "Acme",
