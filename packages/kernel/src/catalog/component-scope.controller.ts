@@ -1,5 +1,6 @@
-import { Controller, Get, HttpCode, Inject, Post, Put } from "@nestjs/common";
+import { Controller, Get, HttpCode, Inject, Post, Put, Req } from "@nestjs/common";
 import { z } from "zod";
+import { ApiError } from "../errors.js";
 import {
   CurrentPrincipal,
   type Principal,
@@ -18,6 +19,7 @@ import {
   type OrgComponentView,
 } from "./component-scope.service.js";
 import { COMPONENT_KINDS, type ComponentKind } from "./component-state.js";
+import { PlatformComponents, type UploadedComponentVersion } from "./platform-components.js";
 
 const Kind = z.enum(COMPONENT_KINDS as [ComponentKind, ...ComponentKind[]]);
 const Scope = z.enum(["all", "optional", "named"]);
@@ -75,6 +77,11 @@ const SwitchBody = z
   })
   .strict();
 
+const IdParams = z.object({ id: z.string().min(1).max(128) });
+const TemplateVersionBody = z.object({ content: z.string().min(1).max(400_000) }).strict();
+class ComponentIdParams extends createZodDto(IdParams, "ComponentIdParams") {}
+class TemplateVersionDto extends createZodDto(TemplateVersionBody, "TemplateVersionBody") {}
+
 class ComponentParamsDto extends createZodDto(ComponentParams, "ComponentParams") {}
 class ComponentListQuery extends createZodDto(ListQuery, "ComponentListQuery") {}
 class ComponentScopePreviewBody extends createZodDto(PreviewBody, "ComponentScopePreviewBody") {}
@@ -97,7 +104,55 @@ const actorOpts = (actor: ReturnType<typeof requireUser>): ActorOpts => {
 @Controller("api/v1/admin/components")
 @SuperAdmin()
 export class AdminComponentsController {
-  constructor(@Inject(ComponentScopeService) private readonly scope: ComponentScopeService) {}
+  constructor(
+    @Inject(ComponentScopeService) private readonly scope: ComponentScopeService,
+    @Inject(PlatformComponents) private readonly components: PlatformComponents,
+  ) {}
+
+  /**
+   * Updates a platform skill on its own (spec §7.2): the skill package (zip) as the raw body
+   * (`application/octet-stream`, at most `packages.maxBytes`). The package keeps the skill's name
+   * (400 `validation_failed`), is checked like an org upload (400 `skill.invalid_package`), and
+   * becomes the next version, flagged as updated on its own; it keeps its plugin and serves in
+   * orgs at once. Unknown component -> 404 `component.not_found`. Audits `component.version_uploaded`.
+   */
+  @Post("skill/:id/versions")
+  @HttpCode(201)
+  uploadSkillVersion(
+    @CurrentPrincipal() principal: Principal,
+    @ZParam(ComponentIdParams) p: z.infer<typeof IdParams>,
+    @Req() req: { body?: unknown },
+  ): Promise<UploadedComponentVersion> {
+    const actor = requireUser(principal);
+    const body = req.body;
+    if (!Buffer.isBuffer(body) || body.byteLength === 0) {
+      throw new ApiError(
+        "unsupported_media_type",
+        "Send the skill package (.zip) as the request body with content-type application/octet-stream",
+      );
+    }
+    return this.components.uploadSkillVersion(
+      { accountId: actor.account.id, ...actorOpts(actor) },
+      p.id,
+      new Uint8Array(body.buffer, body.byteOffset, body.byteLength),
+    );
+  }
+
+  /** Updates a platform agent template on its own: `{ content }` is the template markdown file. */
+  @Post("agent_template/:id/versions")
+  @HttpCode(201)
+  uploadAgentTemplateVersion(
+    @CurrentPrincipal() principal: Principal,
+    @ZParam(ComponentIdParams) p: z.infer<typeof IdParams>,
+    @ZBody(TemplateVersionDto) body: z.infer<typeof TemplateVersionBody>,
+  ): Promise<UploadedComponentVersion> {
+    const actor = requireUser(principal);
+    return this.components.uploadAgentTemplateVersion(
+      { accountId: actor.account.id, ...actorOpts(actor) },
+      p.id,
+      body.content,
+    );
+  }
 
   /** `GET ?kind=`: every platform component of the kind (plugin, owner, scope, version, orgs on). */
   @Get()

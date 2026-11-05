@@ -81,6 +81,7 @@ export const ERROR_CODES = {
   "plugin.builtin": 409,
   "plugin.scope_stale": 409,
   "component.not_found": 404,
+  "component.version_stale": 409,
   "catalog.approval_required": 403,
   "catalog.request_not_found": 404,
   /** No open org notice with that id for an admin of the org (inbox). */

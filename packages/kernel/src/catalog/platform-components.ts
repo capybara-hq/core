@@ -2,18 +2,24 @@
 // connector templates of a catalog item, stored once for the deployment. Files live under
 // `deployment/platform/{skills,agent-templates}/<id>/<version>/`, never under an org prefix (orgs
 // are purged by prefix).
-import { randomUUID } from "node:crypto";
-import type { AgentTemplate, ConnectorTemplateFile, PluginManifest } from "@capybara-hq/plugin-sdk";
+import { createHash, randomUUID } from "node:crypto";
+import {
+  type AgentTemplate,
+  type ConnectorTemplateFile,
+  type PluginManifest,
+  parseAgentTemplate,
+} from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import type { KernelSchemaDb, SkillManifest, SourceFormat } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
+import { audit } from "../identity/audit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import { packagePath } from "../packages/tgz.js";
-import type { SkillPackageFile } from "../skills/package.js";
+import { readSkillPackage, type SkillPackageFile } from "../skills/package.js";
 import { skillManifest } from "../skills/skills.service.js";
 import { type PrefixedStorage, StorageService } from "../storage/storage.service.js";
 import { canonicalJson } from "../tools/canonical-json.js";
@@ -121,6 +127,21 @@ export interface PreparedSync {
   readonly plan: SyncPlan;
 }
 
+/** A component version written by an upload ({@link PlatformComponents.uploadSkillVersion}). */
+export interface UploadedComponentVersion {
+  kind: "skill" | "agent_template";
+  id: string;
+  name: string;
+  /** The version written (`current_version` after the upload). */
+  version: number;
+}
+
+/** Who uploads (the super admin; `actorTokenId` when through a personal access token). */
+export interface UploadActor {
+  accountId: string;
+  actorTokenId?: string;
+}
+
 /** Plans are retried this many times against concurrent syncs of the same item. */
 const SYNC_ATTEMPTS = 3;
 
@@ -219,6 +240,206 @@ export class PlatformComponents {
     const r = await this.apply(p.plan);
     await this.markSynced(p.plan.itemId, p.plan.version);
     return r;
+  }
+
+  /**
+   * A platform skill updated on its own (spec §7.2): the super admin uploads a skill package (zip)
+   * for component `id`. The package keeps the component's name (else 400 `validation_failed`);
+   * the new version keeps the component's plugin provenance and format, is flagged `updated_on_own`
+   * (the next plugin update preview marks it) and serves in orgs at once (resolution is
+   * read-time). Files go to the platform prefix before the transaction; a concurrent change of the
+   * component -> 409 `component.version_stale`. Audits `component.version_uploaded`.
+   */
+  async uploadSkillVersion(
+    actor: UploadActor,
+    id: string,
+    zip: Uint8Array,
+  ): Promise<UploadedComponentVersion> {
+    const pkg = await readSkillPackage(zip);
+    this.files.assertAvailable();
+    const live = await this.liveSkill(id);
+    if (pkg.name !== live.name) throw nameChanged("skill", live.name, pkg.name);
+    const to = live.current_version + 1;
+    const prefix = platformSkillPrefix(id, to);
+    await putCatalogFiles(this.files, prefix, pkg.files);
+    await this.writeSkillVersionIn(actor, live, to, prefix, pkg);
+    return { kind: "skill", id, name: live.name, version: to };
+  }
+
+  /**
+   * A platform agent template updated on its own (spec §7.2), as {@link uploadSkillVersion}: the
+   * template file (markdown) keeps the component's name.
+   */
+  async uploadAgentTemplateVersion(
+    actor: UploadActor,
+    id: string,
+    text: string,
+  ): Promise<UploadedComponentVersion> {
+    const parsed = parseAgentTemplate(text);
+    if ("errors" in parsed) {
+      throw new ApiError(
+        "validation_failed",
+        `Invalid agent template: ${parsed.errors[0] ?? "unknown problem"}`,
+        parsed.errors.map((message) => ({ path: "content", message })),
+      );
+    }
+    this.files.assertAvailable();
+    const live = await this.liveTemplate(id);
+    if (parsed.template.name !== live.name) {
+      throw nameChanged("agent template", live.name, parsed.template.name);
+    }
+    const to = live.current_version + 1;
+    const prefix = platformAgentTemplatePrefix(id, to);
+    const data = new TextEncoder().encode(text);
+    const file: SkillPackageFile = {
+      path: `${live.name}.md`,
+      size: data.byteLength,
+      sha256: createHash("sha256").update(data).digest("hex"),
+      data,
+    };
+    await putCatalogFiles(this.files, prefix, [file]);
+    await this.writeTemplateVersionIn(actor, live, to, prefix, parsed.template);
+    return { kind: "agent_template", id, name: live.name, version: to };
+  }
+
+  private async liveSkill(id: string) {
+    const live = await this.db
+      .selectFrom("platform_skills")
+      .select(["id", "name", "plugin_name", "current_version"])
+      .where("id", "=", id)
+      .where("deleted_at", "is", null)
+      .executeTakeFirst();
+    if (!live) throw new ApiError("component.not_found", `Platform skill ${id} not found`);
+    return live;
+  }
+
+  private async liveTemplate(id: string) {
+    const live = await this.db
+      .selectFrom("platform_agent_templates")
+      .select(["id", "name", "plugin_name", "current_version"])
+      .where("id", "=", id)
+      .where("deleted_at", "is", null)
+      .executeTakeFirst();
+    if (!live) throw new ApiError("component.not_found", `Platform agent template ${id} not found`);
+    return live;
+  }
+
+  @Transactional()
+  private async writeSkillVersionIn(
+    actor: UploadActor,
+    live: { id: string; name: string; plugin_name: string | null; current_version: number },
+    to: number,
+    prefix: string,
+    pkg: Parameters<typeof skillManifest>[0],
+  ): Promise<void> {
+    // the lock of the plugin update and the import confirm: an update and an upload never interleave
+    if (live.plugin_name !== null) await this.itemLock.lock(live.plugin_name);
+    const t = this.db;
+    const row = await t
+      .selectFrom("platform_skills")
+      .select(["current_version"])
+      .where("id", "=", live.id)
+      .where("deleted_at", "is", null)
+      .forUpdate()
+      .executeTakeFirst();
+    if (row?.current_version !== live.current_version) throw versionStale();
+    const cur = await t
+      .selectFrom("platform_skill_versions")
+      .select(["source_format", "suggest_pinned"])
+      .where("skill_id", "=", live.id)
+      .where("version", "=", live.current_version)
+      .executeTakeFirstOrThrow();
+    const manifest = skillManifest(pkg);
+    await t
+      .updateTable("platform_skills")
+      .set({ current_version: to, description: manifest.description, updated_at: new Date() })
+      .where("id", "=", live.id)
+      .execute();
+    await t
+      .insertInto("platform_skill_versions")
+      .values({
+        skill_id: live.id,
+        version: to,
+        manifest: JSON.stringify(manifest),
+        object_prefix: prefix,
+        catalog_version: null,
+        source_format: cur.source_format,
+        suggest_pinned: cur.suggest_pinned,
+        updated_on_own: true,
+        created_by: actor.accountId,
+      })
+      .execute();
+    await audit(t, {
+      actorAccountId: actor.accountId,
+      ...(actor.actorTokenId !== undefined && { actorTokenId: actor.actorTokenId }),
+      action: "component.version_uploaded",
+      target: live.id,
+      detail: {
+        kind: "skill",
+        name: live.name,
+        plugin: live.plugin_name,
+        from: live.current_version,
+        to,
+      },
+    });
+  }
+
+  @Transactional()
+  private async writeTemplateVersionIn(
+    actor: UploadActor,
+    live: { id: string; name: string; plugin_name: string | null; current_version: number },
+    to: number,
+    prefix: string,
+    template: AgentTemplate,
+  ): Promise<void> {
+    if (live.plugin_name !== null) await this.itemLock.lock(live.plugin_name);
+    const t = this.db;
+    const row = await t
+      .selectFrom("platform_agent_templates")
+      .select(["current_version"])
+      .where("id", "=", live.id)
+      .where("deleted_at", "is", null)
+      .forUpdate()
+      .executeTakeFirst();
+    if (row?.current_version !== live.current_version) throw versionStale();
+    const cur = await t
+      .selectFrom("platform_agent_template_versions")
+      .select(["source_format", "suggest_pinned"])
+      .where("template_id", "=", live.id)
+      .where("version", "=", live.current_version)
+      .executeTakeFirstOrThrow();
+    await t
+      .updateTable("platform_agent_templates")
+      .set({ current_version: to, description: template.description, updated_at: new Date() })
+      .where("id", "=", live.id)
+      .execute();
+    await t
+      .insertInto("platform_agent_template_versions")
+      .values({
+        template_id: live.id,
+        version: to,
+        definition: JSON.stringify(template),
+        object_prefix: prefix,
+        catalog_version: null,
+        source_format: cur.source_format,
+        suggest_pinned: cur.suggest_pinned,
+        updated_on_own: true,
+        created_by: actor.accountId,
+      })
+      .execute();
+    await audit(t, {
+      actorAccountId: actor.accountId,
+      ...(actor.actorTokenId !== undefined && { actorTokenId: actor.actorTokenId }),
+      action: "component.version_uploaded",
+      target: live.id,
+      detail: {
+        kind: "agent_template",
+        name: live.name,
+        plugin: live.plugin_name,
+        from: live.current_version,
+        to,
+      },
+    });
   }
 
   /**
@@ -531,3 +752,13 @@ export class PlatformComponents {
 function assertBase<V>(live: Base<V> | undefined, base: Base<V> | undefined): void {
   if (live?.id !== base?.id || live?.version !== base?.version) throw new PlanStale();
 }
+
+const nameChanged = (what: string, was: string, now: string): ApiError =>
+  new ApiError(
+    "validation_failed",
+    `An uploaded ${what} keeps the component's name: it is "${was}", the upload names "${now}"`,
+    [{ path: "name", message: `must stay "${was}"` }],
+  );
+
+const versionStale = (): ApiError =>
+  new ApiError("component.version_stale", "The component changed meanwhile; upload it again");
