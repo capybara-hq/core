@@ -13,3 +13,6 @@ aliases). Migration `0079_rename_enterprise_admin.sql` renames `accounts.is_ente
 `account.last_super_admin`. Kernel exports: the `SuperAdmin` route decorator, `SuperAdminLock` /
 `SuperAdminLockModule`, `AccountsService.countSuperAdmins` / `createSuperAdmin` /
 `createSuperAdminIfNone` / `setSuperAdminByLogin`, `authorizeSuperAdmin`.
+
+Deploying: migration 0079 renames a column, so replace all replicas at once; a rolling upgrade
+across this version breaks the replicas still running the old code.

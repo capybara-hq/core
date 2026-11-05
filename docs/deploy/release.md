@@ -212,6 +212,17 @@ The two jobs are deliberately separate. `changeset version` rewrites versions in
 checkout. The `publish` job checks out exactly `github.sha` on a fresh runner and refuses to run with
 uncommitted `package.json` changes, so only reviewed versions ship.
 
+### Order across repositories, and downtime
+
+- **Core first.** Release core (kernel, plugin-sdk, plugin-tools, plugin-model-fake) and upgrade the
+  deployed kernels before `capybara-hq/plugins` publishes plugins whose `plugin.json` `description` is
+  an object (`{ en, zh? }`): older kernels reject it. The same goes for the official marketplace
+  dropping older versions of a plugin: kernels that still need them must be upgraded first.
+- **No rolling upgrade across the super-admin rename.** Migration 0079 renames a column of
+  `accounts` (the old admin flag becomes `is_super_admin`), so a replica of the old version cannot
+  run against the migrated schema. Replace all replicas at once (stop, migrate,
+  start) for this version; expect a short downtime.
+
 ### The compose image tag
 
 `docker/compose.yaml` pulls `${CAPYBARA_VERSION:-<version>}`, and `docker/.env.example` shows the
