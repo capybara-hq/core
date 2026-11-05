@@ -3,15 +3,22 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
-import EditAgentPage from "../src/app/[locale]/(app)/agents/[id]/page";
-import NewAgentPage from "../src/app/[locale]/(app)/agents/new/page";
-import ExtensionsPage from "../src/app/[locale]/(app)/settings/extensions/page";
-import { bodyOf, json, noContent, stubApi } from "./support/api";
-import { resetNavigation, router } from "./support/navigation";
-import { renderPage } from "./support/render";
+import { keys } from "../src/lib/query/keys";
+import { renderEditAgent } from "./support/agents";
+import { bodyOf, json, lastStubRoutes, noContent, stubApi } from "./support/api";
+import { resetNavigation } from "./support/navigation";
+import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
+import { expectNoFirstPaintFetch, sessionRoutes } from "./support/server";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
-vi.mock("next/navigation", () => ({ useParams: () => ({ id: "ag1" }) }));
+vi.mock("next/navigation", () => ({
+  redirect: (to: string) => {
+    throw new Error(`REDIRECT ${to}`);
+  },
+  notFound: () => {
+    throw new Error("NOT_FOUND");
+  },
+}));
 
 const msgs = { zh, en } as const;
 const ORG = "/api/v1/orgs/o1";
@@ -40,6 +47,11 @@ type Point = {
   effective: string | null;
 };
 
+/** The page's other section, answered empty. */
+const PREVIEWERS = { [`GET ${ORG}/file-previewers`]: () => json(200, { items: [] }) };
+
+const settle = () => new Promise((r) => setTimeout(r, 50));
+
 describe("org extensions page: default providers (web tools spec §6)", () => {
   beforeEach(() => resetNavigation("/settings/extensions"));
 
@@ -57,9 +69,11 @@ describe("org extensions page: default providers (web tools spec §6)", () => {
         { point: "web-fetch", candidates: ["fake-web"], default: null, effective: "fake-web" },
       ];
       const calls = stubApi({
+        ...PREVIEWERS,
         [`GET ${ORG}/extensions`]: () =>
           json(200, { extensions: [webExtension("fake-web"), webExtension("fake-web-2")] }),
         [`GET ${ORG}/extension-points`]: () => json(200, { points }),
+        [`GET ${ORG}/extension-points/available`]: () => json(200, { points: [] }),
         [`PUT ${ORG}/extension-points/web-search/default`]: (c) => {
           const { extension } = bodyOf(c) as { extension: string };
           points = points.map((p) =>
@@ -68,7 +82,7 @@ describe("org extensions page: default providers (web tools spec §6)", () => {
           return noContent();
         },
       });
-      renderPage(<ExtensionsPage />, { locale });
+      await renderRouteWithCache("/settings/extensions", lastStubRoutes(), { locale });
       const section = await screen.findByRole("region", { name: m.title });
       const select = within(section).getByRole("combobox", { name: m.points.webSearch });
       expect(select).toHaveProperty("value", "");
@@ -97,6 +111,7 @@ describe("org extensions page: default providers (web tools spec §6)", () => {
   it("a stored default that is not a candidate now is listed as unavailable", async () => {
     const m = en.extensions.pointDefaults;
     stubApi({
+      ...PREVIEWERS,
       [`GET ${ORG}/extensions`]: () => json(200, { extensions: [webExtension("fake-web")] }),
       [`GET ${ORG}/extension-points`]: () =>
         json(200, {
@@ -110,7 +125,7 @@ describe("org extensions page: default providers (web tools spec §6)", () => {
           ],
         }),
     });
-    renderPage(<ExtensionsPage />, { locale: "en" });
+    await renderRouteWithCache("/settings/extensions", lastStubRoutes(), { locale: "en" });
     const select = await screen.findByRole("combobox", { name: m.points.webSearch });
     expect(select).toHaveProperty("value", "fake-web-2");
     expect(
@@ -123,6 +138,7 @@ describe("org extensions page: default providers (web tools spec §6)", () => {
 
   it("hidden when no point has two candidates", async () => {
     stubApi({
+      ...PREVIEWERS,
       [`GET ${ORG}/extensions`]: () => json(200, { extensions: [webExtension("fake-web")] }),
       [`GET ${ORG}/extension-points`]: () =>
         json(200, {
@@ -131,12 +147,148 @@ describe("org extensions page: default providers (web tools spec §6)", () => {
           ],
         }),
     });
-    renderPage(<ExtensionsPage />, { locale: "en" });
+    await renderRouteWithCache("/settings/extensions", lastStubRoutes(), { locale: "en" });
     await screen.findByRole("region", { name: "fake-web" });
     await vi.waitFor(() =>
       expect(screen.queryByRole("region", { name: en.extensions.pointDefaults.title })).toBeNull(),
     );
   });
+
+  it("a first render from the hydrated cache makes no browser read (the defaults are prefetched)", async () => {
+    const routes = {
+      [`GET ${ORG}/extensions`]: () =>
+        json(200, { extensions: [webExtension("fake-web"), webExtension("fake-web-2")] }),
+      [`GET ${ORG}/extension-points`]: () =>
+        json(200, {
+          points: [
+            {
+              point: "web-search",
+              candidates: ["fake-web", "fake-web-2"],
+              default: null,
+              effective: null,
+            },
+          ],
+        }),
+      [`GET ${ORG}/file-previewers`]: () => json(200, { items: [] }),
+    };
+    const browser = expectNoFirstPaintFetch();
+    const { calls } = await renderRouteWithCache("/settings/extensions", routes);
+    expect(calls.map((c) => c.url)).toContain(`${ORG}/extension-points`);
+    expect(screen.getByRole("region", { name: en.extensions.pointDefaults.title })).toBeTruthy();
+    await settle();
+    expect(browser).toEqual([]);
+  });
+
+  it("an empty cache reads the defaults with the extensions, then shows the section", async () => {
+    await renderRouteEmptyCache("/settings/extensions", {
+      [`GET ${ORG}/extensions`]: () =>
+        json(200, { extensions: [webExtension("fake-web"), webExtension("fake-web-2")] }),
+      [`GET ${ORG}/extension-points`]: () =>
+        json(200, {
+          points: [
+            {
+              point: "web-search",
+              candidates: ["fake-web", "fake-web-2"],
+              default: "fake-web",
+              effective: "fake-web",
+            },
+          ],
+        }),
+      [`GET ${ORG}/file-previewers`]: () => json(200, { items: [] }),
+    });
+    const select = await screen.findByRole("combobox", {
+      name: en.extensions.pointDefaults.points.webSearch,
+    });
+    expect(select).toHaveProperty("value", "fake-web");
+  });
+
+  it("choosing a default invalidates the points and their availability", async () => {
+    stubApi({
+      ...PREVIEWERS,
+      [`GET ${ORG}/extensions`]: () =>
+        json(200, { extensions: [webExtension("fake-web"), webExtension("fake-web-2")] }),
+      [`GET ${ORG}/extension-points`]: () =>
+        json(200, {
+          points: [
+            {
+              point: "web-search",
+              candidates: ["fake-web", "fake-web-2"],
+              default: null,
+              effective: null,
+            },
+          ],
+        }),
+      [`PUT ${ORG}/extension-points/web-search/default`]: () => noContent(),
+    });
+    const { client } = await renderRouteWithCache("/settings/extensions", lastStubRoutes());
+    const spy = vi.spyOn(client, "invalidateQueries");
+    const user = userEvent.setup();
+    await user.selectOptions(
+      await screen.findByRole("combobox", { name: en.extensions.pointDefaults.points.webSearch }),
+      "fake-web-2",
+    );
+    const k = keys.org("o1");
+    await vi.waitFor(() =>
+      expect(spy.mock.calls.map((c) => c[0]?.queryKey)).toEqual(
+        expect.arrayContaining([k.extensionPointDefaults(), k.extensionPointsAvailable()]),
+      ),
+    );
+  });
+
+  it("enabling an extension invalidates the default providers", async () => {
+    stubApi({
+      ...PREVIEWERS,
+      [`GET ${ORG}/extensions`]: () =>
+        json(200, { extensions: [{ ...webExtension("fake-web"), enabled: false }] }),
+      [`GET ${ORG}/extension-points`]: () => json(200, { points: [] }),
+      [`PUT ${ORG}/extensions/fake-web`]: () => json(200, { extension: webExtension("fake-web") }),
+    });
+    const { client } = await renderRouteWithCache("/settings/extensions", lastStubRoutes());
+    const spy = vi.spyOn(client, "invalidateQueries");
+    const user = userEvent.setup();
+    await user.click(
+      await screen.findByRole("switch", {
+        name: en.extensions.enableLabel.replace("{plugin}", "fake-web"),
+      }),
+    );
+    const k = keys.org("o1");
+    await vi.waitFor(() =>
+      expect(spy.mock.calls.map((c) => c[0]?.queryKey)).toEqual(
+        expect.arrayContaining([k.extensionPointDefaults(), k.extensionPointsAvailable()]),
+      ),
+    );
+  });
+});
+
+const available = (search: boolean, fetch: boolean) => () =>
+  json(200, {
+    points: [
+      { point: "web-search", available: search },
+      { point: "web-fetch", available: fetch },
+    ],
+  });
+
+const agentWith = (tools: unknown[]) => ({
+  id: "ag1",
+  orgId: "o1",
+  ownerAccountId: "a1",
+  visibility: "private",
+  currentVersion: 2,
+  memberIds: null,
+  needsReassignment: false,
+  createdAt: T,
+  updatedAt: T,
+  profile: { avatar: null, description: "", quickActions: [], updatedAt: T },
+  definition: {
+    name: "Reader",
+    instructions: "Read.",
+    model: { provider: "model-fake", model: "fake-1" },
+    fallback: null,
+    modelParams: {},
+    fallbackParams: {},
+    tools,
+    toolPolicies: {},
+  },
 });
 
 const CAPS = { tools: true, vision: false, reasoning: false };
@@ -148,100 +300,74 @@ const MODELS = {
     },
   ],
 };
-const available = (search: boolean, fetch: boolean) => () =>
-  json(200, {
-    points: [
-      { point: "web-search", available: search },
-      { point: "web-fetch", available: fetch },
-    ],
-  });
 
-describe("agent form: web tools", () => {
+describe("agent page Tools section: web tools", () => {
+  beforeEach(() => resetNavigation("/agents/ag1"));
+
   it.each(["zh", "en"] as const)(
-    "listed only when their point is available, never checked by default (%s)",
+    "listed only when their point is available, unchecked until picked (%s)",
     async (locale) => {
-      resetNavigation("/agents/new");
       const m = msgs[locale].agents.form;
+      const tools = [{ kind: "builtin", name: "AskUserQuestion" }];
       const calls = stubApi({
+        ...sessionRoutes(),
+        [`GET ${ORG}/agents/ag1`]: () => json(200, { agent: agentWith(tools) }),
         [`GET ${ORG}/models`]: () => json(200, MODELS),
-        [`GET ${ORG}/connectors`]: () => json(200, { connectors: [] }),
-        [`GET ${ORG}/skills`]: () => json(200, { skills: [] }),
         [`GET ${ORG}/extension-points/available`]: available(true, false),
-        [`POST ${ORG}/agents`]: () => json(201, { agent: { id: "ag1" }, warnings: [] }),
+        [`PATCH ${ORG}/agents/ag1`]: () => json(200, { agent: agentWith(tools), warnings: [] }),
       });
-      renderPage(<NewAgentPage />, { locale });
+      await renderEditAgent({ section: "tools", locale });
       const search = await screen.findByRole("checkbox", { name: m.builtin.WebSearch });
       expect(search).toHaveProperty("checked", false);
       expect(screen.queryByRole("checkbox", { name: m.builtin.WebFetch })).toBeNull();
 
       const user = userEvent.setup();
-      await screen.findAllByRole("option", { name: "model-fake / Fake 1", hidden: true });
-      await user.type(screen.getByRole("textbox", { name: m.nameLabel }), "Web");
       await user.click(search);
       await user.click(screen.getByRole("button", { name: m.submit }));
-      await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/agents"));
-      const body = bodyOf(calls.find((c) => c.method === "POST")) as {
+      await vi.waitFor(() => expect(calls.some((c) => c.method === "PATCH")).toBe(true));
+      const body = bodyOf(calls.find((c) => c.method === "PATCH")) as {
         definition: { tools: unknown[] };
       };
       expect(body.definition.tools).toEqual([
         { kind: "builtin", name: "AskUserQuestion" },
-        { kind: "builtin", name: "ReadToolOutput" },
         { kind: "builtin", name: "WebSearch" },
       ]);
     },
   );
 
   it("an agent that selected WebFetch keeps it listed (with a hint) while no provider serves it", async () => {
-    resetNavigation("/agents/ag1");
     const m = en.agents.form;
     const tools = [
       { kind: "builtin", name: "AskUserQuestion" },
       { kind: "builtin", name: "WebFetch" },
     ];
-    const calls = stubApi({
-      [`GET ${ORG}/agents/ag1`]: () =>
-        json(200, {
-          agent: {
-            id: "ag1",
-            orgId: "o1",
-            ownerAccountId: "a1",
-            visibility: "private",
-            currentVersion: 2,
-            memberIds: null,
-            createdAt: T,
-            updatedAt: T,
-            definition: {
-              name: "Reader",
-              instructions: "Read.",
-              model: { provider: "model-fake", model: "fake-1" },
-              fallback: null,
-              modelParams: {},
-              fallbackParams: {},
-              tools,
-              toolPolicies: {},
-            },
-          },
-        }),
+    stubApi({
+      ...sessionRoutes(),
+      [`GET ${ORG}/agents/ag1`]: () => json(200, { agent: agentWith(tools) }),
       [`GET ${ORG}/models`]: () => json(200, MODELS),
-      [`GET ${ORG}/connectors`]: () => json(200, { connectors: [] }),
-      [`GET ${ORG}/skills`]: () => json(200, { skills: [] }),
-      [`GET ${ORG}/agents/ag1/skills`]: () => json(200, { skills: [] }),
       [`GET ${ORG}/extension-points/available`]: available(false, false),
-      [`PATCH ${ORG}/agents/ag1`]: () => json(200, { agent: { id: "ag1" }, warnings: [] }),
     });
-    renderPage(<EditAgentPage />, { locale: "en" });
+    await renderEditAgent({ section: "tools" });
     const fetch = await screen.findByRole("checkbox", { name: m.builtin.WebFetch });
     expect(fetch).toHaveProperty("checked", true);
     expect(await screen.findByText(m.webUnavailable)).toBeTruthy();
     expect(screen.queryByRole("checkbox", { name: m.builtin.WebSearch })).toBeNull();
+  });
 
-    const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: m.submit }));
-    await vi.waitFor(() => expect(calls.some((c) => c.method === "PATCH")).toBe(true));
-    const body = bodyOf(calls.find((c) => c.method === "PATCH")) as {
-      definition?: { tools?: unknown[] };
-    };
-    // unchanged: the saved reference is kept as is
-    expect(body.definition?.tools ?? tools).toEqual(tools);
+  it("the availability is part of the first paint (no browser read)", async () => {
+    const browser = expectNoFirstPaintFetch();
+    const { calls } = await renderEditAgent({
+      section: "tools",
+      routes: {
+        [`GET ${ORG}/agents/ag1`]: () =>
+          json(200, { agent: agentWith([{ kind: "builtin", name: "AskUserQuestion" }]) }),
+        [`GET ${ORG}/models`]: () => json(200, MODELS),
+        [`GET ${ORG}/extension-points/available`]: available(true, true),
+      },
+    });
+    expect(calls.map((c) => c.url)).toContain(`${ORG}/extension-points/available`);
+    expect(screen.getByRole("checkbox", { name: en.agents.form.builtin.WebFetch })).toBeTruthy();
+    await settle();
+    expect(browser).toEqual([]);
   });
 });

@@ -1,4 +1,5 @@
 import { listPluginInstalls } from "../catalog";
+import { listExtensionPointDefaults } from "../extensions";
 import { listInvitations } from "../members";
 import { listOrgPurposes } from "../models";
 import { getOrgSettings } from "../org-settings";
@@ -36,6 +37,14 @@ export const orgFilePreviewersQuery = (orgId: string) =>
   defineQuery({
     key: keys.org(orgId).orgFilePreviewers(),
     fn: () => getOrgFilePreviewers(orgId),
+    freshness: "orgConfig",
+  });
+
+/** The org's `org-default` extension points and their default providers (`{ points }`; admins). */
+export const extensionPointDefaultsQuery = (orgId: string) =>
+  defineQuery({
+    key: keys.org(orgId).extensionPointDefaults(),
+    fn: () => listExtensionPointDefaults(orgId),
     freshness: "orgConfig",
   });
 

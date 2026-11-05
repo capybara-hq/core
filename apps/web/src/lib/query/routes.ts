@@ -56,6 +56,7 @@ import { inboxQuery, skillChangeQuery } from "./inbox";
 import { membersQuery } from "./members";
 import { overviewQueries } from "./overview";
 import {
+  extensionPointDefaultsQuery,
   invitationsQuery,
   orgFilePreviewersQuery,
   orgPurposesQuery,
@@ -527,11 +528,15 @@ export const ROUTES: readonly RouteEntry[] = [
   },
   {
     pattern: "/settings/extensions",
-    // Org admins: the extensions and the file previewers (a section).
+    // Org admins: the extensions, the default providers and the file previewers (sections).
     queries: ({ orgId, me }) =>
       orgId === null || !atLeast(me, "admin")
         ? []
-        : [q(orgExtensionsQuery(orgId)), q(orgFilePreviewersQuery(orgId))],
+        : [
+            q(orgExtensionsQuery(orgId)),
+            q(extensionPointDefaultsQuery(orgId)),
+            q(orgFilePreviewersQuery(orgId)),
+          ],
   },
   {
     pattern: "/settings/members",

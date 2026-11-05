@@ -172,6 +172,7 @@ describe("org file previewers section", () => {
     const m = (locale === "zh" ? zh : en).filePreviewers;
     const calls = stubApi({
       [`GET ${BASE}/extensions`]: () => json(200, { extensions: [] }),
+      [`GET ${BASE}/extension-points`]: () => json(200, { points: [] }),
       [`GET ${BASE}/file-previewers`]: () => json(200, { items: [P("a", 0), P("b", 1)] }),
       [`PUT ${BASE}/file-previewers`]: (c) => {
         const items = (bodyOf(c) as { items: { id: string; disabled: boolean }[] }).items;
@@ -211,6 +212,7 @@ describe("org file previewers section", () => {
   it("is hidden when no enabled extension provides a previewer", async () => {
     stubApi({
       [`GET ${BASE}/extensions`]: () => json(200, { extensions: [] }),
+      [`GET ${BASE}/extension-points`]: () => json(200, { points: [] }),
       [`GET ${BASE}/file-previewers`]: () => json(200, { items: [] }),
     });
     await renderRouteWithCache("/settings/extensions", lastStubRoutes(), { locale: "en" });

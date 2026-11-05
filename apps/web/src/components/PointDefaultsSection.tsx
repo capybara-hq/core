@@ -1,15 +1,15 @@
 "use client";
 
 import { Field, FormSection, Select, Stack, Text, useToast } from "@capybara-hq/design";
+import { useQuery } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
-import { useEffect, useRef, useState } from "react";
-import {
-  type ExtensionPointDefault,
-  listExtensionPointDefaults,
-  putExtensionPointDefault,
-} from "../lib/extensions";
+import { useState } from "react";
+import { type ExtensionPointDefault, putExtensionPointDefault } from "../lib/extensions";
+import { retryOnMountOf } from "../lib/query/client";
+import { keys } from "../lib/query/keys";
+import { useAppMutation } from "../lib/query/mutation";
+import { extensionPointDefaultsQuery } from "../lib/query/settings";
 import { useErrorMessage } from "../lib/use-error-message";
-import { useLoad } from "../lib/use-load";
 
 /** Message keys of the points the web names (others show the point name). */
 const POINT_NAMES: Record<string, "webSearch" | "webFetch"> = {
@@ -23,28 +23,30 @@ const POINT_NAMES: Record<string, "webSearch" | "webFetch"> = {
  * change is saved at once (PUT). While none is chosen the select shows "Not selected" with a
  * hint that the tools using the point are unavailable; a stored default that is not a candidate
  * now (disabled, unconfigured) stays listed as unavailable. Hidden when no point has two
- * candidates or the list cannot be read. `refresh` changes after an extension on the page is
- * enabled, disabled or configured, which can change the candidates.
+ * candidates or the list cannot be read.
+ * From the query cache (a section of the page's prefetch: hidden while it loads); a change
+ * invalidates the points and their availability (the agent page's Tools section). Enabling,
+ * disabling or configuring an extension invalidates them too (`orgExtensionChangeKeys`).
  */
-export function PointDefaultsSection({ orgId, refresh }: { orgId: string; refresh: number }) {
+export function PointDefaultsSection({ orgId }: { orgId: string }) {
   const t = useTranslations("extensions.pointDefaults");
   const toast = useToast();
   const errorMessage = useErrorMessage();
-  const { state, reload } = useLoad(
-    () => listExtensionPointDefaults(orgId).then((r) => r.points),
-    [orgId],
-  );
+  const q = extensionPointDefaultsQuery(orgId);
+  const points = useQuery({ ...q, retryOnMount: retryOnMountOf(q.queryKey) }).data?.points ?? null;
+  const put = useAppMutation({
+    fn: (v: { point: string; extension: string }) =>
+      putExtensionPointDefault(orgId, v.point, v.extension),
+    invalidates: () => [
+      keys.org(orgId).extensionPointDefaults(),
+      keys.org(orgId).extensionPointsAvailable(),
+    ],
+  });
   const [busy, setBusy] = useState<string>();
-  const seen = useRef(refresh);
-  useEffect(() => {
-    if (seen.current === refresh) return;
-    seen.current = refresh;
-    reload();
-  }, [refresh, reload]);
 
-  if (state.kind !== "ready") return null;
-  const points = state.data.filter((p) => p.candidates.length >= 2);
-  if (points.length === 0) return null;
+  if (points === null) return null;
+  const shown = points.filter((p) => p.candidates.length >= 2);
+  if (shown.length === 0) return null;
 
   const nameOf = (point: string) => {
     const key = POINT_NAMES[point];
@@ -55,9 +57,8 @@ export function PointDefaultsSection({ orgId, refresh }: { orgId: string; refres
     if (extension === "" || extension === p.default) return;
     setBusy(p.point);
     try {
-      await putExtensionPointDefault(orgId, p.point, extension);
+      await put.mutateAsync({ point: p.point, extension });
       toast.success(t("saved", { point: nameOf(p.point), extension }));
-      reload();
     } catch (e) {
       toast.error(errorMessage(e));
     } finally {
@@ -67,7 +68,7 @@ export function PointDefaultsSection({ orgId, refresh }: { orgId: string; refres
 
   return (
     <FormSection id="extension-point-defaults" title={t("title")} description={t("description")}>
-      {points.map((p) => {
+      {shown.map((p) => {
         const name = nameOf(p.point);
         const selected = p.effective ?? p.default ?? "";
         const options = [

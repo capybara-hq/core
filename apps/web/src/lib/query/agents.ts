@@ -1,6 +1,7 @@
 import type { UseQueryOptions } from "@tanstack/react-query";
 import { type Agent, getAgent, listAgents, listAgentTemplates } from "../agents";
 import type { ApiClientError } from "../api";
+import { listAvailableExtensionPoints } from "../extensions";
 import { listAgentSkills } from "../skills";
 import { connectorQuery, connectorsQuery, modelsQuery } from "./conversation";
 import { defineQuery } from "./define";
@@ -40,13 +41,25 @@ export const agentSkillsQuery = (orgId: string, agentId: string) =>
     freshness: "orgConfig",
   });
 
+/**
+ * Whether each `org-default` extension point has a provider for the org now (`{ points }`): the
+ * Tools section offers a web tool only while its point is available.
+ */
+export const availableExtensionPointsQuery = (orgId: string) =>
+  defineQuery({
+    key: keys.org(orgId).extensionPointsAvailable(),
+    fn: () => listAvailableExtensionPoints(orgId),
+    freshness: "orgConfig",
+  });
+
 const any = <T>(o: UseQueryOptions<T, ApiClientError>) =>
   o as unknown as UseQueryOptions<unknown, ApiClientError>;
 
 /**
  * The agent form's reads (new agent, or `agentId` to edit): the models (required), the connectors,
  * the org skills and the members (the role decides whether the kernel answers), the agent
- * templates and the org agents (the sub-agents section), and, editing, the agent's own skills.
+ * templates and the org agents (the sub-agents section), and, editing, the agent's own skills and
+ * which web tools the org can serve (the Tools section).
  * The tools of the connectors an edited agent uses are {@link agentConnectorQueries}.
  */
 export const agentFormQueries = (
@@ -59,7 +72,9 @@ export const agentFormQueries = (
   any(agentTemplatesQuery(orgId)),
   any(agentsQuery(orgId)),
   any(membersQuery(orgId)),
-  ...(agentId === undefined ? [] : [any(agentSkillsQuery(orgId, agentId))]),
+  ...(agentId === undefined
+    ? []
+    : [any(agentSkillsQuery(orgId, agentId)), any(availableExtensionPointsQuery(orgId))]),
 ];
 
 /** The ids of the connectors whose tools `agent` takes as a whole (the form lists their tools). */

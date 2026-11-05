@@ -1,12 +1,23 @@
 import { expect, type Page, test } from "@playwright/test";
-import { composer, designZh, replies, startChat, toolGroup, zh } from "./support/chat";
+import {
+  composer,
+  designZh,
+  newAgent,
+  openAgentSection,
+  replies,
+  saveSection,
+  startChat,
+  toolGroup,
+  zh,
+} from "./support/chat";
 import { signIn } from "./support/sign-in";
 
 /**
  * Web tools (spec docs/superpowers/specs/2026-11-04-web-tools-design.md §3.3, §6): the org
  * enables two web providers (`fake-web`, `fake-web-2` of @capybara-hq/testing, loaded by
- * global-setup), picks the default provider of each point, an agent selects `WebFetch` (not
- * checked by default), and a call asks for approval with the URL and the three scopes.
+ * global-setup), picks the default provider of each point, an agent selects `WebFetch` in its
+ * Tools section (not checked by default), and a call asks for approval with the URL and the three
+ * scopes.
  */
 
 const pd = zh.extensions.pointDefaults;
@@ -28,13 +39,13 @@ async function enableWebProvider(page: Page, plugin: string) {
   await expect(enable).toHaveAttribute("aria-checked", "true");
 }
 
-test("web tools: two providers → default provider per point → WebFetch in the agent form → approval card with the URL and three scopes", async ({
+test("web tools: two providers → default provider per point → WebFetch in the agent's Tools → approval card with the URL and three scopes", async ({
   page,
 }) => {
   await signIn(page);
 
   // 1. Enable both fake web providers (each configured with a token)
-  await page.goto("/zh/settings/extensions");
+  await page.goto("/settings/extensions");
   await expect(page.locator('[data-template="SettingsPage"]')).toBeVisible();
   await enableWebProvider(page, "fake-web");
   await enableWebProvider(page, "fake-web-2");
@@ -68,14 +79,9 @@ test("web tools: two providers → default provider per point → WebFetch in th
     0,
   );
 
-  // 3. The agent form lists both web tools, not checked by default; select WebFetch
-  await page.goto("/zh/agents/new");
-  await page
-    .getByRole("textbox", { name: zh.agents.form.nameLabel, exact: true })
-    .fill("Web agent");
-  await page
-    .getByRole("combobox", { name: zh.agents.form.modelLabel, exact: true })
-    .selectOption("model-fake/fake-1");
+  // 3. The agent's Tools section lists both web tools, not checked by default; select WebFetch
+  await newAgent(page, "Web agent");
+  await openAgentSection(page, "tools");
   const webSearch = page.getByRole("checkbox", {
     name: zh.agents.form.builtin.WebSearch,
     exact: true,
@@ -87,8 +93,7 @@ test("web tools: two providers → default provider per point → WebFetch in th
   await expect(webSearch).not.toBeChecked();
   await expect(webFetch).not.toBeChecked();
   await webFetch.check();
-  await page.getByRole("button", { name: zh.agents.form.submit }).click();
-  await expect(page).toHaveURL(/\/zh\/agents$/);
+  await saveSection(page);
 
   // 4. A WebFetch call asks first: the card shows the URL (a key argument) and one approve
   //    button per scope (once, this conversation, always)
