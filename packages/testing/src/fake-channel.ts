@@ -83,6 +83,13 @@ export interface FakeDirectoryBook {
   starts(): number;
 }
 
+/** Which `/send` or `/update` requests a {@link FakeChannelServer.failNext} failure applies to. */
+export interface FakeChannelFailMatch {
+  chatId?: string;
+  /** The message's text contains it. */
+  textIncludes?: string;
+}
+
 /** 插件工具经 `POST /posts` 发出的一条记录。 */
 export interface FakeChannelPost {
   body: Record<string, unknown>;
@@ -115,7 +122,8 @@ export interface FakeChannelServer {
    * 让接下来 `count` 次 `/send`（或 `/update`）返回该状态码（不记录）；`retryAfterMs` 与 `reason` 放进响应体，
    * 测试插件据此抛 `ChannelSendError`（429 / 5xx 可重试，带等待时长；其他不可重试，带失败原因）。
    * `delayMs`：失败响应推迟这么久才返回（模拟慢的失败请求，让会话的后续事件在投递任务持锁期间到达）。
-   * `chatId`: only requests to that chat count and fail. Without it the next requests to any chat
+   * `match`: only matching requests count and fail; a string is a chat id, an object also matches
+   * text (`textIncludes`: the message's text contains it). Without it the next requests to any chat
    * fail, so a late delivery from an earlier test can take the failure meant for the request under test.
    */
   failNext(
@@ -125,7 +133,7 @@ export interface FakeChannelServer {
     retryAfterMs?: number,
     reason?: "auth" | "target_gone" | "rejected" | "too_large",
     delayMs?: number,
-    chatId?: string,
+    match?: string | FakeChannelFailMatch,
   ): void;
   /**
    * Delay the response of the next `count` successful `/send` (or `/update`) requests by `delayMs`.
@@ -194,7 +202,7 @@ export async function startFakeChannelServer(
     retryAfterMs?: number;
     reason?: string;
     delayMs?: number;
-    chatId?: string;
+    match?: FakeChannelFailMatch;
   }[] = [];
   const delays: { path: string; delayMs: number; left: number; onlyCards: boolean }[] = [];
   const live = new Map<FakeChannelStream, ServerResponse>();
@@ -236,10 +244,15 @@ export async function startFakeChannelServer(
 
   const sendOrUpdate = async (req: IncomingMessage, res: ServerResponse, path: string) => {
     const body = await readBody(req);
-    const chatOf = () => (JSON.parse(body) as { target?: { chatId?: string } }).target?.chatId;
-    const f = failures.find(
-      (x) => x.path === path && x.left > 0 && (x.chatId === undefined || x.chatId === chatOf()),
-    );
+    const parsed = JSON.parse(body) as {
+      target?: { chatId?: string };
+      message?: { text?: string };
+    };
+    const matches = (m: FakeChannelFailMatch | undefined) =>
+      m === undefined ||
+      ((m.chatId === undefined || m.chatId === parsed.target?.chatId) &&
+        (m.textIncludes === undefined || (parsed.message?.text ?? "").includes(m.textIncludes)));
+    const f = failures.find((x) => x.path === path && x.left > 0 && matches(x.match));
     if (f) {
       f.left--;
       if (f.delayMs !== undefined) await new Promise((r) => setTimeout(r, f.delayMs));
@@ -387,7 +400,7 @@ export async function startFakeChannelServer(
     duplicateSends,
     posts,
     users,
-    failNext(path, status, count = 1, retryAfterMs, reason, delayMs, chatId) {
+    failNext(path, status, count = 1, retryAfterMs, reason, delayMs, match) {
       failures.push({
         path,
         status,
@@ -395,7 +408,9 @@ export async function startFakeChannelServer(
         ...(retryAfterMs !== undefined && { retryAfterMs }),
         ...(reason !== undefined && { reason }),
         ...(delayMs !== undefined && { delayMs }),
-        ...(chatId !== undefined && { chatId }),
+        ...(match !== undefined && {
+          match: typeof match === "string" ? { chatId: match } : match,
+        }),
       });
     },
     delayNext(path, delayMs, opts = {}) {

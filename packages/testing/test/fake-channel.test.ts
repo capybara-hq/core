@@ -87,6 +87,19 @@ describe("startFakeChannelServer", () => {
     expect(im.sent.map((s) => s.target.chatId)).toEqual([msg().target.chatId, "dm-gone"]);
   });
 
+  it("failNext with a text match fails only the message whose text contains it", async () => {
+    im = await startFakeChannelServer();
+    im.failNext("/send", 403, 1, undefined, "target_gone", undefined, {
+      chatId: "c1",
+      textIncludes: "note",
+    });
+    const reply = await post(`${im.url}/send`, { ...msg(), message: { text: "the reply" } });
+    expect(reply.status).toBe(200);
+    const note = await post(`${im.url}/send`, { ...msg(), message: { text: "a note" } });
+    expect(note.status).toBe(403);
+    expect(im.sent.map((s) => s.message.text)).toEqual(["the reply"]);
+  });
+
   it("长连接收到推送的事件；统计并发峰值", async () => {
     im = await startFakeChannelServer();
     const ac = new AbortController();
