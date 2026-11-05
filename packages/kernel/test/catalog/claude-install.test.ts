@@ -53,6 +53,16 @@ const seedSuperpowers = (o: { version?: string; addTo?: string; pinned?: string[
   });
 
 describe("org skills from a Claude Code plugin", { timeout: 90_000 }, () => {
+  it("the org catalog view carries the latest version's source format", async () => {
+    const item = await seedSuperpowers();
+    const r = await env.boss({ method: "GET", url: `/api/v1/orgs/${env.orgId}/catalog` });
+    expect(r.statusCode, r.body).toBe(200);
+    const view = (r.json().items as { id: string; sourceFormat: string }[]).find(
+      (i) => i.id === item,
+    );
+    expect(view?.sourceFormat).toBe("claude-code");
+  });
+
   it("org install of a claude-code version records source_format and suggest_pinned per skill version", async () => {
     const item = await seedSuperpowers();
     await installOk(item);

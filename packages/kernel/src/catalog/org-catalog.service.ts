@@ -135,7 +135,15 @@ export class OrgCatalogService {
     const [versions, pluginInstalls, configs, requests] = await Promise.all([
       this.db
         .selectFrom("catalog_item_versions")
-        .select(["item_id", "version", "source", "manifest", "object_prefix", "files"])
+        .select([
+          "item_id",
+          "version",
+          "source",
+          "source_format",
+          "manifest",
+          "object_prefix",
+          "files",
+        ])
         .where("item_id", "in", ids)
         .execute(),
       this.db
