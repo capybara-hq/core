@@ -20,6 +20,7 @@ import { type CatalogSkill, latestInvocation } from "../../runtime/context/skill
 import { dispatchOfChildRun } from "../../runtime/subagents/child.js";
 import { resolveSkillForkType } from "../../runtime/subagents/roster.js";
 import { invocationOf, resolveSkills } from "../../skills/catalog.js";
+import { PLATFORM_SOURCE, skillFileStore } from "../../skills/usable.js";
 import { AGENT_TOOL, SANDBOX_TOOL_NAMES } from "../builtin-names.js";
 import type { BuiltinCallContext, BuiltinTool } from "../registry.js";
 import {
@@ -227,7 +228,10 @@ async function readVerified(
 interface LoadedVersion {
   entry: CatalogSkill;
   manifest: SkillManifest;
+  /** The version's source (the marker's `prefix`); `platform:<prefix>` for a platform version. */
   prefix: string;
+  /** The key prefix of the files in {@link LoadedVersion.store}. */
+  keyPrefix: string;
   store: ObjectStore;
   /** 已核对过的 SKILL.md 字节（复制时不再读一遍）。 */
   entryBytes: Uint8Array;
@@ -252,7 +256,7 @@ async function copySkill(s: SandboxSession, v: LoadedVersion): Promise<{ stale: 
     const data =
       f.path === SKILL_ENTRY_FILE
         ? v.entryBytes
-        : await readVerified(v.store, `${v.prefix}${f.path}`, f, name, s.signal);
+        : await readVerified(v.store, `${v.keyPrefix}${f.path}`, f, name, s.signal);
     await s.p.writeFile(s.h, skillSandboxPath(name, f.path), data, s.signal);
   }
   const files = v.manifest.files.map((f) => f.path);
@@ -284,12 +288,18 @@ function fileList(files: SkillManifest["files"]): string {
  * 批准时草稿前缀原样成为版本前缀，版本号变了也能找到），再找本对话发起、仍待批准、前缀相同的技能改动（试用草稿：
  * 没有 `skill_versions` 行，新技能连 `skills` 行都没有）。绝不按版本号解析——被拒绝的草稿与之后别人批准的同号版本
  * 内容不同。都没有 → undefined（已移除）。
+ *
+ * Phase 2 (ruling D2): a `platform:<prefix>` source is a platform skill version: found by its
+ * prefix for the platform skill with the entry's id, or the platform skill an org copy with that id
+ * links to (ruling B2), while neither is deleted. The returned `object_prefix` keeps the
+ * `platform:` form; `skillFileStore` picks the store for it.
  */
 export async function findSkillVersion(
   db: KernelSchemaDb,
   ctx: Pick<BuiltinCallContext, "orgId" | "conversationId">,
   entry: Pick<CatalogSkill, "id" | "source">,
 ): Promise<{ manifest: SkillManifest; object_prefix: string } | undefined> {
+  if (entry.source.startsWith(PLATFORM_SOURCE)) return findPlatformVersion(db, ctx.orgId, entry);
   const row = await db
     .selectFrom("skills")
     .innerJoin("skill_versions", "skill_versions.skill_id", "skills.id")
@@ -310,6 +320,38 @@ export async function findSkillVersion(
     .executeTakeFirst();
   if (!draft) return undefined;
   return { manifest: draft.proposed_version.manifest, object_prefix: draft.object_prefix };
+}
+
+/** {@link findSkillVersion} for a `platform:<prefix>` source. */
+async function findPlatformVersion(
+  db: KernelSchemaDb,
+  orgId: string,
+  entry: Pick<CatalogSkill, "id" | "source">,
+): Promise<{ manifest: SkillManifest; object_prefix: string } | undefined> {
+  const row = await db
+    .selectFrom("platform_skill_versions as v")
+    .innerJoin("platform_skills as p", "p.id", "v.skill_id")
+    .select(["v.manifest"])
+    .where("v.object_prefix", "=", entry.source.slice(PLATFORM_SOURCE.length))
+    .where("p.deleted_at", "is", null)
+    .where((eb) =>
+      eb.or([
+        eb("p.id", "=", entry.id),
+        eb(
+          "p.id",
+          "in",
+          eb
+            .selectFrom("skills")
+            .select("platform_skill_id")
+            .where("id", "=", entry.id)
+            .where("org_id", "=", orgId)
+            .where("deleted_at", "is", null)
+            .where("platform_skill_id", "is not", null),
+        ),
+      ]),
+    )
+    .executeTakeFirst();
+  return row && { manifest: row.manifest, object_prefix: entry.source };
 }
 
 /** A Claude Code style qualified name `<plugin>:<skill>` (phase B, spec §9.3). */
@@ -497,13 +539,14 @@ export function skillLoadTool(deps: SkillLoadDeps): BuiltinTool {
       );
       if (!row) throw new ToolError(removedText(name));
       const manifest = row.manifest;
-      const store = deps.storage.kernel(ctx.orgId);
+      // the marker records the source (`platform:` included); keys use the store's own prefix
       const prefix = row.object_prefix;
+      const { store, prefix: keyPrefix } = skillFileStore(deps.storage, ctx.orgId, prefix);
 
       const md = manifest.files.find((f) => f.path === SKILL_ENTRY_FILE);
       if (!md) throw new ToolError(integrityText(name));
-      const mdBytes = await readVerified(store, `${prefix}${md.path}`, md, name, ctx.signal);
-      const v: LoadedVersion = { entry, manifest, prefix, store, entryBytes: mdBytes };
+      const mdBytes = await readVerified(store, `${keyPrefix}${md.path}`, md, name, ctx.signal);
+      const v: LoadedVersion = { entry, manifest, prefix, keyPrefix, store, entryBytes: mdBytes };
       let parsed: ReturnType<typeof parseSkillMd>;
       try {
         parsed = parseSkillMd(new TextDecoder("utf-8", { fatal: true }).decode(mdBytes), {

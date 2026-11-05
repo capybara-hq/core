@@ -22,6 +22,7 @@ import { textBytesTokens } from "../runtime/context/tokens.js";
 import { StorageService } from "../storage/storage.service.js";
 import { invocationOf, PINNED_SKILLS_LIMITS } from "./catalog.js";
 import { readSkillPackage, type SkillPackageFile, storedInvocation } from "./package.js";
+import { platformSource, skillFileStore, skillVersionsById, usableSkills } from "./usable.js";
 
 /** Where an org skill came from (spec §9.2): the org's own, or a catalog plugin at a version. */
 export type SkillSource = { kind: "org" } | { kind: "plugin"; name: string; version: string };
@@ -123,6 +124,11 @@ export interface SkillSummary {
   manual: boolean;
   /** Phase D: the current version runs as a sub-agent when a person invokes it. */
   fork: boolean;
+  /**
+   * Phase 2: `platform` for a platform skill (deployment-owned, on in the org; not deletable or
+   * versioned by the org), `org` for the org's own.
+   */
+  origin: "org" | "platform";
 }
 
 /** 技能的一个版本（含文件清单）。 */
@@ -157,7 +163,8 @@ export interface UploadedSkill {
 const notFound = () => new ApiError("skill.not_found", "Skill not found");
 
 /**
- * 在调用方事务里核对 agent 定义引用的组织技能：每个 id 都必须是该组织未删除的 `scope=org` 技能，
+ * 在调用方事务里核对 agent 定义引用的组织技能：每个 id 都必须是该组织未删除的 `scope=org` 技能
+ * (or, phase 2, a platform skill on in the org: skills/usable.ts)，
  * 否则 `validation_failed`（path `skills.orgSkills.<i>`）；不可重复。调用方须已锁组织行（技能删除同样锁组织行，二者串行）。
  * `kept`：当前版本里已有的引用（保存时合法），修改时不再核对——技能之后被删也不挡住其他改动（运行时由 T14 忽略已删除的技能）。
  */
@@ -183,7 +190,11 @@ export async function assertOrgSkills(
       .where("deleted_at", "is", null)
       .where("id", "in", toCheck)
       .execute();
-    const live = new Set([...kept, ...found.map((r) => r.id)]);
+    // phase 2: a platform skill on in the org is selectable by its id
+    const platform = [...(await skillVersionsById(db, orgId, toCheck)).values()]
+      .filter((r) => r.origin === "platform" && r.platformSkillId === r.id)
+      .map((r) => r.id);
+    const live = new Set([...kept, ...found.map((r) => r.id), ...platform]);
     ids.forEach((id, i) => {
       if (!live.has(id)) {
         details.push({
@@ -264,20 +275,14 @@ export async function assertPinnedSkills(
     }
     unique.push(id);
   }
-  const rows =
-    unique.length === 0
-      ? []
-      : await db
-          .selectFrom("skills as s")
-          .innerJoin("skill_versions as v", (j) =>
-            j.onRef("v.skill_id", "=", "s.id").onRef("v.version", "=", "s.current_version"),
-          )
-          .select(["s.id", "s.scope", "s.agent_id", "v.manifest"])
-          .where("s.org_id", "=", orgId)
-          .where("s.deleted_at", "is", null)
-          .where("s.id", "in", unique)
-          .execute();
-  const byId = new Map(rows.map((r) => [r.id, r]));
+  // org and agent skills, org copies linked to a platform skill (its current version) and platform
+  // skills on in the org (phase 2)
+  const byId = new Map(
+    [...(await skillVersionsById(db, orgId, unique)).values()].map((r) => [
+      r.id,
+      { id: r.id, scope: r.scope, agent_id: r.agentId, manifest: r.manifest },
+    ]),
+  );
   const keptSet = new Set(kept);
   const selected = new Set(skills?.orgSkills ?? []);
   for (const id of unique) {
@@ -329,8 +334,51 @@ const summary = (r: SummaryRow): SkillSummary => {
     tokenEstimate: textBytesTokens(entryBytes),
     manual: inv.model === false,
     fork: inv.fork !== undefined,
+    origin: "org",
   };
 };
+
+/** Platform skills with the columns of {@link summary} (phase 2). */
+const platformSummaryQuery = (db: KernelSchemaDb) =>
+  db
+    .selectFrom("platform_skills as p")
+    .leftJoin("platform_skill_versions as v", (j) =>
+      j.onRef("v.skill_id", "=", "p.id").onRef("v.version", "=", "p.current_version"),
+    )
+    .select([
+      "p.id",
+      "p.name",
+      "p.description",
+      "p.current_version",
+      "p.created_at",
+      "p.updated_at",
+      "p.plugin_name",
+      "v.source_format",
+      "v.suggest_pinned",
+      "v.manifest",
+    ])
+    .where("p.deleted_at", "is", null);
+
+const platformSummary = (
+  r: Awaited<ReturnType<ReturnType<typeof platformSummaryQuery>["executeTakeFirstOrThrow"]>>,
+): SkillSummary => ({
+  ...summary({
+    id: r.id,
+    scope: "org",
+    agent_id: null,
+    name: r.name,
+    description: r.description,
+    current_version: r.current_version,
+    created_by: null,
+    created_at: r.created_at,
+    updated_at: r.updated_at,
+    item_name: r.plugin_name,
+    source_format: r.source_format,
+    suggest_pinned: r.suggest_pinned,
+    manifest: r.manifest,
+  }),
+  origin: "platform",
+});
 
 /**
  * Skills with their summary columns: the catalog item name (provenance) and the current version's
@@ -710,15 +758,31 @@ export class SkillsService {
     return true;
   }
 
-  /** 组织技能库（`scope=org`、未删除），按名字排序。 */
+  /**
+   * The org skill library, sorted by name: the org's live `scope=org` skills except copies linked
+   * to a platform skill without a pin, and the platform skills on in the org (phase 2,
+   * `usableSkills`; `origin` tells them apart).
+   */
   async list(orgId: string): Promise<SkillSummary[]> {
-    const rows = await summaryQuery(this.db.db)
-      .where("s.org_id", "=", orgId)
-      .where("s.scope", "=", "org")
-      .where("s.deleted_at", "is", null)
-      .orderBy("s.name")
-      .execute();
-    return rows.map(summary);
+    const usable = await usableSkills(this.db.db, orgId);
+    const orgIds = usable.filter((u) => u.origin === "org").map((u) => u.id);
+    const platformIds = usable.filter((u) => u.origin === "platform").map((u) => u.id);
+    const own =
+      orgIds.length === 0
+        ? []
+        : (
+            await summaryQuery(this.db.db).where("s.id", "in", orgIds).orderBy("s.name").execute()
+          ).map(summary);
+    const platform =
+      platformIds.length === 0
+        ? []
+        : (await platformSummaryQuery(this.db.db).where("p.id", "in", platformIds).execute()).map(
+            platformSummary,
+          );
+    if (platform.length === 0) return own;
+    return [...own, ...platform].sort((a, b) =>
+      a.name < b.name ? -1 : a.name > b.name ? 1 : a.id < b.id ? -1 : 1,
+    );
   }
 
   /** 对该 agent 自动生效的技能（`scope=agent`、未删除），按名字排序。 */
@@ -741,7 +805,7 @@ export class SkillsService {
       .where("s.scope", "=", "org")
       .where("s.deleted_at", "is", null)
       .executeTakeFirst();
-    if (!row) throw notFound();
+    if (!row) return this.getPlatform(orgId, skillId);
     const versions = await this.db
       .selectFrom("skill_versions")
       .select(["version", "manifest", "created_by", "created_at", "object_prefix"])
@@ -762,6 +826,42 @@ export class SkillsService {
     };
   }
 
+  /**
+   * A platform skill's detail (phase 2): only while it is on in the org, else `skill.not_found`.
+   * Its versions are the platform skill's.
+   */
+  private async getPlatform(orgId: string, skillId: string): Promise<SkillDetail> {
+    const usable = (await skillVersionsById(this.db.db, orgId, [skillId])).get(skillId);
+    if (usable?.origin !== "platform" || usable.platformSkillId !== skillId) throw notFound();
+    const row = await platformSummaryQuery(this.db.db)
+      .where("p.id", "=", skillId)
+      .executeTakeFirst();
+    if (!row) throw notFound();
+    const versions = await this.db
+      .selectFrom("platform_skill_versions")
+      .select(["version", "manifest", "created_by", "created_at", "object_prefix"])
+      .where("skill_id", "=", skillId)
+      .orderBy("version", "desc")
+      .execute();
+    const current = versions.find((v) => v.version === row.current_version);
+    return {
+      ...platformSummary(row),
+      body: current
+        ? await this.readBody(orgId, {
+            manifest: current.manifest,
+            object_prefix: platformSource(current.object_prefix),
+          })
+        : null,
+      versions: versions.map((v) => ({
+        version: v.version,
+        description: v.manifest.description,
+        files: v.manifest.files,
+        createdBy: v.created_by,
+        createdAt: v.created_at,
+      })),
+    };
+  }
+
   /** 读某版本 SKILL.md 的正文（见 {@link SkillDetail.body}）；任何读取问题都返回 null，不让详情失败。 */
   private async readBody(
     orgId: string,
@@ -770,7 +870,8 @@ export class SkillsService {
     const entry = v.manifest.files.find((f) => f.path === SKILL_ENTRY_FILE);
     if (!entry || entry.size > SKILL_BODY_MAX_BYTES) return null;
     try {
-      const got = await this.storage.kernel(orgId).get(`${v.object_prefix}${SKILL_ENTRY_FILE}`);
+      const { store, prefix } = skillFileStore(this.storage, orgId, v.object_prefix);
+      const got = await store.get(`${prefix}${SKILL_ENTRY_FILE}`);
       if (!got) return null;
       const text = new TextDecoder("utf-8", { fatal: true }).decode(
         await new Response(got.body).arrayBuffer(),

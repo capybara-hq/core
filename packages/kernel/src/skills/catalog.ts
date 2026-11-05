@@ -25,6 +25,7 @@ import {
   sameSnapshot,
 } from "../runtime/context/skills.js";
 import { type PrefixedStorage, StorageService } from "../storage/storage.service.js";
+import { type SkillVersionRow, selectedSkills, skillFileStore } from "./usable.js";
 
 /**
  * 技能目录快照（M5 T14，Ruling M17）：运行开始时解析「此刻对这个对话生效的技能」，与日志里最新一份快照不同才写
@@ -116,44 +117,24 @@ export interface ResolvedSkill {
 export async function resolveSkills(
   db: KernelSchemaDb,
   input: Omit<EffectiveSkillsInput, "conversationId"> & { conversationId?: string },
+  log?: Pick<Logger, "warn">,
 ): Promise<ResolvedSkill[]> {
-  const orgSkills = [...new Set(input.agent.skills?.orgSkills ?? [])];
-  const rows = await db
-    .selectFrom("skills")
-    .innerJoin("skill_versions", (j) =>
-      j
-        .onRef("skill_versions.skill_id", "=", "skills.id")
-        .onRef("skill_versions.version", "=", "skills.current_version"),
-    )
-    .leftJoin("catalog_items", "catalog_items.id", "skills.catalog_item_id")
-    .select([
-      "skills.id",
-      "skills.scope",
-      "skills.name",
-      "skills.current_version",
-      "skill_versions.manifest",
-      "skill_versions.object_prefix",
-      "skill_versions.source_format",
-      "catalog_items.name as item_name",
-    ])
-    .where("skills.org_id", "=", input.orgId)
-    .where("skills.deleted_at", "is", null)
-    .where((eb) => {
-      const agentOwn = eb.and([
-        eb("skills.scope", "=", "agent"),
-        eb("skills.agent_id", "=", input.agentId),
-      ]);
-      if (orgSkills.length === 0) return agentOwn;
-      return eb.or([
-        agentOwn,
-        eb.and([eb("skills.scope", "=", "org"), eb("skills.id", "in", orgSkills)]),
-      ]);
-    })
-    .execute();
-  const byName = new Map<string, (typeof rows)[number]>();
+  // Phase 2 (Task 3): `orgSkills` ids may be org skills, org copies linked to a platform skill
+  // (served as its current version under the copy's id, ruling B2) or platform skill ids; only
+  // those usable in the org resolve (skills/usable.ts)
+  const rows = await selectedSkills(
+    db,
+    { orgId: input.orgId, agentId: input.agentId, orgSkills: input.agent.skills?.orgSkills ?? [] },
+    log,
+  );
+  // One skill per name: the agent's own, then an org skill or copy (an id the agent kept from
+  // before the platform component existed), then a platform skill id; ties by id
+  const rank = (r: SkillVersionRow) =>
+    r.scope === "agent" ? 0 : r.platformSkillId === r.id ? 2 : 1;
+  const byName = new Map<string, SkillVersionRow>();
   for (const r of rows) {
     const prev = byName.get(r.name);
-    if (!prev || (prev.scope === "org" && r.scope === "agent")) byName.set(r.name, r);
+    if (!prev || rank(r) < rank(prev)) byName.set(r.name, r);
   }
   const effective = new Map<string, ResolvedSkill>(
     [...byName.values()].map((r) => [
@@ -162,12 +143,12 @@ export async function resolveSkills(
         skill: {
           id: r.id,
           name: r.name,
-          description: r.manifest.description,
-          version: r.current_version,
-          source: r.object_prefix,
-          ...(r.item_name !== null && { plugin: r.item_name }),
+          description: r.description,
+          version: r.version,
+          source: r.source,
+          ...(r.plugin !== null && { plugin: r.plugin }),
         },
-        format: r.source_format,
+        format: r.format,
         manifest: r.manifest,
       },
     ]),
@@ -281,7 +262,8 @@ export function pinnedFailureText(e: ApiError): string {
 }
 
 /**
- * Reads each pinned skill's SKILL.md from `kernel/<orgId>/<source>SKILL.md`, verifies it against
+ * Reads each pinned skill's SKILL.md from `kernel/<orgId>/<source>SKILL.md` (a platform version's
+ * `platform:<prefix>` from `deployment/<prefix>SKILL.md`), verifies it against
  * the manifest's size and sha256 and returns the parsed body, in order. Every failure throws
  * `storage.unavailable` (Decision 9: the run fails before any model request):
  * - a read error is retried once ({@link PINNED_READ_ATTEMPTS}), then is transient (the user
@@ -299,9 +281,10 @@ export async function loadPinnedBodies(
 ): Promise<PinnedSkill[]> {
   if (pinned.length === 0) return [];
   storage.assertAvailable();
-  const store = storage.kernel(orgId);
   const out: PinnedSkill[] = [];
   for (const p of pinned) {
+    // a platform version (`platform:<prefix>`) is read from deployment/ (ruling D2)
+    const { store, prefix } = skillFileStore(storage, orgId, p.source);
     const unreadable = (problem: string) => {
       opts.log?.error("pinned skill unreadable", {
         orgId,
@@ -321,7 +304,7 @@ export async function loadPinnedBodies(
       let got: Awaited<ReturnType<typeof store.get>>;
       try {
         got = await store.get(
-          `${p.source}${SKILL_ENTRY_FILE}`,
+          `${prefix}${SKILL_ENTRY_FILE}`,
           opts.signal && { signal: opts.signal },
         );
         if (got) bytes = new Uint8Array(await new Response(got.body).arrayBuffer());
@@ -485,7 +468,7 @@ export class SkillsCatalogService {
   ): Promise<void> {
     const log = opts.log ?? this.log;
     for (let attempt = 1; attempt <= RECORD_ATTEMPTS; attempt++) {
-      const all = await resolveSkills(this.db.db, input);
+      const all = await resolveSkills(this.db.db, input, attempt === 1 ? log : undefined);
       // Warn about manual-only pins once, on the first attempt
       const first = pinnedCandidates(
         forModel(all, input),

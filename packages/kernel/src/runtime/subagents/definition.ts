@@ -16,6 +16,7 @@ import { ApiError } from "../../errors.js";
 import type { KernelConfigService } from "../../infra/config/kernel-config.service.js";
 import type { ModelPurposesService } from "../../models/purposes.js";
 import { PINNED_SKILLS_LIMITS } from "../../skills/catalog.js";
+import { selectedSkills } from "../../skills/usable.js";
 import { CHILD_REMOVED_TOOLS } from "../../tools/builtin-names.js";
 import type { ProviderRegistry } from "../providers.js";
 import type { RosterEntry } from "./roster.js";
@@ -196,25 +197,13 @@ async function pinnedFor(
   byName: { plugin: string | undefined } | null,
 ): Promise<{ pinned: string[]; warnings: string[] }> {
   if (refs.length === 0) return { pinned: [], warnings: [] };
-  const orgSkills = a.parent.skills?.orgSkills ?? [];
+  // org and agent skills, linked org copies and platform skills on in the org (phase 2), by id
   const rows: SkillRow[] = (
-    await db
-      .selectFrom("skills as s")
-      .innerJoin("skill_versions as v", (j) =>
-        j.onRef("v.skill_id", "=", "s.id").onRef("v.version", "=", "s.current_version"),
-      )
-      .leftJoin("catalog_items as c", "c.id", "s.catalog_item_id")
-      .select(["s.id", "s.name", "s.scope", "v.manifest", "c.name as plugin"])
-      .where("s.org_id", "=", a.orgId)
-      .where("s.deleted_at", "is", null)
-      .where((eb) => {
-        const own = eb.and([eb("s.scope", "=", "agent"), eb("s.agent_id", "=", a.parentAgentId)]);
-        return orgSkills.length === 0
-          ? own
-          : eb.or([own, eb.and([eb("s.scope", "=", "org"), eb("s.id", "in", orgSkills)])]);
-      })
-      .orderBy("s.id")
-      .execute()
+    await selectedSkills(db, {
+      orgId: a.orgId,
+      agentId: a.parentAgentId,
+      orgSkills: a.parent.skills?.orgSkills ?? [],
+    })
   ).map((r) => ({
     id: r.id,
     name: r.name,
