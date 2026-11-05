@@ -220,7 +220,7 @@ async function importAndConfirm(id: string, name: string, version?: string) {
   const c = await admin({
     method: "POST",
     url: `/api/v1/admin/catalog/imports/${res.json().stagingId}/confirm`,
-    payload: { reviewHash: res.json().review.reviewHash, deployExtension: false },
+    payload: { reviewHash: res.json().review.reviewHash },
   });
   expect(c.statusCode, c.body).toBe(201);
   return { prepared: res.json(), confirmed: c.json() };

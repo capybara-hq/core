@@ -8,9 +8,7 @@ import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
 import type { KernelSchemaDb, SourceFormat } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
-import { ExtensionAdminOps } from "../extensions/admin-ops.js";
 import { ExtensionInstalls } from "../extensions/installs.js";
-import type { AdminExtensionView } from "../extensions/permission-view.js";
 import { audit } from "../identity/audit.js";
 import { EnterpriseAdminLock } from "../identity/enterprise-admin.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
@@ -18,7 +16,7 @@ import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { sameRepository } from "../packages/provenance.js";
-import { countInstalls, itemView, marketplaceLatest } from "./catalog-items.js";
+import { countInstalls, itemScopeFacts, itemView, marketplaceLatest } from "./catalog-items.js";
 import type { TranslationReport } from "./claude/report.js";
 import {
   expandGitUrl,
@@ -46,6 +44,7 @@ import {
 } from "./marketplaces.service.js";
 import { PluginImport, type PluginReview, type ReviewProvenance } from "./plugin-import.js";
 import { cancelPendingRequests } from "./requests.service.js";
+import type { PluginScope } from "./scope.js";
 import { newestFirst } from "./versions.js";
 
 /** Item policy (C22): allow (default for new imports) / needs_approval / disabled (no new installs; existing ones stay). */
@@ -58,7 +57,23 @@ export interface CatalogItemView {
   publisher: string;
   displayName: LocalizedName | null;
   description: string;
+  /** The old item policy, kept for reading only (scope and `disabled` replaced it). */
   policy: CatalogPolicy;
+  /** Who the plugin is offered to (`all` for a builtin plugin). */
+  scope: PluginScope;
+  /** The orgs of a `named` scope (empty otherwise). */
+  scopeOrgs: string[];
+  /** Shipped with the deployment (a required bootstrap plugin): scope `all`, never changed. */
+  builtin: boolean;
+  /** Stopped on the whole deployment by the enterprise admin (its scope is kept). */
+  disabled: boolean;
+  /** Orgs it is on in: orgs with a live plugin install of it (every org for a builtin plugin). */
+  enabledOrgs: number;
+  /**
+   * Its extension is not installed on the deployment, or the extension's permission snapshot is
+   * missing or of another version than the install (listed for confirmation, never installed).
+   */
+  pending: boolean;
   latestVersion: string;
   /** Every version, newest first (semver; equal but for build metadata: the later import first). */
   versions: string[];
@@ -236,8 +251,9 @@ export const CATALOG_LIST_MAX_LIMIT = 1000;
 /**
  * Enterprise catalog items (D9 / C21 / C22, `/api/v1/admin/catalog/*`, enterprise admins only). One
  * kind: every item is a plugin (spec §4), imported through {@link PluginImport} (prepare -> confirm,
- * one review); this service lists and shows items, changes policy, deletes, installs an item's
- * extension on the deployment, and prepares marketplace imports. Stateless, shared by every replica.
+ * one review, whose confirm installs the plugin's extension); this service lists and shows items,
+ * deletes, and prepares marketplace imports (scope and disable: `CatalogScopeService`). Stateless,
+ * shared by every replica.
  */
 @Injectable()
 export class CatalogService {
@@ -247,7 +263,6 @@ export class CatalogService {
     @Inject(EnterpriseAdminLock) private readonly adminLock: EnterpriseAdminLock,
     @Inject(KernelConfigService) private readonly config: KernelConfigService,
     @Inject(ExtensionInstalls) private readonly installs: ExtensionInstalls,
-    @Inject(ExtensionAdminOps) private readonly ops: ExtensionAdminOps,
     /** Plugin import (a marketplace entry goes through its prepare). */
     @Inject(PluginImport) private readonly pluginImport: PluginImport,
     /** The token of an enterprise marketplace (sent only to its URL's origin). */
@@ -590,9 +605,16 @@ export class CatalogService {
     }
     const installs = await countInstalls(this.db, items, byItem);
     const latest = await marketplaceLatest(this.db, this.config.get(), items, byItem);
+    const facts = await itemScopeFacts(this.db, items, byItem);
     return {
       items: items.map((i) =>
-        itemView(i, byItem.get(i.id) ?? [], installs.get(i.id) ?? 0, latest.get(i.id)),
+        itemView(
+          i,
+          byItem.get(i.id) ?? [],
+          installs.get(i.id) ?? 0,
+          latest.get(i.id),
+          facts.get(i.id),
+        ),
       ),
       nextOffset,
     };
@@ -621,9 +643,16 @@ export class CatalogService {
     const byItem = new Map([[item.id, rows]]);
     const installs = await countInstalls(this.db, [item], byItem);
     const latest = await marketplaceLatest(this.db, this.config.get(), [item], byItem);
+    const facts = await itemScopeFacts(this.db, [item], byItem);
     return {
       item: {
-        ...itemView(item, rows, installs.get(item.id) ?? 0, latest.get(item.id)),
+        ...itemView(
+          item,
+          rows,
+          installs.get(item.id) ?? 0,
+          latest.get(item.id),
+          facts.get(item.id),
+        ),
         packageName: item.package_name,
         deletedAt: item.deleted_at?.toISOString() ?? null,
       },
@@ -646,57 +675,6 @@ export class CatalogService {
         importedAt: v.imported_at.toISOString(),
       })),
     };
-  }
-
-  /**
-   * Changes the policy (audit `catalog.policy_changed`, not written when unchanged). Deleted /
-   * missing -> `catalog.item_not_found`.
-   */
-  async setPolicy(
-    actor: string,
-    itemId: string,
-    policy: CatalogPolicy,
-    opts: ActorOpts = {},
-  ): Promise<CatalogItemView> {
-    if (!UUID_RE.test(itemId)) throw notFound();
-    await this.writePolicy(actor, itemId, policy, opts);
-    return this.view(itemId);
-  }
-
-  @Transactional()
-  private async writePolicy(
-    actor: string,
-    itemId: string,
-    policy: CatalogPolicy,
-    opts: ActorOpts,
-  ): Promise<void> {
-    const t = this.db;
-    await this.adminLock.lockAndAuthorize(actor);
-    const row = await t
-      .selectFrom("catalog_items")
-      .select(["name", "policy"])
-      .where("id", "=", itemId)
-      .where("deleted_at", "is", null)
-      .forUpdate()
-      .executeTakeFirst();
-    if (!row) throw notFound();
-    if (row.policy === policy) return;
-    await t
-      .updateTable("catalog_items")
-      .set({
-        policy,
-        disabled: policy === "disabled",
-        updated_at: sql<Date>`now()` as unknown as Date,
-      })
-      .where("id", "=", itemId)
-      .execute();
-    await audit(t, {
-      actorAccountId: actor,
-      ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
-      action: "catalog.policy_changed",
-      target: itemId,
-      detail: { name: row.name, from: row.policy, to: policy },
-    });
   }
 
   /**
@@ -734,51 +712,5 @@ export class CatalogService {
       target: itemId,
       detail: { name: row.name },
     });
-  }
-
-  /**
-   * Installs the extension of one version of an item on the deployment
-   * (`ExtensionAdminOps.install`: a new install is disabled, a version change keeps the desired
-   * state; audit `extension.installed`), with the install record linked to the item (F-AA). The
-   * returned status may be `pending_approval` when the version's permissions are not approved yet.
-   * A version without an extension -> `catalog.no_extension`; item or version missing ->
-   * `catalog.item_not_found`.
-   */
-  async installToDeployment(
-    actor: string,
-    itemId: string,
-    version: string,
-    opts: ActorOpts = {},
-  ): Promise<AdminExtensionView> {
-    if (!UUID_RE.test(itemId)) throw notFound();
-    const item = await this.db
-      .selectFrom("catalog_items")
-      .select(["id", "name"])
-      .where("id", "=", itemId)
-      .where("deleted_at", "is", null)
-      .executeTakeFirst();
-    if (!item) throw notFound();
-    const v = await this.db
-      .selectFrom("catalog_item_versions")
-      .select("extension_sha256")
-      .where("item_id", "=", itemId)
-      .where("version", "=", version)
-      .executeTakeFirst();
-    if (!v) {
-      throw new ApiError("catalog.item_not_found", `Version ${version} of this item not found`);
-    }
-    if (v.extension_sha256 === null) {
-      throw new ApiError(
-        "catalog.no_extension",
-        `Plugin ${item.name} ${version} has no extension; there is nothing to install on the deployment`,
-      );
-    }
-    return this.ops.install(item.name, v.extension_sha256, actor, opts.actorTokenId, {
-      catalogItemId: itemId,
-    });
-  }
-
-  private async view(itemId: string): Promise<CatalogItemView> {
-    return (await this.get(itemId)).item;
   }
 }

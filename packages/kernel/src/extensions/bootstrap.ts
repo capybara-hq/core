@@ -562,10 +562,7 @@ export class BootstrapService {
         ref,
         integrity: e.integrity,
       });
-      await imports.confirm(null, stagingId, {
-        reviewHash: review.reviewHash,
-        deployExtension: false,
-      });
+      await imports.confirm(null, stagingId, { reviewHash: review.reviewHash });
       return true;
     } catch (err) {
       if (err instanceof ApiError && err.code === "catalog.version_exists") return false;
@@ -574,7 +571,7 @@ export class BootstrapService {
   }
 
   /**
-   * Imports, approves, installs and enables (one review, confirmed with `deployExtension`). When
+   * Imports, approves, installs and enables (one review; its confirm deploys the extension). When
    * the catalog already has this version (an earlier run stopped after importing, or the same
    * package came from a marketplace), the extension is deployed from the package store instead.
    */
@@ -601,7 +598,6 @@ export class BootstrapService {
     }
     const r = await imports.confirm(null, staged.stagingId, {
       reviewHash: staged.review.reviewHash,
-      deployExtension: true,
       enable,
     });
     if (r.deploy?.result === "failed") {

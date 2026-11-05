@@ -231,7 +231,7 @@ describe("phase C acceptance: superpowers subagent-driven-development", {
     const confirmed = await admin({
       method: "POST",
       url: `/api/v1/admin/catalog/imports/${stagingId}/confirm`,
-      payload: { reviewHash: review.reviewHash, deployExtension: false },
+      payload: { reviewHash: review.reviewHash },
     });
     expect(confirmed.statusCode, confirmed.body).toBe(201);
     const installed = await admin({

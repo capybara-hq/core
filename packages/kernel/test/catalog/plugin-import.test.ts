@@ -239,12 +239,9 @@ async function prepared(bytes: Uint8Array): Promise<{ stagingId: string; review:
 }
 
 /** prepare -> confirm; returns the confirm response body. */
-async function imported(bytes: Uint8Array, deployExtension = false) {
+async function imported(bytes: Uint8Array) {
   const s = await prepared(bytes);
-  const res = await confirm(admin, s.stagingId, {
-    reviewHash: s.review.reviewHash,
-    deployExtension,
-  });
+  const res = await confirm(admin, s.stagingId, { reviewHash: s.review.reviewHash });
   expect(res.statusCode, res.body).toBe(201);
   return res.json();
 }
@@ -285,7 +282,6 @@ describe("one import flow for every plugin", { timeout: 60_000 }, () => {
     expect(s.review.extension).toBeUndefined();
     const res = await confirm(admin, s.stagingId, {
       reviewHash: s.review.reviewHash,
-      deployExtension: true,
     });
     expect(res.statusCode, res.body).toBe(201);
     expect(res.json().deploy).toBeNull();
@@ -330,7 +326,6 @@ describe("one import flow for every plugin", { timeout: 60_000 }, () => {
     ]);
     const res = await confirm(admin, s.stagingId, {
       reviewHash: s.review.reviewHash,
-      deployExtension: false,
     });
     expect(res.statusCode, res.body).toBe(201);
     const v = await db
@@ -369,7 +364,6 @@ describe("one import flow for every plugin", { timeout: 60_000 }, () => {
     expect(pkg).toEqual({ name: "beta", source: "catalog" });
     const res = await confirm(admin, s.stagingId, {
       reviewHash: s.review.reviewHash,
-      deployExtension: false,
     });
     expect(res.statusCode, res.body).toBe(201);
     const v = await db
@@ -383,8 +377,10 @@ describe("one import flow for every plugin", { timeout: 60_000 }, () => {
       .select(["plugin", "version", "source", "approved_by"])
       .executeTakeFirstOrThrow();
     expect(snap).toEqual({ plugin: "beta", version: "1.0.0", source: "web", approved_by: adminId });
-    // Not deployed without deployExtension
-    expect(await db.selectFrom("extension_installs").select("name").execute()).toEqual([]);
+    // The confirm deploys it
+    expect(await db.selectFrom("extension_installs").select("name").execute()).toEqual([
+      { name: "beta" },
+    ]);
   });
 
   it("a plugin with all three plus dependencies: resolved / unresolved in the review, unresolved does not block", async () => {
@@ -436,7 +432,6 @@ describe("one import flow for every plugin", { timeout: 60_000 }, () => {
     });
     const res = await confirm(admin, s.stagingId, {
       reviewHash: s.review.reviewHash,
-      deployExtension: false,
     });
     expect(res.statusCode, res.body).toBe(201);
     expect(res.json().item).toMatchObject({
@@ -467,7 +462,6 @@ describe("one import flow for every plugin", { timeout: 60_000 }, () => {
     // Confirm works once
     const again = await confirm(admin, s.stagingId, {
       reviewHash: s.review.reviewHash,
-      deployExtension: false,
     });
     expect(again.statusCode).toBe(404);
     expect(again.json().error.code).toBe("plugin.staging_not_found");
@@ -486,7 +480,6 @@ describe("one import flow for every plugin", { timeout: 60_000 }, () => {
     const s = await prepared(await skillPlugin("stale"));
     const res = await confirm(admin, s.stagingId, {
       reviewHash: "0".repeat(32),
-      deployExtension: false,
     });
     expect(res.statusCode).toBe(409);
     expect(res.json().error.code).toBe("plugin.review_stale");
@@ -540,7 +533,6 @@ describe("one import flow for every plugin", { timeout: 60_000 }, () => {
     });
     const res = await confirm(admin, s.stagingId, {
       reviewHash: s.review.reviewHash,
-      deployExtension: false,
     });
     expect(res.statusCode, res.body).toBe(201);
     expect(res.json().item).toMatchObject({
@@ -573,12 +565,10 @@ describe("one import flow for every plugin", { timeout: 60_000 }, () => {
     const b = await prepared(bytes);
     const ok = await confirm(admin, a.stagingId, {
       reviewHash: a.review.reviewHash,
-      deployExtension: false,
     });
     expect(ok.statusCode, ok.body).toBe(201);
     const late = await confirm(admin, b.stagingId, {
       reviewHash: b.review.reviewHash,
-      deployExtension: false,
     });
     expect(late.statusCode, late.body).toBe(409);
     expect(late.json().error.code).toBe("catalog.version_exists");
@@ -606,11 +596,11 @@ describe("one import flow for every plugin", { timeout: 60_000 }, () => {
   });
 });
 
-describe("deployExtension", { timeout: 60_000 }, () => {
+describe("deploying the extension at confirm", { timeout: 60_000 }, () => {
   beforeEach(reset);
 
   it("deploys only the plugin's own extension: installed and enabled without a restart", async () => {
-    const r = await imported(await crm(), true);
+    const r = await imported(await crm());
     expect(r.deploy).toEqual(
       expect.objectContaining({ name: "crm", action: "install", result: "enabled" }),
     );
@@ -644,7 +634,6 @@ describe("deployExtension", { timeout: 60_000 }, () => {
     });
     const kept = await confirm(admin, keep.stagingId, {
       reviewHash: keep.review.reviewHash,
-      deployExtension: true,
     });
     expect(kept.statusCode, kept.body).toBe(201);
     expect(kept.json().deploy).toBeNull();
@@ -655,7 +644,6 @@ describe("deployExtension", { timeout: 60_000 }, () => {
     expect(up.review.extension).toMatchObject({ action: "upgrade", currentVersion: "1.0.0" });
     const res = await confirm(admin, up.stagingId, {
       reviewHash: up.review.reviewHash,
-      deployExtension: true,
     });
     expect(res.statusCode, res.body).toBe(201);
     expect(res.json().deploy).toMatchObject({ name: "eps", action: "upgrade", result: "enabled" });
@@ -691,7 +679,6 @@ describe("deployExtension", { timeout: 60_000 }, () => {
     try {
       const res = await confirm(admin, s.stagingId, {
         reviewHash: s.review.reviewHash,
-        deployExtension: true,
       });
       expect(res.statusCode, res.body).toBe(201);
       expect(res.json().deploy).toEqual(
@@ -754,7 +741,6 @@ describe("deployExtension", { timeout: 60_000 }, () => {
       await sql`DELETE FROM plugin_zeta._migrations`.execute(db);
       const res = await confirm(admin, s.stagingId, {
         reviewHash: s.review.reviewHash,
-        deployExtension: true,
       });
       expect(res.statusCode, res.body).toBe(409);
       expect(res.json().error.code).toBe("extension.downgrade_unsupported");
@@ -774,10 +760,90 @@ describe("deployExtension", { timeout: 60_000 }, () => {
     await k.app.get(ExtensionAdminOps).install("beta", rv.sha256, adminId);
     const res = await confirm(admin, s.stagingId, {
       reviewHash: s.review.reviewHash,
-      deployExtension: false,
     });
     expect(res.statusCode).toBe(409);
     expect(res.json().error.code).toBe("plugin.review_stale");
+  });
+});
+
+describe("confirm installs the extension and stores the scope", { timeout: 60_000 }, () => {
+  beforeEach(reset);
+
+  const ORG_A = "org-scope-a";
+
+  beforeAll(async () => {
+    await db
+      .insertInto("orgs")
+      .values({ id: ORG_A, slug: ORG_A, name: "Scope A" })
+      .onConflict((oc) => oc.column("id").doNothing())
+      .execute();
+  });
+
+  it("without deployExtension: the extension is installed and enabled, the scope is optional", async () => {
+    const s = await prepared(pkgs["beta@1.0.0"] as Uint8Array);
+    const res = await confirm(admin, s.stagingId, { reviewHash: s.review.reviewHash });
+    expect(res.statusCode, res.body).toBe(201);
+    expect(res.json().deploy).toMatchObject({ name: "beta", action: "install", result: "enabled" });
+    expect(res.json().item).toMatchObject({
+      scope: "optional",
+      scopeOrgs: [],
+      builtin: false,
+      disabled: false,
+      enabledOrgs: 0,
+      pending: false,
+    });
+    expect(
+      await db.selectFrom("extension_installs").select(["name", "desired_state"]).execute(),
+    ).toEqual([{ name: "beta", desired_state: "enabled" }]);
+    const row = await db
+      .selectFrom("catalog_items")
+      .select("scope")
+      .where("id", "=", res.json().item.id)
+      .executeTakeFirstOrThrow();
+    expect(row.scope).toBe("optional");
+  });
+
+  it("scope named with orgs: the list is stored; orgs without named or unknown orgs are 400", async () => {
+    const s = await prepared(await skillPlugin("named-skills"));
+    const without = await confirm(admin, s.stagingId, {
+      reviewHash: s.review.reviewHash,
+      scope: "optional",
+      orgs: [ORG_A],
+    });
+    expect(without.statusCode, without.body).toBe(400);
+    expect(without.json().error.code).toBe("validation_failed");
+    const unknown = await confirm(admin, s.stagingId, {
+      reviewHash: s.review.reviewHash,
+      scope: "named",
+      orgs: ["org-nowhere"],
+    });
+    expect(unknown.statusCode, unknown.body).toBe(400);
+    expect(unknown.json().error.code).toBe("validation_failed");
+    const res = await confirm(admin, s.stagingId, {
+      reviewHash: s.review.reviewHash,
+      scope: "named",
+      orgs: [ORG_A],
+    });
+    expect(res.statusCode, res.body).toBe(201);
+    expect(res.json().item).toMatchObject({ scope: "named", scopeOrgs: [ORG_A] });
+    expect(
+      await db
+        .selectFrom("catalog_item_scope_orgs")
+        .select(["item_id", "org_id"])
+        .where("item_id", "=", res.json().item.id)
+        .execute(),
+    ).toEqual([{ item_id: res.json().item.id, org_id: ORG_A }]);
+  });
+
+  it("the old deployExtension field is an unknown key: 400 validation_failed", async () => {
+    const s = await prepared(await skillPlugin("old-field"));
+    const res = await confirm(admin, s.stagingId, {
+      reviewHash: s.review.reviewHash,
+      deployExtension: false,
+    });
+    expect(res.statusCode, res.body).toBe(400);
+    expect(res.json().error.code).toBe("validation_failed");
+    expect(await db.selectFrom("catalog_items").select("id").execute()).toEqual([]);
   });
 });
 
@@ -937,7 +1003,6 @@ describe("npm source", { timeout: 60_000 }, () => {
     expect(s.review.provenanceWarning).toBeUndefined();
     const c = await confirm(admin, s.stagingId, {
       reviewHash: s.review.reviewHash,
-      deployExtension: false,
     });
     expect(c.statusCode, c.body).toBe(201);
     const v = await db
@@ -1011,7 +1076,6 @@ describe("staging cleanup (maintenance job app-staging-cleanup)", { timeout: 60_
       .execute();
     const res = await confirm(admin, s.stagingId, {
       reviewHash: s.review.reviewHash,
-      deployExtension: false,
     });
     expect(res.statusCode).toBe(404);
     expect(res.json().error.code).toBe("plugin.staging_not_found");
@@ -1036,7 +1100,7 @@ describe("permissions", { timeout: 60_000 }, () => {
         url: "/api/v1/admin/catalog/import/npm",
         payload: { package: "@acme/plugin-npm-skills" },
       }),
-      await confirm(member, id, { reviewHash: "x", deployExtension: false }),
+      await confirm(member, id, { reviewHash: "x" }),
       await member({ method: "GET", url: `/api/v1/admin/catalog/imports/${id}` }),
     ]) {
       expect(res.statusCode, res.body).toBe(403);

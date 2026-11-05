@@ -1,6 +1,5 @@
 import type { PluginManifest } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
-import { sql } from "kysely";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { ExtensionRegistry } from "../extensions/registry.js";
@@ -166,6 +165,9 @@ export class OrgCatalogService {
         marketplaceId: _source,
         latestMarketplaceVersion: _latest,
         newerInMarketplace: _newer,
+        scopeOrgs: _scopeOrgs,
+        enabledOrgs: _enabledOrgs,
+        pending: _pending,
         ...view
       } = itemView(i, vs);
       const latest = vs.find((v) => v.version === i.latest_version);

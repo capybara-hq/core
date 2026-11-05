@@ -194,7 +194,7 @@ export async function importPlugin(env: OrgEnv, bytes: Uint8Array): Promise<stri
   const c = await env.root({
     method: "POST",
     url: `/api/v1/admin/catalog/imports/${r.json().stagingId}/confirm`,
-    payload: { reviewHash: r.json().review.reviewHash, deployExtension: false },
+    payload: { reviewHash: r.json().review.reviewHash },
   });
   expect(c.statusCode, c.body).toBe(201);
   return (c.json() as { item: { id: string } }).item.id;
@@ -202,13 +202,18 @@ export async function importPlugin(env: OrgEnv, bytes: Uint8Array): Promise<stri
 
 type Policy = "allow" | "needs_approval" | "disabled";
 
+/**
+ * Sets the old item policy and the disabled flag directly in the database (no scope sync runs, so
+ * existing installs stay): the org side's checks of a disabled item, and the requests that still
+ * read `needs_approval`. The admin route (`PUT items/:id/disabled`) is covered by
+ * admin-scope.test.ts.
+ */
 export async function setPolicy(env: OrgEnv, itemId: string, policy: Policy): Promise<void> {
-  const r = await env.root({
-    method: "PUT",
-    url: `/api/v1/admin/catalog/items/${itemId}/policy`,
-    payload: { policy },
-  });
-  expect(r.statusCode).toBe(200);
+  await env.db
+    .updateTable("catalog_items")
+    .set({ policy, disabled: policy === "disabled" })
+    .where("id", "=", itemId)
+    .execute();
 }
 
 /** Sets an item's scope (and, for `named`, the orgs it lists) directly in the database. */
@@ -281,9 +286,9 @@ export async function importTemplate(
 }
 
 /**
- * The real path end to end: an extension-only plugin imported into the catalog -> its extension
- * installed on the deployment (`extension_installs.catalog_item_id` and the source table) -> enabled
- * on the deployment, waiting for this replica to load it.
+ * The real path end to end: an extension-only plugin imported into the catalog, whose confirm
+ * installs its extension on the deployment (`extension_installs.catalog_item_id` and the source
+ * table) and enables it; waits for this replica to load it.
  */
 export async function importDeployedPlugin(
   env: OrgEnv,
@@ -291,14 +296,6 @@ export async function importDeployedPlugin(
 ): Promise<{ itemId: string; sha256: string }> {
   const bytes = await pluginTgz({ manifest: { name }, extension: {} });
   const itemId = await importPlugin(env, bytes);
-  const inst = await env.root({
-    method: "POST",
-    url: `/api/v1/admin/catalog/items/${itemId}/install-deployment`,
-    payload: { version: "1.0.0" },
-  });
-  expect(inst.statusCode, inst.body).toBe(200);
-  const en = await env.root({ method: "POST", url: `/api/v1/admin/extensions/${name}/enable` });
-  expect(en.statusCode, en.body).toBe(200);
   await waitFor(async () => env.k.app.get(ExtensionHost).current(name) !== undefined, 15_000, name);
   return { itemId, sha256: createHash("sha256").update(bytes).digest("hex") };
 }

@@ -7,6 +7,7 @@ import {
   type OrgEnv,
   requestItem,
   resetOrgCatalog,
+  setPolicy,
   startOrgEnv,
 } from "./org-env.js";
 
@@ -152,11 +153,7 @@ describe("挂着的申请随条目 / 组织删除取消，安装后一并关闭"
     const up = await decideOrg(env.boss, orgReq, "approve");
     expect(up.json().request.stage).toBe("deployment");
     // 先禁用：企业管理员批准 disabled 条目的申请 → item_disabled，不写授予
-    await env.root({
-      method: "PUT",
-      url: `/api/v1/admin/catalog/items/${itemId}/policy`,
-      payload: { policy: "disabled" },
-    });
+    await setPolicy(env, itemId, "disabled");
     const blocked = await decideAdmin(env.root, orgReq, "approve");
     expect(blocked.statusCode).toBe(403);
     expect(blocked.json().error.code).toBe("catalog.item_disabled");
@@ -182,11 +179,7 @@ describe("挂着的申请随条目 / 组织删除取消，安装后一并关闭"
     const pend = await install(env.boss, env, itemId);
     expect(pend.statusCode).toBe(202);
     const id = pend.json().request.id as string;
-    await env.root({
-      method: "PUT",
-      url: `/api/v1/admin/catalog/items/${itemId}/policy`,
-      payload: { policy: "allow" },
-    });
+    await setPolicy(env, itemId, "allow");
     expect((await install(env.boss, env, itemId)).statusCode).toBe(201);
     const row = await env.db
       .selectFrom("catalog_requests")

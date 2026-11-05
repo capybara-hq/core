@@ -208,7 +208,6 @@ describe("phase B acceptance: superpowers from a git marketplace", { timeout: 12
       url: `/api/v1/admin/catalog/imports/${stagingId}/confirm`,
       payload: {
         reviewHash: review.reviewHash,
-        deployExtension: false,
         pinnedSuggestions: ["using-superpowers"],
       },
     });

@@ -65,8 +65,10 @@ import type {
 } from "./catalog.service.js";
 import { findConnectorIn } from "./catalog-content.js";
 import {
+  assertOrgsExist,
   assertPluginNameOwner,
   catalogObjectPrefix,
+  itemScopeFacts,
   itemView,
   permissionsMismatch,
   precheckCatalogImport,
@@ -95,6 +97,7 @@ import {
   readPluginFiles,
   readPluginPackage,
 } from "./plugin-package.js";
+import type { PluginScope } from "./scope.js";
 import { maxSatisfying, satisfiesRange } from "./versions.js";
 
 /**
@@ -117,13 +120,13 @@ import { maxSatisfying, satisfiesRange } from "./versions.js";
  * confirm: `reviewHash` must match the staging; in one transaction it deletes the staging row
  * (confirm works once), locks the extension name and recomputes its deployment state (installed /
  * upgraded / swapped after the review -> `plugin.review_stale`), writes the extension's permission
- * snapshot when it is installed by this import (or upgraded with `deployExtension`; source web, audit
- * `extension.permissions_approved` carrying the plugin), and creates the item or adds the version
- * (`manifest` = the normalized plugin.json, `extension_sha256`, the files under the staging prefix).
- * After the commit, with `deployExtension`, the plugin's own extension is installed on the
- * deployment and enabled (`ExtensionAdminOps.install` + `enable`; each replica reconciles, no
- * restart); a failure is returned, not thrown, and an upgrade that was not installed gets its old
- * snapshot back.
+ * snapshot when it is installed or upgraded by this import (source web, audit
+ * `extension.permissions_approved` carrying the plugin), and creates the item (with the scope the
+ * admin chose, default `optional`) or adds the version (`manifest` = the normalized plugin.json,
+ * `extension_sha256`, the files under the staging prefix). After the commit the plugin's own
+ * extension is installed on the deployment and enabled (`ExtensionAdminOps.install` + `enable`;
+ * each replica reconciles, no restart); a failure is returned, not thrown, and an upgrade that was
+ * not installed gets its old snapshot back.
  *
  * Expired staging is cleaned by the maintenance job `app-staging-cleanup`
  * ({@link PluginImport.cleanupExpired}): it deletes the staging row and its object prefix; a stored
@@ -136,7 +139,7 @@ export const PLUGIN_STAGING_TTL_MS = 24 * 3600_000;
 /** Staging rows cleaned per batch. */
 const CLEANUP_BATCH = 100;
 
-/** The deployment state of the plugin's extension and what confirming with `deployExtension` does. */
+/** The deployment state of the plugin's extension and what confirming does with it. */
 export type ExtensionReviewAction = "install" | "upgrade" | "keep";
 
 /** The plugin's extension in a review. */
@@ -297,7 +300,7 @@ export interface PluginReview {
   reviewHash: string;
 }
 
-/** The deploy result of the plugin's extension with `deployExtension`. */
+/** The deploy result of the plugin's extension at confirm. */
 export interface ExtensionDeployResult {
   name: string;
   action: "install" | "upgrade";
@@ -318,7 +321,7 @@ export interface ExtensionDeployResult {
 /** The result of {@link PluginImport.confirm}. */
 export interface PluginConfirmResult {
   item: CatalogItemView;
-  /** null without `deployExtension` or when there is nothing to deploy (no extension, keep). */
+  /** null when there is nothing to deploy (no extension, or keep). */
   deploy: ExtensionDeployResult | null;
 }
 
@@ -897,31 +900,43 @@ export class PluginImport {
   }
 
   /**
-   * Confirms a staged import (see the file header). Returns the committed catalog item and, with
-   * `deployExtension`, the extension's deploy result (a failed deploy is returned, not thrown).
+   * Confirms a staged import (see the file header). Returns the committed catalog item and the
+   * extension's deploy result (a failed deploy is returned, not thrown). `scope` (default
+   * `optional`) and `orgs` (only with `named`; each an existing org, else `validation_failed`) are
+   * written when this confirm creates the item; a new version of an existing item keeps its scope.
+   * The caller enqueues the scope sync of the item after this returns.
    */
   async confirm(
     actor: string | null,
     stagingId: string,
     input: {
       reviewHash: string;
-      deployExtension: boolean;
       /**
-       * With `deployExtension`: enable the extension after installing it (default true). false
-       * keeps the install record's desired state (a new install stays disabled), for the bootstrap
-       * step's upgrades of a plugin an enterprise admin may have disabled.
+       * Enable the extension after installing it (default true). false keeps the install record's
+       * desired state (a new install stays disabled), for the bootstrap step's upgrades of a
+       * plugin an enterprise admin may have disabled.
        */
       enable?: boolean;
+      /** The new item's scope (default `optional`). */
+      scope?: PluginScope;
+      /** The orgs of a `named` scope. */
+      orgs?: string[];
       /**
        * The skills (by name, each in the review) suggested as pinned when an agent selects them
        * (spec §9.1); replaces the plugin's `pinned` flags in the stored manifest. Omitted keeps
-       * them. An admin decision like `deployExtension`, so not part of `reviewHash`.
+       * them. An admin decision like the scope, so not part of `reviewHash`.
        */
       pinnedSuggestions?: string[];
     },
     opts: ActorOpts = {},
   ): Promise<PluginConfirmResult> {
     if (!UUID_RE.test(stagingId)) throw notFound();
+    const scope = input.scope ?? "optional";
+    if (input.orgs !== undefined && scope !== "named") {
+      throw new ApiError("validation_failed", "orgs: only allowed with scope named", [
+        { path: "orgs", message: "only allowed with scope named" },
+      ]);
+    }
     const row = await this.db
       .selectFrom("plugin_import_staging")
       .selectAll()
@@ -942,14 +957,14 @@ export class PluginImport {
     const committed = await this.commit(
       actor,
       { stagingId, review, staged, src, manifest, objectPrefix: row.object_prefix },
-      input,
+      { scope, orgs: [...new Set(input.orgs ?? [])].sort() },
       stored,
       opts,
     );
 
     const { now } = committed;
     const deploy =
-      input.deployExtension && now && now.action !== "keep"
+      now && now.action !== "keep"
         ? await this.deploy(
             actor,
             review,
@@ -979,7 +994,7 @@ export class PluginImport {
       manifest: StagedPlugin["manifest"];
       objectPrefix: string | null;
     },
-    input: { deployExtension: boolean },
+    scope: { scope: PluginScope; orgs: string[] },
     stored: ExtensionPackage | undefined,
     opts: ActorOpts,
   ): Promise<{
@@ -999,6 +1014,7 @@ export class PluginImport {
       .returning("id")
       .executeTakeFirst();
     if (!used) throw notFound();
+    await assertOrgsExist(t, scope.orgs);
     let now: PluginReviewExtension | undefined;
     let previous: PreviousSnapshot | null | undefined;
     if (reviewed) {
@@ -1018,10 +1034,10 @@ export class PluginImport {
       }
       // A foreseeable deploy failure (a downgrade to a version with unrun migrations) is refused
       // before anything is written
-      if (input.deployExtension && now.action === "upgrade" && stored) {
+      if (now.action === "upgrade" && stored) {
         await assertDowngradable(t, now, stored.migrationSql);
       }
-      if (now.action === "install" || (now.action === "upgrade" && input.deployExtension)) {
+      if (now.action === "install" || now.action === "upgrade") {
         previous = await this.approve(actor, review, staged, now, stored as ExtensionPackage, opts);
       }
     }
@@ -1058,11 +1074,27 @@ export class PluginImport {
       licenseTruncated: staged.licenseTruncated === true,
       auditDetail: {
         stagingId,
-        deployExtension: input.deployExtension,
+        scope: scope.scope,
+        ...(scope.scope === "named" && { orgs: scope.orgs }),
         suggestedPinned: pinnedNames(manifest, review),
         ...(now && { extension: { name: now.name, version: now.version, action: now.action } }),
       },
     });
+    // A new item gets the scope chosen in the review; a new version keeps the item's scope
+    if (itemId === staged.itemId) {
+      await t
+        .updateTable("catalog_items")
+        .set({ scope: scope.scope })
+        .where("id", "=", itemId)
+        .execute();
+      if (scope.scope === "named" && scope.orgs.length > 0) {
+        await t
+          .insertInto("catalog_item_scope_orgs")
+          .values(scope.orgs.map((org_id) => ({ item_id: itemId, org_id })))
+          .onConflict((oc) => oc.doNothing())
+          .execute();
+      }
+    }
     return { itemId, now, previous };
   }
 
@@ -1562,10 +1594,11 @@ export class PluginImport {
       .executeTakeFirstOrThrow();
     const versions = await this.db
       .selectFrom("catalog_item_versions")
-      .select(["version", "source", "imported_at"])
+      .select(["version", "source", "imported_at", "extension_sha256"])
       .where("item_id", "=", itemId)
       .execute();
-    return itemView(item, versions);
+    const facts = await itemScopeFacts(this.db, [item], new Map([[item.id, versions]]));
+    return itemView(item, versions, 0, undefined, facts.get(item.id));
   }
 }
 

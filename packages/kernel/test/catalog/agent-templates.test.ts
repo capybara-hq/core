@@ -78,7 +78,7 @@ async function importOk(bytes: Uint8Array): Promise<string> {
   const c = await env.root({
     method: "POST",
     url: `/api/v1/admin/catalog/imports/${stagingId}/confirm`,
-    payload: { reviewHash: review.reviewHash, deployExtension: false },
+    payload: { reviewHash: review.reviewHash },
   });
   expect(c.statusCode, c.body).toBe(201);
   return c.json().item.id as string;
@@ -162,7 +162,7 @@ describe("agent templates in plugins", () => {
     const c = await env.root({
       method: "POST",
       url: `/api/v1/admin/catalog/imports/${two.stagingId}/confirm`,
-      payload: { reviewHash: two.review.reviewHash, deployExtension: false },
+      payload: { reviewHash: two.review.reviewHash },
     });
     expect(c.statusCode, c.body).toBe(201);
   });

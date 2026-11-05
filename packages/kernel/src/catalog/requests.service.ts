@@ -270,7 +270,7 @@ export class CatalogRequestsService {
     const item = await lockItem(t, itemId);
     if (!item || item.deleted_at !== null) throw itemNotFound();
     // 成员看不到 disabled 的条目（列表、详情、图标一致）：同样答 not found，不暴露条目存在
-    if (item.policy === "disabled") {
+    if (item.disabled) {
       throw roleAtLeast(role, "admin") ? itemDisabled() : itemNotFound();
     }
     const existing = await this.pendingRow(orgId, itemId);
@@ -447,7 +447,7 @@ export class CatalogRequestsService {
     let escalated = false;
     if (decision === "approve") {
       const item = await lockItem(t, row.item_id);
-      if (!item || item.deleted_at !== null || item.policy === "disabled") throw itemDisabled();
+      if (!item || item.deleted_at !== null || item.disabled) throw itemDisabled();
       escalated = item.policy === "needs_approval" && !(await hasGrant(t, orgId, row.item_id));
     }
     await t
@@ -513,7 +513,7 @@ export class CatalogRequestsService {
     }
     if (decision === "approve") {
       const item = await lockItem(t, row.item_id);
-      if (!item || item.deleted_at !== null || item.policy === "disabled") throw itemDisabled();
+      if (!item || item.deleted_at !== null || item.disabled) throw itemDisabled();
       const org = await t
         .selectFrom("orgs")
         .select("deleted_at")

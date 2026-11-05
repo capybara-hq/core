@@ -474,8 +474,8 @@ other plugins) go through the catalog:
   `<version>+git.<sha12>` (archives and npm: `+sha256.<12>`), and the version already imported is
   never overwritten. Org admins then upgrade their installs in place (Settings → Installed
   plugins → Upgrade), or roll a declarative plugin back to an older version. A plugin with an
-  extension follows the deployment: install the new extension version on the deployment first (with
-  `--deploy-extension` or from the catalog item); orgs can then upgrade only to the catalog version
+  extension follows the deployment: importing the new version installs its extension on the
+  deployment (the import's confirm always does); orgs can then upgrade only to the catalog version
   carrying that extension, and their installs show "upgrade pending" until they do.
 - **npm provenance:** for npm sources, the review shows "built from `<repo>@<commit>` by `<workflow>`"
   from the registry's attestations when it has them, and "provenance not checked" otherwise
@@ -521,7 +521,7 @@ other plugins) go through the catalog:
 - **CLI**, inside a running kernel container:
 
   ```bash
-  docker compose exec api node /app/bin/capybara.mjs plugins import npm:@acme/plugin-crm --deploy-extension
+  docker compose exec api node /app/bin/capybara.mjs plugins import npm:@acme/plugin-crm
   docker compose exec api node /app/bin/capybara.mjs plugins import 'git:https://gitlab.corp.example/tools/plugins.git#main:plugins/crm'
   docker compose exec api node /app/bin/capybara.mjs plugins list
   ```

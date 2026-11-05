@@ -278,7 +278,7 @@ const confirm = async (prepared: { stagingId: string; review: { reviewHash: stri
   const c = await admin({
     method: "POST",
     url: `/api/v1/admin/catalog/imports/${prepared.stagingId}/confirm`,
-    payload: { reviewHash: prepared.review.reviewHash, deployExtension: false },
+    payload: { reviewHash: prepared.review.reviewHash },
   });
   expect(c.statusCode, c.body).toBe(201);
   return c.json();

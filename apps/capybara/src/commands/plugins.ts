@@ -226,16 +226,16 @@ export function describeReview(r: PluginReview): string[] {
 
 /**
  * `capybara plugins import <file.tgz | npm:<name>[@<ver>] | git:<url>[#<ref>][:<path>]>
- * [--deploy-extension] [--yes]`: prepares the import (reads and checks the whole package or git
+ * [--yes]`: prepares the import (reads and checks the whole package or git
  * folder, stages it; git goes through the same network rules as the API, `marketplaces.*`), prints
  * the review (source, digest, provenance, extension permissions, skills, connector templates,
- * dependencies) and, after `--yes` or an interactive yes, confirms it.
- * `--deploy-extension` also installs and enables the plugin's extension on the deployment. Acts as the
+ * dependencies) and, after `--yes` or an interactive yes, confirms it, which also installs and
+ * enables the plugin's extension on the deployment. Acts as the
  * CLI operator (no account, like `capybara extensions install`). Exit code: 0 / 1 (failure, not
  * confirmed, or the extension deploy failed).
  */
 export async function runPluginsImport(
-  opts: { target: string; yes?: boolean; deployExtension?: boolean },
+  opts: { target: string; yes?: boolean },
   log: KernelLogger,
   env: NodeJS.ProcessEnv,
   io: PluginsIo = defaultIo(),
@@ -272,7 +272,6 @@ export async function runPluginsImport(
       }
       const { item, deploy } = await cli.imports.confirm(null, prepared.stagingId, {
         reviewHash: prepared.review.reviewHash,
-        deployExtension: opts.deployExtension === true,
       });
       io.stdout.write(`Imported ${item.name} ${item.latestVersion} into the catalog.\n`);
       if (deploy === null) return 0;

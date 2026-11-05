@@ -78,6 +78,8 @@ export const ERROR_CODES = {
   "plugin.disabled": 409,
   "plugin.scope_locked": 409,
   "plugin.switch_stale": 409,
+  "plugin.builtin": 409,
+  "plugin.scope_stale": 409,
   "catalog.approval_required": 403,
   "catalog.request_not_found": 404,
   "catalog.request_decided": 409,

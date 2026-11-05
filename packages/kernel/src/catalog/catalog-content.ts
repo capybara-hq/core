@@ -38,7 +38,13 @@ import { satisfiesRange } from "./versions.js";
 export interface OrgCatalogItem
   extends Omit<
     CatalogItemView,
-    "installs" | "marketplaceId" | "latestMarketplaceVersion" | "newerInMarketplace"
+    | "installs"
+    | "marketplaceId"
+    | "latestMarketplaceVersion"
+    | "newerInMarketplace"
+    | "scopeOrgs"
+    | "enabledOrgs"
+    | "pending"
   > {
   scope: PluginScope;
   /** Shipped with the deployment (a required bootstrap plugin): on in every org, never switchable. */
@@ -117,7 +123,6 @@ export function orgTemplateView(id: string, file: ConnectorTemplateFile): OrgCat
 export interface CatalogIcon {
   data: Uint8Array;
   contentType: "image/svg+xml" | "image/png";
-  policy: "allow" | "needs_approval" | "disabled";
 }
 
 const iconNotFound = () => new ApiError("catalog.icon_not_found", "This catalog item has no icon");
@@ -137,13 +142,13 @@ async function latestVersionRow(db: KernelSchemaDb, itemId: string, includeDisab
   if (!UUID_RE.test(itemId)) throw itemNotFound();
   const item = await db
     .selectFrom("catalog_items")
-    .select(["latest_version", "policy"])
+    .select(["latest_version", "disabled"])
     .where("id", "=", itemId)
     .where("deleted_at", "is", null)
     .executeTakeFirst();
   // An item the caller cannot see is "not found" before any version / storage is read, so "no icon"
   // never reveals that it exists
-  if (!item || (!includeDisabled && item.policy === "disabled")) throw itemNotFound();
+  if (!item || (!includeDisabled && item.disabled)) throw itemNotFound();
   const v = await db
     .selectFrom("catalog_item_versions")
     .select(["manifest", "object_prefix", "files"])
@@ -184,7 +189,7 @@ export async function readCatalogIcon(
   itemId: string,
   includeDisabled: boolean,
 ): Promise<CatalogIcon> {
-  const { item, v } = await latestVersionRow(db, itemId, includeDisabled);
+  const { v } = await latestVersionRow(db, itemId, includeDisabled);
   const path = iconPath(v);
   const f = path === undefined ? undefined : v.files.find((x) => x.path === path);
   if (path === undefined || !f) throw iconNotFound();
@@ -195,7 +200,6 @@ export async function readCatalogIcon(
   return {
     data: file.data,
     contentType: /\.svg$/i.test(path) ? "image/svg+xml" : "image/png",
-    policy: item.policy,
   };
 }
 

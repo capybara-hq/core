@@ -409,10 +409,9 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
   }
 
   /** Confirms a staged import (prepare response) on replica `i`; returns the confirm body. */
-  const confirmImport = (i: 0 | 1, staged: Json, deployExtension = false) =>
+  const confirmImport = (i: 0 | 1, staged: Json) =>
     ok("root", i, "POST", `/api/v1/admin/catalog/imports/${staged.stagingId as string}/confirm`, {
       reviewHash: (staged.review as { reviewHash: string }).reviewHash,
-      deployExtension,
     });
 
   let orgId = "";
@@ -508,14 +507,10 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
       { version: "0.1.0" },
     );
     expect(imported.status, JSON.stringify(imported.json)).toBe(200);
-    const counterItem = ((await confirmImport(1, imported.json)).item as { id: string }).id;
-    // Installed on the deployment (the import's review approved its permissions), then enabled:
-    // the fake-tools-ui plugin depends on it
-    await ok("root", 1, "POST", `/api/v1/admin/catalog/items/${counterItem}/install-deployment`, {
-      version: "0.1.0",
-    });
-    expect((await view("fake-dep-provider", 1)).status).toBe("disabled");
-    await ok("root", 1, "POST", "/api/v1/admin/extensions/fake-dep-provider/enable");
+    // The confirm installs and enables it on the deployment (the import's review approved its
+    // permissions): the fake-tools-ui plugin depends on it
+    const confirmedDep = await confirmImport(1, imported.json);
+    expect(confirmedDep.deploy).toMatchObject({ name: "fake-dep-provider", result: "enabled" });
     await waitFor(() => loadedOnBoth("fake-dep-provider", "0.1.0"), 30_000, "counter on both", 100);
 
     // An enterprise marketplace: no entries before its first refresh; after a refresh on B, A sees
@@ -605,7 +600,7 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
     expect(review.dependencies).toEqual([
       { name: "fake-dep-provider", range: "^0.1.0", resolved: "0.1.0" },
     ]);
-    const confirmed = await confirmImport(0, staged.json, true);
+    const confirmed = await confirmImport(0, staged.json);
     appItem = (confirmed.item as { id: string }).id;
     expect(confirmed.deploy).toMatchObject({
       name: "fake-tools-ui",
@@ -777,9 +772,13 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
   });
 
   it("4. 开关与范围：disabled 的模板不能装（两个副本一样）；开启后经 switch 装入；技能经 switch 入库；customConnectors deny 时自建 403", async () => {
-    await ok("root", 0, "PUT", `/api/v1/admin/catalog/items/${templateItem}/policy`, {
-      policy: "disabled",
-    });
+    // Disabled on the deployment (written directly: this case is about the org side on both
+    // replicas; the admin route and its sync are covered by admin-scope.test.ts)
+    await db
+      .updateTable("catalog_items")
+      .set({ disabled: true })
+      .where("id", "=", templateItem)
+      .execute();
     const connectorBody = {
       connectors: {
         "github-mcp": {
@@ -805,9 +804,11 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
       expect(errCode(off)).toBe("plugin.disabled");
     }
     expect(await liveConnectors()).toHaveLength(1);
-    await ok("root", 1, "PUT", `/api/v1/admin/catalog/items/${templateItem}/policy`, {
-      policy: "allow",
-    });
+    await db
+      .updateTable("catalog_items")
+      .set({ disabled: false })
+      .where("id", "=", templateItem)
+      .execute();
     const installed = await at("boss", 0, "PUT", `${base}/catalog/${templateItem}/switch`, {
       enabled: true,
       inputs: connectorBody,

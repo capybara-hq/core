@@ -176,7 +176,7 @@ describe("capybara plugins list / import", () => {
     );
   }, 90_000);
 
-  it("a plugin with an extension: the review lists permissions; the snapshot is written with source cli", async () => {
+  it("a plugin with an extension: the review lists permissions; the snapshot is written with source cli, and it is installed and enabled", async () => {
     const file = join(work, "withext.tgz");
     await writeFile(file, await pluginTgz({ manifest: { name: "withext" }, extension: {} }));
     const r = await run(["plugins", "import", file, "--yes"]);
@@ -191,26 +191,15 @@ describe("capybara plugins list / import", () => {
         .executeTakeFirst(),
     );
     expect(snap).toEqual({ source: "cli", approved_by: null });
-    const installed = await query((db) =>
-      db.selectFrom("extension_installs").select("name").where("name", "=", "withext").execute(),
-    );
-    expect(installed).toEqual([]);
-  }, 90_000);
-
-  it("--deploy-extension installs and enables the plugin's extension", async () => {
-    const file = join(work, "deployed.tgz");
-    await writeFile(file, await pluginTgz({ manifest: { name: "deployed" }, extension: {} }));
-    const r = await run(["plugins", "import", file, "--yes", "--deploy-extension"]);
-    expect(r.code, r.stderr).toBe(0);
-    expect(r.stdout).toContain("Extension deployed 1.0.0 installed and enabled.");
+    expect(r.stdout).toContain("Extension withext 1.0.0 installed and enabled.");
     const row = await query((db) =>
       db
         .selectFrom("extension_installs")
         .select(["name", "desired_state"])
-        .where("name", "=", "deployed")
+        .where("name", "=", "withext")
         .executeTakeFirst(),
     );
-    expect(row).toEqual({ name: "deployed", desired_state: "enabled" });
+    expect(row).toEqual({ name: "withext", desired_state: "enabled" });
   }, 90_000);
 
   it("a plugin with files needs object storage; the error says so", async () => {

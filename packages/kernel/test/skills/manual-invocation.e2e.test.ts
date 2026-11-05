@@ -216,7 +216,7 @@ describe("phase D acceptance: commands, manual-only and forked skills", {
     const confirmed = await admin({
       method: "POST",
       url: `/api/v1/admin/catalog/imports/${stagingId}/confirm`,
-      payload: { reviewHash: review.reviewHash, deployExtension: false },
+      payload: { reviewHash: review.reviewHash },
     });
     expect(confirmed.statusCode, confirmed.body).toBe(201);
     state.itemId = confirmed.json().item.id as string;

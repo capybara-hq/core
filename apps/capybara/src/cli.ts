@@ -118,11 +118,7 @@ async function main(argv: string[]): Promise<number | undefined> {
     case "plugins-list":
       return runPluginsList(log, process.env);
     case "plugins-import":
-      return runPluginsImport(
-        { target: cmd.target, yes: cmd.yes, deployExtension: cmd.deployExtension },
-        log,
-        process.env,
-      );
+      return runPluginsImport({ target: cmd.target, yes: cmd.yes }, log, process.env);
     case "start":
       if (envFile !== undefined) log.info("loaded env file", { path: envFile });
       return runStart(

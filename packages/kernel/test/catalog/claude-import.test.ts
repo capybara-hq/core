@@ -150,7 +150,7 @@ const confirm = (p: Prepared, extra: Record<string, unknown> = {}) =>
   admin({
     method: "POST",
     url: `/api/v1/admin/catalog/imports/${p.stagingId}/confirm`,
-    payload: { reviewHash: p.review.reviewHash, deployExtension: false, ...extra },
+    payload: { reviewHash: p.review.reviewHash, ...extra },
   });
 const groups = (r: TranslationReport) =>
   Object.fromEntries(

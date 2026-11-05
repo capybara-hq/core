@@ -240,7 +240,7 @@ export class PluginScopeSync {
   }
 
   /** Whether a live install of the org depends on this install (spec §5 rule 9). */
-  private async dependedOn(orgId: string, installId: string): Promise<boolean> {
+  async dependedOn(orgId: string, installId: string): Promise<boolean> {
     const row = await this.db
       .selectFrom("plugin_install_components as c")
       .innerJoin("plugin_installs as a", "a.id", "c.install_id")
@@ -281,7 +281,7 @@ export class PluginScopeSync {
    * connector template, or an extension whose org config is required and not set in the org. The
    * same rule as the org catalog's `needs_config`, applied to the whole tree.
    */
-  private async needsInput(orgId: string, itemId: string, version: string): Promise<boolean> {
+  async needsInput(orgId: string, itemId: string, version: string): Promise<boolean> {
     const v = await this.db
       .selectFrom("catalog_item_versions")
       .select("manifest")

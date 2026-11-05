@@ -32,6 +32,7 @@ import {
   sourceEffective,
 } from "./marketplaces.service.js";
 import { schemaHasPath } from "./schema-path.js";
+import type { PluginScope } from "./scope.js";
 import { compareVersions, newestFirst, sameRelease, withBuild } from "./versions.js";
 
 /**
@@ -578,6 +579,112 @@ export async function countInstalls(
   return new Map([...orgs].map(([id, set]) => [id, set.size]));
 }
 
+/**
+ * Every id is a live org (`validation_failed` naming the unknown ones otherwise): the orgs of a
+ * `named` scope.
+ */
+export async function assertOrgsExist(db: KernelSchemaDb, orgs: readonly string[]): Promise<void> {
+  if (orgs.length === 0) return;
+  const found = await db
+    .selectFrom("orgs")
+    .select("id")
+    .where("id", "in", [...orgs])
+    .where("deleted_at", "is", null)
+    .execute();
+  const known = new Set(found.map((o) => o.id));
+  const unknown = orgs.filter((o) => !known.has(o));
+  if (unknown.length > 0) {
+    throw new ApiError("validation_failed", `orgs: unknown organizations ${unknown.join(", ")}`, [
+      { path: "orgs", message: `unknown organizations: ${unknown.join(", ")}` },
+    ]);
+  }
+}
+
+/** The scope facts of an item's admin view (see {@link CatalogItemView}). */
+export interface ItemScopeFacts {
+  scopeOrgs: string[];
+  enabledOrgs: number;
+  pending: boolean;
+}
+
+const NO_FACTS: ItemScopeFacts = { scopeOrgs: [], enabledOrgs: 0, pending: false };
+const LIVE_INSTALL = ["installing", "installed", "upgrading"] as const;
+
+/**
+ * Per item: the orgs of its `named` list, the orgs it is on in (a live plugin install; every org for
+ * a builtin item) and whether it is pending (its latest version has an extension that is not
+ * installed on the deployment, or whose permission snapshot is missing or of another version than
+ * the install).
+ */
+export async function itemScopeFacts(
+  db: KernelSchemaDb,
+  items: { id: string; name: string; builtin: boolean; latest_version: string }[],
+  versions: ReadonlyMap<string, { version: string; extension_sha256: string | null }[]>,
+): Promise<Map<string, ItemScopeFacts>> {
+  const out = new Map<string, ItemScopeFacts>(
+    items.map((i) => [i.id, { scopeOrgs: [], enabledOrgs: 0, pending: false }]),
+  );
+  if (items.length === 0) return out;
+  const ids = items.map((i) => i.id);
+  // one after the other: `db` may be a transaction's single connection
+  const listed = await db
+    .selectFrom("catalog_item_scope_orgs")
+    .select(["item_id", "org_id"])
+    .where("item_id", "in", ids)
+    .orderBy("org_id")
+    .execute();
+  for (const r of listed) out.get(r.item_id)?.scopeOrgs.push(r.org_id);
+  const live = await db
+    .selectFrom("plugin_installs as a")
+    .innerJoin("orgs as o", "o.id", "a.org_id")
+    .select(["a.item_id", (eb) => eb.fn.count<string>("a.org_id").distinct().as("n")])
+    .where("a.item_id", "in", ids)
+    .where("a.status", "in", [...LIVE_INSTALL])
+    .where("o.deleted_at", "is", null)
+    .groupBy("a.item_id")
+    .execute();
+  for (const r of live) {
+    const f = out.get(r.item_id);
+    if (f) f.enabledOrgs = Number(r.n);
+  }
+  if (items.some((i) => i.builtin)) {
+    const orgs = await db
+      .selectFrom("orgs")
+      .select((eb) => eb.fn.countAll<string>().as("n"))
+      .where("deleted_at", "is", null)
+      .executeTakeFirstOrThrow();
+    for (const i of items) {
+      const f = out.get(i.id);
+      if (i.builtin && f) f.enabledOrgs = Number(orgs.n);
+    }
+  }
+  const withExtension = items.filter(
+    (i) =>
+      (versions.get(i.id) ?? []).find((v) => v.version === i.latest_version)?.extension_sha256 !=
+      null,
+  );
+  if (withExtension.length > 0) {
+    const names = withExtension.map((i) => i.name);
+    const installs = await db
+      .selectFrom("extension_installs")
+      .select(["name", "version"])
+      .where("name", "in", names)
+      .execute();
+    const snaps = await db
+      .selectFrom("extension_permission_snapshots")
+      .select(["plugin", "version"])
+      .where("plugin", "in", names)
+      .execute();
+    for (const i of withExtension) {
+      const inst = installs.find((r) => r.name === i.name);
+      const snap = snaps.find((r) => r.plugin === i.name);
+      const f = out.get(i.id);
+      if (f) f.pending = !inst || !snap || snap.version !== inst.version;
+    }
+  }
+  return out;
+}
+
 export function itemView(
   i: {
     id: string;
@@ -586,6 +693,9 @@ export function itemView(
     display_name: LocalizedName | null;
     description: string;
     policy: CatalogPolicy;
+    scope: PluginScope;
+    builtin: boolean;
+    disabled: boolean;
     latest_version: string;
     marketplace_id?: string | null;
     updated_at: Date;
@@ -593,6 +703,7 @@ export function itemView(
   versions: { version: string; source: string; imported_at?: Date }[],
   installs = 0,
   marketplace: MarketplaceStatus = { latest: null, contentChanged: false },
+  facts: ItemScopeFacts = NO_FACTS,
 ): CatalogItemView {
   const sorted = [...versions].sort((a, b) =>
     newestFirst(
@@ -609,6 +720,12 @@ export function itemView(
     displayName: i.display_name,
     description: i.description,
     policy: i.policy,
+    scope: i.builtin ? "all" : i.scope,
+    scopeOrgs: [...facts.scopeOrgs],
+    builtin: i.builtin,
+    disabled: i.disabled,
+    enabledOrgs: facts.enabledOrgs,
+    pending: facts.pending,
     latestVersion: i.latest_version,
     versions: sorted.map((v) => v.version),
     installs,
