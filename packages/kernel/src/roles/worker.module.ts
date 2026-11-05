@@ -3,6 +3,7 @@ import { BackgroundModule } from "../background/background.module.js";
 import { BackgroundTaskPollJob } from "../background/poll.job.js";
 import { CatalogModule } from "../catalog/catalog.module.js";
 import { CatalogJobs } from "../catalog/jobs.js";
+import { PluginScopeWorkersModule } from "../catalog/scope-sync-workers.js";
 import { ChannelsModule, ChannelWorkersModule } from "../channels/channels.module.js";
 import { GatewayCheckJob } from "../channels/supervisor.js";
 import type { KernelConfig } from "../config/schema.js";
@@ -35,7 +36,7 @@ import { WorkerRole } from "./worker-role.js";
  * `worker`: the cron scheduler and the `@LockedInterval` scheduler (`KernelScheduleModule`, the one
  * place `ScheduleModule.forRoot` is imported), every fixed-period job (`@LockedCron` /
  * `@LockedInterval`, each once per tick across replicas), every queue consumer (`@Processor`: runs,
- * sub-agent runs, `usage.report`, titles, evals, maintenance, channel deliveries) and
+ * sub-agent runs, `usage.report`, titles, evals, maintenance, channel deliveries, the plugin scope sync) and
  * {@link WorkerRole}, which `KernelLifecycle` drives. A process without the worker role runs no cron
  * and no BullMQ worker (the queues' producers exist on every role).
  */
@@ -52,6 +53,7 @@ export class WorkerModule {
         EvalWorkersModule.forRoot(config),
         ChannelWorkersModule.forRoot(config),
         MaintenanceModule,
+        PluginScopeWorkersModule,
         // the domains the fixed-period jobs call
         RuntimeModule,
         UsageReportModule,

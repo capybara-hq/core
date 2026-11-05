@@ -2,6 +2,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { Inject, Injectable } from "@nestjs/common";
 import { type Selectable, sql } from "kysely";
 import { cancelPendingRequests } from "../catalog/requests.service.js";
+import { PluginScopeSync } from "../catalog/scope-sync.js";
 import type { OrgsTable } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { EvalBudget } from "../evals/budget.js";
@@ -74,8 +75,8 @@ async function slugGuard<T>(p: Promise<T>): Promise<T> {
 }
 
 /**
- * Organizations: create, read, update and soft delete. A soft delete emits `org.deleted` on
- * {@link KernelEvents} after the commit.
+ * Organizations: create, read, update and soft delete. A new org's plugin scope sync is enqueued
+ * after the commit; a soft delete emits `org.deleted` on {@link KernelEvents} after the commit.
  */
 @Injectable()
 export class OrgsService {
@@ -88,6 +89,8 @@ export class OrgsService {
     @Inject(KernelEvents) private readonly events: KernelEvents,
     /** Cancels the deleted org's running eval runs (in the delete's transaction). */
     @Inject(EvalBudget) private readonly evalBudget: Pick<EvalBudget, "cancelRuns">,
+    /** A new org gets the plugins its scope offers it (the scope sync, after the commit). */
+    @Inject(PluginScopeSync) private readonly scopeSync: Pick<PluginScopeSync, "enqueueOrg">,
   ) {}
 
   /**
@@ -138,6 +141,7 @@ export class OrgsService {
       target: row.id,
       detail: { slug, name },
     });
+    afterCommit(() => this.scopeSync.enqueueOrg(row.id));
     return toOrg(row);
   }
 

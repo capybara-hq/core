@@ -1231,7 +1231,8 @@ export class ConnectorsService {
   async removeIn(
     orgId: string,
     connectorId: string,
-    actorAccountId: string,
+    /** null: the kernel itself (the plugin scope sync uninstalling a plugin). */
+    actorAccountId: string | null,
     actorTokenId?: string,
     reason?: string,
   ): Promise<void> {

@@ -239,13 +239,21 @@ export function requiredActions(m: PluginManifest): OrgAction[] {
   return out.length > 0 ? out : ["org.extensions.manage"];
 }
 
-/** Locks the org row in the caller's transaction (`orgLock` joins it) and re-checks the actor can do every action (else `forbidden`). */
+/**
+ * Locks the org row in the caller's transaction (`orgLock` joins it) and re-checks the actor can do
+ * every action (else `forbidden`). `actor` null is the kernel itself (the plugin scope sync): the
+ * lock only.
+ */
 export async function lockOrgForActions(
-  orgLock: Pick<OrgLock, "lockAndAuthorize">,
+  orgLock: Pick<OrgLock, "lock" | "lockAndAuthorize">,
   orgId: string,
-  actor: string,
+  actor: string | null,
   actions: OrgAction[],
 ): Promise<void> {
+  if (actor === null) {
+    await orgLock.lock(orgId);
+    return;
+  }
   const [first, ...rest] = actions as [OrgAction, ...OrgAction[]];
   const { role } = await orgLock.lockAndAuthorize(orgId, actor, first);
   for (const a of rest) {

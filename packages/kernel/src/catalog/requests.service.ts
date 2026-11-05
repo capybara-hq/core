@@ -375,7 +375,7 @@ export class CatalogRequestsService {
   async resolveByInstall(
     orgId: string,
     itemId: string,
-    actor: string,
+    actor: string | null,
     opts: RequestActorOpts = {},
   ): Promise<void> {
     const t = this.db;

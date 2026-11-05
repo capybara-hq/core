@@ -115,6 +115,8 @@ export function orgsFor(
     orgLockFor(db),
     events,
     new EvalBudget(h.db, h.txHost),
+    // no worker in these tests: the new org's plugin scope sync is not enqueued
+    { enqueueOrg: async () => {} },
   );
 }
 

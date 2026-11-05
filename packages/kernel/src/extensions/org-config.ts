@@ -254,7 +254,8 @@ export class OrgExtensionConfigs {
     orgId: string,
     plugin: string,
     input: OrgExtensionInput,
-    actorAccountId: string,
+    /** null: the kernel itself (the plugin scope sync installing a plugin), no role check. */
+    actorAccountId: string | null,
     actorTokenId?: string,
     opts: OrgExtensionPutOptions = {},
   ): Promise<OrgExtensionView> {
@@ -275,14 +276,14 @@ export class OrgExtensionConfigs {
     plugin: string,
     manifest: ExtensionManifest,
     input: OrgExtensionInput,
-    actorAccountId: string,
+    actorAccountId: string | null,
     actorTokenId: string | undefined,
     opts: OrgExtensionPutOptions,
   ): Promise<OrgExtensionView> {
     const schema = manifest.config?.org;
     let seen: { schema: z.ZodTypeAny; config: unknown } | undefined;
     const t = this.db;
-    await this.orgLock.lockAndAuthorize(orgId, actorAccountId, "org.extensions.manage");
+    await this.orgLock.lockFor(orgId, actorAccountId, "org.extensions.manage");
     const row = await t
       .selectFrom("extension_org_configs")
       .select(["enabled", "config"])
@@ -516,7 +517,7 @@ export class OrgExtensionConfigs {
   async disableIn(
     orgId: string,
     plugin: string,
-    actorAccountId: string,
+    actorAccountId: string | null,
     reason: string,
   ): Promise<boolean> {
     const t = this.db;

@@ -8,6 +8,7 @@ import { Queue } from "bullmq";
 import { Redis } from "ioredis";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { buildKernelApp, closeKernelApp, createKernelApp } from "../../src/app.js";
+import { PLUGIN_SCOPE_QUEUE } from "../../src/catalog/scope-sync.js";
 import { GATEWAY_CHECK_JOB } from "../../src/channels/job-ids.js";
 import { CHANNEL_QUEUE_NAME } from "../../src/channels/jobs.js";
 import { ChannelSupervisor } from "../../src/channels/supervisor.js";
@@ -45,6 +46,7 @@ const KERNEL_QUEUES = [
   EVAL_QUEUE_NAME,
   MAINTENANCE_QUEUE_NAME,
   CHANNEL_QUEUE_NAME,
+  PLUGIN_SCOPE_QUEUE,
 ];
 
 let pgc: TestContainer;

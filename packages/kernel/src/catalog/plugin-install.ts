@@ -151,7 +151,7 @@ export async function upsertOrgSwitch(
   orgId: string,
   itemId: string,
   enabled: boolean,
-  actor: string,
+  actor: string | null,
 ): Promise<void> {
   await db
     .insertInto("catalog_item_org_switches")
@@ -165,6 +165,13 @@ export async function upsertOrgSwitch(
     )
     .execute();
 }
+
+/** The kernel (actor null, the scope sync) never installs what needs the org's input. */
+const systemNeedsInput = (name: string) =>
+  new ApiError(
+    "internal",
+    `Plugin ${name} needs the organization's input (connector templates); only a person can install it`,
+  );
 
 /** A plugin install in an org (`GET /orgs/:orgId/plugin-installs`). */
 export interface PluginInstallView {
@@ -518,13 +525,13 @@ export class PluginInstaller {
 
   async install(
     orgId: string,
-    actor: string,
+    actor: string | null,
     itemId: string,
     version: string,
     input: PluginInstallInput,
-    opts: { actorTokenId?: string; switchOn?: boolean } = {},
+    opts: { actorTokenId?: string; switchOn?: boolean; via?: "scope" } = {},
   ): Promise<PluginInstallView> {
-    const { switchOn, ...actorOpts } = opts;
+    const { switchOn, via, ...actorOpts } = opts;
     const plan = await this.plan(orgId, actor, itemId, version, input, "", undefined);
     await this.assertNoSkillConflicts(orgId, plan);
     let installId: string;
@@ -532,6 +539,7 @@ export class PluginInstaller {
       installId = await this.execute(orgId, actor, plan, actorOpts, {
         actions: planActions(plan),
         ...(switchOn === true && { switchOn }),
+        ...(via !== undefined && { via }),
       });
     } catch (e) {
       if (!(e instanceof InstallFailure)) throw e;
@@ -589,7 +597,7 @@ export class PluginInstaller {
    */
   async plan(
     orgId: string,
-    actor: string,
+    actor: string | null,
     itemId: string,
     version: string,
     input: PluginInstallInput | null,
@@ -626,12 +634,14 @@ export class PluginInstaller {
         if (problem !== undefined) throw new ApiError("catalog.not_deployed", problem);
       }
     } else {
+      // The kernel installs only what needs no org input (the scope sync's `needs_config` rule)
+      if (actor === null && templates.length > 0) throw systemNeedsInput(manifest.name);
       this.checkInput(manifest, templates, input, at);
       for (const ct of templates) {
         connectors.set(
           ct.id,
           this.planConnector(
-            actor,
+            actor ?? "",
             { itemId, version, name: manifest.name },
             ct,
             input,
@@ -830,10 +840,17 @@ export class PluginInstaller {
    */
   async execute(
     orgId: string,
-    actor: string,
+    actor: string | null,
     plan: InstallPlan,
     opts: { actorTokenId?: string },
-    ctx: { actions: OrgAction[]; approvedBy?: string; parent?: string; switchOn?: boolean },
+    ctx: {
+      actions: OrgAction[];
+      approvedBy?: string;
+      parent?: string;
+      switchOn?: boolean;
+      /** Installed by the plugin scope sync (recorded in the audits). */
+      via?: "scope";
+    },
   ): Promise<string> {
     const { itemId, version, manifest } = plan;
     // The install row (role and item policy re-checked under the lock; one live install per org
@@ -881,6 +898,7 @@ export class PluginInstaller {
             actions: requiredActions(depPlan.manifest),
             approvedBy,
             parent: installId,
+            ...(ctx.via !== undefined && { via: ctx.via }),
           });
         } catch (e) {
           if (e instanceof InstallFailure) {
@@ -917,6 +935,7 @@ export class PluginInstaller {
       for (const ct of plan.templates) {
         const ci = plan.connectors.get(ct.id);
         if (!ci) throw new ApiError("internal", `Connector template ${ct.id} was not planned`);
+        if (actor === null) throw systemNeedsInput(manifest.name);
         const r = await this.connectors.create(orgId, actor, ci, opts.actorTokenId);
         await record({
           kind: "connector",
@@ -1000,7 +1019,7 @@ export class PluginInstaller {
     orgId: string,
     name: string,
     input: OrgExtensionInput,
-    actor: string,
+    actor: string | null,
     actorTokenId: string | undefined,
     opts: Pick<OrgExtensionPutOptions, "viaItem" | "approvedBy">,
     record: (c: Component) => Promise<void>,
@@ -1018,7 +1037,7 @@ export class PluginInstaller {
   @Transactional({ propagation: "requires_new" })
   private async createInstallRow(
     orgId: string,
-    actor: string,
+    actor: string | null,
     plan: InstallPlan,
     ctx: { actions: OrgAction[]; approvedBy?: string },
     installId: string,
@@ -1101,11 +1120,11 @@ export class PluginInstaller {
   @Transactional({ propagation: "requires_new" })
   private async markInstalled(
     orgId: string,
-    actor: string,
+    actor: string | null,
     installId: string,
     plan: InstallPlan,
     done: Component[],
-    ctx: { parent?: string; switchOn?: boolean },
+    ctx: { parent?: string; switchOn?: boolean; via?: "scope" },
     opts: { actorTokenId?: string },
   ): Promise<void> {
     const { itemId, version } = plan;
@@ -1142,6 +1161,7 @@ export class PluginInstaller {
         version,
         components: done,
         ...(ctx.parent !== undefined && { dependencyOf: ctx.parent }),
+        ...(ctx.via !== undefined && { via: ctx.via }),
       },
     });
   }
@@ -1150,10 +1170,10 @@ export class PluginInstaller {
   @Transactional({ propagation: "requires_new" })
   private async markFailed(
     orgId: string,
-    actor: string,
+    actor: string | null,
     installId: string,
     plan: InstallPlan,
-    ctx: { parent?: string },
+    ctx: { parent?: string; via?: "scope" },
     f: { step: Step; code: string; done: Component[]; rollbackErrors: unknown[] },
     opts: { actorTokenId?: string },
   ): Promise<void> {
@@ -1180,6 +1200,7 @@ export class PluginInstaller {
         rolledBack: done,
         rollbackErrors,
         ...(ctx.parent !== undefined && { dependencyOf: ctx.parent }),
+        ...(ctx.via !== undefined && { via: ctx.via }),
       },
     });
   }
@@ -1232,7 +1253,7 @@ export class PluginInstaller {
    */
   private async rollback(
     orgId: string,
-    actor: string,
+    actor: string | null,
     installId: string,
     done: Component[],
     opts: { actorTokenId?: string },
@@ -1264,7 +1285,7 @@ export class PluginInstaller {
   @Transactional({ propagation: "requires_new" })
   private async rollbackOne(
     orgId: string,
-    actor: string,
+    actor: string | null,
     installId: string,
     c: Component,
     opts: { actorTokenId?: string },
@@ -1309,7 +1330,7 @@ export class PluginInstaller {
   @Transactional({ propagation: "mandatory" })
   async removeComponent(
     orgId: string,
-    actor: string,
+    actor: string | null,
     c: Component,
     reason: string,
   ): Promise<boolean> {
@@ -1368,7 +1389,7 @@ export class PluginInstaller {
    */
   async uninstall(
     orgId: string,
-    actor: string,
+    actor: string | null,
     installId: string,
     opts: { actorTokenId?: string } = {},
     sw?: { expectHash?: string },
@@ -1381,7 +1402,7 @@ export class PluginInstaller {
   @Transactional()
   private async writeUninstall(
     orgId: string,
-    actor: string,
+    actor: string | null,
     installId: string,
     opts: { actorTokenId?: string },
     sw?: { expectHash?: string },
@@ -1475,7 +1496,7 @@ export class PluginInstaller {
   @Transactional({ propagation: "mandatory" })
   async uninstallIn(
     orgId: string,
-    actor: string,
+    actor: string | null,
     installId: string,
     ctx: UninstallCtx,
   ): Promise<"missing" | "kept" | "removed"> {
@@ -1666,7 +1687,7 @@ export class PluginInstaller {
   @Transactional({ propagation: "mandatory" })
   async decideRemovalIn(
     orgId: string,
-    actor: string,
+    actor: string | null,
     c: Component,
     removing: Set<string>,
     agentRefs: { connectors: Set<string>; skills: Set<string>; templates: Set<string> },
@@ -1776,7 +1797,7 @@ export class PluginInstaller {
   @Transactional({ propagation: "mandatory" })
   async undoUpgradeIn(
     orgId: string,
-    actor: string,
+    actor: string | null,
     installId: string,
     steps: readonly UpgradeStep[],
     reason: string,

@@ -1,6 +1,7 @@
 import { Module } from "@nestjs/common";
 import { ExtensionsModule } from "../extensions/extensions.module.js";
 import { EnterpriseAdminLockModule } from "../identity/enterprise-admin.js";
+import { QueueModule } from "../infra/queue/queue.module.js";
 import { OrgLockModule } from "../orgs/org-lock.js";
 import { SkillsModule } from "../skills/skills.module.js";
 import { StorageModule } from "../storage/storage.module.js";
@@ -13,6 +14,7 @@ import { PluginImport } from "./plugin-import.js";
 import { PluginInstaller } from "./plugin-install.js";
 import { PluginUpgrader } from "./plugin-upgrade.js";
 import { CatalogRequestsService } from "./requests.service.js";
+import { PLUGIN_SCOPE_QUEUE, PluginScopeSync } from "./scope-sync.js";
 
 /**
  * The enterprise side of the catalog: marketplaces, the one import review (prepare -> confirm) and
@@ -33,8 +35,9 @@ import { CatalogRequestsService } from "./requests.service.js";
 export class CatalogImportModule {}
 
 /**
- * The plugin catalog (spec §4, §10): {@link CatalogImportModule}, catalog requests, and org installs,
- * upgrades and rollbacks with their dependencies. The catalog's periodic jobs (`CatalogJobs`) are
+ * The plugin catalog (spec §4, §10): {@link CatalogImportModule}, catalog requests, org installs,
+ * upgrades and rollbacks with their dependencies, and the producer of the plugin scope sync
+ * (`PluginScopeSync`; its consumer is the worker role's `PluginScopeWorkersModule`). The catalog's periodic jobs (`CatalogJobs`) are
  * the worker role's (`WorkerModule`).
  */
 @Module({
@@ -46,14 +49,23 @@ export class CatalogImportModule {}
     StorageModule,
     SkillsModule,
     ToolsModule,
+    // the producer side of the plugin scope sync (`PluginScopeWorkersModule` consumes it)
+    QueueModule.registerQueue(PLUGIN_SCOPE_QUEUE),
   ],
-  providers: [CatalogRequestsService, PluginInstaller, PluginUpgrader, OrgCatalogService],
+  providers: [
+    CatalogRequestsService,
+    PluginInstaller,
+    PluginUpgrader,
+    OrgCatalogService,
+    PluginScopeSync,
+  ],
   exports: [
     CatalogImportModule,
     CatalogRequestsService,
     PluginInstaller,
     PluginUpgrader,
     OrgCatalogService,
+    PluginScopeSync,
   ],
 })
 export class CatalogModule {}

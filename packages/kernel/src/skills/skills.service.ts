@@ -106,7 +106,7 @@ export interface SkillSummary {
   name: string;
   description: string;
   currentVersion: number;
-  createdBy: string;
+  createdBy: string | null;
   createdAt: Date;
   updatedAt: Date;
   /** The catalog item name the skill came from; null for the org's own (uploaded or written). */
@@ -130,7 +130,7 @@ export interface SkillVersionView {
   version: number;
   files: SkillManifest["files"];
   description: string;
-  createdBy: string;
+  createdBy: string | null;
   createdAt: Date;
 }
 
@@ -205,7 +205,7 @@ interface SummaryRow {
   name: string;
   description: string;
   current_version: number;
-  created_by: string;
+  created_by: string | null;
   created_at: Date;
   updated_at: Date;
   item_name: string | null;
@@ -484,7 +484,8 @@ export class SkillsService {
    */
   async createVersionFromFiles(
     orgId: string,
-    actorAccountId: string,
+    /** null: the kernel itself (the plugin scope sync installing a plugin), no role check. */
+    actorAccountId: string | null,
     pkg: SkillPackageInput,
     opts: {
       prefix?: string;
@@ -527,13 +528,13 @@ export class SkillsService {
   @Transactional()
   private async createVersionIn(
     orgId: string,
-    actorAccountId: string,
+    actorAccountId: string | null,
     pkg: { name: string; description: string },
     manifest: SkillManifest,
     prefix: string,
     opts: Parameters<SkillsService["createVersionFromFiles"]>[3] & {},
   ): Promise<UploadedSkill> {
-    await this.orgLock.lockAndAuthorize(orgId, actorAccountId, "skills.manage");
+    await this.orgLock.lockFor(orgId, actorAccountId, "skills.manage");
     if (opts.catalog) {
       const c = opts.catalog;
       await assertItemInstallable(this.db.db, orgId, c.itemId, c.approvedBy ?? c.itemId);
@@ -628,7 +629,7 @@ export class SkillsService {
     orgId: string,
     skillId: string,
     version: number,
-    actorAccountId: string,
+    actorAccountId: string | null,
     reason: string,
   ): Promise<boolean> {
     const row = await this.db
@@ -683,7 +684,7 @@ export class SkillsService {
   async softDeleteIn(
     orgId: string,
     skillId: string,
-    actorAccountId: string,
+    actorAccountId: string | null,
     reason: string,
   ): Promise<boolean> {
     const r = await this.db

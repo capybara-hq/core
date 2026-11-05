@@ -652,7 +652,8 @@ export interface SkillsTable {
   name: string;
   description: string;
   current_version: number;
-  created_by: string;
+  /** 0075: null for a skill the kernel created (the plugin scope sync). */
+  created_by: string | null;
   created_at: Ts;
   updated_at: Ts;
   deleted_at: TsNullable;
@@ -670,7 +671,8 @@ export interface SkillVersionsTable {
   version: number;
   manifest: Json<SkillManifest>;
   object_prefix: string;
-  created_by: string;
+  /** 0075: null for a version the kernel created (the plugin scope sync). */
+  created_by: string | null;
   created_at: Ts;
   /**
    * 0037, renamed in 0042: this version's enterprise catalog source (NULL for custom uploads /
