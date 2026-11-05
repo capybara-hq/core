@@ -248,6 +248,29 @@ describe("useConversation and the cache", () => {
     expect(invalidated()).toEqual([]);
   });
 
+  it("a seeded conversation's later reconnect catches up as usual", async () => {
+    stubApi({});
+    const qc = testQueryClient();
+    seedNewConversation(qc, "o1", CONV("c1", { title: null }).conversation as never, {
+      event: userMsg(1, "start"),
+    });
+    const invalidated = sideKeys(qc);
+    mount(qc);
+    const es = FakeEventSource.instances[0] as FakeEventSource;
+    act(() => {
+      es.emit("open");
+      es.emit("event", ev(2, "run_started", {}, null));
+    });
+    expect(invalidated()).toEqual([]);
+    // the connection drops and the browser reconnects: what it missed may include side changes
+    act(() => {
+      es.emit("open");
+      es.emit("event", userMsg(3, "while away"));
+    });
+    const side = CONVERSATION_SIDE_KEYS("o1", "c1").map((k) => JSON.stringify(k));
+    expect(invalidated()).toEqual(side);
+  });
+
   it("a title generated before the stream opened appears without a navigation, in the sidebar too", async () => {
     const calls = stubApi({
       [`GET ${BASE}`]: () => json(200, CONV("c1", { title: "Generated early" })),

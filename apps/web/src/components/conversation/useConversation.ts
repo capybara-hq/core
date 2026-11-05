@@ -175,8 +175,9 @@ export function useConversation(orgId: string, conversationId: string): Conversa
     let failures = 0;
     /** The row was read again once for a title generated before the stream was open. */
     // A conversation seeded from the create answer has no title yet and nothing outside the log
-    // changed since (send spec 2.1): its first open is no catch-up and reads nothing.
-    const seeded = isFreshlySeeded(qc, orgId, conversationId);
+    // changed since (send spec 2.1): its first open is no catch-up and reads nothing. Only the
+    // first: a later reconnect catches up as usual.
+    let seeded = isFreshlySeeded(qc, orgId, conversationId);
     let titleChecked = seeded;
     // Deltas are applied once per animation frame, together (final review I3): a fast stream
     // renders the page per frame, not per token. An event first flushes what is pending, so
@@ -234,6 +235,7 @@ export function useConversation(orgId: string, conversationId: string): Conversa
           failures = 0;
           // The browser's own reconnect: its catch-up follows the same rule.
           catchingUp.current = !seeded;
+          seeded = false;
           // An untitled conversation's title may have been generated before the stream was open
           // (its `changed: title` reached nobody): read the row once. A named one reads nothing.
           const row = qc.getQueryData<Conversation>(c.row());
