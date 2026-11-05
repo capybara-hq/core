@@ -500,7 +500,7 @@ function directoryRequestDetail({
           </Text>
           {subject.id !== null && (
             <Text>
-              <Link href={`/catalog/${subject.id}`}>{td("openItem")}</Link>
+              <Link href={`/plugins/${subject.id}`}>{td("openItem")}</Link>
             </Text>
           )}
         </Stack>

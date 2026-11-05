@@ -43,6 +43,25 @@ const NAV: readonly {
     icon: "agent",
     section: "primary",
   },
+  // Plugins (what the enterprise offers this org): members browse and ask, org admins switch them
+  {
+    id: "plugins",
+    key: "plugins",
+    href: "/plugins",
+    audience: "member",
+    icon: "catalog",
+    section: "more",
+  },
+  // Extensions with their org switch and org config: org admins (the kernel's
+  // org.extensions.manage reads them)
+  {
+    id: "extensions",
+    key: "extensions",
+    href: "/extensions",
+    audience: "admin",
+    icon: "extension",
+    section: "more",
+  },
   // Skills: members browse them, guests don't
   {
     id: "skills",
@@ -58,15 +77,6 @@ const NAV: readonly {
     href: "/connectors",
     audience: "all",
     icon: "connector",
-    section: "more",
-  },
-  // Plugins (the org's catalog view): members browse and request, org admins install
-  {
-    id: "catalog",
-    key: "catalog",
-    href: "/catalog",
-    audience: "member",
-    icon: "catalog",
     section: "more",
   },
   {
@@ -138,7 +148,8 @@ export function activeNavOf(pathname: string): string {
   if (under(pathname, "/channels")) return "channels";
   if (under(pathname, "/evals") || under(pathname, "/trajectories")) return "evals";
   if (under(pathname, "/admin")) return "admin";
-  if (under(pathname, "/catalog")) return "catalog";
+  if (under(pathname, "/plugins")) return "plugins";
+  if (under(pathname, "/extensions")) return "extensions";
   if (under(pathname, "/connectors")) return "connectors";
   return pathname === "/" ? "overview" : "";
 }

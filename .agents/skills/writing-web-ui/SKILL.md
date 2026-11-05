@@ -67,7 +67,8 @@ The sidebar has three contexts (the third, setup, is drawn only by `SetupPage`):
 | Trajectory detail, eval case | `/trajectories/[conversationId]`, `/evals/[setId]/cases/[caseId]` | `TracePage`: `waterfall` holds `SpanWaterfall`, `detail` holds the selected span's detail |
 | Eval set, eval run | `/evals/[setId]`, `/evals/runs/[runId]` | `DetailPage` |
 | Create an eval set / start a run | `/evals/new`, `/evals/[setId]/run` | `FormPage` / `WizardPage` |
-| Org-side catalog, item detail, install | `/catalog`, `/catalog/[itemId]`, `/catalog/[itemId]/install` | `ListPage` / `DetailPage` / `WizardPage` |
+| Workspace 插件 (state, 启用 / 组织配置 / 停用 with the switch-off preview, requests, the 市场 tab for org admins), plugin detail (this org's installs: upgrade, clean-up), the input wizard 启用 opens | `/plugins`, `/plugins/[itemId]`, `/plugins/[itemId]/enable` | `ListPage` / `DetailPage` / `WizardPage` |
+| Workspace 扩展 (each extension's switch, which is its plugin's, permissions, org config; default providers; file previewers) | `/extensions` | `ListPage` |
 
 - Admin console views start with the gate `useAdmin()` (`lib/query/workspace.ts`): for non-enterprise-admins the view returns `<NoAccess need={gate.need} />` (`components/NoAccess`, the `StatusPage` no-access state), and the route table prefetches nothing from `/api/v1/admin/*` for them (a UI-level block; the kernel is the final authority). Org views do the same with `useWorkspace()`. The UI always says "enterprise admin".
 - **`SpanWaterfall`**(spec §6.10)takes only plain props (`spans`, `selectedId`, `onSelect`, `labels`, `label`): each span's `kind` (`run` / `step` / `model` / `tool` / `wait`), `startMs` (relative to the earliest span), `durationMs` (null if unknown), `status`, `parentId`; the caller passes them in depth-first order. The page computes time and cost from the data the kernel returns (latency is derived from event times; cost is labeled "estimated").

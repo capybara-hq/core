@@ -89,13 +89,13 @@ const CORE = {
   orgConfigSchema: null,
 };
 
-beforeEach(() => resetNavigation("/settings/extensions"));
+beforeEach(() => resetNavigation("/extensions"));
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
 });
 
-describe("组织插件（SettingsPage）", () => {
+describe("/extensions (ListPage)", () => {
   it.each(["zh", "en"] as const)(
     "the permission list is read-only, a sensitive group carries the mark; enable PUTs enabled (%s)",
     async (locale) => {
@@ -105,10 +105,10 @@ describe("组织插件（SettingsPage）", () => {
         [`PUT ${BASE}/extensions/fake-im`]: (c) =>
           json(200, { extension: { ...FAKE_IM, ...(bodyOf(c) as object) } }),
       });
-      const { container } = await renderRouteWithCache("/settings/extensions", lastStubRoutes(), {
+      const { container } = await renderRouteWithCache("/extensions", lastStubRoutes(), {
         locale,
       });
-      expect(container.querySelector('[data-template="SettingsPage"]')).not.toBeNull();
+      expect(container.querySelector('[data-template="ListPage"]')).not.toBeNull();
       const perms = await screen.findByRole("region", {
         name: m.permissionsLabel.replace("{plugin}", "fake-im"),
       });
@@ -156,7 +156,7 @@ describe("组织插件（SettingsPage）", () => {
             ],
           }),
       });
-      await renderRouteWithCache("/settings/extensions", lastStubRoutes(), { locale });
+      await renderRouteWithCache("/extensions", lastStubRoutes(), { locale });
       const toggle = await screen.findByRole("switch", {
         name: m.enableLabel.replace("{plugin}", "fake-im"),
       });
@@ -197,19 +197,17 @@ describe("组织插件（SettingsPage）", () => {
             ],
           }),
       });
-      await renderRouteWithCache("/settings/extensions", lastStubRoutes(), { locale });
+      await renderRouteWithCache("/extensions", lastStubRoutes(), { locale });
       const toggle = await screen.findByRole("switch", {
         name: m.enableLabel.replace("{plugin}", "fake-im"),
       });
       expect(
         toggle.hasAttribute("disabled") || toggle.getAttribute("aria-disabled") === "true",
       ).toBe(true);
-      // Plain metadata: muted text, no badge.
-      const req = screen.getByText(m.required);
-      expect(req.closest(".cb-badge")).toBeNull();
-      expect(req.getAttribute("data-tone")).toBe("muted");
-      expect(screen.getByText(m.requiredHint)).toBeTruthy();
-      expect(screen.getByText(m.enabled)).toBeTruthy();
+      // On in every org: 已启用 · 企业统一 with the hint, no badge
+      const state = screen.getByText(msgs[locale].plugins.state.enterprise);
+      expect(state.closest(".cb-badge")).toBeNull();
+      expect(screen.getByText(m.enterpriseHint)).toBeTruthy();
       await userEvent.setup().click(toggle);
       expect(calls.some((c) => c.method === "PUT")).toBe(false);
     },
@@ -227,7 +225,7 @@ describe("组织插件（SettingsPage）", () => {
           },
         }),
     });
-    await renderRouteWithCache("/settings/extensions", lastStubRoutes());
+    await renderRouteWithCache("/extensions", lastStubRoutes());
     await userEvent.setup().click(await screen.findByRole("switch", { name: "Enable fake-im" }));
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toContain(en.extensions.dependencyMissing);
@@ -251,7 +249,7 @@ describe("组织插件（SettingsPage）", () => {
               },
             }),
     });
-    await renderRouteWithCache("/settings/extensions", lastStubRoutes(), { locale: "zh" });
+    await renderRouteWithCache("/extensions", lastStubRoutes(), { locale: "zh" });
     const user = userEvent.setup();
     await user.click(await screen.findByRole("switch", { name: "启用 core-dir" }));
     const alert = await screen.findByRole("alert");
@@ -273,7 +271,7 @@ describe("组织插件（SettingsPage）", () => {
       [`PUT ${BASE}/extensions/fake-im`]: () =>
         json(200, { extension: { ...FAKE_IM, config: { url: "http://dir.test" } } }),
     });
-    await renderRouteWithCache("/settings/extensions", lastStubRoutes());
+    await renderRouteWithCache("/extensions", lastStubRoutes());
     const user = userEvent.setup();
     const save = await screen.findByRole("button", { name: "Save config of fake-im" });
     expect(save).toHaveProperty("disabled", true);
@@ -291,7 +289,7 @@ describe("组织插件（SettingsPage）", () => {
       [`GET ${BASE}/extensions`]: () => json(200, { extensions: [{ ...FAKE_IM, enabled: true }] }),
       [`POST ${BASE}/extensions/fake-im/directory/sync`]: () => json(202, { jobId: "j1" }),
     });
-    await renderRouteWithCache("/settings/extensions", lastStubRoutes());
+    await renderRouteWithCache("/extensions", lastStubRoutes());
     await userEvent
       .setup()
       .click(await screen.findByRole("button", { name: "Sync directory of fake-im now" }));
@@ -299,11 +297,11 @@ describe("组织插件（SettingsPage）", () => {
     expect(calls.some((c) => c.method === "POST")).toBe(true);
   });
 
-  it("二级导航：管理员才有「插件」", async () => {
+  it("the org settings nav has no 扩展 (it is the workspace page)", async () => {
     api({ [`GET ${BASE}/settings`]: () => json(200, { settings: { toolSearch: "on" } }) });
     await renderRouteWithCache("/settings/organization", lastStubRoutes(), { me: MEMBER });
     await screen.findByText(en.orgSettings.readonly);
-    expect(screen.queryByRole("link", { name: en.connections.nav.extensions })).toBeNull();
+    expect(screen.queryByRole("link", { name: en.extensions.title })).toBeNull();
     expect(screen.getByRole("link", { name: en.connections.nav.sandbox })).toBeTruthy();
   });
 });

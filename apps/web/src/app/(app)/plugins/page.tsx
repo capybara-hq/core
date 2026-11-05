@@ -1,10 +1,11 @@
-import CatalogView from "./view";
+import PluginsView from "./view";
 
 /**
- * `/catalog` (members up; a setup step, web-order spec §3.8): the org's catalog. It reads nothing:
- * the layout prefetches the catalog on a first load (`lib/query/routes.ts`), and the view reads it
- * from the cache.
+ * `/plugins` (members up; a setup step, web-order spec §3.8): the org's 插件 page. It reads
+ * nothing: the layout prefetches the catalog (and for org admins the extensions and the
+ * marketplace entries) on a first load (`lib/query/routes.ts`), and the view reads them from the
+ * cache.
  */
-export default function CatalogPage() {
-  return <CatalogView />;
+export default function PluginsPage() {
+  return <PluginsView />;
 }

@@ -593,11 +593,11 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
     const menu = await openMore(nav);
     const items = within(menu).getAllByRole("menuitem");
     expect(items.map((l) => [l.textContent, l.getAttribute("href")])).toEqual([
-      // 更多
+      // 更多: plugins (members and up), extensions (org admins)
+      [zh.nav.plugins, "/plugins"],
+      [zh.nav.extensions, "/extensions"],
       [zh.nav.skills, "/skills"],
       [zh.nav.connectors, "/connectors"],
-      // plugins: members and up
-      [zh.nav.catalog, "/catalog"],
       // org admins (owner) see channels, evals and organization settings
       [zh.nav.channels, "/channels"],
       [zh.nav.evals, "/evals"],
@@ -850,13 +850,7 @@ describe("activeNavOf", () => {
     expect(activeNavOf("/connectors")).toBe("connectors");
     expect(activeNavOf("/connectors/x")).toBe("connectors");
     expect(activeNavOf("/connectors/install")).toBe("connectors");
-    for (const p of [
-      "/settings",
-      "/settings/organization",
-      "/settings/sandbox",
-      "/settings/extensions",
-      "/settings/plugins",
-    ]) {
+    for (const p of ["/settings", "/settings/organization", "/settings/sandbox"]) {
       expect(activeNavOf(p)).toBe("settings");
     }
     expect(activeNavOf("/settingsx")).toBe("");
@@ -867,7 +861,8 @@ describe("activeNavOf", () => {
     expect(activeNavOf("/chat/c1")).toBe("");
     expect(activeNavOf("/skills")).toBe("skills");
     expect(activeNavOf("/skills/s1")).toBe("skills");
-    expect(activeNavOf("/catalog")).toBe("catalog");
-    expect(activeNavOf("/catalog/x/install")).toBe("catalog");
+    expect(activeNavOf("/plugins")).toBe("plugins");
+    expect(activeNavOf("/plugins/x/enable")).toBe("plugins");
+    expect(activeNavOf("/extensions")).toBe("extensions");
   });
 });

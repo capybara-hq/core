@@ -39,6 +39,25 @@ const ADMIN_DEFAULTS: Routes = {
   "GET /api/v1/admin/catalog/items": () => json(200, { items: [], nextOffset: null }),
   "GET /api/v1/admin/catalog/items?pending=true": () => json(200, { items: [], nextOffset: null }),
   "GET /api/v1/admin/catalog/requests": () => json(200, { requests: [] }),
+  // The org 插件 pages: the org's extensions (org admins; their config) and the marketplace
+  // entries (org admins; the 市场 tab)
+  "GET /api/v1/orgs/o1/extensions": () => json(200, { extensions: [] }),
+  "GET /api/v1/orgs/o1/marketplaces/entries": () => json(200, { items: [] }),
+  "GET /api/v1/orgs/o1/plugin-installs": () => json(200, { installs: [] }),
+  // The plugin `INSTALL` is an install of (its detail page shows the installs)
+  "GET /api/v1/orgs/o1/catalog/11111111-1111-4111-8111-111111111111": () =>
+    json(200, {
+      item: orgItem({
+        name: "crm",
+        state: "on",
+        installed: { pluginInstallId: "i1", version: "1.0.0", upgradeAvailable: null },
+      }),
+      hasIcon: false,
+      extension: null,
+      templates: [],
+      dependencies: [],
+      skills: [],
+    }),
 };
 const stubApi = (routes: Routes) =>
   stubApiOnly({
@@ -65,19 +84,26 @@ vi.mock("next/navigation", () => ({
 }));
 
 type RenderOpts = Parameters<typeof renderRouteWithCache>[2];
-/** `/catalog` as a first load: the layout prefetches from the latest `stubApi` routes. */
-const renderCatalog = (opts: RenderOpts = {}) =>
-  renderRouteWithCache("/catalog", lastStubRoutes(), opts);
-/** `/catalog/<id>` as a first load: the layout prefetches from the latest `stubApi` routes. */
+/** `/plugins` as a first load: the layout prefetches from the latest `stubApi` routes. */
+const renderPlugins = (opts: RenderOpts = {}) =>
+  renderRouteWithCache("/plugins", lastStubRoutes(), opts);
+/** `/plugins/<id>` as a first load: the layout prefetches from the latest `stubApi` routes. */
 const renderItem = (opts: RenderOpts = {}) =>
-  renderRouteWithCache(`/catalog/${params.current.itemId ?? ""}`, lastStubRoutes(), opts);
-/** `/catalog/<id>/install` as a first load: the layout prefetches from the latest `stubApi` routes. */
+  renderRouteWithCache(`/plugins/${params.current.itemId ?? ""}`, lastStubRoutes(), opts);
+/** `/plugins/<ID>` as a first load, where this org's installs of the plugin are shown. */
+const renderInstalls = (opts: RenderOpts = {}) => {
+  params.current = { itemId: ID };
+  return renderItem(opts);
+};
+/** `/plugins/<id>/enable` as a first load: the layout prefetches from the latest `stubApi` routes. */
 const renderInstall = (opts: RenderOpts = {}) =>
-  renderRouteWithCache(`/catalog/${params.current.itemId ?? ""}/install`, lastStubRoutes(), opts);
+  renderRouteWithCache(`/plugins/${params.current.itemId ?? ""}/enable`, lastStubRoutes(), opts);
 
 const msgs = { zh, en } as const;
 /** The design ErrorDetail's toggle (design i18n `errorDetail.raw`). */
 const RAW_ERROR = { zh: "原始错误", en: "Raw error" } as const;
+/** The design ObjectRow's menu trigger (design i18n `shell.moreActions`). */
+const RAW_MORE = { zh: "更多操作", en: "More actions" } as const;
 const LOCALES = ["zh", "en"] as const;
 const fill = (s: string, vars: Record<string, string | number>) =>
   s.replace(/\{(\w+)\}/g, (_, k: string) => String(vars[k]));
@@ -121,9 +147,21 @@ function orgItem(over: Record<string, unknown> = {}) {
     notDeployed: false,
     installed: null,
     request: null,
+    componentCounts: { extension: 0, skills: 1, connectorTemplates: 0, agentTemplates: 0 },
+    sourceFormat: "capybara",
     ...over,
   };
 }
+
+/** The input the wizard sent with the switch (`PUT …/switch { enabled: true, inputs }`). */
+const switchInputs = (calls: { method: string; body: unknown }[]) => {
+  const b = bodyOf(calls.find((c) => c.method === "PUT") as Parameters<typeof bodyOf>[0]) as {
+    enabled: boolean;
+    inputs: unknown;
+  };
+  expect(b.enabled).toBe(true);
+  return b.inputs;
+};
 
 /** Lets pending reads and effects run (a read after mount would show up in the calls). */
 const settle = () => act(() => new Promise((r) => setTimeout(r, 20)));
@@ -151,91 +189,327 @@ async function renderHeld(path: string, routes: Routes, held: string) {
 
 const escapeRe = (x: string) => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-describe("/catalog: actions follow the plugin state", () => {
-  it.each(LOCALES)(
-    "org admins: the row action and state follow the plugin state (%s)",
-    async (locale) => {
-      const a = msgs[locale].catalog.org.action;
-      const st = msgs[locale].catalog.org.status;
-      const items = [
-        orgItem({ id: "a", name: "yes-skill" }),
-        orgItem({ id: "b", name: "approval", state: "not_offered" }),
-        orgItem({ id: "c", name: "granted-tpl", state: "off" }),
-        orgItem({ id: "d", name: "off", state: "unavailable" }),
-        orgItem({ id: "e", name: "missing", notDeployed: true }),
-        orgItem({
-          id: "f",
-          name: "done",
-          installed: { pluginInstallId: "i1", version: "1.0.0", upgradeAvailable: null },
-        }),
-        orgItem({
-          id: "g",
-          name: "asked",
-          state: "not_offered",
-          request: { id: "r1", kind: "access", createdAt: "2026-10-22T00:00:00.000Z" },
-        }),
-        orgItem({
-          id: "h",
-          name: "old",
-          installed: { pluginInstallId: "i2", version: "1.0.0", upgradeAvailable: "1.1.0" },
-        }),
-      ];
-      stubApi({ [`GET ${ORG}/catalog`]: () => json(200, { items }) });
-      await renderCatalog({ locale });
-      expect(template("ListPage")).not.toBeNull();
-      const list = await screen.findByRole("list", { name: msgs[locale].catalog.org.title });
-      const row = (name: string) =>
-        within(list)
-          .getAllByRole("listitem")
-          .find((r) => within(r).queryByRole("link", { name }) !== null) as HTMLElement;
-      const action = (name: string, label: string) =>
-        within(row(name)).getByRole("link", { name: label }).getAttribute("href");
-      // Installing goes through the wizard; requests and upgrades open the detail page.
-      expect(action("yes-skill", a.install)).toBe("/catalog/a/install");
-      expect(action("granted-tpl", a.install)).toBe("/catalog/c/install");
-      expect(action("approval", a.requestApproval)).toBe("/catalog/b");
-      expect(action("old", a.upgrade)).toBe("/catalog/h");
-      for (const name of ["off", "missing", "done", "asked"]) {
-        // Only the name link: no action button or link.
-        expect(within(row(name)).getAllByRole("link")).toHaveLength(1);
-      }
-      expect(within(row("off")).getByText(st.disabled)).toBeTruthy();
-      expect(within(row("missing")).getByText(st.not_deployed)).toBeTruthy();
-      expect(within(row("done")).getByText(fill(st.installed, { version: "v1.0.0" }))).toBeTruthy();
-      expect(within(row("asked")).getByText(st.requested)).toBeTruthy();
-    },
-  );
+/** A row of the org 插件 list, found by its name link. */
+const rowOf = (list: HTMLElement, name: string) =>
+  within(list)
+    .getAllByRole("listitem")
+    .find((r) => within(r).queryByRole("link", { name }) !== null) as HTMLElement;
+/** The row's buttons and links other than its name and its menu trigger. */
+const actionsOf = (row: HTMLElement, name: string) =>
+  [...within(row).queryAllByRole("button"), ...within(row).queryAllByRole("link")]
+    .filter((e) => !e.hasAttribute("aria-haspopup"))
+    .map((e) => e.textContent ?? "")
+    .filter((label) => label !== name);
+const PREVIEW = {
+  installId: "i1",
+  name: "crm",
+  version: "1.0.0",
+  components: [{ kind: "skill", ref: "notes", created: true }],
+  kept: [{ kind: "extension", ref: "crm", reason: "pre_existing" }],
+  agents: [{ id: "a1", name: "Sales bot", uses: [{ kind: "skill", ref: "notes" }] }],
+};
 
-  it("tabs only when installed holds something different from all", async () => {
-    stubApi({
+describe("/plugins: states and actions follow the scope and the switch", () => {
+  it.each(LOCALES)("org admins: each state and its action (%s)", async (locale) => {
+    const p = msgs[locale].plugins;
+    const items = [
+      orgItem({ id: "a", name: "off" }),
+      orgItem({
+        id: "b",
+        name: "builtin",
+        builtin: true,
+        scope: "all",
+        state: "on",
+        switchable: false,
+      }),
+      orgItem({ id: "c", name: "everyone", scope: "all", state: "on", switchable: false }),
+      orgItem({
+        id: "d",
+        name: "on",
+        state: "on",
+        installed: { pluginInstallId: "i1", version: "1.0.0", upgradeAvailable: null },
+      }),
+      orgItem({
+        id: "e",
+        name: "offered",
+        scope: "named",
+        state: "not_offered",
+        switchable: false,
+      }),
+      orgItem({
+        id: "f",
+        name: "asked",
+        scope: "named",
+        state: "not_offered",
+        switchable: false,
+        request: { id: "r1", kind: "access", createdAt: "2026-10-22T00:00:00.000Z" },
+      }),
+      orgItem({
+        id: "g",
+        name: "needs",
+        state: "needs_config",
+        componentCounts: { extension: 0, skills: 0, connectorTemplates: 1, agentTemplates: 0 },
+      }),
+    ];
+    stubApi({ [`GET ${ORG}/catalog`]: () => json(200, { items }) });
+    await renderPlugins({ locale });
+    expect(template("ListPage")).not.toBeNull();
+    const list = await screen.findByRole("list", { name: p.title });
+    const row = (name: string) => rowOf(list, name);
+    expect(within(row("off")).getByText(p.state.off)).toBeTruthy();
+    expect(actionsOf(row("off"), "off")).toEqual([p.action.enable]);
+    // An `all` or builtin plugin: on for every org, no switch
+    for (const name of ["builtin", "everyone"]) {
+      expect(within(row(name)).getByText(p.state.enterprise)).toBeTruthy();
+      expect(actionsOf(row(name), name)).toEqual([]);
+    }
+    expect(within(row("builtin")).getByText(msgs[locale].catalog.admin.chips.builtin)).toBeTruthy();
+    expect(within(row("on")).getByText(p.state.on)).toBeTruthy();
+    // 停用 sits in the row's menu (a destructive action)
+    expect(actionsOf(row("on"), "on")).toEqual([]);
+    expect(within(row("on")).getByRole("button", { name: RAW_MORE[locale] })).toBeTruthy();
+    expect(within(row("offered")).getByText(p.state.not_offered)).toBeTruthy();
+    expect(actionsOf(row("offered"), "offered")).toEqual([p.action.request]);
+    expect(within(row("asked")).getByText(p.state.requested)).toBeTruthy();
+    expect(actionsOf(row("asked"), "asked")).toEqual([]);
+    expect(within(row("needs")).getByText(p.state.needs_config)).toBeTruthy();
+    // A plugin with connector templates asks for their input first
+    expect(
+      within(row("needs")).getByRole("link", { name: p.action.enable }).getAttribute("href"),
+    ).toBe("/plugins/g/enable");
+  });
+
+  it("启用 an optional plugin without input sends the switch { enabled: true }", async () => {
+    const p = zh.plugins;
+    let on = false;
+    const calls = stubApi({
+      [`GET ${ORG}/catalog`]: () =>
+        json(200, { items: [orgItem({ state: on ? "on" : "off", name: "notes" })] }),
+      [`PUT ${ORG}/catalog/${ID}/switch`]: () => {
+        on = true;
+        return json(200, { item: orgItem({ state: "on", name: "notes" }) });
+      },
+    });
+    await renderPlugins({ locale: "zh" });
+    const list = await screen.findByRole("list", { name: p.title });
+    await userEvent
+      .setup()
+      .click(within(rowOf(list, "notes")).getByRole("button", { name: p.action.enable }));
+    await waitFor(() =>
+      expect(bodyOf(calls.find((c) => c.method === "PUT"))).toEqual({ enabled: true }),
+    );
+    expect(await within(rowOf(list, "notes")).findByText(p.state.on)).toBeTruthy();
+  });
+
+  it("停用 shows what the switch-off takes away, the agents included, then confirms with its hash", async () => {
+    const p = en.plugins;
+    const calls = stubApi({
       [`GET ${ORG}/catalog`]: () =>
         json(200, {
           items: [
-            orgItem({ id: "a", name: "yes-skill" }),
             orgItem({
-              id: "f",
-              name: "done",
+              name: "crm",
+              state: "on",
               installed: { pluginInstallId: "i1", version: "1.0.0", upgradeAvailable: null },
             }),
           ],
         }),
+      [`PUT ${ORG}/catalog/${ID}/switch`]: (c) =>
+        (bodyOf(c) as { confirm?: string }).confirm === undefined
+          ? json(200, { preview: PREVIEW, confirm: "h1" })
+          : json(200, { item: orgItem({ name: "crm", state: "off" }) }),
     });
-    await renderCatalog();
+    await renderPlugins();
+    const list = await screen.findByRole("list", { name: p.title });
     const user = userEvent.setup();
-    await user.click(await screen.findByRole("tab", { name: /Installed/ }));
-    expect(screen.queryByText("yes-skill")).toBeNull();
-    expect(screen.getByText("done")).toBeTruthy();
-    expect(screen.getByRole("tab", { name: /All/ }).textContent).toContain("2");
+    await user.click(within(rowOf(list, "crm")).getByRole("button", { name: "More actions" }));
+    await user.click(await screen.findByRole("menuitem", { name: p.action.disable }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText(/Sales bot/)).toBeTruthy();
+    expect(
+      within(dialog).getByText(`− ${en.catalog.plugins.componentKind.skill} notes`),
+    ).toBeTruthy();
+    expect(calls.filter((c) => c.method === "PUT")).toHaveLength(1);
+    await user.click(within(dialog).getByRole("button", { name: p.switchOff.confirm }));
+    await waitFor(() =>
+      expect(bodyOf(calls.filter((c) => c.method === "PUT")[1])).toEqual({
+        enabled: false,
+        confirm: "h1",
+      }),
+    );
+    expect(bodyOf(calls.filter((c) => c.method === "PUT")[0])).toEqual({ enabled: false });
   });
 
-  it("members: an installable item offers a request that opens the detail page", async () => {
-    const a = en.catalog.org.action;
-    stubApi({ [`GET ${ORG}/catalog`]: () => json(200, { items: [orgItem()] }) });
-    await renderCatalog({ me: MEMBER });
-    const link = await screen.findByRole("link", { name: a.request });
-    expect(link.getAttribute("href")).toBe(`/catalog/${ID}`);
-    expect(screen.queryByRole("link", { name: a.install })).toBeNull();
+  it("members see the rows without switch actions; 申请启用 only on an optional plugin that is off", async () => {
+    const p = en.plugins;
+    const calls = stubApi({
+      [`GET ${ORG}/catalog`]: () =>
+        json(200, {
+          items: [
+            orgItem({ id: "a", name: "off", switchable: false }),
+            orgItem({ id: "b", name: "builtin", builtin: true, scope: "all", state: "on" }),
+            orgItem({ id: "c", name: "on", state: "on" }),
+            orgItem({ id: "d", name: "offered", scope: "named", state: "not_offered" }),
+          ],
+        }),
+      [`POST ${ORG}/catalog/a/requests`]: () => json(201, { request: { id: "r1" } }),
+    });
+    await renderPlugins({ me: MEMBER });
+    const list = await screen.findByRole("list", { name: p.title });
+    for (const name of ["builtin", "on", "offered"]) {
+      expect(actionsOf(rowOf(list, name), name)).toEqual([]);
+    }
+    expect(actionsOf(rowOf(list, "off"), "off")).toEqual([p.action.requestEnable]);
+    await userEvent
+      .setup()
+      .click(within(rowOf(list, "off")).getByRole("button", { name: p.action.requestEnable }));
+    await waitFor(() =>
+      expect(bodyOf(calls.find((c) => c.method === "POST"))).toEqual({ kind: "enable" }),
+    );
   });
+
+  it("org admins: 申请 asks for a plugin that is not offered (access)", async () => {
+    const p = en.plugins;
+    const calls = stubApi({
+      [`GET ${ORG}/catalog`]: () =>
+        json(200, {
+          items: [orgItem({ name: "offered", scope: "named", state: "not_offered" })],
+        }),
+      [`POST ${ORG}/catalog/${ID}/requests`]: () => json(201, { request: { id: "r1" } }),
+    });
+    await renderPlugins();
+    const list = await screen.findByRole("list", { name: p.title });
+    await userEvent
+      .setup()
+      .click(within(rowOf(list, "offered")).getByRole("button", { name: p.action.request }));
+    await waitFor(() =>
+      expect(bodyOf(calls.find((c) => c.method === "POST"))).toEqual({ kind: "access" }),
+    );
+  });
+
+  it("org admins: the 市场 tab lists the entries with 申请引入; it is hidden when browsing is off", async () => {
+    const p = en.plugins;
+    const entry = {
+      sourceId: "official",
+      sourceName: "Official",
+      name: "jina",
+      version: "1.2.0",
+      summary: { en: "Web tools" },
+      minKernel: null,
+      homepage: null,
+      permissions: null,
+      source: { npm: { package: "@x/jina", version: "1.2.0", integrity: "sha512-x" } },
+      compatible: true,
+      importable: true,
+      adopted: null,
+      newerAvailable: false,
+      contentChanged: false,
+    };
+    const calls = stubApi({
+      [`GET ${ORG}/catalog`]: () => json(200, { items: [orgItem()] }),
+      [`GET ${ORG}/marketplaces/entries`]: () => json(200, { items: [entry] }),
+      [`POST ${ORG}/marketplace-requests`]: () => json(201, { request: { id: "r1" } }),
+    });
+    await renderPlugins();
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("tab", { name: new RegExp(p.tabs.market) }));
+    const list = await screen.findByRole("list", { name: p.market.title });
+    await user.click(within(list).getByRole("button", { name: p.action.requestImport }));
+    await waitFor(() =>
+      expect(bodyOf(calls.find((c) => c.method === "POST"))).toEqual({
+        marketplaceId: "official",
+        name: "jina",
+        version: "1.2.0",
+      }),
+    );
+    expect(await within(list).findByText(p.state.requested)).toBeTruthy();
+    cleanup();
+    vi.unstubAllGlobals();
+    // orgMarketplaceBrowse off: the entries route is a 404 and there is no 市场 tab
+    stubApi({
+      [`GET ${ORG}/catalog`]: () => json(200, { items: [orgItem()] }),
+      [`GET ${ORG}/marketplaces/entries`]: () =>
+        json(404, { error: { code: "not_found", message: "x" } }),
+    });
+    await renderPlugins();
+    await screen.findByRole("list", { name: p.title });
+    await settle();
+    expect(screen.queryByRole("tab", { name: new RegExp(p.tabs.market) })).toBeNull();
+  });
+
+  it("members get no 市场 tab and read no entries", async () => {
+    const calls = stubApi({ [`GET ${ORG}/catalog`]: () => json(200, { items: [orgItem()] }) });
+    await renderPlugins({ me: MEMBER });
+    await screen.findByRole("list", { name: en.plugins.title });
+    await settle();
+    expect(screen.queryByRole("tab")).toBeNull();
+    expect(calls.some((c) => c.url.includes("marketplaces"))).toBe(false);
+  });
+});
+
+describe("/extensions: the switch follows the plugin", () => {
+  const EXT = {
+    plugin: "crm",
+    displayName: null,
+    version: "1.0.0",
+    enabled: true,
+    configurable: false,
+    config: null,
+    secrets: [],
+    permissions: [],
+    orgConfigSchema: null,
+    catalogItem: { itemId: ID, scope: "optional" },
+    switchable: true,
+  };
+
+  it("switching an extension off shows the plugin's switch-off preview, then confirms with its hash", async () => {
+    const p = en.plugins;
+    const calls = stubApi({
+      [`GET ${ORG}/extensions`]: () => json(200, { extensions: [EXT] }),
+      [`PUT ${ORG}/extensions/crm`]: (c) =>
+        (bodyOf(c) as { confirm?: string }).confirm === undefined
+          ? json(200, { preview: PREVIEW, confirm: "h1" })
+          : json(200, { extension: { ...EXT, enabled: false } }),
+      [`GET ${ORG}/extension-points`]: () => json(200, { points: [] }),
+      [`GET ${ORG}/file-previewers`]: () => json(200, { items: [] }),
+    });
+    await renderRouteWithCache("/extensions", lastStubRoutes());
+    expect(template("ListPage")).not.toBeNull();
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("switch", { name: "Enable crm" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText(/Sales bot/)).toBeTruthy();
+    expect(calls.filter((c) => c.method === "PUT")).toHaveLength(1);
+    await user.click(within(dialog).getByRole("button", { name: p.switchOff.confirm }));
+    await waitFor(() =>
+      expect(bodyOf(calls.filter((c) => c.method === "PUT")[1])).toEqual({
+        enabled: false,
+        confirm: "h1",
+      }),
+    );
+  });
+
+  it.each(LOCALES)(
+    "an extension of an `all` plugin reads 已启用 · 企业统一 and its switch is read-only (%s)",
+    async (locale) => {
+      const calls = stubApi({
+        [`GET ${ORG}/extensions`]: () =>
+          json(200, {
+            extensions: [{ ...EXT, catalogItem: { itemId: ID, scope: "all" }, switchable: false }],
+          }),
+        [`GET ${ORG}/extension-points`]: () => json(200, { points: [] }),
+        [`GET ${ORG}/file-previewers`]: () => json(200, { items: [] }),
+      });
+      await renderRouteWithCache("/extensions", lastStubRoutes(), { locale });
+      expect(await screen.findByText(msgs[locale].plugins.state.enterprise)).toBeTruthy();
+      const toggle = screen.getByRole("switch");
+      expect(
+        toggle.hasAttribute("disabled") || toggle.getAttribute("aria-disabled") === "true",
+      ).toBe(true);
+      await userEvent.setup().click(toggle);
+      expect(calls.some((c) => c.method === "PUT")).toBe(false);
+    },
+  );
 });
 
 const extension = (over: Record<string, unknown> = {}) => ({
@@ -535,7 +809,7 @@ describe("/admin/plugins/import (WizardPage)", () => {
   });
 });
 
-describe("/catalog/[itemId]/install (WizardPage)", () => {
+describe("/plugins/[itemId]/enable (WizardPage)", () => {
   it("read-only endpoint fields stay read-only, editable ones change; the body has only the changed editable fields and credentials; a dependency failure names it and says it was rolled back", async () => {
     params.current = { itemId: ID };
     const t = en.catalog.org.install;
@@ -562,7 +836,7 @@ describe("/catalog/[itemId]/install (WizardPage)", () => {
     const calls = stubApi({
       [`GET ${ORG}/catalog/${ID}`]: () => json(200, detail),
       [`GET ${ORG}/extensions`]: () => json(200, { extensions: [] }),
-      [`POST ${ORG}/catalog/${ID}/install`]: () =>
+      [`PUT ${ORG}/catalog/${ID}/switch`]: () =>
         json(502, {
           error: {
             code: "plugin.install_failed",
@@ -597,7 +871,7 @@ describe("/catalog/[itemId]/install (WizardPage)", () => {
         `${fill(t.failed, { step: t.step.skills, code: "internal" })} ${fill(t.failedIn, { dependency: "crm-core" })}`,
       ),
     ).toBeTruthy();
-    expect(bodyOf(calls.find((c) => c.method === "POST"))).toEqual({
+    expect(switchInputs(calls)).toEqual({
       version: "1.0.0",
       connectors: {
         gh: {
@@ -637,11 +911,8 @@ describe("/catalog/[itemId]/install (WizardPage)", () => {
             skills: [],
           }),
         [`GET ${ORG}/extensions`]: () => json(200, { extensions: [] }),
-        [`POST ${ORG}/catalog/${ID}/install`]: () =>
-          json(201, {
-            installed: { itemId: ID, version: "1.0.0", pluginInstallId: "i1" },
-            install: { id: "i1" },
-          }),
+        [`PUT ${ORG}/catalog/${ID}/switch`]: () =>
+          json(200, { item: orgItem({ name: "docs", state: "on" }) }),
       });
       await renderInstall({ locale });
       expect(await screen.findByText(t.personalHint)).toBeTruthy();
@@ -652,8 +923,8 @@ describe("/catalog/[itemId]/install (WizardPage)", () => {
       expect(next.disabled).toBe(false);
       await user.click(next);
       await user.click(screen.getByRole("button", { name: t.submit }));
-      await waitFor(() => expect(router.push).toHaveBeenCalledWith("/settings/plugins"));
-      expect(bodyOf(calls.find((c) => c.method === "POST"))).toEqual({
+      await waitFor(() => expect(router.push).toHaveBeenCalledWith(`/plugins/${ID}`));
+      expect(switchInputs(calls)).toEqual({
         version: "1.0.0",
         connectors: { docs: { slug: "docs", credential: { token: "mine" } } },
       });
@@ -676,7 +947,7 @@ describe("/catalog/[itemId]/install (WizardPage)", () => {
           skills: ["skills/notes"],
         }),
       [`GET ${ORG}/extensions`]: () => json(200, { extensions: [] }),
-      [`POST ${ORG}/catalog/${ID}/install`]: () =>
+      [`PUT ${ORG}/catalog/${ID}/switch`]: () =>
         json(409, {
           error: {
             code: "catalog.dependency_unresolved",
@@ -730,14 +1001,11 @@ describe("/catalog/[itemId]/install (WizardPage)", () => {
             },
           ],
         }),
-      [`POST ${ORG}/catalog/${ID}/install`]: () =>
-        json(201, {
-          installed: { itemId: ID, version: "1.0.0", pluginInstallId: "i1" },
-          install: { id: "i1" },
-        }),
+      [`PUT ${ORG}/catalog/${ID}/switch`]: () =>
+        json(200, { item: orgItem({ name: "crm", state: "on" }) }),
     });
     const { client } = await renderInstall();
-    // the list is cached (as after a visit to /catalog)
+    // the list is cached (as after a visit to /plugins)
     client.setQueryData(["org", "o1", "catalog"], { items: [] });
     const user = userEvent.setup();
     await user.type(await screen.findByLabelText("Region", { exact: false }), "eu");
@@ -745,7 +1013,7 @@ describe("/catalog/[itemId]/install (WizardPage)", () => {
     expect(screen.getByText("CRM Suite")).toBeTruthy();
     await user.click(screen.getByRole("button", { name: t.next }));
     await user.click(screen.getByRole("button", { name: t.submit }));
-    await waitFor(() => expect(router.push).toHaveBeenCalledWith("/settings/plugins"));
+    await waitFor(() => expect(router.push).toHaveBeenCalledWith(`/plugins/${ID}`));
     // the install invalidates pluginChangeKeys: the cached catalog is marked stale, the shown
     // item, the org's extensions and its readiness are read again
     expect(client.getQueryState(["org", "o1", "catalog"])?.isInvalidated).toBe(true);
@@ -754,7 +1022,7 @@ describe("/catalog/[itemId]/install (WizardPage)", () => {
         new Set([`${ORG}/catalog/${ID}`, `${ORG}/extensions`, `${ORG}/readiness`]),
       ),
     );
-    expect(bodyOf(calls.find((c) => c.method === "POST"))).toEqual({
+    expect(switchInputs(calls)).toEqual({
       version: "1.0.0",
       extensionConfig: { region: "eu" },
     });
@@ -780,18 +1048,24 @@ const INSTALL = {
   deploymentPending: false,
 };
 /** A dependency install `INSTALL` brought in (its `plugin` component). */
-const DEP_INSTALL = { ...INSTALL, id: "i2", name: "crm-core", components: [] };
+const DEP_INSTALL = {
+  ...INSTALL,
+  id: "i2",
+  itemId: "22222222-2222-4222-8222-222222222222",
+  name: "crm-core",
+  components: [],
+};
 
-describe("/settings/plugins: installed plugins and uninstall", () => {
+describe("/plugins/[itemId]: this org's installs (org admins)", () => {
   it.each(LOCALES)(
-    "dependency installs by plugin name; the uninstall report lists removed and kept components with reasons (%s)",
+    "components with dependency installs by plugin name; cleaning up a failed install reports what was removed and kept, with reasons (%s)",
     async (locale) => {
       const a = msgs[locale].catalog.plugins;
       let gone = false;
       const calls = stubApi({
         [`GET ${ORG}/readiness`]: () => json(200, { modelProvider: "ready", agents: 1 }),
         [`GET ${ORG}/plugin-installs`]: () =>
-          json(200, { installs: gone ? [] : [INSTALL, DEP_INSTALL] }),
+          json(200, { installs: gone ? [] : [{ ...INSTALL, status: "failed" }, DEP_INSTALL] }),
         [`DELETE ${ORG}/plugin-installs/i1`]: () => {
           gone = true;
           return json(200, {
@@ -806,16 +1080,15 @@ describe("/settings/plugins: installed plugins and uninstall", () => {
           });
         },
       });
-      await renderRouteWithCache("/settings/plugins", lastStubRoutes(), { locale });
-      expect(template("SettingsPage")).not.toBeNull();
+      await renderInstalls({ locale });
+      expect(template("DetailPage")).not.toBeNull();
       expect(
         await screen.findByText(`· ${a.componentKind.plugin} crm-core — ${a.created}`),
       ).toBeTruthy();
-      expect(screen.getByText(fill(a.dependencyOf, { names: "crm" }))).toBeTruthy();
+      // only this plugin's install: the dependency's install is on its own page
+      expect(screen.queryByText(fill(a.dependencyOf, { names: "crm" }))).toBeNull();
       const user = userEvent.setup();
-      await user.click(
-        (await screen.findAllByRole("button", { name: a.uninstall }))[0] as HTMLElement,
-      );
+      await user.click(await screen.findByRole("button", { name: a.cleanup }));
       const dialog = await screen.findByRole("dialog");
       await user.click(within(dialog).getByRole("button", { name: a.confirm.confirm }));
       const report = await screen.findByRole("region", {
@@ -833,25 +1106,47 @@ describe("/settings/plugins: installed plugins and uninstall", () => {
           `· ${a.componentKind.skill} s1 — ${a.report.reason.used_by_agents}`,
         ),
       ).toBeTruthy();
-      // the uninstall invalidates what a plugin change touches: the installs and the org's
-      // readiness (an extension it brought may have been a model provider) are read again
-      expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([
-        `DELETE ${ORG}/plugin-installs/i1`,
-        `GET ${ORG}/plugin-installs`,
-        `GET ${ORG}/readiness`,
-      ]);
-      expect(await screen.findByText(a.empty)).toBeTruthy();
+      // the clean-up invalidates what a plugin change touches: the installs, the item and the
+      // org's readiness (an extension it brought may have been a model provider) are read again
+      await waitFor(() =>
+        expect(new Set(calls.map((c) => `${c.method} ${c.url}`))).toEqual(
+          new Set([
+            `DELETE ${ORG}/plugin-installs/i1`,
+            `GET ${ORG}/plugin-installs`,
+            `GET ${ORG}/catalog/${ID}`,
+            `GET ${ORG}/extensions`,
+            `GET ${ORG}/readiness`,
+          ]),
+        ),
+      );
+      expect(calls[0]?.method).toBe("DELETE");
     },
   );
 
-  it("仍在安装中：409 app.install_in_progress 给出友好说明", async () => {
+  it("a dependency install says which plugins installed it; a healthy install has no clean-up", async () => {
+    const a = en.catalog.plugins;
+    stubApi({
+      [`GET ${ORG}/plugin-installs`]: () =>
+        json(200, {
+          installs: [
+            { ...INSTALL, itemId: "other" },
+            { ...DEP_INSTALL, itemId: ID },
+          ],
+        }),
+    });
+    await renderInstalls();
+    expect(await screen.findByText(fill(a.dependencyOf, { names: "crm" }))).toBeTruthy();
+    expect(screen.queryByRole("button", { name: a.cleanup })).toBeNull();
+  });
+
+  it("still installing: a 409 plugin.install_in_progress explains it", async () => {
     stubApi({
       [`GET ${ORG}/plugin-installs`]: () =>
         json(200, { installs: [{ ...INSTALL, status: "installing" }] }),
       [`DELETE ${ORG}/plugin-installs/i1`]: () =>
         json(409, { error: { code: "plugin.install_in_progress", message: "x" } }),
     });
-    await renderRouteWithCache("/settings/plugins", lastStubRoutes());
+    await renderInstalls();
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: en.catalog.plugins.cleanup }));
     await user.click(
@@ -1456,41 +1751,44 @@ describe("inbox: catalog_request", () => {
   });
 });
 
-describe("组织插件：启用被目录条目拒绝", () => {
-  it.each(LOCALES)("approval_required 显示翻译后的原因与去目录的入口（%s）", async (locale) => {
-    const m = msgs[locale];
-    stubApi({
-      [`GET ${ORG}/file-previewers`]: () => json(200, { items: [] }),
-      [`GET ${ORG}/extension-points`]: () => json(200, { points: [] }),
-      [`GET ${ORG}/extensions`]: () =>
-        json(200, {
-          extensions: [
-            {
-              plugin: "crm-core",
-              version: "1.0.0",
-              enabled: false,
-              configurable: false,
-              config: null,
-              secrets: [],
-              permissions: [],
-              orgConfigSchema: null,
-            },
-          ],
+describe("/extensions: switching on refused by the plugin", () => {
+  it.each(LOCALES)(
+    "approval_required shows the translated reason and a link to 插件 (%s)",
+    async (locale) => {
+      const m = msgs[locale];
+      stubApi({
+        [`GET ${ORG}/file-previewers`]: () => json(200, { items: [] }),
+        [`GET ${ORG}/extension-points`]: () => json(200, { points: [] }),
+        [`GET ${ORG}/extensions`]: () =>
+          json(200, {
+            extensions: [
+              {
+                plugin: "crm-core",
+                version: "1.0.0",
+                enabled: false,
+                configurable: false,
+                config: null,
+                secrets: [],
+                permissions: [],
+                orgConfigSchema: null,
+              },
+            ],
+          }),
+        [`PUT ${ORG}/extensions/crm-core`]: () =>
+          json(403, { error: { code: "catalog.approval_required", message: "x" } }),
+      });
+      await renderRouteWithCache("/extensions", lastStubRoutes(), { locale });
+      await userEvent.setup().click(
+        await screen.findByRole("switch", {
+          name: fill(m.extensions.enableLabel, { plugin: "crm-core" }),
         }),
-      [`PUT ${ORG}/extensions/crm-core`]: () =>
-        json(403, { error: { code: "catalog.approval_required", message: "x" } }),
-    });
-    await renderRouteWithCache("/settings/extensions", lastStubRoutes(), { locale });
-    await userEvent.setup().click(
-      await screen.findByRole("switch", {
-        name: fill(m.extensions.enableLabel, { plugin: "crm-core" }),
-      }),
-    );
-    expect(await screen.findByText(`${m.errors.catalog.approval_required}`)).toBeTruthy();
-    expect(screen.getByRole("link", { name: m.extensions.openCatalog }).getAttribute("href")).toBe(
-      "/catalog",
-    );
-  });
+      );
+      expect(await screen.findByText(`${m.errors.catalog.approval_required}`)).toBeTruthy();
+      expect(
+        screen.getByRole("link", { name: m.extensions.openPlugins }).getAttribute("href"),
+      ).toBe("/plugins");
+    },
+  );
 });
 
 describe("安装向导的默认 slug", () => {
@@ -2102,7 +2400,7 @@ describe("phase A1: plugin upgrades and skill conflicts", () => {
   };
 
   it.each(LOCALES)(
-    "settings/plugins: upgrade available opens the dialog; preview -> changes and inputs -> confirm posts { version, diffHash, connectors } (%s)",
+    "plugin page: upgrade available opens the dialog; preview -> changes and inputs -> confirm posts { version, diffHash, connectors } (%s)",
     async (locale) => {
       const m = msgs[locale].catalog;
       let upgraded = false;
@@ -2121,7 +2419,7 @@ describe("phase A1: plugin upgrades and skill conflicts", () => {
           return json(200, { install: { ...UPGRADABLE, version: "1.1.0" } });
         },
       });
-      await renderRouteWithCache("/settings/plugins", lastStubRoutes(), { locale });
+      await renderInstalls({ locale });
       expect(
         await screen.findByText(fill(m.plugins.upgradeAvailable, { version: "v1.1.0" })),
       ).toBeTruthy();
@@ -2174,7 +2472,7 @@ describe("phase A1: plugin upgrades and skill conflicts", () => {
     },
   );
 
-  it("settings/plugins: the deployment's extension moved on -> the org is told to upgrade; upgrading status; a stale preview is fetched again", async () => {
+  it("plugin page: the deployment's extension moved on -> the org is told to upgrade; upgrading status; a stale preview is fetched again", async () => {
     const m = en.catalog;
     let previews = 0;
     const calls = stubApi({
@@ -2200,7 +2498,7 @@ describe("phase A1: plugin upgrades and skill conflicts", () => {
       [`POST ${ORG}/plugin-installs/i1/upgrade`]: () =>
         json(409, { error: { code: "plugin.upgrade_stale", message: "x" } }),
     });
-    await renderRouteWithCache("/settings/plugins", lastStubRoutes());
+    await renderInstalls();
     expect(await screen.findByText(m.plugins.deploymentPending)).toBeTruthy();
     expect(screen.getByText(new RegExp(`^${m.plugins.status.upgrading}`))).toBeTruthy();
     const user = userEvent.setup();
@@ -2219,11 +2517,12 @@ describe("phase A1: plugin upgrades and skill conflicts", () => {
     );
   });
 
-  it("catalog item: installed with an upgrade available offers the upgrade to org admins; needs approval -> request submitted", async () => {
+  it("plugin page: installed with an upgrade available offers the upgrade to org admins; needs approval -> request submitted", async () => {
     params.current = { itemId: ID };
     const m = en.catalog;
     stubApi({
       [`GET ${ORG}/catalog/${ID}`]: () => json(200, DETAIL),
+      [`GET ${ORG}/plugin-installs`]: () => json(200, { installs: [UPGRADABLE] }),
       [`GET ${ORG}/extensions`]: () => json(200, { extensions: [] }),
       [`POST ${ORG}/plugin-installs/i1/upgrade/preview`]: () =>
         json(200, {
@@ -2236,10 +2535,10 @@ describe("phase A1: plugin upgrades and skill conflicts", () => {
     });
     await renderItem();
     expect(
-      await screen.findByText(fill(m.org.action.upgradeAvailable, { version: "v1.1.0" })),
+      await screen.findByText(fill(m.plugins.upgradeAvailable, { version: "v1.1.0" })),
     ).toBeTruthy();
     const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: m.org.action.upgrade }));
+    await user.click(screen.getByRole("button", { name: m.plugins.upgrade }));
     const dialog = await screen.findByRole("dialog");
     await within(dialog).findByText(fill(m.upgrade.versions, { from: "v1.0.0", to: "v1.1.0" }));
     await user.click(within(dialog).getByRole("button", { name: m.upgrade.confirm }));
@@ -2282,7 +2581,7 @@ describe("phase A1: plugin upgrades and skill conflicts", () => {
           ],
         }),
     });
-    await renderRouteWithCache("/settings/plugins", lastStubRoutes(), { locale: "en" });
+    await renderInstalls({ locale: "en" });
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: m.plugins.upgrade }));
     const dialog = await screen.findByRole("dialog");
@@ -2290,7 +2589,7 @@ describe("phase A1: plugin upgrades and skill conflicts", () => {
     expect(within(dialog).queryByText("crm", { exact: true })).toBeNull();
   });
 
-  it("upgrading from the catalog item invalidates the catalog, the items and what the plugin brings", async () => {
+  it("upgrading from the plugin page invalidates the catalog, the items and what the plugin brings", async () => {
     params.current = { itemId: ID };
     const calls = stubApi({
       [`GET ${ORG}/catalog/${ID}`]: () =>
@@ -2305,6 +2604,7 @@ describe("phase A1: plugin upgrades and skill conflicts", () => {
           dependencies: [],
           skills: [],
         }),
+      [`GET ${ORG}/plugin-installs`]: () => json(200, { installs: [UPGRADABLE] }),
       [`POST ${ORG}/plugin-installs/i1/upgrade/preview`]: () => json(200, NO_INPUTS),
       [`POST ${ORG}/plugin-installs/i1/upgrade`]: () =>
         json(200, { install: { ...UPGRADABLE, version: "1.1.0" } }),
@@ -2314,7 +2614,7 @@ describe("phase A1: plugin upgrades and skill conflicts", () => {
     client.setQueryData(["org", "o1", "skills"], { skills: [] });
     const m = en.catalog;
     const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: m.org.action.upgrade }));
+    await user.click(await screen.findByRole("button", { name: m.plugins.upgrade }));
     const dialog = await screen.findByRole("dialog");
     await within(dialog).findByText(m.upgrade.noChanges);
     await user.click(within(dialog).getByRole("button", { name: m.upgrade.confirm }));
@@ -2354,7 +2654,7 @@ describe("phase A1: plugin upgrades and skill conflicts", () => {
             },
           }),
       });
-      await renderRouteWithCache("/settings/plugins", lastStubRoutes(), { locale });
+      await renderInstalls({ locale });
       const user = userEvent.setup();
       await user.click(await screen.findByRole("button", { name: m.plugins.upgrade }));
       const dialog = await screen.findByRole("dialog");
@@ -2392,7 +2692,7 @@ describe("phase A1: plugin upgrades and skill conflicts", () => {
             error: { code: "plugin.upgrade_target_invalid", message: "English", details },
           }),
       });
-      await renderRouteWithCache("/settings/plugins", lastStubRoutes(), { locale });
+      await renderInstalls({ locale });
       const user = userEvent.setup();
       await user.click(await screen.findByRole("button", { name: m.catalog.plugins.upgrade }));
       const dialog = await screen.findByRole("dialog");
@@ -2429,7 +2729,7 @@ describe("phase A1: plugin upgrades and skill conflicts", () => {
       [`POST ${ORG}/plugin-installs/i1/upgrade`]: () =>
         json(409, { error: { code: "plugin.upgrade_stale", message: "x" } }),
     });
-    await renderRouteWithCache("/settings/plugins", lastStubRoutes());
+    await renderInstalls();
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: m.plugins.upgrade }));
     const dialog = await screen.findByRole("dialog");
@@ -2444,17 +2744,17 @@ describe("phase A1: plugin upgrades and skill conflicts", () => {
     await waitFor(() => expect(confirm().disabled).toBe(false));
   });
 
-  it("catalog item: members see the upgrade but no button", async () => {
+  it("plugin page: members read no installs and get no upgrade button", async () => {
     params.current = { itemId: ID };
-    stubApi({ [`GET ${ORG}/catalog/${ID}`]: () => json(200, DETAIL) });
+    const calls = stubApi({ [`GET ${ORG}/catalog/${ID}`]: () => json(200, DETAIL) });
     await renderItem({ me: MEMBER });
-    expect(
-      await screen.findByText(fill(en.catalog.org.action.upgradeAvailable, { version: "v1.1.0" })),
-    ).toBeTruthy();
-    expect(screen.queryByRole("button", { name: en.catalog.org.action.upgrade })).toBeNull();
+    await screen.findByText(en.catalog.components.skills);
+    await settle();
+    expect(screen.queryByRole("button", { name: en.catalog.plugins.upgrade })).toBeNull();
+    expect(calls.some((c) => c.url.endsWith("/plugin-installs"))).toBe(false);
   });
 
-  it("catalog item: the plugin's agent templates are listed", async () => {
+  it("plugin page: the plugin's agent templates are listed", async () => {
     params.current = { itemId: ID };
     stubApi({
       [`GET ${ORG}/catalog/${ID}`]: () =>
@@ -2475,7 +2775,7 @@ describe("phase A1: plugin upgrades and skill conflicts", () => {
         [`GET ${ORG}/catalog/${ID}`]: () =>
           json(200, { ...DETAIL, item: orgItem({ name: "crm" }), templates: [] }),
         [`GET ${ORG}/extensions`]: () => json(200, { extensions: [] }),
-        [`POST ${ORG}/catalog/${ID}/install`]: () =>
+        [`PUT ${ORG}/catalog/${ID}/switch`]: () =>
           json(409, {
             error: {
               code: "plugin.skill_conflict",
@@ -3036,7 +3336,7 @@ describe("phase B: Claude Code plugins in the catalog and marketplaces", () => {
   });
 });
 
-describe("/catalog/[itemId]/install renders on the server (web-SSR spec §6)", () => {
+describe("/plugins/[itemId]/enable renders on the server (web-SSR spec §6)", () => {
   const detail = {
     item: orgItem({ name: "crm" }),
     hasIcon: false,
@@ -3055,7 +3355,7 @@ describe("/catalog/[itemId]/install renders on the server (web-SSR spec §6)", (
     memberships: [{ ...ME.memberships[0], role } as Me["memberships"][number]],
   });
 
-  const path = `/catalog/${ID}/install`;
+  const path = `/plugins/${ID}/enable`;
 
   it("a first render from the hydrated cache makes no browser read; it is a setup step", async () => {
     const browser = expectNoFirstPaintFetch();
@@ -3109,7 +3409,7 @@ describe("/catalog/[itemId]/install renders on the server (web-SSR spec §6)", (
   });
 });
 
-describe("/catalog and /catalog/[itemId] render on the server (web-SSR spec §6)", () => {
+describe("/plugins and /plugins/[itemId] render on the server (web-SSR spec §6)", () => {
   const detail = {
     item: orgItem({ name: "crm" }),
     hasIcon: false,
@@ -3121,6 +3421,10 @@ describe("/catalog and /catalog/[itemId] render on the server (web-SSR spec §6)
   const routes = {
     [`GET ${ORG}/catalog`]: () => json(200, { items: [orgItem()] }),
     [`GET ${ORG}/catalog/${ID}`]: () => json(200, detail),
+    // org admins also read the extensions, the marketplace entries and the installs
+    [`GET ${ORG}/extensions`]: () => json(200, { extensions: [] }),
+    [`GET ${ORG}/marketplaces/entries`]: () => json(200, { items: [] }),
+    [`GET ${ORG}/plugin-installs`]: () => json(200, { installs: [] }),
   };
   const GUEST: Me = {
     ...ME,
@@ -3128,17 +3432,17 @@ describe("/catalog and /catalog/[itemId] render on the server (web-SSR spec §6)
     memberships: [{ ...ME.memberships[0], role: "guest" } as Me["memberships"][number]],
   };
 
-  it("/catalog: a first render from the hydrated cache makes no browser read; it is a setup step", async () => {
+  it("/plugins: a first render from the hydrated cache makes no browser read; it is a setup step", async () => {
     const browser = expectNoFirstPaintFetch();
-    await renderRouteWithCache("/catalog", routes, { readiness: NOT_READY });
-    expect(within(screen.getByRole("list", { name: en.catalog.org.title })).getByText("pdf-tools"));
+    await renderRouteWithCache("/plugins", routes, { readiness: NOT_READY });
+    expect(within(screen.getByRole("list", { name: en.plugins.title })).getByText("pdf-tools"));
     await settle();
     expect(browser).toEqual([]);
     expect(router.replace).not.toHaveBeenCalled();
   });
 
-  it("/catalog: an empty cache shows the template's loading state, then the data", async () => {
-    const { release } = await renderHeld("/catalog", routes, `GET ${ORG}/catalog`);
+  it("/plugins: an empty cache shows the template's loading state, then the data", async () => {
+    const { release } = await renderHeld("/plugins", routes, `GET ${ORG}/catalog`);
     await vi.waitFor(() => {
       if (template("ListPage") === null) throw new Error("no page");
     });
@@ -3149,23 +3453,23 @@ describe("/catalog and /catalog/[itemId] render on the server (web-SSR spec §6)
     await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
   });
 
-  it("/catalog: a guest gets no access and nothing is read; no org renders nothing", async () => {
-    const guest = await renderRouteWithCache("/catalog", routes, { me: GUEST });
+  it("/plugins: a guest gets no access and nothing is read; no org renders nothing", async () => {
+    const guest = await renderRouteWithCache("/plugins", routes, { me: GUEST });
     expect(new Set(guest.calls.map((c) => c.url))).toEqual(
       new Set(["/api/v1/me", `${ORG}/readiness`]),
     );
     expect(template("StatusPage")?.getAttribute("data-kind")).toBe("no-access");
     cleanup();
-    const none = await renderRouteWithCache("/catalog", routes, {
+    const none = await renderRouteWithCache("/plugins", routes, {
       me: { ...ME, currentOrgId: null },
     });
     expect(none.calls.map((c) => c.url)).toEqual(["/api/v1/me"]);
     expect(document.body.textContent).toBe("");
   });
 
-  it("/catalog/<id>: a first render from the hydrated cache makes no browser read; it is a setup step", async () => {
+  it("/plugins/<id>: a first render from the hydrated cache makes no browser read; it is a setup step", async () => {
     const browser = expectNoFirstPaintFetch();
-    await renderRouteWithCache(`/catalog/${ID}`, routes, { readiness: NOT_READY });
+    await renderRouteWithCache(`/plugins/${ID}`, routes, { readiness: NOT_READY });
     expect(screen.getByRole("heading", { level: 1, name: "crm" })).toBeTruthy();
     expect(screen.getByText("· crm")).toBeTruthy();
     await settle();
@@ -3173,8 +3477,8 @@ describe("/catalog and /catalog/[itemId] render on the server (web-SSR spec §6)
     expect(router.replace).not.toHaveBeenCalled();
   });
 
-  it("/catalog/<id>: an empty cache shows the template's loading state, then the data", async () => {
-    const { release } = await renderHeld(`/catalog/${ID}`, routes, `GET ${ORG}/catalog/${ID}`);
+  it("/plugins/<id>: an empty cache shows the template's loading state, then the data", async () => {
+    const { release } = await renderHeld(`/plugins/${ID}`, routes, `GET ${ORG}/catalog/${ID}`);
     await vi.waitFor(() => {
       if (template("DetailPage") === null) throw new Error("no page");
     });
@@ -3194,30 +3498,31 @@ describe("/catalog and /catalog/[itemId] render on the server (web-SSR spec §6)
     await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
   });
 
-  it("/catalog/<id>: an item the kernel does not find is the not-found state in the shell", async () => {
+  it("/plugins/<id>: an item the kernel does not find is the not-found state in the shell", async () => {
     expectNoFirstPaintFetch();
-    await renderRouteWithCache(`/catalog/${ID}`, {
+    await renderRouteWithCache(`/plugins/${ID}`, {
+      ...routes,
       [`GET ${ORG}/catalog/${ID}`]: () =>
         json(404, { error: { code: "catalog.item_not_found", message: "x" } }),
     });
     expect(screen.getByRole("heading", { level: 1, name: en.notFound.title })).toBeTruthy();
   });
 
-  it("/catalog/<id>: a guest gets no access and nothing is read; no org renders nothing", async () => {
-    const guest = await renderRouteWithCache(`/catalog/${ID}`, routes, { me: GUEST });
+  it("/plugins/<id>: a guest gets no access and nothing is read; no org renders nothing", async () => {
+    const guest = await renderRouteWithCache(`/plugins/${ID}`, routes, { me: GUEST });
     expect(new Set(guest.calls.map((c) => c.url))).toEqual(
       new Set(["/api/v1/me", `${ORG}/readiness`]),
     );
     expect(template("StatusPage")?.getAttribute("data-kind")).toBe("no-access");
     cleanup();
-    const none = await renderRouteWithCache(`/catalog/${ID}`, routes, {
+    const none = await renderRouteWithCache(`/plugins/${ID}`, routes, {
       me: { ...ME, currentOrgId: null },
     });
     expect(none.calls.map((c) => c.url)).toEqual(["/api/v1/me"]);
     expect(document.body.textContent).toBe("");
   });
 
-  it("requesting an install invalidates the catalog and the item: the item is read again", async () => {
+  it("a member asking to turn it on invalidates the catalog and the item: the item is read again", async () => {
     params.current = { itemId: ID };
     const calls = stubApi({
       [`GET ${ORG}/catalog/${ID}`]: () =>
@@ -3229,7 +3534,7 @@ describe("/catalog and /catalog/[itemId] render on the server (web-SSR spec §6)
     client.setQueryData(["org", "o1", "catalog"], { items: [orgItem()] });
     await userEvent
       .setup()
-      .click(screen.getByRole("button", { name: en.catalog.org.action.request }));
+      .click(screen.getByRole("button", { name: en.plugins.action.requestEnable }));
     await vi.waitFor(() =>
       expect(calls.filter((c) => c.method === "GET").map((c) => c.url)).toEqual([
         `${ORG}/catalog/${ID}`,

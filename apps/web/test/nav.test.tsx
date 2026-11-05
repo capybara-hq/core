@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { NextIntlClientProvider } from "next-intl";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import zh from "../messages/zh.json";
+import { useOrgSettingsNav } from "../src/components/settings-nav";
 import {
   activeNavOf,
   type NavLevel,
@@ -10,6 +11,7 @@ import {
   useAdminItems,
   useNav,
 } from "../src/components/shell/nav";
+import { SessionContext } from "../src/components/shell/session";
 import { json, stubApi } from "./support/api";
 import { resetNavigation } from "./support/navigation";
 import { ME } from "./support/render";
@@ -64,8 +66,10 @@ describe("nav by level (role hiding is cosmetic; the kernel decides)", () => {
   const primary = ["overview", "agents"];
   const guest = ["connectors"];
   // 组织设置 is shown to members too (read-only for them; user decision, role pass item 8)
-  const member = ["skills", "connectors", "catalog", "settings"];
-  const admin = ["skills", "connectors", "catalog", "channels", "evals", "settings"];
+  // 插件 for members up (read-only for members); 扩展 for org admins (the kernel's
+  // org.extensions.manage reads them)
+  const member = ["plugins", "skills", "connectors", "settings"];
+  const admin = ["plugins", "extensions", "skills", "connectors", "channels", "evals", "settings"];
   const cases: [NavLevel, boolean, string[]][] = [
     ["guest", false, guest],
     ["member", false, member],
@@ -83,7 +87,7 @@ describe("nav by level (role hiding is cosmetic; the kernel decides)", () => {
     });
   }
 
-  it("members see 技能 连接器 插件 组织设置 under 更多; org admins also 渠道 评测与运行", () => {
+  it("members see 插件 技能 连接器 组织设置 under 更多; org admins also 扩展 渠道 评测与运行", () => {
     function Labels({ level }: { level: NavLevel }) {
       const { primary, more } = useNav(0, level, false, false);
       return (
@@ -108,16 +112,17 @@ describe("nav by level (role hiding is cosmetic; the kernel decides)", () => {
         ["Agents", "agent", "/agents"],
       ],
       more: [
+        ["插件", "catalog", "/plugins"],
         ["技能", "skills", "/skills"],
         ["连接器", "connector", "/connectors"],
-        ["插件", "catalog", "/catalog"],
         ["组织设置", "settings", "/settings/organization"],
       ],
     });
     expect(read("admin").more).toEqual([
+      ["插件", "catalog", "/plugins"],
+      ["扩展", "extension", "/extensions"],
       ["技能", "skills", "/skills"],
       ["连接器", "connector", "/connectors"],
-      ["插件", "catalog", "/catalog"],
       ["渠道", "channel", "/channels"],
       ["评测与运行", "evals", "/evals"],
       ["组织设置", "settings", "/settings/organization"],
@@ -165,6 +170,35 @@ describe("nav by level (role hiding is cosmetic; the kernel decides)", () => {
   });
 });
 
+describe("org settings nav", () => {
+  it("has neither 扩展 nor 已安装的插件 (they moved to the workspace 插件 and 扩展 pages)", () => {
+    function Groups() {
+      const groups = useOrgSettingsNav();
+      return <pre data-testid="groups">{JSON.stringify(groups.flatMap((g) => g.items))}</pre>;
+    }
+    render(
+      <SessionContext.Provider value={{ me: ME } as never}>
+        <NextIntlClientProvider locale="zh" messages={zh}>
+          <Groups />
+        </NextIntlClientProvider>
+      </SessionContext.Provider>,
+    );
+    const items = JSON.parse(screen.getByTestId("groups").textContent ?? "[]") as {
+      id: string;
+      href: string;
+    }[];
+    expect(items.map((i) => i.id)).toEqual([
+      "organization",
+      "members",
+      "models",
+      "tokens",
+      "sandbox",
+    ]);
+    expect(items.some((i) => i.href === "/settings/extensions")).toBe(false);
+    expect(items.some((i) => i.href === "/settings/plugins")).toBe(false);
+  });
+});
+
 describe("activeNavOf", () => {
   it.each([
     ["/settings/members", "settings"],
@@ -172,6 +206,9 @@ describe("activeNavOf", () => {
     ["/chat/abc", ""],
     ["/agents/a1", "agents"],
     ["/connectors/c1", "connectors"],
+    ["/plugins", "plugins"],
+    ["/plugins/i1/enable", "plugins"],
+    ["/extensions", "extensions"],
     ["/trajectories/x", "evals"],
     ["/account/connections", ""],
     ["/", "overview"],

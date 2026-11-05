@@ -956,7 +956,8 @@
     "evals": "Evals & runs",
     "settings": "Organization settings",
     "admin": "Admin console",
-    "catalog": "Plugins"
+    "plugins": "Plugins",
+    "extensions": "Extensions"
   },
   "shell": {
     "noOrg": "Select organization",
@@ -1378,10 +1379,8 @@
       "general": "General",
       "sandbox": "Sandbox",
       "identities": "IM identities",
-      "extensions": "Extensions",
       "models": "Model purposes",
       "members": "Members",
-      "plugins": "Installed plugins",
       "tokens": "Service tokens"
     },
     "empty": "No connector needs your own credential.",
@@ -1634,8 +1633,6 @@
     "disabled": "Not enabled",
     "unavailable": "Unavailable",
     "unavailableHint": "This extension is currently unavailable on this deployment. The organization setting is kept.",
-    "required": "Required",
-    "requiredHint": "This plugin is required by the deployment: it is enabled in every organization and cannot be disabled.",
     "enabledToast": "{plugin} enabled.",
     "disabledToast": "{plugin} disabled.",
     "dependencyMissing": "Enable an extension that provides these extension points first:",
@@ -1695,7 +1692,6 @@
       },
       "at": "{file} line {line}"
     },
-    "openCatalog": "Open the catalog to view or request it",
     "pointDefaults": {
       "title": "Default providers",
       "description": "When several enabled extensions provide the same capability, choose the one this organization uses.",
@@ -1707,7 +1703,10 @@
         "webSearch": "Web search",
         "webFetch": "Web fetch"
       }
-    }
+    },
+    "description": "The extensions this organization can use. Fill in organization-level config (such as this organization's own API key) here.",
+    "enterpriseHint": "Your enterprise turned this extension on for every organization; it cannot be turned off here. Its organization config can still be set.",
+    "openPlugins": "Open Plugins to view or request it"
   },
   "identities": {
     "title": "IM identities",
@@ -3190,41 +3189,6 @@
       }
     },
     "org": {
-      "title": "Plugins",
-      "hint": "Plugins provided by your enterprise admins.",
-      "empty": "There are no items in the catalog yet.",
-      "columns": {
-        "name": "Name",
-        "description": "Description",
-        "status": "Status"
-      },
-      "status": {
-        "installed": "Installed {version}",
-        "yes": "Available",
-        "granted": "Approved",
-        "needs_approval": "Needs enterprise admin approval",
-        "disabled": "Disabled",
-        "not_deployed": "Extension not deployed",
-        "requested": "Requested, waiting"
-      },
-      "action": {
-        "install": "Install",
-        "requestApproval": "Ask an enterprise admin",
-        "request": "Request install",
-        "disabledHint": "An enterprise admin disabled this item; it cannot be newly installed.",
-        "notDeployedHint": "Its extension (or one its connector templates need) is not installed on the deployment yet. Contact an enterprise admin.",
-        "pendingHint": "A request has been submitted ({stage}) and is waiting.",
-        "stage": {
-          "org": "organization admin",
-          "deployment": "enterprise admin"
-        },
-        "installed": "Installed {name}",
-        "requested": "Request submitted",
-        "approvalRequested": "Enterprise admin approval is needed; a request was submitted.",
-        "openPlugins": "View installed plugins",
-        "upgradeAvailable": "Upgrade available: {version}",
-        "upgrade": "Upgrade"
-      },
       "detail": {
         "tabsLabel": "Item details",
         "tabs": {
@@ -3237,7 +3201,7 @@
         }
       },
       "install": {
-        "title": "Install {name}",
+        "title": "Turn on {name}",
         "connectorStep": "Connector: {name}",
         "extensionStep": "Extension settings",
         "confirmStep": "Confirm",
@@ -3255,17 +3219,17 @@
         "extensionHint": "This plugin enables its extension in this organization. Fill in the organization settings if it has any (an extension already enabled keeps its settings).",
         "extensionNone": "No extension settings to fill in.",
         "extensionEnabled": "{name}: already enabled in this organization; settings unchanged.",
-        "summary": "This will install:",
+        "summary": "Turning it on gives this organization:",
         "summaryExtension": "extension {name}",
         "summaryTemplates": "{n} connectors",
         "summarySkills": "{n} skills",
         "summaryDependencies": "Installed with it first (unless this organization already has them):",
-        "submit": "Install",
+        "submit": "Turn on",
         "next": "Next",
         "back": "Back",
         "cancel": "Cancel",
-        "failed": "Installing failed at the “{step}” step ({code}); the components it created were rolled back.",
-        "failedNoRollback": "Installing failed at the “{step}” step ({code}) and some components could not be rolled back; uninstall it under Installed plugins to clean up.",
+        "failed": "Turning it on failed at the “{step}” step ({code}); the components it created were rolled back.",
+        "failedNoRollback": "Turning it on failed at the “{step}” step ({code}) and some components could not be rolled back; clean it up on the plugin's page.",
         "failedIn": "(in dependency {dependency})",
         "step": {
           "dependencies": "dependencies",
@@ -3274,16 +3238,10 @@
           "skills": "skills",
           "finish": "finish"
         },
-        "notInstallable": "This plugin cannot be installed right now."
-      },
-      "tabs": {
-        "all": "All",
-        "installed": "Installed"
+        "notInstallable": "This plugin cannot be turned on right now."
       }
     },
     "plugins": {
-      "title": "Installed plugins",
-      "empty": "This organization has not installed any plugins from the catalog.",
       "status": {
         "installing": "Installing",
         "installed": "Installed",
@@ -3304,7 +3262,6 @@
         "agent_template": "Agent template"
       },
       "installedAt": "Installed {at}",
-      "uninstall": "Uninstall",
       "cleanup": "Clean up",
       "confirm": {
         "title": "Uninstall {name}",
@@ -3553,5 +3510,63 @@
     "loadFailed": "Couldn’t load service tokens.",
     "retry": "Retry",
     "expired": "Expired"
+  },
+  "plugins": {
+    "title": "Plugins",
+    "description": "Plugins your enterprise offers this organization, and the ones it asked for. Turning a plugin on turns on all its components.",
+    "empty": "Your enterprise has not offered any plugins to this organization yet.",
+    "tabs": {
+      "plugins": "Plugins",
+      "market": "Marketplace"
+    },
+    "state": {
+      "on": "On",
+      "off": "Off",
+      "needs_config": "Needs configuration",
+      "enterprise": "On · set by the enterprise",
+      "not_offered": "Not offered, can be requested",
+      "requested": "Requested, waiting",
+      "unavailable": "Stopped by the enterprise",
+      "notDeployed": "Extension not deployed"
+    },
+    "action": {
+      "enable": "Turn on",
+      "configure": "Organization config",
+      "disable": "Turn off",
+      "request": "Request",
+      "requestEnable": "Ask to turn on",
+      "requestImport": "Request import"
+    },
+    "chips": {
+      "upgrade": "Update {version}"
+    },
+    "meta": {
+      "enterprise": "Enterprise · {scope}"
+    },
+    "toast": {
+      "enabled": "{name} turned on.",
+      "disabled": "{name} turned off.",
+      "requested": "Request submitted."
+    },
+    "switchOff": {
+      "title": "Turn off {name}",
+      "hint": "Turning it off removes the components this plugin created for this organization that nothing else uses; pre-existing and still-used ones are kept.",
+      "agents": "These agents use its components and will lose them:",
+      "removed": "Removed",
+      "kept": "Kept",
+      "none": "None",
+      "confirm": "Turn off",
+      "cancel": "Cancel",
+      "stale": "What this removes changed; review it again before confirming."
+    },
+    "market": {
+      "title": "Marketplace",
+      "empty": "The marketplaces have no entries yet.",
+      "adopted": "Imported",
+      "unavailable": "Cannot be imported"
+    },
+    "detail": {
+      "installs": "This organization's install"
+    }
   }
 }

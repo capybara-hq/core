@@ -274,7 +274,7 @@ describe("新建渠道连接（FormPage）", () => {
     const empty = container.querySelector('[data-part="empty-state"]') as HTMLElement;
     expect(empty.textContent).toContain(f.noExtensions);
     expect(within(empty).getByRole("link", { name: f.openExtensions }).getAttribute("href")).toBe(
-      "/settings/extensions",
+      "/extensions",
     );
     // no form: no fields, no action row, no 新建渠道
     expect(screen.queryByRole("textbox")).toBeNull();

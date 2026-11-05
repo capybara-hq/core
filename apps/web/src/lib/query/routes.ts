@@ -30,7 +30,7 @@ import {
 } from "./admin";
 import { agentConnectorQueries, agentFormQueries, agentQuery, agentsQuery } from "./agents";
 import { authSourcesQuery, invitationQuery, pendingBindingQuery } from "./auth";
-import { orgCatalogItemQuery, orgCatalogQuery } from "./catalog";
+import { orgCatalogItemQuery, orgCatalogQuery, orgMarketplaceEntriesQuery } from "./catalog";
 import { channelQuery, channelSchemaQuery, channelsQuery, orgExtensionsQuery } from "./channels";
 import {
   attachmentLimitsQuery,
@@ -305,26 +305,6 @@ export const ROUTES: readonly RouteEntry[] = [
       params.token === undefined ? [] : [q(pendingBindingQuery(params.token))],
   },
   {
-    pattern: "/catalog",
-    queries: ({ orgId, me }) =>
-      orgId === null || !atLeast(me, "member") ? [] : [q(orgCatalogQuery(orgId))],
-  },
-  {
-    pattern: "/catalog/[itemId]",
-    queries: ({ orgId, me, params }) =>
-      orgId === null || params.itemId === undefined || !atLeast(me, "member")
-        ? []
-        : [q(orgCatalogItemQuery(orgId, params.itemId))],
-  },
-  {
-    pattern: "/catalog/[itemId]/install",
-    // Org admins: the item and the org's extensions (the wizard's extension step).
-    queries: ({ orgId, me, params }) =>
-      orgId === null || params.itemId === undefined || !atLeast(me, "admin")
-        ? []
-        : [q(orgCatalogItemQuery(orgId, params.itemId)), q(orgExtensionsQuery(orgId))],
-  },
-  {
     pattern: "/channels",
     // Org admins; the agents name the connections' agents (a section).
     queries: ({ orgId, me }) =>
@@ -505,6 +485,18 @@ export const ROUTES: readonly RouteEntry[] = [
     },
   },
   {
+    pattern: "/extensions",
+    // Org admins: the extensions, the default providers and the file previewers (sections).
+    queries: ({ orgId, me }) =>
+      orgId === null || !atLeast(me, "admin")
+        ? []
+        : [
+            q(orgExtensionsQuery(orgId)),
+            q(extensionPointDefaultsQuery(orgId)),
+            q(orgFilePreviewersQuery(orgId)),
+          ],
+  },
+  {
     pattern: "/inbox",
     queries: ({ orgId }) => (orgId === null ? [] : [q(inboxQuery(orgId))]),
     // The first item is selected at once: its skill change's detail when it is one.
@@ -545,16 +537,39 @@ export const ROUTES: readonly RouteEntry[] = [
     },
   },
   {
-    pattern: "/settings/extensions",
-    // Org admins: the extensions, the default providers and the file previewers (sections).
+    pattern: "/plugins",
+    // Members up; org admins also read the org's extensions (a row's 组织配置 and whether 启用
+    // asks for input) and the marketplace entries (the 市场 tab; a 404 when browsing is off).
     queries: ({ orgId, me }) =>
-      orgId === null || !atLeast(me, "admin")
+      orgId === null || !atLeast(me, "member")
         ? []
         : [
-            q(orgExtensionsQuery(orgId)),
-            q(extensionPointDefaultsQuery(orgId)),
-            q(orgFilePreviewersQuery(orgId)),
+            q(orgCatalogQuery(orgId)),
+            ...(atLeast(me, "admin")
+              ? [q(orgExtensionsQuery(orgId)), q(orgMarketplaceEntriesQuery(orgId, "", ""))]
+              : []),
           ],
+  },
+  {
+    pattern: "/plugins/[itemId]",
+    // Members up; org admins also read the installs (the installed section) and the extensions.
+    queries: ({ orgId, me, params }) =>
+      orgId === null || params.itemId === undefined || !atLeast(me, "member")
+        ? []
+        : [
+            q(orgCatalogItemQuery(orgId, params.itemId)),
+            ...(atLeast(me, "admin")
+              ? [q(pluginInstallsQuery(orgId)), q(orgExtensionsQuery(orgId))]
+              : []),
+          ],
+  },
+  {
+    pattern: "/plugins/[itemId]/enable",
+    // Org admins: the item and the org's extensions (the wizard's extension step).
+    queries: ({ orgId, me, params }) =>
+      orgId === null || params.itemId === undefined || !atLeast(me, "admin")
+        ? []
+        : [q(orgCatalogItemQuery(orgId, params.itemId)), q(orgExtensionsQuery(orgId))],
   },
   {
     pattern: "/settings/members",
@@ -575,11 +590,6 @@ export const ROUTES: readonly RouteEntry[] = [
     pattern: "/settings/organization",
     queries: ({ orgId, me }) =>
       orgId === null || !atLeast(me, "member") ? [] : [q(orgSettingsQuery(orgId))],
-  },
-  {
-    pattern: "/settings/plugins",
-    queries: ({ orgId, me }) =>
-      orgId === null || !atLeast(me, "admin") ? [] : [q(pluginInstallsQuery(orgId))],
   },
   {
     pattern: "/settings/sandbox",

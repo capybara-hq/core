@@ -62,8 +62,8 @@ test("假渠道：启用插件 → 建渠道连接 → IM 里未绑定的人收�
   await signIn(page);
 
   // 1. 组织插件：先填组织级配置（通讯录地址），再启用；权限清单里工具与密钥被标为敏感
-  await page.goto("/settings/extensions");
-  await expect(page.locator('[data-template="SettingsPage"]')).toBeVisible();
+  await page.goto("/extensions");
+  await expect(page.locator('[data-template="ListPage"]')).toBeVisible();
   const section = page.getByRole("region", { name: "fake-im", exact: true });
   const perms = section.getByRole("region", {
     name: zh.extensions.permissionsLabel.replace("{plugin}", "fake-im"),

@@ -1,14 +1,23 @@
 "use client";
 
-import { Card, DetailPage, KeyValue, Stack, Text, versionLabel } from "@capybara-hq/design";
-import { useLocale, useTranslations } from "next-intl";
 import {
-  CatalogInstallAction,
-  useOrgItemStatus,
-} from "../../../../components/CatalogInstallAction";
+  Button,
+  Card,
+  DetailPage,
+  KeyValue,
+  LinkButton,
+  Stack,
+  Text,
+  versionLabel,
+} from "@capybara-hq/design";
+import { useQuery } from "@tanstack/react-query";
+import { useLocale, useTranslations } from "next-intl";
 import { CatalogIcon, ComponentSection } from "../../../../components/CatalogParts";
 import { ErrorFrame } from "../../../../components/ErrorFrame";
+import { FormError } from "../../../../components/form-error";
 import { NoAccess } from "../../../../components/NoAccess";
+import { PluginInstallsSection } from "../../../../components/PluginInstallCards";
+import { usePluginActions, usePluginState } from "../../../../components/PluginSwitch";
 import { usePagePath } from "../../../../components/shell/path";
 import {
   agentTemplateNameOf,
@@ -21,20 +30,24 @@ import {
 } from "../../../../lib/catalog";
 import { canUpdateOrg } from "../../../../lib/org-settings";
 import { orgCatalogItemQuery } from "../../../../lib/query/catalog";
+import { orgExtensionsQuery } from "../../../../lib/query/channels";
+import { retryOnMountOf } from "../../../../lib/query/client";
 import { usePageQuery } from "../../../../lib/query/page-query";
 import { useWorkspace } from "../../../../lib/query/workspace";
 import type { Me } from "../../../../lib/session";
 import NotFound from "../../not-found";
 
 /**
- * `/catalog/[itemId]`: a plugin in the catalog from the org's view (DetailPage). Summary,
- * the latest version's components (its extension, skills, connector templates with endpoint and
- * auth, dependencies installed with it); actions follow `installable` (CatalogInstallAction).
- * Inspector: the icon (shown as `<img>` through the kernel route) and basic facts. From the query
- * cache (the layout prefetched it on a first load); a missing item is the not-found state. An
- * action invalidates the item, which is read again.
+ * `/plugins/[itemId]`: a plugin from the org's view (DetailPage). Summary, its state in the org
+ * with the actions of the 插件 page (启用 / 组织配置 / 停用 with its preview / 申请; members
+ * 申请启用), for org admins this org's installs of it (status, components, upgrade, clean-up; see
+ * PluginInstallsSection), then the latest version's components (its extension, skills, connector
+ * templates with endpoint and auth, dependencies installed with it). Inspector: the icon (shown as
+ * `<img>` through the kernel route) and basic facts. From the query cache (the layout prefetched it
+ * on a first load); a missing item is the not-found state. An action invalidates the item, which
+ * is read again.
  */
-export default function CatalogItemView({ itemId }: { itemId: string }) {
+export default function PluginItemView({ itemId }: { itemId: string }) {
   const ws = useWorkspace({ min: "member", setup: "step" });
   if (ws.kind === "pending" || ws.kind === "noOrg") return null;
   if (ws.kind === "noAccess") return <NoAccess need={ws.need} />;
@@ -50,7 +63,7 @@ function CatalogItem({ orgId, itemId, me }: { orgId: string; itemId: string; me:
   if (read.kind === "loading") {
     return (
       <DetailPage
-        header={{ path: [...scope, { label: "catalog", href: "/catalog" }], title: "" }}
+        header={{ path: [...scope, { label: "plugins", href: "/plugins" }], title: "" }}
         tabs={{
           label: t("detail.tabsLabel"),
           items: [{ id: "overview", label: t("detail.tabs.overview") }],
@@ -92,15 +105,21 @@ function CatalogItemDetail({
   const tr = useTranslations("catalog.admin.review");
   const tc = useTranslations("catalog.components");
   const locale = useLocale();
-  const status = useOrgItemStatus();
+  const stateOf = usePluginState();
   const item = detail.item;
+  const admin = canUpdateOrg(me);
+  const eq = orgExtensionsQuery(orgId);
+  const extensions = useQuery({ ...eq, enabled: admin, retryOnMount: retryOnMountOf(eq.queryKey) })
+    .data?.extensions;
+  const { actionsOf, dialog, error, busy } = usePluginActions({ orgId, admin, extensions });
+  const actions = actionsOf(item);
 
   return (
     <DetailPage
       header={{
         path: [
           ...scope,
-          { label: "catalog", href: "/catalog" },
+          { label: "plugins", href: "/plugins" },
           { label: displayNameOf(item, locale) },
         ],
         title: displayNameOf(item, locale),
@@ -121,7 +140,7 @@ function CatalogItemDetail({
             rows={[
               { k: t("detail.fields.publisher"), v: item.publisher || "—" },
               { k: t("detail.fields.version"), v: versionLabel(item.latestVersion) },
-              { k: t("detail.fields.status"), v: status(item) },
+              { k: t("detail.fields.status"), v: stateOf(item).label },
             ]}
           />
         </Stack>
@@ -129,7 +148,30 @@ function CatalogItemDetail({
     >
       <Stack gap={16}>
         {item.description !== "" && <Text variant="prose">{item.description}</Text>}
-        <CatalogInstallAction orgId={orgId} item={item} admin={canUpdateOrg(me)} />
+        <Stack gap={4}>
+          <Stack direction="row" gap={8} align="center">
+            <Text tone={stateOf(item).tone}>{stateOf(item).label}</Text>
+            {actions.map((a) =>
+              a.href !== undefined ? (
+                <LinkButton key={a.id} href={a.href}>
+                  {a.label}
+                </LinkButton>
+              ) : (
+                <Button
+                  key={a.id}
+                  {...(a.danger === true ? { variant: "danger" as const } : {})}
+                  disabled={busy}
+                  onClick={a.onSelect}
+                >
+                  {a.label}
+                </Button>
+              ),
+            )}
+          </Stack>
+          {error !== undefined && <FormError message={error.message} extra={error.extra} />}
+        </Stack>
+        {dialog}
+        {admin && <PluginInstallsSection orgId={orgId} itemId={item.id} />}
         <ComponentSection
           title={tc("extension")}
           count={detail.extension === null ? 0 : 1}

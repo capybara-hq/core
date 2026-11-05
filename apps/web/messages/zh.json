@@ -944,7 +944,8 @@
     "evals": "评测与运行",
     "settings": "组织设置",
     "admin": "管理后台",
-    "catalog": "插件"
+    "plugins": "插件",
+    "extensions": "扩展"
   },
   "shell": {
     "noOrg": "选择组织",
@@ -1366,10 +1367,8 @@
       "general": "通用",
       "sandbox": "沙箱",
       "identities": "IM 身份",
-      "extensions": "扩展",
       "models": "模型用途",
       "members": "成员",
-      "plugins": "已安装的插件",
       "tokens": "服务令牌"
     },
     "empty": "没有需要你个人凭据的连接器。",
@@ -1537,7 +1536,7 @@
       "pluginLabel": "扩展",
       "pluginPlaceholder": "选择扩展",
       "noExtensions": "先启用一个渠道扩展。",
-      "openExtensions": "打开扩展设置",
+      "openExtensions": "打开扩展页",
       "nameLabel": "名称",
       "configSection": "机器人凭据",
       "configHint": "字段由扩展定义。保存时会先向平台校验凭据。",
@@ -1622,8 +1621,6 @@
     "disabled": "未启用",
     "unavailable": "不可用",
     "unavailableHint": "此扩展在部署上当前不可用；组织的启用设置会保留。",
-    "required": "必需",
-    "requiredHint": "此插件是部署必需的：在所有组织中启用，不能停用。",
     "enabledToast": "已启用 {plugin}。",
     "disabledToast": "已停用 {plugin}。",
     "dependencyMissing": "请先启用提供以下扩展点的扩展：",
@@ -1683,7 +1680,6 @@
       },
       "at": "{file} 第 {line} 行"
     },
-    "openCatalog": "去企业目录查看或申请",
     "pointDefaults": {
       "title": "默认提供方",
       "description": "有多个已启用的扩展提供同一种能力时，选择本组织使用哪一个。",
@@ -1695,7 +1691,10 @@
         "webSearch": "网页搜索",
         "webFetch": "网页读取"
       }
-    }
+    },
+    "description": "本组织能用的扩展。组织级配置（例如本组织自己的 API Key）在这里填。",
+    "enterpriseHint": "企业为所有组织统一启用了这个扩展，组织不能停用；组织级配置仍可在这里填写。",
+    "openPlugins": "去插件页查看或申请"
   },
   "identities": {
     "title": "IM 身份",
@@ -3178,41 +3177,6 @@
       }
     },
     "org": {
-      "title": "插件",
-      "hint": "企业管理员提供的插件。",
-      "empty": "企业目录里还没有可用的条目。",
-      "columns": {
-        "name": "名称",
-        "description": "简介",
-        "status": "状态"
-      },
-      "status": {
-        "installed": "已安装 {version}",
-        "yes": "可安装",
-        "granted": "已获批准",
-        "needs_approval": "需企业管理员批准",
-        "disabled": "已禁用",
-        "not_deployed": "扩展尚未部署",
-        "requested": "已申请，等待处理"
-      },
-      "action": {
-        "install": "安装",
-        "requestApproval": "申请企业管理员批准",
-        "request": "申请安装",
-        "disabledHint": "企业管理员禁用了这个条目，不能新装。",
-        "notDeployedHint": "它的扩展（或它的连接器模板需要的扩展）还没装到部署上，请联系企业管理员。",
-        "pendingHint": "已提交申请（{stage}），等待处理。",
-        "stage": {
-          "org": "组织管理员",
-          "deployment": "企业管理员"
-        },
-        "installed": "已安装 {name}",
-        "requested": "已提交申请",
-        "approvalRequested": "需要企业管理员批准，已提交申请。",
-        "openPlugins": "查看已安装的插件",
-        "upgradeAvailable": "可升级到 {version}",
-        "upgrade": "升级"
-      },
       "detail": {
         "tabsLabel": "条目详情",
         "tabs": {
@@ -3225,7 +3189,7 @@
         }
       },
       "install": {
-        "title": "安装 {name}",
+        "title": "启用 {name}",
         "connectorStep": "连接器：{name}",
         "extensionStep": "扩展配置",
         "confirmStep": "确认",
@@ -3243,17 +3207,17 @@
         "extensionHint": "插件会在本组织启用它的扩展；有组织配置的请填写（已启用的扩展不改配置）。",
         "extensionNone": "没有需要填写的扩展配置。",
         "extensionEnabled": "{name}：已在本组织启用，保持现有配置。",
-        "summary": "将安装：",
+        "summary": "启用后本组织会得到：",
         "summaryExtension": "扩展 {name}",
         "summaryTemplates": "{n} 个连接器",
         "summarySkills": "{n} 个技能",
         "summaryDependencies": "先一并安装（本组织已有的不重装）：",
-        "submit": "安装",
+        "submit": "启用",
         "next": "下一步",
         "back": "上一步",
         "cancel": "取消",
-        "failed": "安装在「{step}」一步失败（{code}），已回滚本次新建的组件。",
-        "failedNoRollback": "安装在「{step}」一步失败（{code}），回滚时有组件没能移除，可在「已安装的插件」里卸载清理。",
+        "failed": "启用在「{step}」一步失败（{code}），已回滚本次新建的组件。",
+        "failedNoRollback": "启用在「{step}」一步失败（{code}），回滚时有组件没能移除，可在插件详情页清理。",
         "failedIn": "（在依赖 {dependency} 里）",
         "step": {
           "dependencies": "依赖",
@@ -3262,16 +3226,10 @@
           "skills": "技能",
           "finish": "收尾"
         },
-        "notInstallable": "这个插件现在不能安装。"
-      },
-      "tabs": {
-        "all": "全部",
-        "installed": "已安装"
+        "notInstallable": "这个插件现在不能启用。"
       }
     },
     "plugins": {
-      "title": "已安装的插件",
-      "empty": "本组织还没有从企业目录安装插件。",
       "status": {
         "installing": "安装中",
         "installed": "已安装",
@@ -3292,7 +3250,6 @@
         "agent_template": "agent 模板"
       },
       "installedAt": "安装于 {at}",
-      "uninstall": "卸载",
       "cleanup": "清理",
       "confirm": {
         "title": "卸载 {name}",
@@ -3541,5 +3498,63 @@
     "loadFailed": "无法加载服务令牌。",
     "retry": "重试",
     "expired": "已过期"
+  },
+  "plugins": {
+    "title": "插件",
+    "description": "企业提供给本组织的插件，和本组织申请到的。启用插件会启用它带的全部组件。",
+    "empty": "企业还没有向本组织提供插件。",
+    "tabs": {
+      "plugins": "插件",
+      "market": "市场"
+    },
+    "state": {
+      "on": "已启用",
+      "off": "未启用",
+      "needs_config": "需要配置",
+      "enterprise": "已启用 · 企业统一",
+      "not_offered": "未开放，可申请",
+      "requested": "已申请，等待处理",
+      "unavailable": "企业已停用",
+      "notDeployed": "扩展未部署"
+    },
+    "action": {
+      "enable": "启用",
+      "configure": "组织配置",
+      "disable": "停用",
+      "request": "申请",
+      "requestEnable": "申请启用",
+      "requestImport": "申请引入"
+    },
+    "chips": {
+      "upgrade": "可更新 {version}"
+    },
+    "meta": {
+      "enterprise": "企业 · {scope}"
+    },
+    "toast": {
+      "enabled": "已启用 {name}。",
+      "disabled": "已停用 {name}。",
+      "requested": "申请已提交。"
+    },
+    "switchOff": {
+      "title": "停用 {name}",
+      "hint": "停用会移除这个插件为本组织创建、且别处没在用的组件；已有的和仍在使用的会保留。",
+      "agents": "这些 Agent 在用它的组件，停用后将无法再用：",
+      "removed": "将移除",
+      "kept": "保留",
+      "none": "无",
+      "confirm": "停用",
+      "cancel": "取消",
+      "stale": "要移除的内容已变化，请再看一遍后确认。"
+    },
+    "market": {
+      "title": "市场",
+      "empty": "市场里还没有条目。",
+      "adopted": "已引入",
+      "unavailable": "不能引入"
+    },
+    "detail": {
+      "installs": "本组织的安装"
+    }
   }
 }

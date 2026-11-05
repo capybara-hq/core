@@ -85,14 +85,14 @@ export interface StagedFailure {
 type Staged = PluginPrepared | null | { problem: Problem };
 
 /**
- * `/admin/plugins/import` (上传插件包, and the review of a marketplace entry or an approved
+ * `/admin/plugins/import` ("Upload plugin package", and the review of a marketplace entry or an approved
  * `import` request): bring a plugin in (enterprise admins, WizardPage), reviewed as a whole in one
  * pass:
  * 1. choose the plugin package: upload a tgz, give an npm package name, or read it straight from git
  *    (a one-off import: an https git URL or `owner/repo`, an optional branch / tag / commit and
  *    directory; no marketplace is added) (prepare stages it for 24 hours) and the address becomes
  *    `?staging=<id>`. A marketplace entry is prepared on the
- *    市场 tab (or by approving an org's `import` request), which opens this page with `?staging=<id>`; the page loads that staged review
+ *    Marketplace tab (or by approving an org's `import` request), which opens this page with `?staging=<id>`; the page loads that staged review
  *    (and a marketplace import's permission mismatch) from the kernel
  *    (`GET admin/catalog/imports/:stagingId`) and skips this step. An expired or confirmed one
  *    says so and offers a new import;
@@ -108,7 +108,7 @@ type Staged = PluginPrepared | null | { problem: Problem };
  *    LICENSE text (collapsed), each skill's SKILL.md (collapsed) and the "suggest pinned"
  *    checkboxes (expanded by default when the plugin has a SessionStart hook); a changed choice is
  *    sent at confirm as `pinnedSuggestions`;
- * 3. confirm: the scope (spec §5; default 组织自选, or 指定组织 = the requesting org for a staging
+ * 3. confirm: the scope (spec §5; default "Organizations choose", or "Selected organizations" = the requesting org for a staging
  *    prepared by approving an org's `import` request); confirming installs and enables the
  *    extension (an import below the deployed version only joins the catalog, said as a notice);
  *    with sensitive items, "I understand the sensitive items" must be checked too.
@@ -236,7 +236,7 @@ function PluginImportWizard({ initial, orgId }: { initial: StagedImport; orgId: 
     invalidates: () => [],
   });
   // A confirmed import is a new catalog item or version (and maybe an extension on the
-  // deployment), it may answer an org's request (待确认 and the nav count); the staged import is
+  // deployment), it may answer an org's request (the Pending tab and the nav count); the staged import is
   // gone.
   const confirm = useAppMutation({
     fn: (v: { stagingId: string; body: Parameters<typeof confirmPluginImport>[1] }) =>
@@ -311,7 +311,7 @@ function PluginImportWizard({ initial, orgId }: { initial: StagedImport; orgId: 
   const requestsPending = prepared !== null && requests === undefined && !requestsRead.isError;
   const sendScope = scopeChoice !== undefined || requests !== undefined;
   // A staging prepared by approving an org's `import` request offers the plugin to that org by
-  // default (the kernel's default too, spec §5.1 rule 3); any other import: 组织自选.
+  // default (the kernel's default too, spec §5.1 rule 3); any other import: "Organizations choose".
   const linked =
     prepared === null
       ? undefined

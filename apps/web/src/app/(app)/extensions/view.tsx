@@ -3,7 +3,7 @@
 import {
   Button,
   FormSection,
-  SettingsPage,
+  ListPage,
   Stack,
   Switch,
   Text,
@@ -13,108 +13,88 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
-import { ConfigForm } from "../../../../components/config-form/ConfigForm";
-import { hasConfigFields } from "../../../../components/config-form/model";
-import { orgConfig, orgFormMeta } from "../../../../components/config-form/org";
-import { ErrorFrame } from "../../../../components/ErrorFrame";
-import { FilePreviewersSection } from "../../../../components/FilePreviewersSection";
-import { FormError } from "../../../../components/form-error";
-import { NoAccess } from "../../../../components/NoAccess";
-import { PermissionReview } from "../../../../components/PermissionReview";
-import { PointDefaultsSection } from "../../../../components/PointDefaultsSection";
-import { useOrgSettingsNav } from "../../../../components/settings-nav";
-import { usePagePath } from "../../../../components/shell/path";
-import { Link } from "../../../../i18n/navigation";
-import { ApiClientError, configIssues, issueLines } from "../../../../lib/api";
-import { extensionLabel, labelLocale } from "../../../../lib/extension-label";
+import { ConfigForm } from "../../../components/config-form/ConfigForm";
+import { hasConfigFields } from "../../../components/config-form/model";
+import { orgConfig, orgFormMeta } from "../../../components/config-form/org";
+import { ErrorFrame } from "../../../components/ErrorFrame";
+import { FilePreviewersSection } from "../../../components/FilePreviewersSection";
+import { FormError } from "../../../components/form-error";
+import { NoAccess } from "../../../components/NoAccess";
+import { PermissionReview } from "../../../components/PermissionReview";
+import { SwitchOffDialog } from "../../../components/PluginSwitch";
+import { PointDefaultsSection } from "../../../components/PointDefaultsSection";
+import { usePagePath } from "../../../components/shell/path";
+import { Link } from "../../../i18n/navigation";
+import { ApiClientError, configIssues, issueLines } from "../../../lib/api";
+import type { SwitchPreview } from "../../../lib/catalog";
+import { extensionLabel, labelLocale } from "../../../lib/extension-label";
 import {
   type OrgExtension,
   type PermissionGroup,
+  type PutOrgExtensionInput,
   provides,
   putOrgExtension,
   syncDirectory,
-} from "../../../../lib/extensions";
-import type { ConfigIssue } from "../../../../lib/json-schema";
-import { orgExtensionChangeKeys } from "../../../../lib/query/admin";
-import { orgExtensionsQuery } from "../../../../lib/query/channels";
-import { keys } from "../../../../lib/query/keys";
-import { useAppMutation } from "../../../../lib/query/mutation";
-import { usePageQuery } from "../../../../lib/query/page-query";
-import { useWorkspace } from "../../../../lib/query/workspace";
-import { useErrorMessage } from "../../../../lib/use-error-message";
-import NotFound from "../../not-found";
+} from "../../../lib/extensions";
+import type { ConfigIssue } from "../../../lib/json-schema";
+import { orgExtensionChangeKeys } from "../../../lib/query/admin";
+import { orgExtensionsQuery } from "../../../lib/query/channels";
+import { keys } from "../../../lib/query/keys";
+import { useAppMutation } from "../../../lib/query/mutation";
+import { usePageQuery } from "../../../lib/query/page-query";
+import { useWorkspace } from "../../../lib/query/workspace";
+import { useErrorMessage } from "../../../lib/use-error-message";
+import NotFound from "../not-found";
 
 /**
- * `/settings/extensions`: the org's extensions (SettingsPage, admins). One group per
- * extension: the enable switch (with the reason when a dependency is missing or dependents remain;
- * the latter can be force-disabled), the permission list (read-only, sensitive categories
- * highlighted), the org config form, and "Sync now" for directory-sync extensions. An extension
- * that is currently unavailable on the deployment (e.g. disabled by an enterprise admin) shows
- * "Unavailable": the switch is read-only (the org's setting is kept). A required bootstrap plugin
- * shows "Required": the switch is read-only (always on) and its org config can still be set. Below the
- * extensions, the org's default providers of the points several extensions provide (web tools spec
- * §6), and the org's file previewers (`file-preview@1`) in order, when any is provided.
- * From the query cache (the layout prefetched all three on a first load); a change writes the
- * answer into the cached extensions, and enabling or disabling one also invalidates what an
- * extension brings (its UI, its pages, its file previewers, the default providers' candidates).
+ * `/extensions`: the org's 扩展 page (spec §9; org admins, who read the org's extensions). One
+ * group per extension (in a ListPage): the enable switch, which is its plugin's switch (spec §5
+ * rule 7): switching it off answers the plugin's switch-off preview first (what it takes away, the
+ * agents that use it), confirmed in a dialog with the preview's hash; with the reason when a
+ * dependency is missing or dependents remain (the latter can be force-disabled); the permission
+ * list (read-only, sensitive categories highlighted), the org config form, and "Sync now" for
+ * directory-sync extensions. An extension of an `all` or builtin plugin reads 已启用 · 企业统一
+ * and its switch is read-only (on in every org); its org config can still be set. One the
+ * deployment cannot run now (e.g. stopped by an enterprise admin) shows "Unavailable": the switch is
+ * read-only (the org's setting is kept). Below the extensions, the org's default providers of the
+ * points several extensions provide (web tools spec §6), and the org's file previewers
+ * (`file-preview@1`) in order, when any is provided. From the query cache (the layout prefetched
+ * all three on a first load); a change writes the answer into the cached extensions, and enabling or
+ * disabling one also invalidates what an extension brings (its UI, its pages, its file previewers,
+ * the default providers' candidates) and the plugin's view.
  */
 export default function ExtensionsView() {
   const ws = useWorkspace({ min: "admin" });
   if (ws.kind === "pending" || ws.kind === "noOrg") return null;
   if (ws.kind === "noAccess") return <NoAccess need={ws.need} />;
-  return <Plugins orgId={ws.orgId} />;
+  return <Extensions orgId={ws.orgId} />;
 }
 
-/**
- * The extension groups while they load: two, each its enable switch and state word, the hint line
- * a required bootstrap plugin carries (every org has them) and its permissions (the label and the
- * template's default count of permission cards). A config form depends on the extension.
- */
-const LOADING_EXTENSIONS = [0, 1].map(() => ({
-  fields: [
-    { control: "switch" as const },
-    { control: "text" as const },
-    { control: "card-group" as const },
-  ],
-}));
-
-function Plugins({ orgId }: { orgId: string }) {
+function Extensions({ orgId }: { orgId: string }) {
   const scope = usePagePath("org");
   const t = useTranslations("extensions");
-  const nav = useOrgSettingsNav();
   const read = usePageQuery(orgExtensionsQuery(orgId));
   const header = {
-    path: [
-      ...scope,
-      { label: "settings", href: "/settings/organization" },
-      { label: "extensions" },
-    ],
+    path: [...scope, { label: "extensions" }],
     title: t("title"),
+    description: t("description"),
   };
   if (read.kind === "notFound") return <NotFound />;
   if (read.kind === "error") return <ErrorFrame reset={read.retry} />;
-  if (read.kind === "loading") {
-    return (
-      <SettingsPage
-        header={header}
-        nav={nav}
-        activeNav="extensions"
-        // Two extension groups (titles come with the data).
-        loading={{ sections: LOADING_EXTENSIONS }}
-      />
-    );
-  }
+  if (read.kind === "loading") return <ListPage header={header} loading />;
   const extensions = read.data.extensions;
   return (
-    <SettingsPage header={header} nav={nav} activeNav="extensions">
-      {extensions.length === 0 ? (
-        <Text tone="muted">{t("empty")}</Text>
-      ) : (
-        extensions.map((p) => <ExtensionSection key={p.plugin} orgId={orgId} plugin={p} />)
-      )}
-      <PointDefaultsSection orgId={orgId} />
-      <FilePreviewersSection orgId={orgId} />
-    </SettingsPage>
+    <ListPage header={header}>
+      <Stack gap={24}>
+        {extensions.length === 0 ? (
+          <Text tone="muted">{t("empty")}</Text>
+        ) : (
+          extensions.map((p) => <ExtensionSection key={p.plugin} orgId={orgId} plugin={p} />)
+        )}
+        <PointDefaultsSection orgId={orgId} />
+        <FilePreviewersSection orgId={orgId} />
+      </Stack>
+    </ListPage>
   );
 }
 
@@ -136,6 +116,7 @@ const strings = (raw: unknown[], key: string): string[] => [
 
 function ExtensionSection({ orgId, plugin }: { orgId: string; plugin: OrgExtension }) {
   const t = useTranslations("extensions");
+  const tp = useTranslations("plugins");
   const label = extensionLabel(
     { name: plugin.plugin, displayName: plugin.displayName },
     labelLocale(useLocale()),
@@ -162,6 +143,9 @@ function ExtensionSection({ orgId, plugin }: { orgId: string; plugin: OrgExtensi
   // 部署上停用（或尚未加载）：只显示组织的启用设置，不能修改
   const unavailable = plugin.available === false;
   const required = plugin.required === true;
+  // On in every org (a builtin or `all` plugin): the switch is the enterprise's
+  const enterprise = required || plugin.catalogItem?.scope === "all";
+  const locked = enterprise || plugin.switchable === false;
   const qc = useQueryClient();
   // The answer is the extension as it is now: it replaces that one in the cached list.
   const onSaved = (next: OrgExtension) =>
@@ -172,18 +156,14 @@ function ExtensionSection({ orgId, plugin }: { orgId: string; plugin: OrgExtensi
     );
   // Enabling, disabling or configuring also changes what the extension brings to the org (its
   // readiness, UI, models and purposes); the list itself takes the answer.
+  // Switching the extension's plugin off answers its switch-off preview first: shown in a dialog,
+  // then confirmed with the preview's hash.
+  const [off, setOff] = useState<{ input: PutOrgExtensionInput; preview: SwitchPreview } | null>(
+    null,
+  );
+  const [offNotice, setOffNotice] = useState<string>();
   const put = useAppMutation({
-    // Switching the extension's plugin off answers a preview of what it takes away first; this
-    // page confirms it at once (the preview dialog is the plugin page's job).
-    fn: async (v: { enabled?: boolean; force?: boolean; config?: Record<string, unknown> }) => {
-      const r = await putOrgExtension(orgId, plugin.plugin, v);
-      const done =
-        "preview" in r
-          ? await putOrgExtension(orgId, plugin.plugin, { ...v, confirm: r.confirm })
-          : r;
-      if (!("extension" in done)) throw new Error("the switch did not complete");
-      return done;
-    },
+    fn: (v: PutOrgExtensionInput) => putOrgExtension(orgId, plugin.plugin, v),
     // (a plugin switch also changes the catalog's view and the installed plugins)
     invalidates: () => [
       ...orgExtensionChangeKeys(orgId),
@@ -191,20 +171,39 @@ function ExtensionSection({ orgId, plugin }: { orgId: string; plugin: OrgExtensi
       keys.org(orgId).catalogItemsAll(),
       keys.org(orgId).pluginInstalls(),
     ],
-    onSuccess: (r) => onSaved(r.extension),
+    onSuccess: (r) => {
+      if ("extension" in r) onSaved(r.extension);
+    },
   });
   const startSync = useAppMutation({
     fn: () => syncDirectory(orgId, plugin.plugin),
     invalidates: () => [],
   });
 
-  async function toggle(enabled: boolean, force = false) {
+  async function toggle(enabled: boolean, force = false, confirm?: string) {
     setBusy("toggle");
     setProblem(undefined);
+    const input: PutOrgExtensionInput = {
+      enabled,
+      ...(force ? { force } : {}),
+      ...(confirm !== undefined ? { confirm } : {}),
+    };
     try {
-      await put.mutateAsync({ enabled, ...(force ? { force } : {}) });
+      const r = await put.mutateAsync(input);
+      if ("preview" in r) {
+        setOff({ input: { enabled, ...(force ? { force } : {}) }, preview: r });
+        return;
+      }
+      setOff(null);
       toast.success(t(enabled ? "enabledToast" : "disabledToast", { plugin: label }));
     } catch (e) {
+      // The preview moved on before the confirm: read it again and show it
+      if (off !== null && e instanceof ApiClientError && e.code === "plugin.switch_stale") {
+        setOffNotice(tp("switchOff.stale"));
+        await toggle(enabled, force);
+        return;
+      }
+      setOff(null);
       if (e instanceof ApiClientError && e.code === "extension.dependency_missing")
         setProblem({
           kind: "dependency_missing",
@@ -217,11 +216,11 @@ function ExtensionSection({ orgId, plugin }: { orgId: string; plugin: OrgExtensi
           kind: "other",
           message: errorMessage(e),
           extra: issueLines(e),
-          // Refused by the catalog item that brought it into the deployment (disabled / needs
-          // approval, the strictest wins): link to the catalog to request it
+          // Refused by its plugin (stopped by the enterprise, not offered to this org): link to
+          // the 插件 page to request it
           catalog:
             e instanceof ApiClientError &&
-            (e.code === "catalog.item_disabled" || e.code === "catalog.approval_required"),
+            (e.code === "plugin.disabled" || e.code === "catalog.approval_required"),
         });
     } finally {
       setBusy(undefined);
@@ -271,16 +270,17 @@ function ExtensionSection({ orgId, plugin }: { orgId: string; plugin: OrgExtensi
         <Switch
           label={t("enableLabel", { plugin: label })}
           checked={plugin.enabled}
-          disabled={busy !== undefined || unavailable || required}
+          disabled={busy !== undefined || unavailable || locked}
           onChange={(on) => void toggle(on)}
         />
-        <Text>{plugin.enabled ? t("enabled") : t("disabled")}</Text>
-        {required && <Text tone="muted">{t("required")}</Text>}
+        <Text>
+          {plugin.enabled ? (enterprise ? tp("state.enterprise") : t("enabled")) : t("disabled")}
+        </Text>
         {unavailable && <Text tone="warn">{t("unavailable")}</Text>}
       </Stack>
-      {required && (
+      {enterprise && (
         <Text variant="prose" tone="muted">
-          {t("requiredHint")}
+          {t("enterpriseHint")}
         </Text>
       )}
       {unavailable && (
@@ -311,7 +311,7 @@ function ExtensionSection({ orgId, plugin }: { orgId: string; plugin: OrgExtensi
           <FormError message={problem.message} extra={problem.extra} />
           {problem.catalog === true && (
             <Text>
-              <Link href="/catalog">{t("openCatalog")}</Link>
+              <Link href="/plugins">{t("openPlugins")}</Link>
             </Text>
           )}
         </Stack>
@@ -370,6 +370,20 @@ function ExtensionSection({ orgId, plugin }: { orgId: string; plugin: OrgExtensi
             </Button>
           </Stack>
         </Stack>
+      )}
+      {off !== null && (
+        <SwitchOffDialog
+          orgId={orgId}
+          name={label}
+          preview={off.preview.preview}
+          busy={busy === "toggle"}
+          notice={offNotice}
+          onConfirm={() => void toggle(false, off.input.force === true, off.preview.confirm)}
+          onCancel={() => {
+            setOff(null);
+            setOffNotice(undefined);
+          }}
+        />
       )}
     </FormSection>
   );

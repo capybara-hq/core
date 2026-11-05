@@ -45,8 +45,8 @@ test("web tools: two providers → default provider per point → WebFetch in th
   await signIn(page);
 
   // 1. Enable both fake web providers (each configured with a token)
-  await page.goto("/settings/extensions");
-  await expect(page.locator('[data-template="SettingsPage"]')).toBeVisible();
+  await page.goto("/extensions");
+  await expect(page.locator('[data-template="ListPage"]')).toBeVisible();
   await enableWebProvider(page, "fake-web");
   await enableWebProvider(page, "fake-web-2");
 

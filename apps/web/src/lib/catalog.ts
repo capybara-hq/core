@@ -641,12 +641,6 @@ export interface OrgInstallBody {
   extensionConfig?: Record<string, unknown>;
 }
 
-/** Install result (201): the install view. */
-export interface OrgInstallResult {
-  installed: { itemId: string; version: string; pluginInstallId: string };
-  install: PluginInstall;
-}
-
 /** What switching a plugin off in an org takes away (kernel `UninstallPreview`). */
 export interface UninstallPreview {
   installId: string;
@@ -1008,9 +1002,6 @@ export const setOrgPluginSwitch = (orgId: string, itemId: string, body: OrgSwitc
 export const dismissOrgRequest = (orgId: string, id: string) =>
   apiFetch<void>(`${org(orgId)}/catalog-requests/${enc(id)}/dismiss`, post());
 
-export const installCatalogItem = (orgId: string, itemId: string, body: OrgInstallBody) =>
-  apiFetch<OrgInstallResult>(`${org(orgId)}/catalog/${enc(itemId)}/install`, post(body));
-
 export const listPluginInstalls = (orgId: string) =>
   apiFetch<{ installs: PluginInstall[] }>(`${org(orgId)}/plugin-installs`);
 
@@ -1047,21 +1038,6 @@ export const displayNameOf = (
   i: { name: string; displayName: LocalizedName | null },
   locale: string,
 ): string => (i.displayName ? (locale === "zh" ? i.displayName.zh : i.displayName.en) : i.name);
-
-/**
- * The pre-scope install split of the org pages (copy keys `catalog.org.status.*`), derived from the
- * item's scope state: the pages of plugin scope phase 1 replace it with the state itself.
- */
-export const installableOf = (
-  i: Pick<OrgCatalogItem, "state" | "notDeployed">,
-): "yes" | "needs_approval" | "disabled" | "not_deployed" =>
-  i.state === "unavailable"
-    ? "disabled"
-    : i.notDeployed
-      ? "not_deployed"
-      : i.state === "not_offered"
-        ? "needs_approval"
-        : "yes";
 
 /**
  * What a request is about: its catalog item, or (an `import` request before its confirm) the

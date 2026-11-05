@@ -118,7 +118,7 @@ export function useSetupSteps(me: Me, r: OrgReadiness): SetupStep[] {
     ? [
         later("channels", "/channels/new"),
         later("members", "/settings/members"),
-        later("catalog", "/catalog"),
+        later("catalog", "/plugins"),
       ]
     : navLevelOf(me) === "member"
       ? [later("connections", "/account/connections")]

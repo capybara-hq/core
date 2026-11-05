@@ -9,6 +9,7 @@ const zh = JSON.parse(
 
 const CSRF = { "X-Capybara-Csrf": "1" };
 const D = zh.catalog;
+const P = zh.plugins;
 const fill = (s: string, vars: Record<string, string | number>) =>
   s.replace(/\{(\w+)\}/g, (_, k: string) => String(vars[k]));
 
@@ -30,7 +31,7 @@ async function importEntry(page: Page, pkg: string): Promise<void> {
   await expect(page.locator('[data-template="WizardPage"]')).toBeVisible();
 }
 
-test("catalog: refresh the official marketplace -> import a dependency plugin with its extension and a plugin that depends on it, each in one review -> org install wizard installs the dependency too -> uninstall shows the kept components", async ({
+test("catalog: refresh the official marketplace -> import a dependency plugin with its extension and a plugin that depends on it, each in one review -> the org 插件 page turns it on through the input wizard, installing the dependency too -> turning it off previews the kept components", async ({
   page,
 }) => {
   await signIn(page);
@@ -105,14 +106,14 @@ test("catalog: refresh the official marketplace -> import a dependency plugin wi
     )
     .toBe(200);
 
-  // 6. Org catalog: crm is installable -> install wizard
-  await page.goto("/catalog");
+  // 6. The org's 插件 page: crm is off and asks for input -> the enable wizard
+  await page.goto("/plugins");
   const appRow = page.getByRole("listitem").filter({ hasText: "CRM 套件" });
-  await expect(appRow.getByRole("link", { name: D.org.action.install })).toBeVisible({
+  await expect(appRow.getByRole("link", { name: P.action.enable })).toBeVisible({
     timeout: 60_000,
   });
-  await appRow.getByRole("link", { name: D.org.action.install }).click();
-  await expect(page).toHaveURL(/\/catalog\/[0-9a-f-]{36}\/install$/);
+  await appRow.getByRole("link", { name: P.action.enable }).click();
+  await expect(page).toHaveURL(/\/plugins\/[0-9a-f-]{36}\/enable$/);
   // The connector step: url is editable (the template's only field), no auth
   await expect(page.getByLabel("url", { exact: true })).toBeEditable();
   await expect(page.getByText(D.org.install.noneHint)).toBeVisible();
@@ -121,25 +122,27 @@ test("catalog: refresh the official marketplace -> import a dependency plugin wi
   await expect(page.getByText(D.org.install.summaryDependencies)).toBeVisible();
   await page.getByRole("button", { name: D.org.install.submit }).click();
 
-  // 7. Installed plugins: crm-core is listed as crm's dependency; uninstalling crm removes the
-  //    dependency install and keeps the crm-core extension, enabled before the install
-  await expect(page).toHaveURL(/\/settings\/plugins$/, { timeout: 60_000 });
-  await expect(page.getByText(fill(D.plugins.dependencyOf, { names: "crm" }))).toBeVisible();
-  await page
-    .getByRole("region", { name: "crm v1.0.0", exact: true })
-    .getByRole("button", { name: D.plugins.uninstall })
-    .click();
-  await page.getByRole("dialog").getByRole("button", { name: D.plugins.confirm.confirm }).click();
-  const report = page.getByRole("region", { name: fill(D.plugins.report.title, { name: "crm" }) });
-  await expect(report).toBeVisible();
+  // 7. The plugin's page: its install lists crm-core as a dependency; turning crm off previews
+  //    what goes (the dependency install, its skill) and what stays (the crm-core extension,
+  //    enabled before the install), then removes it
+  await expect(page).toHaveURL(/\/plugins\/[0-9a-f-]{36}$/, { timeout: 60_000 });
+  const card = page.getByRole("region", { name: "crm v1.0.0", exact: true });
   await expect(
-    report.getByText(
+    card.getByText(`· ${D.plugins.componentKind.plugin} crm-core — ${D.plugins.created}`),
+  ).toBeVisible();
+  await page.getByRole("button", { name: P.action.disable }).click();
+  const dialog = page.getByRole("dialog");
+  await expect(
+    dialog.getByText(
       `· ${D.plugins.componentKind.extension} crm-core — ${D.plugins.report.reason.pre_existing}`,
     ),
   ).toBeVisible();
-  await expect(report.getByText(`− ${D.plugins.componentKind.plugin} crm-core`)).toBeVisible();
-  await expect(report.getByText(new RegExp(`− ${D.plugins.componentKind.skill} `))).toBeVisible();
-  await expect(page.getByText(D.plugins.empty)).toBeVisible();
+  await expect(dialog.getByText(`− ${D.plugins.componentKind.plugin} crm-core`)).toBeVisible();
+  await expect(dialog.getByText(new RegExp(`− ${D.plugins.componentKind.skill} `))).toBeVisible();
+  await dialog.getByRole("button", { name: P.switchOff.confirm }).click();
+  await expect(page.getByText(P.state.off, { exact: true }).first()).toBeVisible({
+    timeout: 60_000,
+  });
 });
 
 /** Imports `notes <version>` from the git marketplace's entries and confirms the review. */
@@ -165,7 +168,7 @@ async function importNotes(page: Page, version: string): Promise<void> {
   await expect(page).toHaveURL(/\/admin\/plugins\/[0-9a-f-]{36}$/, { timeout: 60_000 });
 }
 
-test("git marketplace: add a repository in the admin console -> refresh -> import notes 1.0.0 -> org install -> import 1.1.0 -> upgrade from the installed plugins with a preview", async ({
+test("git marketplace: add a repository in the admin console -> refresh -> import notes 1.0.0 -> turn it on in the org -> import 1.1.0 -> upgrade on the plugin page with a preview", async ({
   page,
 }) => {
   const gitUrl = process.env.CAPYBARA_E2E_GIT_MARKETPLACE_URL as string;
@@ -187,19 +190,20 @@ test("git marketplace: add a repository in the admin console -> refresh -> impor
     page.getByText(new RegExp(fill(m.lastCommit, { commit: "[0-9a-f]{7}" }))),
   ).toBeVisible();
 
-  // 2. Import notes 1.0.0 and install it in the org (a skills-only plugin: just confirm)
+  // 2. Import notes 1.0.0 and turn it on in the org (a skills-only plugin: no input)
   await importNotes(page, "1.0.0");
-  await page.goto("/catalog");
+  await page.goto("/plugins");
   const row = page.getByRole("listitem").filter({ hasText: "notes" });
-  await row.getByRole("link", { name: D.org.action.install }).click();
-  await expect(page).toHaveURL(/\/catalog\/[0-9a-f-]{36}\/install$/);
-  await page.getByRole("button", { name: D.org.install.submit }).click();
-  await expect(page).toHaveURL(/\/settings\/plugins$/, { timeout: 60_000 });
+  await row.getByRole("button", { name: P.action.enable }).click();
+  await expect(row.getByText(P.state.on, { exact: true })).toBeVisible({ timeout: 60_000 });
+  await row.getByRole("link", { name: "notes", exact: true }).click();
+  await expect(page).toHaveURL(/\/plugins\/[0-9a-f-]{36}$/);
+  const detail = page.url();
   await expect(page.getByRole("region", { name: "notes v1.0.0", exact: true })).toBeVisible();
 
-  // 3. Import 1.1.0: the installed plugin offers the upgrade; the preview lists the changes
+  // 3. Import 1.1.0: the install offers the upgrade; the preview lists the changes
   await importNotes(page, "1.1.0");
-  await page.goto("/settings/plugins");
+  await page.goto(detail);
   const card = page.getByRole("region", { name: "notes v1.0.0", exact: true });
   await expect(
     card.getByText(fill(D.plugins.upgradeAvailable, { version: "v1.1.0" })),
@@ -224,8 +228,8 @@ test("git marketplace: add a repository in the admin console -> refresh -> impor
   await expect(upgraded).toBeVisible();
   await expect(upgraded.getByRole("button", { name: D.plugins.upgrade })).toHaveCount(0);
 
-  // 4. Clean up: uninstall (the skills it created go with it)
-  await upgraded.getByRole("button", { name: D.plugins.uninstall }).click();
-  await page.getByRole("dialog").getByRole("button", { name: D.plugins.confirm.confirm }).click();
-  await expect(page.getByText(D.plugins.empty)).toBeVisible();
+  // 4. Clean up: turn it off (the skills it created go with it)
+  await page.getByRole("button", { name: P.action.disable }).click();
+  await page.getByRole("dialog").getByRole("button", { name: P.switchOff.confirm }).click();
+  await expect(upgraded).toHaveCount(0, { timeout: 60_000 });
 });

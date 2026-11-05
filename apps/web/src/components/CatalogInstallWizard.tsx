@@ -21,12 +21,11 @@ import {
   displayNameOf,
   endpointLeaves,
   getPath,
-  installableOf,
-  installCatalogItem,
   isOAuth,
   type OrgCatalogDetail,
   type OrgCatalogTemplate,
   type OrgInstallBody,
+  setOrgPluginSwitch,
   setPath,
   showValue,
 } from "../lib/catalog";
@@ -249,7 +248,8 @@ export interface WizardView {
 }
 
 /**
- * The wizard that installs a plugin from the catalog (the page puts `frame` into a WizardPage): for
+ * The wizard that asks for a plugin's input before switching it on (the page puts `frame` into a
+ * WizardPage; the last step calls the plugin's switch with the input): for
  * each of its connector templates, the name, the editable endpoint fields (the rest read-only),
  * credentials or client id / secret; a plugin with an extension has a step for that extension's org
  * config (asked only when this install enables it and it has org config); then confirm, listing the
@@ -274,9 +274,9 @@ export function CatalogInstallWizard({
   const header = (title: string) => ({
     path: [
       ...scope,
-      { label: "catalog", href: "/catalog" },
-      { label: itemId, href: `/catalog/${itemId}` },
-      { label: "install" },
+      { label: "plugins", href: "/plugins" },
+      { label: itemId, href: `/plugins/${encodeURIComponent(itemId)}` },
+      { label: "enable" },
     ],
     title,
   });
@@ -318,7 +318,7 @@ function Wizard({
   frame(view: WizardView): ReactNode;
 }) {
   const t = useTranslations("catalog.org.install");
-  const ta = useTranslations("catalog.org.action");
+  const tp = useTranslations("plugins");
   const locale = useLocale();
   const router = useRouter();
   const toast = useToast();
@@ -358,14 +358,16 @@ function Wizard({
   const [showRequired, setShowRequired] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<{ message: string; extra: string[] }>();
-  // An install changes the catalog's view, the installed plugins and what the plugin brings.
+  // Switching it on (with the input) changes the catalog's view, the installed plugins and what
+  // the plugin brings.
   const install = useAppMutation({
-    fn: (body: OrgInstallBody) => installCatalogItem(orgId, item.id, body),
+    fn: (inputs: OrgInstallBody) => setOrgPluginSwitch(orgId, item.id, { enabled: true, inputs }),
     invalidates: () => pluginChangeKeys(orgId),
   });
   const confirmIdx = steps.length - 1;
   const extensionIdx = hasExtensionStep ? confirmIdx - 1 : -1;
-  const installable = installableOf(item) === "yes";
+  const installable =
+    item.state !== "unavailable" && item.state !== "not_offered" && !item.notDeployed;
 
   const template = step < templates.length ? templates[step] : undefined;
   const draft = template ? drafts[template.id] : undefined;
@@ -394,14 +396,9 @@ function Wizard({
       ...(withConfig !== undefined && { extensionConfig: config.value }),
     };
     try {
-      const r = await install.mutateAsync(body);
-      if ("request" in r) {
-        toast.success(ta("approvalRequested"));
-        router.push(`/catalog/${item.id}`);
-        return;
-      }
-      toast.success(ta("installed", { name }));
-      router.push("/settings/plugins");
+      await install.mutateAsync(body);
+      toast.success(tp("toast.enabled", { name }));
+      router.push(`/plugins/${encodeURIComponent(item.id)}`);
     } catch (e) {
       setError({ message: failureMessage(e), extra: [...failureLines(e), ...catalogLines(e)] });
     } finally {
@@ -445,7 +442,10 @@ function Wizard({
   };
 
   const actionRow = {
-    cancel: { label: t("cancel"), onSelect: () => router.push(`/catalog/${item.id}`) },
+    cancel: {
+      label: t("cancel"),
+      onSelect: () => router.push(`/plugins/${encodeURIComponent(item.id)}`),
+    },
     ...(step > 0 && {
       secondary: { label: t("back"), onSelect: () => setStep((s) => s - 1), disabled: submitting },
     }),

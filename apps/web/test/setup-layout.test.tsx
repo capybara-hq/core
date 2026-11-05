@@ -146,9 +146,9 @@ describe("setup layout scope", () => {
       "/agents/new",
       "/agents/a1",
       "/channels/new",
-      "/catalog",
-      "/catalog/x",
-      "/catalog/x/install",
+      "/plugins",
+      "/plugins/x",
+      "/plugins/x/enable",
       "/account/connections",
     ])
       expect(setupRouteOf(p), p).toBe("step");
@@ -297,7 +297,7 @@ describe("the checklist by role", () => {
     expect(router.refresh).toHaveBeenCalledTimes(1);
     view.update(shellOf(ME, { readiness: NOT_READY }));
     expect(router.refresh).toHaveBeenCalledTimes(1);
-    go("/catalog");
+    go("/plugins");
     view.update(shellOf(ME, { readiness: NOT_READY }));
     expect(router.refresh).toHaveBeenCalledTimes(2);
     cleanup();

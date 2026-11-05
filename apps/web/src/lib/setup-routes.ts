@@ -20,7 +20,7 @@ export function setupRouteOf(pathname: string): "outside" | "home" | "step" | "r
     pathname === "/settings/members" ||
     pathname === "/channels/new" ||
     under(pathname, "/agents") ||
-    under(pathname, "/catalog") ||
+    under(pathname, "/plugins") ||
     under(pathname, "/account")
   ) {
     // `/agents` itself is the list (not a step); `/agents/new` and `/agents/<id>` are.

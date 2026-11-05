@@ -211,7 +211,7 @@ function NewChannelForm({
           action={{
             label: t("form.openExtensions"),
             variant: "primary",
-            href: "/settings/extensions",
+            href: "/extensions",
           }}
         />
       </OverviewPage>

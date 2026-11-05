@@ -205,10 +205,6 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     ["/settings/sandbox", `GET ${O}/settings`, { radios: 2, kv: 1, cards: 0, switches: 0 }],
     // the kernel's five purposes as cards, each with its model select
     ["/settings/models", `GET ${O}/model-purposes`, { radios: 0, kv: 0, cards: 5, switches: 0 }],
-    // the install cards (the template's default count)
-    ["/settings/plugins", `GET ${O}/plugin-installs`, { radios: 0, kv: 0, cards: 3, switches: 0 }],
-    // two extension groups, each its switch row
-    ["/settings/extensions", `GET ${O}/extensions`, { radios: 0, kv: 0, cards: 0, switches: 2 }],
   ] as const)(
     "%s: the loading state draws the page's static shapes (Q6)",
     async (path, held, shapes) => {
@@ -234,13 +230,6 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
           '.cb-form-section-fields > [data-part="skeleton-text"][data-size="body"]',
         ),
       ).toHaveLength(shapes.switches);
-      if (path === "/settings/plugins") {
-        for (const card of document.querySelectorAll('[data-part="loading-shaped-card"]')) {
-          expect(
-            card.querySelector(".cb-card-body > .cb-stack")?.lastElementChild?.children,
-          ).toHaveLength(3);
-        }
-      }
       await release();
       await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
     },
@@ -424,22 +413,6 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     },
   );
 
-  it("/settings/plugins: a first render from the hydrated cache makes no browser read", async () => {
-    const browser = expectNoFirstPaintFetch();
-    await renderRouteWithCache("/settings/plugins", ROUTES);
-    expect(screen.getByText(en.catalog.plugins.empty)).toBeTruthy();
-    await settle();
-    expect(browser).toEqual([]);
-  });
-
-  it("/settings/plugins: an empty cache shows the template's loading state, then the data", async () => {
-    const { release } = await renderHeld("/settings/plugins", `GET ${O}/plugin-installs`);
-    await expectLoading("SettingsPage", en.catalog.plugins.empty);
-    await release();
-    expect(await screen.findByText(en.catalog.plugins.empty)).toBeTruthy();
-    await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
-  });
-
   it("/settings/tokens: a first render from the hydrated cache makes no browser read", async () => {
     const browser = expectNoFirstPaintFetch();
     await renderRouteWithCache("/settings/tokens", ROUTES);
@@ -456,9 +429,9 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
   });
 
-  it("/settings/extensions: a first render from the hydrated cache makes no browser read", async () => {
+  it("/extensions: a first render from the hydrated cache makes no browser read", async () => {
     const browser = expectNoFirstPaintFetch();
-    await renderRouteWithCache("/settings/extensions", {
+    await renderRouteWithCache("/extensions", {
       ...ROUTES,
       [`GET ${O}/extensions`]: () => json(200, { extensions: [EXTENSION] }),
       [`GET ${O}/file-previewers`]: () => json(200, { items: [PREVIEWER] }),
@@ -469,9 +442,9 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     expect(browser).toEqual([]);
   });
 
-  it("/settings/extensions: previewers the kernel fails only hide their block (not read again on mount)", async () => {
+  it("/extensions: previewers the kernel fails only hide their block (not read again on mount)", async () => {
     const browser = expectNoFirstPaintFetch();
-    await renderRouteWithCache("/settings/extensions", {
+    await renderRouteWithCache("/extensions", {
       ...ROUTES,
       [`GET ${O}/file-previewers`]: failing,
     });
@@ -480,15 +453,15 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     expect(browser).toEqual([]);
   });
 
-  it("/settings/extensions: an empty cache shows the template's loading state, then the data", async () => {
-    const { release } = await renderHeld("/settings/extensions", `GET ${O}/extensions`);
-    await expectLoading("SettingsPage", en.extensions.empty);
+  it("/extensions: an empty cache shows the template's loading state, then the data", async () => {
+    const { release } = await renderHeld("/extensions", `GET ${O}/extensions`);
+    await expectLoading("ListPage", en.extensions.empty);
     await release();
     expect(await screen.findByText(en.extensions.empty)).toBeTruthy();
     await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
   });
 
-  it("/settings/extensions: disabling an extension writes it into the cache and invalidates what it brings", async () => {
+  it("/extensions: disabling an extension writes it into the cache and invalidates what it brings", async () => {
     const routes: Routes = {
       ...ROUTES,
       [`GET ${O}/extensions`]: () => json(200, { extensions: [EXTENSION] }),
@@ -500,7 +473,7 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
       [`PUT ${O}/extensions/todo`]: () =>
         json(200, { extension: { ...EXTENSION, enabled: false } }),
     });
-    const { client } = await renderRouteWithCache("/settings/extensions", routes);
+    const { client } = await renderRouteWithCache("/extensions", routes);
     // the models and purposes are cached (as after a visit to /settings/models)
     client.setQueryData(["org", "o1", "models"], { providers: [] });
     client.setQueryData(["org", "o1", "orgPurposes"], { purposes: [] });
@@ -529,8 +502,7 @@ const ROUTE_GATES: [string, "member" | "admin", boolean][] = [
   ["/settings/sandbox", "member", false],
   ["/settings/members", "member", true],
   ["/settings/models", "admin", true],
-  ["/settings/plugins", "admin", false],
-  ["/settings/extensions", "admin", false],
+  ["/extensions", "admin", false],
   ["/settings/tokens", "admin", false],
 ];
 

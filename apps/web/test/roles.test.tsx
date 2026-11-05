@@ -6,9 +6,6 @@ import type { ComponentType, ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import zh from "../messages/zh.json";
 import NewAgentPage from "../src/app/(app)/agents/new/page";
-import CatalogInstallPage from "../src/app/(app)/catalog/[itemId]/install/page";
-import CatalogItemPage from "../src/app/(app)/catalog/[itemId]/page";
-import CatalogPage from "../src/app/(app)/catalog/page";
 import ChannelDetailPage from "../src/app/(app)/channels/[id]/page";
 import NewChannelPage from "../src/app/(app)/channels/new/page";
 import ChannelsPage from "../src/app/(app)/channels/page";
@@ -19,11 +16,13 @@ import EvalRunWizardPage from "../src/app/(app)/evals/[setId]/run/page";
 import NewEvalSetPage from "../src/app/(app)/evals/new/page";
 import EvalsPage from "../src/app/(app)/evals/page";
 import EvalRunPage from "../src/app/(app)/evals/runs/[runId]/page";
-import ExtensionsSettingsPage from "../src/app/(app)/settings/extensions/page";
+import ExtensionsPage from "../src/app/(app)/extensions/page";
+import PluginEnablePage from "../src/app/(app)/plugins/[itemId]/enable/page";
+import PluginItemPage from "../src/app/(app)/plugins/[itemId]/page";
+import PluginsPage from "../src/app/(app)/plugins/page";
 import MembersPage from "../src/app/(app)/settings/members/page";
 import ModelsSettingsPage from "../src/app/(app)/settings/models/page";
 import OrganizationPage from "../src/app/(app)/settings/organization/page";
-import PluginsSettingsPage from "../src/app/(app)/settings/plugins/page";
 import SandboxPage from "../src/app/(app)/settings/sandbox/page";
 import TokensPage from "../src/app/(app)/settings/tokens/page";
 import SkillPage from "../src/app/(app)/skills/[id]/page";
@@ -198,18 +197,7 @@ const PAGES: [string, ComponentType | RoutePage, "member" | "admin", string][] =
     "admin",
     zh.roles.need.admin,
   ],
-  [
-    "/settings/extensions",
-    route("/settings/extensions", () => ExtensionsSettingsPage()),
-    "admin",
-    zh.roles.need.admin,
-  ],
-  [
-    "/settings/plugins",
-    route("/settings/plugins", () => PluginsSettingsPage()),
-    "admin",
-    zh.roles.need.admin,
-  ],
+  ["/extensions", route("/extensions", () => ExtensionsPage()), "admin", zh.roles.need.admin],
   ["/settings/tokens", route("/settings/tokens", () => TokensPage()), "admin", zh.roles.need.admin],
   [
     "/settings/organization",
@@ -236,16 +224,16 @@ const PAGES: [string, ComponentType | RoutePage, "member" | "admin", string][] =
     "member",
     zh.roles.need.member,
   ],
-  ["/catalog", route("/catalog", () => CatalogPage()), "member", zh.roles.need.member],
+  ["/plugins", route("/plugins", () => PluginsPage()), "member", zh.roles.need.member],
   [
-    "/catalog/i1",
-    route("/catalog/i1", () => CatalogItemPage(params({ itemId: "i1" }))),
+    "/plugins/i1",
+    route("/plugins/i1", () => PluginItemPage(params({ itemId: "i1" }))),
     "member",
     zh.roles.need.member,
   ],
   [
-    "/catalog/i1/install",
-    route("/catalog/i1/install", () => CatalogInstallPage(params({ itemId: "i1" }))),
+    "/plugins/i1/enable",
+    route("/plugins/i1/enable", () => PluginEnablePage(params({ itemId: "i1" }))),
     "admin",
     zh.roles.need.admin,
   ],

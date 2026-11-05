@@ -249,7 +249,7 @@ describe("the setup sidebar's steps per role (web-SSR spec §4)", () => {
       },
       { id: "channels", state: "todo", href: "/channels/new", optional: true, text: s.channels },
       { id: "members", state: "todo", href: "/settings/members", optional: true, text: s.members },
-      { id: "catalog", state: "todo", href: "/catalog", optional: true, text: s.catalog },
+      { id: "catalog", state: "todo", href: "/plugins", optional: true, text: s.catalog },
     ]);
   });
 
@@ -261,7 +261,7 @@ describe("the setup sidebar's steps per role (web-SSR spec §4)", () => {
       ["agent", "waiting", null],
       ["channels", "todo", "/channels/new"],
       ["members", "todo", "/settings/members"],
-      ["catalog", "todo", "/catalog"],
+      ["catalog", "todo", "/plugins"],
     ]);
     expect(r[0]?.text).toBe(`${s.model}${sl.model.needsDeploymentAdmin}`);
   });
