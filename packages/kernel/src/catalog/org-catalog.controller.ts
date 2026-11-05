@@ -19,7 +19,6 @@ import type {
   OrgCatalogDetail,
   OrgCatalogItem,
   OrgInstallResult,
-  OrgUpgradeResult,
 } from "./catalog-content.js";
 import { OrgCatalogService, type SwitchResult } from "./org-catalog.service.js";
 import {
@@ -28,7 +27,6 @@ import {
   type UninstallPreview,
   type UninstallReport,
 } from "./plugin-install.js";
-import type { PluginUpgradeInput, UpgradePreview } from "./plugin-upgrade.js";
 import { CatalogRequestsService, type CatalogRequestView } from "./requests.service.js";
 
 const RequestBody = z
@@ -85,19 +83,6 @@ const SwitchBody = z
   })
   .strict();
 
-/** The upgrade preview body: the target version. */
-const UpgradePreviewBody = z.object({ version: z.string().min(1).max(256) }).strict();
-
-/** The upgrade body: the target version, the preview's diffHash, the inputs it listed. */
-const UpgradeBody = z
-  .object({
-    version: z.string().min(1).max(256),
-    diffHash: z.string().regex(/^[0-9a-f]{64}$/),
-    connectors: z.record(z.string(), ConnectorInput).optional(),
-    extensionConfig: z.record(z.string(), z.unknown()).optional(),
-  })
-  .strict();
-
 /**
  * 条目图标的响应头：图标可能是 SVG（可含脚本），只许网页以 `<img>` 显示；直接打开时 CSP sandbox 禁止脚本与一切外部
  * 请求，nosniff 防浏览器按内容另行判型。
@@ -128,11 +113,6 @@ class CatalogMarketplaceRequestBody extends createZodDto(
   MarketplaceRequestBody,
   "CatalogMarketplaceRequestBody",
 ) {}
-class OrgPluginUpgradeBody extends createZodDto(UpgradeBody, "OrgPluginUpgradeBody") {}
-class OrgPluginUpgradePreviewBody extends createZodDto(
-  UpgradePreviewBody,
-  "OrgPluginUpgradePreviewBody",
-) {}
 
 /**
  * The platform catalog from an organization's view (`/api/v1/orgs/:orgId/...`, human users only):
@@ -148,10 +128,8 @@ class OrgPluginUpgradePreviewBody extends createZodDto(
  *   grant -> 202 `{ request }`, otherwise 201 `{ installed, install }` (the install view);
  * - `GET / DELETE plugin-installs[/:installId]` (`org.extensions.manage`; uninstall re-checks the
  *   plugin's component actions in the service);
- * - `POST plugin-installs/:installId/upgrade/preview` and `.../upgrade` (spec §10; the route only
- *   requires `catalog.read`, the service re-checks the component actions of both versions):
- *   preview -> 200 `{ from, to, diffHash, components, inputs, templates }`; upgrade -> 200 `{ install }`, or
- *   202 `{ request }` for a needs_approval item without a grant;
+ * - no per-org upgrade: a platform plugin has one version for the deployment, updated by the super
+ *   admin (`PUT /admin/catalog/items/:id/update`, ruling F2);
  * - `POST catalog-requests/:id/decide` (`catalog.decide`, org admins; `enable` requests only,
  *   `{ approve, reason? }`), `POST catalog-requests/:id/dismiss` (the requester, a decided request).
  */
@@ -317,41 +295,6 @@ export class OrgCatalogController {
     const p = requireUser(principal);
     const tokenId = patTokenId(p);
     return this.catalog.uninstall(org.orgId, p.account.id, installId, tokenId);
-  }
-
-  @Post("plugin-installs/:installId/upgrade/preview")
-  @HttpCode(200)
-  @OrgAction("catalog.read")
-  upgradePreview(
-    @CurrentPrincipal() principal: Principal,
-    @CurrentOrg() org: OrgContext,
-    @Param("installId") installId: string,
-    @ZBody(OrgPluginUpgradePreviewBody) body: z.infer<typeof UpgradePreviewBody>,
-  ): Promise<UpgradePreview> {
-    const p = requireUser(principal);
-    return this.catalog.upgradePreview(org.orgId, p.account.id, installId, body.version);
-  }
-
-  @Post("plugin-installs/:installId/upgrade")
-  @OrgAction("catalog.read")
-  async upgrade(
-    @CurrentPrincipal() principal: Principal,
-    @CurrentOrg() org: OrgContext,
-    @Param("installId") installId: string,
-    @ZBody(OrgPluginUpgradeBody) body: z.infer<typeof UpgradeBody>,
-    @Res({ passthrough: true }) reply: FastifyReply,
-  ): Promise<Omit<OrgUpgradeResult, "status">> {
-    const p = requireUser(principal);
-    const r = await this.catalog.upgrade(
-      org.orgId,
-      p.account.id,
-      installId,
-      body as PluginUpgradeInput,
-      patTokenId(p),
-    );
-    reply.status(r.status);
-    const { status: _status, ...rest } = r;
-    return rest;
   }
 
   @Post("catalog-requests/:id/decide")

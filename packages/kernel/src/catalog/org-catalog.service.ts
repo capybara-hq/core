@@ -21,7 +21,6 @@ import {
   type OrgCatalogItem,
   type OrgInstallInput,
   type OrgInstallResult,
-  type OrgUpgradeResult,
   orgTemplateView,
   readCatalogIcon,
   readCatalogTemplates,
@@ -37,9 +36,7 @@ import {
   uninstallPreviewHash,
   upsertOrgSwitch,
 } from "./plugin-install.js";
-import { type PluginUpgradeInput, PluginUpgrader, type UpgradePreview } from "./plugin-upgrade.js";
 import { type OrgPluginState, requestable, switchable, visibleTo, wantedOn } from "./scope.js";
-import { upgradeInfo } from "./upgrade-targets.js";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const itemNotFound = () => new ApiError("catalog.item_not_found", "Catalog item not found");
@@ -78,7 +75,6 @@ export class OrgCatalogService {
     @Inject(StorageService) private readonly storage: StorageService,
     @Inject(ExtensionRegistry) private readonly registry: ExtensionRegistry,
     @Inject(PluginInstaller) private readonly pluginInstaller: PluginInstaller,
-    @Inject(PluginUpgrader) private readonly pluginUpgrader: PluginUpgrader,
     @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
   ) {}
@@ -175,14 +171,6 @@ export class OrgCatalogService {
         { id: r.id, kind: r.kind as "access" | "enable", createdAt: r.created_at.toISOString() },
       ]),
     );
-    const upgrades = await upgradeInfo(
-      this.db,
-      this.registry,
-      pluginInstalls.flatMap((a) => {
-        const item = items.find((i) => i.id === a.item_id);
-        return item ? [{ itemId: a.item_id, name: item.name, version: a.version }] : [];
-      }),
-    );
     const undeployed = await this.undeployed(
       items.flatMap((i) => {
         const v = versions.find((x) => x.item_id === i.id && x.version === i.latest_version);
@@ -240,7 +228,8 @@ export class OrgCatalogService {
           ? {
               pluginInstallId: a.id,
               version: a.version,
-              upgradeAvailable: upgrades.get(`${a.item_id}@${a.version}`)?.upgradeAvailable ?? null,
+              // no per-org upgrade: the platform update moves every org (ruling F2)
+              upgradeAvailable: null,
             }
           : null,
         request: pending.get(i.id) ?? null,
@@ -376,7 +365,8 @@ export class OrgCatalogService {
     if (!UUID_RE.test(itemId)) throw itemNotFound();
     await this.assertCanInstall(orgId, actor);
     const item = await this.visibleItem(orgId, itemId);
-    const version = body.version ?? item.latest_version;
+    // The platform's version by default (one per deployment, Task 7)
+    const version = body.version ?? item.platform_synced_version ?? item.latest_version;
     const v = await this.db
       .selectFrom("catalog_item_versions")
       .select("version")
@@ -532,37 +522,6 @@ export class OrgCatalogService {
   ): Promise<void> {
     await this.orgLock.lock(orgId);
     await upsertOrgSwitch(this.db, orgId, itemId, enabled, actor);
-  }
-
-  /** The upgrade preview of an org install (spec §10, see `PluginUpgrader`). */
-  async upgradePreview(
-    orgId: string,
-    actor: string,
-    installId: string,
-    version: string,
-  ): Promise<UpgradePreview> {
-    await this.assertCanInstall(orgId, actor);
-    return this.pluginUpgrader.preview(orgId, actor, installId, version);
-  }
-
-  /**
-   * Upgrades an org install in place (spec §10, Decision 11): the preview's `diffHash` is checked
-   * first (`plugin.upgrade_stale`); the item disabled -> `catalog.item_disabled`.
-   */
-  async upgrade(
-    orgId: string,
-    actor: string,
-    installId: string,
-    body: PluginUpgradeInput,
-    actorTokenId?: string,
-  ): Promise<OrgUpgradeResult> {
-    await this.assertCanInstall(orgId, actor);
-    const opts = actorTokenId !== undefined ? { actorTokenId } : {};
-    const { diff } = await this.pluginUpgrader.check(orgId, actor, installId, body);
-    return {
-      status: 200,
-      install: await this.pluginUpgrader.upgrade(orgId, actor, installId, body, opts, diff),
-    };
   }
 
   /** The actor can install something in the org (forbidden otherwise), checked before item errors. */

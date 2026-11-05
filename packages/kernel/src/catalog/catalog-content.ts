@@ -1,5 +1,5 @@
 // Reading a catalog version's stored content (templates, skills, agent templates, icons) and the
-// org install helpers (no providers), shared by PluginInstaller, PluginUpgrader and
+// org install helpers (no providers), shared by PluginInstaller, PlatformPluginUpdater and
 // OrgCatalogService: kept out of org-catalog.service.ts so the installer's module never imports a
 // module whose provider injects PluginInstaller (an ESM import cycle would run decorators early).
 import { createHash } from "node:crypto";
@@ -62,7 +62,8 @@ export interface OrgCatalogItem
   notDeployed: boolean;
   /**
    * This org's live plugin install of the item (installing, installed or upgrading);
-   * `upgradeAvailable` is the version it can be upgraded to now (spec §10), null when none.
+   * `upgradeAvailable` is always null since plugin scope phase 2 (no per-org upgrade, ruling F2;
+   * kept for the web until its upgrade dialog goes).
    */
   installed: { pluginInstallId: string; version: string; upgradeAvailable: string | null } | null;
   /** This org's pending request for the item (spec §5.1), null when none. */
@@ -247,12 +248,6 @@ export interface OrgInstallResult {
   status: 201;
   installed: { itemId: string; version: string; pluginInstallId: string };
   /** The install view (its components, dependency installs included). */
-  install: PluginInstallView;
-}
-
-/** Upgrade result: 200 upgraded (the install view). */
-export interface OrgUpgradeResult {
-  status: 200;
   install: PluginInstallView;
 }
 

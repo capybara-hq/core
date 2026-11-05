@@ -16,7 +16,7 @@ import { OrgExtensionSwitch } from "./org-extension-switch.js";
 import { PlatformComponents } from "./platform-components.js";
 import { PluginImport } from "./plugin-import.js";
 import { PluginInstaller } from "./plugin-install.js";
-import { PluginUpgrader } from "./plugin-upgrade.js";
+import { PlatformPluginUpdater } from "./plugin-upgrade.js";
 import { CatalogRequestsService } from "./requests.service.js";
 import { PLUGIN_SCOPE_QUEUE, PluginScopeSync } from "./scope-sync.js";
 
@@ -35,13 +35,14 @@ import { PLUGIN_SCOPE_QUEUE, PluginScopeSync } from "./scope-sync.js";
     PlatformComponents,
     CatalogService,
   ],
-  exports: [MarketplacesService, PluginImport, PlatformComponents, CatalogService],
+  exports: [MarketplacesService, PluginImport, PlatformComponents, CatalogService, CatalogItemLock],
 })
 export class CatalogImportModule {}
 
 /**
- * The plugin catalog (spec §4, §10): {@link CatalogImportModule}, catalog requests, org installs,
- * upgrades and rollbacks with their dependencies, the admin's scope and disable
+ * The plugin catalog (spec §4, §10): {@link CatalogImportModule}, catalog requests, org installs
+ * with their dependencies, the platform plugin update (`PlatformPluginUpdater`), the admin's scope
+ * and disable
  * (`CatalogScopeService`), and the producer of the plugin scope sync
  * (`PluginScopeSync`; its consumer is the worker role's `PluginScopeWorkersModule`). The catalog's periodic jobs (`CatalogJobs`) are
  * the worker role's (`WorkerModule`).
@@ -61,7 +62,7 @@ export class CatalogImportModule {}
   providers: [
     CatalogRequestsService,
     PluginInstaller,
-    PluginUpgrader,
+    PlatformPluginUpdater,
     OrgCatalogService,
     OrgExtensionSwitch,
     PluginScopeSync,
@@ -72,7 +73,7 @@ export class CatalogImportModule {}
     CatalogImportModule,
     CatalogRequestsService,
     PluginInstaller,
-    PluginUpgrader,
+    PlatformPluginUpdater,
     OrgCatalogService,
     OrgExtensionSwitch,
     PluginScopeSync,

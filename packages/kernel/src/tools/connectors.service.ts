@@ -156,8 +156,9 @@ export interface ConnectorTemplateRef {
 }
 
 /**
- * A connector updated to another version of its catalog template (an org plugin upgrade, package
- * ecosystem spec §10): only template-owned fields change (endpoint preset, auth preset, default tool
+ * A connector updated to another version of its catalog template (the platform plugin update fans
+ * a changed template out to every connector with its `platform_template_id`, ruling E2): only
+ * template-owned fields change (endpoint preset, auth preset, default tool
  * policies still at the template default); the name, slug, status, tools and credentials stay,
  * unless `resetCredentials`.
  */
@@ -718,7 +719,7 @@ export class ConnectorsService {
   }
 
   /**
-   * Checks a template update before anything is written (an org plugin upgrade): the endpoint
+   * Checks a template update before anything is written (the platform plugin update): the endpoint
    * against the connector's schema, and with `resetCredentials` the new credential's shape, or for
    * OAuth the client setup (discovery, dynamic registration or the client credentials token; an
    * outbound failure -> 502 `connector.connect_failed`). Writes nothing.

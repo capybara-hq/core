@@ -76,7 +76,6 @@ import {
 } from "./request-rules.js";
 import { visibleTo } from "./scope.js";
 import { ScopeNoLongerWanted, ScopeStillWanted, wantedByScope } from "./scope-state.js";
-import { upgradeInfo } from "./upgrade-targets.js";
 import { maxSatisfying, satisfiesRange } from "./versions.js";
 
 /** What an org fills in for one connector template at install (C30). */
@@ -210,13 +209,13 @@ export interface PluginInstallView {
     skillVersion: number | null;
     dropped: boolean;
   }[];
-  /** The highest version this install can be upgraded to now, null when none (spec §10). */
-  upgradeAvailable: string | null;
   /**
-   * The plugin's extension on the deployment is not the one of this install's version: the org
-   * should upgrade to the deployment's version ("upgrade pending", Decision 10).
+   * Always null / false since plugin scope phase 2: a platform plugin has one version for the
+   * deployment and the platform update moves every org install (ruling F2); kept for the web until
+   * its upgrade dialog goes.
    */
-  deploymentPending: boolean;
+  upgradeAvailable: null;
+  deploymentPending: false;
 }
 
 /** A dependency resolved against the catalog. */
@@ -493,9 +492,10 @@ export function under(e: unknown, at: string): unknown {
  * install is marked failed (error holds only the step and the error code) and 502
  * `plugin.install_failed` is thrown. Uninstall removes only components with created=true that
  * nothing else uses, and reports what it kept and why. No in-process state; the org row lock
- * serializes writes within one org. In-place upgrades are run by `PluginUpgrader`
- * (plugin-upgrade.ts), which reuses the planning, install and ledger methods here (the ones without
- * `private` are internal to the catalog, not an API).
+ * serializes writes within one org. There is no per-org upgrade: a platform plugin is updated
+ * once for the deployment (`PlatformPluginUpdater`, plugin-upgrade.ts, ruling F2); an install left
+ * `upgrading` by an earlier per-org upgrade is undone from its journal by the next uninstall. The
+ * methods without `private` are internal to the catalog, not an API.
  */
 @Injectable()
 export class PluginInstaller {
@@ -1830,11 +1830,6 @@ export class PluginInstaller {
     if (installId !== undefined) q = q.where("a.id", "=", installId);
     const rows = await q.orderBy("a.installed_at", "desc").orderBy("a.id").execute();
     if (rows.length === 0) return [];
-    const info = await upgradeInfo(
-      this.db,
-      this.registry,
-      rows.map((r) => ({ itemId: r.item_id, name: r.name, version: r.version })),
-    );
     const comps = await this.db
       .selectFrom("plugin_install_components")
       .select(["install_id", "kind", "ref", "created", "skill_version", "dropped"])
@@ -1862,8 +1857,8 @@ export class PluginInstaller {
           skillVersion: c.skill_version,
           dropped: c.dropped,
         })),
-      upgradeAvailable: info.get(`${r.item_id}@${r.version}`)?.upgradeAvailable ?? null,
-      deploymentPending: info.get(`${r.item_id}@${r.version}`)?.deploymentPending ?? false,
+      upgradeAvailable: null,
+      deploymentPending: false,
     }));
   }
 
@@ -1950,8 +1945,9 @@ export class PluginInstaller {
    * more (another install using a component, a connector still using an extension). The plugin's
    * skills and agent templates are platform components (phase 2): the ones on in the org through
    * the plugin (`follow`) go off with it, so the agents using them (by the platform id or an
-   * unpinned org copy linked to it) are listed; ledger rows of earlier installs' org copies are not
-   * removed and not listed.
+   * unpinned org copy linked to it) are listed, also for the dependency installs it created that
+   * go with it; ledger rows of earlier installs' org copies are not removed and not listed (an
+   * uninstall keeps legacy copies, like the platform update keeps copies of removed components).
    */
   async previewUninstall(orgId: string, installId: string): Promise<UninstallPreview> {
     if (!UUID_RE.test(installId)) throw installNotFound();
@@ -1964,15 +1960,17 @@ export class PluginInstaller {
       .where("a.org_id", "=", orgId)
       .executeTakeFirst();
     if (!row) throw installNotFound();
-    const comps = (
-      await t
+    const ledger = (id: string) =>
+      t
         .selectFrom("plugin_install_components")
         .select(["kind", "ref", "created"])
-        .where("install_id", "=", installId)
+        .where("install_id", "=", id)
         .orderBy("kind")
         .orderBy("ref")
-        .execute()
-    ).filter((c) => c.kind !== "skill" && c.kind !== "agent_template");
+        .execute();
+    const comps = (await ledger(installId)).filter(
+      (c) => c.kind !== "skill" && c.kind !== "agent_template",
+    );
     const agents = await agentDefinitionRefs(t, orgId);
     const used = new Map<
       string,
@@ -1980,58 +1978,80 @@ export class PluginInstaller {
     >();
     const use = (a: { id: string; name: string }, kind: ComponentKind, ref: string) => {
       const e = used.get(a.id) ?? { id: a.id, name: a.name, uses: [] };
-      e.uses.push({ kind, ref });
+      if (!e.uses.some((u) => u.kind === kind && u.ref === ref)) e.uses.push({ kind, ref });
       used.set(a.id, e);
     };
     const kept: UninstallReport["kept"] = [];
-    for (const c of comps) {
-      if (!c.created) {
-        kept.push({ kind: c.kind, ref: c.ref, reason: "pre_existing" });
-        continue;
-      }
-      if (c.kind === "plugin") {
-        const dep = await t
-          .selectFrom("plugin_installs")
-          .select("item_id")
-          .where("id", "=", c.ref)
-          .where("org_id", "=", orgId)
-          .executeTakeFirst();
-        if (dep && (await wantedByScope(t, orgId, dep.item_id))) {
-          kept.push({ kind: c.kind, ref: c.ref, reason: "wanted_by_scope" });
+    /**
+     * The agents using what goes with an install: connectors it created (they stay, kept for the
+     * agents) and the plugin's platform skills and agent templates on in the org through it
+     * (`follow`; by the platform id or an unpinned org copy linked to it). Dependency installs it
+     * created go with it unless their own scope wants them (Task 7: their components count too).
+     */
+    const visit = async (
+      itemId: string,
+      rows: { kind: ComponentKind; ref: string; created: boolean }[],
+      top: boolean,
+      seen: Set<string>,
+    ): Promise<void> => {
+      for (const c of rows) {
+        if (!c.created) {
+          if (top) kept.push({ kind: c.kind, ref: c.ref, reason: "pre_existing" });
+          continue;
         }
-        continue;
+        if (c.kind === "plugin") {
+          const dep = await t
+            .selectFrom("plugin_installs")
+            .select("item_id")
+            .where("id", "=", c.ref)
+            .where("org_id", "=", orgId)
+            .executeTakeFirst();
+          if (!dep) continue;
+          if (await wantedByScope(t, orgId, dep.item_id)) {
+            if (top) kept.push({ kind: c.kind, ref: c.ref, reason: "wanted_by_scope" });
+            continue;
+          }
+          if (seen.has(c.ref)) continue;
+          seen.add(c.ref);
+          const sub = (await ledger(c.ref)).filter(
+            (x) => x.kind !== "skill" && x.kind !== "agent_template",
+          );
+          await visit(dep.item_id, sub, false, seen);
+          continue;
+        }
+        if (c.kind !== "connector") continue;
+        const users = agents.filter((a) => a.connectors.has(c.ref));
+        if (users.length === 0) continue;
+        if (top) kept.push({ kind: c.kind, ref: c.ref, reason: "used_by_agents" });
+        for (const a of users) use(a, c.kind, c.ref);
       }
-      if (c.kind !== "connector") continue;
-      const users = agents.filter((a) => a.connectors.has(c.ref));
-      if (users.length === 0) continue;
-      kept.push({ kind: c.kind, ref: c.ref, reason: "used_by_agents" });
-      for (const a of users) use(a, c.kind, c.ref);
-    }
-    for (const kind of ["skill", "agent_template"] as const) {
-      const platform = await loadComponents(t, kind, { itemId: row.item_id });
-      const st = await loadScopeState(t, kind, platform);
-      const off = platform.filter(
-        (c) =>
-          c.scopeMode === "follow" &&
-          componentOn(
-            c,
-            pluginFactsOf(st, c.itemId, orgId),
-            listedIn(st, c.id, orgId),
-            switchOf(st, c.id, orgId),
-          ),
-      );
-      const refs = await referenceIds(
-        t,
-        orgId,
-        kind,
-        off.map((c) => c.id),
-      );
-      for (const a of agents) {
-        for (const ref of kind === "skill" ? a.skills : a.templates) {
-          if (refs.has(ref)) use(a, kind, ref);
+      for (const kind of ["skill", "agent_template"] as const) {
+        const platform = await loadComponents(t, kind, { itemId });
+        const st = await loadScopeState(t, kind, platform);
+        const off = platform.filter(
+          (c) =>
+            c.scopeMode === "follow" &&
+            componentOn(
+              c,
+              pluginFactsOf(st, c.itemId, orgId),
+              listedIn(st, c.id, orgId),
+              switchOf(st, c.id, orgId),
+            ),
+        );
+        const refs = await referenceIds(
+          t,
+          orgId,
+          kind,
+          off.map((c) => c.id),
+        );
+        for (const a of agents) {
+          for (const ref of kind === "skill" ? a.skills : a.templates) {
+            if (refs.has(ref)) use(a, kind, ref);
+          }
         }
       }
-    }
+    };
+    await visit(row.item_id, comps, true, new Set([installId]));
     return {
       installId,
       name: row.name,

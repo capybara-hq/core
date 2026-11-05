@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { AgentDefinition } from "../../src/agents/definition.js";
 import type { PluginReview } from "../../src/catalog/plugin-import.js";
-import type { UpgradePreview } from "../../src/catalog/plugin-upgrade.js";
+import type { PlatformUpdatePreview } from "../../src/catalog/plugin-upgrade.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import type { CaseSnapshot } from "../../src/evals/snapshot.js";
 import { currentTemplate } from "../../src/evals/worker.js";
@@ -21,14 +21,15 @@ import {
   waitForTerminal,
 } from "../helpers/runs.js";
 import { SKILL_MD } from "../skills/zip.js";
-import { install, legacyCopies, type OrgEnv, resetOrgCatalog, startOrgEnv } from "./org-env.js";
+import { install, type OrgEnv, resetOrgCatalog, startOrgEnv } from "./org-env.js";
 import { bundlePlugin, skillFiles } from "./packages.js";
 
 /**
  * Phase C Task 15: agent templates shipped in plugins (`agents/<name>.md`, sub-agents spec §16):
- * the import review and its hash, org install (the roster type `<plugin>:<name>`), upgrade (a new
- * version, listed in the diff), uninstall (a selected template is kept: used_by_agents), rollback
- * (the previous definition comes back) and a started sub-agent's frozen definition.
+ * the import review and its hash, org install (the roster type `<plugin>:<name>`), the platform
+ * plugin update (a new version of the platform template, listed in the diff; a removed template
+ * agents use stays), uninstall (a selected template goes off in the org), a downgrade (the previous
+ * definition comes back as a new version) and a started sub-agent's frozen definition.
  */
 
 let env: OrgEnv;
@@ -85,33 +86,35 @@ async function importOk(bytes: Uint8Array): Promise<string> {
   return c.json().item.id as string;
 }
 
-/**
- * Installs the plugin; `legacy` (default): with the org copies an install wrote before phase 2,
- * which the per-org upgrade and rollback still version.
- */
-async function installOk(itemId: string, version: string, legacy = true): Promise<string> {
+/** Installs the plugin in the org. */
+async function installOk(itemId: string, version: string): Promise<string> {
   const r = await install(env.boss, env, itemId, { version });
   expect(r.statusCode, r.body).toBe(201);
-  if (legacy) await legacyCopies(env, env.orgId, itemId, env.bossId);
   return r.json().installed.pluginInstallId as string;
 }
 
-async function upgradeTo(installId: string, version: string): Promise<UpgradePreview> {
-  const p = await env.boss({
+/** Previews and confirms the platform plugin update to `version` (Task 7). */
+async function updateTo(itemId: string, version: string): Promise<PlatformUpdatePreview> {
+  const p = await env.root({
     method: "POST",
-    url: `/api/v1/orgs/${env.orgId}/plugin-installs/${installId}/upgrade/preview`,
+    url: `/api/v1/admin/catalog/items/${itemId}/update/preview`,
     payload: { version },
   });
   expect(p.statusCode, p.body).toBe(200);
-  const preview = p.json() as UpgradePreview;
-  const u = await env.boss({
-    method: "POST",
-    url: `/api/v1/orgs/${env.orgId}/plugin-installs/${installId}/upgrade`,
+  const preview = p.json() as PlatformUpdatePreview;
+  const u = await env.root({
+    method: "PUT",
+    url: `/api/v1/admin/catalog/items/${itemId}/update`,
     payload: { version, diffHash: preview.diffHash },
   });
   expect(u.statusCode, u.body).toBe(200);
   return preview;
 }
+
+const templateChanges = (p: PlatformUpdatePreview) =>
+  p.components
+    .filter((c) => c.kind === "agent_template")
+    .map((c) => ({ name: c.name, change: c.change }));
 
 const templates = () => agentTemplatesFor(env.db).listForOrg(env.orgId);
 
@@ -186,7 +189,7 @@ describe("agent templates in plugins", () => {
 
   it("org install turns the platform template on (no org row); an agent selects it; it appears in the roster as <plugin>:reviewer", async () => {
     const itemId = await importOk(await agentPlugin("1.0.0", { reviewer: md("reviewer", "R.") }));
-    const installId = await installOk(itemId, "1.0.0", false);
+    const installId = await installOk(itemId, "1.0.0");
     const [t] = await templates();
     expect(t).toMatchObject({
       name: "reviewer",
@@ -211,7 +214,7 @@ describe("agent templates in plugins", () => {
     });
   });
 
-  it("upgrade adds a version and lists it in the diff; rollback restores the previous version", async () => {
+  it("the platform update adds a version and lists it in the diff; a downgrade restores the previous definition", async () => {
     const itemId = await importOk(await agentPlugin("1.0.0", { reviewer: md("reviewer", "R1.") }));
     await importOk(
       await agentPlugin("1.1.0", {
@@ -219,23 +222,23 @@ describe("agent templates in plugins", () => {
         tester: md("tester", "T."),
       }),
     );
-    const installId = await installOk(itemId, "1.0.0");
-    const up = await upgradeTo(installId, "1.1.0");
-    expect(up.components.filter((c) => c.kind === "agent_template")).toEqual([
-      { kind: "agent_template", ref: "reviewer", change: "changed" },
-      { kind: "agent_template", ref: "tester", change: "added" },
+    await installOk(itemId, "1.0.0");
+    const up = await updateTo(itemId, "1.1.0");
+    expect(templateChanges(up)).toEqual([
+      { name: "reviewer", change: "upgrade" },
+      { name: "tester", change: "added" },
     ]);
     const svc = agentTemplatesFor(env.db);
     expect((await svc.resolve(env.orgId, "crm:reviewer"))?.version).toBe(2);
     expect((await svc.resolve(env.orgId, "crm:reviewer"))?.template.instructions).toBe("R2.\n");
-    // an added template is a platform component: the per-org upgrade makes no org copy (phase 2)
-    expect(await svc.resolve(env.orgId, "crm:tester")).toBeNull();
+    // the added template is a platform component, on in the org with the plugin
+    expect(await svc.resolve(env.orgId, "crm:tester")).not.toBeNull();
 
-    // rollback to 1.0.0: the previous definition comes back as a new version, tester goes
-    const back = await upgradeTo(installId, "1.0.0");
-    expect(back.components.filter((c) => c.kind === "agent_template")).toEqual([
-      { kind: "agent_template", ref: "reviewer", change: "changed" },
-      { kind: "agent_template", ref: "tester", change: "removed" },
+    // back to 1.0.0: the previous definition comes back as a new version, tester goes
+    const back = await updateTo(itemId, "1.0.0");
+    expect(templateChanges(back)).toEqual([
+      { name: "reviewer", change: "downgrade" },
+      { name: "tester", change: "removed" },
     ]);
     const r = await svc.resolve(env.orgId, "crm:reviewer");
     expect(r?.version).toBe(3);
@@ -248,7 +251,7 @@ describe("agent templates in plugins", () => {
       await agentPlugin("1.0.0", { reviewer: md("reviewer", "R1."), tester: md("tester", "T.") }),
     );
     await importOk(await agentPlugin("1.1.0", { reviewer: md("reviewer", "R2.") }));
-    const installId = await installOk(itemId, "1.0.0");
+    await installOk(itemId, "1.0.0");
     const byName = Object.fromEntries((await templates()).map((t) => [t.name, t]));
     /** A child case snapshot of a plugin template (only what currentTemplate reads). */
     const caseOf = (id: string) =>
@@ -266,9 +269,11 @@ describe("agent templates in plugins", () => {
       }) as unknown as CaseSnapshot;
     const reviewer = byName.reviewer?.id as string;
     const tester = byName.tester?.id as string;
-    expect(await currentTemplate(env.db, caseOf(reviewer))).toEqual({ id: reviewer, version: 1 });
-    await upgradeTo(installId, "1.1.0");
-    expect(await currentTemplate(env.db, caseOf(reviewer))).toEqual({ id: reviewer, version: 2 });
+    // the ids are the platform templates' (installs make no org row since phase 2)
+    const ref = (version: number) => ({ id: reviewer, version, platformTemplateId: reviewer });
+    expect(await currentTemplate(env.db, caseOf(reviewer))).toEqual(ref(1));
+    await updateTo(itemId, "1.1.0");
+    expect(await currentTemplate(env.db, caseOf(reviewer))).toEqual(ref(2));
     // tester is gone in 1.1.0 (soft-deleted): version 0, always a change
     expect(await currentTemplate(env.db, caseOf(tester))).toEqual({ id: tester, version: 0 });
   });
@@ -322,7 +327,7 @@ describe("agent templates in plugins", () => {
     const itemId = await importOk(
       await agentPlugin("1.0.0", { reviewer: md("reviewer", "R."), tester: md("tester", "T.") }),
     );
-    await installOk(itemId, "1.0.0", false);
+    await installOk(itemId, "1.0.0");
     const reviewer = (await templates()).find((t) => t.name === "reviewer");
     const { id: leadId } = await lead([reviewer?.id as string]);
     const url = `/api/v1/orgs/${env.orgId}/catalog/${itemId}/switch`;
@@ -341,7 +346,7 @@ describe("agent templates in plugins", () => {
     expect(await allTemplateRows()).toEqual([]);
   });
 
-  it("a failed upgrade undoes the template version it added", async () => {
+  it("a failed platform update leaves the template at its version", async () => {
     const itemId = await importOk(
       await bundlePlugin({
         name: "crm",
@@ -350,7 +355,6 @@ describe("agent templates in plugins", () => {
         files: { "agents/reviewer.md": md("reviewer", "R1.") },
       }),
     );
-    // 1.1.0 changes the skill (an org copy from the install: the upgrade versions it)
     const next = await importOk(
       await bundlePlugin({
         name: "crm",
@@ -362,8 +366,8 @@ describe("agent templates in plugins", () => {
       }),
     );
     expect(next).toBe(itemId);
-    const installId = await installOk(itemId, "1.0.0");
-    // the skills step (after the agent templates) fails: storage lost the new version's skill file
+    await installOk(itemId, "1.0.0");
+    // writing the platform versions fails: storage lost the new version's skill file
     const v = await env.db
       .selectFrom("catalog_item_versions")
       .select(["object_prefix"])
@@ -374,30 +378,29 @@ describe("agent templates in plugins", () => {
       .get(StorageService)
       .deployment()
       .delete(`${v.object_prefix}skills/notes/scripts/run.py`);
-    const p = await env.boss({
+    const p = await env.root({
       method: "POST",
-      url: `/api/v1/orgs/${env.orgId}/plugin-installs/${installId}/upgrade/preview`,
+      url: `/api/v1/admin/catalog/items/${itemId}/update/preview`,
       payload: { version: "1.1.0" },
     });
     expect(p.statusCode, p.body).toBe(200);
-    const u = await env.boss({
-      method: "POST",
-      url: `/api/v1/orgs/${env.orgId}/plugin-installs/${installId}/upgrade`,
-      payload: { version: "1.1.0", diffHash: (p.json() as UpgradePreview).diffHash },
+    const u = await env.root({
+      method: "PUT",
+      url: `/api/v1/admin/catalog/items/${itemId}/update`,
+      payload: { version: "1.1.0", diffHash: (p.json() as PlatformUpdatePreview).diffHash },
     });
     expect(u.statusCode, u.body).toBe(502);
     const r = await agentTemplatesFor(env.db).resolve(env.orgId, "crm:reviewer");
     expect(r).toMatchObject({ version: 1 });
     expect(r?.template.instructions).toBe("R1.\n");
     const versions = await env.db
-      .selectFrom("agent_template_versions")
+      .selectFrom("platform_agent_template_versions")
       .select("version")
-      .where("template_id", "=", r?.id as string)
       .execute();
     expect(versions.map((x) => x.version)).toEqual([1]);
   });
 
-  it("an upgrade drops a selected template (kept, used_by_agents); a later upgrade brings it back", async () => {
+  it("an update leaving out a selected template keeps it (spec §7.3); a later update brings it back", async () => {
     const itemId = await importOk(
       await agentPlugin("1.0.0", { reviewer: md("reviewer", "R."), tester: md("tester", "T1.") }),
     );
@@ -405,30 +408,23 @@ describe("agent templates in plugins", () => {
     await importOk(
       await agentPlugin("1.2.0", { reviewer: md("reviewer", "R."), tester: md("tester", "T2.") }),
     );
-    const installId = await installOk(itemId, "1.0.0");
+    await installOk(itemId, "1.0.0");
     const tester = (await templates()).find((t) => t.name === "tester");
-    await lead([tester?.id as string]);
-    const ledger = () =>
-      env.db
-        .selectFrom("plugin_install_components")
-        .select(["ref", "dropped"])
-        .where("install_id", "=", installId)
-        .where("kind", "=", "agent_template")
-        .where("ref", "=", tester?.id as string)
-        .execute();
+    const { id: leadId } = await lead([tester?.id as string]);
 
-    const down = await upgradeTo(installId, "1.1.0");
-    expect(down.components).toContainEqual({
-      kind: "agent_template",
-      ref: "tester",
+    const down = await updateTo(itemId, "1.1.0");
+    expect(down.components.find((c) => c.name === "tester")).toMatchObject({
       change: "removed",
+      kept: [{ orgId: env.orgId, agents: [{ id: leadId, name: "Lead" }] }],
     });
-    // still there for the agent that selects it, and still this install's (dropped)
+    // still there for the agent that selects it
     expect((await templates()).map((t) => t.name)).toEqual(["reviewer", "tester"]);
-    expect(await ledger()).toEqual([{ ref: tester?.id, dropped: true }]);
 
-    await upgradeTo(installId, "1.2.0");
-    expect(await ledger()).toEqual([{ ref: tester?.id, dropped: false }]);
+    const up = await updateTo(itemId, "1.2.0");
+    expect(templateChanges(up)).toEqual([
+      { name: "reviewer", change: "same" },
+      { name: "tester", change: "upgrade" },
+    ]);
     const back = await agentTemplatesFor(env.db).resolve(env.orgId, "crm:tester");
     expect(back?.id).toBe(tester?.id);
     expect(back?.template.instructions).toBe("T2.\n");
@@ -439,7 +435,7 @@ describe("agent templates in plugins", () => {
       await agentPlugin("1.0.0", { reviewer: md("reviewer", "Review v1.") }),
     );
     await importOk(await agentPlugin("1.1.0", { reviewer: md("reviewer", "Review v2.") }));
-    const installId = await installOk(itemId, "1.0.0");
+    await installOk(itemId, "1.0.0");
     const [t] = await templates();
     const { id: agentId } = await lead([t?.id as string]);
     const conv = await createConv(env.boss, env.orgId, agentId);
@@ -456,7 +452,7 @@ describe("agent templates in plugins", () => {
     const subagentId = dispatched?.payload.subagentId as string;
     expect(subagentId).toBeTruthy();
 
-    await upgradeTo(installId, "1.1.0");
+    await updateTo(itemId, "1.1.0");
     capture.reset();
     await postMessage(
       env.boss,

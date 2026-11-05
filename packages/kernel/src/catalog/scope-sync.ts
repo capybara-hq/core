@@ -186,7 +186,7 @@ export class PluginScopeSync {
   private async syncLocked(itemId: string, orgId: string): Promise<ScopeSyncResult> {
     const item = await this.db
       .selectFrom("catalog_items")
-      .select(["id", "scope", "builtin", "disabled", "latest_version"])
+      .select(["id", "scope", "builtin", "disabled", "latest_version", "platform_synced_version"])
       .where("id", "=", itemId)
       .where("deleted_at", "is", null)
       .executeTakeFirst();
@@ -223,16 +223,11 @@ export class PluginScopeSync {
       (live !== undefined && (await this.dependedOn(orgId, live.id)));
     if (wanted) {
       if (live) return "unchanged";
+      // The platform's version (one per deployment, Task 7); the latest import before the first sync
+      const version = item.platform_synced_version ?? item.latest_version;
       try {
-        if (await this.needsInput(orgId, itemId, item.latest_version)) return "needs_config";
-        await this.installer.install(
-          orgId,
-          null,
-          itemId,
-          item.latest_version,
-          {},
-          { via: "scope" },
-        );
+        if (await this.needsInput(orgId, itemId, version)) return "needs_config";
+        await this.installer.install(orgId, null, itemId, version, {}, { via: "scope" });
         return "installed";
       } catch (e) {
         // A person switched it off (or the scope changed) after this decision: the installer's

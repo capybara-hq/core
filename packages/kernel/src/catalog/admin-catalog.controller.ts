@@ -34,6 +34,11 @@ import { CatalogScopeService, type ScopePreview } from "./catalog-scope.service.
 import { sendCatalogIcon } from "./org-catalog.controller.js";
 import { OrgCatalogService } from "./org-catalog.service.js";
 import { type PluginConfirmResult, PluginImport, type PluginReview } from "./plugin-import.js";
+import {
+  PlatformPluginUpdater,
+  type PlatformUpdatePreview,
+  type PlatformUpdateResult,
+} from "./plugin-upgrade.js";
 
 const NpmBody = z.object({
   package: z.string().min(1).max(214),
@@ -90,6 +95,10 @@ const ListQuery = z.object({
 
 const ConfirmPermissionsBody = z.object({ permissionsHash: Hash }).strict();
 
+const Version = z.string().min(1).max(256);
+const UpdatePreviewBody = z.object({ version: Version }).strict();
+const UpdateBody = z.object({ version: Version, diffHash: Hash }).strict();
+
 const actorOpts = (actor: ReturnType<typeof requireUser>): ActorOpts => {
   const tokenId = patTokenId(actor);
   return tokenId !== undefined ? { actorTokenId: tokenId } : {};
@@ -107,6 +116,11 @@ class CatalogConfirmPermissionsBody extends createZodDto(
 ) {}
 class CatalogShownBody extends createZodDto(ShownBody, "CatalogShownBody") {}
 class CatalogDisabledBody extends createZodDto(DisabledBody, "CatalogDisabledBody") {}
+class CatalogUpdatePreviewBody extends createZodDto(
+  UpdatePreviewBody,
+  "CatalogUpdatePreviewBody",
+) {}
+class CatalogUpdateBody extends createZodDto(UpdateBody, "CatalogUpdateBody") {}
 
 /**
  * The platform catalog (`/api/v1/admin/catalog/*`, super admins): plugin import (upload / npm
@@ -122,6 +136,7 @@ export class AdminCatalogController {
     @Inject(PluginImport) private readonly pluginImport: PluginImport,
     @Inject(OrgCatalogService) private readonly orgCatalog: OrgCatalogService,
     @Inject(CatalogScopeService) private readonly scope: CatalogScopeService,
+    @Inject(PlatformPluginUpdater) private readonly updater: PlatformPluginUpdater,
   ) {}
 
   /**
@@ -391,6 +406,40 @@ export class AdminCatalogController {
   ): Promise<CatalogItemView> {
     const actor = requireUser(principal);
     return this.scope.setShown(actor.account.id, id, body.shownToOthers, actorOpts(actor));
+  }
+
+  /**
+   * What updating the platform plugin to `version` would do (spec §7.1, `PlatformPluginUpdater`):
+   * `{ itemId, name, from, to, components: [{ kind, id, name, change: added | removed | upgrade |
+   * downgrade | same, from, to, updatedOnOwn, ownScope, pinnedOrgs, kept? }], extension,
+   * connectorOrgs: [{ orgId, connectors, needsConfig }], diffHash }`. Nothing written. The same
+   * version, a target the deployment's extension or a dependent plugin cannot take -> 409
+   * `plugin.upgrade_target_invalid`; an added skill named like one in use where the plugin is on
+   * -> 409 `plugin.skill_conflict`; disabled -> 403 `catalog.item_disabled`.
+   */
+  @Post("items/:id/update/preview")
+  @HttpCode(200)
+  previewUpdate(
+    @Param("id") id: string,
+    @ZBody(CatalogUpdatePreviewBody) body: z.infer<typeof UpdatePreviewBody>,
+  ): Promise<PlatformUpdatePreview> {
+    return this.updater.preview(id, body.version);
+  }
+
+  /**
+   * Updates the platform plugin, confirmed with the preview's `diffHash` (recomputed under the item
+   * lock; a difference -> 409 `plugin.upgrade_stale`; another update running -> 409
+   * `plugin.install_in_progress`). A failure undoes everything -> 502 `plugin.upgrade_failed`.
+   * Audits `plugin.platform_updated`.
+   */
+  @Put("items/:id/update")
+  update(
+    @CurrentPrincipal() principal: Principal,
+    @Param("id") id: string,
+    @ZBody(CatalogUpdateBody) body: z.infer<typeof UpdateBody>,
+  ): Promise<PlatformUpdateResult> {
+    const actor = requireUser(principal);
+    return this.updater.update(actor.account.id, id, body, actorOpts(actor));
   }
 
   /** 删除条目（软删除，已安装的组件不受影响）。 */

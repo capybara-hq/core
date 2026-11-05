@@ -1,230 +1,190 @@
-import { createHash, randomUUID } from "node:crypto";
-import type { AgentTemplate, ConnectorTemplateFile, PluginManifest } from "@capybara-hq/plugin-sdk";
+// The platform plugin update (plugin and component management spec §7, plugin scope phase 2,
+// Task 7): a platform plugin has one version for the deployment, so an update is previewed and
+// confirmed once by the super admin, per component. The per-org upgrade routes are retired (ruling
+// F2).
+import { createHash } from "node:crypto";
+import type { ConnectorTemplateFile, PluginManifest } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
-import { putTemplateVersionIn } from "../agents/templates.js";
-import type { KernelSchemaDb, SourceFormat } from "../db/kernel-schema.js";
+import type { KernelSchemaDb, SkillManifest } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
-import { isExtensionEnabled } from "../extensions/enabled.js";
-import { OrgExtensionConfigs } from "../extensions/org-config.js";
+import { ExtensionAdminOps } from "../extensions/admin-ops.js";
 import { ExtensionRegistry } from "../extensions/registry.js";
 import { audit } from "../identity/audit.js";
+import { SuperAdminLock } from "../identity/super-admin.js";
+import { afterCommit } from "../infra/database/after-commit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
+import { LockService } from "../infra/lock/lock.service.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import { OrgLock } from "../orgs/org-lock.js";
-import type { OrgAction } from "../orgs/roles.js";
 import { packagePath } from "../packages/tgz.js";
-import { SkillsService, skillConflictError } from "../skills/skills.service.js";
 import { StorageService } from "../storage/storage.service.js";
 import { canonicalJson } from "../tools/canonical-json.js";
-import type {
-  CreateConnectorInput,
-  PreparedTemplateUpdate,
-  TemplateUpdateInput,
-} from "../tools/connectors.service.js";
+import type { PreparedTemplateUpdate, TemplateUpdateInput } from "../tools/connectors.service.js";
 import { ConnectorsService } from "../tools/connectors.service.js";
 import type { ConnectorAuth } from "../tools/credentials.js";
 import {
   type CatalogVersionFiles,
   dirDigest,
   getPath,
-  lockOrgForActions,
-  type OrgCatalogTemplate,
-  orgTemplateView,
   readCatalogAgentTemplates,
-  readCatalogFiles,
   readCatalogTemplates,
-  requiredActions,
   setPath,
-  skillOf,
+  skillFilesDigest,
   templatePluginProblem,
 } from "./catalog-content.js";
 import {
+  agentsUsing,
   type ComponentKind,
-  catalogSkillNames,
-  InstallFailure,
-  type InstallPlan,
-  journalEntries,
-  missingTemplateInput,
-  PluginInstaller,
-  type PluginInstallInput,
-  type PluginInstallView,
-  planActions,
-  planSkillConflicts,
-  type ResolvedDependency,
-  resolveDependencies,
-  type UninstallReport,
-  type UpgradeStep,
-  under,
-} from "./plugin-install.js";
-import { assertItemInstallable, resolveRequestsByInstall } from "./request-rules.js";
-import { deployedExtension, deploymentTarget } from "./upgrade-targets.js";
-import { satisfiesRange } from "./versions.js";
+  clashingOrgSkills,
+  clashingPlatformSkills,
+  componentOn,
+  connectorTemplatesOn,
+  listedIn,
+  loadScopeState,
+  pluginFactsOf,
+  switchOf,
+} from "./component-state.js";
+import { CatalogItemLock } from "./locks.js";
+import { PlatformComponents } from "./platform-components.js";
+import { catalogSkillNames, PluginInstaller } from "./plugin-install.js";
+import { PluginScopeSync } from "./scope-sync.js";
+import { compareVersions, satisfiesRange } from "./versions.js";
 
-/** A component as the upgrade records it in the ledger (and journals it). */
-interface LedgerRecord {
+/** How a component differs between the platform's current and the target version (spec §7.1). */
+export type UpdateChange = "added" | "removed" | "upgrade" | "downgrade" | "same";
+
+/** One component of an update preview. */
+export interface PlatformUpdateComponent {
   kind: ComponentKind;
-  ref: string;
-  created: boolean;
-  skillVersion: number | null;
-  templateId?: string;
-}
-
-/** How a component differs between the installed and the target version. */
-export type UpgradeChange = "added" | "changed" | "removed" | "unchanged";
-
-/**
- * One component of an upgrade preview: `ref` is the extension name, the dependency's plugin name,
- * the skill name, the connector template id or the agent template name.
- */
-export interface UpgradeComponent {
-  kind: ComponentKind;
-  ref: string;
-  change: UpgradeChange;
-  detail?: string;
-}
-
-/** `POST …/plugin-installs/:installId/upgrade/preview` (spec §10, step 1). */
-export interface UpgradePreview {
-  from: string;
-  to: string;
-  /** Confirm with it; it changes when the target, the install's components or the inputs change. */
-  diffHash: string;
-  components: UpgradeComponent[];
-  inputs: {
-    /** Added templates: their connectors are created with the org's input (as at install). */
-    connectors: string[];
-    /** Changed templates whose auth method or required credentials changed: re-entry needed. */
-    credentialsChanged: string[];
-    /** The extension is added and not yet enabled in the org: its org config may be given. */
-    extensionConfig: boolean;
-  };
+  /** The platform component (null: added by the target). */
+  id: string | null;
+  /** Skill or agent template name; a connector template's id. */
+  name: string;
+  change: UpdateChange;
+  /** The catalog version of the component's current version (null: added, or no catalog version). */
+  from: string | null;
+  /** The target version (null: removed). */
+  to: string | null;
+  /** The current version was updated on its own (spec §7.2): the confirm moves it to the plugin's. */
+  updatedOnOwn: boolean;
+  /** The component has its own scope (spec §5 rule 2); the update keeps it. */
+  ownScope: boolean;
   /**
-   * The target version's connector templates named in `inputs.connectors` and
-   * `inputs.credentialsChanged` (presets and auth, no credentials), for the input form: the target
-   * is not always the latest version (an extension's plugin moves to the deployed version).
+   * The orgs where the component is on whose linked copy is pinned to its own version (ruling B2):
+   * the confirm clears those pins, except for a removed component (the copy keeps its version).
    */
-  templates: OrgCatalogTemplate[];
+  pinnedOrgs: string[];
+  /**
+   * A removed skill or agent template agents use: it stays (spec §7.3), listed with the orgs and
+   * agents using it. Absent otherwise.
+   */
+  kept?: { orgId: string; agents: { id: string; name: string }[] }[];
 }
 
-/** The body of `POST …/plugin-installs/:installId/upgrade`. */
-export interface PluginUpgradeInput extends PluginInstallInput {
-  version: string;
+/** The org connectors an update touches (ruling E2, spec §6). */
+export interface PlatformUpdateConnectorOrg {
+  orgId: string;
+  /**
+   * Connectors made from a changed template: they get the template's endpoint preset (the org's
+   * values at the editable paths), auth preset and default policies; `credentialsReset` when the
+   * auth method or the credentials it needs changed (cleared: the org re-enters them).
+   */
+  connectors: { id: string; name: string; templateId: string; credentialsReset: boolean }[];
+  /**
+   * Added templates on in the org where the plugin is on: their connectors need the org's input
+   * (endpoint, credentials), so the update creates none.
+   */
+  needsConfig: string[];
+}
+
+/** `POST /api/v1/admin/catalog/items/:id/update/preview`. */
+export interface PlatformUpdatePreview {
+  itemId: string;
+  name: string;
+  /** The platform's current version (null: never synced). */
+  from: string | null;
+  to: string;
+  components: PlatformUpdateComponent[];
+  /** The deployment's extension moves (`from` null: installed by the update); null: unchanged. */
+  extension: { from: string | null; to: string } | null;
+  connectorOrgs: PlatformUpdateConnectorOrg[];
+  /** Confirm with it; recomputed under the item lock at the confirm. */
   diffHash: string;
 }
 
-/** The steps of an upgrade, in order (`finish`: the removals and the version switch). */
-type UpgradeStepName =
-  | "dependencies"
-  | "extension"
-  | "skills"
-  | "agent_templates"
-  | "connectors"
-  | "finish";
-
-interface LedgerRow {
-  kind: ComponentKind;
-  ref: string;
-  created: boolean;
-  skill_version: number | null;
-  template_id: string | null;
-  dropped: boolean;
+/** `PUT /api/v1/admin/catalog/items/:id/update`. */
+export interface PlatformUpdateResult {
+  itemId: string;
+  version: string;
+  components: PlatformUpdateComponent[];
+  extension: PlatformUpdatePreview["extension"];
+  connectorOrgs: PlatformUpdateConnectorOrg[];
 }
 
 interface VersionRow extends CatalogVersionFiles {
   version: string;
   manifest: PluginManifest;
-  source_format: SourceFormat;
+  extension_sha256: string | null;
 }
 
-interface SkillDiff {
-  name: string;
-  change: UpgradeChange;
-  /** The skill directory in the target version (added / changed / unchanged). */
-  dir?: string;
-  /** The target version suggests pinning the skill (spec §9.1). */
-  suggestPinned?: boolean;
-  /** The ledger row of the org skill (by skill id), when the install has one that is live. */
-  ledger?: LedgerRow;
+/** The deployment's extension step of an update. */
+interface ExtensionStep {
+  from: string | null;
+  to: string;
+  sha256: string;
+  /** The install record's package before the update (null: none, the update installs it). */
+  previous: string | null;
 }
 
-interface AgentTemplateDiff {
-  name: string;
-  change: UpgradeChange;
-  /** The target version's template (added / changed / unchanged). */
-  template?: AgentTemplate;
-  /** The ledger row of the org template, when the install has one that is live. */
-  ledger?: LedgerRow;
-}
-
-interface TemplateDiff {
+/** A connector the update changes, with what its update needs. */
+interface ConnectorChange {
+  orgId: string;
   id: string;
-  change: UpgradeChange;
-  target?: ConnectorTemplateFile;
-  /** The org connector created from the template (live), when the install has one. */
-  connector?: { id: string; connector: string; endpoint: unknown; auth: ConnectorAuth };
-  ledger?: LedgerRow;
-  credentialsChanged: boolean;
-}
-
-interface DependencyDiff {
   name: string;
-  change: UpgradeChange;
-  range?: string;
-  fromRange?: string;
-  resolved?: ResolvedDependency;
-  /** The dependency install recorded in the ledger. */
-  child?: { installId: string; version: string; ledger: LedgerRow };
-  /** Added: null when already installed in the org (recorded created=false). */
-  plan?: InstallPlan | null;
+  connector: string;
+  endpoint: unknown;
+  templateId: string;
+  file: ConnectorTemplateFile;
+  credentialsReset: boolean;
 }
 
-/**
- * Everything an upgrade will do, computed before anything is written (opaque outside this module:
- * {@link PluginUpgrader.check} hands it to {@link PluginUpgrader.upgrade}).
- */
-export interface UpgradeDiff {
-  installId: string;
+/** Everything a confirm does, computed before anything is written. */
+interface UpdateDiff {
   itemId: string;
   name: string;
-  from: VersionRow;
+  from: string | null;
   to: VersionRow;
-  ledger: LedgerRow[];
-  extension: { change: UpgradeChange; name: string } | null;
-  skills: SkillDiff[];
-  agentTemplates: AgentTemplateDiff[];
-  templates: TemplateDiff[];
-  dependencies: DependencyDiff[];
-  components: UpgradeComponent[];
-  inputs: UpgradePreview["inputs"];
+  components: PlatformUpdateComponent[];
+  extension: ExtensionStep | null;
+  connectors: ConnectorChange[];
+  connectorOrgs: PlatformUpdateConnectorOrg[];
+  /** Skills whose content stays and whose pinned suggestion the target sets (by platform id). */
+  suggest: Map<string, boolean>;
+  dependencies: string[];
   diffHash: string;
-  ledgerHash: string;
-  actions: OrgAction[];
-  /** With input: the connectors to create and the template updates to prepare. */
-  creates: Map<string, CreateConnectorInput>;
-  updates: Map<string, TemplateUpdateInput>;
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const installNotFound = () => new ApiError("plugin.install_not_found", "Plugin install not found");
-const inProgress = () =>
-  new ApiError(
-    "plugin.install_in_progress",
-    "This plugin install is being installed, upgraded or uninstalled; try again when it finishes",
-  );
+const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
+const itemNotFound = () => new ApiError("catalog.item_not_found", "Catalog item not found");
 const stale = () =>
   new ApiError(
     "plugin.upgrade_stale",
-    "The upgrade preview is out of date (the catalog version or this install's components changed); preview the upgrade again",
+    "The update preview is out of date (the catalog version, the platform components, a pin or a connector changed); preview the update again",
   );
 const targetInvalid = (message: string, details?: unknown[]) =>
   new ApiError("plugin.upgrade_target_invalid", message, details);
-const fail = (path: string, message: string) =>
-  new ApiError("validation_failed", "Request validation failed", [{ path, message }]);
-const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
+const KIND_ORDER: Record<ComponentKind, number> = {
+  skill: 0,
+  agent_template: 1,
+  connector_template: 2,
+};
+/** How long one update holds its item (renewed while it runs). */
+const UPDATE_LOCK_TTL_MS = 60_000;
 
 /**
  * What a credential of `auth` looks like: two auths with the same key take the same stored
@@ -248,1524 +208,934 @@ function credentialKey(auth: ConnectorAuth): string {
 
 /** The digest of all files of a catalog version. */
 const filesDigest = (row: CatalogVersionFiles): string =>
-  sha256(
-    row.files
-      .map((f) => `${f.path}\0${f.sha256}\n`)
-      .sort()
-      .join(""),
-  );
+  skillFilesDigest(row.files.map((f) => ({ path: f.path, sha256: f.sha256 })));
 
 /**
- * Org in-place upgrade (and, for declarative plugins, rollback) of an installed plugin (package
- * ecosystem spec §10, Decisions 9–11):
- * - **preview** diffs the installed and the target version per component (extension, dependency
- *   plugins, skills by name, connector templates by id) and returns the inputs needed and a
- *   `diffHash`; the same checks as an install run first (dependencies resolve, extension and
- *   template connectors deployed, skill conflicts -> `plugin.skill_conflict`), plus the target
- *   rules (`plugin.upgrade_target_invalid`): an extension-bearing plugin can move only to the
- *   catalog version carrying the deployment's extension, and installs depending on this plugin must
- *   still accept the target;
- * - **upgrade** re-checks the `diffHash` (`plugin.upgrade_stale`), sets the install `upgrading`
- *   under the org lock (another upgrade or an uninstall -> `plugin.install_in_progress`), then:
- *   added dependencies (installed by the install flow), the added extension (enabled), added and
- *   changed skills (a new version of the same skill; agents keep selecting it by id), added
- *   connectors (created from the template), and in one final transaction the changed connectors
- *   (template-owned fields only, `applyTemplateIn`), the removals by the uninstall rules, the new
- *   version and the audit `plugin.org_upgraded`. Each step is journaled in
- *   `plugin_installs.upgrade`; on failure the journal is undone (created components removed, skill
- *   versions reverted; changed connectors were never committed), the install stays `installed` at
- *   the old version with `error = { step, code }`, audit `plugin.org_upgrade_failed`, 502
- *   `plugin.upgrade_failed`. An upgrade interrupted for longer than `catalog.staleInstallMinutes`
- *   is undone by the next preview, upgrade or uninstall.
- * Approval follows the item's policy (the org catalog service creates the request). No in-process
- * state.
+ * The platform plugin update (spec §7; ruling F2 retires the per-org upgrades):
+ * - **preview** diffs the platform's current components of the plugin (the version recorded in
+ *   `catalog_items.platform_synced_version`, components updated on their own included) against a
+ *   catalog version: each skill (by name, by its files' digest), agent template (by name, canonical
+ *   definition) and connector template (by id, canonical file) is `added`, `removed`, `same`, or
+ *   `upgrade` / `downgrade` (the target's direction from the component's catalog version). It marks
+ *   components updated on their own, components with their own scope and the orgs whose linked
+ *   copy is pinned; lists removed components agents still use (they stay, spec §7.3), the org
+ *   connectors made from changed templates (all orgs, ruling E2; `credentialsReset` when the
+ *   credential shape changed) and the added templates that will need an org's input, the
+ *   deployment's extension move, and a `diffHash`. Refused: same version, a disabled or deleted
+ *   item, a target without the extension the deployment runs for it or moving a config-declared
+ *   one, a template moving to another connector, a plugin another platform plugin depends on
+ *   outside its range, and an added skill whose name is taken where the plugin is on (rule 10).
+ * - **update** runs under a Redis lock per item (another update -> `plugin.install_in_progress`):
+ *   the extension first (`ExtensionAdminOps.install`, enabled when the update installs it; added
+ *   permissions wait for the admin's approval as for any extension upgrade), then one transaction
+ *   under the item name's lock that recomputes the diff (`plugin.upgrade_stale` on a difference)
+ *   and writes the platform versions (`PlatformComponents.syncFromVersion`, which records
+ *   `platform_synced_version`), the pinned suggestions of unchanged skills, the removals (a
+ *   component no agent uses is soft-deleted, so unpinned linked copies go with it; pinned copies
+ *   keep their own version; a removed connector template leaves its connectors as the orgs' own),
+ *   clears the pins of linked copies, fans changed templates out to every connector made from them
+ *   (`applyTemplateIn`, under each org's row lock, credentials cleared only for a changed
+ *   credential shape), moves every org install to the version and audits
+ *   `plugin.platform_updated`; the scope sync of the item and its dependencies is enqueued after
+ *   the commit (orgs get new dependencies by rule 9). A failure rolls the transaction back and
+ *   puts the extension back where it was (audit `plugin.platform_update_failed`, 502
+ *   `plugin.upgrade_failed`); files copied to `deployment/platform/` stay unreferenced.
+ * No in-process state.
  */
 @Injectable()
-export class PluginUpgrader {
+export class PlatformPluginUpdater {
   constructor(
-    /** Planning, installs, the ledger and the uninstall rules are the installer's. */
-    @Inject(PluginInstaller) private readonly installer: PluginInstaller,
     @Inject(KernelDb) private readonly kdb: KernelDb,
-    /** The org row lock (orgs/org-lock.ts): joins the caller's transaction. */
+    @Inject(TransactionHost) readonly txHost: TransactionHost,
+    @Inject(SuperAdminLock) private readonly adminLock: SuperAdminLock,
+    @Inject(CatalogItemLock) private readonly itemLock: CatalogItemLock,
     @Inject(OrgLock) private readonly orgLock: OrgLock,
+    @Inject(LockService) private readonly locks: LockService,
     @Inject(StorageService) private readonly storage: StorageService,
     @Inject(ExtensionRegistry) private readonly registry: ExtensionRegistry,
-    @Inject(SkillsService) private readonly skills: SkillsService,
-    @Inject(OrgExtensionConfigs) private readonly orgConfigs: OrgExtensionConfigs,
-    /** Org connectors: installs create, upgrade and remove them. */
+    @Inject(ExtensionAdminOps) private readonly ops: ExtensionAdminOps,
+    @Inject(PlatformComponents) private readonly platform: PlatformComponents,
+    /** Template dependencies (the deployed connector kinds). */
+    @Inject(PluginInstaller) private readonly installer: PluginInstaller,
     @Inject(ConnectorsService) private readonly connectors: ConnectorsService,
+    @Inject(PluginScopeSync) private readonly sync: PluginScopeSync,
     @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
-    @Inject(TransactionHost) readonly txHost: TransactionHost,
   ) {}
 
-  /** The kernel-schema handle of the current context (the transaction, else the pool). */
   private get db(): KernelSchemaDb {
     return this.kdb.db;
   }
 
-  /** The upgrade preview (see the class comment). */
-  async preview(
-    orgId: string,
-    actor: string,
-    installId: string,
-    version: string,
-  ): Promise<UpgradePreview> {
-    await this.recoverInterrupted(orgId, actor, installId);
-    const diff = await this.diff(orgId, actor, installId, version, null);
-    await this.authorizeActions(orgId, actor, diff.actions);
-    return {
-      from: diff.from.version,
-      to: diff.to.version,
-      diffHash: diff.diffHash,
-      components: diff.components,
-      inputs: diff.inputs,
-      templates: diff.templates.flatMap((c) =>
-        c.target !== undefined &&
-        (diff.inputs.connectors.includes(c.id) || diff.inputs.credentialsChanged.includes(c.id))
-          ? [orgTemplateView(c.id, c.target)]
-          : [],
-      ),
-    };
+  /** The update preview (see the class comment); writes nothing. */
+  async preview(itemId: string, version: string): Promise<PlatformUpdatePreview> {
+    return previewOf(await this.diff(itemId, version));
   }
 
-  /** Re-checks the actor's org actions under the org row lock (a transaction of its own). */
-  @Transactional()
-  private async authorizeActions(
-    orgId: string,
+  /** Runs an update confirmed with the preview's `diffHash` (see the class comment). */
+  async update(
     actor: string,
-    actions: OrgAction[],
-  ): Promise<void> {
-    await lockOrgForActions(this.orgLock, orgId, actor, actions);
-  }
-
-  /**
-   * The checks of {@link upgrade} before an approval request (the org catalog service creates one
-   * for a needs_approval item without a grant): the diff with the input, the `diffHash`. Returns
-   * the item and the org actions the upgrade needs.
-   */
-  async check(
-    orgId: string,
-    actor: string,
-    installId: string,
-    input: PluginUpgradeInput,
-  ): Promise<{ itemId: string; name: string; actions: OrgAction[]; diff: UpgradeDiff }> {
-    await this.recoverInterrupted(orgId, actor, installId);
-    const diff = await this.diff(orgId, actor, installId, input.version, input);
-    if (diff.diffHash !== input.diffHash) throw stale();
-    return { itemId: diff.itemId, name: diff.name, actions: diff.actions, diff };
-  }
-
-  /**
-   * Runs an upgrade (see the class comment); returns the install view. `checked` is the diff
-   * {@link check} computed for the same input (re-verified under the org lock: the install's
-   * version and ledger must be unchanged), otherwise it is computed here.
-   */
-  async upgrade(
-    orgId: string,
-    actor: string,
-    installId: string,
-    input: PluginUpgradeInput,
+    itemId: string,
+    input: { version: string; diffHash: string },
     opts: { actorTokenId?: string } = {},
-    checked?: UpgradeDiff,
-  ): Promise<PluginInstallView> {
-    let diff: UpgradeDiff;
-    if (
-      checked !== undefined &&
-      checked.installId === installId &&
-      checked.to.version === input.version &&
-      checked.diffHash === input.diffHash
-    ) {
-      diff = checked;
-    } else {
-      await this.recoverInterrupted(orgId, actor, installId);
-      diff = await this.diff(orgId, actor, installId, input.version, input);
-      if (diff.diffHash !== input.diffHash) throw stale();
-    }
-    const { itemId } = diff;
-    const upgradeId = randomUUID();
-
-    // Start: the install `upgrading`, under the org lock (one upgrade or uninstall at a time)
-    await this.start(orgId, actor, installId, diff, upgradeId);
-
-    const done: UpgradeStep[] = [];
-    /** The step whose journal write found the journal gone (cleaned up as interrupted meanwhile). */
-    let unjournaled: UpgradeStep | undefined;
-    // Appends a step to the journal in the transaction of the context (the journal gone: the
-    // upgrade was cleaned up as interrupted)
-    const journal = async (s: UpgradeStep) => {
-      done.push(s);
-      unjournaled = s;
-      const r = await this.db
-        .updateTable("plugin_installs")
-        .set({
-          upgrade: sql<string>`jsonb_set(upgrade, '{done}', (upgrade->'done') || ${JSON.stringify([s])}::jsonb)`,
-        })
-        .where("id", "=", installId)
-        .where(sql<string>`upgrade->>'id'`, "=", upgradeId)
-        .executeTakeFirst();
-      if (r.numUpdatedRows === 0n) throw cleanedUp();
-      unjournaled = undefined;
-    };
-    // Records a component in the ledger and the journal, in the transaction of the context
-    const record = (c: LedgerRecord) => this.recordIn(installId, journal, c);
-
-    let step: UpgradeStepName = "dependencies";
-    const disabled: string[] = [];
-    try {
-      for (const dep of diff.dependencies.filter((x) => x.change === "added")) {
-        const resolved = dep.resolved as ResolvedDependency;
-        const rec = (c: LedgerRecord) => record(c);
-        if ((await this.installer.recordDependency(orgId, resolved, rec)) !== undefined) continue;
-        if (!dep.plan) {
-          throw new ApiError(
-            "catalog.dependency_unresolved",
-            `Dependency ${dep.name}@${resolved.range} cannot be resolved: its install in this organization was removed meanwhile; try again`,
-            [{ dependency: dep.name, range: resolved.range }],
-          );
-        }
-        let child: string;
-        try {
-          child = await this.installer.execute(orgId, actor, dep.plan, opts, {
-            actions: requiredActions(dep.plan.manifest),
-            approvedBy: itemId,
-            parent: installId,
-          });
-        } catch (e) {
-          if (e instanceof InstallFailure) {
-            throw new InstallFailure(e.step, e.cause, [dep.name, ...e.dependency], e.rolledBack);
-          }
-          if (
-            e instanceof ApiError &&
-            e.code === "plugin.already_installed" &&
-            (await this.installer.recordDependency(orgId, resolved, rec)) !== undefined
-          ) {
-            continue;
-          }
-          throw new InstallFailure("dependencies", e, [dep.name], true);
-        }
-        await this.installer.recordDependency(orgId, resolved, rec, child);
-      }
-
-      step = "extension";
-      if (diff.extension?.change === "added") {
-        await this.installer.enableExtension(
-          orgId,
-          diff.extension.name,
-          {
-            enabled: true,
-            ...(input.extensionConfig !== undefined && { config: input.extensionConfig }),
-          },
-          actor,
-          opts.actorTokenId,
-          { viaItem: itemId },
-          record,
-        );
-      }
-
-      // Skills and agent templates are platform components (plugin scope phase 2): an upgrade
-      // only versions the org copies an earlier install wrote (in the ledger) and never makes new
-      // ones; the platform components move with the platform plugin update
-      step = "skills";
-      for (const s of diff.skills) {
-        if ((s.change !== "added" && s.change !== "changed") || !s.ledger) continue;
-        const files = await readCatalogFiles(
-          this.storage,
-          diff.to.object_prefix,
-          diff.to.files,
-          s.dir as string,
-        );
-        const r = await this.skills.createVersionFromFiles(
-          orgId,
-          actor,
-          { ...skillOf(files), files },
-          {
-            catalog: {
-              itemId,
-              version: diff.to.version,
-              format: diff.to.source_format,
-              suggestPinned: s.suggestPinned === true,
-            },
-            ...opts,
-          },
-        );
-        await this.journalSkill(r, record, journal);
-      }
-
-      step = "agent_templates";
-      for (const a of diff.agentTemplates) {
-        if ((a.change !== "added" && a.change !== "changed") || !a.ledger) continue;
-        await this.upgradeAgentTemplate(orgId, diff, a.template as AgentTemplate, record, journal);
-      }
-
-      step = "connectors";
-      for (const [templateId, ci] of diff.creates) {
-        const r = await this.connectors.create(orgId, actor, ci, opts.actorTokenId);
-        await this.recordStep(installId, journal, {
-          kind: "connector",
-          ref: r.connector.id,
-          created: true,
-          skillVersion: null,
-          templateId,
-        });
-      }
-      const prepared: { connectorId: string; p: PreparedTemplateUpdate }[] = [];
-      for (const tpl of diff.templates) {
-        const update = diff.updates.get(tpl.id);
-        if (!update || !tpl.connector) continue;
-        try {
-          prepared.push({
-            connectorId: tpl.connector.id,
-            p: await this.connectors.prepareTemplateUpdate(actor, tpl.connector.connector, update),
-          });
-        } catch (e) {
-          throw under(e, `connectors.${tpl.id}`);
-        }
-      }
-
-      // Finish, in one transaction: changed connectors, removals, the version switch
-      await this.finish(orgId, actor, installId, upgradeId, diff, prepared, disabled, opts, () => {
-        step = "finish";
-      });
-    } catch (e) {
-      throw await this.failed(
-        orgId,
-        actor,
-        installId,
-        upgradeId,
-        diff,
-        { done, unjournaled },
-        step,
-        e,
-        opts,
+  ): Promise<PlatformUpdateResult> {
+    if (!UUID_RE.test(itemId)) throw itemNotFound();
+    const handle = await this.locks.acquire(`plugin-update-${itemId}`, {
+      ttlMs: UPDATE_LOCK_TTL_MS,
+    });
+    if (!handle) {
+      throw new ApiError(
+        "plugin.install_in_progress",
+        "This plugin is being updated; try again when that update finishes",
       );
     }
-    for (const p of disabled) await this.orgConfigs.afterDisable(orgId, p);
-    const [view] = await this.installer.list(orgId, installId);
-    if (!view) throw installNotFound();
-    return view;
+    try {
+      return await this.updateLocked(actor, itemId, input, opts);
+    } finally {
+      await handle.release();
+    }
   }
 
-  /**
-   * Undoes a failed upgrade (its journal, in one transaction): the install back `installed` at the
-   * old version with `error = { step, code }`, audit `plugin.org_upgrade_failed`. When the journal
-   * is no longer this upgrade's (another request cleaned it up as interrupted and undid what it
-   * journaled), only the step whose journal write failed is undone and the install row is left as
-   * the cleanup set it. Returns the error to throw: 502 `plugin.upgrade_failed` (a dependency
-   * another install is still installing: its 409 as it is).
-   */
-  private async failed(
-    orgId: string,
+  private async updateLocked(
     actor: string,
-    installId: string,
-    upgradeId: string,
-    diff: UpgradeDiff,
-    steps: { done: UpgradeStep[]; unjournaled: UpgradeStep | undefined },
-    step: UpgradeStepName,
-    e: unknown,
+    itemId: string,
+    input: { version: string; diffHash: string },
     opts: { actorTokenId?: string },
-  ): Promise<ApiError> {
-    const failure = e instanceof InstallFailure ? e : undefined;
-    const cause = failure ? failure.cause : e;
-    const code = cause instanceof ApiError ? cause.code : "internal";
-    const at = failure ? failure.step : step;
-    let rolledBack = failure?.rolledBack ?? true;
+  ): Promise<PlatformUpdateResult> {
+    const checked = await this.diff(itemId, input.version);
+    if (checked.diffHash !== input.diffHash) throw stale();
+    const ext = checked.extension;
+    let step: "extension" | "components" = "extension";
+    let extensionMoved = false;
     try {
-      const removed = await this.undoFailed(
-        orgId,
-        actor,
-        installId,
-        upgradeId,
-        diff,
-        steps,
-        { at, code },
-        opts,
-      );
-      for (const r of removed) {
-        if (r.kind === "extension") await this.orgConfigs.afterDisable(orgId, r.ref);
+      if (ext) {
+        await this.ops.install(checked.name, ext.sha256, actor, opts.actorTokenId, {
+          catalogItemId: itemId,
+        });
+        extensionMoved = true;
+        if (ext.previous === null) await this.ops.enable(checked.name, actor, opts.actorTokenId);
       }
-    } catch (u) {
-      // Left `upgrading` with its journal: undone once it is older than catalog.staleInstallMinutes
-      rolledBack = false;
-      this.log.warn("plugin upgrade rollback failed", {
-        orgId,
-        installId,
-        error: u instanceof Error ? u.message : String(u),
-      });
+      step = "components";
+      const diff = await this.commit(actor, itemId, input, opts);
+      return {
+        itemId,
+        version: diff.to.version,
+        components: diff.components,
+        extension: diff.extension && { from: diff.extension.from, to: diff.extension.to },
+        connectorOrgs: diff.connectorOrgs,
+      };
+    } catch (e) {
+      let rolledBack = true;
+      if (extensionMoved && ext) {
+        try {
+          if (ext.previous !== null) {
+            await this.ops.install(checked.name, ext.previous, actor, opts.actorTokenId);
+          } else {
+            await this.ops.uninstall(checked.name, actor, opts.actorTokenId);
+          }
+        } catch (u) {
+          rolledBack = false;
+          this.log.error("putting a plugin's extension back after a failed update failed", {
+            itemId,
+            plugin: checked.name,
+            err: u,
+          });
+        }
+      }
+      const code = e instanceof ApiError ? e.code : "internal";
+      await this.auditFailure(actor, checked, { step, code, rolledBack }, opts);
+      // A refusal found under the lock (stale, disabled meanwhile, a conflict): returned as it is
+      if (e instanceof ApiError && e.status < 500 && rolledBack) throw e;
+      throw new ApiError(
+        "plugin.upgrade_failed",
+        rolledBack
+          ? `Updating the plugin failed at step ${step} (${code}); the platform is back at version ${checked.from ?? "(none)"}`
+          : `Updating the plugin failed at step ${step} (${code}) and putting its extension back failed; check the extension in the admin console`,
+        [
+          {
+            step,
+            code,
+            ...(e instanceof ApiError && { message: e.message }),
+            ...(e instanceof ApiError && e.details !== undefined && { causeDetails: e.details }),
+            rolledBack,
+          },
+        ],
+      );
     }
-    if (cause instanceof ApiError && cause.code === "plugin.install_in_progress" && rolledBack) {
-      return cause;
-    }
-    const dependency = failure && failure.dependency.length > 0 ? failure.dependency : [];
-    const dep = dependency.length > 0 ? ` in dependency ${dependency.join(" > ")}` : "";
-    return new ApiError(
-      "plugin.upgrade_failed",
-      rolledBack
-        ? `Upgrading the plugin failed at step ${at}${dep} (${code}); this organization's components are back at version ${diff.from.version}`
-        : `Upgrading the plugin failed at step ${at}${dep} (${code}) and rolling back failed; it is undone after catalog.staleInstallMinutes`,
-      [
-        {
-          step: at,
-          code,
-          ...(dependency.length > 0 && { dependency: dependency.join(" > ") }),
-          ...(cause instanceof ApiError && { message: cause.message }),
-          ...(cause instanceof ApiError &&
-            cause.details !== undefined && { causeDetails: cause.details }),
-          rolledBack,
-        },
-      ],
-    );
   }
 
-  /**
-   * An upgrade interrupted for longer than `catalog.staleInstallMinutes` (a replica crashed
-   * midway): its journal is undone, the install back `installed` at the old version (error step
-   * `interrupted`), audit `plugin.org_upgrade_failed`. Nothing to do otherwise.
-   */
-  private async recoverInterrupted(orgId: string, actor: string, installId: string): Promise<void> {
-    if (!UUID_RE.test(installId)) throw installNotFound();
-    const removed = await this.undoInterrupted(orgId, actor, installId);
-    for (const r of removed) {
-      if (r.kind === "extension") await this.orgConfigs.afterDisable(orgId, r.ref);
-    }
-  }
-
-  /** The upgrade's start: the install `upgrading` with an empty journal (a transaction of its own). */
+  /** `plugin.platform_update_failed`, in a transaction of its own. */
   @Transactional({ propagation: "requires_new" })
-  private async start(
-    orgId: string,
+  private async auditFailure(
     actor: string,
-    installId: string,
-    diff: UpgradeDiff,
-    upgradeId: string,
+    diff: UpdateDiff,
+    f: { step: string; code: string; rolledBack: boolean },
+    opts: { actorTokenId?: string },
   ): Promise<void> {
-    const { itemId } = diff;
-    const t = this.db;
-    await lockOrgForActions(this.orgLock, orgId, actor, diff.actions);
-    const row = await t
-      .selectFrom("plugin_installs")
-      .select(["status", "version"])
-      .where("id", "=", installId)
-      .where("org_id", "=", orgId)
-      .forUpdate()
-      .executeTakeFirst();
-    if (!row || row.status === "failed") throw installNotFound();
-    if (row.status !== "installed") throw inProgress();
-    if (
-      row.version !== diff.from.version ||
-      ledgerHash(await ledgerOf(t, installId)) !== diff.ledgerHash
-    ) {
-      throw stale();
-    }
-    await assertItemInstallable(t, orgId, itemId);
-    await t
-      .updateTable("plugin_installs")
-      .set({
-        status: "upgrading",
-        upgrade: sql<string>`jsonb_build_object('id', ${upgradeId}::text, 'from', ${diff.from.version}::text, 'to', ${diff.to.version}::text, 'startedAt', now(), 'done', '[]'::jsonb)`,
-      })
-      .where("id", "=", installId)
-      .execute();
-  }
-
-  /** A skill step's ledger and journal rows, in a transaction of their own. */
-  @Transactional({ propagation: "requires_new" })
-  private async journalSkill(
-    r: { created: boolean; skill: { id: string }; version: number },
-    record: (c: LedgerRecord) => Promise<void>,
-    journal: (s: UpgradeStep) => Promise<void>,
-  ): Promise<void> {
-    if (r.created) {
-      await record({ kind: "skill", ref: r.skill.id, created: true, skillVersion: null });
-      return;
-    }
-    await journal({ op: "skill_version", ref: r.skill.id, version: r.version });
-    await record({ kind: "skill", ref: r.skill.id, created: false, skillVersion: r.version });
-  }
-
-  /**
-   * An agent template step: the new version (or template) and its ledger and journal rows, under
-   * the org row lock, in a transaction of their own.
-   */
-  @Transactional({ propagation: "requires_new" })
-  private async upgradeAgentTemplate(
-    orgId: string,
-    diff: UpgradeDiff,
-    template: AgentTemplate,
-    record: (c: LedgerRecord) => Promise<void>,
-    journal: (s: UpgradeStep) => Promise<void>,
-  ): Promise<void> {
-    const { itemId } = diff;
-    const t = this.db;
-    await this.orgLock.lock(orgId);
-    const r = await putTemplateVersionIn(
-      t,
-      {
-        orgId,
-        plugin: diff.name,
-        catalogItemId: itemId,
-        catalogVersion: diff.to.version,
-        sourceFormat: diff.to.source_format,
-      },
-      template,
-    );
-    if (r.created) {
-      await record({ kind: "agent_template", ref: r.id, created: true, skillVersion: null });
-      return;
-    }
-    if (r.changed) await journal({ op: "template_version", ref: r.id, version: r.version });
-    await record({
-      kind: "agent_template",
-      ref: r.id,
-      created: false,
-      skillVersion: r.changed ? r.version : null,
+    await audit(this.db, {
+      actorAccountId: actor,
+      ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
+      action: "plugin.platform_update_failed",
+      target: diff.itemId,
+      detail: { name: diff.name, from: diff.from, to: diff.to.version, ...f },
     });
   }
 
-  /** One ledger record (and its journal row) in a transaction of its own. */
-  @Transactional({ propagation: "requires_new" })
-  private async recordStep(
-    installId: string,
-    journal: (s: UpgradeStep) => Promise<void>,
-    c: LedgerRecord,
-  ): Promise<void> {
-    await this.recordIn(installId, journal, c);
-  }
-
-  /** A component's ledger row and its journal step, in the transaction of the context. */
-  private async recordIn(
-    installId: string,
-    journal: (s: UpgradeStep) => Promise<void>,
-    c: LedgerRecord,
-  ): Promise<void> {
-    const inserted = await this.db
-      .insertInto("plugin_install_components")
-      .values({
-        install_id: installId,
-        kind: c.kind,
-        ref: c.ref,
-        created: c.created,
-        skill_version: c.skillVersion,
-        template_id: c.templateId ?? null,
-      })
-      .onConflict((oc) => oc.columns(["install_id", "kind", "ref"]).doNothing())
-      .returning("ref")
-      .executeTakeFirst();
-    if (c.created) await journal({ op: "created", kind: c.kind, ref: c.ref });
-    else if (inserted) await journal({ op: "recorded", kind: c.kind, ref: c.ref });
-  }
-
   /**
-   * The upgrade's last transaction (under the org row lock): the changed connectors, the removals,
-   * the pinned suggestions and the version switch, `plugin.org_upgraded`. `onFinish` marks the step
-   * once the connectors are applied.
+   * The update's transaction (see the class comment): the super admin re-checked, the diff
+   * recomputed under the item name's lock, then every write. Returns the diff it applied.
    */
   @Transactional({ propagation: "requires_new" })
-  private async finish(
-    orgId: string,
+  private async commit(
     actor: string,
-    installId: string,
-    upgradeId: string,
-    diff: UpgradeDiff,
-    prepared: { connectorId: string; p: PreparedTemplateUpdate }[],
-    disabled: string[],
+    itemId: string,
+    input: { version: string; diffHash: string },
     opts: { actorTokenId?: string },
-    onFinish: () => void,
-  ): Promise<void> {
-    const { itemId } = diff;
-    const t = this.db;
-    await lockOrgForActions(this.orgLock, orgId, actor, diff.actions);
-    const row = await t
-      .selectFrom("plugin_installs")
-      .select(["status", sql<string | null>`upgrade->>'id'`.as("upgradeId")])
-      .where("id", "=", installId)
-      .forUpdate()
+  ): Promise<UpdateDiff> {
+    await this.adminLock.lockAndAuthorize(actor);
+    const named = await this.db
+      .selectFrom("catalog_items")
+      .select("name")
+      .where("id", "=", itemId)
       .executeTakeFirst();
-    if (row?.status !== "upgrading" || row.upgradeId !== upgradeId) throw cleanedUp();
-    await assertItemInstallable(t, orgId, itemId);
-    for (const c of prepared) {
-      await this.connectors.applyTemplateIn(orgId, c.connectorId, actor, c.p, opts.actorTokenId);
-    }
-    onFinish();
-    for (const dep of diff.dependencies) {
-      if (dep.change !== "changed" || !dep.child) continue;
-      const live = await t
-        .selectFrom("plugin_installs")
-        .select("version")
-        .where("id", "=", dep.child.installId)
-        .forShare()
-        .executeTakeFirst();
-      if (!live || !satisfiesRange(live.version, dep.range as string)) {
-        throw new ApiError(
-          "catalog.dependency_unresolved",
-          `Dependency ${dep.name}@${dep.range} cannot be resolved: its install in this organization changed meanwhile; preview the upgrade again`,
-          [{ dependency: dep.name, range: dep.range }],
-        );
-      }
-    }
-    const report = await this.removeIn(orgId, actor, diff, disabled);
-    // An unchanged skill gets no new version, so the target's pinned suggestion goes onto its
-    // current version (when that version is this plugin's) here, with the version switch.
-    for (const sk of diff.skills) {
-      if (sk.change !== "unchanged" || !sk.ledger) continue;
+    if (!named) throw itemNotFound();
+    await this.itemLock.lock(named.name);
+    const diff = await this.diff(itemId, input.version, { applying: true });
+    if (diff.diffHash !== input.diffHash) throw stale();
+    const t = this.db;
+
+    // The platform versions (files are copied first; their rows join this transaction)
+    await this.platform.syncFromVersion(itemId, diff.to.version, { initial: false });
+    for (const [id, pinned] of diff.suggest) {
       await t
-        .updateTable("skill_versions as v")
-        .set({ suggest_pinned: sk.suggestPinned === true })
-        .from("skills as s")
+        .updateTable("platform_skill_versions as v")
+        .set({ suggest_pinned: pinned })
+        .from("platform_skills as s")
         .whereRef("s.id", "=", "v.skill_id")
         .whereRef("s.current_version", "=", "v.version")
-        .where("s.id", "=", sk.ledger.ref)
-        .where("s.org_id", "=", orgId)
-        .where("v.catalog_item_id", "=", itemId)
-        .where("v.suggest_pinned", "<>", sk.suggestPinned === true)
+        .where("s.id", "=", id)
         .execute();
     }
-    await t
-      .updateTable("plugin_installs")
-      .set({ version: diff.to.version, status: "installed", upgrade: null, error: null })
-      .where("id", "=", installId)
-      .execute();
-    await resolveRequestsByInstall(t, orgId, itemId, actor, opts);
-    await audit(t, {
-      actorAccountId: actor,
-      ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
-      orgId,
-      action: "plugin.org_upgraded",
-      target: installId,
-      detail: {
-        itemId,
-        name: diff.name,
-        from: diff.from.version,
-        to: diff.to.version,
-        components: diff.components,
-        removed: report.removed,
-        kept: report.kept,
-      },
-    });
-  }
 
-  /** Undoes a failed upgrade's journal (see {@link failed}) in a transaction of its own. */
-  @Transactional({ propagation: "requires_new" })
-  private async undoFailed(
-    orgId: string,
-    actor: string,
-    installId: string,
-    upgradeId: string,
-    diff: UpgradeDiff,
-    steps: { done: UpgradeStep[]; unjournaled: UpgradeStep | undefined },
-    f: { at: UpgradeStepName; code: string },
-    opts: { actorTokenId?: string },
-  ): Promise<{ kind: ComponentKind; ref: string }[]> {
-    const { at, code } = f;
-    const t = this.db;
-    await this.orgLock.lock(orgId);
-    const row = await t
-      .selectFrom("plugin_installs")
-      .select(sql<string | null>`upgrade->>'id'`.as("upgradeId"))
-      .where("id", "=", installId)
-      .forUpdate()
-      .executeTakeFirst();
-    const ours = row?.upgradeId === upgradeId;
-    // Cleaned up meanwhile: only the step whose journal write found the journal gone is ours to
-    // undo. When that step ran in the same transaction as its journal write (the extension
-    // enable, the ledger rows), the transaction rolled back with the failed write, so undoing
-    // it is a no-op (a never-enabled extension, a never-inserted row); undoing is still safe.
-    const undo = ours ? steps.done : steps.unjournaled ? [steps.unjournaled] : [];
-    const out = await this.installer.undoUpgradeIn(
-      orgId,
-      actor,
-      installId,
-      undo,
-      "plugin_upgrade_rollback",
-    );
-    await t
-      .updateTable("plugin_installs")
-      .set({ status: "installed", upgrade: null, error: JSON.stringify({ step: at, code }) })
-      .where("id", "=", installId)
-      .where(sql<string>`upgrade->>'id'`, "=", upgradeId)
-      .execute();
-    await audit(t, {
-      actorAccountId: actor,
-      ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
-      orgId,
-      action: "plugin.org_upgrade_failed",
-      target: installId,
-      detail: {
-        itemId: diff.itemId,
-        name: diff.name,
-        from: diff.from.version,
-        to: diff.to.version,
-        step: at,
-        code,
-        rolledBack: undo,
-        ...(!ours && { cleanedUpMeanwhile: true }),
-      },
-    });
-    return out;
-  }
-
-  /** Undoes an interrupted upgrade (see {@link recoverInterrupted}) in a transaction of its own. */
-  @Transactional({ propagation: "requires_new" })
-  private async undoInterrupted(
-    orgId: string,
-    actor: string,
-    installId: string,
-  ): Promise<{ kind: ComponentKind; ref: string }[]> {
-    const staleMinutes = this.installer.staleInstallMinutes();
-    const t = this.db;
-    const peek = await t
-      .selectFrom("plugin_installs")
-      .select("status")
-      .where("id", "=", installId)
-      .where("org_id", "=", orgId)
-      .executeTakeFirst();
-    if (peek?.status !== "upgrading") return [];
-    await this.orgLock.lock(orgId);
-    const row = await t
-      .selectFrom("plugin_installs as a")
-      .innerJoin("catalog_items as i", "i.id", "a.item_id")
-      .select([
-        "a.status",
-        "a.upgrade",
-        "a.item_id",
-        "i.name",
-        sql<boolean>`coalesce((a.upgrade->>'startedAt')::timestamptz < now() - make_interval(mins => ${staleMinutes}), false)`.as(
-          "stale",
-        ),
-      ])
-      .where("a.id", "=", installId)
-      .where("a.org_id", "=", orgId)
-      .forUpdate("a")
-      .executeTakeFirst();
-    if (row?.status !== "upgrading" || !row.stale) return [];
-    const steps = journalEntries(row.upgrade);
-    const out = await this.installer.undoUpgradeIn(
-      orgId,
-      actor,
-      installId,
-      steps,
-      "plugin_upgrade_cleanup",
-    );
-    await t
-      .updateTable("plugin_installs")
-      .set({
-        status: "installed",
-        upgrade: null,
-        error: JSON.stringify({ step: "interrupted", code: "internal" }),
-      })
-      .where("id", "=", installId)
-      .execute();
-    const j = row.upgrade as { from?: unknown; to?: unknown } | null;
-    await audit(t, {
-      actorAccountId: actor,
-      orgId,
-      action: "plugin.org_upgrade_failed",
-      target: installId,
-      detail: {
-        itemId: row.item_id,
-        name: row.name,
-        from: j?.from ?? null,
-        to: j?.to ?? null,
-        step: "interrupted",
-        code: "internal",
-        rolledBack: steps,
-      },
-    });
-    return out;
-  }
-
-  /**
-   * The removals of an upgrade, in the final transaction, by the uninstall rules
-   * (`decideRemovalIn`): only components this install created are removed, and only when nothing
-   * else uses them; one still used (by an agent, a connector or another extension) stays in the
-   * ledger marked `dropped` ("no longer in the plugin", still this install's), every other removed
-   * component leaves the ledger; a dropped component the target brings back is un-dropped. A dependency
-   * install is uninstalled by the same rules (another install using it takes it over). Skills ->
-   * connectors -> extension -> dependencies.
-   */
-  @Transactional({ propagation: "mandatory" })
-  private async removeIn(
-    orgId: string,
-    actor: string,
-    diff: UpgradeDiff,
-    disabled: string[],
-  ): Promise<UninstallReport> {
-    const report: UninstallReport = { removed: [], kept: [] };
-    const reason = "plugin_upgrade";
-    const t = this.db;
-    const keep = (
-      kind: ComponentKind,
-      ref: string,
-      why: UninstallReport["kept"][number]["reason"],
-    ) => report.kept.push({ kind, ref, reason: why });
-    const row = (kind: ComponentKind, ref: string) =>
-      t
-        .updateTable("plugin_install_components")
-        .where("install_id", "=", diff.installId)
-        .where("kind", "=", kind)
-        .where("ref", "=", ref);
-    const dropRow = (kind: ComponentKind, ref: string) =>
-      t
-        .deleteFrom("plugin_install_components")
-        .where("install_id", "=", diff.installId)
-        .where("kind", "=", kind)
-        .where("ref", "=", ref)
+    // Removals (spec §7.3): kept while agents use it; otherwise soft-deleted
+    const now = sql<Date>`now()`;
+    for (const c of diff.components) {
+      if (c.change !== "removed" || c.id === null || c.kept !== undefined) continue;
+      const table =
+        c.kind === "skill"
+          ? "platform_skills"
+          : c.kind === "agent_template"
+            ? "platform_agent_templates"
+            : "platform_connector_templates";
+      await t
+        .updateTable(table as "platform_skills")
+        .set({ deleted_at: now, updated_at: now })
+        .where("id", "=", c.id)
         .execute();
-    const removed: LedgerRow[] = [
-      ...diff.skills.flatMap((x) => (x.change === "removed" && x.ledger ? [x.ledger] : [])),
-      ...diff.agentTemplates.flatMap((x) => (x.change === "removed" && x.ledger ? [x.ledger] : [])),
-      ...diff.templates.flatMap((x) => (x.change === "removed" && x.ledger ? [x.ledger] : [])),
-      ...(diff.extension?.change === "removed"
-        ? diff.ledger.filter((l) => l.kind === "extension" && l.ref === diff.extension?.name)
-        : []),
-    ];
-    const agentRefs = await this.installer.agentRefs(orgId);
-    const self = new Set([diff.installId]);
-    for (const l of removed) {
-      if (!l.created) {
-        await dropRow(l.kind, l.ref);
-        keep(l.kind, l.ref, "pre_existing");
-        continue;
-      }
-      const outcome = await this.installer.decideRemovalIn(
-        orgId,
-        actor,
-        { kind: l.kind, ref: l.ref, created: true, skillVersion: null },
-        self,
-        agentRefs,
-        reason,
-      );
-      if (
-        outcome === "used_by_agents" ||
-        outcome === "used_by_connectors" ||
-        outcome === "used_by_plugins"
-      ) {
-        // Still used: stays this install's, marked dropped, so an uninstall (or a later upgrade
-        // bringing it back) still finds it
-        await row(l.kind, l.ref).set({ dropped: true }).execute();
-        keep(l.kind, l.ref, outcome);
-        continue;
-      }
-      await dropRow(l.kind, l.ref);
-      if (outcome === "removed") {
-        report.removed.push({ kind: l.kind, ref: l.ref });
-        if (l.kind === "extension") disabled.push(l.ref);
-      } else if (outcome !== "gone") keep(l.kind, l.ref, outcome);
     }
-    // Components back in the plugin (dropped by an earlier upgrade, brought again by the target)
-    const back: { kind: ComponentKind; ref: string }[] = [
-      ...diff.skills.flatMap((x) =>
-        x.change !== "removed" && x.ledger?.dropped
-          ? [{ kind: "skill" as const, ref: x.ledger.ref }]
-          : [],
-      ),
-      ...diff.agentTemplates.flatMap((x) =>
-        x.change !== "removed" && x.ledger?.dropped
-          ? [{ kind: "agent_template" as const, ref: x.ledger.ref }]
-          : [],
-      ),
-      ...diff.templates.flatMap((x) =>
-        x.change !== "removed" && x.ledger?.dropped
-          ? [{ kind: "connector" as const, ref: x.ledger.ref }]
-          : [],
-      ),
-      ...(diff.extension && diff.extension.change !== "removed"
-        ? diff.ledger
-            .filter((l) => l.kind === "extension" && l.ref === diff.extension?.name && l.dropped)
-            .map((l) => ({ kind: "extension" as const, ref: l.ref }))
-        : []),
-    ];
-    for (const b of back) await row(b.kind, b.ref).set({ dropped: false }).execute();
-    for (const dep of diff.dependencies) {
-      if (dep.change !== "removed" || !dep.child) continue;
-      const ref = dep.child.installId;
-      await dropRow("plugin", ref);
-      if (!dep.child.ledger.created) {
-        keep("plugin", ref, "pre_existing");
-        continue;
-      }
-      const sub: UninstallReport = { removed: [], kept: [] };
-      const outcome = await this.installer.uninstallIn(orgId, actor, ref, {
-        report: sub,
-        removing: new Set(),
-        from: diff.installId,
-        authorize: false,
-        reason,
-        opts: {},
-      });
-      for (const r of sub.removed) if (r.kind === "extension") disabled.push(r.ref);
-      if (outcome === "removed") report.removed.push({ kind: "plugin", ref });
-      else if (outcome === "kept") keep("plugin", ref, "used_by_other_install");
-      else if (outcome === "wanted_by_scope") keep("plugin", ref, "wanted_by_scope");
-    }
-    return report;
-  }
 
-  /**
-   * Computes an upgrade (see the class comment). `input` null: the preview (no input checks);
-   * otherwise the connector inputs are built and checked as at install.
-   */
-  private async diff(
-    orgId: string,
-    actor: string,
-    installId: string,
-    version: string,
-    input: PluginInstallInput | null,
-  ): Promise<UpgradeDiff> {
-    const db = this.db;
-    if (!UUID_RE.test(installId)) throw installNotFound();
-    const install = await db
-      .selectFrom("plugin_installs as a")
-      .innerJoin("catalog_items as i", "i.id", "a.item_id")
-      .select(["a.item_id", "a.version", "a.status", "i.name", "i.disabled", "i.deleted_at"])
-      .where("a.id", "=", installId)
-      .where("a.org_id", "=", orgId)
-      .executeTakeFirst();
-    if (!install || install.status === "failed") throw installNotFound();
-    if (install.status !== "installed") throw inProgress();
-    const itemId = install.item_id;
-    const name = install.name;
-    if (install.deleted_at !== null) {
-      throw new ApiError(
-        "catalog.item_not_found",
-        "This plugin is no longer in the platform catalog",
-      );
+    // Pins of linked copies: moved to the plugin's version (spec §7.1)
+    for (const c of diff.components) {
+      if (c.change === "removed" || c.id === null || c.pinnedOrgs.length === 0) continue;
+      if (c.kind === "skill") {
+        await t
+          .updateTable("skills")
+          .set({ pinned_version: null, updated_at: now })
+          .where("platform_skill_id", "=", c.id)
+          .where("org_id", "in", c.pinnedOrgs)
+          .where("pinned_version", "is not", null)
+          .execute();
+      } else if (c.kind === "agent_template") {
+        await t
+          .updateTable("agent_templates")
+          .set({ pinned_version: null, updated_at: now })
+          .where("platform_template_id", "=", c.id)
+          .where("org_id", "in", c.pinnedOrgs)
+          .where("pinned_version", "is not", null)
+          .execute();
+      }
     }
-    if (install.disabled) {
-      throw new ApiError(
-        "catalog.item_disabled",
-        "This catalog item is disabled by the super admin and cannot be upgraded",
-      );
+
+    // Connectors made from changed templates, in every org (ruling E2)
+    const orgs = [...new Set(diff.connectors.map((c) => c.orgId))].sort();
+    for (const orgId of orgs) {
+      await this.orgLock.lock(orgId);
+      for (const c of diff.connectors.filter((x) => x.orgId === orgId)) {
+        const prepared = await this.prepare(actor, itemId, diff.to.version, c);
+        await this.connectors.applyTemplateIn(orgId, c.id, actor, prepared, opts.actorTokenId);
+      }
     }
-    const versions = await db
-      .selectFrom("catalog_item_versions")
-      .select([
-        "version",
-        "manifest",
-        "object_prefix",
-        "files",
-        "extension_sha256",
-        "imported_at",
-        "source_format",
-      ])
+
+    // One version for the deployment: every org install of the plugin moves with it
+    await t
+      .updateTable("plugin_installs")
+      .set({ version: diff.to.version, error: null })
       .where("item_id", "=", itemId)
+      .where("status", "=", "installed")
       .execute();
-    const fromRow = versions.find((v) => v.version === install.version);
-    const toRow = versions.find((v) => v.version === version);
-    if (!fromRow) {
-      throw new ApiError(
-        "catalog.item_not_found",
-        `The installed version ${install.version} is no longer in the platform catalog`,
-      );
-    }
-    if (!toRow)
-      throw new ApiError("catalog.item_not_found", `Version ${version} of this item not found`);
-    const from = fromRow as typeof fromRow & VersionRow;
-    const to = toRow as typeof toRow & VersionRow;
-    if (to.version === from.version) {
-      // Confirming a preview whose upgrade already ran (a concurrent confirm won): stale
-      if (input !== null) throw stale();
-      throw targetInvalid(`This organization already has version ${from.version} installed`, [
-        { reason: "same_version", version: from.version },
-      ]);
-    }
-
-    // Target rules (Decision 10)
-    if (to.manifest.extension) {
-      const deployed = await deployedExtension(db, this.registry, name);
-      const allowed = deploymentTarget(versions, deployed);
-      if (allowed?.version !== to.version) {
-        throw targetInvalid(
-          deployed === undefined
-            ? `The deployment does not run the extension of plugin ${name}; ask the super admin to install it first`
-            : `The deployment runs the extension of plugin ${name} at version ${deployed.version}; this organization can upgrade only to ${allowed ? `catalog version ${allowed.version}` : "a catalog version carrying that extension, and none is imported"}`,
-          [
-            {
-              reason: "deployment_version",
-              deploymentVersion: deployed?.version ?? null,
-              allowedVersion: allowed?.version ?? null,
-            },
-          ],
-        );
-      }
-    }
-    // Installs in this org depending on this one must accept the target
-    const parents = await db
-      .selectFrom("plugin_install_components as c")
-      .innerJoin("plugin_installs as a", "a.id", "c.install_id")
-      .innerJoin("catalog_item_versions as v", (j) =>
-        j.onRef("v.item_id", "=", "a.item_id").onRef("v.version", "=", "a.version"),
-      )
-      .innerJoin("catalog_items as i", "i.id", "a.item_id")
-      .select(["i.name", "v.manifest"])
-      .where("c.kind", "=", "plugin")
-      .where("c.ref", "=", installId)
-      .where("a.org_id", "=", orgId)
-      .where("a.status", "<>", "failed")
-      .execute();
-    for (const p of parents) {
-      const range = (p.manifest as PluginManifest).dependencies?.find(
-        (x) => x.name === name,
-      )?.version;
-      if (range !== undefined && !satisfiesRange(to.version, range)) {
-        throw targetInvalid(
-          `Plugin ${p.name} installed in this organization depends on ${name}@${range}, which version ${to.version} does not satisfy`,
-          [{ reason: "dependent_range", dependent: p.name, range, version: to.version }],
-        );
-      }
-    }
-
-    const ledger = await ledgerOf(db, installId);
-    const components: UpgradeComponent[] = [];
-
-    // Extension
-    let extension: UpgradeDiff["extension"] = null;
-    let extensionConfig = false;
-    if (from.manifest.extension || to.manifest.extension) {
-      const change: UpgradeChange = !from.manifest.extension
-        ? "added"
-        : !to.manifest.extension
-          ? "removed"
-          : from.extension_sha256 !== to.extension_sha256 ||
-              from.manifest.extension.manifest.version !== to.manifest.extension.manifest.version
-            ? "changed"
-            : "unchanged";
-      extension = { change, name };
-      if (change === "added") {
-        await this.installer.planExtension(orgId, to.manifest);
-        extensionConfig = !(await isExtensionEnabled(db, orgId, name));
-      }
-      components.push({
-        kind: "extension",
-        ref: name,
-        change,
-        ...(change === "changed" && {
-          detail: `${from.manifest.extension?.manifest.version} -> ${to.manifest.extension?.manifest.version}`,
-        }),
-      });
-    }
-
-    // Dependencies (by plugin name)
-    const resolved = await resolveDependencies(db, to.manifest);
-    const childIds = ledger.filter((l) => l.kind === "plugin").map((l) => l.ref);
-    const children =
-      childIds.length === 0
-        ? []
-        : await db
-            .selectFrom("plugin_installs as a")
-            .innerJoin("catalog_items as i", "i.id", "a.item_id")
-            .select(["a.id", "a.version", "i.name"])
-            .where("a.id", "in", childIds)
-            .execute();
-    const childOf = (n: string): DependencyDiff["child"] => {
-      const c = children.find((x) => x.name === n);
-      const l = c && ledger.find((x) => x.kind === "plugin" && x.ref === c.id);
-      return c && l ? { installId: c.id, version: c.version, ledger: l } : undefined;
-    };
-    const dependencies: DependencyDiff[] = [];
-    const fromDeps = from.manifest.dependencies ?? [];
-    for (const r of resolved) {
-      const before = fromDeps.find((x) => x.name === r.name);
-      const child = childOf(r.name);
-      if (before && child) {
-        const change: UpgradeChange = before.version === r.range ? "unchanged" : "changed";
-        if (change === "changed" && !satisfiesRange(child.version, r.range)) {
-          throw new ApiError(
-            "catalog.dependency_unresolved",
-            `Dependency ${r.name}@${r.range} cannot be resolved: this organization has version ${child.version} installed; upgrade it first`,
-            [{ dependency: r.name, range: r.range }],
-          );
-        }
-        dependencies.push({
-          name: r.name,
-          change,
-          range: r.range,
-          fromRange: before.version,
-          resolved: r,
-          child,
-        });
-        continue;
-      }
-      // New (or its install was not recorded): installed by the install flow
-      const live = await this.installer.liveDependency(db, orgId, r);
-      dependencies.push({
-        name: r.name,
-        change: "added",
-        range: r.range,
-        resolved: r,
-        plan:
-          live !== undefined
-            ? null
-            : await this.installer.plan(
-                orgId,
-                actor,
-                r.itemId,
-                r.version,
-                input === null ? null : {},
-                `dependencies.${r.name}.`,
-                itemId,
-              ),
-      });
-    }
-    for (const before of fromDeps) {
-      if (resolved.some((r) => r.name === before.name)) continue;
-      const child = childOf(before.name);
-      dependencies.push({
-        name: before.name,
-        change: "removed",
-        fromRange: before.version,
-        ...(child && { child }),
-      });
-    }
-    for (const dep of dependencies) {
-      components.push({
-        kind: "plugin",
-        ref: dep.name,
-        change: dep.change,
-        ...(dep.change === "changed" && { detail: `${dep.fromRange} -> ${dep.range}` }),
-        ...(dep.change === "added" && {
-          detail: dep.plan === null ? "already installed" : `installs ${dep.resolved?.version}`,
-        }),
-      });
-    }
-
-    // Skills (by name)
-    const fromNames = await catalogSkillNames(this.storage, from, from.manifest);
-    const toNames = await catalogSkillNames(this.storage, to, to.manifest);
-    const dirOf = (m: PluginManifest, i: number) =>
-      packagePath((m.skills ?? [])[i]?.path as string);
-    const fromSkills = new Map(fromNames.map((n, i) => [n, dirOf(from.manifest, i)]));
-    const toSkills = new Map(toNames.map((n, i) => [n, dirOf(to.manifest, i)]));
-    const toPinned = new Set(
-      toNames.filter((_, i) => (to.manifest.skills ?? [])[i]?.pinned === true),
-    );
-    const skillRefs = ledger.filter((l) => l.kind === "skill").map((l) => l.ref);
-    const liveSkills =
-      skillRefs.length === 0
-        ? []
-        : await db
-            .selectFrom("skills")
-            .select(["id", "name"])
-            .where("id", "in", skillRefs)
-            .where("org_id", "=", orgId)
-            .where("deleted_at", "is", null)
-            .execute();
-    const ledgerOfSkill = (n: string) => {
-      const s = liveSkills.find((x) => x.name === n);
-      return s && ledger.find((l) => l.kind === "skill" && l.ref === s.id);
-    };
-    const skills: SkillDiff[] = [];
-    for (const [n, dir] of toSkills) {
-      const before = fromSkills.get(n);
-      const l = ledgerOfSkill(n);
-      const change: UpgradeChange =
-        before === undefined
-          ? "added"
-          : dirDigest(from, before) === dirDigest(to, dir)
-            ? "unchanged"
-            : "changed";
-      skills.push({
-        name: n,
-        change,
-        dir,
-        suggestPinned: toPinned.has(n),
-        ...(l && { ledger: l }),
-      });
-    }
-    for (const n of fromSkills.keys()) {
-      if (toSkills.has(n)) continue;
-      const l = ledgerOfSkill(n);
-      skills.push({ name: n, change: "removed", ...(l && { ledger: l }) });
-    }
-    for (const s of skills) components.push({ kind: "skill", ref: s.name, change: s.change });
-
-    // The same skill conflict check as an install (spec §9.2)
-    const conflicts = await planSkillConflicts(db, orgId, {
-      itemId,
-      name,
-      version: to.version,
-      skillNames: toNames,
-      dependencies: dependencies
-        .filter((x) => x.change === "added")
-        .map((x) => ({ plan: x.plan ?? null })),
+    await audit(t, {
+      actorAccountId: actor,
+      ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
+      action: "plugin.platform_updated",
+      target: itemId,
+      detail: {
+        name: diff.name,
+        from: diff.from,
+        to: diff.to.version,
+        components: diff.components.map((c) => ({
+          kind: c.kind,
+          name: c.name,
+          change: c.change,
+          ...(c.kept !== undefined && { kept: true }),
+          ...(c.pinnedOrgs.length > 0 && c.change !== "removed" && { unpinned: c.pinnedOrgs }),
+        })),
+        ...(diff.extension && { extension: { from: diff.extension.from, to: diff.extension.to } }),
+        connectors: diff.connectors.map((c) => ({
+          orgId: c.orgId,
+          id: c.id,
+          credentialsReset: c.credentialsReset,
+        })),
+      },
     });
-    if (conflicts.length > 0) throw skillConflictError(conflicts);
-
-    // Agent templates (by name; phase C)
-    const fromAgents = await readCatalogAgentTemplates(this.storage, from);
-    const toAgents = await readCatalogAgentTemplates(this.storage, to);
-    const templateRefs = ledger.filter((l) => l.kind === "agent_template").map((l) => l.ref);
-    const liveTemplates =
-      templateRefs.length === 0
-        ? []
-        : await db
-            .selectFrom("agent_templates")
-            .select(["id", "name"])
-            .where("id", "in", templateRefs)
-            .where("org_id", "=", orgId)
-            .where("deleted_at", "is", null)
-            .execute();
-    const ledgerOfTemplate = (n: string) => {
-      const r = liveTemplates.find((x) => x.name === n);
-      return r && ledger.find((l) => l.kind === "agent_template" && l.ref === r.id);
-    };
-    const agentTemplates: AgentTemplateDiff[] = [];
-    for (const a of toAgents) {
-      const n = a.template.name;
-      const before = fromAgents.find((x) => x.template.name === n);
-      const l = ledgerOfTemplate(n);
-      const change: UpgradeChange =
-        before === undefined
-          ? "added"
-          : canonicalJson(before.template) === canonicalJson(a.template)
-            ? "unchanged"
-            : "changed";
-      agentTemplates.push({ name: n, change, template: a.template, ...(l && { ledger: l }) });
-    }
-    for (const a of fromAgents) {
-      const n = a.template.name;
-      if (toAgents.some((x) => x.template.name === n)) continue;
-      const l = ledgerOfTemplate(n);
-      agentTemplates.push({ name: n, change: "removed", ...(l && { ledger: l }) });
-    }
-    for (const a of agentTemplates) {
-      components.push({ kind: "agent_template", ref: a.name, change: a.change });
-    }
-
-    // Connector templates (by id)
-    const fromTemplates = await readCatalogTemplates(this.storage, from);
-    const toTemplates = await readCatalogTemplates(this.storage, to);
-    // The install's connectors by template; a dropped one (kept only for the agents using it) counts
-    // only while its connector is live, so a template the target brings back maps onto it
-    const connectorRows = ledger.filter((l) => l.kind === "connector" && l.template_id !== null);
-    const liveConnectors =
-      connectorRows.length === 0
-        ? []
-        : await db
-            .selectFrom("connectors")
-            .select(["id", "connector", "endpoint", "auth"])
-            .where(
-              "id",
-              "in",
-              connectorRows.map((l) => l.ref),
-            )
-            .where("org_id", "=", orgId)
-            .where("deleted_at", "is", null)
-            .execute();
-    const connectorOf = (templateId: string) => {
-      const rows = connectorRows.filter((x) => x.template_id === templateId);
-      const l =
-        rows.find((x) => !x.dropped) ??
-        rows.find((x) => liveConnectors.some((c) => c.id === x.ref));
-      const c = l && liveConnectors.find((x) => x.id === l.ref);
-      return {
-        ...(l && { ledger: l }),
-        ...(c && {
-          connector: {
-            id: c.id,
-            connector: c.connector,
-            endpoint: c.endpoint,
-            auth: c.auth as ConnectorAuth,
-          },
-        }),
-      };
-    };
-    const deps = this.installer.templateDeps();
-    const templates: TemplateDiff[] = [];
-    for (const ct of toTemplates) {
-      const problem = templatePluginProblem(deps, ct.file.template);
-      const before = fromTemplates.find((x) => x.id === ct.id);
-      const mapped = connectorOf(ct.id);
-      if (!before && mapped.ledger?.dropped && mapped.connector) {
-        // Back in the plugin (an earlier upgrade dropped it, its connector was kept): the kept
-        // connector is updated to the template, not created again (its slug would be taken)
-        if (problem !== undefined) throw new ApiError("catalog.not_deployed", problem);
-        if (mapped.connector.connector !== ct.file.template.connector) {
-          throw targetInvalid(
-            `Connector template ${ct.id} comes back for another connector (${ct.file.template.plugin} "${ct.file.template.connector}"); uninstall the plugin and install the new version instead`,
-            [
-              {
-                reason: "template_connector",
-                template: ct.id,
-                plugin: ct.file.template.plugin,
-                connector: ct.file.template.connector,
-              },
-            ],
-          );
-        }
-        const credentialsChanged =
-          credentialKey(mapped.connector.auth) !==
-          credentialKey(ct.file.template.auth as unknown as ConnectorAuth);
-        templates.push({
-          id: ct.id,
-          change: "changed",
-          target: ct.file,
-          ...mapped,
-          credentialsChanged,
-        });
-        continue;
-      }
-      if (!before) {
-        if (problem !== undefined) throw new ApiError("catalog.not_deployed", problem);
-        // No implied install on an upgrade: the added template's provider must already be on
-        // (unless the target brings the provider: a dependency it declares, installed first, or its own extension)
-        const provider = ct.file.template.plugin;
-        const implied =
-          provider === name ||
-          dependencies.some((d) => d.name === provider && d.change !== "removed");
-        if (!implied && !(await isExtensionEnabled(db, orgId, provider))) {
-          throw new ApiError(
-            "connector.kind_unavailable",
-            `Connector template ${ct.id} needs the plugin ${ct.file.template.plugin}, which is not enabled in this organization; enable it before upgrading`,
-          );
-        }
-        templates.push({ id: ct.id, change: "added", target: ct.file, credentialsChanged: false });
-        continue;
-      }
-      const change: UpgradeChange =
-        canonicalJson(before.file) === canonicalJson(ct.file) ? "unchanged" : "changed";
-      if (change === "changed") {
-        if (
-          before.file.template.plugin !== ct.file.template.plugin ||
-          before.file.template.connector !== ct.file.template.connector
-        ) {
-          throw targetInvalid(
-            `Connector template ${ct.id} moves to another connector (${ct.file.template.plugin} "${ct.file.template.connector}"); uninstall the plugin and install the new version instead`,
-            [
-              {
-                reason: "template_connector",
-                template: ct.id,
-                plugin: ct.file.template.plugin,
-                connector: ct.file.template.connector,
-              },
-            ],
-          );
-        }
-        if (problem !== undefined && mapped.connector) {
-          throw new ApiError("catalog.not_deployed", problem);
+    const enqueue = [itemId, ...diff.dependencies];
+    afterCommit(async () => {
+      for (const id of enqueue) {
+        try {
+          await this.sync.enqueueItem(id);
+        } catch (err) {
+          this.log.warn("enqueueing the scope sync after a platform update failed", {
+            itemId: id,
+            err,
+          });
         }
       }
-      const credentialsChanged =
-        change === "changed" &&
-        mapped.connector !== undefined &&
-        credentialKey(mapped.connector.auth) !==
-          credentialKey(ct.file.template.auth as unknown as ConnectorAuth);
-      templates.push({ id: ct.id, change, target: ct.file, ...mapped, credentialsChanged });
-    }
-    for (const ct of fromTemplates) {
-      if (toTemplates.some((x) => x.id === ct.id)) continue;
-      templates.push({
-        id: ct.id,
-        change: "removed",
-        ...connectorOf(ct.id),
-        credentialsChanged: false,
-      });
-    }
-    for (const c of templates) {
-      components.push({
-        kind: "connector",
-        ref: c.id,
-        change: c.change,
-        ...(c.credentialsChanged && { detail: "credentials change" }),
-        ...(c.change !== "added" &&
-          c.change !== "removed" &&
-          !c.connector && { detail: "no connector in this organization" }),
-      });
-    }
-
-    const inputs: UpgradePreview["inputs"] = {
-      connectors: templates.filter((c) => c.change === "added").map((c) => c.id),
-      credentialsChanged: templates.filter((c) => c.credentialsChanged).map((c) => c.id),
-      extensionConfig,
-    };
-
-    // The inputs (as at install), when given
-    const creates = new Map<string, CreateConnectorInput>();
-    const updates = new Map<string, TemplateUpdateInput>();
-    if (input !== null) {
-      for (const k of Object.keys(input.connectors ?? {})) {
-        if (!inputs.connectors.includes(k) && !inputs.credentialsChanged.includes(k)) {
-          throw fail(
-            `connectors.${k}`,
-            "This upgrade takes no input for this connector template (only added templates and changed credentials)",
-          );
-        }
-      }
-      if (input.extensionConfig !== undefined && !inputs.extensionConfig) {
-        throw fail("extensionConfig", "This upgrade does not enable the plugin's extension");
-      }
-      for (const c of templates) {
-        if (c.change === "added") {
-          creates.set(
-            c.id,
-            this.installer.planConnector(
-              actor,
-              { itemId, version: to.version, name },
-              { id: c.id, file: c.target as ConnectorTemplateFile },
-              input,
-              "",
-              undefined,
-            ),
-          );
-          continue;
-        }
-        if (c.change !== "changed" || !c.connector || !c.target) continue;
-        updates.set(c.id, this.templateUpdate(itemId, to.version, c, input));
-      }
-    }
-
-    const actions = new Set<OrgAction>([
-      ...requiredActions(from.manifest),
-      ...requiredActions(to.manifest),
-    ]);
-    for (const dep of dependencies)
-      if (dep.plan) for (const a of planActions(dep.plan)) actions.add(a);
-    const removedDeps = dependencies.filter((x) => x.change === "removed" && x.child);
-    if (removedDeps.length > 0) {
-      const manifests = await db
-        .selectFrom("plugin_installs as a")
-        .innerJoin("catalog_item_versions as v", (j) =>
-          j.onRef("v.item_id", "=", "a.item_id").onRef("v.version", "=", "a.version"),
-        )
-        .select("v.manifest")
-        .where(
-          "a.id",
-          "in",
-          removedDeps.map((x) => x.child?.installId as string),
-        )
-        .execute();
-      for (const m of manifests)
-        for (const a of requiredActions(m.manifest as PluginManifest)) actions.add(a);
-    }
-
-    const lh = ledgerHash(ledger);
-    const diffHash = sha256(
-      canonicalJson({
-        installId,
-        from: from.version,
-        to: to.version,
-        fromFiles: filesDigest(from),
-        toFiles: filesDigest(to),
-        ledger: lh,
-        components,
-        inputs,
-      }),
-    );
-    return {
-      installId,
-      itemId,
-      name,
-      from,
-      to,
-      ledger,
-      extension,
-      skills,
-      agentTemplates,
-      templates,
-      dependencies,
-      components,
-      inputs,
-      diffHash,
-      ledgerHash: lh,
-      actions: [...actions],
-      creates,
-      updates,
-    };
+    });
+    return diff;
   }
 
   /**
-   * The update of a changed template's connector: the new endpoint preset with the org's values at
-   * the editable paths, the new auth preset and policies; credentials only when the auth method or
-   * the credentials it needs changed (then the input must give what the template needs).
+   * The template update of one connector: the new endpoint preset with the org's values at the
+   * editable paths, the auth preset and default policies; credentials cleared (no new ones: they
+   * are the org's) when the credential shape changed.
    */
-  private templateUpdate(
+  private async prepare(
+    actor: string,
     itemId: string,
     version: string,
-    c: TemplateDiff,
-    input: PluginInstallInput,
-  ): TemplateUpdateInput {
-    const template = (c.target as ConnectorTemplateFile).template;
-    const connector = c.connector as NonNullable<TemplateDiff["connector"]>;
-    const path = `connectors.${c.id}`;
-    const given = input.connectors?.[c.id];
-    if (given !== undefined) {
-      for (const k of ["name", "slug", "endpoint"] as const) {
-        if (given[k] !== undefined) {
-          throw fail(
-            `${path}.${k}`,
-            "An existing connector keeps its name, slug and endpoint fields",
-          );
-        }
-      }
-    }
+    c: ConnectorChange,
+  ): Promise<PreparedTemplateUpdate> {
+    const template = c.file.template;
     const endpoint = structuredClone(template.endpoint) as Record<string, unknown>;
     for (const e of template.editableEndpoint ?? []) {
-      const v = getPath(connector.endpoint, e);
+      const v = getPath(c.endpoint, e);
       if (v !== undefined) setPath(endpoint, e, v);
     }
-    const auth = template.auth as unknown as ConnectorAuth;
-    const oauth = auth.type === "oauth_code" || auth.type === "oauth_client";
-    if (c.credentialsChanged) {
-      const missing = missingTemplateInput(template, given, { personalCredential: false });
-      if (missing !== undefined) {
-        throw fail(
-          `${path}.${missing}`,
-          `The auth method of this connector template changed; it needs ${missing === "client" ? "an OAuth client" : "an org credential"}`,
-        );
-      }
-      if (oauth && given?.credential !== undefined) {
-        throw fail(`${path}.credential`, "This connector uses OAuth; provide client instead");
-      }
-      if (!oauth && given?.client !== undefined) {
-        throw fail(
-          `${path}.client`,
-          "This connector does not use OAuth; provide credential instead",
-        );
-      }
-    }
-    const credential = oauth ? given?.client : given?.credential;
-    return {
+    const input: TemplateUpdateInput = {
       endpoint,
-      auth,
+      auth: template.auth as unknown as ConnectorAuth,
       template: {
         itemId,
         version,
-        templateId: c.id,
+        templateId: c.templateId,
         ...(template.defaultToolPolicies !== undefined && {
           defaultToolPolicies: template.defaultToolPolicies,
         }),
       },
-      resetCredentials: c.credentialsChanged,
-      ...(c.credentialsChanged && credential !== undefined && { credential }),
+      resetCredentials: false,
     };
+    // Checked without credentials (nothing outbound); a changed shape then clears the old ones
+    const prepared = await this.connectors.prepareTemplateUpdate(actor, c.connector, input);
+    return c.credentialsReset
+      ? { ...prepared, input: { ...prepared.input, resetCredentials: true } }
+      : prepared;
+  }
+
+  /** Computes an update (see the class comment). */
+  private async diff(
+    itemId: string,
+    version: string,
+    o: { applying?: boolean } = {},
+  ): Promise<UpdateDiff> {
+    const db = this.db;
+    if (!UUID_RE.test(itemId)) throw itemNotFound();
+    const item = await db
+      .selectFrom("catalog_items")
+      .select(["id", "name", "disabled", "builtin", "deleted_at", "platform_synced_version"])
+      .where("id", "=", itemId)
+      .executeTakeFirst();
+    if (!item || item.deleted_at !== null) throw itemNotFound();
+    if (item.disabled) {
+      throw new ApiError(
+        "catalog.item_disabled",
+        "This plugin is disabled on the deployment; enable it before updating",
+      );
+    }
+    const name = item.name;
+    const versions = (await db
+      .selectFrom("catalog_item_versions")
+      .select(["version", "manifest", "object_prefix", "files", "extension_sha256"])
+      .where("item_id", "=", itemId)
+      .execute()) as VersionRow[];
+    const to = versions.find((v) => v.version === version);
+    if (!to)
+      throw new ApiError("catalog.item_not_found", `Version ${version} of this item not found`);
+    const from = item.platform_synced_version;
+    const fromRow = versions.find((v) => v.version === from);
+    if (from === to.version) {
+      // Confirming a preview whose update already ran (a concurrent confirm won): stale
+      if (o.applying) throw stale();
+      throw targetInvalid(`The platform already runs version ${from} of plugin ${name}`, [
+        { reason: "same_version", version: from },
+      ]);
+    }
+
+    const extension = await this.extensionStep(name, fromRow, to);
+    const dependencies = await this.checkDependents(name, to);
+
+    // The platform's components of the plugin and the target's
+    const live = await this.liveComponents(itemId);
+    const components: PlatformUpdateComponent[] = [];
+    const suggest = new Map<string, boolean>();
+    const direction = (fromVersion: string | null): UpdateChange =>
+      fromVersion === null || compareVersions(to.version, fromVersion) >= 0
+        ? "upgrade"
+        : "downgrade";
+    const added = (kind: ComponentKind, n: string): PlatformUpdateComponent => ({
+      kind,
+      id: null,
+      name: n,
+      change: "added",
+      from: null,
+      to: to.version,
+      updatedOnOwn: false,
+      ownScope: false,
+      pinnedOrgs: [],
+    });
+
+    // Skills (by name, by their files' digest)
+    const skillNames = await catalogSkillNames(this.storage, to, to.manifest);
+    const toSkills = skillNames.map((n, i) => {
+      const entry = (to.manifest.skills ?? [])[i];
+      return {
+        name: n,
+        digest: dirDigest(to, packagePath(entry?.path as string)),
+        pinned: entry?.pinned === true,
+      };
+    });
+    for (const s of toSkills) {
+      const l = live.skills.find((x) => x.name === s.name);
+      if (!l) {
+        components.push(added("skill", s.name));
+        continue;
+      }
+      const same = skillFilesDigest(l.manifest.files) === s.digest;
+      if (same && l.suggestPinned !== s.pinned) suggest.set(l.id, s.pinned);
+      components.push({
+        kind: "skill",
+        id: l.id,
+        name: s.name,
+        change: same ? "same" : direction(l.catalogVersion),
+        from: l.catalogVersion,
+        to: to.version,
+        updatedOnOwn: l.updatedOnOwn,
+        ownScope: l.ownScope,
+        pinnedOrgs: [],
+      });
+    }
+    for (const l of live.skills) {
+      if (toSkills.some((s) => s.name === l.name)) continue;
+      components.push({
+        kind: "skill",
+        id: l.id,
+        name: l.name,
+        change: "removed",
+        from: l.catalogVersion,
+        to: null,
+        updatedOnOwn: l.updatedOnOwn,
+        ownScope: l.ownScope,
+        pinnedOrgs: [],
+      });
+    }
+
+    // Agent templates (by name, canonical definition)
+    const toAgents = await readCatalogAgentTemplates(this.storage, to);
+    for (const a of toAgents) {
+      const l = live.agentTemplates.find((x) => x.name === a.template.name);
+      if (!l) {
+        components.push(added("agent_template", a.template.name));
+        continue;
+      }
+      const same = canonicalJson(l.definition) === canonicalJson(a.template);
+      components.push({
+        kind: "agent_template",
+        id: l.id,
+        name: l.name,
+        change: same ? "same" : direction(l.catalogVersion),
+        from: l.catalogVersion,
+        to: to.version,
+        updatedOnOwn: l.updatedOnOwn,
+        ownScope: l.ownScope,
+        pinnedOrgs: [],
+      });
+    }
+    for (const l of live.agentTemplates) {
+      if (toAgents.some((a) => a.template.name === l.name)) continue;
+      components.push({
+        kind: "agent_template",
+        id: l.id,
+        name: l.name,
+        change: "removed",
+        from: l.catalogVersion,
+        to: null,
+        updatedOnOwn: l.updatedOnOwn,
+        ownScope: l.ownScope,
+        pinnedOrgs: [],
+      });
+    }
+
+    // Connector templates (by id, canonical file) and the connectors made from them
+    const toTemplates = await readCatalogTemplates(this.storage, to);
+    const deps = this.installer.templateDeps();
+    const connectors: ConnectorChange[] = [];
+    for (const ct of toTemplates) {
+      const l = live.templates.find((x) => x.name === ct.id);
+      if (!l) {
+        const problem = templatePluginProblem(deps, ct.file.template);
+        if (problem !== undefined) throw new ApiError("catalog.not_deployed", problem);
+        components.push(added("connector_template", ct.id));
+        continue;
+      }
+      const same = canonicalJson(l.file) === canonicalJson(ct.file);
+      components.push({
+        kind: "connector_template",
+        id: l.id,
+        name: ct.id,
+        change: same ? "same" : direction(l.version),
+        from: l.version,
+        to: to.version,
+        updatedOnOwn: false,
+        ownScope: l.ownScope,
+        pinnedOrgs: [],
+      });
+      if (same) continue;
+      const before = l.file.template;
+      const after = ct.file.template;
+      if (before.plugin !== after.plugin || before.connector !== after.connector) {
+        throw targetInvalid(
+          `Connector template ${ct.id} moves to another connector (${after.plugin} "${after.connector}"); remove the plugin and import the new version as a new plugin instead`,
+          [
+            {
+              reason: "template_connector",
+              template: ct.id,
+              plugin: after.plugin,
+              connector: after.connector,
+            },
+          ],
+        );
+      }
+      const made = await db
+        .selectFrom("connectors")
+        .select(["id", "org_id", "name", "connector", "endpoint", "auth"])
+        .where("platform_template_id", "=", l.id)
+        .where("deleted_at", "is", null)
+        .orderBy("org_id")
+        .orderBy("id")
+        .execute();
+      if (made.length > 0) {
+        const problem = templatePluginProblem(deps, after);
+        if (problem !== undefined) throw new ApiError("catalog.not_deployed", problem);
+      }
+      for (const c of made) {
+        connectors.push({
+          orgId: c.org_id,
+          id: c.id,
+          name: c.name,
+          connector: c.connector,
+          endpoint: c.endpoint,
+          templateId: ct.id,
+          file: ct.file,
+          credentialsReset:
+            credentialKey(c.auth as ConnectorAuth) !==
+            credentialKey(after.auth as unknown as ConnectorAuth),
+        });
+      }
+    }
+    for (const l of live.templates) {
+      if (toTemplates.some((x) => x.id === l.name)) continue;
+      components.push({
+        kind: "connector_template",
+        id: l.id,
+        name: l.name,
+        change: "removed",
+        from: l.version,
+        to: null,
+        updatedOnOwn: false,
+        ownScope: l.ownScope,
+        pinnedOrgs: [],
+      });
+    }
+
+    // The orgs where the plugin is on (a live install; builtin: every org)
+    const onOrgs = await this.pluginOrgs(itemId, item.builtin);
+
+    // Rule 10: an added skill must not take a name already used where the plugin is on
+    const conflicts: { skill: string; orgId: string; conflicts: string[] }[] = [];
+    for (const c of components) {
+      if (c.kind !== "skill" || c.change !== "added") continue;
+      for (const orgId of onOrgs) {
+        const ids = [
+          ...(await clashingOrgSkills(db, orgId, { id: "", itemId }, c.name)),
+          ...(await clashingPlatformSkills(db, orgId, { id: "" }, c.name)).map((x) => x.id),
+        ];
+        if (ids.length > 0) conflicts.push({ skill: c.name, orgId, conflicts: ids.sort() });
+      }
+    }
+    if (conflicts.length > 0) {
+      throw new ApiError(
+        "plugin.skill_conflict",
+        `The update adds skills whose names organizations already use where the plugin is on (${[...new Set(conflicts.map((c) => c.skill))].join(", ")}); remove or rename those skills first`,
+        conflicts,
+      );
+    }
+
+    // Pinned copies (in orgs where the component is on) and removed components agents use
+    for (const kind of ["skill", "agent_template"] as const) {
+      const mine = components.filter((c) => c.kind === kind && c.id !== null);
+      if (mine.length === 0) continue;
+      const pins =
+        kind === "skill"
+          ? await db
+              .selectFrom("skills")
+              .select(["org_id", "platform_skill_id as platform_id"])
+              .where(
+                "platform_skill_id",
+                "in",
+                mine.map((c) => c.id as string),
+              )
+              .where("pinned_version", "is not", null)
+              .where("deleted_at", "is", null)
+              .execute()
+          : await db
+              .selectFrom("agent_templates")
+              .select(["org_id", "platform_template_id as platform_id"])
+              .where(
+                "platform_template_id",
+                "in",
+                mine.map((c) => c.id as string),
+              )
+              .where("pinned_version", "is not", null)
+              .where("deleted_at", "is", null)
+              .execute();
+      const facts = mine.map((c) => {
+        const l = (kind === "skill" ? live.skills : live.agentTemplates).find((x) => x.id === c.id);
+        return {
+          id: c.id as string,
+          itemId,
+          scopeMode: l?.scopeMode ?? "follow",
+          scope: l?.scope ?? "optional",
+          disabled: l?.disabled ?? false,
+        };
+      });
+      const st = await loadScopeState(db, kind, facts);
+      for (const c of mine) {
+        const f = facts.find((x) => x.id === c.id);
+        if (!f) continue;
+        const orgsPinned = [
+          ...new Set(pins.filter((p) => p.platform_id === c.id).map((p) => p.org_id)),
+        ];
+        c.pinnedOrgs = orgsPinned
+          .filter((orgId) =>
+            componentOn(
+              f,
+              pluginFactsOf(st, itemId, orgId),
+              listedIn(st, f.id, orgId),
+              switchOf(st, f.id, orgId),
+            ),
+          )
+          .sort();
+        if (c.change !== "removed") continue;
+        const kept: NonNullable<PlatformUpdateComponent["kept"]> = [];
+        for (const orgId of await this.liveOrgs()) {
+          const agents = await agentsUsing(db, orgId, kind, [c.id as string]);
+          if (agents.length > 0) {
+            kept.push({ orgId, agents: agents.map((a) => ({ id: a.id, name: a.name })) });
+          }
+        }
+        if (kept.length > 0) c.kept = kept;
+      }
+    }
+
+    // The org connectors: changed templates' connectors, added templates needing input
+    const addedTemplates = components
+      .filter((c) => c.kind === "connector_template" && c.change === "added")
+      .map((c) => c.name);
+    const byOrg = new Map<string, PlatformUpdateConnectorOrg>();
+    const entry = (orgId: string) => {
+      const e = byOrg.get(orgId) ?? { orgId, connectors: [], needsConfig: [] };
+      byOrg.set(orgId, e);
+      return e;
+    };
+    for (const c of connectors) {
+      entry(c.orgId).connectors.push({
+        id: c.id,
+        name: c.name,
+        templateId: c.templateId,
+        credentialsReset: c.credentialsReset,
+      });
+    }
+    if (addedTemplates.length > 0) {
+      for (const orgId of onOrgs) {
+        const on = await connectorTemplatesOn(db, orgId, itemId, addedTemplates);
+        if (on.size > 0) entry(orgId).needsConfig.push(...[...on].sort());
+      }
+    }
+    const connectorOrgs = [...byOrg.values()]
+      .map((e) => ({
+        ...e,
+        connectors: e.connectors.sort((a, b) =>
+          `${a.templateId}\0${a.id}`.localeCompare(`${b.templateId}\0${b.id}`),
+        ),
+      }))
+      .sort((a, b) => a.orgId.localeCompare(b.orgId));
+
+    components.sort(
+      (a, b) => KIND_ORDER[a.kind] - KIND_ORDER[b.kind] || a.name.localeCompare(b.name),
+    );
+    const view = extension && { from: extension.from, to: extension.to };
+    const diffHash = sha256(
+      canonicalJson({
+        itemId,
+        from,
+        to: to.version,
+        manifest: to.manifest,
+        files: filesDigest(to),
+        extension: extension && { ...view, sha256: extension.sha256 },
+        components,
+        connectors: connectors.map((c) => ({
+          id: c.id,
+          endpoint: c.endpoint,
+          reset: c.credentialsReset,
+        })),
+        connectorOrgs,
+      }),
+    );
+    return {
+      itemId,
+      name,
+      from,
+      to,
+      components,
+      extension,
+      connectors,
+      connectorOrgs,
+      suggest,
+      dependencies,
+      diffHash,
+    };
+  }
+
+  /**
+   * The deployment's extension step: none when the target carries the extension the deployment
+   * runs; a version without the extension the deployment runs for the plugin, or a move of a
+   * config-declared extension, is refused.
+   */
+  private async extensionStep(
+    name: string,
+    from: VersionRow | undefined,
+    to: VersionRow,
+  ): Promise<ExtensionStep | null> {
+    const want = to.manifest.extension;
+    const row = await this.db
+      .selectFrom("extension_installs")
+      .select(["sha256", "version"])
+      .where("name", "=", name)
+      .executeTakeFirst();
+    const loaded = this.registry.manifests().find((m) => m.name === name);
+    if (!want) {
+      if (from?.manifest.extension && (row || loaded)) {
+        throw targetInvalid(
+          `Version ${to.version} of plugin ${name} has no extension, but the deployment runs it; uninstall the extension first`,
+          [{ reason: "extension_removed", version: to.version }],
+        );
+      }
+      return null;
+    }
+    if (row) {
+      if (row.sha256 === to.extension_sha256) return null;
+    } else if (loaded) {
+      if (loaded.version === want.manifest.version) return null;
+      throw targetInvalid(
+        `The extension of plugin ${name} is declared in the startup config at version ${loaded.version}; it cannot be moved to ${want.manifest.version} by an update`,
+        [{ reason: "config_extension", deploymentVersion: loaded.version }],
+      );
+    }
+    if (to.extension_sha256 === null) {
+      throw targetInvalid(`Version ${to.version} of plugin ${name} has no extension package`, [
+        { reason: "extension_package", version: to.version },
+      ]);
+    }
+    return {
+      from: row?.version ?? null,
+      to: want.manifest.version,
+      sha256: to.extension_sha256,
+      previous: row?.sha256 ?? null,
+    };
+  }
+
+  /**
+   * Other platform plugins depending on this one must accept the target (their platform version's
+   * dependency range); returns the catalog items of the target's own dependencies (their scope
+   * sync is enqueued after the update: rule 9).
+   */
+  private async checkDependents(name: string, to: VersionRow): Promise<string[]> {
+    const rows = await this.db
+      .selectFrom("catalog_items as i")
+      .innerJoin("catalog_item_versions as v", (j) =>
+        j
+          .onRef("v.item_id", "=", "i.id")
+          .on(
+            sql<string>`v.version`,
+            "=",
+            sql<string>`coalesce(i.platform_synced_version, i.latest_version)`,
+          ),
+      )
+      .select(["i.id", "i.name", "v.manifest"])
+      .where("i.deleted_at", "is", null)
+      .execute();
+    for (const r of rows) {
+      if (r.name === name) continue;
+      const range = (r.manifest as PluginManifest).dependencies?.find(
+        (d) => d.name === name,
+      )?.version;
+      if (range !== undefined && !satisfiesRange(to.version, range)) {
+        throw targetInvalid(
+          `Plugin ${r.name} depends on ${name}@${range}, which version ${to.version} does not satisfy`,
+          [{ reason: "dependent_range", dependent: r.name, range, version: to.version }],
+        );
+      }
+    }
+    const wanted = new Set((to.manifest.dependencies ?? []).map((d) => d.name));
+    return rows.filter((r) => wanted.has(r.name)).map((r) => r.id);
+  }
+
+  /** The plugin's live platform components with their current versions. */
+  private async liveComponents(itemId: string) {
+    const db = this.db;
+    const skills = (
+      await db
+        .selectFrom("platform_skills as p")
+        .innerJoin("platform_skill_versions as v", (j) =>
+          j.onRef("v.skill_id", "=", "p.id").onRef("v.version", "=", "p.current_version"),
+        )
+        .select([
+          "p.id",
+          "p.name",
+          "p.scope_mode",
+          "p.scope",
+          "p.disabled",
+          "v.manifest",
+          "v.catalog_version",
+          "v.updated_on_own",
+          "v.suggest_pinned",
+        ])
+        .where("p.catalog_item_id", "=", itemId)
+        .where("p.deleted_at", "is", null)
+        .execute()
+    ).map((r) => ({
+      id: r.id,
+      name: r.name,
+      scopeMode: r.scope_mode,
+      scope: r.scope,
+      disabled: r.disabled,
+      manifest: r.manifest as SkillManifest,
+      catalogVersion: r.catalog_version,
+      updatedOnOwn: r.updated_on_own,
+      ownScope: r.scope_mode === "own",
+      suggestPinned: r.suggest_pinned,
+    }));
+    const agentTemplates = (
+      await db
+        .selectFrom("platform_agent_templates as p")
+        .innerJoin("platform_agent_template_versions as v", (j) =>
+          j.onRef("v.template_id", "=", "p.id").onRef("v.version", "=", "p.current_version"),
+        )
+        .select([
+          "p.id",
+          "p.name",
+          "p.scope_mode",
+          "p.scope",
+          "p.disabled",
+          "v.definition",
+          "v.catalog_version",
+          "v.updated_on_own",
+        ])
+        .where("p.catalog_item_id", "=", itemId)
+        .where("p.deleted_at", "is", null)
+        .execute()
+    ).map((r) => ({
+      id: r.id,
+      name: r.name,
+      scopeMode: r.scope_mode,
+      scope: r.scope,
+      disabled: r.disabled,
+      definition: r.definition,
+      catalogVersion: r.catalog_version,
+      updatedOnOwn: r.updated_on_own,
+      ownScope: r.scope_mode === "own",
+    }));
+    const templates = (
+      await db
+        .selectFrom("platform_connector_templates")
+        .select(["id", "template_id", "current_version", "file", "scope_mode"])
+        .where("catalog_item_id", "=", itemId)
+        .where("deleted_at", "is", null)
+        .execute()
+    ).map((r) => ({
+      id: r.id,
+      name: r.template_id,
+      version: r.current_version,
+      file: r.file as ConnectorTemplateFile,
+      ownScope: r.scope_mode === "own",
+    }));
+    return { skills, agentTemplates, templates };
+  }
+
+  /** The orgs where the plugin is on: a live install (builtin: every live org). */
+  private async pluginOrgs(itemId: string, builtin: boolean): Promise<string[]> {
+    if (builtin) return this.liveOrgs();
+    const rows = await this.db
+      .selectFrom("plugin_installs as a")
+      .innerJoin("orgs as o", "o.id", "a.org_id")
+      .select("a.org_id")
+      .distinct()
+      .where("a.item_id", "=", itemId)
+      .where("a.status", "in", ["installing", "installed", "upgrading"])
+      .where("o.deleted_at", "is", null)
+      .orderBy("a.org_id")
+      .execute();
+    return rows.map((r) => r.org_id);
+  }
+
+  private async liveOrgs(): Promise<string[]> {
+    const rows = await this.db
+      .selectFrom("orgs")
+      .select("id")
+      .where("deleted_at", "is", null)
+      .orderBy("id")
+      .execute();
+    return rows.map((r) => r.id);
   }
 }
 
-const cleanedUp = () =>
-  new ApiError(
-    "plugin.install_not_found",
-    "The upgrade was cleaned up as interrupted while it was running",
-  );
-
-/** The install's ledger rows. */
-function ledgerOf(db: KernelSchemaDb, installId: string): Promise<LedgerRow[]> {
-  return db
-    .selectFrom("plugin_install_components")
-    .select(["kind", "ref", "created", "skill_version", "template_id", "dropped"])
-    .where("install_id", "=", installId)
-    .orderBy("kind")
-    .orderBy("ref")
-    .execute();
-}
-
-/** A fingerprint of the ledger (order independent). */
-function ledgerHash(rows: readonly LedgerRow[]): string {
-  return sha256(
-    rows
-      .map(
-        (r) =>
-          `${r.kind}\0${r.ref}\0${r.created}\0${r.skill_version}\0${r.template_id}\0${r.dropped}\n`,
-      )
-      .sort()
-      .join(""),
-  );
+/** The preview of a diff. */
+function previewOf(d: UpdateDiff): PlatformUpdatePreview {
+  return {
+    itemId: d.itemId,
+    name: d.name,
+    from: d.from,
+    to: d.to.version,
+    components: d.components,
+    extension: d.extension && { from: d.extension.from, to: d.extension.to },
+    connectorOrgs: d.connectorOrgs,
+    diffHash: d.diffHash,
+  };
 }
