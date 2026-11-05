@@ -174,11 +174,12 @@ export function useConversation(orgId: string, conversationId: string): Conversa
     let close: (() => void) | undefined;
     let failures = 0;
     /** The row was read again once for a title generated before the stream was open. */
-    // A conversation seeded from the create answer has no title yet and nothing outside the log
-    // changed since (send spec 2.1): its first open is no catch-up and reads nothing. Only the
-    // first: a later reconnect catches up as usual.
+    // A conversation seeded from the create answer changed nothing outside the log since (send
+    // spec 2.1): its first open is no catch-up and reads no side key. Only the first: a later
+    // reconnect catches up as usual. Its title is still checked below: a quick run's title is
+    // often generated before the stream opens.
     let seeded = isFreshlySeeded(qc, orgId, conversationId);
-    let titleChecked = seeded;
+    let titleChecked = false;
     // Deltas are applied once per animation frame, together (final review I3): a fast stream
     // renders the page per frame, not per token. An event first flushes what is pending, so
     // deltas and events stay in stream order.

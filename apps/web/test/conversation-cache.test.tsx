@@ -226,8 +226,10 @@ describe("useConversation and the cache", () => {
     expect(invalidated()).toEqual(side);
   });
 
-  it("a seeded new conversation reads no row, queue or files when its run's events arrive (send spec 2.1)", async () => {
-    const calls = stubApi({});
+  it("a seeded new conversation reads no queue or files when its run's events arrive, only its title (send spec 2.1)", async () => {
+    const calls = stubApi({
+      [`GET ${BASE}`]: () => json(200, CONV("c1", { title: "Generated early" })),
+    });
     const qc = testQueryClient();
     seedNewConversation(qc, "o1", CONV("c1", { title: null }).conversation as never, {
       event: userMsg(1, "start"),
@@ -244,8 +246,11 @@ describe("useConversation and the cache", () => {
     });
     await act(() => new Promise((r) => setTimeout(r, 20)));
     expect(view.getByTestId("seqs").textContent).toBe("1,2,3");
-    expect(calls).toEqual([]);
-    expect(invalidated()).toEqual([]);
+    // a quick run's title is often generated before the stream opened: the row is read once
+    await vi.waitFor(() => expect(view.getByTestId("title").textContent).toBe("Generated early"));
+    expect(calls.map((c) => c.url)).toEqual([BASE]);
+    // no side key: only the sidebar's groups, for the title found
+    expect(invalidated()).toEqual([JSON.stringify(keys.org("o1").conversationGroupsAll())]);
   });
 
   it("a seeded conversation's later reconnect catches up as usual", async () => {
