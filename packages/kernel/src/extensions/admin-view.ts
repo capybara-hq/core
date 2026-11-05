@@ -34,7 +34,7 @@ import {
   permissionKeyItems,
   reviewHash,
 } from "./permission-view.js";
-import { pluginItemsOf } from "./plugin-items.js";
+import { itemLocked, pluginItemsOf } from "./plugin-items.js";
 import type { ExtensionSource } from "./sources.js";
 
 export { PLUGINS_CHANGED_TOPIC };
@@ -373,10 +373,10 @@ export class ExtensionAdmin {
       ).map((r) => [r.plugin, Number(r.n)] as const),
     );
     return subjects.map((s) => {
-      const item = items.get(s.name);
-      const builtin = item?.builtin === true || s.install?.required === true;
+      const of = items.get(s.name);
+      const builtin = of?.some((i) => i.builtin) === true || s.install?.required === true;
       const scopeInfo = {
-        scope: item ? (builtin ? ("all" as const) : item.scope) : null,
+        scope: of?.[0] ? (builtin || of.some(itemLocked) ? ("all" as const) : of[0].scope) : null,
         enabledOrgs: counts.get(s.name) ?? 0,
         builtin,
       };

@@ -11,7 +11,7 @@ import {
   disabledPluginItems,
   pluginItemDisabled,
 } from "../catalog/request-rules.js";
-import { type PluginScope, switchable, visibleTo } from "../catalog/scope.js";
+import { type PluginScope, visibleTo } from "../catalog/scope.js";
 import { changedPaths, configFields, getPath, secretValues } from "../config/fields.js";
 import { createSecrets, type Keyring } from "../ctx/secrets.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
@@ -32,7 +32,7 @@ import { ExtensionHost } from "./host.js";
 import { ExtensionInstalls } from "./installs.js";
 import type { PermissionSet } from "./permission-set.js";
 import { type PermissionGroup, permissionGroups } from "./permission-view.js";
-import { type ExtensionPluginItem, pluginItemsOf } from "./plugin-items.js";
+import { type ExtensionPluginItem, itemLocked, pluginItemsOf } from "./plugin-items.js";
 
 export { type ConfigIssue, toIssues };
 
@@ -77,8 +77,6 @@ export interface OrgExtensionInput {
   config?: Record<string, unknown> | undefined;
   /** Disable even when enabled dependents remain (default `extension.has_dependents`). */
   force?: boolean | undefined;
-  /** Confirms the uninstall preview of the plugin switch (HTTP only; read by the controller). */
-  confirm?: string | undefined;
 }
 
 /** `put` 的内部选项（不来自 HTTP）。 */
@@ -103,20 +101,29 @@ export interface OrgExtensionPutOptions {
    * transaction) reads `skipped` after `put` returns: no concurrent uninstall fits in between.
    */
   ifDisabled?: { skipped: boolean };
+  /**
+   * Check everything (role, rules, the `config` against the schema merged with the stored secrets)
+   * and write nothing: lets a caller that must do another write first fail without a side effect.
+   */
+  validateOnly?: boolean;
 }
 
 type Obj = Record<string, unknown>;
 
-/** The scope part of an org view: the extension's plugin and whether the org can switch it. */
+/**
+ * The scope part of an org view: the extension's primary plugin and whether the org can switch it.
+ * With several source items, one that is `all` or builtin locks the extension on (scope `all`).
+ */
 function scopeFields(
-  item: ExtensionPluginItem | undefined,
+  items: readonly ExtensionPluginItem[] | undefined,
   required: boolean,
 ): Pick<OrgExtensionView, "catalogItem" | "switchable"> {
-  if (!item) return { catalogItem: null, switchable: !required };
-  const builtin = item.builtin || required;
+  const primary = items?.[0];
+  if (!primary) return { catalogItem: null, switchable: !required };
+  const locked = required || items.some(itemLocked);
   return {
-    catalogItem: { itemId: item.id, scope: builtin ? "all" : item.scope },
-    switchable: switchable({ scope: item.scope, builtin }),
+    catalogItem: { itemId: primary.id, scope: locked ? "all" : primary.scope },
+    switchable: !locked,
   };
 }
 
@@ -245,11 +252,11 @@ export class OrgExtensionConfigs {
       ).map((r) => r.item_id),
     );
     const seen = (name: string) => {
-      const item = items.get(name);
-      if (!item) return true;
-      return visibleTo(
-        { scope: item.builtin || required.has(name) ? "all" : item.scope },
-        listed.has(item.id),
+      const of = items.get(name);
+      if (!of) return true;
+      return (
+        required.has(name) ||
+        of.some((i) => visibleTo({ scope: i.builtin ? "all" : i.scope }, listed.has(i.id)))
       );
     };
     const views = loaded
@@ -287,25 +294,23 @@ export class OrgExtensionConfigs {
   }
 
   /**
-   * The catalog plugin whose org switch an `enabled` write of this extension is: its live item, unless
-   * the extension is a required bootstrap plugin (that stays `put`'s `extension.required` rule) or
-   * has no item (config-declared: written directly) or several. Null: write through {@link put}.
+   * How an `enabled` write of this extension is handled: `direct` through {@link put} (a required
+   * bootstrap plugin keeps `extension.required`; an extension without a live item is config-declared;
+   * several live items keep the direct write, the strictest source rules applying), `locked` (a live
+   * item is `all` or builtin and the write switches off: `plugin.scope_locked`), or `item` (the single
+   * plugin whose org switch it is).
    */
-  async switchItemOf(plugin: string): Promise<string | null> {
+  async switchPlan(
+    plugin: string,
+    enabled: boolean,
+  ): Promise<{ kind: "direct" } | { kind: "locked" } | { kind: "item"; itemId: string }> {
     const t = this.db;
-    if ((await requiredExtensions(t)).has(plugin)) return null;
-    const item = (await pluginItemsOf(t, [plugin])).get(plugin);
-    if (!item) return null;
-    // Brought in by several live items: no single plugin switch; the strictest source rules apply
-    const sources = await t
-      .selectFrom("extension_catalog_sources as s")
-      .innerJoin("catalog_items as i", "i.id", "s.item_id")
-      .select("i.id")
-      .where("s.plugin", "=", plugin)
-      .where("i.deleted_at", "is", null)
-      .where("i.id", "<>", item.id)
-      .executeTakeFirst();
-    return sources === undefined ? item.id : null;
+    if ((await requiredExtensions(t)).has(plugin)) return { kind: "direct" };
+    const items = (await pluginItemsOf(t, [plugin])).get(plugin);
+    if (!items) return { kind: "direct" };
+    if (!enabled && items.some(itemLocked)) return { kind: "locked" };
+    const [only] = items;
+    return items.length === 1 && only ? { kind: "item", itemId: only.id } : { kind: "direct" };
   }
 
   /**
@@ -418,6 +423,9 @@ export class OrgExtensionConfigs {
         next = r.data as Obj;
       }
       seen = { schema, config: next };
+      if (opts.validateOnly) {
+        return this.view(manifest, row, await this.setSecretKeys(t, orgId), required, item);
+      }
       if (input.config !== undefined) {
         changed = changedPaths(schema, before, next);
         plain = structuredClone(next);
@@ -705,7 +713,7 @@ export class OrgExtensionConfigs {
     row: { enabled: boolean; config: Obj | null } | undefined,
     setKeys: ReadonlySet<string>,
     required: boolean,
-    item: ExtensionPluginItem | undefined,
+    items: readonly ExtensionPluginItem[] | undefined,
   ): OrgExtensionView {
     const schema = m.config?.org;
     const paths = schema ? secretPaths(schema) : [];
@@ -725,7 +733,7 @@ export class OrgExtensionConfigs {
       orgConfigSchema: schema ? this.formSchema(m.name, m.version, schema) : null,
       available: true,
       required,
-      ...scopeFields(item, required),
+      ...scopeFields(items, required),
     };
   }
 

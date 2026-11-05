@@ -21,6 +21,7 @@ import {
   AdminCatalogRequestsController,
   OrgCatalogController,
 } from "../catalog/org-catalog.controller.js";
+import { OrgExtensionConfigsController } from "../catalog/org-extension.controller.js";
 import { ChannelsModule } from "../channels/channels.module.js";
 import { ChannelConnectionsController } from "../channels/connections.controller.js";
 import { AttachmentsController } from "../conversations/attachments.controller.js";
@@ -31,7 +32,6 @@ import { EvalRunsController } from "../evals/runs.controller.js";
 import { EvalSetsController } from "../evals/sets.controller.js";
 import { TrajectoryController } from "../evals/trajectory.controller.js";
 import { ExtensionsModule } from "../extensions/extensions.module.js";
-import { OrgExtensionConfigsController } from "../extensions/org-config.controller.js";
 import { ExtensionPointDefaultsController } from "../extensions/point-defaults.controller.js";
 import { FilesModule } from "../files/files.module.js";
 import { FilePreviewersController } from "../files/previewers.controller.js";

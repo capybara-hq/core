@@ -236,14 +236,15 @@ describe("组织插件配置 HTTP", () => {
       scope: "all" | "optional" | "named",
       orgs: string[] = [],
       builtin = false,
+      itemName = plugin,
     ): Promise<string> {
       const id = randomUUID();
       await db
         .insertInto("catalog_items")
         .values({
           id,
-          name: plugin,
-          package_name: `@acme/plugin-${plugin}`,
+          name: itemName,
+          package_name: `@acme/plugin-${itemName}`,
           publisher: "Acme",
           description: "Test",
           latest_version: "1.0.0",
@@ -307,6 +308,33 @@ describe("组织插件配置 HTTP", () => {
       expect(direct.json()).toMatchObject({
         extension: { plugin: "fixture", enabled: true, catalogItem: null, switchable: true },
       });
+    });
+
+    it("an extension sourced from several items: an all item locks it on; any item offered makes it visible", async () => {
+      const req = await session("owner");
+      const orgId = await createOrg(req);
+      await seedItem("orgcfg", "optional", [], false, "orgcfg-a");
+      await seedItem("orgcfg", "all", [], false, "orgcfg-b");
+      const locked = await req({
+        method: "PUT",
+        url: `/api/v1/orgs/${orgId}/extensions/orgcfg`,
+        payload: { enabled: false },
+      });
+      expect(locked.statusCode).toBe(409);
+      expect(errCode(locked)).toBe("plugin.scope_locked");
+      const list = await req({ method: "GET", url: `/api/v1/orgs/${orgId}/extensions` });
+      expect(
+        (list.json() as { extensions: Record<string, unknown>[] }).extensions.find(
+          (e) => e.plugin === "orgcfg",
+        ),
+      ).toMatchObject({ switchable: false, catalogItem: { scope: "all" } });
+      // named without the org + optional: visible through the optional one
+      await seedItem("fixture", "named", [], false, "fixture-a");
+      await seedItem("fixture", "optional", [], false, "fixture-b");
+      const again = await req({ method: "GET", url: `/api/v1/orgs/${orgId}/extensions` });
+      expect(
+        (again.json() as { extensions: { plugin: string }[] }).extensions.map((e) => e.plugin),
+      ).toContain("fixture");
     });
 
     it("optional: enabled:false records the switch off (no install to preview)", async () => {

@@ -11,6 +11,7 @@ import { CatalogScopeService } from "./catalog-scope.service.js";
 import { CatalogItemLock, CatalogSourceLock } from "./locks.js";
 import { MarketplacesService } from "./marketplaces.service.js";
 import { OrgCatalogService } from "./org-catalog.service.js";
+import { OrgExtensionSwitch } from "./org-extension-switch.js";
 import { PluginImport } from "./plugin-import.js";
 import { PluginInstaller } from "./plugin-install.js";
 import { PluginUpgrader } from "./plugin-upgrade.js";
@@ -59,6 +60,7 @@ export class CatalogImportModule {}
     PluginInstaller,
     PluginUpgrader,
     OrgCatalogService,
+    OrgExtensionSwitch,
     PluginScopeSync,
     CatalogScopeService,
   ],
@@ -68,6 +70,7 @@ export class CatalogImportModule {}
     PluginInstaller,
     PluginUpgrader,
     OrgCatalogService,
+    OrgExtensionSwitch,
     PluginScopeSync,
     CatalogScopeService,
   ],

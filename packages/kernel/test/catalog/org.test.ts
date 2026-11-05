@@ -1034,6 +1034,24 @@ describe("the org switch (plugin scope)", { timeout: 60_000 }, () => {
     expect(await env.db.selectFrom("plugin_installs").select("id").execute()).toHaveLength(0);
   });
 
+  it("an extension's PUT with an invalid config fails before the plugin switches", async () => {
+    const { itemId } = await importDeployedPlugin(env, "scoped-ext2");
+    const r = await env.boss({
+      method: "PUT",
+      url: `/api/v1/orgs/${env.orgId}/extensions/scoped-ext2`,
+      payload: { enabled: true, config: { a: 1 } },
+    });
+    expect(r.statusCode, r.body).toBe(400);
+    expect(await env.db.selectFrom("plugin_installs").select("id").execute()).toHaveLength(0);
+    expect(
+      await env.db
+        .selectFrom("catalog_item_org_switches")
+        .select("enabled")
+        .where("item_id", "=", itemId)
+        .execute(),
+    ).toHaveLength(0);
+  });
+
   it("all and builtin: not switchable, switching off is 409 plugin.scope_locked; a builtin is on without an install", async () => {
     const allId = await importSkill(env, { name: "all-skill" });
     await setScope(env, allId, "all");

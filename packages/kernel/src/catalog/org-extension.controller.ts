@@ -1,8 +1,8 @@
 import type { LocalizedName } from "@capybara-hq/plugin-sdk";
 import { Controller, Get, Inject, Param, Put } from "@nestjs/common";
 import { z } from "zod";
-import { OrgCatalogService } from "../catalog/org-catalog.service.js";
-import type { UninstallPreview } from "../catalog/plugin-install.js";
+import { ExtensionDisplayNames } from "../extensions/display-name.js";
+import { OrgExtensionConfigs, type OrgExtensionView } from "../extensions/org-config.js";
 import {
   CurrentPrincipal,
   type Principal,
@@ -12,8 +12,8 @@ import {
 import { createZodDto } from "../infra/validation/create-zod-dto.js";
 import { ZBody } from "../infra/validation/zod-params.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
-import { ExtensionDisplayNames } from "./display-name.js";
-import { OrgExtensionConfigs, type OrgExtensionView } from "./org-config.js";
+import { OrgExtensionSwitch } from "./org-extension-switch.js";
+import type { UninstallPreview } from "./plugin-install.js";
 
 const PutBody = z
   .object({
@@ -39,7 +39,7 @@ export class OrgExtensionConfigsController {
   constructor(
     @Inject(OrgExtensionConfigs) private readonly configs: OrgExtensionConfigs,
     @Inject(ExtensionDisplayNames) private readonly displayNames: ExtensionDisplayNames,
-    @Inject(OrgCatalogService) private readonly catalog: OrgCatalogService,
+    @Inject(OrgExtensionSwitch) private readonly extSwitch: OrgExtensionSwitch,
   ) {}
 
   /** The org's extensions (also the channel plugin options: those providing `channel@1`). */
@@ -54,11 +54,8 @@ export class OrgExtensionConfigsController {
   }
 
   /**
-   * Writes enablement and / or config. For an extension that ships in a catalog plugin, `enabled` is
-   * the plugin's org switch ({@link OrgCatalogService.setSwitch}): switching off without `confirm`
-   * answers `{ preview, confirm }` (the uninstall preview and its hash), with the hash it uninstalls;
-   * `all` and builtin plugins refuse (`plugin.scope_locked`). A required bootstrap plugin and an
-   * extension declared in the startup config keep the direct write. `config` is always a direct write.
+   * Writes enablement and / or config; see {@link OrgExtensionSwitch.put} for how `enabled` follows
+   * the extension's plugin (off answers `{ preview, confirm }` until `confirm` carries the hash).
    */
   @Put(":extension")
   @OrgAction("org.extensions.manage")
@@ -69,41 +66,8 @@ export class OrgExtensionConfigsController {
     @ZBody(OrgExtensionPutBody) body: z.infer<typeof PutBody>,
   ): Promise<{ extension: OrgExtensionItem } | { preview: UninstallPreview; confirm: string }> {
     const p = requireUser(principal);
-    const { confirm, ...input } = body;
-    const itemId = body.enabled === undefined ? null : await this.configs.switchItemOf(extension);
-    let write = input;
-    if (itemId !== null) {
-      const r = await this.catalog.setSwitch(
-        org.orgId,
-        p.account.id,
-        itemId,
-        body.enabled
-          ? { enabled: true }
-          : { enabled: false, ...(confirm !== undefined && { confirm }) },
-        patTokenId(p),
-      );
-      if (r.kind === "preview") return { preview: r.preview, confirm: r.confirm };
-      // The switch is done; what is left is the config (and, switching on, the enabled extension)
-      write = { ...input, enabled: body.enabled ? true : undefined };
-      if (!body.enabled && input.config === undefined) {
-        const view = (await this.configs.list(org.orgId)).find((v) => v.plugin === extension);
-        if (view)
-          return { extension: { ...view, displayName: await this.displayNames.get(extension) } };
-      }
-    }
-    // Switching on with nothing else to write: the install enabled it already (no second write)
-    const opts =
-      itemId !== null && body.enabled && input.config === undefined
-        ? { ifDisabled: { skipped: false } }
-        : {};
-    const view = await this.configs.put(
-      org.orgId,
-      extension,
-      write,
-      p.account.id,
-      patTokenId(p),
-      opts,
-    );
-    return { extension: { ...view, displayName: await this.displayNames.get(view.plugin) } };
+    const r = await this.extSwitch.put(org.orgId, p.account.id, extension, body, patTokenId(p));
+    if (r.kind === "preview") return { preview: r.preview, confirm: r.confirm };
+    return { extension: { ...r.view, displayName: await this.displayNames.get(r.view.plugin) } };
   }
 }
