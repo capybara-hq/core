@@ -31,7 +31,7 @@
     guest: ["all"],
     member: ["all", "member"],
     admin: ["all", "member", "admin"],
-    enterprise: ["all", "member", "admin", "enterprise"],
+    superAdmin: ["all", "member", "admin", "superAdmin"],
   };
 
   // ── Sidebar (v3: work and admin contexts) ─────────────────────────────────
@@ -192,7 +192,7 @@
   }
 
   function sidebar(o) {
-    const level = o.level || "enterprise";
+    const level = o.level || "superAdmin";
     const rail = o.mode === "rail";
     const setup = o.context === "setup";
     const admin = o.context === "admin";
@@ -244,7 +244,7 @@
     const context = admin ? adminBlock(o) : orgBlock(o);
     const middle = admin || setup || rail ? '<div class="r-sb-fill"></div>' : conversations(o);
     const adminEntry =
-      !admin && level === "enterprise" && (!setup || (o.setup || "admin") === "admin")
+      !admin && level === "superAdmin" && (!setup || (o.setup || "admin") === "admin")
         ? rail
           ? `<a class="r-nav-item r-rail-item r-sb-admin" href="#" aria-label="${esc(F.ADMIN_LABEL)}">${icon("admin")}</a>`
           : `<a class="r-nav-item r-sb-admin" href="#">${icon("admin")}<span class="r-ellipsis">${esc(F.ADMIN_LABEL)}</span>${icon("arrow-up-right", 14)}</a>`

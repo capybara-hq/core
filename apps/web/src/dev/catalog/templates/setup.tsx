@@ -36,12 +36,12 @@ export function SetupHomeBody() {
           steps={[
             {
               label: "配置模型",
-              description: "至少配置一个模型提供方，agent 才能回答。",
+              description: "至少配置一个模型提供方，智能体才能回答。",
               done: true,
             },
             {
-              label: "新建 agent",
-              description: "agent 决定用哪个模型、能用哪些工具和技能。",
+              label: "新建智能体",
+              description: "智能体决定用哪个模型、能用哪些工具和技能。",
               done: false,
               action: <Button variant="primary">新建</Button>,
             },
@@ -55,7 +55,7 @@ export function SetupHomeBody() {
             mark={{ icon: "channel" }}
             name="连接渠道"
             href={stay()}
-            description="在飞书或 Slack 里使用 agent。"
+            description="在飞书或 Slack 里使用智能体。"
           />
           <ObjectRow
             mark={{ icon: "user" }}

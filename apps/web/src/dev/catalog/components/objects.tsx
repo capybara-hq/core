@@ -9,7 +9,7 @@ export function ObjectsSection() {
     <Section title="对象列表 ObjectList" note="一行一个对象；空状态；需要处理的提示条">
       <Row label="ObjectList · 对象行（范围芯片、说明、元信息、最近使用、操作、菜单）">
         <Grid columns={1}>
-          <ObjectList label="Agent 列表">
+          <ObjectList label="智能体列表">
             <ObjectRow
               mark={{ text: "研" }}
               name="研究助手"
@@ -72,9 +72,9 @@ export function ObjectsSection() {
       <Row label="EmptyState">
         <Grid columns={1}>
           <EmptyState
-            text="还没有 agent"
-            hint="新建一个 agent，就能和它对话。"
-            action={{ label: "新建 agent", icon: "plus", variant: "primary", onSelect: noop }}
+            text="还没有智能体"
+            hint="新建一个智能体，就能和它对话。"
+            action={{ label: "新建智能体", icon: "plus", variant: "primary", onSelect: noop }}
           />
           <EmptyState
             size="compact"

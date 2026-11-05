@@ -579,14 +579,14 @@ export function listLoadingBlocks(): ReactNode {
   return (
     <>
       <RefBlock id="template-list-default-objects" width={W} height={H}>
-        <ListPage header={LIST_HEADER} variant="objects" listLabel="Agents">
+        <ListPage header={LIST_HEADER} variant="objects" listLabel="智能体">
           {AGENTS.map((name) => (
             <ObjectRow key={name} mark={{ text: name }} name={name} description="检索资料并整理" />
           ))}
         </ListPage>
       </RefBlock>
       <RefBlock id="template-list-loading-objects" width={W} height={H}>
-        <ListPage header={LIST_HEADER} variant="objects" listLabel="Agents" loading />
+        <ListPage header={LIST_HEADER} variant="objects" listLabel="智能体" loading />
       </RefBlock>
       {/* A list page whose content is its own sections (spec §5.1 `keep`). */}
       <RefBlock id="template-list-keep" width={W} height={H}>

@@ -198,8 +198,8 @@ export function TableCatalog() {
           rowKey={(r) => r.id}
           empty={{
             title: "还没有运行记录",
-            hint: "创建一个 Agent 并触发第一次运行",
-            action: <Button variant="primary">+ 新建 agent</Button>,
+            hint: "创建一个智能体并触发第一次运行",
+            action: <Button variant="primary">+ 新建智能体</Button>,
           }}
         />
       </Section>

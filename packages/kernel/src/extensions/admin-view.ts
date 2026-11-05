@@ -127,9 +127,13 @@ export class ExtensionAdmin {
     return this.kdb.db;
   }
 
-  /** 全部插件（配置声明 → 安装记录，各自按名字）。 */
-  async list(): Promise<AdminExtensionView[]> {
-    const subjects = await this.subjects();
+  /**
+   * Every extension (config-declared, then install records, each by name). With `names`, only
+   * those: no other package is read, so a caller that needs a few items (the catalog's pending
+   * check) neither pays for nor logs about the packages of unrelated extensions.
+   */
+  async list(names?: ReadonlySet<string>): Promise<AdminExtensionView[]> {
+    const subjects = await this.subjects(undefined, names);
     return this.views(subjects);
   }
 
@@ -279,10 +283,10 @@ export class ExtensionAdmin {
   }
 
   /** 配置声明 → 安装记录（与配置声明重名的安装记录不生效，不单列）。`only` 给出时只取这一个。 */
-  private async subjects(only?: string): Promise<Subject[]> {
-    const declared = this.host
-      .declaredPlugins()
-      .filter((p) => only === undefined || p.name === only);
+  private async subjects(only?: string, names?: ReadonlySet<string>): Promise<Subject[]> {
+    const wanted = (name: string) =>
+      (only === undefined || name === only) && (names === undefined || names.has(name));
+    const declared = this.host.declaredPlugins().filter((p) => wanted(p.name));
     const taken = new Set(this.host.declaredPlugins().map((p) => p.name));
     const out: Subject[] = [...declared]
       .sort((a, b) => a.name.localeCompare(b.name))
@@ -297,9 +301,7 @@ export class ExtensionAdmin {
         warnings: [],
       }));
     if (only !== undefined && out.length > 0) return out;
-    const rows = (await this.installs.list()).filter(
-      (r) => !taken.has(r.name) && (only === undefined || r.name === only),
-    );
+    const rows = (await this.installs.list()).filter((r) => !taken.has(r.name) && wanted(r.name));
     for (const r of rows) {
       let info: { set: PermissionSet; configurable: boolean; warnings: PackageWarning[] };
       try {

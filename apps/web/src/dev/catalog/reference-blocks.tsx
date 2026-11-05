@@ -90,7 +90,7 @@ function ButtonRow({ density, disabled }: { density?: "dense" | "prominent"; dis
   return (
     <Stack direction="row" gap={12} align="center" wrap>
       <Button variant="primary" disabled={disabled} {...d}>
-        新建 agent
+        新建智能体
       </Button>
       <Button variant="secondary" disabled={disabled} {...d}>
         部署
@@ -141,7 +141,7 @@ function buttonBlocks(): ReactNode {
         force={{ pseudo: ["focus", "focus-visible"], selector: "button" }}
       >
         <Stack direction="row" gap={12} align="center" wrap>
-          <Button variant="primary">新建 agent</Button>
+          <Button variant="primary">新建智能体</Button>
           <Button variant="default">导出</Button>
           <IconButton variant="default" label="更多操作" icon={<Icon name="more-horizontal" />} />
         </Stack>
@@ -1062,7 +1062,7 @@ function noAccessBlocks(): ReactNode {
         title="没有访问权限"
         description="「渠道」只对组织管理员开放。"
         need="组织管理员"
-        ask="如需访问，请联系本组织的管理员或所有者。"
+        ask="如需访问，请联系本组织的组织管理员。"
       />
     </RefBlock>
   );
@@ -1071,7 +1071,7 @@ function noAccessBlocks(): ReactNode {
 const DELETE_ITEM = (
   <DangerZoneItem
     title="删除组织"
-    description="所有成员都会失去这个组织的访问，agent、会话与设置不再可用。"
+    description="所有成员都会失去这个组织的访问，智能体、会话与设置不再可用。"
     action={{ label: "删除组织…", onSelect: noop }}
   />
 );
@@ -1086,7 +1086,7 @@ function dangerZoneBlocks(): ReactNode {
         <DangerZone title="危险操作">
           <DangerZoneItem
             title="转让所有权"
-            description="对方成为所有者，你成为管理员。"
+            description="对方成为组织所有者，你将降为组织管理员。"
             action={{ label: "转让…", onSelect: noop }}
           />
           {DELETE_ITEM}

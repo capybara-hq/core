@@ -94,7 +94,7 @@ function DetailBody() {
           },
         ],
       }}
-      tabs={{ label: "Agent 页内导航", items: DETAIL_TABS, value: tab, onChange: setTab }}
+      tabs={{ label: "智能体页内导航", items: DETAIL_TABS, value: tab, onChange: setTab }}
       inspector={inspector ? <DetailInspector /> : undefined}
       inspectorTitle="属性"
       onInspectorClose={() => setInspector(false)}

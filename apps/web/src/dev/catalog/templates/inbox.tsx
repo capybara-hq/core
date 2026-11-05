@@ -64,7 +64,7 @@ function InboxBody() {
         />
       }
       inspector={<DetailInspector />}
-      inspectorTitle="Agent 属性"
+      inspectorTitle="智能体属性"
       actionRow={{
         cancel: { label: "跳过", onSelect: noop },
         secondary: { label: "拒绝", onSelect: noop },

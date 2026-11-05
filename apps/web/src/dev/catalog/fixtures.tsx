@@ -83,7 +83,7 @@ export type AgentRow = {
   spark: number[];
 };
 
-/** 确定性的 12 段迷你趋势（每个 Agent 不同）。 */
+/** 确定性的 12 段迷你趋势（每个智能体不同）。 */
 function sparkOf(seed: number): number[] {
   return Array.from({ length: 12 }, (_, i) => 1 + ((seed * 7 + i * 5 + ((i * i + seed) % 3)) % 6));
 }
@@ -457,7 +457,7 @@ export const SHEET_PROPS: [string, string][] = [
 // ── 组件（e-components）──────────────────────────────────────────────────
 
 export const BUTTON_VARIANTS = [
-  { variant: "primary", name: "Primary", use: "实心主色", label: "新建 agent" },
+  { variant: "primary", name: "Primary", use: "实心主色", label: "新建智能体" },
   { variant: "secondary", name: "Secondary", use: "主色描边", label: "部署" },
   { variant: "default", name: "Default", use: "中性描边", label: "导出" },
   { variant: "ghost", name: "Ghost", use: "无边框", label: "取消" },

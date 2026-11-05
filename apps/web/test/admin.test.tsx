@@ -279,7 +279,7 @@ describe("/admin/orgs（ListPage）", () => {
     });
     await renderRouteWithCache("/admin/orgs", lastStubRoutes(), { locale: "zh" });
     const hint = await screen.findByText(zh.admin.orgs.hint);
-    expect(hint.textContent).toContain("该组织的管理员");
+    expect(hint.textContent).toContain("需要成为组织管理员");
     expect(hint.getAttribute("data-variant")).toBe("prose");
     expect("memberHint" in zh.admin.orgs).toBe(false);
   });

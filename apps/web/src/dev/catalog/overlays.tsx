@@ -80,7 +80,7 @@ function DialogDemo() {
           <Text variant="small" tone="muted">
             {RERUN_IDS}
           </Text>
-          <Checkbox checked={latest} onChange={setLatest} label="使用最新的 Agent 版本" />
+          <Checkbox checked={latest} onChange={setLatest} label="使用最新的智能体版本" />
         </Stack>
       </Dialog>
     </Backdrop>
@@ -97,7 +97,7 @@ function DangerDemo() {
       <DangerConfirm
         open={open}
         onOpenChange={setOpen}
-        title="删除 Agent"
+        title="删除智能体"
         description="此操作不可撤销。历史运行记录保留 30 天。"
         confirmName="support-triage"
         confirmLabel="删除"

@@ -1,7 +1,7 @@
 {
   "metadata": {
     "title": "Capybara",
-    "description": "Enterprise agent platform"
+    "description": "Agent platform for organizations"
   },
   "common": {
     "appName": "Capybara",
@@ -62,10 +62,10 @@
     "title": "Home",
     "noMemberships": "You have not joined any organization yet.",
     "agents": "Agents",
-    "noMembershipsHint": "Ask an organization admin to invite you.",
+    "noMembershipsHint": "Ask an org admin to invite you.",
     "role": "Role",
     "slug": "Slug",
-    "noMembershipsCreateHint": "Create an organization to get started, or ask an organization admin to invite you.",
+    "noMembershipsCreateHint": "Create an organization to get started, or ask an org admin to invite you.",
     "createOrg": {
       "open": "Create organization",
       "title": "Create an organization",
@@ -1463,7 +1463,7 @@
     },
     "limits": {
       "title": "Sandbox resources",
-      "description": "CPU and memory available to each sandbox. Super admins adjust them per organization in deployment settings; organization admins can only view them.",
+      "description": "CPU and memory available to each sandbox. Super admins adjust them per organization in deployment settings; org admins can only view them.",
       "cpu": "CPU",
       "cpuValue": "{cpu} cores",
       "memory": "Memory",
@@ -2363,7 +2363,7 @@
     },
     "orgs": {
       "title": "Organizations",
-      "hint": "Empty values use the deployment default, and organization admins can only view them in their settings; to manage settings inside an organization, you need to be an admin of that organization.",
+      "hint": "Empty values use the deployment default, and org admins can only view them in their settings; to manage settings inside an organization, you need to be an org admin.",
       "empty": "No organizations yet.",
       "default": "Default",
       "edit": "Set limits",
@@ -2425,7 +2425,7 @@
       "customConnectors": {
         "title": "Custom connectors",
         "description": "Whether organizations may add connectors themselves, outside the catalog.",
-        "allowHint": "Organization admins can add connectors themselves or install them from the catalog.",
+        "allowHint": "Org admins can add connectors themselves or install them from the catalog.",
         "denyHint": "Organizations can only install connectors from the catalog."
       },
       "customSkills": {
@@ -2832,7 +2832,7 @@
         },
         "componentsEmpty": "This version has no components.",
         "orgsHint": {
-          "all": "All organizations: on in every organization; organization admins cannot turn it off.",
+          "all": "All organizations: on in every organization; org admins cannot turn it off.",
           "optional": "Organizations choose: {n, plural, one {# organization has} other {# organizations have}} turned it on.",
           "named": "Selected organizations: only the organizations below can use it."
         },
@@ -3139,8 +3139,8 @@
         "title": "Set the scope of {name}",
         "scopeLabel": "Scope",
         "hints": {
-          "all": "On in every organization, including new ones; organization admins cannot turn it off.",
-          "optional": "Off by default; each organization admin turns it on.",
+          "all": "On in every organization, including new ones; org admins cannot turn it off.",
+          "optional": "Off by default; each org admin turns it on.",
           "named": "On only in the organizations you choose."
         },
         "orgsLabel": "Organizations",
@@ -3306,7 +3306,7 @@
       "requester": "Requested by",
       "version": "Version",
       "note": "Note",
-      "hint": "If approved: allowed items can be installed by an organization admin; items that need approval are forwarded to a super admin.",
+      "hint": "If approved: allowed items can be installed by an org admin; items that need approval are forwarded to a super admin.",
       "approve": "Approve",
       "reject": "Reject",
       "approved": "Catalog request approved",
@@ -3418,7 +3418,7 @@
     "listLabel": "Your organizations",
     "enter": "Open",
     "create": "Create organization",
-    "askHint": "Ask an organization admin to invite you.",
+    "askHint": "Ask an org admin to invite you.",
     "admin": "Open the admin console",
     "logout": "Sign out"
   },

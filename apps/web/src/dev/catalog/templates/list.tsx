@@ -103,19 +103,19 @@ function ListBody() {
     <ListPage
       header={{
         path: [{ label: "capybara", href: "/dev/ui" }, { label: "agents" }],
-        title: "Agents",
+        title: "智能体",
         count: "24",
         metrics: LIST_KPIS,
         actions: [
           { label: "导入", variant: "default" },
           { label: "导出", variant: "default" },
-          { label: "新建 agent", variant: "primary", icon: "plus", href: "/dev/ui/templates/form" },
+          { label: "新建智能体", variant: "primary", icon: "plus", href: "/dev/ui/templates/form" },
         ],
       }}
       rail={<Facets />}
     >
       <DataTable<AgentRow>
-        label="Agents"
+        label="智能体"
         columns={COLUMNS}
         rows={AGENTS}
         rowKey={(a) => a.name}
@@ -127,7 +127,7 @@ function ListBody() {
         toolbar={
           <Stack direction="row" gap={8} align="center">
             <Input
-              aria-label="搜索 Agent"
+              aria-label="搜索智能体"
               placeholder="搜索"
               prefix={<Icon name="search" size={14} />}
               suffix="/"
@@ -158,7 +158,7 @@ function ListBody() {
   );
 }
 
-/** T2 列表：Agents（e-list）。 */
+/** T2 列表：智能体（e-list）。 */
 export function ListTemplate() {
   return (
     <FixtureShell nav="agents" context="agents">

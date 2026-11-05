@@ -334,7 +334,7 @@ function runDividerBlocks(): ReactNode {
       <Block id="run-divider-fallback">
         <RunDivider
           kind="fallback"
-          text={`所选模型 ${D.fallback.from} 已不可用，本条起改用 agent 的模型 ${D.fallback.to}`}
+          text={`所选模型 ${D.fallback.from} 已不可用，本条起改用智能体的模型 ${D.fallback.to}`}
         />
       </Block>
       <Block id="run-divider-notice">

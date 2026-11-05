@@ -46,7 +46,7 @@ function FormBody() {
           { label: "agents", href: "/dev/ui/templates/list" },
           { label: "new" },
         ],
-        title: "新建 agent",
+        title: "新建智能体",
         status: <Badge>草稿</Badge>,
         actions: [{ label: "从 YAML 导入", variant: "default" }],
       }}
@@ -140,7 +140,7 @@ function FormBody() {
   );
 }
 
-/** T4 表单：新建 agent（e-form）。 */
+/** T4 表单：新建智能体（e-form）。 */
 export function FormTemplate() {
   return (
     <FixtureShell nav="agents" context="agents/new">

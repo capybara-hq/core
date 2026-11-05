@@ -551,6 +551,50 @@ describe("same version, different bytes", () => {
   });
 });
 
+describe("the confirm's catalog view during bootstrap", () => {
+  it("reads only the confirmed plugin's package: another unreadable package logs no admin-view warning", async () => {
+    await reset();
+    const v1 = await fixture([
+      { bytes: await lifePkg({ name: "alpha", version: "1.0.0" }) },
+      { bytes: await lifePkg({ name: "beta", version: "1.0.0" }) },
+    ]);
+    await boot(v1);
+    await stopAll();
+    // beta's bytes are gone (as when the object store is not loaded yet during bootstrap)
+    const beta = await db
+      .selectFrom("extension_installs")
+      .select("sha256")
+      .where("name", "=", "beta")
+      .executeTakeFirstOrThrow();
+    await db.deleteFrom("extension_blobs").where("sha256", "=", beta.sha256).execute();
+    const v2 = await fixture([
+      { bytes: await lifePkg({ name: "alpha", version: "1.1.0" }) },
+      { bytes: await lifePkg({ name: "beta", version: "1.0.0" }) },
+    ]);
+    const warns: { msg: string; fields?: Record<string, unknown> }[] = [];
+    const base = createLogger("error");
+    const logger = new Proxy(base, {
+      get(t, k, receiver) {
+        if (k === "warn") {
+          return (msg: string, fields?: Record<string, unknown>) => {
+            warns.push({ msg, ...(fields !== undefined && { fields }) });
+          };
+        }
+        const v = Reflect.get(t, k);
+        return typeof v === "function" ? v.bind(k === "child" ? receiver : t) : v;
+      },
+    });
+    const k = await boot(v2, {}, logger);
+    const r = (await audits("bootstrap.completed")).at(-1)?.detail as { results: unknown[] };
+    expect(r.results).toEqual([
+      { name: "alpha", action: "upgraded", version: "1.1.0" },
+      { name: "beta", action: "kept", version: "1.0.0" },
+    ]);
+    expect(k.app.get(ExtensionHost).current("alpha")?.manifest.version).toBe("1.1.0");
+    expect(warns.filter((w) => w.msg.includes("unreadable for the admin view"))).toEqual([]);
+  });
+});
+
 describe("tampered and missing packages (Review Focus 2)", () => {
   const tampered = async (): Promise<{ dir: string; manifest: BootstrapManifest }> => {
     const fx = await fixture([

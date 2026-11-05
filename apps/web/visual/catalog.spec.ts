@@ -73,14 +73,14 @@ for (const theme of THEMES) {
     // 悬停 / 焦点 / 按下等交互态无法静态渲染，裁剪到元素截图。
     test("交互：悬停主按钮", async ({ page }) => {
       await open(page, "components", theme);
-      const button = page.getByRole("button", { name: "新建 Agent" }).first();
+      const button = page.getByRole("button", { name: "新建智能体" }).first();
       await button.hover();
       await expect(button).toHaveScreenshot(shotName("hover-primary-button", theme));
     });
 
     test("交互：按下主按钮", async ({ page }) => {
       await open(page, "components", theme);
-      const button = page.getByRole("button", { name: "新建 Agent" }).first();
+      const button = page.getByRole("button", { name: "新建智能体" }).first();
       await button.hover();
       // 只按下不松开，定格 :active 态
       await page.mouse.down();
@@ -121,7 +121,7 @@ for (const theme of THEMES) {
 
     test("交互：键盘聚焦输入框", async ({ page }) => {
       await open(page, "components", theme);
-      const input = page.getByLabel("Agent 名称").first();
+      const input = page.getByLabel("智能体名称").first();
       await input.focus();
       const field = input.locator("xpath=ancestor::div[contains(@class, 'cb-field')][1]");
       await expect(field).toHaveScreenshot(shotName("focus-input", theme));

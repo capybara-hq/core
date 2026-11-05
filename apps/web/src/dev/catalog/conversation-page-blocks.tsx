@@ -252,7 +252,7 @@ function pickers(state: ComposerState, open?: "agent" | "model" | "effort") {
       items: g.models.map((m, mi) => ({
         id: `${g.provider}/${m.id}`,
         label: m.label,
-        ...(gi === 0 && mi === 0 ? { tag: "agent 默认" } : {}),
+        ...(gi === 0 && mi === 0 ? { tag: "智能体默认" } : {}),
         checked: g.provider === model.provider && m.id === model.model,
       })),
     })),
@@ -795,7 +795,7 @@ function thread(kind: "main" | "file" | "subagent"): ReactNode {
     return (
       <>
         <UserBubble text="有需要规整的吗？" />
-        <Prose markdown="文件较多，我先让子 agent 列出完整目录树，同时对照流程实际读写的文件。" />
+        <Prose markdown="文件较多，我先让子智能体列出完整目录树，同时对照流程实际读写的文件。" />
         <SubagentGroup rows={S.running.map(running)} openId={S.open} onOpen={noop} now={NOW} />
         <Prose markdown="目录树还在生成，我先整理当前版本流程引用的文件和文件夹 ID……" />
       </>

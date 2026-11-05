@@ -51,7 +51,7 @@ function StressBody() {
           { label: "TOKENS", value: "8,888,888" },
         ],
         actions: [
-          { label: "编辑这个名字特别特别长的 Agent", variant: "default" },
+          { label: "编辑这个名字特别特别长的智能体", variant: "default" },
           { label: "试运行", variant: "primary" },
         ],
       }}

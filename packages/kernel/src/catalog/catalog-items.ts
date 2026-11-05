@@ -647,7 +647,10 @@ export async function itemConfirmations(
     return sha === null ? [] : [{ item: i, sha }];
   });
   if (withExtension.length === 0) return out;
-  const installed = new Map((await admin.list()).map((v) => [v.name, v]));
+  // only these items' extensions: reading every installed package would also log each one that
+  // cannot be read right now (the bootstrap step confirms before the object store is loaded)
+  const names = new Set(withExtension.map((w) => w.item.name));
+  const installed = new Map((await admin.list(names)).map((v) => [v.name, v]));
   for (const { item, sha } of withExtension) {
     const v = installed.get(item.name);
     if (!v) {

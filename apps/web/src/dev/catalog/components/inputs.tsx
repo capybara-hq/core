@@ -13,16 +13,16 @@ export function InputsSection() {
   return (
     <Section title="输入 Input / Select / Textarea" note="高 28；标签在上；错误信息在下">
       <Grid columns={4} gap={16}>
-        <Field label="Agent 名称" help="默认">
+        <Field label="智能体名称" help="默认">
           <Input placeholder="support-triage" />
         </Field>
-        <Field label="Agent 名称" help="小写字母、数字与 -，创建后不可修改">
+        <Field label="智能体名称" help="小写字母、数字与 -，创建后不可修改">
           <Input defaultValue="support-triage" />
         </Field>
-        <Field label="Agent 名称" required error="名称已存在">
+        <Field label="智能体名称" required error="名称已存在">
           <Input defaultValue="kb-ingest" />
         </Field>
-        <Field label="Agent 名称" help="禁用">
+        <Field label="智能体名称" help="禁用">
           <Input defaultValue="support-triage" disabled />
         </Field>
         <Field label="模型" help="Select">
