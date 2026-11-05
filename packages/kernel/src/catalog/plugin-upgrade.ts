@@ -1069,9 +1069,12 @@ export class PlatformPluginUpdater {
       .select(["sha256", "version"])
       .where("name", "=", name)
       .executeTakeFirst();
-    const loaded = this.registry.manifests().find((m) => m.name === name);
+    // Only an extension declared in the startup config runs without an install record; one this
+    // replica still has loaded after its uninstall (until its reconcile) does not count
+    const declared = this.registry.declared().get(name) === "config";
+    const loaded = declared ? this.registry.manifests().find((m) => m.name === name) : undefined;
     if (!want) {
-      if (from?.manifest.extension && (row || loaded)) {
+      if (from?.manifest.extension && (row || declared)) {
         throw targetInvalid(
           `Version ${to.version} of plugin ${name} has no extension, but the deployment runs it; uninstall the extension first`,
           [{ reason: "extension_removed", version: to.version }],
@@ -1081,11 +1084,11 @@ export class PlatformPluginUpdater {
     }
     if (row) {
       if (row.sha256 === to.extension_sha256) return null;
-    } else if (loaded) {
-      if (loaded.version === want.manifest.version) return null;
+    } else if (declared) {
+      if (loaded?.version === want.manifest.version) return null;
       throw targetInvalid(
-        `The extension of plugin ${name} is declared in the startup config at version ${loaded.version}; it cannot be moved to ${want.manifest.version} by an update`,
-        [{ reason: "config_extension", deploymentVersion: loaded.version }],
+        `The extension of plugin ${name} is declared in the startup config at version ${loaded?.version ?? "(not loaded)"}; it cannot be moved to ${want.manifest.version} by an update`,
+        [{ reason: "config_extension", deploymentVersion: loaded?.version ?? null }],
       );
     }
     if (to.extension_sha256 === null) {

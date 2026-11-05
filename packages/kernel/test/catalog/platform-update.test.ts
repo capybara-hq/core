@@ -5,6 +5,7 @@ import { PlatformComponents } from "../../src/catalog/platform-components.js";
 import { PluginInstaller } from "../../src/catalog/plugin-install.js";
 import type { PlatformUpdatePreview } from "../../src/catalog/plugin-upgrade.js";
 import { ExtensionHost } from "../../src/extensions/host.js";
+import { ExtensionRegistry } from "../../src/extensions/registry.js";
 import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import { currentStore } from "../../src/infra/database/transaction-host.js";
 import { SkillsService } from "../../src/skills/skills.service.js";
@@ -816,6 +817,17 @@ describe("platform plugin update: the extension (fix round 1)", { timeout: 180_0
       .where("plugin", "=", "upd-add")
       .execute();
     expect(await extensionRow("upd-add")).toBeUndefined();
+    // This replica may still run the uninstalled extension until its reconcile catches up (the
+    // flake this pins down): a loaded extension without an install record is not config-declared
+    const realManifests = ExtensionRegistry.prototype.manifests;
+    const stillLoaded = vi
+      .spyOn(ExtensionRegistry.prototype, "manifests")
+      .mockImplementation(function (this: ExtensionRegistry) {
+        const ms = realManifests.call(this);
+        return ms.some((m) => m.name === "upd-add")
+          ? ms
+          : [...ms, { name: "upd-add", version: "2.0.0" } as (typeof ms)[number]];
+      });
     // without extensionPermissions.autoApprove (the test kernels turn it on) it waits for approval
     const realGet = KernelConfigService.prototype.get;
     const noAuto = vi.spyOn(KernelConfigService.prototype, "get").mockImplementation(function (
@@ -828,6 +840,7 @@ describe("platform plugin update: the extension (fix round 1)", { timeout: 180_0
     expect(p.extension).toEqual({ from: null, to: "2.0.0", orgs: [], needsApproval: true });
     noAuto.mockRestore();
     expect((await previewOk(item, "2.0.0")).extension?.needsApproval).toBe(false);
+    stillLoaded.mockRestore();
     vi.spyOn(PlatformComponents.prototype, "applySyncIn").mockRejectedValueOnce(
       new Error("injected sync failure"),
     );
