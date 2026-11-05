@@ -1,6 +1,6 @@
 "use client";
 
-import { ListPage, ObjectRow, Stack, Text, versionLabel } from "@capybara-hq/design";
+import { ListPage, type MenuItem, ObjectRow, Stack, Text, versionLabel } from "@capybara-hq/design";
 import { useQuery } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
@@ -13,7 +13,9 @@ import { usePagePath } from "../../../components/shell/path";
 import { issueLines } from "../../../lib/api";
 import {
   displayNameOf,
+  groupMarketplaceEntries,
   type MarketplaceEntry,
+  type MarketplacePlugin,
   type OrgCatalogItem,
   requestMarketplaceEntry,
 } from "../../../lib/catalog";
@@ -74,7 +76,9 @@ function Plugins({ orgId, me }: { orgId: string; me: Me }) {
   if (list.kind === "notFound") return <NotFound />;
   if (list.kind === "error") return <ErrorFrame reset={list.retry} />;
   const items = list.kind === "ready" ? list.data.items : [];
-  const entries = market.data?.items;
+  // One row per plugin of a marketplace, at its latest version
+  const entries =
+    market.data === undefined ? undefined : groupMarketplaceEntries(market.data.items);
   const showMarket = admin && entries !== undefined;
   const active = showMarket && tab === "market" ? "market" : "plugins";
 
@@ -168,10 +172,11 @@ function Plugins({ orgId, me }: { orgId: string; me: Me }) {
 const keyOf = (e: MarketplaceEntry) => `${e.sourceId}/${e.name}/${e.version ?? ""}`;
 
 /**
- * The 市场 tab (org admins, spec §5.1 rule 3): the marketplaces' entries, read-only; 申请引入
- * asks the enterprise admin to bring an entry in (approving runs the import review with this org
- * as the scope). An entry asked for in this visit reads 已申请，等待处理; one the deployment has
- * imported reads 已引入.
+ * The 市场 tab (org admins, spec §5.1 rule 3): the marketplaces' plugins, one row per plugin of a
+ * marketplace at its latest version, read-only; 申请引入 asks the enterprise admin to bring the
+ * latest in (approving runs the import review with this org as the scope), and the row menu's
+ * 其他版本 asks for another version. A version asked for in this visit reads 已申请，等待处理 (the
+ * latest) or 已申请 <version>，等待处理; a plugin the deployment has imported reads 已引入.
  */
 function Market({
   orgId,
@@ -180,7 +185,7 @@ function Market({
 }: {
   orgId: string;
   header: Parameters<typeof ListPage>[0]["header"];
-  entries: MarketplaceEntry[];
+  entries: MarketplacePlugin[];
 }) {
   const t = useTranslations("plugins");
   const locale = useLocale();
@@ -213,20 +218,47 @@ function Market({
   };
   const summaryOf = (e: MarketplaceEntry) =>
     locale === "zh" && e.summary.zh !== undefined ? e.summary.zh : e.summary.en;
-  const stateOf = (e: MarketplaceEntry) =>
-    asked.has(keyOf(e))
-      ? { label: t("state.requested"), tone: "muted" as const }
-      : e.adopted !== null
-        ? { label: t("market.adopted"), tone: "ok" as const }
-        : !e.compatible || !e.importable
-          ? { label: t("market.unavailable"), tone: "muted" as const }
-          : undefined;
+  const stateOf = ({ latest: e, others }: MarketplacePlugin) => {
+    if (asked.has(keyOf(e))) return { label: t("state.requested"), tone: "muted" as const };
+    const other = others.find((o) => asked.has(keyOf(o)));
+    if (other?.version != null) {
+      return {
+        label: t("market.requestedVersion", { version: versionLabel(other.version) }),
+        tone: "muted" as const,
+      };
+    }
+    return e.adopted !== null
+      ? { label: t("market.adopted"), tone: "ok" as const }
+      : !e.compatible || !e.importable
+        ? { label: t("market.unavailable"), tone: "muted" as const }
+        : undefined;
+  };
   const requestable = (e: MarketplaceEntry) =>
     !asked.has(keyOf(e)) &&
     e.adopted === null &&
     e.compatible &&
     e.importable &&
     e.version !== null;
+  /** 其他版本: 申请引入 each other version that can be asked for (asked ones read 已申请). */
+  const menuOf = ({ others }: MarketplacePlugin): MenuItem[] => {
+    const items = others.flatMap((o): MenuItem[] => {
+      if (o.version === null) return [];
+      const version = versionLabel(o.version);
+      if (asked.has(keyOf(o))) {
+        return [
+          {
+            label: t("market.requestedVersion", { version }),
+            disabled: true,
+            onSelect: () => {},
+          },
+        ];
+      }
+      return requestable(o)
+        ? [{ label: t("market.requestVersion", { version }), onSelect: () => void request(o) }]
+        : [];
+    });
+    return items.length > 0 ? [{ label: t("market.otherVersions"), submenu: items }] : [];
+  };
   return (
     <ListPage
       header={header}
@@ -251,17 +283,19 @@ function Market({
         : {})}
       {...(entries.length === 0 ? { empty: { text: t("market.empty") } } : {})}
     >
-      {entries.map((e) => {
-        const state = stateOf(e);
+      {entries.map((plugin) => {
+        const e = plugin.latest;
+        const state = stateOf(plugin);
         return (
           <ObjectRow
-            key={keyOf(e)}
+            key={plugin.key}
             mark={{ text: e.name }}
             name={e.name}
             mono
             description={summaryOf(e)}
             meta={[e.sourceName, ...(e.version !== null ? [versionLabel(e.version)] : [])]}
             {...(state !== undefined ? { state } : {})}
+            menu={menuOf(plugin)}
             {...(requestable(e)
               ? {
                   action: {

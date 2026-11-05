@@ -3032,7 +3032,10 @@
         "view": "View",
         "homepage": "Homepage",
         "loadFailed": "Marketplace entries failed to load.",
-        "retry": "Retry"
+        "retry": "Retry",
+        "adoptedUpdate": "Imported {version} · update to {latest} available",
+        "update": "Update",
+        "otherVersions": "Other versions"
       },
       "marketplaces": {
         "title": "Marketplace sources",
@@ -3567,7 +3570,10 @@
       "title": "Marketplace",
       "empty": "The marketplaces have no entries yet.",
       "adopted": "Imported",
-      "unavailable": "Cannot be imported"
+      "unavailable": "Cannot be imported",
+      "otherVersions": "Other versions",
+      "requestVersion": "Request import of {version}",
+      "requestedVersion": "Requested {version}, waiting"
     },
     "detail": {
       "installs": "This organization's install"

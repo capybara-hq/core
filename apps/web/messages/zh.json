@@ -3020,7 +3020,10 @@
         "view": "查看",
         "homepage": "主页",
         "loadFailed": "市场条目没有加载出来。",
-        "retry": "重试"
+        "retry": "重试",
+        "adoptedUpdate": "已引入 {version} · 可更新到 {latest}",
+        "update": "更新",
+        "otherVersions": "其他版本"
       },
       "marketplaces": {
         "title": "市场源",
@@ -3555,7 +3558,10 @@
       "title": "市场",
       "empty": "市场里还没有条目。",
       "adopted": "已引入",
-      "unavailable": "不能引入"
+      "unavailable": "不能引入",
+      "otherVersions": "其他版本",
+      "requestVersion": "申请引入 {version}",
+      "requestedVersion": "已申请 {version}，等待处理"
     },
     "detail": {
       "installs": "本组织的安装"

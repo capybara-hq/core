@@ -437,6 +437,61 @@ describe("/plugins: states and actions follow the scope and the switch", () => {
     expect(screen.queryByRole("tab", { name: new RegExp(p.tabs.market) })).toBeNull();
   });
 
+  it("org admins: the 市场 tab has one row per plugin, the latest version; 其他版本 requests an older one", async () => {
+    const p = en.plugins;
+    const entry = (version: string) => ({
+      sourceId: "official",
+      sourceName: "Official",
+      name: "jina",
+      version,
+      summary: { en: "Web tools" },
+      minKernel: null,
+      homepage: null,
+      permissions: null,
+      source: { npm: { package: "@x/jina", version, integrity: "sha512-x" } },
+      compatible: true,
+      importable: true,
+      adopted: null,
+      newerAvailable: false,
+      contentChanged: false,
+    });
+    const calls = stubApi({
+      [`GET ${ORG}/catalog`]: () => json(200, { items: [orgItem()] }),
+      [`GET ${ORG}/marketplaces/entries`]: () =>
+        json(200, { items: [entry("1.1.0"), entry("1.10.0"), entry("1.2.0")] }),
+      [`POST ${ORG}/marketplace-requests`]: () => json(201, { request: { id: "r1" } }),
+    });
+    await renderPlugins();
+    const user = userEvent.setup();
+    const tab = await screen.findByRole("tab", { name: new RegExp(p.tabs.market) });
+    expect(tab.textContent).toContain("1");
+    await user.click(tab);
+    const list = await screen.findByRole("list", { name: p.market.title });
+    expect(within(list).getAllByRole("listitem")).toHaveLength(1);
+    expect(within(list).getByText(/v1\.10\.0/)).toBeTruthy();
+    await user.click(within(list).getByRole("button", { name: p.action.requestImport }));
+    await waitFor(() =>
+      expect(bodyOf(calls.find((c) => c.method === "POST"))).toMatchObject({ version: "1.10.0" }),
+    );
+    expect(await within(list).findByText(p.state.requested)).toBeTruthy();
+    // the older versions are in the row's menu
+    await user.click(within(list).getByRole("button", { name: "More actions" }));
+    await user.click(await screen.findByRole("menuitem", { name: p.market.otherVersions }));
+    const older = await screen.findByRole("menuitem", {
+      name: fill(p.market.requestVersion, { version: "v1.2.0" }),
+    });
+    expect(
+      screen.getByRole("menuitem", { name: fill(p.market.requestVersion, { version: "v1.1.0" }) }),
+    ).toBeTruthy();
+    older.focus();
+    await user.keyboard("{Enter}");
+    await waitFor(() =>
+      expect(bodyOf(calls.filter((c) => c.method === "POST").at(-1))).toMatchObject({
+        version: "1.2.0",
+      }),
+    );
+  });
+
   it("members get no 市场 tab and read no entries", async () => {
     const calls = stubApi({ [`GET ${ORG}/catalog`]: () => json(200, { items: [orgItem()] }) });
     await renderPlugins({ me: MEMBER });
@@ -1502,7 +1557,7 @@ describe("/admin/plugins and marketplace entries", () => {
     const calls = stubApi({
       "GET /api/v1/admin/marketplaces": () => json(200, SOURCES),
       "GET /api/v1/admin/marketplaces/entries": () =>
-        json(200, { items: [entry()], truncated: false }),
+        json(200, { items: [entry({ adopted: null, newerAvailable: false })], truncated: false }),
       "POST /api/v1/admin/marketplaces/official/entries/cat-a/import": () =>
         fail
           ? json(502, { error: { code: "marketplace.integrity_mismatch", message: "x" } })
@@ -1530,6 +1585,83 @@ describe("/admin/plugins and marketplace entries", () => {
       expect(router.push).toHaveBeenCalledWith("/admin/plugins/import?staging=st9"),
     );
     expect(bodyOf(calls.filter((x) => x.method === "POST").at(-1))).toEqual({ version: "2.0.0" });
+  });
+
+  it("entries: one row per plugin with its latest version; an older import can be updated; 其他版本 imports another version", async () => {
+    const c = en.catalog.admin.entries;
+    const at = (name: string, v: string, over: Record<string, unknown> = {}) =>
+      entry({ name, version: v, adopted: null, newerAvailable: false, ...over });
+    const old = { adopted: { itemId: ID, versions: ["1.0.0-rc.0"] } };
+    const calls = stubApi({
+      "GET /api/v1/admin/marketplaces": () => json(200, SOURCES),
+      "GET /api/v1/admin/marketplaces/entries": () =>
+        json(200, {
+          items: [
+            // imported at an older version; rc.10 is the newest (semver, not text order)
+            at("cat-a", "1.0.0-rc.2", { ...old, newerAvailable: true }),
+            at("cat-a", "1.0.0-rc.10", { ...old, newerAvailable: true }),
+            at("cat-a", "1.0.0-rc.0", old),
+            // never imported
+            at("dog-b", "0.9.0"),
+            at("dog-b", "1.0.0"),
+            // imported at the latest
+            at("eel-c", "2.0.0", { adopted: { itemId: "e1", versions: ["2.0.0"] } }),
+            at("eel-c", "1.0.0", { adopted: { itemId: "e1", versions: ["2.0.0"] } }),
+          ],
+          truncated: false,
+        }),
+      "POST /api/v1/admin/marketplaces/official/entries/cat-a/import": () =>
+        json(200, { stagingId: "st9", review: REVIEW }),
+    });
+    await renderRouteWithCache(entriesPath(), lastStubRoutes());
+    const list = await screen.findByRole("list", { name: c.title });
+    expect(within(list).getAllByRole("listitem")).toHaveLength(3);
+    const row = (name: string) => within(list).getByText(name).closest("li") as HTMLElement;
+    // imported at an older version: 可更新到 the latest, 更新 imports it
+    const cat = row("cat-a");
+    expect(
+      within(cat).getByText(
+        fill(c.adoptedUpdate, { version: "v1.0.0-rc.0", latest: "v1.0.0-rc.10" }),
+      ),
+    ).toBeTruthy();
+    // the state says it: no 有新版本 chip
+    expect(within(cat).queryByText(en.catalog.newer)).toBeNull();
+    const user = userEvent.setup();
+    await user.click(within(cat).getByRole("button", { name: c.update }));
+    await waitFor(() =>
+      expect(bodyOf(calls.filter((x) => x.method === "POST").at(-1))).toEqual({
+        version: "1.0.0-rc.10",
+      }),
+    );
+    // never imported: 未引入 and 引入 the latest
+    const dog = row("dog-b");
+    expect(within(dog).getByText(c.notAdopted)).toBeTruthy();
+    expect(
+      within(dog).getByRole("button", { name: fill(c.importVersion, { version: "v1.0.0" }) }),
+    ).toBeTruthy();
+    // imported at the latest: 已引入 and 查看
+    const eel = row("eel-c");
+    expect(within(eel).getByText(fill(c.adopted, { version: "v2.0.0" }))).toBeTruthy();
+    expect(within(eel).getByRole("link", { name: c.view }).getAttribute("href")).toContain(
+      "/admin/plugins/e1",
+    );
+    // 其他版本: the other versions, the imported one not importable again
+    await user.click(within(cat).getByRole("button", { name: "More actions" }));
+    await user.click(await screen.findByRole("menuitem", { name: c.otherVersions }));
+    const rc2 = await screen.findByRole("menuitem", {
+      name: fill(c.importVersion, { version: "v1.0.0-rc.2" }),
+    });
+    const rc0 = screen.getByRole("menuitem", {
+      name: fill(c.adopted, { version: "v1.0.0-rc.0" }),
+    });
+    expect(rc0.getAttribute("aria-disabled")).toBe("true");
+    rc2.focus();
+    await user.keyboard("{Enter}");
+    await waitFor(() =>
+      expect(bodyOf(calls.filter((x) => x.method === "POST").at(-1))).toEqual({
+        version: "1.0.0-rc.2",
+      }),
+    );
   });
 
   it("item detail: the agent templates of the latest version", async () => {

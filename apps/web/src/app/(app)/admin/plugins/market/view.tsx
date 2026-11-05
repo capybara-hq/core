@@ -19,10 +19,13 @@ import { usePagePath } from "../../../../../components/shell/path";
 import { useRouter } from "../../../../../i18n/navigation";
 import { issueLines } from "../../../../../lib/api";
 import {
+  compareSemver,
   entryHost,
+  groupMarketplaceEntries,
   importMarketplaceEntry,
   importPageHref,
   type MarketplaceEntry,
+  type MarketplacePlugin,
   marketplaceSourceText,
   shortCommit,
 } from "../../../../../lib/catalog";
@@ -47,15 +50,17 @@ const keyOf = (e: MarketplaceEntry) => `${e.sourceId}/${e.name}/${e.version ?? "
 /**
  * `/admin/plugins/market`: browse marketplace entries (enterprise admins, the 插件 tab 市场), as
  * object rows.
- * One entry is one version of a plugin. A row: the mono name, the summary, a meta line (the
+ * One entry is one version of a plugin; a row is one plugin of one marketplace, at its latest
+ * version (see {@link groupMarketplaceEntries}). A row: the mono name, the summary, a meta line (the
  * marketplace, its source: npm package, archive URL, a git URL pinned to a commit or following a
- * branch, a path in the marketplace's repository; the version, incompatible ones marked; the
- * permission summary with the sensitive count in warn), the state (not imported / imported
- * <version>, or why it cannot be imported: a host outside `marketplaces.allowedHosts`, a path
- * entry of an http marketplace), chips for a newer version or changed content, one action and a
- * menu. The action "Import <version>" (or, when the content changed, "Import the changed content")
- * downloads, verifies and stages the plugin, then opens the import review
- * (`/admin/plugins/import?staging=<id>`); an imported entry's action opens its plugin. The
+ * branch, a path in the marketplace's repository; the version only when incompatible or unnamed;
+ * the permission summary with the sensitive count in warn), the state (未引入 / 已引入 <version> /
+ * 已引入 <version> · 可更新到 <latest>, or why it cannot be imported: a host outside
+ * `marketplaces.allowedHosts`, a path entry of an http marketplace), a chip for changed content,
+ * one action and a menu. The action 引入 <latest> (更新 when an older version is imported; when the
+ * content changed, "Import the changed content") downloads, verifies and stages the plugin, then
+ * opens the import review (`/admin/plugins/import?staging=<id>`); a plugin imported at the latest
+ * opens its plugin. The menu's 其他版本 imports another version the same way. The
  * search sits in the page head (the 插件 head with its tabs and counts); the marketplaces become
  * tabs above the list when there is more than one. Errors such as `marketplace.integrity_mismatch` are a fail callout (with the kernel's
  * line naming the host for network and git codes); a warn callout when the entries are truncated.
@@ -103,7 +108,7 @@ function Catalog({ initial }: { initial: { sourceId: string; q: string } }) {
   const sources = useQuery({ ...mq, retryOnMount: retryOnMountOf(mq.queryKey) }).data?.items;
   const [notice, setNotice] = useState<Notice>();
   const [busy, setBusy] = useState<string>();
-  const rows = state.kind === "ready" ? state.data.items : [];
+  const rows = groupMarketplaceEntries(state.kind === "ready" ? state.data.items : []);
   const truncated = state.kind === "ready" && state.data.truncated === true;
   const sourceList = sources ?? [];
   const qc = useQueryClient();
@@ -159,7 +164,8 @@ function Catalog({ initial }: { initial: { sourceId: string; q: string } }) {
       e.sourceName,
       ...("path" in e.source ? [] : [marketplaceSourceText(e.source)]),
       ...(note !== null ? [note] : []),
-      versionText(e),
+      // the version is in the state or the action, unless it is incompatible or unnamed
+      ...(!e.compatible || e.version === null ? [versionText(e)] : []),
       ...(e.permissions === null
         ? [t("permissionsNone")]
         : [
@@ -183,43 +189,86 @@ function Catalog({ initial }: { initial: { sourceId: string; q: string } }) {
       : e.version === null
         ? t("import")
         : t("importVersion", { version: versionLabel(e.version) });
-  /** The row's one action: import (again, when the content changed), or open the imported item. */
+  /** The newest imported version of the plugin (undefined when none is imported). */
+  const importedTop = (e: MarketplaceEntry) => e.adopted?.versions[0] ?? undefined;
+  /**
+   * Another version than the row's latest is imported, and not a newer one: the row offers 更新 to
+   * the latest (an imported version that is not semver counts as older). Returns that version.
+   */
+  const updatable = (e: MarketplaceEntry) => {
+    const top = importedTop(e);
+    if (top === undefined || e.version === null || imported(e)) return undefined;
+    if (!e.compatible || !e.importable) return undefined;
+    return (compareSemver(top, e.version) ?? -1) < 0 ? top : undefined;
+  };
+  const canImport = (e: MarketplaceEntry) =>
+    e.importable && e.compatible && (!imported(e) || e.contentChanged);
+  const viewHref = (itemId: string) => `/admin/plugins/${encodeURIComponent(itemId)}`;
+  /**
+   * The row's one action: 引入 the latest (更新 when an older version is imported; again when the
+   * content changed), or open the imported item.
+   */
   const actionOf = (e: MarketplaceEntry) => {
-    if (e.importable && e.compatible && (!imported(e) || e.contentChanged)) {
+    if (canImport(e) && (e.adopted === null || imported(e) || updatable(e) !== undefined)) {
       return {
-        label: importLabel(e),
+        label: updatable(e) !== undefined ? t("update") : importLabel(e),
         onSelect: () => {
           if (busy === undefined) void doImport(e);
         },
       };
     }
-    if (e.adopted !== null) {
-      return { label: t("view"), href: `/admin/plugins/${encodeURIComponent(e.adopted.itemId)}` };
-    }
+    if (e.adopted !== null) return { label: t("view"), href: viewHref(e.adopted.itemId) };
     return undefined;
   };
-  const menuOf = (e: MarketplaceEntry): MenuItem[] => [
-    ...(!e.importable
-      ? [{ label: reasonOf(e), disabled: true, onSelect: () => {} }]
-      : !e.compatible
-        ? [{ label: t("noCompatible"), disabled: true, onSelect: () => {} }]
+  /** One other version in 其他版本: import it, or why not (imported, incompatible, unimportable). */
+  const otherItem = (o: MarketplaceEntry): MenuItem => {
+    const v = o.version === null ? t("noVersion") : versionLabel(o.version);
+    if (canImport(o)) {
+      return {
+        label: importLabel(o),
+        onSelect: () => {
+          if (busy === undefined) void doImport(o);
+        },
+      };
+    }
+    const label = imported(o)
+      ? t("adopted", { version: v })
+      : !o.compatible
+        ? t("incompatible", { version: v })
+        : t("importVersion", { version: v });
+    return { label, disabled: true, onSelect: () => {} };
+  };
+  const menuOf = ({ latest: e, others }: MarketplacePlugin): MenuItem[] => {
+    const action = actionOf(e);
+    return [
+      ...(!e.importable
+        ? [{ label: reasonOf(e), disabled: true, onSelect: () => {} }]
+        : !e.compatible
+          ? [{ label: t("noCompatible"), disabled: true, onSelect: () => {} }]
+          : []),
+      ...(e.adopted !== null && action?.label !== t("view")
+        ? [{ label: t("view"), href: viewHref(e.adopted.itemId) }]
         : []),
-    ...(e.adopted !== null
-      ? [{ label: t("view"), href: `/admin/plugins/${encodeURIComponent(e.adopted.itemId)}` }]
-      : []),
-    ...(e.homepage !== null ? [{ label: t("homepage"), href: e.homepage }] : []),
-  ];
-  const stateOf = (e: MarketplaceEntry) =>
-    !e.importable
-      ? { label: reasonOf(e), tone: "warn" as const }
-      : e.adopted === null
-        ? { label: t("notAdopted"), tone: "muted" as const }
-        : {
-            label: t("adopted", {
-              version: e.adopted.versions[0] == null ? "" : versionLabel(e.adopted.versions[0]),
-            }),
-            tone: "ok" as const,
-          };
+      ...(others.length > 0 ? [{ label: t("otherVersions"), submenu: others.map(otherItem) }] : []),
+      ...(e.homepage !== null ? [{ label: t("homepage"), href: e.homepage }] : []),
+    ];
+  };
+  const stateOf = (e: MarketplaceEntry) => {
+    if (!e.importable) return { label: reasonOf(e), tone: "warn" as const };
+    const top = importedTop(e);
+    if (e.adopted === null) return { label: t("notAdopted"), tone: "muted" as const };
+    const older = updatable(e);
+    return {
+      label:
+        older !== undefined && e.version !== null
+          ? t("adoptedUpdate", {
+              version: versionLabel(older),
+              latest: versionLabel(e.version),
+            })
+          : t("adopted", { version: top === undefined ? "" : versionLabel(top) }),
+      tone: "ok" as const,
+    };
+  };
 
   const filtering = sourceId !== "" || query !== "";
   const callout =
@@ -281,11 +330,12 @@ function Catalog({ initial }: { initial: { sourceId: string; q: string } }) {
           }
         : {})}
     >
-      {rows.map((e) => {
+      {rows.map((plugin) => {
+        const e = plugin.latest;
         const action = actionOf(e);
         return (
           <ObjectRow
-            key={keyOf(e)}
+            key={plugin.key}
             mark={{
               text: e.name,
               ...(!e.importable ? { tone: "warn" as const } : {}),
@@ -293,14 +343,14 @@ function Catalog({ initial }: { initial: { sourceId: string; q: string } }) {
             name={e.name}
             mono
             chips={[
-              ...(e.newerAvailable ? [{ label: td("newer") }] : []),
+              // 有新版本 is the state's 可更新到; the changed content is said only here
               ...(e.contentChanged ? [{ label: td("contentChanged"), tone: "warn" as const }] : []),
             ]}
             description={summaryOf(e)}
             meta={metaOf(e)}
             state={stateOf(e)}
             {...(action ? { action } : {})}
-            menu={menuOf(e)}
+            menu={menuOf(plugin)}
           />
         );
       })}

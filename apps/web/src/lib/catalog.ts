@@ -537,6 +537,70 @@ export interface MarketplaceEntry {
   contentChanged: boolean;
 }
 
+const SEMVER = /^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/;
+
+/**
+ * Semver precedence of two versions (build metadata ignored, as the kernel's `compareVersions`):
+ * negative when `a` is older, positive when newer, 0 for the same release; null when either is not
+ * semver.
+ */
+export function compareSemver(a: string, b: string): number | null {
+  const x = SEMVER.exec(a);
+  const y = SEMVER.exec(b);
+  if (x === null || y === null) return null;
+  for (let i = 1; i <= 3; i++) {
+    const d = Number(x[i]) - Number(y[i]);
+    if (d !== 0) return Math.sign(d);
+  }
+  const [pa, pb] = [x[4], y[4]];
+  if (pa === undefined || pb === undefined) return pa === pb ? 0 : pa === undefined ? 1 : -1;
+  const ia = pa.split(".");
+  const ib = pb.split(".");
+  for (let i = 0; i < Math.max(ia.length, ib.length); i++) {
+    const [u, v] = [ia[i], ib[i]];
+    if (u === undefined) return -1;
+    if (v === undefined) return 1;
+    if (u === v) continue;
+    const [nu, nv] = [/^\d+$/.test(u), /^\d+$/.test(v)];
+    if (nu && nv) return Math.sign(Number(u) - Number(v));
+    if (nu !== nv) return nu ? -1 : 1;
+    return u < v ? -1 : 1;
+  }
+  return 0;
+}
+
+/** One plugin of one marketplace: its entries, newest first; `latest` is the row's version. */
+export interface MarketplacePlugin {
+  key: string;
+  latest: MarketplaceEntry;
+  /** The other versions, newest first. */
+  others: MarketplaceEntry[];
+}
+
+/**
+ * Groups marketplace entries (one per version) into one row per (marketplace, plugin), in the order
+ * the plugins first appear. Versions are ordered by semver, newest first; a version that is not
+ * semver keeps its place in the kernel's order (newest first). The latest is the newest version
+ * that can be imported (compatible and importable), else the newest.
+ */
+export function groupMarketplaceEntries(entries: readonly MarketplaceEntry[]): MarketplacePlugin[] {
+  const groups = new Map<string, MarketplaceEntry[]>();
+  for (const e of entries) {
+    const key = `${e.sourceId}/${e.name}`;
+    const list = groups.get(key);
+    if (list === undefined) groups.set(key, [e]);
+    else list.push(e);
+  }
+  return [...groups].map(([key, list]) => {
+    const sorted = [...list].sort((a, b) =>
+      a.version === null || b.version === null ? 0 : (compareSemver(b.version, a.version) ?? 0),
+    );
+    const latest =
+      sorted.find((e) => e.compatible && e.importable) ?? (sorted[0] as MarketplaceEntry);
+    return { key, latest, others: sorted.filter((e) => e !== latest) };
+  });
+}
+
 /** What a request asks for (kernel `CatalogRequestKind`). */
 export type CatalogRequestKind = "access" | "import" | "enable";
 
