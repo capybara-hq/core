@@ -161,9 +161,15 @@ describe("初始化向导（配置了 auth.setupToken）", () => {
     expect(setCookies(ok).map((c) => c.name)).toEqual(expect.arrayContaining(["cap_at", "cap_rt"]));
     const me = await req({ method: "GET", url: "/api/v1/me" });
     expect(me.statusCode).toBe(200);
-    const meBody = me.json() as { account: Account; memberships: { role: string }[] };
+    const meBody = me.json() as {
+      account: Account;
+      memberships: { orgId: string; role: string }[];
+      currentOrgId: string | null;
+    };
     expect(meBody.account.isEnterpriseAdmin).toBe(true);
     expect(meBody.memberships.map((m) => m.role)).toEqual(["owner"]);
+    // the org named at setup is the session's current org at once
+    expect(meBody.currentOrgId).toBe(meBody.memberships[0]?.orgId);
 
     expect((await anon({ method: "GET", url: "/api/v1/setup" })).json()).toEqual({
       needsSetup: false,
@@ -499,6 +505,10 @@ describe("企业管理员端点", () => {
   it("PUT /admin/settings { orgCreation: enterprise_admin } 后普通用户 POST /orgs → 403 org.creation_disabled", async () => {
     const adminReq = await session("admin");
     const userReq = await session("user");
+    const canCreate = async (req: typeof userReq) =>
+      ((await req({ method: "GET", url: "/api/v1/me" })).json() as { canCreateOrg: boolean })
+        .canCreateOrg;
+    expect(await canCreate(userReq)).toBe(true);
     expect((await adminReq({ method: "GET", url: "/api/v1/admin/settings" })).json()).toEqual({
       orgCreation: "anyone",
       runConcurrencyOverrides: {},
@@ -529,6 +539,9 @@ describe("企业管理员端点", () => {
       payload: { orgCreation: "nobody" },
     });
     expect(bad.statusCode).toBe(400);
+    // /me tells the web app whether to offer "create an organization"
+    expect(await canCreate(userReq)).toBe(false);
+    expect(await canCreate(adminReq)).toBe(true);
     const denied = await userReq({ method: "POST", url: "/api/v1/orgs", payload: { name: "X" } });
     expect(denied.statusCode).toBe(403);
     expect(errCode(denied)).toBe("org.creation_disabled");

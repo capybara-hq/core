@@ -1,6 +1,13 @@
 import { readFileSync } from "node:fs";
 import { expect, type Page, test } from "@playwright/test";
-import { composer, startChat, toolGroup } from "./support/chat";
+import {
+  composer,
+  newAgent,
+  openAgentSection,
+  saveSection,
+  startChat,
+  toolGroup,
+} from "./support/chat";
 import { signIn } from "./support/sign-in";
 
 /** 界面文案取自 zh 文案文件，避免与实现重复硬编码。 */
@@ -109,8 +116,10 @@ test("管理员上传技能包，agent 选用它；对话里 Skill 的时间线�
   const orgId = await currentOrg(page);
 
   // 1. 技能库：上传 zip（GitHub 式外层目录），列表出现该技能
-  await page.goto("/zh/skills");
+  await page.goto("/skills");
   await expect(page.locator('[data-template="ListPage"]')).toBeVisible();
+  // the upload lives in a dialog opened from the page head (or the empty state)
+  await page.getByRole("button", { name: zh.skills.upload.open }).first().click();
   await expect(page.getByText(zh.skills.upload.layoutHint)).toBeVisible();
   const zip = makeZip({
     "e2e-notes-main/SKILL.md": `---\nname: ${SKILL}\ndescription: Write notes in the house style.\n---\n# Notes\n\nUse short lines.\n`,
@@ -120,24 +129,23 @@ test("管理员上传技能包，agent 选用它；对话里 Skill 的时间线�
     .locator('input[type="file"]')
     .setInputFiles({ name: "e2e-notes-main.zip", mimeType: "application/zip", buffer: zip });
   await expect(page.getByText(fill(zh.skills.upload.created, { name: SKILL }))).toBeVisible();
-  const table = page.getByRole("table", { name: zh.skills.listLabel });
+  const table = page.getByRole("list", { name: zh.skills.listLabel });
   await table.getByText(SKILL, { exact: true }).click();
 
   // 2. 详情：SKILL.md 正文按纯文本显示
-  await expect(page).toHaveURL(/\/zh\/skills\/[^/]+$/);
+  await expect(page).toHaveURL(/\/skills\/[^/]+$/);
   await expect(page.locator("pre")).toContainText("# Notes");
 
-  // 3. 新建 agent，在技能分组里勾选它，并置顶（skills.pinned）
-  await page.goto("/zh/agents/new");
+  // 3. 新建 agent，在 agent 页面的「技能」分组里勾选它，并置顶（skills.pinned）
+  await newAgent(page, "Skill agent");
+  await openAgentSection(page, "skills");
   const group = page.getByRole("group", { name: zh.agents.form.orgSkillsLabel });
   await group.getByRole("checkbox", { name: new RegExp(SKILL) }).check();
   const pinnedGroup = page.getByRole("group", { name: zh.agents.form.pinnedLabel });
   await pinnedGroup
     .getByRole("checkbox", { name: fill(zh.agents.form.pinSkill, { name: SKILL }) })
     .check();
-  await page.getByRole("textbox", { name: zh.agents.form.nameLabel }).fill("Skill agent");
-  await page.getByRole("button", { name: zh.agents.form.submit }).click();
-  await expect(page).toHaveURL(/\/zh\/agents$/);
+  await saveSection(page);
 
   // 4. 对话：model-fake 按脚本调用 Skill，时间线显示工具给的中文摘要
   const agents = (await (await page.request.get(`/api/v1/orgs/${orgId}/agents`)).json()) as {
@@ -150,7 +158,7 @@ test("管理员上传技能包，agent 选用它；对话里 Skill 的时间线�
   expect(agent?.definition.skills?.orgSkills).toHaveLength(1);
   expect(agent?.definition.skills?.pinned).toEqual(agent?.definition.skills?.orgSkills);
   // the edit page shows it pinned after a reload
-  await page.goto(`/zh/agents/${agent?.id}`);
+  await page.goto(`/agents/${agent?.id}?s=skills`);
   await page.reload();
   await expect(
     page
@@ -163,7 +171,7 @@ test("管理员上传技能包，agent 选用它；对话里 Skill 的时间线�
   });
   expect(conv.status(), await conv.text()).toBe(201);
   const convId = ((await conv.json()) as { conversation: { id: string } }).conversation.id;
-  await page.goto(`/zh/chat/${convId}`);
+  await page.goto(`/chat/${convId}`);
   const input = composer(page);
   await input.fill(`tool:Skill:${JSON.stringify({ skill: SKILL })}`);
   await input.press("Enter");
@@ -197,7 +205,7 @@ test("共享 agent 用 SkillWrite 改技能：发起人确认工具调用，负�
     data: { agentId },
   });
   const convId = ((await conv.json()) as { conversation: { id: string } }).conversation.id;
-  await page.goto(`/zh/chat/${convId}`);
+  await page.goto(`/chat/${convId}`);
 
   // 1. 共享 agent 的 SkillWrite 固定要确认：发起人（也是负责人）在对话里批准工具调用
   const write = {
@@ -216,7 +224,7 @@ test("共享 agent 用 SkillWrite 改技能：发起人确认工具调用，负�
   await expect(toolGroup(page, "SkillWrite")).toHaveAttribute("data-tool-status", "done");
 
   // 2. 收件箱：技能变更卡片显示 agent、文件与差异；负责人批准
-  await page.goto("/zh/inbox");
+  await page.goto("/inbox");
   const list = page.getByRole("table", { name: zh.inbox.listLabel });
   await list.getByText(`${zh.inbox.skillChange.label} · team-glossary`).click();
   const card = page.locator("[data-skill-change-id]");
@@ -232,16 +240,17 @@ test("共享 agent 用 SkillWrite 改技能：发起人确认工具调用，负�
   await expect(page.getByText(zh.inbox.skillChange.approved)).toBeVisible();
   await expect(list.getByText(`${zh.inbox.skillChange.label} · team-glossary`)).toHaveCount(0);
 
-  // 3. 批准后成为 agent 自己的技能：编辑页只读列出
-  await page.goto(`/zh/agents/${agentId}`);
+  // 3. 批准后成为 agent 自己的技能：编辑页的技能分组只读列出
+  await page.goto(`/agents/${agentId}?s=skills`);
   const own = page.getByRole("group", { name: zh.agents.form.ownSkillsLabel });
   await expect(own.getByText("team-glossary · v1")).toBeVisible();
 });
 
 /** Uploads a one-skill zip through the skill library page; returns the skill's id. */
 async function uploadSkill(page: Page, orgId: string, name: string, md: string): Promise<string> {
-  await page.goto("/zh/skills");
+  await page.goto("/skills");
   await expect(page.locator('[data-template="ListPage"]')).toBeVisible();
+  await page.getByRole("button", { name: zh.skills.upload.open }).first().click();
   await page.locator('input[type="file"]').setInputFiles({
     name: `${name}.zip`,
     mimeType: "application/zip",
@@ -319,7 +328,7 @@ test("phase D: invoke skills from the / menu and typed, queue one, run a forked 
   await expect(input).toHaveAttribute("placeholder", "[issue-number]");
   await input.fill("123");
   await input.press("Enter");
-  await expect(page).toHaveURL(/\/zh\/chat\/[^/?#]+(#.*)?$/);
+  await expect(page).toHaveURL(/\/chat\/[^/?#]+(#.*)?$/);
   const first = bubble("/e2e-fix-issue");
   await expect(first.locator('[data-part="bubble"]')).toHaveText("/e2e-fix-issue123");
   await first.getByRole("button", { name: zh.chat.skillInstructions }).click();
@@ -363,8 +372,9 @@ test("phase D: invoke skills from the / menu and typed, queue one, run a forked 
   await expect(page.locator('[data-entry="user"]').filter({ hasText: "slow:300:" })).toBeVisible();
   await expect(input).toHaveValue("");
   await expect(page.locator('[data-entry="prose"][data-streaming="true"]')).toBeVisible();
+  // while the run goes, ↵ queues (⌘↵ / Ctrl+↵ would send now; conversation send design D1)
   await input.fill("/e2e-fix-issue 9");
-  await input.press("ControlOrMeta+Enter");
+  await input.press("Enter");
   const queue = page.locator('[data-entry="queue"]');
   await expect(queue.locator('[data-part="bubble-skill"]')).toHaveText("/e2e-fix-issue");
   await expect(queue).toHaveCount(0, { timeout: 60_000 });

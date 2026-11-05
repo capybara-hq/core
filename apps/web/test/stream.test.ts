@@ -150,7 +150,7 @@ describe("reduceChat", () => {
   it("运行已到终态后到达的 delta 被忽略，终态时丢弃该运行的草稿", () => {
     const s = apply(initialChatState, [started(1)], delta("x"), [aborted(2)]);
     expect(chatItems(s).filter((i) => i.kind === "prose")).toEqual([]);
-    expect(texts(apply(s, delta("y")))).toEqual(["divider:"]);
+    expect(texts(apply(s, delta("y")))).toEqual(["run:"]);
   });
 
   it("run_started 之后、终态之前为运行中", () => {
@@ -205,7 +205,7 @@ describe("reduceChat", () => {
     expect(s.running).toBe(false);
   });
 
-  it("an aborted run is a stopped divider, run_failed a failed divider", () => {
+  it("an aborted run is a stopped run row, run_failed a failed one", () => {
     const s = apply(initialChatState, [
       started(1),
       assistant(2, 0, "part", "aborted"),
@@ -215,8 +215,8 @@ describe("reduceChat", () => {
     ]);
     const items = chatItems(s);
     expect(items[0]).toMatchObject({ kind: "prose", text: "part" });
-    expect(items[1]).toMatchObject({ kind: "divider", divider: "stopped" });
-    expect(items[2]).toMatchObject({ kind: "divider", divider: "failed", code: "model.failed" });
+    expect(items[1]).toMatchObject({ kind: "run", status: "stopped" });
+    expect(items[2]).toMatchObject({ kind: "run", status: "failed", code: "model.failed" });
   });
 
   it("a pinned-skill failure (storage.unavailable) keeps the kernel's message", () => {
@@ -230,7 +230,7 @@ describe("reduceChat", () => {
       ),
     ]);
     expect(chatItems(s).at(-1)).toMatchObject({
-      divider: "failed",
+      status: "failed",
       code: "storage.unavailable",
       message: 'Pinned skill "notes" cannot be read',
     });
@@ -247,7 +247,10 @@ describe("reduceChat", () => {
       ),
       ev(3, "run_failed", { error: { code: "run.hook_denied", message: "x" } }, "r3"),
     ]);
-    expect(chatItems(s).at(-1)).toMatchObject({ divider: "hook-denied", plugin: "guard" });
+    expect(chatItems(s).at(-1)).toMatchObject({
+      status: "failed",
+      hook: { plugin: "guard", reason: "nope" },
+    });
   });
 
   it("thinking carries the model that produced it: the step's model_call, else run_started's", () => {

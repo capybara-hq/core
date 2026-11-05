@@ -25,7 +25,7 @@ const COLUMNS: Column<RecentRun>[] = [
 function OverviewBody() {
   useStatusBar("自动刷新 15s");
   return (
-    <OverviewPage header={{ title: "概览" }}>
+    <OverviewPage header={{ path: [{ label: "~" }], title: "概览" }}>
       <Stack gap={16}>
         <Grid columns={4} gap={16}>
           {LIST_KPIS.map((k) => (

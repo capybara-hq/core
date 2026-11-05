@@ -1,5 +1,6 @@
 import * as RD from "@radix-ui/react-dialog";
 import { type ReactNode, useEffect, useId, useRef, useState } from "react";
+import { FIELDS } from "../controls/a11y";
 import { Button, IconButton } from "../controls/index";
 import { Input } from "../controls/inputs";
 import { Icon } from "../icons/icon";
@@ -12,7 +13,15 @@ export type DialogProps = {
   title: string;
   size?: 480 | 640;
   footer: ReactNode;
+  /**
+   * Where focus starts: by default the first field of the body when the dialog asks for input,
+   * else the primary action; `cancel` (a dangerous dialog) always starts on Cancel.
+   */
   initialFocus?: "primary" | "cancel" | undefined;
+  /**
+   * A dangerous dialog (paired with `initialFocus="cancel"`): marked `data-danger`; the frame and
+   * title stay ordinary, only its destructive button is red (spec §6.7).
+   */
   danger?: boolean;
   /** 描述正文的元素 id，作为对话框的 aria-describedby。 */
   describedBy?: string | undefined;
@@ -32,6 +41,7 @@ export function Dialog({
 }: DialogProps) {
   const t = useDesignT();
   const footerRef = useRef<HTMLDivElement>(null);
+  const bodyRef = useRef<HTMLDivElement>(null);
   const focusReturn = useFocusReturn();
   return (
     <RD.Root open={open} onOpenChange={onOpenChange}>
@@ -46,14 +56,19 @@ export function Dialog({
           onOpenAutoFocus={(e) => {
             focusReturn.capture();
             const buttons = Array.from(
-              footerRef.current?.querySelectorAll<HTMLElement>("button:not(:disabled)") ?? [],
+              footerRef.current?.querySelectorAll<HTMLElement>("button:not(:disabled), a[href]") ??
+                [],
             );
+            // A dialog that asks for input starts on its first field (spec §6.7)
+            const field = bodyRef.current?.querySelector<HTMLElement>(FIELDS) ?? undefined;
             const target =
               initialFocus === "cancel"
                 ? buttons[0]
-                : (buttons.find((b) =>
+                : (field ??
+                  buttons.find((b) =>
                     ["primary", "danger-solid"].includes(b.getAttribute("data-variant") ?? ""),
-                  ) ?? buttons[buttons.length - 1]);
+                  ) ??
+                  buttons[buttons.length - 1]);
             if (target) {
               e.preventDefault();
               target.focus();
@@ -70,7 +85,9 @@ export function Dialog({
               />
             </RD.Close>
           </div>
-          <div className="cb-dialog-body">{children}</div>
+          <div className="cb-dialog-body" ref={bodyRef}>
+            {children}
+          </div>
           <div className="cb-dialog-foot" ref={footerRef}>
             {footer}
           </div>

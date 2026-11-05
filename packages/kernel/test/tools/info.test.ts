@@ -156,6 +156,8 @@ describe("tool kinds", () => {
       Glob: "search",
       Grep: "search",
       Deliver: "tool",
+      TaskOutput: "read",
+      TaskStop: "command",
       ToolSearch: "meta",
       Skill: "meta",
       SkillWrite: "meta",

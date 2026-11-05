@@ -1,11 +1,14 @@
 "use client";
 
 import { Button, Skeleton, Stack, useToast } from "@capybara-hq/design";
+import { useQueries, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback } from "react";
 import { ApiClientError } from "../../lib/api";
+import { retryOnMountOf } from "../../lib/query/client";
+import { useAppMutation } from "../../lib/query/mutation";
+import { type UiViewTarget, uiViewQuery } from "../../lib/query/ui";
 import {
-  getUiView,
   postUiAction,
   type UiActionRequest,
   type UiLocale,
@@ -31,139 +34,77 @@ export interface ViewTarget {
   item?: string;
   /** The tool call an inline card hangs off. */
   card?: { callId: string; key?: string };
+  /** Not shown now (an inline card out of view): it keeps its view and reads none. */
+  paused?: boolean;
 }
 
 /** The state key of a target. */
 export const targetKey = (t: ViewTarget) => t.key ?? uiKey(t.plugin, t.id);
 
-/** 一个视图的取数进度：每个视图同时至多一个请求在途。 */
-interface Run {
-  /** 当前要取的版本（组织 / 会话 / 语言 / 刷新计数 / 重试计数）。 */
-  want: string;
-  /** 最近一次发出的请求对应的版本。 */
-  sent: string;
-  inflight: boolean;
-  /** 发请求用的参数（随最新一次渲染更新）。 */
-  args: {
-    orgId: string;
-    plugin: string;
-    id: string;
-    conversationId?: string;
-    locale: UiLocale;
-    item?: string;
-    card?: { callId: string; key?: string };
-  };
-  /** Aborts the request in flight when the view goes away. */
-  ctrl?: AbortController;
-}
+/** The read of a target. */
+const readOf = (t: ViewTarget): UiViewTarget => ({
+  plugin: t.plugin,
+  id: t.id,
+  ...(t.item !== undefined && { item: t.item }),
+  ...(t.card !== undefined && { card: t.card }),
+});
 
 /**
- * Loads a set of extension views independently: one failing (slow, throwing, an invalid view) only
- * affects its own state (review focus 1). When the count for `extension/contribution` or `*` in
- * `versions` changes, the matching view is fetched again; `retry(key)` goes back to loading and
- * fetches once more; `setView` replaces a view with the one an action returned.
- * Refresh coalescing: at most one request per view is in flight; refreshes arriving meanwhile (any
- * number) cause one more fetch after it completes.
+ * Loads a set of extension views independently, through the query cache (`uiViewQuery`): one
+ * failing (slow, throwing, an invalid view) only affects its own state (review focus 1). Refreshes
+ * come from `refreshUiViews` (the UI stream's `event: ui`, coalesced to at most one read in
+ * flight per view); `retry(key)` goes back to loading and reads once more; `setView` replaces a
+ * view with the one an action returned. A view the layout prefetched paints from the cache; one
+ * that failed there is not read again on mount (its retry reads it).
  */
 export function useExtensionViews(
   orgId: string,
   targets: readonly ViewTarget[],
-  opts: { conversationId?: string; locale: UiLocale; versions?: Readonly<Record<string, number>> },
+  opts: { conversationId?: string; locale: UiLocale },
 ): {
   states: Readonly<Record<string, ViewState>>;
   retry(key: string): void;
   setView(key: string, view: UiView): void;
 } {
   const { conversationId, locale } = opts;
-  const versions = opts.versions ?? NO_VERSIONS;
-  const [states, setStates] = useState<Record<string, ViewState>>({});
-  const [retries, setRetries] = useState<Record<string, number>>({});
-  const runs = useRef<Record<string, Run>>({});
-  const live = useRef(true);
-  const targetsKey = targets.map(targetKey).join("\n");
-
-  useEffect(() => {
-    live.current = true;
-    return () => {
-      live.current = false;
-      for (const r of Object.values(runs.current)) r.ctrl?.abort();
-      runs.current = {};
-    };
-  }, []);
-
-  const start = useCallback((key: string, run: Run) => {
-    run.inflight = true;
-    run.sent = run.want;
-    const { orgId: org, plugin, id, conversationId: conv, locale: lang, item, card } = run.args;
-    const ctrl = new AbortController();
-    run.ctrl = ctrl;
-    const write = (next: ViewState) => {
-      // 发出后又有更新的版本：这次的结果已过时，等补取的那次
-      if (live.current && run.sent === run.want) setStates((s) => ({ ...s, [key]: next }));
-    };
-    getUiView(org, plugin, id, {
-      ...(conv !== undefined && { conversationId: conv }),
-      locale: lang,
-      ...(item !== undefined && { item }),
-      ...(card !== undefined && { card }),
-      signal: ctrl.signal,
-    })
-      .then(
-        ({ view }) => write({ kind: "ready", view }),
-        (e: unknown) =>
-          write({ kind: "error", code: e instanceof ApiClientError ? e.code : "unknown" }),
-      )
-      .finally(() => {
-        run.inflight = false;
-        if (live.current && runs.current[key] === run && run.sent !== run.want) start(key, run);
-      });
-  }, []);
-
-  // biome-ignore lint/correctness/useExhaustiveDependencies: targets 以 targetsKey 表示
-  useEffect(() => {
-    for (const tg of targets) {
-      const key = targetKey(tg);
-      const want = [
-        orgId,
-        conversationId ?? "",
-        locale,
-        versions["*"] ?? 0,
-        versions[uiKey(tg.plugin, tg.id)] ?? 0,
-        retries[key] ?? 0,
-      ].join("|");
-      const args = {
-        orgId,
-        plugin: tg.plugin,
-        id: tg.id,
-        locale,
-        ...(conversationId !== undefined && { conversationId }),
-        ...(tg.item !== undefined && { item: tg.item }),
-        ...(tg.card !== undefined && { card: tg.card }),
+  const qc = useQueryClient();
+  const queries = targets.map((t) =>
+    uiViewQuery(orgId, readOf(t), {
+      ...(conversationId !== undefined && { conversationId }),
+      locale,
+    }),
+  );
+  const results = useQueries({
+    queries: queries.map((q, i) => ({
+      ...q,
+      enabled: (targets[i] as ViewTarget).paused !== true,
+      retry: false,
+      retryOnMount: retryOnMountOf(q.queryKey),
+    })),
+  });
+  const states: Record<string, ViewState> = {};
+  targets.forEach((t, i) => {
+    const r = results[i];
+    const key = targetKey(t);
+    if (r?.data !== undefined) states[key] = { kind: "ready", view: r.data };
+    else if (r?.error)
+      states[key] = {
+        kind: "error",
+        code: r.error instanceof ApiClientError ? r.error.code : "unknown",
       };
-      let run = runs.current[key];
-      if (run === undefined) {
-        run = { want, sent: "", inflight: false, args };
-        runs.current[key] = run;
-      }
-      run.want = want;
-      run.args = args;
-      // 在途：完成后由 finally 补取（多次刷新只补一次）
-      if (run.inflight || run.sent === want) continue;
-      start(key, run);
-    }
-  }, [targetsKey, orgId, conversationId, locale, versions, retries, start]);
-
-  const retry = useCallback((key: string) => {
-    setStates((s) => ({ ...s, [key]: { kind: "loading" } }));
-    setRetries((r) => ({ ...r, [key]: (r[key] ?? 0) + 1 }));
-  }, []);
-  const setView = useCallback((key: string, view: UiView) => {
-    setStates((s) => ({ ...s, [key]: { kind: "ready", view } }));
-  }, []);
+    else states[key] = { kind: "loading" };
+  });
+  const keyed = new Map(targets.map((t, i) => [targetKey(t), queries[i]?.queryKey]));
+  const retry = (key: string) => {
+    const queryKey = keyed.get(key);
+    if (queryKey !== undefined) void qc.resetQueries({ queryKey, exact: true });
+  };
+  const setView = (key: string, view: UiView) => {
+    const queryKey = keyed.get(key);
+    if (queryKey !== undefined) qc.setQueryData(queryKey, view);
+  };
   return { states, retry, setView };
 }
-
-const NO_VERSIONS: Readonly<Record<string, number>> = {};
 
 /**
  * 执行插件视图里的动作（`POST .../ui/actions`）：返回 `{view}` 交给 `onView` 替换，返回 `{toast}` 弹出提示；
@@ -176,22 +117,28 @@ export function useUiAction(
   const { conversationId, locale, onView } = opts;
   const toast = useToast();
   const errorMessage = useErrorMessage();
+  // The answer is the new view (`onView`), or a toast: nothing to invalidate.
+  const { mutateAsync } = useAppMutation({
+    fn: (v: { target: ViewTarget; req: UiActionRequest }) =>
+      postUiAction(orgId, v.target.plugin, v.target.id, {
+        ...v.req,
+        ...(conversationId !== undefined && { conversationId }),
+        locale,
+      }),
+    invalidates: () => [],
+  });
   return useCallback(
     (target: ViewTarget) => async (req: UiActionRequest) => {
       let result: Awaited<ReturnType<typeof postUiAction>>;
       try {
-        result = await postUiAction(orgId, target.plugin, target.id, {
-          ...req,
-          ...(conversationId !== undefined && { conversationId }),
-          locale,
-        });
+        result = await mutateAsync({ target, req });
       } catch (e) {
         throw new Error(errorMessage(e));
       }
       if (result !== undefined && "view" in result) onView(targetKey(target), result.view);
       else if (result?.toast) toast.success(result.toast[locale]);
     },
-    [orgId, conversationId, locale, onView, toast, errorMessage],
+    [mutateAsync, locale, onView, toast, errorMessage],
   );
 }
 

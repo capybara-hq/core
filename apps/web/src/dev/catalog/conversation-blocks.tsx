@@ -1,6 +1,9 @@
 "use client";
 
 import {
+  AgentPanel,
+  AgentRow,
+  type AgentRowItem,
   ApprovalBlock,
   AttachmentStrip,
   BubbleAttachments,
@@ -14,6 +17,7 @@ import {
   FileOutputs,
   FilePreviewFrame,
   type ForcedPseudo,
+  Greeting,
   ImageOutput,
   ImagePreview,
   MarkdownPreview,
@@ -22,7 +26,9 @@ import {
   QuestionBlock,
   QueuedMessage,
   QueuePaused,
+  QuickActions,
   RunDivider,
+  RunRow,
   Stack,
   TextOutput,
   TextPreview,
@@ -32,6 +38,7 @@ import {
   ToolRow,
   type ToolRowData,
   UserBubble,
+  WorkingLine,
 } from "@capybara-hq/design";
 import {
   CONV_FIXTURE,
@@ -40,6 +47,7 @@ import {
   type FixtureFile,
   type FixtureTool,
   HITL_FIXTURE,
+  NEW_CONVERSATION_FIXTURE,
   PANEL_FIXTURE,
   PROSE_FIXTURE,
   QUEUE_FIXTURE,
@@ -157,6 +165,147 @@ function userBubbleBlocks(): ReactNode {
   );
 }
 
+// ── Run row ─────────────────────────────────────────────────────────────────
+
+const RUN_PARTS = ["deepseek-flash", "3.7s", "1,234 tokens"];
+const RUN_FACTS = ["输入 1,000 · 输出 200 · 缓存读 34 · 缓存写 0"];
+const RUN_TRAJECTORY = { label: "查看轨迹", href: "/trajectories/c1" };
+
+function runRowBlocks(): ReactNode {
+  return (
+    <>
+      <Block id="run-row-ok">
+        <RunRow status="ok" parts={RUN_PARTS} facts={RUN_FACTS} links={[RUN_TRAJECTORY]} />
+      </Block>
+      <Block id="run-row-ok-open">
+        <RunRow
+          status="ok"
+          parts={RUN_PARTS}
+          facts={RUN_FACTS}
+          links={[RUN_TRAJECTORY]}
+          defaultOpen
+        />
+      </Block>
+      <Block id="run-row-failed">
+        <RunRow
+          status="failed"
+          parts={["deepseek-flash", "3.7s"]}
+          error={{
+            summary: "模型供应商认证失败。",
+            detail: "401 Unauthorized: Authentication Fails, Your api key is invalid",
+          }}
+          onRetry={noop}
+          links={[{ label: "去配置模型服务", href: "/admin/extensions" }, RUN_TRAJECTORY]}
+        />
+      </Block>
+      <Block id="run-row-stopped">
+        <RunRow
+          status="stopped"
+          parts={RUN_PARTS}
+          statusText="已停止 · 你 14:03"
+          facts={RUN_FACTS}
+          links={[RUN_TRAJECTORY]}
+        />
+      </Block>
+    </>
+  );
+}
+
+// ── Working line ────────────────────────────────────────────────────────────
+
+function workingLineBlocks(): ReactNode {
+  return (
+    <>
+      <Block id="working-line-default">
+        <WorkingLine />
+      </Block>
+      <Block id="working-line-reduced-motion">
+        <WorkingLine still />
+      </Block>
+    </>
+  );
+}
+
+// ── New conversation: greeting, agents row, quick actions ───────────────────
+
+const NC = NEW_CONVERSATION_FIXTURE;
+
+/** The fixture's agents as the row takes them. */
+export const NEW_CONVERSATION_AGENTS: AgentRowItem[] = NC.agents.map((a) => ({
+  id: a.id,
+  name: a.name,
+  description: a.description,
+  avatar: a.preset ? { kind: "preset", id: a.preset } : null,
+}));
+
+function greetingBlocks(): ReactNode {
+  return (
+    <>
+      <Block id="greeting-default">
+        <Greeting text={NC.greeting} still />
+      </Block>
+      <Block id="greeting-placeholder">
+        <Greeting />
+      </Block>
+    </>
+  );
+}
+
+function agentRowBlocks(): ReactNode {
+  return (
+    <>
+      <Block id="agent-row-default">
+        <AgentRow
+          agents={NEW_CONVERSATION_AGENTS}
+          selected={NC.selected}
+          recent={NC.recent}
+          onSelect={noop}
+        />
+      </Block>
+      <Block id="agent-row-panel">
+        <AgentRow
+          agents={NEW_CONVERSATION_AGENTS}
+          selected={NC.selected}
+          recent={NC.recent}
+          onSelect={noop}
+          referenceOpen
+        />
+      </Block>
+      <Block id="agent-row-no-match">
+        <AgentPanel
+          agents={NEW_CONVERSATION_AGENTS}
+          recent={NC.recent}
+          selected={NC.selected}
+          onSelect={noop}
+          onClose={noop}
+          defaultQuery={NC.noMatch}
+          inline
+        />
+      </Block>
+    </>
+  );
+}
+
+function quickActionsBlocks(): ReactNode {
+  return (
+    <>
+      <Block id="quick-actions-default">
+        <QuickActions items={NC.quickActions} onPick={noop} />
+      </Block>
+      <Block
+        id="quick-actions-hover"
+        force={{ pseudo: ["hover"], selector: '[data-part="quick-action"]' }}
+      >
+        <QuickActions items={NC.quickActions} onPick={noop} />
+      </Block>
+      {/* room below the line for the menu, as the reference stages it */}
+      <RefBlock id="quick-actions-menu" width={W} height={160} pad>
+        <QuickActions items={NC.quickActions} onPick={noop} referenceOpen />
+      </RefBlock>
+    </>
+  );
+}
+
 // ── Run divider ─────────────────────────────────────────────────────────────
 
 function runDividerBlocks(): ReactNode {
@@ -186,6 +335,13 @@ function runDividerBlocks(): ReactNode {
         <RunDivider
           kind="fallback"
           text={`所选模型 ${D.fallback.from} 已不可用，本条起改用 agent 的模型 ${D.fallback.to}`}
+        />
+      </Block>
+      <Block id="run-divider-notice">
+        <RunDivider
+          kind="notice"
+          text="后台任务「启动开发服务器」失败 · 退出码 1"
+          action={{ onClick: noop }}
         />
       </Block>
       <Block id="run-divider-hook-denied">
@@ -238,6 +394,7 @@ export function toRow(
     kind: t.kind,
     name: t.name,
     status: t.status,
+    ...(t.waiting ? { waiting: t.waiting } : {}),
     ...(t.tool ? { tool: t.tool } : {}),
     ...(t.tooltip ? { tooltip: t.tooltip } : {}),
     ...(t.description ? { description: t.description } : {}),
@@ -257,6 +414,22 @@ const pick = (list: FixtureTool[], i: number): FixtureTool => {
   const t = list[i];
   if (!t) throw new Error(`fixture ${i} missing`);
   return t;
+};
+
+/** A background `Bash` call (background Bash spec §5): "后台运行" and the link to its task. */
+const BACKGROUND_ROW: ToolRowData = {
+  id: "t_bg",
+  kind: "command",
+  name: "Bash",
+  description: "启动开发服务器",
+  extra: "后台运行",
+  status: "done",
+  durationMs: 300,
+  detail: {
+    command: "pnpm dev --port 3000",
+    output: 'Started background task bt_abc234 ("启动开发服务器").',
+  },
+  link: { label: "查看「启动开发服务器」的输出", onOpen: noop },
 };
 
 function toolGroupBlocks(): ReactNode {
@@ -291,6 +464,9 @@ function toolGroupBlocks(): ReactNode {
       </Block>
       <Block id="tool-group-edited">
         <ToolGroup rows={rows(T.diff)} />
+      </Block>
+      <Block id="tool-group-linked">
+        <ToolGroup rows={[BACKGROUND_ROW]} />
       </Block>
     </>
   );
@@ -344,6 +520,8 @@ function toolRowBlocks(): ReactNode {
         row={toRow(pick(T.hookDenied, 0), { blockedBy: "合规审查" })}
         open
       />
+      <RowBlock id="tool-row-waiting" row={toRow(pick(T.waiting, 0))} />
+      <RowBlock id="tool-row-linked" row={BACKGROUND_ROW} />
     </>
   );
 }
@@ -818,6 +996,11 @@ export const CONVERSATION_BLOCKS = {
   "thinking-row": thinkingRowBlocks,
   "user-bubble": userBubbleBlocks,
   "run-divider": runDividerBlocks,
+  "run-row": runRowBlocks,
+  "working-line": workingLineBlocks,
+  greeting: greetingBlocks,
+  "agent-row": agentRowBlocks,
+  "quick-actions": quickActionsBlocks,
   "tool-group": toolGroupBlocks,
   "tool-row": toolRowBlocks,
   "diff-block": diffBlockBlocks,

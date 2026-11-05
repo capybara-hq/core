@@ -13,7 +13,10 @@ import { currentStore, TransactionHost } from "../../src/infra/database/transact
 import { LoggingModule } from "../../src/infra/logging/logging.module.js";
 import { logJobFailure } from "../../src/infra/queue/job-failure.js";
 import { QUEUE_JOB_DEFAULTS, QueueModule } from "../../src/infra/queue/queue.module.js";
-import { bullConnectionOptions } from "../../src/infra/queue/redis-connection.js";
+import {
+  bullConnectionOptions,
+  REDIS_KEEPALIVE_MS,
+} from "../../src/infra/queue/redis-connection.js";
 import { runJob } from "../../src/infra/queue/run-job.js";
 import { RedisModule } from "../../src/infra/redis/redis.module.js";
 import { KERNEL_POOL } from "../../src/infra/tokens.js";
@@ -144,7 +147,7 @@ describe("QueueModule", () => {
 });
 
 describe("bullConnectionOptions", () => {
-  it("parses host, port, credentials and db, and sets maxRetriesPerRequest null", () => {
+  it("parses host, port, credentials and db; maxRetriesPerRequest null, TCP keepalive", () => {
     expect(bullConnectionOptions("redis://u:p%40ss@cache.local:6380/2")).toEqual({
       host: "cache.local",
       port: 6380,
@@ -152,6 +155,7 @@ describe("bullConnectionOptions", () => {
       password: "p@ss",
       db: 2,
       maxRetriesPerRequest: null,
+      keepAlive: REDIS_KEEPALIVE_MS,
     });
     expect(bullConnectionOptions("rediss://h")).toMatchObject({ host: "h", port: 6379, tls: {} });
   });

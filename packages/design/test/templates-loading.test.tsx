@@ -1,0 +1,1400 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { cleanup, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it } from "vitest";
+import {
+  AuthPage,
+  type Column,
+  ConversationPage,
+  type ConversationPageProps,
+  DataTable,
+  DesignProvider,
+  DetailPage,
+  FormPage,
+  FormSection,
+  type InboxLoading,
+  InboxPage,
+  ListPage,
+  ObjectRow,
+  OverviewPage,
+  SettingsPage,
+  SpanWaterfall,
+  TracePage,
+  WizardPage,
+} from "../src/index";
+
+afterEach(cleanup);
+const zh = (ui: React.ReactElement) => render(<DesignProvider locale="zh">{ui}</DesignProvider>);
+
+const header = { path: [{ label: "capybara" }, { label: "agents" }], title: "研究助手" };
+const tabs = {
+  items: [
+    { id: "summary", label: "概要" },
+    { id: "runs", label: "运行" },
+  ],
+  value: "summary",
+  label: "页面",
+};
+const metrics = [
+  { label: "运行", value: 12 },
+  { label: "失败", value: 1 },
+];
+
+const parts = (name: string) => document.querySelectorAll(`[data-part="${name}"]`);
+const count = (selector: string) => document.querySelectorAll(selector).length;
+
+describe("DetailPage loading", () => {
+  it("DetailPage loading draws the frame and no children", () => {
+    zh(
+      <DetailPage header={header} tabs={tabs} loading={{ inspector: true }}>
+        <p>REAL CONTENT</p>
+      </DetailPage>,
+    );
+    expect(screen.queryByText("REAL CONTENT")).toBeNull();
+    expect(document.querySelector('[data-template="DetailPage"]')).not.toBeNull();
+    expect(parts("page-header")).toHaveLength(1);
+    expect(parts("content")).toHaveLength(1);
+    expect(count(".cb-body-inspector")).toBe(1);
+    // The default is two card-shaped blocks, and the group announces once.
+    expect(count('[data-part="loading-card"]')).toBe(2);
+    expect(screen.getAllByRole("status")).toHaveLength(1);
+    expect(document.querySelector('[aria-busy="true"]')).not.toBeNull();
+  });
+
+  it("takes the block count as given, and no inspector unless flagged", () => {
+    zh(<DetailPage header={header} tabs={tabs} loading={{ blocks: 3 }} />);
+    expect(count('[data-part="loading-card"]')).toBe(3);
+    expect(count(".cb-body-inspector")).toBe(0);
+  });
+
+  it("tabs stay real while loading", () => {
+    zh(<DetailPage header={header} tabs={tabs} loading={{ inspector: true }} />);
+    expect(screen.getByRole("tab", { name: "概要" })).toBeTruthy();
+    expect(screen.getByRole("tab", { name: "运行" })).toBeTruthy();
+  });
+
+  it("the inspector placeholder is KeyValue's own box", () => {
+    zh(<DetailPage header={header} tabs={tabs} loading={{ inspector: true }} />);
+    const dl = document.querySelector('[data-part="loading-inspector"]');
+    expect(dl?.tagName).toBe("DL");
+    expect(dl?.className).toBe("cb-kv");
+    expect(dl?.querySelectorAll(".cb-kv-row")).toHaveLength(4);
+    expect(dl?.querySelector(".cb-kv-key")).not.toBeNull();
+    expect(dl?.querySelector(".cb-kv-value")).not.toBeNull();
+  });
+
+  it("a real inspector stays while loading unless it is flagged", () => {
+    zh(<DetailPage header={header} tabs={tabs} inspector={<p>REAL INSPECTOR</p>} loading={{}} />);
+    expect(screen.getByText("REAL INSPECTOR")).toBeTruthy();
+  });
+
+  it("stats draws stat card placeholders under the header; known metrics render for real", () => {
+    zh(<DetailPage header={header} tabs={tabs} loading={{ stats: 5 }} />);
+    const head = document.querySelector(".cb-template-head-frame");
+    expect(head?.querySelectorAll('[data-part="stat-card"]')).toHaveLength(5);
+    expect(head?.querySelector('[data-size="metric"]')).not.toBeNull();
+    cleanup();
+    zh(<DetailPage header={{ ...header, metrics }} tabs={tabs} loading={{ stats: 5 }} />);
+    expect(parts("stat-card")).toHaveLength(2);
+    expect(screen.getByText("失败")).toBeTruthy();
+    expect(count('[data-size="metric"]')).toBe(0);
+    cleanup();
+    zh(<DetailPage header={header} tabs={tabs} loading={{}} />);
+    expect(parts("stat-card")).toHaveLength(0);
+  });
+});
+
+describe("DetailPage / WizardPage content blocks", () => {
+  const cols: Column<never>[] = [{ key: "id", header: "副本", cell: () => null }];
+  it("content draws the tab's static blocks in a gap-16 stack instead of cards", () => {
+    zh(
+      <DetailPage
+        header={header}
+        tabs={tabs}
+        loading={{
+          content: [
+            { kind: "key-value", rows: 5, columns: 2 },
+            { kind: "buttons", count: 2, help: true },
+            { kind: "table", title: "副本列表", label: "副本", columns: cols },
+            { kind: "list", items: 1 },
+            { kind: "lines", lines: 3 },
+            { kind: "card", card: { lines: 1, field: { control: "radios", options: 3 } } },
+          ],
+        }}
+      />,
+    );
+    expect(count('[data-part="loading-card"]')).toBe(0);
+    const kv = document.querySelector('[data-part="loading-key-value"]');
+    expect(kv?.getAttribute("data-columns")).toBe("2");
+    expect(kv?.querySelectorAll('[data-part="key-value-row"]')).toHaveLength(5);
+    // in the grid too the key slot keeps its width (a max-content column would be 0 px wide)
+    expect((kv?.querySelector("dt") as HTMLElement | null)?.style.width).toBe("8ch");
+    expect(parts("loading-buttons")).toHaveLength(1);
+    expect(count('[data-box="default"]')).toBeGreaterThanOrEqual(2);
+    expect(screen.getByText("副本列表")).toBeTruthy();
+    expect(screen.getByText("副本")).toBeTruthy();
+    expect(document.querySelector('[data-empty="loading"]')).not.toBeNull();
+    expect(parts("loading-plain-radios")).toHaveLength(1);
+    expect(parts("loading-radio")).toHaveLength(3);
+    expect(parts("loading-shaped-card")).toHaveLength(1);
+    // one busy announcement for the page, the table's own silenced
+    expect(screen.getAllByRole("status")).toHaveLength(1);
+    expect(screen.getAllByText("正在加载")).toHaveLength(1);
+  });
+
+  it("a table block draws its static toolbar for real; a card block takes button slots", () => {
+    zh(
+      <DetailPage
+        header={header}
+        tabs={tabs}
+        loading={{
+          content: [
+            {
+              kind: "table",
+              label: "副本",
+              columns: cols,
+              toolbar: <button type="button">刷新</button>,
+            },
+            { kind: "card", card: { lines: 1, buttons: 1 } },
+          ],
+        }}
+      />,
+    );
+    const toolbar = document.querySelector('[data-part="table-toolbar"]');
+    expect(toolbar?.textContent).toBe("刷新");
+    const card = document.querySelector('[data-part="loading-shaped-card"]');
+    const row = card?.querySelector('[data-part="loading-buttons"]');
+    expect(row?.querySelectorAll('[data-box="default"]')).toHaveLength(1);
+    expect(screen.getAllByRole("status")).toHaveLength(1);
+  });
+
+  it("the inspector takes its row count and key width", () => {
+    zh(
+      <DetailPage
+        header={header}
+        tabs={tabs}
+        loading={{ inspector: { rows: 7, keyWidth: "10ch" } }}
+      />,
+    );
+    expect(parts("loading-inspector-row")).toHaveLength(7);
+    const key = document.querySelector('[data-part="loading-inspector-row"] dt') as HTMLElement;
+    expect(key.style.width).toBe("10ch");
+  });
+
+  it("a wizard step with content draws the blocks, no card", () => {
+    zh(
+      <WizardPage
+        header={header}
+        steps={["来源", "审阅"]}
+        current={1}
+        actionRow={{ primary: { label: "下一步", onSelect: () => {} } }}
+        loading={{ content: [{ kind: "lines", lines: 2 }, { kind: "list" }, { kind: "list" }] }}
+      />,
+    );
+    expect(count('[data-part="card"]')).toBe(0);
+    expect(count('[data-size="small"]')).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByRole("status")).toHaveLength(1);
+  });
+});
+
+describe("OverviewPage loading", () => {
+  it("OverviewPage loading draws the frame and no children", () => {
+    zh(
+      <OverviewPage header={header} loading={{}}>
+        <p>REAL CONTENT</p>
+      </OverviewPage>,
+    );
+    expect(screen.queryByText("REAL CONTENT")).toBeNull();
+    expect(document.querySelector('[data-template="OverviewPage"]')).not.toBeNull();
+    expect(parts("page-header")).toHaveLength(1);
+    // Defaults: four stat cards and two sections.
+    expect(parts("stat-card")).toHaveLength(4);
+    expect(count('[data-part="loading-card"]')).toBe(2);
+    expect(screen.getAllByRole("status")).toHaveLength(1);
+  });
+
+  it("takes the stat and section counts as given", () => {
+    zh(<OverviewPage header={header} loading={{ stats: 3, sections: 1 }} />);
+    expect(parts("stat-card")).toHaveLength(3);
+    expect(count('[data-part="loading-card"]')).toBe(1);
+  });
+
+  it("mainSide draws the placeholders in the main-side grid the loaded page uses", () => {
+    zh(<OverviewPage header={header} loading={{ stats: 0, mainSide: { main: 2, side: 1 } }} />);
+    const grid = document.querySelector('[data-template="OverviewPage"] .cb-grid');
+    expect(grid?.getAttribute("data-columns")).toBe("main-side");
+    const columns = [...(grid?.children ?? [])];
+    expect(columns.map((c) => c.className)).toEqual(["cb-stack", "cb-stack"]);
+    expect(columns.map((c) => c.getAttribute("data-gap"))).toEqual(["16", "16"]);
+    expect(columns.map((c) => c.querySelectorAll('[data-part="loading-card"]').length)).toEqual([
+      2, 1,
+    ]);
+    expect(count('[data-part="loading-card"]')).toBe(3);
+    expect(parts("stat-card")).toHaveLength(0);
+  });
+
+  it("keep renders the children as they are under the stat slots, without blocks", () => {
+    zh(
+      <OverviewPage header={header} loading={{ stats: 4, keep: true }}>
+        <p>STATIC NOTE</p>
+      </OverviewPage>,
+    );
+    expect(screen.getByText("STATIC NOTE")).toBeTruthy();
+    expect(parts("stat-card")).toHaveLength(4);
+    expect(count('[data-part="loading-card"]')).toBe(0);
+    expect(screen.getAllByRole("status")).toHaveLength(1);
+  });
+
+  it("without mainSide the sections stack in one column", () => {
+    zh(<OverviewPage header={header} loading={{ sections: 2 }} />);
+    expect(document.querySelector('[data-template="OverviewPage"] .cb-grid')).toBeNull();
+  });
+
+  it("known metrics render for real", () => {
+    zh(<OverviewPage header={{ ...header, metrics }} loading={{ stats: 4 }} />);
+    expect(parts("stat-card")).toHaveLength(2);
+    expect(screen.getByText("失败")).toBeTruthy();
+  });
+});
+
+describe("DataTable loading announcement", () => {
+  it("announces by itself when it stands alone", () => {
+    zh(
+      <DataTable<{ id: string }>
+        label="t"
+        state="loading"
+        columns={[{ key: "a", header: "A", cell: () => null }]}
+        rows={[]}
+        rowKey={(r) => r.id}
+      />,
+    );
+    expect(screen.getAllByRole("status")).toHaveLength(1);
+    expect(screen.getByText("正在加载")).toBeTruthy();
+  });
+});
+
+describe("InboxPage loading", () => {
+  it("InboxPage loading draws the frame and no children", () => {
+    zh(
+      <InboxPage header={header} list={<p>REAL LIST</p>} filters={<p>REAL FILTERS</p>} loading={{}}>
+        <p>REAL CONTENT</p>
+      </InboxPage>,
+    );
+    expect(screen.queryByText("REAL LIST")).toBeNull();
+    expect(screen.queryByText("REAL CONTENT")).toBeNull();
+    expect(document.querySelector('[data-template="InboxPage"]')).not.toBeNull();
+    // The rail's filters are static: they stay; the list is four 64 px rows by default.
+    expect(screen.getByText("REAL FILTERS")).toBeTruthy();
+    expect(count(".cb-body-rail")).toBe(1);
+    expect(count('[data-part="loading-row"]')).toBe(4);
+    expect(screen.getAllByRole("status")).toHaveLength(1);
+  });
+
+  it("takes the row count as given", () => {
+    zh(<InboxPage header={header} loading={{ rows: 6 }} />);
+    expect(count('[data-part="loading-row"]')).toBe(6);
+  });
+
+  it("loading rows sit in the object list's own container", () => {
+    zh(<InboxPage header={header} filters={<p>F</p>} loading={{ rows: 2 }} />);
+    const list = document.querySelector('[data-part="loading-list"]');
+    expect(list?.className).toBe("cb-object-list");
+    const rows = list?.querySelectorAll('[data-part="loading-row"]') ?? [];
+    expect(rows).toHaveLength(2);
+    // The first row is the list's first child, so it takes no top border.
+    expect(rows[0]).toBe(list?.firstElementChild);
+  });
+
+  it("a records list draws the DataTable loading state in the caller's table shape", () => {
+    zh(
+      <InboxPage
+        header={header}
+        filters={<p>F</p>}
+        loading={{
+          list: "records",
+          table: {
+            label: "待处理",
+            columns: [{ key: "t", header: "事项", cell: () => null }],
+            rowHeight: "dense",
+            framed: false,
+          },
+        }}
+      />,
+    );
+    expect(count('[data-part="loading-row"]')).toBe(0);
+    expect(document.querySelector('[data-empty="loading"]')).not.toBeNull();
+    expect(screen.getByText("事项")).toBeTruthy();
+    expect(screen.getByText("F")).toBeTruthy();
+    expect(document.querySelector(".cb-table-panel")).not.toBeNull();
+    // The page's group announces once; the table adds none (spec §6.29).
+    expect(screen.getAllByRole("status")).toHaveLength(1);
+    expect(screen.getAllByText("正在加载")).toHaveLength(1);
+  });
+
+  it("inspector draws KeyValue placeholders in the inspector column; the action row stays disabled", () => {
+    zh(
+      <InboxPage
+        header={header}
+        inspectorTitle="详情"
+        actionRow={{
+          secondary: { label: "拒绝", onSelect: () => {} },
+          primary: { label: "批准", onSelect: () => {} },
+        }}
+        loading={{ rows: 2, inspector: { rows: 3, keyWidth: "10ch" } }}
+      />,
+    );
+    expect(count(".cb-body-inspector")).toBe(1);
+    expect(parts("loading-inspector-row")).toHaveLength(3);
+    const key = document.querySelector('[data-part="loading-inspector-row"] dt') as HTMLElement;
+    expect(key.style.width).toBe("10ch");
+    expect(parts("action-row")).toHaveLength(1);
+    expect((screen.getByRole("button", { name: "批准" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "拒绝" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getAllByRole("status")).toHaveLength(1);
+  });
+
+  it("without inspector the loading inbox has no inspector column", () => {
+    zh(<InboxPage header={header} loading={{}} />);
+    expect(count(".cb-body-inspector")).toBe(0);
+  });
+
+  it("takes a page's own typed columns without a cast", () => {
+    type Row = { id: string; title: string };
+    const columns: Column<Row>[] = [{ key: "title", header: "事项", cell: (r) => r.title }];
+    const loading: InboxLoading = {
+      list: "records",
+      table: { label: "待处理", columns, rowHeight: "dense", framed: false },
+    };
+    zh(<InboxPage header={header} loading={loading} />);
+    expect(screen.getByText("事项")).toBeTruthy();
+  });
+
+  it("without loading, the filters sit above the list", () => {
+    zh(
+      <InboxPage header={header} filters={<p>F</p>} list={<p>第一项</p>}>
+        x
+      </InboxPage>,
+    );
+    expect(screen.getByText("F")).toBeTruthy();
+    expect(screen.getByText("第一项")).toBeTruthy();
+    expect(count('[data-part="loading-row"]')).toBe(0);
+  });
+});
+
+const actionRow = {
+  unsaved: 2,
+  errors: 1,
+  cancel: { label: "放弃", onSelect: () => {} },
+  secondary: { label: "存草稿", onSelect: () => {} },
+  primary: { label: "保存", onSelect: () => {} },
+};
+
+describe("FormPage / FormSection loading", () => {
+  it("FormPage loading draws the frame and no children", () => {
+    zh(
+      <FormPage header={header} actionRow={actionRow} loading>
+        <FormSection id="a" title="基本信息" description="名称与说明" loading={{ fields: 3 }}>
+          <p>REAL FIELD</p>
+        </FormSection>
+        <FormSection id="b" title="模型" loading={{ fields: 2 }} />
+      </FormPage>,
+    );
+    expect(screen.queryByText("REAL FIELD")).toBeNull();
+    expect(document.querySelector('[data-template="FormPage"]')).not.toBeNull();
+    expect(parts("page-header")).toHaveLength(1);
+    expect(parts("content")).toHaveLength(1);
+    expect(count(".cb-form-section")).toBe(2);
+    expect(count('[data-part="loading-field"]')).toBe(5);
+    expect(screen.getAllByRole("status")).toHaveLength(1);
+    expect(screen.getAllByText("正在加载")).toHaveLength(1);
+  });
+
+  it("loading form keeps the action row with disabled buttons", () => {
+    zh(<FormPage header={header} actionRow={actionRow} loading />);
+    expect(parts("action-row")).toHaveLength(1);
+    for (const name of ["放弃", "存草稿", "保存"]) {
+      expect((screen.getByRole("button", { name }) as HTMLButtonElement).disabled).toBe(true);
+    }
+    // Nothing is known to be unsaved yet.
+    expect(parts("action-row-unsaved")).toHaveLength(0);
+    expect(parts("action-row-errors")).toHaveLength(0);
+  });
+
+  it("a section that lists cards draws titled card placeholders in its card", () => {
+    zh(
+      <FormSection id="a" title="用途" loading={{ cards: [{ lines: 2 }, { lines: 3 }] }}>
+        <p>REAL CARD</p>
+      </FormSection>,
+    );
+    expect(screen.queryByText("REAL CARD")).toBeNull();
+    const card = document.querySelector('[data-part="form-card"]');
+    expect(card?.querySelectorAll('[data-part="loading-shaped-card"]')).toHaveLength(2);
+    expect(count('[data-part="loading-field"]')).toBe(0);
+  });
+
+  it("a loading section keeps its title and description real", () => {
+    zh(
+      <FormSection id="a" title="基本信息" description="名称与说明" loading={{ fields: 2 }}>
+        <p>REAL FIELD</p>
+      </FormSection>,
+    );
+    expect(screen.getByRole("heading", { name: "基本信息" })).toBeTruthy();
+    expect(screen.getByText("名称与说明")).toBeTruthy();
+    expect(screen.queryByText("REAL FIELD")).toBeNull();
+  });
+
+  it("a field placeholder is the loaded field's own box: label slot, then a control-height box", () => {
+    zh(<FormSection id="a" title="T" loading={{ fields: 2 }} />);
+    const card = document.querySelector(".cb-form-section-fields");
+    const fields = card?.querySelectorAll(":scope > .cb-field");
+    expect(fields).toHaveLength(2);
+    const field = fields?.[0];
+    const head = field?.querySelector(":scope > .cb-field-head");
+    expect(head?.querySelector('[data-part="skeleton-text"][data-size="body"]')).not.toBeNull();
+    const box = field?.querySelector(':scope > [data-part="skeleton-box"]') as HTMLElement | null;
+    expect(box?.dataset.box).toBe("default");
+    // No width of its own: the field's rule decides, as for the loaded control.
+    expect(box?.style.width).toBe("");
+  });
+
+  it("a textarea shape draws a textarea-height box of its rows", () => {
+    zh(
+      <FormSection
+        id="a"
+        title="T"
+        loading={{ fields: [{ control: "textarea" }, { control: "textarea", rows: 4 }] }}
+      />,
+    );
+    const boxes = document.querySelectorAll<HTMLElement>(
+      '.cb-form-section-fields > .cb-field > [data-part="skeleton-box"]',
+    );
+    expect(boxes).toHaveLength(2);
+    expect(boxes[0]?.dataset.box).toBe("textarea");
+    expect(boxes[0]?.style.getPropertyValue("--cb-skeleton-rows")).toBe("2");
+    expect(boxes[1]?.style.getPropertyValue("--cb-skeleton-rows")).toBe("4");
+  });
+
+  it("a help shape draws one small slot under the control, and only then", () => {
+    zh(
+      <FormSection
+        id="a"
+        title="T"
+        loading={{ fields: [{ help: true }, {}, { control: "select" }] }}
+      />,
+    );
+    const fields = document.querySelectorAll(".cb-form-section-fields > .cb-field");
+    expect(fields).toHaveLength(3);
+    const small = (i: number) =>
+      fields[i]?.querySelectorAll(':scope > [data-part="skeleton-text"][data-size="small"]');
+    expect(small(0)).toHaveLength(1);
+    expect(small(1)).toHaveLength(0);
+    expect(small(2)).toHaveLength(0);
+    const select = fields[2]?.querySelector(':scope > [data-part="skeleton-box"]') as HTMLElement;
+    expect(select.dataset.box).toBe("default");
+  });
+
+  it("a pair shape and the next one share the two-column grid the loaded section uses", () => {
+    zh(
+      <FormSection
+        id="a"
+        title="T"
+        loading={{ fields: [{ control: "select", pair: true }, { control: "segmented" }, {}] }}
+      />,
+    );
+    const card = document.querySelector(".cb-form-section-fields");
+    const grid = card?.querySelector(':scope > .cb-grid[data-columns="2"][data-gap="12"]');
+    expect(grid?.querySelectorAll(":scope > .cb-field")).toHaveLength(2);
+    // The third field stands alone, a direct child of the card.
+    expect(card?.querySelectorAll(":scope > .cb-field")).toHaveLength(1);
+  });
+
+  it("a number still draws that many default inputs; wizard and auth take shapes too", () => {
+    zh(<FormSection id="a" title="T" loading={{ fields: 3 }} />);
+    const boxes = document.querySelectorAll<HTMLElement>(
+      '.cb-form-section-fields > .cb-field > [data-part="skeleton-box"]',
+    );
+    expect([...boxes].map((b) => b.dataset.box)).toEqual(["default", "default", "default"]);
+    cleanup();
+    zh(<AuthPage title="登录" loading={{ fields: [{ help: true }, {}] }} />);
+    expect(document.querySelectorAll(".cb-auth-card .cb-field")).toHaveLength(2);
+    expect(document.querySelectorAll(".cb-auth-card .cb-field [data-size='small']")).toHaveLength(
+      1,
+    );
+  });
+
+  it("a loading flush section keeps its flush card and draws the loaded switch rows", () => {
+    zh(
+      <FormPage header={header} actionRow={actionRow} loading>
+        <FormSection id="t" title="工具" flush loading={{ fields: 3 }} />
+      </FormPage>,
+    );
+    const card = document.querySelector(".cb-form-section-fields");
+    expect(card?.getAttribute("data-flush")).toBe("true");
+    const rows = card?.querySelectorAll(":scope > ul.cb-switch-list > li.cb-switch-row");
+    expect(rows).toHaveLength(3);
+    expect(rows?.[0]?.querySelector(".cb-switch-row-text")).not.toBeNull();
+    expect(rows?.[0]?.querySelector('[data-part="skeleton-box"]')).not.toBeNull();
+    expect(count('[data-part="loading-field"]')).toBe(0);
+    expect(screen.getAllByRole("status")).toHaveLength(1);
+  });
+
+  it("a ready section renders for real next to a loading one", () => {
+    zh(
+      <FormPage header={header} actionRow={actionRow} loading>
+        <FormSection id="a" title="基本信息">
+          <p>READY FIELD</p>
+        </FormSection>
+        <FormSection id="b" title="模型" loading={{ fields: 1 }} />
+      </FormPage>,
+    );
+    expect(screen.getByText("READY FIELD")).toBeTruthy();
+    expect(count('[data-part="loading-field"]')).toBe(1);
+    expect(screen.getAllByRole("status")).toHaveLength(1);
+  });
+
+  it("a loading section outside a loading page announces itself, without a status role", () => {
+    zh(<FormSection id="a" title="T" loading={{ fields: 1 }} />);
+    expect(screen.getAllByText("正在加载")).toHaveLength(1);
+    expect(document.querySelector(".cb-form-section")?.getAttribute("aria-busy")).toBe("true");
+  });
+
+  it("a page that is not loading draws no placeholder and no busy mark", () => {
+    zh(
+      <FormPage header={header} actionRow={actionRow}>
+        <FormSection id="a" title="T">
+          <p>REAL FIELD</p>
+        </FormSection>
+      </FormPage>,
+    );
+    expect(screen.getByText("REAL FIELD")).toBeTruthy();
+    expect(count('[data-part="loading-field"]')).toBe(0);
+    expect(count('[aria-busy="true"]')).toBe(0);
+    expect((screen.getByRole("button", { name: "保存" }) as HTMLButtonElement).disabled).toBe(
+      false,
+    );
+  });
+});
+
+describe("SettingsPage loading", () => {
+  const nav = [
+    {
+      group: "组织",
+      items: [
+        { id: "general", label: "常规", href: "/s/general" },
+        { id: "members", label: "成员", href: "/s/members" },
+      ],
+    },
+  ];
+
+  it("SettingsPage loading draws the frame and no children", () => {
+    zh(
+      <SettingsPage
+        header={{ ...header, description: "管理组织" }}
+        nav={nav}
+        activeNav="general"
+        loading={{ sections: [{ fields: 2 }, { fields: 3, title: "安全" }] }}
+      >
+        <p>REAL CONTENT</p>
+      </SettingsPage>,
+    );
+    expect(screen.queryByText("REAL CONTENT")).toBeNull();
+    expect(document.querySelector('[data-template="SettingsPage"]')).not.toBeNull();
+    expect(parts("page-header")).toHaveLength(1);
+    expect(count(".cb-settings-content > .cb-form-section")).toBe(2);
+    expect(count('[data-part="loading-field"]')).toBe(5);
+    expect(screen.getAllByRole("status")).toHaveLength(1);
+    // What the page knows stays real: the sub-nav, the description, a known title.
+    expect(screen.getByRole("link", { name: "成员" })).toBeTruthy();
+    expect(screen.getByText("管理组织")).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "安全" })).toBeTruthy();
+    // An unknown title and description are slots in the section's head.
+    const first = document.querySelectorAll(".cb-form-section-head")[0];
+    expect(first?.querySelector('[data-size="heading"]')).not.toBeNull();
+  });
+
+  it("without sections the children render as they are", () => {
+    zh(
+      <SettingsPage header={header} nav={nav} activeNav="general" loading={{}}>
+        <FormSection id="a" title="T" loading={{ fields: 1 }} />
+      </SettingsPage>,
+    );
+    expect(count('[data-part="loading-field"]')).toBe(1);
+    expect(screen.getAllByRole("status")).toHaveLength(1);
+  });
+
+  it("radio-cards, key-value and switch shapes draw the loaded group's own markup and a hint line", () => {
+    zh(
+      <SettingsPage
+        header={header}
+        nav={nav}
+        activeNav="general"
+        loading={{
+          sections: [
+            { fields: [{ control: "radio-cards", options: 3, help: true }] },
+            { fields: [{ control: "key-value", rows: 3, keyWidth: "10ch" }] },
+            { fields: [{ control: "switch" }] },
+          ],
+        }}
+      />,
+    );
+    const radios = document.querySelector('[data-part="loading-radios"]');
+    expect(radios?.className).toBe("cb-radios");
+    expect(radios?.getAttribute("data-variant")).toBe("card");
+    const cards = radios?.querySelectorAll('.cb-radio[data-variant="card"]') ?? [];
+    expect(cards).toHaveLength(3);
+    // each card: the label line and the description line
+    expect(cards[0]?.querySelectorAll(".cb-radio-text [data-part='skeleton-text']")).toHaveLength(
+      2,
+    );
+    // the group and its hint sit in a gap-8 stack, as the loaded section's Stack
+    const stack = radios?.parentElement;
+    expect(stack?.className).toBe("cb-stack");
+    expect(stack?.getAttribute("data-gap")).toBe("8");
+    expect(stack?.lastElementChild?.getAttribute("data-size")).toBe("small");
+    const kv = document.querySelector('[data-part="loading-key-value"]');
+    expect(kv?.className).toBe("cb-kv");
+    expect(kv?.querySelectorAll(".cb-kv-row")).toHaveLength(3);
+    expect(kv?.querySelector<HTMLElement>(".cb-kv-key")?.style.width).toBe("10ch");
+    const sw = document.querySelector('[data-box="block"][style*="32px"]');
+    expect(sw).not.toBeNull();
+    expect(count('[data-part="loading-field"]')).toBe(0);
+  });
+
+  it("cards: a stack of titled card placeholders, by shape or a repeated shape (default 3)", () => {
+    zh(
+      <SettingsPage
+        header={header}
+        nav={nav}
+        activeNav="general"
+        loading={{ cards: { shape: { lines: 1, actions: 1 } } }}
+      />,
+    );
+    const stack = document.querySelector(".cb-settings-content > .cb-stack");
+    expect(stack?.getAttribute("data-gap")).toBe("16");
+    const cards = document.querySelectorAll('[data-part="loading-shaped-card"]');
+    expect(cards).toHaveLength(3);
+    expect(cards[0]?.querySelectorAll(".cb-card-actions [data-part='skeleton-box']")).toHaveLength(
+      1,
+    );
+    expect(cards[0]?.querySelectorAll(".cb-card-body [data-part='skeleton-text']")).toHaveLength(1);
+    cleanup();
+    zh(
+      <SettingsPage
+        header={header}
+        nav={nav}
+        activeNav="general"
+        loading={{
+          sections: [
+            {
+              title: "用途",
+              cards: [
+                { lines: 2, lineSize: "small", field: { control: "select" } },
+                { lines: 3, lineSize: "small", field: { control: "select" } },
+              ],
+            },
+          ],
+        }}
+      />,
+    );
+    const inSection = document.querySelectorAll(
+      '.cb-form-section-fields > [data-part="loading-shaped-card"]',
+    );
+    expect(inSection).toHaveLength(2);
+    // the lines (gap 4) then the field (gap 12)
+    const body = inSection[1]?.querySelector(".cb-card-body > .cb-stack");
+    expect(body?.getAttribute("data-gap")).toBe("12");
+    expect(body?.firstElementChild?.getAttribute("data-gap")).toBe("4");
+    expect(body?.firstElementChild?.children).toHaveLength(3);
+    expect(body?.querySelector('[data-part="loading-field"]')).not.toBeNull();
+  });
+
+  it("text and card-group shapes: a hint line at the prose-small line, and a labelled stack of untitled cards (default 2)", () => {
+    zh(
+      <SettingsPage
+        header={header}
+        nav={nav}
+        activeNav="general"
+        loading={{
+          sections: [
+            { fields: [{ control: "switch" }, { control: "text" }, { control: "card-group" }] },
+          ],
+        }}
+      />,
+    );
+    const card = document.querySelector(".cb-form-section-fields");
+    const kids = [...(card?.children ?? [])];
+    expect(kids).toHaveLength(3);
+    // a hint is Text variant="prose": its prose-small line is the body line (20)
+    expect(kids[1]?.getAttribute("data-size")).toBe("body");
+    const group = kids[2];
+    expect(group?.getAttribute("data-gap")).toBe("8");
+    expect(group?.firstElementChild?.getAttribute("data-size")).toBe("small");
+    const cards = group?.querySelectorAll('[data-part="loading-group-card"]') ?? [];
+    expect(cards).toHaveLength(2);
+    expect(cards[0]?.parentElement?.getAttribute("data-gap")).toBe("12");
+    // each card: a body line over two small lines
+    const lines = [...(cards[0]?.querySelectorAll('[data-part="skeleton-text"]') ?? [])];
+    expect(lines.map((l) => l.getAttribute("data-size"))).toEqual(["body", "small", "small"]);
+  });
+
+  it("list-editor shape: list rows, add and count beside a titled editor card (name, 16-line textarea)", () => {
+    zh(
+      <SettingsPage
+        header={header}
+        nav={nav}
+        activeNav="general"
+        loading={{
+          sections: [{ title: "提示词", fields: [{ control: "list-editor", options: 2 }] }],
+        }}
+      />,
+    );
+    const grid = document.querySelector('[data-part="loading-list-editor"]');
+    // the loaded layout's own grid: a 220 px list beside the editor, one column on phones
+    expect(grid?.getAttribute("data-columns")).toBe("list-detail");
+    expect(grid?.getAttribute("data-gap")).toBe("16");
+    const [list, card] = [...(grid?.children ?? [])];
+    expect(list?.getAttribute("data-gap")).toBe("8");
+    const repeater = list?.querySelector('[data-part="loading-repeater"]');
+    expect(repeater?.getAttribute("data-variant")).toBe("rows");
+    expect(repeater?.querySelectorAll('[data-part="loading-repeater-item"]')).toHaveLength(2);
+    expect(repeater?.querySelector(".cb-repeater-foot [data-box]")?.getAttribute("data-box")).toBe(
+      "dense",
+    );
+    expect(list?.lastElementChild?.getAttribute("data-size")).toBe("small");
+    expect(card?.getAttribute("data-part")).toBe("loading-list-editor-card");
+    const fields = card?.querySelectorAll('[data-part="loading-field"]') ?? [];
+    expect(fields).toHaveLength(2);
+    expect(fields[0]?.querySelector("[data-box]")?.getAttribute("data-box")).toBe("default");
+    const area = fields[1]?.querySelector('[data-box="textarea"]') as HTMLElement | null;
+    expect(area?.style.getPropertyValue("--cb-skeleton-rows")).toBe("16");
+    // both fields keep their help line
+    for (const f of fields) expect(f.lastElementChild?.getAttribute("data-size")).toBe("small");
+  });
+
+  it("every FormSection inside a SettingsPage is stacked (the sub-nav holds the title column)", () => {
+    const css = readFileSync(resolve(import.meta.dirname, "../src/styles/templates.css"), "utf8");
+    const rule =
+      css.match(/([^{}]*)\{[^{}]*grid-template-columns: minmax\(0, 1fr\);[^{}]*\}/g) ?? [];
+    expect(rule.some((r) => r.includes(".cb-settings-content .cb-form-section"))).toBe(true);
+  });
+
+  it("FormSection layout: columns by default, stacked puts the head above a full-width card, loading too", () => {
+    zh(
+      <>
+        <FormSection id="a" title="默认">
+          <span>内容</span>
+        </FormSection>
+        <FormSection id="b" title="提示词" description="说明" layout="stacked">
+          <span>编辑器</span>
+        </FormSection>
+      </>,
+    );
+    const [plain, stacked] = [...document.querySelectorAll('[data-part="form-section"]')];
+    // an existing section renders as before: no layout attribute, the two-column rule
+    expect(plain?.hasAttribute("data-layout")).toBe(false);
+    expect(stacked?.getAttribute("data-layout")).toBe("stacked");
+    // the same parts in the same order: the head, then the card
+    expect([...(stacked?.children ?? [])].map((c) => c.getAttribute("data-part"))).toEqual([
+      "form-section-head",
+      "form-card",
+    ]);
+    cleanup();
+    zh(
+      <SettingsPage
+        header={header}
+        nav={nav}
+        activeNav="general"
+        loading={{
+          sections: [
+            {
+              title: "提示词",
+              description: "说明",
+              layout: "stacked",
+              fields: [{ control: "list-editor" }],
+            },
+            { title: "其他", fields: 1 },
+          ],
+        }}
+      />,
+    );
+    const loading = [...document.querySelectorAll('[data-part="form-section"]')];
+    expect(loading[0]?.getAttribute("data-layout")).toBe("stacked");
+    expect(loading[0]?.querySelector('[data-part="loading-list-editor"]')).not.toBeNull();
+    expect(loading[1]?.hasAttribute("data-layout")).toBe(false);
+    const css = readFileSync(resolve(import.meta.dirname, "../src/styles/templates.css"), "utf8");
+    const at = css.indexOf('.cb-form-section[data-layout="stacked"],');
+    expect(css.slice(at, css.indexOf("}", at))).toContain("grid-template-columns: minmax(0, 1fr)");
+    // the default two-column rule is untouched
+    const base = css.indexOf(".cb-form-section {");
+    expect(css.slice(base, css.indexOf("}", base))).toContain(
+      "grid-template-columns: 240px minmax(0, 1fr)",
+    );
+  });
+
+  it("the list-detail grid collapses to one column below 640; label-less rows keep their ends on their line", () => {
+    const controls = readFileSync(
+      resolve(import.meta.dirname, "../src/styles/controls.css"),
+      "utf8",
+    );
+    const wide = controls.indexOf('.cb-grid[data-columns="list-detail"] {');
+    expect(controls.slice(wide, controls.indexOf("}", wide))).toContain(
+      "grid-template-columns: 220px minmax(0, 1fr)",
+    );
+    const narrow = controls.indexOf("@media (max-width: 639px)", wide);
+    expect(narrow).toBeGreaterThan(wide);
+    expect(controls.slice(narrow, controls.indexOf("}\n}", narrow))).toContain(
+      "grid-template-columns: minmax(0, 1fr)",
+    );
+    const repeater = readFileSync(
+      resolve(import.meta.dirname, "../src/styles/repeater.css"),
+      "utf8",
+    );
+    expect(repeater).toContain(":not(:has(.cb-field-head))");
+  });
+
+  it("a card's list: a small label and the list's small lines after the body lines", () => {
+    zh(
+      <SettingsPage
+        header={header}
+        nav={nav}
+        activeNav="general"
+        loading={{ cards: { shape: { lines: 1, list: 2, actions: 1 }, count: 1 } }}
+      />,
+    );
+    const body = document.querySelector(
+      '[data-part="loading-shaped-card"] .cb-card-body > .cb-stack',
+    );
+    const list = body?.lastElementChild;
+    expect(list?.getAttribute("data-gap")).toBe("4");
+    expect(list?.children).toHaveLength(3);
+    expect(list?.firstElementChild?.getAttribute("data-size")).toBe("small");
+  });
+
+  it("loading title and radio text slots take their container's free width (no 0 px bars)", () => {
+    zh(
+      <SettingsPage
+        header={header}
+        nav={nav}
+        activeNav="general"
+        loading={{
+          sections: [{ fields: [{ control: "radio-cards" }] }],
+          cards: { count: 1 },
+        }}
+      />,
+    );
+    expect(document.querySelectorAll('.cb-radio-text[data-loading="true"]')).toHaveLength(2);
+    cleanup();
+    zh(
+      <SettingsPage
+        header={header}
+        nav={nav}
+        activeNav="general"
+        loading={{ cards: { count: 1 } }}
+      />,
+    );
+    expect(
+      document.querySelector('.cb-card-title[data-loading="true"] [data-part="skeleton-text"]'),
+    ).not.toBeNull();
+    // the CSS gives those slots the free width
+    const css = readFileSync(resolve(import.meta.dirname, "../src/styles/controls.css"), "utf8");
+    const rule = (selector: string) =>
+      css.slice(css.indexOf(`${selector} {`), css.indexOf("}", css.indexOf(`${selector} {`)));
+    for (const selector of [
+      '.cb-card-title[data-loading="true"]',
+      '.cb-radio-text[data-loading="true"]',
+    ]) {
+      expect(css.includes(`${selector} {`), selector).toBe(true);
+      expect(rule(selector)).toContain("flex: 1;");
+      expect(rule(selector)).toContain("min-width: 0;");
+    }
+  });
+
+  it("keeps the action row, disabled", () => {
+    zh(
+      <SettingsPage
+        header={header}
+        nav={nav}
+        activeNav="general"
+        actionRow={actionRow}
+        loading={{ sections: [{ fields: 1 }] }}
+      />,
+    );
+    expect((screen.getByRole("button", { name: "保存" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+});
+
+describe("WizardPage loading", () => {
+  const steps = ["类型", "端点", "完成"];
+
+  it("WizardPage loading draws the frame and no children", () => {
+    zh(
+      <WizardPage
+        header={header}
+        steps={steps}
+        current={1}
+        actionRow={actionRow}
+        loading={{ fields: 3 }}
+      >
+        <p>REAL CONTENT</p>
+      </WizardPage>,
+    );
+    expect(screen.queryByText("REAL CONTENT")).toBeNull();
+    expect(document.querySelector('[data-template="WizardPage"]')).not.toBeNull();
+    expect(parts("page-header")).toHaveLength(1);
+    expect(parts("content")).toHaveLength(1);
+    // The step bar is real, and the fields sit in a card.
+    expect(document.querySelectorAll(".cb-step")).toHaveLength(3);
+    expect(screen.getByText("端点")).toBeTruthy();
+    expect(document.querySelector(".cb-card .cb-stack > .cb-field")).not.toBeNull();
+    // the card's title slot takes the head's width (not a 0 px auto-width flex item)
+    expect(
+      document.querySelector(
+        '.cb-card-head > .cb-card-title[data-loading="true"] [data-part="skeleton-text"]',
+      ),
+    ).not.toBeNull();
+    expect(count('[data-part="loading-field"]')).toBe(3);
+    expect(screen.getAllByRole("status")).toHaveLength(1);
+    expect((screen.getByRole("button", { name: "保存" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("keep renders the step's own sections inside the one busy region (they do not announce)", () => {
+    zh(
+      <WizardPage
+        header={header}
+        steps={steps}
+        current={0}
+        actionRow={actionRow}
+        loading={{ keep: true }}
+      >
+        <FormSection id="mode" title="模式" loading={{ fields: [{ control: "radio-cards" }] }} />
+        <FormSection
+          id="c"
+          title="候选"
+          loading={{ fields: [{ control: "select" }, { control: "switch" }] }}
+        />
+      </WizardPage>,
+    );
+    expect(screen.getByRole("heading", { name: "模式" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "候选" })).toBeTruthy();
+    expect(count('[data-part="card"]')).toBe(0);
+    expect(parts("loading-radio")).toHaveLength(2);
+    expect(parts("loading-field")).toHaveLength(1);
+    expect(parts("loading-switch")).toHaveLength(1);
+    expect(screen.getAllByRole("status")).toHaveLength(1);
+    expect((screen.getByRole("button", { name: "保存" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+});
+
+describe("AuthPage loading", () => {
+  it("AuthPage loading draws the frame and no children", () => {
+    zh(
+      <AuthPage title="登录" subtitle="欢迎回来" loading={{ fields: 2 }}>
+        <p>REAL CONTENT</p>
+      </AuthPage>,
+    );
+    expect(screen.queryByText("REAL CONTENT")).toBeNull();
+    expect(document.querySelector('[data-template="AuthPage"]')).not.toBeNull();
+    expect(count(".cb-auth-side")).toBe(2);
+    expect(count(".cb-auth-card")).toBe(1);
+    expect(screen.getByRole("heading", { name: "登录" })).toBeTruthy();
+    expect(screen.getByText("欢迎回来")).toBeTruthy();
+    expect(count('[data-part="loading-field"]')).toBe(2);
+    // The submit button is part of the loaded card: a prominent box.
+    expect(count('.cb-auth-card [data-box="prominent"]')).toBe(1);
+    expect(screen.getAllByRole("status")).toHaveLength(1);
+  });
+
+  it("subtitle, note, hint and buttons keep the loaded card's other parts", () => {
+    zh(
+      <AuthPage
+        title="接受邀请"
+        loading={{
+          fields: 1,
+          subtitle: true,
+          note: <p>REAL NOTE</p>,
+          hint: "登录后接受",
+          buttons: 2,
+        }}
+      />,
+    );
+    expect(document.querySelector('.cb-auth-head [data-size="body"]')).not.toBeNull();
+    expect(screen.getByText("REAL NOTE")).toBeTruthy();
+    expect(screen.getByText("登录后接受")).toBeTruthy();
+    expect(count('.cb-auth-card [data-box="prominent"]')).toBe(2);
+    expect(screen.getAllByRole("status")).toHaveLength(1);
+    cleanup();
+    // A known subtitle stays real; no subtitle slot without the flag.
+    zh(<AuthPage title="登录" loading={{ fields: 1 }} />);
+    expect(document.querySelector('.cb-auth-head [data-size="body"]')).toBeNull();
+    expect(count('.cb-auth-card [data-box="prominent"]')).toBe(1);
+  });
+
+  it("an unknown title is a bar", () => {
+    zh(<AuthPage title="" loading={{ fields: 1 }} />);
+    expect(screen.queryByRole("heading")).toBeNull();
+    expect(document.querySelector('.cb-auth-head [data-size="title"]')).not.toBeNull();
+  });
+});
+
+const noop = () => {};
+const convProps = (over: Partial<ConversationPageProps> = {}): ConversationPageProps => ({
+  titleBar: {
+    path: [{ label: "示例组织" }, { label: "研究助手" }],
+    title: "分析 9 月示例表差异",
+    untitled: "未命名会话",
+    menu: [{ id: "rename", label: "重命名", icon: "square-pen", onSelect: noop }],
+    properties: { pressed: false, onToggle: noop },
+    panels: [{ id: "files", label: "文件", icon: "file-text", pressed: false, onOpen: noop }],
+  },
+  thread: <p>REAL THREAD</p>,
+  composer: <textarea aria-label="REAL COMPOSER" />,
+  status: { context: "grant@示例组织:/chat/9f3a", version: "v0.1.0" },
+  properties: <p>REAL PROPERTIES</p>,
+  panel: <p>REAL PANEL</p>,
+  right: "none",
+  onCloseRight: noop,
+  layout: "inline",
+  ...over,
+});
+const busy = () => document.querySelectorAll('[role="status"][aria-busy="true"]');
+
+describe("ConversationPage loading", () => {
+  it("ConversationPage loading draws the frame and no children", () => {
+    zh(
+      <ConversationPage
+        {...convProps({ right: "panel" })}
+        loading={{ thread: true, title: true, rightArea: true }}
+      />,
+    );
+    expect(screen.queryByText("REAL THREAD")).toBeNull();
+    expect(screen.queryByText("REAL PANEL")).toBeNull();
+    expect(document.querySelector('[data-template="ConversationPage"]')).not.toBeNull();
+    // The real thread column: three turns, a user bar at 45% right-aligned, then two prose bars.
+    const thread = document.querySelector('[data-part="thread"]');
+    expect(thread?.className).toBe("cb-conv-thread");
+    expect(thread?.closest(".cb-conv-scroll")).not.toBeNull();
+    const turns = thread?.querySelectorAll('[data-part="loading-turn"]') ?? [];
+    expect(turns).toHaveLength(3);
+    expect(turns[0]?.className).toBe("cb-user-msg");
+    expect(turns[0]?.querySelector('[data-part="skeleton-text"]')).not.toBeNull();
+    const widths = [...(thread?.querySelectorAll('[data-part="skeleton-text"]') ?? [])].map(
+      (e) => (e as HTMLElement).style.width,
+    );
+    expect(widths).toEqual(["100%", "100%", "70%"]);
+    expect(thread?.querySelectorAll('[data-part="skeleton-text"][data-size="prose"]').length).toBe(
+      3,
+    );
+    // The right panel is the panel's own loading state, in the panel slot.
+    const slot = document.querySelector('[data-part="panel-slot"]');
+    expect(slot?.querySelector('[data-part="right-panel"]')).not.toBeNull();
+    expect(slot?.querySelector('[data-part="panel-body"][data-state="loading"]')).not.toBeNull();
+    // One announcement for the whole page.
+    expect(busy()).toHaveLength(1);
+    expect(screen.getAllByRole("status")).toHaveLength(1);
+  });
+
+  it("composer keeps its box while the thread loads", () => {
+    const composer = ({ sendDisabled }: { sendDisabled: boolean }) => (
+      <div>
+        <textarea aria-label="REAL COMPOSER" />
+        <button type="button" disabled={sendDisabled}>
+          SEND
+        </button>
+      </div>
+    );
+    const ui = (loading?: ConversationPageProps["loading"]) => (
+      <DesignProvider locale="zh">
+        <ConversationPage {...convProps({ composer })} {...(loading ? { loading } : {})} />
+      </DesignProvider>
+    );
+    const { rerender } = render(ui({ thread: true }));
+    const box = () => document.querySelector(".cb-conv-composer");
+    const input = screen.getByLabelText("REAL COMPOSER") as HTMLTextAreaElement;
+    expect(box()?.contains(input)).toBe(true);
+    expect(box()?.parentElement?.className).toBe("cb-conv-center");
+    // Not inert: focusable and editable; only send is blocked.
+    expect(box()?.hasAttribute("inert")).toBe(false);
+    input.focus();
+    expect(document.activeElement).toBe(input);
+    expect((screen.getByText("SEND") as HTMLButtonElement).disabled).toBe(true);
+    // Loading ends: same node, same focus, send is allowed.
+    rerender(ui());
+    expect(screen.getByLabelText("REAL COMPOSER")).toBe(input);
+    expect(document.activeElement).toBe(input);
+    expect((screen.getByText("SEND") as HTMLButtonElement).disabled).toBe(false);
+    // And loading starts again: still the same focused node.
+    rerender(ui({ thread: true }));
+    expect(screen.getByLabelText("REAL COMPOSER")).toBe(input);
+    expect(document.activeElement).toBe(input);
+    expect((screen.getByText("SEND") as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("the title bar keeps its icons and path, and the title is a bar", () => {
+    zh(<ConversationPage {...convProps()} loading={{ title: true }} />);
+    const bar = document.querySelector('[data-part="title-bar"]');
+    expect(bar?.querySelectorAll('[data-part="title-bar-button"]')).toHaveLength(2);
+    expect(screen.getByText("研究助手")).toBeTruthy();
+    expect(screen.queryByText("分析 9 月示例表差异")).toBeNull();
+    const title = bar?.querySelector('[data-part="title"]');
+    expect(title?.querySelector('[data-part="skeleton-text"]')).not.toBeNull();
+    // The thread is real and the composer is usable: only the title is loading.
+    expect(screen.getByText("REAL THREAD")).toBeTruthy();
+    expect(busy()).toHaveLength(1);
+  });
+
+  it("loading parts are independent: a loading right area leaves the thread real", () => {
+    zh(<ConversationPage {...convProps({ right: "properties" })} loading={{ rightArea: true }} />);
+    expect(screen.getByText("REAL THREAD")).toBeTruthy();
+    expect(screen.queryByText("REAL PROPERTIES")).toBeNull();
+    const props = document.querySelector('[data-part="properties"]');
+    expect(
+      props?.querySelectorAll('[data-part="property-section"][data-state="loading"]').length,
+    ).toBe(1);
+    // Only the always-present Context section: no Files placeholder.
+    expect(props?.textContent).toContain("上下文");
+    expect(props?.textContent).not.toContain("文件");
+    expect(busy()).toHaveLength(1);
+  });
+
+  it("the loading right panel takes the caller's title and has no full-screen button", () => {
+    zh(
+      <ConversationPage
+        {...convProps({ right: "panel" })}
+        loading={{ rightArea: { title: "文件" } }}
+      />,
+    );
+    const slot = document.querySelector('[data-part="panel-slot"]');
+    expect(slot?.querySelector('[data-part="panel-title"]')?.textContent).toBe("文件");
+    expect(slot?.querySelector('[aria-label="全屏"]')).toBeNull();
+    expect(slot?.querySelector('[aria-label="关闭"]')).not.toBeNull();
+  });
+
+  it("a closed right area stays closed while loading", () => {
+    zh(<ConversationPage {...convProps()} loading={{ thread: true, rightArea: true }} />);
+    expect(document.querySelector('[data-part="panel-slot"]')).toBeNull();
+    expect(document.querySelector('[data-part="properties"]')).toBeNull();
+  });
+});
+
+const spans = [
+  { id: "a", kind: "run", label: "run", startMs: 0, durationMs: 100, status: "ok" },
+  { id: "b", parentId: "a", kind: "tool", label: "t", startMs: 10, durationMs: 50, status: "ok" },
+] as const;
+
+describe("TracePage loading", () => {
+  it("TracePage loading draws the frame and no children", () => {
+    zh(
+      <TracePage
+        header={header}
+        waterfall={<p>REAL WATERFALL</p>}
+        detail={<p>REAL DETAIL</p>}
+        loading={{}}
+      />,
+    );
+    expect(screen.queryByText("REAL WATERFALL")).toBeNull();
+    expect(screen.queryByText("REAL DETAIL")).toBeNull();
+    expect(document.querySelector('[data-template="TracePage"]')).not.toBeNull();
+    expect(count(".cb-trace")).toBe(1);
+    expect(count(".cb-trace-waterfall .cb-waterfall")).toBe(1);
+    expect(count(".cb-trace-detail")).toBe(1);
+    // Four stat slots, six rows by default, a card-shaped detail.
+    expect(count('[data-part="stat-card"]')).toBe(4);
+    expect(count('[data-part="loading-span-row"]')).toBe(6);
+    expect(count('.cb-trace-detail [data-part="loading-card"]')).toBe(1);
+    expect(screen.getAllByRole("status")).toHaveLength(1);
+  });
+
+  it("takes the row count as given", () => {
+    zh(<TracePage header={header} waterfall={null} detail={null} loading={{ spans: 9 }} />);
+    expect(count('[data-part="loading-span-row"]')).toBe(9);
+  });
+
+  it("a loading row is the loaded row's own box", () => {
+    zh(<TracePage header={header} waterfall={null} detail={null} loading={{ spans: 1 }} />);
+    const row = document.querySelector('[data-part="loading-span-row"]');
+    expect(row?.className).toBe("cb-waterfall-row");
+    expect(row?.parentElement?.className).toBe("cb-waterfall");
+    for (const part of ["name", "track", "status", "ms"]) {
+      expect(row?.querySelector(`.cb-waterfall-${part}`), part).not.toBeNull();
+    }
+    // The loaded row has the same four cells.
+    cleanup();
+    zh(
+      <TracePage
+        header={header}
+        waterfall={
+          <SpanWaterfall
+            spans={[...spans]}
+            selectedId={null}
+            onSelect={noop}
+            labels={{ empty: "无" }}
+          />
+        }
+        detail={null}
+      />,
+    );
+    const real = document.querySelector(".cb-waterfall-row");
+    expect(real?.className).toBe("cb-waterfall-row");
+    expect(real?.children).toHaveLength(row?.children.length ?? -1);
+  });
+
+  it("real metrics stay while loading; the slots are for unknown ones", () => {
+    zh(
+      <TracePage
+        header={{ ...header, metrics: [{ label: "调用数", value: "6" }] }}
+        waterfall={null}
+        detail={null}
+        loading={{}}
+      />,
+    );
+    expect(screen.getByText("调用数")).toBeTruthy();
+    expect(count('[data-part="stat-card"]')).toBe(1);
+  });
+});
+
+describe("ListPage loading keep", () => {
+  it("keep renders the page's own sections inside one busy region (they do not announce)", () => {
+    zh(
+      <ListPage header={header} loading={{ keep: true }}>
+        <FormSection id="a" title="甲" loading={{ fields: 2 }} />
+        <FormSection id="b" title="乙" loading={{ cards: [{ lines: 1 }] }} />
+        <DataTable<never> label="表" state="loading" columns={[]} rows={[]} rowKey={() => ""} />
+      </ListPage>,
+    );
+    expect(count(".cb-form-section")).toBe(2);
+    expect(screen.getAllByRole("status")).toHaveLength(1);
+    expect(screen.getAllByText("正在加载")).toHaveLength(1);
+  });
+});
+
+describe("ListPage loading", () => {
+  const listHeader = {
+    ...header,
+    tabs: [
+      { id: "all", label: "全部", count: 12 },
+      { id: "mine", label: "我的", count: 3 },
+    ],
+    activeTab: "all",
+  };
+
+  it("list loading boxes equal loaded boxes", () => {
+    zh(
+      <ListPage header={listHeader} variant="objects" listLabel="列表">
+        <ObjectRow mark={{ text: "a" }} name="a" description="描述" />
+        <ObjectRow mark={{ text: "b" }} name="b" description="描述" />
+      </ListPage>,
+    );
+    const loaded = document.querySelector(".cb-object-list");
+    const loadedRow = loaded?.querySelector(".cb-object-row");
+    const loadedKinds = [...(loadedRow?.children ?? [])].map((c) => c.className.split(" ")[0]);
+    cleanup();
+    zh(<ListPage header={listHeader} variant="objects" listLabel="列表" loading />);
+    const list = document.querySelector(".cb-object-list");
+    // The same container and row elements, a mark and a text column in each row.
+    expect(list?.tagName).toBe("UL");
+    const rows = list?.querySelectorAll(":scope > .cb-object-row") ?? [];
+    expect(rows).toHaveLength(3);
+    expect(rows[0]).toBe(list?.firstElementChild);
+    const kinds = [...(rows[0]?.children ?? [])]
+      .map((c) => c.className.split(" ")[0])
+      .filter((c) => c !== "cb-sr-only");
+    expect(kinds.slice(0, 1)).toEqual(["cb-skeleton-box"]);
+    expect(loadedKinds.slice(0, 1)).toEqual(["cb-object-mark"]);
+    expect(rows[0]?.querySelector('[data-part="skeleton-box"][data-box="mark"]')).not.toBeNull();
+    // Two text lines in the text column, in the one bar look: no old bars.
+    const text = rows[0]?.querySelector(".cb-object-text");
+    expect(text?.querySelectorAll('[data-part="skeleton-text"]')).toHaveLength(2);
+    expect(count(".cb-object-bar")).toBe(0);
+    // Tab labels stay and the counts are the muted dash; nothing else announces.
+    expect(screen.getByRole("tab", { name: /全部/ })).toBeTruthy();
+    expect(screen.getByRole("tab", { name: /我的/ })).toBeTruthy();
+    expect(document.querySelectorAll('.cb-tab-count[data-pending="true"]')).toHaveLength(2);
+    expect(document.body.textContent).not.toContain("12");
+    expect(screen.getAllByRole("status")).toHaveLength(1);
+  });
+
+  it("a records page without a table shape draws bars in the one bar look", () => {
+    zh(<ListPage header={header} loading />);
+    expect(count(".cb-skeleton-row")).toBe(0);
+    expect(count('.cb-skeleton [data-part="skeleton-text"]')).toBe(4);
+    expect(screen.getAllByRole("status")).toHaveLength(1);
+  });
+
+  it("a records page takes the DataTable shape of its list", () => {
+    const columns: Column<{ id: string }>[] = [{ key: "n", header: "名称", cell: (r) => r.id }];
+    zh(
+      <ListPage
+        header={header}
+        loading={{ table: { label: "列表", columns, rowHeight: "default" } }}
+      />,
+    );
+    expect(screen.getByText("名称")).toBeTruthy();
+    expect(document.querySelector('[data-empty="loading"]')).not.toBeNull();
+    expect(screen.getAllByRole("status")).toHaveLength(1);
+    expect(screen.getAllByText("正在加载")).toHaveLength(1);
+  });
+
+  it("stat slots stand in for metrics the page does not know yet", () => {
+    zh(<ListPage header={header} loading={{ stats: 3 }} />);
+    expect(count('[data-part="stat-card"]')).toBe(3);
+  });
+
+  it("an unknown title is a bar", () => {
+    zh(<ListPage header={{ ...header, title: "" }} loading />);
+    expect(
+      document.querySelector('[data-part="page-header"] [data-part="skeleton-text"]'),
+    ).not.toBeNull();
+    expect(screen.getAllByRole("status")).toHaveLength(1);
+  });
+});
+
+describe("loading never remounts a page", () => {
+  it("ListPage keeps its search input node and focus across loading toggles", () => {
+    const withSearch = {
+      ...header,
+      search: { label: "搜索", value: "", onChange: noop },
+    };
+    const ui = (loading: boolean) => (
+      <DesignProvider locale="zh">
+        <ListPage header={withSearch} variant="objects" listLabel="l" loading={loading}>
+          <ObjectRow mark={{ text: "a" }} name="a" />
+        </ListPage>
+      </DesignProvider>
+    );
+    const { rerender } = render(ui(false));
+    const input = screen.getByRole("searchbox", { name: "搜索" });
+    input.focus();
+    expect(document.activeElement).toBe(input);
+    rerender(ui(true));
+    expect(screen.getByRole("searchbox", { name: "搜索" })).toBe(input);
+    expect(document.activeElement).toBe(input);
+    expect(screen.getAllByRole("status")).toHaveLength(1);
+    rerender(ui(false));
+    expect(screen.getByRole("searchbox", { name: "搜索" })).toBe(input);
+    expect(document.activeElement).toBe(input);
+    expect(screen.queryAllByRole("status")).toHaveLength(0);
+  });
+
+  it("TracePage keeps its head node across loading toggles", () => {
+    const ui = (loading: boolean) => (
+      <DesignProvider locale="zh">
+        <TracePage
+          header={header}
+          waterfall={<p>W</p>}
+          detail={<p>D</p>}
+          {...(loading ? { loading: {} } : {})}
+        />
+      </DesignProvider>
+    );
+    const { rerender } = render(ui(false));
+    const head = document.querySelector(".cb-template-head");
+    const body = document.querySelector(".cb-trace");
+    rerender(ui(true));
+    expect(document.querySelector(".cb-template-head")).toBe(head);
+    expect(document.querySelector(".cb-trace")).toBe(body);
+    rerender(ui(false));
+    expect(document.querySelector(".cb-template-head")).toBe(head);
+    expect(document.querySelector(".cb-trace")).toBe(body);
+    expect(screen.queryAllByRole("status")).toHaveLength(0);
+  });
+});

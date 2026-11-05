@@ -25,7 +25,6 @@ import {
   BUILTIN,
   BUILTIN_TOOL_KINDS,
   BUILTIN_TOOL_NAMES,
-  DEFAULT_AGENT_TOOLS,
   SANDBOX_ASK_TOOL_NAMES,
   SANDBOX_TOOL_NAMES,
   WEB_TOOL_NAMES,
@@ -41,6 +40,9 @@ import { AGENT, Log, MODEL } from "../runtime/context/fixtures.js";
 const dummy = {} as never;
 const builtins = () =>
   new BuiltinTools(
+    dummy,
+    dummy,
+    dummy,
     dummy,
     dummy,
     dummy,
@@ -100,7 +102,7 @@ describe("builtin names", () => {
     expect(BUILTIN_TOOL_NAMES).toHaveLength(Object.values(BUILTIN).length);
   });
 
-  it("the sandbox lists name the seven sandbox tools, Deliver included", () => {
+  it("the sandbox lists name the nine sandbox tools, Deliver and the task tools included", () => {
     expect([...SANDBOX_TOOL_NAMES]).toEqual([
       "Bash",
       "Read",
@@ -109,7 +111,14 @@ describe("builtin names", () => {
       "Glob",
       "Grep",
       "Deliver",
+      "TaskOutput",
+      "TaskStop",
     ]);
+    // reading or stopping a task changes nothing the person has not already approved
+    expect(SANDBOX_ASK_TOOL_NAMES.has("TaskOutput")).toBe(false);
+    expect(SANDBOX_ASK_TOOL_NAMES.has("TaskStop")).toBe(false);
+    expect(BUILTIN_TOOL_KINDS.TaskOutput).toBe("read");
+    expect(BUILTIN_TOOL_KINDS.TaskStop).toBe("command");
     expect([...SANDBOX_ASK_TOOL_NAMES]).toEqual(["Bash", "Write", "Edit", "Deliver"]);
   });
 
@@ -143,9 +152,6 @@ describe("builtin names", () => {
       BUILTIN.WebSearch,
       BUILTIN.WebFetch,
     ]);
-    expect(arrayLiteral(agents, "DEFAULT_BUILTIN_TOOLS")).toEqual(
-      DEFAULT_AGENT_TOOLS.map((r) => (r.kind === "builtin" ? r.name : "")),
-    );
     for (const f of [
       "apps/web/src/lib/timeline.ts",
       "apps/web/src/components/AgentSubagents.tsx",
@@ -165,10 +171,14 @@ describe("builtin names", () => {
     expect(CLAUDE_CODE_TOOL_MAP).not.toMatch(/for example WebFetch/);
   });
 
-  it("the legacy map covers the 13 old names, one per new name", () => {
+  it("the legacy map covers the 13 old names, one per new name (the task and web tools never had one)", () => {
     expect(Object.keys(LEGACY_BUILTINS)).toHaveLength(13);
     expect(new Set(Object.values(LEGACY_BUILTINS).map((l) => l.name))).toEqual(
-      new Set(BUILTIN_TOOL_NAMES.filter((n) => !WEB_TOOL_NAMES.includes(n))),
+      new Set(
+        BUILTIN_TOOL_NAMES.filter(
+          (n) => n !== BUILTIN.TaskOutput && n !== BUILTIN.TaskStop && !WEB_TOOL_NAMES.includes(n),
+        ),
+      ),
     );
     expect(LEGACY_BUILTINS.sandbox_bash).toEqual({
       name: "Bash",

@@ -3,13 +3,11 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
-import ExtensionsPage from "../src/app/[locale]/(app)/settings/extensions/page";
-import IdentitiesPage from "../src/app/[locale]/(app)/settings/identities/page";
-import OrganizationSettingsPage from "../src/app/[locale]/(app)/settings/organization/page";
 import type { Me } from "../src/lib/session";
-import { bodyOf, json, noContent, stubApi } from "./support/api";
+import { bodyOf, json, lastStubRoutes, noContent, stubApi } from "./support/api";
 import { resetNavigation } from "./support/navigation";
-import { ME, renderPage } from "./support/render";
+import { renderRouteWithCache } from "./support/query";
+import { ME } from "./support/render";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 const navigateBrowser = vi.hoisted(() => vi.fn());
@@ -17,6 +15,14 @@ vi.mock("../src/lib/browser", () => ({ navigateBrowser }));
 
 const msgs = { zh, en } as const;
 const BASE = "/api/v1/orgs/o1";
+
+/** The page's server reads that a test does not care about answer empty (the previewers, the login plugins). */
+const api = (routes: Parameters<typeof stubApi>[0]) =>
+  stubApi({
+    [`GET ${BASE}/file-previewers`]: () => json(200, { items: [] }),
+    "GET /api/v1/auth/sources": () => json(200, { sources: [] }),
+    ...routes,
+  });
 const MEMBER: Me = {
   ...ME,
   memberships: [{ orgId: "o1", slug: "acme", name: "Acme", role: "member" }],
@@ -87,22 +93,30 @@ afterEach(() => {
 
 describe("组织插件（SettingsPage）", () => {
   it.each(["zh", "en"] as const)(
-    "权限清单只读、敏感类别高亮；启用 → PUT enabled（%s）",
+    "the permission list is read-only, a sensitive group carries the mark; enable PUTs enabled (%s)",
     async (locale) => {
       const m = msgs[locale].extensions;
-      const calls = stubApi({
+      const calls = api({
         [`GET ${BASE}/extensions`]: () => json(200, { extensions: [FAKE_IM, CORE] }),
         [`PUT ${BASE}/extensions/fake-im`]: (c) =>
           json(200, { extension: { ...FAKE_IM, ...(bodyOf(c) as object) } }),
       });
-      const { container } = renderPage(<ExtensionsPage />, { locale });
+      const { container } = await renderRouteWithCache("/settings/extensions", lastStubRoutes(), {
+        locale,
+      });
       expect(container.querySelector('[data-template="SettingsPage"]')).not.toBeNull();
       const perms = await screen.findByRole("region", {
         name: m.permissionsLabel.replace("{plugin}", "fake-im"),
       });
       expect(within(perms).getAllByText(m.sensitive)).toHaveLength(2);
       expect(within(perms).getByText(m.category.tools)).toBeTruthy();
-      expect(within(perms).getByText("· post_announcement").getAttribute("data-tone")).toBe("warn");
+      // Only the 「敏感」 mark is yellow; a sensitive item is the plain muted list colour.
+      expect(within(perms).getByText("· post_announcement").getAttribute("data-tone")).toBe(
+        "muted",
+      );
+      for (const mark of within(perms).getAllByText(m.sensitive)) {
+        expect(mark.getAttribute("data-tone")).toBe("warn");
+      }
       expect(within(perms).getByText("· channel@1").getAttribute("data-tone")).toBe("muted");
       const user = userEvent.setup();
       await user.click(
@@ -122,7 +136,7 @@ describe("组织插件（SettingsPage）", () => {
     "部署上停用的插件：显示「不可用」，开关只读、保留组织的启用设置，没有配置与同步（%s）",
     async (locale) => {
       const m = msgs[locale].extensions;
-      const calls = stubApi({
+      const calls = api({
         [`GET ${BASE}/extensions`]: () =>
           json(200, {
             extensions: [
@@ -138,14 +152,17 @@ describe("组织插件（SettingsPage）", () => {
             ],
           }),
       });
-      renderPage(<ExtensionsPage />, { locale });
+      await renderRouteWithCache("/settings/extensions", lastStubRoutes(), { locale });
       const toggle = await screen.findByRole("switch", {
         name: m.enableLabel.replace("{plugin}", "fake-im"),
       });
       expect(
         toggle.hasAttribute("disabled") || toggle.getAttribute("aria-disabled") === "true",
       ).toBe(true);
-      expect(screen.getByText(m.unavailable)).toBeTruthy();
+      // A state, not a badge: attention text (warn), never orange.
+      const state = screen.getByText(m.unavailable);
+      expect(state.closest(".cb-badge")).toBeNull();
+      expect(state.getAttribute("data-tone")).toBe("warn");
       expect(screen.getByText(m.unavailableHint)).toBeTruthy();
       expect(screen.getByText(m.enabled)).toBeTruthy();
       expect(
@@ -160,7 +177,7 @@ describe("组织插件（SettingsPage）", () => {
     "a required bootstrap plugin: the switch is read-only (always on) with a note, no PUT (%s)",
     async (locale) => {
       const m = msgs[locale].extensions;
-      const calls = stubApi({
+      const calls = api({
         [`GET ${BASE}/extensions`]: () =>
           json(200, {
             extensions: [
@@ -176,14 +193,17 @@ describe("组织插件（SettingsPage）", () => {
             ],
           }),
       });
-      renderPage(<ExtensionsPage />, { locale });
+      await renderRouteWithCache("/settings/extensions", lastStubRoutes(), { locale });
       const toggle = await screen.findByRole("switch", {
         name: m.enableLabel.replace("{plugin}", "fake-im"),
       });
       expect(
         toggle.hasAttribute("disabled") || toggle.getAttribute("aria-disabled") === "true",
       ).toBe(true);
-      expect(screen.getByText(m.required)).toBeTruthy();
+      // Plain metadata: muted text, no badge.
+      const req = screen.getByText(m.required);
+      expect(req.closest(".cb-badge")).toBeNull();
+      expect(req.getAttribute("data-tone")).toBe("muted");
       expect(screen.getByText(m.requiredHint)).toBeTruthy();
       expect(screen.getByText(m.enabled)).toBeTruthy();
       await userEvent.setup().click(toggle);
@@ -192,7 +212,7 @@ describe("组织插件（SettingsPage）", () => {
   );
 
   it("missing dependency (extension.dependency_missing) lists the missing extension points", async () => {
-    stubApi({
+    api({
       [`GET ${BASE}/extensions`]: () => json(200, { extensions: [FAKE_IM] }),
       [`PUT ${BASE}/extensions/fake-im`]: () =>
         json(409, {
@@ -203,7 +223,7 @@ describe("组织插件（SettingsPage）", () => {
           },
         }),
     });
-    renderPage(<ExtensionsPage />);
+    await renderRouteWithCache("/settings/extensions", lastStubRoutes());
     await userEvent.setup().click(await screen.findByRole("switch", { name: "Enable fake-im" }));
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toContain(en.extensions.dependencyMissing);
@@ -211,7 +231,7 @@ describe("组织插件（SettingsPage）", () => {
   });
 
   it("still has dependents (extension.has_dependents): lists them and offers a forced disable", async () => {
-    const calls = stubApi({
+    const calls = api({
       [`GET ${BASE}/extensions`]: () => json(200, { extensions: [CORE] }),
       [`PUT ${BASE}/extensions/core-dir`]: (c) =>
         (bodyOf(c) as { force?: boolean }).force
@@ -227,7 +247,7 @@ describe("组织插件（SettingsPage）", () => {
               },
             }),
     });
-    renderPage(<ExtensionsPage />, { locale: "zh" });
+    await renderRouteWithCache("/settings/extensions", lastStubRoutes(), { locale: "zh" });
     const user = userEvent.setup();
     await user.click(await screen.findByRole("switch", { name: "启用 core-dir" }));
     const alert = await screen.findByRole("alert");
@@ -244,12 +264,12 @@ describe("组织插件（SettingsPage）", () => {
   });
 
   it("组织级配置：密钥不动则省略 → PUT config", async () => {
-    const calls = stubApi({
+    const calls = api({
       [`GET ${BASE}/extensions`]: () => json(200, { extensions: [FAKE_IM] }),
       [`PUT ${BASE}/extensions/fake-im`]: () =>
         json(200, { extension: { ...FAKE_IM, config: { url: "http://dir.test" } } }),
     });
-    renderPage(<ExtensionsPage />);
+    await renderRouteWithCache("/settings/extensions", lastStubRoutes());
     const user = userEvent.setup();
     const save = await screen.findByRole("button", { name: "Save config of fake-im" });
     expect(save).toHaveProperty("disabled", true);
@@ -263,11 +283,11 @@ describe("组织插件（SettingsPage）", () => {
   });
 
   it("通讯录插件已启用：立即同步 → POST directory/sync", async () => {
-    const calls = stubApi({
+    const calls = api({
       [`GET ${BASE}/extensions`]: () => json(200, { extensions: [{ ...FAKE_IM, enabled: true }] }),
       [`POST ${BASE}/extensions/fake-im/directory/sync`]: () => json(202, { jobId: "j1" }),
     });
-    renderPage(<ExtensionsPage />);
+    await renderRouteWithCache("/settings/extensions", lastStubRoutes());
     await userEvent
       .setup()
       .click(await screen.findByRole("button", { name: "Sync directory of fake-im now" }));
@@ -276,23 +296,23 @@ describe("组织插件（SettingsPage）", () => {
   });
 
   it("二级导航：管理员才有「插件」", async () => {
-    stubApi({ [`GET ${BASE}/settings`]: () => json(200, { settings: { toolSearch: "on" } }) });
-    renderPage(<OrganizationSettingsPage />, { me: MEMBER });
+    api({ [`GET ${BASE}/settings`]: () => json(200, { settings: { toolSearch: "on" } }) });
+    await renderRouteWithCache("/settings/organization", lastStubRoutes(), { me: MEMBER });
     await screen.findByText(en.orgSettings.readonly);
     expect(screen.queryByRole("link", { name: en.connections.nav.extensions })).toBeNull();
-    expect(screen.getByRole("link", { name: en.connections.nav.identities })).toBeTruthy();
+    expect(screen.getByRole("link", { name: en.connections.nav.sandbox })).toBeTruthy();
   });
 });
 
 describe("组织设置：IM 语言", () => {
   it.each(["zh", "en"] as const)("改 IM 语言 → PATCH { locale }（%s）", async (locale) => {
     const o = msgs[locale].orgSettings;
-    const calls = stubApi({
+    const calls = api({
       [`GET ${BASE}/settings`]: () => json(200, { settings: { toolSearch: "on", locale: "en" } }),
       [`PATCH ${BASE}/settings`]: (c) =>
         json(200, { settings: { toolSearch: "on", locale: "en", ...(bodyOf(c) as object) } }),
     });
-    renderPage(<OrganizationSettingsPage />, { locale });
+    await renderRouteWithCache("/settings/organization", lastStubRoutes(), { locale });
     const select = await screen.findByRole("combobox", { name: o.locale.label });
     expect(select).toHaveProperty("value", "en");
     const user = userEvent.setup();
@@ -307,10 +327,10 @@ describe("组织设置：IM 语言", () => {
   });
 
   it("普通成员只读", async () => {
-    stubApi({
+    api({
       [`GET ${BASE}/settings`]: () => json(200, { settings: { toolSearch: "on", locale: "zh" } }),
     });
-    renderPage(<OrganizationSettingsPage />, { me: MEMBER });
+    await renderRouteWithCache("/settings/organization", lastStubRoutes(), { me: MEMBER });
     const select = await screen.findByRole("combobox", { name: en.orgSettings.locale.label });
     expect(select).toHaveProperty("value", "zh");
     expect(select).toHaveProperty("disabled", true);
@@ -338,19 +358,21 @@ const BOUND = {
 };
 
 describe("已绑定的 IM 身份（SettingsPage）", () => {
-  beforeEach(() => resetNavigation("/settings/identities"));
+  beforeEach(() => resetNavigation("/account/identities"));
 
   it.each(["zh", "en"] as const)("列出身份（来源、租户）；解绑 → DELETE（%s）", async (locale) => {
     const m = msgs[locale].identities;
     let identities = [IDENTITY];
-    const calls = stubApi({
+    const calls = api({
       "GET /api/v1/me/identities": () => json(200, { identities }),
       "DELETE /api/v1/me/identities/fake-im%3At1/u-alice": () => {
         identities = [];
         return noContent();
       },
     });
-    const { container } = renderPage(<IdentitiesPage />, { locale });
+    const { container } = await renderRouteWithCache("/account/identities", lastStubRoutes(), {
+      locale,
+    });
     expect(container.querySelector('[data-template="SettingsPage"]')).not.toBeNull();
     const row = await screen.findByRole("row", { name: /Alice Wong/ });
     expect(within(row).getByText("fake-im")).toBeTruthy();
@@ -364,6 +386,10 @@ describe("已绑定的 IM 身份（SettingsPage）", () => {
     await user.click(within(dialog).getByRole("button", { name: m.unlink }));
     expect(await screen.findByText(m.empty)).toBeTruthy();
     expect(calls.some((c) => c.method === "DELETE")).toBe(true);
+    // unlinking invalidates the identities: they are read again in the browser
+    expect(calls.filter((c) => c.method === "GET").map((c) => c.url)).toEqual([
+      "/api/v1/me/identities",
+    ]);
   });
 
   it.each(["zh", "en"] as const)(
@@ -371,12 +397,12 @@ describe("已绑定的 IM 身份（SettingsPage）", () => {
     async (locale) => {
       const m = msgs[locale].identities;
       navigateBrowser.mockReset();
-      stubApi({
+      api({
         "GET /api/v1/me/identities": () => json(200, { identities: [IDENTITY, BOUND] }),
         "GET /api/v1/auth/sources": () =>
           json(200, { sources: [{ plugin: "fake-im", label: { zh: "假 IM", en: "Fake IM" } }] }),
       });
-      renderPage(<IdentitiesPage />, { locale });
+      await renderRouteWithCache("/account/identities", lastStubRoutes(), { locale });
       const bound = await screen.findByRole("row", { name: /Bound Bob/ });
       expect(within(bound).getByText(m.unverified)).toBeTruthy();
       const verified = screen.getByRole("row", { name: /Alice Wong/ });
@@ -390,17 +416,17 @@ describe("已绑定的 IM 身份（SettingsPage）", () => {
       await user.click(within(bound).getByRole("button", { name: rowActions }));
       await user.click(await screen.findByRole("menuitem", { name: m.verify }));
       expect(navigateBrowser).toHaveBeenCalledWith(
-        "/api/v1/auth/sso/fake-im/start?returnTo=%2Fsettings%2Fidentities",
+        "/api/v1/auth/sso/fake-im/start?returnTo=%2Faccount%2Fidentities",
       );
     },
   );
 
   it("该插件不是可用的登录方式（不在 GET /auth/sources 里）→ 仍标「未验证」，但不提供「验证」", async () => {
-    stubApi({
+    api({
       "GET /api/v1/me/identities": () => json(200, { identities: [BOUND] }),
       "GET /api/v1/auth/sources": () => json(200, { sources: [] }),
     });
-    renderPage(<IdentitiesPage />);
+    await renderRouteWithCache("/account/identities", lastStubRoutes());
     const bound = await screen.findByRole("row", { name: /Bound Bob/ });
     expect(within(bound).getByText(en.identities.unverified)).toBeTruthy();
     const user = userEvent.setup();
@@ -410,12 +436,12 @@ describe("已绑定的 IM 身份（SettingsPage）", () => {
   });
 
   it("最后一个登录方式（identity.last_login_method）：对话框里显示原因", async () => {
-    stubApi({
+    api({
       "GET /api/v1/me/identities": () => json(200, { identities: [IDENTITY] }),
       "DELETE /api/v1/me/identities/fake-im%3At1/u-alice": () =>
         json(409, { error: { code: "identity.last_login_method", message: "x" } }),
     });
-    renderPage(<IdentitiesPage />);
+    await renderRouteWithCache("/account/identities", lastStubRoutes());
     const user = userEvent.setup();
     const row = await screen.findByRole("row", { name: /Alice Wong/ });
     await user.click(within(row).getByRole("button", { name: "Row actions" }));

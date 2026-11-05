@@ -75,6 +75,7 @@ const EXPECTED: Record<FakeExtensionName, { provides: string[]; requires?: strin
   "fake-im": { provides: ["channel@1", "identity-source@1", "directory@1"] },
   "fake-web": { provides: ["web-search@1", "web-fetch@1"] },
   "fake-web-2": { provides: ["web-search@1", "web-fetch@1"] },
+  "fake-config-form": { provides: [] },
 };
 
 let out: string;
@@ -155,6 +156,27 @@ describe("packing", () => {
   it("fake-web and fake-web-2 share a byte-identical web.ts", async () => {
     const src = (name: FakeExtensionName) => readFile(join(fakeExtensionDir(name), "src/web.ts"));
     expect((await src("fake-web")).equals(await src("fake-web-2"))).toBe(true);
+  });
+
+  it("fake-config-form carries its display name and the hinted deployment schema", async () => {
+    const plugin = await readPluginPackage(packed.get("fake-config-form") as Uint8Array, {
+      maxBytes: MAX_BYTES,
+      hostSdkVersion: SDK_VERSION,
+    });
+    expect(plugin.manifest.displayName).toEqual({ zh: "表单样例", en: "Form sample" });
+    const deployment = plugin.manifest.extension?.configSchemas?.deployment as
+      | Record<string, unknown>
+      | undefined;
+    expect(deployment?.["x-ui"]).toMatchObject({
+      messages: { duplicateEndpoint: expect.anything() },
+    });
+    const props = deployment?.properties as Record<string, Record<string, unknown>>;
+    expect(props.endpoints?.["x-ui"]).toMatchObject({
+      label: { zh: "端点", en: "Endpoints" },
+      secrets: [{ path: "apiKeys", keyBy: "name", after: "baseUrl" }],
+      presets: expect.arrayContaining([expect.objectContaining({ id: "deepseek" })]),
+    });
+    expect(props.apiKeys?.["x-secret"]).toBe(true);
   });
 
   it("fake-connector ships its template; fake-dep-requirer depends on fake-dep-provider", async () => {

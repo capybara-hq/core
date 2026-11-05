@@ -66,6 +66,18 @@ export const ICON_NAMES = [
   "link",
   "zoom-in",
   "corner-down-right",
+  "chevrons-up-down",
+  "arrow-up-right",
+  "arrow-left",
+  "archive",
+  "filter",
+  "gauge",
+  "store",
+  "cpu",
+  "sliders",
+  "lock",
+  "clock",
+  "grip-vertical",
 ] as const;
 
 export type IconName = (typeof ICON_NAMES)[number];
@@ -423,5 +435,84 @@ export const ICON_NODES: Record<IconName, readonly IconNode[]> = {
   "corner-down-right": [
     ["path", { d: "m15 10 5 5-5 5" }],
     ["path", { d: "M4 4v7a4 4 0 0 0 4 4h12" }],
+  ],
+  "chevrons-up-down": [
+    ["path", { d: "m7 15 5 5 5-5" }],
+    ["path", { d: "m7 9 5-5 5 5" }],
+  ],
+  "arrow-up-right": [
+    ["path", { d: "M7 7h10v10" }],
+    ["path", { d: "M7 17 17 7" }],
+  ],
+  "arrow-left": [
+    ["path", { d: "m12 19-7-7 7-7" }],
+    ["path", { d: "M19 12H5" }],
+  ],
+  archive: [
+    ["rect", { width: "20", height: "5", x: "2", y: "3", rx: "1" }],
+    ["path", { d: "M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8" }],
+    ["path", { d: "M10 12h4" }],
+  ],
+  filter: [
+    ["path", { d: "M2 5h20" }],
+    ["path", { d: "M6 12h12" }],
+    ["path", { d: "M9 19h6" }],
+  ],
+  gauge: [
+    ["path", { d: "m12 14 4-4" }],
+    ["path", { d: "M3.34 19a10 10 0 1 1 17.32 0" }],
+  ],
+  store: [
+    ["path", { d: "M15 21v-5a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v5" }],
+    [
+      "path",
+      {
+        d: "M17.774 10.31a1.12 1.12 0 0 0-1.549 0 2.5 2.5 0 0 1-3.451 0 1.12 1.12 0 0 0-1.548 0 2.5 2.5 0 0 1-3.452 0 1.12 1.12 0 0 0-1.549 0 2.5 2.5 0 0 1-3.77-3.248l2.889-4.184A2 2 0 0 1 7 2h10a2 2 0 0 1 1.653.873l2.895 4.192a2.5 2.5 0 0 1-3.774 3.244",
+      },
+    ],
+    ["path", { d: "M4 10.95V19a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8.05" }],
+  ],
+  cpu: [
+    ["path", { d: "M12 20v2" }],
+    ["path", { d: "M12 2v2" }],
+    ["path", { d: "M17 20v2" }],
+    ["path", { d: "M17 2v2" }],
+    ["path", { d: "M2 12h2" }],
+    ["path", { d: "M2 17h2" }],
+    ["path", { d: "M2 7h2" }],
+    ["path", { d: "M20 12h2" }],
+    ["path", { d: "M20 17h2" }],
+    ["path", { d: "M20 7h2" }],
+    ["path", { d: "M7 20v2" }],
+    ["path", { d: "M7 2v2" }],
+    ["rect", { x: "4", y: "4", width: "16", height: "16", rx: "2" }],
+    ["rect", { x: "8", y: "8", width: "8", height: "8", rx: "1" }],
+  ],
+  sliders: [
+    ["path", { d: "M10 5H3" }],
+    ["path", { d: "M12 19H3" }],
+    ["path", { d: "M14 3v4" }],
+    ["path", { d: "M16 17v4" }],
+    ["path", { d: "M21 12h-9" }],
+    ["path", { d: "M21 19h-5" }],
+    ["path", { d: "M21 5h-7" }],
+    ["path", { d: "M8 10v4" }],
+    ["path", { d: "M8 12H3" }],
+  ],
+  lock: [
+    ["rect", { width: "18", height: "11", x: "3", y: "11", rx: "2", ry: "2" }],
+    ["path", { d: "M7 11V7a5 5 0 0 1 10 0v4" }],
+  ],
+  clock: [
+    ["circle", { cx: "12", cy: "12", r: "10" }],
+    ["path", { d: "M12 6v6l4 2" }],
+  ],
+  "grip-vertical": [
+    ["circle", { cx: "9", cy: "12", r: "1" }],
+    ["circle", { cx: "9", cy: "5", r: "1" }],
+    ["circle", { cx: "9", cy: "19", r: "1" }],
+    ["circle", { cx: "15", cy: "12", r: "1" }],
+    ["circle", { cx: "15", cy: "5", r: "1" }],
+    ["circle", { cx: "15", cy: "19", r: "1" }],
   ],
 };

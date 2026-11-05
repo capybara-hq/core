@@ -1,8 +1,28 @@
 import { existsSync, readFileSync } from "node:fs";
 import { basename, join, relative } from "node:path";
+import { PLUGIN_MANIFEST_FILE } from "@capybara-hq/plugin-sdk";
 import type { Finding } from "./source.js";
 
 const RULE = "plugin-release-metadata";
+const DISPLAY_NAME_RULE = "release-display-name";
+
+/**
+ * Does the plugin's `.capybara-plugin/plugin.json` lack `displayName`? False when the file is
+ * missing or not JSON: "Plugin pack" reports those.
+ */
+function lacksDisplayName(file: string): boolean {
+  if (!existsSync(file)) return false;
+  try {
+    const m = JSON.parse(readFileSync(file, "utf8").replace(/^\uFEFF/, "")) as unknown;
+    return (
+      typeof m === "object" &&
+      m !== null &&
+      (m as { displayName?: unknown }).displayName === undefined
+    );
+  } catch {
+    return false;
+  }
+}
 
 const readJson = (file: string) =>
   JSON.parse(readFileSync(file, "utf8")) as Record<string, unknown>;
@@ -27,6 +47,8 @@ function repositoryUrl(pkg: Record<string, unknown>): string | undefined {
  * has no `directory`. The `example-*` plugins must be private. The plugin tgz carries these fields
  * (`METADATA_FIELDS` of the packer); the libraries' half of the rule is core's
  * `check:release-metadata`.
+ * `release-display-name`: a published plugin's `.capybara-plugin/plugin.json` needs a
+ * `displayName` (`{ zh, en }`), the name every page shows instead of the package name.
  */
 export function checkPluginReleaseMetadata(plugins: string[], root: string): Finding[] {
   const out: Finding[] = [];
@@ -49,6 +71,15 @@ export function checkPluginReleaseMetadata(plugins: string[], root: string): Fin
       finding(`${label} is published and needs a "description"`);
     }
     if (typeof pkg.license !== "string") finding(`${label} is published and needs a "license"`);
+    const manifestFile = join(dir, PLUGIN_MANIFEST_FILE);
+    if (lacksDisplayName(manifestFile)) {
+      out.push({
+        file: manifestFile,
+        line: 1,
+        rule: DISPLAY_NAME_RULE,
+        message: `${label} is published and needs a "displayName" in ${PLUGIN_MANIFEST_FILE}: { "zh": …, "en": … }, the name pages show`,
+      });
+    }
     if (typeof pkg.homepage !== "string" || !pkg.homepage.startsWith("https://")) {
       finding(`${label} is published and needs an https "homepage"`);
     }

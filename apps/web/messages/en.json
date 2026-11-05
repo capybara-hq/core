@@ -13,8 +13,11 @@
     },
     "cancel": "Cancel",
     "retry": "Retry",
-    "loadFailed": "Failed to load",
-    "language": "Language"
+    "language": "Language",
+    "theme": "Theme",
+    "themeLight": "Light",
+    "themeDark": "Dark",
+    "back": "Back"
   },
   "login": {
     "title": "Sign in",
@@ -56,18 +59,70 @@
     "setupTokenHint": "Only needed if the deployment configured a setup token."
   },
   "home": {
-    "title": "Workspace",
-    "greeting": "Hello, {name}",
-    "currentOrg": "Current organization",
-    "selectOrg": "Select an organization",
-    "noMemberships": "You have not joined any organization yet",
+    "title": "Home",
+    "noMemberships": "You have not joined any organization yet.",
     "agents": "Agents",
-    "openAgents": "View and create agents",
     "noMembershipsHint": "Ask an organization admin to invite you.",
-    "noCurrentOrg": "Select a current organization to view and create agents.",
     "role": "Role",
     "slug": "Slug",
-    "orgCard": "Organization"
+    "noMembershipsCreateHint": "Create an organization to get started, or ask an organization admin to invite you.",
+    "createOrg": {
+      "open": "Create organization",
+      "title": "Create an organization",
+      "nameLabel": "Organization name",
+      "nameHint": "Up to 100 characters. You can change it later in the organization settings.",
+      "nameRequired": "Enter a name for the organization.",
+      "submit": "Create",
+      "cancel": "Cancel"
+    },
+    "orgSettings": "Organization settings",
+    "skills": "Skills",
+    "connectors": "Connectors",
+    "members": "Members",
+    "models": "Available models",
+    "newAgent": "New agent",
+    "newConversation": "New conversation",
+    "dailyDescription": "{org} · {role}",
+    "dailyDescriptionPending": "{org} · {role} · {count, plural, one {# thing waits for you} other {# things wait for you}}",
+    "setup": {
+      "description": "{org} is new. Finish these steps and your team can start working with agents.",
+      "progress": "{done} of {total} done",
+      "later": "Can wait",
+      "laterHint": {
+        "channels": "Use agents in Lark or Slack.",
+        "members": "Bring your colleagues into this organization.",
+        "catalog": "Add skills and connectors from the catalog.",
+        "connections": "Connect your own accounts so agents can act for you."
+      }
+    },
+    "inbox": {
+      "title": "Waiting for you",
+      "titleCount": "Waiting for you · {count}",
+      "open": "Open inbox",
+      "empty": "Nothing waits for you.",
+      "unavailable": "Couldn't read what waits for you. Refresh the page to try again.",
+      "toolApproval": "Tool approval",
+      "toolApprovalTitle": "{agent} wants to use {tool}",
+      "view": "View",
+      "approveOnce": "Allow once",
+      "approved": "Allowed. This call continues.",
+      "skillChange": "Skill change",
+      "skillNew": "{agent} wants to create the skill {skill}",
+      "skillUpdate": "{agent} wants to update the skill {skill}",
+      "catalogRequest": "Catalog request",
+      "catalogRequestTitle": "Request to install {item}"
+    },
+    "recent": {
+      "title": "Pick up where you left off",
+      "empty": "No conversations yet. Pick an agent on the right to start.",
+      "unavailable": "Couldn't read your conversations. Refresh the page to try again.",
+      "waiting": "Waiting for you"
+    },
+    "agentsCard": {
+      "title": "Your agents",
+      "all": "All",
+      "chat": "Chat"
+    }
   },
   "errors": {
     "unknown": "Something went wrong. Please try again later.",
@@ -111,7 +166,10 @@
       "subagents_invalid": "Some sub-agent settings cannot be saved: check the templates, names, tools, skills and agents listed, and keep at most 20 agent types.",
       "not_found": "The agent does not exist or you cannot access it.",
       "model_unavailable": "The selected model is unavailable.",
-      "version_conflict": "Someone else saved this agent while you were editing it. Reload the page and apply your changes again."
+      "version_conflict": "Someone else saved this agent while you were editing it. Reload the page and apply your changes again.",
+      "profile_conflict": "Someone else changed this agent's profile while you were editing. Reload to see the latest, then apply your changes again.",
+      "instructions_mismatch": "The instructions do not match the prompt files. Edit the prompt files, or reload and try again.",
+      "profile_unloaded": "The profile has not loaded yet. Reload the page and try again."
     },
     "conversation": {
       "not_found": "The conversation does not exist or you cannot access it.",
@@ -122,6 +180,10 @@
       "queue_full": "The queue is full. Wait for queued messages to go out, or remove some.",
       "queue_item_not_found": "The queued message has already been sent or removed.",
       "read_only": "This is a sub-agent's conversation; it doesn't take messages."
+    },
+    "background_task": {
+      "not_found": "The background task does not exist or has been cleaned up.",
+      "output_unavailable": "The output can't be read now: the sandbox is not running. It is available again once the sandbox resumes."
     },
     "run": {
       "not_active": "There is no reply in progress.",
@@ -342,20 +404,26 @@
     },
     "tool_output": {
       "not_found": "The tool output does not exist or has expired."
+    },
+    "page": {
+      "title": "Failed to load",
+      "description": "The page didn't load. Try again; if it keeps failing, contact your administrator.",
+      "retry": "Retry",
+      "starting": "The kernel is starting…",
+      "startingDescription": "The backend isn't ready yet. The page retries by itself.",
+      "startingStill": "The backend still isn't ready. Try again later, or contact your administrator."
     }
   },
   "agents": {
     "title": "Agents",
     "new": "New agent",
     "empty": "No agents yet.",
-    "startChat": "Start chat",
     "starting": "Creating conversation…",
-    "noOrg": "No current organization selected",
-    "backHome": "Back to workspace",
+    "noOrg": "No current organization selected.",
+    "backHome": "Back to home",
     "form": {
       "title": "New agent",
       "nameLabel": "Name",
-      "instructionsLabel": "Instructions (system prompt)",
       "modelLabel": "Model",
       "fallbackLabel": "Fallback model",
       "fallbackNone": "No fallback model",
@@ -372,12 +440,11 @@
       "modelParamsTitle": "Model parameters",
       "fallbackParamsTitle": "Fallback model parameters",
       "basicSection": "Basics",
-      "basicSectionHint": "Name and visibility; the instructions are shown to the model.",
+      "basicSectionHint": "Pick the picture, name and model. The prompt, tools and skills are set on the agent page.",
       "modelSection": "Model",
       "modelSectionHint": "The fallback model is used when the main model is unavailable.",
       "paramsSectionHint": "Parameters you leave untouched use the model defaults.",
       "nameRequired": "Enter a name.",
-      "instructionsHelp": "Shown to the model; write it in English.",
       "toolsSection": "Tools",
       "toolsSectionHint": "Tools the agent may call. A policy can only be tightened: ask for approval, or deny.",
       "builtinLabel": "Built-in tools",
@@ -416,7 +483,6 @@
       "deleteOwnSkillHint": "The agent stops loading this skill, and pending changes to it are cancelled.",
       "ownSkillDeleted": "Skill {name} deleted.",
       "pinnedLabel": "Pinned skills",
-      "pinnedLoading": "Loading skills…",
       "pinnedUnavailable": "The skill lists could not be read; the pinned skills are kept as they are.",
       "pinnedHint": "A pinned skill's instructions are always in the model's context, without calling Skill. Pin at most 3 of the selected skills, with SKILL.md files of at most 32 KB in total.",
       "noPinnable": "Select skills above to pin them.",
@@ -517,7 +583,7 @@
     },
     "warnings": {
       "fallback_same_provider": "The fallback model should come from a different provider; otherwise it cannot help when that provider fails.",
-      "unknown": "Saved with an unrecognized notice: {code}"
+      "unknown": "Saved with an unrecognized notice: {code}."
     },
     "columns": {
       "name": "Name",
@@ -526,7 +592,98 @@
     "emptyHint": "Create an agent, then start a conversation.",
     "noOrgHint": "Pick one on the home page or from the account menu at the bottom of the sidebar.",
     "edit": "Edit",
-    "runHistory": "Run history"
+    "runHistory": "Run history",
+    "tabs": {
+      "all": "All",
+      "mine": "Mine",
+      "shared": "Shared with org"
+    },
+    "search": "Search by name or model",
+    "scope": {
+      "private": "Only me",
+      "org": "Organization",
+      "members": "Selected members"
+    },
+    "chat": "Chat",
+    "meta": {
+      "skills": "{n, plural, one {# skill} other {# skills}}",
+      "tools": "{n, plural, one {# tool} other {# tools}}"
+    },
+    "noMatch": "No agents match.",
+    "channels": {
+      "title": "Channels",
+      "hint": "IM bots bound to this agent. People chat with the agent through them.",
+      "empty": "No channel is connected to this agent.",
+      "connect": "Connect a channel",
+      "loadFailed": "Could not load the channels."
+    },
+    "readOnly": "Only the agent's owner and org admins can change it; you can chat with it.",
+    "reassign": {
+      "action": "Change owner…",
+      "title": "Change owner",
+      "owner": "New owner",
+      "help": "The owner can change and delete this agent.",
+      "submit": "Change",
+      "done": "Owner changed",
+      "none": "No members to choose from"
+    },
+    "page": {
+      "navGroup": "Agent",
+      "sections": {
+        "basics": "Basics",
+        "quick-actions": "Quick actions",
+        "prompt": "Prompt",
+        "model": "Model",
+        "tools": "Tools",
+        "skills": "Skills",
+        "subagents": "Sub-agents",
+        "channels": "Channels"
+      },
+      "startChat": "Start a conversation",
+      "reassign": "Reassign owner",
+      "leave": {
+        "title": "Discard unsaved changes?",
+        "body": "This section has changes that are not saved. Keep editing, or discard them and leave.",
+        "keep": "Keep editing",
+        "discard": "Discard changes"
+      },
+      "discard": "Discard",
+      "reload": "Reload",
+      "avatarLabel": "Avatar",
+      "uploadOff": "Uploading needs object storage, which this deployment has not configured. Pick one of the animals instead.",
+      "uploadFailed": "The image could not be read. Pick a png, jpg or webp file.",
+      "descriptionLabel": "Description",
+      "descriptionHelp": "One line about what this agent is for. People see it; the model does not.",
+      "membersLabel": "Members who can use it",
+      "membersLoading": "Loading members…",
+      "membersFailed": "The members could not be loaded.",
+      "quickActions": {
+        "hint": "Up to {max} shortcuts people see on the new conversation page. Picking one fills the composer with its text.",
+        "list": "Quick actions",
+        "add": "Add a quick action",
+        "none": "No quick actions yet.",
+        "titleLabel": "Title",
+        "titleRequired": "Enter a title.",
+        "bodyLabel": "Text",
+        "bodyHelp": "What goes into the composer.",
+        "bodyRequired": "Enter the text."
+      },
+      "uploadType": "Pick a png, jpg or webp image.",
+      "prompt": {
+        "hint": "The files go to the model in this order. Write them in English.",
+        "filesLabel": "Prompt files",
+        "add": "Add a file",
+        "nameLabel": "File name",
+        "nameHelp": "Ends in .md, for example WORKFLOW.md.",
+        "nameInvalid": "Use 1–64 characters without / or \\, then .md.",
+        "nameDuplicate": "Another file already has this name.",
+        "contentLabel": "Content",
+        "contentHelp": "Markdown. Shown to the model as written.",
+        "count": "{chars, number} / {maxChars, number} characters · {files} / {maxFiles} files",
+        "tooLong": "Together the files are longer than {max, number} characters. Shorten them to save."
+      },
+      "createUploadFailed": "The agent was created, but its picture could not be uploaded. Pick it again here."
+    }
   },
   "skills": {
     "title": "Skills",
@@ -545,7 +702,7 @@
       "layoutHint": "Upload a .zip file with SKILL.md at the root, or inside a single top-level folder (such as repo-main/ from a GitHub download). Uploading a skill whose name already exists adds a new version.",
       "limits": "Limits: the zip file up to 50 MB, each file up to 10 MB, and 50 MB in total after unzipping.",
       "choose": "Choose a .zip file",
-      "chooseHint": "Choose a file, or drop it here.",
+      "chooseHint": "or drop the .zip file here.",
       "drop": "Drop the .zip file to upload",
       "uploading": "Uploading {name}… {percent}%",
       "created": "Skill {name} added.",
@@ -554,7 +711,9 @@
       "tooLarge": "The zip file is larger than 50 MB.",
       "cancel": "Cancel",
       "cancelled": "Upload cancelled.",
-      "retry": "Retry"
+      "retry": "Retry",
+      "open": "Upload skill",
+      "close": "Close"
     },
     "detail": {
       "tabsLabel": "Skill sections",
@@ -580,7 +739,6 @@
         "files": "Files",
         "created": "Created"
       },
-      "retry": "Retry",
       "dangerTitle": "Danger zone",
       "delete": "Delete skill",
       "deleteTitle": "Delete {name}?",
@@ -589,6 +747,15 @@
     }
   },
   "chat": {
+    "waitingFor": {
+      "someone": "another member",
+      "role": {
+        "guest": "a guest",
+        "member": "a member",
+        "admin": "an admin",
+        "owner": "an owner"
+      }
+    },
     "title": "Chat",
     "inputLabel": "Message",
     "placeholder": "Message, / for commands",
@@ -608,6 +775,7 @@
     "attachments": "Attachments",
     "removeAttachment": "Remove {name}",
     "attachLimit": "At most {max} attachments per message.",
+    "noInvocable": "This agent has no skills to run.",
     "skillsGroup": "Skills",
     "skillTag": {
       "manual": "manual",
@@ -640,8 +808,9 @@
     "fileTooLarge": "The file is too large: images up to {image}, other files up to {other}.",
     "fileTypeNotAllowed": "This file type is not supported. Supported: {types}.",
     "newPlaceholder": "What should {agent} do?",
-    "queueHint": "↵ to send now, Ctrl+↵ to queue",
-    "queueHintMac": "↵ to send now, ⌘↵ to queue",
+    "queueHint": "↵ to queue, Ctrl+↵ to send now",
+    "sendAfterCreate": "You can send again once the conversation is created",
+    "queueHintMac": "↵ to queue, ⌘↵ to send now",
     "queueLabel": "Queued messages",
     "rename": "Rename",
     "copyLink": "Copy link",
@@ -659,7 +828,7 @@
     "pickAgent": "Switch agent",
     "pickModel": "Switch model",
     "pickEffort": "Effort",
-    "agentLocked": "The agent can't change after the first message",
+    "agentLocked": "The agent can't change after the first message.",
     "nextMessage": "Applies from the next message",
     "agentDefault": "agent default",
     "effort": {
@@ -671,19 +840,58 @@
     },
     "effortDefault": "Default",
     "divider": {
-      "stopped": "Stopped · {who} {time}",
       "compacted": "Earlier conversation compacted",
       "compactedSaved": "Earlier conversation compacted · saved {n} tokens",
-      "fallback": "The chosen model {from} is unavailable; using the agent's model {to} from this message",
-      "failed": "Run failed: {reason}",
-      "failedRetried": "Run failed: {reason} · Retried"
+      "fallback": "The chosen model {from} is unavailable; using the agent's model {to} from this message"
     },
     "system": "System",
     "fileRemoved": "No longer available",
     "noAgents": "No agent is available. Create an agent first.",
     "panelExtensions": "Extensions",
     "fullOutput": "Full output",
-    "builtinPreviewer": "Built-in preview"
+    "builtinPreviewer": "Built-in preview",
+    "setup": {
+      "title": "Before you start",
+      "description": "A few steps are left before you can start a conversation.",
+      "model": {
+        "description": "Configure at least one model provider (such as the openai-compatible extension) so agents can answer.",
+        "askAdmin": "No model is available yet. Enterprise admins configure models under Admin → Extensions.",
+        "action": "Set up",
+        "waiting": "Waiting for an enterprise admin"
+      },
+      "agent": {
+        "description": "An agent sets the model it uses and the tools and skills it can use.",
+        "action": "Create"
+      }
+    },
+    "run": {
+      "stopped": "Stopped · {who} {time}",
+      "failedRetried": "Failed · Retried",
+      "tokens": "{n} tokens",
+      "tokenSplit": "Input {input} · Output {output} · Cache read {cacheRead} · Cache write {cacheWrite}",
+      "trajectory": "View trajectory",
+      "configureModels": "Configure model services"
+    },
+    "greeting": {
+      "sub": "Pick an agent, or start from a common task",
+      "morning": [
+        "Good morning, {name}",
+        "Morning. What are we moving forward today?",
+        "A new day. Where do we start?"
+      ],
+      "noon": ["Midday, {name}", "Had lunch yet? What can I take off your plate?"],
+      "afternoon": [
+        "Good afternoon, {name}",
+        "What are we pushing on this afternoon?",
+        "Back at it?"
+      ],
+      "evening": ["Good evening, {name}", "What is left to wrap up today?"],
+      "night": [
+        "Night owl, what are we up to?",
+        "Still up? I'll keep you company",
+        "It's late. Pick one small thing"
+      ]
+    }
   },
   "ui": {
     "dangerDescription": "The extension performs this action. It may not be reversible.",
@@ -721,13 +929,15 @@
     "sandboxRunning": "Running",
     "sandboxSuspended": "Suspended",
     "sandboxLastUsed": "Last used",
-    "sandboxFailed": "Status unavailable"
+    "sandboxFailed": "Status unavailable",
+    "lastRun": "Last run · {parts}"
   },
   "pluginPage": {
+    "pathLabel": "Extension page",
     "liveLost": "Live updates stopped. Reload the page for the latest content."
   },
   "nav": {
-    "overview": "Overview",
+    "overview": "Home",
     "agents": "Agents",
     "goto": "Go to",
     "actions": "Actions",
@@ -735,21 +945,22 @@
     "connectors": "Connectors",
     "channels": "Channels",
     "skills": "Skills",
-    "evals": "Evals",
-    "settings": "Settings",
-    "admin": "Admin",
-    "catalog": "Catalog"
+    "evals": "Evals & runs",
+    "settings": "Organization settings",
+    "admin": "Admin console",
+    "catalog": "Plugins"
   },
   "shell": {
-    "switchLocale": "Switch to {name}",
-    "themeLight": "Switch to light theme",
-    "themeDark": "Switch to dark theme",
-    "noOrg": "Select organization"
+    "noOrg": "Select organization",
+    "orgMenu": "Organization",
+    "createOrg": "Create organization…",
+    "accountSettings": "Personal settings",
+    "noCurrentOrg": "There is no current organization to act on."
   },
   "notFound": {
     "title": "Page not found",
     "description": "The link may be broken, or the page has been removed.",
-    "back": "Back to overview"
+    "back": "Back to home"
   },
   "tools": {
     "outputId": "Full output archived as {id}.",
@@ -793,6 +1004,7 @@
     "system": "the system",
     "otherApprover": "Waiting for an approver.",
     "otherApproverFor": "{tool} ({key}) needs approval; waiting for an approver.",
+    "otherApproverNamed": "{tool} ({key}) needs approval; waiting for {who}.",
     "policy": {
       "agent": "The agent's settings ask for approval",
       "connector": "The connector's policy asks for approval",
@@ -964,8 +1176,7 @@
       },
       "inspectorTitle": "Connector",
       "refresh": "Refresh tools",
-      "refreshed": "Tool list refreshed.",
-      "retry": "Retry"
+      "refreshed": "Tool list refreshed."
     },
     "inspector": {
       "slug": "Slug",
@@ -988,7 +1199,7 @@
       "empty": "This connector has no tools.",
       "missing": "No longer provided by the server",
       "pendingReview": "Pending review",
-      "neverReviewed": "Never reviewed: approve it on the Review tab to enable it"
+      "neverReviewed": "Never reviewed: approve it on the Review tab to enable it."
     },
     "credential": {
       "title": "Credential",
@@ -1143,19 +1354,27 @@
       "rejected": "Rejected {tool}; the tool is disabled.",
       "missingTitle": "No longer provided",
       "missingHint": "These tools are disabled; if the server provides them again they go to review."
+    },
+    "tabs": {
+      "all": "All",
+      "disabled": "Disabled"
     }
   },
   "connections": {
-    "title": "My settings",
     "nav": {
+      "groupPersonal": "Personal",
+      "groupCapabilities": "Capabilities",
+      "groupOrg": "Organization",
       "connections": "My connections",
       "grants": "Remembered approvals",
-      "organization": "Organization",
+      "general": "General",
+      "sandbox": "Sandbox",
       "identities": "IM identities",
       "extensions": "Extensions",
       "models": "Model purposes",
       "members": "Members",
-      "plugins": "Installed plugins"
+      "plugins": "Installed plugins",
+      "tokens": "Service tokens"
     },
     "empty": "No connector needs your own credential.",
     "emptyHint": "Connectors that use personal credentials show up here.",
@@ -1184,6 +1403,10 @@
     "oauthConnect": "Connect",
     "disconnect": "Disconnect",
     "oauthHint": "Sign in to this connector with your own account; other members use theirs."
+  },
+  "sandboxSettings": {
+    "title": "Sandbox",
+    "saved": "Sandbox settings saved."
   },
   "orgSettings": {
     "title": "Organization settings",
@@ -1243,9 +1466,24 @@
       "newOnly": "Only applies to newly created sandboxes; existing sandboxes keep the limits they were created with until they are destroyed."
     }
   },
-  "schemaForm": {
+  "configForm": {
     "none": "—",
+    "issues": "The config has problems:",
+    "advanced": "Advanced",
+    "options": "Options",
+    "add": "Add",
+    "itemN": "Item {n}",
+    "key": "Key",
+    "value": "Value",
     "jsonHint": "Enter a JSON value.",
+    "linesHint": "One item per line.",
+    "hot": "applies immediately",
+    "readonly": "{source, select, env {From an environment variable (read-only)} file {From the config file (read-only)} nacos {From Nacos (read-only)} other {Read-only}}",
+    "tristate": {
+      "default": "Default",
+      "on": "On",
+      "off": "Off"
+    },
     "secretSet": "•••••••• (set)",
     "secretWillClear": "Will be cleared when saved",
     "replace": "Replace",
@@ -1260,13 +1498,21 @@
       "required": "Required",
       "number": "Enter a number",
       "integer": "Enter a whole number",
-      "json": "Invalid JSON"
+      "json": "Invalid JSON",
+      "min": "At least {limit}",
+      "gt": "Must be greater than {limit}",
+      "max": "At most {limit}",
+      "lt": "Must be less than {limit}",
+      "minLength": "At least {limit} characters",
+      "maxLength": "At most {limit} characters",
+      "minItems": "At least {limit} items",
+      "maxItems": "At most {limit} items"
     }
   },
   "channels": {
     "title": "Channels",
     "new": "New channel",
-    "empty": "No channel connections yet",
+    "empty": "No channel connections yet.",
     "emptyHint": "Connect an IM bot (such as Slack or Lark) to an agent so people can chat with it in IM.",
     "columns": {
       "name": "Name",
@@ -1294,10 +1540,9 @@
       "pluginHint": "Channel extensions enabled for this organization.",
       "pluginLabel": "Extension",
       "pluginPlaceholder": "Choose an extension",
-      "noExtensions": "No channel extension is enabled for this organization.",
+      "noExtensions": "Enable a channel extension first.",
       "openExtensions": "Open extensions",
       "nameLabel": "Name",
-      "nameRequired": "Enter a name",
       "configSection": "Bot credentials",
       "configHint": "Fields come from the extension. The credentials are verified with the platform when you save.",
       "pickPluginFirst": "Choose an extension first.",
@@ -1328,7 +1573,6 @@
         "settings": "Settings"
       },
       "inspectorTitle": "Details",
-      "retry": "Retry",
       "statusTitle": "Status",
       "lastError": "Last error",
       "noError": "No recent errors.",
@@ -1368,12 +1612,15 @@
     "inboundModeHint": {
       "long_connection": "The bot keeps a connection open to the platform (default; no public address needed).",
       "webhook": "The platform calls this deployment for every event; needs a public address."
+    },
+    "tabs": {
+      "all": "All",
+      "error": "Errors"
     }
   },
   "extensions": {
     "title": "Extensions",
     "empty": "No extensions are installed.",
-    "version": "Version {version}",
     "enableLabel": "Enable {plugin}",
     "enabled": "Enabled for this organization",
     "disabled": "Not enabled",
@@ -1457,7 +1704,7 @@
   "identities": {
     "title": "IM identities",
     "hint": "IM and sign-in accounts linked to your Capybara account. Messages from a linked IM account act as you.",
-    "empty": "No linked identities",
+    "empty": "No linked identities.",
     "emptyHint": "Message a Capybara bot in IM and follow its link, or sign in with a third-party account.",
     "columns": {
       "name": "Name",
@@ -1476,7 +1723,6 @@
   "bind": {
     "title": "Link IM account",
     "subtitle": "An IM account is asking to link to your Capybara account.",
-    "loading": "Loading…",
     "source": "Source",
     "tenant": "Tenant",
     "externalId": "Account ID",
@@ -1491,10 +1737,10 @@
     "goHome": "Go to Capybara"
   },
   "trajectories": {
-    "title": "Run history",
+    "title": "Evals & runs",
     "untitled": "Untitled conversation",
     "noRun": "No runs",
-    "empty": "No run history to view yet",
+    "empty": "No run history to view yet.",
     "emptyHint": "Conversations with agents you own (all agents for org admins) appear here once they run.",
     "noMatch": "No conversations match the current filters.",
     "loadMore": "Load more",
@@ -1526,13 +1772,13 @@
       "empty": "This conversation has not started any runs yet.",
       "selectHint": "Select a span above to see its details.",
       "spans": {
-        "run": "run · v{version}",
-        "step": "step {n}",
+        "run": "v{version}",
+        "step": "{n}",
         "approval": "approval",
         "question": "question"
       },
       "metrics": {
-        "tokens": "TOKENS",
+        "tokens": "Total tokens",
         "cost": "Cost (est.)",
         "calls": "Calls",
         "duration": "Duration"
@@ -1643,6 +1889,7 @@
       "run": "Run",
       "submit": "Add",
       "noSets": "This agent has no eval sets yet.",
+      "createSet": "New eval set",
       "runNotFinished": "This run has not finished yet. Add it after it ends.",
       "added": "Added to eval set \"{name}\"."
     },
@@ -1661,13 +1908,17 @@
       "shutdown": "worker shut down",
       "wait_timeout": "stopped: sub-agent wait timed out"
     },
-    "parentLink": "Open the parent conversation's trajectory"
+    "parentLink": "Open the parent conversation's trajectory",
+    "tabs": {
+      "sets": "Eval sets",
+      "runs": "Runs"
+    }
   },
   "evals": {
-    "title": "Evals",
+    "title": "Evals & runs",
     "runHistory": "Run history",
     "new": "New eval set",
-    "empty": "No eval sets yet",
+    "empty": "No eval sets yet.",
     "emptyHint": "Pick runs from real conversations into an eval set, then replay them with another model, prompt or agent version and compare.",
     "columns": {
       "name": "Name",
@@ -1687,8 +1938,7 @@
       "descriptionLabel": "Description",
       "rubricLabel": "Rubric",
       "rubricHint": "Shown to the judge model; write it in English. Leave empty to use the default rubric.",
-      "submit": "Create",
-      "nameRequired": "Enter a name"
+      "submit": "Create"
     },
     "set": {
       "tabsLabel": "Eval set contents",
@@ -1711,7 +1961,7 @@
       "defaultRubric": "(default rubric)",
       "created": "Created",
       "casesLabel": "Cases",
-      "casesEmpty": "No cases yet",
+      "casesEmpty": "No cases yet.",
       "casesEmptyHint": "Use \"Sample from conversations\", or \"Add to eval set\" from a run in the run history.",
       "caseColumns": {
         "title": "Trigger message",
@@ -1723,7 +1973,7 @@
       "removeCase": "Remove case",
       "caseRemoved": "Case removed.",
       "runsLabel": "Runs",
-      "runsEmpty": "No runs yet",
+      "runsEmpty": "No runs yet.",
       "runColumns": {
         "created": "Started",
         "mode": "Mode",
@@ -1839,7 +2089,8 @@
         "summary": "Summary"
       },
       "resultsLabel": "Results",
-      "resultsEmpty": "No results",
+      "resultsEmpty": "No results.",
+      "loadMore": "Load more",
       "columns": {
         "case": "Case",
         "step": "Step",
@@ -1921,7 +2172,7 @@
         "verdict": "Verdict",
         "score": "Score",
         "reason": "Reason",
-        "judgeError": "The judge gave no verdict: {reason}",
+        "judgeError": "The judge gave no verdict: {reason}.",
         "unparseable": "the judge's reply could not be parsed",
         "label": "Human label",
         "note": "Note",
@@ -1946,7 +2197,12 @@
       "tool_unmatched": "A tool call had no recorded result",
       "subagent_changed": "A sub-agent's definition changed since the recording",
       "model_switched": "The candidate model replaces a model switch made in the conversation"
-    }
+    },
+    "tabs": {
+      "sets": "Eval sets",
+      "runs": "Runs"
+    },
+    "setMeta": "{agent} · {n, plural, one {# case} other {# cases}}"
   },
   "models": {
     "admin": {
@@ -2015,70 +2271,37 @@
       "unavailable": "{target} (unavailable)",
       "params": "Parameters",
       "save": "Save",
-      "saveLabel": "Save purpose {purpose}",
-      "clear": "Clear",
-      "clearLabel": "Clear the deployment default for purpose {purpose}",
-      "restore": "Restore default",
-      "restoreLabel": "Restore the deployment default for purpose {purpose}",
-      "saved": "Saved purpose {purpose}.",
-      "cleared": "Cleared the deployment default for purpose {purpose}.",
-      "restored": "Purpose {purpose} now uses the deployment default.",
+      "savedAll": "{n, plural, one {Saved # purpose.} other {Saved # purposes.}}",
       "subagentHint": "Used by sub-agents dispatched on this tier. When it is not set, they run on the model of the agent that dispatches them."
     }
   },
   "admin": {
-    "title": "Admin",
+    "title": "Overview",
     "nav": {
+      "group": "Admin",
       "overview": "Overview",
       "accounts": "Accounts",
       "orgs": "Organizations",
       "settings": "Deployment settings",
       "extensions": "Extensions",
       "models": "Models",
-      "catalog": "Catalog"
-    },
-    "forbidden": {
-      "title": "Enterprise admin required",
-      "hint": "Only enterprise admins can open the admin console. Ask an enterprise admin to grant it, or run capybara admin grant with your login on the server."
+      "catalog": "Catalog",
+      "marketplaces": "Marketplaces"
     },
     "overview": {
-      "intro": "Manage the deployment: accounts, organizations, extensions and settings. Each organization's own settings stay in its Settings; admins cannot read conversations.",
+      "intro": "Manage the whole deployment: accounts, organizations, extensions and deployment settings.",
+      "noConversations": "Enterprise admins cannot read conversations.",
       "metrics": {
         "extensions": "Extensions needing action",
         "catalogRequests": "Pending catalog requests",
         "orgs": "Organizations",
         "accounts": "Accounts"
-      },
-      "accounts": {
-        "title": "Accounts",
-        "hint": "Create and deactivate accounts; grant or revoke enterprise admin.",
-        "open": "Manage accounts"
-      },
-      "orgs": {
-        "title": "Organizations",
-        "hint": "Set each organization's run concurrency and sandbox CPU / memory.",
-        "open": "Manage organizations"
-      },
-      "settings": {
-        "title": "Deployment settings",
-        "hint": "Who can create organizations, the price currency, and whether organizations may add their own connectors and skills.",
-        "open": "Open deployment settings"
-      },
-      "extensions": {
-        "title": "Extensions",
-        "hint": "Install, approve, enable, disable and upgrade extensions; fill in deployment config.",
-        "open": "Manage extensions"
-      },
-      "models": {
-        "title": "Models",
-        "hint": "Model providers, prices and the default model for each purpose.",
-        "open": "Manage models"
       }
     },
     "accounts": {
       "title": "Accounts",
       "new": "New account",
-      "empty": "No accounts yet",
+      "empty": "No accounts yet.",
       "loadMore": "Load more",
       "columns": {
         "name": "Name",
@@ -2112,10 +2335,10 @@
         "enable": "Reactivate"
       },
       "done": {
-        "grant": "{name} is now an enterprise admin",
-        "revoke": "{name} is no longer an enterprise admin",
-        "disable": "{name} was deactivated",
-        "enable": "{name} was reactivated"
+        "grant": "{name} is now an enterprise admin.",
+        "revoke": "{name} is no longer an enterprise admin.",
+        "disable": "{name} was deactivated.",
+        "enable": "{name} was reactivated."
       },
       "form": {
         "title": "New account",
@@ -2131,8 +2354,8 @@
     },
     "orgs": {
       "title": "Organizations",
-      "hint": "Empty values use the deployment default. Organization admins can only view them in their settings.",
-      "empty": "No organizations yet",
+      "hint": "Empty values use the deployment default, and organization admins can only view them in their settings; to manage settings inside an organization, you need to be an admin of that organization.",
+      "empty": "No organizations yet.",
       "default": "Default",
       "edit": "Set limits",
       "saved": "Saved",
@@ -2207,8 +2430,8 @@
       "title": "Extensions",
       "install": "Install extension",
       "hint": "Every extension on this deployment. Installing, enabling, disabling and upgrading need no restart: replicas converge within seconds of a change.",
-      "empty": "No extensions yet",
-      "noResults": "No extensions match the filters",
+      "empty": "No extensions yet.",
+      "noResults": "No extensions match the filters.",
       "sensitive": "Sensitive",
       "required": "Required",
       "columns": {
@@ -2242,8 +2465,8 @@
         "legacy_format": "Repack needed"
       },
       "replicas": {
-        "consistent": "In sync ({n})",
-        "diverged": "Out of sync ({n})",
+        "consistent": "Replicas in sync {ok}/{n}",
+        "diverged": "Replicas out of sync {ok}/{n}",
         "none": "No replica reported"
       },
       "detail": {
@@ -2255,6 +2478,7 @@
         },
         "notFound": "The extension does not exist or has been uninstalled.",
         "fields": {
+          "id": "ID",
           "source": "Source",
           "version": "Version",
           "desired": "Desired state",
@@ -2279,8 +2503,8 @@
           "unloaded": "Unloaded",
           "pending": "Pending"
         },
-        "failedReplica": "Replica {replica} failed to load: {reason}",
-        "stillServing": "This replica still serves {version}",
+        "failedReplica": "Replica {replica} failed to load: {reason}.",
+        "stillServing": "This replica still serves {version}.",
         "replicaReason": {
           "config": "Deployment config missing or invalid",
           "approval": "Permissions awaiting approval",
@@ -2296,7 +2520,7 @@
         "converging": "Replicas are converging to the desired state; this page refreshes automatically.",
         "refresh": "Refresh",
         "noReplicas": "No replica has reported yet.",
-        "requiredNote": "A required plugin of this deployment, installed by the bootstrap step from the core image: it is enabled in every organization and cannot be disabled or uninstalled. It can be upgraded, and its deployment config filled in.",
+        "requiredNote": "A required plugin of this deployment, installed by the bootstrap step from npm (version and checksum pinned). It is enabled in every organization and cannot be disabled or uninstalled; it can be upgraded and its deployment config filled in.",
         "configNote": "This extension is declared in the startup config's extensions list: it cannot be disabled, upgraded or uninstalled here. Change the startup config instead.",
         "actions": {
           "enable": "Enable",
@@ -2321,7 +2545,7 @@
           "disable": "Disable submitted; replicas are converging.",
           "uninstall": "Uninstalled “{name}”."
         },
-        "packageError": "The extension package cannot be read: {error}"
+        "packageError": "The extension package cannot be read: {error}."
       },
       "approve": {
         "title": "Approve permissions",
@@ -2331,13 +2555,13 @@
         "done": "Approved; replicas are loading the extension.",
         "stale": "The package or its permissions changed after you reviewed them. Refresh and review again.",
         "refresh": "Refresh and review again",
-        "approved": "Approved: version {version}, {at} ({source})",
+        "approved": "Approved: {version}, {at} ({source})",
         "notApproved": "Not approved yet.",
         "via": {
           "cli": "command line",
           "auto": "auto-approved",
           "web": "web",
-          "bootstrap": "bootstrap (core image)"
+          "bootstrap": "bootstrap (npm)"
         }
       },
       "wizard": {
@@ -2351,9 +2575,10 @@
         "sourceLabel": "Source",
         "sourceFile": "Upload an extension package (.tgz)",
         "sourceNpm": "Fetch from npm",
+        "sourceFileHint": "An npm-pack tgz (the repository's pack-plugin tool builds one).",
+        "sourceNpmHint": "Download it from the npm registry by name and version.",
         "choose": "Choose a .tgz file",
-        "fileHint": "An extension package is an npm-pack tgz (the repository's pack-plugin tool builds one).",
-        "noFile": "No file chosen yet.",
+        "drop": "Drop the .tgz file to choose it",
         "npmPackage": "npm package",
         "npmVersion": "Version",
         "npmVersionHelp": "A version, dist-tag or range; leave empty for latest.",
@@ -2380,24 +2605,35 @@
       "config": {
         "none": "This extension has no deployment config.",
         "hint": "Fields given by the startup config (config file, Nacos, environment variables) are read-only. Fields that apply immediately take effect on save; for the others the extension reloads after saving (no restart).",
-        "invalid": "The config is incomplete or invalid; the extension is waiting for config:",
+        "invalid": "The config is incomplete or invalid; the extension is waiting for config. The reasons are shown next to the fields.",
         "notValidated": "This extension is not loaded right now: saving does not validate; it is validated when the extension loads.",
-        "source": {
-          "env": "From an environment variable (read-only)",
-          "file": "From the config file (read-only)",
-          "nacos": "From Nacos (read-only)",
-          "db": "Saved in the admin console",
-          "default": "Default value",
-          "unset": "Not set"
-        },
-        "secretSet": "Set",
-        "secretUnset": "Not set",
-        "hot": "applies immediately",
-        "reload": "extension reloads after saving",
         "save": "Save config",
         "saving": "Saving; reloading the extension can take up to about {seconds} seconds.",
-        "saved": "Config saved."
-      }
+        "saved": "Config saved.",
+        "saveInvalid": "The config did not pass validation; fix the fields marked below.",
+        "pendingMissing": "The extension is waiting for config. Required fields missing: {fields}.",
+        "listSep": ", ",
+        "willReload": "Saving reloads the extension, which can take up to about {seconds} seconds.",
+        "appliesNow": "These changes apply as soon as they are saved.",
+        "noChanges": "No changes yet."
+      },
+      "tabs": {
+        "all": "All",
+        "attention": "Needs attention",
+        "enabled": "Enabled",
+        "disabled": "Disabled"
+      },
+      "callout": "{n, plural, one {# extension needs attention} other {# extensions need attention}}: {names}",
+      "calloutFix": "Fix now",
+      "configure": "Configure",
+      "settings": "Settings",
+      "upgrade": "Upgrade",
+      "meta": {
+        "points": "{n, plural, one {# extension point} other {# extension points}}",
+        "permissions": "{n, plural, one {# permission} other {# permissions}}"
+      },
+      "loadFailed": "Could not load extensions.",
+      "retry": "Retry"
     }
   },
   "members": {
@@ -2418,8 +2654,8 @@
       "admin": "Admin",
       "owner": "Owner"
     },
-    "roleChanged": "Changed {name} to {role}",
-    "empty": "No members yet",
+    "roleChanged": "Changed {name} to {role}.",
+    "empty": "No members yet.",
     "menu": {
       "transfer": "Transfer ownership",
       "remove": "Remove from organization"
@@ -2436,7 +2672,7 @@
     "transferred": "Transferred ownership to {name}",
     "invitations": {
       "title": "Invitations",
-      "empty": "No invitations yet",
+      "empty": "No invitations yet.",
       "columns": {
         "role": "Role",
         "status": "Status",
@@ -2472,7 +2708,6 @@
   },
   "invite": {
     "title": "Accept invitation",
-    "loading": "Loading…",
     "subtitle": "You are invited to join {org}",
     "role": "Role",
     "expires": "Valid until",
@@ -2557,8 +2792,6 @@
       "actions": {
         "import": "Import",
         "entries": "Browse marketplaces",
-        "more": "More",
-        "marketplaces": "Marketplaces",
         "requests": "Deployment requests"
       },
       "detail": {
@@ -2567,7 +2800,6 @@
           "overview": "Overview",
           "versions": "Versions"
         },
-        "notFound": "The item does not exist.",
         "deleted": "This item was deleted. Organizations can no longer see it; installed components are not affected.",
         "fields": {
           "package": "npm package",
@@ -2619,6 +2851,8 @@
         "sourceLabel": "Source",
         "sourceFile": "Upload plugin package (.tgz)",
         "sourceNpm": "npm package",
+        "sourceFileHint": "An npm-pack plugin package (.tgz).",
+        "sourceNpmHint": "Read it from the npm registry by name (and version).",
         "fetch": "Fetch and review",
         "plugin": "{name} {version}",
         "publisher": "Publisher: {publisher}",
@@ -2634,7 +2868,7 @@
         "unchecked": "The connector extension is not loaded on this replica, so the endpoint has not been checked against its schema yet.",
         "mismatch": "The permission summary in the marketplace does not match the downloaded package (the package is what counts).",
         "mismatchMissing": "Not listed in the marketplace: {keys}",
-        "mismatchExtra": "Listed in the marketplace but not requested: {keys}",
+        "mismatchExtra": "Listed in the marketplace but not requested: {keys}.",
         "deployExtension": "Also install the extension on the deployment",
         "deployOn": "After confirming, the extension is installed (or upgraded) on the deployment and enabled.",
         "deployOff": "If unchecked, the extension is only recorded in the catalog and is not installed. Organizations cannot use the plugin until an enterprise admin installs its extension on the deployment.",
@@ -2649,8 +2883,8 @@
         "openItem": "Open item",
         "gone": "The staged import has expired or was already confirmed. Start the import again.",
         "restart": "Start a new import",
-        "loadingStaged": "Loading the staged import…",
         "sourceGit": "Git repository",
+        "sourceGitHint": "Read it once from a Git repository: no marketplace is added and updates are not tracked.",
         "gitUrl": "Repository",
         "gitUrlHelp": "An https git URL or owner/repo on GitHub. A one-off import: no marketplace is added and updates are not tracked.",
         "gitRef": "Branch, tag or commit",
@@ -2661,7 +2895,7 @@
         "provenance": "Built from {repository}@{commit} by {workflow}",
         "provenanceNotChecked": "Provenance not checked ({reason})",
         "provenanceMismatch": "The repository in the provenance differs from this git marketplace's repository. Check that this is the package you expect.",
-        "buildVersion": "Recorded as {version}: version {pluginVersion} is already in the catalog with other content.",
+        "buildVersion": "Recorded as {version}: {pluginVersion} is already in the catalog with other content.",
         "translation": {
           "title": "Translation from Claude Code",
           "formatClaude": "Claude Code plugin",
@@ -2759,8 +2993,7 @@
       },
       "entries": {
         "title": "Browse marketplaces",
-        "hint": "Each entry is one version of a plugin. It becomes a catalog item only after you import it; the package is downloaded, checked against the marketplace's integrity and reviewed before it is added.",
-        "empty": "No marketplace entries. Add or refresh a marketplace under Marketplaces first.",
+        "empty": "No marketplace entries. Add or refresh a marketplace under Sources first.",
         "noResults": "No entries match.",
         "truncated": "There are too many entries and the list is truncated. Narrow it down by marketplace or keyword.",
         "search": "Search",
@@ -2784,29 +3017,43 @@
         "importVersion": "Import {version}",
         "noCompatible": "No compatible version",
         "reason": {
-          "host_not_allowed": "Host {host} is not in marketplaces.allowedHosts",
-          "path_needs_git_marketplace": "A path in the marketplace's repository: add the repository as a git marketplace"
+          "host_not_allowed": "Host {host} is not in marketplaces.allowedHosts.",
+          "path_needs_git_marketplace": "A path in the marketplace's repository: add the repository as a git marketplace."
         },
         "gitPinned": "commit {commit}",
         "gitFollows": "follows {ref}",
         "gitFollowsDefault": "follows the default branch",
         "pathSource": "{path} in the marketplace repository",
         "importChanged": "Import the changed content of {version}",
-        "contentChangedHint": "Importing it again records a build of that version (for example 1.0.0+git.1a2b3c4d5e6f)."
+        "contentChangedHint": "Importing it again records a build of that version (for example 1.0.0+git.1a2b3c4d5e6f).",
+        "view": "View",
+        "homepage": "Homepage",
+        "loadFailed": "Marketplace entries failed to load.",
+        "retry": "Retry"
       },
       "marketplaces": {
         "title": "Marketplaces",
+        "description": "Each entry is one version of a plugin, from the sources set up here. It becomes a catalog item only after you import it; the package is downloaded, checked against the marketplace's integrity and reviewed before it is added.",
+        "search": "Search sources",
+        "noMatch": "No matching sources.",
         "official": "Official marketplace",
         "officialHint": "The address is set in the deployment config marketplaces.official.* (by default the capybara-hq/plugins git repository) and is read-only here.",
         "offline": "Offline mode: the deployment config turns the official marketplace off (marketplaces.official.enabled = false), so it is never fetched.",
-        "enabled": "Enabled",
+        "enabledLabel": "Enable {name}",
         "url": "URL",
         "mirrors": "Mirrors",
         "status": "Status",
         "statusValue": {
           "ok": "OK ({n} entries, {at})",
-          "error": "Error: {error}",
-          "never": "Not fetched yet"
+          "never": "Not fetched yet",
+          "errors": {
+            "private_address": "The marketplace's host resolves to a private or reserved address, so the network rules blocked it.",
+            "dns": "The marketplace's host name cannot be resolved.",
+            "timeout": "The marketplace did not answer in time.",
+            "http_status": "The marketplace answered with an error status.",
+            "invalid": "The marketplace manifest is not valid.",
+            "unknown": "The refresh failed."
+          }
         },
         "refresh": "Refresh now",
         "refreshed": "Refreshed {name}",
@@ -2874,10 +3121,17 @@
         "reject": "Reject",
         "approved": "Approved",
         "rejected": "Rejected"
-      }
+      },
+      "tabs": {
+        "plugins": "Plugins",
+        "requests": "Deployment requests",
+        "browse": "Browse",
+        "sources": "Sources"
+      },
+      "search": "Search plugins"
     },
     "org": {
-      "title": "Catalog",
+      "title": "Plugins",
       "hint": "Plugins provided by your enterprise admins.",
       "empty": "There are no items in the catalog yet.",
       "columns": {
@@ -2907,13 +3161,12 @@
         },
         "installed": "Installed {name}",
         "requested": "Request submitted",
-        "approvalRequested": "Enterprise admin approval is needed; a request was submitted",
+        "approvalRequested": "Enterprise admin approval is needed; a request was submitted.",
         "openPlugins": "View installed plugins",
         "upgradeAvailable": "Upgrade available: {version}",
         "upgrade": "Upgrade"
       },
       "detail": {
-        "notFound": "The item does not exist or you cannot see it.",
         "tabsLabel": "Item details",
         "tabs": {
           "overview": "Overview"
@@ -2942,7 +3195,7 @@
         "dcrHint": "The client is registered automatically; nothing to fill in.",
         "extensionHint": "This plugin enables its extension in this organization. Fill in the organization settings if it has any (an extension already enabled keeps its settings).",
         "extensionNone": "No extension settings to fill in.",
-        "extensionEnabled": "{name}: already enabled in this organization; settings unchanged",
+        "extensionEnabled": "{name}: already enabled in this organization; settings unchanged.",
         "summary": "This will install:",
         "summaryExtension": "extension {name}",
         "summaryTemplates": "{n} connectors",
@@ -2963,6 +3216,10 @@
           "finish": "finish"
         },
         "notInstallable": "This plugin cannot be installed right now."
+      },
+      "tabs": {
+        "all": "All",
+        "installed": "Installed"
       }
     },
     "plugins": {
@@ -3055,9 +3312,9 @@
       "extensionConfig": "This upgrade enables the plugin's extension in this organization; its organization config:",
       "confirm": "Upgrade",
       "cancel": "Cancel",
-      "done": "Upgraded {name} to {version}",
-      "requested": "Enterprise admin approval is needed; a request was submitted",
-      "failed": "Upgrading failed at the “{step}” step ({code}); this organization's components are back at version {version}.",
+      "done": "Upgraded {name} to {version}.",
+      "requested": "Enterprise admin approval is needed; a request was submitted.",
+      "failed": "Upgrading failed at the “{step}” step ({code}); this organization's components are back at {version}.",
       "failedNoRollback": "Upgrading failed at the “{step}” step ({code}) and could not be undone right away; it is undone automatically after the timeout."
     },
     "errorDetail": {
@@ -3068,7 +3325,7 @@
       "gitSuffix": "The git server redirects this repository URL; use the URL ending in .git.",
       "entry": "Refused entry: {path}",
       "pathEntry": "Marketplace entry {entry} (path {path})",
-      "sameVersion": "Version {version} is already installed in this organization.",
+      "sameVersion": "{version} is already installed in this organization.",
       "deploymentVersion": "The deployment runs this plugin's extension at {deploymentVersion}; this organization can upgrade only to catalog version {allowedVersion}.",
       "deploymentVersionNone": "The deployment runs this plugin's extension at {deploymentVersion}, but no imported catalog version carries it yet.",
       "notDeployed": "The deployment does not run this plugin's extension; ask an enterprise admin to install it first.",
@@ -3108,5 +3365,133 @@
     },
     "contextTotal": "Total tokens with sub-agents {n}",
     "background": "Background tasks"
+  },
+  "background": {
+    "inBackground": "In background",
+    "openTask": "View output of {name}",
+    "notice": "Background task “{description}” {status} · exit code {code}",
+    "noticeNoCode": "Background task “{description}” {status}",
+    "open": "Open",
+    "panelTitle": "Background task",
+    "notFound": "This background task cannot be found.",
+    "status": {
+      "completed": "completed",
+      "failed": "failed",
+      "stopped": "stopped",
+      "timed_out": "timed out",
+      "lost": "lost"
+    }
+  },
+  "orgChooser": {
+    "title": "Choose an organization",
+    "titleNone": "Create an organization",
+    "subtitle": "{name}, choose the organization to open. Next time you sign in you go straight to it; switch later from the account menu at the bottom left.",
+    "subtitleCreate": "You don't belong to any organization yet. Create one to get started.",
+    "subtitleAsk": "You don't belong to any organization yet.",
+    "listLabel": "Your organizations",
+    "enter": "Open",
+    "create": "Create organization",
+    "askHint": "Ask an organization admin to invite you.",
+    "admin": "Open the admin console",
+    "logout": "Sign out"
+  },
+  "setupLayout": {
+    "model": {
+      "needsDeploymentAdmin": "A deployment admin needs to set up a model service",
+      "waitingForAdmin": "Waiting for an admin to set up a model"
+    },
+    "agent": {
+      "needsModel": "Set up a model first",
+      "waitingForAdmin": "Waiting for an admin to create an agent"
+    },
+    "waiting": "The organization is still being set up. You can start chatting once an admin finishes.",
+    "refresh": "Refresh",
+    "waitingDeployment": "A deployment admin needs to set up a model service before you can continue.",
+    "steps": {
+      "model": "Configure a model",
+      "agent": "Create an agent",
+      "channels": "Connect a channel",
+      "members": "Invite members",
+      "catalog": "Install plugins",
+      "connections": "My connections"
+    }
+  },
+  "roles": {
+    "need": {
+      "member": "Org member",
+      "admin": "Org admin",
+      "owner": "Org owner",
+      "enterprise": "Enterprise admin"
+    },
+    "noAccess": {
+      "title": "You don't have access",
+      "description": "{page} is open to {role} only.",
+      "askOrg": "To get access, ask an admin or the owner of this organization.",
+      "askEnterprise": "To get access, ask an enterprise admin to grant it, or run capybara admin grant with your login on the server."
+    },
+    "readOnly": "Read-only for your role ({role}); changes need an org admin."
+  },
+  "orgLifecycle": {
+    "leave": {
+      "action": "Leave organization…",
+      "title": "Leave organization",
+      "description": "You lose access to this organization, and the agents you own go to its owner. Your other organizations are not affected.",
+      "confirm": "Leave organization",
+      "lastOwner": "You are the only owner of this organization. Transfer ownership to someone else under Members before leaving.",
+      "toMembers": "Go to Members",
+      "gotIt": "Got it",
+      "left": "You left {name}"
+    },
+    "danger": {
+      "title": "Danger zone"
+    },
+    "delete": {
+      "action": "Delete organization…",
+      "item": "Delete organization",
+      "hint": "Every member loses access to this organization; its agents, conversations and settings are no longer available.",
+      "title": "Delete organization",
+      "description": "This deletes the organization “{name}”. Every member loses access. It cannot be undone from the app.",
+      "confirm": "Delete organization",
+      "done": "Organization deleted"
+    }
+  },
+  "tokens": {
+    "title": "Service tokens",
+    "description": "Organization tokens for scripts and integrations: they read the organization and its members and use agents.",
+    "create": "New token",
+    "createTitle": "New service token",
+    "name": "Name",
+    "role": "Role",
+    "roleHelp": "At most your own role in this organization.",
+    "expires": "Expires",
+    "expiry": {
+      "never": "Never",
+      "30": "30 days",
+      "90": "90 days",
+      "365": "1 year"
+    },
+    "createSubmit": "Create",
+    "value": "Token",
+    "done": "Done",
+    "created": "Token created",
+    "columns": {
+      "name": "Name",
+      "role": "Role",
+      "created": "Created",
+      "expires": "Expires",
+      "lastUsed": "Last used"
+    },
+    "neverUsed": "Never",
+    "noExpiry": "Never",
+    "revoke": "Revoke",
+    "revokeTitle": "Revoke token",
+    "revokeDescription": "Scripts using “{name}” stop working at once.",
+    "revokeConfirm": "Revoke",
+    "revoked": "Token revoked",
+    "empty": "No service tokens yet.",
+    "emptyHint": "Create a token for CI or an integration to call the organization’s API.",
+    "loadFailed": "Couldn’t load service tokens.",
+    "retry": "Retry",
+    "expired": "Expired"
   }
 }

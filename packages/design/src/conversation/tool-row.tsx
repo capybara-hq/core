@@ -5,7 +5,7 @@ import { useDesignLocale, useDesignT } from "../provider";
 import { useClock } from "./clock";
 import { DiffBlock, type DiffData } from "./diff-block";
 import { Spinner } from "./prose";
-import { elapsed, fillCopy, type ToolKind } from "./tool-copy";
+import { elapsed, fillCopy, type ToolKind, type ToolWaiting, waitingText } from "./tool-copy";
 
 export type ToolRowData = {
   id: string;
@@ -26,6 +26,16 @@ export type ToolRowData = {
   /** A shell row's `description` from the model, shown instead of the key argument. */
   description?: string;
   status: "pending" | "running" | "done" | "failed" | "cancelled";
+  /**
+   * The live call waits for a person (a pending approval, question or connection): the row shows
+   * the waiting word instead of the spinner and the timer (§6.16.9). Ignored once it ends.
+   */
+  waiting?: ToolWaiting;
+  /**
+   * Who the call waits for when that is not the viewer: a member's name, or a role ("管理员") for
+   * an approval escalated by role; absent = the viewer ("等待你批准").
+   */
+  waitingFor?: string;
   startedAt?: number;
   durationMs?: number;
   /** Lines added / removed by an edit ("+a −b"). */
@@ -35,6 +45,12 @@ export type ToolRowData = {
   error?: string;
   /** The extension whose policy hook denied the call. */
   blockedBy?: string;
+  /**
+   * A link at the row's end (§6.16.9): a background `Bash` call's task, "查看「…」的输出" /
+   * "View output of …", which opens the task's output on the right. The row's toggle and the link
+   * are two buttons side by side.
+   */
+  link?: { label: string; onOpen(): void };
   detail?: {
     input?: [string, string][];
     command?: string;
@@ -87,7 +103,11 @@ export function ToolLabel({ row }: { row: ToolRowData }): JSX.Element {
       {...(row.tooltip ? { title: row.tooltip } : {})}
     >
       <span className="cb-tool-name" data-part="tool-name">
-        {row.tool ? `${row.name} [${row.tool}]` : row.name}
+        {row.kind === "question"
+          ? t("tool.verb.question")
+          : row.tool
+            ? `${row.name} [${row.tool}]`
+            : row.name}
       </span>
       {preview ? (
         <>
@@ -108,6 +128,44 @@ export function ToolLabel({ row }: { row: ToolRowData }): JSX.Element {
       {row.status === "cancelled" ? (
         <span className="cb-muted">{` · ${t("tool.cancelled")}`}</span>
       ) : null}
+    </span>
+  );
+}
+
+/** The row's link (§6.16.9), a link button after the toggle. */
+export function ToolLink({ link }: { link: NonNullable<ToolRowData["link"]> }): JSX.Element {
+  return (
+    <button
+      type="button"
+      className="cb-link-btn cb-tool-link"
+      data-part="tool-link"
+      onClick={link.onOpen}
+    >
+      {link.label}
+    </button>
+  );
+}
+
+/** The call is live: pending or running (a waiting call is live too). */
+export const isLive = (row: ToolRowData): boolean =>
+  row.status === "running" || row.status === "pending";
+
+/** The live call waits for a person (§6.16.9): no spinner, no timer, the waiting word. */
+export const isWaiting = (row: ToolRowData): boolean => isLive(row) && row.waiting !== undefined;
+
+/** The waiting word of a live call that waits for a person, in `accent` (§6.16.9). */
+export function WaitingWord({
+  row,
+  lead,
+}: {
+  row: ToolRowData;
+  lead?: string;
+}): JSX.Element | null {
+  const locale = useDesignLocale();
+  if (!isWaiting(row) || row.waiting === undefined) return null;
+  return (
+    <span className="cb-accent-word" data-part="waiting-word">
+      {`${lead ?? ""}${waitingText(row.waiting, row.waitingFor, locale)}`}
     </span>
   );
 }
@@ -282,9 +340,14 @@ export function ToolRow({
   const id = useId();
   const isOpen = open ?? own;
   const expandable = hasDetail(row);
-  const running = row.status === "running" || row.status === "pending";
+  const waiting = isWaiting(row);
+  const running = isLive(row) && !waiting;
   const clock = useClock(running && row.startedAt !== undefined, now);
-  const end = running ? (
+  const end = waiting ? (
+    <span className="cb-tool-end">
+      <WaitingWord row={row} />
+    </span>
+  ) : running ? (
     row.startedAt !== undefined ? (
       // a ticking timer: hidden from screen readers so the live thread does not chatter (I2)
       <span className="cb-tool-end cb-faint" aria-hidden="true">
@@ -298,11 +361,56 @@ export function ToolRow({
   ) : null;
   const inner = (
     <>
-      {running ? <Spinner /> : null}
+      {running ? <Spinner size={16} /> : null}
       <ToolLabel row={row} />
       {end}
     </>
   );
+  const toggle = () => {
+    setAnimate(true);
+    if (open === undefined) setOwn((o) => !o);
+    onToggle?.();
+  };
+  const detail =
+    expandable && isOpen ? (
+      <ToolDetail
+        row={row}
+        id={id}
+        animate={animate}
+        {...(onViewAll ? { onViewAll } : {})}
+        {...(onCopy ? { onCopy } : {})}
+      />
+    ) : null;
+  if (row.link) {
+    // a row with a link: the toggle (or the label) and the link side by side, never nested
+    return (
+      <div className="cb-tool-item" data-open={expandable && isOpen ? "true" : undefined}>
+        <div
+          className="cb-tool-row"
+          data-part="tool-row"
+          data-status={row.status}
+          data-waiting={waiting ? row.waiting : undefined}
+          data-linked="true"
+        >
+          {expandable ? (
+            <button
+              type="button"
+              className="cb-tool-toggle"
+              aria-expanded={isOpen}
+              aria-controls={isOpen ? id : undefined}
+              onClick={toggle}
+            >
+              {inner}
+            </button>
+          ) : (
+            <span className="cb-tool-toggle">{inner}</span>
+          )}
+          <ToolLink link={row.link} />
+        </div>
+        {detail}
+      </div>
+    );
+  }
   return (
     <div className="cb-tool-item" data-open={expandable && isOpen ? "true" : undefined}>
       {expandable ? (
@@ -311,30 +419,24 @@ export function ToolRow({
           className="cb-tool-row"
           data-part="tool-row"
           data-status={row.status}
+          data-waiting={waiting ? row.waiting : undefined}
           aria-expanded={isOpen}
           aria-controls={isOpen ? id : undefined}
-          onClick={() => {
-            setAnimate(true);
-            if (open === undefined) setOwn((o) => !o);
-            onToggle?.();
-          }}
+          onClick={toggle}
         >
           {inner}
         </button>
       ) : (
-        <div className="cb-tool-row" data-part="tool-row" data-status={row.status}>
+        <div
+          className="cb-tool-row"
+          data-part="tool-row"
+          data-status={row.status}
+          data-waiting={waiting ? row.waiting : undefined}
+        >
           {inner}
         </div>
       )}
-      {expandable && isOpen ? (
-        <ToolDetail
-          row={row}
-          id={id}
-          animate={animate}
-          {...(onViewAll ? { onViewAll } : {})}
-          {...(onCopy ? { onCopy } : {})}
-        />
-      ) : null}
+      {detail}
     </div>
   );
 }

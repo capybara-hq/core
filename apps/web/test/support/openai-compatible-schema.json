@@ -1,0 +1,317 @@
+{
+  "type": "object",
+  "properties": {
+    "endpoints": {
+      "minItems": 1,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+            "x-ui": {
+              "label": {
+                "zh": "名称",
+                "en": "Name"
+              },
+              "help": {
+                "zh": "对外模型 ID 为 名称/模型 ID",
+                "en": "Models are exposed as name/model id"
+              }
+            },
+            "title": "Name",
+            "description": "Models are exposed as name/model id"
+          },
+          "baseUrl": {
+            "type": "string",
+            "format": "uri",
+            "x-ui": {
+              "label": {
+                "zh": "接口地址",
+                "en": "Base URL"
+              },
+              "widget": "url",
+              "placeholder": "https://api.example.com/v1"
+            },
+            "title": "Base URL"
+          },
+          "dialect": {
+            "type": "string",
+            "enum": ["generic", "deepseek", "qwen", "ark"],
+            "x-ui": {
+              "label": {
+                "zh": "方言",
+                "en": "Dialect"
+              },
+              "options": [
+                {
+                  "value": "generic",
+                  "label": {
+                    "zh": "通用（vLLM 等）",
+                    "en": "Generic (vLLM, …)"
+                  }
+                },
+                {
+                  "value": "deepseek",
+                  "label": {
+                    "zh": "DeepSeek",
+                    "en": "DeepSeek"
+                  }
+                },
+                {
+                  "value": "qwen",
+                  "label": {
+                    "zh": "通义千问（百炼）",
+                    "en": "Qwen (Model Studio)"
+                  }
+                },
+                {
+                  "value": "ark",
+                  "label": {
+                    "zh": "火山方舟",
+                    "en": "Volcano Ark"
+                  }
+                }
+              ]
+            },
+            "title": "Dialect"
+          },
+          "midConversationSystem": {
+            "type": "boolean",
+            "x-ui": {
+              "label": {
+                "zh": "对话中途的 system 消息",
+                "en": "Mid-conversation system messages"
+              },
+              "widget": "tristate",
+              "advanced": true
+            },
+            "title": "Mid-conversation system messages"
+          },
+          "models": {
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "x-ui": {
+                    "label": {
+                      "zh": "模型 ID",
+                      "en": "Model ID"
+                    },
+                    "placeholder": "deepseek-chat"
+                  },
+                  "title": "Model ID"
+                },
+                "contextWindow": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991,
+                  "x-ui": {
+                    "label": {
+                      "zh": "上下文窗口",
+                      "en": "Context window"
+                    },
+                    "unit": {
+                      "zh": "tokens",
+                      "en": "tokens"
+                    }
+                  },
+                  "title": "Context window"
+                },
+                "maxOutputTokens": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991,
+                  "x-ui": {
+                    "label": {
+                      "zh": "最大输出",
+                      "en": "Max output"
+                    },
+                    "unit": {
+                      "zh": "tokens",
+                      "en": "tokens"
+                    }
+                  },
+                  "title": "Max output"
+                },
+                "vision": {
+                  "type": "boolean",
+                  "x-ui": {
+                    "label": {
+                      "zh": "图片",
+                      "en": "Images"
+                    },
+                    "widget": "checkbox"
+                  },
+                  "title": "Images"
+                },
+                "documents": {
+                  "type": "boolean",
+                  "x-ui": {
+                    "label": {
+                      "zh": "PDF 文档",
+                      "en": "PDF documents"
+                    },
+                    "widget": "checkbox",
+                    "help": {
+                      "zh": "仅通用与通义千问方言支持",
+                      "en": "Only the generic and Qwen dialects accept PDF"
+                    }
+                  },
+                  "title": "PDF documents",
+                  "description": "Only the generic and Qwen dialects accept PDF"
+                },
+                "reasoning": {
+                  "type": "boolean",
+                  "x-ui": {
+                    "label": {
+                      "zh": "推理",
+                      "en": "Reasoning"
+                    },
+                    "widget": "checkbox"
+                  },
+                  "title": "Reasoning"
+                },
+                "caching": {
+                  "type": "boolean",
+                  "x-ui": {
+                    "label": {
+                      "zh": "缓存",
+                      "en": "Caching"
+                    },
+                    "widget": "tristate",
+                    "help": {
+                      "zh": "默认按方言",
+                      "en": "Default follows the dialect"
+                    },
+                    "advanced": true
+                  },
+                  "title": "Caching",
+                  "description": "Default follows the dialect"
+                },
+                "streamIdleTimeoutMs": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991,
+                  "x-ui": {
+                    "label": {
+                      "zh": "流空闲超时",
+                      "en": "Stream idle timeout"
+                    },
+                    "unit": {
+                      "zh": "毫秒",
+                      "en": "ms"
+                    },
+                    "advanced": true
+                  },
+                  "title": "Stream idle timeout"
+                }
+              },
+              "required": ["id", "contextWindow", "maxOutputTokens"],
+              "x-ui": {
+                "layout": "row"
+              }
+            },
+            "x-ui": {
+              "label": {
+                "zh": "模型",
+                "en": "Models"
+              },
+              "item": {
+                "title": "{id}",
+                "addLabel": {
+                  "zh": "添加模型",
+                  "en": "Add model"
+                },
+                "reorder": true
+              }
+            },
+            "title": "Models"
+          }
+        },
+        "required": ["name", "baseUrl", "dialect", "models"],
+        "additionalProperties": false
+      },
+      "x-ui": {
+        "label": {
+          "zh": "端点",
+          "en": "Endpoints"
+        },
+        "item": {
+          "title": "{name}",
+          "subtitle": "{baseUrl}",
+          "addLabel": {
+            "zh": "添加端点",
+            "en": "Add endpoint"
+          },
+          "reorder": true
+        },
+        "secrets": [
+          {
+            "path": "apiKeys",
+            "keyBy": "name",
+            "after": "baseUrl",
+            "label": {
+              "zh": "API 密钥",
+              "en": "API key"
+            },
+            "help": {
+              "zh": "留空则请求不带凭据（如内网 vLLM）。",
+              "en": "Leave empty for services without a key."
+            }
+          }
+        ],
+        "presets": [
+          {
+            "id": "deepseek",
+            "label": {
+              "zh": "DeepSeek",
+              "en": "DeepSeek"
+            },
+            "values": {
+              "name": "deepseek",
+              "baseUrl": "https://api.deepseek.com",
+              "dialect": "deepseek"
+            }
+          },
+          {
+            "id": "generic",
+            "label": {
+              "zh": "其他兼容服务",
+              "en": "Other compatible service"
+            },
+            "values": {
+              "dialect": "generic"
+            }
+          }
+        ]
+      },
+      "title": "Endpoints"
+    },
+    "apiKeys": {
+      "type": "object",
+      "propertyNames": {
+        "type": "string"
+      },
+      "additionalProperties": {
+        "type": "string",
+        "minLength": 1
+      },
+      "x-secret": true
+    }
+  },
+  "required": ["endpoints"],
+  "x-ui": {
+    "messages": {
+      "duplicateEndpoint": {
+        "zh": "端点名称重复",
+        "en": "Endpoint names must be unique"
+      }
+    }
+  }
+}

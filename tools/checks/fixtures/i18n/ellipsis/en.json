@@ -1,0 +1,7 @@
+{
+  "org": {
+    "delete": "Delete organization...",
+    "loading": "Loading…",
+    "range": "between a ... b"
+  }
+}

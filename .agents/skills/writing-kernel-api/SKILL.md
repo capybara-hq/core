@@ -66,7 +66,7 @@ Each concern is done one way; `pnpm check:kernel-conventions` (rules `kc-*`, lis
 | Cache | `@Cacheable` / `@CacheEvict` (Redis, fail-open, keys prefixed `cache:`); inside a transaction `@CacheEvict` evicts after the COMMIT (nothing on rollback) and `@Cacheable` is bypassed (no read, no write: a cached value may be older than the transaction's own writes) | ad-hoc read-through Redis caches (`kc-cache`) |
 | Rate limits | `@Throttled(...)` per route; credential routes `CredentialThrottler` (below) | hand-written counters (`kc-rate-limit`) |
 | Validation | `createZodDto(schema, name)` with `@ZBody` / `@ZQuery` / `@ZParam` (below) | `new ZodPipe(`, `@Body()` / `@Query()` / `@Param()` typed with a DTO (`kc-zod-pipe`) |
-| Logging | inject `KERNEL_LOGGER` | module-level loggers (`kc-logger`) |
+| Logging | inject `KERNEL_LOGGER` (transient: each class gets a child with `context` = its class name) | module-level loggers (`kc-logger`) |
 | Process handlers | only in `src/infra/lifecycle` | `process.on` anywhere else (`kc-process`) |
 | Health | `HealthModule` (`/healthz`, `/readyz`, terminus) | other health routes (`kc-health`) |
 
@@ -205,7 +205,7 @@ Do not use in-process Maps, timers or local events to hold cross-request state. 
 
 ## Tests
 
-Kernel tests start the real application with the helpers in `packages/kernel/test/helpers/runs.ts`: `startKernel(config, opts)` returns a `TestKernel` `{ app, http, port, close() }` (`port` is undefined after `close()`), `buildKernel` one that is built but not started (`start()` runs the production start). Reach a service with `k.app.get(Class)` (tokens: `k.app.get<KernelLogger>(KERNEL_LOGGER)`); `k.http.inject()` is Fastify light-my-request (no port), with the cookie jar from `packages/kernel/test/helpers/http.ts`:
+Kernel tests start the real application with the helpers in `packages/kernel/test/helpers/runs.ts`: `startKernel(config, opts)` returns a `TestKernel` `{ app, http, port, close() }` (`port` is undefined after `close()`), `buildKernel` one that is built but not started (`start()` runs the production start). Reach a service with `k.app.get(Class)` (tokens: `k.app.get(REDIS)`; the logger is `k.app.get<KernelLogger>(KERNEL_ROOT_LOGGER)`, since the transient `KERNEL_LOGGER` cannot be resolved with `get`); `k.http.inject()` is Fastify light-my-request (no port), with the cookie jar from `packages/kernel/test/helpers/http.ts`:
 
 ```ts
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";

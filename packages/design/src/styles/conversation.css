@@ -126,7 +126,7 @@ button.cb-tool-line:focus-visible {
   margin: 0;
   font-size: var(--cb-type-h2-size);
   line-height: var(--cb-type-h2-line);
-  font-weight: 700;
+  font-weight: 600;
 }
 .cb-md > * + .cb-md-h {
   margin-top: var(--cb-space-5);
@@ -151,7 +151,7 @@ button.cb-tool-line:focus-visible {
   color: var(--cb-muted);
 }
 .cb-md strong {
-  font-weight: 700;
+  font-weight: 600;
 }
 .cb-md-quote {
   margin: 0;
@@ -396,7 +396,7 @@ button.cb-tool-line:focus-visible {
   color: var(--cb-muted);
   font-size: var(--cb-type-micro-size);
   line-height: var(--cb-type-micro-line);
-  font-weight: 700;
+  font-weight: 600;
 }
 
 /* ── Run divider ── */
@@ -438,6 +438,126 @@ button.cb-tool-line:focus-visible {
   font-size: var(--cb-type-prose-small-size);
   line-height: var(--cb-type-prose-small-line);
   white-space: pre-wrap;
+}
+
+/* ── Working line (§6.16.24) ── */
+
+/* The mark: the §3 bitmap at pixel unit 2 (28 × 20, the sidebar logo's size), in the row.dense line; frame 1's legs show, frame
+   2's are hidden. The captions share one grid cell (the line keeps the widest one's width); only
+   the first shows. Reduced motion and the still form keep exactly that. */
+.cb-working-mark {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: var(--cb-control-default);
+  height: var(--cb-space-5);
+  color: var(--cb-accent);
+  fill: currentColor;
+}
+.cb-working-mark [data-frame="2"] {
+  visibility: hidden;
+}
+.cb-working-caption {
+  display: inline-grid;
+}
+.cb-working-caption > span {
+  grid-area: 1 / 1;
+  visibility: hidden;
+}
+.cb-working-caption > span:first-child {
+  visibility: visible;
+}
+@media (prefers-reduced-motion: no-preference) {
+  /* Two leg frames 400ms apart (an 800ms cycle); four captions 2.4s each (a 9.6s cycle). The
+     text changes in place: visibility steps, no slide or fade. */
+  .cb-working-line:not([data-still="true"]) .cb-working-mark [data-frame] {
+    animation: cb-working-legs 800ms step-end infinite;
+  }
+  .cb-working-line:not([data-still="true"]) .cb-working-mark [data-frame="2"] {
+    animation-delay: 400ms;
+  }
+  .cb-working-line:not([data-still="true"]) .cb-working-caption > span {
+    animation: cb-working-caption 9.6s step-end infinite;
+  }
+  .cb-working-line:not([data-still="true"]) .cb-working-caption > span:nth-child(2) {
+    animation-delay: 2.4s;
+  }
+  .cb-working-line:not([data-still="true"]) .cb-working-caption > span:nth-child(3) {
+    animation-delay: 4.8s;
+  }
+  .cb-working-line:not([data-still="true"]) .cb-working-caption > span:nth-child(4) {
+    animation-delay: 7.2s;
+  }
+}
+@keyframes cb-working-legs {
+  0% {
+    visibility: visible;
+  }
+  50%,
+  100% {
+    visibility: hidden;
+  }
+}
+@keyframes cb-working-caption {
+  0% {
+    visibility: visible;
+  }
+  25%,
+  100% {
+    visibility: hidden;
+  }
+}
+
+/* ── Run row (§6.16.23) ── */
+
+.cb-run-row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-1);
+  min-width: 0;
+}
+.cb-run-row > .cb-tool-line {
+  height: var(--cb-row-dense);
+}
+.cb-run-status {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--cb-space-1);
+  color: var(--cb-muted);
+  white-space: nowrap;
+}
+.cb-run-mark {
+  display: inline-flex;
+  color: var(--cb-muted);
+}
+.cb-run-status[data-status="ok"] .cb-run-mark {
+  color: var(--cb-ok);
+}
+.cb-run-status[data-status="failed"],
+.cb-run-status[data-status="failed"] .cb-run-mark {
+  color: var(--cb-fail);
+}
+.cb-run-detail {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  row-gap: var(--cb-space-2);
+  padding-left: var(--cb-space-3);
+  border-left: 1px solid var(--cb-line);
+  min-width: 0;
+}
+.cb-run-fact {
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+  overflow-wrap: anywhere;
+}
+.cb-run-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--cb-space-2);
 }
 
 /* ── Tool group, tool box, tool row (§6.16.8, §6.16.9) ── */
@@ -491,11 +611,44 @@ button.cb-tool-row {
 }
 .cb-tool-name {
   color: var(--cb-ink);
-  font-weight: 700;
+  font-weight: 600;
 }
 .cb-tool-row[data-status="running"] .cb-tool-label,
 .cb-tool-row[data-status="pending"] .cb-tool-label {
   color: var(--cb-ink);
+}
+/* A row or line with a link (§6.16.9): the toggle (or the label) and the link side by side. */
+.cb-tool-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-2);
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+button.cb-tool-toggle {
+  cursor: pointer;
+}
+button.cb-tool-toggle:focus-visible {
+  outline: 1px solid var(--cb-accent);
+  outline-offset: 2px;
+}
+.cb-tool-line > button.cb-tool-toggle:hover {
+  color: var(--cb-ink);
+}
+.cb-tool-row > .cb-tool-toggle {
+  flex: 1;
+}
+.cb-tool-row > .cb-tool-toggle > .cb-tool-label {
+  flex: 1;
+}
+.cb-tool-link {
+  flex: none;
+  white-space: nowrap;
 }
 .cb-tool-end {
   flex: none;
@@ -523,7 +676,7 @@ button.cb-tool-row {
   color: var(--cb-faint);
   font-size: var(--cb-type-micro-size);
   line-height: var(--cb-type-small-line);
-  font-weight: 700;
+  font-weight: 600;
 }
 .cb-tool-io-body {
   display: flex;
@@ -532,7 +685,9 @@ button.cb-tool-row {
   gap: var(--cb-space-2);
   min-width: 0;
 }
-.cb-kv {
+/* The tool and approval argument grid (`data-part="kv"`); scoped so it never lays out the
+   KeyValue component (`dl.cb-kv`, a column of rows) as label/value/label/value. */
+.cb-kv[data-part="kv"] {
   display: grid;
   grid-template-columns: max-content minmax(0, 1fr);
   column-gap: var(--cb-space-3);
@@ -541,7 +696,7 @@ button.cb-tool-row {
 .cb-kv-pair {
   display: contents;
 }
-.cb-kv-key {
+.cb-kv[data-part="kv"] .cb-kv-key {
   color: var(--cb-faint);
 }
 .cb-kv-value {
@@ -689,7 +844,7 @@ button.cb-tool-row {
   background: var(--cb-accent);
 }
 .cb-hcard-strong {
-  font-weight: 700;
+  font-weight: 600;
 }
 /* The model-visible key wraps rather than truncates. */
 .cb-hcard-key {
@@ -699,7 +854,7 @@ button.cb-tool-row {
   font-family: var(--cb-font-prose);
   font-size: var(--cb-type-prose-size);
   line-height: var(--cb-type-prose-line);
-  font-weight: 700;
+  font-weight: 600;
   overflow-wrap: anywhere;
 }
 .cb-hcard-args {
@@ -767,7 +922,7 @@ button.cb-tool-row {
   border-radius: var(--cb-radius-sm);
   background: var(--cb-selected);
   font-size: var(--cb-type-small-size);
-  font-weight: 700;
+  font-weight: 600;
 }
 .cb-qa {
   display: flex;
@@ -829,7 +984,7 @@ button.cb-tool-row {
 }
 .cb-q-option:is([aria-disabled="true"], [data-disabled="true"]) {
   cursor: default;
-  color: var(--cb-faint);
+  color: var(--cb-disabled);
 }
 .cb-q-mark {
   flex: none;
@@ -1401,4 +1556,239 @@ button.cb-file-card:focus-visible {
 }
 .cb-composer-input::placeholder {
   color: var(--cb-faint);
+}
+
+/* ── Greeting (§6.16.25) ── */
+
+/* The pixel capybara (unit 2, the working line's mark) and one h1-sized line; the line box keeps
+   one height with or without text, so the client's line replaces the server's placeholder in
+   place. The sub line starts under the text. */
+.cb-greeting {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-1);
+  min-width: 0;
+}
+.cb-greeting-line {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-3);
+  height: var(--cb-type-h1-line);
+  min-width: 0;
+}
+.cb-greeting-mark {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: var(--cb-control-default);
+  height: var(--cb-space-5);
+  color: var(--cb-accent);
+  fill: currentColor;
+}
+.cb-greeting-text {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--cb-ink);
+  font-size: var(--cb-type-h1-size);
+  line-height: var(--cb-type-h1-line);
+  font-weight: 600;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+/* The caret after the typed text, only while typing (never under reduced motion). */
+.cb-greeting-caret {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: 2px;
+  vertical-align: -0.125em;
+  background: var(--cb-accent);
+}
+.cb-greeting-sub {
+  margin: 0;
+  padding-left: calc(var(--cb-control-default) + var(--cb-space-3));
+  color: var(--cb-muted);
+  font-family: var(--cb-font-prose);
+  font-size: var(--cb-type-prose-small-size);
+  line-height: var(--cb-type-prose-small-line);
+}
+
+/* ── Agent row and agent panel (§6.16.26) ── */
+
+.cb-agent-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--cb-space-2);
+  min-width: 0;
+}
+.cb-agent-row-stage {
+  display: flex;
+  flex-direction: column;
+}
+.cb-agent-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--cb-space-2);
+  max-width: 200px;
+  height: var(--cb-control-prominent);
+  padding: 0 var(--cb-space-3) 0 var(--cb-space-1);
+  border: 1px solid var(--cb-line);
+  border-radius: var(--cb-radius-md);
+  background: transparent;
+  color: var(--cb-muted);
+  font: inherit;
+  font-size: var(--cb-type-body-size);
+  line-height: var(--cb-type-body-line);
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color var(--cb-motion-hover),
+    border-color var(--cb-motion-hover),
+    color var(--cb-motion-hover);
+}
+.cb-agent-chip[data-part="agent-more"] {
+  padding: 0 var(--cb-space-3);
+}
+.cb-agent-chip:hover,
+.cb-agent-chip[data-open="true"] {
+  background: var(--cb-hover);
+  color: var(--cb-ink);
+}
+.cb-agent-chip[aria-pressed="true"] {
+  border-color: var(--cb-ink);
+  background: var(--cb-selected);
+  color: var(--cb-ink);
+}
+.cb-agent-chip-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* The panel: the popover's look (§6.7), as wide as the row (its anchor), at most layout.chat. */
+.cb-agent-panel {
+  width: min(var(--radix-popover-trigger-width, var(--cb-layout-chat)), var(--cb-layout-chat));
+  max-width: calc(100vw - 16px);
+  padding: var(--cb-space-2);
+}
+.cb-agent-panel[data-inline="true"] {
+  position: relative;
+  width: 100%;
+  margin-top: var(--cb-space-1);
+  animation: none;
+}
+.cb-agent-panel-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-2);
+}
+/* The list scrolls past 320, or past the room Radix leaves below the row (the available height
+   minus the search, the gap and the panel's padding and border). */
+.cb-agent-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-2);
+  max-height: min(
+    320px,
+    calc(
+      var(--radix-popover-content-available-height, 100vh) -
+      var(--cb-control-default) -
+      3 *
+      var(--cb-space-2) -
+      2px
+    )
+  );
+  overflow-y: auto;
+}
+/* Each group is a two-column grid (§6.16.26); its label spans both columns. */
+.cb-agent-group {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--cb-space-1) var(--cb-space-2);
+}
+.cb-agent-group-label {
+  grid-column: 1 / -1;
+  padding: var(--cb-space-1) var(--cb-space-2) 0;
+  color: var(--cb-muted);
+  font-size: var(--cb-type-micro-size);
+  line-height: var(--cb-type-micro-line);
+}
+.cb-agent-option {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-2);
+  min-width: 0;
+  height: var(--cb-space-8);
+  padding: 0 var(--cb-space-2);
+  border-radius: var(--cb-radius-sm);
+  color: var(--cb-ink);
+  cursor: pointer;
+}
+.cb-agent-option[data-current="true"] {
+  background: var(--cb-selected);
+}
+.cb-agent-option[data-active="true"] {
+  background: var(--cb-hover);
+}
+.cb-agent-option-name {
+  flex: none;
+  max-width: 40%;
+  overflow: hidden;
+  font-weight: 600;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.cb-agent-option-desc {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.cb-agent-empty {
+  margin: 0;
+  padding: var(--cb-space-2);
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+
+/* ── Quick actions (§6.16.27) ── */
+
+/* Quiet (U1): muted small text links, no ground or border, ink on hover and focus; each title one
+   line with an ellipsis, shrinking before the line overflows. */
+.cb-quick-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-4);
+  min-width: 0;
+  min-height: var(--cb-control-dense);
+}
+.cb-quick-action {
+  flex: 0 1 auto;
+  min-width: 0;
+  height: var(--cb-control-dense);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--cb-muted);
+  font: inherit;
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  transition: color var(--cb-motion-hover);
+}
+.cb-quick-action[data-part="quick-more"] {
+  flex: none;
+}
+.cb-quick-action:hover,
+.cb-quick-action:focus-visible {
+  color: var(--cb-ink);
 }

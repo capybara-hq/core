@@ -1,11 +1,25 @@
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { checkMigrationNumbers, migrationFileMatcher } from "../src/check/applied-migrations.js";
 import { checkMigrations, checkSql } from "../src/check/migrations.js";
 
 const fixture = (name: string) =>
   fileURLToPath(new URL(`../fixtures/migrations/${name}`, import.meta.url));
 
 describe("checkMigrations", () => {
+  it("duplicate-number -> migration-duplicate-number on the second file of a number", () => {
+    const f = checkMigrations([fixture("duplicate-number")]);
+    expect(f.map((x) => x.rule)).toEqual(["migration-duplicate-number"]);
+    expect(f[0]?.file).toContain("0002_main.sql");
+    expect(f[0]?.message).toContain("0002_branch.sql");
+  });
+
+  it("the same number in two directories is fine", () => {
+    expect(checkMigrations([fixture("allowed-destructive"), fixture("drop-column")])).toEqual(
+      checkMigrations([fixture("drop-column")]),
+    );
+  });
+
   it("bad-name -> naming", () => {
     const f = checkMigrations([fixture("bad-name")]);
     expect(f.map((x) => x.rule)).toEqual(["naming"]);
@@ -162,5 +176,48 @@ describe("checkMigrations", () => {
 
   it("不存在的目录被忽略", () => {
     expect(checkMigrations([fixture("nope")])).toEqual([]);
+  });
+});
+
+describe("checkMigrationNumbers (migration-number-behind-base)", () => {
+  const isMigration = migrationFileMatcher(["plugins/*/migrations", "migrations"]);
+  const base: Record<string, string[]> = {
+    "plugins/demo/migrations": ["0001_init.sql", "0003_main.sql", "README.md"],
+    migrations: ["0001_init.sql"],
+  };
+  const check = (lines: string[]) =>
+    checkMigrationNumbers(lines.join("\n"), isMigration, (dir) => base[dir] ?? []).map(
+      (f) => f.file,
+    );
+
+  it("reports added files at or below the base's highest of their directory", () => {
+    expect(
+      check([
+        "A\tplugins/demo/migrations/0002_low.sql",
+        "A\tplugins/demo/migrations/0003_same.sql",
+        "A\tplugins/demo/migrations/0004_next.sql",
+        "C075\tplugins/demo/migrations/0001_init.sql\tplugins/demo/migrations/0003_copy.sql",
+        "R100\tdocs/x.sql\tmigrations/0001_moved.sql",
+      ]),
+    ).toEqual([
+      "plugins/demo/migrations/0002_low.sql",
+      "plugins/demo/migrations/0003_same.sql",
+      "plugins/demo/migrations/0003_copy.sql",
+      "migrations/0001_moved.sql",
+    ]);
+  });
+
+  it("passes new directories, files the base already has, other files and bad names", () => {
+    expect(
+      check([
+        "A\tplugins/new/migrations/0001_init.sql",
+        "A\tplugins/demo/migrations/0003_main.sql",
+        "A\tplugins/demo/src/0001_x.sql",
+        "A\tplugins/demo/migrations/BadName.sql",
+        "M\tplugins/demo/migrations/0001_init.sql",
+        "D\tplugins/demo/migrations/0003_main.sql",
+        "",
+      ]),
+    ).toEqual([]);
   });
 });

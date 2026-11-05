@@ -13,6 +13,8 @@ Migrations are plain SQL files. `pnpm check:migrations` (also part of `pnpm chec
 
 **Applied migrations are immutable.** Never edit, delete or rename a migration file once it is on `main`; add a new one instead. The migrator records each file by name and checksum, so an edited file stops `capybara migrate` (checksum mismatch) on every database that already ran it, while fresh test databases pass. On pull requests `pnpm check:applied-migrations --base <base>` fails when the diff modifies, deletes or renames an existing file under `packages/kernel/src/migrations/` or `plugins/*/migrations/` (rule `applied-migration-edited`); adding files is fine, and so is deleting a whole plugin with its migrations (its `.capybara-plugin/plugin.json` deleted in the same diff: the plugin moved to another repository). Run it locally with `--base origin/main`.
 
+**Numbers are used once and only go up.** Two files of one directory never share a `NNNN` (rule `migration-duplicate-number`, `pnpm check:migrations`, in full). On pull requests `check:applied-migrations --base` also fails when a file the diff adds is not numbered above the highest number of its directory at the base itself (rule `migration-number-behind-base`): when the base released the number you took (or a higher one) after you branched, renumber your unapplied files to follow it before merging.
+
 Location: kernel `packages/kernel/src/migrations/` (schema `capybara`); extension `<plugin>/migrations/` (schema `plugin_<name>`, with `-` replaced by `_`). In core the extension ones are `plugins/model-fake` (none today) and the fake extensions under `packages/testing/fixtures/extensions/*/migrations/`; the official plugins' migrations live in capybara-hq/plugins.
 
 ## Which schema a migration runs in

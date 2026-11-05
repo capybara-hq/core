@@ -1,20 +1,21 @@
 import type { Logger } from "@capybara-hq/plugin-sdk";
 import type { LoggerService } from "@nestjs/common";
 
-/** 可选带 debug 的 logger（内核 logger 有 debug；插件契约的 Logger 没有）。 */
+/** A logger with an optional debug (the kernel logger has one; the SDK Logger does not). */
 type MaybeDebugLogger = Logger & {
   debug?: (msg: string, fields?: Record<string, unknown>) => void;
 };
 
 /**
- * 把 Nest 自身的日志转给内核 logger：`log`（启动时的模块加载、路由映射等，每次启动几十行）降为 debug，
- * `warn` / `error` 原级别转发，`debug` / `verbose` 丢弃。logger 没有 debug 时 `log` 也丢弃。
+ * Forwards Nest's own log lines to the kernel logger, as octok does: `log` (module loading,
+ * the `Mapped {/api/v1/…, GET} route` lines at startup) at info, `warn` / `error` as they are,
+ * `debug` / `verbose` at debug. Nest's context name becomes the record's `context`.
  */
 export class NestLogAdapter implements LoggerService {
   constructor(private readonly logger: MaybeDebugLogger) {}
 
   log(message: unknown, ...params: unknown[]): void {
-    this.logger.debug?.(String(message), fields(params));
+    this.logger.info(String(message), fields(params));
   }
 
   warn(message: unknown, ...params: unknown[]): void {
@@ -25,14 +26,27 @@ export class NestLogAdapter implements LoggerService {
     this.logger.error(String(message), fields(params));
   }
 
-  debug(): void {}
+  debug(message: unknown, ...params: unknown[]): void {
+    this.logger.debug?.(String(message), fields(params));
+  }
 
-  verbose(): void {}
+  verbose(message: unknown, ...params: unknown[]): void {
+    this.logger.debug?.(String(message), fields(params));
+  }
 }
 
-/** Nest 把上下文名（如 `RoutesResolver`）、错误堆栈作为额外参数传入。 */
+/**
+ * Nest passes its context name (e.g. `RoutesResolver`) last and, for errors, the stack before it. The
+ * name becomes `context` (the pretty `[context=…]`), anything else `nest`.
+ */
 function fields(params: unknown[]): Record<string, unknown> | undefined {
-  const ctx = params.filter((p) => p !== undefined);
-  if (ctx.length === 0) return undefined;
-  return { nest: ctx.length === 1 ? ctx[0] : ctx };
+  const rest = params.filter((p) => p !== undefined);
+  const last = rest.at(-1);
+  const out: Record<string, unknown> = {};
+  if (typeof last === "string" && /^[A-Za-z][\w.-]*$/.test(last)) {
+    out.context = last;
+    rest.pop();
+  }
+  if (rest.length > 0) out.nest = rest.length === 1 ? rest[0] : rest;
+  return Object.keys(out).length > 0 ? out : undefined;
 }

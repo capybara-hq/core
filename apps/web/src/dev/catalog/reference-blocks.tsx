@@ -3,11 +3,21 @@
 import {
   ActionRow,
   AppShell,
+  AVATAR_PRESET_IDS,
+  AVATAR_SIZES,
+  Avatar,
+  AvatarPicker,
   Button,
   CellTitle,
   type Column,
+  DangerZone,
+  DangerZoneItem,
   DataTable,
+  DesignProvider,
+  ErrorDetail,
   Field,
+  type FieldShape,
+  FilePicker,
   FilterChip,
   FormPage,
   FormSection,
@@ -18,19 +28,30 @@ import {
   IconGallery,
   type IconName,
   Input,
+  type LinkComponent,
   ListPage,
+  ObjectList,
+  ObjectRow,
   PageHeader,
+  SecretReveal,
   Segmented,
   Select,
+  SetupPage,
   SIZES,
   Sidebar,
+  SkeletonBox,
+  SkeletonGroup,
+  SkeletonText,
   Stack,
   StatCards,
   StatusBar,
+  StatusPage,
   SwitchField,
   SwitchList,
   Text,
   Textarea,
+  TitleBar,
+  useDesignLocale,
   useStatusBar,
 } from "@capybara-hq/design";
 import {
@@ -44,18 +65,22 @@ import {
   TABLE_HOVER_ROW,
   TABLE_SELECTED_ROW,
 } from "@capybara-hq/design/fixtures";
-import type { ReactNode } from "react";
+import { createContext, type ReactNode, useContext } from "react";
+import { CONFIG_FORM_BLOCKS } from "./config-form-blocks";
 import { CONVERSATION_BLOCKS } from "./conversation-blocks";
 import { CONVERSATION_PAGE_BLOCKS } from "./conversation-page-blocks";
 import { COMMANDS } from "./fixtures";
 import { RefBlock } from "./ref-block";
 import { type SidebarFixture, sidebarProps, statusFixture } from "./shell-fixture";
+import { listLoadingBlocks, TEMPLATE_LOADING_BLOCKS } from "./template-loading-blocks";
+import { SetupHomeBody, setupFrameProps } from "./templates/setup";
 
 // The /dev/ui side of the reference set (docs/design/reference/src): one RefBlock per state, with
 // the reference block's id, box and fixture copy. Pseudo-states are forced by the Playwright specs.
 
-const LIST = SIZES.layout["content-list"];
+const LIST = SIZES.layout.content;
 const noop = () => {};
+const LP = [{ label: "capybara", href: "/" }, { label: "connectors" }];
 
 // ── Button ──────────────────────────────────────────────────────────────────
 
@@ -65,7 +90,7 @@ function ButtonRow({ density, disabled }: { density?: "dense" | "prominent"; dis
   return (
     <Stack direction="row" gap={12} align="center" wrap>
       <Button variant="primary" disabled={disabled} {...d}>
-        新建 Agent
+        新建 agent
       </Button>
       <Button variant="secondary" disabled={disabled} {...d}>
         部署
@@ -116,7 +141,7 @@ function buttonBlocks(): ReactNode {
         force={{ pseudo: ["focus", "focus-visible"], selector: "button" }}
       >
         <Stack direction="row" gap={12} align="center" wrap>
-          <Button variant="primary">新建 Agent</Button>
+          <Button variant="primary">新建 agent</Button>
           <Button variant="default">导出</Button>
           <IconButton variant="default" label="更多操作" icon={<Icon name="more-horizontal" />} />
         </Stack>
@@ -383,6 +408,10 @@ function tableBlocks(): ReactNode {
       <RefBlock id="table-empty" width={LIST}>
         <ConnectorTable state="empty" />
       </RefBlock>
+      {/* Phones: measured in a 390 window, where the rows stack (spec §6.6, §9.3). */}
+      <RefBlock id="table-narrow" width={390}>
+        <ConnectorTable rows={3} />
+      </RefBlock>
     </>
   );
 }
@@ -428,6 +457,49 @@ function SidebarBlock({
 }
 
 const navAt = (id: string) => `[data-part="nav-item"][href*="at=${id}"]`;
+const stepAt = (id: string) => `[data-part="step-item"][href*="at=${id}"]`;
+
+/**
+ * One link's navigation pending, the way next/link does it: the link provides its status and the
+ * provider's `useLinkPending` reads it inside the link (LinkPendingMark).
+ */
+const PendingHere = createContext(false);
+const usePendingHere = () => useContext(PendingHere);
+function pendingLink(target: string): LinkComponent {
+  return function PendingLink({ href, children, ...rest }) {
+    return (
+      <PendingHere.Provider value={href === target}>
+        <a href={href} {...rest}>
+          {children}
+        </a>
+      </PendingHere.Provider>
+    );
+  };
+}
+const PENDING_LINK = pendingLink(here("channels"));
+
+/** The setup sidebar with the 连接渠道 step's navigation pending (its accent underline). */
+function PendingSidebar() {
+  const locale = useDesignLocale();
+  return (
+    <DesignProvider locale={locale} link={PENDING_LINK} useLinkPending={usePendingHere}>
+      <Sidebar {...sidebarProps({ context: "setup", active: "agent" }, here)} mode="full" />
+    </DesignProvider>
+  );
+}
+
+/** Below 960: the setup home behind the scrim, the setup drawer open over it. */
+function SetupDrawerPage() {
+  return (
+    <SetupPage
+      {...setupFrameProps(here, "admin", "home")}
+      title="开始之前"
+      reference={{ drawer: true }}
+    >
+      <SetupHomeBody />
+    </SetupPage>
+  );
+}
 
 /** Below 960: the list page behind the scrim, the drawer open over it (the reference's stage). */
 function DrawerPage() {
@@ -445,6 +517,7 @@ function DrawerPage() {
     >
       <ListPage
         header={{
+          path: LP,
           title: LIST_PAGE_FIXTURE.title,
           description: LIST_PAGE_FIXTURE.description,
           metrics: LIST_PAGE_FIXTURE.metrics,
@@ -462,15 +535,25 @@ function sidebarBlocks(): ReactNode {
       <SidebarBlock
         id="sidebar-item-hover"
         {...base}
-        force={{ pseudo: ["hover"], selector: navAt("connectors") }}
+        force={{ pseudo: ["hover"], selector: navAt("overview") }}
       />
       <SidebarBlock
         id="sidebar-item-focus"
         {...base}
-        force={{ pseudo: ["focus", "focus-visible"], selector: navAt("inbox") }}
+        // The inbox left the nav items for the brand row (an icon button): the focus ring is shown
+        // on 首页, a nav item every sidebar has.
+        force={{ pseudo: ["focus", "focus-visible"], selector: navAt("overview") }}
       />
       <SidebarBlock id="sidebar-conversation-active" activeConversation="cnv_r2" />
       <SidebarBlock id="sidebar-group-collapsed" {...base} collapsed={["agt_research"]} />
+      <SidebarBlock
+        id="sidebar-more-open"
+        active="connectors"
+        activeConversation="cnv_r2"
+        moreOpen
+      />
+      <SidebarBlock id="sidebar-filter" {...base} filter={{ q: "", state: "waiting" }} />
+      <SidebarBlock id="sidebar-archived" {...base} archived />
       <SidebarBlock id="sidebar-empty" {...base} state="empty" />
       <SidebarBlock id="sidebar-loading" {...base} state="loading" />
       <SidebarBlock id="sidebar-error" {...base} state="error" />
@@ -482,6 +565,7 @@ function sidebarBlocks(): ReactNode {
       />
       <SidebarBlock id="sidebar-many-groups" active="agents" groups="many" />
       <SidebarBlock id="sidebar-guest" {...base} level="guest" />
+      <SidebarBlock id="sidebar-admin" context="admin" active="accounts" />
       <RefBlock
         id="sidebar-rail"
         width={200}
@@ -492,6 +576,34 @@ function sidebarBlocks(): ReactNode {
       </RefBlock>
       <RefBlock id="sidebar-drawer" width={640} height={SIDEBAR_H}>
         <DrawerPage />
+      </RefBlock>
+      {/* The setup context (web-SSR spec §4) */}
+      <SidebarBlock id="sidebar-setup" context="setup" active="agent" />
+      <SidebarBlock id="sidebar-setup-waiting" context="setup" setup="member" active="home" />
+      <SidebarBlock
+        id="sidebar-setup-hover"
+        context="setup"
+        active="agent"
+        force={{ pseudo: ["hover"], selector: stepAt("channels") }}
+      />
+      <SidebarBlock
+        id="sidebar-setup-focus"
+        context="setup"
+        active="agent"
+        force={{ pseudo: ["focus", "focus-visible"], selector: stepAt("model") }}
+      />
+      <RefBlock id="sidebar-setup-rail" width={240} height={SIDEBAR_H}>
+        <Sidebar
+          {...sidebarProps({ context: "setup", setup: "member", active: "home" }, here)}
+          mode="rail"
+          railTooltip="model"
+        />
+      </RefBlock>
+      <RefBlock id="sidebar-setup-drawer" width={640} height={SIDEBAR_H}>
+        <SetupDrawerPage />
+      </RefBlock>
+      <RefBlock id="sidebar-pending" width={SIDEBAR_W} height={SIDEBAR_H}>
+        <PendingSidebar />
       </RefBlock>
     </>
   );
@@ -510,24 +622,99 @@ function pageHeaderBlocks(): ReactNode {
   return (
     <>
       <RefBlock id="page-header-title" width={LIST} pad>
-        <PageHeader title={PAGE_HEADER_FIXTURE.title} />
+        <PageHeader path={F.path.slice(0, 1)} title={PAGE_HEADER_FIXTURE.title} />
       </RefBlock>
-      <RefBlock id="page-header-breadcrumb" width={LIST} pad>
-        <PageHeader breadcrumb={F.breadcrumb} title={PAGE_HEADER_FIXTURE.breadcrumbTitle} />
+      <RefBlock id="page-header-path" width={LIST} pad>
+        <PageHeader path={F.path} title={PAGE_HEADER_FIXTURE.pathTitle} />
       </RefBlock>
       <RefBlock id="page-header-description-actions" width={LIST} pad>
-        <PageHeader title={L.title} description={L.description} actions={ACTIONS} />
+        <PageHeader path={LP} title={L.title} description={L.description} actions={ACTIONS} />
       </RefBlock>
       <RefBlock id="page-header-long-title" width={640} pad>
         <PageHeader
+          path={LP}
           title={PAGE_HEADER_FIXTURE.longTitle}
           description={L.description}
           actions={ACTIONS}
         />
       </RefBlock>
+      {/* An object's page leads row 2 with its avatar at 40 (spec §4.2, §6.30). */}
+      <RefBlock id="page-header-avatar" width={LIST} pad>
+        <PageHeader
+          path={LP}
+          title="研究助手"
+          description={L.description}
+          avatar={<Avatar value={{ kind: "preset", id: "capybara" }} name="研究助手" size={40} />}
+        />
+      </RefBlock>
+      {/* Loading (spec §4.2): the title is a title-size bar, two action blocks and two tab bars
+          stand in for what the page does not know yet. */}
+      <RefBlock id="page-header-loading" width={LIST} pad>
+        <PageHeader
+          path={F.path.slice(0, 1)}
+          title=""
+          loading={{ title: true, actions: 2, tabs: 2 }}
+        />
+      </RefBlock>
+      {/* The same loading header on a phone: the placeholders are 40 px like the real parts. */}
+      <RefBlock id="page-header-narrow-loading" width={390} pad>
+        <PageHeader
+          path={F.path.slice(0, 1)}
+          title=""
+          loading={{ title: true, actions: 2, tabs: 2 }}
+        />
+      </RefBlock>
+      {/* Phones: measured in a 390 window: the search on its own line, the tabs scroll, 40 px
+          tap targets (spec §4.2, §9.3). */}
+      <RefBlock id="page-header-narrow" width={390} pad>
+        <PageHeader
+          path={F.path.slice(0, 1)}
+          title={PAGE_HEADER_FIXTURE.title}
+          actions={ACTIONS}
+          tabs={PAGE_HEADER_FIXTURE.tabs}
+          activeTab="all"
+          search={{ label: PAGE_HEADER_FIXTURE.search, value: "", onChange: noop }}
+        />
+      </RefBlock>
     </>
   );
 }
+
+// ── Skeleton primitives (spec §6.29) ─────────────────────────────────────
+
+function skeletonBlocks(): ReactNode {
+  return (
+    <>
+      <RefBlock id="skeleton-text" width={400} pad>
+        <Stack gap={8}>
+          <SkeletonText width="30%" size="title" />
+          <SkeletonText width="55%" />
+          <SkeletonText width="70%" size="small" />
+          <SkeletonText width="100%" size="prose" />
+        </Stack>
+      </RefBlock>
+      <RefBlock id="skeleton-box" width={400} pad>
+        <Stack gap={8}>
+          <SkeletonBox part="dense" width={96} />
+          <SkeletonBox part="default" width={96} />
+          <SkeletonBox part="prominent" width={96} />
+          <SkeletonBox part="mark" />
+        </Stack>
+      </RefBlock>
+      <RefBlock id="skeleton-group" width={400} pad>
+        <SkeletonGroup label="Reference">
+          <Stack gap={8}>
+            <SkeletonText width="55%" />
+            <SkeletonBox part="default" width={96} />
+          </Stack>
+        </SkeletonGroup>
+      </RefBlock>
+    </>
+  );
+}
+
+// Linked stat cards: only the first card links, so the forced state lands on one card.
+const LINKED_METRICS = L.metrics.map((m, i) => (i === 0 ? { ...m, href: "/dev/ui" } : m));
 
 function statCardsBlocks(): ReactNode {
   return (
@@ -539,6 +726,26 @@ function statCardsBlocks(): ReactNode {
         <StatCards metrics={L.metricsFive} />
       </RefBlock>
       <RefBlock id="stat-cards-tones" width={640} pad>
+        <StatCards metrics={L.metrics} />
+      </RefBlock>
+      <RefBlock
+        id="stat-cards-link-hover"
+        width={640}
+        pad
+        force={{ pseudo: ["hover"], selector: 'a[data-part="stat-card"]' }}
+      >
+        <StatCards metrics={LINKED_METRICS} />
+      </RefBlock>
+      <RefBlock
+        id="stat-cards-link-focus"
+        width={640}
+        pad
+        force={{ pseudo: ["focus", "focus-visible"], selector: 'a[data-part="stat-card"]' }}
+      >
+        <StatCards metrics={LINKED_METRICS} />
+      </RefBlock>
+      {/* Phones: measured in a 390 window, two columns (spec §6.14, §9.3). */}
+      <RefBlock id="stat-cards-narrow" width={390} pad>
         <StatCards metrics={L.metrics} />
       </RefBlock>
     </>
@@ -626,7 +833,13 @@ function ListTemplateBody() {
   useStatusBar(STATUS_FIXTURE.pageStatus);
   return (
     <ListPage
-      header={{ title: L.title, description: L.description, metrics: L.metrics, actions: ACTIONS }}
+      header={{
+        path: LP,
+        title: L.title,
+        description: L.description,
+        metrics: L.metrics,
+        actions: ACTIONS,
+      }}
     >
       <DataTable<FixtureConnectorRow>
         label={L.title}
@@ -725,11 +938,33 @@ function FormFieldView({ f }: { f: FixtureFormField }) {
   }
 }
 
-function FormTemplateBody() {
+/**
+ * The loading shapes of a section's fields, from the same fixture the loaded section draws (the
+ * page's static layout: control kinds, help or error or counter lines, textarea rows, the paired
+ * first two).
+ */
+function loadingShapes(fields: FixtureFormField[], paired: boolean): FieldShape[] {
+  return fields.map((f, i) => {
+    const shape: FieldShape = {};
+    if (f.kind === "textarea") {
+      shape.control = "textarea";
+      shape.rows = f.mono ? 4 : 2;
+    } else if (f.kind === "select" || f.kind === "segmented") {
+      shape.control = f.kind;
+    }
+    if ((f.kind === "input" && f.error) || (f.kind === "textarea" && f.counter)) shape.help = true;
+    if (paired && i === 0) shape.pair = true;
+    return shape;
+  });
+}
+
+function FormTemplateBody({ loading }: { loading?: boolean }) {
   useStatusBar(F.status.pageStatus);
   return (
     <FormPage
-      header={{ breadcrumb: F.breadcrumb, title: F.title }}
+      // Loading (spec §5.3): the page knows its path's first segment, not the object or its title.
+      header={loading ? { path: F.path.slice(0, 1), title: "" } : { path: F.path, title: F.title }}
+      {...(loading ? { loading: true } : {})}
       actionRow={{
         unsaved: 2,
         errors: 1,
@@ -747,6 +982,14 @@ function FormTemplateBody() {
             title={sec.title}
             description={sec.description}
             flush={a?.kind === "switches"}
+            {...(loading
+              ? {
+                  loading: {
+                    fields:
+                      a?.kind === "switches" ? a.rows.length : loadingShapes(sec.fields, paired),
+                  },
+                }
+              : {})}
           >
             {paired ? (
               <Grid columns={2} gap={12}>
@@ -766,15 +1009,31 @@ function FormTemplateBody() {
 
 function templateListBlocks(): ReactNode {
   return (
-    <RefBlock id="template-list-page" width={TEMPLATE_W} height={TEMPLATE_H}>
-      <ShellFixture active="connectors" route="/connectors">
-        <ListTemplateBody />
-      </ShellFixture>
-    </RefBlock>
+    <>
+      <RefBlock id="template-list-page" width={TEMPLATE_W} height={TEMPLATE_H}>
+        <ShellFixture active="connectors" route="/connectors">
+          <ListTemplateBody />
+        </ShellFixture>
+      </RefBlock>
+      {listLoadingBlocks()}
+    </>
   );
 }
 
 function templateFormBlocks(): ReactNode {
+  return (
+    <>
+      <RefBlock id="template-form-loading" width={TEMPLATE_W} height={TEMPLATE_H}>
+        <ShellFixture active="agents" route="/agents/研究助手/edit">
+          <FormTemplateBody loading />
+        </ShellFixture>
+      </RefBlock>
+      {templateFormPageBlock()}
+    </>
+  );
+}
+
+function templateFormPageBlock(): ReactNode {
   return (
     <RefBlock
       id="template-form-page"
@@ -792,6 +1051,181 @@ function templateFormBlocks(): ReactNode {
   );
 }
 
+// ── Role pass ───────────────────────────────────────────────────────────────
+
+function noAccessBlocks(): ReactNode {
+  return (
+    <RefBlock id="no-access-default" width={720} pad>
+      <StatusPage
+        header={{ path: [{ label: "capybara" }, { label: "channels" }], title: "渠道" }}
+        kind="no-access"
+        title="没有访问权限"
+        description="「渠道」只对组织管理员开放。"
+        need="组织管理员"
+        ask="如需访问，请联系本组织的管理员或所有者。"
+      />
+    </RefBlock>
+  );
+}
+
+const DELETE_ITEM = (
+  <DangerZoneItem
+    title="删除组织"
+    description="所有成员都会失去这个组织的访问，agent、会话与设置不再可用。"
+    action={{ label: "删除组织…", onSelect: noop }}
+  />
+);
+
+function dangerZoneBlocks(): ReactNode {
+  return (
+    <>
+      <RefBlock id="danger-zone-default" width={720} pad>
+        <DangerZone title="危险操作">{DELETE_ITEM}</DangerZone>
+      </RefBlock>
+      <RefBlock id="danger-zone-two-items" width={720} pad>
+        <DangerZone title="危险操作">
+          <DangerZoneItem
+            title="转让所有权"
+            description="对方成为所有者，你成为管理员。"
+            action={{ label: "转让…", onSelect: noop }}
+          />
+          {DELETE_ITEM}
+        </DangerZone>
+      </RefBlock>
+    </>
+  );
+}
+
+function secretRevealBlocks(): ReactNode {
+  return (
+    <>
+      <RefBlock id="secret-reveal-default" width={480} pad>
+        <SecretReveal label="令牌" value="cap_svc_4f9c2a7e1b8d" />
+      </RefBlock>
+      <RefBlock id="secret-reveal-copied" width={480} pad>
+        <SecretReveal label="令牌" value="cap_svc_4f9c2a7e1b8d" copied />
+      </RefBlock>
+    </>
+  );
+}
+
+const RAW_REFRESH_ERROR =
+  "https://github.com/capybara-hq/plugins.git: cannot list the refs of https://github.com/capybara-hq/plugins.git: Access to github.com is refused: it resolves to a private or reserved address (add the hostname to marketplaces.allowPrivateHosts to allow an internal host).";
+
+function errorDetailBlocks(): ReactNode {
+  const summary = "市场地址解析到内网或保留地址，已被网络规则拦截。";
+  return (
+    <>
+      <RefBlock id="error-detail-default" width={640} pad>
+        <ErrorDetail summary={summary} detail={RAW_REFRESH_ERROR} />
+      </RefBlock>
+      <RefBlock id="error-detail-open" width={640} pad>
+        <ErrorDetail summary={summary} detail={RAW_REFRESH_ERROR} defaultOpen />
+      </RefBlock>
+    </>
+  );
+}
+
+function filePickerBlocks(): ReactNode {
+  return (
+    <>
+      <RefBlock id="file-picker-default" width={640} pad>
+        <FilePicker dropLabel="松开即选择" onFiles={noop} />
+      </RefBlock>
+      <RefBlock id="file-picker-chosen" width={640} pad>
+        <FilePicker dropLabel="松开即选择" onFiles={noop}>
+          <Text>plugin-todo-0.3.1.tgz · 48 KB</Text>
+        </FilePicker>
+      </RefBlock>
+    </>
+  );
+}
+
+// ── Avatar (spec §6.30) ─────────────────────────────────────────────────────
+
+/** The default sidebar with an avatar on each conversation group's row. */
+function sidebarWithAvatars(): ReturnType<typeof sidebarProps> {
+  const p = sidebarProps({}, here);
+  const c = p.conversations;
+  if (!c) return p;
+  return {
+    ...p,
+    conversations: {
+      ...c,
+      groups: c.groups.map((g, i) => ({
+        ...g,
+        agentAvatar: { kind: "preset" as const, id: AVATAR_PRESET_IDS[i % 10] ?? "capybara" },
+      })),
+    },
+  };
+}
+
+function avatarBlocks(): ReactNode {
+  return (
+    <>
+      <RefBlock id="avatar-presets" width={640} pad>
+        <Stack direction="row" gap={8} wrap>
+          {AVATAR_PRESET_IDS.map((id) => (
+            <Avatar key={id} value={{ kind: "preset", id }} name={id} size={40} />
+          ))}
+        </Stack>
+      </RefBlock>
+      <RefBlock id="avatar-sizes" width={640} pad>
+        <Stack direction="row" gap={12} align="end">
+          {AVATAR_SIZES.map((size) => (
+            <Avatar key={size} value={{ kind: "preset", id: "capybara" }} name="水豚" size={size} />
+          ))}
+        </Stack>
+      </RefBlock>
+      <RefBlock id="avatar-initial" width={640} pad>
+        <Stack direction="row" gap={12} align="end">
+          {AVATAR_SIZES.map((size) => (
+            <Avatar key={size} value={null} name="研究助手" size={size} />
+          ))}
+        </Stack>
+      </RefBlock>
+      {/* Where the avatar sits (spec §6.30): the title bar's path (16), a sidebar group row (16)
+          and an object / agent list row (28). */}
+      <RefBlock id="avatar-title-bar" width={760}>
+        <TitleBar
+          title="整理季度报表"
+          untitled=""
+          path={[
+            { label: "acme" },
+            { label: "研究助手", avatar: { kind: "preset", id: "capybara" } },
+          ]}
+          menu={[]}
+          properties={{ pressed: false, onToggle: noop }}
+          panels={[]}
+        />
+      </RefBlock>
+      <RefBlock id="avatar-sidebar-row" width={SIDEBAR_W} height={SIDEBAR_H}>
+        <Sidebar {...sidebarWithAvatars()} mode="full" />
+      </RefBlock>
+      <RefBlock id="avatar-list-row" width={640} pad>
+        <ObjectList label="智能体">
+          <ObjectRow
+            mark={{ avatar: { kind: "preset", id: "fox" } }}
+            name="研究助手"
+            description="整理资料并给出摘要"
+          />
+          <ObjectRow mark={{ avatar: null }} name="周报助手" description="每周五生成周报" />
+        </ObjectList>
+      </RefBlock>
+      <RefBlock id="avatar-picker" width={640} pad>
+        <AvatarPicker value={{ kind: "preset", id: "capybara" }} onChange={noop} onUpload={noop} />
+      </RefBlock>
+      <RefBlock id="avatar-picker-upload-off" width={640} pad>
+        <AvatarPicker
+          value={{ kind: "preset", id: "fox" }}
+          onChange={noop}
+          uploadOffReason="未配置对象存储，无法上传图片；预设头像仍可使用。"
+        />
+      </RefBlock>
+    </>
+  );
+}
+
 export const REFERENCE_BLOCKS = {
   button: buttonBlocks,
   input: inputBlocks,
@@ -802,11 +1236,20 @@ export const REFERENCE_BLOCKS = {
   icon: iconBlocks,
   sidebar: sidebarBlocks,
   "page-header": pageHeaderBlocks,
+  skeleton: skeletonBlocks,
   "stat-cards": statCardsBlocks,
   "status-bar": statusBarBlocks,
   "action-row": actionRowBlocks,
   "template-list": templateListBlocks,
   "template-form": templateFormBlocks,
+  ...TEMPLATE_LOADING_BLOCKS,
   ...CONVERSATION_BLOCKS,
   ...CONVERSATION_PAGE_BLOCKS,
+  "no-access": noAccessBlocks,
+  "danger-zone": dangerZoneBlocks,
+  "secret-reveal": secretRevealBlocks,
+  "error-detail": errorDetailBlocks,
+  "file-picker": filePickerBlocks,
+  avatar: avatarBlocks,
+  ...CONFIG_FORM_BLOCKS,
 } as const;

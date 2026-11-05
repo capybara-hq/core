@@ -1,4 +1,5 @@
 import type { ModelInfo, ModelRequest } from "@capybara-hq/plugin-sdk";
+import { renderBackgroundFinished } from "../../background/render.js";
 import type { ConversationEvent, EventPayload } from "../../conversations/events.js";
 import { latestSummary } from "./build.js";
 
@@ -121,6 +122,9 @@ function transcriptLine(e: ConversationEvent): string | null {
     }
     case "reminder":
       return `System reminder: ${e.payload.text}`;
+    // a finished background task is a system message of the request (build.ts)
+    case "background_task_finished":
+      return `System reminder: ${renderBackgroundFinished(e.payload)}`;
     // phase D: a forked skill's report is user content of the request (build.ts)
     case "skill_fork_result":
       return `User: ${e.payload.text}`;

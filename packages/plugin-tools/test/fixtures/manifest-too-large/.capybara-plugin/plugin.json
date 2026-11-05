@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "name": "fixture-manifest-too-large",
+  "version": "0.1.0",
+  "publisher": "Capybara",
+  "description": "Fixture: config schemas under their own cap whose packed plugin.json is too large"
+}

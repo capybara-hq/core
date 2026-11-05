@@ -1,5 +1,6 @@
 import { expect, type Page, test } from "@playwright/test";
 import {
+  animationsDone,
   composer,
   conversationIdOf,
   createAgent,
@@ -44,6 +45,7 @@ test("sub-agents: the group, the record on the right, stop, and the properties p
   await expect(group(page).first()).toContainText(designZh("subagent.done").replace("{n}", "1"));
   // a finished group is folded: its line opens it
   await group(page).first().locator('[data-part="tool-line"]').click();
+  await animationsDone(group(page).first());
   const done = row(page, "Check the docs");
   await expect(done).toHaveAttribute("data-status", "completed");
   await expect(done).toContainText("general-purpose");
@@ -51,6 +53,8 @@ test("sub-agents: the group, the record on the right, stop, and the properties p
 
   // the row expands in place to the result; "open the full record" opens it on the right
   await done.click();
+  // the record link sits in the expanding block: click it once the expand has finished
+  await animationsDone(page.locator('[data-part="subagent-steps"]'));
   await page.getByRole("button", { name: designZh("subagent.openRecord") }).click();
   await expect(page).toHaveURL(/#subagent=/);
   const record = panel(page, "Check the docs");
@@ -130,7 +134,7 @@ test("a sub-agent's approval waits in the parent and is decided there; a legacy 
   expect(listed.ok(), await listed.text()).toBe(true);
   const child = ((await listed.json()) as { subagents: { id: string }[] }).subagents[0]?.id;
   expect(child).toBeTruthy();
-  await page.goto(`/zh/chat/${id}?subagent=${child}`);
+  await page.goto(`/chat/${id}?subagent=${child}`);
   await expect(panel(page, "Delete via child")).toBeVisible();
   await expect(page).toHaveURL(new RegExp(`/chat/${id}#subagent=${child}$`));
 });
@@ -143,14 +147,12 @@ test("a failed run shows its notice; Retry repeats the message without a second 
   await createAgent(page, orgId, "Cap retry");
   await startChat(page, "Cap retry");
   await send(page, "fail:invalid_request");
-  const failed = page.locator('[data-divider="failed"]');
+  const failed = page.locator('[data-run-status="failed"]');
   await expect(failed).toHaveCount(1);
   await failed.getByRole("button", { name: designZh("conv.retry") }).click();
   // the retry fails again (the same script): two notices, the first marked retried, one bubble
   await expect(failed).toHaveCount(2);
-  await expect(failed.first()).toContainText(
-    zh.chat.divider.failedRetried.split("{reason}")[1]?.trim() ?? "",
-  );
+  await expect(failed.first()).toContainText(zh.chat.run.failedRetried);
   await expect(users(page)).toHaveCount(1);
   const events = await eventsOf(page, orgId, conversationIdOf(page));
   const messages = events.filter((e) => e.type === "user_message");

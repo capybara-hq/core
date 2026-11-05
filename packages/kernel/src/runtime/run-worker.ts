@@ -8,7 +8,11 @@ import {
   conversationTopic,
   EventLog,
 } from "../conversations/event-log.js";
-import type { ConversationEvent } from "../conversations/events.js";
+import {
+  type AbsorbableEvent,
+  type ConversationEvent,
+  isAbsorbable,
+} from "../conversations/events.js";
 import {
   effectiveDefinition,
   NO_SELECTION,
@@ -728,14 +732,15 @@ export class RunWorker {
         .executeTakeFirstOrThrow();
       const startConsumed = Number(consumed_seq);
       let absorbed = startConsumed;
-      const pendingUserMessages = async (afterSeq: number): Promise<ConversationEvent[]> => {
+      const pendingAbsorbable = async (afterSeq: number): Promise<AbsorbableEvent[]> => {
         // loop 声明已吸收到 afterSeq（续跑时来自 checkpoint，可能包含之前进程吸收的消息）。
         absorbed = Math.max(absorbed, afterSeq);
-        const out: ConversationEvent[] = [];
+        const out: AbsorbableEvent[] = [];
         let after = Math.max(afterSeq, startConsumed);
         for (;;) {
           const page = await this.eventLog.readAfter(conversationId, after, READ_PAGE);
-          for (const e of page) if (e.type === "user_message") out.push(e);
+          // messages and finished background tasks (spec 2026-11-05-background-bash-design §2.4)
+          for (const e of page) if (isAbsorbable(e)) out.push(e);
           const last = page.at(-1);
           if (page.length < READ_PAGE || !last) break;
           after = last.seq;
@@ -760,7 +765,7 @@ export class RunWorker {
           signal: ac.signal,
           shutdown: state.shutdown.signal,
           sink: this.sinkFor(conversationId),
-          pendingUserMessages,
+          pendingAbsorbable,
           limits: { maxSteps, deadline },
           // a sub-agent's conversation fires hooks like a chat, with `parent` set (spec §11)
           conversationKind:
@@ -894,7 +899,7 @@ export class RunWorker {
   @Transactional({ propagation: "requires_new" })
   private async appendRunStarted(
     conversationId: string,
-    run: { id: string; agent_version: number; trigger_account_id: string },
+    run: { id: string; agent_version: number; trigger_account_id: string; trigger_seq: string },
     /** The definition so far (a sub-agent's frozen one is final). */
     current: AgentDefinition,
     saved: AgentDefinition | undefined,
@@ -910,6 +915,13 @@ export class RunWorker {
       saved !== undefined
         ? effectiveDefinition(saved, await readSelection(t, conversationId))
         : current;
+    // a wake run's boundary is a finished background task, not a message (background Bash §3)
+    const boundary = await t
+      .selectFrom("conversation_events")
+      .select("type")
+      .where("conversation_id", "=", conversationId)
+      .where("seq", "=", run.trigger_seq)
+      .executeTakeFirst();
     const [ev] = await this.eventLog.appendIn(conversationId, [
       {
         type: "run_started",
@@ -919,6 +931,10 @@ export class RunWorker {
           agentVersion: run.agent_version,
           model: agent.model,
           triggerAccountId: run.trigger_account_id,
+          ...(boundary?.type === "background_task_finished" && {
+            trigger: "background_task" as const,
+            triggerSeq: Number(run.trigger_seq),
+          }),
         },
       },
     ]);

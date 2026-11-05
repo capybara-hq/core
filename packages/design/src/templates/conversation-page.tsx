@@ -9,7 +9,10 @@ import {
   useRef,
   useState,
 } from "react";
+import { PropertiesPanel, PropertySection, RightPanel } from "../conversation/panels";
 import { NewTitleBar, TitleBar, type TitleBarProps } from "../conversation/title-bar";
+import { WorkingLine } from "../conversation/working-line";
+import { SkeletonGroup, SkeletonText } from "../display/skeleton";
 import { useFocusReturn } from "../overlays/focus-return";
 import { useDesignT } from "../provider";
 import { StatusBar } from "../shell/status-bar";
@@ -55,7 +58,7 @@ function writeWidth(n: number) {
 }
 
 export type ConversationStatus = {
-  /** `user@org:/chat/<id>`. */
+  /** `<login>@<org slug>:~/chat/<id>` (spec §4.4). */
   context: string;
   /**
    * "第 N 轮 · 已用 <elapsed>"; none on a new conversation. A node, so a page can tick the elapsed
@@ -64,16 +67,45 @@ export type ConversationStatus = {
   stats?: ReactNode;
   /** Run status and "上下文 N%", before the version; none on a new conversation. */
   right?: string[];
+  /** The run status's colour (the first `right` item): `fail` after a failed run. */
+  tone?: "fail";
   version: string;
+  /** The viewer's time zone (`UTC+8`), after the version, as on every page (spec §4.4). */
+  timeZone?: string;
 };
 
 export type ConversationPageProps = {
   titleBar: TitleBarProps;
-  /** A new conversation (nothing created yet): the agent's name and description over the composer. */
-  newConversation?: { agentName: string; description?: string };
+  /**
+   * A new conversation (nothing created yet; spec §5.4, agent profile design §4): top to bottom
+   * the greeting (else the agent's name and description), the agents row, the selected agent's
+   * quick actions and the composer.
+   */
+  newConversation?: {
+    agentName?: string;
+    description?: string;
+    /** `Greeting` (§6.16.25); replaces the name and description. */
+    greeting?: ReactNode;
+    /** `AgentRow` (§6.16.26), under the greeting. */
+    agents?: ReactNode;
+    /** `QuickActions` (§6.16.27), under the agents row, just over the composer. */
+    quickActions?: ReactNode;
+  };
   /** The thread; it follows the bottom while the reader is at the bottom. */
   thread?: ReactNode;
-  composer: ReactNode;
+  /**
+   * The working line (§6.16.24) after the thread, where the run's first output will appear. The
+   * page decides when (from the log and its pending messages); at most one per conversation.
+   */
+  working?: boolean;
+  /** The queued messages (§6.16.14), after the thread and the working line. */
+  queue?: ReactNode;
+  /**
+   * The composer. A function receives `{ sendDisabled }`, true while the thread loads: the
+   * composer stays mounted and editable, and only sending is blocked (pass it to the composer's
+   * `send.disabled`).
+   */
+  composer: ReactNode | ((state: { sendDisabled: boolean }) => ReactNode);
   status: ConversationStatus;
   /** Shown when `right` is "properties". */
   properties?: ReactNode;
@@ -86,9 +118,37 @@ export type ConversationPageProps = {
    * the window: a sheet below 1280.
    */
   layout?: "auto" | "sheet" | "inline";
+  /**
+   * Parts whose data is on the way (spec §5.4, §7.1). `thread`: three placeholder turns in the
+   * thread column; the composer stays real and editable, only sending is blocked (see `composer`).
+   * `title`: a bar in the title's place (the path and every icon stay real). `rightArea` (`true`,
+   * or `{ title }`, the open panel's title): the open right area draws its own loading state (the
+   * right panel's `loading`, or one loading Context section) instead of `panel` / `properties`; a closed area stays closed. One announcement
+   * for all of it.
+   */
+  loading?: { thread?: boolean; title?: boolean; rightArea?: boolean | { title?: string } };
   /** The reference set only: the sheet drawn in its positioned box, not over the window. */
   reference?: boolean;
 };
+
+/** The thread's placeholder turns (spec §5.4): a user bubble, then a prose block of two lines. */
+function LoadingThread() {
+  return (
+    <>
+      <div className="cb-user-msg" data-part="loading-turn">
+        <div className="cb-bubble-slot" data-part="loading-bubble">
+          <SkeletonText width="100%" size="prose" />
+        </div>
+      </div>
+      <div data-part="loading-turn">
+        <SkeletonText width="100%" size="prose" />
+      </div>
+      <div data-part="loading-turn">
+        <SkeletonText width="70%" size="prose" />
+      </div>
+    </>
+  );
+}
 
 /**
  * Focus for the inline right area (m11; the sheet has Radix's): when it opens or changes (Back
@@ -131,6 +191,8 @@ export function ConversationPage({
   titleBar,
   newConversation,
   thread,
+  working,
+  queue,
   composer,
   status,
   properties,
@@ -138,6 +200,7 @@ export function ConversationPage({
   right,
   onCloseRight,
   layout = "auto",
+  loading,
   reference,
 }: ConversationPageProps) {
   const t = useDesignT();
@@ -196,15 +259,35 @@ export function ConversationPage({
     setDragging(false);
   };
 
+  const composerNode =
+    typeof composer === "function"
+      ? composer({ sendDisabled: loading?.thread === true })
+      : composer;
   const center = newConversation ? (
     <div className="cb-conv-center">
       <div className="cb-conv-scroll" data-center="true">
-        <div className="cb-conv-new" data-part="new-conversation-body">
-          <h2 className="cb-conv-new-name">{newConversation.agentName}</h2>
-          {newConversation.description ? (
-            <p className="cb-conv-new-desc">{newConversation.description}</p>
-          ) : null}
-          {composer}
+        <div
+          className="cb-conv-new"
+          data-part="new-conversation-body"
+          data-start={
+            newConversation.greeting || newConversation.agents || newConversation.quickActions
+              ? "true"
+              : undefined
+          }
+        >
+          {newConversation.greeting ?? (
+            <>
+              {newConversation.agentName ? (
+                <h2 className="cb-conv-new-name">{newConversation.agentName}</h2>
+              ) : null}
+              {newConversation.description ? (
+                <p className="cb-conv-new-desc">{newConversation.description}</p>
+              ) : null}
+            </>
+          )}
+          {newConversation.agents ?? null}
+          {newConversation.quickActions ?? null}
+          {composerNode}
         </div>
       </div>
     </div>
@@ -212,14 +295,41 @@ export function ConversationPage({
     <div className="cb-conv-center">
       <div ref={scroll} className="cb-conv-scroll">
         <div className="cb-conv-thread" data-part="thread">
-          {thread}
+          {loading?.thread ? (
+            <LoadingThread />
+          ) : (
+            <>
+              {thread}
+              {/* kept mounted (its live region) once the page uses it */}
+              {working !== undefined ? <WorkingLine active={working} /> : null}
+              {queue}
+            </>
+          )}
         </div>
       </div>
-      <div className="cb-conv-composer">{composer}</div>
+      <div className="cb-conv-composer">{composerNode}</div>
     </div>
   );
 
-  const rightNode = right === "properties" ? properties : right === "panel" ? panel : null;
+  const loadingRight = loading?.rightArea !== undefined && loading.rightArea !== false;
+  const rightTitle =
+    typeof loading?.rightArea === "object" && loading.rightArea.title !== undefined
+      ? loading.rightArea.title
+      : t("panel.label");
+  const propertiesNode = loadingRight ? (
+    <PropertiesPanel>
+      <PropertySection title={t("props.context")} state="loading" />
+    </PropertiesPanel>
+  ) : (
+    properties
+  );
+  const panelNode = loadingRight ? (
+    <RightPanel title={rightTitle} state="loading" onClose={onCloseRight} />
+  ) : (
+    panel
+  );
+  const rightNode = right === "properties" ? propertiesNode : right === "panel" ? panelNode : null;
+  const anyLoading = loading?.thread === true || loading?.title === true || loadingRight;
   const open = rightNode != null && right !== "none";
   useInlineFocus(root, sheet ? "sheet" : open ? right : "none");
 
@@ -232,73 +342,81 @@ export function ConversationPage({
       data-layout={layout}
       data-sheet={sheet ? "true" : undefined}
     >
-      <div className="cb-conv-main" data-part="conv-main">
-        {newConversation ? <NewTitleBar /> : <TitleBar {...titleBar} />}
-        <div className="cb-conv-cols">
-          {center}
-          {!sheet && right === "properties" ? properties : null}
-        </div>
-        <StatusBar
-          context={status.context}
-          version={status.version}
-          pageStatus={status.stats}
-          system={status.right}
-          announceFirst={(status.right?.length ?? 0) > 0}
-        />
-      </div>
-      {!sheet && right === "panel" && open ? (
-        <div
-          className="cb-conv-panel"
-          data-part="panel-slot"
-          style={{ "--cb-conv-panel-w": `${shown}px` } as CSSProperties}
-        >
-          {/* biome-ignore lint/a11y/useSemanticElements: a focusable, adjustable splitter, not an <hr> */}
-          <div
-            className="cb-conv-resize"
-            role="separator"
-            aria-orientation="vertical"
-            aria-label={t("panel.resize")}
-            aria-valuemin={PANEL_MIN}
-            aria-valuemax={content > 0 ? Math.max(PANEL_MIN, content - CHAT_MIN) : undefined}
-            aria-valuenow={shown}
-            tabIndex={0}
-            data-dragging={dragging ? "true" : undefined}
-            onKeyDown={onKey}
-            onPointerDown={onPointerDown}
-            onPointerMove={onPointerMove}
-            onPointerUp={onPointerUp}
-            onPointerCancel={onPointerUp}
-          />
-          {panel}
-        </div>
-      ) : null}
-      {sheet ? (
-        // Kept mounted in sheet mode so closing runs Radix's close path (focus goes back to the
-        // title-bar icon that opened it).
-        <RD.Root
-          open={open}
-          modal={!reference}
-          onOpenChange={(o) => {
-            if (!o) onCloseRight();
-          }}
-        >
-          {!open ? null : reference ? (
-            <>
-              <div className="cb-conv-scrim" data-inline="true" data-part="scrim" />
-              <SheetContent inline label={t("panel.label")} focusReturn={focusReturn}>
-                {rightNode}
-              </SheetContent>
-            </>
+      <SkeletonGroup label={t("table.loading")} active={anyLoading}>
+        <div className="cb-conv-main" data-part="conv-main">
+          {newConversation ? (
+            <NewTitleBar />
           ) : (
-            <RD.Portal>
-              <RD.Overlay className="cb-conv-scrim" data-part="scrim" />
-              <SheetContent label={t("panel.label")} focusReturn={focusReturn}>
-                {rightNode}
-              </SheetContent>
-            </RD.Portal>
+            <TitleBar {...titleBar} {...(loading?.title ? { loading: true } : {})} />
           )}
-        </RD.Root>
-      ) : null}
+          <div className="cb-conv-cols">
+            {center}
+            {!sheet && right === "properties" ? propertiesNode : null}
+          </div>
+          <StatusBar
+            context={status.context}
+            version={status.version}
+            {...(status.timeZone !== undefined ? { timeZone: status.timeZone } : {})}
+            pageStatus={status.stats}
+            system={status.right}
+            {...(status.tone !== undefined ? { systemTone: status.tone } : {})}
+            announceFirst={(status.right?.length ?? 0) > 0}
+          />
+        </div>
+        {!sheet && right === "panel" && open ? (
+          <div
+            className="cb-conv-panel"
+            data-part="panel-slot"
+            style={{ "--cb-conv-panel-w": `${shown}px` } as CSSProperties}
+          >
+            {/* biome-ignore lint/a11y/useSemanticElements: a focusable, adjustable splitter, not an <hr> */}
+            <div
+              className="cb-conv-resize"
+              role="separator"
+              aria-orientation="vertical"
+              aria-label={t("panel.resize")}
+              aria-valuemin={PANEL_MIN}
+              aria-valuemax={content > 0 ? Math.max(PANEL_MIN, content - CHAT_MIN) : undefined}
+              aria-valuenow={shown}
+              tabIndex={0}
+              data-dragging={dragging ? "true" : undefined}
+              onKeyDown={onKey}
+              onPointerDown={onPointerDown}
+              onPointerMove={onPointerMove}
+              onPointerUp={onPointerUp}
+              onPointerCancel={onPointerUp}
+            />
+            {panelNode}
+          </div>
+        ) : null}
+        {sheet ? (
+          // Kept mounted in sheet mode so closing runs Radix's close path (focus goes back to the
+          // title-bar icon that opened it).
+          <RD.Root
+            open={open}
+            modal={!reference}
+            onOpenChange={(o) => {
+              if (!o) onCloseRight();
+            }}
+          >
+            {!open ? null : reference ? (
+              <>
+                <div className="cb-conv-scrim" data-inline="true" data-part="scrim" />
+                <SheetContent inline label={t("panel.label")} focusReturn={focusReturn}>
+                  {rightNode}
+                </SheetContent>
+              </>
+            ) : (
+              <RD.Portal>
+                <RD.Overlay className="cb-conv-scrim" data-part="scrim" />
+                <SheetContent label={t("panel.label")} focusReturn={focusReturn}>
+                  {rightNode}
+                </SheetContent>
+              </RD.Portal>
+            )}
+          </RD.Root>
+        ) : null}
+      </SkeletonGroup>
     </div>
   );
 }

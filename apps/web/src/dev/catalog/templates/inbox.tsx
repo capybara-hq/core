@@ -45,7 +45,11 @@ function InboxBody() {
   const [active, setActive] = useState("run_8f2j9p");
   return (
     <InboxPage
-      header={{ title: "审批", count: "7" }}
+      header={{
+        path: [{ label: "capybara", href: "/dev/ui" }, { label: "inbox" }],
+        title: "审批",
+        count: "7",
+      }}
       list={
         <DataTable<Approval>
           label="审批队列"

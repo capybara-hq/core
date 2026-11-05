@@ -89,6 +89,62 @@ describe("checkI18n", () => {
     expect(checkI18n(d)).toEqual([]);
   });
 
+  it("a title, label or button ending with a period -> i18n-label-period (zh and en)", () => {
+    const f = checkI18n(fixture("label-period"));
+    expect(f.map((x) => [x.rule, x.file.endsWith("zh.json") ? "zh" : "en"])).toEqual([
+      ["i18n-label-period", "zh"],
+      ["i18n-label-period", "zh"],
+      ["i18n-label-period", "en"],
+    ]);
+    expect(f.map((x) => x.message.match(/「([^」]+)」/)?.[1])).toEqual([
+      "agents.form.submit",
+      "agents.form.confirmLabel",
+      "agents.title",
+    ]);
+    // the line points at the key; sentences (hints) and an ellipsis are fine
+    expect(f[0]?.line).toBe(5);
+  });
+
+  it("label keys: the last segment or its camelCase last word, case-insensitive", () => {
+    const d = dirWith({
+      "zh.json": JSON.stringify({
+        a: { Title: "x。", pageTitle: "y。", subtitle: "z。", titled: "w。", menuItem: "v。" },
+      }),
+      "en.json": JSON.stringify({
+        a: { Title: "x", pageTitle: "y", subtitle: "z.", titled: "w.", menuItem: "v" },
+      }),
+    });
+    expect(checkI18n(d).map((x) => x.message.match(/「([^」]+)」/)?.[1])).toEqual([
+      "a.Title",
+      "a.pageTitle",
+      "a.menuItem",
+    ]);
+  });
+
+  it("three dots in a message -> i18n-ellipsis (zh and en), the single character is fine", () => {
+    const f = checkI18n(fixture("ellipsis"));
+    expect(f.map((x) => [x.rule, x.file.endsWith("zh.json") ? "zh" : "en"])).toEqual([
+      ["i18n-ellipsis", "zh"],
+      ["i18n-ellipsis", "zh"],
+      ["i18n-ellipsis", "en"],
+      ["i18n-ellipsis", "en"],
+    ]);
+    expect(f[0]?.message).toContain("org.delete");
+    expect(f[0]?.line).toBe(3);
+  });
+
+  it("a half-width ? ! : ; right after a CJK character in zh -> i18n-cjk-halfwidth", () => {
+    const f = checkI18n(fixture("cjk-halfwidth"));
+    expect(f.map((x) => x.rule)).toEqual(Array(4).fill("i18n-cjk-halfwidth"));
+    expect(f.every((x) => x.file.endsWith("zh.json"))).toBe(true);
+    expect(f.map((x) => x.message.match(/「([^」]+)」/)?.[1])).toEqual([
+      "chat.placeholder",
+      "chat.warn",
+      "chat.colon",
+      "chat.semi",
+    ]);
+  });
+
   it("JSON 解析失败 -> i18n-invalid-json", () => {
     const d = dirWith({ "zh.json": '{"a":"x"}', "en.json": "{" });
     expect(checkI18n(d).map((x) => x.rule)).toEqual(["i18n-invalid-json"]);

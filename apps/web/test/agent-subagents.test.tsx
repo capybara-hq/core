@@ -3,13 +3,19 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
-import EditAgentPage from "../src/app/[locale]/(app)/agents/[id]/page";
+import { renderEditAgent } from "./support/agents";
 import { bodyOf, json, stubApi } from "./support/api";
 import { resetNavigation } from "./support/navigation";
-import { renderPage } from "./support/render";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
-vi.mock("next/navigation", () => ({ useParams: () => ({ id: "ag1" }) }));
+vi.mock("next/navigation", () => ({
+  redirect: (to: string) => {
+    throw new Error(`REDIRECT ${to}`);
+  },
+  notFound: () => {
+    throw new Error("NOT_FOUND");
+  },
+}));
 
 /**
  * Phase C Task 19: the agent page's Sub-agents section (the agent tool, general-purpose, plugin
@@ -40,6 +46,12 @@ const agent = (
   ownerAccountId: over.owner ?? "a1",
   visibility: over.visibility ?? "org",
   currentVersion: 3,
+  profile: {
+    avatar: null,
+    description: "",
+    quickActions: [],
+    updatedAt: "2026-11-04T10:00:00.000Z",
+  },
   memberIds: null as string[] | null,
   needsReassignment: false,
   createdAt: T,
@@ -113,7 +125,7 @@ describe("the agent page's Sub-agents section", () => {
       ...routes(),
       [`PATCH ${ORG}/agents/ag1`]: () => json(200, { agent: LEAD, warnings: [] }),
     });
-    renderPage(<EditAgentPage />);
+    await renderEditAgent({ section: "subagents" });
     const user = userEvent.setup();
     const s = await section();
     await user.click(within(s).getByRole("checkbox", { name: S.agentTool }));
@@ -164,9 +176,13 @@ describe("the agent page's Sub-agents section", () => {
       ...routes(),
       [`PATCH ${ORG}/agents/ag1`]: () => json(200, { agent: LEAD, warnings: [] }),
     });
-    renderPage(<EditAgentPage />);
-    await section();
-    await userEvent.setup().click(screen.getByRole("button", { name: en.agents.form.submit }));
+    // a save of another section (a tool switched on) carries no subagents block either
+    await renderEditAgent({ section: "tools" });
+    const user = userEvent.setup();
+    await user.click(
+      await screen.findByRole("checkbox", { name: en.agents.form.builtin.SkillWrite }),
+    );
+    await user.click(screen.getByRole("button", { name: en.agents.form.submit }));
     await vi.waitFor(() => expect(calls.some((c) => c.method === "PATCH")).toBe(true));
     const body = bodyOf(calls.find((c) => c.method === "PATCH")) as {
       definition: Record<string, unknown>;
@@ -201,13 +217,14 @@ describe("the agent page's Sub-agents section", () => {
             },
           }),
       });
-      renderPage(<EditAgentPage />, { locale });
+      await renderEditAgent({ locale, section: "subagents" });
       const s = await section(m.section);
-      await userEvent
-        .setup()
-        .click(
-          screen.getByRole("button", { name: (locale === "zh" ? zh : en).agents.form.submit }),
-        );
+      const user = userEvent.setup();
+      // an edit opens the save row
+      await user.type(within(s).getByRole("textbox", { name: m.inlineDescription }), "!");
+      await user.click(
+        screen.getByRole("button", { name: (locale === "zh" ? zh : en).agents.form.submit }),
+      );
       const nameField = within(s).getByRole("textbox", { name: m.inlineName });
       await vi.waitFor(() => expect(nameField.getAttribute("aria-invalid")).toBe("true"));
       expect(s.textContent).toContain(m.reasons.invalid_name.replace("{value}", "Bad Name"));
@@ -233,9 +250,12 @@ describe("the agent page's Sub-agents section", () => {
           },
         }),
     });
-    renderPage(<EditAgentPage />);
+    await renderEditAgent({ section: "subagents" });
     const s = await section();
-    await userEvent.setup().click(screen.getByRole("button", { name: en.agents.form.submit }));
+    const user = userEvent.setup();
+    // an edit opens the save row (the instructions stay valid)
+    await user.type(within(s).getByRole("textbox", { name: S.inlineInstructions }), "!");
+    await user.click(screen.getByRole("button", { name: en.agents.form.submit }));
     const description = within(s).getByRole("textbox", { name: S.inlineDescription });
     await vi.waitFor(() => expect(description.getAttribute("aria-invalid")).toBe("true"));
     expect(s.textContent).toContain(S.reasons.required);
@@ -259,7 +279,7 @@ describe("the agent page's Sub-agents section", () => {
       ...routes(lead),
       [`GET ${ORG}/agents`]: () => json(200, { agents: [lead, analyst, QUIET] }),
     });
-    renderPage(<EditAgentPage />);
+    await renderEditAgent({ section: "subagents" });
     const s = await section();
     const warning = S.widerWarning.replaceAll("{name}", "Data analyst");
     await vi.waitFor(() => expect(s.textContent).toContain(warning));
@@ -270,7 +290,7 @@ describe("the agent page's Sub-agents section", () => {
       ...routes(),
       [`PATCH ${ORG}/agents/ag1`]: () => json(200, { agent: LEAD, warnings: [] }),
     });
-    renderPage(<EditAgentPage />);
+    await renderEditAgent({ section: "subagents" });
     const s = await section();
     const user = userEvent.setup();
     await user.click(within(s).getByRole("switch", { name: S.dispatchable }));
@@ -298,7 +318,7 @@ describe("the agent page's Sub-agents section", () => {
       },
     });
     stubApi(routes(lead));
-    renderPage(<EditAgentPage />);
+    await renderEditAgent({ section: "subagents" });
     const s = await section();
     await vi.waitFor(() =>
       expect(within(s).getByRole("textbox", { name: S.inlineName })).toBeTruthy(),
@@ -310,7 +330,7 @@ describe("the agent page's Sub-agents section", () => {
   it("settings without the agent tool are kept, with a warning that they are unused", async () => {
     const lead = agent("ag1", "Lead", { definition: { subagents: { general: false } } });
     stubApi(routes(lead));
-    renderPage(<EditAgentPage />);
+    await renderEditAgent({ section: "subagents" });
     const s = await section();
     expect(s.textContent).toContain(S.unused);
   });

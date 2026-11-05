@@ -1,0 +1,130 @@
+/* FieldRow (spec §6.27): a compact row of small fields; labels on the first row only. */
+.cb-field-row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-2);
+  min-width: 0;
+}
+.cb-field-row-fields {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--cb-space-3);
+  min-width: 0;
+}
+.cb-field-row-fields > .cb-field {
+  flex: 1 1 0;
+  min-width: 0;
+}
+/* Checkboxes, groups and the Advanced toggle: their own width, centred on the inputs' line. */
+.cb-field-row-fields > :not(.cb-field, .cb-field-row-group) {
+  display: flex;
+  flex: none;
+  align-items: center;
+  min-height: var(--cb-control-default);
+}
+/* The first row's labels (head 20 + gap 4) push the inputs down; the rest follow. */
+.cb-field-row[data-first="true"] > .cb-field-row-fields > :not(.cb-field, .cb-field-row-group) {
+  margin-top: var(--cb-space-6);
+}
+/* A row's checkboxes as one named group: a field-like label over the boxes on the inputs' line. */
+.cb-field-row-group {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.cb-field-row-group-label {
+  min-height: 20px;
+  color: var(--cb-ink);
+  font-size: var(--cb-type-body-size);
+  line-height: var(--cb-type-body-line);
+}
+.cb-field-row-group-items {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: var(--cb-space-3);
+  min-height: var(--cb-control-default);
+}
+/* Later rows keep their labels as accessible names, out of sight. */
+.cb-field-row[data-first="false"]
+  > .cb-field-row-fields
+  > .cb-field-row-group
+  > .cb-field-row-group-label,
+.cb-field-row[data-first="false"] > .cb-field-row-fields > .cb-field > .cb-field-head {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  min-height: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.cb-field-row-toggle {
+  gap: var(--cb-space-1);
+  padding: 0 var(--cb-space-1);
+  border: 0;
+  border-radius: var(--cb-radius-sm);
+  background: transparent;
+  color: var(--cb-muted);
+  font: inherit;
+  font-size: var(--cb-type-small-size);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.cb-field-row-toggle:hover {
+  background: var(--cb-hover);
+  color: var(--cb-ink);
+}
+.cb-field-row-caret {
+  display: inline-flex;
+  color: var(--cb-faint);
+}
+/* The advanced fields: the Disclosure body's guide line, fields wrapping at their own width. */
+.cb-field-row-more {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--cb-space-3);
+  min-width: 0;
+  padding-left: var(--cb-space-2);
+  border-left: 1px solid var(--cb-line);
+}
+.cb-field-row-more > .cb-field {
+  flex: 1 1 12rem;
+  min-width: 0;
+}
+@media (max-width: 639px) {
+  .cb-field-row-fields {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--cb-space-2);
+  }
+  .cb-field-row-fields > .cb-field {
+    flex: none;
+  }
+  .cb-field-row[data-first="true"] > .cb-field-row-fields > :not(.cb-field, .cb-field-row-group) {
+    margin-top: 0;
+  }
+  .cb-field-row-toggle {
+    align-self: flex-start;
+  }
+  .cb-field-row + .cb-field-row {
+    padding-top: var(--cb-space-2);
+    border-top: 1px solid var(--cb-line-soft);
+  }
+  .cb-field-row[data-first="false"]
+    > .cb-field-row-fields
+    > .cb-field-row-group
+    > .cb-field-row-group-label,
+  .cb-field-row[data-first="false"] > .cb-field-row-fields > .cb-field > .cb-field-head {
+    position: static;
+    width: auto;
+    height: auto;
+    min-height: 20px;
+    overflow: visible;
+    clip-path: none;
+    white-space: normal;
+  }
+}

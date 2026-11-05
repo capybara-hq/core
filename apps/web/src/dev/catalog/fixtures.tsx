@@ -457,7 +457,7 @@ export const SHEET_PROPS: [string, string][] = [
 // ── 组件（e-components）──────────────────────────────────────────────────
 
 export const BUTTON_VARIANTS = [
-  { variant: "primary", name: "Primary", use: "实心主色", label: "新建 Agent" },
+  { variant: "primary", name: "Primary", use: "实心主色", label: "新建 agent" },
   { variant: "secondary", name: "Secondary", use: "主色描边", label: "部署" },
   { variant: "default", name: "Default", use: "中性描边", label: "导出" },
   { variant: "ghost", name: "Ghost", use: "无边框", label: "取消" },

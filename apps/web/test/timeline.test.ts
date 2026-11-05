@@ -2,12 +2,14 @@ import { summarizeTools } from "@capybara-hq/design";
 import { describe, expect, it } from "vitest";
 import type { ConversationEvent, ToolInfo } from "../src/lib/conversations";
 import {
+  awaitingRun,
   buildEventTimeline,
   buildTimeline,
   latestUsage,
   runStats,
   type TimelineEntry,
   withDrafts,
+  workingLineVisible,
 } from "../src/lib/timeline";
 
 let t = 0;
@@ -95,7 +97,7 @@ describe("buildTimeline", () => {
       ev(6, "run_finished", { reason: "end_turn", consumedUpToSeq: 1 }),
     ];
     const out = buildTimeline(events, [], new Map(), "zh");
-    expect(kinds(out)).toEqual(["user", "tools"]);
+    expect(kinds(out)).toEqual(["user", "tools", "run"]);
     const row = tools(out)[0]?.rows[0]?.row;
     expect(row).toMatchObject({
       name: "Bash",
@@ -247,7 +249,7 @@ describe("buildTimeline", () => {
     expect(row).toMatchObject({ status: "failed", blockedBy: "compliance" });
   });
 
-  it("run_aborted → a stopped divider with who; a model.request denial names the extension", () => {
+  it("run_aborted → a stopped run with who; a model.request denial names the extension", () => {
     const events = [
       ev(1, "run_aborted", { byAccountId: "a1", reason: "user" }),
       ev(
@@ -259,12 +261,12 @@ describe("buildTimeline", () => {
       ev(3, "run_failed", { error: { code: "run.hook_denied", message: "x" } }, "r2"),
     ];
     const out = buildTimeline(events, [], new Map(), "en");
-    expect(out[0]).toMatchObject({ kind: "divider", divider: "stopped", byAccountId: "a1" });
+    expect(out[0]).toMatchObject({ kind: "run", status: "stopped", byAccountId: "a1" });
     expect(out[1]).toMatchObject({
-      kind: "divider",
-      divider: "hook-denied",
-      plugin: "guard",
-      reason: "pii",
+      kind: "run",
+      status: "failed",
+      code: "run.hook_denied",
+      hook: { plugin: "guard", reason: "pii" },
     });
   });
 
@@ -287,16 +289,16 @@ describe("buildTimeline", () => {
     ]);
   });
 
-  it("a retry folds into the failed divider instead of a second bubble", () => {
+  it("a retry folds into the failed run instead of a second bubble", () => {
     const events = [
       user(1, "hello"),
       ev(2, "run_failed", { error: { code: "model.timeout", message: "x" } }),
       user(3, "hello", { retryOf: 1 }),
     ];
     const out = buildTimeline(events, [], new Map(), "en");
-    expect(kinds(out)).toEqual(["user", "divider"]);
+    expect(kinds(out)).toEqual(["user", "run"]);
     expect(out[1]).toMatchObject({
-      divider: "failed",
+      status: "failed",
       retried: true,
       retry: { seq: 1, text: "hello" },
     });
@@ -324,7 +326,7 @@ describe("buildTimeline", () => {
       instructions: "The user invoked the skill …",
     });
     expect(out[1]).toMatchObject({
-      divider: "failed",
+      status: "failed",
       retry: { seq: 1, text: "a b", skill: "superpowers:brainstorming" },
     });
   });
@@ -431,6 +433,102 @@ describe("buildTimeline", () => {
       ev(3, "run_aborted", { byAccountId: null, reason: "x" }),
     ];
     expect(tools(buildTimeline(events, [], INFO, "en"))[0]?.rows[0]?.row.status).toBe("cancelled");
+  });
+});
+
+describe("run rows (spec §6.16.23)", () => {
+  const usage = (seq: number, runId: string, input: number, output: number, extra = {}) =>
+    ev(
+      seq,
+      "usage",
+      {
+        step: 0,
+        provider: "p",
+        model: "m2",
+        inputTokens: input,
+        outputTokens: output,
+        cacheReadTokens: 10,
+        cacheWriteTokens: 0,
+        ...extra,
+      },
+      runId,
+    );
+
+  it("a finished run ends with an ok row: the last call's model, the duration and the tokens", () => {
+    const events = [
+      user(1, "hi"),
+      ev(2, "run_started", { agentVersion: 1, model: { provider: "p", model: "m" } }, "r1"),
+      ev(3, "model_call", { step: 0, provider: "p", model: "m2" }, "r1"),
+      usage(4, "r1", 100, 20),
+      ev(5, "model_call", { step: 1, provider: "p", model: "m2" }, "r1"),
+      usage(6, "r1", 200, 30),
+      ev(
+        7,
+        "assistant_message",
+        { step: 1, stopReason: "end_turn", content: [{ type: "text", text: "ok" }] },
+        "r1",
+      ),
+      ev(8, "run_finished", { reason: "end_turn", consumedUpToSeq: 1 }, "r1"),
+    ];
+    const out = buildTimeline(events, [], new Map(), "en");
+    expect(kinds(out)).toEqual(["user", "prose", "run"]);
+    expect(out[2]).toMatchObject({
+      kind: "run",
+      key: "e8",
+      runId: "r1",
+      status: "ok",
+      model: { provider: "p", model: "m2" },
+      durationMs: 6000,
+      tokens: { input: 300, output: 50, cacheRead: 20, cacheWrite: 0, total: 370 },
+    });
+  });
+
+  it("a run still going has no row", () => {
+    const events = [
+      user(1, "hi"),
+      ev(2, "run_started", { agentVersion: 1, model: { provider: "p", model: "m" } }, "r1"),
+      ev(3, "model_call", { step: 0, provider: "p", model: "m" }, "r1"),
+    ];
+    expect(kinds(buildTimeline(events, [], new Map(), "en"))).toEqual(["user"]);
+  });
+
+  it("a failed run keeps the code and the kernel's raw message; no usage, no tokens", () => {
+    const events = [
+      user(1, "hi"),
+      ev(2, "run_started", { agentVersion: 1, model: { provider: "p", model: "m" } }, "r1"),
+      ev(3, "run_failed", { error: { code: "model.auth", message: "401 Unauthorized" } }, "r1"),
+    ];
+    const out = buildTimeline(events, [], new Map(), "en");
+    expect(kinds(out)).toEqual(["user", "run"]);
+    expect(out[1]).toMatchObject({
+      kind: "run",
+      status: "failed",
+      code: "model.auth",
+      message: "401 Unauthorized",
+      hook: null,
+      model: { provider: "p", model: "m" },
+      durationMs: 1000,
+      tokens: null,
+      retry: { seq: 1, text: "hi" },
+      retried: false,
+    });
+  });
+
+  it("a stopped run names who stopped it; a run without run_started has no model or duration", () => {
+    const events = [ev(1, "run_aborted", { byAccountId: "a1", reason: "user" }, "r9")];
+    expect(buildTimeline(events, [], new Map(), "en")).toEqual([
+      {
+        kind: "run",
+        key: "e1",
+        runId: "r9",
+        status: "stopped",
+        byAccountId: "a1",
+        at: expect.any(String),
+        model: null,
+        durationMs: null,
+        tokens: null,
+      },
+    ]);
   });
 });
 
@@ -551,5 +649,271 @@ describe("web tools (WebSearch / WebFetch)", () => {
       });
     const events = [usage(1, 500), usage(2, 90_000, { purpose: "web_fetch", callId: "f" })];
     expect(latestUsage(events)?.inputTokens).toBe(500);
+  });
+});
+
+describe("workingLineVisible (conversation send spec §2.2)", () => {
+  const runStart = (seq: number, runId = "r1") =>
+    ev(seq, "run_started", { agentVersion: 1, model: { provider: "p", model: "m" } }, runId);
+  const finished = (seq: number, consumedUpToSeq: number, runId = "r1") =>
+    ev(seq, "run_finished", { reason: "end_turn", consumedUpToSeq }, runId);
+  const mine = (seq: number, text: string, cmid: string, extra: Record<string, unknown> = {}) =>
+    user(seq, text, { clientMessageId: cmid, ...extra });
+  type Draft = { runId: string; step: number; text: string; thinking: string };
+  const at = (
+    events: ConversationEvent[],
+    s: { waiting?: boolean; pending?: number; sent?: string[] } = {},
+    drafts: Draft[] = [],
+  ) =>
+    workingLineVisible(events, drafts, {
+      waiting: s.waiting ?? false,
+      pending: s.pending ?? 0,
+      // sent here just now (the 60 s backstop has its own tests)
+      sentHere: new Map((s.sent ?? []).map((id) => [id, 0])),
+      paused: false,
+      now: 1000,
+    });
+
+  it("shows for a pending send, before the log has anything of it", () => {
+    expect(at([], { pending: 1 })).toBe(true);
+    expect(at([user(1, "hi"), runStart(2), finished(3, 1)], { pending: 1 })).toBe(true);
+  });
+
+  it("shows for a message this tab sent until its run starts, then until the first output", () => {
+    expect(at([mine(1, "hi", "m1")], { sent: ["m1"] })).toBe(true);
+    expect(at([mine(1, "hi", "m1"), runStart(2)], { sent: ["m1"] })).toBe(true);
+    // a run in progress shows it whoever sent the message
+    expect(at([user(1, "hi"), runStart(2)])).toBe(true);
+  });
+
+  it("an idle old conversation ending in a user message shows no line", () => {
+    expect(at([user(1, "hi")])).toBe(false);
+    expect(at([mine(1, "hi", "m1")], { sent: [] })).toBe(false);
+  });
+
+  it("a message whose delivery failed (dropped from this tab's sends) shows no line", () => {
+    // the kernel wrote it, the POST failed: the view forgets it was sent here
+    expect(at([mine(1, "hi", "m1")], { sent: [] })).toBe(false);
+  });
+
+  it("a child conversation that is not running shows no line", () => {
+    expect(
+      at([
+        ev(
+          1,
+          "user_message",
+          {
+            content: [{ type: "text", text: "task" }],
+            authorAccountId: "a1",
+            dispatch: { parentConversationId: "p", parentRunId: "r0", callId: "c" },
+          },
+          null,
+        ),
+      ]),
+    ).toBe(false);
+  });
+
+  it("is gone at the first output: thinking, prose, a running tool", () => {
+    const base = [user(1, "hi"), runStart(2)];
+    expect(at(base, {}, [{ runId: "r1", step: 0, text: "", thinking: "hmm" }])).toBe(false);
+    expect(at(base, {}, [{ runId: "r1", step: 0, text: "He", thinking: "" }])).toBe(false);
+    const tool = [
+      ...base,
+      calls(3, [{ id: "c1", name: "Bash", input: { command: "ls" } }]),
+      started(4, "c1", "Bash"),
+    ];
+    expect(at(tool)).toBe(false);
+  });
+
+  it("shows again after a tool result while the model has not answered", () => {
+    const events = [
+      user(1, "hi"),
+      runStart(2),
+      calls(3, [{ id: "c1", name: "Bash", input: { command: "ls" } }]),
+      started(4, "c1", "Bash"),
+      result(5, "c1", "Bash"),
+    ];
+    expect(at(events)).toBe(true);
+    expect(at(events, {}, [{ runId: "r1", step: 1, text: "Done", thinking: "" }])).toBe(false);
+  });
+
+  it("a retried run shows the line until its first output", () => {
+    const failed = [
+      mine(1, "hi", "m1"),
+      runStart(2),
+      ev(3, "run_failed", { error: { code: "x", message: "m" } }),
+    ];
+    expect(at(failed, { sent: ["m1"] })).toBe(false);
+    const retry = [...failed, mine(4, "hi", "m2", { retryOf: 1 })];
+    expect(at(retry, { sent: ["m1", "m2"] })).toBe(true);
+    const running = [...retry, runStart(5, "r2")];
+    expect(at(running, { sent: ["m1", "m2"] })).toBe(true);
+    expect(
+      at(running, { sent: ["m1", "m2"] }, [{ runId: "r2", step: 0, text: "Hi", thinking: "" }]),
+    ).toBe(false);
+  });
+
+  it("an interjection after the last model call shows the line for the next run", () => {
+    const events = [
+      user(1, "hi"),
+      runStart(2),
+      ev(3, "assistant_message", {
+        step: 0,
+        content: [{ type: "text", text: "Hello" }],
+        stopReason: "end_turn",
+      }),
+      mine(4, "more", "m2"),
+      finished(5, 1),
+    ];
+    expect(at(events, { sent: ["m2"] })).toBe(true);
+    expect(at([...events, runStart(6, "r2")], { sent: ["m2"] })).toBe(true);
+    // a run that consumed it answered it
+    expect(at([...events.slice(0, 4), finished(5, 4)], { sent: ["m2"] })).toBe(false);
+  });
+
+  it("is gone at the run's end, also without output, and while waiting for a person", () => {
+    const ended = [
+      mine(1, "hi", "m1"),
+      runStart(2),
+      ev(3, "run_failed", { error: { code: "x", message: "m" } }),
+    ];
+    expect(at(ended, { sent: ["m1"] })).toBe(false);
+    expect(at([user(1, "hi"), runStart(2)], { waiting: true })).toBe(false);
+    expect(at([])).toBe(false);
+  });
+});
+
+describe("awaitingRun gives up (review round 2, item 3)", () => {
+  // the server's time is ten minutes behind: only this tab's own send time counts
+  const mine = (seq: number) => ({
+    ...user(seq, "hi", { clientMessageId: "m1" }),
+    createdAt: "2026-11-04T09:50:00.000Z",
+  });
+  const sentAt = 1_000_000;
+  const sent = new Map([["m1", sentAt]]);
+
+  it("waits for the run of a message this tab sent, within 60 s of its send here", () => {
+    expect(awaitingRun([mine(1)], sent, { paused: false, now: sentAt + 59_000 })).toBe(true);
+  });
+
+  it("a server createdAt 10 minutes in the past does not end the wait of a fresh local send", () => {
+    const fresh = new Map([["m1", Date.now()]]);
+    const events = [{ ...mine(1), createdAt: new Date(Date.now() - 600_000).toISOString() }];
+    expect(awaitingRun(events, fresh, { paused: false, now: Date.now() })).toBe(true);
+  });
+
+  it("a run that never starts stops waiting 60 s after the send here (the backstop)", () => {
+    expect(awaitingRun([mine(1)], sent, { paused: false, now: sentAt + 60_001 })).toBe(false);
+    expect(
+      workingLineVisible([mine(1)], [], {
+        waiting: false,
+        pending: 0,
+        sentHere: sent,
+        paused: false,
+        now: sentAt + 60_001,
+      }),
+    ).toBe(false);
+  });
+
+  it("a paused queue means no run is coming", () => {
+    expect(awaitingRun([mine(1)], sent, { paused: true, now: sentAt })).toBe(false);
+  });
+});
+
+describe("calls that wait for a person (design §6.16.9)", () => {
+  const ASK = {
+    key: "AskUserQuestion",
+    title: "Ask the user",
+    kind: "meta",
+    sandbox: false,
+    keyArgs: [],
+    tool: null,
+    source: { kind: "builtin" },
+  } as const satisfies ToolInfo;
+  const info = new Map<string, ToolInfo>([...INFO, ["AskUserQuestion", ASK]]);
+  const ask = (seq: number, questions: unknown[]) =>
+    calls(seq, [{ id: "q", name: "AskUserQuestion", input: { questions } }]);
+  const asked = (seq: number) =>
+    ev(seq, "question_asked", {
+      step: 0,
+      callId: "q",
+      questionId: "qs1",
+      form: { fields: [] },
+      expiresAt: "x",
+    });
+  const row = (events: ConversationEvent[], map = info) =>
+    tools(buildTimeline(events, [], map, "zh"))[0]?.rows[0]?.row;
+  const QUESTIONS = [{ header: "数据库", question: "用哪个数据库？", multiSelect: false }];
+
+  it("a pending question marks its call waiting; the answer ends the wait", () => {
+    const pending = [ask(1, QUESTIONS), started(2, "q", "AskUserQuestion"), asked(3)];
+    expect(row(pending)).toMatchObject({ status: "running", waiting: "input" });
+    const answered = [
+      ...pending,
+      ev(4, "question_answered", {
+        questionId: "qs1",
+        callId: "q",
+        answer: null,
+        byAccountId: "a1",
+        outcome: "answered",
+      }),
+    ];
+    const r = row(answered);
+    expect(r?.status).toBe("running");
+    expect(r?.waiting).toBeUndefined();
+    expect(row([...answered, result(5, "q", "AskUserQuestion")])?.status).toBe("done");
+  });
+
+  it("a pending approval marks its call waiting until the decision", () => {
+    const pending = [
+      calls(1, [{ id: "b", name: "Bash", input: { command: "rm x" } }]),
+      ev(2, "approval_requested", {
+        step: 0,
+        callId: "b",
+        approvalId: "ap1",
+        toolKey: "Bash",
+        expiresAt: "x",
+      }),
+    ];
+    expect(row(pending)).toMatchObject({ status: "pending", waiting: "approval" });
+    const decided = [
+      ...pending,
+      ev(3, "approval_decided", {
+        approvalId: "ap1",
+        callId: "b",
+        decision: "approved",
+        byAccountId: "a1",
+      }),
+    ];
+    expect(row(decided)?.waiting).toBeUndefined();
+  });
+
+  it("a connection wait lasts until the call's result", () => {
+    const events = [
+      calls(1, [{ id: "s", name: "plugin__slack__search", input: { query: "x" } }]),
+      started(2, "s", "plugin__slack__search"),
+      ev(3, "connection_required", { step: 0, callId: "s", appId: "k1", appName: "Slack" }),
+    ];
+    expect(row(events)?.waiting).toBe("connect");
+    const done = row([...events, result(4, "s", "plugin__slack__search")]);
+    expect(done?.status).toBe("done");
+    expect(done?.waiting).toBeUndefined();
+  });
+
+  it("the question tool is kind question and previews the header, else the question, else the title", () => {
+    expect(row([ask(1, QUESTIONS)])).toMatchObject({ kind: "question", keyArg: "数据库" });
+    expect(row([ask(1, [{ question: "用哪个数据库？" }])])?.keyArg).toBe("用哪个数据库？");
+    expect(row([ask(1, [])])?.keyArg).toBe("Ask the user");
+    // before the display metadata arrives, from the key alone
+    expect(row([ask(1, QUESTIONS)], new Map())).toMatchObject({
+      kind: "question",
+      keyArg: "数据库",
+    });
+    // an older key of the question tool (history logged before the rename)
+    const legacy = new Map<string, ToolInfo>([
+      ["legacy_ask", { ...ASK, key: "legacy_ask", aliasOf: "AskUserQuestion" }],
+    ]);
+    const old = calls(1, [{ id: "q", name: "legacy_ask", input: { questions: QUESTIONS } }]);
+    expect(row([old], legacy)?.kind).toBe("question");
   });
 });

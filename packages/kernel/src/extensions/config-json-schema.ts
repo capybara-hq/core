@@ -1,73 +1,158 @@
-import { z } from "zod";
+/**
+ * Config schema → JSON Schema for forms. The conversion (and the secret scrub) lives in the SDK
+ * (`configJsonSchema`, extension config forms spec §4.1) so the packer, the checks and the kernel
+ * share one implementation; the kernel keeps no copy.
+ */
+import {
+  type ConfigUiProblem,
+  configJsonSchema,
+  type JsonSchema,
+  validateConfigUi,
+} from "@capybara-hq/plugin-sdk";
+import type { z } from "zod";
 
-export type JsonSchema = Record<string, unknown>;
+export { configJsonSchema as configToJsonSchema, type JsonSchema } from "@capybara-hq/plugin-sdk";
 
-/** JSON Schema 无法表达的 zod 类型：降级为 `{}` 并标注 `x-unsupported`。 */
-const UNSUPPORTED = new Set([
-  "bigint",
-  "date",
-  "symbol",
-  "undefined",
-  "void",
-  "nan",
-  "map",
-  "set",
-  "function",
-  "promise",
-  "custom",
-  "file",
-]);
+/** The config level a schema belongs to (which hints `validateConfigUi` allows). */
+export type ConfigLevel = "deployment" | "org" | "connection";
+
+/** A config schema as served to forms, with the problems of its hints (empty = kept). */
+export interface ConfigFormSchema {
+  /** Shared by every caller: clone it before handing it out or changing it. */
+  readonly schema: JsonSchema;
+  readonly problems: ConfigUiProblem[];
+}
+
+const isObj = (v: unknown): v is Record<string, unknown> =>
+  typeof v === "object" && v !== null && !Array.isArray(v);
+
+/** Keywords whose value maps names to sub-schemas: their keys are field names, not keywords. */
+const SCHEMA_MAPS = new Set(["properties", "patternProperties", "$defs", "definitions"]);
+
+/** Keywords whose value is data, not a schema: never recursed into. */
+const VALUE_KEYWORDS = new Set(["default", "const", "enum", "examples"]);
 
 /**
- * 把插件配置 schema 转成 JSON Schema（供界面渲染表单）：
- * - `secret()` 字段带 `"x-secret": true`（去掉 zod 附带的 `secret` 元数据键）；
- * - 无法表达的类型为 `{ "x-unsupported": true }`，不抛错；
- * - 以输入侧形态输出（含 default），不带 `$schema`。
+ * Removes every `x-ui` from a JSON Schema in place (a property named `x-ui` is kept, and so are
+ * values: `default`, `const`, `enum` and `examples` are left as they are).
  */
-export function configToJsonSchema(schema: z.ZodType): JsonSchema {
-  const out = z.toJSONSchema(schema, {
-    io: "input",
-    unrepresentable: "any",
-    override: (ctx) => {
-      const js = ctx.jsonSchema as JsonSchema;
-      const def = (ctx.zodSchema as { _zod: { def: { type: string } } })._zod.def;
-      if (js.secret === true) {
-        delete js.secret;
-        js["x-secret"] = true;
-      }
-      if (UNSUPPORTED.has(def.type)) js["x-unsupported"] = true;
-    },
-  }) as JsonSchema;
-  delete out.$schema;
-  scrubSecrets(out);
+export function stripConfigUi(node: unknown): void {
+  if (Array.isArray(node)) {
+    for (const n of node) stripConfigUi(n);
+    return;
+  }
+  if (!isObj(node)) return;
+  delete node["x-ui"];
+  for (const [k, v] of Object.entries(node)) {
+    if (VALUE_KEYWORDS.has(k)) continue;
+    if (SCHEMA_MAPS.has(k) && isObj(v)) for (const child of Object.values(v)) stripConfigUi(child);
+    else stripConfigUi(v);
+  }
+}
+
+/**
+ * Validates the hints of a JSON Schema at a level and strips every `x-ui` when there is any
+ * problem (in place): invalid hints never reach a form, and never fail a load (spec §4.1).
+ */
+export function checkConfigUi(schema: JsonSchema, level: ConfigLevel): ConfigUiProblem[] {
+  const problems = validateConfigUi(schema, level);
+  if (problems.length > 0) stripConfigUi(schema);
+  return problems;
+}
+
+/** Manifests are immutable: one conversion per zod schema object and level (read-only, per replica). */
+const caches: Record<ConfigLevel, WeakMap<object, ConfigFormSchema>> = {
+  deployment: new WeakMap(),
+  org: new WeakMap(),
+  connection: new WeakMap(),
+};
+
+/** A config schema's form JSON Schema ({@link checkConfigUi} applied), cached per schema object. */
+export function configFormSchema(schema: z.ZodTypeAny, level: ConfigLevel): ConfigFormSchema {
+  const cache = caches[level];
+  let r = cache.get(schema);
+  if (!r) {
+    const js = configJsonSchema(schema);
+    r = { schema: js, problems: checkConfigUi(js, level) };
+    cache.set(schema, r);
+  }
+  return r;
+}
+
+/** The schemas whose hinted conversion threw: their fallback (plain schema, or null). */
+const fallbacks: Record<ConfigLevel, WeakMap<object, ConfigFormSchema | null>> = {
+  deployment: new WeakMap(),
+  org: new WeakMap(),
+  connection: new WeakMap(),
+};
+
+/**
+ * {@link configFormSchema} that never throws, for every caller that serves a form schema or reads
+ * its messages (deployment, org, connection, issues). A hint conversion that throws (a hand-made
+ * package, e.g. hints that won't serialize as JSON) drops the hints: the plain schema with every
+ * `x-ui` stripped, else `null` when even the plain conversion fails. `onFallback` runs once per
+ * schema object and level on this replica (the caller's one warning); later calls reuse the result.
+ */
+export function safeConfigFormSchema(
+  schema: z.ZodTypeAny,
+  level: ConfigLevel,
+  onFallback: (err: unknown, fallback: "plain" | "none") => void,
+): ConfigFormSchema | null {
+  const failed = fallbacks[level].get(schema);
+  if (failed !== undefined) return failed;
+  try {
+    return configFormSchema(schema, level);
+  } catch (err) {
+    let r: ConfigFormSchema | null = null;
+    try {
+      const plain = configJsonSchema(schema);
+      stripConfigUi(plain);
+      r = { schema: plain, problems: [] };
+    } catch {
+      r = null;
+    }
+    fallbacks[level].set(schema, r);
+    onFallback(err, r ? "plain" : "none");
+    return r;
+  }
+}
+
+/**
+ * The secret record paths some `x-ui.secrets[].path` of a form schema names (spec §4.3), anywhere in
+ * the schema. Read from a checked schema: one whose hints were invalid was stripped and names none.
+ */
+export function hintedSecretPaths(node: unknown, out = new Set<string>()): Set<string> {
+  if (Array.isArray(node)) {
+    for (const n of node) hintedSecretPaths(n, out);
+    return out;
+  }
+  if (!isObj(node)) return out;
+  const hints = node["x-ui"];
+  if (isObj(hints) && Array.isArray(hints.secrets)) {
+    for (const s of hints.secrets) {
+      if (isObj(s) && typeof s.path === "string") out.add(s.path);
+    }
+  }
+  for (const [k, v] of Object.entries(node)) {
+    if (k === "x-ui" || VALUE_KEYWORDS.has(k)) continue;
+    if (SCHEMA_MAPS.has(k) && isObj(v)) {
+      for (const child of Object.values(v)) hintedSecretPaths(child, out);
+    } else hintedSecretPaths(v, out);
+  }
   return out;
 }
 
-/** 会泄露取值的关键字：密钥字段一律不输出。 */
-const VALUE_KEYWORDS = ["default", "examples", "const", "enum"];
+/** The root `x-ui.messages` of a form schema (the localized texts of custom issues), if any. */
+export function configMessages(
+  schema: JsonSchema | null | undefined,
+): Record<string, unknown> | undefined {
+  const hints = schema?.["x-ui"];
+  return isObj(hints) && isObj(hints.messages) ? hints.messages : undefined;
+}
 
-/** 值为「名字 -> 子 schema」映射的关键字：其键是用户字段名，不是关键字。 */
-const SCHEMA_MAPS = new Set(["properties", "patternProperties", "$defs", "definitions"]);
-
-/**
- * 递归清掉密钥节点及其所有后代上会暴露取值的关键字（`inSecret` 随递归下传）；无环（输出为纯 JSON 树）。
- * 只有 schema 关键字 default / examples / const / enum 的值被当作数据跳过；
- * `properties` 等映射里的键是字段名，名为 default / enum 的字段照常遍历。
- */
-function scrubSecrets(node: unknown, inSecret = false): void {
-  if (Array.isArray(node)) {
-    for (const n of node) scrubSecrets(n, inSecret);
-    return;
-  }
-  if (typeof node !== "object" || node === null) return;
-  const o = node as JsonSchema;
-  const secret = inSecret || o["x-secret"] === true;
-  if (secret) for (const k of VALUE_KEYWORDS) delete o[k];
-  for (const [k, v] of Object.entries(o)) {
-    if (SCHEMA_MAPS.has(k) && typeof v === "object" && v !== null) {
-      for (const child of Object.values(v)) scrubSecrets(child, secret);
-    } else if (!VALUE_KEYWORDS.includes(k)) {
-      scrubSecrets(v, secret);
-    }
-  }
+/** A short text of hint problems for a status detail or a log (the first few). */
+export function describeConfigUiProblems(level: ConfigLevel, problems: ConfigUiProblem[]): string {
+  const shown = problems.slice(0, 5).map((p) => `${p.path || "<root>"}: ${p.message}`);
+  const more = problems.length > shown.length ? `; and ${problems.length - shown.length} more` : "";
+  return `${level} config UI hints ignored (${shown.join("; ")}${more})`;
 }

@@ -8,19 +8,26 @@ import {
   StatusMark,
   Text,
   Textarea,
+  useTimeZone,
   useToast,
 } from "@capybara-hq/design";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import {
   type Approval,
   type ApprovalScope,
   decideApproval,
   formatInput,
-  getApproval,
   scopesFor,
 } from "../lib/approvals";
 import type { ToolInfo } from "../lib/conversations";
+import { approvalQuery } from "../lib/query/conversation";
+import { inboxChangeKeys } from "../lib/query/inbox";
+import { keys } from "../lib/query/keys";
+import { useAppMutation } from "../lib/query/mutation";
+import { useWaiterWords } from "../lib/query/who-waits";
+import { shortTime } from "../lib/time";
 import type { ApprovalDecision, ApprovalItem } from "../lib/timeline";
 import { toolLabel, toolLabelOfKey, toolLabelText } from "../lib/tool-label";
 import { useErrorMessage } from "../lib/use-error-message";
@@ -38,10 +45,6 @@ export function outcomeOf(a: Approval): Outcome | null {
     byAccountId: a.decidedBy,
   };
 }
-
-/** 本地时间（客户端组件在数据到达后才渲染，不涉及水合）。 */
-export const formatTime = (iso: string, locale: string) =>
-  new Date(iso).toLocaleString(locale, { dateStyle: "short", timeStyle: "short" });
 
 const rowsOf = (text: string) => Math.min(12, Math.max(2, text.split("\n").length));
 
@@ -115,18 +118,32 @@ export function ApprovalOutcome({ outcome }: { outcome: Outcome }) {
  * 提交审批决定：成功返回处理后的结果；已被处理（`approval.already_decided`）等错误以 toast 告知并返回 null。
  */
 export function useDecide(orgId: string) {
+  const qc = useQueryClient();
   const session = useSession();
   const toast = useToast();
   const errorMessage = useErrorMessage();
   const [pending, setPending] = useState<"approve" | "deny">();
+  // The answer is the decided approval: it replaces the cached one. The inbox and its count
+  // change too, wherever the decision was taken (here in a conversation, or on /inbox).
+  const { mutateAsync } = useAppMutation({
+    fn: (v: { id: string; decision: "approve" | "deny"; scope: ApprovalScope; reason?: string }) =>
+      decideApproval(orgId, v.id, {
+        decision: v.decision,
+        ...(v.decision === "approve" ? { scope: v.scope } : {}),
+        ...(v.decision === "deny" && v.reason !== undefined ? { reason: v.reason } : {}),
+      }),
+    invalidates: () => inboxChangeKeys(orgId),
+    onSuccess: ({ approval }, v) => qc.setQueryData(keys.org(orgId).approval(v.id), approval),
+  });
   const decide = useCallback(
     async (id: string, decision: "approve" | "deny", scope: ApprovalScope, reason?: string) => {
       setPending(decision);
       try {
-        const { approval } = await decideApproval(orgId, id, {
+        const { approval } = await mutateAsync({
+          id,
           decision,
-          ...(decision === "approve" ? { scope } : {}),
-          ...(decision === "deny" && reason !== undefined ? { reason } : {}),
+          scope,
+          ...(reason !== undefined ? { reason } : {}),
         });
         return approval;
       } catch (e) {
@@ -134,17 +151,15 @@ export function useDecide(orgId: string) {
         return null;
       } finally {
         setPending(undefined);
-        // 顶栏的待处理数立即更新（失败多半是已被处理，同样要更新）
+        // The sidebar's pending count follows at once (a failure most likely means someone
+        // already decided: it changed too).
         session.refreshPending?.();
       }
     },
-    [orgId, toast, errorMessage, session],
+    [toast, errorMessage, session, mutateAsync],
   );
   return { decide, pending };
 }
-
-const shortTime = (iso: string, locale: string) =>
-  new Date(iso).toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" });
 
 /**
  * The approval in the conversation (spec §5.7, design `ApprovalBlock`): the tool, its model-visible
@@ -164,36 +179,36 @@ export function ApprovalCard({
 }) {
   const t = useTranslations("approval");
   const locale = useLocale();
+  const timeZone = useTimeZone();
   const { me } = useSession();
-  const [view, setView] = useState<Approval | null>();
   const [local, setLocal] = useState<(Outcome & { at: string }) | null>(null);
   const { decide, pending } = useDecide(orgId);
   const decided = item.decided;
+  // Pending, the approval tells who may decide; not visible = may not decide (assigned to
+  // someone else, or the role is too low).
+  const approval = useQuery({
+    ...approvalQuery(orgId, item.approvalId),
+    enabled: decided === null,
+    retry: false,
+  });
+  const view: Approval | null | undefined =
+    approval.data !== undefined ? approval.data : approval.error !== null ? null : undefined;
 
-  useEffect(() => {
-    if (decided !== null) return;
-    let disposed = false;
-    getApproval(orgId, item.approvalId).then(
-      ({ approval }) => {
-        if (!disposed) setView(approval);
-      },
-      () => {
-        // Not visible = may not decide (assigned to someone else, or the role is too low).
-        if (!disposed) setView(null);
-      },
-    );
-    return () => {
-      disposed = true;
-    };
-  }, [orgId, item.approvalId, decided]);
-
-  const who = (id: string | null) =>
-    id === null ? t("system") : id === me.account.id ? t("you") : id;
   const fromView = view ? outcomeOf(view) : null;
   const outcome: (Outcome & { at: string | null }) | null =
     decided !== null
       ? { ...decided, at: item.decidedAt }
       : (local ?? (fromView !== null && view ? { ...fromView, at: view.decidedAt } : null));
+  // Names only when someone else decided, or is awaited, so a person's own card reads nothing more
+  const by = outcome?.byAccountId ?? null;
+  const awaited = outcome === null && view === null ? item.approver : undefined;
+  const words = useWaiterWords(
+    orgId,
+    (by !== null && by !== me.account.id) ||
+      (awaited?.kind === "account" && awaited.accountId !== me.account.id),
+  );
+  const who = (id: string | null) =>
+    id === null ? t("system") : (words({ kind: "account", accountId: id }) ?? t("you"));
 
   async function onDecide(decision: "approve" | "deny", scope: ApprovalScope, reason?: string) {
     const r = await decide(item.approvalId, decision, scope, reason);
@@ -221,7 +236,7 @@ export function ApprovalCard({
       kind: "decided",
       decision: outcome.decision,
       who: who(outcome.byAccountId),
-      when: outcome.at ? shortTime(outcome.at, locale) : "",
+      when: outcome.at ? shortTime(outcome.at, locale, timeZone) : "",
       ...(outcome.scope !== undefined ? { scope: outcome.scope } : {}),
       ...(outcome.reason !== undefined ? { reason: outcome.reason } : {}),
     };
@@ -229,7 +244,9 @@ export function ApprovalCard({
     return (
       <div data-role="approval" data-approval-id={item.approvalId}>
         <Text variant="small" tone="muted">
-          {t("otherApproverFor", { tool, key: item.toolKey })}
+          {awaited !== undefined && words(awaited) !== undefined
+            ? t("otherApproverNamed", { tool, key: item.toolKey, who: words(awaited) ?? "" })
+            : t("otherApproverFor", { tool, key: item.toolKey })}
         </Text>
       </div>
     );

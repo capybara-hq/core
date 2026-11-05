@@ -1,5 +1,15 @@
-import { createNavigation } from "next-intl/navigation";
-import { routing } from "./routing";
+import NextLink from "next/link";
+import {
+  redirect as nextRedirect,
+  usePathname as nextUsePathname,
+  useRouter as nextUseRouter,
+} from "next/navigation";
 
-/** 带语言前缀的导航 API（href 不写语言前缀，由当前语言补上）。 */
-export const { Link, redirect, usePathname, useRouter, getPathname } = createNavigation(routing);
+/**
+ * Navigation for the app's pages. URLs carry no language prefix (the language is a cookie, see
+ * `routing.ts`), so these are Next's own; pages import them from here so tests can swap them.
+ */
+export const Link = NextLink;
+export const usePathname = nextUsePathname;
+export const useRouter = nextUseRouter;
+export const redirect = nextRedirect;

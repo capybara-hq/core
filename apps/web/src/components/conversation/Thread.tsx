@@ -9,6 +9,7 @@ import {
   isInlineImageType,
   Prose,
   RunDivider,
+  RunRow,
   Stack,
   SubagentGroup,
   Text,
@@ -17,17 +18,28 @@ import {
   type ToolRowData,
   typeBadge,
   UserBubble,
+  useTimeZone,
   useToast,
 } from "@capybara-hq/design";
+import { useQueries, useQuery } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
-import { memo, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, type ReactNode, useCallback, useMemo, useRef, useState } from "react";
 import { ApiClientError, ensureSession } from "../../lib/api";
 import { artifactDownloadUrl } from "../../lib/artifacts";
 import { attachmentDownloadUrl } from "../../lib/attachments";
-import { type ModelRef, type ToolInfo, toolOutputSize } from "../../lib/conversations";
-import { listMembers } from "../../lib/members";
+import type { ModelRef, ToolInfo } from "../../lib/conversations";
+import { retryOnMountOf } from "../../lib/query/client";
+import { toolOutputSizeQuery } from "../../lib/query/conversation";
+import { membersQuery } from "../../lib/query/members";
 import {
-  type DividerData,
+  canConfigureModels,
+  canViewTrajectory,
+  isModelSetupError,
+  runParts,
+} from "../../lib/run-row";
+import { shortTime } from "../../lib/time";
+import {
+  type FailedRun,
   type FileRef,
   isCallKey,
   type TimelineEntry,
@@ -41,57 +53,44 @@ import { useOpenDownload } from "../SessionFilePreview";
 import { useSession } from "../shell/session";
 import { SubagentWait } from "./SubagentWait";
 
-/** Sizes of archived outputs (`outputId` → characters), fetched once each for "View all". */
+/** Sizes of archived outputs (`outputId` → characters), read once each for "View all". */
 function useOutputSizes(
   orgId: string,
   conversationId: string,
   ids: readonly string[],
 ): ReadonlyMap<string, number> {
-  const [sizes, setSizes] = useState<ReadonlyMap<string, number>>(new Map());
-  const key = ids.join("\n");
-  // biome-ignore lint/correctness/useExhaustiveDependencies: ids are represented by key
-  useEffect(() => {
-    let live = true;
-    for (const id of ids) {
-      if (sizes.has(id)) continue;
-      toolOutputSize(orgId, conversationId, id).then(
-        (n) => {
-          if (live) setSizes((m) => new Map(m).set(id, n));
-        },
-        () => {},
-      );
-    }
-    return () => {
-      live = false;
-    };
-  }, [orgId, conversationId, key]);
-  return sizes;
+  const results = useQueries({
+    queries: ids.map((id) => toolOutputSizeQuery(orgId, conversationId, id)),
+  });
+  // One map per set of answers: the entries re-render only when one arrives.
+  const answered = ids.map((id, i) => `${id}=${results[i]?.data ?? ""}`).join("\n");
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the answers are represented by `answered`
+  return useMemo(() => {
+    const sizes = new Map<string, number>();
+    ids.forEach((id, i) => {
+      const n = results[i]?.data;
+      if (n !== undefined) sizes.set(id, n);
+    });
+    return sizes;
+  }, [answered]);
 }
 
 /**
- * Display names of the org's members, read once when the thread shows a run another account
- * stopped (m8); empty while loading or when the caller cannot list members (a guest).
+ * Display names of the org's members, read once the thread shows a run another account stopped
+ * (m8); empty while loading or when the caller cannot list members (a guest).
  */
 function useMemberNames(orgId: string, needed: boolean): ReadonlyMap<string, string> {
-  const [names, setNames] = useState<ReadonlyMap<string, string>>(new Map());
-  useEffect(() => {
-    if (!needed) return;
-    let live = true;
-    listMembers(orgId).then(
-      (r) => {
-        if (live) setNames(new Map(r.members.map((m) => [m.account.id, m.account.displayName])));
-      },
-      () => {},
-    );
-    return () => {
-      live = false;
-    };
-  }, [orgId, needed]);
-  return names;
+  const q = membersQuery(orgId);
+  const { data } = useQuery({
+    ...q,
+    enabled: needed,
+    retryOnMount: retryOnMountOf(q.queryKey),
+  });
+  return useMemo(
+    () => new Map((data?.members ?? []).map((m) => [m.account.id, m.account.displayName])),
+    [data],
+  );
 }
-
-const shortTime = (iso: string, locale: string) =>
-  new Date(iso).toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" });
 
 const modelName = (m: ModelRef | null) => (m === null ? "—" : m.model);
 
@@ -101,8 +100,15 @@ export type ThreadProps = {
   entries: TimelineEntry[];
   info: ReadonlyMap<string, ToolInfo>;
   reasoningOf(m: ModelRef): boolean | undefined;
-  /** Retry on the failed divider (the last failure only, while no run is going). */
-  onRetry?(d: Extract<DividerData, { divider: "failed" }>): void;
+  /** Retry on the failed run row (the last failure only, while no run is going). */
+  onRetry?(d: FailedRun): void;
+  /**
+   * The main thread's run rows link out (spec §6.16.23): 查看轨迹 for the roles the kernel lets
+   * read the trajectory (the agent's owner decides for members), 去配置模型服务 for enterprise
+   * admins. Absent (a sub-agent's record), the rows link nowhere. `trajectory: false` (a
+   * sub-agent conversation, whose trajectory the kernel gates on the parent's agent) drops 查看轨迹.
+   */
+  runLinks?: { agentOwnerId: string | undefined; trajectory?: boolean };
   /** Opens a file output in the right panel. */
   onOpenFile?(id: string): void;
   /** Opens the Files section (the "N more files" card). */
@@ -121,6 +127,8 @@ export type ThreadProps = {
   openSubagent?: string;
   /** Opens a sub-agent in the right panel (`#subagent=`). */
   onOpenSubagent?(id: string): void;
+  /** Opens a background task's output in the right panel (`#bg-<taskId>`). */
+  onOpenTask?(taskId: string): void;
   /** Renders a sub-agent's task message (the sub-agent panel); nothing without it. */
   renderTask?(e: Extract<TimelineEntry, { kind: "task" }>): ReactNode;
   /**
@@ -138,6 +146,7 @@ type EntryCallbacks = {
     | "onMoreFiles"
     | "onOpenOutput"
     | "onOpenSubagent"
+    | "onOpenTask"
     | "renderCard"
     | "renderTask"]?: ThreadProps[K] | undefined;
 };
@@ -161,8 +170,16 @@ type EntryContext = {
   openSubagent: string | undefined;
   /** Member display names (another member who stopped a run). */
   names: ReadonlyMap<string, string>;
+  /** The run rows' links this reader may follow. */
+  links: { trajectory: boolean; configureModels: boolean };
   /** Which callbacks are given (an absent one hides its control). */
-  has: { retry: boolean; openFile: boolean; moreFiles: boolean; openSubagent: boolean };
+  has: {
+    retry: boolean;
+    openFile: boolean;
+    moreFiles: boolean;
+    openSubagent: boolean;
+    openTask: boolean;
+  };
   cb: { readonly current: EntryCallbacks };
 };
 
@@ -188,8 +205,10 @@ export function Thread({
   renderCard,
   openSubagent,
   onOpenSubagent,
+  onOpenTask,
   live = true,
   renderTask,
+  runLinks,
 }: ThreadProps) {
   const t = useTranslations("chat");
   const [openSummaries, setOpenSummaries] = useState<ReadonlySet<string>>(new Set());
@@ -199,6 +218,7 @@ export function Thread({
   const onImageError = useCallback((id: string) => {
     if (tried.current.has(id)) return;
     tried.current.add(id);
+    // query-exempt: a session refresh before reloading a thumbnail, not a kernel read
     ensureSession().then(
       () => setRetried((s) => new Set(s).add(id)),
       () => {
@@ -227,7 +247,7 @@ export function Thread({
     for (let i = entries.length - 1; i >= 0; i--) {
       const e = entries[i];
       if (e?.kind === "user") return null;
-      if (e?.kind === "divider" && e.divider === "failed") return e.key;
+      if (e?.kind === "run" && e.status === "failed") return e.key;
     }
     return null;
   }, [entries]);
@@ -235,8 +255,8 @@ export function Thread({
   const { me } = useSession();
   const stoppedByOther = entries.some(
     (e) =>
-      e.kind === "divider" &&
-      e.divider === "stopped" &&
+      e.kind === "run" &&
+      e.status === "stopped" &&
       e.byAccountId !== null &&
       e.byAccountId !== me.account.id,
   );
@@ -248,13 +268,20 @@ export function Thread({
     onMoreFiles,
     onOpenOutput,
     onOpenSubagent,
+    onOpenTask,
     renderCard,
     renderTask,
   };
+  const trajectory =
+    runLinks !== undefined &&
+    runLinks.trajectory !== false &&
+    canViewTrajectory(me, runLinks.agentOwnerId);
+  const configureModels = runLinks !== undefined && canConfigureModels(me);
   const hasRetry = onRetry !== undefined;
   const hasOpenFile = onOpenFile !== undefined;
   const hasMoreFiles = onMoreFiles !== undefined;
   const hasOpenSubagent = onOpenSubagent !== undefined;
+  const hasOpenTask = onOpenTask !== undefined;
   const ctx = useMemo<EntryContext>(
     () => ({
       orgId,
@@ -273,11 +300,13 @@ export function Thread({
       removedFiles,
       openSubagent,
       names,
+      links: { trajectory, configureModels },
       has: {
         retry: hasRetry,
         openFile: hasOpenFile,
         moreFiles: hasMoreFiles,
         openSubagent: hasOpenSubagent,
+        openTask: hasOpenTask,
       },
       cb,
     }),
@@ -298,10 +327,13 @@ export function Thread({
       removedFiles,
       openSubagent,
       names,
+      trajectory,
+      configureModels,
       hasRetry,
       hasOpenFile,
       hasMoreFiles,
       hasOpenSubagent,
+      hasOpenTask,
     ],
   );
 
@@ -329,6 +361,7 @@ const EntryView = memo(
       <div
         data-entry={e.kind}
         {...(e.kind === "divider" ? { "data-divider": e.divider } : {})}
+        {...(e.kind === "run" ? { "data-run-status": e.status } : {})}
         {...(e.kind === "prose" && e.streaming
           ? // busy until it settles: the live thread announces the reply once, not per token
             { "data-streaming": "true", "aria-busy": true }
@@ -349,8 +382,10 @@ const EntryView = memo(
 
 function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
   const t = useTranslations("chat");
+  const tb = useTranslations("background");
   const te = useTranslations("errors");
   const locale = useLocale();
+  const timeZone = useTimeZone();
   const { me } = useSession();
   const toast = useToast();
   const errorMessage = useErrorMessage();
@@ -374,14 +409,15 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
   } = c;
   // Callbacks go through the ref at call time: a memoized entry never calls a stale one.
   const cb = c.cb;
-  const onRetry = c.has.retry
-    ? (d: Extract<DividerData, { divider: "failed" }>) => cb.current.onRetry?.(d)
-    : undefined;
+  const onRetry = c.has.retry ? (d: FailedRun) => cb.current.onRetry?.(d) : undefined;
   const onOpenFile = c.has.openFile ? (id: string) => cb.current.onOpenFile?.(id) : undefined;
   const onMoreFiles = c.has.moreFiles ? () => cb.current.onMoreFiles?.() : undefined;
   const onOpenOutput = (callId: string) => cb.current.onOpenOutput?.(callId);
   const onOpenSubagent = c.has.openSubagent
     ? (id: string) => cb.current.onOpenSubagent?.(id)
+    : undefined;
+  const onOpenTask = c.has.openTask
+    ? (taskId: string) => cb.current.onOpenTask?.(taskId)
     : undefined;
   const { renderCard, renderTask } = cb.current;
 
@@ -393,7 +429,23 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
         : (c.names.get(id) ?? t("anotherMember"));
 
   const rowWithSize = (r: TimelineTool): ToolRowData => {
-    const row = r.lines ? { ...r.row, extra: t("toolLines", r.lines) } : r.row;
+    const taskId = r.background?.taskId;
+    const row = r.lines
+      ? { ...r.row, extra: t("toolLines", r.lines) }
+      : r.background
+        ? {
+            ...r.row,
+            extra: tb("inBackground"),
+            ...(taskId && onOpenTask
+              ? {
+                  link: {
+                    label: tb("openTask", { name: r.row.description ?? taskId }),
+                    onOpen: () => onOpenTask(taskId),
+                  },
+                }
+              : {}),
+          }
+        : r.row;
     const total = r.outputId ? sizes.get(r.outputId) : undefined;
     const out = row.detail?.output;
     if (total === undefined || out === undefined) return row;
@@ -405,24 +457,6 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
 
   const divider = (e: Extract<TimelineEntry, { kind: "divider" }>): ReactNode => {
     switch (e.divider) {
-      case "stopped":
-        return (
-          <RunDivider
-            kind="stopped"
-            text={t("divider.stopped", { who: who(e.byAccountId), time: shortTime(e.at, locale) })}
-          />
-        );
-      case "hook-denied":
-        return (
-          <RunDivider
-            kind="hook-denied"
-            text={
-              e.plugin !== null
-                ? te("run.hook_denied", { plugin: e.plugin })
-                : te("run.hook_denied_unknown")
-            }
-          />
-        );
       case "compacted": {
         const open = openSummaries.has(e.key);
         return (
@@ -449,27 +483,74 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
             text={t("divider.fallback", { from: modelName(e.from), to: modelName(e.to) })}
           />
         );
-      case "failed": {
-        // A run fails with these two codes only at start, reading the pinned skills.
-        const reason =
-          e.code === "storage.unavailable"
-            ? `${te("run.pinned_unavailable")}${e.message ? ` ${e.message}` : ""}`
-            : e.code === "conflict"
-              ? te("run.pinned_conflict")
-              : errorMessage(new ApiClientError(0, e.code, e.code));
-        const text = e.retried
-          ? t("divider.failedRetried", { reason })
-          : t("divider.failed", { reason });
-        const canRetry = !e.retried && e.retry !== null && e.key === lastFailed && onRetry;
-        return (
-          <RunDivider
-            kind="failed"
-            text={text}
-            {...(canRetry ? { action: { onClick: () => onRetry(e) } } : {})}
-          />
-        );
-      }
     }
+  };
+
+  const run = (e: Extract<TimelineEntry, { kind: "run" }>): ReactNode => {
+    const n = (v: number) => v.toLocaleString(locale);
+    const parts = runParts(e, locale, (v) => t("run.tokens", { n: v }));
+    const facts = e.tokens
+      ? [
+          t("run.tokenSplit", {
+            input: n(e.tokens.input),
+            output: n(e.tokens.output),
+            cacheRead: n(e.tokens.cacheRead),
+            cacheWrite: n(e.tokens.cacheWrite),
+          }),
+        ]
+      : [];
+    const links = c.links.trajectory
+      ? [
+          {
+            label: t("run.trajectory"),
+            href: `/trajectories/${encodeURIComponent(conversationId)}`,
+          },
+        ]
+      : [];
+    if (e.status === "ok") return <RunRow status="ok" parts={parts} facts={facts} links={links} />;
+    if (e.status === "stopped") {
+      return (
+        <RunRow
+          status="stopped"
+          parts={parts}
+          statusText={t("run.stopped", {
+            who: who(e.byAccountId),
+            time: shortTime(e.at, locale, timeZone),
+          })}
+          facts={facts}
+          links={links}
+        />
+      );
+    }
+    // A run fails with storage.unavailable or conflict only at start, reading the pinned skills.
+    const summary =
+      e.hook !== null
+        ? e.hook.plugin !== null
+          ? te("run.hook_denied", { plugin: e.hook.plugin })
+          : te("run.hook_denied_unknown")
+        : e.code === "storage.unavailable"
+          ? te("run.pinned_unavailable")
+          : e.code === "conflict"
+            ? te("run.pinned_conflict")
+            : errorMessage(new ApiClientError(0, e.code, e.code));
+    const detail = e.hook?.reason ?? e.message;
+    const canRetry =
+      !e.retried && e.retry !== null && e.hook === null && e.key === lastFailed && onRetry;
+    const fix =
+      c.links.configureModels && isModelSetupError(e.code)
+        ? [{ label: t("run.configureModels"), href: "/admin/extensions" }]
+        : [];
+    return (
+      <RunRow
+        status="failed"
+        parts={parts}
+        {...(e.retried ? { statusText: t("run.failedRetried"), defaultOpen: false } : {})}
+        error={{ summary, ...(detail !== "" ? { detail } : {}) }}
+        facts={facts}
+        {...(canRetry ? { onRetry: () => onRetry(e) } : {})}
+        links={[...fix, ...links]}
+      />
+    );
   };
 
   const files = (list: FileRef[]): ReactNode => {
@@ -647,6 +728,29 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
         return files(e.files);
       case "divider":
         return divider(e);
+      case "background":
+        return (
+          <RunDivider
+            kind="notice"
+            text={
+              e.exitCode === null
+                ? tb("noticeNoCode", {
+                    description: e.description,
+                    status: tb(`status.${e.status}`),
+                  })
+                : tb("notice", {
+                    description: e.description,
+                    status: tb(`status.${e.status}`),
+                    code: e.exitCode,
+                  })
+            }
+            {...(onOpenTask
+              ? { action: { label: tb("open"), onClick: () => onOpenTask(e.taskId) } }
+              : {})}
+          />
+        );
+      case "run":
+        return run(e);
     }
   };
 

@@ -13,6 +13,8 @@ export type StatusBarProps = {
    * page's one live status (the conversation page; the thread itself announces messages).
    */
   announceFirst?: boolean;
+  /** The colour of the first `system` item (the page's run state): `fail` for a failed run. */
+  systemTone?: "fail";
 };
 
 const shown = (v: ReactNode) => v != null && v !== false && v !== "";
@@ -29,9 +31,17 @@ export function StatusBar({
   system,
   pageStatus,
   announceFirst,
+  systemTone,
 }: StatusBarProps) {
   // `system` may be several items (the conversation page: run status, context usage).
-  const right = [...(Array.isArray(system) ? system : [system]), version, timeZone].filter(shown);
+  const systemItems = (Array.isArray(system) ? system : [system]).filter(shown);
+  const right = [...systemItems, version, timeZone].filter(shown);
+  // The first slot is the page's run state when there is one: announced, and coloured by tone.
+  const first = (i: number) => i === 0 && systemItems.length > 0;
+  const slot = (i: number) => ({
+    ...(announceFirst && i === 0 ? { role: "status" } : {}),
+    ...(systemTone !== undefined && first(i) ? { "data-tone": systemTone } : {}),
+  });
   return (
     <footer className="cb-statusbar" data-part="status-bar">
       <span className="cb-statusbar-left">
@@ -45,7 +55,7 @@ export function StatusBar({
       <span className="cb-statusbar-right" data-part="status-bar-right">
         {right.map((v, i) => (
           // biome-ignore lint/suspicious/noArrayIndexKey: fixed slots
-          <span key={i} {...(announceFirst && i === 0 ? { role: "status" } : {})}>
+          <span key={i} {...slot(i)}>
             {v}
           </span>
         ))}

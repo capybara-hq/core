@@ -390,6 +390,24 @@ describe("runTitleJob (direct)", { timeout: 60_000 }, () => {
     model: "fake-1",
   });
 
+  it("asks for no thinking where the model declares it; an empty reply is logged", async () => {
+    const { id, log } = await seeded({ content: [{ type: "text", text: "plan the offsite" }] });
+    let defaults: unknown;
+    const warned: string[] = [];
+    const purposes: Pick<ModelPurposesService, "chat"> = {
+      chat: async (_org, _purpose, _req, _signal, opts = {}) => {
+        defaults = opts.paramDefaults;
+        // a thinking model that spent the whole budget on thinking
+        return { content: [], stopReason: "max_tokens" as const, usage, provider: "p", model: "m" };
+      },
+    };
+    const sink = { warn: (msg: string) => void warned.push(msg) };
+    await runTitleJob({ db, eventLog: log, purposes, log: sink }, id, 0);
+    expect(defaults).toEqual({ thinking: "off" });
+    expect(warned).toContain("conversation title call returned no title");
+    expect(await convRow(id)).toMatchObject({ title: null });
+  });
+
   it("the excerpt is the typed text only, never @ resource bodies", async () => {
     const { id, log } = await seeded({
       content: [

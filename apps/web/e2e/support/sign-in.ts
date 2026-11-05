@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { expect, type Page } from "@playwright/test";
+import { hydrated } from "./nav";
 
 /** 界面文案取自 zh 文案文件，避免与实现重复硬编码。 */
 const zh = JSON.parse(
@@ -11,13 +12,45 @@ export const LOGIN = "admin";
 export const PASSWORD = "correct-horse-battery";
 export const ORG_NAME = "Acme";
 
+const CSRF = { "X-Capybara-Csrf": "1" };
+
 /**
- * 幂等登录：未初始化时走初始化向导（同时建组织 Acme），已初始化时走登录页；然后默认选中组织 Acme，
- * 并等 `/me` 里出现当前组织（选组织是异步请求，紧接着读 `/me` 可能还是 null）。
- * 正常情况下 `setup` 项目（`setup.spec.ts`）已经完成初始化，这里走登录；单独跑某个用例时也能自己初始化。
+ * Makes sure the current org has an agent, so the workspace renders the shell instead of the
+ * setup layout (web-order spec §3.8): creates a private model-fake agent "E2E agent" when the
+ * readiness endpoint counts none. The deployment's model-fake provider is loaded by the e2e stack.
  */
-export async function signIn(page: Page, { org = true }: { org?: boolean } = {}): Promise<void> {
-  await page.goto("/zh");
+export async function ensureAgent(page: Page, orgId: string): Promise<void> {
+  const r = await page.request.get(`/api/v1/orgs/${orgId}/readiness`);
+  expect(r.ok(), await r.text()).toBe(true);
+  if (((await r.json()) as { agents: number }).agents > 0) return;
+  const res = await page.request.post(`/api/v1/orgs/${orgId}/agents`, {
+    headers: CSRF,
+    data: {
+      definition: {
+        name: "E2E agent",
+        instructions: "Help.",
+        model: { provider: "model-fake", model: "fake-1" },
+      },
+      visibility: "private",
+    },
+  });
+  expect(res.status(), await res.text()).toBe(201);
+}
+
+/**
+ * Idempotent sign-in: the setup wizard when not set up yet (it creates the org Acme), else the login
+ * page. A new session starts in the org last chosen (or the only one); when the org chooser covers
+ * the app instead, open Acme there. With `org` (the default) it then waits until `/me` names the
+ * current org and, with `agent` (the default), makes sure an agent exists ({@link ensureAgent})
+ * and that the shell (not the setup layout) is on screen. It returns once the page is hydrated
+ * ({@link hydrated}). Normally the `setup` project
+ * (`setup.spec.ts`) has already set up; a spec run alone sets up itself.
+ */
+export async function signIn(
+  page: Page,
+  { org = true, agent = true }: { org?: boolean; agent?: boolean } = {},
+): Promise<void> {
+  await page.goto("/");
   const setupButton = page.getByRole("button", { name: zh.setup.submit });
   const loginButton = page.getByRole("button", { name: zh.login.submit, exact: true });
   await expect(setupButton.or(loginButton)).toBeVisible();
@@ -34,13 +67,37 @@ export async function signIn(page: Page, { org = true }: { org?: boolean } = {})
     await page.getByLabel(zh.login.passwordLabel).fill(PASSWORD);
     await page.getByRole("button", { name: zh.login.submit, exact: true }).click();
   }
-  await expect(page).toHaveURL(/\/zh$/);
-  if (!org) return;
-  await page.getByRole("combobox", { name: zh.home.currentOrg }).selectOption({ label: ORG_NAME });
+  await expect(page).toHaveURL(/\/$/);
+  const chooser = page.getByRole("list", { name: zh.orgChooser.listLabel });
+  const overview = page.locator('[data-template="OverviewPage"]');
+  // an org without an agent shows the setup layout instead of the shell
+  const setup = page.locator('[data-template="SetupPage"]');
+  const landed = overview.or(setup);
+  await expect(chooser.or(landed)).toBeVisible();
+  if (await chooser.isVisible()) {
+    await chooser
+      .getByRole("listitem")
+      .filter({ hasText: ORG_NAME })
+      .getByRole("button", { name: zh.orgChooser.enter })
+      .click();
+    await expect(landed).toBeVisible();
+  }
+  if (!org) return hydrated(page);
+  let orgId: string | null = null;
   await expect
     .poll(async () => {
       const me = await page.request.get("/api/v1/me");
-      return me.ok() ? ((await me.json()) as { currentOrgId: string | null }).currentOrgId : null;
+      orgId = me.ok() ? ((await me.json()) as { currentOrgId: string | null }).currentOrgId : null;
+      return orgId;
     })
     .not.toBeNull();
+  if (!agent) return hydrated(page);
+  await ensureAgent(page, orgId as unknown as string);
+  if (await setup.isVisible()) {
+    // a fresh page load reads readiness again: the org can run now
+    await page.goto("/");
+    await expect(overview).toBeVisible();
+  }
+  // until hydration the sidebar draws two panels and nothing on the page answers a click yet
+  await hydrated(page);
 }

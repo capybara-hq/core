@@ -1,14 +1,15 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  type ConversationEvent,
-  type ConversationUsage,
-  getConversationUsage,
-  listSubagents,
-  type SubagentToolRef,
-  type SubagentView,
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useCallback, useEffect, useMemo, useRef } from "react";
+import type {
+  ConversationEvent,
+  ConversationUsage,
+  SubagentToolRef,
+  SubagentView,
 } from "./conversations";
+import { retryOnMountOf } from "./query/client";
+import { subagentsQuery, usageQuery } from "./query/conversation";
 import { extensionToolKey } from "./tool-key";
 import { toolLabelOfKey, toolLabelText } from "./tool-label";
 
@@ -34,44 +35,49 @@ const dispatchedAny = (events: readonly ConversationEvent[]) =>
   events.some((e) => e.type === "subagent_dispatched");
 
 /**
- * The conversation's sub-agents, newest first, read once a sub-agent was dispatched and again on
- * every `subagent_*` event, after a reconnect (`reconnect`), and when stream progress arrives for a
- * child the list shows as waiting or queued (it moved on: someone decided, or it got a slot).
- * `onLoad` gets each read (progress seeds). Undefined before the first read or without sub-agents.
+ * Invalidates `queryKey` when `count` moves after the first value (the first is what the cached
+ * answer stands for).
+ */
+function useInvalidateOn(queryKey: readonly unknown[], count: number, active: boolean) {
+  const qc = useQueryClient();
+  const seen = useRef(count);
+  useEffect(() => {
+    if (!active || seen.current === count) return;
+    seen.current = count;
+    void qc.invalidateQueries({ queryKey });
+  }, [qc, queryKey, count, active]);
+}
+
+/**
+ * The conversation's sub-agents, newest first, through the query cache: read once a sub-agent was
+ * dispatched, and again on every `subagent_*` event and when stream progress arrives for a child
+ * the list shows as waiting or queued (it moved on: someone decided, or it got a slot). `onLoad`
+ * gets each answer (progress seeds). A failed read keeps what the log says on the rows.
  */
 export function useSubagents(
   orgId: string,
   conversationId: string,
   events: readonly ConversationEvent[],
   progress: Readonly<Record<string, { step: number }>>,
-  reconnect: number,
-  onLoad?: (views: SubagentView[]) => void,
+  onLoad: ((views: SubagentView[]) => void) | undefined,
 ): { views: SubagentView[] | undefined; refresh(): void } {
-  const [views, setViews] = useState<SubagentView[]>();
-  const [bump, setBump] = useState(0);
+  const qc = useQueryClient();
   // scans of the log: once per events change, not per render (final review I3)
   const dispatched = useMemo(() => dispatchedAny(events), [events]);
   const count = useMemo(() => subagentEventCount(events), [events]);
+  const query = subagentsQuery(orgId, conversationId);
+  const views = useQuery({
+    ...query,
+    enabled: dispatched,
+    retryOnMount: retryOnMountOf(query.queryKey),
+  }).data;
+  useInvalidateOn(query.queryKey, count, dispatched);
   const load = useRef(onLoad);
   load.current = onLoad;
-  // biome-ignore lint/correctness/useExhaustiveDependencies: count, reconnect and bump trigger a reread
+  // Each answer seeds the stream progress.
   useEffect(() => {
-    if (!dispatched) return;
-    let live = true;
-    listSubagents(orgId, conversationId).then(
-      (r) => {
-        if (!live) return;
-        setViews(r.subagents);
-        load.current?.(r.subagents);
-      },
-      () => {
-        // Unreadable: rows keep what the log says.
-      },
-    );
-    return () => {
-      live = false;
-    };
-  }, [orgId, conversationId, dispatched, count, reconnect, bump]);
+    if (views !== undefined) load.current?.(views);
+  }, [views]);
   // A child shown as waiting or queued that made progress: read the list again.
   const stale = useMemo(() => {
     const keys: string[] = [];
@@ -83,9 +89,12 @@ export function useSubagents(
     return keys.join(",");
   }, [views, progress]);
   useEffect(() => {
-    if (stale !== "") setBump((n) => n + 1);
-  }, [stale]);
-  const refresh = useCallback(() => setBump((n) => n + 1), []);
+    if (stale !== "") void qc.invalidateQueries({ queryKey: query.queryKey });
+  }, [stale, qc, query.queryKey]);
+  const refresh = useCallback(
+    () => void qc.invalidateQueries({ queryKey: query.queryKey }),
+    [qc, query.queryKey],
+  );
   return { views: dispatched ? views : undefined, refresh };
 }
 
@@ -100,21 +109,13 @@ export function useUsageWithSubagents(
 ): ConversationUsage | undefined {
   const dispatched = useMemo(() => dispatchedAny(events), [events]);
   const ends = useMemo(() => events.filter((e) => e.type === "subagent_finished").length, [events]);
-  const [usage, setUsage] = useState<ConversationUsage>();
-  // biome-ignore lint/correctness/useExhaustiveDependencies: ends triggers a reread
-  useEffect(() => {
-    if (!dispatched) return;
-    let live = true;
-    getConversationUsage(orgId, conversationId).then(
-      (r) => {
-        if (live) setUsage(r.usage);
-      },
-      () => {},
-    );
-    return () => {
-      live = false;
-    };
-  }, [orgId, conversationId, dispatched, ends]);
+  const query = usageQuery(orgId, conversationId);
+  const usage = useQuery({
+    ...query,
+    enabled: dispatched,
+    retryOnMount: retryOnMountOf(query.queryKey),
+  }).data;
+  useInvalidateOn(query.queryKey, ends, dispatched);
   return dispatched ? usage : undefined;
 }
 

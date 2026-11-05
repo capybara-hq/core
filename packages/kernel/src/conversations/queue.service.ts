@@ -316,9 +316,10 @@ export class ConversationQueue {
     itemId: string,
   ): Promise<ConversationEvent> {
     await this.conversations.writable(orgId, conversationId, accountId);
-    const { event, fresh, switched } = await this.sendNowIn(conversationId, itemId);
+    const { event, fresh, switched, unarchived } = await this.sendNowIn(conversationId, itemId);
     if (fresh) await this.eventLog.notify(conversationId, event.seq);
     if (switched) await this.eventLog.publishChanged(conversationId, "selection");
+    if (unarchived) await this.eventLog.publishChanged(conversationId, "archived");
     await this.eventLog.publishChanged(conversationId, "queue");
     await this.runs.ensureRun(conversationId);
     return event;
@@ -329,7 +330,7 @@ export class ConversationQueue {
   private async sendNowIn(
     conversationId: string,
     itemId: string,
-  ): Promise<{ event: ConversationEvent; switched: boolean; fresh: boolean }> {
+  ): Promise<{ event: ConversationEvent; switched: boolean; unarchived: boolean; fresh: boolean }> {
     const t = this.db.db;
     await this.lockConversation(conversationId);
     const head = await t

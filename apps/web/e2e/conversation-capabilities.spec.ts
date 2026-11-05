@@ -24,13 +24,15 @@ import { signIn } from "./support/sign-in";
 const LONG = "Capybaras are the largest living rodents and very calm swimmers. ".repeat(4).trim();
 
 async function newChat(page: Page, agentId: string) {
-  await page.goto(`/zh/chat?agent=${agentId}`);
+  await page.goto(`/chat?agent=${agentId}`);
   await expect(page.locator('[data-template="ConversationPage"]')).toBeVisible();
-  // The agent is picked once the agents list loaded (the heading names it).
-  await expect(page.locator('[data-part="new-conversation-body"] h2')).not.toHaveText("—");
+  // The agent is picked once the agents list loaded (the composer's placeholder names it).
+  await expect(composer(page)).not.toHaveAttribute("placeholder", /—/);
 }
 
-const stopButton = (page: Page) => page.getByRole("button", { name: designZh("composer.stop") });
+// exact: a stopped run's row is named "… 已停止 …" too
+const stopButton = (page: Page) =>
+  page.getByRole("button", { name: designZh("composer.stop"), exact: true });
 const statusBar = (page: Page) => page.locator('[data-part="conv-main"] .cb-statusbar');
 
 test("a new conversation is created on the first send only; the title is generated; rename", async ({
@@ -40,7 +42,10 @@ test("a new conversation is created on the first send only; the title is generat
   const orgId = await currentOrg(page);
   const agentId = await createAgent(page, orgId, "Cap first send");
   await newChat(page, agentId);
-  await expect(page.getByRole("heading", { name: "Cap first send" })).toBeVisible();
+  await expect(composer(page)).toHaveAttribute(
+    "placeholder",
+    zh.chat.newPlaceholder.replace("{agent}", "Cap first send"),
+  );
   // Nothing exists before the first send.
   const before = await page.request.get(`/api/v1/orgs/${orgId}/conversations?agentId=${agentId}`);
   expect(((await before.json()) as { conversations: unknown[] }).conversations).toHaveLength(0);
@@ -66,7 +71,7 @@ test("a new conversation is created on the first send only; the title is generat
   await expect(sidebar.locator(`a[href$="/chat/${id}"]`)).toContainText("Quarterly numbers");
 });
 
-test("interject while running, queue with ⌘↵ / Ctrl+↵ (sent in order after the turn), stop", async ({
+test("queue with ↵ while running (sent in order after the turn), interject with ⌘↵ / Ctrl+↵, stop", async ({
   page,
 }) => {
   await signIn(page);
@@ -75,18 +80,18 @@ test("interject while running, queue with ⌘↵ / Ctrl+↵ (sent in order after
   await newChat(page, agentId);
   await send(page, `slow:500:${LONG}`);
   await expect(page.locator('[data-entry="prose"][data-streaming="true"]')).toBeVisible();
-  // ↵ while running interjects; the hint says so.
+  // ⌘↵ / Ctrl+↵ while running sends now (interjects); the hint says ↵ queues.
   await expect(composer(page)).toHaveAttribute("placeholder", /↵/);
   await composer(page).fill("echo:now");
-  await composer(page).press("Enter");
-  await expect(users(page).filter({ hasText: "echo:now" })).toHaveCount(1);
-  // ⌘↵ / Ctrl+↵ queues: dashed bubbles under the thread, not in the log yet.
-  await composer(page).fill("echo:queued one");
   await composer(page).press("ControlOrMeta+Enter");
+  await expect(users(page).filter({ hasText: "echo:now" })).toHaveCount(1);
+  // ↵ queues: dashed bubbles under the thread, not in the log yet.
+  await composer(page).fill("echo:queued one");
+  await composer(page).press("Enter");
   const queue = page.locator('[data-entry="queue"]');
   await expect(queue.locator("[data-queue-item]")).toHaveCount(1);
   await composer(page).fill("echo:queued two");
-  await composer(page).press("ControlOrMeta+Enter");
+  await composer(page).press("Enter");
   await expect(queue.locator("[data-queue-item]")).toHaveCount(2);
   // After the turn the queued messages go out one at a time, in order.
   await expect(replies(page).filter({ hasText: /^queued two$/ })).toHaveCount(1, {
@@ -96,11 +101,11 @@ test("interject while running, queue with ⌘↵ / Ctrl+↵ (sent in order after
   const texts = await replies(page).allTextContents();
   expect(texts.map((t) => t.trim())).toEqual([LONG, "now", "queued one", "queued two"]);
 
-  // Stop while running: the stop divider names who stopped.
+  // Stop while running: the stopped run row names who stopped.
   await send(page, `slow:300:${LONG}`);
   await expect(page.locator('[data-entry="prose"][data-streaming="true"]')).toBeVisible();
   await stopButton(page).click();
-  await expect(page.locator('[data-divider="stopped"]')).toHaveCount(1);
+  await expect(page.locator('[data-run-status="stopped"]')).toHaveCount(1);
   await expect(stopButton(page)).toHaveCount(0);
   await expect(statusBar(page)).toContainText(zh.chat.status.stopped);
 });
@@ -157,7 +162,7 @@ test("approvals: once / this conversation / always; deny with a reason; stop whi
     approval.getByRole("button", { name: designZh("hitl.approve"), exact: true }),
   ).toBeVisible();
   await stopButton(page).click();
-  await expect(page.locator('[data-divider="stopped"]')).toHaveCount(1);
+  await expect(page.locator('[data-run-status="stopped"]')).toHaveCount(1);
   await expect(
     approval.getByRole("button", { name: designZh("hitl.approve"), exact: true }),
   ).toHaveCount(0);
@@ -273,7 +278,7 @@ test("questions with options and Other; URL elicitation; a connect card", async 
   const connect = page.locator('[data-role="connect"]');
   await expect(connect).toBeVisible();
   await connect.getByRole("button", { name: designZh("hitl.connect") }).click();
-  await expect(page).toHaveURL(new RegExp(`/settings/connections#connector-${personal}$`));
+  await expect(page).toHaveURL(new RegExp(`/account/connections#connector-${personal}$`));
 });
 
 test("reconnect: a stream dropped mid-run reopens from the last seq; nothing arrives twice", async ({
@@ -360,7 +365,7 @@ test("a policy hook: a denied tool row names the extension; a denied run shows t
 
     expect((await probe({ denyModel: true })).ok()).toBe(true);
     await send(page, "echo:blocked");
-    const notice = page.locator('[data-divider="hook-denied"]');
+    const notice = page.locator('[data-run-status="failed"]');
     await expect(notice).toContainText(
       zh.errors.run.hook_denied.replace("{plugin}", "hooks-probe"),
     );

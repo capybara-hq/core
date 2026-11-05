@@ -3,14 +3,20 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
-import EditAgentPage from "../src/app/[locale]/(app)/agents/[id]/page";
-import NewAgentPage from "../src/app/[locale]/(app)/agents/new/page";
+import { renderEditAgent } from "./support/agents";
 import { bodyOf, json, noContent, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
-import { ME, renderPage } from "./support/render";
+import { ME } from "./support/render";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
-vi.mock("next/navigation", () => ({ useParams: () => ({ id: "ag1" }) }));
+vi.mock("next/navigation", () => ({
+  redirect: (to: string) => {
+    throw new Error(`REDIRECT ${to}`);
+  },
+  notFound: () => {
+    throw new Error("NOT_FOUND");
+  },
+}));
 
 const msgs = { zh, en } as const;
 const T = "2026-10-20T08:00:00.000Z";
@@ -44,6 +50,12 @@ const agent = (over: Record<string, unknown> = {}) => ({
   ownerAccountId: "a1",
   visibility: "org",
   currentVersion: 3,
+  profile: {
+    avatar: null,
+    description: "",
+    quickActions: [],
+    updatedAt: "2026-11-04T10:00:00.000Z",
+  },
   memberIds: null,
   needsReassignment: false,
   createdAt: T,
@@ -80,98 +92,6 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("新建 agent：选择组织技能", () => {
-  it.each(["zh", "en"] as const)(
-    "技能分组列出组织技能，勾选后保存 skills.orgSkills（%s）",
-    async (locale) => {
-      const m = msgs[locale];
-      const calls = stubApi({
-        [`GET ${ORG}/models`]: () => json(200, MODELS),
-        [`GET ${ORG}/connectors`]: () => json(200, { connectors: [] }),
-        [`GET ${ORG}/skills`]: () =>
-          json(200, { skills: [orgSkill("s1", "pdf-tools"), orgSkill("s2", "slides")] }),
-        [`POST ${ORG}/agents`]: () => json(201, { agent: agent(), warnings: [] }),
-      });
-      renderPage(<NewAgentPage />, { locale });
-      const user = userEvent.setup();
-      const group = await screen.findByRole("group", { name: m.agents.form.orgSkillsLabel });
-      await user.click(await within(group).findByRole("checkbox", { name: /pdf-tools/ }));
-      expect(screen.getByRole("region", { name: m.agents.form.skillsSection })).toBeTruthy();
-      await user.type(screen.getByRole("textbox", { name: m.agents.form.nameLabel }), "Echo");
-      await user.click(screen.getByRole("button", { name: m.agents.form.submit }));
-      await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/agents"));
-      const body = bodyOf(calls.find((c) => c.method === "POST")) as {
-        definition: { skills?: unknown };
-      };
-      expect(body.definition.skills).toEqual({ orgSkills: ["s1"] });
-    },
-  );
-
-  it.each(["zh", "en"] as const)(
-    "私有 agent 显示 SkillWrite 确认开关，勾选后保存 writePolicy ask；改成共享后隐藏（%s）",
-    async (locale) => {
-      const m = msgs[locale];
-      const calls = stubApi({
-        [`GET ${ORG}/models`]: () => json(200, MODELS),
-        [`GET ${ORG}/connectors`]: () => json(200, { connectors: [] }),
-        [`GET ${ORG}/skills`]: () => json(200, { skills: [] }),
-        [`POST ${ORG}/agents`]: () => json(201, { agent: agent(), warnings: [] }),
-      });
-      renderPage(<NewAgentPage />, { locale });
-      const user = userEvent.setup();
-      const sw = await screen.findByRole("checkbox", { name: m.agents.form.confirmSkillWrite });
-      expect(sw).toHaveProperty("checked", false);
-      await user.click(sw);
-      await user.type(screen.getByRole("textbox", { name: m.agents.form.nameLabel }), "Echo");
-      await user.click(screen.getByRole("button", { name: m.agents.form.submit }));
-      await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/agents"));
-      const body = bodyOf(calls.find((c) => c.method === "POST")) as {
-        definition: { skills?: unknown };
-      };
-      expect(body.definition.skills).toEqual({ orgSkills: [], writePolicy: "ask" });
-    },
-  );
-
-  it("可见性改成共享后，确认开关隐藏", async () => {
-    stubApi({
-      [`GET ${ORG}/models`]: () => json(200, MODELS),
-      [`GET ${ORG}/connectors`]: () => json(200, { connectors: [] }),
-      [`GET ${ORG}/skills`]: () => json(200, { skills: [] }),
-    });
-    renderPage(<NewAgentPage />);
-    const sw = await screen.findByRole("checkbox", { name: en.agents.form.confirmSkillWrite });
-    await userEvent.click(sw);
-    const unsaved = () =>
-      document.querySelector('[data-part="action-row-unsaved"]')?.textContent ?? "";
-    expect(unsaved()).toMatch(/\b1\b/);
-    await userEvent.selectOptions(
-      screen.getByRole("combobox", { name: en.agents.form.visibilityLabel }),
-      "org",
-    );
-    expect(screen.queryByRole("checkbox", { name: en.agents.form.confirmSkillWrite })).toBeNull();
-    // 隐藏的开关不计入改动数：只剩可见性这一项
-    expect(unsaved()).toMatch(/\b1\b/);
-  });
-
-  it("不选技能：定义里不带 skills", async () => {
-    const calls = stubApi({
-      [`GET ${ORG}/models`]: () => json(200, MODELS),
-      [`GET ${ORG}/connectors`]: () => json(200, { connectors: [] }),
-      [`GET ${ORG}/skills`]: () => json(200, { skills: [] }),
-      [`POST ${ORG}/agents`]: () => json(201, { agent: agent(), warnings: [] }),
-    });
-    renderPage(<NewAgentPage />);
-    const user = userEvent.setup();
-    expect(await screen.findByText(en.agents.form.noOrgSkills)).toBeTruthy();
-    await screen.findAllByRole("option", { name: "model-fake / Fake 1", hidden: true });
-    await user.type(screen.getByRole("textbox", { name: en.agents.form.nameLabel }), "Echo");
-    await user.click(screen.getByRole("button", { name: en.agents.form.submit }));
-    await vi.waitFor(() => expect(router.push).toHaveBeenCalled());
-    const body = bodyOf(calls.find((c) => c.method === "POST")) as { definition: object };
-    expect("skills" in body.definition).toBe(false);
-  });
-});
-
 describe("编辑 agent（FormPage）", () => {
   beforeEach(() => resetNavigation("/agents/ag1"));
 
@@ -188,8 +108,8 @@ describe("编辑 agent（FormPage）", () => {
       ...routes(),
       [`PATCH ${ORG}/agents/ag1`]: () => json(200, { agent: agent(), warnings: [] }),
     });
-    const { container } = renderPage(<EditAgentPage />);
-    expect(container.querySelector('[data-template="FormPage"]')).not.toBeNull();
+    const { container } = await renderEditAgent({ section: "skills" });
+    expect(container.querySelector('[data-template="SettingsPage"]')).not.toBeNull();
     const group = await screen.findByRole("group", { name: en.agents.form.orgSkillsLabel });
     const live = await within(group).findByRole("checkbox", { name: /pdf-tools/ });
     expect(live).toHaveProperty("checked", true);
@@ -197,10 +117,7 @@ describe("编辑 agent（FormPage）", () => {
       name: en.agents.form.deletedSkill.replace("{id}", "gone"),
     });
     expect(deleted).toHaveProperty("checked", true);
-    expect(screen.getByRole("textbox", { name: en.agents.form.nameLabel })).toHaveProperty(
-      "value",
-      "Helper",
-    );
+    expect(screen.getByRole("heading", { level: 1, name: "Helper" })).toBeTruthy();
     const user = userEvent.setup();
     await user.click(deleted);
     await user.click(screen.getByRole("button", { name: en.agents.form.submit }));
@@ -218,7 +135,8 @@ describe("编辑 agent（FormPage）", () => {
     expect(body.definition.instructions).toBe("Be helpful.");
     // 没改可见性：不发
     expect(body.visibility).toBeUndefined();
-    expect(router.push).toHaveBeenCalledWith("/agents");
+    // the section's save stays on the page
+    expect(router.push).not.toHaveBeenCalled();
   });
 
   it.each(["zh", "en"] as const)(
@@ -234,7 +152,7 @@ describe("编辑 agent（FormPage）", () => {
           return noContent();
         },
       });
-      renderPage(<EditAgentPage />, { locale });
+      await renderEditAgent({ locale, section: "skills" });
       const list = await screen.findByRole("group", { name: m.agents.form.ownSkillsLabel });
       expect(await within(list).findByText("notes-style · v2")).toBeTruthy();
       expect(within(list).queryByRole("checkbox")).toBeNull();
@@ -248,11 +166,18 @@ describe("编辑 agent（FormPage）", () => {
       await user.type(within(dialog).getByRole("textbox"), "notes-style");
       await user.click(within(dialog).getByRole("button", { name: m.agents.form.deleteOwnSkill }));
       await vi.waitFor(() => expect(calls.some((c) => c.method === "DELETE")).toBe(true));
+      // the delete invalidates the agent's own skills: they are read again
+      const after = () => calls.slice(calls.findIndex((c) => c.method === "DELETE"));
+      await vi.waitFor(() =>
+        expect(after().map((c) => `${c.method} ${c.url}`)).toContain(
+          `GET ${ORG}/agents/ag1/skills`,
+        ),
+      );
       expect(await within(list).findByText(m.agents.form.noOwnSkills)).toBeTruthy();
     },
   );
 
-  it("不改动直接保存：工具引用保持原顺序、skills 合并（保留不认识的键）、带 expectedVersion", async () => {
+  it("a skills save keeps the tool order, merges skills (unknown keys kept) and sends expectedVersion", async () => {
     const tools = [
       { kind: "plugin", plugin: "todo", name: "write" },
       { kind: "builtin", name: "ReadToolOutput" },
@@ -263,17 +188,19 @@ describe("编辑 agent（FormPage）", () => {
       ...routes({ definition: { ...def, tools, skills: { orgSkills: ["s1"], future: 1 } } }),
       [`PATCH ${ORG}/agents/ag1`]: () => json(200, { agent: agent(), warnings: [] }),
     });
-    renderPage(<EditAgentPage />);
+    await renderEditAgent({ section: "skills" });
     const group = await screen.findByRole("group", { name: en.agents.form.orgSkillsLabel });
-    await within(group).findByRole("checkbox", { name: /pdf-tools/ });
-    await userEvent.setup().click(screen.getByRole("button", { name: en.agents.form.submit }));
+    const user = userEvent.setup();
+    // the save row appears with a change: drop the one org skill
+    await user.click(await within(group).findByRole("checkbox", { name: /pdf-tools/ }));
+    await user.click(screen.getByRole("button", { name: en.agents.form.submit }));
     await vi.waitFor(() => expect(calls.some((c) => c.method === "PATCH")).toBe(true));
     const body = bodyOf(calls.find((c) => c.method === "PATCH")) as {
       definition: Record<string, unknown>;
       expectedVersion?: number;
     };
     expect(body.definition.tools).toEqual(tools);
-    expect(body.definition.skills).toEqual({ orgSkills: ["s1"], future: 1 });
+    expect(body.definition.skills).toEqual({ orgSkills: [], future: 1 });
     expect(body.expectedVersion).toBe(3);
   });
 
@@ -285,11 +212,12 @@ describe("编辑 agent（FormPage）", () => {
         [`PATCH ${ORG}/agents/ag1`]: () =>
           json(409, { error: { code: "agent.version_conflict", message: "changed" } }),
       });
-      renderPage(<EditAgentPage />, { locale });
+      await renderEditAgent({ locale, section: "skills" });
       const m = msgs[locale];
       const group = await screen.findByRole("group", { name: m.agents.form.orgSkillsLabel });
-      await within(group).findByRole("checkbox", { name: /pdf-tools/ });
-      await userEvent.setup().click(screen.getByRole("button", { name: m.agents.form.submit }));
+      const user = userEvent.setup();
+      await user.click(await within(group).findByRole("checkbox", { name: /pdf-tools/ }));
+      await user.click(screen.getByRole("button", { name: m.agents.form.submit }));
       expect(await screen.findByText(new RegExp(m.errors.agent.version_conflict))).toBeTruthy();
       expect(router.push).not.toHaveBeenCalled();
     },
@@ -298,7 +226,7 @@ describe("编辑 agent（FormPage）", () => {
   it("「运行记录」入口：负责人与组织管理员可见，指向按该 agent 筛选的运行记录", async () => {
     // 组织 owner（管理员）且是负责人
     stubApi(routes());
-    renderPage(<EditAgentPage />);
+    await renderEditAgent({ section: "skills" });
     const link = await screen.findByRole("link", { name: en.agents.runHistory });
     expect(link.getAttribute("href")).toBe("/trajectories?agentId=ag1");
     cleanup();
@@ -308,19 +236,19 @@ describe("编辑 agent（FormPage）", () => {
       memberships: [{ orgId: "o1", slug: "acme", name: "Acme", role: "member" }],
     };
     stubApi(routes());
-    renderPage(<EditAgentPage />, { me: member });
+    await renderEditAgent({ me: member });
     expect(await screen.findByRole("link", { name: en.agents.runHistory })).toBeTruthy();
     cleanup();
-    // 普通成员、不是负责人：不可见
+    // a member who doesn't own it gets the read-only view, without the entry
     stubApi(routes({ ownerAccountId: "someone-else" }));
-    renderPage(<EditAgentPage />, { me: member });
-    await screen.findByRole("group", { name: en.agents.form.ownSkillsLabel });
+    await renderEditAgent({ me: member });
+    await screen.findByText(en.agents.readOnly);
     expect(screen.queryByRole("link", { name: en.agents.runHistory })).toBeNull();
   });
 
   it("编辑：共享 agent 没有确认开关；私有 agent 已是 ask 时勾选，取消勾选去掉 writePolicy 键", async () => {
     stubApi(routes());
-    renderPage(<EditAgentPage />);
+    await renderEditAgent({ section: "skills" });
     await screen.findByRole("group", { name: en.agents.form.orgSkillsLabel });
     expect(screen.queryByRole("checkbox", { name: en.agents.form.confirmSkillWrite })).toBeNull();
     cleanup();
@@ -333,7 +261,7 @@ describe("编辑 agent（FormPage）", () => {
       }),
       [`PATCH ${ORG}/agents/ag1`]: () => json(200, { agent: agent(), warnings: [] }),
     });
-    renderPage(<EditAgentPage />);
+    await renderEditAgent({ section: "skills" });
     const sw = await screen.findByRole("checkbox", { name: en.agents.form.confirmSkillWrite });
     expect(sw).toHaveProperty("checked", true);
     const user = userEvent.setup();
@@ -348,20 +276,20 @@ describe("编辑 agent（FormPage）", () => {
 
   it("不是负责人：自己的技能没有删除按钮", async () => {
     stubApi(routes({ ownerAccountId: "someone-else" }));
-    renderPage(<EditAgentPage />);
+    await renderEditAgent({ section: "skills" });
     const list = await screen.findByRole("group", { name: en.agents.form.ownSkillsLabel });
     await within(list).findByText("notes-style · v2");
     expect(within(list).queryByRole("button")).toBeNull();
   });
 
-  it("读不到 agent：显示 agent.not_found 的文案", async () => {
+  it("an agent the kernel does not find is the not-found state in the shell", async () => {
     stubApi({
       ...routes(),
       [`GET ${ORG}/agents/ag1`]: () =>
         json(404, { error: { code: "agent.not_found", message: "x" } }),
     });
-    renderPage(<EditAgentPage />, { locale: "zh" });
-    expect(await screen.findByText(`${zh.errors.agent.not_found}`)).toBeTruthy();
+    await renderEditAgent({ locale: "zh" });
+    expect(screen.getByRole("heading", { level: 1, name: zh.notFound.title })).toBeTruthy();
   });
 });
 
@@ -395,80 +323,15 @@ describe("pinned skills (skills.pinned)", () => {
     [`GET ${ORG}/agents/ag1/skills`]: () => json(200, { skills: [] }),
   });
 
-  it.each(["zh", "en"] as const)(
-    "selecting a suggested skill ticks pinned by default; the owner can untick it and pin another (%s)",
-    async (locale) => {
-      const f = msgs[locale].agents.form;
-      const calls = stubApi({
-        [`GET ${ORG}/models`]: () => json(200, MODELS),
-        [`GET ${ORG}/connectors`]: () => json(200, { connectors: [] }),
-        [`GET ${ORG}/skills`]: () => json(200, { skills: ORG_SKILLS }),
-        [`POST ${ORG}/agents`]: () => json(201, { agent: agent(), warnings: [] }),
-      });
-      renderPage(<NewAgentPage />, { locale });
-      const user = userEvent.setup();
-      const org = await screen.findByRole("group", { name: f.orgSkillsLabel });
-      const pinned = screen.getByRole("group", { name: f.pinnedLabel });
-      expect(within(pinned).getByText(f.noPinnable)).toBeTruthy();
-      await user.click(await within(org).findByRole("checkbox", { name: /using-superpowers/ }));
-      await user.click(within(org).getByRole("checkbox", { name: /brainstorming/ }));
-      const using = within(pinned).getByRole("checkbox", {
-        name: fill(f.pinSkill, { name: "using-superpowers" }),
-      });
-      expect(using).toHaveProperty("checked", true);
-      expect(within(pinned).getByText(f.suggested)).toBeTruthy();
-      const brain = within(pinned).getByRole("checkbox", {
-        name: fill(f.pinSkill, { name: "brainstorming" }),
-      });
-      expect(brain).toHaveProperty("checked", false);
-      await user.click(using);
-      await user.click(brain);
-      await user.type(screen.getByRole("textbox", { name: f.nameLabel }), "Echo");
-      await user.click(screen.getByRole("button", { name: f.submit }));
-      await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/agents"));
-      const body = bodyOf(calls.find((c) => c.method === "POST")) as {
-        definition: { skills?: unknown };
-      };
-      expect(body.definition.skills).toEqual({ orgSkills: ["s1", "s2"], pinned: ["s2"] });
-    },
-  );
-
-  it("while the agent's own skills load, or when they cannot be read, no pinned skill shows as deleted (batch-3 I1)", async () => {
+  it("when the agent's own skills cannot be read, no pinned skill shows as deleted (batch-3 I1)", async () => {
     const f = en.agents.form;
-    let release: (r: Response) => void = () => {};
-    stubApi({
-      ...editRoutes({ orgSkills: ["s1"], pinned: ["s1", "k1"] }),
-      [`GET ${ORG}/agents/ag1/skills`]: () =>
-        new Promise<Response>((resolve) => {
-          release = resolve;
-        }),
-    });
-    renderPage(<EditAgentPage />);
-    const pinned = await screen.findByRole("group", { name: f.pinnedLabel });
-    // The org skills are in; the own skills are not: nothing is "deleted" yet.
-    await within(await screen.findByRole("group", { name: f.orgSkillsLabel })).findByRole(
-      "checkbox",
-      { name: /using-superpowers/ },
-    );
-    expect(within(pinned).queryByRole("checkbox", { name: /k1/ })).toBeNull();
-    expect(within(pinned).getByText(f.pinnedLoading)).toBeTruthy();
-    release(json(200, { skills: [ownSkill] }));
-    expect(
-      await within(pinned).findByRole("checkbox", {
-        name: fill(f.pinSkill, { name: "notes-style" }),
-      }),
-    ).toHaveProperty("checked", true);
-    expect(within(pinned).queryByText(fill(f.deletedSkill, { id: "k1" }))).toBeNull();
-    cleanup();
-    vi.unstubAllGlobals();
-
     // A failed read keeps the pins as they are and marks none deleted.
     stubApi({
       ...editRoutes({ orgSkills: ["s1"], pinned: ["s1", "k1"] }),
       [`GET ${ORG}/agents/ag1/skills`]: () =>
         json(500, { error: { code: "internal", message: "x" } }),
     });
-    renderPage(<EditAgentPage />);
+    await renderEditAgent({ section: "skills" });
     const again = await screen.findByRole("group", { name: f.pinnedLabel });
     expect(await within(again).findByText(f.pinnedUnavailable)).toBeTruthy();
     expect(within(again).queryByRole("checkbox", { name: /k1/ })).toBeNull();
@@ -480,7 +343,7 @@ describe("pinned skills (skills.pinned)", () => {
       ...editRoutes({ orgSkills: ["s3"] }),
       [`PATCH ${ORG}/agents/ag1`]: () => json(200, { agent: agent(), warnings: [] }),
     });
-    renderPage(<EditAgentPage />);
+    await renderEditAgent({ section: "skills" });
     const user = userEvent.setup();
     const org = await screen.findByRole("group", { name: f.orgSkillsLabel });
     const pinned = screen.getByRole("group", { name: f.pinnedLabel });
@@ -497,18 +360,20 @@ describe("pinned skills (skills.pinned)", () => {
         name: fill(f.pinSkill, { name: "using-superpowers" }),
       }),
     ).toBeNull();
+    // a skill that is not suggested for pinning: the save has a change but still no pins
+    await user.click(within(org).getByRole("checkbox", { name: /brainstorming/ }));
     await user.click(screen.getByRole("button", { name: f.submit }));
     await vi.waitFor(() => expect(calls.some((c) => c.method === "PATCH")).toBe(true));
     const body = bodyOf(calls.find((c) => c.method === "PATCH")) as {
       definition: Record<string, unknown>;
     };
-    expect(body.definition.skills).toEqual({ orgSkills: ["s3"] });
+    expect(body.definition.skills).toEqual({ orgSkills: ["s3", "s2"] });
   });
 
   it("a fourth pin is disabled with the tooMany hint; the token estimate sums the pinned skills", async () => {
     const f = en.agents.form;
     stubApi(editRoutes({ orgSkills: ["s1", "s2", "s3", "s4"], pinned: ["s1", "s2", "s3"] }));
-    renderPage(<EditAgentPage />);
+    await renderEditAgent({ section: "skills" });
     const pinned = await screen.findByRole("group", { name: f.pinnedLabel });
     const slides = await within(pinned).findByRole("checkbox", {
       name: fill(f.pinSkill, { name: "slides" }),
@@ -547,7 +412,7 @@ describe("pinned skills (skills.pinned)", () => {
           },
         }),
     });
-    renderPage(<EditAgentPage />);
+    await renderEditAgent({ section: "skills" });
     const pinned = await screen.findByRole("group", { name: f.pinnedLabel });
     expect(
       await within(pinned).findByText(fill(f.overLimit, { bytes: 40000, max: 32768 })),
@@ -590,7 +455,7 @@ describe("pinned skills (skills.pinned)", () => {
         ...editRoutes({ orgSkills: ["s1", "s2", "s3", "s4"], pinned: ["s4"] }),
         [`GET ${ORG}/skills`]: () => json(200, { skills }),
       });
-      renderPage(<EditAgentPage />, { locale });
+      await renderEditAgent({ locale, section: "skills" });
       const org = await screen.findByRole("group", { name: f.orgSkillsLabel });
       await within(org).findByRole("checkbox", { name: /release-check/ });
       // release-check and old-pin are manual, review runs as a sub-agent
@@ -626,9 +491,13 @@ describe("pinned skills (skills.pinned)", () => {
           },
         }),
     });
-    renderPage(<EditAgentPage />);
-    await screen.findByRole("group", { name: f.pinnedLabel });
-    await userEvent.setup().click(screen.getByRole("button", { name: f.submit }));
+    await renderEditAgent({ section: "skills" });
+    const pinned = await screen.findByRole("group", { name: f.pinnedLabel });
+    const user = userEvent.setup();
+    await user.click(
+      within(pinned).getByRole("checkbox", { name: fill(f.pinSkill, { name: "pdf-tools" }) }),
+    );
+    await user.click(screen.getByRole("button", { name: f.submit }));
     expect(
       await screen.findByText(fill(f.pinnedError.manual_only, { name: "pdf-tools" })),
     ).toBeTruthy();

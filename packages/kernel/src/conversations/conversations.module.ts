@@ -1,5 +1,6 @@
 import { Module } from "@nestjs/common";
 import { AgentLookupModule } from "../agents/agent-lookup.js";
+import { BackgroundModule } from "../background/background.module.js";
 import { ProvidersModule } from "../runtime/providers.js";
 import { RuntimeModule } from "../runtime/runtime.module.js";
 import { SandboxModule } from "../sandbox/sandbox.module.js";
@@ -36,6 +37,8 @@ import { ConversationSandboxStatus } from "./sandbox-status.js";
     ProvidersModule,
     // the sandbox status
     SandboxModule,
+    // the stop of a deleted conversation's background tasks
+    BackgroundModule,
   ],
   providers: [
     ConversationsService,

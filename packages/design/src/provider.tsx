@@ -1,4 +1,5 @@
 import { type ComponentType, createContext, type ReactNode, useContext } from "react";
+import { type ServerClock, ServerClockProvider } from "./clock";
 import { type DesignKey, type Locale, messages } from "./i18n";
 
 /** 框架无关的链接组件；apps/web 可传入 next-intl 的 Link。 */
@@ -15,6 +16,8 @@ export type LinkComponent = ComponentType<{
   /** The size-table part (spec §9.2) and the roving-focus key (Sidebar). */
   "data-part"?: string;
   "data-rove"?: string;
+  "data-state"?: string;
+  "data-optional"?: string;
 }>;
 
 const DefaultLink: LinkComponent = ({ href, children, ...rest }) => (
@@ -25,19 +28,38 @@ const DefaultLink: LinkComponent = ({ href, children, ...rest }) => (
 
 const LocaleContext = createContext<Locale>("zh");
 const LinkContext = createContext<LinkComponent>(DefaultLink);
+const neverPending = () => false;
+const LinkPendingContext = createContext<() => boolean>(neverPending);
 
 export function DesignProvider({
   locale,
   link,
+  useLinkPending,
+  clock,
   children,
 }: {
   locale: Locale;
   link?: LinkComponent;
+  /**
+   * Whether the enclosing link's navigation is pending (apps/web: `() => useLinkStatus().pending`
+   * from next/link). Called by `LinkPendingMark` inside each design link; it must be a hook valid
+   * inside the provider's `link`. Without it nothing is ever pending.
+   */
+  useLinkPending?: () => boolean;
+  /**
+   * The server render's clock (apps/web: the root layout's time and time zone): server-rendered
+   * times hydrate with it, then follow the browser's clock (`useNow`, `useTimeZone`).
+   */
+  clock?: ServerClock;
   children: ReactNode;
 }) {
   return (
     <LocaleContext.Provider value={locale}>
-      <LinkContext.Provider value={link ?? DefaultLink}>{children}</LinkContext.Provider>
+      <LinkContext.Provider value={link ?? DefaultLink}>
+        <LinkPendingContext.Provider value={useLinkPending ?? neverPending}>
+          <ServerClockProvider clock={clock}>{children}</ServerClockProvider>
+        </LinkPendingContext.Provider>
+      </LinkContext.Provider>
     </LocaleContext.Provider>
   );
 }
@@ -54,4 +76,22 @@ export function useDesignLocale(): Locale {
 
 export function useDesignLink(): LinkComponent {
   return useContext(LinkContext);
+}
+
+/**
+ * The pending mark of a design link (spec §6.13): rendered as the link's last child, it calls the
+ * provider's `useLinkPending` (so the router's link status reaches it) and, while the navigation
+ * is pending, carries `data-pending` and draws a 2 px `accent` underline along the link's bottom.
+ */
+export function LinkPendingMark() {
+  const usePending = useContext(LinkPendingContext);
+  const pending = usePending();
+  return (
+    <span
+      className="cb-link-pending"
+      data-part="link-pending"
+      data-pending={pending ? "true" : undefined}
+      aria-hidden="true"
+    />
+  );
 }

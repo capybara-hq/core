@@ -1,7 +1,10 @@
 /**
- * 浏览器端 API 客户端：请求同源的 `/api/*`（由 Next 路由处理器代理到内核）。
- * 只在客户端组件中使用。
+ * The API client the loaders share. In the browser it requests the same-origin `/api/*` (proxied to
+ * the kernel by a Next route handler); on the server (server components) it goes through the
+ * registered {@link ApiTransport} (`lib/server/register.ts`).
  */
+
+import type { ConfigIssue } from "./json-schema";
 
 /** 内核要求非安全方法带的 CSRF 头。 */
 export const CSRF_HEADER = "X-Capybara-Csrf";
@@ -110,11 +113,18 @@ async function parse<T>(res: Response): Promise<T> {
  */
 let refreshing: Promise<void> | undefined;
 
+/**
+ * Refreshes the session once. `auth.refresh_race` counts as success: another renewer (the web proxy
+ * on a page request, or another tab) rotated the token first and its cookies are in the jar by now,
+ * so the caller retries its request once with them.
+ */
 function refreshOnce(): Promise<void> {
   refreshing ??= (async () => {
     try {
       const res = await send(REFRESH_PATH, { method: "POST" });
-      if (!res.ok) throw await toError(res);
+      if (res.ok) return;
+      const err = await toError(res);
+      if (err.code !== "auth.refresh_race") throw err;
     } finally {
       refreshing = undefined;
     }
@@ -123,11 +133,39 @@ function refreshOnce(): Promise<void> {
 }
 
 /**
+ * How the server reaches the kernel: `path` is the `/api/v1/...` path apiFetch was given. Set once by
+ * `lib/server/register.ts` (the server transport); tests install stubs.
+ */
+export type ApiTransport = (path: string, init: RequestInit) => Promise<Response>;
+
+let transport: ApiTransport | null = null;
+let transportEverywhere = false;
+
+/**
+ * Registers the server-side transport (`null` removes it). `everywhere` is a test seam: it makes a
+ * jsdom test (which has a `window`) use the transport too, for the server phase of a page test.
+ */
+export function setApiTransport(t: ApiTransport | null, opts: { everywhere?: boolean } = {}): void {
+  transport = t;
+  transportEverywhere = t !== null && opts.everywhere === true;
+}
+
+/** A server-side request: through the transport, without the browser's refresh retry. */
+async function serverFetch<T>(path: string, init: RequestInit): Promise<T> {
+  if (transport === null) throw new Error("apiFetch on the server without a transport");
+  const res = await transport(path, init);
+  if (!res.ok) throw await toError(res);
+  return parse<T>(res);
+}
+
+/**
  * 调用内核 API 并解析 JSON（204 / 空 body → `undefined`）。
  * 非 GET 自动带 `X-Capybara-Csrf: 1`；401 `auth.token_expired`（或 Cookie 已过期导致的
  * `auth.required`）时先 `POST /api/v1/auth/refresh` 一次再重试；失败抛 {@link ApiClientError}。
+ * On the server it uses the registered transport and never retries a 401 (the proxy already renewed).
  */
 export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
+  if (typeof window === "undefined" || transportEverywhere) return serverFetch<T>(path, init);
   let res = await send(path, init);
   if (res.status === 401 && !path.startsWith(AUTH_PREFIX)) {
     const err = await toError(res);
@@ -154,4 +192,30 @@ export function issueLines(e: unknown): string[] {
   return e instanceof ApiClientError
     ? e.details.map((d) => (d.path === "" ? d.message : `${d.path}: ${d.message}`))
     : [];
+}
+
+/**
+ * The config issues of an `extension.config_invalid` / `validation_failed` error (kernel
+ * `ConfigIssue`, from the envelope's raw details): the config form maps them onto its fields.
+ */
+export function configIssues(e: unknown): ConfigIssue[] {
+  if (!(e instanceof ApiClientError)) return [];
+  return e.rawDetails.flatMap((d): ConfigIssue[] => {
+    if (typeof d !== "object" || d === null) return [];
+    const { path, segments, message, messageKey } = d as Record<string, unknown>;
+    if (typeof message !== "string") return [];
+    const segs =
+      Array.isArray(segments) &&
+      segments.every((s) => typeof s === "string" || typeof s === "number")
+        ? (segments as (string | number)[])
+        : undefined;
+    return [
+      {
+        path: typeof path === "string" ? path : "",
+        message,
+        ...(segs !== undefined && { segments: segs }),
+        ...(typeof messageKey === "string" && { messageKey }),
+      },
+    ];
+  });
 }

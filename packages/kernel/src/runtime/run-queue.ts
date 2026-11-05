@@ -1,11 +1,20 @@
 import { randomUUID } from "node:crypto";
 import type { Logger } from "@capybara-hq/plugin-sdk";
+import { getQueueToken } from "@nestjs/bullmq";
 import { Inject, Injectable } from "@nestjs/common";
+import type { Queue } from "bullmq";
 import { sql } from "kysely";
 import { visibleTo } from "../agents/agent-lookup.js";
+import {
+  BG_WAKE_JOB,
+  type BgWakeJobData,
+  bgWakeJobId,
+  wakeDecisionIn,
+} from "../background/wake-rules.js";
 import { EventLog } from "../conversations/event-log.js";
 import { dispatchQueuedIn, pauseQueueWith } from "../conversations/queue.js";
 import type { ConversationKind, KernelSchemaDb } from "../db/kernel-schema.js";
+import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
@@ -15,6 +24,7 @@ import { ToolPipeline } from "../tools/pipeline.js";
 import type { RunAbortDetail } from "./abort.js";
 import { KyselyCheckpointSaver } from "./checkpointer.js";
 import { ConversationLock } from "./conversation-lock.js";
+import { MAINTENANCE_QUEUE_NAME } from "./maintenance-queue.js";
 import { notifyFinished, RunFinish } from "./run-finish.js";
 import {
   ACTIVE_RUN_STATUSES,
@@ -45,16 +55,27 @@ interface EnsureState {
   orphanRunId: string | null;
   dispatchedSeq: number | null;
   dispatchedSwitch: boolean;
+  dispatchedUnarchived: boolean;
   /** The queue paused in this transaction: the open pages hear it after the commit. */
   pausedNow: boolean;
   orphanStop: { beforeTerminal: () => Promise<void>; fire: () => void } | undefined;
+  /** A finish would wake the conversation once its wake window ends (background Bash §3). */
+  wakeLater: { windowEnd: number; delayMs: number } | null;
 }
+
+/**
+ * Margin added to the delayed wake job: its window is read on the database's clock, the delay runs
+ * on this process's and Redis's, so the job does not usually fire just before the window ends (one
+ * that does reschedules itself under its next retry id, `bgWakeJobId`).
+ */
+const WAKE_JOB_MARGIN_MS = 1000;
 
 /** 孤儿判定需要的运行字段。 */
 interface ActiveRunRow {
   id: string;
   status: string;
   trigger_seq: string;
+  trigger_account_id: string;
   /** 续跑任务的 jobId；为空表示按触发消息生成的 jobId。 */
   job_id: string | null;
   past_grace: boolean;
@@ -81,6 +102,10 @@ export class RunQueue {
     @Inject(KernelEvents) private readonly events: KernelEvents,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<Logger, "error" | "warn">,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
+    @Inject(KernelConfigService) private readonly config: KernelConfigService,
+    /** The producer side of the delayed `bg-wake` job (`MaintenanceProcessor` consumes it). */
+    @Inject(getQueueToken(MAINTENANCE_QUEUE_NAME))
+    private readonly maintenance: Pick<Queue, "add">,
   ) {}
 
   private get db(): KernelSchemaDb {
@@ -108,6 +133,11 @@ export class RunQueue {
    * 有未消费的用户消息（最新 user_message 的 seq > `consumed_seq`）、会话锁无人持有、
    * 且没有 queued / running / waiting 的运行时：插入 `runs`（queued）并投递任务，返回 runId；否则返回 null。
    *
+   * The boundary (`trigger_seq`) is that newest message; with none unconsumed, the queue's head
+   * once it is sent; with no head either, a wake-eligible finished background task (background
+   * Bash spec §3, {@link wakeDecisionIn}): the run is then attributed to the task's trigger
+   * account, and a finish inside the wake window schedules the delayed `bg-wake` job instead.
+   *
    * 孤儿清理（R29，按需进行，没有定时器）：已有的 queued / running 运行若 BullMQ 任务已不存在、
    * 会话锁也无人持有（queued 的还要超过宽限期），说明没有任何 worker 会再执行它——写
    * `run_failed { code: "run.orphaned" }` 把它标记为失败（consumed_seq 推进到它的触发消息），
@@ -116,18 +146,28 @@ export class RunQueue {
    *
    * agent 已软删除的会话不起新运行（孤儿清理照常进行）。
    */
-  async ensureRun(conversationId: string): Promise<string | null> {
+  async ensureRun(
+    conversationId: string,
+    /** From the `bg-wake` job: it fired `wakeRetry - 1` times before its window ended. */
+    opts: { wakeRetry?: number } = {},
+  ): Promise<string | null> {
     if ((await this.lock.holder(conversationId)) !== null) return null;
     const st: EnsureState = {
       orphanSeq: null,
       orphanRunId: null,
       dispatchedSeq: null,
       dispatchedSwitch: false,
+      dispatchedUnarchived: false,
       pausedNow: false,
       orphanStop: undefined,
+      wakeLater: null,
     };
     const created = await this.ensureRunIn(conversationId, st);
+    if (st.wakeLater !== null) {
+      await this.scheduleWake(conversationId, st.wakeLater, opts.wakeRetry ?? 0);
+    }
     const { orphanSeq, orphanRunId, dispatchedSeq, dispatchedSwitch, pausedNow, orphanStop } = st;
+    const { dispatchedUnarchived } = st;
     if (orphanSeq !== null) {
       await notifyFinished(this.eventLog, conversationId, orphanSeq, "failed");
       orphanStop?.fire();
@@ -138,6 +178,7 @@ export class RunQueue {
       await this.eventLog.notify(conversationId, dispatchedSeq);
       await this.eventLog.publishChanged(conversationId, "queue");
       if (dispatchedSwitch) await this.eventLog.publishChanged(conversationId, "selection");
+      if (dispatchedUnarchived) await this.eventLog.publishChanged(conversationId, "archived");
     }
     if (orphanRunId !== null) {
       await this.dropCheckpoints(orphanRunId);
@@ -180,13 +221,23 @@ export class RunQueue {
     const t = this.db;
     const conv = await t
       .selectFrom("conversations")
-      .select(["consumed_seq", "agent_id", "kind", "queue_paused", "account_id"])
+      .select([
+        "consumed_seq",
+        "org_id",
+        "agent_id",
+        "kind",
+        "queue_paused",
+        "account_id",
+        "deleted_at",
+      ])
       .where("id", "=", conversationId)
       .forUpdate()
       .executeTakeFirst();
     // 评测回放的隐藏对话：运行由评测 worker 在里面直接驱动（工具只回放记录），绝不为它起真实运行
     if (conv?.kind !== "chat") return null;
-    let last = await t
+    // A deleted conversation starts no run, whatever is still unconsumed or queued
+    if (conv.deleted_at !== null) return null;
+    const newest = await t
       .selectFrom("conversation_events")
       .select(["seq", "payload"])
       .where("conversation_id", "=", conversationId)
@@ -194,11 +245,25 @@ export class RunQueue {
       .orderBy("seq", "desc")
       .limit(1)
       .executeTakeFirst();
-    if (!last || Number(last.seq) <= Number(conv.consumed_seq)) {
+    /** The run's boundary: its `trigger_seq` and the account it runs as. */
+    let last: { seq: string; accountId: string } | undefined = newest && {
+      seq: newest.seq,
+      accountId: (newest.payload as { authorAccountId: string }).authorAccountId,
+    };
+    const idleActive =
+      !last || Number(last.seq) <= Number(conv.consumed_seq)
+        ? await this.activeRun(t, conversationId)
+        : undefined;
+    if (idleActive && Number(idleActive.trigger_seq) > Number(conv.consumed_seq)) {
+      // No unconsumed message, but a run whose boundary is not consumed yet (a wake run, whose
+      // boundary is a finished background task): it goes through the orphan check below with
+      // that boundary, as a message's run does
+      last = { seq: idleActive.trigger_seq, accountId: idleActive.trigger_account_id };
+    } else if (!last || Number(last.seq) <= Number(conv.consumed_seq)) {
       // Nothing unconsumed: the queue's head goes out when the conversation is idle (no active
       // run, which includes runs waiting for approval or an answer) and the queue is not paused.
       // Interjections are always unconsumed messages, so the queue never jumps ahead of them.
-      if (conv.queue_paused || (await this.activeRun(t, conversationId))) return null;
+      if (conv.queue_paused || idleActive) return null;
       const owner = await t
         .selectFrom("agents")
         .select("deleted_at")
@@ -211,30 +276,48 @@ export class RunQueue {
         .where("conversation_id", "=", conversationId)
         .limit(1)
         .executeTakeFirst();
-      if (!head) return null;
-      // A queued message may wait for hours: it goes out only while its author can still use
-      // the conversation (active, a member, the agent visible to them; the isAccessible rule).
-      // Otherwise the queue pauses instead of posting as someone who lost access.
-      if (!(await authorCanSend(t, conversationId, conv.account_id))) {
-        await pauseQueueWith(t, conversationId, "author_cannot_send");
-        st.pausedNow = true;
-        this.log.warn("queued message not sent: its author can no longer use the conversation", {
-          conversationId,
-        });
-        return null;
+      if (head) {
+        // A queued message may wait for hours: it goes out only while its author can still use
+        // the conversation (active, a member, the agent visible to them; the isAccessible rule).
+        // Otherwise the queue pauses instead of posting as someone who lost access.
+        if (!(await authorCanSend(t, conversationId, conv.account_id))) {
+          await pauseQueueWith(t, conversationId, "author_cannot_send");
+          st.pausedNow = true;
+          this.log.warn("queued message not sent: its author can no longer use the conversation", {
+            conversationId,
+          });
+          return null;
+        }
+        const sent = await dispatchQueuedIn(t, this.eventLog, conversationId);
+        if (!sent) return null;
+        if ("paused" in sent) {
+          st.pausedNow = true;
+          this.log.warn("queued skill invocation not sent: the skill can no longer be invoked", {
+            conversationId,
+          });
+          return null;
+        }
+        st.dispatchedSeq = sent.event.seq;
+        st.dispatchedSwitch = sent.switched;
+        st.dispatchedUnarchived = sent.unarchived;
+        last = {
+          seq: String(sent.event.seq),
+          accountId: (sent.event.payload as { authorAccountId: string }).authorAccountId,
+        };
+      } else {
+        // Nothing queued either: a finished background task may wake the idle conversation
+        // (background Bash spec §3; a person's message or the queue always goes first)
+        const wake = await wakeDecisionIn(
+          t,
+          { id: conversationId, orgId: conv.org_id },
+          Number(conv.consumed_seq),
+          this.config.get().runtime.wakeOnBackgroundTask,
+          (accountId) => authorCanSend(t, conversationId, accountId),
+        );
+        if (wake?.kind === "later") st.wakeLater = wake;
+        if (wake?.kind !== "wake") return null;
+        last = { seq: String(wake.seq), accountId: wake.triggerAccountId };
       }
-      const sent = await dispatchQueuedIn(t, this.eventLog, conversationId);
-      if (!sent) return null;
-      if ("paused" in sent) {
-        st.pausedNow = true;
-        this.log.warn("queued skill invocation not sent: the skill can no longer be invoked", {
-          conversationId,
-        });
-        return null;
-      }
-      st.dispatchedSeq = sent.event.seq;
-      st.dispatchedSwitch = sent.switched;
-      last = { seq: String(sent.event.seq), payload: sent.event.payload };
     }
     const active = await this.activeRun(t, conversationId);
     if (active) {
@@ -278,7 +361,9 @@ export class RunQueue {
       .orderBy("seq")
       .limit(1)
       .executeTakeFirst();
-    const trigger = fork ?? last;
+    const trigger = fork
+      ? { seq: fork.seq, accountId: (fork.payload as { authorAccountId: string }).authorAccountId }
+      : last;
     // BullMQ 对重复的 jobId 静默忽略（add 返回的 Job 由调用方数据构造，看不出是否真的入队）：
     // 先显式查同一触发点的任务；仍存在（例如属于刚结束、尚未从队列移除的运行）就不插入 runs 行。
     const jobId = runJobId(conversationId, Number(trigger.seq));
@@ -306,11 +391,36 @@ export class RunQueue {
         conversation_id: conversationId,
         status: "queued",
         agent_version: agent.current_version,
-        trigger_account_id: (trigger.payload as { authorAccountId: string }).authorAccountId,
+        trigger_account_id: trigger.accountId,
         trigger_seq: Number(trigger.seq),
       })
       .execute();
     return { runId, jobId };
+  }
+
+  /**
+   * Schedules the delayed `bg-wake` job at the end of the conversation's wake window (after the
+   * commit): one job per conversation and window end, so finishes inside one window share it. It
+   * calls {@link ensureRun}, which wakes the conversation if a finish is still unconsumed. A failed
+   * enqueue is logged: the next message, run end or page opening re-derives the wake.
+   */
+  private async scheduleWake(
+    conversationId: string,
+    w: { windowEnd: number; delayMs: number },
+    retry: number,
+  ): Promise<void> {
+    const data: BgWakeJobData = { conversationId, ...(retry > 0 && { retry }) };
+    try {
+      await this.maintenance.add(BG_WAKE_JOB, data, {
+        // a job that fired early reschedules under a new id (its own is still taken)
+        jobId: bgWakeJobId(conversationId, w.windowEnd, retry),
+        delay: w.delayMs + WAKE_JOB_MARGIN_MS,
+        removeOnComplete: true,
+        removeOnFail: true,
+      });
+    } catch (err) {
+      this.log.error("cannot schedule the background task wake", { conversationId, err });
+    }
   }
 
   /**
@@ -447,6 +557,7 @@ export class RunQueue {
         "id",
         "status",
         "trigger_seq",
+        "trigger_account_id",
         "job_id",
         sql<boolean>`COALESCE(queued_at, created_at) < now() - make_interval(secs => ${ORPHAN_QUEUED_GRACE_SECONDS})`.as(
           "past_grace",

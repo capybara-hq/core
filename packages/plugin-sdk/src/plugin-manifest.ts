@@ -1,6 +1,7 @@
 import semver from "semver";
 import { z } from "zod";
 import { AGENT_TEMPLATE_LIMITS } from "./agent-template.js";
+import { CONFIG_UI_LIMITS, type JsonSchema } from "./config-ui.js";
 import { defineExtension, EXTENSION_NAME_RE, type ExtensionManifest } from "./define-extension.js";
 import {
   CATALOG_ITEM_NAME_RE,
@@ -96,6 +97,12 @@ export interface PluginExtensionSection {
   migrations?: string;
   /** `./ui`. */
   ui?: string;
+  /**
+   * The config JSON Schemas (`configJsonSchema`, with `x-ui` hints), written by the packer so an
+   * extension not loaded on a replica still gets its form; each ≤
+   * {@link CONFIG_UI_LIMITS}`.configSchemaBytes`. Not part of the `manifest_mismatch` comparison.
+   */
+  configSchemas?: { deployment?: JsonSchema; org?: JsonSchema };
 }
 
 /** `.capybara-plugin/plugin.json`. */
@@ -185,6 +192,15 @@ const staticExtensionManifest = z.strictObject({
   config: z.strictObject({ deployment: configFields, org: configFields }),
 });
 
+const configSchemaJson = z
+  .record(z.string(), z.unknown())
+  .refine(
+    (v) => new TextEncoder().encode(JSON.stringify(v)).length <= CONFIG_UI_LIMITS.configSchemaBytes,
+    {
+      message: `must be at most ${CONFIG_UI_LIMITS.configSchemaBytes} bytes of JSON (${CONFIG_UI_LIMITS.configSchemaBytes / 1024} KiB)`,
+    },
+  );
+
 const extensionSection = z.strictObject({
   entry: dotPath("entry").refine((p) => p.endsWith(".mjs"), {
     message: "entry must be a .mjs file",
@@ -192,6 +208,9 @@ const extensionSection = z.strictObject({
   manifest: staticExtensionManifest,
   migrations: dotPath("migrations").optional(),
   ui: dotPath("ui").optional(),
+  configSchemas: z
+    .strictObject({ deployment: configSchemaJson.optional(), org: configSchemaJson.optional() })
+    .optional(),
 });
 
 const schema = z

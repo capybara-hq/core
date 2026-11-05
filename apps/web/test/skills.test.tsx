@@ -3,14 +3,33 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
-import SkillDetailPage from "../src/app/[locale]/(app)/skills/[id]/page";
-import SkillsPage from "../src/app/[locale]/(app)/skills/page";
-import { bodyOf, json, noContent, stubApi } from "./support/api";
+import { bodyOf, json, lastStubRoutes, noContent, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
-import { ME, renderPage } from "./support/render";
+import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
+import { ME } from "./support/render";
+import { expectNoFirstPaintFetch } from "./support/server";
+import { NOT_READY } from "./support/shell";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
-vi.mock("next/navigation", () => ({ useParams: () => ({ id: "s1" }) }));
+vi.mock("next/navigation", () => ({
+  redirect: (to: string) => {
+    throw new Error(`REDIRECT ${to}`);
+  },
+  notFound: () => {
+    throw new Error("NOT_FOUND");
+  },
+}));
+
+type RenderOpts = Parameters<typeof renderRouteWithCache>[2];
+/** `/skills` as a first load: the layout prefetches from the latest `stubApi` routes. */
+const renderSkills = (opts: RenderOpts = {}) =>
+  renderRouteWithCache("/skills", lastStubRoutes(), opts);
+/** `/skills/s1` as a first load (routes as in {@link renderSkills}). */
+const renderSkill = (opts: RenderOpts = {}) =>
+  renderRouteWithCache("/skills/s1", lastStubRoutes(), opts);
+
+/** Lets pending reads and effects run (a read after mount would show up in the calls). */
+const settle = () => act(() => new Promise((r) => setTimeout(r, 20)));
 
 const msgs = { zh, en } as const;
 const LOCALES = ["zh", "en"] as const;
@@ -75,8 +94,15 @@ class FakeXhr {
 const zipFile = (name = "pdf-tools.zip", size = 4) =>
   new File([new Uint8Array(size)], name, { type: "application/zip" });
 
-const fileInput = (container: HTMLElement) =>
-  container.querySelector('input[type="file"]') as HTMLInputElement;
+/** The upload lives in a dialog opened by the header action "Upload skill". */
+const fileInput = () => document.querySelector('input[type="file"]') as HTMLInputElement;
+const openUpload = async (locale: "zh" | "en" = "en") => {
+  await userEvent
+    .setup()
+    .click(
+      screen.getAllByRole("button", { name: msgs[locale].skills.upload.open })[0] as HTMLElement,
+    );
+};
 
 beforeEach(() => {
   resetNavigation("/skills");
@@ -94,24 +120,31 @@ describe("技能库列表（ListPage）", () => {
   it.each(LOCALES)("列出组织技能；管理员看到上传说明（布局与上限）（%s）", async (locale) => {
     const m = msgs[locale];
     stubApi({ [`GET ${BASE}`]: () => json(200, { skills: [skill("s1", "pdf-tools")] }) });
-    const { container } = renderPage(<SkillsPage />, { locale });
+    const { container } = await renderSkills({ locale });
     expect(container.querySelector('[data-template="ListPage"]')).not.toBeNull();
-    const table = await screen.findByRole("table", { name: m.skills.listLabel });
-    expect(within(table).getByText("pdf-tools")).toBeTruthy();
-    expect(within(table).getByText("Use for pdf-tools.")).toBeTruthy();
+    const list = await screen.findByRole("list", { name: m.skills.listLabel });
+    expect(within(list).getByText("pdf-tools")).toBeTruthy();
+    expect(within(list).getByText("Use for pdf-tools.")).toBeTruthy();
+    expect(within(list).getByRole("link", { name: "pdf-tools" }).getAttribute("href")).toBe(
+      "/skills/s1",
+    );
+    await openUpload(locale);
     expect(screen.getByText(m.skills.upload.layoutHint)).toBeTruthy();
     expect(screen.getByText(m.skills.upload.limits)).toBeTruthy();
-    expect(screen.getByRole("button", { name: m.skills.upload.choose })).toBeTruthy();
+    // one design drop zone with a real button, not a bare "+"
+    const zone = document.querySelector('[data-part="file-picker"]') as HTMLElement;
+    expect(within(zone).getByRole("button", { name: m.skills.upload.choose }).textContent).toBe(
+      m.skills.upload.choose,
+    );
+    expect(within(zone).getByText(m.skills.upload.chooseHint)).toBeTruthy();
     // 打开一行 → 详情页
-    await userEvent.setup().click(within(table).getByText("pdf-tools"));
-    expect(router.push).toHaveBeenCalledWith("/skills/s1");
   });
 
   it("成员只能查看：没有上传入口", async () => {
     stubApi({ [`GET ${BASE}`]: () => json(200, { skills: [skill("s1", "pdf-tools")] }) });
-    renderPage(<SkillsPage />, { me: MEMBER });
+    await renderSkills({ me: MEMBER });
     await screen.findByText("pdf-tools");
-    expect(screen.queryByRole("button", { name: en.skills.upload.choose })).toBeNull();
+    expect(screen.queryByRole("button", { name: en.skills.upload.open })).toBeNull();
     expect(screen.queryByText(en.skills.upload.layoutHint)).toBeNull();
   });
 
@@ -130,9 +163,10 @@ describe("技能库列表（ListPage）", () => {
         return json(201, { skill: skills[0], version: 2, created: false });
       },
     });
-    const { container } = renderPage(<SkillsPage />);
+    await renderSkills();
     await screen.findByText("pdf-tools");
-    await userEvent.setup().upload(fileInput(container), zipFile());
+    await openUpload();
+    await userEvent.setup().upload(fileInput(), zipFile());
     expect(
       await screen.findByText(
         en.skills.upload.versionCreated.replace("{name}", "pdf-tools").replace("{version}", "2"),
@@ -149,7 +183,35 @@ describe("技能库列表（ListPage）", () => {
     expect(bodyOf(calls.find((c) => c.method === "POST" && c.url === BASE))).toEqual({
       uploadId: "up1",
     });
-    await vi.waitFor(() => expect(screen.getByText("v2")).toBeTruthy());
+    await vi.waitFor(() => expect(screen.getByText(/^v2 · /)).toBeTruthy());
+  });
+
+  it("an upload invalidates skills and that skill: the list is read again", async () => {
+    const calls = stubApi({
+      [`GET ${BASE}`]: () => json(200, { skills: [skill("s1", "pdf-tools")] }),
+      [`POST ${BASE}/uploads`]: () =>
+        json(201, {
+          id: "up1",
+          upload: { method: "POST", url: S3_URL, headers: {}, fields: { key: "k", policy: "p" } },
+          expiresAt: T,
+        }),
+      [`POST ${BASE}`]: () =>
+        json(201, {
+          skill: skill("s1", "pdf-tools", { currentVersion: 2 }),
+          version: 2,
+          created: false,
+        }),
+    });
+    const { client } = await renderSkills();
+    // the skill is cached (as after a visit to /skills/s1)
+    client.setQueryData(["org", "o1", "skill", "s1"], { skill: skill("s1", "pdf-tools") });
+    await openUpload();
+    await userEvent.setup().upload(fileInput(), zipFile());
+    await vi.waitFor(() =>
+      expect(client.getQueryState(["org", "o1", "skill", "s1"])?.isInvalidated).toBe(true),
+    );
+    const after = calls.slice(calls.findIndex((c) => c.method === "POST" && c.url === BASE));
+    expect(after.map((c) => `${c.method} ${c.url}`)).toContain(`GET ${BASE}`);
   });
 
   it.each(LOCALES)(
@@ -173,9 +235,10 @@ describe("技能库列表（ListPage）", () => {
             },
           }),
       });
-      const { container } = renderPage(<SkillsPage />, { locale });
+      await renderSkills({ locale });
       await screen.findByText(m.skills.empty);
-      await userEvent.setup().upload(fileInput(container), zipFile("bad.zip"));
+      await openUpload(locale);
+      await userEvent.setup().upload(fileInput(), zipFile("bad.zip"));
       const alert = await screen.findByRole("alert");
       expect(within(alert).getByText(`${m.errors.skill.invalid_package}`)).toBeTruthy();
       expect(within(alert).getByText("SKILL.md is missing at the package root")).toBeTruthy();
@@ -191,11 +254,12 @@ describe("技能库列表（ListPage）", () => {
       [`POST ${BASE}`]: () =>
         json(201, { skill: skill("s1", "pdf-tools"), version: 1, created: true }),
     });
-    const { container } = renderPage(<SkillsPage />, { locale });
+    await renderSkills({ locale });
     await screen.findByText(msgs[locale].skills.empty);
+    await openUpload(locale);
     FakeXhr.hold = true;
     const user = userEvent.setup();
-    await user.upload(fileInput(container), zipFile());
+    await user.upload(fileInput(), zipFile());
     const uploading = (pct: number) =>
       u.uploading.replace("{name}", "pdf-tools.zip").replace("{percent}", String(pct));
     expect(await screen.findByText(uploading(0))).toBeTruthy();
@@ -222,14 +286,15 @@ describe("技能库列表（ListPage）", () => {
 
   it("前端预检：不是 zip、超过 50MB 不发请求", async () => {
     const calls = stubApi({ [`GET ${BASE}`]: () => json(200, { skills: [] }) });
-    const { container } = renderPage(<SkillsPage />);
+    await renderSkills();
     await screen.findByText(en.skills.empty);
+    await openUpload();
     const user = userEvent.setup({ applyAccept: false });
-    await user.upload(fileInput(container), new File(["x"], "notes.txt", { type: "text/plain" }));
+    await user.upload(fileInput(), new File(["x"], "notes.txt", { type: "text/plain" }));
     expect(await screen.findByText(`${en.skills.upload.notZip}`)).toBeTruthy();
     const big = zipFile("big.zip");
     Object.defineProperty(big, "size", { value: 50 * 1024 * 1024 + 1 });
-    await user.upload(fileInput(container), big);
+    await user.upload(fileInput(), big);
     expect(await screen.findByText(`${en.skills.upload.tooLarge}`)).toBeTruthy();
     expect(calls.filter((c) => c.method === "POST")).toHaveLength(0);
   });
@@ -268,7 +333,7 @@ describe("技能详情（DetailPage）", () => {
     async (locale) => {
       const m = msgs[locale];
       stubApi({ [`GET ${BASE}/s1`]: () => json(200, detail()) });
-      const { container } = renderPage(<SkillDetailPage />, { locale });
+      const { container } = await renderSkill({ locale });
       expect(container.querySelector('[data-template="DetailPage"]')).not.toBeNull();
       const pre = await vi.waitFor(() => {
         const el = container.querySelector("pre");
@@ -290,7 +355,7 @@ describe("技能详情（DetailPage）", () => {
 
   it("正文读不到：显示说明", async () => {
     stubApi({ [`GET ${BASE}/s1`]: () => json(200, detail({ body: null })) });
-    renderPage(<SkillDetailPage />);
+    await renderSkill();
     expect(await screen.findByText(en.skills.detail.bodyUnavailable)).toBeTruthy();
   });
 
@@ -299,7 +364,7 @@ describe("技能详情（DetailPage）", () => {
       [`GET ${BASE}/s1`]: () => json(200, detail()),
       [`DELETE ${BASE}/s1`]: () => noContent(),
     });
-    renderPage(<SkillDetailPage />);
+    await renderSkill();
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: en.skills.detail.delete }));
     const dialog = await screen.findByRole("dialog");
@@ -313,16 +378,144 @@ describe("技能详情（DetailPage）", () => {
 
   it("成员没有删除入口", async () => {
     stubApi({ [`GET ${BASE}/s1`]: () => json(200, detail()) });
-    renderPage(<SkillDetailPage />, { me: MEMBER });
+    await renderSkill({ me: MEMBER });
     await screen.findByText("# PDF tools", { exact: false });
     expect(screen.queryByRole("button", { name: en.skills.detail.delete })).toBeNull();
   });
 
-  it("不存在：显示 skill.not_found 的文案", async () => {
+  it("a skill the kernel does not find is the not-found state in the shell", async () => {
     stubApi({
       [`GET ${BASE}/s1`]: () => json(404, { error: { code: "skill.not_found", message: "x" } }),
     });
-    renderPage(<SkillDetailPage />, { locale: "zh" });
-    expect(await screen.findByText(`${zh.errors.skill.not_found}`)).toBeTruthy();
+    await renderSkill({ locale: "zh" });
+    expect(screen.getByRole("heading", { level: 1, name: zh.notFound.title })).toBeTruthy();
   });
+
+  it("deleting a skill invalidates the library and forgets the skill once the page is left", async () => {
+    const calls = stubApi({
+      [`GET ${BASE}`]: () => json(200, { skills: [] }),
+      [`GET ${BASE}/s1`]: () => json(200, detail()),
+      [`DELETE ${BASE}/s1`]: () => noContent(),
+    });
+    const { client, unmount } = await renderSkill();
+    // the library is cached (as after a visit to /skills)
+    client.setQueryData(["org", "o1", "skills"], { skills: [skill("s1", "pdf-tools")] });
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: en.skills.detail.delete }));
+    const dialog = await screen.findByRole("dialog");
+    await user.type(within(dialog).getByRole("textbox"), "pdf-tools");
+    await user.click(within(dialog).getByRole("button", { name: en.skills.detail.delete }));
+    await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/skills"));
+    expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([`DELETE ${BASE}/s1`]);
+    expect(client.getQueryState(["org", "o1", "skills"])?.isInvalidated).toBe(true);
+    // still cached while the page shows (no read, no not-found flash before the navigation) ...
+    expect(client.getQueryData(["org", "o1", "skill", "s1"])).toBeDefined();
+    expect(screen.queryByRole("heading", { level: 1, name: en.notFound.title })).toBeNull();
+    // ... and gone once the page is left: Back reads it instead of painting the deleted skill
+    unmount();
+    expect(client.getQueryState(["org", "o1", "skill", "s1"])).toBeUndefined();
+    expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([`DELETE ${BASE}/s1`]);
+  });
+});
+
+describe("the skills pages render on the server (web-SSR spec §6)", () => {
+  const GUEST = {
+    ...ME,
+    account: { ...ME.account, isEnterpriseAdmin: false },
+    memberships: [{ orgId: "o1", slug: "acme", name: "Acme", role: "guest" }],
+  };
+  const detail = {
+    ...skill("s1", "pdf-tools"),
+    body: "# PDF tools\n",
+    versions: [{ version: 1, description: "Use.", files: [], createdAt: T, createdBy: "a1" }],
+  };
+  const routes = {
+    [`GET ${BASE}`]: () => json(200, { skills: [skill("s1", "pdf-tools")] }),
+    [`GET ${BASE}/s1`]: () => json(200, detail),
+  };
+  const template = (name: string) => document.querySelector(`[data-template="${name}"]`);
+
+  it("/skills: a first render from the hydrated cache makes no browser read", async () => {
+    const browser = expectNoFirstPaintFetch();
+    await renderRouteWithCache("/skills", routes);
+    expect(screen.getByRole("list", { name: en.skills.listLabel })).toBeTruthy();
+    expect(screen.getByText("pdf-tools")).toBeTruthy();
+    await settle();
+    expect(browser).toEqual([]);
+  });
+
+  it("/skills/<id>: a first render from the hydrated cache makes no browser read", async () => {
+    const browser = expectNoFirstPaintFetch();
+    const { container } = await renderRouteWithCache("/skills/s1", routes);
+    expect(container.querySelector("pre")?.textContent).toBe("# PDF tools\n");
+    await settle();
+    expect(browser).toEqual([]);
+  });
+
+  it.each([
+    ["/skills", "ListPage", "pdf-tools"],
+    ["/skills/s1", "DetailPage", "# PDF tools"],
+  ])(
+    "%s: an empty cache shows the template's loading state, then the data",
+    async (path, name, text) => {
+      let release: () => void = () => {};
+      const held = new Promise<void>((r) => {
+        release = r;
+      });
+      const later = (body: unknown) => async () => {
+        await held;
+        return json(200, body);
+      };
+      await renderRouteEmptyCache(path, {
+        [`GET ${BASE}`]: later({ skills: [skill("s1", "pdf-tools")] }),
+        [`GET ${BASE}/s1`]: later(detail),
+      });
+      const page = await vi.waitFor(() => {
+        const el = template(name);
+        if (el === null) throw new Error("no page yet");
+        return el as HTMLElement;
+      });
+      expect(document.querySelector("[aria-busy='true']")).not.toBeNull();
+      expect(screen.queryAllByText(text, { exact: false })).toEqual([]);
+      await act(async () => release());
+      expect(await screen.findAllByText(text, { exact: false })).not.toHaveLength(0);
+      await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
+      expect(page).toBeTruthy();
+    },
+  );
+
+  it("/skills/<id>: the loading content is the body's lines and, for an admin, the delete card", async () => {
+    await renderRouteEmptyCache("/skills/s1", {
+      [`GET ${BASE}/s1`]: () => new Promise<Response>(() => {}),
+    });
+    const page = await vi.waitFor(() => {
+      const el = template("DetailPage");
+      if (el === null) throw new Error("no page yet");
+      return el as HTMLElement;
+    });
+    expect(page.querySelectorAll('[data-part="loading-card"]')).toHaveLength(0);
+    const card = page.querySelectorAll('[data-part="loading-shaped-card"]');
+    expect(card).toHaveLength(1);
+    expect(card[0]?.querySelectorAll('[data-part="loading-buttons"] [data-box]')).toHaveLength(1);
+    expect(page.querySelectorAll('[data-part="loading-inspector-row"]')).toHaveLength(4);
+  });
+
+  it.each(["/skills", "/skills/s1"])(
+    "%s: a guest gets no access and nothing is read; no org renders nothing; setup goes home",
+    async (path) => {
+      const guest = await renderRouteWithCache(path, routes, { me: GUEST });
+      expect(new Set(guest.calls.map((c) => c.url))).toEqual(
+        new Set(["/api/v1/me", "/api/v1/orgs/o1/readiness"]),
+      );
+      expect(template("StatusPage")?.getAttribute("data-kind")).toBe("no-access");
+      cleanup();
+      const none = await renderRouteWithCache(path, routes, { me: { ...ME, currentOrgId: null } });
+      expect(none.calls.map((c) => c.url)).toEqual(["/api/v1/me"]);
+      expect(document.body.textContent).toBe("");
+      cleanup();
+      expectNoFirstPaintFetch();
+      await renderRouteWithCache(path, routes, { readiness: NOT_READY });
+      await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/"));
+    },
+  );
 });

@@ -5,6 +5,9 @@ import {
   ToolError,
   validateSandboxPath,
 } from "@capybara-hq/plugin-sdk";
+import type { BackgroundTaskFinisher } from "../../../background/finish.js";
+import type { BackgroundTaskStopper } from "../../../background/stop.js";
+import type { BackgroundTaskStore } from "../../../background/store.js";
 import type { KernelConfig } from "../../../config/schema.js";
 import type { AttachmentsService } from "../../../conversations/attachments.service.js";
 import type { EventLog } from "../../../conversations/event-log.js";
@@ -17,9 +20,32 @@ import type { BuiltinCallContext } from "../../registry.js";
 
 /** 沙箱工具的依赖（都按调用时取，多副本下无进程内状态）。 */
 export interface SandboxToolDeps {
-  /** `pathLease` may be absent (test stubs): the kernel's own file writes then take no path lease. */
+  /**
+   * `pathLease` may be absent (test stubs): the kernel's own file writes then take no path lease.
+   * `currentInstance` too: a background `Bash` launch records the instance it started in; and
+   * `ifRunning`, which `TaskOutput` reads a task through.
+   */
   sandbox: Pick<SandboxService, "available" | "withSandbox"> &
-    Partial<Pick<SandboxService, "pathLease">>;
+    Partial<Pick<SandboxService, "pathLease" | "currentInstance" | "ifRunning">>;
+  /** Background `Bash` tasks; absent in test stubs, where `run_in_background` is refused. */
+  background?: Pick<
+    BackgroundTaskStore,
+    | "reserve"
+    | "markStarted"
+    | "failLaunch"
+    | "finishStoppedLaunch"
+    | "releaseStop"
+    | "get"
+    | "advanceOffset"
+  >;
+  /**
+   * What `TaskOutput` and `TaskStop` finish and stop tasks with; absent in test stubs, where both
+   * answer that background tasks are not available.
+   */
+  tasks?: {
+    finisher: Pick<BackgroundTaskFinisher, "finish">;
+    stopper: Pick<BackgroundTaskStopper, "stop">;
+  };
   attachments: Pick<AttachmentsService, "listForConversation" | "openForConversation">;
   storage: Pick<StorageService, "kernel" | "available">;
   /** `publishChanged`: `Deliver` announces `changed: files` (UI refresh B). */
@@ -52,6 +78,12 @@ const NO_SANDBOX_TEXT =
   "No sandbox is configured in this deployment; ask an administrator to install a sandbox plugin, or do the task without the sandbox.";
 /** 没有沙箱提供方时「工具不可用」的原因（进提醒，内核在后面补句号）：与调用时的错误同一句话。 */
 export const SANDBOX_UNAVAILABLE_REASON = NO_SANDBOX_TEXT.slice(0, -1);
+
+/** The error of a sandbox call in a deployment without a sandbox provider. */
+export function noSandboxError(): ToolError {
+  return new ToolError(NO_SANDBOX_TEXT);
+}
+
 const PATH_BUSY_TEXT = "Another sub-agent is writing this file; wait a moment and retry.";
 const LOCK_LOST_TEXT =
   "The sandbox operation was interrupted because the sandbox lock was lost; check the sandbox state and retry.";
@@ -319,7 +351,7 @@ async function copyAttachments(
 }
 
 /** 沙箱服务的错误 → 给模型的可执行说明；其余原样抛出（管线按「工具失败」处理）。 */
-function mapError(e: unknown): unknown {
+export function mapSandboxError(e: unknown): unknown {
   if (e instanceof ApiError) {
     if (e.code === "sandbox.busy") return new ToolError(BUSY_TEXT);
     if (e.code === "sandbox.unavailable") return new ToolError(NO_SANDBOX_TEXT);
@@ -362,7 +394,7 @@ export async function inSandbox<T>(
       ctx.signal,
     );
   } catch (e) {
-    throw mapError(e);
+    throw mapSandboxError(e);
   }
 }
 

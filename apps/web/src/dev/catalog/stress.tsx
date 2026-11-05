@@ -35,7 +35,11 @@ function StressBody() {
   return (
     <DetailPage
       header={{
-        breadcrumb: [{ label: "Agents", href: "/dev/ui/templates/list" }],
+        path: [
+          { label: "capybara", href: "/dev/ui" },
+          { label: "agents", href: "/dev/ui/templates/list" },
+          { label: LONG_TITLE },
+        ],
         title: LONG_TITLE,
         count: "v1234567",
         status: <StatusMark status="running" label={`运行中 ${RARE}`} />,

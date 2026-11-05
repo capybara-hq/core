@@ -43,6 +43,35 @@ const PAGES = [
   "file-outputs",
   "attachment-strip",
   "file-preview",
+  // the role pass: no-access state, danger zone, secret reveal
+  "roles",
+  // unslop fixes: a failure sentence with its raw text behind a toggle
+  "error-detail",
+  // forms and flows: the one file pick
+  "file-picker",
+  // the run row: a run's model, duration, tokens and outcome
+  "run-row",
+  // the working line: the walking capybara between a send and the first output
+  "working-line",
+  // the new conversation page: the greeting, the agents row and panel, the quick actions
+  "greeting",
+  "agent-row",
+  "quick-actions",
+  // agent avatars: the ten pixel animals, the sizes, the initial and the picker
+  "avatar",
+  // config forms: arrays of objects, compact rows, records
+  "repeater",
+  "field-row",
+  "key-value-editor",
+  // loading states: the skeleton primitives
+  "skeleton",
+  "template-detail",
+  "template-overview",
+  "template-inbox",
+  "template-trace",
+  "template-settings",
+  "template-wizard",
+  "template-auth",
 ];
 const THEMES = ["dark", "light"] as const;
 const BLOCK_ID = /^[a-z-]+-[a-z0-9-]+$/;

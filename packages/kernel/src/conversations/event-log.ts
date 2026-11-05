@@ -88,7 +88,16 @@ export type ConversationBusMessage =
  * What changed about a conversation outside its event log (UI refresh B): the SSE stream sends it as
  * `event: changed` with `{ what }`, and the web refetches that part. Never model-visible.
  */
-export const CONVERSATION_CHANGES = ["title", "queue", "selection", "files"] as const;
+export const CONVERSATION_CHANGES = [
+  "title",
+  "queue",
+  "selection",
+  "files",
+  "archived",
+  "deleted",
+  // the conversation's background tasks (or its sub-agents')
+  "background",
+] as const;
 export type ConversationChange = (typeof CONVERSATION_CHANGES)[number];
 
 const notFound = () => new ApiError("conversation.not_found", "Conversation not found");

@@ -7,10 +7,14 @@ import {
   StatusBar,
   SubagentTask,
   subagentDuration,
+  useNow,
 } from "@capybara-hq/design";
+import { useQuery } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
-import { useEffect, useMemo, useState } from "react";
-import { type ConversationEvent, getConversation, type ModelRef } from "../../lib/conversations";
+import { useMemo } from "react";
+import type { ConversationEvent, ModelRef } from "../../lib/conversations";
+import { conversationQuery } from "../../lib/query/conversation";
+import { useWhoWaits } from "../../lib/query/who-waits";
 import { toolsLine } from "../../lib/subagents";
 import {
   buildTimeline,
@@ -40,18 +44,6 @@ export type SubagentPanelProps = {
   onFullscreen(): void;
 };
 
-/** Re-renders every second while `active` (the header's running time). */
-function useNow(active: boolean): number {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    if (!active) return;
-    setNow(Date.now());
-    const id = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(id);
-  }, [active]);
-  return now;
-}
-
 /**
  * A sub-agent opened on the right (`#subagent=<id>`, spec §5.6): its record read-only. The id comes
  * from the address bar, so it opens only a sub-agent of this conversation (the kernel authorizes
@@ -59,21 +51,16 @@ function useNow(active: boolean): number {
  */
 export function SubagentPanel(p: SubagentPanelProps) {
   const t = useTranslations("subagents.view");
-  const [check, setCheck] = useState<"pending" | "ok" | "failed">("pending");
-  useEffect(() => {
-    let live = true;
-    getConversation(p.orgId, p.subagentId).then(
-      ({ conversation }) => {
-        if (live) setCheck(conversation.parentConversationId === p.parentId ? "ok" : "failed");
-      },
-      () => {
-        if (live) setCheck("failed");
-      },
-    );
-    return () => {
-      live = false;
-    };
-  }, [p.orgId, p.subagentId, p.parentId]);
+  // The child's row (the record shares it): only a child of this conversation opens.
+  const row = useQuery({ ...conversationQuery(p.orgId, p.subagentId), retry: false });
+  const check: "pending" | "ok" | "failed" =
+    row.data !== undefined
+      ? row.data.parentConversationId === p.parentId
+        ? "ok"
+        : "failed"
+      : row.error !== null
+        ? "failed"
+        : "pending";
   if (check === "ok") return <ChildRecord {...p} />;
   return (
     <RightPanel
@@ -109,9 +96,10 @@ function ChildRecord({
   const child = useConversation(orgId, subagentId);
   const keys = useMemo(() => toolKeysOf(child.events), [child.events]);
   const info = useToolInfo(orgId, subagentId, keys);
+  const whoWaits = useWhoWaits(orgId, child.events);
   const entries = useMemo(
-    () => buildTimeline(child.events, child.state.drafts, info, locale),
-    [child.events, child.state.drafts, info, locale],
+    () => buildTimeline(child.events, child.state.drafts, info, locale, { whoWaits }),
+    [child.events, child.state.drafts, info, locale, whoWaits],
   );
   const started = child.events.find(
     (e): e is Extract<ConversationEvent, { type: "subagent_started" }> =>
@@ -119,7 +107,8 @@ function ChildRecord({
   )?.payload as Started | undefined;
   const model = latestModel(child.events);
   const active = child.running || child.waiting;
-  const now = useNow(active);
+  // re-read every second while active (the header's running time)
+  const now = useNow(active ? 1000 : 0);
   // the latest run: its start, and its end once it is over
   let runStart: number | undefined;
   let runEnd: number | undefined;

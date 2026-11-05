@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<title>ErrorDetail · reference</title>
+<link rel="stylesheet" href="/design/styles/fonts.css">
+<link rel="stylesheet" href="/design/styles/tokens.css">
+<link rel="stylesheet" href="reference.css">
+</head>
+<body>
+<main class="r-page">
+<h1>ErrorDetail</h1>
+<p>A failure read first as one sentence; the raw text stays behind a small toggle (spec §6.24).</p>
+<div class="r-blocks">
+<section data-ref-block="error-detail-default" style="width:640px" data-pad>
+  <div class="r-error-detail" data-part="error-detail">
+    <span class="r-error-detail-summary" data-part="error-detail-summary"><span class="r-error-detail-icon"><i data-icon="circle-x" data-size="14"></i></span>市场地址解析到内网或保留地址，已被网络规则拦截。</span>
+    <button class="r-error-detail-toggle" data-part="error-detail-toggle" aria-expanded="false">原始错误<span class="r-error-detail-caret"><i data-icon="chevron-right" data-size="12"></i></span></button>
+  </div>
+</section>
+<section data-ref-block="error-detail-open" style="width:640px" data-pad>
+  <div class="r-error-detail" data-part="error-detail">
+    <span class="r-error-detail-summary" data-part="error-detail-summary"><span class="r-error-detail-icon"><i data-icon="circle-x" data-size="14"></i></span>市场地址解析到内网或保留地址，已被网络规则拦截。</span>
+    <button class="r-error-detail-toggle" data-part="error-detail-toggle" aria-expanded="true">原始错误<span class="r-error-detail-caret"><i data-icon="chevron-down" data-size="12"></i></span></button>
+    <pre class="r-error-detail-raw" data-part="error-detail-raw">https://github.com/capybara-hq/plugins.git: cannot list the refs of https://github.com/capybara-hq/plugins.git: Access to github.com is refused: it resolves to a private or reserved address (add the hostname to marketplaces.allowPrivateHosts to allow an internal host).</pre>
+  </div>
+</section>
+</div>
+</main>
+<script src="fill.js"></script>
+</body>
+</html>

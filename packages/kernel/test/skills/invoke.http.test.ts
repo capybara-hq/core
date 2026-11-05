@@ -23,7 +23,7 @@ import { createDb } from "../../src/db/pool.js";
 import { ApiError } from "../../src/errors.js";
 import { KernelDb } from "../../src/infra/database/kernel-db.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
-import { KERNEL_LOGGER } from "../../src/infra/tokens.js";
+import { KERNEL_ROOT_LOGGER } from "../../src/infra/tokens.js";
 import type { KernelLogger } from "../../src/log.js";
 import { parseSlashCommand, SkillInvoker } from "../../src/skills/invoke.js";
 import { StorageService } from "../../src/storage/storage.service.js";
@@ -826,7 +826,7 @@ describe("SkillInvoker logging", { timeout: 60_000 }, () => {
       size: evil.byteLength,
     });
     // the one SkillInvoker logs through the kernel logger
-    const error = vi.spyOn(k.app.get<KernelLogger>(KERNEL_LOGGER), "error");
+    const error = vi.spyOn(k.app.get<KernelLogger>(KERNEL_ROOT_LOGGER), "error");
     const invoker = k.app.get(SkillInvoker);
     const agent = (await agentsService().get(orgId, agentId, ownerId)).definition;
     try {
@@ -839,6 +839,7 @@ describe("SkillInvoker logging", { timeout: 60_000 }, () => {
         version: s.version,
         source: s.prefix,
         problem: "failed its integrity check",
+        context: "SkillInvoker",
       });
     } finally {
       error.mockRestore();

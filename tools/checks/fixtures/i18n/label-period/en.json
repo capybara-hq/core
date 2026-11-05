@@ -1,0 +1,13 @@
+{
+  "agents": {
+    "title": "Agents.",
+    "form": {
+      "submit": "Save",
+      "confirmLabel": "Confirm",
+      "nameHint": "The name is unique in the organization."
+    }
+  },
+  "chat": {
+    "placeholder": "Message…"
+  }
+}

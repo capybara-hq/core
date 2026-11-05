@@ -4,10 +4,12 @@ import {
   type SubagentRowData,
   type SubagentWaitKind,
   subagentStatusOfFinish,
+  subagentWaitKind,
   type ToolRowData,
 } from "@capybara-hq/design";
 import type {
   ApprovalPolicy,
+  Approver,
   ContentBlock,
   ConversationEvent,
   InputForm,
@@ -15,6 +17,7 @@ import type {
   ModelRef,
   ToolInfo,
 } from "./conversations";
+import type { OrgRole } from "./members";
 import { toolLabel, toolLabelOfKey } from "./tool-label";
 
 /**
@@ -27,9 +30,12 @@ import { toolLabel, toolLabelOfKey } from "./tool-label";
  * - A call's `artifact_created` files and its inline card (`tool_result.card`) land right after the
  *   group that holds the call (files first).
  * - `hook_denied` with a `callId` marks that row as blocked by the extension.
- * - `run_aborted`, `run_failed`, `compaction_summary` and `model_switched { reason: "unavailable" }`
- *   become dividers. A `user_message` with `retryOf` folds into the failed divider of the message it
- *   repeats ("Retried") instead of a second bubble.
+ * - Every run that ended (`run_finished`, `run_failed`, `run_aborted`) becomes a `run` entry at its
+ *   terminal event: its model (the last `model_call`, else `run_started`), duration and tokens (its
+ *   `usage` events) and how it ended (spec §6.16.23); a run still going has none. A `user_message`
+ *   with `retryOf` folds into the failed run of the message it repeats ("Retried") instead of a
+ *   second bubble. `compaction_summary` and `model_switched { reason: "unavailable" }` become
+ *   dividers.
  * - Logs written before UI refresh B (no `description`, `view`, title or card) still render: rows
  *   fall back to the tool key and the first string argument, failures to `isError`.
  * - Sub-agents (phase C, Task 21): consecutive `agent` calls form one `subagents` entry, its rows
@@ -44,6 +50,9 @@ import { toolLabel, toolLabelOfKey } from "./tool-label";
  *   its `skill_fork_result` a `skill-report` entry. A plain message that a later fork's run took
  *   in, not yet sent to the model while that sub-agent works, says it waits for it (`waitsFor`).
  *   A sub-agent's task message carries the `skill` record too and stays a `task`.
+ * - Background Bash (background Bash spec §5): a `Bash` call with `run_in_background: true` is a
+ *   row with `background` (its task id from the result), `TaskOutput` / `TaskStop` rows name the
+ *   task's description, and `background_task_finished` is a `background` notice entry.
  */
 
 export type ApprovalDecision = Extract<ConversationEvent, { type: "approval_decided" }>["payload"];
@@ -84,6 +93,27 @@ export interface SubagentLive {
     string,
     { status: string; pendingApprovalIds: string[]; pendingQuestionIds: string[] }
   >;
+  /**
+   * Who a waiting call waits for, as its row words it ("等待 张三 批准"): a name or a role, or
+   * undefined when it is the viewer (or unknown). Absent = every wait reads "你".
+   */
+  whoWaits?: (w: Waiter) => string | undefined;
+}
+
+/** Who has to act on a wait: a member (an approval's assignee, a run's starter) or a role. */
+export type Waiter = { kind: "account"; accountId: string } | { kind: "role"; role: OrgRole };
+
+/** `{ approver }` for an entry when the event names one, else nothing. */
+const approverField = (a: Approver): { approver?: Waiter } => {
+  const w = approverOf(a);
+  return w === undefined ? {} : { approver: w };
+};
+
+/** An approval's {@link Waiter} from its event; undefined in logs older than the field. */
+export function approverOf(a: Approver): Waiter | undefined {
+  if (a.requestedFor) return { kind: "account", accountId: a.requestedFor };
+  if (a.approverRole) return { kind: "role", role: a.approverRole };
+  return undefined;
 }
 
 /** Longest agent result kept as a row's in-place summary (the panel has the whole record). */
@@ -99,6 +129,13 @@ export interface TimelineTool {
   outputId: string | null;
   /** A read's line range; the thread shows it as the row's extra through i18n (m10). */
   lines?: { from: number; to: number };
+  /**
+   * A background `Bash` call (`run_in_background: true`): the thread labels it "In background"
+   * through i18n, as the row's `extra` (it replaces any other extra, e.g. an extension's display
+   * summary; a line range still wins), and links its task (`#bg-<taskId>`, the row's `link`) once
+   * the result named it.
+   */
+  background?: { taskId: string | null };
 }
 
 export interface ApprovalItem {
@@ -108,6 +145,8 @@ export interface ApprovalItem {
   input: unknown;
   expiresAt: string;
   policy?: ApprovalPolicy;
+  /** Who may decide it (absent in older logs). */
+  approver?: Waiter;
   decided: ApprovalDecision | null;
   decidedAt: string | null;
 }
@@ -129,21 +168,50 @@ export interface ConnectItem {
 }
 
 export type DividerData =
-  | { divider: "stopped"; byAccountId: string | null; at: string }
+  | { divider: "compacted"; summary: string; savedTokens: number | null }
+  | { divider: "fallback"; from: ModelRef | null; to: ModelRef | null };
+
+/** A run's tokens: every `usage` of the run (its step calls and compaction). */
+export interface RunTokens {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  /** input + cacheRead + cacheWrite + output. */
+  total: number;
+}
+
+/** How a run ended (its run row, spec §6.16.23). */
+export type RunEnd =
+  | { status: "ok" }
+  | { status: "stopped"; byAccountId: string | null }
   | {
-      divider: "failed";
+      status: "failed";
       code: string;
-      /** The kernel's message, shown for the pinned-skill failure only. */
+      /** The kernel's raw message (English; the row keeps it behind 原始错误). */
       message: string;
-      at: string;
+      /** A `model.request` denial (`run.hook_denied`): the extension and its reason. */
+      hook: { plugin: string | null; reason: string | null } | null;
       /** The last user message before the failure (what Retry repeats), or null. */
       retry: RetryMessage | null;
       /** A later message retried it. */
       retried: boolean;
-    }
-  | { divider: "hook-denied"; plugin: string | null; reason: string | null; at: string }
-  | { divider: "compacted"; summary: string; savedTokens: number | null }
-  | { divider: "fallback"; from: ModelRef | null; to: ModelRef | null };
+    };
+
+/** A run that ended, from the log alone (`run_started`, `model_call`, `usage`, the terminal). */
+export type RunData = {
+  runId: string | null;
+  /** The run's last model call, else the model it started with; null when the log has neither. */
+  model: ModelRef | null;
+  /** From `run_started` to the terminal event (waits for a person included); null without a start. */
+  durationMs: number | null;
+  /** Null when the run reported no usage. */
+  tokens: RunTokens | null;
+  /** When it ended. */
+  at: string;
+} & RunEnd;
+
+export type FailedRun = Extract<TimelineEntry, { kind: "run"; status: "failed" }>;
 
 /** What Retry repeats: the text (an invocation's arguments), files and the skill invoked. */
 export interface RetryMessage {
@@ -196,6 +264,8 @@ export type TimelineEntry =
       wait: SubagentWaitKind;
       approvalId?: string;
       questionId?: string;
+      /** Who may decide the sub-agent's approval (absent in older logs). */
+      approver?: Waiter;
       toolKey: string;
       expiresAt?: string;
     }
@@ -205,7 +275,17 @@ export type TimelineEntry =
   | { kind: "connect"; key: string; item: ConnectItem }
   | { kind: "card"; key: string; plugin: string; view: string; callId: string; cardKey?: string }
   | { kind: "files"; key: string; files: FileRef[] }
-  | ({ kind: "divider"; key: string } & DividerData);
+  | ({ kind: "divider"; key: string } & DividerData)
+  | {
+      /** A background task ended (`background_task_finished`): a one-line notice that opens it. */
+      kind: "background";
+      key: string;
+      taskId: string;
+      description: string;
+      status: Extract<ConversationEvent, { type: "background_task_finished" }>["payload"]["status"];
+      exitCode: number | null;
+    }
+  | ({ kind: "run"; key: string } & RunData);
 
 /** A streaming draft (`event: delta`), not in the log yet. */
 export interface TimelineDraft {
@@ -218,6 +298,25 @@ export interface TimelineDraft {
 const TERMINAL = new Set<ConversationEvent["type"]>(["run_finished", "run_failed", "run_aborted"]);
 /** The builtin tool that dispatches sub-agents. */
 export const AGENT_TOOL = "Agent";
+/** The builtin question tool: its row reads "已提问 <header>" (design kind `question`, §6.16.9). */
+export const QUESTION_TOOL = "AskUserQuestion";
+/** The builtin shell tool; `run_in_background: true` makes a background task. */
+const BASH_TOOL = "Bash";
+/** The builtins that name a background task by `task_id`: their rows show its description. */
+const TASK_TOOLS = new Set(["TaskOutput", "TaskStop"]);
+/** A background launch's result starts with the task's id (kernel `background/launch.ts`). */
+const STARTED_TASK = /^Started background task (bt_[a-z0-9]+) /;
+
+/** The question row's preview: the first question's header, else its text, else the title. */
+function questionPreview(input: unknown, info: ToolInfo | undefined): string | undefined {
+  const questions = asRecord(input).questions;
+  const first = Array.isArray(questions) ? asRecord(questions[0]) : {};
+  for (const k of ["header", "question"]) {
+    const v = first[k];
+    if (typeof v === "string" && v.trim() !== "") return v;
+  }
+  return info?.title ?? undefined;
+}
 const stepKey = (runId: string, step: number) => `${runId}:${step}`;
 const callKey = (runId: string | null, callId: string) => `${runId ?? ""}\u0000${callId}`;
 /** A row id that is a call key (an `agent` call never dispatched), not a sub-agent id. */
@@ -341,6 +440,111 @@ export function withDrafts(base: EventTimeline, drafts: readonly TimelineDraft[]
   return added ? out : base.entries;
 }
 
+/** Events of a run that are its output (what replaces the working line, spec §2.2). */
+const OUTPUT = new Set<ConversationEvent["type"]>([
+  "assistant_message",
+  "tool_call_started",
+  "approval_requested",
+  "question_asked",
+  "connection_required",
+  "subagent_dispatched",
+  "subagent_started",
+]);
+
+/** How long a message this tab sent waits for its run before the page stops expecting one. */
+export const AWAIT_RUN_MS = 60_000;
+
+/**
+ * The newest user message this tab sent (`sentHere`: its `clientMessageId`s and this tab's send
+ * times) that no run took up
+ * yet: no run started after it, no run failed or stopped after it, and no finished run consumed
+ * it. Null when there is none: the conversation is idle (or the kernel could not deliver it).
+ */
+export function awaitedMessage(
+  events: readonly ConversationEvent[],
+  sentHere: ReadonlyMap<string, number>,
+): ConversationEvent | null {
+  let u: ConversationEvent | null = null;
+  for (const e of events) {
+    if (e.type === "user_message") {
+      const id = e.payload.clientMessageId;
+      u = id !== undefined && sentHere.has(id) ? e : null;
+    } else if (u !== null) {
+      if (e.type === "run_started" || e.type === "run_failed" || e.type === "run_aborted") u = null;
+      else if (e.type === "run_finished" && e.payload.consumedUpToSeq >= u.seq) u = null;
+    }
+  }
+  return u;
+}
+
+/**
+ * A message this tab sent waits for its run ({@link awaitedMessage}), unless no run is coming:
+ * the queue is paused (the kernel holds the conversation's sends), or {@link AWAIT_RUN_MS} passed
+ * since this tab sent it without a `run_started` (a backstop: the page then follows the log
+ * alone). Both times are this tab's clock (`now` and the send time in `sentHere`).
+ */
+export function awaitingRun(
+  events: readonly ConversationEvent[],
+  sentHere: ReadonlyMap<string, number>,
+  s: { paused: boolean; now: number },
+): boolean {
+  if (s.paused) return false;
+  const u = awaitedMessage(events, sentHere);
+  if (u?.type !== "user_message" || u.payload.clientMessageId === undefined) return false;
+  const sentAt = sentHere.get(u.payload.clientMessageId);
+  return sentAt !== undefined && s.now - sentAt <= AWAIT_RUN_MS;
+}
+
+/** The run in progress per the log (started, not ended), or null. */
+function activeRun(events: readonly ConversationEvent[]): { runId: string; seq: number } | null {
+  let run: { runId: string; seq: number } | null = null;
+  for (const e of events) {
+    if (e.type === "run_started" && e.runId !== null) run = { runId: e.runId, seq: e.seq };
+    else if (run !== null && TERMINAL.has(e.type) && e.runId === run.runId) run = null;
+  }
+  return run;
+}
+
+/**
+ * Whether the working line shows (conversation send spec §2.2, review fix 1): never while the run
+ * waits for a person (the card is the output); else when this view has a pending send, when the
+ * run in progress has no output since it started or since its last settled tool result (and no
+ * tool is running), or when a message this tab sent waits for its run ({@link awaitingRun}). An
+ * idle conversation, one whose message the kernel could not deliver, and a child conversation
+ * that is not running show none.
+ */
+export function workingLineVisible(
+  events: readonly ConversationEvent[],
+  drafts: readonly TimelineDraft[],
+  s: {
+    waiting: boolean;
+    pending: number;
+    sentHere: ReadonlyMap<string, number>;
+    paused: boolean;
+    now: number;
+  },
+): boolean {
+  if (s.waiting) return false;
+  if (s.pending > 0) return true;
+  const run = activeRun(events);
+  if (run === null) return awaitingRun(events, s.sentHere, s);
+  if (drafts.some((d) => d.runId === run.runId && (d.text !== "" || d.thinking !== "")))
+    return false;
+  const open = new Set<string>();
+  let output = false;
+  for (const e of events) {
+    if (e.seq <= run.seq || e.runId !== run.runId) continue;
+    if (e.type === "tool_result") {
+      open.delete(e.payload.callId);
+      output = false;
+    } else if (OUTPUT.has(e.type)) {
+      output = true;
+      if (e.type === "tool_call_started") open.add(e.payload.callId);
+    }
+  }
+  return open.size === 0 && !output;
+}
+
 /** The timeline of the log (no drafts); see {@link buildTimeline}. */
 export function buildEventTimeline(
   events: readonly ConversationEvent[],
@@ -359,6 +563,37 @@ export function buildEventTimeline(
   const calls = new Map<string, CallState>();
   const approvals = new Map<string, number>();
   const questions = new Map<string, number>();
+  /** Approval / question id → the call it holds (its row waits for a person until decided). */
+  const waitCalls = new Map<string, CallState>();
+  const waitOn = (
+    runId: string | null,
+    callId: string,
+    what: NonNullable<ToolRowData["waiting"]>,
+    id?: string,
+    waiter?: Waiter,
+  ) => {
+    const c = calls.get(callKey(runId, callId));
+    if (!c || c.done) return;
+    c.tool.row.waiting = what;
+    const who = waiter === undefined ? undefined : live.whoWaits?.(waiter);
+    if (who === undefined) delete c.tool.row.waitingFor;
+    else c.tool.row.waitingFor = who;
+    if (id !== undefined) waitCalls.set(id, c);
+  };
+  const waitEnded = (id: string, what: NonNullable<ToolRowData["waiting"]>) => {
+    const c = waitCalls.get(id);
+    if (c && c.tool.row.waiting === what) {
+      delete c.tool.row.waiting;
+      delete c.tool.row.waitingFor;
+    }
+    waitCalls.delete(id);
+  };
+  /** Each run's starter (`run_started.triggerAccountId`): who answers its questions and connects. */
+  const starters = new Map<string, string>();
+  const starterOf = (runId: string | null): Waiter | undefined => {
+    const id = runId === null ? undefined : starters.get(runId);
+    return id === undefined ? undefined : { kind: "account", accountId: id };
+  };
   const modelDenials = new Map<string, { plugin: string; reason: string }>();
   /** Group key → files delivered by its calls / cards of its calls. */
   const groupFiles = new Map<string, FileRef[]>();
@@ -370,7 +605,32 @@ export function buildEventTimeline(
   const forks = new Map<number, { label: string; dispatched: boolean; reported: boolean }>();
   /** The highest user seq a model call took in (`model_call.request.absorbedUpToSeq`). */
   let absorbed = 0;
-  /** Failed dividers by the user seq they would retry. */
+  /** What the log says so far of each run (its row's model, start and tokens). */
+  const runs = new Map<
+    string,
+    { startedAt: number | null; model: ModelRef | null; tokens: RunTokens | null }
+  >();
+  const runOf = (runId: string) => {
+    let r = runs.get(runId);
+    if (r === undefined) {
+      r = { startedAt: null, model: null, tokens: null };
+      runs.set(runId, r);
+    }
+    return r;
+  };
+  const runData = (
+    e: ConversationEvent,
+  ): Pick<RunData, "runId" | "model" | "durationMs" | "tokens" | "at"> => {
+    const r = e.runId === null ? undefined : runs.get(e.runId);
+    return {
+      runId: e.runId,
+      model: r?.model ?? null,
+      durationMs: r?.startedAt == null ? null : Math.max(0, Date.parse(e.createdAt) - r.startedAt),
+      tokens: r?.tokens ?? null,
+      at: e.createdAt,
+    };
+  };
+  /** Failed runs by the user seq they would retry. */
   const failedBySeq = new Map<number, number>();
   /** The model the person switched to (the `from` of a fallback). */
   let switched: ModelRef | null = null;
@@ -380,6 +640,8 @@ export function buildEventTimeline(
   let compactionUsage: number | null = null;
   /** `agent` calls by (runId, callId). */
   const agentCalls = new Map<string, { sub: TimelineSubagent; runId: string | null }>();
+  /** Background task id → its description (from its launch, else its finish). */
+  const taskDescriptions = new Map<string, string>();
   /** Sub-agent id → its latest dispatch's row and child run. */
   const subagentRows = new Map<
     string,
@@ -415,7 +677,13 @@ export function buildEventTimeline(
     switch (e.type) {
       case "run_started":
         if (e.runId !== null) {
+          const r = runOf(e.runId);
+          // A resumed run writes no second run_started; keep the first start.
+          if (r.startedAt === null) r.startedAt = Date.parse(e.createdAt);
+          if (r.model === null) r.model = e.payload.model;
           models.set(e.runId, e.payload.model);
+          if (e.payload.triggerAccountId !== undefined)
+            starters.set(e.runId, e.payload.triggerAccountId);
           const fb = fallbacks.get(e.runId);
           const d = fb === undefined ? undefined : out[fb];
           if (d?.kind === "divider" && d.divider === "fallback") d.to = e.payload.model;
@@ -427,6 +695,7 @@ export function buildEventTimeline(
           const k = stepKey(e.runId, e.payload.step);
           models.set(k, { provider: e.payload.provider, model: e.payload.model });
           stepStarted.set(k, Date.parse(e.createdAt));
+          runOf(e.runId).model = { provider: e.payload.provider, model: e.payload.model };
         }
         break;
       case "model_switched":
@@ -449,8 +718,8 @@ export function buildEventTimeline(
         const retryOf = e.payload.retryOf;
         const failed = retryOf === undefined ? undefined : failedBySeq.get(retryOf);
         const d = failed === undefined ? undefined : out[failed];
-        if (d?.kind === "divider" && d.divider === "failed" && !d.retried) {
-          // Folded into the failed divider ("Retried"), not a second bubble.
+        if (d?.kind === "run" && d.status === "failed" && !d.retried) {
+          // Folded into the failed run ("Retried"), not a second bubble.
           d.retried = true;
         } else {
           const entry: Extract<TimelineEntry, { kind: "user" }> = {
@@ -537,8 +806,9 @@ export function buildEventTimeline(
           const input = b.input;
           const rec = asRecord(input);
           const group = openGroup();
-          const keyArg = keyArgOf(input, ti);
-          const kind = ti?.kind ?? "tool";
+          const question = (ti?.aliasOf ?? b.name) === QUESTION_TOOL;
+          const keyArg = question ? questionPreview(input, ti) : keyArgOf(input, ti);
+          const kind: ToolRowData["kind"] = question ? "question" : (ti?.kind ?? "tool");
           const command = kind === "command" && typeof rec.command === "string";
           // Claude Code's look: "Bash", "CRM [search]"; before the info arrives, from the key
           const label = ti ? toolLabel(ti, locale) : toolLabelOfKey(b.name);
@@ -561,6 +831,13 @@ export function buildEventTimeline(
             },
           };
           const tool: TimelineTool = { row, callId: b.id, toolKey: b.name, input, outputId: null };
+          const base = ti?.aliasOf ?? b.name;
+          if (base === BASH_TOOL && rec.run_in_background === true)
+            tool.background = { taskId: null };
+          if (TASK_TOOLS.has(base) && typeof rec.task_id === "string") {
+            const description = taskDescriptions.get(rec.task_id);
+            if (description) row.keyArg = description;
+          }
           group.rows.push(tool);
           calls.set(callKey(e.runId, b.id), {
             tool,
@@ -608,6 +885,8 @@ export function buildEventTimeline(
           (view?.kind === "command" && (view.timedOut || (exit ?? 0) !== 0)) ||
           row.blockedBy !== undefined;
         row.status = failed ? "failed" : "done";
+        delete row.waiting;
+        delete row.waitingFor;
         c.done = true;
         const end = Date.parse(e.createdAt);
         if (c.started !== null && !Number.isNaN(end)) row.durationMs = Math.max(0, end - c.started);
@@ -643,6 +922,13 @@ export function buildEventTimeline(
           ...(failed ? { errorText: p.content } : {}),
         };
         c.tool.outputId = p.outputId ?? null;
+        if (c.tool.background && !failed) {
+          const taskId = STARTED_TASK.exec(p.content)?.[1];
+          if (taskId !== undefined) {
+            c.tool.background = { taskId };
+            taskDescriptions.set(taskId, row.description ?? taskId);
+          }
+        }
         if (p.card) {
           const list = groupCards.get(c.group) ?? [];
           list.push({
@@ -762,11 +1048,13 @@ export function buildEventTimeline(
           toolKey: e.payload.toolKey,
           ...(e.payload.approvalId !== undefined ? { approvalId: e.payload.approvalId } : {}),
           ...(e.payload.questionId !== undefined ? { questionId: e.payload.questionId } : {}),
+          ...approverField(e.payload),
           ...(e.payload.expiresAt !== undefined ? { expiresAt: e.payload.expiresAt } : {}),
         });
         break;
       }
       case "approval_requested":
+        waitOn(e.runId, e.payload.callId, "approval", e.payload.approvalId, approverOf(e.payload));
         approvals.set(e.payload.approvalId, out.length);
         out.push({
           kind: "approval",
@@ -778,12 +1066,14 @@ export function buildEventTimeline(
             input: calls.get(callKey(e.runId, e.payload.callId))?.tool.input,
             expiresAt: e.payload.expiresAt,
             ...(e.payload.policy !== undefined ? { policy: e.payload.policy } : {}),
+            ...approverField(e.payload),
             decided: null,
             decidedAt: null,
           },
         });
         break;
       case "approval_decided": {
+        waitEnded(e.payload.approvalId, "approval");
         const i = approvals.get(e.payload.approvalId);
         const prev = i === undefined ? undefined : out[i];
         if (i !== undefined && prev?.kind === "approval")
@@ -791,6 +1081,7 @@ export function buildEventTimeline(
         break;
       }
       case "question_asked":
+        waitOn(e.runId, e.payload.callId, "input", e.payload.questionId, starterOf(e.runId));
         questions.set(e.payload.questionId, out.length);
         out.push({
           kind: "question",
@@ -805,6 +1096,7 @@ export function buildEventTimeline(
         });
         break;
       case "question_answered": {
+        waitEnded(e.payload.questionId, "input");
         const i = questions.get(e.payload.questionId);
         const prev = i === undefined ? undefined : out[i];
         if (i !== undefined && prev?.kind === "question")
@@ -812,6 +1104,8 @@ export function buildEventTimeline(
         break;
       }
       case "connection_required":
+        // until the call's result: the run resumes the call once the person connects
+        waitOn(e.runId, e.payload.callId, "connect", undefined, starterOf(e.runId));
         out.push({
           kind: "connect",
           key,
@@ -824,6 +1118,17 @@ export function buildEventTimeline(
         });
         break;
       case "usage":
+        if (e.runId !== null) {
+          const r = runOf(e.runId);
+          const p = e.payload;
+          const tk = r.tokens ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 };
+          tk.input += p.inputTokens;
+          tk.output += p.outputTokens;
+          tk.cacheRead += p.cacheReadTokens;
+          tk.cacheWrite += p.cacheWriteTokens;
+          tk.total += p.inputTokens + p.cacheReadTokens + p.cacheWriteTokens + p.outputTokens;
+          r.tokens = tk;
+        }
         if (e.payload.purpose === "compaction") {
           const p = e.payload;
           compactionUsage = Math.max(
@@ -832,6 +1137,19 @@ export function buildEventTimeline(
           );
         }
         break;
+      case "background_task_finished": {
+        const p = e.payload;
+        if (!taskDescriptions.has(p.taskId)) taskDescriptions.set(p.taskId, p.description);
+        out.push({
+          kind: "background",
+          key,
+          taskId: p.taskId,
+          description: p.description,
+          status: p.status,
+          exitCode: p.exitCode,
+        });
+        break;
+      }
       case "compaction_summary":
         out.push({
           kind: "divider",
@@ -842,36 +1160,33 @@ export function buildEventTimeline(
         });
         compactionUsage = null;
         break;
+      case "run_finished":
+        out.push({ kind: "run", key, ...runData(e), status: "ok" });
+        break;
       case "run_aborted":
         out.push({
-          kind: "divider",
+          kind: "run",
           key,
-          divider: "stopped",
+          ...runData(e),
+          status: "stopped",
           byAccountId: e.payload.byAccountId,
-          at: e.createdAt,
         });
         break;
       case "run_failed": {
-        const code = e.payload.error.code;
-        if (code === "run.hook_denied") {
-          const d = e.runId === null ? undefined : modelDenials.get(e.runId);
-          out.push({
-            kind: "divider",
-            key,
-            divider: "hook-denied",
-            plugin: d?.plugin ?? null,
-            reason: d?.reason ?? null,
-            at: e.createdAt,
-          });
-          break;
-        }
+        const { code, message } = e.payload.error;
+        const denial =
+          code === "run.hook_denied" && e.runId !== null ? modelDenials.get(e.runId) : undefined;
         out.push({
-          kind: "divider",
+          kind: "run",
           key,
-          divider: "failed",
+          ...runData(e),
+          status: "failed",
           code,
-          message: code === "storage.unavailable" ? e.payload.error.message : "",
-          at: e.createdAt,
+          message,
+          hook:
+            code === "run.hook_denied"
+              ? { plugin: denial?.plugin ?? null, reason: denial?.reason ?? null }
+              : null,
           retry: lastUser,
           retried: false,
         });
@@ -914,12 +1229,7 @@ export function buildEventTimeline(
     if (v === undefined) continue;
     if (v.status === "waiting") {
       row.status = "waiting";
-      row.waiting =
-        v.pendingApprovalIds.length > 0
-          ? "approval"
-          : v.pendingQuestionIds.length > 0
-            ? "input"
-            : "connect";
+      row.waiting = subagentWaitKind(v);
     } else if (v.status === "running" || v.status === "queued") {
       row.status = v.status;
       delete row.waiting;
@@ -974,16 +1284,7 @@ export function runStats(events: readonly ConversationEvent[]): RunStats {
   return { turns, startedAt, endedAt, last };
 }
 
-/** The tool keys the timeline names (for `GET …/tools?keys=`), a sub-agent's waits' included. */
-export function toolKeysOf(events: readonly ConversationEvent[]): string[] {
-  const keys = new Set<string>();
-  for (const e of events) {
-    if (e.type === "subagent_waiting") keys.add(e.payload.toolKey);
-    if (e.type !== "assistant_message") continue;
-    for (const b of e.payload.content) if (b.type === "tool_call") keys.add(b.name);
-  }
-  return [...keys];
-}
+export { toolKeysOf } from "./tool-keys";
 
 /** The latest model the conversation used: the last model_call, else the last run_started. */
 export function latestModel(events: readonly ConversationEvent[]): ModelRef | null {

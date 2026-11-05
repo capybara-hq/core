@@ -23,6 +23,7 @@ export const parentReachable =
           .whereRef("p.org_id", "=", "conversations.org_id")
           .where("p.account_id", "=", viewerAccountId)
           .where("p.kind", "=", "chat")
+          .where("p.deleted_at", "is", null)
           .where("agents.deleted_at", "is", null)
           .where(visibleTo(viewerAccountId)),
       ),
@@ -54,6 +55,7 @@ export class ConversationAccess {
       .where("conversations.id", "=", conversationId)
       .where("conversations.org_id", "=", orgId)
       .where("conversations.account_id", "=", viewerAccountId)
+      .where("conversations.deleted_at", "is", null)
       .where("conversations.kind", "in", ["chat", "subagent"])
       .where(parentReachable(viewerAccountId))
       .where((eb) =>

@@ -7,16 +7,22 @@ import {
   PropertiesPanel,
   typeBadge,
 } from "@capybara-hq/design";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { useEffect, useMemo, useRef } from "react";
-import { getSandboxStatus } from "../../lib/artifacts";
-import { listConnectors } from "../../lib/connectors";
-import type { ConversationEvent, ModelRef, SubagentView, ToolInfo } from "../../lib/conversations";
+import type {
+  BackgroundTaskView,
+  ConversationEvent,
+  ModelRef,
+  SubagentView,
+  ToolInfo,
+} from "../../lib/conversations";
 import type { FileOutput } from "../../lib/files";
+import { retryOnMountOf } from "../../lib/query/client";
+import { connectorsQuery, sandboxQuery } from "../../lib/query/conversation";
 import { useToolInfo } from "../../lib/tool-info";
 import { parseToolKey } from "../../lib/tool-key";
 import type { UiContributionItem } from "../../lib/ui";
-import { useLoad } from "../../lib/use-load";
 import { BackgroundSection } from "./BackgroundSection";
 import { type BlockContext, ExtensionSection } from "./ExtensionBlocks";
 
@@ -76,6 +82,7 @@ const sandboxUses = (
 /**
  * The built-in Context section (the old Context tab): the context ratio of the latest step's usage,
  * the model, the sandbox state (read again after each sandbox tool result) and the connectors used.
+ * A connectors read the role is refused (R5: not read again on mount) names no connectors.
  */
 export function ContextSection({
   orgId,
@@ -83,6 +90,7 @@ export function ContextSection({
   events,
   model,
   contextPct,
+  lastRun,
   total,
 }: {
   orgId: string;
@@ -90,21 +98,24 @@ export function ContextSection({
   events: readonly ConversationEvent[];
   model: ModelRef | null;
   contextPct: number | null;
+  /** The last run's line, once a run ended. */
+  lastRun?: string | undefined;
   /** The tokens with sub-agents line, once there are any. */
   total?: string | undefined;
 }) {
   const t = useTranslations("chatPanel");
-  const connectors = useLoad(() => listConnectors(orgId), [orgId]);
+  const qc = useQueryClient();
+  const connectorsQ = connectorsQuery(orgId);
+  const connectors = useQuery({
+    ...connectorsQ,
+    retryOnMount: retryOnMountOf(connectorsQ.queryKey),
+  }).data;
   const nameOfSlug = useMemo(
-    () =>
-      new Map(
-        connectors.state.kind === "ready"
-          ? connectors.state.data.connectors.map((a) => [a.slug, a.name])
-          : [],
-      ),
-    [connectors.state],
+    () => new Map((connectors?.connectors ?? []).map((a) => [a.slug, a.name])),
+    [connectors],
   );
-  const sandbox = useLoad(() => getSandboxStatus(orgId, conversationId), [orgId, conversationId]);
+  const sandboxQ = sandboxQuery(orgId, conversationId);
+  const sandbox = useQuery({ ...sandboxQ, retryOnMount: retryOnMountOf(sandboxQ.queryKey) });
   const resultKeys = useMemo(
     () => [
       ...new Set(events.flatMap((e) => (e.type === "tool_result" ? [e.payload.toolKey] : []))),
@@ -113,30 +124,30 @@ export function ContextSection({
   );
   const toolInfo = useToolInfo(orgId, conversationId, resultKeys);
   const uses = useMemo(() => sandboxUses(events, toolInfo), [events, toolInfo]);
-  const seen = useRef<number | null>(null);
-  const { reload } = sandbox;
+  // A sandbox tool result since the last look may have started, stopped or replaced it.
+  const seenUses = useRef<number | null>(null);
   useEffect(() => {
     if (uses === null) return;
-    const prev = seen.current;
-    seen.current = uses;
+    const prev = seenUses.current;
+    seenUses.current = uses;
     // The first resolved count is the baseline, not a change.
-    if (prev !== null && uses !== prev) reload();
-  }, [uses, reload]);
-  const s = sandbox.state;
+    if (prev !== null && uses !== prev) void qc.invalidateQueries({ queryKey: sandboxQ.queryKey });
+  }, [uses, qc, sandboxQ.queryKey]);
   const sandboxText =
-    s.kind === "loading"
-      ? undefined
-      : s.kind === "error"
-        ? t("sandboxFailed")
-        : s.data === null
-          ? t("sandboxNone")
-          : t(s.data.status === "running" ? "sandboxRunning" : "sandboxSuspended");
+    sandbox.data === undefined
+      ? sandbox.error === null
+        ? undefined
+        : t("sandboxFailed")
+      : sandbox.data === null
+        ? t("sandboxNone")
+        : t(sandbox.data.status === "running" ? "sandboxRunning" : "sandboxSuspended");
   return (
     <ContextBlock
       ratio={contextPct ?? 0}
       model={model === null ? "—" : model.model}
       {...(sandboxText !== undefined ? { sandbox: `${t("sandbox")} ${sandboxText}` } : {})}
       connectors={connectorsUsed(events, nameOfSlug)}
+      {...(lastRun !== undefined ? { lastRun } : {})}
       {...(total !== undefined ? { total } : {})}
     />
   );
@@ -168,28 +179,36 @@ export function FilesSection({ files, onOpen }: { files: FileOutput[]; onOpen(id
 /**
  * The properties panel (spec §6.16.17 order): Context, the extensions' sections in contribution
  * order (each failing alone), Files (when there are any, the sub-agents' deliveries included), then
- * Background tasks (hidden until there is a sub-agent).
+ * Background tasks (hidden until there is a background task or a sub-agent).
  */
 export function PropertiesSections({
   ctx,
   events,
   model,
   contextPct,
+  lastRun,
   files,
   sections,
   onOpenFile,
-  subagents,
+  background,
   total,
 }: {
   ctx: BlockContext;
   events: readonly ConversationEvent[];
   model: ModelRef | null;
   contextPct: number | null;
+  lastRun?: string | undefined;
   files: FileOutput[];
   sections: UiContributionItem[];
   onOpenFile(id: string): void;
-  subagents?:
-    | { views: readonly SubagentView[]; onStop(id: string): void; onOpen(id: string): void }
+  background?:
+    | {
+        views: readonly SubagentView[];
+        tasks: readonly BackgroundTaskView[];
+        stopping: ReadonlySet<string>;
+        onStop(item: { kind: "task" | "subagent"; id: string }): void;
+        onOpen(item: { kind: "task" | "subagent"; id: string }): void;
+      }
     | undefined;
   total?: string | undefined;
 }) {
@@ -201,17 +220,20 @@ export function PropertiesSections({
         events={events}
         model={model}
         contextPct={contextPct}
+        lastRun={lastRun}
         total={total}
       />
       {sections.map((c) => (
         <ExtensionSection key={`${c.plugin}/${c.id}`} ctx={ctx} c={c} />
       ))}
       {files.length > 0 ? <FilesSection files={files} onOpen={onOpenFile} /> : null}
-      {subagents && subagents.views.length > 0 ? (
+      {background && background.views.length + background.tasks.length > 0 ? (
         <BackgroundSection
-          views={subagents.views}
-          onStop={subagents.onStop}
-          onOpen={subagents.onOpen}
+          views={background.views}
+          tasks={background.tasks}
+          stopping={background.stopping}
+          onStop={background.onStop}
+          onOpen={background.onOpen}
         />
       ) : null}
     </PropertiesPanel>

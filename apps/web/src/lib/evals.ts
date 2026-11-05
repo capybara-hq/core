@@ -336,9 +336,37 @@ export const cancelEvalRun = (orgId: string, runId: string) =>
 /** 一页结果的上限（内核 1–200）。 */
 export const RESULT_PAGE = 200;
 
+/** One page of a run's results (light view). */
+export interface EvalResultPage {
+  rows: EvalResultRow[];
+  /** The cursor of the next page (`null`: this was the last). */
+  next: string | null;
+  /** The response's point in time (the kernel leaves a margin): the next poll's `updatedSince`. */
+  asOf: string | null;
+}
+
 /**
- * 读一次运行的结果轻量视图（按 id 游标逐页读）。给了 `updatedSince` 只读之后有变化的（轮询用）。`asOf` 是第一页
- * 响应的时间点（内核已留余量），作为下一次轮询的 `updatedSince`。
+ * One page (up to {@link RESULT_PAGE}) of a run's results, light view, in id order: `after` is the
+ * previous page's cursor, `updatedSince` reads only rows changed since then (the polling).
+ */
+export async function listEvalResultRowsPage(
+  orgId: string,
+  runId: string,
+  opts: { after?: string; updatedSince?: string } = {},
+): Promise<EvalResultPage> {
+  const q: string =
+    `?view=light&limit=${RESULT_PAGE}` +
+    (opts.updatedSince === undefined ? "" : `&updatedSince=${enc(opts.updatedSince)}`) +
+    (opts.after === undefined ? "" : `&after=${enc(opts.after)}`);
+  const page: { results: EvalResultRow[]; next: string | null; asOf?: string } = await apiFetch(
+    `${org(orgId)}/eval-runs/${enc(runId)}/results${q}`,
+  );
+  return { rows: page.results, next: page.next, asOf: page.asOf ?? null };
+}
+
+/**
+ * Every page of a run's results, light view. With `updatedSince` only the rows changed since then
+ * (the polling). `asOf` is the first page's point in time, the next poll's `updatedSince`.
  */
 export async function listEvalResultRows(
   orgId: string,
@@ -347,19 +375,16 @@ export async function listEvalResultRows(
 ): Promise<{ rows: EvalResultRow[]; asOf: string | null }> {
   const rows: EvalResultRow[] = [];
   let asOf: string | null = null;
-  let after: string | null = null;
+  let after: string | undefined;
   do {
-    const q: string =
-      `?view=light&limit=${RESULT_PAGE}` +
-      (updatedSince === undefined ? "" : `&updatedSince=${enc(updatedSince)}`) +
-      (after === null ? "" : `&after=${enc(after)}`);
-    const page: { results: EvalResultRow[]; next: string | null; asOf?: string } = await apiFetch(
-      `${org(orgId)}/eval-runs/${enc(runId)}/results${q}`,
-    );
-    rows.push(...page.results);
-    asOf ??= page.asOf ?? null;
-    after = page.next;
-  } while (after !== null);
+    const page = await listEvalResultRowsPage(orgId, runId, {
+      ...(updatedSince !== undefined && { updatedSince }),
+      ...(after !== undefined && { after }),
+    });
+    rows.push(...page.rows);
+    asOf ??= page.asOf;
+    after = page.next ?? undefined;
+  } while (after !== undefined);
   return { rows, asOf };
 }
 

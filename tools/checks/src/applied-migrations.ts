@@ -1,13 +1,15 @@
 import { execFileSync } from "node:child_process";
 import {
   checkAppliedMigrations as checkApplied,
+  diffMigrationNumbers,
   migrationFileMatcher,
 } from "@capybara-hq/plugin-tools";
 import type { Finding } from "./source.js";
 
 /**
  * Core's applied migrations: the kernel's (`packages/kernel/src/migrations/*.sql`) and the plugins'
- * (`plugins/<name>/migrations/*.sql`). The check itself is plugin-tools' `checkAppliedMigrations`.
+ * (`plugins/<name>/migrations/*.sql`). The checks themselves are plugin-tools'
+ * `checkAppliedMigrations` and `checkMigrationNumbers`.
  */
 export const isMigrationFile = migrationFileMatcher([
   "packages/kernel/src/migrations",
@@ -57,3 +59,11 @@ export function diffAppliedMigrations(cwd: string, base: string): Finding[] {
   );
   return checkAppliedMigrations(out);
 }
+
+/**
+ * plugin-tools' `migration-number-behind-base` on `<base>...HEAD` in `cwd`: every migration the
+ * diff adds to {@link isMigrationFile}'s directories is numbered above the highest number of its
+ * directory at `<base>`.
+ */
+export const diffNewMigrationNumbers = (cwd: string, base: string): Finding[] =>
+  diffMigrationNumbers(cwd, base, isMigrationFile);

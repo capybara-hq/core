@@ -10,10 +10,13 @@
 <body>
 <main class="r-page">
 <h1>List page template</h1>
-<p>Sidebar + content (list width 1080): header, stat cards, toolbar, table, pagination; status bar at the bottom of the content area.</p>
+<p>Sidebar + content (list width 1080): header, stat cards, toolbar, table, pagination; status bar at the bottom of the content area. Loading (spec §5.1): the header keeps its rows with a dash for each tab count, and the objects list draws rows in its own container, a 36 px mark and two text lines each. Nothing animates.</p>
 <div class="r-blocks">
 <section data-ref-block="template-list-page" style="width:1280px;height:820px">
   <template data-fixture="list-page"></template>
+</section>
+<section data-ref-block="template-list-loading-objects" style="width:1280px;height:640px">
+  <template data-fixture="list-loading-objects"></template>
 </section>
 </div>
 </main>

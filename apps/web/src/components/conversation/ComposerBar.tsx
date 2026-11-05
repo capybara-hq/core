@@ -15,11 +15,14 @@ import {
   Stack,
   useToast,
 } from "@capybara-hq/design";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import {
   type ChangeEvent,
   type KeyboardEvent,
+  type Ref,
   useEffect,
+  useImperativeHandle,
   useRef,
   useState,
   useSyncExternalStore,
@@ -30,17 +33,16 @@ import {
   type ConnectorPrompt,
   type ConnectorResource,
   type ConnectorUnavailable,
-  listConnectorPrompts,
-  listConnectorResources,
   renderConnectorPrompt,
 } from "../../lib/connectors";
 import type { MessageInput } from "../../lib/conversations";
 import {
-  findInvocable,
-  type InvocableSkill,
-  listInvocableSkills,
-  parseSlashCommand,
-} from "../../lib/skills";
+  connectorPromptsQuery,
+  connectorResourcesQuery,
+  invocableSkillsQuery,
+} from "../../lib/query/conversation";
+import { useAppMutation } from "../../lib/query/mutation";
+import { findInvocable, type InvocableSkill, parseSlashCommand } from "../../lib/skills";
 import { useErrorMessage } from "../../lib/use-error-message";
 import { type DraftFile, useDraftFiles } from "../use-draft-files";
 import type { SendResult } from "./useConversation";
@@ -84,7 +86,48 @@ type Palette = "prompts" | "resources" | null;
 export type ComposerMessage = Pick<
   MessageInput,
   "text" | "clientMessageId" | "attachments" | "files" | "skill"
->;
+> & {
+  /**
+   * What a pending bubble shows until the log has the message (never sent): the skill's chip
+   * label and the files' names.
+   */
+  display?: { skill?: string; files: { name: string; kind: "image" | "file" }[] };
+  /**
+   * The draft as it was sent, for a view that outlives this composer (the new conversation's
+   * layout switch remounts it): a failed send gives it to the next composer's `initialDraft`.
+   */
+  draft?: ComposerDraft;
+};
+
+/** A composer's draft handed from one composer to the next (text, chip, resources, files, id). */
+export type ComposerDraft = {
+  text: string;
+  skill: InvocableSkill | null;
+  attachments: DraftAttachment[];
+  files: DraftFile[];
+  /** The draft's `clientMessageId`, kept for the retry (the kernel dedupes it). */
+  id?: { key: string; id: string };
+};
+
+/** What a page may do to its composer from outside (the new conversation's quick actions). */
+export type ComposerControl = {
+  /**
+   * Replaces the text with `text` and focuses the input. The text it replaced is one undo step:
+   * the next ⌘Z / Ctrl+Z, before any other edit, brings it back.
+   */
+  fill(text: string): void;
+  /** Focuses the input (a new conversation's agent was picked). */
+  focus(): void;
+};
+
+/** ⌘Z on a Mac, Ctrl+Z elsewhere (either is taken: the browser's own undo also takes both). */
+export const isUndoKey = (e: {
+  key: string;
+  metaKey: boolean;
+  ctrlKey: boolean;
+  shiftKey: boolean;
+  altKey: boolean;
+}) => (e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "z";
 
 /** The name a picked skill is invoked by: `<plugin>:<name>` for a plugin's skill. */
 const invokeName = (s: InvocableSkill) => (s.plugin ? `${s.plugin}:${s.name}` : s.name);
@@ -130,8 +173,9 @@ function useObjectUrls(files: DraftFile[]): ReadonlyMap<string, string> {
 /**
  * The composer (spec §5.2, §6.16.2): text, the attachment strip, the pickers and send / stop.
  *
- * Keys: ↵ sends (interjects while a run is going); ⌘↵ / Ctrl+↵ queues while a run is going and
- * sends when idle; Shift+↵ is a newline; nothing happens while an IME is composing.
+ * Keys: ↵ sends when idle and queues while a run is going (conversation send spec §2.3); ⌘↵ /
+ * Ctrl+↵ sends, interjecting while a run is going; Shift+↵ is a newline; nothing happens while an
+ * IME is composing.
  *
  * Carried over from the old composer: each draft keeps one `clientMessageId` until it is sent or
  * changed (the kernel dedupes retries); `/` in an empty composer lists the agent's skills, then
@@ -157,58 +201,78 @@ export function ComposerBar({
   pickers,
   placeholder,
   sendDisabled,
+  initialDraft,
+  onBlocked,
+  control,
 }: {
   orgId: string;
   /** The conversation's agent (the `/` menu lists its skills); undefined while loading. */
   agentId?: string | undefined;
   /** The conversation, once it exists and is the caller's (its trial drafts apply). */
   conversationId?: string | undefined;
-  /** A run is going (or waiting for a person): ↵ interjects, ⌘↵ queues, send becomes stop. */
+  /** A run is going (or waiting for a person): ↵ queues, ⌘↵ interjects, send becomes stop. */
   running: boolean;
   stop?: { onStop(): void; stopping: boolean };
   onSend(m: ComposerMessage): Promise<SendResult>;
-  /** Queue the message (⌘↵ while running); absent before the conversation exists. */
+  /** Queue the message (↵ while running); absent before the conversation exists. */
   onQueue?(m: ComposerMessage): Promise<SendResult>;
-  pickers: { agent: PickerProps; model: PickerProps; effort?: PickerProps };
+  /** The agent picker is absent on the new conversation page (its agents row picks). */
+  pickers: { agent?: PickerProps; model: PickerProps; effort?: PickerProps };
   placeholder: string;
-  /** Nothing can be sent yet (a new conversation whose agent is still loading). */
+  /** Nothing can be sent yet (a new conversation whose agent, or a thread, is still loading). */
   sendDisabled?: boolean;
+  /** A failed send's draft to start from (read at mount). */
+  initialDraft?: ComposerDraft | undefined;
+  /** ↵ with a draft while `sendDisabled` (the caller says why; the draft stays). */
+  onBlocked?(): void;
+  /** Filled with {@link ComposerControl} while this composer is mounted. */
+  control?: Ref<ComposerControl>;
 }) {
   const t = useTranslations("chat");
   const tc = useTranslations("common");
   const toast = useToast();
   const errorMessage = useErrorMessage();
   const mac = useSyncExternalStore(noSubscribe, isMac, () => true);
-  const [text, setText] = useState("");
-  const [attachments, setAttachments] = useState<DraftAttachment[]>([]);
+  const [text, setText] = useState(initialDraft?.text ?? "");
+  const [attachments, setAttachments] = useState<DraftAttachment[]>(
+    initialDraft?.attachments ?? [],
+  );
   /** The picked skill (the chip), or null. */
-  const [skill, setSkill] = useState<InvocableSkill | null>(null);
-  /** The agent's invocable skills, read once per agent (and refreshed when the menu opens). */
-  const [skills, setSkills] = useState<{ agentId: string; items: InvocableSkill[] }>();
-  const drafts = useDraftFiles(orgId);
+  const [skill, setSkill] = useState<InvocableSkill | null>(initialDraft?.skill ?? null);
+  const qc = useQueryClient();
+  /** The agent's invocable skills (read again when the menu opens once they are stale). */
+  const skillsQ = invocableSkillsQuery(orgId, agentId ?? "", conversationId);
+  // Read when the menu opens or a typed `/name` is sent (`loadSkills`), or prefetched with the page.
+  const skills = useQuery({ ...skillsQ, enabled: false }).data;
+  // The menus' lists, read when a menu opens (`openPalette`).
+  const prompts = useQuery({ ...connectorPromptsQuery(orgId), enabled: false }).data;
+  const resources = useQuery({ ...connectorResourcesQuery(orgId), enabled: false }).data;
+  // The rendered text goes into the input: nothing cached changes.
+  const { mutateAsync: renderPrompt } = useAppMutation({
+    fn: (v: { p: ConnectorPrompt; values: Record<string, string> }) =>
+      renderConnectorPrompt(orgId, v.p.connectorId, v.p.name, v.values),
+    invalidates: () => [],
+  });
+  const drafts = useDraftFiles(orgId, initialDraft?.files);
   const files = drafts.files;
   const previews = useObjectUrls(files);
   const fileInput = useRef<HTMLInputElement>(null);
 
-  const [pending, setPending] = useState(false);
   const [palette, setPalette] = useState<Palette>(null);
-  const [prompts, setPrompts] = useState<{
-    items: ConnectorPrompt[];
-    unavailable: ConnectorUnavailable[];
-  }>();
-  const [resources, setResources] = useState<{
-    items: ConnectorResource[];
-    unavailable: ConnectorUnavailable[];
-  }>();
   const [argsFor, setArgsFor] = useState<ConnectorPrompt | null>(null);
   const [args, setArgs] = useState<Record<string, string>>({});
   const [rendering, setRendering] = useState(false);
-  const draft = useRef<{ key: string; id: string } | undefined>(undefined);
+  const draft = useRef<{ key: string; id: string } | undefined>(initialDraft?.id);
+  /** A typed `/name` is being resolved (the skills read): a second ↵ waits for it. */
+  const resolving = useRef(false);
   const trigger = useRef<{ char: string; pos: number; picked: boolean } | null>(null);
 
   // A new agent (a new conversation's picker) has other skills: its chip and list go.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: reset on the agent only
+  // (a change, not the mount: a given-back draft keeps its chip)
+  const agentAt = useRef(agentId);
   useEffect(() => {
+    if (agentAt.current === agentId) return;
+    agentAt.current = agentId;
     setSkill(null);
   }, [agentId]);
 
@@ -216,40 +280,44 @@ export function ComposerBar({
    * The agent's invocable skills. A conversation that is not the caller's (404) lists without it.
    * Failures read as no skills (typed `/name` is then sent as text).
    */
-  async function loadSkills(): Promise<InvocableSkill[]> {
+  async function loadSkills(fresh = false): Promise<InvocableSkill[]> {
     if (agentId === undefined) return [];
+    const q = invocableSkillsQuery(orgId, agentId, conversationId);
     try {
-      const r = await listInvocableSkills(orgId, agentId, conversationId).catch((e: unknown) => {
-        if (
-          conversationId !== undefined &&
-          e instanceof ApiClientError &&
-          e.code === "conversation.not_found"
-        )
-          return listInvocableSkills(orgId, agentId);
-        throw e;
-      });
-      setSkills({ agentId, items: r.skills });
-      return r.skills;
+      // The menu opening and a refusal read the list again (a person's action, not a view).
+      return await qc.fetchQuery(fresh ? { ...q, staleTime: 0 } : q);
     } catch (e) {
       toast.error(errorMessage(e));
       return [];
     }
   }
 
+  // A lone "/" is the menu's trigger, not a message.
   const empty = (value: string) =>
-    skill === null && value === "" && (files.length === 0 || attachments.length > 0);
+    skill === null &&
+    (value === "" || value === "/") &&
+    (files.length === 0 || attachments.length > 0);
 
   async function submit(how: "send" | "queue") {
     const sentText = text;
     const sentSkill = skill;
     const sentAttachments = attachments;
     const value = text.trim();
-    if (pending || drafts.blocking || sendDisabled) return;
+    if (sendDisabled && !empty(value)) onBlocked?.();
+    if (drafts.blocking || sendDisabled || resolving.current) return;
     const sent = files.flatMap((f) => (f.id !== undefined ? [{ key: f.key, id: f.id }] : []));
     // Files alone can be sent; `@` resources need text (their bodies follow content[0]).
     if (empty(value)) return;
     const fileIds = sent.map((f) => f.id);
-    setPending(true);
+    const shownFiles = files
+      .filter((f) => f.id !== undefined)
+      .map((f) => ({
+        name: f.name,
+        kind:
+          f.file && fileContentType(f.file).startsWith("image/")
+            ? ("image" as const)
+            : ("file" as const),
+      }));
     // the chip, else a typed `/name args` naming a listed skill (spec §3.2)
     let invoke = skill !== null ? invokeName(skill) : undefined;
     let args = value;
@@ -257,8 +325,9 @@ export function ComposerBar({
     if (invoke === undefined) {
       const typed = parseSlashCommand(value);
       if (typed !== null) {
-        const list =
-          skills !== undefined && skills.agentId === agentId ? skills.items : await loadSkills();
+        resolving.current = true;
+        const list = skills ?? (await loadSkills().finally(() => (resolving.current = false)));
+        resolving.current = false;
         if (findInvocable(list, typed.name) !== undefined) {
           invoke = typed.name;
           args = typed.args;
@@ -266,6 +335,29 @@ export function ComposerBar({
         }
       }
     }
+    // The composer clears now, with the pending bubble in the same render (conversation send
+    // spec §2.1; a typed `/name` first resolves, review fix 4): the message shows where it was
+    // sent and comes back here if the kernel refuses it. Only what was sent is cleared (the
+    // person may have typed on while the skills were read).
+    setText((cur) =>
+      cur === sentText
+        ? ""
+        : cur.startsWith(sentText)
+          ? cur.slice(sentText.length).trimStart()
+          : cur,
+    );
+    setSkill((cur) => (cur === sentSkill ? null : cur));
+    setAttachments((cur) => cur.filter((a) => !sentAttachments.includes(a)));
+    const taken = drafts.take(sent.map((f) => f.key));
+    const restore = () => {
+      setText((cur) => (cur.trim() === "" ? sentText : `${sentText}\n${cur}`));
+      setSkill((cur) => cur ?? sentSkill);
+      setAttachments((cur) => [
+        ...sentAttachments,
+        ...cur.filter((a) => !sentAttachments.includes(a)),
+      ]);
+      drafts.restore(taken);
+    };
     const message = (text: string, name: string | undefined): ComposerMessage => {
       const key = draftKey(text, attachments, fileIds, name);
       if (draft.current?.key !== key) draft.current = { key, id: newClientMessageId() };
@@ -275,6 +367,18 @@ export function ComposerBar({
         attachments: attachments.map((a) => ({ connectorId: a.connectorId, uri: a.uri })),
         files: fileIds,
         ...(name !== undefined ? { skill: { name } } : {}),
+        // the chip shows the bare name, as the thread's bubble does
+        display: {
+          files: shownFiles,
+          ...(name !== undefined ? { skill: `/${name.slice(name.indexOf(":") + 1)}` } : {}),
+        },
+        draft: {
+          text: sentText,
+          skill: sentSkill,
+          attachments: sentAttachments,
+          files: taken,
+          id: draft.current,
+        },
       };
     };
     const post = (m: ComposerMessage) => (how === "queue" && onQueue ? onQueue(m) : onSend(m));
@@ -288,55 +392,52 @@ export function ComposerBar({
       ) {
         // A typed `/name` from a stale list (the skill was deselected since it was read): an
         // unknown name is sent as text (spec §3.2), and the list is read again.
-        void loadSkills();
+        void loadSkills(true);
         r = await post(message(value, undefined));
       }
       if (r.ok) {
         draft.current = undefined;
-        // Clear only what was sent: the person may have typed on while the send was pending.
-        setText((cur) =>
-          cur === sentText
-            ? ""
-            : cur.startsWith(sentText)
-              ? cur.slice(sentText.length).trimStart()
-              : cur,
-        );
-        setSkill((cur) => (cur === sentSkill ? null : cur));
-        setAttachments((cur) => cur.filter((a) => !sentAttachments.includes(a)));
-        drafts.removeSent(sent.map((f) => f.key));
       } else {
+        restore();
         drafts.markFailed(r.error);
       }
-    } finally {
-      setPending(false);
+    } catch (e) {
+      restore();
+      throw e;
     }
   }
 
   function onKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
+    // The one undo step of a fill: only while the text is still what the fill put there.
+    const undo = undoFill.current;
+    if (undo !== null && isUndoKey(e)) {
+      undoFill.current = null;
+      if (text === undo.text) {
+        e.preventDefault();
+        setText(undo.before);
+        return;
+      }
+    }
     if (e.key !== "Enter" || e.nativeEvent.isComposing || e.shiftKey) return;
     e.preventDefault();
+    // While a run is going ↵ queues for after the turn and ⌘↵ / Ctrl+↵ sends now (interjects).
     const modified = e.metaKey || e.ctrlKey;
-    void submit(modified && running && onQueue ? "queue" : "send");
+    void submit(!modified && running && onQueue ? "queue" : "send");
   }
 
   function openPalette(which: Exclude<Palette, null>, pos: number) {
     trigger.current = { char: which === "prompts" ? "/" : "@", pos, picked: false };
     setPalette(which);
+    const failed = (e: unknown) => toast.error(errorMessage(e));
     if (which === "prompts") {
-      void loadSkills();
-      listConnectorPrompts(orgId).then(
-        (r) => setPrompts({ items: r.prompts, unavailable: r.unavailable }),
-        (e: unknown) => toast.error(errorMessage(e)),
-      );
-    } else {
-      listConnectorResources(orgId).then(
-        (r) => setResources({ items: r.resources, unavailable: r.unavailable }),
-        (e: unknown) => toast.error(errorMessage(e)),
-      );
-    }
+      void loadSkills(true);
+      qc.fetchQuery(connectorPromptsQuery(orgId)).catch(failed);
+    } else qc.fetchQuery(connectorResourcesQuery(orgId)).catch(failed);
   }
 
   function onChange(next: string, el?: HTMLTextAreaElement | null) {
+    // An edit after a fill: ⌘Z is the browser's own again.
+    undoFill.current = null;
     const caret = el?.selectionStart ?? next.length;
     if (text === "" && next === "/" && skill === null) {
       openPalette("prompts", 0);
@@ -354,7 +455,7 @@ export function ComposerBar({
   async function insertPrompt(p: ConnectorPrompt, values: Record<string, string>) {
     setRendering(true);
     try {
-      const r = await renderConnectorPrompt(orgId, p.connectorId, p.name, values);
+      const r = await renderPrompt({ p, values });
       setText(r.text);
       setArgsFor(null);
     } catch (e) {
@@ -416,7 +517,7 @@ export function ComposerBar({
     return [...groups.values()];
   };
 
-  const skillItems = skills !== undefined && skills.agentId === agentId ? skills.items : [];
+  const skillItems = skills ?? [];
   const groups: CommandGroup[] =
     palette === "prompts"
       ? [
@@ -448,7 +549,7 @@ export function ComposerBar({
                 },
               ]
             : []),
-          ...byConnector(prompts?.items ?? []).map((g) => ({
+          ...byConnector(prompts?.prompts ?? []).map((g) => ({
             label: g.label,
             items: g.items.map((p) => ({
               id: `prompt:${p.connectorId}:${p.name}`,
@@ -465,7 +566,7 @@ export function ComposerBar({
         ]
       : palette === "resources"
         ? [
-            ...byConnector(resources?.items ?? []).map((g) => ({
+            ...byConnector(resources?.resources ?? []).map((g) => ({
               label: g.label,
               items: g.items.map((r) => ({
                 id: `resource:${r.connectorId}:${r.uri}`,
@@ -516,6 +617,30 @@ export function ComposerBar({
 
   const hint = running ? t(mac ? "queueHintMac" : "queueHint") : undefined;
   const textEl = useRef<HTMLTextAreaElement>(null);
+  /**
+   * The text a fill replaced, while the fill's text is unedited. A controlled textarea's value set
+   * by React is not on the browser's undo stack, so the composer keeps this one step itself.
+   */
+  const undoFill = useRef<{ before: string; text: string } | null>(null);
+  const textNow = useRef(text);
+  textNow.current = text;
+  useImperativeHandle(
+    control,
+    () => ({
+      fill(next: string) {
+        const before = textNow.current;
+        undoFill.current = before === next ? null : { before, text: next };
+        textNow.current = next;
+        setText(next);
+        // a value set from outside puts the caret after the text
+        textEl.current?.focus();
+      },
+      focus() {
+        textEl.current?.focus();
+      },
+    }),
+    [],
+  );
 
   return (
     <>
@@ -555,8 +680,8 @@ export function ComposerBar({
             running && stop
               ? { mode: "stop", busy: stop.stopping, onClick: stop.onStop }
               : {
+                  // Never busy: the message is pending in the thread, not in the composer.
                   mode: "send",
-                  busy: pending,
                   disabled: sendDisabled === true || drafts.blocking || empty(text.trim()),
                   onClick: () => void submit("send"),
                 }
@@ -591,6 +716,7 @@ export function ComposerBar({
           }
         }}
         groups={groups}
+        {...(palette === "prompts" && groups.length === 0 ? { emptyText: t("noInvocable") } : {})}
       />
       <Dialog
         open={argsFor !== null}

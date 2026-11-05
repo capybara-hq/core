@@ -1,10 +1,14 @@
 export {
+  type BaseMigrationNames,
   checkAppliedMigrations,
+  checkMigrationNumbers,
   diffAppliedMigrations,
+  diffMigrationNumbers,
   type MigrationFilePredicate,
   migrationFileMatcher,
 } from "./applied-migrations.js";
 export { CHECK_USAGE, checkCommand } from "./cli.js";
+export { checkConfigForms } from "./config-forms.js";
 export { checkDeps } from "./deps.js";
 export { checkMigrations, checkSql } from "./migrations.js";
 export { checkPluginPack, PLUGIN_PACK_MAX_BYTES } from "./plugin-pack.js";

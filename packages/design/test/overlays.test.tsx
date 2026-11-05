@@ -10,6 +10,7 @@ import {
   DangerConfirm,
   DesignProvider,
   Dialog,
+  LinkButton,
   Menu,
   Sheet,
   ToastProvider,
@@ -74,6 +75,69 @@ describe("Dialog", () => {
     zh(<DialogHarness initialFocus="cancel" />);
     await user.click(screen.getByRole("button", { name: "打开" }));
     expect(document.activeElement).toBe(screen.getByRole("button", { name: "取消" }));
+  });
+});
+
+describe("Dialog: focus and danger", () => {
+  it("a dialog that asks for input starts on its first field", () => {
+    zh(
+      <Dialog
+        open
+        onOpenChange={() => {}}
+        title="新建组织"
+        footer={
+          <Button variant="primary" disabled>
+            新建
+          </Button>
+        }
+      >
+        <label>
+          名称
+          <input aria-label="名称" />
+        </label>
+        <input aria-label="备注" />
+      </Dialog>,
+    );
+    expect(document.activeElement).toBe(screen.getByRole("textbox", { name: "名称" }));
+  });
+
+  it("a dangerous dialog still starts on Cancel, and only its button is red", () => {
+    zh(
+      <DangerConfirm
+        open
+        onOpenChange={() => {}}
+        title="删除组织"
+        description="x"
+        confirmName="abc"
+        confirmLabel="删除"
+        onConfirm={() => {}}
+      />,
+    );
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "取消" }));
+    const css = readFileSync(resolve(import.meta.dirname, "../src/styles/overlays.css"), "utf8");
+    // no fail frame and no fail title: the destructive button carries the colour
+    expect(css).not.toMatch(/\.cb-dialog\[data-danger="true"\]/);
+  });
+
+  it("a primary drawn as a link (LinkButton) is the default focus", () => {
+    zh(
+      <Dialog
+        open
+        onOpenChange={() => {}}
+        title="加入评测集"
+        footer={
+          <>
+            <Button variant="ghost">取消</Button>
+            <LinkButton href="/evals/new" variant="primary">
+              新建评测集
+            </LinkButton>
+          </>
+        }
+      >
+        <p>还没有评测集。</p>
+      </Dialog>,
+    );
+    expect(document.activeElement).toBe(screen.getByRole("link", { name: "新建评测集" }));
   });
 });
 

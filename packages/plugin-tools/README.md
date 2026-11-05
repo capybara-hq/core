@@ -36,13 +36,13 @@ capybara-plugin release [--dry-run] [--provenance] [--out <dir>] [--auto] [--roo
   timers, no module-level mutable state), the permission manifest (hooks, UI, storage, HTTP,
   secrets, tools), packing into a valid plugin package, the tool design rules (English
   descriptions, actionable errors), the migrations (naming, idempotent, no unmarked destructive
-  statements), the plugin tests' imports (`plugin-test-imports`: a file under `<plugin>/test` uses
+  statements, one file per number in a directory), the plugin tests' imports (`plugin-test-imports`: a file under `<plugin>/test` uses
   only `@capybara-hq/plugin-sdk`, `@capybara-hq/testing`, `@capybara-hq/plugin-model-fake`, the
   plugin itself and files inside the plugin, by import, package-name string or path) and the
   release metadata (`plugin-release-metadata`: a public plugin has a `description`, a `license`, an
   https `homepage` and `repository` `{ type: "git", url: <the root package.json's
   repository.url>, directory: <its dir> }`; `example-*` plugins are private). `--base <ref>` also fails when the diff edits, deletes or renames an applied
-  migration. No plugin found is an error. A plugin may list `@capybara-hq/plugin-tools` (like
+  migration, or adds one numbered at or below the highest number of its directory at `<ref>`. No plugin found is an error. A plugin may list `@capybara-hq/plugin-tools` (like
   `@capybara-hq/testing`) in its devDependencies.
 - **sync-versions**: after `changeset version` (which bumps only `package.json`), copies each
   plugin's version into its `.capybara-plugin/plugin.json` and its extension manifest

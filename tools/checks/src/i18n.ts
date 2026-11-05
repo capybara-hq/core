@@ -66,6 +66,81 @@ function invalidMessages(file: string, text: string, json: unknown): Finding[] {
   return findings;
 }
 
+/**
+ * The last words of a key that name a label rather than a sentence: titles, labels, buttons, tabs,
+ * menu items, placeholders (spec §7, "Copy"). Matched on the key's last segment, or the last word
+ * of a camelCase segment (`confirmLabel`, `pageTitle`), case-insensitive.
+ */
+const LABEL_WORDS = new Set([
+  "title",
+  "label",
+  "action",
+  "confirm",
+  "cancel",
+  "submit",
+  "button",
+  "name",
+  "tab",
+  "heading",
+  "item",
+  "menu",
+  "placeholder",
+]);
+
+function isLabelKey(key: string): boolean {
+  const segment = key.split(".").at(-1) ?? "";
+  const lastWord = segment.split(/(?=[A-Z])/).at(-1) ?? "";
+  return LABEL_WORDS.has(lastWord.toLowerCase());
+}
+
+/**
+ * Titles, labels, buttons and the like never end with a period ("。" or "."; an ellipsis "..." is
+ * fine): full sentences do, labels do not (spec §7, "Copy").
+ */
+function labelPeriods(file: string, text: string, json: unknown): Finding[] {
+  return stringLeaves(json)
+    .filter(([key, message]) => isLabelKey(key) && /(?<!\.)[。.]$/.test(message.trimEnd()))
+    .map(([key, message]) => ({
+      file,
+      line: lineOf(text, key),
+      rule: "i18n-label-period",
+      message:
+        `「${key}」is a title / label / button (${JSON.stringify(message)}) and ends with a ` +
+        "period; drop it (only full sentences end with 。 or .)",
+    }));
+}
+
+/** Three dots in a message: the one character "…" is the ellipsis (spec §7.1). */
+function ellipses(file: string, text: string, json: unknown): Finding[] {
+  return stringLeaves(json)
+    .filter(([, message]) => message.includes("..."))
+    .map(([key, message]) => ({
+      file,
+      line: lineOf(text, key),
+      rule: "i18n-ellipsis",
+      message:
+        `「${key}」contains "..." (${JSON.stringify(message)}); ` +
+        'write the single character "…" instead',
+    }));
+}
+
+/** A CJK ideograph directly followed by a half-width ? ! : ; (Chinese text uses ？！：；). */
+const CJK_HALFWIDTH = /[\u3400-\u4dbf\u4e00-\u9fff][?!:;]/;
+
+/** Half-width punctuation right after a CJK character, in the Chinese messages only. */
+function cjkHalfwidth(file: string, text: string, json: unknown): Finding[] {
+  return stringLeaves(json)
+    .filter(([, message]) => CJK_HALFWIDTH.test(message))
+    .map(([key, message]) => ({
+      file,
+      line: lineOf(text, key),
+      rule: "i18n-cjk-halfwidth",
+      message:
+        `「${key}」has a half-width ? ! : ; right after a Chinese character ` +
+        `(${JSON.stringify(message)}); use the full-width ？ ！ ： ；`,
+    }));
+}
+
 type Loaded = { file: string; text: string; json: unknown; keys: Set<string> } | Finding;
 
 function load(file: string): Loaded {
@@ -94,7 +169,9 @@ function load(file: string): Loaded {
 /**
  * 以 zh.json 为基准比较 en.json 的 key 集合（嵌套对象展平为点路径）：
  * en.json 缺少的 key → `i18n-missing-key`，多出的 key → `i18n-extra-key`。
- * A message in either file that is not valid ICU MessageFormat -> `i18n-invalid-message`.
+ * A message in either file that is not valid ICU MessageFormat -> `i18n-invalid-message`; a
+ * title / label / button message ending with a period -> `i18n-label-period`; "..." in a message ->
+ * `i18n-ellipsis`; a half-width ? ! : ; right after a CJK character in zh -> `i18n-cjk-halfwidth`.
  */
 export function checkI18n(messagesDir: string): Finding[] {
   const base = load(join(messagesDir, BASE));
@@ -106,6 +183,11 @@ export function checkI18n(messagesDir: string): Finding[] {
   const findings: Finding[] = [
     ...invalidMessages(base.file, base.text, base.json),
     ...invalidMessages(target.file, target.text, target.json),
+    ...labelPeriods(base.file, base.text, base.json),
+    ...labelPeriods(target.file, target.text, target.json),
+    ...ellipses(base.file, base.text, base.json),
+    ...ellipses(target.file, target.text, target.json),
+    ...cjkHalfwidth(base.file, base.text, base.json),
   ];
   for (const key of base.keys) {
     if (target.keys.has(key)) continue;

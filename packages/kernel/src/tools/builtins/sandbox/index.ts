@@ -6,6 +6,8 @@ import { sandboxEditTool } from "./edit.js";
 import { sandboxGlobTool } from "./glob.js";
 import { sandboxGrepTool } from "./grep.js";
 import { sandboxReadTool } from "./read.js";
+import { taskOutputTool } from "./task-output.js";
+import { taskStopTool } from "./task-stop.js";
 import { sandboxWriteTool } from "./write.js";
 
 export { SANDBOX_ASK_TOOL_NAMES, SANDBOX_TOOL_NAMES } from "../../builtin-names.js";
@@ -29,6 +31,8 @@ export { compileGlob, GlobPatternError, MAX_GLOB_STARS } from "./glob-match.js";
  * 沙箱内置工具（M5 T8）：bash / read / write / edit / glob / grep / deliver，都在本对话的沙箱上执行
  * （`SandboxService.withSandbox`），执行前同步附件到 `/workspace/attachments`。没有沙箱提供方时报不可用。
  * 默认 allow；组织设置 `sandboxToolPolicy` 为 ask 时除 read / glob / grep 外需要审批（见 policy.ts）。
+ * `TaskOutput` and `TaskStop` read and stop background `Bash` tasks through
+ * `SandboxService.ifRunning` (never creating or resuming a sandbox); always allowed.
  */
 export function sandboxTools(deps: SandboxToolDeps): BuiltinTool[] {
   return [
@@ -39,5 +43,7 @@ export function sandboxTools(deps: SandboxToolDeps): BuiltinTool[] {
     sandboxGlobTool(deps),
     sandboxGrepTool(deps),
     sandboxDeliverTool(deps),
+    taskOutputTool(deps),
+    taskStopTool(deps),
   ];
 }

@@ -12,8 +12,12 @@ import {
 import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
 import { type ModelRef, normalizeStoredDefinition } from "../agents/definition.js";
-import { EventLog } from "../conversations/event-log.js";
-import type { ConversationEvent } from "../conversations/events.js";
+import { type AppendEvent, EventLog } from "../conversations/event-log.js";
+import {
+  type AbsorbableEvent,
+  type ConversationEvent,
+  isAbsorbable,
+} from "../conversations/events.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import type { KernelConfigService } from "../infra/config/kernel-config.service.js";
@@ -52,7 +56,10 @@ import type { ResolvedCandidate } from "./step-replay.js";
  *
  * - 种子：原运行 `run_started` 之前的事件按原 seq 插入（`last_seq` 停在其前一位，新的 `run_started` 因此与原来同 seq），
  *   原运行开始时的 `skills_catalog` 照抄；然后写 `runs` 行与 `run_started`，`agent` 用候选定义。
- * - 插话：原运行中途吸收的 user_message，在「原吸收步骤 ≤ 当前步骤」时追加进评测对话并交给 loop。
+ * - 插话：原运行中途吸收的可吸收事件（user_message, and finished background tasks: background Bash
+ *   spec §4.4），在「原吸收步骤 ≤ 当前步骤」时追加进评测对话并交给 loop（a recorded finish is
+ *   appended as recorded: no task starts, polls or stops）。
+ * - A wake run (its boundary a finished background task, not a message) is seeded from that event.
  * - 计费（C7，与单步回放同一套）：每次模型请求（含压缩、重试、兜底）发出前查运行仍在执行、仍持有认领；
  *   收完按真实用量、没收完按估算 `consumeTokens`（越限即 `capped`，下一次请求前停下）。
  * - 附件按快照自己的组织与原对话取（C3）。
@@ -140,7 +147,7 @@ export interface ReplaySeed {
   /** The conversation's `consumed_seq` when the original run started. */
   consumed: number;
   seeds: SnapshotEvent[];
-  /** The run's trigger seq (the last user message before it). */
+  /** The run's trigger seq (its boundary: the last unconsumed message, or the waking finish). */
   trigger: number;
   agentVersion: number;
   model: ModelRef;
@@ -380,6 +387,27 @@ function absorbedByStep(s: CaseSnapshot): Map<number, number> {
   return out;
 }
 
+/**
+ * The replayed run's boundary (`trigger_seq`): a wake run's recorded one (`run_started.triggerSeq`,
+ * background Bash spec §3); otherwise the newest message after `consumed`, else the newest finish
+ * after it that could have woken the run (not reported, no `stoppedBy`), else the last
+ * message (old logs, as before).
+ */
+function replayTrigger(started: unknown, seeds: SnapshotEvent[], consumed: number): number {
+  const recorded = started as { trigger?: string; triggerSeq?: number };
+  if (recorded.trigger === "background_task" && recorded.triggerSeq !== undefined) {
+    return recorded.triggerSeq;
+  }
+  const lastMessage = seeds.findLast((e) => e.type === "user_message")?.seq;
+  if (lastMessage !== undefined && lastMessage > consumed) return lastMessage;
+  const wake = seeds.findLast((e) => {
+    if (e.type !== "background_task_finished" || e.seq <= consumed) return false;
+    const p = e.payload as { reported: boolean; stoppedBy?: string };
+    return !p.reported && p.stoppedBy === undefined;
+  })?.seq;
+  return wake ?? lastMessage ?? 0;
+}
+
 const readAll = async (
   eventLog: EventLog,
   conversationId: string,
@@ -423,7 +451,7 @@ export async function replayRun(
       consumed = Math.max(consumed, (e.payload as { consumedUpToSeq: number }).consumedUpToSeq);
     }
   }
-  const trigger = seeds.findLast((e) => e.type === "user_message")?.seq ?? 0;
+  const trigger = replayTrigger(start.payload, seeds, consumed);
   const catalog = s.events.find(
     (e) => e.runId === s.runId && e.type === "skills_catalog" && e.seq > R,
   );
@@ -566,7 +594,7 @@ export async function replayRun(
     },
   });
 
-  // 插话：原运行开始之后到达、且被原运行某一步吸收的 user_message
+  // 插话：原运行开始之后到达、且被原运行某一步吸收的可吸收事件（user_message / background_task_finished）
   const absorbed = absorbedByStep(s);
   const stepsInOrder = [...absorbed.keys()].sort((a, b) => a - b);
   /** 第 k 步（含）之前原运行吸收到的最大位置；原运行没有模型调用时不设限。 */
@@ -579,7 +607,9 @@ export async function replayRun(
     return cap;
   };
   const interjections = s.events
-    .filter((e) => e.type === "user_message" && e.seq > R)
+    .filter(
+      (e) => (e.type === "user_message" || e.type === "background_task_finished") && e.seq > R,
+    )
     .flatMap((e) => {
       const step = stepsInOrder.find((k) => (absorbed.get(k) as number) >= e.seq);
       return step === undefined ? [] : [{ event: e, step }];
@@ -587,7 +617,7 @@ export async function replayRun(
   /** 已追加的插话：原 seq → 评测对话里的 seq。 */
   const fed = new Map<number, number>();
   let prepared = 0;
-  const pendingUserMessages = async (afterSeq: number): Promise<ConversationEvent[]> => {
+  const pendingAbsorbable = async (afterSeq: number): Promise<AbsorbableEvent[]> => {
     prepared++;
     // loop 的步骤从 1 起（与运行时相同），每步的 prepare 调用一次：第 n 次调用即第 n 步
     const k = prepared;
@@ -595,18 +625,18 @@ export async function replayRun(
       if (x.step > k || fed.has(x.event.seq)) continue;
       const [w] = await eventLog.append(conversationId, [
         {
-          type: "user_message",
+          type: x.event.type,
           idemKey: `replay_interjection:${runId}:${x.event.seq}`,
           payload: x.event.payload,
-        },
+        } as AppendEvent,
       ]);
       if (w) fed.set(x.event.seq, w.seq);
     }
     const cap = capAt(k);
     const fedSeqs = new Set(fed.values());
-    const out: ConversationEvent[] = [];
+    const out: AbsorbableEvent[] = [];
     for (const e of await readAll(eventLog, conversationId)) {
-      if (e.type !== "user_message" || e.seq <= afterSeq) continue;
+      if (!isAbsorbable(e) || e.seq <= afterSeq) continue;
       if (fedSeqs.has(e.seq) || (e.seq < R && e.seq <= cap)) out.push(e);
     }
     return out;
@@ -642,7 +672,7 @@ export async function replayRun(
       signal: loopSignal,
       shutdown: new AbortController().signal,
       sink: () => {},
-      pendingUserMessages,
+      pendingAbsorbable,
       limits: {
         maxSteps:
           subagent === undefined ? runtime.maxSteps : Math.min(subagent.maxSteps, runtime.maxSteps),

@@ -2,6 +2,7 @@ import type { core } from "zod";
 import { configFields, getPath } from "../config/fields.js";
 import { createSecrets, type Keyring } from "../ctx/secrets.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
+import type { JsonSchema } from "./config-json-schema.js";
 
 type Obj = Record<string, unknown>;
 
@@ -22,6 +23,11 @@ export const secretKey = (plugin: string, path: string) => `${SECRET_KEY_PREFIX}
 export interface DeploymentSchemaInfo {
   version: string;
   schema?: core.$ZodType | undefined;
+  /**
+   * Without `schema` (no module on this replica): the package's static form schema
+   * (`extension.configSchemas.deployment`), shown but never used to validate.
+   */
+  jsonSchema?: JsonSchema | undefined;
   fields: { path: string; secret: boolean; hot: boolean }[];
 }
 

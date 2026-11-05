@@ -7,6 +7,7 @@ import {
   checkTokens,
   compositeOver,
   contrastRatio,
+  oklabL,
   parseTokens,
   renderTokensCss,
   renderTokensTs,
@@ -19,6 +20,13 @@ const repoRoot = fileURLToPath(new URL("../../..", import.meta.url));
 const JSON_PATH = "docs/design/tokens.json";
 const CSS_PATH = "packages/design/src/styles/tokens.css";
 const TS_PATH = "packages/design/src/tokens.ts";
+
+/** Loosely typed colors and lists of tokens.json, for the separation fixtures. */
+type LooseColors = {
+  color: Record<"bg" | "sidebar" | "hover" | "selected" | "sidebar-active", { light: string }>;
+  contrast: unknown[];
+  separation: unknown[];
+};
 
 /** Loosely typed tokens.json, for mutating fixtures. */
 type Loose = {
@@ -118,6 +126,77 @@ describe("checkTokens", () => {
     expect(checkTokens(root)).toEqual([]);
   });
 
+  /** Rewrites a fixture copy's tokens.json through `fn` and regenerates its two outputs. */
+  const rewrite = (root: string, fn: (j: LooseColors) => void) => {
+    const j = JSON.parse(readFileSync(join(root, JSON_PATH), "utf8"));
+    fn(j);
+    const { tokens, findings } = parseTokens(JSON.stringify(j), "tokens.json");
+    if (!tokens) throw new Error(`mutated fixture must parse: ${JSON.stringify(findings)}`);
+    writeFileSync(join(root, JSON_PATH), JSON.stringify(j, null, 2));
+    writeFileSync(join(root, CSS_PATH), renderTokensCss(tokens));
+    writeFileSync(join(root, TS_PATH), renderTokensTs(tokens));
+  };
+  /** The approved light grounds (translucent ink overlays) on the lighter light palette. */
+  const newLight = (j: LooseColors) => {
+    j.color.bg.light = "#FAF9F6";
+    j.color.sidebar.light = "#F3F2EE";
+    j.color.hover.light = "rgba(26,26,24,0.04)";
+    j.color.selected.light = "rgba(26,26,24,0.07)";
+    j.color["sidebar-active"].light = "rgba(26,26,24,0.09)";
+  };
+
+  it("the old light palette -> tokens-separation and tokens-separation-order (light only)", () => {
+    const f = checkTokens(fixture("low-separation"));
+    expect(f.map((x) => x.rule)).toEqual([
+      "tokens-separation",
+      "tokens-separation",
+      "tokens-separation",
+      "tokens-separation-order",
+    ]);
+    expect(f[0]?.message).toContain("hover on bg (light)");
+    expect(f[0]?.message).toContain("0.90");
+    expect(f[1]?.message).toContain("hover on sidebar (light)");
+    expect(f[2]?.message).toContain("selected on sidebar (light)");
+    expect(f[3]?.message).toContain("selected on sidebar (light)");
+    expect(f.every((x) => !x.message.includes("(dark)"))).toBe(true);
+  });
+
+  it("the approved light palette -> no separation finding", () => {
+    const root = copyOf("low-separation");
+    rewrite(root, newLight);
+    expect(checkTokens(root)).toEqual([]);
+  });
+
+  it("selected no further from a surface than hover -> tokens-separation-order only", () => {
+    const root = copyOf("low-separation");
+    rewrite(root, (j) => {
+      newLight(j);
+      j.color.selected.light = "rgba(26,26,24,0.04)";
+    });
+    const f = checkTokens(root);
+    expect([...new Set(f.map((x) => x.rule))]).toEqual(["tokens-separation-order"]);
+    expect(f.map((x) => x.message.split(" differs")[0])).toEqual([
+      "selected on bg (light)",
+      "selected on panel (light)",
+      "selected on sidebar (light)",
+    ]);
+  });
+
+  it("a contrast pair with a surface composites over that surface, not bg", () => {
+    const root = copyOf("low-separation");
+    rewrite(root, (j) => {
+      newLight(j);
+      // A darker sidebar: muted on selected still passes over bg but fails over the sidebar.
+      j.color.sidebar.light = "#C8C7C2";
+      j.separation = [];
+      j.contrast.push(["muted", "selected", 4.5], ["muted", "selected", 4.5, "sidebar"]);
+    });
+    const f = checkTokens(root);
+    expect(f.map((x) => x.rule)).toEqual(["tokens-contrast"]);
+    expect(f[0]?.message).toContain("muted on selected over sidebar (light)");
+    expect(f[0]?.message).toContain("composited over sidebar");
+  });
+
   it("the repository's tokens are well-formed, generated and pass contrast", () => {
     expect(checkTokens(repoRoot)).toEqual([]);
   });
@@ -158,6 +237,20 @@ describe("parseTokens", () => {
         j.contrast.push(["nope", "bg", 4.5]);
       },
       "nope",
+    ],
+    [
+      "a separation entry naming an unknown token",
+      (j: Loose) => {
+        (j as unknown as LooseColors).separation = [["hover-nope", "bg", 2.5]];
+      },
+      "hover-nope",
+    ],
+    [
+      "a contrast surface naming an unknown token",
+      (j: Loose) => {
+        j.contrast.push(["ink", "bg", 4.5, "surface-nope"]);
+      },
+      "surface-nope",
     ],
     [
       "a missing shadow theme",
@@ -220,6 +313,11 @@ describe("contrastRatio", () => {
     expect(compositeOver("rgba(0,0,0,0)", "#F7F6F2")).toBe("#F7F6F2");
     expect(compositeOver("#123456", "#000000")).toBe("#123456");
     expect(compositeOver("color-mix(in srgb, red 10%, transparent)", "#000000")).toBeUndefined();
+  });
+
+  it("oklabL: white is 100, black is 0", () => {
+    expect(oklabL("#FFFFFF")).toBeCloseTo(100, 3);
+    expect(oklabL("#000000")).toBeCloseTo(0, 3);
   });
 
   it("is symmetric", () => {

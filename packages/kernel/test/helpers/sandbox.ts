@@ -1,8 +1,11 @@
 import type { Logger, SandboxProvider } from "@capybara-hq/plugin-sdk";
 import type { Redis } from "ioredis";
+import type { BackgroundLaunchLock } from "../../src/background/launch-lock.js";
+import { BackgroundTaskStore } from "../../src/background/store.js";
 import type { KernelConfig } from "../../src/config/schema.js";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { KernelDb } from "../../src/infra/database/kernel-db.js";
+import type { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { LockService } from "../../src/infra/lock/lock.service.js";
 import type { KernelLogger } from "../../src/log.js";
 import { SandboxLeases } from "../../src/sandbox/leases.js";
@@ -60,6 +63,8 @@ export interface SandboxServiceDeps {
   lockTtlMs?: number;
   /** The leases (default: {@link sandboxLeasesFor} over `redis` with the two values above). */
   leases?: SandboxLeases;
+  /** The background task store (default: one over `db`; the sandbox service opens no transaction). */
+  background?: Pick<BackgroundTaskStore, "pendingKills" | "clearKill">;
 }
 
 /** A {@link SandboxService} over a test's own database, Redis and provider. */
@@ -79,5 +84,12 @@ export function sandboxServiceFor(d: SandboxServiceDeps): SandboxService {
     { current: d.provider, lookup: (plugin) => d.lookup?.(plugin) },
     { get: () => d.config() as KernelConfig },
     kernelLog(d.log),
+    d.background ??
+      new BackgroundTaskStore(
+        kernelDbOver(d.db),
+        {} as TransactionHost,
+        // the sandbox service never reserves a launch
+        {} as BackgroundLaunchLock,
+      ),
   );
 }

@@ -8,6 +8,7 @@ import { ListTemplate } from "./list";
 import { OnboardingTemplate } from "./onboarding";
 import { OverviewTemplate } from "./overview";
 import { SettingsTemplate } from "./settings";
+import { SetupTemplate } from "./setup";
 import { StatusTemplate } from "./status";
 import { TraceTemplate } from "./trace";
 import { WizardTemplate } from "./wizard";
@@ -25,9 +26,10 @@ const TEMPLATES: Record<TemplateRoute, () => React.JSX.Element> = {
   "templates/auth": AuthTemplate,
   "templates/status": StatusTemplate,
   "templates/onboarding": OnboardingTemplate,
+  "templates/setup": SetupTemplate,
 };
 
-/** `/dev/ui/templates/*`：12 个页面模板，除认证页外都套在假 App Shell 里。 */
+/** `/dev/ui/templates/*`：13 个页面模板，除认证页外都套在假 App Shell 里。 */
 export function TemplateCatalog({ route }: { route: TemplateRoute }) {
   const Template = TEMPLATES[route];
   return <Template />;

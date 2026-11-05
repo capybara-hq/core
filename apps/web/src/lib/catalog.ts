@@ -443,6 +443,34 @@ export const MARKETPLACE_SKIP_REASONS = [
 ] as const;
 export type MarketplaceSkipReason = (typeof MARKETPLACE_SKIP_REASONS)[number];
 
+/**
+ * What a marketplace's last refresh error was about, read from the kernel's English text
+ * (`Marketplace.lastError` carries no code): each kind has its own sentence on the sources page,
+ * `unknown` the generic one; the raw text stays behind the ErrorDetail toggle.
+ */
+export const MARKETPLACE_ERROR_KINDS = [
+  "private_address",
+  "dns",
+  "timeout",
+  "http_status",
+  "invalid",
+  "unknown",
+] as const;
+export type MarketplaceErrorKind = (typeof MARKETPLACE_ERROR_KINDS)[number];
+
+const MARKETPLACE_ERROR_PATTERNS: [Exclude<MarketplaceErrorKind, "unknown">, RegExp][] = [
+  // net.private_address (the network rules), also inside a git "cannot list the refs" line
+  ["private_address", /private or reserved address|link-local address/],
+  ["dns", /Cannot resolve /],
+  ["timeout", /timed out/i],
+  ["http_status", /\bHTTP \d{3}\b/],
+  ["invalid", /not valid JSON|is not valid|does not match/],
+];
+
+export function marketplaceErrorKind(raw: string): MarketplaceErrorKind {
+  return MARKETPLACE_ERROR_PATTERNS.find(([, re]) => re.test(raw))?.[0] ?? "unknown";
+}
+
 /** Where a marketplace entry's package comes from (SDK `MarketplaceSource`). */
 export type MarketplaceSource =
   | { path: string }

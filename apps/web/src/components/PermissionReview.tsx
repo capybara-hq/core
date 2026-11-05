@@ -9,9 +9,11 @@ import type { PermissionGroup, PermissionItem } from "../lib/extensions";
  * 插件权限审阅（只读）：后台安装确认页、插件详情的权限标签、组织插件设置与应用审阅共用（预检 F-T）。
  * 敏感判定全在内核（分组 `sensitive`、逐项 `entries[].sensitive` 与原因码），这里只渲染：
  *
- * - 按类别分组；敏感分组用强调卡片并标「敏感」，按原因码写明为什么敏感；敏感项以警示色显示；
+ * - 按类别分组（hairline cards）；only the 「敏感」 mark in a sensitive group's title is yellow (warn);
+ *   its reasons are muted secondary text and its items the plain muted list;
  * - 网络访问一组标「声明，平台不拦截」；
- * - 给了 `added` / `removed`（升级、相对已批准快照）时列出新增（敏感的高亮并写原因）/ 减少的权限键；
+ * - 给了 `added` / `removed`（升级、相对已批准快照）时列出新增（a sensitive one carries the mark and its
+ *   reason）/ 减少的权限键；
  * - 给了 `warnings`（迁移里的破坏性语句、DO 块）时逐条列出，同样算敏感。
  */
 export function PermissionReview({
@@ -49,14 +51,14 @@ export function PermissionReview({
       <Stack gap={12}>
         {groups.length === 0 && <Text tone="muted">{t("review.none")}</Text>}
         {groups.map((g) => (
-          <Card key={g.category} tone={g.sensitive ? "accent" : "default"}>
+          <Card key={g.category}>
             <Stack gap={4}>
               <Stack direction="row" gap={8} align="center">
                 <Text>{label(g.category)}</Text>
-                {g.sensitive && <Badge tone="accent">{t("sensitive")}</Badge>}
+                {g.sensitive && <Badge tone="warn">{t("sensitive")}</Badge>}
               </Stack>
               {reasonsOf(g).map((r) => (
-                <Text key={r} variant="small" tone="warn">
+                <Text key={r} variant="small" tone="muted">
                   {r}
                 </Text>
               ))}
@@ -66,7 +68,7 @@ export function PermissionReview({
                 </Text>
               )}
               {g.entries.map((e) => (
-                <Text key={e.value} variant="small" tone={e.sensitive ? "warn" : "muted"}>
+                <Text key={e.value} variant="small" tone="muted">
                   {`· ${e.value}`}
                 </Text>
               ))}
@@ -83,9 +85,12 @@ export function PermissionReview({
                 {added.map((a) => {
                   const r = a.sensitive ? reasonText(a) : null;
                   return (
-                    <Text key={a.value} variant="small" tone={a.sensitive ? "warn" : "ink"}>
-                      {r === null ? `+ ${a.value}` : `+ ${a.value} · ${r}`}
-                    </Text>
+                    <Stack key={a.value} direction="row" gap={8} align="center">
+                      <Text variant="small">
+                        {r === null ? `+ ${a.value}` : `+ ${a.value} · ${r}`}
+                      </Text>
+                      {a.sensitive && <Badge tone="warn">{t("sensitive")}</Badge>}
+                    </Stack>
                   );
                 })}
               </Stack>
@@ -109,7 +114,7 @@ export function PermissionReview({
             <Stack gap={8}>
               <Stack direction="row" gap={8} align="center">
                 <Text>{t("review.warnings")}</Text>
-                <Badge tone="accent">{t("sensitive")}</Badge>
+                <Badge tone="warn">{t("sensitive")}</Badge>
               </Stack>
               <Text variant="small" tone="warn">
                 {t("review.warningsHint")}

@@ -306,6 +306,42 @@ describe("chat", () => {
     expect(req?.maxOutputTokens).toBe(64);
   });
 
+  it("paramDefaults fill only declared, unset parameters whose value fits", async () => {
+    const send = () =>
+      k.app.get(ModelPurposesService).chat(
+        orgId,
+        "eval",
+        {
+          system: [{ text: "Be a judge.", cache: false }],
+          messages: [{ role: "user", content: [{ type: "text", text: "hi" }] }],
+          tools: [],
+          maxOutputTokens: 64,
+        },
+        new AbortController().signal,
+        // thinking is not declared by eval-j: dropped like any other parameter
+        { paramDefaults: { "model-eval.level": 2, thinking: "off" } },
+      );
+    await put(ent, adminUrl("eval"), J);
+    await send();
+    expect(evalModelState().requests.at(-1)?.params).toEqual({ "model-eval.level": 2 });
+    // the purpose's own setting wins
+    await put(ent, adminUrl("eval"), { ...J, params: { "model-eval.level": 0 } });
+    await send();
+    expect(evalModelState().requests.at(-1)?.params).toEqual({ "model-eval.level": 0 });
+    // a value the declaration rejects is dropped, the declared default stays
+    await put(ent, adminUrl("eval"), J);
+    await k.app
+      .get(ModelPurposesService)
+      .chat(
+        orgId,
+        "eval",
+        { system: [], messages: [], tools: [], maxOutputTokens: 64 },
+        new AbortController().signal,
+        { paramDefaults: { "model-eval.level": 5 } },
+      );
+    expect(evalModelState().requests.at(-1)?.params).toEqual({ "model-eval.level": 1 });
+  });
+
   it("输出上限不超过目标模型的 maxOutputTokens（eval-j 为 2000）", async () => {
     await put(ent, adminUrl("eval"), J);
     await k.app.get(ModelPurposesService).chat(

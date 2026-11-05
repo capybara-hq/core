@@ -1,6 +1,14 @@
 import { readFileSync } from "node:fs";
 import { expect, type Page, test } from "@playwright/test";
-import { composer, replies, startChat, toolGroup } from "./support/chat";
+import {
+  composer,
+  newAgent,
+  openAgentSection,
+  replies,
+  saveSection,
+  startChat,
+  toolGroup,
+} from "./support/chat";
 import { signIn } from "./support/sign-in";
 
 /*
@@ -35,19 +43,15 @@ const actionRow = (page: Page) => page.getByRole("region", { name: designZh("she
 
 /** 新建引用某连接器全部工具的 agent（model-fake），从列表开始对话，返回输入框。 */
 async function chatWithAgent(page: Page, agentName: string, connectorName: string) {
-  await page.goto("/zh/agents/new");
-  await page.getByRole("textbox", { name: zh.agents.form.nameLabel, exact: true }).fill(agentName);
-  await page
-    .getByRole("combobox", { name: zh.agents.form.modelLabel, exact: true })
-    .selectOption("model-fake/fake-1");
+  await newAgent(page, agentName);
+  await openAgentSection(page, "tools");
   await page
     .getByRole("checkbox", {
       name: zh.agents.form.connectorTools.replace("{name}", connectorName),
       exact: true,
     })
     .check();
-  await page.getByRole("button", { name: zh.agents.form.submit }).click();
-  await expect(page).toHaveURL(/\/zh\/agents$/);
+  await saveSection(page);
   await startChat(page, agentName);
   return composer(page);
 }
@@ -62,7 +66,7 @@ test("OpenAPI 连接器经安装向导接入（文档认证提示预填 API key�
   await signIn(page);
 
   // 1. 类型：OpenAPI；端点：文档 URL
-  await page.goto("/zh/connectors/install");
+  await page.goto("/connectors/install");
   await page.getByRole("radio", { name: new RegExp(w.connector.openapi) }).check();
   await actionRow(page).getByRole("button", { name: w.next }).click();
   await page.getByRole("textbox", { name: zh.connectors.form.nameLabel, exact: true }).fill("Pets");
@@ -95,7 +99,7 @@ test("OpenAPI 连接器经安装向导接入（文档认证提示预填 API key�
   await actionRow(page).getByRole("button", { name: w.install }).click();
   await expect(page.getByText(w.doneTitle.replace("{name}", "Pets"))).toBeVisible();
   await actionRow(page).getByRole("button", { name: w.openConnector }).click();
-  await expect(page).toHaveURL(/\/zh\/connectors\/[^/]+$/);
+  await expect(page).toHaveURL(/\/connectors\/[^/]+$/);
   await expect(
     page.getByRole("combobox", {
       name: zh.connectors.tools.policyLabel.replace("{tool}", "mcp__pets__createPet"),

@@ -1,4 +1,13 @@
 export {
+  AGENT_PANEL_COLUMNS,
+  AgentPanel,
+  type AgentPanelProps,
+  AgentRow,
+  type AgentRowItem,
+  type AgentRowProps,
+  gridStep,
+} from "./agent-row";
+export {
   type BubbleAttachment,
   BubbleAttachments,
   BubbleSkill,
@@ -45,6 +54,7 @@ export {
   TypeBadge,
   typeBadge,
 } from "./files";
+export { GREETING_TYPE_MS, Greeting, type GreetingProps } from "./greeting";
 export {
   ApprovalBlock,
   type ApprovalBlockProps,
@@ -79,7 +89,15 @@ export {
 } from "./panels";
 export { Cursor, Prose, type ProseProps, Spinner } from "./prose";
 export { QueuedMessage, type QueuedMessageProps, QueuePaused } from "./queued";
+export { type QuickActionItem, QuickActions, type QuickActionsProps } from "./quick-actions";
+export { RunRow, type RunRowProps, type RunRowStatus, runDuration } from "./run-row";
 export {
+  type BackgroundItem,
+  type BackgroundSubagentItem,
+  type BackgroundTaskItem,
+  BackgroundTaskRow,
+  type BackgroundTaskRowProps,
+  type BackgroundTaskStatus,
   BackgroundTasks,
   type BackgroundTasksProps,
   type SubagentFinishStatus,
@@ -97,7 +115,9 @@ export {
   subagentRowFromView,
   subagentRowsFromViews,
   subagentStatusOfFinish,
+  subagentWaitKind,
 } from "./subagents";
+export { TaskOutputPanel, type TaskOutputPanelProps } from "./task-output-panel";
 export { ThinkingRow, type ThinkingRowProps } from "./thinking";
 export {
   NewTitleBar,
@@ -116,6 +136,7 @@ export {
   summaryParts,
   type ToolKind,
   type ToolVerbGroup,
+  type ToolWaiting,
   verbGroup,
 } from "./tool-copy";
 export { ToolGroup, type ToolGroupProps } from "./tool-group";
@@ -123,7 +144,9 @@ export {
   ToolBox,
   ToolDetail,
   ToolLabel,
+  ToolLink,
   ToolRow,
   type ToolRowData,
   type ToolRowProps,
 } from "./tool-row";
+export { WorkingLine, type WorkingLineProps } from "./working-line";

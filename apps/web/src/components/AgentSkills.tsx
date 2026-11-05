@@ -2,45 +2,11 @@
 
 import { Badge, Button, Checkbox, DangerConfirm, Stack, Text, useToast } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
-import { useCallback, useEffect, useState } from "react";
-import {
-  deleteAgentSkill,
-  listAgentSkills,
-  listSkills,
-  PINNED_SKILLS_LIMITS,
-  type SkillSummary,
-} from "../lib/skills";
+import { useState } from "react";
+import { keys } from "../lib/query/keys";
+import { useAppMutation } from "../lib/query/mutation";
+import { deleteAgentSkill, PINNED_SKILLS_LIMITS, type SkillSummary } from "../lib/skills";
 import { useErrorMessage } from "../lib/use-error-message";
-
-/**
- * 组织技能库（`GET /skills`）：读不到（如访客、接口出错）时为空列表，表单照常可用。
- * `undefined` 表示还在读取。
- */
-export function useOrgSkills(orgId: string): {
-  skills: SkillSummary[] | undefined;
-  /** The list could not be read (`skills` is then empty). */
-  failed: boolean;
-} {
-  const [state, setState] = useState<{ skills: SkillSummary[] | undefined; failed: boolean }>({
-    skills: undefined,
-    failed: false,
-  });
-  useEffect(() => {
-    let disposed = false;
-    listSkills(orgId).then(
-      (r) => {
-        if (!disposed) setState({ skills: r.skills, failed: false });
-      },
-      () => {
-        if (!disposed) setState({ skills: [], failed: true });
-      },
-    );
-    return () => {
-      disposed = true;
-    };
-  }, [orgId]);
-  return state;
-}
 
 /**
  * 组织技能多选：每个技能一个复选框（名称 · 描述）。已选但不在库里的 id（技能已被删除）显示为
@@ -139,43 +105,6 @@ export function SkillWriteSwitch({
 }
 
 /**
- * The agent's own skills (`GET /agents/:id/skills`; none for a new agent, `undefined` while
- * loading, empty and `failed` when unreadable) and a reload after a change.
- */
-export function useAgentOwnSkills(
-  orgId: string,
-  agentId: string | undefined,
-): { skills: SkillSummary[] | undefined; failed: boolean; reload(): void } {
-  const [skills, setSkills] = useState<SkillSummary[] | undefined>(
-    agentId === undefined ? [] : undefined,
-  );
-  const [failed, setFailed] = useState(false);
-  const [nonce, setNonce] = useState(0);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: nonce only triggers a reload
-  useEffect(() => {
-    if (agentId === undefined) return;
-    let disposed = false;
-    listAgentSkills(orgId, agentId).then(
-      (r) => {
-        if (disposed) return;
-        setSkills(r.skills);
-        setFailed(false);
-      },
-      () => {
-        if (disposed) return;
-        setSkills([]);
-        setFailed(true);
-      },
-    );
-    return () => {
-      disposed = true;
-    };
-  }, [orgId, agentId, nonce]);
-  const reload = useCallback(() => setNonce((n) => n + 1), []);
-  return { skills, failed, reload };
-}
-
-/**
  * The agent's pinned skills (`skills.pinned`, spec §9.1): one checkbox per selected skill (the
  * org skills in `orgSkills` and the agent's own skills, in that order), with a "suggested" badge
  * when its plugin suggests pinning it and its token estimate; the pinned count and summed token
@@ -183,9 +112,8 @@ export function useAgentOwnSkills(
  * limit (the current versions' sizes) a warning: when the list is unchanged runs keep what fits
  * (the kernel only refuses a changed list); when it changed, saving is refused. A pinned id that
  * is no longer selectable (its skill was deleted) stays ticked as a deleted skill until unticked.
- * `skills` is undefined while either skill list loads (`unavailable` when one could not be read):
- * the pins are then kept as they are and only a status line shows, so a live pin never looks
- * deleted.
+ * `skills` is undefined when either skill list could not be read: the pins are then kept as they
+ * are and only a status line shows, so a live pin never looks deleted.
  */
 export function PinnedSkillsPicker({
   skills,
@@ -193,11 +121,9 @@ export function PinnedSkillsPicker({
   value,
   onChange,
   changed = false,
-  unavailable = false,
 }: {
+  /** Undefined when a skill list could not be read. */
   skills: SkillSummary[] | undefined;
-  /** A skill list could not be read (with `skills` undefined). */
-  unavailable?: boolean;
   /** Ids of the selected skills (org skills in `orgSkills`, then the agent's own). */
   selected: string[];
   value: string[];
@@ -215,7 +141,7 @@ export function PinnedSkillsPicker({
             {t("pinnedLabel")}
           </Text>
           <Text variant="small" tone="faint">
-            {unavailable ? t("pinnedUnavailable") : t("pinnedLoading")}
+            {t("pinnedUnavailable")}
           </Text>
         </Stack>
       </div>
@@ -337,6 +263,11 @@ export function OwnSkills({
   const toast = useToast();
   const errorMessage = useErrorMessage();
   const [target, setTarget] = useState<SkillSummary>();
+  // A delete invalidates the agent's own skills: the list is read again.
+  const remove = useAppMutation({
+    fn: (skillId: string) => deleteAgentSkill(orgId, agentId, skillId),
+    invalidates: () => [keys.org(orgId).agentSkills(agentId)],
+  });
 
   return (
     // biome-ignore lint/a11y/useSemanticElements: fieldset 带浏览器默认边框与内边距，apps/web 不能写样式；用 role=group 分组
@@ -388,7 +319,7 @@ export function OwnSkills({
         onConfirm={async () => {
           if (!target) return;
           try {
-            await deleteAgentSkill(orgId, agentId, target.id);
+            await remove.mutateAsync(target.id);
           } catch (e) {
             throw new Error(errorMessage(e));
           }

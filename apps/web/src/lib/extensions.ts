@@ -1,4 +1,5 @@
 import { apiFetch } from "./api";
+import type { LocalizedName } from "./catalog";
 import type { JsonSchema } from "./json-schema";
 
 /**
@@ -35,6 +36,8 @@ export interface PermissionGroup {
 /** One extension from the org's view (kernel `OrgExtensionView`). */
 export interface OrgExtension {
   plugin: string;
+  /** The extension's display name; null when it has none (show the id). */
+  displayName?: LocalizedName | null;
   version: string;
   enabled: boolean;
   configurable: boolean;

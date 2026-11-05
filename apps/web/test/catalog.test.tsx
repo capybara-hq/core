@@ -1,7 +1,12 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { DesignProvider, PAGE_TEMPLATES, ToastProvider } from "@capybara-hq/design";
-import { missingStates, parseStateLists } from "@capybara-hq/design/reference";
+import {
+  missingStates,
+  parseSizeTables,
+  parseStateLists,
+  partSelector,
+} from "@capybara-hq/design/reference";
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { Catalog } from "../src/dev/catalog";
@@ -60,7 +65,7 @@ function renderRoute(route: string) {
 }
 
 describe("/dev/ui 目录页", () => {
-  it("路由覆盖 12 个模板（kebab 名去掉 Page 后缀）", () => {
+  it("路由覆盖 13 个模板（kebab 名去掉 Page 后缀）", () => {
     const kebab = PAGE_TEMPLATES.map((n) =>
       n
         .replace(/Page$/, "")
@@ -125,7 +130,11 @@ describe("/dev/ui/reference (the reference-set blocks, spec §9.2)", () => {
     expect(container.textContent?.length ?? 0).toBeGreaterThan(0);
   });
 
-  it("renders a block for every listed state of every accepted component", () => {
+  // The two whole-catalog tests render every reference block in turn (seconds alone, more under a
+  // loaded run), so they get a budget sized to that work instead of the 5 s default.
+  it("renders a block for every listed state of every accepted component", {
+    timeout: 30_000,
+  }, () => {
     const lists = parseStateLists(spec);
     for (const c of ACCEPTED) {
       const { container } = renderRoute(`reference/${c}`);
@@ -137,8 +146,33 @@ describe("/dev/ui/reference (the reference-set blocks, spec §9.2)", () => {
     }
   });
 
+  // What visual/fidelity.spec.ts measures must exist before it can be measured: every size-table
+  // row's `<component>-<state>` block and its part (sizes and colors stay Playwright's). A forced
+  // pseudo-state is marked `data-ref-forced` by Playwright (reference-page.ts), so here the part
+  // itself is looked up; image parts render only once their image has loaded, which jsdom never
+  // does, so they are left to Playwright.
+  it("renders the block and part of every size-table row of every accepted component", {
+    timeout: 30_000,
+  }, () => {
+    const tables = parseSizeTables(spec);
+    const afterImageLoad = new Set(["image-frame", "preview-image", "icon-button"]);
+    const missing: string[] = [];
+    for (const c of ACCEPTED) {
+      const { container } = renderRoute(`reference/${c}`);
+      for (const r of tables.find((t) => t.component === c)?.rows ?? []) {
+        if (c.startsWith("file-") && afterImageLoad.has(r.part)) continue;
+        const block = container.querySelector(`[data-ref-block="${c}-${r.state}"]`);
+        const sel = partSelector(r.part.replace("[data-ref-forced=true]", ""));
+        const el = block === null ? null : sel === ":scope" ? block : block.querySelector(sel);
+        if (el === null) missing.push(`${c}-${r.state} ${r.part} (spec.md:${r.line})`);
+      }
+      cleanup();
+    }
+    expect(missing).toEqual([]);
+  });
+
   it("is served by the dev/ui page", async () => {
-    const { default: Page } = await import("../src/app/[locale]/dev/ui/[[...slug]]/page");
+    const { default: Page } = await import("../src/app/dev/ui/[[...slug]]/page");
     await expect(
       Page({ params: Promise.resolve({ locale: "zh", slug: ["reference", "sidebar"] }) }),
     ).resolves.toBeTruthy();
@@ -154,7 +188,7 @@ describe("/dev/ui 生产门禁", () => {
   it("NODE_ENV=production 且未设 CAPYBARA_DEV_UI=1 时 notFound", async () => {
     vi.stubEnv("NODE_ENV", "production");
     vi.stubEnv("CAPYBARA_DEV_UI", "");
-    const { default: Page } = await import("../src/app/[locale]/dev/ui/[[...slug]]/page");
+    const { default: Page } = await import("../src/app/dev/ui/[[...slug]]/page");
     await expect(Page({ params: params(["components"]) })).rejects.toThrow("NEXT_NOT_FOUND");
     expect(notFound).toHaveBeenCalled();
   });
@@ -162,7 +196,7 @@ describe("/dev/ui 生产门禁", () => {
   it("CAPYBARA_DEV_UI=1 时生产环境也可访问", async () => {
     vi.stubEnv("NODE_ENV", "production");
     vi.stubEnv("CAPYBARA_DEV_UI", "1");
-    const { default: Page } = await import("../src/app/[locale]/dev/ui/[[...slug]]/page");
+    const { default: Page } = await import("../src/app/dev/ui/[[...slug]]/page");
     await expect(Page({ params: params(["components"]) })).resolves.toBeTruthy();
     expect(notFound).not.toHaveBeenCalled();
   });
@@ -178,13 +212,13 @@ describe("/dev/ui 生产门禁", () => {
       order.push("notFound");
       throw new Error("NEXT_NOT_FOUND");
     });
-    const { default: Page } = await import("../src/app/[locale]/dev/ui/[[...slug]]/page");
+    const { default: Page } = await import("../src/app/dev/ui/[[...slug]]/page");
     await expect(Page({ params: params(["components"]) })).rejects.toThrow("NEXT_NOT_FOUND");
     expect(order).toEqual(["connection", "notFound"]);
   });
 
   it("未知路由 notFound", async () => {
-    const { default: Page } = await import("../src/app/[locale]/dev/ui/[[...slug]]/page");
+    const { default: Page } = await import("../src/app/dev/ui/[[...slug]]/page");
     await expect(Page({ params: params(["nope"]) })).rejects.toThrow("NEXT_NOT_FOUND");
   });
 });

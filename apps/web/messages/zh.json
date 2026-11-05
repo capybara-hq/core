@@ -1,7 +1,7 @@
 {
   "metadata": {
     "title": "Capybara",
-    "description": "企业级 Agent 平台"
+    "description": "企业级 agent 平台"
   },
   "common": {
     "appName": "Capybara",
@@ -13,8 +13,11 @@
     },
     "cancel": "取消",
     "retry": "重试",
-    "loadFailed": "加载失败",
-    "language": "语言"
+    "language": "语言",
+    "theme": "主题",
+    "themeLight": "浅色",
+    "themeDark": "深色",
+    "back": "返回"
   },
   "login": {
     "title": "登录",
@@ -42,7 +45,7 @@
   },
   "setup": {
     "title": "初始化",
-    "intro": "创建首个企业管理员账号，完成后将自动登录。",
+    "intro": "新建首个企业管理员账号，完成后将自动登录。",
     "loginLabel": "用户名",
     "loginHint": "3–64 个字符：字母、数字及 . _ @ + -",
     "passwordLabel": "密码",
@@ -56,18 +59,70 @@
     "setupTokenHint": "仅当部署配置了初始化令牌时需要。"
   },
   "home": {
-    "title": "工作台",
-    "greeting": "你好，{name}",
-    "currentOrg": "当前组织",
-    "selectOrg": "选择组织",
-    "noMemberships": "还没有加入任何组织",
-    "agents": "Agent",
-    "openAgents": "查看与新建 Agent",
+    "title": "首页",
+    "noMemberships": "还没有加入任何组织。",
+    "agents": "Agents",
     "noMembershipsHint": "请联系组织管理员邀请你加入。",
-    "noCurrentOrg": "请选择当前组织，之后即可查看与新建 Agent。",
     "role": "角色",
     "slug": "标识",
-    "orgCard": "组织"
+    "noMembershipsCreateHint": "新建一个组织开始使用，或者请组织管理员邀请你加入。",
+    "createOrg": {
+      "open": "新建组织",
+      "title": "新建组织",
+      "nameLabel": "组织名称",
+      "nameHint": "最多 100 个字符，之后可以在组织设置里修改。",
+      "nameRequired": "请填写组织名称。",
+      "submit": "新建",
+      "cancel": "取消"
+    },
+    "orgSettings": "组织设置",
+    "skills": "技能",
+    "connectors": "连接器",
+    "members": "成员",
+    "models": "可用模型",
+    "newAgent": "新建 agent",
+    "newConversation": "新会话",
+    "dailyDescription": "{org} · {role}",
+    "dailyDescriptionPending": "{org} · {role} · {count, plural, other {# 件事等你处理}}",
+    "setup": {
+      "description": "{org} 刚建好。完成下面几步，团队就能开始用 agent 干活。",
+      "progress": "已完成 {done} / {total}",
+      "later": "可以稍后再做",
+      "laterHint": {
+        "channels": "在飞书或 Slack 里使用 agent。",
+        "members": "让同事加入这个组织。",
+        "catalog": "从企业目录添加技能和连接器。",
+        "connections": "连接你自己的账号，供 agent 代你操作。"
+      }
+    },
+    "inbox": {
+      "title": "等你处理",
+      "titleCount": "等你处理 · {count}",
+      "open": "打开收件箱",
+      "empty": "没有要你处理的事。",
+      "unavailable": "暂时读不到待处理的事项，刷新页面重试。",
+      "toolApproval": "工具审批",
+      "toolApprovalTitle": "{agent} 想调用 {tool}",
+      "view": "查看",
+      "approveOnce": "允许一次",
+      "approved": "已允许，这一次调用会继续。",
+      "skillChange": "技能变更",
+      "skillNew": "{agent} 想新建技能 {skill}",
+      "skillUpdate": "{agent} 想更新技能 {skill}",
+      "catalogRequest": "目录申请",
+      "catalogRequestTitle": "申请安装 {item}"
+    },
+    "recent": {
+      "title": "接着上次的会话",
+      "empty": "还没有会话。从右边选一个 agent 开始。",
+      "unavailable": "暂时读不到会话列表，刷新页面重试。",
+      "waiting": "等你处理"
+    },
+    "agentsCard": {
+      "title": "常用 agent",
+      "all": "全部",
+      "chat": "会话"
+    }
   },
   "errors": {
     "unknown": "出错了，请稍后重试。",
@@ -99,7 +154,7 @@
       "sandbox_egress_not_allowed": "本部署已禁止沙箱联网，组织只能选择「不联网」。",
       "last_owner": "组织至少要保留一个所有者。",
       "owner_required": "只有所有者可以执行这个操作。",
-      "creation_disabled": "本部署关闭了创建组织。",
+      "creation_disabled": "本部署关闭了新建组织。",
       "slug_taken": "该 slug 已被其他组织使用。"
     },
     "setup": {
@@ -108,20 +163,27 @@
     },
     "agent": {
       "pinned_invalid": "置顶技能无法保存：最多置顶 3 个已选中的技能，且它们的 SKILL.md 合计不超过 32 KB。",
-      "subagents_invalid": "子代理设置无法保存：请检查所列的模板、名称、工具、技能与 agent，且 agent 类型最多 20 个。",
-      "not_found": "Agent 不存在或你无权访问。",
+      "subagents_invalid": "子 agent 设置无法保存：请检查所列的模板、名称、工具、技能与 agent，且 agent 类型最多 20 个。",
+      "not_found": "agent 不存在或你无权访问。",
       "model_unavailable": "所选模型不可用。",
-      "version_conflict": "你编辑期间有人保存了这个 agent。请刷新页面后重新修改。"
+      "version_conflict": "你编辑期间有人保存了这个 agent。请刷新页面后重新修改。",
+      "profile_conflict": "你编辑期间有人修改了这个 agent 的资料。请刷新查看最新内容后重新修改。",
+      "instructions_mismatch": "指令与提示词文件不一致。请编辑提示词文件，或刷新后重试。",
+      "profile_unloaded": "资料尚未加载完成。请刷新页面后重试。"
     },
     "conversation": {
-      "not_found": "对话不存在或你无权访问。",
+      "not_found": "会话不存在或你无权访问。",
       "output_not_found": "完整输出已过期或不存在。",
       "artifact_not_found": "文件不存在或已被删除。",
       "artifact_not_previewable": "这个文件不能预览。",
       "artifact_removed": "这个文件已不可用。",
       "queue_full": "排队的消息已满。请等排队消息发出，或删掉一些。",
       "queue_item_not_found": "这条排队消息已发出或已删除。",
-      "read_only": "这是子 agent 的对话，不能在这里发消息。"
+      "read_only": "这是子 agent 的会话，不能在这里发消息。"
+    },
+    "background_task": {
+      "not_found": "这个后台任务不存在或已被清理。",
+      "output_unavailable": "现在读不到输出：沙箱没有在运行。沙箱恢复后可再查看。"
     },
     "run": {
       "not_active": "当前没有进行中的回复。",
@@ -204,7 +266,7 @@
       "not_configured": "该扩展的通讯录尚未配置，请先在组织配置中填写通讯录设置。"
     },
     "ui": {
-      "not_found": "这个面板不可用：扩展可能未启用，或你无权访问这个对话。",
+      "not_found": "这个面板不可用：扩展可能未启用，或你无权访问这个会话。",
       "render_failed": "扩展加载这个面板失败，请重试。",
       "action_failed": "扩展执行这个操作失败，请重试。",
       "invalid_view": "扩展返回的内容无法显示，请稍后重试。",
@@ -242,7 +304,7 @@
       "unavailable": "文件存储暂不可用，请稍后重试或联系管理员。"
     },
     "sandbox": {
-      "not_found": "本对话还没有沙箱。",
+      "not_found": "本会话还没有沙箱。",
       "unavailable": "当前部署没有可用的沙箱。",
       "busy": "沙箱正忙，请稍后再试。"
     },
@@ -322,7 +384,7 @@
       "install_not_found": "安装记录不存在。",
       "already_installed": "本组织已经装了这个插件，请先卸载再装。",
       "install_in_progress": "这个插件还在安装或升级中，暂时不能变更；中断时，超过时限后可以清理。",
-      "skill_conflict": "这个插件带的技能在本组织已有同名技能（本组织自己的，或来自别的插件）。请先删除或改名，再安装。",
+      "skill_conflict": "这个插件带的技能在本组织已有同名技能（本组织自己的，或来自别的插件）。请先删除或重命名，再安装。",
       "upgrade_stale": "升级预览已过期，请重新预览。",
       "upgrade_target_invalid": "不能升级到这个版本（带扩展的插件只能升级到部署正在运行的版本，依赖它的插件也必须接受该版本）。",
       "upgrade_failed": "升级插件失败。"
@@ -342,20 +404,26 @@
     },
     "tool_output": {
       "not_found": "工具输出不存在或已过期。"
+    },
+    "page": {
+      "title": "加载失败",
+      "description": "页面没有加载出来。可以重试；问题持续时请联系管理员。",
+      "retry": "重试",
+      "starting": "内核正在启动…",
+      "startingDescription": "后端服务还没就绪，页面会自动重试。",
+      "startingStill": "后端服务仍未就绪。稍后再试，或联系管理员。"
     }
   },
   "agents": {
-    "title": "Agent",
-    "new": "新建 Agent",
-    "empty": "暂无 Agent。",
-    "startChat": "开始对话",
-    "starting": "正在创建对话…",
-    "noOrg": "还没有选择当前组织",
-    "backHome": "返回工作台",
+    "title": "Agents",
+    "new": "新建 agent",
+    "empty": "暂无 agent。",
+    "starting": "正在新建会话…",
+    "noOrg": "还没有选择当前组织。",
+    "backHome": "返回首页",
     "form": {
-      "title": "新建 Agent",
+      "title": "新建 agent",
       "nameLabel": "名称",
-      "instructionsLabel": "指令（系统提示词）",
       "modelLabel": "模型",
       "fallbackLabel": "兜底模型",
       "fallbackNone": "不使用兜底模型",
@@ -372,12 +440,11 @@
       "modelParamsTitle": "模型参数",
       "fallbackParamsTitle": "兜底模型参数",
       "basicSection": "基本信息",
-      "basicSectionHint": "名称与可见范围；指令对模型可见。",
+      "basicSectionHint": "选头像、名称和模型。提示词、工具和技能创建后在 agent 页面里设置。",
       "modelSection": "模型",
       "modelSectionHint": "主模型不可用时改用兜底模型。",
       "paramsSectionHint": "未改动的参数使用模型默认值。",
       "nameRequired": "请填写名称。",
-      "instructionsHelp": "对模型可见，请用英文书写。",
       "toolsSection": "工具",
       "toolsSectionHint": "agent 可以调用的工具。策略只能收紧：改为需审批，或禁止。",
       "builtinLabel": "内置工具",
@@ -397,7 +464,7 @@
         "ask": "需审批",
         "deny": "禁止"
       },
-      "editTitle": "编辑 Agent",
+      "editTitle": "编辑 agent",
       "skillsSection": "技能",
       "skillsSectionHint": "agent 在任务需要时可以加载的技能。",
       "orgSkillsLabel": "组织技能",
@@ -416,7 +483,6 @@
       "deleteOwnSkillHint": "agent 不再加载这个技能，针对它的待处理改动会一并取消。",
       "ownSkillDeleted": "已删除技能 {name}。",
       "pinnedLabel": "置顶的技能",
-      "pinnedLoading": "正在读取技能…",
       "pinnedUnavailable": "读不到技能列表；置顶的技能保持不变。",
       "pinnedHint": "置顶技能的说明始终在模型的上下文里，不用调用 Skill。最多从已选技能里置顶 3 个，SKILL.md 合计不超过 32 KB。",
       "noPinnable": "先在上面选择技能，才能置顶。",
@@ -430,7 +496,7 @@
       "overLimitRefused": "在合计不超限之前，这份置顶列表无法保存。",
       "skillTag": {
         "manual": "手动",
-        "fork": "子代理"
+        "fork": "子 agent"
       },
       "manualHint": "手动技能不在模型的技能目录里：由人在会话里用 / 调用。",
       "manualNotPinnable": "手动技能不能置顶。",
@@ -444,11 +510,11 @@
         "manual_only": "{name} 是手动技能（由人用 / 调用），不在模型的技能目录里，不能置顶。"
       },
       "subagents": {
-        "section": "子代理",
-        "sectionHint": "让此 agent 把任务交给子代理：它们在同一对话里并行运行，并把结果交回。",
-        "agentTool": "允许此 agent 派发子代理（agent 工具）",
-        "unused": "agent 工具关闭时，这些子代理设置会保留但不生效。",
-        "general": "通用子代理：此 agent 的副本",
+        "section": "子 agent",
+        "sectionHint": "让此 agent 把任务交给子 agent：它们在同一会话里并行运行，并把结果交回。",
+        "agentTool": "允许此 agent 派发子 agent（agent 工具）",
+        "unused": "agent 工具关闭时，这些子 agent 设置会保留但不生效。",
+        "general": "通用子 agent：此 agent 的副本",
         "templatesLabel": "插件提供的 agent 模板",
         "templatesNone": "本组织还没有安装 agent 模板。",
         "templateGone": "模板 {id}（已不再安装）",
@@ -464,13 +530,13 @@
         "remove": "移除",
         "removeInline": "移除模板 {name}",
         "inlineName": "名称",
-        "inlineNameHelp": "小写字母、数字与连字符；模型按这个子代理类型调用。",
+        "inlineNameHelp": "小写字母、数字与连字符；模型按这个子 agent 类型调用。",
         "inlineDescription": "何时使用",
         "inlineInstructions": "指令",
         "inlineModel": "模型",
         "agentsLabel": "本组织的其他 agent",
-        "agentsNone": "还没有可作为子代理的其他 agent：需由其负责人打开「允许其他 agent 将其作为子代理」。",
-        "agentsWarning": "被允许的 agent 的名单名称与说明会展示给使用此 agent 的所有人；它加载的技能文件会复制到对话的沙箱中并保留在那里。",
+        "agentsNone": "还没有可作为子 agent 的其他 agent：需由其负责人打开「允许其他 agent 将其作为子 agent」。",
+        "agentsWarning": "被允许的 agent 的名单名称与说明会展示给使用此 agent 的所有人；它加载的技能文件会复制到会话的沙箱中并保留在那里。",
         "agentOption": "{name} · 负责人 {owner} · {visibility}",
         "agentUnseen": "{as}（agent {id}，你已看不到它）",
         "visibility": {
@@ -481,17 +547,17 @@
         "widerWarning": "此 agent 的共享范围比 {name} 更广：不能使用 {name} 的成员在派发它时会被拒绝。",
         "agentAs": "{name} 的名单名称",
         "agentDescription": "何时使用 {name}",
-        "dispatchable": "允许其他 agent 将其作为子代理",
-        "dispatchableHint": "其他 agent 的负责人随后可以把此 agent 设为子代理；它以自己的工具和发起人的权限运行。",
+        "dispatchable": "允许其他 agent 将其作为子 agent",
+        "dispatchableHint": "其他 agent 的负责人随后可以把此 agent 设为子 agent；它以自己的工具和发起人的权限运行。",
         "reasons": {
           "not_found": "模板 {value} 未在本组织安装。",
           "invalid_name": "「{value}」不是有效名称：只能用小写字母、数字与连字符，且不能是 general-purpose。",
           "duplicate": "名称 {value} 重复。",
           "tool_not_selected": "工具 {value} 不是此 agent 的工具。",
           "skill_not_selected": "技能 {value} 未被此 agent 选用。",
-          "agent_not_available": "agent {value} 不能作为子代理（你看不到它、已删除，或其负责人未允许）。",
+          "agent_not_available": "agent {value} 不能作为子 agent（你看不到它、已删除，或其负责人未允许）。",
           "self": "agent 不能派发自己。",
-          "too_many": "子代理太多：总数最多 20 个。",
+          "too_many": "子 agent 太多：总数最多 20 个。",
           "required": "此项为必填。"
         }
       },
@@ -517,16 +583,107 @@
     },
     "warnings": {
       "fallback_same_provider": "兜底模型应来自另一家供应商，否则该供应商故障时兜底无效。",
-      "unknown": "保存时出现未识别的提示：{code}"
+      "unknown": "保存时出现未识别的提示：{code}。"
     },
     "columns": {
       "name": "名称",
       "model": "模型"
     },
-    "emptyHint": "新建一个 Agent，然后开始对话。",
-    "noOrgHint": "请在工作台或侧栏底部的账户菜单中选择组织。",
+    "emptyHint": "新建一个 agent，然后开始对话。",
+    "noOrgHint": "请在首页或侧栏底部的账户菜单中选择组织。",
     "edit": "编辑",
-    "runHistory": "运行记录"
+    "runHistory": "运行记录",
+    "tabs": {
+      "all": "全部",
+      "mine": "我的",
+      "shared": "组织共享"
+    },
+    "search": "搜索名称或模型",
+    "scope": {
+      "private": "仅自己",
+      "org": "组织共享",
+      "members": "指定成员"
+    },
+    "chat": "开始会话",
+    "meta": {
+      "skills": "{n} 技能",
+      "tools": "{n} 工具"
+    },
+    "noMatch": "没有符合的 agent。",
+    "channels": {
+      "title": "渠道",
+      "hint": "绑定到这个 agent 的 IM 机器人，人们通过它们和 agent 对话。",
+      "empty": "这个 agent 还没有接入渠道。",
+      "connect": "接入渠道",
+      "loadFailed": "渠道加载失败。"
+    },
+    "readOnly": "只有这个 agent 的负责人和组织管理员能修改它；你可以和它对话。",
+    "reassign": {
+      "action": "更换负责人…",
+      "title": "更换负责人",
+      "owner": "新负责人",
+      "help": "负责人可以修改和删除这个 agent。",
+      "submit": "更换",
+      "done": "负责人已更换",
+      "none": "没有可选的成员"
+    },
+    "page": {
+      "navGroup": "Agent",
+      "sections": {
+        "basics": "基本信息",
+        "quick-actions": "快捷操作",
+        "prompt": "提示词",
+        "model": "模型",
+        "tools": "工具",
+        "skills": "技能",
+        "subagents": "子 Agent",
+        "channels": "渠道"
+      },
+      "startChat": "开始对话",
+      "reassign": "重新指派负责人",
+      "leave": {
+        "title": "放弃未保存的修改？",
+        "body": "这个分组还有没保存的修改。可以继续编辑，或者放弃修改并离开。",
+        "keep": "继续编辑",
+        "discard": "放弃修改"
+      },
+      "discard": "放弃",
+      "reload": "重新加载",
+      "avatarLabel": "头像",
+      "uploadOff": "上传图片需要对象存储，这个部署还没有配置。可以先选一只动物。",
+      "uploadFailed": "读不了这张图片。请选择 png、jpg 或 webp 文件。",
+      "descriptionLabel": "简介",
+      "descriptionHelp": "一句话说明这个 agent 做什么。给人看的，模型看不到。",
+      "membersLabel": "可以使用的成员",
+      "membersLoading": "正在加载成员…",
+      "membersFailed": "成员列表加载失败。",
+      "quickActions": {
+        "hint": "新对话页上显示的快捷入口，最多 {max} 个。点一个，输入框就填上它的内容。",
+        "list": "快捷操作",
+        "add": "添加快捷操作",
+        "none": "还没有快捷操作。",
+        "titleLabel": "标题",
+        "titleRequired": "请输入标题。",
+        "bodyLabel": "内容",
+        "bodyHelp": "填进输入框的文字。",
+        "bodyRequired": "请输入内容。"
+      },
+      "uploadType": "请选择 png、jpg 或 webp 图片。",
+      "prompt": {
+        "hint": "这些文件按顺序拼接后交给模型。请用英文写。",
+        "filesLabel": "提示词文件",
+        "add": "添加文件",
+        "nameLabel": "文件名",
+        "nameHelp": "以 .md 结尾，例如 WORKFLOW.md。",
+        "nameInvalid": "文件名为 1–64 个字符（不含 / 和 \\），再加上 .md。",
+        "nameDuplicate": "已经有同名的文件了。",
+        "contentLabel": "内容",
+        "contentHelp": "Markdown，原样交给模型。",
+        "count": "{chars, number} / {maxChars, number} 字符 · {files} / {maxFiles} 个文件",
+        "tooLong": "文件合计超过 {max, number} 个字符，缩短后才能保存。"
+      },
+      "createUploadFailed": "agent 已创建，但头像没有上传成功。请在这里重新选择。"
+    }
   },
   "skills": {
     "title": "技能",
@@ -545,7 +702,7 @@
       "layoutHint": "上传 .zip 文件：SKILL.md 放在根目录，或放在唯一的一个顶层文件夹里（例如从 GitHub 下载得到的 repo-main/）。上传已有名称的技能会新增一个版本。",
       "limits": "上限：zip 文件 50 MB，单个文件 10 MB，解压后合计 50 MB。",
       "choose": "选择 .zip 文件",
-      "chooseHint": "选择文件，或拖放到这里。",
+      "chooseHint": "或把 .zip 文件拖到这里。",
       "drop": "松开即上传 .zip 文件",
       "uploading": "正在上传 {name}… {percent}%",
       "created": "已添加技能 {name}。",
@@ -554,7 +711,9 @@
       "tooLarge": "zip 文件超过 50 MB。",
       "cancel": "取消",
       "cancelled": "已取消上传。",
-      "retry": "重试"
+      "retry": "重试",
+      "open": "上传技能",
+      "close": "关闭"
     },
     "detail": {
       "tabsLabel": "技能分区",
@@ -580,7 +739,6 @@
         "files": "文件数",
         "created": "创建时间"
       },
-      "retry": "重试",
       "dangerTitle": "危险操作",
       "delete": "删除技能",
       "deleteTitle": "删除 {name}？",
@@ -589,7 +747,16 @@
     }
   },
   "chat": {
-    "title": "对话",
+    "waitingFor": {
+      "someone": "其他成员",
+      "role": {
+        "guest": "访客",
+        "member": "成员",
+        "admin": "管理员",
+        "owner": "所有者"
+      }
+    },
+    "title": "会话",
     "inputLabel": "消息",
     "placeholder": "输入消息，/ 使用命令",
     "send": "发送",
@@ -598,16 +765,17 @@
     "running": "正在回复…",
     "you": "你",
     "anotherMember": "其他成员",
-    "assistant": "Agent",
+    "assistant": "agent",
     "failed": "本次回复失败（{code}）。",
     "empty": "发送一条消息开始对话。",
     "streamLost": "与服务器的实时连接已断开，请刷新页面。",
     "idle": "就绪",
-    "inspectorTitle": "对话信息",
+    "inspectorTitle": "会话信息",
     "waiting": "等你处理",
     "attachments": "附件",
     "removeAttachment": "移除 {name}",
     "attachLimit": "每条消息最多 {max} 个附件。",
+    "noInvocable": "这个 agent 没有可调用的技能。",
     "skillsGroup": "技能",
     "skillTag": {
       "manual": "手动",
@@ -640,8 +808,9 @@
     "fileTooLarge": "文件太大：图片最多 {image}，其他文件最多 {other}。",
     "fileTypeNotAllowed": "不支持这种文件类型。可以上传：{types}。",
     "newPlaceholder": "想让 {agent} 做什么？",
-    "queueHint": "按 ↵ 立即发送，按 Ctrl+↵ 加入队列",
-    "queueHintMac": "按 ↵ 立即发送，按 ⌘↵ 加入队列",
+    "queueHint": "按 ↵ 加入队列，按 Ctrl+↵ 立即发送",
+    "sendAfterCreate": "会话创建后即可继续发送",
+    "queueHintMac": "按 ↵ 加入队列，按 ⌘↵ 立即发送",
     "queueLabel": "排队的消息",
     "rename": "重命名",
     "copyLink": "复制链接",
@@ -659,7 +828,7 @@
     "pickAgent": "切换 agent",
     "pickModel": "切换模型",
     "pickEffort": "思考档位",
-    "agentLocked": "发送第一条消息后不能再换 agent",
+    "agentLocked": "发送第一条消息后不能再换 agent。",
     "nextMessage": "从下一条消息起生效",
     "agentDefault": "agent 默认",
     "effort": {
@@ -671,19 +840,46 @@
     },
     "effortDefault": "默认",
     "divider": {
-      "stopped": "已停止 · {who} {time}",
-      "compacted": "较早的对话已压缩",
-      "compactedSaved": "较早的对话已压缩 · 节省 {n} tokens",
-      "fallback": "所选模型 {from} 已不可用，本条起改用 agent 的模型 {to}",
-      "failed": "运行失败：{reason}",
-      "failedRetried": "运行失败：{reason} · 已重试"
+      "compacted": "较早的会话已压缩",
+      "compactedSaved": "较早的会话已压缩 · 节省 {n} tokens",
+      "fallback": "所选模型 {from} 已不可用，本条起改用 agent 的模型 {to}"
     },
     "system": "系统",
     "fileRemoved": "已不可用",
     "noAgents": "没有可用的 agent。请先新建一个 agent。",
     "panelExtensions": "扩展",
     "fullOutput": "完整输出",
-    "builtinPreviewer": "内置预览"
+    "builtinPreviewer": "内置预览",
+    "setup": {
+      "title": "开始之前",
+      "description": "还差几步才能开始对话。",
+      "model": {
+        "description": "至少配置一个模型提供方（例如 openai-compatible 扩展），agent 才能回答。",
+        "askAdmin": "还没有可用的模型。模型由企业管理员在「管理 → 扩展」里配置。",
+        "action": "去配置",
+        "waiting": "等待企业管理员配置"
+      },
+      "agent": {
+        "description": "agent 决定用哪个模型、能用哪些工具和技能。",
+        "action": "新建"
+      }
+    },
+    "run": {
+      "stopped": "已停止 · {who} {time}",
+      "failedRetried": "失败 · 已重试",
+      "tokens": "{n} token",
+      "tokenSplit": "输入 {input} · 输出 {output} · 缓存读 {cacheRead} · 缓存写 {cacheWrite}",
+      "trajectory": "查看轨迹",
+      "configureModels": "去配置模型服务"
+    },
+    "greeting": {
+      "sub": "选一个 agent，或从常用任务开始",
+      "morning": ["早上好，{name}", "早，今天推进点什么？", "新的一天，从哪件事开始？"],
+      "noon": ["中午好，{name}", "吃过了吗？有什么要交给我"],
+      "afternoon": ["下午好，{name}", "下午我们推进什么？", "接着干？"],
+      "evening": ["晚上好，{name}", "今天收尾还差什么？"],
+      "night": ["夜猫子，干点啥？", "还没睡？我陪你", "夜深了，挑件小事做"]
+    }
   },
   "ui": {
     "dangerDescription": "这个操作由扩展执行，可能无法撤销。",
@@ -691,13 +887,13 @@
     "embedRemountLimit": "扩展页面在加载后反复跳转离开，已停止加载。可以重试，或联系扩展提供方。"
   },
   "chatPanel": {
-    "label": "对话面板",
+    "label": "会话面板",
     "run": "运行",
     "context": "上下文",
-    "runEmpty": "本对话还没有工具调用。",
-    "agent": "Agent",
+    "runEmpty": "本会话还没有工具调用。",
+    "agent": "agent",
     "model": "模型",
-    "conversation": "对话",
+    "conversation": "会话",
     "tokens": "Token",
     "tokensOf": "{used} / {total}（{pct}%）",
     "tokensOnly": "{used}",
@@ -721,13 +917,15 @@
     "sandboxRunning": "运行中",
     "sandboxSuspended": "已休眠",
     "sandboxLastUsed": "最近使用",
-    "sandboxFailed": "状态读取失败"
+    "sandboxFailed": "状态读取失败",
+    "lastRun": "上次运行 · {parts}"
   },
   "pluginPage": {
+    "pathLabel": "扩展页",
     "liveLost": "实时刷新已断开，刷新页面以获取最新内容。"
   },
   "nav": {
-    "overview": "概览",
+    "overview": "首页",
     "agents": "Agents",
     "goto": "跳转",
     "actions": "操作",
@@ -735,21 +933,22 @@
     "connectors": "连接器",
     "channels": "渠道",
     "skills": "技能",
-    "evals": "评测",
-    "settings": "设置",
-    "admin": "管理",
-    "catalog": "企业目录"
+    "evals": "评测与运行",
+    "settings": "组织设置",
+    "admin": "管理后台",
+    "catalog": "插件"
   },
   "shell": {
-    "switchLocale": "切换到 {name}",
-    "themeLight": "切换到浅色主题",
-    "themeDark": "切换到深色主题",
-    "noOrg": "选择组织"
+    "noOrg": "选择组织",
+    "orgMenu": "切换组织",
+    "createOrg": "新建组织…",
+    "accountSettings": "个人设置",
+    "noCurrentOrg": "当前没有组织，无法操作会话。"
   },
   "notFound": {
     "title": "页面不存在",
     "description": "链接可能已失效，或该页面已被移除。",
-    "back": "返回概览"
+    "back": "返回首页"
   },
   "tools": {
     "outputId": "完整结果已存档：{id}。",
@@ -766,18 +965,18 @@
     "waiting": "待处理",
     "tool": "工具",
     "connector": "连接器",
-    "agent": "Agent",
+    "agent": "agent",
     "expires": "过期时间",
     "input": "参数",
     "scopeLabel": "批准范围",
     "scope": {
       "once": "仅本次",
-      "session": "本对话内",
+      "session": "本会话内",
       "always": "以后都允许"
     },
     "scopeHint": {
       "once": "下次调用仍需审批。",
-      "session": "本对话之后的调用不再询问。",
+      "session": "本会话之后的调用不再询问。",
       "always": "该 agent 以后调用这个工具都不再询问；可在设置中撤销。"
     },
     "approve": "批准",
@@ -793,6 +992,7 @@
     "system": "系统",
     "otherApprover": "等待审批人处理。",
     "otherApproverFor": "{tool}（{key}）需要审批，等待审批人处理。",
+    "otherApproverNamed": "{tool}（{key}）需要审批，等待 {who} 处理。",
     "policy": {
       "agent": "agent 的设置要求审批",
       "connector": "连接器的策略要求审批",
@@ -855,9 +1055,9 @@
     "pick": "在左侧选择一项。",
     "pendingCount": "{n} 项待处理",
     "inspectorTitle": "详情",
-    "conversation": "对话",
+    "conversation": "会话",
     "requested": "发起时间",
-    "openConversation": "打开对话",
+    "openConversation": "打开会话",
     "approved": "已批准",
     "denied": "已拒绝",
     "columns": {
@@ -870,7 +1070,7 @@
       "title": "技能变更 · {name}",
       "newSkill": "新技能",
       "update": "版本 {from} → {to}",
-      "agent": "Agent",
+      "agent": "agent",
       "requester": "发起人",
       "version": "版本",
       "description": "描述",
@@ -881,8 +1081,8 @@
       "unchanged": "未变",
       "contentUnavailable": "无法显示这个文件的内容。",
       "diffLabel": "{path} 的改动",
-      "ownerHint": "批准后，改动对这个 agent 的所有对话生效；在此之前只有发起改动的对话能用。",
-      "selfHint": "这项改动是你在自己的对话里发起的。作为共享 agent 的负责人，你先在对话里确认工具调用，再在这里批准改动，这是有意的设计。",
+      "ownerHint": "批准后，改动对这个 agent 的所有会话生效；在此之前只有发起改动的会话能用。",
+      "selfHint": "这项改动是你在自己的会话里发起的。作为共享 agent 的负责人，你先在会话里确认工具调用，再在这里批准改动，这是有意的设计。",
       "approve": "批准",
       "reject": "拒绝",
       "approved": "已批准技能变更",
@@ -964,8 +1164,7 @@
       },
       "inspectorTitle": "连接器",
       "refresh": "刷新工具",
-      "refreshed": "工具列表已刷新。",
-      "retry": "重试"
+      "refreshed": "工具列表已刷新。"
     },
     "inspector": {
       "slug": "Slug",
@@ -988,7 +1187,7 @@
       "empty": "该连接器没有工具。",
       "missing": "服务已不再提供此工具",
       "pendingReview": "待复核",
-      "neverReviewed": "从未复核：在「复核」页签批准后才能启用"
+      "neverReviewed": "从未复核：在「复核」页签批准后才能启用。"
     },
     "credential": {
       "title": "凭据",
@@ -1143,19 +1342,27 @@
       "rejected": "已拒绝 {tool}，工具已停用。",
       "missingTitle": "服务已不再提供",
       "missingHint": "这些工具已停用；服务再次提供时会进入复核。"
+    },
+    "tabs": {
+      "all": "全部",
+      "disabled": "已停用"
     }
   },
   "connections": {
-    "title": "个人设置",
     "nav": {
+      "groupPersonal": "个人",
+      "groupCapabilities": "能力",
+      "groupOrg": "组织",
       "connections": "我的连接",
       "grants": "已记住的授权",
-      "organization": "组织设置",
+      "general": "通用",
+      "sandbox": "沙箱",
       "identities": "IM 身份",
       "extensions": "扩展",
       "models": "模型用途",
       "members": "成员",
-      "plugins": "已安装的插件"
+      "plugins": "已安装的插件",
+      "tokens": "服务令牌"
     },
     "empty": "没有需要你个人凭据的连接器。",
     "emptyHint": "使用个人凭据的连接器会出现在这里。",
@@ -1170,7 +1377,7 @@
       "empty": "没有已记住的授权。",
       "emptyHint": "审批时选择「以后都允许」会在这里留下一条。",
       "columns": {
-        "agent": "Agent",
+        "agent": "agent",
         "tool": "工具",
         "key": "工具键",
         "created": "授权时间",
@@ -1184,6 +1391,10 @@
     "oauthConnect": "连接",
     "disconnect": "断开连接",
     "oauthHint": "用你自己的账号登录此连接器；其他成员各用各的。"
+  },
+  "sandboxSettings": {
+    "title": "沙箱",
+    "saved": "沙箱设置已保存。"
   },
   "orgSettings": {
     "title": "组织设置",
@@ -1243,9 +1454,24 @@
       "newOnly": "只对新建的沙箱生效；已有的沙箱沿用创建时的限额，直到被销毁。"
     }
   },
-  "schemaForm": {
+  "configForm": {
     "none": "—",
+    "issues": "配置有问题：",
+    "advanced": "高级",
+    "options": "选项",
+    "add": "添加",
+    "itemN": "第 {n} 项",
+    "key": "键",
+    "value": "值",
     "jsonHint": "填写 JSON 值。",
+    "linesHint": "每行一项。",
+    "hot": "即时生效",
+    "readonly": "{source, select, env {来自环境变量（只读）} file {来自配置文件（只读）} nacos {来自 Nacos（只读）} other {只读}}",
+    "tristate": {
+      "default": "默认",
+      "on": "开",
+      "off": "关"
+    },
     "secretSet": "••••••••（已设置）",
     "secretWillClear": "保存后将清除",
     "replace": "替换",
@@ -1260,18 +1486,26 @@
       "required": "必填",
       "number": "请输入数字",
       "integer": "请输入整数",
-      "json": "JSON 格式不正确"
+      "json": "JSON 格式不正确",
+      "min": "不能小于 {limit}",
+      "gt": "必须大于 {limit}",
+      "max": "不能大于 {limit}",
+      "lt": "必须小于 {limit}",
+      "minLength": "至少 {limit} 个字符",
+      "maxLength": "最多 {limit} 个字符",
+      "minItems": "至少 {limit} 项",
+      "maxItems": "最多 {limit} 项"
     }
   },
   "channels": {
     "title": "渠道",
     "new": "新建渠道",
-    "empty": "还没有渠道连接",
+    "empty": "还没有渠道连接。",
     "emptyHint": "把 IM 机器人（如 Slack、飞书）接到一个 agent，大家就能在 IM 里和它对话。",
     "columns": {
       "name": "名称",
       "plugin": "扩展",
-      "agent": "Agent",
+      "agent": "agent",
       "policy": "未绑定的人",
       "status": "状态"
     },
@@ -1294,31 +1528,30 @@
       "pluginHint": "该组织已启用的渠道扩展。",
       "pluginLabel": "扩展",
       "pluginPlaceholder": "选择扩展",
-      "noExtensions": "该组织还没有启用任何渠道扩展。",
+      "noExtensions": "先启用一个渠道扩展。",
       "openExtensions": "打开扩展设置",
       "nameLabel": "名称",
-      "nameRequired": "请填写名称",
       "configSection": "机器人凭据",
       "configHint": "字段由扩展定义。保存时会先向平台校验凭据。",
       "pickPluginFirst": "请先选择扩展。",
-      "agentSection": "Agent",
+      "agentSection": "agent",
       "agentSectionHint": "回复发给这个机器人的消息的 agent。",
-      "agentLabel": "Agent",
+      "agentLabel": "agent",
       "agentHint": "回复由这个 agent 生成。",
       "agentPlaceholder": "选择 agent",
       "noAgents": "还没有 agent，请先新建一个。",
       "policySection": "未绑定的人",
       "policySectionHint": "还没绑定账号的人给机器人发消息时怎么处理。",
       "policyLabel": "未绑定的人",
-      "submit": "创建渠道"
+      "submit": "新建渠道"
     },
     "inspector": {
       "plugin": "扩展",
       "tenant": "租户",
       "bot": "机器人",
-      "agent": "Agent",
+      "agent": "agent",
       "policy": "未绑定",
-      "created": "创建于"
+      "created": "创建时间"
     },
     "detail": {
       "tabsLabel": "渠道分区",
@@ -1328,7 +1561,6 @@
         "settings": "设置"
       },
       "inspectorTitle": "详情",
-      "retry": "重试",
       "statusTitle": "状态",
       "lastError": "最近错误",
       "noError": "最近没有错误。",
@@ -1368,12 +1600,15 @@
     "inboundModeHint": {
       "long_connection": "机器人与平台保持一条连接（默认，无需公网地址）。",
       "webhook": "平台每个事件都回调本部署，需要公网地址。"
+    },
+    "tabs": {
+      "all": "全部",
+      "error": "出错"
     }
   },
   "extensions": {
     "title": "扩展",
     "empty": "没有安装任何扩展。",
-    "version": "版本 {version}",
     "enableLabel": "启用 {plugin}",
     "enabled": "已在该组织启用",
     "disabled": "未启用",
@@ -1399,7 +1634,7 @@
       "storage": "对象存储",
       "http": "HTTP 路由",
       "publicRoutes": "公开路由（无需登录）",
-      "tools": "Agent 工具",
+      "tools": "agent 工具",
       "hooks": "Hook",
       "models": "模型",
       "network": "网络访问",
@@ -1457,7 +1692,7 @@
   "identities": {
     "title": "IM 身份",
     "hint": "绑定到你的 Capybara 账号的 IM 与第三方登录账号。已绑定的 IM 账号发来的消息以你的身份处理。",
-    "empty": "还没有绑定任何身份",
+    "empty": "还没有绑定任何身份。",
     "emptyHint": "在 IM 里给 Capybara 机器人发消息并按链接绑定，或使用第三方账号登录。",
     "columns": {
       "name": "名称",
@@ -1476,7 +1711,6 @@
   "bind": {
     "title": "绑定 IM 账号",
     "subtitle": "一个 IM 账号请求绑定到你的 Capybara 账号。",
-    "loading": "加载中…",
     "source": "来源",
     "tenant": "租户",
     "externalId": "账号 ID",
@@ -1491,21 +1725,21 @@
     "goHome": "进入 Capybara"
   },
   "trajectories": {
-    "title": "运行记录",
-    "untitled": "未命名对话",
+    "title": "评测与运行",
+    "untitled": "未命名会话",
     "noRun": "没有运行",
-    "empty": "还没有可查看的运行记录",
-    "emptyHint": "你负责的 agent（组织管理员为全部 agent）有对话运行后会出现在这里。",
-    "noMatch": "没有符合当前筛选的对话。",
+    "empty": "还没有可查看的运行记录。",
+    "emptyHint": "你负责的 agent（组织管理员为全部 agent）有会话运行后会出现在这里。",
+    "noMatch": "没有符合当前筛选的会话。",
     "loadMore": "加载更多",
     "columns": {
-      "title": "对话",
-      "agent": "Agent",
+      "title": "会话",
+      "agent": "agent",
       "status": "最近一次运行",
       "updated": "更新时间"
     },
     "filters": {
-      "agent": "Agent",
+      "agent": "agent",
       "allAgents": "全部 agent",
       "status": "最近一次运行的状态",
       "allStatuses": "全部"
@@ -1523,18 +1757,18 @@
       "region": "Span 详情",
       "audited": "查看运行记录会记入审计。",
       "loadEarlier": "加载更早的运行",
-      "empty": "这个对话还没有开始过运行。",
+      "empty": "这个会话还没有开始过运行。",
       "selectHint": "选择上方的一个 span 查看详情。",
       "spans": {
-        "run": "运行 · v{version}",
-        "step": "步骤 {n}",
+        "run": "v{version}",
+        "step": "{n}",
         "approval": "审批",
         "question": "提问"
       },
       "metrics": {
-        "tokens": "总 TOKEN",
+        "tokens": "总 token",
         "cost": "成本（估算）",
-        "calls": "调用数",
+        "calls": "调用次数",
         "duration": "耗时"
       },
       "run": {
@@ -1551,7 +1785,7 @@
           "aborted": "中止"
         },
         "tokens": "token",
-        "cost": "本次运行成本（估算）",
+        "cost": "本次成本（估算）",
         "calls": "调用次数",
         "callsValue": "模型 {model} · 工具 {tool}",
         "duration": "耗时"
@@ -1607,7 +1841,7 @@
         "scope": "范围",
         "scopes": {
           "once": "仅本次",
-          "session": "本对话",
+          "session": "本会话",
           "always": "始终"
         },
         "by": "处理人",
@@ -1621,7 +1855,7 @@
           "cancelled": "已取消",
           "pending": "待回答"
         },
-        "subagent": "子代理"
+        "subagent": "子 agent"
       },
       "hook": {
         "title": "被策略 hook 拦截",
@@ -1643,6 +1877,7 @@
       "run": "运行",
       "submit": "加入",
       "noSets": "该 agent 还没有评测集。",
+      "createSet": "新建评测集",
       "runNotFinished": "这次运行还没结束，结束后才能加入。",
       "added": "已加入评测集「{name}」。"
     },
@@ -1661,34 +1896,37 @@
       "shutdown": "worker 停机",
       "wait_timeout": "子 agent 等待超时被停止"
     },
-    "parentLink": "打开父对话的轨迹"
+    "parentLink": "打开父会话的轨迹",
+    "tabs": {
+      "sets": "评测集",
+      "runs": "运行记录"
+    }
   },
   "evals": {
-    "title": "评测",
+    "title": "评测与运行",
     "runHistory": "运行记录",
     "new": "新建评测集",
-    "empty": "还没有评测集",
-    "emptyHint": "从真实对话里挑出运行组成评测集，换模型、提示词或 agent 版本后回放比较。",
+    "empty": "还没有评测集。",
+    "emptyHint": "从真实会话里挑出运行组成评测集，换模型、提示词或 agent 版本后回放比较。",
     "columns": {
       "name": "名称",
-      "agent": "Agent",
+      "agent": "agent",
       "cases": "用例",
       "created": "创建时间"
     },
     "form": {
       "title": "新建评测集",
       "basic": "基本信息",
-      "basicHint": "一个评测集对应一个 agent，用例只能来自这个 agent 的对话。",
+      "basicHint": "一个评测集对应一个 agent，用例只能来自这个 agent 的会话。",
       "grading": "评分标准",
       "gradingHint": "LLM 评委按它比较基线与候选的回复。",
-      "agentLabel": "Agent",
+      "agentLabel": "agent",
       "noAgents": "还没有 agent，先新建一个。",
       "nameLabel": "名称",
       "descriptionLabel": "说明",
       "rubricLabel": "评分标准（rubric）",
       "rubricHint": "给评委模型看，请用英文；留空时用默认标准。",
-      "submit": "创建",
-      "nameRequired": "请填写名称"
+      "submit": "新建"
     },
     "set": {
       "tabsLabel": "评测集内容",
@@ -1698,21 +1936,21 @@
       },
       "count": "{n} 个用例",
       "run": "运行评测",
-      "sample": "从对话抽样",
+      "sample": "从会话抽样",
       "more": "更多操作",
       "delete": "删除评测集",
       "deleteTitle": "删除评测集「{name}」",
       "deleteHint": "删除后用例与运行结果都不再可见，正在执行的运行会被取消。",
       "deleted": "已删除评测集「{name}」。",
       "inspectorTitle": "评测集",
-      "agent": "Agent",
+      "agent": "agent",
       "description": "说明",
       "rubric": "评分标准",
       "defaultRubric": "（默认标准）",
       "created": "创建时间",
       "casesLabel": "用例",
-      "casesEmpty": "还没有用例",
-      "casesEmptyHint": "用「从对话抽样」批量加入，或在运行记录里把一次运行「加入评测集」。",
+      "casesEmpty": "还没有用例。",
+      "casesEmptyHint": "用「从会话抽样」批量加入，或在运行记录里把一次运行「加入评测集」。",
       "caseColumns": {
         "title": "触发消息",
         "version": "agent 版本",
@@ -1723,7 +1961,7 @@
       "removeCase": "移除用例",
       "caseRemoved": "已移除用例。",
       "runsLabel": "运行",
-      "runsEmpty": "还没有运行过",
+      "runsEmpty": "还没有运行过。",
       "runColumns": {
         "created": "开始时间",
         "mode": "模式",
@@ -1733,8 +1971,8 @@
       }
     },
     "sample": {
-      "title": "从对话抽样",
-      "hint": "从该 agent 已结束的对话运行里随机挑选，已在评测集里的不会重复加入。",
+      "title": "从会话抽样",
+      "hint": "从该 agent 已结束的会话运行里随机挑选，已在评测集里的不会重复加入。",
       "count": "数量",
       "status": "运行结果",
       "statuses": {
@@ -1755,7 +1993,7 @@
       "step": "单步回放",
       "run": "整轮回放",
       "stepHint": "由日志还原每次模型请求，只换模型、参数与指令后重发比较。",
-      "runHint": "从原对话的起点重跑整轮，工具结果取记录的，不执行真实工具。"
+      "runHint": "从原会话的起点重跑整轮，工具结果取记录的，不执行真实工具。"
     },
     "runStatus": {
       "queued": "排队",
@@ -1822,7 +2060,7 @@
       "cancelled": "已取消运行。",
       "metrics": {
         "progress": "进度",
-        "tokens": "TOKEN / 上限",
+        "tokens": "token / 上限",
         "toolMatch": "工具调用一致",
         "judgePass": "评委通过",
         "humanPass": "人工通过"
@@ -1839,7 +2077,8 @@
         "summary": "汇总"
       },
       "resultsLabel": "结果",
-      "resultsEmpty": "没有结果",
+      "resultsEmpty": "没有结果。",
+      "loadMore": "加载更多",
       "columns": {
         "case": "用例",
         "step": "步骤",
@@ -1921,14 +2160,14 @@
         "verdict": "结论",
         "score": "分数",
         "reason": "理由",
-        "judgeError": "评委没有给出结论：{reason}",
+        "judgeError": "评委没有给出结论：{reason}。",
         "unparseable": "评委回复无法解析",
         "label": "人工标注",
         "note": "备注",
         "pass": "通过",
         "fail": "不通过",
         "clear": "清除标注",
-        "evalTrajectory": "查看评测对话轨迹",
+        "evalTrajectory": "查看评测会话轨迹",
         "diffCaption": "差异",
         "driftSeparator": "、"
       }
@@ -1944,9 +2183,14 @@
       "media_missing": "附件已不可用",
       "media_changed": "附件有变化",
       "tool_unmatched": "有工具调用没有对应的记录",
-      "subagent_changed": "子代理的定义与记录时不同",
+      "subagent_changed": "子 agent 的定义与记录时不同",
       "model_switched": "候选模型替换了会话中切换的模型"
-    }
+    },
+    "tabs": {
+      "sets": "评测集",
+      "runs": "运行记录"
+    },
+    "setMeta": "{agent} · {n} 个用例"
   },
   "models": {
     "admin": {
@@ -2015,70 +2259,37 @@
       "unavailable": "{target}（不可用）",
       "params": "参数",
       "save": "保存",
-      "saveLabel": "保存用途 {purpose}",
-      "clear": "清除",
-      "clearLabel": "清除用途 {purpose} 的部署默认",
-      "restore": "恢复默认",
-      "restoreLabel": "用途 {purpose} 恢复部署默认",
-      "saved": "已保存用途 {purpose}。",
-      "cleared": "已清除用途 {purpose} 的部署默认。",
-      "restored": "用途 {purpose} 已恢复部署默认。",
-      "subagentHint": "按此档位派发的子代理使用它。未设置时，子代理使用派发它的 agent 的模型。"
+      "savedAll": "已保存 {n} 个用途。",
+      "subagentHint": "按此档位派发的子 agent 使用它。未设置时，子 agent 使用派发它的 agent 的模型。"
     }
   },
   "admin": {
-    "title": "管理",
+    "title": "概览",
     "nav": {
+      "group": "管理后台",
       "overview": "概览",
       "accounts": "账号",
       "orgs": "组织",
       "settings": "部署设置",
       "extensions": "扩展",
       "models": "模型",
-      "catalog": "企业目录"
-    },
-    "forbidden": {
-      "title": "需要企业管理员",
-      "hint": "只有企业管理员能打开管理后台。可以请企业管理员授予，或在服务器上运行 capybara admin grant 加登录名。"
+      "catalog": "企业目录",
+      "marketplaces": "市场"
     },
     "overview": {
-      "intro": "企业管理员在这里管理整个部署：账号、组织、扩展与部署设置。各组织自己的设置仍在组织的「设置」里。企业管理员不能查看对话内容。",
+      "intro": "管理整个部署：账号、组织、扩展与部署设置。",
+      "noConversations": "企业管理员不能查看会话内容。",
       "metrics": {
         "extensions": "需要处理的扩展",
         "catalogRequests": "待处理的企业目录申请",
         "orgs": "组织",
         "accounts": "账号"
-      },
-      "accounts": {
-        "title": "账号",
-        "hint": "新建、停用账号，授予或撤销企业管理员。",
-        "open": "管理账号"
-      },
-      "orgs": {
-        "title": "组织",
-        "hint": "为各组织设置运行并发与沙箱 CPU / 内存。",
-        "open": "管理组织"
-      },
-      "settings": {
-        "title": "部署设置",
-        "hint": "谁能建组织、价格币种、组织能否自建连接器与技能。",
-        "open": "打开部署设置"
-      },
-      "extensions": {
-        "title": "扩展",
-        "hint": "安装、批准、启用、停用、升级扩展，填写部署级配置。",
-        "open": "管理扩展"
-      },
-      "models": {
-        "title": "模型",
-        "hint": "模型供应商、价格与各用途的默认模型。",
-        "open": "管理模型"
       }
     },
     "accounts": {
       "title": "账号",
       "new": "新建账号",
-      "empty": "还没有账号",
+      "empty": "还没有账号。",
       "loadMore": "加载更多",
       "columns": {
         "name": "名称",
@@ -2112,10 +2323,10 @@
         "enable": "启用"
       },
       "done": {
-        "grant": "已授予「{name}」企业管理员",
-        "revoke": "已撤销「{name}」的企业管理员",
-        "disable": "已停用「{name}」",
-        "enable": "已启用「{name}」"
+        "grant": "已授予「{name}」企业管理员。",
+        "revoke": "已撤销「{name}」的企业管理员。",
+        "disable": "已停用「{name}」。",
+        "enable": "已启用「{name}」。"
       },
       "form": {
         "title": "新建账号",
@@ -2125,14 +2336,14 @@
         "displayName": "显示名",
         "email": "邮箱",
         "enterpriseAdmin": "设为企业管理员",
-        "submit": "创建",
-        "created": "已创建账号「{name}」"
+        "submit": "新建",
+        "created": "已新建账号「{name}」"
       }
     },
     "orgs": {
       "title": "组织",
-      "hint": "留空的项使用部署默认。组织管理员在组织设置里只能查看。",
-      "empty": "还没有组织",
+      "hint": "留空的项使用部署默认，组织管理员在组织设置里只能查看；要管理组织内的设置，需要成为该组织的管理员。",
+      "empty": "还没有组织。",
       "default": "默认",
       "edit": "设置限额",
       "saved": "已保存",
@@ -2147,7 +2358,7 @@
       "dialog": {
         "title": "「{name}」的限额",
         "runConcurrency": "运行并发上限",
-        "runConcurrencyHelp": "同时运行的对话数上限；留空使用部署默认。",
+        "runConcurrencyHelp": "同时运行的会话数上限；留空使用部署默认。",
         "runConcurrencyInvalid": "请输入正整数，或留空使用部署默认。",
         "cpu": "沙箱 CPU（核）",
         "cpuHelp": "0.25 到 64；留空使用部署默认。",
@@ -2158,13 +2369,13 @@
         "newOnly": "沙箱限额只对之后新建的沙箱生效。",
         "e2bNote": "E2B 沙箱不支持按组织设置 CPU 与内存：规格由 E2B 模板决定，这两项对 E2B 不生效（运行并发照常生效）。",
         "save": "保存",
-        "subagentConcurrent": "每次运行同时运行的子代理数",
+        "subagentConcurrent": "每次运行同时运行的子 agent 数",
         "subagentConcurrentHelp": "1–20；留空使用部署默认（subagents.maxConcurrentPerRun）。",
         "subagentConcurrentInvalid": "请输入 1 到 20 的整数。",
-        "subagentDispatches": "每次运行的子代理派发数",
+        "subagentDispatches": "每次运行的子 agent 派发数",
         "subagentDispatchesHelp": "1–500，含后续追问；留空使用部署默认。",
         "subagentDispatchesInvalid": "请输入 1 到 500 的整数。",
-        "subagentTokens": "每次运行子代理的 token 数",
+        "subagentTokens": "每次运行子 agent 的 token 数",
         "subagentTokensHelp": "至少 10,000；留空使用部署默认。",
         "subagentTokensInvalid": "请输入不小于 10,000 的整数。"
       }
@@ -2176,7 +2387,7 @@
       "allow": "允许",
       "deny": "禁止",
       "orgCreation": {
-        "title": "谁能建组织",
+        "title": "谁能新建组织",
         "description": "限制后只有企业管理员能新建组织。",
         "anyone": "所有人",
         "anyoneHint": "任何登录的用户都能新建组织。",
@@ -2207,8 +2418,8 @@
       "title": "扩展",
       "install": "安装扩展",
       "hint": "部署上的全部扩展。安装、启用、停用、升级都不需要重启：操作提交后各副本会在几秒内收敛。",
-      "empty": "还没有扩展",
-      "noResults": "没有符合筛选条件的扩展",
+      "empty": "还没有扩展。",
+      "noResults": "没有符合筛选条件的扩展。",
       "sensitive": "敏感",
       "required": "必需",
       "columns": {
@@ -2242,8 +2453,8 @@
         "legacy_format": "需要重新打包"
       },
       "replicas": {
-        "consistent": "一致（{n}）",
-        "diverged": "不一致（{n}）",
+        "consistent": "副本一致 {ok}/{n}",
+        "diverged": "副本不一致 {ok}/{n}",
         "none": "无副本上报"
       },
       "detail": {
@@ -2255,6 +2466,7 @@
         },
         "notFound": "扩展不存在或已卸载。",
         "fields": {
+          "id": "标识",
           "source": "来源",
           "version": "版本",
           "desired": "期望状态",
@@ -2279,8 +2491,8 @@
           "unloaded": "已卸下",
           "pending": "待处理"
         },
-        "failedReplica": "副本 {replica} 加载失败：{reason}",
-        "stillServing": "该副本仍在用 {version}",
+        "failedReplica": "副本 {replica} 加载失败：{reason}。",
+        "stillServing": "该副本仍在用 {version}。",
         "replicaReason": {
           "config": "部署配置缺失或不合法",
           "approval": "权限待批准",
@@ -2296,7 +2508,7 @@
         "converging": "各副本正在收敛到期望状态，页面会自动刷新。",
         "refresh": "刷新",
         "noReplicas": "还没有副本上报状态。",
-        "requiredNote": "本部署的必需插件，由预装步骤从核心镜像安装：在每个组织中都启用，不能停用或卸载；可以升级，也可以填写部署配置。",
+        "requiredNote": "本部署的必需插件，由预装步骤从 npm 安装（版本与校验和已固定）。在每个组织中都启用，不能停用或卸载；可以升级，也可以填写部署配置。",
         "configNote": "这个扩展由启动配置的 extensions 列表声明：不能在网页上停用、升级或卸载；要改，请修改启动配置。",
         "actions": {
           "enable": "启用",
@@ -2321,7 +2533,7 @@
           "disable": "已提交停用，各副本正在收敛。",
           "uninstall": "已卸载「{name}」。"
         },
-        "packageError": "扩展包读不到：{error}"
+        "packageError": "扩展包读不到：{error}。"
       },
       "approve": {
         "title": "批准权限",
@@ -2331,13 +2543,13 @@
         "done": "已批准，各副本正在加载。",
         "stale": "审阅之后扩展包或权限已经变化，请刷新后重新审阅。",
         "refresh": "刷新后重新审阅",
-        "approved": "已批准：版本 {version}，{at}（{source}）",
+        "approved": "已批准：{version}，{at}（{source}）",
         "notApproved": "尚未批准。",
         "via": {
           "cli": "命令行",
           "auto": "自动批准",
           "web": "网页",
-          "bootstrap": "预装（核心镜像）"
+          "bootstrap": "预装（npm）"
         }
       },
       "wizard": {
@@ -2351,9 +2563,10 @@
         "sourceLabel": "来源",
         "sourceFile": "上传扩展包（.tgz）",
         "sourceNpm": "从 npm 获取",
+        "sourceFileHint": "npm pack 格式的 tgz（可用仓库里的 pack-plugin 打包）。",
+        "sourceNpmHint": "按包名和版本从 npm 仓库下载。",
         "choose": "选择 .tgz 文件",
-        "fileHint": "扩展包是 npm pack 格式的 tgz（可用仓库里的 pack-plugin 打包）。",
-        "noFile": "还没有选文件。",
+        "drop": "松开即选择 .tgz 文件",
         "npmPackage": "npm 包名",
         "npmVersion": "版本",
         "npmVersionHelp": "版本号、dist-tag 或范围；留空取 latest。",
@@ -2380,24 +2593,35 @@
       "config": {
         "none": "这个扩展没有部署级配置。",
         "hint": "启动配置（配置文件、Nacos、环境变量）给出的字段只读；即时生效的字段保存后马上生效，其余字段保存后扩展会重新加载（不重启）。",
-        "invalid": "配置不完整或不合法，扩展待配置：",
+        "invalid": "配置不完整或不合法，扩展待配置。原因标在对应字段旁。",
         "notValidated": "这个扩展当前没有加载：保存时不校验，加载时再校验。",
-        "source": {
-          "env": "来自环境变量（只读）",
-          "file": "来自配置文件（只读）",
-          "nacos": "来自 Nacos（只读）",
-          "db": "已在后台保存",
-          "default": "使用默认值",
-          "unset": "未设置"
-        },
-        "secretSet": "已设置",
-        "secretUnset": "未设置",
-        "hot": "即时生效",
-        "reload": "保存后扩展重新加载",
         "save": "保存配置",
         "saving": "正在保存；扩展重新加载最多需要约 {seconds} 秒。",
-        "saved": "配置已保存。"
-      }
+        "saved": "配置已保存。",
+        "saveInvalid": "配置没有通过校验，请按字段旁的提示修改。",
+        "pendingMissing": "扩展待配置，还缺这些必填项：{fields}。",
+        "listSep": "、",
+        "willReload": "保存后扩展会重新加载，最多约需 {seconds} 秒。",
+        "appliesNow": "这些改动保存后立即生效。",
+        "noChanges": "还没有改动。"
+      },
+      "tabs": {
+        "all": "全部",
+        "attention": "需要处理",
+        "enabled": "已启用",
+        "disabled": "已停用"
+      },
+      "callout": "{n} 个扩展需要处理：{names}",
+      "calloutFix": "去处理",
+      "configure": "配置",
+      "settings": "设置",
+      "upgrade": "升级",
+      "meta": {
+        "points": "{n} 个扩展点",
+        "permissions": "{n} 项权限"
+      },
+      "loadFailed": "扩展没有加载出来。",
+      "retry": "重试"
     }
   },
   "members": {
@@ -2418,8 +2642,8 @@
       "admin": "管理员",
       "owner": "所有者"
     },
-    "roleChanged": "已把「{name}」改为{role}",
-    "empty": "还没有成员",
+    "roleChanged": "已把「{name}」改为{role}。",
+    "empty": "还没有成员。",
     "menu": {
       "transfer": "转让所有权",
       "remove": "移出组织"
@@ -2436,7 +2660,7 @@
     "transferred": "已把所有权转让给「{name}」",
     "invitations": {
       "title": "邀请",
-      "empty": "还没有邀请",
+      "empty": "还没有邀请。",
       "columns": {
         "role": "角色",
         "status": "状态",
@@ -2472,20 +2696,19 @@
   },
   "invite": {
     "title": "接受邀请",
-    "loading": "加载中…",
     "subtitle": "你被邀请加入「{org}」",
     "role": "角色",
     "expires": "有效期至",
     "accept": "接受邀请",
-    "signInHint": "请先登录再接受邀请；还没有账号可以直接创建一个。",
+    "signInHint": "请先登录再接受邀请；还没有账号可以直接新建一个。",
     "signIn": "登录后接受",
-    "signupToggle": "没有账号？创建账号",
+    "signupToggle": "没有账号？新建账号",
     "loginLabel": "用户名",
     "loginHint": "3–64 个字符：字母、数字及 . _ @ + -",
     "passwordLabel": "密码",
     "passwordHint": "12–256 个字符",
     "displayNameLabel": "显示名称",
-    "signup": "创建账号并加入",
+    "signup": "新建账号并加入",
     "backToSignIn": "已有账号？登录",
     "invalidTitle": "邀请链接已失效",
     "invalidHint": "请联系邀请你的管理员重新发送邀请。",
@@ -2529,9 +2752,9 @@
       "dependencyNotInCatalog": "{name} {range}：不在企业目录里",
       "errorDependency": "依赖：{dependency}",
       "errorCycle": "循环：{cycle}",
-      "skillConflictOrg": "技能「{skill}」已存在于本组织（组织自己的技能）。删除或改名后再试。",
-      "skillConflictPlugin": "技能「{skill}」已存在于本组织（来自插件 {plugin}）。删除或改名后再试。",
-      "agentTemplates": "Agent 模板",
+      "skillConflictOrg": "技能「{skill}」已存在于本组织（组织自己的技能）。删除或重命名后再试。",
+      "skillConflictPlugin": "技能「{skill}」已存在于本组织（来自插件 {plugin}）。删除或重命名后再试。",
+      "agentTemplates": "agent 模板",
       "agentTemplatesNone": "没有 agent 模板。",
       "agentTools": "工具：{tools}",
       "agentToolsInherit": "工具：沿用派发它的 agent 的工具",
@@ -2557,8 +2780,6 @@
       "actions": {
         "import": "导入",
         "entries": "浏览市场",
-        "more": "更多",
-        "marketplaces": "市场",
         "requests": "部署申请"
       },
       "detail": {
@@ -2567,7 +2788,6 @@
           "overview": "概要",
           "versions": "版本"
         },
-        "notFound": "条目不存在。",
         "deleted": "这个条目已删除，组织不再能看到它；已安装的组件不受影响。",
         "fields": {
           "package": "npm 包",
@@ -2619,6 +2839,8 @@
         "sourceLabel": "来源",
         "sourceFile": "上传插件包（.tgz）",
         "sourceNpm": "npm 包",
+        "sourceFileHint": "npm pack 格式的插件包（.tgz）。",
+        "sourceNpmHint": "按包名（和版本）从 npm 仓库读取。",
         "fetch": "读取并审阅",
         "plugin": "{name} {version}",
         "publisher": "发布者：{publisher}",
@@ -2634,7 +2856,7 @@
         "unchecked": "连接器扩展没有在本副本加载，端点还没按它的 schema 校验。",
         "mismatch": "市场列出的权限摘要与下载的包不一致（以包为准）。",
         "mismatchMissing": "市场没列出：{keys}",
-        "mismatchExtra": "市场列了但包没有要：{keys}",
+        "mismatchExtra": "市场列了但包没有要：{keys}。",
         "deployExtension": "同时把扩展装到部署",
         "deployOn": "确认后把扩展安装（或升级）到部署并启用。",
         "deployOff": "不勾选时，扩展只记入企业目录，不会安装；在企业管理员把扩展装到部署之前，组织无法使用这个插件。",
@@ -2649,8 +2871,8 @@
         "openItem": "查看条目",
         "gone": "暂存的导入已过期或已确认。请重新导入。",
         "restart": "重新导入",
-        "loadingStaged": "正在读取暂存的导入…",
         "sourceGit": "Git 仓库",
+        "sourceGitHint": "从 Git 仓库读取一次：不会添加市场，也不跟踪更新。",
         "gitUrl": "仓库",
         "gitUrlHelp": "https 的 git 地址，或 GitHub 上的 owner/repo。一次性导入：不会添加市场，也不跟踪更新。",
         "gitRef": "分支、标签或提交",
@@ -2661,7 +2883,7 @@
         "provenance": "由 {workflow} 从 {repository}@{commit} 构建",
         "provenanceNotChecked": "未核对来源证明（{reason}）",
         "provenanceMismatch": "来源证明里的仓库与这个 git 市场的仓库不一致。请确认这是你预期的包。",
-        "buildVersion": "记为 {version}：版本 {pluginVersion} 已在企业目录中，但内容不同。",
+        "buildVersion": "记为 {version}：{pluginVersion} 已在企业目录中，但内容不同。",
         "translation": {
           "title": "Claude Code 翻译报告",
           "formatClaude": "Claude Code 插件",
@@ -2727,7 +2949,7 @@
             "command_manual_invocation": "导入该版本时还不支持命令",
             "skill_needs_subagents": "导入该版本时还不支持作为子 agent 运行的技能",
             "agent_needs_subagents": "导入该版本时还不支持子 agent",
-            "agent_invalid": "未导入：agent 无效（agent 不会被改名）",
+            "agent_invalid": "未导入：agent 无效（agent 不会被重命名）",
             "agent_field_ignored": "frontmatter 中的 {keys} 被忽略",
             "hooks_not_run": "钩子不会运行",
             "hooks_module": "钩子模块不会运行",
@@ -2759,8 +2981,7 @@
       },
       "entries": {
         "title": "浏览市场",
-        "hint": "每个条目是插件的一个版本。要先「引入」才会成为企业目录条目；引入时下载、按市场的完整性校验，审阅后才加入。",
-        "empty": "没有市场条目。先在「市场」里添加或刷新市场。",
+        "empty": "没有市场条目。先在「市场源」里添加或刷新市场。",
         "noResults": "没有符合条件的条目。",
         "truncated": "条目太多，只显示了前一部分；请按市场或关键词缩小范围。",
         "search": "搜索",
@@ -2784,29 +3005,43 @@
         "importVersion": "引入 {version}",
         "noCompatible": "没有兼容的版本",
         "reason": {
-          "host_not_allowed": "主机 {host} 不在 marketplaces.allowedHosts 中",
-          "path_needs_git_marketplace": "市场仓库里的路径：需把该仓库添加为 git 市场"
+          "host_not_allowed": "主机 {host} 不在 marketplaces.allowedHosts 中。",
+          "path_needs_git_marketplace": "市场仓库里的路径：需把该仓库添加为 git 市场。"
         },
         "gitPinned": "提交 {commit}",
         "gitFollows": "跟随 {ref}",
         "gitFollowsDefault": "跟随默认分支",
         "pathSource": "市场仓库中的 {path}",
         "importChanged": "导入 {version} 的新内容",
-        "contentChangedHint": "再次导入会记为该版本的一个构建（例如 1.0.0+git.1a2b3c4d5e6f）。"
+        "contentChangedHint": "再次导入会记为该版本的一个构建（例如 1.0.0+git.1a2b3c4d5e6f）。",
+        "view": "查看",
+        "homepage": "主页",
+        "loadFailed": "市场条目没有加载出来。",
+        "retry": "重试"
       },
       "marketplaces": {
         "title": "市场",
+        "description": "每个条目是插件的一个版本，来自这里的市场源。要先「引入」才会成为企业目录条目；引入时下载、按市场的完整性校验，审阅后才加入。",
+        "search": "搜索市场源",
+        "noMatch": "没有匹配的市场源。",
         "official": "官方市场",
         "officialHint": "地址在部署配置 marketplaces.official.* 里设置（默认是 git 仓库 capybara-hq/plugins），这里只读。",
         "offline": "离线模式：部署配置关闭了官方市场（marketplaces.official.enabled = false），不会拉取它。",
-        "enabled": "启用",
+        "enabledLabel": "启用「{name}」",
         "url": "地址",
         "mirrors": "镜像",
         "status": "状态",
         "statusValue": {
           "ok": "正常（{n} 个条目，{at}）",
-          "error": "出错：{error}",
-          "never": "还没有拉取过"
+          "never": "还没有拉取过",
+          "errors": {
+            "private_address": "市场地址解析到内网或保留地址，已被网络规则拦截。",
+            "dns": "无法解析市场地址的主机名。",
+            "timeout": "连接市场超时。",
+            "http_status": "市场返回了错误状态码。",
+            "invalid": "市场清单的格式不对。",
+            "unknown": "刷新失败。"
+          }
         },
         "refresh": "立即刷新",
         "refreshed": "已刷新 {name}",
@@ -2874,10 +3109,17 @@
         "reject": "拒绝",
         "approved": "已批准",
         "rejected": "已拒绝"
-      }
+      },
+      "tabs": {
+        "plugins": "插件",
+        "requests": "部署申请",
+        "browse": "浏览",
+        "sources": "市场源"
+      },
+      "search": "搜索插件"
     },
     "org": {
-      "title": "企业目录",
+      "title": "插件",
       "hint": "企业管理员提供的插件。",
       "empty": "企业目录里还没有可用的条目。",
       "columns": {
@@ -2907,13 +3149,12 @@
         },
         "installed": "已安装 {name}",
         "requested": "已提交申请",
-        "approvalRequested": "需要企业管理员批准，已提交申请",
+        "approvalRequested": "需要企业管理员批准，已提交申请。",
         "openPlugins": "查看已安装的插件",
         "upgradeAvailable": "可升级到 {version}",
         "upgrade": "升级"
       },
       "detail": {
-        "notFound": "条目不存在或你看不到它。",
         "tabsLabel": "条目详情",
         "tabs": {
           "overview": "概要"
@@ -2942,7 +3183,7 @@
         "dcrHint": "客户端会自动注册，不需要填写。",
         "extensionHint": "插件会在本组织启用它的扩展；有组织配置的请填写（已启用的扩展不改配置）。",
         "extensionNone": "没有需要填写的扩展配置。",
-        "extensionEnabled": "{name}：已在本组织启用，保持现有配置",
+        "extensionEnabled": "{name}：已在本组织启用，保持现有配置。",
         "summary": "将安装：",
         "summaryExtension": "扩展 {name}",
         "summaryTemplates": "{n} 个连接器",
@@ -2963,6 +3204,10 @@
           "finish": "收尾"
         },
         "notInstallable": "这个插件现在不能安装。"
+      },
+      "tabs": {
+        "all": "全部",
+        "installed": "已安装"
       }
     },
     "plugins": {
@@ -3055,9 +3300,9 @@
       "extensionConfig": "这次升级会在本组织启用插件的扩展；它的组织配置：",
       "confirm": "升级",
       "cancel": "取消",
-      "done": "已把 {name} 升级到 {version}",
-      "requested": "需要企业管理员批准，已提交申请",
-      "failed": "升级在「{step}」这一步失败（{code}）；本组织的组件已恢复到版本 {version}。",
+      "done": "已把 {name} 升级到 {version}。",
+      "requested": "需要企业管理员批准，已提交申请。",
+      "failed": "升级在「{step}」这一步失败（{code}）；本组织的组件已恢复到 {version}。",
       "failedNoRollback": "升级在「{step}」这一步失败（{code}），且未能立即撤销；超时后会自动撤销。"
     },
     "errorDetail": {
@@ -3068,17 +3313,17 @@
       "gitSuffix": "git 服务器对这个仓库地址返回了重定向；请改用以 .git 结尾的地址。",
       "entry": "被拒绝的条目：{path}",
       "pathEntry": "市场条目 {entry}（路径 {path}）",
-      "sameVersion": "本组织已安装版本 {version}。",
+      "sameVersion": "本组织已安装 {version}。",
       "deploymentVersion": "部署运行的是这个插件扩展的 {deploymentVersion}；本组织只能升级到目录版本 {allowedVersion}。",
       "deploymentVersionNone": "部署运行的是这个插件扩展的 {deploymentVersion}，但企业目录里还没有带这个扩展的版本。",
       "notDeployed": "部署上没有运行这个插件的扩展；请先请企业管理员安装。",
-      "dependentRange": "本组织的 {dependent} 依赖 {range}，版本 {version} 不满足。",
+      "dependentRange": "本组织的 {dependent} 依赖 {range}，{version} 不满足。",
       "templateConnector": "连接器模板 {template} 改用了另一种连接器（{plugin} / {connector}）；请卸载插件后安装新版本。"
     }
   },
   "filePreviewers": {
     "title": "文件预览",
-    "description": "在对话里预览文件的扩展，按此顺序选用。使用者可以在文件面板里切换预览方式。",
+    "description": "在会话里预览文件的扩展，按此顺序选用。使用者可以在文件面板里切换预览方式。",
     "enableLabel": "启用 {name}",
     "moveUp": "上移 {name}",
     "moveDown": "下移 {name}",
@@ -3096,17 +3341,145 @@
       "failed": "失败",
       "label": "状态"
     },
-    "askedBy": "由子代理 {name} 提问",
-    "connect": "子代理 {name} 需要连接，打开它进行连接。",
-    "questionElsewhere": "子代理 {name} 正在等待他人回答。",
+    "askedBy": "由子 agent {name} 提问",
+    "connect": "子 agent {name} 需要连接，打开它进行连接。",
+    "questionElsewhere": "子 agent {name} 正在等待他人回答。",
     "view": {
-      "title": "子代理",
-      "stop": "停止子代理",
+      "title": "子 agent",
+      "stop": "停止子 agent",
       "toolsNone": "无",
-      "readOnly": "子代理只读 · 不能和它对话",
-      "loadFailed": "无法打开该子代理。"
+      "readOnly": "子 agent 只读 · 不能和它对话",
+      "loadFailed": "无法打开该子 agent。"
     },
-    "contextTotal": "含子代理的 token 总数 {n}",
+    "contextTotal": "含子 agent 的 token 总数 {n}",
     "background": "后台任务"
+  },
+  "background": {
+    "inBackground": "后台运行",
+    "openTask": "查看「{name}」的输出",
+    "notice": "后台任务「{description}」{status} · 退出码 {code}",
+    "noticeNoCode": "后台任务「{description}」{status}",
+    "open": "打开",
+    "panelTitle": "后台任务",
+    "notFound": "找不到这个后台任务。",
+    "status": {
+      "completed": "已完成",
+      "failed": "失败",
+      "stopped": "已停止",
+      "timed_out": "已超时",
+      "lost": "已丢失"
+    }
+  },
+  "orgChooser": {
+    "title": "选择组织",
+    "titleNone": "新建组织",
+    "subtitle": "{name}，选择要进入的组织。下次登录会直接进入它，之后可以在左下角的账户菜单里切换。",
+    "subtitleCreate": "你还不属于任何组织。新建一个组织开始使用。",
+    "subtitleAsk": "你还不属于任何组织。",
+    "listLabel": "你的组织",
+    "enter": "进入",
+    "create": "新建组织",
+    "askHint": "请组织管理员邀请你加入。",
+    "admin": "进入管理后台",
+    "logout": "退出登录"
+  },
+  "setupLayout": {
+    "model": {
+      "needsDeploymentAdmin": "需要部署管理员配置模型服务",
+      "waitingForAdmin": "等待管理员配置模型"
+    },
+    "agent": {
+      "needsModel": "先配置模型",
+      "waitingForAdmin": "等待管理员新建 agent"
+    },
+    "waiting": "组织还在配置中，管理员完成后你就能开始对话。",
+    "refresh": "刷新",
+    "waitingDeployment": "需要部署管理员配置模型服务后才能继续。",
+    "steps": {
+      "model": "配置模型",
+      "agent": "新建 agent",
+      "channels": "连接渠道",
+      "members": "邀请成员",
+      "catalog": "安装插件",
+      "connections": "我的连接"
+    }
+  },
+  "roles": {
+    "need": {
+      "member": "组织成员",
+      "admin": "组织管理员",
+      "owner": "组织所有者",
+      "enterprise": "企业管理员"
+    },
+    "noAccess": {
+      "title": "没有访问权限",
+      "description": "「{page}」只对{role}开放。",
+      "askOrg": "如需访问，请联系本组织的管理员或所有者。",
+      "askEnterprise": "如需访问，请联系企业管理员授予，或在服务器上运行 capybara admin grant 加登录名。"
+    },
+    "readOnly": "你在本组织是{role}，这里只能查看；修改需要组织管理员。"
+  },
+  "orgLifecycle": {
+    "leave": {
+      "action": "退出组织…",
+      "title": "退出组织",
+      "description": "退出后你将失去这个组织的访问，你负责的 agent 会转给组织所有者。你在其他组织的访问不受影响。",
+      "confirm": "退出组织",
+      "lastOwner": "你是这个组织唯一的所有者。先在「成员」里把所有权转让给别人，才能退出。",
+      "toMembers": "去成员页",
+      "gotIt": "知道了",
+      "left": "已退出「{name}」"
+    },
+    "danger": {
+      "title": "危险操作"
+    },
+    "delete": {
+      "action": "删除组织…",
+      "item": "删除组织",
+      "hint": "所有成员都会失去这个组织的访问，agent、会话与设置不再可用。",
+      "title": "删除组织",
+      "description": "这会删除组织「{name}」，所有成员都会失去访问。此操作无法在界面中撤销。",
+      "confirm": "删除组织",
+      "done": "组织已删除"
+    }
+  },
+  "tokens": {
+    "title": "服务令牌",
+    "description": "给脚本与集成用的组织令牌：只能读取组织信息与成员、使用 agent。",
+    "create": "新建令牌",
+    "createTitle": "新建服务令牌",
+    "name": "名称",
+    "role": "角色",
+    "roleHelp": "不能高于你在本组织的角色。",
+    "expires": "有效期",
+    "expiry": {
+      "never": "不过期",
+      "30": "30 天",
+      "90": "90 天",
+      "365": "1 年"
+    },
+    "createSubmit": "新建",
+    "value": "令牌",
+    "done": "完成",
+    "created": "令牌已创建",
+    "columns": {
+      "name": "名称",
+      "role": "角色",
+      "created": "创建时间",
+      "expires": "过期",
+      "lastUsed": "最近使用"
+    },
+    "neverUsed": "从未",
+    "noExpiry": "不过期",
+    "revoke": "吊销",
+    "revokeTitle": "吊销令牌",
+    "revokeDescription": "吊销后，使用「{name}」的脚本会立即失效。",
+    "revokeConfirm": "吊销",
+    "revoked": "令牌已吊销",
+    "empty": "还没有服务令牌。",
+    "emptyHint": "新建一个令牌，给 CI 或集成调用组织的接口。",
+    "loadFailed": "无法加载服务令牌。",
+    "retry": "重试",
+    "expired": "已过期"
   }
 }

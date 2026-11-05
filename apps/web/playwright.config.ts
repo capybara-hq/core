@@ -20,6 +20,8 @@ export default defineConfig({
       baseURL: process.env.CAPYBARA_E2E_BASE_URL,
     }),
     trace: "retain-on-failure",
+    // the UI language follows Accept-Language when no NEXT_LOCALE cookie is set: the specs read zh
+    locale: "zh-CN",
   },
   // setup 项目在全新内核上跑初始化向导（初始化页的断言只在 setup.spec.ts）；其余用例依赖它先跑完，
   // 再用 e2e/support/sign-in.ts 登录，不依赖文件名排序。

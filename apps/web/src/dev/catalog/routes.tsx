@@ -15,6 +15,7 @@ export const TEMPLATE_ROUTES = [
   "templates/auth",
   "templates/status",
   "templates/onboarding",
+  "templates/setup",
 ] as const;
 
 export const OVERLAY_ROUTES = [
@@ -45,6 +46,13 @@ export const REFERENCE_COMPONENTS = [
   "action-row",
   "template-list",
   "template-form",
+  "template-detail",
+  "template-overview",
+  "template-inbox",
+  "template-trace",
+  "template-settings",
+  "template-wizard",
+  "template-auth",
   "button",
   "input",
   "switch",
@@ -76,8 +84,31 @@ export const REFERENCE_COMPONENTS = [
   "command-palette",
   "inline-card",
   "property-section",
+  "background-task",
+  "task-output-panel",
   "right-panel",
   "template-conversation",
+  // the role pass
+  "no-access",
+  "danger-zone",
+  "secret-reveal",
+  // unslop fixes
+  "error-detail",
+  "file-picker",
+  "run-row",
+  "working-line",
+  // the new conversation page (agent profile design §4)
+  "greeting",
+  "agent-row",
+  "quick-actions",
+  // agent avatars (agent profile design §2.3)
+  "avatar",
+  // config forms
+  "repeater",
+  "field-row",
+  "key-value-editor",
+  // loading states
+  "skeleton",
 ] as const;
 
 export type ReferenceComponent = (typeof REFERENCE_COMPONENTS)[number];

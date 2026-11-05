@@ -13,7 +13,7 @@ export type ActionRowProps = {
   /** Unsaved changes; `0` reads "No unsaved changes", leaving it out shows nothing. */
   unsaved?: number;
   errors?: number;
-  cancel?: { label: string; onSelect(): void };
+  cancel?: { label: string; onSelect(): void; disabled?: boolean };
   secondary?: ButtonSpec;
   primary: ButtonSpec;
 };
@@ -30,7 +30,9 @@ function optional(b: ButtonSpec) {
  * The action row (spec §4.4): above the StatusBar when a page has actions to submit. Left: an
  * accent dot + unsaved count · error count (`fail` text, no icon: the signed reference), or "No
  * unsaved changes";
- * right: cancel · secondary · primary (rightmost), all `default` density.
+ * right: cancel · secondary · primary (rightmost), all `default` density. Inside a template its
+ * row lies in the content frame (the page's one width and side padding), so the primary ends where
+ * the content ends.
  */
 export function ActionRow({ unsaved, errors = 0, cancel, secondary, primary }: ActionRowProps) {
   const t = useDesignT();
@@ -39,48 +41,55 @@ export function ActionRow({ unsaved, errors = 0, cancel, secondary, primary }: A
   const dirty = (unsaved ?? 0) > 0;
   return (
     <section className="cb-actionrow" data-part="action-row" aria-label={t("shell.pending")}>
-      <span className="cb-actionrow-info">
-        {dirty ? <span className="cb-actionrow-dot" aria-hidden="true" /> : null}
-        {dirty || errors > 0 ? (
-          <span className="cb-actionrow-text">
-            {dirty ? (
-              <span data-part="action-row-unsaved">{fill("shell.unsaved", unsaved ?? 0)}</span>
-            ) : null}
-            {dirty && errors > 0 ? " · " : null}
-            {errors > 0 ? (
-              <span className="cb-actionrow-errors" data-part="action-row-errors">
-                {fill("shell.errors", errors)}
-              </span>
-            ) : null}
-          </span>
-        ) : null}
-        {unsaved === 0 && errors === 0 ? <span>{t("shell.clean")}</span> : null}
-      </span>
-      <span className="cb-actionrow-actions">
-        {cancel ? (
-          <Button variant="default" density="default" onClick={cancel.onSelect}>
-            {cancel.label}
-          </Button>
-        ) : null}
-        {secondary ? (
+      <div className="cb-actionrow-frame" data-part="action-row-frame">
+        <span className="cb-actionrow-info">
+          {dirty ? <span className="cb-actionrow-dot" aria-hidden="true" /> : null}
+          {dirty || errors > 0 ? (
+            <span className="cb-actionrow-text">
+              {dirty ? (
+                <span data-part="action-row-unsaved">{fill("shell.unsaved", unsaved ?? 0)}</span>
+              ) : null}
+              {dirty && errors > 0 ? " · " : null}
+              {errors > 0 ? (
+                <span className="cb-actionrow-errors" data-part="action-row-errors">
+                  {fill("shell.errors", errors)}
+                </span>
+              ) : null}
+            </span>
+          ) : null}
+          {unsaved === 0 && errors === 0 ? <span>{t("shell.clean")}</span> : null}
+        </span>
+        <span className="cb-actionrow-actions">
+          {cancel ? (
+            <Button
+              variant="default"
+              density="default"
+              {...(cancel.disabled ? { disabled: true } : {})}
+              onClick={cancel.onSelect}
+            >
+              {cancel.label}
+            </Button>
+          ) : null}
+          {secondary ? (
+            <Button
+              variant="default"
+              density="default"
+              {...optional(secondary)}
+              onClick={secondary.onSelect}
+            >
+              {secondary.label}
+            </Button>
+          ) : null}
           <Button
-            variant="default"
+            variant="primary"
             density="default"
-            {...optional(secondary)}
-            onClick={secondary.onSelect}
+            {...optional(primary)}
+            onClick={primary.onSelect}
           >
-            {secondary.label}
+            {primary.label}
           </Button>
-        ) : null}
-        <Button
-          variant="primary"
-          density="default"
-          {...optional(primary)}
-          onClick={primary.onSelect}
-        >
-          {primary.label}
-        </Button>
-      </span>
+        </span>
+      </div>
     </section>
   );
 }

@@ -1,4 +1,5 @@
 import { Module } from "@nestjs/common";
+import { BackgroundModule } from "../background/background.module.js";
 import { ConversationAccessModule } from "../conversations/access.js";
 import { AttachmentsModule } from "../conversations/attachments.module.js";
 import { EventLogModule } from "../conversations/event-log.js";
@@ -48,6 +49,8 @@ import { ToolRegistry } from "./registry.js";
     SubagentsModule,
     // the builtin sandbox and skill tools run in the conversation's sandbox
     SandboxModule,
+    // `Bash` with run_in_background records its task; TaskOutput / TaskStop finish and stop it
+    BackgroundModule,
     // the conversation page's tool metadata reads only what the viewer may see
     ConversationAccessModule,
     // the WebFetch extraction call: its purpose, usage report and step writes

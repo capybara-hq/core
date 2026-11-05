@@ -208,6 +208,25 @@ the same transaction as the business rows.
 - `Deliver` puts a file into object storage (`kernel/<orgId>/artifacts/<conversation>/<id>`, limit `sandbox.deliverMaxBytes`),
   appends an `artifact_created` event, and the web "Artifacts" tab is rebuilt from the log.
 
+**Background tasks** (spec `docs/superpowers/specs/2026-11-05-background-bash-design.md`; code `packages/kernel/src/background/*`,
+`tools/builtins/sandbox/{bash,task-output,task-stop}.ts`):
+
+- `Bash` `run_in_background: true` reserves a `capybara.background_tasks` row first (counted against `sandbox.background.maxTasks` under a
+  per-sandbox `XactLock`, `sid` null), then launches with one short exec under the call's shared lease (`setsid` + `timeout -s KILL` + `bash`,
+  output in `/workspace/.capybara/tasks/<id>.out`), then records the session id. The call returns at once; `timeout` is the task's own limit
+  (default and cap `sandbox.background.maxSeconds`, itself at most `sandbox.limits.maxCommandSeconds`). A failed launch finishes the row `failed`; a full sandbox is refused with
+  "N background tasks are already running; stop one with TaskStop or wait for one to finish, then retry".
+- `TaskOutput {task_id, block?, timeout?}` (block default true, timeout 30 s, at most 600 s and the run's time left, checked every 2 s) returns
+  the status and the output since this conversation's last read (`read_offset` in PG, spilled like any large result); `TaskStop {task_id}`
+  claims the task (`stopping_at`), sends SIGTERM to the session, SIGKILL after 5 s. Both are `defaultPolicy: "allow"`, offered whenever
+  `Bash` is (the registry adds them, `BASH_COMPANION_TOOLS`), given to sub-agents, and go through `SandboxService.ifRunning` (see
+  `.agents/skills/writing-sandbox-providers`). A conversation reads and stops only its own tasks.
+- A finish (poll, `TaskOutput`, `TaskStop`, or a person's stop from the panel) is one conditional update from `running` plus the
+  model-visible `background_task_finished` event (idempotency key `background_task_finished:<taskId>`) in the same transaction. A finish a
+  tool result already showed the model is `reported: true` (one short line, never wakes); a person's stop is `stoppedBy: "person"` (never
+  wakes), the stop of a conversation being deleted `stoppedBy: "deletion"` (never wakes; the delete marks the conversation deleted first). The wake rules live in `RunQueue.ensureRun` (`background/wake-rules.ts`). A sub-agent's running tasks are stopped when the child
+  ends (`Waits.childFinished`); stopping a run leaves its tasks running.
+
 **Skill tools**:
 
 - `Skill {skill, args?}` (`args` renders the skill as a person's `/name args` does) is not in the agent definition and is added automatically by the registry: it appears when the conversation log has a skill catalog snapshot `skills_catalog` (resolved from the

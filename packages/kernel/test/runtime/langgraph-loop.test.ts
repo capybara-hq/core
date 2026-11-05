@@ -227,7 +227,7 @@ function loopCtx(
     signal: new AbortController().signal,
     shutdown: new AbortController().signal,
     sink: (d) => deltas.push(d),
-    async pendingUserMessages(afterSeq) {
+    async pendingAbsorbable(afterSeq) {
       const evs = await eventLog.readAfter(conversationId, afterSeq, 1000);
       return evs.filter((e) => e.type === "user_message");
     },

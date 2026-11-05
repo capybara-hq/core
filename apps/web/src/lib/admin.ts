@@ -95,11 +95,17 @@ const json = (method: string, body: unknown): RequestInit => ({
   body: JSON.stringify(body),
 });
 
+/** One page of accounts. */
+export interface AdminAccountsPage {
+  accounts: AdminAccount[];
+  next: string | null;
+}
+
 export const getAdminOverview = () => apiFetch<AdminOverview>("/api/v1/admin/overview");
 
 /** 账号分页（按 id 升序）：`next` 为下一页游标，没有更多时为 null。 */
 export const listAdminAccounts = (after?: string) =>
-  apiFetch<{ accounts: AdminAccount[]; next: string | null }>(
+  apiFetch<AdminAccountsPage>(
     `/api/v1/admin/accounts?limit=200${after === undefined ? "" : `&after=${encodeURIComponent(after)}`}`,
   );
 

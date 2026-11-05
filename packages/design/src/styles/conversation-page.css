@@ -83,6 +83,53 @@
   height: var(--cb-layout-title-bar);
   padding: 0 var(--cb-space-3) 0 var(--cb-space-5);
 }
+.cb-title-path {
+  display: flex;
+  flex: 0 1 auto;
+  align-items: center;
+  /* The page head's spacing: space.2 on both sides of every "/" (spec §6.16.1). */
+  gap: var(--cb-space-2);
+  min-width: 0;
+  color: var(--cb-faint);
+  font-family: var(--cb-font);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.cb-title-path-item {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--cb-space-2);
+  min-width: 0;
+}
+.cb-title-path-seg {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--cb-muted);
+  text-decoration: none;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* The agent's segment: its 16 px avatar, space.1, then the name (the name takes the ellipsis). */
+.cb-title-path-seg[data-avatar="true"] {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--cb-space-1);
+}
+.cb-title-path-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+a.cb-title-path-seg:hover {
+  color: var(--cb-ink);
+}
+.cb-title-path-sep {
+  flex: none;
+  color: var(--cb-faint);
+}
+.cb-title-path + .cb-title-btn {
+  margin-left: var(--cb-space-1);
+}
 .cb-title-btn {
   display: inline-flex;
   align-items: center;
@@ -156,6 +203,10 @@ span.cb-title-btn {
 }
 .cb-cmenu[data-size="wide"] {
   min-width: 260px;
+}
+/* A menu of free-text labels (the quick actions' 更多): long labels end in an ellipsis. */
+.cb-cmenu[data-bounded="true"] {
+  max-width: min(320px, calc(100vw - 16px));
 }
 .cb-cmenu-item {
   display: flex;
@@ -327,7 +378,7 @@ span.cb-title-btn {
 .cb-send.cb-btn:disabled {
   border-color: transparent;
   background: var(--cb-selected);
-  color: var(--cb-faint);
+  color: var(--cb-disabled);
 }
 .cb-stop.cb-btn,
 .cb-stop.cb-btn:hover:not(:disabled) {
@@ -365,13 +416,6 @@ span.cb-title-btn {
   display: flex;
   flex-direction: column;
   gap: var(--cb-space-2);
-}
-.cb-skeleton-bar {
-  display: block;
-  width: var(--cb-skeleton-w, 60%);
-  height: var(--cb-space-3);
-  border-radius: var(--cb-radius-sm);
-  background: var(--cb-selected);
 }
 
 /* Task list (a checklist extension view; todo's card, section and panel). */
@@ -423,6 +467,7 @@ span.cb-title-btn {
   padding: var(--cb-space-3);
   border-radius: var(--cb-radius-md);
   background: var(--cb-panel);
+  box-shadow: inset 0 0 0 1px var(--cb-line-card);
   color: var(--cb-ink);
 }
 .cb-property-head {
@@ -577,10 +622,16 @@ button.cb-property-row {
   min-width: 0;
 }
 .cb-conv-scroll {
+  /* The containing block of what the thread holds: an absolutely positioned descendant (a
+     screen-reader copy) is clipped here instead of growing the document (review fix L3). */
+  position: relative;
   flex: 1;
   min-height: 0;
   overflow-y: auto;
   padding: var(--cb-space-4) var(--cb-layout-gutter);
+  /* A classic (non-overlay) scrollbar's gutter on both sides: the centered thread keeps the
+     composer's center line whether or not the thread scrolls (the composer is outside it). */
+  scrollbar-gutter: stable both-edges;
 }
 .cb-conv-scroll[data-center="true"] {
   display: flex;
@@ -617,7 +668,7 @@ button.cb-property-row {
   color: var(--cb-ink);
   font-size: var(--cb-type-h2-size);
   line-height: var(--cb-type-h2-line);
-  font-weight: 700;
+  font-weight: 600;
 }
 .cb-conv-new > .cb-conv-new-desc {
   margin: 0;
@@ -629,6 +680,15 @@ button.cb-property-row {
 .cb-conv-new > .cb-composer,
 .cb-conv-new > .cb-file-drop {
   margin-top: var(--cb-space-3);
+}
+/* With the greeting (§5.4, agent profile design §4): greeting, agents row, quick actions and the
+   composer, space.4 apart. */
+.cb-conv-new[data-start="true"] {
+  gap: var(--cb-space-4);
+}
+.cb-conv-new[data-start="true"] > .cb-composer,
+.cb-conv-new[data-start="true"] > .cb-file-drop {
+  margin-top: 0;
 }
 .cb-conv-panel {
   position: relative;
@@ -643,9 +703,36 @@ button.cb-property-row {
  * the inline area until then, so it never widens the page (no horizontal scroll, no flash).
  */
 @media (max-width: 1279px) {
-  .cb-conv-page[data-layout="auto"]:not([data-sheet]) > .cb-conv-panel,
+  .cb-conv-page[data-layout="auto"]:not([data-sheet]) .cb-conv-panel,
   .cb-conv-page[data-layout="auto"]:not([data-sheet]) .cb-conv-cols > [data-part="properties"] {
     display: none;
+  }
+}
+/*
+ * Phones (below 640, spec §5.4): the middle column has no minimum and fills the window, with 16 px
+ * gutters for the title bar, the thread and the composer, so the composer, its send button and
+ * the user bubbles never run past the right edge. Title-bar buttons are 40 px tap targets; the
+ * right padding is space.1 so an icon's glyph lines up with the 16 px content edge.
+ */
+@media (max-width: 639px) {
+  .cb-conv-main {
+    min-width: 0;
+  }
+  .cb-conv-scroll {
+    padding-inline: var(--cb-space-4);
+  }
+  .cb-conv-composer {
+    padding-inline: var(--cb-space-4);
+  }
+  .cb-title-bar {
+    padding-inline: var(--cb-space-4) var(--cb-space-1);
+  }
+  .cb-title-bar .cb-icon-btn {
+    min-width: 40px;
+    min-height: 40px;
+  }
+  .cb-title-btn {
+    height: 40px;
   }
 }
 .cb-conv-resize {
@@ -751,4 +838,52 @@ button.cb-property-row {
 }
 .cb-ref-board-card[data-current="true"] {
   box-shadow: inset 2px 0 0 var(--cb-accent);
+}
+
+/* The title while the conversation loads: a bar in the title's own box, 30% of the bar. */
+.cb-title-btn[data-loading="true"] {
+  flex: none;
+  width: 30%;
+  cursor: default;
+}
+.cb-title-btn[data-loading="true"] > .cb-title-text {
+  flex: 1;
+}
+
+/* The thread while it loads: a user bubble's box (45%, right) and two prose lines. */
+.cb-conv-thread .cb-user-msg > .cb-bubble-slot {
+  box-sizing: border-box;
+  width: 45%;
+  padding: var(--cb-pad-default-y) var(--cb-pad-default-x);
+  border: 1px solid transparent;
+}
+
+/* ── Background tasks: nested rows and the output panel (§6.16.17, §6.16.18) ── */
+
+.cb-task-row[data-nested="true"] {
+  padding-left: var(--cb-space-4);
+}
+.cb-task-output {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-2);
+  min-width: 0;
+}
+.cb-task-output-head {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-2);
+}
+.cb-task-output-head > button,
+.cb-task-output-stopping {
+  margin-left: auto;
+}
+.cb-task-command {
+  color: var(--cb-ink);
+  font-family: var(--cb-font);
+  overflow-wrap: anywhere;
+}
+.cb-task-output-note {
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
 }

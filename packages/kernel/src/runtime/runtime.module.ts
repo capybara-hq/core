@@ -1,5 +1,7 @@
 import { Module } from "@nestjs/common";
 import type { Redis } from "ioredis";
+import { BackgroundModule } from "../background/background.module.js";
+import { BackgroundWake } from "../background/wake.js";
 import { ConversationAccessModule } from "../conversations/access.js";
 import { AttachmentsModule } from "../conversations/attachments.module.js";
 import { EventLogModule } from "../conversations/event-log.js";
@@ -52,6 +54,7 @@ import { DecisionResumer, Waits } from "./waits.js";
     UsageReportModule,
     TitlesModule,
     StepLogModule,
+    BackgroundModule,
     // the producer side of `wait-timeout` jobs (`MaintenanceProcessor` consumes them)
     QueueModule.registerQueue(MAINTENANCE_QUEUE_NAME),
   ],
@@ -68,6 +71,8 @@ import { DecisionResumer, Waits } from "./waits.js";
     AgentLoops,
     RunSteps,
     RunWorker,
+    // a finished background task wakes an idle conversation (background Bash spec §3)
+    BackgroundWake,
     // one quota per key prefix (the org run quota, the org eval quota)
     {
       provide: RUN_QUOTA,

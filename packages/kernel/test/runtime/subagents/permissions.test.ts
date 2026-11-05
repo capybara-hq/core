@@ -309,6 +309,8 @@ describe("policies and approvals of a sub-agent", () => {
       approvalId: approval.id,
       toolKey: ECHO,
       expiresAt: new Date(approval.expires_at).toISOString(),
+      requestedFor: approval.requested_for,
+      approverRole: approval.approver_role,
     });
 
     type Inbox = {

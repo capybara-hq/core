@@ -3,13 +3,24 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
-import InvitePage from "../src/app/[locale]/(auth)/invite/[token]/page";
-import { bodyOf, json, noContent, stubApi } from "./support/api";
+import { bodyOf, json, lastStubRoutes, noContent, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
-import { ME, renderPage } from "./support/render";
+import { renderAuthRouteWithCache } from "./support/query";
+import { ME } from "./support/render";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
-vi.mock("next/navigation", () => ({ useParams: () => ({ token: "cap_inv_tok" }) }));
+vi.mock("next/navigation", () => ({
+  redirect: (to: string) => {
+    throw new Error(`REDIRECT ${to}`);
+  },
+  notFound: () => {
+    throw new Error("NOT_FOUND");
+  },
+}));
+const navigateBrowser = vi.hoisted(() => vi.fn());
+vi.mock("../src/lib/browser", () => ({ navigateBrowser }));
+
+const PAGE = "/invite/cap_inv_tok";
 
 const msgs = { zh, en } as const;
 const PREVIEW = "/api/v1/invitations/cap_inv_tok";
@@ -22,7 +33,10 @@ const INVITE = {
 const unauthenticated = () => json(401, { error: { code: "auth.required", message: "x" } });
 const refreshFails = () => json(401, { error: { code: "auth.refresh_invalid", message: "x" } });
 
-beforeEach(() => resetNavigation("/invite/cap_inv_tok"));
+beforeEach(() => {
+  resetNavigation("/invite/cap_inv_tok");
+  navigateBrowser.mockReset();
+});
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
@@ -39,7 +53,7 @@ describe("接受邀请页（AuthPage）", () => {
         [`POST ${ACCEPT}`]: () => json(200, { account: { id: "a1" }, orgId: "o9", role: "guest" }),
         "PUT /api/v1/me/current-org": () => noContent(),
       });
-      const { container } = renderPage(<InvitePage />, { locale });
+      const { container } = await renderAuthRouteWithCache(PAGE, lastStubRoutes(), { locale });
       expect(container.querySelector('[data-template="AuthPage"]')).not.toBeNull();
       expect(await screen.findByText(m.invite.subtitle.replace("{org}", "Initech"))).toBeTruthy();
       expect(screen.getByText(m.members.roles.guest)).toBeTruthy();
@@ -48,7 +62,9 @@ describe("接受邀请页（AuthPage）", () => {
       const accept = screen.getByRole("button", { name: m.invite.accept });
       expect(accept.getAttribute("data-variant")).toBe("primary");
       await userEvent.setup().click(accept);
-      await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/"));
+      // A new current org: the whole document is reloaded (ruling R4).
+      await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledWith("/"));
+      expect(router.replace).not.toHaveBeenCalled();
       expect(bodyOf(calls.find((c) => c.url === ACCEPT))).toEqual({});
       expect(bodyOf(calls.find((c) => c.method === "PUT"))).toEqual({ orgId: "o9" });
     },
@@ -61,7 +77,7 @@ describe("接受邀请页（AuthPage）", () => {
       "GET /api/v1/me": unauthenticated,
       "POST /api/v1/auth/refresh": refreshFails,
     });
-    renderPage(<InvitePage />);
+    await renderAuthRouteWithCache(PAGE, lastStubRoutes());
     expect(await screen.findByText(m.signInHint)).toBeTruthy();
     await userEvent.setup().click(screen.getByRole("button", { name: m.signIn }));
     expect(router.push).toHaveBeenCalledWith(
@@ -69,7 +85,7 @@ describe("接受邀请页（AuthPage）", () => {
     );
   });
 
-  it("未登录：创建账号并加入 → POST accept 带注册信息 → 切到该组织 → 进入首页", async () => {
+  it("未登录：新建账号并加入 → POST accept 带注册信息 → 切到该组织 → 进入首页", async () => {
     const m = en.invite;
     const calls = stubApi({
       [`GET ${PREVIEW}`]: () => json(200, INVITE),
@@ -78,14 +94,14 @@ describe("接受邀请页（AuthPage）", () => {
       [`POST ${ACCEPT}`]: () => json(200, { account: { id: "a7" }, orgId: "o9", role: "guest" }),
       "PUT /api/v1/me/current-org": () => noContent(),
     });
-    renderPage(<InvitePage />);
+    await renderAuthRouteWithCache(PAGE, lastStubRoutes());
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: m.signupToggle }));
     await user.type(screen.getByLabelText(m.loginLabel), "carol");
     await user.type(screen.getByLabelText(m.passwordLabel), "a-very-long-password");
     await user.type(screen.getByLabelText(m.displayNameLabel), "Carol");
     await user.click(screen.getByRole("button", { name: m.signup }));
-    await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/"));
+    await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledWith("/"));
     expect(bodyOf(calls.find((c) => c.url === ACCEPT))).toEqual({
       login: "carol",
       password: "a-very-long-password",
@@ -102,7 +118,7 @@ describe("接受邀请页（AuthPage）", () => {
       "POST /api/v1/auth/refresh": refreshFails,
       [`POST ${ACCEPT}`]: () => json(409, { error: { code: "account.login_taken", message: "x" } }),
     });
-    renderPage(<InvitePage />);
+    await renderAuthRouteWithCache(PAGE, lastStubRoutes());
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: m.signupToggle }));
     await user.type(screen.getByLabelText(m.loginLabel), "admin");
@@ -110,7 +126,7 @@ describe("接受邀请页（AuthPage）", () => {
     await user.type(screen.getByLabelText(m.displayNameLabel), "Carol");
     await user.click(screen.getByRole("button", { name: m.signup }));
     expect(await screen.findByText(`${en.errors.account.login_taken}`)).toBeTruthy();
-    expect(router.replace).not.toHaveBeenCalled();
+    expect(navigateBrowser).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -122,7 +138,7 @@ describe("接受邀请页（AuthPage）", () => {
       [`GET ${PREVIEW}`]: () => json(status, { error: { code, message: "x" } }),
       "GET /api/v1/me": () => json(200, ME),
     });
-    renderPage(<InvitePage />);
+    await renderAuthRouteWithCache(PAGE, lastStubRoutes());
     expect(await screen.findByText(en.invite.invalidTitle)).toBeTruthy();
     const [group, key] = code.split(".") as ["invitation", "invalid" | "expired" | "used"];
     expect(screen.getByText(`${en.errors[group][key]}`)).toBeTruthy();

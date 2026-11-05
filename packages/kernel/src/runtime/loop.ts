@@ -1,6 +1,6 @@
 import type { AgentDefinition } from "../agents/definition.js";
 import type { KernelConfig } from "../config/schema.js";
-import type { ConversationEvent } from "../conversations/events.js";
+import type { AbsorbableEvent } from "../conversations/events.js";
 import type { StreamSink } from "./model-call.js";
 
 /** 一次运行交给 loop 的上下文（spec 4.4）。 */
@@ -23,10 +23,11 @@ export interface LoopContext {
   shutdown: AbortSignal;
   sink: StreamSink;
   /**
-   * 下一个步骤间隙要吸收的插话：返回 seq > afterSeq 的 user_message（且只含本轮开始时尚未被消费的，
+   * 下一个步骤间隙要吸收的事件：返回 seq > afterSeq 的可吸收事件（`user_message` 与
+   * `background_task_finished`, `isAbsorbable`；且只含本轮开始时尚未被消费的，
    * 即 seq 也大于会话的 `consumed_seq`），按 seq 升序。loop 记录吸收到的最大 seq 作为 `consumedUpToSeq`。
    */
-  pendingUserMessages(afterSeq: number): Promise<ConversationEvent[]>;
+  pendingAbsorbable(afterSeq: number): Promise<AbsorbableEvent[]>;
   limits: { maxSteps: number; deadline: number };
   /**
    * Kind of the conversation: plugin hooks fire for `chat` and `subagent` (F10, P-18, sub-agents

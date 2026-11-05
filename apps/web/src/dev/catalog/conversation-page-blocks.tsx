@@ -1,8 +1,12 @@
 "use client";
 
 import {
+  AgentRow,
   AppShell,
   AttachmentStrip,
+  type BackgroundItem,
+  type BackgroundTaskItem,
+  BackgroundTaskRow,
   BackgroundTasks,
   Button,
   CommandPalette,
@@ -14,6 +18,7 @@ import {
   CsvPreview,
   FileCard,
   FilesSection,
+  Greeting,
   Icon,
   IconButton,
   InlineCard,
@@ -22,6 +27,7 @@ import {
   PropertiesPanel,
   PropertySection,
   Prose,
+  QuickActions,
   ReferenceBoard,
   RightPanel,
   type RightPanelSwitcher,
@@ -31,6 +37,7 @@ import {
   type SubagentRowData,
   SubagentTask,
   TaskList,
+  TaskOutputPanel,
   TitleBar,
   type TitleBarPanel,
   type TitleBarProps,
@@ -45,6 +52,7 @@ import {
   FILE_FIXTURE,
   type FixtureFile,
   type FixtureSubagent,
+  NEW_CONVERSATION_FIXTURE,
   PANEL_FIXTURE,
   PROSE_FIXTURE,
   SKILL_FIXTURE,
@@ -52,7 +60,7 @@ import {
   TOOL_FIXTURES,
 } from "@capybara-hq/design/fixtures";
 import { type ReactNode, useState } from "react";
-import { Block, bytes, csvText, NOW, toRow } from "./conversation-blocks";
+import { Block, bytes, csvText, NEW_CONVERSATION_AGENTS, NOW, toRow } from "./conversation-blocks";
 import { COMMANDS } from "./fixtures";
 import { RefBlock } from "./ref-block";
 import { sidebarProps } from "./shell-fixture";
@@ -121,6 +129,13 @@ function subagentGroupBlocks(): ReactNode {
     <>
       <Block id="subagent-group-running">
         <SubagentGroup rows={S.running.map(running)} onOpen={noop} now={NOW} />
+      </Block>
+      <Block id="subagent-group-waiting">
+        <SubagentGroup
+          rows={S.running.map((f) => ({ ...running(f), status: "waiting", waiting: "approval" }))}
+          onOpen={noop}
+          now={NOW}
+        />
       </Block>
       <Block id="subagent-group-done">
         <SubagentGroup rows={finished()} onOpen={noop} now={NOW} />
@@ -197,6 +212,10 @@ function titleBarBlocks(): ReactNode {
       </RefBlock>
       <RefBlock id="title-bar-long-title" width={760}>
         <TitleBar {...titleBarProps({ title: C.longTitle })} />
+      </RefBlock>
+      {/* Phones: measured in a 390 window, 40 px tap targets (spec §6.16.1, §9.3). */}
+      <RefBlock id="title-bar-narrow" width={390}>
+        <TitleBar {...titleBarProps()} />
       </RefBlock>
     </>
   );
@@ -435,21 +454,161 @@ function filesSection() {
   return <FilesSection files={fileRows} onOpen={noop} onAll={noop} />;
 }
 
+/** The fixture's running duration, "2:28". */
+const RUNNING_MS = 148_000;
+const ID = { running: "running", sandbox: "finished", event: "unavailable" } as const;
+const BG_START = NOW - RUNNING_MS;
+
 function backgroundSection() {
   return (
     <PropertySection title="后台任务">
       <BackgroundTasks
-        running={P.background.running.map((r, i) => ({
-          id: `bg${i}`,
-          name: r.name,
-          elapsed: r.duration,
-        }))}
-        completed={P.background.completed}
+        items={[
+          ...P.background.running.map(
+            (r, i): BackgroundItem => ({
+              kind: "subagent",
+              id: `bg${i}`,
+              name: r.name,
+              status: "running",
+              startedAt: NOW - RUNNING_MS,
+            }),
+          ),
+          ...Array.from(
+            { length: P.background.completed },
+            (_, i): BackgroundItem => ({
+              kind: "subagent",
+              id: `bgdone${i}`,
+              name: `已完成 ${i}`,
+              status: "completed",
+              startedAt: BG_START,
+              finishedAt: BG_START + 1000 * (i + 1),
+            }),
+          ),
+        ]}
+        now={NOW}
         onStop={noop}
         onOpen={noop}
-        onCompleted={noop}
       />
     </PropertySection>
+  );
+}
+
+const bgTask = (over: Partial<BackgroundTaskItem> = {}): BackgroundTaskItem => ({
+  kind: "task",
+  id: "bgt",
+  description: "pnpm dev --port 3000",
+  status: "running",
+  startedAt: BG_START,
+  ...over,
+});
+
+/** One finished task row inside its section, the way the section draws it. */
+function finishedTask(status: BackgroundTaskItem["status"], exitCode: number | null) {
+  return (
+    <PropertySection title="后台任务">
+      <BackgroundTaskRow
+        item={bgTask({ status, exitCode, finishedAt: BG_START + 72_000 })}
+        now={NOW}
+        onStop={noop}
+        onOpen={noop}
+      />
+    </PropertySection>
+  );
+}
+
+function backgroundTaskBlocks(): ReactNode {
+  return (
+    <>
+      <PropBlock id="background-task-running">
+        <PropertySection title="后台任务">
+          <BackgroundTasks
+            items={[
+              bgTask(),
+              bgTask({ id: "bgt2", description: "tail -f build.log", stopping: true }),
+            ]}
+            now={NOW}
+            onStop={noop}
+            onOpen={noop}
+          />
+        </PropertySection>
+      </PropBlock>
+      <PropBlock id="background-task-waiting">
+        <PropertySection title="后台任务">
+          <BackgroundTasks
+            items={[
+              {
+                kind: "subagent",
+                id: "saw",
+                name: "列出示例文档目录树",
+                status: "waiting",
+                waiting: "approval",
+                startedAt: BG_START,
+              },
+            ]}
+            now={NOW}
+            onStop={noop}
+            onOpen={noop}
+          />
+        </PropertySection>
+      </PropBlock>
+      <PropBlock id="background-task-done">{finishedTask("completed", 0)}</PropBlock>
+      <PropBlock id="background-task-failed">{finishedTask("failed", 2)}</PropBlock>
+      <PropBlock id="background-task-stopped">{finishedTask("stopped", null)}</PropBlock>
+      <PropBlock id="background-task-lost">{finishedTask("lost", null)}</PropBlock>
+      <PropBlock id="background-task-nested">
+        <PropertySection title="后台任务">
+          <BackgroundTasks
+            items={[
+              {
+                kind: "subagent",
+                id: "sa",
+                name: "列出示例文档目录树",
+                status: "running",
+                startedAt: BG_START,
+                tasks: [bgTask({ id: "bgn", nested: true })],
+              },
+            ]}
+            now={NOW}
+            onStop={noop}
+            onOpen={noop}
+          />
+        </PropertySection>
+      </PropBlock>
+    </>
+  );
+}
+
+function taskOutputBlocks(): ReactNode {
+  const body = (
+    status: BackgroundTaskItem["status"],
+    source: "sandbox" | "event",
+    elapsed: string,
+    stopping = false,
+  ) => (
+    <RefBlock
+      id={`task-output-panel-${stopping ? "stopping" : ID[status === "running" ? "running" : source]}`}
+      width={420}
+      pad
+    >
+      <TaskOutputPanel
+        description="pnpm dev --port 3000"
+        command="pnpm dev --port 3000"
+        status={status}
+        elapsed={elapsed}
+        text={"ready in 412 ms\nlistening on http://localhost:3000"}
+        source={source}
+        stopping={stopping}
+        onStop={noop}
+      />
+    </RefBlock>
+  );
+  return (
+    <>
+      {body("running", "sandbox", "2分28秒")}
+      {body("running", "sandbox", "2分28秒", true)}
+      {body("completed", "sandbox", "1分12秒")}
+      {body("completed", "event", "1分12秒")}
+    </>
   );
 }
 
@@ -629,7 +788,7 @@ function rightPanelBlocks(): ReactNode {
 
 // ── Template ────────────────────────────────────────────────────────────────
 
-type TemplateState = "properties" | "file-panel" | "subagent-panel" | "new" | "sheet";
+type TemplateState = "properties" | "file-panel" | "subagent-panel" | "new" | "sheet" | "loading";
 
 function thread(kind: "main" | "file" | "subagent"): ReactNode {
   if (kind === "subagent")
@@ -736,9 +895,21 @@ function TemplateBlock({ state, live }: { state: TemplateState; live?: boolean }
         titleBar={titleBar}
         {...(isNew
           ? {
+              // The new conversation page (agent profile design §4): the greeting, the agents
+              // row and the selected agent's quick actions over the composer.
               newConversation: {
-                agentName: C.agent.name,
-                description: "检索资料、核对数据并整理成报告。",
+                greeting: <Greeting text={NEW_CONVERSATION_FIXTURE.greeting} still />,
+                agents: (
+                  <AgentRow
+                    agents={NEW_CONVERSATION_AGENTS}
+                    selected={NEW_CONVERSATION_FIXTURE.selected}
+                    recent={NEW_CONVERSATION_FIXTURE.recent}
+                    onSelect={noop}
+                  />
+                ),
+                quickActions: (
+                  <QuickActions items={NEW_CONVERSATION_FIXTURE.quickActions} onPick={noop} />
+                ),
               },
             }
           : {})}
@@ -749,7 +920,18 @@ function TemplateBlock({ state, live }: { state: TemplateState; live?: boolean }
                 state === "subagent-panel" ? "subagent" : state === "properties" ? "main" : "file",
               )
         }
-        composer={<ComposerBox {...composerProps(isNew ? "new" : running ? "running" : "idle")} />}
+        composer={({ sendDisabled }) => {
+          const c = composerProps(isNew ? "new" : running ? "running" : "idle");
+          // the new conversation page chooses the agent in its row, not in the composer
+          const { agent: _agent, ...pickers } = c.pickers;
+          return (
+            <ComposerBox
+              {...c}
+              pickers={isNew ? pickers : c.pickers}
+              send={sendDisabled ? { ...c.send, disabled: true } : c.send}
+            />
+          );
+        }}
         status={
           isNew
             ? { context: "grant@示例组织:/chat", version: X.version }
@@ -767,6 +949,10 @@ function TemplateBlock({ state, live }: { state: TemplateState; live?: boolean }
         panel={panelNode}
         right={right}
         onCloseRight={() => setRight("none")}
+        // `loading`: the file-panel block with every part still on its way (spec §5.4).
+        {...(state === "loading"
+          ? { loading: { thread: true, title: true, rightArea: { title: "文件" } } }
+          : {})}
         {...(live
           ? {}
           : {
@@ -779,7 +965,14 @@ function TemplateBlock({ state, live }: { state: TemplateState; live?: boolean }
 }
 
 function templateConversationBlocks(): ReactNode {
-  const states: TemplateState[] = ["properties", "file-panel", "subagent-panel", "new", "sheet"];
+  const states: TemplateState[] = [
+    "properties",
+    "file-panel",
+    "subagent-panel",
+    "new",
+    "sheet",
+    "loading",
+  ];
   return (
     <>
       {states.map((s) => (
@@ -812,6 +1005,8 @@ export const CONVERSATION_PAGE_BLOCKS = {
   "picker-menu": pickerMenuBlocks,
   "inline-card": inlineCardBlocks,
   "property-section": propertySectionBlocks,
+  "background-task": backgroundTaskBlocks,
+  "task-output-panel": taskOutputBlocks,
   "right-panel": rightPanelBlocks,
   "template-conversation": templateConversationBlocks,
 } as const;

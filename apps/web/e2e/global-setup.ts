@@ -5,23 +5,24 @@
  * drives it as an MCP connector; `fake-openapi`, connector kind `openapi`, for the wizard's OpenAPI
  * flow; `fake-tools-ui`, a tool with a conversation view; `fake-embed`, an org page and a
  * conversation tab embed; `fake-web` and `fake-web-2`, two scripted web search and web fetch
- * providers for the web tools case), all allowing local http, and the fake IM test plugin `fake-im`; no
- * official plugin except `model-fake` and the bootstrap plugins; server.mjs then
- * starts the web layer (`next dev`) pointing at it. A fake MCP server
- * (stateful sessions; the destructive tool `delete_item`, `signup` which starts an elicitation, the
- * prompt `summarize` and the resource `docs://handbook`) serves the tool / approval / slash command /
- * resource reference cases; a small pets API (an operations document for `fake-openapi` and the
- * operations behind an API key request header) serves the OpenAPI install wizard case. A SeaweedFS (S3-compatible) container is the object store through the
+ * providers for the web tools case; all allowing local http), `fake-config-form` (a hinted
+ * deployment config form) and the fake IM test plugin `fake-im`; no official plugin except
+ * `model-fake` and the bootstrap plugins; server.mjs then starts the web layer (`next dev`)
+ * pointing at it. A fake MCP server (stateful sessions; the destructive tool `delete_item`,
+ * `signup` which starts an elicitation, the prompt `summarize` and the resource
+ * `docs://handbook`) serves the tool / approval / slash command / resource reference cases; a
+ * small pets API (an operations document for `fake-openapi` and the operations behind an API key
+ * request header) serves the OpenAPI install wizard case. A SeaweedFS (S3-compatible) container
+ * is the object store through the
  * `object-store-s3` plugin, for the attachment upload cases (the browser posts the presigned form
  * cross-origin). object-store-s3 and openai-compatible are the bootstrap plugins: downloaded at the
  * versions packages/kernel/bootstrap.json pins from the npm registry and checked against their
  * sha512 by `capybara bootstrap` (as the compose init does; the only network access of this setup,
  * `CAPYBARA_PACKAGES__NPM_REGISTRY` names a mirror, and a matching tgz in the repository's
  * `./bootstrap` is used instead), before `capybara start`, which then finds the step done.
- * `model-fake`'s
- * fake-1 declares image and document support. The sandbox is the kernel test fixture `sandbox-fake`
- * (a real /bin/sh, instance directories under a temp dir, for tests only), for the artifact case
- * (Write -> Deliver -> the artifacts tab).
+ * `model-fake`'s fake-1 declares image and document support. The sandbox is the kernel test
+ * fixture `sandbox-fake` (a real /bin/sh, instance directories under a temp dir, for tests only),
+ * for the artifact case (Write -> Deliver -> the artifacts tab).
  * The web URL goes into `CAPYBARA_E2E_BASE_URL` (inherited by the worker processes as Playwright's
  * baseURL), the fake MCP endpoint into `CAPYBARA_E2E_MCP_URL`, the pets API's document URL and
  * API key into `CAPYBARA_E2E_OPENAPI_SPEC_URL` / `CAPYBARA_E2E_OPENAPI_KEY`. An extension package
@@ -38,7 +39,7 @@ import { randomBytes } from "node:crypto";
 import { createWriteStream } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer as createHttpServer, type ServerResponse } from "node:http";
-import { register } from "node:module";
+import { registerHooks } from "node:module";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -46,12 +47,16 @@ import { fileURLToPath } from "node:url";
 import { PostgreSqlContainer } from "@testcontainers/postgresql";
 import { GenericContainer, Wait } from "testcontainers";
 
-// 按路径加载的内核测试工具（plugin-packages.ts 等）会 import workspace 包（@capybara-hq/plugin-sdk）：与 CLI 入口
-// （apps/capybara/bin/capybara.mjs）一样补上 `@capybara-hq/source` 导出条件，解析到 src 而不是 dist
-// （CI 的 e2e 只 pnpm install、不 build，没有 dist）。只影响之后的 import，所以放在任何动态 import 之前
-register(
-  "data:text/javascript,export function resolve(s, c, next) { return next(s, { ...c, conditions: [...c.conditions, '@capybara-hq/source'] }); }",
-);
+// The kernel test helpers loaded by path (plugin-packages.ts and others) import workspace packages
+// (@capybara-hq/plugin-sdk): add the `@capybara-hq/source` export condition, as the CLI entry
+// (apps/capybara/bin/capybara.mjs) does, so they resolve to src, not dist (CI's e2e installs but
+// does not build). It affects later imports only, so it comes before any dynamic import. In-thread
+// `registerHooks` (Node >= 22.15): the off-thread `register` loader failed next to Playwright's
+// own loader on Node 24.11 (ERR_INVALID_RETURN_PROPERTY_VALUE).
+registerHooks({
+  resolve: (specifier, context, next) =>
+    next(specifier, { ...context, conditions: [...context.conditions, "@capybara-hq/source"] }),
+});
 
 const repoRoot = fileURLToPath(new URL("../../../", import.meta.url));
 const webDir = fileURLToPath(new URL("../", import.meta.url));
@@ -74,6 +79,11 @@ const fakeOpenApi = fakeExtension("fake-openapi");
 /** Two scripted web providers (`web-search@1`, `web-fetch@1`), for the org default provider. */
 const fakeWeb = fakeExtension("fake-web");
 const fakeWeb2 = fakeExtension("fake-web-2");
+/**
+ * `fake-config-form` (表单样例): an openai-compatible-shaped deployment config with form hints, no
+ * config given here, so it starts pending configuration and the admin form fills it.
+ */
+const fakeConfigForm = fakeExtension("fake-config-form");
 /**
  * 假 IM 测试插件（内核测试夹具：channel@1 + identity-source@1 + directory@1），按路径加载。
  * 渠道连接的平台地址写在连接配置里（im-channels.spec 在 worker 里自起假 IM 平台）；部署级的 platformUrl
@@ -589,6 +599,7 @@ export default async function globalSetup(): Promise<Cleanup> {
         fakeEmbed,
         fakeWeb,
         fakeWeb2,
+        fakeConfigForm,
         sandboxFake,
         hooksProbe,
       ],
@@ -684,7 +695,7 @@ export default async function globalSetup(): Promise<Cleanup> {
     cleanups.push(() => stopChild(web, 10_000));
     const baseUrl = `http://localhost:${webPort}`;
     // 首次请求触发 next dev 编译；顺带预热登录 / 初始化页
-    await waitFor(`${baseUrl}/zh/login`, web, 180_000).catch(async (e) => {
+    await waitFor(`${baseUrl}/login`, web, 180_000).catch(async (e) => {
       throw new Error(`${(e as Error).message}\n${await tail(logs.web)}`);
     });
     process.env.CAPYBARA_E2E_BASE_URL = baseUrl;

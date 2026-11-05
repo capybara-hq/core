@@ -15,7 +15,7 @@ import { z } from "zod";
 import { ModelRef } from "../agents/definition.js";
 import { CurrentPrincipal, type Principal, requireUser } from "../identity/principal.js";
 import { createZodDto } from "../infra/validation/create-zod-dto.js";
-import { ZBody, ZQuery } from "../infra/validation/zod-params.js";
+import { ZBody, ZParam, ZQuery } from "../infra/validation/zod-params.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
 import { CONTROL_OR_HIDDEN_RE } from "../text.js";
 import { MAX_ATTACHMENTS } from "../tools/connector-content.js";
@@ -50,11 +50,19 @@ import type { QueueItem, QueuePauseReason } from "./queue.js";
 import { ConversationQueue } from "./queue.service.js";
 import { ConversationSandboxStatus, type SandboxStatusView } from "./sandbox-status.js";
 
+/** Shared by the list and groups queries: title search, run activity and the archived list. */
+const searchFields = {
+  q: z.string().min(1).max(100).optional(),
+  state: z.enum(["running", "waiting"]).optional(),
+  archived: z.enum(["1"]).optional(),
+};
+
 const ListQuery = z.object({
   after: z.string().min(1).max(100).optional(),
   limit: z.coerce.number().int().min(1).max(200).default(50),
   /** Only this agent's conversations (the sidebar's per-group "More"). */
   agentId: z.string().min(1).max(100).optional(),
+  ...searchFields,
 });
 
 const GroupsQuery = z.object({
@@ -62,6 +70,7 @@ const GroupsQuery = z.object({
   limit: z.coerce.number().int().min(1).max(50).default(20),
   /** The last group's agent id from the previous page (`next`). */
   after: z.string().min(1).max(100).optional(),
+  ...searchFields,
 });
 
 const SubagentsQuery = z.object({
@@ -195,7 +204,7 @@ const QueueEditBody = z.object({ text: z.string().max(100_000) }).strict();
  * A rename: 1–120 characters counted in code points after trimming, with no control or format
  * (bidi, zero-width) characters, the same rule generated and tool titles follow.
  */
-const RenameBody = z
+const PatchBody = z
   .object({
     title: z
       .string()
@@ -209,12 +218,22 @@ const RenameBody = z
       .refine(
         (t) => !CONTROL_OR_HIDDEN_RE.test(t),
         "title must not contain control or format characters",
-      ),
+      )
+      .optional(),
+    /** true archives (hidden from the default lists), false unarchives. */
+    archived: z.boolean().optional(),
   })
-  .strict();
+  .strict()
+  .refine(
+    (b) => b.title !== undefined || b.archived !== undefined,
+    "title or archived is required",
+  );
+
+const IdParams = z.object({ id: z.string().min(1).max(100) });
 
 class ConversationCreateBodyDto extends createZodDto(CreateBody, "ConversationCreateBody") {}
-class ConversationRenameBodyDto extends createZodDto(RenameBody, "ConversationRenameBody") {}
+class ConversationPatchBodyDto extends createZodDto(PatchBody, "ConversationPatchBody") {}
+class ConversationIdParamsDto extends createZodDto(IdParams, "ConversationIdParams") {}
 class ConversationListQueryDto extends createZodDto(ListQuery, "ConversationListQuery") {}
 class ConversationGroupsQueryDto extends createZodDto(GroupsQuery, "ConversationGroupsQuery") {}
 class ConversationEventsQueryDto extends createZodDto(EventsQuery, "ConversationEventsQuery") {}
@@ -256,7 +275,11 @@ export class ConversationsController {
     @Inject(ConversationFiles) private readonly files: ConversationFiles,
   ) {}
 
-  /** 201 when created; 200 when `message.clientMessageId` repeats an earlier first send. */
+  /**
+   * 201 when created; 200 when `message.clientMessageId` repeats an earlier first send. With a
+   * message the answer has `event` (the `user_message`) and `events`: every event the first send
+   * wrote, in seq order from seq 1 (a `model_switched` first when it switched).
+   */
   @Post()
   @OrgAction("agents.use")
   async create(
@@ -264,7 +287,11 @@ export class ConversationsController {
     @CurrentOrg() org: OrgContext,
     @ZBody(ConversationCreateBodyDto) body: z.infer<typeof CreateBody>,
     @Res({ passthrough: true }) reply: FastifyReply,
-  ): Promise<{ conversation: ConversationView; event?: ConversationEvent }> {
+  ): Promise<{
+    conversation: ConversationView;
+    event?: ConversationEvent;
+    events?: ConversationEvent[];
+  }> {
     const p = requireUser(principal);
     if (body.message === undefined) {
       return {
@@ -282,22 +309,53 @@ export class ConversationsController {
       ...(m.skill !== undefined && { skill: m.skill }),
     });
     reply.status(out.created ? 201 : 200);
-    return { conversation: out.conversation, event: out.event };
+    return { conversation: out.conversation, event: out.event, events: out.events };
   }
 
-  /** Rename (owner only): `titleSource` becomes `manual` and the title is never regenerated. */
+  /**
+   * Rename and / or archive (owner only). A rename makes `titleSource` `manual`, so the title is
+   * never regenerated; `archived` archives or unarchives. Returns the final view.
+   */
   @Patch(":id")
   @OrgAction("agents.use")
-  async rename(
+  async patch(
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
     @Param("id") id: string,
-    @ZBody(ConversationRenameBodyDto) body: z.infer<typeof RenameBody>,
+    @ZBody(ConversationPatchBodyDto) body: z.infer<typeof PatchBody>,
   ): Promise<{ conversation: ConversationView }> {
     const p = requireUser(principal);
+    const renamed =
+      body.title === undefined
+        ? undefined
+        : await this.conversations.rename(org.orgId, id, p.account.id, body.title);
+    if (body.archived === undefined) {
+      // The refine guarantees a title when there is no `archived`
+      return {
+        conversation: renamed ?? (await this.conversations.get(org.orgId, id, p.account.id)),
+      };
+    }
     return {
-      conversation: await this.conversations.rename(org.orgId, id, p.account.id, body.title),
+      conversation: await this.conversations.setArchived(
+        org.orgId,
+        id,
+        p.account.id,
+        body.archived,
+      ),
     };
+  }
+
+  /** Soft delete (owner only): stops an active run and hides the conversation everywhere. */
+  @Delete(":id")
+  @HttpCode(204)
+  @OrgAction("agents.use")
+  async remove(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @ZParam(ConversationIdParamsDto) { id }: z.infer<typeof IdParams>,
+  ): Promise<void> {
+    const p = requireUser(principal);
+    await this.conversations.remove(org.orgId, id, p.account.id);
   }
 
   /** 我的会话，最近更新的在前：`next` 为下一页游标（作为 `after` 传回），没有更多时为 null。 */
@@ -313,6 +371,9 @@ export class ConversationsController {
       limit: q.limit + 1,
       ...(q.after !== undefined && { after: q.after }),
       ...(q.agentId !== undefined && { agentId: q.agentId }),
+      ...(q.q !== undefined && { q: q.q }),
+      ...(q.state !== undefined && { state: q.state }),
+      ...(q.archived !== undefined && { archived: true }),
     });
     const conversations = rows.slice(0, q.limit);
     const next = rows.length > q.limit ? (conversations.at(-1)?.id ?? null) : null;
@@ -330,12 +391,15 @@ export class ConversationsController {
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
     @ZQuery(ConversationGroupsQueryDto) q: z.infer<typeof GroupsQuery>,
-  ): Promise<{ groups: ConversationGroup[]; next: string | null }> {
+  ): Promise<{ groups: ConversationGroup[]; next: string | null; archivedCount: number }> {
     const p = requireUser(principal);
     return this.conversations.listGroups(org.orgId, p.account.id, {
       perGroup: q.perGroup,
       limit: q.limit,
       ...(q.after !== undefined && { after: q.after }),
+      ...(q.q !== undefined && { q: q.q }),
+      ...(q.state !== undefined && { state: q.state }),
+      ...(q.archived !== undefined && { archived: true }),
     });
   }
 

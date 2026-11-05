@@ -25,7 +25,7 @@ export type QueuedMessageProps = {
 };
 
 /**
- * A message queued with ⌘↵ while a run is going (§6.16.14): a translucent dashed user bubble and,
+ * A message queued with ↵ while a run is going (§6.16.14): a translucent dashed user bubble and,
  * under it, "Queued", copy / edit / delete and "Send now". Not in the event log until it is sent.
  */
 export function QueuedMessage(p: QueuedMessageProps): JSX.Element {

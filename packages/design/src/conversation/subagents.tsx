@@ -88,15 +88,19 @@ export function subagentRowFromView(v: SubagentViewLike): SubagentRowData {
     startedAt: Date.parse(v.startedAt),
   };
   if (v.finishedAt !== null) row.finishedAt = Date.parse(v.finishedAt);
-  if (v.status === "waiting") {
-    row.waiting =
-      v.pendingApprovalIds.length > 0
-        ? "approval"
-        : v.pendingQuestionIds.length > 0
-          ? "input"
-          : "connect";
-  }
+  if (v.status === "waiting") row.waiting = subagentWaitKind(v);
   return row;
+}
+
+/** What a waiting `SubagentView` waits for: an approval, else an answer, else a connection. */
+export function subagentWaitKind(
+  v: Pick<SubagentViewLike, "pendingApprovalIds" | "pendingQuestionIds">,
+): SubagentWaitKind {
+  return v.pendingApprovalIds.length > 0
+    ? "approval"
+    : v.pendingQuestionIds.length > 0
+      ? "input"
+      : "connect";
 }
 
 /**
@@ -131,6 +135,9 @@ export function subagentDuration(ms: number, locale: Locale): string {
 const active = (r: SubagentRowData) =>
   r.status === "queued" || r.status === "running" || r.status === "waiting";
 
+/** Active but waiting for a person (§6.16.15): no spinner and no clock, the waiting word. */
+const ticking = (r: SubagentRowData) => active(r) && r.status !== "waiting";
+
 function rowMs(r: SubagentRowData, now: number): number | undefined {
   if (r.durationMs !== undefined && !active(r)) return r.durationMs;
   if (r.startedAt === undefined) return undefined;
@@ -155,6 +162,7 @@ export type SubagentRowProps = {
 
 /**
  * One sub-agent (§6.16.15): spinner, kind tag, task, status, "N 次调用 · <duration>", chevron.
+ * A row waiting for a person has no spinner and no duration, only the waiting word.
  * A row with a summary expands in place; any other row opens the sub-agent on the right.
  */
 export function SubagentRow({
@@ -173,7 +181,8 @@ export function SubagentRow({
   const id = useId();
   const expandable = row.summary !== undefined;
   const isExpanded = expandable && (expanded ?? own);
-  const ms = rowMs(row, useClock(active(row), now));
+  const clock = useClock(ticking(row), now);
+  const ms = row.status === "waiting" ? undefined : rowMs(row, clock);
   const status: ReactNode =
     row.status === "failed" ? (
       <span className="cb-fail-word" data-part="fail-word">
@@ -192,7 +201,7 @@ export function SubagentRow({
   ].join(" · ");
   const inner = (
     <>
-      {active(row) ? <Spinner /> : null}
+      {ticking(row) ? <Spinner size={16} /> : null}
       <span className="cb-agent-tag" data-part="agent-tag">
         {row.agentType}
       </span>
@@ -296,8 +305,10 @@ export function SubagentGroup({
   const [animate, setAnimate] = useState(false);
   const id = useId();
   const running = rows.filter(active);
-  // the group ticks for its rows (they get `now`), only while one is active
-  const clock = useClock(running.length > 0, now);
+  // the group ticks for its rows (they get `now`), only while one is active and not waiting
+  const clock = useClock(running.some(ticking), now);
+  // every active row waits for a person: the header says so instead of the spinner and the verb
+  const waitingFor = running.every((r) => r.status === "waiting") ? running[0]?.waiting : null;
   const box = (
     <div className="cb-tool-box" data-part="tool-box">
       {rows.map((r) => (
@@ -317,9 +328,15 @@ export function SubagentGroup({
     return (
       <div className="cb-tool-group" data-part="subagent-group">
         <div className="cb-tool-line" data-part="tool-line">
-          <Spinner />
+          {waitingFor === null ? <Spinner size={16} /> : null}
           <span className="cb-tool-label">
-            {fillCopy(t("subagent.running"), { n: running.length })}
+            {waitingFor === null ? (
+              fillCopy(t("subagent.running"), { n: running.length })
+            ) : (
+              <span className="cb-accent-word" data-part="waiting-word">
+                {t(`subagent.waiting.${waitingFor ?? "approval"}`)}
+              </span>
+            )}
             {finished > 0 ? (
               <span className="cb-faint">
                 {` · ${fillCopy(t("subagent.finishedCount"), { n: finished })}`}
@@ -429,48 +446,247 @@ export function SubagentTask({
   );
 }
 
-export type BackgroundTasksProps = {
-  running: { id: string; name: string; elapsed: string }[];
-  completed: number;
-  onStop(id: string): void;
-  onOpen(id: string): void;
-  onCompleted(): void;
+/** A background Bash task's status (the web maps the kernel's task views onto it). */
+export type BackgroundTaskStatus =
+  | "running"
+  | "completed"
+  | "failed"
+  | "stopped"
+  | "timed_out"
+  | "lost";
+
+export type BackgroundTaskItem = {
+  kind: "task";
+  id: string;
+  /** The command's description, the row's name. */
+  description: string;
+  status: BackgroundTaskStatus;
+  /** Epoch ms. */
+  startedAt: number;
+  finishedAt?: number;
+  exitCode?: number | null;
+  /** A stop is under way (the kernel view's `stopping`): the row stays running, with no stop. */
+  stopping?: boolean;
+  /** Drawn indented, under the sub-agent that started it. */
+  nested?: boolean;
 };
 
-/** The "Background tasks" section body (§6.16.17): running sub-agents, then "N completed ›". */
-export function BackgroundTasks({
-  running,
-  completed,
+export type BackgroundSubagentItem = {
+  kind: "subagent";
+  id: string;
+  name: string;
+  status: SubagentStatus;
+  /** What a `waiting` sub-agent waits for: its row shows that word instead of the clock. */
+  waiting?: SubagentWaitKind;
+  startedAt: number;
+  finishedAt?: number;
+  /** Its own background tasks, drawn nested under it while they run. */
+  tasks?: BackgroundItem[];
+};
+
+export type BackgroundItem = BackgroundTaskItem | BackgroundSubagentItem;
+
+const itemActive = (i: BackgroundItem): boolean =>
+  i.kind === "task"
+    ? i.status === "running"
+    : i.status === "queued" || i.status === "running" || i.status === "waiting";
+
+const itemName = (i: BackgroundItem): string => (i.kind === "task" ? i.description : i.name);
+
+/** The word a finished task ends with: success is never colored, failure is `fail`. */
+function taskStatusWord(
+  status: Exclude<BackgroundTaskStatus, "running">,
+  t: ReturnType<typeof useDesignT>,
+): JSX.Element {
+  switch (status) {
+    case "completed":
+      return (
+        <span className="cb-muted" data-part="task-status">
+          {t("background.done")}
+        </span>
+      );
+    case "stopped":
+      return (
+        <span className="cb-muted" data-part="task-status">
+          {t("background.stopped")}
+        </span>
+      );
+    case "lost":
+      return (
+        <span className="cb-muted" data-part="task-status">
+          {t("background.lost")}
+        </span>
+      );
+    case "failed":
+      return (
+        <span className="cb-fail-word" data-part="fail-word">
+          {t("background.failed")}
+        </span>
+      );
+    case "timed_out":
+      return (
+        <span className="cb-fail-word" data-part="fail-word">
+          {t("background.timedOut")}
+        </span>
+      );
+  }
+}
+
+export type BackgroundTaskRowProps = {
+  item: BackgroundItem;
+  /** The clock for running rows. */
+  now: number;
+  /** Indented under its sub-agent. */
+  nested?: boolean;
+  onStop(id: string): void;
+  onOpen(id: string): void;
+};
+
+/**
+ * One row of the "Background tasks" section (§6.16.17): a running one has the `spinner`, the name,
+ * the elapsed time and a dense stop button; a stopping one says "正在停止…" instead of the button;
+ * a sub-agent waiting for a person has no spinner and says what it waits for instead of the time;
+ * a finished one has its status word and no spinner.
+ */
+export function BackgroundTaskRow({
+  item,
+  now,
+  nested,
   onStop,
   onOpen,
-  onCompleted,
+}: BackgroundTaskRowProps): JSX.Element {
+  const t = useDesignT();
+  const locale = useDesignLocale();
+  const name = itemName(item);
+  const running = itemActive(item);
+  const waiting = item.kind === "subagent" && item.status === "waiting";
+  const end = running ? now : (item.finishedAt ?? now);
+  const stopping = item.kind === "task" && item.stopping === true;
+  const isNested = nested === true || (item.kind === "task" && item.nested === true);
+  return (
+    <div
+      className="cb-property-row cb-task-row"
+      data-part="task-row"
+      data-nested={isNested ? "true" : undefined}
+    >
+      {running && !waiting ? <Spinner /> : null}
+      <button
+        type="button"
+        className="cb-property-link cb-property-name"
+        onClick={() => onOpen(item.id)}
+      >
+        {name}
+      </button>
+      {item.kind === "task" && item.status !== "running" ? taskStatusWord(item.status, t) : null}
+      {item.kind === "subagent" && item.status === "failed" ? (
+        <span className="cb-fail-word" data-part="fail-word">
+          {t("background.failed")}
+        </span>
+      ) : null}
+      {item.kind === "subagent" && item.status === "aborted" ? (
+        <span className="cb-muted" data-part="task-status">
+          {t("background.stopped")}
+        </span>
+      ) : null}
+      {waiting ? (
+        <span className="cb-accent-word" data-part="waiting-word">
+          {t(`subagent.waiting.${item.waiting ?? "approval"}`)}
+        </span>
+      ) : (
+        <span className="cb-muted">{subagentDuration(end - item.startedAt, locale)}</span>
+      )}
+      {stopping ? (
+        <span className="cb-muted" role="status" aria-live="polite">
+          {t("background.stopping")}
+        </span>
+      ) : null}
+      {running && !stopping ? (
+        <IconButton
+          density="dense"
+          label={fillCopy(t("background.stop"), { name })}
+          icon={<Icon name="square" size={12} />}
+          onClick={() => onStop(item.id)}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+export type BackgroundTasksProps = {
+  items: BackgroundItem[];
+  /** The clock for running rows (default: the time now, ticking while a row runs). */
+  now?: number;
+  onStop(id: string): void;
+  /** Opens a row's record on the right (also the newest finished one, from "N completed"). */
+  onOpen(id: string): void;
+  /** The "N completed ›" wording, given the count (default: the design copy). */
+  completedLabel?: (n: number) => string;
+};
+
+function flatten(items: BackgroundItem[]): BackgroundItem[] {
+  return items.flatMap((i) => [i, ...(i.kind === "subagent" ? flatten(i.tasks ?? []) : [])]);
+}
+
+/**
+ * The "Background tasks" section body (§6.16.17): the running sub-agents and tasks (a sub-agent's
+ * own tasks nested under it), then "N completed ›", counting finished tasks and sub-agents
+ * together, which opens the newest.
+ */
+export function BackgroundTasks({
+  items,
+  now,
+  onStop,
+  onOpen,
+  completedLabel,
 }: BackgroundTasksProps): JSX.Element {
   const t = useDesignT();
+  const all = flatten(items);
+  const clock = useClock(
+    all.some((i) => itemActive(i) && !(i.kind === "subagent" && i.status === "waiting")),
+    now,
+  );
+  const finished = all.filter((i) => !itemActive(i));
+  const newest = finished.reduce<BackgroundItem | undefined>(
+    (best, i) =>
+      best === undefined || (i.finishedAt ?? i.startedAt) > (best.finishedAt ?? best.startedAt)
+        ? i
+        : best,
+    undefined,
+  );
   // The rows are the section's own children, `space.1` apart (the reference's section gap).
+  const rows = (list: BackgroundItem[], hasParent: boolean): ReactNode[] =>
+    list.flatMap((i) => {
+      const run = itemActive(i);
+      return [
+        ...(run
+          ? [
+              <BackgroundTaskRow
+                key={i.id}
+                item={i}
+                now={clock}
+                nested={hasParent}
+                onStop={onStop}
+                onOpen={onOpen}
+              />,
+            ]
+          : []),
+        ...(i.kind === "subagent" ? rows(i.tasks ?? [], true) : []),
+      ];
+    });
   return (
     <>
-      {running.map((r) => (
-        <div key={r.id} className="cb-property-row" data-part="property-row">
-          <Spinner />
-          <button
-            type="button"
-            className="cb-property-link cb-property-name"
-            onClick={() => onOpen(r.id)}
-          >
-            {r.name}
-          </button>
-          <span className="cb-muted">{r.elapsed}</span>
-          <IconButton
-            density="dense"
-            label={fillCopy(t("subagent.stop"), { name: r.name })}
-            icon={<Icon name="square" size={12} />}
-            onClick={() => onStop(r.id)}
-          />
-        </div>
-      ))}
-      {completed > 0 || running.length === 0 ? (
-        <button type="button" className="cb-property-row cb-property-more" onClick={onCompleted}>
-          {fillCopy(t("subagent.completed"), { n: completed })}
+      {rows(items, false)}
+      {finished.length > 0 || !all.some(itemActive) ? (
+        <button
+          type="button"
+          className="cb-property-row cb-property-more"
+          onClick={() => {
+            if (newest) onOpen(newest.id);
+          }}
+        >
+          {completedLabel
+            ? completedLabel(finished.length)
+            : fillCopy(t("subagent.completed"), { n: finished.length })}
           <Icon name="chevron-right" size={12} />
         </button>
       ) : null}

@@ -1,17 +1,20 @@
 "use client";
 
 import { formatBytes, useToast } from "@capybara-hq/design";
+import { useQuery } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ApiClientError, clientError } from "../lib/api";
 import {
   type AttachmentLimits,
   DEFAULT_LIMITS,
-  getAttachmentLimits,
   precheckFile,
   typeList,
   uploadAttachment,
 } from "../lib/attachments";
+import { retryOnMountOf } from "../lib/query/client";
+import { attachmentLimitsQuery } from "../lib/query/conversation";
+import { useAppMutation } from "../lib/query/mutation";
 import { useErrorMessage } from "../lib/use-error-message";
 
 /**
@@ -56,38 +59,37 @@ function failedIds(e: unknown): Set<string> {
  * 输入框的上传文件：上限取自内核 `GET /attachments/limits`（取到之前用默认值兜底），加文件时先预检、
  * 通过的立即上传；条数按同步更新的 ref 计算，并发加文件（同时拖入、粘贴）也不会超过上限。
  */
-export function useDraftFiles(orgId: string) {
+export function useDraftFiles(orgId: string, initial: readonly DraftFile[] = []) {
   const t = useTranslations("chat");
   const toast = useToast();
   const errorMessage = useErrorMessage();
-  const [limits, setLimits] = useState<AttachmentLimits>(DEFAULT_LIMITS);
-  const [files, setFilesState] = useState<DraftFile[]>([]);
+  // Until the limits are read (or when the read failed) the defaults apply; an older kernel
+  // without requestMediaBytes / available gets the defaults for those.
+  const limitsQ = attachmentLimitsQuery(orgId);
+  const read = useQuery({ ...limitsQ, retryOnMount: retryOnMountOf(limitsQ.queryKey) }).data;
+  const limits = useMemo<AttachmentLimits>(
+    () => (read ? { ...DEFAULT_LIMITS, ...read } : DEFAULT_LIMITS),
+    [read],
+  );
+  // An upload's answer is the attachment: nothing cached changes.
+  const { mutateAsync: upload } = useAppMutation({
+    fn: (v: { file: File; signal: AbortSignal; onProgress(p: number): void }) =>
+      uploadAttachment(orgId, v.file, { signal: v.signal, onProgress: v.onProgress }),
+    invalidates: () => [],
+  });
+  // `initial`: a failed send's files given back to a new composer (their uploads are done).
+  const [files, setFilesState] = useState<DraftFile[]>(() => [...initial]);
   /** 与 `files` 同步的最新值：加文件时据此算剩余名额（state 在同一轮事件里还是旧值）。 */
-  const filesRef = useRef<DraftFile[]>([]);
+  const filesRef = useRef<DraftFile[]>([...initial]);
   /** 进行中的上传（移除或卸载时中止）。 */
   const uploads = useRef(new Map<string, AbortController>());
-  const seq = useRef(0);
+  // New keys never repeat a given-back file's `f<n>`.
+  const seq = useRef(initial.reduce((n, f) => Math.max(n, Number(f.key.slice(1)) || 0), 0));
 
   const update = useCallback((fn: (list: DraftFile[]) => DraftFile[]) => {
     filesRef.current = fn(filesRef.current);
     setFilesState(filesRef.current);
   }, []);
-
-  useEffect(() => {
-    let live = true;
-    getAttachmentLimits(orgId).then(
-      (l) => {
-        // 较早的内核没有 requestMediaBytes / available：缺的项用默认值补上
-        if (live) setLimits({ ...DEFAULT_LIMITS, ...l });
-      },
-      () => {
-        // 取不到时沿用默认值；以内核的错误码为准
-      },
-    );
-    return () => {
-      live = false;
-    };
-  }, [orgId]);
 
   useEffect(() => {
     const map = uploads.current;
@@ -109,10 +111,7 @@ export function useDraftFiles(orgId: string) {
       uploads.current.get(key)?.abort();
       const ctrl = new AbortController();
       uploads.current.set(key, ctrl);
-      uploadAttachment(orgId, file, {
-        signal: ctrl.signal,
-        onProgress: (p) => patch(key, { progress: p }),
-      })
+      upload({ file, signal: ctrl.signal, onProgress: (p) => patch(key, { progress: p }) })
         .then(
           (view) => {
             if (!ctrl.signal.aborted) patch(key, { status: "ready", progress: 1, id: view.id });
@@ -125,7 +124,7 @@ export function useDraftFiles(orgId: string) {
           if (uploads.current.get(key) === ctrl) uploads.current.delete(key);
         });
     },
-    [orgId, patch],
+    [upload, patch],
   );
 
   /**
@@ -202,6 +201,26 @@ export function useDraftFiles(orgId: string) {
     update((list) => list.filter((f) => !sent.has(f.key)));
   };
 
+  /**
+   * A send clears the composer at once: the sent files leave the draft (returned, so a failed
+   * send can put them back with {@link restore}). Their uploads are done, so nothing is aborted.
+   */
+  const take = (keys: readonly string[]): DraftFile[] => {
+    const sent = new Set(keys);
+    const taken = filesRef.current.filter((f) => sent.has(f.key));
+    update((list) => list.filter((f) => !sent.has(f.key)));
+    return taken;
+  };
+
+  /** A failed send: its files come back first, before any added since (none twice). */
+  const restore = (back: readonly DraftFile[]) => {
+    if (back.length === 0) return;
+    update((list) => {
+      const have = new Set(list.map((f) => f.key));
+      return [...back.filter((f) => !have.has(f.key)), ...list];
+    });
+  };
+
   /** 发送失败：内核指出了哪个附件不存在 / 未就绪时，把对应条目标为出错（可重试）。 */
   const markFailed = (e: unknown) => {
     const ids = failedIds(e);
@@ -238,6 +257,8 @@ export function useDraftFiles(orgId: string) {
     retry,
     canRetry,
     removeSent,
+    take,
+    restore,
     markFailed,
     errorText,
   };

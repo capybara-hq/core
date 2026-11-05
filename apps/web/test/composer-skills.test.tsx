@@ -3,20 +3,20 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
-import ChatPage from "../src/app/[locale]/(app)/chat/[conversationId]/page";
-import NewChatPage from "../src/app/[locale]/(app)/chat/page";
 import { bodyOf, type Call, json, stubApi } from "./support/api";
 import {
   AGENTS,
   CONV,
   ev,
   FakeEventSource,
+  LIMITS,
   MODELS,
+  renderChatRoute,
   runStarted,
   userMsg,
 } from "./support/conversation";
 import { resetNavigation } from "./support/navigation";
-import { renderPage } from "./support/render";
+import { renderRouteWithCache } from "./support/query";
 
 /**
  * Phase D Task 11: the composer's `/` menu lists the agent's skills first (then the connector
@@ -31,6 +31,12 @@ vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 vi.mock("next/navigation", () => ({
   useParams: () => params,
   useSearchParams: () => search,
+  redirect: (to: string) => {
+    throw new Error(`REDIRECT ${to}`);
+  },
+  notFound: () => {
+    throw new Error("NOT_FOUND");
+  },
 }));
 
 const ORG = "/api/v1/orgs/o1";
@@ -147,7 +153,7 @@ describe("the / menu", () => {
     const calls = api({
       [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
     });
-    renderPage(<ChatPage />, { locale: "en" });
+    await renderChatRoute();
     await screen.findByText("hi");
     const user = userEvent.setup();
     await user.type(input(), "/");
@@ -176,7 +182,7 @@ describe("the / menu", () => {
 
   it("typing narrows the list; /superpowers:brainstorming finds brainstorming", async () => {
     api({ [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }) });
-    renderPage(<ChatPage />, { locale: "en" });
+    await renderChatRoute();
     await screen.findByText("hi");
     const user = userEvent.setup();
     await user.type(input(), "/");
@@ -203,7 +209,7 @@ describe("the / menu", () => {
       [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
       [`POST ${BASE}/messages`]: () => json(202, { event: invocation(2) }),
     });
-    renderPage(<ChatPage />, { locale: "en" });
+    await renderChatRoute();
     await screen.findByText("hi");
     const user = userEvent.setup();
     await user.type(input(), "/");
@@ -232,7 +238,7 @@ describe("the / menu", () => {
           event: invocation(2, "x", skillRecord({ name: "release-check", arguments: "" })),
         }),
     });
-    renderPage(<ChatPage />, { locale: "en" });
+    await renderChatRoute();
     await screen.findByText("hi");
     const user = userEvent.setup();
     await user.type(input(), "/");
@@ -249,13 +255,43 @@ describe("the / menu", () => {
   });
 });
 
+describe("a lone /", () => {
+  it("is never sent as a message", async () => {
+    const calls = api({
+      [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
+      [`POST ${BASE}/messages`]: echo,
+    });
+    await renderChatRoute();
+    await screen.findByText("hi");
+    const user = userEvent.setup();
+    await user.click(input());
+    await user.paste("/");
+    await user.keyboard("{Enter}");
+    await new Promise((r) => setTimeout(r, 50));
+    expect(posts(calls, `${BASE}/messages`)).toHaveLength(0);
+  });
+
+  it("with no skills and no prompts the menu says the agent has nothing to run", async () => {
+    api({
+      [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
+      [`GET ${INVOCABLE}`]: () => json(200, { skills: [] }),
+      [`GET ${ORG}/connectors/prompts`]: () => json(200, { prompts: [], unavailable: [] }),
+    });
+    await renderChatRoute();
+    await screen.findByText("hi");
+    await userEvent.setup().type(input(), "/");
+    const dialog = await screen.findByRole("dialog");
+    expect(await within(dialog).findByText(en.chat.noInvocable)).toBeTruthy();
+  });
+});
+
 describe("typed /name", () => {
   it("/fix-issue 7 without the menu is sent as an invocation; /nope 7 and /etc/hosts as text", async () => {
     const calls = api({
       [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
       [`POST ${BASE}/messages`]: echo,
     });
-    renderPage(<ChatPage />, { locale: "en" });
+    await renderChatRoute();
     await screen.findByText("hi");
     const user = userEvent.setup();
     // pasted, so the menu never opens
@@ -290,8 +326,10 @@ describe("a typed /name from a stale list", () => {
           ? json(400, { error: { code: "skill.not_invocable", message: "not invocable" } })
           : echo(c),
     });
-    renderPage(<ChatPage />, { locale: "en" });
+    const { calls: server } = await renderChatRoute();
     await screen.findByText("hi");
+    // the first list comes with the server's snapshot
+    expect(server.filter((c) => c.url.split("?")[0] === INVOCABLE)).toHaveLength(1);
     const user = userEvent.setup();
     await user.click(input());
     await user.paste("/fix-issue 7");
@@ -304,17 +342,18 @@ describe("a typed /name from a stale list", () => {
     ]);
     const ids = sent.map((c) => (bodyOf(c) as { clientMessageId: string }).clientMessageId);
     expect(ids[0]).not.toBe(ids[1]);
+    // the refusal reads the list again in the browser
     await vi.waitFor(() =>
       expect(
         calls.filter((c) => c.method === "GET" && c.url.split("?")[0] === INVOCABLE),
-      ).toHaveLength(2),
+      ).toHaveLength(1),
     );
     await vi.waitFor(() => expect((input() as HTMLTextAreaElement).value).toBe(""));
   });
 });
 
 describe("a pending send", () => {
-  it("text typed while a send is pending is kept when it returns; only what was sent is cleared", async () => {
+  it("the composer clears at once; text typed while the send is pending is kept when it returns", async () => {
     let release: (() => void) | undefined;
     const calls = api({
       [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
@@ -323,18 +362,20 @@ describe("a pending send", () => {
           release = () => resolve(echo(c));
         }),
     });
-    renderPage(<ChatPage />, { locale: "en" });
+    await renderChatRoute();
     await screen.findByText("hi");
     const user = userEvent.setup();
     await user.click(input());
     await user.paste("first");
     await user.keyboard("{Enter}");
+    // cleared before the kernel answers (conversation send spec §2.1)
+    expect((input() as HTMLTextAreaElement).value).toBe("");
     await vi.waitFor(() => expect(posts(calls, `${BASE}/messages`)).toHaveLength(1));
     // typed after the send left, before it returns
-    await user.paste(" and then");
-    expect((input() as HTMLTextAreaElement).value).toBe("first and then");
+    await user.paste("and then");
     release?.();
-    await vi.waitFor(() => expect((input() as HTMLTextAreaElement).value).toBe("and then"));
+    await new Promise((r) => setTimeout(r, 20));
+    expect((input() as HTMLTextAreaElement).value).toBe("and then");
     // a draft replaced while pending stays whole
     await user.clear(input());
     await user.paste("second");
@@ -355,7 +396,7 @@ describe("a pending send", () => {
 });
 
 describe("queueing an invocation", () => {
-  it("⌘↵ while running queues with the skill; the queued bubble shows the chip", async () => {
+  it("↵ while running queues with the skill; the queued bubble shows the chip", async () => {
     let items: unknown[] = [];
     const calls = api({
       [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi"), runStarted(2)] }),
@@ -377,12 +418,12 @@ describe("queueing an invocation", () => {
         return json(201, { item });
       },
     });
-    renderPage(<ChatPage />, { locale: "en" });
+    await renderChatRoute();
     await screen.findByText("hi");
     const user = userEvent.setup();
     await user.type(input(), "/");
     await user.click(await screen.findByRole("option", { name: /^\/fix-issue/ }));
-    await user.type(input(), "9{Meta>}{Enter}{/Meta}");
+    await user.type(input(), "9{Enter}");
     expect(sentMessage(posts(calls, `${BASE}/queue`)[0] as Call)).toEqual({
       text: "9",
       skill: { name: "fix-issue" },
@@ -395,17 +436,17 @@ describe("queueing an invocation", () => {
     );
   });
 
-  it("a typed /name args with ⌘↵ while running queues the invocation", async () => {
+  it("a typed /name args with ↵ while running queues the invocation", async () => {
     const calls = api({
       [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi"), runStarted(2)] }),
       [`POST ${BASE}/queue`]: () => json(201, { item: null }),
     });
-    renderPage(<ChatPage />, { locale: "en" });
+    await renderChatRoute();
     await screen.findByText("hi");
     const user = userEvent.setup();
     await user.click(input());
     await user.paste("/fix-issue 9");
-    await user.keyboard("{Meta>}{Enter}{/Meta}");
+    await user.keyboard("{Enter}");
     await vi.waitFor(() => expect(posts(calls, `${BASE}/queue`)).toHaveLength(1));
     expect(sentMessage(posts(calls, `${BASE}/queue`)[0] as Call)).toEqual({
       text: "9",
@@ -436,7 +477,7 @@ describe("queueing an invocation", () => {
           pauseReason: "skill_not_invocable",
         }),
     });
-    renderPage(<ChatPage />, { locale: "zh" });
+    await renderChatRoute({ locale: "zh" });
     expect(await screen.findByText(zh.chat.queuePaused.skill_not_invocable)).toBeTruthy();
     expect(screen.queryByText(/运行已停止/)).toBeNull();
   });
@@ -445,7 +486,7 @@ describe("queueing an invocation", () => {
 describe("the invocation in the thread", () => {
   it("the bubble shows the chip and the arguments; the disclosure holds what was sent", async () => {
     api({ [`GET ${BASE}/events`]: () => json(200, { events: [invocation(1)] }) });
-    renderPage(<ChatPage />, { locale: "en" });
+    await renderChatRoute();
     const bubble = await vi.waitFor(() => {
       const b = document.querySelector('[data-entry="user"] [data-part="bubble"]');
       if (!b) throw new Error("no bubble");
@@ -514,7 +555,7 @@ describe("the invocation in the thread", () => {
           ],
         }),
     });
-    renderPage(<ChatPage />, { locale: "en" });
+    await renderChatRoute();
     await screen.findByText("The review found nothing.");
     const kinds = [...document.querySelectorAll("[data-entry]")].map((e) =>
       e.getAttribute("data-entry"),
@@ -559,7 +600,7 @@ describe("the invocation in the thread", () => {
           ],
         }),
     });
-    renderPage(<ChatPage />, { locale: "en" });
+    await renderChatRoute();
     const plain = (await screen.findByText("also check the docs")).closest(
       "[data-entry]",
     ) as HTMLElement;
@@ -582,7 +623,7 @@ describe("the invocation in the thread", () => {
           ],
         }),
     });
-    renderPage(<ChatPage />, { locale: "en" });
+    await renderChatRoute();
     await vi.waitFor(() => expect(document.querySelector('[data-entry="task"]')).not.toBeNull());
     expect(document.querySelector('[data-part="bubble-skill"]')).toBeNull();
   });
@@ -596,8 +637,13 @@ describe("a new conversation", () => {
       [`POST ${ORG}/conversations`]: () =>
         json(201, { conversation: CONV().conversation, event: invocation(1) }),
     });
-    renderPage(<NewChatPage />, { locale: "en" });
-    await vi.waitFor(() => expect(input()).toHaveProperty("disabled", false));
+    await renderRouteWithCache("/chat", {
+      [`GET ${ORG}/agents`]: () => json(200, AGENTS),
+      [`GET ${ORG}/models`]: () => json(200, MODELS),
+      [`GET ${ORG}/conversations/groups`]: () => json(200, { groups: [] }),
+      [`GET ${ORG}/attachments/limits`]: () => json(200, LIMITS),
+    });
+    expect(input()).toHaveProperty("disabled", false);
     const user = userEvent.setup();
     await user.type(input(), "/");
     await user.click(await screen.findByRole("option", { name: /^\/fix-issue/ }));
@@ -608,5 +654,38 @@ describe("a new conversation", () => {
     ).toMatchObject({ text: "123", skill: { name: "fix-issue" } });
     expect(calls.some((c) => c.url === INVOCABLE)).toBe(true);
     act(() => {});
+  });
+
+  it("a typed /name resolves before the composer clears, then the pending bubble shows with it (review fix 4)", async () => {
+    resetNavigation("/chat");
+    let answer: (r: Response) => void = () => {};
+    const calls = api({
+      [`GET ${ORG}/conversations/groups`]: () => json(200, { groups: [] }),
+      [`GET ${INVOCABLE}`]: () =>
+        new Promise<Response>((r) => {
+          answer = r;
+        }),
+      [`POST ${ORG}/conversations`]: () => new Promise<Response>(() => {}),
+    });
+    await renderRouteWithCache("/chat", {
+      [`GET ${ORG}/agents`]: () => json(200, AGENTS),
+      [`GET ${ORG}/models`]: () => json(200, MODELS),
+      [`GET ${ORG}/conversations/groups`]: () => json(200, { groups: [] }),
+      [`GET ${ORG}/attachments/limits`]: () => json(200, LIMITS),
+    });
+    const user = userEvent.setup();
+    await user.click(input());
+    await user.paste("/fix-issue 7");
+    await user.keyboard("{Enter}");
+    await vi.waitFor(() => expect(calls.some((c) => c.url === INVOCABLE)).toBe(true));
+    // still resolving: the text stays, nothing pending yet
+    expect(input()).toHaveProperty("value", "/fix-issue 7");
+    expect(document.querySelector("[data-pending]")).toBeNull();
+    await act(async () => answer(json(200, SKILLS)));
+    await vi.waitFor(() => expect(document.querySelector("[data-pending]")).not.toBeNull());
+    expect(input()).toHaveProperty("value", "");
+    const pending = document.querySelector("[data-pending]") as HTMLElement;
+    expect(pending.querySelector('[data-part="bubble-skill"]')?.textContent).toBe("/fix-issue");
+    expect(posts(calls, `${ORG}/conversations`)).toHaveLength(1);
   });
 });

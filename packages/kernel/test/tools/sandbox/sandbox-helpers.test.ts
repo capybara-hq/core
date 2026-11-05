@@ -249,7 +249,18 @@ describe("shellQuote", () => {
 
 describe("registry without a sandbox provider", () => {
   it("sandbox tools are built-in names and resolve as unavailable with an actionable reason", async () => {
-    for (const t of ["Bash", "Read", "Write", "Edit", "Glob", "Grep", "Deliver"]) {
+    const names = [
+      "Bash",
+      "Read",
+      "Write",
+      "Edit",
+      "Glob",
+      "Grep",
+      "Deliver",
+      "TaskOutput",
+      "TaskStop",
+    ];
+    for (const t of names) {
       expect(BUILTIN_TOOL_NAMES as readonly string[]).toContain(t);
     }
     const tools = sandboxTools({
@@ -264,7 +275,7 @@ describe("registry without a sandbox provider", () => {
       // biome-ignore lint/suspicious/noExplicitAny: 不会被调用
       config: { get: () => ({}) as any },
     });
-    expect(tools.map((t) => t.spec.name)).toHaveLength(7);
+    expect(tools.map((t) => t.spec.name)).toEqual(names);
     const host = { tools: () => [], list: () => [] } as unknown as ExtensionHost;
     const registry = new ToolRegistry({} as KernelDb, host, host, { list: () => tools });
     const got = await registry.forAgent("org", {

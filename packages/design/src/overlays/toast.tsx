@@ -12,13 +12,16 @@ import { IconButton } from "../controls/index";
 import { Icon } from "../icons/icon";
 import { useDesignT } from "../provider";
 
+type ToastAction = { label: string; run(): void } | undefined;
+
 type ToastItem =
-  | { id: number; kind: "success"; msg: string }
-  | { id: number; kind: "error"; msg: string; action?: { label: string; run(): void } | undefined }
+  | { id: number; kind: "success"; msg: string; action?: ToastAction }
+  | { id: number; kind: "error"; msg: string; action?: ToastAction }
   | { id: number; kind: "progress"; msg: string; done: number; total: number };
 
 export type ToastApi = {
-  success(msg: string): void;
+  /** A result; with an action (Undo of a Repeater's remove) it stays {@link UNDO_MS}, else 4 s. */
+  success(msg: string, opts?: { actionLabel: string; onAction(): void }): void;
   error(msg: string, opts?: { actionLabel: string; onAction(): void }): void;
   progress(
     msg: string,
@@ -29,6 +32,8 @@ export type ToastApi = {
 const ToastContext = createContext<ToastApi | null>(null);
 
 const SUCCESS_MS = 4000;
+/** How long a success toast carrying an action (Undo) stays (spec §6.7). */
+const UNDO_MS = 8000;
 const SEGMENTS = 10;
 
 export function ToastProvider({ children }: { children: ReactNode }) {
@@ -49,13 +54,24 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 
   const api = useMemo<ToastApi>(
     () => ({
-      success(msg) {
+      success(msg, opts) {
         const id = nextId.current++;
-        setItems((l) => [...l, { id, kind: "success", msg }]);
-        const h = setTimeout(() => {
-          timers.current.delete(h);
-          close(id);
-        }, SUCCESS_MS);
+        setItems((l) => [
+          ...l,
+          {
+            id,
+            kind: "success",
+            msg,
+            action: opts ? { label: opts.actionLabel, run: opts.onAction } : undefined,
+          },
+        ]);
+        const h = setTimeout(
+          () => {
+            timers.current.delete(h);
+            close(id);
+          },
+          opts ? UNDO_MS : SUCCESS_MS,
+        );
         timers.current.add(h);
       },
       error(msg, opts) {
@@ -98,7 +114,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
         {it.kind === "progress" ? (
           <span className="cb-toast-count">{`${it.done}/${it.total}`}</span>
         ) : null}
-        {it.kind === "error" && it.action ? (
+        {it.kind !== "progress" && it.action ? (
           <button
             type="button"
             className="cb-toast-action"
@@ -107,7 +123,8 @@ export function ToastProvider({ children }: { children: ReactNode }) {
               close(it.id);
             }}
           >
-            {it.action.label} →
+            {/* An error's action leads somewhere ("View →"); a success's undoes (no arrow). */}
+            {it.kind === "error" ? `${it.action.label} →` : it.action.label}
           </button>
         ) : null}
       </div>
@@ -154,6 +171,11 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       </div>
     </ToastContext.Provider>
   );
+}
+
+/** The toast API, or null outside a `ToastProvider` (a component that toasts only as a bonus). */
+export function useOptionalToast(): ToastApi | null {
+  return useContext(ToastContext);
 }
 
 export function useToast(): ToastApi {

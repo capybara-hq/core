@@ -1,0 +1,382 @@
+"use client";
+
+import {
+  AttachmentChip,
+  Card,
+  Checkbox,
+  Field,
+  FilePicker,
+  Input,
+  RadioGroup,
+  Stack,
+  Text,
+  useToast,
+  versionLabel,
+  WizardPage,
+} from "@capybara-hq/design";
+import { useQueryClient } from "@tanstack/react-query";
+import { useTranslations } from "next-intl";
+import { useRef, useState } from "react";
+import { ErrorFrame } from "../../../../../components/ErrorFrame";
+import { FormError } from "../../../../../components/form-error";
+import { NoAccess } from "../../../../../components/NoAccess";
+import { PermissionReview } from "../../../../../components/PermissionReview";
+import { usePagePath } from "../../../../../components/shell/path";
+import { Link, useRouter } from "../../../../../i18n/navigation";
+import {
+  approveExtension,
+  enableExtension,
+  ingestNpm,
+  installExtension,
+  type PackageReview,
+  reviewSensitive,
+  UPLOAD_SESSION_EXPIRED,
+  uploadExtensionPackage,
+} from "../../../../../lib/admin-extensions";
+import { ApiClientError, issueLines } from "../../../../../lib/api";
+import { adminExtensionsQuery, extensionChangeKeys } from "../../../../../lib/query/admin";
+import { keys } from "../../../../../lib/query/keys";
+import { useAppMutation } from "../../../../../lib/query/mutation";
+import { usePageQuery } from "../../../../../lib/query/page-query";
+import { useAdmin } from "../../../../../lib/query/workspace";
+import { useErrorMessage } from "../../../../../lib/use-error-message";
+import NotFound from "../../../not-found";
+
+type Step = 0 | 1 | 2;
+type Problem = { message: string; extra: string[] };
+
+/**
+ * `/admin/extensions/install`: install / upgrade an extension (enterprise admins,
+ * WizardPage, three steps).
+ * 1. Source: upload a tgz (with progress, cancellable) or an npm package name and version; the
+ *    kernel returns the review.
+ * 2. Install confirmation: permission groups (sensitive items highlighted with the reason, network
+ *    marked "declared only, not enforced", migration warnings); an upgrade shows the added / removed
+ *    permissions and the time limit for in-flight calls. A name clash with a built-in /
+ *    config-declared extension, or a package name mismatch on upgrade, cannot continue.
+ * 3. Confirm: with sensitive items, "I understand the sensitive items" must be checked; then install
+ *    -> approve (skipped when no approval is needed) -> optionally enable.
+ * `?upgrade=<name>` is an upgrade ("Upgrade" on the extension page).
+ * The installed extensions come from the query cache (the layout prefetched them on a first load).
+ * The source step does not depend on them, so it renders for real while they load; the review
+ * waits for them. Each step's write invalidates the list and what an extension brings to the
+ * current org (its readiness among them).
+ */
+export default function ExtensionInstallView({ target }: { target: string | null }) {
+  const gate = useAdmin();
+  if (gate.kind === "pending") return null;
+  if (gate.kind === "noAccess") return <NoAccess need={gate.need} />;
+  return <ExtensionInstall target={target} orgId={gate.me.currentOrgId} />;
+}
+
+function ExtensionInstall({ target, orgId }: { target: string | null; orgId: string | null }) {
+  const scope = usePagePath("admin");
+  const t = useTranslations("admin.extensions.wizard");
+  const td = useTranslations("admin.extensions.detail");
+  const router = useRouter();
+  const toast = useToast();
+  const errorMessage = useErrorMessage();
+  const qc = useQueryClient();
+  const read = usePageQuery(adminExtensionsQuery());
+  const plugins = read.kind === "ready" ? read.data.extensions : [];
+  const drainSeconds = read.kind === "ready" ? read.data.drainSeconds : 0;
+  const changes = () => [keys.deployment().extensions(), ...extensionChangeKeys(orgId)];
+  const install = useAppMutation({
+    fn: (v: { name: string; sha256: string }) => installExtension(v.name, v.sha256),
+    invalidates: changes,
+  });
+  const approve = useAppMutation({
+    fn: (v: { name: string; sha256: string; reviewHash: string }) =>
+      approveExtension(v.name, { sha256: v.sha256, reviewHash: v.reviewHash }),
+    invalidates: changes,
+  });
+  const enable = useAppMutation({ fn: enableExtension, invalidates: changes });
+  // Only reads the package for the review (nothing changes on the deployment yet).
+  const fetchNpm = useAppMutation({
+    fn: (v: { pkg: string; version: string }) => ingestNpm(v.pkg, v.version),
+    invalidates: () => [],
+  });
+
+  const [step, setStep] = useState<Step>(0);
+  const [source, setSource] = useState<"file" | "npm">("file");
+  const [file, setFile] = useState<File | null>(null);
+  const [progress, setProgress] = useState<number | null>(null);
+  const [cancelled, setCancelled] = useState(false);
+  const abort = useRef<AbortController | null>(null);
+  const [pkg, setPkg] = useState("");
+  const [version, setVersion] = useState("");
+  const [fetching, setFetching] = useState(false);
+  const [fetchError, setFetchError] = useState<Problem>();
+  const [review, setReview] = useState<PackageReview | null>(null);
+  const [ack, setAck] = useState(false);
+  const [enableAfter, setEnableAfter] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<Problem & { installed: string | null }>();
+
+  const problem = (e: unknown): Problem => ({ message: errorMessage(e), extra: issueLines(e) });
+
+  const fetchReview = async () => {
+    setFetchError(undefined);
+    setCancelled(false);
+    setFetching(true);
+    try {
+      let r: PackageReview;
+      if (source === "file") {
+        if (file === null) return;
+        const ctrl = new AbortController();
+        abort.current = ctrl;
+        setProgress(0);
+        r = await uploadExtensionPackage(file, { onProgress: setProgress, signal: ctrl.signal });
+      } else {
+        r = await fetchNpm.mutateAsync({ pkg: pkg.trim(), version: version.trim() });
+      }
+      // The review compares against the installed extensions: they are here before it shows.
+      await qc.ensureQueryData(adminExtensionsQuery());
+      setReview(r);
+      setAck(false);
+      setStep(1);
+    } catch (e) {
+      if (e instanceof DOMException && e.name === "AbortError") setCancelled(true);
+      else if (e instanceof ApiClientError && e.code === UPLOAD_SESSION_EXPIRED)
+        setFetchError({ message: t("sessionExpired"), extra: [] });
+      else setFetchError(problem(e));
+    } finally {
+      abort.current = null;
+      setProgress(null);
+      setFetching(false);
+    }
+  };
+
+  const current = review === null ? undefined : plugins.find((p) => p.name === review.name);
+  const blocked: string | null =
+    review === null
+      ? null
+      : target !== null && review.name !== target
+        ? t("upgradeMismatch", { got: review.name, want: target })
+        : current?.source === "config"
+          ? t("conflictConfig", { name: review.name })
+          : null;
+  const upgrading = current?.source === "install";
+  const sensitive = review !== null && reviewSensitive(review);
+  // 升级启用中的插件：期望状态不变（仍启用），不需要再启用
+  const offerEnable = !upgrading || current?.desired?.state === "disabled";
+
+  const submit = async () => {
+    if (review === null) return;
+    setSubmitting(true);
+    setSubmitError(undefined);
+    let installed: string | null = null;
+    try {
+      await install.mutateAsync({ name: review.name, sha256: review.sha256 });
+      installed = review.name;
+      try {
+        await approve.mutateAsync({
+          name: review.name,
+          sha256: review.sha256,
+          reviewHash: review.reviewHash,
+        });
+      } catch (e) {
+        // 快照已覆盖这个版本的权限（如只少了权限的升级）：无需批准
+        if (!(e instanceof ApiClientError && e.code === "extension.not_pending")) throw e;
+      }
+      if (offerEnable && enableAfter) {
+        await enable.mutateAsync(review.name);
+      }
+      toast.success(t("done", { name: review.name }));
+      router.push(`/admin/extensions/${encodeURIComponent(review.name)}`);
+    } catch (e) {
+      setSubmitError({ ...problem(e), installed });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const back = () => {
+    setSubmitError(undefined);
+    setStep((s) => (s > 0 ? ((s - 1) as Step) : s));
+  };
+  const cancel = {
+    label: t("cancel"),
+    onSelect: () =>
+      router.push(target !== null ? `/admin/extensions/${target}` : "/admin/extensions"),
+  };
+  const actionRow =
+    step === 0
+      ? {
+          cancel,
+          primary: {
+            label: source === "file" ? t("upload") : t("fetch"),
+            onSelect: () => void fetchReview(),
+            loading: fetching,
+            disabled: fetching || (source === "file" ? file === null : pkg.trim() === ""),
+          },
+        }
+      : step === 1
+        ? {
+            cancel,
+            secondary: { label: t("back"), onSelect: back },
+            primary: {
+              label: t("next"),
+              onSelect: () => setStep(2),
+              disabled: blocked !== null,
+            },
+          }
+        : {
+            cancel,
+            secondary: { label: t("back"), onSelect: back, disabled: submitting },
+            primary: {
+              label: t("install"),
+              onSelect: () => void submit(),
+              loading: submitting,
+              disabled: submitting || (sensitive && !ack),
+            },
+          };
+
+  if (read.kind === "notFound") return <NotFound />;
+  if (read.kind === "error") return <ErrorFrame reset={read.retry} />;
+  return (
+    <WizardPage
+      header={{
+        path: [...scope, { label: "extensions", href: "/admin/extensions" }, { label: "install" }],
+        title: target !== null ? t("upgradeTitle", { name: target }) : t("title"),
+      }}
+      steps={[t("steps.source"), t("steps.review"), t("steps.confirm")]}
+      current={step}
+      actionRow={actionRow}
+    >
+      {step === 0 && (
+        <Stack gap={16}>
+          <Card title={t("sourceLabel")}>
+            <RadioGroup
+              label={t("sourceLabel")}
+              variant="card"
+              value={source}
+              onChange={(v) => {
+                setSource(v as "file" | "npm");
+                setFetchError(undefined);
+              }}
+              options={[
+                { value: "file", label: t("sourceFile"), description: t("sourceFileHint") },
+                { value: "npm", label: t("sourceNpm"), description: t("sourceNpmHint") },
+              ]}
+            />
+          </Card>
+          {source === "file" ? (
+            <FilePicker
+              label={t("choose")}
+              dropLabel={t("drop")}
+              accept=".tgz,application/gzip,application/x-gzip"
+              disabled={fetching}
+              onFiles={(files) => {
+                setFile(files[0] ?? null);
+                setCancelled(false);
+                setFetchError(undefined);
+              }}
+            >
+              {file !== null && (
+                <AttachmentChip
+                  name={file.name}
+                  size={file.size}
+                  status={progress !== null ? "uploading" : "ready"}
+                  progress={progress ?? 0}
+                  onRemove={() => {
+                    if (abort.current !== null) abort.current.abort();
+                    else setFile(null);
+                  }}
+                />
+              )}
+              {cancelled && <Text tone="muted">{t("cancelled")}</Text>}
+            </FilePicker>
+          ) : (
+            <Stack gap={12}>
+              <Field label={t("npmPackage")}>
+                <Input value={pkg} onChange={(e) => setPkg(e.target.value)} />
+              </Field>
+              <Field label={t("npmVersion")} help={t("npmVersionHelp")}>
+                <Input value={version} onChange={(e) => setVersion(e.target.value)} />
+              </Field>
+            </Stack>
+          )}
+          {fetchError !== undefined && (
+            <FormError message={fetchError.message} extra={fetchError.extra} />
+          )}
+        </Stack>
+      )}
+      {step === 1 && review !== null && (
+        <Stack gap={16}>
+          <Stack gap={4}>
+            <Text>
+              {t("package", { name: review.name, version: versionLabel(review.version) })}
+            </Text>
+            <Text variant="small" tone="muted">
+              {t("sha", { sha: review.sha256 })}
+            </Text>
+          </Stack>
+          {blocked !== null ? (
+            <FormError message={blocked} />
+          ) : upgrading && current !== undefined ? (
+            <Stack gap={4}>
+              <Text>
+                {t("upgradeFrom", {
+                  from: versionLabel(current.version),
+                  to: versionLabel(review.version),
+                })}
+              </Text>
+              <Text variant="prose" tone="warn">
+                {td("drainHint", { seconds: drainSeconds })}
+              </Text>
+            </Stack>
+          ) : (
+            <Text tone="muted">{t("newInstall")}</Text>
+          )}
+          <PermissionReview
+            plugin={review.name}
+            groups={review.permissions}
+            {...(upgrading && { added: review.addedItems, removed: review.removed })}
+            warnings={review.warnings}
+          />
+        </Stack>
+      )}
+      {step === 2 && review !== null && (
+        <Stack gap={16}>
+          <Text>{t("package", { name: review.name, version: versionLabel(review.version) })}</Text>
+          {upgrading && (
+            <Text variant="prose" tone="warn">
+              {td("drainHint", { seconds: drainSeconds })}
+            </Text>
+          )}
+          {sensitive && (
+            <Stack gap={8}>
+              <Text variant="prose" tone="warn">
+                {t("ackHint")}
+              </Text>
+              <Checkbox checked={ack} onChange={setAck} label={t("ack")} />
+            </Stack>
+          )}
+          {offerEnable && (
+            <Checkbox checked={enableAfter} onChange={setEnableAfter} label={t("enableAfter")} />
+          )}
+          {submitError !== undefined && (
+            <Stack gap={8}>
+              <FormError
+                message={
+                  submitError.installed !== null
+                    ? `${t("failedAfterInstall")} ${submitError.message}`
+                    : submitError.message
+                }
+                extra={submitError.extra}
+              />
+              {submitError.installed !== null && (
+                <Text>
+                  <Link href={`/admin/extensions/${encodeURIComponent(submitError.installed)}`}>
+                    {submitError.installed}
+                  </Link>
+                </Text>
+              )}
+            </Stack>
+          )}
+        </Stack>
+      )}
+    </WizardPage>
+  );
+}

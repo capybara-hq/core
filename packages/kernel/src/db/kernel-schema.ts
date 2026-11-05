@@ -16,6 +16,8 @@ export interface AccountsTable {
   is_enterprise_admin: Generated<boolean>;
   created_at: Ts;
   updated_at: Ts;
+  /** 0064: the org the account last chose as current; a new session starts in it. */
+  last_org_id: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
 export interface IdentitiesTable {
@@ -165,6 +167,15 @@ export interface AgentsTable {
   org_role: Generated<"admin" | "member" | "guest">;
   current_version: number;
   needs_reassignment: Generated<boolean>;
+  /** 0067: the profile (display data, outside the versions). */
+  profile_avatar: ColumnType<
+    Record<string, unknown> | null,
+    string | null | undefined,
+    string | null
+  >;
+  profile_description: Generated<string>;
+  profile_quick_actions: ColumnType<unknown[], string | undefined, string>;
+  profile_updated_at: Ts;
   created_at: Ts;
   updated_at: Ts;
   deleted_at: TsNullable;
@@ -219,6 +230,10 @@ export interface ConversationsTable {
   queue_paused: ColumnType<boolean, boolean | undefined, boolean>;
   /** 0062: why the queue paused (`QueuePauseReason`); null when not paused or not recorded. */
   queue_pause_reason: ColumnType<string | null, string | null | undefined, string | null>;
+  /** 0065: when the owner archived it (hidden from the default lists); null = not archived. */
+  archived_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
+  /** 0065: when the owner deleted it (soft delete: hidden everywhere for the owner); null = live. */
+  deleted_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
 }
 
 /** 0060: an org's order of file-preview@1 previewers (UI refresh B Task 11). */
@@ -608,10 +623,12 @@ export interface AttachmentsTable {
   expires_at: TsNullable;
   /** 0024：上传用途（技能包不能绑定到消息）。 */
   purpose: ColumnType<AttachmentPurpose, AttachmentPurpose | undefined, AttachmentPurpose>;
+  /** 0068: the agent whose profile uses this avatar upload (set once, when it is saved). */
+  agent_id: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
-/** 预签名上传的用途：对话附件 / 技能包 zip。 */
-export type AttachmentPurpose = "chat" | "skill-package";
+/** 预签名上传的用途：对话附件 / 技能包 zip / agent avatar image. */
+export type AttachmentPurpose = "chat" | "skill-package" | "agent-avatar";
 
 /** 技能版本的清单（`skill_versions.manifest`）。 */
 export interface SkillManifest {
@@ -693,6 +710,38 @@ export interface SkillChangeRequestsTable {
   decided_by: string | null;
   decided_at: TsNullable;
   created_at: Ts;
+}
+
+/** 0070_background_tasks.sql: a Bash command running in the background in a conversation's sandbox. */
+export interface BackgroundTasksTable {
+  id: string;
+  org_id: string;
+  conversation_id: string;
+  sandbox_conversation_id: string;
+  run_id: string;
+  call_id: string;
+  trigger_account_id: string;
+  description: string;
+  command: string;
+  /** NULL while the launch is reserved but not started (0071). */
+  sid: string | null;
+  output_path: string;
+  status: ColumnType<
+    "running" | "completed" | "failed" | "stopped" | "timed_out" | "lost",
+    string | undefined,
+    string
+  >;
+  lost_reason: ColumnType<string | null, string | null | undefined, string | null>;
+  exit_code: ColumnType<number | null, number | null | undefined, number | null>;
+  started_at: Ts;
+  finished_at: TsNullable;
+  deadline_at: Date | string;
+  /** NULL while the launch is reserved but not started (0071). */
+  sandbox_created_at: Date | string | null;
+  kill_pending: ColumnType<boolean, boolean | undefined, boolean>;
+  read_offset: ColumnType<string, number | string | undefined, number | string>;
+  /** Set while a stop is under way (0072); the poller skips such a task. */
+  stopping_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
 }
 
 /** 0023_sandboxes.sql：按对话的沙箱（见 sandbox/sandbox.service.ts）。 */
@@ -869,6 +918,12 @@ export interface ExtensionPackagesTable {
   source_ref: string;
   uploaded_by: string | null;
   created_at: Ts;
+  /** 0066: the plugin.json `displayName`; null without one and for packages stored before 0066. */
+  display_name: ColumnType<
+    { zh: string; en: string } | null,
+    string | null | undefined,
+    string | null
+  >;
 }
 
 /** 0030, renamed in 0041: package bytes when there is no object storage. */
@@ -979,6 +1034,7 @@ export interface KernelDatabase {
   directory_exclusions: DirectoryExclusionsTable;
   attachments: AttachmentsTable;
   sandboxes: SandboxesTable;
+  background_tasks: BackgroundTasksTable;
   skills: SkillsTable;
   skill_versions: SkillVersionsTable;
   skill_change_requests: SkillChangeRequestsTable;

@@ -67,6 +67,19 @@ describe("process guards", () => {
     expect(exits).toEqual([1]);
   });
 
+  it("once the circuit is open nothing more is logged, so a failing log write cannot keep the process busy", () => {
+    // The loop seen in acceptance: stdout's reader died, every log write raised EPIPE as an uncaught
+    // exception, the guard logged it (another write, another EPIPE) and the endless chain of
+    // nextTick errors starved the exit, the stop budget's timers and a second Ctrl-C.
+    const { proc, records, exits } = setup();
+    for (let i = 0; i <= GUARD_CIRCUIT_LIMIT; i++)
+      proc.emit("uncaughtException", new Error("EPIPE"));
+    expect(exits).toEqual([1]);
+    const logged = records.length;
+    for (let i = 0; i < 100; i++) proc.emit("uncaughtException", new Error("EPIPE"));
+    expect(records.length).toBe(logged);
+  });
+
   it("events spread over more than the window never open the circuit", () => {
     const { proc, exits, advance } = setup();
     for (let i = 0; i < 20; i++) {

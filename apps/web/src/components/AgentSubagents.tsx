@@ -14,7 +14,7 @@ import {
   Textarea,
 } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
-import { type ReactNode, useEffect, useState } from "react";
+import { type ReactNode, useState } from "react";
 import {
   AGENT_TIERS,
   type Agent,
@@ -23,13 +23,12 @@ import {
   type AgentTier,
   type AgentVisibility,
   type InlineAgentTemplate,
-  listAgents,
-  listAgentTemplates,
   SUBAGENTS_INVALID_REASONS,
   type SubagentsInvalidReason,
 } from "../lib/agents";
 import { ApiClientError } from "../lib/api";
-import { listMembers } from "../lib/members";
+import type { Member } from "../lib/members";
+import { useSectionDraft } from "./agent/useSectionDraft";
 
 /** The builtin tool that dispatches sub-agents. */
 export const AGENT_TOOL = "Agent";
@@ -147,6 +146,39 @@ function buildSubagents(
   return out;
 }
 
+/**
+ * The lists the section offers, as the server read them (`null`: could not be read, left empty):
+ * the plugin agent templates, the org agents and the members (for the owners' names).
+ */
+export interface SubagentsFormData {
+  templates: AgentTemplateView[] | null;
+  agents: Agent[] | null;
+  members: Member[] | null;
+}
+
+/** The section's draft: the `agent` tool and the `subagents` block's fields. */
+type Draft = {
+  agentTool: boolean;
+  general: boolean;
+  templates: string[];
+  inline: InlineAgentTemplate[];
+  agents: AllowedAgent[];
+  dispatchable: boolean;
+};
+function draftOf(existing: Agent | undefined): Draft {
+  const s = existing?.definition.subagents;
+  return {
+    agentTool:
+      existing?.definition.tools?.some((r) => r.kind === "builtin" && r.name === AGENT_TOOL) ??
+      false,
+    general: s?.general !== false,
+    templates: s?.templates ?? [],
+    inline: s?.inline ?? [],
+    agents: s?.agents ?? [],
+    dispatchable: s?.dispatchable === true,
+  };
+}
+
 /** What {@link useSubagentsForm} gives the agent form. */
 export interface SubagentsForm {
   /** The FormSection. */
@@ -161,6 +193,10 @@ export interface SubagentsForm {
   errors: number;
   /** Shows a refused save's `agent.subagents_invalid` reasons next to their fields. */
   showProblems(e: unknown): void;
+  /** Something was edited and differs from the saved block. */
+  dirty: boolean;
+  /** Drops the edits and the problems: the section follows the saved agent again. */
+  reset(): void;
 }
 
 /**
@@ -173,54 +209,42 @@ export interface SubagentsForm {
  * left empty; the kernel checks every selection on save.
  */
 export function useSubagentsForm(
-  orgId: string,
   existing: Agent | undefined,
   visibility: AgentVisibility,
+  data: SubagentsFormData,
+  onEdit: () => void = () => {},
 ): SubagentsForm {
   const t = useTranslations("agents.form.subagents");
+  // the saved block: the draft follows it until something is edited (agent page §3.2)
   const initial = existing?.definition.subagents;
-  const [initialTool] = useState(
-    () =>
-      existing?.definition.tools?.some((r) => r.kind === "builtin" && r.name === AGENT_TOOL) ??
-      false,
-  );
-  const [agentTool, setAgentTool] = useState(initialTool);
-  const [general, setGeneral] = useState(initial?.general !== false);
-  const [templates, setTemplates] = useState<string[]>(initial?.templates ?? []);
-  const [inline, setInline] = useState<InlineAgentTemplate[]>(initial?.inline ?? []);
-  const [agents, setAgents] = useState<AllowedAgent[]>(initial?.agents ?? []);
-  const [dispatchable, setDispatchable] = useState(initial?.dispatchable === true);
+  const saved = draftOf(existing);
+  const draft = useSectionDraft(saved);
+  const { agentTool, general, templates, inline, agents, dispatchable } = draft.draft;
+  const initialTool = saved.agentTool;
+  const edit = (fn: (cur: Draft) => Draft) => {
+    onEdit();
+    draft.set(fn);
+  };
+  /** A setter of one draft field, from a value or a function of the field. */
+  const setter =
+    <K extends keyof Draft>(k: K) =>
+    (next: Draft[K] | ((cur: Draft[K]) => Draft[K])) =>
+      edit((cur) => ({
+        ...cur,
+        [k]: typeof next === "function" ? (next as (c: Draft[K]) => Draft[K])(cur[k]) : next,
+      }));
+  const setAgentTool = setter("agentTool");
+  const setGeneral = setter("general");
+  const setTemplates = setter("templates");
+  const setInline = setter("inline");
+  const setAgents = setter("agents");
+  const setDispatchable = setter("dispatchable");
   const [problems, setProblems] = useState<SubagentsProblem[]>([]);
-  const [templateList, setTemplateList] = useState<AgentTemplateView[]>([]);
-  const [orgAgents, setOrgAgents] = useState<Agent[]>([]);
-  const [names, setNames] = useState<Record<string, string>>({});
-
-  useEffect(() => {
-    let disposed = false;
-    listAgentTemplates(orgId).then(
-      (r) => {
-        if (!disposed) setTemplateList(r.templates);
-      },
-      () => {},
-    );
-    listAgents(orgId).then(
-      (r) => {
-        if (!disposed) setOrgAgents(r.agents);
-      },
-      () => {},
-    );
-    listMembers(orgId).then(
-      (r) => {
-        if (!disposed) {
-          setNames(Object.fromEntries(r.members.map((m) => [m.account.id, m.account.displayName])));
-        }
-      },
-      () => {},
-    );
-    return () => {
-      disposed = true;
-    };
-  }, [orgId]);
+  const templateList = data.templates ?? [];
+  const orgAgents = data.agents ?? [];
+  const names: Record<string, string> = Object.fromEntries(
+    (data.members ?? []).map((m) => [m.account.id, m.account.displayName]),
+  );
 
   const value = buildSubagents(initial, {
     general,
@@ -561,6 +585,11 @@ export function useSubagentsForm(
     agentTool,
     unsaved,
     errors: problems.length,
+    dirty: draft.dirty,
+    reset: () => {
+      draft.reset();
+      setProblems([]);
+    },
     showProblems: (e) =>
       setProblems([
         ...subagentsProblemsOf(e),

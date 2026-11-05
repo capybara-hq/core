@@ -1,27 +1,33 @@
 "use client";
 
-import { RightPanel, type RightPanelSwitcher, TextPreview } from "@capybara-hq/design";
+import { RightPanel, type RightPanelSwitcher, TextPreview, useToast } from "@capybara-hq/design";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   abortRun,
+  type BackgroundTaskView,
   type ConversationEvent,
   type ModelRef,
-  readToolOutput,
   type SubagentView,
+  stopBackgroundTask,
 } from "../../lib/conversations";
-import { type FileOutput, listFiles } from "../../lib/files";
+import type { FileOutput } from "../../lib/files";
+import { retryOnMountOf } from "../../lib/query/client";
+import {
+  backgroundTasksQuery,
+  contributionsQuery,
+  filesQuery,
+  hasBackgroundTasks,
+  toolOutputQuery,
+} from "../../lib/query/conversation";
+import { useAppMutation } from "../../lib/query/mutation";
 import { formatRightHash, parseRightHash, type RightTarget } from "../../lib/right-area";
 import type { TimelineEntry, TimelineTool } from "../../lib/timeline";
 import { toolLabelText } from "../../lib/tool-label";
-import {
-  listUiContributions,
-  type UiContributionItem,
-  type UiOpen,
-  uiKey,
-  uiLocale,
-} from "../../lib/ui";
+import { type UiContributionItem, type UiOpen, uiKey, uiLocale } from "../../lib/ui";
 import { useErrorMessage } from "../../lib/use-error-message";
+import { BackgroundTaskPanel } from "./BackgroundSection";
 import type { RightAreaSlot } from "./ConversationView";
 import { type BlockContext, ExtensionCard, ExtensionPanel, ICON_OF } from "./ExtensionBlocks";
 import { FilePanel } from "./FilePanel";
@@ -78,63 +84,6 @@ export function useRightArea(): {
   return { target, open, back };
 }
 
-/**
- * The extensions' UI contributions for this org (enabled and loaded only). Read again after a
- * stream reconnect (`*`) and when the window gets focus: an extension disabled meanwhile loses
- * its icon, sections and cards. The last good list stays while reading.
- */
-function useContributions(orgId: string, version: number): UiContributionItem[] | null {
-  const [items, setItems] = useState<UiContributionItem[] | null>(null);
-  const [focus, setFocus] = useState(0);
-  useEffect(() => {
-    const onFocus = () => setFocus((n) => n + 1);
-    window.addEventListener("focus", onFocus);
-    return () => window.removeEventListener("focus", onFocus);
-  }, []);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: version and focus trigger a reread
-  useEffect(() => {
-    let live = true;
-    listUiContributions(orgId).then(
-      (r) => {
-        if (live) setItems(r.items);
-      },
-      () => {
-        // Unreadable: keep what was shown (or none); the conversation carries on.
-        if (live) setItems((prev) => prev ?? []);
-      },
-    );
-    return () => {
-      live = false;
-    };
-  }, [orgId, version, focus]);
-  return items;
-}
-
-/**
- * The conversation's file outputs (the kernel's order); read again on `changed: files`
- * (and reconnects). Sub-agents cannot deliver files (`Deliver` is removed for children),
- * so their lists are not read (Task 22 ruling, final review I5); the Files rows' `from` marking
- * stays ready for when they can.
- */
-function useFiles(orgId: string, conversationId: string, version: number): FileOutput[] {
-  const [files, setFiles] = useState<FileOutput[]>([]);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: version triggers a reread
-  useEffect(() => {
-    let live = true;
-    listFiles(orgId, conversationId).then(
-      (mine) => {
-        // the kernel's order: newest first by first delivery
-        if (live) setFiles(mine);
-      },
-      () => {},
-    );
-    return () => {
-      live = false;
-    };
-  }, [orgId, conversationId, version]);
-  return files;
-}
-
 /** The full archived output of a call (replaces the old Run tab's "View full output"). */
 function OutputPanel({
   orgId,
@@ -152,33 +101,23 @@ function OutputPanel({
   onFullscreen(): void;
 }) {
   const errorMessage = useErrorMessage();
-  const [state, setState] = useState<
+  const outputId = tool.outputId;
+  // An output that was not archived is the row's own text: nothing to read.
+  const q = useQuery({
+    ...toolOutputQuery(orgId, conversationId, outputId ?? ""),
+    enabled: outputId !== null,
+  });
+  const state:
     | { kind: "loading" }
     | { kind: "ready"; text: string; complete: boolean }
-    | { kind: "error"; reason: string }
-  >({ kind: "loading" });
-  const [attempt, setAttempt] = useState(0);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: attempt retries
-  useEffect(() => {
-    let live = true;
-    const outputId = tool.outputId;
-    if (outputId === null) {
-      setState({ kind: "ready", text: tool.row.detail?.output ?? "", complete: true });
-      return;
-    }
-    setState({ kind: "loading" });
-    readToolOutput(orgId, conversationId, outputId).then(
-      (r) => {
-        if (live) setState({ kind: "ready", ...r });
-      },
-      (e: unknown) => {
-        if (live) setState({ kind: "error", reason: errorMessage(e) });
-      },
-    );
-    return () => {
-      live = false;
-    };
-  }, [orgId, conversationId, tool.outputId, attempt]);
+    | { kind: "error"; reason: string } =
+    outputId === null
+      ? { kind: "ready", text: tool.row.detail?.output ?? "", complete: true }
+      : q.data !== undefined
+        ? { kind: "ready", ...q.data }
+        : q.error !== null
+          ? { kind: "error", reason: errorMessage(q.error) }
+          : { kind: "loading" };
   return (
     <RightPanel
       title={title}
@@ -191,13 +130,77 @@ function OutputPanel({
       onFullscreen={onFullscreen}
       state={state.kind === "error" ? "failed" : state.kind}
       {...(state.kind === "error" ? { failure: { reason: state.reason } } : {})}
-      onRetry={() => setAttempt((n) => n + 1)}
+      onRetry={() => void q.refetch()}
     >
       {state.kind === "ready" ? (
         <TextPreview text={state.text} truncated={!state.complete} />
       ) : null}
     </RightPanel>
   );
+}
+
+const NONE_CONTRIBUTIONS: UiContributionItem[] = [];
+const NO_FILES: FileOutput[] = [];
+const NO_TASKS: BackgroundTaskView[] = [];
+const NO_SUBAGENTS: SubagentView[] = [];
+const NONE_STOPPING: ReadonlySet<string> = new Set();
+
+/**
+ * The conversation's background tasks (background Bash spec §5), read once the log names one
+ * ({@link hasBackgroundTasks}) and again on `changed: background`; and a person's stop, whose
+ * answer replaces the task in the list (its final status follows with the `changed` frame).
+ * `stopping` holds the tasks whose stop is on its way.
+ */
+function useBackgroundTasks(
+  orgId: string,
+  conversationId: string,
+  events: readonly ConversationEvent[],
+): {
+  tasks: BackgroundTaskView[] | undefined;
+  pending: boolean;
+  stopping: ReadonlySet<string>;
+  stop(taskId: string): void;
+} {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const errorMessage = useErrorMessage();
+  const enabled = useMemo(() => hasBackgroundTasks(events), [events]);
+  const query = backgroundTasksQuery(orgId, conversationId);
+  const r = useQuery({ ...query, enabled, retryOnMount: retryOnMountOf(query.queryKey) });
+  const listKey = query.queryKey;
+  /** The tasks whose stop this page sent and the kernel has not answered yet (each its own). */
+  const [inFlight, setInFlight] = useState<ReadonlySet<string>>(NONE_STOPPING);
+  const { mutateAsync } = useAppMutation({
+    fn: (taskId: string) => stopBackgroundTask(orgId, conversationId, taskId),
+    // the answer is the task now; the kernel's `changed: background` reads the list when it ends
+    invalidates: () => [],
+    onSuccess: ({ task }) =>
+      qc.setQueryData<BackgroundTaskView[]>(listKey, (l) =>
+        l?.map((x) => (x.id === task.id ? task : x)),
+      ),
+  });
+  const stop = useCallback(
+    (taskId: string) => {
+      setInFlight((s) => new Set(s).add(taskId));
+      // `mutateAsync` settles each call (mutate's own callbacks follow only the latest one)
+      mutateAsync(taskId)
+        .catch((e: unknown) => toast.error(errorMessage(e)))
+        .finally(() =>
+          setInFlight((s) => {
+            const next = new Set(s);
+            next.delete(taskId);
+            return next;
+          }),
+        );
+    },
+    [mutateAsync, toast, errorMessage],
+  );
+  return {
+    tasks: enabled ? r.data : undefined,
+    pending: enabled && r.data === undefined && r.error === null,
+    stopping: inFlight,
+    stop,
+  };
 }
 
 const fullscreen = () => {
@@ -209,18 +212,18 @@ const fullscreen = () => {
 /**
  * The right area of the conversation page (Task 20): the title-bar panel icons (Files, then the
  * extensions' panels), the properties panel (Context, Files, the extensions' sections) or one right
- * panel (an extension panel, a file, a call's full output), inline cards for the thread, and the
- * file wiring of the thread (chips, cards, "View all").
+ * panel (an extension panel, a file, a call's full output, a background task's output), inline
+ * cards for the thread, and the file wiring of the thread (chips, cards, "View all").
  */
 export function useRightAreaSlot(p: {
   orgId: string;
   conversationId: string;
   events: readonly ConversationEvent[];
   entries: readonly TimelineEntry[];
-  uiVersions: Readonly<Record<string, number>>;
-  filesVersion: number;
   model: ModelRef | null;
   contextPct: number | null;
+  /** The Context section's last-run line (model, duration, tokens), once a run ended. */
+  lastRun?: string | undefined;
   /** The conversation's sub-agents (`GET …/subagents`), once there are any. */
   subagents?: SubagentView[] | undefined;
   /** The Context section's tokens-with-sub-agents line. */
@@ -231,14 +234,22 @@ export function useRightAreaSlot(p: {
   const t = useTranslations("chat");
   const locale = uiLocale(useLocale());
   const { target, open, back } = useRightArea();
-  const contributions = useContributions(p.orgId, p.uiVersions["*"] ?? 0);
-  const files = useFiles(p.orgId, p.conversationId, p.filesVersion);
-  const panels = useMemo(
-    () => (contributions ?? []).filter((c) => c.place === "panel"),
-    [contributions],
-  );
+  // The extensions' contributions (enabled and loaded only) and the conversation's file outputs.
+  // A failed read (R5: not read again on mount) shows none: no extension blocks, no files.
+  // Sub-agents cannot deliver files (`Deliver` is removed for children), so their lists
+  // are not read (Task 22 ruling, final review I5).
+  const contributionsQ = contributionsQuery(p.orgId);
+  const contributionsR = useQuery({
+    ...contributionsQ,
+    retryOnMount: retryOnMountOf(contributionsQ.queryKey),
+  });
+  const filesQ = filesQuery(p.orgId, p.conversationId);
+  const filesR = useQuery({ ...filesQ, retryOnMount: retryOnMountOf(filesQ.queryKey) });
+  const contributions = contributionsR.data ?? NONE_CONTRIBUTIONS;
+  const files = filesR.data ?? NO_FILES;
+  const panels = useMemo(() => contributions.filter((c) => c.place === "panel"), [contributions]);
   const sections = useMemo(
-    () => (contributions ?? []).filter((c) => c.place === "section"),
+    () => contributions.filter((c) => c.place === "section"),
     [contributions],
   );
   const close = useCallback(() => open(null), [open]);
@@ -256,9 +267,17 @@ export function useRightAreaSlot(p: {
   const ctx: BlockContext = {
     orgId: p.orgId,
     conversationId: p.conversationId,
-    versions: p.uiVersions,
     onOpen: onOpenTarget,
   };
+  const background = useBackgroundTasks(p.orgId, p.conversationId, p.events);
+  /** The finish events' last lines by task (the panel's text when the output is unreadable). */
+  const lastLines = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const e of p.events)
+      if (e.type === "background_task_finished") m.set(e.payload.taskId, e.payload.lastLines);
+    return m;
+  }, [p.events]);
+  const openTask = useCallback((taskId: string) => open({ kind: "background", taskId }), [open]);
   const tools = useMemo(() => {
     const m = new Map<string, TimelineTool>();
     for (const e of p.entries) if (e.kind === "tools") for (const r of e.rows) m.set(r.callId, r);
@@ -379,10 +398,47 @@ export function useRightAreaSlot(p: {
         onFullscreen={fullscreen}
       />
     );
+  } else if (target?.kind === "background") {
+    panelNode = (
+      <BackgroundTaskPanel
+        key={target.taskId}
+        orgId={p.orgId}
+        conversationId={p.conversationId}
+        taskId={target.taskId}
+        task={background.tasks?.find((x) => x.id === target.taskId)}
+        loading={background.pending}
+        lastLines={lastLines.get(target.taskId)}
+        stopping={background.stopping.has(target.taskId)}
+        onStop={() => background.stop(target.taskId)}
+        onClose={close}
+        onFullscreen={fullscreen}
+      />
+    );
   }
 
+  // The open area whose read is still on its way draws its own loading state (spec §7.1): a file
+  // while the files load, an extension panel or the properties while the contributions do.
+  const pending = (r: { data: unknown; error: unknown }) =>
+    r.data === undefined && r.error === null;
+  const loading: RightAreaSlot["loading"] =
+    target?.kind === "file" && pending(filesR)
+      ? { title: t("files") }
+      : target?.kind === "panel" && pending(contributionsR)
+        ? true
+        : target?.kind === "properties" && (pending(contributionsR) || pending(filesR))
+          ? true
+          : undefined;
   const right: RightAreaSlot["right"] =
-    target?.kind === "properties" ? "properties" : panelNode ? "panel" : "none";
+    target?.kind === "properties"
+      ? "properties"
+      : panelNode || loading !== undefined
+        ? "panel"
+        : "none";
+  // A sub-agent's terminal event reaches the parent through its stream: nothing to invalidate.
+  const { mutate: stopSubagent } = useAppMutation({
+    fn: (id: string) => abortRun(p.orgId, id),
+    invalidates: () => [],
+  });
 
   const filePaths = useMemo(() => {
     const m = new Map<string, string>();
@@ -406,17 +462,15 @@ export function useRightAreaSlot(p: {
 
   return {
     titleBarPanels: [
-      {
+      // Files opens the newest file (its panel switches to the others); without a file there is
+      // no Files button: it would have to open something else (the properties panel).
+      ...files.slice(0, 1).map((first) => ({
         id: "files",
         label: t("files"),
-        icon: "file-text",
+        icon: "file-text" as const,
         pressed: target?.kind === "file",
-        onOpen: () => {
-          const first = files[0];
-          if (first) openFile(first.id);
-          else open({ kind: "properties" });
-        },
-      },
+        onOpen: () => openFile(first.id),
+      })),
       ...panels.map((c) => ({
         id: `panel:${uiKey(c.plugin, c.id)}`,
         label: c.title[locale],
@@ -437,15 +491,22 @@ export function useRightAreaSlot(p: {
         events={p.events}
         model={p.model}
         contextPct={p.contextPct}
+        lastRun={p.lastRun}
         files={files}
         sections={sections}
         onOpenFile={openFile}
-        subagents={
-          p.subagents
+        background={
+          p.subagents || background.tasks
             ? {
-                views: p.subagents,
-                onStop: (id) => void abortRun(p.orgId, id).catch(() => {}),
-                onOpen: (id) => open({ kind: "subagent", id }),
+                views: p.subagents ?? NO_SUBAGENTS,
+                tasks: background.tasks ?? NO_TASKS,
+                stopping: background.stopping,
+                onStop: (item) =>
+                  item.kind === "task" ? background.stop(item.id) : stopSubagent(item.id),
+                onOpen: (item) =>
+                  item.kind === "task"
+                    ? openTask(item.id)
+                    : open({ kind: "subagent", id: item.id }),
               }
             : undefined
         }
@@ -453,6 +514,7 @@ export function useRightAreaSlot(p: {
       />
     ),
     ...(panelNode ? { panelNode } : {}),
+    ...(loading !== undefined ? { loading } : {}),
     onCloseRight: close,
     thread: {
       onOpenFile: openFile,
@@ -463,10 +525,11 @@ export function useRightAreaSlot(p: {
       filePaths,
       ...(target?.kind === "subagent" ? { openSubagent: target.id } : {}),
       onOpenSubagent: (id) => open({ kind: "subagent", id }),
+      onOpenTask: openTask,
       renderCard: (e) => (
         <ExtensionCard
           ctx={ctx}
-          contributions={contributions ?? []}
+          contributions={contributions}
           plugin={e.plugin}
           view={e.view}
           callId={e.callId}

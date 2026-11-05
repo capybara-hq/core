@@ -1,24 +1,30 @@
 "use client";
 
 import type { CommandGroup, IconName, SidebarNavItem } from "@capybara-hq/design";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback } from "react";
 import { useRouter } from "../../i18n/navigation";
-import { listInbox } from "../../lib/inbox";
-import { listUiContributions, type UiContributionItem, uiLocale } from "../../lib/ui";
+import { retryOnMountOf } from "../../lib/query/client";
+import { keys } from "../../lib/query/keys";
+import { extensionPagesQuery, inboxCountQuery } from "../../lib/query/shell";
+import { type UiContributionItem, uiLocale } from "../../lib/ui";
+import { ADMIN_PAGES, type AdminPageId } from "../admin-nav";
 
 /**
- * 导航项的可见范围：`all` 所有人，`member` 成员以上（访客看不到），`admin` 管理员以上；
- * `enterprise` 只给企业管理员（`me.account.isEnterpriseAdmin`，与组织角色无关）。
+ * Who sees a nav item: `all` everyone, `member` members and up (not guests), `admin` org admins
+ * and owners. The admin console is for enterprise admins (`me.account.isEnterpriseAdmin`, apart
+ * from the org role).
  */
-type NavAudience = "all" | "member" | "admin" | "enterprise";
+type NavAudience = "all" | "member" | "admin";
 /** 当前用户在当前组织里能看到哪一档导航项。 */
 export type NavLevel = "guest" | "member" | "admin";
 
 /**
- * The sidebar navigation (design spec §6.13): only routes that exist. Items are hidden by the
- * current org role through `audience` (cosmetic only; the kernel decides). `footer` items (Settings,
- * Admin) sit after the Extensions group.
+ * The work context's navigation (web order §2.1): only routes that exist. `primary` items follow
+ * New conversation; `more` items sit in the 更多 flyout (then the extension pages). Search and the
+ * inbox are icon buttons in the brand row. Items are hidden by the current org role through `audience` (cosmetic only; the kernel
+ * decides). The admin console is the entry above the account row, for enterprise admins.
  */
 const NAV: readonly {
   id: string;
@@ -26,36 +32,62 @@ const NAV: readonly {
   href: string;
   audience: NavAudience;
   icon: IconName;
-  footer?: true;
+  section: "primary" | "more";
 }[] = [
-  { id: "overview", key: "overview", href: "/", audience: "all", icon: "home" },
-  { id: "agents", key: "agents", href: "/agents", audience: "all", icon: "agent" },
-  // Skills sit beside agents: members browse them, guests don't
-  { id: "skills", key: "skills", href: "/skills", audience: "member", icon: "skills" },
-  { id: "inbox", key: "inbox", href: "/inbox", audience: "all", icon: "inbox" },
-  { id: "connectors", key: "connectors", href: "/connectors", audience: "all", icon: "connector" },
-  // The catalog (org view): members browse and request, org admins install
-  { id: "catalog", key: "catalog", href: "/catalog", audience: "member", icon: "catalog" },
-  { id: "channels", key: "channels", href: "/channels", audience: "admin", icon: "channel" },
-  // Evals: sets and runs (agent owners reach their runs from the agent page)
-  { id: "evals", key: "evals", href: "/evals", audience: "admin", icon: "evals" },
-  // Settings: my connections first; the settings rail lists the rest by role
+  { id: "overview", key: "overview", href: "/", audience: "all", icon: "home", section: "primary" },
+  {
+    id: "agents",
+    key: "agents",
+    href: "/agents",
+    audience: "all",
+    icon: "agent",
+    section: "primary",
+  },
+  // Skills: members browse them, guests don't
+  {
+    id: "skills",
+    key: "skills",
+    href: "/skills",
+    audience: "member",
+    icon: "skills",
+    section: "more",
+  },
+  {
+    id: "connectors",
+    key: "connectors",
+    href: "/connectors",
+    audience: "all",
+    icon: "connector",
+    section: "more",
+  },
+  // Plugins (the org's catalog view): members browse and request, org admins install
+  {
+    id: "catalog",
+    key: "catalog",
+    href: "/catalog",
+    audience: "member",
+    icon: "catalog",
+    section: "more",
+  },
+  {
+    id: "channels",
+    key: "channels",
+    href: "/channels",
+    audience: "admin",
+    icon: "channel",
+    section: "more",
+  },
+  // Evals and runs: sets and runs (agent owners reach their runs from the agent page)
+  { id: "evals", key: "evals", href: "/evals", audience: "admin", icon: "evals", section: "more" },
+  // Organization settings (members read General, Members and Sandbox; admins change them);
+  // personal settings are the account menu's
   {
     id: "settings",
     key: "settings",
-    href: "/settings/connections",
-    audience: "all",
+    href: "/settings/organization",
+    audience: "member",
     icon: "settings",
-    footer: true,
-  },
-  // Admin (deployment settings, every org and account): enterprise admins
-  {
-    id: "admin",
-    key: "admin",
-    href: "/admin",
-    audience: "enterprise",
-    icon: "admin",
-    footer: true,
+    section: "more",
   },
 ];
 
@@ -75,7 +107,7 @@ export function navLevelOf(me: {
   return role === "member" ? "member" : "guest";
 }
 
-/** 收件箱待处理数的刷新间隔（浏览器内轮询，不涉及服务端状态）。 */
+/** How often the inbox count is read again (in the browser; no server state involved). */
 const PENDING_POLL_MS = 30_000;
 
 const under = (pathname: string, prefix: string) =>
@@ -90,7 +122,7 @@ const decode = (s: string) => {
 };
 
 /**
- * The nav item the route belongs to: `/settings/*` is Settings, trajectories are Evals, an
+ * The nav item the route belongs to: `/settings/*` is Organization settings, trajectories are Evals, an
  * extension page `/p/<plugin>/<id>` is its Extensions item `ext:<plugin>/<id>`; a conversation
  * (`/chat/*`) is none (its sidebar row is current instead).
  */
@@ -112,45 +144,28 @@ export function activeNavOf(pathname: string): string {
 }
 
 /**
- * 当前用户收件箱里的待处理数（`GET /inbox`：工具审批 + 技能变更）：组织或路由变化时、每 30 秒、以及调用
- * `refresh()` 时重读；没有当前组织或读取失败时为 0。`more`：收件箱被截断（实际不止 `count` 项）。
+ * The current user's pending inbox count (`GET /inbox`: tool approvals and skill changes) from the
+ * query cache: read again every 30 s, on a path change while stale (AppFrame) and on `refresh()`;
+ * 0 while it loads or when the read fails. `more`: the inbox was truncated (more than `count`
+ * items).
  */
-export function usePendingApprovals(
-  orgId: string | null,
-  pathname: string,
-): { count: number; more: boolean; refresh(): void } {
-  const [count, setCount] = useState(0);
-  const [more, setMore] = useState(false);
-  const [nonce, setNonce] = useState(0);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: pathname 与 nonce 只用于触发重读
-  useEffect(() => {
-    if (orgId === null) {
-      setCount(0);
-      return;
-    }
-    let disposed = false;
-    const load = () =>
-      listInbox(orgId).then(
-        (r) => {
-          if (disposed) return;
-          setCount(r.items.length);
-          setMore(r.truncated === true);
-        },
-        () => {
-          if (disposed) return;
-          setCount(0);
-          setMore(false);
-        },
-      );
-    void load();
-    const timer = setInterval(() => void load(), PENDING_POLL_MS);
-    return () => {
-      disposed = true;
-      clearInterval(timer);
-    };
-  }, [orgId, pathname, nonce]);
-  const refresh = useCallback(() => setNonce((n) => n + 1), []);
-  return { count, more, refresh };
+export function usePendingApprovals(orgId: string): {
+  count: number;
+  more: boolean;
+  refresh(): void;
+} {
+  const qc = useQueryClient();
+  const query = inboxCountQuery(orgId);
+  const { data } = useQuery({
+    ...query,
+    retryOnMount: retryOnMountOf(query.queryKey),
+    refetchInterval: PENDING_POLL_MS,
+  });
+  const refresh = useCallback(
+    () => void qc.invalidateQueries({ queryKey: keys.org(orgId).inboxCount() }),
+    [qc, orgId],
+  );
+  return { count: data?.count ?? 0, more: data?.more ?? false, refresh };
 }
 
 /** 插件页面的路由：`/p/<插件>/<贡献 id>`。 */
@@ -160,32 +175,23 @@ export const pluginPageHref = (plugin: string, id: string) =>
 /**
  * The sidebar's Extensions group: the page contributions (`place: "page"`) of the current org's
  * enabled extensions, schema views and embeds alike, labelled by the page title; when two pages
- * share a title, each label gets its plugin name. Empty without an org, pages or on a failed read
- * (the group is then hidden).
+ * share a title, each label gets its plugin name. Empty while loading, without pages or on a failed
+ * read (the group is then hidden).
  */
 export function useExtensions(
-  orgId: string | null,
+  orgId: string,
   locale: string,
 ): { id: string; label: string; href: string }[] {
-  const [pages, setPages] = useState<UiContributionItem[]>([]);
-  useEffect(() => {
-    if (orgId === null) {
-      setPages([]);
-      return;
-    }
-    let disposed = false;
-    listUiContributions(orgId).then(
-      ({ items }) => {
-        if (!disposed) setPages(items.filter((c) => c.place === "page"));
-      },
-      () => {
-        if (!disposed) setPages([]);
-      },
-    );
-    return () => {
-      disposed = true;
-    };
-  }, [orgId]);
+  const query = extensionPagesQuery(orgId);
+  const pages = useQuery({ ...query, retryOnMount: retryOnMountOf(query.queryKey) }).data ?? [];
+  return extensionItems(pages, locale);
+}
+
+/** The Extensions group's items for `pages`. */
+function extensionItems(
+  pages: readonly UiContributionItem[],
+  locale: string,
+): { id: string; label: string; href: string }[] {
   const lang = uiLocale(locale);
   const titles = pages.map((p) => p.title[lang]);
   return pages.map((p) => {
@@ -199,44 +205,92 @@ export function useExtensions(
   });
 }
 
-/** StatusBar 上下文路径里的路由段：去掉开头的 `/`，首页记为 `~`。 */
-export function routeLabel(pathname: string): string {
-  const p = pathname.replace(/^\/+/, "");
-  return p === "" ? "~" : p;
+/**
+ * The status bar prompt (web order §2.3, spec §4.4): `<login>@<org-slug>:<path>`, the path `~` +
+ * the pathname in the workspace and the pathname as-is under `/admin`; without a current org there
+ * is no `@<slug>`. The login is the account's name in lowercase, spaces joined by hyphens (`/me`
+ * carries no login name, and an SSO account may have none).
+ */
+export function statusPrompt(login: string, slug: string | null, pathname: string): string {
+  const path = under(pathname, "/admin") ? pathname : `~${pathname === "/" ? "" : pathname}`;
+  const user = login.trim().toLowerCase().replace(/\s+/g, "-");
+  return `${user}${slug === null ? "" : `@${slug}`}:${path}`;
+}
+
+const ADMIN_ICONS: Record<AdminPageId, IconName> = {
+  overview: "gauge",
+  accounts: "user",
+  orgs: "building",
+  extensions: "extension",
+  catalog: "catalog",
+  marketplaces: "store",
+  models: "cpu",
+  settings: "sliders",
+};
+
+/** The admin context's items (web order §2.2), from the admin pages. */
+export function useAdminItems(): SidebarNavItem[] {
+  const t = useTranslations("admin.nav");
+  return ADMIN_PAGES.map((p) => ({
+    id: p.id,
+    label: t(p.id),
+    href: p.href,
+    icon: ADMIN_ICONS[p.id],
+  }));
+}
+
+/** The admin item a route belongs to: the longest matching href (`/admin` only by itself). */
+export function activeAdminOf(pathname: string, items: { id: string; href: string }[]): string {
+  const hit = items
+    .filter((i) => (i.href === "/admin" ? pathname === i.href : under(pathname, i.href)))
+    .sort((a, b) => b.href.length - a.href.length)[0];
+  return hit?.id ?? "";
 }
 
 /**
- * The sidebar navigation (main and footer items) and the command palette. `enterpriseAdmin`: the
- * account is an enterprise admin, so Admin shows (cosmetic; `/api/v1/admin/*` is decided by the
- * kernel).
+ * The work context's navigation (primary items, 更多, the admin entry) and the command palette.
+ * `enterpriseAdmin`: the account is an enterprise admin, so the admin entry shows (cosmetic;
+ * `/api/v1/admin/*` is decided by the kernel).
  */
 export function useNav(
   pending = 0,
   level: NavLevel = "guest",
   pendingMore = false,
   enterpriseAdmin = false,
-): { nav: SidebarNavItem[]; footerNav: SidebarNavItem[]; commands: CommandGroup[] } {
+): {
+  primary: SidebarNavItem[];
+  more: SidebarNavItem[];
+  /** The brand row's inbox button (count only while something is pending). */
+  inbox: { href: string; count?: number; countMore?: boolean };
+  adminHref?: string;
+  commands: CommandGroup[];
+} {
   const t = useTranslations();
   const router = useRouter();
-  const visible = (a: NavAudience) =>
-    a === "enterprise" ? enterpriseAdmin : VISIBLE[level].includes(a);
-  const items = NAV.filter((n) => visible(n.audience)).map((n) => ({
-    footer: n.footer === true,
+  const items = NAV.filter((n) => VISIBLE[level].includes(n.audience)).map((n) => ({
+    section: n.section,
     id: n.id,
     label: t(`nav.${n.key}`),
     href: n.href,
     icon: n.icon,
-    ...(n.id === "inbox" && pending > 0
-      ? { count: pending, ...(pendingMore ? { countMore: true } : {}) }
-      : {}),
   }));
-  const strip = ({ footer: _, ...item }: (typeof items)[number]): SidebarNavItem => item;
-  const nav = items.filter((n) => !n.footer).map(strip);
-  const footerNav = items.filter((n) => n.footer).map(strip);
+  const inbox = {
+    href: "/inbox",
+    ...(pending > 0 ? { count: pending, ...(pendingMore ? { countMore: true } : {}) } : {}),
+  };
+  const strip = ({ section: _, ...item }: (typeof items)[number]): SidebarNavItem => item;
+  const primary = items.filter((n) => n.section === "primary").map(strip);
+  const more = items.filter((n) => n.section === "more").map(strip);
+  const admin = enterpriseAdmin ? [{ id: "admin", label: t("nav.admin"), href: "/admin" }] : [];
   const commands: CommandGroup[] = [
     {
       label: t("nav.goto"),
-      items: [...nav, ...footerNav].map((n) => ({
+      items: [
+        ...primary,
+        { id: "inbox", label: t("nav.inbox"), href: inbox.href },
+        ...more,
+        ...admin,
+      ].map((n) => ({
         id: `goto-${n.id}`,
         label: n.label,
         onSelect: () => router.push(n.href),
@@ -244,15 +298,28 @@ export function useNav(
     },
     {
       label: t("nav.actions"),
+      // agents.create is for members up; installing a connector (connectors.manage) for org admins
       items: [
-        { id: "new-agent", label: t("agents.new"), onSelect: () => router.push("/agents/new") },
-        {
-          id: "new-app",
-          label: t("connectors.new"),
-          onSelect: () => router.push("/connectors/install"),
-        },
+        ...(level !== "guest"
+          ? [
+              {
+                id: "new-agent",
+                label: t("agents.new"),
+                onSelect: () => router.push("/agents/new"),
+              },
+            ]
+          : []),
+        ...(level === "admin"
+          ? [
+              {
+                id: "new-app",
+                label: t("connectors.new"),
+                onSelect: () => router.push("/connectors/install"),
+              },
+            ]
+          : []),
       ],
     },
-  ];
-  return { nav, footerNav, commands };
+  ].filter((g) => g.items.length > 0);
+  return { primary, more, inbox, ...(enterpriseAdmin ? { adminHref: "/admin" } : {}), commands };
 }

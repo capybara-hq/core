@@ -14,11 +14,16 @@ import { FixtureShell } from "../frame";
 const noop = () => {};
 
 const NAV = [
-  { id: "org", label: "组织", href: "/dev/ui/templates/settings" },
-  { id: "env", label: "环境", href: "/dev/ui/templates/settings" },
-  { id: "security", label: "安全", href: "/dev/ui/templates/settings" },
-  { id: "members", label: "成员", href: "/dev/ui/templates/settings" },
-  { id: "billing", label: "计费", href: "/dev/ui/templates/settings" },
+  {
+    group: "组织",
+    items: [
+      { id: "org", label: "组织", href: "/dev/ui/templates/settings" },
+      { id: "env", label: "环境", href: "/dev/ui/templates/settings" },
+      { id: "security", label: "安全", href: "/dev/ui/templates/settings" },
+      { id: "members", label: "成员", href: "/dev/ui/templates/settings", count: 5 },
+    ],
+  },
+  { group: "计费", items: [{ id: "billing", label: "计费", href: "/dev/ui/templates/settings" }] },
 ];
 
 function SettingsBody() {
@@ -27,7 +32,10 @@ function SettingsBody() {
   const [mfa, setMfa] = useState(true);
   return (
     <SettingsPage
-      header={{ title: "设置" }}
+      header={{
+        path: [{ label: "capybara", href: "/dev/ui" }, { label: "settings" }],
+        title: "设置",
+      }}
       nav={NAV}
       activeNav="org"
       actionRow={{

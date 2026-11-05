@@ -25,6 +25,7 @@ import { type ApiTokenRecord, ApiTokenService, FutureIsoDate } from "./api-token
 import { MAX_PASSWORD_LENGTH } from "./login.js";
 import { CurrentPrincipal, type Principal, requireUser, SessionOnly } from "./principal.js";
 import { SessionService } from "./sessions.js";
+import { SettingsService } from "./settings.js";
 
 /** The credential throttlers of a password change (per account, per client IP). */
 const CHANGE_PASSWORD_THROTTLERS = ["change-password", "change-password-ip"] as const;
@@ -56,6 +57,7 @@ export class MeController {
     @Inject(ApiTokenService) private readonly tokens: ApiTokenService,
     @Inject(CredentialThrottler) private readonly throttler: CredentialThrottler,
     @Inject(KERNEL_LOGGER) private readonly log: Logger,
+    @Inject(SettingsService) private readonly settings: SettingsService,
   ) {}
 
   @Get()
@@ -64,6 +66,8 @@ export class MeController {
     via: "session" | "pat";
     currentOrgId: string | null;
     memberships: MembershipView[];
+    /** Whether `POST /api/v1/orgs` would accept this account (the `orgCreation` setting). */
+    canCreateOrg: boolean;
   }> {
     const p = requireUser(principal);
     const currentOrgId =
@@ -74,7 +78,12 @@ export class MeController {
       name: o.name,
       role: o.role,
     }));
-    return { account: p.account, via: p.via, currentOrgId, memberships };
+    // a session's org the account has since left reads as none (removal clears it, but a session
+    // created at that moment may still name it)
+    const current = memberships.some((m) => m.orgId === currentOrgId) ? currentOrgId : null;
+    const { orgCreation } = await this.settings.get();
+    const canCreateOrg = orgCreation === "anyone" || p.account.isEnterpriseAdmin;
+    return { account: p.account, via: p.via, currentOrgId: current, memberships, canCreateOrg };
   }
 
   /** 切换当前组织（仅 Web 会话）；`null` 清空。非成员或已软删除的组织 → `org.not_found`。 */

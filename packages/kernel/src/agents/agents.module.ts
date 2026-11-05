@@ -1,4 +1,5 @@
 import { Module } from "@nestjs/common";
+import { AttachmentsModule } from "../conversations/attachments.module.js";
 import { EvalBudgetModule } from "../evals/budget.js";
 import { OrgLockModule } from "../orgs/org-lock.js";
 import { ProvidersModule } from "../runtime/providers.js";
@@ -6,6 +7,7 @@ import { SandboxModule } from "../sandbox/sandbox.module.js";
 import { SkillsModule } from "../skills/skills.module.js";
 import { ToolsModule } from "../tools/tools.module.js";
 import { AgentLookupModule } from "./agent-lookup.js";
+import { AgentProfileService } from "./agent-profile.service.js";
 import { AgentsService } from "./agents.service.js";
 import { AgentTemplatesService } from "./templates.js";
 
@@ -17,6 +19,8 @@ import { AgentTemplatesService } from "./templates.js";
 @Module({
   imports: [
     AgentLookupModule,
+    // avatar uploads
+    AttachmentsModule,
     OrgLockModule,
     ProvidersModule,
     SkillsModule,
@@ -26,7 +30,7 @@ import { AgentTemplatesService } from "./templates.js";
     // cancels the deleted agent's eval runs
     EvalBudgetModule,
   ],
-  providers: [AgentsService, AgentTemplatesService],
-  exports: [AgentLookupModule, AgentsService, AgentTemplatesService],
+  providers: [AgentsService, AgentProfileService, AgentTemplatesService],
+  exports: [AgentLookupModule, AgentsService, AgentProfileService, AgentTemplatesService],
 })
 export class AgentsModule {}

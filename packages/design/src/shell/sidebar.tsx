@@ -1,26 +1,36 @@
 import * as RD from "@radix-ui/react-dialog";
 import {
-  type FocusEvent,
-  type KeyboardEvent,
   type MouseEvent,
+  type ReactElement,
   type ReactNode,
-  useCallback,
   useEffect,
-  useLayoutEffect,
+  useId,
   useRef,
   useState,
 } from "react";
-import { Button, IconButton } from "../controls/index";
+import { IconButton } from "../controls/index";
+import { initialOf } from "../display/initial";
 import { Logo } from "../display/logo";
 import { Tooltip } from "../display/tooltip";
-import { type Locale, messages } from "../i18n";
 import { Icon } from "../icons/icon";
 import type { IconName } from "../icons/paths";
 import { useFocusReturn } from "../overlays/focus-return";
 import { Menu, type MenuItem } from "../overlays/index";
-import { useDesignLink, useDesignLocale, useDesignT } from "../provider";
+import { LinkPendingMark, useDesignLink, useDesignT } from "../provider";
 import { SIZES } from "../tokens";
+import { type PreferenceBarProps, ThemeToggle } from "./preference-bar";
+import { Conversations, type SidebarConversations, useRoving } from "./sidebar-conversations";
 import { useHydrated, useMediaQuery } from "./use-media-query";
+
+export {
+  type SidebarActivity,
+  type SidebarConversation,
+  type SidebarConversations,
+  type SidebarFilter,
+  type SidebarGroup,
+  untitledLabel,
+} from "./sidebar-conversations";
+export { initialOf };
 
 export type SidebarNavItem = {
   id: string;
@@ -32,57 +42,91 @@ export type SidebarNavItem = {
   countMore?: boolean;
 };
 
-export type SidebarConversation = {
-  id: string;
-  /** null until the conversation has a title: shown as `untitledLabel(startedAt)`. */
-  title: string | null;
-  startedAt: Date;
-  href: string;
+/** The current org in the switcher: `~/<slug> · <role>` under its name; `menu` switches it. */
+export type SidebarOrg = {
+  name: string;
+  /** Drawn on `ink` in the 24 box (and alone in the rail). */
+  initial: string;
+  slug: string;
+  role: string;
+  /** The user's orgs as radio items, then "Create organization…"; empty = not a button. */
+  menu: MenuItem[];
 };
 
-export type SidebarGroup = {
-  agentId: string;
-  agentName: string;
-  conversations: SidebarConversation[];
-  /** The group has more conversations than it shows: a "More" row calls `onMore`. */
-  more: boolean;
-  onMore(): void;
-  /** The group's ＋: a new conversation with this agent. */
-  onNew(): void;
+/**
+ * One step of the guided setup (web-SSR spec §4), drawn as a navigation item of the setup context:
+ * `done` (a `check` in `ok`, still a link), `todo` (a `circle`, a link) or `waiting` (a `clock`,
+ * not a link, with `reason` as its second line). `optional` steps follow the "可以稍后再做" label.
+ */
+export type SetupStep = {
+  id: string;
+  label: string;
+  state: "done" | "todo" | "waiting";
+  /** Where the step is done; a waiting step has none. */
+  href?: string;
+  /** Why the step waits (shown under the label, and in the rail tooltip). */
+  reason?: string;
+  optional?: boolean;
 };
+
+/**
+ * Which context the sidebar shows (spec §2.1–§2.2 of the web order): the workspace of one org,
+ * the admin console of the whole deployment, or the guided setup of an org that cannot run yet
+ * (web-SSR spec §4). The sidebar changes as a whole between them.
+ */
+export type SidebarContext =
+  | {
+      kind: "work";
+      org: SidebarOrg | null;
+      /** After New conversation: Home, Agents. */
+      primary: SidebarNavItem[];
+      /** The 更多 flyout's fixed items. */
+      more: SidebarNavItem[];
+      /** Extension pages, in the 更多 flyout after a separator. */
+      moreExtensions?: SidebarNavItem[];
+      /**
+       * The inbox: an icon button in the brand row (a rail icon below 1280), with a count badge
+       * only while something is pending; current when `activeNav` is `inbox`.
+       */
+      inbox?: { href: string; count?: number; countMore?: boolean };
+      /** The admin console (enterprise admins): the entry above the account row. */
+      adminHref?: string;
+    }
+  | {
+      kind: "admin";
+      /** "← Back to workspace ~/<slug>". */
+      back: { href: string; slug: string | null };
+      items: SidebarNavItem[];
+    }
+  | {
+      kind: "setup";
+      org: SidebarOrg | null;
+      /** The setup home, the first item ("开始之前"; current when `activeNav` is `home`). */
+      home: { href: string };
+      /** The required steps, then (after the "可以稍后再做" label) the optional ones. */
+      steps: SetupStep[];
+      /** The admin console (enterprise admins): the entry above the account row. */
+      adminHref?: string;
+    };
 
 export type SidebarProps = {
-  /** The "New conversation" item (label from design i18n). */
-  newConversation: { href: string };
-  /** Top-level navigation, Overview … Evals, already filtered by role. */
-  nav: SidebarNavItem[];
-  /** The current nav item's id; "" when a conversation is the current page. */
+  context: SidebarContext;
+  /** The "New conversation" item of the work context (label from design i18n). */
+  newConversation?: { href: string };
+  /**
+   * The current item's id; "" when a conversation is the current page; in the setup context a
+   * step id or `home`.
+   */
   activeNav: string;
-  /** Extension pages; the Extensions group shows only when there are any. */
-  extensions?: { id: string; label: string; href: string }[];
-  /** Settings, Admin (already filtered by role). */
-  footerNav: SidebarNavItem[];
-  conversations: {
-    state: "loading" | "ready" | "error";
-    groups: SidebarGroup[];
-    activeId?: string;
-    /** More groups than shown: a "More groups" row calls `onMoreGroups`. */
-    moreGroups: boolean;
-    onMoreGroups(): void;
-    onRetry(): void;
-    /**
-     * Collapsed groups to start with, used instead of the viewer's remembered ones (the
-     * reference set and the catalog only).
-     */
-    collapsed?: string[];
-    /**
-     * Whose groups these are (the org id): the remembered collapsed groups are kept per scope, so
-     * pruning in one org never drops another org's. Without it one list per browser.
-     */
-    scope?: string;
-  };
-  /** The account footer: menu = org switch, language, theme, sign out. */
-  account: { name: string; org: string | null; menu: MenuItem[] };
+  /** The work context's conversation section (unused in the admin and setup contexts). */
+  conversations?: SidebarConversations;
+  /** The account row: the avatar and name open the account menu. */
+  account: { name: string; menu: MenuItem[] };
+  /**
+   * The theme switch, drawn after the account (full sidebar or open drawer); the rail has no room,
+   * so there it is the account menu's first item. The language is the caller's account submenu.
+   */
+  theme?: PreferenceBarProps["theme"];
   onOpenCommands(): void;
   /** Default from media queries: below 1280 `rail`, below 960 `drawer`. */
   mode?: "full" | "rail" | "drawer";
@@ -98,133 +142,18 @@ export type SidebarProps = {
   drawerInline?: boolean;
   /** The rail item whose tooltip is drawn open (the reference set and the catalog only). */
   railTooltip?: string;
+  /** Draw the 更多 flyout open (the reference set and the catalog only). */
+  moreOpen?: boolean;
 };
-
-/** `未命名会话 · MM-DD HH:mm` / `Untitled conversation · MM-DD HH:mm`, in local time. */
-export function untitledLabel(startedAt: Date, locale: Locale): string {
-  const p = (n: number) => String(n).padStart(2, "0");
-  const when = `${p(startedAt.getMonth() + 1)}-${p(startedAt.getDate())} ${p(startedAt.getHours())}:${p(startedAt.getMinutes())}`;
-  return `${messages[locale]["sidebar.untitled"]} · ${when}`;
-}
-
-const COLLAPSED_KEY = "cap.sidebar.collapsed";
-/** At most this many remembered collapsed groups (the most recent toggles). */
-const COLLAPSED_CAP = 100;
-
-/**
- * The collapsed groups, per viewer and scope (org) in localStorage. The stored set is read in a
- * layout effect, so it applies before the first paint, and read again when the scope changes;
- * storage errors mean "all expanded". `known` is the full list of agent ids when every group is
- * loaded (stale ids are then pruned, within this scope only), else null.
- */
-function useCollapsed(
-  initial: string[] | undefined,
-  known: string[] | null,
-  scope: string | undefined,
-): [Set<string>, (agentId: string) => void] {
-  const key = scope === undefined ? COLLAPSED_KEY : `${COLLAPSED_KEY}.${scope}`;
-  const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set(initial));
-  const knownRef = useRef(known);
-  knownRef.current = known;
-  const dirty = useRef(false);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: read on mount and per scope
-  useLayoutEffect(() => {
-    if (initial) return;
-    dirty.current = false;
-    try {
-      const raw = localStorage.getItem(key);
-      const ids: unknown = raw ? JSON.parse(raw) : [];
-      setCollapsed(
-        new Set(Array.isArray(ids) ? ids.filter((x): x is string => typeof x === "string") : []),
-      );
-    } catch {
-      // Storage blocked or malformed: render expanded.
-      setCollapsed(new Set());
-    }
-  }, [key]);
-  // The write happens after a toggle commits, never inside the state updater.
-  useEffect(() => {
-    if (!dirty.current) return;
-    dirty.current = false;
-    const k = knownRef.current;
-    const ids = [...collapsed].filter((id) => k === null || k.includes(id)).slice(-COLLAPSED_CAP);
-    try {
-      localStorage.setItem(key, JSON.stringify(ids));
-    } catch {
-      // Not remembered; the toggle still applies.
-    }
-  }, [collapsed, key]);
-  const toggle = useCallback((agentId: string) => {
-    dirty.current = true;
-    setCollapsed((prev) => {
-      const next = new Set(prev);
-      if (next.has(agentId)) next.delete(agentId);
-      else next.add(agentId);
-      return next;
-    });
-  }, []);
-  return [collapsed, toggle];
-}
-
-/**
- * One roving tab stop for a list (spec §6.11): items carry `data-rove="<key>"`; the item whose
- * key is `stop` (else `fallback`, else the first) has tabIndex 0, the others -1. ↑ / ↓ / Home /
- * End move focus between items; focusing an item makes it the stop.
- */
-function useRoving(fallback: string | undefined) {
-  const [stop, setStop] = useState<string | null>(null);
-  const tabIndexOf = (key: string, keys: readonly string[]) => {
-    const current = stop !== null && keys.includes(stop) ? stop : fallback;
-    const holder = current !== undefined && keys.includes(current) ? current : keys[0];
-    return key === holder ? 0 : -1;
-  };
-  const onKeyDown = (e: KeyboardEvent<HTMLElement>) => {
-    if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(e.key)) return;
-    const items = Array.from(
-      e.currentTarget.querySelectorAll<HTMLElement>("[data-rove]:not([inert] *)"),
-    );
-    const at = items.indexOf(document.activeElement as HTMLElement);
-    if (at < 0) return;
-    e.preventDefault();
-    const to =
-      e.key === "Home"
-        ? 0
-        : e.key === "End"
-          ? items.length - 1
-          : Math.min(items.length - 1, Math.max(0, at + (e.key === "ArrowDown" ? 1 : -1)));
-    items[to]?.focus();
-  };
-  const onFocus = (e: FocusEvent<HTMLElement>) => {
-    const key = (e.target as HTMLElement).getAttribute("data-rove");
-    if (key !== null) setStop(key);
-  };
-  return { tabIndexOf, onKeyDown, onFocus };
-}
 
 const countText = (n: { count?: number; countMore?: boolean }): string =>
   (n.count ?? 0) > 99 ? "99+" : `${n.count ?? 0}${n.countMore ? "+" : ""}`;
 
 type Variant = "full" | "rail" | "panel";
 
-/** Loading: three groups of skeleton bars (widths in %), as the reference set draws them. */
-const SKELETON = [
-  [64, 88, 72],
-  [56, 80],
-  [60, 76],
-] as const;
-
-/** The first grapheme of a name, upper-cased (an emoji or a CJK character stays whole). */
-function initialOf(name: string): string {
-  const Segmenter = (Intl as { Segmenter?: typeof Intl.Segmenter }).Segmenter;
-  const first = Segmenter
-    ? new Segmenter(undefined, { granularity: "grapheme" }).segment(name)[Symbol.iterator]().next()
-        .value?.segment
-    : Array.from(name)[0];
-  return (first ?? "").toUpperCase();
-}
-
 /**
- * The left sidebar (spec §6.13): navigation, conversations grouped by agent, the account.
+ * The left sidebar (spec §6.13): the brand, the context (the org switcher or the admin block),
+ * navigation, the conversations grouped by agent (work context), the admin entry and the account.
  *
  * Without `mode` the variant follows the window width. The server render and the first hydration
  * draw both the full and the rail panel (`data-responsive`) and CSS media queries show one, so the
@@ -244,7 +173,7 @@ export function Sidebar(p: SidebarProps) {
   };
 
   // A route change (another nav item or conversation becomes current) closes the drawer.
-  const route = `${p.activeNav}|${p.conversations.activeId ?? ""}`;
+  const route = `${p.activeNav}|${p.conversations?.activeId ?? ""}`;
   const lastRoute = useRef(route);
   // biome-ignore lint/correctness/useExhaustiveDependencies: runs on route changes only
   useEffect(() => {
@@ -308,6 +237,11 @@ function DrawerLayer({
           else focusReturn.capture();
         }}
         onCloseAutoFocus={focusReturn.restore}
+        onEscapeKeyDown={(e) => {
+          // Esc in the rename or filter input belongs to that input, not to the drawer.
+          const target = e.target as HTMLElement | null;
+          if (target?.closest('[data-part="rename"], [data-part="filter"]')) e.preventDefault();
+        }}
         onClick={(e: MouseEvent<HTMLElement>) => {
           // Following a link closes the drawer (the route changes).
           if ((e.target as HTMLElement).closest("a[href]")) onClose();
@@ -336,24 +270,28 @@ function SidebarPanel({
 }) {
   const t = useDesignT();
   const rail = variant === "rail";
-  const search = `${t("shell.searchShort")} ⌘K`;
+  const ctx = p.context;
   return (
     <aside
       className="cb-sidebar"
       data-part="sidebar"
       data-mode={rail ? "rail" : "full"}
+      data-context={ctx.kind}
       data-responsive={responsive ? "true" : undefined}
     >
-      <div className="cb-sidebar-top">
+      <div className="cb-sidebar-top" data-part="brand-row">
         <Logo scale={2} wordmark={!rail} />
-        {rail ? null : variant === "panel" ? (
-          <IconButton
-            label={t("sidebar.close")}
-            icon={<Icon name="x" />}
-            onClick={() => onClose?.()}
-          />
-        ) : (
-          <IconButton label={search} icon={<Icon name="search" />} onClick={p.onOpenCommands} />
+        {rail ? null : (
+          <span className="cb-sidebar-top-tools">
+            {ctx.kind === "work" ? <BrandTools p={p} rail={false} /> : null}
+            {variant === "panel" ? (
+              <IconButton
+                label={t("sidebar.close")}
+                icon={<Icon name="x" />}
+                onClick={() => onClose?.()}
+              />
+            ) : null}
+          </span>
         )}
       </div>
       {rail ? (
@@ -365,29 +303,266 @@ function SidebarPanel({
               onClick={() => onExpand?.()}
             />
           </Tooltip>
-          <Tooltip content={search}>
-            <IconButton label={search} icon={<Icon name="search" />} onClick={p.onOpenCommands} />
-          </Tooltip>
+          {ctx.kind === "work" ? <BrandTools p={p} rail /> : null}
         </div>
       ) : null}
-      <SidebarNav p={p} rail={rail} />
-      {rail ? <div className="cb-sidebar-fill" /> : <Conversations p={p} />}
-      <Account account={p.account} rail={rail} />
+      {ctx.kind === "admin" ? (
+        <AdminBlock back={ctx.back} rail={rail} />
+      ) : ctx.org ? (
+        <OrgSwitcher org={ctx.org} rail={rail} />
+      ) : null}
+      {ctx.kind === "setup" ? (
+        <SetupNav p={p} ctx={ctx} rail={rail} />
+      ) : (
+        <SidebarNav p={p} rail={rail} />
+      )}
+      {ctx.kind === "work" && !rail && p.conversations ? (
+        <Conversations c={p.conversations} newHref={p.newConversation?.href ?? "/"} />
+      ) : (
+        <div className="cb-sidebar-fill" />
+      )}
+      {ctx.kind !== "admin" && ctx.adminHref !== undefined ? (
+        <AdminEntry href={ctx.adminHref} rail={rail} />
+      ) : null}
+      <Account
+        account={rail ? withTheme(p.account, p.theme) : p.account}
+        rail={rail}
+        trailing={p.theme && !rail ? <ThemeToggle {...p.theme} /> : null}
+      />
     </aside>
+  );
+}
+
+/**
+ * Search (opens the command palette) and the inbox (a link with a count badge while something is
+ * pending): icon buttons in the brand row, rail icons at the top of the rail (web order §2.1).
+ */
+function BrandTools({ p, rail }: { p: SidebarProps; rail: boolean }) {
+  const t = useDesignT();
+  const Link = useDesignLink();
+  const ctx = p.context;
+  const inbox = ctx.kind === "work" ? ctx.inbox : undefined;
+  const search = `${t("shell.searchShort")} ⌘K`;
+  const tip = (key: string, label: string, node: ReactElement) =>
+    rail ? (
+      <RailTip label={label} open={p.railTooltip === key}>
+        {node}
+      </RailTip>
+    ) : (
+      // In the brand row the native title is the tooltip: a Radix Tooltip opened by focus would
+      // take the drawer's Escape.
+      node
+    );
+  const pending = inbox && (inbox.count ?? 0) > 0 ? countText(inbox) : null;
+  const inboxLabel = t("sidebar.inbox");
+  const inboxName =
+    pending === null
+      ? inboxLabel
+      : t("shell.navCount").replace("{label}", inboxLabel).replace("{n}", pending);
+  return (
+    <>
+      {tip(
+        "search",
+        search,
+        <IconButton
+          label={search}
+          icon={<Icon name="search" />}
+          part="search"
+          onClick={p.onOpenCommands}
+        />,
+      )}
+      {inbox
+        ? tip(
+            "inbox",
+            inboxLabel,
+            <Link
+              href={inbox.href}
+              className="cb-btn cb-icon-btn cb-sidebar-inbox"
+              data-part="inbox"
+              data-variant="ghost"
+              data-density="default"
+              aria-label={inboxName}
+              title={inboxName}
+              {...(p.activeNav === "inbox" ? { "aria-current": "page" as const } : {})}
+            >
+              <Icon name="inbox" />
+              {pending === null ? null : (
+                <span className="cb-sidebar-badge" data-part="inbox-badge" aria-hidden="true">
+                  {pending}
+                </span>
+              )}
+            </Link>,
+          )
+        : null}
+    </>
+  );
+}
+
+/** A rail control with its label in a Tooltip to the right, past the rail's edge. */
+function RailTip({
+  label,
+  open,
+  children,
+}: {
+  label: string;
+  open?: boolean;
+  children: ReactElement;
+}) {
+  return (
+    // Beside the rail: past its edge by space.1 (the item is inset by space.2).
+    <Tooltip content={label} side="right" sideOffset={SIZES.space[3]} {...(open ? { open } : {})}>
+      {children}
+    </Tooltip>
+  );
+}
+
+/** The org switcher: a 40 block on `bg`, the initial on `ink`, name and `~/<slug> · <role>`. */
+function OrgSwitcher({ org, rail }: { org: SidebarOrg; rail: boolean }) {
+  const t = useDesignT();
+  const label = t("sidebar.orgSwitch").replace("{org}", org.name);
+  const initial = (
+    <span className="cb-sidebar-org-initial" data-part="org-initial" aria-hidden="true">
+      {org.initial}
+    </span>
+  );
+  const content = rail ? (
+    initial
+  ) : (
+    <>
+      {initial}
+      <span className="cb-sidebar-org-text">
+        <span className="cb-sidebar-org-name">{org.name}</span>
+        <span className="cb-sidebar-org-meta">
+          ~/{org.slug} · {org.role}
+        </span>
+      </span>
+      {org.menu.length > 0 ? <Icon name="chevrons-up-down" size={14} /> : null}
+    </>
+  );
+  if (org.menu.length === 0) {
+    return (
+      <div className="cb-sidebar-org" data-part="org-switcher" data-static="true" title={org.name}>
+        {content}
+      </div>
+    );
+  }
+  const button = (
+    <button
+      type="button"
+      className="cb-sidebar-org"
+      data-part="org-switcher"
+      aria-label={label}
+      // A menu trigger takes no Tooltip: in the rail the name is its title.
+      title={org.name}
+    >
+      {content}
+    </button>
+  );
+  return <Menu items={org.menu} trigger={button} />;
+}
+
+/** The admin context block: static, the shield in the accent tint, and the way back. */
+function AdminBlock({
+  back,
+  rail,
+}: {
+  back: { href: string; slug: string | null };
+  rail: boolean;
+}) {
+  const t = useDesignT();
+  const Link = useDesignLink();
+  const backLabel = back.slug === null ? t("sidebar.back") : `${t("sidebar.back")} ~/${back.slug}`;
+  return (
+    <div className="cb-sidebar-context">
+      <div className="cb-sidebar-org" data-part="context-block" data-static="true">
+        <span className="cb-sidebar-org-initial" data-tone="accent" aria-hidden="true">
+          <Icon name="admin" size={14} />
+        </span>
+        {rail ? (
+          <span className="cb-sr-only">{t("sidebar.admin")}</span>
+        ) : (
+          <span className="cb-sidebar-org-text">
+            <span className="cb-sidebar-org-name">{t("sidebar.admin")}</span>
+            <span className="cb-sidebar-org-meta">{t("sidebar.adminScope")}</span>
+          </span>
+        )}
+      </div>
+      {rail ? (
+        <RailTip label={backLabel}>
+          <Link
+            href={back.href}
+            className="cb-sidebar-back"
+            data-part="back"
+            aria-label={backLabel}
+          >
+            <Icon name="arrow-left" size={14} />
+            <LinkPendingMark />
+          </Link>
+        </RailTip>
+      ) : (
+        <Link href={back.href} className="cb-sidebar-back" data-part="back">
+          <Icon name="arrow-left" size={14} />
+          <span className="cb-sidebar-label">{backLabel}</span>
+          <LinkPendingMark />
+        </Link>
+      )}
+    </div>
+  );
+}
+
+/** The work context's way into the admin console, above the account row. */
+function AdminEntry({ href, rail }: { href: string; rail: boolean }) {
+  const t = useDesignT();
+  const Link = useDesignLink();
+  const label = t("sidebar.admin");
+  const link = (
+    <Link
+      href={href}
+      className="cb-sidebar-item"
+      data-part="admin-entry"
+      {...(rail ? { "aria-label": label } : {})}
+    >
+      <Icon name="admin" />
+      {rail ? null : (
+        <>
+          <span className="cb-sidebar-label">{label}</span>
+          <Icon name="arrow-up-right" size={14} />
+        </>
+      )}
+      <LinkPendingMark />
+    </Link>
+  );
+  return (
+    <div className="cb-sidebar-admin">{rail ? <RailTip label={label}>{link}</RailTip> : link}</div>
   );
 }
 
 function SidebarNav({ p, rail }: { p: SidebarProps; rail: boolean }) {
   const t = useDesignT();
   const Link = useDesignLink();
-  const extensions = p.extensions ?? [];
+  const ctx = p.context;
+  const work = ctx.kind === "work";
+  const primary = work ? ctx.primary : ctx.kind === "admin" ? ctx.items : [];
+  const more = work ? ctx.more : [];
+  const moreExtensions = work ? (ctx.moreExtensions ?? []) : [];
+  const hasMore = work && more.length + moreExtensions.length > 0;
+  const activeInMore = [...more, ...moreExtensions].some((n) => n.id === p.activeNav);
+  const [moreOpen, setMoreOpen] = useState(p.moreOpen ?? false);
+  const newHref = work ? p.newConversation?.href : undefined;
   const keys = [
-    "new",
-    ...p.nav.map((n) => n.id),
-    ...extensions.map((x) => `ext:${x.id}`),
-    ...p.footerNav.map((n) => n.id),
+    ...(newHref !== undefined ? ["new"] : []),
+    ...primary.map((n) => n.id),
+    ...(hasMore ? ["more"] : []),
   ];
   const roving = useRoving(p.activeNav === "" ? undefined : p.activeNav);
+  const tip = (key: string, label: string, node: ReactElement) =>
+    rail ? (
+      <RailTip key={key} label={label} open={p.railTooltip === key}>
+        {node}
+      </RailTip>
+    ) : (
+      node
+    );
   const item = (
     key: string,
     n: { label: string; href: string; icon: IconName; count?: number; countMore?: boolean },
@@ -409,34 +584,65 @@ function SidebarNav({ p, rail }: { p: SidebarProps; rail: boolean }) {
         {...(key === p.activeNav ? { "aria-current": "page" as const } : {})}
         {...(rail ? { "aria-label": name ?? n.label } : name ? { "aria-label": name } : {})}
       >
-        <Icon name={n.icon} />
+        <Icon name={n.icon} size={16} />
         {rail ? null : <span className="cb-sidebar-label">{n.label}</span>}
         {count === null ? null : rail ? (
           <span className="cb-sidebar-badge" data-part="rail-badge" aria-hidden="true">
             {count}
           </span>
         ) : (
-          <span className="cb-sidebar-count" aria-hidden="true">
+          <span className="cb-sidebar-count" data-part="nav-count" aria-hidden="true">
             {count}
           </span>
         )}
+        <LinkPendingMark />
       </Link>
     );
-    return rail ? (
-      // Beside the rail: past its edge by space.1 (the item is inset by space.2).
-      <Tooltip
-        key={key}
-        content={n.label}
-        side="right"
-        sideOffset={SIZES.space[3]}
-        open={p.railTooltip === key}
-      >
-        {link}
-      </Tooltip>
-    ) : (
-      link
-    );
+    return tip(key, n.label, link);
   };
+  const moreLabel = t("sidebar.moreGroup");
+  const toMenu = (n: SidebarNavItem): MenuItem => ({
+    label: n.label,
+    href: n.href,
+    icon: n.icon,
+    ...(n.id === p.activeNav ? { current: true } : {}),
+  });
+  const moreItems: MenuItem[] = [
+    ...more.map(toMenu),
+    ...(more.length > 0 && moreExtensions.length > 0 ? ["separator" as const] : []),
+    ...moreExtensions.map(toMenu),
+  ];
+  // 更多 opens a flyout to the right of the sidebar (Enter / Space / → open it, Escape closes it
+  // and returns focus); it is active while the current page is one of its items.
+  const moreTrigger = (
+    <button
+      type="button"
+      className="cb-sidebar-item"
+      data-part="more-toggle"
+      data-rove="more"
+      data-active={activeInMore ? "true" : undefined}
+      tabIndex={roving.tabIndexOf("more", keys)}
+      onKeyDown={(e) => {
+        if (e.key === "ArrowRight") {
+          e.preventDefault();
+          setMoreOpen(true);
+        } else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+          // ↑ / ↓ belong to the nav's roving focus (it handles the bubbling event); prevented
+          // here so the Radix trigger does not open the flyout as well.
+          e.preventDefault();
+        }
+      }}
+      {...(rail ? { "aria-label": moreLabel, title: moreLabel } : {})}
+    >
+      <Icon name="more-horizontal" />
+      {rail ? null : (
+        <>
+          <span className="cb-sidebar-label">{moreLabel}</span>
+          <Icon name="chevron-right" size={12} />
+        </>
+      )}
+    </button>
+  );
   return (
     <nav
       className="cb-sidebar-nav"
@@ -444,221 +650,195 @@ function SidebarNav({ p, rail }: { p: SidebarProps; rail: boolean }) {
       onKeyDown={roving.onKeyDown}
       onFocus={roving.onFocus}
     >
-      {item(
-        "new",
-        { label: t("sidebar.new"), href: p.newConversation.href, icon: "plus" },
-        "new-conversation",
-      )}
-      {p.nav.map((n) => item(n.id, n))}
-      {extensions.length > 0 ? (
-        <>
-          {rail ? (
-            <span className="cb-sidebar-sep" />
-          ) : (
-            <div className="cb-sidebar-heading">{t("sidebar.extensions")}</div>
-          )}
-          {extensions.map((x) => item(`ext:${x.id}`, { ...x, icon: "extension" }))}
-        </>
-      ) : null}
-      {p.footerNav.length > 0 ? (
-        <>
-          <span className={rail ? "cb-sidebar-sep" : "cb-sidebar-gap"} />
-          {p.footerNav.map((n) => item(n.id, n))}
-        </>
+      {newHref !== undefined
+        ? item("new", { label: t("sidebar.new"), href: newHref, icon: "plus" }, "new-conversation")
+        : null}
+      {primary.map((n) => item(n.id, n))}
+      {hasMore ? (
+        <Menu
+          key="more"
+          items={moreItems}
+          side="right"
+          sideOffset={SIZES.space[3]}
+          label={moreLabel}
+          open={moreOpen}
+          onOpenChange={setMoreOpen}
+          // Drawn open for the reference set: it must not lock the rest of the page.
+          {...(p.moreOpen ? { modal: false } : {})}
+          trigger={moreTrigger}
+        />
       ) : null}
     </nav>
   );
 }
 
-function Conversations({ p }: { p: SidebarProps }) {
-  const t = useDesignT();
-  const c = p.conversations;
-  const known = c.state === "ready" && !c.moreGroups ? c.groups.map((g) => g.agentId) : null;
-  const [collapsed, toggleGroup] = useCollapsed(c.collapsed, known, c.scope);
-  // Height motion only after the viewer toggles a group: the remembered state applies without it.
-  const [motion, setMotion] = useState(false);
-  const toggle = (agentId: string) => {
-    setMotion(true);
-    toggleGroup(agentId);
-  };
-  const keys: string[] = [];
-  if (c.state === "ready") {
-    for (const g of c.groups) {
-      keys.push(`t:${g.agentId}`, `n:${g.agentId}`);
-      if (!collapsed.has(g.agentId)) {
-        keys.push(...g.conversations.map((x) => `c:${x.id}`));
-        if (g.more) keys.push(`m:${g.agentId}`);
-      }
-    }
-    if (c.moreGroups) keys.push("mg");
-  }
-  const roving = useRoving(c.activeId === undefined ? undefined : `c:${c.activeId}`);
-  const tab = (key: string) => roving.tabIndexOf(key, keys);
+const STEP_MARK: Record<SetupStep["state"], IconName> = {
+  done: "check",
+  todo: "circle",
+  waiting: "clock",
+};
 
-  let body: ReactNode;
-  if (c.state === "loading") {
-    body = (
-      <div className="cb-sidebar-loading">
-        {SKELETON.map((group, i) => (
-          // biome-ignore lint/suspicious/noArrayIndexKey: a fixed skeleton
-          <div key={i} className="cb-sidebar-skeleton-group">
-            {group.map((w) => (
-              <span key={w} className="cb-sidebar-skeleton" data-part="skeleton-bar" data-w={w} />
-            ))}
-          </div>
-        ))}
-      </div>
+/**
+ * The setup context's navigation (web-SSR spec §4): the setup home, the required steps, then the
+ * "可以稍后再做" label and the optional steps. Each step carries its state mark; a waiting step is
+ * not a link (it stays focusable, `aria-disabled`, so its reason can be read). In the rail the
+ * label, the state and the reason move into the tooltip and the label becomes a divider.
+ */
+function SetupNav({
+  p,
+  ctx,
+  rail,
+}: {
+  p: SidebarProps;
+  ctx: Extract<SidebarContext, { kind: "setup" }>;
+  rail: boolean;
+}) {
+  const t = useDesignT();
+  const Link = useDesignLink();
+  const groupId = `cb-setup-later-${useId().replace(/[^\w-]/g, "")}`;
+  const required = ctx.steps.filter((s) => !s.optional);
+  const optional = ctx.steps.filter((s) => s.optional);
+  const keys = ["home", ...required.map((s) => s.id), ...optional.map((s) => s.id)];
+  const roving = useRoving(p.activeNav === "" ? undefined : p.activeNav);
+  const tip = (key: string, label: string, node: ReactElement) =>
+    rail ? (
+      <RailTip key={key} label={label} open={p.railTooltip === key}>
+        {node}
+      </RailTip>
+    ) : (
+      node
     );
-  } else if (c.state === "error") {
-    body = (
-      <div className="cb-sidebar-error" role="alert">
-        <span className="cb-sidebar-error-text">
-          <Icon name="circle-alert" size={14} />
-          {t("sidebar.loadFailed")}
-        </span>
-        <span className="cb-sidebar-retry" data-part="retry">
-          <Button variant="ghost" density="dense" onClick={c.onRetry}>
-            <Icon name="refresh" size={14} />
-            {t("sidebar.retry")}
-          </Button>
-        </span>
-      </div>
-    );
-  } else if (c.groups.length === 0) {
-    body = (
-      <p className="cb-sidebar-hint" data-part="empty-hint">
-        {t("sidebar.empty")}
-      </p>
-    );
-  } else {
-    body = (
+  const stateText = (s: SetupStep) =>
+    s.state === "waiting"
+      ? (s.reason ?? t("sidebar.stepWaiting"))
+      : t(s.state === "done" ? "sidebar.stepDone" : "sidebar.stepTodo");
+  const step = (s: SetupStep) => {
+    const name = t("sidebar.stepName").replace("{label}", s.label).replace("{state}", stateText(s));
+    const reason = !rail && s.state === "waiting" && s.reason ? s.reason : null;
+    const common = {
+      className: "cb-sidebar-item",
+      "data-part": "step-item",
+      "data-rove": s.id,
+      "data-state": s.state,
+      "aria-label": name,
+      ...(s.optional ? { "data-optional": "true" } : {}),
+    };
+    const body = (
       <>
-        {c.groups.map((g) => (
-          <Group
-            key={g.agentId}
-            g={g}
-            activeId={c.activeId}
-            collapsed={collapsed.has(g.agentId)}
-            onToggle={() => toggle(g.agentId)}
-            tab={tab}
-          />
-        ))}
-        {c.moreGroups ? (
-          <button
-            type="button"
-            className="cb-sidebar-more"
-            data-part="more"
-            data-rove="mg"
-            tabIndex={tab("mg")}
-            onClick={c.onMoreGroups}
-          >
-            {t("sidebar.moreGroups")}
-          </button>
-        ) : null}
+        <span className="cb-sidebar-step-mark" data-part="step-mark" data-state={s.state}>
+          <Icon name={STEP_MARK[s.state]} size={16} />
+        </span>
+        {rail ? null : reason !== null ? (
+          <span className="cb-sidebar-step-text">
+            <span className="cb-sidebar-label">{s.label}</span>
+            <span className="cb-sidebar-step-reason" data-part="step-reason">
+              {reason}
+            </span>
+          </span>
+        ) : (
+          <span className="cb-sidebar-label">{s.label}</span>
+        )}
       </>
     );
-  }
+    const node =
+      s.state === "waiting" || s.href === undefined ? (
+        // Not a link: nothing to do here yet (the reason says who acts). A disabled link that stays
+        // a roving stop, so its name and reason can be read; an <a> without href has no link role.
+        // biome-ignore lint/a11y/useSemanticElements: a disabled link has no href, so no <a>
+        <span
+          key={s.id}
+          {...common}
+          tabIndex={roving.tabIndexOf(s.id, keys)}
+          role="link"
+          aria-disabled="true"
+          data-reason={reason !== null ? "true" : undefined}
+        >
+          {body}
+        </span>
+      ) : (
+        <Link
+          key={s.id}
+          href={s.href}
+          {...common}
+          tabIndex={roving.tabIndexOf(s.id, keys)}
+          {...(s.id === p.activeNav ? { "aria-current": "page" as const } : {})}
+        >
+          {body}
+          <LinkPendingMark />
+        </Link>
+      );
+    return tip(s.id, name, node);
+  };
+  const homeLabel = t("sidebar.setupHome");
+  const home = (
+    <Link
+      key="home"
+      href={ctx.home.href}
+      className="cb-sidebar-item"
+      data-part="nav-item"
+      data-rove="home"
+      tabIndex={roving.tabIndexOf("home", keys)}
+      {...(p.activeNav === "home" ? { "aria-current": "page" as const } : {})}
+      {...(rail ? { "aria-label": homeLabel } : {})}
+    >
+      <Icon name="diamond" size={16} />
+      {rail ? null : <span className="cb-sidebar-label">{homeLabel}</span>}
+      <LinkPendingMark />
+    </Link>
+  );
   return (
-    <section
-      className="cb-sidebar-convs"
-      aria-label={t("sidebar.conversations")}
-      aria-busy={c.state === "loading" ? true : undefined}
-      data-motion={motion ? "on" : undefined}
+    <nav
+      className="cb-sidebar-nav"
+      aria-label={t("shell.nav")}
       onKeyDown={roving.onKeyDown}
       onFocus={roving.onFocus}
     >
-      {body}
-    </section>
+      {tip("home", homeLabel, home)}
+      {required.map(step)}
+      {optional.length > 0 ? (
+        rail ? (
+          <>
+            <span className="cb-sidebar-step-divider" data-part="step-divider" aria-hidden="true" />
+            {optional.map(step)}
+          </>
+        ) : (
+          // biome-ignore lint/a11y/useSemanticElements: a fieldset is a form control group
+          <div className="cb-sidebar-step-group" role="group" aria-labelledby={groupId}>
+            <span className="cb-sidebar-step-group-label" data-part="step-group-label" id={groupId}>
+              {t("sidebar.setupLater")}
+            </span>
+            {optional.map(step)}
+          </div>
+        )
+      ) : null}
+    </nav>
   );
 }
 
-function Group({
-  g,
-  activeId,
-  collapsed,
-  onToggle,
-  tab,
+/** The rail's account menu: the theme switch as its first item. */
+function withTheme(
+  account: SidebarProps["account"],
+  theme: PreferenceBarProps["theme"] | undefined,
+): SidebarProps["account"] {
+  if (!theme || account.menu.length === 0) return account;
+  const item: MenuItem =
+    theme.value === "dark"
+      ? { label: `${theme.label}: ${theme.lightLabel}`, onSelect: () => theme.onChange("light") }
+      : { label: `${theme.label}: ${theme.darkLabel}`, onSelect: () => theme.onChange("dark") };
+  return { ...account, menu: [item, "separator", ...account.menu] };
+}
+
+function Account({
+  account,
+  rail,
+  trailing,
 }: {
-  g: SidebarGroup;
-  activeId: string | undefined;
-  collapsed: boolean;
-  onToggle(): void;
-  tab(key: string): number;
+  account: SidebarProps["account"];
+  rail: boolean;
+  trailing?: ReactNode;
 }) {
   const t = useDesignT();
-  const locale = useDesignLocale();
-  const Link = useDesignLink();
-  return (
-    <div className="cb-sidebar-group">
-      <div className="cb-sidebar-group-head">
-        <button
-          type="button"
-          className="cb-sidebar-group-toggle"
-          data-part="group-label"
-          data-rove={`t:${g.agentId}`}
-          tabIndex={tab(`t:${g.agentId}`)}
-          aria-expanded={!collapsed}
-          title={g.agentName}
-          onClick={onToggle}
-        >
-          <span className="cb-sidebar-label">{g.agentName}</span>
-          <Icon name={collapsed ? "chevron-right" : "chevron-down"} size={12} />
-        </button>
-        <IconButton
-          density="dense"
-          label={t("sidebar.newWith").replace("{agent}", g.agentName)}
-          icon={<Icon name="plus" size={14} />}
-          data-rove={`n:${g.agentId}`}
-          tabIndex={tab(`n:${g.agentId}`)}
-          onClick={g.onNew}
-        />
-      </div>
-      <div
-        className="cb-sidebar-group-body"
-        data-part="group-body"
-        data-collapsed={collapsed ? "true" : undefined}
-        inert={collapsed}
-        aria-hidden={collapsed ? true : undefined}
-      >
-        <div className="cb-sidebar-group-rows">
-          {g.conversations.map((x) => {
-            const text = x.title ?? untitledLabel(x.startedAt, locale);
-            return (
-              <Link
-                key={x.id}
-                href={x.href}
-                className="cb-sidebar-conv"
-                data-part="conversation"
-                data-rove={`c:${x.id}`}
-                tabIndex={tab(`c:${x.id}`)}
-                title={text}
-                {...(x.id === activeId ? { "aria-current": "page" as const } : {})}
-              >
-                <span className="cb-sidebar-label">{text}</span>
-              </Link>
-            );
-          })}
-          {g.more ? (
-            <button
-              type="button"
-              className="cb-sidebar-more"
-              data-part="more"
-              data-rove={`m:${g.agentId}`}
-              tabIndex={tab(`m:${g.agentId}`)}
-              onClick={g.onMore}
-            >
-              {t("sidebar.more")}
-            </button>
-          ) : null}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function Account({ account, rail }: { account: SidebarProps["account"]; rail: boolean }) {
-  const t = useDesignT();
-  const text = account.org ? `${account.name} · ${account.org}` : account.name;
+  const text = account.name;
   const content = (
     <>
       <span className="cb-sidebar-avatar" data-part="avatar" aria-hidden="true">
@@ -674,6 +854,7 @@ function Account({ account, rail }: { account: SidebarProps["account"]; rail: bo
         <span className="cb-sidebar-account" data-part="account" data-static="true" title={text}>
           {content}
         </span>
+        {trailing}
       </div>
     );
   }
@@ -693,6 +874,7 @@ function Account({ account, rail }: { account: SidebarProps["account"]; rail: bo
           </button>
         }
       />
+      {trailing}
     </div>
   );
 }

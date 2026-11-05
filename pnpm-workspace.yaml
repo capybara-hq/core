@@ -4,6 +4,9 @@ packages:
   - plugins/*
   - tools/*
 allowBuilds:
+  '@parcel/watcher': true
+  '@scarf/scarf': true
+  '@swc/core': true
   cpu-features: true
   esbuild: true
   msgpackr-extract: false

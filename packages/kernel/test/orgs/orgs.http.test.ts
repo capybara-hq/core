@@ -167,6 +167,54 @@ describe("组织 HTTP", () => {
     expect(errCode(get)).toBe("org.not_found");
   });
 
+  it("a new sign-in starts in the org last chosen, else the only one, else none", async () => {
+    const current = async (req: Req) =>
+      ((await req({ method: "GET", url: "/api/v1/me" })).json() as { currentOrgId: string | null })
+        .currentOrgId;
+    // no org: none
+    expect(await current(await session("owner"))).toBeNull();
+    const first = await createOrg(await session("owner"), "Acme", "acme");
+    // exactly one org: a new session starts in it
+    expect(await current(await session("owner"))).toBe(first);
+    const second = await createOrg(await session("owner"), "Beta", "beta");
+    // two orgs, never chosen: none
+    expect(await current(await session("owner"))).toBeNull();
+    // choosing one remembers it for the next sign-in
+    const req = await session("owner");
+    const put = await req({
+      method: "PUT",
+      url: "/api/v1/me/current-org",
+      payload: { orgId: second },
+    });
+    expect(put.statusCode).toBe(204);
+    expect(await current(await session("owner"))).toBe(second);
+    // clearing the session's org keeps the remembered one
+    await req({ method: "PUT", url: "/api/v1/me/current-org", payload: { orgId: null } });
+    expect(await current(await session("owner"))).toBe(second);
+  });
+
+  it("a remembered org the account has left is not used; a deleted one neither", async () => {
+    const current = async (req: Req) =>
+      ((await req({ method: "GET", url: "/api/v1/me" })).json() as { currentOrgId: string | null })
+        .currentOrgId;
+    const ownerReq = await session("owner");
+    const a = await createOrg(ownerReq, "Acme", "acme");
+    const b = await createOrg(ownerReq, "Beta", "beta");
+    await members.add(a, other.id, "member", owner.id);
+    await members.add(b, other.id, "member", owner.id);
+    const otherReq = await session("other");
+    await otherReq({ method: "PUT", url: "/api/v1/me/current-org", payload: { orgId: a } });
+    const rm = await ownerReq({ method: "DELETE", url: `/api/v1/orgs/${a}/members/${other.id}` });
+    expect(rm.statusCode).toBe(204);
+    // only Beta is left: the remembered Acme is skipped, the only org is used
+    expect(await current(await session("other"))).toBe(b);
+    // remember Beta, then Beta is deleted: no org
+    const again = await session("other");
+    await again({ method: "PUT", url: "/api/v1/me/current-org", payload: { orgId: b } });
+    await db.updateTable("orgs").set({ deleted_at: new Date() }).where("id", "=", b).execute();
+    expect(await current(await session("other"))).toBeNull();
+  });
+
   it("PUT /me/current-org：成员组织 → 204 并反映在 GET /me；非成员组织 → 404；null 清空", async () => {
     const ownerReq = await session("owner");
     const id = await createOrg(ownerReq);
@@ -332,6 +380,40 @@ describe("组织 HTTP", () => {
     });
     const left = await ownerReq({ method: "POST", url: `/api/v1/orgs/${id}/leave` });
     expect(left.statusCode).toBe(204);
+  });
+
+  it("leave by role: guest, member and admin leave (204); the sign-in stays, the org is gone", async () => {
+    const ownerReq = await session("owner");
+    const id = await createOrg(ownerReq);
+    for (const role of ["guest", "member", "admin"] as const) {
+      const { req } = await memberAs(id, role, `leaver-${role}`);
+      const left = await req({ method: "POST", url: `/api/v1/orgs/${id}/leave` });
+      expect(left.statusCode).toBe(204);
+      // leaving keeps the session; access to the org ends with the membership
+      const me = await req({ method: "GET", url: "/api/v1/me" });
+      expect(me.statusCode).toBe(200);
+      expect(me.json()).toMatchObject({ currentOrgId: null });
+      expect((await req({ method: "GET", url: `/api/v1/orgs/${id}` })).statusCode).toBe(404);
+    }
+    // one of two owners may leave; the last one may not
+    const { req: second } = await memberAs(id, "owner", "second-owner");
+    expect((await second({ method: "POST", url: `/api/v1/orgs/${id}/leave` })).statusCode).toBe(
+      204,
+    );
+    const last = await ownerReq({ method: "POST", url: `/api/v1/orgs/${id}/leave` });
+    expect(errCode(last)).toBe("org.last_owner");
+  });
+
+  it("DELETE /orgs/:id by role: guest, member and admin 403 (nothing deleted); owner 204", async () => {
+    const ownerReq = await session("owner");
+    const id = await createOrg(ownerReq);
+    for (const role of ["guest", "member", "admin"] as const) {
+      const { req } = await memberAs(id, role, `deleter-${role}`);
+      const denied = await req({ method: "DELETE", url: `/api/v1/orgs/${id}` });
+      expect(denied.statusCode).toBe(403);
+      expect((await req({ method: "GET", url: `/api/v1/orgs/${id}` })).statusCode).toBe(200);
+    }
+    expect((await ownerReq({ method: "DELETE", url: `/api/v1/orgs/${id}` })).statusCode).toBe(204);
   });
 
   it("服务令牌：本组织 org.read 可用；HUMAN_ONLY → 403；他组织 → 404；POST /orgs → 403", async () => {

@@ -165,7 +165,7 @@ describe("loadCliObjectStore", () => {
     const cli = await cliOf([], ["store-cfg"], false, [s3]);
     cli.deploymentConfigOf = async () => ({
       ok: false,
-      issues: [{ path: "bucket", message: "x" }],
+      issues: [{ path: "bucket", segments: ["bucket"], message: "x" }],
     });
     expect(await loadCliObjectStore(cli, log, syncDir)).toMatchObject({
       reason: "store-cfg is not configured (pending deployment config)",

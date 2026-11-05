@@ -9,7 +9,11 @@ import { useHydrated, useMediaQuery } from "./use-media-query";
 
 export type AppShellProps = {
   sidebar: Omit<SidebarProps, "onOpenCommands" | "mode" | "drawer" | "drawerInline">;
-  commands: CommandGroup[];
+  /**
+   * The command palette's groups (⌘K, the sidebar's and the drawer bar's search). Without them
+   * there is no palette and no search (the setup frame, T13).
+   */
+  commands?: CommandGroup[];
   status: Pick<StatusBarProps, "context" | "version" | "timeZone" | "system">;
   /** The page title in the drawer menu bar (below 960); defaults to none. */
   title?: string;
@@ -50,7 +54,9 @@ export function AppShell({
   const hydrated = useHydrated();
   const narrow = useMediaQuery("(max-width: 959px)");
 
+  const searchable = commands !== undefined;
   useEffect(() => {
+    if (!searchable) return;
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
@@ -59,7 +65,7 @@ export function AppShell({
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, []);
+  }, [searchable]);
 
   // Before hydration the bar is drawn and CSS shows it below 960 only.
   const bar = drawerRef || (!railRef && (!hydrated || narrow));
@@ -94,13 +100,15 @@ export function AppShell({
               />
               {title ? <span className="cb-shell-drawerbar-title">{title}</span> : null}
               {/* Search stays reachable by pointer below 960 (the drawer swaps it for close). */}
-              <span className="cb-shell-drawerbar-end">
-                <IconButton
-                  label={`${t("shell.searchShort")} ⌘K`}
-                  icon={<Icon name="search" />}
-                  onClick={() => setPaletteOpen(true)}
-                />
-              </span>
+              {searchable ? (
+                <span className="cb-shell-drawerbar-end">
+                  <IconButton
+                    label={`${t("shell.searchShort")} ⌘K`}
+                    icon={<Icon name="search" />}
+                    onClick={() => setPaletteOpen(true)}
+                  />
+                </span>
+              ) : null}
             </div>
           ) : null}
           <main className="cb-shell-main" id={mainId} tabIndex={-1}>
@@ -109,7 +117,9 @@ export function AppShell({
           {ownStatusBar ? null : <StatusBar {...status} pageStatus={pageStatus} />}
         </div>
       </div>
-      <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} groups={commands} />
+      {commands ? (
+        <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} groups={commands} />
+      ) : null}
     </StatusBarSetterContext.Provider>
   );
 }

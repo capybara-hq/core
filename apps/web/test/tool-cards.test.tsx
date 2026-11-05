@@ -11,7 +11,7 @@ import { buildAnswer, initialDraft, OTHER } from "../src/lib/questions";
 import type { ApprovalItem, QuestionItem } from "../src/lib/timeline";
 import { bodyOf, json, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
-import { ME, renderPage } from "./support/render";
+import { ME, renderPage, testQueryClient } from "./support/render";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 
@@ -98,6 +98,29 @@ describe("ApprovalCard (design ApprovalBlock)", () => {
     expect(await screen.findByText(/你 批准了 Fixture \[delete_item\]/)).toBeTruthy();
   });
 
+  it("a decision in the conversation invalidates the inbox and its count (the inbox list is not left stale)", async () => {
+    stubApi({
+      "GET /api/v1/orgs/o1/approvals/ap1": () => json(200, { approval: APPROVAL }),
+      "POST /api/v1/orgs/o1/approvals/ap1/decision": () =>
+        json(200, {
+          approval: { ...APPROVAL, status: "approved", scope: "once", decidedBy: "a1" },
+        }),
+    });
+    const client = testQueryClient();
+    // the inbox and the sidebar's count are cached (as after a visit to /inbox)
+    client.setQueryData(["org", "o1", "inbox"], { items: [] });
+    client.setQueryData(["org", "o1", "inboxCount"], { count: 1 });
+    renderPage(<ApprovalCard orgId="o1" item={item()} info={INFO} />, { locale: "en", client });
+    await userEvent.setup().click(await screen.findByRole("button", { name: "Approve" }));
+    await vi.waitFor(() =>
+      expect(client.getQueryState(["org", "o1", "inbox"])?.isInvalidated).toBe(true),
+    );
+    expect(client.getQueryState(["org", "o1", "inboxCount"])?.isInvalidated).toBe(true);
+    expect(client.getQueryData(["org", "o1", "approval", "ap1"])).toMatchObject({
+      status: "approved",
+    });
+  });
+
   it("a role escalation offers only once; deny sends the reason", async () => {
     const calls = stubApi({
       "GET /api/v1/orgs/o1/approvals/ap1": () =>
@@ -139,8 +162,13 @@ describe("ApprovalCard (design ApprovalBlock)", () => {
     },
   );
 
-  it("decided (from the log): one line naming who, the key, the scope and the reason", () => {
-    const calls = stubApi({});
+  it("decided (from the log): one line naming who, the key, the scope and the reason", async () => {
+    const calls = stubApi({
+      "GET /api/v1/orgs/o1/members": () =>
+        json(200, {
+          members: [{ account: { id: "someone", displayName: "李四" }, role: "member" }],
+        }),
+    });
     renderPage(
       <ApprovalCard
         orgId="o1"
@@ -155,9 +183,55 @@ describe("ApprovalCard (design ApprovalBlock)", () => {
       />,
       { locale: "zh", me: ME },
     );
-    expect(screen.getByText(/someone 拒绝了 Fixture \[delete_item\]/)).toBeTruthy();
+    // the decider's name, read from the member list (the approval itself is not read)
+    expect(await screen.findByText(/李四 拒绝了 Fixture \[delete_item\]/)).toBeTruthy();
     expect(screen.getByText(/「too risky」/)).toBeTruthy();
-    expect(calls).toHaveLength(0);
+    expect(calls.map((c) => c.url)).toEqual(["/api/v1/orgs/o1/members"]);
+  });
+
+  it("a viewer who can't decide is told who is awaited by name", async () => {
+    stubApi({
+      "GET /api/v1/orgs/o1/approvals/ap1": () =>
+        json(404, { error: { code: "approval.not_found", message: "x" } }),
+      "GET /api/v1/orgs/o1/members": () =>
+        json(200, {
+          members: [{ account: { id: "acc_zhang", displayName: "张三" }, role: "member" }],
+        }),
+    });
+    renderPage(
+      <ApprovalCard
+        orgId="o1"
+        item={{ ...item(), approver: { kind: "account", accountId: "acc_zhang" } }}
+        info={INFO}
+      />,
+      { locale: "zh", me: ME },
+    );
+    expect(
+      await screen.findByText(
+        "Fixture [delete_item]（mcp__fixture__delete_item）需要审批，等待 张三 处理。",
+      ),
+    ).toBeTruthy();
+  });
+
+  it("an approval escalated by role names the role, without reading the member list", async () => {
+    const calls = stubApi({
+      "GET /api/v1/orgs/o1/approvals/ap1": () =>
+        json(404, { error: { code: "approval.not_found", message: "x" } }),
+    });
+    renderPage(
+      <ApprovalCard
+        orgId="o1"
+        item={{ ...item(), approver: { kind: "role", role: "admin" } }}
+        info={INFO}
+      />,
+      { locale: "en", me: ME },
+    );
+    expect(
+      await screen.findByText(
+        "Fixture [delete_item] (mcp__fixture__delete_item) needs approval; waiting for an admin.",
+      ),
+    ).toBeTruthy();
+    expect(calls.map((c) => c.url)).toEqual(["/api/v1/orgs/o1/approvals/ap1"]);
   });
 });
 
@@ -327,7 +401,7 @@ describe("ConnectCard (design ConnectBlock)", () => {
         .setup()
         .click(screen.getByRole("button", { name: locale === "zh" ? "连接" : "Connect" }));
       await vi.waitFor(() =>
-        expect(router.push).toHaveBeenCalledWith("/settings/connections#connector-app2"),
+        expect(router.push).toHaveBeenCalledWith("/account/connections#connector-app2"),
       );
     },
   );

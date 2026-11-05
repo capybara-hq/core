@@ -1,11 +1,17 @@
 import { act, cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import ChatPage from "../src/app/[locale]/(app)/chat/[conversationId]/page";
-import { type Call, json, noContent, stubApi } from "./support/api";
-import { AGENTS, CONV, FakeEventSource, MODELS, runStarted, userMsg } from "./support/conversation";
+import { bodyOf, type Call, json, noContent, stubApi } from "./support/api";
+import {
+  AGENTS,
+  CONV,
+  FakeEventSource,
+  MODELS,
+  renderChatRoute,
+  runStarted,
+  userMsg,
+} from "./support/conversation";
 import { resetNavigation } from "./support/navigation";
-import { renderPage } from "./support/render";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 vi.mock("next/navigation", () => ({ useParams: () => ({ conversationId: "c1" }) }));
@@ -25,7 +31,7 @@ const item = (id: string, text: string, position: number) => ({
 
 let queue: { items: ReturnType<typeof item>[]; paused: boolean };
 
-function api(extra: Record<string, (c: Call) => Response> = {}) {
+function api(extra: Record<string, (c: Call) => Response | Promise<Response>> = {}) {
   return stubApi({
     [`GET ${BASE}`]: () => json(200, CONV()),
     "GET /api/v1/orgs/o1/agents": () => json(200, AGENTS),
@@ -59,7 +65,7 @@ describe("queued messages", () => {
         return noContent();
       },
     });
-    renderPage(<ChatPage />, { locale: "zh" });
+    await renderChatRoute({ locale: "zh" });
     const list = await screen.findByRole("group", { name: "排队的消息" });
     const bubbles = within(list).getAllByText(/queued$/);
     expect(bubbles.map((b) => b.textContent)).toEqual(["first queued", "second queued"]);
@@ -84,7 +90,7 @@ describe("queued messages", () => {
         return json(200, { item: item("q1", "edited", 1) });
       },
     });
-    renderPage(<ChatPage />, { locale: "en" });
+    await renderChatRoute();
     const list = await screen.findByRole("group", { name: "Queued messages" });
     const first = list.querySelector('[data-queue-item="q1"]') as HTMLElement;
     const user = userEvent.setup();
@@ -108,7 +114,7 @@ describe("queued messages", () => {
         return json(202, {});
       },
     });
-    renderPage(<ChatPage />, { locale: "zh" });
+    await renderChatRoute({ locale: "zh" });
     expect(await screen.findByText("运行已停止，队列已暂停（2 条）")).toBeTruthy();
     // Paused bubbles carry no actions.
     expect(screen.queryByRole("button", { name: "立即发送" })).toBeNull();
@@ -121,11 +127,71 @@ describe("queued messages", () => {
 
   it("reloads on changed: queue (another tab or the dispatcher changed it)", async () => {
     api();
-    renderPage(<ChatPage />, { locale: "en" });
+    await renderChatRoute();
     await screen.findByText("first queued");
     queue = { items: [item("q2", "second queued", 2)], paused: false };
     act(() => FakeEventSource.instances[0]?.emit("changed", { what: "queue" }));
     await vi.waitFor(() => expect(screen.queryByText("first queued")).toBeNull());
     expect(screen.getByText("second queued")).toBeTruthy();
+  });
+
+  it("↵ while running shows the queued message at once, before the POST answers, and once after", async () => {
+    let answer: (r: Response) => void = () => {};
+    let posted: { text: string; clientMessageId: string } | undefined;
+    api({
+      [`POST ${BASE}/queue`]: (c) => {
+        posted = bodyOf(c) as { text: string; clientMessageId: string };
+        return new Promise<Response>((r) => {
+          answer = r;
+        });
+      },
+    });
+    await renderChatRoute();
+    await screen.findByText("first queued");
+    const input = screen.getByRole("textbox", { name: "Message", hidden: true });
+    const user = userEvent.setup();
+    await user.type(input, "third{Enter}");
+    // the composer is empty and the message is in the queue list before the kernel answers
+    expect((input as HTMLTextAreaElement).value).toBe("");
+    const list = screen.getByRole("group", { name: "Queued messages" });
+    expect(within(list).getByText("third")).toBeTruthy();
+    const queued = { ...item("q3", "third", 3), clientMessageId: posted?.clientMessageId ?? "" };
+    queue = { ...queue, items: [...queue.items, queued] };
+    await act(async () => answer(json(201, { item: queued })));
+    await vi.waitFor(() => expect(list.querySelector('[data-queue-item="q3"]')).not.toBeNull());
+    expect(within(list).getAllByText("third")).toHaveLength(1);
+  });
+
+  it("a queued message the kernel refused leaves the list and goes back to the composer", async () => {
+    api({
+      [`POST ${BASE}/queue`]: () => json(500, { error: { code: "internal", message: "boom" } }),
+    });
+    await renderChatRoute();
+    await screen.findByText("first queued");
+    const input = screen.getByRole("textbox", { name: "Message", hidden: true });
+    const user = userEvent.setup();
+    await user.type(input, "third{Enter}");
+    await vi.waitFor(() => expect((input as HTMLTextAreaElement).value).toBe("third"));
+    expect(screen.queryByText("third", { selector: '[data-part="bubble"]' })).toBeNull();
+  });
+
+  it("a queued message the stream delivers leaves the list in the same tick: its text shows once (L4)", async () => {
+    api();
+    await renderChatRoute();
+    const list = await screen.findByRole("group", { name: "Queued messages" });
+    expect(list.querySelector('[data-queue-item="q1"]')).not.toBeNull();
+    // the queue's read still lists it: only the log says it was sent
+    act(() =>
+      FakeEventSource.instances[0]?.emit(
+        "event",
+        userMsg(3, "first queued", { clientMessageId: "cm-q1" }),
+      ),
+    );
+    expect(document.querySelector('[data-queue-item="q1"]')).toBeNull();
+    expect(screen.getAllByText("first queued")).toHaveLength(1);
+    expect(
+      screen.getByText("first queued").closest("[data-entry]")?.getAttribute("data-entry"),
+    ).toBe("user");
+    expect(document.querySelector('[data-queue-item="q2"]')).not.toBeNull();
   });
 });

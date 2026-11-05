@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { type AgentDefinition, AgentDefinitionSchema } from "../../../src/agents/definition.js";
+import { joinInstructionFiles } from "../../../src/agents/instruction-files.js";
 import { type KernelConfig, KernelConfigSchema } from "../../../src/config/schema.js";
 import { type KernelSchemaDb, kernelDb } from "../../../src/db/kernel-schema.js";
 import { createDb } from "../../../src/db/pool.js";
@@ -724,6 +725,49 @@ describe("effectiveDefinition", { timeout: 60_000 }, () => {
       expect(r.model).toEqual(FAKE2);
       expect(r.tierFallback).toBe(false);
       expect(r.maxSteps).toBe(30);
+    });
+
+    it("an org agent saved with prompt files dispatches with their join and no instructionFiles", async () => {
+      const files = [
+        { name: "AGENTS.md", content: "You analyse data." },
+        { name: "STYLE.md", content: "Use tables." },
+      ];
+      const joined = joinInstructionFiles(files);
+      const a = randomUUID();
+      await db
+        .insertInto("agents")
+        .values({
+          id: a,
+          org_id: orgId,
+          owner_account_id: owner.id,
+          visibility: "org",
+          current_version: 1,
+        })
+        .execute();
+      await db
+        .insertInto("agent_versions")
+        .values({
+          agent_id: a,
+          version: 1,
+          definition: JSON.stringify(
+            def({
+              name: "Data Analyst",
+              instructions: joined,
+              instructionFiles: files,
+              subagents: { dispatchable: true },
+            }),
+          ),
+          created_by: owner.id,
+        })
+        .execute();
+      const parent = def({
+        subagents: { agents: [{ agentId: a, as: "analyst", description: "Data questions." }] },
+      });
+      const r = await eff(parent, "analyst");
+      expect(r.definition.instructions).toBe(joined);
+      expect(r.definition).not.toHaveProperty("instructionFiles");
+      // the frozen copy parses as subagent_started.definition does
+      expect(AgentDefinitionSchema.parse(r.definition)).not.toHaveProperty("instructionFiles");
     });
   });
 });

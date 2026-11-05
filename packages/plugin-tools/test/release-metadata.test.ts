@@ -17,11 +17,17 @@ describe("plugin-release-metadata", () => {
   it("reports public examples, missing fields, an http homepage and a wrong repository", () => {
     const root = fixture("violations");
     const f = run(root);
-    expect(f.every((x) => x.rule === "plugin-release-metadata")).toBe(true);
+    expect(f.filter((x) => x.rule !== "plugin-release-metadata").map((x) => x.rule)).toEqual([
+      "release-display-name",
+    ]);
     expect(f.map((x) => [relative(root, x.file), x.message.split(":")[0]])).toEqual([
       ["plugins/example-demo/package.json", "plugins/example-demo must not be published"],
       ["plugins/no-desc/package.json", 'plugins/no-desc is published and needs a "description"'],
       ["plugins/no-desc/package.json", 'plugins/no-desc is published and needs a "license"'],
+      [
+        "plugins/no-display-name/.capybara-plugin/plugin.json",
+        'plugins/no-display-name is published and needs a "displayName" in .capybara-plugin/plugin.json',
+      ],
       ["plugins/wrong-dir/package.json", 'plugins/wrong-dir is published and needs "repository"'],
       [
         "plugins/wrong-url/package.json",
@@ -40,6 +46,16 @@ describe("plugin-release-metadata", () => {
     expect(wrong.find((x) => x.file.includes("wrong-dir"))?.message).toContain(
       '"directory": "plugins/wrong-dir"',
     );
+  });
+
+  it("release-display-name: a public plugin's plugin.json needs displayName; private ones don't", () => {
+    const root = fixture("violations");
+    const f = run(root).filter((x) => x.rule === "release-display-name");
+    expect(f.map((x) => relative(root, x.file))).toEqual([
+      "plugins/no-display-name/.capybara-plugin/plugin.json",
+    ]);
+    // clean: the private example-demo has a plugin.json without displayName and passes
+    expect(run(fixture("clean"))).toEqual([]);
   });
 
   it("a root package.json without repository.url is reported once", () => {

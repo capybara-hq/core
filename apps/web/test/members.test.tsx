@@ -3,11 +3,11 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
-import MembersPage from "../src/app/[locale]/(app)/settings/members/page";
 import type { Me } from "../src/lib/session";
-import { bodyOf, json, noContent, stubApi } from "./support/api";
+import { bodyOf, json, lastStubRoutes, noContent, stubApi } from "./support/api";
 import { resetNavigation } from "./support/navigation";
-import { ME, renderPage } from "./support/render";
+import { renderRouteWithCache } from "./support/query";
+import { ME } from "./support/render";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 
@@ -63,7 +63,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("成员页（ListPage）", () => {
+describe("成员页（SettingsPage）", () => {
   it.each(LOCALES)(
     "匿名访客行：带「匿名访客」Badge，角色控件禁用，没有移出与转让（%s）",
     async (locale) => {
@@ -72,8 +72,14 @@ describe("成员页（ListPage）", () => {
         [`GET ${BASE}/members`]: () => json(200, { members: MEMBERS }),
         [`GET ${BASE}/invitations`]: () => json(200, { invitations: [] }),
       });
-      const { container } = renderPage(<MembersPage />, { locale });
-      expect(container.querySelector('[data-template="ListPage"]')).not.toBeNull();
+      const { container } = await renderRouteWithCache("/settings/members", lastStubRoutes(), {
+        locale,
+      });
+      // The settings frame with its sub-nav, like the other /settings pages (audit U8)
+      expect(container.querySelector('[data-template="SettingsPage"]')).not.toBeNull();
+      const current = container.querySelector('.cb-settings-nav [aria-current="page"]');
+      expect(current?.textContent).toBe(msgs[locale].connections.nav.members);
+      expect(current?.getAttribute("href")).toBe("/settings/members");
       expect(await screen.findByText("IM visitor")).toBeTruthy();
       const anon = rowOf("IM visitor");
       expect(within(anon).getByText(m.anonymous)).toBeTruthy();
@@ -92,14 +98,18 @@ describe("成员页（ListPage）", () => {
     },
   );
 
-  it("管理员把成员改为访客：PATCH members/:id，行内角色随之更新", async () => {
+  it("管理员把成员改为访客：PATCH members/:id，行内角色随之更新（members invalidated: read again）", async () => {
     const m = en.members;
+    let members = MEMBERS;
     const calls = stubApi({
-      [`GET ${BASE}/members`]: () => json(200, { members: MEMBERS }),
+      [`GET ${BASE}/members`]: () => json(200, { members }),
       [`GET ${BASE}/invitations`]: () => json(200, { invitations: [] }),
-      [`PATCH ${BASE}/members/a2`]: (c) => json(200, { accountId: "a2", ...(bodyOf(c) as object) }),
+      [`PATCH ${BASE}/members/a2`]: (c) => {
+        members = MEMBERS.map((x) => (x.account.id === "a2" ? { ...x, role: "guest" } : x));
+        return json(200, { accountId: "a2", ...(bodyOf(c) as object) });
+      },
     });
-    renderPage(<MembersPage />, { me: asRole("admin") });
+    await renderRouteWithCache("/settings/members", lastStubRoutes(), { me: asRole("admin") });
     await screen.findByText("Bob");
     const select = within(rowOf("Bob")).getByRole("combobox", {
       name: m.roleOf.replace("{name}", "Bob"),
@@ -114,6 +124,10 @@ describe("成员页（ListPage）", () => {
       ),
     ).toBeTruthy();
     expect(select.value).toBe("guest");
+    expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([
+      `PATCH ${BASE}/members/a2`,
+      `GET ${BASE}/members`,
+    ]);
   });
 
   it("管理员：所有者行的角色控件禁用、没有移出；自己这一行也不能改；没有「转让所有权」", async () => {
@@ -129,7 +143,7 @@ describe("成员页（ListPage）", () => {
         }),
       [`GET ${BASE}/invitations`]: () => json(200, { invitations: [] }),
     });
-    renderPage(<MembersPage />, { me: admin });
+    await renderRouteWithCache("/settings/members", lastStubRoutes(), { me: admin });
     await screen.findByText("IM visitor");
     const owner = rowOf("Grant");
     expect(
@@ -147,12 +161,16 @@ describe("成员页（ListPage）", () => {
 
   it.each(LOCALES)("移出成员要二次确认：确认后 DELETE，行消失（%s）", async (locale) => {
     const m = msgs[locale].members;
+    let members = MEMBERS;
     const calls = stubApi({
-      [`GET ${BASE}/members`]: () => json(200, { members: MEMBERS }),
+      [`GET ${BASE}/members`]: () => json(200, { members }),
       [`GET ${BASE}/invitations`]: () => json(200, { invitations: [] }),
-      [`DELETE ${BASE}/members/a2`]: () => noContent(),
+      [`DELETE ${BASE}/members/a2`]: () => {
+        members = MEMBERS.filter((x) => x.account.id !== "a2");
+        return noContent();
+      },
     });
-    renderPage(<MembersPage />, { locale });
+    await renderRouteWithCache("/settings/members", lastStubRoutes(), { locale });
     await screen.findByText("Bob");
     const user = userEvent.setup();
     await user.click(within(rowOf("Bob")).getByRole("button", { name: ROW_ACTIONS[locale] }));
@@ -184,7 +202,7 @@ describe("成员页（ListPage）", () => {
         return noContent();
       },
     });
-    const { container } = renderPage(<MembersPage />);
+    const { container } = await renderRouteWithCache("/settings/members", lastStubRoutes());
     await screen.findByText("Bob");
     const user = userEvent.setup();
     await user.click(within(rowOf("Bob")).getByRole("button", { name: ROW_ACTIONS.en }));
@@ -208,12 +226,69 @@ describe("成员页（ListPage）", () => {
     expect(container).toBeTruthy();
   });
 
+  it("after a transfer, owner-only actions are gone at once, before the refreshed session arrives", async () => {
+    const m = en.members;
+    let members = MEMBERS;
+    let release: () => void = () => {};
+    const held = new Promise<void>((r) => {
+      release = r;
+    });
+    const page = {
+      [`GET ${BASE}/members`]: () => json(200, { members }),
+      [`GET ${BASE}/invitations`]: () => json(200, { invitations: [] }),
+    };
+    const calls = stubApi({
+      ...page,
+      [`POST ${BASE}/transfer`]: () => {
+        members = MEMBERS.map((x) =>
+          x.account.id === "a2"
+            ? { ...x, role: "owner" }
+            : x.account.id === "a1"
+              ? { ...x, role: "admin" }
+              : x,
+        );
+        return noContent();
+      },
+      // the session read again (my role changed) answers late
+      "GET /api/v1/me": async () => {
+        await held;
+        return json(200, asRole("admin"));
+      },
+    });
+    await renderRouteWithCache("/settings/members", page);
+    const user = userEvent.setup();
+    await user.click(within(rowOf("Bob")).getByRole("button", { name: ROW_ACTIONS.en }));
+    await user.click(await screen.findByRole("menuitem", { name: m.menu.transfer }));
+    const dialog = await screen.findByRole("dialog", {
+      name: m.confirm.transferTitle.replace("{name}", "Bob"),
+    });
+    await user.click(within(dialog).getByRole("button", { name: m.confirm.transfer }));
+    await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    const bob = within(rowOf("Bob")).getByRole("combobox", {
+      name: m.roleOf.replace("{name}", "Bob"),
+    }) as HTMLSelectElement;
+    expect(bob.value).toBe("owner");
+    // an admin may not change an owner's role, nor grant owner
+    expect(bob.disabled).toBe(true);
+    const mine = within(rowOf(`Grant (${m.you})`)).getByRole("combobox", {
+      name: m.roleOf.replace("{name}", "Grant"),
+    }) as HTMLSelectElement;
+    expect(mine.value).toBe("admin");
+    // Bob is an owner now: no row menu for an admin (no transfer, no remove)
+    expect(within(rowOf("Bob")).queryByRole("button", { name: ROW_ACTIONS.en })).toBeNull();
+    // the transfer invalidated the members and the session
+    expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual(
+      expect.arrayContaining([`GET ${BASE}/members`, "GET /api/v1/me"]),
+    );
+    release();
+  });
+
   it("普通成员：只读角色，没有邀请按钮、行菜单，也不请求邀请列表", async () => {
     const m = en.members;
     const calls = stubApi({
       [`GET ${BASE}/members`]: () => json(200, { members: MEMBERS }),
     });
-    renderPage(<MembersPage />, { me: asRole("member") });
+    await renderRouteWithCache("/settings/members", lastStubRoutes(), { me: asRole("member") });
     await screen.findByText("Bob");
     expect(screen.queryByRole("combobox")).toBeNull();
     expect(within(rowOf("Bob")).getByText(m.roles.member)).toBeTruthy();
@@ -242,7 +317,7 @@ describe("成员页（ListPage）", () => {
           return noContent();
         },
       });
-      renderPage(<MembersPage />, { locale });
+      await renderRouteWithCache("/settings/members", lastStubRoutes(), { locale });
       expect(await screen.findByText(m.invitations.empty)).toBeTruthy();
       const user = userEvent.setup();
       await user.click(screen.getByRole("button", { name: m.invite }));

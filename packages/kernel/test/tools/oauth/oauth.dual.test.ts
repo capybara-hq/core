@@ -120,7 +120,7 @@ it("跨副本完成连接；两个副本并发 401 只刷新一次", async () =>
     const back = new URL(authorize.headers.get("location") as string);
     const cb = await at(1, "GET", `${back.pathname}${back.search}`);
     expect(cb.status).toBe(302);
-    expect(cb.location).toBe(`${PUBLIC_URL}/settings/connections?connected=${connectorId}`);
+    expect(cb.location).toBe(`${PUBLIC_URL}/account/connections?connected=${connectorId}`);
     const detail = await at(1, "GET", `${base}/connectors/${connectorId}`);
     expect(
       (detail.json.connector as { tools: { name: string }[] }).tools.map((t) => t.name),

@@ -80,7 +80,34 @@ describe("SubagentGroup (§6.16.15)", () => {
     expect(screen.getByText("正在运行 2 个子 agent")).toBeTruthy();
     // header + two rows
     expect(screen.getAllByRole("img", { name: "进行中" })).toHaveLength(3);
+    // 16, like the tool rows' (§6.16)
+    for (const s of screen.getAllByRole("img", { name: "进行中" }))
+      expect(s.querySelector("svg")?.getAttribute("width")).toBe("16");
     expect(screen.getByText("2分28秒", { exact: false })).toBeTruthy();
+  });
+
+  it("waiting: every active row waits, so no spinner anywhere and the header says what for", () => {
+    const rows = running.map((r) => ({
+      ...r,
+      status: "waiting" as const,
+      waiting: "approval" as const,
+    }));
+    const { container } = wrap(
+      <SubagentGroup rows={[...rows, ...done.slice(0, 1)]} onOpen={() => {}} now={NOW} />,
+    );
+    expect(screen.queryByRole("img", { name: "进行中" })).toBeNull();
+    const head = container.querySelector('[data-part="tool-line"]') as HTMLElement;
+    expect(within(head).getByText("等待批准")).toBeTruthy();
+    expect(within(head).getByText("· 已完成 1 个", { exact: false })).toBeTruthy();
+    expect(within(head).queryByText("正在运行", { exact: false })).toBeNull();
+  });
+
+  it("one row running and one waiting: the header keeps its spinner and the count", () => {
+    const rows = [running[0], { ...running[1], status: "waiting", waiting: "approval" }];
+    wrap(<SubagentGroup rows={rows as SubagentRowData[]} onOpen={() => {}} now={NOW} />);
+    expect(screen.getByText("正在运行 2 个子 agent")).toBeTruthy();
+    // the header and the running row
+    expect(screen.getAllByRole("img", { name: "进行中" })).toHaveLength(2);
   });
 
   it("done: a collapsed header with the failure count in fail and the totals", async () => {
@@ -175,6 +202,20 @@ describe("SubagentRow", () => {
     expect(screen.getByText("等待批准")).toBeTruthy();
   });
 
+  it("a waiting row has no spinner and no duration, only the waiting word and the calls", () => {
+    wrap(
+      <SubagentRow
+        row={{ ...running[0], status: "waiting", waiting: "input" } as SubagentRowData}
+        onOpen={() => {}}
+        now={NOW}
+      />,
+    );
+    expect(screen.queryByRole("img", { name: "进行中" })).toBeNull();
+    expect(screen.getByText("等待回答")).toBeTruthy();
+    expect(screen.getByText("20 次调用")).toBeTruthy();
+    expect(screen.queryByText("2分28秒", { exact: false })).toBeNull();
+  });
+
   it("a stopped sub-agent says so in muted, not as a failure", () => {
     const [row] = done;
     if (!row) throw new Error("fixture");
@@ -217,25 +258,39 @@ describe("SubagentTask", () => {
 });
 
 describe("BackgroundTasks", () => {
-  it("stop buttons are named after the task; completed opens the list", async () => {
+  it("stop buttons are named after the task; completed opens the newest", async () => {
     const onStop = vi.fn();
-    const onCompleted = vi.fn();
     const onOpen = vi.fn();
     wrap(
       <BackgroundTasks
-        running={[{ id: "sa_tree", name: "列出示例文档目录树", elapsed: "2:28" }]}
-        completed={6}
+        items={[
+          {
+            kind: "subagent",
+            id: "sa_tree",
+            name: "列出示例文档目录树",
+            status: "running",
+            startedAt: T0,
+          },
+          {
+            kind: "subagent",
+            id: "sa_done",
+            name: "核对映射表",
+            status: "completed",
+            startedAt: T0,
+            finishedAt: T0 + 1000,
+          },
+        ]}
+        now={NOW}
         onStop={onStop}
         onOpen={onOpen}
-        onCompleted={onCompleted}
       />,
     );
-    await userEvent.click(screen.getByRole("button", { name: "停止 列出示例文档目录树" }));
+    await userEvent.click(screen.getByRole("button", { name: "停止「列出示例文档目录树」" }));
     expect(onStop).toHaveBeenCalledWith("sa_tree");
     await userEvent.click(screen.getByRole("button", { name: "列出示例文档目录树" }));
     expect(onOpen).toHaveBeenCalledWith("sa_tree");
-    await userEvent.click(screen.getByRole("button", { name: /已完成 6 项/ }));
-    expect(onCompleted).toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: /已完成 1 项/ }));
+    expect(onOpen).toHaveBeenCalledWith("sa_done");
   });
 });
 

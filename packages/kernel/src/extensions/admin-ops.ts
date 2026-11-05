@@ -453,6 +453,8 @@ function fallbackView(
 ): AdminExtensionView {
   return {
     name,
+    // the degraded item reads nothing more (the read that failed may be the database)
+    displayName: null,
     version: known.version,
     source: "install",
     sha256: known.sha256,

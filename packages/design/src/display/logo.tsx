@@ -15,6 +15,21 @@ export const CAPYBARA_BITMAP: readonly string[] = [
 const COLS = 14;
 const ROWS = 10;
 
+/**
+ * The `cell` cells (default `X`) of bitmap `rows` as one SVG path of `scale`-sized squares, the
+ * first row drawn at row `top` (the logo, the working line's mark and its leg frames, and one path
+ * per palette colour of an avatar preset).
+ */
+export function bitmapCells(rows: readonly string[], scale: number, top = 0, cell = "X"): string {
+  const out: string[] = [];
+  rows.forEach((row, i) => {
+    const y = top + i;
+    for (let x = 0; x < row.length; x++)
+      if (row[x] === cell) out.push(`M${x * scale} ${y * scale}h${scale}v${scale}h${-scale}z`);
+  });
+  return out.join("");
+}
+
 export function Logo({
   scale = 3,
   tone = "accent",
@@ -24,12 +39,6 @@ export function Logo({
   tone?: "accent" | "muted";
   wordmark?: boolean;
 }) {
-  const cells: string[] = [];
-  CAPYBARA_BITMAP.forEach((row, y) => {
-    for (let x = 0; x < row.length; x++) {
-      if (row[x] === "X") cells.push(`M${x * scale} ${y * scale}h${scale}v${scale}h${-scale}z`);
-    }
-  });
   return (
     <span className="cb-logo" data-tone={tone}>
       <svg
@@ -40,9 +49,46 @@ export function Logo({
         aria-hidden="true"
         focusable="false"
       >
-        <path d={cells.join("")} />
+        <path d={bitmapCells(CAPYBARA_BITMAP, scale)} />
       </svg>
       {wordmark ? <span className="cb-logo-word">CAPYBARA</span> : null}
     </span>
+  );
+}
+
+/**
+ * The pixel capybara as a line drawing (the empty state's illustration, spec §6.18): the outer
+ * edges of the bitmap's cells, the eye included, stroked 1 px in `faint`. Decorative.
+ */
+export function LogoLine({ scale = 6 }: { scale?: 3 | 4 | 6 }) {
+  const filled = (x: number, y: number) => CAPYBARA_BITMAP[y]?.[x] === "X";
+  const segs: string[] = [];
+  CAPYBARA_BITMAP.forEach((row, y) => {
+    for (let x = 0; x < row.length; x++) {
+      if (!filled(x, y)) continue;
+      const l = x * scale + 0.5;
+      const t = y * scale + 0.5;
+      const r = l + scale;
+      const b = t + scale;
+      if (!filled(x, y - 1)) segs.push(`M${l} ${t}H${r}`);
+      if (!filled(x, y + 1)) segs.push(`M${l} ${b}H${r}`);
+      if (!filled(x - 1, y)) segs.push(`M${l} ${t}V${b}`);
+      if (!filled(x + 1, y)) segs.push(`M${r} ${t}V${b}`);
+    }
+  });
+  const w = COLS * scale + 1;
+  const h = ROWS * scale + 1;
+  return (
+    <svg
+      className="cb-logo-line"
+      width={w}
+      height={h}
+      viewBox={`0 0 ${w} ${h}`}
+      shapeRendering="crispEdges"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <path d={segs.join("")} />
+    </svg>
   );
 }

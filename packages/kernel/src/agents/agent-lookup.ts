@@ -6,6 +6,7 @@ import { KernelDb } from "../infra/database/kernel-db.js";
 import { loadLegacyScope } from "../tools/legacy-data.js";
 import type { LegacyScope } from "../tools/legacy-keys.js";
 import { type AgentDefinition, needsLegacyScope, normalizeStoredDefinition } from "./definition.js";
+import type { AgentAvatar, AgentProfile, QuickAction } from "./profile.js";
 
 export const AGENT_VISIBILITIES = ["private", "org", "members"] as const;
 export type AgentVisibility = (typeof AGENT_VISIBILITIES)[number];
@@ -18,6 +19,8 @@ export interface AgentView {
   visibility: AgentVisibility;
   currentVersion: number;
   definition: AgentDefinition;
+  /** Display data outside the versions (never model-visible). */
+  profile: AgentProfile;
   memberIds: string[] | null;
   /** 负责人离职后被转给组织所有者、等待管理员重新指派。 */
   needsReassignment: boolean;
@@ -157,6 +160,10 @@ export class AgentLookup {
         "agents.needs_reassignment",
         "agents.created_at",
         "agents.updated_at",
+        "agents.profile_avatar",
+        "agents.profile_description",
+        "agents.profile_quick_actions",
+        "agents.profile_updated_at",
         "agent_versions.definition",
       ])
       .where("agents.id", "in", ids)
@@ -186,6 +193,12 @@ export class AgentLookup {
           visibility: r.visibility,
           currentVersion: r.current_version,
           definition: normalizeStoredDefinition(r.definition, scopes.get(r.org_id)),
+          profile: {
+            avatar: r.profile_avatar as AgentAvatar,
+            description: r.profile_description,
+            quickActions: r.profile_quick_actions as QuickAction[],
+            updatedAt: r.profile_updated_at.toISOString(),
+          },
           memberIds:
             r.visibility === "members"
               ? memberRows.filter((m) => m.agent_id === id).map((m) => m.account_id)

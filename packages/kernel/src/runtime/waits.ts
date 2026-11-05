@@ -3,6 +3,7 @@ import { getQueueToken } from "@nestjs/bullmq";
 import { Inject, Injectable, type OnApplicationShutdown } from "@nestjs/common";
 import { DelayedError, type Job, type Queue } from "bullmq";
 import { sql } from "kysely";
+import { BackgroundTaskStopper } from "../background/stop.js";
 import { type AppendEvent, EventLog } from "../conversations/event-log.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
@@ -13,6 +14,7 @@ import { LockService } from "../infra/lock/lock.service.js";
 import { LockedCron } from "../infra/schedule/locked-cron.decorator.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
+import type { OrgRole } from "../orgs/roles.js";
 import { ApprovalsService } from "../tools/approvals.service.js";
 import {
   APPROVAL_CANCELLED_TEXT,
@@ -74,6 +76,9 @@ export interface WaitSweepResult {
 
 const TERMINAL_RUN_STATUSES = ["completed", "failed", "aborted"] as const;
 
+/** Who may decide a sub-agent's approval, mirrored into the parent's `subagent_waiting`. */
+type Approver = { requestedFor: string | null; approverRole: OrgRole | null };
+
 /** The data of a wait timeout job; `subagents` waits also carry their run and step. */
 export interface WaitTimeoutData {
   kind: WaitingFor["kind"];
@@ -127,6 +132,9 @@ export class Waits implements OnApplicationShutdown {
     @Inject(getQueueToken(MAINTENANCE_QUEUE_NAME)) private readonly timeouts: Pick<Queue, "add">,
     @Inject(KernelEvents) events: KernelEvents,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<Logger, "error" | "warn">,
+    /** Stops a finished sub-agent run's background tasks ({@link childFinished}). */
+    @Inject(BackgroundTaskStopper)
+    private readonly background: Pick<BackgroundTaskStopper, "stopSubagentTasks">,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
   ) {
     // an orphaned parent run (marked failed by `ensureRun`) stops its children at once; the
@@ -229,13 +237,24 @@ export class Waits implements OnApplicationShutdown {
         .where("child_run_id", "=", runId)
         .executeTakeFirst();
       if (!d) return;
-      const row =
+      const row: { tool_key: string; expires_at: string | Date; approver?: Approver } | undefined =
         waitingFor.kind === "approval"
           ? await this.db
               .selectFrom("approvals")
-              .select(["tool_key", "expires_at"])
+              .select(["tool_key", "expires_at", "requested_for", "approver_role"])
               .where("id", "=", waitingFor.id)
               .executeTakeFirst()
+              .then(
+                (r) =>
+                  r && {
+                    tool_key: r.tool_key,
+                    expires_at: r.expires_at,
+                    approver: {
+                      requestedFor: r.requested_for,
+                      approverRole: r.approver_role as OrgRole | null,
+                    },
+                  },
+              )
           : await this.db
               .selectFrom("questions")
               .select([sql<string>`spec->>'toolKey'`.as("tool_key"), "expires_at"])
@@ -252,7 +271,10 @@ export class Waits implements OnApplicationShutdown {
             childRunId: runId,
             kind: waitingFor.kind,
             ...(waitingFor.kind === "approval"
-              ? { approvalId: waitingFor.id }
+              ? {
+                  approvalId: waitingFor.id,
+                  ...row.approver,
+                }
               : { questionId: waitingFor.id }),
             toolKey: row.tool_key,
             expiresAt: new Date(row.expires_at).toISOString(),
@@ -1081,7 +1103,8 @@ export class Waits implements OnApplicationShutdown {
    * the conditional resume lets exactly one succeed, the last to see all its siblings terminal. A
    * run that is not a dispatched child, or not terminal yet, is left alone. A crash in between is
    * repaired by the wait sweep and by the parent's tools node, which writes a missing
-   * `subagent_finished` itself.
+   * `subagent_finished` itself. The running background tasks the terminal child run started are
+   * then stopped (not those of a later follow-up run of the same child).
    */
   async childFinished(childRunId: string): Promise<void> {
     const row = await dispatchOfChildRun(this.db, childRunId);
@@ -1092,13 +1115,20 @@ export class Waits implements OnApplicationShutdown {
       .where("id", "=", childRunId)
       .executeTakeFirst();
     if (!run || !TERMINAL_STATUSES.has(run.status)) return;
-    const r = await childResult(this.eventLog, row);
-    if (!r) {
-      this.log.warn("sub-agent run is terminal without a terminal event", { childRunId });
-      return;
+    try {
+      const r = await childResult(this.eventLog, row);
+      if (!r) {
+        this.log.warn("sub-agent run is terminal without a terminal event", { childRunId });
+        return;
+      }
+      await this.eventLog.append(row.parentConversationId, [finishedEvent(row, r.finished)]);
+      await this.resume(row.parentRunId, childRunId);
+    } finally {
+      // whichever way the child run ended (its worker, a stop while waiting, an orphan repair):
+      // nobody can read or stop the background tasks it started through its model any more
+      // (background Bash spec §4.3). Never throws.
+      await this.background.stopSubagentTasks(row.childConversationId, childRunId);
     }
-    await this.eventLog.append(row.parentConversationId, [finishedEvent(row, r.finished)]);
-    await this.resume(row.parentRunId, childRunId);
   }
 
   /**

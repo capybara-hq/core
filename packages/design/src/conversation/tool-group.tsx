@@ -4,7 +4,18 @@ import { useDesignLocale } from "../provider";
 import { useClock } from "./clock";
 import { Spinner } from "./prose";
 import { elapsed, summaryParts } from "./tool-copy";
-import { hasDetail, ToolBox, ToolDetail, ToolLabel, ToolRow, type ToolRowData } from "./tool-row";
+import {
+  hasDetail,
+  isLive,
+  isWaiting,
+  ToolBox,
+  ToolDetail,
+  ToolLabel,
+  ToolLink,
+  ToolRow,
+  type ToolRowData,
+  WaitingWord,
+} from "./tool-row";
 
 export type ToolGroupProps = {
   /** Consecutive calls (one call renders as a single tool line). */
@@ -22,7 +33,8 @@ export type ToolGroupProps = {
   children?: ReactNode;
 };
 
-const isRunning = (r: ToolRowData) => r.status === "running" || r.status === "pending";
+/** Live and not waiting for a person: the calls that draw a spinner and a timer. */
+const isRunning = (r: ToolRowData) => isLive(r) && !isWaiting(r);
 
 /** Consecutive tool calls (§6.16.8): one line for one call, else a summary over a tool box. */
 export function ToolGroup({
@@ -61,18 +73,39 @@ export function ToolGroup({
     const running = isRunning(single);
     const label = (
       <>
-        {running ? <Spinner /> : null}
+        {running ? <Spinner size={16} /> : null}
         <ToolLabel row={single} />
         {running && single.startedAt !== undefined ? (
           <span className="cb-faint" aria-hidden="true">
             {` · ${elapsed(clock - single.startedAt, locale)}`}
           </span>
         ) : null}
+        <WaitingWord row={single} lead=" · " />
       </>
     );
+    const chevron = <Icon name={isOpen ? "chevron-down" : "chevron-right"} size={12} />;
     return (
       <div className="cb-tool-group" data-single="true">
-        {expandable ? (
+        {single.link ? (
+          // a call with a link (§6.16.9): the toggle and the link side by side, never nested
+          <div className="cb-tool-line" data-part="tool-line" data-linked="true">
+            {expandable ? (
+              <button
+                type="button"
+                className="cb-tool-toggle"
+                aria-expanded={isOpen}
+                aria-controls={isOpen ? id : undefined}
+                onClick={toggle}
+              >
+                {label}
+                {chevron}
+              </button>
+            ) : (
+              <span className="cb-tool-toggle">{label}</span>
+            )}
+            <ToolLink link={single.link} />
+          </div>
+        ) : expandable ? (
           <button
             type="button"
             className="cb-tool-line"
@@ -82,7 +115,7 @@ export function ToolGroup({
             onClick={toggle}
           >
             {label}
-            <Icon name={isOpen ? "chevron-down" : "chevron-right"} size={12} />
+            {chevron}
           </button>
         ) : (
           <div className="cb-tool-line" data-part="tool-line">
@@ -98,13 +131,19 @@ export function ToolGroup({
     );
   }
 
+  // A group with a live call stays open; its header spins only while a call is not waiting.
+  const live = rows.some(isLive);
   const running = rows.some(isRunning);
-  const isOpen = running || (open ?? own);
+  const isOpen = live || (open ?? own);
   const parts = summaryParts(rows, locale).map((p, i) => (
     <span
       // biome-ignore lint/suspicious/noArrayIndexKey: the runs are positional
       key={i}
-      className={p.tone ? `cb-${p.tone === "fail" ? "fail-word" : p.tone}` : undefined}
+      className={
+        p.tone
+          ? `cb-${p.tone === "fail" ? "fail-word" : p.tone === "accent" ? "accent-word" : p.tone}`
+          : undefined
+      }
       data-part={p.part}
     >
       {p.text}
@@ -133,9 +172,9 @@ export function ToolGroup({
   ) : null;
   return (
     <div className="cb-tool-group">
-      {running ? (
+      {live ? (
         <div className="cb-tool-line" data-part="tool-line">
-          <Spinner />
+          {running ? <Spinner size={16} /> : null}
           <span className="cb-tool-label">{parts}</span>
         </div>
       ) : (

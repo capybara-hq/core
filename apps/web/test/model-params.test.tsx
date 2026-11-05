@@ -6,16 +6,22 @@ import { type ReactNode, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
-import NewAgentPage from "../src/app/[locale]/(app)/agents/new/page";
 import { ModelParams } from "../src/components/ModelParams";
 import type { ModelParameter, ParamValue } from "../src/lib/agents";
-import { resetNavigation, router } from "./support/navigation";
-import { renderPage } from "./support/render";
+import { agentFormDefaults, renderEditAgent } from "./support/agents";
+import { bodyOf, type Call, json, stubApi } from "./support/api";
+import { resetNavigation } from "./support/navigation";
+import { sessionRoutes } from "./support/server";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
-
-const json = (status: number, body: unknown): Response =>
-  new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+vi.mock("next/navigation", () => ({
+  redirect: (to: string) => {
+    throw new Error(`REDIRECT ${to}`);
+  },
+  notFound: () => {
+    throw new Error("NOT_FOUND");
+  },
+}));
 
 const EFFORT: ModelParameter = {
   key: "effort",
@@ -115,6 +121,8 @@ afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
 });
+
+const paramBox = (control: HTMLElement) => control.closest("[data-param]") as HTMLElement;
 
 describe("ModelParams", () => {
   it("标准旋钮渲染专门控件：effort / thinking 分段按钮（按声明顺序），temperature 滑块加数字框，maxOutputTokens 数字框", async () => {
@@ -304,7 +312,7 @@ describe("ModelParams", () => {
 });
 
 // ---------------------------------------------------------------------------
-// AgentForm：按所选模型渲染参数区
+// The Model section of the agent page (`/agents/<id>?s=model`): params by the chosen model
 // ---------------------------------------------------------------------------
 
 const caps = (reasoning: boolean) => ({
@@ -342,32 +350,47 @@ const MODELS = {
   ],
 };
 
-function stub(post: (body: unknown) => Response) {
-  const posts: unknown[] = [];
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
-      if (url === "/api/v1/orgs/o1/models") return json(200, MODELS);
-      if (url === "/api/v1/orgs/o1/agents" && init?.method === "POST") {
-        const body = JSON.parse(String(init.body));
-        posts.push(body);
-        return post(body);
-      }
-      throw new Error(`unexpected ${url}`);
-    }),
-  );
-  return posts;
+const ORG = "/api/v1/orgs/o1";
+const T = "2026-10-20T08:00:00.000Z";
+const SAVED = {
+  id: "ag1",
+  orgId: "o1",
+  ownerAccountId: "a1",
+  visibility: "org",
+  currentVersion: 1,
+  memberIds: null,
+  needsReassignment: false,
+  createdAt: T,
+  updatedAt: T,
+  profile: { avatar: null, description: "", quickActions: [], updatedAt: T },
+  definition: {
+    name: "Helper",
+    instructions: "Be helpful.",
+    model: { provider: "model-fake", model: "fake-1" },
+    fallback: null,
+    modelParams: {},
+    fallbackParams: {},
+    tools: [{ kind: "builtin", name: "AskUserQuestion" }],
+    toolPolicies: {},
+  },
+};
+
+type Handler = (c: Call) => Response | Promise<Response>;
+/** The page's reads plus the agent PATCH (`patch` answers it). */
+function stubModel(patch: Handler = () => json(200, { agent: SAVED, warnings: [] })) {
+  return stubApi({
+    ...sessionRoutes(),
+    ...agentFormDefaults(),
+    [`GET ${ORG}/agents/ag1`]: () => json(200, { agent: SAVED }),
+    [`GET ${ORG}/models`]: () => json(200, MODELS),
+    [`PATCH ${ORG}/agents/ag1`]: patch,
+  });
 }
+const patches = (calls: Call[]) =>
+  calls
+    .filter((c) => c.method === "PATCH" && c.url === `${ORG}/agents/ag1`)
+    .map((c) => bodyOf(c) as { definition: Record<string, unknown>; expectedVersion: number });
 
-const ok = () => json(201, { agent: { id: "ag1" }, warnings: [] });
-
-function renderForm(locale: "zh" | "en") {
-  renderPage(<NewAgentPage />, { locale });
-}
-
-const nameBox = (locale: "zh" | "en") =>
-  screen.getByRole("textbox", { name: (locale === "zh" ? zh : en).agents.form.nameLabel });
 const modelBox = (locale: "zh" | "en") =>
   screen.getByRole("combobox", { name: (locale === "zh" ? zh : en).agents.form.modelLabel });
 /** 兜底模型下拉框的名称带「可选」后缀。 */
@@ -375,71 +398,87 @@ const fallbackBox = (locale: "zh" | "en") => {
   const label = (locale === "zh" ? zh : en).agents.form.fallbackLabel;
   return screen.getByRole("combobox", { name: (n) => n.startsWith(label) });
 };
+const saveButton = (locale: "zh" | "en") =>
+  screen.getByRole("button", { name: (locale === "zh" ? zh : en).agents.form.submit });
 
-const paramBox = (control: HTMLElement) => control.closest("[data-param]") as HTMLElement;
-
-describe("AgentForm 模型参数", () => {
-  it("切换主模型时重新渲染参数区并丢弃新模型没有声明（或不再合法）的键；保存提交 modelParams / fallbackParams", async () => {
-    const posts = stub(ok);
-    renderForm("en");
+describe("the Model section's parameters (/agents/<id>?s=model)", () => {
+  it("switching the main model re-renders the params and drops keys the new model does not declare or allow; the save sends modelParams", async () => {
+    const calls = stubModel();
+    await renderEditAgent({ locale: "en", section: "model" });
     const user = userEvent.setup();
     const main = await screen.findByRole("region", { name: en.agents.form.modelParamsTitle });
-    await user.type(nameBox("en"), "Echo");
     await user.click(within(main).getByRole("radio", { name: en.agents.params.effort.high }));
     await user.selectOptions(within(main).getByRole("combobox", { name: "Reply style" }), "shout");
 
-    // o-1 只声明 effort（low|high）：style 被丢弃，effort=high 保留
+    // o-1 declares only effort (low | high): style is dropped, effort=high stays
     await user.selectOptions(modelBox("en"), "other/o-1");
     expect(within(main).queryByRole("combobox", { name: "Reply style" })).toBeNull();
-    await user.click(screen.getByRole("button", { name: en.agents.form.submit }));
-    expect(posts.at(-1)).toMatchObject({
-      definition: { model: { provider: "other", model: "o-1" }, modelParams: { effort: "high" } },
+    await user.click(saveButton("en"));
+    await vi.waitFor(() => expect(patches(calls)).toHaveLength(1));
+    expect(patches(calls)[0]).toMatchObject({
+      definition: { model: { provider: "other", model: "o-1" } },
+      expectedVersion: 1,
     });
-    expect(router.push).toHaveBeenCalledWith("/agents");
+    expect(patches(calls)[0]?.definition.modelParams).toEqual({ effort: "high" });
   });
 
-  it("切换到不再声明该档位的模型时丢弃旧值；切到无参数模型时参数区消失", async () => {
-    const posts = stub(ok);
-    renderForm("en");
+  it("switching to a model that no longer declares the tier drops the old value; a model without params has no params section", async () => {
+    const calls = stubModel();
+    await renderEditAgent({ locale: "en", section: "model" });
     const user = userEvent.setup();
     const main = await screen.findByRole("region", { name: en.agents.form.modelParamsTitle });
-    await user.type(nameBox("en"), "Echo");
     await user.click(within(main).getByRole("radio", { name: en.agents.params.effort.medium }));
+    // o-1 allows only low | high: medium is no longer legal
     await user.selectOptions(modelBox("en"), "other/o-1");
     await user.selectOptions(modelBox("en"), "other/o-2");
     expect(screen.queryByRole("region", { name: en.agents.form.modelParamsTitle })).toBeNull();
-    await user.click(screen.getByRole("button", { name: en.agents.form.submit }));
-    expect(posts.at(-1)).toMatchObject({ definition: { modelParams: {}, fallbackParams: {} } });
+    await user.click(saveButton("en"));
+    await vi.waitFor(() => expect(patches(calls)).toHaveLength(1));
+    expect(patches(calls)[0]?.definition).toMatchObject({
+      model: { provider: "other", model: "o-2" },
+    });
+    expect(patches(calls)[0]?.definition.modelParams).toEqual({});
+    expect(patches(calls)[0]?.definition.fallbackParams).toEqual({});
   });
 
-  it("兜底模型有自己的参数区；去掉兜底模型时清空 fallbackParams", async () => {
-    const posts = stub(ok);
-    renderForm("en");
+  it("the fallback model has its own params; removing the fallback clears fallbackParams", async () => {
+    const calls = stubModel();
+    await renderEditAgent({ locale: "en", section: "model" });
     const user = userEvent.setup();
     await screen.findByRole("region", { name: en.agents.form.modelParamsTitle });
-    await user.type(nameBox("en"), "Echo");
     expect(screen.queryByRole("region", { name: en.agents.form.fallbackParamsTitle })).toBeNull();
     await user.selectOptions(fallbackBox("en"), "other/o-1");
     const fb = screen.getByRole("region", { name: en.agents.form.fallbackParamsTitle });
     await user.click(within(fb).getByRole("radio", { name: en.agents.params.effort.low }));
     await user.selectOptions(fallbackBox("en"), "");
     expect(screen.queryByRole("region", { name: en.agents.form.fallbackParamsTitle })).toBeNull();
-    await user.click(screen.getByRole("button", { name: en.agents.form.submit }));
-    expect(posts.at(-1)).toMatchObject({ definition: { fallback: null, fallbackParams: {} } });
 
-    // 再选回兜底模型：之前的值已清空
+    // pick the fallback again: the earlier value was cleared
     await user.selectOptions(fallbackBox("en"), "other/o-1");
-    await user.click(screen.getByRole("button", { name: en.agents.form.submit }));
-    expect(posts.at(-1)).toMatchObject({
-      definition: { fallback: { provider: "other", model: "o-1" }, fallbackParams: {} },
-    });
+    await user.click(saveButton("en"));
+    await vi.waitFor(() => expect(patches(calls)).toHaveLength(1));
+    expect(patches(calls)[0]?.definition.fallback).toEqual({ provider: "other", model: "o-1" });
+    expect(patches(calls)[0]?.definition.fallbackParams).toEqual({});
+  });
+
+  it("the fallback params the person sets are saved with the fallback", async () => {
+    const calls = stubModel();
+    await renderEditAgent({ locale: "en", section: "model" });
+    const user = userEvent.setup();
+    await screen.findByRole("region", { name: en.agents.form.modelParamsTitle });
+    await user.selectOptions(fallbackBox("en"), "other/o-1");
+    const fb = screen.getByRole("region", { name: en.agents.form.fallbackParamsTitle });
+    await user.click(within(fb).getByRole("radio", { name: en.agents.params.effort.low }));
+    await user.click(saveButton("en"));
+    await vi.waitFor(() => expect(patches(calls)).toHaveLength(1));
+    expect(patches(calls)[0]?.definition.fallbackParams).toEqual({ effort: "low" });
   });
 
   it.each(["zh", "en"] as const)(
-    "validation_failed 的 details 显示在对应字段旁（%s）",
+    "validation_failed details show beside their fields (%s)",
     async (locale) => {
       const m = locale === "zh" ? zh : en;
-      stub(() =>
+      stubModel(() =>
         json(400, {
           error: {
             code: "validation_failed",
@@ -452,30 +491,28 @@ describe("AgentForm 模型参数", () => {
           },
         }),
       );
-      renderForm(locale);
+      await renderEditAgent({ locale, section: "model" });
       const user = userEvent.setup();
       const main = await screen.findByRole("region", { name: m.agents.form.modelParamsTitle });
-      await user.type(nameBox(locale), "Echo");
       await user.selectOptions(fallbackBox(locale), "other/o-1");
-      await user.click(screen.getByRole("button", { name: m.agents.form.submit }));
+      await user.click(saveButton(locale));
 
       const style = within(main).getByRole("combobox", { name: STYLE.label[locale] });
       expect(await within(paramBox(style)).findByText(`${m.agents.params.invalid}`)).toBeTruthy();
       expect(style.getAttribute("aria-invalid")).toBe("true");
-      // 主模型的 effort 没有错误
+      // the main model's effort has no error
       const mainEffort = within(main).getByRole("radiogroup", { name: EFFORT.label[locale] });
       expect(within(paramBox(mainEffort)).queryByText(`${m.agents.params.invalid}`)).toBeNull();
 
       const fb = screen.getByRole("region", { name: m.agents.form.fallbackParamsTitle });
       const fbEffort = within(fb).getByRole("radiogroup", { name: EFFORT.label[locale] });
       expect(within(paramBox(fbEffort)).getByText(`${m.agents.params.invalid}`)).toBeTruthy();
-      // 界面上没有对应字段的键：随总错误一起列出
+      // a key no field shows is listed with the total error
       const alert = screen.getByRole("alert");
       expect(within(alert).getByText(`${m.errors.validation_failed}`)).toBeTruthy();
       expect(
         within(alert).getByText(`${m.agents.params.invalidKey.replace("{key}", "gone")}`),
       ).toBeTruthy();
-      expect(router.push).not.toHaveBeenCalled();
     },
   );
 });

@@ -10,7 +10,7 @@ export const OAUTH_STATE_TTL_SECONDS = 600;
 /** 浏览器绑定 Cookie：回调必须来自发起连接的同一个浏览器。 */
 export const OAUTH_BINDING_COOKIE = "cap_oauth";
 /** 回调失败、或连接时没给回跳页面时回到的网页（next-intl 会补语言前缀）。 */
-export const DEFAULT_RETURN_PATH = "/settings/connections";
+export const DEFAULT_RETURN_PATH = "/account/connections";
 
 /** OAuth 连接器需要 `http.publicUrl`（回调地址）；未配置 → 这条校验错误。 */
 export const publicUrlRequired = () =>

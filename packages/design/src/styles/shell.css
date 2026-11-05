@@ -11,7 +11,7 @@
   background: var(--cb-accent);
   border-color: var(--cb-accent);
   color: var(--cb-on-accent);
-  font-weight: 700;
+  font-weight: 600;
 }
 .cb-btn-link-primary:hover {
   background: var(--cb-accent-hover);
@@ -41,9 +41,13 @@
 }
 
 .cb-shell {
+  /* The shell fills the window and scrolls only inside its regions: it is a containing block that
+     clips its overflow, so nothing in it can make the document scrollable (review fix L3). */
+  position: relative;
   display: flex;
   height: 100vh;
   min-height: 0;
+  overflow: clip;
   background: var(--cb-bg);
   color: var(--cb-ink);
 }
@@ -78,6 +82,16 @@
 .cb-shell-drawerbar .cb-icon-btn {
   color: var(--cb-muted);
 }
+/* Phones: 40 px tap targets, the icons' glyphs on the 16 px content edge. */
+@media (max-width: 639px) {
+  .cb-shell-drawerbar {
+    padding: 0 var(--cb-space-1);
+  }
+  .cb-shell-drawerbar .cb-icon-btn {
+    min-width: 40px;
+    min-height: 40px;
+  }
+}
 .cb-shell-drawerbar-end {
   display: flex;
   flex: none;
@@ -95,23 +109,89 @@
   }
 }
 
+/* The tabs row (spec §2.4): the views with counts, the search at the right end. */
+/* The tabs row has one height with or without the search (a default control + space.1 above and
+   below); the tabs sit at its bottom and overlap its border by 1 px, so the selected tab's
+   underline lies on the border; the search is centered in the row (spec §6.4). */
+.cb-pageheader-tabs {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--cb-space-3);
+  box-sizing: content-box;
+  height: calc(var(--cb-control-default) + 2 * var(--cb-space-1));
+  margin-top: var(--cb-space-3);
+  border-bottom: 1px solid var(--cb-line-soft);
+}
+.cb-pageheader-tabs .cb-tabs {
+  position: relative;
+  min-width: 0;
+  margin-bottom: -1px;
+  border-bottom: 0;
+}
+.cb-pageheader-search {
+  flex: none;
+  align-self: center;
+  margin-left: auto;
+  width: 240px;
+  max-width: 100%;
+}
+/* Phones (below 640): the search takes its own full-width line above the tabs, and the tabs
+   scroll on theirs; the tabs are 40 px tap targets. */
+@media (max-width: 639px) {
+  /* The placeholders follow the loaded parts' phone sizes (40 px tap targets), so nothing moves. */
+  .cb-pageheader-actions .cb-skeleton-box {
+    min-width: 40px;
+    height: 40px;
+  }
+  .cb-pageheader-tabs .cb-pageheader-tab-slots {
+    height: 40px;
+  }
+  .cb-pageheader-tabs {
+    flex-wrap: wrap;
+    row-gap: var(--cb-space-2);
+    height: auto;
+  }
+  .cb-pageheader-search {
+    order: -1;
+    flex: 1 1 100%;
+    width: 100%;
+    margin-left: 0;
+  }
+  .cb-pageheader-tabs .cb-tab {
+    min-width: 40px;
+    min-height: 40px;
+  }
+}
+
 /* Template head: the PageHeader in the content width, fixed above the body. */
+.cb-template {
+  --cb-content-pad: var(--cb-layout-content-pad);
+}
+@media (max-width: 639px) {
+  .cb-template {
+    --cb-content-pad: 16px;
+  }
+}
+/* One head for every template (spec §4.3): side padding 32 (16 below 640), top 20, so the head
+   sits at the same x and y on every page. */
 .cb-template-head {
   flex: none;
-  padding: var(--cb-space-6) var(--cb-layout-gutter) var(--cb-space-3);
+  padding: var(--cb-space-5) var(--cb-content-pad) var(--cb-space-3);
+  /* Reserve the same scrollbar gutter as the scrolling body below, so a classic (non-overlay)
+     scrollbar does not shift the content column against the head; scrollbar-gutter only applies
+     to a scroll container, hence overflow: hidden. No effect with overlay scrollbars. */
+  overflow: hidden;
+  scrollbar-gutter: stable;
 }
 /* A form's first section sits space.6 below the header, as sections sit apart (spec §5.3). */
-.cb-template-head[data-width="form"] {
+.cb-template-head[data-gap="loose"] {
   padding-bottom: var(--cb-space-6);
 }
-.cb-template-head-frame[data-width="list"],
-.cb-body-frame[data-width="list"] {
-  max-width: var(--cb-layout-content-list);
-  margin: 0 auto;
-}
-.cb-template-head-frame[data-width="form"],
-.cb-body-frame[data-width="form"] {
-  max-width: var(--cb-layout-content-form);
+/* One content width for every frame (spec §4.3). */
+.cb-template-head-frame[data-width="content"],
+.cb-body-frame[data-width="content"] {
+  max-width: var(--cb-layout-content);
   margin: 0 auto;
 }
 
@@ -122,16 +202,17 @@
   gap: var(--cb-space-1);
   min-width: 0;
 }
-.cb-pageheader-crumbs {
+.cb-pageheader-path {
   display: flex;
   align-items: center;
   gap: var(--cb-space-2);
   min-width: 0;
-  color: var(--cb-muted);
+  color: var(--cb-faint);
+  font-family: var(--cb-font);
   font-size: var(--cb-type-small-size);
   line-height: var(--cb-type-small-line);
 }
-.cb-pageheader-crumb {
+.cb-pageheader-path-seg {
   min-width: 0;
   overflow: hidden;
   color: var(--cb-muted);
@@ -140,10 +221,13 @@
   white-space: nowrap;
   transition: color var(--cb-motion-hover);
 }
-.cb-pageheader-crumb:hover {
+a.cb-pageheader-path-seg:hover {
   color: var(--cb-ink);
 }
-.cb-pageheader-crumb-sep {
+.cb-pageheader-path-seg[data-current="true"] {
+  color: var(--cb-ink);
+}
+.cb-pageheader-path-sep {
   flex: none;
   color: var(--cb-faint);
 }
@@ -152,6 +236,11 @@
   align-items: flex-end;
   gap: var(--cb-space-3);
   min-width: 0;
+}
+.cb-pageheader-avatar {
+  display: inline-flex;
+  flex: none;
+  align-self: center;
 }
 .cb-pageheader-text {
   flex: 1;
@@ -169,10 +258,21 @@
   overflow: hidden;
   color: var(--cb-ink);
   font-size: var(--cb-type-h1-size);
-  font-weight: 700;
+  font-weight: 600;
   line-height: var(--cb-type-h1-line);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* Loading: a title-size bar stands in for the h1 and takes the h1's line box. */
+.cb-pageheader-title-bar {
+  flex: 1;
+  min-width: 0;
+}
+.cb-pageheader-tab-slots {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-4);
+  height: var(--cb-control-default);
 }
 .cb-pageheader-count {
   flex: none;
@@ -204,6 +304,11 @@
   .cb-pageheader-actions[data-responsive="true"] [data-fold="inline"] {
     display: none;
   }
+  /* 40 px tap targets on phones. */
+  .cb-pageheader-actions .cb-btn {
+    min-width: 40px;
+    min-height: 40px;
+  }
 }
 @media (min-width: 640px) {
   .cb-pageheader-actions[data-responsive="true"] [data-fold="menu"] {
@@ -231,12 +336,38 @@
   display: flex;
   gap: var(--cb-space-2);
 }
+/* Phones (below 640): two columns, so four metrics are 2 × 2 and their labels keep their words. */
+@media (max-width: 639px) {
+  .cb-stat-cards {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
 .cb-stat-card {
   flex: 1 1 0;
   min-width: 0;
   padding: var(--cb-space-2) var(--cb-space-3);
   border-radius: var(--cb-radius-md);
   background: var(--cb-panel);
+  box-shadow: inset 0 0 0 1px var(--cb-line-card);
+}
+/* A linked card (spec §6.14): the whole card is the link; hover ground, accent focus ring. */
+a.cb-stat-card {
+  display: block;
+  overflow: hidden;
+  color: var(--cb-ink);
+  text-decoration: none;
+  transition: background-color var(--cb-motion-hover);
+}
+a.cb-stat-card:visited {
+  color: var(--cb-ink);
+}
+a.cb-stat-card:hover {
+  background: var(--cb-hover);
+}
+a.cb-stat-card:focus-visible {
+  outline: 2px solid var(--cb-accent);
+  outline-offset: 2px;
 }
 .cb-stat-label {
   overflow: hidden;
@@ -278,6 +409,24 @@
   flex: 1;
   min-height: 0;
 }
+/* InboxPage: the rail + content + inspector split is capped at the content width inside the
+   content padding, like every frame, and reserves the same scrollbar gutter as the head (overflow:
+   hidden makes it a scroll container; the columns scroll on their own), so its left edge is the
+   head's. */
+.cb-template[data-template="InboxPage"] .cb-body:not([data-layout="single"]) {
+  box-sizing: border-box;
+  padding: 0 var(--cb-content-pad);
+  overflow: hidden;
+  scrollbar-gutter: stable;
+}
+.cb-template[data-template="InboxPage"] .cb-body-row {
+  width: 100%;
+  max-width: var(--cb-layout-content);
+  margin: 0 auto;
+}
+.cb-template[data-template="InboxPage"] .cb-body-tools {
+  padding-inline: 0;
+}
 .cb-body-rail {
   flex: none;
   width: 240px;
@@ -294,6 +443,8 @@
   flex: 1;
   min-width: min(560px, 100%);
   overflow: auto;
+  /* Same gutter as .cb-template-head: the column keeps its x whether or not the page scrolls. */
+  scrollbar-gutter: stable;
 }
 /* A content column with its own header (SettingsPage): the header stays, the content scrolls. */
 .cb-body-main {
@@ -310,24 +461,28 @@
   box-sizing: border-box;
   padding: var(--cb-space-4) var(--cb-layout-gutter);
 }
-/* List and form widths: the gutter on both sides, the frame centered, space at the bottom. */
-.cb-body-content:has(> .cb-body-frame[data-width="list"]),
-.cb-body-content:has(> .cb-body-frame[data-width="form"]) {
-  box-sizing: border-box;
-  padding: 0 var(--cb-layout-gutter) var(--cb-space-6);
+.cb-body-content[data-padded="true"]:has(> .cb-body-frame[data-width="content"]) {
+  padding: var(--cb-space-4) var(--cb-content-pad) var(--cb-space-6);
 }
-.cb-body-frame[data-width="list"] {
+/* The content width: the side padding on both sides, the frame centered, space at the bottom. */
+.cb-body-content:not([data-padded="true"]):has(> .cb-body-frame[data-width="content"]) {
+  box-sizing: border-box;
+  padding: 0 var(--cb-content-pad) var(--cb-space-6);
+}
+.cb-body-frame[data-width="full"] {
+  height: 100%;
+}
+/* InboxPage's middle column: the split already sits inside the content padding. */
+.cb-template[data-template="InboxPage"] .cb-body-content[data-padded="true"] {
+  padding: var(--cb-space-4);
+}
+.cb-body-frame[data-width="content"] {
   display: flex;
   flex-direction: column;
   gap: var(--cb-space-3);
 }
-.cb-body-frame[data-width="form"] {
-  display: flex;
-  flex-direction: column;
+.cb-body-frame[data-width="content"][data-gap="loose"] {
   gap: var(--cb-space-6);
-}
-.cb-body-frame[data-width="full"] {
-  height: 100%;
 }
 .cb-body-rail-inner {
   padding: var(--cb-space-3) var(--cb-space-4);
@@ -360,15 +515,28 @@
 }
 
 /* ActionRow (spec §4.4): above the StatusBar, panel-2 ground, soft top line. */
+/* The ground spans the content area; the row inside it is the content frame (spec §4.4): the
+   template's side padding, the one content width and the body's scrollbar gutter, so its right end
+   is the content's. Outside a template (the reference set) the padding is the gutter. */
 .cb-actionrow {
   display: flex;
   flex: none;
   align-items: center;
-  gap: var(--cb-space-2);
   height: var(--cb-layout-action-row);
-  padding: 0 var(--cb-layout-gutter);
+  padding: 0 var(--cb-content-pad, var(--cb-layout-gutter));
+  overflow: hidden;
+  scrollbar-gutter: stable;
   border-top: 1px solid var(--cb-line-soft);
   background: var(--cb-panel-2);
+}
+.cb-actionrow-frame {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: var(--cb-space-2);
+  min-width: 0;
+  max-width: var(--cb-layout-content);
+  margin: 0 auto;
 }
 .cb-actionrow-info {
   display: flex;
@@ -436,6 +604,9 @@
   flex: none;
   gap: var(--cb-space-3);
 }
+.cb-statusbar-right > [data-tone="fail"] {
+  color: var(--cb-fail);
+}
 
 /* Body before hydration: CSS picks the inline rail / inspector or their toolbar buttons. */
 .cb-body-tool {
@@ -462,8 +633,13 @@
   }
 }
 
-/* Full-width templates: the StatCards under the header, inside the fixed head. */
-.cb-template-head-frame[data-width="full"] {
+/* PageTabs inside the head frame line up with the frame. */
+.cb-template-head-frame .cb-pagetabs {
+  padding: 0;
+}
+
+/* Templates that draw the StatCards under the header, inside the fixed head. */
+.cb-template-head-frame[data-stats="head"] {
   display: flex;
   flex-direction: column;
   gap: var(--cb-space-3);

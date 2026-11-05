@@ -3,6 +3,8 @@ import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
 import { AgentLookup, visibleTo } from "../agents/agent-lookup.js";
 import type { AgentDefinition, ModelRef } from "../agents/definition.js";
+import { BackgroundTaskStopper } from "../background/stop.js";
+import { unbindConversation } from "../channels/threads.js";
 import type { TitleSource } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
@@ -40,6 +42,36 @@ export interface ConversationView {
   parentConversationId: string | null;
   /** A sub-agent's type as resolved at its first dispatch; null for any other conversation. */
   subagentType: string | null;
+  /** When the owner archived it; null = not archived (hidden from the default lists). */
+  archivedAt: Date | null;
+  /**
+   * What the latest run is doing: `running` (queued or running), `waiting` (an approval or a
+   * question), else null. Only the list queries compute it; other responses carry null.
+   */
+  activity: "running" | "waiting" | null;
+}
+
+/** Escapes `\`, `%` and `_` so user text is matched literally by `LIKE … ESCAPE '\'`. */
+export function escapeLike(s: string): string {
+  return s.replace(/[\\%_]/g, (ch) => `\\${ch}`);
+}
+
+/**
+ * SQL for the activity of the conversation row aliased/named `ref` (a correlated subquery).
+ * A run waiting on its sub-agents (status waiting with `wait_expires_at`, set only for a
+ * `subagents` wait) is still working, so it reports `running`; only a wait for a person
+ * (approval, input) reports `waiting`.
+ */
+function activitySql(ref: string) {
+  const id = sql.ref(`${ref}.id`);
+  return sql<"running" | "waiting" | null>`(
+    SELECT CASE
+      WHEN lr.status IN ('queued', 'running') THEN 'running'
+      WHEN lr.status = 'waiting' AND lr.wait_expires_at IS NOT NULL THEN 'running'
+      WHEN lr.status = 'waiting' THEN 'waiting' END
+    FROM capybara.runs lr WHERE lr.conversation_id = ${id}
+    ORDER BY lr.created_at DESC, lr.id DESC LIMIT 1
+  )`;
 }
 
 /** One agent's group in the sidebar list: the caller's newest conversations with that agent. */
@@ -129,6 +161,7 @@ const COLUMNS = [
   "updated_at",
   "parent_conversation_id",
   "subagent_type",
+  "archived_at",
 ] as const;
 
 function toView(r: {
@@ -144,6 +177,8 @@ function toView(r: {
   updated_at: Date;
   parent_conversation_id: string | null;
   subagent_type: string | null;
+  archived_at: Date | null;
+  activity?: "running" | "waiting" | null;
 }): ConversationView {
   return {
     id: r.id,
@@ -158,6 +193,8 @@ function toView(r: {
     updatedAt: r.updated_at,
     parentConversationId: r.parent_conversation_id,
     subagentType: r.subagent_type,
+    archivedAt: r.archived_at,
+    activity: r.activity ?? null,
   };
 }
 
@@ -232,6 +269,9 @@ export class ConversationsService {
     private readonly attachments: Pick<AttachmentsService, "bindForMessage">,
     /** Renders a person's skill invocation (phase D). */
     @Inject(SkillInvoker) private readonly invoker: Pick<SkillInvoker, "prepare">,
+    /** Stops a deleted conversation's background tasks. */
+    @Inject(BackgroundTaskStopper)
+    private readonly background: Pick<BackgroundTaskStopper, "stopForDeletedConversation">,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
   ) {}
 
@@ -264,13 +304,20 @@ export class ConversationsService {
    * message's `clientMessageId` (`create_request_id`), so a retried send returns the same
    * conversation and event with `created: false`. An agent the caller cannot use →
    * `agent.not_found` and nothing is written. Queues a run afterwards, like `postUserMessage`.
+   * `events` are every event the create wrote, in seq order from seq 1 (a `model_switched` before
+   * the message when the send switched), so a client can seed the new conversation's log whole.
    */
   async createWithMessage(
     orgId: string,
     accountId: string,
     agentId: string,
     input: UserMessageInput & { clientMessageId: string },
-  ): Promise<{ conversation: ConversationView; event: ConversationEvent; created: boolean }> {
+  ): Promise<{
+    conversation: ConversationView;
+    event: ConversationEvent;
+    events: ConversationEvent[];
+    created: boolean;
+  }> {
     const agent = await this.agents.get(orgId, agentId, accountId);
     const prior = await this.findCreated(orgId, accountId, agentId, input.clientMessageId);
     if (prior) return prior;
@@ -278,15 +325,16 @@ export class ConversationsService {
     const extra = await this.resolveExtra(orgId, accountId, input);
     const invoked = await this.prepareSkill(orgId, agentId, undefined, agent.definition, input);
     const id = randomUUID();
-    const written = await this.createIn(id, orgId, accountId, agentId, input, next, extra, invoked);
-    if (!written) {
+    const all = await this.createIn(id, orgId, accountId, agentId, input, next, extra, invoked);
+    const written = all?.at(-1);
+    if (!all || !written) {
       const raced = await this.findCreated(orgId, accountId, agentId, input.clientMessageId);
       if (!raced) throw new ApiError("conflict", "The conversation is being created; retry");
       return raced;
     }
     await this.eventLog.notify(id, written.seq);
     await this.runs.ensureRun(id);
-    return { conversation: await this.rowView(id), event: written, created: true };
+    return { conversation: await this.rowView(id), event: written, events: all, created: true };
   }
 
   /** The conversation row and its first message (undefined: a concurrent retry committed first). */
@@ -301,7 +349,7 @@ export class ConversationsService {
     next: Selection | null,
     extra: ResolvedExtra,
     invoked: RenderedInvocation | undefined,
-  ): Promise<ConversationEvent | undefined> {
+  ): Promise<ConversationEvent[] | undefined> {
     const row = await this.db
       .insertInto("conversations")
       .values({
@@ -335,7 +383,12 @@ export class ConversationsService {
     accountId: string,
     agentId: string,
     clientMessageId: string,
-  ): Promise<{ conversation: ConversationView; event: ConversationEvent; created: false } | null> {
+  ): Promise<{
+    conversation: ConversationView;
+    event: ConversationEvent;
+    events: ConversationEvent[];
+    created: false;
+  } | null> {
     const row = await this.db
       .selectFrom("conversations")
       .select(COLUMNS)
@@ -353,8 +406,12 @@ export class ConversationsService {
     }
     const event = await this.eventLog.findByIdem(row.id, userMessageIdemKey(clientMessageId));
     if (!event) return null;
+    // what the first send wrote: the log from its start up to the message
+    const events = (await this.eventLog.readAfter(row.id, 0, event.seq)).filter(
+      (e) => e.seq <= event.seq,
+    );
     await this.runs.ensureRun(row.id);
-    return { conversation: toView(row), event, created: false };
+    return { conversation: toView(row), event, events, created: false };
   }
 
   private async rowView(id: string): Promise<ConversationView> {
@@ -386,6 +443,65 @@ export class ConversationsService {
       .executeTakeFirstOrThrow();
     await this.eventLog.publishChanged(conversationId, "title");
     return toView(row);
+  }
+
+  /**
+   * Archives or unarchives a conversation (owner only, as {@link rename}). An archived
+   * conversation leaves the default lists but stays readable. Publishes `changed: archived`.
+   */
+  async setArchived(
+    orgId: string,
+    conversationId: string,
+    accountId: string,
+    archived: boolean,
+  ): Promise<ConversationView> {
+    await this.writable(orgId, conversationId, accountId);
+    const row = await this.db
+      .updateTable("conversations")
+      .set({ archived_at: archived ? sql<Date>`now()` : null })
+      .where("id", "=", conversationId)
+      .returning(COLUMNS)
+      .executeTakeFirstOrThrow();
+    await this.eventLog.publishChanged(conversationId, "archived");
+    return toView(row);
+  }
+
+  /**
+   * Soft-deletes a conversation (owner only; a sub-agent's conversation is `conversation.read_only`):
+   * stops an active run, hides the conversation everywhere for its owner and drops its channel
+   * bindings, then stops every running background task in its sandbox (its sub-agents' too;
+   * outside the delete's transaction, a task whose sandbox cannot be reached ends `lost` with
+   * `kill_pending`). The tasks are stopped after the conversation is marked deleted, so no finish
+   * (the stops' own, or one the poller writes meanwhile) can wake a run on it: `ensureRun` refuses a
+   * deleted conversation (the stops' finishes carry `stoppedBy: "deletion"` as well). The event
+   * log, runs and trajectory stay (enterprise admins still see them).
+   */
+  async remove(orgId: string, conversationId: string, accountId: string): Promise<void> {
+    await this.writable(orgId, conversationId, accountId);
+    try {
+      await this.abort(orgId, conversationId, accountId);
+    } catch (e) {
+      if (!(e instanceof ApiError && e.code === "run.not_active")) throw e;
+    }
+    await this.markDeleted(conversationId);
+    await this.background.stopForDeletedConversation(conversationId);
+    await this.eventLog.publishChanged(conversationId, "deleted");
+  }
+
+  // the publish happens after the commit, in the caller
+  @Transactional()
+  private async markDeleted(conversationId: string): Promise<void> {
+    await this.db
+      .updateTable("conversations")
+      .set({ deleted_at: sql<Date>`now()` })
+      .where("id", "=", conversationId)
+      .execute();
+    // Queued messages must not start a run on a deleted conversation
+    await this.db
+      .deleteFrom("conversation_queue")
+      .where("conversation_id", "=", conversationId)
+      .execute();
+    await unbindConversation(this.db.db, conversationId);
   }
 
   /** 读会话：非所有者、或 agent 已对所有者不可用 → `conversation.not_found`。 */
@@ -422,6 +538,7 @@ export class ConversationsService {
       .where("id", "=", conversationId)
       .where("org_id", "=", orgId)
       .where("account_id", "=", viewerAccountId)
+      .where("deleted_at", "is", null)
       // Hidden eval replay conversations (kind 'eval') are not reachable here (only the trajectory
       // viewer shows them); a sub-agent's conversation is, for its owner (sub-agents spec §6.1)
       .where("kind", "in", ["chat", "subagent"])
@@ -449,15 +566,25 @@ export class ConversationsService {
   async listMine(
     orgId: string,
     accountId: string,
-    opts: { after?: string; limit: number; agentId?: string },
+    opts: {
+      after?: string;
+      limit: number;
+      agentId?: string;
+      archived?: boolean;
+      q?: string;
+      state?: "running" | "waiting";
+    },
   ): Promise<ConversationView[]> {
     let q = this.db
       .selectFrom("conversations")
       .select(COLUMNS)
+      .select(activitySql("conversations").as("activity"))
       .where("org_id", "=", orgId)
       .where("account_id", "=", accountId)
       // 评测回放的隐藏对话（kind = 'eval'）不在「我的对话」里
       .where("kind", "=", "chat")
+      .where("deleted_at", "is", null)
+      .where("archived_at", opts.archived === true ? "is not" : "is", null)
       .where((eb) =>
         eb.exists(
           eb
@@ -472,6 +599,12 @@ export class ConversationsService {
       .orderBy("id", "desc")
       .limit(opts.limit);
     if (opts.agentId !== undefined) q = q.where("agent_id", "=", opts.agentId);
+    if (opts.q !== undefined) {
+      q = q.where(sql<boolean>`conversations.title ILIKE ${`%${escapeLike(opts.q)}%`} ESCAPE '\\'`);
+    }
+    if (opts.state !== undefined) {
+      q = q.where(sql<boolean>`${activitySql("conversations")} = ${opts.state}`);
+    }
     if (opts.after !== undefined) {
       const after = opts.after;
       q = q.where(
@@ -495,14 +628,29 @@ export class ConversationsService {
   async listGroups(
     orgId: string,
     accountId: string,
-    opts: { perGroup: number; limit: number; after?: string },
-  ): Promise<{ groups: ConversationGroup[]; next: string | null }> {
+    opts: {
+      perGroup: number;
+      limit: number;
+      after?: string;
+      archived?: boolean;
+      q?: string;
+      state?: "running" | "waiting";
+    },
+  ): Promise<{ groups: ConversationGroup[]; next: string | null; archivedCount: number }> {
     const visibleAgents = this.db
       .selectFrom("agents")
       .select("agents.id")
       .where("agents.org_id", "=", orgId)
       .where("agents.deleted_at", "is", null)
       .where(visibleTo(accountId));
+    const archivedFilter =
+      opts.archived === true ? sql`c.archived_at IS NOT NULL` : sql`c.archived_at IS NULL`;
+    const searchFilter =
+      opts.q === undefined
+        ? sql``
+        : sql`AND c.title ILIKE ${`%${escapeLike(opts.q)}%`} ESCAPE '\\'`;
+    const stateFilter =
+      opts.state === undefined ? sql`` : sql`AND ${activitySql("c")} = ${opts.state}`;
     const cursor =
       opts.after === undefined
         ? sql``
@@ -524,11 +672,14 @@ export class ConversationsService {
       updated_at: Date;
       parent_conversation_id: string | null;
       subagent_type: string | null;
+      archived_at: Date | null;
+      activity: "running" | "waiting" | null;
     }>`
       WITH g AS (
         SELECT c.agent_id, max(c.updated_at) AS latest_at
         FROM capybara.conversations c
         WHERE c.org_id = ${orgId} AND c.account_id = ${accountId} AND c.kind = 'chat'
+          AND c.deleted_at IS NULL AND ${archivedFilter} ${searchFilter} ${stateFilter}
           AND c.agent_id IN ${visibleAgents}
         GROUP BY c.agent_id
       ), page AS (
@@ -539,15 +690,18 @@ export class ConversationsService {
       )
       SELECT page.agent_id, page.latest_at, v.definition ->> 'name' AS agent_name,
         cs.id, cs.org_id, cs.account_id, cs.title, cs.title_source, cs.selection, cs.last_seq,
-        cs.created_at, cs.updated_at, cs.parent_conversation_id, cs.subagent_type
+        cs.created_at, cs.updated_at, cs.parent_conversation_id, cs.subagent_type,
+        cs.archived_at, cs.activity
       FROM page
       JOIN capybara.agents a ON a.id = page.agent_id
       JOIN capybara.agent_versions v ON v.agent_id = a.id AND v.version = a.current_version
       CROSS JOIN LATERAL (
         SELECT c.id, c.org_id, c.account_id, c.title, c.title_source, c.selection, c.last_seq,
-          c.created_at, c.updated_at, c.parent_conversation_id, c.subagent_type
+          c.created_at, c.updated_at, c.parent_conversation_id, c.subagent_type,
+          c.archived_at, ${activitySql("c")} AS activity
         FROM capybara.conversations c
         WHERE c.org_id = ${orgId} AND c.account_id = ${accountId} AND c.kind = 'chat'
+          AND c.deleted_at IS NULL AND ${archivedFilter} ${searchFilter} ${stateFilter}
           AND c.agent_id = page.agent_id
         ORDER BY c.updated_at DESC, c.id DESC
         LIMIT ${opts.perGroup + 1}
@@ -572,7 +726,14 @@ export class ConversationsService {
     }
     const page = groups.slice(0, opts.limit);
     const next = groups.length > opts.limit ? (page.at(-1)?.agent.id ?? null) : null;
-    return { groups: page, next };
+    // The archived entry's count ignores `q` and `state`
+    const counted = await sql<{ n: string }>`
+      SELECT count(*) AS n FROM capybara.conversations c
+      WHERE c.org_id = ${orgId} AND c.account_id = ${accountId} AND c.kind = 'chat'
+        AND c.deleted_at IS NULL AND c.archived_at IS NOT NULL
+        AND c.agent_id IN ${visibleAgents}
+    `.execute(this.db.db);
+    return { groups: page, next, archivedCount: Number(counted.rows[0]?.n ?? 0) };
   }
 
   /**
@@ -789,6 +950,15 @@ export class ConversationsService {
         this.userMessage(accountId, input, extra, [], invoked),
       ]);
     }
+    // The message is written: it brings an archived conversation back into the default lists
+    if (conv.archivedAt !== null) {
+      await this.db
+        .updateTable("conversations")
+        .set({ archived_at: null })
+        .where("id", "=", conversationId)
+        .execute();
+      await this.eventLog.publishChanged(conversationId, "archived");
+    }
     await this.runs.ensureRun(conversationId);
     return event as ConversationEvent;
   }
@@ -806,7 +976,16 @@ export class ConversationsService {
     invoked: RenderedInvocation | undefined,
   ): Promise<ConversationEvent> {
     const blocks = await this.bindIn(orgId, conversationId, accountId, input.files ?? []);
-    return this.writeMessage(conversationId, accountId, input, next, extra, blocks, invoked);
+    const written = await this.writeMessage(
+      conversationId,
+      accountId,
+      input,
+      next,
+      extra,
+      blocks,
+      invoked,
+    );
+    return written.at(-1) as ConversationEvent;
   }
 
   /**
@@ -856,7 +1035,8 @@ export class ConversationsService {
 
   /**
    * Writes the message (preceded by its `model_switched` when it switches) inside `t` and updates
-   * `conversations.selection`; returns the `user_message` event. The caller notifies after commit.
+   * `conversations.selection`; returns the events written, in seq order (the `user_message`
+   * last). The caller notifies after commit.
    */
   @Transactional({ propagation: "mandatory" })
   private async writeMessage(
@@ -867,7 +1047,7 @@ export class ConversationsService {
     extra: ResolvedExtra,
     blocks: LogContentBlock[],
     invoked: RenderedInvocation | undefined,
-  ): Promise<ConversationEvent> {
+  ): Promise<ConversationEvent[]> {
     const events: AppendEvent[] = [];
     if (next !== null) {
       events.push({
@@ -890,7 +1070,7 @@ export class ConversationsService {
         .where("id", "=", conversationId)
         .execute();
     }
-    return written.at(-1) as ConversationEvent;
+    return written;
   }
 
   /**

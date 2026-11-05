@@ -110,7 +110,11 @@ export const ERROR_CODES = {
   "setup.token_invalid": 403,
   "agent.not_found": 404,
   "agent.version_conflict": 409,
+  /** The profile was changed since the client read it (`expectedUpdatedAt` is stale). */
+  "agent.profile_conflict": 409,
   "agent.model_unavailable": 400,
+  /** A save gave `instructionFiles` and an `instructions` that is not their join. */
+  "agent.instructions_mismatch": 400,
   /**
    * `skills.pinned` of an agent definition is refused (details: `{ skill, reason, totalBytes? }`;
    * reasons `not_selected`, `not_found`, `duplicate`, `too_many`, `too_large`, `manual_only`).
@@ -130,6 +134,10 @@ export const ERROR_CODES = {
   /** A sub-agent's conversation takes no messages from people (sub-agents spec §6.1). */
   "conversation.read_only": 409,
   "run.not_active": 409,
+  /** A background task that is not in this conversation (or its sub-agents), or does not exist. */
+  "background_task.not_found": 404,
+  /** The task's output cannot be read now (its sandbox is not running and no finish recorded it). */
+  "background_task.output_unavailable": 409,
   "connector.not_found": 404,
   "connector.slug_taken": 409,
   "connector.connect_failed": 502,

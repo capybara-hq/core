@@ -1,4 +1,5 @@
 import { apiFetch } from "./api";
+import type { OrgRole } from "./members";
 
 /**
  * 内核会话 API 的类型（浏览器端视角：只声明界面用到的字段；时间为 JSON 字符串）。
@@ -106,7 +107,10 @@ type EventBody =
         reason: "user" | "unavailable";
       };
     }
-  | { type: "run_started"; payload: { agentVersion: number; model: ModelRef } }
+  | {
+      type: "run_started";
+      payload: { agentVersion: number; model: ModelRef; triggerAccountId?: string };
+    }
   | {
       type: "model_call";
       payload: {
@@ -178,7 +182,7 @@ type EventBody =
         expiresAt: string;
         /** Which rule asked (display only; absent in older logs). */
         policy?: ApprovalPolicy;
-      };
+      } & Approver;
     }
   | {
       type: "approval_decided";
@@ -235,6 +239,23 @@ type EventBody =
           version: number;
           source: string;
         }[];
+      };
+    }
+  /** A background `Bash` task ended (background Bash spec §2): the thread's one-line notice. */
+  | {
+      type: "background_task_finished";
+      payload: {
+        taskId: string;
+        description: string;
+        status: Exclude<BackgroundTaskStatus, "running">;
+        exitCode: number | null;
+        elapsedMs: number;
+        /** The output's last lines (at most 20 lines, 4000 characters). */
+        lastLines: string;
+        outputPath: string;
+        reported: boolean;
+        lostReason?: string;
+        stoppedBy?: "person" | "deletion";
       };
     }
   | { type: "compaction_summary"; payload: { coversUpToSeq: number; text: string } }
@@ -308,7 +329,7 @@ type EventBody =
         questionId?: string;
         toolKey: string;
         expiresAt?: string;
-      };
+      } & Approver;
     }
   /** Parent log: a sub-agent's run ended. */
   | {
@@ -370,6 +391,15 @@ export interface ConversationUsage {
   cacheWriteTokens: number;
 }
 
+/**
+ * Who may decide an approval (display only, absent in older logs): the assigned member, else the
+ * escalation role (`approval_requested`, and a sub-agent's in `subagent_waiting`).
+ */
+export interface Approver {
+  requestedFor?: string | null;
+  approverRole?: OrgRole | null;
+}
+
 /** 已写入日志的会话事件。 */
 export type ConversationEvent = (EventBody | SkillForkResultBody) & {
   conversationId: string;
@@ -406,6 +436,8 @@ export interface Conversation {
   subagentType?: string | null;
   /** The conversation's owner. */
   accountId?: string;
+  /** What it is doing now: a run in progress, or waiting for me (absent on older kernels). */
+  activity?: "running" | "waiting" | null;
 }
 
 /** A parent conversation's sub-agent (`GET .../conversations/:id/subagents`). */
@@ -422,6 +454,40 @@ export interface SubagentView {
   usage: ConversationUsage;
   pendingApprovalIds: string[];
   pendingQuestionIds: string[];
+}
+
+/** A background `Bash` task's status (kernel `BackgroundTaskStatus`). */
+export type BackgroundTaskStatus =
+  | "running"
+  | "completed"
+  | "failed"
+  | "stopped"
+  | "timed_out"
+  | "lost";
+
+/** A background task (`GET .../conversations/:id/background-tasks`). */
+export interface BackgroundTaskView {
+  id: string;
+  /** The conversation the task was asked for. */
+  conversationId: string;
+  /** The sub-agent (child conversation) that started it; null for the conversation's own. */
+  subagentId: string | null;
+  description: string;
+  command: string;
+  status: BackgroundTaskStatus;
+  exitCode: number | null;
+  lostReason: string | null;
+  startedAt: string;
+  finishedAt: string | null;
+  /** A stop is under way (another request is handling it); the task still runs. */
+  stopping: boolean;
+}
+
+/** The end of a task's output (`live`: read from the sandbox; `event`: the finish's last lines). */
+export interface BackgroundTaskOutput {
+  text: string;
+  truncated: boolean;
+  source: "live" | "event";
 }
 
 const base = (orgId: string) => `/api/v1/orgs/${encodeURIComponent(orgId)}/conversations`;
@@ -471,7 +537,12 @@ export const createConversationWithMessage = (
   agentId: string,
   message: Omit<MessageInput, "retryOf">,
 ) =>
-  apiFetch<{ conversation: Conversation; event: ConversationEvent }>(base(orgId), {
+  apiFetch<{
+    conversation: Conversation;
+    event: ConversationEvent;
+    /** Every event the create wrote, from seq 1 (a `model_switched` first); older kernels omit it. */
+    events?: ConversationEvent[];
+  }>(base(orgId), {
     method: "POST",
     body: JSON.stringify({ agentId, message: messageBody(message) }),
   });
@@ -482,6 +553,17 @@ export const renameConversation = (orgId: string, id: string, title: string) =>
     method: "PATCH",
     body: JSON.stringify({ title }),
   });
+
+/** Archive or unarchive (owner only); archiving does not stop a running run. */
+export const archiveConversation = (orgId: string, id: string, archived: boolean) =>
+  apiFetch<{ conversation: Conversation }>(one(orgId, id), {
+    method: "PATCH",
+    body: JSON.stringify({ archived }),
+  });
+
+/** Delete (owner only, soft): stops a running run first. */
+export const deleteConversation = (orgId: string, id: string) =>
+  apiFetch<void>(one(orgId, id), { method: "DELETE" });
 
 /** One agent's group of my conversations (`GET .../conversations/groups`, the sidebar). */
 export interface ConversationGroup {
@@ -503,7 +585,35 @@ function query(opts: Record<string, string | number | undefined>): string {
 }
 
 /**
+ * What narrows my conversations (web order §2.1): a title substring (`q`, case-insensitive), a run
+ * state, and the archived list instead of the live one. A blank `q` and state `all` are omitted
+ * (the kernel rejects `?q=`); `q` is cut to the kernel's 100 characters.
+ */
+export type ConversationSearch = {
+  q?: string;
+  state?: "all" | "running" | "waiting";
+  archived?: boolean;
+};
+
+const searchQuery = (s: ConversationSearch) => {
+  const q = s.q?.trim().slice(0, 100);
+  return {
+    q: q === "" ? undefined : q,
+    state: s.state === undefined || s.state === "all" ? undefined : s.state,
+    archived: s.archived === true ? "1" : undefined,
+  };
+};
+
+/** One page of {@link listConversationGroups}. */
+export interface ConversationGroupsPage {
+  groups: ConversationGroup[];
+  next: string | null;
+  archivedCount?: number;
+}
+
+/**
  * My conversations grouped by agent, by latest activity; `next` is passed back as `after`.
+ * `archivedCount` counts my archived conversations whatever the search (the archived entry).
  *
  * The cursor is the last group's agent id, re-read at that group's latest activity when the next
  * page is asked for: a group that gets new activity between two pages can come back on the next
@@ -512,19 +622,29 @@ function query(opts: Record<string, string | number | undefined>): string {
  */
 export const listConversationGroups = (
   orgId: string,
-  opts: { perGroup?: number; limit?: number; after?: string } = {},
+  opts: { perGroup?: number; limit?: number; after?: string } & ConversationSearch = {},
 ) =>
-  apiFetch<{ groups: ConversationGroup[]; next: string | null }>(
-    `${base(orgId)}/groups${query({ perGroup: opts.perGroup, limit: opts.limit, after: opts.after })}`,
+  apiFetch<ConversationGroupsPage>(
+    `${base(orgId)}/groups${query({
+      perGroup: opts.perGroup,
+      limit: opts.limit,
+      after: opts.after,
+      ...searchQuery(opts),
+    })}`,
   );
 
 /** My conversations, newest first; `agentId` keeps one agent's (a group's "More"). */
 export const listConversations = (
   orgId: string,
-  opts: { agentId?: string; after?: string; limit?: number } = {},
+  opts: { agentId?: string; after?: string; limit?: number } & ConversationSearch = {},
 ) =>
   apiFetch<{ conversations: Conversation[]; next: string | null }>(
-    `${base(orgId)}${query({ agentId: opts.agentId, after: opts.after, limit: opts.limit })}`,
+    `${base(orgId)}${query({
+      agentId: opts.agentId,
+      after: opts.after,
+      limit: opts.limit,
+      ...searchQuery(opts),
+    })}`,
   );
 
 export const getConversation = (orgId: string, id: string) =>
@@ -652,6 +772,23 @@ export const listSubagents = (orgId: string, id: string, limit = 100) =>
 export const getConversationUsage = (orgId: string, id: string) =>
   apiFetch<{ usage: ConversationUsage }>(`${one(orgId, id)}/usage`);
 
+/** The conversation's background tasks and its sub-agents', newest first. */
+export const listBackgroundTasks = (orgId: string, id: string) =>
+  apiFetch<{ tasks: BackgroundTaskView[] }>(`${one(orgId, id)}/background-tasks`);
+
+/** A person's stop: the task after it (`running` with `stopping` while the stop goes on). */
+export const stopBackgroundTask = (orgId: string, id: string, taskId: string) =>
+  apiFetch<{ task: BackgroundTaskView }>(
+    `${one(orgId, id)}/background-tasks/${encodeURIComponent(taskId)}/stop`,
+    { method: "POST" },
+  );
+
+/** The end of a task's output; 409 `background_task.output_unavailable` when nothing is readable. */
+export const readBackgroundTaskOutput = (orgId: string, id: string, taskId: string) =>
+  apiFetch<BackgroundTaskOutput>(
+    `${one(orgId, id)}/background-tasks/${encodeURIComponent(taskId)}/output`,
+  );
+
 /** 中止当前运行：202 `{ runId }`；没有活跃运行时内核返回 409 `run.not_active`。 */
 export const abortRun = (orgId: string, id: string) =>
   apiFetch<{ runId: string }>(`${one(orgId, id)}/abort`, { method: "POST" });
@@ -702,8 +839,10 @@ export const toolOutputSize = (orgId: string, conversationId: string, outputId: 
     `${one(orgId, conversationId)}/outputs/${encodeURIComponent(outputId)}?limit=1`,
   ).then((r) => r.output.totalChars);
 
-/** Fired on `window` when the sidebar's conversation list should reload (a title changed). */
-export const CONVERSATIONS_CHANGED = "cap:conversations-changed";
-export const notifyConversationsChanged = () => {
-  if (typeof window !== "undefined") window.dispatchEvent(new Event(CONVERSATIONS_CHANGED));
-};
+/** A row action without a current org: AppFrame shows `shell.noCurrentOrg`. */
+export class NoCurrentOrgError extends Error {
+  constructor() {
+    super("no current organization");
+    this.name = "NoCurrentOrgError";
+  }
+}

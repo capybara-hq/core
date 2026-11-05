@@ -83,22 +83,37 @@ describe("@capybara-hq/design/fixtures", () => {
     expect(fixtures.GROUPS_FIXTURE[2]?.conversations.some((c) => c.title === null)).toBe(true);
   });
 
-  it("nav items use known icons, unique ids, and follow the §4.4 order", () => {
+  it("nav items use known icons, unique ids, and follow the web-order §2.1 order", () => {
     const icons = new Set<string>(ICON_NAMES);
-    for (const n of fixtures.NAV_FIXTURE) expect(icons.has(n.icon), n.icon).toBe(true);
+    for (const n of [...fixtures.NAV_FIXTURE, ...fixtures.ADMIN_NAV_FIXTURE])
+      expect(icons.has(n.icon), n.icon).toBe(true);
     const ids = fixtures.NAV_FIXTURE.map((n) => n.id);
     expect(new Set(ids).size).toBe(ids.length);
-    expect(ids).toEqual([
+    expect(fixtures.NAV_FIXTURE.filter((n) => n.place === "primary").map((n) => n.id)).toEqual([
       "overview",
       "agents",
-      "skills",
+    ]);
+    // the inbox is a brand-row icon button (acceptance round 2, B2)
+    expect(fixtures.NAV_FIXTURE.filter((n) => n.place === "brand").map((n) => n.id)).toEqual([
       "inbox",
+    ]);
+    expect(fixtures.NAV_FIXTURE.filter((n) => n.place === "more").map((n) => n.id)).toEqual([
+      "skills",
       "connectors",
       "catalog",
       "channels",
       "evals",
       "settings",
-      "admin",
+    ]);
+    expect(fixtures.ADMIN_NAV_FIXTURE.map((n) => n.label)).toEqual([
+      "概览",
+      "账号",
+      "组织",
+      "扩展",
+      "企业目录",
+      "市场",
+      "模型",
+      "部署设置",
     ]);
     expect(fixtures.EXTENSION_PAGES_FIXTURE).toHaveLength(2);
   });
@@ -128,7 +143,9 @@ describe("@capybara-hq/design/fixtures", () => {
         expect(rows.length, state).toBeGreaterThan(0);
         for (const r of rows) {
           if (r.status === "failed") expect(r.error, `${state}/${r.id}`).toBeTruthy();
-          if (r.status === "running") expect(r.elapsed, `${state}/${r.id}`).toBeTruthy();
+          // a call waiting for a person shows no timer (§6.16.9)
+          if (r.status === "running" && r.waiting === undefined)
+            expect(r.elapsed, `${state}/${r.id}`).toBeTruthy();
         }
       }
       const ids = Object.values(fixtures.TOOL_FIXTURES).flatMap((rows) => rows.map((r) => r.id));

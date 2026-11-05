@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<title>Repeater · reference</title>
+<link rel="stylesheet" href="/design/styles/fonts.css">
+<link rel="stylesheet" href="/design/styles/tokens.css">
+<link rel="stylesheet" href="reference.css">
+</head>
+<body>
+<main class="r-page">
+<h1>Repeater</h1>
+<p>An array of objects in a config form: hairline item cards with title, subtitle, reorder and remove, or compact rows; an add button or a preset menu (spec §6.26).</p>
+<div class="r-blocks">
+<section data-ref-block="repeater-default" style="width:720px" data-pad>
+  <div class="r-rep" data-part="repeater"><ul class="r-rep-list">
+    <li><div class="r-rep-item" data-part="repeater-item">
+      <div class="r-rep-head" data-part="repeater-head">
+        <span class="r-rep-handle"><i data-icon="grip-vertical" data-size="14"></i></span>
+        <span class="r-rep-titles"><span class="r-rep-title" data-part="repeater-title">deepseek</span><span class="r-rep-subtitle" data-part="repeater-subtitle">https://api.deepseek.com</span></span>
+        <span class="r-rep-actions"><button class="r-icon-btn" data-step="dense" disabled><i data-icon="arrow-up" data-size="14"></i></button><button class="r-icon-btn" data-step="dense" ><i data-icon="arrow-down" data-size="14"></i></button><button class="r-icon-btn" data-step="dense" data-part="repeater-remove"><i data-icon="trash-2" data-size="14"></i></button></span>
+      </div>
+      <div class="r-rep-body" data-part="repeater-body">
+        <div class="r-field"><span class="r-label">名称</span><input class="r-input" value="deepseek"></div>
+        <div class="r-field"><span class="r-label">接口地址</span><input class="r-input" value="https://api.deepseek.com"></div>
+      </div>
+    </div></li>
+    <li><div class="r-rep-item" data-part="repeater-item">
+      <div class="r-rep-head" data-part="repeater-head">
+        <span class="r-rep-handle"><i data-icon="grip-vertical" data-size="14"></i></span>
+        <span class="r-rep-titles"><span class="r-rep-title" data-part="repeater-title">qwen</span><span class="r-rep-subtitle" data-part="repeater-subtitle">https://dashscope.aliyuncs.com/compatible-mode/v1</span></span>
+        <span class="r-rep-actions"><button class="r-icon-btn" data-step="dense" ><i data-icon="arrow-up" data-size="14"></i></button><button class="r-icon-btn" data-step="dense" disabled><i data-icon="arrow-down" data-size="14"></i></button><button class="r-icon-btn" data-step="dense" data-part="repeater-remove"><i data-icon="trash-2" data-size="14"></i></button></span>
+      </div>
+      <div class="r-rep-body" data-part="repeater-body">
+        <div class="r-field"><span class="r-label">名称</span><input class="r-input" value="qwen"></div>
+        <div class="r-field"><span class="r-label">接口地址</span><input class="r-input" value="https://dashscope.aliyuncs.com/compatible-mode/v1"></div>
+      </div>
+    </div></li>
+  </ul>
+  <div class="r-rep-foot"><button class="r-btn" data-variant="default" data-step="dense" data-part="repeater-add"><i data-icon="plus" data-size="14"></i>添加端点<i data-icon="chevron-down" data-size="14"></i></button></div>
+  </div>
+</section>
+<section data-ref-block="repeater-rows" style="width:720px" data-pad>
+  <div class="r-rep" data-part="repeater" data-variant="rows"><ul class="r-rep-list">
+    <li><div class="r-rep-item" data-part="repeater-item"><span class="r-rep-handle"><i data-icon="grip-vertical" data-size="14"></i></span><div class="r-rep-body" data-part="repeater-body">
+      <div class="r-field-row" data-part="field-row" data-first="true">
+        <div class="r-field-row-fields" data-part="field-row-fields">
+          <div class="r-field"><span class="r-label" data-part="field-label">模型 ID</span><input class="r-input" value="deepseek-chat"></div>
+          <div class="r-field"><span class="r-label">上下文窗口</span><input class="r-input" value="128000"></div>
+          <div class="r-field"><span class="r-label">最大输出</span><input class="r-input" value="8192"></div>
+          <div class="r-field-row-group" data-part="field-row-group"><span class="r-label" data-part="field-row-group-label">能力</span><div class="r-field-row-group-items" data-part="field-row-group-items"><span class="r-field-row-check"><span class="r-cfg-box"></span>图片</span><span class="r-field-row-check"><span class="r-cfg-box"></span>推理</span></div></div>
+          <button class="r-field-row-toggle" data-part="field-row-toggle">高级<span class="r-field-row-caret"><i data-icon="chevron-right" data-size="12"></i></span></button>
+        </div>
+
+      </div>
+    </div><span class="r-rep-actions"><button class="r-icon-btn" data-step="dense" disabled><i data-icon="arrow-up" data-size="14"></i></button><button class="r-icon-btn" data-step="dense"><i data-icon="arrow-down" data-size="14"></i></button><button class="r-icon-btn" data-step="dense"><i data-icon="trash-2" data-size="14"></i></button></span></div></li>
+    <li><div class="r-rep-item" data-part="repeater-item"><span class="r-rep-handle"><i data-icon="grip-vertical" data-size="14"></i></span><div class="r-rep-body" data-part="repeater-body">
+      <div class="r-field-row" data-part="field-row" data-first="false">
+        <div class="r-field-row-fields" data-part="field-row-fields">
+          <div class="r-field"><span class="r-label" data-part="field-label">模型 ID</span><input class="r-input" value="deepseek-reasoner"></div>
+          <div class="r-field"><span class="r-label">上下文窗口</span><input class="r-input" value="128000"></div>
+          <div class="r-field"><span class="r-label">最大输出</span><input class="r-input" value="32768"></div>
+          <div class="r-field-row-group" data-part="field-row-group"><span class="r-label" data-part="field-row-group-label">能力</span><div class="r-field-row-group-items" data-part="field-row-group-items"><span class="r-field-row-check"><span class="r-cfg-box"></span>图片</span><span class="r-field-row-check"><span class="r-cfg-box"></span>推理</span></div></div>
+          <button class="r-field-row-toggle" data-part="field-row-toggle">高级<span class="r-field-row-caret"><i data-icon="chevron-right" data-size="12"></i></span></button>
+        </div>
+
+      </div>
+    </div><span class="r-rep-actions"><button class="r-icon-btn" data-step="dense"><i data-icon="arrow-up" data-size="14"></i></button><button class="r-icon-btn" data-step="dense" disabled><i data-icon="arrow-down" data-size="14"></i></button><button class="r-icon-btn" data-step="dense"><i data-icon="trash-2" data-size="14"></i></button></span></div></li>
+  </ul>
+  <div class="r-rep-foot"><button class="r-btn" data-variant="default" data-step="dense" data-part="repeater-add"><i data-icon="plus" data-size="14"></i>添加模型</button></div>
+  </div>
+</section>
+<section data-ref-block="repeater-invalid" style="width:720px" data-pad>
+  <div class="r-rep" data-part="repeater"><ul class="r-rep-list">
+    <li><div class="r-rep-item" data-invalid data-part="repeater-item">
+      <div class="r-rep-head" data-part="repeater-head">
+        <span class="r-rep-handle"><i data-icon="grip-vertical" data-size="14"></i></span>
+        <span class="r-rep-titles"><span class="r-rep-title" data-part="repeater-title">未命名端点</span><span class="r-rep-subtitle" data-part="repeater-subtitle">https://api.deepseek.com</span></span>
+        <span class="r-rep-actions"><button class="r-icon-btn" data-step="dense" disabled><i data-icon="arrow-up" data-size="14"></i></button><button class="r-icon-btn" data-step="dense" disabled><i data-icon="arrow-down" data-size="14"></i></button><button class="r-icon-btn" data-step="dense" data-part="repeater-remove"><i data-icon="trash-2" data-size="14"></i></button></span>
+      </div>
+      <div class="r-rep-body" data-part="repeater-body">
+        <div class="r-field"><span class="r-label">名称</span><input class="r-input" value=""></div>
+        <div class="r-field"><span class="r-label">接口地址</span><input class="r-input" value="https://api.deepseek.com"></div>
+      </div>
+    </div></li>
+  </ul>
+  <div class="r-rep-foot"><button class="r-btn" data-variant="default" data-step="dense" data-part="repeater-add"><i data-icon="plus" data-size="14"></i>添加端点<i data-icon="chevron-down" data-size="14"></i></button></div>
+  </div>
+</section>
+<section data-ref-block="repeater-empty" style="width:720px" data-pad>
+  <div class="r-rep" data-part="repeater"><p class="r-rep-empty" data-part="repeater-empty">还没有端点。添加一个兼容 OpenAI 的服务即可开始。</p>
+  <div class="r-rep-foot"><button class="r-btn" data-variant="default" data-step="dense" data-part="repeater-add"><i data-icon="plus" data-size="14"></i>添加端点<i data-icon="chevron-down" data-size="14"></i></button></div>
+  </div>
+</section>
+</div>
+</main>
+<script src="fill.js"></script>
+</body>
+</html>
