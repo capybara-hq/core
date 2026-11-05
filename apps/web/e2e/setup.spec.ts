@@ -39,7 +39,7 @@ test("初始化向导：未初始化的部署打开首页 → 初始化页（可
   // keep the first document's script from running for a while)
   await hydrated(page);
   const agentStep = page.getByRole("listitem").filter({ hasText: zh.setupLayout.steps.agent });
-  await agentStep.getByRole("button", { name: zh.chat.setup.agent.action }).click();
+  await agentStep.getByRole("link", { name: zh.chat.setup.agent.action }).click();
   await expect(page).toHaveURL(/\/agents\/new$/);
   // the step page renders inside the setup frame; the sidebar's setup home is the way back
   await expect(setup).toBeVisible();

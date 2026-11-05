@@ -1,4 +1,5 @@
 import { Inject, Injectable } from "@nestjs/common";
+import type { KernelConfig } from "../config/schema.js";
 import { EventLog } from "../conversations/event-log.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { LockService } from "../infra/lock/lock.service.js";
@@ -7,7 +8,9 @@ import { LockedInterval } from "../infra/schedule/locked-interval.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import { SandboxService } from "../sandbox/sandbox.service.js";
+import { sandboxBaseTimeoutMs } from "../tools/builtins/sandbox/common.js";
 import { type BackgroundFinish, BackgroundTaskFinisher } from "./finish.js";
+import { LAUNCH_EXEC_TIMEOUT_MS } from "./launch.js";
 import { parsePollOutput, polledAs, pollScript } from "./status.js";
 import { notRunningAs, RECREATED } from "./stop.js";
 import { type BackgroundTaskRow, BackgroundTaskStore } from "./store.js";
@@ -17,11 +20,18 @@ export const BACKGROUND_POLL_JOB = "background-task-poll";
 /** The daily prune of finished background tasks older than `tools.outputRetentionDays`. */
 export const BACKGROUND_PRUNE_JOB = "background-task-prune";
 
+/** The least age at which a reservation counts as abandoned, whatever the config. */
+const LAUNCH_ABANDONED_FLOOR_MS = 120_000;
+
 /**
- * A reservation (`sid` null) older than this has lost its launch: a launch takes at most its 30 s
- * exec plus the lease wait, so only a launching process that died leaves one this old.
+ * A reservation (`sid` null) older than this has lost its launch. The slowest legitimate launch
+ * is the pipeline's own limit for a background `Bash` call ({@link LAUNCH_EXEC_TIMEOUT_MS} plus
+ * {@link sandboxBaseTimeoutMs}: the tool timeout, `sandbox.lockWaitSeconds` and the setup margin),
+ * so twice that (never under 2 minutes) leaves a wide margin: only a launching process that died
+ * leaves a reservation this old.
  */
-export const LAUNCH_ABANDONED_AFTER_MS = 120_000;
+export const launchAbandonedAfterMs = (cfg: KernelConfig): number =>
+  Math.max(LAUNCH_ABANDONED_FLOOR_MS, 2 * (LAUNCH_EXEC_TIMEOUT_MS + sandboxBaseTimeoutMs(cfg)));
 
 /** The time limit of one sandbox's poll exec. */
 const POLL_EXEC_TIMEOUT_MS = 30_000;
@@ -63,13 +73,13 @@ export class BackgroundTaskPollJob {
   /**
    * One poll of every running task (the body of {@link poll}); returns how many tasks finished.
    * A sandbox whose poll fails (busy, a provider error) is logged and tried again next tick.
-   * First, reservations abandoned by a launch that died ({@link LAUNCH_ABANDONED_AFTER_MS}) are
+   * First, reservations abandoned by a launch that died ({@link launchAbandonedAfterMs}) are
    * failed, so they stop holding a slot of `sandbox.background.maxTasks` (not counted in the
    * result: they never started), with a `changed: "background"` frame to their conversations.
    */
   async pollOnce(signal: AbortSignal = new AbortController().signal): Promise<number> {
     const abandoned = await this.store.failAbandonedLaunches(
-      new Date(Date.now() - LAUNCH_ABANDONED_AFTER_MS),
+      new Date(Date.now() - launchAbandonedAfterMs(this.config.get())),
     );
     if (abandoned.length > 0) {
       this.log.warn("abandoned background launches failed", { count: abandoned.length });
