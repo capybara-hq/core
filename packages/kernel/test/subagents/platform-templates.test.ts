@@ -156,8 +156,14 @@ const listed = async () => {
   const r = await env.mem({ method: "GET", url: `/api/v1/orgs/${env.orgId}/agent-templates` });
   expect(r.statusCode, r.body).toBe(200);
   return (
-    r.json().templates as { id: string; type: string; origin: string; version: number }[]
-  ).map((t) => [t.type, t.origin, t.id, t.version]);
+    r.json().templates as {
+      id: string;
+      type: string;
+      origin: string;
+      version: number;
+      linkedIds?: string[];
+    }[]
+  ).map((t) => [t.type, t.origin, t.id, t.version, ...(t.linkedIds ? [t.linkedIds] : [])]);
 };
 
 type Started = Extract<ConversationEvent, { type: "subagent_started" }>;
@@ -215,7 +221,7 @@ describe("agent templates from platform components", () => {
       .execute();
     const { definition } = await lead([p]);
     expect(await types(definition)).toEqual(["general-purpose", "crm:reviewer"]);
-    expect(await listed()).toEqual([["crm:reviewer", "platform", p, 1]]);
+    expect(await listed()).toEqual([["crm:reviewer", "platform", p, 1, []]]);
 
     // a switch off in the org (named scope, listed): gone from the roster and the list
     await env.db
@@ -260,6 +266,7 @@ describe("agent templates from platform components", () => {
       id: p,
       version: 2,
       plugin: "crm",
+      platformTemplateId: p,
     });
     expect(await childSystem("echo:first")).toContain("Review P2.");
   });
@@ -270,7 +277,12 @@ describe("agent templates from platform components", () => {
     const { id: agentId, definition } = await lead([bare]);
     expect(await types(definition)).toEqual(["general-purpose", "reviewer"]);
     const { started } = await dispatch(agentId, "reviewer");
-    expect(started.payload.template).toEqual({ source: "plugin", id: bare, version: 1 });
+    expect(started.payload.template).toEqual({
+      source: "plugin",
+      id: bare,
+      version: 1,
+      platformTemplateId: bare,
+    });
 
     // saving a clash is refused: the reserved type, and an inline template of the same name
     const clash = await env.boss({
@@ -324,7 +336,8 @@ describe("agent templates from platform components", () => {
       .set({ platform_template_id: p })
       .where("id", "=", own)
       .execute();
-    expect(await listed()).toEqual([["crm:reviewer", "platform", p, 1]]);
+    // the linked copy's id rides on its platform template, so the editor keeps it selected
+    expect(await listed()).toEqual([["crm:reviewer", "platform", p, 1, [own]]]);
     // a definition selecting both (reachable only without a save): one entry, the other an alias
     const both = await resolveRoster(env.db, env.orgId, {
       subagents: { templates: [own, p] },
@@ -390,12 +403,17 @@ describe("agent templates from platform components", () => {
       id: copy,
       version: 2,
       plugin: "crm",
+      platformTemplateId: p,
     });
     expect(await childSystem("echo:first")).toContain("Review P2.");
     // the eval worker compares with the same resolution
     const caseOf = (s: Started) =>
       ({ orgId: env.orgId, events: [{ ...s, runId: null }] }) as unknown as CaseSnapshot;
-    expect(await currentTemplate(env.db, caseOf(second.started))).toEqual({ id: copy, version: 2 });
+    expect(await currentTemplate(env.db, caseOf(second.started))).toEqual({
+      id: copy,
+      version: 2,
+      platformTemplateId: p,
+    });
 
     // pinned: the copy serves its own stored version again
     await env.db
@@ -405,7 +423,61 @@ describe("agent templates from platform components", () => {
       .execute();
     capture.reset();
     const third = await dispatch(agentId);
-    expect(third.started.payload.template).toMatchObject({ id: copy, version: 1 });
+    expect(third.started.payload.template).toEqual({
+      source: "plugin",
+      id: copy,
+      version: 1,
+      plugin: "crm",
+    });
     expect(await childSystem("echo:first")).toContain("Review O1.");
+    // the pin changed the source: the linked case differs, the first (org) case matches again
+    expect(await currentTemplate(env.db, caseOf(second.started))).toEqual({ id: copy, version: 1 });
+    expect(first.started.payload.template.platformTemplateId).toBeUndefined();
+  });
+
+  it("a selected platform id shadowed by an org row of the same component stays in the roster as its alias", async () => {
+    const itemId = await catalogItem("crm");
+    const p = await seedPlatform({
+      name: "reviewer",
+      plugin: "crm",
+      bodies: ["Review P1."],
+      itemId,
+    });
+    const { id: agentId, definition } = await lead([p]);
+    const first = await dispatch(agentId);
+    expect(first.started.payload.template).toMatchObject({ id: p, platformTemplateId: p });
+
+    // the org gets its own row of the same component (an install writes one): it wins the type
+    const own = await seedOrg({ name: "reviewer", plugin: "crm", body: "Review O1." });
+    await env.db
+      .updateTable("agent_templates")
+      .set({ catalog_item_id: itemId })
+      .where("id", "=", own)
+      .execute();
+    const roster = await resolveRoster(env.db, env.orgId, definition);
+    expect(roster.map((e) => [e.type, e.templateId, e.aliasTemplateIds])).toEqual([
+      ["general-purpose", undefined, undefined],
+      ["crm:reviewer", own, [p]],
+    ]);
+
+    // the follow-up recorded under the platform id still finds its entry, on its frozen definition
+    capture.reset();
+    await postMessage(
+      env.boss,
+      env.orgId,
+      first.conv,
+      `tool:Agent:${JSON.stringify({ description: "Again", prompt: "echo:again", resume: first.subagentId })}`,
+    );
+    await waitForTerminal(env.db, first.conv, 2, 30_000);
+    expect(await childSystem("echo:again")).toContain("Review P1.");
+    // a new dispatch runs the org row
+    capture.reset();
+    const second = await dispatch(agentId);
+    expect(second.started.payload.template).toEqual({
+      source: "plugin",
+      id: own,
+      version: 1,
+      plugin: "crm",
+    });
   });
 });

@@ -129,6 +129,12 @@ export interface SkillSummary {
    * versioned by the org), `org` for the org's own.
    */
   origin: "org" | "platform";
+  /**
+   * Phase 2, in the library list only: a platform skill's unpinned org copies linked to it (ruling
+   * B2). They resolve to this skill under their own ids, so an agent that selects one of them
+   * selects this skill.
+   */
+  linkedIds?: string[];
 }
 
 /** 技能的一个版本（含文件清单）。 */
@@ -761,7 +767,7 @@ export class SkillsService {
   /**
    * The org skill library, sorted by name: the org's live `scope=org` skills except copies linked
    * to a platform skill without a pin, and the platform skills on in the org (phase 2,
-   * `usableSkills`; `origin` tells them apart).
+   * `usableSkills`; `origin` tells them apart), each with the ids of those copies (`linkedIds`).
    */
   async list(orgId: string): Promise<SkillSummary[]> {
     const usable = await usableSkills(this.db.db, orgId);
@@ -773,13 +779,25 @@ export class SkillsService {
         : (
             await summaryQuery(this.db.db).where("s.id", "in", orgIds).orderBy("s.name").execute()
           ).map(summary);
-    const platform =
-      platformIds.length === 0
-        ? []
-        : (await platformSummaryQuery(this.db.db).where("p.id", "in", platformIds).execute()).map(
-            platformSummary,
-          );
-    if (platform.length === 0) return own;
+    if (platformIds.length === 0) return own;
+    const links = await this.db
+      .selectFrom("skills")
+      .select(["id", "platform_skill_id"])
+      .where("org_id", "=", orgId)
+      .where("scope", "=", "org")
+      .where("deleted_at", "is", null)
+      .where("pinned_version", "is", null)
+      .where("platform_skill_id", "in", platformIds)
+      .orderBy("id")
+      .execute();
+    const linked = new Map<string, string[]>();
+    for (const l of links) {
+      const k = l.platform_skill_id as string;
+      linked.set(k, [...(linked.get(k) ?? []), l.id]);
+    }
+    const platform = (
+      await platformSummaryQuery(this.db.db).where("p.id", "in", platformIds).execute()
+    ).map((r) => ({ ...platformSummary(r), linkedIds: linked.get(r.id) ?? [] }));
     return [...own, ...platform].sort((a, b) =>
       a.name < b.name ? -1 : a.name > b.name ? 1 : a.id < b.id ? -1 : 1,
     );

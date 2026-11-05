@@ -20,7 +20,12 @@ import {
   MediaUnavailableError,
 } from "../runtime/model-call.js";
 import type { ProviderRegistry } from "../runtime/providers.js";
-import { type DriftReason, loadSnapshotMedia, reconstructRequest } from "./reconstruct.js";
+import {
+  type DriftReason,
+  loadSnapshotMedia,
+  reconstructRequest,
+  type SubagentTemplateRef,
+} from "./reconstruct.js";
 import type { CaseSnapshot } from "./snapshot.js";
 
 /**
@@ -52,7 +57,7 @@ export interface ResolvedCandidate {
    * A plugin template's child case: the template's current version (set by the worker), compared
    * with the logged one for `subagent_changed` when the candidate changed.
    */
-  subagentTemplate?: { id: string; version: number };
+  subagentTemplate?: SubagentTemplateRef;
   /**
    * A child case under another agent version: that version's own definition (with the candidate's
    * instructions), compared with the logged sub-agent for `subagent_changed`. Never rendered.

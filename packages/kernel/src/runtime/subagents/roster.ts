@@ -20,9 +20,10 @@ export interface RosterEntry {
    */
   templateId?: string;
   /**
-   * Plugin templates: other selected ids skipped because they resolve to the same platform
-   * template under this type (an org copy linked since the save); a follow-up recorded under one
-   * of them finds this entry.
+   * Plugin templates: other selected ids this entry stands for: ids resolving to the same platform
+   * template under this type (an org copy linked since the save), or a selected platform id an org
+   * row of the same component shadows (the entry is that row); a follow-up recorded under one of
+   * them finds this entry.
    */
   aliasTemplateIds?: string[];
   /** Org agents: the allowlisted agent id. */
@@ -75,19 +76,23 @@ export async function resolveRoster(
   const templates = await loadTemplates(db, orgId, templateIds, log);
   const inlineNames = new Set((sub?.inline ?? []).map((t) => t.name));
   const kept = new Map<string, { entry: RosterEntry; platformTemplateId?: string }>();
+  const alias = (e: RosterEntry, id: string) => {
+    if (e.templateId !== id && !e.aliasTemplateIds?.includes(id)) {
+      e.aliasTemplateIds = [...(e.aliasTemplateIds ?? []), id];
+    }
+  };
   for (const id of templateIds) {
     const r = templates.get(id);
     if (!r) continue;
     const type = templateType(r.plugin, r.name);
     const first = kept.get(type);
     if (first !== undefined || type === "general-purpose" || inlineNames.has(type)) {
-      if (first?.entry.templateId === r.id) continue;
       if (
         first !== undefined &&
-        r.platformTemplateId !== undefined &&
-        first.platformTemplateId === r.platformTemplateId
+        (first.entry.templateId === r.id ||
+          (r.platformTemplateId !== undefined && first.platformTemplateId === r.platformTemplateId))
       ) {
-        first.entry.aliasTemplateIds = [...(first.entry.aliasTemplateIds ?? []), r.id];
+        alias(first.entry, id);
         continue;
       }
       log?.warn("agent template skipped in the roster: its type is taken", {
@@ -105,6 +110,8 @@ export async function resolveRoster(
       templateId: r.id,
       ...(r.plugin ? { plugin: r.plugin } : {}),
     };
+    // a selected platform id that an org row of the same component shadows resolves to that row
+    if (r.id !== id) alias(entry, id);
     kept.set(type, {
       entry,
       ...(r.platformTemplateId !== undefined && { platformTemplateId: r.platformTemplateId }),

@@ -132,6 +132,9 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
 - A plugin template child's case is compared with the template's **current** version (`currentTemplate`, the one DB read): once the
   plugin was upgraded after the case, any changed candidate (a model-only one too) reports `subagent_changed`, and an upgrade landing
   mid-run can give two cases of one run different answers.
+  The comparison also covers the content source (`subagent_started.template.platformTemplateId`, not model-visible; absent = the org's
+  own template): an org copy linked to a platform template, or a pin changing back, reports `subagent_changed` once even when the
+  version number happens to match.
 - **Child full-run replay** runs the logged definition with the candidate's model and params only, and the logged `maxSteps`; the
   run result's drift gets `subagent_changed` by the same rule (`subagentCaseChanged`).
 - **Trajectory**: an `Agent` call carries `subagent: { subagentId, childRunId, agentType, resumed, status }` (`running` until its

@@ -547,6 +547,16 @@ describe("skills from platform components", { timeout: 90_000 }, () => {
     expect(r.isError, r.content).toBe(false);
     expect(r.content).toContain("Platform alpha v2.");
 
+    // the library lists the platform skill with the linked copy's id (the editor keeps it selected)
+    const library = async () => {
+      const res = await owner({ method: "GET", url: `/api/v1/orgs/${orgId}/skills` });
+      expect(res.statusCode, res.body).toBe(200);
+      return (res.json().skills as { id: string; origin: string; linkedIds?: string[] }[]).map(
+        (x) => [x.id, x.origin, ...(x.linkedIds ? [x.linkedIds] : [])],
+      );
+    };
+    expect(await library()).toEqual([[p.id, "platform", [copy.id]]]);
+
     // a pin keeps the copy's own stored version
     await db.updateTable("skills").set({ pinned_version: 1 }).where("id", "=", copy.id).execute();
     await say(conv, 4);
@@ -555,5 +565,7 @@ describe("skills from platform components", { timeout: 90_000 }, () => {
     ]);
     const pinned = await call(conv, "Skill", { skill: "alpha" }, 5);
     expect(pinned.content).toContain("Org copy of alpha.");
+    // pinned: the copy is the org's own again and wins the name
+    expect(await library()).toEqual([[copy.id, "org"]]);
   });
 });

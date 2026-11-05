@@ -35,7 +35,12 @@ import { replyParts, structuralDiff } from "./diff.js";
 import { type EvalJobData, evalJobId } from "./jobs.js";
 import { JUDGE_PROVIDER_UNAVAILABLE, judge } from "./judge.js";
 import { userRequestOf } from "./plan.js";
-import { type DriftReason, subagentCaseChanged, subagentStartedOf } from "./reconstruct.js";
+import {
+  type DriftReason,
+  type SubagentTemplateRef,
+  subagentCaseChanged,
+  subagentStartedOf,
+} from "./reconstruct.js";
 import {
   deleteEvalConversation,
   type EvalReplayHooks,
@@ -1037,14 +1042,20 @@ export class EvalWorker {
 
 /**
  * A plugin template's child case: the template's current version, which a new dispatch would use
- * (a template removed since gets version 0, so it always differs). Undefined for other cases.
+ * (a template removed since gets version 0, so it always differs), with the platform template
+ * whose content that is (absent: the org's own; a link or pin change under a copy's id changes
+ * it). Undefined for other cases.
  */
 export async function currentTemplate(
   db: KernelSchemaDb,
   s: CaseSnapshot,
-): Promise<{ id: string; version: number } | undefined> {
+): Promise<SubagentTemplateRef | undefined> {
   const t = subagentStartedOf(toEvents(s))?.template;
   if (t?.source !== "plugin" || t.id === undefined) return undefined;
   const row = (await loadTemplates(db, s.orgId, [t.id])).get(t.id);
-  return { id: t.id, version: row?.version ?? 0 };
+  return {
+    id: t.id,
+    version: row?.version ?? 0,
+    ...(row?.platformTemplateId !== undefined && { platformTemplateId: row.platformTemplateId }),
+  };
 }

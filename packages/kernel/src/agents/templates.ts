@@ -34,6 +34,11 @@ export interface AgentTemplateView {
   catalogVersion: string | null;
   /** `org`: the org's own template; `platform`: a platform template on in the org. */
   origin: "org" | "platform";
+  /**
+   * Platform templates: this org's unpinned copies linked to it (ruling B2). They resolve to this
+   * template under their own ids, so an agent that selects one of them selects this template.
+   */
+  linkedIds?: string[];
 }
 
 /** A template with its current definition (an org row, a linked copy or a platform template). */
@@ -49,7 +54,11 @@ export interface TemplateRow {
   catalogVersion: string | null;
   /** `platform` for a platform template and for a linked copy that resolves to one. */
   origin: "org" | "platform";
-  /** The platform template whose content this is (a platform template, or a linked copy). */
+  /**
+   * The platform template whose content this is (a platform template, or an unpinned linked
+   * copy); absent for the org's own content (a pinned copy included). `subagent_started` records
+   * it, so evals tell the two version namespaces apart.
+   */
   platformTemplateId?: string;
 }
 
@@ -123,14 +132,15 @@ const orgRaw = (r: Awaited<ReturnType<ReturnType<typeof baseQuery>["execute"]>>[
     sourceFormat: r.source_format,
     catalogItemId: r.catalog_item_id,
     catalogVersion: r.catalog_version,
+    // a pinned copy keeps its link but serves its own version: no platform content source
     origin: "org",
-    ...(r.platform_template_id !== null && { platformTemplateId: r.platform_template_id }),
   }) satisfies RawRow;
 
 /**
  * The platform templates on in the org (`ids`: only those), minus the ones whose type an org
  * template of its own (unlinked, or pinned) already has (the org's wins; logged unless it is a copy
- * of the same component: linked to it, or from the same catalog item). On in the org:
+ * of the same component: linked to it, or from the same catalog item; `shadowed` maps such a
+ * platform id to that org row's id). On in the org:
  * - never when the template or its plugin is disabled (or its plugin is deleted);
  * - `follow`: its plugin is on in the org (a live install, or builtin) and no component switch of
  *   the org says off;
@@ -142,8 +152,9 @@ async function platformOn(
   orgId: string,
   ids: readonly string[] | undefined,
   log?: Pick<Logger, "warn">,
-): Promise<RawRow[]> {
-  if (ids !== undefined && ids.length === 0) return [];
+): Promise<{ rows: RawRow[]; shadowed: Map<string, string> }> {
+  const shadowed = new Map<string, string>();
+  if (ids !== undefined && ids.length === 0) return { rows: [], shadowed };
   let q = db
     .selectFrom("platform_agent_templates as p")
     .innerJoin("platform_agent_template_versions as v", (j) =>
@@ -207,7 +218,7 @@ async function platformOn(
     }
     return wantedOn({ scope: r.scope, disabled: false, builtin: false }, Boolean(r.listed), sw);
   });
-  if (rows.length === 0) return [];
+  if (rows.length === 0) return { rows: [], shadowed };
   const own = await db
     .selectFrom("agent_templates")
     .select(["id", "name", "plugin_name", "platform_template_id", "catalog_item_id"])
@@ -233,6 +244,8 @@ async function platformOn(
           platformTemplateId: r.id,
           templateId: o.id,
         });
+      } else {
+        shadowed.set(r.id, o.id);
       }
       continue;
     }
@@ -249,15 +262,17 @@ async function platformOn(
       platformTemplateId: r.id,
     });
   }
-  return out;
+  return { rows: out, shadowed };
 }
 
 /**
  * The org's live templates by id (`ids`; ids that are no usable template are missing): an org
  * template with its current version; an org copy linked to a platform template without a pin
  * (ruling B2) as that platform template's current version under the copy's id, while the platform
- * template is on in the org; a platform template id while it is on in the org. Deleted and
- * foreign ids are left out. `log` receives the type-clash warnings.
+ * template is on in the org; a platform template id while it is on in the org, or, when an org row
+ * of the same component (unlinked or pinned) wins its type, as that row (its `id` is the row's: the
+ * roster lists the platform id as an alias). Deleted and foreign ids are left out. `log` receives
+ * the type-clash warnings.
  */
 export async function loadTemplates(
   db: KernelSchemaDb,
@@ -278,21 +293,43 @@ export async function loadTemplates(
       ...[...linked].map((r) => r.platform_template_id as string),
     ]),
   ];
-  const platform = new Map((await platformOn(db, orgId, platformIds, log)).map((p) => [p.id, p]));
-  const raw: RawRow[] = [];
+  const on = await platformOn(db, orgId, platformIds, log);
+  const platform = new Map(on.rows.map((p) => [p.id, p]));
+  // a selected platform id shadowed by an org row of the same component resolves to that row
+  const shadowIds = unique.filter((id) => !known.has(id) && on.shadowed.has(id));
+  const shadowRows = new Map(
+    (shadowIds.length === 0
+      ? []
+      : await baseQuery(db, orgId)
+          .where("t.id", "in", [...new Set(shadowIds.map((id) => on.shadowed.get(id) as string))])
+          .execute()
+    ).map((r) => [r.id, orgRaw(r)]),
+  );
+  const raw: { key: string; row: RawRow }[] = [];
   for (const r of rows) {
     if (linked.has(r)) {
       const p = platform.get(r.platform_template_id as string);
-      if (p) raw.push({ ...p, id: r.id });
+      if (p) raw.push({ key: r.id, row: { ...p, id: r.id } });
       continue;
     }
-    raw.push(orgRaw(r));
+    raw.push({ key: r.id, row: orgRaw(r) });
   }
   for (const id of unique) {
+    if (known.has(id)) continue;
     const p = platform.get(id);
-    if (p && !known.has(id)) raw.push(p);
+    if (p) {
+      raw.push({ key: id, row: p });
+      continue;
+    }
+    const o = shadowRows.get(on.shadowed.get(id) ?? "");
+    if (o) raw.push({ key: id, row: o });
   }
-  return new Map((await normalized(db, orgId, raw)).map((t) => [t.id, t]));
+  const done = await normalized(
+    db,
+    orgId,
+    raw.map((x) => x.row),
+  );
+  return new Map(raw.map((x, i) => [x.key, done[i] as TemplateRow]));
 }
 
 /**
@@ -313,7 +350,7 @@ export async function usableTemplates(
     .execute();
   const rows = await normalized(db, orgId, [
     ...own.map(orgRaw),
-    ...(await platformOn(db, orgId, undefined, log)),
+    ...(await platformOn(db, orgId, undefined, log)).rows,
   ]);
   const key = (t: TemplateRow) => [t.plugin ?? "", t.name, t.id] as const;
   return rows.sort((a, b) => {
@@ -330,9 +367,31 @@ export async function usableTemplates(
 export class AgentTemplatesService {
   constructor(@Inject(KernelDb) private readonly db: KernelDb) {}
 
-  /** Every usable template of the org ({@link usableTemplates}), by plugin then name. */
+  /**
+   * Every usable template of the org ({@link usableTemplates}), by plugin then name; a platform
+   * template carries the ids of the org's unpinned copies linked to it (`linkedIds`).
+   */
   async listForOrg(orgId: string): Promise<AgentTemplateView[]> {
-    return (await usableTemplates(this.db.db, orgId)).map((t) => ({
+    const usable = await usableTemplates(this.db.db, orgId);
+    const platformIds = usable.filter((t) => t.origin === "platform").map((t) => t.id);
+    const links =
+      platformIds.length === 0
+        ? []
+        : await this.db.db
+            .selectFrom("agent_templates")
+            .select(["id", "platform_template_id"])
+            .where("org_id", "=", orgId)
+            .where("deleted_at", "is", null)
+            .where("pinned_version", "is", null)
+            .where("platform_template_id", "in", platformIds)
+            .orderBy("id")
+            .execute();
+    const linked = new Map<string, string[]>();
+    for (const l of links) {
+      const k = l.platform_template_id as string;
+      linked.set(k, [...(linked.get(k) ?? []), l.id]);
+    }
+    return usable.map((t) => ({
       id: t.id,
       name: t.name,
       plugin: t.plugin,
@@ -344,6 +403,7 @@ export class AgentTemplatesService {
       catalogItemId: t.catalogItemId,
       catalogVersion: t.catalogVersion,
       origin: t.origin,
+      ...(t.origin === "platform" && { linkedIds: linked.get(t.id) ?? [] }),
     }));
   }
 

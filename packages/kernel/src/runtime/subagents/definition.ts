@@ -400,6 +400,7 @@ export async function effectiveDefinition(
       id: row.id,
       version: row.version,
       ...(row.plugin ? { plugin: row.plugin } : {}),
+      ...(row.platformTemplateId !== undefined && { platformTemplateId: row.platformTemplateId }),
     };
   }
 
