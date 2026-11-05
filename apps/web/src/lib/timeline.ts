@@ -4,6 +4,7 @@ import {
   type SubagentRowData,
   type SubagentWaitKind,
   subagentStatusOfFinish,
+  subagentWaitKind,
   type ToolRowData,
 } from "@capybara-hq/design";
 import type {
@@ -1183,12 +1184,7 @@ export function buildEventTimeline(
     if (v === undefined) continue;
     if (v.status === "waiting") {
       row.status = "waiting";
-      row.waiting =
-        v.pendingApprovalIds.length > 0
-          ? "approval"
-          : v.pendingQuestionIds.length > 0
-            ? "input"
-            : "connect";
+      row.waiting = subagentWaitKind(v);
     } else if (v.status === "running" || v.status === "queued") {
       row.status = v.status;
       delete row.waiting;

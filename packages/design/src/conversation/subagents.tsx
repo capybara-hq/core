@@ -88,15 +88,19 @@ export function subagentRowFromView(v: SubagentViewLike): SubagentRowData {
     startedAt: Date.parse(v.startedAt),
   };
   if (v.finishedAt !== null) row.finishedAt = Date.parse(v.finishedAt);
-  if (v.status === "waiting") {
-    row.waiting =
-      v.pendingApprovalIds.length > 0
-        ? "approval"
-        : v.pendingQuestionIds.length > 0
-          ? "input"
-          : "connect";
-  }
+  if (v.status === "waiting") row.waiting = subagentWaitKind(v);
   return row;
+}
+
+/** What a waiting `SubagentView` waits for: an approval, else an answer, else a connection. */
+export function subagentWaitKind(
+  v: Pick<SubagentViewLike, "pendingApprovalIds" | "pendingQuestionIds">,
+): SubagentWaitKind {
+  return v.pendingApprovalIds.length > 0
+    ? "approval"
+    : v.pendingQuestionIds.length > 0
+      ? "input"
+      : "connect";
 }
 
 /**
@@ -131,6 +135,9 @@ export function subagentDuration(ms: number, locale: Locale): string {
 const active = (r: SubagentRowData) =>
   r.status === "queued" || r.status === "running" || r.status === "waiting";
 
+/** Active but waiting for a person (§6.16.15): no spinner and no clock, the waiting word. */
+const ticking = (r: SubagentRowData) => active(r) && r.status !== "waiting";
+
 function rowMs(r: SubagentRowData, now: number): number | undefined {
   if (r.durationMs !== undefined && !active(r)) return r.durationMs;
   if (r.startedAt === undefined) return undefined;
@@ -155,6 +162,7 @@ export type SubagentRowProps = {
 
 /**
  * One sub-agent (§6.16.15): spinner, kind tag, task, status, "N 次调用 · <duration>", chevron.
+ * A row waiting for a person has no spinner and no duration, only the waiting word.
  * A row with a summary expands in place; any other row opens the sub-agent on the right.
  */
 export function SubagentRow({
@@ -173,7 +181,8 @@ export function SubagentRow({
   const id = useId();
   const expandable = row.summary !== undefined;
   const isExpanded = expandable && (expanded ?? own);
-  const ms = rowMs(row, useClock(active(row), now));
+  const clock = useClock(ticking(row), now);
+  const ms = row.status === "waiting" ? undefined : rowMs(row, clock);
   const status: ReactNode =
     row.status === "failed" ? (
       <span className="cb-fail-word" data-part="fail-word">
@@ -192,7 +201,7 @@ export function SubagentRow({
   ].join(" · ");
   const inner = (
     <>
-      {active(row) ? <Spinner size={16} /> : null}
+      {ticking(row) ? <Spinner size={16} /> : null}
       <span className="cb-agent-tag" data-part="agent-tag">
         {row.agentType}
       </span>
@@ -296,8 +305,10 @@ export function SubagentGroup({
   const [animate, setAnimate] = useState(false);
   const id = useId();
   const running = rows.filter(active);
-  // the group ticks for its rows (they get `now`), only while one is active
-  const clock = useClock(running.length > 0, now);
+  // the group ticks for its rows (they get `now`), only while one is active and not waiting
+  const clock = useClock(running.some(ticking), now);
+  // every active row waits for a person: the header says so instead of the spinner and the verb
+  const waitingFor = running.every((r) => r.status === "waiting") ? running[0]?.waiting : null;
   const box = (
     <div className="cb-tool-box" data-part="tool-box">
       {rows.map((r) => (
@@ -317,9 +328,15 @@ export function SubagentGroup({
     return (
       <div className="cb-tool-group" data-part="subagent-group">
         <div className="cb-tool-line" data-part="tool-line">
-          <Spinner size={16} />
+          {waitingFor === null ? <Spinner size={16} /> : null}
           <span className="cb-tool-label">
-            {fillCopy(t("subagent.running"), { n: running.length })}
+            {waitingFor === null ? (
+              fillCopy(t("subagent.running"), { n: running.length })
+            ) : (
+              <span className="cb-accent-word" data-part="waiting-word">
+                {t(`subagent.waiting.${waitingFor ?? "approval"}`)}
+              </span>
+            )}
             {finished > 0 ? (
               <span className="cb-faint">
                 {` · ${fillCopy(t("subagent.finishedCount"), { n: finished })}`}
@@ -459,6 +476,8 @@ export type BackgroundSubagentItem = {
   id: string;
   name: string;
   status: SubagentStatus;
+  /** What a `waiting` sub-agent waits for: its row shows that word instead of the clock. */
+  waiting?: SubagentWaitKind;
   startedAt: number;
   finishedAt?: number;
   /** Its own background tasks, drawn nested under it while they run. */
@@ -526,6 +545,7 @@ export type BackgroundTaskRowProps = {
 /**
  * One row of the "Background tasks" section (§6.16.17): a running one has the `spinner`, the name,
  * the elapsed time and a dense stop button; a stopping one says "正在停止…" instead of the button;
+ * a sub-agent waiting for a person has no spinner and says what it waits for instead of the time;
  * a finished one has its status word and no spinner.
  */
 export function BackgroundTaskRow({
@@ -539,6 +559,7 @@ export function BackgroundTaskRow({
   const locale = useDesignLocale();
   const name = itemName(item);
   const running = itemActive(item);
+  const waiting = item.kind === "subagent" && item.status === "waiting";
   const end = running ? now : (item.finishedAt ?? now);
   const stopping = item.kind === "task" && item.stopping === true;
   const isNested = nested === true || (item.kind === "task" && item.nested === true);
@@ -548,7 +569,7 @@ export function BackgroundTaskRow({
       data-part="task-row"
       data-nested={isNested ? "true" : undefined}
     >
-      {running ? <Spinner /> : null}
+      {running && !waiting ? <Spinner /> : null}
       <button
         type="button"
         className="cb-property-link cb-property-name"
@@ -567,7 +588,13 @@ export function BackgroundTaskRow({
           {t("background.stopped")}
         </span>
       ) : null}
-      <span className="cb-muted">{subagentDuration(end - item.startedAt, locale)}</span>
+      {waiting ? (
+        <span className="cb-accent-word" data-part="waiting-word">
+          {t(`subagent.waiting.${item.waiting ?? "approval"}`)}
+        </span>
+      ) : (
+        <span className="cb-muted">{subagentDuration(end - item.startedAt, locale)}</span>
+      )}
       {stopping ? (
         <span className="cb-muted" role="status" aria-live="polite">
           {t("background.stopping")}
@@ -614,7 +641,10 @@ export function BackgroundTasks({
 }: BackgroundTasksProps): JSX.Element {
   const t = useDesignT();
   const all = flatten(items);
-  const clock = useClock(all.some(itemActive), now);
+  const clock = useClock(
+    all.some((i) => itemActive(i) && !(i.kind === "subagent" && i.status === "waiting")),
+    now,
+  );
   const finished = all.filter((i) => !itemActive(i));
   const newest = finished.reduce<BackgroundItem | undefined>(
     (best, i) =>

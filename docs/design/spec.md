@@ -1591,13 +1591,13 @@ States: `default`, `hover`, `editing`, `paused`
 
 #### 6.16.15 Sub-agent group
 
-- Sub-agents group like tools (phase C runtime; B builds them on fixtures; rows in child-creation order, durations "41 秒", "1分12秒" / "41s", "1m 12s"; a waiting sub-agent says what it waits for in `accent`, a stopped one "已停止" / "Stopped" in `muted`). **Running**: a header tool line with a `spinner` (16) and "正在运行 N 个子 agent" / "N subagents running", and the rows in a tool box. **Done**: a collapsed header "N 个子 agent 已完成（M 个失败）· 共 X 次调用 · <duration>" / "N subagents done (M failed) · X calls · <duration>" with the failure count in `fail` and the totals in `faint`.
-- **Row** (a tool row): a `spinner` (16) while running; the agent type as a tag (`micro` `muted` on the `selected` ground, radius `sm`, padding 0 `space.1`); the task description in `ink` with an ellipsis; at the end in `faint` ("失败" in `fail` and " · " when failed) "N 次调用 · <duration>" and `chevron-right` 12, a button named "在右侧打开 <description>" / "Open <description> on the right". Success has no mark.
+- Sub-agents group like tools (phase C runtime; B builds them on fixtures; rows in child-creation order, durations "41 秒", "1分12秒" / "41s", "1m 12s"; a waiting sub-agent says what it waits for in `accent`, a stopped one "已停止" / "Stopped" in `muted`). **Running**: a header tool line with a `spinner` (16) and "正在运行 N 个子 agent" / "N subagents running", and the rows in a tool box. **Waiting**: when every active sub-agent waits for a person, the header has no `spinner` and says what the first one waits for in `accent` ("等待批准" / "Waiting for approval"), with " · 已完成 N 个" / " · N done" in `faint` as when running (§6.16.9). **Done**: a collapsed header "N 个子 agent 已完成（M 个失败）· 共 X 次调用 · <duration>" / "N subagents done (M failed) · X calls · <duration>" with the failure count in `fail` and the totals in `faint`.
+- **Row** (a tool row): a `spinner` (16) while running, none while waiting for a person; the agent type as a tag (`micro` `muted` on the `selected` ground, radius `sm`, padding 0 `space.1`); the task description in `ink` with an ellipsis; at the end in `faint` ("失败" in `fail` and " · " when failed) "N 次调用 · <duration>" (a waiting row: the waiting word, " · " and "N 次调用", no duration and no clock) and `chevron-right` 12, a button named "在右侧打开 <description>" / "Open <description> on the right". Success has no mark.
 - The row open in the right panel has `aria-current="true"`, the `accent-tint` ground and a 2px `accent` bar on its left (§2.3).
 - A row can expand in place (`aria-expanded`): the steps (`small`, gap `space.1`, indented `space.5`, padding 0 `space.3`, a 1px `line` rule on the left), the result (`prose-small` `muted`) and "在右侧打开完整记录" / "Open the full record on the right" (link button with `maximize-2` 12); no `line-soft` rule separates the steps from the next row.
 
 <!-- states: subagent-group -->
-States: `running`, `done`, `failed`, `expanded`, `row-open`
+States: `running`, `waiting`, `done`, `failed`, `expanded`, `row-open`
 
 <!-- size-table: subagent-group -->
 | Part | State | Property | Value |
@@ -1611,6 +1611,9 @@ States: `running`, `done`, `failed`, `expanded`, `row-open`
 | agent-tag | running | font-size | type.micro |
 | agent-tag | running | background-color | color.selected |
 | agent-tag | running | color | color.muted |
+| tool-line | waiting | height | row.dense |
+| waiting-word | waiting | color | color.accent |
+| subagent-row | waiting | height | row.dense |
 | fail-word | done | color | color.fail |
 | tool-line | done | height | row.dense |
 | fail-word | failed | color | color.fail |
@@ -1648,7 +1651,7 @@ States: `view`, `embed`, `loading`, `failed`
 
 - The properties panel is `layout.properties` wide and sits **inside** the middle column, under its title bar, right of the thread (padding `space.2` `space.4` `space.4` 0); its sections stack `space.2` apart and it scrolls on its own.
 - A section: `panel` ground, no border, radius `md`, padding `space.3`, gap `space.1`; a head with the title in `muted` and a value at the right, `space.1` above the body.
-- Built-in sections, in order: **Context** (the usage ratio as the value; a meter `space.1` high, `line` track, `ink` fill, radius `sm`; "<model> · <sandbox status>" and "连接器：…" / "Connectors: …" in `small` `muted`; the last run's line "上次运行 · <model> · <duration> · <tokens>" / "Last run · …" in `small` `muted` (`context-last-run`, once a run ended; cost joins it only when the log carries one); once the conversation has sub-agents, a last `small` `muted` line with its tokens including theirs, worded by the page); extension sections (`place: "section"`, in contribution order, rendered `dense`); **Files** (the count as the value, the conversation's own files and its sub-agents' deliveries; rows `row.dense`: type badge, name with an ellipsis, for a sub-agent's file "来自 <sub-agent>" / "from <sub-agent>" in `faint` (at most 40% of the row, with an ellipsis), size in `muted`; then "全部 N 个文件" / "All N files" with `chevron-right` 12 in `muted`); **Background tasks** (sub-agents and background Bash tasks, running ones only; rows `row.dense`: `spinner`, name, duration `muted`, a dense stop icon button `square` 12 named "停止「<name>」" / "Stop <name>"; a task whose stop is under way keeps its `spinner` and shows "正在停止…" / "Stopping…" in `muted` instead of the button; a sub-agent's own tasks are nested under it, indented `space.4` (a task with a parent is nested whatever the parent's status); then "已完成 N 项" / "N completed" with a chevron, counting finished tasks and sub-agents together and opening the newest). The section shows running items only: finished tasks and sub-agents are not rows, they are counted in "N completed". `BackgroundTaskRow`'s finished states exist for places that list finished tasks: no `spinner`, ending with the status word: "已完成" / "Done", "已停止" / "Stopped" and "已丢失" / "Lost" in `muted` (success is not colored), "失败" / "Failed" and "已超时" / "Timed out" in `fail`.
+- Built-in sections, in order: **Context** (the usage ratio as the value; a meter `space.1` high, `line` track, `ink` fill, radius `sm`; "<model> · <sandbox status>" and "连接器：…" / "Connectors: …" in `small` `muted`; the last run's line "上次运行 · <model> · <duration> · <tokens>" / "Last run · …" in `small` `muted` (`context-last-run`, once a run ended; cost joins it only when the log carries one); once the conversation has sub-agents, a last `small` `muted` line with its tokens including theirs, worded by the page); extension sections (`place: "section"`, in contribution order, rendered `dense`); **Files** (the count as the value, the conversation's own files and its sub-agents' deliveries; rows `row.dense`: type badge, name with an ellipsis, for a sub-agent's file "来自 <sub-agent>" / "from <sub-agent>" in `faint` (at most 40% of the row, with an ellipsis), size in `muted`; then "全部 N 个文件" / "All N files" with `chevron-right` 12 in `muted`); **Background tasks** (sub-agents and background Bash tasks, running ones only; rows `row.dense`: `spinner`, name, duration `muted` (a sub-agent waiting for a person: no `spinner`, and what it waits for in `accent` instead of the duration), a dense stop icon button `square` 12 named "停止「<name>」" / "Stop <name>"; a task whose stop is under way keeps its `spinner` and shows "正在停止…" / "Stopping…" in `muted` instead of the button; a sub-agent's own tasks are nested under it, indented `space.4` (a task with a parent is nested whatever the parent's status); then "已完成 N 项" / "N completed" with a chevron, counting finished tasks and sub-agents together and opening the newest). The section shows running items only: finished tasks and sub-agents are not rows, they are counted in "N completed". `BackgroundTaskRow`'s finished states exist for places that list finished tasks: no `spinner`, ending with the status word: "已完成" / "Done", "已停止" / "Stopped" and "已丢失" / "Lost" in `muted` (success is not colored), "失败" / "Failed" and "已超时" / "Timed out" in `fail`.
 - **Task output** (`TaskOutputPanel`, the body of the right panel for a task, §6.16.18): a head line with the status word (`muted`, `fail` when failed or timed out), the elapsed time in `faint` and, while running, a dense stop icon button at the right (once a stop is under way, the task view's `stopping` or the page's own stop in flight, "正在停止…" / "Stopping…" in `muted` with `role="status"` instead of the button); the command in the design's monospace (`font.mono`, which the size table cannot express: it holds numbers and colors only) in `ink`; when only the finish event's tail is left (the sandbox is suspended) the note "输出不可读（沙箱已暂停）" / "Output unavailable (sandbox suspended)" in `muted` above the last lines; the last lines in a `CodeBlock` (§6.8). The elements sit `space.2` apart.
 - A failing extension section shows the load-failure line in that section only.
 
@@ -1674,7 +1677,7 @@ States: `context`, `files`, `background`, `extension`, `failed`
 | load-failed-title | failed | color | color.fail |
 
 <!-- states: background-task -->
-States: `running`, `done`, `failed`, `stopped`, `lost`, `nested`
+States: `running`, `waiting`, `done`, `failed`, `stopped`, `lost`, `nested`
 
 <!-- size-table: background-task -->
 | Part | State | Property | Value |
@@ -1682,6 +1685,8 @@ States: `running`, `done`, `failed`, `stopped`, `lost`, `nested`
 | task-row | running | height | row.dense |
 | spinner | running | color | color.accent |
 | icon-button | running | width | control.dense |
+| task-row | waiting | height | row.dense |
+| waiting-word | waiting | color | color.accent |
 | task-row | done | height | row.dense |
 | task-status | done | color | color.muted |
 | fail-word | failed | color | color.fail |
