@@ -181,11 +181,15 @@ export async function upsertOrgSwitch(
 }
 
 /** The kernel (actor null, the scope sync) never installs what needs the org's input. */
-const systemNeedsInput = (name: string) =>
-  new ApiError(
-    "internal",
-    `Plugin ${name} needs the organization's input (connector templates); only a person can install it`,
-  );
+export class NeedsOrgInput extends ApiError {
+  constructor(readonly plugin: string) {
+    super(
+      "internal",
+      `Plugin ${plugin} needs the organization's input (connector templates); only a person can install it`,
+    );
+  }
+}
+const systemNeedsInput = (name: string) => new NeedsOrgInput(name);
 
 /** A plugin install in an org (`GET /orgs/:orgId/plugin-installs`). */
 export interface PluginInstallView {
@@ -1929,6 +1933,209 @@ export class PluginInstaller {
       await dropRow(s.kind, s.ref);
     }
     return removed;
+  }
+
+  /**
+   * Installs the dependencies an installed plugin's version declares and the org lacks (rule 9),
+   * as the kernel (actor null): a platform update can add one. Each is recorded on the install
+   * as a `plugin` component (created when this installed it, so an uninstall takes it along). One
+   * that needs the org's input (connector templates) is left out and its name returned. A
+   * dependency already installed in the org is recorded as it is (created false).
+   */
+  async addMissingDependencies(orgId: string, installId: string): Promise<string[]> {
+    const row = await this.db
+      .selectFrom("plugin_installs as a")
+      .innerJoin("catalog_item_versions as v", (j) =>
+        j.onRef("v.item_id", "=", "a.item_id").onRef("v.version", "=", "a.version"),
+      )
+      .select(["a.item_id", "a.status", "v.manifest"])
+      .where("a.id", "=", installId)
+      .where("a.org_id", "=", orgId)
+      .executeTakeFirst();
+    if (row?.status !== "installed") return [];
+    const record = async (c: Component) => {
+      await this.db
+        .insertInto("plugin_install_components")
+        .values({
+          install_id: installId,
+          kind: c.kind,
+          ref: c.ref,
+          created: c.created,
+          skill_version: null,
+        })
+        .onConflict((oc) => oc.columns(["install_id", "kind", "ref"]).doNothing())
+        .execute();
+    };
+    const needsInput: string[] = [];
+    for (const dep of await resolveDependencies(this.db, row.manifest as PluginManifest)) {
+      if ((await this.recordDependency(orgId, dep, record)) !== undefined) continue;
+      let plan: InstallPlan;
+      try {
+        plan = await this.plan(orgId, null, dep.itemId, dep.version, {}, "", row.item_id);
+      } catch (e) {
+        if (e instanceof NeedsOrgInput) {
+          needsInput.push(dep.name);
+          continue;
+        }
+        throw e;
+      }
+      const child = await this.execute(
+        orgId,
+        null,
+        plan,
+        {},
+        {
+          actions: requiredActions(plan.manifest),
+          approvedBy: row.item_id,
+          parent: installId,
+          via: "scope",
+        },
+      );
+      await this.recordDependency(orgId, dep, record, child);
+    }
+    return needsInput;
+  }
+
+  /**
+   * The connector templates of an installed plugin that are on in the org (ruling P2-6) and have
+   * no live connector there: made from the platform template (`platform_template_id`) or recorded
+   * on the install (`template_id`). The org's plugin is `needs_config` while any is missing (ruling
+   * P2-10). Empty for a plugin not installed.
+   */
+  async missingConnectors(
+    orgId: string,
+    itemId: string,
+  ): Promise<
+    | {
+        installId: string;
+        version: string;
+        templates: { id: string; file: ConnectorTemplateFile }[];
+      }
+    | undefined
+  > {
+    const a = await this.db
+      .selectFrom("plugin_installs as a")
+      .innerJoin("catalog_item_versions as v", (j) =>
+        j.onRef("v.item_id", "=", "a.item_id").onRef("v.version", "=", "a.version"),
+      )
+      .select(["a.id", "a.version", "v.manifest", "v.object_prefix", "v.files"])
+      .where("a.org_id", "=", orgId)
+      .where("a.item_id", "=", itemId)
+      .where("a.status", "=", "installed")
+      .executeTakeFirst();
+    if (!a) return undefined;
+    if (((a.manifest as PluginManifest).connectorTemplates ?? []).length === 0) {
+      return { installId: a.id, version: a.version, templates: [] };
+    }
+    const all = await readCatalogTemplates(this.storage, a);
+    const on = await connectorTemplatesOn(
+      this.db,
+      orgId,
+      itemId,
+      all.map((t) => t.id),
+    );
+    const made = new Set(
+      (
+        await this.db
+          .selectFrom("connectors as c")
+          .innerJoin("platform_connector_templates as p", "p.id", "c.platform_template_id")
+          .select("p.template_id")
+          .where("c.org_id", "=", orgId)
+          .where("c.deleted_at", "is", null)
+          .where("p.catalog_item_id", "=", itemId)
+          .execute()
+      ).map((r) => r.template_id),
+    );
+    const recorded = await this.db
+      .selectFrom("plugin_install_components as l")
+      .innerJoin("connectors as c", (j) => j.on(sql<string>`c.id::text`, "=", sql<string>`l.ref`))
+      .select("l.template_id")
+      .where("l.install_id", "=", a.id)
+      .where("l.kind", "=", "connector")
+      .where("c.deleted_at", "is", null)
+      .execute();
+    for (const r of recorded) if (r.template_id !== null) made.add(r.template_id);
+    return {
+      installId: a.id,
+      version: a.version,
+      templates: all.filter((t) => on.has(t.id) && !made.has(t.id)),
+    };
+  }
+
+  /**
+   * Creates the connectors an installed plugin is missing (ruling P2-10, `POST …/catalog/:itemId/
+   * connectors`): `input.connectors` names some of {@link missingConnectors}' templates with the
+   * same input as an install (endpoint, credential or OAuth client); each is created as at install
+   * and recorded on the install. Returns the created connectors by template.
+   */
+  async configureConnectors(
+    orgId: string,
+    actor: string,
+    itemId: string,
+    input: PluginInstallInput,
+    opts: { actorTokenId?: string } = {},
+  ): Promise<{ templateId: string; connectorId: string }[]> {
+    if (!UUID_RE.test(itemId)) throw installNotFound();
+    const missing = await this.missingConnectors(orgId, itemId);
+    if (!missing) throw installNotFound();
+    const keys = Object.keys(input.connectors ?? {});
+    if (keys.length === 0) {
+      throw new ApiError("validation_failed", "Request validation failed", [
+        { path: "connectors", message: "Give the input of at least one missing connector" },
+      ]);
+    }
+    for (const k of keys) {
+      if (!missing.templates.some((t) => t.id === k)) {
+        throw new ApiError("validation_failed", "Request validation failed", [
+          {
+            path: `connectors.${k}`,
+            message: "No connector of this template is missing in this organization",
+          },
+        ]);
+      }
+    }
+    const item = await this.db
+      .selectFrom("catalog_items")
+      .select("name")
+      .where("id", "=", itemId)
+      .executeTakeFirstOrThrow();
+    const plans = missing.templates
+      .filter((t) => keys.includes(t.id))
+      .map((t) => ({
+        id: t.id,
+        ci: this.planConnector(
+          actor,
+          { itemId, version: missing.version, name: item.name },
+          t,
+          input,
+          "",
+          undefined,
+        ),
+      }));
+    const out: { templateId: string; connectorId: string }[] = [];
+    for (const p of plans) {
+      const r = await this.connectors.create(orgId, actor, p.ci, opts.actorTokenId);
+      await this.recordConnector(missing.installId, r.connector.id, p.id);
+      out.push({ templateId: p.id, connectorId: r.connector.id });
+    }
+    return out;
+  }
+
+  /** A configured connector's ledger row (its own transaction). */
+  @Transactional({ propagation: "requires_new" })
+  private async recordConnector(installId: string, ref: string, templateId: string): Promise<void> {
+    await this.db
+      .insertInto("plugin_install_components")
+      .values({
+        install_id: installId,
+        kind: "connector",
+        ref,
+        created: true,
+        skill_version: null,
+        template_id: templateId,
+      })
+      .onConflict((oc) => oc.columns(["install_id", "kind", "ref"]).doNothing())
+      .execute();
   }
 
   /** The connector kinds an extension provides (the `connector@1` implementations loaded on this replica). */

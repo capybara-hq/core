@@ -222,7 +222,17 @@ export class PluginScopeSync {
       wantedOn(item, listed !== undefined, sw?.enabled ?? null) ||
       (live !== undefined && (await this.dependedOn(orgId, live.id)));
     if (wanted) {
-      if (live) return "unchanged";
+      if (live) {
+        // A platform update may have added dependencies: installed here (rule 9, Task 7)
+        if (live.status === "installed") {
+          try {
+            await this.installer.addMissingDependencies(orgId, live.id);
+          } catch (e) {
+            await this.failed(orgId, itemId, "install", e);
+          }
+        }
+        return "unchanged";
+      }
       // The platform's version (one per deployment, Task 7); the latest import before the first sync
       const version = item.platform_synced_version ?? item.latest_version;
       try {

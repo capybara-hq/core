@@ -1,13 +1,22 @@
+import { createHash } from "node:crypto";
+import { sql } from "kysely";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { PlatformComponents } from "../../src/catalog/platform-components.js";
 import { PluginInstaller } from "../../src/catalog/plugin-install.js";
 import type { PlatformUpdatePreview } from "../../src/catalog/plugin-upgrade.js";
+import { ExtensionHost } from "../../src/extensions/host.js";
+import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
+import { currentStore } from "../../src/infra/database/transaction-host.js";
 import { SkillsService } from "../../src/skills/skills.service.js";
 import { skillVersionsById, usableSkills } from "../../src/skills/usable.js";
+import { StorageService } from "../../src/storage/storage.service.js";
 import { ConnectorsService } from "../../src/tools/connectors.service.js";
-import { createOrg, enableExtensions } from "../helpers/runs.js";
+import { lifePkg, pluginTgz } from "../helpers/plugin-packages.js";
+import { createOrg, enableExtensions, waitFor } from "../helpers/runs.js";
 import { SKILL_MD } from "../skills/zip.js";
 import {
   auditActions,
+  importPlugin,
   install,
   legacyCopies,
   MCP_TOKEN,
@@ -726,5 +735,238 @@ describe("uninstall and dependencies (Task 7 carry-over)", { timeout: 120_000 },
     expect(p.agents).toEqual([
       { id: agent, name: "Skilled", uses: [{ kind: "skill", ref: dep.id }] },
     ]);
+  });
+});
+
+const sha = (b: Uint8Array) => createHash("sha256").update(b).digest("hex");
+const extensionRow = (name: string) =>
+  env.db
+    .selectFrom("extension_installs")
+    .select(["sha256", "version", "desired_state"])
+    .where("name", "=", name)
+    .executeTakeFirst();
+const syncedVersion = async (itemId: string) =>
+  (
+    await env.db
+      .selectFrom("catalog_items")
+      .select("platform_synced_version")
+      .where("id", "=", itemId)
+      .executeTakeFirstOrThrow()
+  ).platform_synced_version;
+const loaded = (name: string) => env.k.app.get(ExtensionHost).current(name)?.manifest.version;
+
+describe("platform plugin update: the extension (fix round 1)", { timeout: 180_000 }, () => {
+  it("moves the deployment's extension package; the preview lists the orgs using it; a crash after the extension step is completed by a new preview", async () => {
+    const v1 = await lifePkg({ name: "upd-move", version: "1.0.0" });
+    const v2 = await lifePkg({ name: "upd-move", version: "2.0.0" });
+    const item = await importPlugin(env, v1);
+    await waitFor(async () => loaded("upd-move") === "1.0.0", 15_000, "1.0.0 loaded");
+    await installIn(env.orgId, item);
+    // importing 2.0.0 deploys its extension; the platform stays at 1.0.0
+    await importPlugin(env, v2);
+    expect(await extensionRow("upd-move")).toMatchObject({ sha256: sha(v2), version: "2.0.0" });
+    const up = await updateTo(item, "2.0.0");
+    expect(up.extension).toBeNull();
+    // back to 1.0.0: the update moves the package
+    const p = await previewOk(item, "1.0.0");
+    expect(p.extension).toEqual({
+      from: "2.0.0",
+      to: "1.0.0",
+      orgs: [env.orgId],
+      needsApproval: false,
+    });
+    const r = await confirm(item, { version: "1.0.0", diffHash: p.diffHash });
+    expect(r.statusCode, r.body).toBe(200);
+    expect(r.json().extension).toMatchObject({ from: "2.0.0", to: "1.0.0" });
+    expect(await extensionRow("upd-move")).toMatchObject({ sha256: sha(v1), version: "1.0.0" });
+    expect(await syncedVersion(item)).toBe("1.0.0");
+    await waitFor(async () => loaded("upd-move") === "1.0.0", 15_000, "1.0.0 loaded");
+    // a crash between the extension step and the transaction: the extension moved alone
+    const moved = await env.root({
+      method: "POST",
+      url: "/api/v1/admin/extensions/upd-move/install",
+      payload: { sha256: sha(v2) },
+    });
+    expect(moved.statusCode, moved.body).toBe(200);
+    const again = await previewOk(item, "2.0.0");
+    expect(again.extension).toBeNull();
+    const done = await confirm(item, { version: "2.0.0", diffHash: again.diffHash });
+    expect(done.statusCode, done.body).toBe(200);
+    expect(await syncedVersion(item)).toBe("2.0.0");
+  });
+
+  it("adds an extension the deployment does not run (installed and enabled; approval flagged); a failure afterwards disables and uninstalls it again", async () => {
+    const d1 = await pluginTgz({
+      manifest: { name: "upd-add", version: "1.0.0", skills: [{ path: "./skills/notes" }] },
+      files: { "skills/notes/SKILL.md": SKILL_MD("notes") },
+    });
+    const d2 = await lifePkg({ name: "upd-add", version: "2.0.0" });
+    const item = await importPlugin(env, d1);
+    await importPlugin(env, d2);
+    // the deployment no longer runs it, and no approval covers it
+    for (const [method, url] of [
+      ["POST", "/api/v1/admin/extensions/upd-add/disable"],
+      ["DELETE", "/api/v1/admin/extensions/upd-add"],
+    ] as const) {
+      const r = await env.root({ method, url });
+      expect(r.statusCode, r.body).toBeLessThan(300);
+    }
+    await env.db
+      .deleteFrom("extension_permission_snapshots")
+      .where("plugin", "=", "upd-add")
+      .execute();
+    expect(await extensionRow("upd-add")).toBeUndefined();
+    // without extensionPermissions.autoApprove (the test kernels turn it on) it waits for approval
+    const realGet = KernelConfigService.prototype.get;
+    const noAuto = vi.spyOn(KernelConfigService.prototype, "get").mockImplementation(function (
+      this: KernelConfigService,
+    ) {
+      const c = realGet.call(this);
+      return { ...c, extensionPermissions: { ...c.extensionPermissions, autoApprove: false } };
+    });
+    const p = await previewOk(item, "2.0.0");
+    expect(p.extension).toEqual({ from: null, to: "2.0.0", orgs: [], needsApproval: true });
+    noAuto.mockRestore();
+    expect((await previewOk(item, "2.0.0")).extension?.needsApproval).toBe(false);
+    vi.spyOn(PlatformComponents.prototype, "applySyncIn").mockRejectedValueOnce(
+      new Error("injected sync failure"),
+    );
+    const failed = await confirm(item, { version: "2.0.0", diffHash: p.diffHash });
+    expect(failed.statusCode, failed.body).toBe(502);
+    expect(failed.json().error.details[0]).toMatchObject({ step: "components", rolledBack: true });
+    expect(await extensionRow("upd-add")).toBeUndefined();
+    expect(await syncedVersion(item)).toBe("1.0.0");
+    vi.restoreAllMocks();
+    const ok = await confirm(item, { version: "2.0.0", diffHash: p.diffHash });
+    expect(ok.statusCode, ok.body).toBe(200);
+    expect(await extensionRow("upd-add")).toMatchObject({
+      sha256: sha(d2),
+      desired_state: "enabled",
+    });
+  });
+
+  it("a downgrade the extension's migrations refuse is 409 extension.downgrade_unsupported and changes nothing", async () => {
+    const notes = { file: "0001_notes.sql", sql: "CREATE TABLE IF NOT EXISTS notes (id int);\n" };
+    const v1 = await lifePkg({ name: "upd-down", version: "1.0.0", migrations: [notes] });
+    const v2 = await lifePkg({ name: "upd-down", version: "2.0.0", migrations: [notes] });
+    const item = await importPlugin(env, v1);
+    await importPlugin(env, v2);
+    await waitFor(async () => loaded("upd-down") === "2.0.0", 15_000, "2.0.0 loaded");
+    await updateTo(item, "2.0.0");
+    // 1.0.0's migration counts as never run here
+    await sql`DELETE FROM plugin_upd_down._migrations`.execute(env.db);
+    const p = await previewOk(item, "1.0.0");
+    expect(p.extension).toMatchObject({ from: "2.0.0", to: "1.0.0" });
+    const r = await confirm(item, { version: "1.0.0", diffHash: p.diffHash });
+    expect(r.statusCode, r.body).toBe(409);
+    expect(r.json().error.code).toBe("extension.downgrade_unsupported");
+    expect(await extensionRow("upd-down")).toMatchObject({ sha256: sha(v2) });
+    expect(await syncedVersion(item)).toBe("2.0.0");
+  });
+});
+
+describe("platform plugin update: storage, dependencies, missing connectors (fix round 1)", {
+  timeout: 180_000,
+}, () => {
+  it("no storage call runs inside the update's transaction", async () => {
+    const item = await seedCrm();
+    await installIn(env.orgId, item, { connectors: { gh: tokenInput() } });
+    const real = StorageService.prototype.deployment;
+    let calls = 0;
+    vi.spyOn(StorageService.prototype, "deployment").mockImplementation(function (
+      this: StorageService,
+    ) {
+      calls += 1;
+      if (currentStore()) throw new Error("storage called inside a transaction");
+      return real.call(this);
+    });
+    await updateTo(item, "2.0.0");
+    expect(calls).toBeGreaterThan(0);
+    expect((await platformSkill("change")).current_version).toBe(2);
+  });
+
+  it("a target that adds a dependency: the scope sync installs it where the plugin is on (rule 9)", async () => {
+    const dep = await seedPlugin(env, { name: "dep-a", skills: ["dep-skill"], templates: false });
+    const app = await seedPlugin(env, { name: "app", skills: ["app-skill"], templates: false });
+    await seedPlugin(env, {
+      name: "app",
+      addTo: app,
+      version: "2.0.0",
+      skills: ["app-skill"],
+      templates: false,
+      dependencies: [{ name: "dep-a", version: "^1.0.0" }],
+    });
+    const installId = await installIn(env.orgId, app);
+    await updateTo(app, "2.0.0");
+    const depInstall = await waitFor(
+      async () =>
+        env.db
+          .selectFrom("plugin_installs")
+          .select(["id", "status"])
+          .where("org_id", "=", env.orgId)
+          .where("item_id", "=", dep)
+          .where("status", "=", "installed")
+          .executeTakeFirst(),
+      20_000,
+      "dep-a installed by the scope sync",
+    );
+    const ledger = await env.db
+      .selectFrom("plugin_install_components")
+      .select(["kind", "ref", "created"])
+      .where("install_id", "=", installId)
+      .where("kind", "=", "plugin")
+      .execute();
+    expect(ledger).toEqual([{ kind: "plugin", ref: depInstall.id, created: true }]);
+    expect((await usableSkills(env.db, env.orgId)).map((s) => s.name)).toContain("dep-skill");
+  });
+
+  it("an added connector template makes the installed plugin needs_config; the org admin creates the connector (P2-10)", async () => {
+    const item = await seedCrm();
+    await installIn(env.orgId, item, { connectors: { gh: tokenInput() } });
+    const state = async () =>
+      (
+        (await env.boss({ method: "GET", url: `/api/v1/orgs/${env.orgId}/catalog` })).json()
+          .items as { id: string; state: string }[]
+      ).find((i) => i.id === item)?.state;
+    expect(await state()).toBe("on");
+    await updateTo(item, "2.0.0");
+    expect(await state()).toBe("needs_config");
+    const url = `/api/v1/orgs/${env.orgId}/catalog/${item}/connectors`;
+    const member = await env.mem({
+      method: "POST",
+      url,
+      payload: { inputs: { connectors: { docs: tokenInput() } } },
+    });
+    expect(member.statusCode).toBe(403);
+    const notMissing = await env.boss({
+      method: "POST",
+      url,
+      payload: { inputs: { connectors: { gh: tokenInput() } } },
+    });
+    expect(notMissing.statusCode).toBe(400);
+    expect(notMissing.json().error.details[0].path).toBe("connectors.gh");
+    const noCredential = await env.boss({
+      method: "POST",
+      url,
+      payload: { inputs: { connectors: { docs: { endpoint: { url: env.mcp.url } } } } },
+    });
+    expect(noCredential.statusCode).toBe(400);
+    const r = await env.boss({
+      method: "POST",
+      url,
+      payload: { inputs: { connectors: { docs: tokenInput() } } },
+    });
+    expect(r.statusCode, r.body).toBe(201);
+    expect(r.json().connectors).toEqual([{ templateId: "docs", connectorId: expect.any(String) }]);
+    const docs = await connectorFrom(env.orgId, "docs");
+    expect(docs.id).toBe(r.json().connectors[0].connectorId);
+    const recorded = await env.db
+      .selectFrom("plugin_install_components")
+      .select(["ref", "template_id", "created"])
+      .where("kind", "=", "connector")
+      .where("template_id", "=", "docs")
+      .execute();
+    expect(recorded).toEqual([{ ref: docs.id, template_id: "docs", created: true }]);
+    expect(await state()).toBe("on");
   });
 });

@@ -71,6 +71,13 @@ const InstallBody = z
   })
   .strict();
 
+/** The connectors body (ruling P2-10): the input of missing connectors, by template id, as at install. */
+const ConnectorsBody = z
+  .object({
+    inputs: z.object({ connectors: z.record(z.string(), ConnectorInput) }).strict(),
+  })
+  .strict();
+
 /** The switch body: on (with the install inputs), or off (with the preview's hash to confirm). */
 const SwitchBody = z
   .object({
@@ -107,6 +114,7 @@ const AdminListQuery = z.object({
 class CatalogRequestsQuery extends createZodDto(AdminListQuery, "CatalogRequestsQuery") {}
 class CatalogDecideBody extends createZodDto(DecideBody, "CatalogDecideBody") {}
 class OrgPluginInstallBody extends createZodDto(InstallBody, "OrgPluginInstallBody") {}
+class OrgPluginConnectorsBody extends createZodDto(ConnectorsBody, "OrgPluginConnectorsBody") {}
 class OrgPluginSwitchBody extends createZodDto(SwitchBody, "OrgPluginSwitchBody") {}
 class CatalogRequestBody extends createZodDto(RequestBody, "CatalogRequestBody") {}
 class CatalogMarketplaceRequestBody extends createZodDto(
@@ -277,6 +285,35 @@ export class OrgCatalogController {
     reply.status(r.status);
     const { status: _status, ...rest } = r;
     return rest;
+  }
+
+  /**
+   * Creates the connectors an installed plugin is missing (ruling P2-10: a connector template on
+   * in the org without a connector there, e.g. added by a platform update; the plugin shows
+   * `needs_config`): `{ inputs: { connectors: { <templateId>: input } } }` with the same input
+   * checks as an install; recorded on the install -> 201 `{ connectors: [{ templateId,
+   * connectorId }] }`. Not installed -> 404 `plugin.install_not_found`; a template not missing ->
+   * 400 `validation_failed`.
+   */
+  @Post("catalog/:itemId/connectors")
+  @OrgAction("connectors.manage")
+  async configureConnectors(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @Param("itemId") itemId: string,
+    @ZBody(OrgPluginConnectorsBody) body: z.infer<typeof ConnectorsBody>,
+  ): Promise<{ connectors: { templateId: string; connectorId: string }[] }> {
+    const p = requireUser(principal);
+    const tokenId = patTokenId(p);
+    return {
+      connectors: await this.pluginInstaller.configureConnectors(
+        org.orgId,
+        p.account.id,
+        itemId,
+        body.inputs as Parameters<PluginInstaller["configureConnectors"]>[3],
+        tokenId !== undefined ? { actorTokenId: tokenId } : {},
+      ),
+    };
   }
 
   @Get("plugin-installs")

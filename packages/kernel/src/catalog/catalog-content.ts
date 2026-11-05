@@ -51,7 +51,8 @@ export interface OrgCatalogItem
   /** Shipped with the deployment (a required bootstrap plugin): on in every org, never switchable. */
   builtin: boolean;
   /**
-   * The effective state in this org: `on`, `off`, `needs_config` (wanted but not installed, and the
+   * The effective state in this org: `on`, `off`, `needs_config` (installed with an on connector
+   * template that has no connector here, ruling P2-10; or wanted but not installed, and the
    * install needs inputs), `unavailable` (disabled by the super admin; members don't see it)
    * or `not_offered` (a `named` item shown to orgs outside its list: requestable, not usable).
    */

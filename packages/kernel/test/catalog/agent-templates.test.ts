@@ -367,7 +367,7 @@ describe("agent templates in plugins", () => {
     );
     expect(next).toBe(itemId);
     await installOk(itemId, "1.0.0");
-    // writing the platform versions fails: storage lost the new version's skill file
+    // preparing the platform versions fails: storage lost the new version's skill file
     const v = await env.db
       .selectFrom("catalog_item_versions")
       .select(["object_prefix"])
@@ -389,7 +389,9 @@ describe("agent templates in plugins", () => {
       url: `/api/v1/admin/catalog/items/${itemId}/update`,
       payload: { version: "1.1.0", diffHash: (p.json() as PlatformUpdatePreview).diffHash },
     });
-    expect(u.statusCode, u.body).toBe(502);
+    // the files are read before anything is written: refused as storage.unavailable
+    expect(u.statusCode, u.body).toBe(503);
+    expect(u.json().error.code).toBe("storage.unavailable");
     const r = await agentTemplatesFor(env.db).resolve(env.orgId, "crm:reviewer");
     expect(r).toMatchObject({ version: 1 });
     expect(r?.template.instructions).toBe("R1.\n");

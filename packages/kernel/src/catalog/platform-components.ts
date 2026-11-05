@@ -99,7 +99,8 @@ interface ConnectorTemplateStep {
   file: ConnectorTemplateFile;
 }
 
-interface SyncPlan {
+/** A planned sync (see {@link PreparedSync}). */
+export interface SyncPlan {
   itemId: string;
   plugin: string;
   version: string;
@@ -110,7 +111,15 @@ interface SyncPlan {
 }
 
 /** A component changed between the plan and its write (a concurrent sync): plan again. */
-class PlanStale extends Error {}
+export class PlanStale extends Error {}
+
+/**
+ * A sync planned and its files copied ({@link PlatformComponents.prepareSync}), waiting for its rows
+ * ({@link PlatformComponents.applySyncIn}). Opaque outside this module.
+ */
+export interface PreparedSync {
+  readonly plan: SyncPlan;
+}
 
 /** Plans are retried this many times against concurrent syncs of the same item. */
 const SYNC_ATTEMPTS = 3;
@@ -187,6 +196,29 @@ export class PlatformComponents {
         if (!(e instanceof PlanStale) || attempt >= SYNC_ATTEMPTS) throw e;
       }
     }
+  }
+
+  /**
+   * The first phase of a sync inside a caller's transaction (the platform plugin update): plans the
+   * version's components and copies their files, outside any transaction (no storage call holds a
+   * row lock). {@link applySyncIn} writes the rows.
+   */
+  async prepareSync(itemId: string, version: string): Promise<PreparedSync> {
+    const plan = await this.plan(itemId, version);
+    await this.writeFiles(plan);
+    return { plan };
+  }
+
+  /**
+   * The second phase: writes the prepared rows in the caller's transaction and records
+   * `platform_synced_version`. A component changed since the plan -> {@link PlanStale} (the caller
+   * prepares again).
+   */
+  @Transactional({ propagation: "mandatory" })
+  async applySyncIn(p: PreparedSync): Promise<PlatformSyncResult> {
+    const r = await this.apply(p.plan);
+    await this.markSynced(p.plan.itemId, p.plan.version);
+    return r;
   }
 
   /**

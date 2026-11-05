@@ -4,14 +4,20 @@
 // F2).
 import { createHash } from "node:crypto";
 import type { ConnectorTemplateFile, PluginManifest } from "@capybara-hq/plugin-sdk";
+import { SDK_VERSION } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
 import type { KernelSchemaDb, SkillManifest } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { ExtensionAdminOps } from "../extensions/admin-ops.js";
+import { ExtensionBlobs } from "../extensions/blobs.js";
+import { permissionSetOfPackage, readExtensionPackage } from "../extensions/package.js";
+import type { PermissionSet } from "../extensions/permission-set.js";
+import { blockingKeys, diffPermissions } from "../extensions/permission-set.js";
 import { ExtensionRegistry } from "../extensions/registry.js";
 import { audit } from "../identity/audit.js";
 import { SuperAdminLock } from "../identity/super-admin.js";
+import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { afterCommit } from "../infra/database/after-commit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
@@ -49,7 +55,7 @@ import {
   switchOf,
 } from "./component-state.js";
 import { CatalogItemLock } from "./locks.js";
-import { PlatformComponents } from "./platform-components.js";
+import { PlanStale, PlatformComponents, type PreparedSync } from "./platform-components.js";
 import { catalogSkillNames, PluginInstaller } from "./plugin-install.js";
 import { PluginScopeSync } from "./scope-sync.js";
 import { compareVersions, satisfiesRange } from "./versions.js";
@@ -109,8 +115,13 @@ export interface PlatformUpdatePreview {
   from: string | null;
   to: string;
   components: PlatformUpdateComponent[];
-  /** The deployment's extension moves (`from` null: installed by the update); null: unchanged. */
-  extension: { from: string | null; to: string } | null;
+  /**
+   * The deployment's extension moves (`from` null: installed by the update); null: unchanged.
+   * `orgs`: the orgs using it (where the plugin is on; spec §7.4, one version for all of them);
+   * `needsApproval`: the new version asks for permissions the approved snapshot does not cover,
+   * so it waits as `pending_approval` until the super admin approves them.
+   */
+  extension: { from: string | null; to: string; orgs: string[]; needsApproval: boolean } | null;
   connectorOrgs: PlatformUpdateConnectorOrg[];
   /** Confirm with it; recomputed under the item lock at the confirm. */
   diffHash: string;
@@ -138,6 +149,22 @@ interface ExtensionStep {
   sha256: string;
   /** The install record's package before the update (null: none, the update installs it). */
   previous: string | null;
+  needsApproval: boolean;
+  orgs: string[];
+}
+
+/** The target version's contents read from object storage (outside any transaction). */
+interface TargetContents {
+  skillNames: string[];
+  agents: Awaited<ReturnType<typeof readCatalogAgentTemplates>>;
+  templates: Awaited<ReturnType<typeof readCatalogTemplates>>;
+}
+
+/** What the confirm's transaction reuses from the diff computed before it. */
+interface Pre {
+  contents: TargetContents;
+  /** The extension step the update ran before the transaction (null: none). */
+  extension: ExtensionStep | null;
 }
 
 /** A connector the update changes, with what its update needs. */
@@ -164,6 +191,7 @@ interface UpdateDiff {
   connectorOrgs: PlatformUpdateConnectorOrg[];
   /** Skills whose content stays and whose pinned suggestion the target sets (by platform id). */
   suggest: Map<string, boolean>;
+  contents: TargetContents;
   dependencies: string[];
   diffHash: string;
 }
@@ -240,6 +268,15 @@ const filesDigest = (row: CatalogVersionFiles): string =>
  *   the commit (orgs get new dependencies by rule 9). A failure rolls the transaction back and
  *   puts the extension back where it was (audit `plugin.platform_update_failed`, 502
  *   `plugin.upgrade_failed`); files copied to `deployment/platform/` stay unreferenced.
+ * Storage is never read or written inside the transaction: the target's contents (and the
+ * extension package, for `needsApproval`) are read and the platform files copied
+ * (`PlatformComponents.prepareSync`) after the Redis lock is taken and before the transaction,
+ * which reuses them and writes rows only (`applySyncIn`). The confirm-time diff treats the
+ * extension this update moved as expected (the install record must point at that package).
+ * Recovery: a process that dies between the extension step and the transaction leaves the
+ * deployment on the target's extension with the platform components unchanged; a new preview
+ * then shows the extension unchanged (`extension: null`) and the components still to move, and
+ * confirming it completes the update (or an update back to the old version moves it back).
  * No in-process state.
  */
 @Injectable()
@@ -254,6 +291,9 @@ export class PlatformPluginUpdater {
     @Inject(StorageService) private readonly storage: StorageService,
     @Inject(ExtensionRegistry) private readonly registry: ExtensionRegistry,
     @Inject(ExtensionAdminOps) private readonly ops: ExtensionAdminOps,
+    /** Reads the target's extension package (its permissions, for `needsApproval`). */
+    @Inject(ExtensionBlobs) private readonly blobs: ExtensionBlobs,
+    @Inject(KernelConfigService) private readonly config: KernelConfigService,
     @Inject(PlatformComponents) private readonly platform: PlatformComponents,
     /** Template dependencies (the deployed connector kinds). */
     @Inject(PluginInstaller) private readonly installer: PluginInstaller,
@@ -301,26 +341,39 @@ export class PlatformPluginUpdater {
     input: { version: string; diffHash: string },
     opts: { actorTokenId?: string },
   ): Promise<PlatformUpdateResult> {
+    // Storage is read and written here, before any transaction (see the class comment)
     const checked = await this.diff(itemId, input.version);
     if (checked.diffHash !== input.diffHash) throw stale();
+    const prepared = await this.platform.prepareSync(itemId, input.version);
     const ext = checked.extension;
     let step: "extension" | "components" = "extension";
     let extensionMoved = false;
+    let enabledHere = false;
     try {
       if (ext) {
         await this.ops.install(checked.name, ext.sha256, actor, opts.actorTokenId, {
           catalogItemId: itemId,
         });
         extensionMoved = true;
-        if (ext.previous === null) await this.ops.enable(checked.name, actor, opts.actorTokenId);
+        if (ext.previous === null) {
+          await this.ops.enable(checked.name, actor, opts.actorTokenId);
+          enabledHere = true;
+        }
       }
       step = "components";
-      const diff = await this.commit(actor, itemId, input, opts);
+      const diff = await this.commit(
+        actor,
+        itemId,
+        input,
+        opts,
+        { contents: checked.contents, extension: ext },
+        prepared,
+      );
       return {
         itemId,
         version: diff.to.version,
         components: diff.components,
-        extension: diff.extension && { from: diff.extension.from, to: diff.extension.to },
+        extension: extensionView(diff.extension),
         connectorOrgs: diff.connectorOrgs,
       };
     } catch (e) {
@@ -330,6 +383,8 @@ export class PlatformPluginUpdater {
           if (ext.previous !== null) {
             await this.ops.install(checked.name, ext.previous, actor, opts.actorTokenId);
           } else {
+            // Installed by this update: an uninstall needs it disabled first
+            if (enabledHere) await this.ops.disable(checked.name, actor, opts.actorTokenId);
             await this.ops.uninstall(checked.name, actor, opts.actorTokenId);
           }
         } catch (u) {
@@ -343,7 +398,8 @@ export class PlatformPluginUpdater {
       }
       const code = e instanceof ApiError ? e.code : "internal";
       await this.auditFailure(actor, checked, { step, code, rolledBack }, opts);
-      // A refusal found under the lock (stale, disabled meanwhile, a conflict): returned as it is
+      // A refusal found under the lock (stale, disabled meanwhile, a conflict, a downgrade the
+      // extension's migrations refuse): returned as it is
       if (e instanceof ApiError && e.status < 500 && rolledBack) throw e;
       throw new ApiError(
         "plugin.upgrade_failed",
@@ -390,6 +446,8 @@ export class PlatformPluginUpdater {
     itemId: string,
     input: { version: string; diffHash: string },
     opts: { actorTokenId?: string },
+    pre: Pre,
+    prepared: PreparedSync,
   ): Promise<UpdateDiff> {
     await this.adminLock.lockAndAuthorize(actor);
     const named = await this.db
@@ -399,12 +457,17 @@ export class PlatformPluginUpdater {
       .executeTakeFirst();
     if (!named) throw itemNotFound();
     await this.itemLock.lock(named.name);
-    const diff = await this.diff(itemId, input.version, { applying: true });
+    const diff = await this.diff(itemId, input.version, { pre });
     if (diff.diffHash !== input.diffHash) throw stale();
     const t = this.db;
 
-    // The platform versions (files are copied first; their rows join this transaction)
-    await this.platform.syncFromVersion(itemId, diff.to.version, { initial: false });
+    // The platform versions (files copied before the transaction; rows only here)
+    try {
+      await this.platform.applySyncIn(prepared);
+    } catch (e) {
+      if (e instanceof PlanStale) throw stale();
+      throw e;
+    }
     for (const [id, pinned] of diff.suggest) {
       await t
         .updateTable("platform_skill_versions as v")
@@ -488,7 +551,7 @@ export class PlatformPluginUpdater {
           ...(c.kept !== undefined && { kept: true }),
           ...(c.pinnedOrgs.length > 0 && c.change !== "removed" && { unpinned: c.pinnedOrgs }),
         })),
-        ...(diff.extension && { extension: { from: diff.extension.from, to: diff.extension.to } }),
+        ...(diff.extension && { extension: extensionView(diff.extension) }),
         connectors: diff.connectors.map((c) => ({
           orgId: c.orgId,
           id: c.id,
@@ -550,11 +613,7 @@ export class PlatformPluginUpdater {
   }
 
   /** Computes an update (see the class comment). */
-  private async diff(
-    itemId: string,
-    version: string,
-    o: { applying?: boolean } = {},
-  ): Promise<UpdateDiff> {
+  private async diff(itemId: string, version: string, o: { pre?: Pre } = {}): Promise<UpdateDiff> {
     const db = this.db;
     if (!UUID_RE.test(itemId)) throw itemNotFound();
     const item = await db
@@ -582,13 +641,36 @@ export class PlatformPluginUpdater {
     const fromRow = versions.find((v) => v.version === from);
     if (from === to.version) {
       // Confirming a preview whose update already ran (a concurrent confirm won): stale
-      if (o.applying) throw stale();
+      if (o.pre) throw stale();
       throw targetInvalid(`The platform already runs version ${from} of plugin ${name}`, [
         { reason: "same_version", version: from },
       ]);
     }
 
-    const extension = await this.extensionStep(name, fromRow, to);
+    const target = await this.extensionTarget(name, fromRow, to);
+    let extension: ExtensionStep | null;
+    if (o.pre) {
+      // The confirm's transaction: the extension this update moved is expected in place
+      if (o.pre.extension) {
+        const row = await db
+          .selectFrom("extension_installs")
+          .select("sha256")
+          .where("name", "=", name)
+          .executeTakeFirst();
+        if (row?.sha256 !== o.pre.extension.sha256) throw stale();
+        extension = o.pre.extension;
+      } else {
+        if (target !== null) throw stale();
+        extension = null;
+      }
+    } else {
+      extension = target && {
+        ...target,
+        needsApproval: await this.needsApproval(name, target.sha256),
+        orgs: [],
+      };
+    }
+    const contents = o.pre?.contents ?? (await this.readContents(to));
     const dependencies = await this.checkDependents(name, to);
 
     // The platform's components of the plugin and the target's
@@ -612,8 +694,7 @@ export class PlatformPluginUpdater {
     });
 
     // Skills (by name, by their files' digest)
-    const skillNames = await catalogSkillNames(this.storage, to, to.manifest);
-    const toSkills = skillNames.map((n, i) => {
+    const toSkills = contents.skillNames.map((n, i) => {
       const entry = (to.manifest.skills ?? [])[i];
       return {
         name: n,
@@ -657,7 +738,7 @@ export class PlatformPluginUpdater {
     }
 
     // Agent templates (by name, canonical definition)
-    const toAgents = await readCatalogAgentTemplates(this.storage, to);
+    const toAgents = contents.agents;
     for (const a of toAgents) {
       const l = live.agentTemplates.find((x) => x.name === a.template.name);
       if (!l) {
@@ -693,7 +774,7 @@ export class PlatformPluginUpdater {
     }
 
     // Connector templates (by id, canonical file) and the connectors made from them
-    const toTemplates = await readCatalogTemplates(this.storage, to);
+    const toTemplates = contents.templates;
     const deps = this.installer.templateDeps();
     const connectors: ConnectorChange[] = [];
     for (const ct of toTemplates) {
@@ -776,6 +857,7 @@ export class PlatformPluginUpdater {
 
     // The orgs where the plugin is on (a live install; builtin: every org)
     const onOrgs = await this.pluginOrgs(itemId, item.builtin);
+    if (extension) extension = { ...extension, orgs: onOrgs };
 
     // Rule 10: an added skill must not take a name already used where the plugin is on
     const conflicts: { skill: string; orgId: string; conflicts: string[] }[] = [];
@@ -900,7 +982,6 @@ export class PlatformPluginUpdater {
     components.sort(
       (a, b) => KIND_ORDER[a.kind] - KIND_ORDER[b.kind] || a.name.localeCompare(b.name),
     );
-    const view = extension && { from: extension.from, to: extension.to };
     const diffHash = sha256(
       canonicalJson({
         itemId,
@@ -908,7 +989,13 @@ export class PlatformPluginUpdater {
         to: to.version,
         manifest: to.manifest,
         files: filesDigest(to),
-        extension: extension && { ...view, sha256: extension.sha256 },
+        // `needsApproval` is shown only: it does not change what the confirm does
+        extension: extension && {
+          from: extension.from,
+          to: extension.to,
+          orgs: extension.orgs,
+          sha256: extension.sha256,
+        },
         components,
         connectors: connectors.map((c) => ({
           id: c.id,
@@ -928,9 +1015,42 @@ export class PlatformPluginUpdater {
       connectors,
       connectorOrgs,
       suggest,
+      contents,
       dependencies,
       diffHash,
     };
+  }
+
+  /** The target's skill names, agent templates and connector templates, from object storage. */
+  private async readContents(to: VersionRow): Promise<TargetContents> {
+    return {
+      skillNames: await catalogSkillNames(this.storage, to, to.manifest),
+      agents: await readCatalogAgentTemplates(this.storage, to),
+      templates: await readCatalogTemplates(this.storage, to),
+    };
+  }
+
+  /**
+   * Whether the target's extension package asks for permissions the approved snapshot does not
+   * cover (no snapshot, or a blocking addition): it then loads only once approved (§7.4).
+   */
+  private async needsApproval(name: string, sha: string): Promise<boolean> {
+    if (this.config.get().extensionPermissions.autoApprove) return false;
+    const pkg = await readExtensionPackage(await this.blobs.get(sha), {
+      maxBytes: this.config.get().packages.maxBytes,
+      hostSdkVersion: SDK_VERSION,
+    });
+    const snap = await this.db
+      .selectFrom("extension_permission_snapshots")
+      .select("permissions")
+      .where("plugin", "=", name)
+      .executeTakeFirst();
+    if (!snap) return true;
+    const { added } = diffPermissions(
+      snap.permissions as PermissionSet,
+      permissionSetOfPackage(pkg),
+    );
+    return blockingKeys(added).length > 0;
   }
 
   /**
@@ -938,11 +1058,11 @@ export class PlatformPluginUpdater {
    * runs; a version without the extension the deployment runs for the plugin, or a move of a
    * config-declared extension, is refused.
    */
-  private async extensionStep(
+  private async extensionTarget(
     name: string,
     from: VersionRow | undefined,
     to: VersionRow,
-  ): Promise<ExtensionStep | null> {
+  ): Promise<Omit<ExtensionStep, "needsApproval" | "orgs"> | null> {
     const want = to.manifest.extension;
     const row = await this.db
       .selectFrom("extension_installs")
@@ -1134,8 +1254,13 @@ function previewOf(d: UpdateDiff): PlatformUpdatePreview {
     from: d.from,
     to: d.to.version,
     components: d.components,
-    extension: d.extension && { from: d.extension.from, to: d.extension.to },
+    extension: extensionView(d.extension),
     connectorOrgs: d.connectorOrgs,
     diffHash: d.diffHash,
   };
+}
+
+/** The extension step as the preview and the result show it. */
+function extensionView(e: ExtensionStep | null): PlatformUpdatePreview["extension"] {
+  return e && { from: e.from, to: e.to, orgs: e.orgs, needsApproval: e.needsApproval };
 }

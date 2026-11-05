@@ -200,7 +200,11 @@ export class OrgCatalogService {
       let state: OrgPluginState;
       if (i.disabled) state = "unavailable";
       else if (requestable(i, inList.has(i.id))) state = "not_offered";
-      else if (a || i.builtin) state = "on";
+      else if (a) {
+        // An on connector template without a connector here (ruling P2-10)
+        const missing = await this.pluginInstaller.missingConnectors(orgId, i.id);
+        state = (missing?.templates.length ?? 0) > 0 ? "needs_config" : "on";
+      } else if (i.builtin) state = "on";
       else if (!wanted) state = "off";
       else {
         const m = latest?.manifest as PluginManifest | undefined;
