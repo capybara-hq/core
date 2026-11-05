@@ -1268,6 +1268,8 @@
       "install": "安装",
       "openConnector": "打开连接器",
       "typeTitle": "选择端点类型",
+      "noKinds": "需要先在「插件」中启用 MCP 连接器或 OpenAPI 连接器。",
+      "noKindsAction": "前往插件",
       "connector": {
         "mcp": "MCP 服务",
         "openapi": "OpenAPI 文档"

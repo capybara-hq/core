@@ -34,6 +34,7 @@ import { orgCatalogItemQuery, orgCatalogQuery, orgMarketplaceEntriesQuery } from
 import { channelQuery, channelSchemaQuery, channelsQuery, orgExtensionsQuery } from "./channels";
 import {
   attachmentLimitsQuery,
+  connectorKindsQuery,
   connectorQuery,
   connectorsQuery,
   contributionsQuery,
@@ -399,12 +400,13 @@ export const ROUTES: readonly RouteEntry[] = [
   },
   {
     pattern: "/connectors/install",
-    // Org admins; `?template=<item id>` installs a catalog template: its item and the org's
-    // extensions (the wizard's extension step).
+    // Org admins: the connector kinds the wizard offers; `?template=<item id>` installs a catalog
+    // template instead: its item and the org's extensions (the wizard's extension step).
     queries: ({ orgId, me, search }) => {
       const itemId = search.get("template") ?? "";
-      return orgId === null || itemId === "" || !atLeast(me, "admin")
-        ? []
+      if (orgId === null || !atLeast(me, "admin")) return [];
+      return itemId === ""
+        ? [q(connectorKindsQuery(orgId))]
         : [q(orgCatalogItemQuery(orgId, itemId)), q(orgExtensionsQuery(orgId))];
     },
   },

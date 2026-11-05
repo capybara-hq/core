@@ -108,6 +108,18 @@ export class ConnectorsController {
     return { connectors: (await this.connectors.list(org.orgId)).map((a) => forViewer(org, a)) };
   }
 
+  /**
+   * The connector kinds the org can create connectors of, each with the plugin providing it (the
+   * install wizard offers only these; an empty list means no connector extension is enabled).
+   */
+  @Get("kinds")
+  @OrgAction("connectors.manage")
+  async kinds(
+    @CurrentOrg() org: OrgContext,
+  ): Promise<{ kinds: { kind: string; plugin: string }[] }> {
+    return { kinds: await this.connectors.kinds(org.orgId) };
+  }
+
   @Post()
   @OrgAction("connectors.manage")
   async create(

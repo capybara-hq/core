@@ -1280,6 +1280,8 @@
       "install": "Install",
       "openConnector": "Open connector",
       "typeTitle": "Choose the endpoint type",
+      "noKinds": "Enable the MCP connector or the OpenAPI connector in Plugins first.",
+      "noKindsAction": "Open Plugins",
       "connector": {
         "mcp": "MCP server",
         "openapi": "OpenAPI document"

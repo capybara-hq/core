@@ -31,6 +31,11 @@ const LOCALES = ["zh", "en"] as const;
 const T = "2026-10-19T12:00:00.000Z";
 const PREVIEW = "POST /api/v1/orgs/o1/connectors/preview";
 const CREATE = "POST /api/v1/orgs/o1/connectors";
+const KINDS = "GET /api/v1/orgs/o1/connectors/kinds";
+const kindsOf = (...kinds: string[]) => ({
+  [KINDS]: () => json(200, { kinds: kinds.map((kind) => ({ kind, plugin: `connector-${kind}` })) }),
+});
+const BOTH_KINDS = kindsOf("mcp", "openapi");
 
 const app = (over: Record<string, unknown> = {}) => ({
   id: "app1",
@@ -87,6 +92,81 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+describe("the type step offers only the available connector kinds", () => {
+  it.each(LOCALES)("both kinds available: MCP and OpenAPI, MCP chosen (%s)", async (locale) => {
+    const w = msgs[locale].connectors.wizard;
+    stubApi(BOTH_KINDS);
+    await renderInstall({ locale });
+    const radios = screen.getAllByRole("radio") as HTMLInputElement[];
+    expect(radios).toHaveLength(2);
+    expect(screen.getByRole("radio", { name: new RegExp(w.connector.mcp) })).toHaveProperty(
+      "checked",
+      true,
+    );
+    expect(screen.getByRole("radio", { name: new RegExp(w.connector.openapi) })).toBeTruthy();
+  });
+
+  it("one kind available: only OpenAPI, chosen, and the endpoint step asks for the document", async () => {
+    const w = en.connectors.wizard;
+    stubApi(kindsOf("openapi"));
+    await renderInstall();
+    const radios = screen.getAllByRole("radio") as HTMLInputElement[];
+    expect(radios).toHaveLength(1);
+    expect(radios[0]?.checked).toBe(true);
+    expect(screen.queryByRole("radio", { name: new RegExp(w.connector.mcp) })).toBeNull();
+    const user = userEvent.setup();
+    await clickAction(user, "en", w.next);
+    expect(screen.getByRole("radio", { name: w.specSource.url })).toBeTruthy();
+  });
+
+  it("a kind the wizard cannot build is not offered", async () => {
+    stubApi(kindsOf("mcp", "graphql"));
+    await renderInstall();
+    expect(screen.getAllByRole("radio")).toHaveLength(1);
+  });
+
+  it.each(LOCALES)(
+    "none available (org admin): says which plugin to enable, links to Plugins, Next disabled (%s)",
+    async (locale) => {
+      const w = msgs[locale].connectors.wizard;
+      const calls = stubApi(kindsOf());
+      await renderInstall({ locale });
+      expect(screen.getByText(w.noKinds)).toBeTruthy();
+      expect(screen.getByRole("link", { name: w.noKindsAction }).getAttribute("href")).toBe(
+        "/plugins",
+      );
+      expect(screen.queryByRole("radio")).toBeNull();
+      const next = within(actionRow(locale)).getByRole("button", { name: w.next });
+      expect(next).toHaveProperty("disabled", true);
+      const user = userEvent.setup();
+      await user.click(next);
+      expect(currentStep()).toBe(msgs[locale].connectors.wizard.steps.type);
+      expect(calls).toHaveLength(0);
+    },
+  );
+
+  it("an empty cache shows the wizard's loading state, then the kinds", async () => {
+    let release: () => void = () => {};
+    const held = new Promise<void>((r) => {
+      release = r;
+    });
+    await renderRouteEmptyCache(installPath(), {
+      [KINDS]: async () => {
+        await held;
+        return json(200, { kinds: [{ kind: "mcp", plugin: "connector-mcp" }] });
+      },
+    });
+    await vi.waitFor(() => {
+      if (document.querySelector('[data-template="WizardPage"]') === null)
+        throw new Error("no page");
+    });
+    expect(document.querySelector("[aria-busy='true']")).not.toBeNull();
+    await act(async () => release());
+    await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
+    expect(screen.getAllByRole("radio")).toHaveLength(1);
+  });
+});
+
 describe("安装向导（WizardPage）", () => {
   it.each(LOCALES)(
     "MCP + Bearer：端点预览 → 认证后预览列出工具与默认策略 → 安装 → 完成后打开连接器（%s）",
@@ -94,6 +174,7 @@ describe("安装向导（WizardPage）", () => {
       const m = msgs[locale];
       const w = m.connectors.wizard;
       const calls = stubApi({
+        ...BOTH_KINDS,
         [PREVIEW]: (c) => {
           const body = bodyOf(c) as { auth?: unknown };
           return json(
@@ -212,6 +293,7 @@ describe("安装向导（WizardPage）", () => {
       const m = msgs[locale];
       const w = m.connectors.wizard;
       const calls = stubApi({
+        ...BOTH_KINDS,
         [PREVIEW]: (c) => {
           const body = bodyOf(c) as { auth?: unknown };
           return json(200, {
@@ -305,6 +387,7 @@ describe("安装向导（WizardPage）", () => {
     const m = msgs.en;
     const w = m.connectors.wizard;
     const calls = stubApi({
+      ...BOTH_KINDS,
       [PREVIEW]: () => json(200, { tools: [previewTool("search")], issues: [], authHints: [] }),
     });
     await renderInstall({ locale: "en" });
@@ -335,6 +418,7 @@ describe("安装向导（WizardPage）", () => {
     const w = m.connectors.wizard;
     let round = 0;
     stubApi({
+      ...BOTH_KINDS,
       [PREVIEW]: () => {
         round++;
         return json(200, {
@@ -382,6 +466,7 @@ describe("安装向导（WizardPage）", () => {
   it("OpenAPI 上传文档：超过 2 MB 报错；选择文件后以 specText 预览；一个操作都不选时不能安装", async () => {
     const w = en.connectors.wizard;
     const calls = stubApi({
+      ...BOTH_KINDS,
       [PREVIEW]: () =>
         json(200, { tools: null, issues: [], authHints: [], operations: OPERATIONS }),
     });
@@ -426,6 +511,7 @@ describe("安装向导（WizardPage）", () => {
       const w = m.connectors.wizard;
       let creates = 0;
       const calls = stubApi({
+        ...BOTH_KINDS,
         [PREVIEW]: () => json(200, { tools: null, issues: [], authHints: [] }),
         [CREATE]: () => {
           creates += 1;
@@ -539,6 +625,7 @@ describe("安装向导（WizardPage）", () => {
   it("OAuth 客户端凭据：按提示预填令牌地址与 scope；密钥必填；带客户端预览", async () => {
     const w = en.connectors.wizard;
     const calls = stubApi({
+      ...BOTH_KINDS,
       [PREVIEW]: (c) =>
         json(200, {
           tools: (bodyOf(c) as { auth?: unknown }).auth ? [previewTool("search")] : null,
@@ -620,6 +707,7 @@ describe("安装向导（WizardPage）", () => {
   it("OAuth 授权码：未配置 http.publicUrl 时安装给出说明，停留在工具一步", async () => {
     const w = en.connectors.wizard;
     stubApi({
+      ...BOTH_KINDS,
       [PREVIEW]: () => json(200, { tools: null, issues: [], authHints: [] }),
       [CREATE]: () =>
         json(400, {
@@ -658,6 +746,7 @@ describe("安装向导（WizardPage）", () => {
 
   it("端点预览失败（app.connect_failed）：显示翻译后的错误与内核说明，停留在端点一步", async () => {
     stubApi({
+      ...BOTH_KINDS,
       [PREVIEW]: () =>
         json(502, {
           error: {
@@ -715,10 +804,11 @@ describe("/connectors/install reads from the query cache", () => {
 
   it("without ?template= the wizard's first step is the first paint; nothing is read", async () => {
     const browser = expectNoFirstPaintFetch();
-    const { calls } = await renderRouteWithCache(installPath(), {});
+    const { calls } = await renderRouteWithCache(installPath(), BOTH_KINDS);
     expect(document.querySelector('[data-template="WizardPage"]')).not.toBeNull();
+    expect(document.querySelector("[aria-busy='true']")).toBeNull();
     expect(new Set(calls.map((c) => c.url))).toEqual(
-      new Set(["/api/v1/me", "/api/v1/orgs/o1/readiness"]),
+      new Set(["/api/v1/me", "/api/v1/orgs/o1/readiness", "/api/v1/orgs/o1/connectors/kinds"]),
     );
     await settle();
     expect(browser).toEqual([]);
@@ -772,6 +862,15 @@ describe("/connectors/install reads from the query cache", () => {
     expect(screen.getByRole("heading", { level: 1, name: en.notFound.title })).toBeTruthy();
   });
 
+  it("a member gets no access to the wizard and the kinds are not read", async () => {
+    const member = await renderRouteWithCache(installPath(), BOTH_KINDS, { me: as("member") });
+    expect(new Set(member.calls.map((c) => c.url))).toEqual(
+      new Set(["/api/v1/me", "/api/v1/orgs/o1/readiness"]),
+    );
+    expect(document.querySelector('[data-kind="no-access"]')).not.toBeNull();
+    expect(screen.queryByRole("radio")).toBeNull();
+  });
+
   it("a member gets no access and nothing is read; no org renders nothing; setup goes home", async () => {
     const member = await renderRouteWithCache(installPath("acme-crm"), routes, {
       me: as("member"),
@@ -790,7 +889,7 @@ describe("/connectors/install reads from the query cache", () => {
     );
     expect(none.calls.map((c) => c.url)).toEqual(["/api/v1/me"]);
     cleanup();
-    await renderRouteWithCache(installPath(), {}, { readiness: NOT_READY });
+    await renderRouteWithCache(installPath(), BOTH_KINDS, { readiness: NOT_READY });
     await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/"));
   });
 });

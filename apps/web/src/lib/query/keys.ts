@@ -165,6 +165,8 @@ export const keys = {
       models: (): readonly unknown[] => [...all, "models"],
       /** The org's connectors. */
       connectors: (): readonly unknown[] => [...all, "connectors"],
+      /** The connector kinds whose extension is enabled in the org (the install wizard). */
+      connectorKinds: (): readonly unknown[] => [...all, "connectorKinds"],
       /** One connector's detail. */
       connector: (connectorId: string): readonly unknown[] => [...all, "connector", connectorId],
       /** The connectors' prompts (`/` menu) or resources (`@` menu). */

@@ -835,6 +835,14 @@ export class ConnectorsService {
   }
 
   /**
+   * The connector kinds the org can create connectors of (the install wizard's protocol step): a
+   * kind is listed when its `connector@1` extension is loaded and enabled in the org.
+   */
+  kinds(orgId: string): Promise<{ kind: string; plugin: string }[]> {
+    return this.registry.connectorKindsFor(orgId);
+  }
+
+  /**
    * Previews a connector (Ruling A20, for the install wizard): after checking the connector, the
    * endpoint (credential pattern check included) and the credential shape, reads the endpoint
    * description with `connector.inspect` (auth hints, operations), and when it can authenticate

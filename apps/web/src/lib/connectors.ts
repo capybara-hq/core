@@ -207,6 +207,20 @@ const one = (orgId: string, connectorId: string) =>
 export const listConnectors = (orgId: string) =>
   apiFetch<{ connectors: ConnectorSummary[] }>(base(orgId));
 
+/** A connector kind the org can create connectors of, and the plugin providing it. */
+export interface AvailableConnectorKind {
+  kind: string;
+  plugin: string;
+}
+
+/** The connector kinds whose extension is enabled in the org (org admins). */
+export const listConnectorKinds = (orgId: string) =>
+  apiFetch<{ kinds: AvailableConnectorKind[] }>(`${base(orgId)}/kinds`);
+
+/** The kinds of `available` the install wizard can build an endpoint for, MCP first. */
+export const wizardKinds = (available: readonly AvailableConnectorKind[]): ConnectorKind[] =>
+  (["mcp", "openapi"] as const).filter((k) => available.some((a) => a.kind === k));
+
 export const previewConnector = (orgId: string, input: PreviewConnectorInput) =>
   apiFetch<ConnectorPreview>(`${base(orgId)}/preview`, {
     method: "POST",

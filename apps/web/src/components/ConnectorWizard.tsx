@@ -6,6 +6,7 @@ import {
   Card,
   type Column,
   DataTable,
+  EmptyState,
   Field,
   Input,
   RadioGroup,
@@ -130,8 +131,13 @@ export type ConnectorWizardView = {
  * 认证一步再预览一次验证凭据并列出工具；工具一步勾选 OpenAPI 操作、查看默认策略后安装。
  * 安装失败时：OAuth 服务不支持自动注册客户端（`dcr_unsupported`）→ 回到认证一步改为手填客户端；
  * 未配置 `http.publicUrl` → 说明原因。
+ * `kinds`: the connector kinds the org can create (their extension enabled in the org); the type
+ * step offers only these, and with none it says which plugin to enable and the wizard stops there.
  */
-export function useConnectorWizard(orgId: string): ConnectorWizardView {
+export function useConnectorWizard(
+  orgId: string,
+  kinds: readonly ConnectorKind[],
+): ConnectorWizardView {
   const t = useTranslations("connectors");
   const tc = useTranslations("common");
   const router = useRouter();
@@ -143,7 +149,9 @@ export function useConnectorWizard(orgId: string): ConnectorWizardView {
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
 
   // 1. 端点类型
-  const [connector, setConnector] = useState<ConnectorKind>("mcp");
+  const [chosen, setConnector] = useState<ConnectorKind>(kinds[0] ?? "mcp");
+  // A kind that stopped being available (its plugin switched off meanwhile) is not kept
+  const connector = kinds.includes(chosen) ? chosen : (kinds[0] ?? chosen);
   // 2. 端点与文档
   const [name, setName] = useState("");
   const [slug, setSlug] = useState("");
@@ -162,7 +170,7 @@ export function useConnectorWizard(orgId: string): ConnectorWizardView {
   const [keyName, setKeyName] = useState("");
   const [namesRaw, setNamesRaw] = useState("");
   const [credential, setCredential] = useState(EMPTY_CREDENTIAL);
-  const [oauth, setOAuth] = useState<OAuthDraft>(() => oauthDefaults("mcp"));
+  const [oauth, setOAuth] = useState<OAuthDraft>(() => oauthDefaults(kinds[0] ?? "mcp"));
   const [client, setClient] = useState(EMPTY_OAUTH_CLIENT);
   // 4. 工具
   const [tools, setTools] = useState<ConnectorPreview>();
@@ -463,7 +471,9 @@ export function useConnectorWizard(orgId: string): ConnectorWizardView {
       label: primaryLabel,
       onSelect: next,
       loading: pending,
-      ...(step === TOOLS && noOps ? { disabled: true } : {}),
+      ...((step === TOOLS && noOps) || (step === TYPE && kinds.length === 0)
+        ? { disabled: true }
+        : {}),
     },
   };
 
@@ -488,7 +498,17 @@ export function useConnectorWizard(orgId: string): ConnectorWizardView {
   }
 
   let content: ReactNode;
-  if (step === TYPE) {
+  if (step === TYPE && kinds.length === 0) {
+    content = (
+      <Card title={t("wizard.typeTitle")}>
+        <EmptyState
+          size="compact"
+          text={t("wizard.noKinds")}
+          action={{ label: t("wizard.noKindsAction"), variant: "default", href: "/plugins" }}
+        />
+      </Card>
+    );
+  } else if (step === TYPE) {
     content = (
       <Card title={t("wizard.typeTitle")}>
         <RadioGroup
@@ -502,7 +522,7 @@ export function useConnectorWizard(orgId: string): ConnectorWizardView {
             setTools(undefined);
             setOAuth(oauthDefaults(kind));
           }}
-          options={(["mcp", "openapi"] as const).map((k) => ({
+          options={kinds.map((k) => ({
             value: k,
             label: t(`wizard.connector.${k}`),
             description: t(`wizard.connectorHint.${k}`),

@@ -6,6 +6,7 @@ import { getSandboxStatus } from "../artifacts";
 import { getAttachmentLimits } from "../attachments";
 import {
   getConnector,
+  listConnectorKinds,
   listConnectorPrompts,
   listConnectorResources,
   listConnectors,
@@ -217,6 +218,14 @@ export const connectorsQuery = (orgId: string) =>
   defineQuery({
     key: keys.org(orgId).connectors(),
     fn: () => listConnectors(orgId),
+    freshness: "orgConfig",
+  });
+
+/** The connector kinds the org can create connectors of (`{ kinds }`; org admins). */
+export const connectorKindsQuery = (orgId: string) =>
+  defineQuery({
+    key: keys.org(orgId).connectorKinds(),
+    fn: () => listConnectorKinds(orgId),
     freshness: "orgConfig",
   });
 

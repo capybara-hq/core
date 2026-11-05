@@ -325,6 +325,24 @@ describe("连接器 HTTP", () => {
     expect(nf.statusCode).toBe(404);
   });
 
+  it("kinds: only the connector kinds whose extension is enabled in the org; admins only", async () => {
+    const ownerReq = await session("owner");
+    const orgId = await createOrg(ownerReq);
+    const url = `/api/v1/orgs/${orgId}/connectors/kinds`;
+    const before = await ownerReq({ method: "GET", url });
+    expect(before.statusCode, before.body).toBe(200);
+    expect(before.json()).toEqual({ kinds: [] });
+
+    await sql`INSERT INTO capybara.extension_org_configs (plugin, org_id, enabled)
+      VALUES ('mem-connector', ${orgId}, true)`.execute(raw);
+    const after = await ownerReq({ method: "GET", url });
+    expect(after.json()).toEqual({ kinds: [{ kind: "mem", plugin: "mem-connector" }] });
+
+    const member = await memberSession(orgId, "mem", "member");
+    const denied = await member.req({ method: "GET", url });
+    expect(denied.statusCode).toBe(403);
+  });
+
   it("A4：连接失败 → 502 connector.connect_failed，什么都不写（含凭据）", async () => {
     const req = await session("owner");
     const orgId = await createOrg(req);

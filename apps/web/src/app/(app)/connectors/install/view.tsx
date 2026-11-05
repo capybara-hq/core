@@ -7,16 +7,21 @@ import {
   useCatalogInstall,
   type WizardView,
 } from "../../../../components/CatalogInstallWizard";
-import { useConnectorWizard } from "../../../../components/ConnectorWizard";
+import { useConnectorWizard, WIZARD_STEPS } from "../../../../components/ConnectorWizard";
 import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { NoAccess } from "../../../../components/NoAccess";
 import { usePagePath } from "../../../../components/shell/path";
+import { type ConnectorKind, wizardKinds } from "../../../../lib/connectors";
+import { connectorKindsQuery } from "../../../../lib/query/conversation";
+import { usePageQuery } from "../../../../lib/query/page-query";
 import { useWorkspace } from "../../../../lib/query/workspace";
 import NotFound from "../../not-found";
 
 /**
  * `/connectors/install`: the install-connector wizard (WizardPage): endpoint type ->
- * endpoint and docs -> auth -> tools and default policies -> done.
+ * endpoint and docs -> auth -> tools and default policies -> done. The type step offers only the
+ * connector kinds whose extension is enabled in the org (from the query cache; with none it points
+ * to Plugins).
  * `?template=<catalog item id>`: prefilled from a connector template in the catalog (the template
  * decides the endpoint; only the fields the template allows and the credentials can change),
  * installed through the catalog (the plugin's switch), the same wizard as
@@ -61,13 +66,40 @@ function InstallTemplate({ orgId, itemId }: { orgId: string; itemId: string }) {
 function InstallApp({ orgId }: { orgId: string }) {
   const scope = usePagePath("org");
   const t = useTranslations("connectors");
-  const wizard = useConnectorWizard(orgId);
+  const read = usePageQuery(connectorKindsQuery(orgId));
+  if (read.kind === "notFound") return <NotFound />;
+  if (read.kind === "error") return <ErrorFrame reset={read.retry} />;
+  const header = {
+    path: [...scope, { label: "connectors", href: "/connectors" }, { label: "install" }],
+    title: t("wizard.title"),
+  };
+  if (read.kind === "loading") {
+    return (
+      <WizardPage
+        header={header}
+        steps={WIZARD_STEPS.map((s) => t(`wizard.steps.${s}`))}
+        current={0}
+        actionRow={{ primary: { label: t("wizard.next"), onSelect: () => {} } }}
+        loading={{ fields: 1 }}
+      />
+    );
+  }
+  return <InstallWizard orgId={orgId} header={header} kinds={wizardKinds(read.data.kinds)} />;
+}
+
+function InstallWizard({
+  orgId,
+  header,
+  kinds,
+}: {
+  orgId: string;
+  header: { path: { label: string; href?: string }[]; title: string };
+  kinds: ConnectorKind[];
+}) {
+  const wizard = useConnectorWizard(orgId, kinds);
   return (
     <WizardPage
-      header={{
-        path: [...scope, { label: "connectors", href: "/connectors" }, { label: "install" }],
-        title: t("wizard.title"),
-      }}
+      header={header}
       steps={wizard.steps}
       current={wizard.current}
       actionRow={wizard.actionRow}

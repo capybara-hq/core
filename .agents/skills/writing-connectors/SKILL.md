@@ -96,6 +96,8 @@ For every `listTools` (install / refresh / drift check), every tool call, and ev
 
 The kernel's `POST /api/v1/orgs/:orgId/connectors/preview` (`connectors.manage`, writes nothing) and the web install wizard work from this: with `inspect` they return `authHints` / `operations`; when `auth: none` is given, or static auth comes with credentials, or the client-credentials flow comes with a client, `listTools` is run and `tools` (key, default policy, `issue`) and `issues` are returned, otherwise `tools: null` (the authorization-code flow is not listed, to avoid dynamic registration). A connector that needs no prefill (such as MCP) does not implement `inspect`, and the kernel null-checks it.
 
+The wizard's first step reads `GET /api/v1/orgs/:orgId/connectors/kinds` (`connectors.manage`): the `kind`s of the loaded `connector@1` implementations whose extension is enabled in the org, each with its `plugin` (the first implementation of a kind, as connector lookup picks it). It offers only those it can build an endpoint for (`mcp`, `openapi`) and, with none, points the org admin to Plugins. Creating and previewing still check only that the kind is loaded on the deployment.
+
 ## `onToolsChanged`
 
 When the remote reports that the tool list changed (MCP `notifications/tools/list_changed`), call `args.onToolsChanged?.()`: do not wait, an error only logs a warn, it does not affect the current call, and it may be called multiple times. The kernel uses it to enqueue one drift check for that connector (maintenance queue, deduplicated by jobId `drift-<connectorId>-<minute bucket>`). The connector must not re-fetch the list itself.
