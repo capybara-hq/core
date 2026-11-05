@@ -393,3 +393,79 @@ A full map is in the brainstorming record; the facts that shape the work:
   independent updates; (3) org uploads with enterprise confirmation; (4) agent templates as agent
   starters.
 - HTTP routes and their shapes; the review's exact layout; empty and loading states.
+
+## 13. Follow-ups decided during the phase 1 acceptance (2026-11-06)
+
+All **(decided)** by the maintainer on 2026-11-06 unless marked.
+
+### 13.1 Bootstrap plugins
+
+- Required (unchanged): `openai-compatible`, `object-store-s3`, pinned at their latest published versions.
+- Optional preinstalls, at their latest published versions: `connector-mcp`, `connector-openapi`,
+  `anthropic`, `openai`, `jina`, `sandbox-docker`, `todo`. Without a sandbox provider most builtin
+  tools are unusable; without a connector extension no connector can be created.
+- A newer pin upgrades a bootstrap-source install on the next start; an install an enterprise admin
+  upgraded or installed is never touched or downgraded (today's bootstrap rule, kept).
+- Preinstalled optional plugins get the default scope `optional` (designer's call: a scope per
+  bootstrap entry is a later manifest change).
+
+### 13.2 Marketplace: one entry per plugin
+
+Replaces the "one npm entry per public plugin version, append-only" rule of the package ecosystem
+spec, following Claude Code's marketplace (one marketplace serves one version of each plugin):
+
+- `marketplace.json` lists one entry per plugin: its current published version.
+  `capybara-plugin marketplace --write` replaces a plugin's entry when its version moves.
+- Each entry keeps its `integrity` (sha512 of the reproducible pack) **(designer's call:** Claude Code
+  has no checksum for npm sources; keeping it costs nothing and downloads stay verified).
+- `--base` rules: an entry's version may only increase (`marketplace-version-decrease`); the same
+  version must keep the same integrity (`marketplace-integrity`); `marketplace-append-only` goes.
+- Old versions stay installable by direct npm import, and versions already imported stay in the
+  catalog. The bootstrap pins and the compose sandbox contexts stay pinned by `marketplace.commit`;
+  since that commit lists one version per plugin, all pins of one manifest are the versions current
+  at that commit.
+- Readers keep accepting several entries per plugin (enterprise marketplaces written in the old
+  form); the web groups them per plugin (phase 1 follow-up, built).
+
+### 13.3 Marketplace display names and Chinese summaries
+
+- An entry may carry `displayName: { zh, en }`; `capybara-plugin marketplace --write` copies it from
+  the plugin's `plugin.json`. The marketplace lists show it, else the name.
+- `capybara-plugin check` warns when a public plugin's marketplace `summary` lacks `zh`
+  **(designer's call:** a warning, not an error, so third-party marketplaces are not blocked); the
+  official plugins get Chinese summaries.
+
+### 13.4 The word "agent" in Chinese UI
+
+The zh UI says 智能体 (sub-agent 子智能体, agent template 智能体模板, the nav item 智能体); English
+stays "agent". `check:i18n` gains a rule rejecting the Latin word "agent" in zh messages (names in
+`{placeholders}` are not text). Code identifiers, routes and model-visible text do not change.
+
+### 13.4b Role names (decided, 2026-11-06)
+
+The UI names five roles: 超级管理员 / Super admin (the deployment-level flag, formerly 企业管理员 /
+enterprise admin), 组织所有者 / Org owner (`owner`), 组织管理员 / Org admin (`admin`), 组织成员 / Org
+member (`member`), 访客 / Guest (`guest`). Prose saying 组织管理员 means admin and above, owners
+included **(designer's call)**; only owner-only actions (transfer, delete the org) say 组织所有者.
+`check:i18n` rejects 企业管理员 in zh messages. Code identifiers and API fields do not change.
+
+### 13.4c No "enterprise" layer in the UI (2026-11-06)
+
+The deployment layer is called 平台 / Platform (designer's call, maintainer may rename): one deployment
+is one platform run by the 超级管理员, hosting organizations (subsidiaries, departments). 企业 leaves the
+UI: 平台提供的插件, 平台技能, 归属：平台, 已启用 · 平台统一, 向超级管理员申请. 部署 stays for technical
+settings (部署设置, 部署级配置). Phase 2 code uses `platform` for the owner value; existing identifiers
+(`enterpriseAdmin`, routes) do not change. `check:i18n` rejects 企业 in zh messages. In this spec,
+"enterprise" in prose reads as "platform".
+
+### 13.5 Phase 2 decisions (2026-11-06)
+
+- An org admin can switch off a single component of a plugin that is on in the org (on the 技能 /
+  智能体模板 pages), except components whose scope is `all` (§5 rule 5, now decided).
+- Migration of org copies: a copy an org changed (a same-name upload turned it into the org's own) stays
+  the org's own; on a name clash it is renamed with a suffix and the org admins get an inbox notice;
+  agents referencing it keep working; the enterprise version starts switched off in that org.
+- Phase 2 also takes: an enterprise-admin inbox (requests to the enterprise and pending
+  confirmations), a member-readable 扩展 page without config or secrets, prerelease versions folded
+  into 其他版本 once a stable version exists, and a `deprecated` marker for marketplace versions (SDK
+  format, plugin-tools, the plugins repository).
