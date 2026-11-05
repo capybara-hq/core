@@ -365,7 +365,12 @@ Every extension is installed from a plugin package (an npm-pack tgz with
 restart.
 
 **Bootstrap plugins.** The plugins every deployment needs, `openai-compatible` (models) and
-`object-store-s3` (storage), are pinned in `packages/kernel/bootstrap.json` by exact version and sha512.
+`object-store-s3` (storage), are pinned in `packages/kernel/bootstrap.json` by exact version and sha512,
+as required entries. The same manifest pins optional preinstalls: `anthropic`, `openai`,
+`connector-mcp`, `connector-openapi`, `jina`, `sandbox-docker` and `todo`. They are installed and
+enabled on the deployment, but each organization gets them off until an org admin switches them on
+(catalog scope `optional`), and an enterprise admin may disable or uninstall them; an uninstalled one
+is not reinstalled by later bootstrap runs.
 The image carries no packages: the bootstrap step obtains them once per manifest. They are not built
 into the CLI any more.
 
@@ -376,9 +381,9 @@ into the CLI any more.
   registry; `packages.npmToken` for a private one) and must match its pinned sha512. Only the pin is
   trusted; the registry's own metadata is not. npm downloads don't use `net.httpsProxy`: behind a proxy
   set `NODE_USE_ENV_PROXY=1` and `HTTPS_PROXY` on the kernel containers.
-  - **Offline deployments:** run `npm pack @capybara-hq/plugin-openai-compatible@<version>` and
-    `npm pack @capybara-hq/plugin-object-store-s3@<version>` (the versions `bootstrap.json` pins) on a
-    machine with npm access, copy the files into a host directory and mount it at `/app/bootstrap`
+  - **Offline deployments:** run `npm pack @capybara-hq/plugin-<name>@<version>` for every entry of
+    `bootstrap.json` (its pinned versions; an optional entry left out only fails with a warning and is
+    retried on the next start) on a machine with npm access, copy the files into a host directory and mount it at `/app/bootstrap`
     on `init` (and on any kernel service that might run the step first), e.g.
     `volumes: ["./bootstrap:/app/bootstrap:ro"]` in a `compose.override.yaml`. Or point
     `CAPYBARA_PACKAGES__NPM_REGISTRY` at an internal mirror serving the same tarballs.
