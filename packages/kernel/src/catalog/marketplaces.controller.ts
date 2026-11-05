@@ -72,7 +72,7 @@ class MarketplacePatchBody extends createZodDto(PatchBody, "MarketplacePatchBody
 
 /**
  * Marketplaces (`/api/v1/admin/marketplaces/*`, super admins): create, update, delete and
- * refresh the official and enterprise marketplaces, browse entries, import from a marketplace.
+ * refresh the official and custom marketplaces, browse entries, import from a marketplace.
  * Writes re-check the super admin inside the service's lock and are audited.
  */
 @Controller("api/v1/admin/marketplaces")
@@ -94,7 +94,7 @@ export class MarketplacesController {
   }
 
   /**
-   * Adds an enterprise marketplace (https URL and mirrors; the token is kept in secrets and sent only
+   * Adds an custom marketplace (https URL and mirrors; the token is kept in secrets and sent only
    * to the URL's origin). A git URL (`…/*.git`, `owner/repo`, or any URL with `form: "git"`) is a
    * git marketplace with an optional `ref`; anything else is a marketplace.json URL.
    */
@@ -164,7 +164,7 @@ export class MarketplacesController {
   }
 
   /**
-   * Deletes an enterprise marketplace (imported catalog items are kept); official -> 409
+   * Deletes an custom marketplace (imported catalog items are kept); official -> 409
    * `marketplace.builtin`.
    */
   @Delete(":id")

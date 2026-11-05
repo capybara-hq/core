@@ -106,7 +106,7 @@ export interface CatalogItemView {
   /** The latest version's source (file / npm / marketplace). */
   source: string;
   /**
-   * The marketplace an item was imported from (`official` or an enterprise marketplace id); null
+   * The marketplace an item was imported from (`official` or an custom marketplace id); null
    * when imported by hand or when that marketplace was deleted.
    */
   marketplaceId: string | null;
@@ -300,7 +300,7 @@ export class CatalogService {
     @Inject(ExtensionAdmin) private readonly admin: ExtensionAdmin,
     /** Plugin import (a marketplace entry goes through its prepare). */
     @Inject(PluginImport) private readonly pluginImport: PluginImport,
-    /** The token of an enterprise marketplace (sent only to its URL's origin). */
+    /** The token of an custom marketplace (sent only to its URL's origin). */
     @Inject(MarketplacesService) private readonly marketplaces: MarketplacesService,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
   ) {}

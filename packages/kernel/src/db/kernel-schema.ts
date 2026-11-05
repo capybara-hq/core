@@ -1170,7 +1170,7 @@ export interface CatalogItemVersionsTable {
   license_truncated: ColumnType<boolean, boolean | undefined, boolean>;
 }
 
-/** 0035_catalogs.sql, renamed in 0042: marketplaces (official / enterprise). */
+/** 0035_catalogs.sql, renamed in 0042: marketplaces (official / custom). */
 export interface MarketplacesTable {
   id: string;
   name: string;

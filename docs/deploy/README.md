@@ -76,18 +76,18 @@ docker compose ps -a     # createbuckets and init exit 0; everything else become
 
 Open `http://localhost:3000` (`CAPYBARA_WEB_PORT` changes the port).
 
-### The first enterprise admin
+### The first super admin
 
-There are two ways to create the first enterprise admin:
+There are two ways to create the first super admin:
 
 - **Web setup page (default).** With no password file, `init` only migrates, runs the bootstrap step
   (see [Extensions](#extensions)) and prints
   `init: no admin password file ...`. The web app opens on the setup page, which creates the
-  enterprise admin and, optionally, the first organization. It asks for the setup token:
+  super admin and, optionally, the first organization. It asks for the setup token:
   `CAPYBARA_SETUP_TOKEN` from `.env`, which compose passes to `api` as `auth.setupToken`. Without the
   right token, setup is refused (403 `setup.token_invalid`), so whoever reaches the port first can't
   take the deployment over. If you leave `CAPYBARA_SETUP_TOKEN` empty, no token is needed and the
-  first visitor becomes the enterprise admin.
+  first visitor becomes the super admin.
 - **Password file.** `init` creates the admin before anything is reachable, so the setup page is
   already closed and the setup token is moot:
 
@@ -102,7 +102,7 @@ There are two ways to create the first enterprise admin:
 
   On every `up`, `init` runs `capybara migrate`, `capybara bootstrap`, then
   `capybara admin create --if-none --password-file /run/secrets/admin_password`. That creates the admin
-  once and logs `enterprise admin already exists; skipped` on later starts. Relative paths are relative
+  once and logs `super admin already exists; skipped` on later starts. Relative paths are relative
   to `compose.yaml`. `init` runs as root, so mode 600 is fine.
 
   - **After the first start**, change the password in the web app and overwrite the file
@@ -117,7 +117,7 @@ There are two ways to create the first enterprise admin:
   - When the variable is unset, compose mounts `/dev/null` in its place, and `init` treats that as "no
     file". `/dev/null` doesn't exist on Windows hosts, so there you must always set
     `CAPYBARA_INIT_ADMIN_PASSWORD_FILE`.
-  - If the login is already taken by an account that isn't an active enterprise admin,
+  - If the login is already taken by an account that isn't an active super admin,
     `admin create --if-none` fails (`account.login_taken`) instead of skipping. Choose another login.
 
 A failing `init` (for example PostgreSQL older than 15, a bootstrap package that can't be downloaded,
@@ -369,7 +369,7 @@ restart.
 as required entries. The same manifest pins optional preinstalls: `anthropic`, `openai`,
 `connector-mcp`, `connector-openapi`, `jina`, `sandbox-docker` and `todo`. They are installed and
 enabled on the deployment, but each organization gets them off until an org admin switches them on
-(catalog scope `optional`), and an enterprise admin may disable or uninstall them; an uninstalled one
+(catalog scope `optional`), and a super admin may disable or uninstall them; an uninstalled one
 is not reinstalled by later bootstrap runs.
 The image carries no packages: the bootstrap step obtains them once per manifest. They are not built
 into the CLI any more.
@@ -406,7 +406,7 @@ into the CLI any more.
   to install; a failed optional one is logged and retried on the next start.
 - Both are **required**: enabled in every organization, existing and future, and they can't be
   disabled or uninstalled (409 `extension.required`; the admin console shows them as "Required").
-  An enterprise admin can still upgrade them, and they still need their deployment config
+  A super admin can still upgrade them, and they still need their deployment config
   (`object-store-s3`: endpoint, bucket and credentials, which compose sets with
   `CAPYBARA_EXTENSION_CONFIG__OBJECT_STORE_S3__*`; or from the admin console). `capybara extensions list`
   shows them with source `bootstrap` and state `required`.
@@ -448,7 +448,7 @@ runtime:
   read-only and nothing is imported without an admin. An offline deployment sets
   `CAPYBARA_MARKETPLACES__OFFICIAL__ENABLED=false` (with `docker/compose.yaml`:
   `CAPYBARA_OFFICIAL_MARKETPLACE=false` in `.env`): the admin console's marketplaces page then shows
-  it as offline and the kernel never fetches it. Enterprise marketplaces, npm installs and manual
+  it as offline and the kernel never fetches it. Custom marketplaces, npm installs and manual
   uploads work either way, and the bootstrap plugins need no network at all.
 
 Extension lifecycle, permissions and the trust model are described in

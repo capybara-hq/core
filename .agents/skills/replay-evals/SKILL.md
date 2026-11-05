@@ -228,7 +228,7 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
 
 - After `trajectories.read` (member and up), the service additionally checks "org admin or the agent's owner" (the owner is read live); eval replay conversations
   (`kind = 'eval'`) are visible only to org admins (Ruling S1-c). **No permission and does not exist both return 404** (`trajectory.not_found`).
-- Every view of trajectory details or eval case details writes the audit entry `trajectory.viewed`. Eval data has no export endpoint. Enterprise admins cannot read conversations by default.
+- Every view of trajectory details or eval case details writes the audit entry `trajectory.viewed`. Eval data has no export endpoint. Super admins cannot read conversations by default.
 - Latency is derived from event `created_at`, with no new event fields (C2): model latency = that step's `usage` - `model_call`, tool duration = `tool_result` -
   `tool_call_started`, approval wait = `approval_decided` - `approval_requested`. Cost is computed at read time from PG `model_prices` (per million tokens, currency =
   the deployment setting `priceCurrency`), is not written to the log, is labeled "estimated" in the UI, and shows "—" when there is no price.

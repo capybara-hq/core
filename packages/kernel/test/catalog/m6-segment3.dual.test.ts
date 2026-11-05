@@ -50,19 +50,19 @@ import { bundlePlugin, mcpTemplate, SVG_ICON, skillPlugin, templatePlugin } from
  * `extensionPermissions.autoApprove: false`; the core fakes of `@capybara-hq/testing` stand in for
  * official plugins: bootstrap fake-object-store (SeaweedFS), config-declared model-fake and
  * fake-connector (an MCP client, kind `fake`); a fake npm registry, a fake official marketplace
- * (`marketplaces.official.url` points at it) plus one enterprise marketplace, and a fake MCP server.
- * Everything goes through HTTP (the enterprise marketplace is refreshed on B through its refresh
+ * (`marketplaces.official.url` points at it) plus one custom marketplace, and a fake MCP server.
+ * Everything goes through HTTP (the custom marketplace is refreshed on B through its refresh
  * route, the same `MarketplacesService.refresh` the periodic `catalogs-refresh` job runs; in the
  * rename regression the "old agent version" and the "snapshot case" have no HTTP write path and are
  * written to the DB directly, as in the T22 / T3 tests).
  *
  * 1. Import (every plugin through prepare -> confirm): on A, a templates-only plugin from npm and a
  *    skills-only plugin from a file; on B, refresh the official marketplace and import an entry
- *    (fake-dep-provider, extension only); after B refreshes the enterprise marketplace, A sees
+ *    (fake-dep-provider, extension only); after B refreshes the custom marketplace, A sees
  *    the new entries; importing an entry with a tampered integrity -> 502
  *    `marketplace.integrity_mismatch`, nothing written;
  * 2. A plugin with every component: on A, import `fake-tools-ui` (its extension + a connector
- *    template + a skill, depending on fake-dep-provider already in the catalog) from the enterprise
+ *    template + a skill, depending on fake-dep-provider already in the catalog) from the custom
  *    marketplace, one review, its extension deployed, both replicas load it without a restart; an
  *    org admin installs it on B: extension enabled, connector created with a tool snapshot, skill
  *    stored; the agent calls the connector tool and the extension tool, and `Skill` reads the
@@ -386,7 +386,7 @@ describe("M6 第三段双副本验收（平台目录）", { timeout: 240_000 }, 
   }, 120_000);
 
   /**
-   * The enterprise marketplace: the fake-tools-ui plugin with every component; with `withTampered` also a
+   * The custom marketplace: the fake-tools-ui plugin with every component; with `withTampered` also a
    * skill entry whose integrity is another package's.
    */
   function acmeManifest(withTampered: boolean) {
@@ -513,7 +513,7 @@ describe("M6 第三段双副本验收（平台目录）", { timeout: 240_000 }, 
     expect(confirmedDep.deploy).toMatchObject({ name: "fake-dep-provider", result: "enabled" });
     await waitFor(() => loadedOnBoth("fake-dep-provider", "0.1.0"), 30_000, "counter on both", 100);
 
-    // An enterprise marketplace: no entries before its first refresh; after a refresh on B, A sees
+    // An custom marketplace: no entries before its first refresh; after a refresh on B, A sees
     // them; a new entry in the manifest shows on A after the next refresh
     const added = await ok("root", 1, "POST", "/api/v1/admin/marketplaces", {
       name: "Acme",

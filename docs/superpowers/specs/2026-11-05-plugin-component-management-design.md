@@ -26,13 +26,13 @@ names: import into the catalog, deploy the extension and approve its permissions
 that defaults off, or a later step on the extension page), install the plugin in each org, then enable
 and configure the extension in each org (`/settings/extensions` and `/catalog` are two ways to do the
 same thing). Skills, connectors and agent templates a plugin brings are copied into each org on
-install, so the enterprise admin has no single place to see or update them.
+install, so the super admin has no single place to see or update them.
 
 The maintainer's own description of the job (decided):
 
 1. pick a source: the official marketplace, or add a Git marketplace source;
 2. bring a plugin in from a marketplace, or upload a plugin package;
-3. set it up and use it. With a Jina web tools plugin as the example: the enterprise admin can set
+3. set it up and use it. With a Jina web tools plugin as the example: the super admin can set
    the API key for the deployment, an org admin can set the org's own; some plugins support only
    deployment config, some only org config.
 
@@ -47,7 +47,7 @@ Goals:
    (decided). Each component kind has its own list, detail, scope and updates; a plugin groups the
    components it brought and updates them together.
 3. **One scope model** for who can use a plugin or component (decided, §5).
-4. **Ownership** (decided): what an org creates or uploads belongs to that org; only the enterprise
+4. **Ownership** (decided): what an org creates or uploads belongs to that org; only the super
    admin can associate it with other orgs.
 5. **The admin console sees everything** (decided): every plugin and component of the deployment,
    whoever owns it. The org workspace shows the same structure limited to what the org can use; org
@@ -65,7 +65,7 @@ Non-goals:
 
 Anti-goals (what would make this a failure even if it works):
 
-- A capability that is on for an org without anyone having chosen that (the enterprise admin through
+- A capability that is on for an org without anyone having chosen that (the super admin through
   scope, or the org admin through the switch).
 - An independent component update that silently breaks or blocks the next plugin update (today an
   uploaded same-name skill turns into the org's own and the next plugin upgrade fails with
@@ -82,9 +82,9 @@ Anti-goals (what would make this a failure even if it works):
 | 连接器模板 Connector template | A preset for a remote connector (`connectors/<id>.json`) | yes |
 | 连接器 Connector | An org's connector instance with its endpoint and credentials, possibly made from a template | yes |
 | Agent 模板 Agent template | A ready-made agent definition users create their own agents from; also usable as a sub-agent type (§8) | changed |
-| 市场 Marketplace | A source of plugins (official, or an enterprise http / Git source) | yes |
+| 市场 Marketplace | A source of plugins (official, or a custom http / Git source) | yes |
 
-"企业目录" / "catalog" disappears from the UI: the enterprise's installed plugins are simply the
+"企业目录" / "catalog" disappears from the UI: the platform's installed plugins are simply the
 插件 page (designer's call). The code may keep `catalog_*` names.
 
 The four component kinds were checked against the code (`PluginManifest`, `ComponentKind`):
@@ -94,11 +94,11 @@ extension and follow it; they are not components.
 
 ## 4. Bringing a plugin in
 
-### 4.1 Enterprise admin
+### 4.1 Super admin
 
 Entry points on the admin 插件 page (decided):
 
-- the 市场 tab: browse the official marketplace and enterprise sources, 引入 an entry (or 更新 one
+- the 市场 tab: browse the official marketplace and custom marketplaces, 引入 an entry (or 更新 one
   already installed at a lower version); 添加市场源 manages sources;
 - 上传插件包: a `.tgz` upload, npm or Git (the current import wizard's sources).
 
@@ -125,9 +125,9 @@ Only built-in (bootstrap) plugins may be installed first and have their permissi
 An org admin can upload a plugin package, or a single skill `.zip`, from the workspace (decided):
 
 - **without an extension**: installed at once, owned by the org, scope "named: this org";
-- **with an extension**: stored as pending; the enterprise admin reviews it in 待确认 (the same review
+- **with an extension**: stored as pending; the super admin reviews it in 待确认 (the same review
   as §4.1) and confirming installs it, owned by the org, scope "named: this org". Until then the org
-  sees 等待企业管理员确认 and nothing of the plugin is usable, not even its skills (designer's
+  sees 等待超级管理员确认 and nothing of the plugin is usable, not even its skills (designer's
   call: one plugin, one state).
 
 Extension names stay deployment-global (`extension_installs` PK `name`, `extension_name_owners`): an
@@ -147,9 +147,9 @@ Every plugin and every component has an owner and a scope (decided).
 
 Rules:
 
-1. **Owner**: `enterprise` (brought in or uploaded by the enterprise admin, and bootstrap plugins) or
+1. **Owner**: `platform` (brought in or uploaded by the super admin, and bootstrap plugins) or
    an org (created or uploaded in that org). An org-owned item starts as `named: [owner]` and only
-   the enterprise admin can add orgs to it or change its scope (decided), and only when the owner
+   the super admin can add orgs to it or change its scope (decided), and only when the owner
    org marked it 可共享 (§5.1).
 2. **Plugin scope and component scope** (decided): a plugin has a scope; each component either
    follows its plugin (default) or has its own. Changing a plugin's scope applies to all its
@@ -157,7 +157,7 @@ Rules:
    be replaced (designer's call on the listing).
 3. **Built-in** plugins are `all` and their scope cannot be changed; their extension cannot be
    disabled (today's `extension.required`).
-4. **Disabled** is not a scope: the enterprise admin can stop a plugin or component on the whole
+4. **Disabled** is not a scope: the super admin can stop a plugin or component on the whole
    deployment (today's extension disable, item policy `disabled`), keeping its scope for later.
 5. An org admin's switch acts on what the scope offers: on a plugin it switches all components that
    follow the plugin; on a component, only that component (designer's call).
@@ -196,41 +196,41 @@ the person who can decide for something the requester cannot use yet, and approv
 at once (no "approved, now install it again" step).
 
 1. **Visibility to other orgs**: each plugin and component has a "对其他组织显示" flag. An
-   enterprise-owned `named` item defaults to shown: orgs outside its list see it as 未开放，可申请.
-   An org-owned item defaults to hidden; only the enterprise admin can turn it on (the owner org
+   platform-owned `named` item defaults to shown: orgs outside its list see it as 未开放，可申请.
+   An org-owned item defaults to hidden; only the super admin can turn it on (the owner org
    cannot). The flag never makes anything usable; it only makes it requestable.
    **Shareable** (decided, 2026-11-05): when an org contributes something (creates or uploads it),
    its admin chooses whether it is 可共享 (default off; the owner org can change it later). Unless
-   it is shareable, the enterprise admin can neither show it to other orgs nor associate it with
+   it is shareable, the super admin can neither show it to other orgs nor associate it with
    them; turning shareable off later keeps existing associations and hides it from new requesters
-   (designer's call: removing existing users is rule 8's job, done explicitly by the enterprise
+   (designer's call: removing existing users is rule 8's job, done explicitly by the super
    admin).
-2. **Org admin → enterprise admin, for an item shown to them**: approving adds the org to the item's
+2. **Org admin → super admin, for an item shown to them**: approving adds the org to the item's
    `named` list; the owner org (for an org-owned item) gets an inbox notice saying which org now uses
    it.
-3. **Org admin → enterprise admin, for a marketplace entry not brought in yet**: org admins can
+3. **Org admin → super admin, for a marketplace entry not brought in yet**: org admins can
    browse the marketplaces read-only (the workspace 插件 page's 市场 tab) and 申请引入. Approving
    runs the normal import review (§4.1) with scope defaulting to `named` = the requesting org; the
-   enterprise admin may widen it. A deployment setting "组织可以浏览市场" (default on) hides the tab
+   super admin may widen it. A deployment setting "组织可以浏览市场" (default on) hides the tab
    and these requests.
 4. **Member → org admin, for an `optional` item that is off in the org**: approving turns it on in
    the org (today's first request stage).
-5. Requests to the enterprise admin appear in the admin 插件 page's 待确认 tab and in the
-   enterprise admin's inbox; requests to an org admin in that org's inbox. A rejection carries an
+5. Requests to the super admin appear in the admin 插件 page's 待确认 tab and in the
+   super admin's inbox; requests to an org admin in that org's inbox. A rejection carries an
    optional reason the requester sees. One pending request per (org, item or entry, kind).
 
 ## 6. Components at deployment level
 
 Today an org install copies the plugin's skills, agent templates and connectors into org rows
-(`skills.org_id`, `agent_templates.org_id`, `connectors.org_id`); there is no enterprise-level row
-for a component. That makes goals 2, 3 and 5 impossible: an enterprise skill exists N times, updating
+(`skills.org_id`, `agent_templates.org_id`, `connectors.org_id`); there is no platform-level row
+for a component. That makes goals 2, 3 and 5 impossible: a platform skill exists N times, updating
 it means N updates, and there is nothing to attach a scope to.
 
-**Designer's call: enterprise components live once, at deployment level.**
+**Designer's call: platform components live once, at deployment level.**
 
-- Enterprise-owned skills, connector templates and agent templates get deployment-level rows with
+- Platform-owned skills, connector templates and agent templates get deployment-level rows with
   versions (a skill version keeps today's object-storage layout), plus their plugin provenance.
-- An org's usable set = what the org owns ∪ enterprise or other-org items whose scope makes them
+- An org's usable set = what the org owns ∪ platform or other-org items whose scope makes them
   available to it and that are switched on. Runtime readers (skill catalog and `Skill` resolution,
   the sub-agent roster, the agent editor's pickers) read that union instead of org rows only.
 - Connector templates are deployment-level; **connectors stay per org** (they hold endpoints and
@@ -249,17 +249,17 @@ it means N updates, and there is nothing to attach a scope to.
 - **Org-owned items shared with other orgs** (decided): there is still one item. The owner org's
   updates reach every org it is associated with at once; the owner org deleting it shows the affected
   orgs and agents first (rule 8 of §5). When the owner org is deleted, items associated with other
-  orgs become enterprise-owned and stay available (today's `ON DELETE CASCADE` and the
+  orgs become platform-owned and stay available (today's `ON DELETE CASCADE` and the
   `kernel/<orgId>/` storage prefix must not take them down); items used only by the deleted org go
   with it.
 - Model-visible names must not change: skill keys and `<plugin>:<name>` stay as they are, so replays
   of existing conversations keep zero drift (`replay-evals`). Agents keep referencing skills and
-  connectors by id; existing org copies of enterprise components are merged into the deployment-level
+  connectors by id; existing org copies of platform components are merged into the deployment-level
   rows by a migration that keeps every id agents reference working (the builder chooses how: kept
   ids, an alias table, or rewritten agent definitions with new versions).
 
 This replaces per-org versions and rollback of declarative plugins (ecosystem spec §0 item 9):
-an enterprise plugin has one installed version for the deployment.
+a platform plugin has one installed version for the deployment.
 
 Migration of what exists (designer's calls; the mechanics stay the builder's, §12):
 
@@ -318,7 +318,7 @@ Designer's calls:
 - The SDK file format (`agents/<name>.md`) gains the new fields additively; existing templates stay
   valid.
 - Sub-agent type names: plugin templates keep `<plugin>:<name>`; a template without a plugin (org- or
-  enterprise-created) is the bare `<name>`, unique in each org's usable set (§5 rule 10), so
+  platform-created) is the bare `<name>`, unique in each org's usable set (§5 rule 10), so
   `agent_templates.plugin_name` becomes nullable. Existing type names in logged `subagent_started`
   events never change.
 
@@ -336,7 +336,7 @@ sidebar.
 | 插件 | Tabs 已安装 / 市场 / 待确认; actions 添加市场源, 上传插件包. A row: name, chips (内置, Claude Code, owner org), components count, source, scope and how many orgs use it, state (运行中, 可更新 x, 权限待确认) |
 | 插件 detail | Components table (kind, version and the pending update per component, scope: 跟随插件 or its own), tabs 组件 / 组织 / 版本, inspector (package, source, publisher, scope, orgs, permissions); actions 设置范围, 更新到 x |
 | 扩展 | Every extension: provider kinds, plugin, scope and enabled org count, replicas, state; detail keeps today's overview / permissions / deployment config |
-| 技能 / 连接器模板 / Agent 模板 | Every item of the deployment, enterprise and org-owned: from (plugin, upload, org), owner, scope, version; tabs 全部 / 企业 / 组织创建; the enterprise admin associates org items with other orgs here |
+| 技能 / 连接器模板 / Agent 模板 | Every item of the deployment, platform- and org-owned: from (plugin, upload, org), owner, scope, version; tabs 全部 / 平台 / 组织创建; the super admin associates org items with other orgs here |
 
 Workspace sidebar (decided via the mock): 新会话, 首页, Agents; 更多 holds **插件**, **扩展**,
 **技能**, **连接器**, **Agent 模板**, 渠道, 评测与运行, 组织设置. Org settings lose 扩展 and
@@ -344,9 +344,9 @@ Workspace sidebar (decided via the mock): 新会话, 首页, Agents; 更多 hold
 
 | Page | Content |
 |---|---|
-| 插件 | What the org can use: enterprise plugins in scope and the org's own; state 已启用 / 未启用 / 等待企业管理员确认; 启用 and 组织配置; 上传插件包 (admins) |
-| 扩展 | Extensions in scope with the org switch and org config (today's `/settings/extensions` content); 已启用 · 企业统一 for `all` |
-| 技能 | In-scope enterprise skills and the org's own, with switches; 新建技能, 上传 (.zip) |
+| 插件 | What the org can use: platform plugins in scope and the org's own; state 已启用 / 未启用 / 等待超级管理员确认; 启用 and 组织配置; 上传插件包 (admins) |
+| 扩展 | Extensions in scope with the org switch and org config (today's `/settings/extensions` content); 已启用 · 平台统一 for `all` |
+| 技能 | In-scope platform skills and the org's own, with switches; 新建技能, 上传 (.zip) |
 | 连接器 | The org's connectors; 从模板新建 lists the templates in scope |
 | Agent 模板 | In-scope templates and the org's own; 用它创建 Agent; 新建模板 |
 
@@ -367,7 +367,7 @@ A full map is in the brainstorming record; the facts that shape the work:
   to null (`skills.service.ts:541-562`).
 - Agent templates: `agent_templates.plugin_name` is NOT NULL; only `GET orgs/:orgId/agent-templates`
   exists.
-- Every import route is `@EnterpriseAdmin`; `plugin_import_staging` has no org.
+- Every import route is `@SuperAdmin`; `plugin_import_staging` has no org.
 - `deployment_settings.customSkills` / `customConnectors = deny` blocks org-made skills and
   connectors; it should also block org plugin uploads (designer's call).
 
@@ -390,7 +390,7 @@ A full map is in the brainstorming record; the facts that shape the work:
 - Whether the work ships in phases. Suggested order (designer's call): (1) import = install, scope
   for plugins and extensions, the new admin 插件 / 扩展 pages and workspace pages, bootstrap plugins
   as built-in; (2) deployment-level skills, connector templates and agent templates with scope and
-  independent updates; (3) org uploads with enterprise confirmation; (4) agent templates as agent
+  independent updates; (3) org uploads with super admin confirmation; (4) agent templates as agent
   starters.
 - HTTP routes and their shapes; the review's exact layout; empty and loading states.
 
@@ -404,7 +404,7 @@ All **(decided)** by the maintainer on 2026-11-06 unless marked.
 - Optional preinstalls, at their latest published versions: `connector-mcp`, `connector-openapi`,
   `anthropic`, `openai`, `jina`, `sandbox-docker`, `todo`. Without a sandbox provider most builtin
   tools are unusable; without a connector extension no connector can be created.
-- A newer pin upgrades a bootstrap-source install on the next start; an install an enterprise admin
+- A newer pin upgrades a bootstrap-source install on the next start; an install a super admin
   upgraded or installed is never touched or downgraded (today's bootstrap rule, kept).
 - Preinstalled optional plugins get the default scope `optional` (designer's call: a scope per
   bootstrap entry is a later manifest change).
@@ -424,7 +424,7 @@ spec, following Claude Code's marketplace (one marketplace serves one version of
   catalog. The bootstrap pins and the compose sandbox contexts stay pinned by `marketplace.commit`;
   since that commit lists one version per plugin, all pins of one manifest are the versions current
   at that commit.
-- Readers keep accepting several entries per plugin (enterprise marketplaces written in the old
+- Readers keep accepting several entries per plugin (custom marketplaces written in the old
   form); the web groups them per plugin (phase 1 follow-up, built).
 
 ### 13.3 Marketplace display names and Chinese summaries
@@ -458,14 +458,20 @@ settings (部署设置, 部署级配置). Phase 2 code uses `platform` for the o
 (`enterpriseAdmin`, routes) do not change. `check:i18n` rejects 企业 in zh messages. In this spec,
 "enterprise" in prose reads as "platform".
 
+Follow-up (2026-11-06, rename tasks R1-R3): the identifiers were renamed after all (no aliases):
+`isSuperAdmin`, `superAdmin`, `@SuperAdmin`, column `accounts.is_super_admin` (migration 0079), setting
+value `orgCreation: "super_admin"`, error `account.last_super_admin`; routes (`/admin`) keep their
+names. A non-official marketplace is a custom marketplace (自定义市场源). The prose of this spec now
+says super admin and platform; `check:terms` rejects the old identifiers.
+
 ### 13.5 Phase 2 decisions (2026-11-06)
 
 - An org admin can switch off a single component of a plugin that is on in the org (on the 技能 /
   智能体模板 pages), except components whose scope is `all` (§5 rule 5, now decided).
 - Migration of org copies: a copy an org changed (a same-name upload turned it into the org's own) stays
   the org's own; on a name clash it is renamed with a suffix and the org admins get an inbox notice;
-  agents referencing it keep working; the enterprise version starts switched off in that org.
-- Phase 2 also takes: an enterprise-admin inbox (requests to the enterprise and pending
+  agents referencing it keep working; the platform version starts switched off in that org.
+- Phase 2 also takes: a super-admin inbox (requests to the platform and pending
   confirmations), a member-readable 扩展 page without config or secrets, prerelease versions folded
   into 其他版本 once a stable version exists, and a `deprecated` marker for marketplace versions (SDK
   format, plugin-tools, the plugins repository).
