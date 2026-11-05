@@ -26,7 +26,7 @@ import {
   startOrgEnv,
   TEMPLATE_ID,
 } from "./org-env.js";
-import { mcpTemplate, templatePlugin } from "./packages.js";
+import { mcpTemplate, skillPlugin, templatePlugin } from "./packages.js";
 
 let env: OrgEnv;
 
@@ -299,6 +299,20 @@ describe("组织从目录安装：三档策略", { timeout: 60_000 }, () => {
       { name: "delete_all", default_policy: "ask", policy_source: "derived" },
       { name: "search", default_policy: "allow", policy_source: "template" },
     ]);
+  });
+
+  it("the org list and detail carry the latest version's zh description (descriptionZh)", async () => {
+    const id = await importPlugin(
+      env,
+      await skillPlugin("zh-desc", {
+        manifest: { description: { en: "English text", zh: "中文描述" } },
+      }),
+    );
+    const listed = (await orgList(env.root)).find((i) => i.id === id) as unknown;
+    expect(listed).toMatchObject({ description: "English text", descriptionZh: "中文描述" });
+    const d = await env.root({ method: "GET", url: `/api/v1/orgs/${env.orgId}/catalog/${id}` });
+    expect(d.statusCode, d.body).toBe(200);
+    expect(d.json().item).toMatchObject({ descriptionZh: "中文描述" });
   });
 
   it("插件条目：在本组织启用受条目 disabled 约束", async () => {

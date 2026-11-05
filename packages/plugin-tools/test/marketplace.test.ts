@@ -185,6 +185,37 @@ describe("capybara-plugin marketplace", () => {
     expect((await sync(false)).findings).toEqual([]);
   }, 60_000);
 
+  it("marketplace-display-stale: --write refreshes summary and displayName of the listed version, nothing else", async () => {
+    await sync(true);
+    const m = readManifest();
+    const stale = structuredClone(m);
+    const first = stale.plugins[0] as Record<string, unknown> & {
+      source: { npm: { integrity: string } };
+    };
+    first.summary = { en: "old summary" };
+    delete first.displayName;
+    // the published bytes: --write never touches the source
+    first.source.npm.integrity = `sha512-${"B".repeat(86)}==`;
+    writeManifest(stale);
+    const check = await sync(false);
+    expect(check.findings.map((f) => [f.rule, f.message.split(" ")[0]])).toEqual([
+      ["marketplace-display-stale", "fixture-declarative@0.1.0"],
+    ]);
+    const r = await sync(true);
+    expect(r.findings).toEqual([]);
+    expect(r.added).toEqual([]);
+    expect(r.refreshed).toEqual(["fixture-declarative@0.1.0"]);
+    const after = readManifest().plugins[0] as Record<string, unknown>;
+    expect(after).toEqual({
+      ...first,
+      summary: (m.plugins[0] as Record<string, unknown>).summary,
+      displayName: { zh: "声明式", en: "Declarative" },
+    });
+    // the key order of an entry --write writes
+    expect(Object.keys(after).slice(0, 4)).toEqual(["name", "version", "summary", "displayName"]);
+    expect((await sync(false)).findings).toEqual([]);
+  }, 60_000);
+
   it("an already listed version is not compared with the tree's pack (the publish gate owns it)", async () => {
     // after a release, a source or toolchain change packs other bytes at the same version: an
     // ordinary PR must stay green, and other plugins' new entries must still be written
@@ -241,10 +272,11 @@ describe("capybara-plugin marketplace", () => {
       const m = readManifest();
       writeManifest({ ...m, plugins: [m.plugins[1], m.plugins[0], old("later", "9.0.0")] });
       expect((await check()).findings).toEqual([]);
+      // a display field edited at a published version: no base rule (only --write's refresh)
       const edited = structuredClone(m);
       (edited.plugins[0] as { summary: { en: string } }).summary.en = "changed";
       writeManifest(edited);
-      expect((await check()).findings).toEqual([]);
+      expect((await check()).findings.map((f) => f.rule)).toEqual(["marketplace-display-stale"]);
     }, 60_000);
 
     it("marketplace-version-decrease: an entry's version may only increase", async () => {
@@ -268,6 +300,20 @@ describe("capybara-plugin marketplace", () => {
         ["marketplace-integrity", "fixture-declarative@0.1.0"],
       ]);
       expect(f[0]?.message).toContain(integrity.get("fixture-declarative"));
+    }, 60_000);
+
+    it("marketplace-version-decrease: moving back to an older version a base in the older form lists", async () => {
+      const m = readManifest();
+      writeManifest({ ...m, plugins: [old("fixture-declarative", "0.0.9"), ...m.plugins] });
+      git("add", "-A");
+      git("commit", "-q", "-m", "several versions");
+      base = git("rev-parse", "HEAD").trim();
+      writeManifest({ ...m, plugins: [old("fixture-declarative", "0.0.9"), m.plugins[1]] });
+      const f = (await check()).findings.filter((x) => x.rule !== "marketplace-missing");
+      expect(f.map((x) => [x.rule, x.message.split(" ")[0]])).toEqual([
+        ["marketplace-version-decrease", "fixture-declarative@0.0.9"],
+      ]);
+      expect(f[0]?.message).toContain("0.1.0");
     }, 60_000);
 
     it("a base in the older form (several versions) collapses to one entry without findings", async () => {

@@ -35,7 +35,10 @@ export interface CatalogItem {
   name: string;
   publisher: string;
   displayName: LocalizedName | null;
+  /** The English description. */
   description: string;
+  /** The latest version's Chinese description; null without one (see {@link descriptionOf}). */
+  descriptionZh: string | null;
   /** Who the plugin is offered to (`all` for a builtin plugin). */
   scope: PluginScope;
   /** The orgs of a `named` scope (empty otherwise). */
@@ -110,7 +113,8 @@ export interface PluginManifest {
   name: string;
   version: string;
   publisher: string;
-  description: string;
+  /** A string (English) or `{ en, zh? }`. */
+  description: string | { en: string; zh?: string };
   displayName?: LocalizedName;
   icon?: string;
   license?: string;
@@ -387,7 +391,10 @@ export interface PluginReview {
   /** null for a git plugin without package.json. */
   packageName: string | null;
   publisher: string;
+  /** The English description. */
   description: string;
+  /** The Chinese description; null without one (absent in reviews staged before it existed). */
+  descriptionZh?: string | null;
   displayName?: LocalizedName;
   license?: string;
   homepage?: string;
@@ -1105,6 +1112,13 @@ export const decideOrgRequest = (orgId: string, id: string, decision: RequestDec
   );
 
 // ---- 纯函数 ----
+
+/** The description in the UI language: the Chinese one in zh when there is one, else the English. */
+export const descriptionOf = (
+  i: { description: string; descriptionZh?: string | null },
+  locale: string,
+): string =>
+  locale === "zh" && typeof i.descriptionZh === "string" ? i.descriptionZh : i.description;
 
 /** 显示名：有双语名按界面语言取，否则用条目名。 */
 export const displayNameOf = (

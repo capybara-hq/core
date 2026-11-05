@@ -8,6 +8,7 @@ import type {
   MarketplaceEntry,
   PluginManifest,
 } from "@capybara-hq/plugin-sdk";
+import { pluginDescription } from "@capybara-hq/plugin-sdk";
 import { sql } from "kysely";
 import type { KernelConfig } from "../config/schema.js";
 import type { KernelSchemaDb, SourceFormat } from "../db/kernel-schema.js";
@@ -723,6 +724,14 @@ export async function itemScopeFacts(
   return out;
 }
 
+/** The `zh` text of a stored manifest's description; null without one (or an unreadable manifest). */
+function descriptionZhOf(manifest: unknown): string | null {
+  const d = (manifest as { description?: unknown } | null | undefined)?.description;
+  if (typeof d !== "object" || d === null) return null;
+  const zh = pluginDescription(d as { en: string; zh?: string }).zh;
+  return typeof zh === "string" ? zh : null;
+}
+
 export function itemView(
   i: {
     id: string;
@@ -766,6 +775,7 @@ export function itemView(
     publisher: i.publisher,
     displayName: i.display_name,
     description: i.description,
+    descriptionZh: descriptionZhOf(current?.manifest),
     policy: i.policy,
     scope: i.builtin ? "all" : i.scope,
     scopeOrgs: [...facts.scopeOrgs],

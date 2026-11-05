@@ -17,6 +17,7 @@ import {
   PLUGIN_MANIFEST_FILE,
   type PluginDescription,
   parseMarketplaceManifest,
+  parsePluginManifest,
   pluginDescription,
   SDK_VERSION,
 } from "@capybara-hq/plugin-sdk";
@@ -56,10 +57,16 @@ export interface SyncMarketplaceResult {
   /** `name@version` of the other entries of the tree's plugins (dropped with `write`). */
   removed: string[];
   /**
+   * `name@version` of listed entries whose `summary` / `displayName` differ from plugin.json
+   * (rewritten with `write`; source and integrity never change).
+   */
+  refreshed: string[];
+  /**
    * `marketplace-invalid` (the file does not parse, or would not after writing),
    * `marketplace-integrity` and `marketplace-version-decrease` (with a base, see
    * {@link SyncMarketplaceOptions.base}) and, without `write`, `marketplace-missing` (one per
-   * plugin whose current version is not listed, or not as its only entry).
+   * plugin whose current version is not listed, or not as its only entry) and
+   * `marketplace-display-stale` (a listed entry's summary / displayName differ from plugin.json).
    */
   findings: Finding[];
 }
@@ -107,6 +114,49 @@ interface PluginUpdate {
   entry: unknown;
   isNew: boolean;
   dropped: string[];
+  /** The listed entry's summary / displayName differed from plugin.json and were rewritten. */
+  refreshed: boolean;
+}
+
+/** The display fields an entry copies from plugin.json. */
+interface Display {
+  summary: { en: string; zh?: string };
+  displayName?: { zh: string; en: string };
+}
+
+/** The display fields of a plugin's source plugin.json; undefined when it does not parse. */
+function displayOf(json: unknown): Display | undefined {
+  const m = parsePluginManifest(json);
+  if ("errors" in m) return undefined;
+  return {
+    summary: summaryOf(m.description),
+    ...(m.displayName !== undefined && { displayName: m.displayName }),
+  };
+}
+
+/**
+ * `raw` with its `summary` and `displayName` set to `d` (in place, `displayName` right after
+ * `summary` when it is new, removed when plugin.json has none); undefined when they already equal.
+ */
+function refreshDisplay(raw: unknown, d: Display): Record<string, unknown> | undefined {
+  if (!isObj(raw)) return undefined;
+  if (
+    canonical(raw.summary) === canonical(d.summary) &&
+    canonical(raw.displayName) === canonical(d.displayName)
+  ) {
+    return undefined;
+  }
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(raw)) {
+    if (k === "displayName") continue;
+    out[k] = k === "summary" ? d.summary : v;
+    if (k === "summary" && d.displayName !== undefined) out.displayName = d.displayName;
+  }
+  if (!("summary" in raw)) {
+    out.summary = d.summary;
+    if (d.displayName !== undefined) out.displayName = d.displayName;
+  }
+  return out;
 }
 
 /**
@@ -122,7 +172,8 @@ interface PluginUpdate {
  * of a file written in the older one-entry-per-version form), and a plugin not listed yet is
  * appended. Entries of plugins not in the tree are kept. A version already listed is not packed or
  * compared: once published, its bytes are the release gate's business (`release --marketplace`),
- * so a later source or toolchain change at the same version is not a finding. With `base`, see
+ * so a later source or toolchain change at the same version is not a finding; only its display
+ * fields (`summary`, `displayName`) are refreshed from the source plugin.json. With `base`, see
  * {@link SyncMarketplaceOptions.base}. The file is written formatted as Biome formats it
  * ({@link formatMarketplaceJson}); nothing is written when there is any other finding.
  */
@@ -132,7 +183,7 @@ export async function syncMarketplace(
   const findings: Finding[] = [];
   const at = (rule: string, message: string) =>
     findings.push({ file: opts.file, line: 1, rule, message });
-  const none = (): SyncMarketplaceResult => ({ added: [], removed: [], findings });
+  const none = (): SyncMarketplaceResult => ({ added: [], removed: [], refreshed: [], findings });
   if (!existsSync(opts.file)) {
     at(
       "marketplace-invalid",
@@ -173,6 +224,7 @@ export async function syncMarketplace(
       const pkg = JSON.parse(await readFile(pkgFile, "utf8")) as Record<string, unknown>;
       if (pkg.private === true) continue;
       const source = JSON.parse(await readFile(manifestFile, "utf8")) as { name?: unknown };
+      // (the display fields of a listed entry are refreshed from this source plugin.json)
       const name = String(source.name);
       const version = String(pkg.version);
       const mine = parsed.plugins.flatMap((e, i) => (e.name === name ? [{ e, i }] : []));
@@ -185,10 +237,17 @@ export async function syncMarketplace(
       // Only an entry added since the base is compared with the tree's pack.
       const toCompare = listed.filter(({ e }) => baseKeys !== undefined && !baseKeys.has(keyOf(e)));
       const kept = listed[0];
-      if (kept !== undefined && toCompare.length === 0) {
-        if (dropped.length > 0) {
-          updates.push({ name, version, entry: rawEntries[kept.i], isNew: false, dropped });
+      /** Keeps the listed entry: drops the other versions, refreshes its display fields. */
+      const keep = (raw: unknown) => {
+        const display = displayOf(source);
+        const fresh = display === undefined ? undefined : refreshDisplay(raw, display);
+        if (dropped.length > 0 || fresh !== undefined) {
+          const entry = fresh ?? raw;
+          updates.push({ name, version, entry, isNew: false, dropped, refreshed: !!fresh });
         }
+      };
+      if (kept !== undefined && toCompare.length === 0) {
+        keep(rawEntries[kept.i]);
         continue;
       }
       // Packed: the plugin is not listed at its version, or its entry is new since the base.
@@ -214,9 +273,7 @@ export async function syncMarketplace(
         }
       }
       if (kept !== undefined) {
-        if (dropped.length > 0) {
-          updates.push({ name, version, entry: rawEntries[kept.i], isNew: false, dropped });
-        }
+        keep(rawEntries[kept.i]);
         continue;
       }
       const entry: MarketplaceEntry = {
@@ -228,7 +285,7 @@ export async function syncMarketplace(
         permissions: await permissionsOf(bytes, r.manifest.extension !== undefined),
         source: { npm },
       };
-      updates.push({ name, version, entry, isNew: true, dropped });
+      updates.push({ name, version, entry, isNew: true, dropped, refreshed: false });
     }
   } finally {
     await rm(out, { recursive: true, force: true });
@@ -236,8 +293,17 @@ export async function syncMarketplace(
 
   const added = updates.filter((u) => u.isNew).map((u) => u.entry as MarketplaceEntry);
   const removed = updates.flatMap((u) => u.dropped);
+  const refreshed = updates.filter((u) => u.refreshed).map((u) => `${u.name}@${u.version}`);
   if (!opts.write) {
     for (const u of updates) {
+      if (u.refreshed) {
+        at(
+          "marketplace-display-stale",
+          `${u.name}@${u.version} has a summary or displayName other than its plugin.json's: ` +
+            "run capybara-plugin marketplace --write",
+        );
+      }
+      if (!u.isNew && u.dropped.length === 0) continue;
       const also = u.dropped.map((d) => d.slice(u.name.length + 1)).join(", ");
       at(
         "marketplace-missing",
@@ -248,9 +314,9 @@ export async function syncMarketplace(
               "one entry per plugin, its current version; run capybara-plugin marketplace --write",
       );
     }
-    return { added, removed, findings };
+    return { added, removed, refreshed, findings };
   }
-  if (findings.length > 0 || updates.length === 0) return { added, removed, findings };
+  if (findings.length > 0 || updates.length === 0) return { added, removed, refreshed, findings };
   const byName = new Map(updates.map((u) => [u.name, u]));
   const placed = new Set<string>();
   const plugins: unknown[] = [];
@@ -270,10 +336,10 @@ export async function syncMarketplace(
   const check = parseMarketplaceManifest(next);
   if ("errors" in check) {
     at("marketplace-invalid", `the new entries do not parse: ${check.errors.join("; ")}`);
-    return { added, removed, findings };
+    return { added, removed, refreshed, findings };
   }
   await writeFile(opts.file, formatMarketplaceJson(next));
-  return { added, removed, findings };
+  return { added, removed, refreshed, findings };
 }
 
 /** `name@version` of a parsed entry (`?` without a version). */
@@ -329,7 +395,8 @@ function semverOfRaw(e: unknown): string | undefined {
 /**
  * The rules on the entries published at the base: `marketplace-integrity`, a version the base
  * lists keeps its source (package and integrity); `marketplace-version-decrease`, a version the
- * base does not list must be newer than every version the base lists for that plugin. Display
+ * base does not list must be newer than every version the base lists for that plugin, and a
+ * plugin's newest listed version may not be older than the newest the base lists. Display
  * fields (summary, displayName, permissions, homepage) may change, entries may move, and a
  * plugin's older versions may go (one entry per plugin).
  */
@@ -344,6 +411,8 @@ function publishedRules(base: unknown[], current: unknown[], file: string): Find
     const top = newest.get(name);
     if (v !== undefined && (top === undefined || compareSemver(v, top) > 0)) newest.set(name, v);
   }
+  /** `name@version` of the entries reported as `marketplace-version-decrease`. */
+  const decreased = new Set<string>();
   for (const c of current) {
     const key = keyOfRaw(c);
     const b = baseByKey.get(key);
@@ -360,12 +429,27 @@ function publishedRules(base: unknown[], current: unknown[], file: string): Find
     }
     const v = semverOfRaw(c);
     const top = newest.get(isObj(c) ? String(c.name) : "?");
-    if (v !== undefined && top !== undefined && compareSemver(v, top) < 0) {
-      finding(
-        "marketplace-version-decrease",
-        `${key} is older than ${top}, which the base lists: an entry's version may only increase`,
-      );
-    }
+    if (v !== undefined && top !== undefined && compareSemver(v, top) < 0) decreased.add(key);
+  }
+  // A plugin's newest listed version may not fall below the newest the base lists, also when it
+  // moves back to an older version the base lists too (a base in the older form).
+  const newestNow = new Map<string, string>();
+  for (const c of current) {
+    const v = semverOfRaw(c);
+    const name = isObj(c) ? String(c.name) : "?";
+    const top = newestNow.get(name);
+    if (v !== undefined && (top === undefined || compareSemver(v, top) > 0)) newestNow.set(name, v);
+  }
+  for (const [name, v] of newestNow) {
+    const top = newest.get(name);
+    if (top !== undefined && compareSemver(v, top) < 0) decreased.add(`${name}@${v}`);
+  }
+  for (const key of decreased) {
+    const name = key.slice(0, key.lastIndexOf("@"));
+    finding(
+      "marketplace-version-decrease",
+      `${key} is older than ${newest.get(name)}, which the base lists: an entry's version may only increase`,
+    );
   }
   return out;
 }

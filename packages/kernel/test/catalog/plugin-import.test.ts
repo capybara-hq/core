@@ -314,20 +314,35 @@ describe("one import flow for every plugin", { timeout: 60_000 }, () => {
     expect(await d.head(`${v.object_prefix}skills/pdf-tools/SKILL.md`)).not.toBeNull();
   });
 
-  it("a localized plugin.json description: the review and the item carry its English text", async () => {
-    const body = await imported(
-      await skillPlugin("pdf-localized", {
-        manifest: { description: { en: "Read PDFs", zh: "读取 PDF" } },
-      }),
-    );
-    expect(body.item).toMatchObject({ name: "pdf-localized", description: "Read PDFs" });
+  it("a localized plugin.json description: the review and the item views carry en and zh", async () => {
+    const zhPlugin = await skillPlugin("pdf-localized", {
+      manifest: { description: { en: "Read PDFs", zh: "读取 PDF" } },
+    });
+    const staged = await prepared(zhPlugin);
+    expect(staged.review).toMatchObject({ description: "Read PDFs", descriptionZh: "读取 PDF" });
+    const res = await confirm(admin, staged.stagingId, { reviewHash: staged.review.reviewHash });
+    expect(res.statusCode, res.body).toBe(201);
+    const body = res.json();
+    expect(body.item).toMatchObject({ description: "Read PDFs", descriptionZh: "读取 PDF" });
+    const list = await admin({ method: "GET", url: "/api/v1/admin/catalog/items" });
+    expect(
+      list.json().items.find((i: { name: string }) => i.name === "pdf-localized"),
+    ).toMatchObject({ description: "Read PDFs", descriptionZh: "读取 PDF" });
+    const detail = await admin({
+      method: "GET",
+      url: `/api/v1/admin/catalog/items/${body.item.id}`,
+    });
+    expect(detail.json().item).toMatchObject({ descriptionZh: "读取 PDF" });
+    // a later version without zh: the item follows its latest version
     const s = await prepared(
       await skillPlugin("pdf-localized", {
         version: "1.1.0",
         manifest: { description: { en: "Read PDFs" } },
       }),
     );
-    expect(s.review.description).toBe("Read PDFs");
+    expect(s.review).toMatchObject({ description: "Read PDFs", descriptionZh: null });
+    const next = await confirm(admin, s.stagingId, { reviewHash: s.review.reviewHash });
+    expect(next.json().item).toMatchObject({ description: "Read PDFs", descriptionZh: null });
   });
 
   it("a templates-only plugin: checked against the loaded connector, the template file and icon stored", async () => {

@@ -54,11 +54,13 @@ capybara-plugin release [--dry-run] [--provenance] [--out <dir>] [--auto] [--roo
   `summary` from the `plugin.json` `description`, `displayName` from `plugin.json`, `homepage`,
   `permissions`, `source.npm` with the sha512 of a reproducible pack), formatted as Biome formats
   it: a plugin whose version moved gets its entry replaced in place, its other versions are
-  dropped, and entries of plugins not in the tree are kept. `--check` fails when a plugin's
+  dropped, a listed entry's `summary` / `displayName` are refreshed from `plugin.json`
+  (`marketplace-display-stale` in `--check`; source and integrity untouched), and entries of
+  plugins not in the tree are kept. `--check` fails when a plugin's
   current version is missing or not its only entry (`marketplace-missing`) or the file does not
   parse (`marketplace-invalid`). A version already listed is not compared with the tree: once
   published, its bytes are the release gate's business. `--check --base <rev>` (pull requests)
-  also requires an entry's version to only increase over the versions `<rev>` lists
+  also requires a plugin's version to only increase over the versions `<rev>` lists
   (`marketplace-version-decrease`), a version `<rev>` lists to keep its integrity, and the entries
   added since to match their packs (`marketplace-integrity`).
 - **release**: publishes every non-private workspace package whose version is not on npm yet:

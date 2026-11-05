@@ -21,6 +21,7 @@ import { usePluginActions, usePluginState } from "../../../../components/PluginS
 import { usePagePath } from "../../../../components/shell/path";
 import {
   agentTemplateNameOf,
+  descriptionOf,
   displayNameOf,
   endpointLeaves,
   type OrgCatalogDetail,
@@ -147,7 +148,9 @@ function CatalogItemDetail({
       }
     >
       <Stack gap={16}>
-        {item.description !== "" && <Text variant="prose">{item.description}</Text>}
+        {descriptionOf(item, locale) !== "" && (
+          <Text variant="prose">{descriptionOf(item, locale)}</Text>
+        )}
         <Stack gap={4}>
           <Stack direction="row" gap={8} align="center">
             <Text tone={stateOf(item).tone}>{stateOf(item).label}</Text>

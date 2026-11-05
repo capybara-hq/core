@@ -43,6 +43,7 @@ import {
   type CatalogItemDetail,
   type CatalogItemVersion,
   declaredPermissions,
+  descriptionOf,
   displayNameOf,
   importMarketplaceEntry,
   importPageHref,
@@ -279,9 +280,9 @@ function PluginDetail({ detail, orgId }: { detail: CatalogItemDetail; orgId: str
         ) : (
           <Versions versions={detail.versions} />
         )}
-        {item.description && tab === "components" && (
+        {descriptionOf(item, locale) && tab === "components" && (
           <Text variant="prose" tone="muted">
-            {item.description}
+            {descriptionOf(item, locale)}
           </Text>
         )}
         {deleted && <Text tone="warn">{td("admin.detail.deleted")}</Text>}

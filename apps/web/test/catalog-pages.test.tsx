@@ -909,6 +909,57 @@ describe("/admin/plugins/import (WizardPage)", () => {
   });
 });
 
+describe("descriptions in the UI language (descriptionZh)", () => {
+  it.each(LOCALES)(
+    "the import review shows the description in the UI language (%s)",
+    async (locale) => {
+      stubApi({
+        "POST /api/v1/admin/catalog/import/npm": () =>
+          json(200, { stagingId: "st1", review: { ...REVIEW, descriptionZh: "客户管理插件" } }),
+      });
+      await renderRouteWithCache(importPath(), lastStubRoutes(), { locale });
+      const user = userEvent.setup();
+      const r = msgs[locale].catalog.admin.review;
+      await user.click(await screen.findByRole("radio", { name: new RegExp(`^${r.sourceNpm}`) }));
+      await user.type(
+        screen.getByRole("textbox", { name: msgs[locale].admin.extensions.wizard.npmPackage }),
+        "@acme/plugin-crm",
+      );
+      await user.click(screen.getByRole("button", { name: r.fetch }));
+      expect(await screen.findByText(locale === "zh" ? "客户管理插件" : "CRM plugin")).toBeTruthy();
+    },
+  );
+
+  it.each(LOCALES)(
+    "the workspace list and plugin page show the description in the UI language (%s)",
+    async (locale) => {
+      const want = locale === "zh" ? "PDF 助手" : "PDF helpers";
+      const zhItem = orgItem({ descriptionZh: "PDF 助手" });
+      stubApi({ [`GET ${ORG}/catalog`]: () => json(200, { items: [zhItem] }) });
+      await renderPlugins({ locale });
+      expect(await screen.findByText(want)).toBeTruthy();
+      cleanup();
+      vi.unstubAllGlobals();
+      params.current = { itemId: ID };
+      stubApi({
+        [`GET ${ORG}/catalog/${ID}`]: () =>
+          json(200, {
+            item: zhItem,
+            hasIcon: false,
+            extension: null,
+            templates: [],
+            dependencies: [],
+            skills: [],
+          }),
+        [`GET ${ORG}/plugin-installs`]: () => json(200, { installs: [] }),
+        [`GET ${ORG}/extensions`]: () => json(200, { extensions: [] }),
+      });
+      await renderItem({ locale });
+      expect(await screen.findByText(want)).toBeTruthy();
+    },
+  );
+});
+
 describe("/plugins/[itemId]/enable (WizardPage)", () => {
   it("read-only endpoint fields stay read-only, editable ones change; the body has only the changed editable fields and credentials; a dependency failure names it and says it was rolled back", async () => {
     params.current = { itemId: ID };
@@ -1508,6 +1559,39 @@ describe("/admin/plugins and marketplace entries", () => {
     extensionSha256: null,
     importedAt: "2026-10-22T00:00:00.000Z",
   });
+
+  it.each(LOCALES)(
+    "list and item detail show the description in the UI language (%s)",
+    async (locale) => {
+      const want = locale === "zh" ? "客户管理插件" : "CRM plugin";
+      const zhItem = item({
+        name: "crm",
+        description: "CRM plugin",
+        descriptionZh: "客户管理插件",
+      });
+      stubApi({
+        "GET /api/v1/admin/catalog/items": () => json(200, { items: [zhItem], nextOffset: null }),
+        "GET /api/v1/admin/marketplaces": () => json(200, SOURCES),
+      });
+      await renderRouteWithCache("/admin/plugins", lastStubRoutes(), { locale });
+      expect(await screen.findByText(want)).toBeTruthy();
+      cleanup();
+      vi.unstubAllGlobals();
+      params.current = { itemId: ID };
+      stubApi({
+        [`GET /api/v1/admin/catalog/items/${ID}`]: () =>
+          json(200, {
+            item: { ...zhItem, packageName: null, deletedAt: null },
+            versions: [version("1.0.0")],
+            hasIcon: false,
+          }),
+        "GET /api/v1/admin/marketplaces": () => json(200, SOURCES),
+        "GET /api/v1/admin/catalog/items": () => json(200, { items: [], nextOffset: null }),
+      });
+      await renderRouteWithCache(adminItemPath(), lastStubRoutes(), { locale });
+      expect(await screen.findByText(want)).toBeTruthy();
+    },
+  );
 
   it("list: source and “update available”; the search narrows by name", async () => {
     const t = en.catalog;

@@ -1,6 +1,7 @@
 import { resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { formatFinding } from "../check/report.js";
+import { errorsOf } from "../check/source.js";
 import { MARKETPLACE_FILE, syncMarketplace } from "./marketplace.js";
 
 export const MARKETPLACE_USAGE =
@@ -21,9 +22,10 @@ export const MARKETPLACE_USAGE =
  *   versions `<rev>` lists (`marketplace-version-decrease`), a version `<rev>` lists keeps its
  *   integrity, and the entries added since must match the tree's packs (`marketplace-integrity`).
  *
- * `--check` exits 1 on any finding (`marketplace-missing`, `marketplace-integrity`,
- * `marketplace-version-decrease`, `marketplace-invalid`); `--write` writes each plugin's entry
- * (replacing its other versions) and exits 1 only on `marketplace-invalid`.
+ * `--check` exits 1 on any finding that is not a warning (`marketplace-missing`,
+ * `marketplace-display-stale`, `marketplace-integrity`, `marketplace-version-decrease`,
+ * `marketplace-invalid`); `--write` writes each plugin's entry (replacing its other versions,
+ * refreshing a listed entry's summary and displayName) and exits 1 only on `marketplace-invalid`.
  * Relative paths resolve against `cwd`. Returns the exit code.
  */
 export async function marketplaceCommand(args: string[], cwd: string): Promise<number> {
@@ -62,14 +64,16 @@ export async function marketplaceCommand(args: string[], cwd: string): Promise<n
       ...(values.base !== undefined && { base: values.base }),
     });
     for (const f of r.findings) console.error(formatFinding(f, root));
-    if (r.findings.length > 0) {
-      console.error(`\n${r.findings.length} marketplace finding(s)`);
+    const errors = errorsOf(r.findings);
+    if (errors.length > 0) {
+      console.error(`\n${errors.length} marketplace finding(s)`);
       return 1;
     }
     if (values.write) {
       for (const e of r.added) console.log(`added ${e.name}@${e.version}`);
       for (const k of r.removed) console.log(`removed ${k}`);
-      const changed = r.added.length + r.removed.length > 0;
+      for (const k of r.refreshed) console.log(`refreshed ${k}`);
+      const changed = r.added.length + r.removed.length + r.refreshed.length > 0;
       console.log(changed ? `wrote ${file}` : "marketplace is up to date");
     } else {
       console.log("marketplace is up to date");

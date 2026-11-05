@@ -14,7 +14,7 @@ import {
   useScopeLabel,
 } from "../../../../components/PluginsHead";
 import { usePagePath } from "../../../../components/shell/path";
-import { type CatalogItem, displayNameOf } from "../../../../lib/catalog";
+import { type CatalogItem, descriptionOf, displayNameOf } from "../../../../lib/catalog";
 import { catalogItemsQuery, marketplacesQuery } from "../../../../lib/query/admin";
 import { retryOnMountOf } from "../../../../lib/query/client";
 import { usePageQuery } from "../../../../lib/query/page-query";
@@ -115,7 +115,7 @@ function AdminPlugins({ all }: { all: CatalogItem[] }) {
               ...(i.sourceFormat === "claude-code" ? [{ label: t("chips.claudeCode") }] : []),
               ...(i.contentChanged ? [{ label: td("contentChanged"), tone: "warn" as const }] : []),
             ]}
-            description={i.description}
+            description={descriptionOf(i, locale)}
             meta={[
               versionLabel(i.latestVersion),
               sourceLabel(i),

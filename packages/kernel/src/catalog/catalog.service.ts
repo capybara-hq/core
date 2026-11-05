@@ -63,7 +63,13 @@ export interface CatalogItemView {
   name: string;
   publisher: string;
   displayName: LocalizedName | null;
+  /** The English description (the plugin.json description's `en`, or the plain string). */
   description: string;
+  /**
+   * The Chinese description of the latest version (its plugin.json `description.zh`, read from the
+   * stored manifest); null without one. The UI shows it in Chinese, else `description`.
+   */
+  descriptionZh: string | null;
   /** The old item policy, kept for reading only (scope and `disabled` replaced it). */
   policy: CatalogPolicy;
   /** Who the plugin is offered to (`all` for a builtin plugin). */

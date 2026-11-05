@@ -12,6 +12,7 @@ import { useComponentsLabel } from "../../../components/PluginsHead";
 import { usePagePath } from "../../../components/shell/path";
 import { issueLines } from "../../../lib/api";
 import {
+  descriptionOf,
   displayNameOf,
   groupMarketplaceEntries,
   type MarketplaceEntry,
@@ -155,7 +156,7 @@ function Plugins({ orgId, me }: { orgId: string; me: Me }) {
                   ? [{ label: t("chips.upgrade", { version: versionLabel(upgrade) }) }]
                   : []),
               ]}
-              description={i.description}
+              description={descriptionOf(i, locale)}
               meta={[componentsLabel(i.componentCounts), scopeText(i)]}
               state={stateOf(i)}
               {...rowActions(actionsOf(i))}

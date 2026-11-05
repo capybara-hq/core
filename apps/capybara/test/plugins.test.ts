@@ -391,6 +391,7 @@ describe("capybara plugins import git:", () => {
       packageName: null,
       publisher: "git.example.com/acme",
       description: "Alpha",
+      descriptionZh: null,
       skills: [],
       connectorTemplates: [],
       dependencies: [],

@@ -272,7 +272,10 @@ export interface PluginReview {
   /** package.json `name`; null for a git plugin without package.json. */
   packageName: string | null;
   publisher: string;
+  /** The plugin.json description's English text (a plain string description is English). */
   description: string;
+  /** Its Chinese text (`description.zh`); null without one. */
+  descriptionZh: string | null;
   displayName?: LocalizedName;
   license?: string;
   homepage?: string;
@@ -743,6 +746,7 @@ export class PluginImport {
       packageName,
       publisher: m.publisher,
       description: pluginDescription(m.description).en,
+      descriptionZh: pluginDescription(m.description).zh ?? null,
       ...(m.displayName !== undefined && { displayName: m.displayName }),
       ...(m.license !== undefined && { license: m.license }),
       ...(m.homepage !== undefined && { homepage: m.homepage }),

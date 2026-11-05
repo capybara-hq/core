@@ -20,7 +20,7 @@ import {
   WizardPage,
 } from "@capybara-hq/design";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
 import {
   ComponentSection,
@@ -40,6 +40,7 @@ import { Link, useRouter } from "../../../../../i18n/navigation";
 import { ApiClientError, type ApiErrorDetail, issueLines } from "../../../../../lib/api";
 import {
   confirmPluginImport,
+  descriptionOf,
   endpointLeaves,
   importPageHref,
   type PermissionsMismatch,
@@ -622,6 +623,8 @@ function ReviewBody({
   const ttier = (t: "inherit" | "fast" | "standard" | "capable") => tier(t);
   const tp = useTranslations("extensions");
   const origin = useOrigin();
+  const locale = useLocale();
+  const description = descriptionOf(review, locale);
   const detail = review.source.detail;
   const provenance = review.provenance;
   // Provenance exists only for npm packages: an npm import or a marketplace entry from the registry
@@ -649,9 +652,9 @@ function ReviewBody({
             ...(review.license !== undefined ? [t("license", { license: review.license })] : []),
           ].join(" · ")}
         </Text>
-        {review.description !== "" && (
+        {description !== "" && (
           <Text variant="prose" tone="muted">
-            {review.description}
+            {description}
           </Text>
         )}
         {review.repository !== undefined && (
