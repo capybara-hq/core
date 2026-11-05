@@ -414,8 +414,10 @@ into the CLI any more.
 Every other official plugin is published on npm as `@capybara-hq/plugin-<name>` and installed at
 runtime:
 
-- **Admin console:** Admin → Extensions → Install extension. Upload a `.tgz` or enter an npm package name and
-  version, review the permissions, then install, approve and enable.
+- **Admin console:** Admin → Plugins → Import (`/admin/plugins/import`): importing a plugin installs and
+  enables its extension, and the Admin → Extensions page manages the installed ones (there is no
+  separate install wizard there). Upload a `.tgz` or enter an npm package name and version, review the
+  permissions, then confirm.
 - **CLI**, inside a running kernel container:
 
   ```bash
@@ -452,11 +454,14 @@ Extension lifecycle, permissions and the trust model are described in
 Plugins that orgs install themselves (skills, connector templates, an extension, dependencies on
 other plugins) go through the catalog:
 
-- **Admin console:** Admin → Catalog → Import. Upload a `.tgz`, enter an npm package, or import a
+- **Admin console:** Admin → Plugins → Import (`/admin/plugins/import`). Upload a `.tgz`, enter an npm package, or import a
   folder straight from a git repository (URL or `owner/repo`, an optional branch, tag or commit, and
   the plugin's path). Review the whole plugin once (source, content digest, npm provenance, extension
-  permissions, skills, connector templates, dependencies), then confirm, optionally installing and
-  enabling its extension on the deployment at the same time. A direct git import creates no
+  permissions, skills, connector templates, dependencies), then confirm: that installs and
+  enables its extension on the deployment (a version older than the deployed one is added to the
+  catalog only). A new plugin defaults to scope 组织自选 (optional); the admin sets the scope (all
+  orgs, optional, named orgs) afterwards on the plugin's page, with a preview of the orgs and agents
+  affected. A direct git import creates no
   marketplace and tracks no updates; to follow a repo, add it as a marketplace.
 - **Marketplaces:** Admin → Marketplaces adds either a `marketplace.json` URL (the http form, with
   optional mirrors) or a git repository (the git form: an https git URL, or `owner/repo` for GitHub,

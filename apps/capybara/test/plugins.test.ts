@@ -137,7 +137,9 @@ describe("capybara plugins list / import", () => {
       "",
       ...boot.entries.map((e) =>
         expect.stringMatching(
-          new RegExp(`^${e.name}\\t${e.version.replaceAll(".", "\\.")}\\textension\\t\\w+$`),
+          new RegExp(
+            `^${e.name}\\t${e.version.replaceAll(".", "\\.")}\\textension\\t(all|optional|named)( builtin)?( disabled)?$`,
+          ),
         ),
       ),
     ]);
@@ -162,7 +164,7 @@ describe("capybara plugins list / import", () => {
     expect(r.stdout).toContain("Imported notes 1.2.0");
     const list = await run(["plugins", "list"]);
     expect(list.code, list.stderr).toBe(0);
-    expect(list.stdout).toMatch(/notes\t1\.2\.0\t1 skill\t\w+/);
+    expect(list.stdout).toMatch(/notes\t1\.2\.0\t1 skill\toptional/);
   }, 90_000);
 
   it("a template of another connector extension is imported with static checks only", async () => {

@@ -27,7 +27,8 @@ const withCatalog = <T>(
   fn: (cli: CatalogCli) => Promise<T>,
 ) => withOpened(log, env, (config) => openCatalogCli(config, log), fn);
 
-/** `capybara plugins list`: the catalog's items with their latest version, components and policy. */
+/** `capybara plugins list`: the catalog's items with their latest version, components and scope
+ * (with `builtin` / `disabled` markers). */
 export async function runPluginsList(
   log: KernelLogger,
   env: NodeJS.ProcessEnv,
@@ -45,7 +46,7 @@ export async function runPluginsList(
         io.stdout.write("No plugins in the catalog.\n");
         return 0;
       }
-      const lines = [["NAME", "VERSION", "COMPONENTS", "POLICY"].join("\t")];
+      const lines = [["NAME", "VERSION", "COMPONENTS", "SCOPE"].join("\t")];
       for (const item of items) {
         const { versions } = await cli.catalog.get(item.id);
         const m = versions.find((v) => v.version === item.latestVersion)?.manifest;
@@ -56,8 +57,13 @@ export async function runPluginsList(
             ? [count(m.connectorTemplates.length, "connector template")]
             : []),
         ];
+        const scope = [
+          item.scope,
+          ...(item.builtin ? ["builtin"] : []),
+          ...(item.disabled ? ["disabled"] : []),
+        ];
         lines.push(
-          [item.name, item.latestVersion, components.join(", ") || "-", item.policy].join("\t"),
+          [item.name, item.latestVersion, components.join(", ") || "-", scope.join(" ")].join("\t"),
         );
       }
       io.stdout.write(`${lines.join("\n")}\n`);
