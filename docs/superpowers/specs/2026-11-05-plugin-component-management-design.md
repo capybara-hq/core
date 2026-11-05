@@ -1,7 +1,7 @@
 # Plugins and components: one model for bringing in, scoping and managing capabilities
 
 - Date: 2026-11-05, written against `main` at `40d81dc1` (v0.1.0-rc.4).
-- Status: draft, for maintainer review.
+- Status: phase 1 implemented (plugin scope, the org switch, requests, built-in plugins and permission confirmation, the scope sync worker, and the moved admin and workspace plugin and extension pages; migrations 0074-0076). Components with their own scope, agent templates at deployment level and updates (§6-§8) are later phases.
 - Markers: **(decided)** is the maintainer's answer during brainstorming (2026-11-05);
   **(designer's call)** is decided here on the maintainer's behalf and may be overturned in review.
   Items without a marker restate current code.
