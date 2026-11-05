@@ -197,7 +197,15 @@ export interface CatalogItemVersionView {
 /** Item detail (deleted items included: `deletedAt` set). */
 export interface CatalogItemDetail {
   /** `packageName` is null for a git plugin without package.json. */
-  item: CatalogItemView & { packageName: string | null; deletedAt: string | null };
+  item: CatalogItemView & {
+    packageName: string | null;
+    deletedAt: string | null;
+    /**
+     * The version the platform's components come from (spec §7.1): set by the import that created
+     * the item and by each platform update; importing a newer version does not move it.
+     */
+    platformVersion: string;
+  };
   versions: CatalogItemVersionView[];
 }
 
@@ -719,6 +727,7 @@ export class CatalogService {
         ),
         packageName: item.package_name,
         deletedAt: item.deleted_at?.toISOString() ?? null,
+        platformVersion: item.platform_synced_version ?? item.latest_version,
       },
       versions: rows.map((v) => ({
         version: v.version,

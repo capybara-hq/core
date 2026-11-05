@@ -266,4 +266,31 @@ describe("a platform component updated on its own (spec §7.2)", { timeout: 120_
     expect((await skillOf("alpha")).current_version).toBe(1);
     expect((await templateOf("reviewer")).current_version).toBe(1);
   });
+
+  it("GET …/versions lists a component's versions newest first, with the catalog version and the updated-on-own flag", async () => {
+    await importKit();
+    const alpha = await skillOf("alpha");
+    const reviewer = await templateOf("reviewer");
+    const up = await uploadSkill(
+      alpha.id,
+      makeZip([{ name: "SKILL.md", data: SKILL_MD("alpha", "Alpha 1.1.") }]),
+    );
+    expect(up.statusCode, up.body).toBe(201);
+    const versions = (kind: string, id: string, req = env.root) =>
+      req({ method: "GET", url: `/api/v1/admin/components/${kind}/${id}/versions` });
+
+    const s = await versions("skill", alpha.id);
+    expect(s.statusCode, s.body).toBe(200);
+    expect(s.json().versions).toMatchObject([
+      { version: "2", catalogVersion: null, updatedOnOwn: true },
+      { version: "1", catalogVersion: "1.0.0", updatedOnOwn: false },
+    ]);
+    expect(typeof s.json().versions[0].createdAt).toBe("string");
+    const a = await versions("agent_template", reviewer.id);
+    expect(a.json().versions).toMatchObject([
+      { version: "1", catalogVersion: "1.0.0", updatedOnOwn: false },
+    ]);
+    expect((await versions("skill", "missing")).json().error.code).toBe("component.not_found");
+    expect((await versions("skill", alpha.id, env.boss)).statusCode).toBe(403);
+  });
 });

@@ -15,6 +15,7 @@ import type { ActorOpts } from "./catalog.service.js";
 import {
   type ComponentScopePreview,
   ComponentScopeService,
+  type ComponentVersionView,
   type ComponentView,
   type OrgComponentView,
 } from "./component-scope.service.js";
@@ -160,6 +161,18 @@ export class AdminComponentsController {
     @ZQuery(ComponentListQuery) q: z.infer<typeof ListQuery>,
   ): Promise<{ components: ComponentView[] }> {
     return { components: await this.scope.list(q.kind) };
+  }
+
+  /**
+   * A component's versions, newest first: `{ versions: [{ version, catalogVersion, updatedOnOwn,
+   * createdAt }] }` (a connector template keeps no history: its current version only). Unknown or
+   * removed -> 404 `component.not_found`.
+   */
+  @Get(":kind/:id/versions")
+  async versions(
+    @ZParam(ComponentParamsDto) p: z.infer<typeof ComponentParams>,
+  ): Promise<{ versions: ComponentVersionView[] }> {
+    return { versions: await this.scope.versions(p.kind, p.id) };
   }
 
   /**

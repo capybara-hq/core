@@ -88,6 +88,17 @@ export interface ComponentView {
   onIn: string[];
 }
 
+/** One version of a platform component (`GET admin/components/:kind/:id/versions`). */
+export interface ComponentVersionView {
+  /** The component's own version counter (a connector template: its catalog version). */
+  version: string;
+  /** The plugin version it came from (null: uploaded on its own). */
+  catalogVersion: string | null;
+  /** Written by an upload of the component on its own (spec §7.2). */
+  updatedOnOwn: boolean;
+  createdAt: string;
+}
+
 /** An org's view of one component after its switch. */
 export interface OrgComponentView {
   kind: ComponentKind;
@@ -544,6 +555,50 @@ export class ComponentScopeService {
       target: id,
       detail: { kind, name: c.name, plugin: c.plugin, from: c.shownToOthers, to: shown },
     });
+  }
+
+  /**
+   * A live component's versions, newest first. A connector template keeps no history: its one entry
+   * is the current version. Missing (or removed) -> 404 `component.not_found`.
+   */
+  async versions(kind: ComponentKind, id: string): Promise<ComponentVersionView[]> {
+    const [c] = await loadComponents(this.db, kind, { ids: [id] });
+    if (!c) throw notFound();
+    if (kind === "connector_template") {
+      const row = await this.db
+        .selectFrom("platform_connector_templates")
+        .select("updated_at")
+        .where("id", "=", id)
+        .executeTakeFirstOrThrow();
+      return [
+        {
+          version: c.version,
+          catalogVersion: c.version,
+          updatedOnOwn: false,
+          createdAt: row.updated_at.toISOString(),
+        },
+      ];
+    }
+    const rows =
+      kind === "skill"
+        ? await this.db
+            .selectFrom("platform_skill_versions")
+            .select(["version", "catalog_version", "updated_on_own", "created_at"])
+            .where("skill_id", "=", id)
+            .orderBy("version", "desc")
+            .execute()
+        : await this.db
+            .selectFrom("platform_agent_template_versions")
+            .select(["version", "catalog_version", "updated_on_own", "created_at"])
+            .where("template_id", "=", id)
+            .orderBy("version", "desc")
+            .execute();
+    return rows.map((r) => ({
+      version: String(r.version),
+      catalogVersion: r.catalog_version,
+      updatedOnOwn: r.updated_on_own,
+      createdAt: r.created_at.toISOString(),
+    }));
   }
 
   private async view(kind: ComponentKind, id: string): Promise<ComponentView> {

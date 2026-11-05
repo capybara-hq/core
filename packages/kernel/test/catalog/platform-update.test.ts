@@ -549,6 +549,25 @@ describe("platform plugin update (spec §7)", { timeout: 120_000 }, () => {
     await updateTo(item, "2.0.0");
   });
 
+  it("the item detail names the platform's version, which an imported newer version does not move", async () => {
+    const item = await seedPlugin(env, { name: "memo", skills: ["memo"], templates: false });
+    await seedPlugin(env, {
+      name: "memo",
+      addTo: item,
+      version: "1.1.0",
+      skills: ["memo"],
+      templates: false,
+    });
+    const read = async () => {
+      const r = await env.root({ method: "GET", url: `/api/v1/admin/catalog/items/${item}` });
+      expect(r.statusCode, r.body).toBe(200);
+      return r.json().item as { versions: string[]; platformVersion: string };
+    };
+    expect(await read()).toMatchObject({ versions: ["1.1.0", "1.0.0"], platformVersion: "1.0.0" });
+    await updateTo(item, "1.1.0");
+    expect(await read()).toMatchObject({ platformVersion: "1.1.0" });
+  });
+
   it("a stale diffHash is 409 plugin.upgrade_stale and nothing changes", async () => {
     const item = await seedPlugin(env, { name: "notes", skills: ["notes"], templates: false });
     await seedPlugin(env, {
