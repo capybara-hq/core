@@ -100,14 +100,16 @@ const cliAudits = () =>
     .execute();
 
 describe("capybara admin grant / revoke", () => {
-  it("grant → 退出码 0，账号成为企业管理员并写审计（via cli）；再 revoke → 撤销", async () => {
+  it("grant → 退出码 0，账号成为超级管理员并写审计（via cli）；再 revoke → 撤销", async () => {
     const g = await run(["admin", "grant", "alice"]);
     expect(g.code, g.stderr).toBe(0);
     expect(g.stdout).toContain("alice");
+    expect(g.stdout).toContain("is now a super admin");
     expect(await isAdmin("alice")).toBe(true);
 
     const r = await run(["admin", "revoke", "Alice"]);
     expect(r.code, r.stderr).toBe(0);
+    expect(r.stdout).toContain("is no longer a super admin");
     expect(await isAdmin("alice")).toBe(false);
     expect((await cliAudits()).map((e) => [e.actor_account_id, e.detail])).toEqual([
       [null, { isSuperAdmin: true, via: "cli" }],
@@ -115,7 +117,7 @@ describe("capybara admin grant / revoke", () => {
     ]);
   }, 60_000);
 
-  it("撤销最后一个企业管理员 → 退出码 1，stderr 含 account.last_super_admin，库不变", async () => {
+  it("撤销最后一个超级管理员 → 退出码 1，stderr 含 account.last_super_admin，库不变", async () => {
     const r = await run(["admin", "revoke", "root"]);
     expect(r.code).toBe(1);
     expect(r.stderr).toContain("account.last_super_admin");

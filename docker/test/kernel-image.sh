@@ -118,13 +118,13 @@ admin_create() {
 }
 psql_count() {
   docker exec "$PG" psql -U capybara -tAc \
-    "SELECT count(*) FROM capybara.accounts WHERE is_enterprise_admin AND status = 'active'"
+    "SELECT count(*) FROM capybara.accounts WHERE is_super_admin AND status = 'active'"
 }
 OUT="$(admin_create 2>&1)"
-echo "$OUT" | grep -q "enterprise admin created" || fail "first admin create did not create: $OUT"
-[ "$(psql_count)" = "1" ] || fail "expected one enterprise admin after the first admin create"
+echo "$OUT" | grep -q "super admin created" || fail "first admin create did not create: $OUT"
+[ "$(psql_count)" = "1" ] || fail "expected one super admin after the first admin create"
 OUT="$(admin_create)"
-echo "$OUT" | grep -q "enterprise admin already exists; skipped" \
+echo "$OUT" | grep -q "super admin already exists; skipped" \
   || fail "second admin create --if-none did not skip: $OUT"
 [ "$(psql_count)" = "1" ] || fail "the second admin create --if-none changed the admin count"
 

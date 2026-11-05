@@ -94,8 +94,8 @@ export async function readPasswordFile(path: string): Promise<string> {
 
 /**
  * `capybara admin create`：从 stdin 读一行密码（终端上不回显，见 readPassword），或用 `passwordFile` 从文件读
- * （去掉行尾换行）→ 跑内核迁移（幂等）→ 建企业管理员。
- * `ifNone`：已有活跃企业管理员时打印 `enterprise admin already exists; skipped` 并返回 0——这一检查在读密码之前，
+ * （去掉行尾换行）→ 跑内核迁移（幂等）→ 建超级管理员。
+ * `ifNone`：已有活跃超级管理员时打印 `super admin already exists; skipped` 并返回 0——这一检查在读密码之前，
  * 所以此时密码文件缺失也不报错；没有管理员时照常要求密码（文件缺失 → 1，P-7）。检查与插入在同一事务、
  * 同一咨询锁内（SetupService.createSuperAdminIfNone），并发执行也只建一个；没有活跃管理员而登录名已占用 → 1。
  * 只连 PG，不连 Redis。退出码：0 成功 / 1 失败（用法错误的 2 由 parseCli 负责）。
@@ -178,7 +178,7 @@ export async function runAdminCreate(
       // Fast path without reading a password; the authoritative check runs again under the setup
       // lock in createSuperAdminIfNone, so concurrent runs create exactly one admin.
       if ((await accounts.countSuperAdmins()) > 0) {
-        return skipped("enterprise admin already exists");
+        return skipped("super admin already exists");
       }
       const err = await obtainPassword();
       if (err !== undefined) return fail(err);
@@ -187,16 +187,16 @@ export async function runAdminCreate(
           ...input,
           password: password as string,
         });
-        if (account === undefined) return skipped("enterprise admin already exists");
-        log.info("enterprise admin created", { accountId: account.id, login: opts.login });
+        if (account === undefined) return skipped("super admin already exists");
+        log.info("super admin created", { accountId: account.id, login: opts.login });
         return 0;
       } catch (e) {
         // Under the setup lock a taken login cannot come from a concurrent run: there is no active
-        // enterprise admin and the login belongs to a non-admin or disabled account. Fail so an
+        // super admin and the login belongs to a non-admin or disabled account. Fail so an
         // open setup wizard is not hidden.
         if (e instanceof ApiError && e.code === "account.login_taken") {
           return fail(
-            `${e.code}: ${e.message} (no active enterprise admin; choose another --login or re-enable the account)`,
+            `${e.code}: ${e.message} (no active super admin; choose another --login or re-enable the account)`,
           );
         }
         throw e;
@@ -206,7 +206,7 @@ export async function runAdminCreate(
       ...input,
       password: password as string,
     });
-    log.info("enterprise admin created", { accountId: account.id, login: opts.login });
+    log.info("super admin created", { accountId: account.id, login: opts.login });
     return 0;
   } catch (e) {
     if (e instanceof ApiError) return fail(`${e.code}: ${e.message}`);

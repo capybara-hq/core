@@ -14,7 +14,7 @@ export type Command =
       login: string;
       displayName: string;
       email?: string;
-      /** Skip (exit 0) when an active enterprise admin already exists. */
+      /** Skip (exit 0) when an active super admin already exists. */
       ifNone: boolean;
       /** Read the password from this file instead of stdin. */
       passwordFile?: string;
@@ -42,15 +42,15 @@ export const USAGE = `Usage:
                                                per manifest: a re-run does nothing
   capybara admin create --login <login> --display-name <name> [--email <email>]
                          [--if-none] [--password-file <path>]
-                                               Create an enterprise admin; reads the password
+                                               Create a super admin; reads the password
                                                (one line) from stdin, e.g.
                                                echo "$PW" | capybara admin create ...
                                                --password-file reads it from a file instead
                                                (a trailing newline is stripped); --if-none
                                                exits 0 without changes when an active
-                                               enterprise admin already exists
-  capybara admin grant <login>                 Make a local account an enterprise admin
-  capybara admin revoke <login>                Revoke enterprise admin from a local account
+                                               super admin already exists
+  capybara admin grant <login>                 Make a local account a super admin
+  capybara admin revoke <login>                Revoke super admin from a local account
                                                (the last active one cannot be revoked)
   capybara extensions list                     List the deployment's extensions and their status
   capybara extensions install <file.tgz | npm:<name>[@<version>]> [--yes]

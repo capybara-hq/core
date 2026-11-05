@@ -20,6 +20,12 @@ describe("parseCli", () => {
     expect(parseCli(["start", "-h"])).toEqual({ command: "help" });
   });
 
+  it("the help names the deployment role super admin", () => {
+    expect(USAGE).toContain("Make a local account a super admin");
+    expect(USAGE).toContain("Revoke super admin from a local account");
+    expect(USAGE).not.toMatch(/enterprise/i);
+  });
+
   it("admin create", () => {
     expect(parseCli(["admin", "create", "--login", "root", "--display-name", "Root"])).toEqual({
       command: "admin-create",

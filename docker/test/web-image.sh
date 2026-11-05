@@ -98,7 +98,7 @@ ENV_ARGS=(
   -e "CAPYBARA_MARKETPLACES__OFFICIAL__ENABLED=false"
 )
 
-echo "==> migrate and create the enterprise admin"
+echo "==> migrate and create the super admin"
 docker run --rm --network "$NET" "${ENV_ARGS[@]}" "$API_IMAGE" migrate >/dev/null
 docker run --rm --network "$NET" "${ENV_ARGS[@]}" --entrypoint sh "$API_IMAGE" -c \
   'printf "%s\n" "web-image-test-password-123" > /tmp/pw && exec node /app/bin/capybara.mjs admin create --login root --display-name Root --if-none --password-file /tmp/pw' \
