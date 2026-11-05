@@ -244,8 +244,11 @@ next person message would pick it up.
   - no exit file and no process means `lost` (`process_gone`);
   - another instance (a rebuild) means `lost` (`sandbox_recreated`);
   - a sandbox that is suspended or gone means `lost` (`sandbox_suspended` / `sandbox_gone`).
-  - a reservation (`sid` null, no live stop claim) older than 2 minutes means `failed`
-    (`launch_abandoned`): the launching process died before it started the command.
+  - a reservation (`sid` null, no live stop claim) older than `launchAbandonedAfterMs` means `failed`
+    (`launch_abandoned`): the launching process died before it started the command. The threshold is
+    twice the pipeline's limit for a background `Bash` call (the 30 s launch exec plus the tool
+    timeout, `sandbox.lockWaitSeconds` and the setup margin), never under 2 minutes: 690 s with
+    the defaults (30 + 60 + 75 + 180 s, doubled), derived from config, not a constant.
 - **A lost task whose process may live on** gets `kill_pending = true`. This is the case for E2B,
   whose pause keeps processes, and for a suspended sandbox. Right after any resume of that sandbox,
   `SandboxService` (under the exclusive lease, next to its existing `killAll`) runs
@@ -421,7 +424,7 @@ one bullet each.
   "had already finished", §2.3); processes it left running are killed all the same.
 - A reservation stopped during its launch ends `stopped` without an event, and the launching call gets
   a tool error: the model never saw a started task.
-- The poll fails a reservation still without a session after 2 minutes (`launch_abandoned`): its
+- The poll fails a reservation still without a session after `launchAbandonedAfterMs` (`launch_abandoned`; §4.3): its
   launcher died, and it would otherwise hold a cap slot forever.
 - `TaskOutput` and `TaskStop` are offered whenever the agent has `Bash` (the registry adds them); a
   definition need not name them, or an agent could start tasks it can neither read nor stop. Old

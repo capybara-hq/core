@@ -15,6 +15,7 @@ import {
   CONVERSATION_SIDE_KEYS,
   eventsQuery,
   renameWithRow,
+  seedNewConversation,
   toolInfoQuery,
 } from "../src/lib/query/conversation";
 import { keys } from "../src/lib/query/keys";
@@ -220,6 +221,56 @@ describe("useConversation and the cache", () => {
       es.emit("open");
       es.emit("event", userMsg(3, "while away"));
       es.emit("event", userMsg(4, "and more"));
+    });
+    const side = CONVERSATION_SIDE_KEYS("o1", "c1").map((k) => JSON.stringify(k));
+    expect(invalidated()).toEqual(side);
+  });
+
+  it("a seeded new conversation reads no queue or files when its run's events arrive, only its title (send spec 2.1)", async () => {
+    const calls = stubApi({
+      [`GET ${BASE}`]: () => json(200, CONV("c1", { title: "Generated early" })),
+    });
+    const qc = testQueryClient();
+    seedNewConversation(qc, "o1", CONV("c1", { title: null }).conversation as never, {
+      event: userMsg(1, "start"),
+    });
+    const invalidated = sideKeys(qc);
+    const view = mount(qc);
+    const es = FakeEventSource.instances[0] as FakeEventSource;
+    expect(es.url).toBe(`${BASE}/stream?after=1`);
+    // the stream opens and replays what the run wrote since the answer: not a catch-up
+    act(() => {
+      es.emit("open");
+      es.emit("event", ev(2, "run_started", {}, null));
+      es.emit("event", userMsg(3, "more"));
+    });
+    await act(() => new Promise((r) => setTimeout(r, 20)));
+    expect(view.getByTestId("seqs").textContent).toBe("1,2,3");
+    // a quick run's title is often generated before the stream opened: the row is read once
+    await vi.waitFor(() => expect(view.getByTestId("title").textContent).toBe("Generated early"));
+    expect(calls.map((c) => c.url)).toEqual([BASE]);
+    // no side key: only the sidebar's groups, for the title found
+    expect(invalidated()).toEqual([JSON.stringify(keys.org("o1").conversationGroupsAll())]);
+  });
+
+  it("a seeded conversation's later reconnect catches up as usual", async () => {
+    stubApi({});
+    const qc = testQueryClient();
+    seedNewConversation(qc, "o1", CONV("c1", { title: null }).conversation as never, {
+      event: userMsg(1, "start"),
+    });
+    const invalidated = sideKeys(qc);
+    mount(qc);
+    const es = FakeEventSource.instances[0] as FakeEventSource;
+    act(() => {
+      es.emit("open");
+      es.emit("event", ev(2, "run_started", {}, null));
+    });
+    expect(invalidated()).toEqual([]);
+    // the connection drops and the browser reconnects: what it missed may include side changes
+    act(() => {
+      es.emit("open");
+      es.emit("event", userMsg(3, "while away"));
     });
     const side = CONVERSATION_SIDE_KEYS("o1", "c1").map((k) => JSON.stringify(k));
     expect(invalidated()).toEqual(side);
