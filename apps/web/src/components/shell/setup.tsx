@@ -4,6 +4,7 @@ import {
   Button,
   Card,
   type IconName,
+  LinkButton,
   ObjectList,
   ObjectRow,
   type SetupStep,
@@ -14,7 +15,6 @@ import {
 } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
 import { createContext, type ReactNode, useContext } from "react";
-import { useRouter } from "../../i18n/navigation";
 import { type OrgReadiness, setupReady } from "../../lib/agents";
 import { canUpdateOrg } from "../../lib/org-settings";
 import type { Me } from "../../lib/session";
@@ -162,7 +162,6 @@ export function SetupHome({
   refreshing?: boolean;
 }) {
   const t = useTranslations();
-  const router = useRouter();
   const all = useSetupSteps(me, readiness);
   const required = all.filter((s) => !s.optional);
   const optional = all.filter((s) => s.optional);
@@ -180,9 +179,9 @@ export function SetupHome({
     if (s.state === "todo" && s.href !== undefined) {
       const href = s.href;
       return (
-        <Button variant="primary" onClick={() => router.push(href)}>
+        <LinkButton variant="primary" href={href}>
           {actionLabel[s.id]}
-        </Button>
+        </LinkButton>
       );
     }
     // Waiting: only the reason (who acts, or what comes first).

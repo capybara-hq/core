@@ -210,8 +210,9 @@ describe("the checklist by role", () => {
   it("an enterprise admin configures the model in the admin console", async () => {
     renderFrame();
     const model = step(sl.steps.model);
-    await userEvent.setup().click(within(model).getByRole("button", { name: s.model.action }));
-    expect(router.push).toHaveBeenCalledWith("/admin/extensions");
+    expect(within(model).getByRole("link", { name: s.model.action }).getAttribute("href")).toBe(
+      "/admin/extensions",
+    );
     // creating an agent waits for the model: only the reason, no disabled button, no 待办 label
     const agent = step(sl.steps.agent);
     expect(within(agent).queryByRole("button")).toBeNull();
@@ -258,8 +259,9 @@ describe("the checklist by role", () => {
   it("a member with a model creates the agent; a guest waits for an admin", async () => {
     renderFrame({ me: memberMe("member"), readiness: PROVIDER_ONLY });
     const agent = step(sl.steps.agent);
-    await userEvent.setup().click(within(agent).getByRole("button", { name: s.agent.action }));
-    expect(router.push).toHaveBeenCalledWith("/agents/new");
+    expect(within(agent).getByRole("link", { name: s.agent.action }).getAttribute("href")).toBe(
+      "/agents/new",
+    );
     expect(screen.queryByText(sl.waiting)).toBeNull();
     cleanup();
     renderFrame({ me: memberMe("guest"), readiness: PROVIDER_ONLY });
