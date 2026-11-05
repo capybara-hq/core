@@ -15,6 +15,7 @@ import {
   CONVERSATION_SIDE_KEYS,
   eventsQuery,
   renameWithRow,
+  seedNewConversation,
   toolInfoQuery,
 } from "../src/lib/query/conversation";
 import { keys } from "../src/lib/query/keys";
@@ -223,6 +224,28 @@ describe("useConversation and the cache", () => {
     });
     const side = CONVERSATION_SIDE_KEYS("o1", "c1").map((k) => JSON.stringify(k));
     expect(invalidated()).toEqual(side);
+  });
+
+  it("a seeded new conversation reads no row, queue or files when its run's events arrive (send spec 2.1)", async () => {
+    const calls = stubApi({});
+    const qc = testQueryClient();
+    seedNewConversation(qc, "o1", CONV("c1", { title: null }).conversation as never, {
+      event: userMsg(1, "start"),
+    });
+    const invalidated = sideKeys(qc);
+    const view = mount(qc);
+    const es = FakeEventSource.instances[0] as FakeEventSource;
+    expect(es.url).toBe(`${BASE}/stream?after=1`);
+    // the stream opens and replays what the run wrote since the answer: not a catch-up
+    act(() => {
+      es.emit("open");
+      es.emit("event", ev(2, "run_started", {}, null));
+      es.emit("event", userMsg(3, "more"));
+    });
+    await act(() => new Promise((r) => setTimeout(r, 20)));
+    expect(view.getByTestId("seqs").textContent).toBe("1,2,3");
+    expect(calls).toEqual([]);
+    expect(invalidated()).toEqual([]);
   });
 
   it("a title generated before the stream opened appears without a navigation, in the sidebar too", async () => {

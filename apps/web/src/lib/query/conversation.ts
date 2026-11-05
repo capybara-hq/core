@@ -484,6 +484,25 @@ export function seedNewConversation(
   empty(c.queue(), { items: [], paused: false });
   empty(c.files(), []);
   empty(c.sandbox(), null);
+  let marks = seededAt.get(qc);
+  if (marks === undefined) {
+    marks = new Map();
+    seededAt.set(qc, marks);
+  }
+  marks.set(`${orgId}/${conversation.id}`, Date.now());
+}
+
+/**
+ * Conversations whose cache {@link seedNewConversation} just seeded, by `<orgId>/<id>`, with the
+ * seed's time: their first stream open is no catch-up (nothing outside the log can have changed
+ * since the answer), so it invalidates no side key and checks no title.
+ */
+const seededAt = new WeakMap<QueryClient, Map<string, number>>();
+/** How long after the seed the stream's first events still count as the answer's own run. */
+const SEEDED_WINDOW_MS = 10_000;
+export function isFreshlySeeded(qc: QueryClient, orgId: string, id: string): boolean {
+  const at = seededAt.get(qc)?.get(`${orgId}/${id}`);
+  return at !== undefined && Date.now() - at < SEEDED_WINDOW_MS;
 }
 
 /**
