@@ -86,9 +86,9 @@ async function importOk(bytes: Uint8Array): Promise<string> {
   return c.json().item.id as string;
 }
 
-/** Installs the plugin in the org. */
-async function installOk(itemId: string, version: string): Promise<string> {
-  const r = await install(env.boss, env, itemId, { version });
+/** Installs the plugin in the org (at the platform version, `version`). */
+async function installOk(itemId: string, _version: string): Promise<string> {
+  const r = await install(env.boss, env, itemId);
   expect(r.statusCode, r.body).toBe(201);
   return r.json().installed.pluginInstallId as string;
 }

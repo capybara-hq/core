@@ -605,13 +605,19 @@ describe("skill provenance follows the latest version (a skill of the same name 
     expect(await env.db.selectFrom("plugin_installs").select("id").execute()).toEqual([]);
   });
 
-  it("a newer version installed after uninstalling the old one records the new version", async () => {
+  it("an install after the platform moved to a newer version records that version", async () => {
     const itemId = await importSkill(env);
     const first = await install(env.boss, env, itemId);
     expect(first.statusCode, first.body).toBe(201);
     await importSkill(env, { version: "2.0.0" });
     await uninstall(itemId);
-    const up = await install(env.boss, env, itemId, { version: "2.0.0" });
+    // an import does not move the platform version (ruling P2-17); an update does
+    await env.db
+      .updateTable("catalog_items")
+      .set({ platform_synced_version: "2.0.0" })
+      .where("id", "=", itemId)
+      .execute();
+    const up = await install(env.boss, env, itemId);
     expect(up.statusCode, up.body).toBe(201);
     expect((await orgList(env.boss)).find((i) => i.id === itemId)?.installed).toMatchObject({
       version: "2.0.0",
@@ -724,7 +730,7 @@ describe("自建开关与权限", { timeout: 60_000 }, () => {
     expect(r.json().error.code).toBe("forbidden");
     // 成员拿 disabled 条目 / 不存在的版本：先判角色，一律 forbidden（不能借错误码探测条目）
     const off = await importSkill(env, { name: "off", policy: "disabled" });
-    for (const body of [{}, { version: "9.9.9" }, { connectors: {} }]) {
+    for (const body of [{}, { extensionConfig: {} }, { connectors: {} }]) {
       const x = await install(env.mem, env, off, body);
       expect(x.json().error.code).toBe("forbidden");
     }

@@ -272,7 +272,8 @@ describe("platform inbox", { timeout: 90_000 }, () => {
       }),
     ]);
     expect(await count()).toBe(1);
-    // the version is imported: the next sync installs the dependency and clears the failure
+    // the version is imported and the platform moved to it: the next sync installs the
+    // dependency and clears the failure
     await seedPlugin(env, {
       name: "depb",
       skills: ["depb-skill"],
@@ -280,6 +281,11 @@ describe("platform inbox", { timeout: 90_000 }, () => {
       version: "2.0.0",
       addTo: depId,
     });
+    await env.db
+      .updateTable("catalog_items")
+      .set({ platform_synced_version: "2.0.0" })
+      .where("id", "=", depId)
+      .execute();
     expect(await sync.syncPair(itemId, env.orgId)).toBe("unchanged");
     expect(await liveIn(depId)).toBe(true);
     expect(await ofType("scope_sync_failed")).toEqual([]);
