@@ -215,6 +215,64 @@ describe("parseAgentTemplate: phase 4 fields (P4-1)", () => {
     expect(t.instructionFiles).toEqual([{ name: "style.md", content: "Be brief." }]);
   });
 
+  it("reads connector policies on both entry forms and an inline type without tools", () => {
+    const t = parse(
+      [
+        "connectors:",
+        "  - template: github",
+        "    policies: { delete_repo: deny, create_issue: ask }",
+        "  - needs: { protocol: openapi, endpoint: https://api.example.com, tools: [q], label: API }",
+        "    policies: { q: ask }",
+        "subagents:",
+        "  inline:",
+        "    - name: scout",
+        "      description: Finds files.",
+        "      instructions: Look around.",
+        "      skills: []",
+        "      model: fast",
+        "    - name: thinker",
+        "      description: Thinks.",
+        "      instructions: Think.",
+        "      tools: []",
+        "      skills: []",
+        "      model: inherit",
+      ].join("\n"),
+    );
+    expect(t.connectors).toEqual([
+      { template: "github", policies: { delete_repo: "deny", create_issue: "ask" } },
+      {
+        needs: {
+          protocol: "openapi",
+          endpoint: "https://api.example.com",
+          tools: ["q"],
+          label: "API",
+        },
+        policies: { q: "ask" },
+      },
+    ]);
+    expect(t.subagents?.inline?.map((x) => x.tools ?? null)).toEqual([null, []]);
+  });
+
+  it("rejects malformed or over-limit connector policies", () => {
+    expect(
+      errorsOf(md(`${base}\nconnectors:\n  - template: github\n    policies: { x: allow }`)),
+    ).toEqual([expect.stringContaining("connectors[0].policies")]);
+    expect(
+      errorsOf(
+        md(
+          `${base}\nconnectors:\n  - needs: { protocol: mcp, endpoint: e, tools: [], label: L }\n    policies: [x]`,
+        ),
+      ),
+    ).toEqual([expect.stringContaining("connectors[0].policies")]);
+    const many = Array.from(
+      { length: AGENT_TEMPLATE_LIMITS.connectorTools + 1 },
+      (_, i) => `t${i}: ask`,
+    ).join(", ");
+    expect(
+      errorsOf(md(`${base}\nconnectors:\n  - template: github\n    policies: { ${many} }`)),
+    ).toEqual([expect.stringContaining("connectors[0].policies")]);
+  });
+
   it("leaves the new fields absent for an old file", () => {
     const t = parse("skills: [pdf-tools]");
     for (const k of [

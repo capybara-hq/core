@@ -57,6 +57,7 @@ export interface AgentTemplate {
 export type AgentTemplateConnector = {
     template: string;
     tools?: string[];
+    policies?: Record<string, "ask" | "deny">;
 } | {
     needs: {
         protocol: "mcp" | "openapi";
@@ -64,6 +65,7 @@ export type AgentTemplateConnector = {
         tools: string[];
         label: string;
     };
+    policies?: Record<string, "ask" | "deny">;
 };
 
 // @public
@@ -73,7 +75,7 @@ export interface AgentTemplateInlineSubagent {
     model: AgentTemplateTier;
     name: string;
     skills: string[];
-    tools: string[];
+    tools?: string[];
 }
 
 // @public
