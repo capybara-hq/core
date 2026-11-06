@@ -1,6 +1,6 @@
 "use client";
 
-import { FormSection, SettingsPage, Text } from "@capybara-hq/design";
+import { FormSection, SettingsPage } from "@capybara-hq/design";
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { ErrorFrame } from "../../../../components/ErrorFrame";
@@ -9,12 +9,7 @@ import { usePurposeDrafts } from "../../../../components/PurposeEditor";
 import { useOrgSettingsNav } from "../../../../components/settings-nav";
 import { usePagePath } from "../../../../components/shell/path";
 import type { ProviderModels } from "../../../../lib/agents";
-import {
-  EVAL_PURPOSE,
-  type PurposeTarget,
-  type PurposeView,
-  putOrgPurpose,
-} from "../../../../lib/models";
+import { type PurposeTarget, type PurposeView, putOrgPurpose } from "../../../../lib/models";
 import { modelsQuery } from "../../../../lib/query/conversation";
 import { useAppMutation } from "../../../../lib/query/mutation";
 import { usePageQuery } from "../../../../lib/query/page-query";
@@ -37,15 +32,15 @@ export default function OrgModelsView() {
 
 /**
  * The purposes while they load, as PurposeEditor draws them: the kernel's five (eval, title and
- * the three sub-agent tiers), each a card with its small lines (who declares it, the deployment
+ * the three sub-agent tiers), each a row with its small lines (who declares it, the deployment
  * default, and a sub-agent tier's hint) over the model select.
  */
-const purposeCard = (lines: number) => ({
+const purposeRow = (lines: number) => ({
   lines,
   lineSize: "small" as const,
   field: { control: "select" as const },
 });
-const LOADING_PURPOSES = [2, 2, 3, 3, 3].map(purposeCard);
+const LOADING_PURPOSES = [2, 2, 3, 3, 3].map(purposeRow);
 
 function OrgModels({ orgId }: { orgId: string }) {
   const scope = usePagePath("org");
@@ -116,8 +111,7 @@ function Purposes({
         ? d
         : { ...d, purposes: d.purposes.map((p) => (p.purpose === v.purpose ? v : p)) },
     );
-  const evalView = purposes.find((p) => p.purpose === EVAL_PURPOSE);
-  const { editor, actionRow } = usePurposeDrafts({
+  const { list, actionRow } = usePurposeDrafts({
     purposes,
     providers,
     scope: "org",
@@ -131,11 +125,8 @@ function Purposes({
       activeNav="models"
       {...(actionRow !== undefined ? { actionRow } : {})}
     >
-      <FormSection id="purposes" title={t("org.title")} description={t("org.description")}>
-        {evalView !== undefined && evalView.effective === null ? (
-          <Text tone="warn">{t("evalUnmapped")}</Text>
-        ) : null}
-        {purposes.map(editor)}
+      <FormSection id="purposes" title={t("org.title")} description={t("org.description")} flush>
+        {list(t("org.title"))}
       </FormSection>
     </SettingsPage>
   );

@@ -2,8 +2,9 @@
 
 import {
   type ActionRowProps,
-  Card,
   Field,
+  ItemList,
+  ItemListItem,
   Select,
   Stack,
   Text,
@@ -15,6 +16,7 @@ import { findModel, keepDeclared, type ParamValue, type ProviderModels } from ".
 import { labelLocale, modelLabel } from "../lib/extension-label";
 import {
   decodeModel,
+  EVAL_PURPOSE,
   encodeModel,
   type PurposeTarget,
   type PurposeView,
@@ -60,10 +62,12 @@ const sameDraft = (a: PurposeDraft, b: PurposeDraft) =>
   a.model === b.model && sameParams(a.params, b.params);
 
 /**
- * The drafts of a page of purpose cards and the page's one ActionRow (spec §4.4): every card edits
- * its draft, the row counts the changed purposes and saves them all (one PUT per changed purpose;
- * the unset / default option writes `null`, which clears the deployment default or restores the
- * org's default). A purpose that fails keeps its draft and shows its error in its card.
+ * The drafts of a page of purpose rows and the page's one ActionRow (spec §4.4): every row edits
+ * its draft, the ActionRow counts the changed purposes and saves them all (one PUT per changed
+ * purpose; the unset / default option writes `null`, which clears the deployment default or
+ * restores the org's default). A purpose that fails keeps its draft and shows its error in its row.
+ * `list` draws the rows as one flush ItemList, the only content of a `flush` FormSection (spec §1
+ * "One box is enough": the section card is the one box, a purpose is a row, not a card).
  */
 export function usePurposeDrafts({
   purposes,
@@ -166,17 +170,23 @@ export function usePurposeDrafts({
     />
   );
 
-  return { editor, actionRow };
+  const list = (label: string) => (
+    <ItemList label={label} inset="flush">
+      {purposes.map(editor)}
+    </ItemList>
+  );
+
+  return { list, actionRow };
 }
 
 /**
- * One model purpose's card (shared by the deployment defaults and the org overrides):
+ * One model purpose's row (an ItemListItem; shared by the deployment defaults and the org overrides):
  * - `scope: "deployment"`: edits the deployment default (`view.default`); 「未设置」 clears it;
  * - `scope: "org"`: shows the deployment default and edits the org's override (`view.override`);
  *   「使用部署默认」 restores the default.
  * A chosen model renders its parameter declarations (ModelParams; switching models keeps the
  * parameters that are still valid, keepDeclared). A plugin purpose notes that plugins cannot call
- * models yet. The card has no save of its own: the page's ActionRow saves (usePurposeDrafts).
+ * models yet. The row has no save of its own: the page's ActionRow saves (usePurposeDrafts).
  */
 function PurposeEditor({
   view,
@@ -196,6 +206,7 @@ function PurposeEditor({
   error?: PurposeError;
 }) {
   const t = useTranslations("models.purpose");
+  const tm = useTranslations("models");
   const locale = useLocale();
   const lang = labelLocale(locale);
   const saved = savedOf(view, scope);
@@ -224,84 +235,88 @@ function PurposeEditor({
   const defaultText =
     view.default === null ? t("unset") : targetName(providers, view.default.model, lang);
 
+  // The eval purpose without a model (the deployment default, or what the org ends up with):
+  // evals cannot use a judge. A warn line on the eval row, where a notice above the rows stood.
+  const evalUnmapped =
+    view.purpose === EVAL_PURPOSE &&
+    (scope === "deployment" ? view.default : view.effective) === null;
+
   return (
-    <div data-purpose={view.purpose}>
-      <Card
-        title={
-          <Stack direction="row" gap={8} align="center">
-            <Text>{label}</Text>
-            {/* The purpose id is plain metadata: mono muted text, not a badge */}
-            <Text variant="small" tone="muted">
-              {view.purpose}
+    <ItemListItem
+      title={label}
+      // The purpose id is plain metadata: mono muted text, not a badge
+      code={view.purpose}
+      // A state, not a call to act: muted text, never the accent
+      marks={
+        scope === "org" && view.override !== null ? (
+          <Text variant="small" tone="muted">
+            {t("overridden")}
+          </Text>
+        ) : undefined
+      }
+      meta={
+        <>
+          <Text variant="small" tone="muted">
+            {plugin ? t("declaredByPlugin", { plugin: view.declaredBy }) : t("declaredByKernel")}
+          </Text>
+          {plugin ? (
+            <Text variant="small" tone="warn">
+              {t("pluginNote")}
             </Text>
-            {/* A state, not a call to act: muted text, never the accent */}
-            {scope === "org" && view.override !== null ? (
-              <Text variant="small" tone="muted">
-                {t("overridden")}
-              </Text>
-            ) : null}
-          </Stack>
-        }
-      >
-        <Stack gap={12}>
-          <Stack gap={4}>
+          ) : null}
+          {scope === "org" ? (
+            <Text variant="small">{t("deploymentDefault", { target: defaultText })}</Text>
+          ) : null}
+          {view.purpose.startsWith("subagent_") ? (
             <Text variant="small" tone="muted">
-              {plugin ? t("declaredByPlugin", { plugin: view.declaredBy }) : t("declaredByKernel")}
+              {t("subagentHint")}
             </Text>
-            {plugin ? (
-              <Text variant="small" tone="warn">
-                {t("pluginNote")}
-              </Text>
-            ) : null}
-            {scope === "org" ? (
-              <Text variant="small">{t("deploymentDefault", { target: defaultText })}</Text>
-            ) : null}
-            {view.purpose.startsWith("subagent_") ? (
-              <Text variant="small" tone="muted">
-                {t("subagentHint")}
-              </Text>
-            ) : null}
-          </Stack>
-          <Field
-            label={t("model")}
-            {...(error?.model === true ? { error: t("modelInvalid") } : {})}
-          >
-            <Select
-              value={draft.model}
-              disabled={disabled}
-              onChange={(e) => {
-                const v = e.target.value;
-                const r = decodeModel(v);
-                onDraft({
-                  model: v,
-                  params:
-                    r === null
-                      ? {}
-                      : keepDeclared(findModel(providers, r)?.parameters ?? [], draft.params),
-                });
-              }}
-              options={options}
+          ) : null}
+          {evalUnmapped ? (
+            <Text variant="small" tone="warn" icon="circle-alert">
+              {tm("evalUnmapped")}
+            </Text>
+          ) : null}
+        </>
+      }
+    >
+      <Stack gap={12}>
+        <Field label={t("model")} {...(error?.model === true ? { error: t("modelInvalid") } : {})}>
+          <Select
+            value={draft.model}
+            disabled={disabled}
+            onChange={(e) => {
+              const v = e.target.value;
+              const r = decodeModel(v);
+              onDraft({
+                model: v,
+                params:
+                  r === null
+                    ? {}
+                    : keepDeclared(findModel(providers, r)?.parameters ?? [], draft.params),
+              });
+            }}
+            options={options}
+          />
+        </Field>
+        {decl.length > 0 ? (
+          <Stack gap={12}>
+            <Text variant="small" tone="muted">
+              {t("params")}
+            </Text>
+            <ModelParams
+              parameters={decl}
+              value={draft.params}
+              onChange={(params) => onDraft({ model: draft.model, params })}
+              locale={locale}
+              errors={error?.params ?? {}}
             />
-          </Field>
-          {decl.length > 0 ? (
-            <Stack gap={12}>
-              <Text variant="small" tone="muted">
-                {t("params")}
-              </Text>
-              <ModelParams
-                parameters={decl}
-                value={draft.params}
-                onChange={(params) => onDraft({ model: draft.model, params })}
-                locale={locale}
-                errors={error?.params ?? {}}
-              />
-            </Stack>
-          ) : null}
-          {error?.message !== undefined ? (
-            <FormError message={error.message} extra={error.extra} />
-          ) : null}
-        </Stack>
-      </Card>
-    </div>
+          </Stack>
+        ) : null}
+        {error?.message !== undefined ? (
+          <FormError message={error.message} extra={error.extra} />
+        ) : null}
+      </Stack>
+    </ItemListItem>
   );
 }
