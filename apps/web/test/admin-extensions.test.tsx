@@ -1,3 +1,4 @@
+import { describeNestedBox, findNestedBoxes } from "@capybara-hq/design/reference";
 import { cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -264,6 +265,9 @@ describe("/admin/extensions (ListPage + DataTable by capability, details in a Sh
       expect(
         within(sheet).getByRole("region", { name: m.permissionsLabel.replace("{plugin}", "demo") }),
       ).toBeTruthy();
+      // One box (acceptance item AB): the Sheet holds rows and lines, never a card
+      expect(sheet.querySelector('[data-part="card"]')).toBeNull();
+      expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
     },
   );
 
@@ -293,6 +297,10 @@ describe("/admin/extensions (ListPage + DataTable by capability, details in a Sh
     await user.click(screen.getByText("demo", { selector: ".cb-cell-title-name" }));
     const sheet = await screen.findByRole("dialog", { name: "demo" });
     expect(within(sheet).getByText(en.admin.extensions.approve.notApproved)).toBeTruthy();
+    // the approval is a subsection in the Sheet, not an accent card
+    const approval = within(sheet).getByRole("region", { name: en.admin.extensions.approve.title });
+    expect(approval.getAttribute("data-part")).toBe("subsection");
+    expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
     const submit = within(sheet).getByRole("button", { name: en.admin.extensions.approve.submit });
     expect(submit).toHaveProperty("disabled", true);
     await user.click(

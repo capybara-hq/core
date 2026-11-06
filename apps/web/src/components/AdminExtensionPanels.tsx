@@ -2,7 +2,6 @@
 
 import {
   Button,
-  Card,
   Checkbox,
   type Column,
   DangerConfirm,
@@ -13,6 +12,7 @@ import {
   KeyValue,
   LinkButton,
   Stack,
+  Subsection,
   Text,
   useTimeZone,
   useToast,
@@ -313,31 +313,30 @@ export function AdminExtensionOverview({
           </Button>
         </Stack>
       )}
+      {/* Failure lines, not a danger card: the overview sits in the list's Sheet too (spec §6.7) */}
       {failed.length > 0 && (
-        <Card tone="danger">
-          <Stack gap={4}>
-            {failed.map((r) => (
-              <Stack key={r.replicaId} gap={4}>
-                <Text tone="fail">
-                  {t("detail.failedReplica", {
-                    replica: r.replicaId,
-                    reason: reasonText(r.reason) ?? "—",
-                  })}
+        <Stack gap={8}>
+          {failed.map((r) => (
+            <Stack key={r.replicaId} gap={4}>
+              <Text tone="fail" icon="circle-x">
+                {t("detail.failedReplica", {
+                  replica: r.replicaId,
+                  reason: reasonText(r.reason) ?? "—",
+                })}
+              </Text>
+              {r.servingVersion && (
+                <Text variant="small" tone="muted">
+                  {t("detail.stillServing", { version: versionLabel(r.servingVersion) })}
                 </Text>
-                {r.servingVersion && (
-                  <Text variant="small" tone="muted">
-                    {t("detail.stillServing", { version: versionLabel(r.servingVersion) })}
-                  </Text>
-                )}
-                {r.detail !== null && r.detail !== "" && (
-                  <Text variant="small" tone="fail">
-                    {r.detail}
-                  </Text>
-                )}
-              </Stack>
-            ))}
-          </Stack>
-        </Card>
+              )}
+              {r.detail !== null && r.detail !== "" && (
+                <Text variant="small" tone="fail">
+                  {r.detail}
+                </Text>
+              )}
+            </Stack>
+          ))}
+        </Stack>
       )}
       <Stack gap={8}>
         <Text variant="small" tone="muted">
@@ -457,44 +456,41 @@ export function AdminExtensionPermissions({
         removed={plugin.removed}
         warnings={plugin.warnings}
       />
+      {/* The approval is a subsection under the review, not a card: the permissions sit in the
+          list's Sheet too (spec §6.7, §6.32) */}
       {pending && (
-        <Card tone="accent" title={t("title")}>
-          <Stack gap={12}>
-            <Text variant="prose" tone="muted">
-              {t("hint")}
-            </Text>
-            {sensitive && <Checkbox checked={ack} onChange={setAck} label={t("ack")} />}
-            {error !== undefined && (
-              <Stack gap={8}>
-                <FormError message={error.message} />
-                {error.code === "extension.approval_stale" && (
-                  <Stack direction="row">
-                    <Button
-                      density="dense"
-                      onClick={() => {
-                        setError(undefined);
-                        setAck(false);
-                        onRefresh();
-                      }}
-                    >
-                      {t("refresh")}
-                    </Button>
-                  </Stack>
-                )}
-              </Stack>
-            )}
-            <Stack direction="row">
-              <Button
-                variant="primary"
-                loading={busy}
-                disabled={busy || (sensitive && !ack)}
-                onClick={() => void approve()}
-              >
-                {t("submit")}
-              </Button>
+        <Subsection title={t("title")} description={t("hint")}>
+          {sensitive && <Checkbox checked={ack} onChange={setAck} label={t("ack")} />}
+          {error !== undefined && (
+            <Stack gap={8}>
+              <FormError message={error.message} />
+              {error.code === "extension.approval_stale" && (
+                <Stack direction="row">
+                  <Button
+                    density="dense"
+                    onClick={() => {
+                      setError(undefined);
+                      setAck(false);
+                      onRefresh();
+                    }}
+                  >
+                    {t("refresh")}
+                  </Button>
+                </Stack>
+              )}
             </Stack>
+          )}
+          <Stack direction="row">
+            <Button
+              variant="primary"
+              loading={busy}
+              disabled={busy || (sensitive && !ack)}
+              onClick={() => void approve()}
+            >
+              {t("submit")}
+            </Button>
           </Stack>
-        </Card>
+        </Subsection>
       )}
     </Stack>
   );
