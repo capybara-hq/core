@@ -196,6 +196,13 @@ export interface Agent {
 /** 内核返回的保存警告码（界面以 `agents.warnings.<code>` 翻译）。 */
 export type AgentWarning = "fallback_same_provider" | (string & {});
 
+/** The agent page section a save warning is about (the 模型 section owns the fallback). */
+export const WARNING_SECTION: Record<string, "model"> = { fallback_same_provider: "model" };
+
+/** The warnings of `codes` that belong to `section`: the others are shown where they belong. */
+export const warningsOf = (section: "model", codes: readonly AgentWarning[]): AgentWarning[] =>
+  codes.filter((c) => WARNING_SECTION[c] === section);
+
 /**
  * 模型参数声明（对应 plugin-sdk `model-params.ts` 的 `ModelParameter`；Web 层不 import SDK）。
  * `schema` 是受限的 JSON Schema 子集；界面遇到子集之外的类型时按文本框处理。

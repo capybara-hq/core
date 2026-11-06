@@ -5,7 +5,6 @@ import {
   AvatarPicker,
   type AvatarValue,
   Callout,
-  Card,
   Checkbox,
   Field,
   FormSection,
@@ -25,7 +24,6 @@ import {
   type AgentAvatar,
   type AgentDefinitionSave,
   type AgentVisibility,
-  type AgentWarning,
   avatarValue,
   type ProfileInput,
   updateAgent,
@@ -138,7 +136,6 @@ function BasicsEdit() {
   const [pending, setPending] = useState(false);
   const [profileError, setProfileError] = useState<unknown>(null);
   const [agentError, setAgentError] = useState<unknown>(null);
-  const [warnings, setWarnings] = useState<AgentWarning[]>([]);
   const [nameError, setNameError] = useState(false);
   useEffect(() => () => (preview ? URL.revokeObjectURL(preview.src) : undefined), [preview]);
   // Landing here from `/agents/new` after its picked image could not be uploaded.
@@ -250,7 +247,6 @@ function BasicsEdit() {
     setPending(true);
     setProfileError(null);
     setAgentError(null);
-    setWarnings([]);
     // The profile first, then the agent: the agent PATCH's refetch then reads the new profile, so
     // a slow refetch can never write the old profile over the one the profile save cached.
     const [p] = await Promise.allSettled([
@@ -281,7 +277,6 @@ function BasicsEdit() {
     if (a.status === "fulfilled") {
       basic.reset();
       setVersionBase(null);
-      setWarnings(a.value?.warnings ?? []);
     } else setAgentError(a.reason);
     setPending(false);
   }
@@ -327,17 +322,6 @@ function BasicsEdit() {
       }
     >
       <Stack gap={16}>
-        {warnings.length > 0 && (
-          <Card tone="danger" title={t("form.warningsTitle")}>
-            <Stack gap={4}>
-              {warnings.map((w) => (
-                <Text key={w} tone="warn" icon="circle-alert">
-                  {t.has(`warnings.${w}`) ? t(`warnings.${w}`) : t("warnings.unknown", { code: w })}
-                </Text>
-              ))}
-            </Stack>
-          </Card>
-        )}
         {profileError ? <SaveError error={profileError} onReload={() => void reload()} /> : null}
         {agentError ? <SaveError error={agentError} onReload={() => void reload()} /> : null}
         <FormSection id="basics" title={t("page.sections.basics")}>

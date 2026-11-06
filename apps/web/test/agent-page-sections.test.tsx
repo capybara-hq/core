@@ -491,23 +491,48 @@ describe("the agent page's sections with their own saves (agent profile design Â
     ).toBe("other/o-1");
   });
 
-  it("a section save shows the kernel's warnings in the section and the row goes", async () => {
+  const SAME = { fallback: { provider: "model-fake", model: "fake-1" } };
+  const hint = () => screen.queryByText(en.agents.warnings.fallback_same_provider);
+
+  it("saving Tools shows no model warning, even when the kernel returns one", async () => {
+    const a = agent({ definition: SAME });
     stubApi(
-      routes(agent(), {
-        [`PATCH ${ORG}/agents/ag1`]: ok({ agent: agent(), warnings: ["fallback_same_provider"] }),
+      routes(a, {
+        [`PATCH ${ORG}/agents/ag1`]: ok({ agent: a, warnings: ["fallback_same_provider"] }),
       }),
     );
-    await renderEditAgent({ section: "model" });
+    await renderEditAgent({ section: "tools" });
     const user = userEvent.setup();
-    await user.selectOptions(
+    await user.click(screen.getByRole("checkbox", { name: F.builtin.SkillWrite }));
+    await user.click(save());
+    await vi.waitFor(() => expect(document.querySelector('[data-part="action-row"]')).toBeNull());
+    expect(hint()).toBeNull();
+    expect(screen.queryByText(F.warningsTitle)).toBeNull();
+  });
+
+  it("the Model section shows the same-provider hint persistently, live and only then", async () => {
+    stubApi(routes(agent({ definition: SAME })));
+    await renderEditAgent({ section: "model" });
+    const warning = await screen.findByText(en.agents.warnings.fallback_same_provider);
+    expect(warning.closest('[data-tone="warn"]')).not.toBeNull();
+    cleanup();
+
+    stubApi(routes(agent({ definition: { fallback: { provider: "other", model: "o-1" } } })));
+    await renderEditAgent({ section: "model" });
+    await screen.findByRole("combobox", { name: (n) => n.startsWith(F.fallbackLabel) });
+    expect(hint()).toBeNull();
+    // editing the fallback to the model's provider shows it before any save
+    await userEvent.selectOptions(
       screen.getByRole("combobox", { name: (n) => n.startsWith(F.fallbackLabel) }),
       "model-fake/fake-1",
     );
-    await user.click(save());
-    const warning = await screen.findByText(en.agents.warnings.fallback_same_provider);
-    expect(warning.closest('[data-tone="danger"]')).not.toBeNull();
-    await vi.waitFor(() => expect(document.querySelector('[data-part="action-row"]')).toBeNull());
-    expect(router.push).not.toHaveBeenCalled();
+    expect(hint()).not.toBeNull();
+    cleanup();
+
+    stubApi(routes(agent()));
+    await renderEditAgent({ section: "model" });
+    await screen.findByRole("combobox", { name: (n) => n.startsWith(F.fallbackLabel) });
+    expect(hint()).toBeNull();
   });
 });
 

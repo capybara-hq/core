@@ -1,6 +1,6 @@
 "use client";
 
-import { Field, FormSection, Select, Stack } from "@capybara-hq/design";
+import { Callout, Field, FormSection, Select, Stack } from "@capybara-hq/design";
 import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
 import {
@@ -9,6 +9,7 @@ import {
   keepDeclared,
   type ModelParameter,
   type ParamValue,
+  warningsOf,
 } from "../../lib/agents";
 import { ApiClientError } from "../../lib/api";
 import { labelLocale, modelLabel } from "../../lib/extension-label";
@@ -88,6 +89,13 @@ function ModelEdit({ data }: { data: AgentFormData }) {
     })),
   );
   const noModels = options.length === 0;
+  // Persistent hints, live while editing: the draft's fallback against the draft's model. With
+  // the model and fallback untouched, the last save's warnings of this section count as well.
+  const fb = decodeModel(d.fallback);
+  const sameProvider = fb !== null && fb.provider === decodeModel(d.model)?.provider;
+  const untouched = d.model === saved.model && d.fallback === saved.fallback;
+  const hints = new Set<string>(untouched ? warningsOf("model", save.warnings) : []);
+  if (sameProvider) hints.add("fallback_same_provider");
 
   /** `validation_failed` details on the params fields; the ones no field shows are listed. */
   function showDetails(err: unknown) {
@@ -207,6 +215,11 @@ function ModelEdit({ data }: { data: AgentFormData }) {
                 options={[{ value: "", label: t("form.fallbackNone") }, ...options]}
               />
             </Field>
+            {[...hints].map((w) => (
+              <Callout key={w} tone="warn">
+                {t.has(`warnings.${w}`) ? t(`warnings.${w}`) : t("warnings.unknown", { code: w })}
+              </Callout>
+            ))}
           </FormSection>
           {modelDecl.length > 0 && (
             <FormSection

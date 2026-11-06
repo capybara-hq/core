@@ -271,7 +271,7 @@ describe("the agent page by section (agent profile design §3)", () => {
     );
   });
 
-  it("the kernel's warnings after a basics save show in the section", async () => {
+  it("a model warning after a basics save is not shown in Basics", async () => {
     stubApi(
       routes(agent(), {
         [`PATCH ${ORG}/agents/ag1`]: ok({
@@ -284,7 +284,8 @@ describe("the agent page by section (agent profile design §3)", () => {
     const user = userEvent.setup();
     await user.type(screen.getByRole("textbox", { name: en.agents.form.nameLabel }), " 2");
     await user.click(screen.getByRole("button", { name: en.agents.form.submit }));
-    expect(await screen.findByText(en.agents.warnings.fallback_same_provider)).toBeTruthy();
+    await vi.waitFor(() => expect(document.querySelector('[data-part="action-row"]')).toBeNull());
+    expect(screen.queryByText(en.agents.warnings.fallback_same_provider)).toBeNull();
   });
 
   it("leaving a dirty section asks to keep or discard", async () => {
@@ -411,7 +412,7 @@ describe("the agent page by section (agent profile design §3)", () => {
     expect(unload()).toBe(false);
   });
 
-  it("the save row shows only with changes; a definition section shows warnings and drops the row", async () => {
+  it("the save row shows only with changes; a definition section drops the row and shows no other section's warning", async () => {
     stubApi(
       routes(agent(), {
         [`PATCH ${ORG}/agents/ag1`]: ok({
@@ -433,10 +434,10 @@ describe("the agent page by section (agent profile design §3)", () => {
     await user.click(screen.getByRole("checkbox", { name: en.agents.form.builtin.SkillWrite }));
     expect(row()).not.toBeNull();
     await user.click(screen.getByRole("button", { name: en.agents.form.submit }));
-    expect(await screen.findByText(en.agents.warnings.fallback_same_provider)).toBeTruthy();
     // saved: the section follows the saved agent, so nothing is left to save
     await vi.waitFor(() => expect(row()).toBeNull());
     expect(screen.queryByRole("button", { name: en.agents.form.continue })).toBeNull();
+    expect(screen.queryByText(en.agents.warnings.fallback_same_provider)).toBeNull();
   });
 
   it("a combined save shows the new profile in the head even when the agent refetch is slow", async () => {
