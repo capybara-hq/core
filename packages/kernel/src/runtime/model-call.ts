@@ -58,7 +58,7 @@ import type { SubagentParent } from "./loop.js";
 import { MediaCache } from "./media-cache.js";
 import { ProviderListError, type ProviderRegistry } from "./providers.js";
 import type { StepLog } from "./step-log.js";
-import { subagentBudgetUsedUp } from "./subagents/limits.js";
+import { budgetRunOf, subagentBudgetUsedUp } from "./subagents/limits.js";
 import type { UsageReporter } from "./usage-report.js";
 
 /** 单轮收尾的尾部提醒（模型可见，英文；spec 6 轮次额度收尾）。 */
@@ -188,9 +188,12 @@ export interface ModelStepInput {
   conversationKind?: ConversationKindForHooks;
   /** A sub-agent's run: where it was dispatched from (hook payloads carry it as `parent`). */
   parent?: SubagentParent;
+  /** A sub-agent's run without a live parent (a child case's eval replay, `LoopContext`). */
+  subagent?: boolean;
   /**
-   * A sub-agent's run (phase C): the parent run whose `subagent_tokens_used` counts every usage
-   * event this step writes (step, wrap-up and compaction calls; spec §8.3).
+   * A sub-agent's run (phase C): the parent run whose budget run's `subagent_tokens_used` counts
+   * every usage event this step writes (step, wrap-up and compaction calls; spec §8.3, agent map
+   * spec §6).
    */
   parentRunId?: string;
   /**
@@ -361,6 +364,9 @@ async function runStep(
     const resolved = await deps.tools.forAgent(input.orgId, {
       tools: input.agent.tools ?? [],
       subagents: input.agent.subagents,
+      child:
+        input.parent !== undefined || input.parentRunId !== undefined || input.subagent === true,
+      forkChild: input.parent?.forSkill === true,
       skillLoad: skillLoadOffered(
         events.findLast(
           (e): e is Extract<ConversationEvent, { type: "skills_catalog" }> =>
@@ -386,7 +392,12 @@ async function runStep(
     if (
       input.parentRunId !== undefined &&
       events.length !== beforeCompaction &&
-      (await subagentBudgetUsedUp(deps.db, deps.config, input.orgId, input.parentRunId))
+      (await subagentBudgetUsedUp(
+        deps.db,
+        deps.config,
+        input.orgId,
+        input.parent?.budgetRunId ?? (await budgetRunOf(deps.db, input.parentRunId)),
+      ))
     ) {
       return {
         content: [],
@@ -468,7 +479,7 @@ async function runStep(
  * Appends a model call's events (its reply or compaction outcome with its `usage`; also the usage
  * of a `WebFetch` extraction call, `tools/builtins/web/extract.ts`). For a
  * sub-agent's run (`input.parentRunId`) in one transaction that also adds the tokens of the usage
- * events it newly wrote to the parent run's `subagent_tokens_used` (sub-agents spec §8.3): a usage
+ * events it newly wrote to the budget run's `subagent_tokens_used` (sub-agents spec §8.3): a usage
  * event already in the log (an idempotent hit after a crash) adds nothing, so each call counts
  * exactly once.
  */
@@ -477,12 +488,23 @@ export async function appendCounted(
     eventLog: Pick<EventLog, "append" | "notify">;
     stepLog: Pick<StepLog, "appendCounted">;
   },
-  input: { conversationId: string; parentRunId?: string | undefined },
+  input: {
+    conversationId: string;
+    parentRunId?: string | undefined;
+    /** The run's budget window (agent map spec §6), when known; else the parent run's. */
+    budgetRunId?: string | undefined;
+    parent?: { budgetRunId?: string | undefined } | undefined;
+  },
   events: AppendEvent[],
 ): Promise<ConversationEvent[]> {
   const { conversationId, parentRunId } = input;
   if (parentRunId === undefined) return deps.eventLog.append(conversationId, events);
-  const out = await deps.stepLog.appendCounted(conversationId, parentRunId, events);
+  const budgetRunId = input.budgetRunId ?? input.parent?.budgetRunId;
+  const out = await deps.stepLog.appendCounted(
+    conversationId,
+    { parentRunId, ...(budgetRunId !== undefined && { budgetRunId }) },
+    events,
+  );
   if (out.toSeq !== null) await deps.eventLog.notify(conversationId, out.toSeq);
   return out.written;
 }

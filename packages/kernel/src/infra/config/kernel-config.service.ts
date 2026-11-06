@@ -24,7 +24,8 @@ const HOT_APPLIERS: Record<string, (k: { log: KernelLogger }, value: unknown) =>
   // SandboxService reads the shared-lease cap at every acquisition.
   "sandbox.maxConcurrentCommands": () => {},
   // Sub-agent limits are read at every dispatch, child step and tool resolution.
-  "subagents.maxConcurrentPerRun": () => {},
+  "subagents.maxDepth": () => {},
+  "subagents.maxConcurrentPerConversation": () => {},
   "subagents.maxDispatchesPerRun": () => {},
   "subagents.maxTokensPerRun": () => {},
   // The web tools read these limits through the config service on every call.
@@ -34,6 +35,19 @@ const HOT_APPLIERS: Record<string, (k: { log: KernelLogger }, value: unknown) =>
   "web.fetch.cacheSeconds": () => {},
   "web.fetch.timeoutMs": () => {},
 };
+
+/**
+ * Environment variables of renamed config keys, with their replacements: warned about once when
+ * the service starts (agent map spec §6: `subagents.maxConcurrentPerRun` became
+ * `subagents.maxConcurrentPerConversation`). A retired file or Nacos key cannot be told here: the
+ * schema strips unknown keys before the kernel receives its config.
+ */
+const RETIRED_ENV: readonly (readonly [string, string])[] = [
+  [
+    "CAPYBARA_SUBAGENTS__MAX_CONCURRENT_PER_RUN",
+    "CAPYBARA_SUBAGENTS__MAX_CONCURRENT_PER_CONVERSATION",
+  ],
+];
 
 const HOT_PATHS = configFields(KernelConfigSchema)
   .filter((f) => f.meta?.hot)
@@ -68,6 +82,11 @@ export class KernelConfigService {
     this.env = input.env ?? process.env;
     log.setLevel(input.config.log.level);
     log.addSecrets(secretValues(KernelConfigSchema, input.config));
+    for (const [old, now] of RETIRED_ENV) {
+      if (this.env[old] !== undefined) {
+        log.warn(`${old} is no longer read and is ignored; set ${now} instead`, { env: old });
+      }
+    }
   }
 
   get(): KernelConfig {

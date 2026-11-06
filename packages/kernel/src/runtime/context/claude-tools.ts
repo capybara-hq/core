@@ -8,15 +8,16 @@
  * run writes a new snapshot announcing the new map, and old snapshots keep their text (phase C
  * changed the Task / Agent line, sub-agents spec §16.5; the tool-naming change shortened it to the
  * Claude Code names, spec 2026-10-29 §6; background Bash made TaskOutput and TaskStop available,
- * spec 2026-11-05 §4.4; WebFetch and WebSearch joined the same-name list with the web tools).
+ * spec 2026-11-05 §4.4; WebFetch and WebSearch joined the same-name list with the web tools;
+ * SendMessage joined it when it replaced `Agent` with `resume`, agent map spec §4.2).
  */
 export const CLAUDE_CODE_TOOL_MAP = [
   "Some skills in this conversation were written for Claude Code. Its tools Bash, Read, Write, Edit,",
-  "Glob, Grep, Skill, AskUserQuestion, ToolSearch, Agent, WebFetch and WebSearch have the same names here, when they are",
+  "Glob, Grep, Skill, AskUserQuestion, ToolSearch, Agent, SendMessage, WebFetch and WebSearch have the same names here, when they are",
   "in your tools. For the others:",
   "- MultiEdit -> several Edit calls",
   "- TodoWrite -> plugin__todo__write when it is in your tools; otherwise keep the task list in your replies",
-  "- Task -> Agent; SendMessage to a sub-agent -> Agent with resume; model names haiku / sonnet / opus -> fast / standard / capable",
+  "- Task -> Agent; model names haiku / sonnet / opus -> fast / standard / capable",
   "- TaskOutput -> TaskOutput, TaskStop -> TaskStop",
   "- Any other tool a skill names (for example NotebookEdit, EnterWorktree) -> not available unless one of your tools does the same job",
   // biome-ignore lint/suspicious/noTemplateCurlyInString: the literal Claude Code variable the model reads

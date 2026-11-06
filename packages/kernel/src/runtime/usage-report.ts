@@ -23,6 +23,7 @@ import { QueueModule } from "../infra/queue/queue.module.js";
 import { LockedCron } from "../infra/schedule/locked-cron.decorator.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
+import { deliveryRowOfChildRun } from "./subagents/child.js";
 
 /** Queue of `usage.report` deliveries (no `:` in the name). */
 export const USAGE_REPORT_QUEUE = "cap-kernel-usage-report";
@@ -434,8 +435,6 @@ export class UsageReporter {
       .selectFrom("conversation_events as e")
       .innerJoin("conversations as c", "c.id", "e.conversation_id")
       .leftJoin("runs as r", "r.id", "e.run_id")
-      // a sub-agent's run: its dispatch says where it was dispatched from (spec §11)
-      .leftJoin("subagent_dispatches as sd", "sd.child_run_id", "e.run_id")
       .select([
         "e.payload",
         "e.run_id",
@@ -446,9 +445,6 @@ export class UsageReporter {
         "c.account_id",
         "c.kind",
         "r.trigger_account_id",
-        "sd.parent_conversation_id",
-        "sd.parent_run_id",
-        "sd.parent_call_id",
       ])
       .where("e.conversation_id", "=", conversationId)
       .where("e.seq", "=", String(seq))
@@ -463,6 +459,12 @@ export class UsageReporter {
       cacheReadTokens: number;
       cacheWriteTokens: number;
     };
+    // a sub-agent's run: where it was dispatched from (spec §11), its own dispatch, else (a wake
+    // run nobody dispatched, agent map spec §5.3) its conversation's latest one
+    const parent =
+      row.kind === "subagent" && row.run_id !== null
+        ? await deliveryRowOfChildRun(this.db, row.run_id)
+        : null;
     return {
       eventId: `${conversationId}/${seq}`,
       purpose: p.purpose ?? "step",
@@ -473,15 +475,13 @@ export class UsageReporter {
       // a sub-agent's calls report "chat" (spec §11: the SDK union is not widened)
       conversationKind: row.kind === "eval" ? "eval" : "chat",
       runId: row.run_id ?? "",
-      ...(row.parent_conversation_id !== null &&
-        row.parent_run_id !== null &&
-        row.parent_call_id !== null && {
-          parent: {
-            conversationId: row.parent_conversation_id,
-            runId: row.parent_run_id,
-            callId: row.parent_call_id,
-          },
-        }),
+      ...(parent !== null && {
+        parent: {
+          conversationId: parent.parentConversationId,
+          runId: parent.parentRunId,
+          callId: parent.parentCallId,
+        },
+      }),
       provider: p.provider,
       model: p.model,
       usage: {

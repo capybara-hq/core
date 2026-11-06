@@ -47,7 +47,7 @@ import { type FinishRunArgs, RunFinish, TERMINAL_STATUSES } from "./run-finish.j
 import type { RunJobData } from "./run-jobs.js";
 import { RunQueue } from "./run-queue.js";
 import { AgentLoops, RunSteps } from "./run-steps.js";
-import { dispatchOfChildRun } from "./subagents/child.js";
+import { dispatchOfChildRun, rootConversationOf } from "./subagents/child.js";
 import { childRunDefinition } from "./subagents/definition.js";
 import { forkBoundary } from "./subagents/skill-fork.js";
 import { Waits } from "./waits.js";
@@ -153,7 +153,10 @@ export class RunWorker {
     private readonly checkpoints: Pick<KyselyCheckpointSaver, "deleteThread">,
     /** loop 返回 `suspended` 后把运行置为 waiting（释放会话锁与配额之后）; the child lifecycle. */
     @Inject(Waits)
-    private readonly waits: Pick<Waits, "suspend" | "childFinished" | "stopChildren">,
+    private readonly waits: Pick<
+      Waits,
+      "suspend" | "childFinished" | "stopChildren" | "stopDescendantsOfStopped"
+    >,
     /** `run.started` (the channel outbound enqueues the conversation's IM delivery). */
     @Inject(KernelEvents) private readonly events: KernelEvents,
     /** A completed run enqueues the conversation's title job. */
@@ -252,7 +255,8 @@ export class RunWorker {
 
   /**
    * After any terminal commit of a run that is not a sub-agent's (sub-agents spec §12): stops its
-   * active children on its behalf (no account). The wait sweep is the backstop.
+   * active fork invocation child on its behalf (no account); background `Agent` children keep
+   * running (agent map spec §5.4). The wait sweep is the backstop.
    */
   private async stopChildren(runId: string): Promise<void> {
     try {
@@ -272,6 +276,13 @@ export class RunWorker {
       await this.waits.childFinished(runId);
     } catch (err) {
       this.log.error("cannot report finished sub-agent run to its parent", { runId, err });
+    }
+    // a sub-agent a person stopped stops its descendants too, also one it dispatched after the
+    // tree stop read the tree (agent map spec §6); any other end leaves them running
+    try {
+      await this.waits.stopDescendantsOfStopped(runId);
+    } catch (err) {
+      this.log.error("cannot stop the descendants of a stopped sub-agent", { runId, err });
     }
   }
 
@@ -432,6 +443,7 @@ export class RunWorker {
         "trigger_seq",
         "started_at",
         "waited_ms",
+        "budget_run_id",
       ])
       .where("id", "=", runId)
       .executeTakeFirst();
@@ -447,7 +459,7 @@ export class RunWorker {
     if (run.status === "waiting") return;
     const conv = await this.db
       .selectFrom("conversations")
-      .select(["org_id", "agent_id", "kind"])
+      .select(["org_id", "agent_id", "kind", "subagent_depth"])
       .where("id", "=", conversationId)
       .executeTakeFirst();
     if (!conv) return;
@@ -576,8 +588,15 @@ export class RunWorker {
       trigger_seq: string;
       started_at: Date | null;
       waited_ms: string;
+      budget_run_id: string | null;
     },
-    conv: { id: string; org_id: string; agent_id: string; kind: ConversationKind },
+    conv: {
+      id: string;
+      org_id: string;
+      agent_id: string;
+      kind: ConversationKind;
+      subagent_depth: number;
+    },
     state: ActiveRun,
   ): Promise<ExecResult> {
     const runId = run.id;
@@ -610,18 +629,38 @@ export class RunWorker {
       maxSteps = Math.min(started.payload.maxSteps, runtime.maxSteps);
       const row = await dispatchOfChildRun(this.db, runId);
       const otherAgent = started.payload.template.source === "agent";
+      const parentConversationId =
+        row?.parentConversationId ?? started.payload.parent.conversationId;
+      // a sub-agent conversation is at depth 1 at least: one written before depths were recorded
+      // (default 0) was a child of a root
+      const depth = Math.max(conv.subagent_depth, 1) - 1;
+      const rootConversationId =
+        depth === 0
+          ? parentConversationId
+          : await rootConversationOf(this.db, parentConversationId);
+      // the tree's budget window of THIS run (agent map spec §6): its own `budget_run_id`, set when
+      // it was created (a dispatch, or a wake run from the root's current window), else its
+      // dispatch's; never derived from the parent run, which for a wake run is the first dispatch's
+      const budgetRunId = run.budget_run_id ?? row?.budgetRunId;
       parent = row
         ? {
             conversationId: row.parentConversationId,
             runId: row.parentRunId,
             callId: row.parentCallId,
+            depth,
+            rootConversationId,
             otherAgent,
+            ...(budgetRunId !== undefined && { budgetRunId }),
+            ...(row.forSkill === true && { forSkill: true }),
           }
         : {
             conversationId: started.payload.parent.conversationId,
             runId: started.payload.parent.runId,
             callId: started.payload.parent.callId,
+            depth,
+            rootConversationId,
             otherAgent,
+            ...(budgetRunId !== undefined && { budgetRunId }),
           };
     } else {
       const version = await this.db
@@ -915,7 +954,8 @@ export class RunWorker {
       saved !== undefined
         ? effectiveDefinition(saved, await readSelection(t, conversationId))
         : current;
-    // a wake run's boundary is a finished background task, not a message (background Bash §3)
+    // a wake run's boundary is a finished background task (background Bash §3) or a sub-agent's
+    // delivery (agent map spec §5.3), not a message
     const boundary = await t
       .selectFrom("conversation_events")
       .select("type")
@@ -933,6 +973,10 @@ export class RunWorker {
           triggerAccountId: run.trigger_account_id,
           ...(boundary?.type === "background_task_finished" && {
             trigger: "background_task" as const,
+            triggerSeq: Number(run.trigger_seq),
+          }),
+          ...(boundary?.type === "subagent_delivery" && {
+            trigger: "subagent" as const,
             triggerSeq: Number(run.trigger_seq),
           }),
         },

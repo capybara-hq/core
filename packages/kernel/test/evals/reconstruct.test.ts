@@ -14,13 +14,18 @@ import {
   type TestS3,
 } from "@capybara-hq/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { normalizeStoredDefinition } from "../../src/agents/definition.js";
 import { AttachmentsService } from "../../src/conversations/attachments.service.js";
 import { EventLog } from "../../src/conversations/event-log.js";
-import type { ConversationEvent } from "../../src/conversations/events.js";
+import type { ConversationEvent, EventPayload } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb, type SkillManifest } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { ApiError } from "../../src/errors.js";
-import { reconstructRequest, snapshotMediaRefs } from "../../src/evals/reconstruct.js";
+import {
+  reconstructRequest,
+  snapshotMediaRefs,
+  subagentChanged,
+} from "../../src/evals/reconstruct.js";
 import {
   type CaseSnapshot,
   replayableCalls,
@@ -538,6 +543,63 @@ describe("reconstructRequest：基线零漂移", { timeout: 120_000 }, () => {
       }),
     );
     expect(replayableCalls(snap).length).toBe(5);
+  });
+
+  it("a parent request with a subagent_delivery rebuilds with zero drift", async () => {
+    reset();
+    const agentId = await createAgent(
+      { provider: "model-looper", model: "loop-1" },
+      { tools: PROBE_TOOLS },
+    );
+    const conv = await createConv(owner, orgId, agentId);
+    await postMessage(owner, orgId, conv, "loop:400");
+    await waitForEvent(db, conv, (e) => e.type === "model_call");
+    // a child's report lands while the parent's step 1 runs (agent map spec §5.2)
+    const [delivery] = await k.app.get(EventLog).append(conv, [
+      {
+        type: "subagent_delivery",
+        idemKey: `test_delivery:${conv}`,
+        payload: {
+          subagentId: "sa_child",
+          childRunId: randomUUID(),
+          description: "Survey the module",
+          kind: "report",
+          text: "Three call sites.",
+          triggerAccountId: ownerId,
+        },
+      },
+      {
+        type: "subagent_delivery",
+        idemKey: `test_delivery_failed:${conv}`,
+        payload: {
+          subagentId: "sa_other",
+          childRunId: randomUUID(),
+          description: "Check the build",
+          kind: "finished",
+          status: "failed",
+          errorCode: "model.unavailable",
+          text: "The model provider is unavailable.",
+          triggerAccountId: ownerId,
+        },
+      },
+    ]);
+    await waitForTerminal(db, conv, 1, 30_000);
+
+    const calls = modelCalls(await eventsOf(db, conv));
+    const absorbing = calls.findIndex(
+      (c) => (c.payload.request.absorbedUpToSeq ?? 0) >= (delivery?.seq ?? Infinity),
+    );
+    expect(absorbing).toBeGreaterThan(0);
+    expect(sent[absorbing]?.messages).toContainEqual({
+      role: "system",
+      content: 'Sub-agent sa_child ("Survey the module") handed back a report:\nThree call sites.',
+    });
+    expect(sent[absorbing]?.messages).toContainEqual({
+      role: "system",
+      content:
+        'Sub-agent sa_other ("Check the build") failed (model.unavailable): The model provider is unavailable.',
+    });
+    await expectZeroDrift(conv, await snapshotOf(conv));
   });
 
   it("压缩摘要之后的请求", async () => {
@@ -1589,5 +1651,67 @@ describe("reconstructRequest: a recording from before the tool rename", () => {
     expect(all).toContain("Updated skills (");
     expect(all).toMatch(/skill_load/);
     expect(all).not.toMatch(/\bcall Skill\b/);
+  });
+});
+
+describe("reconstructRequest: a recording from before background sub-agents", () => {
+  type Recorded = { snapshot: CaseSnapshot; requests: ModelRequest[] };
+  type Fixture = { model: ModelInfo; parent: Recorded; child: Recorded };
+  const fixture = JSON.parse(
+    readFileSync(
+      fileURLToPath(
+        new URL("./fixtures/pre-background-subagents/conversation.json", import.meta.url),
+      ),
+      "utf8",
+    ),
+  ) as Fixture;
+
+  it("holds a foreground Agent call with resume and a parent the subagents wait resumed", () => {
+    const parent = fixture.parent.snapshot.events;
+    const calls = parent.flatMap((e) =>
+      e.type === "assistant_message"
+        ? (e.payload as { content: { type: string; name?: string; input?: unknown }[] }).content
+        : [],
+    );
+    const agentCalls = calls.filter((b) => b.type === "tool_call" && b.name === "Agent");
+    expect(agentCalls).toHaveLength(4);
+    expect(agentCalls.some((b) => (b.input as { resume?: string }).resume !== undefined)).toBe(
+      true,
+    );
+    // the replies came back as the Agent results (the wait), not as deliveries
+    expect(parent.filter((e) => e.type === "subagent_finished")).toHaveLength(4);
+    expect(parent.some((e) => e.type === "subagent_delivery")).toBe(false);
+    expect(fixture.child.snapshot.events.filter((e) => e.type === "run_started")).toHaveLength(2);
+  });
+
+  it("subagentChanged: Agent follows the logged child and the candidate's subagents block is ignored", () => {
+    const started = fixture.child.snapshot.events.find((e) => e.type === "subagent_started")
+      ?.payload as EventPayload<"subagent_started">;
+    const logged = normalizeStoredDefinition(started.definition);
+    const agentTool = { kind: "builtin" as const, name: "Agent" };
+    // the general child stays listed: only the roster around it changes
+    const roster = { ...logged, subagents: { ...logged.subagents, templates: ["x"] } };
+    // a roster-only change is no change, in the same version or another one
+    expect(subagentChanged(started, logged, roster, true)).toBe(false);
+    expect(subagentChanged(started, logged, roster, false, logged)).toBe(false);
+    // an org agent child logged without Agent (depth limit, or before nesting): a candidate that
+    // offers it is the same child
+    const asAgent = { ...started, template: { source: "agent" as const, id: "a", version: 1 } };
+    const withAgent = { ...logged, tools: [...logged.tools, agentTool] };
+    expect(subagentChanged(asAgent, logged, withAgent, false)).toBe(false);
+    // a child logged with Agent keeps it in the comparison: a candidate without it differs
+    expect(subagentChanged(asAgent, withAgent, logged, false)).toBe(true);
+  });
+
+  it("foreground-era log replays with zero drift", () => {
+    for (const side of [fixture.parent, fixture.child]) {
+      const calls = modelCalls(toEvents(side.snapshot));
+      expect(calls).toHaveLength(side.requests.length);
+      for (const [i, c] of calls.entries()) {
+        const out = reconstructRequest(side.snapshot, c.seq, { model: fixture.model });
+        expect(out.drift, `model_call seq ${c.seq}`).toEqual([]);
+        expect(out.request, `model_call seq ${c.seq}`).toEqual(side.requests[i]);
+      }
+    }
   });
 });

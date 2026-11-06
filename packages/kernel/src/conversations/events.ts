@@ -194,6 +194,20 @@ const ModelUsageShape = {
   cacheWriteTokens: count,
 };
 
+/**
+ * How a sub-agent's run ended (`subagent_finished`, a `subagent_delivery` finish). `timed_out`:
+ * stopped by the parent's sub-agents wait timeout (`run_aborted.detail`).
+ */
+export const SubagentFinishStatusSchema = z.enum([
+  "completed",
+  "max_steps",
+  "max_duration",
+  "budget",
+  "aborted",
+  "timed_out",
+  "failed",
+]);
+
 /** 双语或纯文本（plugin-sdk `InputForm` 的文案字段）。 */
 const FormTextSchema = z.union([z.string(), z.object({ zh: z.string(), en: z.string() })]);
 
@@ -278,6 +292,11 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
           parentRunId: z.string(),
           callId: z.string(),
           /**
+           * `message`: sent by the parent agent with `SendMessage` (agent map spec §5.1); absent or
+           * `task`: the task of a dispatch or follow-up.
+           */
+          kind: z.enum(["task", "message"]).optional(),
+          /**
            * A follow-up (`resume`, final review I1): the frozen tools and org skills intersected
            * with the current version (`narrowFollowUp`); the child's run uses these instead of
            * the frozen ones. Absent on a first dispatch and in older logs.
@@ -322,10 +341,14 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       /**
        * What started the run (display only): absent or `message` = a person's message (or a
        * sub-agent's task), `background_task` = a finished background task woke the conversation
-       * (spec 2026-11-05-background-bash-design §3).
+       * (spec 2026-11-05-background-bash-design §3), `subagent` = a sub-agent's delivery woke it
+       * (agent map spec §5.3).
        */
-      trigger: z.enum(["message", "background_task"]).optional(),
-      /** A wake run's boundary: the seq of the finish that woke it (full-run replay seeds from it). */
+      trigger: z.enum(["message", "background_task", "subagent"]).optional(),
+      /**
+       * A wake run's boundary: the seq of the finish or delivery that woke it (full-run replay
+       * seeds from it).
+       */
       triggerSeq: seqNo.optional(),
     }),
   ),
@@ -714,12 +737,18 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       invokedSeq: seqNo.optional(),
     }),
   ),
-  /** Parent log: a sub-agent waits for a person (approval, input or a connection). Not model-visible. */
+  /**
+   * Root log (agent map spec §7): a sub-agent `subagentId` of the tree, at any depth, waits for a
+   * person (approval, input or a connection). Not model-visible. `path`: the child conversation ids
+   * from the root's child down to `subagentId` (`[subagentId]` for a child of the root); logged under
+   * the root run that last dispatched the root's child on that path.
+   */
   ev(
     "subagent_waiting",
     z.object({
       subagentId: z.string(),
       childRunId: z.string(),
+      path: z.array(z.string()).min(1).max(16),
       kind: z.enum(["approval", "input", "connect"]),
       approvalId: z.string().optional(),
       questionId: z.string().optional(),
@@ -736,21 +765,52 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       subagentId: z.string(),
       childRunId: z.string(),
       callId: z.string(),
-      /** `timed_out`: stopped by the parent's sub-agents wait timeout (`run_aborted.detail`). */
-      status: z.enum([
-        "completed",
-        "max_steps",
-        "max_duration",
-        "budget",
-        "aborted",
-        "timed_out",
-        "failed",
-      ]),
+      status: SubagentFinishStatusSchema,
       errorCode: z.string().optional(),
       toolCalls: count,
       durationMs: count,
       usage: z.object(ModelUsageShape),
     }),
+  ),
+  /**
+   * Parent log (agent map spec §4.5, §5.2): a sub-agent `subagentId` (its child conversation id)
+   * handed back a report (`SubagentHandback`), sent a note (`SendMessage to: "parent"`) or its run
+   * `childRunId` finished. **Model-visible**: absorbed like an interjection and rendered as a system
+   * message (`renderSubagentDelivery`). A finish after a handback carries `text: ""` and
+   * `handedBack: true` and renders as one status line; a finish without one carries the child's
+   * final reply, a failed finish its error message (`errorCode` the code), an aborted one no text
+   * (`abortedBy` who stopped it), with `subagent_finished`'s vocabulary. `status` is present exactly
+   * on `kind: "finished"`. `triggerAccountId`: the child run's trigger account, the one a wake runs
+   * as (§7).
+   */
+  ev(
+    "subagent_delivery",
+    z
+      .object({
+        subagentId: z.string(),
+        childRunId: z.string(),
+        description: z.string(),
+        kind: z.enum(["report", "note", "finished"]),
+        text: z.string().max(200_000),
+        /** `kind: "finished"` only (required there). */
+        status: SubagentFinishStatusSchema.optional(),
+        /** `kind: "finished"` only: a report was handed back before the run finished. */
+        handedBack: z.boolean().optional(),
+        /** `status: "failed"` only: the child run's error code. */
+        errorCode: z.string().optional(),
+        /** `status: "aborted"` only: a person stopped it, or the kernel on its parent's behalf. */
+        abortedBy: z.enum(["user", "parent"]).optional(),
+        triggerAccountId: z.string(),
+      })
+      .superRefine((p, ctx) => {
+        if ((p.kind === "finished") !== (p.status !== undefined)) {
+          ctx.addIssue({
+            code: "custom",
+            path: ["status"],
+            message: "status is required on a finished delivery and allowed only there",
+          });
+        }
+      }),
   ),
   /**
    * Phase D (spec §6.3): the report of the sub-agent that ran a person's fork invocation
@@ -790,9 +850,10 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       /**
        * The finish never wakes a run, but the next run absorbs it like any other (background
        * Bash §3): `person`, a person stopped the task (the conversation's background section);
-       * `deletion`, the conversation was being deleted.
+       * `deletion`, the conversation was being deleted; `subagent_end`, the sub-agent that owns it
+       * ended (a fork's run, or a stopped background sub-agent; agent map spec §5.3).
        */
-      stoppedBy: z.enum(["person", "deletion"]).optional(),
+      stoppedBy: z.enum(["person", "deletion", "subagent_end"]).optional(),
     }),
   ),
   ev("compaction_summary", z.object({ coversUpToSeq: seqNo, text: z.string() })),
@@ -835,10 +896,13 @@ export type ConversationEvent = ConversationEventBody & {
   createdAt: Date;
 };
 
-/** An event a run absorbs at a step boundary: a person's message or a finished background task. */
+/**
+ * An event a run absorbs at a step boundary: a person's message, a finished background task or a
+ * sub-agent's delivery.
+ */
 export type AbsorbableEvent = Extract<
   ConversationEvent,
-  { type: "user_message" | "background_task_finished" }
+  { type: "user_message" | "background_task_finished" | "subagent_delivery" }
 >;
 
 /**
@@ -847,7 +911,9 @@ export type AbsorbableEvent = Extract<
  * places it where the model call that absorbed it was built.
  */
 export const isAbsorbable = (e: ConversationEvent): e is AbsorbableEvent =>
-  e.type === "user_message" || e.type === "background_task_finished";
+  e.type === "user_message" ||
+  e.type === "background_task_finished" ||
+  e.type === "subagent_delivery";
 
 /**
  * What the person typed for a skill invocation (phase D): `/<plugin>:<name> <arguments>` (no

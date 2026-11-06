@@ -50,6 +50,7 @@ const GROUPS = [
       "connect-block",
       "queued-message",
       "subagent-group",
+      "agent-map",
       "inline-card",
       "property-section",
       "right-panel",

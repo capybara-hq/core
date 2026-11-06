@@ -134,6 +134,27 @@ describe("right-area hash", () => {
     expect(parseRightHash("")).toBeNull();
     expect(formatRightHash(null)).toBe("");
   });
+
+  it("#agents=<id>/transcript round-trips", () => {
+    for (const t of [
+      { kind: "agents" },
+      { kind: "agents", id: "c 2" },
+      { kind: "agents", id: "c2", transcript: true },
+    ] as const) {
+      expect(parseRightHash(formatRightHash(t))).toEqual(t);
+    }
+    expect(formatRightHash({ kind: "agents" })).toBe("#agents");
+    expect(formatRightHash({ kind: "agents", id: "c2", transcript: true })).toBe(
+      "#agents=c2/transcript",
+    );
+    expect(parseRightHash("#agents=c2/transcript")).toEqual({
+      kind: "agents",
+      id: "c2",
+      transcript: true,
+    });
+    expect(parseRightHash("#agents=c2/nope")).toBeNull();
+    expect(parseRightHash("#agents=/transcript")).toBeNull();
+  });
 });
 
 describe("the right area", () => {

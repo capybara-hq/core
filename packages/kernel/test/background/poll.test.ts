@@ -24,6 +24,7 @@ import type { ConversationEvent } from "../../src/conversations/events.js";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
+import { Waits } from "../../src/runtime/waits.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { sandboxBaseTimeoutMs } from "../../src/tools/builtins/sandbox/common.js";
 import type { ScriptRule } from "../fixtures/plugins/model-script/index.js";
@@ -45,6 +46,7 @@ import {
   waitFor,
   waitForTerminal,
 } from "../helpers/runs.js";
+import { finishedDeliveries } from "../helpers/subagents.js";
 import { seedConversation } from "../helpers/tool-fixtures.js";
 
 /**
@@ -85,7 +87,7 @@ const RULES: ScriptRule[] = [
       ],
     },
   },
-  { when: { lastToolResultIncludes: "launched" }, reply: { text: "parent done" } },
+  { when: { lastToolResultIncludes: "in the background" }, reply: { text: "parent done" } },
   // a child that starts a task, then waits for the approval of a Write
   {
     when: { systemIncludes: CHILD, lastUserIncludes: "bg-wait", assistantTurns: 0 },
@@ -750,11 +752,13 @@ describe("stopping", () => {
       agentId = (res.json() as { agent: { id: string } }).agent.id;
     });
 
-    it("a sub-agent's run end stops its child conversation's running task", async () => {
+    it("a background sub-agent's run end leaves its running task running (its finish wakes the child)", async () => {
       const conv = await createConv(owner, orgId, agentId);
       used.push(conv);
       await postMessage(owner, orgId, conv, "SCENARIO bg");
       await waitForTerminal(db, conv, 1, 30_000);
+      // the child runs in the background (agent map spec §4.1): wait for its finish
+      await finishedDeliveries(db, conv, 1);
       const child = await db
         .selectFrom("conversations")
         .select("id")
@@ -762,20 +766,23 @@ describe("stopping", () => {
         .executeTakeFirstOrThrow();
       const [task] = await store.listFor([child.id]);
       expect(task).toMatchObject({ conversationId: child.id, sandboxConversationId: conv });
-      const row = await waitFor(
-        async () => {
-          const r = await store.get(task?.id as string);
-          return r?.status !== "running" && r;
-        },
-        15_000,
-        "child task stopped",
+      // the run's end handling, done again and awaited (idempotent: the delivery exists, so it
+      // writes nothing): any task stop it makes has happened when it returns
+      const childRun = await db
+        .selectFrom("runs")
+        .select("id")
+        .where("conversation_id", "=", child.id)
+        .executeTakeFirstOrThrow();
+      expect(await k.app.get(Waits).childFinished(childRun.id)).toBe(false);
+      const row = await store.get(task?.id as string);
+      expect(row).toMatchObject({ status: "running" });
+      expect(await finishedEvents(child.id, task?.id as string)).toEqual([]);
+      expect(await alive({ orgId, conversationId: conv }, row as NonNullable<typeof row>)).toBe(
+        true,
       );
-      expect(row).toMatchObject({ status: "stopped" });
-      expect(await finishedEvents(child.id, row.id)).toHaveLength(1);
-      expect(await alive({ orgId, conversationId: conv }, row)).toBe(false);
     }, 60_000);
 
-    it("a parent stop that aborts a child waiting for approval stops the child's task", async () => {
+    it("stopping a child waiting for approval stops the child's task", async () => {
       const conv = await createConv(owner, orgId, agentId);
       used.push(conv);
       await postMessage(owner, orgId, conv, "SCENARIO wait");
@@ -803,9 +810,10 @@ describe("stopping", () => {
       );
       const [task] = await store.listFor([child.id]);
       expect(task?.status).toBe("running");
+      // the parent's run ended after the dispatch; the child is stopped on its own
       const res = await owner({
         method: "POST",
-        url: `/api/v1/orgs/${orgId}/conversations/${conv}/abort`,
+        url: `/api/v1/orgs/${orgId}/conversations/${child.id}/abort`,
       });
       expect(res.statusCode, res.body).toBe(202);
       const row = await waitFor(

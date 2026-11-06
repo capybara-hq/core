@@ -56,10 +56,17 @@ export interface KernelEventMap {
    */
   "run.wait-stopped": { conversationId: string; runId: string };
   /**
-   * `ensureRun` marked an orphaned run failed (after the commit): the waits stop its active
-   * sub-agents at once. A lost event is repaired by the wait sweep (children of finished runs).
+   * `ensureRun` marked an orphaned run failed (after the commit): the waits stop its active fork
+   * sub-agent at once (background sub-agents keep running, agent map spec §5.4). A lost event is
+   * repaired by the wait sweep (fork children of finished runs).
    */
   "run.orphaned": { runId: string };
+  /**
+   * A sub-agent's `subagent_delivery` was appended to its parent conversation (after the commit;
+   * `SubagentDeliveries`). Waking an idle parent follows it; a lost event is re-derived by the
+   * next `ensureRun` (a message, the end of a run, a page opening).
+   */
+  "subagent.delivered": { conversationId: string };
   /**
    * A background task of the conversation finished (after the commit of its
    * `background_task_finished` event). `BackgroundWake` asks the run queue for a wake run; a lost

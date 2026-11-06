@@ -16,6 +16,7 @@ import {
   AGENT_TOOL,
   AgentToolInput,
   agentResultText,
+  agentStartedText,
   agentTool,
   agentToolSpec,
 } from "../../src/tools/builtins/agent.js";
@@ -35,14 +36,17 @@ const GENERAL: RosterEntry = {
 };
 
 const HEAD =
-  "Dispatch a sub-agent: a fresh agent with its own context that works on one task and returns its " +
-  "final reply as this tool's result. The sub-agent sees only your prompt, not this conversation, so " +
-  "include everything it needs and say what its final reply must contain. It shares your sandbox " +
-  "files. You wait until it finishes. To run several at once, call this tool several times in the " +
-  "same response (at most 4 at a time); their commands run in the sandbox at the same time, so give " +
-  "parallel sub-agents separate files or directories. Sub-agents cannot dispatch sub-agents or ask " +
-  "the user questions. To send a finished sub-agent a follow-up while keeping its context, pass the " +
-  "agentId from its result as resume.\n" +
+  "Dispatch a sub-agent: a fresh agent with its own context that works on one task in the " +
+  "background. This tool returns at once with the sub-agent's agentId; keep working or end your " +
+  "turn, and do not wait for it. When the sub-agent hands back a report or finishes, its result " +
+  "arrives in this conversation as a notification. The sub-agent sees only your prompt, not this " +
+  "conversation, so include everything it needs and say what its report must contain. It shares " +
+  "your sandbox files. To run several at once, call this tool several times (at most 4 of your " +
+  "sub-agents run at a time); their commands run in the sandbox at the same time, so give " +
+  "parallel sub-agents separate files or directories. To give a sub-agent more instructions " +
+  "while it works, or a follow-up after it finished, use SendMessage with its agentId. " +
+  "Sub-agents can dispatch sub-agents of their own up to the nesting limit; they cannot ask the " +
+  "user questions.\n" +
   "\n" +
   "Agent types (subagent_type):\n";
 
@@ -82,7 +86,9 @@ describe("agentToolSpec", () => {
   });
 
   it("the limit goes into the text, so it changes the spec hash", () => {
-    expect(agentToolSpec([GENERAL], 7).description).toContain("(at most 7 at a time)");
+    expect(agentToolSpec([GENERAL], 7).description).toContain(
+      "(at most 7 of your sub-agents run at a time)",
+    );
   });
 
   it("descriptions cannot forge the roster structure: tags inert, one line each", () => {
@@ -124,6 +130,32 @@ describe("agentToolSpec", () => {
     expect(spec.description.endsWith(`- scout: ${"y".repeat(1024)}`)).toBe(true);
   });
 
+  it("SPEC equals agentToolSpec([general-purpose], 4): background, notification, SendMessage", () => {
+    const spec = agentToolSpec([GENERAL], 4);
+    expect(agentTool.spec).toEqual(spec);
+    expect(spec.description).toBe(
+      `${HEAD}- general-purpose: a copy of you with your tools and skills, for multi-step work.`,
+    );
+    expect(spec.description).toContain("in the background");
+    expect(spec.description).toContain("as a notification");
+    expect(spec.description).toContain("use SendMessage with its agentId");
+    expect(spec.description).not.toContain("resume");
+    expect(spec.description).not.toContain("cannot dispatch");
+  });
+
+  it("the schema has no resume", () => {
+    const spec = agentToolSpec([GENERAL], 4);
+    expect(Object.keys(spec.inputSchema.properties as object)).toEqual([
+      "description",
+      "prompt",
+      "subagent_type",
+      "model",
+    ]);
+    expect(AgentToolInput.safeParse({ description: "x", prompt: "y", resume: "c1" }).success).toBe(
+      false,
+    );
+  });
+
   it("input schema of §4.2; the static spec equals the default rendering", () => {
     const spec = agentToolSpec([GENERAL], 4);
     expect(spec.inputSchema).toEqual({
@@ -140,7 +172,7 @@ describe("agentToolSpec", () => {
           minLength: 1,
           maxLength: 100000,
           description:
-            "The complete task for the sub-agent. It sees nothing else of this conversation: include every fact, file path and constraint it needs, and say what its final reply must contain.",
+            "The complete task for the sub-agent. It sees nothing else of this conversation: include every fact, file path and constraint it needs, and say what its report must contain.",
         },
         subagent_type: {
           type: "string",
@@ -155,12 +187,6 @@ describe("agentToolSpec", () => {
           description:
             "Model tier for this sub-agent: fast and cheap for mechanical work, standard for integration and judgment, capable for design and final reviews. Defaults to the agent type's own setting, else your model.",
         },
-        resume: {
-          type: "string",
-          maxLength: 64,
-          description:
-            "The agentId from an earlier result of this tool: sends prompt to that sub-agent as a follow-up, with its earlier context intact. Leave subagent_type and model unset.",
-        },
       },
       required: ["description", "prompt"],
       additionalProperties: false,
@@ -174,7 +200,7 @@ describe("agentToolSpec", () => {
 });
 
 describe("AgentToolInput", () => {
-  it("accepts the five fields and rejects extra keys, vendor model names and bounds", () => {
+  it("accepts the four fields and rejects extra keys, vendor model names and bounds", () => {
     expect(
       AgentToolInput.parse({
         description: "Review the diff",
@@ -188,9 +214,6 @@ describe("AgentToolInput", () => {
       subagent_type: "superpowers:code-reviewer",
       model: "capable",
     });
-    expect(AgentToolInput.safeParse({ description: "x", prompt: "y", resume: "c1" }).success).toBe(
-      true,
-    );
     for (const bad of [
       { description: "x", prompt: "y", extra: 1 },
       { description: "x", prompt: "y", model: "opus" },
@@ -201,7 +224,7 @@ describe("AgentToolInput", () => {
       { description: "x", prompt: "y".repeat(100_001) },
       { description: "x", prompt: "y", subagent_type: "" },
       { description: "x", prompt: "y", subagent_type: "t".repeat(131) },
-      { description: "x", prompt: "y", resume: "r".repeat(65) },
+      { description: "x", prompt: "y", resume: "c1" },
       { prompt: "y" },
     ]) {
       expect(AgentToolInput.safeParse(bad).success, JSON.stringify(bad).slice(0, 60)).toBe(false);
@@ -209,10 +232,21 @@ describe("AgentToolInput", () => {
   });
 });
 
-describe("agentResultText (§4.4)", () => {
+describe("agentStartedText (agent map spec §4.1)", () => {
+  it("names the agentId, the notification and SendMessage", () => {
+    expect(agentStartedText("c-1")).toBe(
+      "agentId: c-1 (running in the background)\n" +
+        "The sub-agent is working on the task. Its result arrives in this conversation as a " +
+        "notification when it hands back a report or finishes; keep working or end your turn. To " +
+        "send it more instructions, use SendMessage with this agentId.",
+    );
+  });
+});
+
+describe("agentResultText (§4.4, a fork invocation's report)", () => {
   const base = { agentId: "c-1", toolCalls: 3, durationMs: 65_000, tokens: 12_345 };
   const line = (status: string, calls = "3 tool calls") =>
-    `[agentId: c-1 · ${status} · ${calls} · 1m 05s · 12,345 tokens. Pass the agentId as resume to send this sub-agent a follow-up.]`;
+    `[agentId: c-1 · ${status} · ${calls} · 1m 05s · 12,345 tokens.]`;
 
   it("completed", () => {
     expect(agentResultText({ ...base, reply: "All done.", status: "completed" })).toEqual({
@@ -300,7 +334,7 @@ describe("agentResultText (§4.4)", () => {
         ownModel: true,
       }).content,
     ).toBe(
-      "Ok.\n\n[agentId: c-2 · completed · model: the agent's own · 1 tool call · 4s · 900 tokens. Pass the agentId as resume to send this sub-agent a follow-up.]",
+      "Ok.\n\n[agentId: c-2 · completed · model: the agent's own · 1 tool call · 4s · 900 tokens.]",
     );
     expect(
       agentResultText({ ...base, reply: "", status: "completed", durationMs: 3_725_000 }).content,
@@ -314,22 +348,16 @@ describe("AGENT_REFUSALS (§4.5)", () => {
       'Unknown subagent_type "nope". Available: general-purpose, scout.',
     );
     expect(AGENT_REFUSALS.tooManyConcurrent(4)).toBe(
-      "At most 4 sub-agents can run at once in this run; dispatch the remaining tasks after these finish.",
+      "At most 4 of your sub-agents can run at once in this conversation; dispatch the remaining tasks after one of them finishes.",
     );
     expect(AGENT_REFUSALS.tooManyDispatches(50)).toBe(
-      "This run has dispatched 50 sub-agents, the limit; do the remaining work yourself.",
+      "50 sub-agents have been dispatched since the user's latest message, counted across all levels of sub-agents; that is the limit, so do the remaining work yourself.",
     );
     expect(AGENT_REFUSALS.budget(5_000_000)).toBe(
-      "Sub-agents of this run have used their token budget (5,000,000 tokens); do the remaining work yourself.",
+      "Sub-agents have used their token budget since the user's latest message (5,000,000 tokens, counted across all levels of sub-agents); do the remaining work yourself.",
     );
-    expect(AGENT_REFUSALS.noSuchAgent("c-9")).toBe(
-      'No sub-agent with agentId "c-9" in this conversation.',
-    );
-    expect(AGENT_REFUSALS.stillRunning("c-9")).toBe(
-      'Sub-agent "c-9" is still running; wait for its result before sending a follow-up.',
-    );
-    expect(AGENT_REFUSALS.resumeWithType).toBe(
-      "resume cannot be combined with subagent_type or model.",
+    expect(AGENT_REFUSALS.depthLimit(3)).toBe(
+      "Sub-agents can be nested at most 3 levels deep, and you are at the deepest level; do this task yourself.",
     );
     expect(AGENT_REFUSALS.notAvailableHere).toBe(
       "Sub-agents are not available in this conversation.",
@@ -471,7 +499,8 @@ describe("tool resolution", { timeout: 60_000 }, () => {
     const plain = await k.app.get(ToolRegistry).forAgent(orgId, {
       tools: [{ kind: "builtin", name: "Agent" }],
     });
-    expect(plain.tools.map((x) => x.key)).toEqual(["Agent"]);
+    // an agent that has Agent also gets SendMessage, to reach its sub-agents (agent map §4.2)
+    expect(plain.tools.map((x) => x.key)).toEqual(["Agent", "SendMessage"]);
     expect(plain.tools[0]?.spec).toEqual(agentTool.spec);
   });
 
@@ -487,7 +516,7 @@ describe("tool resolution", { timeout: 60_000 }, () => {
     expect(r.unavailable).toEqual([]);
   });
 
-  it("a child's tool resolution never contains agent", async () => {
+  it("a child at maxDepth resolves no Agent; below it Agent lists the frozen roster", async () => {
     const parent = def({
       tools: [
         { kind: "builtin", name: "ReadToolOutput" },
@@ -497,19 +526,46 @@ describe("tool resolution", { timeout: 60_000 }, () => {
     });
     const parentAgentId = await orgAgent(parent);
     const roster = await resolveRoster(db, orgId, parent);
+    const deps = {
+      db,
+      purposes: k.app.get(ModelPurposesService),
+      registry: k.app.get(ProviderRegistry),
+      config: { get: () => cfg },
+    };
     for (const type of ["general-purpose", "scout"]) {
       const entry = findType(roster, type) as RosterEntry;
-      const child = await effectiveDefinition(
-        {
-          db,
-          purposes: k.app.get(ModelPurposesService),
-          registry: k.app.get(ProviderRegistry),
-          config: { get: () => cfg },
-        },
-        { orgId, parent, parentAgentId, entry },
+      const deep = await effectiveDefinition(deps, {
+        orgId,
+        parent,
+        parentAgentId,
+        entry,
+        childDepth: 3,
+        maxDepth: 3,
+      });
+      const atMax = await k.app.get(ToolRegistry).forAgent(orgId, deep.definition);
+      expect(atMax.tools.map((x) => x.key)).toEqual(["ReadToolOutput"]);
+      // as a child's run: SendMessage to reach its parent and SubagentHandback, without Agent
+      const asChild = await k.app
+        .get(ToolRegistry)
+        .forAgent(orgId, { ...deep.definition, tools: deep.definition.tools ?? [], child: true });
+      expect(asChild.tools.map((x) => x.key)).toEqual([
+        "ReadToolOutput",
+        "SendMessage",
+        "SubagentHandback",
+      ]);
+      const shallow = await effectiveDefinition(deps, {
+        orgId,
+        parent,
+        parentAgentId,
+        entry,
+        childDepth: 1,
+        maxDepth: 3,
+      });
+      const below = await k.app.get(ToolRegistry).forAgent(orgId, shallow.definition);
+      expect(below.tools.map((x) => x.key)).toEqual(["ReadToolOutput", "Agent", "SendMessage"]);
+      expect(below.tools.find((x) => x.key === "Agent")?.spec.description).toContain(
+        "- scout: Find.",
       );
-      const { tools } = await k.app.get(ToolRegistry).forAgent(orgId, child.definition);
-      expect(tools.map((x) => x.key)).toEqual(["ReadToolOutput"]);
     }
   });
 });

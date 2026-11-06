@@ -13,6 +13,7 @@ import {
 } from "../background/wake-rules.js";
 import { EventLog } from "../conversations/event-log.js";
 import { dispatchQueuedIn, pauseQueueWith } from "../conversations/queue.js";
+import { conversationTree } from "../conversations/tree.js";
 import type { ConversationKind, KernelSchemaDb } from "../db/kernel-schema.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
@@ -33,6 +34,8 @@ import {
   runJobId,
   runQueueNameFor,
 } from "./run-jobs.js";
+import { rootConversationOf } from "./subagents/child.js";
+import { budgetWindowOf } from "./subagents/limits.js";
 
 export {
   ACTIVE_RUN_STATUSES,
@@ -61,6 +64,15 @@ interface EnsureState {
   orphanStop: { beforeTerminal: () => Promise<void>; fire: () => void } | undefined;
   /** A finish would wake the conversation once its wake window ends (background Bash §3). */
   wakeLater: { windowEnd: number; delayMs: number } | null;
+  /** A sub-agent's active run to put through the orphan repair after the commit. */
+  repairRunId: string | null;
+}
+
+/** What {@link RunQueue.ensureRun}'s transaction created: the run and its job on its kind's queue. */
+interface CreatedRun {
+  runId: string;
+  jobId: string;
+  kind: ConversationKind;
 }
 
 /**
@@ -134,9 +146,11 @@ export class RunQueue {
    * 且没有 queued / running / waiting 的运行时：插入 `runs`（queued）并投递任务，返回 runId；否则返回 null。
    *
    * The boundary (`trigger_seq`) is that newest message; with none unconsumed, the queue's head
-   * once it is sent; with no head either, a wake-eligible finished background task (background
-   * Bash spec §3, {@link wakeDecisionIn}): the run is then attributed to the task's trigger
-   * account, and a finish inside the wake window schedules the delayed `bg-wake` job instead.
+   * once it is sent; with no head either, a wake-eligible finished background task or sub-agent
+   * delivery (background Bash spec §3, agent map spec §5.3, {@link wakeDecisionIn}): the run is
+   * then attributed to the event's trigger account and joins the tree's budget window, and an
+   * event inside the wake window schedules the delayed `bg-wake` job instead. A sub-agent's
+   * conversation is only woken this way ({@link childWakeIn}).
    *
    * 孤儿清理（R29，按需进行，没有定时器）：已有的 queued / running 运行若 BullMQ 任务已不存在、
    * 会话锁也无人持有（queued 的还要超过宽限期），说明没有任何 worker 会再执行它——写
@@ -161,8 +175,14 @@ export class RunQueue {
       pausedNow: false,
       orphanStop: undefined,
       wakeLater: null,
+      repairRunId: null,
     };
     const created = await this.ensureRunIn(conversationId, st);
+    if (st.repairRunId !== null) {
+      // a sub-agent's run nobody runs any more: requeued when queued, failed when running (its
+      // finish then reaches the parent through the wait sweep's undelivered repair)
+      await this.repairOrphan(conversationId, st.repairRunId);
+    }
     if (st.wakeLater !== null) {
       await this.scheduleWake(conversationId, st.wakeLater, opts.wakeRetry ?? 0);
     }
@@ -188,10 +208,10 @@ export class RunQueue {
       }
     }
     if (!created) return null;
-    const { runId, jobId } = created;
+    const { runId, jobId, kind } = created;
     try {
-      const queue = this.jobs.queue();
-      await this.jobs.add({ runId, conversationId }, jobId);
+      const queue = this.jobs.queue(runQueueNameFor(kind));
+      await this.jobs.enqueue({ runId, conversationId }, jobId, kind);
       // 从 Redis 读回核对：检查与 add 之间出现了同 jobId 的任务时 add 被静默忽略，撤销本次插入，
       // 不留下没有任务的 queued 行。读不到说明任务已被领取并移除（只可能是本次投递的），不撤销。
       const stored = await queue.getJob(jobId);
@@ -214,10 +234,7 @@ export class RunQueue {
 
   /** {@link ensureRun}'s transaction: what it decided goes back through `st`. */
   @Transactional({ propagation: "requires_new" })
-  private async ensureRunIn(
-    conversationId: string,
-    st: EnsureState,
-  ): Promise<{ runId: string; jobId: string } | null> {
+  private async ensureRunIn(conversationId: string, st: EnsureState): Promise<CreatedRun | null> {
     const t = this.db;
     const conv = await t
       .selectFrom("conversations")
@@ -234,9 +251,10 @@ export class RunQueue {
       .forUpdate()
       .executeTakeFirst();
     // 评测回放的隐藏对话：运行由评测 worker 在里面直接驱动（工具只回放记录），绝不为它起真实运行
-    if (conv?.kind !== "chat") return null;
+    if (conv?.kind !== "chat" && conv?.kind !== "subagent") return null;
     // A deleted conversation starts no run, whatever is still unconsumed or queued
     if (conv.deleted_at !== null) return null;
+    if (conv.kind === "subagent") return this.childWakeIn(conversationId, conv, st);
     const newest = await t
       .selectFrom("conversation_events")
       .select(["seq", "payload"])
@@ -245,6 +263,8 @@ export class RunQueue {
       .orderBy("seq", "desc")
       .limit(1)
       .executeTakeFirst();
+    /** The boundary is a wake event: the run joins the tree's budget window (agent map §6). */
+    let isWake = false;
     /** The run's boundary: its `trigger_seq` and the account it runs as. */
     let last: { seq: string; accountId: string } | undefined = newest && {
       seq: newest.seq,
@@ -256,8 +276,8 @@ export class RunQueue {
         : undefined;
     if (idleActive && Number(idleActive.trigger_seq) > Number(conv.consumed_seq)) {
       // No unconsumed message, but a run whose boundary is not consumed yet (a wake run, whose
-      // boundary is a finished background task): it goes through the orphan check below with
-      // that boundary, as a message's run does
+      // boundary is a finished background task or a sub-agent's delivery): it goes through the
+      // orphan check below with that boundary, as a message's run does
       last = { seq: idleActive.trigger_seq, accountId: idleActive.trigger_account_id };
     } else if (!last || Number(last.seq) <= Number(conv.consumed_seq)) {
       // Nothing unconsumed: the queue's head goes out when the conversation is idle (no active
@@ -309,7 +329,7 @@ export class RunQueue {
         // (background Bash spec §3; a person's message or the queue always goes first)
         const wake = await wakeDecisionIn(
           t,
-          { id: conversationId, orgId: conv.org_id },
+          { id: conversationId, orgId: conv.org_id, rootId: conversationId },
           Number(conv.consumed_seq),
           this.config.get().runtime.wakeOnBackgroundTask,
           (accountId) => authorCanSend(t, conversationId, accountId),
@@ -317,6 +337,7 @@ export class RunQueue {
         if (wake?.kind === "later") st.wakeLater = wake;
         if (wake?.kind !== "wake") return null;
         last = { seq: String(wake.seq), accountId: wake.triggerAccountId };
+        isWake = true;
       }
     }
     const active = await this.activeRun(t, conversationId);
@@ -393,9 +414,188 @@ export class RunQueue {
         agent_version: agent.current_version,
         trigger_account_id: trigger.accountId,
         trigger_seq: Number(trigger.seq),
+        // a chat conversation always has its person-triggered run before any wake (a wake event
+        // comes from a run of it or of its tree); null would only make the wake run its own window
+        budget_run_id: isWake ? await budgetWindowOf(t, conversationId) : null,
       })
       .execute();
-    return { runId, jobId };
+    return { runId, jobId, kind: "chat" };
+  }
+
+  /**
+   * {@link ensureRunIn} for a sub-agent's conversation (agent map spec §5.3), under its row lock.
+   * Its runs from a task, or from a message to an idle sub-agent, are started by the dispatch
+   * (`Agent`, `SendMessage`), which also records the dispatch. Here it is started from a parent's
+   * message that reached its run after that run's last model call (agent map spec §10: a message
+   * racing the run's end starts a new run, never lost); and it is woken by its own background
+   * task's finish or a delivery from its own sub-agent, under the same rules as a chat
+   * conversation. Neither happens once its last run was stopped (`aborted`): a stopped sub-agent is
+   * started again only by its parent. Both read the queue and the trigger account's access on the root
+   * of its tree; a message needs no wake setting and has no wake window. The run counts against
+   * the root's budget window and runs on the sub-agent queue under `runJobId(child, boundary
+   * seq)`. An active run is left to the orphan repair after the commit (`repairRunId`), never
+   * started past.
+   */
+  private async childWakeIn(
+    conversationId: string,
+    conv: { consumed_seq: string; org_id: string; agent_id: string },
+    st: EnsureState,
+  ): Promise<CreatedRun | null> {
+    const t = this.db;
+    const active = await this.activeRun(t, conversationId);
+    if (active) {
+      if (active.status !== "waiting") st.repairRunId = active.id;
+      return null;
+    }
+    // a stopped sub-agent (its last run `aborted`: a person's or a tree stop) stays stopped: no
+    // message, task finish or delivery that reached it before or during the stop wakes it (a
+    // descendant's report that landed just before the stop would otherwise restart the stopped
+    // branch); they are parked for its next run, which only its parent starts (`Agent`,
+    // `SendMessage`)
+    const last = await t
+      .selectFrom("runs")
+      .select("status")
+      .where("conversation_id", "=", conversationId)
+      .orderBy("created_at", "desc")
+      .orderBy("id", "desc")
+      .limit(1)
+      .executeTakeFirst();
+    if (last?.status === "aborted") return null;
+    const rootId = await rootConversationOf(t, conversationId);
+    const wake =
+      (await this.pendingMessageIn(conversationId, Number(conv.consumed_seq), rootId)) ??
+      (await wakeDecisionIn(
+        t,
+        { id: conversationId, orgId: conv.org_id, rootId },
+        Number(conv.consumed_seq),
+        this.config.get().runtime.wakeOnBackgroundTask,
+        (accountId) => authorCanSend(t, rootId, accountId),
+      ));
+    if (wake?.kind === "later") st.wakeLater = wake;
+    if (wake?.kind !== "wake") return null;
+    const jobId = runJobId(conversationId, wake.seq);
+    const existing = await this.jobs.getJob(jobId, runQueueNameFor("subagent"));
+    if (existing) {
+      this.log.warn("run job for this trigger already exists; not enqueuing", {
+        conversationId,
+        jobId,
+        existingRunId: existing.data?.runId,
+      });
+      return null;
+    }
+    const agent = await t
+      .selectFrom("agents")
+      .select(["current_version", "deleted_at"])
+      .where("id", "=", conv.agent_id)
+      .executeTakeFirstOrThrow();
+    if (agent.deleted_at !== null) return null;
+    // a sub-agent runs its definition frozen at dispatch: its runs keep the version recorded then
+    const previous = await t
+      .selectFrom("runs")
+      .select("agent_version")
+      .where("conversation_id", "=", conversationId)
+      .orderBy("created_at", "desc")
+      .limit(1)
+      .executeTakeFirst();
+    const runId = randomUUID();
+    await t
+      .insertInto("runs")
+      .values({
+        id: runId,
+        conversation_id: conversationId,
+        status: "queued",
+        agent_version: previous?.agent_version ?? agent.current_version,
+        trigger_account_id: wake.triggerAccountId,
+        trigger_seq: wake.seq,
+        budget_run_id: await budgetWindowOf(t, rootId),
+      })
+      .execute();
+    return { runId, jobId, kind: "subagent" };
+  }
+
+  /**
+   * The newest unconsumed message of an idle sub-agent (a `SendMessage` its last run did not absorb)
+   * as a run boundary, or null: none; the root's queue is paused or the root deleted (the
+   * message waits for the unpause, {@link wakeHeldTree}); or its author can no longer send to the
+   * root (it waits for a later run). The caller already refused a stopped sub-agent (last run
+   * `aborted`): a message that reached it while running and then stopped is parked, and the next
+   * run its parent starts absorbs it. Called under the sub-agent's row lock.
+   */
+  private async pendingMessageIn(
+    conversationId: string,
+    consumed: number,
+    rootId: string,
+  ): Promise<{ kind: "wake"; seq: number; triggerAccountId: string } | null> {
+    const t = this.db;
+    const message = await t
+      .selectFrom("conversation_events")
+      .select(["seq", "payload"])
+      .where("conversation_id", "=", conversationId)
+      .where("type", "=", "user_message")
+      .where("seq", ">", String(consumed))
+      .orderBy("seq", "desc")
+      .limit(1)
+      .executeTakeFirst();
+    if (!message) return null;
+    const root = await t
+      .selectFrom("conversations")
+      .select(["queue_paused", "deleted_at"])
+      .where("id", "=", rootId)
+      .executeTakeFirst();
+    if (!root || root.queue_paused || root.deleted_at !== null) return null;
+    const accountId = (message.payload as { authorAccountId: string }).authorAccountId;
+    if (!(await authorCanSend(t, rootId, accountId))) return null;
+    return { kind: "wake", seq: Number(message.seq), triggerAccountId: accountId };
+  }
+
+  /**
+   * Re-derives the wakes a paused root held for its tree (agent map spec §5.3: a paused root queue
+   * holds the wakes of the whole tree): after the root's queue is unpaused, {@link ensureRun} on
+   * every sub-agent conversation below it that has an unconsumed wake event or message and no
+   * active run (the root itself is the caller's own `ensureRun`). Errors are logged; the next
+   * event, run end or page opening of that conversation re-derives its wake.
+   */
+  async wakeHeldTree(rootId: string): Promise<void> {
+    const ids = (await conversationTree(this.db, rootId))
+      .filter((c) => c.level > 0)
+      .map((c) => c.id);
+    if (ids.length === 0) return;
+    const held = await this.db
+      .selectFrom("conversations as c")
+      .select("c.id")
+      .where("c.id", "in", ids)
+      .where("c.deleted_at", "is", null)
+      .where(({ exists, selectFrom }) =>
+        exists(
+          selectFrom("conversation_events as e")
+            .select(sql`1`.as("one"))
+            .whereRef("e.conversation_id", "=", "c.id")
+            .where("e.type", "in", [
+              "background_task_finished",
+              "subagent_delivery",
+              "user_message",
+            ])
+            .whereRef("e.seq", ">", "c.consumed_seq"),
+        ),
+      )
+      .where(({ not, exists, selectFrom }) =>
+        not(
+          exists(
+            selectFrom("runs as r")
+              .select(sql`1`.as("one"))
+              .whereRef("r.conversation_id", "=", "c.id")
+              .where("r.status", "in", ACTIVE_RUN_STATUSES),
+          ),
+        ),
+      )
+      .execute();
+    for (const c of held) {
+      try {
+        await this.ensureRun(c.id);
+      } catch (err) {
+        this.log.warn("cannot wake a held sub-agent", { conversationId: c.id, err });
+      }
+    }
   }
 
   /**

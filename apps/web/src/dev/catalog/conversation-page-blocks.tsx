@@ -1,7 +1,13 @@
 "use client";
 
 import {
+  AgentDetail,
+  type AgentMapBackground,
+  AgentMapDialog,
+  type AgentMapNode,
+  AgentMapTree,
   AgentRow,
+  type AgentToolCallRow,
   AppShell,
   AttachmentStrip,
   type BackgroundItem,
@@ -42,11 +48,13 @@ import {
   type TitleBarPanel,
   type TitleBarProps,
   ToolGroup,
+  TranscriptFrame,
   UserBubble,
   untitledLabel,
   useDesignLocale,
 } from "@capybara-hq/design";
 import {
+  AGENT_MAP_FIXTURE,
   CONV_COPY,
   CONV_FIXTURE,
   FILE_FIXTURE,
@@ -96,6 +104,8 @@ const running = (f: FixtureSubagent): SubagentRowData => ({
   id: f.id,
   agentType: f.agentType,
   description: f.description,
+  prompt: f.prompt,
+  ...(f.current !== undefined ? { current: f.current } : {}),
   status: "running",
   toolCalls: f.toolCalls,
   startedAt: NOW - ms(f.duration),
@@ -115,11 +125,12 @@ function finished(): SubagentRowData[] {
       id: f.id,
       agentType: f.agentType,
       description: f.description,
+      prompt: f.prompt,
       status: f.status === "failed" ? "failed" : "completed",
       toolCalls: f.toolCalls,
+      tokens: f.tokens,
       startedAt: start,
       finishedAt: start + d,
-      ...(f.steps && f.result ? { summary: { steps: f.steps, result: f.result } } : {}),
     };
   });
 }
@@ -128,20 +139,26 @@ function subagentGroupBlocks(): ReactNode {
   return (
     <>
       <Block id="subagent-group-running">
-        <SubagentGroup rows={S.running.map(running)} onOpen={noop} now={NOW} />
+        <SubagentGroup rows={S.running.map(running)} onOpen={noop} />
       </Block>
       <Block id="subagent-group-waiting">
         <SubagentGroup
           rows={S.running.map((f) => ({ ...running(f), status: "waiting", waiting: "approval" }))}
           onOpen={noop}
-          now={NOW}
         />
       </Block>
       <Block id="subagent-group-done">
-        <SubagentGroup rows={finished()} onOpen={noop} now={NOW} />
+        <SubagentGroup rows={finished()} onOpen={noop} />
       </Block>
       <Block id="subagent-group-failed">
-        <SubagentGroup rows={finished()} onOpen={noop} defaultOpen now={NOW} />
+        <SubagentGroup rows={finished()} onOpen={noop} defaultOpen />
+      </Block>
+      <Block id="subagent-group-stopped">
+        <SubagentGroup
+          rows={finished().map((r, i) => (i === 1 ? { ...r, status: "aborted" } : r))}
+          onOpen={noop}
+          defaultOpen
+        />
       </Block>
       <Block id="subagent-group-expanded">
         <SubagentGroup
@@ -149,12 +166,150 @@ function subagentGroupBlocks(): ReactNode {
           onOpen={noop}
           defaultOpen
           defaultExpanded={[S.done[0]?.id ?? ""]}
-          now={NOW}
         />
       </Block>
-      <Block id="subagent-group-row-open">
-        <SubagentGroup rows={S.running.map(running)} openId={S.open} onOpen={noop} now={NOW} />
+      <Block id="subagent-group-map-link">
+        <SubagentGroup rows={S.running.map(running)} onOpen={noop} onOpenMap={noop} />
       </Block>
+    </>
+  );
+}
+
+// ── Agent map ───────────────────────────────────────────────────────────────
+
+const AM = AGENT_MAP_FIXTURE;
+
+const agentMapBackground: AgentMapBackground[] = AM.background.map((b) => ({
+  kind: "task",
+  id: b.id,
+  description: b.description,
+  status: b.status,
+  startedAt: NOW - b.durationMs,
+  ...(b.status === "running" ? {} : { finishedAt: NOW }),
+}));
+
+const AD = AM.detail;
+const agentMapSelected = AM.root.children.find((c) => c.id === AM.selected) as AgentMapNode;
+const agentMapCalls: AgentToolCallRow[] = AD.toolCalls.map((c) => ({
+  id: c.id,
+  tool: c.tool,
+  summary: c.summary,
+  running: c.running,
+  ...(c.durationMs !== undefined ? { startedAt: NOW - c.durationMs } : {}),
+  ...(c.range !== undefined ? { range: c.range } : {}),
+}));
+const agentMapDetailBackground: AgentMapBackground[] = AD.background.map((b) => ({
+  kind: "task",
+  id: b.id,
+  description: b.description,
+  status: b.status,
+  startedAt: NOW - b.durationMs,
+}));
+
+function AgentMapDetailBlock({ finished }: { finished?: boolean }) {
+  const node: AgentMapNode = finished
+    ? { ...agentMapSelected, status: "completed" }
+    : agentMapSelected;
+  const calls = finished ? agentMapCalls.map((c) => ({ ...c, running: false })) : agentMapCalls;
+  return (
+    <AgentMapDialog open inline onOpenChange={noop} level="detail">
+      <AgentDetail
+        node={node}
+        agentType={AD.agentType}
+        spawnedBy={AD.spawnedBy}
+        latestText={AD.latestText}
+        task={AD.task}
+        background={agentMapDetailBackground}
+        toolCalls={calls}
+        onBack={noop}
+        onClose={noop}
+        onOpenParent={noop}
+        onOpenTranscript={noop}
+        {...(finished ? {} : { onStop: noop })}
+        now={NOW}
+      />
+    </AgentMapDialog>
+  );
+}
+
+/** Level 3's thread: the conversation's own components, as the transcript builds them. */
+function agentMapThread(): ReactNode {
+  return (
+    <>
+      <UserBubble text={AD.task} />
+      <Prose markdown="先读一季度的说明文件和发票目录。" />
+      <ToolGroup
+        rows={[
+          { id: "tx1", kind: "read", name: "Read", keyArg: "finance/q1/README.md", status: "done" },
+          {
+            id: "tx2",
+            kind: "command",
+            name: "Bash",
+            description: "列出一季度发票文件",
+            status: "done",
+          },
+        ]}
+      />
+      <UserBubble text={AD.message} sender={AD.spawnedBy.label} />
+      <Prose markdown="收到，只核对三月份的付款流水。" />
+      <ToolGroup
+        rows={[
+          {
+            id: "tx3",
+            kind: "command",
+            name: "Bash",
+            description: "运行核对脚本",
+            status: "running",
+            startedAt: NOW - 12_000,
+          },
+        ]}
+        now={NOW}
+      />
+    </>
+  );
+}
+
+function agentMapBlocks(): ReactNode {
+  return (
+    <>
+      <RefBlock id="agent-map-tree" width={1132} height={580} pad>
+        <AgentMapDialog open inline onOpenChange={noop} level="tree">
+          <AgentMapTree
+            root={AM.root}
+            background={agentMapBackground}
+            selectedId={AM.selected}
+            onOpen={noop}
+            now={NOW}
+          />
+        </AgentMapDialog>
+      </RefBlock>
+      <RefBlock id="agent-map-deep" width={1132} height={320} pad>
+        <AgentMapDialog open inline onOpenChange={noop} level="tree">
+          <AgentMapTree root={AM.deep} background={[]} onOpen={noop} now={NOW} />
+        </AgentMapDialog>
+      </RefBlock>
+      <RefBlock id="agent-map-detail" width={792} height={632} pad>
+        <AgentMapDetailBlock />
+      </RefBlock>
+      <RefBlock id="agent-map-finished" width={792} height={632} pad>
+        <AgentMapDetailBlock finished />
+      </RefBlock>
+      <RefBlock id="agent-map-transcript" width={1092} height={672} pad>
+        <AgentMapDialog open inline onOpenChange={noop} level="transcript">
+          <TranscriptFrame
+            node={agentMapSelected}
+            agentType={AD.agentType}
+            spawnedBy={AD.spawnedBy}
+            onOpenParent={noop}
+            contextPercent={AD.contextPercent}
+            onBack={noop}
+            onClose={noop}
+            onStop={noop}
+          >
+            {agentMapThread()}
+          </TranscriptFrame>
+        </AgentMapDialog>
+      </RefBlock>
     </>
   );
 }
@@ -795,8 +950,8 @@ function thread(kind: "main" | "file" | "subagent"): ReactNode {
     return (
       <>
         <UserBubble text="有需要规整的吗？" />
-        <Prose markdown="文件较多，我先让子 agent 列出完整目录树，同时对照流程实际读写的文件。" />
-        <SubagentGroup rows={S.running.map(running)} openId={S.open} onOpen={noop} now={NOW} />
+        <Prose markdown="文件较多，我先让子智能体列出完整目录树，同时对照流程实际读写的文件。" />
+        <SubagentGroup rows={S.running.map(running)} onOpen={noop} />
         <Prose markdown="目录树还在生成，我先整理当前版本流程引用的文件和文件夹 ID……" />
       </>
     );
@@ -999,6 +1154,7 @@ export function ConversationTemplateDemo() {
 
 export const CONVERSATION_PAGE_BLOCKS = {
   "subagent-group": subagentGroupBlocks,
+  "agent-map": agentMapBlocks,
   "title-bar": titleBarBlocks,
   composer: composerBlocks,
   "command-palette": commandPaletteBlocks,

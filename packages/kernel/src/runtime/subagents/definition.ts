@@ -16,7 +16,7 @@ import { ApiError } from "../../errors.js";
 import type { KernelConfigService } from "../../infra/config/kernel-config.service.js";
 import type { ModelPurposesService } from "../../models/purposes.js";
 import { PINNED_SKILLS_LIMITS } from "../../skills/catalog.js";
-import { CHILD_REMOVED_TOOLS } from "../../tools/builtin-names.js";
+import { AGENT_TOOL, CHILD_REMOVED_TOOLS } from "../../tools/builtin-names.js";
 import type { ProviderRegistry } from "../providers.js";
 import type { RosterEntry } from "./roster.js";
 
@@ -119,7 +119,7 @@ async function loadConnectors(
 
 /**
  * Narrows tool refs by resolved key (spec §5.3): keeps a key when `allow` (if given) lists it and
- * neither `deny` nor {@link CHILD_REMOVED_TOOLS} does. A connector ref with `tools: "all"` stays
+ * neither `deny` nor {@link CHILD_REMOVED_TOOLS} does (nor, with `removeAgent`, it is `Agent`). A connector ref with `tools: "all"` stays
  * live only when nothing can narrow it (no allowlist and no deny key under `mcp__<slug>__`), so a tool
  * the connector gains later never slips past the template; otherwise it becomes the kept names, or
  * is dropped. A connector that no longer exists keeps its ref only without an allowlist.
@@ -129,8 +129,10 @@ function narrowTools(
   connectors: Map<string, ConnectorInfo>,
   allow: ReadonlySet<string> | null,
   deny: ReadonlySet<string>,
+  removeAgent: boolean,
 ): AgentToolRef[] {
   const removed = new Set<string>(CHILD_REMOVED_TOOLS);
+  if (removeAgent) removed.add(AGENT_TOOL);
   const keep = (key: string) =>
     !removed.has(key) && !deny.has(key) && (allow === null || allow.has(key));
   const out: AgentToolRef[] = [];
@@ -329,9 +331,19 @@ export interface CheckedOrgAgent {
 /** `"{parent name} › {agent type}"`, within the 80-character name limit. */
 const childName = (parent: string, type: string) => `${parent} › ${type}`.slice(0, 80);
 
+/** Where a new child sits (agent map spec §6): its depth below the root and the tree's limit. */
+export interface ChildDepth {
+  /** The child's depth: 1 for a child of a root conversation. */
+  childDepth: number;
+  /** `subagents.maxDepth` for the organization; a child at it never gets `Agent`. */
+  maxDepth: number;
+}
+
+const atMaxDepth = (a: ChildDepth) => a.childDepth >= a.maxDepth;
+
 function orgAgentDefinition(
   d: EffectiveDefinitionDeps,
-  a: { parent: AgentDefinition; entry: RosterEntry; orgAgent?: CheckedOrgAgent },
+  a: ChildDepth & { parent: AgentDefinition; entry: RosterEntry; orgAgent?: CheckedOrgAgent },
 ): EffectiveDefinition & { model: ModelRef; tierFallback: boolean } {
   // the version the gates checked (checkOrgAgent), never read again here: a version saved in
   // between could be one the gates never saw (batch 3 review M1)
@@ -341,12 +353,13 @@ function orgAgentDefinition(
   const agentId = a.entry.agentId ?? "";
   const own = a.orgAgent.definition;
   // prompt files are authoring data: the child's model sees only `instructions` (their join), and
-  // `subagent_started.definition` keeps its shape (spec 2026-11-04 §3.3)
-  const { subagents: _subagents, skills, instructionFiles: _files, ...rest } = own;
+  // `subagent_started.definition` keeps its shape (spec 2026-11-04 §3.3); its own `subagents`
+  // block stays: it is the roster the child dispatches from (agent map spec §4.1)
+  const { skills, instructionFiles: _files, ...rest } = own;
   const definition: AgentDefinition = {
     ...rest,
     // its own tools, not intersected with the parent's; only the child-removed ones go
-    tools: narrowTools(own.tools, new Map(), null, new Set()),
+    tools: narrowTools(own.tools, new Map(), null, new Set(), atMaxDepth(a)),
     // its policies, then the parent's on top, stricter wins (keys outside its tools are inert)
     toolPolicies: stricterPolicies(own.toolPolicies ?? {}, a.parent.toolPolicies ?? {}),
     ...(skills !== undefined && {
@@ -376,12 +389,14 @@ function orgAgentDefinition(
  *   (`tierFallback`); a template `effort` is set when the resolved model declares it;
  * - `agent`: the org agent's version that passed the gates (`orgAgent`, from {@link checkOrgAgent}),
  *   its own tools minus the child-removed ones, its policies with the parent's on top (stricter
- *   wins), its skills and model; `tier` ignored.
- * The `subagents` block is never part of a child's definition (depth 1).
+ *   wins), its skills, model and `subagents` block; `tier` ignored.
+ * Nesting (agent map spec §4.1): `Agent` stays unless the child is at `maxDepth`; the frozen
+ * definition keeps a `subagents` block, the roster the child dispatches from: an org agent's own,
+ * otherwise the parent definition's (a general-purpose, inline or plugin child inherits it).
  */
 export async function effectiveDefinition(
   d: EffectiveDefinitionDeps,
-  a: {
+  a: ChildDepth & {
     orgId: string;
     parent: AgentDefinition;
     parentAgentId: string;
@@ -415,6 +430,7 @@ export async function effectiveDefinition(
     connectors,
     template?.tools !== undefined ? new Set(template.tools) : null,
     new Set(template?.disallowedTools ?? []),
+    atMaxDepth(a),
   );
   const toolPolicies = stricterPolicies(parent.toolPolicies ?? {}, template?.toolPolicies ?? {});
   const { pinned, warnings } = await pinnedFor(
@@ -450,6 +466,7 @@ export async function effectiveDefinition(
         ...(pinned.length > 0 && { pinned }),
       },
     }),
+    ...(parent.subagents !== undefined && { subagents: parent.subagents }),
   };
   return {
     definition,

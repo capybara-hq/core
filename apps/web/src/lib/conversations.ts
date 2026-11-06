@@ -88,8 +88,16 @@ type EventBody =
         clientMessageId?: string;
         /** A retry after a failed run: the seq of the message it repeats (display only). */
         retryOf?: number;
-        /** A sub-agent's task message (phase C): the parent call that dispatched it. */
-        dispatch?: { parentConversationId: string; parentRunId: string; callId: string };
+        /**
+         * A message to a sub-agent from its parent agent (phase C, agent map spec §5.1): the
+         * dispatch's task (`kind` absent or `task`), or a `SendMessage` (`message`).
+         */
+        dispatch?: {
+          parentConversationId: string;
+          parentRunId: string;
+          callId: string;
+          kind?: "task" | "message";
+        };
         /**
          * A person's skill invocation (phase D): `content[0]` is the rendered skill, this is what
          * they typed (the chip and the arguments).
@@ -255,7 +263,7 @@ type EventBody =
         outputPath: string;
         reported: boolean;
         lostReason?: string;
-        stoppedBy?: "person" | "deletion";
+        stoppedBy?: "person" | "deletion" | "subagent_end";
       };
     }
   | { type: "compaction_summary"; payload: { coversUpToSeq: number; text: string } }
@@ -318,18 +326,44 @@ type EventBody =
         invokedSeq?: number;
       };
     }
-  /** Parent log: a sub-agent waits for a person (its approval, question or connection). */
+  /**
+   * Root log: a sub-agent of the tree, at any depth, waits for a person (its approval, question or
+   * connection). `path`: the child conversation ids from the root's child down to `subagentId`
+   * (absent in logs written before nesting, where it was the parent's own child).
+   */
   | {
       type: "subagent_waiting";
       payload: {
         subagentId: string;
         childRunId: string;
+        path?: string[];
         kind: "approval" | "input" | "connect";
         approvalId?: string;
         questionId?: string;
         toolKey: string;
         expiresAt?: string;
       } & Approver;
+    }
+  /**
+   * Parent log (agent map spec §4.5): a sub-agent's report (`SubagentHandback`), its note
+   * (`SendMessage` to the parent) or its run's end; model-visible.
+   */
+  | {
+      type: "subagent_delivery";
+      payload: {
+        subagentId: string;
+        childRunId: string;
+        description: string;
+        kind: "report" | "note" | "finished";
+        text: string;
+        /** `finished` only. */
+        status?: SubagentEndStatus;
+        /** `finished` only: a report was handed back before (no text then). */
+        handedBack?: boolean;
+        errorCode?: string;
+        abortedBy?: "user" | "parent";
+        triggerAccountId: string;
+      };
     }
   /** Parent log: a sub-agent's run ended. */
   | {
@@ -771,6 +805,33 @@ export const listSubagents = (orgId: string, id: string, limit = 100) =>
 /** The conversation's token usage, its sub-agents' included. */
 export const getConversationUsage = (orgId: string, id: string) =>
   apiFetch<{ usage: ConversationUsage }>(`${one(orgId, id)}/usage`);
+
+/**
+ * One agent of a conversation tree (`GET …/agent-tree`, agent map spec §8): the root conversation
+ * or a sub-agent at any depth. `idle`: no run is active and the latest one completed (or none ran).
+ */
+export interface AgentTreeNode {
+  id: string;
+  /** A sub-agent's dispatched description; the root's title ("" before it has one). */
+  description: string;
+  /** The sub-agent type; null for the root (and a sub-agent without one). */
+  agentType: string | null;
+  status: "queued" | "running" | "waiting" | "completed" | "failed" | "aborted" | "idle";
+  model: ModelRef | null;
+  startedAt: string | null;
+  finishedAt: string | null;
+  /** The wall time of its own runs (a running run up to now). */
+  durationMs: number;
+  /** The tokens of its own runs (never its descendants'). */
+  tokens: number;
+  toolCalls: number;
+  /** The sub-agents it dispatched, oldest first. */
+  children: AgentTreeNode[];
+}
+
+/** The agent tree of a root conversation (its owner only; 404 for a sub-agent conversation). */
+export const getAgentTree = (orgId: string, id: string) =>
+  apiFetch<{ root: AgentTreeNode }>(`${one(orgId, id)}/agent-tree`);
 
 /** The conversation's background tasks and its sub-agents', newest first. */
 export const listBackgroundTasks = (orgId: string, id: string) =>

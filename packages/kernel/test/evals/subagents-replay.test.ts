@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import type { ModelInfo, ModelRequest } from "@capybara-hq/plugin-sdk";
 import {
@@ -26,6 +27,7 @@ import {
 import type { TrajectoryDetail } from "../../src/evals/trajectory.service.js";
 import { BEHAVIOR_RULES } from "../../src/runtime/context/build.js";
 import { ProviderRegistry } from "../../src/runtime/providers.js";
+import { SubagentMessages } from "../../src/runtime/subagents/messages.js";
 import { SUBAGENT_PREAMBLE } from "../../src/runtime/subagents/preamble.js";
 import { StorageService } from "../../src/storage/storage.service.js";
 import { type ScriptRule, scriptRules } from "../fixtures/plugins/model-script/index.js";
@@ -49,6 +51,7 @@ import {
   waitFor,
   waitForTerminal,
 } from "../helpers/runs.js";
+import { finishedDeliveries } from "../helpers/subagents.js";
 
 /**
  * Phase C Task 17 (spec §15): replay and evals with sub-agents. A parent's full-run replay uses the
@@ -88,7 +91,8 @@ const RULES: ScriptRule[] = [
     when: { systemIncludes: CHILD, lastUserIncludes: "par-" },
     reply: { text: "parallel ok", barrier: { name: "three", count: 3, timeoutMs: 8000 } },
   },
-  // the parent: three parallel agent calls, then a follow-up of the last one, then a reply
+  // the parent: three parallel agent calls, then a fourth, then a reply (each `Agent` result is
+  // immediate: the sub-agents run in the background, agent map spec §4.1)
   {
     when: { lastUserIncludes: "SCENARIO combo", assistantTurns: 0 },
     reply: {
@@ -98,19 +102,13 @@ const RULES: ScriptRule[] = [
     },
   },
   {
-    when: { lastUserIncludes: "SCENARIO combo", lastToolResultIncludes: "parallel ok" },
+    when: { lastUserIncludes: "SCENARIO combo", assistantTurns: 1 },
     reply: {
-      toolCalls: [
-        agentCall({
-          description: "Follow up",
-          prompt: "what word did I give you?",
-          resume: "{{lastAgentId}}",
-        }),
-      ],
+      toolCalls: [agentCall({ description: "Follow up", prompt: "what word did I give you?" })],
     },
   },
   {
-    when: { lastUserIncludes: "SCENARIO combo", lastToolResultIncludes: "recalled kiwi" },
+    when: { lastUserIncludes: "SCENARIO combo", assistantTurns: 2 },
     reply: { text: "combo done" },
   },
   // an inline template on the fast tier (mapped to model-fake, which echoes the child's prompt)
@@ -123,7 +121,7 @@ const RULES: ScriptRule[] = [
     },
   },
   {
-    when: { lastUserIncludes: "SCENARIO inline", lastToolResultIncludes: "inline ok" },
+    when: { lastUserIncludes: "SCENARIO inline", lastToolResultIncludes: "in the background" },
     reply: { text: "inline done" },
   },
 ];
@@ -173,6 +171,9 @@ beforeAll(async () => {
             forcePathStyle: true,
           },
         },
+        // the recorded scenario is one parent run: a wake from its children's deliveries would add
+        // runs and requests (waking: runtime/subagents/wake.test.ts)
+        runtime: { wakeOnBackgroundTask: false },
       },
     ),
   );
@@ -201,10 +202,11 @@ beforeAll(async () => {
   expect(res.statusCode, res.body).toBe(201);
   leadId = (res.json() as { agent: { id: string } }).agent.id;
 
-  // the scenario, once: three parallel sub-agents, then a follow-up of the third
+  // the scenario, once: three parallel sub-agents, then a fourth; every child has finished
   const conv = await createConv(owner, orgId, leadId);
   await postMessage(owner, orgId, conv, "SCENARIO combo");
   await waitForTerminal(db, conv, 1, 60_000);
+  await finishedDeliveries(db, conv, 4, 60_000);
   const events = await eventsOf(db, conv);
   const final = events
     .filter((e) => e.type === "assistant_message")
@@ -221,7 +223,7 @@ beforeAll(async () => {
   for (const kid of kids) {
     children.push({ id: kid.id, runs: (await runsOf(db, kid.id)).map((r) => r.id) });
   }
-  expect(children.map((c) => c.runs.length).sort()).toEqual([1, 1, 2]);
+  expect(children.map((c) => c.runs.length)).toEqual([1, 1, 1, 1]);
   Object.assign(state, {
     conv,
     runId: (run as { id: string }).id,
@@ -333,14 +335,14 @@ async function modelInfo(): Promise<ModelInfo> {
 const snapshotOf = (conv: string, runId: string): Promise<CaseSnapshot> =>
   takeSnapshot(db, orgId, conv, runId, 4_194_304);
 
-/** The child that was resumed (two runs) and its snapshot at its second run. */
-async function resumedChild(): Promise<{ id: string; runs: string[]; snap: CaseSnapshot }> {
-  const child = state.children?.find((c) => c.runs.length === 2) as { id: string; runs: string[] };
-  return { ...child, snap: await snapshotOf(child.id, child.runs[1] as string) };
+/** The fourth child (dispatched at step 2) and its snapshot at its run. */
+async function fourthChild(): Promise<{ id: string; runs: string[]; snap: CaseSnapshot }> {
+  const child = state.children?.[3] as { id: string; runs: string[] };
+  return { ...child, snap: await snapshotOf(child.id, child.runs[0] as string) };
 }
 
 describe("full-run replay of a parent with sub-agent calls", { timeout: 120_000 }, () => {
-  it("parent full-run replay with three parallel agent calls and a resume: same requests, zero tool_unmatched, no child conversation created, no subagent_* events", async () => {
+  it("parent full-run replay with three parallel agent calls and a fourth: same requests, zero tool_unmatched, no child conversation created, no subagent_* events", async () => {
     const original = normalizeIds((state.sent ?? []).filter((r) => !isChild(r)));
     expect(original).toHaveLength(3);
     const setId = await createSet("Parent");
@@ -362,13 +364,13 @@ describe("full-run replay of a parent with sub-agent calls", { timeout: 120_000 
     expect(await counts()).toEqual(before);
     const evalEvents = await eventsOf(db, r?.evalConversationId as string);
     expect(evalEvents.filter((e) => e.type.startsWith("subagent_"))).toEqual([]);
-    // the recorded results (with their status lines) came back, in the same step for the three
+    // the recorded immediate results came back, in the same step for the three
     const agentResults = ofType(evalEvents, "tool_result").filter(
       (e) => e.payload.toolKey === "Agent",
     );
     expect(agentResults.map((e) => e.payload.step)).toEqual([1, 1, 1, 2]);
     for (const res of agentResults.slice(0, 3)) {
-      expect(res.payload.content).toMatch(/^parallel ok\n\n\[agentId: /);
+      expect(res.payload.content).toContain("(running in the background)");
     }
   });
 });
@@ -402,7 +404,7 @@ describe("child cases", { timeout: 120_000 }, () => {
   });
 
   it("a definitions-less child snapshot still reconstructs from subagent_started (definitions not consulted)", async () => {
-    const { snap } = await resumedChild();
+    const { snap } = await fourthChild();
     const s = structuredClone(snap);
     s.definitions = {};
     const call = ofType(toEvents(s), "model_call").at(-1) as Ev<"model_call">;
@@ -411,7 +413,7 @@ describe("child cases", { timeout: 120_000 }, () => {
   });
 
   it("a candidate instruction override, a candidate parent version and a candidate template version -> subagent_changed, request still from the log", async () => {
-    const { snap } = await resumedChild();
+    const { snap } = await fourthChild();
     const info = await modelInfo();
     const call = ofType(toEvents(snap), "model_call").at(-1) as Ev<"model_call">;
     const baseline = reconstructRequest(snap, call.seq, { model: info });
@@ -473,9 +475,9 @@ describe("child cases", { timeout: 120_000 }, () => {
   });
 
   it("a child case is added under the parent's agent; a step replay with an instruction candidate reports subagent_changed", async () => {
-    const child = await resumedChild();
+    const child = await fourthChild();
     const setId = await createSet("Child steps");
-    await addCase(setId, child.id, child.runs[1] as string);
+    await addCase(setId, child.id, child.runs[0] as string);
     const row = await db
       .selectFrom("eval_cases")
       .select(["snapshot", "base_model"])
@@ -495,16 +497,8 @@ describe("child cases", { timeout: 120_000 }, () => {
     expect(cand.results.map((r) => [r.status, r.drift])).toEqual([["done", ["subagent_changed"]]]);
   });
 
-  it("a follow-up's snapshot carries the narrowed tools of its task message (final review I1)", async () => {
-    const child = await resumedChild();
-    const tasks = ofType(await eventsOf(db, child.id), "user_message");
-    const narrowed = tasks.at(-1)?.payload.dispatch?.narrowed;
-    expect(narrowed).toBeDefined();
-    expect(child.snap.subagent?.definition.tools).toEqual(narrowed?.tools);
-  });
-
   it("a child case's full-run replay uses the logged definition", async () => {
-    const child = await resumedChild();
+    const child = await fourthChild();
     const childSent = (state.sent ?? []).filter(isChild);
     const original = childSent.filter((r) =>
       r.messages.some(
@@ -515,7 +509,7 @@ describe("child cases", { timeout: 120_000 }, () => {
     );
     expect(original).toHaveLength(1);
     const setId = await createSet("Child run");
-    await addCase(setId, child.id, child.runs[1] as string);
+    await addCase(setId, child.id, child.runs[0] as string);
     capture.reset();
     const before = await counts();
 
@@ -538,9 +532,9 @@ describe("child cases", { timeout: 120_000 }, () => {
 
 describe("candidates on child cases (batch 13 review I1, m1)", { timeout: 120_000 }, () => {
   it("the case's own version with another model is not a sub-agent change", async () => {
-    const child = await resumedChild();
+    const child = await fourthChild();
     const setId = await createSet("Own version");
-    await addCase(setId, child.id, child.runs[1] as string);
+    await addCase(setId, child.id, child.runs[0] as string);
     const { results } = await runEval(setId, {
       mode: "step",
       candidate: { agentVersion: child.snap.agentVersion, model: FAKE },
@@ -584,6 +578,7 @@ describe("candidates on child cases (batch 13 review I1, m1)", { timeout: 120_00
     const conv = await createConv(owner, orgId, agent.id);
     await postMessage(owner, orgId, conv, "SCENARIO inline");
     await waitForTerminal(db, conv, 1, 60_000);
+    await finishedDeliveries(db, conv, 1, 60_000);
     const kid = await db
       .selectFrom("conversations")
       .select("id")
@@ -609,7 +604,7 @@ describe("candidates on child cases (batch 13 review I1, m1)", { timeout: 120_00
   });
 
   it("an inline template changed in another parent version (tools only) is a sub-agent change", async () => {
-    const child = await resumedChild();
+    const child = await fourthChild();
     const info = await modelInfo();
     const call = ofType(toEvents(child.snap), "model_call").at(-1) as Ev<"model_call">;
     const s = structuredClone(child.snap);
@@ -662,7 +657,7 @@ describe("candidates on child cases (batch 13 review I1, m1)", { timeout: 120_00
   });
 
   it("a general child: another parent version that drops general or changes orgSkills is a change", async () => {
-    const child = await resumedChild();
+    const child = await fourthChild();
     const info = await modelInfo();
     const call = ofType(toEvents(child.snap), "model_call").at(-1) as Ev<"model_call">;
     const v1 = child.snap.definitions[String(child.snap.agentVersion)] as NonNullable<
@@ -693,19 +688,15 @@ describe("trajectory links", { timeout: 60_000 }, () => {
     const calls = t.runs.flatMap((r) => r.steps.flatMap((s) => s.toolCalls));
     expect(calls.map((c) => c.toolKey)).toEqual(["Agent", "Agent", "Agent", "Agent"]);
     const children = state.children ?? [];
-    const resumed = children.find((c) => c.runs.length === 2) as { id: string; runs: string[] };
-    expect(calls.map((c) => c.subagent?.subagentId)).toEqual([
-      ...children.map((c) => c.id),
-      resumed.id,
-    ]);
-    expect(calls.map((c) => c.subagent?.resumed)).toEqual([false, false, false, true]);
+    expect(calls.map((c) => c.subagent?.subagentId)).toEqual(children.map((c) => c.id));
+    expect(calls.map((c) => c.subagent?.resumed)).toEqual([false, false, false, false]);
     expect(calls.map((c) => c.subagent?.status)).toEqual([
       "completed",
       "completed",
       "completed",
       "completed",
     ]);
-    expect(calls[3]?.subagent?.childRunId).toBe(resumed.runs[1]);
+    expect(calls[3]?.subagent?.childRunId).toBe(children[3]?.runs[0]);
 
     const auditCount = async (target: string) =>
       Number(
@@ -903,5 +894,64 @@ describe("forked skills (phase D)", { timeout: 120_000 }, () => {
       runId: fork.runId,
       callId: `skill-${fork.seq}`,
     });
+  });
+});
+
+// Last in the file: it adds a hand-made run to the scenario's parent conversation.
+describe("follow-ups by SendMessage", { timeout: 60_000 }, () => {
+  it("a follow-up's snapshot carries the narrowed tools of its message (final review I1)", async () => {
+    const child = await fourthChild();
+    // a running run of the parent conversation (no worker holds it) sends the idle child a message
+    const runId = randomUUID();
+    await db
+      .insertInto("runs")
+      .values({
+        id: runId,
+        conversation_id: state.conv as string,
+        status: "running",
+        agent_version: 1,
+        trigger_account_id: ownerId,
+        trigger_seq: 0,
+      })
+      .execute();
+    const v = await db
+      .selectFrom("agent_versions")
+      .select("definition")
+      .where("agent_id", "=", leadId)
+      .where("version", "=", 1)
+      .executeTakeFirstOrThrow();
+    const agent = normalizeStoredDefinition(v.definition);
+    const out = await k.app.get(SubagentMessages).toChild(
+      {
+        orgId,
+        conversationId: state.conv as string,
+        runId,
+        step: 1,
+        agentId: leadId,
+        agentVersion: 1,
+        agent,
+        accountId: ownerId,
+        signal: new AbortController().signal,
+      },
+      "s1",
+      child.id,
+      "what word did I give you?",
+    );
+    expect(out.isError).toBe(false);
+    const second = await waitFor(
+      async () => {
+        const runs = await runsOf(db, child.id);
+        const r = runs[1];
+        return r && !["queued", "running", "waiting"].includes(r.status) ? r : null;
+      },
+      30_000,
+      "the follow-up's child run",
+    );
+    const tasks = ofType(await eventsOf(db, child.id), "user_message");
+    const narrowed = tasks.at(-1)?.payload.dispatch?.narrowed;
+    expect(tasks.at(-1)?.payload.dispatch?.kind).toBe("message");
+    expect(narrowed).toBeDefined();
+    const snap = await snapshotOf(child.id, second.id);
+    expect(snap.subagent?.definition.tools).toEqual(narrowed?.tools);
   });
 });

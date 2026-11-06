@@ -1,11 +1,12 @@
 import type { Logger } from "@capybara-hq/plugin-sdk";
 import { sql } from "kysely";
 import { type ConversationBusMessage, conversationTopic } from "../../conversations/event-log.js";
+import { conversationAncestors } from "../../conversations/tree.js";
 import type { KernelSchemaDb } from "../../db/kernel-schema.js";
 
 /** A finished step of a sub-agent run, as the loop reports it. */
 export interface SubagentStep {
-  /** The parent conversation, whose topic gets the message. */
+  /** The parent conversation: its topic and those of every conversation above it get the message. */
   parentConversationId: string;
   /** The child conversation (the sub-agent's id). */
   conversationId: string;
@@ -20,11 +21,13 @@ export interface SubagentProgressDeps {
 }
 
 /**
- * Publishes `{ kind: "subagent_progress", subagentId, step, toolCalls, lastToolKey? }` on the
- * parent conversation's topic after a child step (sub-agents spec §14.2). Ephemeral: not in any
- * log, lost on reconnect (the summary API has the current numbers). The counts come from the
- * child run's log (its `tool_result` events), never from process memory, so any replica running
- * the step reports the same. Never throws: a lost progress message costs nothing.
+ * Publishes `{ kind: "subagent_progress", subagentId, step, toolCalls, lastToolKey? }` after a
+ * child step on the topic of every ancestor (sub-agents spec §14.2; agent map spec §8: the root's
+ * agent map follows a sub-agent at any depth), `subagentId` naming the progressing agent.
+ * Ephemeral: not in any log, lost on reconnect (the tree and summary APIs have the current
+ * numbers). The counts come from the child run's log (its `tool_result` events), never from
+ * process memory, so any replica running the step reports the same. Never throws: a lost progress
+ * message costs nothing.
  */
 export async function publishSubagentProgress(
   d: SubagentProgressDeps,
@@ -46,7 +49,9 @@ export async function publishSubagentProgress(
       toolCalls: Number(row?.n ?? 0),
       ...(row?.last != null && { lastToolKey: row.last }),
     };
-    await d.bus.publish(conversationTopic(s.parentConversationId), msg);
+    const ancestors = await conversationAncestors(d.db, s.conversationId);
+    const topics = new Set([s.parentConversationId, ...ancestors]);
+    await Promise.all([...topics].map((id) => d.bus.publish(conversationTopic(id), msg)));
   } catch (err) {
     d.log.warn("sub-agent progress publish failed", {
       conversationId: s.conversationId,

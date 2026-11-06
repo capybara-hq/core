@@ -27,7 +27,10 @@ import {
   BASH_COMPANION_TOOLS,
   BUILTIN,
   BUILTIN_TOOL_NAMES,
+  SEND_MESSAGE,
   SKILL_LOAD,
+  SUBAGENT_HANDBACK,
+  SUBAGENT_MESSAGE_TOOLS,
   TOOL_SEARCH,
 } from "./builtin-names.js";
 import { agentToolSpec } from "./builtins/agent.js";
@@ -59,12 +62,18 @@ export interface BuiltinCallContext extends ToolCallContext {
    */
   runDeadline?: number;
   /**
-   * The conversation whose sandbox this call uses (sub-agents spec §10.1): the parent conversation
-   * for a sub-agent's call, the conversation itself otherwise (the default when absent).
+   * The conversation whose sandbox this call uses (sub-agents spec §10.1, agent map spec §6): the
+   * root conversation for a sub-agent's call at any depth, the conversation itself otherwise (the
+   * default when absent).
    */
   sandboxConversationId?: string;
   /** The parent run of a sub-agent's run (absent for a top-level run). */
   parentRunId?: string;
+  /**
+   * A sub-agent's run: the tree's budget window of this run (`SubagentParent.budgetRunId`), which
+   * a builtin's own model call (the `WebFetch` extraction) counts its tokens on.
+   */
+  budgetRunId?: string;
   /**
    * The rest of the run's hook scope, for a builtin that makes a model call of its own (the
    * `WebFetch` extraction fires `model.request` / `model.response`): the step of the call, the
@@ -422,9 +431,30 @@ export class ToolRegistry {
       skillLoad?: boolean;
       /** The definition's sub-agent roster source: the `Agent` tool's description lists it. */
       subagents?: AgentDefinition["subagents"];
+      /**
+       * The run is a sub-agent's (it has a parent): it gets `SendMessage` (to reach its parent)
+       * and `SubagentHandback` whatever its definition names (agent map spec §4.2, §4.3).
+       */
+      child?: boolean;
+      /**
+       * The run is a fork invocation's child (phase D): its final reply is the skill's report, so
+       * it reaches its parent with neither tool (`SendMessage` only to its own sub-agents).
+       */
+      forkChild?: boolean;
     },
   ): Promise<AgentTools> {
     const { tools, unavailable, hidden } = await this.resolve(orgId, def);
+    // `SendMessage` to an agent that has `Agent` (to reach its sub-agents) or a parent;
+    // `SubagentHandback` to a sub-agent only; a fork invocation's child reports by its reply
+    const toParent = def.child === true && def.forkChild !== true;
+    const messageTools = [
+      ...(toParent || tools.some((t) => t.key === AGENT_TOOL) ? [SEND_MESSAGE] : []),
+      ...(toParent ? [SUBAGENT_HANDBACK] : []),
+    ];
+    for (const name of messageTools) {
+      const b = this.builtins.find((x) => x.spec.name === name);
+      if (b) tools.push(builtinTool(b, b.spec));
+    }
     const sl = def.skillLoad === true && this.builtins.find((x) => x.spec.name === SKILL_LOAD);
     if (sl) {
       tools.push({
@@ -495,6 +525,7 @@ export class ToolRegistry {
     for (const ref of def.tools) {
       if (ref.kind === "builtin") {
         if (ref.name === TOOL_SEARCH || ref.name === SKILL_LOAD) continue;
+        if (SUBAGENT_MESSAGE_TOOLS.has(ref.name)) continue;
         const b = this.builtins.find((x) => x.spec.name === ref.name);
         if (!b) {
           unavailable.push({ ref: ref.name, reason: "Built-in tool does not exist" });
@@ -618,7 +649,7 @@ export class ToolRegistry {
   }
 
   /**
-   * `subagents.maxConcurrentPerRun` with the organization's override, for the `Agent` tool's
+   * `subagents.maxConcurrentPerConversation` with the organization's override, for the `Agent` tool's
    * description (§4.3). A change of the limit changes the tool's spec hash; replays read the
    * definition logged by hash, so no drift reason is involved. Without config (some tests): the
    * schema default.
@@ -626,7 +657,7 @@ export class ToolRegistry {
   private async maxConcurrentSubagents(orgId: string): Promise<number> {
     const cfg = this.config;
     const config = cfg ?? { get: () => ({ subagents: SUBAGENT_LIMIT_DEFAULTS }) };
-    return (await subagentLimits(this.db.db, config, orgId)).maxConcurrentPerRun;
+    return (await subagentLimits(this.db.db, config, orgId)).maxConcurrentPerConversation;
   }
 
   /** Plugins the organization enabled (built-in plugins always count as enabled, C14). */

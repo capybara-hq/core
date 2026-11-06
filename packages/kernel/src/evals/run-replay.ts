@@ -58,8 +58,10 @@ import type { ResolvedCandidate } from "./step-replay.js";
  *   原运行开始时的 `skills_catalog` 照抄；然后写 `runs` 行与 `run_started`，`agent` 用候选定义。
  * - 插话：原运行中途吸收的可吸收事件（user_message, and finished background tasks: background Bash
  *   spec §4.4），在「原吸收步骤 ≤ 当前步骤」时追加进评测对话并交给 loop（a recorded finish is
- *   appended as recorded: no task starts, polls or stops）。
- * - A wake run (its boundary a finished background task, not a message) is seeded from that event.
+ *   appended as recorded: no task starts, polls or stops; likewise a sub-agent's delivery, agent map
+ *   spec §8: no child is dispatched, sent to or woken）。
+ * - A wake run (its boundary a finished background task or a sub-agent's delivery, not a message)
+ *   is seeded from that event.
  * - 计费（C7，与单步回放同一套）：每次模型请求（含压缩、重试、兜底）发出前查运行仍在执行、仍持有认领；
  *   收完按真实用量、没收完按估算 `consumeTokens`（越限即 `capped`，下一次请求前停下）。
  * - 附件按快照自己的组织与原对话取（C3）。
@@ -389,13 +391,16 @@ function absorbedByStep(s: CaseSnapshot): Map<number, number> {
 
 /**
  * The replayed run's boundary (`trigger_seq`): a wake run's recorded one (`run_started.triggerSeq`,
- * background Bash spec §3); otherwise the newest message after `consumed`, else the newest finish
+ * background Bash spec §3, agent map spec §5.3); otherwise the newest message after `consumed`, else the newest finish
  * after it that could have woken the run (not reported, no `stoppedBy`), else the last
  * message (old logs, as before).
  */
 function replayTrigger(started: unknown, seeds: SnapshotEvent[], consumed: number): number {
   const recorded = started as { trigger?: string; triggerSeq?: number };
-  if (recorded.trigger === "background_task" && recorded.triggerSeq !== undefined) {
+  if (
+    (recorded.trigger === "background_task" || recorded.trigger === "subagent") &&
+    recorded.triggerSeq !== undefined
+  ) {
     return recorded.triggerSeq;
   }
   const lastMessage = seeds.findLast((e) => e.type === "user_message")?.seq;
@@ -470,6 +475,12 @@ export async function replayRun(
           model: candidate.model,
           modelParams: candidate.params,
         };
+
+  const triggerEvent = s.events.find((e) => e.seq === trigger);
+  const forkRun =
+    triggerEvent?.type === "user_message" &&
+    (triggerEvent.payload as { skill?: unknown; dispatch?: unknown }).skill !== undefined &&
+    (triggerEvent.payload as { dispatch?: unknown }).dispatch !== undefined;
 
   const conversationId = randomUUID();
   const runId = randomUUID();
@@ -594,7 +605,8 @@ export async function replayRun(
     },
   });
 
-  // 插话：原运行开始之后到达、且被原运行某一步吸收的可吸收事件（user_message / background_task_finished）
+  // 插话：原运行开始之后到达、且被原运行某一步吸收的可吸收事件（user_message /
+  // background_task_finished / subagent_delivery）
   const absorbed = absorbedByStep(s);
   const stepsInOrder = [...absorbed.keys()].sort((a, b) => a - b);
   /** 第 k 步（含）之前原运行吸收到的最大位置；原运行没有模型调用时不设限。 */
@@ -608,7 +620,11 @@ export async function replayRun(
   };
   const interjections = s.events
     .filter(
-      (e) => (e.type === "user_message" || e.type === "background_task_finished") && e.seq > R,
+      (e) =>
+        (e.type === "user_message" ||
+          e.type === "background_task_finished" ||
+          e.type === "subagent_delivery") &&
+        e.seq > R,
     )
     .flatMap((e) => {
       const step = stepsInOrder.find((k) => (absorbed.get(k) as number) >= e.seq);
@@ -680,6 +696,9 @@ export async function replayRun(
       },
       // replays never fire plugin hooks (the loop deps omit them too, P-18)
       conversationKind: "eval",
+      // a child case offers a sub-agent's message tools, as its recorded requests did (a fork
+      // invocation's child, whose run a task with the invocation record started, has none)
+      ...(subagent !== undefined && !forkRun && { subagent: true }),
     });
   } catch (e) {
     const err =

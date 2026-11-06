@@ -33,6 +33,7 @@ import {
   type TestKernel,
   waitFor,
 } from "../helpers/runs.js";
+import { finishedDeliveries } from "../helpers/subagents.js";
 
 /**
  * Phase C Task 11, Review Focus 2: a sub-agent of a conversation started from IM needs an approval
@@ -79,14 +80,9 @@ const RULES: ScriptRule[] = [
     reply: { toolCalls: [agentCall({ description: "Echo it", prompt: "child-deny: go" })] },
   },
   {
-    when: { lastToolResultIncludes: "child was denied" },
-    reply: { text: "parent saw the denial" },
-  },
-  {
     when: { lastUserIncludes: "SA approve", assistantTurns: 0 },
     reply: { toolCalls: [agentCall({ description: "Echo it", prompt: "child-echo: go" })] },
   },
-  { when: { lastToolResultIncludes: "child echoed" }, reply: { text: "parent saw the echo" } },
   {
     // the same IM thread (conversation) as the first test: its turn left two assistant messages
     when: { lastUserIncludes: "SA ask", assistantTurns: 2 },
@@ -108,15 +104,12 @@ const RULES: ScriptRule[] = [
     when: { lastUserIncludes: "SA twice", assistantTurns: 0 },
     reply: { toolCalls: [agentCall({ description: "Echo twice", prompt: "child-twice: go" })] },
   },
-  { when: { lastToolResultIncludes: "child done twice" }, reply: { text: "parent saw both" } },
   {
     when: { lastUserIncludes: "SA group", assistantTurns: 0 },
     reply: { toolCalls: [agentCall({ description: "Echo it", prompt: "child-echo: go" })] },
   },
-  {
-    when: { lastToolResultIncludes: "child got the color" },
-    reply: { text: "parent saw the color" },
-  },
+  // the parent goes on after an immediate `Agent` result; the child works in the background
+  { when: { lastToolResultIncludes: "in the background" }, reply: { text: "parent dispatched" } },
 ];
 
 let pgc: TestContainer;
@@ -142,6 +135,9 @@ beforeAll(async () => {
         auth: { cookieSecure: false },
         channels: { scanIntervalMs: 100, leaseTtlMs: 2000, deliveryIdleMs: 1000 },
         extensionConfig: { "model-script": { rules: RULES } },
+        // these tests share one IM chat: a parent woken by its children's deliveries would absorb
+        // the next test's message as an interjection (waking: runtime/subagents/wake.test.ts)
+        runtime: { wakeOnBackgroundTask: false },
       },
     ),
   );
@@ -214,8 +210,14 @@ const GROUP = "grp-sa";
 const sent = () => im.sent.filter((s) => s.appId === "cli_sa" && s.target.chatId === CHAT);
 const cardOf = (s: FakeChannelSent | undefined) => s?.message.cards?.[0];
 const updatesOf = (messageId: string) => im.updated.filter((u) => u.messageId === messageId);
-const finalText = (s: FakeChannelSent) =>
-  updatesOf(s.messageId).at(-1)?.message.text ?? s.message.text;
+/** Waits for the parent's finished delivery of its child with `text` (agent map spec §4.5). */
+async function childDelivered(conv: string, text: string): Promise<void> {
+  await waitFor(
+    async () => (await finishedDeliveries(db, conv, 1)).some((d) => d.text === text) || null,
+    30_000,
+    `the delivery "${text}"`,
+  );
+}
 
 async function convOf(chatId: string): Promise<string> {
   return waitFor(
@@ -288,9 +290,9 @@ describe("sub-agent cards in an IM thread", { timeout: 60_000 }, () => {
     expect(card.inputPreview).toContain("sa-hi");
     const events: ConversationEvent[] = await eventsOf(db, conv);
     expect(events.some((e) => e.type === "subagent_waiting")).toBe(true);
-    expect(await runStatus(conv)).toBe("waiting");
+    // the parent's run ended after the dispatch; only the child waits
+    await waitFor(async () => (await runStatus(conv)) === "completed", 10_000, "parent done");
 
-    const n = sent().length;
     im.push(
       connId,
       cardAction(
@@ -300,17 +302,8 @@ describe("sub-agent cards in an IM thread", { timeout: 60_000 }, () => {
         cardMsg.target,
       ),
     );
-    await waitFor(
-      async () =>
-        sent()
-          .slice(n)
-          .some((s) => finalText(s) === "parent saw the echo"),
-      30_000,
-      "parent reply in the thread",
-    );
+    await childDelivered(conv, "child echoed");
     expect(await runStatus(child)).toBe("completed");
-    // the thread gets the reply before the parent's worker commits run_finished
-    await waitFor(async () => (await runStatus(conv)) === "completed", 10_000, "parent done");
     // the card shows the decision once the child is done
     const up = await waitFor(
       async () =>
@@ -340,12 +333,9 @@ describe("sub-agent cards in an IM thread", { timeout: 60_000 }, () => {
       payload: { decision: "deny", reason: "wrong repo" },
     });
     expect(decide.statusCode, decide.body).toBe(200);
-    await waitFor(
-      async () => inChat().some((x) => finalText(x) === "parent saw the denial"),
-      30_000,
-      "parent reply",
-    );
-    const child = await childOf(await convOf(chat));
+    const conv = await convOf(chat);
+    await childDelivered(conv, "child was denied");
+    const child = await childOf(conv);
     const result = (await eventsOf(db, child)).find((e) => e.type === "tool_result");
     expect(JSON.stringify(result?.payload)).toContain("Reason: wrong repo");
     const up = await waitFor(
@@ -385,7 +375,6 @@ describe("sub-agent cards in an IM thread", { timeout: 60_000 }, () => {
       form: COLOR_FORM,
       webUrl: `https://cap.example/chat/${conv}?subagent=${child}`,
     });
-    const n = sent().length;
     im.push(
       connId,
       cardAction(
@@ -395,14 +384,7 @@ describe("sub-agent cards in an IM thread", { timeout: 60_000 }, () => {
         cardMsg.target,
       ),
     );
-    await waitFor(
-      async () =>
-        sent()
-          .slice(n)
-          .some((s) => finalText(s) === "parent saw the color"),
-      30_000,
-      "parent reply in the thread",
-    );
+    await childDelivered(conv, "child got the color");
     const up = await waitFor(
       async () =>
         updatesOf(cardMsg.messageId).find(
@@ -464,11 +446,7 @@ describe("sub-agent cards in an IM thread", { timeout: 60_000 }, () => {
         second.target,
       ),
     );
-    await waitFor(
-      async () => inChat().some((x) => finalText(x) === "parent saw both"),
-      30_000,
-      "parent reply",
-    );
+    await childDelivered(conv, "child done twice");
   });
 
   it("in a group thread, someone other than the starter clicking a child's card is told they cannot handle it", async () => {
@@ -507,7 +485,6 @@ describe("sub-agent cards in an IM thread", { timeout: 60_000 }, () => {
     expect(row).toEqual({ status: "pending", requested_for: ownerId });
 
     // the starter can
-    const m = inGroup().length;
     im.push(
       connId,
       cardAction(
@@ -517,13 +494,6 @@ describe("sub-agent cards in an IM thread", { timeout: 60_000 }, () => {
         cardMsg.target,
       ),
     );
-    await waitFor(
-      async () =>
-        inGroup()
-          .slice(m)
-          .some((x) => finalText(x) === "parent saw the echo"),
-      30_000,
-      "parent reply in the group",
-    );
+    await childDelivered(await convOf(GROUP), "child echoed");
   });
 });

@@ -24,7 +24,12 @@ import { keys as queryKeys } from "../../lib/query/keys";
 import { useAppMutation } from "../../lib/query/mutation";
 import { useWhoWaits } from "../../lib/query/who-waits";
 import { runParts } from "../../lib/run-row";
-import { usageTotal, useSubagents, useUsageWithSubagents } from "../../lib/subagents";
+import {
+  usageTotal,
+  useSubagents,
+  useTreeLookup,
+  useUsageWithSubagents,
+} from "../../lib/subagents";
 import {
   AWAIT_RUN_MS,
   awaitedMessage,
@@ -113,6 +118,8 @@ export type RightAreaSlot = {
   right: "none" | "properties" | "panel";
   propertiesNode?: ReactNode;
   panelNode?: ReactNode;
+  /** The agent map dialog while the hash names it (agent map spec §9). */
+  agentMap?: ReactNode;
   onCloseRight(): void;
   /** The open area's read is on its way (its loading state; `title`: the open panel's). */
   loading?: true | { title: string };
@@ -127,6 +134,8 @@ export type RightAreaSlot = {
     | "renderCard"
     | "openSubagent"
     | "onOpenSubagent"
+    | "onOpenAgent"
+    | "onOpenAgentMap"
     | "onOpenTask"
   >;
 };
@@ -188,6 +197,9 @@ export function useConversationPage(
     [subagents.views],
   );
   const whoWaits = useWhoWaits(orgId, conv.events);
+  // the tree is a root's (a sub-agent's page, or one still loading, reads none)
+  const isRoot = conv.conversation !== undefined && !conv.conversation.parentConversationId;
+  const tree = useTreeLookup(orgId, conversationId, conv.events, isRoot);
   // The log's timeline is rebuilt when the log changes; a delta frame only adds the drafts (I3).
   const base = useMemo(
     () =>
@@ -195,8 +207,9 @@ export function useConversationPage(
         progress: conv.state.progress,
         ...(views ? { views } : {}),
         whoWaits,
+        ...(tree ?? {}),
       }),
-    [conv.events, info, locale, conv.state.progress, views, whoWaits],
+    [conv.events, info, locale, conv.state.progress, views, whoWaits, tree],
   );
   const entries = useMemo(() => withDrafts(base, conv.state.drafts), [base, conv.state.drafts]);
   const queue = useQueue(orgId, conversationId, conv.merge, conv.events);
@@ -328,6 +341,10 @@ export function useConversationPage(
     return parts.length > 0 ? tp("lastRun", { parts: parts.join(" · ") }) : undefined;
   }, [base, locale, t, tp]);
 
+  const now = useNow(0);
+  const timeZone = useTimeZone();
+  const createdAt = conv.conversation ? new Date(conv.conversation.createdAt) : new Date(now);
+  const untitled = untitledLabel(createdAt, locale, timeZone);
   const slot: RightAreaSlot | undefined = useRightAreaSlot({
     orgId,
     conversationId,
@@ -341,6 +358,10 @@ export function useConversationPage(
       usageAll === undefined
         ? undefined
         : ts("contextTotal", { n: usageTotal(usageAll).toLocaleString(locale) }),
+    progress: conv.state.progress,
+    untitled,
+    eventsLoaded: !conv.loading,
+    root: conv.conversation === undefined ? undefined : !conv.conversation.parentConversationId,
     contextWindowOf: selection.contextWindowOf,
     reasoningOf: selection.reasoningOf,
   });
@@ -353,14 +374,11 @@ export function useConversationPage(
     onPick: () => {},
   };
 
-  const now = useNow(0);
-  const timeZone = useTimeZone();
-  const createdAt = conv.conversation ? new Date(conv.conversation.createdAt) : new Date(now);
   const page: ConversationPageProps = {
     titleBar: {
       path: titlePath,
       title: conv.conversation?.title ?? null,
-      untitled: untitledLabel(createdAt, locale, timeZone),
+      untitled,
       menu,
       properties: slot?.properties ?? { pressed: false, onToggle: () => {} },
       panels: slot?.titleBarPanels ?? [],
@@ -449,13 +467,18 @@ export function useConversationPage(
     ...(slot.loading !== undefined ? { rightArea: slot.loading } : {}),
   };
   if (Object.keys(loading).length > 0) page.loading = loading;
-  const dialogs = renaming ? (
-    <RenameDialog
-      value={conv.conversation?.title ?? ""}
-      busy={renameBusy}
-      onSave={(v) => void rename(v)}
-      onCancel={() => setRenaming(false)}
-    />
-  ) : null;
+  const dialogs = (
+    <>
+      {renaming ? (
+        <RenameDialog
+          value={conv.conversation?.title ?? ""}
+          busy={renameBusy}
+          onSave={(v) => void rename(v)}
+          onCancel={() => setRenaming(false)}
+        />
+      ) : null}
+      {slot.agentMap}
+    </>
+  );
   return { page, dialogs };
 }

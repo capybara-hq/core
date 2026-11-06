@@ -101,6 +101,8 @@ export const REFERENCE_COMPONENTS = [
   "greeting",
   "agent-row",
   "quick-actions",
+  // the agent map (agent map spec §9)
+  "agent-map",
   // agent avatars (agent profile design §2.3)
   "avatar",
   // config forms

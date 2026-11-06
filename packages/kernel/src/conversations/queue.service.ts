@@ -54,7 +54,8 @@ export class ConversationQueue {
       "get" | "writable" | "resolveExtra" | "bindIn" | "checkPick" | "prepareQueuedSkill"
     >,
     /** Starts the conversation's next run (`ensureRun`). */
-    @Inject(RunControlService) private readonly runs: Pick<RunControl, "ensureRun">,
+    @Inject(RunControlService)
+    private readonly runs: Pick<RunControl, "ensureRun" | "wakeHeldTree">,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
   ) {}
 
@@ -287,6 +288,8 @@ export class ConversationQueue {
     await this.conversations.writable(orgId, conversationId, accountId);
     await this.removeIn(conversationId, itemId);
     await this.eventLog.publishChanged(conversationId, "queue");
+    // removing the last item unpauses the queue: the wakes it held for the tree go out
+    await this.runs.wakeHeldTree(conversationId);
   }
 
   // its own transaction: the caller notifies and publishes after the commit
@@ -322,6 +325,7 @@ export class ConversationQueue {
     if (unarchived) await this.eventLog.publishChanged(conversationId, "archived");
     await this.eventLog.publishChanged(conversationId, "queue");
     await this.runs.ensureRun(conversationId);
+    await this.runs.wakeHeldTree(conversationId);
     return event;
   }
 
@@ -370,6 +374,8 @@ export class ConversationQueue {
       .execute();
     await this.eventLog.publishChanged(conversationId, "queue");
     await this.runs.ensureRun(conversationId);
+    // a paused root holds the wakes of its whole tree (agent map spec §5.3)
+    await this.runs.wakeHeldTree(conversationId);
   }
 
   /** A queued item or a sent message for this client id (outside any transaction). */

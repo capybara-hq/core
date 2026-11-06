@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>Agent Map · 放在哪里</title>
+<style>
+:root{
+  --bg:#0A0A0A;--panel:#111110;--panel2:#0E0E0D;--raised:#141413;--selected:#1F1F1D;--hover:#171716;
+  --line-soft:#1C1C1A;--line:#2A2A28;--line-strong:#3A3A37;--card:rgba(255,255,255,.08);
+  --ink:#E6E6E3;--muted:#8E8E89;--faint:#5A5A56;--accent:#FF6A13;--tint:rgba(255,106,19,.12);
+  --ok:#3FD483;--fail:#FF5C52;--warn:#F2C14B;--scrim:rgba(0,0,0,.6);
+  --mono:"Sarasa Mono SC",ui-monospace,SFMono-Regular,Menlo,monospace;
+  --prose:"Inter","Source Han Sans SC","PingFang SC",system-ui,sans-serif;
+}
+*{box-sizing:border-box}
+body{margin:0;background:#050505;color:var(--ink);font:13px/20px var(--mono);padding:28px 32px 60px}
+h1{font:600 20px/28px var(--prose);margin:0 0 4px}
+.sub{color:var(--muted);margin:0 0 24px;font-family:var(--prose)}
+.opt{margin:0 0 40px;border:1px solid var(--line);border-radius:12px;overflow:hidden;cursor:pointer;transition:border-color .12s}
+.opt:hover{border-color:var(--line-strong)}
+.opt.selected{border-color:var(--accent);box-shadow:0 0 0 3px rgba(255,106,19,.25)}
+.opt-head{display:flex;gap:12px;align-items:baseline;padding:14px 18px;background:var(--panel);border-bottom:1px solid var(--line)}
+.opt-head b{font:600 16px/24px var(--prose)}
+.opt-head span{color:var(--muted);font-family:var(--prose)}
+.letter{display:inline-grid;place-items:center;width:24px;height:24px;border-radius:6px;background:var(--tint);color:var(--accent);font-weight:700}
+
+/* app frame */
+.app{display:flex;height:720px;background:var(--bg);position:relative;overflow:hidden}
+.side{width:220px;background:var(--panel);border-right:1px solid var(--line-soft);padding:14px 12px;flex:none}
+.brand{color:var(--accent);font-weight:700;letter-spacing:.08em;margin-bottom:18px}
+.side .it{padding:5px 8px;border-radius:6px;color:var(--ink)}
+.side .it.on{background:#1A1A18}
+.side .grp{color:var(--faint);margin:14px 8px 6px;font-size:12px}
+.dot{display:inline-block;width:6px;height:6px;border-radius:50%;margin-right:6px;vertical-align:middle}
+.main{flex:1;display:flex;flex-direction:column;min-width:0}
+.titlebar{height:48px;display:flex;align-items:center;padding:0 16px;border-bottom:1px solid var(--line-soft);gap:14px}
+.titlebar .t{font-weight:600;flex:1}
+.tb-ico{width:28px;height:28px;border-radius:6px;display:grid;place-items:center;color:var(--muted);position:relative}
+.tb-ico.on{background:var(--selected);color:var(--ink)}
+.tb-ico .badge{position:absolute;top:-3px;right:-5px;background:var(--accent);color:#0A0A0A;font-size:10px;line-height:14px;border-radius:7px;padding:0 4px;font-weight:700}
+.chat{flex:1;padding:22px 28px;overflow:hidden;font-family:var(--prose);font-size:15px;line-height:26px}
+.bubble{margin-left:auto;width:max-content;max-width:70%;background:var(--raised);border-radius:10px;padding:8px 14px;margin-bottom:18px}
+.group-h{font:13px/20px var(--mono);color:var(--muted);margin:16px 0 8px;display:flex;gap:8px;align-items:center}
+.rows{background:var(--panel);border-radius:8px;font:13px/20px var(--mono)}
+.row{display:flex;align-items:center;gap:10px;height:40px;padding:0 14px;border-top:1px solid var(--line-soft)}
+.row:first-child{border-top:0}
+.row .tag{background:var(--selected);color:var(--muted);border-radius:4px;padding:0 6px;font-size:12px}
+.row .d{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row .m{color:var(--faint)}
+.composer{margin:0 28px 14px;border:1px solid var(--line);border-radius:10px;padding:12px 14px;color:var(--faint);height:84px;background:var(--panel2)}
+.status{height:24px;border-top:1px solid var(--line-soft);color:var(--faint);font-size:12px;display:flex;align-items:center;padding:0 16px;gap:16px}
+
+.spin{width:14px;height:14px;border-radius:50%;border:2px solid rgba(255,106,19,.25);border-top-color:var(--accent);flex:none;animation:sp .8s linear infinite}
+@keyframes sp{to{transform:rotate(360deg)}}
+.ok{width:14px;height:14px;flex:none;color:var(--ok)}
+.st{width:8px;height:8px;border-radius:50%;flex:none}
+.st.run{background:var(--accent)} .st.done{background:var(--ok)} .st.fail{background:var(--fail)} .st.stop{background:var(--faint)} .st.wait{background:var(--warn)}
+
+/* ---- Option A: modal, columns ---- */
+.scrim{position:absolute;inset:0;background:var(--scrim)}
+.dialog{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:940px;max-height:640px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:22px 26px;box-shadow:0 20px 60px rgba(0,0,0,.6)}
+.dialog h3{margin:0;font:600 18px/26px var(--prose);display:flex}
+.dialog h3 .x{margin-left:auto;color:var(--muted);font-weight:400}
+.dialog .count{color:var(--muted);margin:4px 0 18px;font-family:var(--prose)}
+.cols{display:grid;grid-template-columns:240px 26px 290px 26px 260px;align-items:start}
+.node{border:1px solid var(--line);border-radius:8px;padding:9px 12px;background:var(--panel2)}
+.node:hover{border-color:var(--line-strong);background:var(--hover)}
+.node .n{display:flex;gap:8px;align-items:center;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.node .n span{overflow:hidden;text-overflow:ellipsis}
+.node .k{color:var(--muted);font-size:12px;margin-top:2px;padding-left:16px}
+.node.root{border-color:var(--line-strong);background:var(--raised)}
+.node.sel{border-color:var(--accent)}
+.stack{display:flex;flex-direction:column;gap:10px}
+.conn{align-self:stretch;position:relative}
+.conn:before{content:"";position:absolute;left:12px;top:22px;bottom:22px;border-left:1px solid var(--line-strong)}
+.conn.one:before{top:22px;bottom:auto;height:0;left:0;right:0;border-left:0;border-top:1px solid var(--line-strong)}
+.legend{display:flex;gap:16px;color:var(--faint);font-size:12px;margin-top:18px}
+.legend i{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px}
+
+/* ---- Option B: right panel, indented tree ---- */
+.rp{width:440px;flex:none;border-left:1px solid var(--line-soft);background:var(--bg);display:flex;flex-direction:column}
+.rp-h{height:48px;display:flex;align-items:center;gap:10px;padding:0 14px;border-bottom:1px solid var(--line-soft)}
+.rp-h .t{font-weight:600;flex:1}
+.rp-h .c{color:var(--muted)}
+.btn{border:1px solid var(--line);border-radius:6px;padding:3px 10px;color:var(--ink);background:var(--panel)}
+.btn.danger{color:var(--fail)}
+.tree{padding:10px 8px;font-size:13px}
+.tr{display:flex;align-items:center;gap:8px;height:44px;padding:0 10px;border-radius:6px;position:relative}
+.tr:hover{background:var(--hover)}
+.tr.sel{background:var(--selected)}
+.tr .body{flex:1;min-width:0}
+.tr .l1{display:flex;gap:8px;align-items:center}
+.tr .l1 .d{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tr .l2{color:var(--faint);font-size:12px;line-height:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tr .tag{background:var(--selected);color:var(--muted);border-radius:4px;padding:0 6px;font-size:12px;flex:none}
+.tr .chev{color:var(--faint)}
+.ind1{margin-left:22px}.ind2{margin-left:44px}
+.ind1:before,.ind2:before{content:"";position:absolute;left:-12px;top:0;bottom:50%;width:10px;border-left:1px solid var(--line);border-bottom:1px solid var(--line);border-bottom-left-radius:4px}
+.tree .foot{color:var(--faint);font-size:12px;padding:10px 10px 0;border-top:1px solid var(--line-soft);margin-top:8px}
+.rp-status{margin-top:auto;height:24px;border-top:1px solid var(--line-soft);color:var(--faint);font-size:12px;display:flex;align-items:center;padding:0 14px}
+.note{padding:12px 18px;background:var(--panel2);border-top:1px solid var(--line);color:var(--muted);font-family:var(--prose);line-height:22px}
+.note b{color:var(--ink)}
+
+.dialog{width:1100px}
+.tree2{display:flex;align-items:center}
+.branch{display:flex;align-items:center}
+.kids{display:flex;flex-direction:column;padding-left:28px;position:relative}
+.kids:before{content:"";position:absolute;left:0;width:14px;top:50%;border-top:1px solid var(--line-strong)}
+.kid{position:relative;padding:5px 0}
+.kid:before{content:"";position:absolute;left:-14px;width:14px;top:50%;border-top:1px solid var(--line-strong)}
+.kid:after{content:"";position:absolute;left:-14px;top:0;bottom:0;border-left:1px solid var(--line-strong)}
+.kid:first-child:after{top:50%}.kid:last-child:after{bottom:50%}.kid:only-child:after{display:none}
+.node{height:62px;width:320px;display:flex;flex-direction:column;justify-content:center;cursor:pointer}
+.node.root{width:320px}
+.node .k{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pulse{animation:pu 1.6s ease-in-out infinite}@keyframes pu{50%{opacity:.35}}
+.rootcol{display:flex;flex-direction:column;gap:12px;align-self:stretch;justify-content:center;position:relative}
+.bg{position:absolute;left:0;bottom:0;width:320px}
+.bg .h{color:var(--faint);font-size:12px;margin-bottom:6px}
+.bgr{display:flex;align-items:center;gap:8px;height:32px;padding:0 10px;border:1px solid var(--line-soft);border-radius:6px;margin-top:6px;background:var(--panel2);font-size:12px}
+.bgr .c{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bgr .m{color:var(--faint);white-space:nowrap}
+.bgr .tagb{color:var(--muted);background:var(--selected);border-radius:4px;padding:0 5px}
+</style></head><body>
+<h1>A v5：后台任务放在 root 下方</h1>
+<p class="sub">节点统一 62px 高；第二行只占一行，放不下用省略号（悬停显示全文）；父节点对准子节点组的中心，连线是标准的树形折线。节点加宽，第二行不再被截断；运行中改为呼吸圆点。左下角是 root 的后台任务（Bash run_in_background），和 Claude Code 的位置一致。</p>
+<div class="opt"><div class="app">
+<div class="side"><div class="brand">CAPYBARA</div><div class="it">＋ 新会话</div><div class="it">首页</div><div class="it">Agents</div><div class="grp">会话</div><div class="it on"><span class="dot" style="background:var(--accent)"></span>插件与组件管理</div></div>
+<div class="main"><div class="titlebar"><span class="t">插件与组件管理 ⌄</span></div><div class="chat"></div><div class="composer">输入消息，/ 使用命令</div><div class="status">grant@示例组织 · 运行中</div></div>
+<div class="scrim"></div>
+<div class="dialog"><h3>Agent 图<span class="x">✕</span></h3><div class="count">6 个 agent · 2 个运行中 · 点击查看详情</div>
+<div style="position:relative;padding-bottom:96px"><div class="branch"><div class="node root" title="插件与组件管理"><div class="n"><span class="st run pulse"></span><span>插件与组件管理</span></div><div class="k">opus 5.5 · 42分18秒 · 392.7k tokens</div></div>
+<div class="kids">
+<div class="kid"><div class="node " title="Task 3: catalog 拆分"><div class="n"><span class="st done"></span><span>Task 3: catalog 拆分</span></div><div class="k">opus 5.5 · 12分04秒 · 188.2k tokens</div></div></div>
+<div class="kid"><div class="branch"><div class="node sel" title="Task 4: org upload without extension"><div class="n"><span class="st run pulse"></span><span>Task 4: org upload without extension</span></div><div class="k">opus 5.5 · 16分25秒 · 266.5k tokens</div></div>
+  <div class="kids"><div class="kid"><div class="node " title="审查 Task 4 的 diff"><div class="n"><span class="st run pulse"></span><span>审查 Task 4 的 diff</span></div><div class="k">sonnet 5.5 · 1分07秒 · 108.8k tokens</div></div></div></div></div></div>
+<div class="kid"><div class="node " title="Task 5: platform notices"><div class="n"><span class="st wait"></span><span>Task 5: platform notices</span></div><div class="k">opus 5.5 · 4分40秒 · 41.0k tokens</div></div></div>
+<div class="kid"><div class="node " title="Task 6: share 视图"><div class="n"><span class="st fail"></span><span>Task 6: share 视图</span></div><div class="k">haiku 5.5 · 3分12秒 · 30.4k tokens</div></div></div>
+</div></div>
+<div class="bg"><div class="h">后台任务 · 2</div>
+<div class="bgr"><span class="st run pulse"></span><span class="tagb">Bash</span><span class="c">启动 dev kernel</span><span class="m">8分02秒</span></div>
+<div class="bgr"><span class="st done"></span><span class="tagb">Bash</span><span class="c">跑 kernel 全量测试</span><span class="m">3分41秒</span></div></div></div><div class="legend"><span><i style="background:var(--accent)"></i>运行中</span><span><i style="background:var(--warn)"></i>等待</span><span><i style="background:var(--ok)"></i>完成</span><span><i style="background:var(--fail)"></i>失败</span><span><i style="background:var(--faint)"></i>已停止</span></div>
+</div></div></div></body></html>

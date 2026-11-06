@@ -10,10 +10,13 @@
 <body>
 <main class="r-page">
 <h1>Sub-agent group</h1>
-<p>Like tool groups: a summary line and one dense row per sub-agent (spinner, kind tag, task, calls, duration). The row open in the right panel gets the accent tint and bar.</p>
+<p>Like tool groups: a summary line over one Agent call block per sub-agent (header Agent + task, IN with the prompt in two lines, then a status line: the dot, "后台运行中：&lt;current tool&gt;" or the final state, and "在智能体图中查看"). The map-link block: the header's link to the agent map ("智能体图").</p>
 <div class="r-blocks">
 <section data-ref-block="subagent-group-running" style="width:752px" data-pad>
   <template data-fixture="subagent-group" data-opts='{"state": "running"}'></template>
+</section>
+<section data-ref-block="subagent-group-waiting" style="width:752px" data-pad>
+  <template data-fixture="subagent-group" data-opts='{"state": "waiting"}'></template>
 </section>
 <section data-ref-block="subagent-group-done" style="width:752px" data-pad>
   <template data-fixture="subagent-group" data-opts='{"state": "done"}'></template>
@@ -21,11 +24,14 @@
 <section data-ref-block="subagent-group-failed" style="width:752px" data-pad>
   <template data-fixture="subagent-group" data-opts='{"state": "failed"}'></template>
 </section>
+<section data-ref-block="subagent-group-stopped" style="width:752px" data-pad>
+  <template data-fixture="subagent-group" data-opts='{"state": "stopped"}'></template>
+</section>
 <section data-ref-block="subagent-group-expanded" style="width:752px" data-pad>
   <template data-fixture="subagent-group" data-opts='{"state": "expanded"}'></template>
 </section>
-<section data-ref-block="subagent-group-row-open" style="width:752px" data-pad>
-  <template data-fixture="subagent-group" data-opts='{"state": "row-open"}'></template>
+<section data-ref-block="subagent-group-map-link" style="width:752px" data-pad>
+  <template data-fixture="subagent-group" data-opts='{"state": "running", "mapLink": true}'></template>
 </section>
 </div>
 </main>

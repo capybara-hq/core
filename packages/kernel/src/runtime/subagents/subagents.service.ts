@@ -14,6 +14,7 @@ import { SkillInvoker } from "../../skills/invoke.js";
 import { SkillsModule } from "../../skills/skills.module.js";
 import { ProviderRegistry, ProvidersModule } from "../providers.js";
 import { RunJobs, RunJobsModule } from "../run-jobs.js";
+import { SubagentDeliveries } from "./deliveries.js";
 import {
   type ChildWriter,
   commitDispatchIn,
@@ -23,6 +24,7 @@ import {
   type DispatchPlan,
   dispatchSubagent,
 } from "./dispatch.js";
+import { SubagentMessages } from "./messages.js";
 import { publishSubagentProgress, type SubagentStep } from "./progress.js";
 import { liveSkillForks, type SkillForkDeps, type SkillForks } from "./skill-fork.js";
 
@@ -30,9 +32,9 @@ import { liveSkillForks, type SkillForkDeps, type SkillForks } from "./skill-for
  * Sub-agents (phase C, spec §7) and forked skills (phase D): the `Agent` tool's dispatch (the
  * tool pipeline calls {@link dispatch}), a run's fork invocation ({@link skillForks}, the loop's
  * `prepare`) and a child step's progress on the parent's stream ({@link progress}). Child runs go
- * to the sub-agent run queue through {@link RunJobs}. The child lifecycle after dispatch (a
- * finished child resumes its parent, a stopped parent stops its children) is the waits'
- * (`Waits.childFinished` / `stopChildren`).
+ * to the sub-agent run queue through {@link RunJobs}. The child lifecycle after dispatch is the
+ * waits' (`Waits.childFinished`): a background child's finish is delivered to its parent
+ * ({@link SubagentDeliveries}), a fork invocation's child resumes its waiting parent run.
  */
 @Injectable()
 export class SubagentsService {
@@ -90,10 +92,13 @@ export class SubagentsService {
   }
 }
 
-/** Sub-agent dispatch (the tools domain's `Agent` tool and the run loop use it). */
+/**
+ * Sub-agent dispatch, deliveries and messages (the tools domain's `Agent`, `SendMessage` and
+ * `SubagentHandback`, the run loop, the waits).
+ */
 @Module({
   imports: [EventLogModule, ModelsModule, ProvidersModule, RunJobsModule, SkillsModule],
-  providers: [SubagentsService],
-  exports: [SubagentsService],
+  providers: [SubagentsService, SubagentDeliveries, SubagentMessages],
+  exports: [SubagentsService, SubagentDeliveries, SubagentMessages],
 })
 export class SubagentsModule {}

@@ -541,7 +541,7 @@ describe("queued skill invocations: more cases (batch 5 review m5)", { timeout: 
     expect(ofType(await eventsOf(db, conv), "user_message")).toHaveLength(1);
   });
 
-  it("a queued fork waits while the parent waits on its own sub-agent, then runs after it", async () => {
+  it("a queued fork does not wait for the parent's background sub-agent: it goes out once the run ended", async () => {
     const review = await seedForkedSkill(
       { db, storage: k.app.get(StorageService), orgId, ownerId },
       "review",
@@ -573,15 +573,22 @@ describe("queued skill invocations: more cases (batch 5 review m5)", { timeout: 
       20_000,
       "the parent's sub-agent dispatched",
     );
+    // the parent's run ends at once (agent map spec §5.4): its sub-agent works in the background
+    await waitForTerminal(db, conv, 1, 20_000);
+    await held();
     const q = await enqueue(conv, { text: "src", skill: { name: "review" } });
     expect(q.statusCode, q.body).toBe(201);
-    await sleep(1_000);
-    // held: the parent waits on its sub-agent, so the queue does not move
-    expect(ofType(await eventsOf(db, conv), "user_message")).toHaveLength(1);
-    expect((await queueOf(conv)).items).toHaveLength(1);
-    await held();
-    release();
+    // the queue moves although the background sub-agent is still held
     await waitForTerminal(db, conv, 2, 60_000);
+    const kid = await db
+      .selectFrom("subagent_dispatches as sd")
+      .innerJoin("runs as r", "r.id", "sd.child_run_id")
+      .select("r.status")
+      .where("sd.parent_conversation_id", "=", conv)
+      .where("sd.for_skill", "=", false)
+      .executeTakeFirstOrThrow();
+    expect(kid.status).toBe("running");
+    release();
     const events = await eventsOf(db, conv);
     const msgs = ofType(events, "user_message");
     expect(msgs).toHaveLength(2);

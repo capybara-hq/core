@@ -5,6 +5,7 @@ import { DelayedError, type Job, type Queue } from "bullmq";
 import { sql } from "kysely";
 import { BackgroundTaskStopper } from "../background/stop.js";
 import { type AppendEvent, EventLog } from "../conversations/event-log.js";
+import { conversationTree } from "../conversations/tree.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
@@ -30,7 +31,13 @@ import { MAINTENANCE_QUEUE_NAME } from "./maintenance-queue.js";
 import { assistantIdemKey } from "./model-call.js";
 import { notifyFinished, RunFinish, TERMINAL_STATUSES } from "./run-finish.js";
 import { ACTIVE_RUN_STATUSES, RunQueue } from "./run-queue.js";
-import { childResult, dispatchOfChildRun, finishedEvent } from "./subagents/child.js";
+import {
+  childResult,
+  deliveryRowOfChildRun,
+  finishedEvent,
+  rootSurfaceOf,
+} from "./subagents/child.js";
+import { SubagentDeliveries } from "./subagents/deliveries.js";
 
 /** 等待超时任务所在的内核维护队列（见 maintenance.ts）。 */
 export { MAINTENANCE_QUEUE_NAME };
@@ -62,21 +69,34 @@ export interface WaitSweepResult {
   /** 运行已终态、被本次扫描取消的审批 / 输入请求。 */
   cancelled: number;
   /**
-   * Finished parent runs whose open `Agent` calls had no `tool_result`, repaired (final review
-   * I3: the next run would send an unpaired tool call, which providers refuse).
+   * Finished runs whose fork invocation had no report, repaired (`pairStoppedForks`; the next run
+   * would build on a fork lead without its report).
    */
   repaired: number;
   /** Queued sub-agent runs, and chat runs queued by a resume, whose job was lost, enqueued again. */
   requeued: number;
   /** Running sub-agent runs without job or lock, failed `run.orphaned` and reported to the parent. */
   orphaned: number;
-  /** Active sub-agent runs of a finished parent run, asked to stop. */
+  /**
+   * Active fork sub-agent runs of a finished parent run, and active sub-agent runs of a deleted
+   * conversation's tree, asked to stop.
+   */
   stopped: number;
+  /**
+   * Finished background sub-agent runs whose `finished` delivery was never written (the finisher
+   * died after the child's terminal commit), delivered (agent map spec §10).
+   */
+  delivered: number;
+  /**
+   * Idle sub-agents with a parked message no run took (a `SendMessage` that reached a run after
+   * its last model call, whose replica died before the post-run `ensureRun`), started again.
+   */
+  restarted: number;
 }
 
 const TERMINAL_RUN_STATUSES = ["completed", "failed", "aborted"] as const;
 
-/** Who may decide a sub-agent's approval, mirrored into the parent's `subagent_waiting`. */
+/** Who may decide a sub-agent's approval, mirrored into the root's `subagent_waiting`. */
 type Approver = { requestedFor: string | null; approverRole: OrgRole | null };
 
 /** The data of a wait timeout job; `subagents` waits also carry their run and step. */
@@ -112,7 +132,10 @@ export class Waits implements OnApplicationShutdown {
     @Inject(QuestionsService)
     private readonly questions: Pick<QuestionsService, "expire" | "cancelPendingIn">,
     @Inject(RunQueue)
-    private readonly runQueue: Pick<RunQueue, "enqueue" | "repairOrphan" | "abortIfOrphaned">,
+    private readonly runQueue: Pick<
+      RunQueue,
+      "enqueue" | "repairOrphan" | "abortIfOrphaned" | "ensureRun"
+    >,
     /**
      * Writes, in the caller's transaction, the results of a stopped run's open `Agent` calls;
      * `fire` runs their observe hooks after the commit.
@@ -130,15 +153,19 @@ export class Waits implements OnApplicationShutdown {
     @Inject(RunAbort) private readonly abort: Pick<RunAbort, "requested" | "request">,
     /** The maintenance queue: wait timeout jobs (`MaintenanceProcessor` consumes them). */
     @Inject(getQueueToken(MAINTENANCE_QUEUE_NAME)) private readonly timeouts: Pick<Queue, "add">,
-    @Inject(KernelEvents) events: KernelEvents,
+    @Inject(KernelEvents) private readonly events: KernelEvents,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<Logger, "error" | "warn">,
     /** Stops a finished sub-agent run's background tasks ({@link childFinished}). */
     @Inject(BackgroundTaskStopper)
     private readonly background: Pick<BackgroundTaskStopper, "stopSubagentTasks">,
+    /** Delivers a background child's finish to its parent ({@link childFinished}). */
+    @Inject(SubagentDeliveries)
+    private readonly deliveries: Pick<SubagentDeliveries, "childFinished">,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
   ) {
-    // an orphaned parent run (marked failed by `ensureRun`) stops its children at once; the
-    // sweep's `sweepChildrenOfFinished` is the backstop
+    // an orphaned parent run (marked failed by `ensureRun`) stops its fork child at once
+    // (background children keep running, agent map spec §5.4); the sweep's
+    // `sweepForkChildrenOfFinished` is the backstop
     this.unsubscribe = events.on("run.orphaned", ({ runId }) =>
       this.stopChildren(runId, null)
         .then(() => {})
@@ -173,12 +200,17 @@ export class Waits implements OnApplicationShutdown {
       requeued: 0,
       orphaned: 0,
       stopped: 0,
+      delivered: 0,
+      restarted: 0,
     };
     out.cancelled = await this.sweepFinishedRuns();
     out.expired = await this.sweepOverdue();
     Object.assign(out, await this.sweepSubagentOrphans());
     out.repaired = await this.sweepOpenAgentCalls();
-    out.stopped = await this.sweepChildrenOfFinished();
+    out.stopped =
+      (await this.sweepForkChildrenOfFinished()) + (await this.sweepTreesOfDeletedRoots());
+    out.delivered = await this.sweepUndelivered();
+    out.restarted = await this.sweepParkedMessages();
     out.resumed = await this.sweepStuckRuns();
     return out;
   }
@@ -216,27 +248,29 @@ export class Waits implements OnApplicationShutdown {
     if (stop && (await this.abortWaiting(conversationId, runId, stop.byAccountId, stop.detail))) {
       return;
     }
-    await this.surfaceInParent(runId, waitingFor);
+    await this.surfaceInRoot(runId, conversationId, waitingFor);
     await this.scheduleTimeout(waitingFor, runId);
     if (await this.isSettled(waitingFor, runId)) await this.resume(runId, waitingFor.id);
   }
 
   /**
    * A sub-agent's run waits for an approval or an input (sub-agents spec §9): appends
-   * `subagent_waiting` to the parent conversation (idem `subagent_waiting:<childRunId>:<waitId>`),
-   * so the web and the channel outbound show the card there. The approval or question itself stays
-   * the child run's, with the parent run's starter as the person asked. Not a run of a sub-agent,
-   * or a `subagents` wait: nothing. Display only: a failure is logged, the wait goes on.
+   * `subagent_waiting` to the **root** conversation of its tree, whatever its depth (agent map spec
+   * §7, {@link rootSurfaceOf}; idem `subagent_waiting:<childRunId>:<waitId>`), so the web and the
+   * channel outbound show the card where the person looks. The approval or question itself stays
+   * the child run's, with the run's trigger account (inherited down the chain) as the person asked.
+   * Not a run of a sub-agent, or a `subagents` wait: nothing. Display only: a failure is logged,
+   * the wait goes on.
    */
-  private async surfaceInParent(runId: string, waitingFor: WaitingFor): Promise<void> {
+  private async surfaceInRoot(
+    runId: string,
+    conversationId: string,
+    waitingFor: WaitingFor,
+  ): Promise<void> {
     if (waitingFor.kind === "subagents") return;
     try {
-      const d = await this.db
-        .selectFrom("subagent_dispatches")
-        .select(["parent_conversation_id", "parent_run_id", "child_conversation_id"])
-        .where("child_run_id", "=", runId)
-        .executeTakeFirst();
-      if (!d) return;
+      const target = await rootSurfaceOf(this.db, conversationId, runId);
+      if (!target) return;
       const row: { tool_key: string; expires_at: string | Date; approver?: Approver } | undefined =
         waitingFor.kind === "approval"
           ? await this.db
@@ -261,14 +295,15 @@ export class Waits implements OnApplicationShutdown {
               .where("id", "=", waitingFor.id)
               .executeTakeFirst();
       if (!row) return;
-      await this.eventLog.append(d.parent_conversation_id, [
+      await this.eventLog.append(target.conversationId, [
         {
           type: "subagent_waiting",
-          runId: d.parent_run_id,
+          runId: target.runId,
           idemKey: subagentWaitingIdemKey(runId, waitingFor.id),
           payload: {
-            subagentId: d.child_conversation_id,
+            subagentId: conversationId,
             childRunId: runId,
+            path: target.path,
             kind: waitingFor.kind,
             ...(waitingFor.kind === "approval"
               ? {
@@ -282,7 +317,7 @@ export class Waits implements OnApplicationShutdown {
         },
       ]);
     } catch (err) {
-      this.log.error("cannot surface a sub-agent's wait in its parent", { runId, err });
+      this.log.error("cannot surface a sub-agent's wait in its root conversation", { runId, err });
     }
   }
 
@@ -324,8 +359,8 @@ export class Waits implements OnApplicationShutdown {
           ),
         ),
       )
-      // sub-agents (spec §7.2): no child run of this run is still active, so a step waiting on
-      // an approval and on sub-agents resumes once both are done, whichever finishes last
+      // a fork invocation's sub-agent (phase D; agent map spec §5.4: background `Agent`
+      // children never hold their parent run) is no longer active
       .where(({ not, exists, selectFrom }) =>
         not(
           exists(
@@ -333,6 +368,7 @@ export class Waits implements OnApplicationShutdown {
               .innerJoin("runs as cr", "cr.id", "sd.child_run_id")
               .select(sql`1`.as("one"))
               .where("sd.parent_run_id", "=", runId)
+              .where("sd.for_skill", "=", true)
               .where("cr.status", "in", ACTIVE_RUN_STATUSES),
           ),
         ),
@@ -368,8 +404,8 @@ export class Waits implements OnApplicationShutdown {
     at?: { runId: string; step: number },
   ): Promise<{ notDueUntil?: number; acted?: boolean }> {
     if (kind === "subagents") {
-      // A safety net (spec §7.2, §12): the children of that step still active are stopped; each
-      // stopped child reports to the parent, and the last one resumes it. The resume tried here
+      // A safety net (spec §7.2, §12) of a fork invocation's wait: its child, still active, is
+      // stopped and reports to the parent, which then resumes. The resume tried here
       // covers a step whose children were all done already.
       if (!at) {
         this.log.warn("sub-agent wait timeout without its run; ignored", { id });
@@ -421,8 +457,8 @@ export class Waits implements OnApplicationShutdown {
     await this.childFinished(runId).catch((err) =>
       this.log.error("cannot report stopped sub-agent run", { runId, err }),
     );
-    // a stopped parent stops its children (spec §12), on the parent's behalf (no account: they
-    // report "stopped with this run"); the wait sweep is the backstop
+    // a stopped run stops its fork child (spec §12), on its behalf (no account: it reports
+    // "stopped with this run"); background children keep running; the wait sweep is the backstop
     await this.stopChildren(runId, null).catch((err) =>
       this.log.error("cannot stop the sub-agents of a run", { runId, err }),
     );
@@ -481,7 +517,7 @@ export class Waits implements OnApplicationShutdown {
       cancelled.set(q.call_id, { toolKey: spec.toolKey ?? "", text: INPUT_CANCELLED_TEXT });
       if (typeof spec.step === "number") steps.add(spec.step);
     }
-    // a parent waiting on sub-agents (spec §12): its open `Agent` calls get their results
+    // a run waiting on its fork invocation's sub-agent: the report (`pairStoppedForks`)
     const agents = await this.pipeline.stopOpenAgentCalls(runId);
     for (const step of agents.steps) steps.add(step);
     const results = await this.stoppedResults(
@@ -635,9 +671,9 @@ export class Waits implements OnApplicationShutdown {
 
   /**
    * Sub-agents waits past their `runs.wait_expires_at` (their timeout job was lost): expired the
-   * way the timeout job would ({@link expire}: the step's active children stop as `timed out`, the
-   * parent resumes once they are done). The step is the run's latest dispatch step: a waiting run
-   * has active children only from the step it waits in. A run stays here until its children have
+   * way the timeout job would ({@link expire}: the fork invocation's active child stops as
+   * `timed out`, the parent resumes once it is done). Only fork invocations wait (agent map spec
+   * §5.4); their step is the run's fork dispatch step. A run stays here until its children have
    * stopped; a pass that neither stopped a child nor resumed the run is not counted.
    */
   private async sweepOverdueSubagents(): Promise<number> {
@@ -656,6 +692,7 @@ export class Waits implements OnApplicationShutdown {
           .selectFrom("subagent_dispatches")
           .select(sql<number | null>`max(step)`.as("step"))
           .where("parent_run_id", "=", r.id)
+          .where("for_skill", "=", true)
           .executeTakeFirst();
         if (last?.step == null) continue;
         const step = Number(last.step);
@@ -735,49 +772,88 @@ export class Waits implements OnApplicationShutdown {
   }
 
   /**
-   * Finished parent runs (past the grace period, within the last day) with an `Agent` call that has
-   * no `tool_result` (final review I3): a terminal path that skipped `stopOpenAgentCalls`, such as
-   * an old replica's abort, would otherwise leave an unpaired tool call that every later request of
-   * the conversation sends and providers refuse. Each is repaired under the conversation row lock
-   * with the normal `stopOpenCalls` (a child that ended gives its result, an active one the
-   * stopped text; idempotency keys make it safe against the regular paths); its active children
-   * are then stopped by {@link sweepChildrenOfFinished}.
+   * Idle sub-agent conversations (no active run, not deleted) with a message newer than what they
+   * consumed, written past the grace period and within the last day: a `SendMessage` that reached a
+   * run after its last model call is started by that run's post-job `ensureRun`
+   * (`RunQueue.childWakeIn`), which a replica dying after the terminal commit skips. Re-derived with
+   * the same `ensureRun` (its rules decide: a paused root starts nothing). A sub-agent whose last
+   * run was stopped (`aborted`) can never start from a message, so it is left out here, and the
+   * newest conversations come first (active within the last day), so parked messages that cannot
+   * start never fill the batch. Returns how many runs started.
    */
-  private async sweepOpenAgentCalls(): Promise<number> {
-    const agentCalls = await this.db
-      .selectFrom("subagent_dispatches as sd")
-      .innerJoin("runs as pr", "pr.id", "sd.parent_run_id")
-      .select(["sd.parent_run_id", "sd.parent_conversation_id"])
-      .distinct()
-      .where("pr.status", "in", TERMINAL_RUN_STATUSES)
+  private async sweepParkedMessages(): Promise<number> {
+    const rows = await this.db
+      .selectFrom("conversations as c")
+      .select("c.id")
+      .where("c.kind", "=", "subagent")
+      .where("c.deleted_at", "is", null)
+      // every append bumps `updated_at`: a message of the last day implies it (an index-friendly
+      // bound before the event lookups)
+      .where("c.updated_at", ">", sql<Date>`now() - interval '1 day'`)
       .where(
-        "pr.finished_at",
-        "<",
-        sql<Date>`now() - ${WAIT_SWEEP_GRACE_MS}::integer * interval '1 millisecond'`,
+        (eb) =>
+          sql<boolean>`(
+            SELECT r.status FROM capybara.runs r WHERE r.conversation_id = ${eb.ref("c.id")}
+            ORDER BY r.created_at DESC, r.id DESC LIMIT 1
+          ) IS DISTINCT FROM 'aborted'`,
       )
-      .where("pr.finished_at", ">", sql<Date>`now() - interval '1 day'`)
+      .where(({ exists, selectFrom }) =>
+        exists(
+          selectFrom("conversation_events as e")
+            .select(sql`1`.as("one"))
+            .whereRef("e.conversation_id", "=", "c.id")
+            .where("e.type", "=", "user_message")
+            .whereRef("e.seq", ">", "c.consumed_seq")
+            .where(
+              "e.created_at",
+              "<",
+              sql<Date>`now() - ${WAIT_SWEEP_GRACE_MS}::integer * interval '1 millisecond'`,
+            )
+            .where("e.created_at", ">", sql<Date>`now() - interval '1 day'`),
+        ),
+      )
       .where(({ not, exists, selectFrom }) =>
         not(
           exists(
-            selectFrom("conversation_events as e")
+            selectFrom("runs as r")
               .select(sql`1`.as("one"))
-              .whereRef("e.conversation_id", "=", "sd.parent_conversation_id")
-              .where(
-                "e.idem_key",
-                "=",
-                sql<string>`'tool_result:' || sd.parent_run_id || ':' || sd.parent_call_id`,
-              ),
+              .whereRef("r.conversation_id", "=", "c.id")
+              .where("r.status", "in", ACTIVE_RUN_STATUSES),
           ),
         ),
       )
-      // a fork invocation's dispatch (phase D) has no tool call: the query below covers it
-      .where(sql<boolean>`NOT (sd.step = 0 AND sd.parent_call_id LIKE 'skill-%')`)
+      .orderBy("c.updated_at", "desc")
+      .orderBy("c.id")
       .limit(WAIT_SWEEP_BATCH)
       .execute();
-    const forkRuns = await unreportedForkRuns(this.db);
-    const runs = [...agentCalls, ...forkRuns].filter(
-      (r, i, all) => all.findIndex((x) => x.parent_run_id === r.parent_run_id) === i,
-    );
+    let n = 0;
+    for (const c of rows) {
+      try {
+        if ((await this.runQueue.ensureRun(c.id)) === null) continue;
+        n++;
+        this.log.warn("wait sweep: started a sub-agent's parked message", { conversationId: c.id });
+      } catch (err) {
+        this.log.error("wait sweep: cannot start a sub-agent's parked message", {
+          conversationId: c.id,
+          err,
+        });
+      }
+    }
+    return n;
+  }
+
+  /**
+   * Finished runs (past the grace period, within the last day) triggered by a fork invocation that
+   * has no report ({@link unreportedForkRuns}): a terminal path that skipped
+   * `stopOpenAgentCalls`, such as an old replica's abort, would otherwise leave a fork lead without
+   * its report. Each is repaired under the conversation row lock with the normal
+   * `stopOpenAgentCalls` (an ended child gives its result, an active one the stopped text;
+   * idempotency keys make it safe against the regular paths); an active fork child is then stopped
+   * by {@link sweepForkChildrenOfFinished}. An `Agent` call has its result from its dispatch (agent
+   * map spec §4.1).
+   */
+  private async sweepOpenAgentCalls(): Promise<number> {
+    const runs = await unreportedForkRuns(this.db);
     let total = 0;
     for (const r of runs) {
       try {
@@ -792,12 +868,12 @@ export class Waits implements OnApplicationShutdown {
         if (toSeq !== null) await this.eventLog.notify(r.parent_conversation_id, toSeq);
         fire();
         total++;
-        this.log.warn("wait sweep: wrote missing agent results of a finished run", {
+        this.log.warn("wait sweep: wrote the missing fork report of a finished run", {
           runId: r.parent_run_id,
           conversationId: r.parent_conversation_id,
         });
       } catch (err) {
-        this.log.error("wait sweep: cannot write missing agent results of a finished run", {
+        this.log.error("wait sweep: cannot write the missing fork report of a finished run", {
           runId: r.parent_run_id,
           err,
         });
@@ -835,16 +911,19 @@ export class Waits implements OnApplicationShutdown {
   }
 
   /**
-   * Active sub-agent runs of a parent run that finished more than the grace period ago (spec §7.5,
-   * §12: a parent's terminal state stops its children; this is the backstop) → stopped.
+   * Active fork sub-agent runs (phase D, `for_skill`) of a parent run that finished more than the
+   * grace period ago (§12: the run's terminal state stops its fork child and reports it stopped;
+   * this is the backstop) → stopped. Background `Agent` children of a finished run are the normal
+   * case and keep running (agent map spec §5.4).
    */
-  private async sweepChildrenOfFinished(): Promise<number> {
+  private async sweepForkChildrenOfFinished(): Promise<number> {
     const parents = await this.db
       .selectFrom("subagent_dispatches as sd")
       .innerJoin("runs as cr", "cr.id", "sd.child_run_id")
       .innerJoin("runs as pr", "pr.id", "sd.parent_run_id")
       .select("sd.parent_run_id")
       .distinct()
+      .where("sd.for_skill", "=", true)
       .where("cr.status", "in", ACTIVE_RUN_STATUSES)
       .where("pr.status", "in", TERMINAL_RUN_STATUSES)
       .where(
@@ -860,13 +939,138 @@ export class Waits implements OnApplicationShutdown {
         const n = await this.stopChildren(p.parent_run_id, null);
         if (n === 0) continue;
         total += n;
-        this.log.warn("wait sweep: stopped sub-agents of a finished run", {
+        this.log.warn("wait sweep: stopped the fork sub-agent of a finished run", {
           runId: p.parent_run_id,
           count: n,
         });
       } catch (err) {
-        this.log.error("wait sweep: cannot stop sub-agents of a finished run", {
+        this.log.error("wait sweep: cannot stop the fork sub-agent of a finished run", {
           runId: p.parent_run_id,
+          err,
+        });
+      }
+    }
+    return total;
+  }
+
+  /**
+   * Active sub-agent runs with a deleted ancestor (agent map spec §10: deleting the root stops the
+   * whole tree; the delete's own {@link stopTree} is the normal path, this the backstop for a crash
+   * between marking the root deleted and stopping its tree, or a dispatch that raced it) → stopped
+   * on the deleter's behalf (no account). No grace period: nothing in a deleted tree should run.
+   */
+  private async sweepTreesOfDeletedRoots(): Promise<number> {
+    const r = await sql<{ run_id: string; conversation_id: string; status: string }>`
+      WITH RECURSIVE up(run_id, conversation_id, status, ancestor, n) AS (
+        SELECT r.id, r.conversation_id, r.status, c.parent_conversation_id, 1
+        FROM capybara.runs r JOIN capybara.conversations c ON c.id = r.conversation_id
+        WHERE r.status IN ('queued', 'running', 'waiting') AND c.kind = 'subagent'
+          AND c.parent_conversation_id IS NOT NULL
+        UNION ALL
+        SELECT up.run_id, up.conversation_id, up.status, c.parent_conversation_id, up.n + 1
+        FROM up JOIN capybara.conversations c ON c.id = up.ancestor
+        WHERE c.deleted_at IS NULL AND c.parent_conversation_id IS NOT NULL AND up.n < 16
+      )
+      SELECT DISTINCT up.run_id, up.conversation_id, up.status
+      FROM up JOIN capybara.conversations a ON a.id = up.ancestor
+      WHERE a.deleted_at IS NOT NULL
+      LIMIT ${WAIT_SWEEP_BATCH}`.execute(this.db);
+    let total = 0;
+    for (const run of r.rows) {
+      try {
+        // already asked to stop (a worker holds it and stops it at its next check): not again
+        if (run.status === "running" && (await this.abort.requested(run.run_id)) !== null) continue;
+        await this.stopRun(run.conversation_id, run.run_id, run.status, null);
+        total++;
+        this.log.warn("wait sweep: stopped a sub-agent run of a deleted conversation's tree", {
+          runId: run.run_id,
+        });
+      } catch (err) {
+        this.log.error("wait sweep: cannot stop a sub-agent run of a deleted tree", {
+          runId: run.run_id,
+          err,
+        });
+      }
+    }
+    return total;
+  }
+
+  /**
+   * Background sub-agent runs that finished more than the grace period ago (within the last day)
+   * whose parent has no `subagent_finished` for them (agent map spec §10: the finisher died after
+   * the child's terminal commit; the finish path writes `subagent_finished` and the delivery in one
+   * transaction) → {@link childFinished}, idempotent against a late finisher. Keyed on the child
+   * run, so a run nobody dispatched (a wake run, §5.3) is repaired too, and on
+   * `subagent_finished`, not on the delivery, so a child that finished before background
+   * dispatch (its result was the `Agent` call's, its `subagent_finished` written then) is never
+   * delivered a second time. Fork invocations' runs, a run without a terminal event in its log
+   * (nothing to deliver), a conversation never dispatched and a child whose parent conversation
+   * was deleted are skipped; only a written delivery counts.
+   */
+  private async sweepUndelivered(): Promise<number> {
+    const runs = await this.db
+      .selectFrom("runs as cr")
+      .innerJoin("conversations as cc", "cc.id", "cr.conversation_id")
+      .innerJoin("conversations as pc", "pc.id", "cc.parent_conversation_id")
+      .select("cr.id as child_run_id")
+      .where("cc.kind", "=", "subagent")
+      .where("pc.deleted_at", "is", null)
+      .where("cr.status", "in", TERMINAL_RUN_STATUSES)
+      .where(
+        "cr.finished_at",
+        "<",
+        sql<Date>`now() - ${WAIT_SWEEP_GRACE_MS}::integer * interval '1 millisecond'`,
+      )
+      .where("cr.finished_at", ">", sql<Date>`now() - interval '1 day'`)
+      .where(({ exists, selectFrom }) =>
+        exists(
+          selectFrom("subagent_dispatches as sd")
+            .select(sql`1`.as("one"))
+            .whereRef("sd.child_conversation_id", "=", "cc.id"),
+        ),
+      )
+      .where(({ not, exists, selectFrom }) =>
+        not(
+          exists(
+            selectFrom("subagent_dispatches as fd")
+              .select(sql`1`.as("one"))
+              .whereRef("fd.child_run_id", "=", "cr.id")
+              .where("fd.for_skill", "=", true),
+          ),
+        ),
+      )
+      .where(({ not, exists, selectFrom }) =>
+        not(
+          exists(
+            selectFrom("conversation_events as e")
+              .select(sql`1`.as("one"))
+              .whereRef("e.conversation_id", "=", "pc.id")
+              .where("e.idem_key", "=", sql<string>`'subagent_finished:' || cr.id`),
+          ),
+        ),
+      )
+      .where(({ exists, selectFrom }) =>
+        exists(
+          selectFrom("conversation_events as t")
+            .select(sql`1`.as("one"))
+            .whereRef("t.conversation_id", "=", "cc.id")
+            .whereRef("t.run_id", "=", "cr.id")
+            .where("t.type", "in", ["run_finished", "run_failed", "run_aborted"]),
+        ),
+      )
+      .limit(WAIT_SWEEP_BATCH)
+      .execute();
+    let total = 0;
+    for (const r of runs) {
+      try {
+        if (!(await this.childFinished(r.child_run_id))) continue;
+        total++;
+        this.log.warn("wait sweep: delivered the finish of a sub-agent run", {
+          childRunId: r.child_run_id,
+        });
+      } catch (err) {
+        this.log.error("wait sweep: cannot deliver the finish of a sub-agent run", {
+          childRunId: r.child_run_id,
           err,
         });
       }
@@ -909,7 +1113,7 @@ export class Waits implements OnApplicationShutdown {
           ),
         ),
       )
-      // the resume condition's third clause: a parent with an active child is not stuck
+      // the resume condition's third clause: a run with an active fork child is not stuck
       .where(({ not, exists, selectFrom }) =>
         not(
           exists(
@@ -917,6 +1121,7 @@ export class Waits implements OnApplicationShutdown {
               .innerJoin("runs as cr", "cr.id", "sd.child_run_id")
               .select(sql`1`.as("one"))
               .whereRef("sd.parent_run_id", "=", "runs.id")
+              .where("sd.for_skill", "=", true)
               .where("cr.status", "in", ACTIVE_RUN_STATUSES),
           ),
         ),
@@ -942,8 +1147,8 @@ export class Waits implements OnApplicationShutdown {
   }
 
   /**
-   * The id of the run's latest wait (by creation time): an approval, an input request or a
-   * sub-agent dispatch, whose wait id is its child run id (the id the child's finisher resumes
+   * The id of the run's latest wait (by creation time): an approval, an input request or a fork
+   * invocation's dispatch, whose wait id is its child run id (the id the child's finisher resumes
    * with, so a sweep resume and a late finisher resume share one job id).
    */
   private async lastWaitId(runId: string): Promise<string | null> {
@@ -963,7 +1168,8 @@ export class Waits implements OnApplicationShutdown {
             this.db
               .selectFrom("subagent_dispatches")
               .select(["child_run_id as id", "created_at"])
-              .where("parent_run_id", "=", runId),
+              .where("parent_run_id", "=", runId)
+              .where("for_skill", "=", true),
           )
           .as("w"),
       )
@@ -1010,7 +1216,7 @@ export class Waits implements OnApplicationShutdown {
 
   /**
    * Whether the wait is over: an approval or input request is no longer pending (decided, expired
-   * or cancelled); `subagents`: no child run of the run is active.
+   * or cancelled); `subagents`: the run's fork invocation child is no longer active.
    */
   private async isSettled(w: WaitingFor, runId: string): Promise<boolean> {
     if (w.kind === "subagents") {
@@ -1019,6 +1225,7 @@ export class Waits implements OnApplicationShutdown {
         .innerJoin("runs as cr", "cr.id", "sd.child_run_id")
         .select("cr.id")
         .where("sd.parent_run_id", "=", runId)
+        .where("sd.for_skill", "=", true)
         .where("cr.status", "in", ACTIVE_RUN_STATUSES)
         .executeTakeFirst();
       return active === undefined;
@@ -1097,43 +1304,93 @@ export class Waits implements OnApplicationShutdown {
   }
 
   /**
-   * After a child run's terminal state committed (sub-agents spec §7.3): appends
-   * `subagent_finished` to the parent log (idempotent; allowed while the parent waits, it is not
-   * model-visible) and tries {@link resume}`(parentRunId, childRunId)`. Every finishing child tries;
-   * the conditional resume lets exactly one succeed, the last to see all its siblings terminal. A
-   * run that is not a dispatched child, or not terminal yet, is left alone. A crash in between is
-   * repaired by the wait sweep and by the parent's tools node, which writes a missing
-   * `subagent_finished` itself. The running background tasks the terminal child run started are
-   * then stopped (not those of a later follow-up run of the same child).
+   * After a child run's terminal state committed (sub-agents spec §7.3, agent map spec §4.5,
+   * §5.2): a background child's run, whether dispatched, sent a message or woken
+   * ({@link deliveryRowOfChildRun}), is delivered to its parent
+   * ({@link SubagentDeliveries.childFinished}: `subagent_finished` and a `finished` delivery,
+   * idempotent by the run); a fork invocation's child (phase D, `for_skill`) appends
+   * `subagent_finished` (idempotent; not model-visible) and tries
+   * {@link resume}`(parentRunId, childRunId)`, which succeeds once its parent run waits on nothing
+   * else. A run of a conversation never dispatched, or not terminal yet, is left alone. A crash in
+   * between is repaired by the wait sweep (the orphan repair calls this again). A fork child's
+   * running background tasks the terminal run started are then stopped (not those of a later run);
+   * a stopped background child's are all stopped, whichever of its runs started them; a background
+   * child that ended on its own keeps them, and their finish wakes it (agent map spec §5.3). True
+   * when a background child's finished delivery was written by this call.
    */
-  async childFinished(childRunId: string): Promise<void> {
-    const row = await dispatchOfChildRun(this.db, childRunId);
-    if (!row) return;
+  async childFinished(childRunId: string): Promise<boolean> {
+    const row = await deliveryRowOfChildRun(this.db, childRunId);
+    if (!row) return false;
     const run = await this.db
       .selectFrom("runs")
       .select("status")
       .where("id", "=", childRunId)
       .executeTakeFirst();
-    if (!run || !TERMINAL_STATUSES.has(run.status)) return;
+    if (!run || !TERMINAL_STATUSES.has(run.status)) return false;
+    if (row.forSkill !== true) {
+      try {
+        return await this.deliveries.childFinished(childRunId);
+      } finally {
+        // a background child that ended on its own keeps its tasks: their finish wakes it (agent
+        // map spec §5.3); a stopped one's tasks all stop with it, also those an earlier run of it
+        // started, so none of them wakes it. Once a later run of it exists (a `SendMessage`
+        // started it again before this late call), only the stopped run's own tasks stop: the
+        // others may be the new run's. Never throws.
+        if (run.status === "aborted") {
+          const later = await this.hasLaterRun(row.childConversationId, childRunId);
+          await this.background.stopSubagentTasks(
+            row.childConversationId,
+            later ? childRunId : undefined,
+          );
+        }
+      }
+    }
     try {
       const r = await childResult(this.eventLog, row);
       if (!r) {
         this.log.warn("sub-agent run is terminal without a terminal event", { childRunId });
-        return;
+        return false;
       }
       await this.eventLog.append(row.parentConversationId, [finishedEvent(row, r.finished)]);
       await this.resume(row.parentRunId, childRunId);
+      return false;
     } finally {
-      // whichever way the child run ended (its worker, a stop while waiting, an orphan repair):
-      // nobody can read or stop the background tasks it started through its model any more
-      // (background Bash spec §4.3). Never throws.
+      // a fork child, whichever way its run ended (its worker, a stop while waiting, an orphan
+      // repair): nobody reads or stops the background tasks that run started through its model
+      // any more (background Bash spec §4.3); a background child's are handled above. Never throws.
       await this.background.stopSubagentTasks(row.childConversationId, childRunId);
     }
   }
 
   /**
-   * Stops the active children of a parent run (sub-agents spec §12), or only those dispatched in
-   * `opts.step`: a `waiting` child through its own {@link abortWaiting}, a `queued` / `running` one
+   * Whether the conversation has an active run other than `runId`, or one created after it (a
+   * sub-agent started again after `runId` ended).
+   */
+  private async hasLaterRun(conversationId: string, runId: string): Promise<boolean> {
+    const hit = await this.db
+      .selectFrom("runs as r")
+      .select("r.id")
+      .where("r.conversation_id", "=", conversationId)
+      .where("r.id", "<>", runId)
+      .where((eb) =>
+        eb.or([
+          eb("r.status", "in", ACTIVE_RUN_STATUSES),
+          eb(
+            "r.created_at",
+            ">",
+            eb.selectFrom("runs as o").select("o.created_at").where("o.id", "=", runId),
+          ),
+        ]),
+      )
+      .limit(1)
+      .executeTakeFirst();
+    return hit !== undefined;
+  }
+
+  /**
+   * Stops the active fork invocation child of a parent run (sub-agents spec §12, phase D;
+   * `for_skill`), or only one dispatched in `opts.step`; background `Agent` children are never
+   * stopped with the run that dispatched them (agent map spec §5.4, §6): a `waiting` child through its own {@link abortWaiting}, a `queued` / `running` one
    * that no worker holds directly (`RunQueue.abortIfOrphaned`), any other through
    * `RunAbort.request` (the cross-replica broadcast plus the marker key, so a child that starts
    * later still sees it), after which a child found `waiting` is stopped through `abortWaiting`
@@ -1154,37 +1411,138 @@ export class Waits implements OnApplicationShutdown {
       .innerJoin("runs as cr", "cr.id", "sd.child_run_id")
       .select(["sd.child_conversation_id", "sd.child_run_id", "cr.status"])
       .where("sd.parent_run_id", "=", parentRunId)
+      .where("sd.for_skill", "=", true)
       .where("cr.status", "in", ACTIVE_RUN_STATUSES);
     if (opts.step !== undefined) q = q.where("sd.step", "=", opts.step);
     const children = await q.execute();
     for (const c of children) {
-      const conv = c.child_conversation_id;
-      const runId = c.child_run_id;
-      // abortWaiting reports the stopped child to the parent itself (childFinished)
-      if (
-        c.status === "waiting" &&
-        (await this.abortWaiting(conv, runId, byAccountId, opts.detail))
-      ) {
-        continue;
-      }
-      if (await this.runQueue.abortIfOrphaned(conv, runId, byAccountId, opts.detail)) {
-        await this.childFinished(runId);
-        continue;
-      }
-      await this.abort.request(runId, byAccountId, opts.detail);
-      // the suspend handshake (see suspend): a child that became `waiting` after the read above
-      // may have checked the marker before it was set, so check `waiting` again after setting it
-      // (review M1)
-      const now = await this.db
-        .selectFrom("runs")
-        .select("status")
-        .where("id", "=", runId)
-        .executeTakeFirst();
-      if (now?.status === "waiting") {
-        await this.abortWaiting(conv, runId, byAccountId, opts.detail);
-      }
+      await this.stopRun(
+        c.child_conversation_id,
+        c.child_run_id,
+        c.status,
+        byAccountId,
+        opts.detail,
+      );
     }
     return children.length;
+  }
+
+  /**
+   * Stops a sub-agent with its descendants (agent map spec §6: stopping an agent of the map stops
+   * it and everything below it; deleting the root stops the whole tree): every active run of
+   * `conversationId` (unless `includeSelf` is false) and of each sub-agent conversation below it,
+   * shallowest first, each the way {@link stopChildren} stops a child (a stopped agent delivers its
+   * finish to its own parent as `aborted`). A run a worker holds ends later; its worker's
+   * {@link stopDescendantsOfStopped} stops what it dispatched after this read. Then the running
+   * background tasks of every covered sub-agent conversation stop, whether it was running or idle.
+   * Returns the number of runs asked to stop.
+   *
+   * Lock order: nothing is held across runs. Each run's stop is its own transaction (or none), and
+   * one that writes the terminal state locks that run's conversation row, then its run row, the
+   * order of `StepLog.appendCounted` (conversation row, then the root's budget run row) and of
+   * dispatch (conversation, run, budget run). No stop here locks a budget run, let alone before a
+   * descendant's conversation row, so the order is never inverted.
+   */
+  async stopTree(
+    conversationId: string,
+    byAccountId: string | null,
+    opts: { includeSelf?: boolean } = {},
+  ): Promise<number> {
+    const tree = await conversationTree(this.db, conversationId);
+    const ids = tree.filter((c) => opts.includeSelf !== false || c.level > 0).map((c) => c.id);
+    if (ids.length === 0) return 0;
+    const level = new Map(tree.map((c) => [c.id, c.level]));
+    const runs = (
+      await this.db
+        .selectFrom("runs")
+        .select(["id", "conversation_id", "status"])
+        .where("conversation_id", "in", ids)
+        .where("status", "in", ACTIVE_RUN_STATUSES)
+        .execute()
+    ).sort((a, b) => (level.get(a.conversation_id) ?? 0) - (level.get(b.conversation_id) ?? 0));
+    for (const r of runs) {
+      try {
+        if (await this.stopRun(r.conversation_id, r.id, r.status, byAccountId)) {
+          // its approval / question cards changed (RunControl.abortWaiting's event)
+          await this.events.emit("run.wait-stopped", {
+            conversationId: r.conversation_id,
+            runId: r.id,
+          });
+        }
+      } catch (err) {
+        this.log.error("cannot stop a sub-agent run of the tree", { runId: r.id, err });
+      }
+    }
+    // every running background task of the covered sub-agents stops with them, idle ones too
+    // (their finish would wake the idle agent, whose delivery would restart the stopped branch):
+    // all of each conversation's tasks, as a stopped child's run end does (`childFinished`), with
+    // which this is idempotent (only running tasks are stopped; `stoppedBy: "subagent_end"`
+    // never wakes). A root conversation is skipped (`stopSubagentTasks`); never throws.
+    await Promise.all(ids.map((id) => this.background.stopSubagentTasks(id)));
+    return runs.length;
+  }
+
+  /**
+   * After a sub-agent run's terminal commit (its worker): a run a person stopped (`run_aborted`
+   * with an account and no `detail`; only {@link stopTree} stops a sub-agent's run that way) stops
+   * the active runs below its conversation as well, so a descendant it dispatched after the tree
+   * stop read the tree still stops (dispatch needs its run `running`, so after its terminal commit
+   * the set is final). Any other end leaves its children running (agent map spec §5.4). Returns
+   * the number of runs asked to stop. A root conversation's run never stops its children here.
+   */
+  async stopDescendantsOfStopped(runId: string): Promise<number> {
+    const ev = await this.db
+      .selectFrom("runs as r")
+      .innerJoin("conversation_events as e", (j) =>
+        j.onRef("e.conversation_id", "=", "r.conversation_id").onRef("e.run_id", "=", "r.id"),
+      )
+      .innerJoin("conversations as c", "c.id", "r.conversation_id")
+      .select(["r.conversation_id", "e.payload"])
+      .where("r.id", "=", runId)
+      // a root's stop leaves its children running (agent map spec §6): a person-stopped root run
+      // reaching here (a redelivered job, the failure path) stops nothing
+      .where("c.kind", "=", "subagent")
+      .where("r.status", "=", "aborted")
+      .where("e.type", "=", "run_aborted")
+      .executeTakeFirst();
+    const p = ev?.payload as { byAccountId?: string | null; detail?: string } | undefined;
+    if (!ev || typeof p?.byAccountId !== "string" || p.detail !== undefined) return 0;
+    return this.stopTree(ev.conversation_id, p.byAccountId, { includeSelf: false });
+  }
+
+  /**
+   * Stops one active sub-agent run: a `waiting` one through its own {@link abortWaiting}, a
+   * `queued` / `running` one that no worker holds directly (`RunQueue.abortIfOrphaned`, then
+   * reported through {@link childFinished}), any other through `RunAbort.request` (the
+   * cross-replica broadcast plus the marker key, so a run that starts later still sees it), after
+   * which a run found `waiting` is stopped through `abortWaiting` too. True when it was stopped
+   * while waiting.
+   */
+  private async stopRun(
+    conv: string,
+    runId: string,
+    status: string,
+    byAccountId: string | null,
+    detail?: RunAbortDetail,
+  ): Promise<boolean> {
+    // abortWaiting reports the stopped child to the parent itself (childFinished)
+    if (status === "waiting" && (await this.abortWaiting(conv, runId, byAccountId, detail))) {
+      return true;
+    }
+    if (await this.runQueue.abortIfOrphaned(conv, runId, byAccountId, detail)) {
+      await this.childFinished(runId);
+      return false;
+    }
+    await this.abort.request(runId, byAccountId, detail);
+    // the suspend handshake (see suspend): a run that became `waiting` after the read above may
+    // have checked the marker before it was set, so check `waiting` again after setting it
+    // (review M1)
+    const now = await this.db
+      .selectFrom("runs")
+      .select("status")
+      .where("id", "=", runId)
+      .executeTakeFirst();
+    return now?.status === "waiting" && (await this.abortWaiting(conv, runId, byAccountId, detail));
   }
 }
 

@@ -2,6 +2,7 @@ import { isSandboxGoneError } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { ConversationAccess } from "../conversations/access.js";
 import { EventLog } from "../conversations/event-log.js";
+import { conversationTree } from "../conversations/tree.js";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
@@ -50,7 +51,7 @@ const taskNotFound = () => new ApiError("background_task.not_found", "Background
 /**
  * The HTTP side of background tasks (spec 2026-11-05-background-bash-design §5): the tasks of a
  * conversation and of its sub-agents, stopping one, reading its output. A task is reachable
- * through the conversation that owns it or through that conversation's parent, and only by a
+ * through the conversation that owns it or through any conversation above it, and only by a
  * person who may see the conversation (`ConversationAccess`, the rule of `GET :id`, which is also
  * what `POST :id/abort` checks: the owner).
  */
@@ -67,7 +68,10 @@ export class BackgroundTasks {
     @Inject(KernelDb) private readonly db: KernelDb,
   ) {}
 
-  /** The conversation and its sub-agents' conversations; `conversation.not_found` when not visible. */
+  /**
+   * The conversation and every sub-agent conversation below it (grandchildren too: their tasks run
+   * in the root's sandbox, agent map spec §6); `conversation.not_found` when not visible.
+   */
   private async scope(orgId: string, conversationId: string, accountId: string): Promise<string[]> {
     if (
       !UUID_RE.test(conversationId) ||
@@ -75,14 +79,8 @@ export class BackgroundTasks {
     ) {
       throw conversationNotFound();
     }
-    const children = await this.db
-      .selectFrom("conversations")
-      .select("id")
-      .where("org_id", "=", orgId)
-      .where("parent_conversation_id", "=", conversationId)
-      .where("kind", "=", "subagent")
-      .execute();
-    return [conversationId, ...children.map((c) => c.id)];
+    // the conversation is the org's (isAccessible), and so is every sub-agent conversation below it
+    return (await conversationTree(this.db.db, conversationId)).map((c) => c.id);
   }
 
   private view(task: BackgroundTaskRow, conversationId: string): BackgroundTaskView {

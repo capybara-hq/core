@@ -1159,7 +1159,7 @@ describe("ToolPipeline.runStep", () => {
     expect(await redis.exists(`capk:breaker:${seed.orgId}:${priv}`)).toBe(0);
   });
 
-  it("a sub-agent missing a personal connection: subagent_waiting connect in the parent log", async () => {
+  it("a sub-agent missing a personal connection: subagent_waiting connect in the parent (root) log", async () => {
     const priv = await seedConnector(raw, seed.orgId, seed.accountId, {
       slug: "priv",
       name: "Private Docs",
@@ -1170,7 +1170,13 @@ describe("ToolPipeline.runStep", () => {
     const parentConv = randomUUID();
     await sql`INSERT INTO capybara.conversations (id, org_id, agent_id, account_id)
       VALUES (${parentConv}, ${seed.orgId}, ${seed.agentId}, ${seed.accountId})`.execute(raw);
-    const parent = { conversationId: parentConv, runId: randomUUID(), callId: "pc1" };
+    const parent = {
+      conversationId: parentConv,
+      runId: randomUUID(),
+      callId: "pc1",
+      depth: 0,
+      rootConversationId: parentConv,
+    };
     const evs = await runCalls([{ id: "c1", name: "mcp__priv__read", input: {} }], { parent });
     expect(evs.filter((e) => e.type === "connection_required")).toHaveLength(1);
     const mirrored = (await eventsOf(db, parentConv)).filter((e) => e.type === "subagent_waiting");
@@ -1180,11 +1186,61 @@ describe("ToolPipeline.runStep", () => {
         payload: {
           subagentId: seed.conversationId,
           childRunId: runId,
+          path: [seed.conversationId],
           kind: "connect",
           toolKey: "mcp__priv__read",
         },
       },
     ]);
+  });
+
+  it("a grandchild missing a personal connection: subagent_waiting connect in the root log only", async () => {
+    const priv = await seedConnector(raw, seed.orgId, seed.accountId, {
+      slug: "priv",
+      name: "Private Docs",
+      auth: { type: "bearer", ownership: "personal" },
+    });
+    await seedAppTool(priv, "read");
+    resolved = [appTool("priv", priv, "read")];
+    // root → mid → this conversation (agent map spec §7: shown in the root)
+    const rootConv = randomUUID();
+    const midConv = randomUUID();
+    const rootRun = randomUUID();
+    await sql`INSERT INTO capybara.conversations (id, org_id, agent_id, account_id)
+      VALUES (${rootConv}, ${seed.orgId}, ${seed.agentId}, ${seed.accountId})`.execute(raw);
+    await sql`INSERT INTO capybara.conversations
+        (id, org_id, agent_id, account_id, kind, parent_conversation_id, subagent_depth)
+      VALUES (${midConv}, ${seed.orgId}, ${seed.agentId}, ${seed.accountId}, 'subagent',
+        ${rootConv}, 1)`.execute(raw);
+    await sql`UPDATE capybara.conversations SET parent_conversation_id = ${midConv}
+      WHERE id = ${seed.conversationId}`.execute(raw);
+    await sql`INSERT INTO capybara.subagent_dispatches (parent_run_id, parent_call_id,
+        parent_conversation_id, step, child_conversation_id, child_run_id, budget_run_id)
+      VALUES (${rootRun}, 'rc1', ${rootConv}, 1, ${midConv}, ${randomUUID()}, ${rootRun})`.execute(
+      raw,
+    );
+    const parent = {
+      conversationId: midConv,
+      runId: randomUUID(),
+      callId: "pc1",
+      depth: 1,
+      rootConversationId: rootConv,
+    };
+    await runCalls([{ id: "c1", name: "mcp__priv__read", input: {} }], { parent });
+    const mirrored = (await eventsOf(db, rootConv)).filter((e) => e.type === "subagent_waiting");
+    expect(mirrored.map((e) => ({ runId: e.runId, payload: e.payload }))).toEqual([
+      {
+        runId: rootRun,
+        payload: {
+          subagentId: seed.conversationId,
+          childRunId: runId,
+          path: [midConv, seed.conversationId],
+          kind: "connect",
+          toolKey: "mcp__priv__read",
+        },
+      },
+    ]);
+    expect((await eventsOf(db, midConv)).filter((e) => e.type === "subagent_waiting")).toEqual([]);
   });
 
   it("组织凭据缺失：不写 connection_required，提示找组织管理员", async () => {
@@ -1544,7 +1600,14 @@ describe("plugin hooks (tool.preExecute)", () => {
       config: () => ({ hooks: { timeoutMs: 1000 } }),
       log: silent,
     });
-    const parent = { conversationId: randomUUID(), runId: randomUUID(), callId: "pc1" };
+    const parentConv = randomUUID();
+    const parent = {
+      conversationId: parentConv,
+      runId: randomUUID(),
+      callId: "pc1",
+      depth: 0,
+      rootConversationId: parentConv,
+    };
     const evs = await runCalls([{ id: "c1", name: "plugin__probe__echo", input: { text: "1" } }], {
       conversationKind: "subagent",
       parent,

@@ -125,8 +125,16 @@ export type ThreadProps = {
   renderCard?(e: Extract<TimelineEntry, { kind: "card" }>): ReactNode;
   /** The sub-agent open in the right panel. */
   openSubagent?: string;
-  /** Opens a sub-agent in the right panel (`#subagent=`). */
+  /** Opens a sub-agent in the right panel (`#subagent=`): a waiting sub-agent's line. */
   onOpenSubagent?(id: string): void;
+  /**
+   * Opens a sub-agent in the agent map: level 2 (`#agents=<id>`) from an `Agent` call block's
+   * action and a delivery row without text; its transcript (`transcript`, `#agents=<id>/transcript`,
+   * where its approval, question or connection card is) from a nested agent's wait.
+   */
+  onOpenAgent?(id: string, transcript?: boolean): void;
+  /** Opens the agent map (`#agents`): the sub-agent groups' header action. */
+  onOpenAgentMap?(): void;
   /** Opens a background task's output in the right panel (`#bg-<taskId>`). */
   onOpenTask?(taskId: string): void;
   /** Renders a sub-agent's task message (the sub-agent panel); nothing without it. */
@@ -146,6 +154,8 @@ type EntryCallbacks = {
     | "onMoreFiles"
     | "onOpenOutput"
     | "onOpenSubagent"
+    | "onOpenAgent"
+    | "onOpenAgentMap"
     | "onOpenTask"
     | "renderCard"
     | "renderTask"]?: ThreadProps[K] | undefined;
@@ -178,6 +188,8 @@ type EntryContext = {
     openFile: boolean;
     moreFiles: boolean;
     openSubagent: boolean;
+    openAgent: boolean;
+    openAgentMap: boolean;
     openTask: boolean;
   };
   cb: { readonly current: EntryCallbacks };
@@ -205,6 +217,8 @@ export function Thread({
   renderCard,
   openSubagent,
   onOpenSubagent,
+  onOpenAgent,
+  onOpenAgentMap,
   onOpenTask,
   live = true,
   renderTask,
@@ -268,6 +282,8 @@ export function Thread({
     onMoreFiles,
     onOpenOutput,
     onOpenSubagent,
+    onOpenAgent,
+    onOpenAgentMap,
     onOpenTask,
     renderCard,
     renderTask,
@@ -281,6 +297,8 @@ export function Thread({
   const hasOpenFile = onOpenFile !== undefined;
   const hasMoreFiles = onMoreFiles !== undefined;
   const hasOpenSubagent = onOpenSubagent !== undefined;
+  const hasOpenAgent = onOpenAgent !== undefined;
+  const hasOpenAgentMap = onOpenAgentMap !== undefined;
   const hasOpenTask = onOpenTask !== undefined;
   const ctx = useMemo<EntryContext>(
     () => ({
@@ -306,6 +324,8 @@ export function Thread({
         openFile: hasOpenFile,
         moreFiles: hasMoreFiles,
         openSubagent: hasOpenSubagent,
+        openAgent: hasOpenAgent,
+        openAgentMap: hasOpenAgentMap,
         openTask: hasOpenTask,
       },
       cb,
@@ -333,6 +353,8 @@ export function Thread({
       hasOpenFile,
       hasMoreFiles,
       hasOpenSubagent,
+      hasOpenAgent,
+      hasOpenAgentMap,
       hasOpenTask,
     ],
   );
@@ -405,7 +427,6 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
     filePaths,
     selectedFile,
     removedFiles,
-    openSubagent,
   } = c;
   // Callbacks go through the ref at call time: a memoized entry never calls a stale one.
   const cb = c.cb;
@@ -416,6 +437,10 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
   const onOpenSubagent = c.has.openSubagent
     ? (id: string) => cb.current.onOpenSubagent?.(id)
     : undefined;
+  const onOpenAgent = c.has.openAgent
+    ? (id: string, transcript?: boolean) => cb.current.onOpenAgent?.(id, transcript)
+    : undefined;
+  const onOpenAgentMap = c.has.openAgentMap ? () => cb.current.onOpenAgentMap?.() : undefined;
   const onOpenTask = c.has.openTask
     ? (taskId: string) => cb.current.onOpenTask?.(taskId)
     : undefined;
@@ -632,6 +657,7 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
         return (
           <UserBubble
             text={e.text}
+            {...(e.sender ? { sender: e.sender.name ?? t("parentAgent") } : {})}
             {...(e.skill ? { skill: e.skill.label } : {})}
             {...(details !== undefined ? { details } : {})}
             {...(atts.length > 0
@@ -691,25 +717,29 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
       case "subagents":
         return (
           <SubagentGroup
-            rows={e.rows.map((r) => r.row)}
-            {...(openSubagent !== undefined ? { openId: openSubagent } : {})}
+            // without a way to open an agent (no agent map here) the blocks have no action
+            rows={e.rows.map((r) => (onOpenAgent ? r.row : { ...r.row, openable: false }))}
             onOpen={(id) => {
-              // A call refused before any dispatch keeps its call key as id: no record to open.
-              if (!isCallKey(id)) onOpenSubagent?.(id);
+              // A call refused before any dispatch keeps its call key as id: no agent to open.
+              if (!isCallKey(id)) onOpenAgent?.(id);
             }}
+            {...(onOpenAgentMap ? { onOpenMap: onOpenAgentMap } : {})}
           />
         );
-      case "subagent-wait":
+      case "subagent-wait": {
+        // an agent below the conversation's children opens in the map, never the right panel: its
+        // transcript, whose thread holds the card to decide, answer or connect
+        const open = e.deep
+          ? onOpenAgent && ((id: string) => onOpenAgent(id, true))
+          : onOpenSubagent;
         return (
-          <SubagentWait
-            orgId={orgId}
-            wait={e}
-            info={info}
-            {...(onOpenSubagent ? { onOpen: onOpenSubagent } : {})}
-          />
+          <SubagentWait orgId={orgId} wait={e} info={info} {...(open ? { onOpen: open } : {})} />
         );
+      }
       case "task":
         return renderTask?.(e) ?? null;
+      case "delivery":
+        return <DeliveryRow e={e} onOpen={onOpenAgent} />;
       case "skill-report":
         return (
           <Disclosure summary={t("skillReport")}>
@@ -755,4 +785,45 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
   };
 
   return entry(e);
+}
+
+/**
+ * A sub-agent's delivery in its parent (agent map spec §4.5): one notice line ("Scan docs handed
+ * back a report"); its text (the report, the note, a finish's reply or error) opens under it, and
+ * a delivery without text opens the agent in the map.
+ */
+function DeliveryRow({
+  e,
+  onOpen,
+}: {
+  e: Extract<TimelineEntry, { kind: "delivery" }>;
+  onOpen: ((id: string) => void) | undefined;
+}): ReactNode {
+  const t = useTranslations("chat.delivery");
+  const [open, setOpen] = useState(false);
+  const text = t(e.delivery === "finished" ? (e.status ?? "completed") : e.delivery, {
+    name: e.name,
+  });
+  if (e.text === "") {
+    return (
+      <RunDivider
+        kind="notice"
+        text={text}
+        {...(onOpen ? { action: { onClick: () => onOpen(e.subagentId) } } : {})}
+      />
+    );
+  }
+  return (
+    <RunDivider
+      kind="notice"
+      text={text}
+      action={{
+        label: t(open ? "hide" : "show"),
+        expanded: open,
+        onClick: () => setOpen((o) => !o),
+      }}
+    >
+      {open ? <Prose markdown={e.text} streaming={false} /> : undefined}
+    </RunDivider>
+  );
 }

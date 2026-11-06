@@ -77,9 +77,11 @@ export interface DbHandles {
 /** A run control that starts and stops nothing (the old optional `runs` left out). */
 const noRuns: RunControl = {
   ensureRun: async () => null,
+  wakeHeldTree: async () => {},
   abortIfOrphaned: async () => false,
   abortWaiting: async () => false,
   requestAbort: async () => {},
+  stopTree: async () => 0,
 };
 
 /**
