@@ -9,6 +9,7 @@ import {
   baseChecks,
   changedFiles,
   changesetWarning,
+  localTestPlan,
   safePlan,
   tryChangedFiles,
   verifySteps,
@@ -44,8 +45,29 @@ describe("verifySteps", () => {
     ]);
   });
 
-  it("plan.all runs pnpm test", () => {
-    expect(find({ ...basePlan, all: true, test: true }, "test")?.cmd).toEqual(["pnpm", "test"]);
+  it("plan.all runs pnpm test with --full", () => {
+    const all = { ...basePlan, all: true, test: true };
+    expect(verifySteps(all, "abc", { full: true }).find((s) => s.id === "test")?.cmd).toEqual([
+      "pnpm",
+      "test",
+    ]);
+  });
+
+  it("plan.all without --full runs the local plan's tests and leaves the full suite to CI", () => {
+    const all = { ...basePlan, all: true, test: true };
+    const local = { ...basePlan, test: true, testDirs: ["tools/ci", "tools/checks"] };
+    const test = verifySteps(all, "abc", { local }).find((s) => s.id === "test");
+    expect(test?.cmd).toEqual(["pnpm", "exec", "vitest", "run", "tools/ci/", "tools/checks/"]);
+    expect(test?.note).toMatch(/CI runs the full suite/);
+  });
+
+  it("plan.all without --full and nothing local skips the tests with a note", () => {
+    const all = { ...basePlan, all: true, test: true };
+    for (const local of [null, basePlan]) {
+      const test = verifySteps(all, "abc", { local }).find((s) => s.id === "test");
+      expect(test?.cmd).toBeNull();
+      expect(test?.note).toMatch(/pnpm verify --full/);
+    }
   });
 
   it("testDirs become vitest filters", () => {
@@ -75,6 +97,36 @@ describe("verifySteps", () => {
       expect(find(plan, id)).toMatchObject({ cmd: null, note: "CI runs this" });
     }
     expect(find(basePlan, "web")).toBeUndefined();
+  });
+});
+
+describe("localTestPlan", () => {
+  const ws: Workspace = {
+    packages: [
+      { dir: "packages/kernel", name: "@x/kernel", deps: [], hasTests: true },
+      { dir: "tools/ci", name: "@x/ci", deps: [], hasTests: true },
+      { dir: "tools/checks", name: "@x/checks", deps: ["@x/kernel"], hasTests: true },
+    ],
+    testPlugins: {},
+  };
+
+  it("drops the run-everything triggers and keeps what the rest of the diff affects", () => {
+    const local = localTestPlan(
+      [".github/workflows/ci.yml", "tools/ci/README.md", "AGENTS.md", "packages/kernel/src/a.ts"],
+      ws,
+    );
+    expect(local.all).toBe(false);
+    expect(local.testDirs).toEqual(["packages/kernel", "tools/checks", "tools/ci"]);
+  });
+
+  it("runs the own tests of a package a trigger belongs to", () => {
+    const local = localTestPlan(["tools/ci/src/affected.ts", "tools/ci/README.md"], ws);
+    expect(local.test).toBe(true);
+    expect(local.testDirs).toEqual(["tools/ci"]);
+  });
+
+  it("runs nothing when only run-everything triggers and docs changed", () => {
+    expect(localTestPlan(["pnpm-lock.yaml", "docs/x.md"], ws).test).toBe(false);
   });
 });
 

@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
   pull_request:
+  # The merge queue tests each PR merged onto the current main before it lands.
+  merge_group:
 
 # A new push to a PR cancels its older run; runs on main are never cancelled.
 concurrency:
@@ -14,69 +16,15 @@ concurrency:
 # artifacts and the Actions cache use the runner's own token, not GITHUB_TOKEN).
 permissions: {}
 
-# Branch protection requires `ci-ok` (which aggregates every job below) and `issue-linked`
-# (set by community.yml, not part of this workflow).
+# The ruleset requires `ci-ok` (which aggregates every job below) and `issue-linked` (set by
+# community.yml, not part of this workflow).
 #
-# PRs run what the diff affects; pushes to main run everything. The plan comes from
-# tools/ci/src/affected.ts (rules and their tests live there; tools/ci/README.md lists them):
-# - ci (lint, typecheck, pnpm check, plugin packing, commitlint): always, in full (pnpm check runs
-#   the plugin-scoped checks of packages/plugin-tools, the code behind `capybara-plugin check`, on
-#   model-fake and the fake extensions (the official plugins live in capybara-hq/plugins), and
-#   includes perm-hooks: cheap, reads all plugin sources;
-#   check:sdk-api: cheap, regenerates the plugin SDK API report; check:skills-frontmatter: cheap,
-#   reads the skills' frontmatter; check:compose-haproxy: cheap, compares two files
-#   (compose.yaml's inline config and docker/sandbox-proxy/haproxy.cfg);
-#   check:test-plugins: cheap, a text scan of the test roots (incl. test-plugins-official: core
-#   tests load only model-fake, OFFICIAL_EXCEPTIONS is empty, and test-plugins-stale-exception: an
-#   exception that no longer loads its plugins fails); plugin-test-imports (plugin tests reach
-#   nothing outside their plugin) and plugin-release-metadata (published plugins name the root
-#   package.json's repository; example-* private; release-display-name: published plugins have a
-#   displayName), both plugin-tools checks: cheap, scan the plugin tests and read the plugins'
-#   package.json / plugin.json files; plugin-config-ui and plugin-config-labels (config forms:
-#   valid config UI hints; labelled fields of published plugins): cheap, one bundle and import
-#   per plugin with an extension, like the pack check; check:release-metadata: cheap, reads
-#   the workspace package.json files and the compose image tag; check:terms: cheap, a text scan of the tracked files for the old extension /
-#   catalog / plugin names and (rule terms-tool-key) the old builtin tool keys; plugin-tool-key-length (a plugin-tools
-#   check: cheap, a source scan of ctx.tools.register names: the key plugin__<extension>__<tool> fits 64 characters); check:kernel-conventions: cheap, parses the kernel source, its tests
-#   and its callers (about a second) for the patterns the Nest refactor removed; and check:bootstrap: cheap offline (the manifest parses; its npm pins
-#   are left to the network half; bootstrap-compose-ref: the compose files' git build contexts of
-#   capybara-hq/plugins are pinned to marketplace.commit), in full; check:tokens: cheap, compares
-#   docs/design/tokens.json with the two files gen:tokens renders from it and checks its contrast
-#   pairs; design-char-icon, a rule of check:web-ui: cheap, a text scan for characters used as icons in apps/web and
-#   packages/design; the web-query-* and web-lib-client-hook rules of check:web-ui: cheap, AST scans of apps/web/src, in full). Its network half (`check:bootstrap --network`: npm entries
-#   against the registry and the official marketplace commit, marketplace.url the official one,
-#   bootstrap-haproxy: the sandbox-docker plugin's test copy of the socket proxy config at that
-#   commit equals docker/sandbox-proxy/haproxy.cfg, and the compose build contexts exist there;
-#   needs GitHub and npm) runs in the ci job by diff on PRs, only when one of its inputs changed
-#   (packages/kernel/bootstrap.json, the check's code tools/checks/src/{bootstrap*,cli/bootstrap}.ts,
-#   packages/plugin-tools/src/pack/npm.ts, packages/plugin-sdk/src/bootstrap.ts; docker/** runs
-#   everything anyway; plan output bootstrap-network), always on main and in release.yml. On PRs the ci job also runs
-#   check:sdk-api-changeset and check:applied-migrations (applied-migration-edited and
-#   migration-number-behind-base), in full (cheap inspections of the PR diff; skipped on main,
-#   which has no base to compare);
-# npm publishing and the image push are not here: .github/workflows/release.yml runs on push to
-# main and workflow_dispatch only, never on PRs.
-# - test: the affected workspace packages only (4 shards when the kernel tests run, else 1), plus
-#   apps/capybara when packages/kernel/bootstrap.json or packages/plugin-tools changed (its tests
-#   pack fakes and bootstrap them); core tests load model-fake and the fakes only;
-# - web, visual: when apps/web or packages/design changed, or docs/design/{spec.md,tokens.json}
-#   (EXTRA_INPUTS); visual runs the screenshot regression plus the measuring / state-coverage /
-#   completeness spec (visual/fidelity.spec.ts), the skeleton alignment spec
-#   (visual/skeleton-alignment.spec.ts: loading boxes equal the loaded page's boxes) and the interaction specs
-#   (visual/*.interaction.spec.ts); by diff because it builds Next and runs Playwright (minutes);
-#   the reference images (reference-update.yml) and the baselines (visual-update.yml) are rendered
-#   only by those manual workflows, never on PRs;
-# - e2e: when anything the e2e stack is built from or loads changed (including
-#   packages/kernel/bootstrap.json, whose npm pins the e2e setup's `capybara bootstrap` downloads
-#   and installs);
-# - docker (builds the four images for linux/amd64, never pushes, runs docker/test/compose-smoke.sh;
-#   ~15 min, so by diff): when anything the images are built from changed (the dependency closure of
-#   apps/capybara and apps/web: kernel, plugin-sdk, design; packages/kernel/bootstrap.json, whose
-#   npm pins the compose init downloads), plugins/model-fake or packages/plugin-tools (the smoke
-#   test packs model-fake with it and installs it);
-#   docker/**, the Dockerfiles and .dockerignore are outside every package, so they run everything;
-# - docs-only diffs skip test / web / e2e / visual / docker; root config, the lockfile, .github/**, tools/ci/**,
-#   packages/testing/**, unknown files, or a diff that can't be computed run everything.
+# PRs run what the diff affects; pushes to main run everything. The plan is computed by the
+# `changes` job with tools/ci/src/affected.ts (rules unit-tested in tools/ci/test); which job runs
+# when is described in tools/ci/README.md, and what each custom check does in
+# tools/checks/README.md. Keep the descriptions there, not here: this file is a run-everything
+# trigger, so every edit to it reruns the whole suite. npm publishing and the image push are in
+# release.yml (push to main and workflow_dispatch only, never on PRs).
 jobs:
   changes:
     runs-on: ubuntu-latest
@@ -103,18 +51,19 @@ jobs:
       - id: plan
         env:
           EVENT: ${{ github.event_name }}
-          BASE: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
         run: |
           # When in doubt, run everything: a missed run is worse than a wasted one.
-          if [ "$EVENT" != "pull_request" ]; then
+          if [ "$EVENT" != "pull_request" ] && [ "$EVENT" != "merge_group" ]; then
             node tools/ci/src/cli.ts --all "push to main"
           elif ! git diff --name-only "$BASE...$HEAD_SHA" > changed-files.txt; then
             node tools/ci/src/cli.ts --all "could not diff $BASE...$HEAD_SHA"
-          elif grep -qE '^(\.github/|tools/ci/)' changed-files.txt; then
-            # Decided here, not by the script: the PR may have changed the script itself.
+          elif grep -qE '^(\.github/workflows/ci\.yml|tools/ci/)' changed-files.txt; then
+            # Decided here, not by the script: the change may have edited the plan itself (the
+            # script, or this workflow); other .github files are the script's to judge.
             cat changed-files.txt
-            node tools/ci/src/cli.ts --all "CI definition changed (.github/** or tools/ci/**)"
+            node tools/ci/src/cli.ts --all "CI definition changed (ci.yml or tools/ci/**)"
           else
             cat changed-files.txt
             node tools/ci/src/cli.ts < changed-files.txt

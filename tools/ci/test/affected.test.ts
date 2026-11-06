@@ -37,6 +37,7 @@ const ws: Workspace = {
     pkg("tools/checks", ["packages/kernel"]),
     pkg("tools/worktree"),
     pkg("tools/ci"),
+    pkg("tools/release"),
     pkg("packages/plugin-tools", ["packages/sdk"]),
     pkg("tools/no-tests", [], false),
   ],
@@ -60,6 +61,7 @@ describe("planFromFiles: run everything", () => {
     "biome.json",
     ".github/workflows/ci.yml",
     ".github/scripts/anything.sh",
+    ".github/workflows/new-workflow.yml",
     "tools/ci/test-plugins.json",
     "tools/ci/src/affected.ts",
     "packages/testing/src/containers.ts",
@@ -109,6 +111,9 @@ describe("planFromFiles: docs-only fast path", () => {
     [[".claude/skills/x/SKILL.md", ".gitignore", ".changeset/brave-cats.md"]],
     [[".agents/skills/writing-extensions/SKILL.md"]],
     [[".agents/skills/x/scripts/helper.sh", ".agents/skills/x/reference.json"]],
+    [[".github/CODEOWNERS", ".github/workflows/cla.yml", ".github/workflows/community.yml"]],
+    [[".github/workflows/visual-update.yml", ".github/workflows/reference-update.yml"]],
+    [[".github/workflows/merge-queue.yml"]],
     [[]],
     [["", "  "]],
   ])("%j runs nothing", (files) => {
@@ -275,6 +280,15 @@ describe("planFromFiles: by diff", () => {
     expect(plan("docs/config.md").testDirs).toEqual(["tools/checks"]);
   });
 
+  it("release.yml runs only tools/release, whose workflow tests read it", () => {
+    expect(plan(".github/workflows/release.yml")).toMatchObject({
+      all: false,
+      testDirs: ["tools/checks", "tools/release"],
+      docker: false,
+      e2e: false,
+    });
+  });
+
   it("docs/design/tokens.json runs design (and what depends on it) and tools/checks", () => {
     expect(plan("docs/design/tokens.json")).toMatchObject({
       testDirs: ["apps/web", "packages/design", "tools/checks"],
@@ -303,12 +317,12 @@ describe("planFromFiles: by diff", () => {
 });
 
 describe("toOutputs", () => {
-  it("full run: no filter, four shards", () => {
+  it("full run: no filter, six shards", () => {
     expect(toOutputs(planAll("push"))).toMatchObject({
       test: "true",
       "test-dirs": "",
-      "test-shards": "[1,2,3,4]",
-      "test-shard-total": "4",
+      "test-shards": "[1,2,3,4,5,6]",
+      "test-shard-total": "6",
       e2e: "true",
       docker: "true",
       "bootstrap-network": "true",
