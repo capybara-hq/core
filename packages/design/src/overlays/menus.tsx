@@ -3,6 +3,7 @@ import * as RP from "@radix-ui/react-popover";
 import { cloneElement, type ReactElement, type ReactNode } from "react";
 import { Icon } from "../icons/icon";
 import type { IconName } from "../icons/paths";
+import { BoxScope } from "../layout/box";
 import { useDesignLink } from "../provider";
 
 export type MenuItem =
@@ -81,7 +82,7 @@ export function Popover({
           align="start"
           collisionPadding={COLLISION_PADDING}
         >
-          {children}
+          <BoxScope kind="popover">{children}</BoxScope>
         </RP.Content>
       </RP.Portal>
     </RP.Root>

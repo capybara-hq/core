@@ -143,6 +143,28 @@ describe("ItemListItem (rows that hold more than a line, spec §6.12)", () => {
     expect(within(second as HTMLElement).queryByRole("group")).toBeNull();
   });
 
+  it("empty meta and empty children draw no lines and no body", () => {
+    zh(
+      <ItemList label="用途">
+        <ItemListItem title="评测" meta={[]}>
+          {false}
+        </ItemListItem>
+      </ItemList>,
+    );
+    const row = within(screen.getByRole("list")).getByRole("listitem");
+    expect(row.querySelector(".cb-item-list-lines")).toBeNull();
+    expect(row.querySelector(".cb-item-list-body")).toBeNull();
+    expect(within(row).queryByRole("group")).toBeNull();
+    cleanup();
+    zh(
+      <ItemList label="渠道" empty="还没有渠道。">
+        {false}
+        {null}
+      </ItemList>,
+    );
+    expect(screen.getByText("还没有渠道。")).toBeTruthy();
+  });
+
   it("rows and children together; empty children fall back to the empty text", () => {
     zh(
       <ItemList label="渠道" rows={[{ id: "a", title: "飞书" }]}>

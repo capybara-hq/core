@@ -498,6 +498,11 @@ span.cb-title-btn {
 .cb-property-section[data-inset="box"] + .cb-property-section[data-inset="box"] {
   border-top: 1px solid var(--cb-line-soft);
 }
+/* In the sheet the hairline goes between the panel's children, so a section the page wraps (an
+   extension section's `data-extension-section` box) is split from its neighbours too. */
+.cb-conv-sheet > .cb-properties > * + * {
+  border-top: 1px solid var(--cb-line-soft);
+}
 .cb-property-section[data-inset="box"] .cb-table[data-framed="false"] {
   --cb-table-ground: var(--cb-panel-2);
 }

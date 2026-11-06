@@ -2,6 +2,7 @@ import { Fragment, type ReactNode } from "react";
 import { Button, IconButton, LinkButton } from "../controls/index";
 import { Icon } from "../icons/icon";
 import type { IconName } from "../icons/paths";
+import { BoxScope } from "../layout/box";
 import { Menu, type MenuItem, menuActions, menuLone } from "../overlays/index";
 import { LinkPendingMark, useDesignLink, useDesignT } from "../provider";
 import { Avatar, type AvatarValue } from "./avatar";
@@ -74,7 +75,7 @@ export function ObjectList({
   if (loading === undefined || loading === false) {
     return (
       <ul className="cb-object-list" aria-label={label}>
-        {children}
+        <BoxScope kind="object-list">{children}</BoxScope>
       </ul>
     );
   }

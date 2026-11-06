@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { Button } from "../controls/index";
 import { Icon } from "../icons/icon";
+import { BoxScope } from "../layout/box";
 import { useDesignLink } from "../provider";
 
 export type CalloutProps = {
@@ -23,7 +24,9 @@ export function Callout({ tone, children, action }: CalloutProps) {
   return (
     <section className="cb-callout" role={tone === "info" ? "note" : "status"} data-tone={tone}>
       <Icon name="circle-alert" size={16} />
-      <span className="cb-callout-text">{children}</span>
+      <span className="cb-callout-text">
+        <BoxScope kind="callout">{children}</BoxScope>
+      </span>
       {action ? (
         action.href !== undefined ? (
           <Link
