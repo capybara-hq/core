@@ -18,7 +18,7 @@ permissions: {}
 # (set by community.yml, not part of this workflow).
 #
 # PRs run what the diff affects; pushes to main run everything. The plan comes from
-# tools/ci/src/affected.ts (rules and their tests live there; AGENTS.md "CI and checks" lists them):
+# tools/ci/src/affected.ts (rules and their tests live there; tools/ci/README.md lists them):
 # - ci (lint, typecheck, pnpm check, plugin packing, commitlint): always, in full (pnpm check runs
 #   the plugin-scoped checks of packages/plugin-tools, the code behind `capybara-plugin check`, on
 #   model-fake and the fake extensions (the official plugins live in capybara-hq/plugins), and

@@ -99,3 +99,23 @@ pnpm lint && pnpm typecheck && pnpm check && pnpm test   # tests need Docker (Te
 ```
 
 For the contribution workflow see [CONTRIBUTING.md](../CONTRIBUTING.md); for the repository guide coding agents read, [AGENTS.md](../AGENTS.md).
+
+## Logs and tracing
+
+- Dev logs: `pnpm dev:kernel` and `pnpm dev:web` copy their output to `/tmp/capybara-dev-kernel.log`
+  and `/tmp/capybara-dev-web.log` (pretty, colors in the terminal only). A kernel record is
+  `[<local time>] LEVEL: [pid=…] - [traceId=…] [reqId=…] [queue=…] [jobId=…] [runId=…] [context=…]
+  [plugin=…] msg` (each bracket only when present; `context` is the class that logged) with the other
+  fields as indented `key: value` lines below. When a dev kernel or the web app misbehaves, read those
+  first (`tail -n 200`, `grep reqId=<id>`, `grep context=<Class>`) before guessing.
+- The kernel logger is pino (`packages/kernel/src/log.ts`): records are `{ level, time, role, msg,
+  ...fields }`, redacted before any output; `log.format` picks pretty or JSON (auto: pretty on a
+  TTY), `log.loki.url` also pushes to Loki. A provider's injected `KERNEL_LOGGER` is a child with
+  `context` = its class name (transient; outside an injection use `KERNEL_ROOT_LOGGER`); Nest's own
+  lines (route mapping at startup) are at info with Nest's context. Request records carry `reqId` (echoed in
+  `x-request-id`), queue jobs `queue` / `jobId` / `runId` (`log-context.ts`); a new `@Processor`
+  runs each job in `runJob` (`infra/queue/run-job.ts`: a fresh async context plus `withJobContext`).
+- Tracing is OpenTelemetry, on only when `OTEL_EXPORTER_OTLP_ENDPOINT` (or `..._TRACES_ENDPOINT`) is
+  set: `apps/capybara/src/main.ts` starts it (`tracing.ts`) for `capybara start` before the kernel
+  is imported, and imports no OpenTelemetry module otherwise (`apps/capybara/test/tracing.test.ts`).
+  Records logged inside a span carry `traceId` / `spanId`.
