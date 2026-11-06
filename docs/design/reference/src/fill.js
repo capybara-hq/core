@@ -132,7 +132,13 @@
   function conversations(o) {
     const C = F.SIDEBAR_COPY;
     const n = F.ARCHIVED_COUNT_FIXTURE;
-    const head = `<div class="r-sb-convs-head"><span class="r-sb-section">${esc(C.conversations)}</span><button class="r-icon-btn" data-step="dense" aria-label="${esc(C.filter)}"${o.filter ? ' data-active="true"' : ""}>${icon("filter", 14)}</button></div>`;
+    // the archived list's icon button sits in the head before the filter (spec §6.13), shown
+    // while the plain list is up
+    const archive =
+      !o.archived && !o.state
+        ? `<button class="r-icon-btn" data-step="dense" aria-label="${esc(C.archived)} · ${n}" title="${esc(C.archived)} · ${n}">${icon("archive", 14)}</button>`
+        : "";
+    const head = `<div class="r-sb-convs-head"><span class="r-sb-section">${esc(C.conversations)}</span>${archive}<button class="r-icon-btn" data-step="dense" aria-label="${esc(C.filter)}"${o.filter ? ' data-active="true"' : ""}>${icon("filter", 14)}</button></div>`;
     const filter = o.filter
       ? `<div class="r-sb-filter"><input class="r-input r-sb-filter-input" placeholder="${esc(C.filterQuery)}" aria-label="${esc(C.filterQuery)}"${o.query ? ` value="${esc(o.query)}"` : ""}><div class="r-seg r-seg-fill r-sb-filter-seg" role="radiogroup" aria-label="会话状态">${C.states
           .map((label, i) => `<button role="radio" aria-checked="${["all", "running", "waiting"][i] === o.filter}">${esc(label)}</button>`)
@@ -141,11 +147,7 @@
     const back = o.archived
       ? `<button class="r-sb-archived" data-back="true">${icon("arrow-left", 14)}<span class="r-ellipsis">${esc(C.archived)} · ${n}</span></button>`
       : "";
-    const entry =
-      !o.archived && !o.state
-        ? `<button class="r-sb-archived">${icon("archive", 14)}<span class="r-ellipsis">${esc(C.archived)} · ${n}</span></button>`
-        : "";
-    return `<div class="r-sb-convs" aria-label="${esc(C.conversations)}">${head}${filter}${back}${conversationList(o)}${entry}</div>`;
+    return `<div class="r-sb-convs" aria-label="${esc(C.conversations)}">${head}${filter}${back}${conversationList(o)}</div>`;
   }
 
   function orgBlock(o) {
