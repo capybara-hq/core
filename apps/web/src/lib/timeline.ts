@@ -116,9 +116,6 @@ export function approverOf(a: Approver): Waiter | undefined {
   return undefined;
 }
 
-/** Longest agent result kept as a row's in-place summary (the panel has the whole record). */
-const SUBAGENT_RESULT_MAX = 600;
-
 /** A tool row plus what the container needs to act on it. */
 export interface TimelineTool {
   row: ToolRowData;
@@ -864,14 +861,6 @@ export function buildEventTimeline(
           const row = a.sub.row;
           // Refused before any dispatch (unknown type, limits): nothing ran.
           if (row.status === "queued") row.status = e.payload.isError ? "failed" : "completed";
-          const result = e.payload.content;
-          row.summary = {
-            steps: [],
-            result:
-              result.length > SUBAGENT_RESULT_MAX
-                ? `${result.slice(0, SUBAGENT_RESULT_MAX)}…`
-                : result,
-          };
           break;
         }
         const c = calls.get(callKey(e.runId, e.payload.callId));

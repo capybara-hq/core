@@ -1309,8 +1309,10 @@ States: `collapsed`, `expanded`, `live`
 - Attachments sit above the bubble, right-aligned, `space.2` apart: images as `layout.thumb` square thumbnails (radius `sm`, cropped to fill), then files as attachment chips (§6.16.21, without the remove button). Each opens like today's AttachmentPreview. A thumbnail that fails to load is reported to the caller, which may refresh the session and reload it once (as AttachmentPreview's `retry`).
 - **Skill invocation** (phase D, state `skill`): the bubble starts with the skill chip, the composer's chip (§6.16.2) without its remove button: `control.dense` high, radius `sm`, padding 0 `space.2`, the `accent-tint` ground, the label ("/fix-issue") in mono `body` `accent`, centered on the first prose line, `space.2` before the text, which is the invocation's arguments (none: the chip alone). Under the bubble, right-aligned, at most 75% wide, `space.2` below it: a closed Disclosure (§6.5) "技能说明" / "Skill instructions" in `small` `muted`, a `row.dense` summary line whose chevron is `muted` too (not the Disclosure's usual `faint`), whose body is the text sent in the person's name (`small`, line breaks kept). A queued invocation (§6.16.14) shows the same chip in its dashed bubble.
 
+- **Sender** (state `sender`, agent map spec §9.4): a message another agent sent (a parent's message in a sub-agent's transcript) has, above the bubble and right-aligned, "来自 <sender>" / "From <sender>" (`small`, `muted`, one line with an ellipsis, at most 75% wide, `space.2` above the bubble). A person's own message has none.
+
 <!-- states: user-bubble -->
-States: `default`, `attachments`, `skill`
+States: `default`, `attachments`, `skill`, `sender`
 
 <!-- size-table: user-bubble -->
 | Part | State | Property | Value |
@@ -1335,6 +1337,9 @@ States: `default`, `attachments`, `skill`
 | bubble-skill | skill | font-size | type.body |
 | bubble-details | skill | font-size | type.small |
 | bubble-details | skill | color | color.muted |
+| bubble-sender | sender | font-size | type.small |
+| bubble-sender | sender | color | color.muted |
+| bubble | sender | background-color | color.selected |
 
 #### 6.16.7 Run divider
 
@@ -1591,13 +1596,12 @@ States: `default`, `hover`, `editing`, `paused`
 
 #### 6.16.15 Sub-agent group
 
-- Sub-agents group like tools (phase C runtime; B builds them on fixtures; rows in child-creation order, durations "41 秒", "1分12秒" / "41s", "1m 12s"; a waiting sub-agent says what it waits for in `accent`, a stopped one "已停止" / "Stopped" in `muted`). **Running**: a header tool line with a `spinner` (16) and "正在运行 N 个子 agent" / "N subagents running", and the rows in a tool box. **Waiting**: when every active sub-agent waits for a person, the header has no `spinner` and says what the first one waits for in `accent` ("等待批准" / "Waiting for approval"), with " · 已完成 N 个" / " · N done" in `faint` as when running (§6.16.9). **Done**: a collapsed header "N 个子 agent 已完成（M 个失败）· 共 X 次调用 · <duration>" / "N subagents done (M failed) · X calls · <duration>" with the failure count in `fail` and the totals in `faint`.
-- **Row** (a tool row): a `spinner` (16) while running, none while waiting for a person; the agent type as a tag (`micro` `muted` on the `selected` ground, radius `sm`, padding 0 `space.1`); the task description in `ink` with an ellipsis; at the end in `faint` ("失败" in `fail` and " · " when failed) "N 次调用 · <duration>" (a waiting row: the waiting word, " · " and "N 次调用", no duration and no clock) and `chevron-right` 12, a button named "在右侧打开 <description>" / "Open <description> on the right". Success has no mark.
-- The row open in the right panel has `aria-current="true"`, the `accent-tint` ground and a 2px `accent` bar on its left (§2.3).
-- A row can expand in place (`aria-expanded`): the steps (`small`, gap `space.1`, indented `space.5`, padding 0 `space.3`, a 1px `line` rule on the left), the result (`prose-small` `muted`) and "在右侧打开完整记录" / "Open the full record on the right" (link button with `maximize-2` 12); no `line-soft` rule separates the steps from the next row.
+- Sub-agents group like tools (phase C runtime; durations "41 秒", "1分12秒" / "41s", "1m 12s"). **Running**: a header tool line with a `spinner` (16) and "正在运行 N 个子 agent" / "N subagents running", then one Agent call block per sub-agent, `space.2` apart. **Waiting**: when every active sub-agent waits for a person, the header has no `spinner` and says what the first one waits for in `accent` ("等待批准" / "Waiting for approval"), with " · 已完成 N 个" / " · N done" in `faint` as when running (§6.16.9). **Done**: a collapsed header "N 个子 agent 已完成（M 个失败）· 共 X 次调用 · <duration>" / "N subagents done (M failed) · X calls · <duration>" with the failure count in `fail` and the totals in `faint`; opening it shows the blocks.
+- **Agent call block** (`AgentCallBlock({ description, prompt, state, onOpen, defaultExpanded? })`, agent map spec §9.5, as Claude Code draws an `Agent` call): a tool box (`panel`, radius `md`, `small`) whose header (`row.dense`, padding `pad.default`) is the tool name "Agent" (600, `ink`) and the task description (`ink`), one line with an ellipsis; the body is the IN block of an expanded tool row (§6.16.9: the label "输入" / "IN" in `micro` `faint`, 4ch) with the prompt in `ink`, line breaks kept, **two lines with an ellipsis**. When the two lines hide something (measured, again on resize) a link button "展开" / "Show more" (`aria-expanded`, `aria-controls` the prompt) opens it in full and becomes "收起" / "Show less". No prompt: no body.
+- **Status line** under the box (`row.dense`, padding 0 `pad.default.x`, `small`, `muted`, gap `space.2`): the status dot of the agent map (§6.16.28: 8, round, `role="img"` with the status word; running `accent` pulsing every `motion.pulse`, waiting `warn`, completed `ok`, failed `fail`, stopped `faint`), the state (one line, ellipsis) and at the end the link button "在智能体图中查看" / "View in agent map" (`onOpen`: that agent's level 2). While the child works: "后台运行中：<current tool summary>" / "Working in the background: <summary>" ("后台运行中" alone before the first summary; a queued child counts as working); waiting for a person: "后台等待中：<summary>" / "Waiting in the background: <summary>". Once it has ended: "完成" / "Completed", "失败" / "Failed" (in `fail`) or "已停止" / "Stopped", then " · <time> · <tokens>" (each left out when unknown; tokens as the agent map writes them). The action stays after the end. The line is not a live region (the summary changes with every tool call).
 
 <!-- states: subagent-group -->
-States: `running`, `waiting`, `done`, `failed`, `expanded`, `row-open`
+States: `running`, `waiting`, `done`, `failed`, `stopped`, `expanded`
 
 <!-- size-table: subagent-group -->
 | Part | State | Property | Value |
@@ -1607,22 +1611,26 @@ States: `running`, `waiting`, `done`, `failed`, `expanded`, `row-open`
 | spinner | running | width | space.4 |
 | tool-box | running | background-color | color.panel |
 | tool-box | running | border-radius | radius.md |
-| subagent-row | running | height | row.dense |
-| agent-tag | running | font-size | type.micro |
-| agent-tag | running | background-color | color.selected |
-| agent-tag | running | color | color.muted |
+| agent-call-head | running | height | row.dense |
+| agent-call-name | running | color | color.ink |
+| tool-io-label | running | color | color.faint |
+| agent-call-prompt | running | color | color.ink |
+| agent-call-prompt | running | font-size | type.small |
+| agent-call-status | running | height | row.dense |
+| agent-call-status | running | color | color.muted |
+| agent-dot | running | width | space.2 |
+| agent-dot | running | background-color | color.accent |
+| agent-call-open | running | color | color.muted |
 | tool-line | waiting | height | row.dense |
 | waiting-word | waiting | color | color.accent |
-| subagent-row | waiting | height | row.dense |
+| agent-dot | waiting | background-color | color.warn |
 | fail-word | done | color | color.fail |
 | tool-line | done | height | row.dense |
-| fail-word | failed | color | color.fail |
-| subagent-row | failed | height | row.dense |
-| subagent-steps | expanded | padding-left | space.3 |
-| subagent-steps | expanded | border-left-color | color.line |
-| subagent-result | expanded | font-size | type.prose-small |
-| subagent-result | expanded | color | color.muted |
-| subagent-row[aria-current=true] | row-open | background-color | color.accent-tint |
+| agent-dot[data-status=failed] | failed | background-color | color.fail |
+| agent-call-status[data-status=failed] fail-word | failed | color | color.fail |
+| agent-dot[data-status=aborted] | stopped | background-color | color.faint |
+| agent-call-more | expanded | color | color.muted |
+| agent-call-prompt[data-expanded=true] | expanded | color | color.ink |
 
 #### 6.16.16 Inline card
 
@@ -2096,15 +2104,16 @@ back, status dot, title, close, then meta lines). Esc closes, focus is trapped a
   keyboard can focus (`tabindex="0"`, the focus ring inset), so a tree wider than the dialog
   scrolls without a pointer.
 
-`AgentDetail({ node, agentType, spawnedBy, latestText, task, background, toolCalls, onBack,
-onClose, onOpenParent, onOpenTranscript, onStop?, now? })` is level 2, one agent's summary, live at
+`AgentDetail({ node, agentType, inBackground?, spawnedBy, latestText, task, background, toolCalls,
+onBack, onClose, onOpenParent, onOpenTranscript, onStop?, now? })` is level 2, one agent's summary, live at
 the granularity of tool summaries. The dialog has no padding and is 600 high (at most the window
 less 32), so it does not jump while the agent works; head, body and footer pad themselves:
 
 - **Head** (padding `space.5` `space.6` `space.3`, 1px `line-soft` below): a dense back button
   (`arrow-left`, "返回智能体图" / "Back to the agent map"), the status dot, the description (`h2`,
   one line with an ellipsis) and close. Under it, indented past the back button (`control.dense` +
-  `space.2`), three meta lines (`small`, `muted`): "运行中 · <agent type> · <model> · 后台";
+  `space.2`), three meta lines (`small`, `muted`): "运行中 · <agent type> · <model> · 后台" ("后台" only while `inBackground`, the
+default: a fork skill's child runs in the foreground and has none);
   "由 <parent> 派出" / "Spawned by <parent>", the parent an underlined `ink` link that opens its
   node (`onOpenParent`); "<time> · <tokens>".
 - **Body** (scrolls, padding `space.3` `space.6`): the latest text (prose), then three collapsible
@@ -2119,9 +2128,10 @@ less 32), so it does not jump while the agent works; head, body and footer pad t
   and, while the agent runs (`onStop` given), "停止" / "Stop" (`danger`; stops its descendants too).
   The buttons share the row; a finished agent's "Open transcript" fills it.
 
-`TranscriptFrame({ node, agentType, spawnedBy, contextPercent?, onBack, onClose, onStop?,
-children })` is level 3: the same head with one meta line ("<status> · <agent type> · <model> ·
-后台 · 由 <parent> 派出 · <time> · <tokens>"), the thread (`children`: the conversation page's own
+`TranscriptFrame({ node, agentType, inBackground?, spawnedBy, onOpenParent?, contextPercent?,
+onBack, onClose, onStop?, children })` is level 3: the same head with one meta line ("<status> ·
+<agent type> · <model> · 后台 · 由 <parent> 派出 · <time> · <tokens>"; "后台" as at level 2, the
+parent the same link as at level 2 when `onOpenParent` is given), the thread (`children`: the conversation page's own
 timeline components, built from `apps/web/src/lib/timeline.ts`) in the conversation's thread column
 (`.cb-conv-thread`, padding `space.4` `layout.gutter`, scrolling), and instead of a composer a
 read-only status line (`row.dense`, 1px `line-soft` above, `small`, `faint`): "子智能体只读 ·

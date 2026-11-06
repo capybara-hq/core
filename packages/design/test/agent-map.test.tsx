@@ -5,6 +5,8 @@ import { userEvent } from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AGENT_MAP_FIXTURE } from "../src/fixtures/index";
 import {
+  AgentCallBlock,
+  type AgentCallState,
   AgentDetail,
   type AgentMapBackground,
   AgentMapDialog,
@@ -447,11 +449,9 @@ describe("TranscriptFrame (§6.16.28, level 3)", () => {
     const onBack = vi.fn();
     const done: AgentMapNode = { ...invoice, status: "completed" };
     wrap(frame({ node: done, onBack }, { live: false }));
-    expect(
-      screen.getByText(
-        "完成 · 财务助手 · opus 5.5 · 后台 · 由 整理季度经营报告 派出 · 16分25秒 · 266.5k tokens",
-      ),
-    ).toBeTruthy();
+    expect(document.querySelector('[data-part="agent-meta"]')?.textContent).toBe(
+      "完成 · 财务助手 · opus 5.5 · 后台 · 由 整理季度经营报告 派出 · 16分25秒 · 266.5k tokens",
+    );
     expect(screen.queryByRole("button", { name: "停止" })).toBeNull();
     expect(screen.queryByText(/上下文/)).toBeNull();
     await userEvent.click(screen.getByRole("button", { name: "返回智能体图" }));
@@ -466,5 +466,191 @@ describe("TranscriptFrame (§6.16.28, level 3)", () => {
       ),
     ).toBeTruthy();
     expect(screen.getByText("Context 31%")).toBeTruthy();
+  });
+
+  it("the spawning agent is a link when onOpenParent is given", async () => {
+    const onOpenParent = vi.fn();
+    wrap(frame({ onOpenParent }));
+    const meta = document.querySelector('[data-part="agent-meta"]') as HTMLElement;
+    await userEvent.click(within(meta).getByRole("button", { name: "整理季度经营报告" }));
+    expect(onOpenParent).toHaveBeenCalledWith("am_root");
+  });
+
+  it("a foreground agent (inBackground={false}) has no background label", () => {
+    wrap(frame({ inBackground: false }));
+    expect(document.querySelector('[data-part="agent-meta"]')?.textContent).toBe(
+      "运行中 · 财务助手 · opus 5.5 · 由 整理季度经营报告 派出 · 16分25秒 · 266.5k tokens",
+    );
+  });
+});
+
+describe("AgentDetail background label", () => {
+  it("a foreground agent (inBackground={false}) has no background label", () => {
+    wrap(detail({ inBackground: false }));
+    expect(screen.getByText("运行中 · 财务助手 · opus 5.5")).toBeTruthy();
+    expect(screen.queryByText(/· 后台/)).toBeNull();
+  });
+});
+
+// ── The Agent call block in the stream ──────────────────────────────────────
+
+describe("AgentCallBlock (§6.16.15)", () => {
+  const prompt = D.task;
+  const call = (state: AgentCallState, o: { onOpen?: () => void } = {}) => (
+    <AgentCallBlock
+      description={invoice.description}
+      prompt={prompt}
+      state={state}
+      onOpen={o.onOpen ?? (() => {})}
+    />
+  );
+  const status = () =>
+    document.querySelector('[data-part="agent-call-status"]') as HTMLElement | null;
+
+  /** jsdom lays nothing out: make every element report a box taller than it shows. */
+  const overflowing = (on: boolean) => {
+    const proto = HTMLElement.prototype as unknown as Record<string, unknown>;
+    for (const [key, value] of [
+      ["scrollHeight", on ? 120 : 40],
+      ["clientHeight", 40],
+    ] as const) {
+      Object.defineProperty(proto, key, { configurable: true, get: () => value });
+    }
+  };
+  afterEach(() => {
+    const proto = HTMLElement.prototype as unknown as Record<string, unknown>;
+    delete proto.scrollHeight;
+    delete proto.clientHeight;
+  });
+
+  it("the head is the tool name Agent and the task description; the body is IN with the prompt", () => {
+    wrap(call({ status: "running" }));
+    const head = document.querySelector('[data-part="agent-call-head"]') as HTMLElement;
+    expect(head.textContent).toBe("Agent 核对供应商发票与付款记录");
+    expect(within(head).getByText("Agent").dataset.part).toBe("agent-call-name");
+    const io = document.querySelector('[data-part="tool-io"]') as HTMLElement;
+    expect(io.querySelector('[data-part="tool-io-label"]')?.textContent).toBe("输入");
+    expect(within(io).getByText(prompt).dataset.part).toBe("agent-call-prompt");
+  });
+
+  it("the prompt shows two lines and expands", async () => {
+    overflowing(true);
+    wrap(call({ status: "running" }));
+    const p = screen.getByText(prompt);
+    expect(p.dataset.expanded).toBe("false");
+    // two lines with an ellipsis while collapsed
+    expect(rule('.cb-agent-call-prompt[data-expanded="false"]')).toMatch(/-webkit-line-clamp: 2;/);
+    expect(rule('.cb-agent-call-prompt[data-expanded="false"]')).toMatch(/overflow: hidden;/);
+    const more = screen.getByRole("button", { name: "展开" });
+    expect(more.getAttribute("aria-expanded")).toBe("false");
+    await userEvent.click(more);
+    expect(p.dataset.expanded).toBe("true");
+    const less = screen.getByRole("button", { name: "收起" });
+    expect(less.getAttribute("aria-expanded")).toBe("true");
+    expect(less.getAttribute("aria-controls")).toBe(p.id);
+    await userEvent.click(less);
+    expect(p.dataset.expanded).toBe("false");
+  });
+
+  it("a prompt that fits in two lines has no toggle", () => {
+    overflowing(false);
+    wrap(call({ status: "running" }));
+    expect(screen.queryByRole("button", { name: "展开" })).toBeNull();
+  });
+
+  it("a running call shows the current tool summary and updates when it changes", () => {
+    const { rerender } = wrap(call({ status: "running", current: "Bash 运行核对脚本" }));
+    const line = status() as HTMLElement;
+    expect(line.dataset.status).toBe("running");
+    const dot = line.querySelector('[data-part="agent-dot"]');
+    expect(dot?.getAttribute("data-status")).toBe("running");
+    expect(dot?.getAttribute("role")).toBe("img");
+    expect(line.querySelector('[data-part="agent-call-text"]')?.textContent).toBe(
+      "后台运行中：Bash 运行核对脚本",
+    );
+    rerender(
+      <DesignProvider locale="zh">
+        {call({ status: "running", current: "Read finance/q1/payments-2026-03.csv" })}
+      </DesignProvider>,
+    );
+    expect(status()?.querySelector('[data-part="agent-call-text"]')?.textContent).toBe(
+      "后台运行中：Read finance/q1/payments-2026-03.csv",
+    );
+    // no summary yet: the line says it works in the background
+    rerender(<DesignProvider locale="zh">{call({ status: "running" })}</DesignProvider>);
+    expect(status()?.querySelector('[data-part="agent-call-text"]')?.textContent).toBe(
+      "后台运行中",
+    );
+  });
+
+  it("a waiting call says it waits, with the warn dot", () => {
+    wrap(call({ status: "waiting", current: "Bash 删除临时文件" }));
+    expect(status()?.querySelector('[data-part="agent-dot"]')?.getAttribute("data-status")).toBe(
+      "waiting",
+    );
+    expect(status()?.querySelector('[data-part="agent-call-text"]')?.textContent).toBe(
+      "后台等待中：Bash 删除临时文件",
+    );
+  });
+
+  it("an ended call shows status, time and tokens", () => {
+    const { rerender } = wrap(
+      call({ status: "completed", durationMs: 985_000, tokens: 266_500, current: "x" }),
+    );
+    const text = () => status()?.querySelector('[data-part="agent-call-text"]') as HTMLElement;
+    expect(text().textContent).toBe("完成 · 16分25秒 · 266.5k tokens");
+    expect(status()?.querySelector('[data-part="agent-dot"]')?.getAttribute("data-status")).toBe(
+      "completed",
+    );
+    expect(screen.queryByText(/后台运行中/)).toBeNull();
+
+    rerender(
+      <DesignProvider locale="zh">
+        {call({ status: "failed", durationMs: 192_000, tokens: 30_400 })}
+      </DesignProvider>,
+    );
+    expect(text().textContent).toBe("失败 · 3分12秒 · 30.4k tokens");
+    expect(within(text()).getByText("失败").dataset.part).toBe("fail-word");
+
+    rerender(
+      <DesignProvider locale="zh">
+        {call({ status: "aborted", durationMs: 41_000, tokens: 950 })}
+      </DesignProvider>,
+    );
+    expect(text().textContent).toBe("已停止 · 41 秒 · 950 tokens");
+    expect(status()?.querySelector('[data-part="agent-dot"]')?.getAttribute("data-status")).toBe(
+      "aborted",
+    );
+
+    // unknown time and tokens are left out
+    rerender(<DesignProvider locale="zh">{call({ status: "completed" })}</DesignProvider>);
+    expect(text().textContent).toBe("完成");
+  });
+
+  it("the action calls onOpen, running or ended", async () => {
+    const onOpen = vi.fn();
+    const { rerender } = wrap(
+      call({ status: "running", current: "Bash 运行核对脚本" }, { onOpen }),
+    );
+    await userEvent.click(screen.getByRole("button", { name: "在智能体图中查看" }));
+    expect(onOpen).toHaveBeenCalledTimes(1);
+    rerender(
+      <DesignProvider locale="zh">
+        {call({ status: "completed", durationMs: 1000, tokens: 10 }, { onOpen })}
+      </DesignProvider>,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "在智能体图中查看" }));
+    expect(onOpen).toHaveBeenCalledTimes(2);
+  });
+
+  it("speaks English", () => {
+    overflowing(true);
+    wrap(call({ status: "running", current: "Bash 运行核对脚本" }), "en");
+    expect(status()?.querySelector('[data-part="agent-call-text"]')?.textContent).toBe(
+      "Working in the background: Bash 运行核对脚本",
+    );
+    expect(screen.getByRole("button", { name: "View in agent map" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Show more" })).toBeTruthy();
+    expect(document.querySelector('[data-part="tool-io-label"]')?.textContent).toBe("IN");
   });
 });

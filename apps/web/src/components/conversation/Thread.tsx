@@ -405,7 +405,6 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
     filePaths,
     selectedFile,
     removedFiles,
-    openSubagent,
   } = c;
   // Callbacks go through the ref at call time: a memoized entry never calls a stale one.
   const cb = c.cb;
@@ -692,7 +691,6 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
         return (
           <SubagentGroup
             rows={e.rows.map((r) => r.row)}
-            {...(openSubagent !== undefined ? { openId: openSubagent } : {})}
             onOpen={(id) => {
               // A call refused before any dispatch keeps its call key as id: no record to open.
               if (!isCallKey(id)) onOpenSubagent?.(id);

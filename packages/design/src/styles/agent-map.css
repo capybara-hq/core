@@ -445,3 +445,71 @@
   white-space: nowrap;
   text-overflow: ellipsis;
 }
+
+/* ── The Agent call block in the stream (§6.16.15, agent map spec §9.5) ── */
+
+.cb-agent-calls {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-2);
+  min-width: 0;
+}
+.cb-agent-call {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.cb-agent-call-head {
+  display: flex;
+  align-items: center;
+  min-height: var(--cb-row-dense);
+  padding: var(--cb-pad-default-y) var(--cb-pad-default-x);
+  color: var(--cb-ink);
+}
+.cb-agent-call-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cb-agent-call-prompt {
+  margin: 0;
+  color: var(--cb-ink);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.cb-agent-call-prompt[data-expanded="false"] {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+}
+.cb-agent-call-more {
+  align-self: flex-start;
+}
+/* The status line under the block: the dot, the state and the action, aligned with the header's
+   text. */
+.cb-agent-call-status {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-2);
+  min-height: var(--cb-row-dense);
+  padding: 0 var(--cb-pad-default-x);
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.cb-agent-call-text {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cb-agent-call-open {
+  flex: none;
+  margin-left: auto;
+  white-space: nowrap;
+}

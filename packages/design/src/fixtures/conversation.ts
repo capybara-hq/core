@@ -611,14 +611,17 @@ export type FixtureSubagent = {
   status: "running" | "done" | "failed";
   toolCalls: number;
   duration: string;
-  steps?: string[];
-  result?: string;
+  /** The dispatch prompt, the call block's IN. */
+  prompt: string;
+  /** The current tool summary of a running sub-agent. */
+  current?: string;
+  tokens: number;
 };
 
 export const SUBAGENT_FIXTURE: {
   running: FixtureSubagent[];
   done: FixtureSubagent[];
-  /** The id of the row open in the right panel. */
+  /** The id of the sub-agent open in the right panel. */
   open: string;
   totals: { calls: number; duration: string };
   panel: {
@@ -639,6 +642,10 @@ export const SUBAGENT_FIXTURE: {
       status: "running",
       toolCalls: 20,
       duration: "2分28秒",
+      prompt:
+        "只读地列出文档文件夹「示例项目」下的完整目录树。不要移动、改名、删除、共享或修改任何文件。输出：写成 JSON 到 docs/tree.json；最终回复给出文件总数、目录深度，以及一、二级目录名称。",
+      current: "Bash 列出「02 流程 / 10 现金预算」下的子目录",
+      tokens: 48_200,
     },
     {
       id: "sa_dedupe",
@@ -647,6 +654,10 @@ export const SUBAGENT_FIXTURE: {
       status: "running",
       toolCalls: 5,
       duration: "48 秒",
+      prompt:
+        "读流程 v12 里处理重复收款人的代码，说明去重规则：按哪些字段判重、重复时保留哪一行。只读，不要改代码。",
+      current: "Read flows/v12/dedupe.py",
+      tokens: 21_300,
     },
   ],
   done: [
@@ -657,9 +668,9 @@ export const SUBAGENT_FIXTURE: {
       status: "done",
       toolCalls: 8,
       duration: "1分12秒",
-      steps: ["已使用 Acme 表格: 读取区域 映射表!A1:F240", "已运行 4 个命令", "已读取 示例表.xlsx"],
-      result:
-        "结论：示例供应商 A、B、C 属于「同收款人同科目」，流程取第一行；示例供应商 D 属于「同收款人不同科目」，取最后一行。",
+      prompt:
+        "核对映射表里收款人重复的行：按收款人和科目分组，说明流程遇到重复时取哪一行，并列出受影响的供应商。只读，不要改表。",
+      tokens: 63_400,
     },
     {
       id: "sa_ids",
@@ -668,6 +679,8 @@ export const SUBAGENT_FIXTURE: {
       status: "done",
       toolCalls: 9,
       duration: "41 秒",
+      prompt: "收集流程 v12 引用的全部文档和文件夹 ID，按引用位置列出。",
+      tokens: 30_100,
     },
     {
       id: "sa_draft",
@@ -676,6 +689,8 @@ export const SUBAGENT_FIXTURE: {
       status: "failed",
       toolCalls: 4,
       duration: "1分07秒",
+      prompt: "起草一条给财务的确认消息，说明重复收款人的处理规则，请他们确认。",
+      tokens: 12_800,
     },
   ],
   open: "sa_tree",
@@ -975,6 +990,8 @@ export type FixtureAgentDetail = {
   spawnedBy: { id: string; label: string };
   latestText: string;
   task: string;
+  /** A message the parent sent the agent while it worked (a bubble labelled with the parent). */
+  message: string;
   background: FixtureAgentTask[];
   /** In call order, oldest first (the component lists them newest first). */
   toolCalls: FixtureAgentCall[];
@@ -1018,6 +1035,7 @@ export const AGENT_MAP_FIXTURE: {
     spawnedBy: { id: "am_root", label: "整理季度经营报告" },
     latestText: "三月份还差 4 笔付款没对上，现在跑一遍核对脚本。",
     task: "核对第一季度供应商发票与付款记录：以 ERP 导出的付款流水为准，逐笔匹配发票号、金额和收款方，列出未匹配和金额不一致的记录，按供应商汇总后交回。",
+    message: "先核对三月份，一二月的已经由财务确认过。",
     background: [
       { id: "bg_sync", description: "同步 ERP 付款流水", status: "running", durationMs: 95_000 },
     ],

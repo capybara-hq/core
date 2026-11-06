@@ -1,11 +1,10 @@
 import * as RD from "@radix-ui/react-dialog";
 import { createContext, type JSX, type ReactNode, useContext, useId, useState } from "react";
 import { Button, IconButton } from "../controls/button";
-import type { Locale } from "../i18n";
-import { messages } from "../i18n";
 import { Icon } from "../icons/icon";
 import { useFocusReturn } from "../overlays/focus-return";
 import { useDesignLocale, useDesignT } from "../provider";
+import { type AgentMapStatus, agentMapTokens, StatusDot } from "./agent-status";
 import { useClock } from "./clock";
 import { type BackgroundTaskItem, type BackgroundTaskStatus, subagentDuration } from "./subagents";
 import { fillCopy } from "./tool-copy";
@@ -14,8 +13,6 @@ import { fillCopy } from "./tool-copy";
 // level 1 is the tree of agents, columns by depth with elbow connectors, every node one fixed
 // height, status only as a dot (with a legend), and the root's background tasks under its column;
 // level 2 is one agent's summary (AgentDetail), level 3 its transcript (TranscriptFrame).
-
-export type AgentMapStatus = "running" | "waiting" | "completed" | "failed" | "aborted";
 
 export type AgentMapNode = {
   id: string;
@@ -36,18 +33,6 @@ const LEVEL_SIZE = { tree: 1100, detail: 760, transcript: 1060 } as const;
 
 const STATUSES: AgentMapStatus[] = ["running", "waiting", "completed", "failed", "aborted"];
 
-/** "392.7k tokens", "950 tokens", "1.3M tokens". */
-export function agentMapTokens(n: number, locale: Locale): string {
-  const v = Math.max(0, Math.round(n));
-  const short =
-    v < 1000
-      ? String(v)
-      : v < 1_000_000
-        ? `${(Math.round(v / 100) / 10).toFixed(1)}k`
-        : `${(Math.round(v / 100_000) / 10).toFixed(1)}M`;
-  return fillCopy(messages[locale]["agentMap.tokens"], { n: short });
-}
-
 /** A background task's status as a dot. */
 function taskDot(s: BackgroundTaskStatus): AgentMapStatus {
   switch (s) {
@@ -62,19 +47,6 @@ function taskDot(s: BackgroundTaskStatus): AgentMapStatus {
     case "lost":
       return "aborted";
   }
-}
-
-function StatusDot({ status }: { status: AgentMapStatus }): JSX.Element {
-  const t = useDesignT();
-  return (
-    <span
-      className="cb-amap-dot"
-      data-part="agent-dot"
-      data-status={status}
-      role="img"
-      aria-label={t(`agentMap.status.${status}`)}
-    />
-  );
 }
 
 export type AgentMapDialogProps = {
@@ -385,12 +357,45 @@ function withParent(template: string, parent: ReactNode): ReactNode {
   );
 }
 
-/** "运行中 · 财务助手 · opus 5.5 · 后台" and "16分25秒 · 266.5k tokens". */
-function useMeta(node: AgentMapNode, agentType: string): { kind: string; cost: string } {
+/** The spawning agent: a link to its node, plain text when nothing opens it. */
+function ParentLink({
+  spawnedBy,
+  onOpen,
+}: {
+  spawnedBy: Spawner;
+  onOpen?: ((id: string) => void) | undefined;
+}): JSX.Element {
+  if (!onOpen) return <>{spawnedBy.label}</>;
+  return (
+    <button
+      type="button"
+      className="cb-amap-parent"
+      data-part="agent-parent"
+      onClick={() => onOpen(spawnedBy.id)}
+    >
+      {spawnedBy.label}
+    </button>
+  );
+}
+
+/**
+ * "运行中 · 财务助手 · opus 5.5 · 后台" and "16分25秒 · 266.5k tokens"; a foreground agent (a fork
+ * skill's child) has no "后台".
+ */
+function useMeta(
+  node: AgentMapNode,
+  agentType: string,
+  inBackground: boolean,
+): { kind: string; cost: string } {
   const t = useDesignT();
   const locale = useDesignLocale();
   return {
-    kind: [t(`agentMap.status.${node.status}`), agentType, node.model, t("agentMap.inBackground")]
+    kind: [
+      t(`agentMap.status.${node.status}`),
+      agentType,
+      node.model,
+      inBackground ? t("agentMap.inBackground") : "",
+    ]
       .filter((s) => s !== "")
       .join(" · "),
     cost: [subagentDuration(node.durationMs, locale), agentMapTokens(node.tokens, locale)].join(
@@ -444,6 +449,11 @@ function DetailSection({
 export type AgentDetailProps = {
   node: AgentMapNode;
   agentType: string;
+  /**
+   * The agent runs in the background (default); a fork skill's child is foreground and its kind
+   * line has no "后台".
+   */
+  inBackground?: boolean;
   /** The agent that dispatched this one (a link to its node). */
   spawnedBy: Spawner;
   /** The agent's latest text. */
@@ -473,6 +483,7 @@ export type AgentDetailProps = {
 export function AgentDetail({
   node,
   agentType,
+  inBackground = true,
   spawnedBy,
   latestText,
   task,
@@ -487,21 +498,12 @@ export function AgentDetail({
 }: AgentDetailProps): JSX.Element {
   const t = useDesignT();
   const locale = useDesignLocale();
-  const meta = useMeta(node, agentType);
+  const meta = useMeta(node, agentType, inBackground);
   const clock = useClock(
     toolCalls.some((c) => c.running) || background.some((b) => b.status === "running"),
     now,
   );
-  const parent = (
-    <button
-      type="button"
-      className="cb-amap-parent"
-      data-part="agent-parent"
-      onClick={() => onOpenParent(spawnedBy.id)}
-    >
-      {spawnedBy.label}
-    </button>
-  );
+  const parent = <ParentLink spawnedBy={spawnedBy} onOpen={onOpenParent} />;
   return (
     <>
       <AgentMapHead
@@ -598,7 +600,14 @@ export function AgentDetail({
 export type TranscriptFrameProps = {
   node: AgentMapNode;
   agentType: string;
+  /**
+   * The agent runs in the background (default); a fork skill's child is foreground and its kind
+   * line has no "后台".
+   */
+  inBackground?: boolean;
   spawnedBy: Spawner;
+  /** Opens the spawning agent's node (level 2); absent: its name is plain text. */
+  onOpenParent?: (id: string) => void;
   /** Context use, 0–100, shown in the status line while known. */
   contextPercent?: number;
   onBack(): void;
@@ -616,7 +625,9 @@ export type TranscriptFrameProps = {
 export function TranscriptFrame({
   node,
   agentType,
+  inBackground = true,
   spawnedBy,
+  onOpenParent,
   contextPercent,
   onBack,
   onClose,
@@ -624,7 +635,7 @@ export function TranscriptFrame({
   children,
 }: TranscriptFrameProps): JSX.Element {
   const t = useDesignT();
-  const meta = useMeta(node, agentType);
+  const meta = useMeta(node, agentType, inBackground);
   return (
     <>
       <AgentMapHead
@@ -634,11 +645,12 @@ export function TranscriptFrame({
         onClose={onClose}
         meta={
           <p className="cb-amap-meta" data-part="agent-meta">
-            {[
-              meta.kind,
-              fillCopy(t("agentMap.spawnedBy"), { parent: spawnedBy.label }),
-              meta.cost,
-            ].join(" · ")}
+            {`${meta.kind} · `}
+            {withParent(
+              t("agentMap.spawnedBy"),
+              <ParentLink spawnedBy={spawnedBy} onOpen={onOpenParent} />,
+            )}
+            {` · ${meta.cost}`}
           </p>
         }
       />

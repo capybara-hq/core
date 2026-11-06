@@ -106,6 +106,24 @@ describe("UserBubble (§6.16.6)", () => {
     expect(b.contains(d)).toBe(false);
   });
 
+  it("sender: a message another agent sent is labelled with its sender above the bubble", () => {
+    const { container } = wrap(<UserBubble text="先核对三月份" sender="整理季度经营报告" />);
+    const label = container.querySelector('[data-part="bubble-sender"]') as Element;
+    expect(label.textContent).toBe("来自 整理季度经营报告");
+    const b = container.querySelector('[data-part="bubble"]') as Element;
+    expect(label.compareDocumentPosition(b)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(b.textContent).toBe("先核对三月份");
+    cleanup();
+    const en = wrap(<UserBubble text="t" sender="Lead" />, "en");
+    expect(en.container.querySelector('[data-part="bubble-sender"]')?.textContent).toBe(
+      "From Lead",
+    );
+    cleanup();
+    // a person's own message has no label
+    const own = wrap(<UserBubble text="t" />);
+    expect(own.container.querySelector('[data-part="bubble-sender"]')).toBeNull();
+  });
+
   it("skill without arguments: only the chip", () => {
     const { container } = wrap(<UserBubble text="" skill="/release-check" />);
     expect(container.querySelector('[data-part="bubble"]')?.textContent).toBe("/release-check");

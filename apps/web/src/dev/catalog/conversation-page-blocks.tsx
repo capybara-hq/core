@@ -104,6 +104,8 @@ const running = (f: FixtureSubagent): SubagentRowData => ({
   id: f.id,
   agentType: f.agentType,
   description: f.description,
+  prompt: f.prompt,
+  ...(f.current !== undefined ? { current: f.current } : {}),
   status: "running",
   toolCalls: f.toolCalls,
   startedAt: NOW - ms(f.duration),
@@ -123,11 +125,12 @@ function finished(): SubagentRowData[] {
       id: f.id,
       agentType: f.agentType,
       description: f.description,
+      prompt: f.prompt,
       status: f.status === "failed" ? "failed" : "completed",
       toolCalls: f.toolCalls,
+      tokens: f.tokens,
       startedAt: start,
       finishedAt: start + d,
-      ...(f.steps && f.result ? { summary: { steps: f.steps, result: f.result } } : {}),
     };
   });
 }
@@ -136,20 +139,26 @@ function subagentGroupBlocks(): ReactNode {
   return (
     <>
       <Block id="subagent-group-running">
-        <SubagentGroup rows={S.running.map(running)} onOpen={noop} now={NOW} />
+        <SubagentGroup rows={S.running.map(running)} onOpen={noop} />
       </Block>
       <Block id="subagent-group-waiting">
         <SubagentGroup
           rows={S.running.map((f) => ({ ...running(f), status: "waiting", waiting: "approval" }))}
           onOpen={noop}
-          now={NOW}
         />
       </Block>
       <Block id="subagent-group-done">
-        <SubagentGroup rows={finished()} onOpen={noop} now={NOW} />
+        <SubagentGroup rows={finished()} onOpen={noop} />
       </Block>
       <Block id="subagent-group-failed">
-        <SubagentGroup rows={finished()} onOpen={noop} defaultOpen now={NOW} />
+        <SubagentGroup rows={finished()} onOpen={noop} defaultOpen />
+      </Block>
+      <Block id="subagent-group-stopped">
+        <SubagentGroup
+          rows={finished().map((r, i) => (i === 1 ? { ...r, status: "aborted" } : r))}
+          onOpen={noop}
+          defaultOpen
+        />
       </Block>
       <Block id="subagent-group-expanded">
         <SubagentGroup
@@ -157,11 +166,7 @@ function subagentGroupBlocks(): ReactNode {
           onOpen={noop}
           defaultOpen
           defaultExpanded={[S.done[0]?.id ?? ""]}
-          now={NOW}
         />
-      </Block>
-      <Block id="subagent-group-row-open">
-        <SubagentGroup rows={S.running.map(running)} openId={S.open} onOpen={noop} now={NOW} />
       </Block>
     </>
   );
@@ -242,7 +247,7 @@ function agentMapThread(): ReactNode {
           },
         ]}
       />
-      <UserBubble text="先核对三月份，一二月的已经由财务确认过。" />
+      <UserBubble text={AD.message} sender={AD.spawnedBy.label} />
       <Prose markdown="收到，只核对三月份的付款流水。" />
       <ToolGroup
         rows={[
@@ -292,6 +297,7 @@ function agentMapBlocks(): ReactNode {
             node={agentMapSelected}
             agentType={AD.agentType}
             spawnedBy={AD.spawnedBy}
+            onOpenParent={noop}
             contextPercent={AD.contextPercent}
             onBack={noop}
             onClose={noop}
@@ -942,7 +948,7 @@ function thread(kind: "main" | "file" | "subagent"): ReactNode {
       <>
         <UserBubble text="有需要规整的吗？" />
         <Prose markdown="文件较多，我先让子 agent 列出完整目录树，同时对照流程实际读写的文件。" />
-        <SubagentGroup rows={S.running.map(running)} openId={S.open} onOpen={noop} now={NOW} />
+        <SubagentGroup rows={S.running.map(running)} onOpen={noop} />
         <Prose markdown="目录树还在生成，我先整理当前版本流程引用的文件和文件夹 ID……" />
       </>
     );

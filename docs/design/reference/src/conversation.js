@@ -262,6 +262,10 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
       const details = `<div class="r-bubble-details"><div class="r-tline" role="button" aria-expanded="false"><span class="r-tlabel">${esc(S.bubble.details)}</span>${chev(false)}</div></div>`;
       return `<div class="r-ucol"><div class="r-bubble">${chip}${esc(S.bubble.arguments)}</div>${details}</div>`;
     }
+    if (o.state === "sender") {
+      const AD = F.AGENT_MAP_FIXTURE.detail;
+      return `<div class="r-ucol"><div class="r-bubble-sender">来自 ${esc(AD.spawnedBy.label)}</div><div class="r-bubble">${esc(AD.message)}</div></div>`;
+    }
     const text = withAtts ? "帮我对一下这几个文件" : C.user.text;
     return `<div class="r-ucol">${atts}<div class="r-bubble">${esc(text)}</div></div>`;
   }
@@ -517,31 +521,44 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
 
   // ── Sub-agents ─────────────────────────────────────────────────────────
 
-  function subRow(s, o = {}) {
-    const lead = s.status === "running" ? spin(16) : "";
-    const status = s.status === "failed" ? `${failWord}<span class="r-faint"> · </span>` : "";
-    const meta = `<span class="r-tend r-faint">${status}${s.toolCalls} 次调用 · ${esc(s.duration)}</span>`;
-    const open = o.open ? ' aria-current="true"' : "";
-    const row = `<div class="r-trow r-subrow"${open}${o.expanded !== undefined ? ` aria-expanded="${o.expanded}"` : ""} role="button">${lead}<span class="r-tag">${esc(s.agentType)}</span><span class="r-tlabel"><span class="r-em">${esc(s.description)}</span></span>${meta}${o.expanded !== undefined ? chev(o.expanded) : icon("chevron-right", 12)}</div>`;
-    if (!o.expanded) return row;
-    const steps = (s.steps || []).map((x) => `<div>${esc(x)}</div>`).join("");
-    return `${row}<div class="r-substeps">${steps}<p class="r-subresult">${esc(s.result)}</p><button class="r-linkbtn">${icon("maximize-2", 12)}在右侧打开完整记录</button></div>`;
+  const TOK = (n) => (n < 1000 ? `${n} tokens` : `${(Math.round(n / 100) / 10).toFixed(1)}k tokens`);
+  const STATUS_WORD = { running: "运行中", waiting: "等待", completed: "完成", failed: "失败", aborted: "已停止" };
+
+  /** One Agent call block (§6.16.15): the tool box (Agent + task, IN prompt) and the status line. */
+  function agentCall(s, status, o = {}) {
+    const more = o.expanded
+      ? '<button class="r-linkbtn r-acall-more" aria-expanded="true">收起</button>'
+      : '<button class="r-linkbtn r-acall-more" aria-expanded="false">展开</button>';
+    const body = `<div class="r-tdetail"><div class="r-tio"><span class="r-tio-l">输入</span><div class="r-tio-b r-acall-io"><p class="r-acall-prompt"${o.expanded ? " data-expanded" : ""}>${esc(s.prompt)}</p>${more}</div></div></div>`;
+    const box = `<div class="r-tbox"><div class="r-acall-head"><span class="r-tlabel"><b class="r-em">Agent</b> ${esc(s.description)}</span></div>${body}</div>`;
+    let text;
+    if (status === "running") text = s.current ? `后台运行中：${esc(s.current)}` : "后台运行中";
+    else if (status === "waiting") text = s.current ? `后台等待中：${esc(s.current)}` : "后台等待中";
+    else {
+      const word = status === "failed" ? failWord : STATUS_WORD[status];
+      text = `${word} · ${esc(s.duration)} · ${TOK(s.tokens)}`;
+    }
+    const line = `<div class="r-acall-status"><span class="r-amap-dot" data-status="${status}" role="img" aria-label="${STATUS_WORD[status]}"></span><span class="r-tlabel">${text}</span><button class="r-linkbtn r-acall-open">在智能体图中查看</button></div>`;
+    return `<div class="r-acall">${box}${line}</div>`;
   }
 
   function subGroup(o) {
-    if (o.state === "done") {
-      const failed = S.done.filter((s) => s.status === "failed").length;
-      return `<div class="r-tline" role="button" aria-expanded="false"><span class="r-tlabel">${S.done.length} 个子 agent 已完成<span class="r-fail-word">（${failed} 个失败）</span><span class="r-faint"> · 共 ${S.totals.calls} 次调用 · ${esc(S.totals.duration)}</span></span>${chev(false)}</div>`;
+    const failed = S.done.filter((s) => s.status === "failed").length;
+    const doneHead = (open) =>
+      `<div class="r-tline" role="button" aria-expanded="${open}"><span class="r-tlabel">${S.done.length} 个子 agent 已完成<span class="r-fail-word">（${failed} 个失败）</span><span class="r-faint"> · 共 ${S.totals.calls} 次调用 · ${esc(S.totals.duration)}</span></span>${chev(open)}</div>`;
+    if (o.state === "done") return doneHead(false);
+    if (o.state === "failed" || o.state === "expanded" || o.state === "stopped") {
+      const status = (s, i) =>
+        s.status === "failed" ? "failed" : o.state === "stopped" && i === 1 ? "aborted" : "completed";
+      const calls = S.done.map((s, i) => agentCall(s, status(s, i), { expanded: o.state === "expanded" && i === 0 })).join("");
+      return `${doneHead(true)}<div class="r-acalls">${calls}</div>`;
     }
-    if (o.state === "failed" || o.state === "expanded") {
-      const failed = S.done.filter((s) => s.status === "failed").length;
-      const head = `<div class="r-tline" role="button" aria-expanded="true"><span class="r-tlabel">${S.done.length} 个子 agent 已完成<span class="r-fail-word">（${failed} 个失败）</span><span class="r-faint"> · 共 ${S.totals.calls} 次调用 · ${esc(S.totals.duration)}</span></span>${chev(true)}</div>`;
-      const rows = S.done.map((s, i) => subRow(s, { expanded: o.state === "expanded" && i === 0 ? true : o.state === "expanded" ? false : undefined })).join("");
-      return `${head}<div class="r-tbox">${rows}</div>`;
-    }
-    const head = `<div class="r-tline">${spin(16)}<span class="r-tlabel">正在运行 ${S.running.length} 个子 agent</span></div>`;
-    const rows = S.running.map((s) => subRow(s, { open: o.state === "row-open" && s.id === S.open })).join("");
-    return `${head}<div class="r-tbox">${rows}</div>`;
+    const waiting = o.state === "waiting";
+    const head = waiting
+      ? '<div class="r-tline"><span class="r-tlabel"><span class="r-accent-word">等待批准</span></span></div>'
+      : `<div class="r-tline">${spin(16)}<span class="r-tlabel">正在运行 ${S.running.length} 个子 agent</span></div>`;
+    const calls = S.running.map((s) => agentCall(s, waiting ? "waiting" : "running")).join("");
+    return `${head}<div class="r-acalls">${calls}</div>`;
   }
 
   // ── Files ──────────────────────────────────────────────────────────────
@@ -782,7 +799,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
   /** The main thread of the template blocks (canvas "Refined" conversation). */
   function thread(kind) {
     if (kind === "subagent")
-      return `<div class="r-ucol"><div class="r-bubble">有需要规整的吗？</div></div>${prose("<p>文件较多，我先让子 agent 列出完整目录树，同时对照流程实际读写的文件。</p>")}<div class="r-chatcol">${subGroup({ state: "row-open" })}</div>${prose("<p>目录树还在生成，我先整理当前版本流程引用的文件和文件夹 ID……</p>")}`;
+      return `<div class="r-ucol"><div class="r-bubble">有需要规整的吗？</div></div>${prose("<p>文件较多，我先让子 agent 列出完整目录树，同时对照流程实际读写的文件。</p>")}<div class="r-chatcol">${subGroup({ state: "running" })}</div>${prose("<p>目录树还在生成，我先整理当前版本流程引用的文件和文件夹 ID……</p>")}`;
     if (kind === "file")
       return `<div class="r-ucol"><div class="r-bubble">把差异整理成表格</div></div>${toolGroup(T.done.slice(0, 3))}${prose("<p>整理好了，一共 14 行差异，按收款人汇总在第二个工作表：</p>")}${fileCard(FI.outputs[0])}`;
     return `<div class="r-ucol"><div class="r-bubble">${esc(C.user.text)}</div></div>${toolGroup(T.doneFailed.slice(0, 3))}${prose(`<p>${esc(F.PROSE_FIXTURE.streaming)}。明细整理成了表格：</p>`)}${fileCard(FI.outputs[0])}<div class="r-tline">${spin(16)}<span class="r-tlabel">正在核对总账<span class="r-faint"> · ${esc(C.stats.elapsed)}</span></span></div>`;

@@ -1,15 +1,16 @@
-import { type JSX, type ReactNode, useId, useState } from "react";
+import { type JSX, type ReactNode, useId, useLayoutEffect, useRef, useState } from "react";
 import { IconButton } from "../controls/button";
 import type { Locale } from "../i18n";
 import { messages } from "../i18n";
 import { Icon } from "../icons/icon";
 import { useDesignLink, useDesignLocale, useDesignT } from "../provider";
+import { type AgentMapStatus, agentMapTokens, StatusDot } from "./agent-status";
 import { useClock } from "./clock";
 import { Spinner } from "./prose";
 import { fillCopy } from "./tool-copy";
 
-// Sub-agents in the stream (spec §6.16.15) and their pieces in the right panel and the properties
-// panel. The data mirrors phase C (sub-agents spec §14): `SubagentView` from
+// Sub-agents in the stream (spec §6.16.15: the group and its Agent call blocks, agent map spec
+// §9.5) and their pieces in the right panel and the properties panel. The data mirrors phase C (sub-agents spec §14): `SubagentView` from
 // `GET /conversations/:id/subagents`, the parent-log events `subagent_dispatched` /
 // `subagent_waiting` / `subagent_finished`, and the ephemeral `event: subagent_progress`. The
 // components take plain rows; the mappers below turn the API shapes into rows.
@@ -37,6 +38,12 @@ export type SubagentRowData = {
   agentType: string;
   /** The task name (the dispatch's `description`). */
   description: string;
+  /** The dispatch prompt (the `Agent` call's `prompt`), the call block's IN. */
+  prompt?: string;
+  /** The child's current tool summary ("Bash 运行核对脚本"), from `subagent_progress`. */
+  current?: string;
+  /** Tokens the child used, when known. */
+  tokens?: number;
   status: SubagentStatus;
   toolCalls: number;
   /** Epoch ms of the latest run's start. */
@@ -46,8 +53,6 @@ export type SubagentRowData = {
   /** The run's duration when known exactly (`subagent_finished.durationMs`). */
   durationMs?: number;
   waiting?: SubagentWaitKind;
-  /** The in-place expansion: a step summary and the result. */
-  summary?: { steps: string[]; result: string };
 };
 
 // ── Mappers from the phase C API ────────────────────────────────────────────
@@ -135,140 +140,178 @@ export function subagentDuration(ms: number, locale: Locale): string {
 const active = (r: SubagentRowData) =>
   r.status === "queued" || r.status === "running" || r.status === "waiting";
 
-/** Active but waiting for a person (§6.16.15): no spinner and no clock, the waiting word. */
-const ticking = (r: SubagentRowData) => active(r) && r.status !== "waiting";
-
-function rowMs(r: SubagentRowData, now: number): number | undefined {
-  if (r.durationMs !== undefined && !active(r)) return r.durationMs;
-  if (r.startedAt === undefined) return undefined;
-  const end = active(r) ? now : (r.finishedAt ?? now);
-  return end - r.startedAt;
+/** A finished row's time: its exact duration when known, else from its start to its end. */
+function endedMs(r: SubagentRowData): number | undefined {
+  if (r.durationMs !== undefined) return r.durationMs;
+  if (r.startedAt === undefined || r.finishedAt === undefined) return undefined;
+  return r.finishedAt - r.startedAt;
 }
 
-// ── Row ─────────────────────────────────────────────────────────────────────
+// ── Agent call block ────────────────────────────────────────────────────────
 
-export type SubagentRowProps = {
-  row: SubagentRowData;
-  /** The row is the one open in the right panel. */
-  open?: boolean;
-  /** Controlled in-place expansion (rows with a `summary`). */
-  expanded?: boolean;
-  defaultExpanded?: boolean;
+/** What the call block's status line shows (the tree and `subagent_progress` feed it). */
+export type AgentCallState = {
+  status: AgentMapStatus;
+  /** The child's current tool summary while it works ("Bash 运行核对脚本"). */
+  current?: string;
+  /** The child's time, shown once it has ended. */
+  durationMs?: number;
+  /** The child's tokens, shown once it has ended. */
+  tokens?: number;
+};
+
+export type AgentCallBlockProps = {
+  /** The task description (the header after `Agent`). */
+  description: string;
+  /** The dispatch prompt, the body's IN (none: no body). */
+  prompt: string;
+  state: AgentCallState;
+  /** Opens the child in the agent map (level 2). */
   onOpen(): void;
-  onToggle?(): void;
-  /** The clock for running rows (the caller re-renders each second). */
-  now?: number;
+  /** The prompt starts expanded (uncontrolled). */
+  defaultExpanded?: boolean;
 };
 
 /**
- * One sub-agent (§6.16.15): spinner, kind tag, task, status, "N 次调用 · <duration>", chevron.
- * A row waiting for a person has no spinner and no duration, only the waiting word.
- * A row with a summary expands in place; any other row opens the sub-agent on the right.
+ * One `Agent` call in the stream (§6.16.15, agent map spec §9.5, as Claude Code draws it): a tool
+ * block whose header is `Agent` and the task description and whose body is IN with the prompt
+ * (two lines with an ellipsis, expandable). Under it one status line: while the child works a
+ * pulsing dot and "后台运行中：<current tool summary>", once it has ended its status dot and
+ * "完成 · <time> · <tokens>" (failed and stopped say so); the action opens it in the agent map.
  */
-export function SubagentRow({
-  row,
-  open,
-  expanded,
-  defaultExpanded,
+export function AgentCallBlock({
+  description,
+  prompt,
+  state,
   onOpen,
-  onToggle,
-  now,
-}: SubagentRowProps): JSX.Element {
+  defaultExpanded,
+}: AgentCallBlockProps): JSX.Element {
   const t = useDesignT();
   const locale = useDesignLocale();
-  const [own, setOwn] = useState(defaultExpanded === true);
-  const [animate, setAnimate] = useState(false);
-  const id = useId();
-  const expandable = row.summary !== undefined;
-  const isExpanded = expandable && (expanded ?? own);
-  const clock = useClock(ticking(row), now);
-  const ms = row.status === "waiting" ? undefined : rowMs(row, clock);
-  const status: ReactNode =
-    row.status === "failed" ? (
-      <span className="cb-fail-word" data-part="fail-word">
-        {t("tool.failed")}
-      </span>
-    ) : row.status === "aborted" ? (
-      <span className="cb-muted">{t("subagent.stopped")}</span>
-    ) : row.status === "waiting" ? (
-      <span className="cb-accent-word" data-part="waiting-word">
-        {t(`subagent.waiting.${row.waiting ?? "approval"}`)}
-      </span>
-    ) : null;
-  const meta = [
-    fillCopy(t("subagent.calls"), { n: row.toolCalls }),
-    ...(ms === undefined ? [] : [subagentDuration(ms, locale)]),
-  ].join(" · ");
-  const inner = (
-    <>
-      {ticking(row) ? <Spinner size={16} /> : null}
-      <span className="cb-agent-tag" data-part="agent-tag">
-        {row.agentType}
-      </span>
-      <span className="cb-tool-label cb-subagent-desc">{row.description}</span>
-      <span className="cb-tool-end cb-subagent-end cb-faint">
-        {status}
-        {/* Its own flex item, as the reference draws it: the end's gap falls on both sides. */}
-        {status ? <span> · </span> : null}
-        {meta}
-      </span>
-      <Icon name={isExpanded ? "chevron-down" : "chevron-right"} size={12} />
-    </>
-  );
-  const common = {
-    type: "button" as const,
-    className: "cb-tool-row cb-subagent-row",
-    "data-part": "subagent-row",
-    "data-status": row.status,
-    "data-open": open ? "true" : undefined,
-    "aria-current": open ? ("true" as const) : undefined,
-  };
-  return (
-    <div className="cb-tool-item" data-expanded={isExpanded ? "true" : undefined}>
-      {expandable ? (
-        <button
-          {...common}
-          aria-expanded={isExpanded}
-          aria-controls={isExpanded ? id : undefined}
-          onClick={() => {
-            setAnimate(true);
-            if (expanded === undefined) setOwn((o) => !o);
-            onToggle?.();
-          }}
-        >
-          {inner}
-        </button>
+  const [expanded, setExpanded] = useState(defaultExpanded === true);
+  const [overflows, setOverflows] = useState(false);
+  const promptRef = useRef<HTMLParagraphElement>(null);
+  const promptId = useId();
+  // The toggle shows only when the two clamped lines hide something (measured, and again on
+  // resize); an expanded prompt keeps it so it can fold back.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a new prompt must be measured again
+  useLayoutEffect(() => {
+    const el = promptRef.current;
+    if (!el || expanded) return;
+    const measure = () => setOverflows(el.scrollHeight > el.clientHeight + 1);
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [prompt, expanded]);
+
+  const { status } = state;
+  let text: ReactNode;
+  if (status === "running" || status === "waiting") {
+    text =
+      state.current !== undefined && state.current !== ""
+        ? fillCopy(t(`agentMap.call.${status}`), { current: state.current })
+        : t(`agentMap.call.${status}Idle`);
+  } else {
+    const word =
+      status === "failed" ? (
+        <span className="cb-fail-word" data-part="fail-word">
+          {t("tool.failed")}
+        </span>
+      ) : status === "aborted" ? (
+        t("subagent.stopped")
       ) : (
+        t("agentMap.status.completed")
+      );
+    const rest = [
+      ...(state.durationMs !== undefined ? [subagentDuration(state.durationMs, locale)] : []),
+      ...(state.tokens !== undefined ? [agentMapTokens(state.tokens, locale)] : []),
+    ];
+    text = (
+      <>
+        {word}
+        {rest.length > 0 ? ` · ${rest.join(" · ")}` : null}
+      </>
+    );
+  }
+
+  return (
+    <div className="cb-agent-call" data-part="agent-call-block" data-status={status}>
+      <div className="cb-tool-box" data-part="tool-box">
+        <div className="cb-agent-call-head" data-part="agent-call-head">
+          <span className="cb-agent-call-label">
+            <span className="cb-tool-name" data-part="agent-call-name">
+              Agent
+            </span>{" "}
+            <span data-part="agent-call-desc">{description}</span>
+          </span>
+        </div>
+        {prompt !== "" ? (
+          <div className="cb-tool-detail" data-part="tool-detail">
+            <div className="cb-tool-io" data-part="tool-io" data-io="in">
+              <span className="cb-tool-io-label" data-part="tool-io-label">
+                {t("tool.in")}
+              </span>
+              <div className="cb-tool-io-body">
+                <p
+                  ref={promptRef}
+                  id={promptId}
+                  className="cb-agent-call-prompt"
+                  data-part="agent-call-prompt"
+                  data-expanded={expanded ? "true" : "false"}
+                >
+                  {prompt}
+                </p>
+                {expanded || overflows ? (
+                  <button
+                    type="button"
+                    className="cb-link-btn cb-agent-call-more"
+                    data-part="agent-call-more"
+                    aria-expanded={expanded}
+                    aria-controls={promptId}
+                    onClick={() => setExpanded((e) => !e)}
+                  >
+                    {t(expanded ? "agentMap.call.less" : "agentMap.call.more")}
+                  </button>
+                ) : null}
+              </div>
+            </div>
+          </div>
+        ) : null}
+      </div>
+      <div className="cb-agent-call-status" data-part="agent-call-status" data-status={status}>
+        <StatusDot status={status} />
+        <span className="cb-agent-call-text" data-part="agent-call-text">
+          {text}
+        </span>
         <button
-          {...common}
-          aria-label={fillCopy(t("subagent.openOnRight"), { name: row.description })}
+          type="button"
+          className="cb-link-btn cb-agent-call-open"
+          data-part="agent-call-open"
           onClick={onOpen}
         >
-          {inner}
+          {t("agentMap.call.open")}
         </button>
-      )}
-      {isExpanded && row.summary ? (
-        <div
-          id={id}
-          className="cb-subagent-steps cb-expand"
-          data-part="subagent-steps"
-          data-animate={animate ? "true" : undefined}
-        >
-          {row.summary.steps.map((s, i) => (
-            // biome-ignore lint/suspicious/noArrayIndexKey: steps are positional
-            <div key={i}>{s}</div>
-          ))}
-          <p className="cb-subagent-result" data-part="subagent-result">
-            {row.summary.result}
-          </p>
-          <button type="button" className="cb-link-btn" onClick={onOpen}>
-            <Icon name="maximize-2" size={12} />
-            {t("subagent.openRecord")}
-          </button>
-        </div>
-      ) : null}
+      </div>
     </div>
   );
+}
+
+/** A sub-agent row as its call block's state: a queued child already works in the background. */
+function callState(r: SubagentRowData): AgentCallState {
+  if (active(r)) {
+    return {
+      status: r.status === "waiting" ? "waiting" : "running",
+      ...(r.current !== undefined ? { current: r.current } : {}),
+    };
+  }
+  const ms = endedMs(r);
+  return {
+    status: r.status as Exclude<SubagentStatus, "queued" | "running" | "waiting">,
+    ...(ms !== undefined ? { durationMs: ms } : {}),
+    ...(r.tokens !== undefined ? { tokens: r.tokens } : {}),
+  };
 }
 
 // ── Group ───────────────────────────────────────────────────────────────────
@@ -276,28 +319,27 @@ export function SubagentRow({
 export type SubagentGroupProps = {
   /** In child-creation order. */
   rows: SubagentRowData[];
-  /** The id of the row open in the right panel. */
-  openId?: string;
+  /** Opens a sub-agent (its call block's action). */
   onOpen(id: string): void;
   /** Controlled open state of a finished group; a running group is always open. */
   open?: boolean;
   defaultOpen?: boolean;
   onToggle?(): void;
-  /** Rows expanded in place at first (uncontrolled). */
+  /** Sub-agents whose prompt starts expanded (uncontrolled). */
   defaultExpanded?: string[];
-  now?: number;
 };
 
-/** The sub-agents of a turn (§6.16.15): a summary line over a tool box, like tool groups. */
+/**
+ * The sub-agents of a turn (§6.16.15): a summary line like tool groups' over one Agent call block
+ * per sub-agent.
+ */
 export function SubagentGroup({
   rows,
-  openId,
   onOpen,
   open,
   defaultOpen,
   onToggle,
   defaultExpanded,
-  now,
 }: SubagentGroupProps): JSX.Element {
   const t = useDesignT();
   const locale = useDesignLocale();
@@ -305,20 +347,18 @@ export function SubagentGroup({
   const [animate, setAnimate] = useState(false);
   const id = useId();
   const running = rows.filter(active);
-  // the group ticks for its rows (they get `now`), only while one is active and not waiting
-  const clock = useClock(running.some(ticking), now);
   // every active row waits for a person: the header says so instead of the spinner and the verb
   const waitingFor = running.every((r) => r.status === "waiting") ? running[0]?.waiting : null;
-  const box = (
-    <div className="cb-tool-box" data-part="tool-box">
+  const calls = (
+    <div className="cb-agent-calls" data-part="agent-calls">
       {rows.map((r) => (
-        <SubagentRow
+        <AgentCallBlock
           key={r.id}
-          row={r}
-          open={r.id === openId}
+          description={r.description}
+          prompt={r.prompt ?? ""}
+          state={callState(r)}
           defaultExpanded={defaultExpanded?.includes(r.id) === true}
           onOpen={() => onOpen(r.id)}
-          now={clock}
         />
       ))}
     </div>
@@ -344,12 +384,12 @@ export function SubagentGroup({
             ) : null}
           </span>
         </div>
-        {box}
+        {calls}
       </div>
     );
   }
   const failed = rows.filter((r) => r.status === "failed").length;
-  const calls = rows.reduce((n, r) => n + r.toolCalls, 0);
+  const totalCalls = rows.reduce((n, r) => n + r.toolCalls, 0);
   const starts = rows.flatMap((r) => (r.startedAt === undefined ? [] : [r.startedAt]));
   const ends = rows.flatMap((r) =>
     r.finishedAt !== undefined
@@ -384,7 +424,7 @@ export function SubagentGroup({
           ) : null}
           <span className="cb-faint">
             {` · ${[
-              fillCopy(t("subagent.totalCalls"), { n: calls }),
+              fillCopy(t("subagent.totalCalls"), { n: totalCalls }),
               ...(span === undefined ? [] : [subagentDuration(span, locale)]),
             ].join(" · ")}`}
           </span>
@@ -393,7 +433,7 @@ export function SubagentGroup({
       </button>
       {isOpen ? (
         <div id={id} className="cb-expand" data-animate={animate ? "true" : undefined}>
-          {box}
+          {calls}
         </div>
       ) : null}
     </div>

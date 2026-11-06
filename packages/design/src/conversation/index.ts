@@ -5,11 +5,9 @@ export {
   AgentMapDialog,
   type AgentMapDialogProps,
   type AgentMapNode,
-  type AgentMapStatus,
   AgentMapTree,
   type AgentMapTreeProps,
   type AgentToolCallRow,
-  agentMapTokens,
   TranscriptFrame,
   type TranscriptFrameProps,
 } from "./agent-map";
@@ -22,6 +20,7 @@ export {
   type AgentRowProps,
   gridStep,
 } from "./agent-row";
+export { type AgentMapStatus, agentMapTokens } from "./agent-status";
 export {
   type BubbleAttachment,
   BubbleAttachments,
@@ -107,6 +106,9 @@ export { QueuedMessage, type QueuedMessageProps, QueuePaused } from "./queued";
 export { type QuickActionItem, QuickActions, type QuickActionsProps } from "./quick-actions";
 export { RunRow, type RunRowProps, type RunRowStatus, runDuration } from "./run-row";
 export {
+  AgentCallBlock,
+  type AgentCallBlockProps,
+  type AgentCallState,
   type BackgroundItem,
   type BackgroundSubagentItem,
   type BackgroundTaskItem,
@@ -119,9 +121,7 @@ export {
   SubagentGroup,
   type SubagentGroupProps,
   type SubagentProgress,
-  SubagentRow,
   type SubagentRowData,
-  type SubagentRowProps,
   type SubagentStatus,
   SubagentTask,
   type SubagentViewLike,

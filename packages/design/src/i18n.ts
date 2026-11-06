@@ -316,8 +316,6 @@ const zh = {
   "subagent.waiting.approval": "等待批准",
   "subagent.waiting.input": "等待回答",
   "subagent.waiting.connect": "等待连接",
-  "subagent.openOnRight": "在右侧打开 {name}",
-  "subagent.openRecord": "在右侧打开完整记录",
   "subagent.taskLabel": "任务 · 主 agent 派出",
   "subagent.kind": "子 agent",
   "subagent.completed": "已完成 {n} 项",
@@ -395,6 +393,14 @@ const zh = {
   "agentMap.stop": "停止",
   "agentMap.readOnly": "子智能体只读 · 不能和它对话，请让 {parent} 转达",
   "agentMap.context": "上下文 {n}%",
+  "agentMap.call.running": "后台运行中：{current}",
+  "agentMap.call.runningIdle": "后台运行中",
+  "agentMap.call.waiting": "后台等待中：{current}",
+  "agentMap.call.waitingIdle": "后台等待中",
+  "agentMap.call.open": "在智能体图中查看",
+  "agentMap.call.more": "展开",
+  "agentMap.call.less": "收起",
+  "bubble.from": "来自 {name}",
 };
 
 export type DesignKey = keyof typeof zh;
@@ -716,8 +722,6 @@ const en: Record<DesignKey, string> = {
   "subagent.waiting.approval": "Waiting for approval",
   "subagent.waiting.input": "Waiting for an answer",
   "subagent.waiting.connect": "Waiting for a connection",
-  "subagent.openOnRight": "Open {name} on the right",
-  "subagent.openRecord": "Open the full record on the right",
   "subagent.taskLabel": "Task · from the main agent",
   "subagent.kind": "subagent",
   "subagent.completed": "{n} completed",
@@ -795,6 +799,14 @@ const en: Record<DesignKey, string> = {
   "agentMap.stop": "Stop",
   "agentMap.readOnly": "Read-only sub-agent · You can't talk to it; ask {parent} to pass it on",
   "agentMap.context": "Context {n}%",
+  "agentMap.call.running": "Working in the background: {current}",
+  "agentMap.call.runningIdle": "Working in the background",
+  "agentMap.call.waiting": "Waiting in the background: {current}",
+  "agentMap.call.waitingIdle": "Waiting in the background",
+  "agentMap.call.open": "View in agent map",
+  "agentMap.call.more": "Show more",
+  "agentMap.call.less": "Show less",
+  "bubble.from": "From {name}",
 };
 
 export const messages: Record<Locale, Record<DesignKey, string>> = { zh, en };

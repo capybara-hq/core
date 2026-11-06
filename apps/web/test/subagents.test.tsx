@@ -1,4 +1,4 @@
-import { act, cleanup, screen, within } from "@testing-library/react";
+import { cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
@@ -245,8 +245,16 @@ const childPanelWith = (check: (panel: HTMLElement) => unknown) =>
     return panel;
   });
 const group = () => document.querySelector('[data-entry="subagents"]') as HTMLElement | null;
-const rowOf = (name: string) =>
-  screen.findByRole("button", { name: `Open ${name} on the right` }, { timeout: 3000 });
+/** The action of the Agent call block of the sub-agent with that description. */
+const rowOf = async (name: string) => {
+  const desc = await screen.findByText(
+    name,
+    { selector: '[data-part="agent-call-desc"]' },
+    { timeout: 3000 },
+  );
+  const block = desc.closest('[data-part="agent-call-block"]') as HTMLElement;
+  return within(block).getByRole("button", { name: "View in agent map" });
+};
 
 beforeEach(() => {
   params.conversationId = "c1";
@@ -281,7 +289,6 @@ describe("the timeline's sub-agent groups", () => {
       agentType: "general-purpose",
       description: "Scan docs",
       durationMs: 41_000,
-      summary: { steps: [], result: "Docs are fine." },
     });
   });
 
@@ -309,7 +316,6 @@ describe("the timeline's sub-agent groups", () => {
       status: "failed",
       agentType: "nope",
       description: "Spy",
-      summary: { steps: [], result: 'Unknown subagent_type "nope".' },
     });
   });
 
@@ -347,7 +353,7 @@ describe("the timeline's sub-agent groups", () => {
 });
 
 describe("sub-agents on the conversation page", () => {
-  it("renders the group; a row opens the child read-only on the right; stop aborts the child", async () => {
+  it("renders the group; a call block's action opens the child read-only on the right; stop aborts the child", async () => {
     const calls = api({ [`POST ${CHILD}/abort`]: () => json(202, { runId: "run-ch2" }) });
     await renderChat();
     const row = await rowOf("Check tests");
@@ -355,7 +361,6 @@ describe("sub-agents on the conversation page", () => {
     const user = userEvent.setup();
     await user.click(row);
     expect(window.location.hash).toBe("#subagent=ch2");
-    expect(row.getAttribute("aria-current")).toBe("true");
     const panel = await screen.findByRole("complementary", { name: "Check tests" });
     // the task, then the agent · subagent · model · tools line
     expect(await within(panel).findByText("Do Check tests")).toBeTruthy();
@@ -430,15 +435,6 @@ describe("sub-agents on the conversation page", () => {
     expect(await within(panel).findByText(en.subagents.view.loadFailed)).toBeTruthy();
     expect(within(panel).queryByRole("button", { name: en.subagents.view.stop })).toBeNull();
     expect(within(panel).queryByText("All tests pass.")).toBeNull();
-  });
-
-  it("the parent's subagent_progress updates the row's calls", async () => {
-    api();
-    await renderChat();
-    const row = await rowOf("Check tests");
-    const es = FakeEventSource.instances.find((s) => s.url.startsWith(`${PARENT}/stream`));
-    act(() => es?.emit("subagent_progress", { subagentId: "ch2", step: 3, toolCalls: 5 }));
-    expect(row.textContent).toContain("5 calls");
   });
 
   it("a child's approval shows in the parent with its name and decides the child's approval", async () => {
