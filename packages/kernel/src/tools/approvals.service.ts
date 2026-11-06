@@ -12,6 +12,7 @@ import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KernelEvents } from "../infra/events/kernel-events.js";
 import { ORG_ROLES, type OrgRole, roleAtLeast } from "../orgs/roles.js";
+import { rootConversationOf } from "../runtime/subagents/child.js";
 import { pluginDisplayNames } from "./display-names.js";
 import type { ApprovalPolicySource } from "./pipeline.js";
 
@@ -57,8 +58,9 @@ export interface ApprovalView extends ApprovalRecord {
   extension: { name: string; displayName: LocalizedName } | null;
   agent: { id: string; name: string };
   /**
-   * 网页中该会话的路径（不含语言前缀）。A sub-agent's approval links to its parent conversation
-   * with the sub-agent open: `/chat/<parent>?subagent=<child>`.
+   * 网页中该会话的路径（不含语言前缀）。A sub-agent's approval, at any depth, links to the root
+   * conversation of its tree with the sub-agent open: `/chat/<root>?subagent=<child>` (agent map
+   * spec §7).
    */
   conversationPath: string;
   /** Set when the approval belongs to a sub-agent: the conversation it was dispatched from. */
@@ -392,12 +394,15 @@ export class ApprovalsService {
     const hash = before.specHash;
     const connectorId = before.connectorId;
     if (scope === "session") {
-      // a sub-agent's grant is its parent conversation's (sub-agents spec §9): its siblings and
-      // the parent itself are not asked again for the same call
+      // a sub-agent's grant is the root conversation's (agent map spec §7): the root and every
+      // agent of its tree, at any depth, are not asked again for the same call
       await t
         .insertInto("conversation_tool_grants")
         .values({
-          conversation_id: ctx.parent_conversation_id ?? before.conversationId,
+          conversation_id:
+            ctx.parent_conversation_id === null
+              ? before.conversationId
+              : await rootConversationOf(t, ctx.parent_conversation_id),
           tool_key: before.toolKey,
           spec_hash: hash,
           connector_id: connectorId,
@@ -722,6 +727,11 @@ export class ApprovalsService {
       .where("runs.id", "in", [...new Set(recs.map((r) => r.runId))])
       .execute();
     const ctx = new Map(ctxRows.map((r) => [r.id, r]));
+    // a sub-agent's approval links to the root conversation of its tree (agent map spec §7)
+    const roots = new Map<string, string>();
+    for (const p of new Set(ctxRows.flatMap((r) => r.parent_conversation_id ?? []))) {
+      roots.set(p, await rootConversationOf(db.db, p));
+    }
     const names = await this.agentNames([...new Set(ctxRows.map((r) => r.agent_id))]);
     const connectorIds = [
       ...new Set(recs.flatMap((r) => (r.connectorId === null ? [] : [r.connectorId]))),
@@ -769,7 +779,7 @@ export class ApprovalsService {
           agent: { id: c.agent_id, name: names.get(c.agent_id) ?? "" },
           ...(c.parent_conversation_id !== null
             ? {
-                conversationPath: `/chat/${c.parent_conversation_id}?subagent=${r.conversationId}`,
+                conversationPath: `/chat/${roots.get(c.parent_conversation_id) ?? c.parent_conversation_id}?subagent=${r.conversationId}`,
                 parentConversationId: c.parent_conversation_id,
               }
             : { conversationPath: `/chat/${r.conversationId}` }),

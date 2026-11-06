@@ -13,7 +13,11 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { ConversationEvent, EventPayload } from "../../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../../src/db/kernel-schema.js";
 import { createDb } from "../../../src/db/pool.js";
-import { type ScriptRule, scriptRules } from "../../fixtures/plugins/model-script/index.js";
+import {
+  openBarrier,
+  type ScriptRule,
+  scriptRules,
+} from "../../fixtures/plugins/model-script/index.js";
 import { truncateTables } from "../../helpers/db.js";
 import { accountsFor } from "../../helpers/identity.js";
 import { testMembers } from "../../helpers/members.js";
@@ -84,6 +88,65 @@ const RULES: ScriptRule[] = [
     when: { systemIncludes: CHILD, lastToolResultIncludes: "echo: same" },
     reply: { text: "sibling done" },
   },
+  // the tree scenarios (agent map spec §7): an asker at depth 3, and two asker siblings at depth 2
+  {
+    when: { systemIncludes: CHILD, lastUserIncludes: "asker-deep", assistantTurns: 0 },
+    reply: { toolCalls: [{ name: ECHO, input: { text: "deep" } }] },
+  },
+  {
+    when: { systemIncludes: CHILD, lastToolResultIncludes: "echo: deep" },
+    reply: { text: "deep asker done" },
+  },
+  {
+    when: { systemIncludes: CHILD, lastUserIncludes: "asker-twin", assistantTurns: 0 },
+    reply: { toolCalls: [{ name: ECHO, input: { text: "twin" } }] },
+  },
+  {
+    when: { systemIncludes: CHILD, lastToolResultIncludes: "echo: twin" },
+    reply: { text: "twin done" },
+  },
+  {
+    when: { systemIncludes: CHILD, lastUserIncludes: "D2-go", assistantTurns: 0 },
+    reply: {
+      toolCalls: [
+        agentCall({ description: "Deep", prompt: "asker-deep: go", subagent_type: "asker" }),
+      ],
+    },
+  },
+  {
+    when: { systemIncludes: CHILD, lastUserIncludes: "D2-go", assistantTurns: 1 },
+    reply: { text: "D2 reply" },
+  },
+  {
+    when: { systemIncludes: CHILD, lastUserIncludes: "D1-go", assistantTurns: 0 },
+    reply: { toolCalls: [agentCall({ description: "Level 2", prompt: "D2-go" })] },
+  },
+  {
+    when: { systemIncludes: CHILD, lastUserIncludes: "D1-go", assistantTurns: 1 },
+    reply: { text: "D1 reply" },
+  },
+  {
+    when: { systemIncludes: CHILD, lastUserIncludes: "G1-go", assistantTurns: 0 },
+    reply: {
+      toolCalls: [
+        agentCall({ description: "Twin 1", prompt: "asker-twin1: go", subagent_type: "asker" }),
+      ],
+    },
+  },
+  {
+    // the second twin is dispatched only once the test opens the barrier (after the grant)
+    when: { systemIncludes: CHILD, lastUserIncludes: "G1-go", assistantTurns: 1 },
+    reply: {
+      toolCalls: [
+        agentCall({ description: "Twin 2", prompt: "asker-twin2: go", subagent_type: "asker" }),
+      ],
+      barrier: { name: "twin2", count: 99, timeoutMs: 30_000 },
+    },
+  },
+  {
+    when: { systemIncludes: CHILD, lastUserIncludes: "G1-go", assistantTurns: 2 },
+    reply: { text: "G1 reply" },
+  },
   {
     when: { systemIncludes: CHILD, lastUserIncludes: "gp-hooks", assistantTurns: 0 },
     reply: { toolCalls: [{ name: ECHO, input: { text: "hk" } }] },
@@ -123,6 +186,19 @@ const RULES: ScriptRule[] = [
     },
   },
   { when: { lastUserIncludes: "SCENARIO session", assistantTurns: 2 }, reply: { text: "s done" } },
+  {
+    when: { lastUserIncludes: "SCENARIO deep", assistantTurns: 0 },
+    reply: { toolCalls: [agentCall({ description: "Level 1", prompt: "D1-go" })] },
+  },
+  { when: { lastUserIncludes: "SCENARIO deep", assistantTurns: 1 }, reply: { text: "deep done" } },
+  {
+    when: { lastUserIncludes: "SCENARIO twins", assistantTurns: 0 },
+    reply: { toolCalls: [agentCall({ description: "Mid", prompt: "G1-go" })] },
+  },
+  {
+    when: { lastUserIncludes: "SCENARIO twins", assistantTurns: 1 },
+    reply: { text: "twins done" },
+  },
   {
     when: { lastUserIncludes: "SCENARIO hooks", assistantTurns: 0 },
     reply: { toolCalls: [agentCall({ description: "Hooked", prompt: "gp-hooks: echo" })] },
@@ -326,6 +402,7 @@ describe("policies and approvals of a sub-agent", () => {
     expect(waiting.payload).toEqual({
       subagentId: child,
       childRunId: childRun.id,
+      path: [child],
       kind: "approval",
       approvalId: approval.id,
       toolKey: ECHO,
@@ -392,6 +469,146 @@ describe("policies and approvals of a sub-agent", () => {
     const echo = ofType(second, "tool_result").find((r) => r.payload.toolKey === ECHO);
     expect(echo?.payload).toMatchObject({ content: "echo: same", isError: false });
   }, 60_000);
+});
+
+describe("approvals across the tree (agent map spec §7)", () => {
+  /** The chain root → d1 → d2 → d3 of SCENARIO deep, once each level is dispatched. */
+  async function deepChain(conv: string): Promise<[string, string, string]> {
+    const d1 = await firstChild(conv);
+    const d2 = await firstChild(d1);
+    const d3 = await firstChild(d2);
+    return [d1, d2, d3];
+  }
+
+  const runOf = (conv: string) =>
+    db
+      .selectFrom("runs")
+      .select(["id", "status", "trigger_account_id"])
+      .where("conversation_id", "=", conv)
+      .orderBy("created_at")
+      .executeTakeFirstOrThrow();
+
+  it("great-grandchild approval surfaces in the root", async () => {
+    const conv = await createConv(owner, orgId, agentId);
+    await postMessage(owner, orgId, conv, "SCENARIO deep");
+    const [d1, d2, d3] = await deepChain(conv);
+    const approval = await pendingApproval(d3);
+    expect(approval.tool_key).toBe(ECHO);
+    const d3Run = await runOf(d3);
+
+    // shown in the root, with the path from the root's child down to the waiting agent
+    const waiting = (await waitForEvent(
+      db,
+      conv,
+      (e) => e.type === "subagent_waiting",
+      10_000,
+      "subagent_waiting in the root",
+    )) as Ev<"subagent_waiting">;
+    expect(waiting.payload).toEqual({
+      subagentId: d3,
+      childRunId: d3Run.id,
+      path: [d1, d2, d3],
+      kind: "approval",
+      approvalId: approval.id,
+      toolKey: ECHO,
+      expiresAt: new Date(approval.expires_at).toISOString(),
+      requestedFor: ownerId,
+      approverRole: null,
+    });
+    // under the root run that dispatched the branch
+    const rootRun = await runOf(conv);
+    expect(waiting.runId).toBe(rootRun.id);
+    // not model-visible, and not in the intermediate levels' logs
+    for (const mid of [d1, d2]) {
+      expect(ofType(await eventsOf(db, mid), "subagent_waiting")).toEqual([]);
+    }
+
+    // the inbox links to the root conversation with the waiting agent open
+    type Inbox = { items: { approval?: { id: string; conversationPath: string } }[] };
+    const inbox = await owner({ method: "GET", url: `/api/v1/orgs/${orgId}/inbox` });
+    expect(inbox.statusCode, inbox.body).toBe(200);
+    const item = (inbox.json() as Inbox).items.find((i) => i.approval?.id === approval.id);
+    expect(item?.approval?.conversationPath).toBe(`/chat/${conv}?subagent=${d3}`);
+
+    // approving the root's card resumes the depth-3 run
+    await decide(owner, waiting.payload.approvalId as string);
+    await waitFor(
+      async () => ((await runOf(d3)).status === "completed" ? true : null),
+      30_000,
+      "depth-3 run completed",
+    );
+    const echo = ofType(await eventsOf(db, d3), "tool_result").find(
+      (r) => r.payload.toolKey === ECHO,
+    );
+    expect(echo?.payload).toMatchObject({ content: "echo: deep", isError: false });
+    expect((await finishedDeliveries(db, d2)).map((d) => d.text)).toEqual(["deep asker done"]);
+  }, 90_000);
+
+  it('"approve for this conversation" on a grandchild applies to its siblings\' later calls', async () => {
+    const conv = await createConv(owner, orgId, agentId);
+    await postMessage(owner, orgId, conv, "SCENARIO twins");
+    const mid = await firstChild(conv);
+    const twin1 = await firstChild(mid);
+    const approval = await pendingApproval(twin1);
+    await decide(owner, approval.id, "session");
+    // the grant is the root conversation's, so every agent of the tree uses it
+    await waitFor(
+      async () => ((await runOf(twin1)).status === "completed" ? true : null),
+      30_000,
+      "first twin completed",
+    );
+    const grants = await db
+      .selectFrom("conversation_tool_grants")
+      .select(["conversation_id", "tool_key"])
+      .execute();
+    expect(grants).toEqual([{ conversation_id: conv, tool_key: ECHO }]);
+
+    // only now the mid agent dispatches the second twin
+    openBarrier("twin2");
+    await finishedDeliveries(db, mid, 2);
+    const twins = await childrenOf(mid);
+    expect(twins).toHaveLength(2);
+    const approvals = await db.selectFrom("approvals").select("conversation_id").execute();
+    expect(approvals).toEqual([{ conversation_id: twin1 }]);
+    const second = await eventsOf(db, twins[1] as string);
+    const echo = ofType(second, "tool_result").find((r) => r.payload.toolKey === ECHO);
+    expect(echo?.payload).toMatchObject({ content: "echo: twin", isError: false });
+  }, 90_000);
+
+  it("the approver is the trigger account inherited down the chain", async () => {
+    // the member starts the root run of the owner's agent
+    const conv = await createConv(member, orgId, agentId);
+    await postMessage(member, orgId, conv, "SCENARIO deep");
+    const [d1, d2, d3] = await deepChain(conv);
+    const approval = await pendingApproval(d3);
+    expect(approval.requested_for).toBe(memberId);
+    for (const c of [d1, d2, d3]) expect((await runOf(c)).trigger_account_id).toBe(memberId);
+    const waiting = (await waitForEvent(
+      db,
+      conv,
+      (e) => e.type === "subagent_waiting",
+      10_000,
+      "subagent_waiting in the root",
+    )) as Ev<"subagent_waiting">;
+    expect(waiting.payload).toMatchObject({
+      approvalId: approval.id,
+      path: [d1, d2, d3],
+      requestedFor: memberId,
+    });
+    // never the agent's owner
+    const forbidden = await owner({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/approvals/${approval.id}/decision`,
+      payload: { decision: "approve" },
+    });
+    expect(forbidden.statusCode).toBe(404);
+    await decide(member, approval.id);
+    await waitFor(
+      async () => ((await runOf(d3)).status === "completed" ? true : null),
+      30_000,
+      "depth-3 run completed",
+    );
+  }, 90_000);
 });
 
 describe("hooks and usage reports of a sub-agent", () => {

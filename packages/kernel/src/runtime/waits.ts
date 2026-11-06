@@ -31,7 +31,12 @@ import { MAINTENANCE_QUEUE_NAME } from "./maintenance-queue.js";
 import { assistantIdemKey } from "./model-call.js";
 import { notifyFinished, RunFinish, TERMINAL_STATUSES } from "./run-finish.js";
 import { ACTIVE_RUN_STATUSES, RunQueue } from "./run-queue.js";
-import { childResult, deliveryRowOfChildRun, finishedEvent } from "./subagents/child.js";
+import {
+  childResult,
+  deliveryRowOfChildRun,
+  finishedEvent,
+  rootSurfaceOf,
+} from "./subagents/child.js";
 import { SubagentDeliveries } from "./subagents/deliveries.js";
 
 /** 等待超时任务所在的内核维护队列（见 maintenance.ts）。 */
@@ -91,7 +96,7 @@ export interface WaitSweepResult {
 
 const TERMINAL_RUN_STATUSES = ["completed", "failed", "aborted"] as const;
 
-/** Who may decide a sub-agent's approval, mirrored into the parent's `subagent_waiting`. */
+/** Who may decide a sub-agent's approval, mirrored into the root's `subagent_waiting`. */
 type Approver = { requestedFor: string | null; approverRole: OrgRole | null };
 
 /** The data of a wait timeout job; `subagents` waits also carry their run and step. */
@@ -243,27 +248,29 @@ export class Waits implements OnApplicationShutdown {
     if (stop && (await this.abortWaiting(conversationId, runId, stop.byAccountId, stop.detail))) {
       return;
     }
-    await this.surfaceInParent(runId, waitingFor);
+    await this.surfaceInRoot(runId, conversationId, waitingFor);
     await this.scheduleTimeout(waitingFor, runId);
     if (await this.isSettled(waitingFor, runId)) await this.resume(runId, waitingFor.id);
   }
 
   /**
    * A sub-agent's run waits for an approval or an input (sub-agents spec §9): appends
-   * `subagent_waiting` to the parent conversation (idem `subagent_waiting:<childRunId>:<waitId>`),
-   * so the web and the channel outbound show the card there. The approval or question itself stays
-   * the child run's, with the parent run's starter as the person asked. Not a run of a sub-agent,
-   * or a `subagents` wait: nothing. Display only: a failure is logged, the wait goes on.
+   * `subagent_waiting` to the **root** conversation of its tree, whatever its depth (agent map spec
+   * §7, {@link rootSurfaceOf}; idem `subagent_waiting:<childRunId>:<waitId>`), so the web and the
+   * channel outbound show the card where the person looks. The approval or question itself stays
+   * the child run's, with the run's trigger account (inherited down the chain) as the person asked.
+   * Not a run of a sub-agent, or a `subagents` wait: nothing. Display only: a failure is logged,
+   * the wait goes on.
    */
-  private async surfaceInParent(runId: string, waitingFor: WaitingFor): Promise<void> {
+  private async surfaceInRoot(
+    runId: string,
+    conversationId: string,
+    waitingFor: WaitingFor,
+  ): Promise<void> {
     if (waitingFor.kind === "subagents") return;
     try {
-      const d = await this.db
-        .selectFrom("subagent_dispatches")
-        .select(["parent_conversation_id", "parent_run_id", "child_conversation_id"])
-        .where("child_run_id", "=", runId)
-        .executeTakeFirst();
-      if (!d) return;
+      const target = await rootSurfaceOf(this.db, conversationId, runId);
+      if (!target) return;
       const row: { tool_key: string; expires_at: string | Date; approver?: Approver } | undefined =
         waitingFor.kind === "approval"
           ? await this.db
@@ -288,14 +295,15 @@ export class Waits implements OnApplicationShutdown {
               .where("id", "=", waitingFor.id)
               .executeTakeFirst();
       if (!row) return;
-      await this.eventLog.append(d.parent_conversation_id, [
+      await this.eventLog.append(target.conversationId, [
         {
           type: "subagent_waiting",
-          runId: d.parent_run_id,
+          runId: target.runId,
           idemKey: subagentWaitingIdemKey(runId, waitingFor.id),
           payload: {
-            subagentId: d.child_conversation_id,
+            subagentId: conversationId,
             childRunId: runId,
+            path: target.path,
             kind: waitingFor.kind,
             ...(waitingFor.kind === "approval"
               ? {
@@ -309,7 +317,7 @@ export class Waits implements OnApplicationShutdown {
         },
       ]);
     } catch (err) {
-      this.log.error("cannot surface a sub-agent's wait in its parent", { runId, err });
+      this.log.error("cannot surface a sub-agent's wait in its root conversation", { runId, err });
     }
   }
 

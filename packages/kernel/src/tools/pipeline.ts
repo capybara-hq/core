@@ -38,6 +38,7 @@ import {
 } from "../runtime/hook-calls.js";
 import { type SubagentParent, subagentWaitingIdemKey, type WaitingFor } from "../runtime/loop.js";
 import { assistantIdemKey, MAX_MODEL_ATTEMPTS, modelCallIdemKey } from "../runtime/model-call.js";
+import { rootSurfaceOf } from "../runtime/subagents/child.js";
 import type { DispatchArgs, DispatchOutcome } from "../runtime/subagents/dispatch.js";
 import { type MessageOutcome, SubagentMessages } from "../runtime/subagents/messages.js";
 import { pairStoppedForks } from "../runtime/subagents/skill-fork.js";
@@ -182,10 +183,15 @@ export interface PolicyContext {
   conversationId: string;
   runId: string;
   /**
-   * A sub-agent's call: its parent conversation, where "approve for this conversation" grants are
-   * looked up (sub-agents spec §9).
+   * A sub-agent's call: its parent conversation, whose agent's current policies apply on top
+   * (sub-agents spec §5.5).
    */
   parentConversationId?: string;
+  /**
+   * A sub-agent's call: the root conversation of its tree, where "approve for this conversation"
+   * grants are stored and looked up (agent map spec §7), so every agent of the tree uses them.
+   */
+  rootConversationId?: string;
   /**
    * False when the sub-agent runs its parent conversation's agent (a template or general-purpose
    * child): the parent agent's policies were already read as its own, so no second read. Unset:
@@ -666,6 +672,7 @@ export class ToolPipeline {
       runId: ctx.runId,
       ...(ctx.parent !== undefined && {
         parentConversationId: ctx.parent.conversationId,
+        rootConversationId: ctx.parent.rootConversationId,
         ...(ctx.parent.otherAgent !== undefined && { parentAgentDiffers: ctx.parent.otherAgent }),
       }),
     });
@@ -957,29 +964,16 @@ export class ToolPipeline {
         authorization,
       },
     );
-    // a sub-agent that needs a personal connection: mirrored in the parent for display (spec §9;
-    // not a wait, the child got the connect text as its result)
+    // a sub-agent that needs a personal connection: mirrored in the root conversation of its tree
+    // for display (sub-agents spec §9, agent map spec §7; not a wait, the child got the connect
+    // text as its result)
     if (outcome.kind === "connection_required" && ctx.parent !== undefined) {
-      await this.deps.eventLog
-        .append(ctx.parent.conversationId, [
-          {
-            type: "subagent_waiting",
-            runId: ctx.parent.runId,
-            idemKey: subagentWaitingIdemKey(ctx.runId, `connect-${call.id}`),
-            payload: {
-              subagentId: ctx.conversationId,
-              childRunId: ctx.runId,
-              kind: "connect",
-              toolKey: tool.key,
-            },
-          },
-        ])
-        .catch((err: unknown) =>
-          this.deps.log.warn("cannot surface a sub-agent's connect card in its parent", {
-            runId: ctx.runId,
-            err,
-          }),
-        );
+      await this.surfaceConnectInRoot(ctx, ctx.parent, call.id, tool.key).catch((err: unknown) =>
+        this.deps.log.warn("cannot surface a sub-agent's connect card in its root conversation", {
+          runId: ctx.runId,
+          err,
+        }),
+      );
     }
     if (hooks && hookBase) {
       fireObserve(
@@ -991,6 +985,31 @@ export class ToolPipeline {
       );
     }
     return undefined;
+  }
+
+  /** Appends a sub-agent's connect card to its root conversation ({@link rootSurfaceOf}). */
+  private async surfaceConnectInRoot(
+    ctx: ToolStepContext,
+    parent: SubagentParent,
+    callId: string,
+    toolKey: string,
+  ): Promise<void> {
+    const target = await rootSurfaceOf(this.deps.db, ctx.conversationId, ctx.runId, parent);
+    if (!target) return;
+    await this.deps.eventLog.append(target.conversationId, [
+      {
+        type: "subagent_waiting",
+        runId: target.runId,
+        idemKey: subagentWaitingIdemKey(ctx.runId, `connect-${callId}`),
+        payload: {
+          subagentId: ctx.conversationId,
+          childRunId: ctx.runId,
+          path: target.path,
+          kind: "connect",
+          toolKey,
+        },
+      },
+    ]);
   }
 
   /**

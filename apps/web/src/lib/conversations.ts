@@ -318,12 +318,17 @@ type EventBody =
         invokedSeq?: number;
       };
     }
-  /** Parent log: a sub-agent waits for a person (its approval, question or connection). */
+  /**
+   * Root log: a sub-agent of the tree, at any depth, waits for a person (its approval, question or
+   * connection). `path`: the child conversation ids from the root's child down to `subagentId`
+   * (absent in logs written before nesting, where it was the parent's own child).
+   */
   | {
       type: "subagent_waiting";
       payload: {
         subagentId: string;
         childRunId: string;
+        path?: string[];
         kind: "approval" | "input" | "connect";
         approvalId?: string;
         questionId?: string;

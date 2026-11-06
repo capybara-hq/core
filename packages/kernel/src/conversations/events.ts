@@ -737,12 +737,18 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       invokedSeq: seqNo.optional(),
     }),
   ),
-  /** Parent log: a sub-agent waits for a person (approval, input or a connection). Not model-visible. */
+  /**
+   * Root log (agent map spec §7): a sub-agent `subagentId` of the tree, at any depth, waits for a
+   * person (approval, input or a connection). Not model-visible. `path`: the child conversation ids
+   * from the root's child down to `subagentId` (`[subagentId]` for a child of the root); logged under
+   * the root run that last dispatched the root's child on that path.
+   */
   ev(
     "subagent_waiting",
     z.object({
       subagentId: z.string(),
       childRunId: z.string(),
+      path: z.array(z.string()).min(1).max(16),
       kind: z.enum(["approval", "input", "connect"]),
       approvalId: z.string().optional(),
       questionId: z.string().optional(),

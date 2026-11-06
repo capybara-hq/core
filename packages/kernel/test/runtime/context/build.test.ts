@@ -380,6 +380,7 @@ describe("buildModelRequest", () => {
         payload: {
           subagentId: "conv-c",
           childRunId: "run-c",
+          path: ["conv-c"],
           kind: "approval",
           approvalId: "ap-1",
           toolKey: "Bash",

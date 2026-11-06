@@ -270,7 +270,7 @@ Spec `docs/superpowers/specs/2026-10-26-subagents-design.md` §4–§9; code `to
 
 - **Shape**: depth 1 (a child never dispatches). Children run in read-only child conversations with their definition frozen in
   `subagent_started`. Per-run limits are `subagents.*` with org overrides `subagentLimitOverrides`; the children's tokens count
-  against the parent run. A child's approval shows in the parent as `subagent_waiting`. Org agents are dispatchable only behind the
+  against the parent run. A sub-agent's approval shows in the root conversation as `subagent_waiting` (agent map spec §7). Org agents are dispatchable only behind the
   allowlist, `dispatchable` and visibility gates, checked at every dispatch and follow-up. Stopping a parent stops its children.
 - **No in-process waiting**: the parent suspends with a `subagents` wait (PG), children run on the queue `cap-kernel-subagent-runs`,
   and the last child to finish resumes the parent through `Waits.resume`. The wait sweep repairs lost enqueues, orphaned children,
@@ -293,9 +293,12 @@ Spec `docs/superpowers/specs/2026-10-26-subagents-design.md` §4–§9; code `to
   dispatch-time policy or grant decision is not recorded, and the pipeline does not guess.
 - **Children** never get `Agent`, `AskUserQuestion`, `Deliver` or `SkillWrite`. A child's policy is the parent agent's current version
   with the frozen template overlay (stricter wins; never looser); an org agent child uses that agent's current version, then the
-  parent's policies. "Approve for this conversation" on a child is stored on the **parent** conversation, so it covers siblings'
-  identical calls, and a session grant on the parent also satisfies a template's `ask` for the same tool (one conversation from the
-  person's view). Approvals and questions go to the person who started the parent run.
+  parent's policies. "Approve for this conversation" on a sub-agent at any depth is stored on the **root** conversation of its
+  tree (agent map spec §7), so it covers every agent of the tree's identical calls, and a session grant on the root also satisfies a
+  template's `ask` for the same tool (one conversation from the person's view). Approvals and questions go to the run's trigger
+  account, inherited down the chain (the person whose message started that branch of work); `subagent_waiting` (with `path`, the
+  child ids from the root's child down to the waiting agent) is appended to the root's log under the root run that last dispatched
+  that branch (`rootSurfaceOf` in `runtime/subagents/child.ts`), never to the intermediate levels'.
 - **Follow-ups** (`resume`) keep the child's frozen instructions and model, but the type must still be in the dispatching run's roster
   (else the unknown-type refusal), and the frozen tools and `orgSkills` are intersected with the current version (the parent run's;
   for an org agent child, that agent's current version), recorded as `user_message.dispatch.narrowed` and used by the child's run.
