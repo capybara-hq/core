@@ -138,7 +138,8 @@ describe("另存为模板 (ruling P4-9)", () => {
       within(dialog).getByRole("textbox", { name: new RegExp(`^${S.description}`) }),
     ).toHaveProperty("value", "Helps with sales.");
     expect(within(dialog).getByText(S.rosterLeftOut)).toBeTruthy();
-    expect(await within(dialog).findByText("· Research Desk")).toBeTruthy();
+    const roster = within(dialog).getByRole("list", { name: S.rosterLabel });
+    expect(await within(roster).findByText("Research Desk")).toBeTruthy();
   });
 
   it("saves and goes to the new template's page when nothing was left out", async () => {
@@ -235,12 +236,39 @@ describe("另存为模板 (ruling P4-9)", () => {
     ).toBeTruthy();
   });
 
-  it("a name outside the bare-name rule cannot be sent", async () => {
-    const { user, dialog } = await openFromAgentPage(routes());
+  it("a name outside the bare-name rule says so as it is typed, and nothing is sent", async () => {
+    const r = routes();
+    const { user, dialog } = await openFromAgentPage(r);
+    const calls = stubApi(r);
     const name = within(dialog).getByRole("textbox", { name: new RegExp(`^${S.name}`) });
     await user.clear(name);
+    // empty: no error until a save is tried
+    expect(within(dialog).queryByText(S.nameInvalid)).toBeNull();
     await user.type(name, "Sales Helper");
-    expect(within(dialog).getByRole("button", { name: S.submit })).toHaveProperty("disabled", true);
+    expect(within(dialog).getByText(S.nameInvalid)).toBeTruthy();
+    // no dead button: pressing it explains and sends nothing
+    const submit = within(dialog).getByRole("button", { name: S.submit });
+    expect(submit).toHaveProperty("disabled", false);
+    await user.click(submit);
+    await user.clear(name);
+    await user.click(submit);
+    expect(within(dialog).getByText(S.nameRequired)).toBeTruthy();
+    expect(calls.some((c) => c.method === "POST")).toBe(false);
+  });
+
+  it("an agent name with nothing usable (all CJK) leaves the name empty, with the rule and an example", async () => {
+    const zhAgent = { ...HELPER, definition: { ...HELPER.definition, name: "销售助手" } };
+    const r = routes({ [`GET ${ORG}/agents/ag1`]: () => json(200, { agent: zhAgent }) });
+    stubApi(r);
+    await renderEditAgent({ routes: r });
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: en.common.moreActions }));
+    await user.click(await screen.findByRole("menuitem", { name: S.action }));
+    const dialog = await screen.findByRole("dialog");
+    const name = within(dialog).getByRole("textbox", { name: new RegExp(`^${S.name}`) });
+    expect(name).toHaveProperty("value", "");
+    expect(name.getAttribute("placeholder")).toBe(S.namePlaceholder);
+    expect(within(dialog).getByText(S.nameHelpEmpty)).toBeTruthy();
   });
 });
 

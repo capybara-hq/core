@@ -43,6 +43,7 @@ import {
   extensionToolsQuery,
 } from "../../lib/query/agents";
 import { retryOnMountOf } from "../../lib/query/client";
+import { orgComponentsQuery } from "../../lib/query/components";
 import { modelsQuery } from "../../lib/query/conversation";
 import { skillsQuery } from "../../lib/query/skills";
 import { extensionToolKey, parseToolKey } from "../../lib/tool-key";
@@ -50,6 +51,7 @@ import { sameJson } from "../agent/definition-parts";
 import { useSectionActionRow } from "../agent/definition-save";
 import { useInstructionFilesEditor } from "../agent/InstructionFilesEditor";
 import {
+  QUICK_ACTIONS_MAX,
   type QuickActionEntry,
   QuickActionsEditor,
   quickActionEntries,
@@ -237,7 +239,7 @@ export function QuickActionsEdit() {
       <FormSection
         id="quick-actions"
         title={t("sections.quick-actions")}
-        description={tq("hint", { max: 9 })}
+        description={tq("hint", { max: QUICK_ACTIONS_MAX })}
       >
         <QuickActionsEditor
           items={items}
@@ -769,6 +771,60 @@ function connectorOf(d: ConnectorDraft): TemplateConnector {
 }
 
 /**
+ * A connector entry's tool policies (ruling P4-5: they carry over for kept tools): one select per
+ * listed tool, as the Tools section's; an entry naming no tools (a template entry: all its tools)
+ * keeps its saved policies read-only and says so.
+ */
+function ConnectorPolicies({
+  entry,
+  disabled,
+  onChange,
+}: {
+  entry: ConnectorDraft;
+  disabled: boolean;
+  onChange(tool: string, v: TightenedPolicy | ""): void;
+}) {
+  const t = useTranslations("agents.templatePage");
+  const tf = useTranslations("agents.form");
+  const tools = linesOf(entry.toolsText);
+  if (tools.length === 0) {
+    const kept = Object.entries(entry.policies);
+    return kept.length === 0 ? null : (
+      <Text variant="small" tone="muted">
+        {t("connectors.policiesKept", {
+          count: kept.length,
+          list: kept.map(([tool, p]) => `${tool} · ${t(`policy.${p}`)}`).join(", "),
+        })}
+      </Text>
+    );
+  }
+  return (
+    // biome-ignore lint/a11y/useSemanticElements: a fieldset brings browser styles; apps/web writes none
+    <div role="group" aria-label={t("connectors.policies")}>
+      <Stack gap={4}>
+        <Text variant="small" tone="muted">
+          {t("connectors.policies")}
+        </Text>
+        {tools.map((tool) => (
+          <Field key={tool} label={tool}>
+            <Select
+              value={entry.policies[tool] ?? ""}
+              disabled={disabled}
+              onChange={(e) => onChange(tool, e.target.value as TightenedPolicy | "")}
+              options={[
+                { value: "", label: tf("policy.default") },
+                { value: "ask", label: tf("policy.ask") },
+                { value: "deny", label: tf("policy.deny") },
+              ]}
+            />
+          </Field>
+        ))}
+      </Stack>
+    </div>
+  );
+}
+
+/**
  * 连接器: the template entries (a platform connector template, by name) and the needs entries (a
  * connector by protocol, endpoint and tools; ruling P4-11, never credentials). Needs entries are
  * edited in place and may be added; any entry may be removed. An endpoint carrying userinfo, a
@@ -776,9 +832,12 @@ function connectorOf(d: ConnectorDraft): TemplateConnector {
  */
 export function ConnectorsEdit() {
   const t = useTranslations("agents.templatePage");
-  const { template, definition } = useTemplatePage();
+  const { orgId, template, definition } = useTemplatePage();
   const templateName = useConnectorTemplateName();
   const save = useTemplateSave();
+  const cq = orgComponentsQuery(orgId, {});
+  const offered = useQuery({ ...cq, retryOnMount: retryOnMountOf(cq.queryKey) });
+  const [picked, setPicked] = useState("");
   const savedList = definition.connectors ?? [];
   const saved = { items: savedList.map(connectorDraftOf) };
   const draft = useSectionDraft(saved);
@@ -819,6 +878,29 @@ export function ConnectorsEdit() {
   const errorCount = items.reduce((n, _, i) => n + Object.keys(shown(i)).length, 0);
   const unsaved =
     draft.dirty && !sameJson(items.map(connectorOf), saved.items.map(connectorOf)) ? 1 : 0;
+  // the connector templates on in the org that the template does not name yet
+  const addable = (offered.data?.components ?? []).filter(
+    (c) =>
+      c.kind === "connector_template" &&
+      c.on &&
+      !items.some((x) => x.kind === "template" && x.template === c.id),
+  );
+  const full = items.length >= TEMPLATE_LIMITS.connectors;
+  const add = (entry: Omit<ConnectorDraft, "key">) => {
+    next.current += 1;
+    const key = `new-${next.current}`;
+    edit((list) => [...list, { key, ...entry }]);
+  };
+  const setPolicy = (key: string, tool: string, v: TightenedPolicy | "") =>
+    edit((list) =>
+      list.map((x) => {
+        if (x.key !== key) return x;
+        const policies = { ...x.policies };
+        if (v === "") delete policies[tool];
+        else policies[tool] = v;
+        return { ...x, policies };
+      }),
+    );
 
   async function onSave() {
     if (save.pending) return;
@@ -956,36 +1038,65 @@ export function ConnectorsEdit() {
                       onChange={(e) => update(x.key, { toolsText: e.target.value })}
                     />
                   </Field>
-                  {Object.keys(x.policies).length > 0 ? (
-                    <Text variant="small" tone="muted">
-                      {t("connectors.policiesKept", { count: Object.keys(x.policies).length })}
-                    </Text>
-                  ) : null}
+                  <ConnectorPolicies
+                    entry={x}
+                    disabled={save.pending}
+                    onChange={(tool, v) => setPolicy(x.key, tool, v)}
+                  />
                 </Stack>
               </ItemListItem>
             );
           })}
         </ItemList>
-        <Stack direction="row" gap={8}>
-          <Button
-            disabled={save.pending || items.length >= TEMPLATE_LIMITS.connectors}
-            onClick={() => {
-              next.current += 1;
-              const key = `new-${next.current}`;
-              edit((list) => [
-                ...list,
+        <Stack direction="row" gap={8} align="end" wrap>
+          <Field label={t("connectors.addTemplateLabel")}>
+            <Select
+              name="add-template"
+              value={picked}
+              disabled={save.pending || full || addable.length === 0}
+              onChange={(e) => setPicked(e.target.value)}
+              options={[
                 {
-                  key,
-                  kind: "needs",
-                  template: "",
-                  protocol: "mcp",
-                  endpoint: "",
-                  label: "",
-                  toolsText: "",
-                  policies: {},
+                  value: "",
+                  label:
+                    addable.length === 0
+                      ? t("connectors.noTemplates")
+                      : t("connectors.pickTemplate"),
                 },
-              ]);
+                ...addable.map((c) => ({ value: c.id, label: c.name })),
+              ]}
+            />
+          </Field>
+          <Button
+            disabled={save.pending || full || picked === ""}
+            onClick={() => {
+              add({
+                kind: "template",
+                template: picked,
+                protocol: "mcp",
+                endpoint: "",
+                label: "",
+                toolsText: "",
+                policies: {},
+              });
+              setPicked("");
             }}
+          >
+            {t("connectors.addTemplate")}
+          </Button>
+          <Button
+            disabled={save.pending || full}
+            onClick={() =>
+              add({
+                kind: "needs",
+                template: "",
+                protocol: "mcp",
+                endpoint: "",
+                label: "",
+                toolsText: "",
+                policies: {},
+              })
+            }
           >
             {t("connectors.addNeeds")}
           </Button>
@@ -1069,6 +1180,9 @@ export function SubagentsEdit() {
     ...(TEMPLATE_NAME_RE.test(x.name.trim()) ? {} : { name: t("subagents.nameInvalid") }),
     ...(x.description.trim() === "" ? { description: t("subagents.descriptionRequired") } : {}),
     ...(x.instructions.trim() === "" ? { instructions: t("subagents.instructionsRequired") } : {}),
+    ...(x.toolsMode === "list" && linesOf(x.toolsText).length === 0
+      ? { tools: t("subagents.toolsListEmpty") }
+      : {}),
     ...(linesOf(x.skillsText).length > TEMPLATE_LIMITS.skills
       ? { skills: t("subagents.tooManySkills", { max: TEMPLATE_LIMITS.skills }) }
       : {}),
@@ -1269,7 +1383,11 @@ export function SubagentsEdit() {
                       />
                     </Field>
                     {x.toolsMode === "list" ? (
-                      <Field label={t("subagents.toolKeys")} help={t("subagents.toolKeysHelp")}>
+                      <Field
+                        label={t("subagents.toolKeys")}
+                        help={t("subagents.toolKeysHelp")}
+                        {...(p.tools ? { error: p.tools } : {})}
+                      >
                         <Textarea
                           rows={3}
                           disabled={save.pending}

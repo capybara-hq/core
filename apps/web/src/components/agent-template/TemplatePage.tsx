@@ -20,7 +20,7 @@ import {
   deleteAgentTemplate,
   setAgentTemplateShareable,
 } from "../../lib/agents";
-import { type OrgComponent, unavailableComponent } from "../../lib/components";
+import type { OrgComponent } from "../../lib/components";
 import { keys } from "../../lib/query/keys";
 import { useAppMutation } from "../../lib/query/mutation";
 import { useErrorMessage } from "../../lib/use-error-message";
@@ -61,14 +61,28 @@ import {
 /** The breadcrumb's templates segment: the 模板 tab of the 智能体 page (ruling P4-14). */
 export const TEMPLATES_TAB_HREF = "/agents?tab=templates";
 
-/** The component the template stands for among the ones offered to the org (on or off). */
+/**
+ * The component the template stands for among the ones offered to the org (on or off): by its id
+ * or a linked copy's, else (the owner's promoted template) the plugin-less one of the same name the
+ * org owns. Only the switch's 启用 / 停用 read it; whether the template is usable is the detail's.
+ */
 export const offeredComponentOf = (
   offered: readonly OrgComponent[] | undefined,
-  id: string,
-): OrgComponent | undefined =>
-  offered?.find(
-    (c) => c.kind === "agent_template" && (c.id === id || (c.linkedIds ?? []).includes(id)),
+  t: { id: string; name: string },
+  orgId: string,
+): OrgComponent | undefined => {
+  const mine = (offered ?? []).filter((c) => c.kind === "agent_template");
+  return (
+    mine.find((c) => c.id === t.id || (c.linkedIds ?? []).includes(t.id)) ??
+    mine.find(
+      (c) =>
+        c.plugin === null &&
+        c.name === t.name &&
+        c.owner?.kind === "org" &&
+        c.owner.orgId === orgId,
+    )
   );
+};
 
 /**
  * The template page `/agents/templates/<id>` (rulings P4-12, P4-14): the head (the initial square,
@@ -111,8 +125,9 @@ export function TemplatePage({
   const [deleting, setDeleting] = useState(false);
   const describedBy = useId();
   const editable = admin && template.owned;
-  const component = offeredComponentOf(offered, template.id);
-  const off = unavailableComponent(offered, "agent_template", template.id);
+  const component = offeredComponentOf(offered, template, orgId);
+  // not usable here (only its owner reads it, switched off in its own org): the kernel says so
+  const off = template.usable === false;
   const { actionsOf, dialog, error: switchError } = useComponentSwitch({ orgId, admin });
   const switchActions = component !== undefined ? actionsOf(component) : [];
   const enable = switchActions.find((a) => a.id === "enable");
@@ -183,9 +198,7 @@ export function TemplatePage({
   ];
   const actions: HeaderAction[] = [
     ...(menu.length > 0 ? [{ label: tc("moreActions"), menu }] : []),
-    ...(off === undefined
-      ? [{ label: tt("create"), variant: "primary" as const, onSelect: onCreate }]
-      : []),
+    ...(!off ? [{ label: tt("create"), variant: "primary" as const, onSelect: onCreate }] : []),
   ];
   const definition = definitionOf(template);
   const header: PageHeaderProps = {
@@ -206,7 +219,7 @@ export function TemplatePage({
       <Callout tone="fail">
         <FormError message={switchError.message} extra={switchError.extra} />
       </Callout>
-    ) : off !== undefined ? (
+    ) : off ? (
       <Callout
         tone="warn"
         {...(enable?.onSelect !== undefined

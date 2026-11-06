@@ -159,7 +159,11 @@ describe("/agents/templates/[id]: read view and editor (rulings P4-12, P4-14)", 
     );
     // read-only: no form field
     expect(screen.queryByRole("textbox")).toBeNull();
-    expect(screen.getByText("Drafts sales replies.", { selector: "dd, span, div" })).toBeTruthy();
+    // the head's description, as on the agent page; 基本信息 does not repeat it
+    expect(document.querySelector('[data-part="settings-description"]')?.textContent).toBe(
+      "Drafts sales replies.",
+    );
+    expect(screen.getAllByText("Drafts sales replies.")).toHaveLength(1);
     // every section in the nav, members included
     for (const s of Object.values(P.sections))
       expect(screen.getByRole("link", { name: s })).toBeTruthy();
@@ -454,12 +458,15 @@ describe("/agents/templates/[id]: a platform template offered but off in the org
     await settle();
     expect(screen.queryByText(P.off.title)).toBeNull();
     expect(screen.queryByRole("heading", { level: 1, name: "writer" })).toBeNull();
+    // the segment's not-found page
+    expect(screen.getAllByText(en.notFound.title).length).toBeGreaterThan(0);
+    expect(screen.getByText(en.notFound.description)).toBeTruthy();
   });
 
   it("the owner's own promoted template switched off in its org: the editor with the notice and 启用", async () => {
     const r = routes({
       [`GET ${ORG}/agent-templates/t9`]: () =>
-        json(200, detail({ promoted: true, shareable: true })),
+        json(200, detail({ promoted: true, shareable: true, usable: false })),
       [`GET ${ORG}/components`]: () =>
         json(200, {
           components: [
@@ -477,7 +484,7 @@ describe("/agents/templates/[id]: a platform template offered but off in the org
               locked: false,
               pluginOn: true,
               switchable: true,
-              linkedIds: ["t9"],
+              // the org row is not among its linked ids: found by name and owner for the switch
               owner: { kind: "org", orgId: "o1", name: "Acme" },
             },
           ],
@@ -490,5 +497,324 @@ describe("/agents/templates/[id]: a platform template offered but off in the org
     // not usable here: no 用它创建
     expect(screen.queryByRole("button", { name: A.create })).toBeNull();
     expect(screen.getByRole("textbox", { name: P.basics.description })).toBeTruthy();
+  });
+
+  it("not usable here by the kernel's word, the platform row not offered: the notice, no 启用, no 用它创建", async () => {
+    const r = routes({
+      [`GET ${ORG}/agent-templates/t9`]: () => json(200, detail({ promoted: true, usable: false })),
+      [`GET ${ORG}/components`]: () => json(200, { components: [] }),
+    });
+    stubApi(r);
+    await renderRouteWithCache("/agents/templates/t9", r, {
+      me: { ...ME, memberships: [{ orgId: "o1", slug: "acme", name: "Acme", role: "admin" }] },
+    });
+    expect(await screen.findByText(P.off.ownerAdmin)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: C.action.enable })).toBeNull();
+    expect(screen.queryByRole("button", { name: A.create })).toBeNull();
+  });
+});
+
+describe("/agents/templates/[id]: the editor's sections save their part (ruling P4-12)", () => {
+  const TF = en.agents.form;
+  const SA = en.agents.form.subagents;
+  type Put = { definition: Record<string, unknown>; expectedVersion: number };
+  /** Routes whose GET serves `current`, which a PUT replaces (`answer` shapes the new one). */
+  function live(answer: (d: Record<string, unknown>) => Record<string, unknown> = (d) => d) {
+    let current: Record<string, unknown> = { ...DEFINITION };
+    let version = 3;
+    const r = routes({
+      [`GET ${ORG}/agent-templates/t9`]: () => json(200, detail({ definition: current, version })),
+      [`PUT ${ORG}/agent-templates/t9`]: (c) => {
+        current = answer((JSON.parse(String(c.body)) as Put).definition);
+        version += 1;
+        return json(200, detail({ definition: current, version }));
+      },
+    });
+    return r;
+  }
+  const lastPut = (calls: { method: string; body: unknown }[]) =>
+    bodyOf(calls.filter((c) => c.method === "PUT").at(-1) as never) as Put;
+  const rowOf = (title: string) =>
+    (screen.getAllByText(title).find((e) => e.closest("li")) as HTMLElement).closest(
+      "li",
+    ) as HTMLElement;
+  const save = (user: ReturnType<typeof userEvent.setup>) =>
+    user.click(screen.getByRole("button", { name: TF.submit }));
+
+  it("连接器: a connector template on in the org is added, policies are set per listed tool, and both round-trip", async () => {
+    const r = live();
+    r[`GET ${ORG}/components`] = () =>
+      json(200, {
+        components: [
+          { kind: "connector_template", id: "ct-wiki", name: "Wiki", on: true, plugin: "wiki" },
+          { kind: "connector_template", id: "ct-jira", name: "Jira", on: true, plugin: "jira" },
+          { kind: "connector_template", id: "ct-off", name: "Offline", on: false, plugin: "x" },
+        ],
+      });
+    const calls = stubApi(r);
+    await renderRouteWithCache("/agents/templates/t9?s=connectors", r);
+    const user = userEvent.setup();
+    const picker = await screen.findByRole("combobox", { name: P.connectors.addTemplateLabel });
+    // Wiki is named already, Offline is off in the org: Jira is the one to add
+    const list = await (async () => {
+      await user.click(picker);
+      return screen.findByRole("listbox");
+    })();
+    const labels = within(list)
+      .getAllByRole("option")
+      .map((o) => o.textContent);
+    expect(labels).toEqual([P.connectors.pickTemplate, "Jira"]);
+    await user.click(within(list).getByRole("option", { name: "Jira" }));
+    await user.click(screen.getByRole("button", { name: P.connectors.addTemplate }));
+    const jira = rowOf("Jira");
+    await user.type(within(jira).getByRole("textbox"), "create\nsearch");
+    await pickOption(within(jira).getByRole("combobox", { name: "search" }), TF.policy.ask, user);
+    // the needs entry's listed tools get their selects too
+    await pickOption(
+      within(rowOf("CRM")).getByRole("combobox", { name: "update" }),
+      TF.policy.deny,
+      user,
+    );
+    // a template entry naming no tools keeps its policies read-only (Wiki has none: no line)
+    expect(within(rowOf("Wiki")).queryByRole("combobox")).toBeNull();
+    // removing Wiki offers it again
+    await user.click(screen.getByRole("button", { name: "Remove Wiki" }));
+    await user.click(picker);
+    expect(await screen.findByRole("option", { name: "Wiki" })).toBeTruthy();
+    await user.keyboard("{Escape}");
+    await save(user);
+    await vi.waitFor(() => expect(calls.some((c) => c.method === "PUT")).toBe(true));
+    expect(lastPut(calls).definition.connectors).toEqual([
+      {
+        needs: {
+          protocol: "mcp",
+          endpoint: "https://crm.example.com/mcp",
+          tools: ["search", "update"],
+          label: "CRM",
+        },
+        policies: { update: "deny" },
+      },
+      { template: "ct-jira", tools: ["create", "search"], policies: { search: "ask" } },
+    ]);
+    // read again after the save: the saved policies are what the selects show
+    await vi.waitFor(() => expect(screen.queryByRole("button", { name: TF.submit })).toBeNull());
+    expect(within(rowOf("Jira")).getByRole("combobox", { name: "search" }).textContent).toContain(
+      TF.policy.ask,
+    );
+  });
+
+  it("连接器: a template entry without tools keeps its policies read-only and counts only those", async () => {
+    const r = live();
+    r[`GET ${ORG}/agent-templates/t9`] = () =>
+      json(
+        200,
+        detail({
+          definition: {
+            ...DEFINITION,
+            connectors: [{ template: "ct-wiki", policies: { publish: "deny", read: "ask" } }],
+          },
+        }),
+      );
+    stubApi(r);
+    await renderRouteWithCache("/agents/templates/t9?s=connectors", r);
+    expect(
+      await screen.findByText(
+        "This connector lists no tools: its 2 tool policies stay as saved (publish · Denied, read · Ask first); list its tools to change them.",
+      ),
+    ).toBeTruthy();
+  });
+
+  it("连接器: the endpoint the kernel stored canonical is what the field shows after the save", async () => {
+    const r = live((d) => ({
+      ...d,
+      connectors: (d.connectors as Record<string, unknown>[]).map((c) =>
+        "needs" in c
+          ? { ...c, needs: { ...(c.needs as object), endpoint: "https://crm.example.com/" } }
+          : c,
+      ),
+    }));
+    stubApi(r);
+    await renderRouteWithCache("/agents/templates/t9?s=connectors", r);
+    const user = userEvent.setup();
+    const endpoint = await screen.findByRole("textbox", { name: P.connectors.endpoint });
+    await user.clear(endpoint);
+    await user.type(endpoint, "https://CRM.example.com");
+    await save(user);
+    await vi.waitFor(() =>
+      expect(screen.getByRole("textbox", { name: P.connectors.endpoint })).toHaveProperty(
+        "value",
+        "https://crm.example.com/",
+      ),
+    );
+  });
+
+  it("重新加载 after a version conflict reads the template again and drops the edits", async () => {
+    let reads = 0;
+    const r = routes({
+      [`GET ${ORG}/agent-templates/t9`]: () => {
+        reads += 1;
+        return json(
+          200,
+          reads === 1
+            ? detail()
+            : detail({
+                version: 4,
+                definition: { ...DEFINITION, description: "Changed elsewhere." },
+              }),
+        );
+      },
+      [`PUT ${ORG}/agent-templates/t9`]: () =>
+        json(409, { error: { code: "agent_template.version_conflict", message: "changed" } }),
+    });
+    stubApi(r);
+    await renderRouteWithCache("/agents/templates/t9", r);
+    const user = userEvent.setup();
+    const box = await screen.findByRole("textbox", { name: P.basics.description });
+    await user.type(box, " mine");
+    await save(user);
+    await user.click(await screen.findByRole("button", { name: en.agents.page.reload }));
+    await vi.waitFor(() =>
+      expect(screen.getByRole("textbox", { name: P.basics.description })).toHaveProperty(
+        "value",
+        "Changed elsewhere.",
+      ),
+    );
+    expect(screen.queryByText(en.errors.agent_template.version_conflict)).toBeNull();
+  });
+
+  it("工具: ticks and policies; an unticked tool's policy goes with it", async () => {
+    const r = live();
+    const calls = stubApi(r);
+    await renderRouteWithCache("/agents/templates/t9?s=tools", r);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("checkbox", { name: TF.builtin.ReadToolOutput }));
+    await user.click(screen.getByRole("checkbox", { name: TF.builtin.AskUserQuestion }));
+    await pickOption(
+      screen.getByRole("combobox", { name: TF.builtin.ReadToolOutput }),
+      TF.policy.deny,
+      user,
+    );
+    await save(user);
+    await vi.waitFor(() => expect(calls.some((c) => c.method === "PUT")).toBe(true));
+    const { definition } = lastPut(calls);
+    expect(definition.tools).toEqual(["ReadToolOutput"]);
+    expect(definition.toolPolicies).toEqual({ ReadToolOutput: "deny" });
+  });
+
+  it("技能: at most 3 preloaded, unticking a skill unpins it, the rest are selected", async () => {
+    const r = live();
+    const skill = (name: string) => ({
+      id: `s-${name}`,
+      scope: "org",
+      agentId: null,
+      name,
+      description: `${name} skill`,
+      currentVersion: 1,
+      createdBy: "a1",
+      createdAt: "2026-11-07T00:00:00.000Z",
+      updatedAt: "2026-11-07T00:00:00.000Z",
+    });
+    r[`GET ${ORG}/skills`] = () =>
+      json(200, { skills: ["pricing", "tone", "alpha", "beta"].map(skill) });
+    const calls = stubApi(r);
+    await renderRouteWithCache("/agents/templates/t9?s=skills", r);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("checkbox", { name: "alpha · alpha skill" }));
+    await user.click(screen.getByRole("checkbox", { name: "beta · beta skill" }));
+    await user.click(screen.getByRole("checkbox", { name: "Preload tone" }));
+    await user.click(screen.getByRole("checkbox", { name: "Preload alpha" }));
+    // three preloaded: the fourth cannot be
+    expect(screen.getByRole("checkbox", { name: "Preload beta" })).toHaveProperty("disabled", true);
+    // unticking tone unpins it, which frees a place
+    await user.click(screen.getByRole("checkbox", { name: "tone · tone skill" }));
+    expect(screen.queryByRole("checkbox", { name: "Preload tone" })).toBeNull();
+    expect(screen.getByRole("checkbox", { name: "Preload beta" })).toHaveProperty(
+      "disabled",
+      false,
+    );
+    await save(user);
+    await vi.waitFor(() => expect(calls.some((c) => c.method === "PUT")).toBe(true));
+    const { definition } = lastPut(calls);
+    expect(definition.skills).toEqual(["pricing", "alpha"]);
+    expect(definition.selectedSkills).toEqual(["beta"]);
+  });
+
+  it("子智能体: inline sub-agents with all, no and listed tools round-trip; an empty list is refused", async () => {
+    const r = live();
+    const calls = stubApi(r);
+    await renderRouteWithCache("/agents/templates/t9?s=subagents", r);
+    const user = userEvent.setup();
+    const fill = async (row: HTMLElement, name: string, mode?: string) => {
+      await user.type(within(row).getByRole("textbox", { name: SA.inlineName }), name);
+      await user.type(
+        within(row).getByRole("textbox", { name: SA.inlineDescription }),
+        `${name} it`,
+      );
+      await user.type(within(row).getByRole("textbox", { name: SA.inlineInstructions }), "Do it.");
+      if (mode !== undefined) {
+        await pickOption(
+          within(row).getByRole("combobox", { name: P.subagents.tools }),
+          mode,
+          user,
+        );
+      }
+    };
+    const rows = () =>
+      within(screen.getByRole("list", { name: SA.inlineLabel })).getAllByRole("listitem");
+    for (let i = 0; i < 3; i++) {
+      await user.click(await screen.findByRole("button", { name: SA.addInline }));
+    }
+    await fill(rows()[0] as HTMLElement, "all-tools");
+    await fill(rows()[1] as HTMLElement, "no-tools", P.subagents.toolsMode.none);
+    await fill(rows()[2] as HTMLElement, "some-tools", P.subagents.toolsMode.list);
+    await save(user);
+    expect(await screen.findByText(P.subagents.toolsListEmpty)).toBeTruthy();
+    expect(calls.some((c) => c.method === "PUT")).toBe(false);
+    await user.type(
+      within(rows()[2] as HTMLElement).getByRole("textbox", {
+        name: new RegExp(`^${P.subagents.toolKeys}`),
+      }),
+      "Read",
+    );
+    await save(user);
+    await vi.waitFor(() => expect(calls.some((c) => c.method === "PUT")).toBe(true));
+    const base = { instructions: "Do it.", model: "inherit", skills: [] };
+    expect(lastPut(calls).definition.subagents).toEqual({
+      general: true,
+      types: ["docs:reviewer"],
+      inline: [
+        { name: "all-tools", description: "all-tools it", ...base },
+        { name: "no-tools", description: "no-tools it", ...base, tools: [] },
+        { name: "some-tools", description: "some-tools it", ...base, tools: ["Read"] },
+      ],
+    });
+  });
+
+  it("提示词 and 快捷操作 save their part", async () => {
+    const r = live();
+    const calls = stubApi(r);
+    const view = await renderRouteWithCache("/agents/templates/t9?s=prompt", r);
+    const user = userEvent.setup();
+    const content = await screen.findByRole("textbox", {
+      name: new RegExp(`^${en.agents.page.prompt.contentLabel}`),
+    });
+    await user.clear(content);
+    await user.type(content, "New prompt.");
+    await save(user);
+    await vi.waitFor(() => expect(calls.some((c) => c.method === "PUT")).toBe(true));
+    expect(lastPut(calls).definition).toMatchObject({
+      instructionFiles: [{ name: "AGENTS.md", content: "New prompt." }],
+      instructions: "New prompt.",
+    });
+    await view.navigate("/agents/templates/t9?s=quick-actions");
+    const title = await screen.findByRole("textbox", {
+      name: new RegExp(`^${en.agents.page.quickActions.titleLabel}`),
+    });
+    await user.type(title, " v2");
+    await save(user);
+    await vi.waitFor(() => expect(calls.filter((c) => c.method === "PUT")).toHaveLength(2));
+    expect(lastPut(calls).definition.quickActions).toEqual([
+      { title: "Weekly v2", body: "Write the weekly summary." },
+    ]);
   });
 });
