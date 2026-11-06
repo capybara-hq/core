@@ -304,7 +304,11 @@ export function Conversations({
     );
   } else if (groups.length === 0) {
     body = (
-      <div className="cb-sidebar-empty" data-part="empty-hint">
+      <div
+        className="cb-sidebar-empty"
+        data-part="empty-hint"
+        data-state={filtering ? "no-match" : undefined}
+      >
         {filtering ? (
           <EmptyState
             size="compact"

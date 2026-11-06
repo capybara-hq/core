@@ -470,6 +470,16 @@
 .cb-sidebar-empty {
   padding: 0 var(--cb-space-1);
 }
+/* A filter matching nothing: the compact EmptyState in its in-list form, as the DataTable's empty
+   area draws it (§6.6): centered in the list, space.8 above and below. */
+.cb-sidebar-empty[data-state="no-match"] {
+  padding: var(--cb-space-8) 0;
+}
+.cb-sidebar-empty[data-state="no-match"] > .cb-empty-state[data-size="compact"] {
+  align-items: center;
+  padding: 0;
+  text-align: center;
+}
 .cb-sidebar-loading {
   display: flex;
   flex-direction: column;

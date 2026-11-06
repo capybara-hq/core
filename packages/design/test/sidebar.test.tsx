@@ -848,6 +848,12 @@ describe("Sidebar conversations", () => {
     );
     const sec = convSection();
     expect(within(sec).getByText("没有匹配的会话")).toBeTruthy();
+    // the in-list form of the compact empty state (centered in the list like the DataTable's)
+    const hint = sec.querySelector('[data-part="empty-hint"]');
+    expect(hint?.getAttribute("data-state")).toBe("no-match");
+    expect(hint?.querySelector('[data-part="empty-state"]')?.getAttribute("data-size")).toBe(
+      "compact",
+    );
     await userEvent.click(within(sec).getByRole("button", { name: "清除筛选" }));
     expect(onChange).toHaveBeenCalledWith({ q: "", state: "all" });
   });

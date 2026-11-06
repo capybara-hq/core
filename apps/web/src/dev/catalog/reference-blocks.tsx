@@ -554,6 +554,7 @@ function sidebarBlocks(): ReactNode {
         moreOpen
       />
       <SidebarBlock id="sidebar-filter" {...base} filter={{ q: "", state: "waiting" }} />
+      <SidebarBlock id="sidebar-filter-empty" {...base} filter={{ q: "发票", state: "all" }} />
       <SidebarBlock id="sidebar-archived" {...base} archived />
       <SidebarBlock id="sidebar-empty" {...base} state="empty" />
       <SidebarBlock id="sidebar-loading" {...base} state="loading" />

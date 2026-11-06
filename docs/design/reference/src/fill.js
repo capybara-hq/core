@@ -105,10 +105,22 @@
         : o.groups === "many"
           ? F.MANY_GROUPS_FIXTURE
           : F.GROUPS_FIXTURE;
-    if (o.filter && o.filter !== "all") {
+    if (o.filter && (o.filter !== "all" || o.query)) {
+      const q = (o.query ?? "").toLowerCase();
       groups = groups
-        .map((g) => ({ ...g, more: false, conversations: g.conversations.filter((c) => c.activity === o.filter) }))
+        .map((g) => ({
+          ...g,
+          more: false,
+          conversations: g.conversations.filter(
+            (c) =>
+              (o.filter === "all" || c.activity === o.filter) &&
+              (c.title ?? "").toLowerCase().includes(q),
+          ),
+        }))
         .filter((g) => g.conversations.length > 0);
+      // the in-list form of the compact empty state, centered as the DataTable's empty area
+      if (groups.length === 0)
+        return `<div class="r-sb-empty" data-state="no-match"><p class="r-sb-empty-text">${esc(F.SIDEBAR_COPY.noMatch)}</p><button class="r-btn" data-variant="default" data-step="dense">${esc(F.SIDEBAR_COPY.clearFilter)}</button></div>`;
     }
     const moreGroups =
       o.groups === "many" && F.MANY_GROUPS_MORE
@@ -122,7 +134,7 @@
     const n = F.ARCHIVED_COUNT_FIXTURE;
     const head = `<div class="r-sb-convs-head"><span class="r-sb-section">${esc(C.conversations)}</span><button class="r-icon-btn" data-step="dense" aria-label="${esc(C.filter)}"${o.filter ? ' data-active="true"' : ""}>${icon("filter", 14)}</button></div>`;
     const filter = o.filter
-      ? `<div class="r-sb-filter"><input class="r-input r-sb-filter-input" placeholder="${esc(C.filterQuery)}" aria-label="${esc(C.filterQuery)}"><div class="r-seg r-seg-fill r-sb-filter-seg" role="radiogroup" aria-label="会话状态">${C.states
+      ? `<div class="r-sb-filter"><input class="r-input r-sb-filter-input" placeholder="${esc(C.filterQuery)}" aria-label="${esc(C.filterQuery)}"${o.query ? ` value="${esc(o.query)}"` : ""}><div class="r-seg r-seg-fill r-sb-filter-seg" role="radiogroup" aria-label="会话状态">${C.states
           .map((label, i) => `<button role="radio" aria-checked="${["all", "running", "waiting"][i] === o.filter}">${esc(label)}</button>`)
           .join("")}</div></div>`
       : "";

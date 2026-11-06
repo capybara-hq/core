@@ -831,6 +831,11 @@ textarea {
   margin: 0;
   color: var(--cb-ink);
 }
+.r-sb-empty[data-state="no-match"] {
+  align-items: center;
+  padding: var(--cb-space-8) var(--cb-pad-dense-x);
+  text-align: center;
+}
 .r-sb-hint {
   margin: 0;
   padding: 0 var(--cb-pad-dense-x);

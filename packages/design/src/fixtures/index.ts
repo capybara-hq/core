@@ -295,6 +295,8 @@ export const SIDEBAR_COPY = {
   filter: "筛选会话",
   filterQuery: "按标题搜索",
   states: ["全部", "运行中", "等待我"],
+  noMatch: "没有匹配的会话",
+  clearFilter: "清除筛选",
   archived: "已归档",
   adminScope: "整个部署 · /admin",
   back: "回到工作区",
