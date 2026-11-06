@@ -67,7 +67,10 @@ export function useSubagents(
   // scans of the log: once per events change, not per render (final review I3)
   const dispatched = useMemo(() => dispatchedAny(events), [events]);
   const count = useMemo(() => subagentEventCount(events), [events]);
-  const query = subagentsQuery(orgId, conversationId);
+  // One options object (and key) per conversation, not per render: the effects below depend on the
+  // key, and a new array each render re-ran them on every render, reading the list in a loop while
+  // a waiting child had progress (AC5).
+  const query = useMemo(() => subagentsQuery(orgId, conversationId), [orgId, conversationId]);
   const views = useQuery({
     ...query,
     enabled: dispatched,
@@ -90,6 +93,7 @@ export function useSubagents(
     }
     return keys.join(",");
   }, [views, progress]);
+  // once per new `stale` value (a child's step moved), never per render
   useEffect(() => {
     if (stale !== "") void qc.invalidateQueries({ queryKey: query.queryKey });
   }, [stale, qc, query.queryKey]);
