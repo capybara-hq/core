@@ -945,7 +945,7 @@
       "configureModels": "Configure model services"
     },
     "greeting": {
-      "sub": "Pick an agent, or start from a common task",
+      "sub": "Pick an agent to start",
       "morning": [
         "Good morning, {name}",
         "Morning. What are we moving forward today?",

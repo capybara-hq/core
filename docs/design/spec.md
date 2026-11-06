@@ -1947,8 +1947,7 @@ States: `default`, `reduced-motion`
   `pickGreeting`), so the server render (and any render without `text`) draws the mark and an empty
   text box: the line box is always one `type.h1.line` high, and the line replaces the placeholder
   in place.
-- **Sub line** under the text, aligned with it: `prose-small` `muted`, default "选一个 agent，或从常用
-  任务开始" / "Pick an agent, or start from a common task"; `sub={null}` draws none.
+- **Sub line** under the text, aligned with it: `prose-small` `muted`, default "选一个智能体开始" / "Pick an agent to start"; `sub={null}` draws none.
 - **A11y**: the heading's name is the whole line (a visually hidden copy); the typed text and the
   caret are `aria-hidden`, so the line is read once, never a character at a time. The mark is
   decorative.
