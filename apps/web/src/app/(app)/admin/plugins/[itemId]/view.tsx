@@ -92,8 +92,8 @@ type Tab = (typeof TABS)[number];
  * no scope change while its first version waits. Tabs: 组件 (the platform version's extension,
  * skills, connector templates and agent templates with kind, version and scope (跟随插件 or the
  * component's own, linking to the component); its dependencies; the translation report), 组织
- * (the scope and the orgs it names, or how many turned it on), 版本 (each version's source, origin and import time). One centred column (no inspector): the description
- * under the title, the notes, the icon and the facts (package, source, publisher, owner, scope,
+ * (the scope and the orgs it names, or how many turned it on), 版本 (each version's source, origin and import time). One centred column (no inspector): the full
+ * description first, the notes, the icon and the facts (package, source, publisher, owner, scope,
  * orgs using it, the permissions with their state, updated) as a KeyValue, the tab, then the
  * license folded at the end; 删除 is the head's ⋯ menu item. From the query cache (the layout
  * prefetched the reads on a first load): the item (a 404 is the not-found state); the marketplaces,
@@ -297,7 +297,6 @@ function PluginDetail({ detail, orgId }: { detail: CatalogItemDetail; orgId: str
               <ScopeBadge item={item} />
             </Stack>
           ),
-          ...(description !== "" ? { description } : {}),
           actions: headActions,
         }}
         tabs={{
@@ -314,6 +313,12 @@ function PluginDetail({ detail, orgId }: { detail: CatalogItemDetail; orgId: str
         }}
       >
         <Stack gap={16}>
+          {/* The full description, first in the column (the head's line would cut it) */}
+          {description !== "" && (
+            <Text variant="prose" tone="muted" pre>
+              {description}
+            </Text>
+          )}
           {owner !== null && (
             <Text variant="prose" tone="muted">
               {t("detail.ownerNote", { org: owner.name })}

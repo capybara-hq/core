@@ -154,6 +154,10 @@ async function open(path: string, routes: Routes = {}) {
 const put = (calls: Call[], suffix: string) =>
   calls.filter((c) => c.method === "PUT" && c.url.endsWith(suffix));
 
+/** A long, multi-line description: detail pages show it in full (fix round 1). */
+const LONG =
+  "Use when a meeting ends.\nIt writes the minutes, lists the decisions and the follow-ups, and names who owns each one, so nothing said in the room is lost on the way out of it.";
+
 describe("admin component lists", () => {
   it("/admin/skills: name, 来自, 归属, 范围, 版本 and the orgs using it; a first render makes no browser read", async () => {
     const browser = expectNoFirstPaintFetch();
@@ -270,21 +274,27 @@ describe("admin component detail", () => {
   });
 
   it.each([
-    ["/admin/skills/s1", "web-research", "Research the web"],
-    ["/admin/connector-templates/c1", "gh", null],
-    ["/admin/agent-templates/a1", "researcher", "Research the web"],
+    ["/admin/skills/s1", "web-research", "skill"],
+    ["/admin/connector-templates/c1", "gh", "connector_template"],
+    ["/admin/agent-templates/a1", "researcher", "agent_template"],
   ] as const)(
-    "%s: one centred column, the description under the title, the facts as a KeyValue",
-    async (path, name, description) => {
+    "%s: one centred column, the full description first, the facts as a KeyValue",
+    async (path, name, kind) => {
+      const list = { skill: SKILLS, connector_template: TEMPLATES, agent_template: AGENTS }[kind];
       await open(path, {
         "GET /api/v1/admin/components/connector_template/c1/versions": () =>
           json(200, { versions: [] }),
+        [`GET /api/v1/admin/components?kind=${kind}`]: () =>
+          json(200, { components: list.map((c) => ({ ...c, description: LONG })) }),
       });
       expect(await screen.findByRole("heading", { name })).toBeTruthy();
       // No right inspector
       expect(document.querySelector(".cb-body")?.getAttribute("data-layout")).toBe("single");
-      const line = document.querySelector('[data-part="page-header-description"]');
-      expect(line?.textContent ?? null).toBe(description);
+      // The head carries no description: the full text (line breaks kept) is the first block
+      expect(document.querySelector('[data-part="page-header-description"]')).toBeNull();
+      const first = document.querySelector('[data-part="content"] > .cb-stack')?.firstElementChild;
+      expect(first?.textContent).toBe(LONG);
+      expect(first?.getAttribute("data-pre")).toBe("true");
       const facts = document.querySelector('[data-part="content"] [data-part="key-value"]');
       expect(facts?.textContent).toContain(C.detail.fields.owner);
       expect(facts?.textContent).toContain(C.detail.fields.scope);

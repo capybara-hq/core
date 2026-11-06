@@ -57,7 +57,7 @@ import NotFound from "../../not-found";
  * PluginInstallsSection), then the latest version's components (its extension, skills, connector
  * templates with endpoint and auth, dependencies installed with it). The org's own plugin (spec
  * §14) is marked 本组织上传 and has the 可共享 switch and 删除 (org admins, the head's ⋯ menu;
- * members see the state). One centred column: the description under the title, the actions in the
+ * members see the state). One centred column: the full description first, the actions in the
  * head, the icon (an `<img>` through the kernel route) and the facts as a KeyValue. From the query cache (the layout prefetched it
  * on a first load); a missing item is the not-found state. An action invalidates the item, which
  * is read again.
@@ -177,7 +177,6 @@ function CatalogItemDetail({
         title: displayNameOf(item, locale),
         count: versionLabel(item.latestVersion),
         ...(owned && { status: <Badge>{tp("chips.ownUpload")}</Badge> }),
-        ...(description !== "" ? { description } : {}),
         ...(headActions.length > 0 ? { actions: headActions } : {}),
       }}
       tabs={{
@@ -188,6 +187,12 @@ function CatalogItemDetail({
       }}
     >
       <Stack gap={16}>
+        {/* The full description, first in the column (the head's line would cut it) */}
+        {description !== "" && (
+          <Text variant="prose" tone="muted" pre>
+            {description}
+          </Text>
+        )}
         {item.awaitingConfirmation !== true && item.pendingVersion != null && (
           <Text variant="small" tone="warn">
             {tp("chips.pendingVersion", { version: versionLabel(item.pendingVersion) })}

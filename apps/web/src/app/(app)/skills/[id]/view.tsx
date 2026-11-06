@@ -47,8 +47,8 @@ const TABS = ["content", "files", "versions"] as const;
 type Tab = (typeof TABS)[number];
 
 /**
- * `/skills/[id]`: an org skill's detail (DetailPage, one centred column): the description under the
- * title, the facts as a KeyValue, then the tabs: the SKILL.md body (plain text, no HTML or
+ * `/skills/[id]`: an org skill's detail (DetailPage, one centred column): the full description
+ * first (line breaks kept), the facts as a KeyValue, then the tabs: the SKILL.md body (plain text, no HTML or
  * Markdown rendering), the current version's files, the versions. Org admins delete the org's own
  * skill from the head's ⋯ menu (typing its name; the confirmation says what the delete does: one
  * another org uses is transferred to the platform, ruling P3-19). The org's own skill carries the
@@ -97,7 +97,7 @@ function Skill({ orgId, skillId }: { orgId: string; skillId: string }) {
 }
 
 /**
- * The loaded skill in one centred column (no inspector): the description under the title, the
+ * The loaded skill in one centred column (no inspector): the full description first, the
  * facts as a KeyValue (and the 可共享 switch of the org's own skill), then the tab. Org admins
  * delete the org's own skill from the head's ⋯ menu (a destructive item).
  */
@@ -137,7 +137,6 @@ function SkillDetailView({
           path: [...scope, { label: "skills", href: "/skills" }, { label: skill.name }],
           title: skill.name,
           count: t("version", { version: skill.currentVersion }),
-          ...(skill.description !== "" ? { description: skill.description } : {}),
           ...(deletable
             ? {
                 actions: [
@@ -154,6 +153,12 @@ function SkillDetailView({
         tabs={tabs}
       >
         <Stack gap={16}>
+          {/* The full description, line breaks kept, first in the column */}
+          {skill.description !== "" && (
+            <Text variant="prose" tone="muted" pre>
+              {skill.description}
+            </Text>
+          )}
           <Facts orgId={orgId} skill={skill} />
           {tab === "content" ? (
             <ContentTab skill={skill} />

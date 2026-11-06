@@ -142,6 +142,10 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+/** A long, multi-line description: detail pages show it in full (fix round 1). */
+const LONG =
+  "Use when a meeting ends.\nIt writes the minutes, lists the decisions and the follow-ups, and names who owns each one, so nothing said in the room is lost on the way out of it.";
+
 describe("/plugins: 上传插件包", () => {
   it("org admins see 上传插件包; members do not", async () => {
     stubApi({ [`GET ${ORG}/catalog`]: () => json(200, { items: [] }) });
@@ -470,17 +474,19 @@ describe("/plugins/<id>: the org's own plugin", () => {
     expect(screen.queryByRole("button", { name: zh.catalog.admin.detail.more })).toBeNull();
   });
 
-  it("one centred column: the description under the title, the facts as a KeyValue with the owner", async () => {
+  it("one centred column: the full description first, the facts as a KeyValue with the owner", async () => {
     stubApi({
       [`GET ${ORG}/catalog/${ID}`]: () =>
-        json(200, detailOf(orgItem({ owner: ACME, description: "Meeting minutes." }))),
+        json(200, detailOf(orgItem({ owner: ACME, description: LONG }))),
     });
     await renderItem({ locale: "zh" });
     await screen.findByText(zh.plugins.chips.ownUpload);
     expect(document.querySelector(".cb-body")?.getAttribute("data-layout")).toBe("single");
-    expect(document.querySelector('[data-part="page-header-description"]')?.textContent).toBe(
-      "Meeting minutes.",
-    );
+    // The head carries no description: the full text (line breaks kept) is the column's first block
+    expect(document.querySelector('[data-part="page-header-description"]')).toBeNull();
+    const first = document.querySelector('[data-part="content"] > .cb-stack')?.firstElementChild;
+    expect(first?.textContent).toBe(LONG);
+    expect(first?.getAttribute("data-pre")).toBe("true");
     const facts = document.querySelector('[data-part="content"] [data-part="key-value"]');
     expect(facts?.textContent).toContain(zh.catalog.org.detail.fields.owner);
     expect(facts?.textContent).toContain(zh.catalog.owner.self);

@@ -1,6 +1,6 @@
 "use client";
 
-import { DetailPage, Stack, versionLabel } from "@capybara-hq/design";
+import { DetailPage, Stack, Text, versionLabel } from "@capybara-hq/design";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { useState } from "react";
@@ -29,7 +29,7 @@ type Tab = (typeof TABS)[number];
  * `/admin/agent-templates/[id]` (super admins; spec §9): one platform agent template. Head: its
  * name, version and state; actions 设置范围 (跟随插件 or its own scope, with the impact preview),
  * 停用 / 启用, 上传新版本 (a new version on its own, spec §7.2). Tabs 版本 / 组织;
- * one centred column: the description under the title, the facts (来自, 归属, 范围, 在用组织) as a
+ * one centred column: the full description first, the facts (来自, 归属, 范围, 在用组织) as a
  * KeyValue over the tab. From the query cache: the kind's list (a component
  * not in it is the not-found state) and its versions (a section).
  */
@@ -92,7 +92,6 @@ function AdminAgentTemplate({ c, orgId }: { c: PlatformComponent; orgId: string 
           title: c.name,
           count: versionLabel(c.version),
           status: <StateBadges c={c} />,
-          ...(c.description !== null && c.description !== "" ? { description: c.description } : {}),
           actions,
         }}
         tabs={{
@@ -103,6 +102,12 @@ function AdminAgentTemplate({ c, orgId }: { c: PlatformComponent; orgId: string 
         }}
       >
         <Stack gap={16}>
+          {/* The full description, first in the column (the head's line would cut it) */}
+          {c.description !== null && c.description !== "" && (
+            <Text variant="prose" tone="muted" pre>
+              {c.description}
+            </Text>
+          )}
           <ComponentNotes c={c} />
           <ComponentFacts c={c} />
           {tab === "versions" ? (

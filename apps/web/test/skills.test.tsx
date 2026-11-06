@@ -123,6 +123,10 @@ afterEach(() => {
   FakeXhr.instances = [];
 });
 
+/** A long, multi-line description: detail pages show it in full (fix round 1). */
+const LONG =
+  "Use when a meeting ends.\nIt writes the minutes, lists the decisions and the follow-ups, and names who owns each one, so nothing said in the room is lost on the way out of it.";
+
 describe("技能库列表（ListPage）", () => {
   it.each(LOCALES)("列出组织技能；管理员看到上传说明（布局与上限）（%s）", async (locale) => {
     const m = msgs[locale];
@@ -400,14 +404,16 @@ describe("技能详情（DetailPage）", () => {
     expect(screen.queryByRole("button", { name: en.catalog.admin.detail.more })).toBeNull();
   });
 
-  it("one centred column: the description under the title, the facts as a KeyValue, 删除 in the head's menu", async () => {
-    stubApi({ [`GET ${BASE}/s1`]: () => json(200, detail()) });
+  it("one centred column: the full description first, the facts as a KeyValue, 删除 in the head's menu", async () => {
+    stubApi({ [`GET ${BASE}/s1`]: () => json(200, detail({ description: LONG })) });
     await renderSkill();
     await screen.findByText("# PDF tools", { exact: false });
     expect(document.querySelector(".cb-body")?.getAttribute("data-layout")).toBe("single");
-    expect(document.querySelector('[data-part="page-header-description"]')?.textContent).toBe(
-      "Use for pdf-tools.",
-    );
+    // The head carries no description: the full text (line breaks kept) is the column's first block
+    expect(document.querySelector('[data-part="page-header-description"]')).toBeNull();
+    const first = document.querySelector('[data-part="content"] > .cb-stack')?.firstElementChild;
+    expect(first?.textContent).toBe(LONG);
+    expect(first?.getAttribute("data-pre")).toBe("true");
     const facts = document.querySelector('[data-part="content"] [data-part="key-value"]');
     expect(facts?.textContent).toContain(en.skills.detail.owner);
     expect(facts?.textContent).toContain(en.skills.detail.version);

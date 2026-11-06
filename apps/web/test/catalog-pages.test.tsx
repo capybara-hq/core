@@ -215,6 +215,10 @@ const PREVIEW = {
   agents: [{ id: "a1", name: "Sales bot", uses: [{ kind: "skill", ref: "notes" }] }],
 };
 
+/** A long, multi-line description: detail pages show it in full (fix round 1). */
+const LONG =
+  "Use when a meeting ends.\nIt writes the minutes, lists the decisions and the follow-ups, and names who owns each one, so nothing said in the room is lost on the way out of it.";
+
 describe("/plugins: states and actions follow the scope and the switch", () => {
   it.each(LOCALES)("org admins: each state and its action (%s)", async (locale) => {
     const p = msgs[locale].plugins;
@@ -3377,14 +3381,14 @@ describe("phase B: Claude Code plugins in the catalog and marketplaces", () => {
     expect(within(table).getByText(d.format.claudeCode)).toBeTruthy();
   });
 
-  it("item detail: one centred column: the description under the title, the facts as a KeyValue, 删除 in the head's menu, the license folded last", async () => {
+  it("item detail: one centred column: the full description first, the facts as a KeyValue, 删除 in the head's menu, the license folded last", async () => {
     params.current = { itemId: ID };
     const tr = en.catalog.admin.review.translation;
     const d = en.catalog.admin.detail;
     const detail = (await claudeItemDetail().json()) as { item: Record<string, unknown> };
     stubApi({
       [`GET /api/v1/admin/catalog/items/${ID}`]: () =>
-        json(200, { ...detail, item: { ...detail.item, description: "Skills for agents." } }),
+        json(200, { ...detail, item: { ...detail.item, description: LONG } }),
       "GET /api/v1/admin/marketplaces": () => json(200, SOURCES),
       "GET /api/v1/admin/catalog/items": () => json(200, { items: [], nextOffset: null }),
     });
@@ -3392,10 +3396,11 @@ describe("phase B: Claude Code plugins in the catalog and marketplaces", () => {
     await screen.findByRole("region", { name: tr.title });
     // No right inspector: the single centred column
     expect(document.querySelector(".cb-body")?.getAttribute("data-layout")).toBe("single");
-    // The description is the head's line under the title
-    expect(document.querySelector('[data-part="page-header-description"]')?.textContent).toBe(
-      "Skills for agents.",
-    );
+    // The head carries no description: the full text (line breaks kept) is the column's first block
+    expect(document.querySelector('[data-part="page-header-description"]')).toBeNull();
+    const first = document.querySelector('[data-part="content"] > .cb-stack')?.firstElementChild;
+    expect(first?.textContent).toBe(LONG);
+    expect(first?.getAttribute("data-pre")).toBe("true");
     // The facts are a KeyValue in the column
     const facts = document.querySelector('[data-part="content"] [data-part="key-value"]');
     expect(facts?.textContent).toContain(d.fields.publisher);
