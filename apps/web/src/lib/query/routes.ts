@@ -64,7 +64,6 @@ import {
 } from "./evals";
 import { inboxQuery, skillChangeQuery } from "./inbox";
 import { membersQuery } from "./members";
-import { overviewQueries } from "./overview";
 import {
   extensionPointDefaultsQuery,
   invitationsQuery,
@@ -132,21 +131,6 @@ const pluginsHead = () => [q(pendingPluginsQuery()), q(deploymentRequestsQuery()
  * Patterns are string literals: the query checks read them statically.
  */
 export const ROUTES: readonly RouteEntry[] = [
-  {
-    pattern: "/",
-    // The overview, once the org is ready (until then the frame draws the setup home here and the
-    // page reads nothing): readiness is the shell's read, so this waits for it.
-    queries: () => [],
-    // biome-ignore lint/suspicious/noThenProperty: RouteEntry's `then` step (controller ruling)
-    then: async ({ orgId }, qc) => {
-      if (orgId === null) return;
-      const readiness = await qc.fetchQuery({ ...readinessQuery(orgId), retry: false });
-      if (!setupReady(readiness)) return;
-      await Promise.all(
-        overviewQueries(orgId).map((o) => qc.prefetchQuery({ ...o, retry: false })),
-      );
-    },
-  },
   {
     pattern: "/account/connections",
     queries: ({ orgId }) => (orgId === null ? [] : [q(connectorsQuery(orgId))]),

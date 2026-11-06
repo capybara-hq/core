@@ -50,7 +50,7 @@ test("嵌入应用（假扩展 fake-embed）：「扩展」打开组织页面（
   expect(asApi.status()).toBe(401);
 
   // ---- sidebar Extensions → 面板 ----
-  await page.goto("/");
+  await page.goto("/chat");
   // 更多 lists the extension page by its title
   await (await mainNavLink(page, "面板")).click();
   await expect(page).toHaveURL(/\/p\/fake-embed\/panel$/);

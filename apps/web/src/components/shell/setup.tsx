@@ -141,7 +141,7 @@ const LATER_ICON: Record<string, IconName> = {
 };
 
 /**
- * The setup home (`/`, `/chat` while not ready): the same steps as the setup sidebar
+ * The setup home (`/chat`, the workspace's home, while not ready): the same steps as the setup sidebar
  * ({@link useSetupSteps}: ids, labels, order, states). The required ones in the checklist card
  * (no head: "已完成 n / 2" is the page head's count, drawn by the app frame), each with a
  * description and one thing at the right:

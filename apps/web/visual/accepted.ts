@@ -145,7 +145,6 @@ export const LOADING_TEMPLATES: {
     name: "overview",
     pairs: [
       { loaded: "default", loading: "loading" },
-      { loaded: "main-side", loading: "loading-main-side" },
       { loaded: "keep", loading: "loading-keep" },
     ],
   },

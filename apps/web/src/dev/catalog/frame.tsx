@@ -62,9 +62,9 @@ export function Row({ label, children }: { label: string; children?: ReactNode }
 
 /** Where the catalog's sidebar links go: the template that stands for each item. */
 const TEMPLATE_OF: Record<string, string> = {
-  overview: "overview",
   agents: "list",
   inbox: "inbox",
+  skills: "list",
   connectors: "list",
   evals: "trace",
   settings: "settings",

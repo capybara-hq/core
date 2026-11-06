@@ -23,6 +23,7 @@ import { retryOnMountOf } from "../../../../lib/query/client";
 import { keys } from "../../../../lib/query/keys";
 import { useAppMutation } from "../../../../lib/query/mutation";
 import { maybeMeQuery, meQuery } from "../../../../lib/query/shell";
+import { HOME_PATH } from "../../../../lib/routes";
 import type { Me } from "../../../../lib/session";
 import { useErrorMessage } from "../../../../lib/use-error-message";
 
@@ -116,7 +117,7 @@ export default function BindView({ token }: { token: string }) {
               {tc("retry")}
             </Button>
           )}
-          <Button density="prominent" onClick={() => router.replace("/")}>
+          <Button density="prominent" onClick={() => router.replace(HOME_PATH)}>
             {t("goHome")}
           </Button>
         </Stack>
@@ -156,7 +157,7 @@ export default function BindView({ token }: { token: string }) {
       <AuthPage title={t("doneTitle")} subtitle={t("doneHint")} preferences={preferences}>
         <Stack gap={16}>
           {identity}
-          <Button variant="primary" density="prominent" onClick={() => router.replace("/")}>
+          <Button variant="primary" density="prominent" onClick={() => router.replace(HOME_PATH)}>
             {t("goHome")}
           </Button>
         </Stack>
@@ -178,7 +179,7 @@ export default function BindView({ token }: { token: string }) {
           >
             {t("confirm")}
           </Button>
-          <Button density="prominent" disabled={pending} onClick={() => router.replace("/")}>
+          <Button density="prominent" disabled={pending} onClick={() => router.replace(HOME_PATH)}>
             {t("cancel")}
           </Button>
         </Stack>

@@ -2,18 +2,20 @@
 
 import { useContext } from "react";
 import { usePathname } from "../../i18n/navigation";
+import { HOME_PATH } from "../../lib/routes";
 import { SessionContext } from "./session";
 
 /** One segment of the page head's path line (design `PageHeaderProps.path`). */
 export type PathSegment = { label: string; href?: string };
 
-/** Where a page lives: a workspace page (the org slug), the home page (`~`), or the admin console. */
+/** Where a page lives: a workspace page (the org slug), a personal page (`~`), or the admin console. */
 export type PathScope = "org" | "home" | "admin";
 
 /**
  * The path of a page head (spec §2.4): the scope first, then the page and the object. `rest` are the
  * segments after the scope, route words (`agents`) or object names; segments with an `href` link.
- * The scope links to its root (`/` for an org, `/admin` for the admin console); `~` does not.
+ * The scope links to its root (home, the new conversation, for an org; `/admin` for the admin
+ * console); `~` does not.
  */
 export function buildPagePath(
   scope: PathScope,
@@ -25,7 +27,7 @@ export function buildPagePath(
       ? { label: "~" }
       : scope === "admin"
         ? { label: "/admin", href: "/admin" }
-        : { label: orgSlug ?? "~", href: "/" };
+        : { label: orgSlug ?? "~", href: HOME_PATH };
   return [first, ...rest];
 }
 
@@ -49,7 +51,6 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
  * which have no page, read as plain text.
  */
 export const APP_PAGES: readonly string[] = [
-  "/",
   "/account/connections",
   "/account/grants",
   "/account/identities",

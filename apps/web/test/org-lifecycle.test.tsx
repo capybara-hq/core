@@ -65,7 +65,7 @@ describe("退出组织", () => {
         .setup()
         .click(within(dialog).getByRole("button", { name: zh.orgLifecycle.leave.confirm }));
       // the kernel cleared the current org: the server renders the chooser at /
-      await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledWith("/"));
+      await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledWith("/chat"));
       expect(router.push).not.toHaveBeenCalled();
       expect(calls.some((c) => c.method === "PUT")).toBe(false);
       // the dialog stays pending until the new frame arrives
@@ -94,7 +94,7 @@ describe("退出组织", () => {
     await userEvent
       .setup()
       .click(within(dialog).getByRole("button", { name: zh.orgLifecycle.leave.confirm }));
-    await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledWith("/"));
+    await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledWith("/chat"));
     const put = calls.find((c) => c.method === "PUT" && c.url === "/api/v1/me/current-org");
     expect(bodyOf(put)).toEqual({ orgId: "o2" });
     expect(calls.some((c) => c.url === "/api/v1/auth/logout")).toBe(false);
@@ -188,7 +188,7 @@ describe("删除组织 (组织设置 · 通用)", () => {
     await user.click(confirm);
     await vi.waitFor(() => expect(calls.some((c) => c.method === "DELETE")).toBe(true));
     // the kernel cleared the current org with the org: no PUT, no client navigation
-    await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledWith("/"));
+    await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledWith("/chat"));
     expect(calls.some((c) => c.method === "PUT")).toBe(false);
     expect(router.replace).not.toHaveBeenCalled();
     expect(router.push).not.toHaveBeenCalled();

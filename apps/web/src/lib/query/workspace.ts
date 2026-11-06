@@ -5,6 +5,7 @@ import { useEffect } from "react";
 import { useRouter } from "../../i18n/navigation";
 import { setupReady } from "../agents";
 import { myRole, roleAtLeast } from "../members";
+import { HOME_PATH } from "../routes";
 import type { Workspace } from "../server/session";
 import type { Me } from "../session";
 import { isSignedOut } from "../signed-out";
@@ -16,10 +17,10 @@ import { meQuery, readinessQuery } from "./shell";
  * not ready), and client navigations don't re-render the layout. `/me` and the org's readiness are
  * read through the cache (prefetched by the layout, and `mine` never goes stale), so on a
  * navigation inside the app it answers on the first render. No current org is
- * `noOrg`; while the org is not ready, a page that is no setup route (no `setup`) goes to `/`
- * (`pending` until then); below `min` (default `guest`) it is `noAccess`. `pending` while `/me` or
- * readiness has no answer yet. A readiness failure other than a signed-out session throws, to the
- * route's error boundary.
+ * `noOrg`; while the org is not ready, a page that is no setup route (no `setup`) goes home
+ * (`/chat`, where the frame draws the setup home; `pending` until then); below `min` (default
+ * `guest`) it is `noAccess`. `pending` while `/me` or readiness has no answer yet. A readiness
+ * failure other than a signed-out session throws, to the route's error boundary.
  */
 export function useWorkspace(
   opts: { min?: "guest" | "member" | "admin"; setup?: "home" | "step" } = {},
@@ -32,7 +33,7 @@ export function useWorkspace(
   const notReady = readiness.data !== undefined && !setupReady(readiness.data);
   const goHome = notReady && opts.setup === undefined;
   useEffect(() => {
-    if (goHome) router.replace("/");
+    if (goHome) router.replace(HOME_PATH);
   }, [goHome, router]);
   if (me === undefined) return { kind: "pending" };
   if (orgId === null) return { kind: "noOrg" };

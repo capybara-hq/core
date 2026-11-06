@@ -26,6 +26,7 @@ import { retryOnMountOf } from "../../../../lib/query/client";
 import { useAppMutation } from "../../../../lib/query/mutation";
 import { maybeMeQuery } from "../../../../lib/query/shell";
 import { resetSession } from "../../../../lib/query/workspace";
+import { HOME_PATH } from "../../../../lib/routes";
 import { setCurrentOrg } from "../../../../lib/session";
 import { broadcastSession } from "../../../../lib/session-sync";
 import { useErrorMessage } from "../../../../lib/use-error-message";
@@ -96,7 +97,7 @@ export default function InviteView({ token }: { token: string }) {
     broadcastSession(input === undefined ? "org-switched" : "signed-in");
     // A new session or org: drop the cache, then load the new document (ruling R4); the button
     // stays pending until then.
-    await resetSession(qc, () => navigateBrowser("/"));
+    await resetSession(qc, () => navigateBrowser(HOME_PATH));
   }
 
   const preferences = usePreferences();
@@ -126,7 +127,7 @@ export default function InviteView({ token }: { token: string }) {
               {tc("retry")}
             </Button>
           )}
-          <Button density="prominent" onClick={() => router.replace("/")}>
+          <Button density="prominent" onClick={() => router.replace(HOME_PATH)}>
             {t("goHome")}
           </Button>
         </Stack>

@@ -92,11 +92,12 @@ afterEach(() => vi.unstubAllGlobals());
 describe("the (app) layout's setup redirect", () => {
   it("a route that is no setup route goes to / while the org is not ready", async () => {
     shellRoutes(NOT_READY);
-    await expect(layoutAt("/connectors?tab=mine")).rejects.toThrow("REDIRECT /");
+    await expect(layoutAt("/connectors?tab=mine")).rejects.toThrow("REDIRECT /chat");
   });
 
   it("setup routes (home, steps) and the admin console render; a ready org renders anything", async () => {
-    for (const path of ["/", "/chat", "/settings/models", "/agents/new", "/admin/extensions"]) {
+    // `/` is no page: next.config redirects it to `/chat` before the layout runs
+    for (const path of ["/chat", "/settings/models", "/agents/new", "/admin/extensions"]) {
       shellRoutes(NOT_READY);
       await expect(layoutAt(path), path).resolves.toBeTruthy();
     }

@@ -39,11 +39,10 @@ export function Grid({
   children,
 }: {
   /**
-   * `main-side`: a main column twice the side column's width; one column below 960.
    * `list-detail`: a 220 px list beside a flexible detail (a file list and the open file's
    * editor), top-aligned; one column below 640, the list above the detail.
    */
-  columns: 1 | 2 | 3 | 4 | "form" | "main-side" | "list-detail";
+  columns: 1 | 2 | 3 | 4 | "form" | "list-detail";
   gap?: Gap;
   children?: ReactNode;
 }) {

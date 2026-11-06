@@ -108,7 +108,7 @@ describe("setup layout scope", () => {
     expect(workSidebar()).toBeNull();
     const home = setupSidebar()?.querySelector('[data-part="nav-item"]') as HTMLElement;
     expect(home.textContent).toBe("开始之前");
-    expect(home.getAttribute("href")).toBe("/");
+    expect(home.getAttribute("href")).toBe("/chat");
     expect(router.replace).not.toHaveBeenCalled();
   });
 
@@ -134,12 +134,14 @@ describe("setup layout scope", () => {
     await vi.waitFor(() =>
       expect(bodyOf(calls.find((c) => c.method === "PUT"))).toEqual({ orgId: "o2" }),
     );
-    await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledWith("/"));
+    await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledWith("/chat"));
   });
 
   it("routes: home, steps, redirects and the admin console", () => {
-    expect(setupRouteOf("/")).toBe("home");
+    // the setup home is the workspace's home, the new conversation; `/` is no page (next.config
+    // redirects it to `/chat` first), so the frame never sees it as home
     expect(setupRouteOf("/chat")).toBe("home");
+    expect(setupRouteOf("/")).toBe("redirect");
     for (const p of [
       "/settings/models",
       "/settings/members",

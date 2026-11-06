@@ -335,28 +335,6 @@ describe("role-dependent actions", () => {
       await screen.findByText(zh.agents.empty);
       expect(screen.queryAllByRole("link", { name: zh.agents.new }).length > 0).toBe(canCreate);
     });
-
-    it(`overview · ${role}: 新建 Agent and 组织设置 ${canCreate ? "shown" : "hidden"}`, async () => {
-      const ok = (body: unknown) => () => reply(200, body);
-      const gone = () => reply(404, { error: { code: "not_found", message: "x" } });
-      resetNavigation("/");
-      await renderRouteWithCache(
-        "/",
-        {
-          [`GET ${O}/agents`]: ok({ agents: [AGENT("ag1")] }),
-          [`GET ${O}/models`]: ok({ providers: [] }),
-          [`GET ${O}/inbox`]: ok({ items: [], truncated: false }),
-          [`GET ${O}/conversations/groups`]: ok({ groups: [] }),
-          [`GET ${O}/skills`]: gone,
-          [`GET ${O}/connectors`]: gone,
-          [`GET ${O}/members`]: gone,
-        },
-        { locale: "zh", me: meAs(role) },
-      );
-      screen.getByText("Agent ag1");
-      expect(screen.queryByRole("link", { name: zh.home.newAgent }) !== null).toBe(canCreate);
-      expect(screen.queryByRole("link", { name: zh.home.orgSettings }) !== null).toBe(canCreate);
-    });
   }
 });
 

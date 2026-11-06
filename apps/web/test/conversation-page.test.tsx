@@ -1476,7 +1476,7 @@ describe("the conversation page in the app frame", () => {
     // jsdom has no layout: pick the submenu item with the keyboard (see design menu-submenu tests)
     (await screen.findByRole("menuitemradio", { name: "Beta" })).focus();
     await user.keyboard("{Enter}");
-    await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledWith("/"));
+    await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledWith("/chat"));
     expect(router.push).not.toHaveBeenCalled();
     // the old org's conversation stays until the new document replaces it
     expect(screen.getByText("hi")).toBeTruthy();

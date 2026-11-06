@@ -4,7 +4,7 @@ import { FixtureShell } from "../frame";
 /** T12 首次使用：新组织清单。 */
 export function OnboardingTemplate() {
   return (
-    <FixtureShell nav="overview" context="onboarding">
+    <FixtureShell nav="new" context="onboarding">
       <OnboardingPage
         header={{ path: [{ label: "capybara" }, { label: "start" }], title: "开始使用" }}
         steps={[

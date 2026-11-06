@@ -574,7 +574,7 @@ describe("the skills pages render on the server (web-SSR spec §6)", () => {
       cleanup();
       expectNoFirstPaintFetch();
       await renderRouteWithCache(path, routes, { readiness: NOT_READY });
-      await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/"));
+      await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/chat"));
     },
   );
 });

@@ -60,13 +60,6 @@
     "setupTokenHint": "Only needed if the deployment configured a setup token."
   },
   "home": {
-    "title": "Home",
-    "noMemberships": "You have not joined any organization yet.",
-    "agents": "Agents",
-    "noMembershipsHint": "Ask an org admin to invite you.",
-    "role": "Role",
-    "slug": "Slug",
-    "noMembershipsCreateHint": "Create an organization to get started, or ask an org admin to invite you.",
     "createOrg": {
       "open": "Create organization",
       "title": "Create an organization",
@@ -76,17 +69,7 @@
       "submit": "Create",
       "cancel": "Cancel"
     },
-    "orgSettings": "Organization settings",
-    "skills": "Skills",
-    "connectors": "Connectors",
-    "members": "Members",
-    "models": "Available models",
-    "newAgent": "New agent",
-    "newConversation": "New conversation",
-    "dailyDescription": "{org} · {role}",
-    "dailyDescriptionPending": "{org} · {role} · {count, plural, one {# thing waits for you} other {# things wait for you}}",
     "setup": {
-      "description": "{org} is new. Finish these steps and your team can start working with agents.",
       "progress": "{done} of {total} done",
       "later": "Can wait",
       "laterHint": {
@@ -95,41 +78,6 @@
         "catalog": "Add skills and connectors from the catalog.",
         "connections": "Connect your own accounts so agents can act for you."
       }
-    },
-    "inbox": {
-      "title": "Waiting for you",
-      "titleCount": "Waiting for you · {count}",
-      "open": "Open inbox",
-      "empty": "Nothing waits for you.",
-      "unavailable": "Couldn't read what waits for you. Refresh the page to try again.",
-      "toolApproval": "Tool approval",
-      "toolApprovalTitle": "{agent} wants to use {tool}",
-      "view": "View",
-      "approveOnce": "Allow once",
-      "approved": "Allowed. This call continues.",
-      "skillChange": "Skill change",
-      "skillNew": "{agent} wants to create the skill {skill}",
-      "skillUpdate": "{agent} wants to update the skill {skill}",
-      "catalogRequest": "Catalog request",
-      "catalogRequestTitle": "Request to install {item}",
-      "notice": "Notice",
-      "noticeTitle": "You have a new notice",
-      "skillRenamed": "Skill renamed",
-      "skillRenamedTitle": "Skill {from} was renamed to {to}",
-      "requestDecided": "Request decided",
-      "requestApprovedTitle": "Request approved: {item}",
-      "requestRejectedTitle": "Request rejected: {item}"
-    },
-    "recent": {
-      "title": "Pick up where you left off",
-      "empty": "No conversations yet. Pick an agent on the right to start.",
-      "unavailable": "Couldn't read your conversations. Refresh the page to try again.",
-      "waiting": "Waiting for you"
-    },
-    "agentsCard": {
-      "title": "Your agents",
-      "all": "All",
-      "chat": "Chat"
     }
   },
   "errors": {
@@ -457,7 +405,6 @@
     "empty": "No agents yet.",
     "starting": "Creating conversation…",
     "noOrg": "No current organization selected.",
-    "backHome": "Back to home",
     "form": {
       "title": "New agent",
       "nameLabel": "Name",
@@ -637,7 +584,6 @@
       "model": "Model"
     },
     "emptyHint": "Create an agent, then start a conversation.",
-    "noOrgHint": "Pick one on the home page or from the account menu at the bottom of the sidebar.",
     "edit": "Edit",
     "runHistory": "Run history",
     "tabs": {
@@ -1018,7 +964,6 @@
     "liveLost": "Live updates stopped. Reload the page for the latest content."
   },
   "nav": {
-    "overview": "Home",
     "agents": "Agents",
     "goto": "Go to",
     "actions": "Actions",
@@ -1043,7 +988,7 @@
   "notFound": {
     "title": "Page not found",
     "description": "The link may be broken, or the page has been removed.",
-    "back": "Back to home"
+    "back": "Start a new conversation"
   },
   "tools": {
     "outputId": "Full output archived as {id}.",

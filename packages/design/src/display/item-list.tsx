@@ -18,8 +18,8 @@ export type ItemListRow = {
 };
 
 /**
- * Rows of things to look at or act on inside a Card (the overview's inbox, recent conversations,
- * agents): tag, title and meta, status, actions; rows split by `line-soft` (spec §6.12). Empty, it
+ * Rows of things to look at or act on inside a Card (an agent's channels, the org chooser's orgs):
+ * tag, title and meta, status, actions; rows split by `line-soft` (spec §6.12). Empty, it
  * shows `empty` as the compact empty state.
  */
 export function ItemList({

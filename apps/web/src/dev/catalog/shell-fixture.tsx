@@ -103,7 +103,7 @@ export function sidebarProps(o: SidebarFixture, href: (id: string) => string): S
       o.context === "admin"
         ? {
             kind: "admin",
-            back: { href: href("overview"), slug: ORG_SWITCHER_FIXTURE.slug },
+            back: { href: href("new"), slug: ORG_SWITCHER_FIXTURE.slug },
             items: ADMIN_NAV_FIXTURE.map((n) => ({ ...n, href: href(n.id) })),
           }
         : {

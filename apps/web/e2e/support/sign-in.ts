@@ -50,7 +50,8 @@ export async function signIn(
   page: Page,
   { org = true, agent = true }: { org?: boolean; agent?: boolean } = {},
 ): Promise<void> {
-  await page.goto("/");
+  // the home: the new conversation (`/` redirects there too)
+  await page.goto("/chat");
   const setupButton = page.getByRole("button", { name: zh.setup.submit });
   const loginButton = page.getByRole("button", { name: zh.login.submit, exact: true });
   await expect(setupButton.or(loginButton)).toBeVisible();
@@ -67,12 +68,12 @@ export async function signIn(
     await page.getByLabel(zh.login.passwordLabel).fill(PASSWORD);
     await page.getByRole("button", { name: zh.login.submit, exact: true }).click();
   }
-  await expect(page).toHaveURL(/\/$/);
+  await expect(page).toHaveURL(/\/chat$/);
   const chooser = page.getByRole("list", { name: zh.orgChooser.listLabel });
-  const overview = page.locator('[data-template="OverviewPage"]');
+  const home = page.locator('[data-template="ConversationPage"]');
   // an org without an agent shows the setup layout instead of the shell
   const setup = page.locator('[data-template="SetupPage"]');
-  const landed = overview.or(setup);
+  const landed = home.or(setup);
   await expect(chooser.or(landed)).toBeVisible();
   if (await chooser.isVisible()) {
     await chooser
@@ -95,8 +96,8 @@ export async function signIn(
   await ensureAgent(page, orgId as unknown as string);
   if (await setup.isVisible()) {
     // a fresh page load reads readiness again: the org can run now
-    await page.goto("/");
-    await expect(overview).toBeVisible();
+    await page.goto("/chat");
+    await expect(home).toBeVisible();
   }
   // until hydration the sidebar draws two panels and nothing on the page answers a click yet
   await hydrated(page);
