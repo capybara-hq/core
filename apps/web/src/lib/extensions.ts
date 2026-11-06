@@ -56,6 +56,30 @@ export interface OrgExtension {
   catalogItem?: { itemId: string; scope: PluginScope } | null;
   /** The org admin can switch it (the plugin's switch): never for an `all` / builtin plugin. */
   switchable?: boolean;
+  /**
+   * The extension points it provides (`web-search@1`, names only), for every role: members get no
+   * permissions but this (older kernels leave it out; then the `provides` permission group).
+   */
+  provides?: string[];
+}
+
+/**
+ * The permission groups the 扩展 page sorts by capability: `provides` from its own field (members
+ * have it too), the rest (agent tools, UI views) from the permission list when the viewer has it.
+ */
+export function capabilityGroups(e: OrgExtension): PermissionGroup[] {
+  const rest = e.permissions.filter((g) => g.category !== "provides");
+  const points = e.provides ?? e.permissions.find((g) => g.category === "provides")?.items ?? [];
+  if (points.length === 0) return rest;
+  return [
+    {
+      category: "provides",
+      sensitive: false,
+      items: points,
+      entries: points.map((value) => ({ value, sensitive: false })),
+    },
+    ...rest,
+  ];
 }
 
 export interface PutOrgExtensionInput {

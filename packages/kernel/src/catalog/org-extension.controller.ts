@@ -28,12 +28,19 @@ const PutBody = z
 
 class OrgExtensionPutBody extends createZodDto(PutBody, "OrgExtensionPutBody") {}
 
-/** One extension of the org list: the org view plus the plugin's display name. */
-export type OrgExtensionItem = OrgExtensionView & { displayName: LocalizedName | null };
+/**
+ * One extension of the org list: the org view plus the plugin's display name and the extension
+ * points it provides (`channel@1`, `web-search@1`, … the names only, also for members).
+ */
+export type OrgExtensionItem = OrgExtensionView & {
+  displayName: LocalizedName | null;
+  provides: string[];
+};
 
 /**
- * What a member sees of an extension: its state, never the org config, the secrets' state, the config
- * schema or the permission list.
+ * What a member sees of an extension: its state and the points it provides (names only, what the
+ * 扩展 page sorts by), never the org config, the secrets' state, the config schema or the
+ * permission list.
  */
 export type OrgExtensionMemberItem = Omit<
   OrgExtensionItem,
@@ -63,7 +70,11 @@ export class OrgExtensionConfigsController {
   ): Promise<{ extensions: OrgExtensionItem[] | OrgExtensionMemberItem[] }> {
     const views = await this.configs.list(org.orgId);
     const names = await this.displayNames.many(views.map((v) => v.plugin));
-    const items = views.map((v) => ({ ...v, displayName: names.get(v.plugin) ?? null }));
+    const items = views.map((v) => ({
+      ...v,
+      displayName: names.get(v.plugin) ?? null,
+      provides: providesOf(v),
+    }));
     if (roleAtLeast(org.role, "admin")) return { extensions: items };
     return {
       extensions: items.map(
@@ -87,6 +98,17 @@ export class OrgExtensionConfigsController {
     const p = requireUser(principal);
     const r = await this.extSwitch.put(org.orgId, p.account.id, extension, body, patTokenId(p));
     if (r.kind === "preview") return { preview: r.preview, confirm: r.confirm };
-    return { extension: { ...r.view, displayName: await this.displayNames.get(r.view.plugin) } };
+    return {
+      extension: {
+        ...r.view,
+        displayName: await this.displayNames.get(r.view.plugin),
+        provides: providesOf(r.view),
+      },
+    };
   }
+}
+
+/** The extension points an extension provides, from its permission list's `provides` group. */
+function providesOf(view: OrgExtensionView): string[] {
+  return view.permissions.filter((g) => g.category === "provides").flatMap((g) => g.items);
 }

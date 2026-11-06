@@ -176,6 +176,8 @@ describe("组织插件配置 HTTP", () => {
     for (const e of list) {
       for (const f of ["config", "secrets", "orgConfigSchema", "permissions"])
         expect(e).not.toHaveProperty(f);
+      // the extension point names only: what the 扩展 page sorts by capability
+      expect(e.provides).toEqual(expect.any(Array));
       expect(e).toMatchObject({ enabled: expect.any(Boolean), version: expect.any(String) });
     }
     expect(a.body).not.toContain(SECRET);
@@ -183,6 +185,14 @@ describe("组织插件配置 HTTP", () => {
     // the admin keeps the full view
     const adminList = await ownerReq({ method: "GET", url: `/api/v1/orgs/${orgId}/extensions` });
     const full = (adminList.json() as { extensions: Record<string, unknown>[] }).extensions;
+    // members get the same points the admin's permission list names
+    for (const e of full) {
+      const groups = e.permissions as { category: string; items: string[] }[];
+      const points = groups.filter((g) => g.category === "provides").flatMap((g) => g.items);
+      expect(e.provides).toEqual(points);
+      expect(list.find((x) => x.plugin === e.plugin)?.provides).toEqual(points);
+    }
+    expect(full.some((e) => (e.provides as string[]).length > 0)).toBe(true);
     expect(full.find((e) => e.plugin === "orgcfg")).toMatchObject({
       config: { appId: "app-1" },
       secrets: expect.any(Array),

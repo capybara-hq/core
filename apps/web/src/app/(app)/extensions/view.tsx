@@ -44,6 +44,7 @@ import {
 } from "../../../lib/extension-capabilities";
 import { extensionLabel, labelLocale } from "../../../lib/extension-label";
 import {
+  capabilityGroups,
   type OrgExtension,
   type PutOrgExtensionInput,
   putOrgExtension,
@@ -78,8 +79,8 @@ import NotFound from "../not-found";
  * the kernel's reason; a refused switch opens the Sheet by itself), 立即同步 for directory-sync
  * extensions, and the permissions folded into one line that opens the full blocks. Members read the
  * same list without the switch, and a Sheet with the capabilities and the state only (the kernel
- * gives them no config, secrets or permissions, P2-13; so their rows carry no capabilities and
- * the page shows no capability tabs).
+ * gives them no config, secrets or permissions, P2-13, only the points each provides: their tabs
+ * and chips come from those).
  *
  * Under the list, for org admins: the org's default providers of the points several extensions
  * provide (web tools spec §6; in 全部 and 网页) and the org's file previewers (`file-preview@1`; in
@@ -138,17 +139,17 @@ function Extensions({
   const scope = usePagePath("org");
   const t = useTranslations("extensions");
   const read = usePageQuery(orgExtensionsQuery(orgId));
-  const [tab, setTab] = useExtensionTab(canEdit ? initialTab : "all");
+  const [tab, setTab] = useExtensionTab(initialTab);
   const [search, setSearch] = useState("");
   const extensions = read.kind === "ready" ? read.data.extensions : null;
-  const counts = extensions === null ? null : tabCounts(extensions, (e) => e.permissions);
+  const counts = extensions === null ? null : tabCounts(extensions, (e) => capabilityGroups(e));
   const tabItems = useExtensionTabItems(counts, setTab);
-  // Members get no permissions from the kernel, so nothing to sort by capability: no tabs.
   const header = {
     path: [...scope, { label: "extensions" }],
     title: t("title"),
     description: t("description"),
-    ...(canEdit ? { tabs: tabItems, activeTab: tab } : {}),
+    tabs: tabItems,
+    activeTab: tab,
     search: { label: t("search"), value: search, onChange: setSearch },
   };
   const columns = useColumnHeaders(canEdit);
@@ -167,7 +168,7 @@ function Extensions({
       canEdit={canEdit}
       extensions={extensions}
       header={header}
-      tab={canEdit ? tab : "all"}
+      tab={tab}
       search={search}
       clearSearch={() => setSearch("")}
     />
@@ -311,7 +312,7 @@ function ExtensionList({
     (r) => r.label,
     locale,
   );
-  const shown = inTab(sorted, tab, (r) => r.ext.permissions).filter((r) =>
+  const shown = inTab(sorted, tab, (r) => capabilityGroups(r.ext)).filter((r) =>
     matchesSearch(search, r.label, r.ext.plugin),
   );
   const current = open === null ? undefined : rows.find((r) => r.ext.plugin === open);
@@ -471,7 +472,7 @@ function ExtensionList({
       wrap: true,
       tone: "muted",
       cell: (r) => {
-        const caps = capabilitiesIn(r.ext.permissions, tab).map(capabilityLabel);
+        const caps = capabilitiesIn(capabilityGroups(r.ext), tab).map(capabilityLabel);
         return caps.length > 0 ? caps : "—";
       },
     },
@@ -535,7 +536,7 @@ function ExtensionList({
           extension={current.ext}
           label={current.label}
           canEdit={canEdit}
-          capabilities={capabilitiesIn(current.ext.permissions, "all").map(capabilityLabel)}
+          capabilities={capabilitiesIn(capabilityGroups(current.ext), "all").map(capabilityLabel)}
           state={current.state}
           platform={current.platform}
           unavailable={current.unavailable}

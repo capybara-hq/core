@@ -310,29 +310,54 @@ describe("/extensions (ListPage + DataTable by capability, details in a Sheet)",
   );
 
   it.each(["zh", "en"] as const)(
-    "a member reads the same list: states, no switch; the Sheet has no config or permissions (%s)",
+    "a member reads the same list: tabs and chips from `provides`, states, no switch; the Sheet has no config or permissions (%s)",
     async (locale) => {
       const m = msgs[locale].extensions;
-      const {
+      const member = ({
         config: _c,
         secrets: _s,
         orgConfigSchema: _o,
         permissions: _p,
-        ...memberView
-      } = FAKE_IM;
+        ...rest
+      }: typeof FAKE_IM) => rest;
       const calls = api({
         [`GET ${BASE}/extensions`]: () =>
-          json(200, { extensions: [memberView, { ...memberView, plugin: "on", enabled: true }] }),
+          json(200, {
+            extensions: [
+              { ...member(FAKE_IM), provides: ["channel@1", "directory@1"] },
+              {
+                ...member(FAKE_IM),
+                plugin: "jina",
+                enabled: true,
+                provides: ["web-search@1", "web-fetch@1"],
+              },
+            ],
+          }),
       });
       await renderRouteWithCache("/extensions", lastStubRoutes(), { locale, me: MEMBER });
       expect(await screen.findByText(m.disabled)).toBeTruthy();
       expect(screen.getByText(m.enabled)).toBeTruthy();
       expect(screen.queryByRole("switch")).toBeNull();
-      // No capability tabs: the kernel gives members no permissions to sort them by
-      expect(screen.queryByRole("tablist")).toBeNull();
-      const sheet = await openSheet(userEvent.setup(), "fake-im");
+      const tabs = screen.getByRole("tablist");
+      const tab = (id: keyof typeof m.tabs) =>
+        within(tabs).getByRole("tab", { name: new RegExp(`^${m.tabs[id]}`) });
+      expect(tab("all").textContent).toContain("2");
+      expect(tab("web").textContent).toContain("1");
+      expect(tab("tools").textContent).toContain("1");
+      const jina = screen.getByRole("row", { name: /jina/ });
+      expect(jina.textContent).toContain(m.capability.webSearch);
+      expect(jina.textContent).toContain(m.capability.webFetch);
+      expect(screen.getByRole("row", { name: /fake-im/ }).textContent).toContain(
+        m.capability.channel,
+      );
+      const user = userEvent.setup();
+      await user.click(tab("web"));
+      expect(rowNames()).toEqual(["jina"]);
+      await user.click(tab("all"));
+      const sheet = await openSheet(user, "fake-im");
       expect(within(sheet).getByText(m.stateTitle)).toBeTruthy();
       expect(within(sheet).getByText(m.capabilitiesTitle)).toBeTruthy();
+      expect(within(sheet).getByText(new RegExp(m.capability.directory))).toBeTruthy();
       expect(within(sheet).queryByText(m.configTitle)).toBeNull();
       expect(within(sheet).queryByText(m.permissions)).toBeNull();
       expect(within(sheet).queryByRole("textbox")).toBeNull();
