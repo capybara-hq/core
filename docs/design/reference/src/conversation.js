@@ -400,7 +400,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
     const quick = o.quick
       ? `<button class="r-icon-btn" data-part="quick-actions"${o.menu === "quick" ? ' aria-expanded="true" data-state="hover" style="anchor-name: --r-open-trigger"' : state(o.quickState)} aria-label="${esc(QUICK_LABEL)}">${icon("zap", 16)}</button>`
       : "";
-    return `<div class="r-composer"${o.state === "focus" ? ' data-state="focus"' : ""}>${strip}<label class="r-sr" for="msg">消息</label>${line}<div class="r-composer-bar">${iconBtn("plus", K.attach)}${o.noAgent ? "" : picker(C.agent.name, { locked: !isNew, open: o.menu === "agent" })}${picker(o.modelValue ?? modelLabel(model.provider, model.model), { open: o.menu === "model" })}${effort}${quick}<span class="r-grow"></span>${action}</div></div>`;
+    return `<div class="r-composer"${o.state === "focus" ? ' data-state="focus"' : ""}>${strip}<label class="r-sr" for="msg">消息</label>${line}<div class="r-composer-bar">${iconBtn("plus", K.attach)}${o.noAgent || !isNew ? "" : picker(C.agent.name, { open: o.menu === "agent" })}${picker(o.modelValue ?? modelLabel(model.provider, model.model), { open: o.menu === "model" })}${effort}${quick}<span class="r-grow"></span>${action}</div></div>`;
   }
 
   function pickerMenu(o) {

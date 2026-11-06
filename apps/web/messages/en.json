@@ -896,10 +896,8 @@
     "stats": "Turn {n} · {elapsed} elapsed",
     "contextPct": "Context {n}%",
     "toolLines": "lines {from}–{to}",
-    "pickAgent": "Switch agent",
     "pickModel": "Switch model",
     "pickEffort": "Effort",
-    "agentLocked": "The agent can't change after the first message.",
     "nextMessage": "Applies from the next message",
     "agentDefault": "agent default",
     "effort": {

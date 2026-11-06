@@ -167,7 +167,7 @@ describe("the new conversation page (agent profile design §4)", () => {
     expect(parts[parts.indexOf("quick-actions") - 1]).toBe("picker");
     expect(await titles(userEvent.setup())).toEqual(["Plan", "Review", "Draft", "Polish", "Ship"]);
     // the composer has no agent picker; the model picker stays
-    expect(screen.queryByRole("button", { name: new RegExp(`^${en.chat.pickAgent}`) })).toBeNull();
+    expect(bar.textContent).not.toContain("Beta");
     expect(input().getAttribute("placeholder")).toBe("What should Beta do?");
     // top to bottom: greeting, agents, composer (no line of quick actions between them)
     const body = container.querySelector('[data-part="new-conversation-body"]') as HTMLElement;

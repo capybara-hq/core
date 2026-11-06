@@ -123,6 +123,17 @@ describe("the conversation page (ConversationPage)", () => {
     expect(nav.textContent).toBe("acme/Echo agent/");
   });
 
+  it("the composer's toolbar names no agent: the title bar's path does (issue U)", async () => {
+    api({ [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }) });
+    const { container } = await renderChat("en");
+    await screen.findByText("hi");
+    await screen.findByRole("button", { name: `${en.chat.pickModel}: Fake 1` });
+    const bar = container.querySelector('[data-part="composer"]') as HTMLElement;
+    expect(bar).not.toBeNull();
+    expect(bar.querySelector('[data-locked="true"]')).toBeNull();
+    expect(bar.textContent).not.toContain("Echo agent");
+  });
+
   it("the status bar signs like every page: <login>@<slug>:~/chat/<id>, then version and time zone", async () => {
     params.conversationId = "9f60c1e6-1111-4222-8333-444455556666";
     const id = params.conversationId;
@@ -1300,7 +1311,7 @@ describe("a new conversation (/chat)", () => {
     });
     expect(agentChip("Second agent").getAttribute("aria-pressed")).toBe("true");
     // the agents row changes it (the composer has no agent picker here)
-    expect(screen.queryByRole("button", { name: `${en.chat.pickAgent}: Second agent` })).toBeNull();
+    expect(screen.queryByRole("button", { name: /: Second agent$/ })).toBeNull();
     await userEvent.setup().click(agentChip("Echo agent"));
     expect(agentChip("Echo agent").getAttribute("aria-pressed")).toBe("true");
     expect(input().getAttribute("placeholder")).toBe("What should Echo agent do?");

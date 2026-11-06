@@ -237,7 +237,6 @@ function pickers(state: ComposerState, open?: "agent" | "model" | "effort" | "lo
   const agent: PickerProps = {
     label: K.agent,
     value: C.agent.name,
-    ...(state === "new" ? {} : { locked: { hint: K.agentLocked } }),
     groups: [
       { items: C.agents.map((a) => ({ id: a.id, label: a.name, checked: a.id === C.agent.id })) },
     ],
@@ -295,9 +294,12 @@ function pickers(state: ComposerState, open?: "agent" | "model" | "effort" | "lo
     onPick: noop,
     referenceOpen: open === "effort",
   };
+  // the agent picker only in a new conversation: after the first message the title bar's path
+  // names the agent (issue U)
+  const agentPart = state === "new" ? { agent } : {};
   return state === "no-effort"
-    ? { agent, model: modelPicker }
-    : { agent, model: modelPicker, effort };
+    ? { ...agentPart, model: modelPicker }
+    : { ...agentPart, model: modelPicker, effort };
 }
 
 function composerProps(

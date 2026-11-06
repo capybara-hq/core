@@ -896,10 +896,8 @@
     "stats": "第 {n} 轮 · 已用 {elapsed}",
     "contextPct": "上下文 {n}%",
     "toolLines": "第 {from}–{to} 行",
-    "pickAgent": "切换智能体",
     "pickModel": "切换模型",
     "pickEffort": "思考档位",
-    "agentLocked": "发送第一条消息后不能再换智能体。",
     "nextMessage": "从下一条消息起生效",
     "agentDefault": "智能体默认",
     "effort": {

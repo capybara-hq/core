@@ -3,7 +3,6 @@
 import {
   type ConversationPageProps,
   elapsed,
-  type PickerProps,
   RenameDialog,
   Stack,
   type TitleBarMenuItem,
@@ -340,14 +339,6 @@ export function useConversationPage(
     reasoningOf: selection.reasoningOf,
   });
 
-  const agentPicker: PickerProps = {
-    label: t("pickAgent"),
-    value: agent?.definition.name ?? "—",
-    locked: { hint: t("agentLocked") },
-    groups: [],
-    onPick: () => {},
-  };
-
   const now = useNow(0);
   const timeZone = useTimeZone();
   const createdAt = conv.conversation ? new Date(conv.conversation.createdAt) : new Date(now);
@@ -409,8 +400,8 @@ export function useConversationPage(
           stop={{ onStop: conv.stop, stopping: conv.stopping }}
           onSend={send}
           onQueue={enqueue}
+          // no agent here: the title bar's path names it (issue U)
           pickers={{
-            agent: agentPicker,
             model: selection.modelPicker,
             ...(selection.effortPicker ? { effort: selection.effortPicker } : {}),
           }}
