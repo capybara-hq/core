@@ -344,6 +344,22 @@ describe("an anchored picker menu with 100 models", () => {
     expect(filter.value).toBe("model-1");
   });
 
+  it("Space on a focused item picks it; Space in the filter is text", async () => {
+    const onPick = vi.fn();
+    const user = userEvent.setup();
+    wrap(<Picker {...models(onPick)} />);
+    await user.click(screen.getByRole("button", { name: "切换模型: model-80" }));
+    const filter = (await screen.findByRole("textbox", { name: "筛选" })) as HTMLInputElement;
+    await vi.waitFor(() => expect(document.activeElement).toBe(filter));
+    await user.keyboard("model-1 ");
+    expect(filter.value).toBe("model-1 ");
+    await user.keyboard("{Backspace}{ArrowDown}");
+    expect(document.activeElement?.textContent).toContain("model-1");
+    await user.keyboard(" ");
+    expect(onPick).toHaveBeenCalledWith("p1/model-1");
+    expect(screen.queryByRole("menu")).toBeNull();
+  });
+
   it("↑ on the first item returns to the filter", async () => {
     const user = userEvent.setup();
     wrap(<Picker {...models()} />);

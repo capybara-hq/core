@@ -280,9 +280,19 @@ export function ConvMenu({
   );
 }
 
-/** Printable keys and Backspace: typing that belongs in the filter field. */
+/** The items of an anchored menu: menu items, or a Select's options. */
+const ITEM_SELECTOR = '[role^="menuitem"], [role="option"]';
+
+/**
+ * Printable keys and Backspace: typing that belongs in the filter field. Space on a focused item
+ * is not typing: it activates the item, as Enter does.
+ */
 const typesIntoFilter = (e: KeyboardEvent): boolean =>
-  !e.ctrlKey && !e.metaKey && !e.altKey && (e.key.length === 1 || e.key === "Backspace");
+  !e.ctrlKey &&
+  !e.metaKey &&
+  !e.altKey &&
+  (e.key.length === 1 || e.key === "Backspace") &&
+  !(e.key === " " && e.target instanceof Element && e.target.matches(ITEM_SELECTOR));
 
 /** The content of an anchored menu: placement, the height cap, the filter and the scrolling list. */
 function AnchoredContent({
