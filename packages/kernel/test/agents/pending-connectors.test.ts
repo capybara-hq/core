@@ -830,6 +830,14 @@ describe("one more connector from a connector template (P4-7)", { timeout: 120_0
       .where("id", "=", made.id)
       .executeTakeFirstOrThrow();
     expect(row.platform_template_id).toBe(platformGh);
+    // the connector views name the template (the web offers it for a pending connector)
+    expect(r.json().connector.platformTemplateId).toBe(platformGh);
+    const listed = await env.boss({ method: "GET", url: `/api/v1/orgs/${env.orgId}/connectors` });
+    expect(
+      (listed.json().connectors as { id: string; platformTemplateId: string | null }[]).find(
+        (c) => c.id === made.id,
+      )?.platformTemplateId,
+    ).toBe(platformGh);
     const ledger = await env.db
       .selectFrom("plugin_install_components")
       .select(["ref", "template_id"])
