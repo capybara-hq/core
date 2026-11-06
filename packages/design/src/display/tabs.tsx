@@ -1,4 +1,4 @@
-import { type KeyboardEvent, useRef } from "react";
+import { type KeyboardEvent, useRef, useState } from "react";
 import type { ControlA11y } from "../controls/a11y";
 import { type Density, useDensity } from "../controls/density";
 import { LinkPendingMark, useDesignLink, useDesignT } from "../provider";
@@ -49,6 +49,8 @@ export type TabsProps = {
 export function Tabs({ items, value, onChange, label }: TabsProps) {
   const Link = useDesignLink();
   const ref = useRef<HTMLDivElement>(null);
+  // The tab a pointer focused: it draws no ring (spec §2.5), until a key press or a blur.
+  const [pointerFocus, setPointerFocus] = useState<string | null>(null);
   const hasLinks = items.some((i) => i.href);
 
   if (hasLinks) {
@@ -91,6 +93,7 @@ export function Tabs({ items, value, onChange, label }: TabsProps) {
   // value 不对应任何可用页签时，第一个可用页签可被 Tab 聚焦（否则整个页签栏不可达）
   const focusId = enabled.some((i) => i.id === value) ? value : enabled[0]?.id;
   const onKey = (e: KeyboardEvent) => {
+    setPointerFocus(null);
     const idx = enabled.findIndex((i) => i.id === focusId);
     let next: TabItem | undefined;
     if (e.key === "ArrowRight") next = enabled[(idx + 1) % enabled.length];
@@ -119,6 +122,9 @@ export function Tabs({ items, value, onChange, label }: TabsProps) {
             tabIndex={it.id === focusId ? 0 : -1}
             disabled={it.disabled}
             data-state={selected ? "selected" : undefined}
+            data-pointer-focus={pointerFocus === it.id ? "true" : undefined}
+            onPointerDown={() => setPointerFocus(it.id)}
+            onBlur={() => setPointerFocus((p) => (p === it.id ? null : p))}
             onClick={() => onChange?.(it.id)}
           >
             {it.label}

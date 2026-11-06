@@ -483,8 +483,10 @@
 .cb-stepper:hover {
   border-color: var(--cb-line-strong);
 }
+/* The Select is a button: its halo is keyboard focus (or the open list), never a click's focus
+   (spec §2.5); the text fields keep theirs while typed in. */
 .cb-input:focus-within,
-.cb-select:focus-within,
+.cb-select:focus-visible,
 .cb-select[aria-expanded="true"],
 .cb-textarea:focus-within,
 .cb-stepper:focus-within {

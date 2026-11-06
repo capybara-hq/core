@@ -36,6 +36,11 @@
 .cb-tab:focus-visible {
   outline-offset: -2px;
 }
+/* A tab a pointer focused draws no ring, whatever the browser's :focus-visible heuristics say
+   (spec §2.5; acceptance issue Y); a key press or leaving the tab drops the mark. */
+.cb-tab[data-pointer-focus="true"]:focus-visible {
+  outline: none;
+}
 .cb-tab:hover:not(:disabled):not([aria-disabled="true"]) {
   background: var(--cb-hover);
   color: var(--cb-ink);

@@ -1,5 +1,6 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
+import * as React from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   Badge,
@@ -173,6 +174,49 @@ describe("Tabs", () => {
     screen.getByRole("tab", { name: "A" }).focus();
     await userEvent.keyboard("{ArrowRight}");
     expect(onChange).toHaveBeenCalledWith("b");
+  });
+});
+
+describe("Tabs: no focus ring after a pointer (issue Y)", () => {
+  const items = [
+    { id: "a", label: "A" },
+    { id: "b", label: "B" },
+  ];
+  function Stateful() {
+    const [value, setValue] = React.useState("a");
+    return <Tabs label="x" value={value} onChange={setValue} items={items} />;
+  }
+  it("a tab focused by a click is marked, so its :focus-visible ring is not drawn", async () => {
+    wrap(<Stateful />);
+    const b = screen.getByRole("tab", { name: "B" });
+    await userEvent.click(b);
+    expect(document.activeElement).toBe(b);
+    expect(b.getAttribute("data-pointer-focus")).toBe("true");
+    expect(screen.getByRole("tab", { name: "A" }).getAttribute("data-pointer-focus")).toBeNull();
+  });
+  it("a key press drops the mark: keyboard focus draws the ring again", async () => {
+    wrap(<Stateful />);
+    await userEvent.click(screen.getByRole("tab", { name: "B" }));
+    await userEvent.keyboard("{ArrowLeft}");
+    const a = screen.getByRole("tab", { name: "A" });
+    expect(document.activeElement).toBe(a);
+    expect(a.getAttribute("data-pointer-focus")).toBeNull();
+    expect(screen.getByRole("tab", { name: "B" }).getAttribute("data-pointer-focus")).toBeNull();
+  });
+  it("leaving the tab drops the mark, so tabbing back draws the ring", async () => {
+    wrap(
+      <>
+        <Stateful />
+        <button type="button">after</button>
+      </>,
+    );
+    const b = screen.getByRole("tab", { name: "B" });
+    await userEvent.click(b);
+    // a focus move with no key press (a click elsewhere, a script): only the blur drops it
+    const after = screen.getByRole("button", { name: "after" });
+    act(() => after.focus());
+    expect(document.activeElement).toBe(after);
+    expect(b.getAttribute("data-pointer-focus")).toBeNull();
   });
 });
 
