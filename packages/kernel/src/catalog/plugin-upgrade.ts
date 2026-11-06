@@ -482,24 +482,24 @@ export class PlatformPluginUpdater {
     } catch (e) {
       let rolledBack = true;
       if (extensionMoved && ext) {
+        // An owner update was authorized at its start: the put-back is not checked again
+        const back = opsOwner && { ...opsOwner, rollback: true as const };
         try {
           if (ext.sha256 === null) {
             // Removed by this update: the previous package reinstalled (as it was)
             await this.ops.install(checked.name, ext.previous as string, actor, opts.actorTokenId, {
               catalogItemId: itemId,
-              ...(opsOwner && { owner: opsOwner }),
+              ...(back && { owner: back }),
             });
-            if (removedEnabled)
-              await this.ops.enable(checked.name, actor, opts.actorTokenId, opsOwner);
+            if (removedEnabled) await this.ops.enable(checked.name, actor, opts.actorTokenId, back);
           } else if (ext.previous !== null) {
             await this.ops.install(checked.name, ext.previous, actor, opts.actorTokenId, {
-              ...(opsOwner && { owner: opsOwner }),
+              ...(back && { owner: back }),
             });
           } else {
             // Installed by this update: an uninstall needs it disabled first
-            if (enabledHere)
-              await this.ops.disable(checked.name, actor, opts.actorTokenId, opsOwner);
-            await this.ops.uninstall(checked.name, actor, opts.actorTokenId, opsOwner);
+            if (enabledHere) await this.ops.disable(checked.name, actor, opts.actorTokenId, back);
+            await this.ops.uninstall(checked.name, actor, opts.actorTokenId, back);
           }
         } catch (u) {
           rolledBack = false;

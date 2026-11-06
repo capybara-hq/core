@@ -45,6 +45,12 @@ import { ExtensionRegistry } from "./registry.js";
  */
 export interface ExtensionOpsOwner {
   orgId: string;
+  /**
+   * Putting the extension back after a failed owner update: the actor was authorized when the
+   * update started, so no role is checked again (a demotion meanwhile must not leave the
+   * deployment without the extension it had); the audit keeps the actor, marked `rollback`.
+   */
+  rollback?: true;
 }
 
 @Injectable()
@@ -425,6 +431,7 @@ export class ExtensionAdminOps {
    */
   @Transactional({ propagation: "mandatory" })
   private async authorize(actor: string | null, owner: ExtensionOpsOwner | undefined) {
+    if (owner?.rollback === true) return;
     if (owner !== undefined) {
       if (actor === null) throw new Error("an owner's extension operation has an actor");
       await this.orgLock.lockAndAuthorize(owner.orgId, actor, "catalog.upload");
@@ -581,5 +588,6 @@ const isDowngrade = (to: string, from: string): boolean =>
 
 /** The audit detail of an owner's operation. */
 function ownerDetail(owner: ExtensionOpsOwner | undefined): Record<string, unknown> {
-  return owner === undefined ? {} : { ownerOrgId: owner.orgId };
+  if (owner === undefined) return {};
+  return { ownerOrgId: owner.orgId, ...(owner.rollback === true && { rollback: true }) };
 }

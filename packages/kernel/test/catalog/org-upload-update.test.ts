@@ -2,6 +2,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { CatalogScopeService } from "../../src/catalog/catalog-scope.service.js";
 import { PlatformComponents } from "../../src/catalog/platform-components.js";
 import { PlatformPluginUpdater } from "../../src/catalog/plugin-upgrade.js";
+import { ExtensionAdminOps } from "../../src/extensions/admin-ops.js";
 import { SkillsService } from "../../src/skills/skills.service.js";
 import { usableSkills } from "../../src/skills/usable.js";
 import { lifePkg, pluginTgz } from "../helpers/plugin-packages.js";
@@ -266,6 +267,62 @@ describe("owner updates without an extension", { timeout: 120_000 }, () => {
       { action: "extension.uninstalled", actor: env.bossId, ownerOrgId: orgA },
       { action: "extension.installed", actor: env.bossId, ownerOrgId: orgA },
       { action: "extension.enabled", actor: env.bossId, ownerOrgId: orgA },
+    ]);
+  });
+
+  it("the put-back runs even when the admin was demoted during the update", async () => {
+    const itemId = await importPlugin(env, await lifePkg({ name: "own-demote", version: "1.0.0" }));
+    await ownedByA(itemId);
+    const before = await installRow("own-demote");
+    const v2 = await pluginTgz({
+      manifest: { name: "own-demote", version: "2.0.0", skills: [{ path: "./skills/dm-notes" }] },
+      files: { "skills/dm-notes/SKILL.md": SKILL_MD("dm-notes") },
+    });
+    const p = await prepared(env.boss, orgA, v2);
+    // boss is demoted once the extension is uninstalled: the commit's re-check refuses
+    const ops = env.k.app.get(ExtensionAdminOps);
+    const real = ops.uninstall.bind(ops);
+    vi.spyOn(ops, "uninstall").mockImplementationOnce(async (...args) => {
+      await real(...args);
+      await env.db
+        .updateTable("memberships")
+        .set({ role: "member" })
+        .where("org_id", "=", orgA)
+        .where("account_id", "=", env.bossId)
+        .execute();
+    });
+    try {
+      const c = await confirm(env.boss, orgA, p);
+      expect(c.statusCode, c.body).toBe(403);
+    } finally {
+      await env.db
+        .updateTable("memberships")
+        .set({ role: "admin" })
+        .where("org_id", "=", orgA)
+        .where("account_id", "=", env.bossId)
+        .execute();
+    }
+    expect(await installRow("own-demote")).toEqual(before);
+    expect((await itemRow("own-demote")).platform_synced_version).toBe("1.0.0");
+    const failed = await env.db
+      .selectFrom("audit_events")
+      .select("detail")
+      .where("action", "=", "plugin.platform_update_failed")
+      .where("target", "=", itemId)
+      .executeTakeFirstOrThrow();
+    expect(failed.detail).toMatchObject({ step: "components", rolledBack: true });
+    // the put-back keeps the actor, marked as a rollback
+    const rows = await env.db
+      .selectFrom("audit_events")
+      .select(["action", "actor_account_id", "detail"])
+      .where("target", "=", "own-demote")
+      .where("action", "in", ["extension.installed", "extension.enabled"])
+      .where("actor_account_id", "=", env.bossId)
+      .orderBy("at")
+      .execute();
+    expect(rows.map((r) => [r.action, (r.detail as { rollback?: boolean }).rollback])).toEqual([
+      ["extension.installed", true],
+      ["extension.enabled", true],
     ]);
   });
 
