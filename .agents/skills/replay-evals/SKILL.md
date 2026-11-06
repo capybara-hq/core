@@ -81,6 +81,10 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   `deployment/`, `skills/usable.ts` `skillFileStore`); an org copy linked to its platform skill keeps its id in agent definitions and
   snapshots and serves the platform's current version under that id, so linking or a platform update shows as one "Updated skills" notice
   (no removed / new entries, no definition rewrite). Old snapshots keep their org prefixes and still load.
+- Promote on share (plugin scope phase 3, ruling P3-43): when an org skill is promoted to a platform skill, the owner's org row keeps its
+  id and serves its own stored version while it equals the platform's, so the owner's agents see the same id, version and content: no
+  "Updated skills" notice and no DriftReason. Other orgs' agents reference the platform id; an owner's later version reaches both as an
+  ordinary update. The zero-drift fixtures stay unchanged.
 - A skill renamed under its id (the platform components migration renames an org skill whose name a platform skill on in the org has)
   is noticed as its old name removed and its new name added; no log before phase 2 holds such a change, so old logs render as before.
 - **Old logs render byte for byte as before**: a snapshot without `plugin` / `pinned` / `toolMap` means none, and a run on such a conversation

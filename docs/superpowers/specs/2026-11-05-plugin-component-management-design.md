@@ -1,15 +1,15 @@
 # Plugins and components: one model for bringing in, scoping and managing capabilities
 
 - Date: 2026-11-05, written against `main` at `40d81dc1` (v0.1.0-rc.4).
-- Status: phases 1 and 2 implemented. Phase 1: plugin scope, the org switch, requests, built-in
+- Status: phases 1, 2 and 3 implemented. Phase 1: plugin scope, the org switch, requests, built-in
   plugins and permission confirmation, the scope sync worker, and the moved admin and workspace plugin
   and extension pages (migrations 0074-0076). Phase 2: components at deployment level with their own
   scope and org switches, agent templates at deployment level, platform plugin and component updates,
   the migration of org copies, the platform inbox, the member-readable 扩展 page and the marketplace
-  changes of §13.5 (§6-§8; migrations 0080-0082; decisions in §13.6). Phase 3 designed (§14: org
+  changes of §13.5 (§6-§8; migrations 0080-0082; decisions in §13.6). Phase 3 implemented (§14: org
   uploads with super admin confirmation, 可共享 and sharing org items, ownership transfer, 新建技能;
-  plan `docs/superpowers/plans/2026-11-06-plugin-scope-phase-3.md`). Creating agents from templates
-  is phase 4.
+  migration 0083; plan `docs/superpowers/plans/2026-11-06-plugin-scope-phase-3.md`; rulings made
+  during implementation at the end of §14.2). Creating agents from templates is phase 4.
 - Markers: **(decided)** is the maintainer's answer during brainstorming (2026-11-05);
   **(designer's call)** is decided here on the maintainer's behalf and may be overturned in review.
   Items without a marker restate current code.
@@ -699,6 +699,64 @@ Admin component routes and 新建技能
   then the body) and creates the skill with the checks of an upload (`customSkills`, name format and
   size limits of `readSkillPackage`, ruling P2-3, one live name per org). `shareable` is also
   accepted on upload.
+
+Rulings made during implementation (2026-11-06)
+
+- **P3-12'** (controller) A version without an extension that drops the previous version's extension
+  applies at once (removing code never widens trust); the orgs using it get `shared_item_updated`.
+- **P3-15'** (controller, replaces P3-15) `customSkills` = deny refuses org uploads carrying skills or
+  agent templates, `customConnectors` = deny those carrying connector templates; a package with
+  neither is allowed.
+- **P3-25** Turning 可共享 off on an org-owned item (plugin or component) whose scope is `optional` /
+  `all` narrows it in the same transaction to `named` = owner + every org where it is on.
+- **P3-26** Import confirm hitting a non-shareable org-owned item fails closed (409
+  `catalog.not_shareable`) before any request is marked.
+- **P3-27** `catalog.owner_required` also guards a component's own `named` scope; ownership transfer
+  writes the list directly.
+- **P3-28** Org uploads refuse a plugin or extension name in the bundled bootstrap manifest or in any
+  marketplace entry the deployment has read (409 `plugin.name_reserved`); bootstrap takes no name over.
+- **P3-29** The org upload route checks membership and `catalog.upload` before reading the body.
+- **P3-30** An owner may move its plugin to a lower version; the review shows the downgrade and the
+  using orgs get `shared_item_updated`.
+- **P3-31** The super admin's confirmation of an org upload carries `pendingDigest(sha256,
+  reviewHash)`, tied to the exact package.
+- **P3-32** An awaiting item that gets a version without an extension takes it as its first version
+  (installed, pending cleared, name claim released; the old digest answers 409
+  `extension.not_pending`).
+- **P3-33** An upload claims its extension name before the plugin-name check.
+- **P3-34** A pending or rejected version never becomes `latest_version`; every reader of an
+  org-owned item (resolution, scope sync, migration job, org catalog views) reads applied versions only.
+- **P3-35** `confirmOrgUpload` runs every step under the item's lock; the take-out runs only when the
+  confirmation did not win.
+- **P3-36** A confirmation whose extension name has a leftover install of another package is refused
+  (409 `extension.name_conflict`): org code never inherits another package's config or secrets.
+- **P3-37** Approve before applying (pending restored on failure); a super admin delete of an awaiting
+  item and the take-out release its name claim; the generic update refuses a never-applied org version.
+- **P3-38** A scope sync job whose extension is enabled but not loaded on its replica waits for a
+  bounded reconcile, then re-enqueues itself (`scope-item-<id>-<v>-r<n>`, bounded attempts); the HTTP
+  confirmation's reconcile wait is capped.
+- **P3-39** Transfer narrows a component's own `all` scope to `named` = the orgs using it.
+- **P3-40** An `optional` item stays `optional` after transfer; the former owner is then an ordinary
+  org.
+- **P3-41** An owner delete with no other users uninstalls the item in the owner org through the normal
+  uninstall path (connectors kept as the org's own).
+- **P3-42** Promotion and owner versions split into prepare (files, outside the transaction) and a
+  `mandatory`-transaction write.
+- **P3-43** The owner's promoted copy serves its own stored version while it equals the platform's (no
+  "Updated skills" line), else the platform's under the copy id.
+- **P3-44** Promoted skills get `plugin_name` null; templates keep it (the roster type is
+  model-visible); plugin sync and template linking skip promoted rows.
+- **P3-45** Every prepare (owner version, admin upload, promotion) writes to a unique object prefix;
+  a loser's objects are deleted best effort after the failed transaction.
+- **P3-46** Only content the org created can be shared or promoted (409 `catalog.not_owned`): org
+  skills without a catalog item or platform link; no agent template until phase 4.
+- **P3-47** Promoted rows are never plugin-installed, and uninstall never touches them.
+- **P3-48** The super admin cannot upload a version to an org-owned promoted skill (409
+  `catalog.not_owned`).
+- **P3-49** The super admin's platform disable applies to the owner too, without a notice.
+- **P3-50** One global lock order: org rows (sorted) -> the item -> its components;
+  `PlatformPluginUpdater.commit` locks the connector orgs and the owner org first. Files of deleted
+  promoted skills under `deployment/` are not collected in phase 3.
 
 ### 14.3 Not in phase 3
 
