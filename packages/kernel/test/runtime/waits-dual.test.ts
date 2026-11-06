@@ -22,7 +22,6 @@ import {
   postMessage,
   type Req,
   runConfig,
-  sleep,
   startKernel,
   type TestKernel,
   waitFor,
@@ -181,23 +180,24 @@ describe("双副本续跑", () => {
     expect(ofType(evs, "model_call").map((e) => e.payload.step)).toEqual([1, 2]);
   });
 
+  // Both paths act at once in every round; where the expiry sits (set on the PG clock, which both
+  // paths compare under the approval's row lock) decides the winner, so no round sleeps for it.
+  // About 1 s alone; the 30 s timeout is for heavy load.
   it("超时任务（B）与人工决定（A）竞争同一审批：恰好一条决定事件，只续跑一次", async () => {
     const ka = await boot();
     const kb = await boot();
     const jar = cookieJar();
     const reqA = await login(ka, jar);
     await setup(reqA);
-    // 三轮分别在到期前、到期后（各留 800ms 余量，不依赖测试进程与 PG 时钟的细微差异）、到期附近动作：
-    // 人工决定与超时各至少赢一次
+    // Rounds: well before the expiry (the decision must win), past it (the timeout must win), and
+    // right at it (either may win). The expiry is an offset from PG's now().
     const outcomes: string[] = [];
-    for (const waitMs of [200, 1_800, 1_000]) {
+    for (const expiresIn of ["1 hour", "-1 second", "20 milliseconds"]) {
       const convId = await createConv(reqA, orgId, agentId);
       const { runId, id } = await waitingApproval(reqA, convId);
       const job = await waitFor(() => maint.getJob(waitTimeoutJobId(id)), 15_000, "timeout job");
-      // 到期时刻设在 1s 之后（按 PG 时钟），两边在到期前后同时动作
-      await sql`UPDATE capybara.approvals SET expires_at = now() + interval '1 second'
+      await sql`UPDATE capybara.approvals SET expires_at = now() + ${expiresIn}::interval
         WHERE id = ${id}`.execute(raw);
-      await sleep(waitMs);
       const [decision] = await Promise.all([
         reqA({
           method: "POST",
@@ -210,8 +210,18 @@ describe("双副本续跑", () => {
       ]);
       expect([200, 409]).toContain(decision.statusCode);
       await waitForTerminal(db, convId, 1);
-      // 到期前提前执行的超时任务会重新延迟到到期时刻：等它也跑完再核对
-      await sleep(1_200);
+      // A timeout job that ran before the expiry delayed itself again until it: promote it until it
+      // has run to completion (removeOnComplete), so its late run is covered by the checks below.
+      await waitFor(
+        async () => {
+          const j = await maint.getJob(waitTimeoutJobId(id));
+          if (!j) return true;
+          if (await j.isDelayed()) await j.promote().catch(() => undefined);
+          return false;
+        },
+        15_000,
+        "timeout job finished",
+      );
       const evs = await eventsOf(db, convId);
       const decided = ofType(evs, "approval_decided");
       expect(decided).toHaveLength(1);
