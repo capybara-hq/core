@@ -1129,3 +1129,135 @@ describe("waits of nested sub-agents (agent map spec §7)", () => {
     expect(rowOf(out)).not.toHaveProperty("current");
   });
 });
+
+describe("Agent call rows across a child's runs (final review)", () => {
+  const usage = { inputTokens: 1000, outputTokens: 200, cacheReadTokens: 300, cacheWriteTokens: 0 };
+  const agentCall = calls(2, [
+    {
+      id: "k1",
+      name: "Agent",
+      input: { description: "Scan docs", prompt: "Do it", subagent_type: "general-purpose" },
+    },
+  ]);
+  const dispatched = (seq: number, callId: string, childRunId: string, runId = "r1") =>
+    ev(
+      seq,
+      "subagent_dispatched",
+      {
+        step: 0,
+        callId,
+        subagentId: "ch1",
+        childRunId,
+        agentType: "general-purpose",
+        description: "Scan docs",
+        resumed: callId !== "k1",
+        model: { provider: "p", model: "m" },
+      },
+      runId,
+    );
+  const finished = (seq: number, childRunId: string, status = "completed", u = usage) =>
+    ev(
+      seq,
+      "subagent_finished",
+      {
+        subagentId: "ch1",
+        childRunId,
+        callId: "k1",
+        status,
+        toolCalls: 3,
+        durationMs: 41_000,
+        usage: u,
+      },
+      null,
+    );
+  const rowOf = (out: TimelineEntry[]) => {
+    const g = out.find((e) => e.kind === "subagents");
+    return g?.kind === "subagents" ? g.rows[0]?.row : undefined;
+  };
+
+  it("an ended call shows its child's tokens (the four usage fields summed)", () => {
+    const events = [user(1, "go"), agentCall, dispatched(3, "k1", "run-a"), finished(4, "run-a")];
+    expect(rowOf(buildTimeline(events, [], new Map(), "en"))).toMatchObject({
+      status: "completed",
+      durationMs: 41_000,
+      tokens: 1500,
+    });
+  });
+
+  it("a child restarted by SendMessage runs again on its Agent call's row, then ends again", () => {
+    const base = [
+      user(1, "go"),
+      agentCall,
+      dispatched(3, "k1", "run-a"),
+      result(4, "k1", "Agent"),
+      finished(5, "run-a"),
+      user(6, "tell it more"),
+      calls(7, [{ id: "sm1", name: "SendMessage", input: { to: "ch1", message: "more" } }]),
+      // the restart carries the SendMessage call's id, not the Agent call's
+      dispatched(8, "sm1", "run-b"),
+    ];
+    const running = rowOf(buildTimeline(base, [], new Map(), "en"));
+    expect(running).toMatchObject({ id: "ch1", status: "running" });
+    expect(running).not.toHaveProperty("durationMs");
+    expect(running).not.toHaveProperty("finishedAt");
+    expect(running).not.toHaveProperty("tokens");
+    const again = [
+      ...base,
+      finished(9, "run-b", "failed", {
+        inputTokens: 10,
+        outputTokens: 5,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+      }),
+    ];
+    expect(rowOf(buildTimeline(again, [], new Map(), "en"))).toMatchObject({
+      status: "failed",
+      tokens: 15,
+    });
+  });
+
+  it("a child woken by its own background task: the list's newer run reopens the row", () => {
+    const events = [
+      user(1, "go"),
+      agentCall,
+      dispatched(3, "k1", "run-a"),
+      result(4, "k1", "Agent"),
+      finished(5, "run-a"),
+    ];
+    const endedAt = Date.parse(events[4]?.createdAt ?? "");
+    const view = (startedAt: number) =>
+      new Map([
+        [
+          "ch1",
+          {
+            status: "running",
+            startedAt: new Date(startedAt).toISOString(),
+            pendingApprovalIds: [],
+            pendingQuestionIds: [],
+          },
+        ],
+      ]);
+    // the list was read before the finish: the log wins
+    expect(
+      rowOf(buildTimeline(events, [], new Map(), "en", { views: view(endedAt - 30_000) })),
+    ).toMatchObject({ status: "completed" });
+    // a run that started after the finish (a wake writes no dispatch)
+    const woken = rowOf(buildTimeline(events, [], new Map(), "en", { views: view(endedAt + 5000) }));
+    expect(woken).toMatchObject({ status: "running" });
+    expect(woken).not.toHaveProperty("durationMs");
+    // the wake run's own finish is the row's latest end
+    const after = [
+      ...events,
+      finished(6, "run-w", "completed", {
+        inputTokens: 7,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+      }),
+    ];
+    expect(rowOf(buildTimeline(after, [], new Map(), "en"))).toMatchObject({
+      status: "completed",
+      tokens: 7,
+    });
+  });
+});

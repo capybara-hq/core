@@ -47,7 +47,10 @@ import { toolLabel, toolLabelOfKey, toolLabelText } from "./tool-label";
  *   tool (`subagent_progress.lastToolKey`); a parent's `SendMessage` in the child's log
  *   (`dispatch.kind: "message"`) is a user bubble with its `sender`; a `subagent_delivery` (a
  *   report, a note or the child's end) is a compact `delivery` entry in the parent; `SendMessage`
- *   and `SubagentHandback` are ordinary tool rows.
+ *   and `SubagentHandback` are ordinary tool rows. A child that runs again after an end stays on
+ *   its `Agent` call's row: a restart (`subagent_dispatched` carrying the `SendMessage` call's id),
+ *   a wake (no dispatch: the list's run started after the last end, or a later run's
+ *   `subagent_finished` / `subagent_waiting`). An ended row shows the run's time and tokens.
  * - Skill invocations (phase D): a person's `user_message` with `skill` is a bubble with the skill
  *   chip, the arguments as typed and, inline, the rendered instructions (`content[0]`; a fork's
  *   `content[0]` is the lead, and its instructions are the child's task). A fork's dispatch
@@ -96,7 +99,13 @@ export interface SubagentLive {
   progress?: Readonly<Record<string, { toolCalls: number; lastToolKey?: string }>>;
   views?: ReadonlyMap<
     string,
-    { status: string; pendingApprovalIds: string[]; pendingQuestionIds: string[] }
+    {
+      status: string;
+      /** The latest run's start: a run after the log's last finish (a wake) reopens the row. */
+      startedAt?: string;
+      pendingApprovalIds: string[];
+      pendingQuestionIds: string[];
+    }
   >;
   /**
    * Who a waiting call waits for, as its row words it ("等待 张三 批准"): a name or a role, or
@@ -114,6 +123,9 @@ export interface SubagentLive {
    */
   agentStatus?: (conversationId: string) => string | undefined;
 }
+
+/** A list status of a run that is still going. */
+const isActiveView = (s: string) => s === "queued" || s === "running" || s === "waiting";
 
 /** How a sub-agent's run ended, as its delivery row words it. */
 export type DeliveryStatus = "completed" | "failed" | "aborted";
@@ -690,6 +702,24 @@ export function buildEventTimeline(
     { sub: TimelineSubagent; childRunId: string; finished: boolean }
   >();
 
+  /** A child that runs again after an end (a restart or a wake): its row is going again. */
+  const reopen = (
+    s: { sub: TimelineSubagent; childRunId: string; finished: boolean },
+    childRunId: string,
+    at: number,
+  ) => {
+    s.childRunId = childRunId;
+    s.finished = false;
+    const row = s.sub.row;
+    row.status = "running";
+    row.toolCalls = 0;
+    delete row.waiting;
+    delete row.durationMs;
+    delete row.finishedAt;
+    delete row.tokens;
+    if (!Number.isNaN(at)) row.startedAt = at;
+  };
+
   const openSubagents = (): Extract<TimelineEntry, { kind: "subagents" }> => {
     const last = out.at(-1);
     if (last?.kind === "subagents") return last;
@@ -1063,7 +1093,13 @@ export function buildEventTimeline(
           break;
         }
         const a = agentCalls.get(callKey(e.runId, e.payload.callId));
-        if (!a) break;
+        if (!a) {
+          // a restart (`SendMessage` to an ended child): its id is the message call's, the row
+          // stays the child's own `Agent` call's
+          const s = subagentRows.get(e.payload.subagentId);
+          if (s) reopen(s, e.payload.childRunId, Date.parse(e.createdAt));
+          break;
+        }
         const row = a.sub.row;
         row.id = e.payload.subagentId;
         delete row.openable;
@@ -1081,7 +1117,9 @@ export function buildEventTimeline(
       }
       case "subagent_finished": {
         const s = subagentRows.get(e.payload.subagentId);
-        if (!s || s.childRunId !== e.payload.childRunId) break;
+        if (!s) break;
+        // another run's end is the child's latest (a wake run writes no dispatch)
+        s.childRunId = e.payload.childRunId;
         s.finished = true;
         deepWaits.delete(e.payload.subagentId);
         const row = s.sub.row;
@@ -1092,6 +1130,9 @@ export function buildEventTimeline(
         delete row.waiting;
         row.toolCalls = e.payload.toolCalls;
         row.durationMs = e.payload.durationMs;
+        // the run's tokens, summed as the agent tree sums them
+        const u = e.payload.usage;
+        if (u) row.tokens = u.inputTokens + u.outputTokens + u.cacheReadTokens + u.cacheWriteTokens;
         const at = Date.parse(e.createdAt);
         if (!Number.isNaN(at)) row.finishedAt = at;
         break;
@@ -1103,6 +1144,9 @@ export function buildEventTimeline(
         const deep = top !== e.payload.subagentId;
         const s = subagentRows.get(top);
         const row = s?.sub.row;
+        // the child's own wait in a run after its last end (a wake): that run is going
+        if (s && !deep && s.finished && s.childRunId !== e.payload.childRunId)
+          reopen(s, e.payload.childRunId, Number.NaN);
         if (s && row && !s.finished && (deep || s.childRunId === e.payload.childRunId)) {
           row.status = "waiting";
           row.waiting = e.payload.kind;
@@ -1311,8 +1355,20 @@ export function buildEventTimeline(
   }
   // What the log does not say yet: live calls, and a child waiting or queued again.
   for (const [id, s] of subagentRows) {
-    if (s.finished) continue;
     const row = s.sub.row;
+    if (s.finished) {
+      // the list's latest run started after the log's last end (a wake, a restart not logged yet)
+      const v = live.views?.get(id);
+      const started = v?.startedAt === undefined ? Number.NaN : Date.parse(v.startedAt);
+      if (
+        v === undefined ||
+        !isActiveView(v.status) ||
+        row.finishedAt === undefined ||
+        !(started > row.finishedAt)
+      )
+        continue;
+      reopen(s, s.childRunId, started);
+    }
     const p = live.progress?.[id];
     const calls = p?.toolCalls;
     if (calls !== undefined && calls > row.toolCalls) row.toolCalls = calls;
