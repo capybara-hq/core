@@ -35,11 +35,13 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
 
 ## Queued messages (UI refresh B)
 
-- A queued message (`POST …/queue`) lives in `capybara.conversation_queue`, not in the log: the model
-  has not seen it. It enters the log only when sent, as an ordinary `user_message` (author, text, the
-  `@` resource blocks read at queue time, file refs), written by `RunQueue.ensureRun` (one per run,
-  when the conversation is idle and the queue not paused) or by "send now". Replay therefore needs
-  nothing: the log holds exactly what the model saw, and an edit to a queued text never touches it.
+- `POST …/queue` is a deprecated alias of `…/messages`: it logs an ordinary `user_message` at once
+  and stores nothing. `capybara.conversation_queue` only holds leftover rows queued by older versions,
+  not in the log (the model has not seen them); each enters the log only when sent, as an ordinary
+  `user_message` (author, text, the `@` resource blocks read at queue time, file refs), written by
+  `RunQueue.ensureRun` (one per run, when the conversation is idle and the queue not paused) or by
+  "send now". Replay therefore needs nothing: the log holds exactly what the model saw, and an edit to
+  a leftover's text never touches it.
 
 - Run input and live drafts (run input spec 2026-11-07): `POST …/queue` is now an alias of `…/messages`
   and queues nothing new. A message sent during a run is an ordinary logged `user_message` that a
