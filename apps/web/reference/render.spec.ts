@@ -36,6 +36,8 @@ const PAGES = [
   "connect-block",
   "queued-message",
   "subagent-group",
+  // the agent map: tree, one agent's summary, its transcript
+  "agent-map",
   "inline-card",
   "property-section",
   "right-panel",
