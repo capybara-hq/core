@@ -41,6 +41,15 @@ describe("界面文案 zh / en key 一致", () => {
   });
 });
 
+describe("the owner's name (maintainer decision V, 2026-11-07)", () => {
+  // An agent's owner is its 所有者 (the creator, "owner" in en): the zh copy never calls it 负责人.
+  it("zh.json says 所有者, never 负责人, and agents you own are 你拥有的", () => {
+    const zh = readFileSync(new URL("../messages/zh.json", import.meta.url), "utf8");
+    expect(zh).not.toContain("负责人");
+    expect(zh).not.toContain("你负责的");
+  });
+});
+
 describe("eval drift labels (final review m5)", () => {
   // The kernel's `DriftReason` values (packages/kernel/src/evals/reconstruct.ts DRIFT_ORDER, plus
   // the worker's); keep in step when a reason is added

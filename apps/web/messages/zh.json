@@ -338,7 +338,7 @@
     },
     "skill_change": {
       "not_found": "该技能改动不存在或你无权查看。",
-      "not_owner": "只有该智能体的负责人可以批准或拒绝它的技能改动。",
+      "not_owner": "只有该智能体的所有者可以批准或拒绝它的技能改动。",
       "already_decided": "该技能改动已被处理。"
     },
     "inbox": {
@@ -515,7 +515,7 @@
       "deletedSkill": "已删除的技能（{id}）",
       "deletedSkillHint": "已删除的技能在运行时会被忽略；取消勾选即可移除引用。",
       "ownSkillsLabel": "智能体自己写的技能",
-      "ownSkillsHint": "这些技能由智能体通过 SkillWrite 编写。共享智能体的每次改动都要等负责人在收件箱里批准。",
+      "ownSkillsHint": "这些技能由智能体通过 SkillWrite 编写。共享智能体的每次改动都要等所有者在收件箱里批准。",
       "noOwnSkills": "这个智能体还没有写过技能。",
       "ownSkillVersion": "{name} · v{version}",
       "deleteOwnSkill": "删除",
@@ -577,9 +577,9 @@
         "inlineInstructions": "指令",
         "inlineModel": "模型",
         "agentsLabel": "本组织的其他智能体",
-        "agentsNone": "还没有可作为子智能体的其他智能体：需由其负责人打开「允许其他智能体将其作为子智能体」。",
+        "agentsNone": "还没有可作为子智能体的其他智能体：需由其所有者打开「允许其他智能体将其作为子智能体」。",
         "agentsWarning": "被允许的智能体的名单名称与说明会展示给使用此智能体的所有人；它加载的技能文件会复制到会话的沙箱中并保留在那里。",
-        "agentOption": "{name} · 负责人 {owner} · {visibility}",
+        "agentOption": "{name} · 所有者 {owner} · {visibility}",
         "agentUnseen": "{as}（智能体 {id}，你已看不到它）",
         "visibility": {
           "private": "私有",
@@ -590,14 +590,14 @@
         "agentAs": "{name} 的名单名称",
         "agentDescription": "何时使用 {name}",
         "dispatchable": "允许其他智能体将其作为子智能体",
-        "dispatchableHint": "其他智能体的负责人随后可以把此智能体设为子智能体；它以自己的工具和发起人的权限运行。",
+        "dispatchableHint": "其他智能体的所有者随后可以把此智能体设为子智能体；它以自己的工具和发起人的权限运行。",
         "reasons": {
           "not_found": "模板 {value} 未在本组织安装。",
           "invalid_name": "「{value}」不是有效名称：只能用小写字母、数字与连字符，且不能是 general-purpose。",
           "duplicate": "名称 {value} 重复。",
           "tool_not_selected": "工具 {value} 不是此智能体的工具。",
           "skill_not_selected": "技能 {value} 未被此智能体选用。",
-          "agent_not_available": "智能体 {value} 不能作为子智能体（你看不到它、已删除，或其负责人未允许）。",
+          "agent_not_available": "智能体 {value} 不能作为子智能体（你看不到它、已删除，或其所有者未允许）。",
           "self": "智能体不能派发自己。",
           "too_many": "子智能体太多：总数最多 20 个。",
           "required": "此项为必填。"
@@ -663,7 +663,7 @@
       "connect": "接入渠道",
       "loadFailed": "渠道加载失败。"
     },
-    "readOnly": "只有这个智能体的负责人和组织管理员能修改它；你可以和它对话。",
+    "readOnly": "只有这个智能体的所有者和组织管理员能修改它；你可以和它对话。",
     "reassign": {
       "title": "更改所有者",
       "owner": "新所有者",
@@ -784,7 +784,7 @@
       },
       "delete": "删除技能",
       "deleteTitle": "删除 {name}？",
-      "deleteHint": "智能体将不再加载这个技能。智能体定义里的引用会保留并显示为「已删除」，直到负责人移除。",
+      "deleteHint": "智能体将不再加载这个技能。智能体定义里的引用会保留并显示为「已删除」，直到所有者移除。",
       "deleted": "已删除技能「{name}」。",
       "owner": "归属",
       "ownerPlatform": "平台",
@@ -1122,7 +1122,7 @@
     "title": "收件箱",
     "listLabel": "待处理事项",
     "empty": "没有待处理的事项。",
-    "emptyHint": "需要你批准的工具调用，以及你负责的智能体的技能变更，会出现在这里。",
+    "emptyHint": "需要你批准的工具调用，以及你拥有的智能体的技能变更，会出现在这里。",
     "pick": "在左侧选择一项。",
     "pendingCount": "{n} 项待处理",
     "inspectorTitle": "详情",
@@ -1153,7 +1153,7 @@
       "contentUnavailable": "无法显示这个文件的内容。",
       "diffLabel": "{path} 的改动",
       "ownerHint": "批准后，改动对这个智能体的所有会话生效；在此之前只有发起改动的会话能用。",
-      "selfHint": "这项改动是你在自己的会话里发起的。作为共享智能体的负责人，你先在会话里确认工具调用，再在这里批准改动，这是有意的设计。",
+      "selfHint": "这项改动是你在自己的会话里发起的。作为共享智能体的所有者，你先在会话里确认工具调用，再在这里批准改动，这是有意的设计。",
       "approve": "批准",
       "reject": "拒绝",
       "approved": "已批准技能变更",
@@ -1898,7 +1898,7 @@
     "untitled": "未命名会话",
     "noRun": "没有运行",
     "empty": "还没有可查看的运行记录。",
-    "emptyHint": "你负责的智能体（组织管理员为全部智能体）有会话运行后会出现在这里。",
+    "emptyHint": "你拥有的智能体（组织管理员为全部智能体）有会话运行后会出现在这里。",
     "noMatch": "没有符合当前筛选的会话。",
     "loadMore": "加载更多",
     "columns": {
@@ -3224,7 +3224,7 @@
             "agent_skills_truncated": "去掉的预加载技能（最多 3 个本插件的技能名）：{skills}"
           },
           "pinnedTitle": "建议置顶（{n} / {total} 个技能）",
-          "pinnedHint": "智能体的负责人选用建议置顶的技能时，会默认勾选置顶，负责人可以取消。置顶的技能始终在模型的上下文里。",
+          "pinnedHint": "智能体的所有者选用建议置顶的技能时，会默认勾选置顶，所有者可以取消。置顶的技能始终在模型的上下文里。",
           "sessionStartHint": "这个插件在 Claude Code 里会在会话开始时注入技能。在 Capybara 里，把该技能置顶就能达到同样效果。",
           "suggestPinned": "建议置顶 {name}",
           "skillBody": "{name} 的 SKILL.md",
@@ -3761,7 +3761,7 @@
     "leave": {
       "action": "退出组织…",
       "title": "退出组织",
-      "description": "退出后你将失去这个组织的访问，你负责的智能体会转给组织所有者。你在其他组织的访问不受影响。",
+      "description": "退出后你将失去这个组织的访问，你拥有的智能体会转给组织所有者。你在其他组织的访问不受影响。",
       "confirm": "退出组织",
       "lastOwner": "你是这个组织唯一的组织所有者。先在「成员」里把所有权转让给别人，才能退出。",
       "toMembers": "去成员页",
