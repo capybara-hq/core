@@ -929,9 +929,12 @@ Pages
   one meta line (agents: owner · 可见范围; templates: source (平台 / 本组织 / 组织名 / 插件) · v),
   one primary action and a ⋯ menu; the whole card opens the detail. Loading and empty states, keyboard
   (roving focus by row), and the spec / reference block / accepted.ts entries as for any design
-  component. It is a single box per card on the page ground (no box around the grid: the one-box rule of `docs/design/spec.md`, acceptance item AB).
-- **P4-16** Card actions: an agent card's primary is 开始会话; ⋯ holds 设置, 运行记录, 更改所有者
-  (as the agent page's menu), 另存为模板 (org admins). A template card's primary is 用它创建; ⋯
+  component. It is a single box per card on the page ground (no box around the grid: the one-box
+  rule of `docs/design/spec.md`, acceptance item AB).
+- **P4-16** Card actions: an agent card's primary is 开始会话; ⋯ holds 设置, 运行记录 and
+  另存为模板 (org admins). 更改所有者 stays on the agent page's ⋯ only: the maintainer removed the owner
+  change from the agents list during the phase 3 acceptance (item P, 2026-11-07), and a designer's call
+  does not overturn it. A template card's primary is 用它创建; ⋯
   holds 查看, 编辑 / 可共享 / 删除 (owner-org admins), and the component switch for platform
   templates (org admins; the existing switch).
 - **P4-17** The admin 智能体模板 list (`/admin/agent-templates`) uses the same cards with its tabs 全部 /
