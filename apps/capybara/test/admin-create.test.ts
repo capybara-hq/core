@@ -1,16 +1,16 @@
-import { spawn } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
-import { fileURLToPath } from "node:url";
 import { createDb, kernelDb, verifyPassword } from "@capybara-hq/kernel";
 import { startTestPostgres, type TestContainer } from "@capybara-hq/testing";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { readPassword, readPasswordFile } from "../src/commands/admin-create.js";
+import { runCli, runCliInProcess } from "./support/cli.js";
 
-const REPO_ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 const PW = "cli-secret-password-123";
+
+type CliResult = { code: number | null; stdout: string; stderr: string };
 
 let pg: TestContainer;
 let tmp: string;
@@ -38,35 +38,24 @@ function testEnv(dbUrl: string = pg.url): NodeJS.ProcessEnv {
   };
 }
 
-/** 以子进程执行 `pnpm capybara <args>`，stdin 写入给定内容后关闭。 */
-function run(
-  args: string[],
-  stdin: string,
-  dbUrl?: string,
-): Promise<{ code: number | null; stdout: string; stderr: string }> {
-  return new Promise((resolve, reject) => {
-    const child = spawn("pnpm", ["--silent", "capybara", ...args], {
-      cwd: REPO_ROOT,
-      env: testEnv(dbUrl),
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-    let stdout = "";
-    let stderr = "";
-    child.stdout.on("data", (d) => {
-      stdout += String(d);
-    });
-    child.stderr.on("data", (d) => {
-      stderr += String(d);
-    });
-    child.on("error", reject);
-    child.on("close", (code) => resolve({ code, stdout, stderr }));
-    child.stdin.end(stdin);
-  });
+/**
+ * Runs `capybara <args>` in process (`runCliInProcess`: the CLI's own `main`, logger records in
+ * stdout), writing `stdin` and closing it.
+ */
+function run(args: string[], stdin: string, dbUrl?: string): Promise<CliResult> {
+  return runCliInProcess(args, testEnv(dbUrl), stdin);
+}
+
+/** Runs `pnpm capybara <args>` as a child process (only where the real process matters). */
+function spawnRun(args: string[], stdin: string, dbUrl?: string): Promise<CliResult> {
+  return runCli(args, testEnv(dbUrl), stdin);
 }
 
 describe("capybara admin create", () => {
   it("成功：退出码 0，库中该账号是企业管理员", async () => {
-    const r = await run(
+    // The real process (`pnpm capybara`: bin, tsx, the process entry, a piped stdin); the other
+    // cases run the same `main` in process
+    const r = await spawnRun(
       ["admin", "create", "--login", "Admin", "--display-name", "The Admin", "--email", "a@x.io"],
       `${PW}\n`,
     );
@@ -284,9 +273,10 @@ describe("capybara admin create --if-none (concurrent)", () => {
       "--password-file",
       file,
     ];
+    // Two real processes: each with its own pool, as two compose inits would be
     const [a, b] = await Promise.all([
-      run(args("one"), "", fresh.url),
-      run(args("two"), "", fresh.url),
+      spawnRun(args("one"), "", fresh.url),
+      spawnRun(args("two"), "", fresh.url),
     ]);
     expect(a.code, a.stderr).toBe(0);
     expect(b.code, b.stderr).toBe(0);
