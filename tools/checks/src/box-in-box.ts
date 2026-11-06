@@ -58,8 +58,8 @@ const PORTALS = new Set([
 ]);
 /**
  * Design components that draw a box and have no unboxed form: inside a box they are a second box.
- * (CodeBlock, EmbedFrame, DataTable and Repeater draw their unboxed form inside a box by
- * themselves; PropertySection becomes a heading and hairline group; RadioGroup's option cards
+ * (CodeBlock, EmbedFrame, DataTable, Repeater and Callout draw their unboxed form inside a box
+ * by themselves; PropertySection becomes a heading and hairline group; RadioGroup's option cards
  * and the form controls are the spec's exceptions.)
  */
 const BOXED = new Set([
@@ -67,7 +67,6 @@ const BOXED = new Set([
   "FormSection",
   "LoadingFormSection",
   "InlineCard",
-  "Callout",
   "DangerZone",
   "ObjectList",
   "LinkCard",
@@ -95,7 +94,6 @@ const FIX: Readonly<Record<string, string>> = {
   FormSection: "a Subsection",
   LoadingFormSection: "a Subsection",
   InlineCard: "the card's content directly",
-  Callout: "the Callout above the box (spec §6.19: never inside a card or form card)",
   DangerZone: "the DangerZone on the page ground",
   ObjectList: "an ItemList",
   LinkCard: "a TextLink in a row",
@@ -136,8 +134,11 @@ type Located = { node: Node; file: string };
 /** A name a file binds that the rule may follow from a reference. */
 interface Binding {
   name: string;
-  /** `const x = …` (the declarator), `const { x } = useY()` (the declarator), `function x() {}`. */
-  kind: "const" | "destructure" | "function";
+  /**
+   * `const x = …` (the declarator), `const { x } = useY()` (the declarator), `function x() {}`,
+   * or a function's parameter, which shadows outer names and is never followed.
+   */
+  kind: "const" | "destructure" | "function" | "param";
   node: Node;
   /** The innermost function (or the program) the binding lives in. */
   scope: [number, number];
@@ -249,6 +250,25 @@ function isNode(v: unknown): v is Node {
   return typeof v === "object" && v !== null && typeof (v as Node).type === "string";
 }
 
+/** The names a list of binding patterns binds (`a`, `{ b, c: d = 1 }`, `[e, ...f]`). */
+function patternNames(patterns: (Node | null)[]): string[] {
+  const out: string[] = [];
+  const visit = (p: Node | null | undefined) => {
+    if (!p) return;
+    if (p.type === "Identifier") out.push(p.name as string);
+    else if (p.type === "AssignmentPattern") visit(p.left as Node);
+    else if (p.type === "RestElement") visit(p.argument as Node);
+    else if (p.type === "ArrayPattern")
+      for (const e of (p.elements as (Node | null)[]) ?? []) visit(e);
+    else if (p.type === "ObjectPattern")
+      for (const q of (p.properties as Node[]) ?? [])
+        visit(q.type === "Property" ? (q.value as Node) : (q.argument as Node));
+    else if (p.type === "TSParameterProperty") visit(p.parameter as Node);
+  };
+  for (const p of patterns) visit(p);
+  return out;
+}
+
 /** The props a component's first parameter binds. */
 function propsOf(fn: Node): Props {
   const props: Props = { aliases: new Map() };
@@ -271,6 +291,10 @@ export class BoxReader {
   private files = new Map<string, FileInfo | null>();
   private traits = new Map<string, Traits>();
   private visiting = new Set<string>();
+  /** Keys of the traits frames a cycle cut short (`traitsOf` met them while they were open). */
+  private cycleHits: string[] = [];
+  /** Hook returns being resolved (`file:hook start:key`), so a recursive hook cannot loop. */
+  private hooksOpen = new Set<string>();
 
   constructor(private readonly webSrcDir: string) {}
 
@@ -389,6 +413,9 @@ export class BoxReader {
       if (n.type === "FunctionDeclaration" && n.id)
         add({ name: (n.id as Node).name as string, kind: "function", node: n, scope });
       const inner: [number, number] = FUNCTIONS.has(n.type) ? [n.start, n.end] : scope;
+      if (FUNCTIONS.has(n.type))
+        for (const name of patternNames((n.params as Node[] | undefined) ?? []))
+          add({ name, kind: "param", node: n, scope: inner });
       for (const [k, v] of Object.entries(n)) {
         if (k === "type" || k === "start" || k === "end") continue;
         if (Array.isArray(v)) {
@@ -441,6 +468,7 @@ export class BoxReader {
   /** A function `name` stands for at `pos` in `file`: a local binding or an import. */
   private functionAt(file: string, info: FileInfo, name: string, pos: number): Located | undefined {
     const b = this.bindingAt(info, name, pos);
+    if (b?.kind === "param") return undefined;
     if (b?.kind === "function") return { node: b.node, file };
     if (b?.kind === "const") {
       const fn = functionOf(b.node.init as Node | null);
@@ -454,6 +482,19 @@ export class BoxReader {
   private hookReturn(hook: Located, key: string): Located | undefined {
     const info = this.info(hook.file);
     if (!info) return undefined;
+    // A hook that returns what it (or a hook it calls) returns under the same key: a cycle with
+    // nothing to draw at its end, read as nothing.
+    const open = `${hook.file}:${hook.node.start}:${key}`;
+    if (this.hooksOpen.has(open)) return undefined;
+    this.hooksOpen.add(open);
+    try {
+      return this.hookReturnOf(hook, info, key);
+    } finally {
+      this.hooksOpen.delete(open);
+    }
+  }
+
+  private hookReturnOf(hook: Located, info: FileInfo, key: string): Located | undefined {
     let found: Located | undefined;
     const visit = (n: Node) => {
       if (found) return;
@@ -489,7 +530,7 @@ export class BoxReader {
    */
   renderable(file: string, info: FileInfo, name: string, pos: number): Located | undefined {
     const b = this.bindingAt(info, name, pos);
-    if (!b) return undefined;
+    if (!b || b.kind === "param") return undefined;
     if (b.kind === "function") return isCapitalized(name) ? undefined : { node: b.node, file };
     const init = b.node.init as Node | null;
     if (!init) return undefined;
@@ -512,14 +553,22 @@ export class BoxReader {
     const key = `${c.file}:${c.node.start}:${c.node.end}`;
     const known = this.traits.get(key);
     if (known) return known;
-    if (this.visiting.has(key)) return {};
+    if (this.visiting.has(key)) {
+      this.cycleHits.push(key);
+      return {};
+    }
     this.visiting.add(key);
+    const hits = this.cycleHits.length;
     const t: Traits = {};
     const info = this.info(c.file);
     const props = FUNCTIONS.has(c.node.type) ? propsOf(c.node) : { aliases: new Map() };
     if (info) this.scan(c.node, info, c.file, null, null, t, props);
     this.visiting.delete(key);
-    this.traits.set(key, t);
+    // Traits read while an outer frame was still open miss what that frame draws: they are not
+    // kept, so a later reference from outside the cycle reads them whole.
+    const cut = this.cycleHits.slice(hits).some((k) => this.visiting.has(k));
+    if (!cut) this.traits.set(key, t);
+    if (this.visiting.size === 0) this.cycleHits = [];
     return t;
   }
 

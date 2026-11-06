@@ -279,12 +279,12 @@ describe("checkWebUi", () => {
       expect(at()).toEqual([
         ["web-ui-box-in-box", 35, "<Card> inside <FormSection>"],
         ["web-ui-box-in-box", 38, "<PurposeCard> (draws Card) inside <Card>"],
-        ["web-ui-box-in-box", 41, "<Notice> (draws Callout) inside <Sheet>"],
+        ["web-ui-box-in-box", 41, "<Notice> (draws ObjectList) inside <Sheet>"],
         ["web-ui-box-in-box", 44, "<DataTable> inside <FormSection>"],
         ["web-ui-box-in-box", 45, "<Table> (draws a DataTable) inside <FormSection>"],
         ["web-ui-box-in-box", 48, "<CodeBlock> (framed) inside <Card>"],
         ["web-ui-box-in-box", 51, "<FilePicker> inside <Card>"],
-        ["web-ui-box-in-box", 54, "<ReNotice> (draws Callout) inside <Card>"],
+        ["web-ui-box-in-box", 54, "<ReNotice> (draws ObjectList) inside <Card>"],
         ["web-ui-box-in-box", 56, "<Card> inside <Card>"],
       ]));
     it("follows identifiers and calls: a const (a .map result), a helper, hook render functions, renamed children and slot props", () =>
@@ -316,6 +316,17 @@ describe("checkWebUi", () => {
       expect(portals).toBeGreaterThan(1);
       expect(at([], "follow.tsx").filter((r) => Number(r[1]) >= portals)).toEqual([]);
     });
+    it("recursive hooks finish and read their cycles as nothing; a parameter shadows an outer name; a Callout is not a second box; traits cut by a cycle are not kept", () =>
+      // useSelf returns what it returns itself, usePing / usePong each other's: before the guard
+      // either one crashed the whole check with a RangeError. `{cards}` in `.map((cards) => …)`
+      // is the parameter, not the module-level `cards`; a Callout inside a Card draws its unboxed
+      // form (it adapts inside a box like a CodeBlock).
+      expect(at([], "hooks.tsx")).toEqual([
+        ["web-ui-box-in-box", 30, "<drawn> (draws Card) inside <FormSection>"],
+        ["web-ui-box-in-box", 34, "<card> (draws Card) inside <FormSection>"],
+        // Loop1's traits first read inside the Loop1 / Loop2 cycle are not kept
+        ["web-ui-box-in-box", 68, "<Loop1> (draws Card) inside <FormSection>"],
+      ]));
     it("names the fix", () => {
       const f = run("box-in-box");
       expect(f[0]?.message).toContain("ItemList");
