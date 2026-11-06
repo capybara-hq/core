@@ -129,7 +129,7 @@
       "visibility_forbidden": "Only an org admin can create an agent from a template for others. Set the visibility to Only me.",
       "template_preview_stale": "The template or the organization changed after the preview. Preview it again, then create.",
       "pending_connector_not_found": "This connector is no longer waiting to be configured on the agent. Reload the page.",
-      "pending_connector_mismatch": "This connector does not fit: pick one made from the same connector template, of the same protocol, offering the tools the agent needs.",
+      "pending_connector_mismatch": "This connector does not fit: pick one made from the same connector template, of the same protocol, offering the tools the agent needs. An OAuth connector must be authorized first.",
       "no_pending_connectors": "The agent has no connectors waiting to be configured."
     },
     "agent_template": {
