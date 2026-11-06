@@ -351,9 +351,11 @@ The builder's choices for §11 and the rulings of the build that change behaviou
   its tokens on the root's current window, not on the window of the run that first dispatched it.
 - A sub-agent's trajectory is authorized by its root conversation's agent at every depth (never by
   the direct parent's, which below an org agent's child is that org agent).
-- Wake runs and continuation runs (a resumed or restarted run) start without a concurrency check: a
-  continuation keeps the slot it already holds, and refusing a wake would lose the event that woke
-  it.
+- Wake runs and continuation runs start without a concurrency check: a continuation (the next run
+  `ensureRun` starts for a message the sub-agent's ending run never absorbed) keeps the slot that
+  run held, and refusing a wake would lose the event that woke it. A `SendMessage` that starts an
+  idle sub-agent again is neither: it goes through the dispatch transaction and its limit checks
+  (depth, tree budget, dispatch count, concurrency), and is refused when no slot is free (§6).
 - A fork child's later runs (restarted by `SendMessage`) behave as a background child's: they
   deliver their finish and get the message tools; only the fork's own dispatched run is foreground.
 - Background-task listing and stop cover the whole tree (grandchildren's tasks run in the root's
