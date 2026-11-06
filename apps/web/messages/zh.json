@@ -1634,6 +1634,8 @@
       "disable": "停用",
       "enableHint": "机器人已离线，启用后重新连接。",
       "disableHint": "停用会断开机器人，期间发来的消息不会回复。",
+      "enabledToast": "渠道已启用。",
+      "disabledToast": "渠道已停用。",
       "credentialsTitle": "凭据与配置",
       "credentialsHint": "不动的密钥保持原值；替换密钥即轮换凭据，新凭据保存前会先向平台校验。",
       "schemaUnavailable": "渠道扩展不可用，无法编辑配置。请确认扩展已安装并已启用。",
@@ -1679,6 +1681,7 @@
     "unavailable": "不可用",
     "unavailableHint": "此扩展在部署上当前不可用；组织的启用设置会保留。",
     "enabledToast": "已启用「{plugin}」。",
+    "disabledToast": "已停用「{plugin}」。",
     "dependencyMissing": "请先启用提供以下扩展点的扩展：",
     "hasDependents": "以下已启用的扩展依赖它，停用后将无法工作：",
     "forceDisable": "仍然停用",
@@ -3707,6 +3710,7 @@
     },
     "toast": {
       "enabled": "已启用「{name}」。",
+      "disabled": "已停用「{name}」。",
       "requested": "申请已提交。"
     },
     "switchOff": {
@@ -3864,6 +3868,10 @@
       "enable": "启用",
       "disable": "停用",
       "plugin": "查看插件"
+    },
+    "toast": {
+      "enabled": "已启用「{name}」。",
+      "disabled": "已停用「{name}」。"
     },
     "error": {
       "conflict": {

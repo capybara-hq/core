@@ -177,9 +177,8 @@ export function usePluginActions({
 
   const enable = (i: OrgCatalogItem) =>
     run(async () => {
-      // The row shows its new state where it was clicked: no success toast (spec §6 selection)
       await sw.mutateAsync({ itemId: i.id, enabled: true });
-      return undefined;
+      return t("toast.enabled", { name: nameOf(i) });
     });
   // The first off call answers the preview (or switches off at once when nothing is installed)
   const disable = (i: OrgCatalogItem) =>
@@ -190,7 +189,7 @@ export function usePluginActions({
         setOff({ item: i, preview: r });
         return undefined;
       }
-      return undefined;
+      return t("toast.disabled", { name: nameOf(i) });
     });
   const confirmOff = async () => {
     if (off === null) return;
@@ -203,6 +202,7 @@ export function usePluginActions({
         return;
       }
       setOff(null);
+      toast.success(t("toast.disabled", { name: nameOf(item) }));
     } catch (e) {
       // What it takes away changed since the preview: show the new one before confirming again
       if (e instanceof ApiClientError && e.code === "plugin.switch_stale") {

@@ -264,12 +264,13 @@
   background: var(--cb-line);
 }
 
-/* Toast (spec §6.7): bottom center, 16px above the status bar, stacked upward; on narrow screens it
-   spans the width with a 16px gutter. A leading status icon carries the status (no color stripe). */
+/* Toast (spec §6.7): top center, 16px below the top of the content area, stacked downward with the
+   newest on top; centered so it never covers the page head's actions (top right). On narrow screens
+   it spans the width with a 16px gutter. A leading status icon carries the status (no stripe). */
 .cb-toast-region {
   position: fixed;
   left: 50%;
-  bottom: calc(var(--cb-layout-status-bar) + var(--cb-space-4));
+  top: var(--cb-space-4);
   z-index: var(--cb-z-toast);
   display: flex;
   flex-direction: column;

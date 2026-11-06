@@ -404,7 +404,7 @@ describe("Toast", () => {
     act(() => screen.getByRole("button", { name: "关闭" }).click());
     expect(screen.queryByRole("progressbar")).toBeNull();
   });
-  it("a leading status icon carries the status; no color stripe; bottom center above the status bar", () => {
+  it("a leading status icon carries the status; no color stripe; top center, newest on top", () => {
     zh(
       <ToastProvider>
         <T />
@@ -427,8 +427,12 @@ describe("Toast", () => {
     expect(toast).not.toMatch(/inset/);
     const region = css.match(/\.cb-toast-region \{([^}]*)\}/)?.[1] ?? "";
     expect(region).toContain("left: 50%");
-    expect(region).toContain("bottom: calc(var(--cb-layout-status-bar) + var(--cb-space-4))");
-    expect(region).not.toMatch(/right:/);
+    expect(region).toContain("top: var(--cb-space-4)");
+    expect(region).not.toMatch(/right:|bottom:/);
+    // Newest on top: the progress toast, sent after the success one, comes first in its group
+    const status = screen.getByRole("status");
+    const order = [...status.querySelectorAll(".cb-toast-msg")].map((x) => x.textContent);
+    expect(order).toEqual(["上传", "已保存"]);
   });
   it("error（role=alert）不在 aria-live 区域内；success 在 role=status 区域内", () => {
     zh(

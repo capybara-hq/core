@@ -1646,6 +1646,8 @@
       "disable": "Disable",
       "enableHint": "The bot is offline. Enable it to reconnect.",
       "disableHint": "Disabling disconnects the bot; messages sent meanwhile are not answered.",
+      "enabledToast": "Channel enabled.",
+      "disabledToast": "Channel disabled.",
       "credentialsTitle": "Credentials and config",
       "credentialsHint": "Secrets you leave alone are kept. Replace a secret to rotate it; the new credentials are verified with the platform before they are saved.",
       "schemaUnavailable": "The channel extension is not available, so its config cannot be edited. Check that the extension is installed and enabled.",
@@ -1691,6 +1693,7 @@
     "unavailable": "Unavailable",
     "unavailableHint": "This extension is currently unavailable on this deployment. The organization setting is kept.",
     "enabledToast": "\"{plugin}\" enabled.",
+    "disabledToast": "\"{plugin}\" disabled.",
     "dependencyMissing": "Enable an extension that provides these extension points first:",
     "hasDependents": "These enabled extensions depend on it and will stop working:",
     "forceDisable": "Disable anyway",
@@ -3719,6 +3722,7 @@
     },
     "toast": {
       "enabled": "\"{name}\" turned on.",
+      "disabled": "\"{name}\" turned off.",
       "requested": "Request submitted."
     },
     "switchOff": {
@@ -3876,6 +3880,10 @@
       "enable": "Turn on",
       "disable": "Turn off",
       "plugin": "View plugin"
+    },
+    "toast": {
+      "enabled": "\"{name}\" is on.",
+      "disabled": "\"{name}\" is off."
     },
     "error": {
       "conflict": {

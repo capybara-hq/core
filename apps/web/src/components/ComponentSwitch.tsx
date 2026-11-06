@@ -1,6 +1,6 @@
 "use client";
 
-import { Button, Dialog, LinkButton, Stack, Text } from "@capybara-hq/design";
+import { Button, Dialog, LinkButton, Stack, Text, useToast } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
 import { type ReactNode, useState } from "react";
 import { ApiClientError, issueLines } from "../lib/api";
@@ -67,6 +67,7 @@ export function useComponentSwitch({ orgId, admin }: { orgId: string; admin: boo
   busy: boolean;
 } {
   const t = useTranslations("orgComponents");
+  const toast = useToast();
   const errorMessage = useErrorMessage();
   const catalogLines = useCatalogErrorLines();
   const [busy, setBusy] = useState(false);
@@ -98,8 +99,8 @@ export function useComponentSwitch({ orgId, admin }: { orgId: string; admin: boo
     setBusy(true);
     setError(undefined);
     try {
-      // The row shows its new state where it was clicked: no success toast (spec §6 selection)
       await sw.mutateAsync({ c, enabled: true });
+      toast.success(t("toast.enabled", { name: c.name }));
     } catch (e) {
       setError({ message: messageOf(c, e), extra: [...issueLines(e), ...catalogLines(e)] });
     } finally {
@@ -118,6 +119,7 @@ export function useComponentSwitch({ orgId, admin }: { orgId: string; admin: boo
         setOff({ c, preview: r });
         return;
       }
+      toast.success(t("toast.disabled", { name: c.name }));
     } catch (e) {
       setError({ message: messageOf(c, e), extra: [...issueLines(e), ...catalogLines(e)] });
     } finally {
@@ -135,6 +137,7 @@ export function useComponentSwitch({ orgId, admin }: { orgId: string; admin: boo
         return;
       }
       setOff(null);
+      toast.success(t("toast.disabled", { name: c.name }));
     } catch (e) {
       // What it takes away changed since the preview: show the new one before confirming again
       if (e instanceof ApiClientError && e.code === "plugin.switch_stale") {

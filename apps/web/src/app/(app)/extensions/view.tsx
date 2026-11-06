@@ -242,7 +242,7 @@ function ExtensionSection({ orgId, plugin }: { orgId: string; plugin: OrgExtensi
       }
       setOff(null);
       setOffNotice(undefined);
-      // The switch shows its new state where it was clicked: no success toast (spec §6 selection)
+      toast.success(t(enabled ? "enabledToast" : "disabledToast", { plugin: label }));
     } catch (e) {
       // The preview moved on before the confirm: read it again and show it
       if (off !== null && e instanceof ApiClientError && e.code === "plugin.switch_stale") {

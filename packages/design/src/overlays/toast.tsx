@@ -167,16 +167,20 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     </div>
   );
 
+  const newestFirst = [...items].reverse();
+
   return (
     <ToastContext.Provider value={api}>
       {children}
-      {/* 两个分组：错误以 role=alert 自行播报，不能再嵌在 aria-live 区域里（否则读两遍）。 */}
+      {/* Two groups: errors announce themselves with role=alert and must not sit inside the
+          aria-live region (else they are read twice). Each group lists the newest first, so the
+          stack grows downward from the top with the newest on top (spec §6.7). */}
       <div className="cb-toast-region">
         <div className="cb-toast-group" data-group="alert">
-          {items.filter((it) => it.kind === "error").map(renderToast)}
+          {newestFirst.filter((it) => it.kind === "error").map(renderToast)}
         </div>
         <div className="cb-toast-group" data-group="status" role="status" aria-live="polite">
-          {items.filter((it) => it.kind !== "error").map(renderToast)}
+          {newestFirst.filter((it) => it.kind !== "error").map(renderToast)}
         </div>
       </div>
     </ToastContext.Provider>
