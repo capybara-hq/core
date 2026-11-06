@@ -35,6 +35,10 @@ const params = { current: {} as Record<string, string> };
  * and the orgs: answered empty unless a test stubs them.
  */
 const ADMIN_DEFAULTS: Routes = {
+  // The admin plugin detail's components table reads the platform components (its scope column)
+  "GET /api/v1/admin/components?kind=skill": () => json(200, { components: [] }),
+  "GET /api/v1/admin/components?kind=connector_template": () => json(200, { components: [] }),
+  "GET /api/v1/admin/components?kind=agent_template": () => json(200, { components: [] }),
   "GET /api/v1/admin/orgs": () => json(200, { orgs: [] }),
   "GET /api/v1/admin/catalog/items": () => json(200, { items: [], nextOffset: null }),
   "GET /api/v1/admin/catalog/items?pending=true": () => json(200, { items: [], nextOffset: null }),
@@ -2642,38 +2646,14 @@ describe("phase A1: git marketplaces, source detail and provenance", () => {
   });
 });
 
-describe("phase A1: plugin upgrades and skill conflicts", () => {
-  const PREVIEW = {
-    from: "1.0.0",
-    to: "1.1.0",
-    diffHash: "f".repeat(64),
-    components: [
-      { kind: "skill", ref: "notes", change: "changed" },
-      { kind: "skill", ref: "extra", change: "added" },
-      { kind: "connector", ref: "gh", change: "changed", detail: "credentials change" },
-      { kind: "agent_template", ref: "reviewer", change: "changed" },
-    ],
-    inputs: { connectors: [], credentialsChanged: ["gh"], extensionConfig: false },
-    // The target version's template (not in the latest version's detail below)
-    templates: [
-      {
-        id: "gh",
-        displayName: { zh: "GitHub", en: "GitHub" },
-        description: "",
-        plugin: "connector-mcp",
-        connector: "mcp",
-        endpoint: { url: "https://mcp.example.com" },
-        editableEndpoint: ["url"],
-        auth: { type: "bearer", ownership: "org" },
-        ownership: "org",
-      },
-    ],
-  };
+// The org plugin upgrade (its dialog and routes) is retired (ruling F2): a platform plugin moves
+// with the admin platform update (admin-components.test.tsx).
+describe("phase A1: the org plugin page and skill conflicts", () => {
   const DETAIL = {
     item: orgItem({
       name: "crm",
       latestVersion: "1.1.0",
-      installed: { pluginInstallId: "i1", version: "1.0.0", upgradeAvailable: "1.1.0" },
+      installed: { pluginInstallId: "i1", version: "1.0.0", upgradeAvailable: null },
     }),
     hasIcon: false,
     extension: null,
@@ -2681,368 +2661,13 @@ describe("phase A1: plugin upgrades and skill conflicts", () => {
     dependencies: [],
     skills: ["skills/notes", "skills/extra"],
   };
-  const UPGRADABLE = {
-    ...INSTALL,
-    components: [
-      { kind: "skill", ref: "s1", created: true, skillVersion: 1, dropped: false },
-      { kind: "skill", ref: "old-notes", created: true, skillVersion: 1, dropped: true },
-    ],
-    upgradeAvailable: "1.1.0",
-    deploymentPending: false,
-  };
 
-  it.each(LOCALES)(
-    "plugin page: upgrade available opens the dialog; preview -> changes and inputs -> confirm posts { version, diffHash, connectors } (%s)",
-    async (locale) => {
-      const m = msgs[locale].catalog;
-      let upgraded = false;
-      const calls = stubApi({
-        [`GET ${ORG}/plugin-installs`]: () =>
-          json(200, {
-            installs: [
-              upgraded ? { ...UPGRADABLE, version: "1.1.0", upgradeAvailable: null } : UPGRADABLE,
-            ],
-          }),
-        [`GET ${ORG}/catalog/${ID}`]: () => json(200, DETAIL),
-        [`GET ${ORG}/extensions`]: () => json(200, { extensions: [] }),
-        [`POST ${ORG}/plugin-installs/i1/upgrade/preview`]: () => json(200, PREVIEW),
-        [`POST ${ORG}/plugin-installs/i1/upgrade`]: () => {
-          upgraded = true;
-          return json(200, { install: { ...UPGRADABLE, version: "1.1.0" } });
-        },
-      });
-      await renderInstalls({ locale });
-      expect(
-        await screen.findByText(fill(m.plugins.upgradeAvailable, { version: "v1.1.0" })),
-      ).toBeTruthy();
-      expect(
-        screen.getByText(`· ${m.plugins.componentKind.skill} old-notes — ${m.plugins.dropped}`),
-      ).toBeTruthy();
-      const user = userEvent.setup();
-      await user.click(screen.getByRole("button", { name: m.plugins.upgrade }));
-      const dialog = await screen.findByRole("dialog");
-      const line = (change: keyof typeof m.upgrade.change, kind: string, ref: string) =>
-        fill(m.upgrade.line, { change: m.upgrade.change[change], kind, ref });
-      expect(
-        await within(dialog).findByText(line("changed", m.plugins.componentKind.skill, "notes")),
-      ).toBeTruthy();
-      expect(
-        within(dialog).getByText(line("added", m.plugins.componentKind.skill, "extra")),
-      ).toBeTruthy();
-      expect(
-        within(dialog).getByText(
-          line("changed", m.plugins.componentKind.agent_template, "reviewer"),
-        ),
-      ).toBeTruthy();
-      expect(
-        within(dialog).getByText(fill(m.upgrade.credentialsInput, { name: "GitHub" })),
-      ).toBeTruthy();
-      expect(bodyOf(calls.find((c) => c.url.endsWith("/upgrade/preview")))).toEqual({
-        version: "1.1.0",
-      });
-      // The changed connector keeps its name, slug and endpoint: only credentials are asked, and
-      // they are required before confirming
-      expect(within(dialog).queryByLabelText("url")).toBeNull();
-      expect(
-        (within(dialog).getByRole("button", { name: m.upgrade.confirm }) as HTMLButtonElement)
-          .disabled,
-      ).toBe(true);
-      await user.type(
-        within(dialog).getByLabelText(msgs[locale].connectors.form.tokenLabel),
-        "new-tok",
-      );
-      await user.click(within(dialog).getByRole("button", { name: m.upgrade.confirm }));
-      expect(
-        await screen.findByText(fill(m.upgrade.done, { name: "crm", version: "v1.1.0" })),
-      ).toBeTruthy();
-      expect(bodyOf(calls.find((c) => c.url.endsWith("/upgrade")))).toEqual({
-        version: "1.1.0",
-        diffHash: "f".repeat(64),
-        connectors: { gh: { credential: { token: "new-tok" } } },
-      });
-      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    },
-  );
-
-  it("plugin page: the deployment's extension moved on -> the org is told to upgrade; upgrading status; a stale preview is fetched again", async () => {
-    const m = en.catalog;
-    let previews = 0;
-    const calls = stubApi({
-      [`GET ${ORG}/plugin-installs`]: () =>
-        json(200, {
-          installs: [
-            { ...UPGRADABLE, deploymentPending: true },
-            { ...INSTALL, id: "i3", name: "busy", status: "upgrading", components: [] },
-          ],
-        }),
-      [`GET ${ORG}/catalog/${ID}`]: () => json(200, DETAIL),
-      [`GET ${ORG}/extensions`]: () => json(200, { extensions: [] }),
-      [`POST ${ORG}/plugin-installs/i1/upgrade/preview`]: () => {
-        previews += 1;
-        return json(200, {
-          ...PREVIEW,
-          diffHash: String(previews).repeat(64),
-          components: [],
-          inputs: { connectors: [], credentialsChanged: [], extensionConfig: false },
-          templates: [],
-        });
-      },
-      [`POST ${ORG}/plugin-installs/i1/upgrade`]: () =>
-        json(409, { error: { code: "plugin.upgrade_stale", message: "x" } }),
-    });
-    await renderInstalls();
-    expect(await screen.findByText(m.plugins.deploymentPending)).toBeTruthy();
-    expect(screen.getByText(new RegExp(`^${m.plugins.status.upgrading}`))).toBeTruthy();
-    const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: m.plugins.upgrade }));
-    const dialog = await screen.findByRole("dialog");
-    expect(await within(dialog).findByText(m.upgrade.noChanges)).toBeTruthy();
-    await user.click(within(dialog).getByRole("button", { name: m.upgrade.confirm }));
-    expect(await within(dialog).findByText(`${en.errors.plugin.upgrade_stale}`)).toBeTruthy();
-    await waitFor(() => expect(previews).toBe(2));
-    await user.click(within(dialog).getByRole("button", { name: m.upgrade.confirm }));
-    await waitFor(() =>
-      expect(calls.filter((c) => c.url.endsWith("/upgrade")).map((c) => bodyOf(c))).toEqual([
-        { version: "1.1.0", diffHash: "1".repeat(64) },
-        { version: "1.1.0", diffHash: "2".repeat(64) },
-      ]),
-    );
-  });
-
-  it("plugin page: installed with an upgrade available offers the upgrade to org admins; needs approval -> request submitted", async () => {
-    params.current = { itemId: ID };
-    const m = en.catalog;
-    stubApi({
-      [`GET ${ORG}/catalog/${ID}`]: () => json(200, DETAIL),
-      [`GET ${ORG}/plugin-installs`]: () => json(200, { installs: [UPGRADABLE] }),
-      [`GET ${ORG}/extensions`]: () => json(200, { extensions: [] }),
-      [`POST ${ORG}/plugin-installs/i1/upgrade/preview`]: () =>
-        json(200, {
-          ...PREVIEW,
-          inputs: { connectors: [], credentialsChanged: [], extensionConfig: false },
-          templates: [],
-        }),
-      [`POST ${ORG}/plugin-installs/i1/upgrade`]: () =>
-        json(202, { request: { id: "r1", stage: "deployment", status: "pending" } }),
-    });
-    await renderItem();
-    expect(
-      await screen.findByText(fill(m.plugins.upgradeAvailable, { version: "v1.1.0" })),
-    ).toBeTruthy();
-    const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: m.plugins.upgrade }));
-    const dialog = await screen.findByRole("dialog");
-    await within(dialog).findByText(fill(m.upgrade.versions, { from: "v1.0.0", to: "v1.1.0" }));
-    await user.click(within(dialog).getByRole("button", { name: m.upgrade.confirm }));
-    expect(await screen.findByText(m.upgrade.requested)).toBeTruthy();
-  });
-
-  const NO_INPUTS = {
-    ...PREVIEW,
-    components: [],
-    inputs: { connectors: [], credentialsChanged: [], extensionConfig: false },
-    templates: [],
-  };
-
-  it("the upgrade dialog's extension config card is titled with the display name", async () => {
-    const m = en.catalog;
-    stubApi({
-      [`GET ${ORG}/plugin-installs`]: () => json(200, { installs: [UPGRADABLE] }),
-      [`POST ${ORG}/plugin-installs/i1/upgrade/preview`]: () =>
-        json(200, {
-          ...NO_INPUTS,
-          inputs: { connectors: [], credentialsChanged: [], extensionConfig: true },
-        }),
-      [`GET ${ORG}/extensions`]: () =>
-        json(200, {
-          extensions: [
-            {
-              plugin: "crm",
-              displayName: { zh: "客户系统", en: "CRM Suite" },
-              version: "1.0.0",
-              enabled: true,
-              configurable: true,
-              config: null,
-              secrets: [],
-              permissions: [],
-              orgConfigSchema: {
-                type: "object",
-                properties: { region: { type: "string", title: "Region" } },
-              },
-            },
-          ],
-        }),
-    });
-    await renderInstalls({ locale: "en" });
-    const user = userEvent.setup();
-    await user.click(await screen.findByRole("button", { name: m.plugins.upgrade }));
-    const dialog = await screen.findByRole("dialog");
-    expect(await within(dialog).findByText("CRM Suite")).toBeTruthy();
-    expect(within(dialog).queryByText("crm", { exact: true })).toBeNull();
-  });
-
-  it("upgrading from the plugin page invalidates the catalog, the items and what the plugin brings", async () => {
-    params.current = { itemId: ID };
-    const calls = stubApi({
-      [`GET ${ORG}/catalog/${ID}`]: () =>
-        json(200, {
-          item: orgItem({
-            name: "crm",
-            installed: { pluginInstallId: "i1", version: "1.0.0", upgradeAvailable: "1.1.0" },
-          }),
-          hasIcon: false,
-          extension: null,
-          templates: [],
-          dependencies: [],
-          skills: [],
-        }),
-      [`GET ${ORG}/plugin-installs`]: () => json(200, { installs: [UPGRADABLE] }),
-      [`POST ${ORG}/plugin-installs/i1/upgrade/preview`]: () => json(200, NO_INPUTS),
-      [`POST ${ORG}/plugin-installs/i1/upgrade`]: () =>
-        json(200, { install: { ...UPGRADABLE, version: "1.1.0" } }),
-    });
-    const { client } = await renderItem();
-    client.setQueryData(["org", "o1", "connectors"], { connectors: [] });
-    client.setQueryData(["org", "o1", "skills"], { skills: [] });
-    const m = en.catalog;
-    const user = userEvent.setup();
-    await user.click(await screen.findByRole("button", { name: m.plugins.upgrade }));
-    const dialog = await screen.findByRole("dialog");
-    await within(dialog).findByText(m.upgrade.noChanges);
-    await user.click(within(dialog).getByRole("button", { name: m.upgrade.confirm }));
-    // the item (shown) is read again; the cached lists are marked stale
-    await vi.waitFor(() =>
-      expect(
-        calls.filter((c) => c.method === "GET" && c.url === `${ORG}/catalog/${ID}`),
-      ).toHaveLength(1),
-    );
-    expect(client.getQueryState(["org", "o1", "connectors"])?.isInvalidated).toBe(true);
-    expect(client.getQueryState(["org", "o1", "skills"])?.isInvalidated).toBe(true);
-  });
-
-  it.each(LOCALES)(
-    "a failed upgrade names the step, the dependency and whether the components were put back (%s)",
-    async (locale) => {
-      const m = msgs[locale].catalog;
-      let rolledBack = true;
-      stubApi({
-        [`GET ${ORG}/plugin-installs`]: () => json(200, { installs: [UPGRADABLE] }),
-        [`POST ${ORG}/plugin-installs/i1/upgrade/preview`]: () => json(200, NO_INPUTS),
-        [`POST ${ORG}/plugin-installs/i1/upgrade`]: () =>
-          json(502, {
-            error: {
-              code: "plugin.upgrade_failed",
-              message: "x",
-              details: [
-                {
-                  step: "skills",
-                  code: "internal",
-                  dependency: "crm-core",
-                  message: "English cause",
-                  causeDetails: [{ path: "skills.notes", message: "bad file" }],
-                  rolledBack,
-                },
-              ],
-            },
-          }),
-      });
-      await renderInstalls({ locale });
-      const user = userEvent.setup();
-      await user.click(await screen.findByRole("button", { name: m.plugins.upgrade }));
-      const dialog = await screen.findByRole("dialog");
-      await within(dialog).findByText(m.upgrade.noChanges);
-      await user.click(within(dialog).getByRole("button", { name: m.upgrade.confirm }));
-      const inDep = fill(m.org.install.failedIn, { dependency: "crm-core" });
-      expect(
-        await within(dialog).findByText(
-          `${fill(m.upgrade.failed, { step: m.org.install.step.skills, code: "internal", version: "v1.0.0" })} ${inDep}`,
-        ),
-      ).toBeTruthy();
-      expect(within(dialog).getByText("skills.notes: bad file")).toBeTruthy();
-      expect(within(dialog).queryByText(/English cause/)).toBeNull();
-      rolledBack = false;
-      await user.click(within(dialog).getByRole("button", { name: m.upgrade.confirm }));
-      expect(
-        await within(dialog).findByText(
-          `${fill(m.upgrade.failedNoRollback, { step: m.org.install.step.skills, code: "internal" })} ${inDep}`,
-        ),
-      ).toBeTruthy();
-    },
-  );
-
-  it.each(LOCALES)(
-    "an invalid target says why in localized copy (deployment version, dependent range) (%s)",
-    async (locale) => {
-      const m = msgs[locale];
-      let details: unknown[] = [
-        { reason: "deployment_version", deploymentVersion: "0.1.0", allowedVersion: "0.1.0" },
-      ];
-      stubApi({
-        [`GET ${ORG}/plugin-installs`]: () => json(200, { installs: [UPGRADABLE] }),
-        [`POST ${ORG}/plugin-installs/i1/upgrade/preview`]: () =>
-          json(409, {
-            error: { code: "plugin.upgrade_target_invalid", message: "English", details },
-          }),
-      });
-      await renderInstalls({ locale });
-      const user = userEvent.setup();
-      await user.click(await screen.findByRole("button", { name: m.catalog.plugins.upgrade }));
-      const dialog = await screen.findByRole("dialog");
-      expect(
-        await within(dialog).findByText(
-          `${fill(m.catalog.errorDetail.deploymentVersion, { deploymentVersion: "0.1.0", allowedVersion: "0.1.0" })}`,
-        ),
-      ).toBeTruthy();
-      expect(within(dialog).queryByText(/English/)).toBeNull();
-      await user.click(within(dialog).getByRole("button", { name: m.catalog.upgrade.cancel }));
-      details = [
-        { reason: "dependent_range", dependent: "app", range: "^1.0.0", version: "2.0.0" },
-      ];
-      await user.click(screen.getByRole("button", { name: m.catalog.plugins.upgrade }));
-      expect(
-        await within(await screen.findByRole("dialog")).findByText(
-          `${fill(m.catalog.errorDetail.dependentRange, { dependent: "app", range: "^1.0.0", version: "v2.0.0" })}`,
-        ),
-      ).toBeTruthy();
-    },
-  );
-
-  it("after a stale confirm, confirm waits for the new preview", async () => {
-    const m = en.catalog;
-    let release: () => void = () => {};
-    let previews = 0;
-    stubApi({
-      [`GET ${ORG}/plugin-installs`]: () => json(200, { installs: [UPGRADABLE] }),
-      [`POST ${ORG}/plugin-installs/i1/upgrade/preview`]: async () => {
-        previews += 1;
-        if (previews > 1) await new Promise<void>((r) => (release = r));
-        return json(200, NO_INPUTS);
-      },
-      [`POST ${ORG}/plugin-installs/i1/upgrade`]: () =>
-        json(409, { error: { code: "plugin.upgrade_stale", message: "x" } }),
-    });
-    await renderInstalls();
-    const user = userEvent.setup();
-    await user.click(await screen.findByRole("button", { name: m.plugins.upgrade }));
-    const dialog = await screen.findByRole("dialog");
-    await within(dialog).findByText(m.upgrade.noChanges);
-    const confirm = () =>
-      within(dialog).getByRole("button", { name: m.upgrade.confirm }) as HTMLButtonElement;
-    await user.click(confirm());
-    await within(dialog).findByText(`${en.errors.plugin.upgrade_stale}`);
-    await waitFor(() => expect(previews).toBe(2));
-    expect(confirm().disabled).toBe(true);
-    release();
-    await waitFor(() => expect(confirm().disabled).toBe(false));
-  });
-
-  it("plugin page: members read no installs and get no upgrade button", async () => {
+  it("plugin page: members read no installs", async () => {
     params.current = { itemId: ID };
     const calls = stubApi({ [`GET ${ORG}/catalog/${ID}`]: () => json(200, DETAIL) });
     await renderItem({ me: MEMBER });
     await screen.findByText(en.catalog.components.skills);
     await settle();
-    expect(screen.queryByRole("button", { name: en.catalog.plugins.upgrade })).toBeNull();
     expect(calls.some((c) => c.url.endsWith("/plugin-installs"))).toBe(false);
   });
 
@@ -4030,8 +3655,9 @@ describe("/admin/plugins: installed, detail with scope, pending", () => {
     const table = screen.getByRole("table", { name: P.detail.tabs.components });
     expect(within(table).getByText("jina-web")).toBeTruthy();
     expect(within(table).getByText("web-research")).toBeTruthy();
+    // a newer marketplace version is imported first (the platform update comes after the import)
     expect(
-      screen.getByRole("button", { name: fill(P.detail.actions.update, { version: "v1.3.0" }) }),
+      screen.getByRole("button", { name: fill(P.detail.actions.import, { version: "v1.3.0" }) }),
     ).toBeTruthy();
     await user.click(screen.getByRole("button", { name: P.detail.actions.scope }));
     const dialog = await screen.findByRole("dialog");

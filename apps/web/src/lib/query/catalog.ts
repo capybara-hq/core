@@ -1,9 +1,4 @@
-import {
-  getOrgCatalogItem,
-  listOrgCatalog,
-  listOrgMarketplaceEntries,
-  previewPluginUpgrade,
-} from "../catalog";
+import { getOrgCatalogItem, listOrgCatalog, listOrgMarketplaceEntries } from "../catalog";
 import { orgExtensionChangeKeys } from "./admin";
 import { defineQuery } from "./define";
 import { keys } from "./keys";
@@ -44,14 +39,6 @@ export const pluginChangeKeys = (orgId: string): (readonly unknown[])[] => {
   ];
 };
 
-/** What upgrading an installed plugin to `version` changes and needs (the upgrade dialog's read). */
-export const pluginUpgradePreviewQuery = (orgId: string, installId: string, version: string) =>
-  defineQuery({
-    key: keys.org(orgId).pluginUpgradePreview(installId, version),
-    fn: () => previewPluginUpgrade(orgId, installId, version),
-    freshness: "live",
-  });
-
 /**
  * The marketplace entries an org admin browses to request an import (empty source: all sources,
  * empty search: none); a 404 means the deployment turned `orgMarketplaceBrowse` off.
@@ -68,9 +55,10 @@ export const orgMarketplaceEntriesQuery = (orgId: string, sourceId: string, q: s
   });
 
 /**
- * What a plugin's scope, disable, switch or permission confirmation changes: the catalog and the
- * extensions on the deployment (and the 待确认 list, the overview), and in the current org the
- * catalog, the installed plugins and what {@link pluginChangeKeys} lists.
+ * What a plugin's scope, disable, switch, update or permission confirmation changes: the catalog,
+ * the platform components (their effective scope and versions) and the extensions on the
+ * deployment (and the 待确认 list, the overview), and in the current org the catalog, the
+ * installed plugins and what {@link pluginChangeKeys} lists.
  */
 export const pluginScopeChangeKeys = (orgId: string | null): (readonly unknown[])[] => {
   const d = keys.deployment();
@@ -78,6 +66,7 @@ export const pluginScopeChangeKeys = (orgId: string | null): (readonly unknown[]
     d.catalog(),
     d.catalogItemsAll(),
     d.catalogPending(),
+    d.componentsAll(),
     d.extensions(),
     d.adminOverview(),
     ...(orgId === null ? [] : pluginChangeKeys(orgId)),

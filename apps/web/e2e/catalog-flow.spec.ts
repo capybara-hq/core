@@ -168,7 +168,7 @@ async function importNotes(page: Page, version: string): Promise<void> {
   await expect(page).toHaveURL(/\/admin\/plugins\/[0-9a-f-]{36}$/, { timeout: 60_000 });
 }
 
-test("git marketplace: add a repository in the admin console -> refresh -> import notes 1.0.0 -> turn it on in the org -> import 1.1.0 -> upgrade on the plugin page with a preview", async ({
+test("git marketplace: add a repository in the admin console -> refresh -> import notes 1.0.0 -> turn it on in the org -> import 1.1.0 -> update the platform plugin from its admin page with a preview", async ({
   page,
 }) => {
   const gitUrl = process.env.CAPYBARA_E2E_GIT_MARKETPLACE_URL as string;
@@ -201,32 +201,32 @@ test("git marketplace: add a repository in the admin console -> refresh -> impor
   const detail = page.url();
   await expect(page.getByRole("region", { name: "notes v1.0.0", exact: true })).toBeVisible();
 
-  // 3. Import 1.1.0: the install offers the upgrade; the preview lists the changes
+  // 3. Import 1.1.0 (the import does not move the platform), then update the platform plugin
+  // from its admin page: the preview lists each component's change (ruling F2: one version for
+  // the deployment; the org upgrade is gone)
   await importNotes(page, "1.1.0");
-  await page.goto(detail);
-  const card = page.getByRole("region", { name: "notes v1.0.0", exact: true });
-  await expect(
-    card.getByText(fill(D.plugins.upgradeAvailable, { version: "v1.1.0" })),
-  ).toBeVisible();
-  await card.getByRole("button", { name: D.plugins.upgrade }).click();
+  await page
+    .getByRole("button", { name: fill(D.admin.detail.actions.update, { version: "v1.1.0" }) })
+    .click();
   const dialog = page.getByRole("dialog");
-  const line = (change: "added" | "changed", ref: string) =>
-    fill(D.upgrade.line, {
-      change: D.upgrade.change[change],
-      kind: D.plugins.componentKind.skill,
-      ref,
-    });
-  await expect(dialog.getByText(line("added", "notes-extra"))).toBeVisible();
-  await expect(dialog.getByText(line("changed", "notes"))).toBeVisible();
-  await dialog.getByRole("button", { name: D.upgrade.confirm }).click();
+  const changes = dialog.getByRole("table", { name: D.update.components });
   await expect(
-    page.getByText(fill(D.upgrade.done, { name: "notes", version: "v1.1.0" })),
-  ).toBeVisible({
-    timeout: 60_000,
-  });
+    changes.getByRole("row").filter({ hasText: "notes-extra" }).getByText(D.update.change.added),
+  ).toBeVisible();
+  await expect(
+    changes
+      .getByRole("row")
+      .filter({ hasText: /^notes(?!-)/ })
+      .getByText(D.update.change.upgrade),
+  ).toBeVisible();
+  await dialog.getByRole("button", { name: D.update.confirm }).click();
+  await expect(
+    page.getByText(fill(D.update.done, { name: "笔记", version: "v1.1.0" })),
+  ).toBeVisible({ timeout: 60_000 });
+  // The org's install moved with the platform
+  await page.goto(detail);
   const upgraded = page.getByRole("region", { name: "notes v1.1.0", exact: true });
-  await expect(upgraded).toBeVisible();
-  await expect(upgraded.getByRole("button", { name: D.plugins.upgrade })).toHaveCount(0);
+  await expect(upgraded).toBeVisible({ timeout: 60_000 });
 
   // 4. Clean up: turn it off (the skills it created go with it)
   await page.getByRole("button", { name: P.action.disable }).click();

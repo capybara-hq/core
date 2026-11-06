@@ -2300,6 +2300,9 @@
       "orgs": "组织",
       "settings": "部署设置",
       "extensions": "扩展",
+      "skills": "技能",
+      "connector-templates": "连接器模板",
+      "agent-templates": "智能体模板",
       "models": "模型",
       "plugins": "插件"
     },
@@ -2823,12 +2826,14 @@
           "scope": "设置范围",
           "update": "更新到 {version}",
           "disable": "停用",
-          "enable": "启用"
+          "enable": "启用",
+          "import": "导入 {version}"
         },
         "componentColumns": {
           "name": "组件",
           "kind": "类型",
-          "version": "版本"
+          "version": "版本",
+          "scope": "范围"
         },
         "kind": {
           "extension": "扩展",
@@ -3166,7 +3171,10 @@
         "agents": "智能体：{names}",
         "noAgents": "没有智能体用到它。",
         "connectorsKept": "它创建的 {count} 个连接器会保留，归该组织所有，凭据不变。",
-        "needsConfig": "这些组织要先填写它的组织配置：{orgs}"
+        "needsConfig": "这些组织要先填写它的组织配置：{orgs}",
+        "replaced": "这些组件有单独设置的范围，确认后改为跟随插件：{names}",
+        "conflicts": "下面的组织已有同名的技能，不能这样设置。先在那些组织改名或删掉同名技能：",
+        "conflictLine": "{org}：{name}"
       },
       "disableDialog": {
         "title": "停用 {name}",
@@ -3302,9 +3310,7 @@
       },
       "inProgress": "这个插件仍在安装或升级中，暂时不能改动。若已中断，超时后可在这里清理。",
       "dropped": "已不在插件中，仍被使用所以保留",
-      "upgradeAvailable": "可升级到 {version}",
-      "deploymentPending": "部署已更新这个插件的扩展，请把本组织的插件升级到对应版本。",
-      "upgrade": "升级"
+      "deploymentPending": "部署已更新这个插件的扩展，请把本组织的插件升级到对应版本。"
     },
     "inbox": {
       "label": "平台目录申请",
@@ -3327,28 +3333,50 @@
       "pinned": "固定提交",
       "registry": "npm 仓库 {registry}"
     },
-    "upgrade": {
-      "title": "升级 {name}",
+    "update": {
+      "title": "更新 {name}",
       "versions": "{from} → {to}",
-      "loading": "正在预览升级…",
-      "changes": "变化",
+      "loading": "正在预览更新…",
+      "components": "组件",
+      "columns": {
+        "name": "组件",
+        "kind": "类型",
+        "change": "变化",
+        "version": "版本",
+        "marks": "说明"
+      },
+      "kind": {
+        "skill": "技能",
+        "connector_template": "连接器模板",
+        "agent_template": "智能体模板"
+      },
       "change": {
         "added": "新增",
-        "changed": "变更",
         "removed": "移除",
-        "unchanged": "不变"
+        "upgrade": "升级",
+        "downgrade": "降级",
+        "same": "不变"
       },
-      "line": "{change} · {kind} {ref}",
-      "noChanges": "只有版本号变化。",
-      "connectorsInput": "新的连接器模板 {name}：按安装时的方式填写。",
-      "credentialsInput": "{name} 的认证方式变了：请重新填写凭据。",
-      "extensionConfig": "这次升级会在本组织启用插件的扩展；它的组织配置：",
-      "confirm": "升级",
+      "marks": {
+        "updatedOnOwn": "单独更新过",
+        "ownScope": "有单独范围",
+        "kept": "保留（仍被使用）"
+      },
+      "marksHint": "单独更新过的组件会改用插件的这个版本；有单独范围的组件保留它的范围。",
+      "pinned": "{name}：{orgs} 的副本固定在自己的版本上，确认后改用新版本。",
+      "keptLine": "{name} 不在新版本里，但仍有智能体在用，所以保留：{agents}",
+      "extension": "扩展 {from} → {to}，在用的组织一起更新：{orgs}",
+      "extensionNew": "这次更新会在部署上安装扩展 {to}，在用的组织：{orgs}",
+      "extensionNoOrgs": "还没有组织",
+      "needsApproval": "新版本要求更多权限：超级管理员确认之前，扩展保持待确认。",
+      "connectors": "{org}：这些连接器会按新模板更新：{names}",
+      "credentialsReset": "{org}：{names} 的认证方式变了，凭据会清空，需要重新填写。",
+      "needsConfig": "{org}：新增的连接器模板 {ids} 需要该组织填写地址和凭据。",
+      "none": "没有组件变化，只有版本号变化。",
+      "confirm": "更新",
       "cancel": "取消",
-      "done": "已把 {name} 升级到 {version}。",
-      "requested": "需要超级管理员批准，已提交申请。",
-      "failed": "升级在「{step}」这一步失败（{code}）；本组织的组件已恢复到 {version}。",
-      "failedNoRollback": "升级在「{step}」这一步失败（{code}），且未能立即撤销；超时后会自动撤销。"
+      "done": "已把 {name} 更新到 {version}",
+      "stale": "更新的内容已变化，请再看一遍后确认。"
     },
     "errorDetail": {
       "host": "主机：{host}",
@@ -3586,6 +3614,107 @@
     },
     "detail": {
       "installs": "本组织的安装"
+    }
+  },
+  "adminComponents": {
+    "titles": {
+      "skill": "技能",
+      "connector_template": "连接器模板",
+      "agent_template": "智能体模板"
+    },
+    "descriptions": {
+      "skill": "整个部署的技能：插件带来的和平台上的。范围、停用和版本在这里管理。",
+      "connector_template": "组织按模板填入地址和凭据，得到自己的连接器。范围和停用在这里管理。",
+      "agent_template": "预先配好的智能体定义，也可以作为子智能体类型使用。范围、停用和版本在这里管理。"
+    },
+    "empty": {
+      "skill": "还没有技能。引入带技能的插件后，它们会出现在这里。",
+      "connector_template": "还没有连接器模板。引入带连接器模板的插件后，它们会出现在这里。",
+      "agent_template": "还没有智能体模板。引入带智能体模板的插件后，它们会出现在这里。"
+    },
+    "columns": {
+      "name": "名称",
+      "from": "来自",
+      "owner": "归属",
+      "scope": "范围",
+      "version": "版本",
+      "orgs": "在用"
+    },
+    "from": {
+      "none": "在平台上创建"
+    },
+    "owner": {
+      "platform": "平台"
+    },
+    "follow": "跟随插件",
+    "scopeFollow": "{scope} · 跟随插件",
+    "scopeOwn": "{scope} · 单独设置",
+    "orgsUsing": "{n} 个组织在用",
+    "state": {
+      "disabled": "已停用",
+      "pluginStopped": "插件已停用"
+    },
+    "detail": {
+      "tabsLabel": "组件",
+      "tabs": {
+        "versions": "版本",
+        "orgs": "组织"
+      },
+      "fields": {
+        "from": "来自",
+        "owner": "归属",
+        "scope": "范围",
+        "orgs": "在用组织",
+        "version": "版本",
+        "state": "状态"
+      },
+      "stateOn": "使用中",
+      "noOrgs": "还没有组织在用。",
+      "actions": {
+        "scope": "设置范围",
+        "disable": "停用",
+        "enable": "启用",
+        "upload": "上传新版本"
+      },
+      "versionColumns": {
+        "version": "版本",
+        "origin": "来源",
+        "created": "时间"
+      },
+      "origin": {
+        "plugin": "随插件 {version}",
+        "own": "单独更新"
+      },
+      "enabledToast": "已启用 {name}",
+      "disabledToast": "已停用 {name}",
+      "disabledNote": "已在整个部署停用，范围保留；启用后按原范围恢复。",
+      "pluginStoppedNote": "它的插件已停用或删除，所以它在所有组织都不可用。",
+      "orgsHint": {
+        "all": "全部组织启用：每个组织都在用，组织管理员不能关掉。",
+        "optional": "组织自选：{n} 个组织已启用。",
+        "named": "指定组织：只有下面的组织能用。"
+      }
+    },
+    "scopeDialog": {
+      "title": "设置 {name} 的范围",
+      "follow": "跟随插件",
+      "followHint": "使用插件 {plugin} 的范围，插件的范围变了它也跟着变。",
+      "saved": "已设置 {name} 的范围"
+    },
+    "disableDialog": {
+      "title": "停用 {name}",
+      "hint": "停用后整个部署都不能用它，范围保留，之后可以再启用。",
+      "confirm": "停用"
+    },
+    "upload": {
+      "title": "上传 {name} 的新版本",
+      "skillHint": "选一个技能包（.zip），里面的技能名称必须还是 {name}。上传后成为新版本，各组织立即使用；它仍属于原来的插件，下次更新插件时会改用插件的版本。",
+      "templateHint": "选一个智能体模板文件（.md），名称必须还是 {name}。上传后成为新版本，之后用它创建的智能体使用新版本。",
+      "choose": "选择文件",
+      "drop": "拖放文件到这里",
+      "confirm": "上传",
+      "cancel": "取消",
+      "done": "已上传 {name} 的 {version}"
     }
   }
 }

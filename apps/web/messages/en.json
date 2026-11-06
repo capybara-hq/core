@@ -2312,6 +2312,9 @@
       "orgs": "Organizations",
       "settings": "Deployment settings",
       "extensions": "Extensions",
+      "skills": "Skills",
+      "connector-templates": "Connector templates",
+      "agent-templates": "Agent templates",
       "models": "Models",
       "plugins": "Plugins"
     },
@@ -2835,12 +2838,14 @@
           "scope": "Set scope",
           "update": "Update to {version}",
           "disable": "Disable",
-          "enable": "Enable"
+          "enable": "Enable",
+          "import": "Import {version}"
         },
         "componentColumns": {
           "name": "Component",
           "kind": "Kind",
-          "version": "Version"
+          "version": "Version",
+          "scope": "Scope"
         },
         "kind": {
           "extension": "Extension",
@@ -3178,7 +3183,10 @@
         "agents": "Agents: {names}",
         "noAgents": "No agent uses it.",
         "connectorsKept": "{count, plural, one {The connector it created stays} other {The # connectors it created stay}} as the organization's own, with credentials.",
-        "needsConfig": "These organizations need to fill in its organization config first: {orgs}"
+        "needsConfig": "These organizations need to fill in its organization config first: {orgs}",
+        "replaced": "These components have their own scope; after the change they follow the plugin again: {names}",
+        "conflicts": "These organizations already have a skill with the same name, so this change is not possible. Rename or delete the skill there first:",
+        "conflictLine": "{org}: {name}"
       },
       "disableDialog": {
         "title": "Disable {name}",
@@ -3314,9 +3322,7 @@
       },
       "inProgress": "This plugin is still being installed or upgraded and cannot be changed yet. If it was interrupted, you can clean it up here after the timeout.",
       "dropped": "no longer in the plugin; kept while still in use",
-      "upgradeAvailable": "Upgrade available: {version}",
-      "deploymentPending": "The deployment updated this plugin's extension. Upgrade this organization's plugin to match.",
-      "upgrade": "Upgrade"
+      "deploymentPending": "The deployment updated this plugin's extension. Upgrade this organization's plugin to match."
     },
     "inbox": {
       "label": "Catalog request",
@@ -3339,28 +3345,50 @@
       "pinned": "pinned commit",
       "registry": "npm registry {registry}"
     },
-    "upgrade": {
-      "title": "Upgrade {name}",
+    "update": {
+      "title": "Update {name}",
       "versions": "{from} → {to}",
-      "loading": "Previewing the upgrade…",
-      "changes": "Changes",
+      "loading": "Previewing the update…",
+      "components": "Components",
+      "columns": {
+        "name": "Component",
+        "kind": "Kind",
+        "change": "Change",
+        "version": "Version",
+        "marks": "Notes"
+      },
+      "kind": {
+        "skill": "Skill",
+        "connector_template": "Connector template",
+        "agent_template": "Agent template"
+      },
       "change": {
         "added": "Added",
-        "changed": "Changed",
         "removed": "Removed",
-        "unchanged": "Unchanged"
+        "upgrade": "Upgrade",
+        "downgrade": "Downgrade",
+        "same": "Unchanged"
       },
-      "line": "{change} · {kind} {ref}",
-      "noChanges": "Only the version changes.",
-      "connectorsInput": "New connector template {name}: fill it in as at install.",
-      "credentialsInput": "The authentication of {name} changed: enter its credentials again.",
-      "extensionConfig": "This upgrade enables the plugin's extension in this organization; its organization config:",
-      "confirm": "Upgrade",
+      "marks": {
+        "updatedOnOwn": "Updated on its own",
+        "ownScope": "Own scope",
+        "kept": "Kept (still in use)"
+      },
+      "marksHint": "Components updated on their own move to this version of the plugin; components with their own scope keep it.",
+      "pinned": "{name}: the copies in {orgs} are pinned to their own version and move to the new one.",
+      "keptLine": "{name} is not in the new version but agents still use it, so it is kept: {agents}",
+      "extension": "Extension {from} → {to}, for every organization using it at once: {orgs}",
+      "extensionNew": "The update installs the extension {to} on the deployment; organizations using it: {orgs}",
+      "extensionNoOrgs": "none yet",
+      "needsApproval": "The new version asks for more permissions: the extension waits for a super admin's confirmation.",
+      "connectors": "{org}: these connectors are updated from the new template: {names}",
+      "credentialsReset": "{org}: the authentication of {names} changed; their credentials are cleared and must be entered again.",
+      "needsConfig": "{org}: the added connector templates {ids} need the organization's address and credentials.",
+      "none": "No component changes; only the version moves.",
+      "confirm": "Update",
       "cancel": "Cancel",
-      "done": "Upgraded {name} to {version}.",
-      "requested": "Super admin approval is needed; a request was submitted.",
-      "failed": "Upgrading failed at the “{step}” step ({code}); this organization's components are back at {version}.",
-      "failedNoRollback": "Upgrading failed at the “{step}” step ({code}) and could not be undone right away; it is undone automatically after the timeout."
+      "done": "Updated {name} to {version}",
+      "stale": "What the update does has changed. Review it again, then confirm."
     },
     "errorDetail": {
       "host": "Host: {host}",
@@ -3598,6 +3626,107 @@
     },
     "detail": {
       "installs": "This organization's install"
+    }
+  },
+  "adminComponents": {
+    "titles": {
+      "skill": "Skills",
+      "connector_template": "Connector templates",
+      "agent_template": "Agent templates"
+    },
+    "descriptions": {
+      "skill": "Every skill on the deployment: from plugins and from the platform. Manage scope, disabling and versions here.",
+      "connector_template": "Organizations fill in a template's address and credentials to get their own connector. Manage scope and disabling here.",
+      "agent_template": "Ready-made agent definitions, also usable as sub-agent types. Manage scope, disabling and versions here."
+    },
+    "empty": {
+      "skill": "No skills yet. They appear here once a plugin that brings skills is imported.",
+      "connector_template": "No connector templates yet. They appear here once a plugin that brings connector templates is imported.",
+      "agent_template": "No agent templates yet. They appear here once a plugin that brings agent templates is imported."
+    },
+    "columns": {
+      "name": "Name",
+      "from": "From",
+      "owner": "Owner",
+      "scope": "Scope",
+      "version": "Version",
+      "orgs": "In use"
+    },
+    "from": {
+      "none": "Created on the platform"
+    },
+    "owner": {
+      "platform": "Platform"
+    },
+    "follow": "Follows its plugin",
+    "scopeFollow": "{scope} · follows its plugin",
+    "scopeOwn": "{scope} · own scope",
+    "orgsUsing": "{n, plural, one {# org using it} other {# orgs using it}}",
+    "state": {
+      "disabled": "Disabled",
+      "pluginStopped": "Plugin stopped"
+    },
+    "detail": {
+      "tabsLabel": "Component",
+      "tabs": {
+        "versions": "Versions",
+        "orgs": "Organizations"
+      },
+      "fields": {
+        "from": "From",
+        "owner": "Owner",
+        "scope": "Scope",
+        "orgs": "Orgs using it",
+        "version": "Version",
+        "state": "State"
+      },
+      "stateOn": "In use",
+      "noOrgs": "No organization uses it yet.",
+      "actions": {
+        "scope": "Set scope",
+        "disable": "Disable",
+        "enable": "Enable",
+        "upload": "Upload new version"
+      },
+      "versionColumns": {
+        "version": "Version",
+        "origin": "Origin",
+        "created": "Time"
+      },
+      "origin": {
+        "plugin": "With plugin {version}",
+        "own": "Updated on its own"
+      },
+      "enabledToast": "Enabled {name}",
+      "disabledToast": "Disabled {name}",
+      "disabledNote": "Disabled on the whole deployment; its scope is kept and applies again when it is enabled.",
+      "pluginStoppedNote": "Its plugin is disabled or deleted, so it is off in every organization.",
+      "orgsHint": {
+        "all": "All organizations: every organization uses it and org admins cannot turn it off.",
+        "optional": "Organizations choose: {n, plural, one {# organization has} other {# organizations have}} turned it on.",
+        "named": "Named organizations: only the organizations below can use it."
+      }
+    },
+    "scopeDialog": {
+      "title": "Set the scope of {name}",
+      "follow": "Follows its plugin",
+      "followHint": "Uses the scope of the plugin {plugin} and changes with it.",
+      "saved": "Set the scope of {name}"
+    },
+    "disableDialog": {
+      "title": "Disable {name}",
+      "hint": "Nobody on the deployment can use it while it is disabled. Its scope is kept; you can enable it again later.",
+      "confirm": "Disable"
+    },
+    "upload": {
+      "title": "Upload a new version of {name}",
+      "skillHint": "Pick a skill package (.zip) whose skill is still named {name}. It becomes the new version and every organization uses it at once; it stays with its plugin, and the next plugin update moves it to the plugin's version.",
+      "templateHint": "Pick an agent template file (.md) still named {name}. It becomes the new version; agents created from it afterwards use it.",
+      "choose": "Choose a file",
+      "drop": "Drop a file here",
+      "confirm": "Upload",
+      "cancel": "Cancel",
+      "done": "Uploaded {version} of {name}"
     }
   }
 }

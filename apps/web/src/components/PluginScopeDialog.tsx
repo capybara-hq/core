@@ -22,6 +22,7 @@ import {
   PLUGIN_SCOPES,
   type PluginScope,
   previewScope,
+  type ScopeConflict,
   type ScopePreview,
   setDisabled,
   setScope,
@@ -40,9 +41,13 @@ function useOrgs(): AdminOrg[] {
   return useQuery({ ...oq, retryOnMount: retryOnMountOf(oq.queryKey) }).data?.orgs ?? [];
 }
 
+/** A scope choice: one of the scopes, or (a component of a plugin) following its plugin's. */
+export type ScopeChoice = PluginScope | "follow";
+
 /**
  * The scope picker (spec §5): 全部组织启用 / 组织自选 / 指定组织, and for 指定组织 one checkbox
- * per org. Shared by the 设置范围 dialog and the import review's confirm step.
+ * per org. Shared by the 设置范围 dialogs (plugins and components) and the import review's confirm
+ * step. `follow` adds 跟随插件 first (a component of a plugin, spec §5 rule 2).
  */
 export function ScopeFields({
   scope,
@@ -50,12 +55,14 @@ export function ScopeFields({
   onScope,
   onOrgs,
   disabled,
+  follow,
 }: {
-  scope: PluginScope;
+  scope: ScopeChoice;
   orgs: string[];
   onScope(next: PluginScope): void;
   onOrgs(next: string[]): void;
   disabled?: boolean;
+  follow?: { label: string; description: string; onSelect(): void };
 }) {
   const t = useTranslations("catalog");
   const all = useOrgs();
@@ -64,13 +71,18 @@ export function ScopeFields({
       <RadioGroup
         label={t("admin.scopeDialog.scopeLabel")}
         value={scope}
-        onChange={(v) => onScope(v as PluginScope)}
+        onChange={(v) => (v === "follow" ? follow?.onSelect() : onScope(v as PluginScope))}
         {...(disabled ? { disabled } : {})}
-        options={PLUGIN_SCOPES.map((s) => ({
-          value: s,
-          label: t(`scope.${s}`),
-          description: t(`admin.scopeDialog.hints.${s}`),
-        }))}
+        options={[
+          ...(follow
+            ? [{ value: "follow", label: follow.label, description: follow.description }]
+            : []),
+          ...PLUGIN_SCOPES.map((s) => ({
+            value: s,
+            label: t(`scope.${s}`),
+            description: t(`admin.scopeDialog.hints.${s}`),
+          })),
+        ]}
       />
       {scope === "named" && (
         <Field label={t("admin.scopeDialog.orgsLabel")}>
@@ -96,22 +108,37 @@ export function ScopeFields({
   );
 }
 
+/** What a scope preview lists (a plugin's `ScopePreview`, a component's `ComponentScopePreview`). */
+export interface ImpactPreview {
+  affected: ScopePreview["affected"];
+  needsConfig?: string[];
+  replaced?: { kind: string; id: string; name: string }[];
+  conflicts?: ScopeConflict[];
+}
+
+/** The change is refused while an org would be offered a skill whose name it already uses. */
+export const hasConflicts = (p: ImpactPreview | null): boolean => (p?.conflicts?.length ?? 0) > 0;
+
 /**
- * What a scope change or a disable takes away (spec §5 rule 8): each affected org with the agents
- * that use the plugin and the connectors it keeps as its own, and the orgs that must fill in its
- * org config first.
+ * What a scope change or a disable takes away (spec §5 rules 2, 8 and 10): each affected org with
+ * the agents that use it and the connectors it keeps as its own, the orgs that must fill in its
+ * org config first, the components whose own scope a plugin's change replaces, and the name
+ * clashes that refuse the change.
  */
-export function ScopeImpact({ preview }: { preview: ScopePreview }) {
+export function ScopeImpact({ preview }: { preview: ImpactPreview }) {
   const t = useTranslations("catalog.admin.impact");
   const locale = useLocale();
   const orgs = useOrgs();
   const sep = locale === "zh" ? "、" : ", ";
   const nameOf = (id: string) => orgs.find((o) => o.id === id)?.name ?? id;
-  if (preview.affected.length === 0 && preview.needsConfig.length === 0) {
-    return <Text variant="prose">{t("none")}</Text>;
-  }
+  const needsConfig = preview.needsConfig ?? [];
+  const replaced = preview.replaced ?? [];
+  const conflicts = preview.conflicts ?? [];
   return (
     <Stack gap={12}>
+      {preview.affected.length === 0 && needsConfig.length === 0 && (
+        <Text variant="prose">{t("none")}</Text>
+      )}
       {preview.affected.length > 0 && (
         <Stack gap={8}>
           <Text variant="prose">{t("affected")}</Text>
@@ -132,10 +159,27 @@ export function ScopeImpact({ preview }: { preview: ScopePreview }) {
           ))}
         </Stack>
       )}
-      {preview.needsConfig.length > 0 && (
+      {needsConfig.length > 0 && (
         <Text variant="prose" tone="warn">
-          {t("needsConfig", { orgs: preview.needsConfig.map(nameOf).join(sep) })}
+          {t("needsConfig", { orgs: needsConfig.map(nameOf).join(sep) })}
         </Text>
+      )}
+      {replaced.length > 0 && (
+        <Text variant="prose" tone="warn">
+          {t("replaced", { names: replaced.map((r) => r.name).join(sep) })}
+        </Text>
+      )}
+      {conflicts.length > 0 && (
+        <Stack gap={4}>
+          <Text variant="prose" tone="fail">
+            {t("conflicts")}
+          </Text>
+          {conflicts.map((c) => (
+            <Text key={`${c.orgId}:${c.name}`} variant="small">
+              {t("conflictLine", { org: c.orgName, name: c.name })}
+            </Text>
+          ))}
+        </Stack>
       )}
     </Stack>
   );
@@ -264,7 +308,7 @@ export function PluginScopeDialog({
             <Button
               variant="primary"
               loading={saveScope.isPending || saveShown.isPending}
-              disabled={saving}
+              disabled={saving || hasConflicts(preview)}
               onClick={() => void confirm()}
             >
               {t("confirm")}
@@ -322,14 +366,8 @@ export function PluginDisableDialog({
 }) {
   const t = useTranslations("catalog.admin");
   const locale = useLocale();
-  const toast = useToast();
-  const errorMessage = useErrorMessage();
   const name = displayNameOf(item, locale);
-  const [preview, setPreview] = useState<ScopePreview | null>(null);
-  const [error, setError] = useState<string>();
-  const [notice, setNotice] = useState<string>();
-  const asked = useRef(false);
-  const previewIt = useAppMutation({
+  const preview = useAppMutation({
     fn: () => previewScope(item.id, { disabled: true }),
     invalidates: () => [],
   });
@@ -337,6 +375,48 @@ export function PluginDisableDialog({
     fn: (hash: string) => setDisabled(item.id, { disabled: true, scopeHash: hash }),
     invalidates: () => pluginScopeChangeKeys(orgId),
   });
+  return (
+    <ImpactDisableDialog
+      title={t("disableDialog.title", { name })}
+      hint={t("disableDialog.hint")}
+      confirmLabel={t("disableDialog.confirm")}
+      doneToast={t("detail.disabledToast", { name })}
+      preview={preview}
+      disable={disable}
+      onClose={onClose}
+    />
+  );
+}
+
+/**
+ * A disable dialog with its impact (plugins and platform components): `preview` (the caller's
+ * mutation reading the `{ disabled: true }` preview) runs when it opens, the confirm sends its
+ * `scopeHash`; a 409 `plugin.scope_stale` reads it again.
+ */
+export function ImpactDisableDialog({
+  title,
+  hint,
+  confirmLabel,
+  doneToast,
+  preview: previewIt,
+  disable,
+  onClose,
+}: {
+  title: string;
+  hint: string;
+  confirmLabel: string;
+  doneToast: string;
+  preview: { mutateAsync(v: undefined): Promise<ImpactPreview & { scopeHash: string }> };
+  disable: { mutateAsync(hash: string): Promise<unknown>; isPending: boolean };
+  onClose(): void;
+}) {
+  const t = useTranslations("catalog.admin");
+  const toast = useToast();
+  const errorMessage = useErrorMessage();
+  const [preview, setPreview] = useState<(ImpactPreview & { scopeHash: string }) | null>(null);
+  const [error, setError] = useState<string>();
+  const [notice, setNotice] = useState<string>();
+  const asked = useRef(false);
   const { mutateAsync: ask } = previewIt;
   const load = useCallback(
     () =>
@@ -358,7 +438,7 @@ export function PluginDisableDialog({
     setNotice(undefined);
     try {
       await disable.mutateAsync(preview.scopeHash);
-      toast.success(t("detail.disabledToast", { name }));
+      toast.success(doneToast);
       onClose();
     } catch (e) {
       if (e instanceof ApiClientError && e.code === "plugin.scope_stale") {
@@ -376,7 +456,7 @@ export function PluginDisableDialog({
       onOpenChange={(open) => {
         if (!open) onClose();
       }}
-      title={t("disableDialog.title", { name })}
+      title={title}
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>
@@ -388,13 +468,13 @@ export function PluginDisableDialog({
             disabled={preview === null || disable.isPending}
             onClick={() => void confirm()}
           >
-            {t("disableDialog.confirm")}
+            {confirmLabel}
           </Button>
         </>
       }
     >
       <Stack gap={12}>
-        <Text variant="prose">{t("disableDialog.hint")}</Text>
+        <Text variant="prose">{hint}</Text>
         {notice !== undefined && (
           <Text variant="prose" tone="warn">
             {notice}

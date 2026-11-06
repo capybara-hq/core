@@ -234,6 +234,9 @@ const ADMIN_ICONS: Record<AdminPageId, IconName> = {
   orgs: "building",
   plugins: "catalog",
   extensions: "extension",
+  skills: "skills",
+  "connector-templates": "connector",
+  "agent-templates": "agent",
   models: "cpu",
   settings: "sliders",
 };

@@ -63,13 +63,6 @@ export const keys = {
       ],
       /** The plugins installed in the org. */
       pluginInstalls: (): readonly unknown[] => [...all, "pluginInstalls"],
-      /** An upgrade preview of an installed plugin to a version. */
-      pluginUpgradePreview: (installId: string, version: string): readonly unknown[] => [
-        ...all,
-        "pluginUpgradePreview",
-        installId,
-        version,
-      ],
       /** My standing tool grants in the org. */
       toolGrants: (): readonly unknown[] => [...all, "toolGrants"],
       /** Every view of the sidebar's conversation groups (an invalidation prefix). */
@@ -309,6 +302,18 @@ export const keys = {
       catalogRequests: (): readonly unknown[] => [...all, "catalogRequests"],
       /** The marketplaces (with the offline flag). */
       marketplaces: (): readonly unknown[] => [...all, "marketplaces"],
+      /** Every platform component read (lists and versions; an invalidation prefix). */
+      componentsAll: (): readonly unknown[] => [...all, "components"],
+      /** The platform components of one kind (`skill` / `connector_template` / `agent_template`). */
+      components: (kind: string): readonly unknown[] => [...all, "components", kind],
+      /** One platform component's versions. */
+      componentVersions: (kind: string, id: string): readonly unknown[] => [
+        ...all,
+        "components",
+        kind,
+        id,
+        "versions",
+      ],
       /** Every entries read (an invalidation prefix). */
       marketplaceEntriesAll: (): readonly unknown[] => [...all, "marketplaceEntries"],
       /** The marketplace entries of one source (`""`: all) and search (`""`: none). */

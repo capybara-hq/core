@@ -61,13 +61,14 @@ The sidebar has three contexts (the third, setup, is drawn only by `SetupPage`):
 | Admin console overview | `/admin` | `OverviewPage` |
 | Accounts, orgs, extensions, plugins (one head with the tabs 已安装 / 市场 / 待确认: installed plugins, marketplace entries, permission confirmations and org requests), marketplace sources | `/admin/accounts`, `/admin/orgs`, `/admin/extensions`, `/admin/plugins`, `/admin/plugins/market`, `/admin/plugins/pending`, `/admin/plugins/sources` | `ListPage` |
 | Extension detail, plugin detail (tabs 组件 / 组织 / 版本; 设置范围 and 停用 open `PluginScopeDialog` / `PluginDisableDialog` with the impact preview) | `/admin/extensions/[name]`, `/admin/plugins/[itemId]` | `DetailPage` (summary / permissions / config etc. use PageTabs) |
+| Platform components: 技能 / 连接器模板 / 智能体模板 lists (来自, 归属, 范围, 版本, orgs using it) and details (tabs 版本 / 组织; 设置范围 opens `ComponentScopeDialog` with 跟随插件, 停用, 上传新版本 for skills and agent templates); the plugin detail's 更新到 x opens `PlatformUpdateDialog` (the per-component update preview, confirmed with `diffHash`) | `/admin/skills`, `/admin/connector-templates`, `/admin/agent-templates` and their `[id]` | `ListPage` / `DetailPage` |
 | Install an extension, plugin import review (上传插件包; its confirm step asks for the scope) | `/admin/extensions/install`, `/admin/plugins/import` | `WizardPage` |
 | Deployment settings, models and prices | `/admin/settings`, `/admin/models` | `SettingsPage` |
 | Trajectory list / eval set list | `/trajectories`, `/evals` | `ListPage` |
 | Trajectory detail, eval case | `/trajectories/[conversationId]`, `/evals/[setId]/cases/[caseId]` | `TracePage`: `waterfall` holds `SpanWaterfall`, `detail` holds the selected span's detail |
 | Eval set, eval run | `/evals/[setId]`, `/evals/runs/[runId]` | `DetailPage` |
 | Create an eval set / start a run | `/evals/new`, `/evals/[setId]/run` | `FormPage` / `WizardPage` |
-| Workspace 插件 (state, 启用 / 组织配置 / 停用 with the switch-off preview, requests, the 市场 tab for org admins), plugin detail (this org's installs: upgrade, clean-up), the input wizard 启用 opens | `/plugins`, `/plugins/[itemId]`, `/plugins/[itemId]/enable` | `ListPage` / `DetailPage` / `WizardPage` |
+| Workspace 插件 (state, 启用 / 组织配置 / 停用 with the switch-off preview, requests, the 市场 tab for org admins), plugin detail (this org's installs: clean-up; a platform plugin moves only with the admin update), the input wizard 启用 opens | `/plugins`, `/plugins/[itemId]`, `/plugins/[itemId]/enable` | `ListPage` / `DetailPage` / `WizardPage` |
 | Workspace 扩展 (each extension's switch, which is its plugin's, permissions, org config; default providers; file previewers) | `/extensions` | `ListPage` |
 
 - Admin console views start with the gate `useAdmin()` (`lib/query/workspace.ts`): for non-super-admins the view returns `<NoAccess need={gate.need} />` (`components/NoAccess`, the `StatusPage` no-access state), and the route table prefetches nothing from `/api/v1/admin/*` for them (a UI-level block; the kernel is the final authority). Org views do the same with `useWorkspace()`. The UI always says "super admin".

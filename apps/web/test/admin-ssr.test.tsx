@@ -164,6 +164,9 @@ const PREPARED = {
 };
 
 const ROUTES: Routes = {
+  "GET /api/v1/admin/components?kind=skill": () => json(200, { components: [] }),
+  "GET /api/v1/admin/components?kind=connector_template": () => json(200, { components: [] }),
+  "GET /api/v1/admin/components?kind=agent_template": () => json(200, { components: [] }),
   "GET /api/v1/admin/catalog/items": () => json(200, { items: [catalogItem()], nextOffset: null }),
   "GET /api/v1/admin/catalog/items?pending=true": () => json(200, { items: [], nextOffset: null }),
   [`GET /api/v1/admin/catalog/items/${ITEM_ID}`]: () =>

@@ -21,7 +21,6 @@ import { useAppMutation } from "../lib/query/mutation";
 import { pluginInstallsQuery } from "../lib/query/settings";
 import { useErrorMessage } from "../lib/use-error-message";
 import { FormError } from "./form-error";
-import { PluginUpgradeDialog } from "./PluginUpgradeDialog";
 
 /**
  * The org's installs of one plugin on its 插件 detail page (org admins; formerly the settings page
@@ -106,11 +105,9 @@ function InstallCard({
   const ti = useTranslations("catalog.org.install.step");
   const errorMessage = useErrorMessage();
   const [confirm, setConfirm] = useState(false);
-  const [upgrading, setUpgrading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const broken = install.status === "failed" || install.status === "installing";
-  const target = install.status === "installed" ? install.upgradeAvailable : null;
   // An uninstall removes what the plugin brought: everything a plugin change touches is read again.
   const remove = useAppMutation({
     fn: (installId: string) => uninstallPlugin(orgId, installId),
@@ -143,11 +140,6 @@ function InstallCard({
         tone={install.status === "failed" ? "danger" : "default"}
         actions={
           <Stack direction="row" gap={8}>
-            {target !== null && (
-              <Button disabled={busy} onClick={() => setUpgrading(true)}>
-                {t("upgrade")}
-              </Button>
-            )}
             {broken && (
               <Button variant="danger" disabled={busy} onClick={() => setConfirm(true)}>
                 {t("cleanup")}
@@ -160,13 +152,7 @@ function InstallCard({
           <Text tone={install.status === "failed" ? "fail" : "muted"}>
             {`${t(`status.${install.status}`)} · ${t("installedAt", { at: formatDateTime(install.installedAt, "full", timeZone) })}`}
           </Text>
-          {install.deploymentPending ? (
-            <Text tone="warn">{t("deploymentPending")}</Text>
-          ) : (
-            target !== null && (
-              <Text tone="accent">{t("upgradeAvailable", { version: versionLabel(target) })}</Text>
-            )
-          )}
+          {install.deploymentPending && <Text tone="warn">{t("deploymentPending")}</Text>}
           {usedBy.length > 0 && (
             <Text variant="small" tone="muted">
               {t("dependencyOf", { names: usedBy.join(", ") })}
@@ -196,15 +182,6 @@ function InstallCard({
           )}
           {error !== undefined && <FormError message={error} />}
         </Stack>
-        {target !== null && (
-          <PluginUpgradeDialog
-            orgId={orgId}
-            install={install}
-            target={target}
-            open={upgrading}
-            onOpenChange={setUpgrading}
-          />
-        )}
         <Dialog
           open={confirm}
           onOpenChange={setConfirm}

@@ -18,6 +18,7 @@ import {
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
+import { useComponentScopeText } from "../../../../../components/AdminComponents";
 import {
   CatalogIcon,
   ComponentSection,
@@ -29,6 +30,7 @@ import {
 } from "../../../../../components/CatalogParts";
 import { ErrorFrame } from "../../../../../components/ErrorFrame";
 import { NoAccess } from "../../../../../components/NoAccess";
+import { PlatformUpdateDialog } from "../../../../../components/PlatformUpdateDialog";
 import {
   PluginDisableDialog,
   PluginScopeDialog,
@@ -42,6 +44,7 @@ import {
   type CatalogItem,
   type CatalogItemDetail,
   type CatalogItemVersion,
+  compareSemver,
   declaredPermissions,
   descriptionOf,
   displayNameOf,
@@ -54,6 +57,11 @@ import {
   templateIdOf,
 } from "../../../../../lib/catalog";
 import {
+  COMPONENT_ROUTES,
+  type PlatformComponent,
+  type PlatformComponentKind,
+} from "../../../../../lib/components";
+import {
   adminOrgsQuery,
   catalogItemQuery,
   catalogItemsQuery,
@@ -62,6 +70,7 @@ import {
 } from "../../../../../lib/query/admin";
 import { pluginScopeChangeKeys } from "../../../../../lib/query/catalog";
 import { retryOnMountOf } from "../../../../../lib/query/client";
+import { adminComponentsQuery } from "../../../../../lib/query/components";
 import { useAppMutation } from "../../../../../lib/query/mutation";
 import { usePageQuery } from "../../../../../lib/query/page-query";
 import { useAdmin } from "../../../../../lib/query/workspace";
@@ -73,12 +82,14 @@ type Tab = (typeof TABS)[number];
 
 /**
  * `/admin/plugins/[itemId]`: one plugin (super admins, DetailPage; spec §9). Head: the name,
- * the latest version, the 内置 / Claude Code chips and the scope; actions 设置范围 (the scope
+ * the platform's version, the 内置 / Claude Code chips and the scope; actions 设置范围 (the scope
  * dialog with its impact preview), 停用 (with the same preview) or 启用, and 更新到 <version>
- * when its marketplace has a newer compatible version (stages it and opens the import review). A
- * built-in plugin has neither 设置范围 nor 停用. Tabs: 组件 (the latest version's extension,
- * skills, connector templates and agent templates with kind and version; its dependencies; the
- * translation report, the license; delete), 组织 (the scope and the orgs it names, or how many
+ * when the catalog has a newer version than the platform's (the platform update preview, spec
+ * §7.1), else 导入 <version> when its marketplace has a newer compatible version (stages it and
+ * opens the import review). A built-in plugin has neither 设置范围 nor 停用. Tabs: 组件 (the
+ * platform version's extension, skills, connector templates and agent templates with kind,
+ * version and scope (跟随插件 or the component's own, linking to the component); its
+ * dependencies; the translation report, the license; delete), 组织 (the scope and the orgs it names, or how many
  * turned it on), 版本 (each version's source, origin and import time). Inspector: the icon, the
  * package, source, publisher, scope, orgs using it and the permissions with their state. From the
  * query cache (the layout prefetched the reads on a first load): the item (a 404 is the not-found
@@ -140,8 +151,17 @@ function PluginDetail({ detail, orgId }: { detail: CatalogItemDetail; orgId: str
     useQuery({ ...cq, retryOnMount: retryOnMountOf(cq.queryKey) }).data?.items ?? null;
   const sourceLabel = useSourceLabel(marketplaces ?? []);
   const [tab, setTab] = useState<Tab>("components");
-  const [dialog, setDialog] = useState<"scope" | "disable" | null>(null);
+  const [dialog, setDialog] = useState<"scope" | "disable" | "update" | null>(null);
   const item = detail.item;
+  const platformVersion = item.platformVersion ?? item.latestVersion;
+  // The newest imported version, when it is newer than the platform's: the platform update
+  const newest = item.versions[0];
+  const updateTo =
+    newest !== undefined &&
+    newest !== platformVersion &&
+    (compareSemver(newest, platformVersion) ?? 1) > 0
+      ? newest
+      : null;
   const name = displayNameOf(item, locale);
   const latest = detail.versions.find((v) => v.version === item.latestVersion);
   const ext = latest?.manifest.extension?.manifest;
@@ -149,8 +169,11 @@ function PluginDetail({ detail, orgId }: { detail: CatalogItemDetail; orgId: str
     ext === undefined ? 0 : declaredPermissions(ext).reduce((n, g) => n + g.items.length, 0);
   const claudeCode = latest?.sourceFormat === "claude-code";
   const deleted = item.deletedAt !== null;
-  const update =
-    item.newerInMarketplace && item.marketplaceId !== null && item.latestMarketplaceVersion !== null
+  const fetchable =
+    updateTo === null &&
+    item.newerInMarketplace &&
+    item.marketplaceId !== null &&
+    item.latestMarketplaceVersion !== null
       ? { sourceId: item.marketplaceId, version: item.latestMarketplaceVersion }
       : null;
 
@@ -198,14 +221,23 @@ function PluginDetail({ detail, orgId }: { detail: CatalogItemDetail; orgId: str
                 onSelect: () => setDialog("disable"),
               },
         ]),
-    ...(update !== null && !deleted
+    ...(updateTo !== null && !deleted && !item.disabled
       ? [
           {
-            label: t("detail.actions.update", { version: versionLabel(update.version) }),
+            label: t("detail.actions.update", { version: versionLabel(updateTo) }),
+            variant: "primary" as const,
+            onSelect: () => setDialog("update"),
+          },
+        ]
+      : []),
+    ...(fetchable !== null && !deleted
+      ? [
+          {
+            label: t("detail.actions.import", { version: versionLabel(fetchable.version) }),
             variant: "primary" as const,
             onSelect: () =>
               void run(async () => {
-                const p = await stage.mutateAsync(update);
+                const p = await stage.mutateAsync(fetchable);
                 router.push(importPageHref(p.stagingId));
               }),
           },
@@ -219,7 +251,7 @@ function PluginDetail({ detail, orgId }: { detail: CatalogItemDetail; orgId: str
         header={{
           path: [...scope, { label: "plugins", href: "/admin/plugins" }, { label: name }],
           title: name,
-          count: versionLabel(item.latestVersion),
+          count: versionLabel(platformVersion),
           status: (
             <Stack direction="row" gap={8} align="center">
               {item.builtin && <Badge>{t("chips.builtin")}</Badge>}
@@ -293,6 +325,14 @@ function PluginDetail({ detail, orgId }: { detail: CatalogItemDetail; orgId: str
       {dialog === "disable" && (
         <PluginDisableDialog item={item} orgId={orgId} onClose={() => setDialog(null)} />
       )}
+      {dialog === "update" && updateTo !== null && (
+        <PlatformUpdateDialog
+          item={item}
+          version={updateTo}
+          orgId={orgId}
+          onClose={() => setDialog(null)}
+        />
+      )}
     </>
   );
 }
@@ -303,6 +343,35 @@ type ComponentRow = {
   kind: "extension" | "skill" | "connectorTemplate" | "agentTemplate";
   version: string;
 };
+
+/** The platform component kind of a manifest row (an extension has none). */
+const PLATFORM_KIND: Record<ComponentRow["kind"], PlatformComponentKind | null> = {
+  extension: null,
+  skill: "skill",
+  connectorTemplate: "connector_template",
+  agentTemplate: "agent_template",
+};
+
+/** The plugin's platform components of each kind (sections: empty while they load or failed). */
+function usePluginComponents(itemId: string): (row: ComponentRow) => PlatformComponent | undefined {
+  const sq = adminComponentsQuery("skill");
+  const cq = adminComponentsQuery("connector_template");
+  const aq = adminComponentsQuery("agent_template");
+  const skills = useQuery({ ...sq, retryOnMount: retryOnMountOf(sq.queryKey) }).data;
+  const connectors = useQuery({ ...cq, retryOnMount: retryOnMountOf(cq.queryKey) }).data;
+  const agents = useQuery({ ...aq, retryOnMount: retryOnMountOf(aq.queryKey) }).data;
+  const byKind: Record<PlatformComponentKind, PlatformComponent[]> = {
+    skill: skills?.components ?? [],
+    connector_template: connectors?.components ?? [],
+    agent_template: agents?.components ?? [],
+  };
+  return (row) => {
+    const kind = PLATFORM_KIND[row.kind];
+    return kind === null
+      ? undefined
+      : byKind[kind].find((c) => c.itemId === itemId && c.name === row.name);
+  };
+}
 
 /** The components of a version (its plugin.json): the extension, skills, templates. */
 function componentsOf(m: PluginManifest): ComponentRow[] {
@@ -348,8 +417,13 @@ function ComponentsTab({
   const router = useRouter();
   const errorMessage = useErrorMessage();
   const item = detail.item;
-  const latest = detail.versions.find((v) => v.version === item.latestVersion);
+  const latest =
+    detail.versions.find((v) => v.version === (item.platformVersion ?? item.latestVersion)) ??
+    detail.versions.find((v) => v.version === item.latestVersion);
   const [confirm, setConfirm] = useState(false);
+  const tcs = useTranslations("adminComponents");
+  const componentOf = usePluginComponents(item.id);
+  const scopeText = useComponentScopeText();
   const remove = useAppMutation({
     fn: () => removeCatalogItem(item.id),
     invalidates: () => pluginScopeChangeKeys(orgId),
@@ -358,13 +432,34 @@ function ComponentsTab({
   const rows = latest === undefined ? [] : componentsOf(latest.manifest);
   const deps = latest?.manifest.dependencies ?? [];
   const columns: Column<ComponentRow>[] = [
-    { key: "name", header: t("componentColumns.name"), cell: (c) => c.name },
+    {
+      key: "name",
+      header: t("componentColumns.name"),
+      cell: (row) => {
+        const c = componentOf(row);
+        return c === undefined ? (
+          row.name
+        ) : (
+          <Link href={`${COMPONENT_ROUTES[c.kind]}/${encodeURIComponent(c.id)}`}>{row.name}</Link>
+        );
+      },
+    },
     { key: "kind", header: t("componentColumns.kind"), cell: (c) => t(`kind.${c.kind}`) },
     {
       key: "version",
       header: t("componentColumns.version"),
       tone: "muted",
       cell: (c) => versionLabel(c.version),
+    },
+    {
+      key: "scope",
+      header: t("componentColumns.scope"),
+      tone: "muted",
+      // The extension and a component following the plugin: 跟随插件; else its own scope
+      cell: (row) => {
+        const c = componentOf(row);
+        return c === undefined || c.scopeMode === "follow" ? tcs("follow") : scopeText(c);
+      },
     },
   ];
   return (

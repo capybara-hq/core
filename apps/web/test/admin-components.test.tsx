@@ -1,0 +1,729 @@
+// The admin console's platform components (plugin scope phase 2, Task 9; spec §9): the 技能 /
+// 连接器模板 / 智能体模板 lists and details (scope with its impact preview, 跟随插件, disable,
+// versions, a new version uploaded on its own), the plugin detail's scope column and the platform
+// plugin update preview (spec §7.1), and the plugin scope preview's replaced and conflicting items.
+import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import en from "../messages/en.json";
+import zh from "../messages/zh.json";
+import { bodyOf, type Call, json, stubApi } from "./support/api";
+import { resetNavigation } from "./support/navigation";
+import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
+import { ME } from "./support/render";
+import { expectNoFirstPaintFetch, type Routes } from "./support/server";
+
+vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
+vi.mock("next/navigation", () => ({
+  redirect: (to: string) => {
+    throw new Error(`REDIRECT ${to}`);
+  },
+  notFound: () => {
+    throw new Error("NOT_FOUND");
+  },
+}));
+
+const C = en.adminComponents;
+const U = en.catalog.update;
+const fill = (s: string, vars: Record<string, string | number>) =>
+  s.replace(/\{(\w+)\}/g, (_, k: string) => String(vars[k]));
+const template = (name: string) => document.querySelector(`[data-template="${name}"]`);
+const settle = () => act(() => new Promise((r) => setTimeout(r, 20)));
+const T = "2026-11-06T00:00:00.000Z";
+const ITEM = "11111111-1111-4111-8111-111111111111";
+
+const ORGS = {
+  orgs: [
+    { id: "o1", slug: "acme", name: "Acme", memberCount: 3, createdAt: T },
+    { id: "o2", slug: "beta", name: "Beta", memberCount: 4, createdAt: T },
+  ],
+};
+
+const comp = (over: Record<string, unknown> = {}) => ({
+  kind: "skill",
+  id: "s1",
+  name: "web-research",
+  description: "Research the web",
+  plugin: "jina",
+  itemId: ITEM,
+  owner: "platform",
+  scopeMode: "follow",
+  scope: "optional",
+  orgs: [],
+  disabled: false,
+  pluginStopped: false,
+  shownToOthers: true,
+  version: "2",
+  onIn: ["o1", "o2"],
+  ...over,
+});
+const SKILLS = [
+  comp(),
+  comp({
+    id: "s2",
+    name: "notes",
+    description: "Take notes",
+    plugin: null,
+    itemId: null,
+    scopeMode: "own",
+    scope: "named",
+    orgs: ["o1"],
+    version: "1",
+    onIn: ["o1"],
+  }),
+  comp({ id: "s3", name: "summarize", scopeMode: "own", scope: "all", onIn: ["o1", "o2"] }),
+];
+const TEMPLATES = [
+  comp({ kind: "connector_template", id: "c1", name: "gh", description: null, version: "1.2.0" }),
+];
+const AGENTS = [comp({ kind: "agent_template", id: "a1", name: "researcher", version: "1" })];
+
+const base: Routes = {
+  // the skill upload checks the session first
+  "GET /api/v1/me": () => json(200, ME),
+  "GET /api/v1/admin/orgs": () => json(200, ORGS),
+  "GET /api/v1/admin/components?kind=skill": () => json(200, { components: SKILLS }),
+  "GET /api/v1/admin/components?kind=connector_template": () =>
+    json(200, { components: TEMPLATES }),
+  "GET /api/v1/admin/components?kind=agent_template": () => json(200, { components: AGENTS }),
+  "GET /api/v1/admin/components/skill/s1/versions": () =>
+    json(200, {
+      versions: [
+        { version: "2", catalogVersion: null, updatedOnOwn: true, createdAt: T },
+        { version: "1", catalogVersion: "1.2.0", updatedOnOwn: false, createdAt: T },
+      ],
+    }),
+  "GET /api/v1/admin/components/skill/s2/versions": () =>
+    json(200, {
+      versions: [{ version: "1", catalogVersion: null, updatedOnOwn: false, createdAt: T }],
+    }),
+  "GET /api/v1/admin/components/skill/s3/versions": () =>
+    json(200, {
+      versions: [{ version: "1", catalogVersion: "1.2.0", updatedOnOwn: false, createdAt: T }],
+    }),
+  "GET /api/v1/admin/components/agent_template/a1/versions": () =>
+    json(200, {
+      versions: [{ version: "1", catalogVersion: "1.2.0", updatedOnOwn: false, createdAt: T }],
+    }),
+};
+
+beforeEach(() => {
+  resetNavigation("/");
+  window.history.replaceState(null, "", "/");
+});
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
+
+/** Stubs the browser with `base` plus `routes` and renders `path` as a first load. */
+async function open(path: string, routes: Routes = {}) {
+  const all = { ...base, ...routes };
+  const calls = stubApi(all);
+  await renderRouteWithCache(path, all);
+  return calls;
+}
+const put = (calls: Call[], suffix: string) =>
+  calls.filter((c) => c.method === "PUT" && c.url.endsWith(suffix));
+
+describe("admin component lists", () => {
+  it("/admin/skills: name, 来自, 归属, 范围, 版本 and the orgs using it; a first render makes no browser read", async () => {
+    const browser = expectNoFirstPaintFetch();
+    await renderRouteWithCache("/admin/skills", base);
+    const table = await screen.findByRole("table", { name: C.titles.skill });
+    const row = (name: string) => within(table).getByText(name).closest("tr") as HTMLElement;
+    // headers
+    for (const h of Object.values(C.columns)) expect(within(table).getByText(h)).toBeTruthy();
+    // from a plugin: links to it; follows the plugin's scope
+    const research = row("web-research");
+    expect(within(research).getByRole("link", { name: "jina" }).getAttribute("href")).toBe(
+      `/admin/plugins/${ITEM}`,
+    );
+    expect(within(research).getByRole("link", { name: "web-research" }).getAttribute("href")).toBe(
+      "/admin/skills/s1",
+    );
+    expect(within(research).getByText(C.owner.platform)).toBeTruthy();
+    expect(
+      within(research).getByText(fill(C.scopeFollow, { scope: en.catalog.scope.optional })),
+    ).toBeTruthy();
+    expect(within(research).getByText("v2")).toBeTruthy();
+    expect(within(research).getByText("2 orgs using it")).toBeTruthy();
+    // no plugin, its own named scope
+    const notes = row("notes");
+    expect(within(notes).getByText(C.from.none)).toBeTruthy();
+    expect(
+      within(notes).getByText(
+        fill(C.scopeOwn, { scope: fill(en.catalog.admin.meta.named, { orgs: "Acme" }) }),
+      ),
+    ).toBeTruthy();
+    await settle();
+    expect(browser).toEqual([]);
+  });
+
+  it.each([
+    ["/admin/connector-templates", "connector_template", "gh"],
+    ["/admin/agent-templates", "agent_template", "researcher"],
+  ] as const)("%s lists the deployment's %s components", async (path, kind, name) => {
+    await open(path);
+    const table = await screen.findByRole("table", { name: C.titles[kind] });
+    expect(within(table).getByText(name)).toBeTruthy();
+    expect(within(table).getByText(C.owner.platform)).toBeTruthy();
+  });
+
+  it("zh copy: 技能 / 来自 / 归属 / 平台 / 跟随插件", async () => {
+    stubApi(base);
+    await renderRouteWithCache("/admin/skills", base, { locale: "zh" });
+    const table = await screen.findByRole("table", { name: "技能" });
+    expect(within(table).getByText("来自")).toBeTruthy();
+    expect(within(table).getByText("归属")).toBeTruthy();
+    expect(within(table).getAllByText("平台").length).toBeGreaterThan(0);
+    expect(within(table).getByText("组织自选 · 跟随插件")).toBeTruthy();
+    expect(zh.adminComponents.titles.agent_template).toBe("智能体模板");
+  });
+
+  it("an empty cache shows the template's loading state, then the data", async () => {
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    await renderRouteEmptyCache("/admin/skills", {
+      ...base,
+      "GET /api/v1/admin/components?kind=skill": async () => {
+        await gate;
+        return json(200, { components: SKILLS });
+      },
+    });
+    await vi.waitFor(() => {
+      if (template("ListPage") === null) throw new Error("no page");
+    });
+    expect(document.querySelector("[aria-busy='true']")).not.toBeNull();
+    expect(screen.queryByText("web-research")).toBeNull();
+    await act(async () => release());
+    expect(await screen.findByText("web-research")).toBeTruthy();
+  });
+});
+
+describe("admin component detail", () => {
+  it("shows the facts and the versions, marking one updated on its own", async () => {
+    await open("/admin/skills/s1");
+    expect(await screen.findByRole("heading", { name: "web-research" })).toBeTruthy();
+    expect(screen.getByRole("link", { name: "jina" }).getAttribute("href")).toBe(
+      `/admin/plugins/${ITEM}`,
+    );
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("tab", { name: new RegExp(C.detail.tabs.versions) }));
+    const table = screen.getByRole("table", { name: C.detail.tabs.versions });
+    const v2 = within(table).getByText("v2").closest("tr") as HTMLElement;
+    expect(within(v2).getByText(C.detail.origin.own)).toBeTruthy();
+    const v1 = within(table).getByText("v1").closest("tr") as HTMLElement;
+    expect(within(v1).getByText(fill(C.detail.origin.plugin, { version: "v1.2.0" }))).toBeTruthy();
+  });
+
+  it("设置范围: previews the agents losing it and the connectors kept, then confirms with the scopeHash", async () => {
+    const calls = await open("/admin/skills/s1", {
+      "POST /api/v1/admin/components/skill/s1/scope/preview": () =>
+        json(200, {
+          affected: [
+            {
+              orgId: "o1",
+              orgName: "Acme",
+              agents: [{ id: "ag1", name: "Researcher" }],
+              connectorsKept: 2,
+            },
+          ],
+          conflicts: [],
+          scopeHash: "h1",
+        }),
+      "PUT /api/v1/admin/components/skill/s1/scope": () =>
+        json(200, comp({ scopeMode: "own", scope: "named", orgs: ["o2"] })),
+    });
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: C.detail.actions.scope }));
+    const dialog = await screen.findByRole("dialog");
+    // a component of a plugin starts on 跟随插件
+    const follow = within(dialog).getByRole("radio", { name: new RegExp(C.scopeDialog.follow) });
+    expect((follow as HTMLInputElement).checked).toBe(true);
+    await user.click(
+      within(dialog).getByRole("radio", { name: new RegExp(en.catalog.scope.named) }),
+    );
+    await user.click(await within(dialog).findByRole("checkbox", { name: "Beta" }));
+    await user.click(
+      within(dialog).getByRole("button", { name: en.catalog.admin.scopeDialog.next }),
+    );
+    expect(await within(dialog).findByText("Acme")).toBeTruthy();
+    expect(within(dialog).getByText(/Researcher/)).toBeTruthy();
+    expect(within(dialog).getByText(/The 2 connectors it created stay/)).toBeTruthy();
+    expect(bodyOf(calls.find((c) => c.url.endsWith("/scope/preview")))).toEqual({
+      scope: "named",
+      orgs: ["o2"],
+    });
+    await user.click(
+      within(dialog).getByRole("button", { name: en.catalog.admin.scopeDialog.confirm }),
+    );
+    await waitFor(() => expect(put(calls, "/scope")).toHaveLength(1));
+    expect(bodyOf(put(calls, "/scope")[0])).toEqual({
+      scope: "named",
+      orgs: ["o2"],
+      scopeHash: "h1",
+    });
+    // the list is read again
+    await waitFor(() =>
+      expect(
+        calls.filter((c) => c.method === "GET" && c.url.endsWith("/components?kind=skill")).length,
+      ).toBeGreaterThan(0),
+    );
+  });
+
+  it("an own-scoped component goes back to 跟随插件 with { follow: true }; a stale hash previews again", async () => {
+    let previews = 0;
+    let puts = 0;
+    const calls = await open("/admin/skills/s3", {
+      "POST /api/v1/admin/components/skill/s3/scope/preview": () => {
+        previews += 1;
+        return json(200, { affected: [], conflicts: [], scopeHash: `h${previews}` });
+      },
+      "PUT /api/v1/admin/components/skill/s3/scope": () => {
+        puts += 1;
+        return puts === 1
+          ? json(409, { error: { code: "plugin.scope_stale", message: "x" } })
+          : json(200, comp({ id: "s3", name: "summarize" }));
+      },
+    });
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: C.detail.actions.scope }));
+    const dialog = await screen.findByRole("dialog");
+    const all = within(dialog).getByRole("radio", { name: new RegExp(en.catalog.scope.all) });
+    expect((all as HTMLInputElement).checked).toBe(true);
+    await user.click(within(dialog).getByRole("radio", { name: new RegExp(C.scopeDialog.follow) }));
+    await user.click(
+      within(dialog).getByRole("button", { name: en.catalog.admin.scopeDialog.next }),
+    );
+    expect(await within(dialog).findByText(en.catalog.admin.impact.none)).toBeTruthy();
+    expect(bodyOf(calls.find((c) => c.url.endsWith("/scope/preview")))).toEqual({ follow: true });
+    const confirm = () =>
+      user.click(
+        within(dialog).getByRole("button", { name: en.catalog.admin.scopeDialog.confirm }),
+      );
+    await confirm();
+    expect(await within(dialog).findByText(en.catalog.admin.scopeDialog.stale)).toBeTruthy();
+    await confirm();
+    await waitFor(() => expect(put(calls, "/scope")).toHaveLength(2));
+    expect(bodyOf(put(calls, "/scope")[1])).toEqual({ follow: true, scopeHash: "h2" });
+  });
+
+  it("a component without a plugin has no 跟随插件; name clashes block the confirm", async () => {
+    await open("/admin/skills/s2", {
+      "POST /api/v1/admin/components/skill/s2/scope/preview": () =>
+        json(200, {
+          affected: [],
+          conflicts: [{ orgId: "o2", orgName: "Beta", name: "notes", skills: ["k1"], plugins: [] }],
+          scopeHash: "h1",
+        }),
+    });
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: C.detail.actions.scope }));
+    const dialog = await screen.findByRole("dialog");
+    expect(
+      within(dialog).queryByRole("radio", { name: new RegExp(C.scopeDialog.follow) }),
+    ).toBeNull();
+    await user.click(within(dialog).getByRole("radio", { name: new RegExp(en.catalog.scope.all) }));
+    await user.click(
+      within(dialog).getByRole("button", { name: en.catalog.admin.scopeDialog.next }),
+    );
+    expect(await within(dialog).findByText(en.catalog.admin.impact.conflicts)).toBeTruthy();
+    expect(
+      within(dialog).getByText(
+        fill(en.catalog.admin.impact.conflictLine, { org: "Beta", name: "notes" }),
+      ),
+    ).toBeTruthy();
+    const confirm = within(dialog).getByRole("button", {
+      name: en.catalog.admin.scopeDialog.confirm,
+    }) as HTMLButtonElement;
+    expect(confirm.disabled).toBe(true);
+  });
+
+  it("停用 previews the impact and sends its hash; 启用 sends no hash", async () => {
+    const calls = await open("/admin/skills/s1", {
+      "POST /api/v1/admin/components/skill/s1/scope/preview": () =>
+        json(200, {
+          affected: [{ orgId: "o1", orgName: "Acme", agents: [], connectorsKept: 0 }],
+          conflicts: [],
+          scopeHash: "d1",
+        }),
+      "PUT /api/v1/admin/components/skill/s1/disabled": () => json(200, comp({ disabled: true })),
+    });
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: C.detail.actions.disable }));
+    const dialog = await screen.findByRole("dialog");
+    expect(await within(dialog).findByText("Acme")).toBeTruthy();
+    expect(bodyOf(calls.find((c) => c.url.endsWith("/scope/preview")))).toEqual({ disabled: true });
+    await user.click(within(dialog).getByRole("button", { name: C.disableDialog.confirm }));
+    await waitFor(() => expect(put(calls, "/disabled")).toHaveLength(1));
+    expect(bodyOf(put(calls, "/disabled")[0])).toEqual({ disabled: true, scopeHash: "d1" });
+  });
+
+  it("上传新版本: a skill's zip is sent as the raw body", async () => {
+    const calls = await open("/admin/skills/s1", {
+      "POST /api/v1/admin/components/skill/s1/versions": () =>
+        json(201, { kind: "skill", id: "s1", name: "web-research", version: 3 }),
+    });
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: C.detail.actions.upload }));
+    const dialog = await screen.findByRole("dialog");
+    const input = dialog.querySelector('input[type="file"]') as HTMLInputElement;
+    const file = new File([new Uint8Array([80, 75, 3, 4])], "web-research.zip");
+    await user.upload(input, file);
+    expect(within(dialog).getByText("web-research.zip")).toBeTruthy();
+    await user.click(within(dialog).getByRole("button", { name: C.upload.confirm }));
+    await waitFor(() =>
+      expect(calls.filter((c) => c.method === "POST" && c.url.endsWith("/versions"))).toHaveLength(
+        1,
+      ),
+    );
+    const post = calls.find((c) => c.method === "POST" && c.url.endsWith("/versions"));
+    expect(post?.headers.get("content-type")).toBe("application/octet-stream");
+    expect(post?.body).toBe(file);
+    expect(
+      await screen.findByText(fill(C.upload.done, { name: "web-research", version: "v3" })),
+    ).toBeTruthy();
+  });
+
+  it("上传新版本: an agent template's markdown is sent as { content }", async () => {
+    const calls = await open("/admin/agent-templates/a1", {
+      "POST /api/v1/admin/components/agent_template/a1/versions": () =>
+        json(201, { kind: "agent_template", id: "a1", name: "researcher", version: 2 }),
+    });
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: C.detail.actions.upload }));
+    const dialog = await screen.findByRole("dialog");
+    const input = dialog.querySelector('input[type="file"]') as HTMLInputElement;
+    const md = "---\nname: researcher\ndescription: R.\n---\nResearch.\n";
+    await user.upload(input, new File([md], "researcher.md", { type: "text/markdown" }));
+    await user.click(within(dialog).getByRole("button", { name: C.upload.confirm }));
+    await waitFor(() =>
+      expect(calls.filter((c) => c.method === "POST" && c.url.endsWith("/versions"))).toHaveLength(
+        1,
+      ),
+    );
+    expect(bodyOf(calls.find((c) => c.method === "POST" && c.url.endsWith("/versions")))).toEqual({
+      content: md,
+    });
+  });
+
+  it("a connector template has no 上传新版本", async () => {
+    await open("/admin/connector-templates/c1", {
+      "GET /api/v1/admin/components/connector_template/c1/versions": () =>
+        json(200, {
+          versions: [
+            { version: "1.2.0", catalogVersion: "1.2.0", updatedOnOwn: false, createdAt: T },
+          ],
+        }),
+    });
+    expect(await screen.findByRole("button", { name: C.detail.actions.scope })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: C.detail.actions.upload })).toBeNull();
+  });
+});
+
+describe("admin plugin detail: components and the platform update", () => {
+  const item = {
+    id: ITEM,
+    name: "jina",
+    publisher: "Jina AI",
+    displayName: null,
+    description: "Web tools",
+    descriptionZh: null,
+    policy: "allow",
+    scope: "optional",
+    scopeOrgs: [],
+    builtin: false,
+    disabled: false,
+    shownToOthers: true,
+    enabledOrgs: 2,
+    pending: false,
+    permissionsHash: null,
+    latestVersion: "1.3.0",
+    versions: ["1.3.0", "1.2.0"],
+    installs: 2,
+    source: "marketplace",
+    marketplaceId: "official",
+    latestMarketplaceVersion: "1.3.0",
+    newerInMarketplace: false,
+    contentChanged: false,
+    componentCounts: { extension: 1, skills: 2, connectorTemplates: 1, agentTemplates: 1 },
+    sourceFormat: "capybara",
+    updatedAt: T,
+    packageName: "@jina-ai/capybara-plugin",
+    deletedAt: null,
+    platformVersion: "1.2.0",
+  };
+  const manifest = (version: string) => ({
+    name: "jina",
+    version,
+    publisher: "Jina AI",
+    description: "",
+    extension: {
+      entry: "dist/index.js",
+      manifest: {
+        name: "jina-web",
+        version,
+        sdk: "^0.1.0",
+        provides: [],
+        requires: [],
+        optional: [],
+        permissions: {},
+      },
+    },
+    skills: [{ path: "./skills/web-research" }, { path: "./skills/summarize" }],
+    connectorTemplates: [{ path: "./connectors/gh.json" }],
+    agents: [{ path: "./agents/researcher.md" }],
+  });
+  const version = (v: string) => ({
+    version: v,
+    source: "marketplace",
+    sourceRef: "official",
+    integrity: null,
+    contentDigest: null,
+    sourceDetail: null,
+    manifest: manifest(v),
+    size: 1024,
+    extensionSha256: null,
+    importedAt: T,
+    sourceFormat: "capybara",
+    translation: null,
+    licenseText: null,
+    licenseTruncated: false,
+  });
+  const PREVIEW = {
+    itemId: ITEM,
+    name: "jina",
+    from: "1.2.0",
+    to: "1.3.0",
+    components: [
+      {
+        kind: "skill",
+        id: "s1",
+        name: "web-research",
+        change: "upgrade",
+        from: "1.2.0",
+        to: "1.3.0",
+        updatedOnOwn: true,
+        ownScope: false,
+        pinnedOrgs: ["o1"],
+      },
+      {
+        kind: "skill",
+        id: "s3",
+        name: "summarize",
+        change: "upgrade",
+        from: "1.2.0",
+        to: "1.3.0",
+        updatedOnOwn: false,
+        ownScope: true,
+        pinnedOrgs: [],
+      },
+      {
+        kind: "agent_template",
+        id: "a9",
+        name: "old-helper",
+        change: "removed",
+        from: "1.2.0",
+        to: null,
+        updatedOnOwn: false,
+        ownScope: false,
+        pinnedOrgs: [],
+        kept: [{ orgId: "o1", agents: [{ id: "ag1", name: "Helper" }] }],
+      },
+    ],
+    extension: { from: "1.2.0", to: "1.3.0", orgs: ["o1", "o2"], needsApproval: true },
+    connectorOrgs: [
+      {
+        orgId: "o2",
+        connectors: [{ id: "k1", name: "GitHub", templateId: "gh", credentialsReset: true }],
+        needsConfig: ["linear"],
+      },
+    ],
+    diffHash: "d".repeat(64),
+  };
+  const routes = (over: Routes = {}): Routes => ({
+    "GET /api/v1/admin/catalog/items": () => json(200, { items: [item], nextOffset: null }),
+    [`GET /api/v1/admin/catalog/items/${ITEM}`]: () =>
+      json(200, { item, versions: [version("1.3.0"), version("1.2.0")], hasIcon: false }),
+    "GET /api/v1/admin/marketplaces": () => json(200, { offline: false, items: [] }),
+    ...over,
+  });
+
+  it("the components table has a scope column: 跟随插件 or the component's own, linking each component", async () => {
+    await open(`/admin/plugins/${ITEM}`, routes());
+    const table = await screen.findByRole("table", {
+      name: en.catalog.admin.detail.tabs.components,
+    });
+    const row = (name: string) => within(table).getByText(name).closest("tr") as HTMLElement;
+    expect(within(table).getByText(en.catalog.admin.detail.componentColumns.scope)).toBeTruthy();
+    expect(within(row("jina-web")).getByText(C.follow)).toBeTruthy();
+    expect(within(row("web-research")).getByText(C.follow)).toBeTruthy();
+    expect(
+      within(row("summarize")).getByText(fill(C.scopeOwn, { scope: en.catalog.scope.all })),
+    ).toBeTruthy();
+    expect(
+      within(row("summarize")).getByRole("link", { name: "summarize" }).getAttribute("href"),
+    ).toBe("/admin/skills/s3");
+    expect(within(row("gh")).getByRole("link", { name: "gh" }).getAttribute("href")).toBe(
+      "/admin/connector-templates/c1",
+    );
+    expect(
+      within(row("researcher")).getByRole("link", { name: "researcher" }).getAttribute("href"),
+    ).toBe("/admin/agent-templates/a1");
+  });
+
+  it("更新到 x previews each component with its marks, the extension and the orgs' connectors, then confirms with diffHash; a stale hash previews again", async () => {
+    let previews = 0;
+    let puts = 0;
+    const calls = await open(
+      `/admin/plugins/${ITEM}`,
+      routes({
+        [`POST /api/v1/admin/catalog/items/${ITEM}/update/preview`]: () => {
+          previews += 1;
+          return json(200, { ...PREVIEW, diffHash: String(previews).repeat(64) });
+        },
+        [`PUT /api/v1/admin/catalog/items/${ITEM}/update`]: () => {
+          puts += 1;
+          return puts === 1
+            ? json(409, { error: { code: "plugin.upgrade_stale", message: "x" } })
+            : json(200, {
+                itemId: ITEM,
+                version: "1.3.0",
+                components: PREVIEW.components,
+                extension: PREVIEW.extension,
+                connectorOrgs: PREVIEW.connectorOrgs,
+              });
+        },
+      }),
+    );
+    const user = userEvent.setup();
+    await user.click(
+      await screen.findByRole("button", {
+        name: fill(en.catalog.admin.detail.actions.update, { version: "v1.3.0" }),
+      }),
+    );
+    const dialog = await screen.findByRole("dialog");
+    // the plugin's move, then each component's
+    expect(
+      (await within(dialog).findAllByText(fill(U.versions, { from: "v1.2.0", to: "v1.3.0" })))
+        .length,
+    ).toBeGreaterThan(1);
+    expect(bodyOf(calls.find((c) => c.url.endsWith("/update/preview")))).toEqual({
+      version: "1.3.0",
+    });
+    const table = within(dialog).getByRole("table", { name: U.components });
+    const row = (name: string) => within(table).getByText(name).closest("tr") as HTMLElement;
+    expect(within(row("web-research")).getByText(U.marks.updatedOnOwn)).toBeTruthy();
+    expect(within(row("web-research")).getByText(U.change.upgrade)).toBeTruthy();
+    expect(within(row("summarize")).getByText(U.marks.ownScope)).toBeTruthy();
+    expect(within(row("old-helper")).getByText(U.marks.kept)).toBeTruthy();
+    expect(within(row("old-helper")).getByText(U.change.removed)).toBeTruthy();
+    expect(
+      within(dialog).getByText(fill(U.pinned, { name: "web-research", orgs: "Acme" })),
+    ).toBeTruthy();
+    expect(
+      within(dialog).getByText(fill(U.keptLine, { name: "old-helper", agents: "Helper" })),
+    ).toBeTruthy();
+    expect(
+      within(dialog).getByText(
+        fill(U.extension, { from: "v1.2.0", to: "v1.3.0", orgs: "Acme, Beta" }),
+      ),
+    ).toBeTruthy();
+    expect(within(dialog).getByText(U.needsApproval)).toBeTruthy();
+    expect(
+      within(dialog).getByText(fill(U.credentialsReset, { org: "Beta", names: "GitHub" })),
+    ).toBeTruthy();
+    expect(
+      within(dialog).getByText(fill(U.needsConfig, { org: "Beta", ids: "linear" })),
+    ).toBeTruthy();
+    await user.click(within(dialog).getByRole("button", { name: U.confirm }));
+    expect(await within(dialog).findByText(U.stale)).toBeTruthy();
+    await user.click(within(dialog).getByRole("button", { name: U.confirm }));
+    await waitFor(() => expect(put(calls, "/update")).toHaveLength(2));
+    expect(bodyOf(put(calls, "/update")[0])).toEqual({
+      version: "1.3.0",
+      diffHash: "1".repeat(64),
+    });
+    expect(bodyOf(put(calls, "/update")[1])).toEqual({
+      version: "1.3.0",
+      diffHash: "2".repeat(64),
+    });
+    expect(await screen.findByText(fill(U.done, { name: "jina", version: "v1.3.0" }))).toBeTruthy();
+  });
+
+  it("the platform on the newest version offers no update; a newer marketplace version is imported first", async () => {
+    await open(
+      `/admin/plugins/${ITEM}`,
+      routes({
+        [`GET /api/v1/admin/catalog/items/${ITEM}`]: () =>
+          json(200, {
+            item: {
+              ...item,
+              platformVersion: "1.3.0",
+              newerInMarketplace: true,
+              latestMarketplaceVersion: "1.4.0",
+            },
+            versions: [version("1.3.0"), version("1.2.0")],
+            hasIcon: false,
+          }),
+      }),
+    );
+    expect(
+      await screen.findByRole("button", {
+        name: fill(en.catalog.admin.detail.actions.import, { version: "v1.4.0" }),
+      }),
+    ).toBeTruthy();
+    expect(
+      screen.queryByRole("button", {
+        name: fill(en.catalog.admin.detail.actions.update, { version: "v1.3.0" }),
+      }),
+    ).toBeNull();
+  });
+
+  it("设置范围 on a plugin lists the components whose own scope it replaces and refuses name clashes", async () => {
+    await open(
+      `/admin/plugins/${ITEM}`,
+      routes({
+        [`POST /api/v1/admin/catalog/items/${ITEM}/scope/preview`]: () =>
+          json(200, {
+            affected: [],
+            needsConfig: [],
+            replaced: [{ kind: "skill", id: "s3", name: "summarize" }],
+            conflicts: [
+              { orgId: "o2", orgName: "Beta", name: "web-research", skills: ["k"], plugins: [] },
+            ],
+            scopeHash: "h1",
+          }),
+      }),
+    );
+    const user = userEvent.setup();
+    await user.click(
+      await screen.findByRole("button", { name: en.catalog.admin.detail.actions.scope }),
+    );
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("radio", { name: new RegExp(en.catalog.scope.all) }));
+    await user.click(
+      within(dialog).getByRole("button", { name: en.catalog.admin.scopeDialog.next }),
+    );
+    expect(
+      await within(dialog).findByText(
+        fill(en.catalog.admin.impact.replaced, { names: "summarize" }),
+      ),
+    ).toBeTruthy();
+    expect(
+      within(dialog).getByText(
+        fill(en.catalog.admin.impact.conflictLine, { org: "Beta", name: "web-research" }),
+      ),
+    ).toBeTruthy();
+    expect(
+      (
+        within(dialog).getByRole("button", {
+          name: en.catalog.admin.scopeDialog.confirm,
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true);
+  });
+});

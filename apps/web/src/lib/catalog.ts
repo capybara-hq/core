@@ -312,7 +312,12 @@ export interface CatalogItemVersion {
 
 export interface CatalogItemDetail {
   /** `packageName` is null for a git plugin without package.json. */
-  item: CatalogItem & { packageName: string | null; deletedAt: string | null };
+  item: CatalogItem & {
+    packageName: string | null;
+    deletedAt: string | null;
+    /** The version the platform's components come from (an import does not move it). */
+    platformVersion?: string;
+  };
   versions: CatalogItemVersion[];
   /** The latest version has an icon (shown as `<img>` through the kernel route). */
   hasIcon: boolean;
@@ -745,7 +750,21 @@ export interface ScopePreview {
     connectorsKept: number;
   }[];
   needsConfig: string[];
+  /** A scope change: the plugin's components with their own scope, which then follow it again. */
+  replaced?: { kind: string; id: string; name: string }[];
+  /** Orgs that would newly be offered a skill whose name their own skills use: refused. */
+  conflicts?: ScopeConflict[];
   scopeHash: string;
+}
+
+/** An org whose own skills already use the name of a skill a change would offer it (rule 10). */
+export interface ScopeConflict {
+  orgId: string;
+  orgName: string;
+  name: string;
+  /** The clashing skill ids and the plugins they come from. */
+  skills: string[];
+  plugins: string[];
 }
 
 /** `{ scope, orgs? }` (a scope change) or `{ disabled: true }` (a disable). */
@@ -779,47 +798,59 @@ export interface PluginInstall {
   deploymentPending: boolean;
 }
 
-/** How a component differs between the installed and the target version. */
-export type UpgradeChange = "added" | "changed" | "removed" | "unchanged";
+/** How a platform component differs between the platform's and the target version (spec §7.1). */
+export type UpdateChange = "added" | "removed" | "upgrade" | "downgrade" | "same";
 
-/**
- * One component of an upgrade preview (`ref`: extension / dependency / skill / agent template name,
- * connector template id).
- */
-export interface UpgradeComponent {
-  kind: ComponentKind;
-  ref: string;
-  change: UpgradeChange;
-  detail?: string;
+/** One component of a platform update preview (kernel `PlatformUpdateComponent`). */
+export interface PlatformUpdateComponent {
+  kind: "skill" | "agent_template" | "connector_template";
+  /** The platform component (null: added by the target). */
+  id: string | null;
+  /** Skill or agent template name; a connector template's id. */
+  name: string;
+  change: UpdateChange;
+  from: string | null;
+  to: string | null;
+  /** Updated on its own (spec §7.2): the confirm moves it to the plugin's version. */
+  updatedOnOwn: boolean;
+  /** It has its own scope: the update keeps it. */
+  ownScope: boolean;
+  /** Orgs whose copy is pinned to its own version: the confirm clears the pins. */
+  pinnedOrgs: string[];
+  /** A removed component agents still use: it stays, with the orgs and agents using it. */
+  kept?: { orgId: string; agents: { id: string; name: string }[] }[];
 }
 
-/** `POST …/plugin-installs/:installId/upgrade/preview` (kernel `UpgradePreview`). */
-export interface UpgradePreview {
-  from: string;
+/** The org connectors a platform update touches (kernel `PlatformUpdateConnectorOrg`). */
+export interface PlatformUpdateConnectorOrg {
+  orgId: string;
+  connectors: { id: string; name: string; templateId: string; credentialsReset: boolean }[];
+  /** Added templates whose connectors need the org's input (the update creates none). */
+  needsConfig: string[];
+}
+
+/** `POST /api/v1/admin/catalog/items/:id/update/preview` (kernel `PlatformUpdatePreview`). */
+export interface PlatformUpdatePreview {
+  itemId: string;
+  name: string;
+  from: string | null;
   to: string;
-  /** Sent back with the upgrade; it changes when the target, the components or the inputs change. */
+  components: PlatformUpdateComponent[];
+  /** The deployment's extension moves (one version for every org using it); null: unchanged. */
+  extension: { from: string | null; to: string; orgs: string[]; needsApproval: boolean } | null;
+  connectorOrgs: PlatformUpdateConnectorOrg[];
+  /** Confirm with it; 409 `plugin.upgrade_stale` once what the update does changed. */
   diffHash: string;
-  components: UpgradeComponent[];
-  inputs: {
-    /** Added templates: their connectors are created with the org's input. */
-    connectors: string[];
-    /** Changed templates whose auth method or required credentials changed: re-entry needed. */
-    credentialsChanged: string[];
-    /** The extension is added and not yet enabled in the org: its org config may be given. */
-    extensionConfig: boolean;
-  };
-  /** The target version's templates named in the inputs (the input form is built from them). */
-  templates: OrgCatalogTemplate[];
 }
 
-/** The upgrade body: the target, the preview's diffHash and the inputs it listed. */
-export interface PluginUpgradeBody extends Omit<OrgInstallBody, "version"> {
+/** `PUT /api/v1/admin/catalog/items/:id/update` (kernel `PlatformUpdateResult`). */
+export interface PlatformUpdateResult {
+  itemId: string;
   version: string;
-  diffHash: string;
+  components: PlatformUpdateComponent[];
+  extension: PlatformUpdatePreview["extension"];
+  connectorOrgs: PlatformUpdateConnectorOrg[];
 }
-
-/** Upgraded (200). */
-export type PluginUpgradeResult = { install: PluginInstall };
 
 export const KEPT_REASONS = [
   "pre_existing",
@@ -877,6 +908,14 @@ export const setDisabled = (id: string, body: { disabled: boolean; scopeHash?: s
 /** Whether orgs outside a `named` item's list see it as requestable. */
 export const setShownToOthers = (id: string, shownToOthers: boolean) =>
   apiFetch<CatalogItem>(`${admin}/items/${enc(id)}/shown`, put({ shownToOthers }));
+
+/** What updating the platform plugin to `version` would do (nothing written). */
+export const previewPlatformUpdate = (id: string, version: string) =>
+  apiFetch<PlatformUpdatePreview>(`${admin}/items/${enc(id)}/update/preview`, post({ version }));
+
+/** Updates the platform plugin with the preview's `diffHash` (409 `plugin.upgrade_stale` once it changed). */
+export const updatePlatformPlugin = (id: string, body: { version: string; diffHash: string }) =>
+  apiFetch<PlatformUpdateResult>(`${admin}/items/${enc(id)}/update`, put(body));
 
 /** Confirms the item's extension permissions (`permissionsHash` from the item view). */
 export const confirmPending = (id: string, body: { permissionsHash: string }) =>
@@ -1090,20 +1129,6 @@ export const uninstallPlugin = (orgId: string, installId: string) =>
   apiFetch<UninstallReport>(`${org(orgId)}/plugin-installs/${enc(installId)}`, {
     method: "DELETE",
   });
-
-/** Previews upgrading an installed plugin to `version` (the components and the inputs needed). */
-export const previewPluginUpgrade = (orgId: string, installId: string, version: string) =>
-  apiFetch<UpgradePreview>(
-    `${org(orgId)}/plugin-installs/${enc(installId)}/upgrade/preview`,
-    post({ version }),
-  );
-
-/** Upgrades an installed plugin with the preview's `diffHash` (409 `plugin.upgrade_stale` once it changed). */
-export const upgradePlugin = (orgId: string, installId: string, body: PluginUpgradeBody) =>
-  apiFetch<PluginUpgradeResult>(
-    `${org(orgId)}/plugin-installs/${enc(installId)}/upgrade`,
-    post(body),
-  );
 
 export const decideOrgRequest = (orgId: string, id: string, decision: RequestDecision) =>
   apiFetch<{ request: CatalogRequest }>(

@@ -32,6 +32,7 @@ import { agentConnectorQueries, agentFormQueries, agentQuery, agentsQuery } from
 import { authSourcesQuery, invitationQuery, pendingBindingQuery } from "./auth";
 import { orgCatalogItemQuery, orgCatalogQuery, orgMarketplaceEntriesQuery } from "./catalog";
 import { channelQuery, channelSchemaQuery, channelsQuery, orgExtensionsQuery } from "./channels";
+import { adminComponentsQuery, componentVersionsQuery } from "./components";
 import {
   attachmentLimitsQuery,
   connectorKindsQuery,
@@ -199,6 +200,56 @@ export const ROUTES: readonly RouteEntry[] = [
       superAdmin(me) ? [q(adminOrgsQuery()), q(deploymentSettingsQuery())] : [],
   },
   {
+    pattern: "/admin/skills",
+    // The platform skills and the orgs that name their named scopes (a section).
+    queries: ({ me }) =>
+      superAdmin(me) ? [q(adminComponentsQuery("skill")), q(adminOrgsQuery())] : [],
+  },
+  {
+    pattern: "/admin/skills/[id]",
+    // The skills (the component is one of them), its versions and the orgs (its scope, the dialog).
+    queries: ({ me, params }) =>
+      superAdmin(me) && params.id !== undefined
+        ? [
+            q(adminComponentsQuery("skill")),
+            q(componentVersionsQuery("skill", params.id)),
+            q(adminOrgsQuery()),
+          ]
+        : [],
+  },
+  {
+    pattern: "/admin/connector-templates",
+    queries: ({ me }) =>
+      superAdmin(me) ? [q(adminComponentsQuery("connector_template")), q(adminOrgsQuery())] : [],
+  },
+  {
+    pattern: "/admin/connector-templates/[id]",
+    queries: ({ me, params }) =>
+      superAdmin(me) && params.id !== undefined
+        ? [
+            q(adminComponentsQuery("connector_template")),
+            q(componentVersionsQuery("connector_template", params.id)),
+            q(adminOrgsQuery()),
+          ]
+        : [],
+  },
+  {
+    pattern: "/admin/agent-templates",
+    queries: ({ me }) =>
+      superAdmin(me) ? [q(adminComponentsQuery("agent_template")), q(adminOrgsQuery())] : [],
+  },
+  {
+    pattern: "/admin/agent-templates/[id]",
+    queries: ({ me, params }) =>
+      superAdmin(me) && params.id !== undefined
+        ? [
+            q(adminComponentsQuery("agent_template")),
+            q(componentVersionsQuery("agent_template", params.id)),
+            q(adminOrgsQuery()),
+          ]
+        : [],
+  },
+  {
     pattern: "/admin/plugins",
     // The items, the head's counts (pending plugins, requests), and the marketplaces and orgs
     // that name the rows' sources and named scopes (sections).
@@ -209,8 +260,9 @@ export const ROUTES: readonly RouteEntry[] = [
   },
   {
     pattern: "/admin/plugins/[itemId]",
-    // The item, the marketplaces (its source), the catalog (its dependencies, the head's count)
-    // and the orgs (its named scope, the scope dialog).
+    // The item, the marketplaces (its source), the catalog (its dependencies, the head's count),
+    // the orgs (its named scope, the scope dialog) and the platform components (the components
+    // table's scope column and links).
     queries: ({ me, params }) =>
       superAdmin(me) && params.itemId !== undefined
         ? [
@@ -218,6 +270,9 @@ export const ROUTES: readonly RouteEntry[] = [
             q(marketplacesQuery()),
             q(catalogItemsQuery()),
             q(adminOrgsQuery()),
+            q(adminComponentsQuery("skill")),
+            q(adminComponentsQuery("connector_template")),
+            q(adminComponentsQuery("agent_template")),
           ]
         : [],
   },
