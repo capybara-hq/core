@@ -65,8 +65,8 @@ function AgentPageLoading({ agentId, section }: { agentId: string; section: stri
   const ta = useTranslations("agents");
   const tc = useTranslations("common");
   const { me } = useSession();
-  // The head's actions the session already decides: the ⋯ menu with run history and change owner
-  // for org admins (a member owner's run history comes with the agent), and start chat (a static
+  // The head's actions the session already decides: the ⋯ menu with run history, change owner and
+  // save as template for org admins (a member owner's run history comes with the agent), and start chat (a static
   // link). Change owner does nothing until the agent is here.
   const admin = canUpdateOrg(me);
   const chatHref = `/chat?agent=${encodeURIComponent(agentId)}`;
@@ -91,8 +91,9 @@ function AgentPageLoading({ agentId, section }: { agentId: string; section: stri
                       label: ta("runHistory"),
                       href: `/trajectories?agentId=${encodeURIComponent(agentId)}`,
                     },
-                    // does nothing until the agent is here
+                    // they do nothing until the agent is here
                     { label: t("reassign"), onSelect: () => {} },
+                    { label: ta("saveAs.action"), onSelect: () => {} },
                   ],
                 },
               ]

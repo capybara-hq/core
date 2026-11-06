@@ -7,6 +7,7 @@ import { useRouter } from "../../i18n/navigation";
 import { type Agent, avatarValue } from "../../lib/agents";
 import { canUpdateOrg } from "../../lib/org-settings";
 import { ReassignOwnerDialog } from "../ReassignOwnerDialog";
+import { SaveAsTemplateDialog } from "../SaveAsTemplateDialog";
 import { navLevelOf } from "../shell/nav";
 import { usePagePath } from "../shell/path";
 import { useSession } from "../shell/session";
@@ -71,6 +72,7 @@ export function AgentPage({
   const [dirty, setDirty] = useState(false);
   const [leaving, setLeaving] = useState<string | null>(null);
   const [reassigning, setReassigning] = useState(false);
+  const [savingAs, setSavingAs] = useState(false);
   const describedBy = useId();
 
   // While the section holds unsaved edits, any in-app link (section nav, sidebar, path, the head's
@@ -114,7 +116,7 @@ export function AgentPage({
     title: name,
     ...(description !== "" ? { description } : {}),
     avatar: <Avatar value={avatarValue(agent, orgId)} name={name} size={40} />,
-    // 开始对话 is the primary; 运行记录 and 更改所有者 (agents.manage: org admins only) share the ⋯
+    // 开始对话 is the primary; 运行记录, 更改所有者 and 另存为模板 (agents.manage: org admins only) share the ⋯
     // menu beside it (a lone one is a button: no menu of one)
     actions: [
       {
@@ -129,7 +131,11 @@ export function AgentPage({
               ]
             : []),
           ...(admin
-            ? [{ label: t("agents.page.reassign"), onSelect: () => setReassigning(true) }]
+            ? [
+                { label: t("agents.page.reassign"), onSelect: () => setReassigning(true) },
+                // 另存为模板 (agents.manage: org admins, ruling P4-9)
+                { label: t("agents.saveAs.action"), onSelect: () => setSavingAs(true) },
+              ]
             : []),
         ],
       },
@@ -192,6 +198,9 @@ export function AgentPage({
           needsReassignment={agent.needsReassignment === true}
           onClose={() => setReassigning(false)}
         />
+      ) : null}
+      {savingAs ? (
+        <SaveAsTemplateDialog orgId={orgId} agent={agent} onClose={() => setSavingAs(false)} />
       ) : null}
     </AgentPageContext.Provider>
   );

@@ -158,8 +158,8 @@ describe("the agent page by section (agent profile design §3)", () => {
     expect(screen.getByRole("link", { name: P_.startChat }).getAttribute("href")).toBe(
       "/chat?agent=ag1",
     );
-    // 开始对话 stays the primary; 运行记录 and Change owner sit in the ⋯ menu beside it
-    expect(await headMenu()).toEqual([en.agents.runHistory, P_.reassign]);
+    // 开始对话 stays the primary; 运行记录, Change owner and Save as template sit in the ⋯ menu
+    expect(await headMenu()).toEqual([en.agents.runHistory, P_.reassign, en.agents.saveAs.action]);
     expect(P_.reassign).toBe("Change owner");
     await view.navigate("/agents/ag1?s=quick-actions");
     expect(current()).toBe(P_.sections["quick-actions"]);

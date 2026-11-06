@@ -39,7 +39,8 @@ export function useComponentState(): (c: OrgComponent) => PluginStateLabel {
 
 /**
  * What switching a component changes in the org: its lists, the usable sets, every skill detail
- * (the platform skill's and its linked copies', cached under their own ids), its plugin's view.
+ * (the platform skill's and its linked copies', cached under their own ids), every agent template
+ * detail (the template page reads a template switched on again), its plugin's view.
  */
 export const componentSwitchKeys = (orgId: string) => {
   const k = keys.org(orgId);
@@ -48,6 +49,7 @@ export const componentSwitchKeys = (orgId: string) => {
     k.skills(),
     k.skillAll(),
     k.agentTemplates(),
+    k.agentTemplateAll(),
     k.connectors(),
     k.catalog(),
     k.catalogItemsAll(),

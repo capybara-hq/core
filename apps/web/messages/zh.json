@@ -694,6 +694,214 @@
     "filter": "筛选智能体",
     "ownerMe": "我",
     "settings": "设置",
+    "templatePage": {
+      "navGroup": "模板",
+      "sections": {
+        "basics": "基本信息",
+        "quick-actions": "快捷操作",
+        "prompt": "提示词",
+        "model": "模型",
+        "tools": "工具",
+        "skills": "技能",
+        "connectors": "连接器",
+        "subagents": "子智能体"
+      },
+      "basics": {
+        "name": "名称",
+        "type": "类型",
+        "description": "描述",
+        "source": "来源",
+        "version": "版本",
+        "shareable": "可共享",
+        "shareableOn": "是：超级管理员可以把它提供给其他组织",
+        "shareableOff": "否",
+        "nameFixed": "名称也是它作为子智能体的类型，保存后不能修改。",
+        "descriptionRequired": "请填写描述。"
+      },
+      "prompt": {
+        "empty": "（空）"
+      },
+      "model": {
+        "tier": "模型档位",
+        "tierHelp": "用它创建智能体时，组织为这一档配置的模型会被选中；组织默认对话模型档用组织的默认对话模型。",
+        "modelRef": "指定模型",
+        "modelRefHelp": "组织能用这个模型时优先用它，否则按档位选择。",
+        "noModelRef": "不指定",
+        "unavailableModel": "{model}（本组织不可用）",
+        "effort": "推理强度",
+        "noEffort": "模型默认",
+        "maxSteps": "最多步数",
+        "hint": "模板只记录档位和可选的具体模型，创建时按组织的配置选定模型，创建的人还可以修改。"
+      },
+      "tier": {
+        "inherit": "组织默认对话模型",
+        "fast": "快速档",
+        "standard": "标准档",
+        "capable": "最强档"
+      },
+      "effort": {
+        "low": "低",
+        "medium": "中",
+        "high": "高",
+        "xhigh": "很高",
+        "max": "最高"
+      },
+      "policy": {
+        "ask": "需确认",
+        "deny": "禁止"
+      },
+      "tools": {
+        "list": "工具",
+        "none": "没有工具。",
+        "disallowed": "不允许",
+        "hint": "用它创建智能体时，组织可用的工具会被带入，其余的会列为不可用。",
+        "others": "其他工具",
+        "unavailable": "{tool}（本组织没有）",
+        "othersHint": "这些工具本组织现在不能用，取消勾选即从模板中移除。"
+      },
+      "skills": {
+        "list": "技能",
+        "none": "没有技能。",
+        "pinned": "预载",
+        "hint": "模板按名称记录技能，创建智能体时按名称在组织的技能里查找，找不到的会被略过。",
+        "selectLabel": "选用的技能",
+        "noOrgSkills": "本组织还没有技能。",
+        "unreadable": "读不到组织的技能列表。",
+        "missing": "{name}（本组织没有，创建时会被略过）",
+        "tooMany": "最多选用 {max} 个未预载的技能。",
+        "pinLabel": "预载",
+        "noneToPin": "先选用技能，再从中选择预载的。",
+        "pin": "预载 {name}",
+        "pinHint": "预载的技能会写进每次运行的上下文，最多 {max} 个。"
+      },
+      "connectors": {
+        "list": "连接器",
+        "none": "没有连接器。",
+        "hint": "模板只记录需要哪些连接器，从不记录凭据。用它创建智能体时，组织已有的会被接上，没有的标为待配置。",
+        "needsHint": "「需要连接器」只记录协议、地址和工具，创建出的智能体会把它标为待配置，由能配置连接器的人接上。",
+        "templateKind": "连接器模板",
+        "needsKind": "需要连接器 · {protocol}",
+        "protocol": {
+          "mcp": "MCP",
+          "openapi": "OpenAPI"
+        },
+        "endpoint": "地址",
+        "tools": "工具",
+        "allTools": "全部工具",
+        "noTools": "无",
+        "policies": "工具策略",
+        "label": "名称",
+        "protocolLabel": "协议",
+        "endpointHelp": "连接器的 http(s) 地址，不能带账号密码、查询参数或片段（它们可能含凭据）。",
+        "templateToolsHelp": "每行一个工具名；留空表示这个连接器的全部工具。",
+        "needsToolsHelp": "每行一个工具名：智能体会用这些工具。",
+        "endpointInvalid": "请填写 http(s) 地址（最多 2048 个字符）。",
+        "endpointCarries": "地址里不能有{parts}，它们可能含凭据。请改用：{clean}",
+        "part": {
+          "userinfo": "账号密码",
+          "query": "查询参数",
+          "fragment": "片段"
+        },
+        "partSep": "、",
+        "endpointRefused": "这个地址没有被接受，请检查后重试。",
+        "labelRequired": "请填写名称。",
+        "newNeeds": "新连接器",
+        "remove": "移除",
+        "removeLabel": "移除 {name}",
+        "addNeeds": "添加需要的连接器",
+        "policiesKept": "{count} 条工具策略随这个连接器保留（只保留仍列出的工具的）。"
+      },
+      "subagents": {
+        "list": "子智能体",
+        "none": "没有子智能体。",
+        "hint": "用它创建智能体时，这些子智能体会进入新智能体的子智能体列表，不会另建智能体。",
+        "general": "通用子智能体",
+        "typeKind": "模板类型",
+        "inlineKind": "内联",
+        "model": "模型档位",
+        "tools": "工具",
+        "skills": "技能",
+        "noSkills": "无",
+        "allTools": "智能体的全部工具",
+        "noTools": "不给工具",
+        "toolsMode": {
+          "all": "智能体的全部工具",
+          "none": "不给工具",
+          "list": "指定工具"
+        },
+        "toolKeys": "工具",
+        "toolKeysHelp": "每行一个工具名（例如 AskUserQuestion）。",
+        "skillsHelp": "每行一个技能名，最多 {max} 个。",
+        "nameInvalid": "名称只能用小写字母、数字和连字符，以字母或数字开头，最多 64 个字符。",
+        "descriptionRequired": "请填写描述。",
+        "instructionsRequired": "请填写提示词。",
+        "tooManySkills": "最多 {max} 个技能。",
+        "tooMany": "模板类型和内联子智能体合计最多 {max} 个。",
+        "typeUnavailable": "{type}（本组织不能用）"
+      },
+      "off": {
+        "owner": "这个模板已在本组织停用：成员看不到它，也不能用它创建智能体。",
+        "ownerAdmin": "这个模板已在本组织停用：成员看不到它，也不能用它创建智能体。启用后恢复。",
+        "title": "这个模板未在本组织启用",
+        "hintAdmin": "启用后，组织成员才能查看它的内容并用它创建智能体。",
+        "hintPlugin": "它随插件提供，插件在本组织未启用。先启用插件。",
+        "hintLocked": "它现在不能在本组织启用。",
+        "hintMember": "请组织管理员启用后再查看和使用。"
+      }
+    },
+    "saveAs": {
+      "action": "另存为模板",
+      "title": "把 {name} 另存为模板",
+      "name": "模板名称",
+      "nameHelp": "小写字母、数字和连字符，以字母或数字开头。它也是子智能体的类型名，保存后不能修改。",
+      "nameRequired": "请填写模板名称。",
+      "nameInvalid": "只能用小写字母、数字和连字符，以字母或数字开头，最多 64 个字符。",
+      "description": "描述",
+      "descriptionRequired": "请填写描述。",
+      "carried": "提示词、模型、工具、技能、连接器（只记录需要哪些，不含凭据）、子智能体和快捷操作会写入模板，模板归本组织所有。",
+      "rosterLeftOut": "子智能体里的这些组织智能体不是模板，不会带入：",
+      "submit": "另存为模板",
+      "close": "关闭",
+      "taken": {
+        "own": "本组织已有同名的模板，请换一个名称。",
+        "platform": "平台已有同名的模板，请换一个名称。",
+        "org": "组织「{org}」共享的模板已使用这个名称，请换一个名称。",
+        "reserved": "{name} 是保留名称，不能用作模板名称。",
+        "unknown": "这个名称已被使用，请换一个名称。"
+      },
+      "savedTitle": "已另存为模板 {name}",
+      "savedOmitted": "模板已保存。以下内容没有写入模板：",
+      "omittedLabel": "没有写入的内容",
+      "open": "打开模板",
+      "line": "{what}：{why}",
+      "kind": {
+        "subagent_agent": "子智能体「{name}」",
+        "subagent_template": "子智能体模板「{name}」",
+        "subagent_inline": "内联子智能体「{name}」",
+        "skill": "技能「{name}」",
+        "connector": "连接器「{name}」",
+        "tool": "工具「{name}」",
+        "tool_policy": "工具策略「{name}」"
+      },
+      "field": {
+        "disallowedTools": "不允许的工具",
+        "toolPolicies": "工具策略",
+        "effort": "推理强度",
+        "maxSteps": "最多步数",
+        "tools": "工具"
+      },
+      "reason": {
+        "org_agent": "它是组织里的智能体，不是模板",
+        "unavailable": "已不可用",
+        "agent_skill": "它是这个智能体自己写的技能",
+        "no_endpoint": "没有可以记录的地址",
+        "unsupported_protocol": "模板不支持它的协议",
+        "limit": "超出了模板的数量上限",
+        "connector_tool": "它属于没有写入模板的连接器",
+        "unsupported_field": "模板没有地方记录它的{field}设置",
+        "other": "没有写入"
+      }
+    },
     "templates": {
       "listLabel": "智能体模板",
       "search": "搜索模板",

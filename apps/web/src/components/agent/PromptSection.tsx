@@ -1,49 +1,19 @@
 "use client";
 
-import {
-  Button,
-  Field,
-  FormSection,
-  Grid,
-  Input,
-  Repeater,
-  Stack,
-  Text,
-  Textarea,
-} from "@capybara-hq/design";
+import { FormSection, Stack } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
-import { useRef, useState } from "react";
-import type { Agent } from "../../lib/agents";
-import {
-  fileNameProblems,
-  INSTRUCTION_FILE_LIMITS,
-  type InstructionFile,
-  joinInstructionFiles,
-  newFileName,
-  readInstructionFiles,
-} from "../../lib/instruction-files";
-import { sameJson, savedDefinition } from "./definition-parts";
+import { readInstructionFiles } from "../../lib/instruction-files";
+import { savedDefinition } from "./definition-parts";
 import { SaveFeedback, useDefinitionSave, useSectionActionRow } from "./definition-save";
 import { AgentSectionFrame, useAgentPage } from "./frame";
-import { useSectionDraft } from "./useSectionDraft";
-
-type Entry = InstructionFile & { key: string };
-type Draft = { files: Entry[] };
-
-const draftOf = (a: Agent): Draft => ({
-  files: readInstructionFiles(a.definition).map((f, i) => ({ key: `saved-${i}`, ...f })),
-});
-/** What a draft saves: the files in order, without their keys. */
-const filesOf = (d: Draft): InstructionFile[] =>
-  d.files.map(({ name, content }) => ({ name, content }));
+import { useInstructionFilesEditor } from "./InstructionFilesEditor";
 
 /**
- * 提示词 Prompt (agent profile design §3.3): the agent's named `.md` files, the list on the left
- * (add, delete but never the last one, reorder) and the open file's name and content on the
- * right, with the joined character count against 100 000 and the file count against 20. An agent
- * saved without files (every old version) shows one `AGENTS.md` holding its instructions. Save
- * sends `instructionFiles` and no `instructions` (the kernel derives it; a stale one next to the
- * files would be refused). The names and limits are checked here only as hints: the kernel judges.
+ * 提示词 Prompt (agent profile design §3.3): the agent's named `.md` files in the shared
+ * {@link useInstructionFilesEditor}. An agent saved without files (every old version) shows one
+ * `AGENTS.md` holding its instructions. Save sends `instructionFiles` and no `instructions` (the
+ * kernel derives it; a stale one next to the files would be refused). The names and limits are
+ * checked here only as hints: the kernel judges.
  */
 export function PromptSection() {
   const t = useTranslations("agents.page.prompt");
@@ -51,70 +21,31 @@ export function PromptSection() {
   const { agent } = useAgentPage();
   const save = useDefinitionSave();
   const actionRow = useSectionActionRow();
-  const saved = draftOf(agent);
-  const draft = useSectionDraft(saved);
-  const [open, setOpen] = useState<string | null>(null);
-  const [checked, setChecked] = useState(false);
-  // the files whose name problems show: a name left (blur) or a save attempt shows them, and
-  // typing in a name hides its own until it is left again
-  const [shown, setShown] = useState<ReadonlySet<string>>(new Set());
-  const next = useRef(0);
-  const files = draft.draft.files;
-  const current = files.find((f) => f.key === open) ?? files[0];
-  const index = current ? files.indexOf(current) : -1;
-  const edit = (fn: (d: Draft) => Draft) => {
-    save.begin();
-    draft.set(fn);
-  };
-
-  const problems = fileNameProblems(files);
-  const joined = joinInstructionFiles(files).length;
-  const tooLong = joined > INSTRUCTION_FILE_LIMITS.joinedChars;
-  const nameProblem = (i: number) => {
-    const f = files[i];
-    return f !== undefined && shown.has(f.key) ? (problems[i] ?? null) : null;
-  };
-  const show = (key: string, on: boolean) =>
-    setShown((cur) => {
-      if (cur.has(key) === on) return cur;
-      const nextSet = new Set(cur);
-      if (on) nextSet.add(key);
-      else nextSet.delete(key);
-      return nextSet;
-    });
-  const invalidCount = problems.filter((_, i) => nameProblem(i) !== null).length;
-  const unsaved = draft.dirty && !sameJson(filesOf(draft.draft), filesOf(saved)) ? 1 : 0;
+  const files = useInstructionFilesEditor(
+    readInstructionFiles(agent.definition),
+    save.pending,
+    save.begin,
+  );
 
   async function onSave() {
     if (save.pending) return;
-    setChecked(true);
-    setShown(new Set(files.map((f) => f.key)));
-    if (problems.some((p) => p !== null) || tooLong) return;
+    if (!files.check()) return;
     const { instructions: _derived, ...rest } = savedDefinition(agent);
-    const r = await save.send({ ...rest, instructionFiles: filesOf(draft.draft) });
-    if (r.saved) {
-      draft.reset();
-      setChecked(false);
-      setShown(new Set());
-      // the saved files are keyed by position: keep the open one open
-      setOpen(`saved-${Math.max(index, 0)}`);
-    }
+    const r = await save.send({ ...rest, instructionFiles: files.files });
+    if (r.saved) files.saved();
   }
 
   function discard() {
-    draft.reset();
+    files.discard();
     save.clear();
-    setChecked(false);
-    setShown(new Set());
   }
 
-  const problem = index < 0 ? null : nameProblem(index);
   return (
     <AgentSectionFrame
-      dirty={unsaved > 0}
+      dirty={files.unsaved > 0}
       actionRow={actionRow({
-        unsaved,
-        errors: invalidCount + (checked && tooLong ? 1 : 0) + (save.error ? 1 : 0),
+        unsaved: files.unsaved,
+        errors: files.errors + (save.error ? 1 : 0),
         pending: save.pending,
         onDiscard: discard,
         onSave: () => void onSave(),
@@ -128,120 +59,7 @@ export function PromptSection() {
           title={tp("sections.prompt")}
           description={t("hint")}
         >
-          {/* List + editor (spec §5.8): the form card is the one box; the open file's name is an
-              h3 over its fields, the columns split by a hairline, no editor card */}
-          <Grid columns="list-detail" divided>
-            <Stack gap={8}>
-              <Repeater
-                variant="rows"
-                label={t("filesLabel")}
-                addLabel={t("add")}
-                min={1}
-                max={INSTRUCTION_FILE_LIMITS.count}
-                disabled={save.pending}
-                items={files.map((f, i) => ({
-                  key: f.key,
-                  title: f.name,
-                  invalid: nameProblem(i) !== null,
-                  body: (
-                    <Button
-                      variant="ghost"
-                      aria-pressed={f.key === current?.key}
-                      onClick={() => setOpen(f.key)}
-                    >
-                      {f.name}
-                    </Button>
-                  ),
-                }))}
-                onAdd={() => {
-                  next.current += 1;
-                  const key = `new-${next.current}`;
-                  edit((d) =>
-                    d.files.length >= INSTRUCTION_FILE_LIMITS.count
-                      ? d
-                      : { files: [...d.files, { key, name: newFileName(d.files), content: "" }] },
-                  );
-                  setOpen(key);
-                }}
-                onRemove={(key) => {
-                  const before = files;
-                  edit((d) =>
-                    d.files.length <= 1 ? d : { files: d.files.filter((f) => f.key !== key) },
-                  );
-                  return () => edit(() => ({ files: before }));
-                }}
-                onMove={(key, to) =>
-                  edit((d) => {
-                    const from = d.files.findIndex((f) => f.key === key);
-                    if (from < 0) return d;
-                    const list = [...d.files];
-                    const [moved] = list.splice(from, 1);
-                    if (moved) list.splice(to, 0, moved);
-                    return { files: list };
-                  })
-                }
-              />
-              <Text variant="small" tone={tooLong ? "fail" : "muted"}>
-                {t("count", {
-                  chars: joined,
-                  maxChars: INSTRUCTION_FILE_LIMITS.joinedChars,
-                  files: files.length,
-                  maxFiles: INSTRUCTION_FILE_LIMITS.count,
-                })}
-              </Text>
-              {checked && tooLong ? (
-                <Text variant="small" tone="fail">
-                  {t("tooLong", { max: INSTRUCTION_FILE_LIMITS.joinedChars })}
-                </Text>
-              ) : null}
-            </Stack>
-            {current ? (
-              <Stack gap={12}>
-                <Text variant="h3">{current.name}</Text>
-                <Field
-                  label={t("nameLabel")}
-                  required
-                  help={t("nameHelp")}
-                  {...(problem === "duplicate"
-                    ? { error: t("nameDuplicate") }
-                    : problem === "invalid"
-                      ? { error: t("nameInvalid") }
-                      : {})}
-                >
-                  <Input
-                    name="file-name"
-                    disabled={save.pending}
-                    maxLength={67}
-                    value={current.name}
-                    onBlur={() => show(current.key, true)}
-                    onChange={(e) => {
-                      const name = e.target.value;
-                      show(current.key, false);
-                      edit((d) => ({
-                        files: d.files.map((f) => (f.key === current.key ? { ...f, name } : f)),
-                      }));
-                    }}
-                  />
-                </Field>
-                <Field label={t("contentLabel")} help={t("contentHelp")}>
-                  <Textarea
-                    code
-                    name="file-content"
-                    disabled={save.pending}
-                    rows={16}
-                    maxLength={INSTRUCTION_FILE_LIMITS.joinedChars}
-                    value={current.content}
-                    onChange={(e) => {
-                      const content = e.target.value;
-                      edit((d) => ({
-                        files: d.files.map((f) => (f.key === current.key ? { ...f, content } : f)),
-                      }));
-                    }}
-                  />
-                </Field>
-              </Stack>
-            ) : null}
-          </Grid>
+          {files.editor}
         </FormSection>
       </Stack>
     </AgentSectionFrame>

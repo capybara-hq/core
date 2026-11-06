@@ -436,8 +436,12 @@ describe("agents: edit, read-only and 更改所有者", () => {
       await agentPage(role, "someone", {}, edits ? "" : "?s=model");
       if (edits) {
         expect(await screen.findByRole("textbox", { name: zh.agents.form.nameLabel })).toBeTruthy();
-        // 运行记录 and 更改所有者 sit in the head's ⋯ menu beside 开始对话
-        expect(await moreItems()).toEqual([zh.agents.runHistory, zh.agents.page.reassign]);
+        // 运行记录, 更改所有者 and 另存为模板 sit in the head's ⋯ menu beside 开始对话
+        expect(await moreItems()).toEqual([
+          zh.agents.runHistory,
+          zh.agents.page.reassign,
+          zh.agents.saveAs.action,
+        ]);
       } else {
         expect(await screen.findByText("p / m")).toBeTruthy();
         expect(screen.queryByRole("button", { name: zh.agents.form.submit })).toBeNull();
@@ -454,6 +458,7 @@ describe("agents: edit, read-only and 更改所有者", () => {
     expect(screen.queryByRole("button", { name: zh.common.moreActions })).toBeNull();
     expect(screen.getByRole("link", { name: zh.agents.runHistory })).toBeTruthy();
     expect(screen.queryByText(zh.agents.page.reassign)).toBeNull();
+    expect(screen.queryByText(zh.agents.saveAs.action)).toBeNull();
   });
 
   it("a guest who still owns an agent cannot edit it (agents.create is member up)", async () => {
