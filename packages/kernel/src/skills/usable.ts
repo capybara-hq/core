@@ -151,6 +151,27 @@ export async function platformSkillsOn(
 }
 
 /**
+ * The ids among `ids` (platform skills that org copies are pinned to) whose pinned copies the org
+ * may use (ruling P2-18): the platform skill is on in the org ({@link platformSkillsOn}), or it was
+ * removed by a plugin update (soft-deleted, ruling P2-7: a pinned copy then keeps its own version
+ * as the org's).
+ */
+export async function pinnedSkillLinksServed(
+  db: KernelSchemaDb,
+  orgId: string,
+  ids: readonly string[],
+): Promise<Set<string>> {
+  if (ids.length === 0) return new Set();
+  const removed = await db
+    .selectFrom("platform_skills")
+    .select("id")
+    .where("id", "in", [...ids])
+    .where("deleted_at", "is not", null)
+    .execute();
+  return new Set([...(await platformSkillsOn(db, orgId, ids)), ...removed.map((r) => r.id)]);
+}
+
+/**
  * The platform skills on in the org (`ids`: only those), minus the ones whose name an org skill of
  * its own already uses (rule 10: the org's wins; logged unless that skill is a copy of the same
  * component: linked to it, or carrying the same plugin's provenance before the migration linked
@@ -291,7 +312,7 @@ export async function skillVersionsById(
   ];
   const platform = new Map((await platformOn(db, orgId, platformIds, log)).map((p) => [p.id, p]));
   // ruling P2-18: a pinned copy serves its own version while its platform skill is on in the org
-  const pinnedOn = await platformSkillsOn(
+  const pinnedOn = await pinnedSkillLinksServed(
     db,
     orgId,
     pinned.map((r) => r.platform_skill_id as string),
@@ -402,7 +423,7 @@ export async function usableSkillVersions(
     .execute();
   // ruling P2-18: a pinned copy follows its platform skill's availability (the pin fixes the
   // version only)
-  const pinnedOn = await platformSkillsOn(db, orgId, [
+  const pinnedOn = await pinnedSkillLinksServed(db, orgId, [
     ...new Set(own.flatMap((r) => (r.platform_skill_id === null ? [] : [r.platform_skill_id]))),
   ]);
   const rows: SkillVersionRow[] = own

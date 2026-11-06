@@ -230,6 +230,26 @@ export async function platformTemplatesOn(
 }
 
 /**
+ * The ids among `ids` (platform templates that org copies are pinned to) whose pinned copies the
+ * org may use (ruling P2-18): the platform template is on in the org, or it was removed by a
+ * plugin update (soft-deleted, ruling P2-7: a pinned copy then keeps its own version as the org's).
+ */
+async function pinnedTemplateLinksServed(
+  db: KernelSchemaDb,
+  orgId: string,
+  ids: readonly string[],
+): Promise<Set<string>> {
+  if (ids.length === 0) return new Set();
+  const removed = await db
+    .selectFrom("platform_agent_templates")
+    .select("id")
+    .where("id", "in", [...ids])
+    .where("deleted_at", "is not", null)
+    .execute();
+  return new Set([...(await platformTemplatesOn(db, orgId, ids)), ...removed.map((r) => r.id)]);
+}
+
+/**
  * The platform templates on in the org (`ids`: only those), minus the ones whose type an org
  * template of its own (unlinked, or pinned) already has (the org's wins; logged unless it is a copy
  * of the same component: linked to it, or from the same catalog item; `shadowed` maps such a
@@ -327,7 +347,7 @@ export async function loadTemplates(
   const on = await platformOn(db, orgId, platformIds, log);
   const platform = new Map(on.rows.map((p) => [p.id, p]));
   // ruling P2-18: a pinned copy serves its own version while its platform template is on
-  const pinnedOn = await platformTemplatesOn(db, orgId, [
+  const pinnedOn = await pinnedTemplateLinksServed(db, orgId, [
     ...new Set(
       rows.flatMap((r) =>
         r.platform_template_id !== null && r.pinned_version !== null
@@ -392,7 +412,7 @@ export async function usableTemplates(
     .execute();
   // ruling P2-18: a pinned copy follows its platform template's availability (the pin fixes the
   // version only)
-  const pinnedOn = await platformTemplatesOn(db, orgId, [
+  const pinnedOn = await pinnedTemplateLinksServed(db, orgId, [
     ...new Set(
       own.flatMap((r) => (r.platform_template_id === null ? [] : [r.platform_template_id])),
     ),

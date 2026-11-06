@@ -506,12 +506,13 @@ describe("agent templates from platform components", () => {
       .execute();
     expect(await usable()).toEqual([]);
     expect(await byId()).toEqual([]);
+    // removed by a plugin update (ruling P2-7): the pinned copy keeps its own version
     await env.db
       .updateTable("platform_agent_templates")
       .set({ disabled: false, deleted_at: new Date() })
       .where("id", "=", p)
       .execute();
-    expect(await usable()).toEqual([]);
-    expect(await byId()).toEqual([]);
+    expect(await usable()).toEqual([own]);
+    expect(await byId()).toEqual([own]);
   });
 });
