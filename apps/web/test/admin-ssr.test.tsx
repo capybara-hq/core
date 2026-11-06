@@ -763,14 +763,16 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     },
   );
 
-  it("/admin/plugins/[itemId]: the loading detail is the components and the inspector's six facts", async () => {
+  it("/admin/plugins/[itemId]: the loading detail is one column: the facts, then the components", async () => {
     const { release } = await renderHeld(
       `/admin/plugins/${ITEM_ID}`,
       `GET /api/v1/admin/catalog/items/${ITEM_ID}`,
     );
     await expectLoading("DetailPage", "Acme");
     expect(document.querySelectorAll('[data-part="loading-card"]')).toHaveLength(0);
-    expect(document.querySelectorAll('[data-part="loading-inspector-row"]')).toHaveLength(6);
+    expect(document.querySelectorAll('[data-part="loading-inspector-row"]')).toHaveLength(0);
+    const facts = document.querySelector('[data-part="content"] [data-part="loading-key-value"]');
+    expect(facts?.querySelectorAll('[data-part="key-value-row"]')).toHaveLength(9);
     await release();
   });
 

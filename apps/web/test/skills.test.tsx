@@ -332,6 +332,13 @@ const detail = (over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
+/** 删除 sits in the detail head's ⋯ menu (a destructive item): opens it and picks 删除技能. */
+async function openDelete(user: ReturnType<typeof userEvent.setup>, locale: "zh" | "en") {
+  const m = msgs[locale];
+  await user.click(await screen.findByRole("button", { name: m.catalog.admin.detail.more }));
+  await user.click(await screen.findByRole("menuitem", { name: m.skills.detail.delete }));
+}
+
 describe("技能详情（DetailPage）", () => {
   beforeEach(() => resetNavigation("/skills/s1"));
 
@@ -375,7 +382,7 @@ describe("技能详情（DetailPage）", () => {
     });
     await renderSkill();
     const user = userEvent.setup();
-    await user.click(await screen.findByRole("button", { name: en.skills.detail.delete }));
+    await openDelete(user, "en");
     const dialog = await screen.findByRole("dialog");
     const confirm = within(dialog).getByRole("button", { name: en.skills.detail.delete });
     expect(confirm).toHaveProperty("disabled", true);
@@ -390,6 +397,26 @@ describe("技能详情（DetailPage）", () => {
     await renderSkill({ me: MEMBER });
     await screen.findByText("# PDF tools", { exact: false });
     expect(screen.queryByRole("button", { name: en.skills.detail.delete })).toBeNull();
+    expect(screen.queryByRole("button", { name: en.catalog.admin.detail.more })).toBeNull();
+  });
+
+  it("one centred column: the description under the title, the facts as a KeyValue, 删除 in the head's menu", async () => {
+    stubApi({ [`GET ${BASE}/s1`]: () => json(200, detail()) });
+    await renderSkill();
+    await screen.findByText("# PDF tools", { exact: false });
+    expect(document.querySelector(".cb-body")?.getAttribute("data-layout")).toBe("single");
+    expect(document.querySelector('[data-part="page-header-description"]')?.textContent).toBe(
+      "Use for pdf-tools.",
+    );
+    const facts = document.querySelector('[data-part="content"] [data-part="key-value"]');
+    expect(facts?.textContent).toContain(en.skills.detail.owner);
+    expect(facts?.textContent).toContain(en.skills.detail.version);
+    // no danger card in the page: 删除 is the head menu's destructive item
+    expect(screen.queryByText(en.skills.detail.dangerTitle)).toBeNull();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: en.catalog.admin.detail.more }));
+    const del = await screen.findByRole("menuitem", { name: en.skills.detail.delete });
+    expect(del.getAttribute("data-danger")).toBe("true");
   });
 
   it("a skill the kernel does not find is the not-found state in the shell", async () => {
@@ -412,7 +439,7 @@ describe("技能详情（DetailPage）", () => {
     // the library is cached (as after a visit to /skills)
     client.setQueryData(["org", "o1", "skills"], { skills: [skill("s1", "pdf-tools")] });
     const user = userEvent.setup();
-    await user.click(await screen.findByRole("button", { name: en.skills.detail.delete }));
+    await openDelete(user, "en");
     const dialog = await screen.findByRole("dialog");
     await user.type(within(dialog).getByRole("textbox"), "pdf-tools");
     await user.click(within(dialog).getByRole("button", { name: en.skills.detail.delete }));
@@ -501,7 +528,7 @@ describe("the skills pages render on the server (web-SSR spec §6)", () => {
     },
   );
 
-  it("/skills/<id>: the loading content is the body's lines and, for an admin, the delete card", async () => {
+  it("/skills/<id>: the loading content is the facts' KeyValue and the body's lines, in one column", async () => {
     await renderRouteEmptyCache("/skills/s1", {
       [`GET ${BASE}/s1`]: () => new Promise<Response>(() => {}),
     });
@@ -511,10 +538,11 @@ describe("the skills pages render on the server (web-SSR spec §6)", () => {
       return el as HTMLElement;
     });
     expect(page.querySelectorAll('[data-part="loading-card"]')).toHaveLength(0);
-    const card = page.querySelectorAll('[data-part="loading-shaped-card"]');
-    expect(card).toHaveLength(1);
-    expect(card[0]?.querySelectorAll('[data-part="loading-buttons"] [data-box]')).toHaveLength(1);
-    expect(page.querySelectorAll('[data-part="loading-inspector-row"]')).toHaveLength(5);
+    // No delete card (删除 is the head's menu) and no inspector: the facts are in the column
+    expect(page.querySelectorAll('[data-part="loading-shaped-card"]')).toHaveLength(0);
+    expect(page.querySelectorAll('[data-part="loading-inspector-row"]')).toHaveLength(0);
+    const facts = page.querySelector('[data-part="content"] [data-part="loading-key-value"]');
+    expect(facts?.querySelectorAll('[data-part="key-value-row"]')).toHaveLength(5);
   });
 
   it.each(["/skills", "/skills/s1"])(
@@ -709,7 +737,7 @@ describe("plugin scope phase 3: 新建技能, 可共享 and the delete preview",
     });
     await renderSkill();
     const user = userEvent.setup();
-    await user.click(await screen.findByRole("button", { name: en.skills.detail.delete }));
+    await openDelete(user, "en");
     const dialog = await screen.findByRole("dialog");
     await user.type(within(dialog).getByRole("textbox"), "pdf-tools");
     const confirm = within(dialog).getByRole("button", { name: en.skills.detail.delete });
@@ -755,7 +783,7 @@ describe("plugin scope phase 3: 新建技能, 可共享 and the delete preview",
       });
       await renderSkill({ locale });
       const user = userEvent.setup();
-      await user.click(await screen.findByRole("button", { name: m.skills.detail.delete }));
+      await openDelete(user, locale);
       const dialog = await screen.findByRole("dialog");
       expect(
         await within(dialog).findByText(

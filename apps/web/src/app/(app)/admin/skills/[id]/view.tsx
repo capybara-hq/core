@@ -1,11 +1,11 @@
 "use client";
 
-import { DetailPage, Stack, Text, versionLabel } from "@capybara-hq/design";
+import { DetailPage, Stack, versionLabel } from "@capybara-hq/design";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { useState } from "react";
 import {
-  ComponentInspector,
+  ComponentFacts,
   ComponentNotes,
   ComponentOrgs,
   ComponentVersions,
@@ -29,7 +29,8 @@ type Tab = (typeof TABS)[number];
  * `/admin/skills/[id]` (super admins; spec §9): one platform skill. Head: its
  * name, version and state; actions 设置范围 (跟随插件 or its own scope, with the impact preview),
  * 停用 / 启用, 上传新版本 (a new version on its own, spec §7.2). Tabs 版本 / 组织;
- * the inspector holds 来自, 归属, 范围, 在用组织. From the query cache: the kind's list (a component
+ * one centred column: the description under the title, the facts (来自, 归属, 范围, 在用组织) as a
+ * KeyValue over the tab. From the query cache: the kind's list (a component
  * not in it is the not-found state) and its versions (a section).
  */
 export default function AdminSkillView({ id }: { id: string }) {
@@ -58,7 +59,8 @@ function AdminSkillRead({ id, orgId }: { id: string; orgId: string | null }) {
           value: "versions",
           onChange: () => {},
         }}
-        loading={{ inspector: { rows: 6, keyWidth: "8ch" }, content: [{ kind: "list" }] }}
+        // One column: the facts (a KeyValue of six) over the tab
+        loading={{ content: [{ kind: "key-value", rows: 6, keyWidth: "8ch" }, { kind: "list" }] }}
       />
     );
   }
@@ -82,6 +84,7 @@ function AdminSkill({ c, orgId }: { c: PlatformComponent; orgId: string | null }
           title: c.name,
           count: versionLabel(c.version),
           status: <StateBadges c={c} />,
+          ...(c.description !== null && c.description !== "" ? { description: c.description } : {}),
           actions,
         }}
         tabs={{
@@ -90,16 +93,10 @@ function AdminSkill({ c, orgId }: { c: PlatformComponent; orgId: string | null }
           value: tab,
           onChange: (x) => setTab(x as Tab),
         }}
-        inspectorTitle={c.name}
-        inspector={<ComponentInspector c={c} />}
       >
-        <Stack gap={12}>
+        <Stack gap={16}>
           <ComponentNotes c={c} />
-          {c.description !== null && c.description !== "" && (
-            <Text variant="prose" tone="muted">
-              {c.description}
-            </Text>
-          )}
+          <ComponentFacts c={c} />
           {tab === "versions" ? (
             <ComponentVersions versions={versions ?? null} />
           ) : (

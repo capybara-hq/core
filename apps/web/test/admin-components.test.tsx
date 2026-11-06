@@ -269,6 +269,28 @@ describe("admin component detail", () => {
     expect(within(v1).getByText(fill(C.detail.origin.plugin, { version: "v1.2.0" }))).toBeTruthy();
   });
 
+  it.each([
+    ["/admin/skills/s1", "web-research", "Research the web"],
+    ["/admin/connector-templates/c1", "gh", null],
+    ["/admin/agent-templates/a1", "researcher", "Research the web"],
+  ] as const)(
+    "%s: one centred column, the description under the title, the facts as a KeyValue",
+    async (path, name, description) => {
+      await open(path, {
+        "GET /api/v1/admin/components/connector_template/c1/versions": () =>
+          json(200, { versions: [] }),
+      });
+      expect(await screen.findByRole("heading", { name })).toBeTruthy();
+      // No right inspector
+      expect(document.querySelector(".cb-body")?.getAttribute("data-layout")).toBe("single");
+      const line = document.querySelector('[data-part="page-header-description"]');
+      expect(line?.textContent ?? null).toBe(description);
+      const facts = document.querySelector('[data-part="content"] [data-part="key-value"]');
+      expect(facts?.textContent).toContain(C.detail.fields.owner);
+      expect(facts?.textContent).toContain(C.detail.fields.scope);
+    },
+  );
+
   it("设置范围: previews the agents losing it and the connectors kept, then confirms with the scopeHash", async () => {
     const calls = await open("/admin/skills/s1", {
       "POST /api/v1/admin/components/skill/s1/scope/preview": () =>

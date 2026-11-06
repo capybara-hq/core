@@ -3099,7 +3099,8 @@
         "notShareableNote": "Its organization does not share it: you can narrow its scope or disable it, but not show it to or associate it with other organizations.",
         "ownerNote": "It belongs to {org}; new versions come from that organization.",
         "awaitingNote": "Its first version waits for a super admin's confirmation in the Pending tab; nothing of it is usable until then.",
-        "pendingVersionNote": "Version {version} uploaded by its organization waits for a super admin's confirmation in the Pending tab."
+        "pendingVersionNote": "Version {version} uploaded by its organization waits for a super admin's confirmation in the Pending tab.",
+        "more": "More actions"
       },
       "review": {
         "title": "Import plugin",

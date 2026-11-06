@@ -169,8 +169,8 @@ export function ComponentsTable({
   );
 }
 
-/** The detail's inspector: 来自, 归属, 范围, 在用组织, 版本, 状态. */
-export function ComponentInspector({ c }: { c: PlatformComponent }) {
+/** The detail's facts, a KeyValue in its single column: 来自, 归属, 范围, 在用组织, 版本, 状态. */
+export function ComponentFacts({ c }: { c: PlatformComponent }) {
   const t = useTranslations("adminComponents");
   const scopeText = useComponentScopeText();
   const ownerText = useOwnerText();

@@ -2,7 +2,6 @@
 
 import {
   Button,
-  Card,
   CodeBlock,
   type Column,
   DangerConfirm,
@@ -32,6 +31,7 @@ import { useAppMutation } from "../../../../lib/query/mutation";
 import { usePageQuery } from "../../../../lib/query/page-query";
 import { skillDeletePreviewQuery, skillQuery } from "../../../../lib/query/skills";
 import { useWorkspace } from "../../../../lib/query/workspace";
+import type { Me } from "../../../../lib/session";
 import {
   deleteSkill,
   type SkillDeletePreview,
@@ -47,10 +47,12 @@ const TABS = ["content", "files", "versions"] as const;
 type Tab = (typeof TABS)[number];
 
 /**
- * `/skills/[id]`：组织技能详情（DetailPage）：SKILL.md 正文（纯文本，不渲染 HTML / Markdown）、
- * 当前版本的文件、各版本；管理员可删除本组织自己的技能（输入技能名二次确认；the confirmation says what the delete does: one another org
- * uses is transferred to the platform, ruling P3-19). The org's own skill carries the 可共享 switch in
- * the inspector (plugin scope phase 3; members see it disabled). A platform skill on in the org (or
+ * `/skills/[id]`: an org skill's detail (DetailPage, one centred column): the description under the
+ * title, the facts as a KeyValue, then the tabs: the SKILL.md body (plain text, no HTML or
+ * Markdown rendering), the current version's files, the versions. Org admins delete the org's own
+ * skill from the head's ⋯ menu (typing its name; the confirmation says what the delete does: one
+ * another org uses is transferred to the platform, ruling P3-19). The org's own skill carries the
+ * 可共享 switch under the facts (plugin scope phase 3; members see it disabled). A platform skill on in the org (or
  * an org copy linked to one, which the kernel answers with the platform skill) is read only: the
  * org switches it on the 技能 page. From the query cache (the layout prefetched it on a first load);
  * a skill the kernel does not find is the not-found state.
@@ -81,41 +83,105 @@ function Skill({ orgId, skillId }: { orgId: string; skillId: string }) {
       <DetailPage
         header={{ path: [...scope, { label: "skills", href: "/skills" }], title: "" }}
         tabs={tabs}
-        inspectorTitle={t("detail.inspectorTitle")}
-        // The content tab: the SKILL.md body, then the delete card for admins (its hint and
-        // button); the inspector's four facts
+        // One column: the facts (a KeyValue), then the content tab's SKILL.md body
         loading={{
-          inspector: { rows: 5, keyWidth: "10ch" },
           content: [
+            { kind: "key-value", rows: 5, keyWidth: "10ch" },
             { kind: "lines", lines: 12 },
-            ...(canUpdateOrg(me)
-              ? [{ kind: "card" as const, card: { lines: 1, buttons: 1 } }]
-              : []),
           ],
         }}
       />
     );
   }
-  const skill = read.data;
+  return <SkillDetailView orgId={orgId} skill={read.data} tabs={tabs} tab={tab} me={me} />;
+}
+
+/**
+ * The loaded skill in one centred column (no inspector): the description under the title, the
+ * facts as a KeyValue (and the 可共享 switch of the org's own skill), then the tab. Org admins
+ * delete the org's own skill from the head's ⋯ menu (a destructive item).
+ */
+function SkillDetailView({
+  orgId,
+  skill,
+  tabs,
+  tab,
+  me,
+}: {
+  orgId: string;
+  skill: SkillDetail;
+  tabs: Parameters<typeof DetailPage>[0]["tabs"];
+  tab: Tab;
+  me: Me;
+}) {
+  const scope = usePagePath("org");
+  const t = useTranslations("skills");
+  const tc = useTranslations("catalog.admin.detail");
+  const td = useTranslations("plugins.delete");
+  const router = useRouter();
+  const toast = useToast();
+  const previewKey = keys.org(orgId).skillDeletePreview(skill.id);
+  const [confirm, setConfirm] = useState(false);
+  // A delete invalidates the library (the list this page goes back to) and forgets the skill once
+  // this page is left.
+  const remove = useAppMutation({
+    fn: () => deleteSkill(orgId, skill.id),
+    invalidates: () => [keys.org(orgId).skills()],
+    forgetsOnLeave: () => [keys.org(orgId).skill(skill.id), previewKey],
+  });
+  const deletable = canUpdateOrg(me) && skill.origin !== "platform";
   return (
-    <DetailPage
-      header={{
-        path: [...scope, { label: "skills", href: "/skills" }, { label: skill.name }],
-        title: skill.name,
-        count: t("version", { version: skill.currentVersion }),
-      }}
-      tabs={tabs}
-      inspectorTitle={t("detail.inspectorTitle")}
-      inspector={<Inspector orgId={orgId} skill={skill} />}
-    >
-      {tab === "content" ? (
-        <ContentTab orgId={orgId} skill={skill} />
-      ) : tab === "files" ? (
-        <FilesTab files={skill.versions[0]?.files ?? []} />
-      ) : (
-        <VersionsTab versions={skill.versions} />
+    <>
+      <DetailPage
+        header={{
+          path: [...scope, { label: "skills", href: "/skills" }, { label: skill.name }],
+          title: skill.name,
+          count: t("version", { version: skill.currentVersion }),
+          ...(skill.description !== "" ? { description: skill.description } : {}),
+          ...(deletable
+            ? {
+                actions: [
+                  {
+                    label: tc("more"),
+                    menu: [
+                      { label: t("detail.delete"), danger: true, onSelect: () => setConfirm(true) },
+                    ],
+                  },
+                ],
+              }
+            : {}),
+        }}
+        tabs={tabs}
+      >
+        <Stack gap={16}>
+          <Facts orgId={orgId} skill={skill} />
+          {tab === "content" ? (
+            <ContentTab skill={skill} />
+          ) : tab === "files" ? (
+            <FilesTab files={skill.versions[0]?.files ?? []} />
+          ) : (
+            <VersionsTab versions={skill.versions} />
+          )}
+        </Stack>
+      </DetailPage>
+      {deletable && confirm && (
+        <SkillDeleteDialog
+          orgId={orgId}
+          skill={skill}
+          onClose={() => setConfirm(false)}
+          onDelete={async (outcome) => {
+            await remove.mutateAsync(undefined);
+            setConfirm(false);
+            toast.success(
+              outcome === "transferred"
+                ? td("doneTransferred", { name: skill.name })
+                : t("detail.deleted", { name: skill.name }),
+            );
+            router.push("/skills");
+          }}
+        />
       )}
-    </DetailPage>
+    </>
   );
 }
 
@@ -126,7 +192,8 @@ function Skill({ orgId, skillId }: { orgId: string; skillId: string }) {
 const ownSkill = (s: SkillDetail) =>
   s.origin !== "platform" && s.scope === "org" && (s.plugin ?? null) === null;
 
-function Inspector({ orgId, skill }: { orgId: string; skill: SkillDetail }) {
+/** The skill's facts, a KeyValue in the single column; the org's own skill's 可共享 switch under it. */
+function Facts({ orgId, skill }: { orgId: string; skill: SkillDetail }) {
   const t = useTranslations("skills.detail");
   const tv = useTranslations("skills");
   const ownerLabel = useOwnerLabel(orgId);
@@ -135,7 +202,6 @@ function Inspector({ orgId, skill }: { orgId: string; skill: SkillDetail }) {
       <KeyValue
         keyWidth="10ch"
         rows={[
-          { k: t("name"), v: skill.name },
           {
             k: t("owner"),
             // A platform skill's owner from owner_org_id: 本组织 for the org's own upload
@@ -147,14 +213,6 @@ function Inspector({ orgId, skill }: { orgId: string; skill: SkillDetail }) {
           { k: t("updated"), v: <DateTime value={skill.updatedAt} /> },
         ]}
       />
-      <Stack gap={4}>
-        <Text variant="small" tone="muted">
-          {t("description")}
-        </Text>
-        <Text variant="prose" pre>
-          {skill.description}
-        </Text>
-      </Stack>
       {ownSkill(skill) && <ShareSwitch orgId={orgId} skill={skill} />}
     </Stack>
   );
@@ -204,22 +262,9 @@ function ShareSwitch({ orgId, skill }: { orgId: string; skill: SkillDetail }) {
   );
 }
 
-/** SKILL.md 正文（纯文本）；管理员在下方有删除。 */
-function ContentTab({ orgId, skill }: { orgId: string; skill: SkillDetail }) {
+/** The SKILL.md body (plain text); a platform skill says the org switches it on the 技能 page. */
+function ContentTab({ skill }: { skill: SkillDetail }) {
   const t = useTranslations("skills.detail");
-  const router = useRouter();
-  const toast = useToast();
-  const { me } = useSession();
-  const td = useTranslations("plugins.delete");
-  const previewKey = keys.org(orgId).skillDeletePreview(skill.id);
-  const [confirm, setConfirm] = useState(false);
-  // A delete invalidates the library (the list this page goes back to) and forgets the skill once
-  // this page is left.
-  const remove = useAppMutation({
-    fn: () => deleteSkill(orgId, skill.id),
-    invalidates: () => [keys.org(orgId).skills()],
-    forgetsOnLeave: () => [keys.org(orgId).skill(skill.id), previewKey],
-  });
   return (
     <Stack gap={16}>
       {skill.body !== null ? (
@@ -231,39 +276,6 @@ function ContentTab({ orgId, skill }: { orgId: string; skill: SkillDetail }) {
         <Text variant="small" tone="muted">
           {t("platformHint")}
         </Text>
-      )}
-      {canUpdateOrg(me) && skill.origin !== "platform" && (
-        <>
-          <Card tone="danger" title={t("dangerTitle")}>
-            <Stack gap={12}>
-              <Text variant="prose" tone="muted">
-                {t("deleteHint")}
-              </Text>
-              <Stack direction="row">
-                <Button variant="danger" onClick={() => setConfirm(true)}>
-                  {t("delete")}
-                </Button>
-              </Stack>
-            </Stack>
-          </Card>
-          {confirm && (
-            <SkillDeleteDialog
-              orgId={orgId}
-              skill={skill}
-              onClose={() => setConfirm(false)}
-              onDelete={async (outcome) => {
-                await remove.mutateAsync(undefined);
-                setConfirm(false);
-                toast.success(
-                  outcome === "transferred"
-                    ? td("doneTransferred", { name: skill.name })
-                    : t("deleted", { name: skill.name }),
-                );
-                router.push("/skills");
-              }}
-            />
-          )}
-        </>
       )}
     </Stack>
   );

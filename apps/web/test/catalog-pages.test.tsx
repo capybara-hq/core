@@ -3377,6 +3377,45 @@ describe("phase B: Claude Code plugins in the catalog and marketplaces", () => {
     expect(within(table).getByText(d.format.claudeCode)).toBeTruthy();
   });
 
+  it("item detail: one centred column: the description under the title, the facts as a KeyValue, 删除 in the head's menu, the license folded last", async () => {
+    params.current = { itemId: ID };
+    const tr = en.catalog.admin.review.translation;
+    const d = en.catalog.admin.detail;
+    const detail = (await claudeItemDetail().json()) as { item: Record<string, unknown> };
+    stubApi({
+      [`GET /api/v1/admin/catalog/items/${ID}`]: () =>
+        json(200, { ...detail, item: { ...detail.item, description: "Skills for agents." } }),
+      "GET /api/v1/admin/marketplaces": () => json(200, SOURCES),
+      "GET /api/v1/admin/catalog/items": () => json(200, { items: [], nextOffset: null }),
+    });
+    await renderRouteWithCache(adminItemPath(), lastStubRoutes());
+    await screen.findByRole("region", { name: tr.title });
+    // No right inspector: the single centred column
+    expect(document.querySelector(".cb-body")?.getAttribute("data-layout")).toBe("single");
+    // The description is the head's line under the title
+    expect(document.querySelector('[data-part="page-header-description"]')?.textContent).toBe(
+      "Skills for agents.",
+    );
+    // The facts are a KeyValue in the column
+    const facts = document.querySelector('[data-part="content"] [data-part="key-value"]');
+    expect(facts?.textContent).toContain(d.fields.publisher);
+    expect(facts?.textContent).toContain(d.fields.owner);
+    // 删除 is a destructive item of the head's ⋯ menu, not a button in the page
+    expect(screen.queryByRole("button", { name: d.delete })).toBeNull();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: RAW_MORE.en }));
+    const del = await screen.findByRole("menuitem", { name: d.delete });
+    expect(del.getAttribute("data-danger")).toBe("true");
+    await user.keyboard("{Escape}");
+    // The license is a folded section at the end of the page, on every tab
+    const license = screen.getByRole("button", { name: tr.license });
+    const content = document.querySelector('[data-part="content"]') as HTMLElement;
+    const last = content.lastElementChild as HTMLElement;
+    expect(last.contains(license)).toBe(true);
+    await user.click(screen.getByRole("tab", { name: d.tabs.versions }));
+    expect(screen.getByRole("button", { name: tr.license })).toBeTruthy();
+  });
+
   it("item detail: a version whose LICENSE was too long to store says so (batch-3 m6)", async () => {
     params.current = { itemId: ID };
     const tr = en.catalog.admin.review.translation;
@@ -3613,15 +3652,15 @@ describe("/plugins and /plugins/[itemId] render on the server (web-SSR spec §6)
     });
     expect(document.querySelector("[aria-busy='true']")).not.toBeNull();
     expect(screen.queryByRole("heading", { level: 1, name: "crm" })).toBeNull();
-    // the overview's static parts: the install action's button and the five component sections;
-    // the inspector's three facts; no generic cards
+    // one column: the facts' KeyValue (four) and the five component sections; no inspector, no
+    // generic cards
     const page = template("DetailPage") as HTMLElement;
     expect(page.querySelectorAll('[data-part="loading-card"]')).toHaveLength(0);
-    expect(page.querySelectorAll('[data-part="loading-buttons"]')).toHaveLength(1);
-    const stack = page.querySelector('[data-part="loading-buttons"]')?.closest(".cb-stack")
-      ?.parentElement as HTMLElement;
-    expect(stack.children).toHaveLength(7);
-    expect(page.querySelectorAll('[data-part="loading-inspector-row"]')).toHaveLength(3);
+    expect(page.querySelectorAll('[data-part="loading-inspector-row"]')).toHaveLength(0);
+    const facts = page.querySelector('[data-part="content"] [data-part="loading-key-value"]');
+    expect(facts?.querySelectorAll('[data-part="key-value-row"]')).toHaveLength(4);
+    const stack = facts?.closest(".cb-stack") as HTMLElement;
+    expect(stack.children).toHaveLength(6);
     await release();
     expect(await screen.findByRole("heading", { level: 1, name: "crm" })).toBeTruthy();
     await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());

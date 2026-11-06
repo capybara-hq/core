@@ -3087,7 +3087,8 @@
         "notShareableNote": "该组织未开放共享：可以缩小范围或停用，不能向其他组织显示或关联给其他组织。",
         "ownerNote": "它归 {org} 所有，新版本由该组织上传。",
         "awaitingNote": "它的第一个版本在待确认中等待超级管理员确认，确认前什么都不能用。",
-        "pendingVersionNote": "该组织上传的版本 {version} 在待确认中等待超级管理员确认。"
+        "pendingVersionNote": "该组织上传的版本 {version} 在待确认中等待超级管理员确认。",
+        "more": "更多操作"
       },
       "review": {
         "title": "导入插件",

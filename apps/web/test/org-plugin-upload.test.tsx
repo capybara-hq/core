@@ -424,7 +424,11 @@ describe("/plugins/<id>: the org's own plugin", () => {
     });
     await renderItem({ locale: "zh" });
     const user = userEvent.setup();
-    await user.click(await screen.findByRole("button", { name: zh.plugins.action.delete }));
+    // 删除 is the head's ⋯ menu item (destructive)
+    await user.click(await screen.findByRole("button", { name: zh.catalog.admin.detail.more }));
+    const item = await screen.findByRole("menuitem", { name: zh.plugins.action.delete });
+    expect(item.getAttribute("data-danger")).toBe("true");
+    await user.click(item);
     const dialog = await screen.findByRole("dialog");
     expect(
       await within(dialog).findByText(fill(m.transferred, { orgs: "Beta、Gamma" })),
@@ -446,9 +450,9 @@ describe("/plugins/<id>: the org's own plugin", () => {
         json(200, { outcome: "removed", orgs: [], agents: [], previewHash: "ph2" }),
     });
     await renderItem({ locale: "en" });
-    await userEvent
-      .setup()
-      .click(await screen.findByRole("button", { name: en.plugins.action.delete }));
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: en.catalog.admin.detail.more }));
+    await user.click(await screen.findByRole("menuitem", { name: en.plugins.action.delete }));
     const dialog = await screen.findByRole("dialog");
     expect(await within(dialog).findByText(en.plugins.delete.removed)).toBeTruthy();
   });
@@ -463,5 +467,22 @@ describe("/plugins/<id>: the org's own plugin", () => {
     const sw = screen.getByRole("switch", { name: zh.plugins.owned.shareable });
     expect(sw.hasAttribute("disabled")).toBe(true);
     expect(screen.queryByRole("button", { name: zh.plugins.action.delete })).toBeNull();
+    expect(screen.queryByRole("button", { name: zh.catalog.admin.detail.more })).toBeNull();
+  });
+
+  it("one centred column: the description under the title, the facts as a KeyValue with the owner", async () => {
+    stubApi({
+      [`GET ${ORG}/catalog/${ID}`]: () =>
+        json(200, detailOf(orgItem({ owner: ACME, description: "Meeting minutes." }))),
+    });
+    await renderItem({ locale: "zh" });
+    await screen.findByText(zh.plugins.chips.ownUpload);
+    expect(document.querySelector(".cb-body")?.getAttribute("data-layout")).toBe("single");
+    expect(document.querySelector('[data-part="page-header-description"]')?.textContent).toBe(
+      "Meeting minutes.",
+    );
+    const facts = document.querySelector('[data-part="content"] [data-part="key-value"]');
+    expect(facts?.textContent).toContain(zh.catalog.org.detail.fields.owner);
+    expect(facts?.textContent).toContain(zh.catalog.owner.self);
   });
 });

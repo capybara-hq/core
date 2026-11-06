@@ -2,7 +2,6 @@
 
 import {
   Badge,
-  Button,
   type Column,
   DangerConfirm,
   DataTable,
@@ -92,10 +91,11 @@ type Tab = (typeof TABS)[number];
  * 更新到 / 导入 (its org uploads its versions), only narrows when its org does not share it, and takes
  * no scope change while its first version waits. Tabs: 组件 (the platform version's extension,
  * skills, connector templates and agent templates with kind, version and scope (跟随插件 or the
- * component's own, linking to the component); its dependencies; the translation report, the
- * license; delete), 组织 (the scope and the orgs it names, or how many turned it on), 版本 (each
- * version's source, origin and import time). Inspector: the icon, the package, source, publisher,
- * scope, orgs using it and the permissions with their state. From the query cache (the layout
+ * component's own, linking to the component); its dependencies; the translation report), 组织
+ * (the scope and the orgs it names, or how many turned it on), 版本 (each version's source, origin and import time). One centred column (no inspector): the description
+ * under the title, the notes, the icon and the facts (package, source, publisher, owner, scope,
+ * orgs using it, the permissions with their state, updated) as a KeyValue, the tab, then the
+ * license folded at the end; 删除 is the head's ⋯ menu item. From the query cache (the layout
  * prefetched the reads on a first load): the item (a 404 is the not-found state); the marketplaces,
  * the catalog and the orgs are sections.
  */
@@ -126,9 +126,13 @@ function PluginDetailRead({ itemId, orgId }: { itemId: string; orgId: string | n
           onChange: () => {},
         }}
         // The components table and the dependencies; the inspector's six facts.
+        // One column: the facts (a KeyValue of nine), the components table and the dependencies
         loading={{
-          inspector: { rows: 6, keyWidth: "10ch" },
-          content: [{ kind: "list" }, { kind: "list" }],
+          content: [
+            { kind: "key-value", rows: 9, keyWidth: "10ch" },
+            { kind: "list" },
+            { kind: "list" },
+          ],
         }}
       />
     );
@@ -184,6 +188,16 @@ function PluginDetail({ detail, orgId }: { detail: CatalogItemDetail; orgId: str
     fn: () => setDisabled(item.id, { disabled: false }),
     invalidates: () => pluginScopeChangeKeys(orgId),
   });
+  const [confirm, setConfirm] = useState(false);
+  const remove = useAppMutation({
+    fn: () => removeCatalogItem(item.id),
+    invalidates: () => pluginScopeChangeKeys(orgId),
+    forgetsOnLeave: () => [catalogItemQuery(item.id).queryKey],
+  });
+  // The release the platform runs (its license is the page's last section)
+  const platformRelease =
+    detail.versions.find((v) => v.version === platformVersion) ??
+    detail.versions.find((v) => v.version === item.latestVersion);
   // Stages the newer marketplace version: the answer is the staged import the review page reads
   const stage = useAppMutation({
     fn: (v: { sourceId: string; version: string }) =>
@@ -254,6 +268,20 @@ function PluginDetail({ detail, orgId }: { detail: CatalogItemDetail; orgId: str
       : []),
   ];
 
+  // 删除 (a deletable plugin): the head's ⋯ menu, a destructive item (spec §6.7)
+  const deletable = !deleted && !item.builtin;
+  const headActions = [
+    ...actions,
+    ...(deletable
+      ? [
+          {
+            label: t("detail.more"),
+            menu: [{ label: t("detail.delete"), danger: true, onSelect: () => setConfirm(true) }],
+          },
+        ]
+      : []),
+  ];
+  const description = descriptionOf(item, locale);
   return (
     <>
       <DetailPage
@@ -269,7 +297,8 @@ function PluginDetail({ detail, orgId }: { detail: CatalogItemDetail; orgId: str
               <ScopeBadge item={item} />
             </Stack>
           ),
-          actions,
+          ...(description !== "" ? { description } : {}),
+          actions: headActions,
         }}
         tabs={{
           label: t("detail.tabsLabel"),
@@ -283,71 +312,71 @@ function PluginDetail({ detail, orgId }: { detail: CatalogItemDetail; orgId: str
           value: tab,
           onChange: (x) => setTab(x as Tab),
         }}
-        inspectorTitle={item.name}
-        inspector={
-          <Stack gap={12}>
-            {detail.hasIcon && <CatalogIcon src={adminIconUrl(item.id)} name={item.name} />}
-            <KeyValue
-              keyWidth="10ch"
-              rows={[
-                { k: t("detail.fields.package"), v: item.packageName ?? "—" },
-                { k: t("detail.fields.source"), v: sourceLabel(item) },
-                ...(latest?.sourceDetail
-                  ? [{ k: t("detail.fields.origin"), v: origin(latest.sourceDetail) }]
-                  : []),
-                { k: t("detail.fields.publisher"), v: item.publisher || "—" },
-                {
-                  k: t("detail.fields.owner"),
-                  v: owner === null ? tc("owner.platform") : owner.name,
-                },
-                { k: t("detail.fields.scope"), v: scopeLabel(item) },
-                { k: t("detail.fields.orgs"), v: String(item.enabledOrgs) },
-                {
-                  k: t("detail.fields.permissions"),
-                  v:
-                    ext === undefined
-                      ? t("detail.permissions.none")
-                      : item.pending
-                        ? t("detail.permissions.pending", { n: permissionCount })
-                        : t("detail.permissions.confirmed", { n: permissionCount }),
-                },
-                { k: t("detail.fields.updated"), v: <DateTime value={item.updatedAt} /> },
-              ]}
-            />
-          </Stack>
-        }
       >
-        {owner !== null && (
-          <Text variant="prose" tone="muted">
-            {t("detail.ownerNote", { org: owner.name })}
-          </Text>
-        )}
-        {shareGated(item) && <Text tone="warn">{t("detail.notShareableNote")}</Text>}
-        {awaiting ? (
-          <Text tone="warn">{t("detail.awaitingNote")}</Text>
-        ) : (
-          item.pendingVersion !== null &&
-          item.pendingVersion !== undefined && (
-            <Text tone="warn">
-              {t("detail.pendingVersionNote", { version: versionLabel(item.pendingVersion) })}
+        <Stack gap={16}>
+          {owner !== null && (
+            <Text variant="prose" tone="muted">
+              {t("detail.ownerNote", { org: owner.name })}
             </Text>
-          )
-        )}
-        {item.disabled && <Text tone="warn">{t("detail.disabledNote")}</Text>}
-        {item.contentChanged && <Text tone="warn">{t("detail.contentChanged")}</Text>}
-        {tab === "components" ? (
-          <ComponentsTab detail={detail} catalog={catalog} orgId={orgId} />
-        ) : tab === "orgs" ? (
-          <OrgsTab item={item} />
-        ) : (
-          <Versions versions={detail.versions} />
-        )}
-        {descriptionOf(item, locale) && tab === "components" && (
-          <Text variant="prose" tone="muted">
-            {descriptionOf(item, locale)}
-          </Text>
-        )}
-        {deleted && <Text tone="warn">{td("admin.detail.deleted")}</Text>}
+          )}
+          {shareGated(item) && <Text tone="warn">{t("detail.notShareableNote")}</Text>}
+          {awaiting ? (
+            <Text tone="warn">{t("detail.awaitingNote")}</Text>
+          ) : (
+            item.pendingVersion !== null &&
+            item.pendingVersion !== undefined && (
+              <Text tone="warn">
+                {t("detail.pendingVersionNote", { version: versionLabel(item.pendingVersion) })}
+              </Text>
+            )
+          )}
+          {item.disabled && <Text tone="warn">{t("detail.disabledNote")}</Text>}
+          {item.contentChanged && <Text tone="warn">{t("detail.contentChanged")}</Text>}
+          {deleted && <Text tone="warn">{td("admin.detail.deleted")}</Text>}
+          {/* The facts, in the single column (no right inspector) */}
+          {detail.hasIcon && <CatalogIcon src={adminIconUrl(item.id)} name={item.name} />}
+          <KeyValue
+            keyWidth="10ch"
+            rows={[
+              { k: t("detail.fields.package"), v: item.packageName ?? "—" },
+              { k: t("detail.fields.source"), v: sourceLabel(item) },
+              ...(latest?.sourceDetail
+                ? [{ k: t("detail.fields.origin"), v: origin(latest.sourceDetail) }]
+                : []),
+              { k: t("detail.fields.publisher"), v: item.publisher || "—" },
+              {
+                k: t("detail.fields.owner"),
+                v: owner === null ? tc("owner.platform") : owner.name,
+              },
+              { k: t("detail.fields.scope"), v: scopeLabel(item) },
+              { k: t("detail.fields.orgs"), v: String(item.enabledOrgs) },
+              {
+                k: t("detail.fields.permissions"),
+                v:
+                  ext === undefined
+                    ? t("detail.permissions.none")
+                    : item.pending
+                      ? t("detail.permissions.pending", { n: permissionCount })
+                      : t("detail.permissions.confirmed", { n: permissionCount }),
+              },
+              { k: t("detail.fields.updated"), v: <DateTime value={item.updatedAt} /> },
+            ]}
+          />
+          {tab === "components" ? (
+            <ComponentsTab detail={detail} catalog={catalog} />
+          ) : tab === "orgs" ? (
+            <OrgsTab item={item} />
+          ) : (
+            <Versions versions={detail.versions} />
+          )}
+          {/* 许可证全文: folded, at the end of the page */}
+          {platformRelease !== undefined && (
+            <LicenseView
+              text={platformRelease.licenseText}
+              truncated={platformRelease.licenseTruncated}
+            />
+          )}
+        </Stack>
       </DetailPage>
       {dialog === "scope" && (
         <PluginScopeDialog item={item} orgId={orgId} onClose={() => setDialog(null)} />
@@ -363,6 +392,21 @@ function PluginDetail({ detail, orgId }: { detail: CatalogItemDetail; orgId: str
           onClose={() => setDialog(null)}
         />
       )}
+      <DangerConfirm
+        open={confirm}
+        onOpenChange={setConfirm}
+        title={t("detail.deleteConfirm.title", { name: item.name })}
+        description={t("detail.deleteConfirm.hint")}
+        confirmName={item.name}
+        confirmLabel={t("detail.deleteConfirm.confirm")}
+        onConfirm={async () => {
+          await remove.mutateAsync(undefined).catch((e: unknown) => {
+            throw new Error(errorMessage(e));
+          });
+          toast.success(t("detail.deletedToast", { name: item.name }));
+          router.push("/admin/plugins");
+        }}
+      />
     </>
   );
 }
@@ -434,31 +478,20 @@ function componentsOf(m: PluginManifest): ComponentRow[] {
 function ComponentsTab({
   detail,
   catalog,
-  orgId,
 }: {
   detail: CatalogItemDetail;
   /** The deployment catalog; `null` when it could not be read (dependencies are then unchecked). */
   catalog: CatalogItem[] | null;
-  orgId: string | null;
 }) {
   const t = useTranslations("catalog.admin.detail");
   const tc = useTranslations("catalog.components");
-  const toast = useToast();
-  const router = useRouter();
-  const errorMessage = useErrorMessage();
   const item = detail.item;
   const latest =
     detail.versions.find((v) => v.version === (item.platformVersion ?? item.latestVersion)) ??
     detail.versions.find((v) => v.version === item.latestVersion);
-  const [confirm, setConfirm] = useState(false);
   const tcs = useTranslations("adminComponents");
   const componentOf = usePluginComponents(item.id);
   const scopeText = useComponentScopeText();
-  const remove = useAppMutation({
-    fn: () => removeCatalogItem(item.id),
-    invalidates: () => pluginScopeChangeKeys(orgId),
-    forgetsOnLeave: () => [catalogItemQuery(item.id).queryKey],
-  });
   const rows = latest === undefined ? [] : componentsOf(latest.manifest);
   const deps = latest?.manifest.dependencies ?? [];
   const columns: Column<ComponentRow>[] = [
@@ -531,31 +564,6 @@ function ComponentsTab({
         </ComponentSection>
       )}
       {latest?.translation != null && <TranslationReportView report={latest.translation} />}
-      {latest !== undefined && (
-        <LicenseView text={latest.licenseText} truncated={latest.licenseTruncated} />
-      )}
-      {item.deletedAt === null && !item.builtin && (
-        <Stack direction="row">
-          <Button variant="danger" onClick={() => setConfirm(true)}>
-            {t("delete")}
-          </Button>
-        </Stack>
-      )}
-      <DangerConfirm
-        open={confirm}
-        onOpenChange={setConfirm}
-        title={t("deleteConfirm.title", { name: item.name })}
-        description={t("deleteConfirm.hint")}
-        confirmName={item.name}
-        confirmLabel={t("deleteConfirm.confirm")}
-        onConfirm={async () => {
-          await remove.mutateAsync(undefined).catch((e: unknown) => {
-            throw new Error(errorMessage(e));
-          });
-          toast.success(t("deletedToast", { name: item.name }));
-          router.push("/admin/plugins");
-        }}
-      />
     </Stack>
   );
 }
