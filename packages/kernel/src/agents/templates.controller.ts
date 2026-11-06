@@ -56,8 +56,8 @@ const actorOpts = (p: ReturnType<typeof requireUser>) => {
  * phase 4, rulings P4-9 to P4-13). Reads with `agents.create` (members, people only): the list
  * the agent editor and the 模板 tab show, and one template's detail with its definition. The org's
  * own templates (saved from an agent, `POST orgs/:orgId/agents/:agentId/save-as-template`) are
- * edited, deleted and made 可共享 by the owner org's admins (`agents.manage`; 可共享
- * `catalog.upload`, ruling P3-6).
+ * edited, deleted and made 可共享 by the owner org's admins (`agents.manage`, the action that
+ * manages agent templates).
  */
 @Controller("api/v1/orgs/:orgId/agent-templates")
 export class AgentTemplatesController {
@@ -156,7 +156,7 @@ export class AgentTemplatesController {
    * -> 409 `catalog.not_owned`; one the org promoted writes its platform row too (ruling P3-2).
    */
   @Put(":id/shareable")
-  @OrgAction("catalog.upload")
+  @OrgAction("agents.manage")
   async setShareable(
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,

@@ -12,6 +12,7 @@ import {
   parseToolKey,
 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
+import { offeredNamed } from "../catalog/component-state.js";
 import { type Owner, ownerOf, ownersOf } from "../catalog/ownership.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
@@ -27,7 +28,9 @@ import { AgentLookup, type AgentView } from "./agent-lookup.js";
 import {
   type AgentTemplateView,
   loadTemplates,
+  type OwnTemplate,
   putTemplateVersionIn,
+  readOwnTemplate,
   type TemplateRow,
   templateTypeOf,
   templateViewOf,
@@ -61,20 +64,43 @@ export interface AgentTemplateDetail extends AgentTemplateView {
  *   resolve it);
  * - `no_endpoint`: a hand-configured connector without a URL to record (an inline OpenAPI document);
  * - `unsupported_protocol`: a hand-configured connector of a kind other than MCP or OpenAPI;
- * - `limit`: past a template limit (connectors 16, sub-agent types and inline 16, tools 200).
+ * - `limit`: past a template limit (connectors 16, sub-agent types and inline 16, tools 200);
+ * - `connector_tool`: a tool policy on a connector tool (kind `tool_policy`, `name` its key), or a
+ *   connector tool key in an inline sub-agent's tools (kind `subagent_inline`, `field: "tools"`,
+ *   `name` the sub-agent): connector keys embed this org's connector slug;
+ * - `unsupported_field`: a field of an inline sub-agent a template's inline entry cannot hold
+ *   (kind `subagent_inline`, `field`: `disallowedTools`, `toolPolicies`, `effort` or `maxSteps`).
  */
 export interface SaveAsOmission {
-  kind: "subagent_agent" | "subagent_template" | "subagent_inline" | "skill" | "connector" | "tool";
+  kind:
+    | "subagent_agent"
+    | "subagent_template"
+    | "subagent_inline"
+    | "skill"
+    | "connector"
+    | "tool"
+    | "tool_policy";
   name: string;
   id?: string;
+  /** The field of an inline sub-agent left out (`connector_tool`, `unsupported_field`). */
+  field?: string;
   reason:
     | "org_agent"
     | "unavailable"
     | "agent_skill"
     | "no_endpoint"
     | "unsupported_protocol"
-    | "limit";
+    | "limit"
+    | "connector_tool"
+    | "unsupported_field";
 }
+
+/**
+ * Roster names no template may take (ruling T4-R15): `general-purpose`, always the roster's first
+ * entry. Claude Code's other built-in types (`Explore`, `Plan`) are capitalized, which the
+ * template name rule already refuses.
+ */
+export const RESERVED_TEMPLATE_NAMES: ReadonlySet<string> = new Set(["general-purpose"]);
 
 const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
 type Effort = (typeof EFFORTS)[number];
@@ -137,6 +163,35 @@ export function parseTemplateDefinition(definition: Record<string, unknown>): Ag
 }
 
 /**
+ * Ruling P4-11 on an edit: every `connectors[].needs.endpoint` must already be what
+ * {@link sanitizeEndpoint} keeps (an http(s) URL without userinfo, query or fragment, in its
+ * normal form). An edit is never stripped silently: anything else -> 400 `validation_failed`
+ * naming the field (and the accepted form, when there is one).
+ */
+export function assertSanitizedEndpoints(template: AgentTemplate): void {
+  const details: { path: string; message: string }[] = [];
+  (template.connectors ?? []).forEach((c, i) => {
+    if (!("needs" in c)) return;
+    const clean = sanitizeEndpoint(c.needs.endpoint);
+    if (clean === c.needs.endpoint) return;
+    details.push({
+      path: `definition.connectors.${i}.needs.endpoint`,
+      message:
+        clean === null
+          ? "must be an http(s) URL of at most 2048 characters"
+          : `must not carry credentials, a query or a fragment; use ${clean}`,
+    });
+  });
+  if (details.length > 0) {
+    throw new ApiError(
+      "validation_failed",
+      "A connector endpoint in an agent template must be a plain http(s) URL (no userinfo, query or fragment)",
+      details,
+    );
+  }
+}
+
+/**
  * The template an agent is saved as (rulings P4-10, P4-11), with what was left out. Pure reads of
  * the org's state through `db`.
  */
@@ -167,9 +222,13 @@ export async function templateFromAgent(
     }
     tools.push(key);
   }
-  const toolPolicies = Object.fromEntries(
-    Object.entries(def.toolPolicies ?? {}).filter(([k]) => tools.includes(k)),
-  );
+  const toolPolicies: Record<string, "ask" | "deny"> = {};
+  for (const [k, v] of Object.entries(def.toolPolicies ?? {})) {
+    if (tools.includes(k)) toolPolicies[k] = v;
+    else if (parseToolKey(k)?.kind === "connector") {
+      omitted.push({ kind: "tool_policy", name: k, reason: "connector_tool" });
+    }
+  }
 
   // Skills: ids -> names (pinned -> `skills`, the other selected ones -> `selectedSkills`)
   const pinned = def.skills?.pinned ?? [];
@@ -348,9 +407,28 @@ export async function templateFromAgent(
         omitted.push({ kind: "subagent_inline", name: t.name, reason: "limit" });
         continue;
       }
-      const ownTools = (t.tools ?? tools).filter(
+      const listed = t.tools ?? tools;
+      const ownTools = listed.filter(
         (k) => TOOL_KEY_RE.test(k) && parseToolKey(k)?.kind !== "connector",
       );
+      if (listed.some((k) => parseToolKey(k)?.kind === "connector")) {
+        omitted.push({
+          kind: "subagent_inline",
+          name: t.name,
+          field: "tools",
+          reason: "connector_tool",
+        });
+      }
+      for (const field of ["disallowedTools", "toolPolicies", "effort", "maxSteps"] as const) {
+        if (t[field] !== undefined) {
+          omitted.push({
+            kind: "subagent_inline",
+            name: t.name,
+            field,
+            reason: "unsupported_field",
+          });
+        }
+      }
       const inlineSkills: string[] = [];
       for (const id of t.skills ?? []) {
         const n = skillName(id, false);
@@ -403,16 +481,6 @@ export async function templateFromAgent(
     template: parseTemplateDefinition(template as unknown as Record<string, unknown>),
     omitted,
   };
-}
-
-/** The org's own template row (an org template: no plugin, no catalog item), with its link. */
-interface OwnTemplateRow {
-  id: string;
-  name: string;
-  current_version: number;
-  shareable: boolean;
-  /** The platform row it was promoted to (ruling P3-3), or null. */
-  link: string | null;
 }
 
 /**
@@ -479,10 +547,11 @@ export class OrgAgentTemplates {
   }
 
   /**
-   * Rule 10 for a new org template named `name` (a bare type): refused while the org's usable set
-   * has that type, the org has a live row of that name without a plugin (an unusable copy too:
-   * the live-name index), or the platform has a live template the org created under that name
-   * (promotion would clash).
+   * Rule 10 for a new org template named `name` (a bare type): refused for a reserved roster name
+   * (details `[{ reserved: true }]`), and while the org's usable set has that type, the org has a
+   * live row of that name without a plugin (an unusable copy too: the live-name index), a
+   * plugin-less platform template of that name is offered to the org (ruling P2-3's alignment),
+   * or the platform has a live template the org created under that name (promotion would clash).
    */
   private async assertNameFree(orgId: string, name: string): Promise<void> {
     const t = this.db;
@@ -497,6 +566,13 @@ export class OrgAgentTemplates {
         [{ owner, templateId }],
       );
     };
+    if (RESERVED_TEMPLATE_NAMES.has(name)) {
+      throw new ApiError(
+        "agent_template.name_taken",
+        `${name} is a built-in sub-agent type; choose another name`,
+        [{ reserved: true }],
+      );
+    }
     const own = await t
       .selectFrom("agent_templates")
       .select("id")
@@ -511,6 +587,15 @@ export class OrgAgentTemplates {
       (u) => templateTypeOf(u.plugin, u.name) === name,
     );
     if (usable) clash(await this.ownerOfRow(orgId, usable), usable.id);
+    // offered to the org but not on (a switch away, as ruling P2-3 for skills): switching it on
+    // later would put the name in the org twice
+    const offered = (await offeredNamed(t, orgId, "agent_template", name)).find(
+      (c) => c.plugin === null,
+    );
+    if (offered) {
+      const ids = offered.ownerOrgId === null ? [] : [offered.ownerOrgId];
+      clash(ownerOf(offered.ownerOrgId, await ownersOf(t, ids)), offered.id);
+    }
     const origin = await t
       .selectFrom("platform_agent_templates")
       .select(["id", "owner_org_id"])
@@ -527,13 +612,16 @@ export class OrgAgentTemplates {
 
   /**
    * A template usable in the org by id ({@link loadTemplates}: an org row, a linked copy, a
-   * platform template on in the org) with its definition, owner and the org's flags. Not usable
-   * -> 404 `component.not_found`.
+   * platform template on in the org), or the org's own template whatever its switch, with its
+   * definition, owner and the org's flags. Otherwise -> 404 `component.not_found`.
    */
   async detail(orgId: string, id: string): Promise<AgentTemplateDetail> {
-    const t = (await loadTemplates(this.db, orgId, [id])).get(id);
-    if (!t) throw notFound();
     const own = await this.ownRow(orgId, id, false);
+    // the owner opens its own template even while it is switched off in its own org (a promoted
+    // one whose platform row the org switched off is not in its usable set)
+    const t =
+      (await loadTemplates(this.db, orgId, [id])).get(id) ?? (own && (await this.ownServed(own)));
+    if (!t) throw notFound();
     let linked: string[] = [];
     if (t.origin === "platform" && !t.ownedCopy && t.id === t.platformTemplateId) {
       linked = (
@@ -583,6 +671,7 @@ export class OrgAgentTemplates {
     const row = await this.ownRow(orgId, id, true);
     if (!row) throw await this.notOwnedOrMissing(orgId, id);
     const template = parseTemplateDefinition(body.definition);
+    assertSanitizedEndpoints(template);
     if (template.name !== row.name) {
       throw new ApiError("validation_failed", "The name of an agent template cannot change", [
         { path: "definition.name", message: `must stay ${row.name}` },
@@ -667,53 +756,56 @@ export class OrgAgentTemplates {
   }
 
   /**
-   * The org's own template `id` (an org template; promoted ones with their platform link), or
+   * The org's own template `id` ({@link readOwnTemplate}, the predicate `OwnedItems` shares), or
    * undefined: another org's, a plugin's, or a copy of a platform template it does not own.
    */
   private async ownRow(
     orgId: string,
     id: string,
     forUpdate: boolean,
-  ): Promise<OwnTemplateRow | undefined> {
-    let q = this.db
-      .selectFrom("agent_templates as t")
-      .leftJoin("platform_agent_templates as p", "p.id", "t.platform_template_id")
-      .select([
-        "t.id",
-        "t.name",
-        "t.current_version",
-        "t.shareable",
-        "t.platform_template_id",
-        "t.pinned_version",
-        "p.owner_org_id",
-        "p.deleted_at as p_deleted_at",
-      ])
-      .where("t.id", "=", id)
-      .where("t.org_id", "=", orgId)
-      .where("t.deleted_at", "is", null)
-      .where("t.plugin_name", "is", null)
-      .where("t.catalog_item_id", "is", null);
-    if (forUpdate) q = q.forUpdate("t");
-    const r = await q.executeTakeFirst();
-    if (!r) return undefined;
-    if (r.platform_template_id === null) {
-      return {
-        id: r.id,
-        name: r.name,
-        current_version: r.current_version,
-        shareable: r.shareable,
-        link: null,
-      };
-    }
-    const promoted =
-      r.pinned_version === null && r.owner_org_id === orgId && r.p_deleted_at === null;
-    if (!promoted) return undefined;
+  ): Promise<OwnTemplate | undefined> {
+    const r = await readOwnTemplate(this.db, orgId, id, forUpdate);
+    return r !== undefined && "link" in r ? r : undefined;
+  }
+
+  /**
+   * What the org's own template serves, read directly (its usable-set entry is missing while the
+   * org switched its promoted template off): the platform row's current version when it is newer
+   * than the org row's (ruling P3-43), else the org row's.
+   */
+  private async ownServed(own: OwnTemplate): Promise<TemplateRow | undefined> {
+    const db = this.db;
+    const platform =
+      own.link === null
+        ? undefined
+        : await db
+            .selectFrom("platform_agent_templates as p")
+            .innerJoin("platform_agent_template_versions as v", (j) =>
+              j.onRef("v.template_id", "=", "p.id").onRef("v.version", "=", "p.current_version"),
+            )
+            .select(["p.current_version", "v.definition", "v.source_format"])
+            .where("p.id", "=", own.link)
+            .executeTakeFirst();
+    const row =
+      platform !== undefined && platform.current_version !== own.current_version
+        ? platform
+        : await db
+            .selectFrom("agent_template_versions")
+            .select(["version as current_version", "definition", "source_format"])
+            .where("template_id", "=", own.id)
+            .where("version", "=", own.current_version)
+            .executeTakeFirst();
+    if (!row) return undefined;
     return {
-      id: r.id,
-      name: r.name,
-      current_version: r.current_version,
-      shareable: r.shareable,
-      link: r.platform_template_id,
+      id: own.id,
+      name: own.name,
+      plugin: null,
+      version: row.current_version,
+      template: row.definition as AgentTemplate,
+      sourceFormat: row.source_format,
+      catalogItemId: null,
+      catalogVersion: null,
+      origin: "org",
     };
   }
 

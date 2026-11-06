@@ -9,7 +9,7 @@ import { getQueueToken } from "@nestjs/bullmq";
 import { Inject, Injectable } from "@nestjs/common";
 import type { Queue } from "bullmq";
 import { sql } from "kysely";
-import { softDeleteTemplateIn } from "../agents/templates.js";
+import { loadTemplates, readOwnTemplate, softDeleteTemplateIn } from "../agents/templates.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
@@ -145,7 +145,7 @@ export class OwnedItems {
   /**
    * The owner org's 可共享 flag of its item, written on the item and (a plugin) every component
    * row in one transaction (ruling P3-2; turning it off narrows as ruling P3-25 says). A skill or
-   * an agent template is named by the org row's id (`skills.manage` / `catalog.upload`): only the
+   * an agent template is named by the org row's id (`skills.manage` / `agents.manage`): only the
    * org's own rows (ruling P3-6: not an agent's skill, not a copy of another owner's platform item:
    * 409 `catalog.not_owned`); one it promoted writes its platform row too (pre-flight F16). Audits
    * `catalog.shareable_changed`.
@@ -184,10 +184,12 @@ export class OwnedItems {
     shareable: boolean,
     opts: ActorOpts,
   ): Promise<void> {
+    // the action that manages the kind (the component scope ACTION map; ruling P4-12 for
+    // templates, like their edit and delete)
     await this.orgLock.lockAndAuthorize(
       orgId,
       actor,
-      kind === "skill" ? "skills.manage" : "catalog.upload",
+      kind === "skill" ? "skills.manage" : "agents.manage",
     );
     const row = await this.ownedComponent(orgId, kind, id, true);
     if (kind === "skill") {
@@ -400,53 +402,39 @@ export class OwnedItems {
     id: string,
     forUpdate: boolean,
   ): Promise<OwnedComponentRow> {
-    const r =
-      kind === "skill"
-        ? await (() => {
-            let q = this.db
-              .selectFrom("skills as s")
-              .leftJoin("platform_skills as p", "p.id", "s.platform_skill_id")
-              .select([
-                "s.id",
-                "s.name",
-                "s.scope",
-                "s.platform_skill_id as link",
-                "s.pinned_version",
-                "s.catalog_item_id",
-                sql<string | null>`null`.as("plugin_name"),
-                "p.owner_org_id",
-              ])
-              .where("s.id", "=", id)
-              .where("s.org_id", "=", orgId)
-              .where("s.deleted_at", "is", null);
-            if (forUpdate) q = q.forUpdate("s");
-            return q.executeTakeFirst();
-          })()
-        : await (() => {
-            let q = this.db
-              .selectFrom("agent_templates as t")
-              .leftJoin("platform_agent_templates as p", "p.id", "t.platform_template_id")
-              .select([
-                "t.id",
-                "t.name",
-                sql<"org">`'org'`.as("scope"),
-                "t.platform_template_id as link",
-                "t.pinned_version",
-                "t.catalog_item_id",
-                "t.plugin_name",
-                "p.owner_org_id",
-              ])
-              .where("t.id", "=", id)
-              .where("t.org_id", "=", orgId)
-              .where("t.deleted_at", "is", null);
-            if (forUpdate) q = q.forUpdate("t");
-            return q.executeTakeFirst();
-          })();
-    if (!r) throw kind === "skill" ? skillNotFound() : componentNotFound();
+    if (kind === "agent_template") {
+      // the one predicate of the template routes (rulings P3-6, P4-13)
+      const t = await readOwnTemplate(this.db, orgId, id, forUpdate);
+      if (t === undefined) {
+        // a template the org uses but has no row of (another owner's platform template)
+        const used = (await loadTemplates(this.db, orgId, [id])).get(id);
+        if (used) throw notOwnedError(used.name);
+        throw componentNotFound();
+      }
+      if (!("link" in t)) throw notOwnedError(t.name);
+      return { id: t.id, name: t.name, link: t.link };
+    }
+    let q = this.db
+      .selectFrom("skills as s")
+      .leftJoin("platform_skills as p", "p.id", "s.platform_skill_id")
+      .select([
+        "s.id",
+        "s.name",
+        "s.scope",
+        "s.platform_skill_id as link",
+        "s.pinned_version",
+        "s.catalog_item_id",
+        "p.owner_org_id",
+      ])
+      .where("s.id", "=", id)
+      .where("s.org_id", "=", orgId)
+      .where("s.deleted_at", "is", null);
+    if (forUpdate) q = q.forUpdate("s");
+    const r = await q.executeTakeFirst();
+    if (!r) throw skillNotFound();
     if (r.scope !== "org") throw notOwnedError(`Skill ${r.name} belongs to an agent and`);
-    // only content the org created itself (ruling P3-46): no plugin provenance; an agent
-    // template also no plugin (an org template saved from an agent, ruling P4-13)
-    if (r.catalog_item_id !== null || r.plugin_name !== null) throw notOwnedError(r.name);
+    // only content the org created itself (ruling P3-46): no plugin provenance
+    if (r.catalog_item_id !== null) throw notOwnedError(r.name);
     if (r.link === null) return { id: r.id, name: r.name, link: null };
     if (r.pinned_version !== null || r.owner_org_id !== orgId) throw notOwnedError(r.name);
     return { id: r.id, name: r.name, link: r.link };

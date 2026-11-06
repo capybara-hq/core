@@ -1,7 +1,9 @@
 import { randomUUID } from "node:crypto";
 import type { AgentTemplate, AgentTemplateTier, Logger } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
+import { sql } from "kysely";
 import { componentOn } from "../catalog/component-state.js";
+import { type Owner, ownerOf, ownersOf } from "../catalog/ownership.js";
 import type { KernelSchemaDb, SourceFormat } from "../db/kernel-schema.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { canonicalJson } from "../tools/canonical-json.js";
@@ -262,39 +264,38 @@ export async function platformTemplatesOn(
  * offered to the org (ruling P4-13, as `skillNameClashes` for skills): the org's own live rows of
  * that type (unlinked, or pinned) that are no copy of it (linked to it, or from its plugin), and
  * the other platform templates of that type on in the org (two orgs' shared templates of one bare
- * name, P3-5). `skills`: the clashing template ids; `plugins`: the clashing platform templates'
- * plugins (`platform` for none).
+ * name, P3-5). `skills`: the clashing template ids; `owners`: each one's owner, in the same order
+ * (an org row without a plugin is the org's own; a plugin's row its catalog item's owner; a
+ * platform row its `owner_org_id`); `plugins`: the clashing platform templates' plugins.
  */
 export async function templateTypeClashes(
   db: KernelSchemaDb,
   orgId: string,
   component: { id: string; itemId: string | null; plugin: string | null; name: string },
-): Promise<{ skills: string[]; plugins: string[] }> {
+): Promise<{ skills: string[]; plugins: string[]; owners: Owner[] }> {
   const own = await db
-    .selectFrom("agent_templates")
-    .select(["id", "platform_template_id", "catalog_item_id"])
-    .where("org_id", "=", orgId)
-    .where("deleted_at", "is", null)
-    .where("name", "=", component.name)
+    .selectFrom("agent_templates as t")
+    .select(["t.id", "t.platform_template_id", "t.catalog_item_id"])
+    .where("t.org_id", "=", orgId)
+    .where("t.deleted_at", "is", null)
+    .where("t.name", "=", component.name)
     .where((eb) =>
       component.plugin === null
-        ? eb("plugin_name", "is", null)
-        : eb("plugin_name", "=", component.plugin),
+        ? eb("t.plugin_name", "is", null)
+        : eb("t.plugin_name", "=", component.plugin),
     )
     .where((eb) =>
-      eb.or([eb("platform_template_id", "is", null), eb("pinned_version", "is not", null)]),
+      eb.or([eb("t.platform_template_id", "is", null), eb("t.pinned_version", "is not", null)]),
     )
     .execute();
-  const ownIds = own
-    .filter(
-      (r) =>
-        r.platform_template_id !== component.id &&
-        (component.itemId === null || r.catalog_item_id !== component.itemId),
-    )
-    .map((r) => r.id);
+  const ownRows = own.filter(
+    (r) =>
+      r.platform_template_id !== component.id &&
+      (component.itemId === null || r.catalog_item_id !== component.itemId),
+  );
   const others = await db
     .selectFrom("platform_agent_templates")
-    .select(["id", "plugin_name"])
+    .select(["id", "plugin_name", "owner_org_id"])
     .where("name", "=", component.name)
     .where((eb) =>
       component.plugin === null
@@ -310,9 +311,38 @@ export async function templateTypeClashes(
     others.map((o) => o.id),
   );
   const platform = others.filter((o) => on.has(o.id));
+  // a plugin's row: its catalog item's owner (`catalog_items.id` is a uuid, the column text)
+  const itemIds = [
+    ...new Set(ownRows.flatMap((r) => (r.catalog_item_id === null ? [] : [r.catalog_item_id]))),
+  ];
+  const itemOwner = new Map(
+    (itemIds.length === 0
+      ? []
+      : await db
+          .selectFrom("catalog_items")
+          .select(["id", "owner_org_id"])
+          .where(sql<string>`id::text`, "in", itemIds)
+          .execute()
+    ).map((i) => [String(i.id), i.owner_org_id]),
+  );
+  const ownerIds = [
+    ...ownRows.map((r) =>
+      component.plugin === null
+        ? orgId
+        : r.catalog_item_id === null
+          ? null
+          : (itemOwner.get(r.catalog_item_id) ?? null),
+    ),
+    ...platform.map((o) => o.owner_org_id),
+  ];
+  const owners = await ownersOf(
+    db,
+    ownerIds.filter((x): x is string => x !== null),
+  );
   return {
-    skills: [...ownIds, ...platform.map((o) => o.id)],
-    plugins: platform.map((o) => o.plugin_name ?? "platform"),
+    skills: [...ownRows.map((r) => r.id), ...platform.map((o) => o.id)],
+    plugins: platform.flatMap((o) => (o.plugin_name === null ? [] : [o.plugin_name])),
+    owners: ownerIds.map((x) => ownerOf(x, owners)),
   };
 }
 
@@ -562,6 +592,64 @@ export async function usableTemplates(
     }
     return 0;
   });
+}
+
+/** The org's own agent template row (rulings P3-6, P4-13), as its owner acts on it. */
+export interface OwnTemplate {
+  id: string;
+  name: string;
+  current_version: number;
+  shareable: boolean;
+  /** The platform row it was promoted to (ruling P3-3), or null while it is an org row only. */
+  link: string | null;
+}
+
+/**
+ * The one "org's own template" predicate (rulings P3-6, P3-46, P4-13), shared by the template
+ * routes and `OwnedItems`: the org's live row `id` is its own when it is an org template (no
+ * plugin, no catalog item) that is unlinked, or linked without a pin to a live platform row the
+ * org owns (promoted on share). Returns the row (`forUpdate`: locked), `{ own: false, name }` for
+ * a row of the org that is not its own (a plugin's template, a copy of another owner's platform
+ * template), or undefined when the org has no live row `id`.
+ */
+export async function readOwnTemplate(
+  db: KernelSchemaDb,
+  orgId: string,
+  id: string,
+  forUpdate: boolean,
+): Promise<OwnTemplate | { own: false; name: string } | undefined> {
+  let q = db
+    .selectFrom("agent_templates as t")
+    .leftJoin("platform_agent_templates as p", "p.id", "t.platform_template_id")
+    .select([
+      "t.id",
+      "t.name",
+      "t.current_version",
+      "t.shareable",
+      "t.plugin_name",
+      "t.catalog_item_id",
+      "t.platform_template_id",
+      "t.pinned_version",
+      "p.owner_org_id",
+      "p.deleted_at as p_deleted_at",
+    ])
+    .where("t.id", "=", id)
+    .where("t.org_id", "=", orgId)
+    .where("t.deleted_at", "is", null);
+  if (forUpdate) q = q.forUpdate("t");
+  const r = await q.executeTakeFirst();
+  if (!r) return undefined;
+  const notOwn = { own: false as const, name: r.name };
+  if (r.plugin_name !== null || r.catalog_item_id !== null) return notOwn;
+  const own = {
+    id: r.id,
+    name: r.name,
+    current_version: r.current_version,
+    shareable: r.shareable,
+  };
+  if (r.platform_template_id === null) return { ...own, link: null };
+  const promoted = r.pinned_version === null && r.owner_org_id === orgId && r.p_deleted_at === null;
+  return promoted ? { ...own, link: r.platform_template_id } : notOwn;
 }
 
 /**
