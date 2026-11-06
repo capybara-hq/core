@@ -299,7 +299,8 @@ async function platformOn(
  * The org's live templates by id (`ids`; ids that are no usable template are missing): an org
  * template with its current version; an org copy linked to a platform template without a pin
  * (ruling B2) as that platform template's current version under the copy's id, while the platform
- * template is on in the org; a platform template id while it is on in the org, or, when an org row
+ * template is on in the org; a pinned copy as its own version while its platform template is on in
+ * the org (ruling P2-18); a platform template id while it is on in the org, or, when an org row
  * of the same component (unlinked or pinned) wins its type, as that row (its `id` is the row's: the
  * roster lists the platform id as an alias). Deleted and foreign ids are left out. `log` receives
  * the type-clash warnings.
@@ -325,6 +326,16 @@ export async function loadTemplates(
   ];
   const on = await platformOn(db, orgId, platformIds, log);
   const platform = new Map(on.rows.map((p) => [p.id, p]));
+  // ruling P2-18: a pinned copy serves its own version while its platform template is on
+  const pinnedOn = await platformTemplatesOn(db, orgId, [
+    ...new Set(
+      rows.flatMap((r) =>
+        r.platform_template_id !== null && r.pinned_version !== null
+          ? [r.platform_template_id]
+          : [],
+      ),
+    ),
+  ]);
   // a selected platform id shadowed by an org row of the same component resolves to that row
   const shadowIds = unique.filter((id) => !known.has(id) && on.shadowed.has(id));
   const shadowRows = new Map(
@@ -342,6 +353,7 @@ export async function loadTemplates(
       if (p) raw.push({ key: r.id, row: { ...p, id: r.id } });
       continue;
     }
+    if (r.platform_template_id !== null && !pinnedOn.has(r.platform_template_id)) continue;
     raw.push({ key: r.id, row: orgRaw(r) });
   }
   for (const id of unique) {
@@ -364,7 +376,7 @@ export async function loadTemplates(
 
 /**
  * The org's usable templates, by plugin (none first), name and id: its own live templates
- * (unlinked or pinned) and the platform templates on in the org (see {@link platformOn}). An org
+ * (unlinked, or pinned while their platform template is on in the org, ruling P2-18) and the platform templates on in the org (see {@link platformOn}). An org
  * copy linked without a pin is not listed: its platform template is. `log` receives the type-clash
  * warnings.
  */
@@ -378,8 +390,17 @@ export async function usableTemplates(
       eb.or([eb("t.platform_template_id", "is", null), eb("t.pinned_version", "is not", null)]),
     )
     .execute();
+  // ruling P2-18: a pinned copy follows its platform template's availability (the pin fixes the
+  // version only)
+  const pinnedOn = await platformTemplatesOn(db, orgId, [
+    ...new Set(
+      own.flatMap((r) => (r.platform_template_id === null ? [] : [r.platform_template_id])),
+    ),
+  ]);
   const rows = await normalized(db, orgId, [
-    ...own.map(orgRaw),
+    ...own
+      .filter((r) => r.platform_template_id === null || pinnedOn.has(r.platform_template_id))
+      .map(orgRaw),
     ...(await platformOn(db, orgId, undefined, log)).rows,
   ]);
   const key = (t: TemplateRow) => [t.plugin ?? "", t.name, t.id] as const;

@@ -383,9 +383,9 @@ export async function agentDefinitionRefs(
 }
 
 /**
- * The ids an org's agents may reference a platform component by: its own id and the org's unpinned
- * copies linked to it (ruling B2: they resolve to it). Connector templates: none (connectors made
- * from one stay the org's own).
+ * The ids an org's agents may reference a platform component by: its own id and the org's copies
+ * linked to it (ruling B2: unpinned ones resolve to it; ruling P2-18: pinned ones follow its
+ * availability). Connector templates: none (connectors made from one stay the org's own).
  */
 export async function referenceIds(
   db: KernelSchemaDb,
@@ -403,7 +403,6 @@ export async function referenceIds(
           .select(["id", "platform_skill_id as platform_id"])
           .where("org_id", "=", orgId)
           .where("deleted_at", "is", null)
-          .where("pinned_version", "is", null)
           .where("platform_skill_id", "in", [...ids])
           .execute()
       : await db
@@ -411,7 +410,6 @@ export async function referenceIds(
           .select(["id", "platform_template_id as platform_id"])
           .where("org_id", "=", orgId)
           .where("deleted_at", "is", null)
-          .where("pinned_version", "is", null)
           .where("platform_template_id", "in", [...ids])
           .execute();
   for (const c of copies) if (c.platform_id !== null) out.set(c.id, c.platform_id);

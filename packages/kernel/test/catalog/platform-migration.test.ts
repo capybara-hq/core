@@ -21,8 +21,8 @@ import { bundlePlugin, mcpTemplate, skillFiles } from "./packages.js";
 /**
  * Plugin scope phase 2, Task 5: the migration of org copies to platform components (spec §6
  * "Migration of what exists", §13.5). Items without platform rows get them at the highest
- * installed version; org copies link to them (pinned when their content differs or the platform
- * component is not on in their org); an org skill of the org's own whose name a platform skill on
+ * installed version; org copies link to them (pinned when their content differs; a copy whose
+ * platform component is not on in its org stays unlinked until it is, ruling P2-18); an org skill of the org's own whose name a platform skill on
  * in the org has is renamed, with an inbox notice and the platform skill switched off there;
  * connectors link to their platform template. A second run changes nothing.
  */
@@ -69,9 +69,16 @@ async function installIn(orgId: string, itemId: string, version: string): Promis
   const r = await env.root({
     method: "POST",
     url: `/api/v1/orgs/${orgId}/catalog/${itemId}/install`,
-    payload: { version, ...connectorConfig() },
+    payload: connectorConfig(),
   });
   expect(r.statusCode, r.body).toBe(201);
+  // an org installs the platform version (ruling P2-17); before phase 2 orgs could be on others
+  await env.db
+    .updateTable("plugin_installs")
+    .set({ version })
+    .where("org_id", "=", orgId)
+    .where("item_id", "=", itemId)
+    .execute();
   // the org copies an install wrote before phase 2: what the migration links
   await legacyCopies(env, orgId, itemId);
 }
@@ -277,22 +284,30 @@ describe("platform components migration", () => {
     expect(served.get(a[0]?.id as string)).toMatchObject({ origin: "org", version: 1 });
   });
 
-  it("a copy whose platform skill is not on in its org is linked pinned (it keeps serving its own version)", async () => {
+  it("a copy whose platform skill is not on in its org stays the org's own until it is on (ruling P2-18)", async () => {
     const itemId = await importPlugin(env, await kit("1.0.0"));
     await installIn(env.orgId, itemId, "1.0.0");
     // the plugin is no longer on in the org (as after an uninstall that kept skills agents use)
     await env.db.updateTable("plugin_installs").set({ status: "failed" }).execute();
 
+    // a linked copy (pinned or not) follows its platform skill: linked now, it would disappear
     const stats = await run();
-    expect(stats).toMatchObject({ itemsSynced: [], skillsLinked: 2, skillsPinned: 2 });
-    expect((await orgSkills(env.orgId)).map((s) => [s.name, s.pinned_version])).toEqual([
-      ["alpha", 1],
-      ["beta", 1],
+    expect(stats).toMatchObject({ itemsSynced: [], skillsLinked: 0, skillsPinned: 0 });
+    expect(
+      (await orgSkills(env.orgId)).map((s) => [s.name, s.platform_skill_id, s.pinned_version]),
+    ).toEqual([
+      ["alpha", null, null],
+      ["beta", null, null],
     ]);
     expect((await usableSkills(env.db, env.orgId)).map((s) => [s.name, s.origin])).toEqual([
       ["alpha", "org"],
       ["beta", "org"],
     ]);
+
+    // on again: the next run links them
+    await env.db.updateTable("plugin_installs").set({ status: "installed" }).execute();
+    expect(await run()).toMatchObject({ skillsLinked: 2 });
+    expect((await orgSkills(env.orgId)).every((s) => s.platform_skill_id !== null)).toBe(true);
   });
 
   it("an org skill of the org's own named like a platform skill on in the org is renamed, noticed and the platform skill switched off there; agents keep it by id", async () => {

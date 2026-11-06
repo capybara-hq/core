@@ -12,12 +12,13 @@ import {
   type TestS3,
 } from "@capybara-hq/testing";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { agentsUsing, referenceIds } from "../../src/catalog/component-state.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { skillsChangeText } from "../../src/runtime/context/skills.js";
 import { SkillInvoker } from "../../src/skills/invoke.js";
-import { usableSkills } from "../../src/skills/usable.js";
+import { skillVersionsById, usableSkills } from "../../src/skills/usable.js";
 import { StorageService } from "../../src/storage/storage.service.js";
 import { truncateTables } from "../helpers/db.js";
 import { accountsFor } from "../helpers/identity.js";
@@ -567,5 +568,60 @@ describe("skills from platform components", { timeout: 90_000 }, () => {
     expect(pinned.content).toContain("Org copy of alpha.");
     // pinned: the copy is the org's own again and wins the name
     expect(await library()).toEqual([[copy.id, "org"]]);
+  });
+  it("a pinned linked copy follows its platform skill's availability and counts as a reference (ruling P2-18)", async () => {
+    await installPlugin("kit");
+    const p = await seedPlatformSkill({ name: "alpha", plugin: "kit", body: "Platform alpha." });
+    const copy = await seedOrgSkill({ name: "alpha", body: "Org copy of alpha.", plugin: "kit" });
+    await db
+      .updateTable("skills")
+      .set({ platform_skill_id: p.id, pinned_version: 1 })
+      .where("id", "=", copy.id)
+      .execute();
+    const usable = async () => (await usableSkills(db, orgId)).map((x) => x.id);
+    const byId = async () => [...(await skillVersionsById(db, orgId, [copy.id])).keys()];
+    expect(await usable()).toEqual([copy.id]);
+    expect(await byId()).toEqual([copy.id]);
+    const agentId = await agentWith([copy.id]);
+    // the previews (disable, scope, uninstall) see the agent through the pinned copy
+    expect(await referenceIds(db, orgId, "skill", [p.id])).toEqual(
+      new Map([
+        [p.id, p.id],
+        [copy.id, p.id],
+      ]),
+    );
+    expect(await agentsUsing(db, orgId, "skill", [p.id])).toEqual([
+      expect.objectContaining({ id: agentId, refs: [copy.id] }),
+    ]);
+
+    // disabled on the deployment
+    await db
+      .updateTable("platform_skills")
+      .set({ disabled: true })
+      .where("id", "=", p.id)
+      .execute();
+    expect(await usable()).toEqual([]);
+    expect(await byId()).toEqual([]);
+    await db
+      .updateTable("platform_skills")
+      .set({ disabled: false })
+      .where("id", "=", p.id)
+      .execute();
+    expect(await usable()).toEqual([copy.id]);
+
+    // switched off in the org
+    await db
+      .insertInto("component_org_switches")
+      .values({ kind: "skill", component_id: p.id, org_id: orgId, enabled: false })
+      .execute();
+    expect(await usable()).toEqual([]);
+    expect(await byId()).toEqual([]);
+    await db.deleteFrom("component_org_switches").execute();
+    expect(await byId()).toEqual([copy.id]);
+
+    // its plugin uninstalled in the org
+    await db.deleteFrom("plugin_installs").where("org_id", "=", orgId).execute();
+    expect(await usable()).toEqual([]);
+    expect(await byId()).toEqual([]);
   });
 });

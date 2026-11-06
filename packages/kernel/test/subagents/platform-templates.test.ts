@@ -2,7 +2,8 @@ import { randomUUID } from "node:crypto";
 import type { AgentTemplate } from "@capybara-hq/plugin-sdk";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentDefinition } from "../../src/agents/definition.js";
-import { usableTemplates } from "../../src/agents/templates.js";
+import { loadTemplates, usableTemplates } from "../../src/agents/templates.js";
+import { referenceIds } from "../../src/catalog/component-state.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import type { CaseSnapshot } from "../../src/evals/snapshot.js";
 import { currentTemplate } from "../../src/evals/worker.js";
@@ -480,4 +481,37 @@ describe("agent templates from platform components", () => {
       plugin: "crm",
     });
   }, 120_000);
+  it("a pinned linked copy follows its platform template's availability and counts as a reference (ruling P2-18)", async () => {
+    const p = await seedPlatform({ name: "reviewer", plugin: "crm", bodies: ["Review P1."] });
+    const own = await seedOrg({ name: "reviewer", plugin: "crm", body: "Review O1." });
+    await env.db
+      .updateTable("agent_templates")
+      .set({ platform_template_id: p, pinned_version: 1 })
+      .where("id", "=", own)
+      .execute();
+    const usable = async () => (await usableTemplates(env.db, env.orgId)).map((t) => t.id);
+    const byId = async () => [...(await loadTemplates(env.db, env.orgId, [own])).keys()];
+    expect(await usable()).toEqual([own]);
+    expect(await byId()).toEqual([own]);
+    expect(await referenceIds(env.db, env.orgId, "agent_template", [p])).toEqual(
+      new Map([
+        [p, p],
+        [own, p],
+      ]),
+    );
+    await env.db
+      .updateTable("platform_agent_templates")
+      .set({ disabled: true })
+      .where("id", "=", p)
+      .execute();
+    expect(await usable()).toEqual([]);
+    expect(await byId()).toEqual([]);
+    await env.db
+      .updateTable("platform_agent_templates")
+      .set({ disabled: false, deleted_at: new Date() })
+      .where("id", "=", p)
+      .execute();
+    expect(await usable()).toEqual([]);
+    expect(await byId()).toEqual([]);
+  });
 });

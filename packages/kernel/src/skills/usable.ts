@@ -241,7 +241,8 @@ async function platformOn(
  * The org's live skills by id (`ids`; ids that are no usable skill are missing from the map): an
  * agent's own skill or an org skill with its current version; an org copy linked to a platform
  * skill without a pin (ruling B2) as that platform skill's current version under the copy's id,
- * while the platform skill is on in the org; a platform skill id while it is on in the org.
+ * while the platform skill is on in the org; a pinned copy as its own version, while its platform
+ * skill is on in the org (ruling P2-18); a platform skill id while it is on in the org.
  */
 export async function skillVersionsById(
   db: KernelSchemaDb,
@@ -278,6 +279,9 @@ export async function skillVersionsById(
   const linked = rows.filter(
     (r) => r.scope === "org" && r.platform_skill_id !== null && r.pinned_version === null,
   );
+  const pinned = rows.filter(
+    (r) => r.scope === "org" && r.platform_skill_id !== null && r.pinned_version !== null,
+  );
   const known = new Set(rows.map((r) => r.id));
   const platformIds = [
     ...new Set([
@@ -286,12 +290,19 @@ export async function skillVersionsById(
     ]),
   ];
   const platform = new Map((await platformOn(db, orgId, platformIds, log)).map((p) => [p.id, p]));
+  // ruling P2-18: a pinned copy serves its own version while its platform skill is on in the org
+  const pinnedOn = await platformSkillsOn(
+    db,
+    orgId,
+    pinned.map((r) => r.platform_skill_id as string),
+  );
   for (const r of rows) {
     if (linked.includes(r)) {
       const p = platform.get(r.platform_skill_id as string);
       if (p) out.set(r.id, { ...p, id: r.id });
       continue;
     }
+    if (pinned.includes(r) && !pinnedOn.has(r.platform_skill_id as string)) continue;
     out.set(r.id, {
       id: r.id,
       name: r.name,
@@ -345,8 +356,9 @@ export async function selectedSkills(
 }
 
 /**
- * The org's usable skills, sorted by name: its own live org skills (`scope = 'org'`, unlinked or
- * pinned) and the platform skills on in the org (see {@link platformOn}). An org copy linked
+ * The org's usable skills, sorted by name: its own live org skills (`scope = 'org'`, unlinked, or
+ * pinned while their platform skill is on in the org, ruling P2-18) and the platform skills on in
+ * the org (see {@link platformOn}). An org copy linked
  * without a pin is not listed: its platform skill is. `log` receives the name-clash warnings.
  */
 export async function usableSkills(
@@ -388,20 +400,27 @@ export async function usableSkillVersions(
       eb.or([eb("s.platform_skill_id", "is", null), eb("s.pinned_version", "is not", null)]),
     )
     .execute();
-  const rows: SkillVersionRow[] = own.map((r) => ({
-    id: r.id,
-    name: r.name,
-    description: r.manifest.description,
-    version: r.current_version,
-    source: r.object_prefix,
-    plugin: r.item_name,
-    origin: "org",
-    ...(r.platform_skill_id !== null && { platformSkillId: r.platform_skill_id }),
-    scope: "org",
-    agentId: null,
-    manifest: r.manifest,
-    format: r.source_format,
-  }));
+  // ruling P2-18: a pinned copy follows its platform skill's availability (the pin fixes the
+  // version only)
+  const pinnedOn = await platformSkillsOn(db, orgId, [
+    ...new Set(own.flatMap((r) => (r.platform_skill_id === null ? [] : [r.platform_skill_id]))),
+  ]);
+  const rows: SkillVersionRow[] = own
+    .filter((r) => r.platform_skill_id === null || pinnedOn.has(r.platform_skill_id))
+    .map((r) => ({
+      id: r.id,
+      name: r.name,
+      description: r.manifest.description,
+      version: r.current_version,
+      source: r.object_prefix,
+      plugin: r.item_name,
+      origin: "org",
+      ...(r.platform_skill_id !== null && { platformSkillId: r.platform_skill_id }),
+      scope: "org",
+      agentId: null,
+      manifest: r.manifest,
+      format: r.source_format,
+    }));
   rows.push(...(await platformOn(db, orgId, undefined, log)));
   return rows.sort(byNameThenId);
 }

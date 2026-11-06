@@ -115,8 +115,9 @@ export function renamedSkillName(name: string, taken: ReadonlySet<string>): stri
  *    one"), else its latest version;
  * 2. an org skill copy with plugin provenance (on the skill and its current version) links to the
  *    platform skill of its plugin and name; it is pinned to its own current version when its files
- *    differ from the platform version's, or when that platform skill is not on in its org (it keeps
- *    serving what it served: an unpinned link resolves only while the platform skill is on);
+ *    differ from the platform version's. A copy whose platform skill is not on in its org is left
+ *    unlinked (it keeps serving what it served) until a later run finds it on: a linked copy,
+ *    pinned or not, follows its platform skill's availability (ruling P2-18);
  * 3. one-shot (spec §5 rule 10, ruling P2-5: nothing is renamed outside the migration): only while
  *    no run has finished (the first run's own execution), an org skill of the org's own (no
  *    provenance) whose name a platform skill on in its org has stays the org's: it is renamed (`<name>-org`, `-org-2`, …), the org admins get an inbox notice
@@ -292,16 +293,18 @@ export class PlatformMigration {
         orgId,
         list.map((r) => r.platform_id),
       );
-      const links = list.map(
-        (r): Link => ({
-          id: r.id,
-          version: r.current_version,
-          platformId: r.platform_id,
-          pin:
-            !on.has(r.platform_id) ||
-            skillFilesDigest(r.manifest.files) !== skillFilesDigest(r.platform_manifest.files),
-        }),
-      );
+      // a copy whose platform skill is off in its org stays the org's own until it is on: a
+      // linked copy, pinned or not, follows its platform skill's availability (ruling P2-18)
+      const links = list
+        .filter((r) => on.has(r.platform_id))
+        .map(
+          (r): Link => ({
+            id: r.id,
+            version: r.current_version,
+            platformId: r.platform_id,
+            pin: skillFilesDigest(r.manifest.files) !== skillFilesDigest(r.platform_manifest.files),
+          }),
+        );
       const done = await this.linkSkillsIn(orgId, links);
       stats.skillsLinked += done.length;
       stats.skillsPinned += done.filter((l) => l.pin).length;
@@ -512,16 +515,17 @@ export class PlatformMigration {
         orgId,
         list.map((r) => r.platform_id),
       );
-      const links = list.map(
-        (r): Link => ({
-          id: r.id,
-          version: r.current_version,
-          platformId: r.platform_id,
-          pin:
-            !on.has(r.platform_id) ||
-            canonicalJson(r.definition) !== canonicalJson(r.platform_definition),
-        }),
-      );
+      // as skills: a copy whose platform template is off in its org stays unlinked (P2-18)
+      const links = list
+        .filter((r) => on.has(r.platform_id))
+        .map(
+          (r): Link => ({
+            id: r.id,
+            version: r.current_version,
+            platformId: r.platform_id,
+            pin: canonicalJson(r.definition) !== canonicalJson(r.platform_definition),
+          }),
+        );
       const done = await this.linkTemplatesIn(orgId, links);
       stats.templatesLinked += done.length;
       stats.templatesPinned += done.filter((l) => l.pin).length;
