@@ -280,7 +280,8 @@
       "owner_required": "The owner organization cannot be removed from its own item's list.",
       "item_pending": "This plugin is waiting for the super admin's confirmation and cannot be changed yet.",
       "item_removed": "This plugin has been removed.",
-      "preview_stale": "What deleting this plugin does has changed since the preview. Preview it again and confirm."
+      "preview_stale": "What deleting this plugin does has changed since the preview. Preview it again and confirm.",
+      "not_owned": "Only your organization's own skills and agent templates can be shared."
     },
     "directory": {
       "not_configured": "This extension's directory is not configured. Fill in its directory settings in the organization config first."
