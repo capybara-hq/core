@@ -17,7 +17,6 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import type { ProviderModels } from "../../lib/agents";
-import { ApiClientError } from "../../lib/api";
 import {
   type AgentTreeNode,
   abortRun,
@@ -31,6 +30,7 @@ import { retryOnMountOf } from "../../lib/query/client";
 import {
   agentTreeQuery,
   backgroundTasksQuery,
+  catchUpEvents,
   hasBackgroundTasks,
   modelsQuery,
 } from "../../lib/query/conversation";
@@ -38,6 +38,7 @@ import { keys as queryKeys } from "../../lib/query/keys";
 import { useAppMutation } from "../../lib/query/mutation";
 import { useWhoWaits } from "../../lib/query/who-waits";
 import type { RightTarget } from "../../lib/right-area";
+import { useStopUnderWay } from "../../lib/stop";
 import {
   buildEventTimeline,
   latestUsage,
@@ -475,46 +476,48 @@ function AgentLevel({
       e.payload.dispatch !== undefined &&
       e.payload.skill !== undefined,
   );
+  const active = status === "running" || status === "waiting";
+  // A merged re-read of what the stop changes: the child's log from its cached end (never a
+  // wholesale refetch: an event the stream appends meanwhile survives), its row and the tree.
+  const resync = useCallback(
+    () =>
+      Promise.all([
+        catchUpEvents(qc, orgId, id),
+        qc.invalidateQueries({ queryKey: treeQ.queryKey }),
+        qc.invalidateQueries({ queryKey: queryKeys.org(orgId).conversation(id).row() }),
+      ]),
+    [qc, orgId, id, treeQ.queryKey],
+  );
+  // A stop under way: from the click until the agent's run ends in its log, the request fails,
+  // or the bounded fallback (a re-read after STOP_FALLBACK_MS) lets Stop be pressed again.
+  const stopState = useStopUnderWay(child.events, resync);
+  const stopping = stopState.requested && active;
+  const { release } = stopState;
   const stopMutation = useAppMutation({
     fn: () => abortRun(orgId, id),
     // the tree shows the stop as soon as the kernel has it; the agent's terminal event comes
     // through its own stream, open at this level
-    invalidates: () => [
-      agentTreeQuery(orgId, rootId).queryKey,
-      queryKeys.org(orgId).conversation(id).row(),
-    ],
+    invalidates: () => [treeQ.queryKey, queryKeys.org(orgId).conversation(id).row()],
+    // at the hook level: the report survives the level being closed while the request runs
+    onError: (e) => {
+      release();
+      if (e.code === "run.not_active") {
+        // Nothing in this subtree runs: what the page shows is stale. Read it again, so the
+        // status settles to the kernel's and Stop goes.
+        void resync();
+        return;
+      }
+      // The browser's own reason ("Failed to fetch", "Load failed") for diagnosis.
+      console.warn("agent map: stop failed", e.code, e);
+      toast.error(t("stopFailed", { reason: errorMessage(e) }));
+    },
   });
   const { mutate } = stopMutation;
-  const active = status === "running" || status === "waiting";
-  // A stop under way: from the click until the status leaves running / waiting (the agent's
-  // terminal event through its stream) or the request fails. Stop stays, busy, meanwhile.
-  const [stopRequested, setStopRequested] = useState(false);
-  useEffect(() => {
-    if (!active) setStopRequested(false);
-  }, [active]);
-  const stopping = stopRequested && active;
+  const { begin } = stopState;
   const stop = useCallback(() => {
-    setStopRequested(true);
-    mutate(undefined, {
-      onError: (e) => {
-        setStopRequested(false);
-        if (e instanceof ApiClientError && e.code === "run.not_active") {
-          // Nothing in this subtree runs: what the page shows is stale. Read the tree, the
-          // child's row and its log again, so the status settles to the kernel's and Stop goes.
-          for (const queryKey of [
-            treeQ.queryKey,
-            queryKeys.org(orgId).conversation(id).row(),
-            queryKeys.org(orgId).conversation(id).events(),
-          ])
-            void qc.invalidateQueries({ queryKey });
-          return;
-        }
-        // The browser's own reason (a failed fetch: "Load failed", net::ERR_…) for diagnosis.
-        console.warn("agent map: stop failed", e instanceof ApiClientError ? e.code : "", e);
-        toast.error(t("stopFailed", { reason: errorMessage(e) }));
-      },
-    });
-  }, [mutate, toast, errorMessage, t, qc, treeQ.queryKey, orgId, id]);
+    begin();
+    mutate(undefined);
+  }, [begin, mutate]);
   const onStop = active && !stopping ? { onStop: stop } : {};
   const openParent = (pid: string) =>
     onNavigate(pid === rootId ? { kind: "agents" } : { kind: "agents", id: pid });

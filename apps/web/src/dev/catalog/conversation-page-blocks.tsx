@@ -37,6 +37,7 @@ import {
   ReferenceBoard,
   RightPanel,
   type RightPanelSwitcher,
+  SkeletonBars,
   Spinner,
   StatusBar,
   SubagentGroup,
@@ -69,6 +70,7 @@ import {
   TOOL_FIXTURES,
 } from "@capybara-hq/design/fixtures";
 import { type ReactNode, useState } from "react";
+import { FormError } from "../../components/form-error";
 import { Block, bytes, csvText, NEW_CONVERSATION_AGENTS, NOW, toRow } from "./conversation-blocks";
 import { COMMANDS } from "./fixtures";
 import { RefBlock } from "./ref-block";
@@ -288,6 +290,17 @@ function agentMapBlocks(): ReactNode {
       <RefBlock id="agent-map-deep" width={1132} height={320} pad>
         <AgentMapDialog open inline onOpenChange={noop} level="tree">
           <AgentMapTree root={AM.deep} background={[]} onOpen={noop} now={NOW} />
+        </AgentMapDialog>
+      </RefBlock>
+      {/* the page's own loading bars and error line, in the tree level's padded body */}
+      <RefBlock id="agent-map-loading" width={1132} height={200} pad>
+        <AgentMapDialog open inline onOpenChange={noop} level="tree">
+          <SkeletonBars />
+        </AgentMapDialog>
+      </RefBlock>
+      <RefBlock id="agent-map-failed" width={1132} height={140} pad>
+        <AgentMapDialog open inline onOpenChange={noop} level="tree">
+          <FormError message="智能体图加载失败。" />
         </AgentMapDialog>
       </RefBlock>
       <RefBlock id="agent-map-detail" width={786} height={632} pad>

@@ -3647,7 +3647,6 @@
       "title": "子智能体",
       "stop": "停止子智能体",
       "toolsNone": "无",
-      "readOnly": "子智能体只读 · 不能和它对话",
       "loadFailed": "无法打开该子智能体。"
     },
     "contextTotal": "含子智能体的 token 总数 {n}",

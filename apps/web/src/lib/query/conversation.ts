@@ -445,6 +445,22 @@ export function appendEvents(
 }
 
 /**
+ * Reads what the cached log lacks after its end and merges it ({@link appendEvents}): a resync
+ * that never replaces the cache, so an event the stream appends meanwhile survives (the log is
+ * never refetched wholesale, {@link eventsQuery}). Nothing is read while the log is not cached.
+ */
+export async function catchUpEvents(
+  qc: QueryClient,
+  orgId: string,
+  id: string,
+): Promise<{ added: number }> {
+  const cached = qc.getQueryData<ConversationEvent[]>(keys.org(orgId).conversation(id).events());
+  if (cached === undefined) return { added: 0 };
+  const events = await listAllEvents(orgId, id, cached.at(-1)?.seq ?? 0);
+  return appendEvents(qc, orgId, id, events);
+}
+
+/**
  * The messages this tab sent to a conversation, by `clientMessageId`, with this tab's clock at the
  * send (`Date.now()`; per query client, in the browser): the working line and the composer's
  * running mode wait for their runs, at most 60 s from that time (conversation send spec §2.2;

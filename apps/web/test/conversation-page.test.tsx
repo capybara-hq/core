@@ -232,6 +232,25 @@ describe("the conversation page (ConversationPage)", () => {
     warn.mockRestore();
   });
 
+  it("a stop the kernel took stays under way until the run's end arrives (AC5)", async () => {
+    api({
+      [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi"), runStarted(2)] }),
+      [`POST ${BASE}/abort`]: () => json(202, { runId: "r1" }),
+    });
+    await renderChat("en");
+    await userEvent.setup().click(await screen.findByRole("button", { name: en.chat.stop }));
+    // the HTTP answer is in: the stop is still under way (disabled), not pressable again
+    await act(async () => await new Promise((r) => setTimeout(r, 20)));
+    expect(screen.getByRole("button", { name: en.chat.stop })).toHaveProperty("disabled", true);
+    act(() => {
+      FakeEventSource.instances[0]?.emit(
+        "event",
+        ev(3, "run_aborted", { byAccountId: "a1", reason: "user" }),
+      );
+    });
+    expect(screen.queryByRole("button", { name: en.chat.stop })).toBeNull();
+  });
+
   it("a stop answered run.not_active reads the log again, so a stale Stop goes (AC5)", async () => {
     let reads = 0;
     const calls = api({
@@ -252,8 +271,9 @@ describe("the conversation page (ConversationPage)", () => {
     await renderChat("en");
     await userEvent.setup().click(await screen.findByRole("button", { name: en.chat.stop }));
     await waitFor(() => expect(screen.queryByRole("button", { name: en.chat.stop })).toBeNull());
-    // the server's first read, then the client's read again after the 409
+    // the server's first read, then the client's read from the cached end after the 409
     expect(reads).toBe(2);
+    expect(calls.some((c) => c.method === "GET" && c.url.includes("/events?after=2"))).toBe(true);
     expect(calls.some((c) => c.method === "GET" && c.url.startsWith(`${BASE}/events`))).toBe(true);
     expect(screen.queryByText(/Couldn't stop/)).toBeNull();
   });
@@ -417,7 +437,7 @@ describe("the conversation page (ConversationPage)", () => {
   describe("instant send (conversation send spec §2.1)", () => {
     /** The user bubbles of `text`, pending or from the log. */
     const bubbles = (text: string) =>
-      screen.queryAllByText(text, { selector: '[data-part="bubble"]' });
+      screen.queryAllByText(text, { selector: '[data-part="bubble-body"]' });
 
     function deferredSend() {
       let answer: (r: Response) => void = () => {};
@@ -1365,7 +1385,7 @@ describe("the first message from /chat (conversation send spec §2.1)", () => {
     fireEvent.keyDown(input(), { key: "Enter" });
     expect(input()).toHaveProperty("value", "");
     expect(document.querySelector('[data-part="new-conversation-body"]')).toBeNull();
-    const bubble = screen.getByText("start", { selector: '[data-part="bubble"]' });
+    const bubble = screen.getByText("start", { selector: '[data-part="bubble-body"]' });
     expect(bubble.closest("[data-pending]")).not.toBeNull();
     await vi.waitFor(() => expect(d.calls.some((c) => c.method === "POST")).toBe(true));
   });
@@ -1395,7 +1415,7 @@ describe("the first message from /chat (conversation send spec §2.1)", () => {
     const { calls } = await renderRouteEmptyCache("/chat/c9", snapshotDefaults("c9"), {
       client: d.client,
     });
-    expect(screen.getByText("start", { selector: '[data-part="bubble"]' })).toBeTruthy();
+    expect(screen.getByText("start", { selector: '[data-part="bubble-body"]' })).toBeTruthy();
     expect(FakeEventSource.instances.map((e) => e.url)).toEqual([`${C9}/stream?after=1`]);
     // the first message was sent from this tab: the working line carries over the navigation
     expect(document.querySelector('[data-part="working-line"]')).not.toBeNull();
@@ -1436,7 +1456,7 @@ describe("the first message from /chat (conversation send spec §2.1)", () => {
       client: d.client,
     });
     // painted from the seed: the bubble, never the thread's loading state
-    expect(screen.getByText("start", { selector: '[data-part="bubble"]' })).toBeTruthy();
+    expect(screen.getByText("start", { selector: '[data-part="bubble-body"]' })).toBeTruthy();
     expect(container.querySelector('[data-part="loading-turn"]')).toBeNull();
     expect(FakeEventSource.instances.map((e) => e.url)).toEqual([`${C9}/stream?after=2`]);
     await new Promise((r) => setTimeout(r, 20));
@@ -1467,7 +1487,7 @@ describe("the first message from /chat (conversation send spec §2.1)", () => {
     await vi.waitFor(() => expect(d.calls.some((c) => c.method === "POST")).toBe(true));
     await act(async () => d.answer(json(500, { error: { code: "internal", message: "boom" } })));
     await vi.waitFor(() => expect(input()).toHaveProperty("value", "start"));
-    expect(screen.queryByText("start", { selector: '[data-part="bubble"]' })).toBeNull();
+    expect(screen.queryByText("start", { selector: '[data-part="bubble-body"]' })).toBeNull();
     expect(router.replace).not.toHaveBeenCalled();
   });
 });

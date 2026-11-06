@@ -22,6 +22,11 @@ export function useAppMutation<V, R>(o: {
   invalidates: (v: V, r: R) => (readonly unknown[])[];
   forgetsOnLeave?: (v: V, r: R) => (readonly unknown[])[];
   onSuccess?: (r: R, v: V) => void;
+  /**
+   * A failure, at the hook level: it runs even after the calling component unmounted (a `mutate`
+   * call's own `onError` does not), so a report of the failure is never lost.
+   */
+  onError?: (e: ApiClientError, v: V) => void;
   /** Mutations sharing a scope id run one after another (TanStack `scope`). */
   scope?: string;
 }) {
@@ -42,6 +47,7 @@ export function useAppMutation<V, R>(o: {
       if (o.forgetsOnLeave) forgotten.current.push(...o.forgetsOnLeave(v, r));
       o.onSuccess?.(r, v);
     },
+    ...(o.onError !== undefined && { onError: o.onError }),
   });
 }
 

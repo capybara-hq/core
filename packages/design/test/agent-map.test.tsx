@@ -14,9 +14,13 @@ import {
   AgentMapTree,
   type AgentToolCallRow,
   agentMapTokens,
+  Card,
+  CodeBlock,
   DesignProvider,
+  SkeletonBars,
   TranscriptFrame,
 } from "../src/index";
+import { describeNestedBox, findNestedBoxes } from "../src/reference/index";
 
 afterEach(cleanup);
 
@@ -232,6 +236,19 @@ describe("AgentMapDialog (§6.16.28)", () => {
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 
+  it("the tree level pads what a page shows while it reads the tree (loading bars, an error)", () => {
+    wrap(
+      <AgentMapDialog open onOpenChange={() => {}} level="tree">
+        <SkeletonBars />
+      </AgentMapDialog>,
+    );
+    const dialog = screen.getByRole("dialog", { name: "智能体图" });
+    const content = dialog.querySelector('[data-part="agent-map-content"]') as HTMLElement;
+    expect(content.querySelector(".cb-skeleton-list")).not.toBeNull();
+    // the head stays outside the padded body
+    expect(content.querySelector('[data-part="agent-map-head"]')).toBeNull();
+  });
+
   it("the inline frame and the portal frame draw the same head", () => {
     wrap(
       <AgentMapDialog open inline onOpenChange={() => {}} level="tree">
@@ -333,7 +350,8 @@ describe("AgentMapDialog (§6.16.28)", () => {
   it("pads in the compact dialog rhythm: head space.2 space.4, body space.4, footer space.3 space.4 (AC6)", () => {
     expect(rule(".cb-amap-dialog")).toMatch(/padding: 0;/);
     expect(rule(".cb-amap-head")).toMatch(/padding: var\(--cb-space-2\) var\(--cb-space-4\);/);
-    expect(rule(".cb-amap")).toMatch(/padding: var\(--cb-space-4\);/);
+    expect(rule(".cb-amap-content")).toMatch(/padding: var\(--cb-space-4\);/);
+    expect(rule(".cb-amap")).not.toMatch(/padding/);
     expect(rule(".cb-amap-detail")).toMatch(/padding: var\(--cb-space-4\);/);
     expect(rule(".cb-amap-foot")).toMatch(/padding: var\(--cb-space-3\) var\(--cb-space-4\);/);
     // the transcript's thread fills the dialog: no layout gutter on either side
@@ -794,5 +812,41 @@ describe("AgentCallBlock (§6.16.15)", () => {
     expect(screen.getByRole("button", { name: "View in agent map" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Show more" })).toBeTruthy();
     expect(document.querySelector('[data-part="tool-io-label"]')?.textContent).toBe("IN");
+  });
+});
+
+describe("the transcript is a pane (box-in-box review)", () => {
+  it("a CodeBlock in the transcript frame inside the dialog stays framed, and nothing nests", () => {
+    // mounted inside a Card: the box context reaches through the portal, the pane resets it
+    wrap(
+      <Card>
+        <AgentMapDialog open onOpenChange={() => {}} level="transcript">
+          <TranscriptFrame
+            node={invoice}
+            agentType={D.agentType}
+            spawnedBy={D.spawnedBy}
+            onBack={() => {}}
+            onClose={() => {}}
+          >
+            <CodeBlock language="bash" text="pnpm test" />
+          </TranscriptFrame>
+        </AgentMapDialog>
+      </Card>,
+    );
+    const code = document.querySelector('[data-part="code-block"]') as HTMLElement;
+    expect(code.closest(".cb-dialog")).not.toBeNull();
+    expect(code.getAttribute("data-framed")).toBe("true");
+    expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
+  });
+
+  it("levels 1 and 2 are a dialog box: a CodeBlock there draws its unboxed form", () => {
+    wrap(
+      <AgentMapDialog open onOpenChange={() => {}} level="tree">
+        <CodeBlock language="bash" text="pnpm test" />
+      </AgentMapDialog>,
+    );
+    const code = document.querySelector('[data-part="code-block"]') as HTMLElement;
+    expect(code.getAttribute("data-framed")).toBe("false");
+    expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
   });
 });
