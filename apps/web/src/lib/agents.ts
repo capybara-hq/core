@@ -151,6 +151,11 @@ export interface AgentTemplateDetail extends AgentTemplateView {
   shareable: boolean;
   /** Shared already: promoted to a platform row (ruling P3-3). */
   promoted: boolean;
+  /**
+   * In the org's usable set (agents can be created from it here); false when only its owner reads
+   * it (switched off in its own org). Absent from older kernels: usable.
+   */
+  usable?: boolean;
 }
 
 const templatePath = (orgId: string, id: string) =>

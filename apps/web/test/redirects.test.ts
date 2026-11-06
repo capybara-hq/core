@@ -52,6 +52,16 @@ describe("next.config redirects", () => {
     expect(existsSync(join(app, "agent-templates"))).toBe(false);
   });
 
+  it("/agents/templates without an id goes to the 模板 tab (307)", async () => {
+    const redirects = (await config.redirects()) as Redirect[];
+    for (const [source, destination] of [
+      ["/agents/templates", "/agents?tab=templates"],
+      ["/:locale(zh|en)/agents/templates", "/:locale/agents?tab=templates"],
+    ]) {
+      expect(redirects).toContainEqual({ source, destination, permanent: false });
+    }
+  });
+
   it("keeps the connector install redirect", async () => {
     const redirects = (await config.redirects()) as Redirect[];
     expect(redirects.some((r) => r.source === "/:locale(zh|en)/apps/new")).toBe(true);

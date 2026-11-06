@@ -809,7 +809,11 @@
         "remove": "移除",
         "removeLabel": "移除 {name}",
         "addNeeds": "添加需要的连接器",
-        "policiesKept": "{count} 条工具策略随这个连接器保留（只保留仍列出的工具的）。"
+        "policiesKept": "这个连接器没有列出工具：它的 {count} 条工具策略原样保留（{list}），列出工具后可以修改。",
+        "addTemplateLabel": "连接器模板",
+        "pickTemplate": "选择连接器模板",
+        "noTemplates": "没有可添加的连接器模板",
+        "addTemplate": "添加连接器模板"
       },
       "subagents": {
         "list": "子智能体",
@@ -837,7 +841,8 @@
         "instructionsRequired": "请填写提示词。",
         "tooManySkills": "最多 {max} 个技能。",
         "tooMany": "模板类型和内联子智能体合计最多 {max} 个。",
-        "typeUnavailable": "{type}（本组织不能用）"
+        "typeUnavailable": "{type}（本组织不能用）",
+        "toolsListEmpty": "至少列出一个工具，或选择「不给工具」。"
       },
       "off": {
         "owner": "这个模板已在本组织停用：成员看不到它，也不能用它创建智能体。",
@@ -854,12 +859,15 @@
       "title": "把 {name} 另存为模板",
       "name": "模板名称",
       "nameHelp": "小写字母、数字和连字符，以字母或数字开头。它也是子智能体的类型名，保存后不能修改。",
+      "nameHelpEmpty": "智能体名称里没有能用作模板名称的字母或数字，请起一个：小写字母、数字和连字符，以字母或数字开头，保存后不能修改。",
+      "namePlaceholder": "例如 sales-assistant",
       "nameRequired": "请填写模板名称。",
       "nameInvalid": "只能用小写字母、数字和连字符，以字母或数字开头，最多 64 个字符。",
       "description": "描述",
       "descriptionRequired": "请填写描述。",
       "carried": "提示词、模型、工具、技能、连接器（只记录需要哪些，不含凭据）、子智能体和快捷操作会写入模板，模板归本组织所有。",
       "rosterLeftOut": "子智能体里的这些组织智能体不是模板，不会带入：",
+      "rosterLabel": "不会带入的组织智能体",
       "submit": "另存为模板",
       "close": "关闭",
       "taken": {

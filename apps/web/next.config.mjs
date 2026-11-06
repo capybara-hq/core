@@ -53,6 +53,13 @@ const nextConfig = {
       destination: "/:locale/agents/templates/:id",
       permanent: false,
     },
+    // The template page's parent has no page of its own: its path segment means the 模板 tab.
+    { source: "/agents/templates", destination: "/agents?tab=templates", permanent: false },
+    {
+      source: "/:locale(zh|en)/agents/templates",
+      destination: "/:locale/agents?tab=templates",
+      permanent: false,
+    },
   ],
 };
 

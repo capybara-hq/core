@@ -809,7 +809,11 @@
         "remove": "Remove",
         "removeLabel": "Remove {name}",
         "addNeeds": "Add a needed connector",
-        "policiesKept": "{count, plural, one {# tool policy stays} other {# tool policies stay}} with this connector (for the tools still listed)."
+        "policiesKept": "This connector lists no tools: its {count, plural, one {# tool policy stays} other {# tool policies stay}} as saved ({list}); list its tools to change them.",
+        "addTemplateLabel": "Connector template",
+        "pickTemplate": "Choose a connector template",
+        "noTemplates": "No connector template to add",
+        "addTemplate": "Add connector template"
       },
       "subagents": {
         "list": "Sub-agents",
@@ -837,7 +841,8 @@
         "instructionsRequired": "Enter the instructions.",
         "tooManySkills": "At most {max} skills.",
         "tooMany": "At most {max} template types and inline sub-agents together.",
-        "typeUnavailable": "{type} (not available here)"
+        "typeUnavailable": "{type} (not available here)",
+        "toolsListEmpty": "List at least one tool, or choose No tools."
       },
       "off": {
         "owner": "This template is switched off in this organization: members do not see it and cannot create agents from it.",
@@ -854,12 +859,15 @@
       "title": "Save {name} as a template",
       "name": "Template name",
       "nameHelp": "Lowercase letters, digits and hyphens, starting with a letter or digit. It is also the sub-agent type and cannot change after saving.",
+      "nameHelpEmpty": "The agent's name has no letters or digits a template name can use, so choose one: lowercase letters, digits and hyphens, starting with a letter or digit; it cannot change after saving.",
+      "namePlaceholder": "for example sales-assistant",
       "nameRequired": "Enter a template name.",
       "nameInvalid": "Use lowercase letters, digits and hyphens, starting with a letter or digit, at most 64 characters.",
       "description": "Description",
       "descriptionRequired": "Enter a description.",
       "carried": "The prompt, model, tools, skills, connectors (which ones it needs, never credentials), sub-agents and quick actions go into the template, which the organization owns.",
       "rosterLeftOut": "These organization agents in its sub-agents are not templates and are left out:",
+      "rosterLabel": "Organization agents left out",
       "submit": "Save as template",
       "close": "Close",
       "taken": {

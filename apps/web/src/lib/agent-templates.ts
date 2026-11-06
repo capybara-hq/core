@@ -133,12 +133,14 @@ export const saveAgentAsTemplate = (
 export const TEMPLATE_NAME_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
 /**
- * A template name from an agent's name: lower case, every run of other characters one `-`, no
+ * A template name from an agent's name: accents dropped (NFKD, combining marks removed), lower
+ * case, every run of other characters one `-`, no
  * leading or trailing `-`, at most 64 characters. A name with nothing usable (all CJK) gives "".
  */
 export function templateNameFrom(agentName: string): string {
   return agentName
     .normalize("NFKD")
+    .replace(/\p{M}+/gu, "")
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+/, "")

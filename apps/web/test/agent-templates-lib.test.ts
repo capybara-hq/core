@@ -12,6 +12,8 @@ describe("templateNameFrom", () => {
     expect(templateNameFrom("Research Assistant")).toBe("research-assistant");
     expect(templateNameFrom("  --Weekly  Report v2!! ")).toBe("weekly-report-v2");
     expect(templateNameFrom("Café Bot")).toBe("cafe-bot");
+    expect(templateNameFrom("Résumé Writer")).toBe("resume-writer");
+    expect(templateNameFrom("naïve")).toBe("naive");
     expect(TEMPLATE_NAME_RE.test(templateNameFrom("Research Assistant"))).toBe(true);
   });
 

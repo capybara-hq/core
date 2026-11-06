@@ -23,7 +23,7 @@ import { useConnectorTemplateName, useTemplateSource, useToolName } from "./labe
 
 export function BasicsRead() {
   const t = useTranslations("agents.templatePage");
-  const { orgId, template, definition } = useTemplatePage();
+  const { orgId, template } = useTemplatePage();
   const source = useTemplateSource();
   return (
     <TemplateSectionFrame>
@@ -33,7 +33,6 @@ export function BasicsRead() {
           rows={[
             { k: t("basics.name"), v: template.name },
             { k: t("basics.type"), v: template.type },
-            { k: t("basics.description"), v: definition.description },
             { k: t("basics.source"), v: source(template, orgId) },
             { k: t("basics.version"), v: `v${template.version}` },
             ...(template.owned

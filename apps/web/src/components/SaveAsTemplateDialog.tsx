@@ -71,6 +71,8 @@ export function SaveAsTemplateDialog({
   const omissionText = useOmissionText();
   const router = useRouter();
   const [name, setName] = useState(() => templateNameFrom(agent.definition.name));
+  // the agent's name gave nothing usable (all CJK, say): the field explains the rule instead
+  const derivedEmpty = templateNameFrom(agent.definition.name) === "";
   const [description, setDescription] = useState(agent.profile.description);
   const [checked, setChecked] = useState(false);
   const [saved, setSaved] = useState<{
@@ -110,11 +112,11 @@ export function SaveAsTemplateDialog({
   const nameError =
     takenText !== undefined && save.variables?.name === name
       ? takenText
-      : checked && !nameOk
-        ? name === ""
+      : name !== "" && !nameOk
+        ? t("nameInvalid")
+        : checked && name === ""
           ? t("nameRequired")
-          : t("nameInvalid")
-        : undefined;
+          : undefined;
   const otherError = save.error !== null && taken === undefined ? errorMessage(save.error) : null;
 
   async function submit() {
@@ -181,7 +183,7 @@ export function SaveAsTemplateDialog({
           <Button
             variant="primary"
             loading={save.isPending}
-            disabled={save.isPending || !nameOk || !descriptionOk}
+            disabled={save.isPending}
             onClick={() => void submit()}
           >
             {t("submit")}
@@ -193,7 +195,7 @@ export function SaveAsTemplateDialog({
         <Field
           label={t("name")}
           required
-          help={t("nameHelp")}
+          help={derivedEmpty ? t("nameHelpEmpty") : t("nameHelp")}
           count={{ value: name.length, max: 64 }}
           {...(nameError !== undefined ? { error: nameError } : {})}
         >
@@ -201,6 +203,7 @@ export function SaveAsTemplateDialog({
             name="template-name"
             value={name}
             maxLength={64}
+            placeholder={t("namePlaceholder")}
             onChange={(e) => setName(e.target.value)}
           />
         </Field>
@@ -227,11 +230,11 @@ export function SaveAsTemplateDialog({
               <Text variant="prose" tone="warn">
                 {t("rosterLeftOut")}
               </Text>
-              {roster.map((x) => (
-                <Text key={x.agentId} variant="small">
-                  {`· ${nameOf(x.agentId, x.as)}`}
-                </Text>
-              ))}
+              <ItemList label={t("rosterLabel")}>
+                {roster.map((x) => (
+                  <ItemListItem key={x.agentId} title={nameOf(x.agentId, x.as)} code={x.as} />
+                ))}
+              </ItemList>
             </>
           ) : null}
         </Stack>
