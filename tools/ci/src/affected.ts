@@ -61,7 +61,7 @@ export interface Plan {
 }
 
 /** Shard count for the full suite, or whenever the kernel tests (the bulk of the suite) run. */
-export const FULL_SHARDS = 4;
+export const FULL_SHARDS = 6;
 
 /** Root files whose change can affect any test or build. */
 const RUN_ALL_ROOT_FILES = new Set([
