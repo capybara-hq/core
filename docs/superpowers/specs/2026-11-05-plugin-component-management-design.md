@@ -6,8 +6,10 @@
   and extension pages (migrations 0074-0076). Phase 2: components at deployment level with their own
   scope and org switches, agent templates at deployment level, platform plugin and component updates,
   the migration of org copies, the platform inbox, the member-readable 扩展 page and the marketplace
-  changes of §13.5 (§6-§8; migrations 0080-0082; decisions in §13.6). Sharing org components (可共享)
-  and creating agents from templates are later phases.
+  changes of §13.5 (§6-§8; migrations 0080-0082; decisions in §13.6). Phase 3 designed (§14: org
+  uploads with super admin confirmation, 可共享 and sharing org items, ownership transfer, 新建技能;
+  plan `docs/superpowers/plans/2026-11-06-plugin-scope-phase-3.md`). Creating agents from templates
+  is phase 4.
 - Markers: **(decided)** is the maintainer's answer during brainstorming (2026-11-05);
   **(designer's call)** is decided here on the maintainer's behalf and may be overturned in review.
   Items without a marker restate current code.
@@ -541,3 +543,164 @@ they win. Cited in code and docs as "ruling <id>".
   disable, org switch-off, scope removal, uninstall); the pin fixes the version only. A component a
   platform update removed leaves its pinned copies to the org (P2-7). The previews count pinned copies;
   the migration leaves a copy whose component is off in its org unlinked until it is on.
+
+## 14. Phase 3: org uploads, sharing, 新建技能 (2026-11-06)
+
+Phase 3 builds §4.2, §5 rule 1, §5.1 rules 1-2, the org-owned rows of §6 and the workspace and admin
+pages of §9 that depend on them. Plan: `docs/superpowers/plans/2026-11-06-plugin-scope-phase-3.md`.
+The rulings of §13.5 and §13.6 stay binding. Cited in code and docs as "ruling P3-<n>".
+
+### 14.1 Decided by the maintainer (2026-11-06)
+
+1. **Org uploads.** An org admin uploads a plugin package (`.tgz`) or a single skill `.zip` from the
+   workspace. A package without an extension installs at once, owned by the org, scope
+   `named: [owner]`. A package with an extension stays pending until the super admin confirms it in
+   待确认; until then nothing of the plugin is usable. **Every** new version of an org plugin that
+   carries an extension needs confirmation again; a new version without an extension applies at once.
+2. **Names.** Extension names and plugin names stay deployment-global. A taken name is refused at
+   upload, and the refusal names the owner (平台 or the org's name). `customSkills` /
+   `customConnectors` = `deny` also blocks org plugin uploads.
+3. **可共享.** The owner org marks an org-owned item shareable; off by default, and the owner can
+   change it. Only a shareable item can be shown to other orgs (`shown_to_others`) or associated with
+   them by the super admin (added to the `named` list, an access request approved). Turning
+   shareable off later keeps the existing associations and blocks new requesters. When an access
+   request for an org-owned item is approved, the owner org gets an inbox notice.
+4. **Updates of shared items.** Shared items follow the owner's updates automatically, one version for
+   the whole deployment, and the orgs using them get an inbox notice.
+5. **Owner gone.** When the owner deletes a shared item, or the owner org is deleted, while other
+   orgs use it, the item becomes platform-owned and the super admin gets an inbox notice. An item
+   no other org uses is removed as usual.
+6. **新建技能.** A kernel route creates an org skill from text (name, description, `SKILL.md` body;
+   files later). It is org-owned and can be marked shareable. The workspace 技能 page offers 新建
+   next to 上传.
+
+### 14.2 Designer's calls
+
+Owner model
+
+- **P3-1** `owner_org_id text NULL` (null = platform) and `shareable boolean NOT NULL DEFAULT false`
+  on `catalog_items` and on `platform_skills`, `platform_agent_templates` and
+  `platform_connector_templates` (migration 0083). Existing rows are platform-owned. The **share
+  gate** of an item is `owner_org_id IS NULL OR shareable`.
+- **P3-2** The components of an org plugin are `platform_*` rows (written by `syncFromVersion`, as for
+  platform plugins) with the plugin's owner. There is one 可共享 flag, the plugin's; it is copied to
+  its component rows in the same transaction, so every gate reads the row it acts on.
+- **P3-3 Promote on share** (chosen over writing platform rows at upload). An org's own skill or agent
+  template stays an org row (`skills` / `agent_templates`, with a new `shareable` column) until the
+  super admin first shows it to other orgs or associates it with one. Promotion, in that action's
+  transaction, creates the platform row (`owner_org_id` = `origin_org_id` = the org, `scope_mode own`,
+  `named: [owner]`, `shown_to_others false`), copies the current version's files to
+  `deployment/platform/{skills,agent-templates}/<id>/<version>/` **keeping its version number**, and
+  links the org row to it (`platform_skill_id` / `platform_template_id`, no pin; ruling B2). The
+  owner's agents keep referencing the org row's id and resolve to the same version and content (no
+  "Updated skills" notice); other orgs' agents reference the platform id. Why: it is the only path
+  that also covers skills orgs already have, it leaves the upload and `SkillWrite` paths alone until
+  something is shared, and it keeps files of unshared items under `kernel/<orgId>/`, purged with the
+  org.
+- **P3-4** After promotion the owner's new versions (zip upload to the same name, `SkillWrite`
+  change approval) are written to the platform row, never pinned on the copy: ruling P2-4 applies to
+  copies of items the org does not own.
+- **P3-5** The live-name unique indexes of `platform_skills` and `platform_agent_templates` include
+  a new immutable `origin_org_id` (the org an item was created in; null for platform items): two orgs
+  may each share a skill named `report`. Rule 10 (one name per org usable set) still refuses the
+  association that would put both in one org.
+- **P3-6** Shareable exists only on items the org owns: its own org-scope skills (not agent-scope ones,
+  not copies linked to a platform skill it does not own), its own agent templates, and the plugins it
+  uploaded.
+
+Uploads
+
+- **P3-7** Org sources are a `.tgz` file only: no npm, git, marketplace or Claude Code import from an
+  org. The 插件 page's upload also takes a skill `.zip`, sent to the existing skill upload.
+- **P3-8** Staging gains `org_id` (`plugin_import_staging`, null = the super admin's). Staging lives
+  only between the org's prepare and its confirm, so the 24 h TTL stays; the pending state is written
+  at the org's confirm as a committed catalog item and version, so nothing later reads staging.
+  Org routes only see their org's staging rows, admin routes only the platform's.
+- **P3-9** Pending state: `catalog_items.awaiting_confirmation boolean` (a first version not
+  confirmed yet) and `pending_version text NULL` with `pending_by` / `pending_at` (a version waiting
+  for the super admin; equals `latest_version` while `awaiting_confirmation`). While awaiting, the
+  item has no platform components, is never installed by the scope sync or an org switch, is in no
+  org's catalog except the owner's (as 等待超级管理员确认), is no dependency target, not requestable,
+  refused by scope edits (409 `catalog.item_pending`) and skipped by the `platform-components-migrate`
+  job. A pending new version leaves the item serving its platform version, and the generic platform
+  update route refuses that version (409 `catalog.item_pending`: confirm it in 待确认).
+- **P3-10** An org confirm with an extension stores the package (content-addressed, nothing runs),
+  claims the extension name in `extension_name_owners` under the install lock, and writes no
+  permission snapshot and no install. The super admin's existing confirmation (`POST
+  admin/catalog/items/:id/confirm` with the permissions digest) is extended: it approves, installs or
+  upgrades the extension, writes the platform components (first version) or runs the platform update
+  to the pending version, clears the pending state, enqueues the scope sync and notifies the owner
+  (`upload_confirmed`). New: `POST admin/catalog/items/:id/reject { reason? }` (a first version: the
+  item is soft-deleted and the name claim released; a new version: the pending state is cleared),
+  owner notice `upload_rejected`. The owner org may withdraw a pending upload
+  (`DELETE orgs/:orgId/owned-plugins/:id/pending`), with no notice.
+- **P3-11** A second upload while a version is pending replaces the pending one; the super admin's
+  confirmation carries the digest they reviewed, so a confirmation of the replaced one is stale
+  (409 `extension.approval_stale`).
+- **P3-12** A new version without an extension (including one that drops the previous version's
+  extension: removing code runs none) applies at once through the platform updater acting for the
+  owner org; the org's review shows the update preview, and one hash covers both. A failure undoes the
+  update (as today) and leaves the version imported; uploading it again retries.
+- **P3-13** Dependencies of an org upload must each resolve to a confirmed, non-disabled item the
+  owner org can use (scope `all` or `optional`, `named` listing the org, or another org's item shared
+  with it); otherwise prepare and commit refuse (409 `plugin.dependency_unavailable`, naming them). An
+  org upload never imports or confirms anything else, so it cannot bring in code the super admin did
+  not confirm.
+- **P3-14** Names: prepare and, under the item-name lock, commit refuse a plugin name live for
+  another owner: 409 `plugin.name_taken` with `owner: { kind: "platform" } | { kind: "org", orgId,
+  name }`; the same `owner` is added to `extension.name_conflict` (package → item → owner). A super
+  admin import of a name an org owns is refused too (the super admin acts on it in 待确认). The same
+  org uploading its own name is a new version.
+- **P3-15** `customSkills` **or** `customConnectors` = `deny` refuses every org plugin upload
+  (403 `catalog.custom_disabled`), whatever the package carries.
+
+Sharing
+
+- **P3-16** The share gate guards `requestable()`, `PUT …/shown` (true), `addScopeOrg` (the super
+  admin's association and an approved access request), and scope widening to `optional` / `all`
+  (409 `catalog.not_shareable`). Narrowing, removing orgs and disabling are always allowed. Org-owned
+  items start with `shown_to_others = false`; turning shareable off keeps the stored flag but makes it
+  ineffective until shareable is on again.
+- **P3-17** The owner org can toggle 可共享, switch the item off in its own org and delete it; it
+  cannot change the scope or the list (rule 1). The owner org cannot be removed from its own item's
+  list (409 `catalog.owner_required`).
+- **P3-18** "Used by another org" = on in another live org (listed and not switched off for
+  `named`, switched on for `optional`, any other live org for `all`).
+- **P3-19** Owner deletes (plugin: new `POST orgs/:orgId/owned-plugins/:id/delete` after its
+  preview; skill: the existing delete): if another org uses it, it is transferred (`owner_org_id` null, the owner
+  removed from its list, platform notice `ownership_transferred`); otherwise removed as usual. The
+  preview lists the other orgs (their names are already disclosed by `item_shared` notices) and the
+  owner's agents that lose it.
+- **P3-20** Org deletion runs the same rule for every item the org owns, inside
+  `OrgsService.softDeleteIn`'s transaction (PG writes only); pending uploads are removed (first
+  version) or cleared (new version). Removing an org-owned plugin also uninstalls its extension when
+  no live item references it: after the commit, a job `owned-plugin-cleanup-<itemId>` on
+  `cap-kernel-maintenance`, with a daily `@LockedCron` sweep (worker-only) repairing lost enqueues.
+- **P3-21** A super admin confirmation racing a removal re-reads the pending state under the item row
+  lock at each step; when the item was removed meanwhile, the cleanup job takes the just-installed
+  extension out and the confirmation answers 409 `catalog.item_removed`.
+
+Notices
+
+- **P3-22** `org_notices.kind` gains `item_shared` (an org added to the list, or the scope widened;
+  the detail names the org, or 全部组织), `shared_item_updated` (to the orgs where a shared org-owned
+  item is on, except the owner), `upload_confirmed` and `upload_rejected`. A new `platform_notices`
+  table (kind `ownership_transferred`, dismissed by any super admin) feeds the platform inbox, which
+  also gains `org_upload_pending` (an org-owned item waiting in 待确认; such items leave
+  `permission_confirmation`).
+
+Admin component routes and 新建技能
+
+- **P3-23** `admin/components/:kind/:id/*` accept the org row id of an unpromoted org-owned item
+  (as `GET admin/components` lists it, ruling P2-11); an action that shows or associates promotes it
+  first and answers with the platform id.
+- **P3-24** 新建技能 is the existing `POST orgs/:orgId/skills` with a second body form `{ name,
+  description, body, shareable? }`: the kernel writes `SKILL.md` (frontmatter name and description,
+  then the body) and creates the skill with the checks of an upload (`customSkills`, name format and
+  size limits of `readSkillPackage`, ruling P2-3, one live name per org). `shareable` is also
+  accepted on upload.
+
+### 14.3 Not in phase 3
+
+Editing a skill's text after creation, files for 新建技能, org-created agent templates and
+用它创建智能体 (phase 4), an org changing who it shares with, and per-org versions of shared items.
