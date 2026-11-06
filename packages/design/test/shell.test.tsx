@@ -179,6 +179,22 @@ describe("AppShell", () => {
 });
 
 describe("PageHeader", () => {
+  it("while another action runs, the head's other buttons are disabled, never a dead click", () => {
+    zh(
+      <PageHeader
+        path={[{ label: "admin" }]}
+        title="pdf"
+        actions={[
+          { label: "启用", variant: "default", onSelect: () => {}, loading: true },
+          { label: "设置范围", variant: "default", onSelect: () => {}, disabled: true },
+        ]}
+      />,
+    );
+    expect((screen.getByRole("button", { name: "设置范围" }) as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+  });
+
   it("an action whose call is running shows the Button's loading state and is disabled", () => {
     zh(
       <PageHeader

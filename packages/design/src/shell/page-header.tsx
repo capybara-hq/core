@@ -22,6 +22,8 @@ type HeaderButton = {
   shortcut?: string;
   /** Its call is running: the Button's loading state (spinner, `aria-busy`, disabled). */
   loading?: boolean;
+  /** Another action's call is running (spec §6.17: never a click that seems to do nothing). */
+  disabled?: boolean;
 };
 
 /** A button (onSelect) or a link (href), never both; a `more-horizontal` menu is its own kind. */
@@ -129,7 +131,7 @@ export function PageHeader(p: PageHeaderProps) {
       folded.push({
         label: a.label,
         onSelect: () => a.onSelect?.(),
-        ...(a.loading ? { disabled: true } : {}),
+        ...(a.loading || a.disabled ? { disabled: true } : {}),
       });
     }
   }
@@ -179,6 +181,7 @@ export function PageHeader(p: PageHeaderProps) {
         density="default"
         {...(a.shortcut !== undefined ? { shortcut: a.shortcut } : {})}
         {...(a.loading ? { loading: true } : {})}
+        {...(a.disabled ? { disabled: true } : {})}
         {...(a.onSelect ? { onClick: a.onSelect } : {})}
       >
         {a.icon ? <Icon name={a.icon} size={14} /> : null}

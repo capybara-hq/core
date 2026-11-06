@@ -62,6 +62,7 @@ import {
   type PlatformComponent,
   type PlatformComponentKind,
 } from "../../../../../lib/components";
+import { lockWhileRunning } from "../../../../../lib/header-actions";
 import {
   adminOrgsQuery,
   catalogItemQuery,
@@ -297,7 +298,7 @@ function PluginDetail({ detail, orgId }: { detail: CatalogItemDetail; orgId: str
               <ScopeBadge item={item} />
             </Stack>
           ),
-          actions: headActions,
+          actions: lockWhileRunning(headActions),
         }}
         tabs={{
           label: t("detail.tabsLabel"),

@@ -27,6 +27,7 @@ import {
   setComponentShown,
   shareBlockOf,
 } from "../lib/components";
+import { lockWhileRunning } from "../lib/header-actions";
 import { adminOrgsQuery } from "../lib/query/admin";
 import { retryOnMountOf } from "../lib/query/client";
 import { componentChangeKeys } from "../lib/query/components";
@@ -329,7 +330,7 @@ export function useComponentActions(
     ) : open === "upload" ? (
       <ComponentUploadDialog component={c} orgId={orgId} onClose={close} />
     ) : null;
-  return { actions, dialog };
+  return { actions: lockWhileRunning(actions), dialog };
 }
 
 /** The 全部 / 平台 / 组织创建 tabs of a component list, with their counts and filtered rows. */

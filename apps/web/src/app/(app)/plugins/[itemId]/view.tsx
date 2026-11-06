@@ -37,6 +37,7 @@ import {
   showValue,
   skillNameOf,
 } from "../../../../lib/catalog";
+import { lockWhileRunning } from "../../../../lib/header-actions";
 import { canUpdateOrg } from "../../../../lib/org-settings";
 import { orgCatalogItemQuery } from "../../../../lib/query/catalog";
 import { orgExtensionsQuery } from "../../../../lib/query/channels";
@@ -140,7 +141,6 @@ function CatalogItemDetail({
       .map((a) => ({
         label: a.label,
         danger: true,
-        ...(busy ? { disabled: true } : {}),
         onSelect: a.onSelect ?? (() => {}),
       })),
     ...(owned && admin
@@ -157,9 +157,7 @@ function CatalogItemDetail({
               label: a.label,
               variant: "default" as const,
               ...(a.loading === true ? { loading: true } : {}),
-              onSelect: () => {
-                if (!busy) a.onSelect?.();
-              },
+              onSelect: () => a.onSelect?.(),
             },
       ),
     ...(menu.length > 0 ? [{ label: tm("more"), menu }] : []),
@@ -177,7 +175,8 @@ function CatalogItemDetail({
         title: displayNameOf(item, locale),
         count: versionLabel(item.latestVersion),
         ...(owned && { status: <Badge>{tp("chips.ownUpload")}</Badge> }),
-        ...(headActions.length > 0 ? { actions: headActions } : {}),
+        // while one runs (a switch-off preview from the menu too) the other buttons wait
+        ...(headActions.length > 0 ? { actions: lockWhileRunning(headActions, busy) } : {}),
       }}
       tabs={{
         label: t("detail.tabsLabel"),

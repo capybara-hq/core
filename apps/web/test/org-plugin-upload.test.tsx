@@ -1,4 +1,4 @@
-import { cleanup, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
@@ -472,6 +472,31 @@ describe("/plugins/<id>: the org's own plugin", () => {
     expect(sw.hasAttribute("disabled")).toBe(true);
     expect(screen.queryByRole("button", { name: zh.plugins.action.delete })).toBeNull();
     expect(screen.queryByRole("button", { name: zh.catalog.admin.detail.more })).toBeNull();
+  });
+
+  it("while 启用 runs from the head, its other buttons are disabled (never a dead click)", async () => {
+    let answer: () => void = () => {};
+    const held = new Promise<void>((r) => {
+      answer = r;
+    });
+    stubApi({
+      [`GET ${ORG}/catalog/${ID}`]: () =>
+        json(200, detailOf(orgItem({ owner: ACME, state: "off", pendingVersion: "1.1.0" }))),
+      [`PUT ${ORG}/catalog/${ID}/switch`]: async () => {
+        await held;
+        return json(200, { item: orgItem({ owner: ACME, state: "on" }) });
+      },
+    });
+    await renderItem({ locale: "en" });
+    const user = userEvent.setup();
+    const enable = await screen.findByRole("button", { name: en.plugins.action.enable });
+    const withdraw = screen.getByRole("button", { name: en.plugins.action.withdraw });
+    expect((withdraw as HTMLButtonElement).disabled).toBe(false);
+    await user.click(enable);
+    await waitFor(() => expect(enable.getAttribute("aria-busy")).toBe("true"));
+    expect((withdraw as HTMLButtonElement).disabled).toBe(true);
+    await act(async () => answer());
+    await waitFor(() => expect(enable.getAttribute("aria-busy")).toBeNull());
   });
 
   it("one centred column: the full description first, the facts as a KeyValue with the owner", async () => {
