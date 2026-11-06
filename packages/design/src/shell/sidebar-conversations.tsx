@@ -372,6 +372,7 @@ export function Conversations({
   return (
     <section
       className="cb-sidebar-convs"
+      data-part="conversations"
       aria-label={t("sidebar.conversations")}
       aria-busy={c.state === "loading" ? true : undefined}
       data-motion={motion ? "on" : undefined}
@@ -435,7 +436,9 @@ export function Conversations({
           <span className="cb-sidebar-label">{fill(t("sidebar.archived"), { n: count })}</span>
         </button>
       ) : null}
-      <div className="cb-sidebar-convs-body">{body}</div>
+      <div className="cb-sidebar-convs-body" data-part="conversation-list">
+        {body}
+      </div>
       {!archivedList && count > 0 && c.state === "ready" ? (
         <button
           type="button"

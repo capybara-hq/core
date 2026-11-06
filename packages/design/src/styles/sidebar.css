@@ -285,9 +285,12 @@
   gap: var(--cb-space-1);
   padding: 0 var(--cb-space-1);
 }
+/* The list: agent groups at the section's gap (space.1), so collapsed groups, the filter row, the
+   list and 已归档 share one rhythm; a group's rows stay contiguous. */
 .cb-sidebar-convs-body {
   display: flex;
   flex-direction: column;
+  gap: var(--cb-space-1);
 }
 .cb-sidebar-archived {
   display: flex;
@@ -317,9 +320,6 @@
 .cb-sidebar-org:focus-visible {
   outline: 1px solid var(--cb-accent);
   outline-offset: -1px;
-}
-.cb-sidebar-group + .cb-sidebar-group {
-  margin-top: var(--cb-space-2);
 }
 .cb-sidebar-group-head {
   display: flex;

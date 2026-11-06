@@ -20,6 +20,14 @@ function decls(sel: string): string {
 }
 
 describe("the conversation section", () => {
+  it("one vertical rhythm: the head, the filter, each agent group and 已归档 are space.1 apart", () => {
+    expect(decls(".cb-sidebar-convs")).toContain("gap: var(--cb-space-1);");
+    // the groups sit in the list's own column, at the section's gap, never a larger one
+    expect(decls(".cb-sidebar-convs-body")).toContain("gap: var(--cb-space-1);");
+    expect(decls(".cb-sidebar-group + .cb-sidebar-group")).toBe("");
+    expect(decls(".cb-sidebar-group")).not.toMatch(/margin/);
+  });
+
   it("a filter matching nothing draws the compact empty state centered in the list (the DataTable's in-list form)", () => {
     const hint = decls('.cb-sidebar-empty[data-state="no-match"]');
     expect(hint).toContain("padding: var(--cb-space-8) 0;");
