@@ -80,13 +80,15 @@ const RUN_ALL_DIRS = [".github/", "tools/ci/", "packages/testing/"];
 
 /**
  * Files under `.github/` that no test, build or check of a PR reads: they configure other
- * workflows (CLA, the issue gate, the manual baseline and reference renders) or review routing.
+ * workflows (CLA, the issue gate and its merge-queue report, the manual baseline and reference
+ * renders) or review routing.
  * Every other `.github/` file, ci.yml first, runs everything.
  */
 const GITHUB_NO_TESTS = new Set([
   ".github/CODEOWNERS",
   ".github/workflows/cla.yml",
   ".github/workflows/community.yml",
+  ".github/workflows/merge-queue.yml",
   ".github/workflows/visual-update.yml",
   ".github/workflows/reference-update.yml",
 ]);

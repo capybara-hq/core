@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
   pull_request:
+  # The merge queue tests each PR merged onto the current main before it lands.
+  merge_group:
 
 # A new push to a PR cancels its older run; runs on main are never cancelled.
 concurrency:
@@ -49,18 +51,19 @@ jobs:
       - id: plan
         env:
           EVENT: ${{ github.event_name }}
-          BASE: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
         run: |
           # When in doubt, run everything: a missed run is worse than a wasted one.
-          if [ "$EVENT" != "pull_request" ]; then
+          if [ "$EVENT" != "pull_request" ] && [ "$EVENT" != "merge_group" ]; then
             node tools/ci/src/cli.ts --all "push to main"
           elif ! git diff --name-only "$BASE...$HEAD_SHA" > changed-files.txt; then
             node tools/ci/src/cli.ts --all "could not diff $BASE...$HEAD_SHA"
-          elif grep -qE '^(\.github/|tools/ci/)' changed-files.txt; then
-            # Decided here, not by the script: the PR may have changed the script itself.
+          elif grep -qE '^(\.github/workflows/ci\.yml|tools/ci/)' changed-files.txt; then
+            # Decided here, not by the script: the change may have edited the plan itself (the
+            # script, or this workflow); other .github files are the script's to judge.
             cat changed-files.txt
-            node tools/ci/src/cli.ts --all "CI definition changed (.github/** or tools/ci/**)"
+            node tools/ci/src/cli.ts --all "CI definition changed (ci.yml or tools/ci/**)"
           else
             cat changed-files.txt
             node tools/ci/src/cli.ts < changed-files.txt

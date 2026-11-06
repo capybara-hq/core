@@ -113,6 +113,7 @@ describe("planFromFiles: docs-only fast path", () => {
     [[".agents/skills/x/scripts/helper.sh", ".agents/skills/x/reference.json"]],
     [[".github/CODEOWNERS", ".github/workflows/cla.yml", ".github/workflows/community.yml"]],
     [[".github/workflows/visual-update.yml", ".github/workflows/reference-update.yml"]],
+    [[".github/workflows/merge-queue.yml"]],
     [[]],
     [["", "  "]],
   ])("%j runs nothing", (files) => {

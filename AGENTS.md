@@ -161,6 +161,7 @@ docker compose -f docker/compose.dev.yaml up -d   # local postgres + valkey
 ## CI and checks
 
 - Required statuses: `ci-ok` (aggregates every job in `.github/workflows/ci.yml`) and `issue-linked`.
+  PRs land through the merge queue, which tests each one merged onto `main` (`merge_group`).
 - PRs run what the diff affects; pushes to `main` run everything. The plan is
   `tools/ci/src/affected.ts`, described in [tools/ci/README.md](tools/ci/README.md); keep that page
   and `affected.ts` in sync. Don't describe the plan or the checks in `ci.yml`: every edit to it
