@@ -25,16 +25,28 @@ let orgA: string;
 let orgB: string;
 /** Org C ("C"; root is its owner). */
 let orgC: string;
-/** An account in no org. */
+/** A guest of org A (role `guest`). */
 let guest: Req;
+/** An account in no org. */
+let outsider: Req;
 
 beforeAll(async () => {
   env = await startOrgEnv();
   orgA = env.orgId;
   orgB = await createOrg(env.root, "B");
   orgC = await createOrg(env.root, "C");
-  await accountsFor(env.db).createLocal({ login: "guest", password: PW, displayName: "G" });
+  const g = await accountsFor(env.db).createLocal({
+    login: "guest",
+    password: PW,
+    displayName: "G",
+  });
+  await env.db
+    .insertInto("memberships")
+    .values({ org_id: orgA, account_id: g.id, role: "guest" })
+    .execute();
   guest = await session(env.k, "guest");
+  await accountsFor(env.db).createLocal({ login: "outsider", password: PW, displayName: "O" });
+  outsider = await session(env.k, "outsider");
 }, 240_000);
 
 afterAll(async () => {
@@ -218,15 +230,20 @@ describe("org-owned plugins", { timeout: 180_000 }, () => {
   it("delete an unshared plugin removes it", async () => {
     const itemId = await confirmedV1("own-rm");
     const agentId = await agentUsingSkill(orgA, itemId, "Helper");
-    // another org's admin, a member and a guest cannot preview or delete it
+    // another org's admin, a member, a guest and an outsider cannot preview or delete it
     const other = await env.root({ method: "POST", url: `${owned(orgB, itemId)}/delete/preview` });
     expect(errorOf(other)).toEqual([404, "catalog.item_not_found"]);
     const p = await preview(env.boss, orgA, itemId);
-    for (const req of [env.mem, guest]) {
+    // a member and a guest are members below admin: 403 forbidden; an outsider does not see
+    // the org: 404 org.not_found (OrgGuard)
+    for (const [req, status, code] of [
+      [env.mem, 403, "forbidden"],
+      [guest, 403, "forbidden"],
+      [outsider, 404, "org.not_found"],
+    ] as const) {
       const pre = await req({ method: "POST", url: `${owned(orgA, itemId)}/delete/preview` });
-      expect([403, 404], pre.body).toContain(pre.statusCode);
-      const d = await del(req, orgA, itemId, p.previewHash);
-      expect([403, 404], d.body).toContain(d.statusCode);
+      expect(errorOf(pre)).toEqual([status, code]);
+      expect(errorOf(await del(req, orgA, itemId, p.previewHash))).toEqual([status, code]);
     }
     expect((await del(env.mem, orgA, itemId, p.previewHash)).statusCode).toBe(403);
     expect(errorOf(await del(env.root, orgB, itemId, p.previewHash))).toEqual([

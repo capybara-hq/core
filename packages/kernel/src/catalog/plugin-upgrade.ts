@@ -131,6 +131,12 @@ export interface PlatformUpdatePreview {
     needsApproval: boolean;
   } | null;
   connectorOrgs: PlatformUpdateConnectorOrg[];
+  /**
+   * An owner's update preview only ({@link PlatformPluginUpdater.previewForOwner}): the name of
+   * every org the preview mentions, by id. An org admin cannot read other orgs, and these names
+   * are already disclosed to the owner (rulings P3-14, P3-19). Not covered by `diffHash`.
+   */
+  orgNames?: Record<string, string>;
   /** Confirm with it; recomputed under the item lock at the confirm. */
   diffHash: string;
 }
@@ -360,12 +366,29 @@ export class PlatformPluginUpdater {
         `internal: previewForOwner got the staged target of version ${staged.version} for version ${version}`,
       );
     }
-    return previewOf(
+    const preview = previewOf(
       await this.diff(itemId, version, {
         owner: { orgId },
         ...(staged !== undefined && { target: staged }),
       }),
     );
+    return { ...preview, orgNames: await this.orgNamesOf(preview) };
+  }
+
+  /** The names of the orgs a preview mentions, by id (an owner's preview, see `orgNames`). */
+  private async orgNamesOf(p: PlatformUpdatePreview): Promise<Record<string, string>> {
+    const ids = new Set<string>([
+      ...(p.extension?.orgs ?? []),
+      ...p.connectorOrgs.map((c) => c.orgId),
+      ...p.components.flatMap((c) => [...c.pinnedOrgs, ...(c.kept ?? []).map((k) => k.orgId)]),
+    ]);
+    if (ids.size === 0) return {};
+    const rows = await this.db
+      .selectFrom("orgs")
+      .select(["id", "name"])
+      .where("id", "in", [...ids])
+      .execute();
+    return Object.fromEntries(rows.map((r) => [r.id, r.name]));
   }
 
   /**

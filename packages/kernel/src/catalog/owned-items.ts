@@ -573,6 +573,63 @@ export class OwnedItems {
   }
 
   /**
+   * An org is deleted (P3-20), in `OrgsService.softDeleteIn`'s transaction (PG writes only; the
+   * org row is already marked deleted, so it counts as no user): the org's live plugins and the
+   * platform skills and agent templates it promoted (ruling P3-3) are locked `FOR UPDATE`, then
+   * each goes through {@link transferOrRemove} with reason `org_deleted`. A first upload still
+   * waiting is removed and its extension name released here (nothing is installed under it,
+   * pre-flight F10); a pending new version of a transferred plugin is cleared; a removed plugin's
+   * extension is taken out by the cleanup job after the commit. The org's unpromoted rows (its own
+   * skills, copies, installs) are left: they go with the org as before. Must not inject
+   * `OrgsService` (it calls this).
+   */
+  @Transactional({ propagation: "mandatory" })
+  async onOrgDeleted(
+    orgId: string,
+    actor: string | null,
+    opts: ActorOpts = {},
+  ): Promise<{ transferred: number; removed: number }> {
+    const t = this.db;
+    const plugins = await t
+      .selectFrom("catalog_items")
+      .select("id")
+      .where("owner_org_id", "=", orgId)
+      .where("deleted_at", "is", null)
+      .orderBy("id")
+      .forUpdate()
+      .execute();
+    // promoted rows only: a plugin's components (`catalog_item_id` set) follow their plugin
+    const skills = await t
+      .selectFrom("platform_skills")
+      .select("id")
+      .where("owner_org_id", "=", orgId)
+      .where("catalog_item_id", "is", null)
+      .where("deleted_at", "is", null)
+      .orderBy("id")
+      .forUpdate()
+      .execute();
+    const templates = await t
+      .selectFrom("platform_agent_templates")
+      .select("id")
+      .where("owner_org_id", "=", orgId)
+      .where("catalog_item_id", "is", null)
+      .where("deleted_at", "is", null)
+      .orderBy("id")
+      .forUpdate()
+      .execute();
+    const refs: OwnedRef[] = [
+      ...plugins.map((r) => ({ kind: "plugin" as const, id: r.id })),
+      ...skills.map((r) => ({ kind: "skill" as const, id: r.id })),
+      ...templates.map((r) => ({ kind: "agent_template" as const, id: r.id })),
+    ];
+    const counts = { transferred: 0, removed: 0 };
+    for (const ref of refs) {
+      counts[await this.transferOrRemove(ref, "org_deleted", actor, opts)] += 1;
+    }
+    return counts;
+  }
+
+  /**
    * {@link transferOrRemove} of a platform skill or agent template the org promoted (ruling P3-3;
    * `id` its platform id): another live org uses it -> `transferred`: platform-owned, not shown
    * when the owner had not made it shareable, an `all` scope narrowed to `named` = the orgs using

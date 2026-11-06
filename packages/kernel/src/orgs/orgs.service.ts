@@ -1,6 +1,7 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { Inject, Injectable } from "@nestjs/common";
 import { type Selectable, sql } from "kysely";
+import { OwnedItems } from "../catalog/owned-items.js";
 import { cancelPendingRequests } from "../catalog/request-rules.js";
 import { PluginScopeSync } from "../catalog/scope-sync.js";
 import type { OrgsTable } from "../db/kernel-schema.js";
@@ -91,6 +92,8 @@ export class OrgsService {
     @Inject(EvalBudget) private readonly evalBudget: Pick<EvalBudget, "cancelRuns">,
     /** A new org gets the plugins its scope offers it (the scope sync, after the commit). */
     @Inject(PluginScopeSync) private readonly scopeSync: Pick<PluginScopeSync, "enqueueOrg">,
+    /** What the deleted org owns is transferred or removed in the delete's transaction (P3-20). */
+    @Inject(OwnedItems) private readonly ownedItems: Pick<OwnedItems, "onOrgDeleted">,
   ) {}
 
   /**
@@ -233,9 +236,12 @@ export class OrgsService {
 
   /**
    * Soft delete (needs owner, decided live under the org lock): in the same transaction revokes
-   * the org's service tokens, cancels its running eval runs and pending catalog requests, and
-   * clears sessions' current org pointing at it; after the commit emits `org.deleted` (channel
-   * connections go with the org: the runtime's connection reads filter deleted orgs).
+   * the org's service tokens, cancels its running eval runs and pending catalog requests, clears
+   * sessions' current org pointing at it, and transfers or removes the plugins and promoted
+   * components it owns ({@link OwnedItems.onOrgDeleted}, P3-20: shared ones become the platform's,
+   * the others are removed, a removed plugin's extension taken out by its cleanup job after the
+   * commit); after the commit emits `org.deleted` (channel connections go with the org: the
+   * runtime's connection reads filter deleted orgs).
    */
   async softDelete(orgId: string, actor: Account, actorTokenId?: string): Promise<void> {
     await this.softDeleteIn(orgId, actor, actorTokenId);
@@ -253,6 +259,10 @@ export class OrgsService {
       .set({ deleted_at: sql<Date>`now()` })
       .where("id", "=", orgId)
       .execute();
+    // after the org is marked deleted, so it counts as no user of what it shared (P3-18)
+    await this.ownedItems.onOrgDeleted(orgId, actor.id, {
+      ...(actorTokenId !== undefined && { actorTokenId }),
+    });
     await this.apiTokens.revokeAllForOrg(orgId);
     // eval runs of a deleted org stop spending: cancelled explicitly (audited with the reason)
     await this.evalBudget.cancelRuns(

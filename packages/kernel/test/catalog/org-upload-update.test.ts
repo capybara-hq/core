@@ -236,6 +236,35 @@ describe("owner updates without an extension", { timeout: 120_000 }, () => {
     ]);
   });
 
+  it("the owner's preview names the other orgs it mentions (orgNames)", async () => {
+    const itemId = await importPlugin(
+      env,
+      await lifePkg({ name: "own-names", version: "1.0.0", skills: ["names-notes"] }),
+    );
+    await env.db
+      .updateTable("catalog_items")
+      .set({ owner_org_id: orgA, shareable: true, shown_to_others: false })
+      .where("id", "=", itemId)
+      .execute();
+    await setScope(env, itemId, "named", [orgA, orgB]);
+    await env.k.app.get(CatalogScopeService).enqueueSync(itemId);
+    await waitFor(
+      async () => (await usable(orgB)).includes("names-notes"),
+      15_000,
+      "names-notes usable in org B",
+    );
+    const v2 = await pluginTgz({
+      manifest: { name: "own-names", version: "2.0.0", skills: [{ path: "./skills/names-notes" }] },
+      files: { "skills/names-notes/SKILL.md": SKILL_MD("names-notes") },
+    });
+    const p = (await prepared(env.boss, orgA, v2)) as Prepared & {
+      update: { extension: { orgs: string[] } | null; orgNames?: Record<string, string> };
+    };
+    expect(p.update?.extension?.orgs).toContain(orgB);
+    // an org admin cannot read other orgs: the kernel names them (P3-19, P3-14)
+    expect(p.update?.orgNames).toEqual({ [orgA]: "Acme", [orgB]: "B" });
+  });
+
   it("a failed update that removed the extension puts it back as it was", async () => {
     const itemId = await importPlugin(env, await lifePkg({ name: "own-rb", version: "1.0.0" }));
     await ownedByA(itemId);

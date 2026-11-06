@@ -117,6 +117,8 @@ export function orgsFor(
     new EvalBudget(h.db, h.txHost),
     // no worker in these tests: the new org's plugin scope sync is not enqueued
     { enqueueOrg: async () => {} },
+    // no catalog here: what a deleted org owns is covered by test/orgs/org-delete-owned.test.ts
+    { onOrgDeleted: async () => ({ transferred: 0, removed: 0 }) },
   );
 }
 
