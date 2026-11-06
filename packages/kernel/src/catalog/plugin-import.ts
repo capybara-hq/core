@@ -51,6 +51,7 @@ import { audit } from "../identity/audit.js";
 import { assertCustomAllowed } from "../identity/settings.js";
 import { SuperAdminLock } from "../identity/super-admin.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
+import { afterCommit } from "../infra/database/after-commit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
@@ -1555,7 +1556,8 @@ export class PluginImport {
    * An expired org staging's extension package (an org upload stores it at prepare, P3-10): removed
    * with the staging unless something else uses it — an install (running or migrated), a catalog
    * version, another staging — or it was stored by anyone else (the package row's source must be
-   * this staging's own `catalog` ref). A platform staging keeps its package, as before.
+   * this staging's own `catalog` ref). A platform staging keeps its package, as before. Its object
+   * is deleted after the commit.
    */
   @Transactional({ propagation: "mandatory" })
   private async dropOrgPackage(row: {
@@ -1593,9 +1595,22 @@ export class PluginImport {
         .where(sql<boolean>`review->'extension'->>'sha256' = ${sha}`)
         .executeTakeFirst());
     if (used !== undefined) return;
-    if (pkg.blob_store === "object") await this.files.deployment().delete(blobKey(sha));
     // extension_blobs (a PG-stored package) goes with the row (ON DELETE CASCADE)
     await t.deleteFrom("extension_packages").where("sha256", "=", sha).execute();
+    // The object only once the row is gone for good: a failure leaves an unreferenced object
+    // (harmless; a later upload of the same bytes rewrites it), never a row without its bytes
+    if (pkg.blob_store === "object") {
+      afterCommit(async () => {
+        try {
+          await this.files.deployment().delete(blobKey(sha));
+        } catch (err) {
+          this.log.warn("cannot delete an expired org upload's extension package object", {
+            sha256: sha,
+            err,
+          });
+        }
+      });
+    }
   }
 
   // ---------------------------------------------------------------------------------------------
