@@ -773,6 +773,22 @@ describe("waking on sub-agent deliveries", { timeout: 90_000 }, () => {
     await expectNoWake(mid.conversationId, 1);
   });
 
+  it("deleting the root stops its sub-agents' background tasks as a deletion", async () => {
+    const before = arrivals("child");
+    const conv = await dispatched("SCENARIO hold deleted");
+    const [child] = await childRunsOf(db, conv);
+    if (!child) throw new Error("no child dispatched");
+    await waitFor(async () => arrivals("child") > before, 20_000, "the child held");
+    const task = await finishChildTask(conv, child, { finish: false });
+    const res = await owner({
+      method: "DELETE",
+      url: `/api/v1/orgs/${orgId}/conversations/${conv}`,
+    });
+    expect(res.statusCode, res.body).toBe(204);
+    const stopped = await taskFinish(child.conversationId, task.taskId);
+    expect(stopped.payload).toMatchObject({ stoppedBy: "deletion" });
+  });
+
   it("unpausing the root wakes the sub-agents whose wake it held", async () => {
     const conv = await dispatched("SCENARIO quick unpause");
     const [child] = await childRunsOf(db, conv);

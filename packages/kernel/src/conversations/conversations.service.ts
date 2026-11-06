@@ -483,9 +483,10 @@ export class ConversationsService {
   /**
    * Soft-deletes a conversation (owner only; a sub-agent's conversation is `conversation.read_only`):
    * stops an active run, hides the conversation everywhere for its owner and drops its channel
-   * bindings, stops every active run of its sub-agent tree (agent map spec §10), then stops every
-   * running background task in its sandbox (its sub-agents' too; outside the delete's
-   * transaction, a task whose sandbox cannot be reached ends `lost` with `kill_pending`). The tasks are stopped after the conversation is marked deleted, so no finish
+   * bindings, stops every running background task in its sandbox (its sub-agents' too; outside
+   * the delete's transaction, a task whose sandbox cannot be reached ends `lost` with
+   * `kill_pending`), then every active run of its sub-agent tree (agent map spec §10). The tasks
+   * are stopped after the conversation is marked deleted, so no finish
    * (the stops' own, or one the poller writes meanwhile) can wake a run on it: `ensureRun` refuses a
    * deleted conversation (the stops' finishes carry `stoppedBy: "deletion"` as well). The event
    * log, runs and trajectory stay (enterprise admins still see them).
@@ -498,10 +499,13 @@ export class ConversationsService {
       if (!(e instanceof ApiError && e.code === "run.not_active")) throw e;
     }
     await this.markDeleted(conversationId);
-    // the whole tree stops (agent map spec §10), after the mark, so a stopped agent's delivery
-    // cannot start a run on the deleted root (`ensureRun` refuses it)
-    await this.runs.stopTree(conversationId, accountId, { includeSelf: false });
+    // after the mark, so no finish or delivery of the stops below can start a run on the deleted
+    // root (`ensureRun` refuses it). The sandbox's tasks stop first, so the sub-agents' tasks end
+    // as a deletion; the tree stop then only stops a task a sub-agent started in between
+    // (`stoppedBy: "subagent_end"`, which never wakes either)
     await this.background.stopForDeletedConversation(conversationId);
+    // the whole tree stops (agent map spec §10)
+    await this.runs.stopTree(conversationId, accountId, { includeSelf: false });
     await this.eventLog.publishChanged(conversationId, "deleted");
   }
 
