@@ -254,8 +254,14 @@ async function seedRun(
   runId: string,
   text: string,
   recorded: { name: string; input: unknown; content: string }[],
-  /** A message, or a finished background task (background Bash §4.4), landing during step 1. */
-  interjection?: string | { finished: EventPayload<"background_task_finished"> },
+  /**
+   * A message, a finished background task (background Bash §4.4) or a sub-agent delivery (agent
+   * map spec §5.2), landing during step 1.
+   */
+  interjection?:
+    | string
+    | { finished: EventPayload<"background_task_finished"> }
+    | { delivery: EventPayload<"subagent_delivery"> },
   catalog?: EventPayload<"skills_catalog">,
 ): Promise<{ userSeq: number; interjectionSeq: number | null }> {
   const [msg] = await eventLog.append(convId, [
@@ -336,7 +342,9 @@ async function seedRun(
             type: "user_message",
             payload: { content: [{ type: "text", text: interjection }], authorAccountId: adminId },
           }
-        : { type: "background_task_finished", payload: interjection.finished },
+        : "finished" in interjection
+          ? { type: "background_task_finished", payload: interjection.finished }
+          : { type: "subagent_delivery", payload: interjection.delivery },
     ]);
     interjectionSeq = m?.seq ?? null;
   }
@@ -406,9 +414,22 @@ const finishedTask = (taskId: string): EventPayload<"background_task_finished"> 
   reported: false,
 });
 
+/** A sub-agent's finish delivered to its parent (agent map spec §5.2, as the writer logs it). */
+const delivery = (subagentId: string, text: string): EventPayload<"subagent_delivery"> => ({
+  subagentId,
+  childRunId: `run-${subagentId}`,
+  description: `Part ${subagentId}`,
+  kind: "finished",
+  text,
+  status: "completed",
+  handedBack: false,
+  triggerAccountId: adminId,
+});
+
 /**
- * A wake run written to the log (background Bash §3): the conversation's finished task after the
- * last consumed message is the run's boundary (`trigger_seq`); step 1 absorbs it and answers.
+ * A wake run written to the log (background Bash §3, agent map spec §5.3): the conversation's
+ * finished task (or, with `delivery`, a sub-agent delivery) after the last consumed message is the
+ * run's boundary (`trigger_seq`); step 1 absorbs it and answers.
  */
 async function seedWakeRun(
   convId: string,
@@ -419,10 +440,14 @@ async function seedWakeRun(
     recordTrigger?: boolean;
     /** Finishes logged after the boundary, before the run started. */
     after?: EventPayload<"background_task_finished">[];
+    /** A sub-agent wake (`trigger: "subagent"`): the boundary is this delivery. */
+    delivery?: EventPayload<"subagent_delivery">;
   } = {},
 ): Promise<number> {
   const [f] = await eventLog.append(convId, [
-    { type: "background_task_finished", payload: finishedTask(taskId) },
+    opts.delivery !== undefined
+      ? { type: "subagent_delivery", payload: opts.delivery }
+      : { type: "background_task_finished", payload: finishedTask(taskId) },
   ]);
   const seq = f?.seq ?? 0;
   const later = await eventLog.append(
@@ -451,7 +476,7 @@ async function seedWakeRun(
         agentVersion: 1,
         model: { provider: "model-fake", model: "fake-1" },
         triggerAccountId: adminId,
-        trigger: "background_task",
+        trigger: opts.delivery !== undefined ? "subagent" : "background_task",
         ...(opts.recordTrigger !== false && { triggerSeq: seq }),
       },
     },
@@ -1176,6 +1201,139 @@ describe("整轮回放", { timeout: 60_000 }, () => {
       after: [{ ...finishedTask("bt_stopped"), status: "stopped", stoppedBy: "person" }],
     });
     expect(b.trigger).toBe(b.seq);
+  });
+
+  it('a wake run with trigger "subagent" is seeded from triggerSeq (agent map spec §8)', async () => {
+    const setId = await createSet();
+    const conv = await createConv(admin, orgId, agentId);
+    await seedRun(conv, "sa-before", "echo:first", []);
+    const wakeSeq = await seedWakeRun(conv, "sa-wake", "unused", {
+      delivery: delivery("child-wake", "all parts done"),
+    });
+    await addCase(setId, conv, "sa-wake");
+    const run = await startRun(setId, {});
+    expect((await finished(run.id)).status).toBe("completed");
+    const [r] = await results(run.id);
+    expect(r?.status, JSON.stringify(r?.error)).toBe("done");
+    const evalConv = r?.evalConversationId as string;
+    const row = await db
+      .selectFrom("runs")
+      .select("trigger_seq")
+      .where("conversation_id", "=", evalConv)
+      .executeTakeFirstOrThrow();
+    // the recorded boundary (the delivery), not the consumed message before it
+    expect(Number(row.trigger_seq)).toBe(wakeSeq);
+    const evs = await eventsOf(db, evalConv);
+    const step1 = evs.find(
+      (e): e is Extract<ConversationEvent, { type: "model_call" }> =>
+        e.type === "model_call" && e.payload.step === 1 && e.seq > wakeSeq,
+    );
+    expect(step1?.payload.request.absorbedUpToSeq).toBe(wakeSeq);
+    expect(evs.find((e) => e.seq === wakeSeq && e.type === "subagent_delivery")).toBeDefined();
+    const fin = evs.find((e) => e.type === "run_finished" && e.seq > (step1?.seq ?? 0));
+    expect(
+      ((fin as ConversationEvent).payload as EventPayload<"run_finished">).consumedUpToSeq,
+    ).toBe(wakeSeq);
+  });
+
+  it("a delivery absorbed mid-run is fed at its step (agent map spec §5.2)", async () => {
+    const setId = await createSet();
+    const conv = await createConv(admin, orgId, agentId);
+    const d = delivery("child-mid", "part one done");
+    await seedRun(
+      conv,
+      "sa-mid",
+      'tool:plugin__tools-count__count:{"n":5}',
+      [{ name: "plugin__tools-count__count", input: { n: 5 }, content: "counted 5" }],
+      { delivery: d },
+    );
+    await addCase(setId, conv, "sa-mid");
+    const run = await startRun(setId, {});
+    expect((await finished(run.id)).status).toBe("completed");
+    const [r] = await results(run.id);
+    expect(r?.status, JSON.stringify(r?.error)).toBe("done");
+    expect((r as EvalResultView).candidate as RunReplayResult).toMatchObject({ unmatched: 0 });
+    const evs = await evalEvents(r as EvalResultView);
+    const fed = evs.filter((e) => e.type === "subagent_delivery");
+    expect(fed.map((e) => e.payload)).toEqual([d]);
+    const calls = evs.filter(
+      (e): e is Extract<ConversationEvent, { type: "model_call" }> => e.type === "model_call",
+    );
+    const step1 = calls.find((c) => c.payload.step === 1);
+    const step2 = calls.find((c) => c.payload.step === 2);
+    const result1 = evs.find((e) => e.type === "tool_result");
+    const f = fed[0] as ConversationEvent;
+    // fed after step 1's tool results, absorbed by step 2 as in the original
+    expect(f.seq).toBeGreaterThan(result1?.seq ?? Number.POSITIVE_INFINITY);
+    expect(f.seq).toBeLessThan(step2?.seq ?? 0);
+    expect(step1?.payload.request.absorbedUpToSeq).toBeLessThan(f.seq);
+    expect(step2?.payload.request.absorbedUpToSeq).toBe(f.seq);
+  });
+
+  it("replay never dispatches, sends or hands back (recorded results only)", async () => {
+    const setId = await createSet();
+    const conv = await createConv(admin, orgId, agentId);
+    const recorded = [
+      {
+        name: "Agent",
+        input: { description: "Part A", prompt: "do part A" },
+        content: "Started sub-agent child-a in the background.",
+      },
+      {
+        name: "SendMessage",
+        input: { to: "child-a", message: "also check B" },
+        content: "Message delivered to child-a (running).",
+      },
+      {
+        name: "SubagentHandback",
+        input: { message: "interim report" },
+        content: "Report delivered to your caller.",
+      },
+    ];
+    await seedRun(
+      conv,
+      "sa-tools",
+      `tools:${JSON.stringify(recorded.map(({ name, input }) => ({ name, input })))}`,
+      recorded,
+    );
+    await addCase(setId, conv, "sa-tools");
+    const outside = async () => {
+      const [convs, dispatches, events] = await Promise.all([
+        db
+          .selectFrom("conversations")
+          .select((eb) => eb.fn.countAll().as("n"))
+          .where("kind", "=", "subagent")
+          .executeTakeFirstOrThrow(),
+        db
+          .selectFrom("subagent_dispatches")
+          .select((eb) => eb.fn.countAll().as("n"))
+          .executeTakeFirstOrThrow(),
+        db
+          .selectFrom("conversation_events as e")
+          .innerJoin("conversations as c", "c.id", "e.conversation_id")
+          .select((eb) => eb.fn.countAll().as("n"))
+          .where("c.kind", "!=", "eval")
+          .executeTakeFirstOrThrow(),
+      ]);
+      return [Number(convs.n), Number(dispatches.n), Number(events.n)];
+    };
+    const before = await outside();
+    const run = await startRun(setId, {});
+    expect((await finished(run.id)).status).toBe("completed");
+    const [r] = await results(run.id);
+    expect(r?.status, JSON.stringify(r?.error)).toBe("done");
+    const cand = (r as EvalResultView).candidate as RunReplayResult;
+    expect(cand.unmatched).toBe(0);
+    expect(cand.toolCalls.map((c) => c.name)).toEqual(["Agent", "SendMessage", "SubagentHandback"]);
+    const evs = await evalEvents(r as EvalResultView);
+    // the recorded results came back; no child, no dispatch, no delivery, no event elsewhere
+    expect(
+      evs.flatMap((e) =>
+        e.type === "tool_result" ? [(e.payload as { content: string }).content] : [],
+      ),
+    ).toEqual(recorded.map((x) => x.content));
+    expect(evs.filter((e) => e.type.startsWith("subagent_"))).toEqual([]);
+    expect(await outside()).toEqual(before);
   });
 
   it("达到 token 上限：loop 在下一次请求前停下，结果 skipped，运行 capped", async () => {

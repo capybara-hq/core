@@ -1,6 +1,7 @@
 # Background sub-agents, `SendMessage` and the agent map
 
-Status: design, 2026-11-06. Amends the sub-agents spec (`2026-10-26-subagents-design.md`, "phase C")
+Status: kernel built (2026-11-07; see "Decisions made during implementation" at the end), the web
+agent map in progress; was: design, 2026-11-06. Amends the sub-agents spec (`2026-10-26-subagents-design.md`, "phase C")
 and reuses the wake rules of the background Bash spec (`2026-11-05-background-bash-design.md` §3).
 Decisions taken with the user in the brainstorm of 2026-11-06 are marked **(decided)**; calls made by
 the designer are marked **(designer's call)**; everything else is left to the builder (§11).
@@ -61,10 +62,9 @@ or a stop button. This spec brings that to Capybara.
 - N3. Session tools for the model (search conversations, rename, post to another conversation by
   id). The user asked about them in the same session; they are a separate project that can reuse the
   delivery path built here.
-- N4. The conversation timeline restyle. The user liked the transcript mockup's look (tool blocks
-  shown open with IN / OUT, its spacing, type and colour) and wants the conversation page to move
-  that way. That is a separate project; this one renders transcripts with today's timeline component
-  (§9.4).
+- N4. ~~The conversation timeline restyle.~~ **Withdrawn (decided by the user during the build).** The IN / OUT look
+  meant the open-transcript mockup only; there is no restyle project. Transcripts render with
+  today's timeline component and its collapsed Thread (§9.4).
 - N5. Sandbox isolation per sub-agent (phase C N5 stands).
 
 **Anti-goals**
@@ -284,8 +284,8 @@ The **same timeline component** as the conversation page, inside the dialog, wit
 **(decided)**: the task as the first bubble, messages from the parent as bubbles labelled with their
 sender, `SubagentHandback` and other tools as ordinary tool blocks, live. The footer is a read-only
 status line ("子智能体只读 · 不能和它对话，请让 <parent> 转达"), context use and Stop while running.
-Built from `apps/web/src/lib/timeline.ts` like every timeline. When the timeline restyle (N4) lands,
-transcripts change with it.
+Built from `apps/web/src/lib/timeline.ts` like every timeline, with the conversation page's
+collapsed Thread for tool calls, not IN / OUT blocks shown open (N4 is withdrawn).
 
 ### 9.5 In the conversation stream **(decided, 2026-11-06: as Claude Code)**
 
@@ -323,3 +323,40 @@ Event and field names; the delivery event's rendering text; whether `context: fo
 (§5.4); the budget window of §6; whether children wake on their own background tasks and under which
 config key (§5.3); the map's entry points and whether level 2 supersedes the right panel (§9.2, §9.5);
 the plan's phases (kernel first, then design components, then web).
+
+## Decisions made during implementation
+
+The builder's choices for §11 and the rulings of the build that change behaviour, one line each.
+
+- Events: `subagent_delivery` (`report` / `note` / `finished`, model-visible, absorbable),
+  `run_started.trigger: "subagent"` with `triggerSeq` at the delivery, `user_message.dispatch.kind`
+  `"task"` / `"message"` (absent = `"task"`).
+- Fork skills keep the foreground `subagents` wait (§5.4): only `for_skill` dispatches count for
+  `timed_out`, `Waits.expire` and the overdue sweep; a fork invocation's child gets no message tools
+  and does not deliver.
+- Budget window (§6): a person-triggered root run opens it; every other run of the tree carries
+  `runs.budget_run_id` = that run, where tokens and dispatches are counted.
+- Wakes (§5.3): children wake on their parent's messages and on their own background Bash finishes,
+  under the one switch `runtime.wakeOnBackgroundTask`, with the queue and access checks on the root.
+- Every terminal run of a child (dispatched, restarted by `SendMessage`, or a wake run) delivers a
+  `finished` delivery with that run's final reply, keyed on the child run.
+- A tree stop never wakes the stopped ancestors: the `aborted` delivery is still written (marked)
+  and absorbed at that conversation's next run.
+- Stopping a child conversation stops all its active background tasks, not only the stopped run's.
+- Background-task listing and stop cover the whole tree (grandchildren's tasks run in the root's
+  sandbox).
+- Unpausing the root's queue re-evaluates pending wakes of the whole tree.
+- Conversation access for a sub-agent conversation is "the root is the viewer's chat" (same org,
+  owner, not deleted, agent visible), so the map reaches every depth.
+- A run restarted by `SendMessage` acts for the sender's trigger account (§7), and holds a
+  concurrency slot like a dispatched one.
+- The agent tree API carries no per-node latest text; level 2 reads it from the child's own events.
+- Map entry points: an "智能体图 / Agent map" action in the `SubagentGroup` header and a title-bar
+  icon while the conversation has sub-agents; the state lives in the URL hash (`#agents`,
+  `#agents=<id>`, `#agents=<id>/transcript`); the sub-agent right panel stays for now.
+- The map's tree scrolls horizontally inside the 1100 px dialog at four columns (depth 3), keeping
+  the node width.
+- The admin sub-agent limits dialog gains a `maxDepth` field, and its "per run" labels are corrected.
+- The design `UserBubble` takes an optional sender label (a parent's message in a transcript), and
+  the sub-agent row's "后台" label is omitted for a fork invocation's (foreground) child.
+- N4 is withdrawn (see §2): level 3 uses the collapsed Thread.

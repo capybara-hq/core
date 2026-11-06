@@ -28,6 +28,7 @@ import type { ToolStepContext } from "../../src/tools/pipeline.js";
 import type { ScriptRule } from "../fixtures/plugins/model-script/index.js";
 import { legacyDbFor } from "../helpers/conversations.js";
 import { accountsFor } from "../helpers/identity.js";
+import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { captureProviderRequests } from "../helpers/provider-capture.js";
 import {
@@ -430,6 +431,46 @@ describe("SendMessage to a sub-agent", { timeout: 90_000 }, () => {
     expect(JSON.stringify(followUp?.messages)).toContain("quick-task: go");
     expect(JSON.stringify(followUp?.system)).not.toContain("edited");
     expect(childRunId).not.toBe(rows[1]?.id);
+  });
+
+  it("a child run a message starts acts for the sender's account, not the dispatcher's (spec §7)", async () => {
+    const { conv, ctx } = await parentRun();
+    const { childId } = await dispatch(ctx, "ta1", "quick-task: speaker", "Speaker");
+    await settled(childId, 1);
+    // another speaker's later run of the same conversation (an IM group) messages the child
+    const speakerId = (
+      await accountsFor(db).createLocal({ login: "speaker", password: PW, displayName: "S" })
+    ).id;
+    await testMembers(db).add(orgId, speakerId, "member", ownerId);
+    await db
+      .updateTable("runs")
+      .set({ status: "completed", finished_at: new Date() })
+      .where("id", "=", ctx.runId)
+      .execute();
+    const laterRunId = randomUUID();
+    await db
+      .insertInto("runs")
+      .values({
+        id: laterRunId,
+        conversation_id: conv,
+        status: "running",
+        agent_version: ctx.agentVersion,
+        trigger_account_id: speakerId,
+        trigger_seq: 0,
+      })
+      .execute();
+    const later: ToolStepContext = { ...ctx, runId: laterRunId, accountId: speakerId };
+    const out = await send(later, "ts1", childId, "FOLLOW-UP: from the speaker");
+    expect(out.isError, out.content).toBe(false);
+    await settled(childId, 2);
+    const runs = await db
+      .selectFrom("runs")
+      .select("trigger_account_id")
+      .where("conversation_id", "=", childId)
+      .orderBy("created_at")
+      .execute();
+    // the approver of the restarted run follows the account it acts for
+    expect(runs.map((r) => r.trigger_account_id)).toEqual([ownerId, speakerId]);
   });
 
   it("to an idle child at the concurrency cap is refused, nothing written", async () => {

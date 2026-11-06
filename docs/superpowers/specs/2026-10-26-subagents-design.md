@@ -2,6 +2,12 @@
 
 - Date: 2026-10-26, written against `main` at `77de4ba` (phase B merged; UI refresh B not built).
 - Status: built (see "Phase C as built" at the end); was: draft for maintainer review.
+  **Amended by `2026-11-06-agent-map-design.md`** (background sub-agents): `Agent` dispatches in the
+  background and `resume` is replaced by `SendMessage`; children hand back with `SubagentHandback`
+  and their reports and finishes reach the parent as `subagent_delivery` events that wake it; nesting
+  goes to `subagents.maxDepth` (default 3); concurrency is per conversation and the dispatch and token
+  caps count per tree; the `subagents` wait remains only for `context: fork` skills. Where the two
+  disagree, the newer spec wins.
   Parent spec: `2026-10-22-package-ecosystem-design.md` §11
   (direction and constraints), §12 (phase C acceptance), "Phase B as built" (pinned skills, the
   tool-name map, the translation report). Display side: `2026-10-22-ui-refresh-design.md` §5.6 and

@@ -1187,7 +1187,7 @@ export const KernelConfigSchema = z.object({
           meta({
             hot: true,
             description:
-              "Sub-agents the whole tree under a person's message may dispatch in total, nested ones and follow-ups included; later agent calls are refused. Organizations can be given their own value in subagentLimitOverrides",
+              "Sub-agents the whole tree under a person's message may dispatch in total, counted across every level (nested dispatches and SendMessage messages that restart an idle sub-agent included); later agent calls and such messages are refused. Organizations can be given their own value in subagentLimitOverrides",
           }),
         ),
       maxTokensPerRun: z

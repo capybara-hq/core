@@ -418,7 +418,12 @@ const parentSide = (d: AgentDefinition, started: SubagentStarted): string =>
  *   parent version (its own version is {@link ReconstructOptions.subagentTemplate}). Template
  *   narrowing that needs the database (inline and plugin tool allowlists, skill names) is not
  *   recomputed: those compare instructions only.
- * Models and params are not part of it: they are candidate axes of their own.
+ * Models and params are not part of it: they are candidate axes of their own. Neither is the
+ * candidate's `subagents` block as the child's own roster (allowlist, templates, limits; only a
+ * template child's entry in its parent's roster counts, `parentSide`) nor whether it offers `Agent`:
+ * whether a child has `Agent` follows its depth (`keepAgent` comes only from the logged child), and
+ * what a nesting child dispatches is recorded as its `Agent` results, which replay reuses (agent
+ * map spec §4.1, §8). A roster-only candidate therefore reports no `subagent_changed`.
  */
 export function subagentChanged(
   started: SubagentStarted,

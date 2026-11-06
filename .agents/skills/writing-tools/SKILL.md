@@ -1,11 +1,11 @@
 ---
 name: writing-tools
-description: 'Use when changing the kernel tool pipeline or builtin tools (packages/kernel/src/tools), or the tool contract extensions and connectors implement: ctx.tools.register as the kernel hosts it, tool naming and keys, English descriptions and actionable error text (the tool design check), annotations, defaultPolicy and policy_source, ToolError and kind (circuit breaker), timeouts and abort, output archiving (ReadToolOutput, {"$output": id}), InputRequired and resume, ToolSearch, drift review; the builtin sandbox tools Bash / Read / Write / Edit / Glob / Grep / Deliver (sandboxToolPolicy) and skill tools Skill (also <plugin>:<name>) / SkillWrite (writePolicy, change approval), pinned skills (skills.pinned); the builtin agent tool (sub-agents); the builtin web tools WebSearch / WebFetch; PLUGIN_UNLOADED_TOOL_ERROR; tool hooks; tests with fake-tools-ui and model-fake. For connectors see writing-connectors; to write a plugin''s tools (todo) see writing-tools in capybara-hq/plugins.'
+description: 'Use when changing the kernel tool pipeline or builtin tools (packages/kernel/src/tools), or the tool contract extensions and connectors implement: ctx.tools.register as the kernel hosts it, tool naming and keys, English descriptions and actionable error text (the tool design check), annotations, defaultPolicy and policy_source, ToolError and kind (circuit breaker), timeouts and abort, output archiving (ReadToolOutput, {"$output": id}), InputRequired and resume, ToolSearch, drift review; the builtin sandbox tools Bash / Read / Write / Edit / Glob / Grep / Deliver (sandboxToolPolicy) and skill tools Skill (also <plugin>:<name>) / SkillWrite (writePolicy, change approval), pinned skills (skills.pinned); sub-agent tools Agent / SendMessage / SubagentHandback; web tools WebSearch / WebFetch; PLUGIN_UNLOADED_TOOL_ERROR; tool hooks; tests with fake-tools-ui and model-fake. For connectors see writing-connectors; to write a plugin''s tools (todo) see writing-tools in capybara-hq/plugins.'
 ---
 
 # Writing tools
 
-This skill covers what core owns: the tool pipeline, policy and approval, archiving, `ToolSearch`, drift review and resume, the kernel builtin tools (`AskUserQuestion`, `ReadToolOutput`, `ToolSearch`, `Bash` / `Read` / `Write` / `Edit` / `Glob` / `Grep` / `Deliver`, `Skill` / `SkillWrite`, `Agent`, `WebSearch` / `WebFetch`), hooks around a tool call, and the tool contract as extensions and connectors implement it; tested on the `fake-tools-ui` and `fake-connector` extensions of `@capybara-hq/testing` with model-fake. The description and error rules below apply to builtin tools too (the tool design check of `pnpm check` covers `packages/kernel/src/tools/builtins` and the fake extensions). **Writing a plugin's own tools** is in [writing-tools in capybara-hq/plugins](https://github.com/capybara-hq/plugins/tree/main/.agents/skills/writing-tools), where `capybara-plugin check` runs the same tool design check.
+This skill covers what core owns: the tool pipeline, policy and approval, archiving, `ToolSearch`, drift review and resume, the kernel builtin tools (`AskUserQuestion`, `ReadToolOutput`, `ToolSearch`, `Bash` / `Read` / `Write` / `Edit` / `Glob` / `Grep` / `Deliver`, `Skill` / `SkillWrite`, `Agent` / `SendMessage` / `SubagentHandback`, `WebSearch` / `WebFetch`), hooks around a tool call, and the tool contract as extensions and connectors implement it; tested on the `fake-tools-ui` and `fake-connector` extensions of `@capybara-hq/testing` with model-fake. The description and error rules below apply to builtin tools too (the tool design check of `pnpm check` covers `packages/kernel/src/tools/builtins` and the fake extensions). **Writing a plugin's own tools** is in [writing-tools in capybara-hq/plugins](https://github.com/capybara-hq/plugins/tree/main/.agents/skills/writing-tools), where `capybara-plugin check` runs the same tool design check.
 
 For the extension host (manifest, config, ctx, the multi-replica prohibitions, dual-replica tests) see `.agents/skills/writing-extensions`. Implementations:
 
@@ -264,34 +264,58 @@ Spec `docs/superpowers/specs/2026-11-04-web-tools-design.md`; code `tools/builti
 - **Replay.** The recorded `tool_result` is the whole truth: replays never call a provider or the extraction model (see replay-evals).
 - Tests: `packages/kernel/test/tools/web-*.test.ts` with the `fake-web` / `fake-web-2` fixtures of `@capybara-hq/testing`.
 
-## The `Agent` builtin tool (sub-agents, phase C)
+## The `Agent` builtin tool (sub-agents) and the message tools
 
-Spec `docs/superpowers/specs/2026-10-26-subagents-design.md` §4–§9; code `tools/builtins/agent.ts`, `runtime/subagents/*`.
+Specs `docs/superpowers/specs/2026-10-26-subagents-design.md` §4–§9 (phase C) and
+`docs/superpowers/specs/2026-11-06-agent-map-design.md` (background sub-agents, `SendMessage`, `SubagentHandback`, nesting); code
+`tools/builtins/agent.ts`, `send-message.ts`, `handback.ts`, `runtime/subagents/*`.
 
-- **Shape**: depth 1 (a child never dispatches). Children run in read-only child conversations with their definition frozen in
-  `subagent_started`. Per-run limits are `subagents.*` with org overrides `subagentLimitOverrides`; the children's tokens count
-  against the parent run. A sub-agent's approval shows in the root conversation as `subagent_waiting` (agent map spec §7). Org agents are dispatchable only behind the
-  allowlist, `dispatchable` and visibility gates, checked at every dispatch and follow-up. Stopping a parent stops its children.
-- **No in-process waiting**: the parent suspends with a `subagents` wait (PG), children run on the queue `cap-kernel-subagent-runs`,
-  and the last child to finish resumes the parent through `Waits.resume`. The wait sweep repairs lost enqueues, orphaned children,
-  children of finished parents and overdue waits (`runs.wait_expires_at`).
-
-- **Inputs** exactly `description` (1–80), `prompt`, `subagent_type` (default `general-purpose`), `model` (`inherit` / `fast` /
-  `standard` / `capable`: tiers mapped to the purposes `subagent_*`, never a vendor model id; an unmapped tier runs on the parent's
-  model, `tierFallback: true`) and `resume` (an `agentId`; not combined with `subagent_type` or `model`). `defaultPolicy: "allow"`,
-  always loaded under `ToolSearch`, never offered to a child, and not offered at all when the agent's roster is empty.
-- **Description varies with config**: it lists the roster (owner and plugin text made inert: `<` / `>` shown as `‹` / `›`) and the
+- **Shape**: `Agent` dispatches in the **background**: its result is immediate (the agentId plus "the result arrives as a
+  notification"), and the parent keeps working or ends its turn. Children run in read-only child conversations with their definition
+  frozen in `subagent_started` (with a `subagents` block: an org agent child uses its own roster, a general / inline / plugin child
+  inherits its parent's). Nesting goes down to `subagents.maxDepth` levels below the root (default 3, bound 1–5, 1 = only the root
+  dispatches): `Agent` is offered to an agent whose depth is below it, and refused at the limit for safety. Org agents are dispatchable
+  only behind the allowlist, `dispatchable` and visibility gates, checked at every dispatch and every message that restarts a child, at
+  every level, for the person the dispatching run acts for.
+- **Limits** (`subagents.*`, org overrides `subagentLimitOverrides`): `maxConcurrentPerConversation` counts one parent conversation's
+  children with any active run (a run a message started holds a slot too; a send or dispatch beyond it is refused, never queued);
+  dispatch and token caps count per **tree**, against the budget window that a person-triggered root run opens (`runs.budget_run_id`
+  on every other run of the tree: children, wake runs). Every descendant's tokens count toward the root.
+- **Deliveries**: a child's `SubagentHandback`, its `SendMessage` to `"parent"` and every terminal run of a child (dispatched,
+  restarted by a message, or a wake run) append one model-visible, absorbable `subagent_delivery` (`report` / `note` / `finished` with
+  its status) to the parent's log, rendered like an interjection (`renderSubagentDelivery`); a finish after a handback is a short status
+  line. An active parent run absorbs it at its next model call; an idle parent is woken (`run_started.trigger: "subagent"`, the
+  background Bash wake rules with the queue and the trigger account read on the root). A stopped child's `aborted` finish never wakes.
+  `subagent_finished` stays display-only.
+- **No in-process waiting**: nothing waits for a background child. Children run on the queue `cap-kernel-subagent-runs`; the wait
+  sweep repairs lost enqueues and parked messages. Only a person's `context: fork` skill keeps the foreground `subagents` wait (its
+  dispatch row has `for_skill = true`; `timed_out`, `Waits.expire` and the overdue sweep count only those).
+- **Stops**: the conversation's stop stops only the root's current run (children keep working); stopping a sub-agent stops it and
+  its descendants (and all its background tasks); deleting the root stops the whole tree. A finished parent run with active
+  children is the normal case.
+- **`Agent` inputs** exactly `description` (1–80), `prompt`, `subagent_type` (default `general-purpose`) and `model` (`inherit` /
+  `fast` / `standard` / `capable`: tiers mapped to the purposes `subagent_*`, never a vendor model id; an unmapped tier runs on the
+  parent's model, `tierFallback: true`). There is no `resume`: `SendMessage` replaces it. `defaultPolicy: "allow"`, always loaded under
+  `ToolSearch`, not offered when the agent's roster is empty.
+- **`SendMessage`** `{ to, message }`: `to` is the agentId of one of the caller's own children, or `"parent"` in a child; anything else
+  (a sibling, a grandchild, an unknown id) is refused listing the valid targets. To a running child it appends a `user_message` with
+  `dispatch.kind: "message"`, absorbed at the child's next model call (a message its run never absorbed starts the next run); to an idle
+  child it starts a child run through the dispatch transaction (counted as a dispatch, refused at the limits, gates and roster checked,
+  tools narrowed). The restarted run acts for the **sender's** trigger account. The result says delivered (running, or idle and now
+  resumed), never the reply. `defaultPolicy: "allow"`; offered with `Agent` and to every child except a fork invocation's child.
+- **`SubagentHandback`** `{ message }` (children only, not a fork invocation's child): delivers a report; the child keeps its turn
+  and may hand back several times. Result: "Report delivered to your caller."
+- **Description varies with config**: `Agent` lists the roster (owner and plugin text made inert: `<` / `>` shown as `‹` / `›`) and the
   organization's `subagents.maxConcurrentPerConversation`. So its spec hash changes when the roster or that limit changes: replays read specs
   by hash (no `DriftReason`), drift review covers connector tools only, and a remembered grant on `Agent` (only relevant when an owner
   set it to `ask`) lapses with the hash, as for any spec change.
-- **The pipeline handles it, not `run`**: no `tool_call_started`; after policy, approval and `tool.preExecute` it dispatches a child
-  run and the step suspends with a `subagents` wait; the result (the child's final reply plus the status line `[agentId: … · status ·
-  n tool calls · duration · tokens. …]`, tokens comma-grouped, durations `4s` / `1m 05s` / `1h 02m`) is written when the child ends.
-  Refusals (unknown type, limits, a foreign or running `resume`, org agent gates) are `isError` results that start nothing.
-- **Audit**: every dispatch is `subagent.dispatched`; the result is audited `tool.called` and fires `tool.postExecute` when it is
-  written (also the stop texts of a stopped parent). Its `authorization` is set only when an approval allowed the call: the
-  dispatch-time policy or grant decision is not recorded, and the pipeline does not guess.
-- **Children** never get `Agent`, `AskUserQuestion`, `Deliver` or `SkillWrite`. A child's policy is the parent agent's current version
+- **The pipeline handles them, not `run`**: no `tool_call_started`; after policy, approval and `tool.preExecute` the pipeline dispatches
+  (`SubagentsService`) or sends (`SubagentMessages`), idempotent by the call. Refusals (unknown type, limits, depth, unknown targets,
+  org agent gates) are `isError` results that start nothing.
+- **Audit**: every dispatch (and every restart by a message) is `subagent.dispatched`; the result is audited `tool.called` and fires
+  `tool.postExecute`. Its `authorization` is set only when an approval allowed the call: the dispatch-time policy or grant decision is
+  not recorded, and the pipeline does not guess.
+- **Children** never get `AskUserQuestion`, `Deliver` or `SkillWrite`. A child's policy is the parent agent's current version
   with the frozen template overlay (stricter wins; never looser); an org agent child uses that agent's current version, then the
   parent's policies. "Approve for this conversation" on a sub-agent at any depth is stored on the **root** conversation of its
   tree (agent map spec §7), so it covers every agent of the tree's identical calls, and a session grant on the root also satisfies a
@@ -299,13 +323,15 @@ Spec `docs/superpowers/specs/2026-10-26-subagents-design.md` §4–§9; code `to
   account, inherited down the chain (the person whose message started that branch of work); `subagent_waiting` (with `path`, the
   child ids from the root's child down to the waiting agent) is appended to the root's log under the root run that last dispatched
   that branch (`rootSurfaceOf` in `runtime/subagents/child.ts`), never to the intermediate levels'.
-- **Follow-ups** (`resume`) keep the child's frozen instructions and model, but the type must still be in the dispatching run's roster
-  (else the unknown-type refusal), and the frozen tools and `orgSkills` are intersected with the current version (the parent run's;
+- **Restarts by a message** keep the child's frozen instructions and model, but the type must still be in the sending run's roster
+  (else the unknown-type refusal), and the frozen tools and `orgSkills` are intersected with the current version (the sending run's;
   for an org agent child, that agent's current version), recorded as `user_message.dispatch.narrowed` and used by the child's run.
+- **Agent tree API**: `GET …/conversations/:id/agent-tree` (each node's status, type, model, start / end, tokens, tool calls) feeds the
+  web agent map; a sub-agent conversation is reachable by a viewer whose root conversation it is.
 - **A person's forked skill** (`/name` of a `context: fork` skill) dispatches through the same code but has no `Agent` call: the
   `Agent` tool's policy, approval and `tool.preExecute` do not apply (by design, phase D spec §6.2: the person dispatches); the
   child's own calls are gated as usual. A hook point for person-initiated dispatches comes later.
-- **Sandbox**: children use the parent conversation's sandbox (`BuiltinCallContext.sandboxConversationId`) and may run commands at
+- **Sandbox**: sub-agents at every depth use the root conversation's sandbox (`BuiltinCallContext.sandboxConversationId`) and may run commands at
   the same time; the `Bash` and `Agent` descriptions warn that shell commands writing one file are not serialized (kernel file
   tools are, per path).
 
