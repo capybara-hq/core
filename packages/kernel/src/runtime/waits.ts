@@ -889,6 +889,8 @@ export class Waits implements OnApplicationShutdown {
     let total = 0;
     for (const run of r.rows) {
       try {
+        // already asked to stop (a worker holds it and stops it at its next check): not again
+        if (run.status === "running" && (await this.abort.requested(run.run_id)) !== null) continue;
         await this.stopRun(run.conversation_id, run.run_id, run.status, null);
         total++;
         this.log.warn("wait sweep: stopped a sub-agent run of a deleted conversation's tree", {
@@ -1337,7 +1339,7 @@ export class Waits implements OnApplicationShutdown {
    * the active runs below its conversation as well, so a descendant it dispatched after the tree
    * stop read the tree still stops (dispatch needs its run `running`, so after its terminal commit
    * the set is final). Any other end leaves its children running (agent map spec §5.4). Returns
-   * the number of runs asked to stop.
+   * the number of runs asked to stop. A root conversation's run never stops its children here.
    */
   async stopDescendantsOfStopped(runId: string): Promise<number> {
     const ev = await this.db
@@ -1345,8 +1347,12 @@ export class Waits implements OnApplicationShutdown {
       .innerJoin("conversation_events as e", (j) =>
         j.onRef("e.conversation_id", "=", "r.conversation_id").onRef("e.run_id", "=", "r.id"),
       )
+      .innerJoin("conversations as c", "c.id", "r.conversation_id")
       .select(["r.conversation_id", "e.payload"])
       .where("r.id", "=", runId)
+      // a root's stop leaves its children running (agent map spec §6): a person-stopped root run
+      // reaching here (a redelivered job, the failure path) stops nothing
+      .where("c.kind", "=", "subagent")
       .where("r.status", "=", "aborted")
       .where("e.type", "=", "run_aborted")
       .executeTakeFirst();

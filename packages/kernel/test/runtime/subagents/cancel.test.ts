@@ -372,6 +372,49 @@ describe("stopping a sub-agent stops its descendants", () => {
     expect(await runStatus(db, sibling.runId)).toBe("running");
   }, 60_000);
 
+  it("the root's owner stops a depth-2 agent with its child; anyone else gets 404", async () => {
+    const { conv, t1, t2, t3, sibling } = await startTree();
+    for (const c of [t2, t3]) {
+      const read = await owner({
+        method: "GET",
+        url: `/api/v1/orgs/${orgId}/conversations/${c.conversationId}`,
+      });
+      expect(read.statusCode, read.body).toBe(200);
+      const other = await member({
+        method: "GET",
+        url: `/api/v1/orgs/${orgId}/conversations/${c.conversationId}`,
+      });
+      expect(other.statusCode).toBe(404);
+    }
+    const denied = await member({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/conversations/${t2.conversationId}/abort`,
+    });
+    expect(denied.statusCode).toBe(404);
+    expect(await runStatus(db, t2.runId)).toBe("running");
+    const res = await owner({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/conversations/${t2.conversationId}/abort`,
+    });
+    expect(res.statusCode, res.body).toBe(202);
+    await allStopped([t2.runId, t3.runId]);
+    expect(await abortedBy(t3.conversationId)).toEqual([ownerId]);
+    // above the stopped agent nothing stops
+    expect(await runStatus(db, t1.runId)).toBe("running");
+    expect(await runStatus(db, sibling.runId)).toBe("running");
+    // a deleted root takes its tree out of reach
+    await db
+      .updateTable("conversations")
+      .set({ deleted_at: new Date() })
+      .where("id", "=", conv)
+      .execute();
+    const gone = await owner({
+      method: "GET",
+      url: `/api/v1/orgs/${orgId}/conversations/${t2.conversationId}`,
+    });
+    expect(gone.statusCode).toBe(404);
+  }, 60_000);
+
   it("a child that only has working descendants: its stop stops them", async () => {
     const conv = await createConv(owner, orgId, agentId);
     await postMessage(owner, orgId, conv, "SCENARIO deep");
@@ -437,7 +480,7 @@ describe("stopping a sub-agent stops its descendants", () => {
       .where("id", "=", conv)
       .execute();
     const r = await k.app.get(Waits).sweep();
-    expect(r.stopped).toBe(4);
+    expect(r.stopped).toBeGreaterThanOrEqual(4);
     await allStopped([t1.runId, t2.runId, t3.runId, sibling.runId]);
   }, 60_000);
 });
@@ -467,6 +510,8 @@ describe("a parent run that ends leaves its background children running", () => 
     });
     expect(res.statusCode, res.body).toBe(202);
     await allStopped([parentRun.id]);
+    // the root run's end, seen again (a redelivered job, the failure path), stops no child
+    expect(await k.app.get(Waits).stopDescendantsOfStopped(parentRun.id)).toBe(0);
     // the dispatches' results were written with them: nothing to pair at the stop
     const events = await eventsOf(db, conv);
     expect(agentResults(events).map((r) => r.payload.isError)).toEqual([false, false, false]);

@@ -273,6 +273,9 @@ describe("background task routes", { timeout: 90_000 }, () => {
     expect(fromRoot.map((t) => [t.id, t.subagentId])).toEqual([[deep.id, grandkid]]);
     const fromKid = await listOf(kid);
     expect(fromKid.map((t) => [t.id, t.subagentId])).toEqual([[deep.id, grandkid]]);
+    // the grandchild's own page (depth 2) is reachable for the root's owner
+    expect((await listOf(grandkid)).map((t) => [t.id, t.subagentId])).toEqual([[deep.id, null]]);
+    expect((await other({ method: "GET", url: base(grandkid) })).statusCode).toBe(404);
     const r = await owner({ method: "POST", url: `${base(c.conversationId)}/${deep.id}/stop` });
     expect(r.statusCode, r.body).toBe(200);
     expect((r.json() as { task: View }).task).toMatchObject({ id: deep.id, status: "stopped" });

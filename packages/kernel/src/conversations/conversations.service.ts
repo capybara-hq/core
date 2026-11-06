@@ -479,9 +479,9 @@ export class ConversationsService {
   /**
    * Soft-deletes a conversation (owner only; a sub-agent's conversation is `conversation.read_only`):
    * stops an active run, hides the conversation everywhere for its owner and drops its channel
-   * bindings, stops every active run of its sub-agent tree (agent map spec §10), then stops every running background task in its sandbox (its sub-agents' too;
-   * outside the delete's transaction, a task whose sandbox cannot be reached ends `lost` with
-   * `kill_pending`). The tasks are stopped after the conversation is marked deleted, so no finish
+   * bindings, stops every active run of its sub-agent tree (agent map spec §10), then stops every
+   * running background task in its sandbox (its sub-agents' too; outside the delete's
+   * transaction, a task whose sandbox cannot be reached ends `lost` with `kill_pending`). The tasks are stopped after the conversation is marked deleted, so no finish
    * (the stops' own, or one the poller writes meanwhile) can wake a run on it: `ensureRun` refuses a
    * deleted conversation (the stops' finishes carry `stoppedBy: "deletion"` as well). The event
    * log, runs and trajectory stay (enterprise admins still see them).

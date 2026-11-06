@@ -726,7 +726,13 @@ export class ConversationsController {
     return { event: await this.queue.sendNow(org.orgId, id, p.account.id, itemId) };
   }
 
-  /** 中止当前运行（会话所有者）：202 `{ runId }`；没有活跃运行 → 409 `run.not_active`。 */
+  /**
+   * Stops the current run (the conversation's owner): 202 `{ runId }`; nothing active → 409
+   * `run.not_active`. On a root conversation `runId` is the stopped run, and its background
+   * sub-agents keep working. On a sub-agent's conversation (the root's owner, at any depth) the
+   * sub-agent stops with every sub-agent below it, and `runId` is the sub-agent's latest run,
+   * which may already be finished when only its descendants were working (agent map spec §6).
+   */
   @Post(":id/abort")
   @HttpCode(202)
   @OrgAction("agents.use")
