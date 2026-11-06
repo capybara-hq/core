@@ -1,4 +1,4 @@
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import * as React from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -216,6 +216,36 @@ describe("Tabs: no focus ring after a pointer (issue Y)", () => {
     const after = screen.getByRole("button", { name: "after" });
     act(() => after.focus());
     expect(document.activeElement).toBe(after);
+    expect(b.getAttribute("data-pointer-focus")).toBeNull();
+  });
+  it("a modifier key alone keeps the mark (the browser does not count it as keyboard use)", async () => {
+    wrap(<Stateful />);
+    const b = screen.getByRole("tab", { name: "B" });
+    await userEvent.click(b);
+    await userEvent.keyboard("{Meta}{Shift}");
+    expect(b.getAttribute("data-pointer-focus")).toBe("true");
+    await userEvent.keyboard("{Enter}");
+    expect(b.getAttribute("data-pointer-focus")).toBeNull();
+  });
+  it("a pointer press that gives no focus (WebKit, Firefox on macOS) leaves no mark for a later focus", async () => {
+    wrap(<Stateful />);
+    const b = screen.getByRole("tab", { name: "B" });
+    // pointerdown and pointerup without the button taking focus, as a click there does
+    fireEvent.pointerDown(b);
+    fireEvent.pointerUp(b);
+    expect(b.getAttribute("data-pointer-focus")).toBeNull();
+    await act(() => new Promise((r) => setTimeout(r, 0)));
+    // later, keyboard focus arrives (Tab): the ring must show, so no mark
+    act(() => b.focus());
+    expect(document.activeElement).toBe(b);
+    expect(b.getAttribute("data-pointer-focus")).toBeNull();
+  });
+  it("a pointer press that is never released gives no mark to a focus on the next tick", async () => {
+    wrap(<Stateful />);
+    const b = screen.getByRole("tab", { name: "B" });
+    fireEvent.pointerDown(b);
+    await act(() => new Promise((r) => setTimeout(r, 0)));
+    act(() => b.focus());
     expect(b.getAttribute("data-pointer-focus")).toBeNull();
   });
 });

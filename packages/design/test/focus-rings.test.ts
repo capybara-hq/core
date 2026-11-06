@@ -23,12 +23,46 @@ function rules(): Rule[] {
   return out;
 }
 
-/** A declaration that draws a ring: an outline that is not removed, a box-shadow, a border colour. */
+/**
+ * A declaration that draws a ring: a box-shadow, an outline (shorthand or `outline-color` /
+ * `-width` / `-style`) that is not removed, or a border (shorthand, a side, its colour or width)
+ * that is not removed.
+ */
 function drawsRing(body: string): boolean {
-  if (/(^|;)\s*(box-shadow|border-color)\s*:/.test(body)) return true;
-  const outline = body.match(/(?:^|;)\s*outline\s*:\s*([^;]*)/)?.[1]?.trim();
-  return outline !== undefined && outline !== "none" && outline !== "0";
+  for (const decl of body.split(";")) {
+    const i = decl.indexOf(":");
+    if (i < 0) continue;
+    const prop = decl.slice(0, i).trim();
+    const value = decl.slice(i + 1).trim();
+    const removed = value === "none" || value === "0" || value === "0px";
+    if (prop === "box-shadow" && !removed) return true;
+    if (/^outline(-(color|width|style))?$/.test(prop) && !removed) return true;
+    if (
+      /^border(-(top|right|bottom|left|block|inline)(-(start|end))?)?(-(color|width))?$/.test(
+        prop,
+      ) &&
+      !removed
+    )
+      return true;
+  }
+  return false;
 }
+
+describe("drawsRing", () => {
+  it("catches outline longhands and the border shorthand, not their removal", () => {
+    expect(drawsRing("outline-color: var(--cb-accent)")).toBe(true);
+    expect(drawsRing("outline-width: 2px")).toBe(true);
+    expect(drawsRing("outline-style: solid")).toBe(true);
+    expect(drawsRing("border: 1px solid var(--cb-accent)")).toBe(true);
+    expect(drawsRing("border-bottom-color: red")).toBe(true);
+    expect(drawsRing("border-color: red")).toBe(true);
+    expect(drawsRing("box-shadow: 0 0 0 3px red")).toBe(true);
+    expect(drawsRing("outline: none")).toBe(false);
+    expect(drawsRing("outline: 0")).toBe(false);
+    expect(drawsRing("border: none")).toBe(false);
+    expect(drawsRing("color: red; opacity: 1")).toBe(false);
+  });
+});
 
 /**
  * Focus a click also gives: `:focus` / `:focus-within` outside a `:not(...)`, unless the selector
