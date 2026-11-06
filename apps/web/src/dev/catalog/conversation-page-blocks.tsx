@@ -1,10 +1,13 @@
 "use client";
 
 import {
+  AgentDetail,
   type AgentMapBackground,
   AgentMapDialog,
+  type AgentMapNode,
   AgentMapTree,
   AgentRow,
+  type AgentToolCallRow,
   AppShell,
   AttachmentStrip,
   type BackgroundItem,
@@ -45,6 +48,7 @@ import {
   type TitleBarPanel,
   type TitleBarProps,
   ToolGroup,
+  TranscriptFrame,
   UserBubble,
   untitledLabel,
   useDesignLocale,
@@ -176,6 +180,87 @@ const agentMapBackground: AgentMapBackground[] = AM.background.map((b) => ({
   ...(b.status === "running" ? {} : { finishedAt: NOW }),
 }));
 
+const AD = AM.detail;
+const agentMapSelected = AM.root.children.find((c) => c.id === AM.selected) as AgentMapNode;
+const agentMapCalls: AgentToolCallRow[] = AD.toolCalls.map((c) => ({
+  id: c.id,
+  tool: c.tool,
+  summary: c.summary,
+  running: c.running,
+  ...(c.durationMs !== undefined ? { startedAt: NOW - c.durationMs } : {}),
+  ...(c.range !== undefined ? { range: c.range } : {}),
+}));
+const agentMapDetailBackground: AgentMapBackground[] = AD.background.map((b) => ({
+  kind: "task",
+  id: b.id,
+  description: b.description,
+  status: b.status,
+  startedAt: NOW - b.durationMs,
+}));
+
+function AgentMapDetailBlock({ finished }: { finished?: boolean }) {
+  const node: AgentMapNode = finished
+    ? { ...agentMapSelected, status: "completed" }
+    : agentMapSelected;
+  const calls = finished ? agentMapCalls.map((c) => ({ ...c, running: false })) : agentMapCalls;
+  return (
+    <AgentMapDialog open inline onOpenChange={noop} level="detail">
+      <AgentDetail
+        node={node}
+        agentType={AD.agentType}
+        spawnedBy={AD.spawnedBy}
+        latestText={AD.latestText}
+        task={AD.task}
+        background={agentMapDetailBackground}
+        toolCalls={calls}
+        onBack={noop}
+        onClose={noop}
+        onOpenParent={noop}
+        onOpenTranscript={noop}
+        {...(finished ? {} : { onStop: noop })}
+        now={NOW}
+      />
+    </AgentMapDialog>
+  );
+}
+
+/** Level 3's thread: the conversation's own components, as the transcript builds them. */
+function agentMapThread(): ReactNode {
+  return (
+    <>
+      <UserBubble text={AD.task} />
+      <Prose markdown="先读一季度的说明文件和发票目录。" />
+      <ToolGroup
+        rows={[
+          { id: "tx1", kind: "read", name: "Read", keyArg: "finance/q1/README.md", status: "done" },
+          {
+            id: "tx2",
+            kind: "command",
+            name: "Bash",
+            description: "列出一季度发票文件",
+            status: "done",
+          },
+        ]}
+      />
+      <UserBubble text="先核对三月份，一二月的已经由财务确认过。" />
+      <Prose markdown="收到，只核对三月份的付款流水。" />
+      <ToolGroup
+        rows={[
+          {
+            id: "tx3",
+            kind: "command",
+            name: "Bash",
+            description: "运行核对脚本",
+            status: "running",
+            startedAt: NOW - 12_000,
+          },
+        ]}
+        now={NOW}
+      />
+    </>
+  );
+}
+
 function agentMapBlocks(): ReactNode {
   return (
     <>
@@ -193,6 +278,27 @@ function agentMapBlocks(): ReactNode {
       <RefBlock id="agent-map-deep" width={1132} height={320} pad>
         <AgentMapDialog open inline onOpenChange={noop} level="tree">
           <AgentMapTree root={AM.deep} background={[]} onOpen={noop} now={NOW} />
+        </AgentMapDialog>
+      </RefBlock>
+      <RefBlock id="agent-map-detail" width={792} height={632} pad>
+        <AgentMapDetailBlock />
+      </RefBlock>
+      <RefBlock id="agent-map-finished" width={792} height={632} pad>
+        <AgentMapDetailBlock finished />
+      </RefBlock>
+      <RefBlock id="agent-map-transcript" width={1092} height={672} pad>
+        <AgentMapDialog open inline onOpenChange={noop} level="transcript">
+          <TranscriptFrame
+            node={agentMapSelected}
+            agentType={AD.agentType}
+            spawnedBy={AD.spawnedBy}
+            contextPercent={AD.contextPercent}
+            onBack={noop}
+            onClose={noop}
+            onStop={noop}
+          >
+            {agentMapThread()}
+          </TranscriptFrame>
         </AgentMapDialog>
       </RefBlock>
     </>

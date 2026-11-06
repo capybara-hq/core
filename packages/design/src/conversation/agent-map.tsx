@@ -1,6 +1,6 @@
 import * as RD from "@radix-ui/react-dialog";
-import { type JSX, type ReactNode, useId } from "react";
-import { IconButton } from "../controls/button";
+import { createContext, type JSX, type ReactNode, useContext, useId, useState } from "react";
+import { Button, IconButton } from "../controls/button";
 import type { Locale } from "../i18n";
 import { messages } from "../i18n";
 import { Icon } from "../icons/icon";
@@ -12,7 +12,8 @@ import { fillCopy } from "./tool-copy";
 
 // The agent map (spec §6.16.28, agent map spec §9): a dialog over the conversation page whose
 // level 1 is the tree of agents, columns by depth with elbow connectors, every node one fixed
-// height, status only as a dot (with a legend), and the root's background tasks under its column.
+// height, status only as a dot (with a legend), and the root's background tasks under its column;
+// level 2 is one agent's summary (AgentDetail), level 3 its transcript (TranscriptFrame).
 
 export type AgentMapStatus = "running" | "waiting" | "completed" | "failed" | "aborted";
 
@@ -79,17 +80,74 @@ function StatusDot({ status }: { status: AgentMapStatus }): JSX.Element {
 export type AgentMapDialogProps = {
   open: boolean;
   onOpenChange(open: boolean): void;
-  /** The level shown: the width follows it (1100 / 760 / 1060). */
+  /**
+   * The level shown: the width follows it (1100 / 760 / 1060). The tree's head (title, close) is
+   * the frame's; levels 2 and 3 draw their own ({@link AgentDetail}, {@link TranscriptFrame}).
+   */
   level: "tree" | "detail" | "transcript";
   /** Drawn in place, without the portal and the scrim (the reference blocks of `/dev/ui`). */
   inline?: boolean;
   children: ReactNode;
 };
 
+/** Inside the portal dialog the head's title is the Radix title (the dialog's name). */
+const RadixFrame = createContext(false);
+
+/**
+ * The head of every level (§6.16.28): an optional back button and status dot, the title and
+ * close, then the meta lines (levels 2 and 3), indented past the back button.
+ */
+function AgentMapHead({
+  title,
+  status,
+  onBack,
+  onClose,
+  meta,
+}: {
+  title: string;
+  status?: AgentMapStatus;
+  onBack?: () => void;
+  onClose(): void;
+  meta?: ReactNode;
+}): JSX.Element {
+  const t = useDesignT();
+  const radix = useContext(RadixFrame);
+  const Title = radix ? RD.Title : "h2";
+  return (
+    <div
+      className="cb-amap-head"
+      data-part="agent-map-head"
+      data-back={onBack ? "true" : undefined}
+    >
+      <div className="cb-amap-head-line">
+        {onBack ? (
+          <IconButton
+            label={t("agentMap.back")}
+            icon={<Icon name="arrow-left" size={14} />}
+            density="dense"
+            onClick={onBack}
+          />
+        ) : null}
+        {status ? <StatusDot status={status} /> : null}
+        <Title className="cb-amap-title" data-part="agent-map-title">
+          {title}
+        </Title>
+        <IconButton
+          label={t("overlay.close")}
+          icon={<Icon name="x" size={14} />}
+          density="dense"
+          onClick={onClose}
+        />
+      </div>
+      {meta}
+    </div>
+  );
+}
+
 /**
  * The agent map's dialog frame (§6.16.28): the ordinary dialog ground, border, radius and shadow
- * (§6.7) at the level's width, a head with the title and close, and the level's content. Esc
- * closes; focus is trapped and returned.
+ * (§6.7) at the level's width, the tree's head (title, close) at level 1, and the level's content.
+ * Esc closes; focus is trapped and returned.
  */
 export function AgentMapDialog({
   open,
@@ -100,8 +158,13 @@ export function AgentMapDialog({
 }: AgentMapDialogProps): JSX.Element | null {
   const t = useDesignT();
   const focusReturn = useFocusReturn();
-  const close = (
-    <IconButton label={t("overlay.close")} icon={<Icon name="x" size={14} />} density="dense" />
+  const body = (
+    <>
+      {level === "tree" ? (
+        <AgentMapHead title={t("agentMap.title")} onClose={() => onOpenChange(false)} />
+      ) : null}
+      {children}
+    </>
   );
   if (inline) {
     if (!open) return null;
@@ -110,22 +173,12 @@ export function AgentMapDialog({
         className="cb-dialog cb-amap-dialog"
         data-part="agent-map-dialog"
         data-size={LEVEL_SIZE[level]}
+        data-level={level}
         data-inline="true"
         role="dialog"
         aria-label={t("agentMap.title")}
       >
-        <div className="cb-amap-head">
-          <h2 className="cb-amap-title" data-part="agent-map-title">
-            {t("agentMap.title")}
-          </h2>
-          <IconButton
-            label={t("overlay.close")}
-            icon={<Icon name="x" size={14} />}
-            density="dense"
-            onClick={() => onOpenChange(false)}
-          />
-        </div>
-        {children}
+        {body}
       </div>
     );
   }
@@ -137,20 +190,39 @@ export function AgentMapDialog({
           className="cb-dialog cb-amap-dialog"
           data-part="agent-map-dialog"
           data-size={LEVEL_SIZE[level]}
+          data-level={level}
           aria-describedby={undefined}
           onOpenAutoFocus={() => focusReturn.capture()}
           onCloseAutoFocus={focusReturn.restore}
         >
-          <div className="cb-amap-head">
-            <RD.Title className="cb-amap-title" data-part="agent-map-title">
-              {t("agentMap.title")}
-            </RD.Title>
-            <RD.Close asChild>{close}</RD.Close>
-          </div>
-          {children}
+          <RadixFrame.Provider value={true}>{body}</RadixFrame.Provider>
         </RD.Content>
       </RD.Portal>
     </RD.Root>
+  );
+}
+
+/** Background task rows (level 1 under the root column, level 2 in its section). */
+function TaskRows({ tasks, now }: { tasks: AgentMapBackground[]; now: number }): JSX.Element {
+  const locale = useDesignLocale();
+  return (
+    <ul className="cb-amap-background-list">
+      {tasks.map((b) => (
+        <li key={b.id} className="cb-amap-task" data-part="agent-task">
+          <StatusDot status={taskDot(b.status)} />
+          <span className="cb-amap-task-tag" data-part="agent-task-tag">
+            Bash
+          </span>
+          <span className="cb-amap-task-name">{b.description}</span>
+          <span className="cb-amap-task-time" data-part="agent-task-time">
+            {subagentDuration(
+              (b.status === "running" ? now : (b.finishedAt ?? now)) - b.startedAt,
+              locale,
+            )}
+          </span>
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -248,7 +320,14 @@ export function AgentMapTree({
       <p className="cb-amap-count" data-part="agent-map-count">
         {count}
       </p>
-      <div className="cb-amap-canvas" data-part="agent-map" data-columns={depthOf(root)}>
+      <section
+        className="cb-amap-canvas"
+        data-part="agent-map"
+        data-columns={depthOf(root)}
+        aria-label={t("agentMap.canvas")}
+        // biome-ignore lint/a11y/noNoninteractiveTabindex: a scroll region the keyboard must reach
+        tabIndex={0}
+      >
         {branch(root, 0)}
         {background.length > 0 ? (
           <section
@@ -259,26 +338,10 @@ export function AgentMapTree({
             <h3 className="cb-amap-background-head" id={backgroundId}>
               {backgroundLabel}
             </h3>
-            <ul className="cb-amap-background-list">
-              {background.map((b) => (
-                <li key={b.id} className="cb-amap-task" data-part="agent-task">
-                  <StatusDot status={taskDot(b.status)} />
-                  <span className="cb-amap-task-tag" data-part="agent-task-tag">
-                    Bash
-                  </span>
-                  <span className="cb-amap-task-name">{b.description}</span>
-                  <span className="cb-amap-task-time" data-part="agent-task-time">
-                    {subagentDuration(
-                      (b.status === "running" ? clock : (b.finishedAt ?? clock)) - b.startedAt,
-                      locale,
-                    )}
-                  </span>
-                </li>
-              ))}
-            </ul>
+            <TaskRows tasks={background} now={clock} />
           </section>
         ) : null}
-      </div>
+      </section>
       <ul className="cb-amap-legend" data-part="agent-legend" aria-label={t("agentMap.legend")}>
         {STATUSES.map((s) => (
           <li key={s} className="cb-amap-legend-item">
@@ -288,5 +351,317 @@ export function AgentMapTree({
         ))}
       </ul>
     </div>
+  );
+}
+
+// ── Levels 2 and 3 ──────────────────────────────────────────────────────────
+
+/** One tool call of level 2: the tool name and its display summary. */
+export type AgentToolCallRow = {
+  id: string;
+  /** The tool name ("Bash", "Read"). */
+  tool: string;
+  /** The display summary (`Bash` description, `Read` path, …). */
+  summary: string;
+  running: boolean;
+  /** Epoch ms; the running call's clock counts from it. */
+  startedAt?: number;
+  /** A range after the summary ("第 1–180 行"). */
+  range?: string;
+};
+
+type Spawner = { id: string; label: string };
+
+/** A template with one `{parent}` slot, the slot filled with a node. */
+function withParent(template: string, parent: ReactNode): ReactNode {
+  const at = template.indexOf("{parent}");
+  if (at < 0) return template;
+  return (
+    <>
+      {template.slice(0, at)}
+      {parent}
+      {template.slice(at + "{parent}".length)}
+    </>
+  );
+}
+
+/** "运行中 · 财务助手 · opus 5.5 · 后台" and "16分25秒 · 266.5k tokens". */
+function useMeta(node: AgentMapNode, agentType: string): { kind: string; cost: string } {
+  const t = useDesignT();
+  const locale = useDesignLocale();
+  return {
+    kind: [t(`agentMap.status.${node.status}`), agentType, node.model, t("agentMap.inBackground")]
+      .filter((s) => s !== "")
+      .join(" · "),
+    cost: [subagentDuration(node.durationMs, locale), agentMapTokens(node.tokens, locale)].join(
+      " · ",
+    ),
+  };
+}
+
+/** A collapsible section of level 2: chevron, title, count. */
+function DetailSection({
+  title,
+  count,
+  defaultOpen,
+  children,
+}: {
+  title: string;
+  count?: number;
+  defaultOpen: boolean;
+  children: ReactNode;
+}): JSX.Element {
+  const [open, setOpen] = useState(defaultOpen);
+  const id = useId();
+  const name = count === undefined ? title : `${title} ${count}`;
+  return (
+    <div
+      className="cb-amap-section"
+      data-part="agent-section"
+      data-open={open ? "true" : undefined}
+    >
+      <button
+        type="button"
+        className="cb-amap-section-head"
+        data-part="agent-section-head"
+        aria-expanded={open}
+        aria-controls={open ? id : undefined}
+        onClick={() => setOpen((o) => !o)}
+      >
+        <Icon name={open ? "chevron-down" : "chevron-right"} size={12} />
+        <span>{title}</span>
+        {count !== undefined ? <span className="cb-amap-section-count">{count}</span> : null}
+      </button>
+      {open ? (
+        <section id={id} className="cb-amap-section-body" aria-label={name}>
+          {children}
+        </section>
+      ) : null}
+    </div>
+  );
+}
+
+export type AgentDetailProps = {
+  node: AgentMapNode;
+  agentType: string;
+  /** The agent that dispatched this one (a link to its node). */
+  spawnedBy: Spawner;
+  /** The agent's latest text. */
+  latestText: string;
+  /** The dispatch prompt. */
+  task: string;
+  /** The agent's own background tasks. */
+  background: AgentMapBackground[];
+  /** In call order, oldest first: listed newest first. */
+  toolCalls: AgentToolCallRow[];
+  onBack(): void;
+  onClose(): void;
+  onOpenParent(id: string): void;
+  onOpenTranscript(): void;
+  /** Absent: the agent has finished and "Open transcript" fills the footer. */
+  onStop?: () => void;
+  /** The clock for the running call and tasks (default: the time now, ticking while one runs). */
+  now?: number;
+};
+
+/**
+ * Level 2 of the agent map (§6.16.28): one agent's summary, live at the granularity of tool
+ * summaries. The head (back, status, description, close; kind, spawner and cost lines), the
+ * latest text, the collapsible task, background tasks and tool calls (newest first, the running
+ * one with a pulsing dot and a clock), and the footer: "Open transcript" and, while running, Stop.
+ */
+export function AgentDetail({
+  node,
+  agentType,
+  spawnedBy,
+  latestText,
+  task,
+  background,
+  toolCalls,
+  onBack,
+  onClose,
+  onOpenParent,
+  onOpenTranscript,
+  onStop,
+  now,
+}: AgentDetailProps): JSX.Element {
+  const t = useDesignT();
+  const locale = useDesignLocale();
+  const meta = useMeta(node, agentType);
+  const clock = useClock(
+    toolCalls.some((c) => c.running) || background.some((b) => b.status === "running"),
+    now,
+  );
+  const parent = (
+    <button
+      type="button"
+      className="cb-amap-parent"
+      data-part="agent-parent"
+      onClick={() => onOpenParent(spawnedBy.id)}
+    >
+      {spawnedBy.label}
+    </button>
+  );
+  return (
+    <>
+      <AgentMapHead
+        title={node.description}
+        status={node.status}
+        onBack={onBack}
+        onClose={onClose}
+        meta={
+          <>
+            <p className="cb-amap-meta" data-part="agent-meta">
+              {meta.kind}
+            </p>
+            <p className="cb-amap-meta" data-part="agent-spawned-by">
+              {withParent(t("agentMap.spawnedBy"), parent)}
+            </p>
+            <p className="cb-amap-meta" data-part="agent-meta">
+              {meta.cost}
+            </p>
+          </>
+        }
+      />
+      <div className="cb-amap-detail" data-part="agent-detail">
+        {latestText !== "" ? (
+          <p className="cb-amap-latest" data-part="agent-latest">
+            {latestText}
+          </p>
+        ) : null}
+        <DetailSection title={t("agentMap.section.task")} defaultOpen={false}>
+          <p className="cb-amap-prompt" data-part="agent-prompt">
+            {task}
+          </p>
+        </DetailSection>
+        <DetailSection
+          title={t("agentMap.section.background")}
+          count={background.length}
+          defaultOpen={false}
+        >
+          <TaskRows tasks={background} now={clock} />
+        </DetailSection>
+        <DetailSection
+          title={t("agentMap.section.toolCalls")}
+          count={toolCalls.length}
+          defaultOpen={true}
+        >
+          <ul className="cb-amap-calls">
+            {[...toolCalls].reverse().map((c) => (
+              <li
+                key={c.id}
+                className="cb-amap-call"
+                data-part="agent-call"
+                data-running={c.running ? "true" : undefined}
+              >
+                <span className="cb-amap-call-slot">
+                  {c.running ? <StatusDot status="running" /> : null}
+                </span>
+                <span className="cb-amap-call-tool" data-part="agent-call-tool">
+                  {c.tool}
+                </span>
+                <span className="cb-amap-call-summary" data-part="agent-call-summary">
+                  {c.summary}
+                </span>
+                {c.range !== undefined ? (
+                  <span className="cb-amap-call-end" data-part="agent-call-range">
+                    {c.range}
+                  </span>
+                ) : null}
+                {c.running && c.startedAt !== undefined ? (
+                  // a ticking clock: hidden from screen readers so the live list does not chatter
+                  <span
+                    className="cb-amap-call-end"
+                    data-part="agent-call-clock"
+                    aria-hidden="true"
+                  >
+                    {subagentDuration(clock - c.startedAt, locale)}
+                  </span>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        </DetailSection>
+      </div>
+      <div className="cb-amap-foot" data-part="agent-detail-foot">
+        <Button onClick={onOpenTranscript}>{t("agentMap.openTranscript")}</Button>
+        {onStop ? (
+          <Button variant="danger" onClick={onStop}>
+            {t("agentMap.stop")}
+          </Button>
+        ) : null}
+      </div>
+    </>
+  );
+}
+
+export type TranscriptFrameProps = {
+  node: AgentMapNode;
+  agentType: string;
+  spawnedBy: Spawner;
+  /** Context use, 0–100, shown in the status line while known. */
+  contextPercent?: number;
+  onBack(): void;
+  onClose(): void;
+  /** Absent: the agent has finished (no Stop). */
+  onStop?: () => void;
+  /** The thread: the conversation's timeline components, built like every timeline. */
+  children: ReactNode;
+};
+
+/**
+ * Level 3 of the agent map (§6.16.28): the agent's transcript as the conversation page draws its
+ * thread, framed by the head (one meta line) and a read-only status line instead of a composer.
+ */
+export function TranscriptFrame({
+  node,
+  agentType,
+  spawnedBy,
+  contextPercent,
+  onBack,
+  onClose,
+  onStop,
+  children,
+}: TranscriptFrameProps): JSX.Element {
+  const t = useDesignT();
+  const meta = useMeta(node, agentType);
+  return (
+    <>
+      <AgentMapHead
+        title={node.description}
+        status={node.status}
+        onBack={onBack}
+        onClose={onClose}
+        meta={
+          <p className="cb-amap-meta" data-part="agent-meta">
+            {[
+              meta.kind,
+              fillCopy(t("agentMap.spawnedBy"), { parent: spawnedBy.label }),
+              meta.cost,
+            ].join(" · ")}
+          </p>
+        }
+      />
+      <div className="cb-amap-transcript" data-part="agent-transcript">
+        <div className="cb-conv-thread" data-part="thread">
+          {children}
+        </div>
+      </div>
+      <div className="cb-amap-status" data-part="agent-transcript-status">
+        <span className="cb-amap-status-text">
+          {fillCopy(t("agentMap.readOnly"), { parent: spawnedBy.label })}
+        </span>
+        {contextPercent !== undefined ? (
+          <span data-part="agent-context">
+            {fillCopy(t("agentMap.context"), { n: Math.round(contextPercent) })}
+          </span>
+        ) : null}
+        {onStop ? (
+          <Button variant="danger" density="dense" onClick={onStop}>
+            {t("agentMap.stop")}
+          </Button>
+        ) : null}
+      </div>
+    </>
   );
 }

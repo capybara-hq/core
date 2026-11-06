@@ -5,12 +5,15 @@ import { userEvent } from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AGENT_MAP_FIXTURE } from "../src/fixtures/index";
 import {
+  AgentDetail,
   type AgentMapBackground,
   AgentMapDialog,
   type AgentMapNode,
   AgentMapTree,
+  type AgentToolCallRow,
   agentMapTokens,
   DesignProvider,
+  TranscriptFrame,
 } from "../src/index";
 
 afterEach(cleanup);
@@ -143,6 +146,13 @@ describe("AgentMapTree (§6.16.28)", () => {
     expect(onOpen).toHaveBeenLastCalledWith("am_root");
   });
 
+  it("the tree canvas is a labelled, keyboard-focusable scroll region", () => {
+    wrap(<AgentMapTree root={F.deep} background={[]} onOpen={() => {}} now={NOW} />);
+    const canvas = screen.getByRole("region", { name: "智能体树" });
+    expect(canvas.dataset.part).toBe("agent-map");
+    expect(canvas.getAttribute("tabindex")).toBe("0");
+  });
+
   it("three levels below the root lay out in four columns", () => {
     wrap(<AgentMapTree root={F.deep} background={[]} onOpen={() => {}} now={NOW} />);
     const canvas = document.querySelector('[data-part="agent-map"]');
@@ -191,8 +201,39 @@ describe("AgentMapDialog (§6.16.28)", () => {
       );
       expect(screen.getByRole("dialog").getAttribute("data-size")).toBe(size);
     }
+    // Levels 2 and 3 bring their own head (back, title, close): the frame draws none.
+    expect(screen.queryByRole("button", { name: "关闭" })).toBeNull();
+    rerender(
+      <DesignProvider locale="zh">
+        <AgentMapDialog open onOpenChange={onOpenChange} level="tree">
+          <p>body</p>
+        </AgentMapDialog>
+      </DesignProvider>,
+    );
     await userEvent.click(screen.getByRole("button", { name: "关闭" }));
     expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it("the inline frame and the portal frame draw the same head", () => {
+    wrap(
+      <AgentMapDialog open inline onOpenChange={() => {}} level="tree">
+        <p>body</p>
+      </AgentMapDialog>,
+    );
+    const inline = screen.getByRole("dialog");
+    const inlineHead = inline.querySelector('[data-part="agent-map-head"]')?.outerHTML;
+    expect(inlineHead).toContain("智能体图");
+    cleanup();
+    wrap(
+      <AgentMapDialog open onOpenChange={() => {}} level="tree">
+        <p>body</p>
+      </AgentMapDialog>,
+    );
+    const portal = screen.getByRole("dialog");
+    const strip = (h: string | undefined) => h?.replace(/ id="[^"]*"/g, "");
+    expect(strip(portal.querySelector('[data-part="agent-map-head"]')?.outerHTML)).toBe(
+      strip(inlineHead),
+    );
   });
 
   it("the dialog sizes include the agent map widths", () => {
@@ -204,5 +245,226 @@ describe("AgentMapDialog (§6.16.28)", () => {
       expect(overlays).toContain(`.cb-dialog[data-size="${w}"]`);
       expect(overlays).toContain(`width: min(${w}px, calc(100vw - 32px));`);
     }
+  });
+});
+
+// ── Levels 2 and 3 ──────────────────────────────────────────────────────────
+
+const D = F.detail;
+const invoice = root.children.find((c) => c.id === "am_invoice") as AgentMapNode;
+const calls: AgentToolCallRow[] = D.toolCalls.map((c) => ({
+  id: c.id,
+  tool: c.tool,
+  summary: c.summary,
+  running: c.running,
+  ...(c.durationMs !== undefined ? { startedAt: NOW - c.durationMs } : {}),
+  ...(c.range !== undefined ? { range: c.range } : {}),
+}));
+const detailBackground: AgentMapBackground[] = D.background.map((b) => ({
+  kind: "task",
+  id: b.id,
+  description: b.description,
+  status: b.status,
+  startedAt: NOW - b.durationMs,
+}));
+
+type DetailOverrides = Partial<Parameters<typeof AgentDetail>[0]>;
+const detail = (o: DetailOverrides = {}, { stop = true } = {}) => (
+  <AgentDetail
+    node={invoice}
+    agentType={D.agentType}
+    spawnedBy={D.spawnedBy}
+    latestText={D.latestText}
+    task={D.task}
+    background={detailBackground}
+    toolCalls={calls}
+    onBack={() => {}}
+    onClose={() => {}}
+    onOpenParent={() => {}}
+    onOpenTranscript={() => {}}
+    {...(stop ? { onStop: () => {} } : {})}
+    now={NOW}
+    {...o}
+  />
+);
+
+describe("AgentDetail (§6.16.28, level 2)", () => {
+  it("tool calls list newest first, the running one with a pulse and a clock", () => {
+    wrap(detail());
+    const section = screen.getByRole("region", { name: "工具调用 7" });
+    const rows = within(section).getAllByRole("listitem");
+    expect(rows.map((r) => r.querySelector('[data-part="agent-call-tool"]')?.textContent)).toEqual([
+      "Bash",
+      "Edit",
+      "Bash",
+      "Read",
+      "Grep",
+      "Bash",
+      "Read",
+    ]);
+    const live = rows[0] as HTMLElement;
+    expect(live.dataset.running).toBe("true");
+    expect(live.querySelector('[data-part="agent-dot"]')?.getAttribute("data-status")).toBe(
+      "running",
+    );
+    expect(live.querySelector('[data-part="agent-call-clock"]')?.textContent).toBe("12 秒");
+    expect(live.textContent).toContain("运行核对脚本");
+    // Finished rows: no dot, no clock; a range shows at the end.
+    for (const r of rows.slice(1)) {
+      expect(r.querySelector('[data-part="agent-dot"]')).toBeNull();
+      expect(r.querySelector('[data-part="agent-call-clock"]')).toBeNull();
+    }
+    expect(rows[3]?.querySelector('[data-part="agent-call-range"]')?.textContent).toBe(
+      "第 1–180 行",
+    );
+  });
+
+  it("the head: back, status, title, close; meta lines with the spawning agent as a link", async () => {
+    const onBack = vi.fn();
+    const onClose = vi.fn();
+    const onOpenParent = vi.fn();
+    wrap(detail({ onBack, onClose, onOpenParent }));
+    expect(screen.getByRole("heading", { name: "核对供应商发票与付款记录" })).toBeTruthy();
+    expect(screen.getByText("运行中 · 财务助手 · opus 5.5 · 后台")).toBeTruthy();
+    expect(screen.getByText("16分25秒 · 266.5k tokens")).toBeTruthy();
+    expect(screen.getByText(D.latestText)).toBeTruthy();
+    const spawned = screen.getByText(
+      (_, el) => (el as HTMLElement | null)?.dataset.part === "agent-spawned-by",
+    );
+    expect(spawned.textContent).toBe("由 整理季度经营报告 派出");
+    await userEvent.click(within(spawned).getByRole("button", { name: "整理季度经营报告" }));
+    expect(onOpenParent).toHaveBeenCalledWith("am_root");
+    await userEvent.click(screen.getByRole("button", { name: "返回智能体图" }));
+    expect(onBack).toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "关闭" }));
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  it("a running agent's footer has Open transcript and Stop", async () => {
+    const onStop = vi.fn();
+    const onOpenTranscript = vi.fn();
+    wrap(detail({ onStop, onOpenTranscript }));
+    const foot = document.querySelector('[data-part="agent-detail-foot"]') as HTMLElement;
+    const buttons = within(foot).getAllByRole("button");
+    expect(buttons.map((b) => b.textContent)).toEqual(["打开完整记录", "停止"]);
+    await userEvent.click(buttons[0] as HTMLElement);
+    expect(onOpenTranscript).toHaveBeenCalled();
+    await userEvent.click(buttons[1] as HTMLElement);
+    expect(onStop).toHaveBeenCalled();
+  });
+
+  it("a finished agent has no stop button", () => {
+    const done: AgentMapNode = { ...invoice, status: "completed" };
+    wrap(detail({ node: done }, { stop: false }));
+    expect(screen.queryByRole("button", { name: "停止" })).toBeNull();
+    const foot = document.querySelector('[data-part="agent-detail-foot"]') as HTMLElement;
+    const buttons = within(foot).getAllByRole("button");
+    expect(buttons.map((b) => b.textContent)).toEqual(["打开完整记录"]);
+    // "Open transcript" fills the row: every footer button grows.
+    expect(rule(".cb-amap-foot > .cb-btn")).toMatch(/flex: 1;/);
+  });
+
+  it("the task and background sections are collapsible", async () => {
+    wrap(detail());
+    const toggle = (name: RegExp) => screen.getByRole("button", { name });
+    // Collapsed at first; the tool calls are open.
+    expect(toggle(/^任务/).getAttribute("aria-expanded")).toBe("false");
+    expect(toggle(/^后台任务/).getAttribute("aria-expanded")).toBe("false");
+    expect(toggle(/^工具调用/).getAttribute("aria-expanded")).toBe("true");
+    expect(screen.queryByText(D.task)).toBeNull();
+    expect(screen.queryByText("同步 ERP 付款流水")).toBeNull();
+
+    await userEvent.click(toggle(/^任务/));
+    expect(toggle(/^任务/).getAttribute("aria-expanded")).toBe("true");
+    expect(screen.getByText(D.task)).toBeTruthy();
+
+    await userEvent.click(toggle(/^后台任务/));
+    const bg = screen.getByRole("region", { name: "后台任务 1" });
+    expect(within(bg).getByText("同步 ERP 付款流水")).toBeTruthy();
+    expect(within(bg).getByText("1分35秒")).toBeTruthy();
+
+    await userEvent.click(toggle(/^工具调用/));
+    expect(screen.queryByText("运行核对脚本")).toBeNull();
+    await userEvent.click(toggle(/^任务/));
+    expect(screen.queryByText(D.task)).toBeNull();
+  });
+
+  it("titles the portal dialog with the agent's description", () => {
+    wrap(
+      <AgentMapDialog open onOpenChange={() => {}} level="detail">
+        {detail()}
+      </AgentMapDialog>,
+    );
+    expect(screen.getByRole("dialog", { name: "核对供应商发票与付款记录" })).toBeTruthy();
+  });
+
+  it("speaks English", () => {
+    wrap(detail(), "en");
+    expect(screen.getByText("Running · 财务助手 · opus 5.5 · Background")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Open transcript" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /^Tool calls/ })).toBeTruthy();
+    const spawned = screen.getByText(
+      (_, el) => (el as HTMLElement | null)?.dataset.part === "agent-spawned-by",
+    );
+    expect(spawned.textContent).toBe("Spawned by 整理季度经营报告");
+  });
+});
+
+describe("TranscriptFrame (§6.16.28, level 3)", () => {
+  const frame = (o: Partial<Parameters<typeof TranscriptFrame>[0]> = {}, { live = true } = {}) => (
+    <TranscriptFrame
+      node={invoice}
+      agentType={D.agentType}
+      spawnedBy={D.spawnedBy}
+      {...(live ? { contextPercent: D.contextPercent, onStop: () => {} } : {})}
+      onBack={() => {}}
+      onClose={() => {}}
+      {...o}
+    >
+      <p>the thread</p>
+    </TranscriptFrame>
+  );
+
+  it('shows the read-only line "子智能体只读 · 不能和它对话，请让 <parent> 转达" and no composer', async () => {
+    const onStop = vi.fn();
+    wrap(frame({ onStop }));
+    const status = document.querySelector('[data-part="agent-transcript-status"]') as HTMLElement;
+    expect(
+      within(status).getByText("子智能体只读 · 不能和它对话，请让 整理季度经营报告 转达"),
+    ).toBeTruthy();
+    expect(within(status).getByText("上下文 31%")).toBeTruthy();
+    await userEvent.click(within(status).getByRole("button", { name: "停止" }));
+    expect(onStop).toHaveBeenCalled();
+    // The thread is the children, inside the conversation's thread column; nothing to type in.
+    const thread = screen.getByText("the thread").closest('[data-part="agent-transcript"]');
+    expect(thread).toBeTruthy();
+    expect(screen.getByText("the thread").closest(".cb-conv-thread")).toBeTruthy();
+    expect(screen.queryByRole("textbox")).toBeNull();
+    expect(document.querySelector('[data-part="composer"]')).toBeNull();
+  });
+
+  it("the head is one meta line; a finished agent has no stop and no context", async () => {
+    const onBack = vi.fn();
+    const done: AgentMapNode = { ...invoice, status: "completed" };
+    wrap(frame({ node: done, onBack }, { live: false }));
+    expect(
+      screen.getByText(
+        "完成 · 财务助手 · opus 5.5 · 后台 · 由 整理季度经营报告 派出 · 16分25秒 · 266.5k tokens",
+      ),
+    ).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "停止" })).toBeNull();
+    expect(screen.queryByText(/上下文/)).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "返回智能体图" }));
+    expect(onBack).toHaveBeenCalled();
+  });
+
+  it("speaks English", () => {
+    wrap(frame(), "en");
+    expect(
+      screen.getByText(
+        "Read-only sub-agent · You can't talk to it; ask 整理季度经营报告 to pass it on",
+      ),
+    ).toBeTruthy();
+    expect(screen.getByText("Context 31%")).toBeTruthy();
   });
 });

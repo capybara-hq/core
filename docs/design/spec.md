@@ -2062,10 +2062,11 @@ States: `default`, `hover`, `menu`
 
 `AgentMapDialog({ open, onOpenChange, level, children })` is a dialog over the conversation page
 (agent map spec §9) whose width follows its level: the tree 1100, one agent's summary 760, the
-transcript 1060 (the §6.7 frame: `panel`, `line-strong`, radius `md`, `shadow-2`, `scrim`; padding
-`space.5` `space.6`). The head is the title "智能体图" / "Agent map" (`h2`, prose, 500) and close;
-Esc closes, focus is trapped and returned. `AgentMapTree({ root, background, selectedId, onOpen })`
-is level 1:
+transcript 1060 (the §6.7 frame: `panel`, `line-strong`, radius `md`, `shadow-2`, `scrim`; at
+level 1 padding `space.5` `space.6`). Level 1's head is the title "智能体图" / "Agent map" (`h2`,
+prose, 500) and close; levels 2 and 3 draw their own head with the same parts (one shared head:
+back, status dot, title, close, then meta lines). Esc closes, focus is trapped and returned.
+`AgentMapTree({ root, background, selectedId, onOpen })` is level 1:
 
 - **Count line** under the title (prose, `muted`): "N 个智能体 · M 个运行中 · 点击查看详情" /
   "N agents · M running · Click a node for details"; N counts every node with the root, M the
@@ -2091,9 +2092,45 @@ is level 1:
   per task (`row.default`, `panel-2`, 1px `line-soft`, radius `sm`, `small`): the dot, a `Bash` tag
   (the picker-menu tag: `micro` `muted` on `selected`), the description with an ellipsis and the
   duration in `faint`. None: nothing. A child's background tasks show only in its level 2.
+- **Canvas**: the tree's scroll region is a labelled region ("智能体树" / "Agent tree") the
+  keyboard can focus (`tabindex="0"`, the focus ring inset), so a tree wider than the dialog
+  scrolls without a pointer.
+
+`AgentDetail({ node, agentType, spawnedBy, latestText, task, background, toolCalls, onBack,
+onClose, onOpenParent, onOpenTranscript, onStop?, now? })` is level 2, one agent's summary, live at
+the granularity of tool summaries. The dialog has no padding and is 600 high (at most the window
+less 32), so it does not jump while the agent works; head, body and footer pad themselves:
+
+- **Head** (padding `space.5` `space.6` `space.3`, 1px `line-soft` below): a dense back button
+  (`arrow-left`, "返回智能体图" / "Back to the agent map"), the status dot, the description (`h2`,
+  one line with an ellipsis) and close. Under it, indented past the back button (`control.dense` +
+  `space.2`), three meta lines (`small`, `muted`): "运行中 · <agent type> · <model> · 后台";
+  "由 <parent> 派出" / "Spawned by <parent>", the parent an underlined `ink` link that opens its
+  node (`onOpenParent`); "<time> · <tokens>".
+- **Body** (scrolls, padding `space.3` `space.6`): the latest text (prose), then three collapsible
+  sections, each a button (chevron, title 500, count `faint`) with `aria-expanded`: **任务 / Task**
+  (the dispatch prompt, prose small `muted`, closed at first), **后台任务 / Background tasks · N**
+  (the agent's own tasks, level 1's rows, closed at first) and **工具调用 / Tool calls · N** (open):
+  the calls newest first, each a `row.dense` line: a dot slot (`space.2`; the running call's dot
+  pulses), the tool name (500, at least 44 wide), its display summary (`muted`; the running one
+  `ink`) with an ellipsis, and at the end in `faint` a range ("第 1–180 行") or the running call's
+  clock. The section content starts under its title.
+- **Footer** (padding `space.3` `space.6`, 1px `line-soft` above): "打开完整记录" / "Open transcript"
+  and, while the agent runs (`onStop` given), "停止" / "Stop" (`danger`; stops its descendants too).
+  The buttons share the row; a finished agent's "Open transcript" fills it.
+
+`TranscriptFrame({ node, agentType, spawnedBy, contextPercent?, onBack, onClose, onStop?,
+children })` is level 3: the same head with one meta line ("<status> · <agent type> · <model> ·
+后台 · 由 <parent> 派出 · <time> · <tokens>"), the thread (`children`: the conversation page's own
+timeline components, built from `apps/web/src/lib/timeline.ts`) in the conversation's thread column
+(`.cb-conv-thread`, padding `space.4` `layout.gutter`, scrolling), and instead of a composer a
+read-only status line (`row.dense`, 1px `line-soft` above, `small`, `faint`): "子智能体只读 ·
+不能和它对话，请让 <parent> 转达" / "Read-only sub-agent · You can't talk to it; ask <parent> to
+pass it on", then "上下文 N%" / "Context N%" when known and a dense `danger` Stop while running. The
+dialog is 640 high.
 
 <!-- states: agent-map -->
-States: `tree`, `deep`
+States: `tree`, `deep`, `detail`, `finished`, `transcript`
 
 <!-- size-table: agent-map -->
 | Part | State | Property | Value |
@@ -2127,6 +2164,32 @@ States: `tree`, `deep`
 | agent-legend | tree | color | color.faint |
 | agent-node | deep | height | 62 |
 | agent-node[data-depth=3] | deep | width | 320 |
+| agent-map-dialog | detail | width | 760 |
+| agent-map-dialog | detail | height | 600 |
+| agent-map-head | detail | border-bottom-color | color.line-soft |
+| agent-map-title | detail | font-size | type.h2 |
+| agent-meta | detail | font-size | type.small |
+| agent-meta | detail | color | color.muted |
+| agent-parent | detail | color | color.ink |
+| agent-section-head | detail | height | row.dense |
+| agent-call | detail | height | row.dense |
+| agent-call-tool | detail | font-size | type.body |
+| agent-call[data-running=true] agent-call-summary | detail | color | color.ink |
+| agent-call[data-running=true] | detail | height | row.dense |
+| agent-call-clock | detail | color | color.faint |
+| agent-call-range | detail | color | color.faint |
+| agent-detail-foot | detail | border-top-color | color.line-soft |
+| button[data-variant=danger] | detail | height | control.default |
+| agent-detail-foot | finished | border-top-color | color.line-soft |
+| agent-call-summary | finished | color | color.muted |
+| button | finished | width | 710 |
+| agent-map-dialog | transcript | width | 1060 |
+| agent-map-dialog | transcript | height | 640 |
+| thread | transcript | max-width | layout.chat |
+| agent-transcript-status | transcript | height | row.dense |
+| agent-transcript-status | transcript | color | color.faint |
+| agent-transcript-status | transcript | border-top-color | color.line-soft |
+| agent-context | transcript | font-size | type.small |
 
 ---
 

@@ -1,5 +1,6 @@
 /* The agent map (spec §6.16.28): the dialog frame at its level's width (overlays.css), level 1's
-   tree with elbow connectors, the root's background tasks and the legend. */
+   tree with elbow connectors, the root's background tasks and the legend; level 2's summary and
+   level 3's transcript frame. */
 
 .cb-amap-dialog {
   padding: var(--cb-space-5) var(--cb-space-6);
@@ -11,14 +12,42 @@
   max-height: none;
   animation: none;
 }
+/* Levels 2 and 3: no frame padding; the head, body and footer pad themselves, at one height so
+   the dialog does not jump while the agent works. */
+.cb-amap-dialog[data-level="detail"],
+.cb-amap-dialog[data-level="transcript"] {
+  padding: 0;
+}
+.cb-amap-dialog[data-level="detail"] {
+  height: min(600px, calc(100vh - 32px));
+}
+.cb-amap-dialog[data-level="transcript"] {
+  height: min(640px, calc(100vh - 32px));
+}
+
+/* The head of every level: [back] [dot] title close, then the meta lines past the back button. */
 .cb-amap-head {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+}
+.cb-amap-head[data-back="true"] {
+  padding: var(--cb-space-5) var(--cb-space-6) var(--cb-space-3);
+  border-bottom: 1px solid var(--cb-line-soft);
+}
+.cb-amap-head-line {
   display: flex;
   align-items: center;
   gap: var(--cb-space-2);
+  min-width: 0;
 }
 .cb-amap-title {
   flex: 1;
+  min-width: 0;
   margin: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
   font-family: var(--cb-font-prose);
   font-size: var(--cb-type-h2-size);
   line-height: var(--cb-type-h2-line);
@@ -45,6 +74,10 @@
   gap: var(--cb-space-4);
   min-height: 0;
   overflow: auto;
+}
+/* The ring inside the scroll region, which would clip an outer one. */
+.cb-amap-canvas:focus-visible {
+  outline-offset: -2px;
 }
 .cb-amap-branch {
   display: flex;
@@ -254,4 +287,161 @@
   display: flex;
   align-items: center;
   gap: var(--cb-space-2);
+}
+
+/* ── Level 2: one agent's summary ── */
+
+.cb-amap-meta {
+  margin: 0;
+  padding-left: calc(var(--cb-control-dense) + var(--cb-space-2));
+  overflow: hidden;
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-body-line);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.cb-amap-head-line + .cb-amap-meta {
+  margin-top: var(--cb-space-1);
+}
+.cb-amap-parent {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--cb-ink);
+  font: inherit;
+  text-decoration: underline;
+  text-decoration-color: var(--cb-line-strong);
+  cursor: pointer;
+}
+.cb-amap-parent:hover {
+  text-decoration-color: var(--cb-ink);
+}
+.cb-amap-detail {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--cb-space-3) var(--cb-space-6);
+}
+.cb-amap-latest {
+  margin: 0 0 var(--cb-space-3);
+  font-family: var(--cb-font-prose);
+  font-size: var(--cb-type-prose-size);
+  line-height: var(--cb-type-prose-line);
+}
+.cb-amap-section-head {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-2);
+  height: var(--cb-row-dense);
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--cb-ink);
+  font: inherit;
+  font-weight: 500;
+  cursor: pointer;
+}
+.cb-amap-section-head > svg,
+.cb-amap-section-count {
+  color: var(--cb-faint);
+  font-weight: 400;
+}
+/* The section's content starts under its title: chevron 12 + gap space.2. */
+.cb-amap-section-body {
+  padding-bottom: var(--cb-space-2);
+}
+.cb-amap-prompt {
+  margin: 0;
+  padding-left: var(--cb-space-5);
+  color: var(--cb-muted);
+  font-family: var(--cb-font-prose);
+  font-size: var(--cb-type-prose-small-size);
+  line-height: var(--cb-type-prose-small-line);
+  white-space: pre-wrap;
+}
+.cb-amap-section-body > .cb-amap-background-list {
+  margin: 0;
+  padding-left: var(--cb-space-5);
+}
+.cb-amap-calls {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+/* A call: the dot slot (space.2) + gap space.3 puts the tool name under the section title. */
+.cb-amap-call {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-3);
+  height: var(--cb-row-dense);
+  min-width: 0;
+}
+.cb-amap-call-slot {
+  display: flex;
+  flex: none;
+  width: var(--cb-space-2);
+}
+.cb-amap-call-tool {
+  flex: none;
+  min-width: 44px;
+  font-weight: 500;
+}
+.cb-amap-call-summary {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--cb-muted);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.cb-amap-call[data-running="true"] .cb-amap-call-summary {
+  color: var(--cb-ink);
+}
+.cb-amap-call-end {
+  flex: none;
+  margin-left: auto;
+  padding-left: var(--cb-space-2);
+  color: var(--cb-faint);
+  white-space: nowrap;
+}
+.cb-amap-foot {
+  display: flex;
+  flex: none;
+  gap: var(--cb-space-3);
+  padding: var(--cb-space-3) var(--cb-space-6);
+  border-top: 1px solid var(--cb-line-soft);
+}
+/* "Open transcript" fills the row alone (a finished agent) or shares it with Stop. */
+.cb-amap-foot > .cb-btn {
+  flex: 1;
+}
+
+/* ── Level 3: the transcript frame ── */
+
+/* The thread as the conversation page draws it (.cb-conv-thread), without the composer. */
+.cb-amap-transcript {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--cb-space-4) var(--cb-layout-gutter);
+}
+.cb-amap-status {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--cb-space-4);
+  height: var(--cb-row-dense);
+  padding: 0 var(--cb-space-4);
+  border-top: 1px solid var(--cb-line-soft);
+  color: var(--cb-faint);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.cb-amap-status-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }

@@ -384,6 +384,17 @@ const zh = {
   "agentMap.status.completed": "完成",
   "agentMap.status.failed": "失败",
   "agentMap.status.aborted": "已停止",
+  "agentMap.canvas": "智能体树",
+  "agentMap.back": "返回智能体图",
+  "agentMap.inBackground": "后台",
+  "agentMap.spawnedBy": "由 {parent} 派出",
+  "agentMap.section.task": "任务",
+  "agentMap.section.background": "后台任务",
+  "agentMap.section.toolCalls": "工具调用",
+  "agentMap.openTranscript": "打开完整记录",
+  "agentMap.stop": "停止",
+  "agentMap.readOnly": "子智能体只读 · 不能和它对话，请让 {parent} 转达",
+  "agentMap.context": "上下文 {n}%",
 };
 
 export type DesignKey = keyof typeof zh;
@@ -773,6 +784,17 @@ const en: Record<DesignKey, string> = {
   "agentMap.status.completed": "Completed",
   "agentMap.status.failed": "Failed",
   "agentMap.status.aborted": "Stopped",
+  "agentMap.canvas": "Agent tree",
+  "agentMap.back": "Back to the agent map",
+  "agentMap.inBackground": "Background",
+  "agentMap.spawnedBy": "Spawned by {parent}",
+  "agentMap.section.task": "Task",
+  "agentMap.section.background": "Background tasks",
+  "agentMap.section.toolCalls": "Tool calls",
+  "agentMap.openTranscript": "Open transcript",
+  "agentMap.stop": "Stop",
+  "agentMap.readOnly": "Read-only sub-agent · You can't talk to it; ask {parent} to pass it on",
+  "agentMap.context": "Context {n}%",
 };
 
 export const messages: Record<Locale, Record<DesignKey, string>> = { zh, en };

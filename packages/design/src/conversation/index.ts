@@ -1,4 +1,6 @@
 export {
+  AgentDetail,
+  type AgentDetailProps,
   type AgentMapBackground,
   AgentMapDialog,
   type AgentMapDialogProps,
@@ -6,7 +8,10 @@ export {
   type AgentMapStatus,
   AgentMapTree,
   type AgentMapTreeProps,
+  type AgentToolCallRow,
   agentMapTokens,
+  TranscriptFrame,
+  type TranscriptFrameProps,
 } from "./agent-map";
 export {
   AGENT_PANEL_COLUMNS,

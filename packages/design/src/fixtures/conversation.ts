@@ -960,6 +960,27 @@ const agentNode = (
   children: FixtureAgentNode[] = [],
 ): FixtureAgentNode => ({ id, description, model, durationMs, tokens, status, children });
 
+export type FixtureAgentCall = {
+  id: string;
+  tool: string;
+  summary: string;
+  running: boolean;
+  /** How long the running call has run. */
+  durationMs?: number;
+  range?: string;
+};
+
+export type FixtureAgentDetail = {
+  agentType: string;
+  spawnedBy: { id: string; label: string };
+  latestText: string;
+  task: string;
+  background: FixtureAgentTask[];
+  /** In call order, oldest first (the component lists them newest first). */
+  toolCalls: FixtureAgentCall[];
+  contextPercent: number;
+};
+
 /** The agent map: a root with four children, one of them with a child, and two background tasks. */
 export const AGENT_MAP_FIXTURE: {
   root: FixtureAgentNode;
@@ -968,6 +989,8 @@ export const AGENT_MAP_FIXTURE: {
   background: FixtureAgentTask[];
   /** Three levels below the root: four columns. */
   deep: FixtureAgentNode;
+  /** Level 2 and 3 of the selected node (`am_invoice`). */
+  detail: FixtureAgentDetail;
 } = {
   root: agentNode("am_root", "整理季度经营报告", "opus 5.5", 2_538_000, 392_700, "running", [
     agentNode("am_sales", "汇总各区域销售数据", "opus 5.5", 724_000, 188_200, "completed"),
@@ -990,4 +1013,29 @@ export const AGENT_MAP_FIXTURE: {
     ]),
     agentNode("am_d1b", "汇总各区域销售数据", "opus 5.5", 724_000, 188_200, "completed"),
   ]),
+  detail: {
+    agentType: "财务助手",
+    spawnedBy: { id: "am_root", label: "整理季度经营报告" },
+    latestText: "三月份还差 4 笔付款没对上，现在跑一遍核对脚本。",
+    task: "核对第一季度供应商发票与付款记录：以 ERP 导出的付款流水为准，逐笔匹配发票号、金额和收款方，列出未匹配和金额不一致的记录，按供应商汇总后交回。",
+    background: [
+      { id: "bg_sync", description: "同步 ERP 付款流水", status: "running", durationMs: 95_000 },
+    ],
+    toolCalls: [
+      { id: "tc1", tool: "Read", summary: "finance/q1/README.md", running: false },
+      { id: "tc2", tool: "Bash", summary: "列出一季度发票文件", running: false },
+      { id: "tc3", tool: "Grep", summary: "invoice_no", running: false },
+      {
+        id: "tc4",
+        tool: "Read",
+        summary: "finance/q1/payments-2026-03.csv",
+        running: false,
+        range: "第 1–180 行",
+      },
+      { id: "tc5", tool: "Bash", summary: "按供应商汇总付款金额", running: false },
+      { id: "tc6", tool: "Edit", summary: "finance/q1/reconcile.py", running: false },
+      { id: "tc7", tool: "Bash", summary: "运行核对脚本", running: true, durationMs: 12_000 },
+    ],
+    contextPercent: 31,
+  },
 };
