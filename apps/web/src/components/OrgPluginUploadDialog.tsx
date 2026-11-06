@@ -2,7 +2,7 @@
 
 import {
   Button,
-  Card,
+  ContentSection,
   Dialog,
   FilePicker,
   Stack,
@@ -204,36 +204,38 @@ export function OrgPluginUploadDialog({
         ) : (
           review !== null && (
             <>
-              <Card>
-                <Stack gap={8}>
-                  <Text>{t("scope")}</Text>
-                  {!known ? null : existing === undefined ? (
-                    <SwitchField
-                      label={t("shareable")}
-                      checked={shareable}
-                      onChange={setShareable}
-                      disabled={busy}
-                    />
-                  ) : (
-                    <Text variant="prose" tone="muted">
-                      {t("newVersion", { name: review.name })}
-                    </Text>
-                  )}
-                  {review.extension !== undefined && (
-                    <Text variant="prose" tone="warn">
-                      {t("extensionNotice")}
-                    </Text>
-                  )}
-                </Stack>
-              </Card>
-              {staged.update !== null && (
-                <Card title={t("updateTitle")}>
-                  <PlatformUpdatePreviewBody
-                    preview={staged.update}
-                    orgName={nameOrg}
-                    hideUnknown
+              {/* The Dialog is the one box (spec §6.7): the scope lines, then the update and the
+                  review under their headings, never cards */}
+              <Stack gap={8}>
+                <Text>{t("scope")}</Text>
+                {!known ? null : existing === undefined ? (
+                  <SwitchField
+                    label={t("shareable")}
+                    checked={shareable}
+                    onChange={setShareable}
+                    disabled={busy}
                   />
-                </Card>
+                ) : (
+                  <Text variant="prose" tone="muted">
+                    {t("newVersion", { name: review.name })}
+                  </Text>
+                )}
+                {review.extension !== undefined && (
+                  <Text variant="prose" tone="warn">
+                    {t("extensionNotice")}
+                  </Text>
+                )}
+              </Stack>
+              {staged.update !== null && (
+                <ContentSection title={t("updateTitle")}>
+                  <Stack gap={8}>
+                    <PlatformUpdatePreviewBody
+                      preview={staged.update}
+                      orgName={nameOrg}
+                      hideUnknown
+                    />
+                  </Stack>
+                </ContentSection>
               )}
               <PluginReviewBody review={review} />
             </>

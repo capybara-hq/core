@@ -1,3 +1,4 @@
+import { describeNestedBox, findNestedBoxes } from "@capybara-hq/design/reference";
 import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -114,6 +115,46 @@ const REVIEW = {
   reviewHash: "h1",
 };
 
+/** A review with everything that used to be a card: permission groups, a warning, a template. */
+const FULL_REVIEW = {
+  ...REVIEW,
+  extension: {
+    ...REVIEW.extension,
+    sensitive: true,
+    permissions: [
+      {
+        category: "tables",
+        sensitive: true,
+        items: ["crm_contacts"],
+        entries: [{ value: "crm_contacts", sensitive: true }],
+      },
+    ],
+    warnings: [
+      {
+        kind: "destructive_migration",
+        sensitive: true,
+        file: "migrations/0002_drop.sql",
+        line: 3,
+        statement: "DROP TABLE old;",
+      },
+    ],
+  },
+  connectorTemplates: [
+    {
+      id: "crm-api",
+      displayName: { en: "CRM API" },
+      description: "The CRM's API",
+      plugin: "connector-openapi",
+      connector: "openapi",
+      endpoint: { url: "https://crm.example.com" },
+      auth: { type: "none" },
+      editableEndpoint: [],
+      endpointChecked: true,
+    },
+  ],
+  sensitive: true,
+};
+
 const renderPlugins = (opts: Parameters<typeof renderRouteWithCache>[2] = {}) =>
   renderRouteWithCache("/plugins", lastStubRoutes(), opts);
 const renderItem = (opts: Parameters<typeof renderRouteWithCache>[2] = {}) => {
@@ -175,6 +216,9 @@ describe("/plugins: 上传插件包", () => {
     const { user, dialog } = await uploadIn(tgz());
     expect(await within(dialog).findByText(m.scope)).toBeTruthy();
     expect(within(dialog).getByText(m.extensionNotice)).toBeTruthy();
+    // One box (acceptance item AB): the Dialog holds headings and rows, never a card
+    expect(dialog.querySelector('[data-part="card"]')).toBeNull();
+    expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
     const share = within(dialog).getByRole("switch", { name: m.shareable });
     expect(share.getAttribute("aria-checked")).toBe("false");
     // org mode: no scope picker, no pinned suggestions
@@ -188,6 +232,33 @@ describe("/plugins: 上传插件包", () => {
       }),
     );
     expect(await screen.findByText(m.pending)).toBeTruthy();
+  });
+
+  it("the review in the Dialog: the extension a subsection, its permissions and the templates rows, the warning a warn line over its code", async () => {
+    const tp = en.extensions;
+    stubApi({
+      [`GET ${ORG}/catalog`]: () => json(200, { items: [] }),
+      [`POST ${ORG}/catalog/uploads/file`]: () =>
+        json(200, { stagingId: "st9", review: FULL_REVIEW, update: null }),
+      "GET /api/v1/me": () => json(200, ME),
+    });
+    await renderPlugins({ locale: "en" });
+    const { dialog } = await uploadIn(tgz(), "en");
+    const ext = await within(dialog).findByRole("region", { name: "crm" });
+    expect(ext.getAttribute("data-part")).toBe("subsection");
+    const perms = within(ext).getByRole("list", {
+      name: fill(tp.permissionsLabel, { plugin: "crm" }),
+    });
+    const db = within(perms).getByRole("group", { name: tp.category.tables });
+    expect(within(db).getByText(tp.sensitive)).toBeTruthy();
+    expect(within(db).getByText("· crm_contacts")).toBeTruthy();
+    const warning = within(perms).getByRole("group", { name: tp.review.warnings });
+    expect(within(warning).getByText(tp.review.warningsHint)).toBeTruthy();
+    expect(warning.querySelector('[data-part="code-block"]')).not.toBeNull();
+    const templates = within(dialog).getByRole("list", { name: en.catalog.components.templates });
+    expect(within(templates).getByRole("group", { name: /^crm-api/ })).toBeTruthy();
+    expect(dialog.querySelector('[data-part="card"]')).toBeNull();
+    expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
   });
 
   it("a new version of the org's own plugin shows the update preview and sends no pinnedSuggestions", async () => {
@@ -221,6 +292,10 @@ describe("/plugins: 上传插件包", () => {
         fill(en.catalog.update.versions, { from: "v1.0.0", to: "v1.1.0" }),
       ),
     ).toBeTruthy();
+    // the update preview sits under its heading in the Dialog, not in a card
+    expect(within(dialog).getByRole("region", { name: m.updateTitle })).toBeTruthy();
+    expect(dialog.querySelector('[data-part="card"]')).toBeNull();
+    expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
     expect(within(dialog).queryByText(m.extensionNotice)).toBeNull();
     await user.click(within(dialog).getByRole("button", { name: m.confirm }));
     await waitFor(() =>

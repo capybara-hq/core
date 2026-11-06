@@ -1,3 +1,4 @@
+import { describeNestedBox, findNestedBoxes } from "@capybara-hq/design/reference";
 import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -907,6 +908,18 @@ describe("/admin/plugins/import (WizardPage)", () => {
           fill(c.dependencyUnresolved, { name: "crm-extra", range: "^2.0.0" }),
         ),
       ).toBeTruthy();
+      // One box (acceptance item AB): the extension is a subsection whose permissions are rows,
+      // the templates are rows; no card holds another box
+      const sub = within(ext).getByRole("region", { name: REVIEW.extension.name });
+      expect(sub.getAttribute("data-part")).toBe("subsection");
+      expect(
+        within(sub).getByRole("list", {
+          name: fill(msgs[locale].extensions.permissionsLabel, { plugin: REVIEW.extension.name }),
+        }),
+      ).toBeTruthy();
+      expect(within(templates).getByRole("list", { name: c.templates })).toBeTruthy();
+      expect(document.querySelector('[data-part="card"]')).toBeNull();
+      expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
       // The address names the staged import (a reload comes back to this review)
       expect(router.replace).toHaveBeenCalledWith("/admin/plugins/import?staging=st1");
       await user.click(screen.getByRole("button", { name: w.next }));

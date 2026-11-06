@@ -2,12 +2,14 @@
 
 import {
   Badge,
-  Card,
   Checkbox,
   CodeBlock,
   Disclosure,
+  ItemList,
+  ItemListItem,
   KeyValue,
   Stack,
+  Subsection,
   Text,
   versionLabel,
 } from "@capybara-hq/design";
@@ -134,22 +136,23 @@ export function PluginReviewBody({
         )}
         <LicenseView text={review.licenseText} truncated={review.licenseTruncated === true} />
       </Stack>
+      {/* Warn lines, not a card: the review sits in a Dialog too (spec §6.7) */}
       {mismatch !== null && (
-        <Card tone="accent">
-          <Stack gap={4}>
-            <Text tone="warn">{t("mismatch")}</Text>
-            {mismatch.missing.length > 0 && (
-              <Text variant="small" tone="warn">
-                {t("mismatchMissing", { keys: mismatch.missing.join(", ") })}
-              </Text>
-            )}
-            {mismatch.extra.length > 0 && (
-              <Text variant="small" tone="muted">
-                {t("mismatchExtra", { keys: mismatch.extra.join(", ") })}
-              </Text>
-            )}
-          </Stack>
-        </Card>
+        <Stack gap={4}>
+          <Text tone="warn" icon="circle-alert">
+            {t("mismatch")}
+          </Text>
+          {mismatch.missing.length > 0 && (
+            <Text variant="small" tone="warn">
+              {t("mismatchMissing", { keys: mismatch.missing.join(", ") })}
+            </Text>
+          )}
+          {mismatch.extra.length > 0 && (
+            <Text variant="small" tone="muted">
+              {t("mismatchExtra", { keys: mismatch.extra.join(", ") })}
+            </Text>
+          )}
+        </Stack>
       )}
       {review.translation !== undefined && <TranslationReportView report={review.translation} />}
       <ComponentSection
@@ -207,9 +210,10 @@ export function PluginReviewBody({
         count={review.connectorTemplates.length}
         empty={tc("templatesNone")}
       >
-        {review.connectorTemplates.map((c) => (
-          <Card key={c.id} title={`${c.id} · ${c.plugin} / ${c.connector}`}>
-            <Stack gap={8}>
+        {/* One row per template, split by hairlines (spec §6.33) */}
+        <ItemList label={tc("templates")}>
+          {review.connectorTemplates.map((c) => (
+            <ItemListItem key={c.id} title={`${c.id} · ${c.plugin} / ${c.connector}`}>
               <KeyValue
                 keyWidth="14ch"
                 rows={endpointLeaves(c.endpoint).map(([k, v]) => ({ k, v: showValue(v) }))}
@@ -225,9 +229,9 @@ export function PluginReviewBody({
                   {t("unchecked")}
                 </Text>
               )}
-            </Stack>
-          </Card>
-        ))}
+            </ItemListItem>
+          ))}
+        </ItemList>
       </ComponentSection>
       <ComponentSection
         title={tc("agentTemplates")}
@@ -301,8 +305,10 @@ function ExtensionReview({ extension }: { extension: PluginReviewExtension }) {
         : t("action.keep", {
             version: versionLabel(extension.currentVersion ?? extension.version),
           });
+  // A subsection, not a card (spec §6.32): the review sits on the import page and in the org's
+  // upload Dialog, and its permission rows already group with hairlines.
   return (
-    <Card
+    <Subsection
       title={extension.name}
       {...(extension.sensitive && { actions: <Badge tone="warn">{tp("sensitive")}</Badge> })}
     >
@@ -318,6 +324,6 @@ function ExtensionReview({ extension }: { extension: PluginReviewExtension }) {
           warnings={extension.warnings}
         />
       </Stack>
-    </Card>
+    </Subsection>
   );
 }

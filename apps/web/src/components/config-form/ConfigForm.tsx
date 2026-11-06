@@ -2,7 +2,6 @@
 
 import {
   Button,
-  Card,
   Checkbox,
   Disclosure,
   Field,
@@ -16,6 +15,7 @@ import {
   Segmented,
   Select,
   Stack,
+  Subsection,
   Switch,
   Text,
   Textarea,
@@ -63,8 +63,9 @@ export interface ConfigFormState {
 /**
  * One renderer for every extension config form (extension config forms spec §5): deployment, org
  * and channel connection config, the catalog install wizard and the upgrade dialog. Draws the
- * JSON Schema's tree with its `x-ui` hints: objects as cards (sections and an "Advanced"
- * disclosure), arrays of objects as a `Repeater` (compact `FieldRow`s for `layout: "row"` items),
+ * JSON Schema's tree with its `x-ui` hints: nested objects as `Subsection`s (sections and an
+ * "Advanced" disclosure; never a card inside the box the form sits in), arrays of objects as a
+ * `Repeater` (divided rows inside a box; compact `FieldRow`s for `layout: "row"` items),
  * records as a `KeyValueEditor`, secrets as keep / replace / clear inputs, unions as JSON.
  *
  * `value` is where the form starts: it keeps its own draft and reports the value to save, the
@@ -215,7 +216,7 @@ function Root({
         return (
           <Stack key={s.id} gap={12}>
             <Stack gap={4}>
-              <Text as="h3">{s.label}</Text>
+              <Text variant="h3">{s.label}</Text>
               {s.help !== undefined && (
                 <Text variant="small" tone="muted">
                   {s.help}
@@ -310,17 +311,12 @@ function Node(props: NodeProps) {
   const { node, draft, set, segs, ctx } = props;
   switch (node.kind) {
     case "object":
+      // A nested object is a subsection of the box it sits in (spec §1 "One box is enough",
+      // §6.32): its title as an h3, its help, its fields under the guide; never a Card.
       return (
-        <Card title={node.label}>
-          <Stack gap={16}>
-            {node.help !== undefined && (
-              <Text variant="small" tone="muted">
-                {node.help}
-              </Text>
-            )}
-            <Children node={node} draft={draft} set={set} segs={segs} ctx={ctx} />
-          </Stack>
-        </Card>
+        <Subsection title={node.label} {...(node.help !== undefined && { description: node.help })}>
+          <Children node={node} draft={draft} set={set} segs={segs} ctx={ctx} />
+        </Subsection>
       );
     case "array":
       return node.item.kind === "object" ? (

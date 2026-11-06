@@ -1,3 +1,4 @@
+import { describeNestedBox, findNestedBoxes } from "@capybara-hq/design/reference";
 import { cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -282,6 +283,10 @@ describe("/extensions (ListPage + DataTable by capability, details in a Sheet)",
         expect(mark.getAttribute("data-tone")).toBe("warn");
       }
       expect(within(perms).getByText("· channel@1").getAttribute("data-tone")).toBe("muted");
+      // One box (acceptance item AB): a row per category in the Sheet, never a card
+      expect(within(perms).getByRole("group", { name: m.category.tools })).toBeTruthy();
+      expect(sheet.querySelector('[data-part="card"]')).toBeNull();
+      expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
     },
   );
 
