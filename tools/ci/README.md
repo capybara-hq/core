@@ -25,13 +25,14 @@ sync. The rules for each custom check are in [tools/checks/README.md](../checks/
 - Visual baselines are generated only in the Playwright Docker image, via the `visual-update` workflow (see [.agents/skills/writing-web-ui](../../.agents/skills/writing-web-ui/SKILL.md)). The bot's baseline commit does not trigger PR checks; push an empty commit afterwards to rerun CI.
 - The design reference set (`docs/design/reference/*.png` and its review page `index.html`, rendered from `docs/design/reference/src` by `apps/web/reference`) is likewise rendered only by a manual workflow, `reference-update` (`workflow_dispatch` with the branch; never on PRs, not part of `ci-ok`), in the same Playwright image; see `docs/design/reference/README.md`.
 
-## Merge queue
+## Merge queue (prepared, off)
 
-PRs land through GitHub's merge queue: once a PR has `ci-ok` and `issue-linked` on its head, the
-queue tests it merged onto the current `main` (`merge_group` events, planned by diff against
-`main` like a PR) and merges it when that passes, so a PR no longer has to be brought up to date
-by hand and rerun after every merge. `issue-linked` is a status `community.yml` sets on PR heads;
-`merge-queue.yml` reports it on the merge group's commit, since every queued PR already passed it.
+`ci.yml` runs on `merge_group` and `merge-queue.yml` reports `issue-linked` on a merge group's
+commit (`community.yml` sets it on PR heads only), so a GitHub merge queue can be turned on in the
+`main-quality` ruleset. It is off: the queue admits a PR only once its code-owner review passed, and
+with a single maintainer, who merges their own PRs by bypassing the `main-review` rule, nothing
+could enter the queue, while the queue rule blocked every direct merge. Turn it on when a second
+maintainer can review (or the review rule changes); until then PRs must be up to date with `main`.
 
 The `changes` job decides "run everything" itself, before the plan script, when the diff touches
 `tools/ci/**` or `.github/workflows/ci.yml`: those can change the plan, so the script is not
