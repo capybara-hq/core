@@ -844,9 +844,10 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       /**
        * The finish never wakes a run, but the next run absorbs it like any other (background
        * Bash §3): `person`, a person stopped the task (the conversation's background section);
-       * `deletion`, the conversation was being deleted.
+       * `deletion`, the conversation was being deleted; `subagent_end`, the sub-agent that owns it
+       * ended (a fork's run, or a stopped background sub-agent; agent map spec §5.3).
        */
-      stoppedBy: z.enum(["person", "deletion"]).optional(),
+      stoppedBy: z.enum(["person", "deletion", "subagent_end"]).optional(),
     }),
   ),
   ev("compaction_summary", z.object({ coversUpToSeq: seqNo, text: z.string() })),

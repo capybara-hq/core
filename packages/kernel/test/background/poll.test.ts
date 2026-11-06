@@ -24,6 +24,7 @@ import type { ConversationEvent } from "../../src/conversations/events.js";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
+import { Waits } from "../../src/runtime/waits.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { sandboxBaseTimeoutMs } from "../../src/tools/builtins/sandbox/common.js";
 import type { ScriptRule } from "../fixtures/plugins/model-script/index.js";
@@ -765,8 +766,14 @@ describe("stopping", () => {
         .executeTakeFirstOrThrow();
       const [task] = await store.listFor([child.id]);
       expect(task).toMatchObject({ conversationId: child.id, sandboxConversationId: conv });
-      // the finish's follow-ups ran (a stop would have come with the delivery): still running
-      await new Promise((r) => setTimeout(r, 1_000));
+      // the run's end handling, done again and awaited (idempotent: the delivery exists, so it
+      // writes nothing): any task stop it makes has happened when it returns
+      const childRun = await db
+        .selectFrom("runs")
+        .select("id")
+        .where("conversation_id", "=", child.id)
+        .executeTakeFirstOrThrow();
+      expect(await k.app.get(Waits).childFinished(childRun.id)).toBe(false);
       const row = await store.get(task?.id as string);
       expect(row).toMatchObject({ status: "running" });
       expect(await finishedEvents(child.id, task?.id as string)).toEqual([]);

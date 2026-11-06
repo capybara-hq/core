@@ -112,9 +112,15 @@ export class BackgroundTaskStopper {
     assertTaskRef(cur.id, sid);
     const reported = why === "tool";
     // a person's stop never wakes the conversation (background Bash §3, fix round 1), nor does
-    // the stop of a conversation being deleted
+    // the stop of a conversation being deleted or of a sub-agent that ended (agent map spec §5.3)
     const stoppedBy: BackgroundStoppedBy | undefined =
-      why === "person" ? "person" : why === "conversation_deleted" ? "deletion" : undefined;
+      why === "person"
+        ? "person"
+        : why === "conversation_deleted"
+          ? "deletion"
+          : why === "subagent_end"
+            ? "subagent_end"
+            : undefined;
     const opts = stoppedBy === undefined ? {} : { stoppedBy };
     let r: IfRunningResult<{ to: BackgroundFinish; lastLines: string }>;
     try {
@@ -172,13 +178,14 @@ export class BackgroundTaskStopper {
   }
 
   /**
-   * After the sub-agent run `runId` ended (spec §4.3): stops the running tasks that run started in
-   * `conversationId` when it is a sub-agent's conversation (nobody can read or stop them through
-   * that run's model after that); any other conversation is left alone. Only that run's tasks: a
-   * follow-up run of the same child keeps its own when an older run's end is handled late. Never
-   * throws (see {@link stopAll}).
+   * After a sub-agent run ended (spec §4.3): stops the running tasks of `conversationId` when it
+   * is a sub-agent's conversation; any other conversation is left alone. With `runId`, only the
+   * tasks that run started (a fork child's run: a later run of the same child keeps its own when
+   * an older run's end is handled late); without, all of them (a stopped background child, agent
+   * map spec §6). Their finish is marked `stoppedBy: "subagent_end"`, so it never wakes the child.
+   * Never throws (see {@link stopAll}).
    */
-  async stopSubagentTasks(conversationId: string, runId: string): Promise<void> {
+  async stopSubagentTasks(conversationId: string, runId?: string): Promise<void> {
     try {
       const conv = await this.db
         .selectFrom("conversations")
@@ -187,7 +194,7 @@ export class BackgroundTaskStopper {
         .executeTakeFirst();
       if (conv?.kind !== "subagent") return;
       const tasks = (await this.store.runningOwnedBy(conversationId)).filter(
-        (t) => t.runId === runId,
+        (t) => runId === undefined || t.runId === runId,
       );
       await this.stopAll(tasks, "subagent_end");
     } catch (err) {

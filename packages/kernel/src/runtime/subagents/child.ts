@@ -65,6 +65,42 @@ export async function dispatchOfChildRun(
   return r ? toRow(r) : null;
 }
 
+/**
+ * The dispatch row a finished child run reports through (agent map spec §5.2: every run of a child
+ * conversation that ends appends one `finished` delivery to its parent): the run's own dispatch
+ * (`Agent`, `SendMessage`), else, for a run nobody dispatched (a wake run, §5.3), the newest dispatch
+ * of its conversation with `childRunId` set to this run, `forSkill` false (a wake run of a fork's
+ * child is delivered like any background run; no parent run waits on it) and the run's own budget
+ * run. Null when the run is unknown or its conversation was never dispatched.
+ */
+export async function deliveryRowOfChildRun(
+  db: KernelSchemaDb,
+  childRunId: string,
+): Promise<DispatchRow | null> {
+  const own = await dispatchOfChildRun(db, childRunId);
+  if (own) return own;
+  const run = await db
+    .selectFrom("runs")
+    .select(["conversation_id", "budget_run_id"])
+    .where("id", "=", childRunId)
+    .executeTakeFirst();
+  if (!run) return null;
+  const latest = await db
+    .selectFrom("subagent_dispatches")
+    .select(DISPATCH_COLUMNS)
+    .where("child_conversation_id", "=", run.conversation_id)
+    .orderBy("created_at", "desc")
+    .limit(1)
+    .executeTakeFirst();
+  if (!latest) return null;
+  return {
+    ...toRow(latest),
+    childRunId,
+    forSkill: false,
+    ...(run.budget_run_id !== null && { budgetRunId: run.budget_run_id }),
+  };
+}
+
 /** The dispatch of the parent call `(runId, callId)`, or null (not dispatched yet). */
 export async function dispatchOfCall(
   db: KernelSchemaDb,

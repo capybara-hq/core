@@ -22,6 +22,7 @@ import { ProviderRegistry } from "../../../src/runtime/providers.js";
 import { RunQueue } from "../../../src/runtime/run-queue.js";
 import { SubagentDeliveries } from "../../../src/runtime/subagents/deliveries.js";
 import { renderSubagentDelivery } from "../../../src/runtime/subagents/render.js";
+import { Waits } from "../../../src/runtime/waits.js";
 import type { ScriptRule } from "../../fixtures/plugins/model-script/index.js";
 import { legacyDbFor } from "../../helpers/conversations.js";
 import { accountsFor } from "../../helpers/identity.js";
@@ -76,6 +77,24 @@ const RULES: ScriptRule[] = [
     reply: { text: "trio child done", barrier: held("trio") },
   },
   { when: { systemIncludes: CHILD, lastUserIncludes: "child-quick" }, reply: { text: "quick" } },
+  // an intermediate child: dispatches a held leaf, goes on, and answers when woken
+  {
+    when: { systemIncludes: CHILD, lastUserIncludes: "mid-dispatch", assistantTurns: 0 },
+    reply: { toolCalls: [agent("Leaf", "child-hold: leaf")] },
+  },
+  {
+    when: { systemIncludes: CHILD, lastUserIncludes: "mid-dispatch", assistantTurns: 2 },
+    reply: { text: "mid woke" },
+  },
+  // an intermediate child that dispatches a held leaf and holds its own next call
+  {
+    when: { systemIncludes: CHILD, lastUserIncludes: "tree-mid", assistantTurns: 0 },
+    reply: { toolCalls: [agent("Tree leaf", "child-hold: tree leaf")] },
+  },
+  {
+    when: { systemIncludes: CHILD, lastUserIncludes: "tree-mid", assistantTurns: 1 },
+    reply: { text: "tree mid done", barrier: held("tree-mid") },
+  },
   // parents: step 1 dispatches
   {
     when: { lastUserIncludes: "SCENARIO hold", assistantTurns: 0 },
@@ -84,6 +103,14 @@ const RULES: ScriptRule[] = [
   {
     when: { lastUserIncludes: "SCENARIO quick", assistantTurns: 0 },
     reply: { toolCalls: [agent("Quick task", "child-quick: work")] },
+  },
+  {
+    when: { lastUserIncludes: "SCENARIO deep", assistantTurns: 0 },
+    reply: { toolCalls: [agent("Mid task", "mid-dispatch: go")] },
+  },
+  {
+    when: { lastUserIncludes: "SCENARIO tree", assistantTurns: 0 },
+    reply: { toolCalls: [agent("Tree mid", "tree-mid: go")] },
   },
   {
     when: { lastUserIncludes: "SCENARIO trio", assistantTurns: 0 },
@@ -497,4 +524,193 @@ describe("waking on sub-agent deliveries", { timeout: 90_000 }, () => {
     });
     expect(await consumedSeq(db, child.conversationId)).toBeGreaterThanOrEqual(finished.seq);
   });
+
+  it("a child's wake run finishing delivers to the parent", async () => {
+    const conv = await dispatched("SCENARIO quick wake delivers");
+    const [child] = await childRunsOf(db, conv);
+    if (!child) throw new Error("no child dispatched");
+    await waitForTerminal(db, child.conversationId, 1, 30_000);
+    await waitForTerminal(db, conv, 2, 30_000);
+    await finishChildTask(conv, child);
+    await waitForTerminal(db, child.conversationId, 2, 30_000);
+    const wake = (await runRows(child.conversationId))[1] as RunRow;
+    const ofWake = async () =>
+      (await deliveriesOf(conv)).filter((d) => d.payload.childRunId === wake.id);
+    const [d] = await waitFor(
+      async () => {
+        const got = await ofWake();
+        return got.length > 0 ? got : null;
+      },
+      30_000,
+      "the wake run's delivery",
+    );
+    expect(d?.payload).toEqual({
+      subagentId: child.conversationId,
+      childRunId: wake.id,
+      description: "Quick task",
+      kind: "finished",
+      status: "completed",
+      text: "quick",
+      triggerAccountId: ownerId,
+    });
+    const finished = (await eventsOf(db, conv)).filter(
+      (e) => e.type === "subagent_finished" && e.payload.childRunId === wake.id,
+    );
+    expect(finished).toHaveLength(1);
+    // exactly once: the end handling again, and the sweep, write nothing more
+    expect(await k.app.get(Waits).childFinished(wake.id)).toBe(false);
+    await k.app.get(Waits).sweep();
+    expect(await ofWake()).toHaveLength(1);
+  });
+
+  it("a grandchild's delivery wakes the intermediate child, whose wake run reaches the root", async () => {
+    const conv = await dispatched("SCENARIO deep");
+    const [mid] = await childRunsOf(db, conv);
+    if (!mid) throw new Error("no child dispatched");
+    await waitForTerminal(db, mid.conversationId, 1, 30_000);
+    const [leaf] = await childRunsOf(db, mid.conversationId);
+    if (!leaf) throw new Error("no grandchild dispatched");
+    expect(await runRows(mid.conversationId)).toHaveLength(1);
+    await waiting("child");
+    release("child");
+    await waitForTerminal(db, mid.conversationId, 2, 30_000);
+    const [leafDelivery] = await deliveriesOf(mid.conversationId);
+    if (!leafDelivery) throw new Error("no delivery to the intermediate child");
+    expect(leafDelivery.payload).toMatchObject({ childRunId: leaf.runId, text: "held child done" });
+    const midWake = (await runRows(mid.conversationId))[1] as RunRow;
+    expect(Number(midWake.trigger_seq)).toBe(leafDelivery.seq);
+    expect(midWake.budget_run_id).toBe((await runRows(conv))[0]?.id);
+    expect((await runStarted(mid.conversationId, midWake.id)).payload.trigger).toBe("subagent");
+    const reached = await waitFor(
+      async () =>
+        (await deliveriesOf(conv)).find((d) => d.payload.childRunId === midWake.id) ?? null,
+      30_000,
+      "the intermediate child's wake delivery at the root",
+    );
+    expect(reached.payload).toMatchObject({
+      subagentId: mid.conversationId,
+      kind: "finished",
+      status: "completed",
+      text: "mid woke",
+    });
+  });
+
+  it("a tree stop wakes neither the stopped agent nor the root", async () => {
+    const conv = await dispatched("SCENARIO tree");
+    const [mid] = await childRunsOf(db, conv);
+    if (!mid) throw new Error("no child dispatched");
+    await waiting("tree-mid");
+    await waiting("child");
+    const [leaf] = await childRunsOf(db, mid.conversationId);
+    if (!leaf) throw new Error("no grandchild dispatched");
+    // a task an earlier run of the mid started: it stops with the stopped mid too
+    const earlier = await finishChildTask(
+      conv,
+      { ...mid, runId: "run-earlier" },
+      { finish: false },
+    );
+    const res = await owner({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/conversations/${mid.conversationId}/abort`,
+    });
+    expect(res.statusCode, res.body).toBe(202);
+    // the leaf's aborted finish lands in the stopped mid's log, the mid's in the root's
+    const leafDelivery = await waitFor(
+      async () => (await deliveriesOf(mid.conversationId))[0] ?? null,
+      30_000,
+      "the leaf's delivery",
+    );
+    expect(leafDelivery.payload).toMatchObject({ childRunId: leaf.runId, status: "aborted" });
+    const midDelivery = await waitFor(
+      async () => (await deliveriesOf(conv))[0] ?? null,
+      30_000,
+      "the mid's delivery",
+    );
+    expect(midDelivery.payload).toMatchObject({ childRunId: mid.runId, status: "aborted" });
+    await new Promise((r) => setTimeout(r, 500));
+    await expectNoWake(mid.conversationId, 1);
+    await expectNoWake(conv, 1);
+    expect(await consumedSeq(db, mid.conversationId)).toBeLessThan(leafDelivery.seq);
+    const stopped = await waitFor(
+      async () =>
+        (await eventsOf(db, mid.conversationId)).find(
+          (e) => e.type === "background_task_finished" && e.payload.taskId === earlier.taskId,
+        ) ?? null,
+      15_000,
+      "the earlier task stopped",
+    );
+    expect(stopped.payload).toMatchObject({ stoppedBy: "subagent_end" });
+  });
+
+  it("unpausing the root wakes the sub-agents whose wake it held", async () => {
+    const conv = await dispatched("SCENARIO quick unpause");
+    const [child] = await childRunsOf(db, conv);
+    if (!child) throw new Error("no child dispatched");
+    await waitForTerminal(db, child.conversationId, 1, 30_000);
+    await waitForTerminal(db, conv, 2, 30_000);
+    await sql`UPDATE capybara.conversations SET queue_paused = true, queue_pause_reason = 'run_ended'
+      WHERE id = ${conv}`.execute(raw);
+    const finished = await finishChildTask(conv, child);
+    await expectNoWake(child.conversationId, 1);
+    const res = await owner({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/conversations/${conv}/queue/resume`,
+    });
+    expect(res.statusCode, res.body).toBe(202);
+    await waitForTerminal(db, child.conversationId, 2, 30_000);
+    const wake = (await runRows(child.conversationId))[1] as RunRow;
+    expect(Number(wake.trigger_seq)).toBe(finished.seq);
+  });
 });
+
+/**
+ * Starts a background task of the child as its run `child.runId` and, unless `finish` is false,
+ * finishes it; the finish event, or (not finished) the task id.
+ */
+async function finishChildTask(
+  conv: string,
+  child: { conversationId: string; runId: string },
+  opts: { finish: false },
+): Promise<{ taskId: string }>;
+async function finishChildTask(
+  conv: string,
+  child: { conversationId: string; runId: string },
+): Promise<ConversationEvent>;
+async function finishChildTask(
+  conv: string,
+  child: { conversationId: string; runId: string },
+  opts: { finish?: boolean } = {},
+): Promise<ConversationEvent | { taskId: string }> {
+  const store = k.app.get(BackgroundTaskStore);
+  const id = newTaskId();
+  const startedAt = new Date(Date.now() - 5_000);
+  await store.insert({
+    id,
+    orgId,
+    conversationId: child.conversationId,
+    sandboxConversationId: conv,
+    runId: child.runId,
+    callId: "call-x",
+    triggerAccountId: ownerId,
+    description: `Task ${id}`,
+    command: "true",
+    sid: "4242",
+    outputPath: taskOutputPath(id),
+    startedAt,
+    deadlineAt: new Date(startedAt.getTime() + 3_600_000),
+    sandboxCreatedAt: new Date(),
+  });
+  if (opts.finish === false) return { taskId: id };
+  const task = await store.get(id);
+  if (!task) throw new Error("task row missing");
+  expect(
+    await k.app
+      .get(BackgroundTaskFinisher)
+      .finish(task, { status: "completed", exitCode: 0 }, "out\n", false),
+  ).toBe(true);
+  const finished = (await eventsOf(db, child.conversationId)).find(
+    (e) => e.type === "background_task_finished" && e.payload.taskId === id,
+  );
+  if (!finished) throw new Error("no finish in the child's log");
+  return finished;
+}

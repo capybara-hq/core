@@ -120,6 +120,8 @@ const notFound = () => new ApiError("conversation.not_found", "Conversation not 
 export interface RunControl {
   /** 有未消费的消息且没有进行中的运行时投递一轮运行；返回 runId 或 null。 */
   ensureRun(conversationId: string): Promise<string | null>;
+  /** After a root's queue was unpaused: the wakes it held for its tree (agent map spec §5.3). */
+  wakeHeldTree(rootId: string): Promise<void>;
   /**
    * 运行是孤儿（会话锁空闲、任务已不存在，没有 worker 会收到中止广播）时直接把它写成 aborted，返回 true；
    * 否则返回 false。

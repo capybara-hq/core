@@ -58,8 +58,10 @@ const WAKE_EVENT_TYPES = ["background_task_finished", "subagent_delivery"] as co
  *     and has no `stoppedBy` (`"person"`: that person is looking at the conversation;
  *     `"deletion"`: the conversation is being deleted), or
  *   - a `subagent_delivery` (its own `triggerAccountId`: the trigger account of the child run that
- *     delivered it, agent map spec §7), except the finish of a child a person stopped
- *     (`abortedBy: "user"`), for the same reason as a person's task stop;
+ *     delivered it, agent map spec §7), except the finish of a child that was stopped
+ *     (`status: "aborted"`: a person's stop of it or of a sub-agent above it, a tree stop, the
+ *     deletion of the root), for the same reason as a person's task stop; a tree stop thus never
+ *     wakes the stopped ancestors through their descendants' finishes, which land after them;
  * - the wake setting is on (the org's override, else `deploymentOn`);
  * - the root's queue is not paused and the root is not deleted (a paused root holds the wakes of
  *   the whole tree, agent map spec §5.3);
@@ -97,7 +99,7 @@ export async function wakeDecisionIn(
     .where("e.conversation_id", "=", conv.id)
     .where("e.type", "=", "subagent_delivery")
     .where("e.seq", ">", String(consumed))
-    .where(sql<boolean>`e.payload ->> 'abortedBy' IS DISTINCT FROM 'user'`)
+    .where(sql<boolean>`e.payload ->> 'status' IS DISTINCT FROM 'aborted'`)
     .orderBy("e.seq", "desc")
     .limit(CANDIDATES)
     .execute();

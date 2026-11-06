@@ -11,7 +11,7 @@ import { KernelEvents } from "../../infra/events/kernel-events.js";
 import { KERNEL_LOGGER } from "../../infra/tokens.js";
 import type { KernelLogger } from "../../log.js";
 import { TERMINAL_STATUSES } from "../run-finish.js";
-import { childResult, type DispatchRow, dispatchOfChildRun, finishedEvent } from "./child.js";
+import { childResult, type DispatchRow, deliveryRowOfChildRun, finishedEvent } from "./child.js";
 import { dispatchedIdemKey } from "./dispatch.js";
 
 /** What a caller of {@link SubagentDeliveries.deliverIn} gives; the rest comes from the dispatch. */
@@ -114,15 +114,17 @@ export class SubagentDeliveries {
   }
 
   /**
-   * A background child run reached a terminal state (agent map spec §4.5): appends the parent's
-   * `subagent_finished` (display only) and a `finished` delivery in one transaction. The delivery
+   * A background child run reached a terminal state (agent map spec §4.5, §5.2): appends the
+   * parent's `subagent_finished` (display only) and a `finished` delivery in one transaction, for
+   * every run of a child conversation (dispatched, sent a message or woken;
+   * {@link deliveryRowOfChildRun}), each once by its run. The delivery
    * carries the final reply when the run handed back no report, else no text and `handedBack`; a
-   * failed run's error message and code, an aborted run who stopped it. A run that is not a
-   * dispatched child, a fork invocation's child, or not terminal yet is left alone. True when this
+   * failed run's error message and code, an aborted run who stopped it. A run of a conversation
+   * never dispatched, a fork invocation's child, or not terminal yet is left alone. True when this
    * call wrote the delivery.
    */
   async childFinished(childRunId: string): Promise<boolean> {
-    const row = await dispatchOfChildRun(this.db, childRunId);
+    const row = await deliveryRowOfChildRun(this.db, childRunId);
     if (!row || row.forSkill === true) return false;
     const run = await this.db
       .selectFrom("runs")

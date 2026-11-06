@@ -31,7 +31,7 @@ import { MAINTENANCE_QUEUE_NAME } from "./maintenance-queue.js";
 import { assistantIdemKey } from "./model-call.js";
 import { notifyFinished, RunFinish, TERMINAL_STATUSES } from "./run-finish.js";
 import { ACTIVE_RUN_STATUSES, RunQueue } from "./run-queue.js";
-import { childResult, dispatchOfChildRun, finishedEvent } from "./subagents/child.js";
+import { childResult, deliveryRowOfChildRun, finishedEvent } from "./subagents/child.js";
 import { SubagentDeliveries } from "./subagents/deliveries.js";
 
 /** 等待超时任务所在的内核维护队列（见 maintenance.ts）。 */
@@ -910,19 +910,21 @@ export class Waits implements OnApplicationShutdown {
    * Background sub-agent runs that finished more than the grace period ago (within the last day)
    * whose parent has no `subagent_finished` for them (agent map spec §10: the finisher died after
    * the child's terminal commit; the finish path writes `subagent_finished` and the delivery in one
-   * transaction) → {@link childFinished}, idempotent against a late finisher. Keyed on
+   * transaction) → {@link childFinished}, idempotent against a late finisher. Keyed on the child
+   * run, so a run nobody dispatched (a wake run, §5.3) is repaired too, and on
    * `subagent_finished`, not on the delivery, so a child that finished before background
    * dispatch (its result was the `Agent` call's, its `subagent_finished` written then) is never
-   * delivered a second time. A run without a terminal event in its log (nothing to deliver) and a
-   * child whose parent conversation was deleted are skipped; only a written delivery counts.
+   * delivered a second time. Fork invocations' runs, a run without a terminal event in its log
+   * (nothing to deliver), a conversation never dispatched and a child whose parent conversation
+   * was deleted are skipped; only a written delivery counts.
    */
   private async sweepUndelivered(): Promise<number> {
     const runs = await this.db
-      .selectFrom("subagent_dispatches as sd")
-      .innerJoin("runs as cr", "cr.id", "sd.child_run_id")
-      .innerJoin("conversations as pc", "pc.id", "sd.parent_conversation_id")
-      .select("sd.child_run_id")
-      .where("sd.for_skill", "=", false)
+      .selectFrom("runs as cr")
+      .innerJoin("conversations as cc", "cc.id", "cr.conversation_id")
+      .innerJoin("conversations as pc", "pc.id", "cc.parent_conversation_id")
+      .select("cr.id as child_run_id")
+      .where("cc.kind", "=", "subagent")
       .where("pc.deleted_at", "is", null)
       .where("cr.status", "in", TERMINAL_RUN_STATUSES)
       .where(
@@ -931,13 +933,30 @@ export class Waits implements OnApplicationShutdown {
         sql<Date>`now() - ${WAIT_SWEEP_GRACE_MS}::integer * interval '1 millisecond'`,
       )
       .where("cr.finished_at", ">", sql<Date>`now() - interval '1 day'`)
+      .where(({ exists, selectFrom }) =>
+        exists(
+          selectFrom("subagent_dispatches as sd")
+            .select(sql`1`.as("one"))
+            .whereRef("sd.child_conversation_id", "=", "cc.id"),
+        ),
+      )
+      .where(({ not, exists, selectFrom }) =>
+        not(
+          exists(
+            selectFrom("subagent_dispatches as fd")
+              .select(sql`1`.as("one"))
+              .whereRef("fd.child_run_id", "=", "cr.id")
+              .where("fd.for_skill", "=", true),
+          ),
+        ),
+      )
       .where(({ not, exists, selectFrom }) =>
         not(
           exists(
             selectFrom("conversation_events as e")
               .select(sql`1`.as("one"))
-              .whereRef("e.conversation_id", "=", "sd.parent_conversation_id")
-              .where("e.idem_key", "=", sql<string>`'subagent_finished:' || sd.child_run_id`),
+              .whereRef("e.conversation_id", "=", "pc.id")
+              .where("e.idem_key", "=", sql<string>`'subagent_finished:' || cr.id`),
           ),
         ),
       )
@@ -945,8 +964,8 @@ export class Waits implements OnApplicationShutdown {
         exists(
           selectFrom("conversation_events as t")
             .select(sql`1`.as("one"))
-            .whereRef("t.conversation_id", "=", "sd.child_conversation_id")
-            .whereRef("t.run_id", "=", "sd.child_run_id")
+            .whereRef("t.conversation_id", "=", "cc.id")
+            .whereRef("t.run_id", "=", "cr.id")
             .where("t.type", "in", ["run_finished", "run_failed", "run_aborted"]),
         ),
       )
@@ -1196,20 +1215,22 @@ export class Waits implements OnApplicationShutdown {
   }
 
   /**
-   * After a child run's terminal state committed (sub-agents spec §7.3, agent map spec §4.5): a
-   * background child's finish is delivered to its parent ({@link SubagentDeliveries.childFinished}:
-   * `subagent_finished` and a `finished` delivery, idempotent); a fork invocation's child (phase D,
-   * `for_skill`) appends `subagent_finished` (idempotent; not model-visible) and tries
+   * After a child run's terminal state committed (sub-agents spec §7.3, agent map spec §4.5,
+   * §5.2): a background child's run, whether dispatched, sent a message or woken
+   * ({@link deliveryRowOfChildRun}), is delivered to its parent
+   * ({@link SubagentDeliveries.childFinished}: `subagent_finished` and a `finished` delivery,
+   * idempotent by the run); a fork invocation's child (phase D, `for_skill`) appends
+   * `subagent_finished` (idempotent; not model-visible) and tries
    * {@link resume}`(parentRunId, childRunId)`, which succeeds once its parent run waits on nothing
-   * else. A run that is not a dispatched child, or not terminal yet, is left alone. A crash in
-   * between is repaired by the wait sweep (the orphan repair calls this again). The running
-   * background tasks the terminal run started are then stopped (not those of a later run) for a
-   * fork child and a stopped background child; a background child that ended on its own keeps
-   * them, and their finish wakes it (agent map spec §5.3). True when a background child's
-   * finished delivery was written by this call.
+   * else. A run of a conversation never dispatched, or not terminal yet, is left alone. A crash in
+   * between is repaired by the wait sweep (the orphan repair calls this again). A fork child's
+   * running background tasks the terminal run started are then stopped (not those of a later run);
+   * a stopped background child's are all stopped, whichever of its runs started them; a background
+   * child that ended on its own keeps them, and their finish wakes it (agent map spec §5.3). True
+   * when a background child's finished delivery was written by this call.
    */
   async childFinished(childRunId: string): Promise<boolean> {
-    const row = await dispatchOfChildRun(this.db, childRunId);
+    const row = await deliveryRowOfChildRun(this.db, childRunId);
     if (!row) return false;
     const run = await this.db
       .selectFrom("runs")
@@ -1222,9 +1243,10 @@ export class Waits implements OnApplicationShutdown {
         return await this.deliveries.childFinished(childRunId);
       } finally {
         // a background child that ended on its own keeps its tasks: their finish wakes it (agent
-        // map spec §5.3); a stopped one's tasks stop with it. Never throws.
+        // map spec §5.3); a stopped one's tasks all stop with it, also those an earlier run of it
+        // started, so none of them wakes it. Never throws.
         if (run.status === "aborted") {
-          await this.background.stopSubagentTasks(row.childConversationId, childRunId);
+          await this.background.stopSubagentTasks(row.childConversationId);
         }
       }
     }
@@ -1238,9 +1260,9 @@ export class Waits implements OnApplicationShutdown {
       await this.resume(row.parentRunId, childRunId);
       return false;
     } finally {
-      // whichever way the child run ended (its worker, a stop while waiting, an orphan repair):
-      // nobody can read or stop the background tasks it started through its model any more
-      // (background Bash spec §4.3). Never throws.
+      // a fork child, whichever way its run ended (its worker, a stop while waiting, an orphan
+      // repair): nobody reads or stops the background tasks that run started through its model
+      // any more (background Bash spec §4.3); a background child's are handled above. Never throws.
       await this.background.stopSubagentTasks(row.childConversationId, childRunId);
     }
   }

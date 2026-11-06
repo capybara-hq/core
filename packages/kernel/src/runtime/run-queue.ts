@@ -13,6 +13,7 @@ import {
 } from "../background/wake-rules.js";
 import { EventLog } from "../conversations/event-log.js";
 import { dispatchQueuedIn, pauseQueueWith } from "../conversations/queue.js";
+import { conversationTree } from "../conversations/tree.js";
 import type { ConversationKind, KernelSchemaDb } from "../db/kernel-schema.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
@@ -413,6 +414,8 @@ export class RunQueue {
         agent_version: agent.current_version,
         trigger_account_id: trigger.accountId,
         trigger_seq: Number(trigger.seq),
+        // a chat conversation always has its person-triggered run before any wake (a wake event
+        // comes from a run of it or of its tree); null would only make the wake run its own window
         budget_run_id: isWake ? await budgetWindowOf(t, conversationId) : null,
       })
       .execute();
@@ -487,6 +490,52 @@ export class RunQueue {
       })
       .execute();
     return { runId, jobId, kind: "subagent" };
+  }
+
+  /**
+   * Re-derives the wakes a paused root held for its tree (agent map spec §5.3: a paused root queue
+   * holds the wakes of the whole tree): after the root's queue is unpaused, {@link ensureRun} on
+   * every sub-agent conversation below it that has an unconsumed wake event and no active run
+   * (the root itself is the caller's own `ensureRun`). Errors are logged; the next event, run end
+   * or page opening of that conversation re-derives its wake.
+   */
+  async wakeHeldTree(rootId: string): Promise<void> {
+    const ids = (await conversationTree(this.db, rootId))
+      .filter((c) => c.level > 0)
+      .map((c) => c.id);
+    if (ids.length === 0) return;
+    const held = await this.db
+      .selectFrom("conversations as c")
+      .select("c.id")
+      .where("c.id", "in", ids)
+      .where("c.deleted_at", "is", null)
+      .where(({ exists, selectFrom }) =>
+        exists(
+          selectFrom("conversation_events as e")
+            .select(sql`1`.as("one"))
+            .whereRef("e.conversation_id", "=", "c.id")
+            .where("e.type", "in", ["background_task_finished", "subagent_delivery"])
+            .whereRef("e.seq", ">", "c.consumed_seq"),
+        ),
+      )
+      .where(({ not, exists, selectFrom }) =>
+        not(
+          exists(
+            selectFrom("runs as r")
+              .select(sql`1`.as("one"))
+              .whereRef("r.conversation_id", "=", "c.id")
+              .where("r.status", "in", ACTIVE_RUN_STATUSES),
+          ),
+        ),
+      )
+      .execute();
+    for (const c of held) {
+      try {
+        await this.ensureRun(c.id);
+      } catch (err) {
+        this.log.warn("cannot wake a held sub-agent", { conversationId: c.id, err });
+      }
+    }
   }
 
   /**

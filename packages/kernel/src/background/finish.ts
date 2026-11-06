@@ -12,9 +12,10 @@ export type BackgroundFinish = Parameters<BackgroundTaskStore["finish"]>[1];
 
 /**
  * Who stopped a task, when its finish must never wake the conversation: a person (who is looking at
- * it) or the deletion of the conversation.
+ * it), the deletion of the conversation, or the end of the sub-agent that owns it (a fork's run, a
+ * stopped background sub-agent).
  */
-export type BackgroundStoppedBy = "person" | "deletion";
+export type BackgroundStoppedBy = "person" | "deletion" | "subagent_end";
 
 /** The idempotency key of a task's `background_task_finished` event. */
 export const finishedEventKey = (taskId: string): string => `background_task_finished:${taskId}`;

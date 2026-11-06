@@ -255,7 +255,7 @@ type EventBody =
         outputPath: string;
         reported: boolean;
         lostReason?: string;
-        stoppedBy?: "person" | "deletion";
+        stoppedBy?: "person" | "deletion" | "subagent_end";
       };
     }
   | { type: "compaction_summary"; payload: { coversUpToSeq: number; text: string } }

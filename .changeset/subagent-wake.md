@@ -9,3 +9,6 @@ are read on the root conversation. A wake run runs as the trigger account of the
 delivered (or the task's), records `run_started.trigger: "subagent"` for a delivery and counts
 against the tree's budget window. A finished background sub-agent no longer stops its running
 background tasks. `runtime.wakeOnBackgroundTask` covers both kinds of wake.
+Every run of a sub-agent that ends, a wake run included, delivers its finish to the parent; a
+stopped sub-agent's finish never wakes anyone, a stopped sub-agent's background tasks all stop
+(`stoppedBy: "subagent_end"`), and resuming a root's queue releases the wakes it held for its tree.

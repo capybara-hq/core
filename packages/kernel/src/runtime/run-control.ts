@@ -13,7 +13,8 @@ import { Waits } from "./waits.js";
 @Injectable()
 export class RunControl {
   constructor(
-    @Inject(RunQueue) private readonly queue: Pick<RunQueue, "ensureRun" | "abortIfOrphaned">,
+    @Inject(RunQueue)
+    private readonly queue: Pick<RunQueue, "ensureRun" | "abortIfOrphaned" | "wakeHeldTree">,
     @Inject(Waits)
     private readonly waits: Pick<
       Waits,
@@ -27,6 +28,11 @@ export class RunControl {
   /** 有未消费的消息且没有进行中的运行时投递一轮运行；返回 runId 或 null。 */
   ensureRun(conversationId: string): Promise<string | null> {
     return this.queue.ensureRun(conversationId);
+  }
+
+  /** After a root's queue was unpaused: the wakes it held for its tree ({@link RunQueue.wakeHeldTree}). */
+  wakeHeldTree(rootId: string): Promise<void> {
+    return this.queue.wakeHeldTree(rootId);
   }
 
   /**

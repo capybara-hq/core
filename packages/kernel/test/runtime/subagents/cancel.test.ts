@@ -434,7 +434,23 @@ describe("stopping a sub-agent stops its descendants", () => {
     expect(res.statusCode, res.body).toBe(202);
     await allStopped([d3.runId]);
     expect(await abortedBy(d3.conversationId)).toEqual([ownerId]);
-    // a subtree with nothing working answers run.not_active
+    // a subtree with nothing working answers run.not_active (once the wakes the finished
+    // deliveries started, agent map spec §5.3, have ended too)
+    await waitFor(
+      async () =>
+        (await db
+          .selectFrom("runs")
+          .select("id")
+          .where(
+            "conversation_id",
+            "in",
+            [d1, d2, d3].map((d) => d.conversationId),
+          )
+          .where("status", "in", ["queued", "running", "waiting"])
+          .executeTakeFirst()) === undefined,
+      20_000,
+      "the subtree idle",
+    );
     const again = await owner({
       method: "POST",
       url: `/api/v1/orgs/${orgId}/conversations/${d1.conversationId}/abort`,
