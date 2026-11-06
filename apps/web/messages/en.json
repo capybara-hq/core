@@ -694,6 +694,214 @@
     "filter": "Filter agents",
     "ownerMe": "Me",
     "settings": "Settings",
+    "templatePage": {
+      "navGroup": "Template",
+      "sections": {
+        "basics": "Basics",
+        "quick-actions": "Quick actions",
+        "prompt": "Prompt",
+        "model": "Model",
+        "tools": "Tools",
+        "skills": "Skills",
+        "connectors": "Connectors",
+        "subagents": "Sub-agents"
+      },
+      "basics": {
+        "name": "Name",
+        "type": "Type",
+        "description": "Description",
+        "source": "Source",
+        "version": "Version",
+        "shareable": "Shareable",
+        "shareableOn": "Yes: the super admin may offer it to other organizations",
+        "shareableOff": "No",
+        "nameFixed": "The name is also its sub-agent type and cannot change after saving.",
+        "descriptionRequired": "Enter a description."
+      },
+      "prompt": {
+        "empty": "(empty)"
+      },
+      "model": {
+        "tier": "Model tier",
+        "tierHelp": "An agent created from it gets the model the organization maps for this tier; the default chat model tier uses the organization's default chat model.",
+        "modelRef": "Specific model",
+        "modelRefHelp": "Used first when the organization can use it; otherwise the tier decides.",
+        "noModelRef": "None",
+        "unavailableModel": "{model} (not available here)",
+        "effort": "Reasoning effort",
+        "noEffort": "Model default",
+        "maxSteps": "Max steps",
+        "hint": "A template records a tier and, optionally, a specific model; creating an agent picks the model by the organization's setup, and the creator may change it."
+      },
+      "tier": {
+        "inherit": "Organization default chat model",
+        "fast": "Fast",
+        "standard": "Standard",
+        "capable": "Most capable"
+      },
+      "effort": {
+        "low": "Low",
+        "medium": "Medium",
+        "high": "High",
+        "xhigh": "Very high",
+        "max": "Max"
+      },
+      "policy": {
+        "ask": "Ask first",
+        "deny": "Denied"
+      },
+      "tools": {
+        "list": "Tools",
+        "none": "No tools.",
+        "disallowed": "Not allowed",
+        "hint": "An agent created from it gets the tools the organization can use; the rest are listed as unavailable.",
+        "others": "Other tools",
+        "unavailable": "{tool} (not available here)",
+        "othersHint": "The organization cannot use these tools now; untick one to remove it from the template."
+      },
+      "skills": {
+        "list": "Skills",
+        "none": "No skills.",
+        "pinned": "Preloaded",
+        "hint": "A template names its skills; creating an agent looks them up by name among the organization's skills and skips the ones it cannot find.",
+        "selectLabel": "Skills used",
+        "noOrgSkills": "The organization has no skills yet.",
+        "unreadable": "The organization's skills could not be read.",
+        "missing": "{name} (not in this organization; skipped on create)",
+        "tooMany": "At most {max} skills that are not preloaded.",
+        "pinLabel": "Preloaded",
+        "noneToPin": "Pick skills first, then choose which to preload.",
+        "pin": "Preload {name}",
+        "pinHint": "Preloaded skills go into every run's context; at most {max}."
+      },
+      "connectors": {
+        "list": "Connectors",
+        "none": "No connectors.",
+        "hint": "A template records which connectors it needs, never credentials. An agent created from it gets the organization's matching connectors; missing ones are marked to set up.",
+        "needsHint": "A needed connector records only its protocol, address and tools; the agent created from it marks it to set up, for someone who may configure connectors.",
+        "templateKind": "Connector template",
+        "needsKind": "Needs a connector · {protocol}",
+        "protocol": {
+          "mcp": "MCP",
+          "openapi": "OpenAPI"
+        },
+        "endpoint": "Address",
+        "tools": "Tools",
+        "allTools": "All tools",
+        "noTools": "None",
+        "policies": "Tool policies",
+        "label": "Name",
+        "protocolLabel": "Protocol",
+        "endpointHelp": "The connector's http(s) address, without credentials, a query or a fragment (they may hold credentials).",
+        "templateToolsHelp": "One tool name per line; leave empty for all of the connector's tools.",
+        "needsToolsHelp": "One tool name per line: the tools the agent uses.",
+        "endpointInvalid": "Enter an http(s) address (at most 2048 characters).",
+        "endpointCarries": "The address must not carry {parts}; they may hold credentials. Use: {clean}",
+        "part": {
+          "userinfo": "a user name or password",
+          "query": "a query",
+          "fragment": "a fragment"
+        },
+        "partSep": ", ",
+        "endpointRefused": "This address was not accepted. Check it and try again.",
+        "labelRequired": "Enter a name.",
+        "newNeeds": "New connector",
+        "remove": "Remove",
+        "removeLabel": "Remove {name}",
+        "addNeeds": "Add a needed connector",
+        "policiesKept": "{count, plural, one {# tool policy stays} other {# tool policies stay}} with this connector (for the tools still listed)."
+      },
+      "subagents": {
+        "list": "Sub-agents",
+        "none": "No sub-agents.",
+        "hint": "An agent created from it gets these sub-agents in its own roster; no separate agents are created.",
+        "general": "General-purpose sub-agent",
+        "typeKind": "Template type",
+        "inlineKind": "Inline",
+        "model": "Model tier",
+        "tools": "Tools",
+        "skills": "Skills",
+        "noSkills": "None",
+        "allTools": "All of the agent's tools",
+        "noTools": "No tools",
+        "toolsMode": {
+          "all": "All of the agent's tools",
+          "none": "No tools",
+          "list": "Listed tools"
+        },
+        "toolKeys": "Tools",
+        "toolKeysHelp": "One tool name per line (such as AskUserQuestion).",
+        "skillsHelp": "One skill name per line, at most {max}.",
+        "nameInvalid": "Use lowercase letters, digits and hyphens, starting with a letter or digit, at most 64 characters.",
+        "descriptionRequired": "Enter a description.",
+        "instructionsRequired": "Enter the instructions.",
+        "tooManySkills": "At most {max} skills.",
+        "tooMany": "At most {max} template types and inline sub-agents together.",
+        "typeUnavailable": "{type} (not available here)"
+      },
+      "off": {
+        "owner": "This template is switched off in this organization: members do not see it and cannot create agents from it.",
+        "ownerAdmin": "This template is switched off in this organization: members do not see it and cannot create agents from it. Switch it on to bring it back.",
+        "title": "This template is not on in this organization",
+        "hintAdmin": "Once it is on, members can read it and create agents from it.",
+        "hintPlugin": "It comes with a plugin that is not on in this organization. Turn the plugin on first.",
+        "hintLocked": "It cannot be switched on in this organization now.",
+        "hintMember": "Ask an organization admin to switch it on."
+      }
+    },
+    "saveAs": {
+      "action": "Save as template",
+      "title": "Save {name} as a template",
+      "name": "Template name",
+      "nameHelp": "Lowercase letters, digits and hyphens, starting with a letter or digit. It is also the sub-agent type and cannot change after saving.",
+      "nameRequired": "Enter a template name.",
+      "nameInvalid": "Use lowercase letters, digits and hyphens, starting with a letter or digit, at most 64 characters.",
+      "description": "Description",
+      "descriptionRequired": "Enter a description.",
+      "carried": "The prompt, model, tools, skills, connectors (which ones it needs, never credentials), sub-agents and quick actions go into the template, which the organization owns.",
+      "rosterLeftOut": "These organization agents in its sub-agents are not templates and are left out:",
+      "submit": "Save as template",
+      "close": "Close",
+      "taken": {
+        "own": "The organization already has a template of this name. Choose another name.",
+        "platform": "The platform already has a template of this name. Choose another name.",
+        "org": "A template shared by {org} already uses this name. Choose another name.",
+        "reserved": "{name} is a reserved name and cannot name a template.",
+        "unknown": "This name is taken. Choose another name."
+      },
+      "savedTitle": "Saved as template {name}",
+      "savedOmitted": "The template is saved. These were left out of it:",
+      "omittedLabel": "Left out",
+      "open": "Open template",
+      "line": "{what}: {why}",
+      "kind": {
+        "subagent_agent": "Sub-agent {name}",
+        "subagent_template": "Sub-agent template {name}",
+        "subagent_inline": "Inline sub-agent {name}",
+        "skill": "Skill {name}",
+        "connector": "Connector {name}",
+        "tool": "Tool {name}",
+        "tool_policy": "Tool policy {name}"
+      },
+      "field": {
+        "disallowedTools": "disallowed tools",
+        "toolPolicies": "tool policies",
+        "effort": "reasoning effort",
+        "maxSteps": "max steps",
+        "tools": "tools"
+      },
+      "reason": {
+        "org_agent": "it is an organization agent, not a template",
+        "unavailable": "it is no longer available",
+        "agent_skill": "it is a skill the agent wrote itself",
+        "no_endpoint": "it has no address to record",
+        "unsupported_protocol": "templates do not support its protocol",
+        "limit": "it is over a template limit",
+        "connector_tool": "it belongs to a connector the template does not carry",
+        "unsupported_field": "templates have no place for its {field} setting",
+        "other": "left out"
+      }
+    },
     "templates": {
       "listLabel": "Agent templates",
       "search": "Search templates",

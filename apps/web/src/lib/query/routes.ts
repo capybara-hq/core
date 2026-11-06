@@ -37,6 +37,8 @@ import {
   agentsQuery,
   agentTemplateQuery,
   agentTemplatesQuery,
+  availableExtensionPointsQuery,
+  extensionToolsQuery,
 } from "./agents";
 import { authSourcesQuery, invitationQuery, pendingBindingQuery } from "./auth";
 import { orgCatalogItemQuery, orgCatalogQuery, orgMarketplaceEntriesQuery } from "./catalog";
@@ -388,6 +390,34 @@ export const ROUTES: readonly RouteEntry[] = [
       orgId === null || !atLeast(me, "member")
         ? []
         : [...agentFormQueries(orgId), q(attachmentLimitsQuery(orgId))],
+  },
+  {
+    pattern: "/agents/templates/[id]",
+    // Members up (guests get no access): the template (a 404 when the org cannot use it) and the
+    // components offered to the org (a platform template off here, the connector templates'
+    // names; a section).
+    queries: ({ orgId, me, params }) =>
+      orgId === null || params.id === undefined || !atLeast(me, "member")
+        ? []
+        : [q(agentTemplateQuery(orgId, params.id)), q(orgComponentsQuery(orgId, {}))],
+    // An owner-org admin edits it: every section's reads (the models, the org skills, the
+    // enabled extensions' tools, which web tools the org can serve, the usable templates)
+    // biome-ignore lint/suspicious/noThenProperty: RouteEntry's `then` step (controller ruling)
+    then: async ({ orgId, params, me }, qc) => {
+      const id = params.id;
+      if (orgId === null || id === undefined || !atLeast(me, "admin")) return;
+      const t = qc.getQueryData<{ owned: boolean }>(agentTemplateQuery(orgId, id).queryKey);
+      if (t?.owned !== true) return;
+      await Promise.all(
+        [
+          q(modelsQuery(orgId)),
+          q(skillsQuery(orgId)),
+          q(extensionToolsQuery(orgId)),
+          q(availableExtensionPointsQuery(orgId)),
+          q(agentTemplatesQuery(orgId)),
+        ].map((o) => qc.prefetchQuery({ ...o, retry: false })),
+      );
+    },
   },
   {
     pattern: "/bind/[token]",
