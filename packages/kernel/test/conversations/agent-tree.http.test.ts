@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
+import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
@@ -320,6 +321,60 @@ describe("GET /conversations/:id/agent-tree", () => {
     expect(r.body).not.toContain(l1);
     const unknown = await getTree(owner, "00000000-0000-4000-8000-000000000000");
     expect(unknown.statusCode).toBe(404);
+  }, 90_000);
+});
+
+describe("GET /conversations/:id/agent-tree edge cases", () => {
+  it("a usage event without some token fields still counts the fields it has", async () => {
+    const { conv, l1, l2 } = await tree();
+    const leafOf = async () =>
+      ((await getTree(owner, conv)).json() as { root: AgentTreeNode }).root.children[0]
+        ?.children[0] as AgentTreeNode;
+    const before = await leafOf();
+    expect(before.id).toBe(l2);
+    expect(l1).not.toBe(l2);
+    const run = await db
+      .selectFrom("runs")
+      .select("id")
+      .where("conversation_id", "=", l2)
+      .executeTakeFirstOrThrow();
+    // an older or partial usage record: no cache fields at all
+    await sql`
+      INSERT INTO capybara.conversation_events (conversation_id, seq, type, run_id, payload)
+      SELECT ${l2}, coalesce(max(seq), 0) + 1, 'usage', ${run.id},
+        ${JSON.stringify({ provider: "model-script", model: "script-1", inputTokens: 7, outputTokens: 5 })}::jsonb
+      FROM capybara.conversation_events WHERE conversation_id = ${l2}
+    `.execute(db);
+    expect((await leafOf()).tokens).toBe(before.tokens + 12);
+  }, 90_000);
+
+  it("another org's id, a deleted root and a root whose agent the viewer cannot see are 404", async () => {
+    const { conv } = await tree();
+    const notFound = (r: Awaited<ReturnType<typeof getTree>>) => {
+      expect(r.statusCode, r.body).toBe(404);
+      expect(r.json()).toMatchObject({ error: { code: "conversation.not_found" } });
+    };
+    // the owner is a member of a second org: the root is not found through it
+    const otherOrg = await createOrg(owner, "Beta");
+    notFound(
+      await owner({
+        method: "GET",
+        url: `/api/v1/orgs/${otherOrg}/conversations/${conv}/agent-tree`,
+      }),
+    );
+    // a root the member owns, whose agent then stops being visible to the member
+    const mine = await createConv(member, orgId, agentId);
+    expect((await getTree(member, mine)).statusCode).toBe(200);
+    await db
+      .updateTable("agents")
+      .set({ visibility: "members" })
+      .where("id", "=", agentId)
+      .execute();
+    notFound(await getTree(member, mine));
+    // a deleted root
+    const del = await owner({ method: "DELETE", url: `${base()}/${conv}` });
+    expect(del.statusCode, del.body).toBe(204);
+    notFound(await getTree(owner, conv));
   }, 90_000);
 });
 

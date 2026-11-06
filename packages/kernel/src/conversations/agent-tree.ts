@@ -11,7 +11,10 @@ export interface AgentTreeNode {
   id: string;
   /** A sub-agent's dispatched description; the root's title ("" before it has one). */
   description: string;
-  /** The sub-agent type; null for the root. */
+  /**
+   * The sub-agent type (`conversations.subagent_type`, set at the first dispatch); null for the
+   * root, and for a sub-agent row that has none (the column is nullable; no sentinel is invented).
+   */
   agentType: string | null;
   /**
    * The latest run's status; `idle` when no run is active and the latest run completed (or the
@@ -55,8 +58,9 @@ interface NodeRow {
 /**
  * The agent tree of the root conversation `rootId` of org `orgId`: null when it is not a root
  * chat conversation of that org. The tree's ids come from {@link conversationTree} (one recursive
- * query); one more query reads every node's numbers. A sub-agent conversation without a dispatch
- * row is left out, with its subtree. Call only after an access check of the root.
+ * query); one more query reads every node's numbers. A deleted conversation, and a sub-agent
+ * conversation without a dispatch row, is left out with its subtree. Call only after an access
+ * check of the root.
  */
 export async function readAgentTree(
   db: KernelSchemaDb,
@@ -83,8 +87,10 @@ export async function readAgentTree(
       (SELECT count(*) FROM capybara.conversation_events e
         WHERE e.conversation_id = c.id AND e.type = 'tool_result') AS tool_calls,
       (SELECT coalesce(sum(
-          (e.payload->>'inputTokens')::bigint + (e.payload->>'outputTokens')::bigint
-          + (e.payload->>'cacheReadTokens')::bigint + (e.payload->>'cacheWriteTokens')::bigint
+          coalesce((e.payload->>'inputTokens')::bigint, 0)
+          + coalesce((e.payload->>'outputTokens')::bigint, 0)
+          + coalesce((e.payload->>'cacheReadTokens')::bigint, 0)
+          + coalesce((e.payload->>'cacheWriteTokens')::bigint, 0)
         ), 0)
         FROM capybara.conversation_events e
         WHERE e.conversation_id = c.id AND e.type = 'usage' AND e.run_id IS NOT NULL) AS tokens
@@ -101,7 +107,7 @@ export async function readAgentTree(
           FILTER (WHERE r.started_at IS NOT NULL), 0)::bigint AS duration_ms
       FROM capybara.runs r WHERE r.conversation_id = c.id
     ) runs
-    WHERE c.id IN (${sql.join(ids)}) AND c.org_id = ${orgId}
+    WHERE c.id IN (${sql.join(ids)}) AND c.org_id = ${orgId} AND c.deleted_at IS NULL
       AND (
         (c.id = ${rootId} AND c.kind = 'chat' AND c.parent_conversation_id IS NULL)
         OR (c.id <> ${rootId} AND c.kind = 'subagent' AND EXISTS (
@@ -128,7 +134,7 @@ function toNode(r: NodeRow, isRoot: boolean): AgentTreeNode {
   return {
     id: r.id,
     description: (isRoot ? r.title : (r.description ?? r.title)) ?? "",
-    agentType: isRoot ? null : (r.subagent_type ?? ""),
+    agentType: isRoot ? null : r.subagent_type,
     status,
     model: modelOf(r.run_model ?? r.dispatched_model),
     startedAt: r.started_at?.toISOString() ?? null,
