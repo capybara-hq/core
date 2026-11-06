@@ -58,7 +58,13 @@ export function Tabs({ items, value, onChange, label }: TabsProps) {
   // no focus is dropped on pointerup or the next tick, and a later keyboard focus keeps its ring.
   const [pointerFocus, setPointerFocus] = useState<string | null>(null);
   const pressed = useRef<string | null>(null);
-  const press = (id: string) => {
+  const press = (id: string, el: HTMLElement) => {
+    // A press on the tab that already has focus moves no focus, so no focus event comes: Chrome
+    // keeps that focus's keyboard origin (and its ring), so the mark is set at once.
+    if (document.activeElement === el) {
+      setPointerFocus(id);
+      return;
+    }
     pressed.current = id;
     setTimeout(() => {
       if (pressed.current === id) pressed.current = null;
@@ -138,7 +144,7 @@ export function Tabs({ items, value, onChange, label }: TabsProps) {
             disabled={it.disabled}
             data-state={selected ? "selected" : undefined}
             data-pointer-focus={pointerFocus === it.id ? "true" : undefined}
-            onPointerDown={() => press(it.id)}
+            onPointerDown={(e) => press(it.id, e.currentTarget)}
             onPointerUp={() => {
               pressed.current = null;
             }}

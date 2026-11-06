@@ -218,6 +218,15 @@ describe("Tabs: no focus ring after a pointer (issue Y)", () => {
     expect(document.activeElement).toBe(after);
     expect(b.getAttribute("data-pointer-focus")).toBeNull();
   });
+  it("a click on a tab that already has keyboard focus marks it (the focus does not move)", async () => {
+    wrap(<Stateful />);
+    const a = screen.getByRole("tab", { name: "A" });
+    act(() => a.focus());
+    expect(a.getAttribute("data-pointer-focus")).toBeNull();
+    await userEvent.click(a);
+    expect(document.activeElement).toBe(a);
+    expect(a.getAttribute("data-pointer-focus")).toBe("true");
+  });
   it("a modifier key alone keeps the mark (the browser does not count it as keyboard use)", async () => {
     wrap(<Stateful />);
     const b = screen.getByRole("tab", { name: "B" });
