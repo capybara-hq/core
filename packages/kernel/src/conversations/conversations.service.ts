@@ -18,6 +18,7 @@ import { rootConversationOf } from "../runtime/subagents/child.js";
 import { type RenderedInvocation, SkillInvoker } from "../skills/invoke.js";
 import { ConnectorContent } from "../tools/connector-content.js";
 import { ConversationAccess, parentReachable } from "./access.js";
+import { type AgentTreeNode, readAgentTree } from "./agent-tree.js";
 import { AttachmentsService } from "./attachments.service.js";
 import { type AppendEvent, EventLog } from "./event-log.js";
 import type { ConversationEvent, LogContentBlock } from "./events.js";
@@ -852,6 +853,22 @@ export class ConversationsService {
     );
     const next = rows.length > opts.limit ? (subagents.at(-1)?.id ?? null) : null;
     return { subagents, next };
+  }
+
+  /**
+   * The agent tree of a root conversation (agent map spec §8, §9.2): the root and every sub-agent
+   * below it with status, model, time, tokens and tool calls. Owner only, as {@link isAccessible};
+   * a sub-agent's id (not a root) is `conversation.not_found` too.
+   */
+  async agentTree(
+    orgId: string,
+    conversationId: string,
+    viewerAccountId: string,
+  ): Promise<{ root: AgentTreeNode }> {
+    if (!(await this.isAccessible(orgId, conversationId, viewerAccountId))) throw notFound();
+    const root = await readAgentTree(this.db.db, orgId, conversationId);
+    if (!root) throw notFound();
+    return { root };
   }
 
   /**

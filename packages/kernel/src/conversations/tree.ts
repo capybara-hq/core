@@ -28,3 +28,25 @@ export async function conversationTree(
     SELECT id, level FROM tree ORDER BY level, id`.execute(db);
   return r.rows;
 }
+
+/**
+ * The ancestors of a conversation (agent map spec §8: live progress reaches every level above a
+ * sub-agent), nearest first: its parent, the parent's parent and so on up to the root, through
+ * `conversations.parent_conversation_id`. Empty for a root or an unknown id.
+ */
+export async function conversationAncestors(
+  db: KernelSchemaDb,
+  conversationId: string,
+): Promise<string[]> {
+  const r = await sql<{ id: string }>`
+    WITH RECURSIVE up(id, parent, level) AS (
+      SELECT c.id, c.parent_conversation_id, 0 FROM capybara.conversations c
+      WHERE c.id = ${conversationId}
+      UNION ALL
+      SELECT c.id, c.parent_conversation_id, up.level + 1
+      FROM capybara.conversations c JOIN up ON c.id = up.parent
+      WHERE up.level < ${TREE_MAX_LEVELS}
+    )
+    SELECT id FROM up WHERE level > 0 ORDER BY level`.execute(db);
+  return r.rows.map((row) => row.id);
+}

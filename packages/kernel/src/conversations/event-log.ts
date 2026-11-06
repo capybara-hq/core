@@ -60,9 +60,10 @@ export const conversationTopic = (conversationId: string): string => `conv.${con
  *   中途才订阅的一方据此判断自己是否从头收到了该步的文本（渠道出站投递只在完整时发草稿）；
  * - `ui`：插件经 `ctx.ui.invalidate` 告知这个会话的某个界面贡献变了（不进日志、不是模型可见内容），
  *   SSE 转发为 `event: ui`，网页据此重新取视图。
- * - `subagent_progress`: after each step of a sub-agent run, on its **parent's** topic (sub-agents
- *   spec §14.2): the child's step and tool call count so far, and its last tool's key. Not in any
- *   log; the SSE forwards it as `event: subagent_progress` (data without `kind`).
+ * - `subagent_progress`: after each step of a sub-agent run, on the topic of **every ancestor**
+ *   (sub-agents spec §14.2, agent map spec §8), `subagentId` the progressing agent: its step and
+ *   tool call count so far, and its last tool's key. Not in any log; the SSE forwards it as
+ *   `event: subagent_progress` (data without `kind`).
  */
 export type ConversationBusMessage =
   | { kind: "events"; toSeq: number }

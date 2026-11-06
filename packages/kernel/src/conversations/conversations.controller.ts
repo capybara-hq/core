@@ -25,6 +25,7 @@ import {
   TOOL_INFO_MAX_KEYS,
   type ToolInfo,
 } from "../tools/info.js";
+import type { AgentTreeNode } from "./agent-tree.js";
 import {
   ARTIFACT_DOWNLOAD_CACHE_SECONDS,
   type ArtifactPreview,
@@ -448,6 +449,23 @@ export class ConversationsController {
       limit: q.limit,
       ...(q.after !== undefined && { after: q.after }),
     });
+  }
+
+  /**
+   * The agent tree of a root conversation (agent map spec §8, §9.2): `{ root }`, each node with its
+   * status, model, time, tokens, tool calls and children. Owner only; a sub-agent's id is
+   * `conversation.not_found`.
+   */
+  @Get(":id/agent-tree")
+  @Header("cache-control", "private, no-store")
+  @OrgAction("agents.use")
+  async agentTree(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @ZParam(ConversationIdParamsDto) { id }: z.infer<typeof IdParams>,
+  ): Promise<{ root: AgentTreeNode }> {
+    const p = requireUser(principal);
+    return this.conversations.agentTree(org.orgId, id, p.account.id);
   }
 
   /**
