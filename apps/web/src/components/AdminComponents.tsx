@@ -183,7 +183,7 @@ export function ComponentCard({ c, orgId }: { c: PlatformComponent; orgId: strin
   const t = useTranslations("adminComponents");
   const scopeText = useComponentScopeText();
   const ownerText = useOwnerText();
-  const { menu, dialog } = useComponentActions(c, orgId);
+  const { menu, dialog } = useComponentActions(c, orgId, { inList: true });
   const href = `${COMPONENT_ROUTES[c.kind]}/${encodeURIComponent(c.id)}`;
   return (
     <>
@@ -296,7 +296,9 @@ export function ComponentOrgs({ c }: { c: PlatformComponent }) {
 export function useComponentActions(
   c: PlatformComponent,
   orgId: string | null,
+  opts: { inList?: boolean } = {},
 ): { actions: HeaderAction[]; menu: MenuItem[]; dialog: ReactNode } {
+  // From a list (`inList`, the admin cards) a promotion moves nowhere: the list is read again
   const t = useTranslations("adminComponents.detail");
   const ts = useTranslations("adminComponents.share");
   const toast = useToast();
@@ -322,11 +324,13 @@ export function useComponentActions(
         label: t("actions.enable"),
         variant: "default",
         loading: enable.isPending,
-        onSelect: () =>
+        onSelect: () => {
+          if (enable.isPending) return;
           void enable.mutateAsync(undefined).then(
             () => toast.success(t("enabledToast", { name: c.name })),
             (e: unknown) => toast.error(errorMessage(e)),
-          ),
+          );
+        },
       }
     : { label: t("actions.disable"), variant: "default", onSelect: () => setOpen("disable") };
   const uploadAction: HeaderAction = {
@@ -339,14 +343,16 @@ export function useComponentActions(
     label: ts("show"),
     variant: "default",
     loading: show.isPending,
-    onSelect: () =>
+    onSelect: () => {
+      if (show.isPending) return;
       void show.mutateAsync(undefined).then(
         (r) => {
           toast.success(ts("shownToast", { name: c.name }));
-          moveTo(router, c, r);
+          if (opts.inList !== true) moveTo(router, c, r);
         },
         (e: unknown) => toast.error(errorMessage(e)),
-      ),
+      );
+    },
   };
   const platform = platformOwned(c);
   const shared = !platform && shareBlockOf(c) === null;
@@ -361,23 +367,39 @@ export function useComponentActions(
     ...(platform && c.kind !== "connector_template" ? [uploadAction] : []),
   ];
   // The same actions as a card's ⋯ menu (ruling P4-17): 上传新版本 stays on the detail, and 停用
-  // is the menu's destructive item, last
+  // is the menu's destructive item, last. A running call disables its item (and the call guards
+  // itself), so it never fires twice.
   const menu: MenuItem[] = [
     ...(shared && c.scope === "named" && !c.shownToOthers
-      ? [{ label: ts("show"), onSelect: showAction.onSelect ?? (() => {}) }]
+      ? [
+          {
+            label: ts("show"),
+            disabled: show.isPending,
+            onSelect: showAction.onSelect ?? (() => {}),
+          },
+        ]
       : []),
     ...(scope ? [{ label: t("actions.scope"), onSelect: () => setOpen("scope") }] : []),
     ...(disable
       ? [
           c.disabled
-            ? { label: t("actions.enable"), onSelect: disableAction.onSelect ?? (() => {}) }
+            ? {
+                label: t("actions.enable"),
+                disabled: enable.isPending,
+                onSelect: disableAction.onSelect ?? (() => {}),
+              }
             : { label: t("actions.disable"), danger: true, onSelect: () => setOpen("disable") },
         ]
       : []),
   ];
   const dialog =
     open === "scope" ? (
-      <ComponentScopeDialog component={c} orgId={orgId} onClose={close} />
+      <ComponentScopeDialog
+        component={c}
+        orgId={orgId}
+        onClose={close}
+        stay={opts.inList === true}
+      />
     ) : open === "disable" ? (
       <ComponentDisableDialog component={c} orgId={orgId} onClose={close} />
     ) : open === "upload" ? (

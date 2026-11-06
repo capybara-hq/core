@@ -504,15 +504,15 @@ describe("agents: edit, read-only and 更改所有者", () => {
     );
   });
 
-  // The card's ⋯ holds the agent page's actions (ruling P4-16): 设置 for whoever may change it,
-  // 运行记录 for org admins and a member owner, 更改所有者 for org admins; 另存为模板 is not offered
-  // yet (its dialog comes with the template page). A menu of one is a second button.
+  // The card's ⋯ (ruling P4-16 as amended): 设置 for whoever may change it, 运行记录 for org admins
+  // and a member owner; the owner is changed on the agent page only, never from the list
+  // (acceptance item P), for any role. A menu of one is a second button.
   const cardCases: [OrgRole, string, string[]][] = [
     ["guest", "someone", []],
     ["member", "someone", []],
     ["member", "a1", [zh.agents.settings, zh.agents.runHistory]],
-    ["admin", "someone", [zh.agents.settings, zh.agents.runHistory, zh.agents.page.reassign]],
-    ["owner", "someone", [zh.agents.settings, zh.agents.runHistory, zh.agents.page.reassign]],
+    ["admin", "someone", [zh.agents.settings, zh.agents.runHistory]],
+    ["owner", "someone", [zh.agents.settings, zh.agents.runHistory]],
   ];
   for (const [role, owner, items] of cardCases) {
     it(`agent card · ${role}${owner === "a1" ? " (its owner)" : ""}: 开始会话, the card opens the agent, ⋯ ${items.length === 0 ? "none" : items.join(" / ")}`, async () => {
@@ -535,12 +535,11 @@ describe("agents: edit, read-only and 更改所有者", () => {
       }
       const user = userEvent.setup();
       await user.click(more as HTMLElement);
-      expect((await screen.findAllByRole("menuitem")).map((i) => i.textContent)).toEqual(items);
-      expect(screen.queryByRole("menuitem", { name: "另存为模板" })).toBeNull();
-      if (items.includes(zh.agents.page.reassign)) {
-        await user.click(screen.getByRole("menuitem", { name: zh.agents.page.reassign }));
-        expect(await screen.findByRole("dialog", { name: zh.agents.reassign.title })).toBeTruthy();
-      } else await user.keyboard("{Escape}");
+      const menu = (await screen.findAllByRole("menuitem")).map((i) => i.textContent);
+      // the leading items; 另存为模板 (org admins) may follow them
+      expect(menu.slice(0, items.length)).toEqual(items);
+      expect(screen.queryByRole("menuitem", { name: zh.agents.page.reassign })).toBeNull();
+      await user.keyboard("{Escape}");
     });
   }
 

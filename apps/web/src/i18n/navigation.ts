@@ -3,6 +3,7 @@ import {
   redirect as nextRedirect,
   usePathname as nextUsePathname,
   useRouter as nextUseRouter,
+  useSearchParams as nextUseSearchParams,
 } from "next/navigation";
 
 /**
@@ -12,4 +13,5 @@ import {
 export const Link = NextLink;
 export const usePathname = nextUsePathname;
 export const useRouter = nextUseRouter;
+export const useSearchParams = nextUseSearchParams;
 export const redirect = nextRedirect;

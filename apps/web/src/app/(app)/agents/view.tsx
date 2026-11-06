@@ -16,7 +16,7 @@ import { FormError } from "../../../components/form-error";
 import { NoAccess } from "../../../components/NoAccess";
 import { navLevelOf } from "../../../components/shell/nav";
 import { usePagePath } from "../../../components/shell/path";
-import type { AgentsTab } from "../../../lib/agents";
+import { type AgentsTab, parseAgentsTab } from "../../../lib/agents";
 import { usableRows } from "../../../lib/components";
 import { canUpdateOrg } from "../../../lib/org-settings";
 import { agentsQuery, agentTemplatesQuery } from "../../../lib/query/agents";
@@ -26,6 +26,7 @@ import { membersQuery } from "../../../lib/query/members";
 import { usePageQuery } from "../../../lib/query/page-query";
 import { useWorkspace } from "../../../lib/query/workspace";
 import type { Me } from "../../../lib/session";
+import { useUrlTab } from "../../../lib/url-tab";
 import NotFound from "../not-found";
 
 /**
@@ -43,32 +44,30 @@ export default function AgentsView({ tab = "agents" }: { tab?: AgentsTab }) {
   return <Agents orgId={ws.orgId} me={ws.me} initialTab={tab} />;
 }
 
-/** The open tab, kept in the address (`?tab=templates`; 智能体 is the bare `/agents`). */
 /** The page head both tabs share; each adds the path. */
 type Head = Omit<PageHeaderProps, "path">;
 
+/**
+ * The open tab, kept in the address (`?tab=templates`; 智能体 is the bare `/agents`), following it
+ * on a navigation too (the sidebar's 智能体 while 模板 is open goes back to 智能体).
+ */
 function useAgentsTab(initial: AgentsTab): [AgentsTab, (t: AgentsTab) => void] {
-  const [tab, setTab] = useState<AgentsTab>(initial);
-  const select = (next: AgentsTab) => {
-    setTab(next);
-    // In an event handler, never during render (web-ssr-location).
-    const url = new URL(window.location.href);
-    if (next === "agents") url.searchParams.delete("tab");
-    else url.searchParams.set("tab", next);
-    window.history.replaceState(window.history.state, "", url.pathname + url.search + url.hash);
-  };
-  return [tab, select];
+  return useUrlTab(initial, parseAgentsTab, "agents");
 }
 
 function Agents({ orgId, me, initialTab }: { orgId: string; me: Me; initialTab: AgentsTab }) {
   const t = useTranslations("agents");
   // agents.create is for members up: guests never see 新建 nor the templates (R1, P4-14)
   const member = navLevelOf(me) !== "guest";
-  const [tab, setTab] = useAgentsTab(member ? initialTab : "agents");
+  const [urlTab, setTab] = useAgentsTab(member ? initialTab : "agents");
+  const tab = member ? urlTab : "agents";
   const [query, setQuery] = useState("");
+  // The agents' filter lives here, so it survives a switch to 模板 and back
+  const [filter, setFilter] = useState<AgentScope>("all");
   // Both counts for the head's tabs: the open tab's list is its page read, the other tab's the
   // same cache entry (prefetched for members up)
-  const agentCount = useQuery(agentsQuery(orgId)).data?.agents.length;
+  const agents = useQuery(agentsQuery(orgId));
+  const agentCount = agents.data?.agents.length;
   const templates = useQuery({ ...agentTemplatesQuery(orgId), enabled: member });
   const cq = orgComponentsQuery(orgId, { kind: "agent_template" });
   const offered = useQuery({
@@ -96,16 +95,14 @@ function Agents({ orgId, me, initialTab }: { orgId: string; me: Me; initialTab: 
             {
               id: "agents",
               label: t("pageTabs.agents"),
-              // the open tab counts (a dash while it loads); the other once it is known
-              ...(agentCount !== undefined || tab === "agents" ? { count: agentCount ?? 0 } : {}),
+              // a count once known; the open tab's dash while it loads; none when it failed
+              ...countOf(agentCount, tab === "agents" && agents.isPending),
               onSelect: () => switchTo("agents"),
             },
             {
               id: "templates",
               label: t("pageTabs.templates"),
-              ...(templateCount !== undefined || tab === "templates"
-                ? { count: templateCount ?? 0 }
-                : {}),
+              ...countOf(templateCount, tab === "templates" && templates.isPending),
               onSelect: () => switchTo("templates"),
             },
           ],
@@ -126,10 +123,19 @@ function Agents({ orgId, me, initialTab }: { orgId: string; me: Me; initialTab: 
       me={me}
       head={head}
       query={query}
+      filter={filter}
+      onFilter={setFilter}
       newAgent={member ? newAgent : undefined}
     />
   );
 }
+
+/**
+ * A head tab's count: the number once its list is known, a dash (`0` while the page loads) for the
+ * open tab still on its way, nothing otherwise (a list that failed shows no count, never 0).
+ */
+const countOf = (n: number | undefined, loading: boolean): { count?: number } =>
+  n !== undefined ? { count: n } : loading ? { count: 0 } : {};
 
 /** A tab whose list could not be read: the head and its tabs stay, the list says so with 重试. */
 function useTabError(): (retry: () => void) => EmptyStateProps {
@@ -151,12 +157,16 @@ function AgentsTabList({
   me,
   head,
   query,
+  filter,
+  onFilter,
   newAgent,
 }: {
   orgId: string;
   me: Me;
   head: Head;
   query: string;
+  filter: AgentScope;
+  onFilter(f: AgentScope): void;
   newAgent: { label: string; variant: "primary"; href: string } | undefined;
 }) {
   const scope = usePagePath("org");
@@ -169,13 +179,12 @@ function AgentsTabList({
     enabled: navLevelOf(me) !== "guest",
     retryOnMount: retryOnMountOf(mq.queryKey),
   });
-  const [filter, setFilter] = useState<AgentScope>("all");
   if (list.kind === "notFound") return <NotFound />;
   const filters = (
     <Segmented
       label={t("filter")}
       value={filter}
-      onChange={(v) => setFilter(v as AgentScope)}
+      onChange={(v) => onFilter(v as AgentScope)}
       options={(["all", "mine", "shared"] as const).map((id) => ({
         value: id,
         label: t(`tabs.${id}`),

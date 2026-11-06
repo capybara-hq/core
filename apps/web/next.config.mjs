@@ -39,18 +39,19 @@ const nextConfig = {
         permanent: true,
       },
     ]),
-    // 智能体模板 became the 模板 tab of /agents and its detail the template page (ruling P4-14)
-    { source: "/agent-templates", destination: "/agents?tab=templates", permanent: true },
+    // 智能体模板 became the 模板 tab of /agents and its detail the template page (ruling P4-14).
+    // Temporary: /agent-templates never shipped in a release, so no browser should cache the move.
+    { source: "/agent-templates", destination: "/agents?tab=templates", permanent: false },
     {
       source: "/:locale(zh|en)/agent-templates",
       destination: "/:locale/agents?tab=templates",
-      permanent: true,
+      permanent: false,
     },
-    { source: "/agent-templates/:id", destination: "/agents/templates/:id", permanent: true },
+    { source: "/agent-templates/:id", destination: "/agents/templates/:id", permanent: false },
     {
       source: "/:locale(zh|en)/agent-templates/:id",
       destination: "/:locale/agents/templates/:id",
-      permanent: true,
+      permanent: false,
     },
   ],
 };

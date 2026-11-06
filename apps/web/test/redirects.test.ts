@@ -44,7 +44,8 @@ describe("next.config redirects", () => {
       ["/agent-templates/:id", "/agents/templates/:id"],
       ["/:locale(zh|en)/agent-templates/:id", "/:locale/agents/templates/:id"],
     ]) {
-      expect(redirects).toContainEqual({ source, destination, permanent: true });
+      // temporary (307): the old path never shipped, so no browser keeps the move
+      expect(redirects).toContainEqual({ source, destination, permanent: false });
     }
     // no page answers there any more: the redirects are the only answer
     const app = join(dirname(fileURLToPath(import.meta.url)), "../src/app/(app)");

@@ -102,7 +102,7 @@ describe("@capybara-hq/design/fixtures", () => {
     expect(fixtures.NAV_FIXTURE.filter((n) => n.place === "more").map((n) => n.id)).toEqual([
       "plugins",
       "extensions",
-      "agent-templates",
+      // 智能体模板 is the 模板 tab of 智能体, no 更多 item (ruling P4-14)
       "channels",
       "evals",
       "settings",
