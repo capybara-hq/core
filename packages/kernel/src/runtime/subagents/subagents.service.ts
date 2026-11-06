@@ -24,6 +24,7 @@ import {
   type DispatchPlan,
   dispatchSubagent,
 } from "./dispatch.js";
+import { SubagentMessages } from "./messages.js";
 import { publishSubagentProgress, type SubagentStep } from "./progress.js";
 import { liveSkillForks, type SkillForkDeps, type SkillForks } from "./skill-fork.js";
 
@@ -91,10 +92,13 @@ export class SubagentsService {
   }
 }
 
-/** Sub-agent dispatch and deliveries (the tools domain's `Agent` tool, the run loop, the waits). */
+/**
+ * Sub-agent dispatch, deliveries and messages (the tools domain's `Agent`, `SendMessage` and
+ * `SubagentHandback`, the run loop, the waits).
+ */
 @Module({
   imports: [EventLogModule, ModelsModule, ProvidersModule, RunJobsModule, SkillsModule],
-  providers: [SubagentsService, SubagentDeliveries],
-  exports: [SubagentsService, SubagentDeliveries],
+  providers: [SubagentsService, SubagentDeliveries, SubagentMessages],
+  exports: [SubagentsService, SubagentDeliveries, SubagentMessages],
 })
 export class SubagentsModule {}

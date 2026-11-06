@@ -22,6 +22,8 @@ export const BUILTIN = {
   ReadToolOutput: "ReadToolOutput",
   ToolSearch: "ToolSearch",
   Agent: "Agent",
+  SendMessage: "SendMessage",
+  SubagentHandback: "SubagentHandback",
   TaskOutput: "TaskOutput",
   TaskStop: "TaskStop",
   WebSearch: "WebSearch",
@@ -71,7 +73,8 @@ export const SANDBOX_ASK_TOOL_NAMES: ReadonlySet<string> = new Set<string>([
  * Every builtin name. Saving an agent checks builtin refs against this list, not against what is
  * registered now, so the order the implementations land in never affects a saved definition.
  * `SkillWrite` is available only when a definition names it; `ToolSearch` and `Skill` are added
- * by the registry; `Agent` dispatches sub-agents and its description is built per agent.
+ * by the registry; `Agent` dispatches sub-agents and its description is built per agent;
+ * `SendMessage` and `SubagentHandback` are added by the registry ({@link SUBAGENT_MESSAGE_TOOLS}).
  */
 export const BUILTIN_TOOL_NAMES: readonly BuiltinName[] = [
   BUILTIN.AskUserQuestion,
@@ -81,6 +84,8 @@ export const BUILTIN_TOOL_NAMES: readonly BuiltinName[] = [
   BUILTIN.SkillWrite,
   ...SANDBOX_TOOL_NAMES,
   BUILTIN.Agent,
+  BUILTIN.SendMessage,
+  BUILTIN.SubagentHandback,
   ...WEB_TOOL_NAMES,
 ];
 
@@ -90,6 +95,20 @@ export const SKILL_LOAD = BUILTIN.Skill;
 export const TOOL_SEARCH = BUILTIN.ToolSearch;
 /** The builtin that dispatches sub-agents. */
 export const AGENT_TOOL = BUILTIN.Agent;
+/** The builtin that sends a message to one of the caller's sub-agents or to its parent. */
+export const SEND_MESSAGE = BUILTIN.SendMessage;
+/** The builtin that hands a sub-agent's report back to its parent (sub-agents only). */
+export const SUBAGENT_HANDBACK = BUILTIN.SubagentHandback;
+
+/**
+ * The tools between the agents of one tree (agent map spec §4.2, §4.3), added by the registry
+ * whatever a definition names: `SendMessage` to an agent that has `Agent` or a parent, and
+ * `SubagentHandback` to a sub-agent. A definition's ref to either is ignored.
+ */
+export const SUBAGENT_MESSAGE_TOOLS: ReadonlySet<string> = new Set<string>([
+  SEND_MESSAGE,
+  SUBAGENT_HANDBACK,
+]);
 
 /**
  * Tool keys on the spec 3.6 R3 fixed list ("allowed is not confirmed"): their policy is at least
@@ -142,6 +161,8 @@ export const BUILTIN_TOOL_KINDS: Readonly<Record<string, ToolKind>> = {
   [BUILTIN.SkillWrite]: "meta",
   [BUILTIN.ReadToolOutput]: "meta",
   [BUILTIN.AskUserQuestion]: "meta",
+  [BUILTIN.SendMessage]: "meta",
+  [BUILTIN.SubagentHandback]: "meta",
   [BUILTIN.WebSearch]: "search",
   [BUILTIN.WebFetch]: "read",
 };

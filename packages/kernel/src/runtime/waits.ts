@@ -1244,8 +1244,12 @@ export class Waits implements OnApplicationShutdown {
       } finally {
         // a background child that ended on its own keeps its tasks: their finish wakes it (agent
         // map spec §5.3); a stopped one's tasks all stop with it, also those an earlier run of it
-        // started, so none of them wakes it. Never throws.
-        if (run.status === "aborted") {
+        // started, so none of them wakes it. Not once a later run of it exists (a `SendMessage`
+        // started it again before this late call): the tasks are that run's now. Never throws.
+        if (
+          run.status === "aborted" &&
+          !(await this.hasLaterRun(row.childConversationId, childRunId))
+        ) {
           await this.background.stopSubagentTasks(row.childConversationId);
         }
       }
@@ -1265,6 +1269,31 @@ export class Waits implements OnApplicationShutdown {
       // any more (background Bash spec §4.3); a background child's are handled above. Never throws.
       await this.background.stopSubagentTasks(row.childConversationId, childRunId);
     }
+  }
+
+  /**
+   * Whether the conversation has an active run other than `runId`, or one created after it (a
+   * sub-agent started again after `runId` ended).
+   */
+  private async hasLaterRun(conversationId: string, runId: string): Promise<boolean> {
+    const hit = await this.db
+      .selectFrom("runs as r")
+      .select("r.id")
+      .where("r.conversation_id", "=", conversationId)
+      .where("r.id", "<>", runId)
+      .where((eb) =>
+        eb.or([
+          eb("r.status", "in", ACTIVE_RUN_STATUSES),
+          eb(
+            "r.created_at",
+            ">",
+            eb.selectFrom("runs as o").select("o.created_at").where("o.id", "=", runId),
+          ),
+        ]),
+      )
+      .limit(1)
+      .executeTakeFirst();
+    return hit !== undefined;
   }
 
   /**

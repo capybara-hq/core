@@ -27,7 +27,10 @@ import {
   BASH_COMPANION_TOOLS,
   BUILTIN,
   BUILTIN_TOOL_NAMES,
+  SEND_MESSAGE,
   SKILL_LOAD,
+  SUBAGENT_HANDBACK,
+  SUBAGENT_MESSAGE_TOOLS,
   TOOL_SEARCH,
 } from "./builtin-names.js";
 import { agentToolSpec } from "./builtins/agent.js";
@@ -423,9 +426,24 @@ export class ToolRegistry {
       skillLoad?: boolean;
       /** The definition's sub-agent roster source: the `Agent` tool's description lists it. */
       subagents?: AgentDefinition["subagents"];
+      /**
+       * The run is a sub-agent's (it has a parent): it gets `SendMessage` (to reach its parent)
+       * and `SubagentHandback` whatever its definition names (agent map spec §4.2, §4.3).
+       */
+      child?: boolean;
     },
   ): Promise<AgentTools> {
     const { tools, unavailable, hidden } = await this.resolve(orgId, def);
+    // `SendMessage` to an agent that has `Agent` (to reach its sub-agents) or a parent;
+    // `SubagentHandback` to a sub-agent only
+    const messageTools = [
+      ...(def.child === true || tools.some((t) => t.key === AGENT_TOOL) ? [SEND_MESSAGE] : []),
+      ...(def.child === true ? [SUBAGENT_HANDBACK] : []),
+    ];
+    for (const name of messageTools) {
+      const b = this.builtins.find((x) => x.spec.name === name);
+      if (b) tools.push(builtinTool(b, b.spec));
+    }
     const sl = def.skillLoad === true && this.builtins.find((x) => x.spec.name === SKILL_LOAD);
     if (sl) {
       tools.push({
@@ -496,6 +514,7 @@ export class ToolRegistry {
     for (const ref of def.tools) {
       if (ref.kind === "builtin") {
         if (ref.name === TOOL_SEARCH || ref.name === SKILL_LOAD) continue;
+        if (SUBAGENT_MESSAGE_TOOLS.has(ref.name)) continue;
         const b = this.builtins.find((x) => x.spec.name === ref.name);
         if (!b) {
           unavailable.push({ ref: ref.name, reason: "Built-in tool does not exist" });

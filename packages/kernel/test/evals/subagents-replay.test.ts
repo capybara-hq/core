@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import type { ModelInfo, ModelRequest } from "@capybara-hq/plugin-sdk";
 import {
@@ -26,6 +27,7 @@ import {
 import type { TrajectoryDetail } from "../../src/evals/trajectory.service.js";
 import { BEHAVIOR_RULES } from "../../src/runtime/context/build.js";
 import { ProviderRegistry } from "../../src/runtime/providers.js";
+import { SubagentMessages } from "../../src/runtime/subagents/messages.js";
 import { SUBAGENT_PREAMBLE } from "../../src/runtime/subagents/preamble.js";
 import { StorageService } from "../../src/storage/storage.service.js";
 import { type ScriptRule, scriptRules } from "../fixtures/plugins/model-script/index.js";
@@ -892,5 +894,64 @@ describe("forked skills (phase D)", { timeout: 120_000 }, () => {
       runId: fork.runId,
       callId: `skill-${fork.seq}`,
     });
+  });
+});
+
+// Last in the file: it adds a hand-made run to the scenario's parent conversation.
+describe("follow-ups by SendMessage", { timeout: 60_000 }, () => {
+  it("a follow-up's snapshot carries the narrowed tools of its message (final review I1)", async () => {
+    const child = await fourthChild();
+    // a running run of the parent conversation (no worker holds it) sends the idle child a message
+    const runId = randomUUID();
+    await db
+      .insertInto("runs")
+      .values({
+        id: runId,
+        conversation_id: state.conv as string,
+        status: "running",
+        agent_version: 1,
+        trigger_account_id: ownerId,
+        trigger_seq: 0,
+      })
+      .execute();
+    const v = await db
+      .selectFrom("agent_versions")
+      .select("definition")
+      .where("agent_id", "=", leadId)
+      .where("version", "=", 1)
+      .executeTakeFirstOrThrow();
+    const agent = normalizeStoredDefinition(v.definition);
+    const out = await k.app.get(SubagentMessages).toChild(
+      {
+        orgId,
+        conversationId: state.conv as string,
+        runId,
+        step: 1,
+        agentId: leadId,
+        agentVersion: 1,
+        agent,
+        accountId: ownerId,
+        signal: new AbortController().signal,
+      },
+      "s1",
+      child.id,
+      "what word did I give you?",
+    );
+    expect(out.isError).toBe(false);
+    const second = await waitFor(
+      async () => {
+        const runs = await runsOf(db, child.id);
+        const r = runs[1];
+        return r && !["queued", "running", "waiting"].includes(r.status) ? r : null;
+      },
+      30_000,
+      "the follow-up's child run",
+    );
+    const tasks = ofType(await eventsOf(db, child.id), "user_message");
+    const narrowed = tasks.at(-1)?.payload.dispatch?.narrowed;
+    expect(tasks.at(-1)?.payload.dispatch?.kind).toBe("message");
+    expect(narrowed).toBeDefined();
+    const snap = await snapshotOf(child.id, second.id);
+    expect(snap.subagent?.definition.tools).toEqual(narrowed?.tools);
   });
 });

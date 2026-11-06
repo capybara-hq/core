@@ -39,13 +39,16 @@ import {
 import { type SubagentParent, subagentWaitingIdemKey, type WaitingFor } from "../runtime/loop.js";
 import { assistantIdemKey, MAX_MODEL_ATTEMPTS, modelCallIdemKey } from "../runtime/model-call.js";
 import type { DispatchArgs, DispatchOutcome } from "../runtime/subagents/dispatch.js";
+import { type MessageOutcome, SubagentMessages } from "../runtime/subagents/messages.js";
 import { pairStoppedForks } from "../runtime/subagents/skill-fork.js";
 import { SubagentsService } from "../runtime/subagents/subagents.service.js";
 import { skillLoadOfferedIn } from "../skills/catalog.js";
 import { type ApprovalRecord, type ApprovalScope, ApprovalsService } from "./approvals.service.js";
 import { Breaker, breakerOpenMessage } from "./breaker.js";
-import { TOOL_SEARCH } from "./builtin-names.js";
+import { SEND_MESSAGE, SUBAGENT_HANDBACK, TOOL_SEARCH } from "./builtin-names.js";
 import { AGENT_TOOL, AgentToolInput } from "./builtins/agent.js";
+import { HandbackInput } from "./builtins/handback.js";
+import { SendMessageInput } from "./builtins/send-message.js";
 import { isAlwaysLoaded, notLoadedText } from "./builtins/tool-search.js";
 import { type ConnectorAuth, CredentialMissing, Credentials } from "./credentials.js";
 import { ToolDrift } from "./drift.js";
@@ -253,6 +256,11 @@ interface PipelineDeps {
    * it, `Agent` calls reach the builtin's guard, which refuses them.
    */
   readonly subagents: { dispatch(a: DispatchArgs): Promise<DispatchOutcome> } | undefined;
+  /**
+   * `SendMessage` and `SubagentHandback` (agent map spec §4.2, §4.3; `SubagentMessages`). Without
+   * it, their calls reach the builtins' guards, which refuse them.
+   */
+  readonly messages: Pick<SubagentMessages, "toChild" | "toParent"> | undefined;
 }
 
 /** The sub-agent dispatch the pipeline calls (`SubagentsService.dispatch`). */
@@ -411,6 +419,8 @@ export class ToolPipeline {
     @Inject(EventLog) eventLog: EventLog,
     /** The `Agent` tool's sub-agent dispatch; absent (tests): `Agent` calls are refused. */
     @Inject(SubagentsService) subagents: Pick<SubagentsService, "dispatch"> | undefined,
+    /** The message tools between agents; absent (tests): their calls are refused. */
+    @Inject(SubagentMessages) messages: Pick<SubagentMessages, "toChild" | "toParent"> | undefined,
     @Inject(ToolRegistry) registry: Pick<ToolRegistry, "forAgent" | "findConnector" | "handler">,
     @Inject(Credentials) credentials: Pick<Credentials, "injection" | "onUnauthorized">,
     @Inject(Breaker) breaker: Pick<Breaker, "check" | "failure" | "success">,
@@ -453,6 +463,7 @@ export class ToolPipeline {
       get subagents() {
         return subagents ? { dispatch: (a: DispatchArgs) => subagents.dispatch(a) } : undefined;
       },
+      messages,
     };
     const decide = hooks?.decidePolicy;
     // the default policy reads live, on the context's handle
@@ -491,6 +502,7 @@ export class ToolPipeline {
           tools: ctx.agent.tools ?? [],
           skillLoad,
           subagents: ctx.agent.subagents,
+          child: ctx.parent !== undefined,
         });
       }
       return resolved;
@@ -793,6 +805,52 @@ export class ToolPipeline {
             content: r.content,
             durationMs: 0,
           },
+          ctx.signal,
+          this.deps.log,
+        );
+      }
+      return undefined;
+    }
+
+    // `SendMessage` and `SubagentHandback` (agent map spec §4.2, §4.3): no tool_call_started; each
+    // write is idempotent by the call (the message in the sub-agent's log, the delivery in the
+    // parent's), so a call retried after a crash sends nothing twice. A send that starts an idle
+    // sub-agent writes its result with the dispatch, like `Agent`
+    const messenger = this.deps.messages;
+    if (
+      tool.source.kind === "builtin" &&
+      (tool.key === SEND_MESSAGE || tool.key === SUBAGENT_HANDBACK) &&
+      messenger
+    ) {
+      const t0 = Date.now();
+      let r: MessageOutcome;
+      if (tool.key === SEND_MESSAGE) {
+        const parsed = SendMessageInput.safeParse(input);
+        if (!parsed.success) {
+          return fail("Invalid SendMessage call: pass to and message.", outKey);
+        }
+        r = await messenger.toChild(ctx, call.id, parsed.data.to, parsed.data.message, {
+          authorization,
+        });
+      } else {
+        const parsed = HandbackInput.safeParse(input);
+        if (!parsed.success) return fail("Invalid SubagentHandback call: pass message.", outKey);
+        r = await messenger.toParent(ctx, "report", parsed.data.message, call.id);
+      }
+      if (r.isError) return fail(r.content, outKey);
+      const durationMs = Date.now() - t0;
+      if (r.logged !== true) {
+        await this.writeResult(ctx, call.id, outKey, { content: r.content, isError: false }, [], {
+          durationMs,
+          connectorId: null,
+          authorization,
+        });
+      }
+      if (hooks && hookBase) {
+        fireObserve(
+          hooks,
+          "tool.postExecute",
+          { ...hookBase, isError: false, content: r.content, durationMs },
           ctx.signal,
           this.deps.log,
         );

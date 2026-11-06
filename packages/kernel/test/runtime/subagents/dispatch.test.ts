@@ -17,10 +17,15 @@ import { ModelPurposesService } from "../../../src/models/purposes.js";
 import { BEHAVIOR_RULES } from "../../../src/runtime/context/build.js";
 import { ProviderRegistry } from "../../../src/runtime/providers.js";
 import { type DispatchDeps, dispatchSubagent } from "../../../src/runtime/subagents/dispatch.js";
+import { SubagentMessages } from "../../../src/runtime/subagents/messages.js";
 import { SUBAGENT_PREAMBLE } from "../../../src/runtime/subagents/preamble.js";
 import { SubagentsService } from "../../../src/runtime/subagents/subagents.service.js";
 import { AGENT_REFUSALS, agentStartedText } from "../../../src/tools/builtins/agent.js";
-import { hookDeniedText } from "../../../src/tools/pipeline.js";
+import {
+  SEND_MESSAGE_REFUSALS,
+  sentToRunningText,
+} from "../../../src/tools/builtins/send-message.js";
+import { hookDeniedText, type ToolStepContext } from "../../../src/tools/pipeline.js";
 import { type ScriptRule, scriptRules } from "../../fixtures/plugins/model-script/index.js";
 import { legacyDbFor } from "../../helpers/conversations.js";
 import { truncateTables } from "../../helpers/db.js";
@@ -324,7 +329,14 @@ describe("dispatch", () => {
       { role: "user", content: [{ type: "text", text: "gp-task: do it" }] },
     ]);
     // a child at depth 1 keeps the agent tool below maxDepth (agent map spec §4.1)
-    expect(first.tools?.map((t) => t.name).sort()).toEqual(["Agent", "Read", "Write"]);
+    // a child also gets the message tools (agent map spec §4.2, §4.3)
+    expect(first.tools?.map((t) => t.name).sort()).toEqual([
+      "Agent",
+      "Read",
+      "SendMessage",
+      "SubagentHandback",
+      "Write",
+    ]);
     const parentReq = capture.sent.find((r) => !isChildRequest(r)) as ModelRequest;
     expect(parentReq.tools?.map((t) => t.name)).toContain("Agent");
 
@@ -748,5 +760,237 @@ describe("dispatch idempotency under the parent run lock", () => {
     const out = await dispatchSubagent(deps(), { ctx, callId: "c1", input });
     expect(out).toEqual({ kind: "refused", content: AGENT_REFUSALS.notAvailableHere });
     expect(await children(conv)).toEqual([]);
+  }, 60_000);
+
+  // Follow-ups (phase C `resume`) are `SendMessage`s now (agent map spec §4.2, §5.1, §6): the
+  // gates and the roster are checked at every message, and an idle child starts again narrowed.
+
+  const send = (ctx: ToolStepContext, callId: string, to: string, text: string) =>
+    k.app.get(SubagentMessages).toChild(ctx, callId, to, text);
+
+  /** Marks the child run of `out` finished, so a message starts it again. */
+  const settle = async (out: { kind: string; childRunId?: string }) => {
+    if (out.kind !== "dispatched" || out.childRunId === undefined) throw new Error("refused");
+    await db
+      .updateTable("runs")
+      .set({ status: "completed" })
+      .where("id", "=", out.childRunId)
+      .execute();
+  };
+  /** Waits until the child conversation has `n` runs and none is active. */
+  const childIdle = (childId: string, n: number) =>
+    waitFor(
+      async () => {
+        const rows = await db
+          .selectFrom("runs")
+          .select("status")
+          .where("conversation_id", "=", childId)
+          .execute();
+        return (
+          rows.length === n &&
+          rows.every((r) => !["queued", "running", "waiting"].includes(r.status))
+        );
+      },
+      30_000,
+      `${n} settled runs of ${childId}`,
+    );
+  const lastMessage = async (childId: string) =>
+    ofType(await eventsOf(db, childId), "user_message").at(-1)?.payload.dispatch;
+
+  it("a message to a child that is appending its usage waits for it without a lock cycle (review I1)", async () => {
+    const { conv, runId, ctx } = await parentRun();
+    const first = await dispatchSubagent(deps(), { ctx, callId: "c1", input });
+    if (first.kind !== "dispatched") throw new Error("not dispatched");
+    const [child] = await children(conv);
+    const childId = (child as { id: string }).id;
+    // the child's run started and is in appendCounted: its conversation row, then the parent run
+    await db
+      .updateTable("runs")
+      .set({ status: "running" })
+      .where("id", "=", first.childRunId)
+      .execute();
+    let locked!: () => void;
+    const holding = new Promise<void>((r) => {
+      locked = r;
+    });
+    const append = db.transaction().execute(async (t) => {
+      await t
+        .selectFrom("conversations")
+        .select("id")
+        .where("id", "=", childId)
+        .forUpdate()
+        .executeTakeFirst();
+      locked();
+      await new Promise((r) => setTimeout(r, 300));
+      await t
+        .updateTable("runs")
+        .set({ subagent_tokens_used: sql<string>`subagent_tokens_used + 1` })
+        .where("id", "=", runId)
+        .execute();
+    });
+    await holding;
+    // the message holds no lock of the parent's while it waits for the child's row
+    const [out] = await Promise.all([send(ctx, "s1", childId, "more"), append]);
+    expect(out).toEqual({
+      content: sentToRunningText({ id: childId, description: "Task" }),
+      isError: false,
+    });
+    expect((await lastMessage(childId))?.kind).toBe("message");
+    await settle(first);
+  }, 60_000);
+
+  it("a follow-up drops a connector the parent lost and narrows `all` to its names (final review I1)", async () => {
+    const { conv, ctx } = await parentRun();
+    const gone = randomUUID();
+    const kept = randomUUID();
+    const v1 = {
+      ...ctx.agent,
+      tools: [
+        ...ctx.agent.tools,
+        { kind: "connector" as const, connectorId: gone, tools: "all" as const },
+        { kind: "connector" as const, connectorId: kept, tools: "all" as const },
+      ],
+      // a general-purpose child takes the parent's org skills (and pins nothing)
+      skills: { orgSkills: ["s-gone", "s-kept"] },
+    };
+    const first = await dispatchSubagent(deps(), {
+      ctx: { ...ctx, agent: v1 },
+      callId: "c1",
+      input,
+    });
+    await settle(first);
+    const [child] = await children(conv);
+    const childId = (child as { id: string }).id;
+    const v2 = {
+      ...ctx.agent,
+      tools: [
+        ...ctx.agent.tools.filter((t) => t.kind !== "builtin" || t.name !== "Write"),
+        { kind: "connector" as const, connectorId: kept, tools: ["lookup"] },
+      ],
+      skills: { orgSkills: ["s-kept"] },
+    };
+    const again = await send({ ...ctx, agent: v2 }, "s1", childId, "more");
+    expect(again).toMatchObject({ isError: false, logged: true });
+    expect(await lastMessage(childId)).toMatchObject({
+      kind: "message",
+      narrowed: {
+        tools: [
+          { kind: "builtin", name: "Agent" },
+          { kind: "builtin", name: "Read" },
+          { kind: "connector", connectorId: kept, tools: ["lookup"] },
+        ],
+        skills: { orgSkills: ["s-kept"] },
+      },
+    });
+    await childIdle(childId, 2);
+  }, 60_000);
+
+  it("a follow-up runs with the tools the parent's current version still has, after its earlier history (final review I1)", async () => {
+    const { conv, ctx } = await parentRun();
+    const first = await dispatchSubagent(deps(), { ctx, callId: "c1", input });
+    await settle(first);
+    const [child] = await children(conv);
+    const childId = (child as { id: string }).id;
+    const v2 = {
+      ...ctx.agent,
+      tools: ctx.agent.tools.filter((t) => t.kind !== "builtin" || t.name !== "Write"),
+    };
+    capture.reset();
+    expect((await send({ ...ctx, agent: v2 }, "s1", childId, "what word?")).isError).toBe(false);
+    await childIdle(childId, 2);
+    const followUp = capture.sent.find(
+      (r) => isChildRequest(r) && JSON.stringify(r.messages).includes("what word?"),
+    ) as ModelRequest;
+    const names = followUp.tools?.map((t) => t.name) ?? [];
+    expect(names).toContain("Read");
+    expect(names).not.toContain("Write");
+    // the same conversation: the earlier task is in its history
+    expect(JSON.stringify(followUp.messages)).toContain(input.prompt);
+    const rows = await db
+      .selectFrom("subagent_dispatches")
+      .select(["resumed", "child_conversation_id"])
+      .where("parent_conversation_id", "=", conv)
+      .orderBy("created_at")
+      .execute();
+    expect(rows).toEqual([
+      { resumed: false, child_conversation_id: childId },
+      { resumed: true, child_conversation_id: childId },
+    ]);
+  }, 60_000);
+
+  it("a follow-up to a type the roster no longer offers is refused (final review I1)", async () => {
+    const { conv, ctx } = await parentRun();
+    const inline = { name: "rev", description: "Reviews", instructions: "Review it." };
+    const v1 = { ...ctx.agent, subagents: { inline: [inline] } };
+    const first = await dispatchSubagent(deps(), {
+      ctx: { ...ctx, agent: v1 },
+      callId: "c1",
+      input: { ...input, subagent_type: "rev" },
+    });
+    await settle(first);
+    const general = await dispatchSubagent(deps(), {
+      ctx: { ...ctx, agent: v1 },
+      callId: "c2",
+      input,
+    });
+    await settle(general);
+    const [rev, gp] = (await children(conv)).map((c) => c.id) as [string, string];
+    const v2 = { ...ctx.agent, subagents: { general: false } };
+    expect(await send({ ...ctx, agent: v2 }, "s1", rev, "more")).toEqual({
+      content: SEND_MESSAGE_REFUSALS.notAvailable(rev, "rev"),
+      isError: true,
+    });
+    expect(await send({ ...ctx, agent: v2 }, "s2", gp, "more")).toEqual({
+      content: SEND_MESSAGE_REFUSALS.notAvailable(gp, "general-purpose"),
+      isError: true,
+    });
+    expect(ofType(await eventsOf(db, rev), "user_message")).toHaveLength(1);
+    // an inline template edited (not removed) keeps the type: the follow-up runs
+    const v3 = { ...ctx.agent, subagents: { inline: [{ ...inline, instructions: "Changed." }] } };
+    const ok = await send({ ...ctx, agent: v3 }, "s3", rev, "more");
+    expect(ok.isError).toBe(false);
+    await childIdle(rev, 2);
+  }, 60_000);
+
+  it("refuses foreign and forged targets and writes nothing", async () => {
+    // P1 with its child C1; P2 (same owner) with its child C2; C3 belongs to another person
+    const p1 = await parentRun();
+    const p2 = await parentRun();
+    await settle(await dispatchSubagent(deps(), { ctx: p1.ctx, callId: "c1", input }));
+    await settle(await dispatchSubagent(deps(), { ctx: p2.ctx, callId: "c1", input }));
+    const c1 = ((await children(p1.conv))[0] as { id: string }).id;
+    const c2 = ((await children(p2.conv))[0] as { id: string }).id;
+    const otherConv = randomUUID();
+    const c3 = randomUUID();
+    await db
+      .insertInto("conversations")
+      .values([
+        { id: otherConv, org_id: orgId, agent_id: agentId, account_id: otherId },
+        {
+          id: c3,
+          org_id: orgId,
+          agent_id: agentId,
+          account_id: otherId,
+          kind: "subagent",
+          parent_conversation_id: otherConv,
+          subagent_type: "general-purpose",
+        },
+      ])
+      .execute();
+    const targets = [{ id: c1, description: "Task" }];
+    for (const [i, to] of [c2, "not-an-id", c3].entries()) {
+      expect(await send(p1.ctx, `s${i}`, to, "what word?")).toEqual({
+        content: SEND_MESSAGE_REFUSALS.unknownTarget(to, targets, { hasParent: false, more: 0 }),
+        isError: true,
+      });
+    }
+    expect(ofType(await eventsOf(db, c2), "user_message")).toHaveLength(1);
+    expect(ofType(await eventsOf(db, c3), "user_message")).toHaveLength(0);
+    expect(
+      await db.selectFrom("runs").select("id").where("conversation_id", "=", c3).execute(),
+    ).toEqual([]);
+    expect(
+      await db.selectFrom("subagent_dispatches").select("child_run_id").execute(),
+    ).toHaveLength(2);
   }, 60_000);
 });

@@ -274,10 +274,11 @@ describe("nested sub-agents", () => {
     const [l3] = await childOf(l2?.id as string);
     expect([l1, l2, l3].map((c) => c?.subagent_depth)).toEqual([1, 2, 3]);
     expect(await childOf(l3?.id as string)).toEqual([]);
-    // depths 1 and 2 have Agent; depth 3 (the default maxDepth) does not
-    expect(toolsOf("L1-go")).toEqual(["Agent", "Write"]);
-    expect(toolsOf("L2-go")).toEqual(["Agent", "Write"]);
-    expect(toolsOf("L3-go")).toEqual(["Write"]);
+    // depths 1 and 2 have Agent; depth 3 (the default maxDepth) does not; every child has the
+    // message tools (agent map spec §4.2, §4.3)
+    expect(toolsOf("L1-go")).toEqual(["Agent", "SendMessage", "SubagentHandback", "Write"]);
+    expect(toolsOf("L2-go")).toEqual(["Agent", "SendMessage", "SubagentHandback", "Write"]);
+    expect(toolsOf("L3-go")).toEqual(["SendMessage", "SubagentHandback", "Write"]);
     // the frozen definitions: Agent kept below the limit, removed at it
     const frozenTools = async (id: string) => {
       const started = ofType(await eventsOf(db, id), "subagent_started")[0];

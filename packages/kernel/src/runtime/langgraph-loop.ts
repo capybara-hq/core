@@ -169,6 +169,7 @@ export class LangGraphLoop implements AgentLoop {
       accountId: ctx.triggerAccountId,
       ...(ctx.conversationKind !== undefined && { conversationKind: ctx.conversationKind }),
       ...(ctx.parent !== undefined && { parentRunId: ctx.parent.runId, parent: ctx.parent }),
+      ...(ctx.subagent === true && { subagent: true }),
     });
     const deps = this.stepDeps;
     const hooks = this.hooks;

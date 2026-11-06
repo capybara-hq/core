@@ -10,8 +10,13 @@ import { takeSnapshot, toEvents } from "../../src/evals/snapshot.js";
 import { ProviderRegistry } from "../../src/runtime/providers.js";
 import { checkOrgAgent, currentAgentDefinition } from "../../src/runtime/subagents/org-agents.js";
 import { AGENT_REFUSALS } from "../../src/tools/builtins/agent.js";
+import { SEND_MESSAGE_REFUSALS } from "../../src/tools/builtins/send-message.js";
 import { memState } from "../fixtures/plugins/mem-connector/index.js";
-import { type ScriptRule, scriptRules } from "../fixtures/plugins/model-script/index.js";
+import {
+  openBarrier,
+  type ScriptRule,
+  scriptRules,
+} from "../fixtures/plugins/model-script/index.js";
 import { truncateTables } from "../helpers/db.js";
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
@@ -113,6 +118,24 @@ const RULES: ScriptRule[] = [
     },
   },
   { when: { lastToolResultIncludes: "is not available to" }, reply: { text: "refused done" } },
+  // a later message sends the analyst a follow-up with SendMessage (agent map spec §4.2)
+  {
+    when: { lastUserIncludes: "SCENARIO follow", lastToolResultIncludes: "Message delivered" },
+    reply: { text: "follow done" },
+  },
+  {
+    when: {
+      lastUserIncludes: "SCENARIO follow",
+      lastToolResultIncludes: "can no longer receive messages",
+    },
+    reply: { text: "refused done" },
+  },
+  {
+    when: { lastUserIncludes: "SCENARIO follow" },
+    reply: {
+      toolCalls: [{ name: "SendMessage", input: { to: "{{lastAgentId}}", message: "follow up" } }],
+    },
+  },
   {
     when: { lastUserIncludes: "SCENARIO hello", lastToolResultIncludes: "in the background" },
     reply: { text: "hello done" },
@@ -138,6 +161,9 @@ beforeAll(async () => {
         roles: ["api", "worker"],
         extensions: [MODEL_FAKE, MODEL_SCRIPT, MEM_CONNECTOR],
         extensionConfig: { "model-script": { rules: RULES } },
+        // no wake runs: a finished analyst's delivery waits for the lead's next run, so every
+        // run of the lead is one a test started (its replies stay deterministic)
+        runtime: { wakeOnBackgroundTask: false },
       },
     ),
   );
@@ -586,6 +612,244 @@ describe("the gates", () => {
     expect(r.statusCode, r.body).toBe(400);
     expect((r.json() as { error: { code: string } }).error.code).toBe("agent.subagents_invalid");
   });
+});
+
+describe("follow-ups with SendMessage", () => {
+  /**
+   * Waits until the conversation is idle: no active run of it or of its children, and every child
+   * run's finish delivered (no wake runs here: the deliveries wait for the next run).
+   */
+  async function quiesce(conv: string): Promise<void> {
+    await waitFor(
+      async () => {
+        const kids = (await childrenOf(conv)).map((c) => c.id);
+        const runs = await db
+          .selectFrom("runs")
+          .select(["conversation_id", "status"])
+          .where("conversation_id", "in", [conv, ...kids])
+          .execute();
+        if (runs.some((r) => ["queued", "running", "waiting"].includes(r.status))) return false;
+        const childRunCount = runs.filter((r) => r.conversation_id !== conv).length;
+        const finished = ofType(await eventsOf(db, conv), "subagent_delivery").filter(
+          (d) => d.payload.kind === "finished",
+        );
+        return finished.length === childRunCount;
+      },
+      30_000,
+      "the conversation idle",
+    );
+  }
+
+  /** Sends "SCENARIO follow" to `conv` and waits for that message's run; its events. */
+  async function follow(req: Req, conv: string): Promise<ConversationEvent[]> {
+    await quiesce(conv);
+    await postMessage(req, orgId, conv, "SCENARIO follow");
+    const run = await waitFor(
+      async () => {
+        const msg = ofType(await eventsOf(db, conv), "user_message").at(-1);
+        if (!msg) return null;
+        const r = await db
+          .selectFrom("runs")
+          .select(["id", "status"])
+          .where("conversation_id", "=", conv)
+          .where("trigger_seq", "=", String(msg.seq))
+          .executeTakeFirst();
+        return r && !["queued", "running", "waiting"].includes(r.status) ? r : null;
+      },
+      30_000,
+      "the follow-up run",
+    );
+    return (await eventsOf(db, conv)).filter((e) => e.runId === run.id);
+  }
+
+  const sendResults = (events: ConversationEvent[]) =>
+    ofType(events, "tool_result").filter((r) => r.payload.toolKey === "SendMessage");
+
+  it("a follow-up keeps the frozen version after the analyst's new version; a new dispatch takes the newest", async () => {
+    const first = await converse(member, "SCENARIO hello");
+    expect(finalText(first.events)).toBe("hello done");
+    await patchAnalyst({ definition: ANALYST_DEF({ instructions: `${ANALYST}, v2.` }) });
+
+    const events = await follow(member, first.conv);
+    expect(finalText(events)).toBe("follow done");
+    const [child, ...more] = await childrenOf(first.conv);
+    expect(more).toEqual([]);
+    const runs = await waitFor(
+      async () => {
+        const r = await childRuns(child?.id as string);
+        return r.length === 2 ? r : null;
+      },
+      20_000,
+      "the follow-up's child run",
+    );
+    expect(runs.map((r) => r.agent_version)).toEqual([1, 1]);
+    const started = ofType(await eventsOf(db, child?.id as string), "subagent_started");
+    expect(started).toHaveLength(1);
+    expect(started[0]?.payload.template.version).toBe(1);
+    const dispatched = await audits("subagent.dispatched");
+    expect(dispatched.map((a) => (a.detail as { agentVersion: number }).agentVersion)).toEqual([
+      1, 1,
+    ]);
+    expect(dispatched[1]?.detail).toMatchObject({ resumed: true });
+    await quiesce(first.conv);
+
+    // a new sub-agent runs the newest version
+    const fresh = await converse(member, "SCENARIO hello");
+    const [freshChild] = await childrenOf(fresh.conv);
+    expect((await childRuns(freshChild?.id as string)).map((r) => r.agent_version)).toEqual([2]);
+    const freshStarted = ofType(await eventsOf(db, freshChild?.id as string), "subagent_started");
+    expect(freshStarted[0]?.payload.definition.instructions).toBe(`${ANALYST}, v2.`);
+    await quiesce(fresh.conv);
+  }, 90_000);
+
+  it("a follow-up narrows the frozen tools to the analyst's current version (final review I1)", async () => {
+    const first = await converse(member, "SCENARIO hello");
+    expect(finalText(first.events)).toBe("hello done");
+    await patchAnalyst({
+      definition: ANALYST_DEF({
+        tools: [{ kind: "connector", connectorId, tools: ["search"] }],
+        toolPolicies: {},
+      }),
+    });
+    const events = await follow(member, first.conv);
+    expect(finalText(events)).toBe("follow done");
+    const [child] = await childrenOf(first.conv);
+    const tasks = ofType(await eventsOf(db, child?.id as string), "user_message");
+    // the instructions stay v1 (frozen); the tools are what v2 still has
+    expect(tasks.at(-1)?.payload.dispatch).toMatchObject({ kind: "message" });
+    expect(tasks.at(-1)?.payload.dispatch?.narrowed?.tools).toEqual([
+      { kind: "connector", connectorId, tools: ["search"] },
+    ]);
+    await quiesce(first.conv);
+  }, 90_000);
+
+  it("a member who loses visibility between dispatch and follow-up is refused; nothing starts", async () => {
+    const first = await converse(member, "SCENARIO hello");
+    expect(finalText(first.events)).toBe("hello done");
+    // ana takes the member off the analyst's members list
+    await patchAnalyst({ memberIds: [ids.owner] });
+
+    const events = await follow(member, first.conv);
+    expect(finalText(events)).toBe("refused done");
+    const [child] = await childrenOf(first.conv);
+    expect(sendResults(events)[0]?.payload).toMatchObject({
+      content: SEND_MESSAGE_REFUSALS.notAvailable(child?.id as string, "analyst"),
+      isError: true,
+    });
+    expect(await childRuns(child?.id as string)).toHaveLength(1);
+    expect(ofType(await eventsOf(db, child?.id as string), "user_message")).toHaveLength(1);
+    expect(await audits("subagent.dispatched")).toHaveLength(1);
+    const refused = await audits("subagent.refused");
+    expect(refused).toHaveLength(1);
+    expect(refused[0]?.detail).toMatchObject({ gate: "visibility", resumed: true });
+  }, 90_000);
+
+  it("a follow-up after the parent's owner removed the analyst from the allowlist is refused (allowlist, the parent's current version)", async () => {
+    const first = await converse(member, "SCENARIO hello");
+    expect(finalText(first.events)).toBe("hello done");
+    const lead = await owner({
+      method: "PATCH",
+      url: `/api/v1/orgs/${orgId}/agents/${leadId}`,
+      payload: {
+        definition: {
+          name: "Lead",
+          instructions: "Lead the work.",
+          model: SCRIPT,
+          tools: [
+            { kind: "builtin", name: "Agent" },
+            { kind: "connector", connectorId, tools: ["remove"] },
+          ],
+          toolPolicies: { mcp__mine__remove: "deny" },
+          subagents: { agents: [] },
+        },
+      },
+    });
+    expect(lead.statusCode, lead.body).toBe(200);
+
+    // the conversation's next run uses the new version, whose roster no longer has the analyst:
+    // still offered SendMessage (it has Agent), its message is refused by the allowlist gate
+    const events = await follow(member, first.conv);
+    expect(finalText(events)).toBe("refused done");
+    const refused = await audits("subagent.refused");
+    expect(refused[0]?.detail).toMatchObject({ gate: "allowlist", resumed: true });
+  }, 90_000);
+
+  it("the allowlist is read from the parent agent's current version, not the run's: removing the analyst mid-run refuses that run's message", async () => {
+    // after the immediate Agent result the same run messages the (waiting) analyst; its model call
+    // is held until the lead's owner took the analyst off the allowlist
+    scriptRules([
+      {
+        when: { lastUserIncludes: "SCENARIO midrun", assistantTurns: 0 },
+        reply: {
+          toolCalls: [
+            agentCall({ description: "Create", prompt: "policy: go", subagent_type: "analyst" }),
+          ],
+        },
+      },
+      {
+        when: { lastUserIncludes: "SCENARIO midrun", lastToolResultIncludes: "in the background" },
+        reply: {
+          toolCalls: [
+            { name: "SendMessage", input: { to: "{{lastAgentId}}", message: "follow up" } },
+          ],
+          barrier: { name: "midrun", count: 99, timeoutMs: 30_000 },
+        },
+      },
+      {
+        when: { lastUserIncludes: "SCENARIO midrun", lastToolResultIncludes: "can no longer" },
+        reply: { text: "refused done" },
+      },
+    ]);
+    const conv = await createConv(member, orgId, leadId);
+    await postMessage(member, orgId, conv, "SCENARIO midrun");
+    const approval = await waitFor(
+      async () =>
+        db.selectFrom("approvals").select("id").where("status", "=", "pending").executeTakeFirst(),
+      20_000,
+      "pending approval",
+    );
+    const lead = await owner({
+      method: "PATCH",
+      url: `/api/v1/orgs/${orgId}/agents/${leadId}`,
+      payload: {
+        definition: {
+          name: "Lead",
+          instructions: "Lead the work.",
+          model: SCRIPT,
+          tools: [{ kind: "builtin", name: "Agent" }],
+          subagents: { agents: [] },
+        },
+      },
+    });
+    expect(lead.statusCode, lead.body).toBe(200);
+    openBarrier("midrun");
+    await waitForTerminal(db, conv, 1, 30_000);
+    const events = await eventsOf(db, conv);
+    expect(finalText(events)).toBe("refused done");
+    const [child] = await childrenOf(conv);
+    expect(sendResults(events)[0]?.payload.content).toBe(
+      SEND_MESSAGE_REFUSALS.notAvailable(child?.id as string, "analyst"),
+    );
+    const refused = await audits("subagent.refused");
+    expect(refused).toHaveLength(1);
+    expect(refused[0]?.detail).toMatchObject({ gate: "allowlist", resumed: true });
+    // the run itself still ran its own version
+    const run = await db
+      .selectFrom("runs")
+      .select("agent_version")
+      .where("conversation_id", "=", conv)
+      .orderBy("created_at")
+      .executeTakeFirstOrThrow();
+    expect(run.agent_version).toBe(1);
+    // the analyst goes on once its approval is decided
+    const ok = await member({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/approvals/${approval.id}/decision`,
+      payload: { decision: "approve" },
+    });
+    expect(ok.statusCode, ok.body).toBe(200);
+    await quiesce(conv);
+  }, 90_000);
 });
 
 describe("replay (spec §15.3)", () => {

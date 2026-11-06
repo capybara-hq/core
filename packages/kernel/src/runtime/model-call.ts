@@ -188,6 +188,8 @@ export interface ModelStepInput {
   conversationKind?: ConversationKindForHooks;
   /** A sub-agent's run: where it was dispatched from (hook payloads carry it as `parent`). */
   parent?: SubagentParent;
+  /** A sub-agent's run without a live parent (a child case's eval replay, `LoopContext`). */
+  subagent?: boolean;
   /**
    * A sub-agent's run (phase C): the parent run whose budget run's `subagent_tokens_used` counts
    * every usage event this step writes (step, wrap-up and compaction calls; spec §8.3, agent map
@@ -362,6 +364,8 @@ async function runStep(
     const resolved = await deps.tools.forAgent(input.orgId, {
       tools: input.agent.tools ?? [],
       subagents: input.agent.subagents,
+      child:
+        input.parent !== undefined || input.parentRunId !== undefined || input.subagent === true,
       skillLoad: skillLoadOffered(
         events.findLast(
           (e): e is Extract<ConversationEvent, { type: "skills_catalog" }> =>

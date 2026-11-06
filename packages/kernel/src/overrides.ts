@@ -8,6 +8,10 @@ import { FILE_PREVIEW_TIMEOUT } from "./files/previewers.js";
 import { LIST_MODELS_TIMEOUT } from "./runtime/providers.js";
 import { AGENT_LOOP_FACTORY, type AgentLoopFactory } from "./runtime/run-steps.js";
 import { RUN_HOOKS, type RunHooks } from "./runtime/run-worker.js";
+import {
+  SUBAGENT_MESSAGES_HOOKS,
+  type SubagentMessagesHooks,
+} from "./runtime/subagents/messages.js";
 import { USAGE_REPORT_RETRY, type UsageReportRetry } from "./runtime/usage-report.js";
 import { SANDBOX_LEASE_TIMINGS, type SandboxLeaseTimings } from "./sandbox/leases.js";
 import { TOOL_PIPELINE_HOOKS, type ToolPipelineHooks } from "./tools/pipeline.js";
@@ -21,6 +25,7 @@ import { EMBED_TOKEN_CLOCK } from "./ui/embed-token.js";
  * - `RUN_HOOKS`: the run worker's hooks;
  * - `EVAL_REPLAY_HOOKS`: the hooks of the eval full-run replay and the judge;
  * - `TOOL_PIPELINE_HOOKS`: the tool pipeline's hooks and policy decision;
+ * - `SUBAGENT_MESSAGES_HOOKS`: the sub-agent message tools' hooks (a send raced by a run's end);
  * - `BOOTSTRAP_LOCK_TTL`, `FILE_PREVIEW_TIMEOUT`, `LIST_MODELS_TIMEOUT`, `USAGE_REPORT_RETRY`,
  *   `SANDBOX_LEASE_TIMINGS`, `CHANNEL_WEBHOOK_TIMINGS`: shorter timings;
  * - `EMBED_TOKEN_CLOCK`: the clock embed tokens are issued and checked with;
@@ -31,6 +36,7 @@ interface KernelSeams {
   [RUN_HOOKS]: RunHooks;
   [EVAL_REPLAY_HOOKS]: EvalReplayHooks;
   [TOOL_PIPELINE_HOOKS]: ToolPipelineHooks;
+  [SUBAGENT_MESSAGES_HOOKS]: SubagentMessagesHooks;
   [BOOTSTRAP_LOCK_TTL]: number;
   [FILE_PREVIEW_TIMEOUT]: number;
   [LIST_MODELS_TIMEOUT]: number;
@@ -56,6 +62,7 @@ const SEAM_TOKENS = [
   RUN_HOOKS,
   EVAL_REPLAY_HOOKS,
   TOOL_PIPELINE_HOOKS,
+  SUBAGENT_MESSAGES_HOOKS,
   BOOTSTRAP_LOCK_TTL,
   FILE_PREVIEW_TIMEOUT,
   LIST_MODELS_TIMEOUT,

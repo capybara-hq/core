@@ -9,6 +9,7 @@ import { audit } from "../../identity/audit.js";
 import type { KernelConfigService } from "../../infra/config/kernel-config.service.js";
 import type { ModelPurposesService } from "../../models/purposes.js";
 import { forkAgentUnknownText } from "../../skills/invoke.js";
+import { SEND_MESSAGE } from "../../tools/builtin-names.js";
 import {
   AGENT_REFUSALS,
   AGENT_TOOL,
@@ -67,7 +68,20 @@ export interface DispatchArgs {
    * authorization fields, and when the pipeline started it (the audit's duration).
    */
   call?: { toolKey: string; authorization: Record<string, unknown>; startedAt: number };
+  /**
+   * A `SendMessage` that starts an idle sub-agent again (agent map spec §5.1, §6): its call's
+   * immediate result, written with the dispatch instead of `agentStartedText`, and the texts of
+   * the limit refusals. `input.description` is the sub-agent's task label, `input.prompt` the
+   * message.
+   */
+  sent?: { content: string; refusals: LimitRefusals };
 }
+
+/** The texts of the limit refusals of a dispatch (§4.5, agent map spec §6). */
+export type LimitRefusals = Pick<
+  typeof AGENT_REFUSALS,
+  "depthLimit" | "budget" | "tooManyDispatches" | "tooManyConcurrent"
+>;
 
 /**
  * Writes the child's events in the dispatch's transaction (`db` is its handle); `checked` is the
@@ -296,7 +310,7 @@ export async function dispatchSubagent(d: DispatchDeps, a: DispatchArgs): Promis
  * sub-agent freezes the definition read here) and again inside it under the parent run's row lock
  * ({@link commit}), so a gate revoked in between refuses (batch 9 review M1).
  */
-async function orgAgentGates(
+export async function orgAgentGates(
   db: KernelSchemaDb,
   a: { ctx: ToolStepContext; callId: string },
   agentId: string,
@@ -326,7 +340,12 @@ async function orgAgentGates(
   return { refused: refused(AGENT_REFUSALS.agentNotAvailable(agentType)) };
 }
 
-const taskMessage = (
+/**
+ * A sub-agent's task message, or (`message`) a `SendMessage` from its parent (agent map spec
+ * §5.1: `dispatch.kind: "message"`, idempotent by the sending call, with the follow-up narrowing
+ * the run it triggers uses).
+ */
+export const taskMessage = (
   ctx: ToolStepContext,
   callId: string,
   prompt: string,
@@ -336,8 +355,10 @@ const taskMessage = (
    * is offered and resolves the invoked version (phase D).
    */
   skill?: SkillForkDispatch["skill"],
+  message = false,
 ) => ({
   type: "user_message" as const,
+  ...(message && { idemKey: sentMessageIdemKey(ctx.runId, callId) }),
   payload: {
     content: [{ type: "text" as const, text: prompt }],
     ...(skill !== undefined && { skill }),
@@ -346,10 +367,15 @@ const taskMessage = (
       parentConversationId: ctx.conversationId,
       parentRunId: ctx.runId,
       callId,
+      ...(message && { kind: "message" as const }),
       ...(narrowed !== undefined && { narrowed }),
     },
   },
 });
+
+/** Idempotency key of a `SendMessage`'s `user_message` in the sub-agent's log. */
+export const sentMessageIdemKey = (runId: string, callId: string): string =>
+  `send_message:${runId}:${callId}`;
 
 /**
  * The dispatch transaction shared by new sub-agents and follow-ups: locks the parent conversation
@@ -426,7 +452,12 @@ export async function commitDispatchIn(
     let result: { content: string; seq: number } | null = null;
     if (a.forSkill === undefined) {
       const [ev] = await d.eventLog.appendIn(ctx.conversationId, [
-        agentResultEvent(ctx, callId, a.call?.toolKey, existing.child_conversation_id),
+        resultEvent(
+          ctx,
+          callId,
+          a.call?.toolKey ?? AGENT_TOOL,
+          a.sent?.content ?? agentStartedText(existing.child_conversation_id),
+        ),
       ]);
       if (ev?.type === "tool_result") result = { content: ev.payload.content, seq: ev.seq };
     }
@@ -460,7 +491,14 @@ export async function commitDispatchIn(
             .forUpdate()
             .executeTakeFirst()
         )?.subagent_tokens_used ?? 0);
-  const limit = await limitRefusal(t, d, ctx, budgetRunId, tokensUsed);
+  const limit = await limitRefusal(
+    t,
+    d,
+    ctx,
+    budgetRunId,
+    tokensUsed,
+    a.sent?.refusals ?? AGENT_REFUSALS,
+  );
   if (limit !== null) return { kind: "limit" as const, content: limit };
   let checked: CheckedOrgAgent | undefined;
   if (plan.source === "agent") {
@@ -507,6 +545,7 @@ export async function commitDispatchIn(
     .execute();
   // an org agent runs on its own model (§5.4): a `model` on the call was ignored
   const ownModel = plan.source === "agent" && input.model !== undefined;
+  const content = a.sent?.content ?? agentStartedText(plan.childConversationId, { ownModel });
   const parentEvents = await d.eventLog.appendIn(ctx.conversationId, [
     {
       type: "subagent_dispatched",
@@ -528,7 +567,7 @@ export async function commitDispatchIn(
     // an `Agent` call's result is immediate (agent map spec §4.1): the sub-agent works in the
     // background and reports through `subagent_delivery`; a fork invocation has no tool call
     ...(a.forSkill === undefined
-      ? [agentResultEvent(ctx, callId, a.call?.toolKey, plan.childConversationId, ownModel)]
+      ? [resultEvent(ctx, callId, a.call?.toolKey ?? AGENT_TOOL, content)]
       : []),
   ]);
   await audit(t, {
@@ -557,7 +596,7 @@ export async function commitDispatchIn(
       action: "tool.called",
       target: ctx.conversationId,
       detail: {
-        toolKey: AGENT_TOOL,
+        toolKey: a.sent !== undefined ? SEND_MESSAGE : AGENT_TOOL,
         isError: false,
         durationMs: a.call === undefined ? null : Math.max(0, Date.now() - a.call.startedAt),
         agentId: ctx.agentId,
@@ -574,32 +613,23 @@ export async function commitDispatchIn(
     childRunId,
     childSeq: task.seq,
     parentSeq: Math.max(...parentEvents.map((e) => e.seq)),
-    content: agentStartedText(plan.childConversationId, { ownModel }),
+    content,
   };
 }
 
-/** An `Agent` call's immediate `tool_result` ({@link agentStartedText}), idempotent by the call. */
-const agentResultEvent = (
-  ctx: ToolStepContext,
-  callId: string,
-  toolKey: string | undefined,
-  childConversationId: string,
-  ownModel = false,
-) => ({
+/**
+ * The immediate `tool_result` of an `Agent` call ({@link agentStartedText}) or of a `SendMessage`
+ * that started an idle sub-agent, idempotent by the call.
+ */
+const resultEvent = (ctx: ToolStepContext, callId: string, toolKey: string, content: string) => ({
   type: "tool_result" as const,
   runId: ctx.runId,
   idemKey: `tool_result:${ctx.runId}:${callId}`,
-  payload: {
-    step: ctx.step,
-    callId,
-    toolKey: toolKey ?? AGENT_TOOL,
-    content: agentStartedText(childConversationId, { ownModel }),
-    isError: false,
-  },
+  payload: { step: ctx.step, callId, toolKey, content, isError: false },
 });
 
-async function commit(
-  d: DispatchDeps,
+export async function commit(
+  d: Pick<DispatchDeps, "commitDispatch" | "enqueue" | "log" | "eventLog">,
   a: DispatchArgs,
   plan: DispatchPlan,
   /** Writes the child's events; `checked` is the org agent version the in-lock gates passed. */
@@ -633,7 +663,7 @@ async function commit(
       kind: "dispatched",
       childRunId: out.childRunId,
       childConversationId: out.childConversationId,
-      content: out.result?.content ?? agentStartedText(out.childConversationId),
+      content: out.result?.content ?? a.sent?.content ?? agentStartedText(out.childConversationId),
     };
   }
   // the result is never read: the run is over
@@ -676,11 +706,12 @@ async function limitRefusal(
   ctx: ToolStepContext,
   budgetRunId: string,
   tokensUsed: string | number | bigint,
+  texts: LimitRefusals,
 ): Promise<string | null> {
   const limits = await subagentLimits(t, d.config, ctx.orgId);
-  if (runDepth(ctx) >= limits.maxDepth) return AGENT_REFUSALS.depthLimit(limits.maxDepth);
+  if (runDepth(ctx) >= limits.maxDepth) return texts.depthLimit(limits.maxDepth);
   if (Number(tokensUsed) >= limits.maxTokensPerRun) {
-    return AGENT_REFUSALS.budget(limits.maxTokensPerRun);
+    return texts.budget(limits.maxTokensPerRun);
   }
   const total = await t
     .selectFrom("subagent_dispatches")
@@ -688,7 +719,7 @@ async function limitRefusal(
     .where("budget_run_id", "=", budgetRunId)
     .executeTakeFirstOrThrow();
   if (Number(total.n) >= limits.maxDispatchesPerRun) {
-    return AGENT_REFUSALS.tooManyDispatches(limits.maxDispatchesPerRun);
+    return texts.tooManyDispatches(limits.maxDispatchesPerRun);
   }
   const active = await t
     .selectFrom("subagent_dispatches as sd")
@@ -698,7 +729,7 @@ async function limitRefusal(
     .where("cr.status", "in", ACTIVE_RUN_STATUSES)
     .executeTakeFirstOrThrow();
   if (Number(active.n) >= limits.maxConcurrentPerConversation) {
-    return AGENT_REFUSALS.tooManyConcurrent(limits.maxConcurrentPerConversation);
+    return texts.tooManyConcurrent(limits.maxConcurrentPerConversation);
   }
   return null;
 }

@@ -40,6 +40,12 @@ export interface LoopContext {
    * below `subagents.maxDepth` (agent map spec §4.1).
    */
   parent?: SubagentParent;
+  /**
+   * The run is a sub-agent's without a live `parent`: a child case's eval replay. Its requests
+   * offer the message tools a sub-agent has (`SendMessage`, `SubagentHandback`), as the recorded
+   * run's did. Implied by `parent`.
+   */
+  subagent?: boolean;
 }
 
 /** Where a sub-agent's run was dispatched from (its `subagent_dispatches` row). */

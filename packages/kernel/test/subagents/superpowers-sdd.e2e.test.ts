@@ -28,6 +28,7 @@ import { takeSnapshot, toEvents } from "../../src/evals/snapshot.js";
 import { BEHAVIOR_RULES } from "../../src/runtime/context/build.js";
 import { ProviderRegistry } from "../../src/runtime/providers.js";
 import { SUBAGENT_PREAMBLE } from "../../src/runtime/subagents/preamble.js";
+import { sentToIdleText } from "../../src/tools/builtins/send-message.js";
 import { loadFixtureAsStrings } from "../catalog/claude-fixtures.js";
 import type { ScriptRule } from "../fixtures/plugins/model-script/index.js";
 import { agentTemplatesFor } from "../helpers/conversations.js";
@@ -49,6 +50,7 @@ import {
   waitFor,
   waitForTerminal,
 } from "../helpers/runs.js";
+import { finishedDeliveries } from "../helpers/subagents.js";
 
 /**
  * Phase C acceptance (sub-agents spec §21 "End to end on fakes", ecosystem spec §12): superpowers'
@@ -57,10 +59,18 @@ import {
  * fake git marketplace and installed; `model-script` plays the controller and every sub-agent from
  * `sdd-script.json`; `sandbox-fake` runs the skill's real bash scripts and git in the shared
  * workspace. The controller loads the skill, runs `scripts/task-brief`, dispatches an implementer
- * (`fast`), runs `scripts/review-package`, dispatches a task reviewer that finds one issue, resumes
- * the implementer with the fix, dispatches a scoped re-review, repeats for task 2, then dispatches
- * the final review (`superpowers:code-reviewer`, `capable`) and a file check in parallel. The
- * conversation then replays with zero drift. The `it`s run in order and share state.
+ * (`fast`), runs `scripts/review-package`, dispatches a task reviewer that finds one issue, sends
+ * the finished implementer the fix with `SendMessage` (it starts again with its earlier context),
+ * dispatches a scoped re-review, repeats for task 2, then dispatches the final review
+ * (`superpowers:code-reviewer`, `capable`) and a file check in parallel. The conversation then
+ * replays with zero drift. The `it`s run in order and share state.
+ *
+ * Sub-agents run in the background (agent map spec §4.1): each hands its report back with
+ * `SubagentHandback`, then touches a marker file; the controller dispatches and waits for the
+ * marker in one step (a `Bash` loop), so its next model call holds the report, absorbed as a
+ * `subagent_delivery`. Before the fix it waits for the implementer's finish delivery (a sleep
+ * loop). Wake runs are off: a finish that lands after the controller's last step stays unconsumed
+ * instead of starting another run, which keeps the controller's runs fixed.
  */
 
 const fixture = (name: string) =>
@@ -114,6 +124,7 @@ beforeAll(async () => {
         extensionHost: { dir: pluginsDir },
         marketplaces: { allowInsecureLoopback: true, allowedHosts: ["127.0.0.1"] },
         extensions: [MODEL_FAKE, MODEL_SCRIPT, SANDBOX_FAKE, OBJECT_STORE],
+        runtime: { wakeOnBackgroundTask: false },
         extensionConfig: {
           "model-script": { rules: SDD.rules },
           "sandbox-fake": { root: sandboxRoot },
@@ -204,11 +215,7 @@ async function childConversations(parent: string) {
     .execute();
 }
 
-// Skipped while `Agent` runs in the background without SendMessage (agent map plan Task A6) and
-// wake runs (Task A5): the controller reads each sub-agent's report as its `Agent` result and
-// resumes the implementer with `resume`, neither of which exists any more. Task A6 rewrites the
-// script on deliveries, wakes and SendMessage and turns the suite back on.
-describe.skip("phase C acceptance: superpowers subagent-driven-development", {
+describe("phase C acceptance: superpowers subagent-driven-development", {
   timeout: 180_000,
 }, () => {
   it("superpowers is imported from a git marketplace and installed; an agent gets the SDD skills, the agent tool and the code-reviewer template", async () => {
@@ -288,7 +295,7 @@ describe.skip("phase C acceptance: superpowers subagent-driven-development", {
     state.agentId = created.json().agent.id as string;
   });
 
-  it("the controller runs the two-task plan: implementer, reviewer, resumed fix, re-review, task 2, parallel final review", async () => {
+  it("the controller runs the two-task plan: implementer, reviewer, fix by SendMessage, re-review, task 2, parallel final review", async () => {
     capture.reset();
     const conv = await createConv(admin, orgId, state.agentId as string);
     state.conv = conv;
@@ -300,6 +307,8 @@ describe.skip("phase C acceptance: superpowers subagent-driven-development", {
     );
     const [terminal] = await waitForTerminal(db, conv, 1, 150_000);
     expect(terminal?.type, JSON.stringify(terminal?.payload)).toBe("run_finished");
+    // the last two sub-agents may finish after the controller's last step
+    await finishedDeliveries(db, conv, 8, 30_000);
     state.original = structuredClone(sent);
 
     const events = await eventsOf(db, conv);
@@ -333,12 +342,12 @@ describe.skip("phase C acceptance: superpowers subagent-driven-development", {
     expect(out).toContain("wrote /workspace/.superpowers/sdd/plan/review-2.diff: 1 commit(s)");
     expect(out).toContain("wrote /workspace/.superpowers/sdd/plan/final.diff: 3 commit(s)");
 
-    // seven dispatches; the fix is a follow-up of the first implementer
+    // seven dispatches and the fix, a SendMessage that started the first implementer again
     const dispatched = ofType(events, "subagent_dispatched").map((e) => e.payload);
     expect(dispatched.map((d) => [d.description, d.agentType, d.resumed])).toEqual([
       ["Implement Task 1", "general-purpose", false],
       ["Review Task 1", "general-purpose", false],
-      ["Fix Task 1", "general-purpose", true],
+      ["Implement Task 1", "general-purpose", true],
       ["Re-review Task 1", "general-purpose", false],
       ["Implement Task 2", "general-purpose", false],
       ["Review Task 2", "general-purpose", false],
@@ -356,24 +365,44 @@ describe.skip("phase C acceptance: superpowers subagent-driven-development", {
     expect(final?.model).toEqual(SCRIPT);
     expect(final?.tierFallback).toBe(true);
 
-    // every agent result is the child's reply plus the status line
+    // every Agent result is immediate; the reports arrive as deliveries
     const agentResults = results.filter((r) => r.payload.toolKey === "Agent");
-    expect(agentResults).toHaveLength(8);
+    expect(agentResults).toHaveLength(7);
     for (const r of agentResults) {
-      expect(r.payload.content).toMatch(
-        /\n\n\[agentId: [^ ]+ · completed · \d+ tool calls? · \d+s · \d+ tokens\. Pass the agentId as resume to send this sub-agent a follow-up\.\]$/,
-      );
+      expect(r.payload.content).toContain("(running in the background)");
     }
-    expect(agentResults[1]?.payload.content).toContain("greeting.txt has no trailing newline");
-    expect(agentResults[2]?.payload.content).toContain("now ends with a newline");
+    const [send, ...moreSends] = results.filter((r) => r.payload.toolKey === "SendMessage");
+    expect(moreSends).toEqual([]);
+    expect(send?.payload.content).toBe(
+      sentToIdleText({ id: dispatched[0]?.subagentId as string, description: "Implement Task 1" }),
+    );
+    const deliveries = ofType(events, "subagent_delivery").map((e) => e.payload);
+    const reports = deliveries.filter((d) => d.kind === "report").map((d) => d.text);
+    expect(reports.slice(0, 6)).toEqual([
+      "Status: DONE. Committed greeting.txt (feat: greeting file).",
+      "Spec compliance: ✅. Important: greeting.txt has no trailing newline. Verdict: changes needed.",
+      "Status: DONE. greeting.txt now ends with a newline (fix commit).",
+      "The newline fix is in place. Verdict: approved.",
+      "Status: DONE. Committed farewell.txt (feat: farewell file).",
+      "Spec compliance: ✅. No issues. Verdict: approved.",
+    ]);
+    // the parallel pair ran concurrently (the barrier in both first requests needs both)
+    expect(reports.slice(6).sort()).toEqual([
+      "Both files are present with the planned content.",
+      "Both tasks match the plan. Ready to merge.",
+    ]);
+    // each report reached the controller's next model call
+    const parentRequests = sent.filter((r) => !isChildRequest(r));
+    for (const report of reports) {
+      expect(parentRequests.some((r) => JSON.stringify(r.messages).includes(report))).toBe(true);
+    }
+    // every finish after a handback is one status line
+    const finishes = deliveries.filter((d) => d.kind === "finished");
+    expect(finishes.map((f) => [f.status, f.handedBack, f.text])).toEqual(
+      Array(8).fill(["completed", true, ""]),
+    );
     const finished = ofType(events, "subagent_finished").map((e) => e.payload);
     expect(finished.map((f) => f.status)).toEqual(Array(8).fill("completed"));
-
-    // the parallel pair ran concurrently (the barrier in both first requests needs both)
-    expect(agentResults.slice(-2).map((r) => r.payload.content.split("\n")[0])).toEqual([
-      "Both tasks match the plan. Ready to merge.",
-      "Both files are present with the planned content.",
-    ]);
   });
 
   it("each child's first request holds only its system text and the prompt", async () => {
@@ -557,9 +586,10 @@ describe.skip("phase C acceptance: superpowers subagent-driven-development", {
     expect(r?.status, JSON.stringify(r?.error)).toBe("done");
     expect(r?.drift).toEqual([]);
     expect((r?.candidate as RunReplayResult | undefined)?.unmatched).toBe(0);
-    // the replay sends exactly the parent's requests, none of a child's
+    // the replay sends exactly the parent's requests, none of a child's (at least 16 steps: a
+    // finish check of the implementer may loop)
     const parentRequests = (state.original as ModelRequest[]).filter((q) => !isChildRequest(q));
-    expect(parentRequests).toHaveLength(16);
+    expect(parentRequests.length).toBeGreaterThanOrEqual(16);
     expect(normalizeIds(sent)).toEqual(normalizeIds(parentRequests));
     expect(await countKids()).toBe(kidsBefore);
   });

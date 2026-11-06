@@ -690,6 +690,8 @@ export async function replayRun(
       },
       // replays never fire plugin hooks (the loop deps omit them too, P-18)
       conversationKind: "eval",
+      // a child case offers a sub-agent's message tools, as its recorded requests did
+      ...(subagent !== undefined && { subagent: true }),
     });
   } catch (e) {
     const err =

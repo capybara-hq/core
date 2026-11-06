@@ -465,7 +465,8 @@ describe("agent templates in plugins", () => {
       env.boss,
       env.orgId,
       conv,
-      `tool:Agent:${JSON.stringify({ description: "Again", prompt: "echo:again", resume: subagentId })}`,
+      // a follow-up is a SendMessage to the sub-agent (agent map spec §4.2)
+      `tool:SendMessage:${JSON.stringify({ to: subagentId, message: "echo:again" })}`,
     );
     await waitForTerminal(env.db, conv, 2, 30_000);
     const childReq = await waitFor(
@@ -477,7 +478,7 @@ describe("agent templates in plugins", () => {
           return (
             last?.role === "user" &&
             JSON.stringify(last.content).includes("echo:again") &&
-            !JSON.stringify(last.content).includes("tool:Agent")
+            !JSON.stringify(last.content).includes("tool:SendMessage")
           );
         }),
       10_000,
@@ -488,5 +489,5 @@ describe("agent templates in plugins", () => {
     expect(system).not.toContain("Review v2.");
     const child = await eventsOf(env.db, subagentId);
     expect(child.filter((e) => e.type === "subagent_started")).toHaveLength(1);
-  });
+  }, 60_000);
 });

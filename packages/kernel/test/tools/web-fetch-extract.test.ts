@@ -59,6 +59,7 @@ import {
   waitFor,
   waitForTerminal,
 } from "../helpers/runs.js";
+import { finishedDeliveries } from "../helpers/subagents.js";
 
 /**
  * Web tools spec §5, §8: the `WebFetch` extraction call on the `web_fetch` model purpose, on a real
@@ -229,7 +230,11 @@ function rules(url: string): ScriptRule[] {
         ],
       },
     },
-    { when: { lastToolResultIncludes: "child done" }, reply: { text: "parent done" } },
+    // the Agent result is immediate (agent map spec §4.1): the parent goes on at once
+    {
+      when: { lastUserIncludes: "SCENARIO child", lastToolResultIncludes: "in the background" },
+      reply: { text: "parent done" },
+    },
     {
       when: { lastUserIncludes: "SCENARIO fetch", assistantTurns: 0 },
       reply: { toolCalls: [fetchCall] },
@@ -442,10 +447,16 @@ describe("WebFetch extraction", { timeout: 120_000 }, () => {
     // the fetcher's tier runs on script-2; the parent on script-1; web_fetch is unmapped
     await mapPurpose("subagent_fast", SCRIPT_2);
     const url = unique();
-    const { conv, events } = await converse("SCENARIO child", url);
-    expect(ofType(events, "assistant_message").at(-1)?.payload.content).toEqual([
-      { type: "text", text: "parent done" },
-    ]);
+    const { conv } = await converse("SCENARIO child", url);
+    // the sub-agent runs in the background: its finish delivery says it is done
+    await finishedDeliveries(db, conv, 1);
+    const events = await eventsOf(db, conv);
+    const parentRun = ofType(events, "run_started")[0]?.runId as string;
+    expect(
+      ofType(events, "assistant_message")
+        .filter((e) => e.runId === parentRun)
+        .at(-1)?.payload.content,
+    ).toEqual([{ type: "text", text: "parent done" }]);
     const child = await db
       .selectFrom("conversations")
       .select("id")
@@ -459,7 +470,6 @@ describe("WebFetch extraction", { timeout: 120_000 }, () => {
     expect(webFetchUsage(events)).toEqual([]);
 
     // the parent run's sub-agent tokens: every usage event of the child, the extraction included
-    const parentRun = ofType(events, "run_started")[0]?.runId as string;
     const run = await db
       .selectFrom("runs")
       .select("subagent_tokens_used")
