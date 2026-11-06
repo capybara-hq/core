@@ -1,3 +1,4 @@
+import { connect, createServer, type Socket } from "node:net";
 import { startTestPostgres, startTestRedis } from "@capybara-hq/testing";
 import { describe, expect, it } from "vitest";
 import { type KernelConfig, KernelConfigSchema } from "../../src/config/schema.js";
@@ -16,6 +17,54 @@ const cfg = (roles: readonly string[], pgUrl: string, redisUrl: string): KernelC
     marketplaces: { official: { enabled: false } },
     http: { port: 0 },
   });
+
+/**
+ * A TCP proxy in front of Redis that can play "Redis down" and recover. Stopping the Redis container
+ * instead leaves the kernel's queues unable to close, so every close waited out the whole 30 s stop
+ * budget; with Redis back before the close, the close is quick.
+ */
+async function redisProxy(redisUrl: string) {
+  const target = new URL(redisUrl);
+  const live = new Set<Socket>();
+  let down = false;
+  const server = createServer((client) => {
+    if (down) {
+      client.destroy();
+      return;
+    }
+    const upstream = connect(Number(target.port), target.hostname);
+    for (const s of [client, upstream]) {
+      live.add(s);
+      s.on("close", () => live.delete(s));
+      s.on("error", () => {});
+    }
+    client.pipe(upstream).pipe(client);
+    client.on("close", () => upstream.destroy());
+    upstream.on("close", () => client.destroy());
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  if (address === null || typeof address === "string") throw new Error("no proxy port");
+  const url = new URL(redisUrl);
+  url.hostname = "127.0.0.1";
+  url.port = String(address.port);
+  return {
+    url: url.toString(),
+    down() {
+      down = true;
+      // end, not destroy: a stopping Redis closes its connections, it doesn't reset them
+      for (const s of live) s.end();
+    },
+    up() {
+      down = false;
+    },
+    close: () =>
+      new Promise<void>((resolve) => {
+        for (const s of live) s.destroy();
+        server.close(() => resolve());
+      }),
+  };
+}
 
 describe.each(ROLES)("terminus health on roles %j", (...roles) => {
   async function boot() {
@@ -60,16 +109,24 @@ describe.each(ROLES)("terminus health on roles %j", (...roles) => {
   }, 120_000);
 
   it("redis down: readyz 503 naming redis", async () => {
-    const { pgc, rd, k, get } = await boot();
+    const pgc = await startTestPostgres();
+    const rd = await startTestRedis();
+    const proxy = await redisProxy(rd.url);
+    const k = await startKernel(cfg(roles, pgc.url, proxy.url), {
+      env: {},
+      logger: createLogger("error", { write: () => {} }),
+    });
     try {
-      await rd.stop();
-      const r = await get("/readyz");
+      proxy.down();
+      const r = await k.http.inject({ method: "GET", url: "/readyz" });
       expect(r.statusCode).toBe(503);
       expect(r.json()).toEqual({ ok: false, pg: "ok", redis: "error" });
       expect(r.body).not.toContain("redis://");
     } finally {
+      proxy.up();
       await k.close().catch(() => {});
-      await pgc.stop();
+      await proxy.close();
+      await Promise.all([pgc.stop(), rd.stop()]);
     }
   }, 120_000);
 
