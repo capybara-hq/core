@@ -379,6 +379,45 @@ function commandPaletteBlocks(): ReactNode {
   );
 }
 
+/** The composer of a new conversation (no agent picker) holding the agent's quick actions. */
+function QuickActionsComposer({ open }: { open?: boolean }) {
+  const { agent: _agent, ...rest } = composerProps("new").pickers;
+  return (
+    <ComposerBox
+      {...composerProps("new")}
+      pickers={rest}
+      quickActions={
+        <QuickActions
+          items={NEW_CONVERSATION_FIXTURE.quickActions}
+          onPick={noop}
+          {...(open ? { referenceOpen: true } : {})}
+        />
+      }
+    />
+  );
+}
+
+/** The quick actions (§6.16.27): the zap button after the effort picker, and its menu above. */
+function quickActionsBlocks(): ReactNode {
+  return (
+    <>
+      <Block id="quick-actions-default">
+        <QuickActionsComposer />
+      </Block>
+      <Block
+        id="quick-actions-hover"
+        force={{ pseudo: ["hover"], selector: '[data-part="quick-actions"]' }}
+      >
+        <QuickActionsComposer />
+      </Block>
+      {/* room above the composer for the menu, as the picker menus are staged */}
+      <Block id="quick-actions-menu" offsetTop={220}>
+        <QuickActionsComposer open />
+      </Block>
+    </>
+  );
+}
+
 function pickerMenuBlocks(): ReactNode {
   return (
     <>
@@ -895,8 +934,8 @@ function TemplateBlock({ state, live }: { state: TemplateState; live?: boolean }
         titleBar={titleBar}
         {...(isNew
           ? {
-              // The new conversation page (agent profile design §4): the greeting, the agents
-              // row and the selected agent's quick actions over the composer.
+              // The new conversation page (agent profile design §4): the greeting and the agents
+              // row over the composer, which holds the selected agent's quick actions.
               newConversation: {
                 greeting: <Greeting text={NEW_CONVERSATION_FIXTURE.greeting} still />,
                 agents: (
@@ -906,9 +945,6 @@ function TemplateBlock({ state, live }: { state: TemplateState; live?: boolean }
                     recent={NEW_CONVERSATION_FIXTURE.recent}
                     onSelect={noop}
                   />
-                ),
-                quickActions: (
-                  <QuickActions items={NEW_CONVERSATION_FIXTURE.quickActions} onPick={noop} />
                 ),
               },
             }
@@ -928,6 +964,13 @@ function TemplateBlock({ state, live }: { state: TemplateState; live?: boolean }
             <ComposerBox
               {...c}
               pickers={isNew ? pickers : c.pickers}
+              {...(isNew
+                ? {
+                    quickActions: (
+                      <QuickActions items={NEW_CONVERSATION_FIXTURE.quickActions} onPick={noop} />
+                    ),
+                  }
+                : {})}
               send={sendDisabled ? { ...c.send, disabled: true } : c.send}
             />
           );
@@ -1003,6 +1046,7 @@ export const CONVERSATION_PAGE_BLOCKS = {
   composer: composerBlocks,
   "command-palette": commandPaletteBlocks,
   "picker-menu": pickerMenuBlocks,
+  "quick-actions": quickActionsBlocks,
   "inline-card": inlineCardBlocks,
   "property-section": propertySectionBlocks,
   "background-task": backgroundTaskBlocks,

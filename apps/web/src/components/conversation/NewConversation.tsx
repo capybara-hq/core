@@ -201,17 +201,6 @@ export function useNewConversationPage(
                 onSelect={selectAgent}
               />
             ),
-            quickActions: (
-              <QuickActions
-                // keyed by agent: another agent's line starts closed
-                key={agent?.id ?? ""}
-                items={quickActions.map((q, i) => ({ id: String(i), title: q.title }))}
-                onPick={(id) => {
-                  const body = quickActions[Number(id)]?.body;
-                  if (body !== undefined) composer.current?.fill(body);
-                }}
-              />
-            ),
           },
         }),
     composer: (
@@ -243,6 +232,22 @@ export function useNewConversationPage(
             model: selection.modelPicker,
             ...(selection.effortPicker ? { effort: selection.effortPicker } : {}),
           }}
+          // the agent's quick actions: a zap menu after the effort picker, none without any
+          {...(!sent && quickActions.length > 0
+            ? {
+                quickActions: (
+                  <QuickActions
+                    // keyed by agent: another agent's menu starts closed
+                    key={agent?.id ?? ""}
+                    items={quickActions.map((q, i) => ({ id: String(i), title: q.title }))}
+                    onPick={(id) => {
+                      const body = quickActions[Number(id)]?.body;
+                      if (body !== undefined) composer.current?.fill(body);
+                    }}
+                  />
+                ),
+              }
+            : {})}
           placeholder={t("newPlaceholder", { agent: name })}
         />
       </Stack>

@@ -28,7 +28,7 @@ Tokens: `docs/design/tokens.json` is the source; `pnpm gen:tokens` writes `token
 | Create / edit an object | `FormPage` | Centered, grouped by `FormSection`, always has an ActionRow |
 | Org / environment / security settings | `SettingsPage` | Secondary nav + Centered, ActionRow when there are changes |
 | Human approval, alert handling | `InboxPage` | Rail + Content (+ Inspector) |
-| The conversation page (`/chat`, `/chat/<id>`) | `ConversationPage` | Title bar + thread + composer, with the properties panel or one right panel (spec §5.4) (it replaced `PlaygroundPage`); a new conversation (`/chat`) passes `newConversation` with `Greeting`, `AgentRow` and `QuickActions`, and the composer has no agent picker |
+| The conversation page (`/chat`, `/chat/<id>`) | `ConversationPage` | Title bar + thread + composer, with the properties panel or one right panel (spec §5.4) (it replaced `PlaygroundPage`); a new conversation (`/chat`) passes `newConversation` with `Greeting` and `AgentRow`, and the composer has no agent picker and takes the agent's `QuickActions` (a `zap` menu after the effort picker) |
 | Single run detail | `TracePage` | Span waterfall + detail |
 | First-time setup of a model / connector / extension | `WizardPage` | Centered + step bar, previous / next |
 | Login, initialization, accept invitation | `AuthPage` | No Shell |

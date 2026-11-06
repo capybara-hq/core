@@ -1658,40 +1658,8 @@ textarea {
   font-size: var(--cb-type-small-size);
   line-height: var(--cb-type-small-line);
 }
-/* Quick actions (§6.16.27): quiet muted small links, ink on hover; 更多's menu below it. */
-.r-quick-actions {
-  display: flex;
-  align-items: center;
-  gap: var(--cb-space-4);
-  min-width: 0;
-  min-height: var(--cb-control-dense);
-}
-.r-quick-action {
-  flex: 0 1 auto;
-  min-width: 0;
-  height: var(--cb-control-dense);
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--cb-muted);
-  font: inherit;
-  font-size: var(--cb-type-small-size);
-  line-height: var(--cb-type-small-line);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.r-quick-action[data-state="hover"] {
-  color: var(--cb-ink);
-}
-.r-quick-more-wrap {
-  position: relative;
-  flex: none;
-  display: inline-flex;
-}
+/* Quick actions (§6.16.27): the composer's zap icon button; its menu, bounded like the old one. */
 .r-quick-menu {
-  top: calc(100% + var(--cb-space-1));
-  left: 0;
   min-width: 160px;
   max-width: min(320px, calc(100vw - 16px));
 }

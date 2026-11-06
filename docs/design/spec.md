@@ -437,7 +437,7 @@ States: `page`, `loading`
   - The **middle column** holds, top to bottom: the title bar (§6.16.1), the thread (centered, at most `layout.chat` wide, gutters `layout.gutter`, padding `space.4` on top, items `space.3` apart, following the bottom while the reader is at the bottom; it reserves a classic scrollbar's gutter on both sides, `scrollbar-gutter: stable both-edges`, so it keeps the composer's center line whether or not it scrolls), the composer (§6.16.2, at most `layout.chat` plus the gutters wide, centered, `space.3` from the status bar) and the status bar (§4.4). It is never narrower than `layout.chat-min`, except **below 640**, where it fills the window and the title bar, the thread and the composer use `space.4` (16) gutters, so the composer, its send button and the user bubbles never run past the right edge.
   - The **right area** holds one thing at a time: either the **properties panel** (§6.16.17), which sits *inside* the middle column under its title bar so the title bar spans thread and properties, or **one right panel** (§6.16.18), full height beside the middle column, whose title bar then narrows with it. Opening one closes the other; "none" is the default.
 - **Narrow windows**: below 1280 (where the sidebar becomes the rail, §4.3) the right area is a right-side Sheet over the page (`layout.panel` wide, `shadow-sheet`, a `scrim` behind it), closed by Esc, its close button or a click on the scrim; the server render and hydration cannot know the window, so below 1280 a CSS media query hides the inline right area until the first client render makes it the Sheet (the page never scrolls sideways, no flash). At 1280 and above it sits beside the thread; with the full sidebar at exactly 1280 the panel narrows to 544 so the thread keeps `layout.chat-min` (maintainer ruling 2026-10-27).
-- **New conversation**: nothing is created until the first send. The title bar shows "新会话" / "New conversation"; the thread is replaced by a centered column (`layout.chat` wide) holding, top to bottom and `space.4` apart (agent profile design §4, U1): the greeting (§6.16.25), the agents row (§6.16.26; hidden with one usable agent), the selected agent's quick actions (§6.16.27; hidden when it has none) and the composer, whose control row then has no agent picker (the row chooses the agent; the model and effort pickers stay). `ConversationPage.newConversation` takes them as `greeting`, `agents` and `quickActions`; without a `greeting` the agent's name (`h2`) and description (`prose-small` `muted`) stand in its place. With any of the three the column's parts are `space.4` apart; with none it is the name and description over the composer, `space.2` apart. The status bar shows only the context and the version.
+- **New conversation**: nothing is created until the first send. The title bar shows "新会话" / "New conversation"; the thread is replaced by a centered column (`layout.chat` wide) holding, top to bottom and `space.4` apart (agent profile design §4, U1): the greeting (§6.16.25), the agents row (§6.16.26; hidden with one usable agent) and the composer, whose control row then has no agent picker (the row chooses the agent; the model and effort pickers stay) and holds the selected agent's quick actions as a `zap` button after the effort picker (§6.16.27; none when it has none). `ConversationPage.newConversation` takes them as `greeting` and `agents`; without a `greeting` the agent's name (`h2`) and description (`prose-small` `muted`) stand in its place. With either of the two the column's parts are `space.4` apart; with none it is the name and description over the composer, `space.2` apart. The status bar shows only the context and the version.
 - **Status bar** (read-only, §4.4): left `user@org:/chat/<id>` and "第 N 轮 · 已用 <elapsed>" / "Turn N · <elapsed>" (the run's working time: it ticks only while the run works and stops while it waits for a person, an approval or a question, then counts on); right the run status ("空闲" / "Idle", "运行中" / "Running", "等待批准" / "Waiting for approval"), "上下文 N%" / "Context N%" and the version.
 - **Runs** (design note, unslop fixes 2026-11-03): every run that ended closes with a **run row** (§6.16.23), a quiet mono line `运行 · <model> · <duration> · <tokens>` with its status mark, built from the log alone (`run_started`, `model_call`, `usage`, `run_finished` / `run_failed` / `run_aborted`). A finished run's row is collapsed and uncoloured except its `ok` check; a failed run's row is open at first and red only in its mark, its status word and the failure sentence; its detail holding the failure (ErrorDetail: the sentence in the reader's language, the raw kernel text behind 原始错误), 重试 (the last failure only, while nothing runs), 查看轨迹 (`/trajectories/<conversationId>`, only for those the kernel lets read it: org admins and owners, or the agent's owner) and, for a super admin when the model service is misconfigured (`model.auth`, `model.unconfigured`, `run.model_unavailable`), 去配置模型服务 (`/admin/extensions`). A stopped run's row names who stopped it. The run row replaces the stopped, failed and hook-denied dividers (no run is drawn twice); a running run shows nothing new (the live indicators stay). The properties panel's Context section adds the last run's line (model, duration, tokens; cost only when the log carries one, which it does not today).
 - Extension slots, files and sub-agents: §6.16.16–§6.16.18, §6.16.15.
@@ -465,7 +465,7 @@ The two `right-panel` widths of 544 hold only at the width the `template-convers
 | new-conversation-body | new | row-gap | space.4 |
 | greeting-line | new | height | type.h1.line |
 | agent-chip | new | height | control.prominent |
-| quick-action | new | color | color.muted |
+| quick-actions | new | width | control.default |
 | sidebar | sheet | width | layout.sidebar-rail |
 | right-panel | sheet | width | layout.panel |
 | status-bar | sheet | height | layout.status-bar |
@@ -1178,7 +1178,7 @@ States: `default`, `untitled`, `rename-menu`, `panel-active`, `overflow`, `long-
 
 - `raised` ground, 1px `line` border, radius `md`, `shadow-float`, padding `space.2` `space.2` `space.2` `space.3`. While its textarea has focus: an `accent` border plus the 3px `focus-ring` halo (the input focus rule of §2.5) over the same shadow.
 - Top to bottom: the attachment strip (§6.16.21) when there are attachments; the textarea (no border or ground, `prose` 15 / 26 `ink`, placeholder `faint`, one line high when empty, growing with its content up to 8 lines and then scrolling, `space.2` below it); the control row.
-- **Control row**, gap `space.1`, pulled left by `space.2` so the ＋ lines up with the text: ＋ (ghost `IconButton`, `plus`, "添加附件" / "Attach files") · agent picker · model picker · effort picker · flexible space · send. The agent picker is optional (`pickers.agent`): the new conversation page leaves it out, its agents row chooses the agent (§5.4).
+- **Control row**, gap `space.1`, pulled left by `space.2` so the ＋ lines up with the text: ＋ (ghost `IconButton`, `plus`, "添加附件" / "Attach files") · agent picker · model picker · effort picker · quick actions · flexible space · send. The agent picker is optional (`pickers.agent`): the new conversation page leaves it out, its agents row chooses the agent (§5.4). The quick actions (`quickActions`, §6.16.27) are a ghost `zap` icon button, given only when the agent has some.
   - Pickers are ghost `default`-step buttons in `muted`: label + `chevron-down` 12, padding 0 `space.2`, opening a picker menu (§6.16.3) above them.
   - The agent picker is a picker only in a new conversation; after the first message it is plain `muted` text with no chevron (`data-locked="true"`, `title` "发送第一条消息后不能再换 agent" / "The agent can't change after the first message").
   - The effort picker is hidden when the selected model declares no `effort` values.
@@ -2046,17 +2046,22 @@ States: `default`, `panel`, `no-match`
 
 #### 6.16.27 Quick actions
 
-`QuickActions({ items, onPick, max = 4, moreLabel })` lists the selected agent's quick actions
-(agent profile design §4.3); `items` are `{ id, title }` and the page keeps the bodies.
+`QuickActions({ items, onPick, label? })` offers the selected agent's quick actions (agent profile
+design §4.3); `items` are `{ id, title }` and the page keeps the bodies. It sits in the composer's
+control row (`ComposerBox.quickActions`, §6.16.2), right after the effort picker (after the model
+picker when the effort picker is hidden), so the new conversation's column holds no line of its own
+between the agents row and the composer (maintainer decision, 2026-11-07).
 
-- **Quiet** (U1): one line of text links `space.4` apart, each a button `control.dense` high with
-  no ground and no border, `small` `muted`, `ink` on hover and focus (the focus ring as everywhere);
-  a title is one line with an ellipsis (the whole title is its tooltip), and titles shrink before
-  the line overflows.
-- **Count**: the first `max` show, then a quiet "更多" / "More" link of the same look opens the rest
-  in a small menu (§6.16.3's menu, 160 at least and at most `min(320px, 100vw − 16px)`, one item
-  per title, a long title cut with an ellipsis). No items: nothing.
-- **Pick**: `onPick(id)`; the page puts the body into the composer and focuses it.
+- **Button**: a ghost `IconButton` like the ＋ (`control.default` square, `muted` icon, `ink` on
+  hover), the `zap` icon 16 (the line set, §3), named "常用任务" / "Common tasks" (its accessible name
+  and tooltip). Shown only when the agent has quick actions; no items: nothing, and nothing takes its
+  place.
+- **Menu**: it opens a small menu above the composer, `space.1` from its top edge, like the
+  pickers' (§6.16.3's menu, 160 at least and at most `min(320px, 100vw − 16px)`), named like the
+  button, one item per title in the agent's order, a long title cut with an ellipsis.
+- **Pick**: choosing one closes the menu, then `onPick(id)`: the page puts the body into the
+  composer and focuses it (focus does not return to the button); Escape closes the menu and
+  returns focus to the button.
 
 <!-- states: quick-actions -->
 States: `default`, `hover`, `menu`
@@ -2064,13 +2069,10 @@ States: `default`, `hover`, `menu`
 <!-- size-table: quick-actions -->
 | Part | State | Property | Value |
 |---|---|---|---|
-| quick-actions | default | column-gap | space.4 |
-| quick-action | default | height | control.dense |
-| quick-action | default | font-size | type.small |
-| quick-action | default | color | color.muted |
-| quick-action | default | border-top-width | 0 |
-| quick-more | default | color | color.muted |
-| quick-action[data-ref-forced=true] | hover | color | color.ink |
+| quick-actions | default | width | control.default |
+| quick-actions | default | height | control.default |
+| quick-actions | default | color | color.muted |
+| quick-actions[data-ref-forced=true] | hover | color | color.ink |
 | menu | menu | background-color | color.panel |
 | menu-item | menu | height | row.default |
 

@@ -43,6 +43,11 @@ export type ConvMenuProps = {
   open?: boolean;
   onOpenChange?(open: boolean): void;
   /**
+   * As the menu closes, before focus returns to the trigger; `preventDefault()` keeps it where
+   * an item's action put it (a quick action focuses the composer).
+   */
+  onCloseAutoFocus?(e: Event): void;
+  /**
    * Draw the menu open in place (no portal, not modal, never closes): the reference set and the
    * catalog only.
    */
@@ -62,6 +67,7 @@ export function ConvMenu({
   bounded,
   open,
   onOpenChange,
+  onCloseAutoFocus,
   inline,
 }: ConvMenuProps): JSX.Element {
   // Notes are not items, so screen readers skip them inside a menu: they describe the menu (m14).
@@ -79,6 +85,7 @@ export function ConvMenu({
       align={align}
       sideOffset={sideOffset}
       avoidCollisions={!inline}
+      {...(onCloseAutoFocus ? { onCloseAutoFocus } : {})}
     >
       {entries.map((e, i) => {
         switch (e.kind) {

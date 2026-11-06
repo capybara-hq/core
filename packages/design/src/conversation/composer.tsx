@@ -5,6 +5,7 @@ import {
   type KeyboardEvent,
   type ReactNode,
   type Ref,
+  type RefObject,
   type TextareaHTMLAttributes,
   useCallback,
   useEffect,
@@ -86,21 +87,8 @@ export function Picker({
   onPick,
   referenceOpen,
 }: PickerProps): JSX.Element {
-  const trigger = useRef<HTMLButtonElement>(null);
+  const { trigger, offset, measure } = useMenuAboveComposer(referenceOpen === true);
   const [open, setOpen] = useState(false);
-  const [offset, setOffset] = useState(4);
-  // The menu opens above the composer, `space.1` from its top edge (the signed reference), not
-  // just above the picker: the offset is the picker's distance from the composer's top.
-  const measure = () => {
-    const el = trigger.current;
-    const frame = el?.closest('[data-part="composer"]');
-    if (el && frame)
-      setOffset(el.getBoundingClientRect().top - frame.getBoundingClientRect().top + 4);
-  };
-  // biome-ignore lint/correctness/useExhaustiveDependencies: measured once for the drawn-open menu
-  useLayoutEffect(() => {
-    if (referenceOpen) measure();
-  }, [referenceOpen]);
   if (locked) {
     return (
       <span className="cb-picker" data-part="picker" data-locked="true" title={locked.hint}>
@@ -153,6 +141,32 @@ export function Picker({
   );
 }
 
+/**
+ * A control-row menu's place (the pickers, the quick actions): it opens above the composer,
+ * `space.1` from its top edge (the signed reference), not just above the trigger, so the offset
+ * is the trigger's distance from the composer's top. `measure` runs as the menu opens; a menu
+ * drawn open in place (`drawnOpen`, the reference set) is measured once on mount.
+ */
+export function useMenuAboveComposer(drawnOpen: boolean): {
+  trigger: RefObject<HTMLButtonElement | null>;
+  offset: number;
+  measure(): void;
+} {
+  const trigger = useRef<HTMLButtonElement>(null);
+  const [offset, setOffset] = useState(4);
+  const measure = () => {
+    const el = trigger.current;
+    const frame = el?.closest('[data-part="composer"]');
+    if (el && frame)
+      setOffset(el.getBoundingClientRect().top - frame.getBoundingClientRect().top + 4);
+  };
+  // biome-ignore lint/correctness/useExhaustiveDependencies: measured once for the drawn-open menu
+  useLayoutEffect(() => {
+    if (drawnOpen) measure();
+  }, [drawnOpen]);
+  return { trigger, offset, measure };
+}
+
 export type ComposerBoxProps = {
   value: string;
   onChange(v: string): void;
@@ -170,6 +184,11 @@ export type ComposerBoxProps = {
    * agent (agent profile design §4.2); the model and effort pickers stay.
    */
   pickers: { agent?: PickerProps; model: PickerProps; effort?: PickerProps };
+  /**
+   * The selected agent's quick actions (`QuickActions`, §6.16.27): a `zap` button right after the
+   * effort picker, given only when the agent has some.
+   */
+  quickActions?: ReactNode;
   send: { mode: "send" | "stop"; disabled?: boolean; busy?: boolean; onClick(): void };
   textareaRef?: Ref<HTMLTextAreaElement>;
   /** The reference set only: draw the focused frame (`:focus-within` is forced there). */
@@ -217,7 +236,8 @@ function ComposerTokenChip({
 
 /**
  * The composer (§6.16.2): the frame, the attachment strip, the textarea (grows to 8 lines) and the
- * control row: ＋ · agent · model · effort (hidden without efforts) · send / stop.
+ * control row: ＋ · agent · model · effort (hidden without efforts) · quick actions (only when the
+ * agent has some) · send / stop.
  */
 export function ComposerBox({
   value,
@@ -230,6 +250,7 @@ export function ComposerBox({
   onAttach,
   attachDisabled,
   pickers,
+  quickActions,
   send,
   textareaRef,
   autoFocus,
@@ -315,6 +336,7 @@ export function ComposerBox({
         {pickers.agent ? <Picker {...pickers.agent} /> : null}
         <Picker {...pickers.model} />
         {pickers.effort ? <Picker {...pickers.effort} /> : null}
+        {quickActions ?? null}
         <span className="cb-grow" />
         {send.mode === "stop" ? (
           <IconButton

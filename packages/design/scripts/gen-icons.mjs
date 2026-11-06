@@ -107,6 +107,8 @@ const ICONS = {
   clock: "clock",
   // Config forms: the Repeater's drag handle.
   "grip-vertical": "grip-vertical",
+  // The composer toolbar's quick actions (§6.16.27).
+  zap: "zap",
 };
 
 const entries = Object.entries(ICONS).map(([name, file]) => {

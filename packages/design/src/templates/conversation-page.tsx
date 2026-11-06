@@ -78,8 +78,8 @@ export type ConversationPageProps = {
   titleBar: TitleBarProps;
   /**
    * A new conversation (nothing created yet; spec §5.4, agent profile design §4): top to bottom
-   * the greeting (else the agent's name and description), the agents row, the selected agent's
-   * quick actions and the composer.
+   * the greeting (else the agent's name and description), the agents row and the composer (the
+   * selected agent's quick actions are a button in the composer's control row, §6.16.27).
    */
   newConversation?: {
     agentName?: string;
@@ -88,8 +88,6 @@ export type ConversationPageProps = {
     greeting?: ReactNode;
     /** `AgentRow` (§6.16.26), under the greeting. */
     agents?: ReactNode;
-    /** `QuickActions` (§6.16.27), under the agents row, just over the composer. */
-    quickActions?: ReactNode;
   };
   /** The thread; it follows the bottom while the reader is at the bottom. */
   thread?: ReactNode;
@@ -269,11 +267,7 @@ export function ConversationPage({
         <div
           className="cb-conv-new"
           data-part="new-conversation-body"
-          data-start={
-            newConversation.greeting || newConversation.agents || newConversation.quickActions
-              ? "true"
-              : undefined
-          }
+          data-start={newConversation.greeting || newConversation.agents ? "true" : undefined}
         >
           {newConversation.greeting ?? (
             <>
@@ -286,7 +280,6 @@ export function ConversationPage({
             </>
           )}
           {newConversation.agents ?? null}
-          {newConversation.quickActions ?? null}
           {composerNode}
         </div>
       </div>

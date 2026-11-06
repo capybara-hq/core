@@ -26,7 +26,6 @@ import {
   QuestionBlock,
   QueuedMessage,
   QueuePaused,
-  QuickActions,
   RunDivider,
   RunRow,
   Stack,
@@ -226,7 +225,7 @@ function workingLineBlocks(): ReactNode {
   );
 }
 
-// ── New conversation: greeting, agents row, quick actions ───────────────────
+// ── New conversation: greeting, agents row (quick actions: in the composer) ──
 
 const NC = NEW_CONVERSATION_FIXTURE;
 
@@ -282,26 +281,6 @@ function agentRowBlocks(): ReactNode {
           inline
         />
       </Block>
-    </>
-  );
-}
-
-function quickActionsBlocks(): ReactNode {
-  return (
-    <>
-      <Block id="quick-actions-default">
-        <QuickActions items={NC.quickActions} onPick={noop} />
-      </Block>
-      <Block
-        id="quick-actions-hover"
-        force={{ pseudo: ["hover"], selector: '[data-part="quick-action"]' }}
-      >
-        <QuickActions items={NC.quickActions} onPick={noop} />
-      </Block>
-      {/* room below the line for the menu, as the reference stages it */}
-      <RefBlock id="quick-actions-menu" width={W} height={160} pad>
-        <QuickActions items={NC.quickActions} onPick={noop} referenceOpen />
-      </RefBlock>
     </>
   );
 }
@@ -1000,7 +979,6 @@ export const CONVERSATION_BLOCKS = {
   "working-line": workingLineBlocks,
   greeting: greetingBlocks,
   "agent-row": agentRowBlocks,
-  "quick-actions": quickActionsBlocks,
   "tool-group": toolGroupBlocks,
   "tool-row": toolRowBlocks,
   "diff-block": diffBlockBlocks,

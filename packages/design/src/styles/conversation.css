@@ -1759,36 +1759,5 @@ button.cb-file-card:focus-visible {
 
 /* ── Quick actions (§6.16.27) ── */
 
-/* Quiet (U1): muted small text links, no ground or border, ink on hover and focus; each title one
-   line with an ellipsis, shrinking before the line overflows. */
-.cb-quick-actions {
-  display: flex;
-  align-items: center;
-  gap: var(--cb-space-4);
-  min-width: 0;
-  min-height: var(--cb-control-dense);
-}
-.cb-quick-action {
-  flex: 0 1 auto;
-  min-width: 0;
-  height: var(--cb-control-dense);
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--cb-muted);
-  font: inherit;
-  font-size: var(--cb-type-small-size);
-  line-height: var(--cb-type-small-line);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  cursor: pointer;
-  transition: color var(--cb-motion-hover);
-}
-.cb-quick-action[data-part="quick-more"] {
-  flex: none;
-}
-.cb-quick-action:hover,
-.cb-quick-action:focus-visible {
-  color: var(--cb-ink);
-}
+/* The composer control row's ghost `zap` icon button (the ＋'s style) and the conversation menu:
+   nothing of their own. */

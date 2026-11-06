@@ -20,6 +20,7 @@ import { useTranslations } from "next-intl";
 import {
   type ChangeEvent,
   type KeyboardEvent,
+  type ReactNode,
   type Ref,
   useEffect,
   useImperativeHandle,
@@ -200,6 +201,7 @@ export function ComposerBar({
   onSend,
   onQueue,
   pickers,
+  quickActions,
   placeholder,
   sendDisabled,
   initialDraft,
@@ -225,6 +227,8 @@ export function ComposerBar({
   onQueue?(m: ComposerMessage): Promise<SendResult>;
   /** The agent picker is absent on the new conversation page (its agents row picks). */
   pickers: { agent?: PickerProps; model: PickerProps; effort?: PickerProps };
+  /** The selected agent's quick actions (`QuickActions`), after the effort picker. */
+  quickActions?: ReactNode;
   placeholder: string;
   /** Nothing can be sent yet (a new conversation whose agent, or a thread, is still loading). */
   sendDisabled?: boolean;
@@ -683,6 +687,7 @@ export function ComposerBar({
           }}
           attachDisabled={!drafts.limits.available}
           pickers={pickers}
+          {...(quickActions !== undefined ? { quickActions } : {})}
           send={
             running && stop
               ? { mode: "stop", busy: stop.stopping, onClick: stop.onStop }
