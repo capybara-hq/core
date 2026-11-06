@@ -63,10 +63,11 @@ function AgentPageLoading({ agentId, section }: { agentId: string; section: stri
   const scope = usePagePath("org");
   const t = useTranslations("agents.page");
   const ta = useTranslations("agents");
+  const tc = useTranslations("common");
   const { me } = useSession();
-  // The head's actions the session already decides: run history and reassign for org admins
-  // (a member owner's run history comes with the agent), and start chat (a static link). Reassign
-  // does nothing until the agent is here.
+  // The head's actions the session already decides: the ⋯ menu with run history and change owner
+  // for org admins (a member owner's run history comes with the agent), and start chat (a static
+  // link). Change owner does nothing until the agent is here.
   const admin = canUpdateOrg(me);
   const chatHref = `/chat?agent=${encodeURIComponent(agentId)}`;
   // whether the viewer may change the agent is known only with it: members up see every section
@@ -84,11 +85,16 @@ function AgentPageLoading({ agentId, section }: { agentId: string; section: stri
           ...(admin
             ? [
                 {
-                  label: ta("runHistory"),
-                  variant: "default" as const,
-                  href: `/trajectories?agentId=${encodeURIComponent(agentId)}`,
+                  label: tc("moreActions"),
+                  menu: [
+                    {
+                      label: ta("runHistory"),
+                      href: `/trajectories?agentId=${encodeURIComponent(agentId)}`,
+                    },
+                    // does nothing until the agent is here
+                    { label: t("reassign"), onSelect: () => {} },
+                  ],
                 },
-                { label: t("reassign"), variant: "default" as const },
               ]
             : []),
           { label: t("startChat"), variant: "primary" as const, href: chatHref },

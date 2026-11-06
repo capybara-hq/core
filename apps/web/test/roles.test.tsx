@@ -390,7 +390,21 @@ const MEMBERS = {
   ],
 };
 
-describe("agents: edit, read-only and 更换负责人", () => {
+/** The agent head's ⋯ menu (更多操作): opens it and reads its items, then closes it. */
+async function moreItems(): Promise<string[]> {
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: zh.common.moreActions }));
+  const items = (await screen.findAllByRole("menuitem")).map((i) => i.textContent ?? "");
+  await user.keyboard("{Escape}");
+  return items;
+}
+/** 更改所有者 from the agent head's ⋯ menu. */
+async function changeOwner(user: ReturnType<typeof userEvent.setup>): Promise<void> {
+  await user.click(await screen.findByRole("button", { name: zh.common.moreActions }));
+  await user.click(await screen.findByRole("menuitem", { name: zh.agents.page.reassign }));
+}
+
+describe("agents: edit, read-only and 更改所有者", () => {
   const agentPage = async (
     role: OrgRole,
     owner: string,
@@ -422,19 +436,24 @@ describe("agents: edit, read-only and 更换负责人", () => {
       await agentPage(role, "someone", {}, edits ? "" : "?s=model");
       if (edits) {
         expect(await screen.findByRole("textbox", { name: zh.agents.form.nameLabel })).toBeTruthy();
-        expect(screen.getByRole("button", { name: zh.agents.page.reassign })).toBeTruthy();
+        // 运行记录 and 更改所有者 sit in the head's ⋯ menu beside 开始对话
+        expect(await moreItems()).toEqual([zh.agents.runHistory, zh.agents.page.reassign]);
       } else {
         expect(await screen.findByText("p / m")).toBeTruthy();
         expect(screen.queryByRole("button", { name: zh.agents.form.submit })).toBeNull();
-        expect(screen.queryByRole("button", { name: zh.agents.page.reassign })).toBeNull();
+        expect(screen.queryByRole("button", { name: zh.common.moreActions })).toBeNull();
+        expect(screen.queryByText(zh.agents.page.reassign)).toBeNull();
       }
     });
   }
 
-  it("a member who owns the agent edits it, without 更换负责人", async () => {
+  it("a member who owns the agent edits it, without 更改所有者 (运行记录 alone is a button)", async () => {
     await agentPage("member", "a1");
     expect(await screen.findByRole("textbox", { name: zh.agents.form.nameLabel })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: zh.agents.page.reassign })).toBeNull();
+    // no menu of one: the lone 运行记录 stays a button
+    expect(screen.queryByRole("button", { name: zh.common.moreActions })).toBeNull();
+    expect(screen.getByRole("link", { name: zh.agents.runHistory })).toBeTruthy();
+    expect(screen.queryByText(zh.agents.page.reassign)).toBeNull();
   });
 
   it("a guest who still owns an agent cannot edit it (agents.create is member up)", async () => {
@@ -445,7 +464,7 @@ describe("agents: edit, read-only and 更换负责人", () => {
   it("an admin changes the owner: picks a member (no anonymous guests) and posts it", async () => {
     await agentPage("admin", "someone");
     const user = userEvent.setup();
-    await user.click(await screen.findByRole("button", { name: zh.agents.page.reassign }));
+    await changeOwner(user);
     const dialog = await screen.findByRole("dialog", { name: zh.agents.reassign.title });
     const select = await within(dialog).findByRole("combobox", { name: zh.agents.reassign.owner });
     expect(within(select).queryByRole("option", { name: /Anonymous/ })).toBeNull();
@@ -453,12 +472,18 @@ describe("agents: edit, read-only and 更换负责人", () => {
     await user.click(within(dialog).getByRole("button", { name: zh.agents.reassign.submit }));
     await vi.waitFor(() => expect(calls).toContain(`POST ${O}/agents/x1/owner`));
     expect(await screen.findByText(zh.agents.reassign.done)).toBeTruthy();
+    // the agent is read again (and the agents list, when it is cached)
+    await vi.waitFor(() =>
+      expect(calls.slice(calls.indexOf(`POST ${O}/agents/x1/owner`))).toContain(
+        `GET ${O}/agents/x1`,
+      ),
+    );
   });
 
   it("an agent that needs reassignment can be confirmed to its current owner", async () => {
     await agentPage("admin", "a2", { needsReassignment: true });
     const user = userEvent.setup();
-    await user.click(await screen.findByRole("button", { name: zh.agents.page.reassign }));
+    await changeOwner(user);
     const dialog = await screen.findByRole("dialog", { name: zh.agents.reassign.title });
     await within(dialog).findByRole("combobox", { name: zh.agents.reassign.owner });
     const submit = within(dialog).getByRole("button", { name: zh.agents.reassign.submit });
@@ -470,7 +495,7 @@ describe("agents: edit, read-only and 更换负责人", () => {
   it("without needsReassignment the current owner is not a change", async () => {
     await agentPage("admin", "a2");
     const user = userEvent.setup();
-    await user.click(await screen.findByRole("button", { name: zh.agents.page.reassign }));
+    await changeOwner(user);
     const dialog = await screen.findByRole("dialog", { name: zh.agents.reassign.title });
     await within(dialog).findByRole("combobox", { name: zh.agents.reassign.owner });
     expect(within(dialog).getByRole("button", { name: zh.agents.reassign.submit })).toHaveProperty(
@@ -480,8 +505,7 @@ describe("agents: edit, read-only and 更换负责人", () => {
   });
 
   for (const role of ROLES) {
-    const admin = role === "admin" || role === "owner";
-    it(`agent row · ${role}: 编辑 only through the name, 更换负责人 ${admin ? "as a button" : "hidden"}`, async () => {
+    it(`agent row · ${role}: 开始会话 only; 编辑 through the name; no owner change in the list`, async () => {
       routes = { [`GET ${O}/agents`]: { agents: [AGENT("ag1", "a1")] } };
       resetNavigation("/agents");
       await renderRouteWithCache("/agents", served(), { locale: "zh", me: meAs(role) });
@@ -493,35 +517,17 @@ describe("agents: edit, read-only and 更换负责人", () => {
       expect(nameLink?.getAttribute("href") ?? null).toBe(role === "guest" ? null : "/agents/ag1");
       expect(screen.queryByRole("button", { name: zh.agents.edit })).toBeNull();
       expect(screen.queryByRole("link", { name: zh.agents.edit })).toBeNull();
-      // No menu of one: the admins' lone 更换负责人 is a button
+      // the owner is changed on the agent's page, never from the list (2026-11-07), for any role:
+      // the row's only button is 开始会话
       expect(screen.queryByRole("button", { name: "更多操作" })).toBeNull();
-      expect(screen.queryByRole("button", { name: zh.agents.reassign.action }) !== null).toBe(
-        admin,
-      );
+      const row = screen.getByText("Agent ag1").closest("li") as HTMLElement;
+      expect(
+        within(row)
+          .getAllByRole("button")
+          .map((b) => b.textContent),
+      ).toEqual([zh.agents.chat]);
     });
   }
-});
-
-describe("agents list: 更换负责人", () => {
-  it("reassign invalidates the agents list and the agent: the list is read again", async () => {
-    routes = {
-      [`GET ${O}/agents`]: { agents: [AGENT("ag1", "a1")] },
-      [`GET ${O}/members`]: MEMBERS,
-      [`POST ${O}/agents/ag1/owner`]: { agent: AGENT("ag1", "a2") },
-    };
-    resetNavigation("/agents");
-    await renderRouteWithCache("/agents", served(), { locale: "zh", me: meAs("admin") });
-    const user = userEvent.setup();
-    await user.click(await screen.findByRole("button", { name: zh.agents.reassign.action }));
-    const dialog = await screen.findByRole("dialog", { name: zh.agents.reassign.title });
-    const select = await within(dialog).findByRole("combobox", { name: zh.agents.reassign.owner });
-    await user.selectOptions(select, "a2");
-    calls = [];
-    await user.click(within(dialog).getByRole("button", { name: zh.agents.reassign.submit }));
-    await vi.waitFor(() =>
-      expect(calls).toEqual([`POST ${O}/agents/ag1/owner`, `GET ${O}/agents`]),
-    );
-  });
 });
 
 describe("trajectories: only the tabs the role can use", () => {

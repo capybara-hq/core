@@ -120,6 +120,14 @@ const nav = () => {
 };
 const current = () => nav().querySelector('[aria-current="page"]')?.textContent;
 const settle = () => act(() => new Promise((r) => setTimeout(r, 20)));
+/** The head's ⋯ menu (More actions): opens it, reads its items and closes it. */
+async function headMenu(): Promise<string[]> {
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: en.common.moreActions }));
+  const items = (await screen.findAllByRole("menuitem")).map((i) => i.textContent ?? "");
+  await user.keyboard("{Escape}");
+  return items;
+}
 
 beforeEach(() => resetNavigation("/agents/ag1"));
 afterEach(() => {
@@ -146,8 +154,9 @@ describe("the agent page by section (agent profile design §3)", () => {
     expect(screen.getByRole("link", { name: P_.startChat }).getAttribute("href")).toBe(
       "/chat?agent=ag1",
     );
-    expect(screen.getByRole("link", { name: en.agents.runHistory })).toBeTruthy();
-    expect(screen.getByRole("button", { name: P_.reassign })).toBeTruthy();
+    // 开始对话 stays the primary; 运行记录 and Change owner sit in the ⋯ menu beside it
+    expect(await headMenu()).toEqual([en.agents.runHistory, P_.reassign]);
+    expect(P_.reassign).toBe("Change owner");
     await view.navigate("/agents/ag1?s=quick-actions");
     expect(current()).toBe(P_.sections["quick-actions"]);
     expect(screen.getByRole("region", { name: P_.sections["quick-actions"] })).toBeTruthy();
@@ -176,7 +185,8 @@ describe("the agent page by section (agent profile design §3)", () => {
     expect(screen.queryByRole("button", { name: en.agents.form.submit })).toBeNull();
     expect(screen.getByRole("link", { name: P_.startChat })).toBeTruthy();
     expect(screen.queryByRole("link", { name: en.agents.runHistory })).toBeNull();
-    expect(screen.queryByRole("button", { name: P_.reassign })).toBeNull();
+    expect(screen.queryByRole("button", { name: en.common.moreActions })).toBeNull();
+    expect(screen.queryByText(P_.reassign)).toBeNull();
     await view.navigate("/agents/ag1?s=quick-actions");
     expect(screen.getByText("Summarize")).toBeTruthy();
     expect(screen.queryByRole("button", { name: P_.quickActions.add })).toBeNull();
@@ -789,8 +799,8 @@ describe("the agent page by section (agent profile design §3)", () => {
     expect(
       within(actions).getByRole("link", { name: en.agents.page.startChat }).getAttribute("href"),
     ).toBe("/chat?agent=ag1");
-    expect(within(actions).getByRole("link", { name: en.agents.runHistory })).toBeTruthy();
-    expect(within(actions).getByRole("button", { name: en.agents.page.reassign })).toBeTruthy();
+    // 运行记录 and Change owner: the ⋯ menu, as on the loaded page
+    expect(within(actions).getByRole("button", { name: en.common.moreActions })).toBeTruthy();
     await act(async () => release());
     expect(await screen.findByDisplayValue("Summarize")).toBeTruthy();
     await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());

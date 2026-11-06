@@ -2,12 +2,11 @@
 
 import { ObjectRow } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
-import { useContext, useState } from "react";
+import { useContext } from "react";
 import { useRouter } from "../i18n/navigation";
 import { type Agent, avatarValue } from "../lib/agents";
 import { modelLabel } from "../lib/extension-label";
 import { canUpdateOrg } from "../lib/org-settings";
-import { ReassignOwnerDialog } from "./ReassignOwnerDialog";
 import { navLevelOf } from "./shell/nav";
 import { SessionContext } from "./shell/session";
 
@@ -39,9 +38,7 @@ export function AgentRow({ agent }: { agent: Agent }) {
   const t = useTranslations("agents");
   const router = useRouter();
   const session = useContext(SessionContext);
-  const [reassigning, setReassigning] = useState(false);
-  // The kernel lets the owner (agents.create: members up) or an org admin change an agent;
-  // 更换负责人 is agents.manage (org admins).
+  // The kernel lets the owner (agents.create: members up) or an org admin change an agent.
   const admin = session !== null && canUpdateOrg(session.me);
   const canEdit =
     session !== null &&
@@ -67,20 +64,10 @@ export function AgentRow({ agent }: { agent: Agent }) {
         name={def.name}
         {...(canEdit ? { href: editHref } : {})}
         meta={meta}
+        // The row's one action starts a conversation; the name opens the agent's page, where the
+        // owner is changed (maintainer decision 2026-11-07: no owner change in the list).
         action={{ label: t("chat"), onSelect: start }}
-        // The row action starts a conversation and the name already opens the edit page, so the
-        // menu repeats neither (spec §6.7): it holds only 更换负责人, for org admins.
-        menu={admin ? [{ label: t("reassign.action"), onSelect: () => setReassigning(true) }] : []}
       />
-      {reassigning ? (
-        <ReassignOwnerDialog
-          orgId={agent.orgId}
-          agentId={agent.id}
-          ownerAccountId={agent.ownerAccountId}
-          needsReassignment={agent.needsReassignment === true}
-          onClose={() => setReassigning(false)}
-        />
-      ) : null}
     </>
   );
 }

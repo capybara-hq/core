@@ -224,13 +224,16 @@ describe("编辑 agent（FormPage）", () => {
   );
 
   it("「运行记录」入口：负责人与组织管理员可见，指向按该 agent 筛选的运行记录", async () => {
-    // 组织 owner（管理员）且是负责人
+    // an org owner (admin) who also owns it: 运行记录 sits in the head's ⋯ menu with Change owner
     stubApi(routes());
     await renderEditAgent({ section: "skills" });
-    const link = await screen.findByRole("link", { name: en.agents.runHistory });
+    await userEvent
+      .setup()
+      .click(await screen.findByRole("button", { name: en.common.moreActions }));
+    const link = await screen.findByRole("menuitem", { name: en.agents.runHistory });
     expect(link.getAttribute("href")).toBe("/trajectories?agentId=ag1");
     cleanup();
-    // 普通成员、是负责人：可见
+    // a member who owns it: 运行记录 alone, a button (no menu of one)
     const member = {
       ...ME,
       memberships: [{ orgId: "o1", slug: "acme", name: "Acme", role: "member" }],

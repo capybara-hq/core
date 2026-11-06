@@ -665,7 +665,6 @@
     },
     "readOnly": "Only the agent's owner and org admins can change it; you can chat with it.",
     "reassign": {
-      "action": "Change owner…",
       "title": "Change owner",
       "owner": "New owner",
       "help": "The owner can change and delete this agent.",
@@ -686,7 +685,7 @@
         "channels": "Channels"
       },
       "startChat": "Start a conversation",
-      "reassign": "Reassign owner",
+      "reassign": "Change owner",
       "leave": {
         "title": "Discard unsaved changes?",
         "body": "This section has changes that are not saved. Keep editing, or discard them and leave.",
