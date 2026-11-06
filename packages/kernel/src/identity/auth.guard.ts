@@ -89,6 +89,21 @@ export async function authorizeSuperAdmin(req: FastifyRequest, s: AuthServices):
 }
 
 /**
+ * Before the body is read (Fastify `onRequest`), for an org's package upload (an `@OrgAction`
+ * route of a human-only action): authenticated like {@link authorizeSuperAdmin}, a person (service
+ * tokens -> `forbidden`), CSRF for cookies. The org role is checked by `OrgGuard` afterwards, and
+ * again under the org row lock by the service.
+ */
+export async function authorizeOrgUploader(req: FastifyRequest, s: AuthServices): Promise<void> {
+  const resolved = await resolvePrincipal(req, s);
+  if (!resolved) throw new ApiError("auth.required", "Authentication required");
+  if (resolved.cookie && !SAFE_METHODS.has(req.method.toUpperCase())) requireCsrf(req);
+  if (resolved.principal.kind === "service") {
+    throw new ApiError("forbidden", "Service tokens cannot access this endpoint");
+  }
+}
+
+/**
  * 全局守卫（`APP_GUARD`），默认拒绝：
  * 1. `Authorization: Bearer cap_pat_…|cap_svc_…` → API 令牌；个人令牌再实时读账号状态。不做 CSRF 检查。
  * 2. 否则 Cookie `cap_at` → 会话 access token（Redis 吊销标记作快速路径，再以 PG `sessions.revoked_at` 为准，

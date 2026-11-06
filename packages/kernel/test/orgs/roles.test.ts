@@ -42,6 +42,7 @@ const EXPECTED: Record<OrgAction, OrgRole[]> = {
   "catalog.read": [M, A, O],
   "catalog.request": [M, A, O],
   "catalog.decide": [A, O],
+  "catalog.upload": [A, O],
 };
 
 /** 服务令牌可执行的动作（不在 HUMAN_ONLY 中）。 */
@@ -55,7 +56,7 @@ describe("roles", () => {
     expect(roleAtLeast("guest", "member")).toBe(false);
   });
 
-  it("ACTION_MIN_ROLE 覆盖全部 26 个动作", () => {
+  it("ACTION_MIN_ROLE covers all 27 actions", () => {
     expect(Object.keys(ACTION_MIN_ROLE).sort()).toEqual(Object.keys(EXPECTED).sort());
   });
 
@@ -64,8 +65,8 @@ describe("roles", () => {
       (action) => [role, action, EXPECTED[action].includes(role)] as const,
     ),
   );
-  it("真值表共 4×26 = 104 个组合", () => {
-    expect(cases.length).toBe(104);
+  it("the truth table has 4×27 = 108 combinations", () => {
+    expect(cases.length).toBe(108);
   });
   it.each(cases)("can(%s, %s) = %s", (role, action, allowed) => {
     expect(can(role, action)).toBe(allowed);
@@ -86,6 +87,7 @@ describe("roles", () => {
       "catalog.read",
       "catalog.request",
       "catalog.decide",
+      "catalog.upload",
     ] as const)
       expect(HUMAN_ONLY.has(a)).toBe(true);
     const rest = (Object.keys(EXPECTED) as OrgAction[]).filter((a) => !SERVICE_OK.includes(a));

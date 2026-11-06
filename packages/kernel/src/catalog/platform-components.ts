@@ -588,6 +588,20 @@ export class PlatformComponents {
     await this.itemLock.lock(plan.plugin);
     const t = this.db;
     const out: PlatformSyncResult = { skills: [], agentTemplates: [], connectorTemplates: [] };
+    // New component rows carry the plugin's owner and 可共享 flag (ruling P3-2); an org plugin's
+    // skills and agent templates were created in its owner org (`origin_org_id`, immutable, F27),
+    // and like the plugin they are not shown to other orgs until the super admin shows them
+    const item = await t
+      .selectFrom("catalog_items")
+      .select(["owner_org_id", "shareable"])
+      .where("id", "=", plan.itemId)
+      .executeTakeFirst();
+    const ownerOrgId = item?.owner_org_id ?? null;
+    const owned =
+      ownerOrgId === null
+        ? {}
+        : { owner_org_id: ownerOrgId, shareable: item?.shareable === true, shown_to_others: false };
+    const origin = ownerOrgId === null ? {} : { origin_org_id: ownerOrgId };
 
     for (const s of plan.skills) {
       const live = await t
@@ -623,6 +637,8 @@ export class PlatformComponents {
             description_zh: null,
             current_version: s.to,
             scope_mode: "follow",
+            ...owned,
+            ...origin,
           })
           .execute();
       }
@@ -680,6 +696,8 @@ export class PlatformComponents {
             description,
             current_version: a.to,
             scope_mode: "follow",
+            ...owned,
+            ...origin,
           })
           .execute();
       }
@@ -733,6 +751,7 @@ export class PlatformComponents {
             current_version: plan.version,
             file: JSON.stringify(c.file),
             scope_mode: "follow",
+            ...owned,
           })
           .execute();
       }

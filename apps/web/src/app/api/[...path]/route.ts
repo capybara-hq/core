@@ -6,9 +6,9 @@
  * as the kernel's Fastify bodyLimit); installing / previewing a connector
  * (`POST /api/v1/orgs/:orgId/connectors[/preview]`) may carry an OpenAPI document of up to 2 MB, so
  * like those two kernel routes it is raised to 6 MiB. Extension and plugin package uploads
- * (`POST /api/v1/admin/extensions/packages/file`, `/api/v1/admin/catalog/import/file`) are raised
- * to `CAPYBARA_WEB_MAX_PACKAGE_BYTES` (default 50 MiB) and forwarded while being read, never
- * buffered whole. Client addresses are handled in `lib/peer.ts`.
+ * (`POST /api/v1/admin/extensions/packages/file`, `/api/v1/admin/catalog/import/file`,
+ * `/api/v1/orgs/:orgId/catalog/uploads/file`) are raised to `CAPYBARA_WEB_MAX_PACKAGE_BYTES`
+ * (default 50 MiB) and forwarded while being read, never buffered whole. Client addresses are handled in `lib/peer.ts`.
  */
 
 import {
@@ -27,13 +27,17 @@ export const dynamic = "force-dynamic";
 const CONNECTOR_INSTALL_MAX_BODY_BYTES = 6 * 1024 * 1024;
 const CONNECTOR_INSTALL_PATH = /^\/api\/v1\/orgs\/[^/]+\/connectors(?:\/preview)?$/;
 /**
- * Upload routes whose request body is streamed through (extension package tgz, plugin package tgz;
- * up to tens of MiB).
+ * Upload routes whose request body is streamed through (extension package tgz, plugin package tgz,
+ * an org's plugin package tgz; up to tens of MiB).
  */
-const STREAMED_UPLOAD_PATHS = new Set([
-  "/api/v1/admin/extensions/packages/file",
-  "/api/v1/admin/catalog/import/file",
-]);
+const STREAMED_UPLOAD_PATHS: readonly RegExp[] = [
+  /^\/api\/v1\/admin\/extensions\/packages\/file$/,
+  /^\/api\/v1\/admin\/catalog\/import\/file$/,
+  /^\/api\/v1\/orgs\/[^/]+\/catalog\/uploads\/file$/,
+];
+
+const streamedUpload = (pathname: string): boolean =>
+  STREAMED_UPLOAD_PATHS.some((p) => p.test(pathname));
 
 const upstreamUnavailable = () =>
   Response.json(
@@ -91,7 +95,7 @@ async function proxy(req: Request): Promise<Response> {
   if (peer !== undefined) headers.set("x-forwarded-for", peer);
 
   let upstream: Response;
-  if (req.method === "POST" && STREAMED_UPLOAD_PATHS.has(src.pathname) && req.body !== null) {
+  if (req.method === "POST" && streamedUpload(src.pathname) && req.body !== null) {
     // Large uploads: forward while reading (never buffered whole), count while forwarding, abort
     // over the limit. The cost: when upstream answers 401, undici reports a network error (the
     // stream cannot be replayed), so the browser checks the session before uploading (see

@@ -34,7 +34,8 @@ export type OrgAction =
   | "org.models.manage"
   | "catalog.read"
   | "catalog.request"
-  | "catalog.decide";
+  | "catalog.decide"
+  | "catalog.upload";
 
 /** 每个动作所需的最低角色。 */
 export const ACTION_MIN_ROLE: Record<OrgAction, OrgRole> = {
@@ -77,6 +78,8 @@ export const ACTION_MIN_ROLE: Record<OrgAction, OrgRole> = {
   "catalog.read": "member",
   "catalog.request": "member",
   "catalog.decide": "admin",
+  // An org admin uploads a plugin package the org owns (spec §14.1 item 1, ruling P3-7)
+  "catalog.upload": "admin",
 };
 
 /** 服务令牌也可执行的动作：只读的 org.read、org.members.read，以及使用 agent 的 agents.use。 */

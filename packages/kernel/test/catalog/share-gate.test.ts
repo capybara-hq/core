@@ -416,14 +416,9 @@ describe("share gate", { timeout: 90_000 }, () => {
     expect((await orgCatalog(orgA, env.root)).map((i) => i.id)).toContain(itemId);
   });
 
-  it("an import confirm onto a non-shareable org-owned item fails before marking requests (P3-26)", async () => {
+  it("an import confirm onto a name an org came to own fails before marking requests (P3-14, P3-26)", async () => {
     const itemId = await importSkill(env, { name: "owned-imp" });
     await setScope(env, itemId, "named", [orgA]);
-    await env.db
-      .updateTable("catalog_items")
-      .set({ owner_org_id: orgA, shareable: false })
-      .where("id", "=", itemId)
-      .execute();
     const p = await env.root({
       method: "POST",
       url: "/api/v1/admin/catalog/import/file",
@@ -431,6 +426,13 @@ describe("share gate", { timeout: 90_000 }, () => {
       payload: Buffer.from(await skillPlugin("owned-imp", { version: "2.0.0" })),
     });
     expect(p.statusCode, p.body).toBe(200);
+    // owned by org A after the review: the confirm refuses the name under its lock (P3-14), so
+    // the fail-closed share gate of P3-26 behind it is never reached
+    await env.db
+      .updateTable("catalog_items")
+      .set({ owner_org_id: orgA, shareable: false })
+      .where("id", "=", itemId)
+      .execute();
     const requestId = randomUUID();
     await env.db
       .insertInto("catalog_requests")
@@ -450,7 +452,7 @@ describe("share gate", { timeout: 90_000 }, () => {
       url: `/api/v1/admin/catalog/imports/${p.json().stagingId}/confirm`,
       payload: { reviewHash: p.json().review.reviewHash },
     });
-    expect(errorOf(c)).toEqual([409, "catalog.not_shareable"]);
+    expect(errorOf(c)).toEqual([409, "plugin.name_taken"]);
     const row = await env.db
       .selectFrom("catalog_requests")
       .select(["status", "item_id"])

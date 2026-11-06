@@ -14,7 +14,7 @@ import {
   pluginFactsOf,
   switchOf,
 } from "./component-state.js";
-import { wantedOn } from "./scope.js";
+import { type PluginScope, wantedOn } from "./scope.js";
 
 /** Who owns an item or component: the platform, or one org (by id and name, deleted orgs too). */
 export type Owner = { kind: "platform" } | { kind: "org"; orgId: string; name: string };
@@ -77,6 +77,98 @@ export function assertShareableTarget(
   const added =
     from.scope === "named" && target.scope === "named" && target.orgs.some((o) => !known.has(o));
   if (wider || added) assertShareable(row);
+}
+
+/** The facts {@link isUsable} and {@link usableBy} read from a `catalog_items` row. */
+export interface UsableFacts {
+  scope: PluginScope;
+  builtin: boolean;
+  disabled: boolean;
+  deleted_at: Date | null;
+  awaiting_confirmation: boolean;
+  owner_org_id: string | null;
+  shareable: boolean;
+}
+
+/**
+ * Whether an item can serve anything at all (ruling P3-9, F12): confirmed (not a first upload
+ * still waiting for the super admin), not disabled and not deleted. The one predicate for the
+ * dependency check of org uploads (P3-13), the scope sync, org switches and installs.
+ */
+export function isUsable(
+  item: Pick<UsableFacts, "disabled" | "deleted_at" | "awaiting_confirmation">,
+): boolean {
+  return !item.awaiting_confirmation && !item.disabled && item.deleted_at === null;
+}
+
+/**
+ * Whether `orgId` can use the item (P3-13): {@link isUsable}, and its owner, or listed by a `named`
+ * scope (an org already associated keeps it), or offered to every org (`all` / `optional`, builtin)
+ * through the {@link shareGate} (another org's item only while it is shared).
+ */
+export function usableBy(item: UsableFacts, orgId: string, listed: boolean): boolean {
+  if (!isUsable(item)) return false;
+  if (item.owner_org_id === orgId) return true;
+  if (!item.builtin && item.scope === "named") return listed;
+  return listed || shareGate(item);
+}
+
+/**
+ * The owner of the live catalog item called `name` when it is not `owner` (null = the platform),
+ * else undefined: a plugin name is live for one owner only (ruling P3-14).
+ */
+export async function otherNameOwner(
+  db: KernelSchemaDb,
+  name: string,
+  owner: string | null,
+): Promise<Owner | undefined> {
+  const live = await db
+    .selectFrom("catalog_items")
+    .select("owner_org_id")
+    .where("name", "=", name)
+    .where("deleted_at", "is", null)
+    .executeTakeFirst();
+  if (live === undefined || live.owner_org_id === owner) return undefined;
+  const ids = live.owner_org_id === null ? [] : [live.owner_org_id];
+  return ownerOf(live.owner_org_id, await ownersOf(db, ids));
+}
+
+/**
+ * 409 `plugin.name_taken` (details `[{ owner }]`) when the plugin name is live for another owner
+ * than `owner` (null = the platform): an org cannot upload a platform's or another org's name, and
+ * the super admin cannot import an org's (ruling P3-14). The same owner adds a version.
+ */
+export async function assertNameFree(
+  db: KernelSchemaDb,
+  name: string,
+  owner: string | null,
+): Promise<void> {
+  const other = await otherNameOwner(db, name, owner);
+  if (other === undefined) return;
+  throw new ApiError(
+    "plugin.name_taken",
+    other.kind === "platform"
+      ? `Plugin name ${name} is taken by the platform`
+      : `Plugin name ${name} is taken by organization ${other.name}`,
+    [{ owner: other }],
+  );
+}
+
+/**
+ * The owner of the extension name an npm package holds (package -> its live catalog item -> that
+ * item's owner; ruling P3-14): the platform when no live item carries the package.
+ */
+export async function packageOwner(db: KernelSchemaDb, packageName: string | null): Promise<Owner> {
+  if (packageName === null) return PLATFORM_OWNER;
+  const item = await db
+    .selectFrom("catalog_items")
+    .select("owner_org_id")
+    .where("package_name", "=", packageName)
+    .where("deleted_at", "is", null)
+    .orderBy("owner_org_id")
+    .executeTakeFirst();
+  const id = item?.owner_org_id ?? null;
+  return ownerOf(id, await ownersOf(db, id === null ? [] : [id]));
 }
 
 /** The owners of `orgIds` by org id (deleted orgs included, by their name). */

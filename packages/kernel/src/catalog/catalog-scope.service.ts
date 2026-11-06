@@ -503,6 +503,14 @@ export class CatalogScopeService {
     return changed;
   }
 
+  /**
+   * Enqueues the item's scope sync after a commit made elsewhere (an org upload's confirm,
+   * `OrgPluginUploads`); a failure only warns.
+   */
+  async enqueueSync(itemId: string): Promise<void> {
+    await this.enqueue(itemId);
+  }
+
   /** Enqueues the item's scope sync; a failure only warns (the next change or org sync converges). */
   private async enqueue(itemId: string): Promise<void> {
     try {

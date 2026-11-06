@@ -38,7 +38,7 @@ import {
   sourceEffective,
   unimportable,
 } from "./marketplaces.service.js";
-import { type Owner, ownerOf, ownersOf, PLATFORM_OWNER } from "./ownership.js";
+import { type Owner, ownerOf, ownersOf, PLATFORM_OWNER, packageOwner } from "./ownership.js";
 import { schemaHasPath } from "./schema-path.js";
 import type { PluginScope } from "./scope.js";
 import { compareVersions, newestFirst, sameRelease, withBuild } from "./versions.js";
@@ -424,7 +424,8 @@ export async function writeCatalogVersion(
 /**
  * An extension name belongs to the npm package that first installed it (`extension_name_owners`,
  * Ruling P3): when another package owns it, the import is refused right away with
- * `extension.name_conflict` (the same code as at install), instead of failing only at deploy time.
+ * `extension.name_conflict` (the same code as at install, details `[{ owner }]`: the owner of the
+ * package holding it), instead of failing only at deploy time.
  */
 export async function assertPluginNameOwner(
   db: KernelSchemaDb,
@@ -440,6 +441,8 @@ export async function assertPluginNameOwner(
     throw new ApiError(
       "extension.name_conflict",
       `Extension name ${name} belongs to package ${owner.package_name}; ${packageLabel(packageName)} cannot use it`,
+      // who holds it (package -> item -> owner, ruling P3-14)
+      [{ owner: await packageOwner(db, owner.package_name) }],
     );
   }
 }

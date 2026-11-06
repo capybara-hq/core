@@ -7,7 +7,11 @@ import type { Route } from "../ctx/create-ctx.js";
 import { ApiError, errorBody } from "../errors.js";
 import { AccountsService } from "../identity/accounts.js";
 import { ApiTokenService } from "../identity/api-tokens.js";
-import { type AuthServices, authorizeSuperAdmin } from "../identity/auth.guard.js";
+import {
+  type AuthServices,
+  authorizeOrgUploader,
+  authorizeSuperAdmin,
+} from "../identity/auth.guard.js";
 import { SessionService } from "../identity/sessions.js";
 import { withLogContext } from "../log-context.js";
 import { redactPath } from "./error.filter.js";
@@ -82,6 +86,14 @@ export const PACKAGE_UPLOAD_ROUTES: ReadonlySet<string> = new Set([
   COMPONENT_SKILL_UPLOAD_ROUTE,
 ]);
 
+/** An org admin's plugin package upload (spec §14, ruling P3-7; a tgz as the raw body). */
+export const ORG_PLUGIN_UPLOAD_ROUTE = "/api/v1/orgs/:orgId/catalog/uploads/file";
+/**
+ * The org routes that take raw package bytes (limit `packages.maxBytes`): the caller is
+ * authenticated as a person before the body is read; the org role is the route's `@OrgAction`.
+ */
+export const ORG_PACKAGE_UPLOAD_ROUTES: ReadonlySet<string> = new Set([ORG_PLUGIN_UPLOAD_ROUTE]);
+
 /** Paths without an access log line (probes). */
 const QUIET_PATHS = new Set(["/healthz", "/readyz"]);
 
@@ -155,7 +167,8 @@ export async function createHttpApp(
     if (LARGE_BODY_ROUTES.has(r.url) && [r.method].flat().includes("POST")) {
       r.bodyLimit = LARGE_BODY_LIMIT;
     }
-    if (PACKAGE_UPLOAD_ROUTES.has(r.url) && opts.packageMaxBytes !== undefined) {
+    const upload = PACKAGE_UPLOAD_ROUTES.has(r.url) || ORG_PACKAGE_UPLOAD_ROUTES.has(r.url);
+    if (upload && opts.packageMaxBytes !== undefined) {
       r.bodyLimit = opts.packageMaxBytes + 1;
     }
   });
@@ -182,6 +195,14 @@ export async function createHttpApp(
     if (req.method === "POST" && PACKAGE_UPLOAD_ROUTES.has(req.routeOptions.url ?? "")) {
       try {
         await authorizeSuperAdmin(req, services());
+      } catch (e) {
+        return sendError(reply, e, req.method, req.url);
+      }
+      return;
+    }
+    if (req.method === "POST" && ORG_PACKAGE_UPLOAD_ROUTES.has(req.routeOptions.url ?? "")) {
+      try {
+        await authorizeOrgUploader(req, services());
       } catch (e) {
         return sendError(reply, e, req.method, req.url);
       }

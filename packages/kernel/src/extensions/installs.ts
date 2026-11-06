@@ -11,6 +11,7 @@ import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KEYRING } from "../infra/tokens.js";
+import { OrgLock } from "../orgs/org-lock.js";
 import {
   fetchNpmPackage,
   IntegrityMismatchError,
@@ -141,6 +142,8 @@ export class ExtensionInstalls {
     @Inject(ExtensionRegistry) private readonly registry: ExtensionRegistry,
     @Inject(KernelConfigService) private readonly config: KernelConfigService,
     @Inject(KEYRING) private readonly keyring: Keyring,
+    /** The owner org's lock: an org upload re-checks its org admin instead (ruling P3-10). */
+    @Inject(OrgLock) private readonly orgLock: OrgLock,
   ) {}
 
   /**
@@ -174,14 +177,24 @@ export class ExtensionInstalls {
    * - extension name equal to a config-declared one -> `extension.config_declared`;
    * - an install record of the same name comes from another npm package -> `extension.name_conflict`
    *   (a new version of the same package is an upgrade, handled elsewhere).
-   * `actor` null means the CLI (no super admin re-check, audit without an actor).
+   * `actor` null means the CLI (no super admin re-check, audit without an actor). `owner`: an org
+   * upload (spec §14, P3-10): the actor is re-checked as an org admin of that org (`catalog.upload`)
+   * instead of a super admin; the package is only stored, as always (nothing runs, no install).
    */
   async ingest(
     actor: string | null,
     bytes: Uint8Array,
     src: IngestSource,
-    opts: { actorTokenId?: string; store?: "object" | "pg"; expectPackageName?: string } = {},
+    opts: {
+      actorTokenId?: string;
+      store?: "object" | "pg";
+      expectPackageName?: string;
+      owner?: { orgId: string };
+    } = {},
   ): Promise<PackageReview> {
+    if (opts.owner !== undefined && actor === null) {
+      throw new Error("an org upload has an actor");
+    }
     const maxBytes = this.config.get().packages.maxBytes;
     if (bytes.byteLength > maxBytes) {
       throw new ApiError(
@@ -225,19 +238,25 @@ export class ExtensionInstalls {
     }
 
     // 写包之前在锁内复核发起人仍是超级管理员（守卫读到的身份可能已过期）；审计在写完后同样复核
-    if (actor !== null) await this.authorize(actor);
+    if (actor !== null) await this.authorize(actor, opts.owner);
     await this.blobs.put(pkg, bytes, {
       source: src.source,
       ref: src.ref,
       actor,
       ...(opts.store !== undefined && { store: opts.store }),
     });
-    await this.auditUpload(actor, opts.actorTokenId, {
-      name: m.name,
-      version: m.version,
-      sha256: pkg.sha256,
-      source: src.source,
-    });
+    await this.auditUpload(
+      actor,
+      opts.actorTokenId,
+      {
+        name: m.name,
+        version: m.version,
+        sha256: pkg.sha256,
+        source: src.source,
+        ...(opts.owner !== undefined && { orgId: opts.owner.orgId }),
+      },
+      opts.owner,
+    );
 
     const set = permissionSetOfPackage(pkg);
     const snapshot = (await this.approvals.all()).get(m.name);
@@ -262,8 +281,16 @@ export class ExtensionInstalls {
    * transaction holding the lock.
    */
   @Transactional({ propagation: "requires_new" })
-  private async authorize(actor: string): Promise<void> {
-    await this.adminLock.lockAndAuthorize(actor);
+  private async authorize(actor: string, owner?: { orgId: string }): Promise<void> {
+    await this.authorizeIn(actor, owner);
+  }
+
+  /** The super admin, or for an org upload the owner org's admin, re-checked under its lock. */
+  @Transactional({ propagation: "mandatory" })
+  private async authorizeIn(actor: string, owner: { orgId: string } | undefined): Promise<void> {
+    if (owner !== undefined)
+      await this.orgLock.lockAndAuthorize(owner.orgId, actor, "catalog.upload");
+    else await this.adminLock.lockAndAuthorize(actor);
   }
 
   /**
@@ -274,9 +301,16 @@ export class ExtensionInstalls {
   private async auditUpload(
     actor: string | null,
     actorTokenId: string | undefined,
-    detail: { name: string; version: string; sha256: string; source: IngestSource["source"] },
+    detail: {
+      name: string;
+      version: string;
+      sha256: string;
+      source: IngestSource["source"];
+      orgId?: string;
+    },
+    owner?: { orgId: string },
   ): Promise<void> {
-    if (actor !== null) await this.adminLock.lockAndAuthorize(actor);
+    if (actor !== null) await this.authorizeIn(actor, owner);
     await audit(this.db.db, {
       ...(actor !== null && { actorAccountId: actor }),
       ...(actorTokenId !== undefined && { actorTokenId }),
