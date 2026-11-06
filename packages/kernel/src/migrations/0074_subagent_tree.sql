@@ -5,7 +5,8 @@
 --   descendants' tokens count against; null = the run is its own budget run.
 -- - subagent_dispatches.budget_run_id: the budget run the dispatch counted against (existing rows:
 --   the dispatching run, which was its own budget run before nesting).
--- - subagent_dispatches.for_skill: the dispatch of a `context: fork` skill invocation.
+-- - subagent_dispatches.for_skill: the dispatch of a `context: fork` skill invocation (existing
+--   fork dispatches are backfilled).
 ALTER TABLE conversations ADD COLUMN IF NOT EXISTS subagent_depth smallint NOT NULL DEFAULT 0;
 
 ALTER TABLE runs ADD COLUMN IF NOT EXISTS budget_run_id text;
@@ -16,6 +17,11 @@ ALTER TABLE subagent_dispatches ADD COLUMN IF NOT EXISTS budget_run_id text;
 UPDATE subagent_dispatches SET budget_run_id = parent_run_id WHERE budget_run_id IS NULL;
 ALTER TABLE subagent_dispatches ALTER COLUMN budget_run_id SET NOT NULL;
 ALTER TABLE subagent_dispatches ADD COLUMN IF NOT EXISTS for_skill boolean NOT NULL DEFAULT false;
+-- Existing fork dispatches (phase D: call id `skill-<seq>` at step 0, `skillCallId` / `FORK_STEP`
+-- in runtime/subagents/skill-fork.ts) are marked, so a fork in flight across the upgrade keeps its
+-- wait and its finish is never delivered as a background child's. A second run changes nothing.
+UPDATE subagent_dispatches SET for_skill = true
+WHERE for_skill = false AND step = 0 AND parent_call_id ~ '^skill-[0-9]+$';
 CREATE INDEX IF NOT EXISTS subagent_dispatches_budget_run_idx
   ON subagent_dispatches (budget_run_id);
 

@@ -252,7 +252,8 @@ export class RunWorker {
 
   /**
    * After any terminal commit of a run that is not a sub-agent's (sub-agents spec §12): stops its
-   * active children on its behalf (no account). The wait sweep is the backstop.
+   * active fork invocation child on its behalf (no account); background `Agent` children keep
+   * running (agent map spec §5.4). The wait sweep is the backstop.
    */
   private async stopChildren(runId: string): Promise<void> {
     try {

@@ -118,23 +118,24 @@ export class SubagentDeliveries {
    * `subagent_finished` (display only) and a `finished` delivery in one transaction. The delivery
    * carries the final reply when the run handed back no report, else no text and `handedBack`; a
    * failed run's error message and code, an aborted run who stopped it. A run that is not a
-   * dispatched child, a fork invocation's child, or not terminal yet is left alone.
+   * dispatched child, a fork invocation's child, or not terminal yet is left alone. True when this
+   * call wrote the delivery.
    */
-  async childFinished(childRunId: string): Promise<void> {
+  async childFinished(childRunId: string): Promise<boolean> {
     const row = await dispatchOfChildRun(this.db, childRunId);
-    if (!row || row.forSkill === true) return;
+    if (!row || row.forSkill === true) return false;
     const run = await this.db
       .selectFrom("runs")
       .select("status")
       .where("id", "=", childRunId)
       .executeTakeFirst();
-    if (!run || !TERMINAL_STATUSES.has(run.status)) return;
+    if (!run || !TERMINAL_STATUSES.has(run.status)) return false;
     const r = await childResult(this.eventLog, row);
     if (!r) {
       this.log.warn("sub-agent run is terminal without a terminal event", { childRunId });
-      return;
+      return false;
     }
-    await this.finishIn(row, r);
+    return this.finishIn(row, r);
   }
 
   /** {@link childFinished}'s transaction. */
@@ -142,7 +143,7 @@ export class SubagentDeliveries {
   private async finishIn(
     row: DispatchRow,
     r: NonNullable<Awaited<ReturnType<typeof childResult>>>,
-  ): Promise<void> {
+  ): Promise<boolean> {
     await this.eventLog.appendIn(row.parentConversationId, [finishedEvent(row, r.finished)]);
     const { status, errorCode } = r.finished;
     const handedBack = await this.handedBack(row);
@@ -153,7 +154,7 @@ export class SubagentDeliveries {
         : status === "aborted" || status === "timed_out"
           ? ""
           : r.reply;
-    await this.deliverIn(row, {
+    const seq = await this.deliverIn(row, {
       kind: "finished",
       status,
       text,
@@ -161,6 +162,7 @@ export class SubagentDeliveries {
       ...(errorCode !== undefined && { errorCode }),
       ...(r.abortedBy !== undefined && { abortedBy: r.abortedBy }),
     });
+    return seq !== null;
   }
 
   /** Whether the child run handed back a report (`SubagentHandback`) before it finished. */

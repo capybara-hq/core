@@ -158,16 +158,7 @@ export interface DispatchPlan {
  * type, or an org agent that fails one of its gates ({@link orgAgentGates}, checked at every
  * level; audited `subagent.refused`).
  */
-export async function dispatchSubagent(
-  d: DispatchDeps,
-  a: {
-    ctx: ToolStepContext;
-    callId: string;
-    input: AgentToolInputT;
-    /** Phase D: a person's fork invocation (see {@link SkillForkDispatch}). */
-    forSkill?: SkillForkDispatch;
-  },
-): Promise<DispatchOutcome> {
+export async function dispatchSubagent(d: DispatchDeps, a: DispatchArgs): Promise<DispatchOutcome> {
   const { ctx, input } = a;
   const { maxDepth } = await subagentLimits(d.db, d.config, ctx.orgId);
   const childDepth = runDepth(ctx) + 1;
@@ -370,7 +361,7 @@ const taskMessage = (
  *
  * Under the parent run's row lock it first re-checks what the pipeline checked without it: a call
  * already dispatched (a second holder of the same step, e.g. after a stalled-job takeover) gets
- * the existing child run back and writes nothing, and a parent run that is no longer `running`
+ * the existing child run back and writes nothing but a missing `Agent` result, and a parent run that is no longer `running`
  * (stopped, orphaned) dispatches nothing. Then the limits (§8.2, agent map spec §6,
  * {@link subagentLimits}), read fresh: the depth, the tree's token counter at or over the cap,
  * its dispatches (follow-ups included) at the cap, or as many active children of the parent
@@ -384,6 +375,8 @@ export type DispatchCommit =
       childRunId: string;
       childConversationId: string;
       requeue: { conversationId: string; seq: number } | null;
+      /** The call's logged result (null for a fork dispatch) and its seq, to notify. */
+      result: { content: string; seq: number } | null;
     }
   | { kind: "stopped" }
   | { kind: "limit"; content: string }
@@ -426,17 +419,22 @@ export async function commitDispatchIn(
     .where("sd.parent_call_id", "=", callId)
     .executeTakeFirst();
   if (existing) {
+    // An `Agent` call's result was written with its first dispatch (this returns it). A call
+    // dispatched before `Agent` ran in the background (a foreground wait in flight across the
+    // upgrade) gets the immediate result now, so the log never keeps it unpaired; such a call
+    // reaches here again through the pipeline's policy stages, so it may ask for approval again.
+    let result: { content: string; seq: number } | null = null;
     if (a.forSkill === undefined) {
-      // written with the first dispatch; a call dispatched before `Agent` ran in the background
-      // (a foreground wait) gets its result now, so the log never keeps it unpaired
-      await d.eventLog.appendIn(ctx.conversationId, [
+      const [ev] = await d.eventLog.appendIn(ctx.conversationId, [
         agentResultEvent(ctx, callId, a.call?.toolKey, existing.child_conversation_id),
       ]);
+      if (ev?.type === "tool_result") result = { content: ev.payload.content, seq: ev.seq };
     }
     return {
       kind: "existing" as const,
       childRunId: existing.child_run_id,
       childConversationId: existing.child_conversation_id,
+      result,
       // still queued: the first holder may have died before its enqueue (review M4)
       requeue:
         existing.status === "queued" && existing.trigger_seq !== null
@@ -630,11 +628,12 @@ async function commit(
           }),
         );
     }
+    if (out.result !== null) await d.eventLog.notify(ctx.conversationId, out.result.seq);
     return {
       kind: "dispatched",
       childRunId: out.childRunId,
       childConversationId: out.childConversationId,
-      content: agentStartedText(out.childConversationId),
+      content: out.result?.content ?? agentStartedText(out.childConversationId),
     };
   }
   // the result is never read: the run is over

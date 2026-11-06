@@ -635,6 +635,73 @@ describe("dispatch idempotency under the parent run lock", () => {
     expect(enqueued.length).toBeGreaterThan(2);
   }, 60_000);
 
+  it("a call dispatched before background Agent (no tool_result yet) is paired once, under its logged key", async () => {
+    const { conv, runId, ctx } = await parentRun();
+    // a foreground-era dispatch of the rc `agent` call: row and child, but no result in the log
+    const childConv = randomUUID();
+    const childRun = randomUUID();
+    await db
+      .insertInto("conversations")
+      .values({
+        id: childConv,
+        org_id: orgId,
+        agent_id: agentId,
+        account_id: ownerId,
+        kind: "subagent",
+        parent_conversation_id: conv,
+        subagent_type: "general-purpose",
+        subagent_depth: 1,
+      })
+      .execute();
+    await db
+      .insertInto("runs")
+      .values({
+        id: childRun,
+        conversation_id: childConv,
+        status: "completed",
+        agent_version: 1,
+        trigger_account_id: ownerId,
+        trigger_seq: 0,
+        budget_run_id: runId,
+      })
+      .execute();
+    await db
+      .insertInto("subagent_dispatches")
+      .values({
+        parent_run_id: runId,
+        parent_call_id: "old-1",
+        parent_conversation_id: conv,
+        step: 1,
+        child_conversation_id: childConv,
+        child_run_id: childRun,
+        resumed: false,
+        budget_run_id: runId,
+      })
+      .execute();
+    const call = { toolKey: "agent", authorization: { policy: "allow" }, startedAt: Date.now() };
+    const out = await dispatchSubagent(deps(), { ctx, callId: "old-1", input, call });
+    expect(out).toEqual({
+      kind: "dispatched",
+      childRunId: childRun,
+      childConversationId: childConv,
+      content: agentStartedText(childConv),
+    });
+    const again = await dispatchSubagent(deps(), { ctx, callId: "old-1", input, call });
+    expect(again).toEqual(out);
+    const results = toolResults(await eventsOf(db, conv));
+    expect(results.map((r) => r.payload)).toEqual([
+      {
+        step: 1,
+        callId: "old-1",
+        toolKey: "agent",
+        content: agentStartedText(childConv),
+        isError: false,
+      },
+    ]);
+    // nothing new was dispatched
+    expect(await children(conv)).toHaveLength(1);
+  }, 60_000);
+
   it("the dispatch locks the parent conversation before the parent run (final review m2)", async () => {
     const { conv, runId, ctx } = await parentRun();
     let release!: () => void;

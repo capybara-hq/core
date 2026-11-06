@@ -10,9 +10,11 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import type { ConversationEvent, EventPayload } from "../../../src/conversations/events.js";
 import type { KernelSchemaDb } from "../../../src/db/kernel-schema.js";
 import { createDb } from "../../../src/db/pool.js";
+import { KernelConfigService } from "../../../src/infra/config/kernel-config.service.js";
 import { KERNEL_BUS } from "../../../src/infra/tokens.js";
+import { RUN_QUOTA_PREFIX } from "../../../src/runtime/quota.js";
 import { RUN_QUEUE_NAME, SUBAGENT_RUN_QUEUE_NAME } from "../../../src/runtime/run-queue.js";
-import { Waits } from "../../../src/runtime/waits.js";
+import { resumeJobId, Waits } from "../../../src/runtime/waits.js";
 import { type ScriptRule, scriptRules } from "../../fixtures/plugins/model-script/index.js";
 import { eventLogFor, legacyDbFor } from "../../helpers/conversations.js";
 import { truncateTables } from "../../helpers/db.js";
@@ -31,6 +33,7 @@ import {
   startKernel,
   type TestKernel,
   waitFor,
+  waitForRunJobDone,
   waitForTerminal,
 } from "../../helpers/runs.js";
 import {
@@ -75,6 +78,17 @@ const RULES: ScriptRule[] = [
   {
     when: { lastUserIncludes: "SCENARIO one", assistantTurns: 0 },
     reply: { toolCalls: [agentCall("task-one")] },
+  },
+  {
+    // the parent's own call that asks (Write: ask): it waits on the approval
+    when: { lastUserIncludes: "SCENARIO direct", assistantTurns: 0 },
+    reply: {
+      toolCalls: [{ name: "Write", input: { file_path: "/workspace/p.txt", content: "p" } }],
+    },
+  },
+  {
+    when: { lastUserIncludes: "SCENARIO direct", assistantTurns: 1 },
+    reply: { text: "direct done" },
   },
   { when: { lastToolResultIncludes: "in the background" }, reply: { text: "parent done" } },
 ];
@@ -170,6 +184,11 @@ type Ev<T extends ConversationEvent["type"]> = ConversationEvent & {
 };
 const ofType = <T extends ConversationEvent["type"]>(events: ConversationEvent[], type: T) =>
   events.filter((e): e is Ev<T> => e.type === type);
+const finalText = (events: ConversationEvent[]) =>
+  ofType(events, "assistant_message")
+    .at(-1)
+    ?.payload.content.flatMap((b) => (b.type === "text" ? [b.text] : []))
+    .join("");
 const finished = async (conv: string) =>
   ofType(await eventsOf(db, conv), "subagent_delivery").filter(
     (d) => d.payload.kind === "finished",
@@ -303,5 +322,75 @@ describe("recovery by the wait sweep", () => {
     // idempotent: a second sweep finds nothing
     expect((await k.app.get(Waits).sweep()).delivered).toBe(0);
     expect(await finished(conv)).toHaveLength(1);
+  }, 60_000);
+
+  it("a parent set queued by a resume whose enqueue never happened is enqueued by the sweep (final review m8)", async () => {
+    const conv = await createConv(owner, orgId, agentId);
+    await postMessage(owner, orgId, conv, "SCENARIO direct");
+    const approval = await waitFor(
+      () =>
+        db
+          .selectFrom("approvals")
+          .select(["id", "run_id"])
+          .where("conversation_id", "=", conv)
+          .where("status", "=", "pending")
+          .executeTakeFirst(),
+      20_000,
+      "the parent's approval",
+    );
+    const runId = approval.run_id;
+    await waitFor(async () => (await runStatus(db, runId)) === "waiting", 20_000, "parent waiting");
+    await waitForRunJobDone(db, runQueue, runId);
+    // the approval is decided and Waits.resume's update committed, then its replica died before
+    // queue.add
+    await db
+      .updateTable("approvals")
+      .set({ status: "approved", scope: "once", decided_by: ownerId, decided_at: new Date() })
+      .where("id", "=", approval.id)
+      .execute();
+    await db
+      .updateTable("runs")
+      .set({
+        status: "queued",
+        queued_at: new Date(),
+        waiting_since: null,
+        wait_expires_at: null,
+        job_id: resumeJobId(conv, approval.id),
+      })
+      .where("id", "=", runId)
+      .execute();
+    expect((await k.app.get(Waits).sweep()).requeued).toBe(0);
+    await backdateRun(db, runId);
+    expect((await k.app.get(Waits).sweep()).requeued).toBe(1);
+    await waitForTerminal(db, conv, 1, 20_000);
+    expect(finalText(await eventsOf(db, conv))).toBe("direct done");
+  }, 60_000);
+
+  it("a stopped child still queued ends without an org run slot and never starts (final review m7)", async () => {
+    const { conv, child } = await startPaused("SCENARIO one");
+    // every org run slot is taken
+    const redis = redisClient();
+    const key = `${RUN_QUOTA_PREFIX}${orgId}`;
+    try {
+      const n = k.app.get(KernelConfigService).get().runtime.orgConcurrency;
+      for (let i = 0; i < n; i++) await redis.zadd(key, Date.now() + 600_000, `busy-${i}`);
+      const res = await abortChild(child.conversationId);
+      expect(res.statusCode, res.body).toBe(202);
+      await subQueue.resume();
+      await waitFor(
+        async () => (await runStatus(db, child.runId)) === "aborted",
+        20_000,
+        "child aborted while the quota is full",
+      );
+      const cev = await eventsOf(db, child.conversationId);
+      expect(ofType(cev, "run_started")).toEqual([]);
+      expect(ofType(cev, "run_aborted")[0]?.payload).toMatchObject({ byAccountId: ownerId });
+    } finally {
+      await redis.del(key);
+    }
+    expect((await deliveredOnce(conv)).payload).toMatchObject({
+      status: "aborted",
+      abortedBy: "user",
+    });
   }, 60_000);
 });

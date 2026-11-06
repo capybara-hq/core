@@ -10,7 +10,8 @@ import { KERNEL_MIGRATIONS_DIR } from "../../src/kernel.js";
 
 /**
  * 0074_subagent_tree.sql (agent map spec §6): `conversations.subagent_depth`, `runs.budget_run_id`,
- * `subagent_dispatches.budget_run_id` (backfilled with the dispatching run) and `for_skill`, with
+ * `subagent_dispatches.budget_run_id` (backfilled with the dispatching run) and `for_skill`
+ * (backfilled for fork dispatches), with
  * an index on both budget columns; stored org overrides of `subagentLimitOverrides` get
  * `maxConcurrentPerConversation` in place of `maxConcurrentPerRun`. Migrates to 0073 first and writes a phase C tree, then runs
  * 0074, then runs the file a second time.
@@ -86,12 +87,16 @@ beforeAll(async () => {
     values ('p1', 'o1', 'ag1', 'a1')`.execute(db);
   await sql`insert into capybara.conversations
     (id, org_id, agent_id, account_id, kind, parent_conversation_id, subagent_type)
-    values ('s1', 'o1', 'ag1', 'a1', 'subagent', 'p1', 'general-purpose')`.execute(db);
+    values ('s1', 'o1', 'ag1', 'a1', 'subagent', 'p1', 'general-purpose'),
+      ('s2', 'o1', 'ag1', 'a1', 'subagent', 'p1', 'general-purpose')`.execute(db);
   await sql`insert into capybara.runs (id, conversation_id, status, agent_version, trigger_account_id)
-    values ('rp', 'p1', 'completed', 1, 'a1'), ('rs', 's1', 'completed', 1, 'a1')`.execute(db);
+    values ('rp', 'p1', 'completed', 1, 'a1'), ('rs', 's1', 'completed', 1, 'a1'),
+      ('rf', 's2', 'completed', 1, 'a1')`.execute(db);
   await sql`insert into capybara.subagent_dispatches
     (parent_run_id, parent_call_id, parent_conversation_id, step, child_conversation_id, child_run_id)
-    values ('rp', 'call-1', 'p1', 0, 's1', 'rs')`.execute(db);
+    values ('rp', 'call-1', 'p1', 0, 's1', 'rs'), ('rp', 'skill-7', 'p1', 0, 's2', 'rf')`.execute(
+    db,
+  );
   await sql`insert into capybara.deployment_settings (key, value) values
     ('subagentLimitOverrides', ${JSON.stringify(OVERRIDES_BEFORE)}::jsonb),
     ('sandboxLimitOverrides', ${JSON.stringify(SANDBOX)}::jsonb)`.execute(db);
@@ -141,16 +146,27 @@ describe("0074_subagent_tree", () => {
     expect(convs.rows).toEqual([
       { id: "p1", subagent_depth: 0 },
       { id: "s1", subagent_depth: 0 },
+      { id: "s2", subagent_depth: 0 },
     ]);
     const runs = await sql<{ id: string; budget_run_id: string | null }>`
       select id, budget_run_id from capybara.runs order by id`.execute(db);
     expect(runs.rows).toEqual([
+      { id: "rf", budget_run_id: null },
       { id: "rp", budget_run_id: null },
       { id: "rs", budget_run_id: null },
     ]);
-    const dispatches = await sql<{ budget_run_id: string; for_skill: boolean }>`
-      select budget_run_id, for_skill from capybara.subagent_dispatches`.execute(db);
-    expect(dispatches.rows).toEqual([{ budget_run_id: "rp", for_skill: false }]);
+    // a fork dispatch (`skill-<seq>` at step 0) is marked; an `Agent` call's is not
+    const dispatches = await sql<{
+      parent_call_id: string;
+      budget_run_id: string;
+      for_skill: boolean;
+    }>`
+      select parent_call_id, budget_run_id, for_skill from capybara.subagent_dispatches
+      order by parent_call_id`.execute(db);
+    expect(dispatches.rows).toEqual([
+      { parent_call_id: "call-1", budget_run_id: "rp", for_skill: false },
+      { parent_call_id: "skill-7", budget_run_id: "rp", for_skill: true },
+    ]);
   });
 
   it("stored org overrides carry maxConcurrentPerConversation, other keys and settings intact", async () => {
@@ -161,9 +177,13 @@ describe("0074_subagent_tree", () => {
   it("applies a second time without error or change", async () => {
     await rerun();
     expect(await setting("subagentLimitOverrides")).toEqual(OVERRIDES_AFTER);
-    const dispatches = await sql<{ budget_run_id: string }>`
-      select budget_run_id from capybara.subagent_dispatches`.execute(db);
-    expect(dispatches.rows).toEqual([{ budget_run_id: "rp" }]);
+    const dispatches = await sql<{ budget_run_id: string; for_skill: boolean }>`
+      select budget_run_id, for_skill from capybara.subagent_dispatches
+      order by parent_call_id`.execute(db);
+    expect(dispatches.rows).toEqual([
+      { budget_run_id: "rp", for_skill: false },
+      { budget_run_id: "rp", for_skill: true },
+    ]);
     // a new dispatch must name its budget run
     await expect(
       sql`insert into capybara.subagent_dispatches

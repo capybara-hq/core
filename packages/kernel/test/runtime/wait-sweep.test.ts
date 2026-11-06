@@ -6,6 +6,7 @@ import { Queue } from "bullmq";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { EventLog } from "../../src/conversations/event-log.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
@@ -499,6 +500,51 @@ describe("wait sweep and sub-agents (agent map spec §5.4)", () => {
     expect(await runStatus(d.childRun)).toBe("running");
     expect(ofType(await eventsOf(db, d.childConv), "run_aborted")).toEqual([]);
     expect(logs.A.map((l) => l.msg)).toEqual([]);
+  });
+
+  it("a child that finished before background dispatch (subagent_finished, no delivery) gets no delivery", async () => {
+    /** A background child that ended 5 minutes ago with a terminal event in its log. */
+    const ended = async () => {
+      const d = await dispatched("completed", false);
+      await kA.app.get(EventLog).append(d.childConv, [
+        {
+          type: "run_finished",
+          runId: d.childRun,
+          payload: { reason: "completed", consumedUpToSeq: 0 },
+        },
+      ]);
+      await db
+        .updateTable("runs")
+        .set({ status: "completed", finished_at: sql<Date>`now() - interval '5 minutes'` })
+        .where("id", "=", d.childRun)
+        .execute();
+      return d;
+    };
+    // pre-upgrade: its result was the `Agent` call's and its subagent_finished was written then
+    const before = await ended();
+    await kA.app.get(EventLog).append(before.convId, [
+      {
+        type: "subagent_finished",
+        runId: before.runId,
+        idemKey: `subagent_finished:${before.childRun}`,
+        payload: {
+          subagentId: before.childConv,
+          childRunId: before.childRun,
+          callId: "call-1",
+          status: "completed",
+          toolCalls: 0,
+          durationMs: 0,
+          usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
+        },
+      },
+    ]);
+    // a background child whose finisher died: the sweep delivers it
+    const lost = await ended();
+    const r = await kA.app.get(Waits).sweep();
+    expect(r.delivered).toBe(1);
+    expect(ofType(await eventsOf(db, before.convId), "subagent_delivery")).toEqual([]);
+    expect(ofType(await eventsOf(db, lost.convId), "subagent_delivery")).toHaveLength(1);
+    expect((await kA.app.get(Waits).sweep()).delivered).toBe(0);
   });
 
   it("fork dispatches still time out with timed_out", async () => {

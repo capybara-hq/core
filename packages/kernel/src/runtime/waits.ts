@@ -861,9 +861,13 @@ export class Waits implements OnApplicationShutdown {
 
   /**
    * Background sub-agent runs that finished more than the grace period ago (within the last day)
-   * whose parent has no `finished` delivery for them (agent map spec §10: the finisher died after
-   * the child's terminal commit) → {@link childFinished}, idempotent against a late finisher. A
-   * child whose parent conversation was deleted is skipped.
+   * whose parent has no `subagent_finished` for them (agent map spec §10: the finisher died after
+   * the child's terminal commit; the finish path writes `subagent_finished` and the delivery in one
+   * transaction) → {@link childFinished}, idempotent against a late finisher. Keyed on
+   * `subagent_finished`, not on the delivery, so a child that finished before background
+   * dispatch (its result was the `Agent` call's, its `subagent_finished` written then) is never
+   * delivered a second time. A run without a terminal event in its log (nothing to deliver) and a
+   * child whose parent conversation was deleted are skipped; only a written delivery counts.
    */
   private async sweepUndelivered(): Promise<number> {
     const runs = await this.db
@@ -886,12 +890,17 @@ export class Waits implements OnApplicationShutdown {
             selectFrom("conversation_events as e")
               .select(sql`1`.as("one"))
               .whereRef("e.conversation_id", "=", "sd.parent_conversation_id")
-              .where(
-                "e.idem_key",
-                "=",
-                sql<string>`'subagent_delivery:' || sd.child_run_id || ':finished'`,
-              ),
+              .where("e.idem_key", "=", sql<string>`'subagent_finished:' || sd.child_run_id`),
           ),
+        ),
+      )
+      .where(({ exists, selectFrom }) =>
+        exists(
+          selectFrom("conversation_events as t")
+            .select(sql`1`.as("one"))
+            .whereRef("t.conversation_id", "=", "sd.child_conversation_id")
+            .whereRef("t.run_id", "=", "sd.child_run_id")
+            .where("t.type", "in", ["run_finished", "run_failed", "run_aborted"]),
         ),
       )
       .limit(WAIT_SWEEP_BATCH)
@@ -899,7 +908,7 @@ export class Waits implements OnApplicationShutdown {
     let total = 0;
     for (const r of runs) {
       try {
-        await this.childFinished(r.child_run_id);
+        if (!(await this.childFinished(r.child_run_id))) continue;
         total++;
         this.log.warn("wait sweep: delivered the finish of a sub-agent run", {
           childRunId: r.child_run_id,
@@ -1148,29 +1157,27 @@ export class Waits implements OnApplicationShutdown {
    * else. A run that is not a dispatched child, or not terminal yet, is left alone. A crash in
    * between is repaired by the wait sweep (the orphan repair calls this again). The running
    * background tasks the terminal child run started are then stopped (not those of a later run of
-   * the same child).
+   * the same child). True when a background child's finished delivery was written by this call.
    */
-  async childFinished(childRunId: string): Promise<void> {
+  async childFinished(childRunId: string): Promise<boolean> {
     const row = await dispatchOfChildRun(this.db, childRunId);
-    if (!row) return;
+    if (!row) return false;
     const run = await this.db
       .selectFrom("runs")
       .select("status")
       .where("id", "=", childRunId)
       .executeTakeFirst();
-    if (!run || !TERMINAL_STATUSES.has(run.status)) return;
+    if (!run || !TERMINAL_STATUSES.has(run.status)) return false;
     try {
-      if (row.forSkill !== true) {
-        await this.deliveries.childFinished(childRunId);
-        return;
-      }
+      if (row.forSkill !== true) return await this.deliveries.childFinished(childRunId);
       const r = await childResult(this.eventLog, row);
       if (!r) {
         this.log.warn("sub-agent run is terminal without a terminal event", { childRunId });
-        return;
+        return false;
       }
       await this.eventLog.append(row.parentConversationId, [finishedEvent(row, r.finished)]);
       await this.resume(row.parentRunId, childRunId);
+      return false;
     } finally {
       // whichever way the child run ended (its worker, a stop while waiting, an orphan repair):
       // nobody can read or stop the background tasks it started through its model any more
