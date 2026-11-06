@@ -490,7 +490,7 @@ function AgentLevel({
   );
   // A stop under way: from the click until the agent's run ends in its log, the request fails,
   // or the bounded fallback (a re-read after STOP_FALLBACK_MS) lets Stop be pressed again.
-  const stopState = useStopUnderWay(child.events, resync);
+  const stopState = useStopUnderWay(id, child.events, resync);
   const stopping = stopState.requested && active;
   const { release } = stopState;
   const stopMutation = useAppMutation({
@@ -504,7 +504,9 @@ function AgentLevel({
       if (e.code === "run.not_active") {
         // Nothing in this subtree runs: what the page shows is stale. Read it again, so the
         // status settles to the kernel's and Stop goes.
-        void resync();
+        resync().catch((err: unknown) =>
+          console.warn("agent map: re-read after run.not_active failed", err),
+        );
         return;
       }
       // The browser's own reason ("Failed to fetch", "Load failed") for diagnosis.

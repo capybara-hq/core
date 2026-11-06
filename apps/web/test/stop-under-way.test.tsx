@@ -10,11 +10,12 @@ import { ev, runStarted, userMsg } from "./support/conversation";
 const running = [userMsg(1, "go"), runStarted(2)];
 const aborted = (seq: number) => ev(seq, "run_aborted", { byAccountId: "a1", reason: "user" });
 
-type Props = { events: ConversationEvent[] };
+type Props = { events: ConversationEvent[]; scope?: string };
 
 function mount(fallback: () => Promise<unknown> = () => Promise.resolve()) {
-  return renderHook((p: Props) => useStopUnderWay(p.events, fallback), {
-    initialProps: { events: running },
+  const initialProps: Props = { events: running };
+  return renderHook((p: Props) => useStopUnderWay(p.scope ?? "c1", p.events, fallback), {
+    initialProps,
   });
 }
 
@@ -39,6 +40,17 @@ describe("useStopUnderWay", () => {
     act(() => result.current.begin());
     rerender({ events: [...running, aborted(3), userMsg(4, "again"), runStarted(5)] });
     expect(result.current.requested).toBe(false);
+  });
+
+  it("never carries over to another conversation", async () => {
+    const fallback = vi.fn(() => Promise.resolve());
+    const { result, rerender } = mount(fallback);
+    act(() => result.current.begin());
+    rerender({ events: running, scope: "c2" });
+    expect(result.current.requested).toBe(false);
+    // and the first conversation's fallback never fires
+    await act(async () => await vi.advanceTimersByTimeAsync(STOP_FALLBACK_MS * 2));
+    expect(fallback).not.toHaveBeenCalled();
   });
 
   it("release ends it (the request failed)", () => {
