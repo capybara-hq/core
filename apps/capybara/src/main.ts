@@ -22,4 +22,6 @@ if (command?.command === "start" && tracingEnabled(process.env)) {
   const { startTracing } = await import("./tracing.js");
   await startTracing({ env: process.env, ...(command.roles && { roles: command.roles }) });
 }
-await import("./cli.js");
+// Imported only now, so the kernel modules load after the tracing started
+const { runProcess } = await import("./cli.js");
+await runProcess();

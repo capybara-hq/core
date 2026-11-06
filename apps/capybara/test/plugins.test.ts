@@ -44,7 +44,7 @@ beforeAll(async () => {
   work = await mkdtemp(join(tmpdir(), "capybara-plugins-"));
   // The deployment's object store is a bootstrap plugin (the fake fake-object-store standing in for
   // object-store-s3), as after compose init
-  const r = await runCli(
+  const r = await runCliInProcess(
     ["bootstrap", "--dir", boot.dir, "--manifest", boot.manifest],
     testEnv(true, []),
   );

@@ -5,17 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable, Writable } from "node:stream";
 import { fileURLToPath } from "node:url";
-import { createLogger } from "@capybara-hq/kernel";
 import { fakeExtensionDir, packFixture } from "@capybara-hq/testing";
-import { parseCli } from "../../src/args.js";
-import {
-  runExtensionsApprove,
-  runExtensionsInstall,
-  runExtensionsList,
-  runExtensionsReview,
-  runExtensionsState,
-} from "../../src/commands/extensions.js";
-import { runPluginsImport, runPluginsList } from "../../src/commands/plugins.js";
 
 export const REPO_ROOT = fileURLToPath(new URL("../../../../", import.meta.url));
 
@@ -55,20 +45,21 @@ export function runCli(
 }
 
 /**
- * Runs a `capybara extensions …` or `capybara plugins …` command in process, the way `cli.ts`
- * does: the arguments go through `parseCli` and the parsed command to the same `run*` function
- * with `env`, `stdin` as a piped (non-TTY) input and captured stdout / stderr. A spawned CLI
- * (`runCli`) loads the kernel sources through tsx first, seconds of CPU per call, so tests that
- * run many commands use this and keep `runCli` for the cases about the real process. The logger
- * writes nowhere (a spawned CLI's records go to its stdout; tests assert on the commands' output).
+ * Runs `capybara <args>` in process: the same `main` the process entry runs (env file, argument
+ * parsing and exit code 2 on a usage error, the dispatch, the CLI logger), with a copy of `env`,
+ * `stdin` as a piped (non-TTY) input, the repository root as the working directory and captured
+ * stdout / stderr; logger records go to stdout, as in a spawned CLI. A spawned CLI (`runCli`)
+ * loads the kernel sources through tsx first, seconds of CPU per call, so tests use this and keep
+ * `runCli` for the cases about the real process. Not for `capybara start` (it keeps running, and
+ * installs signal handlers on this process).
  */
 export async function runCliInProcess(
   args: string[],
   env: NodeJS.ProcessEnv,
   stdin = "",
 ): Promise<{ code: number | null; stdout: string; stderr: string }> {
-  const cmd = parseCli(args);
-  const log = createLogger("info", { write: () => {} });
+  // Imported here: tests that only spawn the CLI (tracing.test.ts) don't load the kernel
+  const { main } = await import("../../src/cli.js");
   let stdout = "";
   let stderr = "";
   const sink = (append: (s: string) => void) =>
@@ -78,40 +69,18 @@ export async function runCliInProcess(
         cb();
       },
     });
-  const io = {
-    stdin: Readable.from([stdin]),
+  const code = await main(args, {
+    stdin: Readable.from(stdin === "" ? [] : [stdin]),
     stdout: sink((s) => {
       stdout += s;
     }),
     stderr: sink((s) => {
       stderr += s;
     }),
-  };
-  const code = await (() => {
-    switch (cmd.command) {
-      case "extensions-review":
-        return runExtensionsReview(log, env, io);
-      case "extensions-approve":
-        return runExtensionsApprove({ name: cmd.name, yes: cmd.yes }, log, env, io);
-      case "extensions-list":
-        return runExtensionsList(log, env, io);
-      case "extensions-install":
-        return runExtensionsInstall({ target: cmd.target, yes: cmd.yes }, log, env, io);
-      case "extensions-state":
-        return runExtensionsState({ name: cmd.name, action: cmd.action }, log, env, io);
-      case "plugins-list":
-        return runPluginsList(log, env, io);
-      case "plugins-import":
-        return runPluginsImport(
-          { target: cmd.target, yes: cmd.yes, deployExtension: cmd.deployExtension },
-          log,
-          env,
-          io,
-        );
-      default:
-        throw new Error(`runCliInProcess runs extensions and plugins commands: ${args.join(" ")}`);
-    }
-  })();
+    env: { ...env },
+    cwd: REPO_ROOT,
+  });
+  if (code === undefined) throw new Error(`runCliInProcess: no exit code for ${args.join(" ")}`);
   return { code, stdout, stderr };
 }
 
