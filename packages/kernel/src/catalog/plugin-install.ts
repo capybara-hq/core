@@ -350,6 +350,8 @@ async function resolveOne(
       "platform_synced_version",
       "marketplace_id",
       "awaiting_confirmation",
+      "owner_org_id",
+      "latest_version",
     ])
     .where("name", "=", d.name)
     .where("deleted_at", "is", null)
@@ -384,7 +386,9 @@ async function resolveOne(
     }
   } else {
     const deprecated = await deprecatedVersions(db, d.name, item.marketplace_id);
+    // An org's plugin offers only its applied version: never one pending or rejected (P3-34)
     const candidates = versions
+      .filter((x) => item.owner_org_id === null || x.version === item.latest_version)
       .filter((x) => !deprecated.has(x.version))
       .map((x) => ({ ...x, importedAt: x.imported_at }));
     v =

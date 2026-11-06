@@ -50,7 +50,7 @@ import {
   MarketplacesService,
   pluginNameFrom,
 } from "./marketplaces.service.js";
-import type { Owner } from "./ownership.js";
+import { type Owner, releaseExtensionClaim } from "./ownership.js";
 import { PluginImport, type PluginReview, type ReviewProvenance } from "./plugin-import.js";
 import { cancelPendingRequests } from "./request-rules.js";
 import type { PluginScope } from "./scope.js";
@@ -788,9 +788,12 @@ export class CatalogService {
       })
       .where("id", "=", itemId)
       .where("deleted_at", "is", null)
-      .returning(["name"])
+      .returning(["name", "awaiting_confirmation", "package_name"])
       .executeTakeFirst();
     if (!row) throw notFound();
+    // An org upload still waiting: nothing was installed under its claim, free the name
+    // (ruling P3-37, pre-flight F10)
+    if (row.awaiting_confirmation) await releaseExtensionClaim(t, row.name, row.package_name);
     // Pending requests for a deleted item are pointless: cancel them in the same transaction
     await cancelPendingRequests(t, { itemId }, actor, "item_removed", opts);
     await audit(t, {

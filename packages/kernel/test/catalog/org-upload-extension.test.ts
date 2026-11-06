@@ -1,8 +1,11 @@
 import { sql } from "kysely";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { CatalogScopeService } from "../../src/catalog/catalog-scope.service.js";
+import { PlatformComponents } from "../../src/catalog/platform-components.js";
 import { PlatformMigration } from "../../src/catalog/platform-migration.js";
 import { PluginScopeSync } from "../../src/catalog/scope-sync.js";
+import { ExtensionAdmin } from "../../src/extensions/admin-view.js";
+import { ExtensionInstalls } from "../../src/extensions/installs.js";
 import { ExtensionRegistry } from "../../src/extensions/registry.js";
 import { usableSkills } from "../../src/skills/usable.js";
 import { lifePkg, pluginTgz } from "../helpers/plugin-packages.js";
@@ -387,7 +390,8 @@ describe("org uploads with an extension", { timeout: 180_000 }, () => {
     expect(await itemRow("ext-v")).toMatchObject({
       awaiting_confirmation: false,
       pending_version: "2.0.0",
-      latest_version: "2.0.0",
+      // a pending version is not the item's latest until confirmed (P3-34)
+      latest_version: "1.0.0",
       platform_synced_version: "1.0.0",
     });
     expect((await installRow("ext-v"))?.sha256).toBe(v1sha);
@@ -578,5 +582,179 @@ describe("org uploads with an extension", { timeout: 180_000 }, () => {
     ).toBeUndefined();
     expect(errorOf(await superConfirm(itemId, old))).toEqual([409, "extension.not_pending"]);
     expect(await installRow("ext-n")).toBeUndefined();
+  });
+});
+
+describe("fix round 1: applied versions only, the confirm lock (P3-34 to P3-37)", {
+  timeout: 180_000,
+}, () => {
+  const claim = (name: string) =>
+    env.db
+      .selectFrom("extension_name_owners")
+      .select("package_name")
+      .where("name", "=", name)
+      .executeTakeFirst();
+
+  it("a pending version never becomes the effective one, even before the first sync", async () => {
+    const itemId = await uploaded(
+      env.boss,
+      orgA,
+      await lifePkg({ name: "ext-ns", version: "1.0.0", skills: ["ext-ns-notes"] }),
+      "pending",
+    );
+    // the confirm's component write fails (logged): platform_synced_version stays null
+    vi.spyOn(PlatformComponents.prototype, "syncFromVersion").mockRejectedValueOnce(
+      new Error("injected sync failure"),
+    );
+    const c = await superConfirm(itemId, await digestOf(itemId));
+    expect(c.statusCode, c.body).toBe(200);
+    expect((await itemRow("ext-ns"))?.platform_synced_version).toBeNull();
+    await uploaded(
+      env.boss,
+      orgA,
+      await lifePkg({ name: "ext-ns", version: "2.0.0", skills: ["ext-ns-notes"] }),
+      "pending",
+    );
+    expect(await itemRow("ext-ns")).toMatchObject({
+      latest_version: "1.0.0",
+      pending_version: "2.0.0",
+    });
+    await env.k.app.get(PlatformMigration).runOnce();
+    await env.k.app.get(PluginScopeSync).process({ kind: "item", itemId });
+    expect((await itemRow("ext-ns"))?.platform_synced_version).toBe("1.0.0");
+    const installs = await env.db
+      .selectFrom("plugin_installs")
+      .select("version")
+      .where("item_id", "=", itemId)
+      .execute();
+    expect(installs.map((i) => i.version)).toEqual(["1.0.0"]);
+    expect((await installRow("ext-ns"))?.sha256).toBe(await versionSha(itemId, "1.0.0"));
+    expect(imported("ext-ns", "2.0.0")).toBe(false);
+  });
+
+  it("other orgs never see a pending version; a rejected one stays out of reach", async () => {
+    const itemId = await confirmedV1("ext-o");
+    await sharedWithB(itemId, "ext-o-notes");
+    await uploaded(
+      env.boss,
+      orgA,
+      await lifePkg({ name: "ext-o", version: "2.0.0", skills: ["ext-o-notes"] }),
+      "pending",
+    );
+    const inB = await env.root({ method: "GET", url: `/api/v1/orgs/${orgB}/catalog/${itemId}` });
+    expect(inB.statusCode, inB.body).toBe(200);
+    expect((inB.json() as { item: unknown }).item).toMatchObject({
+      latestVersion: "1.0.0",
+      versions: ["1.0.0"],
+    });
+    expect(JSON.stringify(inB.json())).not.toContain("2.0.0");
+    const inA = await env.boss({ method: "GET", url: `/api/v1/orgs/${orgA}/catalog/${itemId}` });
+    expect((inA.json() as { item: unknown }).item).toMatchObject({
+      latestVersion: "1.0.0",
+      pendingVersion: "2.0.0",
+    });
+    // rejected: latest stays at 1.0.0, and the generic update cannot apply it (P3-37)
+    expect((await reject(itemId, "No")).statusCode).toBe(204);
+    expect(await itemRow("ext-o")).toMatchObject({
+      latest_version: "1.0.0",
+      pending_version: null,
+    });
+    const preview = await env.root({
+      method: "POST",
+      url: `/api/v1/admin/catalog/items/${itemId}/update/preview`,
+      payload: { version: "2.0.0" },
+    });
+    expect(errorOf(preview)).toEqual([409, "plugin.upgrade_target_invalid"]);
+    expect((await installRow("ext-o"))?.sha256).toBe(await versionSha(itemId, "1.0.0"));
+  });
+
+  it("two concurrent confirms leave the extension installed and confirmed", async () => {
+    const itemId = await uploaded(
+      env.boss,
+      orgA,
+      await lifePkg({ name: "ext-cc", version: "1.0.0", skills: ["ext-cc-notes"] }),
+      "pending",
+    );
+    const d = await digestOf(itemId);
+    const rs = await Promise.all([superConfirm(itemId, d), superConfirm(itemId, d)]);
+    const codes = rs.map((r) => r.statusCode).sort();
+    expect(codes, rs.map((r) => r.body).join("\n")).toEqual([200, 409]);
+    expect(await installRow("ext-cc")).toMatchObject({ desired_state: "enabled" });
+    expect(await itemRow("ext-cc")).toMatchObject({
+      awaiting_confirmation: false,
+      pending_version: null,
+    });
+    await waitFor(async () => loaded("ext-cc"), 15_000, "ext-cc loaded");
+  });
+
+  it("an approval that fails after the update puts the pending version back", async () => {
+    const itemId = await confirmedV1("ext-ap");
+    await uploaded(
+      env.boss,
+      orgA,
+      await lifePkg({ name: "ext-ap", version: "2.0.0", skills: ["ext-ap-notes"] }),
+      "pending",
+    );
+    const d = await digestOf(itemId);
+    vi.spyOn(ExtensionAdmin.prototype, "approve").mockRejectedValueOnce(
+      new Error("injected approval failure"),
+    );
+    expect((await superConfirm(itemId, d)).statusCode).toBe(500);
+    expect(await itemRow("ext-ap")).toMatchObject({
+      pending_version: "2.0.0",
+      platform_synced_version: "2.0.0",
+    });
+    expect((await pendingItems()).map((i) => i.id)).toContain(itemId);
+    const again = await superConfirm(itemId, d);
+    expect(again.statusCode, again.body).toBe(200);
+    expect((await itemRow("ext-ap"))?.pending_version).toBeNull();
+    expect((await installRow("ext-ap"))?.sha256).toBe(await versionSha(itemId, "2.0.0"));
+  });
+
+  it("a leftover install of another package is refused at the confirm", async () => {
+    const itemId = await uploaded(
+      env.boss,
+      orgA,
+      await lifePkg({ name: "ext-lo", version: "1.0.0" }),
+      "pending",
+    );
+    // another package's install of the name appears after the upload (legacy data)
+    const other = await env.k.app
+      .get(ExtensionInstalls)
+      .ingest(
+        null,
+        await lifePkg({ name: "ext-lo", version: "1.0.0", packageName: "@other/ext-lo" }),
+        { source: "file", ref: "upload" },
+      );
+    await env.db
+      .insertInto("extension_installs")
+      .values({
+        name: "ext-lo",
+        sha256: other.sha256,
+        version: "1.0.0",
+        source: "file",
+        desired_state: "disabled",
+        installed_by: null,
+        updated_by: null,
+      })
+      .execute();
+    const c = await superConfirm(itemId, await digestOf(itemId));
+    expect(errorOf(c)).toEqual([409, "extension.name_conflict"]);
+    expect((await installRow("ext-lo"))?.sha256).toBe(other.sha256);
+    expect((await itemRow("ext-lo"))?.awaiting_confirmation).toBe(true);
+    await env.db.deleteFrom("extension_installs").where("name", "=", "ext-lo").execute();
+  });
+
+  it("a super admin delete of an awaiting item releases its name claim", async () => {
+    const itemId = await uploaded(
+      env.boss,
+      orgA,
+      await lifePkg({ name: "ext-del", version: "1.0.0" }),
+      "pending",
+    );
+    expect(await claim("ext-del")).toBeDefined();
+    const r = await env.root({ method: "DELETE", url: `/api/v1/admin/catalog/items/${itemId}` });
+    expect(r.statusCode, r.body).toBe(204);
+    expect(await claim("ext-del")).toBeUndefined();
   });
 });

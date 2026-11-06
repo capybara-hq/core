@@ -5,6 +5,7 @@ import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { ExtensionAdminOps } from "../extensions/admin-ops.js";
 import { ExtensionAdmin } from "../extensions/admin-view.js";
+import { ExtensionLifecycle } from "../extensions/lifecycle.js";
 import { audit } from "../identity/audit.js";
 import { SuperAdminLock } from "../identity/super-admin.js";
 import { addOrgNotice, notifyItemShared } from "../inbox/org-notices.js";
@@ -38,6 +39,7 @@ import {
   assertShareableTarget,
   itemRemovedError,
   newlySharedWith,
+  packageOwner,
   pendingDigest,
   releaseExtensionClaim,
 } from "./ownership.js";
@@ -175,6 +177,8 @@ export class CatalogScopeService {
     @Inject(PlatformPluginUpdater) private readonly updater: PlatformPluginUpdater,
     /** The owner org's lock: an org admin withdrawing its pending upload (ruling P3-10). */
     @Inject(OrgLock) private readonly orgLock: OrgLock,
+    /** This replica's reconcile once a confirmed extension is enabled (before the scope sync). */
+    @Inject(ExtensionLifecycle) private readonly lifecycle: ExtensionLifecycle,
     @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
   ) {}
@@ -233,7 +237,7 @@ export class CatalogScopeService {
       .executeTakeFirst();
     if (!item) throw notFound();
     if (item.owner_org_id !== null) {
-      return this.confirmOrgUpload(actor, item, permissionsHash, opts);
+      return this.confirmOrgUpload(actor, { id: item.id, name: item.name }, permissionsHash, opts);
     }
     const version = await this.db
       .selectFrom("catalog_item_versions")
@@ -304,67 +308,179 @@ export class CatalogScopeService {
    */
   private async confirmOrgUpload(
     actor: string,
-    item: {
-      id: string;
-      name: string;
-      awaiting_confirmation: boolean;
-      pending_version: string | null;
-    },
+    item: { id: string; name: string },
     permissionsHash: string,
     opts: ActorOpts,
   ): Promise<CatalogItemView> {
+    // Every step under the item's update lock (ruling P3-35): a second confirmation waits its
+    // turn out as 409 plugin.install_in_progress and never undoes the first one's install
+    const first = await this.updater.withItemLock(item.id, () =>
+      this.confirmLocked(actor, item.id, item.name, permissionsHash, opts),
+    );
+    if (first !== null) {
+      // Loaded here before the scope sync plans its install (the enable does not wait for the
+      // reconcile; other replicas converge through the bus)
+      try {
+        await this.lifecycle.reconcile(`confirmed:${item.name}`);
+      } catch (err) {
+        this.log.error("loading a confirmed extension on this replica failed", {
+          plugin: item.name,
+          err,
+        });
+      }
+      await this.pluginImport.writePlatformComponents(item.id, first);
+      await this.enqueue(item.id);
+    }
+    return (await this.catalog.get(item.id)).item;
+  }
+
+  /**
+   * {@link confirmOrgUpload} under the item lock; returns the confirmed first version (its
+   * platform components and scope sync follow after), null for a new version.
+   */
+  private async confirmLocked(
+    actor: string,
+    itemId: string,
+    name: string,
+    permissionsHash: string,
+    opts: ActorOpts,
+  ): Promise<string | null> {
+    // Read again under the lock (the caller's read was outside it)
+    const item = await this.db
+      .selectFrom("catalog_items")
+      .select([
+        "deleted_at",
+        "owner_org_id",
+        "awaiting_confirmation",
+        "pending_version",
+        "pending_by",
+        "pending_at",
+        "package_name",
+        "platform_synced_version",
+      ])
+      .where("id", "=", itemId)
+      .executeTakeFirst();
+    if (!item || item.deleted_at !== null || item.owner_org_id === null) {
+      throw itemRemovedError(name);
+    }
     const version = item.pending_version;
-    if (version === null) throw notPending(item.name);
+    if (version === null) throw notPending(name);
     const row = await this.db
       .selectFrom("catalog_item_versions")
       .select("extension_sha256")
-      .where("item_id", "=", item.id)
+      .where("item_id", "=", itemId)
       .where("version", "=", version)
       .executeTakeFirst();
     const sha = row?.extension_sha256 ?? null;
-    if (sha === null) throw notPending(item.name);
+    if (sha === null) throw notPending(name);
     const reviewHash = await this.extensions.packageReviewHash(sha);
     if (reviewHash === null || pendingDigest(sha, reviewHash) !== permissionsHash) {
-      throw pendingStale(item.name);
+      throw pendingStale(name);
+    }
+    // An install of this name from another package (left by an earlier item): the org's code
+    // never inherits its deployment config, secrets or data (ruling P3-36)
+    const install = await this.db
+      .selectFrom("extension_installs as x")
+      .innerJoin("extension_packages as p", "p.sha256", "x.sha256")
+      .select(["x.sha256", "p.package_name"])
+      .where("x.name", "=", name)
+      .executeTakeFirst();
+    if (install !== undefined && install.package_name !== item.package_name) {
+      throw new ApiError(
+        "extension.name_conflict",
+        `Extension ${name} is installed from package ${install.package_name}; the upload's package ${item.package_name ?? "(none)"} cannot take it over`,
+        [{ owner: await packageOwner(this.db, install.package_name, name) }],
+      );
     }
     if (!item.awaiting_confirmation) {
-      try {
-        await this.updater.updateToPending(actor, item.id, version, opts);
-      } catch (e) {
-        if (e instanceof ApiError && e.code === "catalog.item_not_found") {
-          throw itemRemovedError(item.name);
+      const pending = {
+        version,
+        by: item.pending_by,
+        at: item.pending_at,
+      };
+      // A new version: applied (unless an earlier confirmation applied it and stopped before the
+      // approval), then its permissions approved; an approval that fails puts the pending state
+      // back, so the version shows in 待确认 again (ruling P3-37)
+      if (item.platform_synced_version !== version) {
+        try {
+          await this.updater.updateToPendingLocked(actor, itemId, version, opts);
+        } catch (e) {
+          if (e instanceof ApiError && e.code === "catalog.item_not_found") {
+            throw itemRemovedError(name);
+          }
+          throw e;
         }
+      } else {
+        await this.clearPending(itemId, version);
+      }
+      try {
+        await this.approvePackage(actor, name, sha, reviewHash, opts);
+      } catch (e) {
+        await this.restorePending(itemId, pending);
         throw e;
       }
-      await this.approvePackage(actor, item.name, sha, reviewHash, opts);
-      return (await this.catalog.get(item.id)).item;
+      return null;
     }
-    await this.stillPending(item.id, item.name, version);
+    await this.stillPending(itemId, name, version);
     let installedHere = false;
     try {
-      const install = await this.db
-        .selectFrom("extension_installs")
-        .select(["sha256", "desired_state"])
-        .where("name", "=", item.name)
-        .executeTakeFirst();
       if (install?.sha256 !== sha) {
-        await this.ops.install(item.name, sha, actor, opts.actorTokenId, {
-          catalogItemId: item.id,
-        });
+        await this.ops.install(name, sha, actor, opts.actorTokenId, { catalogItemId: itemId });
         installedHere = install === undefined;
       }
-      await this.stillPending(item.id, item.name, version);
-      await this.approvePackage(actor, item.name, sha, reviewHash, opts);
-      await this.stillPending(item.id, item.name, version);
-      await this.ops.enable(item.name, actor, opts.actorTokenId);
-      await this.finishFirstVersion(actor, item.id, version, opts);
+      await this.stillPending(itemId, name, version);
+      await this.approvePackage(actor, name, sha, reviewHash, opts);
+      await this.stillPending(itemId, name, version);
+      await this.ops.enable(name, actor, opts.actorTokenId);
+      await this.finishFirstVersion(actor, itemId, version, opts);
     } catch (e) {
-      if (installedHere) await this.takeOut(item.name, actor, opts);
+      // Taken out only when this confirmation did not win: the item gone or still waiting
+      if (installedHere && !(await this.confirmed(itemId))) {
+        await this.takeOut(itemId, name, actor, opts);
+      }
       throw e;
     }
-    await this.pluginImport.writePlatformComponents(item.id, version);
-    await this.enqueue(item.id);
-    return (await this.catalog.get(item.id)).item;
+    return version;
+  }
+
+  /** The item is live and its first version confirmed (no longer awaiting). */
+  private async confirmed(itemId: string): Promise<boolean> {
+    const row = await this.db
+      .selectFrom("catalog_items")
+      .select(["deleted_at", "awaiting_confirmation"])
+      .where("id", "=", itemId)
+      .executeTakeFirst();
+    return row !== undefined && row.deleted_at === null && !row.awaiting_confirmation;
+  }
+
+  /** Clears the pending state of a version an earlier confirmation applied already. */
+  @Transactional()
+  private async clearPending(itemId: string, version: string): Promise<void> {
+    await this.db
+      .updateTable("catalog_items")
+      .set({ pending_version: null, pending_by: null, pending_at: null })
+      .where("id", "=", itemId)
+      .where("pending_version", "=", version)
+      .execute();
+  }
+
+  /**
+   * Puts a confirmed new version's pending state back after its approval failed (ruling P3-37):
+   * the version applied, its permissions still waiting, 待确认 shows it again. Not when another
+   * upload is pending meanwhile.
+   */
+  @Transactional()
+  private async restorePending(
+    itemId: string,
+    p: { version: string; by: string | null; at: Date | string | null },
+  ): Promise<void> {
+    await this.db
+      .updateTable("catalog_items")
+      .set({ pending_version: p.version, pending_by: p.by, pending_at: p.at })
+      .where("id", "=", itemId)
+      .where("deleted_at", "is", null)
+      .where("pending_version", "is", null)
+      .execute();
   }
 
   /** Approves the permissions of the installed package `sha` (already covered: nothing to do). */
@@ -384,14 +500,35 @@ export class CatalogScopeService {
 
   /**
    * An extension a confirmation installed whose item was removed or replaced meanwhile is taken
-   * out again (disabled, uninstalled; P3-21). Best effort: a failure is logged.
+   * out again (disabled, uninstalled; P3-21), and the name claim released when the item is gone
+   * (ruling P3-37). Best effort: a failure is logged.
    */
-  private async takeOut(name: string, actor: string, opts: ActorOpts): Promise<void> {
+  private async takeOut(
+    itemId: string,
+    name: string,
+    actor: string,
+    opts: ActorOpts,
+  ): Promise<void> {
     try {
       await this.ops.disable(name, actor, opts.actorTokenId);
       await this.ops.uninstall(name, actor, opts.actorTokenId);
+      await this.releaseIfGone(itemId, name);
     } catch (err) {
       this.log.error("taking out the extension of a removed org upload failed", { name, err });
+    }
+  }
+
+  /** Releases the name claim of a removed item (nothing installed under it any more). */
+  @Transactional()
+  private async releaseIfGone(itemId: string, name: string): Promise<void> {
+    const row = await this.db
+      .selectFrom("catalog_items")
+      .select(["deleted_at", "package_name"])
+      .where("id", "=", itemId)
+      .forUpdate()
+      .executeTakeFirst();
+    if (row === undefined || row.deleted_at !== null) {
+      await releaseExtensionClaim(this.db, name, row?.package_name ?? null);
     }
   }
 
@@ -438,6 +575,8 @@ export class CatalogScopeService {
         pending_version: null,
         pending_by: null,
         pending_at: null,
+        // the confirmed version is the item's latest (ruling P3-34)
+        latest_version: version,
         updated_at: sql<Date>`now()` as unknown as Date,
       })
       .where("id", "=", itemId)

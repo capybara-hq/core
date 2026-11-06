@@ -260,7 +260,8 @@ describe("owner updates without an extension", { timeout: 120_000 }, () => {
     expect(await installRow("own-rb")).toEqual(before);
     expect(await itemRow("own-rb")).toMatchObject({
       platform_synced_version: "1.0.0",
-      latest_version: "2.0.0",
+      // never applied: not the item's latest (ruling P3-34)
+      latest_version: "1.0.0",
     });
     expect(await extensionAudits("own-rb")).toEqual([
       { action: "extension.disabled", actor: env.bossId, ownerOrgId: orgA },
@@ -406,9 +407,9 @@ describe("owner updates without an extension", { timeout: 120_000 }, () => {
     const failed = await confirm(env.boss, orgA, p);
     expect(failed.statusCode, failed.body).toBe(409);
     expect((failed.json() as { error: { code: string } }).error.code).toBe("plugin.skill_conflict");
-    // the version is imported, the platform still at 1.0.0
+    // the version is imported but not applied: latest and platform still at 1.0.0 (P3-34)
     expect(await itemRow("crm")).toMatchObject({
-      latest_version: "2.0.0",
+      latest_version: "1.0.0",
       platform_synced_version: "1.0.0",
     });
     expect(await usable(orgA)).not.toContain("clash");

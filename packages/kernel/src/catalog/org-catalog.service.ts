@@ -188,7 +188,13 @@ export class OrgCatalogService {
     const loaded = new Map(this.registry.manifests().map((x) => [x.name, x]));
     const out: OrgCatalogItem[] = [];
     for (const i of items) {
-      const vs = versions.filter((v) => v.item_id === i.id);
+      // Another org sees only an org-owned plugin's applied version, never one its owner
+      // uploaded that is pending or was rejected (ruling P3-34)
+      const vs = versions.filter(
+        (v) =>
+          v.item_id === i.id &&
+          (i.owner_org_id === null || i.owner_org_id === orgId || v.version === i.latest_version),
+      );
       const {
         installs: _installs,
         marketplaceId: _source,

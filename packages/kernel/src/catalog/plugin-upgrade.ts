@@ -431,17 +431,39 @@ export class PlatformPluginUpdater {
     opts: { actorTokenId?: string } = {},
   ): Promise<PlatformUpdateResult> {
     if (!UUID_RE.test(itemId)) throw itemNotFound();
-    return this.locked(itemId, async () => {
-      const d = await this.diff(itemId, version, { confirmPending: version });
-      return this.updateLocked(
-        actor,
-        itemId,
-        { version, diffHash: d.diffHash },
-        opts,
-        undefined,
-        version,
-      );
-    });
+    return this.locked(itemId, () => this.updateToPendingLocked(actor, itemId, version, opts));
+  }
+
+  /**
+   * {@link updateToPending} for a caller already holding the item's update lock
+   * ({@link withItemLock}): the super admin's confirmation runs all its steps under it (ruling
+   * P3-35).
+   */
+  async updateToPendingLocked(
+    actor: string,
+    itemId: string,
+    version: string,
+    opts: { actorTokenId?: string } = {},
+  ): Promise<PlatformUpdateResult> {
+    const d = await this.diff(itemId, version, { confirmPending: version });
+    return this.updateLocked(
+      actor,
+      itemId,
+      { version, diffHash: d.diffHash },
+      opts,
+      undefined,
+      version,
+    );
+  }
+
+  /**
+   * Runs `f` holding the item's update lock (the one every platform update of the item takes;
+   * another holder -> 409 `plugin.install_in_progress`): the super admin's confirmation of an org
+   * upload runs every step under it (ruling P3-35).
+   */
+  withItemLock<T>(itemId: string, f: () => Promise<T>): Promise<T> {
+    if (!UUID_RE.test(itemId)) throw itemNotFound();
+    return this.locked(itemId, f);
   }
 
   /**
@@ -717,6 +739,12 @@ export class PlatformPluginUpdater {
       .where("status", "in", ["installing", "installed", "upgrading"])
       .execute();
     if (owner !== undefined || confirmPending !== undefined) {
+      // An org's version becomes its latest once applied or confirmed (ruling P3-34)
+      await t
+        .updateTable("catalog_items")
+        .set({ latest_version: diff.to.version })
+        .where("id", "=", itemId)
+        .execute();
       // An owner's new version replaces a version waiting for the super admin (pre-flight F7):
       // their confirmation of it is then refused (409 extension.not_pending); the super admin's
       // confirmation applied it
@@ -846,6 +874,7 @@ export class PlatformPluginUpdater {
         "owner_org_id",
         "awaiting_confirmation",
         "pending_version",
+        "latest_version",
       ])
       .where("id", "=", itemId)
       .executeTakeFirst();
@@ -855,6 +884,15 @@ export class PlatformPluginUpdater {
       if (item.awaiting_confirmation) throw itemPendingError(item.name);
       if (item.pending_version !== null && item.pending_version === version) {
         throw itemPendingError(item.name, version);
+      }
+      // The super admin's generic update of an org's plugin reaches only its applied version
+      // (`latest_version`, ruling P3-34/P3-37): one the org uploaded that was never applied or
+      // confirmed (a rejected or failed one) is not theirs to apply
+      if (o.owner === undefined && item.owner_org_id !== null && version !== item.latest_version) {
+        throw targetInvalid(
+          `Version ${version} of plugin ${item.name} was uploaded by its organization but never applied; only its owner can apply it (or the super admin confirm it in 待确认)`,
+          [{ reason: "org_version_not_applied", version }],
+        );
       }
     }
     if (o.owner !== undefined && item.owner_org_id !== o.owner.orgId) throw itemNotFound();

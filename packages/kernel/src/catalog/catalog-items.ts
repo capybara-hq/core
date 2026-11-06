@@ -132,6 +132,11 @@ export interface CatalogListing {
 
 /** Input of {@link writeCatalogVersion}. */
 export interface CatalogVersionWrite {
+  /**
+   * A new version of an org-owned item: `latest_version` (and the listing) stays where it is; it
+   * moves only when the version is applied or confirmed (ruling P3-34).
+   */
+  keepLatest?: boolean;
   /** null: the CLI (no account). */
   actor: string | null;
   actorTokenId?: string;
@@ -389,7 +394,7 @@ export async function writeCatalogVersion(
       true,
     );
     if (existing.some((v) => v.version === version)) throw versionExists(version, false, true);
-    const newer = compareVersions(version, live.latest_version) >= 0;
+    const newer = w.keepLatest !== true && compareVersions(version, live.latest_version) >= 0;
     await t
       .updateTable("catalog_items")
       .set({

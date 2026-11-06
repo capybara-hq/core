@@ -1406,6 +1406,8 @@ export class PluginImport {
       };
     }
     const { id: itemId, created } = await writeCatalogVersion(t, {
+      // an org's version becomes its latest only when applied or confirmed (P3-34)
+      ...(owner !== undefined && { keepLatest: true }),
       actor,
       ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
       name: m.name,
@@ -1510,6 +1512,7 @@ export class PluginImport {
           pending_version: null,
           pending_by: null,
           pending_at: null,
+          latest_version: staged.version,
         })
         .where("id", "=", itemId)
         .execute();
