@@ -143,3 +143,147 @@ describe("parseAgentTemplate", () => {
     expect(AGENT_TEMPLATE_NAME_RE.test("a".repeat(65))).toBe(false);
   });
 });
+
+describe("parseAgentTemplate: phase 4 fields (P4-1)", () => {
+  const parse = (front: string) => {
+    const r = parseAgentTemplate(md(`${base}\n${front}`));
+    if (!("template" in r)) throw new Error(r.errors.join("; "));
+    return r.template;
+  };
+
+  it("reads selectedSkills, connectors, subagents, modelRef, quickActions and instructionFiles", () => {
+    const t = parse(
+      [
+        "selectedSkills: [pdf-tools, writing-plans]",
+        "connectors:",
+        "  - template: github",
+        "    tools: [list_issues]",
+        "  - template: other:jira",
+        "  - needs:",
+        "      protocol: mcp",
+        "      endpoint: https://mcp.example.com/sse",
+        "      tools: [search]",
+        "      label: Wiki",
+        "subagents:",
+        "  general: true",
+        "  types: [reviewer, superpowers:implementer]",
+        "  inline:",
+        "    - name: scout",
+        "      description: Finds files.",
+        "      instructions: Look around.",
+        "      tools: [Read, Grep]",
+        "      skills: [pdf-tools]",
+        "      model: fast",
+        "modelRef: anthropic/claude-x",
+        "quickActions:",
+        "  - title: Summarize",
+        "    body: Summarize the thread.",
+        "instructionFiles:",
+        "  - name: style.md",
+        "    content: Be brief.",
+      ].join("\n"),
+    );
+    expect(t.selectedSkills).toEqual(["pdf-tools", "writing-plans"]);
+    expect(t.connectors).toEqual([
+      { template: "github", tools: ["list_issues"] },
+      { template: "other:jira" },
+      {
+        needs: {
+          protocol: "mcp",
+          endpoint: "https://mcp.example.com/sse",
+          tools: ["search"],
+          label: "Wiki",
+        },
+      },
+    ]);
+    expect(t.subagents).toEqual({
+      general: true,
+      types: ["reviewer", "superpowers:implementer"],
+      inline: [
+        {
+          name: "scout",
+          description: "Finds files.",
+          instructions: "Look around.",
+          tools: ["Read", "Grep"],
+          skills: ["pdf-tools"],
+          model: "fast",
+        },
+      ],
+    });
+    expect(t.modelRef).toBe("anthropic/claude-x");
+    expect(t.quickActions).toEqual([{ title: "Summarize", body: "Summarize the thread." }]);
+    expect(t.instructionFiles).toEqual([{ name: "style.md", content: "Be brief." }]);
+  });
+
+  it("leaves the new fields absent for an old file", () => {
+    const t = parse("skills: [pdf-tools]");
+    for (const k of [
+      "selectedSkills",
+      "connectors",
+      "subagents",
+      "modelRef",
+      "quickActions",
+      "instructionFiles",
+    ]) {
+      expect(k in t).toBe(false);
+    }
+  });
+
+  it("rejects over-limit lists with the field path", () => {
+    const names = Array.from({ length: 33 }, (_, i) => `s${i}`).join(", ");
+    expect(errorsOf(md(`${base}\nselectedSkills: [${names}]`))).toEqual([
+      expect.stringContaining("selectedSkills"),
+    ]);
+    const conns = Array.from({ length: 17 }, () => "  - template: a").join("\n");
+    expect(errorsOf(md(`${base}\nconnectors:\n${conns}`))).toEqual([
+      expect.stringContaining("connectors"),
+    ]);
+    const types = Array.from({ length: 17 }, (_, i) => `t${i}`).join(", ");
+    expect(errorsOf(md(`${base}\nsubagents:\n  types: [${types}]`))).toEqual([
+      expect.stringContaining("subagents"),
+    ]);
+    const inline = (i: number) =>
+      `    - name: n${i}\n      description: d\n      instructions: x\n      tools: []\n      skills: []\n      model: fast`;
+    const eight = [0, 1, 2, 3, 4, 5, 6, 7, 8].map(inline).join("\n");
+    expect(
+      errorsOf(
+        md(
+          `${base}\nsubagents:\n  types: [${types.split(", ").slice(0, 8).join(", ")}]\n  inline:\n${eight}`,
+        ),
+      ),
+    ).toEqual([expect.stringContaining("subagents")]);
+  });
+
+  it("rejects over-long inline instructions", () => {
+    const front = `${base}\nsubagents:\n  inline:\n    - name: a\n      description: d\n      instructions: ${"x".repeat(100_001)}\n      tools: []\n      skills: []\n      model: fast`;
+    expect(errorsOf(md(front))).toEqual([
+      expect.stringContaining("subagents.inline[0].instructions"),
+    ]);
+  });
+
+  it("rejects malformed entries with the field path", () => {
+    expect(errorsOf(md(`${base}\nselectedSkills: [Not Valid]`))).toEqual([
+      expect.stringContaining("selectedSkills"),
+    ]);
+    expect(errorsOf(md(`${base}\nconnectors:\n  - {}`))).toEqual([
+      expect.stringContaining("connectors[0]"),
+    ]);
+    expect(
+      errorsOf(
+        md(`${base}\nconnectors:\n  - needs: { protocol: grpc, endpoint: x, tools: [], label: L }`),
+      ),
+    ).toEqual([expect.stringContaining("connectors[0].needs.protocol")]);
+    expect(errorsOf(md(`${base}\nsubagents:\n  general: yes-please`))).toEqual([
+      expect.stringContaining("subagents.general"),
+    ]);
+    expect(errorsOf(md(`${base}\nmodelRef: nomodel`))).toEqual([
+      expect.stringContaining("modelRef"),
+    ]);
+    expect(errorsOf(md(`${base}\nquickActions:\n  - title: ""\n    body: b`))).toEqual([
+      expect.stringContaining("quickActions[0]"),
+    ]);
+    expect(errorsOf(md(`${base}\ninstructionFiles:\n  - name: a`))).toEqual([
+      expect.stringContaining("instructionFiles[0]"),
+    ]);
+  });
+});

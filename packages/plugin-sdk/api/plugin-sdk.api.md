@@ -15,6 +15,16 @@ export const AGENT_TEMPLATE_LIMITS: {
     readonly perPlugin: 64;
     readonly skills: 3;
     readonly tools: 200;
+    readonly selectedSkills: 32;
+    readonly connectors: 16;
+    readonly subagentTypes: 16;
+    readonly inlineInstructionsChars: 100000;
+    readonly connectorTools: 200;
+    readonly quickActions: 9;
+    readonly quickActionTitleChars: 40;
+    readonly quickActionBodyChars: 20000;
+    readonly instructionFiles: 20;
+    readonly instructionFilesChars: 100000;
 };
 
 // @public
@@ -22,16 +32,64 @@ export const AGENT_TEMPLATE_NAME_RE: RegExp;
 
 // @public
 export interface AgentTemplate {
+    connectors?: AgentTemplateConnector[];
     description: string;
     disallowedTools?: string[];
     effort?: "low" | "medium" | "high" | "xhigh" | "max";
+    instructionFiles?: AgentTemplateInstructionFile[];
     instructions: string;
     maxSteps?: number;
     model?: AgentTemplateTier;
+    modelRef?: string;
     name: string;
+    quickActions?: AgentTemplateQuickAction[];
+    selectedSkills?: string[];
     skills?: string[];
+    subagents?: AgentTemplateSubagents;
     toolPolicies?: Record<string, "ask" | "deny">;
     tools?: string[];
+}
+
+// @public
+export type AgentTemplateConnector = {
+    template: string;
+    tools?: string[];
+} | {
+    needs: {
+        protocol: "mcp" | "openapi";
+        endpoint: string;
+        tools: string[];
+        label: string;
+    };
+};
+
+// @public
+export interface AgentTemplateInlineSubagent {
+    description: string;
+    instructions: string;
+    model: AgentTemplateTier;
+    name: string;
+    skills: string[];
+    tools: string[];
+}
+
+// @public
+export interface AgentTemplateInstructionFile {
+    content: string;
+    name: string;
+}
+
+// @public
+export interface AgentTemplateQuickAction {
+    body: string;
+    title: string;
+}
+
+// @public
+export interface AgentTemplateSubagents {
+    general?: boolean;
+    inline?: AgentTemplateInlineSubagent[];
+    types?: string[];
 }
 
 // @public
