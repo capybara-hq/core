@@ -11,6 +11,7 @@ import {
   type OrgEnv,
   resetOrgCatalog,
   seedPlugin,
+  setBuiltin,
   setScope,
   startOrgEnv,
 } from "./org-env.js";
@@ -654,5 +655,111 @@ describe("fix round 1", { timeout: 60_000 }, () => {
     const off = await tplSwitch(false, pre.json().confirm);
     expect(off.statusCode, off.body).toBe(200);
     expect(await liveConnectors()).toEqual([conn]);
+  });
+});
+
+describe("the admin component list: builtin and org-owned (Task 9 fix round 1)", {
+  timeout: 60_000,
+}, () => {
+  it("flags components of a builtin plugin and refuses their scope changes", async () => {
+    const { itemId, skillId } = await crmInBoth();
+    const list = async () =>
+      (await env.root({ method: "GET", url: "/api/v1/admin/components?kind=skill" })).json()
+        .components as { id: string; builtin: boolean }[];
+    expect((await list()).find((c) => c.id === skillId)).toMatchObject({ builtin: false });
+    await setBuiltin(env, itemId);
+    expect((await list()).find((c) => c.id === skillId)).toMatchObject({ builtin: true });
+    const pv = await env.root({
+      method: "POST",
+      url: `/api/v1/admin/components/skill/${skillId}/scope/preview`,
+      payload: { disabled: true },
+    });
+    expect(pv.statusCode).toBe(409);
+    expect(pv.json().error.code).toBe("plugin.builtin");
+  });
+
+  it("lists org-owned skills and agent templates read-only with their org and versions (ruling P2-11)", async () => {
+    await crmInBoth();
+    const org = await env.db
+      .selectFrom("orgs")
+      .select("name")
+      .where("id", "=", env.orgId)
+      .executeTakeFirstOrThrow();
+    const skillId = "11111111-aaaa-4aaa-8aaa-111111111111";
+    await env.db
+      .insertInto("skills")
+      .values({
+        id: skillId,
+        org_id: env.orgId,
+        scope: "org",
+        agent_id: null,
+        name: "house-style",
+        description: "Our style",
+        current_version: 2,
+        created_by: env.bossId,
+      })
+      .execute();
+    for (const version of [1, 2]) {
+      await env.db
+        .insertInto("skill_versions")
+        .values({
+          skill_id: skillId,
+          version,
+          manifest: JSON.stringify({ name: "house-style", description: "Our style" }) as never,
+          object_prefix: `kernel/${env.orgId}/skills/${skillId}/${version}/`,
+          created_by: env.bossId,
+        })
+        .execute();
+    }
+    const tplId = "22222222-aaaa-4aaa-8aaa-222222222222";
+    await env.db
+      .insertInto("agent_templates")
+      .values({ id: tplId, org_id: env.orgId, name: "helper", current_version: 1 })
+      .execute();
+    await env.db
+      .insertInto("agent_template_versions")
+      .values({ template_id: tplId, version: 1, definition: JSON.stringify({}) as never })
+      .execute();
+
+    const skills = (
+      await env.root({ method: "GET", url: "/api/v1/admin/components?kind=skill" })
+    ).json().components as Record<string, unknown>[];
+    expect(skills.find((c) => c.name === "pdf-tools")).toMatchObject({
+      owner: "platform",
+      ownerName: null,
+    });
+    expect(skills.find((c) => c.id === skillId)).toMatchObject({
+      kind: "skill",
+      name: "house-style",
+      owner: env.orgId,
+      ownerName: org.name,
+      plugin: null,
+      version: "2",
+      builtin: false,
+      onIn: [env.orgId],
+    });
+    const tpls = (
+      await env.root({ method: "GET", url: "/api/v1/admin/components?kind=agent_template" })
+    ).json().components as Record<string, unknown>[];
+    expect(tpls.find((c) => c.id === tplId)).toMatchObject({ owner: env.orgId, version: "1" });
+    // connector templates are never org-owned
+    const conns = (
+      await env.root({ method: "GET", url: "/api/v1/admin/components?kind=connector_template" })
+    ).json().components as { owner: string }[];
+    expect(conns.every((c) => c.owner === "platform")).toBe(true);
+
+    const v = await env.root({
+      method: "GET",
+      url: `/api/v1/admin/components/skill/${skillId}/versions`,
+    });
+    expect(v.statusCode, v.body).toBe(200);
+    expect(v.json().versions.map((x: { version: string }) => x.version)).toEqual(["2", "1"]);
+    // read-only in the admin console: no scope, disable or upload
+    const pv = await env.root({
+      method: "POST",
+      url: `/api/v1/admin/components/skill/${skillId}/scope/preview`,
+      payload: { disabled: true },
+    });
+    expect(pv.statusCode).toBe(404);
   });
 });

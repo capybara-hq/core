@@ -6,8 +6,10 @@ import { useTranslations } from "next-intl";
 import { useState } from "react";
 import {
   ComponentInspector,
+  ComponentNotes,
   ComponentOrgs,
   ComponentVersions,
+  StateBadges,
   useComponentActions,
 } from "../../../../../components/AdminComponents";
 import { ErrorFrame } from "../../../../../components/ErrorFrame";
@@ -79,6 +81,7 @@ function AdminSkill({ c, orgId }: { c: PlatformComponent; orgId: string | null }
           path: [...scope, { label: "skills", href: "/admin/skills" }, { label: c.name }],
           title: c.name,
           count: versionLabel(c.version),
+          status: <StateBadges c={c} />,
           actions,
         }}
         tabs={{
@@ -91,8 +94,7 @@ function AdminSkill({ c, orgId }: { c: PlatformComponent; orgId: string | null }
         inspector={<ComponentInspector c={c} />}
       >
         <Stack gap={12}>
-          {c.disabled && <Text tone="warn">{t("disabledNote")}</Text>}
-          {c.pluginStopped && <Text tone="warn">{t("pluginStoppedNote")}</Text>}
+          <ComponentNotes c={c} />
           {c.description !== null && c.description !== "" && (
             <Text variant="prose" tone="muted">
               {c.description}

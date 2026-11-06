@@ -193,10 +193,11 @@ test("git marketplace: add a repository in the admin console -> refresh -> impor
   // 2. Import notes 1.0.0 and turn it on in the org (a skills-only plugin: no input)
   await importNotes(page, "1.0.0");
   await page.goto("/plugins");
-  const row = page.getByRole("listitem").filter({ hasText: "notes" });
+  // The plugin's display name (plugin.json displayName) names the row, the link and the toasts
+  const row = page.getByRole("listitem").filter({ hasText: "笔记" });
   await row.getByRole("button", { name: P.action.enable }).click();
   await expect(row.getByText(P.state.on, { exact: true })).toBeVisible({ timeout: 60_000 });
-  await row.getByRole("link", { name: "notes", exact: true }).click();
+  await row.getByRole("link", { name: "笔记", exact: true }).click();
   await expect(page).toHaveURL(/\/plugins\/[0-9a-f-]{36}$/);
   const detail = page.url();
   await expect(page.getByRole("region", { name: "notes v1.0.0", exact: true })).toBeVisible();

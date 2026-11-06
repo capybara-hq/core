@@ -65,11 +65,21 @@ export function ComponentFrom({ c }: { c: PlatformComponent }) {
   return <Link href={`/admin/plugins/${encodeURIComponent(c.itemId)}`}>{c.plugin}</Link>;
 }
 
-/** The state chips of a component: 已停用, 插件已停用. */
-function StateBadges({ c }: { c: PlatformComponent }) {
+/** Whether the platform owns it (an org's own item is read-only in the admin console). */
+export const platformOwned = (c: PlatformComponent): boolean => c.owner === "platform";
+
+/** The 归属 text: 平台, or the owning org's name. */
+export function useOwnerText(): (c: PlatformComponent) => string {
+  const t = useTranslations("adminComponents");
+  return (c) => (platformOwned(c) ? t("owner.platform") : (c.ownerName ?? c.owner));
+}
+
+/** The state chips of a component: 内置, 已停用, 插件已停用. */
+export function StateBadges({ c }: { c: PlatformComponent }) {
   const t = useTranslations("adminComponents.state");
   return (
     <>
+      {c.builtin && <Badge>{t("builtin")}</Badge>}
       {c.disabled && <Badge tone="warn">{t("disabled")}</Badge>}
       {c.pluginStopped && <Badge tone="warn">{t("pluginStopped")}</Badge>}
     </>
@@ -89,6 +99,7 @@ export function ComponentsTable({
 }) {
   const t = useTranslations("adminComponents");
   const scopeText = useComponentScopeText();
+  const ownerText = useOwnerText();
   const columns: Column<PlatformComponent>[] = [
     {
       key: "name",
@@ -101,7 +112,7 @@ export function ComponentsTable({
       ),
     },
     { key: "from", header: t("columns.from"), tone: "muted", cell: (c) => <ComponentFrom c={c} /> },
-    { key: "owner", header: t("columns.owner"), cell: () => t("owner.platform") },
+    { key: "owner", header: t("columns.owner"), cell: (c) => ownerText(c) },
     { key: "scope", header: t("columns.scope"), cell: (c) => scopeText(c) },
     {
       key: "version",
@@ -132,12 +143,13 @@ export function ComponentsTable({
 export function ComponentInspector({ c }: { c: PlatformComponent }) {
   const t = useTranslations("adminComponents");
   const scopeText = useComponentScopeText();
+  const ownerText = useOwnerText();
   return (
     <KeyValue
       keyWidth="8ch"
       rows={[
         { k: t("detail.fields.from"), v: <ComponentFrom c={c} /> },
-        { k: t("detail.fields.owner"), v: t("owner.platform") },
+        { k: t("detail.fields.owner"), v: ownerText(c) },
         { k: t("detail.fields.scope"), v: scopeText(c) },
         { k: t("detail.fields.orgs"), v: String(c.onIn.length) },
         { k: t("detail.fields.version"), v: versionLabel(c.version) },
@@ -222,29 +234,34 @@ export function useComponentActions(
     invalidates: () => componentChangeKeys(orgId),
   });
   const close = () => setOpen(null);
+  const scopeAction: HeaderAction = {
+    label: t("actions.scope"),
+    variant: "default",
+    onSelect: () => setOpen("scope"),
+  };
+  const disableAction: HeaderAction = c.disabled
+    ? {
+        label: t("actions.enable"),
+        variant: "default",
+        onSelect: () =>
+          void enable.mutateAsync(undefined).then(
+            () => toast.success(t("enabledToast", { name: c.name })),
+            (e: unknown) => toast.error(errorMessage(e)),
+          ),
+      }
+    : { label: t("actions.disable"), variant: "default", onSelect: () => setOpen("disable") };
+  const uploadAction: HeaderAction = {
+    label: t("actions.upload"),
+    icon: "upload",
+    variant: "primary",
+    onSelect: () => setOpen("upload"),
+  };
+  // An org's own item is read-only here; a builtin plugin's component keeps its scope and stays
+  // on (the kernel refuses both with 409 plugin.builtin), though it takes a new version
+  const manage = platformOwned(c) && !c.builtin;
   const actions: HeaderAction[] = [
-    { label: t("actions.scope"), variant: "default", onSelect: () => setOpen("scope") },
-    c.disabled
-      ? {
-          label: t("actions.enable"),
-          variant: "default",
-          onSelect: () =>
-            void enable.mutateAsync(undefined).then(
-              () => toast.success(t("enabledToast", { name: c.name })),
-              (e: unknown) => toast.error(errorMessage(e)),
-            ),
-        }
-      : { label: t("actions.disable"), variant: "default", onSelect: () => setOpen("disable") },
-    ...(c.kind === "connector_template"
-      ? []
-      : [
-          {
-            label: t("actions.upload"),
-            icon: "upload" as const,
-            variant: "primary" as const,
-            onSelect: () => setOpen("upload"),
-          },
-        ]),
+    ...(manage ? [scopeAction, disableAction] : []),
+    ...(platformOwned(c) && c.kind !== "connector_template" ? [uploadAction] : []),
   ];
   const dialog =
     open === "scope" ? (
@@ -255,4 +272,52 @@ export function useComponentActions(
       <ComponentUploadDialog component={c} orgId={orgId} onClose={close} />
     ) : null;
   return { actions, dialog };
+}
+
+/** The 全部 / 平台 / 组织创建 tabs of a component list, with their counts and filtered rows. */
+export function useOwnerTabs(rows: PlatformComponent[] | null): {
+  items: { id: string; label: string; count?: number; onSelect(): void }[];
+  active: string;
+  rows: PlatformComponent[] | null;
+} {
+  const t = useTranslations("adminComponents.tabs");
+  const [active, setActive] = useState<"all" | "platform" | "org">("all");
+  const platform = rows?.filter(platformOwned) ?? null;
+  const org = rows?.filter((c) => !platformOwned(c)) ?? null;
+  const count = (r: PlatformComponent[] | null) => (r === null ? {} : { count: r.length });
+  return {
+    items: [
+      { id: "all", label: t("all"), ...count(rows), onSelect: () => setActive("all") },
+      {
+        id: "platform",
+        label: t("platform"),
+        ...count(platform),
+        onSelect: () => setActive("platform"),
+      },
+      { id: "org", label: t("org"), ...count(org), onSelect: () => setActive("org") },
+    ],
+    active,
+    rows: active === "platform" ? platform : active === "org" ? org : rows,
+  };
+}
+
+/** The detail's notes: disabled, plugin stopped, builtin, org-owned. */
+export function ComponentNotes({ c }: { c: PlatformComponent }) {
+  const t = useTranslations("adminComponents.detail");
+  return (
+    <>
+      {!platformOwned(c) && (
+        <Text variant="prose" tone="muted">
+          {t("orgOwnedNote")}
+        </Text>
+      )}
+      {c.builtin && (
+        <Text variant="prose" tone="muted">
+          {t("builtinNote")}
+        </Text>
+      )}
+      {c.disabled && <Text tone="warn">{t("disabledNote")}</Text>}
+      {c.pluginStopped && <Text tone="warn">{t("pluginStoppedNote")}</Text>}
+    </>
+  );
 }

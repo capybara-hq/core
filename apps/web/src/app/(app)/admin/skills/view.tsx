@@ -2,7 +2,7 @@
 
 import { ListPage } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
-import { ComponentsTable } from "../../../../components/AdminComponents";
+import { ComponentsTable, useOwnerTabs } from "../../../../components/AdminComponents";
 import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { NoAccess } from "../../../../components/NoAccess";
 import { usePagePath } from "../../../../components/shell/path";
@@ -27,16 +27,19 @@ function AdminSkills() {
   const scope = usePagePath("admin");
   const t = useTranslations("adminComponents");
   const list = usePageQuery(adminComponentsQuery("skill"));
+  const tabs = useOwnerTabs(list.kind === "ready" ? list.data.components : null);
   const header = {
     path: [...scope, { label: "skills" }],
     title: t("titles.skill"),
     description: t("descriptions.skill"),
+    tabs: tabs.items,
+    activeTab: tabs.active,
   };
   if (list.kind === "notFound") return <NotFound />;
   if (list.kind === "error") return <ErrorFrame reset={list.retry} />;
   return (
     <ListPage header={header}>
-      <ComponentsTable kind="skill" rows={list.kind === "ready" ? list.data.components : null} />
+      <ComponentsTable kind="skill" rows={tabs.rows} />
     </ListPage>
   );
 }

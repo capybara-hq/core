@@ -28,6 +28,7 @@ const U = en.catalog.update;
 const fill = (s: string, vars: Record<string, string | number>) =>
   s.replace(/\{(\w+)\}/g, (_, k: string) => String(vars[k]));
 const template = (name: string) => document.querySelector(`[data-template="${name}"]`);
+const escapeRe = (x: string) => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const settle = () => act(() => new Promise((r) => setTimeout(r, 20)));
 const T = "2026-11-06T00:00:00.000Z";
 const ITEM = "11111111-1111-4111-8111-111111111111";
@@ -47,6 +48,8 @@ const comp = (over: Record<string, unknown> = {}) => ({
   plugin: "jina",
   itemId: ITEM,
   owner: "platform",
+  ownerName: null,
+  builtin: false,
   scopeMode: "follow",
   scope: "optional",
   orgs: [],
@@ -72,6 +75,23 @@ const SKILLS = [
     onIn: ["o1"],
   }),
   comp({ id: "s3", name: "summarize", scopeMode: "own", scope: "all", onIn: ["o1", "o2"] }),
+  // an org's own skill (ruling P2-11): read-only here
+  comp({
+    id: "s4",
+    name: "house-style",
+    description: "Our style",
+    plugin: null,
+    itemId: null,
+    owner: "o1",
+    ownerName: "Acme",
+    scopeMode: "own",
+    scope: "named",
+    orgs: ["o1"],
+    shownToOthers: false,
+    version: "3",
+    onIn: ["o1"],
+  }),
+  comp({ id: "s5", name: "base-chat", plugin: "openai-compatible", builtin: true, scope: "all" }),
 ];
 const TEMPLATES = [
   comp({ kind: "connector_template", id: "c1", name: "gh", description: null, version: "1.2.0" }),
@@ -100,6 +120,14 @@ const base: Routes = {
   "GET /api/v1/admin/components/skill/s3/versions": () =>
     json(200, {
       versions: [{ version: "1", catalogVersion: "1.2.0", updatedOnOwn: false, createdAt: T }],
+    }),
+  "GET /api/v1/admin/components/skill/s4/versions": () =>
+    json(200, {
+      versions: [{ version: "3", catalogVersion: null, updatedOnOwn: false, createdAt: T }],
+    }),
+  "GET /api/v1/admin/components/skill/s5/versions": () =>
+    json(200, {
+      versions: [{ version: "1", catalogVersion: "0.1.0", updatedOnOwn: false, createdAt: T }],
     }),
   "GET /api/v1/admin/components/agent_template/a1/versions": () =>
     json(200, {
@@ -158,6 +186,28 @@ describe("admin component lists", () => {
     ).toBeTruthy();
     await settle();
     expect(browser).toEqual([]);
+  });
+
+  it("tabs 全部 / 平台 / 组织创建 filter the rows; an org's own skill names its org as the owner", async () => {
+    await open("/admin/skills");
+    const table = await screen.findByRole("table", { name: C.titles.skill });
+    const tab = (label: string) =>
+      screen.getByRole("tab", { name: new RegExp(`^${label}`) }) as HTMLElement;
+    expect(tab(C.tabs.all).textContent).toMatch(/5/);
+    expect(tab(C.tabs.platform).textContent).toMatch(/4/);
+    expect(tab(C.tabs.org).textContent).toMatch(/1/);
+    const own = within(table).getByText("house-style").closest("tr") as HTMLElement;
+    expect(within(own).getByText("Acme")).toBeTruthy();
+    expect(within(own).queryByText(C.owner.platform)).toBeNull();
+    const builtin = within(table).getByText("base-chat").closest("tr") as HTMLElement;
+    expect(within(builtin).getByText(C.state.builtin)).toBeTruthy();
+    const user = userEvent.setup();
+    await user.click(tab(C.tabs.org));
+    expect(within(table).getByText("house-style")).toBeTruthy();
+    expect(within(table).queryByText("web-research")).toBeNull();
+    await user.click(tab(C.tabs.platform));
+    expect(within(table).queryByText("house-style")).toBeNull();
+    expect(within(table).getByText("web-research")).toBeTruthy();
   });
 
   it.each([
@@ -408,6 +458,26 @@ describe("admin component detail", () => {
     expect(bodyOf(calls.find((c) => c.method === "POST" && c.url.endsWith("/versions")))).toEqual({
       content: md,
     });
+  });
+
+  it("a component of a builtin plugin has the 内置 chip and no 设置范围 or 停用", async () => {
+    await open("/admin/skills/s5");
+    expect(await screen.findByRole("heading", { name: "base-chat" })).toBeTruthy();
+    expect(screen.getAllByText(C.state.builtin).length).toBeGreaterThan(0);
+    expect(screen.queryByRole("button", { name: C.detail.actions.scope })).toBeNull();
+    expect(screen.queryByRole("button", { name: C.detail.actions.disable })).toBeNull();
+    // the kernel takes a new version of it like any platform skill
+    expect(screen.getByRole("button", { name: C.detail.actions.upload })).toBeTruthy();
+  });
+
+  it("an org's own skill is read-only: its org as the owner, no actions", async () => {
+    await open("/admin/skills/s4");
+    expect(await screen.findByRole("heading", { name: "house-style" })).toBeTruthy();
+    expect(screen.getAllByText("Acme").length).toBeGreaterThan(0);
+    expect(screen.getByText(C.detail.orgOwnedNote)).toBeTruthy();
+    for (const a of [C.detail.actions.scope, C.detail.actions.disable, C.detail.actions.upload]) {
+      expect(screen.queryByRole("button", { name: a })).toBeNull();
+    }
   });
 
   it("a connector template has no 上传新版本", async () => {
@@ -681,6 +751,85 @@ describe("admin plugin detail: components and the platform update", () => {
         name: fill(en.catalog.admin.detail.actions.update, { version: "v1.3.0" }),
       }),
     ).toBeNull();
+  });
+
+  it("更新到 picks the highest version, and offers none when the versions do not compare", async () => {
+    const detailWith = (versions: string[]) => () =>
+      json(200, {
+        item: { ...item, versions, latestVersion: versions[0] },
+        versions: versions.map(version),
+        hasIcon: false,
+      });
+    await open(
+      `/admin/plugins/${ITEM}`,
+      routes({ [`GET /api/v1/admin/catalog/items/${ITEM}`]: detailWith(["1.2.0", "1.10.0"]) }),
+    );
+    expect(
+      await screen.findByRole("button", {
+        name: fill(en.catalog.admin.detail.actions.update, { version: "v1.10.0" }),
+      }),
+    ).toBeTruthy();
+    cleanup();
+    await open(
+      `/admin/plugins/${ITEM}`,
+      routes({ [`GET /api/v1/admin/catalog/items/${ITEM}`]: detailWith(["nightly", "1.2.0"]) }),
+    );
+    await screen.findByRole("button", { name: en.catalog.admin.detail.actions.scope });
+    expect(
+      screen.queryByRole("button", {
+        name: new RegExp(escapeRe(en.catalog.admin.detail.actions.update.split("{")[0] ?? "")),
+      }),
+    ).toBeNull();
+  });
+
+  it.each([
+    [
+      { reason: "same_version", version: "1.3.0" },
+      fill(en.catalog.errorDetail.sameVersion, { version: "v1.3.0" }),
+    ],
+    [
+      { reason: "config_extension", deploymentVersion: "1.2.0" },
+      fill(en.catalog.errorDetail.configExtension, { version: "v1.2.0" }),
+    ],
+    [
+      { reason: "config_extension", deploymentVersion: null },
+      en.catalog.errorDetail.configExtensionUnloaded,
+    ],
+    [
+      { reason: "extension_removed", version: "1.3.0" },
+      fill(en.catalog.errorDetail.extensionRemoved, { version: "v1.3.0" }),
+    ],
+    [
+      { reason: "extension_package", version: "1.3.0" },
+      fill(en.catalog.errorDetail.extensionPackage, { version: "v1.3.0" }),
+    ],
+    [
+      { reason: "dependent_range", dependent: "crm", range: "^1.2.0", version: "1.3.0" },
+      fill(en.catalog.errorDetail.dependentRange, {
+        dependent: "crm",
+        range: "^1.2.0",
+        version: "v1.3.0",
+      }),
+    ],
+  ])("a refused update says why in the dialog (%o)", async (detail, line) => {
+    await open(
+      `/admin/plugins/${ITEM}`,
+      routes({
+        [`POST /api/v1/admin/catalog/items/${ITEM}/update/preview`]: () =>
+          json(409, {
+            error: { code: "plugin.upgrade_target_invalid", message: "x", details: [detail] },
+          }),
+      }),
+    );
+    const user = userEvent.setup();
+    await user.click(
+      await screen.findByRole("button", {
+        name: fill(en.catalog.admin.detail.actions.update, { version: "v1.3.0" }),
+      }),
+    );
+    const dialog = await screen.findByRole("dialog");
+    expect(await within(dialog).findByText(en.errors.plugin.upgrade_target_invalid)).toBeTruthy();
+    expect(within(dialog).getByText(line)).toBeTruthy();
   });
 
   it("设置范围 on a plugin lists the components whose own scope it replaces and refuses name clashes", async () => {

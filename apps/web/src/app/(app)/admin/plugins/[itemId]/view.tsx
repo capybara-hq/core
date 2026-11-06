@@ -154,14 +154,12 @@ function PluginDetail({ detail, orgId }: { detail: CatalogItemDetail; orgId: str
   const [dialog, setDialog] = useState<"scope" | "disable" | "update" | null>(null);
   const item = detail.item;
   const platformVersion = item.platformVersion ?? item.latestVersion;
-  // The newest imported version, when it is newer than the platform's: the platform update
-  const newest = item.versions[0];
+  // The highest imported version newer than the platform's: the platform update (a version that
+  // does not compare as semver is never offered)
   const updateTo =
-    newest !== undefined &&
-    newest !== platformVersion &&
-    (compareSemver(newest, platformVersion) ?? 1) > 0
-      ? newest
-      : null;
+    item.versions
+      .filter((v) => (compareSemver(v, platformVersion) ?? 0) > 0)
+      .sort((a, b) => compareSemver(b, a) ?? 0)[0] ?? null;
   const name = displayNameOf(item, locale);
   const latest = detail.versions.find((v) => v.version === item.latestVersion);
   const ext = latest?.manifest.extension?.manifest;

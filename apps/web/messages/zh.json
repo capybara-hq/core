@@ -398,7 +398,7 @@
       "install_in_progress": "这个插件还在安装或升级中，暂时不能变更；中断时，超过时限后可以清理。",
       "skill_conflict": "这个插件带的技能在本组织已有同名技能（本组织自己的，或来自别的插件）。请先删除或重命名，再安装。",
       "upgrade_stale": "升级预览已过期，请重新预览。",
-      "upgrade_target_invalid": "不能升级到这个版本（带扩展的插件只能升级到部署正在运行的版本，依赖它的插件也必须接受该版本）。",
+      "upgrade_target_invalid": "平台插件不能更新到这个版本：平台已在用它、它的扩展不能这样移动，或依赖它的插件不接受该版本。",
       "upgrade_failed": "升级插件失败。",
       "disabled": "这个插件已在整个部署停用。",
       "scope_locked": "这个插件的范围由超级管理员决定，组织里不能开关。",
@@ -3386,12 +3386,13 @@
       "gitSuffix": "git 服务器对这个仓库地址返回了重定向；请改用以 .git 结尾的地址。",
       "entry": "被拒绝的条目：{path}",
       "pathEntry": "市场条目 {entry}（路径 {path}）",
-      "sameVersion": "本组织已安装 {version}。",
-      "deploymentVersion": "部署运行的是这个插件扩展的 {deploymentVersion}；本组织只能升级到目录版本 {allowedVersion}。",
-      "deploymentVersionNone": "部署运行的是这个插件扩展的 {deploymentVersion}，但平台目录里还没有带这个扩展的版本。",
-      "notDeployed": "部署上没有运行这个插件的扩展；请先请超级管理员安装。",
-      "dependentRange": "本组织的 {dependent} 依赖 {range}，{version} 不满足。",
-      "templateConnector": "连接器模板 {template} 改用了另一种连接器（{plugin} / {connector}）；请卸载插件后安装新版本。"
+      "sameVersion": "平台已在用 {version}。",
+      "dependentRange": "插件 {dependent} 依赖 {range}，{version} 不满足。",
+      "templateConnector": "连接器模板 {template} 改用了另一种连接器（{plugin} / {connector}）；请删除插件，再把新版本作为新插件引入。",
+      "configExtension": "这个插件的扩展在启动配置里声明（部署运行 {version}），更新不能移动它；请先在启动配置里修改。",
+      "configExtensionUnloaded": "这个插件的扩展在启动配置里声明，更新不能移动它；请先在启动配置里修改。",
+      "extensionRemoved": "{version} 不带扩展，但部署正在运行它；请先卸载扩展。",
+      "extensionPackage": "{version} 的扩展包不在目录里，不能更新到它；请重新引入这个版本。"
     }
   },
   "filePreviewers": {
@@ -3627,6 +3628,11 @@
       "connector_template": "组织按模板填入地址和凭据，得到自己的连接器。范围和停用在这里管理。",
       "agent_template": "预先配好的智能体定义，也可以作为子智能体类型使用。范围、停用和版本在这里管理。"
     },
+    "tabs": {
+      "all": "全部",
+      "platform": "平台",
+      "org": "组织创建"
+    },
     "empty": {
       "skill": "还没有技能。引入带技能的插件后，它们会出现在这里。",
       "connector_template": "还没有连接器模板。引入带连接器模板的插件后，它们会出现在这里。",
@@ -3652,7 +3658,8 @@
     "orgsUsing": "{n} 个组织在用",
     "state": {
       "disabled": "已停用",
-      "pluginStopped": "插件已停用"
+      "pluginStopped": "插件已停用",
+      "builtin": "内置"
     },
     "detail": {
       "tabsLabel": "组件",
@@ -3693,7 +3700,9 @@
         "all": "全部组织启用：每个组织都在用，组织管理员不能关掉。",
         "optional": "组织自选：{n} 个组织已启用。",
         "named": "指定组织：只有下面的组织能用。"
-      }
+      },
+      "orgOwnedNote": "这是组织自己的，在这里只能查看；把它关联给其他组织之后才能在这里管理。",
+      "builtinNote": "它来自内置插件：在所有组织启用，范围不能改，也不能停用。"
     },
     "scopeDialog": {
       "title": "设置 {name} 的范围",

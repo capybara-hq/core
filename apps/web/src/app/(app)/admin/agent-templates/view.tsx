@@ -2,7 +2,7 @@
 
 import { ListPage } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
-import { ComponentsTable } from "../../../../components/AdminComponents";
+import { ComponentsTable, useOwnerTabs } from "../../../../components/AdminComponents";
 import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { NoAccess } from "../../../../components/NoAccess";
 import { usePagePath } from "../../../../components/shell/path";
@@ -27,19 +27,19 @@ function AdminAgentTemplates() {
   const scope = usePagePath("admin");
   const t = useTranslations("adminComponents");
   const list = usePageQuery(adminComponentsQuery("agent_template"));
+  const tabs = useOwnerTabs(list.kind === "ready" ? list.data.components : null);
   const header = {
     path: [...scope, { label: "agent-templates" }],
     title: t("titles.agent_template"),
     description: t("descriptions.agent_template"),
+    tabs: tabs.items,
+    activeTab: tabs.active,
   };
   if (list.kind === "notFound") return <NotFound />;
   if (list.kind === "error") return <ErrorFrame reset={list.retry} />;
   return (
     <ListPage header={header}>
-      <ComponentsTable
-        kind="agent_template"
-        rows={list.kind === "ready" ? list.data.components : null}
-      />
+      <ComponentsTable kind="agent_template" rows={tabs.rows} />
     </ListPage>
   );
 }

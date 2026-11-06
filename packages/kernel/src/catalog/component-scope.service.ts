@@ -64,7 +64,11 @@ export type ComponentTarget =
   | { disabled: boolean }
   | { follow: true };
 
-/** A platform component in the admin list (`GET admin/components`). */
+/**
+ * A component in the admin list (`GET admin/components`): a platform component, or (ruling P2-11)
+ * an org's own skill or agent template, listed read-only (`owner` = the org id; its scope fields
+ * say it is on in that org only; scope, disable and uploads are platform-only, 404 for it).
+ */
 export interface ComponentView {
   kind: ComponentKind;
   id: string;
@@ -73,7 +77,12 @@ export interface ComponentView {
   /** The plugin it came from (null: none). */
   plugin: string | null;
   itemId: string | null;
-  owner: "platform";
+  /** `platform`, or the id of the org that owns it. */
+  owner: string;
+  /** The owning org's name (null for `platform`). */
+  ownerName: string | null;
+  /** Of a builtin plugin: on everywhere, its scope cannot be changed nor disabled (409). */
+  builtin: boolean;
   scopeMode: "follow" | "own";
   /** The effective scope: the plugin's (builtin: `all`) when following it, else its own. */
   scope: PluginScope;
@@ -233,42 +242,110 @@ export class ComponentScopeService {
     const comps = await loadComponents(this.db, kind);
     const st = await loadScopeState(this.db, kind, comps);
     const orgs = await this.liveOrgs();
-    return comps
-      .map((c) => {
-        const plugin = c.itemId === null ? undefined : st.plugins.get(c.itemId);
-        const follow = c.scopeMode === "follow" && c.itemId !== null;
-        const scope: PluginScope = follow
-          ? plugin?.builtin
-            ? "all"
-            : (plugin?.scope ?? c.scope)
-          : c.scope;
-        const list = follow
-          ? (st.pluginListed.get(c.itemId as string) ?? new Set<string>())
-          : (st.listed.get(c.id) ?? new Set<string>());
-        return {
-          kind,
-          id: c.id,
-          name: c.name,
-          description: c.description,
-          plugin: c.plugin,
-          itemId: c.itemId,
-          owner: "platform" as const,
-          scopeMode: c.scopeMode,
-          scope,
-          orgs: scope === "named" ? [...list].sort() : [],
-          disabled: c.disabled,
-          pluginStopped: c.itemId !== null && (plugin === undefined || plugin.disabled),
-          shownToOthers: c.shownToOthers,
-          version: c.version,
-          onIn: orgs
-            .filter((o) => this.on(c, st, o.id))
-            .map((o) => o.id)
-            .sort(),
-        };
-      })
-      .sort((a, b) =>
-        a.name < b.name ? -1 : a.name > b.name ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0,
-      );
+    const platform = comps.map((c): ComponentView => {
+      const plugin = c.itemId === null ? undefined : st.plugins.get(c.itemId);
+      const follow = c.scopeMode === "follow" && c.itemId !== null;
+      const scope: PluginScope = follow
+        ? plugin?.builtin
+          ? "all"
+          : (plugin?.scope ?? c.scope)
+        : c.scope;
+      const list = follow
+        ? (st.pluginListed.get(c.itemId as string) ?? new Set<string>())
+        : (st.listed.get(c.id) ?? new Set<string>());
+      return {
+        kind,
+        id: c.id,
+        name: c.name,
+        description: c.description,
+        plugin: c.plugin,
+        itemId: c.itemId,
+        owner: "platform",
+        ownerName: null,
+        builtin: plugin?.builtin === true,
+        scopeMode: c.scopeMode,
+        scope,
+        orgs: scope === "named" ? [...list].sort() : [],
+        disabled: c.disabled,
+        pluginStopped: c.itemId !== null && (plugin === undefined || plugin.disabled),
+        shownToOthers: c.shownToOthers,
+        version: c.version,
+        onIn: orgs
+          .filter((o) => this.on(c, st, o.id))
+          .map((o) => o.id)
+          .sort(),
+      };
+    });
+    const owned = await this.orgOwned(kind, orgs);
+    return [...platform, ...owned].sort((a, b) =>
+      a.name < b.name ? -1 : a.name > b.name ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0,
+    );
+  }
+
+  /**
+   * The orgs' own skills (org scope) and agent templates, not linked to a platform component
+   * (ruling P2-11): listed read-only, on in their org only. Connector templates have none.
+   */
+  private async orgOwned(
+    kind: ComponentKind,
+    orgs: { id: string; name: string }[],
+  ): Promise<ComponentView[]> {
+    if (kind === "connector_template") return [];
+    const names = new Map(orgs.map((o) => [o.id, o.name]));
+    const rows =
+      kind === "skill"
+        ? await this.db
+            .selectFrom("skills as s")
+            .leftJoin("catalog_items as c", "c.id", "s.catalog_item_id")
+            .select([
+              "s.id",
+              "s.org_id",
+              "s.name",
+              "s.description",
+              "s.current_version",
+              "s.catalog_item_id",
+              "c.name as plugin",
+            ])
+            .where("s.scope", "=", "org")
+            .where("s.deleted_at", "is", null)
+            .where("s.platform_skill_id", "is", null)
+            .execute()
+        : (
+            await this.db
+              .selectFrom("agent_templates")
+              .select([
+                "id",
+                "org_id",
+                "name",
+                "current_version",
+                "catalog_item_id",
+                "plugin_name as plugin",
+              ])
+              .where("deleted_at", "is", null)
+              .where("platform_template_id", "is", null)
+              .execute()
+          ).map((r) => ({ ...r, description: null as string | null }));
+    return rows
+      .filter((r) => names.has(r.org_id))
+      .map((r) => ({
+        kind,
+        id: r.id,
+        name: r.name,
+        description: r.description,
+        plugin: r.plugin,
+        itemId: r.catalog_item_id,
+        owner: r.org_id,
+        ownerName: names.get(r.org_id) ?? null,
+        builtin: false,
+        scopeMode: "own" as const,
+        scope: "named" as const,
+        orgs: [r.org_id],
+        disabled: false,
+        pluginStopped: false,
+        shownToOthers: false,
+        version: String(r.current_version),
+        onIn: [r.org_id],
+      }));
   }
 
   /** The preview of a scope change, a disable or a return to following the plugin (nothing written). */
@@ -563,7 +640,7 @@ export class ComponentScopeService {
    */
   async versions(kind: ComponentKind, id: string): Promise<ComponentVersionView[]> {
     const [c] = await loadComponents(this.db, kind, { ids: [id] });
-    if (!c) throw notFound();
+    if (!c) return this.orgOwnedVersions(kind, id);
     if (kind === "connector_template") {
       const row = await this.db
         .selectFrom("platform_connector_templates")
@@ -597,6 +674,32 @@ export class ComponentScopeService {
       version: String(r.version),
       catalogVersion: r.catalog_version,
       updatedOnOwn: r.updated_on_own,
+      createdAt: r.created_at.toISOString(),
+    }));
+  }
+
+  /** An org-owned skill's or agent template's versions (ruling P2-11); else 404. */
+  private async orgOwnedVersions(kind: ComponentKind, id: string): Promise<ComponentVersionView[]> {
+    const owned = (await this.list(kind)).find((x) => x.id === id && x.owner !== "platform");
+    if (!owned) throw notFound();
+    const rows =
+      kind === "skill"
+        ? await this.db
+            .selectFrom("skill_versions")
+            .select(["version", "catalog_version", "created_at"])
+            .where("skill_id", "=", id)
+            .orderBy("version", "desc")
+            .execute()
+        : await this.db
+            .selectFrom("agent_template_versions")
+            .select(["version", "catalog_version", "created_at"])
+            .where("template_id", "=", id)
+            .orderBy("version", "desc")
+            .execute();
+    return rows.map((r) => ({
+      version: String(r.version),
+      catalogVersion: r.catalog_version,
+      updatedOnOwn: false,
       createdAt: r.created_at.toISOString(),
     }));
   }

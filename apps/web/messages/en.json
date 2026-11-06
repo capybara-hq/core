@@ -398,7 +398,7 @@
       "install_in_progress": "This plugin is still being installed or upgraded and cannot be changed yet. If it was interrupted, you can clean it up after the timeout.",
       "skill_conflict": "A skill this plugin brings already exists in this organization (your own skill, or one from another plugin). Remove or rename it, then install again.",
       "upgrade_stale": "The upgrade preview is out of date. Preview the upgrade again.",
-      "upgrade_target_invalid": "This version cannot be the upgrade target (a plugin with an extension can only move to the version the deployment runs, and plugins depending on it must accept the version).",
+      "upgrade_target_invalid": "The platform plugin cannot be updated to this version: the platform already runs it, its extension cannot move this way, or a plugin that depends on it does not accept the version.",
       "upgrade_failed": "Upgrading the plugin failed.",
       "disabled": "This plugin is disabled on the whole deployment.",
       "scope_locked": "The super admin sets this plugin's scope; it cannot be switched in an organization.",
@@ -3398,12 +3398,13 @@
       "gitSuffix": "The git server redirects this repository URL; use the URL ending in .git.",
       "entry": "Refused entry: {path}",
       "pathEntry": "Marketplace entry {entry} (path {path})",
-      "sameVersion": "{version} is already installed in this organization.",
-      "deploymentVersion": "The deployment runs this plugin's extension at {deploymentVersion}; this organization can upgrade only to catalog version {allowedVersion}.",
-      "deploymentVersionNone": "The deployment runs this plugin's extension at {deploymentVersion}, but no imported catalog version carries it yet.",
-      "notDeployed": "The deployment does not run this plugin's extension; ask a super admin to install it first.",
-      "dependentRange": "{dependent} in this organization depends on {range}, which {version} does not satisfy.",
-      "templateConnector": "Connector template {template} moves to another connector ({plugin} / {connector}); uninstall the plugin and install the new version instead."
+      "sameVersion": "The platform already runs {version}.",
+      "dependentRange": "The plugin {dependent} depends on {range}, which {version} does not satisfy.",
+      "templateConnector": "Connector template {template} moves to another connector ({plugin} / {connector}); delete the plugin and import the new version as a new plugin instead.",
+      "configExtension": "This plugin's extension is declared in the startup config (the deployment runs {version}); an update cannot move it. Change the startup config first.",
+      "configExtensionUnloaded": "This plugin's extension is declared in the startup config; an update cannot move it. Change the startup config first.",
+      "extensionRemoved": "{version} has no extension, but the deployment runs it; uninstall the extension first.",
+      "extensionPackage": "The extension package of {version} is missing from the catalog; import that version again."
     }
   },
   "filePreviewers": {
@@ -3639,6 +3640,11 @@
       "connector_template": "Organizations fill in a template's address and credentials to get their own connector. Manage scope and disabling here.",
       "agent_template": "Ready-made agent definitions, also usable as sub-agent types. Manage scope, disabling and versions here."
     },
+    "tabs": {
+      "all": "All",
+      "platform": "Platform",
+      "org": "Created by organizations"
+    },
     "empty": {
       "skill": "No skills yet. They appear here once a plugin that brings skills is imported.",
       "connector_template": "No connector templates yet. They appear here once a plugin that brings connector templates is imported.",
@@ -3664,7 +3670,8 @@
     "orgsUsing": "{n, plural, one {# org using it} other {# orgs using it}}",
     "state": {
       "disabled": "Disabled",
-      "pluginStopped": "Plugin stopped"
+      "pluginStopped": "Plugin stopped",
+      "builtin": "Built-in"
     },
     "detail": {
       "tabsLabel": "Component",
@@ -3705,7 +3712,9 @@
         "all": "All organizations: every organization uses it and org admins cannot turn it off.",
         "optional": "Organizations choose: {n, plural, one {# organization has} other {# organizations have}} turned it on.",
         "named": "Named organizations: only the organizations below can use it."
-      }
+      },
+      "orgOwnedNote": "It belongs to its organization and is read-only here; associating it with other organizations comes later.",
+      "builtinNote": "It comes from a built-in plugin: on in every organization; its scope cannot be changed and it cannot be disabled."
     },
     "scopeDialog": {
       "title": "Set the scope of {name}",

@@ -28,6 +28,7 @@ import { pluginScopeChangeKeys } from "../lib/query/catalog";
 import { retryOnMountOf } from "../lib/query/client";
 import { useAppMutation } from "../lib/query/mutation";
 import { useErrorMessage } from "../lib/use-error-message";
+import { useCatalogErrorLines } from "./CatalogParts";
 import { FormError } from "./form-error";
 
 const optVersion = (v: string | null) => (v === null ? "—" : versionLabel(v));
@@ -63,7 +64,12 @@ export function PlatformUpdateDialog({
   const names = (ids: string[]) => ids.map(orgName).join(sep);
   const name = displayNameOf(item, locale);
   const [preview, setPreview] = useState<PlatformUpdatePreview | null>(null);
-  const [error, setError] = useState<string>();
+  const catalogLines = useCatalogErrorLines();
+  const [error, setError] = useState<{ message: string; extra: string[] }>();
+  const problem = useCallback(
+    (e: unknown) => ({ message: errorMessage(e), extra: catalogLines(e) }),
+    [errorMessage, catalogLines],
+  );
   const [notice, setNotice] = useState<string>();
   const asked = useRef(false);
   const previewIt = useAppMutation({
@@ -79,9 +85,9 @@ export function PlatformUpdateDialog({
     () =>
       ask(undefined).then(
         (p) => setPreview(p),
-        (e: unknown) => setError(errorMessage(e)),
+        (e: unknown) => setError(problem(e)),
       ),
-    [ask, errorMessage],
+    [ask, problem],
   );
   useEffect(() => {
     if (asked.current) return;
@@ -101,7 +107,7 @@ export function PlatformUpdateDialog({
         setPreview(null);
         await load();
         setNotice(t("stale"));
-      } else setError(errorMessage(e));
+      } else setError(problem(e));
     }
   };
 
@@ -271,7 +277,7 @@ export function PlatformUpdateDialog({
             })}
           </>
         )}
-        {error !== undefined && <FormError message={error} />}
+        {error !== undefined && <FormError message={error.message} extra={error.extra} />}
       </Stack>
     </Dialog>
   );

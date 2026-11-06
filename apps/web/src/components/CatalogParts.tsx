@@ -183,7 +183,8 @@ export function LicenseView({
  * `catalog.dependency_*` error (or the cycle), one line per skill of `plugin.skill_conflict` (the
  * org's own skill or the plugin it comes from), and the envelope details of the network, git and
  * upgrade-target codes (the host, repository, ref or commit, refused entry, the version rule) as
- * localized lines. None for other errors; `{ path, message }` details come from `issueLines`.
+ * localized lines (the platform update's refusals: same version, an extension declared in the
+ * startup config, removed or missing, a dependent's range, a template changing connector). None for other errors; `{ path, message }` details come from `issueLines`.
  */
 export function useCatalogErrorLines(): (e: unknown) => string[] {
   const t = useTranslations("catalog.components");
@@ -197,16 +198,21 @@ export function useCatalogErrorLines(): (e: unknown) => string[] {
       switch (d.reason) {
         case "same_version":
           return [td("sameVersion", { version: d.version == null ? "" : versionLabel(d.version) })];
-        case "deployment_version":
-          if (d.deploymentVersion === undefined) return [td("notDeployed")];
-          return d.allowedVersion === undefined
-            ? [td("deploymentVersionNone", { deploymentVersion: d.deploymentVersion })]
-            : [
-                td("deploymentVersion", {
-                  deploymentVersion: d.deploymentVersion,
-                  allowedVersion: d.allowedVersion,
-                }),
-              ];
+        case "config_extension":
+          // the extension is declared in the startup config (its loaded version, if any)
+          return [
+            d.deploymentVersion === undefined
+              ? td("configExtensionUnloaded")
+              : td("configExtension", { version: versionLabel(d.deploymentVersion) }),
+          ];
+        case "extension_removed":
+          return [
+            td("extensionRemoved", { version: d.version == null ? "" : versionLabel(d.version) }),
+          ];
+        case "extension_package":
+          return [
+            td("extensionPackage", { version: d.version == null ? "" : versionLabel(d.version) }),
+          ];
         case "dependent_range":
           return [
             td("dependentRange", {

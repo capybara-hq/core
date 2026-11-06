@@ -25,7 +25,10 @@ export const COMPONENT_SEGMENTS: Record<PlatformComponentKind, string> = {
   agent_template: "agent-templates",
 };
 
-/** A platform component (kernel `ComponentView`). */
+/**
+ * A component in the admin list (kernel `ComponentView`): a platform component, or an org's own
+ * skill or agent template (ruling P2-11; scope, disable and uploads are platform-only).
+ */
 export interface PlatformComponent {
   kind: PlatformComponentKind;
   id: string;
@@ -34,7 +37,12 @@ export interface PlatformComponent {
   /** The plugin it came from (null: none). */
   plugin: string | null;
   itemId: string | null;
-  owner: "platform";
+  /** `platform`, or the id of the org that owns it (an org's own item: read-only here). */
+  owner: string;
+  /** The owning org's name (null for `platform`). */
+  ownerName: string | null;
+  /** Of a builtin plugin: its scope cannot be changed nor disabled. */
+  builtin: boolean;
   /** `follow`: its plugin's scope; `own`: its own. */
   scopeMode: "follow" | "own";
   /** The effective scope. */
