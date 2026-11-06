@@ -25,14 +25,19 @@ sync. The rules for each custom check are in [tools/checks/README.md](../checks/
 - Visual baselines are generated only in the Playwright Docker image, via the `visual-update` workflow (see [.agents/skills/writing-web-ui](../../.agents/skills/writing-web-ui/SKILL.md)). The bot's baseline commit does not trigger PR checks; push an empty commit afterwards to rerun CI.
 - The design reference set (`docs/design/reference/*.png` and its review page `index.html`, rendered from `docs/design/reference/src` by `apps/web/reference`) is likewise rendered only by a manual workflow, `reference-update` (`workflow_dispatch` with the branch; never on PRs, not part of `ci-ok`), in the same Playwright image; see `docs/design/reference/README.md`.
 
-## Merge queue (prepared, off)
+## Merging without being up to date, and the merge queue (prepared, off)
 
-`ci.yml` runs on `merge_group` and `merge-queue.yml` reports `issue-linked` on a merge group's
-commit (`community.yml` sets it on PR heads only), so a GitHub merge queue can be turned on in the
-`main-quality` ruleset. It is off: the queue admits a PR only once its code-owner review passed, and
-with a single maintainer, who merges their own PRs by bypassing the `main-review` rule, nothing
-could enter the queue, while the queue rule blocked every direct merge. Turn it on when a second
-maintainer can review (or the review rule changes); until then PRs must be up to date with `main`.
+The `main-quality` ruleset requires `ci-ok` and `issue-linked` but not that a PR be up to date with
+`main` (strict off): a merge doesn't send every open PR back to merge `main` and rerun. Two PRs
+that pass apart can still break together; the full run on every push to `main` catches that, and
+a follow-up PR fixes it.
+
+`ci.yml` also runs on `merge_group`, and `merge-queue.yml` reports `issue-linked` on a merge
+group's commit (`community.yml` sets it on PR heads only), so a GitHub merge queue can be turned on
+in the ruleset. It is off: the queue admits a PR only once its code-owner review passed, and with
+a single maintainer, who merges their own PRs by bypassing the `main-review` rule, nothing could
+enter the queue, while the queue rule blocked every direct merge (tried and rolled back
+2026-11-06). Turn it on once a second maintainer reviews.
 
 The `changes` job decides "run everything" itself, before the plan script, when the diff touches
 `tools/ci/**` or `.github/workflows/ci.yml`: those can change the plan, so the script is not
