@@ -1,4 +1,4 @@
-import { Controller, Delete, Get, HttpCode, Inject, Post, Req } from "@nestjs/common";
+import { Controller, Delete, Get, HttpCode, Inject, Post, Put, Req } from "@nestjs/common";
 import { z } from "zod";
 import { ApiError } from "../errors.js";
 import {
@@ -17,6 +17,7 @@ import {
   type OrgUploadOutcome,
   type OrgUploadReview,
 } from "./org-plugin-uploads.js";
+import { type OwnedDeletePreview, OwnedItems } from "./owned-items.js";
 
 const StagingParams = z.object({ stagingId: z.string().min(1).max(100) });
 const OwnedParams = z.object({ id: z.string().min(1).max(100) });
@@ -34,6 +35,11 @@ const ConfirmBody = z
 class OrgUploadStagingParams extends createZodDto(StagingParams, "OrgUploadStagingParams") {}
 class OrgUploadConfirmBody extends createZodDto(ConfirmBody, "OrgUploadConfirmBody") {}
 class OrgOwnedPluginParams extends createZodDto(OwnedParams, "OrgOwnedPluginParams") {}
+
+const ShareableBody = z.object({ shareable: z.boolean() }).strict();
+const DeleteBody = z.object({ previewHash: z.string().min(1).max(128) }).strict();
+class OrgOwnedShareableBody extends createZodDto(ShareableBody, "OrgOwnedShareableBody") {}
+class OrgOwnedDeleteBody extends createZodDto(DeleteBody, "OrgOwnedDeleteBody") {}
 
 const actorOpts = (actor: ReturnType<typeof requireUser>): ActorOpts => {
   const tokenId = patTokenId(actor);
@@ -128,12 +134,79 @@ export class OrgPluginUploadsController {
 }
 
 /**
- * The org's own plugins (`/api/v1/orgs/:orgId/owned-plugins/*`, spec §14): the owner org's admin
- * withdraws a pending upload. Writes re-check the org admin under the org row lock.
+ * The org's own plugins (`/api/v1/orgs/:orgId/owned-plugins/*`, spec §14, P3-17 to P3-19): the
+ * owner org's admin withdraws a pending upload, toggles 可共享 and deletes the plugin after a
+ * preview. Another org's or a platform plugin -> 404. Writes re-check the org admin under the org
+ * row lock.
  */
 @Controller("api/v1/orgs/:orgId/owned-plugins")
 export class OrgOwnedPluginsController {
-  constructor(@Inject(CatalogScopeService) private readonly scope: CatalogScopeService) {}
+  constructor(
+    @Inject(CatalogScopeService) private readonly scope: CatalogScopeService,
+    @Inject(OwnedItems) private readonly owned: OwnedItems,
+  ) {}
+
+  /**
+   * Sets 可共享 (ruling P3-2: the plugin and its component rows in one transaction; turning it
+   * off keeps the orgs already associated and hides it from new ones, ruling P3-25). 204.
+   */
+  @Put(":id/shareable")
+  @HttpCode(204)
+  @OrgAction("catalog.upload")
+  async setShareable(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @ZParam(OrgOwnedPluginParams) params: z.infer<typeof OwnedParams>,
+    @ZBody(OrgOwnedShareableBody) body: z.infer<typeof ShareableBody>,
+  ): Promise<void> {
+    const actor = requireUser(principal);
+    await this.owned.setShareable(
+      org.orgId,
+      actor.account.id,
+      { kind: "plugin", id: params.id },
+      body.shareable,
+      actorOpts(actor),
+    );
+  }
+
+  /**
+   * What deleting the plugin does (P3-19, nothing written): `outcome` `removed` (no other org
+   * uses it) or `transferred` (to the platform), `orgs` the other orgs using it, `agents` the
+   * org's agents that lose it, and the `previewHash` to confirm.
+   */
+  @Post(":id/delete/preview")
+  @HttpCode(200)
+  @OrgAction("catalog.upload")
+  previewDelete(
+    @CurrentOrg() org: OrgContext,
+    @ZParam(OrgOwnedPluginParams) params: z.infer<typeof OwnedParams>,
+  ): Promise<OwnedDeletePreview> {
+    return this.owned.previewDelete(org.orgId, params.id);
+  }
+
+  /**
+   * Deletes the plugin after its preview: removed, or transferred to the platform when another
+   * org uses it (platform notice `ownership_transferred`). A preview that changed meanwhile ->
+   * 409 `catalog.preview_stale`. 204.
+   */
+  @Post(":id/delete")
+  @HttpCode(204)
+  @OrgAction("catalog.upload")
+  async delete(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @ZParam(OrgOwnedPluginParams) params: z.infer<typeof OwnedParams>,
+    @ZBody(OrgOwnedDeleteBody) body: z.infer<typeof DeleteBody>,
+  ): Promise<void> {
+    const actor = requireUser(principal);
+    await this.owned.delete(
+      org.orgId,
+      actor.account.id,
+      params.id,
+      body.previewHash,
+      actorOpts(actor),
+    );
+  }
 
   /**
    * Withdraws the org's pending upload of the plugin (ruling P3-10, no notice): a first version

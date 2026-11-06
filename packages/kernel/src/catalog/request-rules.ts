@@ -161,7 +161,7 @@ export interface RequestActorOpts {
 export async function cancelPendingRequests(
   db: KernelSchemaDb,
   where: { itemId: string } | { orgId: string },
-  actor: string,
+  actor: string | null,
   reason: "item_removed" | "org_deleted",
   opts: RequestActorOpts = {},
 ): Promise<number> {

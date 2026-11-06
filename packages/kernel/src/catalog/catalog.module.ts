@@ -15,6 +15,7 @@ import { MarketplacesService } from "./marketplaces.service.js";
 import { OrgCatalogService } from "./org-catalog.service.js";
 import { OrgExtensionSwitch } from "./org-extension-switch.js";
 import { OrgPluginUploads } from "./org-plugin-uploads.js";
+import { OwnedItems } from "./owned-items.js";
 import { PlatformComponents } from "./platform-components.js";
 import { PluginImport } from "./plugin-import.js";
 import { PluginInstaller } from "./plugin-install.js";
@@ -53,7 +54,7 @@ export class CatalogImportModule {}
  * The plugin catalog (spec §4, §10): {@link CatalogImportModule}, catalog requests, org installs
  * with their dependencies, the platform plugin update (`PlatformPluginUpdater`), the admin's scope
  * and disable
- * (`CatalogScopeService`), org admins' plugin uploads (`OrgPluginUploads`), and the producer of the plugin scope sync
+ * (`CatalogScopeService`), org admins' plugin uploads (`OrgPluginUploads`) and their own plugins (`OwnedItems`), and the producer of the plugin scope sync
  * (`PluginScopeSync`; its consumer is the worker role's `PluginScopeWorkersModule`). The catalog's periodic jobs (`CatalogJobs`) are
  * the worker role's (`WorkerModule`).
  */
@@ -68,6 +69,9 @@ export class CatalogImportModule {}
     ToolsModule,
     // the producer side of the plugin scope sync (`PluginScopeWorkersModule` consumes it)
     QueueModule.registerQueue(PLUGIN_SCOPE_QUEUE),
+    // a removed org plugin's cleanup job (`OwnedItems`, `CatalogScopeService`; consumed by the
+    // worker role's `MaintenanceProcessor`)
+    QueueModule.registerQueue(MAINTENANCE_QUEUE_NAME),
   ],
   providers: [
     CatalogRequestsService,
@@ -79,6 +83,7 @@ export class CatalogImportModule {}
     CatalogScopeService,
     ComponentScopeService,
     OrgPluginUploads,
+    OwnedItems,
   ],
   exports: [
     CatalogImportModule,
@@ -91,6 +96,7 @@ export class CatalogImportModule {}
     CatalogScopeService,
     ComponentScopeService,
     OrgPluginUploads,
+    OwnedItems,
   ],
 })
 export class CatalogModule {}

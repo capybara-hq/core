@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
+import { getQueueToken } from "@nestjs/bullmq";
 import { Inject, Injectable } from "@nestjs/common";
+import type { Queue } from "bullmq";
 import { sql } from "kysely";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
@@ -16,6 +18,7 @@ import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import { OrgLock } from "../orgs/org-lock.js";
+import { MAINTENANCE_QUEUE_NAME } from "../runtime/maintenance-queue.js";
 import { type ActorOpts, type CatalogItemView, CatalogService } from "./catalog.service.js";
 import { assertOrgsExist } from "./catalog-items.js";
 import { nameConflictError } from "./component-scope.service.js";
@@ -32,6 +35,7 @@ import {
   skillNameClashes,
   switchOf,
 } from "./component-state.js";
+import { ownedPluginCleanupJob } from "./job-ids.js";
 import {
   assertNotAwaiting,
   assertOwnerListed,
@@ -181,6 +185,8 @@ export class CatalogScopeService {
     @Inject(OrgLock) private readonly orgLock: OrgLock,
     /** This replica's reconcile once a confirmed extension is enabled (before the scope sync). */
     @Inject(ExtensionLifecycle) private readonly lifecycle: ExtensionLifecycle,
+    /** The removed org plugin's cleanup job, backing the take-out of P3-21 (pre-flight F9). */
+    @Inject(getQueueToken(MAINTENANCE_QUEUE_NAME)) private readonly maintenance: Pick<Queue, "add">,
     @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
   ) {}
@@ -502,7 +508,9 @@ export class CatalogScopeService {
   /**
    * An extension a confirmation installed whose item was removed or replaced meanwhile is taken
    * out again (disabled, uninstalled; P3-21), and the name claim released when the item is gone
-   * (ruling P3-37). Best effort: a failure is logged.
+   * (ruling P3-37). Inline and best effort (a failure is logged); a removed item's cleanup job
+   * (`owned-plugin-cleanup-<itemId>`, idempotent) is enqueued as well, so a failed take-out is
+   * retried (pre-flight F9).
    */
   private async takeOut(
     itemId: string,
@@ -516,6 +524,19 @@ export class CatalogScopeService {
       await this.releaseIfGone(itemId, name);
     } catch (err) {
       this.log.error("taking out the extension of a removed org upload failed", { name, err });
+    }
+    const gone = await this.db
+      .selectFrom("catalog_items")
+      .select("id")
+      .where("id", "=", itemId)
+      .where("deleted_at", "is not", null)
+      .executeTakeFirst();
+    if (gone === undefined) return;
+    const job = ownedPluginCleanupJob(itemId);
+    try {
+      await this.maintenance.add(job.name, job.data, job.opts);
+    } catch (err) {
+      this.log.warn("enqueueing the owned plugin cleanup failed", { itemId, err });
     }
   }
 

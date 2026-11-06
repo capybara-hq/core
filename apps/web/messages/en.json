@@ -279,7 +279,8 @@
       "not_shareable": "Its owner organization has not made it shareable, so it cannot be shown or associated with other organizations.",
       "owner_required": "The owner organization cannot be removed from its own item's list.",
       "item_pending": "This plugin is waiting for the super admin's confirmation and cannot be changed yet.",
-      "item_removed": "This plugin has been removed."
+      "item_removed": "This plugin has been removed.",
+      "preview_stale": "What deleting this plugin does has changed since the preview. Preview it again and confirm."
     },
     "directory": {
       "not_configured": "This extension's directory is not configured. Fill in its directory settings in the organization config first."

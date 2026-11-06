@@ -778,19 +778,40 @@ export class CatalogService {
 
   @Transactional()
   private async writeRemove(actor: string, itemId: string, opts: ActorOpts): Promise<void> {
-    const t = this.db;
     await this.adminLock.lockAndAuthorize(actor);
+    if ((await this.removeIn(actor, itemId, opts)) === null) throw notFound();
+  }
+
+  /**
+   * The soft delete of {@link remove} in the caller's transaction, without its super admin check
+   * (pre-flight F14: the super admin's remove and an owner's delete or an org deletion,
+   * `OwnedItems.transferOrRemove`, share it): `deleted_at` set, a pending version cleared, the
+   * extension name claim of a first upload still waiting released (ruling P3-37, F10), pending
+   * requests cancelled, audit `catalog.removed` (`actor` null: the kernel). Returns the removed
+   * item's name, or null when it is gone already.
+   */
+  @Transactional({ propagation: "mandatory" })
+  async removeIn(
+    actor: string | null,
+    itemId: string,
+    opts: ActorOpts & { reason?: string } = {},
+  ): Promise<{ name: string } | null> {
+    const t = this.db;
+    const now = sql<Date>`now()` as unknown as Date;
     const row = await t
       .updateTable("catalog_items")
       .set({
-        deleted_at: sql<Date>`now()` as unknown as Date,
-        updated_at: sql<Date>`now()` as unknown as Date,
+        deleted_at: now,
+        updated_at: now,
+        pending_version: null,
+        pending_by: null,
+        pending_at: null,
       })
       .where("id", "=", itemId)
       .where("deleted_at", "is", null)
-      .returning(["name", "awaiting_confirmation", "package_name"])
+      .returning(["name", "awaiting_confirmation", "package_name", "owner_org_id"])
       .executeTakeFirst();
-    if (!row) throw notFound();
+    if (!row) return null;
     // An org upload still waiting: nothing was installed under its claim, free the name
     // (ruling P3-37, pre-flight F10)
     if (row.awaiting_confirmation) await releaseExtensionClaim(t, row.name, row.package_name);
@@ -801,7 +822,12 @@ export class CatalogService {
       ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
       action: "catalog.removed",
       target: itemId,
-      detail: { name: row.name },
+      detail: {
+        name: row.name,
+        ...(row.owner_org_id !== null && { ownerOrgId: row.owner_org_id }),
+        ...(opts.reason !== undefined && { reason: opts.reason }),
+      },
     });
+    return { name: row.name };
   }
 }

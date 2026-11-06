@@ -80,6 +80,8 @@ export const ERROR_CODES = {
   "catalog.item_pending": 409,
   /** A super admin confirmation raced the item's removal (P3-21). */
   "catalog.item_removed": 409,
+  /** What deleting an org's own plugin does changed since its preview (P3-19). */
+  "catalog.preview_stale": 409,
   "catalog.name_conflict": 409,
   "directory.not_configured": 409,
   "catalog.item_disabled": 403,
