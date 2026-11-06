@@ -169,6 +169,8 @@ export const ERROR_CODES = {
   /** A sub-agent's conversation takes no messages from people (sub-agents spec §6.1). */
   "conversation.read_only": 409,
   "run.not_active": 409,
+  /** A run that is not one of the conversation's (the live draft route, spec 2026-11-07 §3.2). */
+  "run.not_found": 404,
   /** A background task that is not in this conversation (or its sub-agents), or does not exist. */
   "background_task.not_found": 404,
   /** The task's output cannot be read now (its sandbox is not running and no finish recorded it). */

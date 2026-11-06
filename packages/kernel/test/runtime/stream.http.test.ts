@@ -145,6 +145,47 @@ const textOf = (e: ConversationEvent | undefined) =>
     ? e.payload.content.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("")
     : "";
 
+/** The `event: draft` frames of a stream. */
+const draftsIn = (msgs: SseMessage[]) =>
+  msgs
+    .filter((m) => m.event === "draft")
+    .map(
+      (m) =>
+        JSON.parse(m.data as string) as {
+          runId: string;
+          step: number;
+          text: string;
+          thinking: string;
+        },
+    );
+
+/**
+ * What a client that (re)connected shows for a step's text: the draft, then each text delta whose
+ * `offset` continues it (one already in the draft is dropped; a gap would need a draft refetch).
+ */
+function resumedText(msgs: SseMessage[], runId: string, step: number): string {
+  let text = draftsIn(msgs).find((d) => d.runId === runId && d.step === step)?.text ?? "";
+  for (const m of msgs.filter((x) => x.event === "delta")) {
+    const d = JSON.parse(m.data as string) as {
+      runId: string;
+      step: number;
+      delta: string;
+      text?: string;
+      offset?: number;
+    };
+    if (d.runId !== runId || d.step !== step || d.delta !== "text") continue;
+    const t = d.text ?? "";
+    const offset = d.offset ?? 0;
+    if (offset + t.length <= text.length) continue;
+    if (offset > text.length) throw new Error(`gap: offset ${offset} beyond ${text.length}`);
+    text = text.slice(0, offset) + t;
+  }
+  return text;
+}
+
+/** A reply the fake model streams in 4-character chunks, one every `delayMs`. */
+const SLOW_REPLY = "The quick brown fox jumps over the lazy dog, twice over.";
+
 let pgc: TestContainer;
 let rd: TestContainer;
 let raw: ReturnType<typeof createDb>;
@@ -199,6 +240,25 @@ async function account(name: string): Promise<string> {
 
 const streamUrl = (k: TestKernel, orgId: string, convId: string, query = "") =>
   `http://127.0.0.1:${k.port}/api/v1/orgs/${orgId}/conversations/${convId}/stream${query}`;
+const draftUrl = (orgId: string, convId: string, runId: string) =>
+  `/api/v1/orgs/${orgId}/conversations/${convId}/runs/${runId}/draft`;
+const draftKeys = () => redis.keys("capk:run-draft*");
+
+/** Waits for the run's first model call, then for `n` text deltas on `s`; returns the run id. */
+async function streaming(s: SseClient, convId: string, n: number): Promise<string> {
+  const call = await waitFor(
+    async () =>
+      (await eventsOf(db, convId)).find((e) => e.type === "model_call" && e.runId !== null),
+    10_000,
+    "model_call",
+  );
+  await s.until(
+    (m) => deltasIn(m).filter((d) => d.delta === "text").length >= n,
+    10_000,
+    `${n} text deltas`,
+  );
+  return call.runId as string;
+}
 
 describe("会话 SSE（单副本 api+worker）", () => {
   let k: TestKernel;
@@ -374,6 +434,184 @@ describe("会话 SSE（单副本 api+worker）", () => {
   });
 });
 
+describe("会话 SSE：live drafts (spec 2026-11-07 §3.2)", () => {
+  let k: TestKernel;
+  let owner: { req: Req; cookie: () => string };
+  let orgId: string;
+  let convId: string;
+
+  beforeAll(async () => {
+    k = await startKernel(runConfig(urls(), { roles: ["api", "worker"], runtime: STREAM_RUNTIME }));
+  }, 60_000);
+  afterAll(async () => {
+    await k?.close();
+  });
+  beforeEach(async () => {
+    await resetDb();
+    await account("owner");
+    owner = await login(k, "owner");
+    orgId = await createOrg(owner.req);
+    const agentId = await createAgent(owner.req, orgId);
+    convId = await createConv(owner.req, orgId, agentId);
+  });
+
+  it("a stream opened mid-reply gets the draft after its catch-up, then the deltas, with no gap", async () => {
+    const a = await openSse(streamUrl(k, orgId, convId), { cookie: owner.cookie() });
+    let b: SseClient | undefined;
+    try {
+      await postMessage(owner.req, orgId, convId, `slow:120:${SLOW_REPLY}`);
+      const runId = await streaming(a, convId, 3);
+      b = await openSse(streamUrl(k, orgId, convId), { cookie: owner.cookie() });
+      await b.until((m) => draftsIn(m).length === 1, 5_000, "draft frame");
+      await b.until((m) => finishedCount(m) === 1, 15_000, "run_finished");
+
+      const [draft] = draftsIn(b.messages);
+      expect(draft).toMatchObject({ runId, step: 1, thinking: "" });
+      expect(draft?.text.length).toBeGreaterThan(0);
+      expect(SLOW_REPLY.startsWith(draft?.text ?? "x")).toBe(true);
+      // the draft follows the catch-up (the run's model_call is logged) and precedes every delta
+      const iDraft = b.messages.findIndex((m) => m.event === "draft");
+      const iCall = b.messages.findIndex(
+        (m) => m.event === "event" && JSON.parse(m.data as string).type === "model_call",
+      );
+      expect(iCall).toBeGreaterThanOrEqual(0);
+      expect(iCall).toBeLessThan(iDraft);
+      const iDelta = b.messages.findIndex((m) => m.event === "delta");
+      if (iDelta >= 0) expect(iDraft).toBeLessThan(iDelta);
+      expect(resumedText(b.messages, runId, 1)).toBe(SLOW_REPLY);
+      expect(textOf(eventsIn(b.messages).find((e) => e.type === "assistant_message"))).toBe(
+        SLOW_REPLY,
+      );
+      // the step's assistant_message is logged: its draft is gone
+      await waitFor(
+        async () => ((await draftKeys()).length === 0 ? true : undefined),
+        5_000,
+        "draft cleared",
+      );
+
+      // a stream opened after the run sends no draft
+      const c = await openSse(streamUrl(k, orgId, convId), { cookie: owner.cookie() });
+      try {
+        await c.until((m) => finishedCount(m) === 1, 5_000, "catch-up");
+        await sleep(300);
+        expect(draftsIn(c.messages)).toEqual([]);
+      } finally {
+        c.close();
+      }
+    } finally {
+      a.close();
+      b?.close();
+    }
+  }, 30_000);
+
+  it("text deltas carry offsets that add up to the reply", async () => {
+    const s = await openSse(streamUrl(k, orgId, convId), { cookie: owner.cookie() });
+    try {
+      await postMessage(owner.req, orgId, convId, "echo:offsets add up");
+      await s.until((m) => finishedCount(m) === 1, 15_000, "run_finished");
+      const deltas = deltasIn(s.messages).filter((d) => d.delta === "text") as {
+        text?: string;
+        offset?: number;
+      }[];
+      let at = 0;
+      for (const d of deltas) {
+        expect(d.offset).toBe(at);
+        at += d.text?.length ?? 0;
+      }
+      expect(at).toBe("offsets add up".length);
+    } finally {
+      s.close();
+    }
+  });
+
+  it("GET …/runs/:runId/draft: the draft while the step streams, none after; 404 / 401 / 4xx", async () => {
+    await postMessage(owner.req, orgId, convId, `slow:120:${SLOW_REPLY}`);
+    const call = await waitFor(
+      async () => (await eventsOf(db, convId)).find((e) => e.type === "model_call"),
+      10_000,
+      "model_call",
+    );
+    const runId = call.runId as string;
+    const live = await waitFor(
+      async () => {
+        const r = await owner.req({ method: "GET", url: draftUrl(orgId, convId, runId) });
+        expect(r.statusCode).toBe(200);
+        const body = r.json() as { drafts: { step: number; text: string; thinking: string }[] };
+        return body.drafts.length > 0 ? body : undefined;
+      },
+      5_000,
+      "a draft",
+    );
+    expect(live.drafts).toHaveLength(1);
+    expect(live.drafts[0]).toMatchObject({ step: 1, thinking: "" });
+    expect(SLOW_REPLY.startsWith(live.drafts[0]?.text ?? "x")).toBe(true);
+    expect(Object.keys(live.drafts[0] ?? {}).sort()).toEqual(["step", "text", "thinking"]);
+
+    await waitForTerminal(db, convId);
+    const after = await owner.req({ method: "GET", url: draftUrl(orgId, convId, runId) });
+    expect(after.statusCode).toBe(200);
+    expect(after.json()).toEqual({ drafts: [] });
+
+    const unknown = await owner.req({ method: "GET", url: draftUrl(orgId, convId, "run-nope") });
+    expect(unknown.statusCode).toBe(404);
+    expect((unknown.json() as { error: { code: string } }).error.code).toBe("run.not_found");
+
+    // a run of another conversation of the same owner is unknown here
+    const agentId = await createAgent(owner.req, orgId);
+    const conv2 = await createConv(owner.req, orgId, agentId);
+    const cross = await owner.req({ method: "GET", url: draftUrl(orgId, conv2, runId) });
+    expect(cross.statusCode).toBe(404);
+    expect((cross.json() as { error: { code: string } }).error.code).toBe("run.not_found");
+
+    const anon = await k.http.inject({ method: "GET", url: draftUrl(orgId, convId, runId) });
+    expect(anon.statusCode).toBe(401);
+
+    const bobId = await account("bob");
+    await db
+      .insertInto("memberships")
+      .values({ org_id: orgId, account_id: bobId, role: "member" })
+      .execute();
+    const bob = await login(k, "bob");
+    const other = await bob.req({ method: "GET", url: draftUrl(orgId, convId, runId) });
+    expect(other.statusCode).toBe(404);
+    expect((other.json() as { error: { code: string } }).error.code).toBe("conversation.not_found");
+
+    // a run id past the parameter bound never reaches the handler (Fastify's maxParamLength)
+    const bad = await owner.req({ method: "GET", url: draftUrl(orgId, convId, "x".repeat(101)) });
+    expect(bad.statusCode).toBeGreaterThanOrEqual(400);
+    expect(bad.statusCode).toBeLessThan(500);
+  }, 30_000);
+
+  it("a run stopped mid-step leaves no draft: none in Redis, none on a new stream", async () => {
+    const a = await openSse(streamUrl(k, orgId, convId), { cookie: owner.cookie() });
+    try {
+      await postMessage(owner.req, orgId, convId, `slow:150:${SLOW_REPLY}`);
+      await streaming(a, convId, 2);
+      const stop = await owner.req({
+        method: "POST",
+        url: `/api/v1/orgs/${orgId}/conversations/${convId}/abort`,
+      });
+      expect(stop.statusCode).toBe(202);
+      await waitForTerminal(db, convId);
+      await waitFor(
+        async () => ((await draftKeys()).length === 0 ? true : undefined),
+        5_000,
+        "draft cleared",
+      );
+      const b = await openSse(streamUrl(k, orgId, convId), { cookie: owner.cookie() });
+      try {
+        await b.until((m) => eventsIn(m).some((e) => e.type === "run_aborted"), 5_000, "catch-up");
+        await sleep(300);
+        expect(draftsIn(b.messages)).toEqual([]);
+      } finally {
+        b.close();
+      }
+    } finally {
+      a.close();
+    }
+  }, 30_000);
+});
+
 describe("会话 SSE（跨副本：运行在 worker 副本，SSE 连在 api 副本）", () => {
   let worker: TestKernel;
   let api: TestKernel;
@@ -387,6 +625,37 @@ describe("会话 SSE（跨副本：运行在 worker 副本，SSE 连在 api 副�
   afterAll(async () => {
     await Promise.all([worker?.close(), api?.close()]);
   });
+
+  it("a viewer on the api replica gets the draft of a run streaming on the worker replica", async () => {
+    await resetDb();
+    await account("owner");
+    const owner = await login(api, "owner");
+    const orgId = await createOrg(owner.req);
+    const agentId = await createAgent(owner.req, orgId);
+    const convId = await createConv(owner.req, orgId, agentId);
+
+    const a = await openSse(streamUrl(api, orgId, convId), { cookie: owner.cookie() });
+    let b: SseClient | undefined;
+    try {
+      await postMessage(owner.req, orgId, convId, `slow:120:${SLOW_REPLY}`);
+      const runId = await streaming(a, convId, 3);
+      b = await openSse(streamUrl(api, orgId, convId), { cookie: owner.cookie() });
+      await b.until((m) => draftsIn(m).length === 1, 5_000, "draft frame");
+      const r = await owner.req({ method: "GET", url: draftUrl(orgId, convId, runId) });
+      expect(r.statusCode).toBe(200);
+      const route = (r.json() as { drafts: { text: string }[] }).drafts;
+      await b.until((m) => finishedCount(m) === 1, 15_000, "run_finished");
+      const [draft] = draftsIn(b.messages);
+      expect(draft?.text.length).toBeGreaterThan(0);
+      expect(SLOW_REPLY.startsWith(draft?.text ?? "x")).toBe(true);
+      // the route on the api replica read the same draft, at least as far
+      expect(route[0]?.text.startsWith(draft?.text ?? "x")).toBe(true);
+      expect(resumedText(b.messages, runId, 1)).toBe(SLOW_REPLY);
+    } finally {
+      a.close();
+      b?.close();
+    }
+  }, 30_000);
 
   it("api 副本收到 worker 副本运行的全部增量与事件；停机时关闭进行中的流", async () => {
     await resetDb();

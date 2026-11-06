@@ -20,6 +20,7 @@ import { MAINTENANCE_QUEUE_NAME } from "./maintenance-queue.js";
 import { ProvidersModule } from "./providers.js";
 import { EVAL_QUOTA, EVAL_QUOTA_PREFIX, OrgQuota, RUN_QUOTA, RUN_QUOTA_PREFIX } from "./quota.js";
 import { RunControl } from "./run-control.js";
+import { RunDrafts } from "./run-drafts.js";
 import { RunFinish } from "./run-finish.js";
 import { RunJobsModule } from "./run-jobs.js";
 import { RunQueue } from "./run-queue.js";
@@ -68,6 +69,7 @@ import { DecisionResumer, Waits } from "./waits.js";
     Waits,
     DecisionResumer,
     RunControl,
+    RunDrafts,
     AgentLoops,
     RunSteps,
     RunWorker,
@@ -97,6 +99,7 @@ import { DecisionResumer, Waits } from "./waits.js";
     RunQueue,
     Waits,
     RunControl,
+    RunDrafts,
     AgentLoops,
     RunSteps,
     RunWorker,
