@@ -7,13 +7,14 @@ import { ExtensionAdminOps } from "../extensions/admin-ops.js";
 import { ExtensionAdmin } from "../extensions/admin-view.js";
 import { audit } from "../identity/audit.js";
 import { SuperAdminLock } from "../identity/super-admin.js";
-import { notifyItemShared } from "../inbox/org-notices.js";
+import { addOrgNotice, notifyItemShared } from "../inbox/org-notices.js";
 import { afterCommit } from "../infra/database/after-commit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
+import { OrgLock } from "../orgs/org-lock.js";
 import { type ActorOpts, type CatalogItemView, CatalogService } from "./catalog.service.js";
 import { assertOrgsExist } from "./catalog-items.js";
 import { nameConflictError } from "./component-scope.service.js";
@@ -31,13 +32,19 @@ import {
   switchOf,
 } from "./component-state.js";
 import {
+  assertNotAwaiting,
   assertOwnerListed,
   assertShareable,
   assertShareableTarget,
+  itemRemovedError,
   newlySharedWith,
+  pendingDigest,
+  releaseExtensionClaim,
 } from "./ownership.js";
 import { type PluginConfirmResult, PluginImport } from "./plugin-import.js";
 import { PluginInstaller } from "./plugin-install.js";
+import { PlatformPluginUpdater } from "./plugin-upgrade.js";
+import { cancelPendingRequests } from "./request-rules.js";
 import { type PluginScope, wantedOn } from "./scope.js";
 import { addScopeOrg } from "./scope-orgs.js";
 import { PluginScopeSync } from "./scope-sync.js";
@@ -94,6 +101,7 @@ interface Target {
 interface ItemRow {
   id: string;
   name: string;
+  awaiting_confirmation: boolean;
   scope: PluginScope;
   builtin: boolean;
   disabled: boolean;
@@ -105,6 +113,13 @@ interface ItemRow {
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const LIVE = ["installing", "installed", "upgrading"] as const;
 const notFound = () => new ApiError("catalog.item_not_found", "Catalog item not found");
+const notPending = (name: string) =>
+  new ApiError("extension.not_pending", `Plugin ${name} has no upload waiting for confirmation`);
+const pendingStale = (name: string) =>
+  new ApiError(
+    "extension.approval_stale",
+    `The pending upload of ${name} changed since it was reviewed; review it again`,
+  );
 const builtinError = () =>
   new ApiError(
     "plugin.builtin",
@@ -157,6 +172,9 @@ export class CatalogScopeService {
     @Inject(ExtensionAdmin) private readonly extensions: ExtensionAdmin,
     @Inject(ExtensionAdminOps) private readonly ops: ExtensionAdminOps,
     @Inject(PluginScopeSync) private readonly sync: PluginScopeSync,
+    @Inject(PlatformPluginUpdater) private readonly updater: PlatformPluginUpdater,
+    /** The owner org's lock: an org admin withdrawing its pending upload (ruling P3-10). */
+    @Inject(OrgLock) private readonly orgLock: OrgLock,
     @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
   ) {}
@@ -188,6 +206,9 @@ export class CatalogScopeService {
    * deployed (no install record) is installed and enabled first (the package is in the package
    * store from the import). Nothing waiting (a covered snapshot a person approved already, an item
    * without an extension) -> 409 `extension.not_pending`. Enqueues the item's scope sync after.
+   *
+   * An org-owned item is confirmed only while an upload of it waits (ruling P3-10, see
+   * {@link confirmOrgUpload}); otherwise -> 409 `extension.not_pending`.
    */
   async confirmPermissions(
     actor: string,
@@ -198,11 +219,22 @@ export class CatalogScopeService {
     if (!UUID_RE.test(itemId)) throw notFound();
     const item = await this.db
       .selectFrom("catalog_items")
-      .select(["id", "name", "latest_version", "builtin"])
+      .select([
+        "id",
+        "name",
+        "latest_version",
+        "builtin",
+        "owner_org_id",
+        "awaiting_confirmation",
+        "pending_version",
+      ])
       .where("id", "=", itemId)
       .where("deleted_at", "is", null)
       .executeTakeFirst();
     if (!item) throw notFound();
+    if (item.owner_org_id !== null) {
+      return this.confirmOrgUpload(actor, item, permissionsHash, opts);
+    }
     const version = await this.db
       .selectFrom("catalog_item_versions")
       .select("extension_sha256")
@@ -251,6 +283,272 @@ export class CatalogScopeService {
     if (disabled) await this.ops.enable(item.name, actor, opts.actorTokenId);
     await this.enqueue(itemId);
     return (await this.catalog.get(itemId)).item;
+  }
+
+  /**
+   * The super admin's confirmation of an org upload's pending version (rulings P3-10, P3-11,
+   * P3-21): `permissionsHash` must be the digest of that version's package ({@link pendingDigest};
+   * another -> 409 `extension.approval_stale`, also for a version a later upload replaced); no
+   * pending version (withdrawn, rejected, replaced by one without an extension) -> 409
+   * `extension.not_pending`.
+   *
+   * A first version: its extension installed, its permissions approved, enabled, then (one
+   * transaction) the item stops waiting and the owner is told (`upload_confirmed`); after the
+   * commit its platform components are written and the scope sync enqueued. Each step re-reads
+   * the item under its row lock: removed meanwhile -> 409 `catalog.item_removed`, the pending
+   * version replaced -> `extension.approval_stale`; the extension this confirmation installed is
+   * then taken out again. A new version: the platform update to it
+   * ({@link PlatformPluginUpdater.updateToPending}, which installs or upgrades the extension,
+   * clears the pending state, tells the owner and the orgs using a shared plugin), then its
+   * permissions approved.
+   */
+  private async confirmOrgUpload(
+    actor: string,
+    item: {
+      id: string;
+      name: string;
+      awaiting_confirmation: boolean;
+      pending_version: string | null;
+    },
+    permissionsHash: string,
+    opts: ActorOpts,
+  ): Promise<CatalogItemView> {
+    const version = item.pending_version;
+    if (version === null) throw notPending(item.name);
+    const row = await this.db
+      .selectFrom("catalog_item_versions")
+      .select("extension_sha256")
+      .where("item_id", "=", item.id)
+      .where("version", "=", version)
+      .executeTakeFirst();
+    const sha = row?.extension_sha256 ?? null;
+    if (sha === null) throw notPending(item.name);
+    const reviewHash = await this.extensions.packageReviewHash(sha);
+    if (reviewHash === null || pendingDigest(sha, reviewHash) !== permissionsHash) {
+      throw pendingStale(item.name);
+    }
+    if (!item.awaiting_confirmation) {
+      try {
+        await this.updater.updateToPending(actor, item.id, version, opts);
+      } catch (e) {
+        if (e instanceof ApiError && e.code === "catalog.item_not_found") {
+          throw itemRemovedError(item.name);
+        }
+        throw e;
+      }
+      await this.approvePackage(actor, item.name, sha, reviewHash, opts);
+      return (await this.catalog.get(item.id)).item;
+    }
+    await this.stillPending(item.id, item.name, version);
+    let installedHere = false;
+    try {
+      const install = await this.db
+        .selectFrom("extension_installs")
+        .select(["sha256", "desired_state"])
+        .where("name", "=", item.name)
+        .executeTakeFirst();
+      if (install?.sha256 !== sha) {
+        await this.ops.install(item.name, sha, actor, opts.actorTokenId, {
+          catalogItemId: item.id,
+        });
+        installedHere = install === undefined;
+      }
+      await this.stillPending(item.id, item.name, version);
+      await this.approvePackage(actor, item.name, sha, reviewHash, opts);
+      await this.stillPending(item.id, item.name, version);
+      await this.ops.enable(item.name, actor, opts.actorTokenId);
+      await this.finishFirstVersion(actor, item.id, version, opts);
+    } catch (e) {
+      if (installedHere) await this.takeOut(item.name, actor, opts);
+      throw e;
+    }
+    await this.pluginImport.writePlatformComponents(item.id, version);
+    await this.enqueue(item.id);
+    return (await this.catalog.get(item.id)).item;
+  }
+
+  /** Approves the permissions of the installed package `sha` (already covered: nothing to do). */
+  private async approvePackage(
+    actor: string,
+    name: string,
+    sha: string,
+    reviewHash: string,
+    opts: ActorOpts,
+  ): Promise<void> {
+    try {
+      await this.extensions.approve(actor, name, { sha256: sha, reviewHash }, opts);
+    } catch (e) {
+      if (!(e instanceof ApiError && e.code === "extension.not_pending")) throw e;
+    }
+  }
+
+  /**
+   * An extension a confirmation installed whose item was removed or replaced meanwhile is taken
+   * out again (disabled, uninstalled; P3-21). Best effort: a failure is logged.
+   */
+  private async takeOut(name: string, actor: string, opts: ActorOpts): Promise<void> {
+    try {
+      await this.ops.disable(name, actor, opts.actorTokenId);
+      await this.ops.uninstall(name, actor, opts.actorTokenId);
+    } catch (err) {
+      this.log.error("taking out the extension of a removed org upload failed", { name, err });
+    }
+  }
+
+  /** The item is still live and pending with `version` (row lock), else 409 (P3-21). */
+  @Transactional()
+  private async stillPending(itemId: string, name: string, version: string): Promise<void> {
+    await this.pendingRow(itemId, name, version);
+  }
+
+  /** {@link stillPending} in the caller's transaction; returns the owner org. */
+  private async pendingRow(itemId: string, name: string, version: string): Promise<string> {
+    const row = await this.db
+      .selectFrom("catalog_items")
+      .select(["deleted_at", "pending_version", "owner_org_id"])
+      .where("id", "=", itemId)
+      .forUpdate()
+      .executeTakeFirst();
+    if (!row || row.deleted_at !== null || row.owner_org_id === null) {
+      throw itemRemovedError(name);
+    }
+    if (row.pending_version !== version) throw pendingStale(name);
+    return row.owner_org_id;
+  }
+
+  /** A confirmed first version: the item stops waiting, the owner is told (`upload_confirmed`). */
+  @Transactional()
+  private async finishFirstVersion(
+    actor: string,
+    itemId: string,
+    version: string,
+    opts: ActorOpts,
+  ): Promise<void> {
+    await this.adminLock.lockAndAuthorize(actor);
+    const named = await this.db
+      .selectFrom("catalog_items")
+      .select("name")
+      .where("id", "=", itemId)
+      .executeTakeFirstOrThrow();
+    const owner = await this.pendingRow(itemId, named.name, version);
+    await this.db
+      .updateTable("catalog_items")
+      .set({
+        awaiting_confirmation: false,
+        pending_version: null,
+        pending_by: null,
+        pending_at: null,
+        updated_at: sql<Date>`now()` as unknown as Date,
+      })
+      .where("id", "=", itemId)
+      .execute();
+    await addOrgNotice(this.db, owner, "upload_confirmed", { itemId, name: named.name, version });
+    await audit(this.db, {
+      actorAccountId: actor,
+      ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
+      action: "catalog.upload_confirmed",
+      target: itemId,
+      detail: { name: named.name, version, ownerOrgId: owner },
+    });
+  }
+
+  /**
+   * The super admin rejects an org upload's pending version (ruling P3-10, `reason` shown to the
+   * owner in `upload_rejected`): a first version is removed (soft delete, its requests
+   * cancelled), a new version's pending state cleared (the version stays imported, never applied);
+   * the extension name claim is released when nothing is installed under it (pre-flight F10).
+   * Nothing pending, or a platform-owned item (pre-flight F11) -> 409 `extension.not_pending`.
+   */
+  async reject(
+    actor: string,
+    itemId: string,
+    reason: string | null,
+    opts: ActorOpts = {},
+  ): Promise<void> {
+    if (!UUID_RE.test(itemId)) throw notFound();
+    await this.dropPending(actor, itemId, { kind: "reject", reason }, opts);
+  }
+
+  /**
+   * The owner org withdraws its pending upload (ruling P3-10): as {@link reject}, without a
+   * notice. Another org's or a platform item -> 404; nothing pending -> 409
+   * `extension.not_pending`.
+   */
+  async withdraw(
+    orgId: string,
+    actor: string,
+    itemId: string,
+    opts: ActorOpts = {},
+  ): Promise<void> {
+    if (!UUID_RE.test(itemId)) throw notFound();
+    await this.dropPending(actor, itemId, { kind: "withdraw", orgId }, opts);
+  }
+
+  @Transactional()
+  private async dropPending(
+    actor: string,
+    itemId: string,
+    how: { kind: "reject"; reason: string | null } | { kind: "withdraw"; orgId: string },
+    opts: ActorOpts,
+  ): Promise<void> {
+    if (how.kind === "reject") await this.adminLock.lockAndAuthorize(actor);
+    else await this.orgLock.lockAndAuthorize(how.orgId, actor, "catalog.upload");
+    const t = this.db;
+    const item = await t
+      .selectFrom("catalog_items")
+      .select([
+        "id",
+        "name",
+        "owner_org_id",
+        "awaiting_confirmation",
+        "pending_version",
+        "package_name",
+      ])
+      .where("id", "=", itemId)
+      .where("deleted_at", "is", null)
+      .forUpdate()
+      .executeTakeFirst();
+    if (!item) throw notFound();
+    if (how.kind === "withdraw" && item.owner_org_id !== how.orgId) throw notFound();
+    if (item.owner_org_id === null || item.pending_version === null) throw notPending(item.name);
+    const now = sql<Date>`now()` as unknown as Date;
+    await t
+      .updateTable("catalog_items")
+      .set({
+        pending_version: null,
+        pending_by: null,
+        pending_at: null,
+        updated_at: now,
+        // A first version is removed: the name is free again (P3-10)
+        ...(item.awaiting_confirmation && { deleted_at: now }),
+      })
+      .where("id", "=", itemId)
+      .execute();
+    if (item.awaiting_confirmation) {
+      await cancelPendingRequests(t, { itemId }, actor, "item_removed", opts);
+    }
+    await releaseExtensionClaim(t, item.name, item.package_name);
+    if (how.kind === "reject") {
+      await addOrgNotice(t, item.owner_org_id, "upload_rejected", {
+        itemId,
+        name: item.name,
+        version: item.pending_version,
+        reason: how.reason,
+      });
+    }
+    await audit(t, {
+      actorAccountId: actor,
+      ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
+      action: how.kind === "reject" ? "catalog.upload_rejected" : "catalog.upload_withdrawn",
+      target: itemId,
+      detail: {
+        name: item.name,
+        version: item.pending_version,
+        ownerOrgId: item.owner_org_id,
+        removed: item.awaiting_confirmation,
+        ...(how.kind === "reject" && { reason: how.reason }),
+      },
+    });
   }
 
   /** The preview of a scope change or a disable (nothing written). */
@@ -317,12 +615,14 @@ export class CatalogScopeService {
     // A builtin item is `all`: the flag is irrelevant there but harmless, so it is not refused
     const item = await this.db
       .selectFrom("catalog_items")
-      .select(["name", "shown_to_others", "owner_org_id", "shareable"])
+      .select(["name", "shown_to_others", "owner_org_id", "shareable", "awaiting_confirmation"])
       .where("id", "=", itemId)
       .where("deleted_at", "is", null)
       .forUpdate()
       .executeTakeFirst();
     if (!item) throw notFound();
+    // A first version waiting for the super admin is nobody's to show yet (P3-9)
+    assertNotAwaiting(item);
     // Showing goes through the share gate (P3-16); hiding is always allowed
     if (shown) assertShareable(item);
     if (item.shown_to_others === shown) return;
@@ -350,6 +650,7 @@ export class CatalogScopeService {
   ): Promise<void> {
     await this.adminLock.lockAndAuthorize(actor);
     const item = await this.item(itemId, true);
+    assertNotAwaiting(item);
     const t = await this.targetOf(item, target);
     const from = await this.listed(itemId);
     // The owner stays listed (P3-17); widening goes through the share gate (P3-16)
@@ -498,6 +799,7 @@ export class CatalogScopeService {
     opts: ActorOpts & { requestId?: string } = {},
   ): Promise<boolean> {
     const item = await this.item(itemId, true);
+    assertNotAwaiting(item);
     const changed = await addScopeOrg(this.db, actor, item, orgId, opts);
     if (changed) afterCommit(() => this.enqueue(itemId));
     return changed;
@@ -534,6 +836,7 @@ export class CatalogScopeService {
         "latest_version",
         "owner_org_id",
         "shareable",
+        "awaiting_confirmation",
       ])
       .where("id", "=", itemId)
       .where("deleted_at", "is", null);

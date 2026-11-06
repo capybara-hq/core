@@ -3,6 +3,7 @@
 // (`owner_org_id` null) or by one org; an org-owned one reaches other orgs only while its owner
 // makes it shareable. Every writer that shows an item to another org or associates one checks the
 // gate on the row it writes, read `FOR UPDATE` in its transaction.
+import { createHash } from "node:crypto";
 import { sql } from "kysely";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
@@ -100,6 +101,72 @@ export function isUsable(
   item: Pick<UsableFacts, "disabled" | "deleted_at" | "awaiting_confirmation">,
 ): boolean {
   return !item.awaiting_confirmation && !item.disabled && item.deleted_at === null;
+}
+
+/**
+ * 409 `catalog.item_pending`: the item, or the version asked for, waits for the super admin's
+ * confirmation in 待确认 (ruling P3-9): no scope edit, switch, install or generic update.
+ */
+export function itemPendingError(name: string, version?: string): ApiError {
+  return new ApiError(
+    "catalog.item_pending",
+    version === undefined
+      ? `${name} waits for a super admin to confirm its extension; confirm or reject it in 待确认 first`
+      : `Version ${version} of ${name} waits for a super admin to confirm its extension; confirm it in 待确认`,
+  );
+}
+
+/**
+ * 409 `catalog.item_removed`: the item was removed while a super admin confirmation of its upload
+ * was running (ruling P3-21).
+ */
+export function itemRemovedError(name: string): ApiError {
+  return new ApiError(
+    "catalog.item_removed",
+    `${name} was removed while its confirmation was running; nothing of it stays installed`,
+  );
+}
+
+/** 409 `catalog.item_pending` while the item's first version waits for the super admin (P3-9). */
+export function assertNotAwaiting(item: { awaiting_confirmation: boolean; name: string }): void {
+  if (item.awaiting_confirmation) throw itemPendingError(item.name);
+}
+
+/**
+ * The digest a super admin confirms an org upload's pending version with (rulings P3-10, P3-11):
+ * the extension's permission review digest bound to the exact package, so a pending version
+ * replaced by another upload is stale even when both ask for the same permissions.
+ */
+export function pendingDigest(sha256: string, reviewHash: string): string {
+  return createHash("sha256")
+    .update(JSON.stringify({ sha256, reviewHash }))
+    .digest("hex")
+    .slice(0, 32);
+}
+
+/**
+ * Releases the extension name an org upload claimed (pre-flight F10), in the caller's
+ * transaction, when nothing is installed under it: a rejected or withdrawn upload, a pending first
+ * version replaced by one without an extension, a deleted org's pending upload. An installed
+ * extension keeps its claim (its removal is the cleanup job's).
+ */
+export async function releaseExtensionClaim(
+  db: KernelSchemaDb,
+  name: string,
+  packageName: string | null,
+): Promise<void> {
+  if (packageName === null) return;
+  const installed = await db
+    .selectFrom("extension_installs")
+    .select("name")
+    .where("name", "=", name)
+    .executeTakeFirst();
+  if (installed !== undefined) return;
+  await db
+    .deleteFrom("extension_name_owners")
+    .where("name", "=", name)
+    .where("package_name", "=", packageName)
+    .execute();
 }
 
 /**

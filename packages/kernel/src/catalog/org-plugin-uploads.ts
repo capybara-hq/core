@@ -103,8 +103,10 @@ export class OrgPluginUploads {
         ...opts,
         owner: { orgId },
       });
+      // A version waiting for the super admin is synced by their confirmation (P3-10)
+      if (r.pending) return { item: r.item, outcome: "pending" };
       await this.scope.enqueueSync(r.item.id);
-      return { item: r.item, outcome: r.created ? "installed" : "updated" };
+      return { item: r.item, outcome: r.firstVersion ? "installed" : "updated" };
     }
     if (input.pinnedSuggestions !== undefined) {
       throw new ApiError(
@@ -149,7 +151,11 @@ export class OrgPluginUploads {
   }
 }
 
-/** A new version of the org's own plugin without an extension: applied at once (P3-12). */
+/**
+ * A new version of the org's own plugin without an extension: applied at once through the
+ * platform updater (P3-12). Not while the item's first version still waits for the super admin:
+ * such an upload replaces that first version instead (`PluginImport.commit`, plan Task 6).
+ */
 function appliesAtOnce(st: StagedTarget): boolean {
-  return st.existing && !st.extension;
+  return st.existing && !st.extension && !st.awaiting;
 }

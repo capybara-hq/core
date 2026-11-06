@@ -344,7 +344,13 @@ async function resolveOne(
 ): Promise<ResolvedDependency & { manifest: PluginManifest }> {
   const item = await db
     .selectFrom("catalog_items")
-    .select(["id", "disabled", "platform_synced_version", "marketplace_id"])
+    .select([
+      "id",
+      "disabled",
+      "platform_synced_version",
+      "marketplace_id",
+      "awaiting_confirmation",
+    ])
     .where("name", "=", d.name)
     .where("deleted_at", "is", null)
     .executeTakeFirst();
@@ -356,6 +362,10 @@ async function resolveOne(
     );
   }
   if (item.disabled) throw dependencyDisabled(d.name);
+  // An org upload waiting for the super admin is no dependency target (ruling P3-9)
+  if (item.awaiting_confirmation) {
+    throw unresolved(d.name, d.version, "it waits for a super admin to confirm its extension");
+  }
   const versions = await db
     .selectFrom("catalog_item_versions")
     .select(["version", "manifest", "imported_at"])

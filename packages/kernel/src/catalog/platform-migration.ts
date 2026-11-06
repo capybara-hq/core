@@ -230,6 +230,8 @@ export class PlatformMigration {
       .select(["i.id", "i.name", "i.latest_version"])
       .where("i.deleted_at", "is", null)
       .where("i.platform_synced_version", "is", null)
+      // an org upload waiting for the super admin gets its components at the confirmation (P3-9)
+      .where("i.awaiting_confirmation", "=", false)
       .orderBy("i.name")
       .execute();
     for (const item of items) {

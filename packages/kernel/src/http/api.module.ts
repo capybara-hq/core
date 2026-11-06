@@ -26,7 +26,10 @@ import {
   OrgCatalogController,
 } from "../catalog/org-catalog.controller.js";
 import { OrgExtensionConfigsController } from "../catalog/org-extension.controller.js";
-import { OrgPluginUploadsController } from "../catalog/org-plugin-uploads.controller.js";
+import {
+  OrgOwnedPluginsController,
+  OrgPluginUploadsController,
+} from "../catalog/org-plugin-uploads.controller.js";
 import { ChannelsModule } from "../channels/channels.module.js";
 import { ChannelConnectionsController } from "../channels/connections.controller.js";
 import { AttachmentsController } from "../conversations/attachments.controller.js";
@@ -133,6 +136,7 @@ const CONTROLLERS: Type[] = [
   ModelPurposesController,
   OrgCatalogController,
   OrgPluginUploadsController,
+  OrgOwnedPluginsController,
   OrgComponentsController,
   AdminCatalogRequestsController,
 ];

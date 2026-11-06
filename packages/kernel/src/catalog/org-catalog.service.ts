@@ -29,7 +29,7 @@ import {
 } from "./catalog-content.js";
 import { itemView, ownerOnlyFacts } from "./catalog-items.js";
 import { connectorTemplatesOn, templateIdOfPath } from "./component-state.js";
-import { ownerOf, ownersOf } from "./ownership.js";
+import { itemPendingError, ownerOf, ownersOf } from "./ownership.js";
 import {
   PluginInstaller,
   type UninstallPreview,
@@ -122,10 +122,12 @@ export class OrgCatalogService {
     const inList = new Set(listed.map((r) => r.item_id));
     // Hidden `named` items (not listed, not shown to other orgs) are absent; shown ones are
     // `not_offered`
+    // An org upload waiting for the super admin is its owner's only (ruling P3-9)
     const items = all.filter(
       (i) =>
-        visibleTo({ scope: i.builtin ? "all" : i.scope }, inList.has(i.id)) ||
-        requestable(i, inList.has(i.id)),
+        (!i.awaiting_confirmation || i.owner_org_id === orgId) &&
+        (visibleTo({ scope: i.builtin ? "all" : i.scope }, inList.has(i.id)) ||
+          requestable(i, inList.has(i.id))),
     );
     if (items.length === 0) return [];
     const sw = new Map(switches.map((r) => [r.item_id, r.enabled]));
@@ -205,7 +207,8 @@ export class OrgCatalogService {
       const scope = i.builtin ? "all" : i.scope;
       const wanted = wantedOn(i, inList.has(i.id), sw.get(i.id) ?? null);
       let state: OrgPluginState;
-      if (i.disabled) state = "unavailable";
+      if (i.awaiting_confirmation) state = "awaiting_confirmation";
+      else if (i.disabled) state = "unavailable";
       else if (requestable(i, inList.has(i.id))) state = "not_offered";
       else if (a) {
         // An on connector template without a connector here (ruling P2-10)
@@ -235,7 +238,10 @@ export class OrgCatalogService {
         scope,
         builtin: i.builtin,
         state,
-        switchable: state !== "not_offered" && switchable({ scope, builtin: i.builtin }),
+        switchable:
+          state !== "not_offered" &&
+          state !== "awaiting_confirmation" &&
+          switchable({ scope, builtin: i.builtin }),
         notDeployed: latest !== undefined && undeployed.has(i.id),
         installed: a
           ? {
@@ -416,6 +422,12 @@ export class OrgCatalogService {
       .where("deleted_at", "is", null)
       .executeTakeFirst();
     if (!item) throw itemNotFound();
+    // An org upload waiting for the super admin: absent for other orgs, not switchable by its
+    // owner (ruling P3-9)
+    if (item.awaiting_confirmation) {
+      if (item.owner_org_id !== orgId) throw itemNotFound();
+      throw itemPendingError(item.name);
+    }
     const listed = await this.db
       .selectFrom("catalog_item_scope_orgs")
       .select("item_id")

@@ -38,7 +38,14 @@ import {
   sourceEffective,
   unimportable,
 } from "./marketplaces.service.js";
-import { type Owner, ownerOf, ownersOf, PLATFORM_OWNER, packageOwner } from "./ownership.js";
+import {
+  type Owner,
+  ownerOf,
+  ownersOf,
+  PLATFORM_OWNER,
+  packageOwner,
+  pendingDigest,
+} from "./ownership.js";
 import { schemaHasPath } from "./schema-path.js";
 import type { PluginScope } from "./scope.js";
 import { compareVersions, newestFirst, sameRelease, withBuild } from "./versions.js";
@@ -692,11 +699,38 @@ export type ItemConfirmations = ReadonlyMap<
  */
 export async function itemConfirmations(
   admin: ExtensionAdmin,
-  items: { id: string; name: string; builtin: boolean; latest_version: string }[],
+  items: {
+    id: string;
+    name: string;
+    builtin: boolean;
+    latest_version: string;
+    owner_org_id: string | null;
+    pending_version: string | null;
+  }[],
   versions: ReadonlyMap<string, { version: string; extension_sha256: string | null }[]>,
 ): Promise<ItemConfirmations> {
   const out = new Map<string, { pending: boolean; permissionsHash: string | null }>();
+  // An org-owned item waits only while an upload of it does (rulings P3-9, P3-10): the digest of
+  // that version's package (P3-11); nothing else of an org's item is the super admin's to confirm
+  for (const i of items) {
+    if (i.owner_org_id === null) continue;
+    const sha =
+      i.pending_version === null
+        ? null
+        : ((versions.get(i.id) ?? []).find((v) => v.version === i.pending_version)
+            ?.extension_sha256 ?? null);
+    if (sha === null) {
+      out.set(i.id, { pending: false, permissionsHash: null });
+      continue;
+    }
+    const hash = await admin.packageReviewHash(sha);
+    out.set(i.id, {
+      pending: true,
+      permissionsHash: hash === null ? null : pendingDigest(sha, hash),
+    });
+  }
   const withExtension = items.flatMap((i) => {
+    if (i.owner_org_id !== null) return [];
     const sha =
       (versions.get(i.id) ?? []).find((v) => v.version === i.latest_version)?.extension_sha256 ??
       null;

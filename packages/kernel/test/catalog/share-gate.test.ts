@@ -464,9 +464,10 @@ describe("share gate", { timeout: 90_000 }, () => {
 
   it("other orgs' catalog views carry no pending upload", async () => {
     const { itemId } = await ownedPlugin({ shareable: true, extra: [env.orgId] });
+    // a new version waiting: the item serves its platform version, the pending one is the owner's
     await env.db
       .updateTable("catalog_items")
-      .set({ awaiting_confirmation: true, pending_version: "2.0.0" })
+      .set({ pending_version: "2.0.0" })
       .where("id", "=", itemId)
       .execute();
     const other = (await orgCatalog(env.orgId)).find((i) => i.id === itemId) as Record<
@@ -477,7 +478,18 @@ describe("share gate", { timeout: 90_000 }, () => {
     expect("pendingVersion" in other).toBe(false);
     expect("awaitingConfirmation" in other).toBe(false);
     const own = (await orgCatalog(orgA, env.root)).find((i) => i.id === itemId);
-    expect(own).toMatchObject({ awaitingConfirmation: true, pendingVersion: "2.0.0" });
+    expect(own).toMatchObject({ awaitingConfirmation: false, pendingVersion: "2.0.0" });
+    // a first version waiting is in no other org's catalog at all (ruling P3-9, Task 6)
+    await env.db
+      .updateTable("catalog_items")
+      .set({ awaiting_confirmation: true })
+      .where("id", "=", itemId)
+      .execute();
+    expect((await orgCatalog(env.orgId)).map((i) => i.id)).not.toContain(itemId);
+    expect((await orgCatalog(orgA, env.root)).find((i) => i.id === itemId)).toMatchObject({
+      awaitingConfirmation: true,
+      state: "awaiting_confirmation",
+    });
   });
 
   it("a component switch-on waits for an unshare that holds the row and then sees the narrowed scope", async () => {

@@ -15,6 +15,7 @@ import { runJob } from "../infra/queue/run-job.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import { connectorTemplatesOn, templateIdOfPath } from "./component-state.js";
+import { isUsable } from "./ownership.js";
 import { type InstallPlan, PluginInstaller } from "./plugin-install.js";
 import { wantedOn } from "./scope.js";
 import { ScopeNoLongerWanted, ScopeStillWanted } from "./scope-state.js";
@@ -211,7 +212,16 @@ export class PluginScopeSync {
   ): Promise<ScopeSyncResult> {
     const item = await this.db
       .selectFrom("catalog_items")
-      .select(["id", "scope", "builtin", "disabled", "latest_version", "platform_synced_version"])
+      .select([
+        "id",
+        "scope",
+        "builtin",
+        "disabled",
+        "deleted_at",
+        "awaiting_confirmation",
+        "latest_version",
+        "platform_synced_version",
+      ])
       .where("id", "=", itemId)
       .where("deleted_at", "is", null)
       .executeTakeFirst();
@@ -258,6 +268,9 @@ export class PluginScopeSync {
         }
         return "unchanged";
       }
+      // Never installed while not usable: an org upload still waiting for the super admin
+      // (ruling P3-9) has nothing confirmed to install
+      if (!isUsable(item)) return "unchanged";
       // The platform's version (one per deployment, Task 7); the latest import before the first sync
       const version = item.platform_synced_version ?? item.latest_version;
       try {

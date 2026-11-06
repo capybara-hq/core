@@ -448,15 +448,14 @@ describe("org plugin upload without an extension", () => {
     expect(errorOf(unknown)).toEqual([409, "plugin.dependency_unavailable"]);
   });
 
-  it("a package with an extension is reviewed, but its confirm answers 501 until Task 6", async () => {
+  it("a package with an extension is reviewed and waits for the super admin (Task 6)", async () => {
     const bytes = await skillPlugin("with-ext", { extension: {} });
     const p = await prepared(env.boss, orgA, bytes);
     expect(p.review).toMatchObject({ extension: { name: "with-ext", action: "install" } });
-    expect(errorOf(await confirm(env.boss, orgA, p))).toEqual([
-      501,
-      "plugin.extension_upload_pending",
-    ]);
-    expect(await liveItem("with-ext")).toBeUndefined();
+    const c = await confirm(env.boss, orgA, p);
+    expect(c.statusCode, c.body).toBe(201);
+    expect((c.json() as { outcome: string }).outcome).toBe("pending");
+    expect(await liveItem("with-ext")).toMatchObject({ awaiting_confirmation: true });
     expect(
       await env.db
         .selectFrom("extension_installs")

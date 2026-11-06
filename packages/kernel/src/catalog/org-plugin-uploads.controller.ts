@@ -1,4 +1,4 @@
-import { Controller, Get, HttpCode, Inject, Post, Req } from "@nestjs/common";
+import { Controller, Delete, Get, HttpCode, Inject, Post, Req } from "@nestjs/common";
 import { z } from "zod";
 import { ApiError } from "../errors.js";
 import {
@@ -11,6 +11,7 @@ import { createZodDto } from "../infra/validation/create-zod-dto.js";
 import { ZBody, ZParam } from "../infra/validation/zod-params.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
 import type { ActorOpts, CatalogItemView } from "./catalog.service.js";
+import { CatalogScopeService } from "./catalog-scope.service.js";
 import {
   OrgPluginUploads,
   type OrgUploadOutcome,
@@ -18,6 +19,7 @@ import {
 } from "./org-plugin-uploads.js";
 
 const StagingParams = z.object({ stagingId: z.string().min(1).max(100) });
+const OwnedParams = z.object({ id: z.string().min(1).max(100) });
 
 const ConfirmBody = z
   .object({
@@ -31,6 +33,7 @@ const ConfirmBody = z
 
 class OrgUploadStagingParams extends createZodDto(StagingParams, "OrgUploadStagingParams") {}
 class OrgUploadConfirmBody extends createZodDto(ConfirmBody, "OrgUploadConfirmBody") {}
+class OrgOwnedPluginParams extends createZodDto(OwnedParams, "OrgOwnedPluginParams") {}
 
 const actorOpts = (actor: ReturnType<typeof requireUser>): ActorOpts => {
   const tokenId = patTokenId(actor);
@@ -94,7 +97,11 @@ export class OrgPluginUploadsController {
    * `named: [org]`, not shown to other orgs, `shareable` as sent (default false), installed in the
    * org by the scope sync (`installed`); a new version of its own item (`updated`). The checks of
    * prepare run again under the item name's lock (the first confirm of a name wins). A package
-   * with an extension -> 501 `plugin.extension_upload_pending`.
+   * with an extension waits for the super admin (`pending`, ruling P3-10): stored, its extension
+   * name claimed (another package's -> 409 `extension.name_conflict` naming the owner), nothing
+   * installed or usable until confirmed in 待确认; a later upload replaces the pending version
+   * (P3-11). A version without an extension for an item whose first version still waits replaces
+   * that upload and is installed at once (`installed`).
    */
   @Post(":stagingId/confirm")
   @HttpCode(201)
@@ -117,5 +124,32 @@ export class OrgPluginUploadsController {
       },
       actorOpts(actor),
     );
+  }
+}
+
+/**
+ * The org's own plugins (`/api/v1/orgs/:orgId/owned-plugins/*`, spec §14): the owner org's admin
+ * withdraws a pending upload. Writes re-check the org admin under the org row lock.
+ */
+@Controller("api/v1/orgs/:orgId/owned-plugins")
+export class OrgOwnedPluginsController {
+  constructor(@Inject(CatalogScopeService) private readonly scope: CatalogScopeService) {}
+
+  /**
+   * Withdraws the org's pending upload of the plugin (ruling P3-10, no notice): a first version
+   * is removed (its name free again), a new version's pending state cleared (the platform version
+   * keeps running). Another org's or a platform plugin -> 404; nothing pending -> 409
+   * `extension.not_pending`. 204.
+   */
+  @Delete(":id/pending")
+  @HttpCode(204)
+  @OrgAction("catalog.upload")
+  async withdraw(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @ZParam(OrgOwnedPluginParams) params: z.infer<typeof OwnedParams>,
+  ): Promise<void> {
+    const actor = requireUser(principal);
+    await this.scope.withdraw(org.orgId, actor.account.id, params.id, actorOpts(actor));
   }
 }

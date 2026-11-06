@@ -2,6 +2,7 @@ import { sql } from "kysely";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
+import { isUsable, itemPendingError } from "./ownership.js";
 import { visibleTo } from "./scope.js";
 
 /**
@@ -24,7 +25,7 @@ async function lockItem(t: KernelSchemaDb, itemId: string) {
   if (!UUID_RE.test(itemId)) return undefined;
   return t
     .selectFrom("catalog_items")
-    .select(["id", "name", "disabled", "scope", "builtin", "deleted_at"])
+    .select(["id", "name", "disabled", "scope", "builtin", "deleted_at", "awaiting_confirmation"])
     .where("id", "=", itemId)
     .forShare()
     .executeTakeFirst();
@@ -44,13 +45,27 @@ export async function assertItemInstallable(
   itemId: string,
   approvedBy: string = itemId,
 ): Promise<void> {
-  if (approvedBy !== itemId) {
-    const own = await lockItem(t, itemId);
-    if (!own || own.deleted_at !== null || own.disabled) throw itemDisabled();
-  }
+  if (approvedBy !== itemId) assertUsable(await lockItem(t, itemId));
   const item = await lockItem(t, approvedBy);
-  if (!item || item.deleted_at !== null || item.disabled) throw itemDisabled();
+  assertUsable(item);
   if (!(await offeredTo(t, orgId, item))) throw notOffered();
+}
+
+/**
+ * The item is usable ({@link isUsable}): gone or disabled -> `catalog.item_disabled`; an org
+ * upload still waiting for the super admin -> 409 `catalog.item_pending` (ruling P3-9).
+ */
+function assertUsable<
+  T extends {
+    name: string;
+    disabled: boolean;
+    deleted_at: Date | null;
+    awaiting_confirmation: boolean;
+  },
+>(item: T | undefined): asserts item is T {
+  if (item && isUsable(item)) return;
+  if (item && item.deleted_at === null && !item.disabled) throw itemPendingError(item.name);
+  throw itemDisabled();
 }
 
 const notOffered = () =>

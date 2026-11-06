@@ -100,7 +100,14 @@ import {
 } from "./claude/report.js";
 import { isClaudePluginTree, translateClaudePlugin } from "./claude/translate.js";
 import { CatalogItemLock } from "./locks.js";
-import { assertNameFree, assertShareable, packageOwner, shareGate, usableBy } from "./ownership.js";
+import {
+  assertNameFree,
+  assertShareable,
+  packageOwner,
+  releaseExtensionClaim,
+  shareGate,
+  usableBy,
+} from "./ownership.js";
 import { PlatformComponents } from "./platform-components.js";
 import { PLATFORM_MIGRATION_JOB } from "./platform-migration.js";
 import {
@@ -363,6 +370,17 @@ export interface PluginConfirmResult {
   created: boolean;
   /** null when there is nothing to deploy (no extension, or keep). */
   deploy: ExtensionDeployResult | null;
+  /**
+   * An org upload with an extension: the version waits for the super admin's confirmation
+   * (ruling P3-10); nothing was approved, installed or synced.
+   */
+  pending: boolean;
+  /**
+   * The confirm made the item's first usable version: it created the item, or it replaced an org
+   * upload's first version that was still waiting for the super admin with a version without an
+   * extension (applied at once, plan Task 6).
+   */
+  firstVersion: boolean;
 }
 
 /** What prepare checks besides the package itself (npm and marketplace imports). */
@@ -433,6 +451,8 @@ export interface StagedTarget {
   extension: boolean;
   /** The live item exists already (a new version), owned by the staging's org. */
   existing: boolean;
+  /** That item's first version still waits for the super admin (P3-9). */
+  awaiting: boolean;
   /** The version is imported already (pre-flight F4). */
   retry: boolean;
   /** The target as the platform updater reads it (the staged manifest and files). */
@@ -1040,7 +1060,7 @@ export class PluginImport {
     const staged = row.manifest as StagedPlugin;
     const item = await this.db
       .selectFrom("catalog_items")
-      .select("id")
+      .select(["id", "awaiting_confirmation"])
       .where("id", "=", staged.itemId)
       .where("deleted_at", "is", null)
       .where("owner_org_id", "=", owner.orgId)
@@ -1060,6 +1080,7 @@ export class PluginImport {
       reviewHash: review.reviewHash,
       extension: review.extension !== undefined,
       existing: item !== undefined,
+      awaiting: item?.awaiting_confirmation === true,
       retry: staged.retry === true,
       target:
         imported !== undefined
@@ -1095,8 +1116,9 @@ export class PluginImport {
    * An org upload (`opts.owner`, spec §14): only that org's staging; the actor re-checked as its
    * admin; `scope` / `orgs` are not taken: a new item is owned by the org, scope `named: [owner]`,
    * not shown to other orgs, `shareable` as given (default false). Custom deny, the name owner and
-   * the dependencies are checked again under the item name's lock. A package with an extension ->
-   * 501 `plugin.extension_upload_pending` until org uploads with an extension are built.
+   * the dependencies are checked again under the item name's lock. A package with an extension
+   * is stored and its extension name claimed, nothing approved or installed: the version waits
+   * for the super admin (`pending`, ruling P3-10; see {@link commit}).
    */
   async confirm(
     actor: string | null,
@@ -1165,18 +1187,14 @@ export class PluginImport {
     const staged = row.manifest as StagedPlugin;
     const src = row.source as PluginImportSource;
     if (input.reviewHash !== review.reviewHash) throw reviewStale(review);
-    if (owner !== undefined && review.extension !== undefined) {
-      // Plan Task 6 removes this: the pending state for org uploads with an extension
-      throw new ApiError(
-        "plugin.extension_upload_pending",
-        "Uploading a plugin with an extension from an organization is not available yet",
-      );
-    }
     const manifest = withPinned(staged.manifest, review, input.pinnedSuggestions);
     const reviewed = review.extension;
-    // Read the stored package outside the transaction (unless it was already installed as is)
+    // Read the stored package outside the transaction (unless it was already installed as is, or
+    // an org upload, which approves nothing)
     const stored =
-      reviewed && reviewed.action !== "keep" ? await this.readStored(reviewed.sha256) : undefined;
+      reviewed && reviewed.action !== "keep" && owner === undefined
+        ? await this.readStored(reviewed.sha256)
+        : undefined;
 
     const committed = await this.commit(
       actor,
@@ -1191,10 +1209,20 @@ export class PluginImport {
     );
 
     const { now } = committed;
+    if (committed.pending) {
+      // Waits for the super admin (P3-10): no platform components, nothing deployed
+      return {
+        item: await this.itemView(committed.itemId),
+        created: committed.created,
+        deploy: null,
+        pending: true,
+        firstVersion: false,
+      };
+    }
     // A new item's skills, agent templates and connector templates become platform components
     // (plugin scope phase 2); a new version of an existing item leaves them to the platform
     // update. After the commit: it copies files in object storage
-    if (committed.created) await this.syncPlatform(committed.itemId, staged.version);
+    if (committed.firstVersion) await this.syncPlatform(committed.itemId, staged.version);
     const deploy =
       now && now.action !== "keep"
         ? await this.deploy(
@@ -1207,13 +1235,37 @@ export class PluginImport {
             input.enable ?? true,
           )
         : null;
-    return { item: await this.itemView(committed.itemId), created: committed.created, deploy };
+    return {
+      item: await this.itemView(committed.itemId),
+      created: committed.created,
+      deploy,
+      pending: false,
+      firstVersion: committed.firstVersion,
+    };
+  }
+
+  /**
+   * Writes the platform components of an item's first usable version after a commit made
+   * elsewhere (the super admin's confirmation of an org upload, `CatalogScopeService`); a failure
+   * is logged and retried by the migration job (see {@link syncPlatform}).
+   */
+  async writePlatformComponents(itemId: string, version: string): Promise<void> {
+    await this.syncPlatform(itemId, version);
   }
 
   /**
    * The confirm's transaction: the staging row consumed, the extension's action recomputed under
    * its install lock (stale -> `plugin.review_stale`), its snapshot approved, and the catalog
    * version written under the item name's lock.
+   *
+   * An org upload with an extension (ruling P3-10) approves nothing: under the install lock it
+   * claims the extension name for its package (another package's -> 409
+   * `extension.name_conflict` naming its owner, before anything is written), and the version
+   * written becomes the item's pending one (`pending_version` / `_by` / `_at`; a first version
+   * also `awaiting_confirmation`). A later upload replaces the pending version (P3-11). An org
+   * upload without an extension for an item whose first version still waits (plan Task 6) replaces
+   * that upload and applies at once: the item stops waiting and the claim is released (nothing
+   * was installed under it).
    */
   @Transactional()
   private async commit(
@@ -1233,6 +1285,10 @@ export class PluginImport {
     itemId: string;
     /** This confirm created the catalog item (a first import of the name). */
     created: boolean;
+    /** The item's first usable version (see {@link PluginConfirmResult.firstVersion}). */
+    firstVersion: boolean;
+    /** An org upload's version waits for the super admin. */
+    pending: boolean;
     now: PluginReviewExtension | undefined;
     previous: PreviousSnapshot | null | undefined;
   }> {
@@ -1276,12 +1332,21 @@ export class PluginImport {
       if (pluginReviewHash({ ...review, extension: now }, staged.files) !== review.reviewHash) {
         throw stale();
       }
+      if (owner !== undefined) {
+        // An org upload only claims the name (P3-10): the super admin approves and installs it
+        await t
+          .insertInto("extension_name_owners")
+          .values({ name: reviewed.name, package_name: staged.packageName as string })
+          .onConflict((oc) => oc.column("name").doNothing())
+          .execute();
+        await assertPluginNameOwner(t, reviewed.name, staged.packageName);
+      }
       // A foreseeable deploy failure (a downgrade to a version with unrun migrations) is refused
       // before anything is written
       if (now.action === "upgrade" && stored) {
         await assertDowngradable(t, now, stored.migrationSql);
       }
-      if (now.action === "install" || now.action === "upgrade") {
+      if (owner === undefined && (now.action === "install" || now.action === "upgrade")) {
         previous = await this.approve(actor, review, staged, now, stored as ExtensionPackage, opts);
       }
     }
@@ -1298,9 +1363,10 @@ export class PluginImport {
     // of a live item (which keeps its scope)
     const existing = await t
       .selectFrom("catalog_items")
-      .select(["id", "scope"])
+      .select(["id", "scope", "awaiting_confirmation", "package_name"])
       .where("name", "=", m.name)
       .where("deleted_at", "is", null)
+      .forUpdate()
       .executeTakeFirst();
     const actual =
       existing === undefined
@@ -1330,7 +1396,14 @@ export class PluginImport {
               .where("content_digest", "=", staged.contentDigest)
               .executeTakeFirst();
       if (existing === undefined || existing.id !== staged.itemId || v === undefined) throw stale();
-      return { itemId: existing.id, created: false, now, previous };
+      return {
+        itemId: existing.id,
+        created: false,
+        firstVersion: false,
+        pending: false,
+        now,
+        previous,
+      };
     }
     const { id: itemId, created } = await writeCatalogVersion(t, {
       actor,
@@ -1412,7 +1485,44 @@ export class PluginImport {
     if (item !== undefined) {
       for (const org of requestOrgs) await addScopeOrg(t, actor, item, org, opts);
     }
-    return { itemId, created, now, previous };
+    const pending = owner !== undefined && reviewed !== undefined;
+    if (pending) {
+      // Waits for the super admin; a later upload replaces the pending version (P3-10, P3-11)
+      await t
+        .updateTable("catalog_items")
+        .set({
+          ...(created && { awaiting_confirmation: true }),
+          pending_version: staged.version,
+          pending_by: actor,
+          pending_at: sql<Date>`now()` as unknown as Date,
+        })
+        .where("id", "=", itemId)
+        .execute();
+    }
+    // A first version still waiting replaced by one without an extension: applied at once
+    const replacedAwaiting =
+      owner !== undefined && !pending && existing?.awaiting_confirmation === true;
+    if (replacedAwaiting) {
+      await t
+        .updateTable("catalog_items")
+        .set({
+          awaiting_confirmation: false,
+          pending_version: null,
+          pending_by: null,
+          pending_at: null,
+        })
+        .where("id", "=", itemId)
+        .execute();
+      await releaseExtensionClaim(t, m.name, existing.package_name);
+    }
+    return {
+      itemId,
+      created,
+      firstVersion: (created && !pending) || replacedAwaiting,
+      pending,
+      now,
+      previous,
+    };
   }
 
   /**

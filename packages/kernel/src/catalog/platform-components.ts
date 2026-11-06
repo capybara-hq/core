@@ -33,6 +33,7 @@ import {
 } from "./catalog-content.js";
 import { putCatalogFiles } from "./catalog-items.js";
 import { CatalogItemLock } from "./locks.js";
+import { assertNotAwaiting } from "./ownership.js";
 
 /** A skill or agent template version a sync wrote (`from` null: the component was created). */
 export interface ChangedRef {
@@ -458,10 +459,12 @@ export class PlatformComponents {
   private async plan(itemId: string, version: string): Promise<SyncPlan> {
     const item = await this.db
       .selectFrom("catalog_items")
-      .select(["name"])
+      .select(["name", "awaiting_confirmation"])
       .where("id", "=", itemId)
       .where("deleted_at", "is", null)
       .executeTakeFirst();
+    // An org upload still waiting for the super admin has no platform components (P3-9)
+    if (item !== undefined) assertNotAwaiting(item);
     const row = item
       ? await this.db
           .selectFrom("catalog_item_versions")

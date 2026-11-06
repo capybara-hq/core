@@ -54,8 +54,10 @@ export interface MigrationRunView {
  * acted on where it lives (the web links to it).
  * - `catalog_request`: an org's pending request to the platform (`access`: use a plugin shown to
  *   it; `import`: bring in a marketplace entry), as `GET /admin/catalog/requests` lists them;
- * - `permission_confirmation`: a plugin whose extension permissions wait for a super admin's
- *   confirmation (`GET /admin/catalog/items?pending=true`), `id` = the item's;
+ * - `permission_confirmation`: a platform plugin whose extension permissions wait for a super
+ *   admin's confirmation (`GET /admin/catalog/items?pending=true`), `id` = the item's;
+ * - `org_upload_pending`: an org-owned plugin whose uploaded version (with an extension) waits for
+ *   the super admin in 待确认 (ruling P3-22; confirmed or rejected there), `id` = the item's;
  * - `scope_sync_failed`: an open scope sync failure, `id` = `<itemId>/<orgId>`;
  * - `platform_migration`: the latest migration run, failed items or stuck, `id` = the run's;
  * - `ownership_transferred`: a deleted org's shared item now belongs to the platform, until a
@@ -64,6 +66,7 @@ export interface MigrationRunView {
 export type PlatformInboxItem =
   | { type: "catalog_request"; id: string; createdAt: string; request: CatalogRequestView }
   | { type: "permission_confirmation"; id: string; createdAt: string; item: CatalogItemView }
+  | { type: "org_upload_pending"; id: string; createdAt: string; item: CatalogItemView }
   | { type: "scope_sync_failed"; id: string; createdAt: string; failure: ScopeSyncFailureView }
   | { type: "platform_migration"; id: string; createdAt: string; run: MigrationRunView }
   | {
@@ -132,7 +135,7 @@ export class PlatformInboxService {
       ),
       ...pending.map(
         (i): PlatformInboxItem => ({
-          type: "permission_confirmation",
+          type: i.owner.kind === "org" ? "org_upload_pending" : "permission_confirmation",
           id: i.id,
           createdAt: i.updatedAt,
           item: i,

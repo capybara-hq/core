@@ -1,0 +1,582 @@
+import { sql } from "kysely";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { CatalogScopeService } from "../../src/catalog/catalog-scope.service.js";
+import { PlatformMigration } from "../../src/catalog/platform-migration.js";
+import { PluginScopeSync } from "../../src/catalog/scope-sync.js";
+import { ExtensionRegistry } from "../../src/extensions/registry.js";
+import { usableSkills } from "../../src/skills/usable.js";
+import { lifePkg, pluginTgz } from "../helpers/plugin-packages.js";
+import { createOrg, type Req, waitFor } from "../helpers/runs.js";
+import { SKILL_MD } from "../skills/zip.js";
+import { importPlugin, type OrgEnv, resetOrgCatalog, setScope, startOrgEnv } from "./org-env.js";
+import { bundlePlugin } from "./packages.js";
+
+/**
+ * Plugin scope phase 3, Task 6 (spec §14, P3-9 to P3-11, P3-13, P3-21, P3-22; pre-flight F7, F8,
+ * F10, F11, F12): an org upload carrying an extension stays pending until the super admin confirms
+ * that exact version's digest. Nothing of it runs or is usable before: no install, no platform
+ * components, no scope sync install, no dependency target. Every later version with an extension
+ * waits again; a re-upload replaces the pending version (the old digest is stale); the super admin
+ * may reject, the owner may withdraw.
+ */
+
+let env: OrgEnv;
+/** Org A ("Acme"; boss is its admin). */
+let orgA: string;
+/** Org B ("B"; root is its owner). */
+let orgB: string;
+
+beforeAll(async () => {
+  env = await startOrgEnv();
+  orgA = env.orgId;
+  orgB = await createOrg(env.root, "B");
+}, 240_000);
+
+afterAll(async () => {
+  await env?.stop();
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
+beforeEach(async () => {
+  await resetOrgCatalog(env);
+  await env.db.deleteFrom("org_notices").execute();
+});
+
+const base = (orgId: string) => `/api/v1/orgs/${orgId}/catalog/uploads`;
+
+interface Prepared {
+  stagingId: string;
+  review: { name: string; version: string; reviewHash: string; extension?: unknown };
+  update: unknown;
+}
+
+const errorOf = (r: { statusCode: number; body: string }) =>
+  [r.statusCode, (JSON.parse(r.body) as { error?: { code: string } }).error?.code] as const;
+
+const upload = (req: Req, orgId: string, bytes: Uint8Array) =>
+  req({
+    method: "POST",
+    url: `${base(orgId)}/file`,
+    headers: { "content-type": "application/octet-stream" },
+    payload: Buffer.from(bytes),
+  });
+
+async function prepared(req: Req, orgId: string, bytes: Uint8Array): Promise<Prepared> {
+  const r = await upload(req, orgId, bytes);
+  expect(r.statusCode, r.body).toBe(200);
+  return r.json() as Prepared;
+}
+
+const confirm = (req: Req, orgId: string, p: Prepared, body: Record<string, unknown> = {}) =>
+  req({
+    method: "POST",
+    url: `${base(orgId)}/${p.stagingId}/confirm`,
+    payload: { reviewHash: p.review.reviewHash, ...body },
+  });
+
+/** Uploads and confirms in the org; returns the item id after asserting the outcome. */
+async function uploaded(
+  req: Req,
+  orgId: string,
+  bytes: Uint8Array,
+  outcome: "pending" | "installed" | "updated",
+): Promise<string> {
+  const p = await prepared(req, orgId, bytes);
+  const c = await confirm(req, orgId, p);
+  expect(c.statusCode, c.body).toBe(201);
+  expect((c.json() as { outcome: string }).outcome).toBe(outcome);
+  return (c.json() as { item: { id: string } }).item.id;
+}
+
+const itemRow = (name: string) =>
+  env.db
+    .selectFrom("catalog_items")
+    .selectAll()
+    .where("name", "=", name)
+    .where("deleted_at", "is", null)
+    .executeTakeFirst();
+
+const installRow = (name: string) =>
+  env.db
+    .selectFrom("extension_installs")
+    .select(["sha256", "version", "desired_state"])
+    .where("name", "=", name)
+    .executeTakeFirst();
+
+const versionSha = async (itemId: string, version: string) =>
+  (
+    await env.db
+      .selectFrom("catalog_item_versions")
+      .select("extension_sha256")
+      .where("item_id", "=", itemId)
+      .where("version", "=", version)
+      .executeTakeFirstOrThrow()
+  ).extension_sha256;
+
+const usable = async (orgId: string) => (await usableSkills(env.db, orgId)).map((s) => s.name);
+
+const loaded = (name: string) =>
+  env.k.app
+    .get(ExtensionRegistry)
+    .manifests()
+    .some((m) => m.name === name);
+
+const imported = (name: string, version: string) =>
+  ((globalThis as { __lifeImports?: string[] }).__lifeImports ?? []).includes(`${name} ${version}`);
+
+interface AdminItem {
+  id: string;
+  name: string;
+  pending: boolean;
+  permissionsHash: string | null;
+  owner: unknown;
+  pendingVersion: string | null;
+  awaitingConfirmation: boolean;
+}
+
+/** The super admin's pending list (`GET admin/catalog/items?pending=true`). */
+async function pendingItems(): Promise<AdminItem[]> {
+  const r = await env.root({ method: "GET", url: "/api/v1/admin/catalog/items?pending=true" });
+  expect(r.statusCode, r.body).toBe(200);
+  return (r.json() as { items: AdminItem[] }).items;
+}
+
+async function digestOf(itemId: string): Promise<string> {
+  const item = (await pendingItems()).find((i) => i.id === itemId);
+  expect(item?.permissionsHash).toBeTruthy();
+  return item?.permissionsHash as string;
+}
+
+const superConfirm = (itemId: string, permissionsHash: string) =>
+  env.root({
+    method: "POST",
+    url: `/api/v1/admin/catalog/items/${itemId}/confirm`,
+    payload: { permissionsHash },
+  });
+
+const reject = (itemId: string, reason?: string) =>
+  env.root({
+    method: "POST",
+    url: `/api/v1/admin/catalog/items/${itemId}/reject`,
+    payload: reason === undefined ? {} : { reason },
+  });
+
+const withdraw = (req: Req, orgId: string, itemId: string) =>
+  req({ method: "DELETE", url: `/api/v1/orgs/${orgId}/owned-plugins/${itemId}/pending` });
+
+const notices = (orgId: string) =>
+  env.db
+    .selectFrom("org_notices")
+    .select(["kind", "detail"])
+    .where("org_id", "=", orgId)
+    .orderBy("created_at")
+    .execute();
+
+/** Org A uploads `name` 1.0.0 (extension + skill `<name>-notes`), the super admin confirms it. */
+async function confirmedV1(name: string): Promise<string> {
+  const itemId = await uploaded(
+    env.boss,
+    orgA,
+    await lifePkg({ name, version: "1.0.0", skills: [`${name}-notes`] }),
+    "pending",
+  );
+  const c = await superConfirm(itemId, await digestOf(itemId));
+  expect(c.statusCode, c.body).toBe(200);
+  await waitFor(
+    async () => (await usable(orgA)).includes(`${name}-notes`),
+    30_000,
+    `${name}-notes usable in A`,
+  );
+  return itemId;
+}
+
+/** Shares a confirmed item of org A with org B, where it is then on. */
+async function sharedWithB(itemId: string, skill: string): Promise<void> {
+  await env.db
+    .updateTable("catalog_items")
+    .set({ shareable: true, shown_to_others: true })
+    .where("id", "=", itemId)
+    .execute();
+  await env.db
+    .updateTable("platform_skills")
+    .set({ shareable: true })
+    .where("catalog_item_id", "=", itemId)
+    .execute();
+  await setScope(env, itemId, "named", [orgA, orgB]);
+  // a new scope version: the sync job of the confirm may still run under the old one's id
+  await env.db
+    .updateTable("catalog_items")
+    .set({ scope_version: sql<number>`scope_version + 1` })
+    .where("id", "=", itemId)
+    .execute();
+  await env.k.app.get(CatalogScopeService).enqueueSync(itemId);
+  await waitFor(async () => (await usable(orgB)).includes(skill), 30_000, `${skill} usable in B`);
+}
+
+describe("org uploads with an extension", { timeout: 180_000 }, () => {
+  it("first version stays pending and unusable", async () => {
+    const itemId = await uploaded(
+      env.boss,
+      orgA,
+      await lifePkg({ name: "ext-a", version: "1.0.0", skills: ["ext-a-notes"] }),
+      "pending",
+    );
+    expect(await itemRow("ext-a")).toMatchObject({
+      id: itemId,
+      owner_org_id: orgA,
+      awaiting_confirmation: true,
+      pending_version: "1.0.0",
+      pending_by: env.bossId,
+      platform_synced_version: null,
+    });
+    expect((await itemRow("ext-a"))?.pending_at).not.toBeNull();
+    // the package is stored and the name claimed; nothing installed, approved or loaded
+    expect(await versionSha(itemId, "1.0.0")).toMatch(/^[0-9a-f]{64}$/);
+    expect(await installRow("ext-a")).toBeUndefined();
+    expect(
+      await env.db
+        .selectFrom("extension_name_owners")
+        .select("package_name")
+        .where("name", "=", "ext-a")
+        .executeTakeFirst(),
+    ).toEqual({ package_name: "@test/plugin-ext-a" });
+    expect(
+      await env.db
+        .selectFrom("extension_permission_snapshots")
+        .select("plugin")
+        .where("plugin", "=", "ext-a")
+        .executeTakeFirst(),
+    ).toBeUndefined();
+    expect(loaded("ext-a")).toBe(false);
+    expect(imported("ext-a", "1.0.0")).toBe(false);
+    // no platform components, nothing usable; the scope sync and the migration job change nothing
+    const comps = () =>
+      env.db
+        .selectFrom("platform_skills")
+        .select("id")
+        .where("catalog_item_id", "=", itemId)
+        .execute();
+    expect(await comps()).toEqual([]);
+    await env.k.app.get(PluginScopeSync).process({ kind: "item", itemId });
+    await env.k.app.get(PluginScopeSync).process({ kind: "org", orgId: orgA });
+    await env.k.app.get(PlatformMigration).runOnce();
+    expect(await comps()).toEqual([]);
+    expect(await usable(orgA)).not.toContain("ext-a-notes");
+    expect(
+      await env.db
+        .selectFrom("plugin_installs")
+        .select("id")
+        .where("item_id", "=", itemId)
+        .execute(),
+    ).toEqual([]);
+    expect((await itemRow("ext-a"))?.platform_synced_version).toBeNull();
+    expect(await installRow("ext-a")).toBeUndefined();
+    // the owner sees it awaiting; another org sees nothing
+    const a = await env.boss({ method: "GET", url: `/api/v1/orgs/${orgA}/catalog` });
+    expect(
+      (a.json() as { items: { id: string; state: string }[] }).items.find((i) => i.id === itemId),
+    ).toMatchObject({ state: "awaiting_confirmation", awaitingConfirmation: true });
+    const b = await env.root({ method: "GET", url: `/api/v1/orgs/${orgB}/catalog` });
+    expect((b.json() as { items: { id: string }[] }).items.map((i) => i.id)).not.toContain(itemId);
+    // switching it on, scope edits and the generic update are refused while it waits
+    const on = await env.boss({
+      method: "PUT",
+      url: `/api/v1/orgs/${orgA}/catalog/${itemId}/switch`,
+      payload: { enabled: true },
+    });
+    expect(errorOf(on)).toEqual([409, "catalog.item_pending"]);
+    const preview = await env.root({
+      method: "POST",
+      url: `/api/v1/admin/catalog/items/${itemId}/update/preview`,
+      payload: { version: "1.0.0" },
+    });
+    expect(errorOf(preview)).toEqual([409, "catalog.item_pending"]);
+    const shown = await env.root({
+      method: "PUT",
+      url: `/api/v1/admin/catalog/items/${itemId}/shown`,
+      payload: { shownToOthers: true },
+    });
+    expect(errorOf(shown)).toEqual([409, "catalog.item_pending"]);
+    // the super admin's pending list and inbox show it as an org upload
+    expect((await pendingItems()).find((i) => i.id === itemId)).toMatchObject({
+      pending: true,
+      awaitingConfirmation: true,
+      pendingVersion: "1.0.0",
+      owner: { kind: "org", orgId: orgA, name: "Acme" },
+    });
+    const inbox = await env.root({ method: "GET", url: "/api/v1/admin/inbox" });
+    const items = (inbox.json() as { items: { type: string; id: string }[] }).items;
+    expect(items.filter((i) => i.id === itemId).map((i) => i.type)).toEqual(["org_upload_pending"]);
+    // a wrong digest is refused, nothing installed
+    expect(errorOf(await superConfirm(itemId, "0".repeat(32)))).toEqual([
+      409,
+      "extension.approval_stale",
+    ]);
+    expect(await installRow("ext-a")).toBeUndefined();
+  });
+
+  it("pending items are not dependencies", async () => {
+    await uploaded(
+      env.boss,
+      orgA,
+      await lifePkg({ name: "ext-dep", version: "1.0.0", skills: ["ext-dep-notes"] }),
+      "pending",
+    );
+    const r = await upload(
+      env.boss,
+      orgA,
+      await bundlePlugin({
+        name: "needs-ext",
+        skills: ["needs-ext"],
+        dependencies: [{ name: "ext-dep", version: "^1.0.0" }],
+      }),
+    );
+    expect(errorOf(r)).toEqual([409, "plugin.dependency_unavailable"]);
+  });
+
+  it("super admin confirm deploys it", async () => {
+    const itemId = await uploaded(
+      env.boss,
+      orgA,
+      await lifePkg({ name: "ext-c", version: "1.0.0", skills: ["ext-c-notes"] }),
+      "pending",
+    );
+    const c = await superConfirm(itemId, await digestOf(itemId));
+    expect(c.statusCode, c.body).toBe(200);
+    expect(await installRow("ext-c")).toEqual({
+      sha256: await versionSha(itemId, "1.0.0"),
+      version: "1.0.0",
+      desired_state: "enabled",
+    });
+    expect(await itemRow("ext-c")).toMatchObject({
+      awaiting_confirmation: false,
+      pending_version: null,
+      pending_by: null,
+      platform_synced_version: "1.0.0",
+    });
+    await waitFor(
+      async () => (await usable(orgA)).includes("ext-c-notes"),
+      15_000,
+      "ext-c-notes usable in A",
+    );
+    await waitFor(async () => loaded("ext-c"), 15_000, "ext-c loaded");
+    expect(await notices(orgA)).toEqual([
+      { kind: "upload_confirmed", detail: { itemId, name: "ext-c", version: "1.0.0" } },
+    ]);
+    expect((await pendingItems()).map((i) => i.id)).not.toContain(itemId);
+    // confirmed already: nothing pending
+    expect(errorOf(await superConfirm(itemId, "0".repeat(32)))).toEqual([
+      409,
+      "extension.not_pending",
+    ]);
+  });
+
+  it("every new version with an extension waits", async () => {
+    const itemId = await confirmedV1("ext-v");
+    await sharedWithB(itemId, "ext-v-notes");
+    const v1sha = await versionSha(itemId, "1.0.0");
+    await uploaded(
+      env.boss,
+      orgA,
+      await lifePkg({ name: "ext-v", version: "2.0.0", skills: ["ext-v-notes"] }),
+      "pending",
+    );
+    expect(await itemRow("ext-v")).toMatchObject({
+      awaiting_confirmation: false,
+      pending_version: "2.0.0",
+      latest_version: "2.0.0",
+      platform_synced_version: "1.0.0",
+    });
+    expect((await installRow("ext-v"))?.sha256).toBe(v1sha);
+    expect(imported("ext-v", "2.0.0")).toBe(false);
+    // the generic update route refuses the pending version (confirm it in 待确认)
+    const preview = await env.root({
+      method: "POST",
+      url: `/api/v1/admin/catalog/items/${itemId}/update/preview`,
+      payload: { version: "2.0.0" },
+    });
+    expect(errorOf(preview)).toEqual([409, "catalog.item_pending"]);
+    const update = await env.root({
+      method: "PUT",
+      url: `/api/v1/admin/catalog/items/${itemId}/update`,
+      payload: { version: "2.0.0", diffHash: "0".repeat(32) },
+    });
+    expect(errorOf(update)).toEqual([409, "catalog.item_pending"]);
+    expect((await installRow("ext-v"))?.sha256).toBe(v1sha);
+    // the super admin confirms v2: installed, the platform moves, B is told
+    const c = await superConfirm(itemId, await digestOf(itemId));
+    expect(c.statusCode, c.body).toBe(200);
+    expect((await installRow("ext-v"))?.sha256).toBe(await versionSha(itemId, "2.0.0"));
+    expect(await itemRow("ext-v")).toMatchObject({
+      pending_version: null,
+      platform_synced_version: "2.0.0",
+    });
+    expect(await notices(orgB)).toEqual([
+      {
+        kind: "shared_item_updated",
+        detail: expect.objectContaining({ name: "ext-v", from: "1.0.0", to: "2.0.0" }),
+      },
+    ]);
+    expect(
+      (await notices(orgA)).map((n) => [n.kind, (n.detail as { version: string }).version]),
+    ).toEqual([
+      ["upload_confirmed", "1.0.0"],
+      ["upload_confirmed", "2.0.0"],
+    ]);
+    await waitFor(async () => imported("ext-v", "2.0.0"), 15_000, "ext-v 2.0.0 loaded");
+  });
+
+  it("a replaced pending version is stale", async () => {
+    const itemId = await confirmedV1("ext-s");
+    await uploaded(
+      env.boss,
+      orgA,
+      await lifePkg({ name: "ext-s", version: "2.0.0", skills: ["ext-s-notes"] }),
+      "pending",
+    );
+    const d2 = await digestOf(itemId);
+    // a re-upload replaces the pending version (P3-11)
+    await uploaded(
+      env.boss,
+      orgA,
+      await lifePkg({ name: "ext-s", version: "3.0.0", skills: ["ext-s-notes"] }),
+      "pending",
+    );
+    expect((await itemRow("ext-s"))?.pending_version).toBe("3.0.0");
+    const d3 = await digestOf(itemId);
+    expect(d3).not.toBe(d2);
+    expect(errorOf(await superConfirm(itemId, d2))).toEqual([409, "extension.approval_stale"]);
+    expect((await installRow("ext-s"))?.sha256).toBe(await versionSha(itemId, "1.0.0"));
+    const c = await superConfirm(itemId, d3);
+    expect(c.statusCode, c.body).toBe(200);
+    expect((await installRow("ext-s"))?.sha256).toBe(await versionSha(itemId, "3.0.0"));
+    expect((await itemRow("ext-s"))?.platform_synced_version).toBe("3.0.0");
+  });
+
+  it("reject and withdraw", async () => {
+    const itemId = await uploaded(
+      env.boss,
+      orgA,
+      await lifePkg({ name: "ext-r", version: "1.0.0", skills: ["ext-r-notes"] }),
+      "pending",
+    );
+    const r = await reject(itemId, "Asks for too much");
+    expect(r.statusCode, r.body).toBe(204);
+    expect(await itemRow("ext-r")).toBeUndefined();
+    expect(await notices(orgA)).toEqual([
+      {
+        kind: "upload_rejected",
+        detail: { itemId, name: "ext-r", version: "1.0.0", reason: "Asks for too much" },
+      },
+    ]);
+    // the name claim is released: another org (another package) can upload the name now
+    expect(
+      await env.db
+        .selectFrom("extension_name_owners")
+        .select("package_name")
+        .where("name", "=", "ext-r")
+        .executeTakeFirst(),
+    ).toBeUndefined();
+    const other = await uploaded(
+      env.root,
+      orgB,
+      await lifePkg({ name: "ext-r", version: "1.0.0", packageName: "@b/ext-r" }),
+      "pending",
+    );
+    expect((await itemRow("ext-r"))?.owner_org_id).toBe(orgB);
+    // nothing pending -> not_pending; a platform item is the super admin's own (F11)
+    expect(errorOf(await withdraw(env.boss, orgA, other))).toEqual([404, "catalog.item_not_found"]);
+    const platformItem = await importPlugin(
+      env,
+      await lifePkg({ name: "ext-p", version: "1.0.0" }),
+    );
+    expect(errorOf(await reject(platformItem))).toEqual([409, "extension.not_pending"]);
+
+    // withdraw a pending new version: cleared, v1 keeps running, no notice
+    await env.db.deleteFrom("org_notices").execute();
+    const wId = await confirmedV1("ext-w");
+    await env.db.deleteFrom("org_notices").execute();
+    await uploaded(
+      env.boss,
+      orgA,
+      await lifePkg({ name: "ext-w", version: "2.0.0", skills: ["ext-w-notes"] }),
+      "pending",
+    );
+    expect(errorOf(await withdraw(env.mem, orgA, wId))).toEqual([403, "forbidden"]);
+    const w = await withdraw(env.boss, orgA, wId);
+    expect(w.statusCode, w.body).toBe(204);
+    expect(await itemRow("ext-w")).toMatchObject({
+      pending_version: null,
+      platform_synced_version: "1.0.0",
+    });
+    expect((await installRow("ext-w"))?.sha256).toBe(await versionSha(wId, "1.0.0"));
+    expect(await notices(orgA)).toEqual([]);
+    expect(errorOf(await withdraw(env.boss, orgA, wId))).toEqual([409, "extension.not_pending"]);
+    expect(errorOf(await reject(wId))).toEqual([409, "extension.not_pending"]);
+  });
+
+  it("extension name race", async () => {
+    const pA = await prepared(env.boss, orgA, await lifePkg({ name: "x-race", version: "1.0.0" }));
+    const pB = await prepared(
+      env.root,
+      orgB,
+      await lifePkg({ name: "x-race", version: "1.0.0", packageName: "@b/x-race" }),
+    );
+    const a = await confirm(env.boss, orgA, pA);
+    expect(a.statusCode, a.body).toBe(201);
+    const b = await confirm(env.root, orgB, pB);
+    expect(errorOf(b)).toEqual([409, "extension.name_conflict"]);
+    expect((b.json() as { error: { details: unknown[] } }).error.details).toEqual([
+      { owner: { kind: "org", orgId: orgA, name: "Acme" } },
+    ]);
+    const rows = await env.db
+      .selectFrom("catalog_items")
+      .select(["owner_org_id"])
+      .where("name", "=", "x-race")
+      .execute();
+    expect(rows).toEqual([{ owner_org_id: orgA }]);
+  });
+
+  it("a no-extension upload replaces an awaiting first version and applies at once", async () => {
+    const itemId = await uploaded(
+      env.boss,
+      orgA,
+      await lifePkg({ name: "ext-n", version: "1.0.0", skills: ["ext-n-notes"] }),
+      "pending",
+    );
+    const old = await digestOf(itemId);
+    const plain = await pluginTgz({
+      manifest: { name: "ext-n", version: "1.1.0", skills: [{ path: "./skills/ext-n-notes" }] },
+      files: { "skills/ext-n-notes/SKILL.md": SKILL_MD("ext-n-notes") },
+    });
+    const p = await prepared(env.boss, orgA, plain);
+    expect(p.update).toBeNull();
+    const c = await confirm(env.boss, orgA, p);
+    expect(c.statusCode, c.body).toBe(201);
+    expect((c.json() as { outcome: string }).outcome).toBe("installed");
+    expect(await itemRow("ext-n")).toMatchObject({
+      id: itemId,
+      awaiting_confirmation: false,
+      pending_version: null,
+      platform_synced_version: "1.1.0",
+    });
+    await waitFor(
+      async () => (await usable(orgA)).includes("ext-n-notes"),
+      15_000,
+      "ext-n-notes usable in A",
+    );
+    // nothing was installed under the claim: released; the old digest has nothing to confirm
+    expect(
+      await env.db
+        .selectFrom("extension_name_owners")
+        .select("package_name")
+        .where("name", "=", "ext-n")
+        .executeTakeFirst(),
+    ).toBeUndefined();
+    expect(errorOf(await superConfirm(itemId, old))).toEqual([409, "extension.not_pending"]);
+    expect(await installRow("ext-n")).toBeUndefined();
+  });
+});

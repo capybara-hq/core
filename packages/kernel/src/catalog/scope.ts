@@ -10,9 +10,17 @@ export type PluginScope = "all" | "optional" | "named";
 
 /**
  * The effective state of a plugin in one org. `not_offered`: a `named` item that does not list the
- * org but is shown to other orgs, which may request access (spec §5.1).
+ * org but is shown to other orgs, which may request access (spec §5.1). `awaiting_confirmation`:
+ * the org's own upload with an extension, until the super admin confirms it (ruling P3-9).
  */
-export type OrgPluginState = "on" | "off" | "needs_config" | "unavailable" | "not_offered";
+export type OrgPluginState =
+  | "on"
+  | "off"
+  | "needs_config"
+  | "unavailable"
+  | "not_offered"
+  /** The org's own upload, waiting for the super admin's confirmation (owner only, P3-9). */
+  | "awaiting_confirmation";
 
 /**
  * Whether the item should be on in the org. Builtin implies `all`: it is on unless disabled and

@@ -94,6 +94,8 @@ const ListQuery = z.object({
 });
 
 const ConfirmPermissionsBody = z.object({ permissionsHash: Hash }).strict();
+/** The reason shown to the owner org in its `upload_rejected` notice (optional). */
+const RejectBody = z.object({ reason: z.string().trim().min(1).max(1000).optional() }).strict();
 
 const Version = z.string().min(1).max(256);
 const UpdatePreviewBody = z.object({ version: Version }).strict();
@@ -115,6 +117,7 @@ class CatalogConfirmPermissionsBody extends createZodDto(
   "CatalogConfirmPermissionsBody",
 ) {}
 class CatalogShownBody extends createZodDto(ShownBody, "CatalogShownBody") {}
+class CatalogRejectBody extends createZodDto(RejectBody, "CatalogRejectBody") {}
 class CatalogDisabledBody extends createZodDto(DisabledBody, "CatalogDisabledBody") {}
 class CatalogUpdatePreviewBody extends createZodDto(
   UpdatePreviewBody,
@@ -375,7 +378,10 @@ export class AdminCatalogController {
    * Confirms the item's extension permissions (the admin's 待确认; body `{ permissionsHash }` from
    * the item view): approves the current permission set (snapshot source `web`) and installs and
    * enables an extension that was never deployed. A changed set -> 409 `extension.approval_stale`;
-   * nothing to confirm -> 409 `extension.not_pending`. Returns the item.
+   * nothing to confirm -> 409 `extension.not_pending`. Returns the item. An org's upload
+   * (`owner.kind` org, ruling P3-10): the digest of its pending version's package; a first version
+   * is installed, approved, enabled and synced, a new version applied by the platform update
+   * (the item removed meanwhile -> 409 `catalog.item_removed`, P3-21).
    */
   @Post("items/:id/confirm")
   @HttpCode(200)
@@ -391,6 +397,23 @@ export class AdminCatalogController {
       body.permissionsHash,
       actorOpts(actor),
     );
+  }
+
+  /**
+   * Rejects an org upload's pending version (ruling P3-10; body `{ reason? }`, told to the owner
+   * org in `upload_rejected`): a first version is removed (its name free again), a new version's
+   * pending state cleared. Nothing pending, or a platform item (pre-flight F11) -> 409
+   * `extension.not_pending`. 204.
+   */
+  @Post("items/:id/reject")
+  @HttpCode(204)
+  async reject(
+    @CurrentPrincipal() principal: Principal,
+    @Param("id") id: string,
+    @ZBody(CatalogRejectBody) body: z.infer<typeof RejectBody>,
+  ): Promise<void> {
+    const actor = requireUser(principal);
+    await this.scope.reject(actor.account.id, id, body.reason ?? null, actorOpts(actor));
   }
 
   /**
@@ -430,7 +453,9 @@ export class AdminCatalogController {
    * Updates the platform plugin, confirmed with the preview's `diffHash` (recomputed under the item
    * lock; a difference -> 409 `plugin.upgrade_stale`; another update running -> 409
    * `plugin.install_in_progress`). A failure undoes everything -> 502 `plugin.upgrade_failed`.
-   * Audits `plugin.platform_updated`.
+   * Audits `plugin.platform_updated`. A version an org upload waits with (or an item whose first
+   * version waits) -> 409 `catalog.item_pending`: confirm it in 待确认 (pre-flight F8); the
+   * preview answers the same.
    */
   @Put("items/:id/update")
   update(

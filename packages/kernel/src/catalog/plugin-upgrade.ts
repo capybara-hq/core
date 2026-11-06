@@ -17,7 +17,7 @@ import { blockingKeys, diffPermissions } from "../extensions/permission-set.js";
 import { ExtensionRegistry } from "../extensions/registry.js";
 import { audit } from "../identity/audit.js";
 import { SuperAdminLock } from "../identity/super-admin.js";
-import { notifySharedUpdate } from "../inbox/org-notices.js";
+import { addOrgNotice, notifySharedUpdate } from "../inbox/org-notices.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { afterCommit } from "../infra/database/after-commit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
@@ -56,6 +56,7 @@ import {
   switchOf,
 } from "./component-state.js";
 import { CatalogItemLock } from "./locks.js";
+import { itemPendingError, itemRemovedError } from "./ownership.js";
 import { PlanStale, PlatformComponents, type PreparedSync } from "./platform-components.js";
 import { catalogSkillNames, PluginInstaller } from "./plugin-install.js";
 import { PluginScopeSync } from "./scope-sync.js";
@@ -224,6 +225,12 @@ const stale = () =>
   new ApiError(
     "plugin.upgrade_stale",
     "The update preview is out of date (the catalog version, the platform components, a pin or a connector changed); preview the update again",
+  );
+/** The pending version a super admin confirms was replaced by another upload (P3-11). */
+const pendingStale = (name: string) =>
+  new ApiError(
+    "extension.approval_stale",
+    `The pending upload of ${name} changed since it was reviewed; review it again`,
   );
 const targetInvalid = (message: string, details?: unknown[]) =>
   new ApiError("plugin.upgrade_target_invalid", message, details);
@@ -408,7 +415,40 @@ export class PlatformPluginUpdater {
     }
   }
 
-  /** Runs an update confirmed with the preview's `diffHash` (see the class comment). */
+  /**
+   * The super admin's confirmation of an org upload's pending new version (rulings P3-10, P3-21,
+   * pre-flight F8): the update to `version` as {@link update} does it (the super admin's, the
+   * extension installed or upgraded on the deployment), with the version allowed although it is
+   * pending. Its transaction re-reads the item under the row lock: removed meanwhile -> 409
+   * `catalog.item_removed`, the pending version replaced -> 409 `extension.approval_stale` (both
+   * undo the extension step); then the pending state is cleared and the owner told
+   * (`upload_confirmed`). The caller checked the digest of the version's package.
+   */
+  async updateToPending(
+    actor: string,
+    itemId: string,
+    version: string,
+    opts: { actorTokenId?: string } = {},
+  ): Promise<PlatformUpdateResult> {
+    if (!UUID_RE.test(itemId)) throw itemNotFound();
+    return this.locked(itemId, async () => {
+      const d = await this.diff(itemId, version, { confirmPending: version });
+      return this.updateLocked(
+        actor,
+        itemId,
+        { version, diffHash: d.diffHash },
+        opts,
+        undefined,
+        version,
+      );
+    });
+  }
+
+  /**
+   * Runs an update confirmed with the preview's `diffHash` (see the class comment). A version an
+   * org upload waits with, or an item whose first version waits, -> 409 `catalog.item_pending`
+   * (confirmed in 待确认 instead, pre-flight F8).
+   */
   async update(
     actor: string,
     itemId: string,
@@ -425,9 +465,13 @@ export class PlatformPluginUpdater {
     input: { version: string; diffHash: string },
     opts: { actorTokenId?: string },
     owner?: OwnerMode,
+    confirmPending?: string,
   ): Promise<PlatformUpdateResult> {
     // Storage is read and written here, before any transaction (see the class comment)
-    const checked = await this.diff(itemId, input.version, owner && { owner });
+    const checked = await this.diff(itemId, input.version, {
+      ...(owner && { owner }),
+      ...(confirmPending !== undefined && { confirmPending }),
+    });
     if (checked.diffHash !== input.diffHash) throw stale();
     const prepared = await this.platform.prepareSync(itemId, input.version);
     const ext = checked.extension;
@@ -471,6 +515,7 @@ export class PlatformPluginUpdater {
         { contents: checked.contents, extension: ext },
         prepared,
         owner,
+        confirmPending,
       );
       return {
         itemId,
@@ -563,6 +608,7 @@ export class PlatformPluginUpdater {
     pre: Pre,
     prepared: PreparedSync,
     owner?: OwnerMode,
+    confirmPending?: string,
   ): Promise<UpdateDiff> {
     if (owner === undefined) await this.adminLock.lockAndAuthorize(actor);
     else await this.orgLock.lockAndAuthorize(owner.orgId, actor, "catalog.upload");
@@ -573,7 +619,24 @@ export class PlatformPluginUpdater {
       .executeTakeFirst();
     if (!named) throw itemNotFound();
     await this.itemLock.lock(named.name);
-    const diff = await this.diff(itemId, input.version, { pre, ...(owner && { owner }) });
+    let pendingOwner: string | null = null;
+    if (confirmPending !== undefined) {
+      // The super admin's confirmation (P3-21): still pending with the version they reviewed
+      const row = await this.db
+        .selectFrom("catalog_items")
+        .select(["deleted_at", "pending_version", "owner_org_id"])
+        .where("id", "=", itemId)
+        .forUpdate()
+        .executeTakeFirstOrThrow();
+      if (row.deleted_at !== null) throw itemRemovedError(named.name);
+      if (row.pending_version !== confirmPending) throw pendingStale(named.name);
+      pendingOwner = row.owner_org_id;
+    }
+    const diff = await this.diff(itemId, input.version, {
+      pre,
+      ...(owner && { owner }),
+      ...(confirmPending !== undefined && { confirmPending }),
+    });
     if (diff.diffHash !== input.diffHash) throw stale();
     const t = this.db;
 
@@ -653,15 +716,23 @@ export class PlatformPluginUpdater {
       .where("item_id", "=", itemId)
       .where("status", "in", ["installing", "installed", "upgrading"])
       .execute();
-    if (owner !== undefined) {
-      // The new version replaces a version waiting for the super admin (pre-flight F7): their
-      // confirmation of it is then refused (409 extension.not_pending)
+    if (owner !== undefined || confirmPending !== undefined) {
+      // An owner's new version replaces a version waiting for the super admin (pre-flight F7):
+      // their confirmation of it is then refused (409 extension.not_pending); the super admin's
+      // confirmation applied it
       await t
         .updateTable("catalog_items")
         .set({ pending_version: null, pending_by: null, pending_at: null })
         .where("id", "=", itemId)
         .where("pending_version", "is not", null)
         .execute();
+    }
+    if (confirmPending !== undefined && pendingOwner !== null) {
+      await addOrgNotice(t, pendingOwner, "upload_confirmed", {
+        itemId,
+        name: diff.name,
+        version: diff.to.version,
+      });
     }
     // The orgs using a shared org-owned plugin are told, one notice per plugin (a platform-owned
     // plugin tells nobody); a plugin never synced before has no version to come from
@@ -759,7 +830,7 @@ export class PlatformPluginUpdater {
   private async diff(
     itemId: string,
     version: string,
-    o: { pre?: Pre; target?: UpdateTarget; owner?: OwnerMode } = {},
+    o: { pre?: Pre; target?: UpdateTarget; owner?: OwnerMode; confirmPending?: string } = {},
   ): Promise<UpdateDiff> {
     const db = this.db;
     if (!UUID_RE.test(itemId)) throw itemNotFound();
@@ -773,10 +844,19 @@ export class PlatformPluginUpdater {
         "deleted_at",
         "platform_synced_version",
         "owner_org_id",
+        "awaiting_confirmation",
+        "pending_version",
       ])
       .where("id", "=", itemId)
       .executeTakeFirst();
     if (!item || item.deleted_at !== null) throw itemNotFound();
+    // A version waiting for the super admin applies only through their confirmation (P3-9, F8)
+    if (o.confirmPending !== version) {
+      if (item.awaiting_confirmation) throw itemPendingError(item.name);
+      if (item.pending_version !== null && item.pending_version === version) {
+        throw itemPendingError(item.name, version);
+      }
+    }
     if (o.owner !== undefined && item.owner_org_id !== o.owner.orgId) throw itemNotFound();
     if (item.disabled) {
       throw new ApiError(

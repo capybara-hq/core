@@ -76,6 +76,10 @@ export const ERROR_CODES = {
   "catalog.not_shareable": 409,
   /** The owner org cannot be removed from its own item's list (P3-17). */
   "catalog.owner_required": 409,
+  /** The item (or the version asked for) waits for the super admin's confirmation (P3-9). */
+  "catalog.item_pending": 409,
+  /** A super admin confirmation raced the item's removal (P3-21). */
+  "catalog.item_removed": 409,
   "catalog.name_conflict": 409,
   "directory.not_configured": 409,
   "catalog.item_disabled": 403,
