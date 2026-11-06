@@ -2,7 +2,7 @@ import type { PluginManifest } from "@capybara-hq/plugin-sdk";
 import { getQueueToken, OnWorkerEvent, WorkerHost } from "@nestjs/bullmq";
 import { Inject, Injectable } from "@nestjs/common";
 import type { Job, Queue, Worker } from "bullmq";
-import type { KernelSchemaDb } from "../db/kernel-schema.js";
+import type { KernelSchemaDb, ScopeSyncOp } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { ExtensionRegistry } from "../extensions/registry.js";
 import { audit } from "../identity/audit.js";
@@ -34,11 +34,13 @@ import { ScopeNoLongerWanted, ScopeStillWanted } from "./scope-state.js";
  * The decision is made outside the org row lock; the installer re-checks the scope under it for a
  * `via: "scope"` install or uninstall, so a person's switch committed meanwhile wins.
  * The sync writes no switch row: those record people's choices. Builtin items are left alone (on
- * everywhere through their required extension). An install or uninstall failure is logged,
- * audited `plugin.scope_sync_failed`, kept as the pair's open failure (`plugin_scope_sync_failures`,
- * the super admin's inbox, until a later sync of the pair does not fail) and not retried until the
- * next enqueue; every worker start enqueues every live item once
- * ({@link PluginScopeSync.enqueueAll}), which also catches a lost enqueue.
+ * everywhere through their required extension). A failed install, uninstall or dependency install
+ * is logged, audited `plugin.scope_sync_failed`, kept as the pair's open failure
+ * (`plugin_scope_sync_failures`, the super admin's inbox, until a later sync of the pair does not
+ * fail) and not retried until the next enqueue. An error outside those steps (a read, the failure
+ * write itself) ends the attempt without touching the pair's row, so an older failure stays open.
+ * Every worker start enqueues every live item once ({@link PluginScopeSync.enqueueAll}), which
+ * also catches a lost enqueue.
  *
  * Jobs (queue {@link PLUGIN_SCOPE_QUEUE}): one per item and scope version
  * (`scope-item-<itemId>-<scope_version>`, every org), one per org (`scope-org-<orgId>`, every item,
@@ -186,7 +188,8 @@ export class PluginScopeSync {
 
   /**
    * {@link syncLocked} plus the pair's open failure (`plugin_scope_sync_failures`, the super
-   * admin's inbox): an attempt that failed records it, any other attempt clears it.
+   * admin's inbox): an attempt that failed records it, any other attempt clears it. An attempt
+   * that throws (outside the recorded steps) leaves the row as it was.
    */
   private async syncRecorded(itemId: string, orgId: string): Promise<ScopeSyncResult> {
     const attempt = { failed: false };
@@ -250,7 +253,7 @@ export class PluginScopeSync {
           try {
             await this.installer.addMissingDependencies(orgId, live.id);
           } catch (e) {
-            await this.failed(orgId, itemId, "install", e, attempt);
+            await this.failed(orgId, itemId, "dependencies", e, attempt);
           }
         }
         return "unchanged";
@@ -391,7 +394,7 @@ export class PluginScopeSync {
   private async failed(
     orgId: string,
     itemId: string,
-    op: "install" | "uninstall",
+    op: ScopeSyncOp,
     e: unknown,
     attempt: { failed: boolean },
   ): Promise<void> {
@@ -406,7 +409,7 @@ export class PluginScopeSync {
   private async recordFailure(
     orgId: string,
     itemId: string,
-    op: "install" | "uninstall",
+    op: ScopeSyncOp,
     code: string,
     message: string,
   ): Promise<void> {

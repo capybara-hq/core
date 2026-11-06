@@ -1112,13 +1112,19 @@ export interface OrgNoticesTable {
 }
 
 /**
+ * 0082: what a failed scope sync attempt was doing: turning the plugin on, off, or installing the
+ * dependencies a platform update added to a live install.
+ */
+export type ScopeSyncOp = "install" | "uninstall" | "dependencies";
+
+/**
  * 0082: an open failure of the plugin scope sync for one (item, org): its last attempt failed; the
  * next sync of the pair that does not fail deletes the row.
  */
 export interface PluginScopeSyncFailuresTable {
   item_id: string;
   org_id: string;
-  op: "install" | "uninstall";
+  op: ScopeSyncOp;
   /** The `ApiError` code, else `internal`. */
   code: string;
   message: string;

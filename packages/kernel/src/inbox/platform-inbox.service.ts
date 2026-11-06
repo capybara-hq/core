@@ -1,11 +1,9 @@
 import type { LocalizedName } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
+import { sql } from "kysely";
 import { type CatalogItemView, CatalogService } from "../catalog/catalog.service.js";
-import {
-  CATALOG_REQUESTS_LIST_MAX,
-  CatalogRequestsService,
-  type CatalogRequestView,
-} from "../catalog/requests.service.js";
+import { CatalogRequestsService, type CatalogRequestView } from "../catalog/requests.service.js";
+import type { ScopeSyncOp } from "../db/kernel-schema.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 
 /** The most items one platform inbox read returns. */
@@ -22,13 +20,14 @@ export const MIGRATION_RUN_STUCK_MS = 60 * 60_000;
 const LIVE_INSTALL = ["installing", "installed", "upgrading"] as const;
 
 /**
- * An open failure of the plugin scope sync: its last attempt to install the plugin in the org (or
- * to uninstall it) failed, and the org still differs from the scope in that direction.
+ * An open failure of the plugin scope sync: its last attempt to install the plugin in the org, to
+ * uninstall it, or to install the dependencies a platform update added (`dependencies`) failed,
+ * and the org still differs from the scope in that direction.
  */
 export interface ScopeSyncFailureView {
   item: { id: string; name: string; displayName: LocalizedName | null };
   org: { id: string; name: string };
-  op: "install" | "uninstall";
+  op: ScopeSyncOp;
   /** The error code (`internal` for an unexpected error) and its message. */
   code: string;
   message: string;
@@ -64,10 +63,14 @@ export type PlatformInboxItem =
   | { type: "scope_sync_failed"; id: string; createdAt: string; failure: ScopeSyncFailureView }
   | { type: "platform_migration"; id: string; createdAt: string; run: MigrationRunView };
 
-/** `GET /admin/inbox`: newest first, at most {@link PLATFORM_INBOX_MAX_ITEMS}; `truncated`: more. */
+/**
+ * `GET /admin/inbox`: newest first, at most {@link PLATFORM_INBOX_MAX_ITEMS}; `truncated`: more;
+ * `total`: how many items wait in all (also `GET /admin/inbox/count`).
+ */
 export interface PlatformInboxView {
   items: PlatformInboxItem[];
   truncated: boolean;
+  total: number;
 }
 
 /**
@@ -80,16 +83,21 @@ export interface PlatformInboxView {
 export class PlatformInboxService {
   constructor(
     @Inject(CatalogRequestsService)
-    private readonly requests: Pick<CatalogRequestsService, "listDeployment">,
+    private readonly requests: Pick<
+      CatalogRequestsService,
+      "listDeployment" | "countPendingDeployment"
+    >,
     @Inject(CatalogService) private readonly catalog: Pick<CatalogService, "list">,
     @Inject(KernelDb) private readonly kdb: KernelDb,
   ) {}
 
   async list(): Promise<PlatformInboxView> {
-    const [requests, pending, failures, run] = await Promise.all([
+    const [requests, requestCount, pending, failures, failureCount, run] = await Promise.all([
       this.requests.listDeployment(),
+      this.requests.countPendingDeployment(),
       this.catalog.list({ pending: true }),
       this.scopeSyncFailures(),
+      this.countScopeSyncFailures(),
       this.migrationRun(),
     ]);
     const all: PlatformInboxItem[] = [
@@ -140,36 +148,36 @@ export class PlatformInboxService {
             ? 1
             : 0,
     );
-    const full =
-      requests.length >= CATALOG_REQUESTS_LIST_MAX ||
-      failures.length >= SCOPE_SYNC_FAILURES_LIST_MAX;
-    return {
-      items: all.slice(0, PLATFORM_INBOX_MAX_ITEMS),
-      truncated: full || all.length > PLATFORM_INBOX_MAX_ITEMS,
-    };
+    const total = requestCount + pending.length + failureCount + (run === null ? 0 : 1);
+    const items = all.slice(0, PLATFORM_INBOX_MAX_ITEMS);
+    return { items, truncated: total > items.length, total };
   }
 
   /**
-   * The open scope sync failures of live items and orgs whose pair still differs from the scope in
-   * the failed direction (a person may have converged it meanwhile): an install failure while the
-   * org has no live install of the item, an uninstall failure while it has one. Newest first.
+   * How many items wait (the sidebar's count): the same sources, counted where they can be (the
+   * requests and the failures; the permission confirmations are the catalog's pending list).
    */
-  private async scopeSyncFailures(): Promise<ScopeSyncFailureView[]> {
-    const rows = await this.kdb.db
+  async count(): Promise<number> {
+    const [requests, pending, failures, run] = await Promise.all([
+      this.requests.countPendingDeployment(),
+      this.catalog.list({ pending: true }),
+      this.countScopeSyncFailures(),
+      this.migrationRun(),
+    ]);
+    return requests + pending.length + failures + (run === null ? 0 : 1);
+  }
+
+  /**
+   * The open failures still worth a look, joined to their item and org: of a live item and org,
+   * and the pair still differs in the failed direction (a person may have converged it meanwhile):
+   * an install failure while the org has no live install of the item; an uninstall or dependencies
+   * failure while it has one.
+   */
+  private failureRows() {
+    return this.kdb.db
       .selectFrom("plugin_scope_sync_failures as f")
       .innerJoin("catalog_items as i", "i.id", "f.item_id")
       .innerJoin("orgs as o", "o.id", "f.org_id")
-      .select([
-        "f.item_id",
-        "i.name as item_name",
-        "i.display_name",
-        "f.org_id",
-        "o.name as org_name",
-        "f.op",
-        "f.code",
-        "f.message",
-        "f.failed_at",
-      ])
       .where("i.deleted_at", "is", null)
       .where("o.deleted_at", "is", null)
       .where((eb) => {
@@ -183,9 +191,32 @@ export class PlatformInboxService {
         );
         return eb.or([
           eb.and([eb("f.op", "=", "install"), eb.not(live)]),
-          eb.and([eb("f.op", "=", "uninstall"), live]),
+          eb.and([eb("f.op", "in", ["uninstall", "dependencies"]), live]),
         ]);
-      })
+      });
+  }
+
+  private async countScopeSyncFailures(): Promise<number> {
+    const r = await this.failureRows()
+      .select(sql<string>`count(*)`.as("n"))
+      .executeTakeFirstOrThrow();
+    return Number(r.n);
+  }
+
+  /** The open scope sync failures ({@link failureRows}), newest first. */
+  private async scopeSyncFailures(): Promise<ScopeSyncFailureView[]> {
+    const rows = await this.failureRows()
+      .select([
+        "f.item_id",
+        "i.name as item_name",
+        "i.display_name",
+        "f.org_id",
+        "o.name as org_name",
+        "f.op",
+        "f.code",
+        "f.message",
+        "f.failed_at",
+      ])
       .orderBy("f.failed_at", "desc")
       .orderBy("f.item_id")
       .orderBy("f.org_id")

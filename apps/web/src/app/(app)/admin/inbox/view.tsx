@@ -20,7 +20,11 @@ import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { NoAccess } from "../../../../components/NoAccess";
 import { usePagePath } from "../../../../components/shell/path";
 import { useRouter } from "../../../../i18n/navigation";
-import { type PlatformInboxItem, platformInboxHref } from "../../../../lib/admin-inbox";
+import {
+  type PlatformInboxItem,
+  type PlatformInboxView,
+  platformInboxHref,
+} from "../../../../lib/admin-inbox";
 import {
   displayNameOf,
   requesterOf,
@@ -59,7 +63,7 @@ function AdminInbox({
   inbox,
 }: {
   /** `null` while it loads. */
-  inbox: { items: PlatformInboxItem[]; truncated: boolean } | null;
+  inbox: PlatformInboxView | null;
 }) {
   const scope = usePagePath("admin");
   const t = useTranslations("admin.inbox");
@@ -69,7 +73,8 @@ function AdminInbox({
   const [activeId, setActiveId] = useState<string>();
   const active = rows.find((i) => i.id === activeId) ?? rows[0];
   // Nothing while the inbox loads (not "0 pending")
-  useStatusBar(inbox === null ? null : `· ${t("pendingCount", { n: rows.length })}`);
+  // The total, not the shown rows: the list stops at 100
+  useStatusBar(inbox === null ? null : `· ${t("pendingCount", { n: inbox.total })}`);
 
   const columns: Column<PlatformInboxItem>[] = [
     {
@@ -116,7 +121,7 @@ function AdminInbox({
       header={{
         ...header,
         description: t("description"),
-        count: `${rows.length}${inbox.truncated ? "+" : ""}`,
+        count: `${inbox.total}`,
       }}
       {...(rows.length === 0 ? { empty: { text: t("empty"), hint: t("emptyHint") } } : {})}
       list={

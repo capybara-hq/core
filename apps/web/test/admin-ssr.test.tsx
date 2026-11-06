@@ -245,7 +245,9 @@ const ROUTES: Routes = {
         },
       ],
       truncated: false,
+      total: 2,
     }),
+  "GET /api/v1/admin/inbox/count": () => json(200, { total: 2 }),
   "GET /api/v1/admin/overview": () =>
     json(200, { extensionsNeedingAction: 3, catalogRequestsPending: 1, orgs: 2, accounts: 7 }),
   "GET /api/v1/admin/accounts": () =>
@@ -684,9 +686,20 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
   it("/admin/inbox: an empty inbox is the template's empty state", async () => {
     await renderRouteWithCache("/admin/inbox", {
       ...ROUTES,
-      "GET /api/v1/admin/inbox": () => json(200, { items: [], truncated: false }),
+      "GET /api/v1/admin/inbox": () => json(200, { items: [], truncated: false, total: 0 }),
     });
     expect(screen.getByText(en.admin.inbox.empty)).toBeTruthy();
+  });
+
+  it("/admin/inbox: a truncated inbox counts the total, not the shown rows", async () => {
+    const full = await ROUTES["GET /api/v1/admin/inbox"]?.({} as never);
+    const body = (await (full as Response).json()) as { items: unknown[] };
+    await renderRouteWithCache("/admin/inbox", {
+      ...ROUTES,
+      "GET /api/v1/admin/inbox": () => json(200, { ...body, truncated: true, total: 150 }),
+    });
+    expect(screen.getByText(en.admin.inbox.truncated)).toBeTruthy();
+    expect(screen.getByText("150")).toBeTruthy();
   });
 
   it("/admin/plugins/pending: a first render from the hydrated cache makes no browser read", async () => {

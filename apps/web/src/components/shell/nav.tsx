@@ -5,7 +5,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { useCallback } from "react";
 import { useRouter } from "../../i18n/navigation";
-import { adminInboxQuery } from "../../lib/query/admin";
+import { adminInboxCountQuery } from "../../lib/query/admin";
 import { retryOnMountOf } from "../../lib/query/client";
 import { keys } from "../../lib/query/keys";
 import { extensionPagesQuery, inboxCountQuery } from "../../lib/query/shell";
@@ -191,19 +191,20 @@ export function usePendingApprovals(orgId: string): {
 }
 
 /**
- * The super admin's inbox count for the admin sidebar's 收件箱 item (`GET /admin/inbox`, the page's
- * own query): read again every 30 s while `enabled` (under `/admin`); undefined while it loads,
- * when the read failed or when not enabled.
+ * The super admin's inbox count for the admin sidebar's 收件箱 item (`GET /admin/inbox/count`, a
+ * number rather than the page's items, so it is not capped at the page's 100): read again every
+ * 30 s while `enabled` (under `/admin`); undefined while it loads, when the read failed or when not
+ * enabled. The sidebar draws a count above 99 as `99+`.
  */
 export function useAdminInboxCount(enabled: boolean): number | undefined {
-  const query = adminInboxQuery();
+  const query = adminInboxCountQuery();
   const { data } = useQuery({
     ...query,
     enabled,
     retryOnMount: retryOnMountOf(query.queryKey),
     refetchInterval: enabled ? PENDING_POLL_MS : false,
   });
-  return enabled ? data?.items.length : undefined;
+  return enabled ? data?.total : undefined;
 }
 
 /** 插件页面的路由：`/p/<插件>/<贡献 id>`。 */

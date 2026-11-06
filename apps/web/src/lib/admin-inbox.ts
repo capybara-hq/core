@@ -2,13 +2,14 @@ import { apiFetch } from "./api";
 import type { CatalogItem, CatalogRequest, LocalizedName } from "./catalog";
 
 /**
- * An open failure of the plugin scope sync: its last attempt to turn the plugin on in the org (or
- * off) failed, and the org still differs from the plugin's scope.
+ * An open failure of the plugin scope sync: its last attempt to turn the plugin on in the org, off,
+ * or to install the dependencies a platform update added (`dependencies`) failed, and the org
+ * still differs from the plugin's scope.
  */
 export interface ScopeSyncFailure {
   item: { id: string; name: string; displayName: LocalizedName | null };
   org: { id: string; name: string };
-  op: "install" | "uninstall";
+  op: "install" | "uninstall" | "dependencies";
   code: string;
   message: string;
   failedAt: string;
@@ -29,8 +30,8 @@ export interface MigrationRun {
 
 /**
  * The super admin's inbox (kernel `GET /api/v1/admin/inbox`, `inbox/platform-inbox.service.ts`):
- * what waits on the platform, newest first, at most 100 (`truncated`: more). Nothing is decided
- * here: each item links to the page where it is acted on.
+ * what waits on the platform, newest first, at most 100 (`truncated`: more; `total`: how many in
+ * all). Nothing is decided here: each item links to the page where it is acted on.
  */
 export type PlatformInboxItem =
   | { type: "catalog_request"; id: string; createdAt: string; request: CatalogRequest }
@@ -41,14 +42,18 @@ export type PlatformInboxItem =
 export interface PlatformInboxView {
   items: PlatformInboxItem[];
   truncated: boolean;
+  total: number;
 }
 
 export const getPlatformInbox = () => apiFetch<PlatformInboxView>("/api/v1/admin/inbox");
 
+/** How many items wait in the super admin's inbox (`GET /admin/inbox/count`). */
+export const getPlatformInboxCount = () => apiFetch<{ total: number }>("/api/v1/admin/inbox/count");
+
 /**
  * Where an item is acted on: requests and permission confirmations in the admin 插件 page's
- * 待确认 tab, a failed scope sync on its plugin's page (scope and orgs), a migration run on the
- * plugin list.
+ * 待确认 tab, a failed scope sync on its plugin's page (a scope change there syncs it again), a
+ * migration run on the plugin list.
  */
 export function platformInboxHref(item: PlatformInboxItem): string {
   switch (item.type) {

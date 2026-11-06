@@ -202,7 +202,8 @@
       "pinned_conflict": "This reply did not start because the agent's pinned skills changed meanwhile. Send the message again."
     },
     "component": {
-      "not_found": "The component does not exist or was removed."
+      "not_found": "The component does not exist or was removed.",
+      "version_stale": "The component changed meanwhile. Upload it again."
     },
     "connector": {
       "not_found": "The connector does not exist or has been removed.",
@@ -2402,13 +2403,15 @@
         "label": "Scope sync failed",
         "op": {
           "install": "Not turned on",
-          "uninstall": "Not turned off"
+          "uninstall": "Not turned off",
+          "dependencies": "Dependencies not installed"
         },
         "code": "Error code",
         "message": "Message",
         "hint": {
-          "install": "The plugin's scope turns it on in {org}, but the sync failed. Once the cause is fixed (a name clash, for example), changing the plugin's scope or a worker restart syncs it again.",
-          "uninstall": "The plugin's scope turns it off in {org}, but the sync failed. Once the cause is fixed, changing the plugin's scope or a worker restart syncs it again."
+          "install": "The plugin's scope turns it on in {org}, but the sync failed. It is tried again the next time this plugin and organization sync: once the cause is fixed, changing the plugin's scope on its page or a worker restart syncs it again (saving an unchanged scope does not).",
+          "uninstall": "The plugin's scope turns it off in {org}, but the sync failed. It is tried again the next time this plugin and organization sync: once the cause is fixed, changing the plugin's scope on its page or a worker restart syncs it again (saving an unchanged scope does not).",
+          "dependencies": "The plugin is on in {org}, but a dependency a platform update added could not be installed. It is tried again the next time this plugin and organization sync: once the cause is fixed (import a version the dependency range accepts, for example), changing the plugin's scope on its page or a worker restart syncs it again (saving an unchanged scope does not)."
         }
       },
       "migration": {

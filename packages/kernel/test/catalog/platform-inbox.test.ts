@@ -43,7 +43,25 @@ interface Item {
   [k: string]: unknown;
 }
 
-async function inbox(): Promise<{ items: Item[]; truncated: boolean }> {
+async function count(): Promise<number> {
+  const r = await env.root({ method: "GET", url: "/api/v1/admin/inbox/count" });
+  expect(r.statusCode, r.body).toBe(200);
+  return (r.json() as { total: number }).total;
+}
+
+const failureRows = () =>
+  env.db.selectFrom("plugin_scope_sync_failures").select(["item_id", "op"]).execute();
+
+const liveIn = async (itemId: string): Promise<boolean> =>
+  (await env.db
+    .selectFrom("plugin_installs")
+    .select("id")
+    .where("org_id", "=", env.orgId)
+    .where("item_id", "=", itemId)
+    .where("status", "in", ["installing", "installed", "upgrading"])
+    .executeTakeFirst()) !== undefined;
+
+async function inbox(): Promise<{ items: Item[]; truncated: boolean; total: number }> {
   const r = await env.root({ method: "GET", url: "/api/v1/admin/inbox" });
   expect(r.statusCode, r.body).toBe(200);
   return r.json();
@@ -55,7 +73,11 @@ describe("platform inbox", { timeout: 90_000 }, () => {
   it("is for super admins only, and empty when nothing waits", async () => {
     expect((await env.boss({ method: "GET", url: "/api/v1/admin/inbox" })).statusCode).toBe(403);
     expect((await env.mem({ method: "GET", url: "/api/v1/admin/inbox" })).statusCode).toBe(403);
-    expect(await inbox()).toEqual({ items: [], truncated: false });
+    expect(await inbox()).toEqual({ items: [], truncated: false, total: 0 });
+    expect(await count()).toBe(0);
+    expect((await env.boss({ method: "GET", url: "/api/v1/admin/inbox/count" })).statusCode).toBe(
+      403,
+    );
   });
 
   it("lists an org's access request until it is decided", async () => {
@@ -211,5 +233,107 @@ describe("platform inbox", { timeout: 90_000 }, () => {
       .values({ id: randomUUID(), started_at: new Date(now - 60_000) })
       .execute();
     expect(await ofType("platform_migration")).toEqual([]);
+  });
+  it("a dependency a platform update added that fails to install is listed until it installs", async () => {
+    const depId = await seedPlugin(env, { name: "depb", skills: ["depb-skill"], templates: false });
+    const itemId = await seedPlugin(env, {
+      name: "depa",
+      skills: ["depa-skill"],
+      templates: false,
+    });
+    await setScope(env, itemId, "named", [env.orgId]);
+    const sync = env.k.app.get(PluginScopeSync);
+    expect(await sync.syncPair(itemId, env.orgId)).toBe("installed");
+    // a platform update adds a dependency no imported version satisfies yet
+    const v = await env.db
+      .selectFrom("catalog_item_versions")
+      .select("manifest")
+      .where("item_id", "=", itemId)
+      .executeTakeFirstOrThrow();
+    await env.db
+      .updateTable("catalog_item_versions")
+      .set({
+        manifest: JSON.stringify({
+          ...(v.manifest as Record<string, unknown>),
+          dependencies: [{ name: "depb", version: "^2.0.0" }],
+        }),
+      })
+      .where("item_id", "=", itemId)
+      .execute();
+    expect(await sync.syncPair(itemId, env.orgId)).toBe("unchanged");
+    expect(await liveIn(depId)).toBe(false);
+    expect(await ofType("scope_sync_failed")).toEqual([
+      expect.objectContaining({
+        id: `${itemId}/${env.orgId}`,
+        failure: expect.objectContaining({
+          op: "dependencies",
+          code: "catalog.dependency_unresolved",
+        }),
+      }),
+    ]);
+    expect(await count()).toBe(1);
+    // the version is imported: the next sync installs the dependency and clears the failure
+    await seedPlugin(env, {
+      name: "depb",
+      skills: ["depb-skill"],
+      templates: false,
+      version: "2.0.0",
+      addTo: depId,
+    });
+    expect(await sync.syncPair(itemId, env.orgId)).toBe("unchanged");
+    expect(await liveIn(depId)).toBe(true);
+    expect(await ofType("scope_sync_failed")).toEqual([]);
+    expect(await failureRows()).toEqual([]);
+    // the dependency re-sync after an uninstall clears the dependency's own open failure too
+    await env.db
+      .insertInto("plugin_scope_sync_failures")
+      .values({
+        item_id: depId,
+        org_id: env.orgId,
+        op: "uninstall",
+        code: "internal",
+        message: "x",
+      })
+      .execute();
+    expect(await ofType("scope_sync_failed")).toHaveLength(1);
+    await setScope(env, itemId, "named", []);
+    expect(await sync.syncPair(itemId, env.orgId)).toBe("removed");
+    expect(await liveIn(depId)).toBe(false);
+    expect(await failureRows()).toEqual([]);
+  });
+
+  it("truncates at 100 items, with the total and the count", async () => {
+    const ids = Array.from({ length: 101 }, () => randomUUID());
+    await env.db
+      .insertInto("catalog_items")
+      .values(
+        ids.map((id, i) => ({
+          id,
+          name: `bulk-${i}`,
+          package_name: `@acme/plugin-bulk-${i}`,
+          publisher: "Acme",
+          description: "bulk",
+          latest_version: "1.0.0",
+          policy: "allow" as const,
+        })),
+      )
+      .execute();
+    await env.db
+      .insertInto("plugin_scope_sync_failures")
+      .values(
+        ids.map((id) => ({
+          item_id: id,
+          org_id: env.orgId,
+          op: "install" as const,
+          code: "internal",
+          message: "boom",
+        })),
+      )
+      .execute();
+    const r = await inbox();
+    expect(r.items).toHaveLength(100);
+    expect(r.truncated).toBe(true);
+    expect(r.total).toBe(101);
+    expect(await count()).toBe(101);
   });
 });
