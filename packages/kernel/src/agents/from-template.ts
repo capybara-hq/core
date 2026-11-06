@@ -521,6 +521,19 @@ export async function planFromTemplate(
     }
   }
 
+  // `disallowedTools` naming a bound connector's tool narrows that connector (P4-5)
+  for (let i = tools.length - 1; i >= 0; i--) {
+    const r = tools[i];
+    if (r?.kind !== "connector") continue;
+    const c = slugs.get(r.connectorId);
+    if (!c) continue;
+    const names = r.tools === "all" ? c.tools : r.tools;
+    const kept = names.filter((n) => !disallowed.has(connectorToolKey(c.slug, n)));
+    if (kept.length === names.length) continue;
+    if (kept.length === 0) tools.splice(i, 1);
+    else tools[i] = { ...r, tools: kept };
+  }
+
   // the tool keys the agent has, for policies and inline allowlists
   const keys = new Set<string>();
   for (const r of tools) {
@@ -544,9 +557,8 @@ export async function planFromTemplate(
     for (const k of x.tools) {
       if (!keys.has(k)) dropped.push(`subagents.inline.${x.name}.tools.${k}`);
     }
-    // nothing left of an allowlist: the sub-agent gets no tool rather than all of them
-    x.tools = kept.length > 0 ? kept : [];
-    if (x.tools.length === 0) delete x.tools;
+    // nothing left of an allowlist: an empty one (no tool) rather than none (all the agent's)
+    x.tools = kept;
   }
 
   const definition: PlannedDefinition = {

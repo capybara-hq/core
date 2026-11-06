@@ -412,6 +412,56 @@ describe("creating an agent from a template", () => {
     expect(agent.ownerAccountId).toBe(env.memId);
   });
 
+  it("narrows a bound connector by disallowedTools", async () => {
+    const itemId = await catalogItem("crm");
+    const ct = await connectorTemplate(itemId, "gh");
+    const conn = await connector("gh", ["search", "delete_all"], ct);
+    const id = await platformTemplate(
+      tpl({ connectors: [{ template: "gh" }], disallowedTools: ["mcp__gh__delete_all"] }),
+      { plugin: "crm", itemId },
+    );
+    const { agent } = await createOk(env.boss, id);
+    expect(agent.definition.tools).toContainEqual({
+      kind: "connector",
+      connectorId: conn,
+      tools: ["search"],
+    });
+  });
+
+  it("keeps an inline allowlist narrow when none of its tools carry over", async () => {
+    const id = await platformTemplate(
+      tpl({
+        tools: ["Read"],
+        subagents: {
+          inline: [
+            {
+              name: "web",
+              description: "Web.",
+              instructions: "Go.",
+              tools: ["WebFetch"],
+              skills: [],
+              model: "inherit",
+            },
+            {
+              name: "any",
+              description: "Any.",
+              instructions: "Go.",
+              tools: [],
+              skills: [],
+              model: "inherit",
+            },
+          ],
+        },
+      }),
+    );
+    const { agent, preview: p } = await createOk(env.mem, id);
+    expect(p.dropped).toContain("subagents.inline.web.tools.WebFetch");
+    expect(agent.definition.subagents?.inline?.map((x) => [x.name, x.tools ?? null])).toEqual([
+      ["web", []],
+      ["any", null],
+    ]);
+  });
+
   it("chooses the model: modelRef, then the tier's purpose, then the default (P4-4)", async () => {
     const plain = await platformTemplate(tpl());
     expect((await preview(env.mem, plain)).model).toEqual({
