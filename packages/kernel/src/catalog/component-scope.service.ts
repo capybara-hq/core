@@ -5,6 +5,7 @@ import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
 import { SuperAdminLock } from "../identity/super-admin.js";
+import { notifyItemShared } from "../inbox/org-notices.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
@@ -36,6 +37,7 @@ import {
   assertOwnerListed,
   assertShareable,
   assertShareableTarget,
+  newlySharedWith,
   type Owner,
   ownerOf,
   ownersOf,
@@ -682,6 +684,7 @@ export class ComponentScopeService {
     if (p.scopeHash !== hash) throw staleError();
     if (p.conflicts.length > 0) throw nameConflictError(p.conflicts);
     if (c.scopeMode === t.scopeMode && c.scope === t.scope && from.join() === t.orgs.join()) return;
+    const before = await this.effectiveScope(c, from);
     await this.db
       .updateTable(TABLE[kind] as "platform_skills")
       .set({
@@ -702,6 +705,13 @@ export class ComponentScopeService {
         .insertInto("component_scope_orgs")
         .values(t.orgs.map((org_id) => ({ kind, component_id: id, org_id })))
         .execute();
+    }
+    // An own scope that newly shows an org-owned component tells its owner (P3-22)
+    if (t.scopeMode === "own" && kind !== "connector_template") {
+      const shared = newlySharedWith(before, t);
+      if (shared === "all_orgs" || shared.length > 0) {
+        await notifyItemShared(this.db, c.ownerOrgId, { kind, id }, c.name, shared);
+      }
     }
     await audit(this.db, {
       actorAccountId: actor,

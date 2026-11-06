@@ -7,6 +7,7 @@ import { ExtensionAdminOps } from "../extensions/admin-ops.js";
 import { ExtensionAdmin } from "../extensions/admin-view.js";
 import { audit } from "../identity/audit.js";
 import { SuperAdminLock } from "../identity/super-admin.js";
+import { notifyItemShared } from "../inbox/org-notices.js";
 import { afterCommit } from "../infra/database/after-commit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
@@ -29,7 +30,12 @@ import {
   skillNameClashes,
   switchOf,
 } from "./component-state.js";
-import { assertOwnerListed, assertShareable, assertShareableTarget } from "./ownership.js";
+import {
+  assertOwnerListed,
+  assertShareable,
+  assertShareableTarget,
+  newlySharedWith,
+} from "./ownership.js";
 import { type PluginConfirmResult, PluginImport } from "./plugin-import.js";
 import { PluginInstaller } from "./plugin-install.js";
 import { type PluginScope, wantedOn } from "./scope.js";
@@ -369,6 +375,16 @@ export class CatalogScopeService {
         .insertInto("catalog_item_scope_orgs")
         .values(t.orgs.map((org_id) => ({ item_id: itemId, org_id })))
         .execute();
+    }
+    const shared = newlySharedWith({ scope: item.scope, orgs: from }, t);
+    if (shared === "all_orgs" || shared.length > 0) {
+      await notifyItemShared(
+        this.db,
+        item.owner_org_id,
+        { kind: "plugin", id: itemId },
+        item.name,
+        shared,
+      );
     }
     await audit(this.db, {
       actorAccountId: actor,

@@ -18,27 +18,34 @@ import {
   ApprovalsService,
   type ApprovalView,
 } from "../tools/approvals.service.js";
+import type { OrgNoticeDetails } from "./org-notices.js";
 
 /** The most open org notices one inbox read returns. */
 export const ORG_NOTICES_LIST_MAX = 100;
 
-/**
- * A notice for the org's admins (`org_notices`), shown until one of them dismisses it:
- * `skill_renamed` (the platform components migration renamed an org skill whose name a platform
- * skill on in the org has; agents keep it, by id).
- */
-export interface OrgNoticeView {
-  id: string;
-  kind: "skill_renamed";
-  createdAt: string;
-  skillRenamed: {
-    skillId: string;
-    from: string;
-    to: string;
-    platformSkillId: string;
-    plugin: string | null;
-  };
+/** The skill the platform components migration renamed (`skill_renamed`). */
+export interface SkillRenamedDetail {
+  skillId: string;
+  from: string;
+  to: string;
+  platformSkillId: string;
+  plugin: string | null;
 }
+
+/**
+ * A notice for the org's admins (`org_notices`), shown until one of them dismisses it; `kind`
+ * picks the detail field that is set:
+ * - `skill_renamed` (`skillRenamed`): the platform components migration renamed an org skill whose
+ *   name a platform skill on in the org has; agents keep it, by id;
+ * - `item_shared`, `shared_item_updated`, `upload_confirmed`, `upload_rejected` (`detail`): the
+ *   shapes of {@link OrgNoticeDetails} (plugin scope phase 3, P3-22).
+ */
+export type OrgNoticeView = { id: string; createdAt: string } & (
+  | { kind: "skill_renamed"; skillRenamed: SkillRenamedDetail }
+  | {
+      [K in keyof OrgNoticeDetails]: { kind: K; detail: OrgNoticeDetails[K] };
+    }[keyof OrgNoticeDetails]
+);
 
 /** 收件箱一次最多返回的事项数。 */
 export const INBOX_MAX_ITEMS = 100;
@@ -51,8 +58,9 @@ export const INBOX_MAX_ITEMS = 100;
  *   admin (M6 T26, C22; plugin scope spec §5.1);
  * - `catalog_request_decided`: the current user's own requests in this org that were approved or
  *   rejected (with the reason), until dismissed (`POST catalog-requests/:id/dismiss`);
- * - `skill_renamed`: for org admins, an org skill the platform components migration renamed,
- *   until an admin dismisses it (`POST inbox/notices/:id/dismiss`).
+ * - the org notices (`skill_renamed`, `item_shared`, `shared_item_updated`, `upload_confirmed`,
+ *   `upload_rejected`; `type` = the notice's kind): for org admins, until one dismisses it
+ *   (`POST inbox/notices/:id/dismiss`).
  */
 export type InboxItem =
   | { type: "tool_approval"; id: string; createdAt: string; approval: ApprovalView }
@@ -65,7 +73,12 @@ export type InboxItem =
       createdAt: string;
       request: CatalogRequestView;
     }
-  | { type: "skill_renamed"; id: string; createdAt: string; notice: OrgNoticeView };
+  | {
+      type: OrgNoticeView["kind"];
+      id: string;
+      createdAt: string;
+      notice: OrgNoticeView;
+    };
 
 /** `GET /inbox` 的结果：新的在前，最多 {@link INBOX_MAX_ITEMS} 项；`truncated` 为 true 表示还有更多。 */
 export interface InboxView {
@@ -130,7 +143,7 @@ export class InboxService {
         }),
       ),
       ...notices.map(
-        (n): InboxItem => ({ type: "skill_renamed", id: n.id, createdAt: n.createdAt, notice: n }),
+        (n): InboxItem => ({ type: n.kind, id: n.id, createdAt: n.createdAt, notice: n }),
       ),
     ];
     // 新的在前；同一时刻按 id 定序（结果稳定）
@@ -165,19 +178,18 @@ export class InboxService {
       .selectFrom("org_notices")
       .select(["id", "kind", "detail", "created_at"])
       .where("org_id", "=", orgId)
-      // 0083 added kinds this view does not render yet (phase 3 Task 3 does).
-      .where("kind", "=", "skill_renamed")
       .where("dismissed_at", "is", null)
       .orderBy("created_at", "desc")
       .orderBy("id")
       .limit(ORG_NOTICES_LIST_MAX)
       .execute();
-    return rows.map((r) => ({
-      id: r.id,
-      kind: "skill_renamed" as const,
-      createdAt: r.created_at.toISOString(),
-      skillRenamed: r.detail as OrgNoticeView["skillRenamed"],
-    }));
+    return rows.map((r): OrgNoticeView => {
+      const base = { id: r.id, createdAt: r.created_at.toISOString() };
+      if (r.kind === "skill_renamed") {
+        return { ...base, kind: r.kind, skillRenamed: r.detail as unknown as SkillRenamedDetail };
+      }
+      return { ...base, kind: r.kind, detail: r.detail } as OrgNoticeView;
+    });
   }
 
   /**

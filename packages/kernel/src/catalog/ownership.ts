@@ -5,6 +5,16 @@
 // gate on the row it writes, read `FOR UPDATE` in its transaction.
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
+import {
+  type ComponentKind,
+  componentOn,
+  listedIn,
+  loadComponents,
+  loadScopeState,
+  pluginFactsOf,
+  switchOf,
+} from "./component-state.js";
+import { wantedOn } from "./scope.js";
 
 /** Who owns an item or component: the platform, or one org (by id and name, deleted orgs too). */
 export type Owner = { kind: "platform" } | { kind: "org"; orgId: string; name: string };
@@ -86,4 +96,86 @@ export async function ownersOf(
 export function ownerOf(ownerOrgId: string | null, owners: ReadonlyMap<string, Owner>): Owner {
   if (ownerOrgId === null) return PLATFORM_OWNER;
   return owners.get(ownerOrgId) ?? { kind: "org", orgId: ownerOrgId, name: ownerOrgId };
+}
+
+/** An owned item: a plugin, a skill or an agent template (the platform id once promoted). */
+export type OwnedRef = { kind: "plugin" | "skill" | "agent_template"; id: string };
+
+/**
+ * The live orgs an item is on in (ruling P3-18: listed and not switched off for `named`, switched
+ * on for `optional`, any live org for `all`; a component by {@link componentOn}), minus
+ * `except` (usually the owner), by name. One definition for the update notices and the
+ * "used by another org" check of deletes. An item that is gone or disabled is on nowhere.
+ */
+export async function orgsUsing(
+  db: KernelSchemaDb,
+  ref: OwnedRef,
+  opts: { except?: string | null } = {},
+): Promise<{ id: string; name: string }[]> {
+  const orgs = await db
+    .selectFrom("orgs")
+    .select(["id", "name"])
+    .where("deleted_at", "is", null)
+    .orderBy("name")
+    .orderBy("id")
+    .execute();
+  const others = orgs.filter((o) => o.id !== opts.except);
+  if (others.length === 0) return [];
+  if (ref.kind === "plugin") {
+    const item = await db
+      .selectFrom("catalog_items")
+      .select(["scope", "builtin", "disabled"])
+      .where("id", "=", ref.id)
+      .where("deleted_at", "is", null)
+      .executeTakeFirst();
+    if (!item) return [];
+    const listed = new Set(
+      (
+        await db
+          .selectFrom("catalog_item_scope_orgs")
+          .select("org_id")
+          .where("item_id", "=", ref.id)
+          .execute()
+      ).map((r) => r.org_id),
+    );
+    const switches = new Map(
+      (
+        await db
+          .selectFrom("catalog_item_org_switches")
+          .select(["org_id", "enabled"])
+          .where("item_id", "=", ref.id)
+          .execute()
+      ).map((r) => [r.org_id, r.enabled] as const),
+    );
+    return others.filter((o) => wantedOn(item, listed.has(o.id), switches.get(o.id) ?? null));
+  }
+  const kind: ComponentKind = ref.kind;
+  const [c] = await loadComponents(db, kind, { ids: [ref.id] });
+  if (!c) return [];
+  const st = await loadScopeState(db, kind, [c]);
+  return others.filter((o) =>
+    componentOn(
+      c,
+      pluginFactsOf(st, c.itemId, o.id),
+      listedIn(st, c.id, o.id),
+      switchOf(st, c.id, o.id),
+    ),
+  );
+}
+
+/**
+ * Who a scope change newly shows an org-owned item to (the `item_shared` notice, P3-22): the orgs
+ * added to a `named` list, or `all_orgs` when the scope gets broader (`named` < `optional` < `all`);
+ * nothing for a narrowing or a platform-owned item.
+ */
+export function newlySharedWith(
+  from: { scope: string; orgs: readonly string[] },
+  to: { scope: string; orgs: readonly string[] },
+): string[] | "all_orgs" {
+  if ((BREADTH[to.scope] ?? 2) > (BREADTH[from.scope] ?? 2)) return "all_orgs";
+  if (from.scope === "named" && to.scope === "named") {
+    const known = new Set(from.orgs);
+    return to.orgs.filter((o) => !known.has(o));
+  }
+  return [];
 }

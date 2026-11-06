@@ -1,6 +1,17 @@
-import { Controller, Get, Inject } from "@nestjs/common";
-import { SuperAdmin } from "../identity/principal.js";
+import { Controller, Get, HttpCode, Inject, Post } from "@nestjs/common";
+import { z } from "zod";
+import {
+  CurrentPrincipal,
+  type Principal,
+  requireUser,
+  SuperAdmin,
+} from "../identity/principal.js";
+import { createZodDto } from "../infra/validation/create-zod-dto.js";
+import { ZParam } from "../infra/validation/zod-params.js";
 import { PlatformInboxService, type PlatformInboxView } from "./platform-inbox.service.js";
+
+const NoticeParamsSchema = z.object({ id: z.string().min(1).max(100) });
+class NoticeParams extends createZodDto(NoticeParamsSchema, "PlatformInboxNoticeParams") {}
 
 /**
  * The super admin's inbox (`GET /api/v1/admin/inbox`): the platform's requests, permission
@@ -21,5 +32,15 @@ export class PlatformInboxController {
   @Get("count")
   async count(): Promise<{ total: number }> {
     return { total: await this.inbox.count() };
+  }
+
+  /** A super admin dismisses a platform notice (`ownership_transferred`) for every super admin. */
+  @Post("notices/:id/dismiss")
+  @HttpCode(204)
+  async dismissNotice(
+    @CurrentPrincipal() principal: Principal,
+    @ZParam(NoticeParams) params: z.infer<typeof NoticeParamsSchema>,
+  ): Promise<void> {
+    await this.inbox.dismissNotice(requireUser(principal).account.id, params.id);
   }
 }

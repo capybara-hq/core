@@ -4,7 +4,9 @@ import { sql } from "kysely";
 import { type CatalogItemView, CatalogService } from "../catalog/catalog.service.js";
 import { CatalogRequestsService, type CatalogRequestView } from "../catalog/requests.service.js";
 import type { ScopeSyncOp } from "../db/kernel-schema.js";
+import { ApiError } from "../errors.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
+import type { PlatformNoticeDetails } from "./platform-notices.js";
 
 /** The most items one platform inbox read returns. */
 export const PLATFORM_INBOX_MAX_ITEMS = 100;
@@ -55,13 +57,29 @@ export interface MigrationRunView {
  * - `permission_confirmation`: a plugin whose extension permissions wait for a super admin's
  *   confirmation (`GET /admin/catalog/items?pending=true`), `id` = the item's;
  * - `scope_sync_failed`: an open scope sync failure, `id` = `<itemId>/<orgId>`;
- * - `platform_migration`: the latest migration run, failed items or stuck, `id` = the run's.
+ * - `platform_migration`: the latest migration run, failed items or stuck, `id` = the run's;
+ * - `ownership_transferred`: a deleted org's shared item now belongs to the platform, until a
+ *   super admin dismisses it (`POST admin/inbox/notices/:id/dismiss`).
  */
 export type PlatformInboxItem =
   | { type: "catalog_request"; id: string; createdAt: string; request: CatalogRequestView }
   | { type: "permission_confirmation"; id: string; createdAt: string; item: CatalogItemView }
   | { type: "scope_sync_failed"; id: string; createdAt: string; failure: ScopeSyncFailureView }
-  | { type: "platform_migration"; id: string; createdAt: string; run: MigrationRunView };
+  | { type: "platform_migration"; id: string; createdAt: string; run: MigrationRunView }
+  | {
+      type: "ownership_transferred";
+      id: string;
+      createdAt: string;
+      notice: PlatformNoticeView;
+    };
+
+/** An open platform notice (`platform_notices`, kind `ownership_transferred`). */
+export interface PlatformNoticeView {
+  id: string;
+  kind: "ownership_transferred";
+  createdAt: string;
+  detail: PlatformNoticeDetails["ownership_transferred"];
+}
 
 /**
  * `GET /admin/inbox`: newest first, at most {@link PLATFORM_INBOX_MAX_ITEMS}; `truncated`: more;
@@ -92,14 +110,16 @@ export class PlatformInboxService {
   ) {}
 
   async list(): Promise<PlatformInboxView> {
-    const [requests, requestCount, pending, failures, failureCount, run] = await Promise.all([
-      this.requests.listDeployment(),
-      this.requests.countPendingDeployment(),
-      this.catalog.list({ pending: true }),
-      this.scopeSyncFailures(),
-      this.countScopeSyncFailures(),
-      this.migrationRun(),
-    ]);
+    const [requests, requestCount, pending, failures, failureCount, run, notices] =
+      await Promise.all([
+        this.requests.listDeployment(),
+        this.requests.countPendingDeployment(),
+        this.catalog.list({ pending: true }),
+        this.scopeSyncFailures(),
+        this.countScopeSyncFailures(),
+        this.migrationRun(),
+        this.notices(),
+      ]);
     const all: PlatformInboxItem[] = [
       ...requests.map(
         (r): PlatformInboxItem => ({
@@ -125,6 +145,14 @@ export class PlatformInboxService {
           failure: f,
         }),
       ),
+      ...notices.map(
+        (n): PlatformInboxItem => ({
+          type: "ownership_transferred",
+          id: n.id,
+          createdAt: n.createdAt,
+          notice: n,
+        }),
+      ),
       ...(run === null
         ? []
         : [
@@ -148,7 +176,8 @@ export class PlatformInboxService {
             ? 1
             : 0,
     );
-    const total = requestCount + pending.length + failureCount + (run === null ? 0 : 1);
+    const total =
+      requestCount + pending.length + failureCount + (run === null ? 0 : 1) + notices.length;
     const items = all.slice(0, PLATFORM_INBOX_MAX_ITEMS);
     return { items, truncated: total > items.length, total };
   }
@@ -158,13 +187,62 @@ export class PlatformInboxService {
    * requests and the failures; the permission confirmations are the catalog's pending list).
    */
   async count(): Promise<number> {
-    const [requests, pending, failures, run] = await Promise.all([
+    const [requests, pending, failures, run, notices] = await Promise.all([
       this.requests.countPendingDeployment(),
       this.catalog.list({ pending: true }),
       this.countScopeSyncFailures(),
       this.migrationRun(),
+      this.countNotices(),
     ]);
-    return requests + pending.length + failures + (run === null ? 0 : 1);
+    return requests + pending.length + failures + (run === null ? 0 : 1) + notices;
+  }
+
+  private async countNotices(): Promise<number> {
+    const r = await this.kdb.db
+      .selectFrom("platform_notices")
+      .select(sql<string>`count(*)`.as("n"))
+      .where("dismissed_at", "is", null)
+      .executeTakeFirstOrThrow();
+    return Number(r.n);
+  }
+
+  /** The open platform notices, newest first, at most {@link PLATFORM_INBOX_MAX_ITEMS}. */
+  private async notices(): Promise<PlatformNoticeView[]> {
+    const rows = await this.kdb.db
+      .selectFrom("platform_notices")
+      .select(["id", "kind", "detail", "created_at"])
+      .where("dismissed_at", "is", null)
+      .orderBy("created_at", "desc")
+      .orderBy("id")
+      .limit(PLATFORM_INBOX_MAX_ITEMS)
+      .execute();
+    return rows.map((r) => ({
+      id: r.id,
+      kind: r.kind,
+      createdAt: r.created_at.toISOString(),
+      detail: r.detail as unknown as PlatformNoticeDetails["ownership_transferred"],
+    }));
+  }
+
+  /**
+   * A super admin dismisses a platform notice (for every super admin). Dismissing one already
+   * dismissed is fine; no notice with that id -> `inbox.notice_not_found`.
+   */
+  async dismissNotice(accountId: string, id: string): Promise<void> {
+    if (!UUID_RE.test(id)) throw new ApiError("inbox.notice_not_found", "Notice not found");
+    const r = await this.kdb.db
+      .updateTable("platform_notices")
+      .set({ dismissed_at: sql<Date>`now()`, dismissed_by: accountId })
+      .where("id", "=", id)
+      .where("dismissed_at", "is", null)
+      .executeTakeFirst();
+    if (r.numUpdatedRows > 0n) return;
+    const exists = await this.kdb.db
+      .selectFrom("platform_notices")
+      .select("id")
+      .where("id", "=", id)
+      .executeTakeFirst();
+    if (!exists) throw new ApiError("inbox.notice_not_found", "Notice not found");
   }
 
   /**
@@ -262,3 +340,5 @@ export class PlatformInboxService {
     };
   }
 }
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

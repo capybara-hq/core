@@ -1,6 +1,7 @@
 import { sql } from "kysely";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { audit } from "../identity/audit.js";
+import { notifyItemShared } from "../inbox/org-notices.js";
 import { assertShareable, shareGate } from "./ownership.js";
 
 /**
@@ -71,5 +72,8 @@ export async function addScopeOrg(
       ...(opts.requestId !== undefined && { requestId: opts.requestId }),
     },
   });
+  await notifyItemShared(db, item.owner_org_id, { kind: "plugin", id: item.id }, item.name, [
+    orgId,
+  ]);
   return true;
 }
