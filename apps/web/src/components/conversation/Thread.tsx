@@ -128,10 +128,11 @@ export type ThreadProps = {
   /** Opens a sub-agent in the right panel (`#subagent=`): a waiting sub-agent's line. */
   onOpenSubagent?(id: string): void;
   /**
-   * Opens a sub-agent in the agent map (`#agents=<id>`, level 2): an `Agent` call block's action
-   * and a delivery row without text.
+   * Opens a sub-agent in the agent map: level 2 (`#agents=<id>`) from an `Agent` call block's
+   * action and a delivery row without text; its transcript (`transcript`, `#agents=<id>/transcript`,
+   * where its approval, question or connection card is) from a nested agent's wait.
    */
-  onOpenAgent?(id: string): void;
+  onOpenAgent?(id: string, transcript?: boolean): void;
   /** Opens the agent map (`#agents`): the sub-agent groups' header action. */
   onOpenAgentMap?(): void;
   /** Opens a background task's output in the right panel (`#bg-<taskId>`). */
@@ -436,7 +437,9 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
   const onOpenSubagent = c.has.openSubagent
     ? (id: string) => cb.current.onOpenSubagent?.(id)
     : undefined;
-  const onOpenAgent = c.has.openAgent ? (id: string) => cb.current.onOpenAgent?.(id) : undefined;
+  const onOpenAgent = c.has.openAgent
+    ? (id: string, transcript?: boolean) => cb.current.onOpenAgent?.(id, transcript)
+    : undefined;
   const onOpenAgentMap = c.has.openAgentMap ? () => cb.current.onOpenAgentMap?.() : undefined;
   const onOpenTask = c.has.openTask
     ? (taskId: string) => cb.current.onOpenTask?.(taskId)
@@ -714,7 +717,8 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
       case "subagents":
         return (
           <SubagentGroup
-            rows={e.rows.map((r) => r.row)}
+            // without a way to open an agent (no agent map here) the blocks have no action
+            rows={e.rows.map((r) => (onOpenAgent ? r.row : { ...r.row, openable: false }))}
             onOpen={(id) => {
               // A call refused before any dispatch keeps its call key as id: no agent to open.
               if (!isCallKey(id)) onOpenAgent?.(id);
@@ -723,8 +727,11 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
           />
         );
       case "subagent-wait": {
-        // an agent below the conversation's children opens in the map, never the right panel
-        const open = e.deep ? onOpenAgent : onOpenSubagent;
+        // an agent below the conversation's children opens in the map, never the right panel: its
+        // transcript, whose thread holds the card to decide, answer or connect
+        const open = e.deep
+          ? onOpenAgent && ((id: string) => onOpenAgent(id, true))
+          : onOpenSubagent;
         return (
           <SubagentWait orgId={orgId} wait={e} info={info} {...(open ? { onOpen: open } : {})} />
         );

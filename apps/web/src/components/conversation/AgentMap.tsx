@@ -73,12 +73,20 @@ function statusOf(s: AgentTreeNode["status"]): AgentMapStatus {
 /**
  * The agent tree (`GET …/agent-tree`) as the map's nodes (agent map spec §9.2): `idle` reads as
  * completed, the model as `provider / model` (with the providers' display names when given), an
- * untitled root as `untitled`.
+ * untitled root as `untitled`. The tree reports a run that ended on its step, time or token limit
+ * as `idle` (the run completed); `finishes` (the root's own children's latest
+ * `subagent_finished`, which the stream shows as failed) corrects an ended node. A deeper agent's
+ * end is only in its parent's log, which level 1 does not read: its node keeps the tree's word
+ * until its level 2 (its own log) is open.
  */
 export function agentTreeNodes(
   tree: AgentTreeNode,
   locale: "zh" | "en",
-  opts: { untitled?: string; providers?: ProviderModels[] | undefined } = {},
+  opts: {
+    untitled?: string;
+    providers?: ProviderModels[] | undefined;
+    finishes?: ReadonlyMap<string, AgentMapStatus>;
+  } = {},
 ): AgentMapNode {
   const model = (m: AgentTreeNode["model"]) =>
     m === null
@@ -92,7 +100,10 @@ export function agentTreeNodes(
     model: model(n.model),
     durationMs: n.durationMs,
     tokens: n.tokens,
-    status: statusOf(n.status),
+    status:
+      n.status === "idle" || n.status === "completed"
+        ? (opts.finishes?.get(n.id) ?? "completed")
+        : statusOf(n.status),
     children: n.children.map((c) => walk(c, false)),
   });
   return walk(tree, true);
@@ -156,6 +167,7 @@ export function AgentMap({
   failed,
   tasks,
   untitled,
+  finishes,
   contextWindowOf,
   reasoningOf,
   onNavigate,
@@ -170,6 +182,8 @@ export function AgentMap({
   tasks: readonly BackgroundTaskView[] | undefined;
   /** The root's name while the conversation has no title. */
   untitled: string;
+  /** How the root's own children's latest runs ended, by id (the stream's words). */
+  finishes?: ReadonlyMap<string, AgentMapStatus>;
   contextWindowOf(m: ModelRef): number | undefined;
   reasoningOf(m: ModelRef): boolean | undefined;
   onNavigate(t: RightTarget | null): void;
@@ -180,8 +194,15 @@ export function AgentMap({
   const providers = useQuery({ ...modelsQ, retryOnMount: retryOnMountOf(modelsQ.queryKey) }).data
     ?.providers;
   const nodes = useMemo(
-    () => (root ? agentTreeNodes(root, locale, { untitled, providers }) : undefined),
-    [root, locale, untitled, providers],
+    () =>
+      root
+        ? agentTreeNodes(root, locale, {
+            untitled,
+            providers,
+            ...(finishes ? { finishes } : {}),
+          })
+        : undefined,
+    [root, locale, untitled, providers, finishes],
   );
   const types = useMemo(() => (root ? agentTypes(root) : new Map<string, string>()), [root]);
   const names = useMemo(() => (nodes ? nodeNames(nodes) : new Map<string, string>()), [nodes]);
@@ -201,7 +222,14 @@ export function AgentMap({
     const { node, parent } = found;
     const transcript = target.transcript === true;
     return (
-      <AgentMapDialog open level={transcript ? "transcript" : "detail"} onOpenChange={close}>
+      <AgentMapDialog
+        open
+        level={transcript ? "transcript" : "detail"}
+        view={`${transcript ? "transcript" : "detail"}:${node.id}`}
+        // Esc goes back one level, as the head's back button does
+        onBack={() => onNavigate(transcript ? { kind: "agents", id: node.id } : { kind: "agents" })}
+        onOpenChange={close}
+      >
         <AgentLevel
           key={node.id}
           orgId={orgId}
@@ -219,13 +247,14 @@ export function AgentMap({
     );
   }
   return (
-    <AgentMapDialog open level="tree" onOpenChange={close}>
+    <AgentMapDialog open level="tree" view="tree" onOpenChange={close}>
       {nodes ? (
         <AgentMapTree
           root={nodes}
           background={background}
-          {...(target.id !== undefined ? { selectedId: target.id } : {})}
-          onOpen={(id) => onNavigate(id === nodes.id ? { kind: "agents" } : { kind: "agents", id })}
+          // the root opens nothing and is never selected
+          {...(target.id !== undefined && target.id !== nodes.id ? { selectedId: target.id } : {})}
+          onOpen={(id) => onNavigate({ kind: "agents", id })}
         />
       ) : failed ? (
         <FormError message={t("agentMapFailed")} />
@@ -245,7 +274,14 @@ function latestText(entries: readonly TimelineEntry[]): string {
   return "";
 }
 
-/** The agent's own status from its log once it has one (the tree is read again only now and then). */
+/** Run ends the stream shows as failed (`subagent_finished` with a limit's status). */
+const LIMIT_ENDS = new Set(["max_steps", "max_duration", "budget"]);
+
+/**
+ * The agent's own status from its log once it has one (the tree is read again only now and then).
+ * A message or a background task's end after the last run's end, with no run started yet, is a
+ * restart or a wake that is queued: the log has no word for it, the tree has (`queued`, running).
+ */
 function liveStatus(
   tree: AgentMapStatus,
   log: { loading: boolean; running: boolean; waiting: boolean; events: ConversationEvent[] },
@@ -255,7 +291,9 @@ function liveStatus(
   if (log.running) return "running";
   for (let i = log.events.length - 1; i >= 0; i--) {
     const e = log.events[i];
-    if (e?.type === "run_finished") return "completed";
+    if (e?.type === "user_message" || e?.type === "background_task_finished") return tree;
+    if (e?.type === "run_finished")
+      return LIMIT_ENDS.has(e.payload.reason) ? "failed" : "completed";
     if (e?.type === "run_failed") return "failed";
     if (e?.type === "run_aborted") return "aborted";
   }
@@ -374,12 +412,11 @@ function AgentLevel({
   );
   const stopMutation = useAppMutation({
     fn: () => abortRun(orgId, id),
-    // the tree shows the stop as soon as the kernel has it; the agent's own log is read again
-    // (a grandchild's terminal event reaches no stream of the page but its own)
+    // the tree shows the stop as soon as the kernel has it; the agent's terminal event comes
+    // through its own stream, open at this level
     invalidates: () => [
       agentTreeQuery(orgId, rootId).queryKey,
       queryKeys.org(orgId).conversation(id).row(),
-      queryKeys.org(orgId).conversation(id).events(),
     ],
   });
   const { mutate } = stopMutation;
@@ -428,8 +465,12 @@ function AgentLevel({
             entries={entries}
             info={info}
             reasoningOf={reasoningOf}
-            onOpenAgent={(sub) => onNavigate({ kind: "agents", id: sub })}
+            onOpenAgent={(sub, toTranscript) =>
+              onNavigate({ kind: "agents", id: sub, ...(toTranscript ? { transcript: true } : {}) })
+            }
             onOpenAgentMap={() => onNavigate({ kind: "agents" })}
+            // its background tasks' notices open the task (the root's list holds every agent's)
+            onOpenTask={(taskId) => onNavigate({ kind: "background", taskId })}
             renderTask={(e) => <UserBubble text={e.text} sender={spawnedBy.label} />}
           />
         )}

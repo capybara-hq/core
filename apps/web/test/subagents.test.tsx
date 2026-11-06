@@ -478,11 +478,11 @@ describe("sub-agents on the conversation page", () => {
     expect(link.getAttribute("href")).toContain("/agents/ag1");
   });
 
-  it("?subagent= (inbox and IM links) becomes the agent map's hash, not the right panel", async () => {
+  it("?subagent= (inbox and IM links) becomes the agent map's transcript hash, not the right panel", async () => {
     api({ [`GET ${PARENT}/agent-tree`]: () => json(404, { error: { code: "not_found" } }) });
     window.history.replaceState(null, "", "/chat/c1?subagent=ch2");
     await renderChat();
-    await vi.waitFor(() => expect(window.location.hash).toBe("#agents=ch2"));
+    await vi.waitFor(() => expect(window.location.hash).toBe("#agents=ch2/transcript"));
     expect(window.location.search).toBe("");
     expect(screen.queryByRole("complementary", { name: "Check tests" })).toBeNull();
   });

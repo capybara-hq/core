@@ -359,6 +359,7 @@ export function useConversationPage(
     progress: conv.state.progress,
     untitled,
     eventsLoaded: !conv.loading,
+    root: conv.conversation === undefined ? undefined : !conv.conversation.parentConversationId,
     contextWindowOf: selection.contextWindowOf,
     reasoningOf: selection.reasoningOf,
   });

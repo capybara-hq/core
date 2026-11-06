@@ -111,7 +111,7 @@ test("sub-agents: the call block, the finish notice, the record on the right, st
   );
 });
 
-test("a sub-agent's approval waits in the parent and is decided there; a ?subagent= link opens the child in the agent map", async ({
+test("a sub-agent's approval waits in the parent and is decided there; a ?subagent= link opens the child's transcript in the agent map", async ({
   page,
 }) => {
   await signIn(page);
@@ -136,7 +136,8 @@ test("a sub-agent's approval waits in the parent and is decided there; a ?subage
   await done.getByRole("button", { name: zh.chat.delivery.show }).click();
   await expect(done).toContainText("deleted c9");
 
-  // an inbox or IM link (?subagent=, any depth) opens that child in the agent map (level 2)
+  // an inbox or IM link (?subagent=, any depth) opens that child's transcript in the agent map
+  // (where a pending approval's card is)
   const id = conversationIdOf(page);
   const listed = await page.request.get(`/api/v1/orgs/${orgId}/conversations/${id}/subagents`);
   expect(listed.ok(), await listed.text()).toBe(true);
@@ -144,7 +145,7 @@ test("a sub-agent's approval waits in the parent and is decided there; a ?subage
   expect(child).toBeTruthy();
   await page.goto(`/chat/${id}?subagent=${child}`);
   await expect(page.getByRole("dialog", { name: "Delete via child" })).toBeVisible();
-  await expect(page).toHaveURL(new RegExp(`/chat/${id}#agents=${child}$`));
+  await expect(page).toHaveURL(new RegExp(`/chat/${id}#agents=${child}/transcript$`));
 });
 
 test("a failed run shows its notice; Retry repeats the message without a second bubble", async ({

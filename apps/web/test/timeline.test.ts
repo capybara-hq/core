@@ -1242,7 +1242,9 @@ describe("Agent call rows across a child's runs (final review)", () => {
       rowOf(buildTimeline(events, [], new Map(), "en", { views: view(endedAt - 30_000) })),
     ).toMatchObject({ status: "completed" });
     // a run that started after the finish (a wake writes no dispatch)
-    const woken = rowOf(buildTimeline(events, [], new Map(), "en", { views: view(endedAt + 5000) }));
+    const woken = rowOf(
+      buildTimeline(events, [], new Map(), "en", { views: view(endedAt + 5000) }),
+    );
     expect(woken).toMatchObject({ status: "running" });
     expect(woken).not.toHaveProperty("durationMs");
     // the wake run's own finish is the row's latest end

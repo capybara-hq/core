@@ -38,6 +38,13 @@ export type SubagentPanelProps = {
   description?: string;
   contextWindowOf(m: ModelRef): number | undefined;
   reasoningOf(m: ModelRef): boolean | undefined;
+  /**
+   * Opens an agent in the agent map (the record's own `Agent` calls: its sub-agents, and a
+   * nested wait's transcript); absent: those calls have no open action.
+   */
+  onOpenAgent?(id: string, transcript?: boolean): void;
+  /** Opens the agent map (the record's sub-agent groups' header link); absent: no link. */
+  onOpenAgentMap?(): void;
   /** Back: what the right area showed before (e.g. the properties panel), else close. */
   onBack(): void;
   onClose(): void;
@@ -86,6 +93,8 @@ function ChildRecord({
   description,
   contextWindowOf,
   reasoningOf,
+  onOpenAgent,
+  onOpenAgentMap,
   onBack,
   onClose,
   onFullscreen,
@@ -167,6 +176,8 @@ function ChildRecord({
         entries={entries}
         info={info}
         reasoningOf={reasoningOf}
+        {...(onOpenAgent ? { onOpenAgent } : {})}
+        {...(onOpenAgentMap ? { onOpenAgentMap } : {})}
         renderTask={(e) => (
           <SubagentTask
             text={e.text}

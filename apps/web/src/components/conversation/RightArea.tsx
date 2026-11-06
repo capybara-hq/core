@@ -1,6 +1,13 @@
 "use client";
 
-import { RightPanel, type RightPanelSwitcher, TextPreview, useToast } from "@capybara-hq/design";
+import {
+  type AgentMapStatus,
+  RightPanel,
+  type RightPanelSwitcher,
+  subagentStatusOfFinish,
+  TextPreview,
+  useToast,
+} from "@capybara-hq/design";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -56,13 +63,14 @@ export function useRightArea(): {
   /** What was open before the agent map (moving inside the map keeps it). */
   const beforeMap = useRef<RightTarget | null>(null);
   useEffect(() => {
-    // Inbox and IM links name a sub-agent at any depth as `?subagent=<id>`: it opens in the agent
-    // map (the right panel takes only the conversation's own children).
+    // Inbox and IM links name a sub-agent at any depth as `?subagent=<id>` (it waits for a person):
+    // it opens in the agent map at its transcript, whose thread holds the approval, question or
+    // connection card (the right panel takes only the conversation's own children).
     const url = new URL(window.location.href);
     const legacy = url.searchParams.get("subagent");
     if (legacy) {
       url.searchParams.delete("subagent");
-      url.hash = formatRightHash({ kind: "agents", id: legacy });
+      url.hash = formatRightHash({ kind: "agents", id: legacy, transcript: true });
       window.history.replaceState(window.history.state, "", url.pathname + url.search + url.hash);
     }
     const read = () => {
@@ -257,6 +265,11 @@ export function useRightAreaSlot(p: {
   untitled: string;
   /** The log is loaded (`events` is the whole log, not the empty list of a pending read). */
   eventsLoaded: boolean;
+  /**
+   * Whether the conversation is a root (not a sub-agent's); undefined while its row loads. Only a
+   * root has an agent map (`GET …/agent-tree` is 404 for a sub-agent conversation).
+   */
+  root: boolean | undefined;
   contextWindowOf(m: ModelRef): number | undefined;
   reasoningOf(m: ModelRef): boolean | undefined;
 }): RightAreaSlot {
@@ -307,16 +320,39 @@ export function useRightAreaSlot(p: {
     return m;
   }, [p.events]);
   const openTask = useCallback((taskId: string) => open({ kind: "background", taskId }), [open]);
-  // The agent map (agent map spec §9): its entries show once a sub-agent was dispatched.
-  const hasSubagents = useMemo(() => dispatchedAny(p.events), [p.events]);
+  // The agent map (agent map spec §9): its entries show once a root conversation dispatched a
+  // sub-agent (a sub-agent conversation's page has none: the tree is its root's).
+  const dispatched = useMemo(() => dispatchedAny(p.events), [p.events]);
+  const hasSubagents = dispatched && p.root === true;
   const openMap = useCallback(() => open({ kind: "agents" }), [open]);
+  const openAgent = useCallback(
+    (id: string, transcript?: boolean) =>
+      open({ kind: "agents", id, ...(transcript ? { transcript: true } : {}) }),
+    [open],
+  );
   const mapTarget = target?.kind === "agents" ? target : null;
-  const tree = useAgentTree(p.orgId, p.conversationId, p.events, p.progress, mapTarget !== null);
-  // `#agents…` on a conversation without sub-agents (a pasted link): nothing to show, drop it
-  const staleMap = p.eventsLoaded && mapTarget !== null && !hasSubagents;
+  const tree = useAgentTree(
+    p.orgId,
+    p.conversationId,
+    p.events,
+    p.progress,
+    mapTarget !== null && hasSubagents,
+  );
+  // `#agents…` on a conversation without sub-agents, or on a sub-agent's page (a pasted link):
+  // nothing to show, drop it
+  const staleMap = p.eventsLoaded && p.root !== undefined && mapTarget !== null && !hasSubagents;
   useEffect(() => {
     if (staleMap) closeMap();
   }, [staleMap, closeMap]);
+  // how the conversation's own children's latest runs ended, as the stream words them (the tree
+  // says `idle` for a run that ended on a limit)
+  const finishes = useMemo(() => {
+    const m = new Map<string, AgentMapStatus>();
+    for (const e of p.events)
+      if (e.type === "subagent_finished")
+        m.set(e.payload.subagentId, subagentStatusOfFinish(e.payload.status) as AgentMapStatus);
+    return m;
+  }, [p.events]);
   const tools = useMemo(() => {
     const m = new Map<string, TimelineTool>();
     for (const e of p.entries) if (e.kind === "tools") for (const r of e.rows) m.set(r.callId, r);
@@ -432,6 +468,7 @@ export function useRightAreaSlot(p: {
         {...(description ? { description } : {})}
         contextWindowOf={p.contextWindowOf}
         reasoningOf={p.reasoningOf}
+        {...(hasSubagents ? { onOpenAgent: openAgent, onOpenAgentMap: openMap } : {})}
         onBack={back}
         onClose={close}
         onFullscreen={fullscreen}
@@ -508,6 +545,7 @@ export function useRightAreaSlot(p: {
         failed={tree.failed}
         tasks={background.tasks}
         untitled={p.untitled}
+        finishes={finishes}
         contextWindowOf={p.contextWindowOf}
         reasoningOf={p.reasoningOf}
         onNavigate={(t) => (t === null ? closeMap() : open(t))}
@@ -591,9 +629,7 @@ export function useRightAreaSlot(p: {
       filePaths,
       ...(target?.kind === "subagent" ? { openSubagent: target.id } : {}),
       onOpenSubagent: (id) => open({ kind: "subagent", id }),
-      ...(hasSubagents
-        ? { onOpenAgentMap: openMap, onOpenAgent: (id: string) => open({ kind: "agents", id }) }
-        : {}),
+      ...(hasSubagents ? { onOpenAgentMap: openMap, onOpenAgent: openAgent } : {}),
       onOpenTask: openTask,
       renderCard: (e) => (
         <ExtensionCard
