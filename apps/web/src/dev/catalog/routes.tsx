@@ -121,6 +121,8 @@ export const REFERENCE_COMPONENTS = [
   "item-list",
   "subsection",
   "callout",
+  // cards on the page ground (plugin scope phase 4, ruling P4-15)
+  "card-grid",
 ] as const;
 
 export type ReferenceComponent = (typeof REFERENCE_COMPONENTS)[number];

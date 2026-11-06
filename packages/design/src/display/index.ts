@@ -30,6 +30,13 @@ export {
 export { Badge, Kbd, Metric, type MetricProps, StatusMark } from "./basic";
 export { Callout, type CalloutProps } from "./callout";
 export {
+  CardGrid,
+  ObjectCard,
+  type ObjectCardAction,
+  type ObjectCardLoaded,
+  type ObjectCardProps,
+} from "./card-grid";
+export {
   Checklist,
   type ChecklistProps,
   type ChecklistStatus,

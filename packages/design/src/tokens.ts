@@ -113,5 +113,6 @@ export const SIZES = {
     "head-tabs": 16,
     "head-tabs-content": 16,
     "head-content": 24,
+    "card-min": 280,
   },
 } as const;

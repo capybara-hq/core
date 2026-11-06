@@ -72,7 +72,14 @@ const BOXED = new Set([
   "LinkCard",
   "StatCards",
   "FilePicker",
+  "CardGrid",
+  "ObjectCard",
 ]);
+/**
+ * Grids of boxes on the page ground (CardGrid, spec §6.34): the grid itself is judged where it is
+ * drawn, and its cards are judged against no box, so a grid in a box is one finding, not one per card.
+ */
+const GROUND = new Set(["CardGrid"]);
 /**
  * Full-height panes: what they hold is on a page again (the right panel, the file preview, which
  * the design draws as one, and the agent map's transcript).
@@ -100,6 +107,8 @@ const FIX: Readonly<Record<string, string>> = {
   StatCards: "KeyValue figures",
   FilePicker: "the FilePicker on the page ground or in a Dialog",
   DataTable: "a `flush` FormSection (the table runs to the card's edges, unframed)",
+  CardGrid: "the CardGrid on the page ground, or an ItemList of ItemListItem rows inside the box",
+  ObjectCard: "an ItemListItem row (the ObjectCard belongs in a CardGrid on the page ground)",
 };
 
 /**
@@ -658,7 +667,7 @@ export class BoxReader {
             nextPortal = true;
             if (!OUTER.has(design)) next = null;
           }
-          if (PANES.has(design)) next = null;
+          if (PANES.has(design) || GROUND.has(design)) next = null;
         } else if (isCapitalized(name)) {
           const c = this.componentFor(file, name);
           if (c) {

@@ -77,6 +77,7 @@
   --cb-layout-head-tabs: 16px;
   --cb-layout-head-tabs-content: 16px;
   --cb-layout-head-content: 24px;
+  --cb-layout-card-min: 280px;
 }
 
 :root[data-theme="dark"] {

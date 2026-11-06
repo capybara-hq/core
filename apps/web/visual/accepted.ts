@@ -127,6 +127,11 @@ export const ACCEPTED: string[] = [
   // `warn`, `info`, `in-box`; the reference PNGs and the side-by-side review wait for the
   // reference-update and visual-update workflows
   "callout",
+  // cards on the page ground (plugin scope phase 4, ruling P4-15): CardGrid and ObjectCard, and
+  // the List template's `cards` / `loading-cards`. Blocks, size tables and the reference source
+  // are in place; the reference PNGs and the side-by-side review wait for the reference-update
+  // and visual-update workflows
+  "card-grid",
 ];
 
 /**

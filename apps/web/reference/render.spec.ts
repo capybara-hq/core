@@ -82,6 +82,8 @@ const PAGES = [
   "item-list",
   "subsection",
   "callout",
+  // cards on the page ground (plugin scope phase 4, ruling P4-15)
+  "card-grid",
 ];
 const THEMES = ["dark", "light"] as const;
 const BLOCK_ID = /^[a-z-]+-[a-z0-9-]+$/;

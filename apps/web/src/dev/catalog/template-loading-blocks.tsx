@@ -17,6 +17,7 @@ import {
   ItemListItem,
   KeyValue,
   ListPage,
+  ObjectCard,
   ObjectList,
   ObjectRow,
   OverviewPage,
@@ -32,6 +33,7 @@ import {
 } from "@capybara-hq/design";
 import { LIST_PAGE_FIXTURE, PAGE_HEADER_FIXTURE } from "@capybara-hq/design/fixtures";
 import type { ReactNode } from "react";
+import { AGENT_CARDS } from "./card-grid-blocks";
 import { TRACE_SPANS } from "./fixtures";
 import { RefBlock } from "./ref-block";
 
@@ -639,6 +641,18 @@ export function listLoadingBlocks(): ReactNode {
         <ListPage header={LIST_HEADER} loading={{ keep: true }}>
           <FormSection id="a" title="内置市场" description="官方市场" loading={{ fields: 1 }} />
         </ListPage>
+      </RefBlock>
+      {/* Cards on the page ground (spec §6.34, ruling P4-15): the workspace 智能体 tab. */}
+      <RefBlock id="template-list-cards" width={W} height={H}>
+        <ListPage header={LIST_HEADER} variant="cards" listLabel="智能体">
+          {AGENT_CARDS.map((c, i) => (
+            // biome-ignore lint/suspicious/noArrayIndexKey: fixed catalog cards
+            <ObjectCard key={i} {...c} />
+          ))}
+        </ListPage>
+      </RefBlock>
+      <RefBlock id="template-list-loading-cards" width={W} height={H}>
+        <ListPage header={LIST_HEADER} variant="cards" listLabel="智能体" loading />
       </RefBlock>
     </>
   );
