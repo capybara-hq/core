@@ -184,7 +184,7 @@ function childEvents(id = "ch1", parent = "c1", task = "Do Scan docs"): Conversa
 function api(
   events: ConversationEvent[],
   answer: () => Response = () => json(200, tree("running")),
-  extra: Record<string, (c: Call) => Response> = {},
+  extra: Record<string, (c: Call) => Response | Promise<Response>> = {},
 ): Call[] {
   return stubApi({
     [`GET ${CHILD}`]: () => json(200, CONV("ch1", { parentConversationId: "c1" })),
@@ -993,6 +993,7 @@ describe("stopping a sub-agent from the map (AC5)", () => {
     expect(toasts()).toHaveLength(0);
   });
 
+  const ACTIVE_STATUSES: ReadonlySet<string> = new Set(["running", "waiting"]);
   // The head's status and Stop come from one status, settled from the log first: a tree read
   // before the run's end never brings Stop back (rows: the child's log tail, the tree's status).
   const restart = (seq: number): ConversationEvent =>
@@ -1028,7 +1029,7 @@ describe("stopping a sub-agent from the map (AC5)", () => {
     const dialog = await detailDialog();
     await within(dialog).findByText("Reading the docs first.");
     await waitFor(() => expect(headStatus(dialog)).toBe(expected));
-    const active = expected === "running" || expected === "waiting";
+    const active = ACTIVE_STATUSES.has(expected);
     await waitFor(() =>
       expect(within(dialog).queryByRole("button", { name: "Stop" }) !== null).toBe(active),
     );
