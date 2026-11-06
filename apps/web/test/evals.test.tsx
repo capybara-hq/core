@@ -373,6 +373,32 @@ describe("评测集详情（DetailPage）", () => {
     expect(router.push).toHaveBeenLastCalledWith("/evals/runs/er1");
   });
 
+  it("one centred column: the description, then the facts, at the top; a custom rubric folds", async () => {
+    stubApi(
+      routes({
+        [`GET ${SETS}/s1`]: () =>
+          json(200, { set: { ...SET, rubric: "Be exact.\nCite the doc.", cases: CASES } }),
+      }),
+    );
+    const { container } = await renderRouteWithCache("/evals/s1", lastStubRoutes());
+    await screen.findByRole("table", { name: E.set.casesLabel });
+    expect(screen.queryByRole("complementary")).toBeNull();
+    const facts = container.querySelector('[data-part="detail-facts"]') as HTMLElement;
+    expect(container.querySelector('[data-part="content"]')?.firstElementChild).toBe(facts);
+    // the description is the block's first line, before the rows
+    const description = within(facts).getByText("Nightly checks");
+    const rows = facts.querySelectorAll('[data-part="key-value-row"]');
+    expect(rows).toHaveLength(2);
+    expect(description.compareDocumentPosition(rows[0] as Node)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+    expect(await within(facts).findByText("Helper")).toBeTruthy();
+    // the custom rubric is folded under the rows; opening it shows the whole text
+    expect(within(facts).queryByText(/Cite the doc/)).toBeNull();
+    await userEvent.setup().click(within(facts).getByRole("button", { name: E.set.rubric }));
+    expect(within(facts).getByText(/Cite the doc/)).toBeTruthy();
+  });
+
   it("从对话抽样：弹窗提交参数，提示加入与跳过的个数并重读", async () => {
     let reads = 0;
     const calls = stubApi(
@@ -781,7 +807,7 @@ describe("评测运行（DetailPage）", () => {
   });
 
   it.each(["zh", "en"] as const)(
-    "结果表与 Inspector：文本差异、工具差异、评委理由；页头指标（%s）",
+    "结果表与结果抽屉：文本差异、工具差异、评委理由；页头指标（%s）",
     async (locale) => {
       const m = msgs[locale].evals;
       stubApi(routes(() => evalRun(), [result()]));
@@ -803,8 +829,16 @@ describe("评测运行（DetailPage）", () => {
       expect(metric(m.run.metrics.judgePass).getByText("100%")).toBeTruthy();
       expect(metric(m.run.metrics.humanPass).getByText("—")).toBeTruthy();
 
-      await userEvent.setup().click(within(row).getByText(m.run.mismatch));
-      const region = await screen.findByRole("region", { name: m.run.inspector.title });
+      // one column: no inspector beside the table; a result opens in a right-side Sheet
+      expect(screen.queryByRole("complementary")).toBeNull();
+      expect(screen.queryByRole("dialog")).toBeNull();
+      const user = userEvent.setup();
+      await user.click(within(row).getByText(m.run.mismatch));
+      const sheet = await screen.findByRole("dialog", { name: m.run.inspector.title });
+      expect(
+        within(sheet).getByText("Delete the stale item", { selector: ".cb-sheet-meta" }),
+      ).toBeTruthy();
+      const region = within(sheet).getByRole("region", { name: m.run.inspector.title });
       const inspector = within(region);
       // 文本差异：lineDiff + CodeBlock（标注走 i18n）；工具差异的代码块不带标注
       const blocks = region.querySelectorAll("figure");
@@ -820,6 +854,10 @@ describe("评测运行（DetailPage）", () => {
       // 评委理由
       expect(inspector.getByText("Deleted the wrong item.")).toBeTruthy();
       expect(inspector.getByText("2")).toBeTruthy();
+      // closing the Sheet clears the open result
+      const close = locale === "zh" ? "关闭" : "Close";
+      await user.click(within(sheet).getByRole("button", { name: close }));
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     },
   );
 

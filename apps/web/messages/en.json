@@ -1296,12 +1296,10 @@
         "credentials": "Credentials",
         "settings": "Settings"
       },
-      "inspectorTitle": "Connector",
       "refresh": "Refresh tools",
       "refreshed": "Tool list refreshed."
     },
     "inspector": {
-      "slug": "Slug",
       "connector": "Connector",
       "endpoint": "Endpoint",
       "auth": "Auth",
@@ -1680,7 +1678,6 @@
       "submit": "Create channel"
     },
     "inspector": {
-      "plugin": "Extension",
       "tenant": "Tenant",
       "bot": "Bot",
       "agent": "Agent",
@@ -1694,7 +1691,6 @@
         "credentials": "Credentials",
         "settings": "Settings"
       },
-      "inspectorTitle": "Details",
       "statusTitle": "Status",
       "lastError": "Last error",
       "noError": "No recent errors.",
@@ -2122,9 +2118,7 @@
       "deleteTitle": "Delete eval set \"{name}\"",
       "deleteHint": "Cases and run results will no longer be visible, and runs in progress are cancelled.",
       "deleted": "Deleted eval set \"{name}\".",
-      "inspectorTitle": "Eval set",
       "agent": "Agent",
-      "description": "Description",
       "rubric": "Rubric",
       "defaultRubric": "(default rubric)",
       "created": "Created",
@@ -2320,7 +2314,6 @@
       },
       "inspector": {
         "title": "Result",
-        "selectHint": "Select a result in the table to see the diff and the judge's reason.",
         "case": "Case",
         "status": "Status",
         "drift": "Drift",

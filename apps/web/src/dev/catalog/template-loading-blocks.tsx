@@ -35,7 +35,7 @@ import { RefBlock } from "./ref-block";
 
 // The loading states of the Detail, Overview and Inbox templates (spec §5.2, §5.6, §5.7). Each
 // template's `-default` and `-loading` blocks come from one fixture (the same header, tabs,
-// filters, inspector and metrics), so the part boxes of the two can be compared. The box is the
+// filters, facts, inspector and metrics), so the part boxes of the two can be compared. The box is the
 // 1280-wide content area without the sidebar.
 
 const W = 1280;
@@ -74,7 +74,7 @@ const PROPERTIES = [
   { k: "可见性", v: "组织" },
 ];
 
-const inspector = <KeyValue rows={PROPERTIES} />;
+const facts = <KeyValue rows={PROPERTIES} />;
 
 const sections: ReactNode = (
   <>
@@ -104,17 +104,12 @@ function detailBlocks(): ReactNode {
   return (
     <>
       <RefBlock id="template-detail-default" width={W} height={H}>
-        <DetailPage header={DETAIL_HEADER} tabs={TABS} inspector={inspector}>
+        <DetailPage header={DETAIL_HEADER} tabs={TABS} facts={facts}>
           {sections}
         </DetailPage>
       </RefBlock>
       <RefBlock id="template-detail-loading" width={W} height={H}>
-        <DetailPage
-          header={loadingHeader(PATH, 2)}
-          tabs={TABS}
-          inspector={inspector}
-          loading={{ inspector: true }}
-        />
+        <DetailPage header={loadingHeader(PATH, 2)} tabs={TABS} loading={{ facts: true }} />
       </RefBlock>
       {/* A tab with a known static structure: facts, actions and a table (spec §5.2). */}
       <RefBlock id="template-detail-content" width={W} height={H}>

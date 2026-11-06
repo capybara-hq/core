@@ -327,6 +327,22 @@ function LoadingKeyValue({
   );
 }
 
+/**
+ * A detail page's facts while they load (spec §5.2): KeyValue's own `dl` with `rows` rows (default
+ * 4), a `keyWidth` key slot (default 8ch) and a 55% value slot, one or two `columns`.
+ */
+export function LoadingFacts({
+  rows = 4,
+  keyWidth = "8ch",
+  columns = 1,
+}: {
+  rows?: number;
+  keyWidth?: string;
+  columns?: 1 | 2;
+}) {
+  return <LoadingKeyValue rows={rows} keyWidth={keyWidth} columns={columns} />;
+}
+
 /** A list beside the open item's editor (`list-editor`, see {@link FieldShape}). */
 function LoadingListEditor({ items, rows }: { items: number; rows: number }) {
   return (

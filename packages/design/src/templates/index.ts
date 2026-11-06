@@ -10,7 +10,7 @@ export {
   PANEL_STEP,
   PANEL_WIDTH_KEY,
 } from "./conversation-page";
-export { DetailPage } from "./detail-page";
+export { DetailPage, type FactsShape } from "./detail-page";
 export { FormPage, FormSection, type FormSectionLayout } from "./form-page";
 export type { BlockShape, CardShape, FieldShape } from "./frame";
 export { type InboxLoading, InboxPage } from "./inbox-page";

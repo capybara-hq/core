@@ -46,7 +46,7 @@ const count = (selector: string) => document.querySelectorAll(selector).length;
 describe("DetailPage loading", () => {
   it("DetailPage loading draws the frame and no children", () => {
     zh(
-      <DetailPage header={header} tabs={tabs} loading={{ inspector: true }}>
+      <DetailPage header={header} tabs={tabs} loading={{ facts: true }}>
         <p>REAL CONTENT</p>
       </DetailPage>,
     );
@@ -54,38 +54,44 @@ describe("DetailPage loading", () => {
     expect(document.querySelector('[data-template="DetailPage"]')).not.toBeNull();
     expect(parts("page-header")).toHaveLength(1);
     expect(parts("content")).toHaveLength(1);
-    expect(count(".cb-body-inspector")).toBe(1);
+    // one centred column: no right pane, the facts block is in the column
+    expect(count(".cb-body-inspector")).toBe(0);
+    expect(parts("detail-facts")).toHaveLength(1);
     // The default is two card-shaped blocks, and the group announces once.
     expect(count('[data-part="loading-card"]')).toBe(2);
     expect(screen.getAllByRole("status")).toHaveLength(1);
     expect(document.querySelector('[aria-busy="true"]')).not.toBeNull();
   });
 
-  it("takes the block count as given, and no inspector unless flagged", () => {
+  it("takes the block count as given, and no facts block unless flagged", () => {
     zh(<DetailPage header={header} tabs={tabs} loading={{ blocks: 3 }} />);
     expect(count('[data-part="loading-card"]')).toBe(3);
-    expect(count(".cb-body-inspector")).toBe(0);
+    expect(parts("detail-facts")).toHaveLength(0);
   });
 
   it("tabs stay real while loading", () => {
-    zh(<DetailPage header={header} tabs={tabs} loading={{ inspector: true }} />);
+    zh(<DetailPage header={header} tabs={tabs} loading={{ facts: true }} />);
     expect(screen.getByRole("tab", { name: "概要" })).toBeTruthy();
     expect(screen.getByRole("tab", { name: "运行" })).toBeTruthy();
   });
 
-  it("the inspector placeholder is KeyValue's own box", () => {
-    zh(<DetailPage header={header} tabs={tabs} loading={{ inspector: true }} />);
-    const dl = document.querySelector('[data-part="loading-inspector"]');
+  it("the facts placeholder is KeyValue's own box, first in the column before the blocks", () => {
+    zh(<DetailPage header={header} tabs={tabs} loading={{ facts: true }} />);
+    const facts = document.querySelector('[data-part="detail-facts"]');
+    const dl = facts?.querySelector('[data-part="loading-key-value"]');
     expect(dl?.tagName).toBe("DL");
     expect(dl?.className).toBe("cb-kv");
     expect(dl?.querySelectorAll(".cb-kv-row")).toHaveLength(4);
     expect(dl?.querySelector(".cb-kv-key")).not.toBeNull();
     expect(dl?.querySelector(".cb-kv-value")).not.toBeNull();
+    const content = document.querySelector('[data-part="content"]');
+    expect(content?.firstElementChild).toBe(facts);
   });
 
-  it("a real inspector stays while loading unless it is flagged", () => {
-    zh(<DetailPage header={header} tabs={tabs} inspector={<p>REAL INSPECTOR</p>} loading={{}} />);
-    expect(screen.getByText("REAL INSPECTOR")).toBeTruthy();
+  it("a real facts block stays while loading unless it is flagged", () => {
+    zh(<DetailPage header={header} tabs={tabs} facts={<p>REAL FACTS</p>} loading={{}} />);
+    expect(screen.getByText("REAL FACTS")).toBeTruthy();
+    expect(document.querySelector('[data-part="detail-facts"]')?.textContent).toBe("REAL FACTS");
   });
 
   it("stats draws stat card placeholders under the header; known metrics render for real", () => {
@@ -168,17 +174,26 @@ describe("DetailPage / WizardPage content blocks", () => {
     expect(screen.getAllByRole("status")).toHaveLength(1);
   });
 
-  it("the inspector takes its row count and key width", () => {
+  it("the facts placeholder takes its row count and key width, above the content blocks", () => {
     zh(
       <DetailPage
         header={header}
         tabs={tabs}
-        loading={{ inspector: { rows: 7, keyWidth: "10ch" } }}
+        loading={{
+          facts: { rows: 7, keyWidth: "10ch" },
+          content: [{ kind: "table", label: "副本", columns: cols }],
+        }}
       />,
     );
-    expect(parts("loading-inspector-row")).toHaveLength(7);
-    const key = document.querySelector('[data-part="loading-inspector-row"] dt') as HTMLElement;
-    expect(key.style.width).toBe("10ch");
+    const facts = document.querySelector('[data-part="detail-facts"]') as HTMLElement;
+    expect(facts.querySelectorAll('[data-part="key-value-row"]')).toHaveLength(7);
+    expect((facts.querySelector("dt") as HTMLElement).style.width).toBe("10ch");
+    // the facts come first, then the tab's blocks
+    const content = document.querySelector('[data-part="content"]') as HTMLElement;
+    expect(content.firstElementChild).toBe(facts);
+    expect(
+      facts.compareDocumentPosition(document.querySelector('[data-empty="loading"]') as Node),
+    ).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
   });
 
   it("a wizard step with content draws the blocks, no card", () => {

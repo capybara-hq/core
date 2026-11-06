@@ -54,7 +54,7 @@ describe("页面模板根节点与页头", () => {
       <DetailPage
         header={header}
         tabs={{ items: [{ id: "a", label: "概要" }], value: "a", label: "标签" }}
-        inspector={<div>i</div>}
+        facts={<div>i</div>}
       >
         x
       </DetailPage>,
@@ -313,7 +313,7 @@ describe("widths, stat cards and the form without anchors", () => {
       <DetailPage
         header={header}
         tabs={{ items: [{ id: "a", label: "概要" }], value: "a", label: "t" }}
-        inspector={<div>i</div>}
+        facts={<div>i</div>}
       >
         x
       </DetailPage>,
@@ -324,6 +324,28 @@ describe("widths, stat cards and the form without anchors", () => {
     expect(content.getAttribute("data-width")).toBe("content");
     expect(head.closest(".cb-body-main")).not.toBeNull();
     expect(head.closest(".cb-body-main")).toBe(content.closest(".cb-body-main"));
+  });
+
+  it("DetailPage: the facts are a block at the top of the one centred column, no right pane", () => {
+    zh(
+      <DetailPage
+        header={header}
+        tabs={{ items: [{ id: "a", label: "概要" }], value: "a", label: "t" }}
+        facts={<dl>FACTS</dl>}
+      >
+        <p>TAB</p>
+      </DetailPage>,
+    );
+    expect(document.querySelector(".cb-body-inspector")).toBeNull();
+    expect(screen.queryByRole("complementary")).toBeNull();
+    expect(document.querySelector(".cb-body")?.getAttribute("data-layout")).toBe("single");
+    const content = document.querySelector('[data-part="content"]') as HTMLElement;
+    const facts = content.firstElementChild as HTMLElement;
+    expect(facts.getAttribute("data-part")).toBe("detail-facts");
+    expect(facts.textContent).toBe("FACTS");
+    expect(facts.nextElementSibling?.textContent).toBe("TAB");
+    // no 详情 button opening a sheet below 1280 either: the facts are always in the column
+    expect(screen.queryByRole("button", { name: "详情" })).toBeNull();
   });
 
   it("ListPage renders StatCards after the header when metrics are given", () => {
@@ -390,16 +412,8 @@ describe("WizardPage", () => {
 });
 
 describe("其他模板行为", () => {
-  it("DetailPage / InboxPage 透传 onInspectorClose", async () => {
+  it("InboxPage passes onInspectorClose through", async () => {
     const onClose = vi.fn();
-    const tabs = { items: [{ id: "a", label: "概要" }], value: "a", label: "标签" };
-    const { unmount } = zh(
-      <DetailPage header={header} tabs={tabs} inspector={<div>i</div>} onInspectorClose={onClose}>
-        x
-      </DetailPage>,
-    );
-    await userEvent.click(screen.getByRole("button", { name: "关闭" }));
-    unmount();
     zh(
       <InboxPage
         header={header}
@@ -411,7 +425,7 @@ describe("其他模板行为", () => {
       </InboxPage>,
     );
     await userEvent.click(screen.getByRole("button", { name: "关闭" }));
-    expect(onClose).toHaveBeenCalledTimes(2);
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 
   it("InboxPage with no items: one page empty state instead of the list + detail split", () => {

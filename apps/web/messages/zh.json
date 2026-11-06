@@ -1284,12 +1284,10 @@
         "credentials": "凭据",
         "settings": "设置"
       },
-      "inspectorTitle": "连接器",
       "refresh": "刷新工具",
       "refreshed": "工具列表已刷新。"
     },
     "inspector": {
-      "slug": "Slug",
       "connector": "连接器",
       "endpoint": "端点",
       "auth": "认证",
@@ -1668,7 +1666,6 @@
       "submit": "新建渠道"
     },
     "inspector": {
-      "plugin": "扩展",
       "tenant": "租户",
       "bot": "机器人",
       "agent": "智能体",
@@ -1682,7 +1679,6 @@
         "credentials": "凭据",
         "settings": "设置"
       },
-      "inspectorTitle": "详情",
       "statusTitle": "状态",
       "lastError": "最近错误",
       "noError": "最近没有错误。",
@@ -2110,9 +2106,7 @@
       "deleteTitle": "删除评测集「{name}」",
       "deleteHint": "删除后用例与运行结果都不再可见，正在执行的运行会被取消。",
       "deleted": "已删除评测集「{name}」。",
-      "inspectorTitle": "评测集",
       "agent": "智能体",
-      "description": "说明",
       "rubric": "评分标准",
       "defaultRubric": "（默认标准）",
       "created": "创建时间",
@@ -2308,7 +2302,6 @@
       },
       "inspector": {
         "title": "结果详情",
-        "selectHint": "在表格里选择一条结果查看差异与评委理由。",
         "case": "用例",
         "status": "状态",
         "drift": "漂移",

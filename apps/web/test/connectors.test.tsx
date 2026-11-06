@@ -158,9 +158,14 @@ describe("连接器详情（DetailPage）", () => {
     expect(bodyOf(calls.filter((c) => c.method === "PATCH")[1])).toEqual({
       tools: { delete_item: { status: "disabled" } },
     });
-    // inspector
-    const inspector = screen.getByRole("complementary");
-    expect(within(inspector).getByText("http://127.0.0.1:9/mcp")).toBeTruthy();
+    // the facts are the column's first block (no right pane): connector, endpoint, auth,
+    // credential; the slug is the head's count and is not repeated
+    expect(screen.queryByRole("complementary")).toBeNull();
+    const facts = document.querySelector('[data-part="detail-facts"]') as HTMLElement;
+    expect(document.querySelector('[data-part="content"]')?.firstElementChild).toBe(facts);
+    expect(within(facts).getByText("http://127.0.0.1:9/mcp")).toBeTruthy();
+    expect(facts.querySelectorAll('[data-part="key-value-row"]')).toHaveLength(4);
+    expect(within(facts).queryByText("fixture")).toBeNull();
   });
 
   it.each(LOCALES)(
@@ -759,8 +764,8 @@ describe("the connectors pages render on the server (web-SSR spec §6)", () => {
     });
     expect(document.querySelector("[aria-busy='true']")).not.toBeNull();
     expect(screen.queryByRole("heading", { level: 1, name: "Fixture" })).toBeNull();
-    // the tools tab's table: its header and, for a manager, the refresh button (disabled), and
-    // the inspector's five facts; no generic cards
+    // the facts block's four rows, then the tools tab's table: its header and, for a manager,
+    // the refresh button (disabled); no generic cards
     const page = document.querySelector('[data-template="DetailPage"]') as HTMLElement;
     expect(page.querySelector('[data-empty="loading"]')).not.toBeNull();
     expect(within(page).getByText(en.connectors.tools.columns.policy)).toBeTruthy();
@@ -769,7 +774,10 @@ describe("the connectors pages render on the server (web-SSR spec §6)", () => {
     }) as HTMLButtonElement;
     expect(refresh.disabled).toBe(true);
     expect(page.querySelectorAll('[data-part="loading-card"]')).toHaveLength(0);
-    expect(page.querySelectorAll('[data-part="loading-inspector-row"]')).toHaveLength(5);
+    expect(page.querySelector(".cb-body-inspector")).toBeNull();
+    expect(
+      page.querySelectorAll('[data-part="detail-facts"] [data-part="key-value-row"]'),
+    ).toHaveLength(4);
     await act(async () => release());
     expect(await screen.findByRole("heading", { level: 1, name: "Fixture" })).toBeTruthy();
     await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());

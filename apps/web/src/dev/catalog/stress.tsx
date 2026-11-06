@@ -63,7 +63,7 @@ function StressBody() {
           { id: "b", label: `生僻字 ${RARE}` },
         ],
       }}
-      inspector={
+      facts={
         <Stack gap={8}>
           <Text truncate>{LONG_TITLE}</Text>
           <Text>{RARE}</Text>
