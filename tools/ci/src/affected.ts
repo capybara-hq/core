@@ -3,8 +3,8 @@
  *
  * Pushes to main always run everything (`planAll`). On a PR:
  * - docs-only diffs run nothing heavy (the old docs-only fast path);
- * - "run everything" triggers (root config, lockfile, `.github/**`, `packages/testing/**`, files that
- *   belong to no workspace package) run everything;
+ * - "run everything" triggers (root config, lockfile, `.github/**` except the files no test reads,
+ *   `packages/testing/**`, files that belong to no workspace package) run everything;
  * - otherwise tests run for the changed workspace packages, everything that depends on them
  *   (all dependency kinds, transitively), and every package whose tests load an affected plugin by
  *   path (tools/ci/test-plugins.json, kept honest by `pnpm check`); web / visual / e2e / docker run
@@ -72,10 +72,24 @@ const RUN_ALL_ROOT_FILES = new Set([
 ]);
 const RUN_ALL_ROOT_PATTERNS = [/^vitest\.config\.[^/]+$/, /^tsconfig[^/]*\.json$/];
 /**
- * Directories whose change can affect any test: CI itself (workflows, and this script with its
- * test-plugins.json), and the test kit every package uses.
+ * Directories whose change can affect any test: CI itself (this script with its test-plugins.json,
+ * and `.github/` except the files `GITHUB_NO_TESTS` and `EXTRA_INPUTS` name), and the test kit
+ * every package uses.
  */
 const RUN_ALL_DIRS = [".github/", "tools/ci/", "packages/testing/"];
+
+/**
+ * Files under `.github/` that no test, build or check of a PR reads: they configure other
+ * workflows (CLA, the issue gate, the manual baseline and reference renders) or review routing.
+ * Every other `.github/` file, ci.yml first, runs everything.
+ */
+const GITHUB_NO_TESTS = new Set([
+  ".github/CODEOWNERS",
+  ".github/workflows/cla.yml",
+  ".github/workflows/community.yml",
+  ".github/workflows/visual-update.yml",
+  ".github/workflows/reference-update.yml",
+]);
 
 /**
  * Files outside any workspace package that tests or checks read, and the package whose tests read them.
@@ -83,6 +97,8 @@ const RUN_ALL_DIRS = [".github/", "tools/ci/", "packages/testing/"];
  * ignored, or unknown and runs everything).
  */
 const EXTRA_INPUTS: { match: (f: string) => boolean; dirs: string[] }[] = [
+  // tools/release's workflow tests pin the release workflow's layout.
+  { match: (f) => f === ".github/workflows/release.yml", dirs: ["tools/release"] },
   // tools/worktree's tests execute the hooks directly.
   {
     match: (f) => f.startsWith(".claude/hooks/") || f === ".claude/settings.json",
@@ -152,6 +168,7 @@ const isBootstrapNetworkInput = (f: string) => BOOTSTRAP_NETWORK_INPUTS.some((m)
 
 /** Docs: no test, build or check reads them. Same rules as the former code-changed.sh. */
 function isDoc(f: string): boolean {
+  if (GITHUB_NO_TESTS.has(f)) return true;
   if (f.startsWith("docs/")) return true;
   if (f === ".gitignore") return true;
   if (f.startsWith(".claude/") || f.startsWith(".agents/")) return true;
@@ -159,6 +176,7 @@ function isDoc(f: string): boolean {
 }
 
 function isRunAll(f: string): boolean {
+  if (GITHUB_NO_TESTS.has(f) || f === ".github/workflows/release.yml") return false;
   if (RUN_ALL_ROOT_FILES.has(f)) return true;
   if (RUN_ALL_ROOT_PATTERNS.some((re) => re.test(f))) return true;
   return RUN_ALL_DIRS.some((d) => f.startsWith(d));
