@@ -20,9 +20,9 @@ import { resetNavigation } from "./support/navigation";
 
 /**
  * Agent map spec §9.2 (Task C1): the agent map's level 1 opened from the conversation page, from
- * the sub-agent group's header and from a title-bar icon shown while the conversation has
- * sub-agents; the dialog lives in the URL hash (`#agents`) and reads `GET …/agent-tree`, again
- * when a sub-agent event or progress arrives.
+ * the sub-agent group's header and from the composer's agents chip shown while the conversation
+ * has sub-agents (AC3; the title-bar icon is gone); the dialog lives in the URL hash (`#agents`)
+ * and reads `GET …/agent-tree`, again when a sub-agent event or progress arrives.
  */
 
 const params = { conversationId: "c1" };
@@ -39,7 +39,8 @@ vi.mock("next/navigation", () => ({
 
 const ORG = "/api/v1/orgs/o1";
 const PARENT = `${ORG}/conversations/c1`;
-const MAP = en.chat.agentMap;
+/** The map dialog's name and the sub-agent group's link (the design's `agentMap.title`). */
+const MAP = "Agent map";
 
 const call = (id: string, description: string) => ({
   type: "tool_call",
@@ -219,6 +220,9 @@ function api(
 const treeReads = (calls: Call[]) =>
   calls.filter((c) => c.method === "GET" && c.url.endsWith("/agent-tree")).length;
 const titleBar = () => document.querySelector('[data-part="title-bar"]') as HTMLElement;
+/** The composer's agents chip (AC3). */
+const agentsChip = () =>
+  document.querySelector('[data-part="agents-chip"]') as HTMLButtonElement | null;
 const mapDialog = () => screen.findByRole("dialog", { name: MAP });
 
 beforeEach(() => {
@@ -280,24 +284,77 @@ describe("the agent map's entry points", () => {
     expect(window.location.hash).toBe("");
   });
 
-  it("the title-bar icon shows only while the conversation has sub-agents", async () => {
+  it("the composer's agents chip shows only while the conversation has sub-agents; no title-bar icon", async () => {
     api([userMsg(1, "go"), runStarted(2)]);
     await renderChatRoute();
     await screen.findByText("go");
-    expect(within(titleBar()).queryByRole("button", { name: MAP })).toBeNull();
+    expect(agentsChip()).toBeNull();
     cleanup();
 
     const calls = api(parentEvents());
     await renderChatRoute();
-    const icon = await within(titleBar()).findByRole("button", { name: MAP });
-    // the tree is read only once the map opens
+    const chip = await waitFor(() => {
+      const c = agentsChip();
+      expect(c).not.toBeNull();
+      return c as HTMLButtonElement;
+    });
+    // the agent map has no title-bar icon any more (AC3)
+    expect(within(titleBar()).queryByRole("button", { name: MAP })).toBeNull();
+    // the tree is read only once the map opens: the chip reads nothing of its own
     expect(treeReads(calls)).toBe(0);
-    await userEvent.setup().click(icon);
+    const user = userEvent.setup();
+    await user.click(chip);
     expect(window.location.hash).toBe("#agents");
+    const dialog = await mapDialog();
+    expect(await within(dialog).findByText("Read the changelog")).toBeTruthy();
+    // Esc closes the map and gives the focus back to the chip
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: MAP })).toBeNull());
+    expect(window.location.hash).toBe("");
+    await waitFor(() => expect(document.activeElement).toBe(agentsChip()));
+  });
+
+  it("the agents chip counts the tree, pulses while one runs and names the running count", async () => {
+    api(parentEvents());
+    await renderChatRoute();
+    const chip = await waitFor(() => {
+      const c = agentsChip();
+      expect(c).not.toBeNull();
+      return c as HTMLButtonElement;
+    });
+    // before the tree is read: the conversation's own child from its log
+    expect(chip.textContent).toBe("1 agent");
+    expect(chip.getAttribute("aria-label")).toBe("1 agent, 1 running");
+    expect(chip.title).toBe("1 agent, 1 running");
+    expect(chip.querySelector('[data-part="agent-dot"]')?.getAttribute("data-status")).toBe(
+      "running",
+    );
+    // the map's tree read adds the grandchild
+    const user = userEvent.setup();
+    await user.click(chip);
     expect(await within(await mapDialog()).findByText("Read the changelog")).toBeTruthy();
-    // the dialog is modal: the page under it is hidden from the accessibility tree
-    const pressed = within(titleBar()).getByRole("button", { name: MAP, hidden: true });
-    expect(pressed.getAttribute("aria-pressed")).toBe("true");
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(agentsChip()?.textContent).toBe("2 agents"));
+    expect(agentsChip()?.getAttribute("aria-label")).toBe("2 agents, 2 running");
+    // the child ends: nothing below it counts as running any more, the dot goes
+    act(() => {
+      FakeEventSource.instances[0]?.emit(
+        "event",
+        ev(5, "subagent_finished", {
+          subagentId: "ch1",
+          childRunId: "run-ch1",
+          callId: "k1",
+          status: "completed",
+          toolCalls: 2,
+          durationMs: 41_000,
+          usage: { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0 },
+        }),
+      );
+    });
+    await waitFor(() =>
+      expect(agentsChip()?.getAttribute("aria-label")).toBe("2 agents, 0 running"),
+    );
+    expect(agentsChip()?.querySelector('[data-part="agent-dot"]')).toBeNull();
   });
 
   it("open properties, open the map, close the map: the properties are back", async () => {
@@ -306,7 +363,8 @@ describe("the agent map's entry points", () => {
     await renderChatRoute();
     expect(await screen.findByRole("complementary", { name: "Properties" })).toBeTruthy();
     const user = userEvent.setup();
-    await user.click(await within(titleBar()).findByRole("button", { name: MAP }));
+    await waitFor(() => expect(agentsChip()).not.toBeNull());
+    await user.click(agentsChip() as HTMLButtonElement);
     expect(window.location.hash).toBe("#agents");
     const dialog = await mapDialog();
     await user.click(within(dialog).getByRole("button", { name: "Close" }));
@@ -374,6 +432,7 @@ describe("the agent map's entry points", () => {
     await screen.findByText("Reading the docs first.");
     await waitFor(() => expect(window.location.hash).toBe(""));
     expect(within(titleBar()).queryByRole("button", { name: MAP })).toBeNull();
+    expect(agentsChip()).toBeNull();
     const group = document.querySelector('[data-entry="subagents"]') as HTMLElement;
     expect(within(group).queryByRole("button", { name: MAP })).toBeNull();
     expect(within(group).queryByRole("button", { name: "View in agent map" })).toBeNull();
