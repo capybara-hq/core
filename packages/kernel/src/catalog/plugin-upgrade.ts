@@ -375,6 +375,45 @@ export class PlatformPluginUpdater {
     return { ...preview, orgNames: await this.orgNamesOf(preview) };
   }
 
+  /**
+   * Locks, in sorted order and before the item (ruling P3-50), every live org the update may
+   * write in: the orgs with connectors made from the plugin's connector templates and the item's
+   * owner org. `acting`: the owner org an owner update acts for, locked with its admin re-checked
+   * (`catalog.upload`; deleted -> 404 `org.not_found`). Returns the live orgs locked; another
+   * deleted one is skipped.
+   */
+  private async lockUpdateOrgs(
+    itemId: string,
+    acting?: { orgId: string; actor: string },
+  ): Promise<Set<string>> {
+    const item = await this.db
+      .selectFrom("catalog_items")
+      .select("owner_org_id")
+      .where("id", "=", itemId)
+      .executeTakeFirst();
+    const made = await this.db
+      .selectFrom("connectors as c")
+      .innerJoin("platform_connector_templates as t", "t.id", "c.platform_template_id")
+      .select("c.org_id")
+      .distinct()
+      .where("t.catalog_item_id", "=", itemId)
+      .where("c.deleted_at", "is", null)
+      .execute();
+    const ids = new Set(made.map((r) => r.org_id));
+    if (item?.owner_org_id) ids.add(item.owner_org_id);
+    if (acting !== undefined) ids.add(acting.orgId);
+    const live = new Set<string>();
+    for (const orgId of [...ids].sort()) {
+      if (orgId === acting?.orgId) {
+        await this.orgLock.lockAndAuthorize(orgId, acting.actor, "catalog.upload");
+        live.add(orgId);
+      } else if (await this.orgLock.tryLock(orgId)) {
+        live.add(orgId);
+      }
+    }
+    return live;
+  }
+
   /** The names of the orgs a preview mentions, by id (an owner's preview, see `orgNames`). */
   private async orgNamesOf(p: PlatformUpdatePreview): Promise<Record<string, string>> {
     const ids = new Set<string>([
@@ -387,6 +426,7 @@ export class PlatformPluginUpdater {
       .selectFrom("orgs")
       .select(["id", "name"])
       .where("id", "in", [...ids])
+      .where("deleted_at", "is", null)
       .execute();
     return Object.fromEntries(rows.map((r) => [r.id, r.name]));
   }
@@ -656,7 +696,10 @@ export class PlatformPluginUpdater {
     confirmPending?: string,
   ): Promise<UpdateDiff> {
     if (owner === undefined) await this.adminLock.lockAndAuthorize(actor);
-    else await this.orgLock.lockAndAuthorize(owner.orgId, actor, "catalog.upload");
+    // The global lock order (ruling P3-50): the orgs (sorted; the acting owner org's admin
+    // re-checked at its place), then the item, then its components; an org deletion locks its org
+    // row, then the items it owns
+    const liveOrgs = await this.lockUpdateOrgs(itemId, owner && { orgId: owner.orgId, actor });
     const named = await this.db
       .selectFrom("catalog_items")
       .select("name")
@@ -745,7 +788,18 @@ export class PlatformPluginUpdater {
     // Connectors made from changed templates, in every org (ruling E2)
     const orgs = [...new Set(diff.connectors.map((c) => c.orgId))].sort();
     for (const orgId of orgs) {
-      await this.orgLock.lock(orgId);
+      if (!liveOrgs.has(orgId)) {
+        // Locked before the item (P3-50): an org not locked then is deleted (its connectors go
+        // with it), or its connector was made since, which changes what the update does
+        const live = await t
+          .selectFrom("orgs")
+          .select("id")
+          .where("id", "=", orgId)
+          .where("deleted_at", "is", null)
+          .executeTakeFirst();
+        if (live === undefined) continue;
+        throw stale();
+      }
       for (const c of diff.connectors.filter((x) => x.orgId === orgId)) {
         const prepared = await this.prepare(actor, itemId, diff.to.version, c);
         await this.connectors.applyTemplateIn(orgId, c.id, actor, prepared, opts.actorTokenId);

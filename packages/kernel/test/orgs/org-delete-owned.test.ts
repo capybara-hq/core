@@ -1,19 +1,23 @@
 import { sql } from "kysely";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { CatalogScopeService } from "../../src/catalog/catalog-scope.service.js";
+import { PlatformComponents } from "../../src/catalog/platform-components.js";
 import { ExtensionAdminOps } from "../../src/extensions/admin-ops.js";
+import { runOutsideTransaction } from "../../src/infra/database/transaction-host.js";
 import { usableSkills } from "../../src/skills/usable.js";
 import { StorageService } from "../../src/storage/storage.service.js";
 import {
+  MCP_TOKEN,
   type OrgEnv,
   resetOrgCatalog,
+  seedPlugin,
   setDeployment,
   setScope,
   startOrgEnv,
 } from "../catalog/org-env.js";
 import { skillPlugin } from "../catalog/packages.js";
 import { lifePkg } from "../helpers/plugin-packages.js";
-import { createOrg, type Req, waitFor } from "../helpers/runs.js";
+import { createOrg, enableExtensions, type Req, waitFor } from "../helpers/runs.js";
 
 /**
  * Plugin scope phase 3, Task 9 (spec §14, P3-20, P3-21; pre-flight F9, F10, F28): deleting an org
@@ -318,6 +322,122 @@ describe("org deletion and what the org owns", { timeout: 180_000 }, () => {
     expect(again).not.toBe(itemId);
   });
 
+  it("a transferred plugin's pending new version is cleared", async () => {
+    const orgX = await newOrg();
+    const itemId = await confirmedIn(orgX, "del-pv");
+    await sharedWithB(orgX, itemId, "del-pv-notes");
+    const v2 = await uploaded(
+      orgX,
+      await lifePkg({ name: "del-pv", version: "2.0.0", skills: ["del-pv-notes"] }),
+      "pending",
+    );
+    expect(v2).toBe(itemId);
+    expect(await itemRow(itemId)).toMatchObject({ pending_version: "2.0.0" });
+    expect((await deleteOrg(orgX)).statusCode).toBe(204);
+    expect(await itemRow(itemId)).toEqual({
+      deleted_at: null,
+      owner_org_id: null,
+      awaiting_confirmation: false,
+      pending_version: null,
+    });
+    const item = await env.db
+      .selectFrom("catalog_items")
+      .select(["pending_by", "pending_at", "platform_synced_version"])
+      .where("id", "=", itemId)
+      .executeTakeFirstOrThrow();
+    expect(item).toEqual({ pending_by: null, pending_at: null, platform_synced_version: "1.0.0" });
+    // B keeps the confirmed version; nothing of 2.0.0 is installed
+    expect(await usable(orgB)).toContain("del-pv-notes");
+    const ext = await env.db
+      .selectFrom("extension_installs")
+      .select("version")
+      .where("name", "=", "del-pv")
+      .executeTakeFirstOrThrow();
+    expect(ext.version).toBe("1.0.0");
+  });
+
+  it("a platform update and the owner org's deletion take their locks in one order", async () => {
+    // ruling P3-50: the orgs first, then the item, then its components
+    const orgX = await newOrg();
+    await enableExtensions(env.db, orgX, "fake-connector");
+    const itemId = await seedPlugin(env, {
+      name: "del-upd",
+      skills: ["upd-notes"],
+      templates: { gh: { defaultToolPolicies: { search: "allow", delete_all: "allow" } } },
+    });
+    await seedPlugin(env, {
+      name: "del-upd",
+      addTo: itemId,
+      version: "2.0.0",
+      skills: ["upd-notes"],
+      templates: { gh: { defaultToolPolicies: { search: "ask", delete_all: "allow" } } },
+    });
+    await setScope(env, itemId, "named", [orgX]);
+    const ins = await env.root({
+      method: "POST",
+      url: `/api/v1/orgs/${orgX}/catalog/${itemId}/install`,
+      payload: {
+        connectors: { gh: { endpoint: { url: env.mcp.url }, credential: { token: MCP_TOKEN } } },
+      },
+    });
+    expect(ins.statusCode, ins.body).toBe(201);
+    // org X owns it, at its applied version 2.0.0 (the super admin's generic update reaches it)
+    await env.db
+      .updateTable("catalog_items")
+      .set({ owner_org_id: orgX, latest_version: "2.0.0" })
+      .where("id", "=", itemId)
+      .execute();
+    for (const table of ["platform_skills", "platform_connector_templates"] as const) {
+      await env.db
+        .updateTable(table as "platform_skills")
+        .set({ owner_org_id: orgX })
+        .where("catalog_item_id", "=", itemId)
+        .execute();
+    }
+    const p = await env.root({
+      method: "POST",
+      url: `/api/v1/admin/catalog/items/${itemId}/update/preview`,
+      payload: { version: "2.0.0" },
+    });
+    expect(p.statusCode, p.body).toBe(200);
+    expect(
+      (p.json() as { connectorOrgs: { orgId: string }[] }).connectorOrgs.map((c) => c.orgId),
+    ).toEqual([orgX]);
+    // the deletion starts while the update holds its rows, and waits on a lock before it goes on
+    let deletion: Promise<{ statusCode: number; body: string }> | undefined;
+    const original = PlatformComponents.prototype.applySyncIn;
+    vi.spyOn(PlatformComponents.prototype, "applySyncIn").mockImplementationOnce(async function (
+      this: PlatformComponents,
+      ...args
+    ) {
+      const r = await original.apply(this, args);
+      // a request of its own, outside the update's transaction context
+      deletion = runOutsideTransaction(() => deleteOrg(orgX));
+      await waitFor(
+        async () => {
+          const row = await sql<{ n: number }>`
+              SELECT count(*)::int AS n FROM pg_stat_activity
+              WHERE wait_event_type = 'Lock' AND datname = current_database()`.execute(env.db);
+          return (row.rows[0]?.n ?? 0) > 0;
+        },
+        10_000,
+        "the deletion waits on a lock",
+      );
+      return r;
+    });
+    const u = await env.root({
+      method: "PUT",
+      url: `/api/v1/admin/catalog/items/${itemId}/update`,
+      payload: { version: "2.0.0", diffHash: p.json().diffHash },
+    });
+    expect(deletion).toBeDefined();
+    const d = await (deletion as Promise<{ statusCode: number; body: string }>);
+    // no deadlock (40P01 -> 500) on either side
+    expect(u.statusCode, u.body).toBe(200);
+    expect(d.statusCode, d.body).toBe(204);
+    expect((await itemRow(itemId)).deleted_at).not.toBeNull();
+  });
+
   describe("confirmation racing the removal (P3-21)", () => {
     /** Org X's pending upload `name` and the digest the super admin confirms it with. */
     async function pendingIn(name: string) {
@@ -332,7 +452,8 @@ describe("org deletion and what the org owns", { timeout: 180_000 }, () => {
       const original = ops.install.bind(ops);
       const spy = vi.spyOn(ops, "install").mockImplementationOnce(async (...args) => {
         const r = await original(...args);
-        await between();
+        // a request of its own, outside any transaction context of the confirmation
+        await runOutsideTransaction(between);
         return r;
       });
       return spy;
@@ -342,6 +463,8 @@ describe("org deletion and what the org owns", { timeout: 180_000 }, () => {
       const { orgX, itemId, digest } = await pendingIn("del-race");
       const spy = afterInstall(async () => {
         expect((await deleteOrg(orgX)).statusCode).toBe(204);
+        // installed under its claim: the deletion leaves the claim to the take-out (F10)
+        expect(await claimOf("del-race")).toBeDefined();
       });
       const c = await confirmUpload(itemId, digest);
       expect(spy).toHaveBeenCalledTimes(1);

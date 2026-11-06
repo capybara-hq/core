@@ -724,11 +724,17 @@ export class PlatformComponents {
     // New component rows carry the plugin's owner and 可共享 flag (ruling P3-2); an org plugin's
     // skills and agent templates were created in its owner org (`origin_org_id`, immutable, F27),
     // and like the plugin they are not shown to other orgs until the super admin shows them
+    // Under the item row lock: an item removed since the plan (an org deletion, P3-20) gets no
+    // component rows (the item before its components, ruling P3-50)
     const item = await t
       .selectFrom("catalog_items")
-      .select(["owner_org_id", "shareable"])
+      .select(["owner_org_id", "shareable", "deleted_at"])
       .where("id", "=", plan.itemId)
+      .forUpdate()
       .executeTakeFirst();
+    if (!item || item.deleted_at !== null) {
+      throw new ApiError("catalog.item_not_found", `Catalog item ${plan.itemId} was removed`);
+    }
     const ownerOrgId = item?.owner_org_id ?? null;
     const owned =
       ownerOrgId === null

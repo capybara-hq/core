@@ -1,3 +1,4 @@
+import { sql } from "kysely";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { CatalogScopeService } from "../../src/catalog/catalog-scope.service.js";
 import { PlatformComponents } from "../../src/catalog/platform-components.js";
@@ -247,11 +248,26 @@ describe("owner updates without an extension", { timeout: 120_000 }, () => {
       .where("id", "=", itemId)
       .execute();
     await setScope(env, itemId, "named", [orgA, orgB]);
+    // a new scope version, so this sync is not deduplicated against the import's own sync job
+    // (`scope-item-<id>-<v>`) still running; then the full convergence: live installs in A and B
+    await env.db
+      .updateTable("catalog_items")
+      .set({ scope_version: sql<number>`scope_version + 1` })
+      .where("id", "=", itemId)
+      .execute();
     await env.k.app.get(CatalogScopeService).enqueueSync(itemId);
     await waitFor(
-      async () => (await usable(orgB)).includes("names-notes"),
-      15_000,
-      "names-notes usable in org B",
+      async () =>
+        (
+          await env.db
+            .selectFrom("plugin_installs")
+            .select("org_id")
+            .where("item_id", "=", itemId)
+            .where("status", "=", "installed")
+            .execute()
+        ).length === 2,
+      30_000,
+      "own-names installed in orgs A and B",
     );
     const v2 = await pluginTgz({
       manifest: { name: "own-names", version: "2.0.0", skills: [{ path: "./skills/names-notes" }] },

@@ -10,6 +10,7 @@ import type { KernelSchemaDb, SourceFormat } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { ExtensionAdmin } from "../extensions/admin-view.js";
 import { ExtensionInstalls } from "../extensions/installs.js";
+import { PluginInstallLock } from "../extensions/locks.js";
 import { audit } from "../identity/audit.js";
 import { SuperAdminLock } from "../identity/super-admin.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
@@ -323,6 +324,8 @@ export class CatalogService {
     @Inject(PluginImport) private readonly pluginImport: PluginImport,
     /** The token of a custom marketplace (sent only to its URL's origin). */
     @Inject(MarketplacesService) private readonly marketplaces: MarketplacesService,
+    /** Serializes a claim release with an install of that name still committing (F10). */
+    @Inject(PluginInstallLock) private readonly installLock: PluginInstallLock,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
   ) {}
 
@@ -812,9 +815,13 @@ export class CatalogService {
       .returning(["name", "awaiting_confirmation", "package_name", "owner_org_id"])
       .executeTakeFirst();
     if (!row) return null;
-    // An org upload still waiting: nothing was installed under its claim, free the name
-    // (ruling P3-37, pre-flight F10)
-    if (row.awaiting_confirmation) await releaseExtensionClaim(t, row.name, row.package_name);
+    // An org upload still waiting: free the name when nothing is installed under its claim
+    // (ruling P3-37, pre-flight F10). Under the install lock, so an install a running confirmation
+    // is committing is seen: that claim stays for its take-out or the cleanup job
+    if (row.awaiting_confirmation && row.package_name !== null) {
+      await this.installLock.lock(row.name);
+      await releaseExtensionClaim(t, row.name, row.package_name);
+    }
     // Pending requests for a deleted item are pointless: cancel them in the same transaction
     await cancelPendingRequests(t, { itemId }, actor, "item_removed", opts);
     await audit(t, {

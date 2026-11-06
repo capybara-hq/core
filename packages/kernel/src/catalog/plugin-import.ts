@@ -1540,6 +1540,20 @@ export class PluginImport {
     try {
       await this.platform.syncFromVersion(itemId, version, { initial: true });
     } catch (err) {
+      // Removed meanwhile (an org deletion racing a confirmation, P3-20): nothing to write
+      const live = await this.db
+        .selectFrom("catalog_items")
+        .select("id")
+        .where("id", "=", itemId)
+        .where("deleted_at", "is", null)
+        .executeTakeFirst();
+      if (live === undefined) {
+        this.log.info("catalog item removed before its platform components were written", {
+          itemId,
+          version,
+        });
+        return;
+      }
       this.log.error("writing the platform components of a new catalog item failed", {
         itemId,
         version,
