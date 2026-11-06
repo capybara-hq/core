@@ -1049,11 +1049,14 @@ textarea {
 
 /* ── Page header ─────────────────────────────────────────────────────────── */
 
+/* Head rhythm (spec §4.2): one layout.head-* token per pair of rows, no gap of the column. */
 .r-ph {
   display: flex;
   flex-direction: column;
-  gap: var(--cb-space-1);
   min-width: 0;
+}
+.r-ph-crumb + .r-ph-row {
+  margin-top: var(--cb-layout-head-path);
 }
 .r-ph-crumb {
   display: flex;
@@ -1091,7 +1094,7 @@ textarea {
   font-weight: 600;
 }
 .r-ph-desc {
-  margin: var(--cb-space-1) 0 0;
+  margin: var(--cb-layout-head-description) 0 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1395,6 +1398,14 @@ textarea {
 }
 .r-content[data-width="content"] {
   max-width: var(--cb-layout-content);
+}
+/* The page head in a full page: layout.head-content (head-tabs-content below a tab row) to the
+   first block, in place of the column's space.3 (spec §4.2). */
+.r-content > .r-ph + * {
+  margin-top: calc(var(--cb-layout-head-content) - var(--cb-space-3));
+}
+.r-content > .r-ph:has(> .r-ph-tabs) + * {
+  margin-top: calc(var(--cb-layout-head-tabs-content) - var(--cb-space-3));
 }
 
 /* ── Icon grid ───────────────────────────────────────────────────────────── */
@@ -3399,7 +3410,7 @@ textarea {
   display: flex;
   flex-wrap: wrap;
   row-gap: var(--cb-space-2);
-  margin-top: var(--cb-space-3);
+  margin-top: var(--cb-layout-head-tabs);
   border-bottom: 1px solid var(--cb-line-soft);
 }
 .r-ph-tabs .r-search {
@@ -3910,8 +3921,13 @@ textarea {
   max-width: var(--cb-layout-content);
   margin: 0 auto;
 }
+/* The template head: space.5 above it, layout.head-content (or layout.head-tabs-content below a
+   tab row) between it and the body, whose first block adds no space of its own (spec §4.2). */
 .r-tpl-head {
-  padding: 0 var(--cb-content-pad, 32px);
+  padding: var(--cb-space-5) var(--cb-content-pad, 32px) var(--cb-layout-head-content);
+}
+.r-tpl-head:has(.r-ph-tabs) {
+  padding-bottom: var(--cb-layout-head-tabs-content);
 }
 .r-tpl-body {
   display: flex;
@@ -3924,7 +3940,7 @@ textarea {
   flex-direction: column;
   gap: var(--cb-space-3);
   min-width: 0;
-  padding: var(--cb-space-4) var(--cb-content-pad, 32px);
+  padding: 0 var(--cb-content-pad, 32px) var(--cb-space-4);
 }
 .r-tpl-rail {
   flex: none;
@@ -4177,7 +4193,9 @@ textarea {
 .r-tpl-head[data-stats] {
   display: flex;
   flex-direction: column;
-  gap: var(--cb-space-3);
+}
+.r-tpl-head[data-stats] > .r-stats {
+  margin-top: var(--cb-layout-head-content);
 }
 .r-trace {
   display: grid;

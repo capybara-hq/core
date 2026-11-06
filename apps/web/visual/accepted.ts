@@ -17,6 +17,11 @@ export const ACCEPTED: string[] = [
   "icon",
   "sidebar",
   "page-header",
+  // the head rhythm across the templates (spec §4.2 "Head rhythm", acceptance item S): blocks and
+  // size table in place, and head-rhythm.spec.ts compares the offsets across the blocks; no
+  // reference PNG (the blocks are the templates themselves, the reference-update workflow draws
+  // the templates' own pages)
+  "head-rhythm",
   "stat-cards",
   "status-bar",
   "action-row",

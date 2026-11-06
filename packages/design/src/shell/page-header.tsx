@@ -96,7 +96,9 @@ const shown = (v: React.ReactNode) => v != null && v !== false;
 /**
  * The page header (spec §4.2): row 1 the path, row 2 the title (+ count / status) and the
  * description, actions on the right. No line, no ground. Below 640 the actions other than the
- * primary fold into a `more-horizontal` menu.
+ * primary fold into a `more-horizontal` menu. The vertical rhythm is the head tokens (spec §4.2
+ * "Head rhythm"): `layout.head-path` between the path and the title row, `layout.head-description`
+ * between the title and the description, `layout.head-tabs` above the notice and the tab row.
  */
 export function PageHeader(p: PageHeaderProps) {
   assertHeader(p);
@@ -249,7 +251,11 @@ export function PageHeader(p: PageHeaderProps) {
           })}
         </nav>
       ) : null}
-      <div className="cb-pageheader-row">
+      <div
+        className="cb-pageheader-row"
+        data-part="page-header-row"
+        data-avatar={shown(p.avatar) || loading?.avatar ? "true" : undefined}
+      >
         {shown(p.avatar) ? (
           <span className="cb-pageheader-avatar" data-part="page-header-avatar">
             {p.avatar}
@@ -300,7 +306,7 @@ export function PageHeader(p: PageHeaderProps) {
           </div>
         ) : null}
       </div>
-      {p.notice ?? null}
+      {shown(p.notice) ? <div className="cb-pageheader-notice">{p.notice}</div> : null}
       {tabItems.length > 0 || p.search || tabSlots > 0 ? (
         <div className="cb-pageheader-tabs" data-part="page-header-tabs">
           {tabItems.length > 0 ? (

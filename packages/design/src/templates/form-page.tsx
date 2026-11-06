@@ -64,7 +64,7 @@ export function FormPage({
   }, [dirty]);
   const page = (
     <>
-      <TemplateHead header={loading ? loadingHeader(header) : header} loose />
+      <TemplateHead header={loading ? loadingHeader(header) : header} />
       <Body layout="centered" loose width="content">
         {children}
       </Body>

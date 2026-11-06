@@ -142,6 +142,7 @@ Every size a component uses is a step of one of these scales, stored in `tokens.
 | Type | §2.2 | | `--cb-type-<name>-size`, `--cb-type-<name>-line` |
 | Radius | `sm` / `md` / `bubble` | 4 / 8 / 10 | `--cb-radius-<step>` |
 | Layout | `sidebar` / `sidebar-rail` / `content` / `content-pad` / `chat` / `status-bar` / `action-row` / `gutter` | 256 / 48 / 1120 / 32 / 720 / 24 / 40 / 20 | `--cb-layout-<name>` |
+| Layout, page head (§4.2 "Head rhythm") | `head-path` / `head-description` / `head-tabs` / `head-tabs-content` / `head-content` | 12 / 4 / 16 / 16 / 24 | `--cb-layout-<name>` |
 | Layout, conversation page | `title-bar` / `properties` / `panel-min` / `panel` / `chat-min` / `tool-output` / `file-card` / `thumb` / `inline-image` / `menu-max-height` | 48 / 300 / 520 / 560 / 480 / 120 / 240 / 56 / 360 / 328 (ten `row.default` items and the menu's padding) | `--cb-layout-<name>` |
 
 **Density steps.** Controls and rows come in three steps, chosen by context, never by taste:
@@ -216,7 +217,7 @@ Every page (except auth pages, §5 T10) is **Sidebar | content area**. The conte
 |---|---|---|---|
 | Drawer menu bar | `row.roomy` | Only below 960 | Menu button that opens the sidebar drawer, page title; below 640 its buttons are 40 px tap targets and it is padded 0 `space.1`, so their icons sit on the 16 px content edge |
 | PageHeader | content | Required | Row 1 the path; row 2 title + one-line description, actions on the right; optional tabs row (§4.2) |
-| PageTabs | 36 | Optional (detail pages only) | In-page tabs, current item underlined |
+| PageTabs | the head's tab row | Optional (detail pages only) | In-page tabs, current item underlined; drawn by the template as the head's tab row, the same box as the PageHeader's row 4 (§4.2) |
 | Body | flexible | Required | One of the layouts in §4.3 |
 | ActionRow | `layout.action-row` | Optional | Appears when the page has actions to submit, stacked above the StatusBar |
 | StatusBar | `layout.status-bar` | Required | Read-only: context · page status ｜ system status · version · time zone |
@@ -235,7 +236,18 @@ See §6.13 for the component. Width `layout.sidebar`; below 1280 an icon rail of
 - No bottom line and no background; spacing separates it from the body.
 - Actions: at most 1 solid primary action + 2 secondary + a `more-horizontal` menu; the primary action is rightmost; all `default` density; an action may lead with a 14 icon (`plus` on a create action). The submit action of form pages **must not** go here; it goes in the ActionRow.
 - List-page key metrics are **not** in the header: the template renders them below the header as StatCards (§6.14), at most 4–5. List and overview pages draw them at the top of the body; detail, trace, inbox, onboarding and status templates draw them in the fixed header area under the PageHeader.
-- Content width: the header shares the body's one content width (`layout.content`, 1120, centered; §4.3). It sits `space.6` below the top of the content area and `space.3` above the body (StatCards or the table).
+- Content width: the header shares the body's one content width (`layout.content`, 1120, centered; §4.3). It sits `space.5` below the top of the content area; what follows it is the head rhythm below.
+- **Head rhythm** (acceptance item S, 2026-11-07): one set of vertical gaps for every page head, the `layout.head-*` tokens (§2.5), drawn by `PageHeader` and the templates' one head (`TemplateHead`), so a page head reads the same on every template:
+
+  | Between | Token | Value |
+  |---|---|---|
+  | the path (row 1) and the title row (row 2, with its avatar, count / status and actions) | `layout.head-path` | 12 |
+  | the title line and the description | `layout.head-description` | 4 |
+  | the title row (or the notice, or a detail page's StatCards) and the notice or the tab row | `layout.head-tabs` | 16 |
+  | the tab row's bottom line and the body's first block | `layout.head-tabs-content` | 16 |
+  | a head without a tab row (its last row, or the StatCards a detail, trace or inbox head carries) and the body's first block | `layout.head-content` | 24 |
+
+  The gaps are the head's own: the body adds no space above its first block (no top padding on a detail page's content, a form's first section or a settings grid), and no template sets a gap of its own, so the path, the title row, the tabs and the first block sit at the same y on every template for the same head (List, Detail, Form, Settings, Overview, Inbox, Trace, Wizard, and Status / Onboarding, which share the head). A detail page's in-page tabs are the head's tab row (the same box as row 4: `control.default` + `space.1` above and below, the 1 px `line-soft` bottom border, 40 px tabs below 640). In-head StatCards sit `layout.head-content` below the PageHeader. A title row led by the avatar centres the title block and the actions on the 40 px avatar. The conversation title bar (§6.16.1) is one 48 px row (the path and the title on one line), so the rhythm does not apply to it; it shares the path's look and its horizontal spacing only. Checked by the `head-rhythm` blocks (below) and `apps/web/visual/head-rhythm.spec.ts`, which measures every template's path, title row, tab row and first block and expects them equal, and by the design unit test `head-rhythm.test.ts`.
 
 <!-- states: page-header -->
 States: `title`, `path`, `description-actions`, `long-title`, `narrow`, `loading`, `narrow-loading`, `avatar`
@@ -246,15 +258,18 @@ States: `title`, `path`, `description-actions`, `long-title`, `narrow`, `loading
 | page-header-title | title | font-size | type.h1 |
 | page-header-title | title | line-height | type.h1.line |
 | page-header-title | title | color | color.ink |
+| page-header-row | title | margin-top | layout.head-path |
 | path | path | font-size | type.small |
 | path | path | color | color.faint |
 | page-header-description | description-actions | font-size | type.prose-small |
 | page-header-description | description-actions | line-height | type.prose-small.line |
 | page-header-description | description-actions | color | color.muted |
+| page-header-description | description-actions | margin-top | layout.head-description |
 | button[data-variant=primary] | description-actions | height | control.default |
 | page-header-title | long-title | height | type.h1.line |
 | page-header | long-title | width | 608 |
 | page-header-tabs | narrow | row-gap | space.2 |
+| page-header-tabs | narrow | margin-top | layout.head-tabs |
 | page-header-search | narrow | width | 358 |
 | tab | narrow | height | 40 |
 | button[data-variant=primary] | narrow | height | 40 |
@@ -264,6 +279,32 @@ States: `title`, `path`, `description-actions`, `long-title`, `narrow`, `loading
 | page-header-tab-slots | narrow-loading | height | 40 |
 | page-header-avatar avatar | avatar | width | 40 |
 | page-header-avatar avatar | avatar | height | 40 |
+
+The head rhythm across the templates: one block per template, all with the same head (the path `capybara / agents / 研究助手`, the title, one default action); `list-tabs` adds the header's tabs and search, `detail` has its in-page tabs, `settings-avatar` leads the title row with the avatar (the agent page). Each block is the template in a 1280 × 480 box.
+
+<!-- states: head-rhythm -->
+States: `list`, `list-tabs`, `detail`, `form`, `settings`, `settings-avatar`, `overview`, `inbox`, `trace`, `wizard`
+
+<!-- size-table: head-rhythm -->
+| Part | State | Property | Value |
+|---|---|---|---|
+| template-head | list | padding-top | space.5 |
+| template-head | list | padding-bottom | layout.head-content |
+| page-header-row | list | margin-top | layout.head-path |
+| template-head | list-tabs | padding-bottom | layout.head-tabs-content |
+| page-header-tabs | list-tabs | margin-top | layout.head-tabs |
+| template-head | detail | padding-bottom | layout.head-tabs-content |
+| page-tabs | detail | margin-top | layout.head-tabs |
+| page-tabs | detail | height | 37 |
+| template-head | form | padding-bottom | layout.head-content |
+| template-head | settings | padding-bottom | layout.head-content |
+| template-head | settings-avatar | padding-bottom | layout.head-content |
+| page-header-row | settings-avatar | margin-top | layout.head-path |
+| page-header-row | settings-avatar | height | 40 |
+| template-head | overview | padding-bottom | layout.head-content |
+| template-head | inbox | padding-bottom | layout.head-content |
+| template-head | trace | padding-bottom | layout.head-content |
+| template-head | wizard | padding-bottom | layout.head-content |
 
 ### 4.3 Body layouts and content widths
 

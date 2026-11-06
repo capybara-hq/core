@@ -457,7 +457,9 @@ describe("其他模板行为", () => {
   it("the template head has one padding rule: the content padding, no page gutter", () => {
     const css = readFileSync(resolve(import.meta.dirname, "../src/styles/shell.css"), "utf8");
     const head = /\.cb-template-head \{([^}]*)\}/.exec(css)?.[1] ?? "";
-    expect(head).toContain("padding: var(--cb-space-5) var(--cb-content-pad) var(--cb-space-3);");
+    expect(head).toContain(
+      "padding: var(--cb-space-5) var(--cb-content-pad) var(--cb-layout-head-content);",
+    );
     expect(head).toContain("scrollbar-gutter: stable;");
     expect(css).not.toContain('.cb-template-head[data-width="content"]');
   });

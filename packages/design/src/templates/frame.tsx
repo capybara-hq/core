@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { SkeletonBox, SkeletonText, StatCards } from "../display/index";
+import { SkeletonBox, SkeletonText, StatCards, Tabs, type TabsProps } from "../display/index";
 import { Grid, Stack, Text } from "../layout/index";
 import { type ActionRowProps, PageHeader, type PageHeaderProps } from "../shell/index";
 import { type Column, DataTable } from "../table/index";
@@ -9,30 +9,43 @@ import { type Column, DataTable } from "../table/index";
  * width (`layout.content`, §4.3), so it lines up with the body below it on every page. Templates
  * without a list body (detail, trace, inbox, onboarding, status) draw the header's metrics here as
  * StatCards (`statsInHead`); list and overview pages draw them at the top of the body (WithStats).
- * `loose` leaves space.6 below the header for forms.
+ * `tabs` is a detail page's in-page tabs, drawn as the head's tab row (the PageHeader's own row
+ * box, `layout.head-tabs` below what is above it). Every template draws its head here, so one rule
+ * sets the head rhythm (spec §4.2): the body starts `layout.head-content` below the head, or
+ * `layout.head-tabs-content` below a tab row (the header's `tabs` / `search`, or `tabs`).
  */
 export function TemplateHead({
   header,
   statsInHead,
-  loose,
+  tabs,
   loadingStats = 0,
   children,
 }: {
   header: PageHeaderProps;
   statsInHead?: boolean;
-  loose?: boolean;
+  /** A detail page's in-page tabs (DetailPage `tabs`): the head's tab row. */
+  tabs?: TabsProps;
   /**
    * With `statsInHead`: stat card placeholders for metrics the page does not know yet (DetailPage
    * `loading.stats`); the header's own `metrics` render for real instead.
    */
   loadingStats?: number;
-  /** Drawn under the header inside the same frame (DetailPage's tabs). */
+  /** Drawn under the header inside the same frame (a loading trace's stat slots). */
   children?: ReactNode;
 }) {
   const metrics = statsInHead ? (header.metrics ?? []) : [];
   const slots = statsInHead && metrics.length === 0 ? loadingStats : 0;
+  const withTabs =
+    tabs !== undefined ||
+    (header.tabs?.length ?? 0) > 0 ||
+    header.search !== undefined ||
+    (header.loading?.tabs ?? 0) > 0;
   return (
-    <div className="cb-template-head" data-gap={loose ? "loose" : undefined}>
+    <div
+      className="cb-template-head"
+      data-part="template-head"
+      data-tabs={withTabs ? "true" : undefined}
+    >
       <div
         className="cb-template-head-frame"
         data-width="content"
@@ -41,6 +54,11 @@ export function TemplateHead({
         <PageHeader {...header} />
         {metrics.length > 0 ? <StatCards metrics={metrics} /> : <LoadingStats count={slots} />}
         {children}
+        {tabs !== undefined ? (
+          <div className="cb-pageheader-tabs" data-part="page-tabs">
+            <Tabs {...tabs} />
+          </div>
+        ) : null}
       </div>
     </div>
   );

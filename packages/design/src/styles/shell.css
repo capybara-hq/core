@@ -120,7 +120,9 @@
   gap: var(--cb-space-3);
   box-sizing: content-box;
   height: calc(var(--cb-control-default) + 2 * var(--cb-space-1));
-  margin-top: var(--cb-space-3);
+  /* Head rhythm (spec §4.2): the tab row sits layout.head-tabs below the title row, the notice or
+     the stat cards; a detail page's PageTabs are this same row (TemplateHead `tabs`). */
+  margin-top: var(--cb-layout-head-tabs);
   border-bottom: 1px solid var(--cb-line-soft);
 }
 .cb-pageheader-tabs .cb-tabs {
@@ -174,19 +176,20 @@
   }
 }
 /* One head for every template (spec §4.3): side padding 32 (16 below 640), top 20, so the head
-   sits at the same x and y on every page. */
+   sits at the same x and y on every page. Head rhythm (spec §4.2): the body starts
+   layout.head-content below the head, or layout.head-tabs-content below its tab row; the body
+   adds no space of its own above its first block, so these are the only head-to-content gaps. */
 .cb-template-head {
   flex: none;
-  padding: var(--cb-space-5) var(--cb-content-pad) var(--cb-space-3);
+  padding: var(--cb-space-5) var(--cb-content-pad) var(--cb-layout-head-content);
   /* Reserve the same scrollbar gutter as the scrolling body below, so a classic (non-overlay)
      scrollbar does not shift the content column against the head; scrollbar-gutter only applies
      to a scroll container, hence overflow: hidden. No effect with overlay scrollbars. */
   overflow: hidden;
   scrollbar-gutter: stable;
 }
-/* A form's first section sits space.6 below the header, as sections sit apart (spec §5.3). */
-.cb-template-head[data-gap="loose"] {
-  padding-bottom: var(--cb-space-6);
+.cb-template-head[data-tabs="true"] {
+  padding-bottom: var(--cb-layout-head-tabs-content);
 }
 /* One content width for every frame (spec §4.3). */
 .cb-template-head-frame[data-width="content"],
@@ -195,12 +198,15 @@
   margin: 0 auto;
 }
 
-/* PageHeader (spec §4.2): two rows, no line, no ground. */
+/* PageHeader (spec §4.2): the path, the title row, then the optional notice and tab row; no line,
+   no ground. The gaps are the head tokens, one per pair of rows (spec §4.2 "Head rhythm"). */
 .cb-pageheader {
   display: flex;
   flex-direction: column;
-  gap: var(--cb-space-1);
   min-width: 0;
+}
+.cb-pageheader-notice {
+  margin-top: var(--cb-layout-head-tabs);
 }
 .cb-pageheader-path {
   display: flex;
@@ -236,6 +242,13 @@ a.cb-pageheader-path-seg:hover {
   align-items: flex-end;
   gap: var(--cb-space-3);
   min-width: 0;
+}
+.cb-pageheader-path + .cb-pageheader-row {
+  margin-top: var(--cb-layout-head-path);
+}
+/* A row led by the 40 px avatar centres the title block and the actions on it (spec §4.2). */
+.cb-pageheader-row[data-avatar="true"] {
+  align-items: center;
 }
 .cb-pageheader-avatar {
   display: inline-flex;
@@ -281,7 +294,7 @@ a.cb-pageheader-path-seg:hover {
   line-height: var(--cb-type-body-line);
 }
 .cb-pageheader-description {
-  margin: var(--cb-space-1) 0 0;
+  margin: var(--cb-layout-head-description) 0 0;
   overflow: hidden;
   color: var(--cb-muted);
   font-family: var(--cb-font-prose);
@@ -466,8 +479,9 @@ a.cb-stat-card:focus-visible {
   box-sizing: border-box;
   padding: var(--cb-space-4) var(--cb-layout-gutter);
 }
+/* In the content width the head's bottom padding is the gap above the first block (spec §4.2). */
 .cb-body-content[data-padded="true"]:has(> .cb-body-frame[data-width="content"]) {
-  padding: var(--cb-space-4) var(--cb-content-pad) var(--cb-space-6);
+  padding: 0 var(--cb-content-pad) var(--cb-space-6);
 }
 /* The content width: the side padding on both sides, the frame centered, space at the bottom. */
 .cb-body-content:not([data-padded="true"]):has(> .cb-body-frame[data-width="content"]) {
@@ -638,16 +652,14 @@ a.cb-stat-card:focus-visible {
   }
 }
 
-/* PageTabs inside the head frame line up with the frame. */
-.cb-template-head-frame .cb-pagetabs {
-  padding: 0;
-}
-
-/* Templates that draw the StatCards under the header, inside the fixed head. */
+/* Templates that draw the StatCards under the header, inside the fixed head: the cards are the
+   head's first block below the PageHeader, layout.head-content below it (spec §4.2). */
 .cb-template-head-frame[data-stats="head"] {
   display: flex;
   flex-direction: column;
-  gap: var(--cb-space-3);
+}
+.cb-template-head-frame > .cb-stat-cards {
+  margin-top: var(--cb-layout-head-content);
 }
 
 /* Skip link (m9): visually hidden until focused, then over the sidebar's top left corner. */

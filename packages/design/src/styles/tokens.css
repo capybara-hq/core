@@ -70,6 +70,11 @@
   --cb-layout-thumb: 56px;
   --cb-layout-inline-image: 360px;
   --cb-layout-menu-max-height: 328px;
+  --cb-layout-head-path: 12px;
+  --cb-layout-head-description: 4px;
+  --cb-layout-head-tabs: 16px;
+  --cb-layout-head-tabs-content: 16px;
+  --cb-layout-head-content: 24px;
 }
 
 :root[data-theme="dark"] {

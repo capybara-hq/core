@@ -42,6 +42,8 @@ export const CATALOG_ROUTES = [
  */
 export const REFERENCE_COMPONENTS = [
   "page-header",
+  // the head rhythm across the templates (spec §4.2, acceptance item S)
+  "head-rhythm",
   "status-bar",
   "action-row",
   "template-list",

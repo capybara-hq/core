@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { SkeletonGroup, type TabsProps } from "../display/index";
 import { useDesignT } from "../provider";
-import { Body, type PageHeaderProps, PageTabs } from "../shell/index";
+import { Body, type PageHeaderProps } from "../shell/index";
 import {
   type BlockShape,
   LoadingBlocks,
@@ -24,7 +24,7 @@ export type FactsShape = {
 };
 
 /**
- * T3 详情：PageTabs + one centred column (spec §5.2; no right pane). `facts` is the object's facts
+ * T3 Detail: the head's tab row + one centred column (spec §5.2; no right pane). `facts` is the object's facts
  * block (a KeyValue, or the page's grouped KeyValues), drawn first in the column, right under the
  * head, above the tab's content (`children`). `loading` draws the page's frame while its data is on
  * the way: the header keeps its rows (`header.loading`), the tabs stay real (they are static per
@@ -68,9 +68,8 @@ export function DetailPage({
           header={loading ? loadingHeader(header) : header}
           statsInHead
           loadingStats={loading?.stats ?? 0}
-        >
-          <PageTabs {...tabs} />
-        </TemplateHead>
+          tabs={tabs}
+        />
       }
     >
       {factsNode != null && factsNode !== false ? (

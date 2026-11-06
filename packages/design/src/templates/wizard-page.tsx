@@ -42,7 +42,7 @@ export function WizardPage({
   const t = useDesignT();
   const page = (
     <>
-      <TemplateHead header={loading ? loadingHeader(header) : header} loose />
+      <TemplateHead header={loading ? loadingHeader(header) : header} />
       <Body layout="centered" loose width="content">
         <ol className="cb-steps" aria-label={t("shell.steps")}>
           {steps.map((label, i) => {

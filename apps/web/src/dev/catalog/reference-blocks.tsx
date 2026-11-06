@@ -73,6 +73,7 @@ import { CONFIG_FORM_BLOCKS } from "./config-form-blocks";
 import { CONVERSATION_BLOCKS } from "./conversation-blocks";
 import { CONVERSATION_PAGE_BLOCKS } from "./conversation-page-blocks";
 import { COMMANDS } from "./fixtures";
+import { headRhythmBlocks } from "./head-rhythm-blocks";
 import { RefBlock } from "./ref-block";
 import { type SidebarFixture, sidebarProps, statusFixture } from "./shell-fixture";
 import { listLoadingBlocks, TEMPLATE_LOADING_BLOCKS } from "./template-loading-blocks";
@@ -1306,6 +1307,7 @@ export const REFERENCE_BLOCKS = {
   icon: iconBlocks,
   sidebar: sidebarBlocks,
   "page-header": pageHeaderBlocks,
+  "head-rhythm": headRhythmBlocks,
   skeleton: skeletonBlocks,
   "stat-cards": statCardsBlocks,
   "status-bar": statusBarBlocks,
