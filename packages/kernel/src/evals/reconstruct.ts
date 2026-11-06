@@ -24,6 +24,7 @@ import {
 import { assembleModelRequest, type MediaSourceDeps } from "../runtime/model-call.js";
 import { CHILD_REMOVED_TOOLS } from "../runtime/subagents/definition.js";
 import { PINNED_SKILLS_LIMITS } from "../skills/catalog.js";
+import { AGENT_TOOL } from "../tools/builtin-names.js";
 import { canonicalJson } from "./recorded-tools.js";
 import { type CaseSnapshot, toEvents } from "./snapshot.js";
 
@@ -373,13 +374,24 @@ const sameTemplate = (logged: SubagentStarted["template"], t: { id: string; vers
 const pinsOf = (d: AgentDefinition): string[] =>
   [...new Set(d.skills?.pinned ?? [])].slice(0, PINNED_SKILLS_LIMITS.count);
 
-/** Tool refs as a sub-agent gets them without template narrowing (general and org agents). */
-const childToolsOf = (d: AgentDefinition): string =>
+/**
+ * Tool refs as a sub-agent gets them without template narrowing (general and org agents).
+ * `Agent` depends on the child's depth, not on the definition (agent map spec §4.1): it is kept
+ * only when the logged child had it, so a child logged without it (at the depth limit, or before
+ * nesting) compares equal to a candidate that offers it.
+ */
+const childToolsOf = (d: AgentDefinition, keepAgent: boolean): string =>
   canonicalJson(
     d.tools.filter(
-      (t) => t.kind !== "builtin" || !(CHILD_REMOVED_TOOLS as readonly string[]).includes(t.name),
+      (t) =>
+        t.kind !== "builtin" ||
+        (!(CHILD_REMOVED_TOOLS as readonly string[]).includes(t.name) &&
+          (keepAgent || t.name !== AGENT_TOOL)),
     ),
   );
+
+const hasAgent = (d: AgentDefinition): boolean =>
+  d.tools.some((t) => t.kind === "builtin" && t.name === AGENT_TOOL);
 
 /** The parent's selection a template child depends on: its tools, org skills and roster entry. */
 const parentSide = (d: AgentDefinition, started: SubagentStarted): string =>
@@ -416,19 +428,21 @@ export function subagentChanged(
   /** The parent's definition at the case's version (the snapshot's), for template children. */
   original?: AgentDefinition,
 ): boolean {
+  const keepAgent = hasAgent(logged);
+  const childTools = (d: AgentDefinition) => childToolsOf(d, keepAgent);
   const differs = (instructions: string, pinned: string[] | null, tools: string | null): boolean =>
     instructions !== logged.instructions ||
     (pinned !== null && canonicalJson(pinned) !== canonicalJson(pinsOf(logged))) ||
-    (tools !== null && tools !== childToolsOf(logged));
+    (tools !== null && tools !== childTools(logged));
   if (sameVersion) {
     return differs(candidate.instructions, pinsOf(candidate), canonicalJson(candidate.tools));
   }
   switch (started.template.source) {
     case "agent":
-      return differs(candidate.instructions, pinsOf(candidate), childToolsOf(candidate));
+      return differs(candidate.instructions, pinsOf(candidate), childTools(candidate));
     case "general":
       return (
-        differs(candidate.instructions, [], childToolsOf(candidate)) ||
+        differs(candidate.instructions, [], childTools(candidate)) ||
         (original !== undefined && parentSide(original, started) !== parentSide(candidate, started))
       );
     case "inline": {

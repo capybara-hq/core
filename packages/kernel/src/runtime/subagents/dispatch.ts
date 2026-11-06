@@ -98,6 +98,13 @@ const GENERAL_ENTRY: RosterEntry = {
   description: GENERAL_PURPOSE_DESCRIPTION,
 };
 
+/**
+ * The depth of the run behind `ctx` below the root (agent map spec §6): 0 for a root
+ * conversation's run, its parent's depth plus one for a sub-agent's.
+ */
+export const runDepth = (ctx: Pick<ToolStepContext, "parent">): number =>
+  ctx.parent === undefined ? 0 : ctx.parent.depth + 1;
+
 /** Idempotency key of the parent's `subagent_dispatched` event. */
 export const dispatchedIdemKey = (runId: string, callId: string) =>
   `subagent_dispatched:${runId}:${callId}`;
@@ -128,9 +135,10 @@ export interface DispatchPlan {
  * starts the child's next run the same way. After commit the child run is enqueued; a failed
  * enqueue only logs (the dispatch is durable, the wait sweep re-enqueues it).
  *
- * Refusals (§4.5) start nothing: a call from a sub-agent, an unknown type, an org agent that fails
- * one of its gates ({@link orgAgentGates}, at every dispatch and follow-up; audited
- * `subagent.refused`), `resume` with `subagent_type` / `model`, a `resume` id that is not a
+ * Refusals (§4.5) start nothing: a call from a run at `subagents.maxDepth` (agent map spec §4.1:
+ * its definition has no `Agent`, so only a forged call or a lowered limit gets here), an unknown
+ * type, an org agent that fails one of its gates ({@link orgAgentGates}, checked at every level,
+ * dispatch and follow-up; audited `subagent.refused`), `resume` with `subagent_type` / `model`, a `resume` id that is not a
  * sub-agent of this conversation (whatever it is otherwise: no detail about other conversations),
  * or one whose run is still active.
  */
@@ -145,7 +153,9 @@ export async function dispatchSubagent(
   },
 ): Promise<DispatchOutcome> {
   const { ctx, input } = a;
-  if (ctx.parent !== undefined) return refused(AGENT_REFUSALS.notAvailableHere);
+  const { maxDepth } = await subagentLimits(d.db, d.config, ctx.orgId);
+  const childDepth = runDepth(ctx) + 1;
+  if (childDepth > maxDepth) return refused(AGENT_REFUSALS.depthLimit(maxDepth));
   if (input.resume !== undefined) {
     if (input.subagent_type !== undefined || input.model !== undefined) {
       return refused(AGENT_REFUSALS.resumeWithType);
@@ -187,6 +197,8 @@ export async function dispatchSubagent(
       parent: ctx.agent,
       parentAgentId: ctx.agentId,
       entry,
+      childDepth,
+      maxDepth,
       ...(input.model !== undefined && { tier: input.model }),
       ...(orgAgent !== undefined && { orgAgent }),
     });
@@ -227,6 +239,7 @@ export async function dispatchSubagent(
         kind: "subagent",
         parent_conversation_id: ctx.conversationId,
         subagent_type: entry.type,
+        subagent_depth: childDepth,
       })
       .execute();
     const [, task] = await d.eventLog.appendIn(childId, [
@@ -438,10 +451,11 @@ const taskMessage = (
  * Under the parent run's row lock it first re-checks what the pipeline checked without it: a call
  * already dispatched (a second holder of the same step, e.g. after a stalled-job takeover) gets
  * the existing child run back and writes nothing, and a parent run that is no longer `running`
- * (stopped, orphaned) dispatches nothing. Then the run's limits (§8.2, {@link subagentLimits}),
- * read fresh: its children's token counter at or over the cap, its dispatches (follow-ups
- * included) at the cap, or as many active children as may run at once each refuse with the §4.5
- * text. The lock serializes the dispatches of one run, so the counts cannot race.
+ * (stopped, orphaned) dispatches nothing. Then the limits (§8.2, agent map spec §6,
+ * {@link subagentLimits}), read fresh: the depth, the tree's token counter at or over the cap,
+ * its dispatches (follow-ups included) at the cap, or as many active children of the parent
+ * conversation as may run at once each refuse with the §4.5 text. The budget run's row lock
+ * serializes the dispatches of one tree, so the counts cannot race.
  */
 /** What the dispatch transaction did. */
 export type DispatchCommit =
@@ -665,9 +679,10 @@ async function commit(
 /**
  * The §4.5 refusal of a dispatch the limits forbid, or null (agent map spec §6). Runs under the
  * parent conversation's, the parent run's and the budget run's row locks; `tokensUsed` is the
- * budget run's counter read with its lock. Tokens and dispatches (follow-ups included) count the
- * whole tree on its budget run; concurrency counts the active children of the parent
- * conversation, whichever of its runs dispatched them.
+ * budget run's counter read with its lock. A dispatch from a run at `maxDepth` is refused (the
+ * limit may have been lowered since the call's definition was frozen); tokens and dispatches
+ * (follow-ups included) count the whole tree on its budget run; concurrency counts the active
+ * children of the parent conversation, whichever of its runs dispatched them.
  */
 async function limitRefusal(
   t: KernelSchemaDb,
@@ -677,6 +692,7 @@ async function limitRefusal(
   tokensUsed: string | number | bigint,
 ): Promise<string | null> {
   const limits = await subagentLimits(t, d.config, ctx.orgId);
+  if (runDepth(ctx) >= limits.maxDepth) return AGENT_REFUSALS.depthLimit(limits.maxDepth);
   if (Number(tokensUsed) >= limits.maxTokensPerRun) {
     return AGENT_REFUSALS.budget(limits.maxTokensPerRun);
   }

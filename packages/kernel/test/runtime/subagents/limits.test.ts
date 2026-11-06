@@ -634,7 +634,7 @@ describe("tokens", () => {
       content: AGENT_REFUSALS.budget(10_000),
     });
     expect(AGENT_REFUSALS.budget(10_000)).toBe(
-      "Sub-agents of this run have used their token budget (10,000 tokens); do the remaining work yourself.",
+      "Sub-agents have used their token budget since the user's latest message (10,000 tokens, counted across all levels of sub-agents); do the remaining work yourself.",
     );
   }, 60_000);
 });

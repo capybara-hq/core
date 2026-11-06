@@ -155,11 +155,13 @@ export const AGENT_REFUSALS = {
   unknownType: (x: string, roster: readonly string[]): string =>
     `Unknown subagent_type "${x}". Available: ${roster.join(", ")}.`,
   tooManyConcurrent: (n: number): string =>
-    `At most ${n} sub-agents can run at once in this run; dispatch the remaining tasks after these finish.`,
+    `At most ${n} of your sub-agents can run at once in this conversation; dispatch the remaining tasks after one of them finishes.`,
   tooManyDispatches: (n: number): string =>
-    `This run has dispatched ${n} sub-agents, the limit; do the remaining work yourself.`,
+    `${n} sub-agents have been dispatched since the user's latest message, counted across all levels of sub-agents; that is the limit, so do the remaining work yourself.`,
   budget: (n: number): string =>
-    `Sub-agents of this run have used their token budget (${count(n)} tokens); do the remaining work yourself.`,
+    `Sub-agents have used their token budget since the user's latest message (${count(n)} tokens, counted across all levels of sub-agents); do the remaining work yourself.`,
+  depthLimit: (maxDepth: number): string =>
+    `Sub-agents can be nested at most ${maxDepth} levels deep, and you are at the deepest level; do this task yourself.`,
   noSuchAgent: (id: string): string => `No sub-agent with agentId "${id}" in this conversation.`,
   stillRunning: (id: string): string =>
     `Sub-agent "${id}" is still running; wait for its result before sending a follow-up.`,

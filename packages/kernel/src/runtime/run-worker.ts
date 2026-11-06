@@ -47,7 +47,7 @@ import { type FinishRunArgs, RunFinish, TERMINAL_STATUSES } from "./run-finish.j
 import type { RunJobData } from "./run-jobs.js";
 import { RunQueue } from "./run-queue.js";
 import { AgentLoops, RunSteps } from "./run-steps.js";
-import { dispatchOfChildRun } from "./subagents/child.js";
+import { dispatchOfChildRun, rootConversationOf } from "./subagents/child.js";
 import { childRunDefinition } from "./subagents/definition.js";
 import { forkBoundary } from "./subagents/skill-fork.js";
 import { Waits } from "./waits.js";
@@ -447,7 +447,7 @@ export class RunWorker {
     if (run.status === "waiting") return;
     const conv = await this.db
       .selectFrom("conversations")
-      .select(["org_id", "agent_id", "kind"])
+      .select(["org_id", "agent_id", "kind", "subagent_depth"])
       .where("id", "=", conversationId)
       .executeTakeFirst();
     if (!conv) return;
@@ -577,7 +577,13 @@ export class RunWorker {
       started_at: Date | null;
       waited_ms: string;
     },
-    conv: { id: string; org_id: string; agent_id: string; kind: ConversationKind },
+    conv: {
+      id: string;
+      org_id: string;
+      agent_id: string;
+      kind: ConversationKind;
+      subagent_depth: number;
+    },
     state: ActiveRun,
   ): Promise<ExecResult> {
     const runId = run.id;
@@ -610,11 +616,22 @@ export class RunWorker {
       maxSteps = Math.min(started.payload.maxSteps, runtime.maxSteps);
       const row = await dispatchOfChildRun(this.db, runId);
       const otherAgent = started.payload.template.source === "agent";
+      const parentConversationId =
+        row?.parentConversationId ?? started.payload.parent.conversationId;
+      // a sub-agent conversation is at depth 1 at least: one written before depths were recorded
+      // (default 0) was a child of a root
+      const depth = Math.max(conv.subagent_depth, 1) - 1;
+      const rootConversationId =
+        depth === 0
+          ? parentConversationId
+          : await rootConversationOf(this.db, parentConversationId);
       parent = row
         ? {
             conversationId: row.parentConversationId,
             runId: row.parentRunId,
             callId: row.parentCallId,
+            depth,
+            rootConversationId,
             otherAgent,
             ...(row.budgetRunId !== undefined && { budgetRunId: row.budgetRunId }),
           }
@@ -622,6 +639,8 @@ export class RunWorker {
             conversationId: started.payload.parent.conversationId,
             runId: started.payload.parent.runId,
             callId: started.payload.parent.callId,
+            depth,
+            rootConversationId,
             otherAgent,
           };
     } else {

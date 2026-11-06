@@ -1170,7 +1170,13 @@ describe("ToolPipeline.runStep", () => {
     const parentConv = randomUUID();
     await sql`INSERT INTO capybara.conversations (id, org_id, agent_id, account_id)
       VALUES (${parentConv}, ${seed.orgId}, ${seed.agentId}, ${seed.accountId})`.execute(raw);
-    const parent = { conversationId: parentConv, runId: randomUUID(), callId: "pc1" };
+    const parent = {
+      conversationId: parentConv,
+      runId: randomUUID(),
+      callId: "pc1",
+      depth: 0,
+      rootConversationId: parentConv,
+    };
     const evs = await runCalls([{ id: "c1", name: "mcp__priv__read", input: {} }], { parent });
     expect(evs.filter((e) => e.type === "connection_required")).toHaveLength(1);
     const mirrored = (await eventsOf(db, parentConv)).filter((e) => e.type === "subagent_waiting");
@@ -1544,7 +1550,14 @@ describe("plugin hooks (tool.preExecute)", () => {
       config: () => ({ hooks: { timeoutMs: 1000 } }),
       log: silent,
     });
-    const parent = { conversationId: randomUUID(), runId: randomUUID(), callId: "pc1" };
+    const parentConv = randomUUID();
+    const parent = {
+      conversationId: parentConv,
+      runId: randomUUID(),
+      callId: "pc1",
+      depth: 0,
+      rootConversationId: parentConv,
+    };
     const evs = await runCalls([{ id: "c1", name: "plugin__probe__echo", input: { text: "1" } }], {
       conversationKind: "subagent",
       parent,

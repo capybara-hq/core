@@ -409,8 +409,10 @@ describe("phase C acceptance: superpowers subagent-driven-development", {
         expect(system[0]).toContain("You are a Senior Code Reviewer");
         expect(system[0]).not.toContain(INSTRUCTIONS);
       }
-      // children never see the agent tool
-      expect(first?.tools?.map((t) => t.name)).not.toContain("Agent");
+      // a general-purpose child at depth 1 may nest (agent map spec §4.1): it keeps Agent
+      if (p.type === "general-purpose") {
+        expect(first?.tools?.map((t) => t.name)).toContain("Agent");
+      }
     }
     // the follow-up's request carries the implementer's earlier history
     const followUp = original.find(

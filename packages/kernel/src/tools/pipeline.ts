@@ -678,6 +678,7 @@ export class ToolPipeline {
         "parent_conversation_id",
         "child_conversation_id",
         "child_run_id",
+        "budget_run_id",
         "step",
         "created_at",
       ])
@@ -743,6 +744,7 @@ export class ToolPipeline {
         parentConversationId: d.parent_conversation_id,
         childConversationId: d.child_conversation_id,
         childRunId: d.child_run_id,
+        budgetRunId: d.budget_run_id,
       };
       const child = await t
         .selectFrom("runs")
@@ -1395,9 +1397,9 @@ export class ToolPipeline {
       ...(tool.source.kind === "builtin" && { runId: ctx.runId }),
       ...(tool.source.kind === "builtin" &&
         ctx.deadline !== undefined && { runDeadline: ctx.deadline }),
-      // a sub-agent works in its parent conversation's sandbox (spec §10.1)
+      // a sub-agent works in its root conversation's sandbox (spec §10.1, at every depth)
       ...(tool.source.kind === "builtin" &&
-        ctx.parent !== undefined && { sandboxConversationId: ctx.parent.conversationId }),
+        ctx.parent !== undefined && { sandboxConversationId: ctx.parent.rootConversationId }),
       ...(tool.source.kind === "builtin" &&
         ctx.parent !== undefined && { parentRunId: ctx.parent.runId }),
       // the hook scope of a builtin's own model call (the WebFetch extraction)

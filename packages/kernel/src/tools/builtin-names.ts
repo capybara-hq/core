@@ -107,12 +107,11 @@ export const R3_SHARED_AGENT_ONLY_TOOL_KEYS: ReadonlySet<string> = new Set<strin
 ]);
 
 /**
- * Tools a sub-agent never gets (sub-agents spec §5.3, §5.5): `Agent` (depth 1), `AskUserQuestion`
- * (the person does not see the child), `Deliver` (delivering files is the parent's job) and
- * `SkillWrite`.
+ * Tools a sub-agent never gets (sub-agents spec §5.3, §5.5): `AskUserQuestion` (the person does
+ * not see the child), `Deliver` (delivering files is the parent's job) and `SkillWrite`. `Agent`
+ * is removed only from a child at `subagents.maxDepth` (agent map spec §4.1, `effectiveDefinition`).
  */
 export const CHILD_REMOVED_TOOLS = [
-  BUILTIN.Agent,
   BUILTIN.AskUserQuestion,
   BUILTIN.Deliver,
   BUILTIN.SkillWrite,

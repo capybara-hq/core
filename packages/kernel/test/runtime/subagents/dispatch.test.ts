@@ -314,6 +314,7 @@ describe("dispatch", () => {
       parent: { conversationId: conv, runId: run.id, step: 1 },
     });
     expect(started.payload.definition.tools.map((t) => (t as { name: string }).name)).toEqual([
+      "Agent",
       "Write",
       "Read",
     ]);
@@ -332,8 +333,8 @@ describe("dispatch", () => {
     expect(first.messages).toEqual([
       { role: "user", content: [{ type: "text", text: "gp-task: do it" }] },
     ]);
-    // a child never sees the agent tool; the parent does
-    expect(first.tools?.map((t) => t.name).sort()).toEqual(["Read", "Write"]);
+    // a child at depth 1 keeps the agent tool below maxDepth (agent map spec §4.1)
+    expect(first.tools?.map((t) => t.name).sort()).toEqual(["Agent", "Read", "Write"]);
     const parentReq = capture.sent.find((r) => !isChildRequest(r)) as ModelRequest;
     expect(parentReq.tools?.map((t) => t.name)).toContain("Agent");
 
@@ -516,6 +517,7 @@ describe("dispatch", () => {
     const tasks = ofType(await eventsOf(db, (child as { id: string }).id), "user_message");
     expect(tasks[0]?.payload.dispatch?.narrowed).toBeUndefined();
     expect(tasks[1]?.payload.dispatch?.narrowed?.tools).toEqual([
+      { kind: "builtin", name: "Agent" },
       { kind: "builtin", name: "Read" },
     ]);
   }, 60_000);
@@ -875,6 +877,7 @@ describe("dispatch idempotency under the parent run lock", () => {
     expect(again.kind).toBe("dispatched");
     expect((await followUpTask(childId))?.narrowed).toEqual({
       tools: [
+        { kind: "builtin", name: "Agent" },
         { kind: "builtin", name: "Read" },
         { kind: "connector", connectorId: kept, tools: ["lookup"] },
       ],

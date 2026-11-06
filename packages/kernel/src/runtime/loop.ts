@@ -35,8 +35,9 @@ export interface LoopContext {
    */
   conversationKind?: "chat" | "eval" | "subagent";
   /**
-   * Set for a sub-agent's run (phase C): the dispatch this run serves. Its tools use the parent
-   * conversation's sandbox (spec §10.1), and it never dispatches sub-agents itself (depth 1).
+   * Set for a sub-agent's run (phase C): the dispatch this run serves. Its tools use the root
+   * conversation's sandbox (spec §10.1), and it dispatches sub-agents only while its depth is
+   * below `subagents.maxDepth` (agent map spec §4.1).
    */
   parent?: SubagentParent;
 }
@@ -46,6 +47,13 @@ export interface SubagentParent {
   conversationId: string;
   runId: string;
   callId: string;
+  /**
+   * The parent conversation's depth below the root (0: the parent is the root); this run's own
+   * depth is one more (agent map spec §6, `conversations.subagent_depth`).
+   */
+  depth: number;
+  /** The root conversation of the tree: its sandbox is the one every sub-agent works in. */
+  rootConversationId: string;
   /**
    * The child runs another org agent than its parent conversation's (§5.5, `template.source`
    * `agent`): only then the parent agent's current policies are read on top of its own.

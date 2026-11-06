@@ -71,6 +71,28 @@ export async function dispatchOfCall(
   return r ? toRow(r) : null;
 }
 
+/**
+ * The root conversation of `conversationId`'s tree (agent map spec §6): the first ancestor without
+ * a parent, or `conversationId` itself for a root (or an unknown id). Walks at most 16 levels, far
+ * above `subagents.maxDepth`'s bound of 5.
+ */
+export async function rootConversationOf(
+  db: KernelSchemaDb,
+  conversationId: string,
+): Promise<string> {
+  let id = conversationId;
+  for (let i = 0; i < 16; i++) {
+    const row = await db
+      .selectFrom("conversations")
+      .select("parent_conversation_id")
+      .where("id", "=", id)
+      .executeTakeFirst();
+    if (!row?.parent_conversation_id) return id;
+    id = row.parent_conversation_id;
+  }
+  return id;
+}
+
 /** All events of one run of a conversation, by seq. */
 async function runEvents(
   eventLog: EventLog,
