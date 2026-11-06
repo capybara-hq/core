@@ -20,6 +20,20 @@ function decls(sel: string): string {
 }
 
 describe("the conversation section", () => {
+  it("scrolls in a box that runs to the sidebar's edges, so its scrollbar sits on the border; the rows keep their inset", () => {
+    const convs = decls(".cb-sidebar-convs");
+    expect(convs).toContain("overflow-y: auto;");
+    // out over the sidebar's own space.2 side padding, and the same padding back inside
+    expect(convs).toContain("margin: 0 calc(-1 * var(--cb-space-2));");
+    expect(convs).toContain("padding: var(--cb-space-2) var(--cb-space-2) 0;");
+    // the divider above it stays inset like the account row's
+    expect(convs).toMatch(/border-image: linear-gradient\(/);
+    const sidebarRule = decls(".cb-sidebar");
+    expect(sidebarRule).toContain(
+      "padding: var(--cb-space-3) var(--cb-space-2) var(--cb-space-2);",
+    );
+  });
+
   it("one vertical rhythm: the head, the filter, each agent group and 已归档 are space.1 apart", () => {
     expect(decls(".cb-sidebar-convs")).toContain("gap: var(--cb-space-1);");
     // the groups sit in the list's own column, at the section's gap, never a larger one
