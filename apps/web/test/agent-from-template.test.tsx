@@ -3,7 +3,12 @@ import { act, cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
-import { droppedLine, previewChanges } from "../src/lib/from-template";
+import {
+  connectorNamer,
+  droppedLine,
+  type PlanItem,
+  previewChanges,
+} from "../src/lib/from-template";
 import type { Me } from "../src/lib/session";
 import { bodyOf, type Call, json, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
@@ -192,7 +197,7 @@ describe("用它创建 (P4-18)", () => {
     expect(within(dialog).getByText(F.dropped.maxSteps)).toBeTruthy();
     expect(
       within(dialog).getByText(
-        "Connector connector-1's tool delete_all: the connector doesn't offer it.",
+        "Connector GitHub's tool delete_all: the connector doesn't offer it.",
       ),
     ).toBeTruthy();
     // one box: nothing boxed inside the dialog
@@ -260,6 +265,8 @@ describe("用它创建 (P4-18)", () => {
                 items: PREVIEW.items.map((i) =>
                   i.name === "GitHub" ? { ...i, state: "carried", reason: undefined } : i,
                 ),
+                // the step limit is no longer dropped
+                dropped: ["connectors.connector-1.tools.delete_all"],
                 previewHash: HASH2,
               },
         );
@@ -280,11 +287,39 @@ describe("用它创建 (P4-18)", () => {
     expect(await within(dialog).findByText(F.stale)).toBeTruthy();
     expect(within(dialog).getByText("Connector GitHub: to configure → carried over.")).toBeTruthy();
     expect(within(dialog).getByText("To configure · 1")).toBeTruthy();
+    expect(within(dialog).getByText(`Now carried over: ${F.dropped.maxSteps}`)).toBeTruthy();
     expect(router.push).not.toHaveBeenCalled();
     await user.click(within(dialog).getByRole("button", { name: F.submit }));
     await vi.waitFor(() => expect(posts(calls, "from-template")).toHaveLength(2));
     expect((posts(calls, "from-template")[1] as { previewHash: string }).previewHash).toBe(HASH2);
     await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/agents/ag9?s=tools"));
+  });
+
+  it("re-picking the automatic model sends no model", async () => {
+    const r = routes();
+    const calls = stubApi(r);
+    const dialog = await openDialog(r);
+    const model = within(dialog).getByRole("combobox", {
+      name: new RegExp(en.agents.form.modelLabel),
+    });
+    await pickOption(model, "model-fake/fake-1");
+    await pickOption(model, "model-fake/fake-2");
+    await userEvent.setup().click(within(dialog).getByRole("button", { name: F.submit }));
+    await vi.waitFor(() => expect(posts(calls, "from-template")).toHaveLength(1));
+    expect((posts(calls, "from-template")[0] as Record<string, unknown>).model).toBeUndefined();
+  });
+
+  it("a 404 on create (the template went away meanwhile) shows the gone state", async () => {
+    const r = routes({
+      [`POST ${ORG}/agents/from-template`]: () =>
+        json(404, { error: { code: "component.not_found", message: "nope" } }),
+    });
+    stubApi(r);
+    const dialog = await openDialog(r);
+    await userEvent.setup().click(within(dialog).getByRole("button", { name: F.submit }));
+    expect(await within(dialog).findByText(F.gone)).toBeTruthy();
+    expect(within(dialog).queryByRole("button", { name: F.submit })).toBeNull();
+    expect(router.push).not.toHaveBeenCalled();
   });
 
   it("a template no longer usable (404) says so and offers no create; a 403 shows its message", async () => {
@@ -328,6 +363,28 @@ describe("from-template helpers", () => {
       values: { name: "scout", tool: "Bash" },
     });
     expect(droppedLine("weird.path")).toEqual({ key: "other", values: { path: "weird.path" } });
+    // a connector is named by the n-th connector item, never by its kernel key
+    const named = connectorNamer(PREVIEW.items as PlanItem[]);
+    expect(droppedLine("connectors.connector-2.policies.write", named)).toEqual({
+      key: "connectorPolicy",
+      values: { connector: "Docs", tool: "write" },
+    });
+    expect(named("connector-9")).toBe("connector-9");
+    // two items with one name stay two (one moves, the other stays)
+    const twice = (second: "carried" | "pending") => ({
+      items: [
+        { kind: "connector" as const, name: "GitHub", state: "pending" as const },
+        { kind: "connector" as const, name: "GitHub", state: second },
+      ],
+      model: null,
+      dropped: [],
+      previewHash: HASH1,
+    });
+    expect(previewChanges(twice("pending"), twice("carried"))).toMatchObject({
+      added: [],
+      removed: [],
+      moved: [{ item: { state: "carried" }, from: "pending" }],
+    });
     const before = { items: [], model: null, dropped: [], previewHash: HASH1 };
     const after = {
       items: [{ kind: "skill" as const, name: "pdf", state: "carried" as const }],

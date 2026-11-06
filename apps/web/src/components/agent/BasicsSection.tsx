@@ -38,6 +38,7 @@ import { keys } from "../../lib/query/keys";
 import { membersQuery } from "../../lib/query/members";
 import { useAppMutation, useUpdateProfile } from "../../lib/query/mutation";
 import { useErrorMessage } from "../../lib/use-error-message";
+import { templateHref } from "../AgentTemplateCards";
 import { FormError } from "../form-error";
 import { savedDefinition } from "./definition-parts";
 import { AgentSectionFrame, useAgentPage } from "./frame";
@@ -97,9 +98,6 @@ export function BasicsSection() {
   const { editable } = useAgentPage();
   return editable ? <BasicsEdit /> : <BasicsReadOnly />;
 }
-
-/** The template page (phase 4 Task 9), linked from the provenance line while it is usable. */
-const templateHref = (id: string) => `/agents/templates/${encodeURIComponent(id)}`;
 
 /**
  * 「由模板 <name> v<version> 创建」 (ruling P4-8): the template's name links to it while it is

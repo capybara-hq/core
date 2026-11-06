@@ -203,9 +203,11 @@ describe("the 待配置 notice (P4-7)", () => {
     const notice = await screen.findByRole("list", { name: P.listLabel });
     expect(within(notice).getByText("GitHub")).toBeTruthy();
     expect(
-      within(notice).getByText("Needs a MCP connector: https://docs.example/mcp"),
+      within(notice).getByText("Needs an MCP connector: https://docs.example/mcp"),
     ).toBeTruthy();
     expect(within(notice).getByText("Takes the tools: search")).toBeTruthy();
+    // a template entry names its template (the entry's label is the template's display name)
+    expect(within(notice).getByText("Made from the connector template GitHub")).toBeTruthy();
     const rows = within(notice).getAllByRole("listitem");
     await userEvent
       .setup()
@@ -256,6 +258,72 @@ describe("the 待配置 notice (P4-7)", () => {
     expect(
       within(dialog).getByRole("link", { name: P.bindError.openConnector }).getAttribute("href"),
     ).toBe("/connectors/custom_one");
+  });
+
+  it("an entry bound elsewhere meanwhile: the agent is read again and the dialog closes", async () => {
+    let reads = 0;
+    stubApi(
+      routes(agent(), {
+        [`GET ${ORG}/agents/ag1`]: () => {
+          reads += 1;
+          return json(200, { agent: agent() });
+        },
+        [`POST ${ORG}/agents/ag1/pending-connectors/connector-1/bind`]: () =>
+          json(404, {
+            error: { code: "agent.pending_connector_not_found", message: "gone" },
+          }),
+      }),
+    );
+    await renderEditAgent({ me: as("admin", "boss"), section: "tools" });
+    const notice = await screen.findByRole("list", { name: P.listLabel });
+    const before = reads;
+    const rows = within(notice).getAllByRole("listitem");
+    await userEvent
+      .setup()
+      .click(within(rows[0] as HTMLElement).getByRole("button", { name: P.configure }));
+    const dialog = await screen.findByRole("dialog", { name: "Configure GitHub" });
+    await userEvent.setup().click(within(dialog).getByRole("button", { name: P.bind }));
+    await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await vi.waitFor(() => expect(reads).toBeGreaterThan(before));
+    // no error was shown for it
+    expect(screen.queryByText(en.errors.agent.pending_connector_not_found)).toBeNull();
+  });
+
+  it("a template switched off in the org offers no create, and says so", async () => {
+    stubApi(
+      routes(agent(), {
+        [`GET ${ORG}/connectors`]: ok({ connectors: [] }),
+        [`GET ${ORG}/components?kind=connector_template`]: ok({
+          components: [
+            {
+              kind: "connector_template",
+              id: CT,
+              name: "gh",
+              description: null,
+              plugin: "crm",
+              itemId: ITEM,
+              version: "1",
+              scopeMode: "follow",
+              switch: false,
+              on: false,
+              locked: false,
+              pluginOn: true,
+              switchable: true,
+            },
+          ],
+        }),
+      }),
+    );
+    await renderEditAgent({ me: as("admin", "boss"), section: "tools" });
+    const notice = await screen.findByRole("list", { name: P.listLabel });
+    const rows = within(notice).getAllByRole("listitem");
+    await userEvent
+      .setup()
+      .click(within(rows[0] as HTMLElement).getByRole("button", { name: P.configure }));
+    const dialog = await screen.findByRole("dialog", { name: "Configure GitHub" });
+    expect(await within(dialog).findByText(P.modeCreateOff)).toBeTruthy();
+    expect(within(dialog).queryByRole("radio", { name: new RegExp(P.modeCreate) })).toBeNull();
+    expect(within(dialog).getByText(P.noCandidatesOff)).toBeTruthy();
   });
 
   it("a needs entry opens the custom connector form prefilled", async () => {

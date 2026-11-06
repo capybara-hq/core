@@ -1,3 +1,4 @@
+import { describeNestedBox, findNestedBoxes } from "@capybara-hq/design/reference";
 import { cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -135,7 +136,10 @@ describe("connector setup requests in the inbox (P4-7)", () => {
     expect((await screen.findAllByText("Sales helper")).length).toBeGreaterThan(0);
     expect(screen.getAllByText(S.label).length).toBeGreaterThan(0);
     expect(screen.getByText("Configure connectors for Sales helper")).toBeTruthy();
-    expect(screen.getByText("Needs a MCP connector: https://docs.example/mcp")).toBeTruthy();
+    expect(screen.getByText("Needs an MCP connector: https://docs.example/mcp")).toBeTruthy();
+    expect(screen.getByText("Made from the connector template GitHub")).toBeTruthy();
+    // one box: the detail card holds the list and the reason without a second box
+    expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: S.configure }));
     let dialog = await screen.findByRole("dialog", {

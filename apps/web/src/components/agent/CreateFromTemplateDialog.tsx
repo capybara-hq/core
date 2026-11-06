@@ -26,6 +26,7 @@ import { ApiClientError } from "../../lib/api";
 import type { ModelRef } from "../../lib/conversations";
 import { labelLocale, modelLabel } from "../../lib/extension-label";
 import {
+  connectorNamer,
   createFromTemplate,
   droppedLine,
   groupItems,
@@ -107,8 +108,14 @@ export function CreateFromTemplateDialog({
   // The person's pick; null = the preview's automatic choice.
   const [picked, setPicked] = useState<string | null>(null);
   // The preview the person saw before a 409 and what changed since, shown above the groups.
-  const [changes, setChanges] = useState<PreviewChange | null>(null);
+  const [changes, setChanges] = useState<{
+    change: PreviewChange;
+    before: readonly PlanItem[];
+    after: readonly PlanItem[];
+  } | null>(null);
   const [error, setError] = useState<unknown>(null);
+  // The template stopped being usable here between the preview and the create (404 on create).
+  const [goneOnCreate, setGoneOnCreate] = useState(false);
 
   const data = preview.data;
   const auto = data?.model ? encodeModel(data.model) : "";
@@ -123,7 +130,8 @@ export function CreateFromTemplateDialog({
     })),
   );
   const model = picked ?? auto;
-  const gone = preview.error instanceof ApiClientError && preview.error.status === 404;
+  const gone =
+    goneOnCreate || (preview.error instanceof ApiClientError && preview.error.status === 404);
 
   const create = useAppMutation({
     fn: (p: TemplatePreview) => {
@@ -160,10 +168,14 @@ export function CreateFromTemplateDialog({
         const after = await qc.fetchQuery({ ...previewQ, staleTime: 0 }).catch(() => undefined);
         if (after !== undefined) {
           const c = previewChanges(before, after);
-          setChanges(c);
+          setChanges({ change: c, before: before.items, after: after.items });
           if (!hasChanges(c)) setError(e);
           return;
         }
+      }
+      if (e instanceof ApiClientError && e.status === 404) {
+        setGoneOnCreate(true);
+        return;
       }
       setError(e);
     }
@@ -172,6 +184,7 @@ export function CreateFromTemplateDialog({
   const ready = data !== undefined;
   const nameOk = name.trim() !== "";
   const noModels = models.data !== undefined && options.length === 0;
+  const modelsLoading = models.data === undefined && models.error === null;
   const canCreate = ready && !gone && nameOk && !noModels && model !== "" && !create.isPending;
 
   return (
@@ -283,13 +296,19 @@ export function CreateFromTemplateDialog({
           >
             <Select
               name="model"
-              disabled={!ready || noModels || create.isPending}
+              disabled={!ready || modelsLoading || noModels || create.isPending}
               value={model}
               onChange={(e) => setPicked(e.target.value)}
               options={[...(model === "" ? [{ value: "", label: "—" }] : []), ...options]}
             />
           </Field>
-          {changes !== null && <PreviewChanges changes={changes} />}
+          {changes !== null && (
+            <PreviewChanges
+              changes={changes.change}
+              before={changes.before}
+              after={changes.after}
+            />
+          )}
           {data === undefined ? (
             preview.error !== null ? (
               <Callout
@@ -359,19 +378,28 @@ export function PreviewGroups({ preview }: { preview: TemplatePreview }) {
           </Disclosure>
         </div>
       ))}
-      {preview.dropped.length > 0 && <DroppedList dropped={preview.dropped} />}
+      {preview.dropped.length > 0 && (
+        <DroppedList dropped={preview.dropped} items={preview.items} />
+      )}
     </Stack>
   );
 }
 
-function DroppedList({ dropped }: { dropped: readonly string[] }) {
+function DroppedList({
+  dropped,
+  items,
+}: {
+  dropped: readonly string[];
+  items: readonly PlanItem[];
+}) {
   const t = useTranslations("agents.fromTemplate");
+  const named = connectorNamer(items);
   return (
     <div data-preview-group="dropped">
       <Disclosure summary={<Text>{t("droppedTitle", { n: dropped.length })}</Text>}>
         <Stack gap={4}>
           {dropped.map((d) => {
-            const l = droppedLine(d);
+            const l = droppedLine(d, named);
             return (
               <Text key={d} variant="small">
                 {t(`dropped.${l.key}`, l.values)}
@@ -385,9 +413,21 @@ function DroppedList({ dropped }: { dropped: readonly string[] }) {
 }
 
 /** What changed since the preview the person saw (after a 409): the new preview is below. */
-function PreviewChanges({ changes }: { changes: PreviewChange }) {
+function PreviewChanges({
+  changes,
+  before,
+  after,
+}: {
+  changes: PreviewChange;
+  before: readonly PlanItem[];
+  after: readonly PlanItem[];
+}) {
   const t = useTranslations("agents.fromTemplate");
   const kind = (i: PlanItem) => t(`kinds.${i.kind}`);
+  const what = (d: string, items: readonly PlanItem[]) => {
+    const l = droppedLine(d, connectorNamer(items));
+    return t(`dropped.${l.key}`, l.values);
+  };
   const lines = [
     ...changes.added.map((i) =>
       t("changes.added", { kind: kind(i), name: i.name, state: t(`state.${i.state}`) }),
@@ -401,17 +441,16 @@ function PreviewChanges({ changes }: { changes: PreviewChange }) {
         to: t(`state.${item.state}`),
       }),
     ),
-    ...changes.droppedAdded.map((d) => {
-      const l = droppedLine(d);
-      return t("changes.droppedAdded", { what: t(`dropped.${l.key}`, l.values) });
-    }),
+    ...changes.droppedAdded.map((d) => t("changes.droppedAdded", { what: what(d, after) })),
+    ...changes.droppedRemoved.map((d) => t("changes.droppedRemoved", { what: what(d, before) })),
     ...(changes.modelChanged ? [t("changes.model")] : []),
   ];
   return (
     <Stack gap={4}>
       <Callout tone="warn">{t("stale")}</Callout>
-      {lines.map((l) => (
-        <Text key={l} variant="small">
+      {lines.map((l, i) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: the lines are computed once per 409 and never reorder
+        <Text key={i} variant="small">
           {l}
         </Text>
       ))}

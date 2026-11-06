@@ -1016,7 +1016,8 @@
         "removed": "{kind}「{name}」不再带入。",
         "moved": "{kind}「{name}」：{from} → {to}。",
         "droppedAdded": "不会带入：{what}",
-        "model": "自动选择的模型变了。"
+        "model": "自动选择的模型变了。",
+        "droppedRemoved": "现在会带入：{what}"
       }
     },
     "pending": {
@@ -1026,9 +1027,8 @@
       "listLabel": "待配置的连接器",
       "state": "待配置",
       "configure": "配置",
-      "fromTemplate": "由连接器模板创建",
       "fromTemplateNamed": "由连接器模板「{name}」创建",
-      "needs": "需要一个 {protocol} 连接器：{endpoint}",
+      "needs": "需要一个 {protocol, select, mcp {MCP} openapi {OpenAPI} other {{protocol}}} 连接器：{endpoint}",
       "toolsAll": "带入它的全部工具",
       "tools": "带入工具：{tools}",
       "plain": "这个智能体有 {n} 个连接器待配置，配置好之前相关工具不可用。",
@@ -1076,7 +1076,10 @@
         "rejectedReason": "组织管理员驳回了申请：{reason}",
         "ask": "申请",
         "none": "还没有向组织管理员申请配置这些连接器。"
-      }
+      },
+      "modeCreateOff": "这个连接器模板在本组织已关闭或不可用，无法用它新建连接器。",
+      "alreadyBound": "「{name}」已在别处配置好",
+      "noCandidatesOff": "组织里没有由这个模板创建的连接器，而这个模板在本组织已关闭或不可用。请先在插件或组件里开启它。"
     }
   },
   "skills": {
@@ -1581,8 +1584,8 @@
       "title": "为「{agent}」配置连接器",
       "hint": "这个智能体由模板创建，模板需要的连接器组织里还没有。配置会把连接器绑定到智能体；全部绑定后申请自动关闭。",
       "connectors": "需要的连接器",
-      "fromTemplate": "由连接器模板创建",
-      "needs": "需要一个 {protocol} 连接器：{endpoint}",
+      "fromTemplate": "由连接器模板「{name}」创建",
+      "needs": "需要一个 {protocol, select, mcp {MCP} openapi {OpenAPI} other {{protocol}}} 连接器：{endpoint}",
       "reasonLabel": "驳回理由",
       "reasonHelp": "驳回时发给申请人。",
       "titleApproved": "「{agent}」的连接器已配置好",

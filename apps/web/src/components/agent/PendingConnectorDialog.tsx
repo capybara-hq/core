@@ -14,10 +14,11 @@ import {
   Text,
   useToast,
 } from "@capybara-hq/design";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { type ReactNode, useState } from "react";
 import { Link } from "../../i18n/navigation";
+import { ApiClientError } from "../../lib/api";
 import { displayNameOf, type OrgCatalogTemplate } from "../../lib/catalog";
 import {
   addTemplateConnector,
@@ -51,12 +52,15 @@ export function useEntrySource(): (e: PendingEntry) => string {
   const locale = useLocale();
   return (e) =>
     e.source.kind === "template"
-      ? e.source.displayName !== null
-        ? t("fromTemplateNamed", {
-            name: displayNameOf({ name: e.label, displayName: e.source.displayName }, locale),
-          })
-        : t("fromTemplate")
-      : t("needs", { protocol: e.source.protocol.toUpperCase(), endpoint: e.source.endpoint });
+      ? t("fromTemplateNamed", {
+          // the request names the template's display name; an agent's entry carries it as its
+          // label (the kernel labels template entries with the template's display name)
+          name:
+            e.source.displayName !== null
+              ? displayNameOf({ name: e.label, displayName: e.source.displayName }, locale)
+              : e.label,
+        })
+      : t("needs", { protocol: e.source.protocol, endpoint: e.source.endpoint });
 }
 
 /** The tools an entry takes once bound, in words. */
@@ -135,11 +139,13 @@ export function PendingConnectorDialog({
   const entry = left.find((e) => e.key === open);
   const single = initialKey !== undefined;
 
-  const afterBind = (key: string, label: string, dropped: string[]) => {
+  const afterBind = (key: string, label: string, dropped: string[] | null) => {
     toast.success(
-      dropped.length > 0
-        ? t("boundDropped", { name: label, n: dropped.length })
-        : t("bound", { name: label }),
+      dropped === null
+        ? t("alreadyBound", { name: label })
+        : dropped.length > 0
+          ? t("boundDropped", { name: label, n: dropped.length })
+          : t("bound", { name: label }),
     );
     const next = new Set(bound).add(key);
     setBound(next);
@@ -221,7 +227,8 @@ function EntryDialog({
   entry: PendingEntry;
   onBack(): void;
   backLabel: string;
-  onBound(dropped: string[]): void;
+  /** Bound; `null` when it was already bound elsewhere (the entry is gone). */
+  onBound(dropped: string[] | null): void;
 }) {
   const t = useTranslations("agents.pending");
   const source = useEntrySource();
@@ -231,11 +238,26 @@ function EntryDialog({
     ...connectorsQ,
     retryOnMount: retryOnMountOf(connectorsQ.queryKey),
   });
+  const qc = useQueryClient();
   const candidates = candidatesFor(entry, connectors.data?.connectors ?? []);
+  const template = entry.source.kind === "template";
+  // A template switched off in the org (or gone) makes nothing new: only picking stays
+  const compQ = orgComponentsQuery(orgId, { kind: "connector_template" });
+  const comps = useQuery({
+    ...compQ,
+    enabled: template,
+    retryOnMount: retryOnMountOf(compQ.queryKey),
+  });
+  const createOff =
+    entry.source.kind === "template" &&
+    comps.data !== undefined &&
+    comps.data.components.find((c) => c.id === (entry.source as { templateId: string }).templateId)
+      ?.on !== true;
   const [mode, setMode] = useState<Mode | null>(null);
   // Without a connector to pick, creating one is the way (once the list answered).
-  const shown: Mode =
-    mode ?? (connectors.data !== undefined && candidates.length === 0 ? "create" : "existing");
+  const shown: Mode = createOff
+    ? "existing"
+    : (mode ?? (connectors.data !== undefined && candidates.length === 0 ? "create" : "existing"));
   const [picked, setPicked] = useState<string>("");
   const connectorId = picked !== "" ? picked : (candidates[0]?.id ?? "");
   const [error, setError] = useState<{ error: unknown; connectorId: string | null } | null>(null);
@@ -256,11 +278,22 @@ function EntryDialog({
       const r = await bind.mutateAsync(id);
       onBound(r.dropped);
     } catch (e) {
+      if (e instanceof ApiClientError && e.code === "agent.pending_connector_not_found") {
+        // bound elsewhere meanwhile: read the agent and the request again, this entry is done
+        for (const queryKey of [
+          k.agent(agentId),
+          k.setupRequest(agentId),
+          ...inboxChangeKeys(orgId),
+        ]) {
+          void qc.invalidateQueries({ queryKey });
+        }
+        onBound(null);
+        return;
+      }
       setError({ error: e, connectorId: id });
     }
   }
 
-  const template = entry.source.kind === "template";
   const options = [
     { value: "existing", label: t("modeExisting"), description: t("modeExistingHint") },
     template
@@ -277,16 +310,22 @@ function EntryDialog({
           {toolsOf(entry)}
         </Text>
       </Stack>
-      <RadioGroup
-        variant="card"
-        label={t("modeLabel")}
-        value={shown}
-        onChange={(v) => {
-          setMode(v as Mode);
-          setError(null);
-        }}
-        options={options}
-      />
+      {createOff ? (
+        <Text variant="prose" tone="muted">
+          {t("modeCreateOff")}
+        </Text>
+      ) : (
+        <RadioGroup
+          variant="card"
+          label={t("modeLabel")}
+          value={shown}
+          onChange={(v) => {
+            setMode(v as Mode);
+            setError(null);
+          }}
+          options={options}
+        />
+      )}
       {shown === "existing" &&
         (connectors.data === undefined ? (
           connectors.error !== null ? (
@@ -296,7 +335,11 @@ function EntryDialog({
           )
         ) : candidates.length === 0 ? (
           <Text variant="prose" tone="muted">
-            {template ? t("noCandidatesTemplate") : t("noCandidatesNeeds")}
+            {createOff
+              ? t("noCandidatesOff")
+              : template
+                ? t("noCandidatesTemplate")
+                : t("noCandidatesNeeds")}
           </Text>
         ) : (
           <Field label={t("connectorLabel")}>
