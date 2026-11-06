@@ -1219,9 +1219,20 @@ export class PluginInstaller {
     const { itemId, version } = plan;
     const t = this.db;
     await this.orgLock.lock(orgId);
+    // The platform version current at commit (one per deployment): a platform update that
+    // committed while this install ran moved the row already, or did not see it yet
     const updated = await t
       .updateTable("plugin_installs")
-      .set({ status: "installed" })
+      .set((eb) => ({
+        status: "installed",
+        version: eb.fn.coalesce(
+          eb
+            .selectFrom("catalog_items as i")
+            .select("i.platform_synced_version")
+            .where("i.id", "=", itemId),
+          eb.ref("plugin_installs.version"),
+        ),
+      }))
       .where("id", "=", installId)
       .where("status", "=", "installing")
       .executeTakeFirst();

@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { sql } from "kysely";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { PlatformComponents } from "../../src/catalog/platform-components.js";
@@ -566,6 +566,70 @@ describe("platform plugin update (spec §7)", { timeout: 120_000 }, () => {
     expect(await read()).toMatchObject({ versions: ["1.1.0", "1.0.0"], platformVersion: "1.0.0" });
     await updateTo(item, "1.1.0");
     expect(await read()).toMatchObject({ platformVersion: "1.1.0" });
+  });
+
+  it("installs still installing (or a legacy upgrading row) move with the update; an install finishing after an update records the platform version", async () => {
+    const item = await seedPlugin(env, { name: "memo", skills: ["memo"], templates: false });
+    for (const v of ["1.1.0", "1.2.0"]) {
+      await seedPlugin(env, {
+        name: "memo",
+        addTo: item,
+        version: v,
+        skills: ["memo"],
+        templates: false,
+      });
+    }
+    const versions = async () =>
+      (
+        await env.db
+          .selectFrom("plugin_installs")
+          .select(["org_id", "version", "status"])
+          .where("item_id", "=", item)
+          .orderBy("status")
+          .execute()
+      ).map((r) => `${r.org_id === env.orgId ? "org1" : "org2"}:${r.version}:${r.status}`);
+    await env.db
+      .insertInto("plugin_installs")
+      .values([
+        {
+          id: randomUUID(),
+          org_id: env.orgId,
+          item_id: item,
+          version: "1.0.0",
+          status: "installing",
+        },
+        {
+          id: randomUUID(),
+          org_id: org2,
+          item_id: item,
+          version: "1.0.0",
+          status: "upgrading",
+        },
+      ])
+      .execute();
+    await updateTo(item, "1.1.0");
+    expect(await versions()).toEqual(["org1:1.1.0:installing", "org2:1.1.0:upgrading"]);
+
+    // an install planned at 1.1.0 while the platform moves to 1.2.0 before it is marked installed
+    await env.db.deleteFrom("plugin_installs").where("item_id", "=", item).execute();
+    const installer = env.k.app.get(PluginInstaller) as unknown as {
+      markInstalled: (...a: unknown[]) => Promise<void>;
+    };
+    const mark = installer.markInstalled;
+    const spy = vi.spyOn(installer, "markInstalled").mockImplementation(async (...a) => {
+      await env.db
+        .updateTable("catalog_items")
+        .set({ platform_synced_version: "1.2.0" })
+        .where("id", "=", item)
+        .execute();
+      return mark.apply(installer, a);
+    });
+    try {
+      await installIn(env.orgId, item);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(await versions()).toEqual(["org1:1.2.0:installed"]);
   });
 
   it("a stale diffHash is 409 plugin.upgrade_stale and nothing changes", async () => {

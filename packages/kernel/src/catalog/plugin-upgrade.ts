@@ -528,12 +528,14 @@ export class PlatformPluginUpdater {
       }
     }
 
-    // One version for the deployment: every org install of the plugin moves with it
+    // One version for the deployment: every live org install of the plugin moves with it (one
+    // still installing too, and a legacy `upgrading` row; an install marked installed later
+    // records the platform version current at its commit, PluginInstaller.markInstalled)
     await t
       .updateTable("plugin_installs")
       .set({ version: diff.to.version, error: null })
       .where("item_id", "=", itemId)
-      .where("status", "=", "installed")
+      .where("status", "in", ["installing", "installed", "upgrading"])
       .execute();
     await audit(t, {
       actorAccountId: actor,
