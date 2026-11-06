@@ -63,6 +63,15 @@ export const keys = {
       ],
       /** The plugins installed in the org. */
       pluginInstalls: (): readonly unknown[] => [...all, "pluginInstalls"],
+      /** Every read of the platform components offered to the org (an invalidation prefix). */
+      componentsAll: (): readonly unknown[] => [...all, "components"],
+      /** The components offered to the org (`""`: every kind / every plugin). */
+      components: (kind: string, itemId: string): readonly unknown[] => [
+        ...all,
+        "components",
+        kind,
+        itemId,
+      ],
       /** My standing tool grants in the org. */
       toolGrants: (): readonly unknown[] => [...all, "toolGrants"],
       /** Every view of the sidebar's conversation groups (an invalidation prefix). */

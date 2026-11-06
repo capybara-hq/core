@@ -163,3 +163,94 @@ export const uploadAgentTemplateVersion = (id: string, content: string) =>
     `${one("agent_template", id)}/versions`,
     send("POST", { content }),
   );
+
+/**
+ * A platform component offered to the org (kernel `OrgOfferedComponentView`, `GET
+ * /orgs/:orgId/components`): on there, or one an org admin could switch on. Members read it.
+ */
+export interface OrgComponent {
+  kind: PlatformComponentKind;
+  id: string;
+  name: string;
+  description: string | null;
+  plugin: string | null;
+  itemId: string | null;
+  version: string;
+  scopeMode: "follow" | "own";
+  /** The org's own switch (null: never switched). */
+  switch: boolean | null;
+  on: boolean;
+  /** Its effective scope is `all`: on for every org, never switched off here (已启用 · 平台统一). */
+  locked: boolean;
+  /** A component following its plugin: the plugin is on in the org (true for its own scope). */
+  pluginOn: boolean;
+  /** An org admin may switch it now (not locked; its plugin on when it follows it). */
+  switchable: boolean;
+}
+
+/** What switching a component off in the org takes away: the agents using it, connectors kept. */
+export interface ComponentSwitchPreview {
+  preview: { agents: { id: string; name: string; refs: string[] }[]; connectorsKept: number };
+  confirm: string;
+}
+
+const orgBase = (orgId: string) => `/api/v1/orgs/${enc(orgId)}/components`;
+
+/** The components offered to the org, of one kind and / or of one plugin. */
+export const listOrgComponents = (
+  orgId: string,
+  filter: { kind?: PlatformComponentKind; itemId?: string },
+) => {
+  const q = new URLSearchParams();
+  if (filter.kind !== undefined) q.set("kind", filter.kind);
+  if (filter.itemId !== undefined) q.set("itemId", filter.itemId);
+  const qs = q.toString();
+  return apiFetch<{ components: OrgComponent[] }>(`${orgBase(orgId)}${qs === "" ? "" : `?${qs}`}`);
+};
+
+/**
+ * Switches one component on or off in the org (org admins). Off on a component in use answers its
+ * preview first; confirm with its hash. `all` -> 409 `plugin.scope_locked`; a name taken in the
+ * org -> 409 `plugin.skill_conflict`.
+ */
+export const setOrgComponentSwitch = (
+  orgId: string,
+  kind: PlatformComponentKind,
+  id: string,
+  body: { enabled: boolean; confirm?: string },
+) =>
+  apiFetch<{ component: OrgComponent } | ComponentSwitchPreview>(
+    `${orgBase(orgId)}/${kind}/${enc(id)}/switch`,
+    send("PUT", body),
+  );
+
+/** One row of a workspace component page: the org's own item, or a platform one with its state. */
+export type UsableRow<T> =
+  | { kind: "own"; item: T }
+  | { kind: "platform"; item: T | undefined; component: OrgComponent | undefined };
+
+/**
+ * The rows of a workspace 技能 / 智能体模板 page by name: the org's own items, then each platform
+ * component once (the usable set has the ones on in the org, the component list every one offered;
+ * either may be missing while it loads).
+ */
+export function usableRows<T extends { id: string; name: string; origin?: "org" | "platform" }>(
+  usable: readonly T[],
+  offered: readonly OrgComponent[] | undefined,
+): UsableRow<T>[] {
+  const rows: UsableRow<T>[] = usable
+    .filter((x) => x.origin !== "platform")
+    .map((item) => ({ kind: "own", item }));
+  const platform = usable.filter((x) => x.origin === "platform");
+  const ids = new Set([...platform.map((x) => x.id), ...(offered ?? []).map((c) => c.id)]);
+  for (const id of ids) {
+    rows.push({
+      kind: "platform",
+      item: platform.find((x) => x.id === id),
+      component: offered?.find((c) => c.id === id),
+    });
+  }
+  const nameOf = (r: UsableRow<T>) =>
+    r.item?.name ?? (r.kind === "platform" ? (r.component?.name ?? "") : "");
+  return rows.sort((a, b) => (nameOf(a) < nameOf(b) ? -1 : nameOf(a) > nameOf(b) ? 1 : 0));
+}

@@ -598,6 +598,7 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
       [zh.nav.extensions, "/extensions"],
       [zh.nav.skills, "/skills"],
       [zh.nav.connectors, "/connectors"],
+      [zh.nav.agentTemplates, "/agent-templates"],
       // org admins (owner) see channels, evals and organization settings
       [zh.nav.channels, "/channels"],
       [zh.nav.evals, "/evals"],

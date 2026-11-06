@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  Badge,
   Button,
   Card,
   Checkbox,
@@ -330,27 +331,34 @@ export function useSubagentsForm(
                   {t("templatesNone")}
                 </Text>
               )}
-              {templateList.map((tpl) => (
-                <Checkbox
-                  key={tpl.id}
-                  checked={templates.includes(tpl.id)}
-                  onChange={(on) =>
-                    setTemplates((cur) =>
-                      on ? [...cur, tpl.id] : cur.filter((id) => id !== tpl.id),
-                    )
-                  }
-                  label={
-                    <Stack gap={0}>
-                      <Text>{`${tpl.type} · ${tierLabel(tpl.model)}`}</Text>
-                      <Text variant="small" tone="muted">
-                        {tpl.description}
-                      </Text>
-                    </Stack>
-                  }
-                />
-              ))}
+              {/* A platform template is selected by its id or an org copy linked to it (older
+                  agents); unticking removes every alias, ticking adds the platform id */}
+              {templateList.map((tpl) => {
+                const aliases = [tpl.id, ...(tpl.linkedIds ?? [])];
+                return (
+                  <Stack key={tpl.id} direction="row" gap={8} align="center">
+                    <Checkbox
+                      checked={aliases.some((id) => templates.includes(id))}
+                      onChange={(on) =>
+                        setTemplates((cur) =>
+                          on ? [...cur, tpl.id] : cur.filter((id) => !aliases.includes(id)),
+                        )
+                      }
+                      label={
+                        <Stack gap={0}>
+                          <Text>{`${tpl.type} · ${tierLabel(tpl.model)}`}</Text>
+                          <Text variant="small" tone="muted">
+                            {tpl.description}
+                          </Text>
+                        </Stack>
+                      }
+                    />
+                    {tpl.origin === "platform" && <Badge>{t("platform")}</Badge>}
+                  </Stack>
+                );
+              })}
               {templates
-                .filter((id) => !templateList.some((x) => x.id === id))
+                .filter((id) => !templateList.some((x) => x.id === id || x.linkedIds?.includes(id)))
                 .map((id) => (
                   <Checkbox
                     key={id}

@@ -117,12 +117,19 @@ export interface AgentSubagents {
 export interface AgentTemplateView {
   id: string;
   name: string;
-  plugin: string;
-  /** The roster type `<plugin>:<name>`. */
+  /** The plugin it came from; null for a template without one (its type is the bare name). */
+  plugin: string | null;
+  /** The roster type `<plugin>:<name>`, or the bare `<name>` without a plugin. */
   type: string;
   description: string;
   model: AgentTier;
   version: number;
+  /** `platform`: a platform template on in the org; `org`: the org's own (older kernels: absent). */
+  origin?: "org" | "platform";
+  /** A platform template: the ids of the org's copies linked to it (they select this template). */
+  linkedIds?: string[];
+  /** The catalog item (plugin) it came from, when any. */
+  catalogItemId?: string | null;
 }
 
 export const listAgentTemplates = (orgId: string) =>

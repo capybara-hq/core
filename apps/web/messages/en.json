@@ -112,7 +112,10 @@
       "catalogRequest": "Catalog request",
       "catalogRequestTitle": "Request to install {item}",
       "skillRenamed": "Skill renamed",
-      "skillRenamedTitle": "Skill {from} was renamed to {to}"
+      "skillRenamedTitle": "Skill {from} was renamed to {to}",
+      "requestDecided": "Request decided",
+      "requestApprovedTitle": "Request approved: {item}",
+      "requestRejectedTitle": "Request rejected: {item}"
     },
     "recent": {
       "title": "Pick up where you left off",
@@ -513,7 +516,8 @@
       "overLimitRefused": "Saving this pinned list is refused until it fits.",
       "skillTag": {
         "manual": "manual",
-        "fork": "sub-agent"
+        "fork": "sub-agent",
+        "platform": "Platform"
       },
       "manualHint": "A manual skill is not in the model's skills catalog: people invoke it with / in a conversation.",
       "manualNotPinnable": "Manual skills cannot be pinned.",
@@ -576,7 +580,8 @@
           "self": "An agent cannot dispatch itself.",
           "too_many": "Too many sub-agents: at most 20 in total.",
           "required": "This field is required."
-        }
+        },
+        "platform": "Platform"
       },
       "webUnavailable": "This organization has no usable web provider: an org admin needs to enable and configure one, or, when several are enabled, choose a default provider in the extension settings, before the selected web tools can be used."
     },
@@ -730,7 +735,8 @@
       "cancelled": "Upload cancelled.",
       "retry": "Retry",
       "open": "Upload skill",
-      "close": "Close"
+      "close": "Close",
+      "nameTaken": "The platform already offers a skill with this name to this organization; skill names are unique in an organization. Rename the skill in SKILL.md and upload it again."
     },
     "detail": {
       "tabsLabel": "Skill sections",
@@ -760,8 +766,14 @@
       "delete": "Delete skill",
       "deleteTitle": "Delete {name}?",
       "deleteHint": "Agents stop loading this skill. Agent definitions keep the reference, which shows as deleted until their owners remove it.",
-      "deleted": "Skill {name} deleted."
-    }
+      "deleted": "Skill {name} deleted.",
+      "owner": "Owner",
+      "ownerPlatform": "Platform",
+      "ownerOrg": "This org",
+      "plugin": "Plugin",
+      "platformHint": "The platform provides this skill: this organization cannot change or delete it; org admins turn it on or off on the Skills page."
+    },
+    "description": "The skills this organization can use. Skills the platform turns on for everyone cannot be turned off; org admins turn the other platform skills on or off."
   },
   "chat": {
     "waitingFor": {
@@ -966,7 +978,8 @@
     "settings": "Organization settings",
     "admin": "Admin console",
     "plugins": "Plugins",
-    "extensions": "Extensions"
+    "extensions": "Extensions",
+    "agentTemplates": "Agent templates"
   },
   "shell": {
     "noOrg": "Select organization",
@@ -1127,6 +1140,20 @@
       "plugin": "Plugin",
       "dismiss": "Got it",
       "dismissed": "Notice dismissed"
+    },
+    "requestDecided": {
+      "label": "Request decided",
+      "approved": "Approved",
+      "rejected": "Rejected",
+      "status": "Result",
+      "decidedAt": "Decided",
+      "dismiss": "Got it",
+      "titleApproved": "Request approved · {name}",
+      "titleRejected": "Request rejected · {name}",
+      "hintApproved": "Your request was approved; it is ready to use.",
+      "hintRejected": "Your request was not approved.",
+      "reason": "Reason",
+      "openItem": "View plugin"
     }
   },
   "connectors": {
@@ -3274,6 +3301,16 @@
           "finish": "finish"
         },
         "notInstallable": "This plugin cannot be turned on right now."
+      },
+      "connectors": {
+        "title": "Complete setup of {name}",
+        "confirmStep": "Confirm",
+        "next": "Next",
+        "backToPlugin": "Back to the plugin",
+        "nothing": "{name} misses no connector.",
+        "submit": "Create connectors",
+        "done": "Connectors created for {name}.",
+        "summary": "{n} connectors will be created for this organization."
       }
     },
     "plugins": {
@@ -3592,7 +3629,8 @@
       "disable": "Turn off",
       "request": "Request",
       "requestEnable": "Ask to turn on",
-      "requestImport": "Request import"
+      "requestImport": "Request import",
+      "connectors": "Complete setup"
     },
     "chips": {
       "upgrade": "Update {version}"
@@ -3737,5 +3775,65 @@
       "cancel": "Cancel",
       "done": "Uploaded {version} of {name}"
     }
+  },
+  "orgComponents": {
+    "state": {
+      "on": "On",
+      "off": "Off",
+      "platform": "On · set by the platform",
+      "pluginOff": "Plugin off"
+    },
+    "origin": {
+      "org": "This org",
+      "platform": "Platform"
+    },
+    "from": {
+      "plugin": "Plugin · {plugin}",
+      "platform": "Uploaded to the platform",
+      "org": "Uploaded by this org"
+    },
+    "action": {
+      "enable": "Turn on",
+      "disable": "Turn off",
+      "plugin": "View plugin"
+    },
+    "toast": {
+      "enabled": "{name} is on.",
+      "disabled": "{name} is off."
+    },
+    "error": {
+      "conflict": "This organization already has a skill named {name}; skill names are unique in an organization. Remove or rename that skill, then turn this one on.",
+      "locked": "{name} is on for every organization by the platform and cannot be turned off here."
+    },
+    "switchOff": {
+      "title": "Turn off {name}",
+      "hint": {
+        "skill": "Once it is off, this organization's agents can no longer load this skill.",
+        "agent_template": "Once it is off, this organization's agents can no longer use this template as a sub-agent.",
+        "connector_template": "Once it is off, this organization can no longer create connectors from this template."
+      },
+      "agents": "These agents use it and will lose it:",
+      "noAgents": "No agent in this organization uses it.",
+      "connectorsKept": "The {n} connectors made from it stay, as this organization's own.",
+      "confirm": "Turn off",
+      "cancel": "Cancel",
+      "stale": "What this changes moved on before you confirmed; review it again."
+    },
+    "kind": {
+      "skill": "Skill",
+      "agent_template": "Agent template",
+      "connector_template": "Connector template"
+    },
+    "unavailable": "The components' state in this organization could not be read.",
+    "inOrg": "In this organization",
+    "noneInOrg": "This plugin offers no component to this organization."
+  },
+  "agentTemplates": {
+    "title": "Agent templates",
+    "description": "The agent templates this organization can use, as sub-agents of its agents. Templates the platform turns on for everyone cannot be turned off; org admins turn the other platform templates on or off.",
+    "listLabel": "Agent templates",
+    "empty": "No agent templates yet. Plugins can bring agent templates.",
+    "type": "type {type}",
+    "version": "v{version}"
   }
 }

@@ -701,6 +701,11 @@ export interface OrgCatalogDetail {
   skills: string[];
   /** The agent template files (`agents/<name>.md`; older kernels leave it out). */
   agents?: string[];
+  /**
+   * An installed `needs_config` plugin: the connector templates on in the org that miss a
+   * connector there (补充配置 creates them); empty otherwise, absent from older kernels.
+   */
+  missingTemplates?: OrgCatalogTemplate[];
 }
 
 /** What an org fills in for one connector template at install. */
@@ -1115,6 +1120,20 @@ export const setOrgPluginSwitch = (orgId: string, itemId: string, body: OrgSwitc
   apiFetch<{ item: OrgCatalogItem } | SwitchPreview>(
     `${org(orgId)}/catalog/${enc(itemId)}/switch`,
     put(body),
+  );
+
+/**
+ * Creates the connectors an installed plugin misses (`needs_config`): one input per missing
+ * template, checked like an install -> 201 `{ connectors }`.
+ */
+export const createPluginConnectors = (
+  orgId: string,
+  itemId: string,
+  connectors: Record<string, ConnectorInstallInput>,
+) =>
+  apiFetch<{ connectors: { templateId: string; connectorId: string }[] }>(
+    `${org(orgId)}/catalog/${enc(itemId)}/connectors`,
+    post({ inputs: { connectors } }),
   );
 
 /** The requester dismisses a decided request from the inbox (204). */

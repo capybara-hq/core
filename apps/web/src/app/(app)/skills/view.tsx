@@ -12,15 +12,22 @@ import {
   useTimeZone,
   useToast,
 } from "@capybara-hq/design";
+import { useQuery } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { useRef, useState } from "react";
+import { useCatalogErrorLines } from "../../../components/CatalogParts";
+import { useComponentState, useComponentSwitch } from "../../../components/ComponentSwitch";
 import { ErrorFrame } from "../../../components/ErrorFrame";
 import { FormError } from "../../../components/form-error";
 import { NoAccess } from "../../../components/NoAccess";
+import { rowActions } from "../../../components/PluginSwitch";
 import { usePagePath } from "../../../components/shell/path";
 import { useSession } from "../../../components/shell/session";
-import { issueLines } from "../../../lib/api";
+import { ApiClientError, issueLines } from "../../../lib/api";
+import { usableRows } from "../../../lib/components";
 import { canUpdateOrg } from "../../../lib/org-settings";
+import { retryOnMountOf } from "../../../lib/query/client";
+import { orgComponentsQuery } from "../../../lib/query/components";
 import { keys } from "../../../lib/query/keys";
 import { useAppMutation } from "../../../lib/query/mutation";
 import { usePageQuery } from "../../../lib/query/page-query";
@@ -31,9 +38,12 @@ import { useErrorMessage } from "../../../lib/use-error-message";
 import NotFound from "../not-found";
 
 /**
- * `/skills`：组织技能库（object list）。成员可浏览，点一行进详情；管理员另有上传卡片
- * （选 / 拖入 .zip → 登记 → 直传 → 解包校验，同名技能新增版本）。From the query cache (the layout
- * prefetched it on a first load); an upload invalidates the list.
+ * `/skills` (spec §9): the skills the org can use and the platform skills offered to it (object
+ * list). Org-own rows carry 本组织, platform rows 平台 with their state in the org (已启用 · 平台统一
+ * for `all`, 已启用, 未启用, 插件未启用); org admins switch platform skills (启用, 停用 with the
+ * preview of the agents using it) and upload a .zip (a name a platform skill offered here already
+ * has is refused, rule 10). Members read the page. From the query cache (the layout prefetched the
+ * library and the offered components on a first load); a switch or an upload invalidates them.
  */
 export default function SkillsView() {
   const ws = useWorkspace({ min: "member" });
@@ -46,13 +56,23 @@ function Skills({ orgId }: { orgId: string }) {
   const timeZone = useTimeZone();
   const scope = usePagePath("org");
   const t = useTranslations("skills");
+  const tc = useTranslations("orgComponents");
   const { me } = useSession();
   const admin = canUpdateOrg(me);
   const [uploading, setUploading] = useState(false);
   const list = usePageQuery(skillsQuery(orgId));
+  const cq = orgComponentsQuery(orgId, { kind: "skill" });
+  const offered = useQuery({ ...cq, retryOnMount: retryOnMountOf(cq.queryKey) });
+  const stateOf = useComponentState();
+  const { actionsOf, dialog, error, busy } = useComponentSwitch({ orgId, admin });
   if (list.kind === "notFound") return <NotFound />;
   if (list.kind === "error") return <ErrorFrame reset={list.retry} />;
-  const rows = list.kind === "ready" ? list.data.skills : [];
+  const rows = list.kind === "ready" ? usableRows(list.data.skills, offered.data?.components) : [];
+  const upload = {
+    label: t("upload.open"),
+    icon: "upload" as const,
+    onSelect: () => setUploading(true),
+  };
   const empty =
     rows.length === 0
       ? {
@@ -60,48 +80,83 @@ function Skills({ orgId }: { orgId: string }) {
           ...(admin
             ? {
                 action: {
-                  label: t("upload.open"),
+                  label: upload.label,
                   variant: "primary" as const,
-                  onSelect: () => setUploading(true),
+                  onSelect: upload.onSelect,
                 },
               }
             : {}),
         }
       : undefined;
+  const fromOf = (plugin: string | null | undefined, platform: boolean) =>
+    plugin ? tc("from.plugin", { plugin }) : platform ? tc("from.platform") : tc("from.org");
   return (
     <>
       <ListPage
         header={{
           path: [...scope, { label: "skills" }],
           title: t("title"),
-          ...(admin
-            ? {
-                actions: [
-                  {
-                    label: t("upload.open"),
-                    variant: "primary" as const,
-                    onSelect: () => setUploading(true),
-                  },
-                ],
-              }
-            : {}),
+          description: t("description"),
+          ...(admin ? { actions: [{ ...upload, variant: "primary" as const }] } : {}),
         }}
         variant="objects"
         listLabel={t("listLabel")}
+        {...(error !== undefined
+          ? {
+              callout: {
+                tone: "fail" as const,
+                children: <FormError message={error.message} extra={error.extra} />,
+              },
+            }
+          : {})}
         {...(list.kind === "loading" ? { loading: true } : empty ? { empty } : {})}
       >
-        {rows.map((s) => (
-          <ObjectRow
-            key={s.id}
-            mark={{ text: s.name }}
-            name={s.name}
-            href={`/skills/${encodeURIComponent(s.id)}`}
-            mono
-            description={s.description}
-            meta={`${t("version", { version: s.currentVersion })} · ${formatDateTime(s.updatedAt, "full", timeZone)}`}
-          />
-        ))}
+        {rows.map((r) => {
+          if (r.kind === "own") {
+            const s = r.item;
+            return (
+              <ObjectRow
+                key={s.id}
+                mark={{ text: s.name }}
+                name={s.name}
+                href={`/skills/${encodeURIComponent(s.id)}`}
+                mono
+                chips={[{ label: tc("origin.org") }]}
+                description={s.description}
+                meta={[
+                  fromOf(s.plugin, false),
+                  t("version", { version: s.currentVersion }),
+                  formatDateTime(s.updatedAt, "full", timeZone),
+                ]}
+                state={{ label: tc("state.on"), tone: "ok" }}
+              />
+            );
+          }
+          const c = r.component;
+          const s = r.item;
+          const id = s?.id ?? c?.id ?? "";
+          const name = s?.name ?? c?.name ?? "";
+          const on = c?.on ?? s !== undefined;
+          return (
+            <ObjectRow
+              key={id}
+              mark={{ text: name }}
+              name={name}
+              mono
+              {...(on && s !== undefined ? { href: `/skills/${encodeURIComponent(id)}` } : {})}
+              chips={[{ label: tc("origin.platform") }]}
+              description={s?.description ?? c?.description ?? ""}
+              meta={[
+                fromOf(s?.plugin ?? c?.plugin, true),
+                t("version", { version: s?.currentVersion ?? c?.version ?? "" }),
+              ]}
+              state={c !== undefined ? stateOf(c) : { label: tc("state.on"), tone: "ok" }}
+              {...(c !== undefined && !busy ? rowActions(actionsOf(c)) : {})}
+            />
+          );
+        })}
       </ListPage>
+      {dialog}
       {admin && (
         <Dialog
           open={uploading}
@@ -125,6 +180,7 @@ function UploadCard({ orgId, onUploaded }: { orgId: string; onUploaded(): void }
   const t = useTranslations("skills.upload");
   const toast = useToast();
   const errorMessage = useErrorMessage();
+  const catalogLines = useCatalogErrorLines();
   const [busy, setBusy] = useState<{ name: string; progress: number }>();
   const [error, setError] = useState<{ message: string; extra: string[] }>();
   const [cancelled, setCancelled] = useState(false);
@@ -138,7 +194,11 @@ function UploadCard({ orgId, onUploaded }: { orgId: string; onUploaded(): void }
         signal: v.signal,
         onProgress: (progress) => setBusy({ name: v.file.name, progress }),
       }),
-    invalidates: (_, r) => [keys.org(orgId).skills(), keys.org(orgId).skill(r.skill.id)],
+    invalidates: (_, r) => [
+      keys.org(orgId).skills(),
+      keys.org(orgId).skill(r.skill.id),
+      keys.org(orgId).componentsAll(),
+    ],
   });
 
   async function upload(files: File[]) {
@@ -166,7 +226,11 @@ function UploadCard({ orgId, onUploaded }: { orgId: string; onUploaded(): void }
     } catch (e) {
       setFailed(file);
       if (c.signal.aborted) setCancelled(true);
-      else setError({ message: errorMessage(e), extra: issueLines(e) });
+      else if (e instanceof ApiClientError && e.code === "plugin.skill_conflict") {
+        // Rule 10: the name is a platform skill's offered to the org; rename and upload again
+        setFailed(undefined);
+        setError({ message: t("nameTaken"), extra: catalogLines(e) });
+      } else setError({ message: errorMessage(e), extra: issueLines(e) });
     } finally {
       ctrl.current = null;
       setBusy(undefined);

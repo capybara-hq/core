@@ -355,6 +355,24 @@ function DailyOverview({
         href: "/inbox",
       };
     }
+    if (item.type === "catalog_request_decided") {
+      return {
+        id: item.id,
+        tag: { label: t("inbox.requestDecided") },
+        title: t(
+          item.request.status === "approved"
+            ? "inbox.requestApprovedTitle"
+            : "inbox.requestRejectedTitle",
+          {
+            item:
+              requestSubject(item.request).displayName?.[locale === "zh" ? "zh" : "en"] ??
+              requestSubject(item.request).name,
+          },
+        ),
+        meta: when,
+        href: "/inbox",
+      };
+    }
     return {
       id: item.id,
       tag: { label: t("inbox.catalogRequest") },

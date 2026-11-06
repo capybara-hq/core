@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
-import { bodyOf, json, lastStubRoutes, noContent, stubApi } from "./support/api";
+import { bodyOf, json, lastStubRoutes, noContent, stubApi as stubApiOnly } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
 import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
 import { ME } from "./support/render";
@@ -19,6 +19,13 @@ vi.mock("next/navigation", () => ({
     throw new Error("NOT_FOUND");
   },
 }));
+
+/** The platform skills offered to the org (the 技能 page's switches): none unless a test stubs them. */
+const stubApi = (routes: Parameters<typeof stubApiOnly>[0]) =>
+  stubApiOnly({
+    "GET /api/v1/orgs/o1/components": () => json(200, { components: [] }),
+    ...routes,
+  });
 
 type RenderOpts = Parameters<typeof renderRouteWithCache>[2];
 /** `/skills` as a first load: the layout prefetches from the latest `stubApi` routes. */
@@ -183,7 +190,7 @@ describe("技能库列表（ListPage）", () => {
     expect(bodyOf(calls.find((c) => c.method === "POST" && c.url === BASE))).toEqual({
       uploadId: "up1",
     });
-    await vi.waitFor(() => expect(screen.getByText(/^v2 · /)).toBeTruthy());
+    await vi.waitFor(() => expect(screen.getByText(/ · v2 · /)).toBeTruthy());
   });
 
   it("an upload invalidates skills and that skill: the list is read again", async () => {
@@ -432,6 +439,7 @@ describe("the skills pages render on the server (web-SSR spec §6)", () => {
   const routes = {
     [`GET ${BASE}`]: () => json(200, { skills: [skill("s1", "pdf-tools")] }),
     [`GET ${BASE}/s1`]: () => json(200, detail),
+    "GET /api/v1/orgs/o1/components": () => json(200, { components: [] }),
   };
   const template = (name: string) => document.querySelector(`[data-template="${name}"]`);
 
@@ -497,7 +505,7 @@ describe("the skills pages render on the server (web-SSR spec §6)", () => {
     const card = page.querySelectorAll('[data-part="loading-shaped-card"]');
     expect(card).toHaveLength(1);
     expect(card[0]?.querySelectorAll('[data-part="loading-buttons"] [data-box]')).toHaveLength(1);
-    expect(page.querySelectorAll('[data-part="loading-inspector-row"]')).toHaveLength(4);
+    expect(page.querySelectorAll('[data-part="loading-inspector-row"]')).toHaveLength(5);
   });
 
   it.each(["/skills", "/skills/s1"])(

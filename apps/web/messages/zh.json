@@ -112,7 +112,10 @@
       "catalogRequest": "目录申请",
       "catalogRequestTitle": "申请安装 {item}",
       "skillRenamed": "技能改名",
-      "skillRenamedTitle": "技能 {from} 已改名为 {to}"
+      "skillRenamedTitle": "技能 {from} 已改名为 {to}",
+      "requestDecided": "申请结果",
+      "requestApprovedTitle": "申请已批准：{item}",
+      "requestRejectedTitle": "申请被拒绝：{item}"
     },
     "recent": {
       "title": "接着上次的会话",
@@ -513,7 +516,8 @@
       "overLimitRefused": "在合计不超限之前，这份置顶列表无法保存。",
       "skillTag": {
         "manual": "手动",
-        "fork": "子智能体"
+        "fork": "子智能体",
+        "platform": "平台"
       },
       "manualHint": "手动技能不在模型的技能目录里：由人在会话里用 / 调用。",
       "manualNotPinnable": "手动技能不能置顶。",
@@ -576,7 +580,8 @@
           "self": "智能体不能派发自己。",
           "too_many": "子智能体太多：总数最多 20 个。",
           "required": "此项为必填。"
-        }
+        },
+        "platform": "平台"
       },
       "webUnavailable": "本组织没有可用的网页提供方：需要组织管理员在扩展设置里启用并配置一个；如果已启用多个，则选择一个默认提供方。之后选中的网页工具才能使用。"
     },
@@ -730,7 +735,8 @@
       "cancelled": "已取消上传。",
       "retry": "重试",
       "open": "上传技能",
-      "close": "关闭"
+      "close": "关闭",
+      "nameTaken": "平台已向本组织提供同名技能，同一组织里技能名称不能重复。请在 SKILL.md 里改个名字再上传。"
     },
     "detail": {
       "tabsLabel": "技能分区",
@@ -760,8 +766,14 @@
       "delete": "删除技能",
       "deleteTitle": "删除 {name}？",
       "deleteHint": "智能体将不再加载这个技能。智能体定义里的引用会保留并显示为「已删除」，直到负责人移除。",
-      "deleted": "已删除技能 {name}。"
-    }
+      "deleted": "已删除技能 {name}。",
+      "owner": "归属",
+      "ownerPlatform": "平台",
+      "ownerOrg": "本组织",
+      "plugin": "插件",
+      "platformHint": "这是平台提供的技能，本组织不能修改或删除它；组织管理员可以在技能页面启用或停用。"
+    },
+    "description": "本组织能用的技能。平台统一启用的不能停用；其他平台技能由组织管理员启用或停用。"
   },
   "chat": {
     "waitingFor": {
@@ -954,7 +966,8 @@
     "settings": "组织设置",
     "admin": "管理后台",
     "plugins": "插件",
-    "extensions": "扩展"
+    "extensions": "扩展",
+    "agentTemplates": "智能体模板"
   },
   "shell": {
     "noOrg": "选择组织",
@@ -1115,6 +1128,20 @@
       "plugin": "插件",
       "dismiss": "知道了",
       "dismissed": "已移除通知"
+    },
+    "requestDecided": {
+      "label": "申请结果",
+      "approved": "已批准",
+      "rejected": "已拒绝",
+      "status": "结果",
+      "decidedAt": "处理时间",
+      "dismiss": "知道了",
+      "titleApproved": "申请已批准 · {name}",
+      "titleRejected": "申请被拒绝 · {name}",
+      "hintApproved": "你的申请已批准，已经可以使用。",
+      "hintRejected": "你的申请没有被批准。",
+      "reason": "原因",
+      "openItem": "查看插件"
     }
   },
   "connectors": {
@@ -3262,6 +3289,16 @@
           "finish": "收尾"
         },
         "notInstallable": "这个插件现在不能启用。"
+      },
+      "connectors": {
+        "title": "补充配置 {name}",
+        "confirmStep": "确认",
+        "next": "下一步",
+        "backToPlugin": "返回插件",
+        "nothing": "{name} 没有缺少的连接器。",
+        "submit": "创建连接器",
+        "done": "已为 {name} 创建连接器。",
+        "summary": "将为本组织创建 {n} 个连接器。"
       }
     },
     "plugins": {
@@ -3580,7 +3617,8 @@
       "disable": "停用",
       "request": "申请",
       "requestEnable": "申请启用",
-      "requestImport": "申请引入"
+      "requestImport": "申请引入",
+      "connectors": "补充配置"
     },
     "chips": {
       "upgrade": "可更新 {version}"
@@ -3725,5 +3763,65 @@
       "cancel": "取消",
       "done": "已上传 {name} 的 {version}"
     }
+  },
+  "orgComponents": {
+    "state": {
+      "on": "已启用",
+      "off": "未启用",
+      "platform": "已启用 · 平台统一",
+      "pluginOff": "插件未启用"
+    },
+    "origin": {
+      "org": "本组织",
+      "platform": "平台"
+    },
+    "from": {
+      "plugin": "插件 · {plugin}",
+      "platform": "平台上传",
+      "org": "本组织上传"
+    },
+    "action": {
+      "enable": "启用",
+      "disable": "停用",
+      "plugin": "查看插件"
+    },
+    "toast": {
+      "enabled": "已启用 {name}。",
+      "disabled": "已停用 {name}。"
+    },
+    "error": {
+      "conflict": "本组织已有名为 {name} 的技能，同一组织里技能名称不能重复。请先删除或重命名那个技能，再启用。",
+      "locked": "{name} 由平台对所有组织统一启用，这里不能停用。"
+    },
+    "switchOff": {
+      "title": "停用 {name}",
+      "hint": {
+        "skill": "停用后，本组织的智能体不能再加载这个技能。",
+        "agent_template": "停用后，本组织的智能体不能再把这个模板用作子智能体。",
+        "connector_template": "停用后，本组织不能再用这个模板新建连接器。"
+      },
+      "agents": "这些智能体在用它，停用后将无法再用：",
+      "noAgents": "本组织没有智能体在用它。",
+      "connectorsKept": "用它建的 {n} 个连接器会保留，作为本组织自己的连接器。",
+      "confirm": "停用",
+      "cancel": "取消",
+      "stale": "影响在你确认前变了，请再看一遍后确认。"
+    },
+    "kind": {
+      "skill": "技能",
+      "agent_template": "智能体模板",
+      "connector_template": "连接器模板"
+    },
+    "unavailable": "暂时读不到组件在本组织的状态。",
+    "inOrg": "在本组织",
+    "noneInOrg": "这个插件没有向本组织提供组件。"
+  },
+  "agentTemplates": {
+    "title": "智能体模板",
+    "description": "本组织能用的智能体模板，可在智能体里用作子智能体。平台统一启用的不能停用；其他平台模板由组织管理员启用或停用。",
+    "listLabel": "智能体模板",
+    "empty": "还没有智能体模板。插件可以带来智能体模板。",
+    "type": "类型 {type}",
+    "version": "v{version}"
   }
 }

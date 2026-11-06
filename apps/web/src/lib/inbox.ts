@@ -11,6 +11,8 @@ export type InboxItem =
   | { type: "tool_approval"; id: string; createdAt: string; approval: Approval }
   | { type: "skill_change"; id: string; createdAt: string; skillChange: SkillChange }
   | { type: "catalog_request"; id: string; createdAt: string; request: CatalogRequest }
+  /** My own request in this org, approved or rejected (with the reason); `createdAt`: decided. */
+  | { type: "catalog_request_decided"; id: string; createdAt: string; request: CatalogRequest }
   | { type: "skill_renamed"; id: string; createdAt: string; notice: OrgNotice };
 
 /**

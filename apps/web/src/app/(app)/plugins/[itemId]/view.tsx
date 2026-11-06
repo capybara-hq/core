@@ -13,6 +13,7 @@ import {
 import { useQuery } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { CatalogIcon, ComponentSection } from "../../../../components/CatalogParts";
+import { ComponentSwitchList } from "../../../../components/ComponentSwitch";
 import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { FormError } from "../../../../components/form-error";
 import { NoAccess } from "../../../../components/NoAccess";
@@ -33,6 +34,7 @@ import { canUpdateOrg } from "../../../../lib/org-settings";
 import { orgCatalogItemQuery } from "../../../../lib/query/catalog";
 import { orgExtensionsQuery } from "../../../../lib/query/channels";
 import { retryOnMountOf } from "../../../../lib/query/client";
+import { orgComponentsQuery } from "../../../../lib/query/components";
 import { usePageQuery } from "../../../../lib/query/page-query";
 import { useWorkspace } from "../../../../lib/query/workspace";
 import type { Me } from "../../../../lib/session";
@@ -175,6 +177,7 @@ function CatalogItemDetail({
         </Stack>
         {dialog}
         {admin && <PluginInstallsSection orgId={orgId} itemId={item.id} />}
+        <OrgComponentsSection orgId={orgId} itemId={item.id} admin={admin} />
         <ComponentSection
           title={tc("extension")}
           count={detail.extension === null ? 0 : 1}
@@ -248,5 +251,32 @@ function CatalogItemDetail({
         </ComponentSection>
       </Stack>
     </DetailPage>
+  );
+}
+
+/**
+ * The plugin's skills, agent templates and connector templates in this org (spec §9, §13.5): each
+ * one's state and, for org admins, its own switch (a component of an `all` plugin or scope has
+ * none). A section: nothing while it loads, a line when it failed.
+ */
+function OrgComponentsSection({
+  orgId,
+  itemId,
+  admin,
+}: {
+  orgId: string;
+  itemId: string;
+  admin: boolean;
+}) {
+  const t = useTranslations("orgComponents");
+  const q = orgComponentsQuery(orgId, { itemId });
+  const read = useQuery({ ...q, retryOnMount: retryOnMountOf(q.queryKey) });
+  if (read.data === undefined) {
+    return read.error === null ? null : <Text tone="muted">{t("unavailable")}</Text>;
+  }
+  return (
+    <ComponentSection title={t("inOrg")} count={read.data.components.length} empty={t("noneInOrg")}>
+      <ComponentSwitchList orgId={orgId} admin={admin} components={read.data.components} />
+    </ComponentSection>
   );
 }

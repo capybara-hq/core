@@ -42,8 +42,10 @@ type Tab = (typeof TABS)[number];
 
 /**
  * `/skills/[id]`：组织技能详情（DetailPage）：SKILL.md 正文（纯文本，不渲染 HTML / Markdown）、
- * 当前版本的文件、各版本；管理员可删除（输入技能名二次确认）。From the query cache (the layout
- * prefetched it on a first load); a skill the kernel does not find is the not-found state.
+ * 当前版本的文件、各版本；管理员可删除本组织自己的技能（输入技能名二次确认）。A platform skill on in
+ * the org (or an org copy linked to one, which the kernel answers with the platform skill) is read
+ * only: the org switches it on the 技能 page. From the query cache (the layout prefetched it on a
+ * first load); a skill the kernel does not find is the not-found state.
  */
 export default function SkillView({ skillId }: { skillId: string }) {
   const ws = useWorkspace({ min: "member" });
@@ -75,7 +77,7 @@ function Skill({ orgId, skillId }: { orgId: string; skillId: string }) {
         // The content tab: the SKILL.md body, then the delete card for admins (its hint and
         // button); the inspector's four facts
         loading={{
-          inspector: { rows: 4, keyWidth: "10ch" },
+          inspector: { rows: 5, keyWidth: "10ch" },
           content: [
             { kind: "lines", lines: 12 },
             ...(canUpdateOrg(me)
@@ -118,6 +120,11 @@ function Inspector({ skill }: { skill: SkillDetail }) {
         keyWidth="10ch"
         rows={[
           { k: t("name"), v: skill.name },
+          {
+            k: t("owner"),
+            v: skill.origin === "platform" ? t("ownerPlatform") : t("ownerOrg"),
+          },
+          ...(skill.plugin ? [{ k: t("plugin"), v: skill.plugin }] : []),
           { k: t("version"), v: tv("version", { version: skill.currentVersion }) },
           { k: t("files"), v: String(skill.versions[0]?.files.length ?? 0) },
           { k: t("updated"), v: <DateTime value={skill.updatedAt} /> },
@@ -157,7 +164,12 @@ function ContentTab({ orgId, skill }: { orgId: string; skill: SkillDetail }) {
       ) : (
         <Text tone="muted">{t("bodyUnavailable")}</Text>
       )}
-      {canUpdateOrg(me) && (
+      {skill.origin === "platform" && (
+        <Text variant="small" tone="muted">
+          {t("platformHint")}
+        </Text>
+      )}
+      {canUpdateOrg(me) && skill.origin !== "platform" && (
         <>
           <Card tone="danger" title={t("dangerTitle")}>
             <Stack gap={12}>

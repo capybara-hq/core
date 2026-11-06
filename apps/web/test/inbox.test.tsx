@@ -441,6 +441,68 @@ describe("inbox: a renamed skill (org admins)", () => {
   });
 });
 
+describe("inbox: my decided requests", () => {
+  const request = (status: "approved" | "rejected", reason: string | null = null) => ({
+    id: "r1",
+    orgId: "o1",
+    orgName: "Acme",
+    kind: "enable",
+    item: { id: "11111111-1111-4111-8111-111111111111", name: "crm", displayName: null },
+    entry: null,
+    status,
+    note: "",
+    reason,
+    requestedBy: "a1",
+    requestedByName: "Grant",
+    decidedBy: "a2",
+    decidedAt: T,
+    stagingId: null,
+    createdAt: T,
+  });
+  const withDecided = (r: ReturnType<typeof request> | null) => ({
+    items:
+      r === null ? [] : [{ type: "catalog_request_decided", id: r.id, createdAt: T, request: r }],
+    truncated: false,
+  });
+
+  it.each(LOCALES)("an approved request shows and is dismissed (%s)", async (locale) => {
+    const m = msgs[locale];
+    let open: ReturnType<typeof request> | null = request("approved");
+    const { calls } = await renderInbox(
+      {
+        [LIST]: () => json(200, withDecided(open)),
+        "POST /api/v1/orgs/o1/catalog-requests/r1/dismiss": () => {
+          open = null;
+          return noContent();
+        },
+      },
+      { locale },
+    );
+    const table = await screen.findByRole("table", { name: m.inbox.listLabel });
+    expect(within(table).getByText(`${m.inbox.requestDecided.label} · crm`)).toBeTruthy();
+    expect(within(table).getByText(m.inbox.requestDecided.approved)).toBeTruthy();
+    expect(
+      await screen.findByText(m.inbox.requestDecided.titleApproved.replace("{name}", "crm")),
+    ).toBeTruthy();
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: m.inbox.requestDecided.dismiss }));
+    expect(await screen.findByText(m.inbox.empty)).toBeTruthy();
+    expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([
+      "POST /api/v1/orgs/o1/catalog-requests/r1/dismiss",
+      "GET /api/v1/orgs/o1/inbox",
+    ]);
+  });
+
+  it("a rejected request shows the reason", async () => {
+    await renderInbox({ [LIST]: () => json(200, withDecided(request("rejected", "Not now."))) });
+    expect(
+      await screen.findByText(en.inbox.requestDecided.titleRejected.replace("{name}", "crm")),
+    ).toBeTruthy();
+    expect(screen.getByText("Not now.")).toBeTruthy();
+  });
+});
+
 describe("the inbox from the cache", () => {
   it("a first render from the hydrated cache makes no browser read; a refused skill change detail shows its error", async () => {
     const browser = expectNoFirstPaintFetch();

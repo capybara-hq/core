@@ -171,6 +171,31 @@ describe("the agent page's Sub-agents section", () => {
     });
   });
 
+  it("a platform template is selected by its linked copy's id (never gone) and shows its badge", async () => {
+    const lead = agent("ag1", "Lead", {
+      definition: {
+        tools: [
+          { kind: "builtin", name: "AskUserQuestion" },
+          { kind: "builtin", name: "Agent" },
+        ],
+        subagents: { templates: ["tcopy"] },
+      },
+    });
+    stubApi({
+      ...routes(lead),
+      [`GET ${ORG}/agent-templates`]: () =>
+        json(200, {
+          templates: [{ ...TEMPLATES[0], origin: "platform", linkedIds: ["tcopy"] }],
+        }),
+    });
+    await renderEditAgent({ section: "subagents" });
+    const s = await section();
+    const box = await within(s).findByRole("checkbox", { name: /superpowers:code-reviewer/ });
+    expect(box).toHaveProperty("checked", true);
+    expect(within(s).getByText(S.platform)).toBeTruthy();
+    expect(within(s).queryByText(S.templateGone.replace("{id}", "tcopy"))).toBeNull();
+  });
+
   it("an agent without sub-agent settings saves without a subagents block", async () => {
     const calls = stubApi({
       ...routes(),

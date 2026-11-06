@@ -79,6 +79,15 @@ const NAV: readonly {
     icon: "connector",
     section: "more",
   },
+  // Agent templates: members browse them (sub-agent types; org admins switch platform ones)
+  {
+    id: "agent-templates",
+    key: "agentTemplates",
+    href: "/agent-templates",
+    audience: "member",
+    icon: "agent",
+    section: "more",
+  },
   {
     id: "channels",
     key: "channels",
@@ -142,6 +151,7 @@ export function activeNavOf(pathname: string): string {
   if (ext?.[1] !== undefined && ext[2] !== undefined)
     return `ext:${decode(ext[1])}/${decode(ext[2])}`;
   if (under(pathname, "/settings")) return "settings";
+  if (under(pathname, "/agent-templates")) return "agent-templates";
   if (under(pathname, "/agents")) return "agents";
   if (under(pathname, "/skills")) return "skills";
   if (under(pathname, "/inbox")) return "inbox";

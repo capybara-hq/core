@@ -36,6 +36,7 @@ export const pluginChangeKeys = (orgId: string): (readonly unknown[])[] => {
     ...orgExtensionChangeKeys(orgId),
     k.skills(),
     k.agentTemplates(),
+    k.componentsAll(),
   ];
 };
 

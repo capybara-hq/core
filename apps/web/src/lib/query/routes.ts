@@ -28,11 +28,17 @@ import {
   pendingPluginsQuery,
   stagedImportQuery,
 } from "./admin";
-import { agentConnectorQueries, agentFormQueries, agentQuery, agentsQuery } from "./agents";
+import {
+  agentConnectorQueries,
+  agentFormQueries,
+  agentQuery,
+  agentsQuery,
+  agentTemplatesQuery,
+} from "./agents";
 import { authSourcesQuery, invitationQuery, pendingBindingQuery } from "./auth";
 import { orgCatalogItemQuery, orgCatalogQuery, orgMarketplaceEntriesQuery } from "./catalog";
 import { channelQuery, channelSchemaQuery, channelsQuery, orgExtensionsQuery } from "./channels";
-import { adminComponentsQuery, componentVersionsQuery } from "./components";
+import { adminComponentsQuery, componentVersionsQuery, orgComponentsQuery } from "./components";
 import {
   attachmentLimitsQuery,
   connectorKindsQuery,
@@ -317,6 +323,14 @@ export const ROUTES: readonly RouteEntry[] = [
   {
     pattern: "/admin/settings",
     queries: ({ me }) => (superAdmin(me) ? [q(deploymentSettingsQuery())] : []),
+  },
+  {
+    pattern: "/agent-templates",
+    // Members up: the usable templates and the platform ones offered to the org (a section).
+    queries: ({ orgId, me }) =>
+      orgId === null || !atLeast(me, "member")
+        ? []
+        : [q(agentTemplatesQuery(orgId)), q(orgComponentsQuery(orgId, { kind: "agent_template" }))],
   },
   {
     pattern: "/agents",
@@ -615,10 +629,19 @@ export const ROUTES: readonly RouteEntry[] = [
         ? []
         : [
             q(orgCatalogItemQuery(orgId, params.itemId)),
+            q(orgComponentsQuery(orgId, { itemId: params.itemId })),
             ...(atLeast(me, "admin")
               ? [q(pluginInstallsQuery(orgId)), q(orgExtensionsQuery(orgId))]
               : []),
           ],
+  },
+  {
+    pattern: "/plugins/[itemId]/connectors",
+    // Org admins: the item (the templates that miss a connector).
+    queries: ({ orgId, me, params }) =>
+      orgId === null || params.itemId === undefined || !atLeast(me, "admin")
+        ? []
+        : [q(orgCatalogItemQuery(orgId, params.itemId))],
   },
   {
     pattern: "/plugins/[itemId]/enable",
@@ -665,8 +688,11 @@ export const ROUTES: readonly RouteEntry[] = [
   },
   {
     pattern: "/skills",
+    // Members up: the library and the platform skills offered to the org (a section).
     queries: ({ orgId, me }) =>
-      orgId === null || !atLeast(me, "member") ? [] : [q(skillsQuery(orgId))],
+      orgId === null || !atLeast(me, "member")
+        ? []
+        : [q(skillsQuery(orgId)), q(orgComponentsQuery(orgId, { kind: "skill" }))],
   },
   {
     pattern: "/skills/[id]",

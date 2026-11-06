@@ -48,6 +48,8 @@ const ADMIN_DEFAULTS: Routes = {
   "GET /api/v1/orgs/o1/extensions": () => json(200, { extensions: [] }),
   "GET /api/v1/orgs/o1/marketplaces/entries": () => json(200, { items: [] }),
   "GET /api/v1/orgs/o1/plugin-installs": () => json(200, { installs: [] }),
+  // The org plugin detail's components in the org (their switches)
+  "GET /api/v1/orgs/o1/components": () => json(200, { components: [] }),
   // The plugin `INSTALL` is an install of (its detail page shows the installs)
   "GET /api/v1/orgs/o1/catalog/11111111-1111-4111-8111-111111111111": () =>
     json(200, {
@@ -1271,6 +1273,8 @@ describe("/plugins/[itemId]: this org's installs (org admins)", () => {
             `GET ${ORG}/catalog/${ID}`,
             `GET ${ORG}/extensions`,
             `GET ${ORG}/readiness`,
+            // the plugin's components in the org
+            `GET ${ORG}/components?itemId=${ID}`,
           ]),
         ),
       );
@@ -3342,6 +3346,8 @@ describe("/plugins and /plugins/[itemId] render on the server (web-SSR spec §6)
     [`GET ${ORG}/extensions`]: () => json(200, { extensions: [] }),
     [`GET ${ORG}/marketplaces/entries`]: () => json(200, { items: [] }),
     [`GET ${ORG}/plugin-installs`]: () => json(200, { installs: [] }),
+    // the plugin's components in the org
+    [`GET ${ORG}/components`]: () => json(200, { components: [] }),
   };
   const GUEST: Me = {
     ...ME,

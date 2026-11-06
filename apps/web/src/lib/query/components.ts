@@ -1,5 +1,6 @@
 import {
   listComponentVersions,
+  listOrgComponents,
   listPlatformComponents,
   type PlatformComponentKind,
 } from "../components";
@@ -32,3 +33,17 @@ export const componentVersionsQuery = (kind: PlatformComponentKind, id: string) 
  */
 export const componentChangeKeys = (orgId: string | null): (readonly unknown[])[] =>
   pluginScopeChangeKeys(orgId);
+
+/**
+ * The platform components offered to the org (members read them): of one kind (the 技能 / 智能体模板
+ * pages) or of one plugin (its detail).
+ */
+export const orgComponentsQuery = (
+  orgId: string,
+  filter: { kind?: PlatformComponentKind; itemId?: string },
+) =>
+  defineQuery({
+    key: keys.org(orgId).components(filter.kind ?? "", filter.itemId ?? ""),
+    fn: () => listOrgComponents(orgId, filter),
+    freshness: "orgConfig",
+  });

@@ -34,6 +34,7 @@ import {
   type CatalogRequest,
   decideOrgRequest,
   requesterOf as directoryRequester,
+  dismissOrgRequest,
   displayNameOf,
   requestSubject,
   requestVersion,
@@ -104,6 +105,12 @@ function Inbox({
     fn: (id: string) => dismissNotice(orgId, id),
     invalidates: () => inboxChangeKeys(orgId),
   });
+  // Dismissing a decided request of mine changes only the inbox
+  const dismissDecidedMutation = useAppMutation({
+    fn: (id: string) => dismissOrgRequest(orgId, id),
+    invalidates: () => inboxChangeKeys(orgId),
+  });
+  const tdd = useTranslations("inbox.requestDecided");
   // A catalog request decision changes the catalog's view of the item and the inbox (a failure
   // reads the inbox again through `handled`).
   const decideRequestMutation = useAppMutation({
@@ -126,6 +133,9 @@ function Inbox({
     skillChange: t("skillChange.label"),
     request: td("label"),
     skillRenamed: tn("label"),
+    decided: tdd("label"),
+    approved: tdd("approved"),
+    rejected: tdd("rejected"),
   };
   const columns: Column<InboxItem>[] = [
     {
@@ -135,7 +145,7 @@ function Inbox({
         <Stack gap={0}>
           <Text>{titleOf(item, labels, locale)}</Text>
           <Text variant="small" tone="muted">
-            {subtitleOf(item)}
+            {subtitleOf(item, labels)}
           </Text>
         </Stack>
       ),
@@ -189,6 +199,19 @@ function Inbox({
     }
   }
 
+  async function dismissDecided(request: CatalogRequest) {
+    setNoticePending(true);
+    try {
+      await dismissDecidedMutation.mutateAsync(request.id);
+      handled(request.id, tn("dismissed"));
+    } catch (e) {
+      toast.error(errorMessage(e));
+      handled(request.id, null);
+    } finally {
+      setNoticePending(false);
+    }
+  }
+
   async function dismiss(notice: OrgNotice) {
     setNoticePending(true);
     try {
@@ -213,34 +236,43 @@ function Inbox({
             tn,
             t,
           })
-        : active.type === "catalog_request"
-          ? directoryRequestDetail({
+        : active.type === "catalog_request_decided"
+          ? decidedRequestDetail({
               request: active.request,
-              pending: requestPending,
-              onDecide: (d) => void decideRequest(active.request, d),
-              td,
+              pending: noticePending,
+              onDismiss: () => void dismissDecided(active.request),
+              tdd,
               t,
               locale,
             })
-          : active.type === "tool_approval"
-            ? toolApprovalDetail({
-                approval: active.approval,
-                scope,
-                setScope,
-                pending: approvals.pending,
-                onDecide: (d) => void decideApproval(active.approval, d),
-                openConversation: () => router.push(active.approval.conversationPath),
+          : active.type === "catalog_request"
+            ? directoryRequestDetail({
+                request: active.request,
+                pending: requestPending,
+                onDecide: (d) => void decideRequest(active.request, d),
+                td,
+                t,
                 locale,
-                t,
-                ta,
               })
-            : skillChangeDetail({
-                orgId,
-                change: active.skillChange,
-                pending: changes.pending,
-                onDecide: (d) => void decideChange(active.skillChange, d),
-                t,
-              });
+            : active.type === "tool_approval"
+              ? toolApprovalDetail({
+                  approval: active.approval,
+                  scope,
+                  setScope,
+                  pending: approvals.pending,
+                  onDecide: (d) => void decideApproval(active.approval, d),
+                  openConversation: () => router.push(active.approval.conversationPath),
+                  locale,
+                  t,
+                  ta,
+                })
+              : skillChangeDetail({
+                  orgId,
+                  change: active.skillChange,
+                  pending: changes.pending,
+                  onDecide: (d) => void decideChange(active.skillChange, d),
+                  t,
+                });
 
   if (inbox === null) {
     return (
@@ -318,6 +350,9 @@ interface Labels {
   skillChange: string;
   request: string;
   skillRenamed: string;
+  decided: string;
+  approved: string;
+  rejected: string;
 }
 
 /**
@@ -332,11 +367,17 @@ function titleOf(item: InboxItem, labels: Labels, locale: string): string {
   if (item.type === "skill_renamed") {
     return `${labels.skillRenamed} · ${item.notice.skillRenamed.to}`;
   }
+  if (item.type === "catalog_request_decided") {
+    return `${labels.decided} · ${displayNameOf(requestSubject(item.request), locale)}`;
+  }
   return toolLabelText(approvalToolLabel(item.approval, locale));
 }
 
 /** The row's second line: the agent, the requested item, or the renamed skill's old name. */
-function subtitleOf(item: InboxItem): string {
+function subtitleOf(item: InboxItem, labels: Labels): string {
+  if (item.type === "catalog_request_decided") {
+    return item.request.status === "approved" ? labels.approved : labels.rejected;
+  }
   if (item.type === "tool_approval") return item.approval.agent.name;
   if (item.type === "skill_change") return item.skillChange.agent.name;
   if (item.type === "skill_renamed") return item.notice.skillRenamed.from;
@@ -546,6 +587,72 @@ function directoryRequestDetail({
           {subject.id !== null && (
             <Text>
               <Link href={`/plugins/${subject.id}`}>{td("openItem")}</Link>
+            </Text>
+          )}
+        </Stack>
+      </Card>
+    ),
+  };
+}
+
+/** My request, decided: approved (it is usable now) or rejected with the reason; dismiss. */
+function decidedRequestDetail({
+  request,
+  pending,
+  onDismiss,
+  tdd,
+  t,
+  locale,
+}: {
+  request: CatalogRequest;
+  pending: boolean;
+  onDismiss(): void;
+  tdd: Translate;
+  t: Translate;
+  locale: string;
+}): Detail {
+  const subject = requestSubject(request);
+  const name = displayNameOf(subject, locale);
+  const approved = request.status === "approved";
+  return {
+    inspector: (
+      <KeyValue
+        keyWidth="10ch"
+        rows={[
+          { k: tdd("status"), v: approved ? tdd("approved") : tdd("rejected") },
+          { k: t("requested"), v: <DateTime value={request.createdAt} /> },
+          ...(request.decidedAt !== null
+            ? [{ k: tdd("decidedAt"), v: <DateTime value={request.decidedAt} /> }]
+            : []),
+        ]}
+      />
+    ),
+    actionRow: {
+      primary: { label: tdd("dismiss"), onSelect: onDismiss, loading: pending, disabled: pending },
+    },
+    content: (
+      <Card
+        title={tdd(approved ? "titleApproved" : "titleRejected", { name })}
+        actions={
+          <StatusMark
+            status={approved ? "success" : "failed"}
+            label={approved ? tdd("approved") : tdd("rejected")}
+          />
+        }
+      >
+        <Stack gap={8}>
+          <Text variant="prose">{approved ? tdd("hintApproved") : tdd("hintRejected")}</Text>
+          {!approved && request.reason !== null && request.reason !== "" && (
+            <Stack gap={4}>
+              <Text variant="small" tone="muted">
+                {tdd("reason")}
+              </Text>
+              <Text variant="prose">{request.reason}</Text>
+            </Stack>
+          )}
+          {subject.id !== null && (
+            <Text>
+              <Link href={`/plugins/${subject.id}`}>{tdd("openItem")}</Link>
             </Text>
           )}
         </Stack>

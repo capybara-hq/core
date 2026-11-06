@@ -77,7 +77,7 @@ export function needsInput(item: OrgCatalogItem, extensions: OrgExtension[] | un
 
 /** One action on a plugin: a link, or a call. `danger` (停用) belongs in a row's menu. */
 export interface PluginAction {
-  id: "enable" | "configure" | "disable" | "request" | "requestEnable";
+  id: "enable" | "configure" | "connectors" | "disable" | "request" | "requestEnable";
   label: string;
   href?: string;
   onSelect?(): void;
@@ -85,7 +85,7 @@ export interface PluginAction {
 }
 
 /** A row's actions as ObjectRow wants them: the first safe one as its action, 停用 in its menu. */
-export function rowActions(actions: PluginAction[]): {
+export function rowActions(actions: readonly Omit<PluginAction, "id">[]): {
   action?: { label: string; href?: string; onSelect?(): void };
   menu?: MenuItem[];
 } {
@@ -247,6 +247,26 @@ export function usePluginActions({
     if (i.state === "not_offered") {
       return [
         { id: "request", label: t("action.request"), onSelect: () => void request(i, "access") },
+      ];
+    }
+    // Installed but a connector template on here misses its connector (P2-10): 补充配置
+    if (i.state === "needs_config" && i.installed !== null) {
+      return [
+        {
+          id: "connectors",
+          label: t("action.connectors"),
+          href: `/plugins/${encodeURIComponent(i.id)}/connectors`,
+        },
+        ...(i.switchable
+          ? [
+              {
+                id: "disable" as const,
+                label: t("action.disable"),
+                danger: true,
+                onSelect: () => void disable(i),
+              },
+            ]
+          : []),
       ];
     }
     if (i.state === "off" || i.state === "needs_config") {

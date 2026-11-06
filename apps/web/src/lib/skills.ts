@@ -32,7 +32,23 @@ export interface SkillSummary {
   manual?: boolean;
   /** Phase D: the current version runs as a sub-agent when a person invokes it. */
   fork?: boolean;
+  /**
+   * Plugin scope phase 2: `platform` for a platform skill on in the org (not deletable or versioned
+   * by the org), `org` for the org's own (absent from older kernels: the org's own).
+   */
+  origin?: "org" | "platform";
+  /**
+   * A platform skill in the library list: the ids of the org's copies linked to it. They resolve
+   * to this skill, so an agent that selected one of them has this skill selected.
+   */
+  linkedIds?: string[];
 }
+
+/** The skill's id and the ids of the org copies linked to it (they all select the same skill). */
+export const skillAliases = (s: Pick<SkillSummary, "id" | "linkedIds">): string[] => [
+  s.id,
+  ...(s.linkedIds ?? []),
+];
 
 /**
  * Pinned skill limits (kernel `PINNED_SKILLS_LIMITS` in `skills/catalog.ts`; the kernel is the

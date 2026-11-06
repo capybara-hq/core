@@ -68,8 +68,18 @@ describe("nav by level (role hiding is cosmetic; the kernel decides)", () => {
   // 组织设置 is shown to members too (read-only for them; user decision, role pass item 8)
   // 插件 for members up (read-only for members); 扩展 for org admins (the kernel's
   // org.extensions.manage reads them)
-  const member = ["plugins", "skills", "connectors", "settings"];
-  const admin = ["plugins", "extensions", "skills", "connectors", "channels", "evals", "settings"];
+  // 智能体模板 for members up (read-only for members)
+  const member = ["plugins", "skills", "connectors", "agent-templates", "settings"];
+  const admin = [
+    "plugins",
+    "extensions",
+    "skills",
+    "connectors",
+    "agent-templates",
+    "channels",
+    "evals",
+    "settings",
+  ];
   const cases: [NavLevel, boolean, string[]][] = [
     ["guest", false, guest],
     ["member", false, member],
@@ -87,7 +97,7 @@ describe("nav by level (role hiding is cosmetic; the kernel decides)", () => {
     });
   }
 
-  it("members see 插件 技能 连接器 组织设置 under 更多; org admins also 扩展 渠道 评测与运行", () => {
+  it("members see 插件 技能 连接器 智能体模板 组织设置 under 更多; org admins also 扩展 渠道 评测与运行", () => {
     function Labels({ level }: { level: NavLevel }) {
       const { primary, more } = useNav(0, level, false, false);
       return (
@@ -115,6 +125,7 @@ describe("nav by level (role hiding is cosmetic; the kernel decides)", () => {
         ["插件", "catalog", "/plugins"],
         ["技能", "skills", "/skills"],
         ["连接器", "connector", "/connectors"],
+        ["智能体模板", "agent", "/agent-templates"],
         ["组织设置", "settings", "/settings/organization"],
       ],
     });
@@ -123,6 +134,7 @@ describe("nav by level (role hiding is cosmetic; the kernel decides)", () => {
       ["扩展", "extension", "/extensions"],
       ["技能", "skills", "/skills"],
       ["连接器", "connector", "/connectors"],
+      ["智能体模板", "agent", "/agent-templates"],
       ["渠道", "channel", "/channels"],
       ["评测与运行", "evals", "/evals"],
       ["组织设置", "settings", "/settings/organization"],
