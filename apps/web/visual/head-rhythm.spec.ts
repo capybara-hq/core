@@ -35,10 +35,19 @@ type Offsets = {
   pathBottom: number;
   row: number;
   rowBottom: number;
-  /** The PageHeader's bottom, or the bottom of the StatCards a head carries. */
+  /**
+   * The PageHeader's bottom, or the bottom of the StatCards a head carries: the head's end, used
+   * only for a head without a tab row (a list page's tab row lies inside the PageHeader).
+   */
   headBottom: number;
   tabs: number | null;
   tabsBottom: number | null;
+  /**
+   * The bottom of the laid-out element right before the tab row (the title row, the notice, the
+   * description's row or the stat cards): the tab row lies inside the PageHeader on a list page, so
+   * the header's own bottom is the tab row's bottom, never what is above it.
+   */
+  aboveTabs: number | null;
   /** The body's first block: the first child of the content frame, or the rail when there is one. */
   content: number;
 };
@@ -75,7 +84,13 @@ for (const theme of THEMES) {
         const row = need('[data-part="page-header-row"]');
         const header = need('[data-part="page-header"]');
         const stats = box('[data-part="template-head"] [data-part="stat-cards"]');
+        const tabsEl = b.querySelector('[data-part="page-header-tabs"], [data-part="page-tabs"]');
         const tabs = box('[data-part="page-header-tabs"], [data-part="page-tabs"]');
+        // The nearest earlier sibling with a box (a hidden announcement or an empty slot has none).
+        let above = tabsEl?.previousElementSibling ?? null;
+        while (above && above.getBoundingClientRect().height === 0) {
+          above = above.previousElementSibling;
+        }
         const frame = b.querySelector('[data-part="content"]');
         const first = frame?.firstElementChild;
         const firsts = [first, b.querySelector('[data-part="rail"]')]
@@ -90,6 +105,7 @@ for (const theme of THEMES) {
           headBottom: stats ? stats.bottom : header.bottom,
           tabs: tabs ? tabs.top : null,
           tabsBottom: tabs ? tabs.bottom : null,
+          aboveTabs: above ? above.getBoundingClientRect().bottom - top : null,
           content: Math.min(...firsts),
         };
       }, `${COMPONENT}-${state}`);
@@ -130,7 +146,7 @@ for (const theme of THEMES) {
       const m = measured[s] as Offsets;
       gap(s, "path → title row", m.pathBottom, m.row, "head-path");
       if (TABBED.includes(s)) {
-        gap(s, "head → tabs", m.headBottom, m.tabs ?? Number.NaN, "head-tabs");
+        gap(s, "head → tabs", m.aboveTabs, m.tabs ?? Number.NaN, "head-tabs");
         gap(s, "tabs → content", m.tabsBottom, m.content, "head-tabs-content");
       } else {
         if (m.tabs != null) failures.push(`${s}: a tab row the block should not have`);

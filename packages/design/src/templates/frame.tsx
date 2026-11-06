@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { SkeletonBox, SkeletonText, StatCards, Tabs, type TabsProps } from "../display/index";
 import { Grid, Stack, Text } from "../layout/index";
 import { type ActionRowProps, PageHeader, type PageHeaderProps } from "../shell/index";
+import { hasTabRow } from "../shell/page-header";
 import { type Column, DataTable } from "../table/index";
 
 /**
@@ -35,11 +36,7 @@ export function TemplateHead({
 }) {
   const metrics = statsInHead ? (header.metrics ?? []) : [];
   const slots = statsInHead && metrics.length === 0 ? loadingStats : 0;
-  const withTabs =
-    tabs !== undefined ||
-    (header.tabs?.length ?? 0) > 0 ||
-    header.search !== undefined ||
-    (header.loading?.tabs ?? 0) > 0;
+  const withTabs = tabs !== undefined || hasTabRow(header);
   return (
     <div
       className="cb-template-head"

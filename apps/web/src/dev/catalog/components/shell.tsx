@@ -1,13 +1,5 @@
-import {
-  ActionRow,
-  Grid,
-  PageHeader,
-  PageTabs,
-  StatCards,
-  StatusBar,
-  StatusMark,
-} from "@capybara-hq/design";
-import { DETAIL_KPIS, DETAIL_TABS } from "../fixtures";
+import { ActionRow, Grid, PageHeader, StatCards, StatusBar, StatusMark } from "@capybara-hq/design";
+import { DETAIL_KPIS } from "../fixtures";
 import { Row, Section } from "../frame";
 import { statusFixture } from "../shell-fixture";
 
@@ -35,7 +27,6 @@ export function ShellSection() {
           ]}
         />
         <StatCards metrics={DETAIL_KPIS} />
-        <PageTabs label="智能体页内导航" items={DETAIL_TABS} value="summary" onChange={noop} />
       </Grid>
       <Row label="ActionRow · 有改动 / 有错误">
         <Grid columns={1}>

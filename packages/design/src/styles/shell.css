@@ -121,7 +121,7 @@
   box-sizing: content-box;
   height: calc(var(--cb-control-default) + 2 * var(--cb-space-1));
   /* Head rhythm (spec §4.2): the tab row sits layout.head-tabs below the title row, the notice or
-     the stat cards; a detail page's PageTabs are this same row (TemplateHead `tabs`). */
+     the stat cards; a detail page's in-page tabs are this same row (TemplateHead `tabs`). */
   margin-top: var(--cb-layout-head-tabs);
   border-bottom: 1px solid var(--cb-line-soft);
 }
@@ -327,21 +327,6 @@ a.cb-pageheader-path-seg:hover {
   .cb-pageheader-actions[data-responsive="true"] [data-fold="menu"] {
     display: none;
   }
-}
-
-/* PageTabs: closed by a soft line, at the gutter. */
-.cb-pagetabs {
-  flex: none;
-  height: 36px;
-  padding: 0 var(--cb-layout-gutter);
-  border-bottom: 1px solid var(--cb-line-soft);
-}
-.cb-pagetabs .cb-tabs {
-  height: 36px;
-  border-bottom: 0;
-}
-.cb-pagetabs .cb-tab {
-  height: 36px;
 }
 
 /* StatCards (spec §6.14) */
