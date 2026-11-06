@@ -28,8 +28,18 @@ ALTER TABLE catalog_requests ADD CONSTRAINT catalog_requests_target_check
   CHECK (
     kind = 'import' AND entry_name IS NOT NULL
     OR kind = 'connector_setup' AND agent_id IS NOT NULL
+      AND item_id IS NULL AND entry_name IS NULL
     OR kind NOT IN ('import', 'connector_setup') AND item_id IS NOT NULL
   );
+
+-- `pending_keys` is a JSON array of keys when set.
+ALTER TABLE catalog_requests DROP CONSTRAINT IF EXISTS catalog_requests_pending_keys_check;
+ALTER TABLE catalog_requests ADD CONSTRAINT catalog_requests_pending_keys_check
+  CHECK (pending_keys IS NULL OR jsonb_typeof(pending_keys) = 'array');
+
+-- At most one pending setup request per agent (P4-7).
+CREATE UNIQUE INDEX IF NOT EXISTS catalog_requests_pending_setup_uq
+  ON catalog_requests (agent_id) WHERE kind = 'connector_setup' AND status = 'pending';
 
 CREATE INDEX IF NOT EXISTS catalog_requests_agent_idx
   ON catalog_requests (agent_id) WHERE agent_id IS NOT NULL;

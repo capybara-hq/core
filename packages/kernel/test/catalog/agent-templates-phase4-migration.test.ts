@@ -85,6 +85,33 @@ describe("0085 agent templates phase 4", () => {
     await expect(insertSetup("00000000-0000-0000-0000-0000000000c2", null)).rejects.toThrow();
   });
 
+  it("a connector_setup row carries no item or entry", async () => {
+    await expect(
+      sql`insert into capybara.catalog_requests (id, org_id, kind, agent_id, item_id, stage)
+        values (gen_random_uuid(), 'o1', 'connector_setup', 'ag1', ${ITEM}, 'org')`.execute(db),
+    ).rejects.toThrow();
+    await expect(
+      sql`insert into capybara.catalog_requests (id, org_id, kind, agent_id, entry_name, stage)
+        values (gen_random_uuid(), 'o1', 'connector_setup', 'ag1', 'e', 'org')`.execute(db),
+    ).rejects.toThrow();
+  });
+
+  it("pending_keys must be an array", async () => {
+    await expect(
+      sql`insert into capybara.catalog_requests (id, org_id, kind, agent_id, pending_keys, stage)
+        values (gen_random_uuid(), 'o1', 'connector_setup', 'ag1', '{"a":1}'::jsonb, 'org')`.execute(
+        db,
+      ),
+    ).rejects.toThrow();
+  });
+
+  it("one pending setup request per agent", async () => {
+    await expect(insertSetup("00000000-0000-0000-0000-0000000000c3", "ag1")).rejects.toThrow();
+    await sql`update capybara.catalog_requests set status = 'cancelled'
+      where id = '00000000-0000-0000-0000-0000000000c1'`.execute(db);
+    await insertSetup("00000000-0000-0000-0000-0000000000c3", "ag1");
+  });
+
   it("the other kinds keep their shape and unknown kinds fail", async () => {
     await expect(
       sql`insert into capybara.catalog_requests (id, org_id, kind, stage)
