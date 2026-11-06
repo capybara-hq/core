@@ -448,7 +448,7 @@ function ScalarField({ node, draft, set, segs, ctx }: NodeProps & { node: Scalar
           {off ? (
             <Select value={v} disabled options={opts} onChange={() => {}} />
           ) : (
-            <Segmented label={node.label} value={v} options={opts} onChange={pick} />
+            <Segmented fill label={node.label} value={v} options={opts} onChange={pick} />
           )}
         </NodeField>
       );

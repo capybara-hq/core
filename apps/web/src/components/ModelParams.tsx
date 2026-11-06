@@ -83,6 +83,7 @@ export function ModelParams({
       const optionLabel = (v: string) => (t.has(`${knob}.${v}`) ? t(`${knob}.${v}`) : v);
       control = (
         <Segmented
+          fill
           label={label}
           value={typeof own === "string" ? own : ""}
           onChange={(v) => set(p.key, v === "" ? undefined : v)}
