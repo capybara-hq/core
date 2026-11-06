@@ -112,6 +112,13 @@ export const ACCEPTED: string[] = [
   // plugin and component management acceptance (fix batch 1): blocks and size table in place;
   // the reference PNGs and the side-by-side review wait for the reference-update workflow
   "content-section",
+  // one box is enough (acceptance item AB, wave 1): the groupings inside a box. Blocks, size
+  // tables and the reference source are in place (also the new states repeater `divided`,
+  // template-settings `items` / `loading-items`, template-conversation `properties-sheet`); the
+  // reference PNGs and the side-by-side review wait for the reference-update and visual-update
+  // workflows
+  "item-list",
+  "subsection",
 ];
 
 /**
@@ -176,6 +183,7 @@ export const LOADING_TEMPLATES: {
       { loaded: "default", loading: "loading" },
       { loaded: "radio-cards", loading: "loading-radio-cards" },
       { loaded: "cards", loading: "loading-cards" },
+      { loaded: "items", loading: "loading-items" },
     ],
   },
   {
@@ -260,8 +268,11 @@ export const LOADING_ALIASES: Record<string, string> = {
   "loading-field": "field",
   "loading-bubble": "bubble",
   "loading-key-value": "key-value",
-  "loading-group-card": "card",
   "loading-shaped-card": "card",
+  // item rows (spec §5.8 "Items", §6.33): the ItemList's own list and rows
+  "loading-item-list": "item-list",
+  "loading-item-group": "item-list",
+  "loading-item-row": "item-list-row",
   // `<ancestor part> > <part>`: a placeholder box whose own part name is the generic skeleton-box
   "page-header-action-slots > skeleton-box": "button",
   "loading-switch-row > skeleton-box": "switch",
@@ -292,6 +303,10 @@ export const DATA_ONLY_PARTS: Record<string, string> = {
     "the loaded control kinds are page data; the loading field (loading-field) stands in for each field and its count is compared through `field`",
   "switch-knob": "the knob inside a loaded switch; the switch box itself is counted (`switch`)",
   "field-error": "a validation message exists only for typed data",
+  "item-list-title":
+    "an item row's title text; the loading row's title line holds a bar (`item-list-head` is compared)",
+  "item-list-code":
+    "an item row's mono id is page data; the loading row's title line holds one bar for both",
   "action-row-unsaved":
     "an unsaved count the page cannot know yet; the loading action row has none (spec §5.3)",
   "action-row-errors":

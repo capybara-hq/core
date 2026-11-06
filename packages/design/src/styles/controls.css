@@ -96,6 +96,30 @@
   gap: 32px;
 }
 
+/*
+ * A divided grid (spec §5.8 "List + editor"): a line-soft column divider space.4 from each column,
+ * running the full row height; once a list-detail grid stacks (below 640) it is a row divider.
+ */
+.cb-grid[data-divided="true"] {
+  column-gap: var(--cb-space-4);
+}
+.cb-grid[data-divided="true"] > * {
+  align-self: stretch;
+  min-width: 0;
+}
+.cb-grid[data-divided="true"] > * + * {
+  padding-left: var(--cb-space-4);
+  border-left: 1px solid var(--cb-line-soft);
+}
+@media (max-width: 639px) {
+  .cb-grid[data-divided="true"][data-columns="list-detail"] > * + * {
+    padding-top: var(--cb-space-4);
+    padding-left: 0;
+    border-top: 1px solid var(--cb-line-soft);
+    border-left: 0;
+  }
+}
+
 /* Cards and sections: the panel ground and a line-card hairline (spec §2.5). */
 .cb-card {
   background: var(--cb-panel);
@@ -147,6 +171,12 @@
 .cb-text[data-variant="h2"] {
   font-size: var(--cb-type-h2-size);
   line-height: var(--cb-type-h2-line);
+  font-weight: 500;
+}
+/* h3: a heading inside a box (a subsection, the open item of a list + editor; spec §2.2). */
+.cb-text[data-variant="h3"] {
+  font-size: var(--cb-type-body-size);
+  line-height: var(--cb-type-body-line);
   font-weight: 500;
 }
 .cb-text[data-variant="body"] {

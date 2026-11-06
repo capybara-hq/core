@@ -16,6 +16,27 @@ Tokens: `docs/design/tokens.json` is the source; `pnpm gen:tokens` writes `token
 
 **Type, figures and details** (spec §2.2, §6.5, §6.17, §6.18). A sentence is prose: `Text variant="prose"` for hints, notes, descriptions and dialog bodies (field help, object descriptions, callouts and empty states already are); mono stays for ids, paths, numbers, versions and dates. A date is `<DateTime value={iso} />` (`YYYY-MM-DD HH:mm`, the relative age on hover) or `formatDateTime(iso, form, useTimeZone())` inside a string; never `toLocaleString`. Anything that reads the clock or the zone in render takes `useNow()` / `useTimeZone()` (`formatRelative(iso, locale, useNow())`, `untitledLabel(d, locale, useTimeZone())`, a running time `useNow(1000)`), never `Date.now()` / `new Date()`: they hydrate with the server render's clock (`DesignProvider` `clock`, set by the root layout) and switch to the browser's after, so a server-rendered time never fails hydration. A version is `versionLabel(v)` ("v0.1.0"), but request bodies keep the bare version. An `ObjectRow` mark is `{ text: <display name> }` (drawn as its upper-cased initial), never an icon for an object. Plain metadata (visibility, purpose ids) is meta or muted text, never a badge. `EmptyState` has two styles, `page` (the capybara) and `compact` (words only).
 
+**One box is enough** (spec §1 principle 7, §2.5; acceptance item AB). Inside a box (a `Card`, a
+`FormSection`'s card, a `Sheet`, a `Dialog`, an `InlineCard`, a `PropertySection`) group with
+headings, hairlines and space, never a second `Card`, `FormSection`, `Callout`, `ObjectList` or
+`StatCards`:
+
+| Inside a box you want | Use |
+|---|---|
+| A list of things, each with lines or fields (purposes, quick actions, inline sub-agents, permission groups) | `<FormSection flush>` + `<ItemList label inset="flush">` of `<ItemListItem title code? marks? actions? meta?>{fields}</ItemListItem>` (`inset="card"`, the default, inside a padded box) |
+| A nested group of fields (a config object, an advanced group) | `<Subsection title description?>` (h3, help, fields under the 1px guide) |
+| Several tables in one card | `<FormSection flush>` + one `<Subsection variant="flush" title>` per table, each holding a `DataTable` (unframed by itself) |
+| A list beside the open item's fields | `<Grid columns="list-detail" divided>`, the open item's name as `<Text variant="h3">` over its fields, no Card |
+| A notice about the section | the `Callout` above the section, never inside it; in a Dialog or Sheet a `Text tone="warn" icon="circle-alert"` line |
+| A choice of sources in a Dialog | `RadioGroup variant="card"` and the one `FilePicker` straight in the body, no Card |
+
+`DataTable`, `CodeBlock`, `EmbedFrame` and `Repeater` draw their unboxed form inside a box by
+themselves (unframed, borderless, divided rows); don't pass `framed` there. Option cards, form
+controls, the FilePicker in a Dialog and a `RightPanel` are the exceptions. `pnpm check:web-ui`
+(`web-ui-box-in-box`) enforces it on apps/web's JSX, with the `BOX_PENDING` ratchet in
+`tools/checks/src/box-in-box.ts`; `findNestedBoxes` (`@capybara-hq/design/reference`) checks the
+rendered DOM in tests.
+
 **Icons are components.** Use `<Icon name="search" size={14} />` (or an `IconButton` with an `Icon` and an `aria-label`) from `@capybara-hq/design`; never a character as an icon (`▾ ✓ ✕ ⋯ ⠿ ▤ ●`…; rule `design-char-icon`) and never an icon library in `apps/web`. A missing icon is added to `packages/design/scripts/gen-icons.mjs` (`pnpm --filter @capybara-hq/design gen:icons`).
 
 ## Choosing a template (spec §5)
@@ -221,8 +242,10 @@ moves when the data lands. Pass the shape the page knows statically; a template 
 - `ListPage loading`: `true`, or `{ rows?, stats?, table?: { label, columns, rowHeight?, framed? },
   keep? }` (`keep`: the children are the page's own sections, each loading for itself).
 - `FormPage loading` (boolean) with `FormSection loading={{ fields: n | FieldShape[] }}` or
-  `{{ cards: CardShape[] }}`; `LoadingFormSection` when the section's title is not known either.
-- `SettingsPage loading={{ sections?: [{ fields?, cards?, title?, description? }], cards? }}`.
+  `{{ items: ItemShape[] }}` (item rows in a flush card); `LoadingFormSection` when the section's
+  title is not known either.
+- `SettingsPage loading={{ sections?: [{ fields?, items?, title?, description? }], cards? }}`
+  (`cards`: a stack of titled cards on the page ground, no section).
 - `DetailPage loading={{ inspector?: true | { rows?, keyWidth? }, blocks?, content?: BlockShape[] }}`
   and `WizardPage loading={{ fields }} | {{ content: BlockShape[] }}`.
 - `OverviewPage loading={{ stats?, sections?, keep? }}` (`keep`: the children don't depend on the
@@ -230,9 +253,9 @@ moves when the data lands. Pass the shape the page knows statically; a template 
 - `InboxPage loading`, `TracePage loading={{ spans?, stats? }}`, `AuthPage loading={{ fields }}`,
   `ConversationPage loading={{ thread?, title?, rightArea? }}`, `PageHeader loading`.
 - Shapes (`templates/frame.tsx`): `FieldShape` (`control`: `input` / `textarea` / `select` /
-  `segmented` / `radio-cards` / `radios` / `key-value` / `switch` / `text` / `card-group`, plus
-  `help`, `rows`, `pair`, `options`, `keyWidth`), `CardShape` (`lines`, `lineSize`, `field`,
-  `actions`, `list`), `BlockShape` (`lines` / `list` / `key-value` / `buttons` / `table` /
+  `segmented` / `radio-cards` / `radios` / `key-value` / `switch` / `text` / `item-group` /
+  `list-editor`, plus `help`, `rows`, `pair`, `options`, `keyWidth`), `ItemShape` (`lines`,
+  `lineSize`, `field`, `buttons`, `actions`, `list`), `BlockShape` (`lines` / `list` / `key-value` / `buttons` / `table` /
   `card`). Parts already cached render for real; only the missing parts are skeletons. One busy
   region per page (`aria-busy`); reduced motion draws static bars. `PendingState` stays for
   in-place loading after a person's action, never for navigation.
@@ -349,6 +372,7 @@ Rule implementation: `tools/checks/src/web-ui.ts`; every rule has a violating-fi
 | `web-ui-page-path` | a `header` of a page template (all but `ConversationPage`, `AuthPage`, `OnboardingPage`, `StatusPage`, `TracePage`, `InboxPage`) in a `src/app/(app)/**/page.tsx` without a `path` property, or one the rule cannot follow (reported as "cannot be confirmed statically"): no literal `path` beside a spread, an imported or called value, a spread element without `header` | Pass `header={{ path: [...scope, { label }], title }}` inline or as a same-file const object literal; a page that builds its header elsewhere passes `path` and `title` through and writes the literal itself (see `WizardView`) |
 | `design-char-icon` | A character used as an icon (`▾ ▴ ▸ ◂ ✓ ✗ ✕ ◐ › ‹ « » ● ○ ⠿ ▤ ⋯ ↻ ↗ ↕ ▲ ▼ ‖ ⊘ ◆ □ ■ ▶ ∅ ☰ ⚙ ⌕ ▦`) in a string, template literal or JSX text of non-test code in `apps/web/src` or `packages/design/src`, or in a value of `apps/web/messages/*.json`; the message names the icon to use. Box-drawing (`─ │ └`), `⌘`, `↵`, `→`, `·` and `…` are text and allowed | `<Icon name="chevron-down">` (or an `IconButton` with an `Icon`, `Text icon="circle-x"`, `MenuItem.checked`); keep the accessible name in text or `aria-label` |
 | `web-ui-extension-label` | A provider / extension label built by hand that shows the extension id: a template literal that puts `<…>.provider` (or `provider`) before ` / `, or one holding such an expression as the value of a `label` property or JSX attribute (spaced or not), outside `lib/extension-label.ts`; option values (`value:`, encode helpers) stay allowed | `extensionLabel(x, locale)` / `modelLabel(provider, model, locale)` from `apps/web/src/lib/extension-label.ts` (the display name in the page locale, else the id) |
+| `web-ui-box-in-box` | A boxed design component (`Card`, `FormSection`, `Callout`, `DangerZone`, `ObjectList`, `LinkCard`, `StatCards`, `InlineCard`, `FilePicker` outside a Dialog) inside a box (`Card`, `FormSection`, `Dialog`, `Sheet`, `Popover`, `InlineCard`, `PropertySection`, `Callout`, `DangerZone`, `ObjectList`), directly, in an attribute or through an apps/web component that draws one; a `DataTable` in a non-`flush` FormSection; a `framed` CodeBlock / EmbedFrame / DataTable inside a box. `web-ui-box-stale-pending`: a `BOX_PENDING` entry whose finding is gone (remove it) | `ItemList` / `ItemListItem` rows, `Subsection`, a `flush` FormSection, the Callout above the box (see "One box is enough") |
 | `design-color-literal` | `#hex` / `rgb()` / `hsl()` in `packages/design/src` outside `styles/tokens.css` (both CSS and TS strings are checked; `color-mix()` referencing tokens is allowed) | Define a token in `tokens.css` and use `var(--cb-…)` |
 
 `web-ui-template` has two exemptions: `app/dev/**` (the development catalog page; the other rules still apply), and pages that only handle 404 -- containing no JSX and calling `notFound()` imported from `next/navigation` (e.g. `(app)/[...rest]/page.tsx`), where the page is rendered by the `StatusPage` in the `not-found.tsx` of the same segment. Don't use this exemption to write other pages.
@@ -367,8 +391,10 @@ catalog install wizard, the plugin upgrade dialog) is drawn by one renderer, the
 `model.ts` builds the field tree and reads a draft back; `deployment.ts`, `org.ts` and
 `channel.ts` adapt each API's view and save body). Don't write another schema form. It is built
 only from design pieces: `Repeater` (arrays of objects: item titles, presets, move / remove /
-undo), `FieldRow` / `FieldRowGroup` (compact rows, e.g. an endpoint's models), `KeyValueEditor`
-(records, `maskValues` for secret records). A missing piece is added to `packages/design` through
+undo; inside the form card its items are divided rows by themselves), `Subsection` (a nested
+object: its title as an h3, its help, its fields under the guide; never a `Card`), `FieldRow` /
+`FieldRowGroup` (compact rows, e.g. an endpoint's models), `KeyValueEditor` (records,
+`maskValues` for secret records). A missing piece is added to `packages/design` through
 the steps below, never styled in `apps/web`.
 
 ## Adding a component or template

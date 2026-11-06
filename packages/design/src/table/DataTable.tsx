@@ -14,6 +14,7 @@ import { Select } from "../controls/select";
 import { Checkbox } from "../controls/toggles";
 import { Pagination } from "../display/pagination";
 import { Icon } from "../icons/icon";
+import { useInBox } from "../layout/box";
 import { Menu, menuActions } from "../overlays/menus";
 import { useDesignT } from "../provider";
 import { useMediaQuery } from "../shell/use-media-query";
@@ -90,9 +91,12 @@ export function DataTable<T>({
   sort,
   pagination,
   rowHeight = "default",
-  framed = true,
+  framed: framedProp,
 }: DataTableProps<T>) {
   const t = useDesignT();
+  // One box is enough (spec §1, §6.6): inside a box the table has no ground of its own.
+  const box = useInBox();
+  const framed = framedProp ?? box === null;
   // Below 640 the rows stack (spec §6.6): the header row is only read by screen readers, so its
   // sort buttons and select-all checkbox move to a compact bar above the rows.
   const narrow = useMediaQuery("(max-width: 639px)");

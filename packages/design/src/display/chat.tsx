@@ -1,6 +1,7 @@
 import { type ReactNode, useId, useState } from "react";
 import { Icon } from "../icons/icon";
 import type { IconName } from "../icons/paths";
+import { useInBox } from "../layout/box";
 import { useDesignT } from "../provider";
 import { StatusMark } from "./basic";
 
@@ -244,12 +245,23 @@ export function Checklist({ items, label }: ChecklistProps) {
 export type CodeBlockProps = {
   language?: string;
   text: string;
+  /**
+   * The 1px `line` frame. Default: framed on the page ground and in a pane, borderless inside a
+   * box (a Card, a form card, a Dialog or Sheet, an inline card, a property section): a `panel-2`
+   * tint with no line, as a DataTable is unframed there (spec §6.9, §1 "One box is enough").
+   */
+  framed?: boolean;
 };
 
 /** 代码块：等宽、保留空白、横向滚动；不做语法高亮。 */
-export function CodeBlock({ language, text }: CodeBlockProps) {
+export function CodeBlock({ language, text, framed }: CodeBlockProps) {
+  const inBox = useInBox() !== null;
   return (
-    <figure className="cb-code">
+    <figure
+      className="cb-code"
+      data-part="code-block"
+      data-framed={(framed ?? !inBox) ? "true" : "false"}
+    >
       {language ? <figcaption className="cb-code-lang">{language}</figcaption> : null}
       <pre className="cb-code-pre">
         <code data-language={language}>{text}</code>

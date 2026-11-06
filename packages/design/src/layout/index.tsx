@@ -1,6 +1,7 @@
 import type { ElementType, ReactNode } from "react";
 import { Icon } from "../icons/icon";
 import type { IconName } from "../icons/paths";
+import { BoxScope } from "./box";
 
 export type Gap = 0 | 4 | 8 | 12 | 16 | 24 | 32;
 
@@ -36,6 +37,7 @@ export function Stack({
 export function Grid({
   columns,
   gap = 16,
+  divided,
   children,
 }: {
   /**
@@ -44,10 +46,20 @@ export function Grid({
    */
   columns: 1 | 2 | 3 | 4 | "form" | "list-detail";
   gap?: Gap;
+  /**
+   * A `line-soft` column divider between the columns, `gap` from each side (a list beside the
+   * open item's fields in one box, spec §5.8 "List + editor"); a row divider once they stack.
+   */
+  divided?: boolean;
   children?: ReactNode;
 }) {
   return (
-    <div className="cb-grid" data-columns={columns} data-gap={gap}>
+    <div
+      className="cb-grid"
+      data-columns={columns}
+      data-gap={gap}
+      data-divided={divided ? "true" : undefined}
+    >
       {children}
     </div>
   );
@@ -67,13 +79,15 @@ export function Card({
 }) {
   return (
     <section className="cb-card" data-part="card" data-tone={tone}>
-      {title || actions ? (
-        <header className="cb-card-head">
-          <div className="cb-card-title">{title}</div>
-          {actions ? <div className="cb-card-actions">{actions}</div> : null}
-        </header>
-      ) : null}
-      <div className="cb-card-body">{children}</div>
+      <BoxScope kind="card">
+        {title || actions ? (
+          <header className="cb-card-head">
+            <div className="cb-card-title">{title}</div>
+            {actions ? <div className="cb-card-actions">{actions}</div> : null}
+          </header>
+        ) : null}
+        <div className="cb-card-body">{children}</div>
+      </BoxScope>
     </section>
   );
 }
@@ -92,7 +106,8 @@ export function Text({
    * `prose`: running text (descriptions, hints, dialog bodies) in the proportional font,
    * `prose-small` 13 / 20 (spec §2.2); every other variant is the mono UI skeleton.
    */
-  variant?: "h1" | "h2" | "body" | "small" | "micro" | "prose";
+  /** `h3`: a heading inside a box (a subsection, an open item's name): `body` size, 500. */
+  variant?: "h1" | "h2" | "h3" | "body" | "small" | "micro" | "prose";
   tone?: "ink" | "muted" | "faint" | "accent" | "ok" | "fail" | "warn";
   as?: ElementType;
   truncate?: boolean;
@@ -104,7 +119,8 @@ export function Text({
   title?: string;
   children?: ReactNode;
 }) {
-  const Tag: ElementType = as ?? (variant === "h1" ? "h1" : variant === "h2" ? "h2" : "span");
+  const Tag: ElementType =
+    as ?? (variant === "h1" ? "h1" : variant === "h2" ? "h2" : variant === "h3" ? "h3" : "span");
   const title =
     titleText ??
     (truncate && (typeof children === "string" || typeof children === "number")

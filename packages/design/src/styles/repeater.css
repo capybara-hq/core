@@ -176,3 +176,65 @@
     margin-top: 0;
   }
 }
+
+/*
+ * Divided (spec §6.26): the cards variant inside a box. No border and no radius: items are split
+ * by line-soft hairlines, each a head line (title body 500, subtitle, actions) over its fields;
+ * the head has no rule under it. An invalid item carries a 2px fail bar in the box's padding.
+ */
+.cb-repeater[data-variant="divided"] > .cb-repeater-list {
+  gap: 0;
+}
+.cb-repeater[data-variant="divided"] > .cb-repeater-list > .cb-repeater-li > .cb-repeater-item {
+  position: relative;
+  padding: var(--cb-space-3) 0;
+  border: 0;
+  border-radius: 0;
+}
+.cb-repeater[data-variant="divided"] .cb-repeater-li + .cb-repeater-li > .cb-repeater-item {
+  border-top: 1px solid var(--cb-line-soft);
+}
+.cb-repeater[data-variant="divided"] .cb-repeater-li:first-child > .cb-repeater-item {
+  padding-top: 0;
+}
+.cb-repeater[data-variant="divided"]
+  > .cb-repeater-list
+  > .cb-repeater-li
+  > .cb-repeater-item[data-invalid="true"]::before {
+  position: absolute;
+  top: var(--cb-space-3);
+  bottom: var(--cb-space-3);
+  left: calc(-1 * var(--cb-space-2));
+  width: 2px;
+  background: var(--cb-fail);
+  content: "";
+}
+.cb-repeater[data-variant="divided"]
+  .cb-repeater-li:first-child
+  > .cb-repeater-item[data-invalid="true"]::before {
+  top: 0;
+}
+.cb-repeater[data-variant="divided"]
+  > .cb-repeater-list
+  > .cb-repeater-li
+  > .cb-repeater-item:focus-visible {
+  outline: 1px solid var(--cb-accent);
+  outline-offset: -1px;
+}
+.cb-repeater[data-variant="divided"]
+  > .cb-repeater-list
+  > .cb-repeater-li
+  > .cb-repeater-item[data-drop="true"] {
+  background: var(--cb-hover);
+}
+.cb-repeater[data-variant="divided"] .cb-repeater-head {
+  padding: 0;
+  border-bottom: 0;
+}
+.cb-repeater[data-variant="divided"]
+  .cb-repeater-head:has(> .cb-repeater-handle:first-child, > .cb-icon-btn:first-child) {
+  padding-left: 0;
+}
+.cb-repeater[data-variant="divided"] .cb-repeater-body {
+  padding: var(--cb-space-2) 0 0;
+}

@@ -13,12 +13,15 @@ import {
   type HeaderAction,
   InboxPage,
   Input,
+  ItemList,
+  ItemListItem,
   KeyValue,
   ListPage,
   ObjectList,
   ObjectRow,
   OverviewPage,
   RadioGroup,
+  Select,
   SettingsPage,
   SpanWaterfall,
   Stack,
@@ -370,21 +373,21 @@ function settingsBlocks(): ReactNode {
               <Text variant="small" tone="muted">
                 权限
               </Text>
-              <Stack gap={12}>
+              {/* Rows split by hairlines inside the form card, never cards (spec §1). */}
+              <ItemList label="权限">
                 {["存储", "网络"].map((g) => (
-                  <Card key={g}>
-                    <Stack gap={4}>
-                      <Text>{g}</Text>
-                      <Text variant="small" tone="muted">
-                        · read
-                      </Text>
-                      <Text variant="small" tone="muted">
-                        · write
-                      </Text>
-                    </Stack>
-                  </Card>
+                  <ItemListItem
+                    key={g}
+                    title={g}
+                    meta={
+                      <>
+                        <span>· read</span>
+                        <span>· write</span>
+                      </>
+                    }
+                  />
                 ))}
-              </Stack>
+              </ItemList>
             </Stack>
           </FormSection>
         </SettingsPage>
@@ -406,7 +409,7 @@ function settingsBlocks(): ReactNode {
                 description: "每个沙箱的 CPU 与内存。",
                 fields: [{ control: "key-value", rows: 3, keyWidth: "10ch", help: true }],
               },
-              { fields: [{ control: "switch" }, { control: "text" }, { control: "card-group" }] },
+              { fields: [{ control: "switch" }, { control: "text" }, { control: "item-group" }] },
             ],
           }}
         />
@@ -442,9 +445,64 @@ function settingsBlocks(): ReactNode {
           loading={{ cards: { shape: { lines: 1, list: 2, actions: 1 } } }}
         />
       </RefBlock>
+      {/* A section that lists items (the model purposes): rows in a flush card, never cards. */}
+      <RefBlock id="template-settings-items" width={W} height={H}>
+        <SettingsPage header={SETTINGS_HEADER} nav={SETTINGS_NAV} activeNav="org">
+          <FormSection id="purposes" title="模型用途" description="每个用途用哪个模型。" flush>
+            <ItemList label="用途" inset="flush">
+              {PURPOSES.map((p) => (
+                <ItemListItem
+                  key={p.code}
+                  title={p.title}
+                  code={p.code}
+                  meta={p.lines.map((l) => (
+                    <Text key={l} variant="small" tone="muted">
+                      {l}
+                    </Text>
+                  ))}
+                >
+                  <Field label="模型">
+                    <Select value="" onChange={noop} options={[{ value: "", label: "使用默认" }]} />
+                  </Field>
+                </ItemListItem>
+              ))}
+            </ItemList>
+          </FormSection>
+        </SettingsPage>
+      </RefBlock>
+      <RefBlock id="template-settings-loading-items" width={W} height={H}>
+        <SettingsPage
+          header={{ ...SETTINGS_HEADER, title: "" }}
+          nav={SETTINGS_NAV}
+          activeNav="org"
+          loading={{
+            sections: [
+              {
+                title: "模型用途",
+                description: "每个用途用哪个模型。",
+                items: PURPOSES.map((p) => ({
+                  lines: p.lines.length,
+                  lineSize: "small" as const,
+                  field: { control: "select" as const },
+                })),
+              },
+            ],
+          }}
+        />
+      </RefBlock>
     </>
   );
 }
+
+/** The purposes of the `items` blocks: a title, its mono id and its small lines. */
+const PURPOSES = [
+  { title: "评测", code: "eval", lines: ["由内核声明"] },
+  {
+    title: "子智能体 · 快",
+    code: "subagent_fast",
+    lines: ["由内核声明", "部署默认：deepseek-chat"],
+  },
+];
 
 const WIZARD_HEADER = { path: PATH.slice(0, 1), title: "接入模型" };
 const WIZARD_STEPS = ["选择供应商", "填写凭据", "测试连接", "完成"];

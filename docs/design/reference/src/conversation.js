@@ -840,7 +840,8 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
   }
 
   function template(o) {
-    const side = sidebar({ mode: o.state === "sheet" ? "rail" : "full", activeConversation: "cnv_r1", activeTitle: C.title });
+    const sheet = o.state === "sheet" || o.state === "properties-sheet";
+    const side = sidebar({ mode: sheet ? "rail" : "full", activeConversation: "cnv_r1", activeTitle: C.title });
     if (o.state === "new") {
       // The new conversation page (agent profile design §4): greeting, agents row, quick actions
       // and the composer without its agent picker (NEW_CONVERSATION, below).
@@ -858,16 +859,20 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
     }
     const running = o.state === "properties";
     const props = o.state === "properties" ? propertiesPanel() : "";
-    const pressed = o.state === "properties" ? "properties" : o.state === "file-panel" || o.state === "sheet" ? "files" : undefined;
+    const pressed = o.state === "properties" || o.state === "properties-sheet" ? "properties" : o.state === "file-panel" || o.state === "sheet" ? "files" : undefined;
     const kind = o.state === "subagent-panel" ? "subagent" : o.state === "properties" ? "main" : "file";
     const center = `<div class="r-conv-center"><div class="r-conv-scroll"><div class="r-thread">${thread(kind)}</div></div><div class="r-conv-composer">${composer({ state: running ? "running" : "idle" })}</div></div>`;
-    const main = `<main class="r-main r-conv-main">${titleBar({ pressed })}<div class="r-conv-cols">${center}${props}</div>${convStatus({ idle: o.state === "file-panel" || o.state === "sheet" })}</main>`;
+    const main = `<main class="r-main r-conv-main">${titleBar({ pressed })}<div class="r-conv-cols">${center}${props}</div>${convStatus({ idle: o.state === "file-panel" || sheet })}</main>`;
     let panel = "";
     if (o.state === "file-panel") panel = `<aside class="r-rpanel" aria-label="文件预览">${filePanel("xlsx")}</aside>`;
     if (o.state === "subagent-panel") panel = rightPanel({ state: "subagent" });
     if (o.state === "sheet")
       panel = `<div class="r-scrim r-sheet-scrim"></div><aside class="r-rpanel r-sheet" role="dialog" aria-modal="true" aria-label="文件预览">${filePanel("xlsx")}</aside>`;
-    return `<div class="r-app r-conv-app"${o.state === "sheet" ? " data-sheet" : ""}>${side}${main}${panel}</div>`;
+    // The properties panel in the narrow sheet (spec §6.16.17): the sheet is the box, its sections
+    // are heading and hairline groups (no ground, radius or hairline of their own).
+    if (o.state === "properties-sheet")
+      panel = `<div class="r-scrim r-sheet-scrim"></div><aside class="r-sheet r-props-sheet" role="dialog" aria-modal="true" aria-label="属性"><aside class="r-props" data-part="properties" aria-label="${esc(K.properties)}">${["context", "extension", "files", "background"].map((st) => propSection({ state: st }).replace('class="r-psec"', 'class="r-psec" data-part="property-section" data-inset="box"')).join("")}</aside></aside>`;
+    return `<div class="r-app r-conv-app"${sheet ? " data-sheet" : ""}>${side}${main}${panel}</div>`;
   }
 
   // Each kind renders inside a 720-wide column (`.r-col-chat`) unless it is a whole frame.

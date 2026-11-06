@@ -4,6 +4,8 @@ import { describe, expect, it } from "vitest";
 // design 是浏览器包（无扩展名导入）；names.ts 无 React 依赖，直接按相对路径取常量。
 import { PAGE_TEMPLATES } from "../../../packages/design/src/templates/names.js";
 import {
+  BOX_PENDING,
+  type BoxPending,
   checkWebUi,
   QUERY_PENDING,
   type QueryPending,
@@ -11,13 +13,19 @@ import {
   WEB_UI_TEMPLATES,
 } from "../src/web-ui.js";
 
-const run = (name: string, pending: SsrPending[] = [], queryPending: QueryPending[] = []) => {
+const run = (
+  name: string,
+  pending: SsrPending[] = [],
+  queryPending: QueryPending[] = [],
+  boxPending: BoxPending[] = [],
+) => {
   const dir = fileURLToPath(new URL(`../fixtures/web-ui/${name}`, import.meta.url));
   return checkWebUi(
     join(dir, "apps/web/src"),
     join(dir, "packages/design/src"),
     pending,
     queryPending,
+    boxPending,
   );
 };
 
@@ -257,6 +265,57 @@ describe("checkWebUi", () => {
     });
     it("every QUERY_PENDING entry has a reason that names its task", () => {
       for (const e of QUERY_PENDING) expect(e.reason).toMatch(/Task \d+/);
+    });
+  });
+
+  describe('web-ui-box-in-box (spec §1 "One box is enough")', () => {
+    const at = (boxPending: BoxPending[] = []) =>
+      run("box-in-box", [], [], boxPending).map((x) => [x.rule, x.line, x.message.split(":")[0]]);
+    it("flags a box inside a box: direct, through components, imports, re-exports and attributes", () =>
+      expect(at()).toEqual([
+        ["web-ui-box-in-box", 35, "<Card> inside <FormSection>"],
+        ["web-ui-box-in-box", 38, "<PurposeCard> (draws Card) inside <Card>"],
+        ["web-ui-box-in-box", 41, "<Notice> (draws Callout) inside <Sheet>"],
+        ["web-ui-box-in-box", 44, "<DataTable> inside <FormSection>"],
+        ["web-ui-box-in-box", 45, "<Table> (draws a DataTable) inside <FormSection>"],
+        ["web-ui-box-in-box", 48, "<CodeBlock> (framed) inside <Card>"],
+        ["web-ui-box-in-box", 51, "<FilePicker> inside <Card>"],
+        ["web-ui-box-in-box", 54, "<ReNotice> (draws Callout) inside <Card>"],
+        ["web-ui-box-in-box", 56, "<Card> inside <Card>"],
+      ]));
+    it("names the fix", () => {
+      const f = run("box-in-box");
+      expect(f[0]?.message).toContain("ItemList");
+      expect(f[3]?.message).toContain("flush");
+    });
+    it("a pending entry hides its findings", () =>
+      expect(
+        at([
+          { id: "x", path: "components/boxes.tsx", inner: "Card", fix: "P1" },
+          { id: "y", path: "components/boxes.tsx", inner: "PurposeCard", fix: "P1" },
+        ]).map((r) => r[2]),
+      ).not.toContain("<Card> inside <FormSection>"));
+    it("web-ui-box-stale-pending: an entry without its finding fails (the list only shrinks)", () => {
+      const f = at([{ id: "x", path: "components/boxes.tsx", inner: "LinkCard", fix: "P1" }]);
+      expect(f.at(-1)).toEqual([
+        "web-ui-box-stale-pending",
+        1,
+        "BOX_PENDING entry x (components/boxes.tsx, <LinkCard>) is fixed; remove it from BOX_PENDING in tools/checks/src/box-in-box.ts (the list only shrinks)",
+      ]);
+    });
+    it("web-ui-box-stale-pending: a missing file, and a rendered entry whose file no longer draws the box", () => {
+      const f = at([
+        { id: "a", path: "components/gone.tsx", inner: "Card", fix: "P1" },
+        { id: "b", path: "components/notice.tsx", inner: "Card", fix: "P1", rendered: true },
+        { id: "c", path: "components/notice.tsx", inner: "Callout", fix: "P6", rendered: true },
+      ]).filter((r) => r[0] === "web-ui-box-stale-pending");
+      expect(f.map((r) => String(r[2]).split(":")[0])).toEqual([
+        "BOX_PENDING entry a (components/gone.tsx, <Card>)",
+        "BOX_PENDING entry b (components/notice.tsx, <Card>) is fixed; remove it from BOX_PENDING in tools/checks/src/box-in-box.ts (the list only shrinks)",
+      ]);
+    });
+    it("every BOX_PENDING entry names its pattern and fix", () => {
+      for (const e of BOX_PENDING) expect(e.fix).toMatch(/^P\d/);
     });
   });
 });

@@ -133,7 +133,7 @@ function AdminModelsRead({ me }: { me: Me }) {
           id="purposes"
           title={t("admin.purposes.title")}
           description={t("admin.purposes.description")}
-          loading={{ cards: LOADING_PURPOSES }}
+          loading={{ items: LOADING_PURPOSES }}
         />
       </ListPage>
     );

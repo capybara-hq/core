@@ -3289,6 +3289,27 @@ textarea {
   width: var(--cb-layout-panel);
   box-shadow: var(--cb-shadow-sheet);
 }
+/* The properties panel in the narrow sheet (spec §6.16.17): one box, its sections hairline groups. */
+.r-props-sheet {
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid var(--cb-line-soft);
+  background: var(--cb-panel-2);
+}
+.r-props-sheet > .r-props {
+  flex: 1;
+  gap: 0;
+  width: 100%;
+  padding: var(--cb-space-2) var(--cb-space-4);
+}
+.r-psec[data-inset="box"] {
+  padding: var(--cb-space-3) 0;
+  border-radius: 0;
+  background: transparent;
+}
+.r-psec[data-inset="box"] + .r-psec[data-inset="box"] {
+  border-top: 1px solid var(--cb-line-soft);
+}
 
 @media (prefers-reduced-motion: reduce) {
   *,
@@ -4691,4 +4712,234 @@ textarea {
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
+}
+
+/* ── One box is enough (spec §1 principle 7): the groupings inside a box ── */
+
+.r-boxcard {
+  background: var(--cb-panel);
+  border: 1px solid var(--cb-line-card);
+  border-radius: var(--cb-radius-md);
+}
+.r-boxcard-head {
+  padding: var(--cb-space-2) var(--cb-space-4);
+  border-bottom: 1px solid var(--cb-line-soft);
+  font-weight: 500;
+}
+.r-boxcard-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-3);
+  padding: var(--cb-space-4);
+}
+.r-badge-warn {
+  padding: 0 6px;
+  border: 1px solid var(--cb-warn);
+  border-radius: var(--cb-radius-sm);
+  color: var(--cb-warn);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.r-warn {
+  color: var(--cb-warn);
+}
+
+/* ItemList (spec §6.33): rows split by line-soft, never cards. */
+.r-item-list {
+  margin: -8px 0;
+  padding: 0;
+  list-style: none;
+}
+.r-item-list[data-inset="flush"] {
+  margin: 0;
+}
+.r-item-row {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-3);
+  min-height: var(--cb-row-roomy);
+  padding: var(--cb-space-2) 0;
+  border-top: 1px solid var(--cb-line-soft);
+}
+.r-item-row:first-child {
+  border-top: 0;
+}
+.r-item-row[data-shape="item"] {
+  display: block;
+  padding: var(--cb-space-3) 0;
+}
+.r-item-list > .r-item-row[data-shape="item"]:first-child {
+  padding-top: var(--cb-space-2);
+}
+.r-item-list > .r-item-row[data-shape="item"]:last-child {
+  padding-bottom: var(--cb-space-2);
+}
+.r-item-list[data-inset="flush"] > .r-item-row[data-shape="item"] {
+  padding: var(--cb-space-4);
+}
+.r-item-tag {
+  padding: 1px 6px;
+  border: 1px solid var(--cb-line);
+  border-radius: var(--cb-radius-sm);
+  color: var(--cb-muted);
+  font-size: var(--cb-type-micro-size);
+  line-height: var(--cb-type-micro-line);
+}
+.r-item-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+.r-item-head {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-2);
+  min-height: var(--cb-control-dense);
+}
+.r-item-titles {
+  display: flex;
+  flex: 1;
+  align-items: baseline;
+  gap: var(--cb-space-2);
+  min-width: 0;
+}
+.r-item-title {
+  color: var(--cb-ink);
+}
+.r-item-row[data-shape="item"] .r-item-title {
+  font-weight: 500;
+}
+.r-item-code,
+.r-item-meta,
+.r-item-status {
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.r-item-lines {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-1);
+  margin-top: var(--cb-space-1);
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.r-item-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-3);
+  margin-top: var(--cb-space-3);
+}
+/* CodeBlock inside a box (spec §6.9): a panel-2 tint, no line. */
+.r-codeblock {
+  margin: 0;
+  border: 1px solid var(--cb-line);
+  background: var(--cb-panel);
+}
+.r-codeblock[data-framed="false"] {
+  border: 0;
+  border-radius: var(--cb-radius-sm);
+  background: var(--cb-panel-2);
+}
+.r-codeblock-lang {
+  padding: 2px 8px 0;
+  color: var(--cb-faint);
+  font-size: var(--cb-type-micro-size);
+  line-height: 16px;
+}
+.r-codeblock pre {
+  margin: 0;
+  padding: 8px;
+  font: inherit;
+  white-space: pre;
+}
+
+/* Subsection (spec §6.32): a heading, its help, the content under the guide or to the edges. */
+.r-subsection {
+  display: flex;
+  flex-direction: column;
+  row-gap: var(--cb-space-2);
+}
+.r-subsection-head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-1);
+}
+.r-subsection-heading {
+  display: flex;
+  align-items: baseline;
+  gap: var(--cb-space-2);
+}
+.r-subsection-title {
+  margin: 0;
+  color: var(--cb-ink);
+  font-size: var(--cb-type-body-size);
+  font-weight: 500;
+  line-height: var(--cb-type-body-line);
+}
+.r-subsection-count {
+  color: var(--cb-faint);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.r-subsection-description {
+  margin: 0;
+  color: var(--cb-muted);
+  font-family: var(--cb-font-prose);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.r-subsection-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-3);
+}
+.r-subsection[data-variant="guide"] > .r-subsection-body {
+  padding-left: var(--cb-space-2);
+  border-left: 1px solid var(--cb-line);
+}
+.r-subsection[data-variant="flush"] {
+  row-gap: 0;
+}
+.r-subsection[data-variant="flush"] > .r-subsection-head {
+  padding: var(--cb-space-3);
+}
+.r-subsection[data-variant="flush"] + .r-subsection[data-variant="flush"] {
+  border-top: 1px solid var(--cb-line-soft);
+}
+.r-subsection .r-table {
+  background: transparent;
+}
+
+/* Repeater divided (spec §6.26): the cards variant inside a box. */
+.r-rep[data-variant="divided"] .r-rep-list {
+  gap: 0;
+}
+.r-rep[data-variant="divided"] .r-rep-item {
+  padding: var(--cb-space-3) 0;
+  border: 0;
+  border-radius: 0;
+}
+.r-rep[data-variant="divided"] li + li .r-rep-item {
+  border-top: 1px solid var(--cb-line-soft);
+}
+.r-rep[data-variant="divided"] li:first-child .r-rep-item {
+  padding-top: 0;
+}
+.r-rep[data-variant="divided"] .r-rep-head {
+  padding: 0;
+  border-bottom: 0;
+}
+.r-rep[data-variant="divided"] .r-rep-body {
+  padding: var(--cb-space-2) 0 0;
+}
+.r-item-lines .r-ink {
+  color: var(--cb-ink);
+}
+/* A stacked form section (spec §5.3): the head above the card at the full width. */
+.r-form-section-stacked {
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--cb-space-3);
 }

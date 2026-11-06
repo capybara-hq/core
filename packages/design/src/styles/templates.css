@@ -425,6 +425,93 @@ a.cb-item-list-title:hover {
   flex: none;
   gap: var(--cb-space-2);
 }
+/*
+ * Rows that hold more than a line (ItemListItem, spec §6.12): the title line (title in body 500,
+ * its mono id small muted, marks, actions at the right), meta lines space.1 apart, then the body
+ * (fields, a review) space.3 below. In a padded box the rows reach its padding; `flush` (alone in
+ * a flush form card) pads each row space.4, so the hairlines run to the card's edges.
+ */
+.cb-item-list-row[data-shape="item"] {
+  position: relative;
+  display: block;
+  padding: var(--cb-space-3) 0;
+}
+.cb-item-list > .cb-item-list-row[data-shape="item"]:first-child {
+  padding-top: var(--cb-space-2);
+}
+.cb-item-list > .cb-item-list-row[data-shape="item"]:last-child {
+  padding-bottom: var(--cb-space-2);
+}
+.cb-item-list[data-inset="flush"] {
+  margin: 0;
+}
+.cb-item-list[data-inset="flush"] > .cb-item-list-row {
+  padding: var(--cb-space-2) var(--cb-space-4);
+}
+.cb-item-list[data-inset="flush"] > .cb-item-list-row[data-shape="item"] {
+  padding: var(--cb-space-4);
+}
+.cb-item-list-row[data-invalid="true"]::before {
+  position: absolute;
+  top: var(--cb-space-3);
+  bottom: var(--cb-space-3);
+  left: calc(-1 * var(--cb-space-2));
+  width: 2px;
+  background: var(--cb-fail);
+  content: "";
+}
+.cb-item-list[data-inset="flush"] > .cb-item-list-row[data-invalid="true"]::before {
+  top: 0;
+  bottom: 0;
+  left: 0;
+}
+.cb-item-list-item {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.cb-item-list-head {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-2);
+  min-width: 0;
+  min-height: var(--cb-control-dense);
+}
+.cb-item-list-titles {
+  display: flex;
+  flex: 1;
+  align-items: baseline;
+  gap: var(--cb-space-2);
+  min-width: 0;
+}
+.cb-item-list-row[data-shape="item"] .cb-item-list-title {
+  min-width: 0;
+  font-weight: 500;
+}
+.cb-item-list-code {
+  flex: none;
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+  white-space: nowrap;
+}
+.cb-item-list-lines {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-1);
+  margin-top: var(--cb-space-1);
+  min-width: 0;
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.cb-item-list-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-3);
+  margin-top: var(--cb-space-3);
+  min-width: 0;
+}
 
 /* Sections inside a page's own wrapper (not the form frame's direct children) keep space.6 apart. */
 .cb-form-section + .cb-form-section {

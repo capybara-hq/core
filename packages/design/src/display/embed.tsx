@@ -1,4 +1,5 @@
 import { type Ref, useCallback, useEffect, useRef } from "react";
+import { useInBox } from "../layout/box";
 
 /** 固定的沙箱：允许脚本与表单，不给同源（嵌入页拿不到外层的 cookie / storage / DOM）。 */
 export const EMBED_SANDBOX = "allow-scripts allow-forms";
@@ -13,6 +14,11 @@ export type EmbedFrameProps = {
   onMessage(e: MessageEvent): void;
   /** 拿到 iframe 元素，用于 `frameRef.current?.contentWindow?.postMessage(...)`。 */
   frameRef?: Ref<HTMLIFrameElement>;
+  /**
+   * The 1px `line` border. Default: framed on the page ground and in a pane, borderless inside a
+   * box (an inline card, a property section, a Card): the box is its frame (spec §6.9).
+   */
+  framed?: boolean;
 };
 
 function assignRef<T>(ref: Ref<T> | undefined, value: T | null) {
@@ -24,7 +30,15 @@ function assignRef<T>(ref: Ref<T> | undefined, value: T | null) {
  * 插件嵌入页（spec §6.9）。整个界面里唯一渲染 iframe 的地方：apps/web 不得自己写 iframe。
  * sandbox 固定为 `allow-scripts allow-forms`，不可由调用方放宽。
  */
-export function EmbedFrame({ src, title, height = 360, onMessage, frameRef }: EmbedFrameProps) {
+export function EmbedFrame({
+  src,
+  title,
+  height = 360,
+  onMessage,
+  frameRef,
+  framed,
+}: EmbedFrameProps) {
+  const inBox = useInBox() !== null;
   const own = useRef<HTMLIFrameElement | null>(null);
   const handler = useRef(onMessage);
   useEffect(() => {
@@ -53,6 +67,8 @@ export function EmbedFrame({ src, title, height = 360, onMessage, frameRef }: Em
     <iframe
       ref={setRef}
       className="cb-embed"
+      data-part="embed-frame"
+      data-framed={(framed ?? !inBox) ? "true" : "false"}
       src={src}
       title={title}
       height={Math.max(0, Math.round(height))}

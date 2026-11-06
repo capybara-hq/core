@@ -53,20 +53,20 @@ export const SECTION_FIELDS: Record<AgentSection, FieldShape[]> = {
     { control: "textarea", rows: 3 },
     { control: "select" },
   ],
-  "quick-actions": [{ control: "card-group", options: 2 }],
+  "quick-actions": [{ control: "item-group", options: 2 }],
   // the file list (one row: AGENTS.md) beside the open file's name and 16-line content
   prompt: [{ control: "list-editor", options: 1, rows: 16 }],
   model: [{ control: "select" }, { control: "select" }],
-  tools: [{ control: "card-group", options: 2 }],
-  skills: [{ control: "card-group", options: 2 }],
-  subagents: [{ control: "card-group", options: 1 }],
-  channels: [{ control: "card-group", options: 1 }],
+  tools: [{ control: "item-group", options: 2 }],
+  skills: [{ control: "item-group", options: 2 }],
+  subagents: [{ control: "item-group", options: 1 }],
+  channels: [{ control: "item-group", options: 1 }],
 };
 
 /** The read-only variant's field layout (key-value rows, or the quick-action cards). */
 export const READ_ONLY_FIELDS: Partial<Record<AgentSection, FieldShape[]>> = {
   basics: [{ control: "text" }, { control: "key-value" }],
-  "quick-actions": [{ control: "card-group", options: 2 }],
+  "quick-actions": [{ control: "item-group", options: 2 }],
   model: [{ control: "key-value" }],
 };
 

@@ -69,7 +69,7 @@ function OrgModels({ orgId }: { orgId: string }) {
         loading={{
           sections: [
             {
-              cards: LOADING_PURPOSES,
+              items: LOADING_PURPOSES,
               title: t("org.title"),
               description: t("org.description"),
             },

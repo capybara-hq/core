@@ -69,6 +69,7 @@ import {
   TABLE_SELECTED_ROW,
 } from "@capybara-hq/design/fixtures";
 import { createContext, type ReactNode, useContext } from "react";
+import { BOX_BLOCKS } from "./box-blocks";
 import { CONFIG_FORM_BLOCKS } from "./config-form-blocks";
 import { CONVERSATION_BLOCKS } from "./conversation-blocks";
 import { CONVERSATION_PAGE_BLOCKS } from "./conversation-page-blocks";
@@ -1320,4 +1321,5 @@ export const REFERENCE_BLOCKS = {
   "file-picker": filePickerBlocks,
   avatar: avatarBlocks,
   ...CONFIG_FORM_BLOCKS,
+  ...BOX_BLOCKS,
 } as const;
