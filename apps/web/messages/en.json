@@ -397,6 +397,9 @@
       "path_unsupported": "This entry is a path in the marketplace's repository, but the marketplace is fetched over http. Add the repository as a git marketplace."
     },
     "plugin": {
+      "name_taken": "Another owner already has a plugin with this name (the platform or another organization). Rename the plugin and upload it again.",
+      "name_reserved": "This name belongs to a bootstrap plugin or a plugin listed by a marketplace of this deployment. Rename the plugin and upload it again.",
+      "dependency_unavailable": "A plugin this one depends on is not available to this organization.",
       "review_stale": "The review is out of date (extensions on the deployment changed). Fetch the plugin package again.",
       "staging_not_found": "The staged plugin package has expired. Fetch it again.",
       "install_failed": "Installing failed; the components it created were rolled back.",

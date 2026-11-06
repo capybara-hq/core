@@ -1,5 +1,10 @@
+import { randomUUID } from "node:crypto";
+import { Readable } from "node:stream";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { PluginImport } from "../../src/catalog/plugin-import.js";
+import { blobKey } from "../../src/extensions/blobs.js";
 import { usableSkills } from "../../src/skills/usable.js";
+import { StorageService } from "../../src/storage/storage.service.js";
 import { accountsFor } from "../helpers/identity.js";
 import { createOrg, PW, type Req, session, waitFor } from "../helpers/runs.js";
 import {
@@ -159,6 +164,113 @@ describe("org plugin upload without an extension", () => {
     const p = await prepared(env.boss, orgA, bytes);
     expect(errorOf(await confirm(env.mem, orgA, p))).toEqual([403, "forbidden"]);
     expect(await liveItem("crm")).toBeUndefined();
+  });
+
+  it("the org role is checked before the body is read (ruling P3-29)", async () => {
+    // A body that never ends: answering at all proves the kernel did not wait to read it
+    const endless = (): Readable => {
+      let sent = 0;
+      return new Readable({
+        read() {
+          if (sent < 5 * 1024 * 1024) {
+            sent += 1024 * 1024;
+            this.push(Buffer.alloc(1024 * 1024, 7));
+          }
+          // never pushes null: a reader would wait forever
+        },
+      });
+    };
+    const send = (req: Req, orgId: string) =>
+      Promise.race([
+        req({
+          method: "POST",
+          url: `${base(orgId)}/file`,
+          headers: {
+            "content-type": "application/octet-stream",
+            "content-length": String(40 * 1024 * 1024),
+          },
+          payload: endless(),
+        }),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("the body was read before the role check")), 3_000),
+        ),
+      ]);
+    expect(errorOf(await send(env.mem, orgA))).toEqual([403, "forbidden"]);
+    expect(errorOf(await send(guest, orgA))).toEqual([403, "forbidden"]);
+    // boss is not a member of org B: as OrgGuard, the org is not disclosed
+    expect(errorOf(await send(env.boss, orgB))).toEqual([404, "org.not_found"]);
+  }, 20_000);
+
+  it("names of bootstrap and marketplace plugins are reserved (ruling P3-28)", async () => {
+    // a bootstrap plugin of the bundled manifest
+    const r = await upload(env.boss, orgA, await skillPlugin("anthropic"));
+    expect(errorOf(r)).toEqual([409, "plugin.name_reserved"]);
+    // an entry of a marketplace the deployment has read
+    const marketplaceId = randomUUID();
+    await env.db
+      .insertInto("marketplaces")
+      .values({
+        id: marketplaceId,
+        name: "Acme market",
+        url: "https://m.example.com/m.json",
+        mirrors: "[]",
+      })
+      .execute();
+    try {
+      await env.db
+        .insertInto("marketplace_entries")
+        .values({ source_id: marketplaceId, name: "market-crm", version: "1.0.0", entry: "{}" })
+        .execute();
+      const m = await upload(env.boss, orgA, await skillPlugin("market-crm"));
+      expect(errorOf(m)).toEqual([409, "plugin.name_reserved"]);
+      // a free name passes
+      const free = await prepared(env.boss, orgA, await skillPlugin("acme-own-crm"));
+      expect(free.review.name).toBe("acme-own-crm");
+    } finally {
+      await env.db.deleteFrom("marketplaces").where("id", "=", marketplaceId).execute();
+    }
+  });
+
+  it("an expired org staging takes its extension package with it", async () => {
+    const p = await prepared(env.boss, orgA, await skillPlugin("ext-expire", { extension: {} }));
+    const sha = (p.review as unknown as { extension: { sha256: string } }).extension.sha256;
+    const pkg = await env.db
+      .selectFrom("extension_packages")
+      .select("blob_store")
+      .where("sha256", "=", sha)
+      .executeTakeFirstOrThrow();
+    expect(pkg.blob_store).toBe("object");
+    const store = env.k.app.get(StorageService).deployment();
+    expect(await store.head(blobKey(sha))).not.toBeNull();
+    // a platform staging of another extension package keeps its package (it may be confirmed later)
+    const a = await env.root({
+      method: "POST",
+      url: "/api/v1/admin/catalog/import/file",
+      headers: { "content-type": "application/octet-stream" },
+      payload: Buffer.from(await skillPlugin("ext-platform", { extension: {} })),
+    });
+    expect(a.statusCode, a.body).toBe(200);
+    const platformSha = a.json().review.extension.sha256 as string;
+    await env.db
+      .updateTable("plugin_import_staging")
+      .set({ expires_at: new Date(Date.now() - 1000) })
+      .execute();
+    expect(await env.k.app.get(PluginImport).cleanupExpired()).toBe(2);
+    expect(
+      await env.db
+        .selectFrom("extension_packages")
+        .select("sha256")
+        .where("sha256", "=", sha)
+        .executeTakeFirst(),
+    ).toBeUndefined();
+    expect(await store.head(blobKey(sha))).toBeNull();
+    expect(
+      await env.db
+        .selectFrom("extension_packages")
+        .select("sha256")
+        .where("sha256", "=", platformSha)
+        .executeTakeFirst(),
+    ).toBeDefined();
   });
 
   it("staging is per org", async () => {

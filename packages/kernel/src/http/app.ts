@@ -9,11 +9,13 @@ import { AccountsService } from "../identity/accounts.js";
 import { ApiTokenService } from "../identity/api-tokens.js";
 import {
   type AuthServices,
-  authorizeOrgUploader,
+  authenticateOrgUploader,
   authorizeSuperAdmin,
 } from "../identity/auth.guard.js";
 import { SessionService } from "../identity/sessions.js";
+import { KernelDb } from "../infra/database/kernel-db.js";
 import { withLogContext } from "../log-context.js";
+import { authorizeOrgAction } from "../orgs/org.guard.js";
 import { redactPath } from "./error.filter.js";
 import { type GatewayRoutes, registerGatewayRoutes } from "./gateway-routes.js";
 import {
@@ -89,8 +91,8 @@ export const PACKAGE_UPLOAD_ROUTES: ReadonlySet<string> = new Set([
 /** An org admin's plugin package upload (spec §14, ruling P3-7; a tgz as the raw body). */
 export const ORG_PLUGIN_UPLOAD_ROUTE = "/api/v1/orgs/:orgId/catalog/uploads/file";
 /**
- * The org routes that take raw package bytes (limit `packages.maxBytes`): the caller is
- * authenticated as a person before the body is read; the org role is the route's `@OrgAction`.
+ * The org routes that take raw package bytes (limit `packages.maxBytes`): before the body is read
+ * the caller is authenticated as a person with the org role of `catalog.upload` (ruling P3-29).
  */
 export const ORG_PACKAGE_UPLOAD_ROUTES: ReadonlySet<string> = new Set([ORG_PLUGIN_UPLOAD_ROUTE]);
 
@@ -202,7 +204,16 @@ export async function createHttpApp(
     }
     if (req.method === "POST" && ORG_PACKAGE_UPLOAD_ROUTES.has(req.routeOptions.url ?? "")) {
       try {
-        await authorizeOrgUploader(req, services());
+        // the org admin role before the body (ruling P3-29): no one else makes the kernel buffer
+        // a package-sized body
+        const principal = await authenticateOrgUploader(req, services());
+        const orgId = (req.params as Record<string, string | undefined>).orgId ?? "";
+        await authorizeOrgAction(
+          app.get(KernelDb, { strict: false }).db,
+          principal,
+          orgId,
+          "catalog.upload",
+        );
       } catch (e) {
         return sendError(reply, e, req.method, req.url);
       }

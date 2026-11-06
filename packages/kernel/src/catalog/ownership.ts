@@ -3,6 +3,7 @@
 // (`owner_org_id` null) or by one org; an org-owned one reaches other orgs only while its owner
 // makes it shareable. Every writer that shows an item to another org or associates one checks the
 // gate on the row it writes, read `FOR UPDATE` in its transaction.
+import { sql } from "kysely";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import {
@@ -155,17 +156,25 @@ export async function assertNameFree(
 }
 
 /**
- * The owner of the extension name an npm package holds (package -> its live catalog item -> that
- * item's owner; ruling P3-14): the platform when no live item carries the package.
+ * The owner of extension `extensionName`, held by npm package `packageName` (package -> its live
+ * catalog item -> that item's owner; ruling P3-14). The item is the one named like the extension
+ * (a plugin and its extension share one name), else the oldest live item of the package; none ->
+ * the platform (an extension installed outside the catalog is the super admin's).
  */
-export async function packageOwner(db: KernelSchemaDb, packageName: string | null): Promise<Owner> {
+export async function packageOwner(
+  db: KernelSchemaDb,
+  packageName: string | null,
+  extensionName: string,
+): Promise<Owner> {
   if (packageName === null) return PLATFORM_OWNER;
   const item = await db
     .selectFrom("catalog_items")
     .select("owner_org_id")
     .where("package_name", "=", packageName)
     .where("deleted_at", "is", null)
-    .orderBy("owner_org_id")
+    .orderBy(sql`name = ${extensionName}`, "desc")
+    .orderBy("created_at")
+    .orderBy("id")
     .executeTakeFirst();
   const id = item?.owner_org_id ?? null;
   return ownerOf(id, await ownersOf(db, id === null ? [] : [id]));

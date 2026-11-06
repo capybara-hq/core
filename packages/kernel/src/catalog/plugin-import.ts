@@ -21,7 +21,7 @@ import { ApiError } from "../errors.js";
 import { ExtensionAdminOps } from "../extensions/admin-ops.js";
 import { ExtensionAdmin } from "../extensions/admin-view.js";
 import { writeSnapshot } from "../extensions/approvals.js";
-import { ExtensionBlobs } from "../extensions/blobs.js";
+import { blobKey, ExtensionBlobs } from "../extensions/blobs.js";
 import { ExtensionInstalls } from "../extensions/installs.js";
 import { PluginApproveLock, PluginInstallLock } from "../extensions/locks.js";
 import { unrunMigrations } from "../extensions/migrate-lock.js";
@@ -109,6 +109,7 @@ import {
   readPluginPackage,
 } from "./plugin-package.js";
 import { hasImportRequests, importRequestOf, resolveImportRequests } from "./request-rules.js";
+import { assertNameNotReserved } from "./reserved-names.js";
 import type { PluginScope } from "./scope.js";
 import { addScopeOrg } from "./scope-orgs.js";
 import { maxSatisfying, satisfiesRange } from "./versions.js";
@@ -727,7 +728,11 @@ export class PluginImport {
     // A name live for another owner (an org's for the super admin; the platform's or another
     // org's for an org) -> 409 plugin.name_taken naming it (P3-14); the same owner adds a version
     await assertNameFree(this.db, m.name, owner?.orgId ?? null);
-    if (owner !== undefined) await assertCustomContent(this.db, content);
+    if (owner !== undefined) {
+      // a bootstrap or marketplace plugin's name stays free for the platform (ruling P3-28)
+      await assertNameNotReserved(this.db, m.name);
+      await assertCustomContent(this.db, content);
+    }
     const { existing, version } = await precheckCatalogImport(this.db, m.name, {
       packageName,
       version: m.version,
@@ -1178,7 +1183,10 @@ export class PluginImport {
     // Under the name's lock: the first confirm of a name wins, a later one of another owner is
     // refused naming it, before anything of it is written (P3-14)
     await assertNameFree(t, m.name, owner?.orgId ?? null);
-    if (owner !== undefined) await this.resolveDependencies(m, owner);
+    if (owner !== undefined) {
+      await assertNameNotReserved(t, m.name);
+      await this.resolveDependencies(m, owner);
+    }
     // The scope the audit records: the review's for a new item, the item's own for a new version
     // of a live item (which keeps its scope)
     const existing = await t
@@ -1530,7 +1538,7 @@ export class PluginImport {
     const t = this.db;
     const locked = await t
       .selectFrom("plugin_import_staging")
-      .select("id")
+      .select(["id", "org_id", "review", "manifest"])
       .where("id", "=", r.id)
       .where("expires_at", "<=", sql<Date>`now()`)
       .forUpdate()
@@ -1539,7 +1547,55 @@ export class PluginImport {
     if (!locked) return false;
     if (r.object_prefix) await this.files.deployment().deletePrefix(r.object_prefix);
     await t.deleteFrom("plugin_import_staging").where("id", "=", r.id).execute();
+    await this.dropOrgPackage(locked);
     return true;
+  }
+
+  /**
+   * An expired org staging's extension package (an org upload stores it at prepare, P3-10): removed
+   * with the staging unless something else uses it — an install (running or migrated), a catalog
+   * version, another staging — or it was stored by anyone else (the package row's source must be
+   * this staging's own `catalog` ref). A platform staging keeps its package, as before.
+   */
+  @Transactional({ propagation: "mandatory" })
+  private async dropOrgPackage(row: {
+    org_id: string | null;
+    review: unknown;
+    manifest: unknown;
+  }): Promise<void> {
+    const sha = (row.review as PluginReview).extension?.sha256;
+    if (row.org_id === null || sha === undefined) return;
+    const staged = row.manifest as StagedPlugin;
+    const t = this.db;
+    const pkg = await t
+      .selectFrom("extension_packages")
+      .select("blob_store")
+      .where("sha256", "=", sha)
+      .where("source", "=", "catalog")
+      .where("source_ref", "=", `${staged.itemId}@${staged.version}`)
+      .forUpdate()
+      .executeTakeFirst();
+    if (!pkg) return;
+    const used =
+      (await t
+        .selectFrom("extension_installs")
+        .select("name")
+        .where((eb) => eb.or([eb("sha256", "=", sha), eb("migrated_sha", "=", sha)]))
+        .executeTakeFirst()) ??
+      (await t
+        .selectFrom("catalog_item_versions")
+        .select("version")
+        .where("extension_sha256", "=", sha)
+        .executeTakeFirst()) ??
+      (await t
+        .selectFrom("plugin_import_staging")
+        .select("id")
+        .where(sql<boolean>`review->'extension'->>'sha256' = ${sha}`)
+        .executeTakeFirst());
+    if (used !== undefined) return;
+    if (pkg.blob_store === "object") await this.files.deployment().delete(blobKey(sha));
+    // extension_blobs (a PG-stored package) goes with the row (ON DELETE CASCADE)
+    await t.deleteFrom("extension_packages").where("sha256", "=", sha).execute();
   }
 
   // ---------------------------------------------------------------------------------------------
@@ -1723,34 +1779,36 @@ export class PluginImport {
   ): Promise<PluginReview["dependencies"]> {
     const deps = m.dependencies ?? [];
     if (deps.length === 0) return [];
-    const all = await this.db
+    const names = deps.map((d) => d.name);
+    const versions = this.db
       .selectFrom("catalog_items as i")
       .innerJoin("catalog_item_versions as v", "v.item_id", "i.id")
-      .leftJoin("catalog_item_scope_orgs as so", (j) =>
-        j.onRef("so.item_id", "=", "i.id").on("so.org_id", "=", owner?.orgId ?? ""),
-      )
-      .select([
-        "i.name",
-        "v.version",
-        "v.imported_at",
-        "i.scope",
-        "i.builtin",
-        "i.disabled",
-        "i.deleted_at",
-        "i.awaiting_confirmation",
-        "i.owner_org_id",
-        "i.shareable",
-        "so.org_id as listed",
-      ])
       .where("i.deleted_at", "is", null)
-      .where(
-        "i.name",
-        "in",
-        deps.map((d) => d.name),
-      )
-      .execute();
-    const rows =
-      owner === undefined ? all : all.filter((r) => usableBy(r, owner.orgId, r.listed !== null));
+      .where("i.name", "in", names);
+    const rows: { name: string; version: string; imported_at: Date }[] =
+      owner === undefined
+        ? await versions.select(["i.name", "v.version", "v.imported_at"]).execute()
+        : (
+            await versions
+              // the org's own row of a `named` list (usableBy reads whether it is listed)
+              .leftJoin("catalog_item_scope_orgs as so", (j) =>
+                j.onRef("so.item_id", "=", "i.id").on("so.org_id", "=", owner.orgId),
+              )
+              .select([
+                "i.name",
+                "v.version",
+                "v.imported_at",
+                "i.scope",
+                "i.builtin",
+                "i.disabled",
+                "i.deleted_at",
+                "i.awaiting_confirmation",
+                "i.owner_org_id",
+                "i.shareable",
+                "so.org_id as listed",
+              ])
+              .execute()
+          ).filter((r) => usableBy(r, owner.orgId, r.listed !== null));
     const resolved = deps.map((d) => ({
       name: d.name,
       range: d.version,
@@ -1792,7 +1850,7 @@ export class PluginImport {
       throw new ApiError(
         "extension.name_conflict",
         `Extension ${name} is already installed from package ${r.package_name}; package ${packageName} cannot use it`,
-        [{ owner: await packageOwner(this.db, r.package_name) }],
+        [{ owner: await packageOwner(this.db, r.package_name, name) }],
       );
     }
     return r

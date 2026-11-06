@@ -91,16 +91,20 @@ export async function authorizeSuperAdmin(req: FastifyRequest, s: AuthServices):
 /**
  * Before the body is read (Fastify `onRequest`), for an org's package upload (an `@OrgAction`
  * route of a human-only action): authenticated like {@link authorizeSuperAdmin}, a person (service
- * tokens -> `forbidden`), CSRF for cookies. The org role is checked by `OrgGuard` afterwards, and
- * again under the org row lock by the service.
+ * tokens -> `forbidden`), CSRF for cookies. Returns the principal for the org role check that also
+ * runs before the body (ruling P3-29); `OrgGuard` and the service's lock re-check it afterwards.
  */
-export async function authorizeOrgUploader(req: FastifyRequest, s: AuthServices): Promise<void> {
+export async function authenticateOrgUploader(
+  req: FastifyRequest,
+  s: AuthServices,
+): Promise<Principal> {
   const resolved = await resolvePrincipal(req, s);
   if (!resolved) throw new ApiError("auth.required", "Authentication required");
   if (resolved.cookie && !SAFE_METHODS.has(req.method.toUpperCase())) requireCsrf(req);
   if (resolved.principal.kind === "service") {
     throw new ApiError("forbidden", "Service tokens cannot access this endpoint");
   }
+  return resolved.principal;
 }
 
 /**

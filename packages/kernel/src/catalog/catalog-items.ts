@@ -442,7 +442,7 @@ export async function assertPluginNameOwner(
       "extension.name_conflict",
       `Extension name ${name} belongs to package ${owner.package_name}; ${packageLabel(packageName)} cannot use it`,
       // who holds it (package -> item -> owner, ruling P3-14)
-      [{ owner: await packageOwner(db, owner.package_name) }],
+      [{ owner: await packageOwner(db, owner.package_name, name) }],
     );
   }
 }

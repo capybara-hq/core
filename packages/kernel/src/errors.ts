@@ -118,6 +118,7 @@ export const ERROR_CODES = {
   "marketplace.path_unsupported": 422,
   "plugin.review_stale": 409,
   "plugin.name_taken": 409,
+  "plugin.name_reserved": 409,
   "plugin.dependency_unavailable": 409,
   "plugin.extension_upload_pending": 501,
   "plugin.staging_not_found": 404,
