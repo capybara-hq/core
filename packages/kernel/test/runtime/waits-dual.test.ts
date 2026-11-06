@@ -45,6 +45,12 @@ let rd: TestContainer;
 let raw: ReturnType<typeof createDb>;
 let db: KernelSchemaDb;
 let maint: Queue;
+/**
+ * The client `maint` uses. A queue given a client does not close it, so afterAll quits it before
+ * Redis stops: an open client without an error listener reports "[ioredis] Unhandled error event"
+ * on every reconnect, which can land after Vitest tore the worker down.
+ */
+let maintRedis: Redis;
 const kernels: TestKernel[] = [];
 
 const config = () =>
@@ -78,11 +84,13 @@ beforeAll(async () => {
   });
   raw = createDb(pgc.url, 5);
   db = kernelDb(raw);
-  maint = new Queue(MAINTENANCE_QUEUE_NAME, { connection: new Redis(rd.url) });
+  maintRedis = new Redis(rd.url);
+  maint = new Queue(MAINTENANCE_QUEUE_NAME, { connection: maintRedis });
 }, 120_000);
 
 afterAll(async () => {
   await maint?.close();
+  await maintRedis?.quit();
   for (const k of kernels) await k.close();
   await raw?.destroy();
   await Promise.all([pgc?.stop(), rd?.stop()]);
@@ -142,7 +150,11 @@ async function waitingApproval(req: Req, convId: string): Promise<{ runId: strin
 }
 
 describe("双副本续跑", () => {
-  it("A 副本暂停（随后停机），B 副本收到审批决定并从 checkpoint 续跑", async () => {
+  // Boots two kernels in turn and stops one, with a run before and after: about 3 s alone, so the
+  // default 5 s timeout fails under load; no fixed sleeps, every wait polls its real condition.
+  it("A 副本暂停（随后停机），B 副本收到审批决定并从 checkpoint 续跑", {
+    timeout: 30_000,
+  }, async () => {
     const ka = await boot();
     const jar = cookieJar();
     const reqA = await login(ka, jar);

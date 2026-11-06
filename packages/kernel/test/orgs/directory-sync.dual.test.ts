@@ -32,6 +32,12 @@ let fd: FakeChannelServer;
 let h: Harness | undefined;
 let raw: ReturnType<typeof createDb> | undefined;
 let queue: Queue | undefined;
+/**
+ * The client the queue above uses. A queue given a client does not close it, so afterAll quits it
+ * before Redis stops: an open client without an error listener reports "[ioredis] Unhandled error
+ * event" on every reconnect, which can land after Vitest tore the worker down.
+ */
+let queueConn: Redis | undefined;
 
 beforeAll(async () => {
   [pgc, rdc] = await Promise.all([startTestPostgres(), startTestRedis()]);
@@ -40,6 +46,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await queue?.close();
+  await queueConn?.quit();
   await raw?.destroy();
   await h?.stop();
   await fd?.stop();
@@ -59,9 +66,8 @@ describe("通讯录同步（双副本）", () => {
     const harness = h;
     raw = createDb(harness.dbUrl, 3);
     const db: KernelSchemaDb = kernelDb(raw);
-    queue = new Queue(MAINTENANCE_QUEUE_NAME, {
-      connection: new Redis(rdc.url, { maxRetriesPerRequest: null }),
-    });
+    queueConn = new Redis(rdc.url, { maxRetriesPerRequest: null });
+    queue = new Queue(MAINTENANCE_QUEUE_NAME, { connection: queueConn });
 
     let cookie = "";
     const call = async (method: string, path: string, body?: unknown) => {

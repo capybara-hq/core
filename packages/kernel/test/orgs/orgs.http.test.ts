@@ -267,7 +267,11 @@ describe("组织 HTTP", () => {
     expect(errCode(get)).toBe("auth.session_revoked");
   });
 
-  it("current-org 与并发移出成员 50 轮：会话的 current_org_id 不指向已移出的组织", async () => {
+  // 50 rounds of real DB writes plus an HTTP request each (about 3 s alone, no sleeps), so the
+  // default 5 s timeout fails under load.
+  it("current-org 与并发移出成员 50 轮：会话的 current_org_id 不指向已移出的组织", {
+    timeout: 30_000,
+  }, async () => {
     const ownerReq = await session("owner");
     const id = await createOrg(ownerReq);
     const { req, acc } = await memberAs(id, "member", "racer");

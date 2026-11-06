@@ -63,6 +63,17 @@ let k: TestKernel;
 let im: FakeChannelServer;
 let raw: ReturnType<typeof createDb>;
 let queue: Queue;
+/**
+ * The client the queue above uses. A queue given a client does not close it, so afterAll quits it
+ * before Redis stops: an open client without an error listener reports "[ioredis] Unhandled error
+ * event" on every reconnect, which can land after Vitest tore the worker down.
+ */
+const redisClients: Redis[] = [];
+const redisClient = (): Redis => {
+  const c = new Redis(rd.url);
+  redisClients.push(c);
+  return c;
+};
 let owner: Req;
 let orgId: string;
 let agentId: string;
@@ -94,7 +105,7 @@ beforeAll(async () => {
     ),
   );
   raw = createDb(pgc.url, 3);
-  queue = new Queue(CHANNEL_QUEUE_NAME, { connection: new Redis(rd.url) });
+  queue = new Queue(CHANNEL_QUEUE_NAME, { connection: redisClient() });
   await accountsFor(kernelDb(raw)).createLocal({
     login: "owner",
     password: PW,
@@ -119,6 +130,7 @@ beforeAll(async () => {
 afterAll(async () => {
   await k?.close();
   await queue?.close();
+  await Promise.all(redisClients.splice(0).map((c) => c.quit()));
   await im?.stop();
   await raw?.destroy();
   await Promise.all([pgc?.stop(), rd?.stop()]);
