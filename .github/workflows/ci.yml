@@ -222,12 +222,28 @@ jobs:
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
+      # install-deps adds a few font packages (about 22 MB) on the runner image; a slow apt mirror once
+      # took 9 minutes for them, in one of the three e2e shards. Their .deb files are cached (per runner
+      # image, whose apt sources decide the versions), so a hit installs them without downloading.
+      - name: Cache the .deb files of Chromium's system dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/apt-archives
+          key: apt-playwright-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageVersion }}-${{ steps.playwright.outputs.version }}
+      - name: Point apt's package cache at the cached directory and keep what it downloads
+        run: |
+          mkdir -p "$HOME/apt-archives/partial"
+          printf 'Dir::Cache::Archives "%s";\nAPT::Keep-Downloaded-Packages "true";\n' "$HOME/apt-archives" \
+            | sudo tee /etc/apt/apt.conf.d/99capybara-apt-archives
+          sudo rm -f /etc/apt/apt.conf.d/docker-clean
       - name: Install Playwright Chromium (with system dependencies)
         if: steps.playwright-cache.outputs.cache-hit != 'true'
         run: pnpm --filter @capybara-hq/web exec playwright install --with-deps chromium
       - name: Install only the Chromium system dependencies (the browser comes from the cache)
         if: steps.playwright-cache.outputs.cache-hit == 'true'
         run: pnpm --filter @capybara-hq/web exec playwright install-deps chromium
+      # apt wrote the cached directory as root; the cache action saves it as the runner user
+      - run: sudo chown -R "$(id -u):$(id -g)" "$HOME/apt-archives"
       - name: End-to-end tests (Testcontainers starts PG / Valkey, kernel + model-fake, web tier)
         run: pnpm --filter @capybara-hq/web e2e --shard=${{ matrix.shard }}/3
       - uses: actions/upload-artifact@v4
