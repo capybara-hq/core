@@ -4236,10 +4236,6 @@ textarea {
 .r-skel-text[data-size="prose"] {
   height: var(--cb-type-prose-line);
 }
-/* A list page's body is not padded at the top (the header's own space is the gap). */
-.r-tpl-main[data-flat] {
-  padding-top: 0;
-}
 .r-tpl-head[data-stats] {
   display: flex;
   flex-direction: column;

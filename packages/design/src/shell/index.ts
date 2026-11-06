@@ -7,7 +7,6 @@ export {
   PageHeader,
   type PageHeaderProps,
 } from "./page-header";
-export { PageTabs } from "./page-tabs";
 export { PreferenceBar, type PreferenceBarProps, ThemeToggle } from "./preference-bar";
 export {
   initialOf,

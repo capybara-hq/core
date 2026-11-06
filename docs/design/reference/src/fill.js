@@ -289,8 +289,14 @@
         nActions > 0
           ? `<div class="r-ph-actions">${Array.from({ length: nActions }, (_, i) => loadBox(i)).join("")}</div>`
           : "";
-      const loadTabs =
-        nTabs > 0
+      // `tabItems`: the page's static tabs, drawn for real while the data loads (a detail page's
+      // in-page tabs are the head's tab row, spec §4.2, §5.2).
+      const tabItems = typeof o.loading === "object" ? o.loading.tabItems : undefined;
+      const loadTabs = tabItems
+        ? `<div class="r-ph-tabs"><div class="r-ph-tablist" role="tablist">${tabItems
+            .map((t, i) => `<span role="tab" aria-selected="${i === 0}">${esc(t)}</span>`)
+            .join("")}</div></div>`
+        : nTabs > 0
           ? `<div class="r-ph-tabs r-ph-tabs-loading"><div class="r-ph-tab-slots" data-part="page-header-tab-slots">${Array.from({ length: nTabs }, () => '<div class="r-skel-text" data-size="body" style="width:56px"><span class="r-skel-bar"></span></div>').join("")}</div></div>`
           : "";
       return `<header class="r-ph"${o.narrow ? " data-narrow" : ""} aria-busy="true">${loadCrumb}<div class="r-ph-row"><div class="r-ph-text"><div class="r-skel-text" data-part="skeleton-text" data-size="title" style="width:30%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div></div>${loadActions}</div>${loadTabs}</header>`;
@@ -499,7 +505,7 @@
   function listLoadingObjects() {
     const row = `<li class="r-lrow" data-part="loading-row"><div class="r-skel-box" data-part="skeleton-box" data-box="mark"></div><div class="r-lrow-text">${skelText("30%")}${skelText("55%")}</div></li>`;
     const head = pageHeader({ title: F.PAGE_HEADER_FIXTURE.title, actions: true, tabs: true, pending: true });
-    return `<div class="r-tpl" aria-busy="true"><div class="r-tpl-head">${head}</div><div class="r-tpl-body"><div class="r-tpl-main" data-flat><ul class="r-llist" data-part="loading-list">${row.repeat(3)}</ul></div></div></div>`;
+    return `<div class="r-tpl" aria-busy="true"><div class="r-tpl-head">${head}</div><div class="r-tpl-body"><div class="r-tpl-main"><ul class="r-llist" data-part="loading-list">${row.repeat(3)}</ul></div></div></div>`;
   }
 
   /** The trace page while loading: stat slots, 11 waterfall rows (the loaded fixture's spans), a card. */

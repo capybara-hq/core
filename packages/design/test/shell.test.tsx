@@ -14,7 +14,6 @@ import {
   type HeaderAction,
   PageHeader,
   type PageHeaderProps,
-  PageTabs,
   StatCards,
   StatusBar,
   useStatusBar,
@@ -524,13 +523,6 @@ describe("StatCards", () => {
   it("six metrics throw", () => {
     const m = Array.from({ length: 6 }, (_, i) => ({ label: `m${i}`, value: i }));
     expect(() => zh(<StatCards metrics={m} />)).toThrow();
-  });
-});
-
-describe("PageTabs", () => {
-  it("渲染标签", () => {
-    zh(<PageTabs label="详情" items={[{ id: "a", label: "概览" }]} value="a" />);
-    expect(screen.getByRole("tab", { name: "概览" })).toBeTruthy();
   });
 });
 
