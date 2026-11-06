@@ -3468,7 +3468,8 @@
         "fields": {
           "publisher": "发布者",
           "version": "版本",
-          "status": "状态"
+          "status": "状态",
+          "owner": "归属"
         }
       },
       "install": {
@@ -3656,6 +3657,10 @@
       "configExtensionUnloaded": "这个插件的扩展在启动配置里声明，更新不能移动它；请先在启动配置里修改。",
       "extensionRemoved": "{version} 不带扩展，但部署正在运行它；请先卸载扩展。",
       "extensionPackage": "{version} 的扩展包不在目录里，不能更新到它；请重新引入这个版本。"
+    },
+    "owner": {
+      "self": "本组织",
+      "platform": "平台"
     }
   },
   "filePreviewers": {
@@ -3855,7 +3860,7 @@
       "ownUpload": "本组织上传"
     },
     "meta": {
-      "platform": "平台 · {scope}"
+      "scope": "{owner} · {scope}"
     },
     "toast": {
       "enabled": "已启用「{name}」。",
@@ -4060,7 +4065,8 @@
     "from": {
       "plugin": "插件 · {plugin}",
       "platform": "平台上传",
-      "org": "本组织上传"
+      "org": "本组织上传",
+      "orgNamed": "{org} 上传"
     },
     "action": {
       "enable": "启用",

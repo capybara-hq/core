@@ -337,6 +337,44 @@ describe("share gate", { timeout: 90_000 }, () => {
     });
   });
 
+  it("org views carry the owner: the offered components, the skill library and detail", async () => {
+    const { skillId } = await ownedPlugin({ shareable: true, extra: [env.orgId] });
+    const plainId = await seedPlugin(env, {
+      name: "plain",
+      skills: ["plain-skill"],
+      templates: false,
+    });
+    await setScope(env, plainId, "named", [orgA, env.orgId]);
+    const orgA_ = { kind: "org", orgId: orgA, name: "A" };
+    for (const [org, req] of [
+      [orgA, env.root],
+      [env.orgId, env.boss],
+    ] as const) {
+      const r = await req({ method: "GET", url: `/api/v1/orgs/${org}/components?kind=skill` });
+      expect(r.statusCode, r.body).toBe(200);
+      const cs = r.json().components as Record<string, unknown>[];
+      expect(cs.find((x) => x.id === skillId)).toMatchObject({ owner: orgA_ });
+      expect(cs.find((x) => x.name === "plain-skill")).toMatchObject({
+        owner: { kind: "platform" },
+      });
+    }
+    // On for every org (its own scope `all`): org B's library and detail name org A as the owner
+    expect((await putSkillScope(skillId, { scope: "all" })).statusCode).toBe(200);
+    const lib = await env.boss({ method: "GET", url: `/api/v1/orgs/${env.orgId}/skills` });
+    expect(lib.statusCode, lib.body).toBe(200);
+    const skills = lib.json().skills as Record<string, unknown>[];
+    expect(skills.find((s) => s.id === skillId)).toMatchObject({
+      origin: "platform",
+      owner: orgA_,
+    });
+    const one = await env.boss({
+      method: "GET",
+      url: `/api/v1/orgs/${env.orgId}/skills/${skillId}`,
+    });
+    expect(one.statusCode, one.body).toBe(200);
+    expect(one.json()).toMatchObject({ origin: "platform", owner: orgA_ });
+  });
+
   it("a component switched from following to its own scope may keep the plugin's list", async () => {
     const { skillId } = await ownedPlugin({ extra: [orgC] });
     // the plugin lists A and C: an own list of A and C is no widening, adding B is

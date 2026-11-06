@@ -307,6 +307,31 @@ describe("/plugins: states and actions follow the scope and the switch", () => {
     expect(await within(rowOf(list, "notes")).findByText(p.state.on)).toBeTruthy();
   });
 
+  it.each(LOCALES)(
+    "the owner follows the item's owner in the chip and the meta line: 本组织, another org, 平台 (%s)",
+    async (locale) => {
+      const p = msgs[locale].plugins;
+      const c = msgs[locale].catalog;
+      const items = [
+        orgItem({ id: "a", name: "minutes", owner: { kind: "org", orgId: "o1", name: "Acme" } }),
+        orgItem({ id: "b", name: "shared", owner: { kind: "org", orgId: "o2", name: "Beta" } }),
+        orgItem({ id: "c", name: "plain", owner: { kind: "platform" } }),
+      ];
+      stubApi({ [`GET ${ORG}/catalog`]: () => json(200, { items }) });
+      await renderPlugins({ locale });
+      const list = await screen.findByRole("list", { name: p.title });
+      const meta = (name: string) =>
+        rowOf(list, name).querySelector(".cb-object-meta")?.textContent ?? "";
+      const scope = c.scope.optional;
+      expect(within(rowOf(list, "minutes")).getByText(p.chips.ownUpload)).toBeTruthy();
+      expect(meta("minutes")).toContain(fill(p.meta.scope, { owner: c.owner.self, scope }));
+      expect(meta("minutes")).not.toContain(c.owner.platform);
+      expect(meta("shared")).toContain(fill(p.meta.scope, { owner: "Beta", scope }));
+      expect(within(rowOf(list, "shared")).queryByText(p.chips.ownUpload)).toBeNull();
+      expect(meta("plain")).toContain(fill(p.meta.scope, { owner: c.owner.platform, scope }));
+    },
+  );
+
   it("启用 shows its pending state and cannot be pressed again until the switch answers", async () => {
     const p = zh.plugins;
     let answer: () => void = () => {};

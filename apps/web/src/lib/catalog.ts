@@ -1212,6 +1212,20 @@ export const withdrawPending = (orgId: string, itemId: string) =>
 export const ownedBy = (item: { owner?: Owner }, orgId: string): boolean =>
   item.owner?.kind === "org" && item.owner.orgId === orgId;
 
+/**
+ * Whose an item or component is, seen from the viewing org (spec §14, ruling P3-1): its own
+ * (`self`), another org's shared with it (`org`, by name), or the platform's (also for older
+ * answers without an owner). The one rule every owner badge and meta line follows.
+ */
+export type OwnerSide = { kind: "self" } | { kind: "org"; name: string } | { kind: "platform" };
+
+export const ownerSide = (owner: Owner | undefined, orgId: string): OwnerSide =>
+  owner?.kind !== "org"
+    ? { kind: "platform" }
+    : owner.orgId === orgId
+      ? { kind: "self" }
+      : { kind: "org", name: owner.name };
+
 /** The org that owns the item, null for the platform's (older answers carry no owner). */
 export const ownerOrgOf = (item: { owner?: Owner }): { orgId: string; name: string } | null =>
   item.owner?.kind === "org" ? item.owner : null;

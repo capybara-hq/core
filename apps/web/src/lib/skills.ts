@@ -1,6 +1,7 @@
 import { ApiClientError, apiFetch } from "./api";
 import type { CreatedAttachment } from "./attachments";
 import { uploadToStorage } from "./attachments";
+import type { Owner } from "./components";
 
 /**
  * 内核技能 API 的类型（`packages/kernel/src/skills/*`；只声明界面用到的字段）。Web 层不 import 内核代码。
@@ -37,6 +38,8 @@ export interface SkillSummary {
    * by the org), `org` for the org's own (absent from older kernels: the org's own).
    */
   origin?: "org" | "platform";
+  /** A platform skill's owner: the platform, or the org whose upload it came from (P3-1). */
+  owner?: Owner;
   /**
    * A platform skill in the library list: the ids of the org's copies linked to it. They resolve
    * to this skill, so an agent that selected one of them has this skill selected.

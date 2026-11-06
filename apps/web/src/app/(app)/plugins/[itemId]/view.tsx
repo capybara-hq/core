@@ -16,7 +16,7 @@ import {
 import { useQuery } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
-import { CatalogIcon, ComponentSection } from "../../../../components/CatalogParts";
+import { CatalogIcon, ComponentSection, useOwnerLabel } from "../../../../components/CatalogParts";
 import { ComponentSwitchList } from "../../../../components/ComponentSwitch";
 import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { FormError } from "../../../../components/form-error";
@@ -131,6 +131,7 @@ function CatalogItemDetail({
   const { actionsOf, dialog, error, busy } = usePluginActions({ orgId, admin, extensions });
   const actions = actionsOf(item);
   const owned = ownedBy(item, orgId);
+  const ownerLabel = useOwnerLabel(orgId);
   const tp = useTranslations("plugins");
 
   return (
@@ -159,6 +160,7 @@ function CatalogItemDetail({
             keyWidth="10ch"
             rows={[
               { k: t("detail.fields.publisher"), v: item.publisher || "—" },
+              { k: t("detail.fields.owner"), v: ownerLabel(item.owner) },
               { k: t("detail.fields.version"), v: versionLabel(item.latestVersion) },
               { k: t("detail.fields.status"), v: stateOf(item).label },
             ]}

@@ -169,6 +169,11 @@ export interface OrgOfferedComponentView extends OrgComponentView {
    * of these ids use this component, and lose it while it is off (spec §5 rule 8).
    */
   linkedIds: string[];
+  /**
+   * The platform, or the org that owns it (an org's upload, ruling P3-1): what the workspace pages
+   * name as its owner (本组织 for the viewing org's own, the owner's name for another org's).
+   */
+  owner: Owner;
 }
 
 /** The result of an org switch: the component, or (switching off without `confirm`) the preview. */
@@ -397,6 +402,10 @@ export class ComponentScopeService {
       );
       const st = await loadScopeState(this.db, kind, comps);
       const linked = await this.linkedCopies(orgId, kind);
+      const owners = await ownersOf(
+        this.db,
+        comps.flatMap((c) => (c.ownerOrgId === null ? [] : [c.ownerOrgId])),
+      );
       const rows: OrgOfferedComponentView[] = [];
       for (const c of comps) {
         const p = pluginFactsOf(st, c.itemId, orgId);
@@ -421,6 +430,7 @@ export class ComponentScopeService {
           pluginOn,
           switchable: !locked && pluginOn,
           linkedIds: linked.get(c.id) ?? [],
+          owner: ownerOf(c.ownerOrgId, owners),
         });
       }
       rows.sort((a, b) =>

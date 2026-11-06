@@ -3,6 +3,7 @@
 import { ListPage, ObjectRow } from "@capybara-hq/design";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
+import { useOwnerLabel } from "../../../components/CatalogParts";
 import { useComponentState, useComponentSwitch } from "../../../components/ComponentSwitch";
 import { ErrorFrame } from "../../../components/ErrorFrame";
 import { FormError } from "../../../components/form-error";
@@ -10,6 +11,7 @@ import { NoAccess } from "../../../components/NoAccess";
 import { rowActions } from "../../../components/PluginSwitch";
 import { usePagePath } from "../../../components/shell/path";
 import { useSession } from "../../../components/shell/session";
+import { type OwnerSide, ownerSide } from "../../../lib/catalog";
 import { usableRows } from "../../../lib/components";
 import { canUpdateOrg } from "../../../lib/org-settings";
 import { agentTemplatesQuery } from "../../../lib/query/agents";
@@ -46,12 +48,20 @@ function AgentTemplates({ orgId }: { orgId: string }) {
   const offered = useQuery({ ...cq, retryOnMount: retryOnMountOf(cq.queryKey) });
   const stateOf = useComponentState();
   const { actionsOf, dialog, error } = useComponentSwitch({ orgId, admin });
+  const ownerLabel = useOwnerLabel(orgId);
   if (list.kind === "notFound") return <NotFound />;
   if (list.kind === "error") return <ErrorFrame reset={list.retry} />;
   const rows =
     list.kind === "ready" ? usableRows(list.data.templates, offered.data?.components) : [];
-  const fromOf = (plugin: string | null | undefined, platform: boolean) =>
-    plugin ? tc("from.plugin", { plugin }) : platform ? tc("from.platform") : tc("from.org");
+  // Where it came from: its plugin, else whose upload it is (the same owner as the chip)
+  const fromOf = (plugin: string | null | undefined, owner: OwnerSide) =>
+    plugin
+      ? tc("from.plugin", { plugin })
+      : owner.kind === "platform"
+        ? tc("from.platform")
+        : owner.kind === "self"
+          ? tc("from.org")
+          : tc("from.orgNamed", { org: owner.name });
   return (
     <>
       <ListPage
@@ -98,7 +108,7 @@ function AgentTemplates({ orgId }: { orgId: string }) {
                 chips={[{ label: tc("origin.org") }]}
                 description={x.description}
                 meta={[
-                  fromOf(x.plugin, false),
+                  fromOf(x.plugin, { kind: "self" }),
                   t("type", { type: x.type }),
                   ta(`tier.${x.model}`),
                   t("version", { version: x.version }),
@@ -109,6 +119,8 @@ function AgentTemplates({ orgId }: { orgId: string }) {
           }
           const x = r.item;
           const c = r.component;
+          // The owner from owner_org_id: 本组织 for the org's own upload, else the owner org or 平台
+          const owner = c?.owner;
           const id = x?.id ?? c?.id ?? "";
           const name = x?.name ?? c?.name ?? "";
           return (
@@ -117,10 +129,10 @@ function AgentTemplates({ orgId }: { orgId: string }) {
               mark={{ text: name }}
               name={name}
               mono
-              chips={[{ label: tc("origin.platform") }]}
+              chips={[{ label: ownerLabel(owner) }]}
               description={x?.description ?? c?.description ?? ""}
               meta={[
-                fromOf(x?.plugin ?? c?.plugin, true),
+                fromOf(x?.plugin ?? c?.plugin, ownerSide(owner, orgId)),
                 ...(x !== undefined ? [t("type", { type: x.type }), ta(`tier.${x.model}`)] : []),
                 t("version", { version: x?.version ?? c?.version ?? "" }),
               ]}

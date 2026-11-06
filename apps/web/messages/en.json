@@ -3480,7 +3480,8 @@
         "fields": {
           "publisher": "Publisher",
           "version": "Version",
-          "status": "Status"
+          "status": "Status",
+          "owner": "Owner"
         }
       },
       "install": {
@@ -3668,6 +3669,10 @@
       "configExtensionUnloaded": "This plugin's extension is declared in the startup config; an update cannot move it. Change the startup config first.",
       "extensionRemoved": "{version} has no extension, but the deployment runs it; uninstall the extension first.",
       "extensionPackage": "The extension package of {version} is missing from the catalog; import that version again."
+    },
+    "owner": {
+      "self": "This org",
+      "platform": "Platform"
     }
   },
   "filePreviewers": {
@@ -3867,7 +3872,7 @@
       "ownUpload": "Uploaded by this organization"
     },
     "meta": {
-      "platform": "Platform · {scope}"
+      "scope": "{owner} · {scope}"
     },
     "toast": {
       "enabled": "\"{name}\" turned on.",
@@ -4072,7 +4077,8 @@
     "from": {
       "plugin": "Plugin · {plugin}",
       "platform": "Uploaded to the platform",
-      "org": "Uploaded by this org"
+      "org": "Uploaded by this org",
+      "orgNamed": "Uploaded by {org}"
     },
     "action": {
       "enable": "Turn on",

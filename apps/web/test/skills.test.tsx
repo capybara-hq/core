@@ -652,6 +652,22 @@ describe("plugin scope phase 3: 新建技能, 可共享 and the delete preview",
     },
   );
 
+  it("a platform skill names its owner from owner_org_id: 本组织, another org, 平台", async () => {
+    const m = en.skills.detail;
+    const cases = [
+      [{ kind: "org", orgId: "o1", name: "Acme" }, en.catalog.owner.self],
+      [{ kind: "org", orgId: "o2", name: "Beta" }, "Beta"],
+      [{ kind: "platform" }, en.catalog.owner.platform],
+    ] as const;
+    for (const [owner, label] of cases) {
+      stubApi({ [`GET ${BASE}/s1`]: () => json(200, detail({ origin: "platform", owner })) });
+      await renderSkill();
+      const key = await screen.findByText(m.owner);
+      expect(key.parentElement?.textContent).toContain(label);
+      cleanup();
+    }
+  });
+
   it("no 可共享 on a platform skill, a plugin's skill, or for members", async () => {
     stubApi({ [`GET ${BASE}/s1`]: () => json(200, detail({ origin: "platform" })) });
     await renderSkill();

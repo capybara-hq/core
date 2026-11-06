@@ -141,6 +141,41 @@ describe("/skills: own and platform skills with their org state", () => {
     },
   );
 
+  it.each(["zh", "en"] as const)(
+    "a platform row names its owner: 本组织 for the org's own upload, the owner org for a shared one (%s)",
+    async (locale) => {
+      const m = { zh, en }[locale];
+      const own = { kind: "org", orgId: "o1", name: "Acme" };
+      const beta = { kind: "org", orgId: "o2", name: "Beta" };
+      const routes = skillRoutes({
+        [`GET ${ORG}/skills`]: () =>
+          json(200, {
+            skills: [
+              ...LIBRARY,
+              skill("p5", "minutes", { origin: "platform", plugin: "minutes", owner: own }),
+              skill("p6", "shared", { origin: "platform", plugin: null, owner: beta }),
+            ],
+          }),
+        [`GET ${ORG}/components?kind=skill`]: () =>
+          json(200, {
+            components: [
+              ...OFFERED.map((c) => ({ ...c, owner: { kind: "platform" } })),
+              component("p5", "minutes", { on: true, plugin: "minutes", owner: own }),
+              component("p6", "shared", { on: true, plugin: null, owner: beta }),
+            ],
+          }),
+      });
+      await renderRouteWithCache("/skills", routes, { locale });
+      const minutes = await rowOf("minutes", locale);
+      expect(within(minutes).getByText(m.catalog.owner.self)).toBeTruthy();
+      expect(within(minutes).queryByText(m.catalog.owner.platform)).toBeNull();
+      const shared = await rowOf("shared", locale);
+      expect(within(shared).getByText("Beta")).toBeTruthy();
+      expect(shared.textContent).toContain(m.orgComponents.from.orgNamed.replace("{org}", "Beta"));
+      expect(within(await rowOf("pdf", locale)).getByText(m.catalog.owner.platform)).toBeTruthy();
+    },
+  );
+
   it("members read it: no switch, no upload", async () => {
     await renderRouteWithCache("/skills", skillRoutes(), { me: MEMBER });
     const notes = await rowOf("notes");

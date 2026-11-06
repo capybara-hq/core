@@ -230,6 +230,8 @@ export interface OrgComponent {
   switchable: boolean;
   /** The org's copies linked to it (older agents select them; absent from older kernels). */
   linkedIds?: string[];
+  /** The platform, or the org that owns it (an org's upload; absent from older kernels). */
+  owner?: Owner;
 }
 
 /**

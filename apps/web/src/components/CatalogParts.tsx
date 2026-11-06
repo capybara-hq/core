@@ -19,6 +19,7 @@ import {
   hasHiddenCharacters,
   type Marketplace,
   ownerOfError,
+  ownerSide,
   type SourceDetail,
   shortCommit,
   skillConflictsOfError,
@@ -30,6 +31,20 @@ import {
   translationExtras,
   translationValues,
 } from "../lib/catalog";
+import type { Owner } from "../lib/components";
+
+/**
+ * The owner as the workspace names it (spec §14): 本组织 for the viewing org's own item or
+ * component, the owner org's name for another org's shared one, 平台 for the platform's. Badges and
+ * meta lines both go through it, so a row never says two different owners.
+ */
+export function useOwnerLabel(orgId: string): (owner: Owner | undefined) => string {
+  const t = useTranslations("catalog.owner");
+  return (owner) => {
+    const side = ownerSide(owner, orgId);
+    return side.kind === "org" ? side.name : t(side.kind);
+  };
+}
 
 /**
  * One kind of a plugin's components (extension, skills, connector templates, dependencies) as a

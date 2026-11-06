@@ -15,7 +15,7 @@ import {
 import { useQuery } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { useRef, useState } from "react";
-import { useCatalogErrorLines } from "../../../components/CatalogParts";
+import { useCatalogErrorLines, useOwnerLabel } from "../../../components/CatalogParts";
 import { useComponentState, useComponentSwitch } from "../../../components/ComponentSwitch";
 import { ErrorFrame } from "../../../components/ErrorFrame";
 import { FormError } from "../../../components/form-error";
@@ -25,6 +25,7 @@ import { SkillCreateDialog } from "../../../components/SkillCreateDialog";
 import { usePagePath } from "../../../components/shell/path";
 import { useSession } from "../../../components/shell/session";
 import { ApiClientError, issueLines } from "../../../lib/api";
+import { type OwnerSide, ownerSide } from "../../../lib/catalog";
 import { usableRows } from "../../../lib/components";
 import { canUpdateOrg } from "../../../lib/org-settings";
 import { retryOnMountOf } from "../../../lib/query/client";
@@ -68,6 +69,7 @@ function Skills({ orgId }: { orgId: string }) {
   const offered = useQuery({ ...cq, retryOnMount: retryOnMountOf(cq.queryKey) });
   const stateOf = useComponentState();
   const { actionsOf, dialog, error } = useComponentSwitch({ orgId, admin });
+  const ownerLabel = useOwnerLabel(orgId);
   if (list.kind === "notFound") return <NotFound />;
   if (list.kind === "error") return <ErrorFrame reset={list.retry} />;
   const rows = list.kind === "ready" ? usableRows(list.data.skills, offered.data?.components) : [];
@@ -98,8 +100,15 @@ function Skills({ orgId }: { orgId: string }) {
             : {}),
         }
       : undefined;
-  const fromOf = (plugin: string | null | undefined, platform: boolean) =>
-    plugin ? tc("from.plugin", { plugin }) : platform ? tc("from.platform") : tc("from.org");
+  // Where it came from: its plugin, else whose upload it is (the same owner as the chip)
+  const fromOf = (plugin: string | null | undefined, owner: OwnerSide) =>
+    plugin
+      ? tc("from.plugin", { plugin })
+      : owner.kind === "platform"
+        ? tc("from.platform")
+        : owner.kind === "self"
+          ? tc("from.org")
+          : tc("from.orgNamed", { org: owner.name });
   return (
     <>
       <ListPage
@@ -144,7 +153,7 @@ function Skills({ orgId }: { orgId: string }) {
                 chips={[{ label: tc("origin.org") }]}
                 description={s.description}
                 meta={[
-                  fromOf(s.plugin, false),
+                  fromOf(s.plugin, { kind: "self" }),
                   t("version", { version: s.currentVersion }),
                   formatDateTime(s.updatedAt, "full", timeZone),
                 ]}
@@ -154,6 +163,8 @@ function Skills({ orgId }: { orgId: string }) {
           }
           const c = r.component;
           const s = r.item;
+          // The owner from owner_org_id: 本组织 for the org's own upload, else the owner org or 平台
+          const owner = c?.owner ?? s?.owner;
           const id = s?.id ?? c?.id ?? "";
           const name = s?.name ?? c?.name ?? "";
           const on = c?.on ?? s !== undefined;
@@ -164,10 +175,10 @@ function Skills({ orgId }: { orgId: string }) {
               name={name}
               mono
               {...(on && s !== undefined ? { href: `/skills/${encodeURIComponent(id)}` } : {})}
-              chips={[{ label: tc("origin.platform") }]}
+              chips={[{ label: ownerLabel(owner) }]}
               description={s?.description ?? c?.description ?? ""}
               meta={[
-                fromOf(s?.plugin ?? c?.plugin, true),
+                fromOf(s?.plugin ?? c?.plugin, ownerSide(owner, orgId)),
                 t("version", { version: s?.currentVersion ?? c?.version ?? "" }),
               ]}
               state={c !== undefined ? stateOf(c) : { label: tc("state.on"), tone: "ok" }}

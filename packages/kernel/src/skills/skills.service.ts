@@ -4,6 +4,7 @@ import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
 import type { AgentDefinition } from "../agents/definition.js";
 import { offeredNamed } from "../catalog/component-state.js";
+import { type Owner, PLATFORM_OWNER } from "../catalog/ownership.js";
 import { type OwnerVersion, PlatformComponents } from "../catalog/platform-components.js";
 import { assertItemInstallable } from "../catalog/request-rules.js";
 import {
@@ -209,6 +210,11 @@ export interface SkillSummary {
    * versioned by the org), `org` for the org's own.
    */
   origin: "org" | "platform";
+  /**
+   * A platform skill's owner (ruling P3-1): the platform, or the org whose upload it came from
+   * (absent on the org's own skills).
+   */
+  owner?: Owner;
   /**
    * The org's own skill is marked 可共享 by its org (plugin scope phase 3, ruling P3-6); false for
    * platform skills and agents' skills.
@@ -431,6 +437,7 @@ const platformSummaryQuery = (db: KernelSchemaDb) =>
     .leftJoin("platform_skill_versions as v", (j) =>
       j.onRef("v.skill_id", "=", "p.id").onRef("v.version", "=", "p.current_version"),
     )
+    .leftJoin("orgs as owner", "owner.id", "p.owner_org_id")
     .select([
       "p.id",
       "p.name",
@@ -439,6 +446,8 @@ const platformSummaryQuery = (db: KernelSchemaDb) =>
       "p.created_at",
       "p.updated_at",
       "p.plugin_name",
+      "p.owner_org_id",
+      "owner.name as owner_name",
       "v.source_format",
       "v.suggest_pinned",
       "v.manifest",
@@ -465,6 +474,10 @@ const platformSummary = (
     shareable: false,
   }),
   origin: "platform",
+  owner:
+    r.owner_org_id === null
+      ? PLATFORM_OWNER
+      : { kind: "org", orgId: r.owner_org_id, name: r.owner_name ?? r.owner_org_id },
 });
 
 /**

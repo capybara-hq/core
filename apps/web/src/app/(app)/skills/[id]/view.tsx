@@ -19,6 +19,7 @@ import {
 import { useQuery } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
+import { useOwnerLabel } from "../../../../components/CatalogParts";
 import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { FormError } from "../../../../components/form-error";
 import { NoAccess } from "../../../../components/NoAccess";
@@ -128,6 +129,7 @@ const ownSkill = (s: SkillDetail) =>
 function Inspector({ orgId, skill }: { orgId: string; skill: SkillDetail }) {
   const t = useTranslations("skills.detail");
   const tv = useTranslations("skills");
+  const ownerLabel = useOwnerLabel(orgId);
   return (
     <Stack gap={12}>
       <KeyValue
@@ -136,7 +138,8 @@ function Inspector({ orgId, skill }: { orgId: string; skill: SkillDetail }) {
           { k: t("name"), v: skill.name },
           {
             k: t("owner"),
-            v: skill.origin === "platform" ? t("ownerPlatform") : t("ownerOrg"),
+            // A platform skill's owner from owner_org_id: 本组织 for the org's own upload
+            v: skill.origin === "platform" ? ownerLabel(skill.owner) : t("ownerOrg"),
           },
           ...(skill.plugin ? [{ k: t("plugin"), v: skill.plugin }] : []),
           { k: t("version"), v: tv("version", { version: skill.currentVersion }) },

@@ -4,7 +4,7 @@ import { ListPage, type MenuItem, ObjectRow, Stack, Text, versionLabel } from "@
 import { useQuery } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
-import { useCatalogErrorLines } from "../../../components/CatalogParts";
+import { useCatalogErrorLines, useOwnerLabel } from "../../../components/CatalogParts";
 import { ErrorFrame } from "../../../components/ErrorFrame";
 import { NoAccess } from "../../../components/NoAccess";
 import { OrgPluginUploadDialog } from "../../../components/OrgPluginUploadDialog";
@@ -62,6 +62,7 @@ function Plugins({ orgId, me }: { orgId: string; me: Me }) {
   const admin = canUpdateOrg(me);
   const stateOf = usePluginState();
   const componentsLabel = useComponentsLabel();
+  const ownerLabel = useOwnerLabel(orgId);
   const [tab, setTab] = useState<"plugins" | "market">("plugins");
   const [uploading, setUploading] = useState(false);
   const list = usePageQuery(orgCatalogQuery(orgId));
@@ -154,8 +155,11 @@ function Plugins({ orgId, me }: { orgId: string; me: Me }) {
           ),
         }
       : undefined;
+  // The owner and the scope: 本组织 / the owner org / 平台, the same owner the chip names
   const scopeText = (i: OrgCatalogItem) =>
-    i.builtin ? tc("scope.all") : t("meta.platform", { scope: tc(`scope.${i.scope}`) });
+    i.builtin
+      ? tc("scope.all")
+      : t("meta.scope", { owner: ownerLabel(i.owner), scope: tc(`scope.${i.scope}`) });
   return (
     <>
       <ListPage
