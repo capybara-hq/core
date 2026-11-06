@@ -279,6 +279,8 @@ export const keys = {
       pendingBinding: (token: string): readonly unknown[] => [...all, "pendingBinding", token],
       /** The admin console's four overview numbers. */
       adminOverview: (): readonly unknown[] => [...all, "adminOverview"],
+      /** The super admin's inbox (its items; the sidebar's count reads it too). */
+      adminInbox: (): readonly unknown[] => [...all, "adminInbox"],
       /** Every page of the accounts list (an invalidation prefix). */
       adminAccountsAll: (): readonly unknown[] => [...all, "adminAccounts"],
       /** A page of the accounts list: the first (`after: ""`) or the one after a cursor. */

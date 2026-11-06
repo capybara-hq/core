@@ -47,6 +47,7 @@ import {
   activeNavOf,
   navLevelOf,
   statusPrompt,
+  useAdminInboxCount,
   useAdminItems,
   useExtensions,
   useNav,
@@ -220,10 +221,14 @@ function ShellFrame({
     me.account.isSuperAdmin,
   );
   const extensions = sections?.extensions ?? [];
-  // Under /admin (super admins only) the 插件 item shows what waits in its 待确认 tab; the
-  // persistent sidebar refetches the stale counts on each path change.
+  // Under /admin (super admins only) the 收件箱 item shows what waits on the platform and the 插件
+  // item what waits in its 待确认 tab; the persistent sidebar refetches the stale counts on each
+  // path change.
   const adminContext = me.account.isSuperAdmin && under(pathname, "/admin");
-  const adminItems = useAdminItems({ plugins: usePluginPendingCount(adminContext) });
+  const adminItems = useAdminItems({
+    inbox: useAdminInboxCount(adminContext),
+    plugins: usePluginPendingCount(adminContext),
+  });
   const preferences = usePreferences();
   const [creatingOrg, setCreatingOrg] = useState(false);
   const [leavingOrg, setLeavingOrg] = useState(false);

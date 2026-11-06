@@ -160,7 +160,7 @@ describe("nav by level (role hiding is cosmetic; the kernel decides)", () => {
     expect(read("admin")).toEqual(["new-agent", "new-app"]);
   });
 
-  it("the admin context lists 概览 账号 组织 插件 扩展 技能 连接器模板 智能体模板 模型 部署设置 (no 平台目录 or 市场)", () => {
+  it("the admin context lists 概览 收件箱 账号 组织 插件 扩展 技能 连接器模板 智能体模板 模型 部署设置 (no 平台目录 or 市场)", () => {
     function Admin() {
       const items = useAdminItems();
       return <pre data-testid="admin">{JSON.stringify(items.map((i) => [i.label, i.href]))}</pre>;
@@ -172,6 +172,7 @@ describe("nav by level (role hiding is cosmetic; the kernel decides)", () => {
     );
     expect(JSON.parse(screen.getByTestId("admin").textContent ?? "[]")).toEqual([
       ["概览", "/admin"],
+      ["收件箱", "/admin/inbox"],
       ["账号", "/admin/accounts"],
       ["组织", "/admin/orgs"],
       ["插件", "/admin/plugins"],
@@ -182,6 +183,25 @@ describe("nav by level (role hiding is cosmetic; the kernel decides)", () => {
       ["模型", "/admin/models"],
       ["部署设置", "/admin/settings"],
     ]);
+  });
+});
+
+describe("admin context counts", () => {
+  it("收件箱 and 插件 carry their counts; a zero or unknown count shows none", () => {
+    function Admin() {
+      const items = useAdminItems({ inbox: 3, plugins: 0 });
+      return (
+        <pre data-testid="admin">
+          {JSON.stringify(items.filter((i) => i.count !== undefined).map((i) => [i.id, i.count]))}
+        </pre>
+      );
+    }
+    render(
+      <NextIntlClientProvider locale="zh" messages={zh}>
+        <Admin />
+      </NextIntlClientProvider>,
+    );
+    expect(JSON.parse(screen.getByTestId("admin").textContent ?? "[]")).toEqual([["inbox", 3]]);
   });
 });
 

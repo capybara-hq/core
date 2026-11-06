@@ -2338,6 +2338,7 @@
     "nav": {
       "group": "Admin",
       "overview": "Overview",
+      "inbox": "Inbox",
       "accounts": "Accounts",
       "orgs": "Organizations",
       "settings": "Deployment settings",
@@ -2356,6 +2357,69 @@
         "catalogRequests": "Pending catalog requests",
         "orgs": "Organizations",
         "accounts": "Accounts"
+      }
+    },
+    "inbox": {
+      "title": "Inbox",
+      "description": "What waits on a super admin: organizations' requests to the platform, plugins whose permissions need confirming, failed scope syncs and the platform components migration. Each item is handled on its own page.",
+      "listLabel": "Pending items",
+      "empty": "Nothing to handle.",
+      "emptyHint": "Organizations' requests to the platform, plugins whose permissions need confirming and failed syncs show up here.",
+      "pick": "Select an item on the left.",
+      "pendingCount": "{n} pending",
+      "inspectorTitle": "Details",
+      "truncated": "Only the newest items are shown. Handle some to see the rest.",
+      "columns": {
+        "item": "Item",
+        "time": "Time"
+      },
+      "open": "Open",
+      "org": "Organization",
+      "plugin": "Plugin",
+      "time": "Time",
+      "waiting": "Waiting",
+      "failed": "Failed",
+      "request": {
+        "kind": {
+          "access": "Access request",
+          "import": "Import request"
+        },
+        "requester": "Requested by",
+        "version": "Version",
+        "note": "Note",
+        "hint": {
+          "access": "{org} asks to use this plugin. Approve or reject it in the Pending tab of the Plugins page; once approved, the organization can use it at once.",
+          "import": "{org} asks to bring this plugin in from a marketplace. Approve or reject it in the Pending tab of the Plugins page; approving opens the import review, scoped to that organization by default."
+        }
+      },
+      "permission": {
+        "label": "Permissions to confirm",
+        "version": "Version",
+        "hint": "The permissions this plugin's extension declares wait for a super admin's confirmation. Review and confirm them in the Pending tab of the Plugins page.",
+        "hintBuiltin": "This built-in plugin's extension permissions wait for a super admin's confirmation; it keeps running meanwhile. Review and confirm them in the Pending tab of the Plugins page."
+      },
+      "sync": {
+        "label": "Scope sync failed",
+        "op": {
+          "install": "Not turned on",
+          "uninstall": "Not turned off"
+        },
+        "code": "Error code",
+        "message": "Message",
+        "hint": {
+          "install": "The plugin's scope turns it on in {org}, but the sync failed. Once the cause is fixed (a name clash, for example), changing the plugin's scope or a worker restart syncs it again.",
+          "uninstall": "The plugin's scope turns it off in {org}, but the sync failed. Once the cause is fixed, changing the plugin's scope or a worker restart syncs it again."
+        }
+      },
+      "migration": {
+        "label": "Platform components migration",
+        "stuck": "Unfinished",
+        "failed": "{n, plural, one {# plugin failed} other {# plugins failed}}",
+        "started": "Started",
+        "finished": "Finished",
+        "items": "Failed plugins",
+        "hintStuck": "The latest run has not finished an hour after it started; its worker may have stopped. It runs again at the next worker start or daily run.",
+        "hintFailed": "The latest run could not write these plugins' platform components; the next run tries again. See the kernel log for the cause."
       }
     },
     "accounts": {

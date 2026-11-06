@@ -58,7 +58,7 @@ export const orgMarketplaceEntriesQuery = (orgId: string, sourceId: string, q: s
 /**
  * What a plugin's scope, disable, switch, update or permission confirmation changes: the catalog,
  * the platform components (their effective scope and versions) and the extensions on the
- * deployment (and the 待确认 list, the overview), and in the current org the catalog, the
+ * deployment (and the 待确认 list, the overview, the super admin's inbox), and in the current org the catalog, the
  * installed plugins and what {@link pluginChangeKeys} lists.
  */
 export const pluginScopeChangeKeys = (orgId: string | null): (readonly unknown[])[] => {
@@ -70,6 +70,7 @@ export const pluginScopeChangeKeys = (orgId: string | null): (readonly unknown[]
     d.componentsAll(),
     d.extensions(),
     d.adminOverview(),
+    d.adminInbox(),
     ...(orgId === null ? [] : pluginChangeKeys(orgId)),
   ];
 };

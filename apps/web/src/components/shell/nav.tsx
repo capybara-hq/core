@@ -5,6 +5,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { useCallback } from "react";
 import { useRouter } from "../../i18n/navigation";
+import { adminInboxQuery } from "../../lib/query/admin";
 import { retryOnMountOf } from "../../lib/query/client";
 import { keys } from "../../lib/query/keys";
 import { extensionPagesQuery, inboxCountQuery } from "../../lib/query/shell";
@@ -189,6 +190,22 @@ export function usePendingApprovals(orgId: string): {
   return { count: data?.count ?? 0, more: data?.more ?? false, refresh };
 }
 
+/**
+ * The super admin's inbox count for the admin sidebar's 收件箱 item (`GET /admin/inbox`, the page's
+ * own query): read again every 30 s while `enabled` (under `/admin`); undefined while it loads,
+ * when the read failed or when not enabled.
+ */
+export function useAdminInboxCount(enabled: boolean): number | undefined {
+  const query = adminInboxQuery();
+  const { data } = useQuery({
+    ...query,
+    enabled,
+    retryOnMount: retryOnMountOf(query.queryKey),
+    refetchInterval: enabled ? PENDING_POLL_MS : false,
+  });
+  return enabled ? data?.items.length : undefined;
+}
+
 /** 插件页面的路由：`/p/<插件>/<贡献 id>`。 */
 export const pluginPageHref = (plugin: string, id: string) =>
   `/p/${encodeURIComponent(plugin)}/${encodeURIComponent(id)}`;
@@ -240,6 +257,7 @@ export function statusPrompt(login: string, slug: string | null, pathname: strin
 
 const ADMIN_ICONS: Record<AdminPageId, IconName> = {
   overview: "gauge",
+  inbox: "inbox",
   accounts: "user",
   orgs: "building",
   plugins: "catalog",
@@ -253,7 +271,7 @@ const ADMIN_ICONS: Record<AdminPageId, IconName> = {
 
 /**
  * The admin context's items (web order §2.2), from the admin pages. `counts` puts a count on an
- * item: 插件 shows what waits in its 待确认 tab (spec §9).
+ * item: 收件箱 shows what waits on the platform, 插件 what waits in its 待确认 tab (spec §9).
  */
 export function useAdminItems(
   counts: Partial<Record<AdminPageId, number | undefined>> = {},

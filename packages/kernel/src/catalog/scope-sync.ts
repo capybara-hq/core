@@ -34,10 +34,11 @@ import { ScopeNoLongerWanted, ScopeStillWanted } from "./scope-state.js";
  * The decision is made outside the org row lock; the installer re-checks the scope under it for a
  * `via: "scope"` install or uninstall, so a person's switch committed meanwhile wins.
  * The sync writes no switch row: those record people's choices. Builtin items are left alone (on
- * everywhere through their required extension). An install or uninstall failure is logged and
- * audited `plugin.scope_sync_failed` and not retried until the next enqueue; every worker start
- * enqueues every live item once ({@link PluginScopeSync.enqueueAll}), which also catches a lost
- * enqueue.
+ * everywhere through their required extension). An install or uninstall failure is logged,
+ * audited `plugin.scope_sync_failed`, kept as the pair's open failure (`plugin_scope_sync_failures`,
+ * the super admin's inbox, until a later sync of the pair does not fail) and not retried until the
+ * next enqueue; every worker start enqueues every live item once
+ * ({@link PluginScopeSync.enqueueAll}), which also catches a lost enqueue.
  *
  * Jobs (queue {@link PLUGIN_SCOPE_QUEUE}): one per item and scope version
  * (`scope-item-<itemId>-<scope_version>`, every org), one per org (`scope-org-<orgId>`, every item,
@@ -179,11 +180,32 @@ export class PluginScopeSync {
         waitMs: ORG_LOCK_WAIT_MS,
         ...(signal !== undefined && { signal }),
       },
-      () => this.syncLocked(itemId, orgId),
+      () => this.syncRecorded(itemId, orgId),
     );
   }
 
-  private async syncLocked(itemId: string, orgId: string): Promise<ScopeSyncResult> {
+  /**
+   * {@link syncLocked} plus the pair's open failure (`plugin_scope_sync_failures`, the super
+   * admin's inbox): an attempt that failed records it, any other attempt clears it.
+   */
+  private async syncRecorded(itemId: string, orgId: string): Promise<ScopeSyncResult> {
+    const attempt = { failed: false };
+    const result = await this.syncLocked(itemId, orgId, attempt);
+    if (!attempt.failed) {
+      await this.db
+        .deleteFrom("plugin_scope_sync_failures")
+        .where("item_id", "=", itemId)
+        .where("org_id", "=", orgId)
+        .execute();
+    }
+    return result;
+  }
+
+  private async syncLocked(
+    itemId: string,
+    orgId: string,
+    attempt: { failed: boolean },
+  ): Promise<ScopeSyncResult> {
     const item = await this.db
       .selectFrom("catalog_items")
       .select(["id", "scope", "builtin", "disabled", "latest_version", "platform_synced_version"])
@@ -228,7 +250,7 @@ export class PluginScopeSync {
           try {
             await this.installer.addMissingDependencies(orgId, live.id);
           } catch (e) {
-            await this.failed(orgId, itemId, "install", e);
+            await this.failed(orgId, itemId, "install", e, attempt);
           }
         }
         return "unchanged";
@@ -250,7 +272,7 @@ export class PluginScopeSync {
         ) {
           return "unchanged";
         }
-        await this.failed(orgId, itemId, "install", e);
+        await this.failed(orgId, itemId, "install", e, attempt);
         return "unchanged";
       }
     }
@@ -264,12 +286,12 @@ export class PluginScopeSync {
       // A person switched it on (or the scope changed, or another install came to depend on it)
       // after this decision: the installer's re-check under the org row lock refused it
       if (e instanceof ScopeStillWanted) return "unchanged";
-      await this.failed(orgId, itemId, "uninstall", e);
+      await this.failed(orgId, itemId, "uninstall", e, attempt);
       return "unchanged";
     }
     // Dependency installs it took along may be wanted on by their own scope: synced again
     for (const dep of deps) {
-      if (dep !== itemId) await this.syncLocked(dep, orgId);
+      if (dep !== itemId) await this.syncRecorded(dep, orgId);
     }
     return "removed";
   }
@@ -362,32 +384,45 @@ export class PluginScopeSync {
     return configured === undefined;
   }
 
-  /** Logs and audits a failed install or uninstall (`plugin.scope_sync_failed`, actor null). */
+  /**
+   * Logs and audits a failed install or uninstall (`plugin.scope_sync_failed`, actor null) and
+   * records it as the pair's open failure (the super admin's inbox).
+   */
   private async failed(
     orgId: string,
     itemId: string,
     op: "install" | "uninstall",
     e: unknown,
+    attempt: { failed: boolean },
   ): Promise<void> {
+    attempt.failed = true;
     const code = e instanceof ApiError ? e.code : "internal";
     const message = e instanceof Error ? e.message : String(e);
     this.log.warn("plugin scope sync failed", { orgId, itemId, op, code, err: e });
-    await this.auditFailure(orgId, itemId, { via: "scope", op, code, message });
+    await this.recordFailure(orgId, itemId, op, code, message);
   }
 
   @Transactional({ propagation: "requires_new" })
-  private async auditFailure(
+  private async recordFailure(
     orgId: string,
     itemId: string,
-    detail: Record<string, unknown>,
+    op: "install" | "uninstall",
+    code: string,
+    message: string,
   ): Promise<void> {
     await audit(this.db, {
       actorAccountId: null,
       orgId,
       action: "plugin.scope_sync_failed",
       target: itemId,
-      detail,
+      detail: { via: "scope", op, code, message },
     });
+    const failure = { op, code, message, failed_at: new Date() };
+    await this.db
+      .insertInto("plugin_scope_sync_failures")
+      .values({ item_id: itemId, org_id: orgId, ...failure })
+      .onConflict((oc) => oc.columns(["item_id", "org_id"]).doUpdateSet(failure))
+      .execute();
   }
 }
 

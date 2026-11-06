@@ -6,6 +6,7 @@ import {
   listAdminOrgs,
 } from "../admin";
 import { getAdminExtension, getExtensionConfig, listAdminExtensions } from "../admin-extensions";
+import { getPlatformInbox } from "../admin-inbox";
 import {
   getCatalogItem,
   getStagedImport,
@@ -27,6 +28,13 @@ const d = () => keys.deployment();
 /** The overview's four numbers. */
 export const adminOverviewQuery = () =>
   defineQuery({ key: d().adminOverview(), fn: () => getAdminOverview(), freshness: "deployment" });
+
+/**
+ * The super admin's inbox (`{ items, truncated }`): requests, permission confirmations, failed
+ * scope syncs and a migration run that needs a look. Moves on its own (orgs ask, syncs fail).
+ */
+export const adminInboxQuery = () =>
+  defineQuery({ key: d().adminInbox(), fn: () => getPlatformInbox(), freshness: "live" });
 
 /** A page of accounts: the first (`after` omitted) or the one after a cursor ("Load more"). */
 export const adminAccountsQuery = (after?: string) =>
@@ -120,11 +128,12 @@ export const orgExtensionChangeKeys = (orgId: string): (readonly unknown[])[] =>
 
 /**
  * What a change to an extension on the deployment changes besides the extension itself: the
- * overview's count, and in the current org (the only one cached) its extensions and
+ * overview's count, the super admin's inbox (its permission confirmations), and in the current org (the only one cached) its extensions and
  * {@link orgExtensionChangeKeys}.
  */
 export const extensionChangeKeys = (orgId: string | null): (readonly unknown[])[] => [
   keys.deployment().adminOverview(),
+  keys.deployment().adminInbox(),
   ...(orgId === null ? [] : [keys.org(orgId).orgExtensions(), ...orgExtensionChangeKeys(orgId)]),
 ];
 

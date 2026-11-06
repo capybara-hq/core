@@ -14,6 +14,7 @@ import { identitiesQuery, toolGrantsQuery } from "./account";
 import {
   adminAccountsQuery,
   adminExtensionsQuery,
+  adminInboxQuery,
   adminModelsQuery,
   adminOrgsQuery,
   adminOverviewQuery,
@@ -194,6 +195,11 @@ export const ROUTES: readonly RouteEntry[] = [
       superAdmin(me) && params.name !== undefined
         ? [q(adminExtensionsQuery()), q(extensionConfigQuery(params.name))]
         : [],
+  },
+  {
+    pattern: "/admin/inbox",
+    // Super admins (no org needed): what waits on the platform.
+    queries: ({ me }) => (superAdmin(me) ? [q(adminInboxQuery())] : []),
   },
   {
     pattern: "/admin/models",

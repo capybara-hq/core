@@ -1085,6 +1085,7 @@ export interface KernelDatabase {
   bootstrap_runs: BootstrapRunsTable;
   platform_migration_runs: PlatformMigrationRunsTable;
   org_notices: OrgNoticesTable;
+  plugin_scope_sync_failures: PluginScopeSyncFailuresTable;
 }
 
 /** 0081: one run of the platform components migration job (`catalog/platform-migration.ts`). */
@@ -1108,6 +1109,20 @@ export interface OrgNoticesTable {
   created_at: Ts;
   dismissed_at: TsNullable;
   dismissed_by: NullableCol<string>;
+}
+
+/**
+ * 0082: an open failure of the plugin scope sync for one (item, org): its last attempt failed; the
+ * next sync of the pair that does not fail deletes the row.
+ */
+export interface PluginScopeSyncFailuresTable {
+  item_id: string;
+  org_id: string;
+  op: "install" | "uninstall";
+  /** The `ApiError` code, else `internal`. */
+  code: string;
+  message: string;
+  failed_at: Ts;
 }
 
 /** 0050: one row per bootstrap manifest the bootstrap step completed. */

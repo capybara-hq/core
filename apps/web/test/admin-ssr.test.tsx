@@ -221,6 +221,31 @@ const ROUTES: Routes = {
   "GET /api/v1/admin/catalog/imports/st1": () => json(200, PREPARED),
   "GET /api/v1/admin/extensions": () => json(200, { extensions: [ext()], drainSeconds: 45 }),
   "GET /api/v1/admin/extensions/demo/config": () => json(200, CONFIG),
+  "GET /api/v1/admin/inbox": () =>
+    json(200, {
+      items: [
+        {
+          type: "scope_sync_failed",
+          id: `${ITEM_ID}/o2`,
+          createdAt: T,
+          failure: {
+            item: { id: ITEM_ID, name: "crm", displayName: null },
+            org: { id: "o2", name: "Beta" },
+            op: "install",
+            code: "plugin.skill_conflict",
+            message: "A skill named pdf already exists",
+            failedAt: T,
+          },
+        },
+        {
+          type: "platform_migration",
+          id: "run1",
+          createdAt: T,
+          run: { id: "run1", startedAt: T, finishedAt: null, stuck: true, itemsFailed: [] },
+        },
+      ],
+      truncated: false,
+    }),
   "GET /api/v1/admin/overview": () =>
     json(200, { extensionsNeedingAction: 3, catalogRequestsPending: 1, orgs: 2, accounts: 7 }),
   "GET /api/v1/admin/accounts": () =>
@@ -643,6 +668,27 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     expect(screen.queryByText(/not in the catalog/)).toBeNull();
   });
 
+  it("/admin/inbox: a first render from the hydrated cache makes no browser read; 前往处理 opens the item's page", async () => {
+    const browser = expectNoFirstPaintFetch();
+    await renderRouteWithCache("/admin/inbox", ROUTES);
+    expect(screen.getAllByText(`${en.admin.inbox.sync.label} · crm`).length).toBeGreaterThan(0);
+    expect(screen.getByText(en.admin.inbox.migration.label)).toBeTruthy();
+    // the first item is selected: its message, and the way to where it is acted on
+    expect(screen.getByText("A skill named pdf already exists")).toBeTruthy();
+    await settle();
+    expect(browser).toEqual([]);
+    await userEvent.setup().click(screen.getByRole("button", { name: en.admin.inbox.open }));
+    expect(router.push).toHaveBeenCalledWith(`/admin/plugins/${ITEM_ID}`);
+  });
+
+  it("/admin/inbox: an empty inbox is the template's empty state", async () => {
+    await renderRouteWithCache("/admin/inbox", {
+      ...ROUTES,
+      "GET /api/v1/admin/inbox": () => json(200, { items: [], truncated: false }),
+    });
+    expect(screen.getByText(en.admin.inbox.empty)).toBeTruthy();
+  });
+
   it("/admin/plugins/pending: a first render from the hydrated cache makes no browser read", async () => {
     const browser = expectNoFirstPaintFetch();
     await renderRouteWithCache("/admin/plugins/pending", ROUTES);
@@ -875,6 +921,7 @@ const CACHED: string[] = [
   "/admin/plugins/pending",
   "/admin/plugins/sources",
   "/admin/plugins/market",
+  "/admin/inbox",
 ];
 
 describe("the super-admin gate", () => {
