@@ -57,9 +57,12 @@ export interface AgentTemplateInstructionFile {
   content: string;
 }
 
-/** A connector entry of a template: a connector template id (`<id>` or `<plugin>:<id>`) or a need. */
+/**
+ * A connector entry of a template: a connector template id (`<id>` or `<plugin>:<id>`) or a need.
+ * `policies` tighten the connector's tools by tool name (`ask` / `deny`), applied once it is bound.
+ */
 export type AgentTemplateConnector =
-  | { template: string; tools?: string[] }
+  | { template: string; tools?: string[]; policies?: Record<string, "ask" | "deny"> }
   | {
       needs: {
         protocol: "mcp" | "openapi";
@@ -67,6 +70,7 @@ export type AgentTemplateConnector =
         tools: string[];
         label: string;
       };
+      policies?: Record<string, "ask" | "deny">;
     };
 
 /** A sub-agent type described inside a template. */
@@ -74,7 +78,8 @@ export interface AgentTemplateInlineSubagent {
   name: string;
   description: string;
   instructions: string;
-  tools: string[];
+  /** Tool keys allowed (an allowlist; `[]` = no tools); absent = all of the agent's tools. */
+  tools?: string[];
   /** Skill names. */
   skills: string[];
   model: AgentTemplateTier;
@@ -106,7 +111,7 @@ export const AGENT_TEMPLATE_LIMITS = {
   subagentTypes: 16,
   /** Characters of one inline sub-agent's instructions. */
   inlineInstructionsChars: 100_000,
-  /** Tools named by a connector entry. */
+  /** Tools named by a connector entry (its `tools`, and the keys of its `policies`). */
   connectorTools: 200,
   /** Quick actions, as the agent profile limits them. */
   quickActions: 9,
@@ -262,6 +267,12 @@ const isStr = (v: unknown, max: number): v is string =>
 const strList = (v: unknown, max: number, itemMax: number): v is string[] =>
   Array.isArray(v) && v.length <= max && v.every((x) => isStr(x, itemMax));
 
+const connectorPolicies = (v: unknown): v is Record<string, "ask" | "deny"> =>
+  isObj(v) &&
+  Object.keys(v).length <= AGENT_TEMPLATE_LIMITS.connectorTools &&
+  Object.entries(v).every(([k, p]) => isStr(k, 128) && (p === "ask" || p === "deny"));
+const connectorPoliciesRule = `must map at most ${AGENT_TEMPLATE_LIMITS.connectorTools} tool names to ask or deny`;
+
 function readConnectors(v: unknown, errors: string[]): AgentTemplateConnector[] | undefined {
   const L = AGENT_TEMPLATE_LIMITS;
   if (!Array.isArray(v) || v.length > L.connectors) {
@@ -282,10 +293,16 @@ function readConnectors(v: unknown, errors: string[]): AgentTemplateConnector[] 
       } else if (e.tools !== undefined && !strList(e.tools, L.connectorTools, 128)) {
         errors.push(`${at}.tools must list at most ${L.connectorTools} tool names`);
         ok = false;
+      } else if (e.policies !== undefined && !connectorPolicies(e.policies)) {
+        errors.push(`${at}.policies ${connectorPoliciesRule}`);
+        ok = false;
       } else {
         out.push({
           template: e.template,
           ...(e.tools !== undefined && { tools: e.tools as string[] }),
+          ...(e.policies !== undefined && {
+            policies: { ...(e.policies as Record<string, "ask" | "deny">) },
+          }),
         });
       }
     } else if ("needs" in e) {
@@ -305,6 +322,9 @@ function readConnectors(v: unknown, errors: string[]): AgentTemplateConnector[] 
       } else if (!isStr(n.label, 80)) {
         errors.push(`${at}.needs.label must be a non-empty string of at most 80 characters`);
         ok = false;
+      } else if (e.policies !== undefined && !connectorPolicies(e.policies)) {
+        errors.push(`${at}.policies ${connectorPoliciesRule}`);
+        ok = false;
       } else {
         out.push({
           needs: {
@@ -313,6 +333,9 @@ function readConnectors(v: unknown, errors: string[]): AgentTemplateConnector[] 
             tools: n.tools as string[],
             label: n.label,
           },
+          ...(e.policies !== undefined && {
+            policies: { ...(e.policies as Record<string, "ask" | "deny">) },
+          }),
         });
       }
     } else {
@@ -372,7 +395,9 @@ function readSubagents(v: unknown, errors: string[]): AgentTemplateSubagents | u
             `${at}.instructions must be a non-empty string of at most ${L.inlineInstructionsChars} characters`,
           );
         }
-        if (!toolList(e.tools)) errors.push(`${at}.tools must be ${toolListRule}`);
+        if (e.tools !== undefined && !toolList(e.tools)) {
+          errors.push(`${at}.tools must be ${toolListRule}`);
+        }
         if (
           !(
             Array.isArray(e.skills) &&
