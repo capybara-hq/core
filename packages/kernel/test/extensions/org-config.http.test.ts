@@ -223,6 +223,13 @@ describe("组织插件配置 HTTP", () => {
       payload: body,
     });
     expect(d.statusCode).toBe(403);
+    // the read action is not a service-token action either
+    const e = await k.http.inject({
+      method: "GET",
+      url: `/api/v1/orgs/${orgId}/extensions`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(e.statusCode).toBe(403);
   });
 
   it("错误码：未加载插件 404、无 org schema 传 config 400、配置不合法 400 带 details、未知字段 400", async () => {
