@@ -1,3 +1,4 @@
+import type { Logger } from "@capybara-hq/plugin-sdk";
 import { Controller, Get, Headers, Inject, Param, Req, Res } from "@nestjs/common";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
@@ -8,10 +9,11 @@ import { ApiTokenService } from "../identity/api-tokens.js";
 import { credentialCheck } from "../identity/credential-check.js";
 import { CurrentPrincipal, type Principal, requireUser } from "../identity/principal.js";
 import { SessionService } from "../identity/sessions.js";
+import { KERNEL_LOGGER } from "../infra/tokens.js";
 import { createZodDto } from "../infra/validation/create-zod-dto.js";
 import { ZParam, ZQuery } from "../infra/validation/zod-params.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
-import { type RunDraft, RunDrafts } from "./run-drafts.js";
+import { type LiveDraft, type RunDraft, RunDrafts } from "./run-drafts.js";
 import { ConversationStreams } from "./stream.js";
 
 const BEARER_RE = /^Bearer\s+(\S+)$/i;
@@ -60,6 +62,7 @@ export class ConversationStreamController {
     @Inject(ConversationsService) private readonly conversations: ConversationsService,
     @Inject(ConversationAccess) private readonly access: ConversationAccess,
     @Inject(RunDrafts) private readonly drafts: RunDrafts,
+    @Inject(KERNEL_LOGGER) private readonly log: Pick<Logger, "warn">,
   ) {}
 
   /**
@@ -83,7 +86,18 @@ export class ConversationStreamController {
     if (!(await this.drafts.runOf(params.id, params.runId))) {
       throw new ApiError("run.not_found", "Run not found");
     }
-    const live = await this.drafts.live(params.id, params.runId);
+    let live: LiveDraft[];
+    try {
+      live = await this.drafts.live(params.id, params.runId);
+    } catch (err) {
+      // a convenience, like the stream's: no drafts rather than an error (the log stays the truth)
+      this.log.warn("cannot read live drafts", {
+        conversationId: params.id,
+        runId: params.runId,
+        err,
+      });
+      live = [];
+    }
     return { drafts: live.map(({ step, text, thinking }) => ({ step, text, thinking })) };
   }
 

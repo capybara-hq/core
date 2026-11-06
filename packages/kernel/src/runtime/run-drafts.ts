@@ -41,6 +41,8 @@ interface Held {
   /** When the draft was last written (`-Infinity`: never, so the first delta writes at once). */
   writtenAt: number;
   dirty: boolean;
+  /** The one trailing write armed while something is held (cancelled by a write, clear, release). */
+  timer: NodeJS.Timeout | undefined;
 }
 
 const parse = (step: number, v: string | null): RunDraft | null => {
@@ -64,8 +66,9 @@ const parse = (step: number, v: string | null): RunDraft | null => {
  *
  * The writer is the process executing the run: it holds the step's draft in memory (only for the
  * runs it executes; {@link release} drops them when the execution ends) and writes it at most once
- * per {@link DRAFT_FLUSH_MS}, on the first delta past the window (no timer), plus once when the
- * model stream ends ({@link flush}). Writes are issued before the delta is published, on the same
+ * per {@link DRAFT_FLUSH_MS}: on the first delta past the window, or, when deltas stop inside it,
+ * by one trailing one-shot timer per held step (process-local, unref'd, cancelled by a write,
+ * {@link clear} and {@link release}), plus once when the model stream ends ({@link flush}). Writes are issued before the delta is published, on the same
  * connection as the bus publish, so a viewer that sees a delta past its snapshot and asks again
  * gets a draft at least that far whenever that delta was written. Every write refreshes the
  * {@link DRAFT_TTL_SECONDS} TTL; {@link clear} deletes the step's draft once its
@@ -91,12 +94,28 @@ export class RunDrafts {
   append(runId: string, step: number, channel: "text" | "thinking", text: string): void {
     let h = this.held.get(runId);
     if (h?.step !== step) {
-      h = { step, text: "", thinking: "", writtenAt: Number.NEGATIVE_INFINITY, dirty: false };
+      if (h) this.drop(runId, h);
+      h = {
+        step,
+        text: "",
+        thinking: "",
+        writtenAt: Number.NEGATIVE_INFINITY,
+        dirty: false,
+        timer: undefined,
+      };
       this.held.set(runId, h);
     }
     h[channel] += text;
     h.dirty = true;
-    if (Date.now() - h.writtenAt >= DRAFT_FLUSH_MS) this.write(runId, h);
+    const elapsed = Date.now() - h.writtenAt;
+    if (elapsed >= DRAFT_FLUSH_MS) this.write(runId, h);
+    else if (h.timer === undefined) {
+      // held: written when the window ends even if no delta follows (a tool input, a pause)
+      h.timer = setTimeout(() => {
+        h.timer = undefined;
+        this.flush(runId, step);
+      }, DRAFT_FLUSH_MS - elapsed).unref();
+    }
   }
 
   /** The end of the step's model stream: writes what the window still holds. */
@@ -107,7 +126,8 @@ export class RunDrafts {
 
   /** Deletes the step's draft (its `assistant_message` is logged, or the step starts over). */
   clear(runId: string, step: number): void {
-    if (this.held.get(runId)?.step === step) this.held.delete(runId);
+    const h = this.held.get(runId);
+    if (h?.step === step) this.drop(runId, h);
     this.redis
       .multi()
       .del(draftKey(runId, step))
@@ -122,7 +142,8 @@ export class RunDrafts {
    * that never ended is not shown once the run is no longer running (TTL removes it).
    */
   release(runId: string): void {
-    this.held.delete(runId);
+    const h = this.held.get(runId);
+    if (h) this.drop(runId, h);
   }
 
   /** The run's steps with a draft, by step. */
@@ -172,7 +193,15 @@ export class RunDrafts {
     return row !== undefined;
   }
 
+  private drop(runId: string, h: Held): void {
+    clearTimeout(h.timer);
+    h.timer = undefined;
+    this.held.delete(runId);
+  }
+
   private write(runId: string, h: Held): void {
+    clearTimeout(h.timer);
+    h.timer = undefined;
     h.writtenAt = Date.now();
     h.dirty = false;
     const { step } = h;

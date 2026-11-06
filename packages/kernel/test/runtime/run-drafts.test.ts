@@ -57,6 +57,56 @@ describe("RunDrafts", () => {
     expect(await stored("r1", 1)).toEqual({ text: "Hello world", thinking: "hmm" });
   });
 
+  it("a held delta is written when the window ends, with no further delta (one trailing timer)", async () => {
+    vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+    vi.setSystemTime(1_000_000);
+    const d = draftsOn(redis);
+    d.append("r1", 1, "text", "a");
+    vi.setSystemTime(1_000_000 + 50);
+    d.append("r1", 1, "text", "b");
+    d.append("r1", 1, "thinking", "c");
+    // one timer for the held step, however many deltas it holds
+    expect(vi.getTimerCount()).toBe(1);
+    expect(await stored("r1", 1)).toEqual({ text: "a", thinking: "" });
+    vi.advanceTimersByTime(DRAFT_FLUSH_MS - 50);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(await stored("r1", 1)).toEqual({ text: "ab", thinking: "c" });
+  });
+
+  it("the trailing timer goes with a write, a clear or a release", async () => {
+    vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+    vi.setSystemTime(1_000_000);
+    const d = draftsOn(redis);
+    // a write on the next delta past the window takes the timer's place
+    d.append("r1", 1, "text", "a");
+    d.append("r1", 1, "text", "b");
+    expect(vi.getTimerCount()).toBe(1);
+    vi.setSystemTime(1_000_000 + DRAFT_FLUSH_MS);
+    d.append("r1", 1, "text", "c");
+    expect(vi.getTimerCount()).toBe(0);
+    // clear
+    d.append("r1", 1, "text", "d");
+    expect(vi.getTimerCount()).toBe(1);
+    d.clear("r1", 1);
+    expect(vi.getTimerCount()).toBe(0);
+    // release
+    d.append("r2", 1, "text", "x");
+    d.append("r2", 1, "text", "y");
+    expect(vi.getTimerCount()).toBe(1);
+    d.release("r2");
+    expect(vi.getTimerCount()).toBe(0);
+    // flush at stream end
+    d.append("r3", 1, "text", "x");
+    d.append("r3", 1, "text", "y");
+    d.flush("r3", 1);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(await stored("r3", 1)).toEqual({ text: "xy", thinking: "" });
+    // nothing fires after the clear / release
+    vi.advanceTimersByTime(DRAFT_FLUSH_MS * 2);
+    expect(await stored("r1", 1)).toBeNull();
+    expect(await stored("r2", 1)).toEqual({ text: "x", thinking: "" });
+  });
+
   it("sets the key's TTL to 600 s and refreshes it on every write", async () => {
     expect(DRAFT_TTL_SECONDS).toBe(600);
     const d = draftsOn(redis);

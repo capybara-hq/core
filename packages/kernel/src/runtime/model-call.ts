@@ -350,6 +350,13 @@ async function runStep(
   try {
     if (signal.aborted) throw new StepAborted();
     let events = await readAll(deps.eventLog, conversationId);
+    // an earlier execution of this run already sent this step (it streamed, then crashed or was
+    // handed over): this one starts at offset 0, so viewers drop that attempt's draft first
+    if (
+      events.some((e) => e.type === "model_call" && e.runId === runId && e.payload.step === step)
+    ) {
+      sink({ kind: "step_reset", runId, step });
+    }
     // sticky (M-4): a model.request denial already logged for this step (any attempt, e.g. a crash
     // after recording it) is final: fail the same way, before compaction or any model call. Read from
     // the events just loaded, so it costs no query (M-2).

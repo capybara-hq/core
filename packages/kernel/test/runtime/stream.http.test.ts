@@ -1,13 +1,14 @@
 import { connect } from "node:net";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { KernelConfig } from "../../src/config/schema.js";
 import { conversationTopic } from "../../src/conversations/event-log.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import { createKeyring } from "../../src/ctx/secrets.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { RunDrafts } from "../../src/runtime/run-drafts.js";
 import { truncateTables } from "../helpers/db.js";
 import { asUser, type CookieJar, cookieJar } from "../helpers/http.js";
 import { accountsFor, apiTokensFor, sessionsFor } from "../helpers/identity.js";
@@ -160,28 +161,79 @@ const draftsIn = (msgs: SseMessage[]) =>
     );
 
 /**
- * What a client that (re)connected shows for a step's text: the draft, then each text delta whose
- * `offset` continues it (one already in the draft is dropped; a gap would need a draft refetch).
+ * What a client that (re)connected shows for a step's text, followed live as `s` receives it: the
+ * draft, then each text delta whose `offset` continues it (one already in the draft is dropped).
+ * A delta past the draft is a gap (it was published before the stream subscribed, inside a
+ * coalescing window): the client asks `refetch` (the draft route) again until the draft reaches it,
+ * which the writer guarantees within a window. Returns at the run's `run_finished`; the step's
+ * `assistant_message` replaces a draft the route no longer has (the step finalized meanwhile).
  */
-function resumedText(msgs: SseMessage[], runId: string, step: number): string {
-  let text = draftsIn(msgs).find((d) => d.runId === runId && d.step === step)?.text ?? "";
-  for (const m of msgs.filter((x) => x.event === "delta")) {
-    const d = JSON.parse(m.data as string) as {
-      runId: string;
-      step: number;
-      delta: string;
-      text?: string;
-      offset?: number;
-    };
-    if (d.runId !== runId || d.step !== step || d.delta !== "text") continue;
-    const t = d.text ?? "";
-    const offset = d.offset ?? 0;
-    if (offset + t.length <= text.length) continue;
-    if (offset > text.length) throw new Error(`gap: offset ${offset} beyond ${text.length}`);
-    text = text.slice(0, offset) + t;
+async function resumeLive(
+  s: SseClient,
+  refetch: () => Promise<string | undefined>,
+  runId: string,
+  step: number,
+): Promise<{ text: string; refetches: number }> {
+  let text = "";
+  let refetches = 0;
+  let i = 0;
+  for (;;) {
+    while (i < s.messages.length) {
+      const m = s.messages[i++] as SseMessage;
+      if (m.event === "draft") {
+        const d = JSON.parse(m.data as string) as { runId: string; step: number; text: string };
+        if (d.runId === runId && d.step === step) text = d.text;
+        continue;
+      }
+      if (m.event === "event") {
+        const e = JSON.parse(m.data as string) as ConversationEvent;
+        if (e.type === "run_finished") return { text, refetches };
+        continue;
+      }
+      if (m.event !== "delta") continue;
+      const d = JSON.parse(m.data as string) as {
+        runId: string;
+        step: number;
+        delta: string;
+        text?: string;
+        offset?: number;
+      };
+      if (d.runId !== runId || d.step !== step || d.delta !== "text") continue;
+      const t = d.text ?? "";
+      const offset = d.offset ?? 0;
+      if (offset > text.length) {
+        const deadline = Date.now() + 2_000;
+        for (;;) {
+          refetches++;
+          const fresh = await refetch();
+          if (fresh !== undefined && fresh.length >= offset) {
+            if (fresh.length > text.length) text = fresh;
+            break;
+          }
+          const final = eventsIn(s.messages).find(
+            (e) => e.type === "assistant_message" && e.runId === runId,
+          );
+          if (fresh === undefined && final) return { text: textOf(final), refetches };
+          if (Date.now() > deadline) throw new Error(`gap: offset ${offset} beyond ${text.length}`);
+          await sleep(25);
+        }
+      }
+      if (offset + t.length <= text.length) continue;
+      text = text.slice(0, offset) + t;
+    }
+    if (s.isEnded()) throw new Error("stream ended before run_finished");
+    await sleep(10);
   }
-  return text;
 }
+
+/** The draft route's text for one step (undefined when it has none). */
+const routeText = (req: Req, url: string, step: number) => async () => {
+  const r = await req({ method: "GET", url });
+  expect(r.statusCode).toBe(200);
+  return (r.json() as { drafts: { step: number; text: string }[] }).drafts.find(
+    (d) => d.step === step,
+  )?.text;
+};
 
 /** A reply the fake model streams in 4-character chunks, one every `delayMs`. */
 const SLOW_REPLY = "The quick brown fox jumps over the lazy dog, twice over.";
@@ -455,13 +507,19 @@ describe("会话 SSE：live drafts (spec 2026-11-07 §3.2)", () => {
     convId = await createConv(owner.req, orgId, agentId);
   });
 
-  it("a stream opened mid-reply gets the draft after its catch-up, then the deltas, with no gap", async () => {
+  it("a stream opened mid-reply gets the draft after its catch-up, then the deltas; a gap is closed by the route", async () => {
     const a = await openSse(streamUrl(k, orgId, convId), { cookie: owner.cookie() });
     let b: SseClient | undefined;
     try {
       await postMessage(owner.req, orgId, convId, `slow:120:${SLOW_REPLY}`);
       const runId = await streaming(a, convId, 3);
       b = await openSse(streamUrl(k, orgId, convId), { cookie: owner.cookie() });
+      const resumed = resumeLive(
+        b,
+        routeText(owner.req, draftUrl(orgId, convId, runId), 1),
+        runId,
+        1,
+      );
       await b.until((m) => draftsIn(m).length === 1, 5_000, "draft frame");
       await b.until((m) => finishedCount(m) === 1, 15_000, "run_finished");
 
@@ -478,7 +536,7 @@ describe("会话 SSE：live drafts (spec 2026-11-07 §3.2)", () => {
       expect(iCall).toBeLessThan(iDraft);
       const iDelta = b.messages.findIndex((m) => m.event === "delta");
       if (iDelta >= 0) expect(iDraft).toBeLessThan(iDelta);
-      expect(resumedText(b.messages, runId, 1)).toBe(SLOW_REPLY);
+      expect((await resumed).text).toBe(SLOW_REPLY);
       expect(textOf(eventsIn(b.messages).find((e) => e.type === "assistant_message"))).toBe(
         SLOW_REPLY,
       );
@@ -582,6 +640,25 @@ describe("会话 SSE：live drafts (spec 2026-11-07 §3.2)", () => {
     expect(bad.statusCode).toBeLessThan(500);
   }, 30_000);
 
+  it("GET …/draft answers no drafts (and warns) when the drafts cannot be read", async () => {
+    await postMessage(owner.req, orgId, convId, "echo:done");
+    await waitForTerminal(db, convId);
+    const runId = (await eventsOf(db, convId)).find((e) => e.type === "model_call")
+      ?.runId as string;
+    const read = vi.spyOn(k.app.get(RunDrafts), "read").mockRejectedValue(new Error("redis down"));
+    // a running run, so live() reaches Redis
+    await db.updateTable("runs").set({ status: "running" }).where("id", "=", runId).execute();
+    try {
+      const r = await owner.req({ method: "GET", url: draftUrl(orgId, convId, runId) });
+      expect(r.statusCode).toBe(200);
+      expect(r.json()).toEqual({ drafts: [] });
+      expect(read).toHaveBeenCalled();
+    } finally {
+      read.mockRestore();
+      await db.updateTable("runs").set({ status: "completed" }).where("id", "=", runId).execute();
+    }
+  });
+
   it("a run stopped mid-step leaves no draft: none in Redis, none on a new stream", async () => {
     const a = await openSse(streamUrl(k, orgId, convId), { cookie: owner.cookie() });
     try {
@@ -640,6 +717,12 @@ describe("会话 SSE（跨副本：运行在 worker 副本，SSE 连在 api 副�
       await postMessage(owner.req, orgId, convId, `slow:120:${SLOW_REPLY}`);
       const runId = await streaming(a, convId, 3);
       b = await openSse(streamUrl(api, orgId, convId), { cookie: owner.cookie() });
+      const resumed = resumeLive(
+        b,
+        routeText(owner.req, draftUrl(orgId, convId, runId), 1),
+        runId,
+        1,
+      );
       await b.until((m) => draftsIn(m).length === 1, 5_000, "draft frame");
       const r = await owner.req({ method: "GET", url: draftUrl(orgId, convId, runId) });
       expect(r.statusCode).toBe(200);
@@ -650,7 +733,7 @@ describe("会话 SSE（跨副本：运行在 worker 副本，SSE 连在 api 副�
       expect(SLOW_REPLY.startsWith(draft?.text ?? "x")).toBe(true);
       // the route on the api replica read the same draft, at least as far
       expect(route[0]?.text.startsWith(draft?.text ?? "x")).toBe(true);
-      expect(resumedText(b.messages, runId, 1)).toBe(SLOW_REPLY);
+      expect((await resumed).text).toBe(SLOW_REPLY);
     } finally {
       a.close();
       b?.close();
