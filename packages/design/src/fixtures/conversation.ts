@@ -12,6 +12,31 @@ import type { PresetId } from "../display/avatar-presets";
 export type FixtureModelOption = { id: string; label: string; efforts?: string[] };
 export type FixtureModelGroup = { provider: string; label: string; models: FixtureModelOption[] };
 
+/**
+ * A long model list (§6.16.3 state `long`): two providers of fifty models each, the checked one
+ * deep in the second group, so the menu is capped, filtered and scrolled to the checked model.
+ */
+export const LONG_MODELS_FIXTURE: {
+  groups: { provider: string; label: string; models: { id: string; label: string }[] }[];
+  /** The checked model's id. */
+  selected: string;
+  /** What the filter field holds in the reference block (empty: the whole list). */
+  query: string;
+} = {
+  groups: [
+    { provider: "acme", label: "Acme Cloud" },
+    { provider: "north", label: "North AI" },
+  ].map((g, gi) => ({
+    ...g,
+    models: Array.from({ length: 50 }, (_, i) => {
+      const n = gi * 50 + i + 1;
+      return { id: `model-${n}`, label: `${g.provider}-chat-${String(n).padStart(3, "0")}` };
+    }),
+  })),
+  selected: "model-80",
+  query: "",
+};
+
 export const CONV_FIXTURE: {
   title: string;
   /** A 60-character CJK title for the long-title block. */

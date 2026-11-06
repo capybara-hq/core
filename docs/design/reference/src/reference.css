@@ -1658,11 +1658,8 @@ textarea {
   font-size: var(--cb-type-small-size);
   line-height: var(--cb-type-small-line);
 }
-/* Quick actions (§6.16.27): the composer's zap icon button; its menu, bounded like the old one. */
-.r-quick-menu {
-  min-width: 160px;
-  max-width: min(320px, calc(100vw - 16px));
-}
+/* Quick actions (§6.16.27): the composer's zap icon button; its menu is an anchored one
+   (§6.16.3, .r-anchored-menu), sized like the pickers'. */
 /* Avatar (§6.30): a preset on its ground or the initial square; the picker's 48 px tiles. */
 .r-avatar-row {
   display: flex;
@@ -3056,6 +3053,52 @@ textarea {
 .r-anchored-menu {
   position-anchor: --r-open-trigger;
   left: anchor(left);
+}
+/* §6.16.3: an anchored menu hangs from its trigger (above it here, the conversation page's
+   case), at least the trigger's width, at most min(320px, 100vw − 16px). */
+.r-menu-stage > .r-anchored-menu {
+  bottom: calc(anchor(top) + var(--cb-space-1));
+  min-width: anchor-size(width);
+  max-width: min(320px, calc(100vw - 16px));
+}
+.r-menu-stage[data-tall] {
+  padding-top: 380px;
+}
+.r-menu-capped {
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  max-height: var(--cb-layout-menu-max-height);
+  overflow: hidden;
+}
+.r-menu-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--cb-scroll-thumb) transparent;
+}
+.r-menu-capped > .r-menu-note {
+  flex: none;
+}
+.r-menu-filter {
+  flex: none;
+  box-sizing: border-box;
+  width: 100%;
+  height: var(--cb-control-dense);
+  margin-bottom: var(--cb-space-1);
+  padding: 0 var(--cb-pad-dense-x);
+  border: 1px solid var(--cb-accent);
+  border-radius: var(--cb-radius-sm);
+  background: var(--cb-bg);
+  color: var(--cb-ink);
+  font: inherit;
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+  outline: none;
+}
+.r-menu-filter::placeholder {
+  color: var(--cb-faint);
 }
 .r-subpanel {
   display: flex;

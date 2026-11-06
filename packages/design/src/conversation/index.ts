@@ -70,7 +70,16 @@ export {
   type QuestionState,
   safeHttpUrl,
 } from "./hitl";
-export { ConvMenu, type ConvMenuEntry, type ConvMenuProps } from "./menu";
+export {
+  ConvMenu,
+  type ConvMenuEntry,
+  type ConvMenuProps,
+  filterMenuEntries,
+  MENU_COLLISION_PADDING,
+  MENU_FILTER_THRESHOLD,
+  type MenuPlacementInput,
+  menuPlacement,
+} from "./menu";
 export {
   type BlockState,
   ContextSection,

@@ -2,7 +2,6 @@ import { type JSX, useRef, useState } from "react";
 import { IconButton } from "../controls/button";
 import { Icon } from "../icons/icon";
 import { useDesignT } from "../provider";
-import { useMenuAboveComposer } from "./composer";
 import { ConvMenu } from "./menu";
 
 /** A quick action's title; the page keeps its body and fills the composer on `onPick`. */
@@ -20,8 +19,9 @@ export type QuickActionsProps = {
 /**
  * The selected agent's quick actions (§6.16.27, agent profile design §4.3): a ghost `zap` icon
  * button in the composer's control row, right after the effort picker (`ComposerBox`'s
- * `quickActions`). It opens a small menu above the composer, like the pickers', listing every
- * quick action by title (a long title cut with an ellipsis); choosing one closes it and then
+ * `quickActions`). It opens an anchored menu like the pickers' (§6.16.3: below or above the
+ * button, capped, filtered past ten items) listing every quick action by title (a long title cut
+ * with an ellipsis); choosing one closes it and then
  * calls `onPick`, leaving the focus where that puts it (the composer); Escape returns it to the
  * button. No items: nothing.
  */
@@ -32,7 +32,6 @@ export function QuickActions({
   referenceOpen,
 }: QuickActionsProps): JSX.Element | null {
   const t = useDesignT();
-  const { trigger, offset, measure } = useMenuAboveComposer(referenceOpen === true);
   const [open, setOpen] = useState(false);
   // A pick runs once the menu has closed, its focus trap gone, so the focus can go where the page
   // puts it (the composer); Escape returns it to the button.
@@ -43,16 +42,12 @@ export function QuickActions({
     <ConvMenu
       inline={referenceOpen === true}
       label={name}
+      anchored
+      // drawn open in place (the reference set): above, as on the conversation page
       side="top"
-      sideOffset={offset}
       align="start"
-      size="narrow"
-      bounded
       open={open}
-      onOpenChange={(o) => {
-        if (o) measure();
-        setOpen(o);
-      }}
+      onOpenChange={setOpen}
       onCloseAutoFocus={(e) => {
         const id = picked.current;
         picked.current = null;
@@ -61,12 +56,7 @@ export function QuickActions({
         onPick(id);
       }}
       trigger={
-        <IconButton
-          ref={trigger}
-          part="quick-actions"
-          label={name}
-          icon={<Icon name="zap" size={16} />}
-        />
+        <IconButton part="quick-actions" label={name} icon={<Icon name="zap" size={16} />} />
       }
       entries={items.map((it) => ({
         kind: "item" as const,

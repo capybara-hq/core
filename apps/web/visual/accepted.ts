@@ -50,6 +50,9 @@ export const ACCEPTED: string[] = [
   "subagent-group",
   "title-bar",
   "composer",
+  // picker-menu: the anchored long-list state `long` (2026-11-07, issues N/N'/N'') has its block and
+  // size-table rows in place; its reference PNG and side-by-side review wait for the
+  // reference-update and visual-update workflows
   "picker-menu",
   // phase D (Task 10): accepted by the blind side-by-side review (compare-out-d)
   "command-palette",

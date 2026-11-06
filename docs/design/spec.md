@@ -142,7 +142,7 @@ Every size a component uses is a step of one of these scales, stored in `tokens.
 | Type | §2.2 | | `--cb-type-<name>-size`, `--cb-type-<name>-line` |
 | Radius | `sm` / `md` / `bubble` | 4 / 8 / 10 | `--cb-radius-<step>` |
 | Layout | `sidebar` / `sidebar-rail` / `content` / `content-pad` / `chat` / `status-bar` / `action-row` / `gutter` | 256 / 48 / 1120 / 32 / 720 / 24 / 40 / 20 | `--cb-layout-<name>` |
-| Layout, conversation page | `title-bar` / `properties` / `panel-min` / `panel` / `chat-min` / `tool-output` / `file-card` / `thumb` / `inline-image` | 48 / 300 / 520 / 560 / 480 / 120 / 240 / 56 / 360 | `--cb-layout-<name>` |
+| Layout, conversation page | `title-bar` / `properties` / `panel-min` / `panel` / `chat-min` / `tool-output` / `file-card` / `thumb` / `inline-image` / `menu-max-height` | 48 / 300 / 520 / 560 / 480 / 120 / 240 / 56 / 360 / 328 (ten `row.default` items and the menu's padding) | `--cb-layout-<name>` |
 
 **Density steps.** Controls and rows come in three steps, chosen by context, never by taste:
 
@@ -1179,7 +1179,7 @@ States: `default`, `untitled`, `rename-menu`, `panel-active`, `overflow`, `long-
 - `raised` ground, 1px `line` border, radius `md`, `shadow-float`, padding `space.2` `space.2` `space.2` `space.3`. While its textarea has focus: an `accent` border plus the 3px `focus-ring` halo (the input focus rule of §2.5) over the same shadow.
 - Top to bottom: the attachment strip (§6.16.21) when there are attachments; the textarea (no border or ground, `prose` 15 / 26 `ink`, placeholder `faint`, one line high when empty, growing with its content up to 8 lines and then scrolling, `space.2` below it); the control row.
 - **Control row**, gap `space.1`, pulled left by `space.2` so the ＋ lines up with the text: ＋ (ghost `IconButton`, `plus`, "添加附件" / "Attach files") · agent picker · model picker · effort picker · quick actions · flexible space · send. The agent picker is optional (`pickers.agent`): the new conversation page leaves it out, its agents row chooses the agent (§5.4). The quick actions (`quickActions`, §6.16.27) are a ghost `zap` icon button, given only when the agent has some.
-  - Pickers are ghost `default`-step buttons in `muted`: label + `chevron-down` 12, padding 0 `space.2`, opening a picker menu (§6.16.3) above them.
+  - Pickers are ghost `default`-step buttons in `muted`: label + `chevron-down` 12, padding 0 `space.2`, opening a picker menu (§6.16.3) anchored to them (below, or above when the room below is short).
   - The agent picker is a picker only in a new conversation; after the first message it is plain `muted` text with no chevron (`data-locked="true"`, `title` "发送第一条消息后不能再换 agent" / "The agent can't change after the first message").
   - The effort picker is hidden when the selected model declares no `effort` values.
   - Send: a `control.default` square icon button with `arrow-up` 16 on the `accent` ground, `on-accent` icon; disabled (no text and no files) it is the `selected` ground with a `faint` icon. While a run is going it becomes Stop (`square` 14, `selected` ground, `ink` icon, "停止" / "Stop").
@@ -1231,14 +1231,19 @@ States: `idle`, `new`, `running`, `attachments`, `focus`, `no-effort`, `skill`
 
 #### 6.16.3 Picker menu
 
-- The model, effort and agent menus of the composer: a Menu (§6.7: `panel` ground, 1px `line-strong` border, radius `md`, `shadow-1`, padding `space.1`) opening above the composer, `space.1` from its top edge, aligned with its picker. Items are `menuitemradio`, `row.default` high, padding 0 `pad.default.x`, radius `sm`, `ink`; the selected item has `aria-checked="true"`, the `selected` ground and a `check` 14 at its end.
+- The model, effort and agent menus of the composer, and the quick actions' (§6.16.27): a Menu (§6.7: `panel` ground, 1px `line-strong` border, radius `md`, `shadow-1`, padding `space.1`) **anchored to its trigger** (maintainer decision 2026-11-07; `ConvMenu anchored`):
+  - **Placement** (`menuPlacement`, a pure function): `space.1` from the trigger, below it by default, above it when the menu does not fit below but fits above (so the new conversation page's menus open below, the conversation page's above); when neither side fits the whole menu, on the side with more room. Its start edge sits on the trigger's; it may cover the textarea. 8 px stay between the menu and the viewport edge (collision padding; it shifts sideways to keep them).
+  - **Size**: as wide as its content, at least the trigger's width and at most `min(320px, 100vw − 16px)`, a long label cut with an ellipsis and the whole label in its tooltip. Its height is the smaller of `layout.menu-max-height` (328: ten `row.default` items and the padding) and the room from the trigger to the viewport edge on its side minus the gap and the 8 px; the list scrolls inside it while the filter field above and the note below stay in view.
+  - **Filter**: with more than ten items a filter field heads the menu (`menu-filter`: `control.dense` high, 1px `line` border, `accent` when focused, radius `sm`, `bg` ground, `small`, placeholder "筛选" / "Filter" in `faint`). Focus starts in it; typing narrows the items to those whose label contains the text (case-insensitive) and keeps the group label over each group that still has a match; ↓ moves to the first match and the arrows go on through the matches; Enter picks the first match; no match is the line "没有匹配项" / "No matches" (`menu-empty`, prose `small` `muted`).
+  - **Open**: the checked item is scrolled into view.
+- Items are `menuitemradio`, `row.default` high, padding 0 `pad.default.x`, radius `sm`, `ink`; the selected item has `aria-checked="true"`, the `selected` ground and a `check` 14 at its end.
 - **Model**: grouped by provider, each group under a label (`micro` `muted`, padding `space.2` `pad.default.x` `space.1`); the chat models of the org's enabled providers (`GET /orgs/:orgId/models`), the agent's own model first and tagged "agent 默认" / "agent default" (`micro` `muted` on the `selected` ground, radius `sm`, padding 0 `space.1`). The agent's fallback model is never listed.
 - **Effort**: exactly the values the selected model declares, in the order low, medium, high, xhigh, max.
 - **Agent**: the agents the person can use (new conversation only).
 - A note closes each menu (`micro` `muted`, a `line-soft` top line, padding `space.2` `pad.default.x` `space.1`): model and effort "从下一条消息起生效" / "Applies from the next message"; agent "发送第一条消息后不能再换 agent" / "The agent can't change after the first message".
 
 <!-- states: picker-menu -->
-States: `model`, `effort`, `agent`
+States: `model`, `effort`, `agent`, `long`
 
 <!-- size-table: picker-menu -->
 | Part | State | Property | Value |
@@ -1261,6 +1266,12 @@ States: `model`, `effort`, `agent`
 | menu-item | effort | height | row.default |
 | menu-item | agent | height | row.default |
 | menu-note | agent | color | color.muted |
+| menu | long | max-height | layout.menu-max-height |
+| menu-filter | long | height | control.dense |
+| menu-filter | long | border-radius | radius.sm |
+| menu-filter | long | font-size | type.small |
+| menu-item | long | height | row.default |
+| menu-note | long | color | color.muted |
 
 #### 6.16.4 Prose
 
@@ -2055,9 +2066,10 @@ between the agents row and the composer (maintainer decision, 2026-11-07).
   hover), the `zap` icon 16 (the line set, §3), named "常用任务" / "Common tasks" (its accessible name
   and tooltip). Shown only when the agent has quick actions; no items: nothing, and nothing takes its
   place.
-- **Menu**: it opens a small menu above the composer, `space.1` from its top edge, like the
-  pickers' (§6.16.3's menu, 160 at least and at most `min(320px, 100vw − 16px)`), named like the
-  button, one item per title in the agent's order, a long title cut with an ellipsis.
+- **Menu**: it opens the pickers' anchored menu (§6.16.3: below the button, or above it when the
+  room below is short; at least the button's width, at most `min(320px, 100vw − 16px)`; capped at
+  `layout.menu-max-height` with a filter past ten items), named like the button, one item per
+  title in the agent's order, a long title cut with an ellipsis and whole in its tooltip.
 - **Pick**: choosing one closes the menu, then `onPick(id)`: the page puts the body into the
   composer and focuses it (focus does not return to the button); Escape closes the menu and
   returns focus to the button.

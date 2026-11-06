@@ -106,5 +106,6 @@ export const SIZES = {
     "file-card": 240,
     thumb: 56,
     "inline-image": 360,
+    "menu-max-height": 328,
   },
 } as const;

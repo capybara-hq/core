@@ -208,6 +208,60 @@ span.cb-title-btn {
 .cb-cmenu[data-bounded="true"] {
   max-width: min(320px, calc(100vw - 16px));
 }
+/* A composer toolbar menu (§6.16.3): anchored to its trigger, at least its width and at most
+   min(320px, 100vw − 16px); the height capped (inline max-height: layout.menu-max-height and
+   the room on its side); the filter and the notes stay while the list scrolls between them. */
+.cb-cmenu[data-anchored="true"] {
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  min-width: var(--radix-dropdown-menu-trigger-width, 0);
+  max-width: min(320px, calc(100vw - 16px));
+  overflow: hidden;
+}
+.cb-cmenu-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--cb-scroll-thumb) transparent;
+}
+.cb-cmenu[data-anchored="true"] > .cb-cmenu-note {
+  flex: none;
+}
+.cb-cmenu[data-anchored="true"] .cb-cmenu-item {
+  min-width: 0;
+}
+.cb-cmenu-filter {
+  flex: none;
+  box-sizing: border-box;
+  width: 100%;
+  height: var(--cb-control-dense);
+  margin-bottom: var(--cb-space-1);
+  padding: 0 var(--cb-pad-dense-x);
+  border: 1px solid var(--cb-line);
+  border-radius: var(--cb-radius-sm);
+  background: var(--cb-bg);
+  color: var(--cb-ink);
+  font: inherit;
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+  outline: none;
+}
+.cb-cmenu-filter::placeholder {
+  color: var(--cb-faint);
+}
+.cb-cmenu-filter:focus-visible {
+  border-color: var(--cb-accent);
+}
+.cb-cmenu-empty {
+  padding: var(--cb-space-2) var(--cb-pad-default-x);
+  color: var(--cb-muted);
+  font-family: var(--cb-font-prose);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
 .cb-cmenu-item {
   display: flex;
   align-items: center;

@@ -52,6 +52,7 @@ import {
   FILE_FIXTURE,
   type FixtureFile,
   type FixtureSubagent,
+  LONG_MODELS_FIXTURE,
   NEW_CONVERSATION_FIXTURE,
   PANEL_FIXTURE,
   PROSE_FIXTURE,
@@ -231,7 +232,7 @@ function modelLabel(provider: string, id: string): string {
   );
 }
 
-function pickers(state: ComposerState, open?: "agent" | "model" | "effort") {
+function pickers(state: ComposerState, open?: "agent" | "model" | "effort" | "long") {
   const model = state === "no-effort" ? C.noEffortModel : C.selected;
   const agent: PickerProps = {
     label: K.agent,
@@ -244,22 +245,39 @@ function pickers(state: ComposerState, open?: "agent" | "model" | "effort") {
     onPick: noop,
     referenceOpen: open === "agent",
   };
-  const modelPicker: PickerProps = {
+  const long = LONG_MODELS_FIXTURE;
+  const longPicker: PickerProps = {
     label: K.model,
-    value: modelLabel(model.provider, model.model),
-    groups: C.models.map((g, gi) => ({
+    value:
+      long.groups.flatMap((g) => g.models).find((m) => m.id === long.selected)?.label ??
+      long.selected,
+    groups: long.groups.map((g) => ({
       label: g.label,
-      items: g.models.map((m, mi) => ({
-        id: `${g.provider}/${m.id}`,
-        label: m.label,
-        ...(gi === 0 && mi === 0 ? { tag: "智能体默认" } : {}),
-        checked: g.provider === model.provider && m.id === model.model,
-      })),
+      items: g.models.map((m) => ({ id: m.id, label: m.label, checked: m.id === long.selected })),
     })),
     note: K.modelHint,
     onPick: noop,
-    referenceOpen: open === "model",
+    referenceOpen: true,
   };
+  const modelPicker: PickerProps =
+    open === "long"
+      ? longPicker
+      : {
+          label: K.model,
+          value: modelLabel(model.provider, model.model),
+          groups: C.models.map((g, gi) => ({
+            label: g.label,
+            items: g.models.map((m, mi) => ({
+              id: `${g.provider}/${m.id}`,
+              label: m.label,
+              ...(gi === 0 && mi === 0 ? { tag: "智能体默认" } : {}),
+              checked: g.provider === model.provider && m.id === model.model,
+            })),
+          })),
+          note: K.modelHint,
+          onPick: noop,
+          referenceOpen: open === "model",
+        };
   const efforts = C.models[0]?.models[0]?.efforts ?? [];
   const effort: PickerProps = {
     label: K.effort,
@@ -284,7 +302,7 @@ function pickers(state: ComposerState, open?: "agent" | "model" | "effort") {
 
 function composerProps(
   state: ComposerState,
-  open?: "agent" | "model" | "effort",
+  open?: "agent" | "model" | "effort" | "long",
 ): ComposerBoxProps {
   const value =
     state === "attachments"
@@ -426,6 +444,10 @@ function pickerMenuBlocks(): ReactNode {
           <ComposerBox {...composerProps(m === "agent" ? "new" : "idle", m)} />
         </Block>
       ))}
+      {/* 100 models: the filter, the capped list scrolled to the checked one, the note kept */}
+      <Block id="picker-menu-long" offsetTop={380}>
+        <ComposerBox {...composerProps("idle", "long")} />
+      </Block>
     </>
   );
 }

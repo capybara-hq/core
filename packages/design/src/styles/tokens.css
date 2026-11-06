@@ -69,6 +69,7 @@
   --cb-layout-file-card: 240px;
   --cb-layout-thumb: 56px;
   --cb-layout-inline-image: 360px;
+  --cb-layout-menu-max-height: 328px;
 }
 
 :root[data-theme="dark"] {

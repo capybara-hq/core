@@ -5,12 +5,10 @@ import {
   type KeyboardEvent,
   type ReactNode,
   type Ref,
-  type RefObject,
   type TextareaHTMLAttributes,
   useCallback,
   useEffect,
   useId,
-  useLayoutEffect,
   useRef,
   useState,
 } from "react";
@@ -87,7 +85,6 @@ export function Picker({
   onPick,
   referenceOpen,
 }: PickerProps): JSX.Element {
-  const { trigger, offset, measure } = useMenuAboveComposer(referenceOpen === true);
   const [open, setOpen] = useState(false);
   if (locked) {
     return (
@@ -115,17 +112,14 @@ export function Picker({
     <ConvMenu
       inline={referenceOpen === true}
       label={label}
+      anchored
+      // drawn open in place (the reference set): above, as on the conversation page
       side="top"
-      sideOffset={offset}
       align="start"
       open={open}
-      onOpenChange={(o) => {
-        if (o) measure();
-        setOpen(o);
-      }}
+      onOpenChange={setOpen}
       trigger={
         <Button
-          ref={trigger}
           variant="ghost"
           className="cb-picker"
           part="picker"
@@ -139,32 +133,6 @@ export function Picker({
       entries={entries}
     />
   );
-}
-
-/**
- * A control-row menu's place (the pickers, the quick actions): it opens above the composer,
- * `space.1` from its top edge (the signed reference), not just above the trigger, so the offset
- * is the trigger's distance from the composer's top. `measure` runs as the menu opens; a menu
- * drawn open in place (`drawnOpen`, the reference set) is measured once on mount.
- */
-export function useMenuAboveComposer(drawnOpen: boolean): {
-  trigger: RefObject<HTMLButtonElement | null>;
-  offset: number;
-  measure(): void;
-} {
-  const trigger = useRef<HTMLButtonElement>(null);
-  const [offset, setOffset] = useState(4);
-  const measure = () => {
-    const el = trigger.current;
-    const frame = el?.closest('[data-part="composer"]');
-    if (el && frame)
-      setOffset(el.getBoundingClientRect().top - frame.getBoundingClientRect().top + 4);
-  };
-  // biome-ignore lint/correctness/useExhaustiveDependencies: measured once for the drawn-open menu
-  useLayoutEffect(() => {
-    if (drawnOpen) measure();
-  }, [drawnOpen]);
-  return { trigger, offset, measure };
 }
 
 export type ComposerBoxProps = {

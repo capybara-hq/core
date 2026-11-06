@@ -400,7 +400,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
     const quick = o.quick
       ? `<button class="r-icon-btn" data-part="quick-actions"${o.menu === "quick" ? ' aria-expanded="true" data-state="hover" style="anchor-name: --r-open-trigger"' : state(o.quickState)} aria-label="${esc(QUICK_LABEL)}">${icon("zap", 16)}</button>`
       : "";
-    return `<div class="r-composer"${o.state === "focus" ? ' data-state="focus"' : ""}>${strip}<label class="r-sr" for="msg">消息</label>${line}<div class="r-composer-bar">${iconBtn("plus", K.attach)}${o.noAgent ? "" : picker(C.agent.name, { locked: !isNew, open: o.menu === "agent" })}${picker(modelLabel(model.provider, model.model), { open: o.menu === "model" })}${effort}${quick}<span class="r-grow"></span>${action}</div></div>`;
+    return `<div class="r-composer"${o.state === "focus" ? ' data-state="focus"' : ""}>${strip}<label class="r-sr" for="msg">消息</label>${line}<div class="r-composer-bar">${iconBtn("plus", K.attach)}${o.noAgent ? "" : picker(C.agent.name, { locked: !isNew, open: o.menu === "agent" })}${picker(o.modelValue ?? modelLabel(model.provider, model.model), { open: o.menu === "model" })}${effort}${quick}<span class="r-grow"></span>${action}</div></div>`;
   }
 
   function pickerMenu(o) {
@@ -428,6 +428,22 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
         })
         .join("");
       body += `<div class="r-menu-note">${esc(K.modelHint)}</div>`;
+    } else if (o.menu === "long") {
+      // 100 models (§6.16.3 state long): the filter on top, the list capped and scrolled to the
+      // checked model (drawn as the rows in view), the note kept below
+      const L = F.LONG_MODELS_FIXTURE;
+      const all = L.groups.flatMap((g) => g.models.map((m) => ({ ...m, group: g.label })));
+      const at = all.findIndex((m) => m.id === L.selected);
+      const view = all.slice(Math.max(0, at - 8), at + 1);
+      const rows = view
+        .map((m) => {
+          const sel = m.id === L.selected;
+          return `<div class="r-menu-item" role="menuitemradio" aria-checked="${sel}" title="${esc(m.label)}"><span class="r-ellipsis">${esc(m.label)}</span><span class="r-grow"></span>${sel ? icon("check", 14) : ""}</div>`;
+        })
+        .join("");
+      body = `<input class="r-menu-filter" placeholder="筛选" aria-label="筛选" value="${esc(L.query)}"><div class="r-menu-list">${rows}</div><div class="r-menu-note">${esc(K.modelHint)}</div>`;
+      const value = all[at]?.label ?? L.selected;
+      return `<div class="r-menu-stage" data-tall>${composer({ state: "idle", menu: "model", modelValue: value })}<div class="r-menu r-anchored-menu r-menu-capped" role="menu">${body}</div></div>`;
     } else {
       body = C.agents
         .map((a) => {

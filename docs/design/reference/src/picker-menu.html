@@ -10,7 +10,7 @@
 <body>
 <main class="r-page">
 <h1>Picker menus</h1>
-<p>Menus above the composer: models grouped by provider with the agent's model first; the efforts the model declares; agents (new conversation only). Changes apply from the next message.</p>
+<p>Menus anchored to their picker (below it when there is room, else above it, as on the conversation page drawn here): models grouped by provider with the agent's model first; the efforts the model declares; agents (new conversation only); a long list (100 models) capped at layout.menu-max-height with a filter on top, scrolled to the checked model, the note kept. Changes apply from the next message.</p>
 <div class="r-blocks">
 <section data-ref-block="picker-menu-model" style="width:752px" data-pad>
   <template data-fixture="picker-menu" data-opts='{"state": "model"}'></template>
@@ -20,6 +20,9 @@
 </section>
 <section data-ref-block="picker-menu-agent" style="width:752px" data-pad>
   <template data-fixture="picker-menu" data-opts='{"state": "agent"}'></template>
+</section>
+<section data-ref-block="picker-menu-long" style="width:752px" data-pad>
+  <template data-fixture="picker-menu" data-opts='{"state": "long"}'></template>
 </section>
 </div>
 </main>
