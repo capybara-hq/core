@@ -35,6 +35,11 @@ const SUCCESS_MS = 4000;
 /** How long a success toast carrying an action (Undo) stays (spec §6.7). */
 const UNDO_MS = 8000;
 const SEGMENTS = 10;
+const TOAST_ICON = {
+  success: "circle-check",
+  error: "circle-alert",
+  progress: "spinner",
+} as const;
 
 export function ToastProvider({ children }: { children: ReactNode }) {
   const t = useDesignT();
@@ -108,7 +113,12 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       data-kind={it.kind}
       role={it.kind === "error" ? "alert" : undefined}
     >
-      {/* 两列网格：左列为标题行与进度条，右列为关闭按钮；进度条因此与标题行同宽。 */}
+      {/* Three-column grid: the status icon, then the head row and the progress bar (so the bar is
+          as wide as the head), then the close button. The icon carries the status, not color alone:
+          ok circle-check, fail circle-alert, progress spinner. */}
+      <span className="cb-toast-icon">
+        <Icon name={TOAST_ICON[it.kind]} size={16} />
+      </span>
       <div className="cb-toast-head">
         <span className="cb-toast-msg">{it.msg}</span>
         {it.kind === "progress" ? (

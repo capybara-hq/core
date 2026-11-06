@@ -150,7 +150,7 @@ describe("/skills: own and platform skills with their org state", () => {
     expect(screen.queryByRole("button", { name: en.skills.upload.open })).toBeNull();
   });
 
-  it("an org admin switches a platform skill on; the switch invalidates the lists", async () => {
+  it("an org admin switches a platform skill on; the switch invalidates the lists, no toast", async () => {
     let on = false;
     const routes = skillRoutes({
       [`GET ${ORG}/components?kind=skill`]: () =>
@@ -166,14 +166,17 @@ describe("/skills: own and platform skills with their org state", () => {
     await renderRouteWithCache("/skills", routes);
     const notes = await rowOf("notes");
     await userEvent.setup().click(within(notes).getByRole("button", { name: C.action.enable }));
-    expect(await screen.findByText(C.toast.enabled.replace("{name}", "notes"))).toBeTruthy();
-    expect(bodyOf(calls.find((c) => c.method === "PUT"))).toEqual({ enabled: true });
+    await vi.waitFor(() =>
+      expect(bodyOf(calls.find((c) => c.method === "PUT"))).toEqual({ enabled: true }),
+    );
     await vi.waitFor(() =>
       expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual(
         expect.arrayContaining([`GET ${ORG}/components?kind=skill`, `GET ${ORG}/skills`]),
       ),
     );
     expect(within(await rowOf("notes")).getByText(C.state.on)).toBeTruthy();
+    // The row shows its new state where it was clicked: no success toast (spec §6)
+    expect(document.querySelector(".cb-toast")).toBeNull();
   });
 
   it("switching off previews the agents that use it, then confirms with its hash", async () => {
@@ -199,7 +202,8 @@ describe("/skills: own and platform skills with their org state", () => {
     const dialog = await screen.findByRole("dialog");
     expect(within(dialog).getByText("· Helper")).toBeTruthy();
     await user.click(within(dialog).getByRole("button", { name: C.switchOff.confirm }));
-    expect(await screen.findByText(C.toast.disabled.replace("{name}", "pdf"))).toBeTruthy();
+    await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(document.querySelector(".cb-toast")).toBeNull();
     expect(calls.filter((c) => c.method === "PUT").map(bodyOf)).toEqual([
       { enabled: false },
       { enabled: false, confirm: hash },

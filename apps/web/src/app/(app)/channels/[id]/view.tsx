@@ -189,8 +189,8 @@ function OverviewTab({ channel, update }: { channel: ChannelConnection; update: 
   async function toggle() {
     setPending(true);
     try {
+      // The status shows its new state where it was clicked: no success toast (spec §6 selection)
       await update({ status: active ? "disabled" : "active" });
-      toast.success(t(active ? "detail.disabledToast" : "detail.enabledToast"));
     } catch (e) {
       toast.error(errorMessage(e));
     } finally {

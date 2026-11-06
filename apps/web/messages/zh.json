@@ -503,7 +503,7 @@
       "deleteOwnSkillLabel": "删除技能 {name}",
       "deleteOwnSkillTitle": "删除技能 {name}？",
       "deleteOwnSkillHint": "智能体不再加载这个技能，针对它的待处理改动会一并取消。",
-      "ownSkillDeleted": "已删除技能 {name}。",
+      "ownSkillDeleted": "已删除技能「{name}」。",
       "pinnedLabel": "置顶的技能",
       "pinnedUnavailable": "读不到技能列表；置顶的技能保持不变。",
       "pinnedHint": "置顶技能的说明始终在模型的上下文里，不用调用 Skill。最多从已选技能里置顶 3 个，SKILL.md 合计不超过 32 KB。",
@@ -732,8 +732,8 @@
       "chooseHint": "或把 .zip 文件拖到这里。",
       "drop": "松开即上传 .zip 文件",
       "uploading": "正在上传 {name}… {percent}%",
-      "created": "已添加技能 {name}。",
-      "versionCreated": "技能 {name} 已更新到版本 {version}。",
+      "created": "已添加技能「{name}」。",
+      "versionCreated": "技能「{name}」已更新到版本 {version}。",
       "notZip": "请选择 .zip 文件。",
       "tooLarge": "zip 文件超过 50 MB。",
       "cancel": "取消",
@@ -771,7 +771,7 @@
       "delete": "删除技能",
       "deleteTitle": "删除 {name}？",
       "deleteHint": "智能体将不再加载这个技能。智能体定义里的引用会保留并显示为「已删除」，直到负责人移除。",
-      "deleted": "已删除技能 {name}。",
+      "deleted": "已删除技能「{name}」。",
       "owner": "归属",
       "ownerPlatform": "平台",
       "ownerOrg": "本组织",
@@ -1400,8 +1400,8 @@
       "reject": "拒绝",
       "approveLabel": "批准 {tool}",
       "rejectLabel": "拒绝 {tool}",
-      "approved": "已批准 {tool}。",
-      "rejected": "已拒绝 {tool}，工具已停用。",
+      "approved": "已批准「{tool}」。",
+      "rejected": "已拒绝「{tool}」，工具已停用。",
       "missingTitle": "服务已不再提供",
       "missingHint": "这些工具已停用；服务再次提供时会进入复核。"
     },
@@ -1431,8 +1431,8 @@
     "missing": "未连接",
     "save": "保存",
     "clear": "清除",
-    "saved": "{connector} 的凭据已保存。",
-    "cleared": "{connector} 的凭据已清除。",
+    "saved": "「{connector}」的凭据已保存。",
+    "cleared": "「{connector}」的凭据已清除。",
     "grants": {
       "empty": "没有已记住的授权。",
       "emptyHint": "审批时选择「以后都允许」会在这里留下一条。",
@@ -1445,7 +1445,7 @@
       },
       "revoke": "撤销",
       "revokeLabel": "撤销 {agent} 的 {tool} 授权",
-      "revoked": "已撤销 {tool} 的授权。"
+      "revoked": "已撤销「{tool}」的授权。"
     },
     "reconnect": "重新连接",
     "oauthConnect": "连接",
@@ -1628,8 +1628,6 @@
       "disable": "停用",
       "enableHint": "机器人已离线，启用后重新连接。",
       "disableHint": "停用会断开机器人，期间发来的消息不会回复。",
-      "enabledToast": "渠道已启用。",
-      "disabledToast": "渠道已停用。",
       "credentialsTitle": "凭据与配置",
       "credentialsHint": "不动的密钥保持原值；替换密钥即轮换凭据，新凭据保存前会先向平台校验。",
       "schemaUnavailable": "渠道扩展不可用，无法编辑配置。请确认扩展已安装并已启用。",
@@ -1674,8 +1672,7 @@
     "disabled": "未启用",
     "unavailable": "不可用",
     "unavailableHint": "此扩展在部署上当前不可用；组织的启用设置会保留。",
-    "enabledToast": "已启用 {plugin}。",
-    "disabledToast": "已停用 {plugin}。",
+    "enabledToast": "已启用「{plugin}」。",
     "dependencyMissing": "请先启用提供以下扩展点的扩展：",
     "hasDependents": "以下已启用的扩展依赖它，停用后将无法工作：",
     "forceDisable": "仍然停用",
@@ -1704,7 +1701,7 @@
     "saveAndEnable": "保存并启用",
     "saveAndEnableLabel": "保存 {plugin} 的配置并启用",
     "configFirstHint": "先填写组织级配置再启用。",
-    "configSaved": "{plugin} 的配置已保存。",
+    "configSaved": "「{plugin}」的配置已保存。",
     "sync": "立即同步",
     "syncLabel": "立即同步 {plugin} 的通讯录",
     "syncHint": "通讯录同步会按平台通讯录增删组织成员。",
@@ -1742,7 +1739,7 @@
       "none": "未选择",
       "noneHint": "有多个扩展提供{point}。选定之前，用到它的工具不可用。",
       "unavailable": "{extension}（不可用）",
-      "saved": "{point}现在使用 {extension}。",
+      "saved": "{point}现在使用「{extension}」。",
       "points": {
         "webSearch": "网页搜索",
         "webFetch": "网页读取"
@@ -1767,7 +1764,7 @@
     "unlink": "解绑",
     "unlinkTitle": "解绑 {name}？",
     "unlinkHint": "解绑后，这个 IM 账号发来的消息不再以你的身份处理，也不能再用它登录。",
-    "unlinked": "已解绑 {name}。",
+    "unlinked": "已解绑「{name}」。",
     "unverified": "未验证",
     "verify": "验证（用该账号登录一次）"
   },
@@ -2289,8 +2286,8 @@
         "save": "保存价格",
         "saveLabel": "保存 {model} 的价格",
         "cancel": "取消",
-        "saved": "已保存 {model} 的价格。",
-        "cleared": "已清除 {model} 的价格。"
+        "saved": "已保存「{model}」的价格。",
+        "cleared": "已清除「{model}」的价格。"
       },
       "purposes": {
         "title": "用途默认映射",
@@ -2468,7 +2465,7 @@
         "email": "邮箱",
         "superAdmin": "设为超级管理员",
         "submit": "新建",
-        "created": "已新建账号「{name}」"
+        "created": "已新建账号「{name}」。"
       }
     },
     "orgs": {
@@ -2761,8 +2758,8 @@
       "transferHint": "对方成为组织所有者，你将降为组织管理员。",
       "transfer": "转让"
     },
-    "removed": "已移出「{name}」",
-    "transferred": "已把所有权转让给「{name}」",
+    "removed": "已移出「{name}」。",
+    "transferred": "已把所有权转让给「{name}」。",
     "invitations": {
       "title": "邀请",
       "empty": "还没有邀请。",
@@ -2903,7 +2900,7 @@
           "hint": "组织将不再看到这个插件，已安装的组件不受影响。之后可以重新引入。",
           "confirm": "删除"
         },
-        "deletedToast": "已删除 {name}",
+        "deletedToast": "已删除「{name}」。",
         "versionColumns": {
           "version": "版本",
           "source": "来源",
@@ -2953,8 +2950,8 @@
           "slug": "标识"
         },
         "orgsEmpty": "还没有组织。",
-        "enabledToast": "已启用 {name}",
-        "disabledToast": "已停用 {name}",
+        "enabledToast": "已启用「{name}」。",
+        "disabledToast": "已停用「{name}」。",
         "disabledNote": "已在整个部署停用，范围保留；启用后按原范围恢复。"
       },
       "review": {
@@ -2991,7 +2988,7 @@
         "ackHint": "插件里有敏感权限或迁移警告，确认前请逐项看过。",
         "ack": "我已了解敏感项",
         "confirm": "确认导入",
-        "done": "已导入插件 {name}",
+        "done": "已导入插件「{name}」。",
         "deployResult": "部署结果",
         "deployFailed": "{name} {version}：装到部署失败（{code}），导入已保留。可在扩展后台重试。",
         "openItem": "查看插件",
@@ -3189,16 +3186,16 @@
         "tokenSet": "已设置令牌",
         "clearToken": "清除令牌",
         "save": "保存",
-        "saved": "已保存 {name}",
+        "saved": "已保存「{name}」。",
         "remove": "删除",
         "removeConfirm": {
           "title": "删除市场 {name}",
           "hint": "它的条目缓存随之删除，已引入的平台目录条目保留。",
           "confirm": "删除"
         },
-        "removed": "已删除 {name}",
+        "removed": "已删除「{name}」。",
         "add": "添加自定义市场源",
-        "added": "已添加 {name}",
+        "added": "已添加「{name}」。",
         "form": "类型",
         "formHttp": "marketplace.json 地址",
         "formGit": "Git 仓库",
@@ -3265,7 +3262,7 @@
         "back": "上一步",
         "cancel": "取消",
         "confirm": "确认",
-        "saved": "已设置 {name} 的范围",
+        "saved": "已设置「{name}」的范围。",
         "stale": "影响已变化，请再看一遍后确认。"
       },
       "impact": {
@@ -3295,7 +3292,7 @@
         "confirmTitle": "确认 {name} 的权限",
         "confirmHint": "扩展的代码在内核进程里运行，作用于整个部署，与范围无关。",
         "confirm": "确认权限",
-        "confirmed": "已确认 {name} 的权限",
+        "confirmed": "已确认「{name}」的权限。",
         "noHash": "读不出这个插件的扩展包，暂时无法确认。",
         "kind": {
           "access": "申请使用",
@@ -3373,7 +3370,7 @@
         "backToPlugin": "返回插件",
         "nothing": "{name} 没有缺少的连接器。",
         "submit": "创建连接器",
-        "done": "已为 {name} 创建连接器。",
+        "done": "已为「{name}」创建连接器。",
         "summary": "将为本组织创建 {n} 个连接器。"
       }
     },
@@ -3488,7 +3485,7 @@
       "none": "没有组件变化，只有版本号变化。",
       "confirm": "更新",
       "cancel": "取消",
-      "done": "已把 {name} 更新到 {version}",
+      "done": "已把「{name}」更新到 {version}。",
       "stale": "更新的内容已变化，请再看一遍后确认。"
     },
     "errorDetail": {
@@ -3615,7 +3612,7 @@
       "lastOwner": "你是这个组织唯一的组织所有者。先在「成员」里把所有权转让给别人，才能退出。",
       "toMembers": "去成员页",
       "gotIt": "知道了",
-      "left": "已退出「{name}」"
+      "left": "已退出「{name}」。"
     },
     "danger": {
       "title": "危险操作"
@@ -3703,8 +3700,7 @@
       "platform": "平台 · {scope}"
     },
     "toast": {
-      "enabled": "已启用 {name}。",
-      "disabled": "已停用 {name}。",
+      "enabled": "已启用「{name}」。",
       "requested": "申请已提交。"
     },
     "switchOff": {
@@ -3808,8 +3804,8 @@
         "plugin": "随插件 {version}",
         "own": "单独更新"
       },
-      "enabledToast": "已启用 {name}",
-      "disabledToast": "已停用 {name}",
+      "enabledToast": "已启用「{name}」。",
+      "disabledToast": "已停用「{name}」。",
       "disabledNote": "已在整个部署停用，范围保留；启用后按原范围恢复。",
       "pluginStoppedNote": "它的插件已停用或删除，所以它在所有组织都不可用。",
       "orgsHint": {
@@ -3824,7 +3820,7 @@
       "title": "设置 {name} 的范围",
       "follow": "跟随插件",
       "followHint": "使用插件 {plugin} 的范围，插件的范围变了它也跟着变。",
-      "saved": "已设置 {name} 的范围"
+      "saved": "已设置「{name}」的范围。"
     },
     "disableDialog": {
       "title": "停用 {name}",
@@ -3839,7 +3835,7 @@
       "drop": "拖放文件到这里",
       "confirm": "上传",
       "cancel": "取消",
-      "done": "已上传 {name} 的 {version}"
+      "done": "已上传「{name}」的 {version}。"
     }
   },
   "orgComponents": {
@@ -3862,10 +3858,6 @@
       "enable": "启用",
       "disable": "停用",
       "plugin": "查看插件"
-    },
-    "toast": {
-      "enabled": "已启用 {name}。",
-      "disabled": "已停用 {name}。"
     },
     "error": {
       "conflict": {

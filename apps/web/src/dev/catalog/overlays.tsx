@@ -253,7 +253,7 @@ function ToastDemo() {
     fired.current = true;
     fire();
   });
-  return <Backdrop label="Toast — 右下堆叠；4s 消失；错误需手动关" onOpen={fire} />;
+  return <Backdrop label="Toast — 底部居中，向上堆叠；4s 消失；错误需手动关" onOpen={fire} />;
 }
 
 /** `/dev/ui/overlays/*`：每条路由打开一种浮层。 */
