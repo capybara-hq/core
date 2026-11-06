@@ -531,7 +531,11 @@ export class OrgCatalogService {
     return item;
   }
 
-  /** Writes the org's switch row of the item under the org row lock. */
+  /**
+   * Writes the org's switch row of the item under the org row lock. Switching on locks the item row
+   * FOR SHARE first (exclusive with a scope change or an unshare, ruling P3-25) and re-checks that
+   * the org may still see it; the install path re-checks the same in `assertItemInstallable`.
+   */
   @Transactional()
   private async recordSwitch(
     orgId: string,
@@ -540,6 +544,25 @@ export class OrgCatalogService {
     enabled: boolean,
   ): Promise<void> {
     await this.orgLock.lock(orgId);
+    if (enabled) {
+      const item = await this.db
+        .selectFrom("catalog_items")
+        .select(["scope", "builtin"])
+        .where("id", "=", itemId)
+        .where("deleted_at", "is", null)
+        .forShare()
+        .executeTakeFirst();
+      if (!item) throw itemNotFound();
+      const listed = await this.db
+        .selectFrom("catalog_item_scope_orgs")
+        .select("item_id")
+        .where("item_id", "=", itemId)
+        .where("org_id", "=", orgId)
+        .executeTakeFirst();
+      if (!visibleTo({ scope: item.builtin ? "all" : item.scope }, listed !== undefined)) {
+        throw itemNotFound();
+      }
+    }
     await upsertOrgSwitch(this.db, orgId, itemId, enabled, actor);
   }
 

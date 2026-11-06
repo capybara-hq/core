@@ -560,7 +560,12 @@ export class ComponentScopeService {
     actorTokenId?: string,
   ): Promise<ComponentSwitchResult> {
     await this.orgLock.lockAndAuthorize(orgId, actor, ACTION[kind]);
-    const [c] = await loadComponents(this.db, kind, { ids: [id] });
+    // The rows an unshare narrows (ruling P3-25) are locked before the scope is read, in its order
+    // (plugin, then component): a switch-on never commits against a scope narrowed meanwhile
+    const [found] = await loadComponents(this.db, kind, { ids: [id] });
+    if (!found) throw notFound();
+    if (found.itemId !== null) await lockItemShared(this.db, found.itemId);
+    const [c] = await loadComponents(this.db, kind, { ids: [id], forUpdate: true });
     if (!c) throw notFound();
     const st = await loadScopeState(this.db, kind, [c]);
     const p = pluginFactsOf(st, c.itemId, orgId);
@@ -997,6 +1002,11 @@ export class ComponentScopeService {
     const p = { affected, conflicts };
     return { ...p, scopeHash: previewHash(c, target, p) };
   }
+}
+
+/** The plugin row FOR SHARE (exclusive with its scope writers and an unshare, which hold it FOR UPDATE). */
+async function lockItemShared(db: KernelSchemaDb, itemId: string): Promise<void> {
+  await db.selectFrom("catalog_items").select("id").where("id", "=", itemId).forShare().execute();
 }
 
 /** The share gate's view of a component row. */

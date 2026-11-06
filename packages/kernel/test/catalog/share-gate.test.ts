@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { CatalogScopeService } from "../../src/catalog/catalog-scope.service.js";
 import { createOrg, waitFor } from "../helpers/runs.js";
@@ -475,5 +476,51 @@ describe("share gate", { timeout: 90_000 }, () => {
     expect("awaitingConfirmation" in other).toBe(false);
     const own = (await orgCatalog(orgA, env.root)).find((i) => i.id === itemId);
     expect(own).toMatchObject({ awaitingConfirmation: true, pendingVersion: "2.0.0" });
+  });
+
+  it("a component switch-on waits for an unshare that holds the row and then sees the narrowed scope", async () => {
+    const { skillId } = await ownedPlugin({ shareable: true, extra: [orgC] });
+    expect((await putSkillScope(skillId, { scope: "optional" })).statusCode).toBe(200);
+    let settled = false;
+    let pending: ReturnType<typeof env.root> | undefined;
+    // the unshare's transaction (P3-25), held open on the component row
+    await env.db.transaction().execute(async (trx) => {
+      await trx
+        .selectFrom("platform_skills")
+        .select("id")
+        .where("id", "=", skillId)
+        .forUpdate()
+        .execute();
+      pending = env.root({
+        method: "PUT",
+        url: `/api/v1/orgs/${orgC}/components/skill/${skillId}/switch`,
+        payload: { enabled: true },
+      });
+      void pending.then(() => {
+        settled = true;
+      });
+      // the switch blocks on the row lock (it must not read the scope before the unshare commits)
+      await waitFor(
+        async () => {
+          if (settled) throw new Error("the switch did not wait for the row lock");
+          const r = await sql<{ n: number }>`select count(*)::int as n from pg_stat_activity
+            where wait_event_type = 'Lock' and query ilike '%platform_skills%'`.execute(env.db);
+          return (r.rows[0]?.n ?? 0) > 0;
+        },
+        10_000,
+        "the switch waiting for the component row",
+      );
+      await trx
+        .updateTable("platform_skills")
+        .set({ scope: "named", shareable: false })
+        .where("id", "=", skillId)
+        .execute();
+      await trx
+        .insertInto("component_scope_orgs")
+        .values({ kind: "skill", component_id: skillId, org_id: orgA })
+        .execute();
+    });
+    const r = await (pending as ReturnType<typeof env.root>);
+    expect(errorOf(r)).toEqual([404, "component.not_found"]);
   });
 });
