@@ -332,13 +332,12 @@ export function useRightAreaSlot(p: {
     [open],
   );
   const mapTarget = target?.kind === "agents" ? target : null;
-  const tree = useAgentTree(
-    p.orgId,
-    p.conversationId,
-    p.events,
-    p.progress,
-    mapTarget !== null && hasSubagents,
-  );
+  // read on a root conversation with sub-agents (the agents chip counts the whole tree), kept
+  // closer while the map is open
+  const tree = useAgentTree(p.orgId, p.conversationId, p.events, p.progress, {
+    enabled: hasSubagents,
+    open: mapTarget !== null && hasSubagents,
+  });
   // `#agents…` on a conversation without sub-agents, or on a sub-agent's page (a pasted link):
   // nothing to show, drop it
   const staleMap = p.eventsLoaded && p.root !== undefined && mapTarget !== null && !hasSubagents;
@@ -537,7 +536,7 @@ export function useRightAreaSlot(p: {
     [files],
   );
 
-  // The composer's agents chip (AC3): what the page already reads, no read of its own.
+  // The composer's agents chip (AC3): the whole tree (read above), the list, the log, progress.
   const agents = useMemo(
     () =>
       hasSubagents

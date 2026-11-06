@@ -177,6 +177,34 @@ const view = (id: string, description: string, status: string, extra = {}) => ({
   ...extra,
 });
 
+/** The agent tree the page reads with sub-agents (AC3 fix round 1: the agents chip counts it). */
+const treeOf = (id: string, children: { id: string; status: string }[]) => ({
+  root: {
+    id,
+    description: "",
+    agentType: null,
+    status: "running",
+    model: null,
+    startedAt: null,
+    finishedAt: null,
+    durationMs: 0,
+    tokens: 0,
+    toolCalls: 0,
+    children: children.map((c) => ({
+      ...c,
+      description: c.id,
+      agentType: "general-purpose",
+      model: null,
+      startedAt: null,
+      finishedAt: null,
+      durationMs: 0,
+      tokens: 0,
+      toolCalls: 0,
+      children: [],
+    })),
+  },
+});
+
 function api(
   extra: Record<string, (c: Call) => Response> = {},
   opts: { parent?: ConversationEvent[]; child?: ConversationEvent[] } = {},
@@ -198,6 +226,14 @@ function api(
       json(200, {
         usage: { inputTokens: 1000, outputTokens: 200, cacheReadTokens: 34, cacheWriteTokens: 0 },
       }),
+    [`GET ${PARENT}/agent-tree`]: () =>
+      json(
+        200,
+        treeOf("c1", [
+          { id: "ch2", status: "running" },
+          { id: "ch1", status: "idle" },
+        ]),
+      ),
     [`GET ${CHILD}`]: () =>
       json(200, CONV("ch2", { parentConversationId: "c1", subagentType: "general-purpose" })),
     [`GET ${CHILD}/events`]: () => json(200, { events: opts.child ?? childEvents(true) }),

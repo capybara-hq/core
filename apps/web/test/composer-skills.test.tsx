@@ -110,6 +110,34 @@ const skillRecord = (over: Record<string, unknown> = {}) => ({
 const invocation = (seq: number, text = RENDERED, skill = skillRecord()) =>
   userMsg(seq, text, { skill });
 
+/** The agent tree the page reads with sub-agents (AC3 fix round 1: the agents chip counts it). */
+const treeOf = (id: string, children: { id: string; status: string }[]) => ({
+  root: {
+    id,
+    description: "",
+    agentType: null,
+    status: "running",
+    model: null,
+    startedAt: null,
+    finishedAt: null,
+    durationMs: 0,
+    tokens: 0,
+    toolCalls: 0,
+    children: children.map((c) => ({
+      ...c,
+      description: c.id,
+      agentType: "general-purpose",
+      model: null,
+      startedAt: null,
+      finishedAt: null,
+      durationMs: 0,
+      tokens: 0,
+      toolCalls: 0,
+      children: [],
+    })),
+  },
+});
+
 function api(extra: Record<string, (c: Call) => Response | Promise<Response>> = {}) {
   return stubApi({
     [`GET ${BASE}`]: () => json(200, CONV()),
@@ -118,6 +146,7 @@ function api(extra: Record<string, (c: Call) => Response | Promise<Response>> = 
     [`GET ${BASE}/queue`]: () => json(200, { items: [], paused: false }),
     [`GET ${BASE}/tools`]: () => json(200, { tools: [] }),
     [`GET ${BASE}/subagents`]: () => json(200, { subagents: [] }),
+    [`GET ${BASE}/agent-tree`]: () => json(200, treeOf("c1", [])),
     [`GET ${INVOCABLE}`]: () => json(200, SKILLS),
     [`GET ${ORG}/connectors/prompts`]: () => json(200, PROMPTS),
     ...extra,

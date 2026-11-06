@@ -102,7 +102,10 @@ export const subagentsQuery = (orgId: string, id: string) =>
     freshness: "live",
   });
 
-/** The agent tree of a root conversation (the agent map's level 1; read while the map is open). */
+/**
+ * The agent tree of a root conversation (the agent map's level 1, and the composer's agents chip:
+ * read once the conversation has dispatched a sub-agent).
+ */
 export const agentTreeQuery = (orgId: string, id: string) =>
   defineQuery({
     key: keys.org(orgId).conversation(id).agentTree(),
@@ -342,10 +345,10 @@ export const connectorResourcesQuery = (orgId: string) =>
 
 /**
  * What the conversation page reads once it has the log and the row (the route's `then`, as
- * today's snapshot did): the tool info the events name, the sub-agents and usage once one was
- * dispatched, the background tasks once the log names one ({@link hasBackgroundTasks}), the
- * members once a run another account stopped shows, and the agent's invocable
- * skills (with the conversation's trial drafts when it is the caller's).
+ * today's snapshot did): the tool info the events name, the sub-agents, usage and (a root
+ * conversation's) agent tree once one was dispatched, the background tasks once the log names one
+ * ({@link hasBackgroundTasks}), the members once a run another account stopped shows, and the
+ * agent's invocable skills (with the conversation's trial drafts when it is the caller's).
  */
 export function conversationFollowUps(
   orgId: string,
@@ -362,6 +365,9 @@ export function conversationFollowUps(
   if (events.some((e) => e.type === "subagent_dispatched")) {
     add(subagentsQuery(orgId, id));
     add(usageQuery(orgId, id));
+    // the composer's agents chip counts the whole tree from the first paint (AC3); a sub-agent
+    // conversation has no tree of its own (the API answers 404)
+    if (!row.parentConversationId) add(agentTreeQuery(orgId, id));
   }
   if (hasBackgroundTasks(events)) add(backgroundTasksQuery(orgId, id));
   const stoppedByOther = events.some(

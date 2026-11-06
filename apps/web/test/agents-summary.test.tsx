@@ -117,6 +117,23 @@ describe("agentsSummary", () => {
     ).toEqual({ count: 2, running: 0, waiting: 0 });
   });
 
+  it("a stale tree never drops the dot: an active child with nothing below it that counts runs", () => {
+    const events = [dispatched(1, "a")];
+    // the child waits on its sub-agents (no approval or question of its own); the tree read last
+    // shows them all ended (a deep agent's restart reaches no event of the root's log)
+    const views = [view("a", "waiting")];
+    const stale = node("root", "running", [
+      node("a", "waiting", [node("a1", "idle"), node("a2", "failed")]),
+    ]);
+    expect(sum({ events, views, tree: stale })).toEqual({ count: 3, running: 1, waiting: 0 });
+    // a running child counts once, never twice
+    const runs = [view("a", "running")];
+    expect(sum({ events, views: runs, tree: stale })).toEqual({ count: 3, running: 1, waiting: 0 });
+    // a child waiting for a person is a wait, whatever the tree says below it
+    const asks = [view("a", "waiting", { pendingQuestionIds: ["q1"] })];
+    expect(sum({ events, views: asks, tree: stale })).toEqual({ count: 3, running: 0, waiting: 1 });
+  });
+
   it("agents named only by the stream's progress or a wait's path count too", () => {
     expect(
       sum({

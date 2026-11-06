@@ -251,9 +251,15 @@ labels: position and lines show the hierarchy **(decided)**.
 ### 9.2 Level 1: the tree
 
 - A dialog over the conversation page, opened from the conversation (the sub-agent group in the
-  stream and a title-bar entry while the conversation has sub-agents; exact entry points are the
-  designer's call for the design-system change).
-- Header: title (智能体图 / Agent map), "N 个智能体 · M 个运行中 · 点击查看详情", close.
+  stream and, since AC3 (2026-11-07), the composer's agents chip "N 个智能体" while the
+  conversation has sub-agents, in place of the title-bar entry).
+- Header: title (智能体图 / Agent map), "N 个智能体 · M 个运行中 · 点击查看详情", close. N counts
+  the sub-agents (the root not counted), the same number as the chip (AC3 ruling 4).
+- The page reads the tree whenever a root conversation has dispatched a sub-agent, not only while
+  the map is open: the server prefetches it with the conversation, and it is read again on every
+  `subagent_*` event of the root's log; while the map is closed a progress step reads it only for
+  an agent the tree lacks (once) or shows waiting (once per answer), and the trailing reads run
+  only while the map is open (AC3 fix round 1).
 - Columns left to right by depth; the root is vertically centred on its children; standard elbow
   connectors from each parent to the vertical centre of each child.
 - Every node has the **same height**; line 1: status dot + description (bold, ellipsis); line 2:
