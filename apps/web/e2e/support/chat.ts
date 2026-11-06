@@ -37,15 +37,15 @@ export const toolGroup = (page: Page, key: string): Locator =>
   page.locator(`[data-entry="tools"][data-tool-keys~="${key}"]`);
 
 /**
- * Opens a new conversation with the agent from the Agents list (the row action 对话): the page
- * is `/chat?agent=<id>` and nothing is created before the first send.
+ * Opens a new conversation with the agent from the Agents list (its card's primary 开始会话, a
+ * link): the page is `/chat?agent=<id>` and nothing is created before the first send.
  */
 export async function startChat(page: Page, agentName: string): Promise<void> {
   if (!/\/agents$/.test(page.url())) await page.goto("/agents");
   await page
     .getByRole("listitem")
     .filter({ hasText: agentName })
-    .getByRole("button", { name: zh.agents.chat, exact: true })
+    .getByRole("link", { name: zh.agents.chat, exact: true })
     .click();
   await expect(page).toHaveURL(/\/chat\?agent=[^&]+$/);
   await expect(page.locator('[data-template="ConversationPage"]')).toBeVisible();

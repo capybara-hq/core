@@ -72,18 +72,17 @@ export const isOrgRow = (c: PlatformComponent): boolean =>
   c.owner.kind === "org" && !c.promoted && c.itemId === null;
 
 /** Why the super admin cannot show an org-owned component to or associate it with other orgs. */
-export type ShareBlock = "notShareable" | "templateNotShareable" | "notOwned";
+export type ShareBlock = "notShareable" | "notOwned";
 
 /**
- * The share gate of an org-owned component (rulings P3-1, P3-16, P3-46), null when the super
- * admin may show and associate it (and always for the platform's): agent templates are not shared
- * in phase 3, an org row must be a skill its org created itself (no plugin), and its owner must
- * share it.
+ * The share gate of an org-owned component (rulings P3-1, P3-16, P4-13), null when the super
+ * admin may show and associate it (and always for the platform's): an org row must be one its org
+ * created itself (no plugin), an org's agent template too (a plugin's template is shared with its
+ * plugin, ruling T4-R9; P3-46 is lifted for org-created templates only), and its owner must share it.
  */
 export function shareBlockOf(c: PlatformComponent): ShareBlock | null {
   if (c.owner.kind === "platform") return null;
-  if (c.kind === "agent_template") return "templateNotShareable";
-  if (isOrgRow(c) && c.plugin !== null) return "notOwned";
+  if ((isOrgRow(c) || c.kind === "agent_template") && c.plugin !== null) return "notOwned";
   return c.shareable ? null : "notShareable";
 }
 
@@ -313,4 +312,19 @@ export function usableRows<T extends { id: string; name: string; origin?: "org" 
   const nameOf = (r: UsableRow<T>) =>
     r.item?.name ?? (r.kind === "platform" ? (r.component?.name ?? "") : "");
   return rows.sort((a, b) => (nameOf(a) < nameOf(b) ? -1 : nameOf(a) > nameOf(b) ? 1 : 0));
+}
+
+/**
+ * Whether a workspace template row may be the org's own agent template (rulings P4-12, P4-13): no
+ * plugin, and the org's own row without a catalog item, or a platform row this org owns (one it
+ * shared, promoted). Only a candidate: the template's detail (`owned`) decides.
+ */
+export function maybeOwnTemplate(
+  r: UsableRow<{ id: string; plugin: string | null; catalogItemId?: string | null }>,
+  orgId: string,
+): boolean {
+  if (r.kind === "own") return r.item.plugin === null && (r.item.catalogItemId ?? null) === null;
+  const plugin = r.item?.plugin ?? r.component?.plugin ?? null;
+  const owner = r.component?.owner;
+  return plugin === null && owner?.kind === "org" && owner.orgId === orgId;
 }

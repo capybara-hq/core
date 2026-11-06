@@ -36,6 +36,21 @@ describe("next.config redirects", () => {
     }
   });
 
+  it("智能体模板 moved into /agents (ruling P4-14): the list to its 模板 tab, a detail to the template page", async () => {
+    const redirects = (await config.redirects()) as Redirect[];
+    for (const [source, destination] of [
+      ["/agent-templates", "/agents?tab=templates"],
+      ["/:locale(zh|en)/agent-templates", "/:locale/agents?tab=templates"],
+      ["/agent-templates/:id", "/agents/templates/:id"],
+      ["/:locale(zh|en)/agent-templates/:id", "/:locale/agents/templates/:id"],
+    ]) {
+      expect(redirects).toContainEqual({ source, destination, permanent: true });
+    }
+    // no page answers there any more: the redirects are the only answer
+    const app = join(dirname(fileURLToPath(import.meta.url)), "../src/app/(app)");
+    expect(existsSync(join(app, "agent-templates"))).toBe(false);
+  });
+
   it("keeps the connector install redirect", async () => {
     const redirects = (await config.redirects()) as Redirect[];
     expect(redirects.some((r) => r.source === "/:locale(zh|en)/apps/new")).toBe(true);

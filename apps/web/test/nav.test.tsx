@@ -68,9 +68,9 @@ describe("nav by level (role hiding is cosmetic; the kernel decides)", () => {
   const primary = ["agents", "skills", "connectors"];
   // 组织设置 is shown to members too (read-only for them; user decision, role pass item 8)
   // 插件 and 扩展 for members up (read-only for members; the kernel's org.extensions.read)
-  // 智能体模板 for members up (read-only for members)
-  const member = ["plugins", "extensions", "agent-templates", "settings"];
-  const admin = ["plugins", "extensions", "agent-templates", "channels", "evals", "settings"];
+  // 智能体模板 is no item: it is the 模板 tab of 智能体 (ruling P4-14)
+  const member = ["plugins", "extensions", "settings"];
+  const admin = ["plugins", "extensions", "channels", "evals", "settings"];
   const cases: [NavLevel, boolean, string[], string[]][] = [
     ["guest", false, primaryGuest, []],
     ["member", false, primary, member],
@@ -99,7 +99,7 @@ describe("nav by level (role hiding is cosmetic; the kernel decides)", () => {
     }
   });
 
-  it("the nav reads 智能体 技能 连接器 after 新会话; members see 插件 扩展 智能体模板 组织设置 under 更多; org admins also 渠道 评测与运行", () => {
+  it("the nav reads 智能体 技能 连接器 after 新会话; members see 插件 扩展 组织设置 under 更多; org admins also 渠道 评测与运行", () => {
     function Labels({ level }: { level: NavLevel }) {
       const { primary, more } = useNav(0, level, false, false);
       return (
@@ -128,7 +128,6 @@ describe("nav by level (role hiding is cosmetic; the kernel decides)", () => {
       more: [
         ["插件", "catalog", "/plugins"],
         ["扩展", "extension", "/extensions"],
-        ["智能体模板", "agent", "/agent-templates"],
         ["组织设置", "settings", "/settings/organization"],
       ],
     });
@@ -136,7 +135,6 @@ describe("nav by level (role hiding is cosmetic; the kernel decides)", () => {
     expect(read("admin").more).toEqual([
       ["插件", "catalog", "/plugins"],
       ["扩展", "extension", "/extensions"],
-      ["智能体模板", "agent", "/agent-templates"],
       ["渠道", "channel", "/channels"],
       ["评测与运行", "evals", "/evals"],
       ["组织设置", "settings", "/settings/organization"],
@@ -242,6 +240,8 @@ describe("activeNavOf", () => {
     ["/settings/organization", "settings"],
     ["/chat/abc", ""],
     ["/agents/a1", "agents"],
+    // the template page sits under 智能体 (its 模板 tab; ruling P4-14)
+    ["/agents/templates/t1", "agents"],
     ["/connectors/c1", "connectors"],
     ["/plugins", "plugins"],
     ["/plugins/i1/enable", "plugins"],

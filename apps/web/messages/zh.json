@@ -685,6 +685,41 @@
         "tooLong": "文件合计超过 {max, number} 个字符，缩短后才能保存。"
       },
       "createUploadFailed": "智能体已创建，但头像没有上传成功。请在这里重新选择。"
+    },
+    "pageTabs": {
+      "agents": "智能体",
+      "templates": "模板"
+    },
+    "filter": "筛选智能体",
+    "ownerMe": "我",
+    "settings": "设置",
+    "templates": {
+      "listLabel": "智能体模板",
+      "search": "搜索模板",
+      "empty": "还没有智能体模板。插件可以带来模板，组织管理员也可以把智能体另存为模板。",
+      "noMatch": "没有符合的模板。",
+      "create": "用它创建",
+      "view": "查看",
+      "edit": "编辑",
+      "share": "设为可共享",
+      "unshare": "取消共享",
+      "shareOn": "「{name}」已设为可共享。",
+      "shareOff": "「{name}」已取消共享。",
+      "delete": "删除",
+      "deleteTitle": "删除模板 {name}？",
+      "deleteHint": "删除后不能再用它创建智能体。已用它创建的智能体不受影响。",
+      "deleteAgents": "这些智能体的子智能体里有它，删除后它们会失去它：",
+      "deleted": "已删除模板「{name}」。",
+      "deletedTransferred": "已删除模板「{name}」，其他组织仍在使用，它已转为平台所有。",
+      "previewFailed": "读不到删除的影响，确认前请重试。",
+      "previewRetry": "重试",
+      "version": "v{version}",
+      "source": {
+        "platform": "平台",
+        "org": "本组织",
+        "orgNamed": "{org}",
+        "plugin": "插件 · {plugin}"
+      }
     }
   },
   "skills": {
@@ -973,8 +1008,7 @@
     "settings": "组织设置",
     "admin": "管理后台",
     "plugins": "插件",
-    "extensions": "扩展",
-    "agentTemplates": "智能体模板"
+    "extensions": "扩展"
   },
   "shell": {
     "noOrg": "选择组织",
@@ -3914,6 +3948,9 @@
       "connector_template": "还没有连接器模板。引入带连接器模板的插件后，它们会出现在这里。",
       "agent_template": "还没有智能体模板。引入带智能体模板的插件后，它们会出现在这里。"
     },
+    "emptyTab": {
+      "agent_template": "这一栏下没有智能体模板。"
+    },
     "columns": {
       "name": "名称",
       "from": "来自",
@@ -3923,8 +3960,10 @@
       "orgs": "在用"
     },
     "from": {
-      "none": "在平台上创建"
+      "none": "在平台上创建",
+      "org": "组织创建"
     },
+    "view": "查看",
     "owner": {
       "platform": "平台"
     },
@@ -4005,7 +4044,6 @@
       "show": "向其他组织显示",
       "shownToast": "已向其他组织显示「{name}」。",
       "notShareable": "该组织未开放共享",
-      "templateNotShareable": "智能体模板暂不支持共享",
       "notOwned": "来自插件，不能共享"
     }
   },
@@ -4067,13 +4105,5 @@
     "noneInOrg": "这个插件没有向本组织提供组件。",
     "listUnavailable": "暂时读不到平台组件在本组织的状态：未启用的平台组件和它们的开关没有显示。",
     "retry": "重试"
-  },
-  "agentTemplates": {
-    "title": "智能体模板",
-    "description": "本组织能用的智能体模板，可在智能体里用作子智能体。平台统一启用的不能停用；其他平台模板由组织管理员启用或停用。",
-    "listLabel": "智能体模板",
-    "empty": "还没有智能体模板。插件可以带来智能体模板。",
-    "type": "类型 {type}",
-    "version": "v{version}"
   }
 }

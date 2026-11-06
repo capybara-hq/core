@@ -39,6 +39,19 @@ const nextConfig = {
         permanent: true,
       },
     ]),
+    // 智能体模板 became the 模板 tab of /agents and its detail the template page (ruling P4-14)
+    { source: "/agent-templates", destination: "/agents?tab=templates", permanent: true },
+    {
+      source: "/:locale(zh|en)/agent-templates",
+      destination: "/:locale/agents?tab=templates",
+      permanent: true,
+    },
+    { source: "/agent-templates/:id", destination: "/agents/templates/:id", permanent: true },
+    {
+      source: "/:locale(zh|en)/agent-templates/:id",
+      destination: "/:locale/agents/templates/:id",
+      permanent: true,
+    },
   ],
 };
 

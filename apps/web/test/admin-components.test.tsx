@@ -214,14 +214,71 @@ describe("admin component lists", () => {
     expect(within(table).getByText("web-research")).toBeTruthy();
   });
 
-  it.each([
-    ["/admin/connector-templates", "connector_template", "gh"],
-    ["/admin/agent-templates", "agent_template", "researcher"],
-  ] as const)("%s lists the deployment's %s components", async (path, kind, name) => {
-    await open(path);
-    const table = await screen.findByRole("table", { name: C.titles[kind] });
-    expect(within(table).getByText(name)).toBeTruthy();
+  it("/admin/connector-templates lists the deployment's connector templates (a table)", async () => {
+    await open("/admin/connector-templates");
+    const table = await screen.findByRole("table", { name: C.titles.connector_template });
+    expect(within(table).getByText("gh")).toBeTruthy();
     expect(within(table).getByText(C.owner.platform)).toBeTruthy();
+  });
+
+  it("/admin/agent-templates: cards with source · owner · scope · v, the primary 查看 and ⋯ (ruling P4-17)", async () => {
+    await open("/admin/agent-templates");
+    expect(screen.queryByRole("table")).toBeNull();
+    const grid = await screen.findByRole("list", { name: C.titles.agent_template });
+    expect(grid.getAttribute("data-part")).toBe("card-grid");
+    const card = within(grid)
+      .getByRole("link", { name: "researcher" })
+      .closest("li") as HTMLElement;
+    expect(within(card).getByRole("link", { name: "researcher" }).getAttribute("href")).toBe(
+      "/admin/agent-templates/a1",
+    );
+    expect(within(card).getByRole("link", { name: C.view }).getAttribute("href")).toBe(
+      "/admin/agent-templates/a1",
+    );
+    const meta = card.querySelector('[data-part="object-card-meta"]')?.textContent ?? "";
+    expect(meta).toContain(`${C.owner.platform} · `);
+    expect(meta).toMatch(/· v1$/);
+    // ⋯: 设置范围 and 停用 (上传新版本 stays on the detail)
+    const user = userEvent.setup();
+    await user.click(within(card).getByRole("button", { name: "More actions" }));
+    expect((await screen.findAllByRole("menuitem")).map((i) => i.textContent)).toEqual([
+      C.detail.actions.scope,
+      C.detail.actions.disable,
+    ]);
+    await user.click(screen.getByRole("menuitem", { name: C.detail.actions.scope }));
+    expect(await screen.findByRole("dialog")).toBeTruthy();
+  });
+
+  it("/admin/agent-templates: skeleton cards while loading, then the cards", async () => {
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    await renderRouteEmptyCache("/admin/agent-templates", {
+      ...base,
+      "GET /api/v1/admin/components?kind=agent_template": async () => {
+        await gate;
+        return json(200, { components: AGENTS });
+      },
+    });
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-part="card-grid"][aria-busy="true"]')).not.toBeNull(),
+    );
+    await act(async () => release());
+    expect(await screen.findByRole("link", { name: "researcher" })).toBeTruthy();
+  });
+
+  it("/admin/agent-templates: none at all, and none under the open tab", async () => {
+    await open("/admin/agent-templates", {
+      ...base,
+      "GET /api/v1/admin/components?kind=agent_template": () => json(200, { components: [] }),
+    });
+    expect(await screen.findByText(C.empty.agent_template)).toBeTruthy();
+    cleanup();
+    await open("/admin/agent-templates");
+    await screen.findByRole("link", { name: "researcher" });
+    await userEvent.setup().click(screen.getByRole("tab", { name: new RegExp(`^${C.tabs.org}`) }));
+    expect(screen.getByText(C.emptyTab.agent_template)).toBeTruthy();
   });
 
   it("zh copy: 技能 / 来自 / 归属 / 平台 / 跟随插件", async () => {
@@ -1082,12 +1139,38 @@ describe("org-owned components in the admin console (phase 3)", () => {
     expect(owner.disabled).toBe(true);
   });
 
-  it("an org's agent template is never shared in this phase, even when marked shareable", async () => {
+  it("an org's plugin template is shared with its plugin, never on its own (ruling T4-R9)", async () => {
     await open("/admin/agent-templates/a2", routes);
     expect(await screen.findByRole("heading", { name: "house-agent" })).toBeTruthy();
-    expect(screen.getAllByText(C.share.templateNotShareable).length).toBeGreaterThan(0);
-    for (const a of [C.share.show, C.detail.actions.scope, C.detail.actions.upload]) {
+    expect(screen.getAllByText(C.share.notOwned).length).toBeGreaterThan(0);
+    for (const a of [C.share.show, C.detail.actions.upload]) {
       expect(screen.queryByRole("button", { name: a })).toBeNull();
     }
+  });
+
+  it("an org-created template its org shares: 对其他组织显示 on its card (P3-46 lifted, ruling P4-13)", async () => {
+    const calls = await open("/admin/agent-templates", {
+      ...routes,
+      "GET /api/v1/admin/components?kind=agent_template": () =>
+        json(200, {
+          components: [...AGENTS, { ...ORG_TEMPLATE, id: "a3", name: "sales", plugin: null }],
+        }),
+      "PUT /api/v1/admin/components/agent_template/a3/shown": () =>
+        json(200, { ...ORG_TEMPLATE, id: "p3", name: "sales", plugin: null, promoted: true }),
+    });
+    const card = (await screen.findByRole("link", { name: "sales" })).closest("li") as HTMLElement;
+    expect(card.querySelector('[data-part="object-card-meta"]')?.textContent).toContain(
+      `${C.from.org} · Acme · `,
+    );
+    const user = userEvent.setup();
+    await user.click(within(card).getByRole("button", { name: "More actions" }));
+    expect((await screen.findAllByRole("menuitem")).map((i) => i.textContent)).toEqual([
+      C.share.show,
+      C.detail.actions.scope,
+    ]);
+    await user.click(screen.getByRole("menuitem", { name: C.share.show }));
+    await vi.waitFor(() =>
+      expect(calls.some((c) => c.method === "PUT" && c.url.endsWith("/a3/shown"))).toBe(true),
+    );
   });
 });

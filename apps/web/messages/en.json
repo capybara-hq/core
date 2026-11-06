@@ -685,6 +685,41 @@
         "tooLong": "Together the files are longer than {max, number} characters. Shorten them to save."
       },
       "createUploadFailed": "The agent was created, but its picture could not be uploaded. Pick it again here."
+    },
+    "pageTabs": {
+      "agents": "Agents",
+      "templates": "Templates"
+    },
+    "filter": "Filter agents",
+    "ownerMe": "Me",
+    "settings": "Settings",
+    "templates": {
+      "listLabel": "Agent templates",
+      "search": "Search templates",
+      "empty": "No agent templates yet. Plugins can bring templates, and org admins can save an agent as a template.",
+      "noMatch": "No templates match.",
+      "create": "Create from it",
+      "view": "View",
+      "edit": "Edit",
+      "share": "Make shareable",
+      "unshare": "Stop sharing",
+      "shareOn": "\"{name}\" is now shareable.",
+      "shareOff": "\"{name}\" is no longer shareable.",
+      "delete": "Delete",
+      "deleteTitle": "Delete template {name}?",
+      "deleteHint": "Agents can no longer be created from it. Agents already created from it are not affected.",
+      "deleteAgents": "These agents have it as a sub-agent and will lose it:",
+      "deleted": "Template \"{name}\" deleted.",
+      "deletedTransferred": "Template \"{name}\" deleted; other organizations still use it, so it is now platform-owned.",
+      "previewFailed": "What deleting it does could not be read; retry before confirming.",
+      "previewRetry": "Retry",
+      "version": "v{version}",
+      "source": {
+        "platform": "Platform",
+        "org": "This org",
+        "orgNamed": "{org}",
+        "plugin": "Plugin · {plugin}"
+      }
     }
   },
   "skills": {
@@ -985,8 +1020,7 @@
     "settings": "Organization settings",
     "admin": "Admin console",
     "plugins": "Plugins",
-    "extensions": "Extensions",
-    "agentTemplates": "Agent templates"
+    "extensions": "Extensions"
   },
   "shell": {
     "noOrg": "Select organization",
@@ -3926,6 +3960,9 @@
       "connector_template": "No connector templates yet. They appear here once a plugin that brings connector templates is imported.",
       "agent_template": "No agent templates yet. They appear here once a plugin that brings agent templates is imported."
     },
+    "emptyTab": {
+      "agent_template": "No agent templates under this tab."
+    },
     "columns": {
       "name": "Name",
       "from": "From",
@@ -3935,8 +3972,10 @@
       "orgs": "In use"
     },
     "from": {
-      "none": "Created on the platform"
+      "none": "Created on the platform",
+      "org": "Created by an org"
     },
+    "view": "View",
     "owner": {
       "platform": "Platform"
     },
@@ -4017,7 +4056,6 @@
       "show": "Show to other organizations",
       "shownToast": "\"{name}\" is now shown to other organizations.",
       "notShareable": "Not shared by its organization",
-      "templateNotShareable": "Agent templates cannot be shared yet",
       "notOwned": "It came from a plugin and cannot be shared"
     }
   },
@@ -4079,13 +4117,5 @@
     "noneInOrg": "This plugin offers no component to this organization.",
     "listUnavailable": "The platform components' state in this organization could not be read: the ones that are off and their switches are not shown.",
     "retry": "Retry"
-  },
-  "agentTemplates": {
-    "title": "Agent templates",
-    "description": "The agent templates this organization can use, as sub-agents of its agents. Templates the platform turns on for everyone cannot be turned off; org admins turn the other platform templates on or off.",
-    "listLabel": "Agent templates",
-    "empty": "No agent templates yet. Plugins can bring agent templates.",
-    "type": "type {type}",
-    "version": "v{version}"
   }
 }
