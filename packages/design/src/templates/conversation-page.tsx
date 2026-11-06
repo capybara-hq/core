@@ -13,6 +13,7 @@ import { PropertiesPanel, PropertySection, RightPanel } from "../conversation/pa
 import { NewTitleBar, TitleBar, type TitleBarProps } from "../conversation/title-bar";
 import { WorkingLine } from "../conversation/working-line";
 import { SkeletonGroup, SkeletonText } from "../display/skeleton";
+import { BoxScope } from "../layout/box";
 import { useFocusReturn } from "../overlays/focus-return";
 import { useDesignT } from "../provider";
 import { StatusBar } from "../shell/status-bar";
@@ -440,7 +441,9 @@ function SheetContent({
         : { onOpenAutoFocus: focusReturn.capture, onCloseAutoFocus: focusReturn.restore })}
     >
       <RD.Title className="cb-sr-only">{label}</RD.Title>
-      {children}
+      {/* The sheet is a box: the properties sections inside draw as heading and hairline groups
+          (a RightPanel resets this: a full-height pane holds content like a page). */}
+      <BoxScope kind="properties-sheet">{children}</BoxScope>
     </RD.Content>
   );
 }

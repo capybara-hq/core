@@ -1006,7 +1006,15 @@ function rightPanelBlocks(): ReactNode {
 
 // ── Template ────────────────────────────────────────────────────────────────
 
-type TemplateState = "properties" | "file-panel" | "subagent-panel" | "new" | "sheet" | "loading";
+type TemplateState =
+  | "properties"
+  | "file-panel"
+  | "subagent-panel"
+  | "new"
+  | "sheet"
+  // the properties panel in the narrow sheet: its sections are heading and hairline groups
+  | "properties-sheet"
+  | "loading";
 
 function thread(kind: "main" | "file" | "subagent"): ReactNode {
   if (kind === "subagent")
@@ -1056,7 +1064,11 @@ function thread(kind: "main" | "file" | "subagent"): ReactNode {
 
 function TemplateBlock({ state, live }: { state: TemplateState; live?: boolean }) {
   const [right, setRight] = useState<ConversationPageProps["right"]>(
-    state === "properties" ? "properties" : state === "new" ? "none" : "panel",
+    state === "properties" || state === "properties-sheet"
+      ? "properties"
+      : state === "new"
+        ? "none"
+        : "panel",
   );
   const [panel, setPanel] = useState<string>(state === "subagent-panel" ? "subagent" : "files");
   const isNew = state === "new";
@@ -1107,7 +1119,9 @@ function TemplateBlock({ state, live }: { state: TemplateState; live?: boolean }
       commands={COMMANDS}
       status={{ context: "", version: X.version }}
       ownStatusBar
-      {...(state === "sheet" ? { reference: { rail: true } as const } : {})}
+      {...(state === "sheet" || state === "properties-sheet"
+        ? { reference: { rail: true } as const }
+        : {})}
     >
       <ConversationPage
         titleBar={titleBar}
@@ -1178,7 +1192,10 @@ function TemplateBlock({ state, live }: { state: TemplateState; live?: boolean }
         {...(live
           ? {}
           : {
-              layout: state === "sheet" ? ("sheet" as const) : ("inline" as const),
+              layout:
+                state === "sheet" || state === "properties-sheet"
+                  ? ("sheet" as const)
+                  : ("inline" as const),
               reference: true,
             })}
       />
@@ -1193,6 +1210,7 @@ function templateConversationBlocks(): ReactNode {
     "subagent-panel",
     "new",
     "sheet",
+    "properties-sheet",
     "loading",
   ];
   return (
@@ -1201,7 +1219,7 @@ function templateConversationBlocks(): ReactNode {
         <RefBlock
           key={s}
           id={`template-conversation-${s}`}
-          width={s === "sheet" ? 1100 : 1280}
+          width={s === "sheet" || s === "properties-sheet" ? 1100 : 1280}
           height={820}
         >
           <TemplateBlock state={s} />

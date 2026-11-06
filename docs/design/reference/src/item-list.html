@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<title>ItemList · reference</title>
+<link rel="stylesheet" href="/design/styles/fonts.css">
+<link rel="stylesheet" href="/design/styles/tokens.css">
+<link rel="stylesheet" href="reference.css">
+</head>
+<body>
+<main class="r-page">
+<h1>ItemList</h1>
+<p>Rows inside one box, split by line-soft hairlines, never cards (spec §1 "One box is enough", §6.33): plain rows in a Card; item rows with their fields in a flush form card (the model purposes); a review row with a warn line and its code, borderless inside the box.</p>
+<div class="r-blocks">
+<section data-ref-block="item-list-rows" style="width:560px" data-pad>
+  <section class="r-boxcard"><div class="r-boxcard-head">渠道</div><div class="r-boxcard-body">
+  <ul class="r-item-list" data-part="item-list">
+    <li class="r-item-row" data-part="item-list-row"><span class="r-item-tag">飞书</span><span class="r-item-text"><span class="r-item-title">财务助手群</span><span class="r-item-meta">研究助手 · 2 个会话</span></span><button class="r-btn" data-variant="default" data-step="dense">解绑</button></li>
+    <li class="r-item-row" data-part="item-list-row"><span class="r-item-tag">Slack</span><span class="r-item-text"><span class="r-item-title">#finance</span><span class="r-item-meta">研究助手</span></span><span class="r-item-status">已停用</span></li>
+  </ul>
+  </div></section>
+</section>
+<section data-ref-block="item-list-fields" style="width:960px" data-pad>
+  <section class="r-form-section"><div class="r-form-intro"><h2 class="r-h2">用途默认映射</h2><p class="r-prose-small r-muted">各组织可在设置里覆盖。</p></div><div class="r-form-card r-form-card-flush">
+  <ul class="r-item-list" data-inset="flush" data-part="item-list">
+    <li class="r-item-row" data-shape="item" data-part="item-list-row"><div class="r-item-head" data-part="item-list-head"><span class="r-item-titles"><span class="r-item-title" data-part="item-list-title">评测</span><span class="r-item-code" data-part="item-list-code">eval</span></span></div><div class="r-item-lines" data-part="item-list-meta"><span>由内核声明</span></div><div class="r-item-body" data-part="item-list-body"><div class="r-field"><label class="r-label">模型</label><div class="r-select-stage"><button class="r-input r-select-field" data-part="select"><span class="r-select-value">DeepSeek / deepseek-chat</span><i data-icon="chevron-down" data-size="14"></i></button></div></div></div></li>
+    <li class="r-item-row" data-shape="item" data-part="item-list-row"><div class="r-item-head" data-part="item-list-head"><span class="r-item-titles"><span class="r-item-title" data-part="item-list-title">标题</span><span class="r-item-code" data-part="item-list-code">title</span></span></div><div class="r-item-lines" data-part="item-list-meta"><span>由内核声明</span></div><div class="r-item-body" data-part="item-list-body"><div class="r-field"><label class="r-label">模型</label><div class="r-select-stage"><button class="r-input r-select-field" data-part="select"><span class="r-select-value">DeepSeek / deepseek-chat</span><i data-icon="chevron-down" data-size="14"></i></button></div></div></div></li>
+    <li class="r-item-row" data-shape="item" data-part="item-list-row"><div class="r-item-head" data-part="item-list-head"><span class="r-item-titles"><span class="r-item-title" data-part="item-list-title">子智能体 · 快</span><span class="r-item-code" data-part="item-list-code">subagent_fast</span></span></div><div class="r-item-lines" data-part="item-list-meta"><span>由内核声明</span><span>子智能体选「快」时用这个模型。</span></div><div class="r-item-body" data-part="item-list-body"><div class="r-field"><label class="r-label">模型</label><div class="r-select-stage"><button class="r-input r-select-field" data-part="select"><span class="r-select-value">DeepSeek / deepseek-chat</span><i data-icon="chevron-down" data-size="14"></i></button></div></div></div></li>
+  </ul>
+  </div></section>
+</section>
+<section data-ref-block="item-list-review" style="width:720px" data-pad>
+  <section class="r-boxcard"><div class="r-boxcard-head">crm 1.2.0</div><div class="r-boxcard-body">
+  <ul class="r-item-list" data-part="item-list">
+    <li class="r-item-row" data-shape="item" data-part="item-list-row"><div class="r-item-head" data-part="item-list-head"><span class="r-item-titles"><span class="r-item-title" data-part="item-list-title">数据库表</span><span class="r-badge-warn">敏感</span></span></div><div class="r-item-lines" data-part="item-list-meta"><span class="r-ink">可以删除自己的表。</span></div><div class="r-item-body" data-part="item-list-body"><span class="r-muted r-small">· crm_contacts</span></div></li>
+    <li class="r-item-row" data-shape="item" data-part="item-list-row"><div class="r-item-head" data-part="item-list-head"><span class="r-item-titles"><span class="r-item-title" data-part="item-list-title">迁移里的危险语句</span><span class="r-badge-warn">敏感</span></span></div><div class="r-item-lines" data-part="item-list-meta"><span class="r-warn"><i data-icon="circle-alert" data-size="12"></i> 删除表 · migrations/0002_drop.sql 第 3 行</span></div><div class="r-item-body" data-part="item-list-body"><figure class="r-codeblock" data-framed="false" data-part="code-block"><figcaption class="r-codeblock-lang">sql</figcaption><pre>DROP TABLE IF EXISTS crm_legacy;</pre></figure></div></li>
+  </ul>
+  </div></section>
+</section>
+</div>
+</main>
+<script src="fill.js"></script>
+</body>
+</html>

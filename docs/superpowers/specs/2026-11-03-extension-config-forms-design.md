@@ -291,6 +291,11 @@ deployment upgrades the kernel before it imports plugins packed by the new toolc
 
 - **Labels** from `x-ui.label` in the page locale; without hints, `title`, else the field key (as
   today). Help, placeholder and unit likewise. Enum options show `options[].label` and `help`.
+- **One box is enough** (design spec §1 principle 7, acceptance item AB, 2026-11-07): the form sits
+  in one box (a form card, a Card, a Sheet, a Dialog). A nested object is a `Subsection` (its label
+  as an `h3`, its help, its fields under the 1px guide; nested objects nest their guides), never a
+  `Card`; an array's `Repeater` draws its items as divided rows inside the box by itself (its
+  `cards` form is for the page ground only).
 - **Arrays of objects** → `Repeater`; nested arrays nest (endpoint → models). Arrays of scalars →
   `tags` or a one-per-line list. Records of scalars → `KeyValueEditor`. Unions, tuples and
   `x-unsupported` keep the JSON textarea, now per node rather than per top-level field.

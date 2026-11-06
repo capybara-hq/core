@@ -200,11 +200,11 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
 
   it.each([
     // the radio cards of tool search; the read-only note only for a member
-    ["/settings/organization", `GET ${O}/settings`, { radios: 1, kv: 0, cards: 0, switches: 0 }],
+    ["/settings/organization", `GET ${O}/settings`, { radios: 1, kv: 0, items: 0, switches: 0 }],
     // the tool policy and egress radios, the resources' key-value
-    ["/settings/sandbox", `GET ${O}/settings`, { radios: 2, kv: 1, cards: 0, switches: 0 }],
+    ["/settings/sandbox", `GET ${O}/settings`, { radios: 2, kv: 1, items: 0, switches: 0 }],
     // the kernel's five purposes as cards, each with its model select
-    ["/settings/models", `GET ${O}/model-purposes`, { radios: 0, kv: 0, cards: 5, switches: 0 }],
+    ["/settings/models", `GET ${O}/model-purposes`, { radios: 0, kv: 0, items: 5, switches: 0 }],
   ] as const)(
     "%s: the loading state draws the page's static shapes (Q6)",
     async (path, held, shapes) => {
@@ -214,16 +214,20 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
       });
       expect(document.querySelectorAll('[data-part="loading-radios"]')).toHaveLength(shapes.radios);
       expect(document.querySelectorAll('[data-part="loading-key-value"]')).toHaveLength(shapes.kv);
-      expect(document.querySelectorAll('[data-part="loading-shaped-card"]')).toHaveLength(
-        shapes.cards,
-      );
+      expect(
+        document.querySelectorAll(
+          '[data-part="loading-item-list"] > [data-part="loading-item-row"]',
+        ),
+      ).toHaveLength(shapes.items);
       expect(document.querySelectorAll('[data-box="block"][style*="32px"]')).toHaveLength(
         shapes.switches,
       );
-      // extensions: each group's hint line and permission cards; plugins: each card's components
-      expect(document.querySelectorAll('[data-part="loading-group-card"]')).toHaveLength(
-        shapes.switches * 2,
-      );
+      // extensions: each group's hint line and permission rows; plugins: each item's components
+      expect(
+        document.querySelectorAll(
+          '[data-part="loading-item-group"] > [data-part="loading-item-row"]',
+        ),
+      ).toHaveLength(shapes.switches * 2);
       expect(
         // the hint is Text variant="prose": its slot is at the prose-small line (the body size)
         document.querySelectorAll(

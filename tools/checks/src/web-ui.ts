@@ -1,5 +1,6 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
+import { BOX_PENDING, type BoxPending, boxFindings } from "./box-in-box.js";
 import {
   collectImports,
   type Finding,
@@ -11,6 +12,7 @@ import {
   walk,
 } from "./source.js";
 
+export { BOX_PENDING, type BoxPending } from "./box-in-box.js";
 export type { Finding };
 
 /** The page templates of spec §5; must equal @capybara-hq/design PAGE_TEMPLATES (a test checks). */
@@ -1258,6 +1260,7 @@ export function checkWebUi(
   designSrcDir: string,
   pending: readonly SsrPending[] = SSR_PENDING,
   queryPending: readonly QueryPending[] = QUERY_PENDING,
+  boxPending: readonly BoxPending[] = BOX_PENDING,
 ): Finding[] {
   const findings: Finding[] = [];
   const readers = kernelReaders(webSrcDir);
@@ -1275,5 +1278,6 @@ export function checkWebUi(
   }
   findings.push(...charIconMessageFindings(join(webSrcDir, "..", "messages")));
   findings.push(...checkDesign(designSrcDir));
+  findings.push(...boxFindings(webSrcDir, boxPending));
   return applyQueryPending(applySsrPending(findings, webSrcDir, pending), webSrcDir, queryPending);
 }

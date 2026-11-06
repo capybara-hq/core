@@ -4,6 +4,7 @@ import { FIELDS } from "../controls/a11y";
 import { Button, IconButton } from "../controls/index";
 import { Input } from "../controls/inputs";
 import { Icon } from "../icons/icon";
+import { BoxScope } from "../layout/box";
 import { useDesignT } from "../provider";
 import { useFocusReturn } from "./focus-return";
 
@@ -86,12 +87,14 @@ export function Dialog({
               />
             </RD.Close>
           </div>
-          <div className="cb-dialog-body" ref={bodyRef}>
-            {children}
-          </div>
-          <div className="cb-dialog-foot" ref={footerRef}>
-            {footer}
-          </div>
+          <BoxScope kind="dialog">
+            <div className="cb-dialog-body" ref={bodyRef}>
+              {children}
+            </div>
+            <div className="cb-dialog-foot" ref={footerRef}>
+              {footer}
+            </div>
+          </BoxScope>
         </RD.Content>
       </RD.Portal>
     </RD.Root>

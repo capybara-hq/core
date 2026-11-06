@@ -58,7 +58,14 @@ export { EMBED_SANDBOX, EmbedFrame, type EmbedFrameProps } from "./embed";
 export { EmptyState, type EmptyStateProps } from "./empty-state";
 export { ErrorDetail, type ErrorDetailProps } from "./error-detail";
 export { BarChart, Dither, Skeleton, Sparkline } from "./graphics";
-export { ItemList, type ItemListRow } from "./item-list";
+export {
+  ItemList,
+  type ItemListInset,
+  ItemListItem,
+  type ItemListItemProps,
+  type ItemListProps,
+  type ItemListRow,
+} from "./item-list";
 export { KeyValue, type KeyValueProps } from "./key-value";
 export { LinkCard, TextLink } from "./link";
 export { CAPYBARA_BITMAP, Logo } from "./logo";
@@ -82,6 +89,7 @@ export {
 } from "./skeleton";
 export { StatCards } from "./stat-cards";
 export { type Step, StepList } from "./step-list";
+export { Subsection, type SubsectionProps } from "./subsection";
 export { Segmented, type TabItem, Tabs, type TabsProps } from "./tabs";
 export { Tooltip } from "./tooltip";
 export { formatSpanDuration, type Span, SpanWaterfall, type SpanWaterfallProps } from "./waterfall";

@@ -6,14 +6,15 @@ import {
   SkeletonText,
   useSkeletonAnnounces,
 } from "../display/skeleton";
+import { BoxScope } from "../layout/box";
 import { Text } from "../layout/index";
 import { useDesignT } from "../provider";
 import { ActionRow, type ActionRowProps, Body, type PageHeaderProps } from "../shell/index";
 import {
-  type CardShape,
   type FieldShape,
+  type ItemShape,
   LoadingFields,
-  LoadingShapedCards,
+  LoadingItemRows,
   LoadingSwitchRows,
   loadingActionRow,
   loadingCount,
@@ -98,9 +99,14 @@ export type FormSectionLayout = "columns" | "stacked";
 
 /**
  * A form section (spec §5.3): two columns, the title (h2) and a prose-small muted description on
- * the left, the fields on a `panel` card on the right. Sections are separated by spacing.
+ * the left, the fields on a `panel` card on the right. Sections are separated by spacing. The card
+ * is the one box (spec §1): what it holds groups with headings and hairlines (`Subsection`,
+ * `ItemList`), and boxed pieces inside draw their unboxed form (a DataTable unframed, a Repeater
+ * divided, a CodeBlock borderless).
  * `loading` keeps the title and description real and draws `fields` field placeholders in the
- * card (a count of default inputs, or the page's static `FieldShape`s) in place of `children`; a `flush` section keeps its flush card and draws `fields` switch rows instead; a section whose data
+ * card (a count of default inputs, or the page's static `FieldShape`s) in place of `children`; a
+ * `flush` section keeps its flush card and draws `fields` switch rows instead; `items` draws item
+ * row placeholders in a flush card (a section that lists items, spec §5.8); a section whose data
  * is ready renders for real next to loading ones. Outside a loading page it announces itself.
  * `layout="stacked"` puts the head above a fields card across the full width, for content that
  * needs it (an editor); below 960 every section is stacked anyway.
@@ -119,16 +125,20 @@ export function FormSection({
   description?: string;
   /** `columns` (default): the head column beside the card; `stacked`: the head above it. */
   layout?: FormSectionLayout;
-  /** The card without padding, for content that reaches its edges (a SwitchList). */
+  /**
+   * The card without padding, for content that reaches its edges: a SwitchList, a flush
+   * `ItemList`, an unframed DataTable, flush `Subsection`s.
+   */
   flush?: boolean;
   /**
    * The section's data is not here yet: `fields` field placeholders replace `children`, or, for a
-   * section that lists cards, `cards` titled card placeholders (spec §5.8).
+   * section that lists items, `items` item row placeholders in a flush card (spec §5.8).
    */
-  loading?: { fields: number | FieldShape[] } | { cards: CardShape[] };
+  loading?: { fields: number | FieldShape[] } | { items: ItemShape[] };
   children?: ReactNode;
 }) {
   const announces = useSkeletonAnnounces();
+  const items = loading !== undefined && "items" in loading ? loading.items : undefined;
   return (
     <section
       id={id}
@@ -146,19 +156,21 @@ export function FormSection({
       <div
         className="cb-form-section-fields"
         data-part="form-card"
-        data-flush={flush ? "true" : undefined}
+        data-flush={flush || items !== undefined ? "true" : undefined}
       >
-        {loading ? (
-          "cards" in loading ? (
-            <LoadingShapedCards cards={loading.cards} />
-          ) : flush ? (
-            <LoadingSwitchRows count={loadingCount(loading.fields)} />
+        <BoxScope kind="form-card">
+          {items !== undefined ? (
+            <LoadingItemRows items={items} />
+          ) : loading && "fields" in loading ? (
+            flush ? (
+              <LoadingSwitchRows count={loadingCount(loading.fields)} />
+            ) : (
+              <LoadingFields fields={loading.fields} />
+            )
           ) : (
-            <LoadingFields fields={loading.fields} />
-          )
-        ) : (
-          children
-        )}
+            children
+          )}
+        </BoxScope>
       </div>
     </section>
   );
@@ -168,19 +180,19 @@ export function FormSection({
  * A section whose title and description are not known either (SettingsPage's loading shorthand):
  * the `FormSection` frame with an h2-sized slot for the title and a prose-small slot for the
  * description. What the page does know (`title`, `description`) renders for real. The form card
- * holds `fields` field placeholders, or `cards` titled card placeholders (a section that lists
- * cards, spec §5.8).
+ * holds `fields` field placeholders, or `items` item row placeholders in a flush card (a section
+ * that lists items, spec §5.8).
  */
 export function LoadingFormSection({
   fields,
-  cards,
+  items,
   title,
   description,
   layout = "columns",
 }: {
   layout?: FormSectionLayout;
   fields?: number | FieldShape[];
-  cards?: CardShape[];
+  items?: ItemShape[];
   title?: string;
   description?: string;
 }) {
@@ -205,12 +217,18 @@ export function LoadingFormSection({
           <SkeletonText width="70%" />
         )}
       </div>
-      <div className="cb-form-section-fields" data-part="form-card">
-        {cards !== undefined ? (
-          <LoadingShapedCards cards={cards} />
-        ) : (
-          <LoadingFields fields={fields ?? 0} />
-        )}
+      <div
+        className="cb-form-section-fields"
+        data-part="form-card"
+        data-flush={items !== undefined ? "true" : undefined}
+      >
+        <BoxScope kind="form-card">
+          {items !== undefined ? (
+            <LoadingItemRows items={items} />
+          ) : (
+            <LoadingFields fields={fields ?? 0} />
+          )}
+        </BoxScope>
       </div>
     </section>
   );
