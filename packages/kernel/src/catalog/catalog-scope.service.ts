@@ -29,6 +29,7 @@ import {
   skillNameClashes,
   switchOf,
 } from "./component-state.js";
+import { assertOwnerListed, assertShareable, assertShareableTarget } from "./ownership.js";
 import { type PluginConfirmResult, PluginImport } from "./plugin-import.js";
 import { PluginInstaller } from "./plugin-install.js";
 import { type PluginScope, wantedOn } from "./scope.js";
@@ -90,6 +91,8 @@ interface ItemRow {
   builtin: boolean;
   disabled: boolean;
   latest_version: string;
+  owner_org_id: string | null;
+  shareable: boolean;
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -307,12 +310,14 @@ export class CatalogScopeService {
     // A builtin item is `all`: the flag is irrelevant there but harmless, so it is not refused
     const item = await this.db
       .selectFrom("catalog_items")
-      .select(["name", "shown_to_others"])
+      .select(["name", "shown_to_others", "owner_org_id", "shareable"])
       .where("id", "=", itemId)
       .where("deleted_at", "is", null)
       .forUpdate()
       .executeTakeFirst();
     if (!item) throw notFound();
+    // Showing goes through the share gate (P3-16); hiding is always allowed
+    if (shown) assertShareable(item);
     if (item.shown_to_others === shown) return;
     await this.db
       .updateTable("catalog_items")
@@ -339,10 +344,13 @@ export class CatalogScopeService {
     await this.adminLock.lockAndAuthorize(actor);
     const item = await this.item(itemId, true);
     const t = await this.targetOf(item, target);
+    const from = await this.listed(itemId);
+    // The owner stays listed (P3-17); widening goes through the share gate (P3-16)
+    assertOwnerListed(item, t);
+    assertShareableTarget(item, { scope: item.scope, orgs: from }, t);
     const p = await this.compute(item, t);
     if (p.scopeHash !== hash) throw staleError();
     if (p.conflicts.length > 0) throw nameConflictError(p.conflicts);
-    const from = await this.listed(itemId);
     if (item.scope === t.scope && from.join() === t.orgs.join() && p.replaced.length === 0) return;
     await this.followAgain(actor, itemId, p.replaced, opts);
     await this.db
@@ -447,7 +455,16 @@ export class CatalogScopeService {
     if (!UUID_RE.test(itemId)) throw notFound();
     let q = this.db
       .selectFrom("catalog_items")
-      .select(["id", "name", "scope", "builtin", "disabled", "latest_version"])
+      .select([
+        "id",
+        "name",
+        "scope",
+        "builtin",
+        "disabled",
+        "latest_version",
+        "owner_org_id",
+        "shareable",
+      ])
       .where("id", "=", itemId)
       .where("deleted_at", "is", null);
     if (forUpdate) q = q.forUpdate();

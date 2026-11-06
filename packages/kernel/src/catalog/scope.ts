@@ -3,6 +3,7 @@
  * caller reads the item's scope, disabled and builtin flags, the org's list membership and its
  * explicit switch, and these functions decide the effective state.
  */
+import { shareGate } from "./ownership.js";
 
 /** Who a platform plugin is offered to: every org, an opt-in set, or the listed orgs. */
 export type PluginScope = "all" | "optional" | "named";
@@ -46,12 +47,21 @@ export function switchable(item: { scope: PluginScope; builtin: boolean }): bool
 }
 
 /**
- * Whether an org outside a `named` item's list sees it as requestable: shown to other orgs and not
- * builtin (a builtin item is `all`).
+ * Whether an org outside a `named` item's list sees it as requestable: shown to other orgs, not
+ * builtin (a builtin item is `all`) and through the share gate (ruling P3-16: an org-owned item its
+ * owner has not made shareable stays hidden, whatever its stored `shown_to_others`).
  */
 export function requestable(
-  item: { scope: PluginScope; builtin: boolean; shown_to_others: boolean },
+  item: {
+    scope: PluginScope;
+    builtin: boolean;
+    shown_to_others: boolean;
+    owner_org_id: string | null;
+    shareable: boolean;
+  },
   inList: boolean,
 ): boolean {
-  return !item.builtin && item.scope === "named" && !inList && item.shown_to_others;
+  return (
+    !item.builtin && item.scope === "named" && !inList && item.shown_to_others && shareGate(item)
+  );
 }

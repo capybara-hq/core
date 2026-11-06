@@ -25,6 +25,9 @@ export const COMPONENT_SEGMENTS: Record<PlatformComponentKind, string> = {
   agent_template: "agent-templates",
 };
 
+/** Who owns an item or component (kernel `catalog/ownership.ts`): the platform, or one org. */
+export type Owner = { kind: "platform" } | { kind: "org"; orgId: string; name: string };
+
 /**
  * A component in the admin list (kernel `ComponentView`): a platform component, or an org's own
  * skill or agent template (ruling P2-11; scope, disable and uploads are platform-only).
@@ -37,10 +40,12 @@ export interface PlatformComponent {
   /** The plugin it came from (null: none). */
   plugin: string | null;
   itemId: string | null;
-  /** `platform`, or the id of the org that owns it (an org's own item: read-only here). */
-  owner: string;
-  /** The owning org's name (null for `platform`). */
-  ownerName: string | null;
+  /** The platform, or the org that owns it (an org's own item: read-only here; ruling P3-1). */
+  owner: Owner;
+  /** Its owner shares it with other orgs (the share gate; false for the platform's). */
+  shareable: boolean;
+  /** A platform row made from an org's own skill or agent template when first shared (P3-3). */
+  promoted: boolean;
   /** Of a builtin plugin: its scope cannot be changed nor disabled. */
   builtin: boolean;
   /** `follow`: its plugin's scope; `own`: its own. */

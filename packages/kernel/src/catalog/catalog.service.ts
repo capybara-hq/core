@@ -50,6 +50,7 @@ import {
   MarketplacesService,
   pluginNameFrom,
 } from "./marketplaces.service.js";
+import type { Owner } from "./ownership.js";
 import { PluginImport, type PluginReview, type ReviewProvenance } from "./plugin-import.js";
 import { cancelPendingRequests } from "./request-rules.js";
 import type { PluginScope } from "./scope.js";
@@ -86,6 +87,17 @@ export interface CatalogItemView {
    * them (spec §5.1 rule 1). Irrelevant for other scopes.
    */
   shownToOthers: boolean;
+  /** The platform, or the org that owns it (ruling P3-1; deleted orgs by their name). */
+  owner: Owner;
+  /**
+   * An org-owned item's owner shares it with other orgs (the share gate `owner = platform OR
+   * shareable`, P3-1); false for platform items, which pass the gate anyway.
+   */
+  shareable: boolean;
+  /** An org's upload carrying an extension waits for the super admin's confirmation (P3-9). */
+  awaitingConfirmation: boolean;
+  /** The org-uploaded version that waits for that confirmation (null: none). */
+  pendingVersion: string | null;
   /** Orgs it is on in: orgs with a live plugin install of it (every org for a builtin plugin). */
   enabledOrgs: number;
   /**

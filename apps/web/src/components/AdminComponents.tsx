@@ -66,12 +66,12 @@ export function ComponentFrom({ c }: { c: PlatformComponent }) {
 }
 
 /** Whether the platform owns it (an org's own item is read-only in the admin console). */
-export const platformOwned = (c: PlatformComponent): boolean => c.owner === "platform";
+export const platformOwned = (c: PlatformComponent): boolean => c.owner.kind === "platform";
 
 /** The 归属 text: 平台, or the owning org's name. */
 export function useOwnerText(): (c: PlatformComponent) => string {
   const t = useTranslations("adminComponents");
-  return (c) => (platformOwned(c) ? t("owner.platform") : (c.ownerName ?? c.owner));
+  return (c) => (c.owner.kind === "platform" ? t("owner.platform") : c.owner.name);
 }
 
 /** The state chips of a component: 内置, 已停用, 插件已停用. */

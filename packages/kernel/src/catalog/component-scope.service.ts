@@ -32,6 +32,14 @@ import {
   skillNameClashes,
   switchOf,
 } from "./component-state.js";
+import {
+  assertOwnerListed,
+  assertShareable,
+  assertShareableTarget,
+  type Owner,
+  ownerOf,
+  ownersOf,
+} from "./ownership.js";
 import type { PluginScope } from "./scope.js";
 
 /**
@@ -68,7 +76,7 @@ export type ComponentTarget =
 
 /**
  * A component in the admin list (`GET admin/components`): a platform component, or (ruling P2-11)
- * an org's own skill or agent template, listed read-only (`owner` = the org id; its scope fields
+ * an org's own skill or agent template, listed read-only (`owner` = the org; its scope fields
  * say it is on in that org only; scope, disable and uploads are platform-only, 404 for it).
  */
 export interface ComponentView {
@@ -79,10 +87,15 @@ export interface ComponentView {
   /** The plugin it came from (null: none). */
   plugin: string | null;
   itemId: string | null;
-  /** `platform`, or the id of the org that owns it. */
-  owner: string;
-  /** The owning org's name (null for `platform`). */
-  ownerName: string | null;
+  /** The platform, or the org that owns it (ruling P3-1). */
+  owner: Owner;
+  /** Its owner shares it with other orgs (the share gate; always false for the platform's). */
+  shareable: boolean;
+  /**
+   * A platform row created from an org's own skill or agent template when it was first shared
+   * (promote on share, ruling P3-3); false for an org row and for a plugin's component.
+   */
+  promoted: boolean;
   /** Of a builtin plugin: on everywhere, its scope cannot be changed nor disabled (409). */
   builtin: boolean;
   scopeMode: "follow" | "own";
@@ -268,6 +281,10 @@ export class ComponentScopeService {
     const comps = await loadComponents(this.db, kind);
     const st = await loadScopeState(this.db, kind, comps);
     const orgs = await this.liveOrgs();
+    const owners = await ownersOf(
+      this.db,
+      comps.flatMap((c) => (c.ownerOrgId === null ? [] : [c.ownerOrgId])),
+    );
     const platform = comps.map((c): ComponentView => {
       const plugin = c.itemId === null ? undefined : st.plugins.get(c.itemId);
       const follow = c.scopeMode === "follow" && c.itemId !== null;
@@ -286,8 +303,9 @@ export class ComponentScopeService {
         description: c.description,
         plugin: c.plugin,
         itemId: c.itemId,
-        owner: "platform",
-        ownerName: null,
+        owner: ownerOf(c.ownerOrgId, owners),
+        shareable: c.shareable,
+        promoted: c.itemId === null && c.originOrgId !== null,
         builtin: plugin?.builtin === true,
         scopeMode: c.scopeMode,
         scope,
@@ -404,7 +422,7 @@ export class ComponentScopeService {
     orgs: { id: string; name: string }[],
   ): Promise<ComponentView[]> {
     if (kind === "connector_template") return [];
-    const names = new Map(orgs.map((o) => [o.id, o.name]));
+    const live = new Set(orgs.map((o) => o.id));
     const rows =
       kind === "skill"
         ? await this.db
@@ -417,6 +435,7 @@ export class ComponentScopeService {
               "s.description",
               "s.current_version",
               "s.catalog_item_id",
+              "s.shareable",
               "c.name as plugin",
             ])
             .where("s.scope", "=", "org")
@@ -432,33 +451,38 @@ export class ComponentScopeService {
                 "name",
                 "current_version",
                 "catalog_item_id",
+                "shareable",
                 "plugin_name as plugin",
               ])
               .where("deleted_at", "is", null)
               .where("platform_template_id", "is", null)
               .execute()
           ).map((r) => ({ ...r, description: null as string | null }));
-    return rows
-      .filter((r) => names.has(r.org_id))
-      .map((r) => ({
-        kind,
-        id: r.id,
-        name: r.name,
-        description: r.description,
-        plugin: r.plugin,
-        itemId: r.catalog_item_id,
-        owner: r.org_id,
-        ownerName: names.get(r.org_id) ?? null,
-        builtin: false,
-        scopeMode: "own" as const,
-        scope: "named" as const,
-        orgs: [r.org_id],
-        disabled: false,
-        pluginStopped: false,
-        shownToOthers: false,
-        version: String(r.current_version),
-        onIn: [r.org_id],
-      }));
+    const kept = rows.filter((r) => live.has(r.org_id));
+    const owners = await ownersOf(
+      this.db,
+      kept.map((r) => r.org_id),
+    );
+    return kept.map((r) => ({
+      kind,
+      id: r.id,
+      name: r.name,
+      description: r.description,
+      plugin: r.plugin,
+      itemId: r.catalog_item_id,
+      owner: ownerOf(r.org_id, owners),
+      shareable: r.shareable,
+      promoted: false,
+      builtin: false,
+      scopeMode: "own" as const,
+      scope: "named" as const,
+      orgs: [r.org_id],
+      disabled: false,
+      pluginStopped: false,
+      shownToOthers: false,
+      version: String(r.current_version),
+      onIn: [r.org_id],
+    }));
   }
 
   /** The preview of a scope change, a disable or a return to following the plugin (nothing written). */
@@ -642,10 +666,16 @@ export class ComponentScopeService {
     await this.adminLock.lockAndAuthorize(actor);
     const c = await this.component(kind, id, true);
     const t = await this.targetOf(c, target);
+    const from = await this.listed(kind, id);
+    // Its own scope: the owner stays listed (P3-17), widening goes through the share gate (P3-16);
+    // following the plugin again takes the plugin's scope, which its own writer gates
+    if (t.scopeMode === "own") {
+      assertOwnerListed(gateRow(c), t);
+      assertShareableTarget(gateRow(c), await this.effectiveScope(c, from), t);
+    }
     const p = await this.compute(c, t);
     if (p.scopeHash !== hash) throw staleError();
     if (p.conflicts.length > 0) throw nameConflictError(p.conflicts);
-    const from = await this.listed(kind, id);
     if (c.scopeMode === t.scopeMode && c.scope === t.scope && from.join() === t.orgs.join()) return;
     await this.db
       .updateTable(TABLE[kind] as "platform_skills")
@@ -732,6 +762,8 @@ export class ComponentScopeService {
     await this.adminLock.lockAndAuthorize(actor);
     const [c] = await loadComponents(this.db, kind, { ids: [id], forUpdate: true });
     if (!c) throw notFound();
+    // Showing goes through the share gate (P3-16); hiding is always allowed
+    if (shown) assertShareable(gateRow(c));
     if (c.shownToOthers === shown) return;
     await this.db
       .updateTable(TABLE[kind] as "platform_skills")
@@ -793,7 +825,7 @@ export class ComponentScopeService {
 
   /** An org-owned skill's or agent template's versions (ruling P2-11); else 404. */
   private async orgOwnedVersions(kind: ComponentKind, id: string): Promise<ComponentVersionView[]> {
-    const owned = (await this.list(kind)).find((x) => x.id === id && x.owner !== "platform");
+    const owned = (await this.list(kind)).find((x) => x.id === id && x.owner.kind === "org");
     if (!owned) throw notFound();
     const rows =
       kind === "skill"
@@ -840,6 +872,30 @@ export class ComponentScopeService {
       if (item?.builtin) throw builtinError();
     }
     return c;
+  }
+
+  /**
+   * The scope that offers the component now: its own (`listed`: its own list), or for `follow` its
+   * plugin's (`all` for a builtin or deleted plugin: the widest, so nothing counts as widening).
+   */
+  private async effectiveScope(
+    c: ComponentRow,
+    listed: string[],
+  ): Promise<{ scope: PluginScope; orgs: string[] }> {
+    if (c.scopeMode === "own" || c.itemId === null) return { scope: c.scope, orgs: listed };
+    const item = await this.db
+      .selectFrom("catalog_items")
+      .select(["scope", "builtin"])
+      .where("id", "=", c.itemId)
+      .where("deleted_at", "is", null)
+      .executeTakeFirst();
+    if (!item || item.builtin) return { scope: "all", orgs: [] };
+    const rows = await this.db
+      .selectFrom("catalog_item_scope_orgs")
+      .select("org_id")
+      .where("item_id", "=", c.itemId)
+      .execute();
+    return { scope: item.scope, orgs: rows.map((r) => r.org_id) };
   }
 
   /** The component's own `named` list, sorted. */
@@ -942,6 +998,13 @@ export class ComponentScopeService {
     return { ...p, scopeHash: previewHash(c, target, p) };
   }
 }
+
+/** The share gate's view of a component row. */
+const gateRow = (c: ComponentRow) => ({
+  owner_org_id: c.ownerOrgId,
+  shareable: c.shareable,
+  name: c.name,
+});
 
 const TABLE: Record<ComponentKind, string> = {
   skill: "platform_skills",

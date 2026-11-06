@@ -1,22 +1,42 @@
 import { sql } from "kysely";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { audit } from "../identity/audit.js";
+import { assertShareable } from "./ownership.js";
 
 /**
  * Adds one org to a `named` item's list in the caller's transaction (the caller holds the item row
  * `FOR UPDATE`): bumps `scope_version` and audits `catalog.scope_changed` the way a scope change
  * does (`from` / `to` with the sorted lists; `requestId` when a request asked for it). Nothing is
  * written when the item is not `named` (or builtin) or the org is listed already. Returns whether
- * the list changed; the caller enqueues the item's scope sync after the commit.
+ * the list changed; the caller enqueues the item's scope sync after the commit. Adding an org other
+ * than its owner to an org-owned item that is not shareable -> 409 `catalog.not_shareable` (the
+ * share gate, ruling P3-16, read on the caller's locked row).
  */
 export async function addScopeOrg(
   db: KernelSchemaDb,
   actor: string | null,
-  item: { id: string; name: string; scope: "all" | "optional" | "named"; builtin: boolean },
+  item: {
+    id: string;
+    name: string;
+    scope: "all" | "optional" | "named";
+    builtin: boolean;
+    owner_org_id: string | null;
+    shareable: boolean;
+  },
   orgId: string,
   opts: { actorTokenId?: string; requestId?: string } = {},
 ): Promise<boolean> {
   if (item.builtin || item.scope !== "named") return false;
+  if (orgId !== item.owner_org_id) {
+    const listed = await db
+      .selectFrom("catalog_item_scope_orgs")
+      .select("org_id")
+      .where("item_id", "=", item.id)
+      .where("org_id", "=", orgId)
+      .executeTakeFirst();
+    if (listed !== undefined) return false;
+    assertShareable(item);
+  }
   const added = await db
     .insertInto("catalog_item_scope_orgs")
     .values({ item_id: item.id, org_id: orgId })

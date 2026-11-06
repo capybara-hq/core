@@ -278,7 +278,7 @@ describe("component scope (super admin)", { timeout: 60_000 }, () => {
         id: skillId,
         name: "pdf-tools",
         plugin: "crm",
-        owner: "platform",
+        owner: { kind: "platform" },
         scope: "named",
         version: "1",
         onIn: [org2],
@@ -725,14 +725,15 @@ describe("the admin component list: builtin and org-owned (Task 9 fix round 1)",
       await env.root({ method: "GET", url: "/api/v1/admin/components?kind=skill" })
     ).json().components as Record<string, unknown>[];
     expect(skills.find((c) => c.name === "pdf-tools")).toMatchObject({
-      owner: "platform",
-      ownerName: null,
+      owner: { kind: "platform" },
+      promoted: false,
     });
     expect(skills.find((c) => c.id === skillId)).toMatchObject({
       kind: "skill",
       name: "house-style",
-      owner: env.orgId,
-      ownerName: org.name,
+      owner: { kind: "org", orgId: env.orgId, name: org.name },
+      shareable: false,
+      promoted: false,
       plugin: null,
       version: "2",
       builtin: false,
@@ -741,12 +742,15 @@ describe("the admin component list: builtin and org-owned (Task 9 fix round 1)",
     const tpls = (
       await env.root({ method: "GET", url: "/api/v1/admin/components?kind=agent_template" })
     ).json().components as Record<string, unknown>[];
-    expect(tpls.find((c) => c.id === tplId)).toMatchObject({ owner: env.orgId, version: "1" });
+    expect(tpls.find((c) => c.id === tplId)).toMatchObject({
+      owner: { kind: "org", orgId: env.orgId },
+      version: "1",
+    });
     // connector templates are never org-owned
     const conns = (
       await env.root({ method: "GET", url: "/api/v1/admin/components?kind=connector_template" })
-    ).json().components as { owner: string }[];
-    expect(conns.every((c) => c.owner === "platform")).toBe(true);
+    ).json().components as { owner: { kind: string } }[];
+    expect(conns.every((c) => c.owner.kind === "platform")).toBe(true);
 
     const v = await env.root({
       method: "GET",

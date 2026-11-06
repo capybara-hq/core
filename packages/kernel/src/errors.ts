@@ -72,6 +72,10 @@ export const ERROR_CODES = {
   "catalog.dependency_cycle": 409,
   "catalog.version_exists": 409,
   "catalog.item_not_found": 404,
+  /** An org-owned item its owner has not made shareable cannot be shown or associated (P3-16). */
+  "catalog.not_shareable": 409,
+  /** The owner org cannot be removed from its own item's list (P3-17). */
+  "catalog.owner_required": 409,
   "catalog.name_conflict": 409,
   "directory.not_configured": 409,
   "catalog.item_disabled": 403,

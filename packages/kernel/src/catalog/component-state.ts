@@ -112,6 +112,12 @@ export interface ComponentRow extends ComponentScopeFacts {
   version: string;
   description: string | null;
   shownToOthers: boolean;
+  /** The owning org (null: the platform; ruling P3-1). */
+  ownerOrgId: string | null;
+  /** The org it was created in (skills, agent templates; null: the platform, F27). */
+  originOrgId: string | null;
+  /** Its owner shares it with other orgs (the share gate, P3-1). */
+  shareable: boolean;
 }
 
 /** The live platform components of `kind` (`ids` / `itemId`: only those). */
@@ -128,6 +134,8 @@ export async function loadComponents(
     scope: PluginScope;
     disabled: boolean;
     shown_to_others: boolean;
+    owner_org_id: string | null;
+    shareable: boolean;
   }) => ({
     kind,
     id: r.id,
@@ -136,6 +144,8 @@ export async function loadComponents(
     scope: r.scope,
     disabled: r.disabled,
     shownToOthers: r.shown_to_others,
+    ownerOrgId: r.owner_org_id,
+    shareable: r.shareable,
   });
   if (kind === "connector_template") {
     let q = db
@@ -150,6 +160,8 @@ export async function loadComponents(
         "p.scope",
         "p.disabled",
         "p.shown_to_others",
+        "p.owner_org_id",
+        "p.shareable",
         "c.name as item_name",
       ])
       .where("p.deleted_at", "is", null);
@@ -163,6 +175,7 @@ export async function loadComponents(
       plugin: r.item_name,
       version: r.current_version,
       description: null,
+      originOrgId: null,
     }));
   }
   const table = kind === "skill" ? "platform_skills" : "platform_agent_templates";
@@ -179,6 +192,9 @@ export async function loadComponents(
       "p.scope",
       "p.disabled",
       "p.shown_to_others",
+      "p.owner_org_id",
+      "p.origin_org_id",
+      "p.shareable",
     ])
     .where("p.deleted_at", "is", null);
   if (filter.ids !== undefined) q = q.where("p.id", "in", [...filter.ids]);
@@ -191,6 +207,7 @@ export async function loadComponents(
     plugin: r.plugin_name,
     version: String(r.current_version),
     description: r.description as string | null,
+    originOrgId: r.origin_org_id,
   }));
 }
 

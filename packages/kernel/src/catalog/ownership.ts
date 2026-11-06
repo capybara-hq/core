@@ -1,0 +1,89 @@
+// Owners of catalog items and platform components, and the share gate (plugin scope phase 3, spec
+// §14, rulings P3-1, P3-16, P3-17). An item or component is owned by the platform
+// (`owner_org_id` null) or by one org; an org-owned one reaches other orgs only while its owner
+// makes it shareable. Every writer that shows an item to another org or associates one checks the
+// gate on the row it writes, read `FOR UPDATE` in its transaction.
+import type { KernelSchemaDb } from "../db/kernel-schema.js";
+import { ApiError } from "../errors.js";
+
+/** Who owns an item or component: the platform, or one org (by id and name, deleted orgs too). */
+export type Owner = { kind: "platform" } | { kind: "org"; orgId: string; name: string };
+
+export const PLATFORM_OWNER: Owner = { kind: "platform" };
+
+/**
+ * The share gate (P3-1): a platform item, or an org-owned one its owner made shareable. Closed:
+ * the item is never shown, requestable or associable outside its owner (orgs already associated
+ * keep it).
+ */
+export function shareGate(row: { owner_org_id: string | null; shareable: boolean }): boolean {
+  return row.owner_org_id === null || row.shareable;
+}
+
+/** 409 `catalog.not_shareable` unless the row passes the {@link shareGate} (P3-16). */
+export function assertShareable(row: {
+  owner_org_id: string | null;
+  shareable: boolean;
+  name: string;
+}): void {
+  if (shareGate(row)) return;
+  throw new ApiError(
+    "catalog.not_shareable",
+    `${row.name} is owned by an organization that has not made it shareable`,
+  );
+}
+
+/**
+ * 409 `catalog.owner_required` when a `named` list after a change leaves out the item's owner org
+ * (P3-17: the owner stays on its own item's list).
+ */
+export function assertOwnerListed(
+  row: { owner_org_id: string | null; name: string },
+  target: { scope: string; orgs: readonly string[] },
+): void {
+  if (row.owner_org_id === null || target.scope !== "named") return;
+  if (target.orgs.includes(row.owner_org_id)) return;
+  throw new ApiError(
+    "catalog.owner_required",
+    `${row.name} is owned by an organization that must stay on its list`,
+  );
+}
+
+const BREADTH: Record<string, number> = { named: 0, optional: 1, all: 2 };
+
+/**
+ * A widening of the scope for a row that does not pass the share gate -> 409
+ * `catalog.not_shareable`: a broader scope (`named` < `optional` < `all`), or, `named` to `named`,
+ * an org not on the list before the change. Narrowing is always allowed (P3-16).
+ */
+export function assertShareableTarget(
+  row: { owner_org_id: string | null; shareable: boolean; name: string },
+  from: { scope: string; orgs: readonly string[] },
+  target: { scope: string; orgs: readonly string[] },
+): void {
+  if (shareGate(row)) return;
+  const wider = (BREADTH[target.scope] ?? 2) > (BREADTH[from.scope] ?? 2);
+  const known = new Set(from.orgs);
+  const added =
+    from.scope === "named" && target.scope === "named" && target.orgs.some((o) => !known.has(o));
+  if (wider || added) assertShareable(row);
+}
+
+/** The owners of `orgIds` by org id (deleted orgs included, by their name). */
+export async function ownersOf(
+  db: KernelSchemaDb,
+  orgIds: readonly string[],
+): Promise<Map<string, Owner>> {
+  const ids = [...new Set(orgIds)];
+  const out = new Map<string, Owner>();
+  if (ids.length === 0) return out;
+  const rows = await db.selectFrom("orgs").select(["id", "name"]).where("id", "in", ids).execute();
+  for (const r of rows) out.set(r.id, { kind: "org", orgId: r.id, name: r.name });
+  return out;
+}
+
+/** The {@link Owner} of a row from {@link ownersOf}'s map (an org row gone: its id as the name). */
+export function ownerOf(ownerOrgId: string | null, owners: ReadonlyMap<string, Owner>): Owner {
+  if (ownerOrgId === null) return PLATFORM_OWNER;
+  return owners.get(ownerOrgId) ?? { kind: "org", orgId: ownerOrgId, name: ownerOrgId };
+}

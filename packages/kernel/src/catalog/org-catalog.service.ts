@@ -27,8 +27,9 @@ import {
   type TemplateDeps,
   templatePluginProblem,
 } from "./catalog-content.js";
-import { itemView } from "./catalog-items.js";
+import { itemView, ownerOnlyFacts } from "./catalog-items.js";
 import { connectorTemplatesOn, templateIdOfPath } from "./component-state.js";
+import { ownerOf, ownersOf } from "./ownership.js";
 import {
   PluginInstaller,
   type UninstallPreview,
@@ -178,6 +179,10 @@ export class OrgCatalogService {
       }),
     );
     const configured = new Set(configs.map((c) => c.plugin));
+    const owners = await ownersOf(
+      this.db,
+      items.flatMap((i) => (i.owner_org_id === null ? [] : [i.owner_org_id])),
+    );
     const loaded = new Map(this.registry.manifests().map((x) => [x.name, x]));
     const out: OrgCatalogItem[] = [];
     for (const i of items) {
@@ -192,7 +197,7 @@ export class OrgCatalogService {
         pending: _pending,
         shownToOthers: _shown,
         ...view
-      } = itemView(i, vs);
+      } = itemView(i, vs, 0, undefined, ownerOnlyFacts(ownerOf(i.owner_org_id, owners)));
       const latest = vs.find((v) => v.version === i.latest_version);
       const a = pluginInstalls.find((x) => x.item_id === i.id);
       const scope = i.builtin ? "all" : i.scope;
@@ -299,11 +304,12 @@ export class OrgCatalogService {
     // A hidden `named` item stays absent here too
     const item = await this.db
       .selectFrom("catalog_items")
-      .select(["scope", "builtin", "shown_to_others"])
+      .select(["scope", "builtin", "shown_to_others", "owner_org_id", "shareable"])
       .where("id", "=", itemId)
       .where("deleted_at", "is", null)
       .executeTakeFirst();
-    if (item && !item.builtin && item.scope === "named" && !item.shown_to_others) {
+    // Not requestable from outside its list (hidden, or held back by the share gate): only listed orgs
+    if (item && !item.builtin && item.scope === "named" && !requestable(item, false)) {
       const listed = await this.db
         .selectFrom("catalog_item_scope_orgs")
         .select("item_id")

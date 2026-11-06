@@ -96,6 +96,7 @@ import {
 } from "./claude/report.js";
 import { isClaudePluginTree, translateClaudePlugin } from "./claude/translate.js";
 import { CatalogItemLock } from "./locks.js";
+import { shareGate } from "./ownership.js";
 import { PlatformComponents } from "./platform-components.js";
 import { PLATFORM_MIGRATION_JOB } from "./platform-migration.js";
 import {
@@ -1171,11 +1172,14 @@ export class PluginImport {
     if (!created && requestOrgs.length > 0) {
       const item = await t
         .selectFrom("catalog_items")
-        .select(["id", "name", "scope", "builtin"])
+        .select(["id", "name", "scope", "builtin", "owner_org_id", "shareable"])
         .where("id", "=", itemId)
         .forUpdate()
         .executeTakeFirstOrThrow();
-      for (const org of requestOrgs) await addScopeOrg(t, actor, item, org, opts);
+      // An org-owned item held back by the share gate (P3-16) gains no org from an import
+      if (shareGate(item)) {
+        for (const org of requestOrgs) await addScopeOrg(t, actor, item, org, opts);
+      }
     }
     return { itemId, created, now, previous };
   }

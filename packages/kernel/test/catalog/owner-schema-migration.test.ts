@@ -90,6 +90,12 @@ describe("0083 org owned items", () => {
     await ins("ps2", "org-a");
     await expect(ins("ps3", "org-a")).rejects.toThrow();
     await expect(ins("ps4", null)).rejects.toThrow();
+    // two orgs, one name: org B's own `report` is a second live row
+    await ins("ps5", "org-b");
+    expect(
+      await q(`select id from capybara.platform_skills where name = 'report' and deleted_at is null
+        order by id`),
+    ).toEqual([{ id: "ps1" }, { id: "ps2" }, { id: "ps5" }]);
   });
 
   it("org_notices accepts the new kinds only", async () => {

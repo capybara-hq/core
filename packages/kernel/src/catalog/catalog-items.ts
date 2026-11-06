@@ -38,6 +38,7 @@ import {
   sourceEffective,
   unimportable,
 } from "./marketplaces.service.js";
+import { type Owner, ownerOf, ownersOf, PLATFORM_OWNER } from "./ownership.js";
 import { schemaHasPath } from "./schema-path.js";
 import type { PluginScope } from "./scope.js";
 import { compareVersions, newestFirst, sameRelease, withBuild } from "./versions.js";
@@ -627,14 +628,16 @@ export interface ItemScopeFacts {
   pending: boolean;
   /** The digest `confirm` takes (null unless pending and readable). */
   permissionsHash: string | null;
+  /** The platform, or the org that owns the item (ruling P3-1). */
+  owner: Owner;
 }
 
-const NO_FACTS: ItemScopeFacts = {
-  scopeOrgs: [],
-  enabledOrgs: 0,
-  pending: false,
-  permissionsHash: null,
-};
+/** The facts of a view that shows none of the scope facts, only the item's owner. */
+export function ownerOnlyFacts(owner: Owner): ItemScopeFacts {
+  return { scopeOrgs: [], enabledOrgs: 0, pending: false, permissionsHash: null, owner };
+}
+
+const NO_FACTS: ItemScopeFacts = ownerOnlyFacts(PLATFORM_OWNER);
 
 /** What an item with an extension needs confirming (see {@link itemConfirmations}). */
 export type ItemConfirmations = ReadonlyMap<
@@ -691,9 +694,19 @@ const LIVE_INSTALL = ["installing", "installed", "upgrading"] as const;
  */
 export async function itemScopeFacts(
   db: KernelSchemaDb,
-  items: { id: string; name: string; builtin: boolean; latest_version: string }[],
+  items: {
+    id: string;
+    name: string;
+    builtin: boolean;
+    latest_version: string;
+    owner_org_id: string | null;
+  }[],
   confirmations: ItemConfirmations,
 ): Promise<Map<string, ItemScopeFacts>> {
+  const owners = await ownersOf(
+    db,
+    items.flatMap((i) => (i.owner_org_id === null ? [] : [i.owner_org_id])),
+  );
   const out = new Map<string, ItemScopeFacts>(
     items.map((i) => [
       i.id,
@@ -702,6 +715,7 @@ export async function itemScopeFacts(
         enabledOrgs: 0,
         pending: confirmations.get(i.id)?.pending ?? false,
         permissionsHash: confirmations.get(i.id)?.permissionsHash ?? null,
+        owner: ownerOf(i.owner_org_id, owners),
       },
     ]),
   );
@@ -765,6 +779,9 @@ export function itemView(
     latest_version: string;
     marketplace_id?: string | null;
     updated_at: Date;
+    shareable: boolean;
+    awaiting_confirmation: boolean;
+    pending_version: string | null;
   },
   versions: {
     version: string;
@@ -800,6 +817,10 @@ export function itemView(
     builtin: i.builtin,
     disabled: i.disabled,
     shownToOthers: i.shown_to_others,
+    owner: facts.owner,
+    shareable: i.shareable,
+    awaitingConfirmation: i.awaiting_confirmation,
+    pendingVersion: i.pending_version,
     enabledOrgs: facts.enabledOrgs,
     pending: facts.pending,
     permissionsHash: facts.permissionsHash,
