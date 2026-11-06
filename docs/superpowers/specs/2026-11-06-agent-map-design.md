@@ -287,7 +287,18 @@ status line ("子智能体只读 · 不能和它对话，请让 <parent> 转达"
 Built from `apps/web/src/lib/timeline.ts` like every timeline. When the timeline restyle (N4) lands,
 transcripts change with it.
 
-### 9.5 Design system
+### 9.5 In the conversation stream **(decided, 2026-11-06: as Claude Code)**
+
+Each `Agent` call in the stream is a tool block: the header is `Agent` + the task description; the
+body is `IN` with the prompt (two lines, ellipsis, expandable). Under it, while the child works, one
+live status line: a pulsing dot, "后台运行中：<the child's current tool summary>" / "Working in the
+background: <summary>", and an action that opens that agent in the map (level 2), the way Claude Code
+says "type /tasks to see its transcript". When the child ends, the line becomes its final state
+(status dot, "完成 · <time> · <tokens>" / failed / stopped) and the action stays. The line is fed by
+`subagent_progress` (latest tool summary) and the tree. It replaces today's per-call row inside
+`SubagentGroup`; whether the group header stays is the builder's call.
+
+### 9.6 Design system
 
 New design components and their state lists and reference blocks in `packages/design`, a section in
 `docs/design/spec.md`, visual baselines through `visual-update`, and the web rules of AGENTS.md
