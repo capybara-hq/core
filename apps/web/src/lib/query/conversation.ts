@@ -64,7 +64,7 @@ export const eventsQuery = (orgId: string, id: string) =>
     freshness: "events",
   });
 
-/** The queued messages and whether the queue is paused (and why). */
+/** Messages an older version queued (leftovers the kernel still sends) and whether they are paused. */
 export const queueQuery = (orgId: string, id: string) =>
   defineQuery({
     key: keys.org(orgId).conversation(id).queue(),

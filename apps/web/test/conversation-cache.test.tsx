@@ -19,7 +19,7 @@ import {
   toolInfoQuery,
 } from "../src/lib/query/conversation";
 import { keys } from "../src/lib/query/keys";
-import { type Call, json, noContent, stubApi } from "./support/api";
+import { type Call, json, stubApi } from "./support/api";
 import {
   CONV,
   ev,
@@ -483,7 +483,7 @@ describe("the conversation page from the cache", () => {
     expect(gets(calls)).toEqual([`${BASE}/files`]);
   });
 
-  it("deleting a queued message invalidates the queue", async () => {
+  it("continuing paused leftover messages invalidates the queue", async () => {
     const queued = {
       id: "q1",
       text: "queued",
@@ -493,24 +493,24 @@ describe("the conversation page from the cache", () => {
       createdAt: "2026-10-26T06:00:00.000Z",
       position: 1,
     };
-    let items = [queued];
+    let paused = true;
     const extra = {
-      [`GET ${BASE}/queue`]: () => json(200, { items, paused: false }),
-      [`DELETE ${BASE}/queue/q1`]: () => {
-        items = [];
-        return noContent();
+      [`GET ${BASE}/queue`]: () => json(200, { items: [queued], paused }),
+      [`POST ${BASE}/queue/resume`]: () => {
+        paused = false;
+        return json(202, {});
       },
     };
     const calls = stubApi(routes(extra));
     await renderChatRoute({ routes: routes(extra) });
     expect(await screen.findByText("queued")).toBeTruthy();
     act(() => {
-      (
-        document.querySelector('[data-queue-item="q1"] [aria-label="Delete"]') as HTMLElement
-      )?.click();
+      screen.getByRole("button", { name: "Continue sending" }).click();
     });
     await vi.waitFor(() => expect(gets(calls)).toEqual([`${BASE}/queue`]));
-    await vi.waitFor(() => expect(screen.queryByText("queued")).toBeNull());
+    await vi.waitFor(() =>
+      expect(screen.queryByRole("button", { name: "Continue sending" })).toBeNull(),
+    );
   });
 });
 

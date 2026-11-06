@@ -1,7 +1,7 @@
 import { act, cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { bodyOf, type Call, json, noContent, stubApi } from "./support/api";
+import { bodyOf, type Call, json, stubApi } from "./support/api";
 import {
   AGENTS,
   CONV,
@@ -53,79 +53,62 @@ afterEach(() => {
   FakeEventSource.instances = [];
 });
 
-describe("queued messages", () => {
-  it("show under the thread in order, with copy / edit / delete / Send now", async () => {
-    const calls = api({
-      [`POST ${BASE}/queue/q2/send`]: () => {
-        queue = { ...queue, items: [queue.items[0] as ReturnType<typeof item>] };
-        return json(202, { event: userMsg(3, "second queued") });
-      },
-      [`DELETE ${BASE}/queue/q1`]: () => {
-        queue = { ...queue, items: [] };
-        return noContent();
-      },
-    });
-    await renderChatRoute({ locale: "zh" });
-    const list = await screen.findByRole("group", { name: "排队的消息" });
-    const bubbles = within(list).getAllByText(/queued$/);
-    expect(bubbles.map((b) => b.textContent)).toEqual(["first queued", "second queued"]);
-    const second = list.querySelector('[data-queue-item="q2"]') as HTMLElement;
-    const user = userEvent.setup();
-    await user.click(within(second).getByRole("button", { name: "立即发送" }));
-    expect(calls.some((c) => c.method === "POST" && c.url === `${BASE}/queue/q2/send`)).toBe(true);
-    // Sent now: an interjection in the thread, gone from the queue.
-    await vi.waitFor(() => expect(list.querySelector('[data-queue-item="q2"]')).toBeNull());
-    expect(
-      screen.getByText("second queued").closest("[data-entry]")?.getAttribute("data-entry"),
-    ).toBe("user");
-    const first = list.querySelector('[data-queue-item="q1"]') as HTMLElement;
-    await user.click(within(first).getByRole("button", { name: "删除" }));
-    await vi.waitFor(() => expect(screen.queryByRole("group", { name: "排队的消息" })).toBeNull());
+describe("leftover queued messages (run input spec 2026-11-07 D3)", () => {
+  it("show after the thread in order as pending bubbles, with no queue controls", async () => {
+    api();
+    const { container } = await renderChatRoute({ locale: "zh" });
+    await screen.findByText("first queued");
+    const left = [...container.querySelectorAll("[data-leftover]")] as HTMLElement[];
+    expect(left.map((n) => n.getAttribute("data-leftover"))).toEqual(["q1", "q2"]);
+    for (const n of left) {
+      expect(n.querySelector('[data-queued="true"]')).not.toBeNull();
+      expect(within(n).getByText("待处理")).toBeTruthy();
+    }
+    for (const name of ["立即发送", "编辑", "删除", "复制"])
+      expect(screen.queryByRole("button", { name })).toBeNull();
+    expect(screen.queryByRole("group", { name: "排队的消息" })).toBeNull();
   });
 
-  it("edits in place: PATCH with the new text", async () => {
+  it("↵ while running posts a message, never the queue", async () => {
+    let n = 2;
     const calls = api({
-      [`PATCH ${BASE}/queue/q1`]: () => {
-        queue = { ...queue, items: [item("q1", "edited", 1), ...queue.items.slice(1)] };
-        return json(200, { item: item("q1", "edited", 1) });
-      },
+      [`POST ${BASE}/messages`]: (c) =>
+        json(202, { event: userMsg(++n, String((bodyOf(c) as { text: string }).text)) }),
     });
     await renderChatRoute();
-    const list = await screen.findByRole("group", { name: "Queued messages" });
-    const first = list.querySelector('[data-queue-item="q1"]') as HTMLElement;
-    const user = userEvent.setup();
-    await user.click(within(first).getByRole("button", { name: "Edit" }));
-    const box = within(first).getByRole("textbox");
-    await user.clear(box);
-    await user.type(box, "edited");
-    await user.click(within(first).getByRole("button", { name: "Save" }));
-    await vi.waitFor(() => expect(calls.some((c) => c.method === "PATCH")).toBe(true));
-    expect(JSON.parse(String(calls.find((c) => c.method === "PATCH")?.body))).toEqual({
-      text: "edited",
-    });
-    expect(await screen.findByText("edited")).toBeTruthy();
-  });
-
-  it("a paused queue shows Continue sending, which resumes", async () => {
-    queue = { ...queue, paused: true };
-    const calls = api({
-      [`POST ${BASE}/queue/resume`]: () => {
-        queue = { ...queue, paused: false };
-        return json(202, {});
-      },
-    });
-    await renderChatRoute({ locale: "zh" });
-    expect(await screen.findByText("运行已停止，队列已暂停（2 条）")).toBeTruthy();
-    // Paused bubbles carry no actions.
-    expect(screen.queryByRole("button", { name: "立即发送" })).toBeNull();
-    await userEvent.setup().click(screen.getByRole("button", { name: "继续发送" }));
-    expect(calls.some((c) => c.method === "POST" && c.url === `${BASE}/queue/resume`)).toBe(true);
+    await screen.findByText("first queued");
+    const input = screen.getByRole("textbox", { name: "Message", hidden: true });
+    await userEvent.setup().type(input, "third{Enter}");
     await vi.waitFor(() =>
-      expect(screen.getAllByRole("button", { name: "立即发送" })).toHaveLength(2),
+      expect(calls.filter((c) => c.method === "POST" && c.url === `${BASE}/messages`)).toHaveLength(
+        1,
+      ),
     );
+    expect(calls.some((c) => c.method === "POST" && c.url.startsWith(`${BASE}/queue`))).toBe(false);
+    // the new message is not one of the leftovers
+    expect(document.querySelectorAll("[data-leftover]")).toHaveLength(2);
   });
 
-  it("reloads on changed: queue (another tab or the dispatcher changed it)", async () => {
+  it("a leftover the stream delivers leaves in the same tick: its text shows once", async () => {
+    api();
+    await renderChatRoute();
+    await screen.findByText("first queued");
+    // the queue's read still lists it: only the log says it was sent
+    act(() =>
+      FakeEventSource.instances[0]?.emit(
+        "event",
+        userMsg(3, "first queued", { clientMessageId: "cm-q1" }),
+      ),
+    );
+    expect(document.querySelector('[data-leftover="q1"]')).toBeNull();
+    expect(screen.getAllByText("first queued")).toHaveLength(1);
+    expect(
+      screen.getByText("first queued").closest("[data-entry]")?.getAttribute("data-entry"),
+    ).toBe("user");
+    expect(document.querySelector('[data-leftover="q2"]')).not.toBeNull();
+  });
+
+  it("reloads on changed: queue (the dispatcher sent one)", async () => {
     api();
     await renderChatRoute();
     await screen.findByText("first queued");
@@ -135,63 +118,28 @@ describe("queued messages", () => {
     expect(screen.getByText("second queued")).toBeTruthy();
   });
 
-  it("↵ while running shows the queued message at once, before the POST answers, and once after", async () => {
-    let answer: (r: Response) => void = () => {};
-    let posted: { text: string; clientMessageId: string } | undefined;
-    api({
-      [`POST ${BASE}/queue`]: (c) => {
-        posted = bodyOf(c) as { text: string; clientMessageId: string };
-        return new Promise<Response>((r) => {
-          answer = r;
-        });
+  it("paused leftovers keep Continue sending (the only way they drain), which resumes", async () => {
+    queue = { ...queue, paused: true };
+    const calls = api({
+      [`POST ${BASE}/queue/resume`]: () => {
+        queue = { ...queue, paused: false };
+        return json(202, {});
       },
     });
-    await renderChatRoute();
-    await screen.findByText("first queued");
-    const input = screen.getByRole("textbox", { name: "Message", hidden: true });
-    const user = userEvent.setup();
-    await user.type(input, "third{Enter}");
-    // the composer is empty and the message is in the queue list before the kernel answers
-    expect((input as HTMLTextAreaElement).value).toBe("");
-    const list = screen.getByRole("group", { name: "Queued messages" });
-    expect(within(list).getByText("third")).toBeTruthy();
-    const queued = { ...item("q3", "third", 3), clientMessageId: posted?.clientMessageId ?? "" };
-    queue = { ...queue, items: [...queue.items, queued] };
-    await act(async () => answer(json(201, { item: queued })));
-    await vi.waitFor(() => expect(list.querySelector('[data-queue-item="q3"]')).not.toBeNull());
-    expect(within(list).getAllByText("third")).toHaveLength(1);
+    await renderChatRoute({ locale: "zh" });
+    expect(await screen.findByText("运行已停止，队列已暂停（2 条）")).toBeTruthy();
+    await userEvent.setup().click(screen.getByRole("button", { name: "继续发送" }));
+    expect(calls.some((c) => c.method === "POST" && c.url === `${BASE}/queue/resume`)).toBe(true);
+    await vi.waitFor(() => expect(screen.queryByRole("button", { name: "继续发送" })).toBeNull());
+    expect(document.querySelectorAll("[data-leftover]")).toHaveLength(2);
   });
 
-  it("a queued message the kernel refused leaves the list and goes back to the composer", async () => {
-    api({
-      [`POST ${BASE}/queue`]: () => json(500, { error: { code: "internal", message: "boom" } }),
-    });
-    await renderChatRoute();
-    await screen.findByText("first queued");
-    const input = screen.getByRole("textbox", { name: "Message", hidden: true });
-    const user = userEvent.setup();
-    await user.type(input, "third{Enter}");
-    await vi.waitFor(() => expect((input as HTMLTextAreaElement).value).toBe("third"));
-    expect(screen.queryByText("third", { selector: '[data-part="bubble"]' })).toBeNull();
-  });
-
-  it("a queued message the stream delivers leaves the list in the same tick: its text shows once (L4)", async () => {
+  it("no leftovers: nothing after the thread", async () => {
+    queue = { items: [], paused: true };
     api();
-    await renderChatRoute();
-    const list = await screen.findByRole("group", { name: "Queued messages" });
-    expect(list.querySelector('[data-queue-item="q1"]')).not.toBeNull();
-    // the queue's read still lists it: only the log says it was sent
-    act(() =>
-      FakeEventSource.instances[0]?.emit(
-        "event",
-        userMsg(3, "first queued", { clientMessageId: "cm-q1" }),
-      ),
-    );
-    expect(document.querySelector('[data-queue-item="q1"]')).toBeNull();
-    expect(screen.getAllByText("first queued")).toHaveLength(1);
-    expect(
-      screen.getByText("first queued").closest("[data-entry]")?.getAttribute("data-entry"),
-    ).toBe("user");
-    expect(document.querySelector('[data-queue-item="q2"]')).not.toBeNull();
+    const { container } = await renderChatRoute();
+    await screen.findByText("hi");
+    expect(container.querySelector("[data-leftover]")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Continue sending" })).toBeNull();
   });
 });

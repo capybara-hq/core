@@ -265,7 +265,7 @@ async function uploadSkill(page: Page, orgId: string, name: string, md: string):
   return id as string;
 }
 
-test("phase D: invoke skills from the / menu and typed, queue one, run a forked one; a manual skill is in the menu, not the model's catalog", async ({
+test("phase D: invoke skills from the / menu and typed, send one while running, run a forked one; a manual skill is in the menu, not the model's catalog", async ({
   page,
 }) => {
   await signIn(page);
@@ -364,7 +364,7 @@ test("phase D: invoke skills from the / menu and typed, queue one, run a forked 
     ["e2e-fix-issue", "e2e-manual-check"],
   );
 
-  // 3. queued while running: the queued bubble carries the chip, then it goes out
+  // 3. sent while running: an interjection whose pending bubble carries the chip, then taken in
   const long = Array.from({ length: 60 }, (_, i) => `w${i}`).join(" ");
   await input.fill(`slow:300:${long}`);
   await input.press("Enter");
@@ -372,15 +372,14 @@ test("phase D: invoke skills from the / menu and typed, queue one, run a forked 
   await expect(page.locator('[data-entry="user"]').filter({ hasText: "slow:300:" })).toBeVisible();
   await expect(input).toHaveValue("");
   await expect(page.locator('[data-entry="prose"][data-streaming="true"]')).toBeVisible();
-  // while the run goes, ↵ queues (⌘↵ / Ctrl+↵ would send now; conversation send design D1)
+  // while the run goes, ↵ sends an interjection (run input spec D1): logged at once, pending
+  // (待处理) until a step takes it in; nothing is queued
   await input.fill("/e2e-fix-issue 9");
   await input.press("Enter");
-  const queue = page.locator('[data-entry="queue"]');
-  await expect(queue.locator('[data-part="bubble-skill"]')).toHaveText("/e2e-fix-issue");
-  await expect(queue).toHaveCount(0, { timeout: 60_000 });
-  await expect(bubble("/e2e-fix-issue").last().locator('[data-part="bubble"]')).toHaveText(
-    "/e2e-fix-issue9",
-  );
+  const sent = bubble("/e2e-fix-issue").last();
+  await expect(sent.locator('[data-part="bubble"]')).toHaveText("/e2e-fix-issue9");
+  await expect(page.locator("[data-leftover]")).toHaveCount(0);
+  await expect(sent).not.toContainText(zh.chat.interjectionPending, { timeout: 60_000 });
   await expect(answered).toHaveCount(4, { timeout: 60_000 });
 
   // 4. a forked skill: the sub-agent row under the bubble, the report, then the reply

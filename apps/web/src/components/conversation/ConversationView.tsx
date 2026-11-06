@@ -48,11 +48,10 @@ import { statusPrompt } from "../shell/nav";
 import { usePagePath } from "../shell/path";
 import { useSession } from "../shell/session";
 import { ComposerBar, type ComposerMessage, newClientMessageId } from "./ComposerBar";
-import { PendingBubbles, usePendingSends } from "./PendingBubbles";
+import { LeftoverBubbles, PendingBubbles, usePendingSends } from "./PendingBubbles";
 import { useRightAreaSlot } from "./RightArea";
 import { Thread, type ThreadProps } from "./Thread";
 import { type SendResult, useConversation } from "./useConversation";
-import { QueueList, useQueue } from "./useQueue";
 import { useSelection } from "./useSelection";
 
 /**
@@ -127,9 +126,10 @@ export type RightAreaSlot = {
 
 /**
  * The conversation page (`/chat/<id>`, spec §5) as `ConversationPage` props: the title bar (title,
- * rename, properties, panels), the thread built by `lib/timeline.ts`, the queue, the composer
- * (pickers, ↵ / ⌘↵) and the status bar; `dialogs` go next to the page. Use it in a component keyed
- * by the conversation id: everything here (drafts, queue, picks, the right area) belongs to one
+ * rename, properties, panels), the thread built by `lib/timeline.ts`, the leftover queued messages
+ * (pending bubbles), the composer (pickers; ↵ interjects while a run goes) and the status bar;
+ * `dialogs` go next to the page. Use it in a component keyed by the conversation id: everything
+ * here (drafts, picks, the right area) belongs to one
  * conversation and never shows under another. Everything comes from the query cache (the
  * layout's prefetch on a first load); what is not cached yet draws the template's loading state
  * (spec §7.1): the thread while the log loads (the composer stays, only send waits), the title
@@ -193,7 +193,6 @@ export function useConversationPage(
     [conv.events, info, locale, conv.state.progress, views, whoWaits],
   );
   const entries = useMemo(() => withDrafts(base, conv.state.drafts), [base, conv.state.drafts]);
-  const queue = useQueue(orgId, conversationId, conv.merge, conv.events);
   const pending = usePendingSends(conv.events);
   const [renaming, setRenaming] = useState(false);
   const [renameBusy, setRenameBusy] = useState(false);
@@ -201,7 +200,7 @@ export function useConversationPage(
   const sentHere = sentHereOf(qc, orgId, conversationId);
   // One source for the composer's mode, the status bar and the working line (review fix L1, L2):
   // a pending send of this view, a message this tab sent that waits for its run, or a run per the
-  // log. While any holds, ↵ queues.
+  // log. While any holds, a message is an interjection (run input spec D1).
   // (not memoized: the set changes with this view's sends, each of which re-renders it)
   const awaited = awaitedMessage(conv.events, sentHere);
   const awaitAt = useAwaitBackstop(
@@ -209,7 +208,7 @@ export function useConversationPage(
       ? sentHere.get(awaited.payload.clientMessageId)
       : undefined,
   );
-  const awaiting = awaitingRun(conv.events, sentHere, { paused: queue.paused, now: awaitAt });
+  const awaiting = awaitingRun(conv.events, sentHere, awaitAt);
   const busy = conv.running || pending.shown.length > 0 || awaiting;
   const active = busy || conv.waiting;
   const stats = useMemo(() => runStats(conv.events), [conv.events]);
@@ -225,17 +224,6 @@ export function useConversationPage(
     if (!r.ok) sentHere.delete(m.clientMessageId);
     pending.drop(m.clientMessageId);
     if (r.ok) selection.sent(pick);
-    return r;
-  };
-
-  // ↵ while running: the queued message carries the pick, applied when it is sent (final review I1).
-  const enqueue = async (m: ComposerMessage): Promise<SendResult> => {
-    const pick = selection.pending;
-    // sent after the turn: its run is this tab's to wait for too
-    sentHere.set(m.clientMessageId, Date.now());
-    const r = await queue.add({ ...m, ...pick });
-    if (r.ok) selection.sent(pick);
-    else sentHere.delete(m.clientMessageId);
     return r;
   };
 
@@ -370,13 +358,13 @@ export function useConversationPage(
         <PendingBubbles items={pending.shown} />
       </>
     ),
-    queue: <QueueList queue={queue} />,
+    // messages an older version queued, until the kernel sends them (run input spec D3)
+    queue: <LeftoverBubbles orgId={orgId} conversationId={conversationId} events={conv.events} />,
     // decided from the log and this view's pending bubbles (spec §2.2)
     working: workingLineVisible(conv.events, conv.state.drafts, {
       waiting: conv.waiting,
       pending: pending.shown.length,
       sentHere,
-      paused: queue.paused,
       now: awaitAt,
     }),
     composer: ({ sendDisabled }) => (
@@ -399,7 +387,6 @@ export function useConversationPage(
           running={active}
           stop={{ onStop: conv.stop, stopping: conv.stopping }}
           onSend={send}
-          onQueue={enqueue}
           // no agent here: the title bar's path names it (issue U)
           pickers={{
             model: selection.modelPicker,

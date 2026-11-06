@@ -80,7 +80,8 @@ test("登录 → 新建 agent → 流式回复、停止、插话、刷新后历�
   expect(LONG_TEXT.startsWith(partial)).toBe(true);
   await expect(stopButton(page)).toHaveCount(0);
 
-  // 4. slow 回复进行中插话（⌘↵ / Ctrl+↵；↵ 会加入队列）：两条都得到回复，插话的回复在第一条之后
+  // 4. slow 回复进行中插话（↵ 与 ⌘↵ 相同，没有队列）：两条都得到回复，插话排在它被接收的位置，
+  // 即第一条回复之后（run input spec D4）
   await send(page, `slow:200:${SECOND_TEXT}`);
   await expect(draft).toHaveText(/.+/);
   await expect(page.getByRole("textbox", { name: zh.chat.inputLabel })).toBeEnabled();
@@ -119,8 +120,8 @@ test("登录 → 新建 agent → 流式回复、停止、插话、刷新后历�
     `user:slow:300:${LONG_TEXT}`,
     `assistant:${partial}`,
     `user:slow:200:${SECOND_TEXT}`,
-    "user:echo:interject",
     `assistant:${SECOND_TEXT}`,
+    "user:echo:interject",
     "assistant:interject",
   ]);
 

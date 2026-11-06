@@ -141,7 +141,7 @@ export type ComposerBoxProps = {
   onKeyDown?(e: KeyboardEvent<HTMLTextAreaElement>): void;
   onPaste?(e: ClipboardEvent<HTMLTextAreaElement>): void;
   placeholder: string;
-  /** Replaces the placeholder while a run is going ("按 ↵ 加入队列，按 ⌘↵ 立即发送"). */
+  /** Replaces the placeholder while a run is going ("运行中发送的消息会在下一步交给智能体"). */
   hint?: string;
   /** The attachment strip, above the textarea. */
   attachments?: ReactNode;

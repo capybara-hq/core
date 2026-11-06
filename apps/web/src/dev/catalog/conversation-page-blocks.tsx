@@ -318,7 +318,7 @@ function composerProps(
     onChange: noop,
     placeholder:
       state === "new" ? K.newPlaceholder.replace("研究助手", C.agent.name) : K.placeholder,
-    ...(state === "running" ? { hint: K.queueHint } : {}),
+    ...(state === "running" ? { hint: K.runningHint } : {}),
     ...(state === "attachments" && image && pdf
       ? {
           // The reference draws these chips without remove buttons; the product passes onRemove.

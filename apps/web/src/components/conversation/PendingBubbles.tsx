@@ -1,8 +1,21 @@
 "use client";
 
-import { BubbleAttachments, Stack, UserBubble } from "@capybara-hq/design";
+import {
+  BubbleAttachments,
+  QueuePaused,
+  Stack,
+  Text,
+  UserBubble,
+  useToast,
+} from "@capybara-hq/design";
+import { useQuery } from "@tanstack/react-query";
+import { useTranslations } from "next-intl";
 import { useCallback, useMemo, useState } from "react";
-import type { ConversationEvent } from "../../lib/conversations";
+import { type ConversationEvent, type QueueItem, resumeQueue } from "../../lib/conversations";
+import { retryOnMountOf } from "../../lib/query/client";
+import { queueQuery } from "../../lib/query/conversation";
+import { useAppMutation } from "../../lib/query/mutation";
+import { useErrorMessage } from "../../lib/use-error-message";
 import type { ComposerMessage } from "./ComposerBar";
 
 /** A message sent from this view that the log does not hold yet (conversation send spec §2.1). */
@@ -78,6 +91,100 @@ export function PendingBubbles({ items }: { items: readonly PendingSend[] }) {
           />
         </div>
       ))}
+    </Stack>
+  );
+}
+
+/** The chip of a leftover invocation: the skill's bare name (as the thread's bubble shows it). */
+const skillLabel = (name: string) => `/${name.slice(name.indexOf(":") + 1)}`;
+
+const NO_ITEMS: readonly QueueItem[] = [];
+
+/**
+ * Messages an older version queued (`GET …/queue`; run input spec 2026-11-07 D3): nothing is
+ * queued any more, but the kernel still sends these leftovers one per run after the turn. Until
+ * the log holds one (its `clientMessageId`) it shows as a pending bubble, the interjection's
+ * 待处理 look, with no actions. A leftover queue a failed or stopped run paused keeps
+ * "Continue sending", the only way it ever drains.
+ */
+export function useLeftovers(
+  orgId: string,
+  conversationId: string,
+  events: readonly ConversationEvent[] | undefined,
+): { items: readonly QueueItem[]; paused: boolean; pauseReason?: string } {
+  const query = queueQuery(orgId, conversationId);
+  const read = useQuery({ ...query, retryOnMount: retryOnMountOf(query.queryKey) }).data;
+  const logged = useMemo(() => loggedIds(events), [events]);
+  const all = read?.items ?? NO_ITEMS;
+  const items = useMemo(() => all.filter((it) => !logged.has(it.clientMessageId)), [all, logged]);
+  return {
+    items,
+    paused: read?.paused ?? false,
+    ...(read?.pauseReason !== undefined ? { pauseReason: read.pauseReason } : {}),
+  };
+}
+
+/** The leftover queued messages after the thread, as pending bubbles. */
+export function LeftoverBubbles({
+  orgId,
+  conversationId,
+  events,
+}: {
+  orgId: string;
+  conversationId: string;
+  events: readonly ConversationEvent[] | undefined;
+}) {
+  const t = useTranslations("chat");
+  const toast = useToast();
+  const errorMessage = useErrorMessage();
+  const left = useLeftovers(orgId, conversationId, events);
+  const resume = useAppMutation({
+    fn: () => resumeQueue(orgId, conversationId),
+    invalidates: () => [queueQuery(orgId, conversationId).queryKey],
+  });
+  if (left.items.length === 0) return null;
+  return (
+    <Stack gap={12}>
+      {left.items.map((it) => (
+        <div key={it.id} data-leftover={it.id}>
+          <UserBubble
+            text={it.text}
+            queued
+            {...(it.skill !== undefined ? { skill: skillLabel(it.skill.name) } : {})}
+            details={
+              <Text variant="small" tone="faint">
+                {t("interjectionPending")}
+              </Text>
+            }
+            {...(it.files.length > 0
+              ? {
+                  attachments: (
+                    <BubbleAttachments
+                      items={it.files.map((f) => ({
+                        id: f.attachmentId,
+                        kind: f.mediaType.startsWith("image/") ? "image" : "file",
+                        name: f.name,
+                      }))}
+                    />
+                  ),
+                }
+              : {})}
+          />
+        </div>
+      ))}
+      {left.paused ? (
+        <QueuePaused
+          count={left.items.length}
+          busy={resume.isPending}
+          {...(left.pauseReason === "author_cannot_send" ||
+          left.pauseReason === "skill_not_invocable"
+            ? { text: t(`queuePaused.${left.pauseReason}`) }
+            : {})}
+          onContinue={() =>
+            resume.mutateAsync(undefined).catch((e) => toast.error(errorMessage(e)))
+          }
+        />
+      ) : null}
     </Stack>
   );
 }

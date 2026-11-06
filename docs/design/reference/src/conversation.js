@@ -384,7 +384,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
       : isNew
         ? K.newPlaceholder.replace("研究助手", C.agent.name)
         : running
-          ? K.queueHint
+          ? K.runningHint
           : K.placeholder;
     const value = o.state === "attachments" ? "帮我对一下这几个文件" : o.state === "focus" ? "再按收款人汇总一张表" : "";
     // a picked skill can be sent without arguments

@@ -71,35 +71,51 @@ test("a new conversation is created on the first send only; the title is generat
   await expect(sidebar.locator(`a[href$="/chat/${id}"]`)).toContainText("Quarterly numbers");
 });
 
-test("queue with ↵ while running (sent in order after the turn), interject with ⌘↵ / Ctrl+↵, stop", async ({
+test("↵ and ⌘↵ / Ctrl+↵ while running send interjections (no queue), placed where taken in, stop", async ({
   page,
 }) => {
   await signIn(page);
   const orgId = await currentOrg(page);
-  const agentId = await createAgent(page, orgId, "Cap queue");
+  const agentId = await createAgent(page, orgId, "Cap interject");
+  const queuePosts: string[] = [];
+  page.on("request", (r) => {
+    if (r.method() === "POST" && /\/queue(\/|$)/.test(new URL(r.url()).pathname))
+      queuePosts.push(r.url());
+  });
   await newChat(page, agentId);
   await send(page, `slow:500:${LONG}`);
   await expect(page.locator('[data-entry="prose"][data-streaming="true"]')).toBeVisible();
-  // ⌘↵ / Ctrl+↵ while running sends now (interjects); the hint says ↵ queues.
-  await expect(composer(page)).toHaveAttribute("placeholder", /↵/);
+  // the hint says a message reaches the agent at its next step (run input spec §4)
+  await expect(composer(page)).toHaveAttribute("placeholder", zh.chat.runningHint);
+  // ↵ sends now: in the log at once, pending (待处理) at the bottom until a step takes it in
   await composer(page).fill("echo:now");
-  await composer(page).press("ControlOrMeta+Enter");
+  await composer(page).press("Enter");
   await expect(users(page).filter({ hasText: "echo:now" })).toHaveCount(1);
-  // ↵ queues: dashed bubbles under the thread, not in the log yet.
-  await composer(page).fill("echo:queued one");
-  await composer(page).press("Enter");
-  const queue = page.locator('[data-entry="queue"]');
-  await expect(queue.locator("[data-queue-item]")).toHaveCount(1);
-  await composer(page).fill("echo:queued two");
-  await composer(page).press("Enter");
-  await expect(queue.locator("[data-queue-item]")).toHaveCount(2);
-  // After the turn the queued messages go out one at a time, in order.
-  await expect(replies(page).filter({ hasText: /^queued two$/ })).toHaveCount(1, {
-    timeout: 60_000,
-  });
-  await expect(queue).toHaveCount(0);
-  const texts = await replies(page).allTextContents();
-  expect(texts.map((t) => t.trim())).toEqual([LONG, "now", "queued one", "queued two"]);
+  const now = page.locator('[data-entry="user"]').filter({ hasText: "echo:now" });
+  await expect(now).toContainText(zh.chat.interjectionPending);
+  // ⌘↵ / Ctrl+↵ sends exactly like ↵ (D2)
+  await composer(page).fill("echo:again");
+  await composer(page).press("ControlOrMeta+Enter");
+  await expect(users(page).filter({ hasText: "echo:again" })).toHaveCount(1);
+  // no queue: no leftover bubbles, no queue call
+  await expect(page.locator("[data-leftover]")).toHaveCount(0);
+  // taken in after the streaming reply: both below it, answered by the step that took them in
+  await expect(replies(page).filter({ hasText: /^again$/ })).toHaveCount(1, { timeout: 60_000 });
+  await expect(now).not.toContainText(zh.chat.interjectionPending);
+  const order = await page
+    .locator('[data-entry="user"], [data-entry="prose"]')
+    .evaluateAll((els) =>
+      els.map((el) =>
+        el.getAttribute("data-entry") === "user"
+          ? `user:${el.querySelector('[data-part="bubble"]')?.textContent}`
+          : `assistant:${el.querySelector('[data-part="prose"]')?.textContent?.trim()}`,
+      ),
+    );
+  expect(order.indexOf(`assistant:${LONG}`)).toBeGreaterThan(0);
+  expect(order.indexOf("user:echo:now")).toBeGreaterThan(order.indexOf(`assistant:${LONG}`));
+  expect(order.indexOf("user:echo:again")).toBeGreaterThan(order.indexOf("user:echo:now"));
+  expect(order.at(-1)).toBe("assistant:again");
+  expect(queuePosts).toEqual([]);
 
   // Stop while running: the stopped run row names who stopped.
   await send(page, `slow:300:${LONG}`);

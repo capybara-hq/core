@@ -101,7 +101,8 @@ export async function saveSection(page: Page): Promise<void> {
 
 /**
  * Sends with ↵ and waits for the bubble (the first send also creates the conversation). While a
- * run is going ↵ queues instead (conversation send design D1): use {@link interject} there.
+ * run is going the message is an interjection the run takes in at its next step (run input spec
+ * 2026-11-07 D1); ⌘↵ / Ctrl+↵ sends the same way (D2).
  */
 export async function send(page: Page, text: string, keys = "Enter"): Promise<void> {
   const input = composer(page);
@@ -111,9 +112,8 @@ export async function send(page: Page, text: string, keys = "Enter"): Promise<vo
   await expect(page).toHaveURL(/\/chat\/[^/?#]+(#.*)?$/);
 }
 
-/** Sends now while a run is going (an interjection: ⌘↵ / Ctrl+↵) and waits for the bubble. */
-export const interject = (page: Page, text: string): Promise<void> =>
-  send(page, text, "ControlOrMeta+Enter");
+/** Sends while a run is going (an interjection; ↵ like any send) and waits for the bubble. */
+export const interject = (page: Page, text: string): Promise<void> => send(page, text);
 
 /**
  * Waits until the CSS animations on `target` and inside it have finished (an expand opens with a

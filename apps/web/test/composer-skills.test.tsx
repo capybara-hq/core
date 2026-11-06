@@ -426,28 +426,15 @@ describe("a pending send", () => {
   });
 });
 
-describe("queueing an invocation", () => {
-  it("↵ while running queues with the skill; the queued bubble shows the chip", async () => {
-    let items: unknown[] = [];
+describe("an invocation while running", () => {
+  it("↵ while running posts the invocation as a message; the pending bubble shows the chip", async () => {
+    let answer: (r: Response) => void = () => {};
     const calls = api({
       [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi"), runStarted(2)] }),
-      [`GET ${BASE}/queue`]: () => json(200, { items, paused: false }),
-      [`POST ${BASE}/queue`]: (c) => {
-        const item = {
-          id: "q1",
-          text: "9",
-          files: [],
-          attachments: [],
-          clientMessageId: (bodyOf(c) as { clientMessageId: string }).clientMessageId,
-          model: null,
-          effort: null,
-          createdAt: "2026-10-26T06:00:00.000Z",
-          position: 1,
-          skill: { name: "fix-issue", arguments: "9", mode: "inline" },
-        };
-        items = [item];
-        return json(201, { item });
-      },
+      [`POST ${BASE}/messages`]: () =>
+        new Promise<Response>((r) => {
+          answer = r;
+        }),
     });
     await renderChatRoute();
     await screen.findByText("hi");
@@ -455,22 +442,22 @@ describe("queueing an invocation", () => {
     await user.type(input(), "/");
     await user.click(await screen.findByRole("option", { name: /^\/fix-issue/ }));
     await user.type(input(), "9{Enter}");
-    expect(sentMessage(posts(calls, `${BASE}/queue`)[0] as Call)).toEqual({
+    await vi.waitFor(() => expect(posts(calls, `${BASE}/messages`)).toHaveLength(1));
+    expect(sentMessage(posts(calls, `${BASE}/messages`)[0] as Call)).toEqual({
       text: "9",
       skill: { name: "fix-issue" },
     });
-    const list = await screen.findByRole("group", { name: en.chat.queueLabel });
-    await vi.waitFor(() =>
-      expect(
-        list.querySelector('[data-queue-item="q1"] [data-part="bubble-skill"]')?.textContent,
-      ).toBe("/fix-issue"),
+    expect(posts(calls, `${BASE}/queue`)).toHaveLength(0);
+    expect(document.querySelector('[data-pending] [data-part="bubble-skill"]')?.textContent).toBe(
+      "/fix-issue",
     );
+    await act(async () => answer(json(202, { event: invocation(3) })));
   });
 
-  it("a typed /name args with ↵ while running queues the invocation", async () => {
+  it("a typed /name args with ↵ while running posts the invocation", async () => {
     const calls = api({
       [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi"), runStarted(2)] }),
-      [`POST ${BASE}/queue`]: () => json(201, { item: null }),
+      [`POST ${BASE}/messages`]: () => json(202, { event: invocation(3) }),
     });
     await renderChatRoute();
     await screen.findByText("hi");
@@ -478,14 +465,17 @@ describe("queueing an invocation", () => {
     await user.click(input());
     await user.paste("/fix-issue 9");
     await user.keyboard("{Enter}");
-    await vi.waitFor(() => expect(posts(calls, `${BASE}/queue`)).toHaveLength(1));
-    expect(sentMessage(posts(calls, `${BASE}/queue`)[0] as Call)).toEqual({
+    await vi.waitFor(() => expect(posts(calls, `${BASE}/messages`)).toHaveLength(1));
+    expect(sentMessage(posts(calls, `${BASE}/messages`)[0] as Call)).toEqual({
       text: "9",
       skill: { name: "fix-issue" },
     });
+    expect(posts(calls, `${BASE}/queue`)).toHaveLength(0);
   });
+});
 
-  it("a queue paused because the head's skill can no longer be invoked says so", async () => {
+describe("a leftover queued invocation", () => {
+  it("shows the chip; paused because its skill can no longer be invoked, it says so", async () => {
     api({
       [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
       [`GET ${BASE}/queue`]: () =>
@@ -511,6 +501,9 @@ describe("queueing an invocation", () => {
     await renderChatRoute({ locale: "zh" });
     expect(await screen.findByText(zh.chat.queuePaused.skill_not_invocable)).toBeTruthy();
     expect(screen.queryByText(/运行已停止/)).toBeNull();
+    expect(
+      document.querySelector('[data-leftover="q1"] [data-part="bubble-skill"]')?.textContent,
+    ).toBe("/fix-issue");
   });
 });
 

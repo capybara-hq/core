@@ -96,7 +96,7 @@ export const CONV_FIXTURE: {
 export const CONV_COPY = {
   placeholder: "输入消息，/ 使用命令",
   newPlaceholder: "想让 研究助手 做什么？",
-  queueHint: "按 ↵ 加入队列，按 ⌘↵ 立即发送",
+  runningHint: "运行中发送的消息会在下一步交给智能体",
   attach: "添加附件",
   send: "发送",
   stop: "停止",

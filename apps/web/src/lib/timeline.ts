@@ -505,20 +505,19 @@ export function awaitedMessage(
 
 /**
  * A message this tab sent waits for its run ({@link awaitedMessage}), unless no run is coming:
- * the queue is paused (the kernel holds the conversation's sends), or {@link AWAIT_RUN_MS} passed
- * since this tab sent it without a `run_started` (a backstop: the page then follows the log
- * alone). Both times are this tab's clock (`now` and the send time in `sentHere`).
+ * {@link AWAIT_RUN_MS} passed since this tab sent it without a `run_started` (a backstop: the page
+ * then follows the log alone). Both times are this tab's clock (`now` and the send time in
+ * `sentHere`).
  */
 export function awaitingRun(
   events: readonly ConversationEvent[],
   sentHere: ReadonlyMap<string, number>,
-  s: { paused: boolean; now: number },
+  now: number,
 ): boolean {
-  if (s.paused) return false;
   const u = awaitedMessage(events, sentHere);
   if (u?.type !== "user_message" || u.payload.clientMessageId === undefined) return false;
   const sentAt = sentHere.get(u.payload.clientMessageId);
-  return sentAt !== undefined && s.now - sentAt <= AWAIT_RUN_MS;
+  return sentAt !== undefined && now - sentAt <= AWAIT_RUN_MS;
 }
 
 /** The run in progress per the log (started, not ended), or null. */
@@ -546,14 +545,13 @@ export function workingLineVisible(
     waiting: boolean;
     pending: number;
     sentHere: ReadonlyMap<string, number>;
-    paused: boolean;
     now: number;
   },
 ): boolean {
   if (s.waiting) return false;
   if (s.pending > 0) return true;
   const run = activeRun(events);
-  if (run === null) return awaitingRun(events, s.sentHere, s);
+  if (run === null) return awaitingRun(events, s.sentHere, s.now);
   if (drafts.some((d) => d.runId === run.runId && (d.text !== "" || d.thinking !== "")))
     return false;
   const open = new Set<string>();

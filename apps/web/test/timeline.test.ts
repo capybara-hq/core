@@ -730,7 +730,6 @@ describe("workingLineVisible (conversation send spec §2.2)", () => {
       pending: s.pending ?? 0,
       // sent here just now (the 60 s backstop has its own tests)
       sentHere: new Map((s.sent ?? []).map((id) => [id, 0])),
-      paused: false,
       now: 1000,
     });
 
@@ -853,30 +852,25 @@ describe("awaitingRun gives up (review round 2, item 3)", () => {
   const sent = new Map([["m1", sentAt]]);
 
   it("waits for the run of a message this tab sent, within 60 s of its send here", () => {
-    expect(awaitingRun([mine(1)], sent, { paused: false, now: sentAt + 59_000 })).toBe(true);
+    expect(awaitingRun([mine(1)], sent, sentAt + 59_000)).toBe(true);
   });
 
   it("a server createdAt 10 minutes in the past does not end the wait of a fresh local send", () => {
     const fresh = new Map([["m1", Date.now()]]);
     const events = [{ ...mine(1), createdAt: new Date(Date.now() - 600_000).toISOString() }];
-    expect(awaitingRun(events, fresh, { paused: false, now: Date.now() })).toBe(true);
+    expect(awaitingRun(events, fresh, Date.now())).toBe(true);
   });
 
   it("a run that never starts stops waiting 60 s after the send here (the backstop)", () => {
-    expect(awaitingRun([mine(1)], sent, { paused: false, now: sentAt + 60_001 })).toBe(false);
+    expect(awaitingRun([mine(1)], sent, sentAt + 60_001)).toBe(false);
     expect(
       workingLineVisible([mine(1)], [], {
         waiting: false,
         pending: 0,
         sentHere: sent,
-        paused: false,
         now: sentAt + 60_001,
       }),
     ).toBe(false);
-  });
-
-  it("a paused queue means no run is coming", () => {
-    expect(awaitingRun([mine(1)], sent, { paused: true, now: sentAt })).toBe(false);
   });
 });
 
