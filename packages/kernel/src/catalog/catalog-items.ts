@@ -10,6 +10,7 @@ import type {
 } from "@capybara-hq/plugin-sdk";
 import { pluginDescription } from "@capybara-hq/plugin-sdk";
 import { sql } from "kysely";
+import semver from "semver";
 import type { KernelConfig } from "../config/schema.js";
 import type { KernelSchemaDb, SourceFormat } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
@@ -35,6 +36,7 @@ import {
   entryDeprecated,
   type ImportedAs,
   sourceEffective,
+  unimportable,
 } from "./marketplaces.service.js";
 import { schemaHasPath } from "./schema-path.js";
 import type { PluginScope } from "./scope.js";
@@ -482,8 +484,10 @@ export interface MarketplaceStatus {
 }
 
 /**
- * For each marketplace-imported item, its marketplace (when enabled): the highest compatible
- * version listed, and whether a compatible entry's content changed at an imported version.
+ * For each marketplace-imported item, its marketplace (when enabled): the version to update to
+ * (the highest compatible, importable, non-deprecated stable version listed, a prerelease only
+ * when no such stable version exists, as the market rows fold them), and whether a compatible,
+ * non-deprecated entry's content changed at an imported version.
  */
 export async function marketplaceLatest(
   db: KernelSchemaDb,
@@ -507,6 +511,7 @@ export async function marketplaceLatest(
       "s.builtin",
       "s.enabled",
       "s.url",
+      "s.form",
       "s.last_commit",
     ])
     .where("e.source_id", "in", [...new Set(sourced.map((i) => i.marketplace_id as string))])
@@ -518,13 +523,21 @@ export async function marketplaceLatest(
         r.source_id === i.marketplace_id &&
         r.name === i.name &&
         sourceEffective(r, config) &&
-        entryCompatible(r.entry as MarketplaceEntry),
+        entryCompatible(r.entry as MarketplaceEntry) &&
+        // a deprecated version is never the one to update to, nor content to import again
+        !entryDeprecated(r.entry as MarketplaceEntry),
     );
-    // a deprecated version is never the one to update to
-    const [best] = listed
-      .filter((r) => r.version !== "" && !entryDeprecated(r.entry as MarketplaceEntry))
+    // As the market rows fold them: the newest importable stable version, a prerelease only when
+    // no stable one can be imported
+    const importable = listed
+      .filter(
+        (r) =>
+          r.version !== "" &&
+          unimportable(r.entry as MarketplaceEntry, r.form, config) === undefined,
+      )
       .map((r) => r.version)
       .sort(newestFirst);
+    const best = importable.find((v) => semver.prerelease(v) === null) ?? importable[0];
     const recorded = versions.get(i.id) ?? [];
     out.set(i.id, {
       latest: best ?? null,

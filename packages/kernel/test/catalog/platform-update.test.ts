@@ -930,17 +930,23 @@ describe("platform plugin update: storage, dependencies, missing connectors (fix
     });
     const installId = await installIn(env.orgId, app);
     await updateTo(app, "2.0.0");
+    // The sync commits the child install and the parent's ledger row in two steps: wait for both
+    // (the installed dep-a recorded on app's install), not for the child alone
     const depInstall = await waitFor(
       async () =>
         env.db
-          .selectFrom("plugin_installs")
-          .select(["id", "status"])
-          .where("org_id", "=", env.orgId)
-          .where("item_id", "=", dep)
-          .where("status", "=", "installed")
+          .selectFrom("plugin_install_components as c")
+          // ref is text, the install id a uuid
+          .innerJoin("plugin_installs as d", (j) => j.on(sql<boolean>`d.id::text = c.ref`))
+          .select(["d.id", "c.created"])
+          .where("c.install_id", "=", installId)
+          .where("c.kind", "=", "plugin")
+          .where("d.item_id", "=", dep)
+          .where("d.org_id", "=", env.orgId)
+          .where("d.status", "=", "installed")
           .executeTakeFirst(),
       20_000,
-      "dep-a installed by the scope sync",
+      "dep-a installed by the scope sync and recorded on app's install",
     );
     const ledger = await env.db
       .selectFrom("plugin_install_components")

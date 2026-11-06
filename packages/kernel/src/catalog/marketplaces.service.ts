@@ -513,7 +513,7 @@ export function hostAllowed(host: string, config: KernelConfig): boolean {
 }
 
 /** Why an entry is not importable from a marketplace of `form`, or undefined when it is. */
-function unimportable(
+export function unimportable(
   e: MarketplaceEntry,
   form: MarketplaceForm,
   config: KernelConfig,
@@ -542,8 +542,8 @@ export const sourceEffective = (
 
 /**
  * Reads a marketplace entry for import: `version` given -> the entry listing that version; omitted
- * -> the newest compatible versioned entry that is not deprecated, a stable version before a
- * prerelease, else the entry without a version (not deprecated first), else the newest versioned
+ * -> the newest compatible, importable versioned entry that is not deprecated, a stable version
+ * before a prerelease, else the entry without a version (not deprecated first), else the newest versioned
  * one (refused later as incompatible or deprecated). Marketplace missing -> `marketplace.not_found`;
  * marketplace disabled (official offline included), entry or version missing ->
  * `marketplace.entry_not_found`.
@@ -586,8 +586,11 @@ export async function loadMarketplaceEntry(
     const versioned = entries
       .filter((e) => e.version !== "")
       .sort((a, b) => newestFirst(a.version, b.version));
+    // as the market rows (web `groupMarketplaceEntries`): compatible, importable, not deprecated
     const usable = (e: (typeof entries)[number]) =>
-      entryCompatible(e.entry) && !entryDeprecated(e.entry);
+      entryCompatible(e.entry) &&
+      unimportable(e.entry, src.form, config) === undefined &&
+      !entryDeprecated(e.entry);
     pickedRow =
       versioned.find((e) => usable(e) && semver.prerelease(e.version) === null) ??
       versioned.find(usable) ??
@@ -1475,6 +1478,7 @@ export class MarketplacesService {
           compareVersions(version, top) > 0,
         contentChanged:
           adopted !== null &&
+          !entryDeprecated(e) &&
           entryContentChanged(
             e,
             {

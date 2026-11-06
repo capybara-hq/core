@@ -272,7 +272,7 @@ function Catalog({ initial }: { initial: { sourceId: string; q: string } }) {
   };
   const stateOf = (e: MarketplaceEntry) => {
     if (!e.importable) return { label: reasonOf(e), tone: "warn" as const };
-    // every version is deprecated: the row's says so
+    // every version is deprecated: the row's state says so
     if (entryDeprecated(e)) return { label: deprecatedLabel(e), tone: "warn" as const };
     const top = importedTop(e);
     if (e.adopted === null) return { label: t("notAdopted"), tone: "muted" as const };

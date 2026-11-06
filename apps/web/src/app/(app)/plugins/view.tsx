@@ -178,8 +178,8 @@ const keyOf = (e: MarketplaceEntry) => `${e.sourceId}/${e.name}/${e.version ?? "
  * marketplace at its latest version, read-only; 申请引入 asks the super admin to bring the
  * latest in (approving runs the import review with this org as the scope), and the row menu's
  * 其他版本 asks for another version (a deprecated one reads 已废弃 and cannot be asked for;
- * prereleases sit there while a stable version can be asked for). A version asked for in this visit reads 已申请，等待处理 (the
- * latest) or 已申请 <version>，等待处理; a plugin the deployment has imported reads 已引入.
+ * prereleases sit there while a stable version can be asked for). A version asked for in this
+ * visit reads 已申请，等待处理 (the latest) or 已申请 <version>，等待处理; a plugin the deployment has imported reads 已引入.
  */
 function Market({
   orgId,
@@ -191,6 +191,7 @@ function Market({
   entries: MarketplacePlugin[];
 }) {
   const t = useTranslations("plugins");
+  const tc = useTranslations("catalog.admin.entries");
   const locale = useLocale();
   const errorMessage = useErrorMessage();
   const catalogLines = useCatalogErrorLines();
@@ -223,7 +224,7 @@ function Market({
     locale === "zh" && e.summary.zh !== undefined ? e.summary.zh : e.summary.en;
   /** 已废弃 with the marketplace's reason when it gives one. */
   const deprecatedLabel = (e: MarketplaceEntry) => {
-    const version = e.version === null ? "" : versionLabel(e.version);
+    const version = e.version === null ? tc("noVersion") : versionLabel(e.version);
     const reason = e.deprecated?.reason ?? null;
     return reason !== null
       ? t("market.deprecatedReason", { version, reason })

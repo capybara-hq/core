@@ -941,6 +941,42 @@ describe("从清单引入", () => {
     });
   });
 
+  it("the version to update to folds prereleases and skips what cannot be imported", async () => {
+    const a1 = pkgs["cat-a"] as Uint8Array;
+    const listing = (...plugins: unknown[]) => {
+      cat.setManifest({ ...marketplaceManifest(), plugins });
+      return refresh(admin, id);
+    };
+    // without a version: an unimportable stable (a path entry of an http marketplace) is passed by
+    await listing(entry("cat-a", a1), {
+      name: "cat-a",
+      version: "3.0.0",
+      summary: { en: "path" },
+      source: { path: "./cat-a" },
+    });
+    const { prepared } = await importAndConfirm(id, "cat-a");
+    expect(prepared.review.version).toBe("1.0.0");
+    const latest = async () => {
+      const items = await admin({ method: "GET", url: "/api/v1/admin/catalog/items" });
+      const it = items.json().items[0];
+      return [it.latestMarketplaceVersion, it.newerInMarketplace];
+    };
+    expect(await latest()).toEqual(["1.0.0", false]);
+    // a newer stable and a newer prerelease: the stable
+    await listing(
+      entry("cat-a", a1),
+      entry("cat-a", a1, {}, "1.1.0"),
+      entry("cat-a", a1, {}, "2.0.0-rc.0"),
+    );
+    expect(await latest()).toEqual(["1.1.0", true]);
+    // only a prerelease is newer: the imported stable stays the latest
+    await listing(entry("cat-a", a1), entry("cat-a", a1, {}, "2.0.0-rc.0"));
+    expect(await latest()).toEqual(["1.0.0", false]);
+    // no stable listed: the prerelease
+    await listing(entry("cat-a", a1, {}, "2.0.0-rc.0"));
+    expect(await latest()).toEqual(["2.0.0-rc.0", true]);
+  });
+
   it("条目 / 版本 / 来源不存在 404", async () => {
     const noEntry = await importEntry(admin, id, "nope");
     expect(noEntry.statusCode).toBe(404);
