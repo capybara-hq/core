@@ -157,7 +157,10 @@ async function connector(
 }
 
 /** An org skill (`manual`: manual-only, never pinned). */
-async function orgSkill(name: string, o: { manual?: boolean; plugin?: string } = {}) {
+async function orgSkill(
+  name: string,
+  o: { manual?: boolean; itemId?: string; bytes?: number } = {},
+) {
   const id = randomUUID();
   await env.db
     .insertInto("skills")
@@ -170,6 +173,7 @@ async function orgSkill(name: string, o: { manual?: boolean; plugin?: string } =
       description: "d",
       current_version: 1,
       created_by: env.bossId,
+      ...(o.itemId !== undefined && { catalog_item_id: o.itemId }),
     })
     .execute();
   await env.db
@@ -180,7 +184,7 @@ async function orgSkill(name: string, o: { manual?: boolean; plugin?: string } =
       manifest: JSON.stringify({
         name,
         description: "d",
-        files: [{ path: "SKILL.md", size: 100, sha256: "0".repeat(64) }],
+        files: [{ path: "SKILL.md", size: o.bytes ?? 100, sha256: "0".repeat(64) }],
         ...(o.manual && { invocation: { model: false, user: true } }),
       }),
       object_prefix: `skills/${id}/`,
@@ -189,6 +193,8 @@ async function orgSkill(name: string, o: { manual?: boolean; plugin?: string } =
     .execute();
   return id;
 }
+
+const ZERO_HASH = `${"0".repeat(64)}.${"0".repeat(16)}`;
 
 const tpl = (over: Partial<AgentTemplate> = {}): AgentTemplate => ({
   name: "helper",
@@ -268,14 +274,17 @@ describe("creating an agent from a template", () => {
         toolPolicies: {
           Bash: "ask",
           Read: "deny",
-          mcp__one__delete_all: "deny",
           plugin__nope__write: "deny",
         },
         skills: ["pdf", "manual"],
         selectedSkills: ["sheets", "missing-skill"],
         connectors: [
-          { template: "none" },
-          { template: "one", tools: ["delete_all", "gone"] },
+          { template: "none", policies: { x: "ask" } },
+          {
+            template: "one",
+            tools: ["delete_all", "gone"],
+            policies: { delete_all: "deny", search: "ask", gone: "ask" },
+          },
           { template: "crm:many" },
           {
             needs: {
@@ -284,6 +293,7 @@ describe("creating an agent from a template", () => {
               tools: ["q"],
               label: "Wiki",
             },
+            policies: { q: "deny" },
           },
           { template: "unknown" },
         ],
@@ -339,7 +349,12 @@ describe("creating an agent from a template", () => {
     ]);
     expect(pick(p, "quick_action")).toEqual([["Summarize", "carried", null]]);
     expect(p.dropped).toEqual(
-      expect.arrayContaining(["maxSteps", "connectors.connector-2.tools.gone"]),
+      expect.arrayContaining([
+        "maxSteps",
+        "connectors.connector-2.tools.gone",
+        "connectors.connector-2.policies.search",
+        "connectors.connector-2.policies.gone",
+      ]),
     );
 
     const d = agent.definition;
@@ -352,7 +367,8 @@ describe("creating an agent from a template", () => {
       { kind: "connector", connectorId: firstMany, tools: "all" },
       { kind: "builtin", name: "Agent" },
     ]);
-    // policies only for the agent's tools; Read was disallowed, the nope plugin is unavailable
+    // policies only for the agent's tools; Read was disallowed, the nope plugin is unavailable;
+    // the connector entry's policy lands on the bound connector's key
     expect(d.toolPolicies).toEqual({ Bash: "ask", mcp__one__delete_all: "deny" });
     expect(d.skills).toEqual({
       orgSkills: [pinnedSkill, manualSkill, selectedSkill, inlineSkill],
@@ -372,7 +388,7 @@ describe("creating an agent from a template", () => {
       ],
     });
     expect(d.pendingConnectors).toEqual([
-      { key: "connector-1", label: "NONE", source: { template: none } },
+      { key: "connector-1", label: "NONE", source: { template: none }, policies: { x: "ask" } },
       {
         key: "connector-4",
         label: "Wiki",
@@ -385,6 +401,7 @@ describe("creating an agent from a template", () => {
           },
         },
         tools: ["q"],
+        policies: { q: "deny" },
       },
     ]);
     expect(agent.profile.description).toBe("Helps with things.");
@@ -392,11 +409,19 @@ describe("creating an agent from a template", () => {
     expect(agent.visibility).toBe("private");
     expect(agent.currentVersion).toBe(1);
 
-    // pending connectors are model-invisible: tools come from `tools` only
+    // pending connectors are model-invisible: the tools are exactly those `tools` implies
+    // (SendMessage comes with Agent; Bash is unavailable without a sandbox provider here)
     const resolved = await env.k.app.get(ToolRegistry).forAgent(env.orgId, d);
-    const keys = resolved.tools.map((t) => t.key);
-    expect(keys).toContain("mcp__one__delete_all");
-    expect(keys.some((k) => k.includes("Wiki") || k.startsWith("mcp__none"))).toBe(false);
+    expect(resolved.tools.map((t) => t.key).sort()).toEqual(
+      [
+        "Agent",
+        "SendMessage",
+        "mcp__many-a__search",
+        "mcp__one__delete_all",
+        "plugin__fake-tools-ui__write",
+      ].sort(),
+    );
+    expect(resolved.unavailable.map((u) => u.ref)).toEqual(["Bash"]);
   });
 
   it("binds nothing and adds no Agent tool for a plain template; tools default", async () => {
@@ -428,7 +453,7 @@ describe("creating an agent from a template", () => {
     });
   });
 
-  it("keeps an inline allowlist narrow when none of its tools carry over", async () => {
+  it("inline tools: absent = all, [] = none, all dropped = none (ruling P4-T3-8)", async () => {
     const id = await platformTemplate(
       tpl({
         tools: ["Read"],
@@ -443,10 +468,17 @@ describe("creating an agent from a template", () => {
               model: "inherit",
             },
             {
+              name: "none",
+              description: "None.",
+              instructions: "Go.",
+              tools: [],
+              skills: [],
+              model: "inherit",
+            },
+            {
               name: "any",
               description: "Any.",
               instructions: "Go.",
-              tools: [],
               skills: [],
               model: "inherit",
             },
@@ -458,6 +490,7 @@ describe("creating an agent from a template", () => {
     expect(p.dropped).toContain("subagents.inline.web.tools.WebFetch");
     expect(agent.definition.subagents?.inline?.map((x) => [x.name, x.tools ?? null])).toEqual([
       ["web", []],
+      ["none", []],
       ["any", null],
     ]);
   });
@@ -537,11 +570,23 @@ describe("creating an agent from a template", () => {
     const none = await plan();
     expect(none.model).toBeNull();
     expect(none.dropped).toContain("effort");
-    // the person's choice wins; the hash does not depend on the model
+    // the person's choice wins; the base hash does not depend on the model
     usable.add("p/chosen");
     const chosen = await plan({ model: { provider: "p", model: "chosen" } });
     expect(chosen.model?.source).toBe("chosen");
-    expect(chosen.hash).toBe(none.hash);
+    expect(chosen.auto).toBeNull();
+    expect(chosen.baseHash).toBe(none.baseHash);
+    expect(chosen.modelHash).toBe(none.modelHash);
+    // choosing the automatic model keeps its params and source; the model part follows it
+    usable.add("p/tier");
+    const sameAsAuto = await plan({ model: { provider: "p", model: "tier" } });
+    expect(sameAsAuto.model).toEqual({
+      ref: { provider: "p", model: "tier" },
+      params: { effort: "low" },
+      source: "tier",
+    });
+    expect(sameAsAuto.modelHash).not.toBe(none.modelHash);
+    expect(sameAsAuto.hash).toBe(`${sameAsAuto.baseHash}.${sameAsAuto.modelHash}`);
   });
 
   it("only an admin creates it for others (403 agent.visibility_forbidden)", async () => {
@@ -638,10 +683,10 @@ describe("creating an agent from a template", () => {
       payload: { templateId: shared },
     });
     expect(r.statusCode).toBe(404);
-    expect(errCode(r)).toBe("agent.template_not_found");
-    const c = await create(env.mem, { templateId: shared, name: "X", previewHash: "0".repeat(64) });
+    expect(errCode(r)).toBe("component.not_found");
+    const c = await create(env.mem, { templateId: shared, name: "X", previewHash: ZERO_HASH });
     expect(c.statusCode).toBe(404);
-    expect(errCode(c)).toBe("agent.template_not_found");
+    expect(errCode(c)).toBe("component.not_found");
     // the provenance stays; the link is gone
     const g = await env.mem({ method: "GET", url: `/api/v1/orgs/${env.orgId}/agents/${agent.id}` });
     expect((g.json() as { agent: AgentView }).agent.createdFrom).toEqual({
@@ -836,5 +881,245 @@ describe("creating an agent from a template", () => {
     expect(
       (plain.json() as { agent: AgentView }).agent.definition.pendingConnectors,
     ).toBeUndefined();
+  });
+  it("lists the connector, sub-agent and Agent edge cases (P4-5)", async () => {
+    const itemId = await catalogItem("crm");
+    const gh = await connectorTemplate(itemId, "gh");
+    await connector("gh", ["search"], gh);
+    const nar = await connectorTemplate(itemId, "nar");
+    await connector("nar", ["x"], nar);
+    const old = await connectorTemplate(itemId, "old");
+    const oldConn = await connector("old", ["read"], old);
+    const gone = await connectorTemplate(itemId, "gone");
+    await env.db
+      .updateTable("platform_connector_templates")
+      .set({ deleted_at: new Date() })
+      .where("id", "in", [old, gone])
+      .execute();
+    const reviewer = await platformTemplate(tpl({ name: "reviewer" }), { plugin: "crm", itemId });
+    const orgRev = randomUUID();
+    await env.db
+      .insertInto("agent_templates")
+      .values({ id: orgRev, org_id: env.orgId, name: "rev", plugin_name: null, current_version: 1 })
+      .execute();
+    await env.db
+      .insertInto("agent_template_versions")
+      .values({
+        template_id: orgRev,
+        version: 1,
+        definition: JSON.stringify(tpl({ name: "rev" })),
+        source_format: "capybara",
+        catalog_version: null,
+      })
+      .execute();
+    const inline = (name: string) => ({
+      name,
+      description: "D.",
+      instructions: "I.",
+      skills: [],
+      model: "inherit" as const,
+    });
+    const id = await platformTemplate(
+      tpl({
+        tools: ["Read"],
+        disallowedTools: ["mcp__nar__x"],
+        connectors: [
+          { template: "gh", tools: ["absent"] },
+          { template: "nar" },
+          { template: "old" },
+          { template: "gone" },
+        ],
+        subagents: {
+          types: ["reviewer", "crm:reviewer", "rev"],
+          inline: ["rev", ...Array.from({ length: 10 }, (_, i) => `in-${i}`)].map(inline),
+        },
+      }),
+      { plugin: "crm", itemId },
+    );
+    const { agent, preview: p } = await createOk(env.boss, id);
+    expect(pick(p, "connector")).toEqual([
+      ["GH", "pending", "tools_missing"],
+      ["Conn nar", "unavailable", "disallowed"],
+      ["Conn old", "carried", null],
+      ["GONE", "unavailable", "template_not_found"],
+    ]);
+    // a pending connector keeps its names: none is both kept and dropped
+    expect(p.dropped.filter((d) => d.startsWith("connectors."))).toEqual([]);
+    expect(agent.definition.pendingConnectors).toEqual([
+      { key: "connector-1", label: "GH", source: { template: gh }, tools: ["absent"] },
+    ]);
+    expect(agent.definition.tools).toEqual([
+      { kind: "builtin", name: "Read" },
+      { kind: "connector", connectorId: oldConn, tools: "all" },
+      { kind: "builtin", name: "Agent" },
+    ]);
+    expect(pick(p, "subagent")).toEqual([
+      ["crm:reviewer", "carried", null],
+      ["crm:reviewer", "unavailable", "type_taken"],
+      ["rev", "unavailable", "type_taken"],
+      ["rev", "carried", null],
+      ...Array.from({ length: 9 }, (_, i) => [`in-${i}`, "carried", null]),
+      ["in-9", "unavailable", "too_many"],
+    ]);
+    expect(agent.definition.subagents?.templates).toEqual([reviewer]);
+    expect(agent.definition.subagents?.inline).toHaveLength(10);
+  });
+
+  it("adds Agent for general: true, and never against the template's disallow", async () => {
+    const general = await platformTemplate(tpl({ tools: ["Read"], subagents: { general: true } }));
+    const g = await createOk(env.mem, general);
+    expect(pick(g.preview, "tool")).toEqual([
+      ["Read", "carried", null],
+      ["Agent", "carried", "subagents"],
+    ]);
+    const denied = await platformTemplate(
+      tpl({
+        name: "denied",
+        disallowedTools: ["Agent"],
+        subagents: {
+          inline: [
+            { name: "a", description: "D.", instructions: "I.", skills: [], model: "inherit" },
+          ],
+        },
+      }),
+    );
+    const d = await createOk(env.mem, denied);
+    expect(d.agent.definition.tools.some((r) => r.kind === "builtin" && r.name === "Agent")).toBe(
+      false,
+    );
+  });
+
+  it("gives every name of one skill its item and leaves an oversized one unpinned", async () => {
+    const itemId = await catalogItem("crm");
+    const pdf = await orgSkill("pdf", { itemId });
+    const big = await orgSkill("big", { bytes: 40_000 });
+    const id = await platformTemplate(tpl({ skills: ["pdf", "big"], selectedSkills: ["crm:pdf"] }));
+    const { agent, preview: p } = await createOk(env.mem, id);
+    expect(pick(p, "skill")).toEqual([
+      ["pdf", "carried", "pinned"],
+      ["big", "carried", "not_pinned_too_large"],
+      ["crm:pdf", "carried", "pinned"],
+    ]);
+    expect(agent.definition.skills).toEqual({ orgSkills: [pdf, big], pinned: [pdf] });
+  });
+
+  it("404s another org's unshared org template", async () => {
+    const other = await createOrg(env.root, "Elsewhere");
+    const theirs = randomUUID();
+    await env.db
+      .insertInto("agent_templates")
+      .values({ id: theirs, org_id: other, name: "theirs", plugin_name: null, current_version: 1 })
+      .execute();
+    await env.db
+      .insertInto("agent_template_versions")
+      .values({
+        template_id: theirs,
+        version: 1,
+        definition: JSON.stringify(tpl({ name: "theirs" })),
+        source_format: "capybara",
+        catalog_version: null,
+      })
+      .execute();
+    const r = await env.mem({
+      method: "POST",
+      url: `/api/v1/orgs/${env.orgId}/agents/from-template/preview`,
+      payload: { templateId: theirs },
+    });
+    expect(r.statusCode).toBe(404);
+    expect(errCode(r)).toBe("component.not_found");
+  });
+
+  it("refuses an unusable chosen model; a silent change of the automatic one is stale", async () => {
+    const id = await platformTemplate(tpl({ model: "fast" }));
+    const p = await preview(env.mem, id);
+    expect(p.model?.source).toBe("default");
+    const bad = await create(env.mem, {
+      templateId: id,
+      name: "X",
+      model: { provider: "model-fake", model: "nope" },
+      previewHash: p.previewHash,
+    });
+    expect(bad.statusCode, bad.body).toBe(400);
+    expect(errCode(bad)).toBe("agent.model_unavailable");
+
+    // the tier gets mapped after the preview: the automatic choice changed
+    await env.db
+      .insertInto("model_purpose_mappings")
+      .values({
+        org_id: env.orgId,
+        purpose: "subagent_fast",
+        provider: "model-fake",
+        model: "fake-1",
+        params: JSON.stringify({ effort: "low" }),
+        updated_by: env.bossId,
+      })
+      .execute();
+    const silent = await create(env.mem, { templateId: id, name: "X", previewHash: p.previewHash });
+    expect(silent.statusCode).toBe(409);
+    expect(errCode(silent)).toBe("agent.template_preview_stale");
+    // an explicit choice is not stale; equal to the automatic one, it keeps the tier's params
+    const chosen = await create(env.mem, {
+      templateId: id,
+      name: "X",
+      model: { provider: "model-fake", model: "fake-1" },
+      previewHash: p.previewHash,
+    });
+    expect(chosen.statusCode, chosen.body).toBe(201);
+    expect((chosen.json() as { agent: AgentView }).agent.definition.modelParams).toEqual({
+      effort: "low",
+    });
+  });
+
+  it("cuts text in UTF-16 units so the agent saves again as created", async () => {
+    const id = await platformTemplate(
+      tpl({
+        description: "😀".repeat(300),
+        instructions: "😀".repeat(60_000),
+        quickActions: [{ title: "😀".repeat(30), body: "Go." }],
+      }),
+    );
+    const { agent, preview: p } = await createOk(env.mem, id);
+    expect(p.dropped).toEqual(
+      expect.arrayContaining(["description", "instructions", "quickActions.0.title"]),
+    );
+    expect(agent.profile.description).toBe("😀".repeat(250));
+    expect(agent.definition.instructions).toBe("😀".repeat(50_000));
+    expect(agent.profile.quickActions[0]?.title).toBe("😀".repeat(20));
+    const url = `/api/v1/orgs/${env.orgId}/agents/${agent.id}`;
+    const patch = await env.mem({
+      method: "PATCH",
+      url,
+      payload: { definition: agent.definition },
+    });
+    expect(patch.statusCode, patch.body).toBe(200);
+    const profile = await env.mem({
+      method: "PATCH",
+      url: `${url}/profile`,
+      payload: {
+        description: agent.profile.description,
+        quickActions: agent.profile.quickActions,
+        expectedUpdatedAt: agent.profile.updatedAt,
+      },
+    });
+    expect(profile.statusCode, profile.body).toBe(200);
+
+    // instruction files: case-insensitive duplicates and a join past the limit are left out
+    const files = await platformTemplate(
+      tpl({
+        name: "files",
+        instructionFiles: [
+          { name: "AGENTS.md", content: "x".repeat(60_000) },
+          { name: "agents.md", content: "dup" },
+          { name: "more.md", content: "y".repeat(60_000) },
+        ],
+      }),
+    );
+    const f = await createOk(env.mem, files);
+    expect(pick(f.preview, "instruction_file")).toEqual([
+      ["AGENTS.md", "carried", null],
+      ["agents.md", "unavailable", "duplicate"],
+      ["more.md", "unavailable", "too_long"],
+    ]);
+    expect(f.agent.definition.instructionFiles?.map((x) => x.name)).toEqual(["AGENTS.md"]);
   });
 });

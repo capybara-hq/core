@@ -107,7 +107,7 @@ const FromTemplateBody = z
       .strict()
       .optional(),
     /** The preview's `previewHash`; another one → 409 `agent.template_preview_stale`. */
-    previewHash: z.string().regex(/^[0-9a-f]{64}$/),
+    previewHash: z.string().regex(/^[0-9a-f]{64}\.[0-9a-f]{16}$/),
   })
   .strict();
 
@@ -138,11 +138,16 @@ export class AgentsController {
     @Inject(AgentsFromTemplate) private readonly fromTemplate: AgentsFromTemplate,
   ) {}
 
+  /** A response's view with its provenance link (`createdFrom.available`, ruling P4-8). */
+  private async linked(orgId: string, view: AgentView): Promise<AgentView> {
+    return (await this.agents.withTemplateLinks(orgId, [view]))[0] as AgentView;
+  }
+
   /**
    * What creating an agent from a template would carry over (rulings P4-3, P4-5): the items
    * (carried / pending / unavailable, with reasons), the model the dialog preselects (P4-4), the
    * template fields with no place in the agent, and the `previewHash` the create must send. A
-   * template not usable in the org → 404 `agent.template_not_found`.
+   * template not usable in the org → 404 `component.not_found`.
    */
   @Post("from-template/preview")
   @HttpCode(200)
@@ -168,7 +173,7 @@ export class AgentsController {
     @ZBody(AgentFromTemplateBodyDto) body: z.infer<typeof FromTemplateBody>,
   ): Promise<{ agent: AgentView }> {
     const p = requireUser(principal);
-    return this.fromTemplate.create(
+    const { agent } = await this.fromTemplate.create(
       org.orgId,
       p.account.id,
       {
@@ -182,6 +187,7 @@ export class AgentsController {
       },
       patTokenId(p),
     );
+    return { agent: await this.linked(org.orgId, agent) };
   }
 
   @Post()
@@ -211,7 +217,8 @@ export class AgentsController {
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
   ): Promise<{ agents: AgentView[] }> {
-    return { agents: await this.agents.listVisible(org.orgId, viewerOf(principal)) };
+    const agents = await this.agents.listVisible(org.orgId, viewerOf(principal));
+    return { agents: await this.agents.withTemplateLinks(org.orgId, agents) };
   }
 
   @Get(":agentId")
@@ -221,7 +228,12 @@ export class AgentsController {
     @CurrentOrg() org: OrgContext,
     @Param("agentId") agentId: string,
   ): Promise<{ agent: AgentView }> {
-    return { agent: await this.agents.get(org.orgId, agentId, viewerOf(principal)) };
+    return {
+      agent: await this.linked(
+        org.orgId,
+        await this.agents.get(org.orgId, agentId, viewerOf(principal)),
+      ),
+    };
   }
 
   @Patch(":agentId")
@@ -233,7 +245,8 @@ export class AgentsController {
     @ZBody(AgentUpdateBodyDto) body: z.infer<typeof UpdateBody>,
   ): Promise<{ agent: AgentView; warnings: AgentWarning[] }> {
     const p = requireUser(principal);
-    return this.agents.update(org.orgId, agentId, p.account.id, body, patTokenId(p));
+    const r = await this.agents.update(org.orgId, agentId, p.account.id, body, patTokenId(p));
+    return { ...r, agent: await this.linked(org.orgId, r.agent) };
   }
 
   /** Display data only: no agent version. Same permission as `PATCH :agentId`. */
@@ -335,15 +348,14 @@ export class AgentsController {
     @ZBody(AgentOwnerBodyDto) body: z.infer<typeof OwnerBody>,
   ): Promise<{ agent: AgentView }> {
     const p = requireUser(principal);
-    return {
-      agent: await this.agents.reassignOwner(
-        org.orgId,
-        agentId,
-        body.accountId,
-        p.account.id,
-        patTokenId(p),
-      ),
-    };
+    const agent = await this.agents.reassignOwner(
+      org.orgId,
+      agentId,
+      body.accountId,
+      p.account.id,
+      patTokenId(p),
+    );
+    return { agent: await this.linked(org.orgId, agent) };
   }
 
   @Get(":agentId/versions")

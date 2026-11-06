@@ -123,13 +123,16 @@ export const PENDING_CONNECTORS_MAX = 16;
  * A connector the template the agent was created from needs and the org has not bound yet
  * (ruling P4-6): `source.template` is the platform connector template's id, `source.needs` a
  * hand-configured connector described by protocol, endpoint and tools (P4-11). `tools` are the
- * tool names to enable once bound (absent = all of a template's tools). Never model-visible:
- * tools are built from `tools` only, and a pending connector has none.
+ * tool names to enable once bound (absent = all of a template's tools), `policies` the template's
+ * tightened policies by tool name, applied by the bind. Never model-visible: tools are built from
+ * `tools` only, and a pending connector has none. Text limits are twice the template's (which
+ * counts code points) so any parsed template fits (this schema counts UTF-16 units).
  */
+const PendingToolName = z.string().min(1).max(256);
 export const PendingConnectorSchema = z
   .object({
     key: z.string().regex(PENDING_CONNECTOR_KEY_RE),
-    label: z.string().min(1).max(80),
+    label: z.string().min(1).max(160),
     source: z.union([
       z.object({ template: z.string().min(1).max(100) }).strict(),
       z
@@ -137,15 +140,19 @@ export const PendingConnectorSchema = z
           needs: z
             .object({
               protocol: z.enum(["mcp", "openapi"]),
-              endpoint: z.string().min(1).max(2048),
-              tools: z.array(z.string().min(1).max(128)).max(200),
-              label: z.string().min(1).max(80),
+              endpoint: z.string().min(1).max(4096),
+              tools: z.array(PendingToolName).max(200),
+              label: z.string().min(1).max(160),
             })
             .strict(),
         })
         .strict(),
     ]),
-    tools: z.array(z.string().min(1).max(128)).max(200).optional(),
+    tools: z.array(PendingToolName).max(200).optional(),
+    policies: z
+      .record(PendingToolName, z.enum(["ask", "deny"]))
+      .refine((p) => Object.keys(p).length <= 200, "at most 200 policies")
+      .optional(),
   })
   .strict();
 export type PendingConnector = z.infer<typeof PendingConnectorSchema>;

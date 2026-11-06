@@ -157,8 +157,6 @@ export const ERROR_CODES = {
   "agent.pinned_invalid": 400,
   /** `subagents` of an agent definition is refused (details: `{ reason, path, value? }`). */
   "agent.subagents_invalid": 400,
-  /** Creating from a template: the template is not usable in the org (ruling P4-3). */
-  "agent.template_not_found": 404,
   /** Creating from a template with a visibility other than `private` without `agents.manage`. */
   "agent.visibility_forbidden": 403,
   /** Creating from a template: the template or the org changed since the preview (P4-3). */

@@ -17,6 +17,7 @@ import {
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { invocationOf, PINNED_SKILLS_LIMITS } from "../skills/catalog.js";
 import { type SkillVersionRow, usableSkillVersions } from "../skills/usable.js";
+import { CONTROL_OR_HIDDEN_RE } from "../text.js";
 import {
   AGENT_TOOL,
   BASH_COMPANION_TOOLS,
@@ -25,17 +26,25 @@ import {
   DEFAULT_AGENT_TOOLS,
 } from "../tools/builtin-names.js";
 import { canonicalJson } from "../tools/canonical-json.js";
-import type {
-  AgentToolRef,
-  InlineAgentTemplate,
-  ModelParams,
-  ModelRef,
-  PendingConnector,
-  Subagents,
+import {
+  AgentDefinitionSchema,
+  type AgentToolRef,
+  type InlineAgentTemplate,
+  type ModelParams,
+  type ModelRef,
+  type PendingConnector,
+  SUBAGENT_NAME_RE,
+  SUBAGENT_ROSTER_MAX,
+  type Subagents,
 } from "./definition.js";
-import { SUBAGENT_NAME_RE, SUBAGENT_ROSTER_MAX } from "./definition.js";
-import type { AgentDefinitionInput } from "./instruction-files.js";
-import { PROFILE_LIMITS, type QuickAction } from "./profile.js";
+import {
+  type AgentDefinitionInput,
+  INSTRUCTION_FILE_LIMITS,
+  INSTRUCTION_FILE_NAME_RE,
+  type InstructionFile,
+  joinInstructionFiles,
+} from "./instruction-files.js";
+import { PROFILE_LIMITS, ProfileInputSchema, type QuickAction } from "./profile.js";
 import { type TemplateRow, templateTypeOf, usableTemplates } from "./templates.js";
 
 /** What the preview lists (P4-5): 带入 / 待配置 / 不可用. */
@@ -53,6 +62,8 @@ export type PlanItemKind =
 /**
  * One line of the preview. `reason` (a code) says why an item is pending or unavailable, and
  * qualifies some carried ones:
+ * - instruction_file: unavailable `invalid_name`, `duplicate`, `too_many`, `too_long` (the joined
+ *   files exceed the agent's limit);
  * - tool: `default` (the template names no tools: the defaults of a new agent), `subagents`
  *   (`Agent` added because the template describes sub-agents); unavailable `plugin_unavailable`
  *   (its plugin is not enabled in the org or not loaded), `unknown_tool`, `connector_key` (a
@@ -61,7 +72,8 @@ export type PlanItemKind =
  *   inline sub-agent); unavailable `not_found`;
  * - connector: `several` (the first of several connectors made from the template was bound);
  *   pending `no_connector`, `tools_missing` (the connector made from the template lacks every
- *   named tool), `needs`; unavailable `template_not_found`;
+ *   named tool), `needs`; unavailable `template_not_found`, `disallowed` (`disallowedTools` left
+ *   none of its tools);
  * - subagent: unavailable `type_not_found`, `type_taken`, `too_many`.
  */
 export interface PlanItem {
@@ -89,17 +101,23 @@ export interface TemplatePlan {
   profile: { description: string; quickActions: QuickAction[] };
   /** The model the new agent gets (`opts.model` when given); null when the org has none. */
   model: PlannedModel | null;
+  /** The automatic choice (P4-4), whatever `opts.model` is; what the dialog preselects. */
+  auto: PlannedModel | null;
   items: PlanItem[];
   /**
-   * Template fields (and inline sub-agent tool keys) that have no place in the agent: `maxSteps`,
-   * `effort` when the model does not declare it, `description` when cut to the profile's limit,
-   * `subagents.inline.<name>.tools.<key>` for a key the agent does not have.
+   * What has no place in the agent or was cut to its limits: `maxSteps`, `effort` when the model
+   * does not declare it, `description` / `instructions` / `quickActions.<i>.title|body` /
+   * `instructionFiles.<i>.content` / `subagents.inline.<name>.description|instructions` when cut to
+   * the kernel's limits (UTF-16 units), `subagents.inline.<name>.tools.<key>` for a key the agent
+   * does not have, `connectors.<key>.tools.<name>` / `connectors.<key>.policies.<name>` for a tool
+   * the bound connector does not offer.
    */
   dropped: string[];
-  /**
-   * The preview hash (`previewHash`): sha256 of the template id and version and everything
-   * resolved above except the model, which the person chooses in the dialog.
-   */
+  /** sha256 of the template id and version and everything resolved except the model. */
+  baseHash: string;
+  /** The first 16 hex digits of sha256 of the automatic model choice (ref and params). */
+  modelHash: string;
+  /** The preview hash: `<baseHash>.<modelHash>`. */
   hash: string;
 }
 
@@ -117,7 +135,7 @@ export interface PlanOptions {
    * provider listed, as the agent form preselects (ruling P4-T3-2).
    */
   defaultModel(): Promise<ModelRef | null>;
-  /** The model the person chose; resolution stops there. */
+  /** The model the person chose (the automatic choice keeps its params when it is the same). */
   model?: ModelRef;
 }
 
@@ -128,20 +146,10 @@ function parseModelRef(s: string): ModelRef | null {
   return { provider: s.slice(0, i), model: s.slice(i + 1) };
 }
 
+type Choice = PlannedModel & { decl: ModelParameter[] };
+
 /** P4-4: `modelRef` when usable, else the tier's purpose, else the org's default chat model. */
-async function chooseModel(
-  t: AgentTemplate,
-  opts: PlanOptions,
-): Promise<{
-  ref: ModelRef;
-  params: ModelParams;
-  source: ModelSource;
-  decl: ModelParameter[];
-} | null> {
-  if (opts.model !== undefined) {
-    const decl = (await opts.resolveModel(opts.model)) ?? [];
-    return { ref: opts.model, params: {}, source: "chosen", decl };
-  }
+async function autoModel(t: AgentTemplate, opts: PlanOptions): Promise<Choice | null> {
   const fromRef = t.modelRef === undefined ? null : parseModelRef(t.modelRef);
   if (fromRef !== null) {
     const decl = await opts.resolveModel(fromRef);
@@ -161,6 +169,31 @@ async function chooseModel(
   if (def === null) return null;
   const decl = await opts.resolveModel(def);
   return decl === null ? null : { ref: def, params: {}, source: "default", decl };
+}
+
+/** A template `effort` on a choice: the model parameter when declared and valid (P4-4). */
+function withEffort(c: Choice | null, effort: AgentTemplate["effort"]): PlannedModel | null {
+  if (c === null) return null;
+  const params: ModelParams = { ...c.params };
+  if (effort !== undefined) {
+    const decl = c.decl.find((p) => p.standard === "effort");
+    if (decl !== undefined && validateParams([decl], { [decl.key]: effort }).ok) {
+      params[decl.key] = effort;
+    }
+  }
+  return { ref: c.ref, params, source: c.source };
+}
+
+/**
+ * `s` cut to `max` UTF-16 units (what the kernel's zod schemas count), never splitting a
+ * surrogate pair.
+ */
+export function cutUtf16(s: string, max: number): string {
+  if (s.length <= max) return s;
+  let out = s.slice(0, max);
+  const last = out.charCodeAt(out.length - 1);
+  if (last >= 0xd800 && last <= 0xdbff) out = out.slice(0, -1);
+  return out;
 }
 
 /** A usable skill by name: `<plugin>:<name>`, or a bare name preferring the template's plugin. */
@@ -188,23 +221,27 @@ interface OrgConnector {
 }
 
 /**
- * The live platform connector template a `{ template }` entry names: `<plugin>:<id>` by its
- * plugin's catalog item; a bare `<id>` of the template's own plugin; otherwise a platform connector
- * template id (what 另存为模板 writes, P4-11).
+ * The platform connector template a `{ template }` entry names: `<plugin>:<id>` by its plugin's
+ * catalog item; a bare `<id>` of the template's own plugin; otherwise a platform connector template
+ * id (what 另存为模板 writes, P4-11). A live row wins; a soft-deleted one (`deleted`) still names
+ * the org connectors made from it, but nothing new can be made from it.
  */
 async function connectorTemplateOf(
   db: KernelSchemaDb,
   ref: string,
   own: { plugin: string | null; catalogItemId: string | null },
-): Promise<{ id: string; file: ConnectorTemplateFile } | null> {
+): Promise<{ id: string; file: ConnectorTemplateFile; deleted: boolean } | null> {
   const base = db
     .selectFrom("platform_connector_templates as p")
     .innerJoin("catalog_items as c", "c.id", "p.catalog_item_id")
-    .select(["p.id", "p.file"])
-    .where("p.deleted_at", "is", null)
-    .where("c.deleted_at", "is", null);
+    .select(["p.id", "p.file", "p.deleted_at", "c.deleted_at as item_deleted_at"])
+    // live first, then the most recently created
+    .orderBy((eb) => eb.case().when("p.deleted_at", "is", null).then(0).else(1).end())
+    .orderBy("p.created_at", "desc");
   const i = ref.indexOf(":");
-  let row: { id: string; file: unknown } | undefined;
+  let row:
+    | { id: string; file: unknown; deleted_at: Date | null; item_deleted_at: Date | null }
+    | undefined;
   if (i > 0) {
     row = await base
       .where("c.name", "=", ref.slice(0, i))
@@ -225,7 +262,12 @@ async function connectorTemplateOf(
     }
     row ??= await base.where("p.id", "=", ref).executeTakeFirst();
   }
-  return row === undefined ? null : { id: row.id, file: row.file as ConnectorTemplateFile };
+  if (row === undefined) return null;
+  return {
+    id: row.id,
+    file: row.file as ConnectorTemplateFile,
+    deleted: row.deleted_at !== null || row.item_deleted_at !== null,
+  };
 }
 
 /** The org's live connectors made from platform connector template `id`, oldest first. */
@@ -262,15 +304,58 @@ async function connectorsFrom(
 
 const labelOf = (file: ConnectorTemplateFile, fallback: string): string => {
   const name = file?.displayName?.en;
-  return (typeof name === "string" && name.trim() !== "" ? name : fallback).slice(0, 80);
+  return cutUtf16(typeof name === "string" && name.trim() !== "" ? name : fallback, 160);
 };
 
 /** The pending connector key of the template's `connectors[i]` (stable per entry). */
 export const pendingKeyOf = (i: number): string => `connector-${i + 1}`;
 
+const RANK = { ask: 1, deny: 2 } as const;
+
+/**
+ * The template's instruction files as the agent accepts them (InstructionFilesSchema): valid,
+ * case-insensitively unique names, at most 20, the join within the limit (files past it dropped
+ * from the end; a single file too long is cut).
+ */
+function instructionFilesOf(
+  t: AgentTemplate,
+  item: (name: string, state: PlanItemState, reason?: string) => void,
+  dropped: string[],
+): InstructionFile[] {
+  const out: InstructionFile[] = [];
+  const lines: { name: string; state: PlanItemState; reason?: string }[] = [];
+  const seen = new Set<string>();
+  for (const f of t.instructionFiles ?? []) {
+    if (!INSTRUCTION_FILE_NAME_RE.test(f.name) || CONTROL_OR_HIDDEN_RE.test(f.name)) {
+      lines.push({ name: f.name, state: "unavailable", reason: "invalid_name" });
+    } else if (seen.has(f.name.toLowerCase())) {
+      lines.push({ name: f.name, state: "unavailable", reason: "duplicate" });
+    } else if (out.length >= INSTRUCTION_FILE_LIMITS.count) {
+      lines.push({ name: f.name, state: "unavailable", reason: "too_many" });
+    } else {
+      seen.add(f.name.toLowerCase());
+      out.push({ name: f.name, content: f.content });
+      lines.push({ name: f.name, state: "carried" });
+    }
+  }
+  while (out.length > 1 && joinInstructionFiles(out).length > INSTRUCTION_FILE_LIMITS.joinedChars) {
+    const gone = out.pop() as InstructionFile;
+    const line = lines.find((l) => l.name === gone.name && l.state === "carried");
+    if (line) Object.assign(line, { state: "unavailable", reason: "too_long" });
+  }
+  const only = out[0];
+  if (out.length === 1 && only && only.content.length > INSTRUCTION_FILE_LIMITS.joinedChars) {
+    only.content = cutUtf16(only.content, INSTRUCTION_FILE_LIMITS.joinedChars);
+    dropped.push("instructionFiles.0.content");
+  }
+  for (const l of lines) item(l.name, l.state, l.reason);
+  return out;
+}
+
 /**
  * Resolves what `row`'s template carries into a new agent of `orgId` (P4-4, P4-5, P4-6). Never
- * throws for the org's state: what does not resolve is listed and left out.
+ * throws for the org's state: what does not resolve is listed and left out, and text is cut to
+ * the kernel's limits; the result is checked against the agent and profile schemas.
  */
 export async function planFromTemplate(
   db: KernelSchemaDb,
@@ -284,17 +369,26 @@ export async function planFromTemplate(
   const item = (kind: PlanItemKind, name: string, state: PlanItemState, reason?: string) =>
     items.push({ kind, name, state, ...(reason !== undefined && { reason }) });
 
-  // prompt, description, quick actions
-  const files = t.instructionFiles;
-  if (files !== undefined && files.length > 0) {
-    for (const f of files) item("instruction_file", f.name, "carried");
-  } else item("instruction_file", "AGENTS.md", "carried");
+  // prompt, description, quick actions (cut in UTF-16 units, as the kernel schemas count)
+  const files = instructionFilesOf(t, (n, s, r) => item("instruction_file", n, s, r), dropped);
+  let instructions: string | undefined;
+  if (files.length === 0) {
+    if ((t.instructionFiles ?? []).length === 0) item("instruction_file", "AGENTS.md", "carried");
+    instructions = cutUtf16(t.instructions, INSTRUCTION_FILE_LIMITS.joinedChars);
+    if (instructions !== t.instructions) dropped.push("instructions");
+  }
   const fullDescription = typeof t.description === "string" ? t.description : "";
-  const description = [...fullDescription].slice(0, PROFILE_LIMITS.description).join("");
+  const description = cutUtf16(fullDescription, PROFILE_LIMITS.description);
   if (description !== fullDescription) dropped.push("description");
   if (description !== "") item("description", "description", "carried");
-  const quickActions = (t.quickActions ?? []).slice(0, PROFILE_LIMITS.quickActions);
-  for (const q of quickActions) item("quick_action", q.title, "carried");
+  const quickActions = (t.quickActions ?? []).slice(0, PROFILE_LIMITS.quickActions).map((q, i) => {
+    const title = cutUtf16(q.title, PROFILE_LIMITS.title);
+    const body = cutUtf16(q.body, PROFILE_LIMITS.body);
+    if (title !== q.title) dropped.push(`quickActions.${i}.title`);
+    if (body !== q.body) dropped.push(`quickActions.${i}.body`);
+    item("quick_action", title, "carried");
+    return { title, body };
+  });
   if (t.maxSteps !== undefined) dropped.push("maxSteps");
 
   // tools: builtin and plugin keys usable in the org (P4-5)
@@ -329,7 +423,7 @@ export async function planFromTemplate(
     }
   }
 
-  // skills: by name against the org's usable skills (P4-5)
+  // skills: by name against the org's usable skills (P4-5); every name gets its item
   const usable = await usableSkillVersions(db, orgId);
   const orgSkills: string[] = [];
   const select = (id: string) => {
@@ -337,19 +431,21 @@ export async function planFromTemplate(
   };
   const pinned: string[] = [];
   let pinnedBytes = 0;
-  const skillNames = [...(t.skills ?? []), ...(t.selectedSkills ?? [])];
-  const seenSkills = new Set<string>();
+  const preloaded = new Set(t.skills ?? []);
+  const skillNames = [...new Set([...(t.skills ?? []), ...(t.selectedSkills ?? [])])];
   for (const name of skillNames) {
-    if (seenSkills.has(name)) continue;
-    seenSkills.add(name);
     const s = skillByName(usable, name, row.plugin);
     if (!s) {
       item("skill", name, "unavailable", "not_found");
       continue;
     }
     select(s.id);
-    if (!(t.skills ?? []).includes(name)) {
-      item("skill", name, "carried");
+    if (!preloaded.has(name)) {
+      item("skill", name, "carried", pinned.includes(s.id) ? "pinned" : undefined);
+      continue;
+    }
+    if (pinned.includes(s.id)) {
+      item("skill", name, "carried", "pinned");
       continue;
     }
     const bytes = s.manifest.files.find((f) => f.path === SKILL_ENTRY_FILE)?.size ?? 0;
@@ -360,7 +456,7 @@ export async function planFromTemplate(
       pinnedBytes + bytes > PINNED_SKILLS_LIMITS.totalBytes
     ) {
       item("skill", name, "carried", "not_pinned_too_large");
-    } else if (!pinned.includes(s.id)) {
+    } else {
       pinned.push(s.id);
       pinnedBytes += bytes;
       item("skill", name, "carried", "pinned");
@@ -370,14 +466,17 @@ export async function planFromTemplate(
   // connectors (P4-5, P4-6)
   const pendingConnectors: PendingConnector[] = [];
   const slugs = new Map<string, OrgConnector>();
+  const connectorPolicies: Record<string, "ask" | "deny"> = {};
   for (const [i, entry] of (t.connectors ?? []).entries()) {
     const key = pendingKeyOf(i);
+    const policies = entry.policies !== undefined && Object.keys(entry.policies).length > 0;
     if ("needs" in entry) {
       pendingConnectors.push({
         key,
         label: entry.needs.label,
         source: { needs: { ...entry.needs, tools: [...entry.needs.tools] } },
         tools: [...entry.needs.tools],
+        ...(policies && { policies: { ...entry.policies } }),
       });
       item("connector", entry.needs.label, "pending", "needs");
       continue;
@@ -392,11 +491,17 @@ export async function planFromTemplate(
     }
     const label = labelOf(ct.file, entry.template);
     const pending = (reason: string) => {
+      // nothing new can be made from a removed connector template
+      if (ct.deleted) {
+        item("connector", label, "unavailable", "template_not_found");
+        return;
+      }
       pendingConnectors.push({
         key,
         label,
         source: { template: ct.id },
         ...(entry.tools !== undefined && { tools: [...entry.tools] }),
+        ...(policies && { policies: { ...entry.policies } }),
       });
       item("connector", label, "pending", reason);
     };
@@ -406,26 +511,45 @@ export async function planFromTemplate(
       pending("no_connector");
       continue;
     }
-    let names: "all" | string[] = "all";
+    let names = entry.tools === undefined ? first.tools : entry.tools;
     if (entry.tools !== undefined) {
-      names = entry.tools.filter((n) => first.tools.includes(n));
-      for (const n of entry.tools) {
-        if (!first.tools.includes(n)) dropped.push(`connectors.${key}.tools.${n}`);
-      }
-      if (names.length === 0) {
+      const present = entry.tools.filter((n) => first.tools.includes(n));
+      if (present.length === 0) {
+        // pending keeps every name: none is dropped
         pending("tools_missing");
         continue;
       }
+      for (const n of entry.tools) {
+        if (!first.tools.includes(n)) dropped.push(`connectors.${key}.tools.${n}`);
+      }
+      names = present;
+    }
+    // `disallowedTools` naming its tools narrows it (P4-5)
+    const allowed = names.filter((n) => !disallowed.has(connectorToolKey(first.slug, n)));
+    if (allowed.length === 0) {
+      item("connector", first.name, "unavailable", "disallowed");
+      continue;
+    }
+    const narrowed = allowed.length !== names.length;
+    const refTools: "all" | string[] = entry.tools === undefined && !narrowed ? "all" : allowed;
+    for (const [name, p] of Object.entries(entry.policies ?? {})) {
+      if (!allowed.includes(name)) {
+        dropped.push(`connectors.${key}.policies.${name}`);
+        continue;
+      }
+      const k = connectorToolKey(first.slug, name);
+      const prev = connectorPolicies[k];
+      if (prev === undefined || RANK[p] > RANK[prev]) connectorPolicies[k] = p;
     }
     const existing = tools.find(
       (r): r is Extract<AgentToolRef, { kind: "connector" }> =>
         r.kind === "connector" && r.connectorId === first.id,
     );
     if (existing === undefined) {
-      tools.push({ kind: "connector", connectorId: first.id, tools: names });
+      tools.push({ kind: "connector", connectorId: first.id, tools: refTools });
     } else if (existing.tools !== "all") {
       existing.tools =
-        names === "all" ? "all" : [...new Set([...(existing.tools as string[]), ...names])];
+        refTools === "all" ? "all" : [...new Set([...(existing.tools as string[]), ...refTools])];
     }
     slugs.set(first.id, first);
     item("connector", first.name, "carried", made.length > 1 ? "several" : undefined);
@@ -458,7 +582,7 @@ export async function planFromTemplate(
         if (found === undefined) {
           item("subagent", type, "unavailable", "type_not_found");
         } else if (taken.has(found.type) || inlineNames.has(found.type)) {
-          if (!templateIds.includes(found.id)) item("subagent", type, "unavailable", "type_taken");
+          item("subagent", type, "unavailable", "type_taken");
         } else if (room <= 0 || templateIds.length >= 20) {
           item("subagent", type, "unavailable", "too_many");
         } else {
@@ -486,10 +610,7 @@ export async function planFromTemplate(
       for (const name of x.skills ?? []) {
         const s = skillByName(usable, name, row.plugin);
         if (!s) {
-          if (
-            !skillNames.includes(name) &&
-            !items.some((i) => i.kind === "skill" && i.name === name)
-          ) {
+          if (!items.some((i) => i.kind === "skill" && i.name === name)) {
             item("skill", name, "unavailable", "not_found");
           }
           continue;
@@ -500,12 +621,16 @@ export async function planFromTemplate(
           item("skill", name, "carried", "subagent");
         }
       }
+      const description = cutUtf16(x.description, 4096);
+      const instr = cutUtf16(x.instructions, 100_000);
+      if (description !== x.description) dropped.push(`subagents.inline.${x.name}.description`);
+      if (instr !== x.instructions) dropped.push(`subagents.inline.${x.name}.instructions`);
       inline.push({
         name: x.name,
-        description: x.description,
-        instructions: x.instructions,
-        // an empty list is the template's "no allowlist" (ruling P4-T3-6); filtered below
-        ...(x.tools.length > 0 && { tools: [...x.tools] }),
+        description,
+        instructions: instr,
+        // absent = no allowlist (all the agent's tools), `[]` = no tools (ruling P4-T3-8)
+        ...(x.tools !== undefined && { tools: [...x.tools] }),
         ...(skillIds.length > 0 && { skills: skillIds.slice(0, 3) }),
         ...(x.model !== undefined && { model: x.model }),
       });
@@ -513,25 +638,17 @@ export async function planFromTemplate(
     }
     if (inline.length > 0) out.inline = inline;
     subagents = out;
-    // a roster needs the `Agent` tool to be offered (ruling P4-T3-5)
+    // a roster needs the `Agent` tool to be offered (ruling P4-T3-5), unless the template
+    // disallows it
     const describes = templateIds.length > 0 || inline.length > 0 || sub.general === true;
-    if (describes && !tools.some((r) => r.kind === "builtin" && r.name === AGENT_TOOL)) {
+    if (
+      describes &&
+      !disallowed.has(AGENT_TOOL) &&
+      !tools.some((r) => r.kind === "builtin" && r.name === AGENT_TOOL)
+    ) {
       tools.push({ kind: "builtin", name: AGENT_TOOL });
       item("tool", AGENT_TOOL, "carried", "subagents");
     }
-  }
-
-  // `disallowedTools` naming a bound connector's tool narrows that connector (P4-5)
-  for (let i = tools.length - 1; i >= 0; i--) {
-    const r = tools[i];
-    if (r?.kind !== "connector") continue;
-    const c = slugs.get(r.connectorId);
-    if (!c) continue;
-    const names = r.tools === "all" ? c.tools : r.tools;
-    const kept = names.filter((n) => !disallowed.has(connectorToolKey(c.slug, n)));
-    if (kept.length === names.length) continue;
-    if (kept.length === 0) tools.splice(i, 1);
-    else tools[i] = { ...r, tools: kept };
   }
 
   // the tool keys the agent has, for policies and inline allowlists
@@ -548,25 +665,27 @@ export async function planFromTemplate(
     }
   }
   const toolPolicies: Record<string, "ask" | "deny"> = {};
-  for (const [key, p] of Object.entries(t.toolPolicies ?? {})) {
-    if (keys.has(key) && (p === "ask" || p === "deny")) toolPolicies[key] = p;
+  for (const [key, p] of [
+    ...Object.entries(t.toolPolicies ?? {}),
+    ...Object.entries(connectorPolicies),
+  ]) {
+    if (!keys.has(key) || (p !== "ask" && p !== "deny")) continue;
+    const prev = toolPolicies[key];
+    if (prev === undefined || RANK[p] > RANK[prev]) toolPolicies[key] = p;
   }
   for (const x of subagents?.inline ?? []) {
     if (x.tools === undefined) continue;
-    const kept = x.tools.filter((k) => keys.has(k));
     for (const k of x.tools) {
       if (!keys.has(k)) dropped.push(`subagents.inline.${x.name}.tools.${k}`);
     }
-    // nothing left of an allowlist: an empty one (no tool) rather than none (all the agent's)
-    x.tools = kept;
+    // an allowlist stays one: all its tools dropped leaves `[]` (no tool), never all of them
+    x.tools = x.tools.filter((k) => keys.has(k));
   }
 
   const definition: PlannedDefinition = {
     name: row.name.slice(0, 80),
     avatarUrl: null,
-    ...(files !== undefined && files.length > 0
-      ? { instructionFiles: files.map((f) => ({ name: f.name, content: f.content })) }
-      : { instructions: t.instructions }),
+    ...(instructions === undefined ? { instructionFiles: files } : { instructions }),
     fallback: null,
     fallbackParams: {},
     tools,
@@ -577,23 +696,42 @@ export async function planFromTemplate(
     ...(subagents !== undefined && { subagents }),
     ...(pendingConnectors.length > 0 && { pendingConnectors }),
   };
+  const profile = { description, quickActions };
 
-  // the model (P4-4); `effort` becomes the model parameter when the model declares it
-  const chosen = await chooseModel(t, opts);
-  let model: PlannedModel | null = null;
-  if (chosen !== null) {
-    const params: ModelParams = { ...chosen.params };
-    if (t.effort !== undefined) {
-      const decl = chosen.decl.find((p) => p.standard === "effort");
-      const r = decl === undefined ? null : validateParams([decl], { [decl.key]: t.effort });
-      if (decl !== undefined && r?.ok) params[decl.key] = t.effort;
-      else dropped.push("effort");
-    }
-    model = { ref: chosen.ref, params, source: chosen.source };
-  } else if (t.effort !== undefined) dropped.push("effort");
+  // the model (P4-4): the automatic choice always; the person's choice keeps its params when equal
+  const autoChoice = await autoModel(t, opts);
+  const auto = withEffort(autoChoice, t.effort);
+  let model = auto;
+  if (
+    opts.model !== undefined &&
+    (auto === null ||
+      auto.ref.provider !== opts.model.provider ||
+      auto.ref.model !== opts.model.model)
+  ) {
+    const decl = (await opts.resolveModel(opts.model)) ?? [];
+    model = withEffort({ ref: opts.model, params: {}, source: "chosen", decl }, t.effort);
+  }
+  // a standard knob's key is its name (`effort`)
+  if (t.effort !== undefined && model?.params.effort !== t.effort) dropped.push("effort");
 
-  const profile = { description, quickActions: quickActions.map((q) => ({ ...q })) };
-  const hash = createHash("sha256")
+  // the result fits the kernel's schemas; a residue here is a bug in the cutting above
+  const check = AgentDefinitionSchema.safeParse({
+    ...definition,
+    instructions: definition.instructions ?? joinInstructionFiles(files),
+    model: model?.ref ?? { provider: "none", model: "none" },
+    modelParams: model?.params ?? {},
+  });
+  const checkProfile = ProfileInputSchema.safeParse(profile);
+  if (!check.success || !checkProfile.success) {
+    const issues = [...(check.error?.issues ?? []), ...(checkProfile.error?.issues ?? [])];
+    throw new Error(
+      `template ${row.id} v${row.version} planned outside the agent schema: ${issues
+        .map((x) => `${x.path.join(".")}: ${x.message}`)
+        .join("; ")}`,
+    );
+  }
+
+  const baseHash = createHash("sha256")
     .update(
       canonicalJson({
         templateId: row.id,
@@ -605,5 +743,19 @@ export async function planFromTemplate(
       }),
     )
     .digest("hex");
-  return { definition, profile, model, items, dropped, hash };
+  const modelHash = createHash("sha256")
+    .update(canonicalJson(auto === null ? null : { ref: auto.ref, params: auto.params }))
+    .digest("hex")
+    .slice(0, 16);
+  return {
+    definition,
+    profile,
+    model,
+    auto,
+    items,
+    dropped,
+    baseHash,
+    modelHash,
+    hash: `${baseHash}.${modelHash}`,
+  };
 }

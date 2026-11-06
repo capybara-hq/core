@@ -875,6 +875,26 @@ export class AgentsService {
     return this.lookup.view(agentId);
   }
 
+  /**
+   * `views` with `createdFrom.available` set (ruling P4-8): whether each recorded template is
+   * still usable in the org. One template read for all of them; only the agents API calls it.
+   */
+  async withTemplateLinks<T extends AgentView>(orgId: string, views: T[]): Promise<T[]> {
+    const ids = [
+      ...new Set(views.flatMap((v) => (v.createdFrom === null ? [] : [v.createdFrom.templateId]))),
+    ];
+    if (ids.length === 0) return views;
+    const usable = await loadTemplates(this.db.db, orgId, ids);
+    return views.map((v) =>
+      v.createdFrom === null
+        ? v
+        : {
+            ...v,
+            createdFrom: { ...v.createdFrom, available: usable.has(v.createdFrom.templateId) },
+          },
+    );
+  }
+
   /** 取对 viewer 可见的 agent；`viewerAccountId = null` 表示该组织的服务令牌。不可见 → `agent.not_found`。 */
   get(orgId: string, agentId: string, viewerAccountId: string | null): Promise<AgentView> {
     return this.lookup.get(orgId, agentId, viewerAccountId);
