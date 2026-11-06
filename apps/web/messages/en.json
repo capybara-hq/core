@@ -893,6 +893,16 @@
         "Still up? I'll keep you company",
         "It's late. Pick one small thing"
       ]
+    },
+    "parentAgent": "Parent agent",
+    "delivery": {
+      "report": "{name} handed back a report",
+      "note": "{name} sent a message",
+      "completed": "{name} finished",
+      "failed": "{name} failed",
+      "aborted": "{name} was stopped",
+      "show": "Show",
+      "hide": "Hide"
     }
   },
   "ui": {

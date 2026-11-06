@@ -917,3 +917,122 @@ describe("calls that wait for a person (design §6.16.9)", () => {
     expect(row([old], legacy)?.kind).toBe("question");
   });
 });
+
+describe("background sub-agents (agent map spec §5, §9.4)", () => {
+  const dispatch = (kind?: "task" | "message") => ({
+    dispatch: {
+      parentConversationId: "c0",
+      parentRunId: "r0",
+      callId: "k1",
+      ...(kind ? { kind } : {}),
+    },
+  });
+
+  it("a parent message in a child renders as a bubble labelled with the parent", () => {
+    const events = [
+      user(1, "Scan the docs", dispatch()),
+      ev(2, "run_started", { agentVersion: 1, model: { provider: "p", model: "m" } }),
+      user(3, "Focus on the API docs", dispatch("message")),
+    ];
+    const out = buildTimeline(events, [], new Map(), "en", {
+      agentName: (id) => (id === "c0" ? "Release notes" : undefined),
+    });
+    expect(kinds(out)).toEqual(["task", "user"]);
+    expect(out[1]).toMatchObject({
+      kind: "user",
+      text: "Focus on the API docs",
+      sender: { id: "c0", name: "Release notes" },
+    });
+    // without a name the sender is still the parent (the thread words it)
+    const bare = buildTimeline(events, [], new Map(), "en");
+    expect(bare[1]).toMatchObject({ kind: "user", sender: { id: "c0" } });
+    expect(bare[1]).not.toHaveProperty("sender.name");
+  });
+
+  it("a subagent_delivery renders in the parent", () => {
+    const delivery = (seq: number, payload: Record<string, unknown>) =>
+      ev(
+        seq,
+        "subagent_delivery",
+        {
+          subagentId: "ch1",
+          childRunId: "run-ch1",
+          description: "Scan docs",
+          triggerAccountId: "a1",
+          text: "",
+          ...payload,
+        },
+        null,
+      );
+    const events = [
+      user(1, "go"),
+      delivery(2, { kind: "report", text: "Docs are fine." }),
+      delivery(3, { kind: "note", text: "Halfway there." }),
+      delivery(4, { kind: "finished", status: "completed", handedBack: true }),
+      delivery(5, { kind: "finished", status: "max_steps", text: "out of steps" }),
+      delivery(6, { kind: "finished", status: "aborted", abortedBy: "user" }),
+    ];
+    const out = buildTimeline(events, [], new Map(), "en");
+    expect(kinds(out)).toEqual([
+      "user",
+      "delivery",
+      "delivery",
+      "delivery",
+      "delivery",
+      "delivery",
+    ]);
+    expect(out.slice(1)).toMatchObject([
+      { subagentId: "ch1", name: "Scan docs", delivery: "report", text: "Docs are fine." },
+      { delivery: "note", text: "Halfway there." },
+      { delivery: "finished", status: "completed", text: "" },
+      { delivery: "finished", status: "failed", text: "out of steps" },
+      { delivery: "finished", status: "aborted" },
+    ]);
+  });
+
+  it("SendMessage and SubagentHandback are ordinary tool rows", () => {
+    const events = [
+      user(1, "go"),
+      calls(2, [
+        { id: "a", name: "SendMessage", input: { to: "parent", message: "Halfway" } },
+        { id: "b", name: "SubagentHandback", input: { message: "All done" } },
+      ]),
+      result(3, "a", "SendMessage"),
+      result(4, "b", "SubagentHandback"),
+    ];
+    const out = buildTimeline(events, [], new Map(), "en");
+    expect(kinds(out)).toEqual(["user", "tools"]);
+    expect(tools(out)[0]?.rows.map((r) => [r.row.name, r.row.status])).toEqual([
+      ["SendMessage", "done"],
+      ["SubagentHandback", "done"],
+    ]);
+  });
+
+  it("an unfinished sub-agent's row names its current tool from subagent_progress", () => {
+    const events = [
+      user(1, "go"),
+      calls(2, [
+        {
+          id: "k1",
+          name: "Agent",
+          input: { description: "Scan docs", prompt: "Do it", subagent_type: "general-purpose" },
+        },
+      ]),
+      ev(3, "subagent_dispatched", {
+        step: 0,
+        callId: "k1",
+        subagentId: "ch1",
+        childRunId: "run-ch1",
+        agentType: "general-purpose",
+        description: "Scan docs",
+        resumed: false,
+        model: { provider: "p", model: "m" },
+      }),
+    ];
+    const out = buildTimeline(events, [], INFO, "en", {
+      progress: { ch1: { toolCalls: 2, lastToolKey: "plugin__slack__search" } },
+    });
+    const g = out.find((e) => e.kind === "subagents");
+    expect(g?.kind === "subagents" && g.rows[0]?.row.current).toBe("Slack [search]");
+  });
+});

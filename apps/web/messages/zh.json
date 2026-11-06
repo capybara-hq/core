@@ -881,6 +881,16 @@
       "afternoon": ["下午好，{name}", "下午我们推进什么？", "接着干？"],
       "evening": ["晚上好，{name}", "今天收尾还差什么？"],
       "night": ["夜猫子，干点啥？", "还没睡？我陪你", "夜深了，挑件小事做"]
+    },
+    "parentAgent": "上级智能体",
+    "delivery": {
+      "report": "{name} 交回了报告",
+      "note": "{name} 发来消息",
+      "completed": "{name} 已完成",
+      "failed": "{name} 失败",
+      "aborted": "{name} 已停止",
+      "show": "查看",
+      "hide": "收起"
     }
   },
   "ui": {

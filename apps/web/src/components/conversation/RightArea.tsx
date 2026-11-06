@@ -507,6 +507,8 @@ export function useRightAreaSlot(p: {
         failed={tree.failed}
         tasks={background.tasks}
         untitled={p.untitled}
+        contextWindowOf={p.contextWindowOf}
+        reasoningOf={p.reasoningOf}
         onNavigate={(t) => (t === null ? closeMap() : open(t))}
       />
     ) : undefined;
@@ -588,7 +590,9 @@ export function useRightAreaSlot(p: {
       filePaths,
       ...(target?.kind === "subagent" ? { openSubagent: target.id } : {}),
       onOpenSubagent: (id) => open({ kind: "subagent", id }),
-      ...(hasSubagents ? { onOpenAgentMap: openMap } : {}),
+      ...(hasSubagents
+        ? { onOpenAgentMap: openMap, onOpenAgent: (id: string) => open({ kind: "agents", id }) }
+        : {}),
       onOpenTask: openTask,
       renderCard: (e) => (
         <ExtensionCard

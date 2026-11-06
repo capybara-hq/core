@@ -103,11 +103,88 @@ const tree = (childStatus: AgentTreeNode["status"]) => ({
   }),
 });
 
+const CHILD = `${ORG}/conversations/ch1`;
+
+/** The child's log: started, its task, a read, a parent's message, then a running command. */
+function childEvents(): ConversationEvent[] {
+  const c = (seq: number, type: string, payload: unknown, runId: string | null = "run-ch1") =>
+    ev(seq, type, payload, runId, "ch1");
+  return [
+    c(
+      1,
+      "subagent_started",
+      {
+        parent: { conversationId: "c1", runId: "r1", callId: "k1", step: 1 },
+        agentType: "general-purpose",
+        template: { source: "general" },
+        definition: { name: "general-purpose", tools: [{ kind: "builtin", name: "Read" }] },
+        maxSteps: 20,
+      },
+      null,
+    ),
+    c(
+      2,
+      "user_message",
+      {
+        content: [{ type: "text", text: "Do Scan docs" }],
+        authorAccountId: "a1",
+        dispatch: { parentConversationId: "c1", parentRunId: "r1", callId: "k1" },
+      },
+      null,
+    ),
+    c(3, "run_started", { agentVersion: 1, model: { provider: "model-fake", model: "fake-1" } }),
+    c(4, "assistant_message", {
+      step: 1,
+      stopReason: "tool_use",
+      content: [
+        { type: "text", text: "Reading the docs first." },
+        { type: "tool_call", id: "x1", name: "Read", input: { file_path: "docs/a.md" } },
+      ],
+    }),
+    c(5, "tool_result", {
+      step: 1,
+      callId: "x1",
+      toolKey: "Read",
+      content: "# A",
+      isError: false,
+      view: { kind: "read", path: "docs/a.md", fromLine: 1, toLine: 180 },
+    }),
+    c(
+      6,
+      "user_message",
+      {
+        content: [{ type: "text", text: "Focus on the API docs" }],
+        authorAccountId: "a1",
+        dispatch: { parentConversationId: "c1", parentRunId: "r1", callId: "s1", kind: "message" },
+      },
+      null,
+    ),
+    c(7, "assistant_message", {
+      step: 2,
+      stopReason: "tool_use",
+      content: [
+        {
+          type: "tool_call",
+          id: "x2",
+          name: "Bash",
+          input: { command: "pnpm test", description: "Run the tests" },
+        },
+      ],
+    }),
+    c(8, "tool_call_started", { step: 2, callId: "x2", toolKey: "Bash", specHash: "h" }),
+  ];
+}
+
 function api(
   events: ConversationEvent[],
   answer: () => Response = () => json(200, tree("running")),
+  extra: Record<string, (c: Call) => Response> = {},
 ): Call[] {
   return stubApi({
+    [`GET ${CHILD}`]: () => json(200, CONV("ch1", { parentConversationId: "c1" })),
+    [`GET ${CHILD}/events`]: () => json(200, { events: childEvents() }),
+    [`GET ${CHILD}/tools`]: () => json(200, { tools: [] }),
+    ...extra,
     [`GET ${PARENT}`]: () => json(200, CONV("c1")),
     [`GET ${PARENT}/events`]: () => json(200, { events }),
     [`GET ${PARENT}/queue`]: () => json(200, { items: [], paused: false }),
@@ -298,5 +375,174 @@ describe("the agent map's tree", () => {
     await waitFor(() => expect(treeReads(calls)).toBeGreaterThan(before), {
       timeout: TREE_PROGRESS_MS + 1500,
     });
+  });
+});
+
+const childStream = () =>
+  FakeEventSource.instances.find((s) => s.url.startsWith(`${CHILD}/stream`));
+const detailDialog = () => screen.findByRole("dialog", { name: "Scan docs" });
+
+describe("the agent map's levels 2 and 3", () => {
+  it("level 2 lists the child's tool calls newest first from its events", async () => {
+    api(parentEvents());
+    window.history.replaceState(null, "", "/chat/c1#agents=ch1");
+    await renderChatRoute();
+    const dialog = await detailDialog();
+    // the latest text and the task come from the child's own log
+    expect(await within(dialog).findByText("Reading the docs first.")).toBeTruthy();
+    const rows = await waitFor(() => {
+      const r = [...dialog.querySelectorAll('[data-part="agent-call"]')];
+      expect(r).toHaveLength(2);
+      return r;
+    });
+    expect(rows.map((r) => r.querySelector('[data-part="agent-call-tool"]')?.textContent)).toEqual([
+      "Bash",
+      "Read",
+    ]);
+    expect(rows[0]?.querySelector('[data-part="agent-call-summary"]')?.textContent).toBe(
+      "Run the tests",
+    );
+    expect(rows[0]?.getAttribute("data-running")).toBe("true");
+    expect(rows[1]?.querySelector('[data-part="agent-call-summary"]')?.textContent).toBe(
+      "docs/a.md",
+    );
+    expect(rows[1]?.querySelector('[data-part="agent-call-range"]')?.textContent).toBe(
+      "lines 1–180",
+    );
+    // spawned by the root, which opens the tree
+    const spawned = dialog.querySelector('[data-part="agent-spawned-by"]') as HTMLElement;
+    expect(spawned.textContent).toBe("Spawned by Release notes");
+    const user = userEvent.setup();
+    await user.click(within(spawned).getByRole("button", { name: "Release notes" }));
+    expect(window.location.hash).toBe("#agents");
+    expect(await within(await mapDialog()).findByText("Read the changelog")).toBeTruthy();
+  });
+
+  it("Stop calls abortRun with the child id and is absent once finished", async () => {
+    const calls = api(parentEvents(), undefined, {
+      [`POST ${CHILD}/abort`]: () => json(202, { runId: "run-ch1" }),
+    });
+    window.history.replaceState(null, "", "/chat/c1#agents=ch1");
+    await renderChatRoute();
+    const dialog = await detailDialog();
+    const stop = await within(dialog).findByRole("button", { name: "Stop" });
+    await userEvent.setup().click(stop);
+    await waitFor(() =>
+      expect(calls.some((c) => c.method === "POST" && c.url === `${CHILD}/abort`)).toBe(true),
+    );
+    // only this child: the parent's own run is not stopped
+    expect(calls.some((c) => c.method === "POST" && c.url === `${PARENT}/abort`)).toBe(false);
+    await waitFor(() => expect(childStream()).toBeTruthy());
+    act(() => {
+      childStream()?.emit(
+        "event",
+        ev(9, "run_aborted", { byAccountId: "a1", reason: "user" }, "run-ch1", "ch1"),
+      );
+    });
+    await waitFor(() => expect(within(dialog).queryByRole("button", { name: "Stop" })).toBeNull());
+    expect(within(dialog).getByRole("button", { name: "Open transcript" })).toBeTruthy();
+  });
+
+  it("level 3 renders the child's Thread without a composer", async () => {
+    api(parentEvents());
+    window.history.replaceState(null, "", "/chat/c1#agents=ch1");
+    await renderChatRoute();
+    const user = userEvent.setup();
+    await user.click(
+      await within(await detailDialog()).findByRole("button", { name: "Open transcript" }),
+    );
+    expect(window.location.hash).toBe("#agents=ch1/transcript");
+    const dialog = await detailDialog();
+    const log = await within(dialog).findByRole("log");
+    // the task first, then the parent's message, both labelled with the parent
+    const bubbles = await waitFor(() => {
+      const b = [...log.querySelectorAll('[data-entry="task"], [data-entry="user"]')];
+      expect(b).toHaveLength(2);
+      return b;
+    });
+    expect(bubbles[0]?.textContent).toContain("Do Scan docs");
+    expect(bubbles[1]?.textContent).toContain("Focus on the API docs");
+    for (const b of bubbles)
+      expect(b.querySelector('[data-part="bubble-sender"]')?.textContent).toBe(
+        "From Release notes",
+      );
+    // the conversation's own tool groups, collapsed
+    expect(log.querySelector('[data-entry="tools"]')).not.toBeNull();
+    // read-only: no composer, the child's own stream, one live thread on the page
+    expect(within(dialog).queryByRole("textbox")).toBeNull();
+    expect(log.getAttribute("aria-live")).toBe("off");
+    expect(dialog.querySelector('[data-part="agent-transcript-status"]')?.textContent).toContain(
+      "ask Release notes to pass it on",
+    );
+    expect(childStream()).toBeTruthy();
+    // back returns to level 2
+    await user.click(within(dialog).getByRole("button", { name: "Back to the agent map" }));
+    expect(window.location.hash).toBe("#agents=ch1");
+    expect(
+      await within(await detailDialog()).findByRole("button", { name: "Open transcript" }),
+    ).toBeTruthy();
+  });
+
+  it("the Agent call block shows the child's current tool and opens level 2", async () => {
+    api(parentEvents());
+    await renderChatRoute();
+    const block = (await waitFor(() => {
+      const b = document.querySelector('[data-part="agent-call-block"]');
+      expect(b).not.toBeNull();
+      return b;
+    })) as HTMLElement;
+    act(() => {
+      FakeEventSource.instances[0]?.emit("subagent_progress", {
+        subagentId: "ch1",
+        step: 1,
+        toolCalls: 1,
+        lastToolKey: "Read",
+      });
+    });
+    await waitFor(() =>
+      expect(block.querySelector('[data-part="agent-call-text"]')?.textContent).toBe(
+        "Working in the background: Read",
+      ),
+    );
+    await userEvent.setup().click(within(block).getByRole("button", { name: "View in agent map" }));
+    expect(window.location.hash).toBe("#agents=ch1");
+    expect(
+      await within(await detailDialog()).findByRole("button", { name: "Open transcript" }),
+    ).toBeTruthy();
+  });
+});
+
+describe("deliveries in the parent", () => {
+  const delivery = (seq: number, payload: Record<string, unknown>) =>
+    ev(seq, "subagent_delivery", {
+      subagentId: "ch1",
+      childRunId: "run-ch1",
+      description: "Scan docs",
+      triggerAccountId: "a1",
+      text: "",
+      ...payload,
+    });
+
+  it("a report shows its text on demand; a finish without text opens the agent", async () => {
+    api([
+      ...parentEvents(),
+      delivery(5, { kind: "report", text: "Docs are fine." }),
+      delivery(6, { kind: "finished", status: "completed", handedBack: true }),
+    ]);
+    await renderChatRoute();
+    const rows = await waitFor(() => {
+      const r = [...document.querySelectorAll<HTMLElement>('[data-entry="delivery"]')];
+      expect(r).toHaveLength(2);
+      return r;
+    });
+    const [report, done] = rows as [HTMLElement, HTMLElement];
+    expect(report.textContent).toContain(en.chat.delivery.report.replace("{name}", "Scan docs"));
+    expect(report.textContent).not.toContain("Docs are fine.");
+    const user = userEvent.setup();
+    await user.click(within(report).getByRole("button", { name: en.chat.delivery.show }));
+    expect(await within(report).findByText("Docs are fine.")).toBeTruthy();
+    expect(done.textContent).toContain(en.chat.delivery.completed.replace("{name}", "Scan docs"));
+    await user.click(within(done).getByRole("button", { name: "Open" }));
+    expect(window.location.hash).toBe("#agents=ch1");
   });
 });

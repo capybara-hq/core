@@ -88,8 +88,16 @@ type EventBody =
         clientMessageId?: string;
         /** A retry after a failed run: the seq of the message it repeats (display only). */
         retryOf?: number;
-        /** A sub-agent's task message (phase C): the parent call that dispatched it. */
-        dispatch?: { parentConversationId: string; parentRunId: string; callId: string };
+        /**
+         * A message to a sub-agent from its parent agent (phase C, agent map spec §5.1): the
+         * dispatch's task (`kind` absent or `task`), or a `SendMessage` (`message`).
+         */
+        dispatch?: {
+          parentConversationId: string;
+          parentRunId: string;
+          callId: string;
+          kind?: "task" | "message";
+        };
         /**
          * A person's skill invocation (phase D): `content[0]` is the rendered skill, this is what
          * they typed (the chip and the arguments).
@@ -335,6 +343,27 @@ type EventBody =
         toolKey: string;
         expiresAt?: string;
       } & Approver;
+    }
+  /**
+   * Parent log (agent map spec §4.5): a sub-agent's report (`SubagentHandback`), its note
+   * (`SendMessage` to the parent) or its run's end; model-visible.
+   */
+  | {
+      type: "subagent_delivery";
+      payload: {
+        subagentId: string;
+        childRunId: string;
+        description: string;
+        kind: "report" | "note" | "finished";
+        text: string;
+        /** `finished` only. */
+        status?: SubagentEndStatus;
+        /** `finished` only: a report was handed back before (no text then). */
+        handedBack?: boolean;
+        errorCode?: string;
+        abortedBy?: "user" | "parent";
+        triggerAccountId: string;
+      };
     }
   /** Parent log: a sub-agent's run ended. */
   | {

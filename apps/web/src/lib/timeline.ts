@@ -18,7 +18,7 @@ import type {
   ToolInfo,
 } from "./conversations";
 import type { OrgRole } from "./members";
-import { toolLabel, toolLabelOfKey } from "./tool-label";
+import { toolLabel, toolLabelOfKey, toolLabelText } from "./tool-label";
 
 /**
  * The conversation timeline (UI refresh B, spec §5.5–§5.8): the one pure builder that turns the
@@ -43,6 +43,11 @@ import { toolLabel, toolLabelOfKey } from "./tool-label";
  *   the call's result as the in-place summary; a call refused before any dispatch is a failed row.
  *   `subagent_waiting` puts the child's approval, question or connection into the parent; a child's
  *   task message (`user_message.dispatch`) is a `task` entry.
+ * - Background sub-agents (agent map spec §5, §9.4): an unfinished row names the child's current
+ *   tool (`subagent_progress.lastToolKey`); a parent's `SendMessage` in the child's log
+ *   (`dispatch.kind: "message"`) is a user bubble with its `sender`; a `subagent_delivery` (a
+ *   report, a note or the child's end) is a compact `delivery` entry in the parent; `SendMessage`
+ *   and `SubagentHandback` are ordinary tool rows.
  * - Skill invocations (phase D): a person's `user_message` with `skill` is a bubble with the skill
  *   chip, the arguments as typed and, inline, the rendered instructions (`content[0]`; a fork's
  *   `content[0]` is the lead, and its instructions are the child's task). A fork's dispatch
@@ -88,7 +93,7 @@ export interface TimelineSubagent {
  * sub-agents list (`GET …/subagents`), whose status shows a waiting or queued child.
  */
 export interface SubagentLive {
-  progress?: Readonly<Record<string, { toolCalls: number }>>;
+  progress?: Readonly<Record<string, { toolCalls: number; lastToolKey?: string }>>;
   views?: ReadonlyMap<
     string,
     { status: string; pendingApprovalIds: string[]; pendingQuestionIds: string[] }
@@ -98,7 +103,12 @@ export interface SubagentLive {
    * undefined when it is the viewer (or unknown). Absent = every wait reads "你".
    */
   whoWaits?: (w: Waiter) => string | undefined;
+  /** The name of an agent of the tree (a parent message's sender), when known. */
+  agentName?: (conversationId: string) => string | undefined;
 }
+
+/** How a sub-agent's run ended, as its delivery row words it. */
+export type DeliveryStatus = "completed" | "failed" | "aborted";
 
 /** Who has to act on a wait: a member (an approval's assignee, a run's starter) or a role. */
 export type Waiter = { kind: "account"; accountId: string } | { kind: "role"; role: OrgRole };
@@ -234,6 +244,11 @@ export type TimelineEntry =
       instructions?: string;
       /** A plain message a later fork's run took in: answered after that sub-agent ("/review"). */
       waitsFor?: string;
+      /**
+       * Sent by another agent, not a person: a parent's `SendMessage` in a sub-agent's log (agent
+       * map spec §9.4), its conversation id and name when known.
+       */
+      sender?: { id: string; name?: string };
     }
   | {
       /** The report of the sub-agent that ran a person's fork invocation (phase D). */
@@ -267,6 +282,19 @@ export type TimelineEntry =
       expiresAt?: string;
     }
   | { kind: "task"; key: string; seq: number; text: string }
+  | {
+      /** A sub-agent's delivery to its parent (`subagent_delivery`, agent map spec §4.5). */
+      kind: "delivery";
+      key: string;
+      subagentId: string;
+      /** The sub-agent's task description. */
+      name: string;
+      delivery: "report" | "note" | "finished";
+      /** `finished` only. */
+      status?: DeliveryStatus;
+      /** The report, the note, or a finish's final reply or error ("" when it handed back). */
+      text: string;
+    }
   | { kind: "approval"; key: string; item: ApprovalItem }
   | { kind: "question"; key: string; item: QuestionItem }
   | { kind: "connect"; key: string; item: ConnectItem }
@@ -706,7 +734,25 @@ export function buildEventTimeline(
         }
         break;
       case "user_message": {
-        if (e.payload.dispatch !== undefined) {
+        const dispatch = e.payload.dispatch;
+        if (dispatch?.kind === "message") {
+          // The parent agent's `SendMessage`: a bubble labelled with its sender.
+          const name = live.agentName?.(dispatch.parentConversationId);
+          out.push({
+            kind: "user",
+            key,
+            seq: e.seq,
+            text: userText(e),
+            files: messageFiles(e.payload.content),
+            attachments: [],
+            sender: {
+              id: dispatch.parentConversationId,
+              ...(name !== undefined && name !== "" ? { name } : {}),
+            },
+          });
+          break;
+        }
+        if (dispatch !== undefined) {
           // A sub-agent's task (its parent's prompt), not a person's message.
           out.push({ kind: "task", key, seq: e.seq, text: userText(e) });
           break;
@@ -1057,6 +1103,21 @@ export function buildEventTimeline(
         });
         break;
       }
+      case "subagent_delivery": {
+        const p = e.payload;
+        out.push({
+          kind: "delivery",
+          key,
+          subagentId: p.subagentId,
+          name: p.description,
+          delivery: p.kind,
+          ...(p.status !== undefined
+            ? { status: subagentStatusOfFinish(p.status) as DeliveryStatus }
+            : {}),
+          text: p.text,
+        });
+        break;
+      }
       case "approval_requested":
         waitOn(e.runId, e.payload.callId, "approval", e.payload.approvalId, approverOf(e.payload));
         approvals.set(e.payload.approvalId, out.length);
@@ -1227,8 +1288,13 @@ export function buildEventTimeline(
   for (const [id, s] of subagentRows) {
     if (s.finished) continue;
     const row = s.sub.row;
-    const calls = live.progress?.[id]?.toolCalls;
+    const p = live.progress?.[id];
+    const calls = p?.toolCalls;
     if (calls !== undefined && calls > row.toolCalls) row.toolCalls = calls;
+    if (p?.lastToolKey !== undefined) {
+      const ti = info.get(p.lastToolKey);
+      row.current = toolLabelText(ti ? toolLabel(ti, locale) : toolLabelOfKey(p.lastToolKey));
+    }
     const v = live.views?.get(id);
     if (v === undefined) continue;
     if (v.status === "waiting") {

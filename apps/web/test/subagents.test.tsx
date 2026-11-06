@@ -408,15 +408,22 @@ describe("the timeline's sub-agent groups", () => {
 });
 
 describe("sub-agents on the conversation page", () => {
-  it("renders the group; a call block's action opens the child read-only on the right; stop aborts the child", async () => {
-    const calls = api({ [`POST ${CHILD}/abort`]: () => json(202, { runId: "run-ch2" }) });
+  it("a call block's action opens the child in the agent map (level 2)", async () => {
+    api({ [`GET ${PARENT}/agent-tree`]: () => json(404, { error: { code: "not_found" } }) });
     await renderChat();
     const row = await rowOf("Check tests");
     expect(group()?.textContent).toContain("1 subagents running");
+    await userEvent.setup().click(row);
+    expect(window.location.hash).toBe("#agents=ch2");
+    expect(screen.queryByRole("complementary", { name: "Check tests" })).toBeNull();
+  });
+
+  it("#subagent= opens the child read-only on the right; stop aborts the child", async () => {
+    const calls = api({ [`POST ${CHILD}/abort`]: () => json(202, { runId: "run-ch2" }) });
+    window.history.replaceState(null, "", "/chat/c1#subagent=ch2");
+    await renderChat();
     const user = userEvent.setup();
-    await user.click(row);
-    expect(window.location.hash).toBe("#subagent=ch2");
-    const panel = await screen.findByRole("complementary", { name: "Check tests" });
+    const panel = await childPanelWith((p) => within(p).getByText("Do Check tests"));
     // the task, then the agent · subagent · model · tools line
     expect(await within(panel).findByText("Do Check tests")).toBeTruthy();
     expect(panel.querySelector('[data-part="subagent-meta"]')?.textContent).toBe(
@@ -743,12 +750,12 @@ describe("the properties panel with sub-agents", () => {
     expect(window.location.hash).toBe("#properties");
   });
 
-  it("Back in a sub-agent opened from the thread closes the panel", async () => {
+  it("Back in a sub-agent opened from the hash closes the panel", async () => {
     api({}, { child: childEvents(false) });
+    window.history.replaceState(null, "", "/chat/c1#subagent=ch2");
     await renderChat();
     const user = userEvent.setup();
-    await user.click(await rowOf("Check tests"));
-    const panel = await screen.findByRole("complementary", { name: "Check tests" });
+    const panel = await childPanelWith((p) => within(p).getByText("All tests pass."));
     await user.click(within(panel).getByRole("button", { name: "Back" }));
     expect(screen.queryByRole("complementary", { name: "Check tests" })).toBeNull();
     expect(screen.queryByRole("complementary", { name: "Properties" })).toBeNull();
