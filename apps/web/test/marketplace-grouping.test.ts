@@ -54,4 +54,15 @@ describe("groupMarketplaceEntries", () => {
       ["1.0.0", ["2.0.0"]],
     ]);
   });
+  it("the same default as the kernel's import (loadMarketplaceEntry) when nothing can be imported", () => {
+    const off = { compatible: false };
+    // a versioned entry that can be imported comes before one without a version
+    expect(versions([entry(null), entry("1.0.0")])).toEqual([["1.0.0", [null]]]);
+    // none can be: the entry without a version that is not deprecated
+    expect(versions([entry("1.0.0", off), entry(null, off)])).toEqual([[null, ["1.0.0"]]]);
+    // then the newest versioned one that is not deprecated
+    expect(
+      versions([entry("2.0.0", { ...off, deprecated: { reason: null } }), entry("1.0.0", off)]),
+    ).toEqual([["1.0.0", ["2.0.0"]]]);
+  });
 });

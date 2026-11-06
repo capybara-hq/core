@@ -541,10 +541,34 @@ export const sourceEffective = (
 ): boolean => row.enabled && (!row.builtin || config.marketplaces.official.enabled);
 
 /**
+ * The default entry of a marketplace plugin (`version` `""`: the entry without a version), the
+ * same order as the web's market row (`groupMarketplaceEntries`, apps/web/src/lib/catalog.ts):
+ * the newest `usable` versioned entry, a stable version before a prerelease; else the entry
+ * without a version that is not deprecated; else the newest versioned one that is not deprecated;
+ * else the entry without a version; else the newest.
+ */
+export function pickDefaultEntry<T extends { version: string }>(
+  entries: readonly T[],
+  o: { usable: (e: T) => boolean; deprecated: (e: T) => boolean },
+): T | undefined {
+  const versioned = entries
+    .filter((e) => e.version !== "")
+    .sort((a, b) => newestFirst(a.version, b.version));
+  const bare = entries.filter((e) => e.version === "");
+  return (
+    versioned.find((e) => o.usable(e) && semver.prerelease(e.version) === null) ??
+    versioned.find(o.usable) ??
+    bare.find((e) => !o.deprecated(e)) ??
+    versioned.find((e) => !o.deprecated(e)) ??
+    bare[0] ??
+    versioned[0]
+  );
+}
+
+/**
  * Reads a marketplace entry for import: `version` given -> the entry listing that version; omitted
- * -> the newest compatible, importable versioned entry that is not deprecated, a stable version
- * before a prerelease, else the entry without a version (not deprecated first), else the newest
- * versioned one (refused later as incompatible or deprecated). Marketplace missing ->
+ * -> {@link pickDefaultEntry} over the compatible, importable entries that are not deprecated
+ * (a fallback is refused later as incompatible or deprecated). Marketplace missing ->
  * `marketplace.not_found`;
  * marketplace disabled (official offline included), entry or version missing ->
  * `marketplace.entry_not_found`.
@@ -584,20 +608,14 @@ export async function loadMarketplaceEntry(
   if (version !== undefined) {
     pickedRow = entries.find((e) => e.version === version);
   } else {
-    const versioned = entries
-      .filter((e) => e.version !== "")
-      .sort((a, b) => newestFirst(a.version, b.version));
-    // as the market rows (web `groupMarketplaceEntries`): compatible, importable, not deprecated
-    const usable = (e: (typeof entries)[number]) =>
-      entryCompatible(e.entry) &&
-      unimportable(e.entry, src.form, config) === undefined &&
-      !entryDeprecated(e.entry);
-    pickedRow =
-      versioned.find((e) => usable(e) && semver.prerelease(e.version) === null) ??
-      versioned.find(usable) ??
-      entries.find((e) => e.version === "" && !entryDeprecated(e.entry)) ??
-      entries.find((e) => e.version === "") ??
-      versioned[0];
+    pickedRow = pickDefaultEntry(entries, {
+      // compatible, importable, not deprecated
+      usable: (e) =>
+        entryCompatible(e.entry) &&
+        unimportable(e.entry, src.form, config) === undefined &&
+        !entryDeprecated(e.entry),
+      deprecated: (e) => entryDeprecated(e.entry),
+    });
   }
   const picked = pickedRow?.entry;
   if (!picked) {

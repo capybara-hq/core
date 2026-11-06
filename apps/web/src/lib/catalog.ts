@@ -608,10 +608,12 @@ export interface MarketplacePlugin {
 /**
  * Groups marketplace entries (one per version) into one row per (marketplace, plugin), in the order
  * the plugins first appear. Versions are ordered by semver, newest first; a version that is not
- * semver keeps its place in the kernel's order (newest first). The latest is the newest stable
- * version that can be imported (compatible, importable, not deprecated), else the newest
- * prerelease that can be (prereleases fold into 其他版本 while a stable one can be imported), else
- * the newest version that is not deprecated, else the newest.
+ * semver keeps its place in the kernel's order (newest first). The latest is the kernel's default
+ * import (`pickDefaultEntry` of marketplaces.service.ts): the newest stable versioned entry that
+ * can be imported (compatible, importable, not deprecated), else the newest prerelease that can be
+ * (prereleases fold into 其他版本 while a stable one can be imported), else the entry without a
+ * version that is not deprecated, else the newest versioned one that is not deprecated, else the
+ * entry without a version, else the newest.
  */
 export function groupMarketplaceEntries(entries: readonly MarketplaceEntry[]): MarketplacePlugin[] {
   const groups = new Map<string, MarketplaceEntry[]>();
@@ -626,11 +628,15 @@ export function groupMarketplaceEntries(entries: readonly MarketplaceEntry[]): M
       a.version === null || b.version === null ? 0 : (compareSemver(b.version, a.version) ?? 0),
     );
     const usable = (e: MarketplaceEntry) => e.compatible && e.importable && !entryDeprecated(e);
+    const versioned = sorted.filter((e) => e.version !== null);
+    const bare = sorted.filter((e) => e.version === null);
     const latest =
-      sorted.find((e) => usable(e) && !isPrerelease(e.version)) ??
-      sorted.find(usable) ??
-      sorted.find((e) => !entryDeprecated(e)) ??
-      (sorted[0] as MarketplaceEntry);
+      versioned.find((e) => usable(e) && !isPrerelease(e.version)) ??
+      versioned.find(usable) ??
+      bare.find((e) => !entryDeprecated(e)) ??
+      versioned.find((e) => !entryDeprecated(e)) ??
+      bare[0] ??
+      (versioned[0] as MarketplaceEntry);
     return { key, latest, others: sorted.filter((e) => e !== latest) };
   });
 }
