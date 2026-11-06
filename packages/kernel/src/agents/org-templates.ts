@@ -64,7 +64,9 @@ export interface AgentTemplateDetail extends AgentTemplateView {
  *   resolve it);
  * - `no_endpoint`: a hand-configured connector without a URL to record (an inline OpenAPI document);
  * - `unsupported_protocol`: a hand-configured connector of a kind other than MCP or OpenAPI;
- * - `limit`: past a template limit (connectors 16, sub-agent types and inline 16, tools 200);
+ * - `limit`: past a template limit (connectors 16, sub-agent types and inline 16, tools 200, a
+ *   connector entry's tools and policy keys 200 together: kind `tool_policy`, `name` the tool,
+ *   `id` the connector);
  * - `connector_tool`: a policy on a tool of a connector the template does not carry (kind
  *   `tool_policy`, `name` its key; carried connectors take their policies in `policies`), or a
  *   connector tool key in an inline sub-agent's allowlist (kind `subagent_inline`,
@@ -164,24 +166,37 @@ export function parseTemplateDefinition(definition: Record<string, unknown>): Ag
 }
 
 /**
- * Ruling P4-11 on an edit: every `connectors[].needs.endpoint` must already be what
- * {@link sanitizeEndpoint} keeps (an http(s) URL without userinfo, query or fragment, in its
- * normal form). An edit is never stripped silently: anything else -> 400 `validation_failed`
- * naming the field (and the accepted form, when there is one).
+ * Ruling P4-11 on an edit: a `connectors[].needs.endpoint` that carries userinfo, a query or a
+ * fragment, or is no http(s) URL of at most 2048 characters, is refused with 400
+ * `validation_failed` naming the field and what it carries (an edit is never stripped silently).
+ * One that differs only by normalization (a trailing slash, the host's case) is accepted:
+ * returns the template with each such endpoint in its canonical {@link sanitizeEndpoint} form.
  */
-export function assertSanitizedEndpoints(template: AgentTemplate): void {
+export function canonicalEndpoints(template: AgentTemplate): AgentTemplate {
   const details: { path: string; message: string }[] = [];
-  (template.connectors ?? []).forEach((c, i) => {
-    if (!("needs" in c)) return;
-    const clean = sanitizeEndpoint(c.needs.endpoint);
-    if (clean === c.needs.endpoint) return;
-    details.push({
-      path: `definition.connectors.${i}.needs.endpoint`,
-      message:
-        clean === null
-          ? "must be an http(s) URL of at most 2048 characters"
-          : `must not carry credentials, a query or a fragment; use ${clean}`,
-    });
+  const connectors = (template.connectors ?? []).map((c, i) => {
+    if (!("needs" in c)) return c;
+    const raw = c.needs.endpoint;
+    const clean = sanitizeEndpoint(raw);
+    const path = `definition.connectors.${i}.needs.endpoint`;
+    if (clean === null) {
+      details.push({ path, message: "must be an http(s) URL of at most 2048 characters" });
+      return c;
+    }
+    const u = new URL(raw);
+    const carries = [
+      ...(u.username !== "" || u.password !== "" ? ["userinfo"] : []),
+      ...(u.search !== "" ? ["a query"] : []),
+      ...(u.hash !== "" ? ["a fragment"] : []),
+    ];
+    if (carries.length > 0) {
+      details.push({
+        path,
+        message: `must not carry ${carries.join(", ")} (they may hold credentials); use ${clean}`,
+      });
+      return c;
+    }
+    return clean === raw ? c : { ...c, needs: { ...c.needs, endpoint: clean } };
   });
   if (details.length > 0) {
     throw new ApiError(
@@ -190,6 +205,7 @@ export function assertSanitizedEndpoints(template: AgentTemplate): void {
       details,
     );
   }
+  return template.connectors === undefined ? template : { ...template, connectors };
 }
 
 /**
@@ -245,14 +261,11 @@ export async function templateFromAgent(
   const usedSlugs = new Set<string>();
   /** The `policies` of the entry of connector `slug` (tool names of at most 128 characters). */
   const policiesOf = (slug: string): { policies?: Record<string, "ask" | "deny"> } => {
-    const list = (connectorPolicies.get(slug) ?? []).filter((p) => [...p.tool].length <= 128);
+    const list = connectorPolicies.get(slug) ?? [];
     if (list.length === 0) return {};
     usedSlugs.add(slug);
-    return {
-      policies: Object.fromEntries(
-        list.slice(0, L.connectorTools).map((p) => [p.tool, p.policy] as const),
-      ),
-    };
+    // capped with the entry's tools when it is pushed
+    return { policies: Object.fromEntries(list.map((p) => [p.tool, p.policy] as const)) };
   };
 
   // Skills: ids -> names (pinned -> `skills`, the other selected ones -> `selectedSkills`)
@@ -303,10 +316,33 @@ export async function templateFromAgent(
 
   // Connectors (P4-11), then the agent's pending connectors as they are
   const connectors: AgentTemplateConnector[] = [];
-  const pushConnector = (c: AgentTemplateConnector, name: string, id?: string) => {
+  const pushConnector = (entry: AgentTemplateConnector, name: string, id?: string) => {
     if (connectors.length >= L.connectors) {
       omitted.push({ kind: "connector", name, ...(id !== undefined && { id }), reason: "limit" });
-    } else connectors.push(c);
+      return;
+    }
+    let c = entry;
+    // an entry names at most `connectorTools` tools, its `tools` and its policy keys together
+    // (the SDK's limit): policies past that room are listed, never written
+    if (c.policies !== undefined) {
+      const named = "needs" in c ? c.needs.tools.length : (c.tools?.length ?? 0);
+      const valid = Object.entries(c.policies).filter(
+        ([tool]) => tool.trim() !== "" && [...tool].length <= 128,
+      );
+      const room = Math.max(0, L.connectorTools - named);
+      for (const [tool] of valid.slice(room)) {
+        omitted.push({
+          kind: "tool_policy",
+          name: tool,
+          ...(id !== undefined && { id }),
+          reason: "limit",
+        });
+      }
+      const kept = valid.slice(0, room);
+      const { policies: _all, ...rest } = c;
+      c = kept.length > 0 ? { ...rest, policies: Object.fromEntries(kept) } : rest;
+    }
+    connectors.push(c);
   };
   const ids = [...new Set(connectorRefs.map((r) => r.connectorId))];
   const rows =
@@ -718,8 +754,7 @@ export class OrgAgentTemplates {
     await this.orgLock.lockAndAuthorize(orgId, actor, "agents.manage");
     const row = await this.ownRow(orgId, id, true);
     if (!row) throw await this.notOwnedOrMissing(orgId, id);
-    const template = parseTemplateDefinition(body.definition);
-    assertSanitizedEndpoints(template);
+    const template = canonicalEndpoints(parseTemplateDefinition(body.definition));
     if (template.name !== row.name) {
       throw new ApiError("validation_failed", "The name of an agent template cannot change", [
         { path: "definition.name", message: `must stay ${row.name}` },

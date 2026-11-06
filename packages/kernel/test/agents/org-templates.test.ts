@@ -927,28 +927,86 @@ describe("org agent templates", { timeout: 120_000 }, () => {
       ...definition,
       connectors: [{ needs: { protocol: "mcp", endpoint, tools: ["find"], label: "Wiki" } }],
     });
-    const put = (def: Record<string, unknown>) =>
+    const put = (def: Record<string, unknown>, expectedVersion = 1) =>
       boss({
         method: "PUT",
         url: `/api/v1/orgs/${orgA}/agent-templates/${id}`,
-        payload: { definition: def, expectedVersion: 1 },
+        payload: { definition: def, expectedVersion },
       });
-    for (const endpoint of [
-      "https://alice:hunter2@wiki.example.com/mcp",
-      "https://wiki.example.com/mcp?token=sekrit",
-      "https://wiki.example.com/mcp#frag",
-      "ftp://wiki.example.com/mcp",
-      "not a url",
-    ]) {
+    // refused: what it carries, or why it is no endpoint, is named
+    for (const [endpoint, says] of [
+      ["https://alice:hunter2@wiki.example.com/mcp", "userinfo"],
+      ["https://wiki.example.com/mcp?token=sekrit", "a query"],
+      ["https://wiki.example.com/mcp#frag", "a fragment"],
+      ["https://bob@wiki.example.com/mcp?x=1#y", "userinfo, a query, a fragment"],
+      ["ftp://wiki.example.com/mcp", "http(s) URL"],
+      ["not a url", "http(s) URL"],
+    ] as const) {
       const r = await put(needs(endpoint));
       expect(errorOf(r), endpoint).toEqual([400, "validation_failed"]);
       expect(r.json().error.details).toEqual([
-        { path: "definition.connectors.0.needs.endpoint", message: expect.any(String) },
+        {
+          path: "definition.connectors.0.needs.endpoint",
+          message: expect.stringContaining(says),
+        },
       ]);
     }
-    const ok = await put(needs("https://wiki.example.com/mcp"));
+    // only normalization differs (a bare host, the host's case): stored canonical, no error
+    const bare = await put(needs("https://Wiki.Example.com"));
+    expect(bare.statusCode, bare.body).toBe(200);
+    expect(bare.json().template).toMatchObject({
+      version: 2,
+      definition: {
+        connectors: [
+          {
+            needs: {
+              protocol: "mcp",
+              endpoint: "https://wiki.example.com/",
+              tools: ["find"],
+              label: "Wiki",
+            },
+          },
+        ],
+      },
+    });
+    const ok = await put(needs("https://wiki.example.com/mcp"), 2);
     expect(ok.statusCode, ok.body).toBe(200);
-    expect(ok.json().template.version).toBe(2);
+    expect(ok.json().template.version).toBe(3);
+  });
+
+  it("save-as keeps a connector entry's tools and policy keys within the SDK limit", async () => {
+    const names = Array.from({ length: 150 }, (_, i) => `t${String(i).padStart(3, "0")}`);
+    const conn = await seedConnector(orgA, {
+      name: "Big",
+      connector: "mcp",
+      endpoint: { url: "https://big.example.com/mcp" },
+      tools: names.map((name) => ({ name, status: "enabled" as const })),
+    });
+    // 100 policies on a connector whose entry already names 150 tools: room for 50
+    const toolPolicies = Object.fromEntries(
+      names.slice(0, 100).map((n) => [`mcp__big__${n}`, "ask"] as const),
+    );
+    const agentId = await seedAgent(orgA, {
+      name: "Big",
+      instructions: "Use the big connector.",
+      model: { provider: "model-fake", model: "fake-1" },
+      tools: [{ kind: "connector", connectorId: conn, tools: "all" }],
+      toolPolicies,
+    });
+    const res = await saveAs(boss, orgA, agentId, "big");
+    expect(res.statusCode, res.body).toBe(201);
+    const [entry] = res.json().template.definition.connectors as {
+      needs: { tools: string[] };
+      policies: Record<string, string>;
+    }[];
+    expect(entry?.needs.tools).toHaveLength(150);
+    expect(Object.keys(entry?.policies ?? {})).toEqual(names.slice(0, 50));
+    const capped = (res.json().omitted as { kind: string; reason: string; name: string }[]).filter(
+      (o) => o.kind === "tool_policy",
+    );
+    expect(capped).toHaveLength(50);
+    expect(capped.every((o) => o.reason === "limit")).toBe(true);
+    expect(capped.map((o) => o.name)).toEqual(names.slice(50, 100));
   });
 
   it("the owner opens and edits its promoted template while switched off in its own org", async () => {
