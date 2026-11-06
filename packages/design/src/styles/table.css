@@ -488,6 +488,25 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* A version after the name: the name takes the ellipsis, the version stays whole. */
+.cb-cell-title-line {
+  display: flex;
+  align-items: baseline;
+  gap: var(--cb-space-2);
+  min-width: 0;
+}
+.cb-cell-title-line > .cb-cell-title-name {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+.cb-cell-title-trailing {
+  flex: none;
+  color: var(--cb-faint);
+  font-size: var(--cb-type-small-size);
+  font-variant-numeric: tabular-nums;
+  line-height: var(--cb-type-small-line);
+  white-space: nowrap;
+}
 .cb-cell-title-desc {
   color: var(--cb-muted);
   font-family: var(--cb-font-prose);

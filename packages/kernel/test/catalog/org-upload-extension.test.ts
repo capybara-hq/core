@@ -357,6 +357,12 @@ describe("org uploads with an extension", { timeout: 180_000 }, () => {
       await lifePkg({ name: "ext-c", version: "1.0.0", skills: ["ext-c-notes"] }),
       "pending",
     );
+    // the notice carries the plugin's display name, which the org inbox names it by
+    await env.db
+      .updateTable("catalog_items")
+      .set({ display_name: JSON.stringify({ zh: "扩展 C", en: "Ext C" }) })
+      .where("id", "=", itemId)
+      .execute();
     const c = await superConfirm(itemId, await digestOf(itemId));
     expect(c.statusCode, c.body).toBe(200);
     expect(await installRow("ext-c")).toEqual({
@@ -377,7 +383,15 @@ describe("org uploads with an extension", { timeout: 180_000 }, () => {
     );
     await waitFor(async () => loaded("ext-c"), 15_000, "ext-c loaded");
     expect(await notices(orgA)).toEqual([
-      { kind: "upload_confirmed", detail: { itemId, name: "ext-c", version: "1.0.0" } },
+      {
+        kind: "upload_confirmed",
+        detail: {
+          itemId,
+          name: "ext-c",
+          displayName: { zh: "扩展 C", en: "Ext C" },
+          version: "1.0.0",
+        },
+      },
     ]);
     expect((await pendingItems()).map((i) => i.id)).not.toContain(itemId);
     // confirmed already: nothing pending
@@ -483,7 +497,13 @@ describe("org uploads with an extension", { timeout: 180_000 }, () => {
     expect(await notices(orgA)).toEqual([
       {
         kind: "upload_rejected",
-        detail: { itemId, name: "ext-r", version: "1.0.0", reason: "Asks for too much" },
+        detail: {
+          itemId,
+          name: "ext-r",
+          displayName: null,
+          version: "1.0.0",
+          reason: "Asks for too much",
+        },
       },
     ]);
     // the name claim is released: another org (another package) can upload the name now

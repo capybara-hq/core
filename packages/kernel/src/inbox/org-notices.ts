@@ -13,8 +13,27 @@ export interface OrgNoticeDetails {
   item_shared: { ref: OwnedRef; name: string; org: { id: string; name: string } | "all_orgs" };
   /** A shared org-owned item changed version, for the orgs it is on in. */
   shared_item_updated: { ref: OwnedRef; name: string; from: string; to: string; owner: Owner };
-  upload_confirmed: { itemId: string; name: string; version: string };
-  upload_rejected: { itemId: string; name: string; version: string; reason: string | null };
+  /** `displayName`: the plugin's display name, which the inbox names it by (null without one). */
+  upload_confirmed: { itemId: string; name: string; displayName: LocalizedName; version: string };
+  upload_rejected: {
+    itemId: string;
+    name: string;
+    displayName: LocalizedName;
+    version: string;
+    reason: string | null;
+  };
+}
+
+type LocalizedName = { zh: string; en: string } | null;
+
+/** A catalog item's display name for an upload notice (null without one, or for an unknown id). */
+export async function itemDisplayName(db: KernelSchemaDb, itemId: string): Promise<LocalizedName> {
+  const row = await db
+    .selectFrom("catalog_items")
+    .select("display_name")
+    .where("id", "=", itemId)
+    .executeTakeFirst();
+  return row?.display_name ?? null;
 }
 
 /** Writes an org notice in the caller's transaction. */

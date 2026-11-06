@@ -4,6 +4,7 @@ import {
   type ActionRowProps,
   Button,
   Card,
+  CellTitle,
   type Column,
   DataTable,
   DateTime,
@@ -147,16 +148,19 @@ function Inbox({
   };
   const columns: Column<InboxItem>[] = [
     {
-      key: "request",
-      header: t("columns.request"),
-      cell: (item) => (
-        <Stack gap={0}>
-          <Text>{titleOf(item, labels, locale)}</Text>
-          <Text variant="small" tone="muted">
-            {subtitleOf(item, labels)}
-          </Text>
-        </Stack>
-      ),
+      // A neutral header: the rows are requests and notices alike
+      key: "item",
+      header: t("columns.item"),
+      cell: (item) => {
+        const r = rowOf(item, labels, locale);
+        return (
+          <CellTitle
+            title={r.title}
+            {...(r.trailing !== null ? { trailing: r.trailing } : {})}
+            {...(r.description !== "" ? { description: r.description } : {})}
+          />
+        );
+      },
     },
     {
       key: "at",
@@ -244,6 +248,7 @@ function Inbox({
             tn,
             tnn,
             t,
+            locale,
           })
         : active.type === "catalog_request_decided"
           ? decidedRequestDetail({
@@ -317,7 +322,7 @@ function Inbox({
           columns={columns}
           rows={rows}
           rowKey={(a) => a.id}
-          rowLabel={(a) => titleOf(a, labels, locale)}
+          rowLabel={(a) => rowOf(a, labels, locale).title}
           {...(active ? { activeKey: active.id } : {})}
           onOpen={(a) => setActiveId(a.id)}
           state="ready"
@@ -366,39 +371,61 @@ interface Labels {
 }
 
 /**
- * 列表里的一行标题：工具审批为「连接器 · 工具」，技能变更为「技能变更 · 名称」，目录申请为「目录申请 · 条目」，
- * 技能改名为「技能改名 · 新名称」。
+ * One list row (spec §5.7): it leads with what the item is about (the tool, the skill, the
+ * plugin's display name), the version beside it (never cut, the name takes the ellipsis), and
+ * the kind of item on the second line (技能变更 · the agent, 已共享 · the org, 上传已确认 …).
  */
-function titleOf(item: InboxItem, labels: Labels, locale: string): string {
-  if (item.type === "skill_change") return `${labels.skillChange} · ${item.skillChange.name}`;
+function rowOf(
+  item: InboxItem,
+  labels: Labels,
+  locale: string,
+): { title: string; trailing: string | null; description: string } {
+  const joined = (...parts: string[]) => parts.filter((p) => p !== "").join(" · ");
+  if (item.type === "skill_change") {
+    const c = item.skillChange;
+    return { title: c.name, trailing: null, description: joined(labels.skillChange, c.agent.name) };
+  }
   if (item.type === "catalog_request") {
-    return `${labels.request} · ${displayNameOf(requestSubject(item.request), locale)}`;
+    const version = requestVersion(item.request);
+    return {
+      title: displayNameOf(requestSubject(item.request), locale),
+      trailing: version === null ? null : versionLabel(version),
+      description: labels.request,
+    };
   }
   if (hasNotice(item)) {
     const n = item.notice;
-    if (n.kind === "skill_renamed") return `${labels.skillRenamed} · ${n.skillRenamed.to}`;
-    const line = noticeLine(n, labels.notice);
-    return line.name === null ? line.label : `${line.label} · ${line.name}`;
+    if (n.kind === "skill_renamed") {
+      return {
+        title: n.skillRenamed.to,
+        trailing: null,
+        description: joined(labels.skillRenamed, n.skillRenamed.from),
+      };
+    }
+    const line = noticeLine(n, labels.notice, locale);
+    return line.name === null
+      ? { title: line.label, trailing: null, description: "" }
+      : {
+          title: line.name,
+          trailing: line.version,
+          description: joined(line.label, line.subtitle),
+        };
   }
   if (item.type === "catalog_request_decided") {
-    return `${labels.decided} · ${displayNameOf(requestSubject(item.request), locale)}`;
+    return {
+      title: displayNameOf(requestSubject(item.request), locale),
+      trailing: null,
+      description: joined(
+        labels.decided,
+        item.request.status === "approved" ? labels.approved : labels.rejected,
+      ),
+    };
   }
-  return toolLabelText(approvalToolLabel(item.approval, locale));
-}
-
-/** The row's second line: the agent, the requested item, or the renamed skill's old name. */
-function subtitleOf(item: InboxItem, labels: Labels): string {
-  if (item.type === "catalog_request_decided") {
-    return item.request.status === "approved" ? labels.approved : labels.rejected;
-  }
-  if (item.type === "tool_approval") return item.approval.agent.name;
-  if (item.type === "skill_change") return item.skillChange.agent.name;
-  if (hasNotice(item)) {
-    return item.notice.kind === "skill_renamed"
-      ? item.notice.skillRenamed.from
-      : noticeLine(item.notice, labels.notice).subtitle;
-  }
-  return requestSubject(item.request).name;
+  return {
+    title: toolLabelText(approvalToolLabel(item.approval, locale)),
+    trailing: null,
+    description: item.approval.agent.name,
+  };
 }
 
 /** 选中项的三块：内容区、Inspector、ActionRow。 */
@@ -686,7 +713,9 @@ function noticeDetail({
   tn,
   tnn,
   t,
+  locale,
 }: {
+  locale: string;
   notice: OrgNotice;
   pending: boolean;
   onDismiss(): void;
@@ -695,7 +724,7 @@ function noticeDetail({
   t: Translate;
 }): Detail {
   if (notice.kind !== "skill_renamed") {
-    const line = noticeLine(notice, tnn);
+    const line = noticeLine(notice, tnn, locale);
     return {
       inspector: (
         <KeyValue
@@ -755,9 +784,12 @@ function noticeDetail({
 function noticeLine(
   notice: OrgNotice,
   tnn: Translate,
+  locale: string,
 ): {
   label: string;
   name: string | null;
+  /** The version the row shows beside the name (`v0.1.0`), null when it has none. */
+  version: string | null;
   subtitle: string;
   title: string;
   hint: string;
@@ -766,6 +798,7 @@ function noticeLine(
   const unknown = {
     label: tnn("unknownLabel"),
     name: null,
+    version: null,
     subtitle: "",
     title: tnn("unknownTitle"),
     hint: "",
@@ -775,9 +808,14 @@ function noticeLine(
     "detail" in notice && typeof notice.detail === "object" && notice.detail !== null
       ? (notice.detail as unknown as Record<string, unknown>)
       : {};
-  const name = typeof d.name === "string" ? d.name : null;
-  if (name === null) return unknown;
+  const id = typeof d.name === "string" ? d.name : null;
+  if (id === null) return unknown;
   const text = (v: unknown, fallback = ""): string => (typeof v === "string" ? v : fallback);
+  // A plugin is named by its display name when the notice carries one (upload notices)
+  const dn = d.displayName as { zh?: unknown; en?: unknown } | null | undefined;
+  const localized = dn?.[locale === "zh" ? "zh" : "en"];
+  const name = typeof localized === "string" && localized !== "" ? localized : id;
+  const v = (x: unknown) => (typeof x === "string" && x !== "" ? versionLabel(x) : "");
   switch (notice.kind) {
     case "item_shared": {
       const org = d.org;
@@ -790,6 +828,7 @@ function noticeLine(
       return {
         label: tnn("itemSharedLabel"),
         name,
+        version: null,
         subtitle: orgName,
         title:
           org === "all_orgs"
@@ -803,14 +842,15 @@ function noticeLine(
       };
     }
     case "shared_item_updated": {
-      const from = text(d.from);
-      const to = text(d.to);
+      const from = v(d.from);
+      const to = v(d.to);
       const o = d.owner as { kind?: string; name?: string } | undefined;
       const owner = o?.kind === "org" ? text(o.name) : tnn("ownerPlatform");
       return {
         label: tnn("sharedItemUpdatedLabel"),
         name,
-        subtitle: `${from} → ${to}`,
+        version: to === "" ? null : to,
+        subtitle: owner,
         title: tnn("sharedItemUpdatedTitle", { owner, name, from, to }),
         hint: tnn("sharedItemUpdatedHint"),
         rows: [
@@ -822,11 +862,12 @@ function noticeLine(
       };
     }
     case "upload_confirmed": {
-      const version = text(d.version);
+      const version = v(d.version);
       return {
         label: tnn("uploadConfirmedLabel"),
         name,
-        subtitle: version,
+        version: version === "" ? null : version,
+        subtitle: "",
         title: tnn("uploadConfirmedTitle", { name, version }),
         hint: tnn("uploadConfirmedHint"),
         rows: [
@@ -836,13 +877,14 @@ function noticeLine(
       };
     }
     case "upload_rejected": {
-      const version = text(d.version);
+      const version = v(d.version);
       // the reason is said only when the super admin gave one
       const reason = typeof d.reason === "string" && d.reason.trim() !== "" ? d.reason : null;
       return {
         label: tnn("uploadRejectedLabel"),
         name,
-        subtitle: version,
+        version: version === "" ? null : version,
+        subtitle: "",
         title: tnn("uploadRejectedTitle", { name, version }),
         hint: tnn("uploadRejectedHint"),
         rows: [

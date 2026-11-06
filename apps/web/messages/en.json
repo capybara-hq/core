@@ -1150,7 +1150,7 @@
     "approved": "Approved",
     "denied": "Denied",
     "columns": {
-      "request": "Request",
+      "item": "Item",
       "time": "Requested"
     },
     "truncated": "Only the newest items are shown. Handle some to see the rest.",

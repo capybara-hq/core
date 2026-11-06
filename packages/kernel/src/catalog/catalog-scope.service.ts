@@ -11,7 +11,7 @@ import { ExtensionLifecycle } from "../extensions/lifecycle.js";
 import { PluginInstallLock } from "../extensions/locks.js";
 import { audit } from "../identity/audit.js";
 import { SuperAdminLock } from "../identity/super-admin.js";
-import { addOrgNotice, notifyItemShared } from "../inbox/org-notices.js";
+import { addOrgNotice, itemDisplayName, notifyItemShared } from "../inbox/org-notices.js";
 import { afterCommit } from "../infra/database/after-commit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
@@ -628,7 +628,12 @@ export class CatalogScopeService {
       .where("id", "=", itemId)
       .execute();
     await markVersionApplied(this.db, itemId, version);
-    await addOrgNotice(this.db, owner, "upload_confirmed", { itemId, name: named.name, version });
+    await addOrgNotice(this.db, owner, "upload_confirmed", {
+      itemId,
+      name: named.name,
+      displayName: await itemDisplayName(this.db, itemId),
+      version,
+    });
     await audit(this.db, {
       actorAccountId: actor,
       ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
@@ -730,6 +735,7 @@ export class CatalogScopeService {
       await addOrgNotice(t, item.owner_org_id, "upload_rejected", {
         itemId,
         name: item.name,
+        displayName: await itemDisplayName(t, itemId),
         version: item.pending_version,
         reason: how.reason,
       });

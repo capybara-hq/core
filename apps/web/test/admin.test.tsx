@@ -741,7 +741,12 @@ describe("org-owned plugins in the admin console (phase 3)", () => {
       "GET /api/v1/admin/inbox": () =>
         json(200, {
           items: [
-            { type: "org_upload_pending", id: NEW_ID, createdAt: T, item: FIRST },
+            {
+              type: "org_upload_pending",
+              id: NEW_ID,
+              createdAt: T,
+              item: { ...FIRST, displayName: { zh: "文件助手", en: "Acme files" } },
+            },
             {
               type: "ownership_transferred",
               id: "n1",
@@ -767,16 +772,29 @@ describe("org-owned plugins in the admin console (phase 3)", () => {
       "POST /api/v1/admin/inbox/notices/n1/dismiss": () => new Response(null, { status: 204 }),
     });
     await renderRouteWithCache("/admin/inbox", lastStubRoutes());
+    // the selected item's card says who uploaded what
     expect(
-      (await screen.findAllByText(fill(I.orgUpload.title, { org: "Beta", name: "acme-files" })))
+      (await screen.findAllByText(fill(I.orgUpload.title, { org: "Beta", name: "Acme files" })))
         .length,
     ).toBeGreaterThan(0);
+    // a row leads with the plugin's display name, its version beside it, whole; the kind and the
+    // org second; the column header is neutral
+    const table = screen.getByRole("table", { name: I.listLabel });
+    expect(within(table).getByRole("columnheader", { name: I.columns.item })).toBeTruthy();
+    const name = within(table).getByText("Acme files", { selector: ".cb-cell-title-name" });
+    expect(name.getAttribute("title")).toBe("Acme files");
+    const upload = name.closest("tr") as HTMLElement;
+    expect(within(upload).getByText("v0.1.0").getAttribute("data-part")).toBe(
+      "cell-title-trailing",
+    );
+    expect(within(upload).getByText(`${I.orgUpload.label} · Beta`)).toBeTruthy();
     const transferred = fill(I.transferred.title, {
       name: "brand-voice",
       why: fill(I.transferred.reason.org_deleted, { org: "Acme" }),
     });
     const user = userEvent.setup();
-    await user.click(screen.getAllByText(transferred)[0] as HTMLElement);
+    await user.click(within(table).getByText("brand-voice", { selector: ".cb-cell-title-name" }));
+    expect(await screen.findByText(transferred)).toBeTruthy();
     expect(await screen.findByText("2 organizations still use it.")).toBeTruthy();
     await user.click(screen.getByRole("button", { name: I.transferred.dismiss }));
     await waitFor(() =>

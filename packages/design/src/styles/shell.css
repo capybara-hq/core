@@ -433,6 +433,11 @@ a.cb-stat-card:focus-visible {
   overflow: auto;
   border-right: 1px solid var(--cb-line-soft);
 }
+/* The inbox's rail is its list column: a row leads with the item's name and keeps its version
+   whole, so it is wider than a filter rail (spec §5.7). */
+.cb-template[data-template="InboxPage"] .cb-body-rail {
+  width: 320px;
+}
 .cb-body-inspector {
   flex: none;
   width: 400px;

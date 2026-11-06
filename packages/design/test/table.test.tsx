@@ -291,6 +291,27 @@ describe("DataTable rows", () => {
     expect(screen.getByRole("row", { name: /Alpha/ })).toBeTruthy();
   });
 
+  it("CellTitle trailing: a version after the name never takes the ellipsis; the name does", () => {
+    plain({
+      columns: [
+        {
+          key: "name",
+          header: "名称",
+          cell: (r) => <CellTitle title={r.name} trailing="v0.1.0" description="上传已确认" />,
+        },
+      ],
+    });
+    const name = screen.getByText("Alpha");
+    expect(name.getAttribute("title")).toBe("Alpha");
+    const version = within(name.closest("tr") as HTMLElement).getByText("v0.1.0");
+    expect(version.getAttribute("data-part")).toBe("cell-title-trailing");
+    // one line: the name, then the version beside it
+    expect(version.parentElement).toBe(name.parentElement);
+    const css = readFileSync(resolve(import.meta.dirname, "../src/styles/table.css"), "utf8");
+    const rule = css.slice(css.indexOf(".cb-cell-title-trailing {"));
+    expect(rule.slice(0, rule.indexOf("}"))).toContain("flex: none");
+  });
+
   it("勾选行 data-state 含 checked", () => {
     render(<Harness initial={["a"]} />);
     const r1 = screen.getByText("Alpha").closest("tr") as HTMLElement;

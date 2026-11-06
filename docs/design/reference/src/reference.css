@@ -3874,7 +3874,8 @@ textarea {
 }
 .r-tpl-rail {
   flex: none;
-  width: 240px;
+  /* the inbox's list column (spec §5.7); only template-inbox draws this rail */
+  width: 320px;
   border-right: 1px solid var(--cb-line-soft);
 }
 .r-tpl-inspector {

@@ -1138,7 +1138,7 @@
     "approved": "已批准",
     "denied": "已拒绝",
     "columns": {
-      "request": "请求",
+      "item": "事项",
       "time": "时间"
     },
     "truncated": "只显示最新的事项，处理掉一些后可看到其余的。",

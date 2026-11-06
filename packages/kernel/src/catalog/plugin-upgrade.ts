@@ -17,7 +17,7 @@ import { blockingKeys, diffPermissions } from "../extensions/permission-set.js";
 import { ExtensionRegistry } from "../extensions/registry.js";
 import { audit } from "../identity/audit.js";
 import { SuperAdminLock } from "../identity/super-admin.js";
-import { addOrgNotice, notifySharedUpdate } from "../inbox/org-notices.js";
+import { addOrgNotice, itemDisplayName, notifySharedUpdate } from "../inbox/org-notices.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { afterCommit } from "../infra/database/after-commit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
@@ -844,6 +844,7 @@ export class PlatformPluginUpdater {
       await addOrgNotice(t, pendingOwner, "upload_confirmed", {
         itemId,
         name: diff.name,
+        displayName: await itemDisplayName(t, itemId),
         version: diff.to.version,
       });
     }

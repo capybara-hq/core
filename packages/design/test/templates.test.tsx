@@ -801,3 +801,20 @@ describe("PendingState (the neutral loading state)", () => {
     expect(el.querySelectorAll('[data-part="pending-bar"]').length).toBeGreaterThan(0);
   });
 });
+
+describe("InboxPage list column (plugin acceptance fix batch 1)", () => {
+  it("the rail is the list column, 320 wide on the inbox (wider than a filter rail's 240)", () => {
+    render(
+      <DesignProvider locale="zh">
+        <InboxPage header={{ path: [{ label: "admin" }], title: "收件箱" }} list={<div>l</div>}>
+          <div>c</div>
+        </InboxPage>
+      </DesignProvider>,
+    );
+    expect(document.querySelector(".cb-body-rail")?.getAttribute("data-part")).toBe("rail");
+    const css = readFileSync(resolve(import.meta.dirname, "../src/styles/shell.css"), "utf8");
+    const at = css.indexOf('.cb-template[data-template="InboxPage"] .cb-body-rail {');
+    expect(at).toBeGreaterThanOrEqual(0);
+    expect(css.slice(at, css.indexOf("}", at))).toContain("width: 320px");
+  });
+});

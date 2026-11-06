@@ -3,6 +3,7 @@
 import {
   type ActionRowProps,
   Card,
+  CellTitle,
   type Column,
   DataTable,
   DateTime,
@@ -91,14 +92,16 @@ function AdminInbox({
     {
       key: "item",
       header: t("columns.item"),
-      cell: (item) => (
-        <Stack gap={0}>
-          <Text>{titleOf(item, t, locale)}</Text>
-          <Text variant="small" tone="muted">
-            {subtitleOf(item, t)}
-          </Text>
-        </Stack>
-      ),
+      cell: (item) => {
+        const r = rowOf(item, t, locale);
+        return (
+          <CellTitle
+            title={r.title}
+            {...(r.trailing !== null ? { trailing: r.trailing } : {})}
+            description={r.description}
+          />
+        );
+      },
     },
     {
       key: "at",
@@ -164,7 +167,7 @@ function AdminInbox({
           columns={columns}
           rows={rows}
           rowKey={(i) => i.id}
-          rowLabel={(i) => titleOf(i, t, locale)}
+          rowLabel={(i) => rowOf(i, t, locale).title}
           {...(active ? { activeKey: active.id } : {})}
           onOpen={(i) => setActiveId(i.id)}
           state="ready"
@@ -191,7 +194,61 @@ function AdminInbox({
   );
 }
 
-/** A row's title: the kind, then what it is about. */
+/**
+ * One list row (spec §5.7): it leads with what the item is about (the plugin's display name), its
+ * version beside it (never cut: the name takes the ellipsis), then the kind and the org on the
+ * second line.
+ */
+function rowOf(
+  item: PlatformInboxItem,
+  t: Translate,
+  locale: string,
+): { title: string; trailing: string | null; description: string } {
+  switch (item.type) {
+    case "catalog_request": {
+      const version = requestVersion(item.request);
+      return {
+        title: displayNameOf(requestSubject(item.request), locale),
+        trailing: version === null ? null : versionLabel(version),
+        description: `${t(`request.kind.${item.request.kind}`)} · ${item.request.orgName}`,
+      };
+    }
+    case "permission_confirmation":
+      return {
+        title: displayNameOf(item.item, locale),
+        trailing: versionLabel(item.item.latestVersion),
+        description: t("permission.label"),
+      };
+    case "scope_sync_failed":
+      return {
+        title: displayNameOf(item.failure.item, locale),
+        trailing: null,
+        description: `${t("sync.label")} · ${item.failure.org.name} · ${t(`sync.op.${item.failure.op}`)}`,
+      };
+    case "platform_migration":
+      return {
+        title: t("migration.label"),
+        trailing: null,
+        description: item.run.stuck
+          ? t("migration.stuck")
+          : t("migration.failed", { n: item.run.itemsFailed.length }),
+      };
+    case "org_upload_pending":
+      return {
+        title: displayNameOf(item.item, locale),
+        trailing: versionLabel(item.item.pendingVersion ?? item.item.latestVersion),
+        description: `${t("orgUpload.label")} · ${ownerOrgOf(item.item)?.name ?? ""}`,
+      };
+    case "ownership_transferred":
+      return {
+        title: item.notice.detail.name,
+        trailing: null,
+        description: `${t("transferred.label")} · ${t("transferred.usedBy", { count: item.notice.detail.usedBy })}`,
+      };
+  }
+}
+
+/** The selected item's card title: the kind, then what it is about. */
 function titleOf(item: PlatformInboxItem, t: Translate, locale: string): string {
   switch (item.type) {
     case "catalog_request":
@@ -218,26 +275,6 @@ function transferredTitle(n: PlatformNotice, t: Translate): string {
     name: n.detail.name,
     why: t(`transferred.reason.${n.detail.reason}`, { org: n.detail.fromOrg.name }),
   });
-}
-
-/** A row's second line: the org, the version, or what went wrong with the run. */
-function subtitleOf(item: PlatformInboxItem, t: Translate): string {
-  switch (item.type) {
-    case "catalog_request":
-      return item.request.orgName;
-    case "permission_confirmation":
-      return versionLabel(item.item.latestVersion);
-    case "scope_sync_failed":
-      return `${item.failure.org.name} · ${t(`sync.op.${item.failure.op}`)}`;
-    case "platform_migration":
-      return item.run.stuck
-        ? t("migration.stuck")
-        : t("migration.failed", { n: item.run.itemsFailed.length });
-    case "org_upload_pending":
-      return `${t("orgUpload.label")} · ${versionLabel(item.item.pendingVersion ?? item.item.latestVersion)}`;
-    case "ownership_transferred":
-      return `${t("transferred.label")} · ${t("transferred.usedBy", { count: item.notice.detail.usedBy })}`;
-  }
 }
 
 /** The selected item: the content card and the inspector's facts. */
