@@ -1,8 +1,8 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { ReactElement, ReactNode } from "react";
+import { type ReactElement, type ReactNode, useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   Card,
@@ -113,18 +113,97 @@ describe("ObjectCard", () => {
     expect(nav).toHaveBeenCalledWith("/agents/a");
   });
 
-  it("the description is clamped to two lines with the full text in its title; the name keeps one line with its title", () => {
+  /** Lays the name and the description out as cut off (or not): jsdom measures nothing. */
+  function measured(cut: boolean) {
+    const part = (el: HTMLElement) => el.getAttribute("data-part");
+    vi.spyOn(HTMLElement.prototype, "scrollWidth", "get").mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      return part(this) === "object-card-name" && cut ? 600 : 200;
+    });
+    vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(200);
+    vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      return part(this) === "object-card-description" && cut ? 120 : 40;
+    });
+    vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(40);
+  }
+
+  it("the description is clamped to two lines and the name to one; the full text is their title only when cut off", () => {
     const long = "很长的描述".repeat(40);
+    measured(true);
     withNav(grid([card({ description: long, title: "名字很长".repeat(12) })]));
     const desc = document.querySelector('[data-part="object-card-description"]');
     expect(desc?.getAttribute("title")).toBe(long);
     const name = document.querySelector('[data-part="object-card-name"]');
     expect(name?.getAttribute("title")).toBe("名字很长".repeat(12));
+    cleanup();
+    vi.restoreAllMocks();
+    measured(false);
+    withNav(grid([card()]));
+    expect(
+      document.querySelector('[data-part="object-card-description"]')?.hasAttribute("title"),
+    ).toBe(false);
+    expect(document.querySelector('[data-part="object-card-name"]')?.hasAttribute("title")).toBe(
+      false,
+    );
+    vi.restoreAllMocks();
     const css = readFileSync(resolve(__dirname, "../src/styles/card-grid.css"), "utf8");
     const rule = /\.cb-object-card-desc\s*\{([^}]*)\}/.exec(css)?.[1] ?? "";
     expect(rule).toMatch(/-webkit-line-clamp:\s*2/);
     const nameRule = /\.cb-object-card-name\s*\{([^}]*)\}/.exec(css)?.[1] ?? "";
     expect(nameRule).toMatch(/text-overflow:\s*ellipsis/);
+  });
+
+  it("a click on the description: a selection inside it stays one, Ctrl / Cmd or the middle button open a new tab", async () => {
+    const open = vi.spyOn(window, "open").mockReturnValue(null);
+    const { nav } = withNav(
+      <>
+        <p>别处的文字</p>
+        {grid([card()])}
+      </>,
+    );
+    const desc = screen.getByText("帮你检索资料、整理笔记，并按需生成摘要。");
+    // a selection elsewhere on the page does not stop the card from opening
+    const sel = window.getSelection() as Selection;
+    sel.selectAllChildren(screen.getByText("别处的文字"));
+    fireEvent.click(desc);
+    expect(nav).toHaveBeenCalledTimes(1);
+    // a selection inside the description keeps the click a selection
+    sel.selectAllChildren(desc);
+    fireEvent.click(desc);
+    expect(nav).toHaveBeenCalledTimes(1);
+    sel.removeAllRanges();
+    fireEvent.click(desc, { ctrlKey: true });
+    fireEvent.click(desc, { metaKey: true });
+    fireEvent(desc, new MouseEvent("auxclick", { bubbles: true, button: 1 }));
+    expect(nav).toHaveBeenCalledTimes(1);
+    expect(open).toHaveBeenCalledTimes(3);
+    expect(open).toHaveBeenLastCalledWith(
+      expect.stringMatching(/\/agents\/a$/),
+      "_blank",
+      "noopener,noreferrer",
+    );
+    open.mockRestore();
+  });
+
+  it("the primary, the lone item and the menu are described by the card's name", () => {
+    withNav(
+      grid([
+        card(),
+        card({ title: "周报模板", href: "/t", menu: [{ label: "查看", href: "/t/v" }] }),
+      ]),
+    );
+    const [first, second] = screen.getAllByRole("listitem") as HTMLElement[];
+    const nameOf = (el: HTMLElement) =>
+      document.getElementById(el.getAttribute("aria-describedby") ?? "")?.textContent;
+    const one = within(first as HTMLElement);
+    expect(nameOf(one.getByRole("button", { name: "开始会话" }))).toBe("研究助手");
+    expect(nameOf(one.getByRole("button", { name: "更多操作" }))).toBe("研究助手");
+    expect(nameOf(within(second as HTMLElement).getByRole("link", { name: "查看" }))).toBe(
+      "周报模板",
+    );
   });
 
   it("without a description draws no description line", () => {
@@ -282,6 +361,70 @@ describe("CardGrid keyboard (roving focus by row)", () => {
     expect(link("研究助手").tabIndex).toBe(-1);
   });
 
+  it("the ⋯ menu opens from the keyboard (↵ or ↓ on its trigger)", async () => {
+    withNav(grid());
+    const first = screen.getAllByRole("listitem")[0] as HTMLElement;
+    const trigger = within(first).getByRole("button", { name: "更多操作" });
+    trigger.focus();
+    await userEvent.keyboard("{Enter}");
+    expect(await screen.findByRole("menuitem", { name: "设置" })).toBeTruthy();
+    await userEvent.keyboard("{Escape}");
+    expect(screen.queryByRole("menuitem", { name: "设置" })).toBeNull();
+    trigger.focus();
+    await userEvent.keyboard("{ArrowDown}");
+    expect(await screen.findByRole("menuitem", { name: "设置" })).toBeTruthy();
+  });
+
+  it("↑ ↓ follow a re-layout: two columns, then three", async () => {
+    withNav(grid());
+    layout(2);
+    link("研究助手").focus();
+    await userEvent.keyboard("{ArrowDown}");
+    expect(document.activeElement).toBe(link("客服助手"));
+    layout(3);
+    await userEvent.keyboard("{ArrowDown}");
+    expect(document.activeElement).toBe(link("代码助手"));
+    await userEvent.keyboard("{ArrowUp}");
+    expect(document.activeElement).toBe(link("周报助手"));
+  });
+
+  it("Tab from the last card's menu leaves the grid", async () => {
+    withNav(
+      <>
+        {grid()}
+        <button type="button">之后</button>
+      </>,
+    );
+    layout(3);
+    link("研究助手").focus();
+    await userEvent.keyboard("{End}");
+    expect(document.activeElement).toBe(link("代码助手"));
+    await userEvent.tab();
+    await userEvent.tab();
+    expect(document.activeElement?.getAttribute("aria-label")).toBe("更多操作");
+    await userEvent.tab();
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "之后" }));
+  });
+
+  it("arrows skip skeleton cards; fragments in the children are opened", async () => {
+    withNav(
+      <CardGrid label="智能体">
+        <>
+          <ObjectCard key="a" {...card({ title: "研究助手", href: "/a" })} />
+          <ObjectCard key="b" {...card({ title: "周报助手", href: "/b" })} />
+        </>
+        <ObjectCard key="s" loading />
+      </CardGrid>,
+    );
+    layout(3);
+    expect(screen.getAllByRole("listitem")).toHaveLength(3);
+    link("研究助手").focus();
+    await userEvent.keyboard("{End}");
+    expect(document.activeElement).toBe(link("周报助手"));
+    await userEvent.keyboard("{ArrowRight}");
+    expect(document.activeElement).toBe(link("周报助手"));
+  });
+
   it("an ObjectCard outside a CardGrid keeps every control in the tab order", () => {
     withNav(
       <ul>
@@ -290,6 +433,129 @@ describe("CardGrid keyboard (roving focus by row)", () => {
     );
     expect(link("研究助手").tabIndex).toBe(0);
     for (const b of screen.getAllByRole("button")) expect(b.tabIndex).toBe(0);
+  });
+});
+
+describe("CardGrid keeps the stop on its card", () => {
+  const link = (name: string) => screen.getByRole("link", { name });
+
+  /** A grid whose cards can be deleted from their ⋯ menu, and added or removed from outside. */
+  function Deletable({ initial }: { initial: string[] }) {
+    const [names, setNames] = useState(initial);
+    return (
+      <>
+        <button type="button" onClick={() => setNames((n) => n.slice(1))}>
+          删第一个
+        </button>
+        <button type="button" onClick={() => setNames((n) => [...n, `新助手${n.length}`])}>
+          加一个
+        </button>
+        <CardGrid label="智能体">
+          {names.map((n) => (
+            <ObjectCard
+              key={n}
+              title={n}
+              href={`/a/${n}`}
+              primary={{ label: "开始会话", onSelect: () => {} }}
+              menu={[
+                { label: "设置", onSelect: () => {} },
+                {
+                  label: "删除",
+                  danger: true,
+                  onSelect: () => setNames((all) => all.filter((x) => x !== n)),
+                },
+              ]}
+            />
+          ))}
+        </CardGrid>
+      </>
+    );
+  }
+  const menuOf = (name: string) =>
+    within(link(name).closest("li") as HTMLElement).getByRole("button", { name: "更多操作" });
+
+  it("the held card deleted from its own ⋯ menu: the stop and focus move to its neighbour's link", async () => {
+    withNav(<Deletable initial={["甲", "乙", "丙"]} />);
+    link("甲").focus();
+    await userEvent.keyboard("{ArrowRight}");
+    expect(document.activeElement).toBe(link("乙"));
+    await userEvent.tab();
+    await userEvent.tab();
+    expect(document.activeElement).toBe(menuOf("乙"));
+    await userEvent.keyboard("{Enter}");
+    await userEvent.click(await screen.findByRole("menuitem", { name: "删除" }));
+    expect(screen.queryByRole("link", { name: "乙" })).toBeNull();
+    await waitFor(() => expect(document.activeElement).toBe(link("丙")));
+    expect(link("丙").tabIndex).toBe(0);
+    expect(link("甲").tabIndex).toBe(-1);
+    // and it stays there once the menu has finished closing
+    await new Promise((r) => setTimeout(r, 20));
+    expect(document.activeElement).toBe(link("丙"));
+  });
+
+  it("the last card deleted: the stop and focus go to the new last card", async () => {
+    withNav(<Deletable initial={["甲", "乙"]} />);
+    link("甲").focus();
+    await userEvent.keyboard("{End}");
+    menuOf("乙").focus();
+    await userEvent.keyboard("{Enter}");
+    await userEvent.click(await screen.findByRole("menuitem", { name: "删除" }));
+    await waitFor(() => expect(document.activeElement).toBe(link("甲")));
+    expect(link("甲").tabIndex).toBe(0);
+  });
+
+  it("a card removed before the stop, or cards added: the stop stays on its card", async () => {
+    withNav(<Deletable initial={["甲", "乙", "丙"]} />);
+    link("甲").focus();
+    await userEvent.keyboard("{End}");
+    expect(link("丙").tabIndex).toBe(0);
+    await userEvent.click(screen.getByRole("button", { name: "删第一个" }));
+    expect(link("丙").tabIndex).toBe(0);
+    expect(link("乙").tabIndex).toBe(-1);
+    // focus was outside the grid: nothing moves it back in
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "删第一个" }));
+    await userEvent.click(screen.getByRole("button", { name: "加一个" }));
+    expect(screen.getAllByRole("listitem")).toHaveLength(3);
+    expect(link("丙").tabIndex).toBe(0);
+    expect(link("新助手2").tabIndex).toBe(-1);
+  });
+
+  it("the held card filtered out while focus is elsewhere: the stop moves to its neighbour, focus stays", async () => {
+    const keyed = (names: string[]) => (
+      <DesignProvider locale="zh">
+        <CardGrid label="智能体">
+          {names.map((n) => (
+            <ObjectCard key={n} {...card({ title: n, href: `/a/${n}` })} />
+          ))}
+        </CardGrid>
+      </DesignProvider>
+    );
+    const { rerender } = render(keyed(NAMES));
+    link("研究助手").focus();
+    await userEvent.keyboard("{ArrowRight}");
+    link("周报助手").blur();
+    rerender(keyed(NAMES.filter((n) => n !== "周报助手")));
+    expect(link("客服助手").tabIndex).toBe(0);
+    expect(link("研究助手").tabIndex).toBe(-1);
+    expect(document.activeElement).toBe(document.body);
+  });
+
+  it("the held card filtered out while its link has focus: focus goes to the neighbour's link", async () => {
+    const keyed = (names: string[]) => (
+      <DesignProvider locale="zh">
+        <CardGrid label="智能体">
+          {names.map((n) => (
+            <ObjectCard key={n} {...card({ title: n, href: `/a/${n}` })} />
+          ))}
+        </CardGrid>
+      </DesignProvider>
+    );
+    const { rerender } = render(keyed(NAMES));
+    link("研究助手").focus();
+    await userEvent.keyboard("{ArrowRight}");
+    rerender(keyed(NAMES.filter((n) => n !== "周报助手")));
+    expect(document.activeElement).toBe(link("客服助手"));
+    expect(link("客服助手").tabIndex).toBe(0);
   });
 });
 

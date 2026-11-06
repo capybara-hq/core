@@ -61,6 +61,8 @@ export type LinkButtonProps = {
   shortcut?: string;
   /** Out of the tab order (`-1`) where a roving container holds the tab stop (CardGrid). */
   tabIndex?: number;
+  /** What the action is about (an ObjectCard's name), read after the label. */
+  "aria-describedby"?: string;
   children: ReactNode;
 };
 
@@ -74,6 +76,7 @@ export function LinkButton({
   density,
   shortcut,
   tabIndex,
+  "aria-describedby": describedBy,
   children,
 }: LinkButtonProps) {
   const Link = useDesignLink();
@@ -86,6 +89,7 @@ export function LinkButton({
       data-variant={variant}
       data-density={step}
       {...(tabIndex !== undefined ? { tabIndex } : {})}
+      {...(describedBy !== undefined ? { "aria-describedby": describedBy } : {})}
     >
       <span className="cb-btn-body">
         {children}
