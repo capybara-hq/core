@@ -8,6 +8,7 @@ import {
   validateSkillPackage,
 } from "@capybara-hq/plugin-sdk";
 import yauzl from "yauzl";
+import type { SkillManifest } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { cleanInvocationKeys } from "./invocation-keys.js";
 
@@ -286,4 +287,27 @@ export function checkBuiltSkillFiles(files: SkillPackageFile[]): SkillPackage {
     if (e instanceof SkillArchiveError) throw invalid(e.problems);
     throw e;
   }
+}
+
+/** A validated skill package: its name, description, files and invocation. */
+export interface SkillPackageInput {
+  name: string;
+  description: string;
+  files: SkillPackageFile[];
+  /** Phase D: stored in the manifest when it is not the default. */
+  invocation?: SkillInvocation;
+}
+
+/**
+ * The stored manifest of a skill package (the invocation only when it is not the default); org
+ * skills and platform skills store the same shape.
+ */
+export function skillManifest(pkg: SkillPackageInput): SkillManifest {
+  const invocation = pkg.invocation && storedInvocation(pkg.invocation);
+  return {
+    name: pkg.name,
+    description: pkg.description,
+    files: pkg.files.map(({ path, size, sha256 }) => ({ path, size, sha256 })),
+    ...(invocation !== undefined && { invocation }),
+  };
 }

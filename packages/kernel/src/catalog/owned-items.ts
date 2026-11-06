@@ -1,7 +1,9 @@
 // The owner org's own catalog items (plugin scope phase 3, spec §14, rulings P3-2, P3-17 to
-// P3-20; pre-flight F13 to F15): 可共享, delete after a preview, and the one rule an owner delete
-// and an org deletion share: an item another org uses is transferred to the platform, any other
-// one is removed (its extension then taken out by `OwnedPluginCleanup`).
+// P3-20; pre-flight F13 to F16, F19): 可共享, delete after a preview, and the one rule an owner
+// delete and an org deletion share: an item another org uses is transferred to the platform, any
+// other one is removed (a plugin's extension then taken out by `OwnedPluginCleanup`). Plugins and,
+// since Task 8, the org's own skills and agent templates (promoted ones through their platform
+// rows, ruling P3-3).
 import { createHash } from "node:crypto";
 import { getQueueToken } from "@nestjs/bullmq";
 import { Inject, Injectable } from "@nestjs/common";
@@ -19,8 +21,10 @@ import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import { OrgLock } from "../orgs/org-lock.js";
 import { MAINTENANCE_QUEUE_NAME } from "../runtime/maintenance-queue.js";
+import { SkillsService } from "../skills/skills.service.js";
 import { type ActorOpts, CatalogService } from "./catalog.service.js";
 import { CatalogScopeService } from "./catalog-scope.service.js";
+import { notOwnedError } from "./component-promotion.js";
 import {
   agentsUsing,
   COMPONENT_KINDS,
@@ -37,6 +41,7 @@ import { ownedPluginCleanupJob } from "./job-ids.js";
 import { type OwnedRef, orgsUsing } from "./ownership.js";
 import { PluginInstaller } from "./plugin-install.js";
 import { ScopeStillWanted } from "./scope-state.js";
+import { narrowComponentOnUnshare } from "./unshare.js";
 
 /**
  * What deleting an owned plugin does (P3-19): `removed` when no other org uses it, else
@@ -61,8 +66,19 @@ const previewStale = () =>
     "catalog.preview_stale",
     "What deleting this plugin does has changed since the preview; preview it again and confirm the new hash",
   );
-/** The skill and agent template branches are plugin scope phase 3 Task 8's (pre-flight F16). */
-const notYet = (kind: string) => new Error(`owned ${kind} items are not handled here yet`);
+const skillNotFound = () => new ApiError("skill.not_found", "Skill not found");
+const componentNotFound = () => new ApiError("component.not_found", "Component not found");
+
+/** What deleting an org skill does (`GET orgs/:orgId/skills/:id/delete-preview`, pre-flight F19). */
+export type OwnedSkillDeletePreview = Omit<OwnedDeletePreview, "previewHash">;
+
+/** An org's own skill or agent template row, as its owner acts on it (ruling P3-6). */
+interface OwnedComponentRow {
+  id: string;
+  name: string;
+  /** The platform row it was promoted to (ruling P3-3), or null. */
+  link: string | null;
+}
 
 const COMPONENT_TABLES = [
   "platform_skills",
@@ -113,6 +129,8 @@ export class OwnedItems {
     @Inject(CatalogScopeService) private readonly scope: CatalogScopeService,
     /** The owner org's own uninstall of a removed plugin (ruling P3-41). */
     @Inject(PluginInstaller) private readonly installer: PluginInstaller,
+    /** The owner's org skill row, soft-deleted after its promoted platform row leaves it. */
+    @Inject(SkillsService) private readonly skills: SkillsService,
     /** The removed plugin's cleanup job (`owned-plugin-cleanup-<itemId>`, P3-20). */
     @Inject(getQueueToken(MAINTENANCE_QUEUE_NAME)) private readonly queue: Pick<Queue, "add">,
     @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
@@ -125,7 +143,10 @@ export class OwnedItems {
 
   /**
    * The owner org's 可共享 flag of its item, written on the item and (a plugin) every component
-   * row in one transaction (ruling P3-2; turning it off narrows as ruling P3-25 says). Audits
+   * row in one transaction (ruling P3-2; turning it off narrows as ruling P3-25 says). A skill or
+   * an agent template is named by the org row's id (`skills.manage` / `catalog.upload`): only the
+   * org's own rows (ruling P3-6: not an agent's skill, not a copy of another owner's platform item:
+   * 409 `catalog.not_owned`); one it promoted writes its platform row too (pre-flight F16). Audits
    * `catalog.shareable_changed`.
    */
   @Transactional()
@@ -136,7 +157,10 @@ export class OwnedItems {
     shareable: boolean,
     opts: ActorOpts = {},
   ): Promise<void> {
-    if (ref.kind !== "plugin") throw notYet(ref.kind);
+    if (ref.kind !== "plugin") {
+      await this.setComponentShareable(orgId, actor, ref.kind, ref.id, shareable, opts);
+      return;
+    }
     await this.orgLock.lockAndAuthorize(orgId, actor, "catalog.upload");
     const item = await this.ownedRow(orgId, ref.id, true);
     await this.scope.setShareable(item.id, shareable, actor);
@@ -150,17 +174,213 @@ export class OwnedItems {
     });
   }
 
+  /** {@link setShareable} of an org skill or agent template (named by the org row's id). */
+  private async setComponentShareable(
+    orgId: string,
+    actor: string,
+    kind: "skill" | "agent_template",
+    id: string,
+    shareable: boolean,
+    opts: ActorOpts,
+  ): Promise<void> {
+    await this.orgLock.lockAndAuthorize(
+      orgId,
+      actor,
+      kind === "skill" ? "skills.manage" : "catalog.upload",
+    );
+    const row = await this.ownedComponent(orgId, kind, id, true);
+    if (kind === "skill") {
+      await this.db.updateTable("skills").set({ shareable }).where("id", "=", row.id).execute();
+    } else {
+      await this.db
+        .updateTable("agent_templates")
+        .set({ shareable })
+        .where("id", "=", row.id)
+        .execute();
+    }
+    // promoted: the platform row is the one every gate reads (ruling P3-2), written in this
+    // transaction; turning it off narrows an optional / all scope (ruling P3-25)
+    if (row.link !== null) {
+      const [c] = await loadComponents(this.db, kind, { ids: [row.link], forUpdate: true });
+      if (c) {
+        await this.db
+          .updateTable(TABLE_OF[kind] as "platform_skills")
+          .set({ shareable, updated_at: sql<Date>`now()` as unknown as Date })
+          .where("id", "=", c.id)
+          .execute();
+        if (!shareable) await narrowComponentOnUnshare(this.db, actor, c);
+      }
+    }
+    await audit(this.db, {
+      actorAccountId: actor,
+      ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
+      orgId,
+      action: "catalog.shareable_changed",
+      target: row.id,
+      detail: {
+        kind,
+        name: row.name,
+        shareable,
+        ...(row.link !== null && { platformId: row.link }),
+      },
+    });
+  }
+
   /** The other live orgs the item is on in (P3-18, {@link orgsUsing}), by name. */
   async usedByOthers(ref: OwnedRef): Promise<{ id: string; name: string }[]> {
-    if (ref.kind !== "plugin") throw notYet(ref.kind);
-    const row = await this.db
-      .selectFrom("catalog_items")
-      .select("owner_org_id")
-      .where("id", "=", ref.id)
-      .where("deleted_at", "is", null)
-      .executeTakeFirst();
+    const row =
+      ref.kind === "plugin"
+        ? await this.db
+            .selectFrom("catalog_items")
+            .select("owner_org_id")
+            .where("id", "=", ref.id)
+            .where("deleted_at", "is", null)
+            .executeTakeFirst()
+        : await this.db
+            .selectFrom(TABLE_OF[ref.kind] as "platform_skills")
+            .select("owner_org_id")
+            .where("id", "=", ref.id)
+            .where("deleted_at", "is", null)
+            .executeTakeFirst();
     if (!row) return [];
     return orgsUsing(this.db, ref, { except: row.owner_org_id });
+  }
+
+  /**
+   * What deleting the org's skill `skillId` does (pre-flight F19, P3-19): one it promoted that
+   * another org uses is `transferred` (`orgs`: those orgs), else `removed`; `agents`: the org's
+   * agents that lose it (by its id, or its platform id). Not an org-scope skill of the org -> 404
+   * `skill.not_found`.
+   */
+  async previewSkillDelete(orgId: string, skillId: string): Promise<OwnedSkillDeletePreview> {
+    const row = await this.orgSkill(orgId, skillId, false);
+    const orgs =
+      row.link === null
+        ? []
+        : await orgsUsing(
+            this.db,
+            { kind: "skill", id: row.link },
+            {
+              except: orgId,
+            },
+          );
+    const agents = await agentsUsing(this.db, orgId, "skill", [row.link ?? row.id]);
+    return {
+      outcome: orgs.length > 0 ? "transferred" : "removed",
+      orgs,
+      agents: agents
+        .map((a) => ({ id: a.id, name: a.name }))
+        .sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id)),
+    };
+  }
+
+  /**
+   * The owner deletes its org skill (`DELETE orgs/:orgId/skills/:id`, `skills.manage` re-checked
+   * under the org row lock): one it promoted goes through {@link transferOrRemove} with reason
+   * `owner_deleted` (another org using it keeps it, now the platform's), then the org row is
+   * soft-deleted as before (audit `skill.deleted`). Not an org-scope skill of the org -> 404.
+   */
+  @Transactional()
+  async deleteSkill(
+    orgId: string,
+    actor: string,
+    skillId: string,
+    opts: ActorOpts = {},
+  ): Promise<"transferred" | "removed"> {
+    await this.orgLock.lockAndAuthorize(orgId, actor, "skills.manage");
+    const row = await this.orgSkill(orgId, skillId, true);
+    const outcome =
+      row.link === null
+        ? "removed"
+        : await this.transferOrRemove(
+            { kind: "skill", id: row.link },
+            "owner_deleted",
+            actor,
+            opts,
+          );
+    await this.skills.deleteOrgSkillIn(orgId, row.id, actor, opts.actorTokenId);
+    return outcome;
+  }
+
+  /**
+   * The org-scope skill `skillId` of the org (`forUpdate`: row locked), with the platform row it
+   * promoted (`link`; a copy of another owner's platform skill has none here). Missing -> 404.
+   */
+  private async orgSkill(
+    orgId: string,
+    skillId: string,
+    forUpdate: boolean,
+  ): Promise<OwnedComponentRow> {
+    let q = this.db
+      .selectFrom("skills as s")
+      .leftJoin("platform_skills as p", "p.id", "s.platform_skill_id")
+      .select(["s.id", "s.name", "s.platform_skill_id", "s.pinned_version", "p.owner_org_id"])
+      .where("s.id", "=", skillId)
+      .where("s.org_id", "=", orgId)
+      .where("s.scope", "=", "org")
+      .where("s.deleted_at", "is", null);
+    if (forUpdate) q = q.forUpdate("s");
+    const r = await q.executeTakeFirst();
+    if (!r) throw skillNotFound();
+    const promoted =
+      r.platform_skill_id !== null && r.pinned_version === null && r.owner_org_id === orgId;
+    return { id: r.id, name: r.name, link: promoted ? r.platform_skill_id : null };
+  }
+
+  /**
+   * The org's own skill or agent template `id` (ruling P3-6), locked with `forUpdate`: missing
+   * (or another org's) -> 404; an agent's own skill, or a copy linked to a platform item another
+   * owner has (or pinned to one) -> 409 `catalog.not_owned`. `link`: the platform row it promoted.
+   */
+  private async ownedComponent(
+    orgId: string,
+    kind: "skill" | "agent_template",
+    id: string,
+    forUpdate: boolean,
+  ): Promise<OwnedComponentRow> {
+    const r =
+      kind === "skill"
+        ? await (() => {
+            let q = this.db
+              .selectFrom("skills as s")
+              .leftJoin("platform_skills as p", "p.id", "s.platform_skill_id")
+              .select([
+                "s.id",
+                "s.name",
+                "s.scope",
+                "s.platform_skill_id as link",
+                "s.pinned_version",
+                "p.owner_org_id",
+              ])
+              .where("s.id", "=", id)
+              .where("s.org_id", "=", orgId)
+              .where("s.deleted_at", "is", null);
+            if (forUpdate) q = q.forUpdate("s");
+            return q.executeTakeFirst();
+          })()
+        : await (() => {
+            let q = this.db
+              .selectFrom("agent_templates as t")
+              .leftJoin("platform_agent_templates as p", "p.id", "t.platform_template_id")
+              .select([
+                "t.id",
+                "t.name",
+                sql<"org">`'org'`.as("scope"),
+                "t.platform_template_id as link",
+                "t.pinned_version",
+                "p.owner_org_id",
+              ])
+              .where("t.id", "=", id)
+              .where("t.org_id", "=", orgId)
+              .where("t.deleted_at", "is", null);
+            if (forUpdate) q = q.forUpdate("t");
+            return q.executeTakeFirst();
+          })();
+    if (!r) throw kind === "skill" ? skillNotFound() : componentNotFound();
+    if (r.scope !== "org") throw notOwnedError(`Skill ${r.name} belongs to an agent and`);
+    if (r.link === null) return { id: r.id, name: r.name, link: null };
+    if (r.pinned_version !== null || r.owner_org_id !== orgId) throw notOwnedError(r.name);
+    return { id: r.id, name: r.name, link: r.link };
   }
 
   /** The preview of deleting the org's own plugin (nothing written). */
@@ -212,7 +432,8 @@ export class OwnedItems {
     actor: string | null,
     opts: ActorOpts = {},
   ): Promise<"transferred" | "removed"> {
-    if (ref.kind !== "plugin") throw notYet(ref.kind);
+    if (ref.kind !== "plugin")
+      return this.transferOrRemoveComponent(ref.kind, ref.id, reason, actor, opts);
     const t = this.db;
     const item = await t
       .selectFrom("catalog_items")
@@ -343,6 +564,113 @@ export class OwnedItems {
       detail: { name: item.name, fromOrgId: owner, reason, usedBy: others.map((o) => o.id) },
     });
     afterCommit(() => this.scope.enqueueSync(item.id));
+    return "transferred";
+  }
+
+  /**
+   * {@link transferOrRemove} of a platform skill or agent template the org promoted (ruling P3-3;
+   * `id` its platform id): another live org uses it -> `transferred`: platform-owned, not shown
+   * when the owner had not made it shareable, an `all` scope narrowed to `named` = the orgs using
+   * it (ruling P3-39), the former owner off its list and switches, platform notice
+   * `ownership_transferred`, audit `catalog.ownership_transferred`. Otherwise `removed`: the
+   * platform row is soft-deleted (audit `component.removed`). The owner's org row is the caller's
+   * (an owner delete soft-deletes it). Gone or platform-owned -> 404.
+   */
+  private async transferOrRemoveComponent(
+    kind: "skill" | "agent_template",
+    id: string,
+    reason: OwnerLeaveReason,
+    actor: string | null,
+    opts: ActorOpts,
+  ): Promise<"transferred" | "removed"> {
+    const t = this.db;
+    const [c] = await loadComponents(t, kind, { ids: [id], forUpdate: true });
+    if (!c || c.ownerOrgId === null) throw componentNotFound();
+    const owner = c.ownerOrgId;
+    const ref: OwnedRef = { kind, id };
+    const others = await orgsUsing(t, ref, { except: owner });
+    const now = sql<Date>`now()` as unknown as Date;
+    const table = TABLE_OF[kind] as "platform_skills";
+    if (others.length === 0) {
+      await t
+        .updateTable(table)
+        .set({ deleted_at: now, updated_at: now })
+        .where("id", "=", id)
+        .execute();
+      await audit(t, {
+        actorAccountId: actor,
+        ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
+        orgId: owner,
+        action: "component.removed",
+        target: id,
+        detail: { kind, name: c.name, reason },
+      });
+      return "removed";
+    }
+    // read before anything changes: where an own `all` scope is on (P3-39)
+    const narrowTo =
+      c.scopeMode === "own" && c.scope === "all" ? await this.componentOrgsOn(c, owner) : null;
+    await t
+      .updateTable(table)
+      .set({
+        owner_org_id: null,
+        ...(!c.shareable && { shown_to_others: false }),
+        ...(narrowTo !== null && {
+          scope: "named" as const,
+          scope_version: sql<number>`scope_version + 1`,
+        }),
+        updated_at: now,
+      })
+      .where("id", "=", id)
+      .execute();
+    if (narrowTo !== null) {
+      await t
+        .deleteFrom("component_scope_orgs")
+        .where("kind", "=", kind)
+        .where("component_id", "=", id)
+        .execute();
+      if (narrowTo.length > 0) {
+        await t
+          .insertInto("component_scope_orgs")
+          .values(narrowTo.map((org_id) => ({ kind, component_id: id, org_id })))
+          .execute();
+      }
+    }
+    for (const list of ["component_scope_orgs", "component_org_switches"] as const) {
+      await t
+        .deleteFrom(list as "component_scope_orgs")
+        .where("kind", "=", kind)
+        .where("component_id", "=", id)
+        .where("org_id", "=", owner)
+        .execute();
+    }
+    const from = await t
+      .selectFrom("orgs")
+      .select(["id", "name"])
+      .where("id", "=", owner)
+      .executeTakeFirst();
+    await addPlatformNotice(t, "ownership_transferred", {
+      ref,
+      name: c.name,
+      fromOrg: from ?? { id: owner, name: owner },
+      reason,
+      usedBy: others.length,
+    });
+    await audit(t, {
+      actorAccountId: actor,
+      ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
+      orgId: owner,
+      action: "catalog.ownership_transferred",
+      target: id,
+      detail: {
+        kind,
+        name: c.name,
+        fromOrgId: owner,
+        reason,
+        usedBy: others.map((o) => o.id),
+        ...(narrowTo !== null && { narrowedTo: narrowTo }),
+      },
+    });
     return "transferred";
   }
 

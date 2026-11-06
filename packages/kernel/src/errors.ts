@@ -76,6 +76,11 @@ export const ERROR_CODES = {
   "catalog.not_shareable": 409,
   /** The owner org cannot be removed from its own item's list (P3-17). */
   "catalog.owner_required": 409,
+  /**
+   * Only the org's own rows can be made shareable: not an agent's skill, not a copy linked to a
+   * platform item another owner has (P3-6).
+   */
+  "catalog.not_owned": 409,
   /** The item (or the version asked for) waits for the super admin's confirmation (P3-9). */
   "catalog.item_pending": 409,
   /** A super admin confirmation raced the item's removal (P3-21). */

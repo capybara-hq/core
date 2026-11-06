@@ -529,6 +529,11 @@ export class PlatformMigration {
       .where("a.deleted_at", "is", null)
       .where("a.platform_template_id", "is", null)
       .where("p.deleted_at", "is", null)
+      // an org's own template it promoted (ruling P3-3) is no plugin's: other orgs' copies of a
+      // plugin template of the same type never link to it
+      .where((eb) =>
+        eb.or([eb("p.catalog_item_id", "is not", null), eb("p.origin_org_id", "is", null)]),
+      )
       .orderBy("a.org_id")
       .orderBy("a.id")
       .execute();

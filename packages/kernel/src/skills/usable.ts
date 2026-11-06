@@ -2,6 +2,8 @@
 // (rulings A2, C2) that are on in the org. Org copies linked to a platform skill (ruling B2) resolve
 // to the platform skill's current version under their own id unless pinned; platform files are
 // read from `deployment/` and their snapshot `source` is `platform:<object prefix>` (ruling D2).
+// A copy linked to a platform skill its own org owns (promote on share, ruling P3-3) serves its own
+// stored version while that is the platform skill's current one, and is listed instead of it.
 import type { Logger, ObjectStore } from "@capybara-hq/plugin-sdk";
 import { componentOn } from "../catalog/component-state.js";
 import type { KernelSchemaDb, SkillManifest, SourceFormat } from "../db/kernel-schema.js";
@@ -311,6 +313,11 @@ export async function skillVersionsById(
     ]),
   ];
   const platform = new Map((await platformOn(db, orgId, platformIds, log)).map((p) => [p.id, p]));
+  const owned = await ownedPlatformIds(
+    db,
+    orgId,
+    linked.map((r) => r.platform_skill_id as string),
+  );
   // ruling P2-18: a pinned copy serves its own version while its platform skill is on in the org
   const pinnedOn = await pinnedSkillLinksServed(
     db,
@@ -320,8 +327,19 @@ export async function skillVersionsById(
   for (const r of rows) {
     if (linked.includes(r)) {
       const p = platform.get(r.platform_skill_id as string);
-      if (p) out.set(r.id, { ...p, id: r.id });
-      continue;
+      if (!p) continue;
+      if (!owned.has(p.id)) {
+        out.set(r.id, { ...p, id: r.id });
+        continue;
+      }
+      // the org's own skill, promoted (ruling P3-3): promotion copied its current version to the
+      // platform under the same number, so while that is still the platform's current version it
+      // serves its own stored version (its snapshot source stays); a newer platform version (the
+      // owner's later upload, ruling P3-4) serves under its id. Either way it is the org's own.
+      if (r.current_version !== p.version) {
+        out.set(r.id, { ...p, id: r.id, origin: "org", plugin: r.item_name });
+        continue;
+      }
     }
     if (pinned.includes(r) && !pinnedOn.has(r.platform_skill_id as string)) continue;
     out.set(r.id, {
@@ -344,6 +362,26 @@ export async function skillVersionsById(
     if (p && !known.has(id)) out.set(id, p);
   }
   return out;
+}
+
+/**
+ * The ids among `platformIds` of the live platform skills owned by `orgId` (promoted from its own
+ * skills, ruling P3-3).
+ */
+async function ownedPlatformIds(
+  db: KernelSchemaDb,
+  orgId: string,
+  platformIds: readonly string[],
+): Promise<Set<string>> {
+  if (platformIds.length === 0) return new Set();
+  const rows = await db
+    .selectFrom("platform_skills")
+    .select("id")
+    .where("id", "in", [...new Set(platformIds)])
+    .where("owner_org_id", "=", orgId)
+    .where("deleted_at", "is", null)
+    .execute();
+  return new Set(rows.map((r) => r.id));
 }
 
 /**
@@ -380,7 +418,9 @@ export async function selectedSkills(
  * The org's usable skills, sorted by name: its own live org skills (`scope = 'org'`, unlinked, or
  * pinned while their platform skill is on in the org, ruling P2-18) and the platform skills on in
  * the org (see {@link platformOn}). An org copy linked
- * without a pin is not listed: its platform skill is. `log` receives the name-clash warnings.
+ * without a pin is not listed: its platform skill is; except the org's own skill it promoted
+ * (ruling P3-3), listed once under its own id instead of the platform skill.
+ * `log` receives the name-clash warnings.
  */
 export async function usableSkills(
   db: KernelSchemaDb,
@@ -442,6 +482,28 @@ export async function usableSkillVersions(
       manifest: r.manifest,
       format: r.source_format,
     }));
-  rows.push(...(await platformOn(db, orgId, undefined, log)));
+  // the org's own skills it promoted: under their own ids, instead of their platform skills
+  const promoted = await db
+    .selectFrom("skills as s")
+    .innerJoin("platform_skills as p", "p.id", "s.platform_skill_id")
+    .select(["s.id", "s.platform_skill_id"])
+    .where("s.org_id", "=", orgId)
+    .where("s.scope", "=", "org")
+    .where("s.deleted_at", "is", null)
+    .where("s.pinned_version", "is", null)
+    .where("p.owner_org_id", "=", orgId)
+    .where("p.deleted_at", "is", null)
+    .execute();
+  const promotedTo = new Set(promoted.map((r) => r.platform_skill_id as string));
+  if (promoted.length > 0) {
+    const served = await skillVersionsById(
+      db,
+      orgId,
+      promoted.map((r) => r.id),
+      log,
+    );
+    rows.push(...served.values());
+  }
+  rows.push(...(await platformOn(db, orgId, undefined, log)).filter((p) => !promotedTo.has(p.id)));
   return rows.sort(byNameThenId);
 }

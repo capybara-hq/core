@@ -16,7 +16,9 @@ import { needsLegacyScope, normalizeToolKeys } from "./definition.js";
  * install, upgrade and uninstall write the org rows through the `…In` functions in the caller's
  * transaction; the roster and the effective definition read both through {@link loadTemplates}.
  * An org copy linked to a platform template (ruling B2) resolves to the platform template's current
- * version under the copy's own id unless pinned. No in-process state.
+ * version under the copy's own id unless pinned. A copy linked to a platform template its own org
+ * owns (promote on share, ruling P3-3) serves its own stored version while that is the platform
+ * template's current one, and is listed instead of it. No in-process state.
  */
 
 /** A usable template of an org (`GET` listings, the agent page). */
@@ -60,6 +62,11 @@ export interface TemplateRow {
    * it, so evals tell the two version namespaces apart.
    */
   platformTemplateId?: string;
+  /**
+   * The org's own template it promoted (ruling P3-3), served from its platform template: listed
+   * as the org's own. Never recorded in an event.
+   */
+  ownedCopy?: true;
 }
 
 /** The roster type of a template: `<plugin>:<name>`, the bare `<name>` without a plugin. */
@@ -102,6 +109,27 @@ interface RawRow {
   catalogVersion: string | null;
   origin: "org" | "platform";
   platformTemplateId?: string;
+  ownedCopy?: true;
+}
+
+/**
+ * The ids among `platformIds` of the live platform templates owned by `orgId` (promoted from its
+ * own templates, ruling P3-3).
+ */
+async function ownedPlatformIds(
+  db: KernelSchemaDb,
+  orgId: string,
+  platformIds: readonly string[],
+): Promise<Set<string>> {
+  if (platformIds.length === 0) return new Set();
+  const rows = await db
+    .selectFrom("platform_agent_templates")
+    .select("id")
+    .where("id", "in", [...new Set(platformIds)])
+    .where("owner_org_id", "=", orgId)
+    .where("deleted_at", "is", null)
+    .execute();
+  return new Set(rows.map((r) => r.id));
 }
 
 /**
@@ -346,6 +374,11 @@ export async function loadTemplates(
   ];
   const on = await platformOn(db, orgId, platformIds, log);
   const platform = new Map(on.rows.map((p) => [p.id, p]));
+  const owned = await ownedPlatformIds(
+    db,
+    orgId,
+    [...linked].map((r) => r.platform_template_id as string),
+  );
   // ruling P2-18: a pinned copy serves its own version while its platform template is on
   const pinnedOn = await pinnedTemplateLinksServed(db, orgId, [
     ...new Set(
@@ -370,7 +403,17 @@ export async function loadTemplates(
   for (const r of rows) {
     if (linked.has(r)) {
       const p = platform.get(r.platform_template_id as string);
-      if (p) raw.push({ key: r.id, row: { ...p, id: r.id } });
+      if (!p) continue;
+      if (!owned.has(p.id)) {
+        raw.push({ key: r.id, row: { ...p, id: r.id } });
+      } else if (r.current_version === p.version) {
+        // the org's own template, promoted (ruling P3-3) at the same version: its own stored
+        // version, so the roster and `subagent_started` see what they saw before
+        raw.push({ key: r.id, row: orgRaw(r) });
+      } else {
+        // a newer platform version: under its id, with the copy's roster type
+        raw.push({ key: r.id, row: { ...p, id: r.id, plugin: r.plugin_name, ownedCopy: true } });
+      }
       continue;
     }
     if (r.platform_template_id !== null && !pinnedOn.has(r.platform_template_id)) continue;
@@ -397,8 +440,9 @@ export async function loadTemplates(
 /**
  * The org's usable templates, by plugin (none first), name and id: its own live templates
  * (unlinked, or pinned while their platform template is on in the org, ruling P2-18) and the platform templates on in the org (see {@link platformOn}). An org
- * copy linked without a pin is not listed: its platform template is. `log` receives the type-clash
- * warnings.
+ * copy linked without a pin is not listed: its platform template is; except the org's own template
+ * it promoted (ruling P3-3), listed once under its own id instead of the platform template. `log`
+ * receives the type-clash warnings.
  */
 export async function usableTemplates(
   db: KernelSchemaDb,
@@ -417,12 +461,40 @@ export async function usableTemplates(
       own.flatMap((r) => (r.platform_template_id === null ? [] : [r.platform_template_id])),
     ),
   ]);
-  const rows = await normalized(db, orgId, [
-    ...own
-      .filter((r) => r.platform_template_id === null || pinnedOn.has(r.platform_template_id))
-      .map(orgRaw),
-    ...(await platformOn(db, orgId, undefined, log)).rows,
-  ]);
+  // the org's own templates it promoted: under their own ids, instead of their platform templates
+  const promoted = await db
+    .selectFrom("agent_templates as t")
+    .innerJoin("platform_agent_templates as p", "p.id", "t.platform_template_id")
+    .select(["t.id", "t.platform_template_id"])
+    .where("t.org_id", "=", orgId)
+    .where("t.deleted_at", "is", null)
+    .where("t.pinned_version", "is", null)
+    .where("p.owner_org_id", "=", orgId)
+    .where("p.deleted_at", "is", null)
+    .execute();
+  const promotedTo = new Set(promoted.map((r) => r.platform_template_id as string));
+  const served =
+    promoted.length === 0
+      ? []
+      : [
+          ...(
+            await loadTemplates(
+              db,
+              orgId,
+              promoted.map((r) => r.id),
+              log,
+            )
+          ).values(),
+        ];
+  const rows = [
+    ...(await normalized(db, orgId, [
+      ...own
+        .filter((r) => r.platform_template_id === null || pinnedOn.has(r.platform_template_id))
+        .map(orgRaw),
+      ...(await platformOn(db, orgId, undefined, log)).rows.filter((p) => !promotedTo.has(p.id)),
+    ])),
+    ...served,
+  ];
   const key = (t: TemplateRow) => [t.plugin ?? "", t.name, t.id] as const;
   return rows.sort((a, b) => {
     const [x, y] = [key(a), key(b)];
@@ -473,8 +545,9 @@ export class AgentTemplatesService {
       sourceFormat: t.sourceFormat,
       catalogItemId: t.catalogItemId,
       catalogVersion: t.catalogVersion,
-      origin: t.origin,
-      ...(t.origin === "platform" && { linkedIds: linked.get(t.id) ?? [] }),
+      // the org's own template it promoted is the org's own, whatever version it serves
+      origin: t.ownedCopy ? "org" : t.origin,
+      ...(t.origin === "platform" && !t.ownedCopy && { linkedIds: linked.get(t.id) ?? [] }),
     }));
   }
 

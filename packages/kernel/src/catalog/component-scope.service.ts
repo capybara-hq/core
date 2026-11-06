@@ -14,6 +14,14 @@ import type { OrgAction } from "../orgs/roles.js";
 import type { ActorOpts } from "./catalog.service.js";
 import { assertOrgsExist } from "./catalog-items.js";
 import {
+  ComponentPromotion,
+  type OrgRow,
+  PROMOTION_ATTEMPTS,
+  type PreparedPromotion,
+  PromotionStale,
+  promotionStaleError,
+} from "./component-promotion.js";
+import {
   agentsUsing,
   COMPONENT_KINDS,
   type ComponentKind,
@@ -271,11 +279,53 @@ export class ComponentScopeService {
     @Inject(SuperAdminLock) private readonly adminLock: SuperAdminLock,
     /** The org row lock (orgs/org-lock.ts): joins the caller's transaction. */
     @Inject(OrgLock) private readonly orgLock: OrgLock,
+    /** Promote on share (ruling P3-3): an org row shown or associated becomes a platform row. */
+    @Inject(ComponentPromotion) private readonly promotion: ComponentPromotion,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
   ) {}
 
   private get db(): KernelSchemaDb {
     return this.kdb.db;
+  }
+
+  /**
+   * What the admin routes act on (ruling P3-23): the platform component `id`, an org row the org
+   * promoted already (its platform row), or an org's own row not promoted yet. A connector
+   * template has no org rows; anything else -> 404 `component.not_found`.
+   */
+  private async resolve(
+    kind: ComponentKind,
+    id: string,
+  ): Promise<{ c: ComponentRow } | { org: OrgRow }> {
+    const [c] = await loadComponents(this.db, kind, { ids: [id] });
+    if (c) return { c };
+    if (kind === "connector_template") throw notFound();
+    const org = await this.promotion.orgRow(kind, id);
+    if (!org) throw notFound();
+    if (org.link === null) return { org };
+    const [linked] = await loadComponents(this.db, kind, { ids: [org.link] });
+    if (!linked) throw notFound();
+    return { c: linked };
+  }
+
+  /**
+   * Runs `write` with the org row prepared for promotion ({@link ComponentPromotion.prepare}, files
+   * copied before the transaction), preparing again when the row changed meanwhile.
+   */
+  private async withPromotion<T>(
+    kind: "skill" | "agent_template",
+    orgRowId: string,
+    write: (p: PreparedPromotion) => Promise<T>,
+  ): Promise<T> {
+    for (let attempt = 1; ; attempt++) {
+      const prepared = await this.promotion.prepare(kind, orgRowId);
+      try {
+        return await write(prepared);
+      } catch (e) {
+        if (!(e instanceof PromotionStale)) throw e;
+        if (attempt >= PROMOTION_ATTEMPTS) throw promotionStaleError();
+      }
+    }
   }
 
   /** The platform components of `kind`, with their effective scope and the orgs they are on in. */
@@ -493,8 +543,17 @@ export class ComponentScopeService {
     id: string,
     target: ComponentTarget,
   ): Promise<ComponentScopePreview> {
-    const c = await this.component(kind, id, false);
-    return this.compute(c, await this.targetOf(c, target));
+    const r = await this.resolve(kind, id);
+    if ("c" in r) {
+      const c = await this.component(kind, r.c.id, false);
+      return this.compute(c, await this.targetOf(c, target), { hashId: id });
+    }
+    // an org row not promoted yet (P3-23): as the platform row it would become, `named: [owner]`;
+    // a disable is platform-only
+    if ("disabled" in target) throw notFound();
+    const v = virtualOf(r.org);
+    const listed = [r.org.orgId];
+    return this.compute(v, await this.targetOf(v, target, listed), { hashId: id, listed });
   }
 
   /** Gives the component its own scope, or makes it follow its plugin again, after its preview. */
@@ -506,8 +565,32 @@ export class ComponentScopeService {
     opts: ActorOpts = {},
   ): Promise<ComponentView> {
     const { scopeHash, ...target } = body;
-    await this.writeScope(actor, kind, id, target, scopeHash, opts);
-    return this.view(kind, id);
+    const r = await this.resolve(kind, id);
+    if ("c" in r) {
+      await this.writeScope(actor, kind, r.c.id, target, scopeHash, opts, { hashId: id });
+      return this.view(kind, r.c.id);
+    }
+    // An org row not promoted yet (P3-23): a change that shows it to another org promotes it first
+    // (ruling P3-3), after the owner and share gate checks on the org row and the preview's hash
+    const v = virtualOf(r.org);
+    const listed = [r.org.orgId];
+    const t = await this.targetOf(v, target, listed);
+    if (t.scopeMode === "own" && t.scope === "named" && t.orgs.join() === listed.join()) {
+      return this.view(kind, id);
+    }
+    assertOwnerListed(gateRow(v), t);
+    assertShareable(gateRow(v));
+    const p = await this.compute(v, t, { hashId: id, listed });
+    if (p.scopeHash !== scopeHash) throw staleError();
+    if (p.conflicts.length > 0) throw nameConflictError(p.conflicts);
+    const promotable = kind as "skill" | "agent_template";
+    const written = await this.withPromotion(promotable, id, (prepared) =>
+      this.writeScope(actor, kind, prepared.platformId, target, scopeHash, opts, {
+        hashId: id,
+        promote: prepared,
+      }),
+    );
+    return this.view(kind, written);
   }
 
   /**
@@ -540,8 +623,19 @@ export class ComponentScopeService {
     shown: boolean,
     opts: ActorOpts = {},
   ): Promise<ComponentView> {
-    await this.writeShown(actor, kind, id, shown, opts);
-    return this.view(kind, id);
+    const r = await this.resolve(kind, id);
+    if ("c" in r) {
+      await this.writeShown(actor, kind, r.c.id, shown, opts);
+      return this.view(kind, r.c.id);
+    }
+    // An org row not promoted yet is shown to nobody: hiding it changes nothing; showing it goes
+    // through the share gate on the org row, then promotes it (rulings P3-3, P3-23)
+    if (!shown) return this.view(kind, id);
+    assertShareable(gateRow(virtualOf(r.org)));
+    const written = await this.withPromotion(kind as "skill" | "agent_template", id, (prepared) =>
+      this.writeShown(actor, kind, prepared.platformId, true, opts, prepared),
+    );
+    return this.view(kind, written);
   }
 
   /**
@@ -661,6 +755,10 @@ export class ComponentScopeService {
     };
   }
 
+  /**
+   * `x.hashId`: the id the preview was asked for (an org row's id before its promotion);
+   * `x.promote`: the org row to promote first, in this transaction. Returns the id written.
+   */
   @Transactional()
   private async writeScope(
     actor: string,
@@ -669,8 +767,10 @@ export class ComponentScopeService {
     target: { scope: PluginScope; orgs?: string[] } | { follow: true },
     hash: string,
     opts: ActorOpts,
-  ): Promise<void> {
+    x: { hashId: string; promote?: PreparedPromotion },
+  ): Promise<string> {
     await this.adminLock.lockAndAuthorize(actor);
+    if (x.promote) id = await this.promotion.promote(x.promote, actor);
     const c = await this.component(kind, id, true);
     const t = await this.targetOf(c, target);
     const from = await this.listed(kind, id);
@@ -680,10 +780,12 @@ export class ComponentScopeService {
       assertOwnerListed(gateRow(c), t);
       assertShareableTarget(gateRow(c), await this.effectiveScope(c, from), t);
     }
-    const p = await this.compute(c, t);
+    const p = await this.compute(c, t, { hashId: x.hashId });
     if (p.scopeHash !== hash) throw staleError();
     if (p.conflicts.length > 0) throw nameConflictError(p.conflicts);
-    if (c.scopeMode === t.scopeMode && c.scope === t.scope && from.join() === t.orgs.join()) return;
+    if (c.scopeMode === t.scopeMode && c.scope === t.scope && from.join() === t.orgs.join()) {
+      return id;
+    }
     const before = await this.effectiveScope(c, from);
     await this.db
       .updateTable(TABLE[kind] as "platform_skills")
@@ -726,6 +828,7 @@ export class ComponentScopeService {
         to: { scopeMode: t.scopeMode, scope: t.scope, orgs: t.orgs },
       },
     });
+    return id;
   }
 
   @Transactional()
@@ -766,6 +869,7 @@ export class ComponentScopeService {
     });
   }
 
+  /** `promote`: the org row to promote first, in this transaction. Returns the id written. */
   @Transactional()
   private async writeShown(
     actor: string,
@@ -773,13 +877,15 @@ export class ComponentScopeService {
     id: string,
     shown: boolean,
     opts: ActorOpts,
-  ): Promise<void> {
+    promote?: PreparedPromotion,
+  ): Promise<string> {
     await this.adminLock.lockAndAuthorize(actor);
+    if (promote) id = await this.promotion.promote(promote, actor);
     const [c] = await loadComponents(this.db, kind, { ids: [id], forUpdate: true });
     if (!c) throw notFound();
     // Showing goes through the share gate (P3-16); hiding is always allowed
     if (shown) assertShareable(gateRow(c));
-    if (c.shownToOthers === shown) return;
+    if (c.shownToOthers === shown) return id;
     await this.db
       .updateTable(TABLE[kind] as "platform_skills")
       .set({ shown_to_others: shown, updated_at: sql<Date>`now()` as unknown as Date })
@@ -792,6 +898,7 @@ export class ComponentScopeService {
       target: id,
       detail: { kind, name: c.name, plugin: c.plugin, from: c.shownToOthers, to: shown },
     });
+    return id;
   }
 
   /**
@@ -799,8 +906,10 @@ export class ComponentScopeService {
    * is the current version. Missing (or removed) -> 404 `component.not_found`.
    */
   async versions(kind: ComponentKind, id: string): Promise<ComponentVersionView[]> {
-    const [c] = await loadComponents(this.db, kind, { ids: [id] });
-    if (!c) return this.orgOwnedVersions(kind, id);
+    const r = await this.resolve(kind, id);
+    if ("org" in r) return this.orgOwnedVersions(kind, id);
+    const c = r.c;
+    id = c.id;
     if (kind === "connector_template") {
       const row = await this.db
         .selectFrom("platform_connector_templates")
@@ -925,12 +1034,19 @@ export class ComponentScopeService {
     return rows.map((r) => r.org_id);
   }
 
-  /** The state after the change: `orgs` only with `named`, each a live org. */
-  private async targetOf(c: ComponentRow, target: ComponentTarget): Promise<Target> {
+  /**
+   * The state after the change: `orgs` only with `named`, each a live org. `listed`: the list now
+   * (an org row not promoted yet: `[owner]`), else read.
+   */
+  private async targetOf(
+    c: ComponentRow,
+    target: ComponentTarget,
+    listed?: string[],
+  ): Promise<Target> {
     const now = {
       scopeMode: c.scopeMode,
       scope: c.scope,
-      orgs: await this.listed(c.kind, c.id),
+      orgs: listed ?? (await this.listed(c.kind, c.id)),
       disabled: c.disabled,
     };
     if ("disabled" in target) return { ...now, disabled: target.disabled };
@@ -972,9 +1088,18 @@ export class ComponentScopeService {
     );
   }
 
-  /** The preview of moving `c` to `target` (read through the current context). */
-  private async compute(c: ComponentRow, target: Target): Promise<ComponentScopePreview> {
+  /**
+   * The preview of moving `c` to `target` (read through the current context). `x.hashId`: the id
+   * the hash names (the one the preview was asked for); `x.listed`: the list now of an org row not
+   * promoted yet (`[owner]`).
+   */
+  private async compute(
+    c: ComponentRow,
+    target: Target,
+    x: { hashId?: string; listed?: string[] } = {},
+  ): Promise<ComponentScopePreview> {
     const st = await loadScopeState(this.db, c.kind, [c]);
+    if (x.listed !== undefined) st.listed.set(c.id, new Set(x.listed));
     const after: ComponentScopeFacts = {
       scopeMode: target.scopeMode,
       scope: target.scope,
@@ -1010,7 +1135,7 @@ export class ComponentScopeService {
       }
     }
     const p = { affected, conflicts };
-    return { ...p, scopeHash: previewHash(c, target, p) };
+    return { ...p, scopeHash: previewHash({ kind: c.kind, id: x.hashId ?? c.id }, target, p) };
   }
 }
 
@@ -1018,6 +1143,27 @@ export class ComponentScopeService {
 async function lockItemShared(db: KernelSchemaDb, itemId: string): Promise<void> {
   await db.selectFrom("catalog_items").select("id").where("id", "=", itemId).forShare().execute();
 }
+
+/**
+ * An org row not promoted yet as the platform row it would become (ruling P3-3): its own scope
+ * `named: [owner]`, not shown, owned and created by its org.
+ */
+const virtualOf = (o: OrgRow): ComponentRow => ({
+  kind: o.kind,
+  id: o.id,
+  name: o.name,
+  plugin: o.plugin,
+  version: String(o.version),
+  description: null,
+  itemId: null,
+  scopeMode: "own",
+  scope: "named",
+  disabled: false,
+  shownToOthers: false,
+  ownerOrgId: o.orgId,
+  originOrgId: o.orgId,
+  shareable: o.shareable,
+});
 
 /** The share gate's view of a component row. */
 const gateRow = (c: ComponentRow) => ({

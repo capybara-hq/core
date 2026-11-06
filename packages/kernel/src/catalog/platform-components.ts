@@ -19,8 +19,7 @@ import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import { packagePath } from "../packages/tgz.js";
-import { readSkillPackage, type SkillPackageFile } from "../skills/package.js";
-import { skillManifest } from "../skills/skills.service.js";
+import { readSkillPackage, type SkillPackageFile, skillManifest } from "../skills/package.js";
 import { type PrefixedStorage, StorageService } from "../storage/storage.service.js";
 import { canonicalJson } from "../tools/canonical-json.js";
 import {
@@ -135,6 +134,18 @@ export interface UploadedComponentVersion {
   name: string;
   /** The version written (`current_version` after the upload). */
   version: number;
+}
+
+/**
+ * The owner's next version of a skill it promoted (ruling P3-4), its files written
+ * ({@link PlatformComponents.prepareOwnerVersion}), waiting for its row
+ * ({@link PlatformComponents.addOwnerVersionIn}).
+ */
+export interface OwnerVersion {
+  readonly platformId: string;
+  /** The version it becomes (the platform row's current version + 1 when prepared). */
+  readonly to: number;
+  readonly prefix: string;
 }
 
 /** Who uploads (the super admin; `actorTokenId` when through a personal access token). */
@@ -301,6 +312,69 @@ export class PlatformComponents {
     await putCatalogFiles(this.files, prefix, [file]);
     await this.writeTemplateVersionIn(actor, live, to, prefix, parsed.template);
     return { kind: "agent_template", id, name: live.name, version: to };
+  }
+
+  /**
+   * The first phase of the owner's new version of platform skill `platformId` (ruling P3-4: an org
+   * that promoted its skill writes later versions to the platform row, never a pin on its copy):
+   * the files go to `deployment/platform/skills/<id>/<current + 1>/`, outside any transaction.
+   * Missing -> 404 `component.not_found`.
+   */
+  async prepareOwnerVersion(platformId: string, files: SkillPackageFile[]): Promise<OwnerVersion> {
+    this.files.assertAvailable();
+    const live = await this.liveSkill(platformId);
+    const to = live.current_version + 1;
+    const prefix = platformSkillPrefix(platformId, to);
+    await putCatalogFiles(this.files, prefix, files);
+    return { platformId, to, prefix };
+  }
+
+  /**
+   * The second phase, in the caller's transaction (the owner org's skill upload, under the org row
+   * and the copy's row lock): the platform row becomes version `v.to` with `manifest`, keeping its
+   * format. A version written since the first phase -> 409 `component.version_stale`. Returns
+   * the version written. The caller tells the orgs using it (`notifySharedUpdate`).
+   */
+  @Transactional({ propagation: "mandatory" })
+  async addOwnerVersionIn(
+    v: OwnerVersion,
+    manifest: SkillManifest,
+    actorAccountId: string | null,
+  ): Promise<number> {
+    const t = this.db;
+    const row = await t
+      .selectFrom("platform_skills")
+      .select(["current_version"])
+      .where("id", "=", v.platformId)
+      .where("deleted_at", "is", null)
+      .forUpdate()
+      .executeTakeFirst();
+    if (row?.current_version !== v.to - 1) throw versionStale();
+    const cur = await t
+      .selectFrom("platform_skill_versions")
+      .select(["source_format", "suggest_pinned"])
+      .where("skill_id", "=", v.platformId)
+      .where("version", "=", row.current_version)
+      .executeTakeFirstOrThrow();
+    await t
+      .updateTable("platform_skills")
+      .set({ current_version: v.to, description: manifest.description, updated_at: new Date() })
+      .where("id", "=", v.platformId)
+      .execute();
+    await t
+      .insertInto("platform_skill_versions")
+      .values({
+        skill_id: v.platformId,
+        version: v.to,
+        manifest: JSON.stringify(manifest),
+        object_prefix: v.prefix,
+        catalog_version: null,
+        source_format: cur.source_format,
+        suggest_pinned: cur.suggest_pinned,
+        created_by: actorAccountId,
+      })
+      .execute();
+    return v.to;
   }
 
   private async liveSkill(id: string) {
@@ -533,6 +607,10 @@ export class PlatformComponents {
         .where("p.plugin_name", "=", plugin)
         .where("p.name", "=", a.template.name)
         .where("p.deleted_at", "is", null)
+        // never an org's own template it promoted under the same roster type (ruling P3-3)
+        .where((eb) =>
+          eb.or([eb("p.catalog_item_id", "is not", null), eb("p.origin_org_id", "is", null)]),
+        )
         .executeTakeFirst();
       if (live && canonicalJson(live.definition) === canonicalJson(a.template)) continue;
       const [file] = await readCatalogFiles(
@@ -673,6 +751,9 @@ export class PlatformComponents {
         .where("plugin_name", "=", plan.plugin)
         .where("name", "=", a.name)
         .where("deleted_at", "is", null)
+        .where((eb) =>
+          eb.or([eb("catalog_item_id", "is not", null), eb("origin_org_id", "is", null)]),
+        )
         .forUpdate()
         .executeTakeFirst();
       assertBase(live && { id: live.id, version: live.current_version }, a.base);
