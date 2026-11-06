@@ -2068,13 +2068,15 @@ States: `default`, `hover`, `menu`
 
 #### 6.16.28 Agent map
 
-`AgentMapDialog({ open, onOpenChange, level, children })` is a dialog over the conversation page
+`AgentMapDialog({ open, onOpenChange, level, onBack?, view?, children })` is a dialog over the conversation page
 (agent map spec §9) whose width follows its level: the tree 1100, one agent's summary 760, the
 transcript 1060, and levels 2 and 3 have fixed heights, 600 and 640 (at most the window less 32),
 so the dialog does not jump while an agent works (the §6.7 frame: `panel`, `line-strong`, radius `md`, `shadow-2`, `scrim`; at
 level 1 padding `space.5` `space.6`). Level 1's head is the title "智能体图" / "Agent map" (`h2`,
 prose, 500) and close; levels 2 and 3 draw their own head with the same parts (one shared head:
-back, status dot, title, close, then meta lines). Esc closes, focus is trapped and returned.
+back, status dot, title, close, then meta lines). Esc closes the tree and goes back one level
+from levels 2 and 3 (`onBack`); focus is trapped and returned, and when the view changes (another
+level or agent, `view`) it moves to the new head's back button, else its title.
 `AgentMapTree({ root, background, selectedId, onOpen })` is level 1:
 
 - **Count line** under the title (prose, `muted`): "N 个智能体 · M 个运行中 · 点击查看详情" /
@@ -2089,8 +2091,10 @@ back, status dot, title, close, then meta lines). Esc closes, focus is trapped a
   1px `line`, radius `md`; hover `line-strong` on `hover`); line 1 the status dot and the
   description (500, `ink`); line 2 exactly "model · time · tokens" (`small`, `muted`, "opus 5.5 ·
   42分18秒 · 392.7k tokens"), indented past the dot. Both lines are one line with an ellipsis, and
-  the node's tooltip is the full text. The root has `line-strong` on `raised`; the node open at
-  level 2 has an `accent` border (`aria-current="true"`). Activating a node opens it (`onOpen`).
+  the node's tooltip is the full text. The root (the conversation itself) has `line-strong` on
+  `raised`, no hover and is not a button: it has no summary to open and is never selected. The
+  node open at level 2 has an `accent` border (`aria-current="true"`). Activating a node opens it
+  (`onOpen`).
 - **Status is only the dot** (8, round, `role="img"` with the status word as its label): running
   `accent`, pulsing every `motion.pulse` (still under reduced motion); waiting `warn`; completed
   `ok`; failed `fail`; stopped `faint`. No status words in the tree (the exception to §2.4's icon

@@ -156,9 +156,14 @@
   border-color: var(--cb-line-strong);
   background: var(--cb-hover);
 }
-.cb-amap-node[data-root="true"] {
+.cb-amap-node[data-root="true"],
+.cb-amap-node[data-root="true"]:hover {
   border-color: var(--cb-line-strong);
   background: var(--cb-raised);
+}
+/* The root is the conversation itself: nothing to open. */
+.cb-amap-node[data-root="true"] {
+  cursor: default;
 }
 .cb-amap-node[aria-current="true"] {
   border-color: var(--cb-accent);

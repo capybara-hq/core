@@ -34,7 +34,7 @@ const background: AgentMapBackground[] = F.background.map((b) => ({
   ...(b.status === "running" ? {} : { finishedAt: NOW }),
 }));
 const root: AgentMapNode = F.root;
-const nodes = () => screen.getAllByRole("button").filter((b) => b.dataset.part === "agent-node");
+const nodes = () => [...document.querySelectorAll<HTMLElement>('[data-part="agent-node"]')];
 const css = readFileSync(resolve(import.meta.dirname, "../src/styles/agent-map.css"), "utf8");
 const rule = (selector: string) => {
   const at = css.indexOf(`\n${selector} {`);
@@ -143,9 +143,25 @@ describe("AgentMapTree (§6.16.28)", () => {
     expect(onOpen).toHaveBeenCalledWith("am_review");
     const selected = nodes().filter((n) => n.getAttribute("aria-current") === "true");
     expect(selected.map((n) => n.dataset.id)).toEqual(["am_invoice"]);
-    (nodes()[0] as HTMLElement).focus();
+    const invoiceNode = nodes().find((n) => n.dataset.id === "am_invoice") as HTMLElement;
+    invoiceNode.focus();
     await userEvent.keyboard("{Enter}");
-    expect(onOpen).toHaveBeenLastCalledWith("am_root");
+    expect(onOpen).toHaveBeenLastCalledWith("am_invoice");
+  });
+
+  it("the root opens nothing and is never the selected node", async () => {
+    const onOpen = vi.fn();
+    wrap(
+      <AgentMapTree root={root} background={[]} selectedId="am_root" onOpen={onOpen} now={NOW} />,
+    );
+    const rootNode = nodes().find((n) => n.dataset.root === "true") as HTMLElement;
+    expect(rootNode.tagName).not.toBe("BUTTON");
+    expect(rootNode.getAttribute("aria-current")).toBeNull();
+    await userEvent.click(rootNode);
+    expect(onOpen).not.toHaveBeenCalled();
+    // the other nodes stay buttons
+    expect(nodes().filter((n) => n.tagName === "BUTTON")).toHaveLength(5);
+    expect(rule('.cb-amap-node[data-root="true"]')).toMatch(/cursor: default;/);
   });
 
   it("the tree canvas is a labelled, keyboard-focusable scroll region", () => {
@@ -236,6 +252,69 @@ describe("AgentMapDialog (§6.16.28)", () => {
     expect(strip(portal.querySelector('[data-part="agent-map-head"]')?.outerHTML)).toBe(
       strip(inlineHead),
     );
+  });
+
+  it("Esc at levels 2 and 3 goes back one level; at the tree it closes", async () => {
+    const onOpenChange = vi.fn();
+    const onBack = vi.fn();
+    const { rerender } = wrap(
+      <AgentMapDialog open onOpenChange={onOpenChange} level="detail" onBack={onBack}>
+        <p>body</p>
+      </AgentMapDialog>,
+    );
+    await userEvent.keyboard("{Escape}");
+    expect(onBack).toHaveBeenCalledTimes(1);
+    expect(onOpenChange).not.toHaveBeenCalled();
+    rerender(
+      <DesignProvider locale="zh">
+        <AgentMapDialog open onOpenChange={onOpenChange} level="tree">
+          <p>body</p>
+        </AgentMapDialog>
+      </DesignProvider>,
+    );
+    await userEvent.keyboard("{Escape}");
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it("moving to another level (or agent) puts focus on its back button, or the tree's title", () => {
+    const detail = (id: string) => (
+      <DesignProvider locale="zh">
+        <AgentMapDialog open onOpenChange={() => {}} level="detail" view={`detail:${id}`}>
+          <AgentDetail
+            node={{ ...invoice, id }}
+            agentType="general-purpose"
+            inBackground
+            spawnedBy={{ id: "am_root", label: "整理季度经营报告" }}
+            latestText=""
+            task=""
+            background={[]}
+            toolCalls={[]}
+            onBack={() => {}}
+            onClose={() => {}}
+            onOpenParent={() => {}}
+            onOpenTranscript={() => {}}
+          />
+        </AgentMapDialog>
+      </DesignProvider>
+    );
+    const { rerender } = wrap(
+      <AgentMapDialog open onOpenChange={() => {}} level="tree" view="tree">
+        <AgentMapTree root={root} background={[]} onOpen={() => {}} now={NOW} />
+      </AgentMapDialog>,
+    );
+    rerender(detail("am_invoice"));
+    expect(document.activeElement?.getAttribute("aria-label")).toBe("返回智能体图");
+    (document.body as HTMLElement).focus();
+    rerender(detail("am_review"));
+    expect(document.activeElement?.getAttribute("aria-label")).toBe("返回智能体图");
+    rerender(
+      <DesignProvider locale="zh">
+        <AgentMapDialog open onOpenChange={() => {}} level="tree" view="tree">
+          <AgentMapTree root={root} background={[]} onOpen={() => {}} now={NOW} />
+        </AgentMapDialog>
+      </DesignProvider>,
+    );
+    expect(document.activeElement?.getAttribute("data-part")).toBe("agent-map-title");
   });
 
   it("the dialog sizes include the agent map widths", () => {

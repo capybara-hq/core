@@ -1,5 +1,14 @@
 import * as RD from "@radix-ui/react-dialog";
-import { createContext, type JSX, type ReactNode, useContext, useId, useState } from "react";
+import {
+  createContext,
+  type JSX,
+  type ReactNode,
+  useContext,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+} from "react";
 import { Button, IconButton } from "../controls/button";
 import { Icon } from "../icons/icon";
 import { useFocusReturn } from "../overlays/focus-return";
@@ -59,6 +68,16 @@ export type AgentMapDialogProps = {
   level: "tree" | "detail" | "transcript";
   /** Drawn in place, without the portal and the scrim (the reference blocks of `/dev/ui`). */
   inline?: boolean;
+  /**
+   * Back one level (levels 2 and 3): Esc calls it instead of closing the dialog. Absent (the
+   * tree): Esc closes.
+   */
+  onBack?: () => void;
+  /**
+   * What the dialog shows (e.g. `detail:<id>`): when it changes while the dialog stays open, focus
+   * moves to the new content's back button, else the head's title (the old focus is gone).
+   */
+  view?: string;
   children: ReactNode;
 };
 
@@ -101,7 +120,8 @@ function AgentMapHead({
           />
         ) : null}
         {status ? <StatusDot status={status} /> : null}
-        <Title className="cb-amap-title" data-part="agent-map-title">
+        {/* focusable from script only: a level change puts focus here when there is no back */}
+        <Title className="cb-amap-title" data-part="agent-map-title" tabIndex={-1}>
           {title}
         </Title>
         <IconButton
@@ -119,17 +139,31 @@ function AgentMapHead({
 /**
  * The agent map's dialog frame (§6.16.28): the ordinary dialog ground, border, radius and shadow
  * (§6.7) at the level's width, the tree's head (title, close) at level 1, and the level's content.
- * Esc closes; focus is trapped and returned.
+ * Esc closes the tree and goes back one level from levels 2 and 3 (`onBack`); focus is trapped and
+ * returned, and moves to the head when the view changes.
  */
 export function AgentMapDialog({
   open,
   onOpenChange,
   level,
   inline,
+  onBack,
+  view,
   children,
 }: AgentMapDialogProps): JSX.Element | null {
   const t = useDesignT();
   const focusReturn = useFocusReturn();
+  const content = useRef<HTMLDivElement>(null);
+  const shown = useRef(view ?? level);
+  const current = view ?? level;
+  useEffect(() => {
+    if (shown.current === current) return;
+    shown.current = current;
+    const head = content.current?.querySelector('[data-part="agent-map-head"]');
+    const back = head?.querySelector<HTMLElement>(`button[aria-label="${t("agentMap.back")}"]`);
+    const title = head?.querySelector<HTMLElement>('[data-part="agent-map-title"]');
+    (back ?? title)?.focus();
+  }, [current, t]);
   const body = (
     <>
       {level === "tree" ? (
@@ -142,6 +176,7 @@ export function AgentMapDialog({
     if (!open) return null;
     return (
       <div
+        ref={content}
         className="cb-dialog cb-amap-dialog"
         data-part="agent-map-dialog"
         data-size={LEVEL_SIZE[level]}
@@ -159,6 +194,7 @@ export function AgentMapDialog({
       <RD.Portal>
         <RD.Overlay className="cb-scrim" />
         <RD.Content
+          ref={content}
           className="cb-dialog cb-amap-dialog"
           data-part="agent-map-dialog"
           data-size={LEVEL_SIZE[level]}
@@ -166,6 +202,11 @@ export function AgentMapDialog({
           aria-describedby={undefined}
           onOpenAutoFocus={() => focusReturn.capture()}
           onCloseAutoFocus={focusReturn.restore}
+          onEscapeKeyDown={(e) => {
+            if (!onBack) return;
+            e.preventDefault();
+            onBack();
+          }}
         >
           <RadixFrame.Provider value={true}>{body}</RadixFrame.Provider>
         </RD.Content>
@@ -245,18 +286,8 @@ export function AgentMapTree({
       subagentDuration(n.durationMs, locale),
       agentMapTokens(n.tokens, locale),
     ].join(" · ");
-    return (
-      <button
-        type="button"
-        className="cb-amap-node"
-        data-part="agent-node"
-        data-id={n.id}
-        data-depth={depth}
-        data-root={depth === 0 ? "true" : undefined}
-        aria-current={n.id === selectedId ? "true" : undefined}
-        title={`${n.description}\n${meta}`}
-        onClick={() => onOpen(n.id)}
-      >
+    const body = (
+      <>
         <span className="cb-amap-node-line">
           <StatusDot status={n.status} />
           <span className="cb-amap-node-name" data-part="agent-node-name">
@@ -266,6 +297,36 @@ export function AgentMapTree({
         <span className="cb-amap-node-meta" data-part="agent-node-meta">
           {meta}
         </span>
+      </>
+    );
+    const title = `${n.description}\n${meta}`;
+    // the root is the conversation itself: it has no summary to open and is never selected
+    if (depth === 0) {
+      return (
+        <div
+          className="cb-amap-node"
+          data-part="agent-node"
+          data-id={n.id}
+          data-depth={depth}
+          data-root="true"
+          title={title}
+        >
+          {body}
+        </div>
+      );
+    }
+    return (
+      <button
+        type="button"
+        className="cb-amap-node"
+        data-part="agent-node"
+        data-id={n.id}
+        data-depth={depth}
+        aria-current={n.id === selectedId ? "true" : undefined}
+        title={title}
+        onClick={() => onOpen(n.id)}
+      >
+        {body}
       </button>
     );
   };
