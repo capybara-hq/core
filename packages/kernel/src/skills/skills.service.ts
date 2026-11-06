@@ -21,8 +21,14 @@ import { Transactional } from "../infra/database/transactional.decorator.js";
 import { OrgLock } from "../orgs/org-lock.js";
 import { textBytesTokens } from "../runtime/context/tokens.js";
 import { StorageService } from "../storage/storage.service.js";
+import { buildSkillWrite } from "../tools/builtins/skill-write.js";
 import { invocationOf, PINNED_SKILLS_LIMITS } from "./catalog.js";
-import { readSkillPackage, type SkillPackageFile, storedInvocation } from "./package.js";
+import {
+  checkBuiltSkillFiles,
+  readSkillPackage,
+  type SkillPackageFile,
+  storedInvocation,
+} from "./package.js";
 import {
   platformSkillsOn,
   platformSource,
@@ -543,6 +549,7 @@ export class SkillsService {
     actorAccountId: string,
     uploadId: string,
     actorTokenId?: string,
+    shareable?: boolean,
   ): Promise<UploadedSkill> {
     this.storage.assertAvailable();
     const prefix = skillFilesPrefix(uploadId);
@@ -567,7 +574,15 @@ export class SkillsService {
     const zip = await this.attachments.readSkillPackage(orgId, actorAccountId, uploadId);
     const pkg = await readSkillPackage(zip);
     await this.putFiles(orgId, prefix, pkg.files);
-    return this.createUploadedVersionIn(orgId, actorAccountId, uploadId, pkg, prefix, actorTokenId);
+    return this.createUploadedVersionIn(
+      orgId,
+      actorAccountId,
+      uploadId,
+      pkg,
+      prefix,
+      actorTokenId,
+      shareable,
+    );
   }
 
   /**
@@ -584,6 +599,7 @@ export class SkillsService {
     pkg: SkillPackageInput,
     prefix: string,
     actorTokenId: string | undefined,
+    shareable: boolean | undefined,
   ): Promise<UploadedSkill> {
     await this.orgLock.lockAndAuthorize(orgId, actorAccountId, "skills.manage");
     await assertCustomAllowed(this.db.db, "customSkills");
@@ -591,6 +607,49 @@ export class SkillsService {
     return this.createVersionIn(orgId, actorAccountId, pkg, skillManifest(pkg), prefix, {
       prefix,
       ...(actorTokenId !== undefined && { actorTokenId }),
+      ...(shareable !== undefined && { shareable }),
+    });
+  }
+
+  /**
+   * Creates an org skill from text (spec §14, P3-24): `SKILL.md` is built from the name,
+   * description and body ({@link buildSkillWrite}, the description a YAML string) and checked like
+   * an uploaded package. The same policy and name rules as an upload, except that a live org skill
+   * of that name is `skill.name_exists` (409) instead of a new version.
+   */
+  async createFromText(
+    orgId: string,
+    actorAccountId: string,
+    input: {
+      name: string;
+      description: string;
+      body: string;
+      shareable?: boolean;
+      actorTokenId?: string;
+    },
+  ): Promise<UploadedSkill> {
+    this.storage.assertAvailable();
+    await assertCustomAllowed(this.db.db, "customSkills");
+    const built = buildSkillWrite({
+      name: input.name,
+      description: input.description,
+      files: [{ path: SKILL_ENTRY_FILE, content: input.body }],
+    });
+    if ("errors" in built) {
+      throw new ApiError(
+        "validation_failed",
+        `Invalid skill: ${built.errors[0] ?? "unknown problem"}`,
+        built.errors.map((message) => ({ path: "body", message })),
+      );
+    }
+    const pkg = checkBuiltSkillFiles(built.files);
+    const prefix = skillFilesPrefix(randomUUID());
+    await this.putFiles(orgId, prefix, pkg.files);
+    return this.createVersionIn(orgId, actorAccountId, pkg, skillManifest(pkg), prefix, {
+      prefix,
+      failIfExists: true,
+      ...(input.actorTokenId !== undefined && { actorTokenId: input.actorTokenId }),
+      ...(input.shareable !== undefined && { shareable: input.shareable }),
     });
   }
 
@@ -610,6 +669,10 @@ export class SkillsService {
     opts: {
       prefix?: string;
       actorTokenId?: string;
+      /** The owner shares a new skill with other orgs (default false). */
+      shareable?: boolean;
+      /** A live org skill of the name is `skill.name_exists` instead of getting a new version. */
+      failIfExists?: boolean;
       /** Catalog provenance; `approvedBy` is the item whose policy approves it (default `itemId`). */
       catalog?: {
         itemId: string;
@@ -668,6 +731,12 @@ export class SkillsService {
       .where("deleted_at", "is", null)
       .forUpdate()
       .executeTakeFirst();
+    if (existing && opts.failIfExists) {
+      throw new ApiError(
+        "skill.name_exists",
+        `A skill named "${pkg.name}" already exists in this organization. Choose another name.`,
+      );
+    }
     // A catalog install never overwrites a skill of other provenance (spec §9.2; planning checks
     // it first, this closes the race with a skill created since)
     if (existing && opts.catalog && existing.catalog_item_id !== opts.catalog.itemId) {
@@ -717,6 +786,7 @@ export class SkillsService {
           description: pkg.description,
           current_version: 1,
           created_by: actorAccountId,
+          ...(opts.shareable !== undefined && { shareable: opts.shareable }),
           ...provenance,
         })
         .execute();

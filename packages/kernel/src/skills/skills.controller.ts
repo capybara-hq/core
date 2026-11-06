@@ -1,4 +1,9 @@
-import { hasControlChars, MEDIA_NAME_MAX_CHARS } from "@capybara-hq/plugin-sdk";
+import {
+  hasControlChars,
+  isSkillName,
+  MEDIA_NAME_MAX_CHARS,
+  SKILL_LIMITS,
+} from "@capybara-hq/plugin-sdk";
 import { Controller, Delete, Get, HttpCode, Inject, Param, Post } from "@nestjs/common";
 import { z } from "zod";
 import {
@@ -14,6 +19,7 @@ import {
 import { createZodDto } from "../infra/validation/create-zod-dto.js";
 import { ZBody } from "../infra/validation/zod-params.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
+import { SKILL_WRITE_MAX_BYTES } from "../tools/builtins/skill-write.js";
 import {
   type SkillDetail,
   type SkillSummary,
@@ -31,7 +37,25 @@ const UploadBody = z
     size: z.number().int().min(1).max(SKILL_PACKAGE_UPLOAD_MAX_BYTES),
   })
   .strict();
-const CreateBody = z.object({ uploadId: z.string().min(1).max(100) }).strict();
+const CreateBody = z
+  .object({
+    uploadId: z.string().min(1).max(100).optional(),
+    name: z
+      .string()
+      .refine(isSkillName, "name must be 1-64 lowercase letters, digits and single hyphens")
+      .optional(),
+    description: z.string().min(1).max(SKILL_LIMITS.descriptionMaxChars).optional(),
+    body: z.string().max(SKILL_WRITE_MAX_BYTES).optional(),
+    shareable: z.boolean().optional(),
+  })
+  .strict()
+  .refine(
+    (v) =>
+      v.uploadId !== undefined
+        ? v.name === undefined && v.description === undefined && v.body === undefined
+        : v.name !== undefined && v.description !== undefined && v.body !== undefined,
+    "send either { uploadId } or { name, description, body }",
+  );
 class SkillUploadBody extends createZodDto(UploadBody, "SkillUploadBody") {}
 class SkillCreateBody extends createZodDto(CreateBody, "SkillCreateBody") {}
 
@@ -74,7 +98,17 @@ export class SkillsController {
     @ZBody(SkillCreateBody) body: z.infer<typeof CreateBody>,
   ): Promise<UploadedSkill> {
     const p = requireUser(principal);
-    return this.skills.upload(org.orgId, p.account.id, body.uploadId, patTokenId(p));
+    const tokenId = patTokenId(p);
+    if (body.uploadId !== undefined) {
+      return this.skills.upload(org.orgId, p.account.id, body.uploadId, tokenId, body.shareable);
+    }
+    return this.skills.createFromText(org.orgId, p.account.id, {
+      name: body.name as string,
+      description: body.description as string,
+      body: body.body as string,
+      ...(body.shareable !== undefined && { shareable: body.shareable }),
+      ...(tokenId !== undefined && { actorTokenId: tokenId }),
+    });
   }
 
   @Get()
