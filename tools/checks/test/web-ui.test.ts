@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -269,8 +270,11 @@ describe("checkWebUi", () => {
   });
 
   describe('web-ui-box-in-box (spec §1 "One box is enough")', () => {
-    const at = (boxPending: BoxPending[] = []) =>
-      run("box-in-box", [], [], boxPending).map((x) => [x.rule, x.line, x.message.split(":")[0]]);
+    /** The findings of one fixture file (`boxes.tsx`: direct and through components). */
+    const at = (boxPending: BoxPending[] = [], file = "boxes.tsx") =>
+      run("box-in-box", [], [], boxPending)
+        .filter((x) => x.file.endsWith(`/${file}`))
+        .map((x) => [x.rule, x.line, x.message.split(":")[0]]);
     it("flags a box inside a box: direct, through components, imports, re-exports and attributes", () =>
       expect(at()).toEqual([
         ["web-ui-box-in-box", 35, "<Card> inside <FormSection>"],
@@ -283,35 +287,80 @@ describe("checkWebUi", () => {
         ["web-ui-box-in-box", 54, "<ReNotice> (draws Callout) inside <Card>"],
         ["web-ui-box-in-box", 56, "<Card> inside <Card>"],
       ]));
+    it("follows identifiers and calls: a const (a .map result), a helper, hook render functions, renamed children and slot props", () =>
+      expect(at([], "follow.tsx")).toEqual([
+        ["web-ui-box-in-box", 51, "<cards> (draws Card) inside <FormSection>"],
+        ["web-ui-box-in-box", 53, "<renderCard> (draws Card) inside <Card>"],
+        // a hook in another file, then one in the same file passed to .map
+        ["web-ui-box-in-box", 55, "<editor> (draws Card) inside <FormSection>"],
+        ["web-ui-box-in-box", 56, "<local> (draws Card) inside <FormSection>"],
+        // `{ children: body }`, a slot prop `aside`, and `props.footer`
+        ["web-ui-box-in-box", 59, "<Card> inside <Card>"],
+        ["web-ui-box-in-box", 61, "<Card> inside <Card>"],
+        ["web-ui-box-in-box", 62, "<Card> inside <Card>"],
+        // a component in a table cell's render function
+        ["web-ui-box-in-box", 66, "<Cell> (draws Card) inside <Sheet>"],
+        ["web-ui-box-in-box", 72, "<Card> inside <AgentMapDialog>"],
+      ]));
+    it("portals reset the outer box: a Card in a Menu, the command palette or the agent map's transcript in a Card is not reported", () => {
+      const src = readFileSync(
+        fileURLToPath(
+          new URL(
+            "../fixtures/web-ui/box-in-box/apps/web/src/components/follow.tsx",
+            import.meta.url,
+          ),
+        ),
+        "utf8",
+      ).split("\n");
+      const portals = src.findIndex((l) => l.startsWith("export function Portals")) + 1;
+      expect(portals).toBeGreaterThan(1);
+      expect(at([], "follow.tsx").filter((r) => Number(r[1]) >= portals)).toEqual([]);
+    });
     it("names the fix", () => {
       const f = run("box-in-box");
       expect(f[0]?.message).toContain("ItemList");
       expect(f[3]?.message).toContain("flush");
     });
-    it("a pending entry hides its findings", () =>
-      expect(
-        at([
-          { id: "x", path: "components/boxes.tsx", inner: "Card", fix: "P1" },
-          { id: "y", path: "components/boxes.tsx", inner: "PurposeCard", fix: "P1" },
-        ]).map((r) => r[2]),
-      ).not.toContain("<Card> inside <FormSection>"));
-    it("web-ui-box-stale-pending: an entry without its finding fails (the list only shrinks)", () => {
-      const f = at([{ id: "x", path: "components/boxes.tsx", inner: "LinkCard", fix: "P1" }]);
-      expect(f.at(-1)).toEqual([
-        "web-ui-box-stale-pending",
-        1,
-        "BOX_PENDING entry x (components/boxes.tsx, <LinkCard>) is fixed; remove it from BOX_PENDING in tools/checks/src/box-in-box.ts (the list only shrinks)",
-      ]);
+    const entry = (inner: string, max: number): BoxPending => ({
+      path: "components/boxes.tsx",
+      inner,
+      max,
+      fix: "P1",
     });
-    it("web-ui-box-stale-pending: a missing file, and a rendered entry whose file no longer draws the box", () => {
-      const f = at([
-        { id: "a", path: "components/gone.tsx", inner: "Card", fix: "P1" },
-        { id: "b", path: "components/notice.tsx", inner: "Card", fix: "P1", rendered: true },
-        { id: "c", path: "components/notice.tsx", inner: "Callout", fix: "P6", rendered: true },
-      ]).filter((r) => r[0] === "web-ui-box-stale-pending");
-      expect(f.map((r) => String(r[2]).split(":")[0])).toEqual([
-        "BOX_PENDING entry a (components/gone.tsx, <Card>)",
-        "BOX_PENDING entry b (components/notice.tsx, <Card>) is fixed; remove it from BOX_PENDING in tools/checks/src/box-in-box.ts (the list only shrinks)",
+    it("a pending entry hides up to max findings of its file and inner box", () => {
+      const f = at([entry("Card", 2)]).map((r) => r[2]);
+      expect(f).not.toContain("<Card> inside <FormSection>");
+      expect(f).not.toContain("<Card> inside <Card>");
+      expect(f).toContain("<PurposeCard> (draws Card) inside <Card>");
+    });
+    it("the ratchet: more findings than max are all reported with the allowance", () => {
+      const f = run("box-in-box", [], [], [entry("Card", 1)]).filter((x) =>
+        x.message.includes("allows 1"),
+      );
+      expect(f.map((x) => x.line)).toEqual([35, 56]);
+      expect(f[0]?.message).toContain('(pending "components/boxes.tsx" <Card> allows 1, found 2)');
+    });
+    it("web-ui-box-stale-pending: fewer findings than max say lower max, none say remove", () => {
+      const f = at([entry("Card", 3), entry("LinkCard", 1)]).filter(
+        (r) => r[0] === "web-ui-box-stale-pending",
+      );
+      expect(f.map((r) => r[2])).toEqual([
+        '2 box-in-box finding(s) left for "components/boxes.tsx" <Card>',
+        'no box-in-box finding left for "components/boxes.tsx" <LinkCard>',
+      ]);
+      expect(run("box-in-box", [], [], [entry("Card", 3)]).at(-1)?.message).toContain(
+        "lower max to 2 in BOX_PENDING",
+      );
+    });
+    it("web-ui-box-stale-pending: an entry whose file is gone", () => {
+      const f = run(
+        "box-in-box",
+        [],
+        [],
+        [{ path: "components/gone.tsx", inner: "Card", max: 1, fix: "P1" }],
+      ).filter((x) => x.rule === "web-ui-box-stale-pending");
+      expect(f.map((x) => x.message)).toEqual([
+        '"components/gone.tsx" <Card>: the file does not exist; remove the entry from BOX_PENDING in tools/checks/src/box-in-box.ts',
       ]);
     });
     it("BOX_PENDING is empty since AB wave 2: the ratchet only shrinks and new code adds no entry", () => {
