@@ -3,10 +3,11 @@ import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { effectiveWakeOnBackgroundTask, readOrgSettings } from "../orgs/settings.service.js";
 
 /**
- * The wake rules of a finished background task (spec 2026-11-05-background-bash-design §3), read
- * by `RunQueue.ensureRun` in its transaction: every path that may start a run (a finish, the end of
- * a run, the delayed wake job, a page opening) applies the same rules. `BackgroundWake` is what
- * calls `ensureRun` when a task finishes.
+ * The wake rules of an idle conversation (spec 2026-11-05-background-bash-design §3, generalized
+ * by agent map spec §5.3 to a second event kind): a finished background task or a sub-agent's
+ * delivery starts a run. Read by `RunQueue.ensureRun` in its transaction: every path that may start
+ * a run (a finish, a delivery, the end of a run, the delayed wake job, a page opening) applies the
+ * same rules. `BackgroundWake` is what calls `ensureRun` when a task finishes or a delivery lands.
  */
 
 /** No two wakes of one conversation start within this window. */
@@ -30,8 +31,8 @@ export interface BgWakeJobData {
 }
 
 /**
- * What a conversation's unconsumed finishes decide:
- * - `wake`: start a run whose boundary is the finish at `seq`, as `triggerAccountId`;
+ * What a conversation's unconsumed wake events decide:
+ * - `wake`: start a run whose boundary is the event at `seq`, as `triggerAccountId`;
  * - `later`: a wake started less than {@link WAKE_WINDOW_MS} ago; the window ends at `windowEnd`
  *   (epoch ms, the database's clock), `delayMs` from now;
  * - null: nothing wakes the conversation.
@@ -41,39 +42,47 @@ export type WakeDecision =
   | { kind: "later"; windowEnd: number; delayMs: number }
   | null;
 
-/** How many unconsumed finishes are tried for a trigger account that can still send. */
+/** How many unconsumed events are tried for a trigger account that can still send. */
 const CANDIDATES = 20;
 
+/** The event types whose run is a wake run (its boundary, `runs.trigger_seq`, is one of them). */
+const WAKE_EVENT_TYPES = ["background_task_finished", "subagent_delivery"] as const;
+
 /**
- * The wake decision for a chat conversation that is idle, whose queue is not paused and has no
- * unconsumed message (the caller checked these under the conversation's row lock). A finish
- * wakes it when:
- * - it is after `consumed`, not `reported` (a tool call already told the model) and has no
- *   `stoppedBy` (`"person"`: that person is looking at the conversation; `"deletion"`: the
- *   conversation is being deleted);
- * - it belongs to a task of this conversation (the join on `conversation_id` reads the task's
- *   trigger account). A sub-agent's task is excluded by the conversation's kind, not here: its
- *   finish is in the child's log, and `ensureRun` never wakes a non-chat conversation;
+ * The wake decision for a conversation that is idle and has no unconsumed message (the caller
+ * checked these under the conversation's row lock): a chat conversation (`rootId` = its own id) or
+ * a sub-agent's (`rootId` = the root of its tree). An event wakes it when:
+ * - it is after `consumed` and is either
+ *   - a `background_task_finished` of a task of this conversation (the join on `conversation_id`
+ *     reads the task's trigger account) that is not `reported` (a tool call already told the model)
+ *     and has no `stoppedBy` (`"person"`: that person is looking at the conversation;
+ *     `"deletion"`: the conversation is being deleted), or
+ *   - a `subagent_delivery` (its own `triggerAccountId`: the trigger account of the child run that
+ *     delivered it, agent map spec §7), except the finish of a child a person stopped
+ *     (`abortedBy: "user"`), for the same reason as a person's task stop;
  * - the wake setting is on (the org's override, else `deploymentOn`);
- * - the task's trigger account can still send to the conversation (`canSend`);
- * - no other wake started in the last {@link WAKE_WINDOW_MS} (else `later`).
- * The boundary is the newest finish whose trigger account can send.
+ * - the root's queue is not paused and the root is not deleted (a paused root holds the wakes of
+ *   the whole tree, agent map spec §5.3);
+ * - the event's trigger account can still send to the root (`canSend`, which the caller binds to
+ *   the root);
+ * - no other wake of this conversation started in the last {@link WAKE_WINDOW_MS} (else `later`).
+ * The boundary is the newest event whose trigger account can send.
  */
 export async function wakeDecisionIn(
   t: KernelSchemaDb,
-  conv: { id: string; orgId: string },
+  conv: { id: string; orgId: string; rootId: string },
   consumed: number,
   deploymentOn: boolean,
   canSend: (accountId: string) => Promise<boolean>,
 ): Promise<WakeDecision> {
-  const candidates = await t
+  const finishes = await t
     .selectFrom("conversation_events as e")
     .innerJoin("background_tasks as b", (j) =>
       j
         .on(sql<boolean>`b.id = e.payload ->> 'taskId'`)
         .onRef("b.conversation_id", "=", "e.conversation_id"),
     )
-    .select(["e.seq", "b.trigger_account_id"])
+    .select(["e.seq", "b.trigger_account_id as account"])
     .where("e.conversation_id", "=", conv.id)
     .where("e.type", "=", "background_task_finished")
     .where("e.seq", ">", String(consumed))
@@ -82,13 +91,32 @@ export async function wakeDecisionIn(
     .orderBy("e.seq", "desc")
     .limit(CANDIDATES)
     .execute();
+  const deliveries = await t
+    .selectFrom("conversation_events as e")
+    .select(["e.seq", sql<string>`e.payload ->> 'triggerAccountId'`.as("account")])
+    .where("e.conversation_id", "=", conv.id)
+    .where("e.type", "=", "subagent_delivery")
+    .where("e.seq", ">", String(consumed))
+    .where(sql<boolean>`e.payload ->> 'abortedBy' IS DISTINCT FROM 'user'`)
+    .orderBy("e.seq", "desc")
+    .limit(CANDIDATES)
+    .execute();
+  const candidates = [...finishes, ...deliveries]
+    .sort((a, b) => Number(b.seq) - Number(a.seq))
+    .slice(0, CANDIDATES);
   if (candidates.length === 0) return null;
   const org = (await readOrgSettings(t, conv.orgId)).wakeOnBackgroundTask;
   if (!effectiveWakeOnBackgroundTask(deploymentOn, org)) return null;
+  const root = await t
+    .selectFrom("conversations")
+    .select(["queue_paused", "deleted_at"])
+    .where("id", "=", conv.rootId)
+    .executeTakeFirst();
+  if (!root || root.queue_paused || root.deleted_at !== null) return null;
   let boundary: { seq: number; triggerAccountId: string } | undefined;
   for (const c of candidates) {
-    if (await canSend(c.trigger_account_id)) {
-      boundary = { seq: Number(c.seq), triggerAccountId: c.trigger_account_id };
+    if (await canSend(c.account)) {
+      boundary = { seq: Number(c.seq), triggerAccountId: c.account };
       break;
     }
   }
@@ -104,7 +132,7 @@ export async function wakeDecisionIn(
       sql<string>`floor(extract(epoch from now()) * 1000)::bigint`.as("now"),
     ])
     .where("r.conversation_id", "=", conv.id)
-    .where("w.type", "=", "background_task_finished")
+    .where("w.type", "in", WAKE_EVENT_TYPES)
     .executeTakeFirst();
   if (last?.started != null) {
     const windowEnd = Number(last.started) + WAKE_WINDOW_MS;

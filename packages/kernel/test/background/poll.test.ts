@@ -751,7 +751,7 @@ describe("stopping", () => {
       agentId = (res.json() as { agent: { id: string } }).agent.id;
     });
 
-    it("a sub-agent's run end stops its child conversation's running task", async () => {
+    it("a background sub-agent's run end leaves its running task running (its finish wakes the child)", async () => {
       const conv = await createConv(owner, orgId, agentId);
       used.push(conv);
       await postMessage(owner, orgId, conv, "SCENARIO bg");
@@ -765,17 +765,14 @@ describe("stopping", () => {
         .executeTakeFirstOrThrow();
       const [task] = await store.listFor([child.id]);
       expect(task).toMatchObject({ conversationId: child.id, sandboxConversationId: conv });
-      const row = await waitFor(
-        async () => {
-          const r = await store.get(task?.id as string);
-          return r?.status !== "running" && r;
-        },
-        15_000,
-        "child task stopped",
+      // the finish's follow-ups ran (a stop would have come with the delivery): still running
+      await new Promise((r) => setTimeout(r, 1_000));
+      const row = await store.get(task?.id as string);
+      expect(row).toMatchObject({ status: "running" });
+      expect(await finishedEvents(child.id, task?.id as string)).toEqual([]);
+      expect(await alive({ orgId, conversationId: conv }, row as NonNullable<typeof row>)).toBe(
+        true,
       );
-      expect(row).toMatchObject({ status: "stopped" });
-      expect(await finishedEvents(child.id, row.id)).toHaveLength(1);
-      expect(await alive({ orgId, conversationId: conv }, row)).toBe(false);
     }, 60_000);
 
     it("stopping a child waiting for approval stops the child's task", async () => {

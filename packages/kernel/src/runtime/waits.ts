@@ -1156,8 +1156,10 @@ export class Waits implements OnApplicationShutdown {
    * {@link resume}`(parentRunId, childRunId)`, which succeeds once its parent run waits on nothing
    * else. A run that is not a dispatched child, or not terminal yet, is left alone. A crash in
    * between is repaired by the wait sweep (the orphan repair calls this again). The running
-   * background tasks the terminal child run started are then stopped (not those of a later run of
-   * the same child). True when a background child's finished delivery was written by this call.
+   * background tasks the terminal run started are then stopped (not those of a later run) for a
+   * fork child and a stopped background child; a background child that ended on its own keeps
+   * them, and their finish wakes it (agent map spec §5.3). True when a background child's
+   * finished delivery was written by this call.
    */
   async childFinished(childRunId: string): Promise<boolean> {
     const row = await dispatchOfChildRun(this.db, childRunId);
@@ -1168,8 +1170,18 @@ export class Waits implements OnApplicationShutdown {
       .where("id", "=", childRunId)
       .executeTakeFirst();
     if (!run || !TERMINAL_STATUSES.has(run.status)) return false;
+    if (row.forSkill !== true) {
+      try {
+        return await this.deliveries.childFinished(childRunId);
+      } finally {
+        // a background child that ended on its own keeps its tasks: their finish wakes it (agent
+        // map spec §5.3); a stopped one's tasks stop with it. Never throws.
+        if (run.status === "aborted") {
+          await this.background.stopSubagentTasks(row.childConversationId, childRunId);
+        }
+      }
+    }
     try {
-      if (row.forSkill !== true) return await this.deliveries.childFinished(childRunId);
       const r = await childResult(this.eventLog, row);
       if (!r) {
         this.log.warn("sub-agent run is terminal without a terminal event", { childRunId });

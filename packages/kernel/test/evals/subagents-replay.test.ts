@@ -169,6 +169,9 @@ beforeAll(async () => {
             forcePathStyle: true,
           },
         },
+        // the recorded scenario is one parent run: a wake from its children's deliveries would add
+        // runs and requests (waking: runtime/subagents/wake.test.ts)
+        runtime: { wakeOnBackgroundTask: false },
       },
     ),
   );

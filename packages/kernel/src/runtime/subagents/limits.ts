@@ -60,6 +60,27 @@ export async function budgetRunOf(db: KernelSchemaDb, runId: string): Promise<st
 }
 
 /**
+ * The current budget window of the tree rooted at `rootConversationId` (agent map spec §6): its
+ * newest run that opened its own window (`budget_run_id` null: a person-triggered run), or null
+ * when it has none. A wake run of any conversation of the tree carries it as its `budget_run_id`,
+ * so a chain of wakes never opens a new window.
+ */
+export async function budgetWindowOf(
+  db: KernelSchemaDb,
+  rootConversationId: string,
+): Promise<string | null> {
+  const row = await db
+    .selectFrom("runs")
+    .select("id")
+    .where("conversation_id", "=", rootConversationId)
+    .where("budget_run_id", "is", null)
+    .orderBy("created_at", "desc")
+    .limit(1)
+    .executeTakeFirst();
+  return row?.id ?? null;
+}
+
+/**
  * Whether the sub-agents of a tree have used their token budget (§8.3): the budget run's
  * `subagent_tokens_used`, read fresh, at or over `maxTokensPerRun`. A sub-agent's step checks it
  * before every model request and ends its run with `budget` when it is.

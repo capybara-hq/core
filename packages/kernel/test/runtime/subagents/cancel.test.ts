@@ -322,13 +322,16 @@ describe("a parent run that ends leaves its background children running", () => 
       status: "completed",
       text: "child ok",
     });
-    // the finished parent run is not resumed by the delivery
+    // the finished parent run is not resumed by the delivery: it stays completed, and what the
+    // delivery starts is a wake run of its own (agent map spec §5.3)
     const runs = await db
       .selectFrom("runs")
-      .select("status")
+      .select(["id", "status", "budget_run_id"])
       .where("conversation_id", "=", conv)
+      .orderBy("created_at")
       .execute();
-    expect(runs).toEqual([{ status: "completed" }]);
+    expect(runs[0]?.status).toBe("completed");
+    for (const wake of runs.slice(1)) expect(wake.budget_run_id).toBe(runs[0]?.id);
   }, 60_000);
 
   it("ensureRun's orphan repair of the parent run leaves its child running", async () => {

@@ -135,6 +135,9 @@ beforeAll(async () => {
         auth: { cookieSecure: false },
         channels: { scanIntervalMs: 100, leaseTtlMs: 2000, deliveryIdleMs: 1000 },
         extensionConfig: { "model-script": { rules: RULES } },
+        // these tests share one IM chat: a parent woken by its children's deliveries would absorb
+        // the next test's message as an interjection (waking: runtime/subagents/wake.test.ts)
+        runtime: { wakeOnBackgroundTask: false },
       },
     ),
   );

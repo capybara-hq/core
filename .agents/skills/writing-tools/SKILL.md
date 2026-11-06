@@ -224,8 +224,7 @@ the same transaction as the business rows.
 - A finish (poll, `TaskOutput`, `TaskStop`, or a person's stop from the panel) is one conditional update from `running` plus the
   model-visible `background_task_finished` event (idempotency key `background_task_finished:<taskId>`) in the same transaction. A finish a
   tool result already showed the model is `reported: true` (one short line, never wakes); a person's stop is `stoppedBy: "person"` (never
-  wakes), the stop of a conversation being deleted `stoppedBy: "deletion"` (never wakes; the delete marks the conversation deleted first). The event is absorbed like an interjection (a mid-run message) and wakes an idle conversation by the rules of the background Bash spec §3; they live in `RunQueue.ensureRun` (`background/wake-rules.ts`). A sub-agent's running tasks are stopped when the child
-  ends (`Waits.childFinished`); stopping a run leaves its tasks running.
+  wakes), the stop of a conversation being deleted `stoppedBy: "deletion"` (never wakes; the delete marks the conversation deleted first). The event is absorbed like an interjection (a mid-run message) and wakes an idle conversation by the rules of the background Bash spec §3; they live in `RunQueue.ensureRun` (`background/wake-rules.ts`), which applies them to a sub-agent's `subagent_delivery` too (agent map spec §5.3: `run_started.trigger: "subagent"`, the delivery's `triggerAccountId`, not for a child a person stopped) and to sub-agent conversations (woken by their own tasks and their own sub-agents' deliveries, with the queue and the trigger account's access read on the root; wake runs carry the root's budget window as `budget_run_id`). A background sub-agent keeps its running tasks when its run ends (a fork invocation's child has them stopped, `Waits.childFinished`); stopping a run leaves its tasks running.
 
 **Skill tools**:
 

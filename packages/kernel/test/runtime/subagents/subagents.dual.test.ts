@@ -276,7 +276,7 @@ describe("sub-agents across two replicas", () => {
     });
   }, 90_000);
 
-  it("children finished while their deliveries were lost: both replicas sweep, each delivered once", async () => {
+  it("children finished while their deliveries were lost: both replicas sweep, each delivered once, one wake", async () => {
     const a = await boot();
     const b = await boot();
     const reqA = await login(a);
@@ -304,7 +304,22 @@ describe("sub-agents across two replicas", () => {
       children.map((c) => `by hand ${c.runId}`).sort(),
     );
     expect(ofType(events, "subagent_finished")).toHaveLength(2);
-    expect(ofType(events, "run_finished")).toHaveLength(1);
+    // the idle parent is woken once (agent map spec §5.3): both replicas' deliveries reach
+    // ensureRun, which the conversation row lock and the 60 s window serialize
+    await waitForTerminal(db, conv, 2, 30_000);
+    await sleep(500);
+    const parentRuns = await db
+      .selectFrom("runs")
+      .select("id")
+      .where("conversation_id", "=", conv)
+      .orderBy("created_at")
+      .execute();
+    expect(parentRuns).toHaveLength(2);
+    const after = await eventsOf(db, conv);
+    expect(ofType(after, "run_finished")).toHaveLength(2);
+    const wakeStart = ofType(after, "run_started").find((e) => e.runId === parentRuns[1]?.id);
+    expect(wakeStart?.payload.trigger).toBe("subagent");
+    expect(ds.map((d) => d.seq)).toContain(wakeStart?.payload.triggerSeq);
   }, 90_000);
 
   it("a lost enqueue: both replicas sweep, the child runs once and delivers once", async () => {

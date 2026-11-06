@@ -711,7 +711,7 @@ export const KernelConfigSchema = z.object({
         .meta(
           meta({
             description:
-              "Whether the finish of a background Bash task starts a run on an idle conversation (the person who started the task's run is the trigger); an organization can override it in its settings. When false the event is only logged and shown, and the next message picks it up",
+              "Whether the finish of a background Bash task or a sub-agent's delivery starts a run on an idle conversation or sub-agent (the person who started the task's or the sub-agent's run is the trigger); an organization can override it in its settings. When false the event is only logged and shown, and the next message picks it up",
           }),
         ),
       maxRunSeconds: z

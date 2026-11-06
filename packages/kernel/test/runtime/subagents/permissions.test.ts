@@ -158,6 +158,9 @@ async function startKernel(): Promise<TestKernel> {
         roles: ["api", "worker"],
         extensions: [MODEL_FAKE, MODEL_SCRIPT, SANDBOX_FAKE, HOOKS_PROBE],
         extensionConfig: { "model-script": { rules: RULES }, "sandbox-fake": { root } },
+        // these tests are about dispatch, not waking (subagents/wake.test.ts): a parent woken by
+        // its children's deliveries would race their last-reply and one-run assertions
+        runtime: { wakeOnBackgroundTask: false },
       },
     ),
   );

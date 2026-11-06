@@ -70,15 +70,10 @@ export class RunJobs {
     return this.queue(name).getJob(jobId);
   }
 
-  /** Adds a conversation run job (`ensureRun`'s own enqueue). */
-  async add(data: RunJobData, jobId: string): Promise<void> {
-    await this.queue().add("run", data, { jobId, ...RUN_JOB_OPTIONS });
-  }
-
   /**
-   * Enqueues a run job under the caller's job id (resumes, dispatches, repairs). The queue follows
-   * the conversation's kind (a sub-agent's runs go to {@link SUBAGENT_RUN_QUEUE_NAME}); pass
-   * `kind` when the caller knows it, else it is read.
+   * Enqueues a run job under the caller's job id (`ensureRun`, resumes, dispatches, repairs). The
+   * queue follows the conversation's kind (a sub-agent's runs go to
+   * {@link SUBAGENT_RUN_QUEUE_NAME}); pass `kind` when the caller knows it, else it is read.
    */
   async enqueue(data: RunJobData, jobId: string, kind?: ConversationKind): Promise<void> {
     const k =
