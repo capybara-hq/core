@@ -1,9 +1,8 @@
 "use client";
 
-import { ListPage, ObjectRow, useToast } from "@capybara-hq/design";
+import { ListPage, ObjectRow } from "@capybara-hq/design";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
-import { useState } from "react";
 import { useComponentState, useComponentSwitch } from "../../../components/ComponentSwitch";
 import { ErrorFrame } from "../../../components/ErrorFrame";
 import { FormError } from "../../../components/form-error";
@@ -11,28 +10,22 @@ import { NoAccess } from "../../../components/NoAccess";
 import { rowActions } from "../../../components/PluginSwitch";
 import { usePagePath } from "../../../components/shell/path";
 import { useSession } from "../../../components/shell/session";
-import { type AgentTemplateView, setTemplateShareable } from "../../../lib/agents";
 import { usableRows } from "../../../lib/components";
 import { canUpdateOrg } from "../../../lib/org-settings";
 import { agentTemplatesQuery } from "../../../lib/query/agents";
 import { retryOnMountOf } from "../../../lib/query/client";
 import { orgComponentsQuery } from "../../../lib/query/components";
-import { keys } from "../../../lib/query/keys";
-import { useAppMutation } from "../../../lib/query/mutation";
 import { usePageQuery } from "../../../lib/query/page-query";
 import { useWorkspace } from "../../../lib/query/workspace";
-import { useErrorMessage } from "../../../lib/use-error-message";
 import NotFound from "../not-found";
 
 /**
  * `/agent-templates` (spec §8, §9): the agent templates the org can use (its own, 本组织) and the
- * platform ones offered to it (平台, with their state in the org: 已启用 · 平台统一 for `all`, 已启用, 未启用,
- * 插件未启用). Org admins switch platform templates (启用, 停用 with the preview of the agents using one);
- * members read the page. The org's own template (not a plugin's, whose sharing is its plugin's)
- * carries 可共享 (plugin scope phase 3): a chip when on, and the org admin's action to switch it,
- * shown only when the kernel says the template's `shareable`. A template is a sub-agent type in the
- * agent editor; creating an agent from one comes later. From the query cache (the layout prefetched
- * both lists on a first load); a switch invalidates them.
+ * platform ones offered to it (平台, with their state in the org: 已启用 · 平台统一 for `all`, 已启用,
+ * 未启用, 插件未启用). Org admins switch platform templates (启用, 停用 with the preview of the
+ * agents using one); members read the page. A template is a sub-agent type in the agent editor;
+ * creating an agent from one comes later. From the query cache (the layout prefetched both lists
+ * on a first load); a switch invalidates them.
  */
 export default function AgentTemplatesView() {
   const ws = useWorkspace({ min: "member" });
@@ -52,29 +45,7 @@ function AgentTemplates({ orgId }: { orgId: string }) {
   const cq = orgComponentsQuery(orgId, { kind: "agent_template" });
   const offered = useQuery({ ...cq, retryOnMount: retryOnMountOf(cq.queryKey) });
   const stateOf = useComponentState();
-  const { actionsOf, dialog, error: switchError, busy } = useComponentSwitch({ orgId, admin });
-  const toast = useToast();
-  const errorMessage = useErrorMessage();
-  const [shareError, setShareError] = useState<string>();
-  // 可共享 changes the template and what the platform may offer: both lists read again
-  const share = useAppMutation({
-    fn: (v: { id: string; shareable: boolean }) => setTemplateShareable(orgId, v.id, v.shareable),
-    invalidates: () => [keys.org(orgId).agentTemplates(), keys.org(orgId).componentsAll()],
-  });
-  const toggleShare = async (x: AgentTemplateView) => {
-    const next = x.shareable !== true;
-    setShareError(undefined);
-    try {
-      await share.mutateAsync({ id: x.id, shareable: next });
-      toast.success(
-        next ? t("share.doneOn", { name: x.name }) : t("share.doneOff", { name: x.name }),
-      );
-    } catch (e) {
-      setShareError(errorMessage(e));
-    }
-  };
-  const error =
-    switchError ?? (shareError !== undefined ? { message: shareError, extra: [] } : undefined);
+  const { actionsOf, dialog, error, busy } = useComponentSwitch({ orgId, admin });
   if (list.kind === "notFound") return <NotFound />;
   if (list.kind === "error") return <ErrorFrame reset={list.retry} />;
   const rows =
@@ -118,25 +89,13 @@ function AgentTemplates({ orgId }: { orgId: string }) {
         {rows.map((r) => {
           if (r.kind === "own") {
             const x = r.item;
-            const sharable = x.shareable !== undefined && x.plugin === null;
             return (
               <ObjectRow
                 key={x.id}
                 mark={{ text: x.name }}
                 name={x.name}
                 mono
-                chips={[
-                  { label: tc("origin.org") },
-                  ...(sharable && x.shareable === true ? [{ label: t("share.chip") }] : []),
-                ]}
-                {...(sharable && admin && !share.isPending
-                  ? {
-                      action: {
-                        label: x.shareable === true ? t("share.off") : t("share.on"),
-                        onSelect: () => void toggleShare(x),
-                      },
-                    }
-                  : {})}
+                chips={[{ label: tc("origin.org") }]}
                 description={x.description}
                 meta={[
                   fromOf(x.plugin, false),

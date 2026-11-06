@@ -692,6 +692,23 @@ describe("org-owned plugins in the admin console (phase 3)", () => {
     });
   });
 
+  it("待确认: an org item whose pending version carries no extension to confirm is not an upload row", async () => {
+    // a stale pending version with nothing waiting (not pending, not awaiting): no 确认 of a digest
+    const STALE = item({ pending: false, pendingVersion: "1.1.0", versions: ["1.1.0", "1.0.0"] });
+    stubApi(routes([STALE, FIRST], [STALE, FIRST]));
+    await renderRouteWithCache("/admin/plugins/pending", lastStubRoutes());
+    const list = await screen.findByRole("list", { name: P.pending.listLabel });
+    const row = (name: string) =>
+      within(list).queryAllByText(name)[0]?.closest("li") as HTMLElement | undefined;
+    const first = row("acme-files") as HTMLElement;
+    expect(within(first).getByText(P.pending.upload.extension)).toBeTruthy();
+    const stale = row("acme-crm");
+    if (stale !== undefined) {
+      expect(within(stale).queryByText(P.pending.upload.extension)).toBeNull();
+      expect(within(stale).queryByText(fill(P.pending.upload.by, { org: "Acme" }))).toBeNull();
+    }
+  });
+
   it("待确认: 拒绝 an org upload posts the reason", async () => {
     const calls = stubApi({
       ...routes([FIRST], [FIRST]),

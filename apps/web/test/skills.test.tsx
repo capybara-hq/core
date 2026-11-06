@@ -670,6 +670,55 @@ describe("plugin scope phase 3: 新建技能, 可共享 and the delete preview",
     expect(share).toHaveProperty("disabled", true);
   });
 
+  it("the delete waits for its preview; a failed preview offers 重试; the toast follows the preview seen", async () => {
+    let fail = true;
+    let release: () => void = () => {};
+    const held = new Promise<void>((r) => {
+      release = r;
+    });
+    let reads = 0;
+    const calls = stubApi({
+      [`GET ${BASE}/s1`]: () => json(200, detail({ origin: "org", shareable: true })),
+      [`GET ${BASE}/s1/delete-preview`]: async () => {
+        reads += 1;
+        if (fail) return json(500, { error: { code: "internal", message: "x" } });
+        await held;
+        return json(200, {
+          outcome: "transferred",
+          orgs: [{ id: "o2", name: "Beta" }],
+          agents: [],
+        });
+      },
+      [`DELETE ${BASE}/s1`]: () => noContent(),
+    });
+    await renderSkill();
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: en.skills.detail.delete }));
+    const dialog = await screen.findByRole("dialog");
+    await user.type(within(dialog).getByRole("textbox"), "pdf-tools");
+    const confirm = within(dialog).getByRole("button", { name: en.skills.detail.delete });
+    // the preview failed: an error with 重试, and no delete without it
+    const retry = await within(dialog).findByRole("button", {
+      name: en.skills.detail.previewRetry,
+    });
+    expect(confirm).toHaveProperty("disabled", true);
+    fail = false;
+    const before = reads;
+    await user.click(retry);
+    await vi.waitFor(() => expect(reads).toBe(before + 1));
+    // while it reads, confirm stays disabled
+    expect(confirm).toHaveProperty("disabled", true);
+    release();
+    await within(dialog).findByText(fill(en.plugins.delete.transferred, { orgs: "Beta" }));
+    await vi.waitFor(() => expect(confirm).toHaveProperty("disabled", false));
+    await user.click(confirm);
+    await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/skills"));
+    expect(calls.filter((c) => c.method === "DELETE")).toHaveLength(1);
+    expect(
+      await screen.findByText(fill(en.plugins.delete.doneTransferred, { name: "pdf-tools" })),
+    ).toBeTruthy();
+  });
+
   it.each(LOCALES)(
     "deleting a shared skill another org uses says it is transferred, naming the orgs and agents (%s)",
     async (locale) => {

@@ -5,18 +5,20 @@ import {
   Card,
   CodeBlock,
   type Column,
-  DangerConfirm,
   DataTable,
   DateTime,
   DetailPage,
+  Dialog,
+  Field,
   formatBytes,
+  Input,
   KeyValue,
   Stack,
   SwitchField,
   Text,
   useToast,
 } from "@capybara-hq/design";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
 import { ErrorFrame } from "../../../../components/ErrorFrame";
@@ -206,10 +208,8 @@ function ContentTab({ orgId, skill }: { orgId: string; skill: SkillDetail }) {
   const t = useTranslations("skills.detail");
   const router = useRouter();
   const toast = useToast();
-  const errorMessage = useErrorMessage();
   const { me } = useSession();
   const td = useTranslations("plugins.delete");
-  const qc = useQueryClient();
   const previewKey = keys.org(orgId).skillDeletePreview(skill.id);
   const [confirm, setConfirm] = useState(false);
   // A delete invalidates the library (the list this page goes back to) and forgets the skill once
@@ -245,81 +245,135 @@ function ContentTab({ orgId, skill }: { orgId: string; skill: SkillDetail }) {
               </Stack>
             </Stack>
           </Card>
-          <DangerConfirm
-            open={confirm}
-            onOpenChange={setConfirm}
-            title={t("deleteTitle", { name: skill.name })}
-            description={
-              confirm ? <DeleteImpact orgId={orgId} skillId={skill.id} /> : t("deleteHint")
-            }
-            confirmName={skill.name}
-            confirmLabel={t("delete")}
-            onConfirm={async () => {
-              let outcome: "transferred" | "removed" = "removed";
-              try {
+          {confirm && (
+            <SkillDeleteDialog
+              orgId={orgId}
+              skill={skill}
+              onClose={() => setConfirm(false)}
+              onDelete={async (outcome) => {
                 await remove.mutateAsync(undefined);
-                outcome = transferred(qc.getQueryData(previewKey)) ? "transferred" : "removed";
-              } catch (e) {
-                throw new Error(errorMessage(e));
-              }
-              setConfirm(false);
-              toast.success(
-                outcome === "transferred"
-                  ? td("doneTransferred", { name: skill.name })
-                  : t("deleted", { name: skill.name }),
-              );
-              router.push("/skills");
-            }}
-          />
+                setConfirm(false);
+                toast.success(
+                  outcome === "transferred"
+                    ? td("doneTransferred", { name: skill.name })
+                    : t("deleted", { name: skill.name }),
+                );
+                router.push("/skills");
+              }}
+            />
+          )}
         </>
       )}
     </Stack>
   );
 }
 
-const transferred = (p: unknown): boolean =>
-  (p as SkillDeletePreview | undefined)?.outcome === "transferred";
-
 /**
- * What deleting the skill does, read when the confirmation opens (ruling P3-19): one another org
- * uses is transferred to the platform (the orgs are named), and the org's agents that lose it are
- * listed. While it reads, or when it cannot be read, the plain delete hint stands.
+ * The delete confirmation (ruling P3-19): it reads what the delete does first and says it (one
+ * another org uses is transferred to the platform, the orgs named; the org's agents that lose it).
+ * 删除技能 stays disabled until that preview is read and the name typed; a preview that cannot be
+ * read says so with 重试. The outcome passed to `onDelete` is the preview the person saw.
  */
-function DeleteImpact({ orgId, skillId }: { orgId: string; skillId: string }) {
+function SkillDeleteDialog({
+  orgId,
+  skill,
+  onClose,
+  onDelete,
+}: {
+  orgId: string;
+  skill: SkillDetail;
+  onClose(): void;
+  onDelete(outcome: SkillDeletePreview["outcome"]): Promise<void>;
+}) {
   const t = useTranslations("skills.detail");
   const td = useTranslations("plugins.delete");
+  const tc = useTranslations("common");
   const sep = useLocale() === "zh" ? "、" : ", ";
+  const errorMessage = useErrorMessage();
+  const [typed, setTyped] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string>();
   const preview = useQuery({
-    ...skillDeletePreviewQuery(orgId, skillId),
+    ...skillDeletePreviewQuery(orgId, skill.id),
     refetchOnMount: "always",
   });
-  const p = preview.data;
+  // the preview shown, unless a read is in flight (a retry): only a settled preview is confirmed
+  const p = preview.isFetching ? undefined : preview.data;
+  const ready = p !== undefined && typed === skill.name && !busy;
+  const confirm = async () => {
+    if (!ready) return;
+    setBusy(true);
+    setError(undefined);
+    try {
+      await onDelete(p.outcome);
+    } catch (e) {
+      setError(errorMessage(e));
+      setBusy(false);
+    }
+  };
   return (
-    <Stack gap={8}>
-      {p !== undefined && p.outcome === "transferred" && (
-        <Text variant="prose" tone="warn">
-          {td("transferred", { orgs: p.orgs.map((o) => o.name).join(sep) })}
-        </Text>
-      )}
-      <Text variant="prose">{t("deleteHint")}</Text>
-      {p === undefined && preview.isPending && (
-        <Text variant="small" tone="muted">
-          {td("loading")}
-        </Text>
-      )}
-      {p !== undefined && p.agents.length > 0 && (
-        <Stack gap={4}>
-          <Text variant="small" tone="warn">
-            {td("agents")}
+    <Dialog
+      open
+      onOpenChange={(open) => {
+        if (!open && !busy) onClose();
+      }}
+      title={t("deleteTitle", { name: skill.name })}
+      danger
+      initialFocus="cancel"
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose} disabled={busy}>
+            {tc("cancel")}
+          </Button>
+          <Button
+            variant={ready ? "danger-solid" : "danger"}
+            disabled={!ready}
+            loading={busy}
+            onClick={() => void confirm()}
+          >
+            {t("delete")}
+          </Button>
+        </>
+      }
+    >
+      <Stack gap={12}>
+        {p !== undefined && p.outcome === "transferred" && (
+          <Text variant="prose" tone="warn">
+            {td("transferred", { orgs: p.orgs.map((o) => o.name).join(sep) })}
           </Text>
-          {p.agents.map((a) => (
-            <Text key={a.id} variant="small">
-              {`· ${a.name}`}
+        )}
+        <Text variant="prose">{t("deleteHint")}</Text>
+        {p === undefined && !preview.isError && (
+          <Text variant="small" tone="muted">
+            {td("loading")}
+          </Text>
+        )}
+        {preview.isError && !preview.isFetching && (
+          <Stack direction="row" gap={8} align="center" wrap>
+            <Text variant="small" tone="fail">
+              {t("previewFailed")}
             </Text>
-          ))}
-        </Stack>
-      )}
-    </Stack>
+            <Button onClick={() => void preview.refetch()}>{t("previewRetry")}</Button>
+          </Stack>
+        )}
+        {p !== undefined && p.agents.length > 0 && (
+          <Stack gap={4}>
+            <Text variant="small" tone="warn">
+              {td("agents")}
+            </Text>
+            {p.agents.map((a) => (
+              <Text key={a.id} variant="small">
+                {`· ${a.name}`}
+              </Text>
+            ))}
+          </Stack>
+        )}
+        <Field label={t("deleteTypeName", { name: skill.name })}>
+          <Input value={typed} autoComplete="off" onChange={(e) => setTyped(e.target.value)} />
+        </Field>
+        {error !== undefined && <FormError message={error} />}
+      </Stack>
+    </Dialog>
   );
 }
 

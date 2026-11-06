@@ -130,26 +130,11 @@ export interface AgentTemplateView {
   linkedIds?: string[];
   /** The catalog item (plugin) it came from, when any. */
   catalogItemId?: string | null;
-  /**
-   * Plugin scope phase 3: the org's own template is 可共享; absent when the kernel does not say
-   * (the page then offers no 可共享 action for it).
-   */
-  shareable?: boolean;
 }
 
 export const listAgentTemplates = (orgId: string) =>
   apiFetch<{ templates: AgentTemplateView[] }>(
     `/api/v1/orgs/${encodeURIComponent(orgId)}/agent-templates`,
-  );
-
-/**
- * Sets 可共享 on the org's own agent template (`PUT /agent-templates/:id/shareable`, org admins;
- * a copy of another owner's template -> 409 `catalog.not_owned`).
- */
-export const setTemplateShareable = (orgId: string, id: string, shareable: boolean) =>
-  apiFetch<{ id: string; shareable: boolean }>(
-    `/api/v1/orgs/${encodeURIComponent(orgId)}/agent-templates/${encodeURIComponent(id)}/shareable`,
-    { method: "PUT", body: JSON.stringify({ shareable }) },
   );
 
 /** Why `subagents` was refused (`agent.subagents_invalid` details). */

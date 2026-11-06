@@ -979,6 +979,41 @@ describe("org-owned components in the admin console (phase 3)", () => {
     expect(await screen.findByText(fill(C.share.shownToast, { name: "house-tone" }))).toBeTruthy();
   });
 
+  it("a component of an org-uploaded plugin: 停用 is the super admin's platform disable (P3-49)", async () => {
+    const FROM_ORG_PLUGIN = comp({
+      id: "s8",
+      name: "crm-notes",
+      plugin: "acme-crm",
+      itemId: "99999999-9999-4999-8999-999999999999",
+      owner: ACME,
+      shareable: false,
+      scopeMode: "follow",
+      onIn: ["o1"],
+    });
+    const calls = await open("/admin/skills/s8", {
+      ...routes,
+      "GET /api/v1/admin/components?kind=skill": () =>
+        json(200, { components: [...SKILLS, FROM_ORG_PLUGIN] }),
+      "GET /api/v1/admin/components/skill/s8/versions": () => json(200, { versions: [] }),
+      "POST /api/v1/admin/components/skill/s8/scope/preview": () =>
+        json(200, {
+          affected: [{ orgId: "o1", orgName: "Acme", agents: [], connectorsKept: 0 }],
+          conflicts: [],
+          scopeHash: "d8",
+        }),
+      "PUT /api/v1/admin/components/skill/s8/disabled": () =>
+        json(200, { ...FROM_ORG_PLUGIN, disabled: true }),
+    });
+    expect(await screen.findByRole("heading", { name: "crm-notes" })).toBeTruthy();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: C.detail.actions.disable }));
+    const dialog = await screen.findByRole("dialog");
+    expect(await within(dialog).findByText("Acme")).toBeTruthy();
+    await user.click(within(dialog).getByRole("button", { name: C.disableDialog.confirm }));
+    await waitFor(() => expect(put(calls, "/disabled")).toHaveLength(1));
+    expect(bodyOf(put(calls, "/disabled")[0])).toMatchObject({ disabled: true, scopeHash: "d8" });
+  });
+
   it("a promoted org skill: no 上传新版本 (its org uploads versions); 停用 stays", async () => {
     await open("/admin/skills/p7", routes);
     expect(await screen.findByRole("heading", { name: "brand-voice" })).toBeTruthy();

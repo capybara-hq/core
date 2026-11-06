@@ -326,79 +326,36 @@ describe("/agent-templates", () => {
   });
 });
 
-describe("/agent-templates: 可共享 on the org's own templates (plugin scope phase 3)", () => {
+describe("/agent-templates: templates are never shared in phase 3 (P3-46)", () => {
   beforeEach(() => resetNavigation("/agent-templates"));
-  const A = en.agentTemplates;
-  const own = (shareable: boolean | undefined) => ({
-    id: "t9",
-    name: "sales",
-    plugin: null,
-    type: "sales",
-    description: "sales template.",
-    model: "inherit",
-    version: 1,
-    origin: "org",
-    ...(shareable !== undefined && { shareable }),
-  });
-  const platform = {
-    id: "t1",
-    name: "reviewer",
-    plugin: "docs",
-    type: "docs:reviewer",
-    description: "reviewer template.",
-    model: "inherit",
-    version: 1,
-    origin: "platform",
-    linkedIds: [],
-    shareable: false,
-  };
-  const rowIn = async (name: string) => {
-    const l = await screen.findByRole("list", { name: A.listLabel });
-    const row = within(l)
-      .getAllByRole("listitem")
-      .find((li) => within(li).queryByText(name, { exact: true }) !== null);
-    if (row === undefined) throw new Error(`no row ${name}`);
-    return row as HTMLElement;
-  };
-
-  it("an org admin shares an own template; platform rows have no such action", async () => {
-    let shared = false;
+  it("an own template has no 可共享 chip or action, even when the kernel sends shareable", async () => {
     const r: Routes = {
-      [`GET ${ORG}/agent-templates`]: () => json(200, { templates: [platform, own(shared)] }),
-      [`GET ${ORG}/components?kind=agent_template`]: () =>
+      [`GET ${ORG}/agent-templates`]: () =>
         json(200, {
-          components: [component("t1", "reviewer", { kind: "agent_template", on: true })],
+          templates: [
+            {
+              id: "t9",
+              name: "sales",
+              plugin: null,
+              type: "sales",
+              description: "sales template.",
+              model: "inherit",
+              version: 1,
+              origin: "org",
+              shareable: true,
+            },
+          ],
         }),
-      [`PUT ${ORG}/agent-templates/t9/shareable`]: () => {
-        shared = true;
-        return json(200, { id: "t9", shareable: true });
-      },
+      [`GET ${ORG}/components?kind=agent_template`]: () => json(200, { components: [] }),
     };
     const calls = stubApi(r);
     await renderRouteWithCache("/agent-templates", r);
-    const reviewer = await rowIn("reviewer");
-    expect(within(reviewer).queryByRole("button", { name: A.share.on })).toBeNull();
-    await userEvent
-      .setup()
-      .click(within(await rowIn("sales")).getByRole("button", { name: A.share.on }));
-    await vi.waitFor(() =>
-      expect(bodyOf(calls.find((c) => c.method === "PUT"))).toEqual({ shareable: true }),
-    );
-    await vi.waitFor(async () =>
-      expect(within(await rowIn("sales")).getByText(A.share.chip)).toBeTruthy(),
-    );
-    expect(within(await rowIn("sales")).getByRole("button", { name: A.share.off })).toBeTruthy();
-  });
-
-  it("members see the 可共享 chip without the action", async () => {
-    const r: Routes = {
-      [`GET ${ORG}/agent-templates`]: () => json(200, { templates: [own(true)] }),
-      [`GET ${ORG}/components?kind=agent_template`]: () => json(200, { components: [] }),
-    };
-    await renderRouteWithCache("/agent-templates", r, { me: MEMBER });
-    const row = await rowIn("sales");
-    expect(within(row).getByText(A.share.chip)).toBeTruthy();
+    const l = await screen.findByRole("list", { name: en.agentTemplates.listLabel });
+    const row = within(l).getByText("sales").closest("li") as HTMLElement;
     expect(within(row).queryByRole("button")).toBeNull();
+    expect(within(row).queryByText(en.skills.detail.shareable)).toBeNull();
+    await settle();
+    expect(calls.some((c) => c.method === "PUT")).toBe(false);
   });
 });
 

@@ -52,17 +52,17 @@ import { useErrorMessage } from "../../../../../lib/use-error-message";
 import NotFound from "../../../not-found";
 
 /**
- * `/admin/plugins/pending`: what waits for a super admin (ListPage, tab 待确认; spec §4,
- * §5.1, Ruling I). First the plugins whose extension permissions are not confirmed (a built-in
- * plugin keeps running meanwhile): 审阅权限 opens the permission set, and confirming sends the
- * item's `permissionsHash` (which also installs an extension that was never deployed). Then the
+ * `/admin/plugins/pending`: what waits for a super admin (ListPage, tab 待确认; spec §4, §5.1, Ruling
+ * I). First the plugins whose extension permissions are not confirmed (a built-in plugin keeps
+ * running meanwhile): 审阅权限 opens the permission set, and confirming sends the item's
+ * `permissionsHash` (which also installs an extension that was never deployed). Then the
  * organizations' requests (`access`: use a plugin shown to them; `import`: bring in a marketplace
- * entry): 批准 takes effect at once, except an `import` request, whose approval stages the entry
- * and opens its import review (the scope defaults to the requesting org there); 拒绝 asks for an
- * optional reason the requester sees. An org's upload carrying an extension (phase 3) names its
- * org and new plugin or 更新 from -> to; 确认 reviews the waiting version's permissions and sends
- * its digest, 拒绝 asks for an optional reason the org sees. From the query cache (the layout prefetched both reads on a
- * first load); the requests are a section of the page.
+ * entry): 批准 takes effect at once, except an `import` request, whose approval stages the entry and
+ * opens its import review (the scope defaults to the requesting org there); 拒绝 asks for an optional
+ * reason the requester sees. An org's upload carrying an extension (phase 3) names its org and new
+ * plugin or 更新 from -> to; 确认 reviews the waiting version's permissions and sends its digest, 拒绝
+ * asks for an optional reason the org sees. From the query cache (the layout prefetched both reads
+ * on a first load); the requests are a section of the page.
  */
 export default function PendingView() {
   const gate = useAdmin();
@@ -165,7 +165,14 @@ function Pending({
         {items.map((i) => {
           const name = displayNameOf(i, locale);
           const owner = ownerOrgOf(i);
-          if (owner !== null && i.pendingVersion !== null && i.pendingVersion !== undefined) {
+          // only a version that waits with an extension (or a first upload awaiting) is an upload
+          // row: 确认 sends that extension's digest
+          if (
+            owner !== null &&
+            i.pendingVersion !== null &&
+            i.pendingVersion !== undefined &&
+            (i.awaitingConfirmation || i.pending)
+          ) {
             // An org's upload carrying an extension (rulings P3-9, P3-10): its org, new or
             // from -> to, the extension notice; 确认 reviews the waiting version's permissions
             return (

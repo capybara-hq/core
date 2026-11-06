@@ -799,7 +799,10 @@
       "shareable": "Shareable",
       "shareableHelp": "When on, the super admin can show or offer this skill to other organizations. Turning it off does not affect organizations it is already offered to.",
       "shareOn": "\"{name}\" is now shareable.",
-      "shareOff": "\"{name}\" is no longer shareable."
+      "shareOff": "\"{name}\" is no longer shareable.",
+      "previewFailed": "What deleting it does could not be read; retry before confirming.",
+      "previewRetry": "Retry",
+      "deleteTypeName": "Type \"{name}\" to confirm"
     },
     "description": "The skills this organization can use. Skills the platform turns on for everyone cannot be turned off; org admins turn the other platform skills on or off.",
     "create": {
@@ -4121,13 +4124,6 @@
     "listLabel": "Agent templates",
     "empty": "No agent templates yet. Plugins can bring agent templates.",
     "type": "type {type}",
-    "version": "v{version}",
-    "share": {
-      "chip": "Shareable",
-      "on": "Make shareable",
-      "off": "Stop sharing",
-      "doneOn": "\"{name}\" is now shareable.",
-      "doneOff": "\"{name}\" is no longer shareable."
-    }
+    "version": "v{version}"
   }
 }

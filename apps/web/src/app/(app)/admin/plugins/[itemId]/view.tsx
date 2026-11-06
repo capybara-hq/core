@@ -83,21 +83,21 @@ const TABS = ["components", "orgs", "versions"] as const;
 type Tab = (typeof TABS)[number];
 
 /**
- * `/admin/plugins/[itemId]`: one plugin (super admins, DetailPage; spec §9). Head: the name,
- * the platform's version, the 内置 / Claude Code chips and the scope; actions 设置范围 (the scope
- * dialog with its impact preview), 停用 (with the same preview) or 启用, and 更新到 <version>
- * when the catalog has a newer version than the platform's (the platform update preview, spec
- * §7.1), else 导入 <version> when its marketplace has a newer compatible version (stages it and
- * opens the import review). A built-in plugin has neither 设置范围 nor 停用. An org's upload
- * (phase 3) names its owner org, takes no 更新到 / 导入 (its org uploads its versions), only narrows
- * when its org does not share it, and takes no scope change while its first version waits. Tabs: 组件 (the
- * platform version's extension, skills, connector templates and agent templates with kind,
- * version and scope (跟随插件 or the component's own, linking to the component); its
- * dependencies; the translation report, the license; delete), 组织 (the scope and the orgs it names, or how many
- * turned it on), 版本 (each version's source, origin and import time). Inspector: the icon, the
- * package, source, publisher, scope, orgs using it and the permissions with their state. From the
- * query cache (the layout prefetched the reads on a first load): the item (a 404 is the not-found
- * state); the marketplaces, the catalog and the orgs are sections.
+ * `/admin/plugins/[itemId]`: one plugin (super admins, DetailPage; spec §9). Head: the name, the
+ * platform's version, the 内置 / Claude Code chips and the scope; actions 设置范围 (the scope dialog with
+ * its impact preview), 停用 (with the same preview) or 启用, and 更新到 <version> when the catalog has a
+ * newer version than the platform's (the platform update preview, spec §7.1), else 导入 <version>
+ * when its marketplace has a newer compatible version (stages it and opens the import review). A
+ * built-in plugin has neither 设置范围 nor 停用. An org's upload (phase 3) names its owner org, takes no
+ * 更新到 / 导入 (its org uploads its versions), only narrows when its org does not share it, and takes
+ * no scope change while its first version waits. Tabs: 组件 (the platform version's extension,
+ * skills, connector templates and agent templates with kind, version and scope (跟随插件 or the
+ * component's own, linking to the component); its dependencies; the translation report, the
+ * license; delete), 组织 (the scope and the orgs it names, or how many turned it on), 版本 (each
+ * version's source, origin and import time). Inspector: the icon, the package, source, publisher,
+ * scope, orgs using it and the permissions with their state. From the query cache (the layout
+ * prefetched the reads on a first load): the item (a 404 is the not-found state); the marketplaces,
+ * the catalog and the orgs are sections.
  */
 export default function PluginDetailGate({ itemId }: { itemId: string }) {
   const gate = useAdmin();
