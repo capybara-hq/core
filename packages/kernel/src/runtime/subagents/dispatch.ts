@@ -484,9 +484,15 @@ export async function commitDispatchIn(
     if (a.forSkill === undefined) {
       // an rc child that already ended under the foreground wait, whose rc finisher wrote
       // `subagent_finished` and resumed this run (no delivery; the sweep never delivers a run with
-      // `subagent_finished`): its report is this call's result, as the rc gave it, or it is lost
+      // `subagent_finished`): its report is this call's result, as the rc gave it, or it is lost.
+      // Only while the call has no result: a call that has one (a background dispatch's second
+      // holder) keeps it, and its child's finish stays to its delivery or the undelivered sweep.
+      const resultKey = resultEvent(ctx, callId, AGENT_TOOL, "").idemKey;
       const finished =
-        a.sent === undefined && existing.status !== null && !isActiveStatus(existing.status)
+        a.sent === undefined &&
+        existing.status !== null &&
+        !isActiveStatus(existing.status) &&
+        (await d.eventLog.findByIdem(ctx.conversationId, resultKey)) === undefined
           ? await rcFinishedResult(d, {
               parentRunId: ctx.runId,
               parentCallId: callId,

@@ -812,6 +812,105 @@ describe("dispatch idempotency under the parent run lock", () => {
     expect(ofType(events, "subagent_delivery")).toEqual([]);
   }, 60_000);
 
+  it("a second holder of a call that already has its result writes no subagent_finished for an undelivered child", async () => {
+    const { conv, runId, ctx } = await parentRun();
+    const childConv = randomUUID();
+    const childRun = randomUUID();
+    await db
+      .insertInto("conversations")
+      .values({
+        id: childConv,
+        org_id: orgId,
+        agent_id: agentId,
+        account_id: ownerId,
+        kind: "subagent",
+        parent_conversation_id: conv,
+        subagent_type: "general-purpose",
+        subagent_depth: 1,
+      })
+      .execute();
+    await db
+      .insertInto("runs")
+      .values({
+        id: childRun,
+        conversation_id: childConv,
+        status: "completed",
+        agent_version: 1,
+        trigger_account_id: ownerId,
+        trigger_seq: 1,
+        budget_run_id: runId,
+      })
+      .execute();
+    await db
+      .insertInto("subagent_dispatches")
+      .values({
+        parent_run_id: runId,
+        parent_call_id: "bg-1",
+        parent_conversation_id: conv,
+        step: 1,
+        child_conversation_id: childConv,
+        child_run_id: childRun,
+        resumed: false,
+        budget_run_id: runId,
+      })
+      .execute();
+    const log = k.app.get(EventLog);
+    // a background dispatch: the call's immediate result is logged
+    await log.append(conv, [
+      {
+        type: "tool_result",
+        runId,
+        idemKey: `tool_result:${runId}:bg-1`,
+        payload: {
+          step: 1,
+          callId: "bg-1",
+          toolKey: "Agent",
+          content: agentStartedText(childConv),
+          isError: false,
+        },
+      },
+    ] as AppendEvent[]);
+    // the child ended, its delivery not written yet (lost or in flight)
+    await log.append(childConv, [
+      {
+        type: "user_message",
+        payload: { content: [{ type: "text", text: "task" }], authorAccountId: ownerId },
+      },
+      {
+        type: "run_started",
+        runId: childRun,
+        payload: {
+          agentVersion: 1,
+          model: { provider: "model-script", model: "script-1" },
+          triggerAccountId: ownerId,
+        },
+      },
+      {
+        type: "assistant_message",
+        runId: childRun,
+        payload: {
+          step: 1,
+          content: [{ type: "text", text: "the background report" }],
+          stopReason: "end_turn",
+        },
+      },
+      {
+        type: "run_finished",
+        runId: childRun,
+        payload: { reason: "completed", consumedUpToSeq: 1 },
+      },
+    ] as AppendEvent[]);
+    const call = { toolKey: "Agent", authorization: { policy: "allow" }, startedAt: Date.now() };
+    const out = await dispatchSubagent(deps(), { ctx, callId: "bg-1", input, call });
+    expect(out).toMatchObject({ kind: "dispatched", content: agentStartedText(childConv) });
+    const events = await eventsOf(db, conv);
+    expect(toolResults(events).map((e) => e.payload.content)).toEqual([
+      agentStartedText(childConv),
+    ]);
+    // the undelivered sweep still sees the run as undelivered
+    expect(ofType(events, "subagent_finished")).toEqual([]);
+  }, 60_000);
+
   it("the dispatch locks the parent conversation before the parent run (final review m2)", async () => {
     const { conv, runId, ctx } = await parentRun();
     let release!: () => void;
