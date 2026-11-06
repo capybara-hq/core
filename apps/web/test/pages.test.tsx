@@ -79,65 +79,92 @@ describe("(app) 页面模板", () => {
     ...over,
   });
 
-  it("Agents page: object rows with the visibility in the meta line (no chip) and the row action Chat", async () => {
+  /** What the agents page reads on a first load (members up: the members and the templates). */
+  const agentsPage = (agents: unknown[]) => ({
+    "GET /api/v1/orgs/o1/agents": () => json(200, { agents }),
+    "GET /api/v1/orgs/o1/members": () =>
+      json(200, {
+        members: [
+          {
+            account: { id: "someone-else", displayName: "Lin", email: null },
+            role: "member",
+            joinedAt: "2026-10-01T00:00:00Z",
+            anonymous: false,
+          },
+        ],
+      }),
+    "GET /api/v1/orgs/o1/agent-templates": () => json(200, { templates: [] }),
+    "GET /api/v1/orgs/o1/components": () => json(200, { components: [] }),
+  });
+
+  it("Agents page: cards with owner · visibility as the meta line (no chip) and the primary 开始会话", async () => {
     const calls = stubApi({});
     await renderRouteWithCache(
       "/agents",
-      {
-        "GET /api/v1/orgs/o1/agents": () => json(200, { agents: [agentRow("ag1", "Echo agent")] }),
-      },
+      agentsPage([
+        agentRow("ag1", "Echo agent", {
+          profile: { ...agentRow("x", "x").profile, description: "Says it back." },
+        }),
+      ]),
       { locale: "zh" },
     );
     expect(template("ListPage")).not.toBeNull();
-    const list = await screen.findByRole("list", { name: zh.agents.title });
-    const row = within(list).getAllByRole("listitem")[0] as HTMLElement;
-    expect(within(row).getByText("Echo agent")).toBeTruthy();
-    // visibility is plain metadata: the first part of the mono meta line, never a chip
-    expect(row.querySelector(".cb-object-chip")).toBeNull();
-    expect(
-      within(row).getByText(`${zh.agents.scope.org} · model-fake / fake-1 · 2 技能 · 1 工具`),
-    ).toBeTruthy();
+    const grid = await screen.findByRole("list", { name: zh.agents.title });
+    expect(grid.getAttribute("data-part")).toBe("card-grid");
+    const card = within(grid).getAllByRole("listitem")[0] as HTMLElement;
+    // the name is the card's one link, to the agent's page
+    expect(within(card).getByRole("link", { name: "Echo agent" }).getAttribute("href")).toBe(
+      "/agents/ag1",
+    );
+    expect(within(card).getByText("Says it back.")).toBeTruthy();
+    // owner · visibility is plain metadata, never a chip
+    expect(card.querySelector(".cb-object-chip")).toBeNull();
+    expect(within(card).getByText(`Lin · ${zh.agents.scope.org}`)).toBeTruthy();
+    // 开始会话: a new conversation with the agent picked; nothing is created before the first send
+    expect(within(card).getByRole("link", { name: zh.agents.chat }).getAttribute("href")).toBe(
+      "/chat?agent=ag1",
+    );
     expect(screen.getByRole("link", { name: zh.agents.new }).getAttribute("href")).toBe(
       "/agents/new",
     );
-    await userEvent.setup().click(within(row).getByRole("button", { name: zh.agents.chat }));
-    // A new conversation with the agent picked: nothing is created before the first send.
-    expect(router.push).toHaveBeenCalledWith("/chat?agent=ag1");
     expect(calls.some((c) => c.method === "POST")).toBe(false);
   });
 
-  it("Agents page: tabs with counts (all / mine / shared) and a local search", async () => {
+  it("Agents page: the tabs 智能体 / 模板 with counts, the toolbar filter 全部 / 我的 / 组织共享 and a local search", async () => {
     stubApi({});
-    await renderRouteWithCache("/agents", {
-      "GET /api/v1/orgs/o1/agents": () =>
-        json(200, {
-          agents: [
-            agentRow("ag1", "Alpha"),
-            agentRow("ag2", "Beta", { ownerAccountId: ME.account.id, visibility: "private" }),
-            agentRow("ag3", "Gamma", { ownerAccountId: ME.account.id }),
-          ],
-        }),
-    });
+    await renderRouteWithCache(
+      "/agents",
+      agentsPage([
+        agentRow("ag1", "Alpha"),
+        agentRow("ag2", "Beta", { ownerAccountId: ME.account.id, visibility: "private" }),
+        agentRow("ag3", "Gamma", { ownerAccountId: ME.account.id }),
+      ]),
+    );
     const user = userEvent.setup();
     await screen.findByText("Alpha");
-    await user.click(screen.getByRole("tab", { name: /Mine/ }));
+    expect(screen.getByRole("tab", { name: /Agents/ }).textContent).toContain("3");
+    expect(screen.getByRole("tab", { name: /Templates/ }).textContent).toContain("0");
+    // the owner is "Me" on one's own agents
+    expect(screen.getByText(`${en.agents.ownerMe} · ${en.agents.scope.private}`)).toBeTruthy();
+    const filter = screen.getByRole("radiogroup", { name: en.agents.filter });
+    await user.click(within(filter).getByRole("radio", { name: en.agents.tabs.mine }));
     expect(screen.queryByText("Alpha")).toBeNull();
     expect(screen.getByText("Beta")).toBeTruthy();
-    expect(screen.getByRole("tab", { name: /Mine/ }).textContent).toContain("2");
-    await user.click(screen.getByRole("tab", { name: /Shared with org/ }));
+    await user.click(within(filter).getByRole("radio", { name: en.agents.tabs.shared }));
     expect(screen.queryByText("Beta")).toBeNull();
-    expect(screen.getByRole("tab", { name: /Shared with org/ }).textContent).toContain("2");
-    await user.click(screen.getByRole("tab", { name: /All/ }));
+    expect(screen.getByText("Gamma")).toBeTruthy();
+    await user.click(within(filter).getByRole("radio", { name: en.agents.tabs.all }));
     await user.type(screen.getByRole("searchbox", { name: en.agents.search }), "gam");
     expect(screen.getByText("Gamma")).toBeTruthy();
     expect(screen.queryByText("Alpha")).toBeNull();
+    // nothing left: one sentence, no primary
+    await user.type(screen.getByRole("searchbox", { name: en.agents.search }), "zzz");
+    expect(screen.getByText(en.agents.noMatch)).toBeTruthy();
   });
 
   it("Agents page: the empty state is one sentence and the primary action", async () => {
     stubApi({});
-    await renderRouteWithCache("/agents", {
-      "GET /api/v1/orgs/o1/agents": () => json(200, { agents: [] }),
-    });
+    await renderRouteWithCache("/agents", agentsPage([]));
     expect(await screen.findByText(en.agents.empty)).toBeTruthy();
     expect(screen.queryByRole("table")).toBeNull();
     expect(screen.getAllByRole("link", { name: en.agents.new }).length).toBeGreaterThan(0);
@@ -268,7 +295,6 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
       // 更多: plugins (members and up), extensions (org admins)
       [zh.nav.plugins, "/plugins"],
       [zh.nav.extensions, "/extensions"],
-      [zh.nav.agentTemplates, "/agent-templates"],
       // org admins (owner) see channels, evals and organization settings
       [zh.nav.channels, "/channels"],
       [zh.nav.evals, "/evals"],

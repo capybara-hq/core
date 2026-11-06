@@ -248,7 +248,7 @@ describe("the new conversation page (agent profile design §4)", () => {
     expect(input()).toHaveProperty("value", "Plan body!");
   });
 
-  it("an agent with avatar null shows its initial in the row, list, title bar and sidebar", async () => {
+  it("an agent with avatar null shows its initial in the row, the cards, title bar and sidebar", async () => {
     const plain = {
       agents: [
         agent("ag1", "echo agent", { avatar: null }),
@@ -270,11 +270,16 @@ describe("the new conversation page (agent profile design §4)", () => {
     ).toBe("owl");
     cleanup();
 
-    // the agent list rows (28)
-    await renderRouteWithCache("/agents", { [`GET ${ORG}/agents`]: () => json(200, plain) });
+    // the agent cards (40, ruling P4-15)
+    await renderRouteWithCache("/agents", {
+      [`GET ${ORG}/agents`]: () => json(200, plain),
+      [`GET ${ORG}/members`]: () => json(200, { members: [] }),
+      [`GET ${ORG}/agent-templates`]: () => json(200, { templates: [] }),
+      [`GET ${ORG}/components`]: () => json(200, { components: [] }),
+    });
     const listRow = screen.getByText("echo agent").closest("li");
     expect(initialIn(listRow)).toBe("E");
-    expect(listRow?.querySelector('[data-part="avatar"]')?.getAttribute("data-size")).toBe("28");
+    expect(listRow?.querySelector('[data-part="avatar"]')?.getAttribute("data-size")).toBe("40");
     cleanup();
 
     // the conversation title bar, next to the agent name (16)

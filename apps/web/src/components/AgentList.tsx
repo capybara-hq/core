@@ -1,18 +1,18 @@
 "use client";
 
-import { ObjectRow } from "@capybara-hq/design";
+import { ObjectCard } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
-import { useContext } from "react";
-import { useRouter } from "../i18n/navigation";
+import { useState } from "react";
 import { type Agent, avatarValue } from "../lib/agents";
 import { modelLabel } from "../lib/extension-label";
-import { canUpdateOrg } from "../lib/org-settings";
+import { canEditAgent, canUpdateOrg } from "../lib/org-settings";
+import type { Me } from "../lib/session";
+import { ReassignOwnerDialog } from "./ReassignOwnerDialog";
 import { navLevelOf } from "./shell/nav";
-import { SessionContext } from "./shell/session";
 
 export type AgentScope = "all" | "mine" | "shared";
 
-/** Whether the agent belongs to the "mine" / "shared" tab (the kernel decides who can see what). */
+/** Whether the agent belongs to the "mine" / "shared" filter (the kernel decides who can see what). */
 export function inScope(a: Agent, scope: AgentScope, accountId: string | undefined): boolean {
   if (scope === "mine") return a.ownerAccountId === accountId;
   if (scope === "shared") return a.visibility !== "private";
@@ -29,45 +29,68 @@ export function matchesAgent(a: Agent, query: string): boolean {
 }
 
 /**
- * One agent as an object row: mark, name (links to the edit page for the owner and org admins),
- * scope chip, a meta line (model, skills, tools) and the row action "Start conversation", which opens a new
- * conversation with that agent picked (`/chat?agent=`, created on the first send). The API returns
- * no last-use time, so there is no trailing text.
+ * One agent as a card (rulings P4-15, P4-16): avatar, name (the whole card opens the agent's page,
+ * read-only for whoever may only use it), the description, the meta line owner · 可见范围, the
+ * primary 开始会话 (`/chat?agent=`, a new conversation with that agent picked, created on the first
+ * send) and the ⋯ menu as the agent page's: 设置 (whoever may change it), 运行记录 (org admins, and
+ * a member who owns it), 更改所有者 (org admins, the agent page's dialog). 另存为模板 (org admins)
+ * joins the menu with its dialog (phase 4 Task 9); until then it is left out rather than shown dead.
+ * `ownerName` is the owner's display name when the members list is readable (members up).
  */
-export function AgentRow({ agent }: { agent: Agent }) {
+export function AgentCard({
+  agent,
+  me,
+  ownerName,
+}: {
+  agent: Agent;
+  me: Me;
+  ownerName: string | undefined;
+}) {
   const t = useTranslations("agents");
-  const router = useRouter();
-  const session = useContext(SessionContext);
-  // The kernel lets the owner (agents.create: members up) or an org admin change an agent.
-  const admin = session !== null && canUpdateOrg(session.me);
-  const canEdit =
-    session !== null &&
-    navLevelOf(session.me) !== "guest" &&
-    (agent.ownerAccountId === session.me.account.id || admin);
-  const def = agent.definition;
-  const skills = def.skills?.orgSkills.length ?? 0;
-  const tools = def.tools?.length ?? 0;
-  // Visibility is plain metadata (mono muted meta text), never a chip.
-  const meta = [
-    t(`scope.${agent.visibility}`),
-    // The list has no providers list (it would cost a vendor call): the provider id stands in.
-    modelLabel({ name: def.model.provider }, def.model.model, "en"),
-    ...(skills > 0 ? [t("meta.skills", { n: skills })] : []),
-    ...(tools > 0 ? [t("meta.tools", { n: tools })] : []),
-  ].join(" · ");
-  const editHref = `/agents/${encodeURIComponent(agent.id)}`;
-  const start = () => router.push(`/chat?agent=${encodeURIComponent(agent.id)}`);
+  const tp = useTranslations("agents.page");
+  const [reassigning, setReassigning] = useState(false);
+  const admin = canUpdateOrg(me);
+  const level = navLevelOf(me);
+  const mine = agent.ownerAccountId === me.account.id;
+  const editable = canEditAgent(me, agent);
+  // As the agent page: its run history for org admins and for a member who owns it
+  const canViewRuns = editable && (level === "admin" || (level === "member" && mine));
+  const name = agent.definition.name;
+  const page = `/agents/${encodeURIComponent(agent.id)}`;
+  const owner = mine ? t("ownerMe") : ownerName;
+  const description = agent.profile.description;
   return (
     <>
-      <ObjectRow
-        mark={{ text: def.name, avatar: avatarValue(agent, agent.orgId) }}
-        name={def.name}
-        {...(canEdit ? { href: editHref } : {})}
-        meta={meta}
-        // The row's one action starts a conversation; the name opens the agent's page, where the
-        // owner is changed (maintainer decision 2026-11-07: no owner change in the list).
-        action={{ label: t("chat"), onSelect: start }}
+      <ObjectCard
+        avatar={avatarValue(agent, agent.orgId)}
+        title={name}
+        href={page}
+        {...(description !== "" ? { description } : {})}
+        // Visibility is plain metadata, never a chip; the owner only when it can be named
+        meta={[...(owner !== undefined ? [owner] : []), t(`scope.${agent.visibility}`)]}
+        primary={{ label: t("chat"), href: `/chat?agent=${encodeURIComponent(agent.id)}` }}
+        menu={[
+          ...(editable ? [{ label: t("settings"), href: page }] : []),
+          ...(canViewRuns
+            ? [
+                {
+                  label: t("runHistory"),
+                  href: `/trajectories?agentId=${encodeURIComponent(agent.id)}`,
+                },
+              ]
+            : []),
+          ...(admin ? [{ label: tp("reassign"), onSelect: () => setReassigning(true) }] : []),
+        ]}
       />
+      {reassigning ? (
+        <ReassignOwnerDialog
+          orgId={agent.orgId}
+          agentId={agent.id}
+          ownerAccountId={agent.ownerAccountId}
+          needsReassignment={agent.needsReassignment === true}
+          onClose={() => setReassigning(false)}
+        />
+      ) : null}
     </>
   );
 }

@@ -111,6 +111,12 @@ describe("the agent pages render on the server (web-SSR spec §6)", () => {
     tools: [{ key: "mcp__tracker__find", status: "enabled" }],
   };
   const ok = (body: unknown) => () => apiJson(200, body);
+  /** What `/agents` reads besides the agents for members up (owner names, the 模板 tab). */
+  const agentsPageReads = {
+    [`GET ${ORG}/members`]: ok({ members: [] }),
+    [`GET ${ORG}/agent-templates`]: ok({ templates: [] }),
+    [`GET ${ORG}/components`]: ok({ components: [] }),
+  };
   const formRoutes = {
     [`GET ${ORG}/models`]: ok(MODELS),
     [`GET ${ORG}/connectors`]: ok({ connectors: [connector] }),
@@ -143,7 +149,7 @@ describe("the agent pages render on the server (web-SSR spec §6)", () => {
     stubApi({});
     await renderRouteWithCache(
       "/agents",
-      { [`GET ${ORG}/agents`]: ok({ agents: [] }) },
+      { [`GET ${ORG}/agents`]: ok({ agents: [] }), ...agentsPageReads },
       { readiness: NOT_READY },
     );
     await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/chat"));
@@ -154,6 +160,8 @@ describe("the agent pages render on the server (web-SSR spec §6)", () => {
     const browser = stubApi({});
     await renderRouteWithCache("/agents", {
       [`GET ${ORG}/agents`]: ok({ agents: [agent("ag1", "Echo agent")] }),
+      // members up: the cards' owner names and the 模板 tab (its count) paint at once too
+      ...agentsPageReads,
     });
     expect(screen.getByText("Echo agent")).toBeTruthy();
     await settle();
@@ -166,6 +174,7 @@ describe("the agent pages render on the server (web-SSR spec §6)", () => {
       release = r;
     });
     await renderRouteEmptyCache("/agents", {
+      ...agentsPageReads,
       [`GET ${ORG}/agents`]: async () => {
         await held;
         return apiJson(200, { agents: [agent("ag1", "Echo agent")] });

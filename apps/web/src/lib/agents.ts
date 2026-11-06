@@ -137,6 +137,54 @@ export const listAgentTemplates = (orgId: string) =>
     `/api/v1/orgs/${encodeURIComponent(orgId)}/agent-templates`,
   );
 
+/**
+ * One template usable in the org (kernel `AgentTemplateDetail`, `GET …/agent-templates/:id`;
+ * not usable there -> 404 `component.not_found`): `owned` is the org's own template, whose org
+ * admins edit, delete and set 可共享 on it (rulings P4-12, P4-13); always false for a plugin's.
+ */
+export interface AgentTemplateDetail extends AgentTemplateView {
+  /** The served definition (SDK `AgentTemplate`; the web reads only what it shows). */
+  definition: Record<string, unknown>;
+  owner: { kind: "platform" } | { kind: "org"; orgId: string; name: string };
+  owned: boolean;
+  /** 可共享 (only meaningful when `owned`). */
+  shareable: boolean;
+  /** Shared already: promoted to a platform row (ruling P3-3). */
+  promoted: boolean;
+}
+
+const templatePath = (orgId: string, id: string) =>
+  `/api/v1/orgs/${encodeURIComponent(orgId)}/agent-templates/${encodeURIComponent(id)}`;
+
+export const getAgentTemplate = (orgId: string, id: string) =>
+  apiFetch<{ template: AgentTemplateDetail }>(templatePath(orgId, id));
+
+/** Sets 可共享 on the org's own template (`agents.manage`). */
+export const setAgentTemplateShareable = (orgId: string, id: string, shareable: boolean) =>
+  apiFetch<{ id: string; shareable: boolean }>(`${templatePath(orgId, id)}/shareable`, {
+    method: "PUT",
+    body: JSON.stringify({ shareable }),
+  });
+
+/**
+ * What deleting the org's own template does (nothing written; P3 owner rules): `transferred` when
+ * it was shared and other orgs use it (`orgs`; it becomes the platform's), else `removed`; `agents`:
+ * the org's agents whose sub-agent roster names it. Agents created from it are never touched.
+ */
+export interface AgentTemplateDeletePreview {
+  outcome: "removed" | "transferred";
+  orgs: { id: string; name: string }[];
+  agents: { id: string; name: string }[];
+}
+
+export const previewAgentTemplateDelete = (orgId: string, id: string) =>
+  apiFetch<AgentTemplateDeletePreview>(`${templatePath(orgId, id)}/delete-preview`);
+
+export const deleteAgentTemplate = (orgId: string, id: string) =>
+  apiFetch<{ outcome: AgentTemplateDeletePreview["outcome"] }>(templatePath(orgId, id), {
+    method: "DELETE",
+  });
+
 /** Why `subagents` was refused (`agent.subagents_invalid` details). */
 export const SUBAGENTS_INVALID_REASONS = [
   "not_found",
@@ -430,3 +478,9 @@ export async function uploadAvatar(
   );
   return { uploadId: created.id };
 }
+
+/** The `/agents` page's tabs (ruling P4-14): 智能体, or 模板 (`?tab=templates`). */
+export type AgentsTab = "agents" | "templates";
+
+export const parseAgentsTab = (raw: string | undefined | null): AgentsTab =>
+  raw === "templates" ? "templates" : "agents";

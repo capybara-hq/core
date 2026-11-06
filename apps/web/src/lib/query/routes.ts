@@ -1,7 +1,8 @@
 import type { QueryClient, UseQueryOptions } from "@tanstack/react-query";
-import { type Agent, setupReady } from "../agents";
+import { type Agent, type AgentTemplateView, setupReady } from "../agents";
 import type { ApiClientError } from "../api";
 import type { ChannelConnection } from "../channels";
+import { maybeOwnTemplate, type OrgComponent, usableRows } from "../components";
 import { type ConnectorSummary, personalConnectors } from "../connectors";
 import type { Conversation, ConversationEvent } from "../conversations";
 import type { EvalSetDetail } from "../evals";
@@ -34,6 +35,7 @@ import {
   agentFormQueries,
   agentQuery,
   agentsQuery,
+  agentTemplateQuery,
   agentTemplatesQuery,
 } from "./agents";
 import { authSourcesQuery, invitationQuery, pendingBindingQuery } from "./auth";
@@ -315,16 +317,40 @@ export const ROUTES: readonly RouteEntry[] = [
     queries: ({ me }) => (superAdmin(me) ? [q(deploymentSettingsQuery())] : []),
   },
   {
-    pattern: "/agent-templates",
-    // Members up: the usable templates and the platform ones offered to the org (a section).
-    queries: ({ orgId, me }) =>
-      orgId === null || !atLeast(me, "member")
-        ? []
-        : [q(agentTemplatesQuery(orgId)), q(orgComponentsQuery(orgId, { kind: "agent_template" }))],
-  },
-  {
     pattern: "/agents",
-    queries: ({ orgId }) => (orgId === null ? [] : [q(agentsQuery(orgId))]),
+    // Both tabs paint at once (ruling P4-14; the head counts both): the agents, and for members up
+    // the members (the cards' owner names), the usable templates and the platform ones offered to
+    // the org (a section). Guests get the agents only (no tabs).
+    queries: ({ orgId, me }) =>
+      orgId === null
+        ? []
+        : [
+            q(agentsQuery(orgId)),
+            ...(atLeast(me, "member")
+              ? [
+                  q(membersQuery(orgId)),
+                  q(agentTemplatesQuery(orgId)),
+                  q(orgComponentsQuery(orgId, { kind: "agent_template" })),
+                ]
+              : []),
+          ],
+    // Org admins: the detail of each template that may be the org's own (its 编辑 / 可共享 /
+    // 删除 depend on `owned` and `shareable`), so the cards' menus paint complete
+    // biome-ignore lint/suspicious/noThenProperty: RouteEntry's `then` step (controller ruling)
+    then: async ({ orgId, me }, qc) => {
+      if (orgId === null || !atLeast(me, "admin")) return;
+      const templates = qc.getQueryData<{ templates: AgentTemplateView[] }>(
+        agentTemplatesQuery(orgId).queryKey,
+      );
+      if (templates === undefined) return;
+      const offered = qc.getQueryData<{ components: OrgComponent[] }>(
+        orgComponentsQuery(orgId, { kind: "agent_template" }).queryKey,
+      );
+      const ids = usableRows(templates.templates, offered?.components)
+        .filter((r) => maybeOwnTemplate(r, orgId))
+        .flatMap((r) => (r.item !== undefined ? [r.item.id] : []));
+      await Promise.all(ids.map((id) => qc.prefetchQuery(agentTemplateQuery(orgId, id))));
+    },
   },
   {
     pattern: "/agents/[id]",

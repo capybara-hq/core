@@ -7,6 +7,8 @@ import {
   DateTime,
   type HeaderAction,
   KeyValue,
+  type MenuItem,
+  ObjectCard,
   Stack,
   Text,
   useToast,
@@ -170,6 +172,42 @@ export function ComponentsTable({
   );
 }
 
+/**
+ * One platform component as a card (ruling P4-17, the admin 智能体模板 list): the initial square,
+ * the name (the whole card opens its detail), the description, the meta line source · owner ·
+ * scope · v (内置 plain, 已停用 / 插件已停用 in `warn`), the primary 查看 and ⋯ with the detail's
+ * 对其他组织显示, 设置范围 and 停用 / 启用 (each opening the detail's dialog with its preview);
+ * 上传新版本 stays on the detail.
+ */
+export function ComponentCard({ c, orgId }: { c: PlatformComponent; orgId: string | null }) {
+  const t = useTranslations("adminComponents");
+  const scopeText = useComponentScopeText();
+  const ownerText = useOwnerText();
+  const { menu, dialog } = useComponentActions(c, orgId);
+  const href = `${COMPONENT_ROUTES[c.kind]}/${encodeURIComponent(c.id)}`;
+  return (
+    <>
+      <ObjectCard
+        title={c.name}
+        href={href}
+        {...(c.description !== null && c.description !== "" ? { description: c.description } : {})}
+        meta={[
+          c.plugin ?? (platformOwned(c) ? t("from.none") : t("from.org")),
+          ownerText(c),
+          scopeText(c),
+          versionLabel(c.version),
+          ...(c.builtin ? [t("state.builtin")] : []),
+          ...(c.disabled ? [{ label: t("state.disabled"), tone: "warn" as const }] : []),
+          ...(c.pluginStopped ? [{ label: t("state.pluginStopped"), tone: "warn" as const }] : []),
+        ]}
+        primary={{ label: t("view"), href }}
+        menu={menu}
+      />
+      {dialog}
+    </>
+  );
+}
+
 /** The detail's facts, a KeyValue in its single column: 来自, 归属, 范围, 在用组织, 版本, 状态. */
 export function ComponentFacts({ c }: { c: PlatformComponent }) {
   const t = useTranslations("adminComponents");
@@ -258,7 +296,7 @@ export function ComponentOrgs({ c }: { c: PlatformComponent }) {
 export function useComponentActions(
   c: PlatformComponent,
   orgId: string | null,
-): { actions: HeaderAction[]; dialog: ReactNode } {
+): { actions: HeaderAction[]; menu: MenuItem[]; dialog: ReactNode } {
   const t = useTranslations("adminComponents.detail");
   const ts = useTranslations("adminComponents.share");
   const toast = useToast();
@@ -322,6 +360,21 @@ export function useComponentActions(
     ...(disable ? [disableAction] : []),
     ...(platform && c.kind !== "connector_template" ? [uploadAction] : []),
   ];
+  // The same actions as a card's ⋯ menu (ruling P4-17): 上传新版本 stays on the detail, and 停用
+  // is the menu's destructive item, last
+  const menu: MenuItem[] = [
+    ...(shared && c.scope === "named" && !c.shownToOthers
+      ? [{ label: ts("show"), onSelect: showAction.onSelect ?? (() => {}) }]
+      : []),
+    ...(scope ? [{ label: t("actions.scope"), onSelect: () => setOpen("scope") }] : []),
+    ...(disable
+      ? [
+          c.disabled
+            ? { label: t("actions.enable"), onSelect: disableAction.onSelect ?? (() => {}) }
+            : { label: t("actions.disable"), danger: true, onSelect: () => setOpen("disable") },
+        ]
+      : []),
+  ];
   const dialog =
     open === "scope" ? (
       <ComponentScopeDialog component={c} orgId={orgId} onClose={close} />
@@ -330,7 +383,7 @@ export function useComponentActions(
     ) : open === "upload" ? (
       <ComponentUploadDialog component={c} orgId={orgId} onClose={close} />
     ) : null;
-  return { actions: lockWhileRunning(actions), dialog };
+  return { actions: lockWhileRunning(actions), menu, dialog };
 }
 
 /** The 全部 / 平台 / 组织创建 tabs of a component list, with their counts and filtered rows. */

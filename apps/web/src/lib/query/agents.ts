@@ -1,5 +1,12 @@
 import type { UseQueryOptions } from "@tanstack/react-query";
-import { type Agent, getAgent, listAgents, listAgentTemplates } from "../agents";
+import {
+  type Agent,
+  getAgent,
+  getAgentTemplate,
+  listAgents,
+  listAgentTemplates,
+  previewAgentTemplateDelete,
+} from "../agents";
 import type { ApiClientError } from "../api";
 import { listAvailableExtensionPoints, listExtensionTools } from "../extensions";
 import { listAgentSkills } from "../skills";
@@ -32,6 +39,22 @@ export const agentTemplatesQuery = (orgId: string) =>
     key: keys.org(orgId).agentTemplates(),
     fn: () => listAgentTemplates(orgId),
     freshness: "orgConfig",
+  });
+
+/** One agent template usable in the org (a 404 when it is not). */
+export const agentTemplateQuery = (orgId: string, id: string) =>
+  defineQuery({
+    key: keys.org(orgId).agentTemplate(id),
+    fn: () => getAgentTemplate(orgId, id).then((r) => r.template),
+    freshness: "orgConfig",
+  });
+
+/** What deleting the org's own agent template does (read when its confirmation opens). */
+export const agentTemplateDeletePreviewQuery = (orgId: string, id: string) =>
+  defineQuery({
+    key: keys.org(orgId).agentTemplateDeletePreview(id),
+    fn: () => previewAgentTemplateDelete(orgId, id),
+    freshness: "live",
   });
 
 /** The skills the agent wrote itself (`{ skills }`). */

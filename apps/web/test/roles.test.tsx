@@ -258,7 +258,6 @@ const noAccess = () =>
 
 describe("NoAccess names the page by its nav label", () => {
   it.each([
-    ["/agent-templates", zh.nav.agentTemplates],
     ["/channels", zh.nav.channels],
     ["/settings/organization", zh.nav.settings],
     // New conversation has no nav message of its own: the head says no access
@@ -340,12 +339,18 @@ const AGENT = (id: string, owner = "someone") => ({
   updatedAt: "2026-10-01T00:00:00Z",
 });
 const O = "/api/v1/orgs/o1";
+/** What `/agents` reads besides the agents for members up: the members and the templates. */
+const agentsPageReads = (): Record<string, unknown> => ({
+  [`GET ${O}/members`]: { members: [] },
+  [`GET ${O}/agent-templates`]: { templates: [] },
+  [`GET ${O}/components`]: { components: [] },
+});
 
 describe("role-dependent actions", () => {
   for (const role of ROLES) {
     const canCreate = role !== "guest";
     it(`/agents · ${role}: 新建 Agent ${canCreate ? "shown" : "hidden"}`, async () => {
-      routes = { [`GET ${O}/agents`]: { agents: [] } };
+      routes = { [`GET ${O}/agents`]: { agents: [] }, ...agentsPageReads() };
       resetNavigation("/agents");
       await renderRouteWithCache("/agents", served(), { locale: "zh", me: meAs(role) });
       await screen.findByText(zh.agents.empty);
@@ -499,28 +504,67 @@ describe("agents: edit, read-only and 更改所有者", () => {
     );
   });
 
-  for (const role of ROLES) {
-    it(`agent row · ${role}: 开始会话 only; 编辑 through the name; no owner change in the list`, async () => {
-      routes = { [`GET ${O}/agents`]: { agents: [AGENT("ag1", "a1")] } };
+  // The card's ⋯ holds the agent page's actions (ruling P4-16): 设置 for whoever may change it,
+  // 运行记录 for org admins and a member owner, 更改所有者 for org admins; 另存为模板 is not offered
+  // yet (its dialog comes with the template page). A menu of one is a second button.
+  const cardCases: [OrgRole, string, string[]][] = [
+    ["guest", "someone", []],
+    ["member", "someone", []],
+    ["member", "a1", [zh.agents.settings, zh.agents.runHistory]],
+    ["admin", "someone", [zh.agents.settings, zh.agents.runHistory, zh.agents.page.reassign]],
+    ["owner", "someone", [zh.agents.settings, zh.agents.runHistory, zh.agents.page.reassign]],
+  ];
+  for (const [role, owner, items] of cardCases) {
+    it(`agent card · ${role}${owner === "a1" ? " (its owner)" : ""}: 开始会话, the card opens the agent, ⋯ ${items.length === 0 ? "none" : items.join(" / ")}`, async () => {
+      routes = { [`GET ${O}/agents`]: { agents: [AGENT("ag1", owner)] }, ...agentsPageReads() };
       resetNavigation("/agents");
       await renderRouteWithCache("/agents", served(), { locale: "zh", me: meAs(role) });
-      await screen.findByText("Agent ag1");
-      // 开始会话 is the row's action; the menu never repeats it
-      expect(screen.getAllByRole("button", { name: zh.agents.chat })).toHaveLength(1);
-      // The name links to the edit page for whoever may edit; 编辑 is never offered twice
-      const nameLink = screen.queryByRole("link", { name: "Agent ag1" });
-      expect(nameLink?.getAttribute("href") ?? null).toBe(role === "guest" ? null : "/agents/ag1");
-      expect(screen.queryByRole("button", { name: zh.agents.edit })).toBeNull();
-      expect(screen.queryByRole("link", { name: zh.agents.edit })).toBeNull();
-      // the owner is changed on the agent's page, never from the list (2026-11-07), for any role:
-      // the row's only button is 开始会话
-      expect(screen.queryByRole("button", { name: "更多操作" })).toBeNull();
-      const row = screen.getByText("Agent ag1").closest("li") as HTMLElement;
-      expect(
-        within(row)
-          .getAllByRole("button")
-          .map((b) => b.textContent),
-      ).toEqual([zh.agents.chat]);
+      const card = (await screen.findByText("Agent ag1")).closest("li") as HTMLElement;
+      // the whole card opens the agent's page (read-only for whoever may only use it)
+      expect(within(card).getByRole("link", { name: "Agent ag1" }).getAttribute("href")).toBe(
+        "/agents/ag1",
+      );
+      expect(within(card).getByRole("link", { name: zh.agents.chat }).getAttribute("href")).toBe(
+        "/chat?agent=ag1",
+      );
+      const more = within(card).queryByRole("button", { name: "更多操作" });
+      if (items.length === 0) {
+        expect(more).toBeNull();
+        expect(within(card).queryAllByRole("button")).toEqual([]);
+        return;
+      }
+      const user = userEvent.setup();
+      await user.click(more as HTMLElement);
+      expect((await screen.findAllByRole("menuitem")).map((i) => i.textContent)).toEqual(items);
+      expect(screen.queryByRole("menuitem", { name: "另存为模板" })).toBeNull();
+      if (items.includes(zh.agents.page.reassign)) {
+        await user.click(screen.getByRole("menuitem", { name: zh.agents.page.reassign }));
+        expect(await screen.findByRole("dialog", { name: zh.agents.reassign.title })).toBeTruthy();
+      } else await user.keyboard("{Escape}");
+    });
+  }
+
+  for (const role of ROLES) {
+    const member = role !== "guest";
+    it(`/agents · ${role}: ${member ? "the tabs 智能体 / 模板" : "the agents only, no tabs (guests cannot create)"}`, async () => {
+      routes = { [`GET ${O}/agents`]: { agents: [AGENT("ag1")] }, ...agentsPageReads() };
+      resetNavigation("/agents?tab=templates");
+      await renderRouteWithCache("/agents?tab=templates", served(), {
+        locale: "zh",
+        me: meAs(role),
+      });
+      if (member) {
+        expect(await screen.findByRole("tab", { name: /模板/ })).toBeTruthy();
+        expect(screen.getByRole("tab", { name: /模板/ }).getAttribute("aria-selected")).toBe(
+          "true",
+        );
+        expect(await screen.findByText(zh.agents.templates.empty)).toBeTruthy();
+      } else {
+        // the address asks for the templates, a guest gets the agents
+        expect(await screen.findByText("Agent ag1")).toBeTruthy();
+        expect(screen.queryByRole("tab")).toBeNull();
+        expect(calls.some((c) => c.includes("/agent-templates"))).toBe(false);
+      }
     });
   }
 });

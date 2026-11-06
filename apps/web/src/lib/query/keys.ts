@@ -32,6 +32,16 @@ export const keys = {
       agentSkills: (agentId: string): readonly unknown[] => [...all, "agentSkills", agentId],
       /** The org's agent templates (from plugins). */
       agentTemplates: (): readonly unknown[] => [...all, "agentTemplates"],
+      /** One agent template usable in the org (its definition, owner and 可共享). */
+      agentTemplate: (id: string): readonly unknown[] => [...all, "agentTemplate", id],
+      /** Every agent template detail read (an invalidation prefix). */
+      agentTemplateAll: (): readonly unknown[] => [...all, "agentTemplate"],
+      /** What deleting the org's own agent template does. */
+      agentTemplateDeletePreview: (id: string): readonly unknown[] => [
+        ...all,
+        "agentTemplateDeletePreview",
+        id,
+      ],
       /** The org skill library. */
       skills: (): readonly unknown[] => [...all, "skills"],
       /** One org skill (its body, files and versions). */

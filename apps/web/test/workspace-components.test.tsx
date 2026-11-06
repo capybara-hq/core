@@ -316,8 +316,10 @@ describe("/skills: own and platform skills with their org state", () => {
   });
 });
 
-describe("/agent-templates", () => {
-  beforeEach(() => resetNavigation("/agent-templates"));
+describe("/agents?tab=templates: the 模板 tab (rulings P4-14, P4-16)", () => {
+  const PATH = "/agents?tab=templates";
+  beforeEach(() => resetNavigation(PATH));
+  const A = en.agents.templates;
   const template = (id: string, name: string, over: Record<string, unknown> = {}) => ({
     id,
     name,
@@ -328,95 +330,264 @@ describe("/agent-templates", () => {
     version: 1,
     origin: "platform",
     linkedIds: [],
+    catalogItemId: ITEM,
     ...over,
   });
+  const detail = (over: Record<string, unknown> = {}) => ({
+    template: {
+      ...template("t9", "sales", {
+        plugin: null,
+        type: "sales",
+        origin: "org",
+        catalogItemId: null,
+      }),
+      definition: {},
+      owner: { kind: "org", orgId: "o1", name: "Acme" },
+      owned: true,
+      shareable: false,
+      promoted: false,
+      ...over,
+    },
+  });
+  /** Platform `reviewer` (on), `writer` (off, offered), the org's own `sales` (no plugin). */
   const routes = (): Routes => ({
+    [`GET ${ORG}/agents`]: () => json(200, { agents: [] }),
+    [`GET ${ORG}/members`]: () => json(200, { members: [] }),
     [`GET ${ORG}/agent-templates`]: () =>
       json(200, {
         templates: [
           template("t1", "reviewer"),
-          template("t9", "sales", { plugin: null, type: "sales", origin: "org" }),
+          template("t9", "sales", {
+            plugin: null,
+            type: "sales",
+            origin: "org",
+            catalogItemId: null,
+            version: 3,
+          }),
         ],
       }),
     [`GET ${ORG}/components?kind=agent_template`]: () =>
       json(200, {
         components: [
-          component("t1", "reviewer", { kind: "agent_template", on: true }),
-          component("t2", "writer", { kind: "agent_template" }),
+          component("t1", "reviewer", {
+            kind: "agent_template",
+            on: true,
+            owner: { kind: "platform" },
+          }),
+          component("t2", "writer", { kind: "agent_template", owner: { kind: "platform" } }),
         ],
       }),
+    [`GET ${ORG}/agent-templates/t9`]: () => json(200, detail()),
   });
-  const list = () => screen.findByRole("list", { name: en.agentTemplates.listLabel });
+  const grid = () => screen.findByRole("list", { name: A.listLabel });
+  const card = async (name: string) =>
+    (await within(await grid()).findByRole("link", { name })).closest("li") as HTMLElement;
+  const menuOf = async (c: HTMLElement) => {
+    await userEvent.setup().click(within(c).getByRole("button", { name: "More actions" }));
+    return (await screen.findAllByRole("menuitem")).map((i) => i.textContent);
+  };
 
-  it("lists the org's own and the platform templates; a first render makes no browser read", async () => {
+  it("cards: source · version, 用它创建 on the usable ones; a first render makes no browser read", async () => {
     const browser = expectNoFirstPaintFetch();
-    const { container } = await renderRouteWithCache("/agent-templates", routes());
+    const { container } = await renderRouteWithCache(PATH, routes());
     expect(container.querySelector('[data-template="ListPage"]')).not.toBeNull();
-    const l = await list();
-    expect(within(l).getByText("reviewer")).toBeTruthy();
-    expect(within(l).getByText("sales")).toBeTruthy();
-    expect(within(l).getByText("writer")).toBeTruthy();
-    expect(within(l).getAllByText(C.origin.platform)).toHaveLength(2);
-    expect(within(l).getByText(C.origin.org)).toBeTruthy();
-    expect(within(l).getByRole("button", { name: C.action.enable })).toBeTruthy();
+    const l = await grid();
+    expect(l.getAttribute("data-part")).toBe("card-grid");
+    const reviewer = await card("reviewer");
+    expect(within(reviewer).getByRole("link", { name: "reviewer" }).getAttribute("href")).toBe(
+      "/agents/templates/t1",
+    );
+    expect(within(reviewer).getByText("Plugin · docs · v1")).toBeTruthy();
+    // 用它创建 goes to the template page until its dialog lands (phase 4 Task 8)
+    expect(within(reviewer).getByRole("link", { name: A.create }).getAttribute("href")).toBe(
+      "/agents/templates/t1",
+    );
+    const sales = await card("sales");
+    expect(within(sales).getByText("This org · v3")).toBeTruthy();
+    // an off platform template: no 用它创建; the org admin's 启用 is its primary
+    const writer = await card("writer");
+    expect(within(writer).getByText(C.state.off)).toBeTruthy();
+    expect(within(writer).queryByRole("link", { name: A.create })).toBeNull();
+    expect(within(writer).getByRole("button", { name: C.action.enable })).toBeTruthy();
+    // the head counts both tabs
+    expect(screen.getByRole("tab", { name: /Templates/ }).textContent).toContain("3");
     await settle();
     expect(browser).toEqual([]);
   });
 
-  it("members read it without switches", async () => {
-    await renderRouteWithCache("/agent-templates", routes(), { me: MEMBER });
-    const l = await list();
-    expect(within(l).getByText("writer")).toBeTruthy();
-    expect(within(l).queryByRole("button")).toBeNull();
+  it("members: 用它创建 and 查看 only (a lone 查看 is a second button), no switch, no owner actions", async () => {
+    const r = routes();
+    const calls = stubApi(r);
+    await renderRouteWithCache(PATH, r, { me: MEMBER });
+    const sales = await card("sales");
+    expect(within(sales).getByRole("link", { name: A.create })).toBeTruthy();
+    expect(within(sales).getByRole("link", { name: A.view }).getAttribute("href")).toBe(
+      "/agents/templates/t9",
+    );
+    expect(within(sales).queryByRole("button")).toBeNull();
+    const writer = await card("writer");
+    expect(within(writer).queryByRole("button")).toBeNull();
+    await settle();
+    // the owner's flags are never read for a member
+    expect(calls.some((c) => c.url.endsWith("/agent-templates/t9"))).toBe(false);
   });
 
-  it("an org admin switches a platform template on", async () => {
+  it("an owner-org admin: 编辑, 设为可共享 and 删除 on the org's own template; 查看 and 停用 on a platform one", async () => {
+    const r: Routes = {
+      ...routes(),
+      [`PUT ${ORG}/agent-templates/t9/shareable`]: () => json(200, { id: "t9", shareable: true }),
+    };
+    const calls = stubApi(r);
+    await renderRouteWithCache(PATH, r);
+    const sales = await card("sales");
+    await vi.waitFor(async () => {
+      expect(await menuOf(sales)).toEqual([A.edit, A.share, A.delete]);
+    });
+    await userEvent.setup().click(screen.getByRole("menuitem", { name: A.share }));
+    await vi.waitFor(() =>
+      expect(
+        bodyOf(calls.find((c) => c.method === "PUT" && c.url.endsWith("/t9/shareable"))),
+      ).toEqual({ shareable: true }),
+    );
+    expect(await menuOf(await card("reviewer"))).toEqual([A.view, C.action.disable]);
+  });
+
+  it("deleting the org's own template: the preview first, the name typed, then DELETE", async () => {
+    const r: Routes = {
+      ...routes(),
+      [`GET ${ORG}/agent-templates/t9/delete-preview`]: () =>
+        json(200, {
+          outcome: "transferred",
+          orgs: [{ id: "o2", name: "Beta" }],
+          agents: [{ id: "ag1", name: "Planner" }],
+        }),
+      [`DELETE ${ORG}/agent-templates/t9`]: () => json(200, { outcome: "transferred" }),
+    };
+    const calls = stubApi(r);
+    await renderRouteWithCache(PATH, r);
+    const user = userEvent.setup();
+    const sales = await card("sales");
+    await vi.waitFor(async () => expect(await menuOf(sales)).toContain(A.delete));
+    await user.click(screen.getByRole("menuitem", { name: A.delete }));
+    const dialog = await screen.findByRole("dialog");
+    expect(await within(dialog).findByText(/Beta/)).toBeTruthy();
+    expect(within(dialog).getByText("· Planner")).toBeTruthy();
+    const confirm = within(dialog).getByRole("button", { name: A.delete });
+    expect(confirm).toHaveProperty("disabled", true);
+    await user.type(within(dialog).getByRole("textbox"), "sales");
+    await user.click(confirm);
+    await vi.waitFor(() =>
+      expect(
+        calls.some((c) => c.method === "DELETE" && c.url.endsWith("/agent-templates/t9")),
+      ).toBe(true),
+    );
+    expect(await screen.findByText(A.deletedTransferred.replace("{name}", "sales"))).toBeTruthy();
+  });
+
+  it("a plugin's template of the org is never the org's to edit, share or delete", async () => {
+    const r: Routes = {
+      ...routes(),
+      [`GET ${ORG}/agent-templates`]: () =>
+        json(200, { templates: [template("t5", "helper", { origin: "org" })] }),
+      [`GET ${ORG}/components?kind=agent_template`]: () => json(200, { components: [] }),
+    };
+    const calls = stubApi(r);
+    await renderRouteWithCache(PATH, r);
+    const helper = await card("helper");
+    expect(within(helper).getByRole("link", { name: A.view })).toBeTruthy();
+    expect(within(helper).queryByRole("button")).toBeNull();
+    await settle();
+    expect(calls.some((c) => c.url.endsWith("/agent-templates/t5"))).toBe(false);
+  });
+
+  it("an org admin switches a platform template on from its card", async () => {
     const r = {
       ...routes(),
       [`PUT ${ORG}/components/agent_template/t2/switch`]: () =>
         json(200, { component: component("t2", "writer", { kind: "agent_template", on: true }) }),
     };
     const calls = stubApi(r);
-    await renderRouteWithCache("/agent-templates", r);
+    await renderRouteWithCache(PATH, r);
     await userEvent
       .setup()
-      .click(within(await list()).getByRole("button", { name: C.action.enable }));
+      .click(within(await card("writer")).getByRole("button", { name: C.action.enable }));
     await vi.waitFor(() =>
       expect(calls.some((c) => c.method === "PUT" && c.url.endsWith("/t2/switch"))).toBe(true),
     );
   });
-});
 
-describe("/agent-templates: templates are never shared in phase 3 (P3-46)", () => {
-  beforeEach(() => resetNavigation("/agent-templates"));
-  it("an own template has no 可共享 chip or action, even when the kernel sends shareable", async () => {
+  it("the search narrows the cards; nothing left is one sentence", async () => {
+    stubApi(routes());
+    await renderRouteWithCache(PATH, routes());
+    await card("reviewer");
+    const user = userEvent.setup();
+    await user.type(screen.getByRole("searchbox", { name: A.search }), "sal");
+    expect(within(await grid()).getByText("sales")).toBeTruthy();
+    expect(screen.queryByText("reviewer")).toBeNull();
+    await user.type(screen.getByRole("searchbox", { name: A.search }), "zzz");
+    expect(screen.getByText(A.noMatch)).toBeTruthy();
+  });
+
+  it("switching tabs keeps the address in step and clears the search", async () => {
+    stubApi(routes());
+    await renderRouteWithCache(PATH, routes());
+    await card("reviewer");
+    const user = userEvent.setup();
+    await user.type(screen.getByRole("searchbox", { name: A.search }), "sal");
+    await user.click(screen.getByRole("tab", { name: /Agents/ }));
+    expect(window.location.search).toBe("");
+    expect(await screen.findByText(en.agents.empty)).toBeTruthy();
+    expect(
+      (screen.getByRole("searchbox", { name: en.agents.search }) as HTMLInputElement).value,
+    ).toBe("");
+    await user.click(screen.getByRole("tab", { name: /Templates/ }));
+    expect(window.location.search).toBe("?tab=templates");
+    expect(await card("sales")).toBeTruthy();
+  });
+
+  it("no templates at all: the page empty state", async () => {
     const r: Routes = {
-      [`GET ${ORG}/agent-templates`]: () =>
-        json(200, {
-          templates: [
-            {
-              id: "t9",
-              name: "sales",
-              plugin: null,
-              type: "sales",
-              description: "sales template.",
-              model: "inherit",
-              version: 1,
-              origin: "org",
-              shareable: true,
-            },
-          ],
-        }),
+      ...routes(),
+      [`GET ${ORG}/agent-templates`]: () => json(200, { templates: [] }),
       [`GET ${ORG}/components?kind=agent_template`]: () => json(200, { components: [] }),
     };
-    const calls = stubApi(r);
-    await renderRouteWithCache("/agent-templates", r);
-    const l = await screen.findByRole("list", { name: en.agentTemplates.listLabel });
-    const row = within(l).getByText("sales").closest("li") as HTMLElement;
-    expect(within(row).queryByRole("button")).toBeNull();
-    expect(within(row).queryByText(en.skills.detail.shareable)).toBeNull();
-    await settle();
-    expect(calls.some((c) => c.method === "PUT")).toBe(false);
+    stubApi(r);
+    await renderRouteWithCache(PATH, r, { me: MEMBER });
+    expect(await screen.findByText(A.empty)).toBeTruthy();
+  });
+
+  it("an empty cache shows skeleton cards, then the templates", async () => {
+    let release: () => void = () => {};
+    const held = new Promise<void>((r) => {
+      release = r;
+    });
+    await renderRouteEmptyCache(PATH, {
+      ...routes(),
+      [`GET ${ORG}/agent-templates`]: async () => {
+        await held;
+        return json(200, { templates: [template("t1", "reviewer")] });
+      },
+    });
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-part="card-grid"][aria-busy="true"]')).not.toBeNull(),
+    );
+    // the head and its tabs stay while the list loads
+    expect(screen.getByRole("tab", { name: /Templates/ })).toBeTruthy();
+    await act(async () => release());
+    expect(await card("reviewer")).toBeTruthy();
+  });
+
+  it("a list that cannot be read: the tab says so with 重试, the tabs stay", async () => {
+    const r: Routes = {
+      ...routes(),
+      [`GET ${ORG}/agent-templates`]: () =>
+        json(500, { error: { code: "internal", message: "boom" } }),
+    };
+    stubApi(r);
+    await renderRouteWithCache(PATH, r);
+    expect(await screen.findByText(en.errors.page.title)).toBeTruthy();
+    expect(screen.getByRole("button", { name: en.errors.page.retry })).toBeTruthy();
+    expect(screen.getByRole("tab", { name: /Agents/ })).toBeTruthy();
   });
 });
 
