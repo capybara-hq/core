@@ -38,6 +38,7 @@ const tabs = { items: [{ id: "a", label: "概要" }], value: "a", label: "标签
 const TEMPLATES: [string, ReactElement, boolean][] = [
   ["ListPage", <ListPage header={header}>x</ListPage>, false],
   ["ListPage tabs", <ListPage header={withTabs}>x</ListPage>, true],
+  ["ListPage cards", <ListPage header={withTabs} variant="cards" />, true],
   [
     "DetailPage",
     <DetailPage header={header} tabs={tabs}>

@@ -5032,3 +5032,147 @@ textarea {
   align-self: center;
   margin-left: var(--cb-space-2);
 }
+
+/* CardGrid and ObjectCard (spec §6.34, ruling P4-15): cards on the page ground, one box each. */
+.r-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, var(--cb-layout-card-min)), 1fr));
+  gap: var(--cb-space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.r-ocard {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-3);
+  min-width: 0;
+  overflow: hidden;
+  padding: var(--cb-space-4);
+  border: 1px solid var(--cb-line-card);
+  border-radius: var(--cb-radius-md);
+  background: var(--cb-panel);
+}
+.r-ocard-head {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-3);
+  min-width: 0;
+}
+.r-ocard-avatar {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+}
+.r-ocard-avatar[data-kind="icon"] {
+  border-radius: var(--cb-radius-sm);
+  background: var(--cb-selected);
+  color: var(--cb-ink);
+}
+.r-ocard-link {
+  flex: 1;
+  min-width: 0;
+  color: var(--cb-ink);
+  font-weight: 600;
+  text-decoration: none;
+}
+.r-ocard-name {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--cb-type-body-size);
+  line-height: var(--cb-type-body-line);
+}
+.r-ocard-head > .r-ocard-name {
+  flex: 1;
+  min-width: 0;
+}
+.r-ocard-desc {
+  display: -webkit-box;
+  overflow: hidden;
+  margin: 0;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  color: var(--cb-muted);
+  font-family: var(--cb-font-prose);
+  font-size: var(--cb-type-prose-small-size);
+  line-height: var(--cb-type-prose-small-line);
+}
+.r-ocard-desc[data-skeleton] {
+  display: flex;
+  flex-direction: column;
+}
+.r-ocard-foot {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-2);
+  min-width: 0;
+  min-height: var(--cb-control-dense);
+  margin-top: auto;
+}
+.r-ocard-foot > .r-btn,
+.r-ocard-foot > .r-icon-btn,
+.r-ocard-foot > .r-skel-box {
+  flex: none;
+}
+.r-ocard-meta {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+/* A phone (the `narrow` block, 390): one column, 40 px tap targets. */
+[data-narrow] .r-card-grid {
+  grid-template-columns: 1fr;
+}
+[data-narrow] .r-ocard-foot > .r-btn,
+[data-narrow] .r-ocard-foot > .r-icon-btn {
+  min-width: 40px;
+  height: 40px;
+}
+/* The page empty state (spec §6.18): the line-art capybara over the words, centered. */
+.r-empty-page {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--cb-space-3);
+  padding: calc(var(--cb-space-8) * 2) var(--cb-space-4);
+  color: var(--cb-ink);
+  text-align: center;
+}
+.r-empty-art {
+  display: flex;
+  margin-bottom: var(--cb-space-1);
+}
+.r-logo-line {
+  display: block;
+  fill: none;
+  stroke: var(--cb-faint);
+  stroke-width: 1;
+}
+.r-empty-words {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-1);
+}
+.r-empty-text,
+.r-empty-hint {
+  margin: 0;
+  font-family: var(--cb-font-prose);
+}
+.r-empty-hint {
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.r-empty-action {
+  display: flex;
+  margin-top: var(--cb-space-1);
+}

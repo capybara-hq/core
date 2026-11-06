@@ -2,6 +2,7 @@ import { isValidElement, type ReactNode } from "react";
 import {
   Callout,
   type CalloutProps,
+  CardGrid,
   EmptyState,
   type EmptyStateProps,
   ObjectList,
@@ -14,7 +15,8 @@ import { type Column, DataTable } from "../table/index";
 import { LoadingStats, loadingActionRow, loadingHeader, TemplateHead, WithStats } from "./frame";
 
 /**
- * What `ListPage.loading` takes besides `true`: `rows` (objects: the row count, default 3), `stats`
+ * What `ListPage.loading` takes besides `true`: `rows` (objects: the row count, default 3; cards:
+ * the card count, default 6), `stats`
  * (stat card placeholders when the header carries no `metrics` yet), and, for a `records` list,
  * `table`: the caller's table shape (label, header columns, row height and frame), drawn as the
  * DataTable's own loading state instead of plain bars.
@@ -39,12 +41,14 @@ export type ListLoading =
 
 /**
  * T2 List: Rail + Content (Single without a rail), list width; StatCards from `metrics`.
- * `variant="objects"` wraps the children (ObjectRows) in one ObjectList panel; `records` (default)
+ * `variant="objects"` wraps the children (ObjectRows) in one ObjectList panel; `cards` lays the
+ * children (ObjectCards) out in one CardGrid on the page ground (spec §6.34); `records` (default)
  * leaves them to the caller (a DataTable). `callout` is drawn between the title row and the tabs;
  * `empty` is drawn instead of the children. `loading` draws the page's frame while the first answer
  * is on the way (spec §5.1): the header keeps its rows (an unknown title is a bar), its tabs show a
  * dash for their counts, stat slots stand in for unknown metrics, and the list is skeleton rows in the
- * loaded list's own container (objects: the ObjectList panel; records: the DataTable's loading
+ * loaded list's own container (objects: the ObjectList panel; cards: skeleton cards in the
+ * CardGrid; records: the DataTable's loading
  * state in the caller's `table` shape, else plain bars), instead of the children or `empty`. One
  * busy announcement.
  *
@@ -66,7 +70,7 @@ export function ListPage({
   header: PageHeaderProps;
   rail?: ReactNode;
   actionRow?: ActionRowProps;
-  variant?: "objects" | "records";
+  variant?: "objects" | "records" | "cards";
   /** The accessible name of the object list (default: the page title). */
   listLabel?: string;
   callout?: CalloutProps;
@@ -111,6 +115,8 @@ export function ListPage({
   const loadingList =
     variant === "objects" ? (
       <ObjectList label={listLabel ?? header.title} loading={spec.rows ?? true} />
+    ) : variant === "cards" ? (
+      <CardGrid label={listLabel ?? header.title} loading={spec.rows ?? true} />
     ) : spec.table ? (
       <DataTable<never>
         label={spec.table.label}
@@ -134,6 +140,8 @@ export function ListPage({
     <EmptyState {...empty} />
   ) : variant === "objects" ? (
     <ObjectList label={listLabel ?? header.title}>{children}</ObjectList>
+  ) : variant === "cards" ? (
+    <CardGrid label={listLabel ?? header.title}>{children}</CardGrid>
   ) : (
     children
   );

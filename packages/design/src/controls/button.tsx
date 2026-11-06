@@ -59,6 +59,8 @@ export type LinkButtonProps = {
   density?: Density;
   /** A keyboard hint after the label, as on {@link Button}. */
   shortcut?: string;
+  /** Out of the tab order (`-1`) where a roving container holds the tab stop (CardGrid). */
+  tabIndex?: number;
   children: ReactNode;
 };
 
@@ -71,6 +73,7 @@ export function LinkButton({
   variant = "default",
   density,
   shortcut,
+  tabIndex,
   children,
 }: LinkButtonProps) {
   const Link = useDesignLink();
@@ -82,6 +85,7 @@ export function LinkButton({
       data-part="button"
       data-variant={variant}
       data-density={step}
+      {...(tabIndex !== undefined ? { tabIndex } : {})}
     >
       <span className="cb-btn-body">
         {children}

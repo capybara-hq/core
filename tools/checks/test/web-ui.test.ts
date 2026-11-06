@@ -302,6 +302,12 @@ describe("checkWebUi", () => {
         ["web-ui-box-in-box", 66, "<Cell> (draws Card) inside <Sheet>"],
         ["web-ui-box-in-box", 72, "<Card> inside <AgentMapDialog>"],
       ]));
+    it("a CardGrid or an ObjectCard inside a box is a second box; the cards of a grid are judged by the grid alone (spec §6.34)", () =>
+      expect(at([], "cards.tsx")).toEqual([
+        ["web-ui-box-in-box", 15, "<CardGrid> inside <Card>"],
+        ["web-ui-box-in-box", 20, "<ObjectCard> inside <Sheet>"],
+        ["web-ui-box-in-box", 23, "<Grid> (draws CardGrid) inside <Card>"],
+      ]));
     it("portals reset the outer box: a Card in a Menu, the command palette or the agent map's transcript in a Card is not reported", () => {
       const src = readFileSync(
         fileURLToPath(
