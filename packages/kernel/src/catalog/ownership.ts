@@ -223,6 +223,103 @@ export async function assertNameFree(
 }
 
 /**
+ * The owner other than `owner` (an org id) that already holds npm package `packageName`, else
+ * undefined (ruling P3-51: a package name is an identity only within one owner). Held = a catalog
+ * item of the package of another owner that is live, or removed while its extension is still
+ * installed or its name claimed (a cleanup not run yet); an install of the package whose catalog
+ * item is not one of `owner`'s (none = the platform: bootstrap or a direct install); a name claim
+ * of the package for which `owner` has no item of that name (an uninstalled platform extension
+ * keeps its claim).
+ */
+export async function otherPackageOwner(
+  db: KernelSchemaDb,
+  packageName: string | null,
+  owner: string,
+): Promise<Owner | undefined> {
+  if (packageName === null) return undefined;
+  const found = async (ownerOrgId: string | null) =>
+    ownerOf(ownerOrgId, await ownersOf(db, ownerOrgId === null ? [] : [ownerOrgId]));
+  const item = await db
+    .selectFrom("catalog_items as ci")
+    .select("ci.owner_org_id")
+    .where("ci.package_name", "=", packageName)
+    .where(sql<boolean>`ci.owner_org_id IS DISTINCT FROM ${owner}`)
+    .where(({ or, eb, exists, selectFrom }) =>
+      or([
+        eb("ci.deleted_at", "is", null),
+        exists(
+          selectFrom("extension_installs as x")
+            .innerJoin("extension_packages as p", "p.sha256", "x.sha256")
+            .select("x.name")
+            .whereRef("x.name", "=", "ci.name")
+            .whereRef("p.package_name", "=", "ci.package_name"),
+        ),
+        exists(
+          selectFrom("extension_name_owners as o")
+            .select("o.name")
+            .whereRef("o.name", "=", "ci.name")
+            .whereRef("o.package_name", "=", "ci.package_name"),
+        ),
+      ]),
+    )
+    .orderBy("ci.deleted_at", (o) => o.desc().nullsFirst())
+    .orderBy("ci.created_at")
+    .executeTakeFirst();
+  if (item !== undefined) return found(item.owner_org_id);
+  const install = await db
+    .selectFrom("extension_installs as x")
+    .innerJoin("extension_packages as p", "p.sha256", "x.sha256")
+    .leftJoin("catalog_items as ci", "ci.id", "x.catalog_item_id")
+    .select(["ci.id", "ci.owner_org_id"])
+    .where("p.package_name", "=", packageName)
+    .where((eb) =>
+      eb.or([eb("ci.id", "is", null), eb("ci.owner_org_id", "is distinct from", owner)]),
+    )
+    .executeTakeFirst();
+  if (install !== undefined) return found(install.id === null ? null : install.owner_org_id);
+  const claim = await db
+    .selectFrom("extension_name_owners as o")
+    .select("o.name")
+    .where("o.package_name", "=", packageName)
+    .where(({ not, exists, selectFrom }) =>
+      not(
+        exists(
+          selectFrom("catalog_items as ci")
+            .select("ci.id")
+            .whereRef("ci.name", "=", "o.name")
+            .whereRef("ci.package_name", "=", "o.package_name")
+            .where("ci.owner_org_id", "=", owner),
+        ),
+      ),
+    )
+    .executeTakeFirst();
+  if (claim !== undefined) return packageOwner(db, packageName, claim.name);
+  return undefined;
+}
+
+/**
+ * 409 `plugin.name_taken` (details `[{ owner }]`) when an org upload's npm package is held by
+ * another owner ({@link otherPackageOwner}, ruling P3-51): an org never shares a package identity
+ * with another org or the platform, so no name claim, existing install or cleanup can mistake one
+ * owner's plugin for another's.
+ */
+export async function assertPackageFree(
+  db: KernelSchemaDb,
+  packageName: string | null,
+  owner: string,
+): Promise<void> {
+  const other = await otherPackageOwner(db, packageName, owner);
+  if (other === undefined) return;
+  throw new ApiError(
+    "plugin.name_taken",
+    other.kind === "platform"
+      ? `Package ${packageName} is used by a plugin of the platform; rename the package (package.json name) and upload it again`
+      : `Package ${packageName} is used by a plugin of organization ${other.name}; rename the package (package.json name) and upload it again`,
+    [{ owner: other }],
+  );
+}
+
+/**
  * The owner of extension `extensionName`, held by npm package `packageName` (package -> its live
  * catalog item -> that item's owner; ruling P3-14). The item is the one named like the extension
  * (a plugin and its extension share one name), else the oldest live item of the package; none ->

@@ -757,6 +757,15 @@ Rulings made during implementation (2026-11-06)
 - **P3-50** One global lock order: org rows (sorted) -> the item -> its components;
   `PlatformPluginUpdater.commit` locks the connector orgs and the owner org first. Files of deleted
   promoted skills under `deployment/` are not collected in phase 3.
+- **P3-51** An npm package name is an identity only within one owner: an org upload whose package
+  another owner holds (another org, the platform, a removed item whose extension is still installed
+  or claimed) is refused with 409 `plugin.name_taken` naming the owner; the cleanup's `referenced` and
+  the confirm's existing-install check compare the catalog item and its owner, never the package name
+  alone.
+- **P3-52** Version rows record `applied_at` / `rejected_at` (migration 0083); the generic update, org
+  version lists, dependency resolution and the admin item views of platform items use only applied,
+  not rejected versions, whoever owns the item, so a transfer never makes an unapplied or rejected
+  upload a usable platform version.
 
 ### 14.3 Not in phase 3
 

@@ -17,8 +17,9 @@ Org admins upload plugins and share what their org owns (plugin scope phase 3, m
   (`catalog.not_shareable`), and turning it off keeps the orgs that use it. Shared items follow the
   owner's versions, with inbox notices for the orgs using them.
 - An owner deleting an item other orgs use, or an org being deleted, transfers it to the platform
-  with a notice in the platform inbox; org skills and agent templates become platform rows when
-  first shared, keeping their ids, so agents and logs are unchanged.
+  with a notice in the platform inbox; org skills become platform rows when first shared, keeping
+  their ids, so agents and logs are unchanged (agent templates are not shareable until org-created
+  templates exist).
 - 新建技能: `POST /api/v1/orgs/:orgId/skills` also takes `{ name, description, body }`, and the
   workspace 技能 page creates a skill from text.
 - The admin console shows owners, the share gate, org uploads in 待确认 and the new inbox kinds.

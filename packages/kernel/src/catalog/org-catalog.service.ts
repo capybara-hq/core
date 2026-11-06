@@ -27,7 +27,7 @@ import {
   type TemplateDeps,
   templatePluginProblem,
 } from "./catalog-content.js";
-import { itemView, ownerOnlyFacts } from "./catalog-items.js";
+import { itemView, ownerOnlyFacts, versionUsable } from "./catalog-items.js";
 import { connectorTemplatesOn, templateIdOfPath } from "./component-state.js";
 import { itemPendingError, ownerOf, ownersOf } from "./ownership.js";
 import {
@@ -143,6 +143,8 @@ export class OrgCatalogService {
           "manifest",
           "object_prefix",
           "files",
+          "applied_at",
+          "rejected_at",
         ])
         .where("item_id", "in", ids)
         .execute(),
@@ -189,11 +191,13 @@ export class OrgCatalogService {
     const out: OrgCatalogItem[] = [];
     for (const i of items) {
       // Another org sees only an org-owned plugin's applied version, never one its owner
-      // uploaded that is pending or was rejected (ruling P3-34)
+      // uploaded that is pending or was rejected (ruling P3-34), nor such a version of a plugin
+      // transferred to the platform since (ruling P3-52)
       const vs = versions.filter(
         (v) =>
           v.item_id === i.id &&
-          (i.owner_org_id === null || i.owner_org_id === orgId || v.version === i.latest_version),
+          (i.owner_org_id === orgId ||
+            (versionUsable(v) && (i.owner_org_id === null || v.version === i.latest_version))),
       );
       const {
         installs: _installs,

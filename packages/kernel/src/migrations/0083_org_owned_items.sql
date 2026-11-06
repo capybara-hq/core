@@ -19,6 +19,15 @@ CREATE INDEX IF NOT EXISTS catalog_items_owner_idx
   ON catalog_items (owner_org_id)
   WHERE owner_org_id IS NOT NULL AND deleted_at IS NULL;
 
+-- Whether a version may be used (ruling P3-52): `applied_at` is set when it was applied or
+-- confirmed (a platform import is applied as it is written: the default; an org's upload writes
+-- NULL until its owner applies it or the super admin confirms it), `rejected_at` when the super
+-- admin rejected it. Readers serving other orgs or the generic update use only applied, not
+-- rejected versions, whoever owns the item (a transfer keeps the version rows). Existing rows
+-- are platform imports: applied.
+ALTER TABLE catalog_item_versions ADD COLUMN IF NOT EXISTS applied_at timestamptz DEFAULT now();
+ALTER TABLE catalog_item_versions ADD COLUMN IF NOT EXISTS rejected_at timestamptz;
+
 -- Platform components: the owning org (NULL = platform), the org they were created in
 -- (`origin_org_id`, no FK, immutable; F27) and the share switch (P3-3, P3-5).
 ALTER TABLE platform_skills ADD COLUMN IF NOT EXISTS owner_org_id text

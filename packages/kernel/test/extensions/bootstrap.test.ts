@@ -555,6 +555,59 @@ describe("same version, different bytes", { timeout: 30_000 }, () => {
   });
 });
 
+describe("a pin whose name an organization holds", { timeout: 30_000 }, () => {
+  it("warns naming the plugin and the organization (P3-28)", async () => {
+    await reset();
+    // a later kernel release pins a plugin name an org uploaded meanwhile
+    await db.insertInto("orgs").values({ id: "org-held", slug: "held", name: "Held" }).execute();
+    await db
+      .insertInto("catalog_items")
+      .values({
+        id: "00000000-0000-4000-8000-0000000000aa",
+        name: "omega",
+        package_name: "@held/omega",
+        publisher: "Held",
+        description: "omega",
+        latest_version: "1.0.0",
+        created_by: null,
+        owner_org_id: "org-held",
+      })
+      .execute();
+    const fx = await fixture([
+      { bytes: await lifePkg({ name: "omega", version: "1.0.0" }), required: false },
+    ]);
+    const warns: { msg: string; fields?: Record<string, unknown> }[] = [];
+    const base = createLogger("error");
+    const logger = new Proxy(base, {
+      get(t, k, receiver) {
+        if (k === "warn") {
+          return (msg: string, fields?: Record<string, unknown>) => {
+            warns.push({ msg, ...(fields !== undefined && { fields }) });
+          };
+        }
+        const v = Reflect.get(t, k);
+        return typeof v === "function" ? v.bind(k === "child" ? receiver : t) : v;
+      },
+    });
+    await boot(fx, {}, logger);
+    // once per bootstrap attempt (the start retries a failed optional entry)
+    const held = warns.filter((w) => w.msg.includes("held by an organization"));
+    expect(held.length).toBeGreaterThan(0);
+    expect(new Set(held.map((w) => JSON.stringify(w))).size).toBe(1);
+    expect(held[0]).toEqual({
+      msg: expect.stringContaining("bootstrap:"),
+      fields: {
+        plugin: "omega",
+        version: "1.0.0",
+        required: false,
+        ownerOrgId: "org-held",
+        ownerOrg: "Held",
+        context: "BootstrapService",
+      },
+    });
+  });
+});
+
 describe("the confirm's catalog view during bootstrap", { timeout: 30_000 }, () => {
   it("reads only the confirmed plugin's package: another unreadable package logs no admin-view warning", async () => {
     await reset();

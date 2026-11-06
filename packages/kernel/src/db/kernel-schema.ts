@@ -1379,6 +1379,13 @@ export interface CatalogItemVersionsTable {
   license_text: ColumnType<string | null, string | null | undefined, string | null>;
   /** 0051: the root LICENSE was too long (or not UTF-8) to store. */
   license_truncated: ColumnType<boolean, boolean | undefined, boolean>;
+  /**
+   * 0083 (ruling P3-52): when the version was applied or confirmed (default: written; an org's
+   * upload writes null until applied). Only applied, not rejected versions serve other orgs.
+   */
+  applied_at: TsNullable;
+  /** 0083 (ruling P3-52): when the super admin rejected this pending org version. */
+  rejected_at: TsNullable;
 }
 
 /** 0035_catalogs.sql, renamed in 0042: marketplaces (official / custom). */

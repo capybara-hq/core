@@ -25,8 +25,8 @@ const GONE = new Set(["extension.not_found", "extension.not_disabled"]);
 
 /**
  * The cleanup of a removed org-owned plugin: {@link run} disables and uninstalls its extension (an
- * install of the item's name from the item's package) when no live catalog item of that package
- * references it any more, then releases the extension name claim, in one transaction under the import's item name lock
+ * install of the item's name from the item's package) when no live catalog item uses it any more
+ * ({@link OwnedPluginCleanup.referenced}), then releases the extension name claim, in one transaction under the import's item name lock
  * (pre-flight F10: the claim of an
  * installed extension is released here, never at the removal). Idempotent: a live item (a
  * transferred one), a platform item or nothing installed changes nothing but the claim. The
@@ -58,7 +58,7 @@ export class OwnedPluginCleanup {
       .executeTakeFirst();
     if (!item || item.deleted_at === null || item.owner_org_id === null) return;
     if (item.package_name === null) return;
-    await this.takeOut(itemId, item.name, item.package_name);
+    await this.takeOut(itemId, item.name, item.package_name, item.owner_org_id);
   }
 
   /**
@@ -67,9 +67,14 @@ export class OwnedPluginCleanup {
    * is taken out) or waits until this commits, so a newly imported extension is never uninstalled.
    */
   @Transactional()
-  private async takeOut(itemId: string, name: string, pkg: string): Promise<void> {
+  private async takeOut(
+    itemId: string,
+    name: string,
+    pkg: string,
+    ownerOrgId: string,
+  ): Promise<void> {
     await this.itemLock.lock(name);
-    if (await this.referenced(this.db, pkg)) return;
+    if (await this.referenced(this.db, name, pkg, ownerOrgId)) return;
     const install = await this.db
       .selectFrom("extension_installs as x")
       .innerJoin("extension_packages as p", "p.sha256", "x.sha256")
@@ -89,7 +94,7 @@ export class OwnedPluginCleanup {
   }
 
   /**
-   * Daily: {@link run} for every removed org-owned item no live item of its package references
+   * Daily: {@link run} for every removed org-owned item no live item {@link referenced} names
    * whose extension is still installed, or whose name claim is still held (a lost enqueue, or a
    * run that uninstalled and failed before releasing the claim).
    */
@@ -107,8 +112,15 @@ export class OwnedPluginCleanup {
             exists(
               selectFrom("catalog_items as live")
                 .select("live.id")
+                .whereRef("live.name", "=", "ci.name")
                 .whereRef("live.package_name", "=", "ci.package_name")
-                .where("live.deleted_at", "is", null),
+                .where("live.deleted_at", "is", null)
+                .where((eb) =>
+                  eb.or([
+                    eb("live.owner_org_id", "is", null),
+                    eb("live.owner_org_id", "=", eb.ref("ci.owner_org_id")),
+                  ]),
+                ),
             ),
           ),
           or([
@@ -138,13 +150,25 @@ export class OwnedPluginCleanup {
     }
   }
 
-  /** A live catalog item of the package still references its extension. */
-  private async referenced(db: KernelSchemaDb, packageName: string): Promise<boolean> {
+  /**
+   * A live catalog item still uses the extension: one named like it (a plugin and its extension
+   * share one name) from the same package whose owner is the removed item's owner (a re-upload)
+   * or the platform (the super admin imported it over the install). Never any item of the package
+   * name alone: another org choosing the same package name keeps nothing installed (ruling P3-51).
+   */
+  private async referenced(
+    db: KernelSchemaDb,
+    name: string,
+    packageName: string,
+    ownerOrgId: string,
+  ): Promise<boolean> {
     const live = await db
       .selectFrom("catalog_items")
       .select("id")
+      .where("name", "=", name)
       .where("package_name", "=", packageName)
       .where("deleted_at", "is", null)
+      .where((eb) => eb.or([eb("owner_org_id", "is", null), eb("owner_org_id", "=", ownerOrgId)]))
       .executeTakeFirst();
     return live !== undefined;
   }

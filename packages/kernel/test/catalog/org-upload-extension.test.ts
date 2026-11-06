@@ -1,8 +1,10 @@
+import { randomUUID } from "node:crypto";
 import { getQueueToken } from "@nestjs/bullmq";
 import type { Queue } from "bullmq";
 import { sql } from "kysely";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { CatalogScopeService } from "../../src/catalog/catalog-scope.service.js";
+import { OwnedPluginCleanup } from "../../src/catalog/owned-plugin-cleanup.js";
 import { PlatformComponents } from "../../src/catalog/platform-components.js";
 import { PlatformMigration } from "../../src/catalog/platform-migration.js";
 import {
@@ -13,6 +15,7 @@ import {
 } from "../../src/catalog/scope-sync.js";
 import { ExtensionAdmin } from "../../src/extensions/admin-view.js";
 import { ExtensionInstalls } from "../../src/extensions/installs.js";
+import { PluginInstallLock } from "../../src/extensions/locks.js";
 import { ExtensionRegistry } from "../../src/extensions/registry.js";
 import { usableSkills } from "../../src/skills/usable.js";
 import { lifePkg, pluginTgz } from "../helpers/plugin-packages.js";
@@ -831,5 +834,170 @@ describe("fix round 2: the scope sync waits for its replica to load the extensio
       .where("item_id", "=", itemId)
       .execute();
     expect(failures).toEqual([{ org_id: orgA, code: "catalog.not_deployed" }]);
+  });
+});
+
+describe("final review fixes: package identity and version applicability (P3-51, P3-52)", {
+  timeout: 180_000,
+}, () => {
+  const nameOwner = (r: { body: string }) =>
+    (JSON.parse(r.body) as { error: { details?: unknown[] } }).error.details;
+
+  /** Removes A's item the way a pending cleanup leaves it: deleted, its extension installed. */
+  const removedUncleaned = (itemId: string) =>
+    env.db
+      .updateTable("catalog_items")
+      .set({ deleted_at: sql<Date>`now()` as unknown as Date })
+      .where("id", "=", itemId)
+      .execute();
+
+  const claimOf = (name: string) =>
+    env.db
+      .selectFrom("extension_name_owners")
+      .select("package_name")
+      .where("name", "=", name)
+      .executeTakeFirst();
+
+  it("another org's no-extension upload with a removed item's package is refused and never blocks its cleanup", async () => {
+    const itemA = await confirmedV1("pk-a");
+    await removedUncleaned(itemA);
+    // org B reuses A's npm package name for a plugin of its own (no extension)
+    const b = await upload(
+      env.root,
+      orgB,
+      await bundlePlugin({
+        name: "pk-b",
+        skills: ["pk-b-notes"],
+        packageName: "@test/plugin-pk-a",
+      }),
+    );
+    expect(errorOf(b)).toEqual([409, "plugin.name_taken"]);
+    expect(nameOwner(b)).toEqual([{ owner: { kind: "org", orgId: orgA, name: "Acme" } }]);
+    // even if such an item exists (written before the refusal existed), the cleanup compares
+    // the item and its owner, never the package name alone
+    await env.db
+      .insertInto("catalog_items")
+      .values({
+        id: randomUUID(),
+        name: "pk-b",
+        package_name: "@test/plugin-pk-a",
+        publisher: "B",
+        description: "pk-b",
+        latest_version: "1.0.0",
+        created_by: env.rootId,
+        owner_org_id: orgB,
+      })
+      .execute();
+    expect(await installRow("pk-a")).toBeDefined();
+    await env.k.app.get(OwnedPluginCleanup).sweep();
+    expect(await installRow("pk-a")).toBeUndefined();
+    expect(await claimOf("pk-a")).toBeUndefined();
+  });
+
+  it("another org's extension upload of a removed item's name and package never takes its install over", async () => {
+    const itemA = await confirmedV1("pk-x");
+    const shaA = (await installRow("pk-x"))?.sha256;
+    await removedUncleaned(itemA);
+    const bytes = await lifePkg({ name: "pk-x", version: "2.0.0" });
+    const b = await upload(env.root, orgB, bytes);
+    expect(errorOf(b)).toEqual([409, "plugin.name_taken"]);
+    expect(nameOwner(b)).toEqual([{ owner: { kind: "org", orgId: orgA, name: "Acme" } }]);
+    // A's install cleaned up: B may now upload the name, pending as any first version
+    await env.k.app.get(OwnedPluginCleanup).run(itemA);
+    expect(await installRow("pk-x")).toBeUndefined();
+    const itemB = await uploaded(env.root, orgB, bytes, "pending");
+    // A's install shows up again under its own item (a cleanup racing, legacy data); its
+    // package is kept while A's version row refers to it
+    await env.db
+      .insertInto("extension_installs")
+      .values({
+        name: "pk-x",
+        sha256: shaA as string,
+        version: "1.0.0",
+        source: "catalog",
+        desired_state: "disabled",
+        installed_by: null,
+        updated_by: null,
+        catalog_item_id: itemA,
+      })
+      .execute();
+    // the super admin's confirm of B refuses: B never inherits A's install, config or data
+    const c = await superConfirm(itemB, await digestOf(itemB));
+    expect(errorOf(c)).toEqual([409, "extension.name_conflict"]);
+    expect(nameOwner(c)).toEqual([{ owner: { kind: "org", orgId: orgA, name: "Acme" } }]);
+    expect(await installRow("pk-x")).toMatchObject({ sha256: shaA, version: "1.0.0" });
+    expect((await itemRow("pk-x"))?.awaiting_confirmation).toBe(true);
+    await env.db.deleteFrom("extension_installs").where("name", "=", "pk-x").execute();
+  });
+
+  it("a reject releases the name claim under the per-name install lock", async () => {
+    const itemId = await uploaded(
+      env.boss,
+      orgA,
+      await lifePkg({ name: "ext-rl", version: "1.0.0" }),
+      "pending",
+    );
+    const locked = vi.spyOn(PluginInstallLock.prototype, "lock");
+    expect((await reject(itemId)).statusCode).toBe(204);
+    expect(locked.mock.calls).toContainEqual(["ext-rl"]);
+    expect(await claimOf("ext-rl")).toBeUndefined();
+  });
+
+  it("a transferred plugin keeps its rejected and never-applied versions out of reach", async () => {
+    const itemId = await confirmedV1("tr-v");
+    await sharedWithB(itemId, "tr-v-notes");
+    await uploaded(
+      env.boss,
+      orgA,
+      await lifePkg({ name: "tr-v", version: "2.0.0", skills: ["tr-v-notes"] }),
+      "pending",
+    );
+    expect((await reject(itemId, "No")).statusCode).toBe(204);
+    await uploaded(
+      env.boss,
+      orgA,
+      await lifePkg({ name: "tr-v", version: "3.0.0", skills: ["tr-v-notes"] }),
+      "pending",
+    );
+    // org A deletes it while B uses it: transferred to the platform
+    const owned = `/api/v1/orgs/${orgA}/owned-plugins/${itemId}`;
+    const p = await env.boss({ method: "POST", url: `${owned}/delete/preview` });
+    expect(p.statusCode, p.body).toBe(200);
+    expect((p.json() as { outcome: string }).outcome).toBe("transferred");
+    const d = await env.boss({
+      method: "POST",
+      url: `${owned}/delete`,
+      payload: { previewHash: (p.json() as { previewHash: string }).previewHash },
+    });
+    expect(d.statusCode, d.body).toBe(204);
+    expect((await itemRow("tr-v"))?.owner_org_id).toBeNull();
+    // the generic update reaches neither the rejected nor the never-applied version
+    for (const version of ["2.0.0", "3.0.0"]) {
+      const preview = await env.root({
+        method: "POST",
+        url: `/api/v1/admin/catalog/items/${itemId}/update/preview`,
+        payload: { version },
+      });
+      expect(errorOf(preview)).toEqual([409, "plugin.upgrade_target_invalid"]);
+    }
+    // other orgs (B) see only the applied version
+    const inB = await env.root({ method: "GET", url: `/api/v1/orgs/${orgB}/catalog/${itemId}` });
+    expect(inB.statusCode, inB.body).toBe(200);
+    expect((inB.json() as { item: unknown }).item).toMatchObject({
+      latestVersion: "1.0.0",
+      versions: ["1.0.0"],
+    });
+    const rows = await env.db
+      .selectFrom("catalog_item_versions")
+      .select(["version", "applied_at", "rejected_at"])
+      .where("item_id", "=", itemId)
+      .orderBy("version")
+      .execute();
+    expect(rows.map((r) => [r.version, r.applied_at !== null, r.rejected_at !== null])).toEqual([
+      ["1.0.0", true, false],
+      ["2.0.0", false, true],
+      ["3.0.0", false, false],
+    ]);
+    expect((await installRow("tr-v"))?.sha256).toBe(await versionSha(itemId, "1.0.0"));
   });
 });

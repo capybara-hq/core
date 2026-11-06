@@ -43,6 +43,7 @@ import {
   skillFilesDigest,
   templatePluginProblem,
 } from "./catalog-content.js";
+import { markVersionApplied, versionUsable } from "./catalog-items.js";
 import {
   agentsUsing,
   type ComponentKind,
@@ -240,6 +241,12 @@ const pendingStale = (name: string) =>
   );
 const targetInvalid = (message: string, details?: unknown[]) =>
   new ApiError("plugin.upgrade_target_invalid", message, details);
+/** A version an org uploaded that was never applied or confirmed, or was rejected (P3-37, P3-52). */
+const notApplied = (name: string, version: string) =>
+  targetInvalid(
+    `Version ${version} of plugin ${name} was uploaded by an organization and never applied or confirmed (or was rejected); the generic update cannot apply it`,
+    [{ reason: "org_version_not_applied", version }],
+  );
 const KIND_ORDER: Record<ComponentKind, number> = {
   skill: 0,
   agent_template: 1,
@@ -822,6 +829,7 @@ export class PlatformPluginUpdater {
         .set({ latest_version: diff.to.version })
         .where("id", "=", itemId)
         .execute();
+      await markVersionApplied(t, itemId, diff.to.version);
       // An owner's new version replaces a version waiting for the super admin (pre-flight F7):
       // their confirmation of it is then refused (409 extension.not_pending); the super admin's
       // confirmation applied it
@@ -966,10 +974,7 @@ export class PlatformPluginUpdater {
       // (`latest_version`, ruling P3-34/P3-37): one the org uploaded that was never applied or
       // confirmed (a rejected or failed one) is not theirs to apply
       if (o.owner === undefined && item.owner_org_id !== null && version !== item.latest_version) {
-        throw targetInvalid(
-          `Version ${version} of plugin ${item.name} was uploaded by its organization but never applied; only its owner can apply it (or the super admin confirm it in 待确认)`,
-          [{ reason: "org_version_not_applied", version }],
-        );
+        throw notApplied(item.name, version);
       }
     }
     if (o.owner !== undefined && item.owner_org_id !== o.owner.orgId) throw itemNotFound();
@@ -982,12 +987,26 @@ export class PlatformPluginUpdater {
     const name = item.name;
     const versions = (await db
       .selectFrom("catalog_item_versions")
-      .select(["version", "manifest", "object_prefix", "files", "extension_sha256"])
+      .select([
+        "version",
+        "manifest",
+        "object_prefix",
+        "files",
+        "extension_sha256",
+        "applied_at",
+        "rejected_at",
+      ])
       .where("item_id", "=", itemId)
-      .execute()) as VersionRow[];
+      .execute()) as (VersionRow & { applied_at: Date | null; rejected_at: Date | null })[];
     const to = o.target ?? versions.find((v) => v.version === version);
     if (!to)
       throw new ApiError("catalog.item_not_found", `Version ${version} of this item not found`);
+    // Whoever owns the item now (a transfer keeps the version rows), the generic update never
+    // reaches a version that was rejected or never applied (ruling P3-52)
+    const row = versions.find((v) => v.version === version);
+    if (o.owner === undefined && o.confirmPending !== version && row && !versionUsable(row)) {
+      throw notApplied(item.name, version);
+    }
     if (o.owner !== undefined && to.manifest.extension) {
       // An org's version with an extension waits for the super admin's confirmation (plan Task 6)
       throw new ApiError(

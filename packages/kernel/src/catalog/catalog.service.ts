@@ -24,6 +24,7 @@ import {
   itemScopeFacts,
   itemView,
   marketplaceLatest,
+  versionUsable,
 } from "./catalog-items.js";
 import type { TranslationReport } from "./claude/report.js";
 import {
@@ -672,6 +673,8 @@ export class CatalogService {
         "imported_at",
         "manifest",
         "source_format",
+        "applied_at",
+        "rejected_at",
       ])
       .where(
         "item_id",
@@ -679,8 +682,12 @@ export class CatalogService {
         items.map((i) => i.id),
       )
       .execute();
+    const platformOwned = new Set(items.filter((i) => i.owner_org_id === null).map((i) => i.id));
     const byItem = new Map<string, (typeof versions)[number][]>();
     for (const v of versions) {
+      // a platform item offers only versions it may use (a transferred org item's rejected or
+      // never-applied uploads stay out, ruling P3-52); an org item's pending ones show in 待确认
+      if (platformOwned.has(v.item_id) && !versionUsable(v)) continue;
       const list = byItem.get(v.item_id) ?? [];
       list.push(v);
       byItem.set(v.item_id, list);
@@ -715,11 +722,13 @@ export class CatalogService {
       .where("id", "=", itemId)
       .executeTakeFirst();
     if (!item) throw notFound();
-    const rows = await this.db
-      .selectFrom("catalog_item_versions")
-      .selectAll()
-      .where("item_id", "=", itemId)
-      .execute();
+    const rows = (
+      await this.db
+        .selectFrom("catalog_item_versions")
+        .selectAll()
+        .where("item_id", "=", itemId)
+        .execute()
+    ).filter((v) => item.owner_org_id !== null || versionUsable(v));
     rows.sort((a, b) =>
       newestFirst(
         { version: a.version, importedAt: a.imported_at },

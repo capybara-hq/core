@@ -59,6 +59,7 @@ import {
   templateConnectorInput,
   templatePluginProblem,
 } from "./catalog-content.js";
+import { versionUsable } from "./catalog-items.js";
 import {
   agentDefinitionRefs,
   componentOn,
@@ -370,7 +371,7 @@ async function resolveOne(
   }
   const versions = await db
     .selectFrom("catalog_item_versions")
-    .select(["version", "manifest", "imported_at"])
+    .select(["version", "manifest", "imported_at", "applied_at", "rejected_at"])
     .where("item_id", "=", item.id)
     .execute();
   let v: (typeof versions)[number] | undefined;
@@ -386,8 +387,10 @@ async function resolveOne(
     }
   } else {
     const deprecated = await deprecatedVersions(db, d.name, item.marketplace_id);
-    // An org's plugin offers only its applied version: never one pending or rejected (P3-34)
+    // An org's plugin offers only its applied version: never one pending or rejected (P3-34),
+    // also once transferred to the platform (P3-52)
     const candidates = versions
+      .filter((x) => versionUsable(x))
       .filter((x) => item.owner_org_id === null || x.version === item.latest_version)
       .filter((x) => !deprecated.has(x.version))
       .map((x) => ({ ...x, importedAt: x.imported_at }));

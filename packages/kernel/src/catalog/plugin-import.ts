@@ -79,6 +79,7 @@ import {
   itemConfirmations,
   itemScopeFacts,
   itemView,
+  markVersionApplied,
   permissionsMismatch,
   precheckCatalogImport,
   putCatalogFiles,
@@ -102,6 +103,7 @@ import { isClaudePluginTree, translateClaudePlugin } from "./claude/translate.js
 import { CatalogItemLock } from "./locks.js";
 import {
   assertNameFree,
+  assertPackageFree,
   assertShareable,
   packageOwner,
   releaseExtensionClaim,
@@ -780,6 +782,8 @@ export class PluginImport {
     if (owner !== undefined) {
       // a bootstrap or marketplace plugin's name stays free for the platform (ruling P3-28)
       await assertNameNotReserved(this.db, m.name);
+      // its npm package is an identity of this org only (ruling P3-51)
+      await assertPackageFree(this.db, packageName, owner.orgId);
       await assertCustomContent(this.db, content);
     }
     // An org's own version imported but not applied: its update is retried (pre-flight F4)
@@ -1314,6 +1318,8 @@ export class PluginImport {
       });
     }
     await assertOrgsExist(t, scope.orgs);
+    // Checked again before this upload claims anything (ruling P3-51)
+    if (owner !== undefined) await assertPackageFree(t, staged.packageName, owner.orgId);
     let now: PluginReviewExtension | undefined;
     let previous: PreviousSnapshot | null | undefined;
     if (reviewed) {
@@ -1488,6 +1494,9 @@ export class PluginImport {
       for (const org of requestOrgs) await addScopeOrg(t, actor, item, org, opts);
     }
     const pending = owner !== undefined && reviewed !== undefined;
+    // An org's first version without an extension is installed at once: applied (P3-52)
+    if (owner !== undefined && created && !pending)
+      await markVersionApplied(t, itemId, staged.version);
     if (pending) {
       // Waits for the super admin; a later upload replaces the pending version (P3-10, P3-11)
       await t
@@ -1516,6 +1525,7 @@ export class PluginImport {
         })
         .where("id", "=", itemId)
         .execute();
+      await markVersionApplied(t, itemId, staged.version);
       await releaseExtensionClaim(t, m.name, existing.package_name);
     }
     return {

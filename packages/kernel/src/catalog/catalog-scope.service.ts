@@ -8,6 +8,7 @@ import { ApiError } from "../errors.js";
 import { ExtensionAdminOps } from "../extensions/admin-ops.js";
 import { ExtensionAdmin } from "../extensions/admin-view.js";
 import { ExtensionLifecycle } from "../extensions/lifecycle.js";
+import { PluginInstallLock } from "../extensions/locks.js";
 import { audit } from "../identity/audit.js";
 import { SuperAdminLock } from "../identity/super-admin.js";
 import { addOrgNotice, notifyItemShared } from "../inbox/org-notices.js";
@@ -20,7 +21,7 @@ import type { KernelLogger } from "../log.js";
 import { OrgLock } from "../orgs/org-lock.js";
 import { MAINTENANCE_QUEUE_NAME } from "../runtime/maintenance-queue.js";
 import { type ActorOpts, type CatalogItemView, CatalogService } from "./catalog.service.js";
-import { assertOrgsExist } from "./catalog-items.js";
+import { assertOrgsExist, markVersionApplied } from "./catalog-items.js";
 import { nameConflictError } from "./component-scope.service.js";
 import {
   agentsUsing,
@@ -43,6 +44,9 @@ import {
   assertShareableTarget,
   itemRemovedError,
   newlySharedWith,
+  ownerOf,
+  ownersOf,
+  PLATFORM_OWNER,
   packageOwner,
   pendingDigest,
   releaseExtensionClaim,
@@ -183,6 +187,8 @@ export class CatalogScopeService {
     @Inject(PlatformPluginUpdater) private readonly updater: PlatformPluginUpdater,
     /** The owner org's lock: an org admin withdrawing its pending upload (ruling P3-10). */
     @Inject(OrgLock) private readonly orgLock: OrgLock,
+    /** The per-name install lock a reject / withdraw releases the name claim under (M1). */
+    @Inject(PluginInstallLock) private readonly installLock: PluginInstallLock,
     /** This replica's reconcile once a confirmed extension is enabled (before the scope sync). */
     @Inject(ExtensionLifecycle) private readonly lifecycle: ExtensionLifecycle,
     /** The removed org plugin's cleanup job, backing the take-out of P3-21 (pre-flight F9). */
@@ -384,19 +390,37 @@ export class CatalogScopeService {
     if (reviewHash === null || pendingDigest(sha, reviewHash) !== permissionsHash) {
       throw pendingStale(name);
     }
-    // An install of this name from another package (left by an earlier item): the org's code
-    // never inherits its deployment config, secrets or data (ruling P3-36)
+    // An install of this name that is not this item's (left by an earlier item, of another
+    // package or of the same package name under another owner): the org's code never inherits its
+    // deployment config, secrets or data (rulings P3-36, P3-51). This item's own install, or one
+    // its owner's removed item of the same package left, is upgraded in place.
     const install = await this.db
       .selectFrom("extension_installs as x")
       .innerJoin("extension_packages as p", "p.sha256", "x.sha256")
-      .select(["x.sha256", "p.package_name"])
+      .leftJoin("catalog_items as ci", "ci.id", "x.catalog_item_id")
+      .select(["x.sha256", "x.catalog_item_id", "p.package_name", "ci.owner_org_id"])
       .where("x.name", "=", name)
       .executeTakeFirst();
-    if (install !== undefined && install.package_name !== item.package_name) {
+    const own =
+      install === undefined ||
+      (install.package_name === item.package_name &&
+        (install.catalog_item_id === itemId ||
+          (install.catalog_item_id !== null && install.owner_org_id === item.owner_org_id)));
+    if (install !== undefined && !own) {
+      // who holds it: the install's own item's owner, else the package's (none: the platform)
+      const holderOrg = install.catalog_item_id === null ? null : install.owner_org_id;
+      const holder =
+        install.catalog_item_id !== null
+          ? ownerOf(holderOrg, await ownersOf(this.db, holderOrg === null ? [] : [holderOrg]))
+          : install.package_name !== item.package_name
+            ? await packageOwner(this.db, install.package_name, name)
+            : PLATFORM_OWNER;
       throw new ApiError(
         "extension.name_conflict",
-        `Extension ${name} is installed from package ${install.package_name}; the upload's package ${item.package_name ?? "(none)"} cannot take it over`,
-        [{ owner: await packageOwner(this.db, install.package_name, name) }],
+        install.package_name !== item.package_name
+          ? `Extension ${name} is installed from package ${install.package_name}; the upload's package ${item.package_name ?? "(none)"} cannot take it over`
+          : `Extension ${name} is installed for another plugin of package ${install.package_name}; this upload cannot take it over`,
+        [{ owner: holder }],
       );
     }
     if (!item.awaiting_confirmation) {
@@ -603,6 +627,7 @@ export class CatalogScopeService {
       })
       .where("id", "=", itemId)
       .execute();
+    await markVersionApplied(this.db, itemId, version);
     await addOrgNotice(this.db, owner, "upload_confirmed", { itemId, name: named.name, version });
     await audit(this.db, {
       actorAccountId: actor,
@@ -688,6 +713,18 @@ export class CatalogScopeService {
     if (item.awaiting_confirmation) {
       await cancelPendingRequests(t, { itemId }, actor, "item_removed", opts);
     }
+    if (how.kind === "reject") {
+      // never usable afterwards, whoever owns the item later (ruling P3-52)
+      await t
+        .updateTable("catalog_item_versions")
+        .set({ rejected_at: now })
+        .where("item_id", "=", itemId)
+        .where("version", "=", item.pending_version)
+        .execute();
+    }
+    // Under the per-name install lock, as CatalogService.removeIn: a confirm's install still
+    // committing is seen, so its claim is never released under it
+    await this.installLock.lock(item.name);
     await releaseExtensionClaim(t, item.name, item.package_name);
     if (how.kind === "reject") {
       await addOrgNotice(t, item.owner_org_id, "upload_rejected", {

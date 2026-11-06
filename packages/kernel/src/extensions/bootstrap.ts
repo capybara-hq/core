@@ -12,6 +12,7 @@ import {
 import { Inject, Injectable, Optional } from "@nestjs/common";
 import { sql } from "kysely";
 import semver from "semver";
+import { otherNameOwner } from "../catalog/ownership.js";
 import { catalogPackageError, type PluginImport } from "../catalog/plugin-import.js";
 import { PluginPackageError, readPluginPackage } from "../catalog/plugin-package.js";
 import type { KernelConfig } from "../config/schema.js";
@@ -383,6 +384,7 @@ export class BootstrapService {
       const failures: BootstrapFailure[] = [];
       for (const e of o.manifest.plugins) {
         signal.throwIfAborted();
+        await this.warnIfHeld(e);
         try {
           const r = await this.entry(e, files.get(e.name) as Uint8Array, handled, o.imports);
           results.push(carried(r, o.carry));
@@ -408,6 +410,26 @@ export class BootstrapService {
       this.log.info("bootstrap completed", { manifestSha256, results });
       return { manifestSha256, results };
     });
+  }
+
+  /**
+   * A pin whose plugin name an org holds (a live org-owned catalog item): the bootstrap takes no
+   * name over (ruling P3-28), so the entry fails; this warning tells the super admin why and
+   * which org holds it (final review M4).
+   */
+  private async warnIfHeld(e: BootstrapEntry): Promise<void> {
+    const holder = await otherNameOwner(this.db, e.name, null);
+    if (holder?.kind !== "org") return;
+    this.log.warn(
+      "bootstrap: the plugin name is held by an organization; the entry cannot take it over until the organization renames or deletes its plugin",
+      {
+        plugin: e.name,
+        version: e.version,
+        required: e.required,
+        ownerOrgId: holder.orgId,
+        ownerOrg: holder.name,
+      },
+    );
   }
 
   /** The `bootstrap_runs` row and the `bootstrap.completed` audit, in one transaction. */

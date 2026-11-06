@@ -134,7 +134,8 @@ export interface CatalogListing {
 export interface CatalogVersionWrite {
   /**
    * A new version of an org-owned item: `latest_version` (and the listing) stays where it is; it
-   * moves only when the version is applied or confirmed (ruling P3-34).
+   * moves only when the version is applied or confirmed (ruling P3-34). The version row is
+   * written not applied (`applied_at` null, ruling P3-52) until {@link markVersionApplied}.
    */
   keepLatest?: boolean;
   /** null: the CLI (no account). */
@@ -446,6 +447,8 @@ export async function writeCatalogVersion(
       translation: w.translation != null ? JSON.stringify(w.translation) : null,
       license_text: w.licenseText ?? null,
       license_truncated: w.licenseTruncated === true,
+      // an org's version is usable only once applied or confirmed (ruling P3-52)
+      ...(w.keepLatest === true && { applied_at: null }),
     })
     .execute();
   await audit(t, {
@@ -466,6 +469,32 @@ export async function writeCatalogVersion(
     },
   });
   return { id, created };
+}
+
+/**
+ * Records that `version` of the item was applied or confirmed (ruling P3-52), in the caller's
+ * transaction: from then on it may serve other orgs and the generic update. Idempotent.
+ */
+export async function markVersionApplied(
+  db: KernelSchemaDb,
+  itemId: string,
+  version: string,
+): Promise<void> {
+  await db
+    .updateTable("catalog_item_versions")
+    .set({ applied_at: sql<Date>`now()` as unknown as Date })
+    .where("item_id", "=", itemId)
+    .where("version", "=", version)
+    .where("applied_at", "is", null)
+    .execute();
+}
+
+/**
+ * Whether a version may serve other orgs, dependency resolution and the generic update (ruling
+ * P3-52): applied or confirmed, and never rejected, whoever owns the item now.
+ */
+export function versionUsable(v: { applied_at: Date | null; rejected_at: Date | null }): boolean {
+  return v.applied_at !== null && v.rejected_at === null;
 }
 
 /**
