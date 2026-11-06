@@ -1019,7 +1019,6 @@ describe("M6 第三段双副本验收（平台目录）", { timeout: 240_000 }, 
     const kitItem = (v1.item as { id: string }).id;
     // B: installed at 1.0.0, an agent selects the skill
     const inst = await at("boss", 1, "POST", `${base}/catalog/${kitItem}/install`, {
-      version: "1.0.0",
       connectors: {
         "kit-docs": {
           name: "Kit Docs",

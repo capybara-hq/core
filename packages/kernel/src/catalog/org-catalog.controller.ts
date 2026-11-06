@@ -62,10 +62,12 @@ const ConnectorInput = z
   })
   .strict();
 
-/** The org install body: the version (default the latest), template input, the extension's org config. */
+/**
+ * The org install body: template input, the extension's org config. No version: an org installs the
+ * platform version (one per deployment, ruling P2-17).
+ */
 const InstallBody = z
   .object({
-    version: z.string().min(1).max(256).optional(),
     connectors: z.record(z.string(), ConnectorInput).optional(),
     extensionConfig: z.record(z.string(), z.unknown()).optional(),
   })

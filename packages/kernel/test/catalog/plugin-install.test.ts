@@ -713,14 +713,15 @@ describe("org plugin install: one kind per component", { timeout: 60_000 }, () =
 });
 
 describe("org plugin install: dependencies", { timeout: 60_000 }, () => {
-  it("installs the highest imported version satisfying the range first, as a nested install recorded as a plugin component; uninstall removes it", async () => {
+  it("installs the dependency's platform version first (not a newer import), as a nested install recorded as a plugin component; uninstall removes it", async () => {
     const d = await skillsPlugin("dep");
+    // imported ahead of updating: an import does not move the platform version (ruling P2-17)
     await skillsPlugin("dep", undefined, { version: "1.2.0", addTo: d });
     await skillsPlugin("dep", undefined, { version: "2.0.0", addTo: d });
     const p = await skillsPlugin("app", [{ name: "dep", version: "^1.0.0" }]);
     const r = await install(env.boss, env, p);
     expect(r.statusCode, r.body).toBe(201);
-    expect(await liveInstalls()).toEqual(["app@1.0.0:installed", "dep@1.2.0:installed"]);
+    expect(await liveInstalls()).toEqual(["app@1.0.0:installed", "dep@1.0.0:installed"]);
     const depId = await installIdOf("dep");
     expect(r.json().install.components).toEqual(
       expect.arrayContaining([
@@ -750,6 +751,56 @@ describe("org plugin install: dependencies", { timeout: 60_000 }, () => {
     expect(report.removed.map((x) => x.kind)).toEqual(["plugin"]);
     expect(await liveInstalls()).toEqual([]);
     expect(await usableNames()).toEqual([]);
+  });
+
+  it("a dependency whose platform version does not satisfy the range: 409 catalog.dependency_unresolved, even with a satisfying import (ruling P2-17)", async () => {
+    const d = await skillsPlugin("dep");
+    await skillsPlugin("dep", undefined, { version: "2.0.0", addTo: d });
+    const p = await skillsPlugin("app", [{ name: "dep", version: "^2.0.0" }]);
+    const r = await install(env.boss, env, p);
+    expect(r.statusCode, r.body).toBe(409);
+    expect(r.json().error.code).toBe("catalog.dependency_unresolved");
+    expect(r.json().error.message).toContain("dep@^2.0.0");
+    expect(await liveInstalls()).toEqual([]);
+  });
+
+  it("a dependency without a platform version yet: the highest stable version satisfying the range, a prerelease only when no stable one does (ruling P2-17)", async () => {
+    const d = await seedPlugin(env, {
+      name: "dep",
+      templates: false,
+      skills: ["dep-skill"],
+      platform: false,
+    });
+    await skillsPlugin("dep", undefined, { version: "1.4.0", addTo: d });
+    await skillsPlugin("dep", undefined, { version: "1.5.0-rc.1", addTo: d });
+    await skillsPlugin("dep", undefined, { version: "2.0.0-rc.1", addTo: d });
+    const p = await skillsPlugin("app", [{ name: "dep", version: "^1.0.0" }]);
+    const r = await install(env.boss, env, p);
+    expect(r.statusCode, r.body).toBe(201);
+    expect(await liveInstalls()).toEqual(["app@1.0.0:installed", "dep@1.4.0:installed"]);
+    await uninstallId(r.json().installed.pluginInstallId);
+    const q = await skillsPlugin("next", [{ name: "dep", version: ">=2.0.0-rc.0" }]);
+    const n = await install(env.boss, env, q);
+    expect(n.statusCode, n.body).toBe(201);
+    expect(await liveInstalls()).toContain("dep@2.0.0-rc.1:installed");
+  });
+
+  it("the org install takes no version: 400 validation_failed (one version per deployment, ruling P2-17)", async () => {
+    const p = await skillsPlugin("app");
+    await skillsPlugin("app", undefined, { version: "1.1.0", addTo: p });
+    const r = await install(env.boss, env, p, { version: "1.1.0" });
+    expect(r.statusCode, r.body).toBe(400);
+    expect(r.json().error.code).toBe("validation_failed");
+    const s = await env.boss({
+      method: "PUT",
+      url: `/api/v1/orgs/${env.orgId}/catalog/${p}/switch`,
+      payload: { enabled: true, inputs: { version: "1.1.0" } },
+    });
+    expect(s.statusCode, s.body).toBe(400);
+    expect(await liveInstalls()).toEqual([]);
+    const ok = await install(env.boss, env, p);
+    expect(ok.statusCode, ok.body).toBe(201);
+    expect(await liveInstalls()).toEqual(["app@1.0.0:installed"]);
   });
 
   it("a range nothing in the catalog satisfies, or a dependency not in the catalog: 409 catalog.dependency_unresolved naming it, nothing written (no request either)", async () => {
@@ -827,9 +878,18 @@ describe("org plugin install: dependencies", { timeout: 60_000 }, () => {
     expect(report.kept).toEqual([{ kind: "plugin", ref: depId, reason: "pre_existing" }]);
     expect(await liveInstalls()).toEqual(["dep@1.0.0:installed"]);
     expect(await usableNames()).toEqual(["platform:dep-skill"]);
-    // Installed at a version outside the range: refused (org upgrades arrive in phase A)
+    // A platform version outside the range: refused (the super admin updates the dependency first)
     const q = await skillsPlugin("strict", [{ name: "dep", version: "^2.0.0" }]);
     await skillsPlugin("dep", undefined, { version: "2.0.0", addTo: d });
+    const platform = await install(env.boss, env, q);
+    expect(platform.json().error.code).toBe("catalog.dependency_unresolved");
+    expect(platform.json().error.message).toContain("platform version 1.0.0");
+    // Installed at a version outside the range (the platform moved without this install): refused
+    await env.db
+      .updateTable("catalog_items")
+      .set({ platform_synced_version: "2.0.0" })
+      .where("id", "=", d)
+      .execute();
     const strict = await install(env.boss, env, q);
     expect(strict.json().error.code).toBe("catalog.dependency_unresolved");
     expect(strict.json().error.message).toContain("1.0.0 installed");

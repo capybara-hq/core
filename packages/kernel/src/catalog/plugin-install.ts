@@ -6,6 +6,8 @@ import {
   type ConnectorTemplateSpec,
   EXTENSION_POINTS,
   type ExtensionManifest,
+  type MarketplaceEntry,
+  marketplaceEntryDeprecation,
   type PluginManifest,
   parseExtensionPoint,
   parseSkillMd,
@@ -13,6 +15,7 @@ import {
 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
+import semver from "semver";
 import { revertTemplateVersionIn, softDeleteTemplateIn } from "../agents/templates.js";
 import type { KernelSchemaDb, SourceFormat } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
@@ -328,10 +331,12 @@ const dependencyDisabled = (name: string) =>
   );
 
 /**
- * The dependency `d` resolved against the catalog: the highest imported version (of the live item
- * with that name) satisfying its range. No such item or version -> `catalog.dependency_unresolved`;
- * the item disabled -> `catalog.dependency_disabled` (the super admin's ban is not bypassed,
- * spec §10).
+ * The dependency `d` resolved against the catalog (ruling P2-17, one version per deployment): the
+ * dependency's platform version (`platform_synced_version`), which must satisfy its range; only
+ * while it has none yet (its first sync failed), the highest imported version satisfying the range
+ * that its marketplace does not deprecate, a stable one before a prerelease (the marketplace
+ * folding rule). No such item or version -> `catalog.dependency_unresolved`; the item disabled ->
+ * `catalog.dependency_disabled` (the super admin's ban is not bypassed, spec §10).
  */
 async function resolveOne(
   db: KernelSchemaDb,
@@ -339,7 +344,7 @@ async function resolveOne(
 ): Promise<ResolvedDependency & { manifest: PluginManifest }> {
   const item = await db
     .selectFrom("catalog_items")
-    .select(["id", "disabled"])
+    .select(["id", "disabled", "platform_synced_version", "marketplace_id"])
     .where("name", "=", d.name)
     .where("deleted_at", "is", null)
     .executeTakeFirst();
@@ -356,10 +361,28 @@ async function resolveOne(
     .select(["version", "manifest", "imported_at"])
     .where("item_id", "=", item.id)
     .execute();
-  const v = maxSatisfying(
-    versions.map((x) => ({ ...x, importedAt: x.imported_at })),
-    d.version,
-  );
+  let v: (typeof versions)[number] | undefined;
+  if (item.platform_synced_version !== null) {
+    v = versions.find((x) => x.version === item.platform_synced_version);
+    if (!v || !satisfiesRange(v.version, d.version)) {
+      throw unresolved(
+        d.name,
+        d.version,
+        `its platform version ${item.platform_synced_version} does not satisfy the range; ask ` +
+          "the super admin to update it",
+      );
+    }
+  } else {
+    const deprecated = await deprecatedVersions(db, d.name, item.marketplace_id);
+    const candidates = versions
+      .filter((x) => !deprecated.has(x.version))
+      .map((x) => ({ ...x, importedAt: x.imported_at }));
+    v =
+      maxSatisfying(
+        candidates.filter((x) => semver.prerelease(x.version) === null),
+        d.version,
+      ) ?? maxSatisfying(candidates, d.version);
+  }
   if (!v) {
     throw unresolved(
       d.name,
@@ -376,10 +399,30 @@ async function resolveOne(
   };
 }
 
+/** The versions of plugin `name` its marketplace (`marketplaceId`) marks deprecated. */
+async function deprecatedVersions(
+  db: KernelSchemaDb,
+  name: string,
+  marketplaceId: string | null,
+): Promise<Set<string>> {
+  if (marketplaceId === null) return new Set();
+  const rows = await db
+    .selectFrom("marketplace_entries")
+    .select(["version", "entry"])
+    .where("source_id", "=", marketplaceId)
+    .where("name", "=", name)
+    .execute();
+  return new Set(
+    rows
+      .filter((r) => marketplaceEntryDeprecation(r.entry as MarketplaceEntry) !== null)
+      .map((r) => r.version),
+  );
+}
+
 /**
- * Resolves a plugin's dependencies against the catalog: for each one the highest imported version
- * of the live item with that name satisfying its range. The whole dependency tree is checked: a
- * dependency nothing satisfies -> `catalog.dependency_unresolved`; a disabled one ->
+ * Resolves a plugin's dependencies against the catalog: for each one the platform version of the
+ * live item with that name, which must satisfy its range (see `resolveOne`). The whole dependency
+ * tree is checked: a dependency nothing satisfies -> `catalog.dependency_unresolved`; a disabled one ->
  * `catalog.dependency_disabled`; a cycle (`a` -> `b` -> `a`, by name) or nesting deeper than
  * {@link DEPENDENCY_DEPTH_LIMIT} -> `catalog.dependency_cycle`. Returns the direct dependencies.
  */

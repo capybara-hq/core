@@ -375,8 +375,8 @@ export class OrgCatalogService {
     if (!UUID_RE.test(itemId)) throw itemNotFound();
     await this.assertCanInstall(orgId, actor);
     const item = await this.visibleItem(orgId, itemId);
-    // The platform's version by default (one per deployment, Task 7)
-    const version = body.version ?? item.platform_synced_version ?? item.latest_version;
+    // The platform's version (one per deployment, ruling P2-17)
+    const version = item.platform_synced_version ?? item.latest_version;
     const v = await this.db
       .selectFrom("catalog_item_versions")
       .select("version")
@@ -389,8 +389,7 @@ export class OrgCatalogService {
     if (item.disabled) throw pluginDisabled();
     // Dependencies resolved, extensions deployed, template connectors available
     await this.pluginInstaller.preflight(orgId, actor, itemId, version);
-    const { version: _version, ...input } = body;
-    const view = await this.pluginInstaller.install(orgId, actor, itemId, version, input, opts);
+    const view = await this.pluginInstaller.install(orgId, actor, itemId, version, body, opts);
     return {
       status: 201,
       installed: { itemId, version, pluginInstallId: view.id },

@@ -245,10 +245,11 @@ export async function readCatalogIcon(
 
 export type { ConnectorInstallInput };
 
-/** The input of `POST /orgs/:orgId/catalog/:itemId/install` (default version: the latest). */
-export interface OrgInstallInput extends PluginInstallInput {
-  version?: string;
-}
+/**
+ * The input of `POST /orgs/:orgId/catalog/:itemId/install`: the platform version is installed
+ * (ruling P2-17), so there is no version.
+ */
+export type OrgInstallInput = PluginInstallInput;
 
 /** Install result: 201 installed. */
 export interface OrgInstallResult {
