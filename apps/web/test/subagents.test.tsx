@@ -390,6 +390,47 @@ describe("sub-agents on the conversation page", () => {
     expect(within(panel).queryByRole("button", { name: en.subagents.view.stop })).toBeNull();
   });
 
+  it("a child waiting for an approval: the panel's time stops at the wait and says so, no spinner", async () => {
+    const at = (e: ConversationEvent, s: number) => ({
+      ...e,
+      createdAt: new Date(Date.UTC(2026, 9, 26, 6, 0, 0) + s * 1000).toISOString(),
+    });
+    // the child worked 6 s, then asked for an approval (days ago: all of it waiting)
+    const child = [
+      ...childEvents(true)
+        .slice(0, 4)
+        .map((e) => at(e, e.type === "run_started" ? 10 : e.seq)),
+      at(
+        ev(
+          5,
+          "approval_requested",
+          {
+            step: 1,
+            callId: "x1",
+            approvalId: "ap1",
+            toolKey: "Bash",
+            expiresAt: "2026-10-27T00:00:00.000Z",
+          },
+          "run-ch2",
+          "ch2",
+        ),
+        16,
+      ),
+    ];
+    api({}, { child });
+    window.history.replaceState(null, "", "/chat/c1#subagent=ch2");
+    await renderChat();
+    const meta = () =>
+      screen
+        .getByRole("complementary", { name: "Check tests" })
+        .querySelector('[data-part="panel-meta"]') as HTMLElement;
+    await childPanelWith(() => expect(meta().textContent).toBe("Waiting for approval · 6s"));
+    expect(meta().querySelector('[data-part="spinner"]')).toBeNull();
+    // it does not tick while the child waits
+    await act(() => new Promise((r) => setTimeout(r, 1100)));
+    expect(meta().textContent).toBe("Waiting for approval · 6s");
+  });
+
   it("an org agent's name in the task line links to the agent", async () => {
     const child = childEvents(false).map((e) =>
       e.type === "subagent_started"

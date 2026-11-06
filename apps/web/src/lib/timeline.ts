@@ -1284,6 +1284,8 @@ export interface RunStats {
    * while it waits for a person, after it ended and before any run, so nothing ticks then.
    */
   resumedAt: number | null;
+  /** What the current run waits for while it waits for a person, else null. */
+  waitingFor: "approval" | "input" | null;
 }
 
 /** The running time the status bar shows: worked time, plus the open working stretch. */
@@ -1301,6 +1303,11 @@ class RunClock {
   /** When the run last started working; null while it waits and after it ended. */
   resumedAt: number | null;
   private readonly waits = new PersonWaits();
+
+  /** What it waits for while it waits for a person, else null. */
+  get waitingFor(): "approval" | "input" | null {
+    return this.waits.kind;
+  }
 
   constructor(at: number) {
     this.resumedAt = at;
@@ -1367,6 +1374,7 @@ export function runStats(events: readonly ConversationEvent[]): RunStats {
     last,
     workedMs: Math.max(0, clock?.workedMs ?? 0),
     resumedAt: clock?.resumedAt ?? null,
+    waitingFor: active === null ? null : (clock?.waitingFor ?? null),
   };
 }
 

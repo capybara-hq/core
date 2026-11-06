@@ -14,6 +14,12 @@ export class PersonWaits {
     return this.open.size > 0;
   }
 
+  /** What the latest open wait waits for, or null when none is open. */
+  get kind(): "approval" | "input" | null {
+    const last = [...this.open].at(-1);
+    return last === undefined ? null : last.startsWith("a:") ? "approval" : "input";
+  }
+
   /**
    * Applies `e` (an event of the run being followed). Returns `"start"` when the run began
    * waiting with it, `"end"` when its last open wait closed with it, else null.
