@@ -236,7 +236,8 @@ function DeleteOrg({ orgId }: { orgId: string }) {
             throw new Error(errorMessage(e));
           }
           // The kernel cleared the current org with the org: a full navigation home (the org
-          // chooser covers it), told to the other tabs (ruling R4). The dialog stays busy until the unload.
+          // chooser covers it), told to the other tabs (ruling R4). The dialog stays busy until
+          // the unload.
           toast.success(t("delete.done"));
           broadcastSession("org-switched");
           // The browser's one client (the provider's): drop the old org's cache before leaving.

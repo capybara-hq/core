@@ -4,7 +4,7 @@ import { StatusPage } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
 import { usePathname } from "../i18n/navigation";
 import type { OrgRole } from "../lib/members";
-import { activeNavOf } from "./shell/nav";
+import { activeNavOf, navMessageKey } from "./shell/nav";
 import { usePagePath } from "./shell/path";
 
 /** The role a page needs: an org role, or `superAdmin` for the admin console. */
@@ -19,11 +19,12 @@ export function NoAccess({ need }: { need: Need }) {
   const pathname = usePathname();
   const superAdmin = need === "superAdmin";
   const scope = usePagePath(superAdmin ? "admin" : "org");
-  const nav = activeNavOf(pathname);
+  // The page's nav label; a route without one (New conversation, an extension page) says no access.
+  const key = navMessageKey(activeNavOf(pathname));
   const page = superAdmin
     ? t("nav.admin")
-    : nav !== "" && !nav.startsWith("ext:") && nav !== "overview"
-      ? t(`nav.${nav}`)
+    : key !== undefined
+      ? t(`nav.${key}` as "nav.agents")
       : t("roles.noAccess.title");
   const role = t(`roles.need.${need}`);
   return (

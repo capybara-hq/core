@@ -30,6 +30,7 @@ import SkillsPage from "../src/app/(app)/skills/page";
 import TrajectoryPage from "../src/app/(app)/trajectories/[conversationId]/page";
 import TrajectoriesPage from "../src/app/(app)/trajectories/page";
 import { HydrateCache } from "../src/components/HydrateCache";
+import { NoAccess } from "../src/components/NoAccess";
 import { setApiTransport } from "../src/lib/api";
 import type { OrgRole } from "../src/lib/members";
 import { makeQueryClient } from "../src/lib/query/client";
@@ -254,6 +255,21 @@ const PAGES: [string, ComponentType | RoutePage, "member" | "admin", string][] =
 
 const noAccess = () =>
   document.querySelector('[data-template="StatusPage"][data-kind="no-access"]');
+
+describe("NoAccess names the page by its nav label", () => {
+  it.each([
+    ["/agent-templates", zh.nav.agentTemplates],
+    ["/channels", zh.nav.channels],
+    ["/settings/organization", zh.nav.settings],
+    // New conversation has no nav message of its own: the head says no access
+    ["/chat", zh.roles.noAccess.title],
+    ["/p/example-board/board", zh.roles.noAccess.title],
+  ])("%s → %s", (path, title) => {
+    resetNavigation(path);
+    renderPage(<NoAccess need="member" />, { locale: "zh", me: meAs("guest") });
+    expect(screen.getByRole("heading", { level: 1, name: title })).toBeTruthy();
+  });
+});
 
 describe("role gate: pages a role may not open", () => {
   for (const [path, Page, min, need] of PAGES) {

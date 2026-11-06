@@ -593,8 +593,8 @@ function sidebarBlocks(): ReactNode {
       <SidebarBlock
         id="sidebar-item-focus"
         {...base}
-        // The inbox left the nav items for the brand row (an icon button) and there is no home item:
-        // the focus ring is shown on 连接器, a nav item every sidebar has (guests' too).
+        // The inbox left the nav items for the brand row (an icon button) and there is no home
+        // item: the focus ring is shown on 连接器, a nav item every sidebar has (guests' too).
         force={{ pseudo: ["focus", "focus-visible"], selector: navAt("connectors") }}
       />
       <SidebarBlock id="sidebar-conversation-active" activeConversation="cnv_r2" />

@@ -11,7 +11,7 @@ export const isAdminPath = (path: string): boolean => under(path, "/admin");
 
 /**
  * The workspace's home: the new conversation (acceptance 2026-11-07; there is no separate home
- * page). `/` redirects here (`next.config.mjs`), and every "go home" (sign-in, setup, an org switch,
- * the not-found page, the path's org scope) goes here directly.
+ * page). `/` redirects here (`next.config.mjs`), and every "go home" (sign-in, setup, an org
+ * switch, the not-found page, the path's org scope) goes here directly.
  */
 export const HOME_PATH = "/chat";

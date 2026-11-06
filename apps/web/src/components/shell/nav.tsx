@@ -25,8 +25,9 @@ export type NavLevel = "guest" | "member" | "admin";
  * The work context's navigation (web order §2.1, acceptance 2026-11-07): only routes that exist.
  * `primary` items follow New conversation (智能体, 技能, 连接器; there is no home page: the new
  * conversation is the home, and `/` redirects to `/chat`); `more` items sit in the 更多 flyout (then
- * the extension pages). Search and the inbox are icon buttons in the brand row. Items are hidden by the current org role through `audience` (cosmetic only; the kernel
- * decides). The admin console is the entry above the account row, for super admins.
+ * the extension pages). Search and the inbox are icon buttons in the brand row. Items are hidden
+ * by the current org role through `audience` (cosmetic only; the kernel decides). The admin
+ * console is the entry above the account row, for super admins.
  */
 const NAV: readonly {
   id: string;
@@ -125,6 +126,16 @@ export function navLevelOf(me: {
   const role = me.memberships.find((m) => m.orgId === me.currentOrgId)?.role;
   if (role === "owner" || role === "admin") return "admin";
   return role === "member" ? "member" : "guest";
+}
+
+/**
+ * The `nav.*` message key naming the nav item `id` (`agent-templates` is `agentTemplates`), or
+ * undefined for an item without a nav label of its own: `new` (New conversation, labelled by the
+ * design system), an extension page, none.
+ */
+export function navMessageKey(id: string): string | undefined {
+  if (id === "inbox" || id === "admin") return id;
+  return NAV.find((n) => n.id === id)?.key;
 }
 
 /** How often the inbox count is read again (in the browser; no server state involved). */
