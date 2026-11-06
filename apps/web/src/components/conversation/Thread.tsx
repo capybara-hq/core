@@ -722,15 +722,13 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
             {...(onOpenAgentMap ? { onOpenMap: onOpenAgentMap } : {})}
           />
         );
-      case "subagent-wait":
+      case "subagent-wait": {
+        // an agent below the conversation's children opens in the map, never the right panel
+        const open = e.deep ? onOpenAgent : onOpenSubagent;
         return (
-          <SubagentWait
-            orgId={orgId}
-            wait={e}
-            info={info}
-            {...(onOpenSubagent ? { onOpen: onOpenSubagent } : {})}
-          />
+          <SubagentWait orgId={orgId} wait={e} info={info} {...(open ? { onOpen: open } : {})} />
         );
+      }
       case "task":
         return renderTask?.(e) ?? null;
       case "delivery":

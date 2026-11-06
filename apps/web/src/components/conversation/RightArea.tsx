@@ -56,12 +56,13 @@ export function useRightArea(): {
   /** What was open before the agent map (moving inside the map keeps it). */
   const beforeMap = useRef<RightTarget | null>(null);
   useEffect(() => {
-    // Inbox and IM links name a sub-agent as `?subagent=<id>`: it becomes the hash.
+    // Inbox and IM links name a sub-agent at any depth as `?subagent=<id>`: it opens in the agent
+    // map (the right panel takes only the conversation's own children).
     const url = new URL(window.location.href);
     const legacy = url.searchParams.get("subagent");
     if (legacy) {
       url.searchParams.delete("subagent");
-      url.hash = formatRightHash({ kind: "subagent", id: legacy });
+      url.hash = formatRightHash({ kind: "agents", id: legacy });
       window.history.replaceState(window.history.state, "", url.pathname + url.search + url.hash);
     }
     const read = () => {

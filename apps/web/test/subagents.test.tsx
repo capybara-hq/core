@@ -478,13 +478,13 @@ describe("sub-agents on the conversation page", () => {
     expect(link.getAttribute("href")).toContain("/agents/ag1");
   });
 
-  it("?subagent= (inbox and IM links) opens that child and becomes the hash", async () => {
-    api();
+  it("?subagent= (inbox and IM links) becomes the agent map's hash, not the right panel", async () => {
+    api({ [`GET ${PARENT}/agent-tree`]: () => json(404, { error: { code: "not_found" } }) });
     window.history.replaceState(null, "", "/chat/c1?subagent=ch2");
     await renderChat();
-    await childPanelWith((p) => within(p).getByText("All tests pass."));
+    await vi.waitFor(() => expect(window.location.hash).toBe("#agents=ch2"));
     expect(window.location.search).toBe("");
-    expect(window.location.hash).toBe("#subagent=ch2");
+    expect(screen.queryByRole("complementary", { name: "Check tests" })).toBeNull();
   });
 
   it("#subagent= naming a conversation that is not a child of this one fails, with no stop", async () => {

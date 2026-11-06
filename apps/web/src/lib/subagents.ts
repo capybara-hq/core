@@ -100,6 +100,48 @@ export function useSubagents(
   return { views: dispatched ? views : undefined, refresh };
 }
 
+/** Whether the log holds a wait of an agent below the conversation's own children (§7). */
+export const hasNestedWait = (events: readonly ConversationEvent[]) =>
+  events.some((e) => e.type === "subagent_waiting" && (e.payload.path?.length ?? 1) > 1);
+
+/** What the timeline reads of the agent tree: each agent's name and own status. */
+export type TreeLookup = {
+  agentName(id: string): string | undefined;
+  agentStatus(id: string): string | undefined;
+};
+
+/**
+ * The agent tree as names and statuses for the conversation's timeline (agent map spec §7): read
+ * only while the log holds a nested agent's wait (its name and whether it still waits are in the
+ * tree, not in the root's log). The map's own refresh ({@link useAgentTree}) keeps it current.
+ */
+export function useTreeLookup(
+  orgId: string,
+  conversationId: string,
+  events: readonly ConversationEvent[],
+): TreeLookup | undefined {
+  const nested = useMemo(() => hasNestedWait(events), [events]);
+  const query = agentTreeQuery(orgId, conversationId);
+  const root = useQuery({
+    ...query,
+    enabled: nested,
+    retryOnMount: retryOnMountOf(query.queryKey),
+  }).data;
+  return useMemo(() => {
+    if (!nested || root === undefined) return undefined;
+    const nodes = new Map<string, AgentTreeNode>();
+    const walk = (n: AgentTreeNode) => {
+      nodes.set(n.id, n);
+      n.children.forEach(walk);
+    };
+    walk(root);
+    return {
+      agentName: (id) => nodes.get(id)?.description || nodes.get(id)?.agentType || undefined,
+      agentStatus: (id) => nodes.get(id)?.status,
+    };
+  }, [nested, root]);
+}
+
 /** The most often stream progress reads the agent tree again (a trailing throttle window). */
 export const TREE_PROGRESS_MS = 1500;
 

@@ -24,7 +24,12 @@ import { keys as queryKeys } from "../../lib/query/keys";
 import { useAppMutation } from "../../lib/query/mutation";
 import { useWhoWaits } from "../../lib/query/who-waits";
 import { runParts } from "../../lib/run-row";
-import { usageTotal, useSubagents, useUsageWithSubagents } from "../../lib/subagents";
+import {
+  usageTotal,
+  useSubagents,
+  useTreeLookup,
+  useUsageWithSubagents,
+} from "../../lib/subagents";
 import {
   AWAIT_RUN_MS,
   awaitedMessage,
@@ -192,6 +197,7 @@ export function useConversationPage(
     [subagents.views],
   );
   const whoWaits = useWhoWaits(orgId, conv.events);
+  const tree = useTreeLookup(orgId, conversationId, conv.events);
   // The log's timeline is rebuilt when the log changes; a delta frame only adds the drafts (I3).
   const base = useMemo(
     () =>
@@ -199,8 +205,9 @@ export function useConversationPage(
         progress: conv.state.progress,
         ...(views ? { views } : {}),
         whoWaits,
+        ...(tree ?? {}),
       }),
-    [conv.events, info, locale, conv.state.progress, views, whoWaits],
+    [conv.events, info, locale, conv.state.progress, views, whoWaits, tree],
   );
   const entries = useMemo(() => withDrafts(base, conv.state.drafts), [base, conv.state.drafts]);
   const queue = useQueue(orgId, conversationId, conv.merge, conv.events);

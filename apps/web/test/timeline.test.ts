@@ -1036,3 +1036,96 @@ describe("background sub-agents (agent map spec §5, §9.4)", () => {
     expect(g?.kind === "subagents" && g.rows[0]?.row.current).toBe("Slack [search]");
   });
 });
+
+describe("waits of nested sub-agents (agent map spec §7)", () => {
+  const agentCall = calls(2, [
+    {
+      id: "k1",
+      name: "Agent",
+      input: { description: "Scan docs", prompt: "Do it", subagent_type: "general-purpose" },
+    },
+  ]);
+  const dispatched = ev(3, "subagent_dispatched", {
+    step: 0,
+    callId: "k1",
+    subagentId: "ch1",
+    childRunId: "run-ch1",
+    agentType: "general-purpose",
+    description: "Scan docs",
+    resumed: false,
+    model: { provider: "p", model: "m" },
+  });
+  const deepWait = ev(4, "subagent_waiting", {
+    subagentId: "gc1",
+    childRunId: "run-gc1",
+    path: ["ch1", "gc1"],
+    kind: "connect",
+    toolKey: "mcp__gh__issue",
+  });
+  const events = [user(1, "go"), agentCall, dispatched, deepWait];
+  const rowOf = (out: TimelineEntry[]) => {
+    const g = out.find((e) => e.kind === "subagents");
+    return g?.kind === "subagents" ? g.rows[0]?.row : undefined;
+  };
+
+  it("a deep agent's wait marks its root-level row waiting and names the waiting agent", () => {
+    const out = buildTimeline(events, [], new Map(), "en", {
+      agentName: (id) => (id === "gc1" ? "Read the changelog" : undefined),
+      // the list says the root's child itself runs: its descendant's wait still shows
+      views: new Map([
+        ["ch1", { status: "running", pendingApprovalIds: [], pendingQuestionIds: [] }],
+      ]),
+    });
+    expect(rowOf(out)).toMatchObject({ id: "ch1", status: "waiting", waiting: "connect" });
+    expect(out.at(-1)).toMatchObject({
+      kind: "subagent-wait",
+      subagent: { id: "gc1", name: "Read the changelog" },
+      deep: true,
+      wait: "connect",
+    });
+  });
+
+  it("without the agent's name a deep wait is named by its branch, never by a bare id", () => {
+    const out = buildTimeline(events, [], new Map(), "en");
+    expect(out.at(-1)).toMatchObject({ subagent: { id: "gc1", name: "Scan docs" } });
+  });
+
+  it("the tree says the deep agent goes on: the row is no longer waiting", () => {
+    const out = buildTimeline(events, [], new Map(), "en", {
+      agentStatus: (id) => (id === "gc1" ? "running" : undefined),
+    });
+    expect(rowOf(out)).toMatchObject({ status: "running" });
+    expect(rowOf(out)).not.toHaveProperty("waiting");
+  });
+
+  it("only a background row names its current tool (a fork's child is foreground)", () => {
+    const fork = [
+      user(1, "/review", {
+        skill: {
+          id: "s1",
+          version: 1,
+          source: "org",
+          name: "review",
+          arguments: "",
+          mode: "fork",
+        },
+      }),
+      ev(2, "subagent_dispatched", {
+        step: 0,
+        callId: "skill-1",
+        subagentId: "ch9",
+        childRunId: "run-ch9",
+        agentType: "general-purpose",
+        description: "review",
+        resumed: false,
+        model: { provider: "p", model: "m" },
+        invokedSeq: 1,
+      }),
+    ];
+    const out = buildTimeline(fork, [], new Map(), "en", {
+      progress: { ch9: { toolCalls: 1, lastToolKey: "Bash" } },
+    });
+    expect(rowOf(out)).toMatchObject({ id: "ch9", background: false });
+    expect(rowOf(out)).not.toHaveProperty("current");
+  });
+});

@@ -103,8 +103,16 @@ export interface SubagentLive {
    * undefined when it is the viewer (or unknown). Absent = every wait reads "你".
    */
   whoWaits?: (w: Waiter) => string | undefined;
-  /** The name of an agent of the tree (a parent message's sender), when known. */
+  /**
+   * The name of an agent of the tree (a parent message's sender, a nested agent's wait), when
+   * known (the agent tree).
+   */
   agentName?: (conversationId: string) => string | undefined;
+  /**
+   * An agent's own status per the agent tree, when known: a nested agent's wait holds its
+   * root-level row waiting only while the tree does not say it went on.
+   */
+  agentStatus?: (conversationId: string) => string | undefined;
 }
 
 /** How a sub-agent's run ended, as its delivery row words it. */
@@ -269,10 +277,15 @@ export type TimelineEntry =
   | { kind: "tools"; key: string; rows: TimelineTool[] }
   | { kind: "subagents"; key: string; rows: TimelineSubagent[] }
   | {
-      /** A sub-agent waits for a person: its approval, question or connection, in the parent. */
+      /**
+       * A sub-agent waits for a person: its approval, question or connection, in the root (at any
+       * depth, agent map spec §7).
+       */
       kind: "subagent-wait";
       key: string;
       subagent: { id: string; name: string };
+      /** Not a child of this conversation but deeper (its record is opened in the agent map). */
+      deep?: true;
       wait: SubagentWaitKind;
       approvalId?: string;
       questionId?: string;
@@ -669,6 +682,8 @@ export function buildEventTimeline(
   const agentResults = new Set<TimelineSubagent>();
   /** Background task id → its description (from its launch, else its finish). */
   const taskDescriptions = new Map<string, string>();
+  /** Root-level sub-agent id → the latest wait of an agent below it (agent map spec §7). */
+  const deepWaits = new Map<string, { id: string; kind: SubagentWaitKind }>();
   /** Sub-agent id → its latest dispatch's row and child run. */
   const subagentRows = new Map<
     string,
@@ -1068,6 +1083,7 @@ export function buildEventTimeline(
         const s = subagentRows.get(e.payload.subagentId);
         if (!s || s.childRunId !== e.payload.childRunId) break;
         s.finished = true;
+        deepWaits.delete(e.payload.subagentId);
         const row = s.sub.row;
         // A background call's result is logged at dispatch; a child that finished before its
         // call's result was a foreground one (a log written before background sub-agents).
@@ -1081,19 +1097,28 @@ export function buildEventTimeline(
         break;
       }
       case "subagent_waiting": {
-        const s = subagentRows.get(e.payload.subagentId);
+        // the root's child on the waiting agent's path (the agent itself for a child of the root)
+        const path = e.payload.path ?? [e.payload.subagentId];
+        const top = path[0] ?? e.payload.subagentId;
+        const deep = top !== e.payload.subagentId;
+        const s = subagentRows.get(top);
         const row = s?.sub.row;
-        if (s && row && !s.finished && s.childRunId === e.payload.childRunId) {
+        if (s && row && !s.finished && (deep || s.childRunId === e.payload.childRunId)) {
           row.status = "waiting";
           row.waiting = e.payload.kind;
+          if (deep) deepWaits.set(top, { id: e.payload.subagentId, kind: e.payload.kind });
+          else deepWaits.delete(top);
         }
+        const branch = row?.description || row?.agentType || e.payload.subagentId;
         out.push({
           kind: "subagent-wait",
           key,
           subagent: {
             id: e.payload.subagentId,
-            name: row?.description || row?.agentType || e.payload.subagentId,
+            // a deeper agent's name comes from the tree; until then its branch names it
+            name: live.agentName?.(e.payload.subagentId) || branch,
           },
+          ...(deep ? { deep: true as const } : {}),
           wait: e.payload.kind,
           toolKey: e.payload.toolKey,
           ...(e.payload.approvalId !== undefined ? { approvalId: e.payload.approvalId } : {}),
@@ -1291,18 +1316,33 @@ export function buildEventTimeline(
     const p = live.progress?.[id];
     const calls = p?.toolCalls;
     if (calls !== undefined && calls > row.toolCalls) row.toolCalls = calls;
-    if (p?.lastToolKey !== undefined) {
+    // the status line names the current tool only for a background child (§9.5)
+    if (p?.lastToolKey !== undefined && row.background !== false) {
       const ti = info.get(p.lastToolKey);
       row.current = toolLabelText(ti ? toolLabel(ti, locale) : toolLabelOfKey(p.lastToolKey));
     }
     const v = live.views?.get(id);
-    if (v === undefined) continue;
-    if (v.status === "waiting") {
-      row.status = "waiting";
-      row.waiting = subagentWaitKind(v);
-    } else if (v.status === "running" || v.status === "queued") {
-      row.status = v.status;
-      delete row.waiting;
+    if (v !== undefined) {
+      if (v.status === "waiting") {
+        row.status = "waiting";
+        row.waiting = subagentWaitKind(v);
+      } else if (v.status === "running" || v.status === "queued") {
+        row.status = v.status;
+        delete row.waiting;
+      }
+    }
+    // an agent below waits for a person (the list knows only the child's own state)
+    const d = deepWaits.get(id);
+    if (d !== undefined && v?.status !== "waiting") {
+      const st = live.agentStatus?.(d.id);
+      if (st === undefined || st === "waiting") {
+        row.status = "waiting";
+        row.waiting = d.kind;
+      } else if (v === undefined) {
+        // the tree says it went on: the log's mark is stale
+        row.status = "running";
+        delete row.waiting;
+      }
     }
   }
 

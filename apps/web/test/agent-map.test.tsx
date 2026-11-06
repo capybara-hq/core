@@ -104,17 +104,18 @@ const tree = (childStatus: AgentTreeNode["status"]) => ({
 });
 
 const CHILD = `${ORG}/conversations/ch1`;
+const GRANDCHILD = `${ORG}/conversations/gc1`;
 
 /** The child's log: started, its task, a read, a parent's message, then a running command. */
-function childEvents(): ConversationEvent[] {
-  const c = (seq: number, type: string, payload: unknown, runId: string | null = "run-ch1") =>
-    ev(seq, type, payload, runId, "ch1");
+function childEvents(id = "ch1", parent = "c1", task = "Do Scan docs"): ConversationEvent[] {
+  const c = (seq: number, type: string, payload: unknown, runId: string | null = `run-${id}`) =>
+    ev(seq, type, payload, runId, id);
   return [
     c(
       1,
       "subagent_started",
       {
-        parent: { conversationId: "c1", runId: "r1", callId: "k1", step: 1 },
+        parent: { conversationId: parent, runId: "r1", callId: "k1", step: 1 },
         agentType: "general-purpose",
         template: { source: "general" },
         definition: { name: "general-purpose", tools: [{ kind: "builtin", name: "Read" }] },
@@ -126,9 +127,9 @@ function childEvents(): ConversationEvent[] {
       2,
       "user_message",
       {
-        content: [{ type: "text", text: "Do Scan docs" }],
+        content: [{ type: "text", text: task }],
         authorAccountId: "a1",
-        dispatch: { parentConversationId: "c1", parentRunId: "r1", callId: "k1" },
+        dispatch: { parentConversationId: parent, parentRunId: "r1", callId: "k1" },
       },
       null,
     ),
@@ -155,7 +156,12 @@ function childEvents(): ConversationEvent[] {
       {
         content: [{ type: "text", text: "Focus on the API docs" }],
         authorAccountId: "a1",
-        dispatch: { parentConversationId: "c1", parentRunId: "r1", callId: "s1", kind: "message" },
+        dispatch: {
+          parentConversationId: parent,
+          parentRunId: "r1",
+          callId: "s1",
+          kind: "message",
+        },
       },
       null,
     ),
@@ -184,6 +190,10 @@ function api(
     [`GET ${CHILD}`]: () => json(200, CONV("ch1", { parentConversationId: "c1" })),
     [`GET ${CHILD}/events`]: () => json(200, { events: childEvents() }),
     [`GET ${CHILD}/tools`]: () => json(200, { tools: [] }),
+    [`GET ${GRANDCHILD}`]: () => json(200, CONV("gc1", { parentConversationId: "ch1" })),
+    [`GET ${GRANDCHILD}/events`]: () =>
+      json(200, { events: childEvents("gc1", "ch1", "Do Read the changelog") }),
+    [`GET ${GRANDCHILD}/tools`]: () => json(200, { tools: [] }),
     ...extra,
     [`GET ${PARENT}`]: () => json(200, CONV("c1")),
     [`GET ${PARENT}/events`]: () => json(200, { events }),
@@ -544,5 +554,93 @@ describe("deliveries in the parent", () => {
     expect(done.textContent).toContain(en.chat.delivery.completed.replace("{name}", "Scan docs"));
     await user.click(within(done).getByRole("button", { name: "Open" }));
     expect(window.location.hash).toBe("#agents=ch1");
+  });
+});
+
+describe("nested agents (agent map spec §7)", () => {
+  const gcDialog = () => screen.findByRole("dialog", { name: "Read the changelog" });
+  const grandchildStream = () =>
+    FakeEventSource.instances.find((s) => s.url.startsWith(`${GRANDCHILD}/stream`));
+
+  it("a grandchild: Stop aborts it and re-reads its log; its transcript is its own thread", async () => {
+    const calls = api(parentEvents(), undefined, {
+      [`POST ${GRANDCHILD}/abort`]: () => json(202, { runId: "run-gc1" }),
+    });
+    window.history.replaceState(null, "", "/chat/c1#agents=gc1");
+    await renderChatRoute();
+    const dialog = await gcDialog();
+    expect(
+      (
+        await waitFor(() => {
+          const el = dialog.querySelector('[data-part="agent-spawned-by"]');
+          expect(el).not.toBeNull();
+          return el;
+        })
+      )?.textContent,
+    ).toBe("Spawned by Scan docs");
+    const reads = () =>
+      calls.filter((c) => c.method === "GET" && c.url.startsWith(`${GRANDCHILD}/events`)).length;
+    await waitFor(() => expect(reads()).toBeGreaterThan(0));
+    const before = reads();
+    const user = userEvent.setup();
+    await user.click(await within(dialog).findByRole("button", { name: "Stop" }));
+    await waitFor(() =>
+      expect(calls.some((c) => c.method === "POST" && c.url === `${GRANDCHILD}/abort`)).toBe(true),
+    );
+    expect(calls.some((c) => c.method === "POST" && c.url === `${CHILD}/abort`)).toBe(false);
+    // the stopped agent's log is read again (its terminal event may not reach this page's streams)
+    await waitFor(() => expect(reads()).toBeGreaterThan(before));
+    act(() => {
+      grandchildStream()?.emit(
+        "event",
+        ev(9, "run_aborted", { byAccountId: "a1", reason: "user" }, "run-gc1", "gc1"),
+      );
+    });
+    await waitFor(() => expect(within(dialog).queryByRole("button", { name: "Stop" })).toBeNull());
+    await user.click(within(dialog).getByRole("button", { name: "Open transcript" }));
+    expect(window.location.hash).toBe("#agents=gc1/transcript");
+    const log = await within(await gcDialog()).findByRole("log");
+    const task = await waitFor(() => {
+      const el = log.querySelector('[data-entry="task"]');
+      expect(el).not.toBeNull();
+      return el as HTMLElement;
+    });
+    expect(task.textContent).toContain("Do Read the changelog");
+    expect(task.querySelector('[data-part="bubble-sender"]')?.textContent).toBe("From Scan docs");
+  });
+
+  it("a deep agent's wait in the root is named from the tree and opens it in the map", async () => {
+    const calls = api([
+      ...parentEvents(),
+      ev(5, "subagent_waiting", {
+        subagentId: "gc1",
+        childRunId: "run-gc1",
+        path: ["ch1", "gc1"],
+        kind: "connect",
+        toolKey: "mcp__gh__issue",
+      }),
+    ]);
+    await renderChatRoute();
+    const line = await waitFor(() => {
+      const c = document.querySelector('[data-role="subagent-connect"]');
+      expect(c?.textContent).toContain(
+        en.subagents.connect.replace("{name}", "Read the changelog"),
+      );
+      return c as HTMLElement;
+    });
+    // the tree is read for the name while the map is closed
+    expect(treeReads(calls)).toBeGreaterThan(0);
+    await userEvent.setup().click(within(line).getByRole("button", { name: en.subagents.open }));
+    expect(window.location.hash).toBe("#agents=gc1");
+    expect(await gcDialog()).toBeTruthy();
+  });
+
+  it("?subagent= (inbox and IM links, any depth) opens the agent in the map", async () => {
+    api(parentEvents());
+    window.history.replaceState(null, "", "/chat/c1?subagent=gc1");
+    await renderChatRoute();
+    expect(await gcDialog()).toBeTruthy();
+    expect(window.location.search).toBe("");
+    expect(window.location.hash).toBe("#agents=gc1");
   });
 });

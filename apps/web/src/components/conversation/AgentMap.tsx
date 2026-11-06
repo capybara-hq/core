@@ -34,6 +34,7 @@ import {
   hasBackgroundTasks,
   modelsQuery,
 } from "../../lib/query/conversation";
+import { keys as queryKeys } from "../../lib/query/keys";
 import { useAppMutation } from "../../lib/query/mutation";
 import { useWhoWaits } from "../../lib/query/who-waits";
 import type { RightTarget } from "../../lib/right-area";
@@ -373,8 +374,13 @@ function AgentLevel({
   );
   const stopMutation = useAppMutation({
     fn: () => abortRun(orgId, id),
-    // the tree shows the stop as soon as the kernel has it
-    invalidates: () => [agentTreeQuery(orgId, rootId).queryKey],
+    // the tree shows the stop as soon as the kernel has it; the agent's own log is read again
+    // (a grandchild's terminal event reaches no stream of the page but its own)
+    invalidates: () => [
+      agentTreeQuery(orgId, rootId).queryKey,
+      queryKeys.org(orgId).conversation(id).row(),
+      queryKeys.org(orgId).conversation(id).events(),
+    ],
   });
   const { mutate } = stopMutation;
   const stop = useCallback(
