@@ -479,7 +479,7 @@ export async function commitDispatchIn(
     .executeTakeFirst();
   const parent = await t
     .selectFrom("runs")
-    .select(["status", "subagent_tokens_used"])
+    .select(["status", "subagent_tokens_used", "budget_run_id"])
     .where("id", "=", ctx.runId)
     .forUpdate()
     .executeTakeFirst();
@@ -505,7 +505,21 @@ export async function commitDispatchIn(
     };
   }
   if (parent?.status !== "running") return { kind: "stopped" as const };
-  const limit = await limitRefusal(t, d, ctx, parent.subagent_tokens_used);
+  // the tree's budget run (agent map spec §6), locked after the parent run so the dispatches of
+  // every run of one tree serialize on it; the parent run itself when it opened the window
+  const budgetRunId = parent.budget_run_id ?? ctx.runId;
+  const tokensUsed =
+    budgetRunId === ctx.runId
+      ? parent.subagent_tokens_used
+      : ((
+          await t
+            .selectFrom("runs")
+            .select("subagent_tokens_used")
+            .where("id", "=", budgetRunId)
+            .forUpdate()
+            .executeTakeFirst()
+        )?.subagent_tokens_used ?? 0);
+  const limit = await limitRefusal(t, d, ctx, budgetRunId, tokensUsed);
   if (limit !== null) return { kind: "limit" as const, content: limit };
   let checked: CheckedOrgAgent | undefined;
   if (plan.source === "agent") {
@@ -533,6 +547,7 @@ export async function commitDispatchIn(
       agent_version: plan.agentVersion,
       trigger_account_id: ctx.accountId,
       trigger_seq: task.seq,
+      budget_run_id: budgetRunId,
     })
     .execute();
   await t
@@ -545,6 +560,7 @@ export async function commitDispatchIn(
       child_conversation_id: plan.childConversationId,
       child_run_id: childRunId,
       resumed: plan.resumed,
+      budget_run_id: budgetRunId,
     })
     .execute();
   const [dispatched] = await d.eventLog.appendIn(ctx.conversationId, [
@@ -647,35 +663,40 @@ async function commit(
 }
 
 /**
- * The §4.5 refusal of a dispatch the parent run's limits forbid, or null. Runs under the parent
- * run's row lock; `tokensUsed` is the counter read with that lock.
+ * The §4.5 refusal of a dispatch the limits forbid, or null (agent map spec §6). Runs under the
+ * parent conversation's, the parent run's and the budget run's row locks; `tokensUsed` is the
+ * budget run's counter read with its lock. Tokens and dispatches (follow-ups included) count the
+ * whole tree on its budget run; concurrency counts the active children of the parent
+ * conversation, whichever of its runs dispatched them.
  */
 async function limitRefusal(
   t: KernelSchemaDb,
   d: Pick<DispatchDeps, "config">,
   ctx: ToolStepContext,
+  budgetRunId: string,
   tokensUsed: string | number | bigint,
 ): Promise<string | null> {
   const limits = await subagentLimits(t, d.config, ctx.orgId);
   if (Number(tokensUsed) >= limits.maxTokensPerRun) {
     return AGENT_REFUSALS.budget(limits.maxTokensPerRun);
   }
-  const counts = await t
-    .selectFrom("subagent_dispatches as sd")
-    .innerJoin("runs as cr", "cr.id", "sd.child_run_id")
-    .select([
-      sql<string>`count(*)`.as("total"),
-      sql<string>`count(*) FILTER (WHERE cr.status IN (${sql.join(ACTIVE_RUN_STATUSES)}))`.as(
-        "active",
-      ),
-    ])
-    .where("sd.parent_run_id", "=", ctx.runId)
+  const total = await t
+    .selectFrom("subagent_dispatches")
+    .select(sql<string>`count(*)`.as("n"))
+    .where("budget_run_id", "=", budgetRunId)
     .executeTakeFirstOrThrow();
-  if (Number(counts.total) >= limits.maxDispatchesPerRun) {
+  if (Number(total.n) >= limits.maxDispatchesPerRun) {
     return AGENT_REFUSALS.tooManyDispatches(limits.maxDispatchesPerRun);
   }
-  if (Number(counts.active) >= limits.maxConcurrentPerRun) {
-    return AGENT_REFUSALS.tooManyConcurrent(limits.maxConcurrentPerRun);
+  const active = await t
+    .selectFrom("subagent_dispatches as sd")
+    .innerJoin("runs as cr", "cr.id", "sd.child_run_id")
+    .select(sql<string>`count(*)`.as("n"))
+    .where("sd.parent_conversation_id", "=", ctx.conversationId)
+    .where("cr.status", "in", ACTIVE_RUN_STATUSES)
+    .executeTakeFirstOrThrow();
+  if (Number(active.n) >= limits.maxConcurrentPerConversation) {
+    return AGENT_REFUSALS.tooManyConcurrent(limits.maxConcurrentPerConversation);
   }
   return null;
 }

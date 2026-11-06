@@ -175,7 +175,7 @@ function LimitsDialog({
   const [cpu, setCpu] = useState(text(sandbox?.cpu));
   const [memory, setMemory] = useState(text(sandbox?.memoryMb));
   const subagent = settings.subagentLimitOverrides?.[org.id];
-  const [concurrent, setConcurrent] = useState(text(subagent?.maxConcurrentPerRun));
+  const [concurrent, setConcurrent] = useState(text(subagent?.maxConcurrentPerConversation));
   const [dispatches, setDispatches] = useState(text(subagent?.maxDispatchesPerRun));
   const [tokens, setTokens] = useState(text(subagent?.maxTokensPerRun));
   const [busy, setBusy] = useState(false);
@@ -209,7 +209,7 @@ function LimitsDialog({
       ...(memoryValue !== null && { memoryMb: memoryValue }),
     };
     const subagentLimits: SubagentLimitOverride = {
-      ...(concurrentValue !== null && { maxConcurrentPerRun: concurrentValue }),
+      ...(concurrentValue !== null && { maxConcurrentPerConversation: concurrentValue }),
       ...(dispatchesValue !== null && { maxDispatchesPerRun: dispatchesValue }),
       ...(tokensValue !== null && { maxTokensPerRun: tokensValue }),
     };

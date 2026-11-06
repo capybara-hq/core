@@ -618,7 +618,7 @@ export class ToolRegistry {
   }
 
   /**
-   * `subagents.maxConcurrentPerRun` with the organization's override, for the `Agent` tool's
+   * `subagents.maxConcurrentPerConversation` with the organization's override, for the `Agent` tool's
    * description (§4.3). A change of the limit changes the tool's spec hash; replays read the
    * definition logged by hash, so no drift reason is involved. Without config (some tests): the
    * schema default.
@@ -626,7 +626,7 @@ export class ToolRegistry {
   private async maxConcurrentSubagents(orgId: string): Promise<number> {
     const cfg = this.config;
     const config = cfg ?? { get: () => ({ subagents: SUBAGENT_LIMIT_DEFAULTS }) };
-    return (await subagentLimits(this.db.db, config, orgId)).maxConcurrentPerRun;
+    return (await subagentLimits(this.db.db, config, orgId)).maxConcurrentPerConversation;
   }
 
   /** Plugins the organization enabled (built-in plugins always count as enabled, C14). */

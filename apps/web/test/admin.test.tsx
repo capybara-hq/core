@@ -396,7 +396,11 @@ describe("/admin/orgs（ListPage）", () => {
       await vi.waitFor(() =>
         expect(bodyOf(calls.find((c) => c.method === "PUT"))).toMatchObject({
           subagentLimitOverrides: {
-            o2: { maxConcurrentPerRun: 2, maxDispatchesPerRun: 9, maxTokensPerRun: 200000 },
+            o2: {
+              maxConcurrentPerConversation: 2,
+              maxDispatchesPerRun: 9,
+              maxTokensPerRun: 200000,
+            },
           },
         }),
       );

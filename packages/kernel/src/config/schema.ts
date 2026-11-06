@@ -1151,7 +1151,20 @@ export const KernelConfigSchema = z.object({
     .prefault({} as never),
   subagents: z
     .object({
-      maxConcurrentPerRun: z
+      maxDepth: z
+        .number()
+        .int()
+        .min(1)
+        .max(5)
+        .default(3)
+        .meta(
+          meta({
+            hot: true,
+            description:
+              "Levels of sub-agents below the conversation's own agent; 1 means sub-agents cannot dispatch sub-agents of their own. Organizations can be given their own value in the deployment setting subagentLimitOverrides",
+          }),
+        ),
+      maxConcurrentPerConversation: z
         .number()
         .int()
         .min(1)
@@ -1161,7 +1174,7 @@ export const KernelConfigSchema = z.object({
           meta({
             hot: true,
             description:
-              "Sub-agents one run may have running at the same time; agent calls beyond it in one response are refused. Organizations can be given their own value in the deployment setting subagentLimitOverrides",
+              "Sub-agents one conversation may have running at the same time, whichever of its runs dispatched them; agent calls beyond it are refused. Organizations can be given their own value in subagentLimitOverrides",
           }),
         ),
       maxDispatchesPerRun: z
@@ -1174,7 +1187,7 @@ export const KernelConfigSchema = z.object({
           meta({
             hot: true,
             description:
-              "Sub-agents one run may dispatch in total, follow-ups included; later agent calls are refused. Organizations can be given their own value in subagentLimitOverrides",
+              "Sub-agents the whole tree under a person's message may dispatch in total, nested ones and follow-ups included; later agent calls are refused. Organizations can be given their own value in subagentLimitOverrides",
           }),
         ),
       maxTokensPerRun: z
@@ -1186,7 +1199,7 @@ export const KernelConfigSchema = z.object({
           meta({
             hot: true,
             description:
-              "Tokens (input, output and cache) the sub-agents of one run may use together; at the cap running sub-agents stop and new dispatches are refused. Organizations can be given their own value in subagentLimitOverrides",
+              "Tokens (input, output and cache) all sub-agents of the tree under a person's message may use together; at the cap running sub-agents stop and new dispatches are refused. Organizations can be given their own value in subagentLimitOverrides",
           }),
         ),
     })

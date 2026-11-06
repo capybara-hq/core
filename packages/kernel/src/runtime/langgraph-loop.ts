@@ -11,7 +11,7 @@ import {
   runFinalWrapUp,
   runModelStep,
 } from "./model-call.js";
-import { subagentBudgetUsedUp } from "./subagents/limits.js";
+import { budgetRunOf, subagentBudgetUsedUp } from "./subagents/limits.js";
 import type { SubagentStep } from "./subagents/progress.js";
 import { isForkInvocation, type SkillForks } from "./subagents/skill-fork.js";
 
@@ -177,11 +177,17 @@ export class LangGraphLoop implements AgentLoop {
       // 先查截止时间、再吸收（R33）：超时结束的运行不得消费它没有回复的消息，
       // 否则 consumed_seq 越过它们、也不会再起新一轮。
       if (timedOut()) return { outcome: "max_duration" };
-      // a sub-agent stops before its next request once its parent run's children used their token
-      // budget (spec §8.3; fresh read, in-flight requests of siblings may overshoot by one each)
+      // a sub-agent stops before its next request once its tree used its token budget (spec §8.3,
+      // agent map §6: on the budget run; fresh read, in-flight requests of others may overshoot by
+      // one each)
       if (
         ctx.parent !== undefined &&
-        (await subagentBudgetUsedUp(deps.db, deps.config, ctx.orgId, ctx.parent.runId))
+        (await subagentBudgetUsedUp(
+          deps.db,
+          deps.config,
+          ctx.orgId,
+          await budgetRunOf(deps.db, ctx.parent.runId),
+        ))
       ) {
         return { outcome: "budget" };
       }

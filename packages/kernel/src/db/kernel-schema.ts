@@ -234,6 +234,8 @@ export interface ConversationsTable {
   archived_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
   /** 0065: when the owner deleted it (soft delete: hidden everywhere for the owner); null = live. */
   deleted_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
+  /** 0074: levels below the root conversation (0 = a root; a sub-agent's is its parent's + 1). */
+  subagent_depth: ColumnType<number, number | undefined, number>;
 }
 
 /** 0060: an org's order of file-preview@1 previewers (UI refresh B Task 11). */
@@ -319,6 +321,11 @@ export interface RunsTable {
   subagent_tokens_used: Int8;
   /** 0054: when this run's `subagents` wait expires (set while it waits on sub-agents). */
   wait_expires_at: TsNullable;
+  /**
+   * 0074: the person-triggered root run whose budget window this run counts against (dispatches
+   * and its descendants' tokens, agent map spec §6); null = the run is its own budget run.
+   */
+  budget_run_id: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
 /** 0053: one row per sub-agent dispatch (an `Agent` call of a parent run). */
@@ -332,6 +339,10 @@ export interface SubagentDispatchesTable {
   /** A follow-up to an existing sub-agent, not a new one. */
   resumed: ColumnType<boolean, boolean | undefined, boolean>;
   created_at: Ts;
+  /** 0074: the budget run the dispatch counts against (`runs.budget_run_id` of the tree). */
+  budget_run_id: string;
+  /** 0074: the dispatch of a `context: fork` skill invocation (phase D). */
+  for_skill: ColumnType<boolean, boolean | undefined, boolean>;
 }
 
 /** 0053: an agent template installed in an org from a plugin. */

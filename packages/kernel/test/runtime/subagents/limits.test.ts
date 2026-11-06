@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -6,14 +7,24 @@ import type { ModelRequest } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Queue } from "bullmq";
 import { Redis } from "ioredis";
+import { sql } from "kysely";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { EventLog } from "../../../src/conversations/event-log.js";
 import type { ConversationEvent, EventPayload } from "../../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../../src/db/kernel-schema.js";
 import { createDb } from "../../../src/db/pool.js";
 import { KernelConfigService } from "../../../src/infra/config/kernel-config.service.js";
 import { SUBAGENT_RUN_QUEUE_NAME } from "../../../src/runtime/run-queue.js";
-import { subagentLimits } from "../../../src/runtime/subagents/limits.js";
-import { AGENT_REFUSALS } from "../../../src/tools/builtins/agent.js";
+import { StepLog } from "../../../src/runtime/step-log.js";
+import type { DispatchCommit } from "../../../src/runtime/subagents/dispatch.js";
+import {
+  budgetRunOf,
+  subagentBudgetUsedUp,
+  subagentLimits,
+} from "../../../src/runtime/subagents/limits.js";
+import { SubagentsService } from "../../../src/runtime/subagents/subagents.service.js";
+import { AGENT_REFUSALS, type AgentToolInputT } from "../../../src/tools/builtins/agent.js";
+import type { ToolStepContext } from "../../../src/tools/pipeline.js";
 import { type ScriptRule, scriptRules } from "../../fixtures/plugins/model-script/index.js";
 import { truncateTables } from "../../helpers/db.js";
 import { accountsFor } from "../../helpers/identity.js";
@@ -76,6 +87,10 @@ const RULES: ScriptRule[] = [
   {
     when: { lastUserIncludes: "SCENARIO five", assistantTurns: 0 },
     reply: { toolCalls: calls("lim-", 5) },
+  },
+  {
+    when: { lastUserIncludes: "SCENARIO one", assistantTurns: 0 },
+    reply: { toolCalls: calls("one-", 1) },
   },
   {
     when: { lastUserIncludes: "SCENARIO two", assistantTurns: 0 },
@@ -230,12 +245,137 @@ async function converse(text: string, timeoutMs = 30_000) {
   return { conv, run, events: await eventsOf(db, conv) };
 }
 
+const liveConfig = () => ({ get: () => k.app.get(KernelConfigService).get() });
+
+async function accountOf(conv: string): Promise<string> {
+  return (
+    await db
+      .selectFrom("conversations")
+      .select("account_id")
+      .where("id", "=", conv)
+      .executeTakeFirstOrThrow()
+  ).account_id;
+}
+
+/** Inserts a run of `conv` directly (no queue job); `budget` is its `budget_run_id`. */
+async function seedRun(
+  conv: string,
+  status: "running" | "completed",
+  budget: string | null,
+): Promise<string> {
+  const id = randomUUID();
+  await db
+    .insertInto("runs")
+    .values({
+      id,
+      conversation_id: conv,
+      status,
+      agent_version: 1,
+      trigger_account_id: await accountOf(conv),
+      trigger_seq: 0,
+      budget_run_id: budget,
+    })
+    .execute();
+  return id;
+}
+
+/** Inserts a child conversation of `parentConv` dispatched by `parentRun`, with its run. */
+async function seedChild(
+  parentConv: string,
+  parentRun: string,
+  budget: string,
+  status: "running" | "completed",
+): Promise<{ conv: string; run: string }> {
+  const conv = randomUUID();
+  await db
+    .insertInto("conversations")
+    .values({
+      id: conv,
+      org_id: orgId,
+      agent_id: agentId,
+      account_id: await accountOf(parentConv),
+      kind: "subagent",
+      parent_conversation_id: parentConv,
+      subagent_type: "general-purpose",
+    })
+    .execute();
+  const run = await seedRun(conv, status, budget);
+  await db
+    .insertInto("subagent_dispatches")
+    .values({
+      parent_run_id: parentRun,
+      parent_call_id: randomUUID(),
+      parent_conversation_id: parentConv,
+      step: 0,
+      child_conversation_id: conv,
+      child_run_id: run,
+      budget_run_id: budget,
+    })
+    .execute();
+  return { conv, run };
+}
+
+/** One dispatch transaction of a general-purpose child from run `runId` of `conv`. */
+async function dispatchFrom(
+  conv: string,
+  runId: string,
+): Promise<{ out: DispatchCommit | null; childConv: string }> {
+  const eventLog = k.app.get(EventLog);
+  const account = await accountOf(conv);
+  const childConv = randomUUID();
+  const ctx = {
+    orgId,
+    conversationId: conv,
+    runId,
+    step: 0,
+    agentId,
+    agentVersion: 1,
+    accountId: account,
+  } as unknown as ToolStepContext;
+  const out = await k.app.get(SubagentsService).commitDispatch(
+    { ctx, callId: randomUUID(), input: { description: "Task", prompt: "p" } as AgentToolInputT },
+    {
+      childConversationId: childConv,
+      agentType: "general-purpose",
+      source: "general",
+      agentId,
+      agentVersion: 1,
+      resumed: false,
+      model: { provider: "model-script", model: "script-1" },
+      tierFallback: false,
+    },
+    async (t) => {
+      await t
+        .insertInto("conversations")
+        .values({
+          id: childConv,
+          org_id: orgId,
+          agent_id: agentId,
+          account_id: account,
+          kind: "subagent",
+          parent_conversation_id: conv,
+          subagent_type: "general-purpose",
+        })
+        .execute();
+      const [task] = await eventLog.appendIn(childConv, [
+        {
+          type: "user_message",
+          payload: { content: [{ type: "text", text: "p" }], authorAccountId: account },
+        },
+      ]);
+      return task ?? null;
+    },
+  );
+  return { out, childConv };
+}
+
 describe("subagentLimits", () => {
   it("the config values, then the organization's override value by value", async () => {
     expect(
       await subagentLimits(db, { get: () => k.app.get(KernelConfigService).get() }, orgId),
     ).toEqual({
-      maxConcurrentPerRun: 4,
+      maxDepth: 3,
+      maxConcurrentPerConversation: 4,
       maxDispatchesPerRun: 50,
       maxTokensPerRun: 5_000_000,
     });
@@ -243,7 +383,8 @@ describe("subagentLimits", () => {
     expect(
       await subagentLimits(db, { get: () => k.app.get(KernelConfigService).get() }, orgId),
     ).toEqual({
-      maxConcurrentPerRun: 4,
+      maxDepth: 3,
+      maxConcurrentPerConversation: 4,
       maxDispatchesPerRun: 50,
       maxTokensPerRun: 20_000,
     });
@@ -253,7 +394,10 @@ describe("subagentLimits", () => {
     ).toBe(5_000_000);
     // out of bounds or unknown keys are refused; null removes the override
     for (const bad of [
-      { maxConcurrentPerRun: 21 },
+      { maxConcurrentPerConversation: 21 },
+      { maxConcurrentPerRun: 2 },
+      { maxDepth: 0 },
+      { maxDepth: 6 },
       { maxDispatchesPerRun: 0 },
       { maxTokensPerRun: 9_999 },
       { other: 1 },
@@ -274,9 +418,34 @@ describe("subagentLimits", () => {
   });
 });
 
+describe("depth", () => {
+  it("maxDepth defaults to 3 and an org override wins", async () => {
+    expect((await subagentLimits(db, liveConfig(), orgId)).maxDepth).toBe(3);
+    await override({ maxDepth: 1 });
+    expect((await subagentLimits(db, liveConfig(), orgId)).maxDepth).toBe(1);
+    expect((await subagentLimits(db, liveConfig(), "another-org")).maxDepth).toBe(3);
+    await override({ maxDepth: 5 });
+    expect((await subagentLimits(db, liveConfig(), orgId)).maxDepth).toBe(5);
+  });
+});
+
 describe("concurrency", () => {
-  it("five calls with maxConcurrentPerRun 3: three dispatched, two refused with the exact text", async () => {
-    await override({ maxConcurrentPerRun: 3 });
+  it("concurrency counts active children of the parent conversation across its runs", async () => {
+    const conv = await createConv(owner, orgId, agentId);
+    // an earlier run of this conversation ended while four of its children still work
+    const earlier = await seedRun(conv, "completed", null);
+    for (let i = 0; i < 4; i++) await seedChild(conv, earlier, earlier, "running");
+    await postMessage(owner, orgId, conv, "SCENARIO one");
+    await waitForTerminal(db, conv, 1, 30_000);
+    const events = await eventsOf(db, conv);
+    expect(ofType(events, "subagent_dispatched")).toHaveLength(0);
+    expect(agentResults(events).map((r) => [r.payload.content, r.payload.isError])).toEqual([
+      [AGENT_REFUSALS.tooManyConcurrent(4), true],
+    ]);
+  }, 60_000);
+
+  it("five calls with maxConcurrentPerConversation 3: three dispatched, two refused with the exact text", async () => {
+    await override({ maxConcurrentPerConversation: 3 });
     await subQueue.pause();
     const conv = await createConv(owner, orgId, agentId);
     await postMessage(owner, orgId, conv, "SCENARIO five");
@@ -314,7 +483,7 @@ describe("concurrency", () => {
     expect(first.tools?.find((t) => t.name === "Agent")?.description).toContain(
       "(at most 4 at a time)",
     );
-    await override({ maxConcurrentPerRun: 1 });
+    await override({ maxConcurrentPerConversation: 1 });
     capture.reset();
     await subQueue.pause();
     const conv = await createConv(owner, orgId, agentId);
@@ -334,7 +503,7 @@ describe("concurrency", () => {
 
 describe("dispatch count", () => {
   it("the 51st dispatch of a run is refused", async () => {
-    await override({ maxConcurrentPerRun: 20 });
+    await override({ maxConcurrentPerConversation: 20 });
     const { conv, events } = await converse("SCENARIO many", 120_000);
     expect(finalText(events)).toBe("parent done");
     expect(await childRunsOf(db, conv)).toHaveLength(50);
@@ -346,6 +515,84 @@ describe("dispatch count", () => {
     );
     expect(refused[0]?.payload.callId).toBe(third?.at(-1));
   }, 180_000);
+});
+
+describe("tree budget", () => {
+  it("dispatch and token caps count the whole tree on the budget run", async () => {
+    await override({ maxConcurrentPerConversation: 20, maxTokensPerRun: 20_000 });
+    const conv = await createConv(owner, orgId, agentId);
+    // the person's run (its own budget run) dispatched 48 children; one of them still works
+    const root = await seedRun(conv, "completed", null);
+    for (let i = 0; i < 47; i++) await seedChild(conv, root, root, "completed");
+    const child = await seedChild(conv, root, root, "running");
+    // a later run of the root conversation that is not a person's (a wake run)
+    const wake = await seedRun(conv, "running", root);
+    expect(await budgetRunOf(db, root)).toBe(root);
+    expect(await budgetRunOf(db, child.run)).toBe(root);
+    expect(await budgetRunOf(db, wake)).toBe(root);
+
+    // the child's dispatch: the 49th of the tree, counted on the root run
+    const fromChild = await dispatchFrom(child.conv, child.run);
+    expect(fromChild.out?.kind).toBe("written");
+    const grandchildRun = (fromChild.out as { childRunId: string }).childRunId;
+    const childRow = await db
+      .selectFrom("subagent_dispatches")
+      .select("budget_run_id")
+      .where("child_run_id", "=", grandchildRun)
+      .executeTakeFirstOrThrow();
+    expect(childRow.budget_run_id).toBe(root);
+    expect(await budgetRunOf(db, grandchildRun)).toBe(root);
+
+    // the wake run's dispatch: the 50th
+    const fromWake = await dispatchFrom(conv, wake);
+    expect(fromWake.out?.kind).toBe("written");
+    // the 51st, from either run, is refused
+    for (const [c, r] of [
+      [conv, wake],
+      [child.conv, child.run],
+    ] as const) {
+      expect((await dispatchFrom(c, r)).out).toEqual({
+        kind: "limit",
+        content: AGENT_REFUSALS.tooManyDispatches(50),
+      });
+    }
+
+    // the grandchild's usage is counted on the root run, not on the child run that dispatched it
+    await k.app.get(StepLog).appendCounted(fromChild.childConv, child.run, [
+      {
+        type: "usage",
+        payload: {
+          step: 0,
+          provider: "model-script",
+          model: "script-1",
+          inputTokens: 20_000,
+          outputTokens: 0,
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0,
+        },
+      },
+    ]);
+    const counters = await db
+      .selectFrom("runs")
+      .select(["id", "subagent_tokens_used"])
+      .where("id", "in", [root, child.run])
+      .execute();
+    expect(Object.fromEntries(counters.map((r) => [r.id, Number(r.subagent_tokens_used)]))).toEqual(
+      { [root]: 20_000, [child.run]: 0 },
+    );
+    expect(await subagentBudgetUsedUp(db, liveConfig(), orgId, root)).toBe(true);
+    // at the token cap the tree's next dispatch is refused with the budget text
+    expect((await dispatchFrom(child.conv, child.run)).out).toEqual({
+      kind: "limit",
+      content: AGENT_REFUSALS.budget(20_000),
+    });
+    await db
+      .updateTable("runs")
+      .set({ subagent_tokens_used: sql<string>`0` })
+      .where("id", "=", root)
+      .execute();
+    expect(await subagentBudgetUsedUp(db, liveConfig(), orgId, root)).toBe(false);
+  }, 60_000);
 });
 
 describe("tokens", () => {

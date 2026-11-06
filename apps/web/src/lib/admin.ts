@@ -40,7 +40,7 @@ export interface SandboxLimitOverride {
 
 /** One organization's sub-agent limits; values left out use the deployment's `subagents.*`. */
 export interface SubagentLimitOverride {
-  maxConcurrentPerRun?: number;
+  maxConcurrentPerConversation?: number;
   maxDispatchesPerRun?: number;
   maxTokensPerRun?: number;
 }

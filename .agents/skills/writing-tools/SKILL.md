@@ -282,7 +282,7 @@ Spec `docs/superpowers/specs/2026-10-26-subagents-design.md` §4–§9; code `to
   model, `tierFallback: true`) and `resume` (an `agentId`; not combined with `subagent_type` or `model`). `defaultPolicy: "allow"`,
   always loaded under `ToolSearch`, never offered to a child, and not offered at all when the agent's roster is empty.
 - **Description varies with config**: it lists the roster (owner and plugin text made inert: `<` / `>` shown as `‹` / `›`) and the
-  organization's `subagents.maxConcurrentPerRun`. So its spec hash changes when the roster or that limit changes: replays read specs
+  organization's `subagents.maxConcurrentPerConversation`. So its spec hash changes when the roster or that limit changes: replays read specs
   by hash (no `DriftReason`), drift review covers connector tools only, and a remembered grant on `Agent` (only relevant when an owner
   set it to `ask`) lapses with the hash, as for any spec change.
 - **The pipeline handles it, not `run`**: no `tool_call_started`; after policy, approval and `tool.preExecute` it dispatches a child

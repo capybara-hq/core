@@ -7,9 +7,14 @@ export interface SubagentsConfig {
   get(): Pick<KernelConfig, "subagents">;
 }
 
-/** The sub-agent limits of one parent run (sub-agents spec §8.2). */
+/**
+ * The sub-agent limits of an organization (sub-agents spec §8.2, agent map spec §6): the depth
+ * below the root, the active children of one conversation, and the dispatches and tokens of one
+ * tree, counted on its budget run ({@link budgetRunOf}).
+ */
 export interface SubagentLimits {
-  maxConcurrentPerRun: number;
+  maxDepth: number;
+  maxConcurrentPerConversation: number;
   maxDispatchesPerRun: number;
   maxTokensPerRun: number;
 }
@@ -32,14 +37,30 @@ export async function subagentLimits(
   const base = config.get().subagents;
   const over = await readSubagentLimitOverride(db, orgId);
   return {
-    maxConcurrentPerRun: over?.maxConcurrentPerRun ?? base.maxConcurrentPerRun,
+    maxDepth: over?.maxDepth ?? base.maxDepth,
+    maxConcurrentPerConversation:
+      over?.maxConcurrentPerConversation ?? base.maxConcurrentPerConversation,
     maxDispatchesPerRun: over?.maxDispatchesPerRun ?? base.maxDispatchesPerRun,
     maxTokensPerRun: over?.maxTokensPerRun ?? base.maxTokensPerRun,
   };
 }
 
 /**
- * Whether the sub-agents of `parentRunId` have used their token budget (§8.3): its
+ * The budget run of `runId` (agent map spec §6): its `budget_run_id`, or the run itself when it has
+ * none (a person-triggered run opens its own window) or does not exist. The dispatch count and the
+ * token counter of a whole tree live on this run.
+ */
+export async function budgetRunOf(db: KernelSchemaDb, runId: string): Promise<string> {
+  const row = await db
+    .selectFrom("runs")
+    .select("budget_run_id")
+    .where("id", "=", runId)
+    .executeTakeFirst();
+  return row?.budget_run_id ?? runId;
+}
+
+/**
+ * Whether the sub-agents of a tree have used their token budget (§8.3): the budget run's
  * `subagent_tokens_used`, read fresh, at or over `maxTokensPerRun`. A sub-agent's step checks it
  * before every model request and ends its run with `budget` when it is.
  */
@@ -47,12 +68,12 @@ export async function subagentBudgetUsedUp(
   db: KernelSchemaDb,
   config: SubagentsConfig,
   orgId: string,
-  parentRunId: string,
+  budgetRunId: string,
 ): Promise<boolean> {
   const row = await db
     .selectFrom("runs")
     .select("subagent_tokens_used")
-    .where("id", "=", parentRunId)
+    .where("id", "=", budgetRunId)
     .executeTakeFirst();
   if (!row) return false;
   const { maxTokensPerRun } = await subagentLimits(db, config, orgId);

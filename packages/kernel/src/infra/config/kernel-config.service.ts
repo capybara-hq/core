@@ -24,7 +24,8 @@ const HOT_APPLIERS: Record<string, (k: { log: KernelLogger }, value: unknown) =>
   // SandboxService reads the shared-lease cap at every acquisition.
   "sandbox.maxConcurrentCommands": () => {},
   // Sub-agent limits are read at every dispatch, child step and tool resolution.
-  "subagents.maxConcurrentPerRun": () => {},
+  "subagents.maxDepth": () => {},
+  "subagents.maxConcurrentPerConversation": () => {},
   "subagents.maxDispatchesPerRun": () => {},
   "subagents.maxTokensPerRun": () => {},
   // The web tools read these limits through the config service on every call.
