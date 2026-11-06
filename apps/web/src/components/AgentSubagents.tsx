@@ -3,11 +3,12 @@
 import {
   Badge,
   Button,
-  Card,
   Checkbox,
   Field,
   FormSection,
   Input,
+  ItemList,
+  ItemListItem,
   Select,
   Stack,
   Switch,
@@ -387,91 +388,94 @@ export function useSubagentsForm(
               <Text variant="small" tone="muted">
                 {t("inlineLabel")}
               </Text>
-              {inline.map((x, i) => (
-                <Card
-                  // biome-ignore lint/suspicious/noArrayIndexKey: drafts have no id; order is the roster order
-                  key={i}
-                  title={x.name || t("inlineNew")}
-                  actions={
-                    <Button
-                      variant="ghost"
-                      density="dense"
-                      aria-label={t("removeInline", { name: x.name || t("inlineNew") })}
-                      onClick={() => setInline((cur) => cur.filter((_, j) => j !== i))}
-                    >
-                      {t("remove")}
-                    </Button>
-                  }
-                >
-                  <Stack gap={8}>
-                    <Field
-                      label={t("inlineName")}
-                      help={t("inlineNameHelp")}
-                      {...fieldError(`subagents.inline.${i}.name`)}
-                    >
-                      <Input
-                        value={x.name}
-                        maxLength={64}
-                        onChange={(e) => updateInline(i, { name: e.target.value })}
-                      />
-                    </Field>
-                    <Field
-                      label={t("inlineDescription")}
-                      {...fieldError(`subagents.inline.${i}.description`)}
-                    >
-                      <Textarea
-                        rows={2}
-                        maxLength={4096}
-                        value={x.description}
-                        onChange={(e) => updateInline(i, { description: e.target.value })}
-                      />
-                    </Field>
-                    <Field
-                      label={t("inlineInstructions")}
-                      {...fieldError(`subagents.inline.${i}.instructions`)}
-                    >
-                      <Textarea
-                        code
-                        rows={4}
-                        maxLength={100_000}
-                        value={x.instructions}
-                        onChange={(e) => updateInline(i, { instructions: e.target.value })}
-                      />
-                    </Field>
-                    <Field label={t("inlineModel")}>
-                      <Select
-                        value={x.model ?? "inherit"}
-                        onChange={(e) => {
-                          const v = e.target.value as AgentTier;
-                          setInline((cur) =>
-                            cur.map((y, k) => {
-                              if (k !== i) return y;
-                              const { model: _old, ...rest } = y;
-                              return v === "inherit" ? rest : { ...rest, model: v };
-                            }),
-                          );
-                        }}
-                        options={AGENT_TIERS.map((tier) => ({
-                          value: tier,
-                          label: tierLabel(tier),
-                        }))}
-                      />
-                    </Field>
-                    {problemsAt(`subagents.inline.${i}`)
-                      .filter(
-                        (p) =>
-                          !["name", "description", "instructions"].some(
-                            (f) => p.path === `subagents.inline.${i}.${f}`,
-                          ),
-                      )
-                      .map((p) => (
-                        <Text key={`${p.path}:${p.reason}`} variant="small" tone="fail">
-                          {problemText(p)}
-                        </Text>
-                      ))}
-                  </Stack>
-                </Card>
-              ))}
+              {/* Rows inside the form card, not cards (spec §1 "One box is enough") */}
+              <ItemList label={t("inlineLabel")}>
+                {inline.map((x, i) => (
+                  <ItemListItem
+                    // biome-ignore lint/suspicious/noArrayIndexKey: drafts have no id; order is the roster order
+                    key={i}
+                    title={x.name || t("inlineNew")}
+                    actions={
+                      <Button
+                        variant="ghost"
+                        density="dense"
+                        aria-label={t("removeInline", { name: x.name || t("inlineNew") })}
+                        onClick={() => setInline((cur) => cur.filter((_, j) => j !== i))}
+                      >
+                        {t("remove")}
+                      </Button>
+                    }
+                  >
+                    <Stack gap={8}>
+                      <Field
+                        label={t("inlineName")}
+                        help={t("inlineNameHelp")}
+                        {...fieldError(`subagents.inline.${i}.name`)}
+                      >
+                        <Input
+                          value={x.name}
+                          maxLength={64}
+                          onChange={(e) => updateInline(i, { name: e.target.value })}
+                        />
+                      </Field>
+                      <Field
+                        label={t("inlineDescription")}
+                        {...fieldError(`subagents.inline.${i}.description`)}
+                      >
+                        <Textarea
+                          rows={2}
+                          maxLength={4096}
+                          value={x.description}
+                          onChange={(e) => updateInline(i, { description: e.target.value })}
+                        />
+                      </Field>
+                      <Field
+                        label={t("inlineInstructions")}
+                        {...fieldError(`subagents.inline.${i}.instructions`)}
+                      >
+                        <Textarea
+                          code
+                          rows={4}
+                          maxLength={100_000}
+                          value={x.instructions}
+                          onChange={(e) => updateInline(i, { instructions: e.target.value })}
+                        />
+                      </Field>
+                      <Field label={t("inlineModel")}>
+                        <Select
+                          value={x.model ?? "inherit"}
+                          onChange={(e) => {
+                            const v = e.target.value as AgentTier;
+                            setInline((cur) =>
+                              cur.map((y, k) => {
+                                if (k !== i) return y;
+                                const { model: _old, ...rest } = y;
+                                return v === "inherit" ? rest : { ...rest, model: v };
+                              }),
+                            );
+                          }}
+                          options={AGENT_TIERS.map((tier) => ({
+                            value: tier,
+                            label: tierLabel(tier),
+                          }))}
+                        />
+                      </Field>
+                      {problemsAt(`subagents.inline.${i}`)
+                        .filter(
+                          (p) =>
+                            !["name", "description", "instructions"].some(
+                              (f) => p.path === `subagents.inline.${i}.${f}`,
+                            ),
+                        )
+                        .map((p) => (
+                          <Text key={`${p.path}:${p.reason}`} variant="small" tone="fail">
+                            {problemText(p)}
+                          </Text>
+                        ))}
+                    </Stack>
+                  </ItemListItem>
+                ))}
+              </ItemList>
               <Stack direction="row" gap={8}>
                 <Button
                   disabled={inline.length >= INLINE_MAX}

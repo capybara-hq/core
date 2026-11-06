@@ -2,10 +2,11 @@
 
 import {
   Callout,
-  Card,
   Field,
   FormSection,
   Input,
+  ItemList,
+  ItemListItem,
   Repeater,
   Stack,
   Text,
@@ -54,19 +55,16 @@ function QuickActionsReadOnly() {
   const list = agent.profile.quickActions;
   return (
     <AgentSectionFrame>
-      <FormSection id="quick-actions" title={t("sections.quick-actions")}>
-        {list.length === 0 ? (
-          <Text tone="muted">{t("quickActions.none")}</Text>
-        ) : (
-          <Stack gap={12}>
-            {list.map((q, i) => (
-              // biome-ignore lint/suspicious/noArrayIndexKey: titles may repeat; the order is the identity
-              <Card key={i} title={q.title}>
-                <Text variant="prose">{q.body}</Text>
-              </Card>
-            ))}
-          </Stack>
-        )}
+      {/* The section card is the one box: each action a row (title, then its body), not a card */}
+      <FormSection id="quick-actions" title={t("sections.quick-actions")} flush>
+        <ItemList label={t("quickActions.list")} inset="flush" empty={t("quickActions.none")}>
+          {list.map((q, i) => (
+            // biome-ignore lint/suspicious/noArrayIndexKey: titles may repeat; the order is the identity
+            <ItemListItem key={i} title={q.title}>
+              <Text variant="prose">{q.body}</Text>
+            </ItemListItem>
+          ))}
+        </ItemList>
       </FormSection>
     </AgentSectionFrame>
   );

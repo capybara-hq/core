@@ -1,8 +1,11 @@
-import { act, cleanup, fireEvent, screen, within } from "@testing-library/react";
+import { DesignProvider, SettingsPage } from "@capybara-hq/design";
+import { describeNestedBox, findNestedBoxes } from "@capybara-hq/design/reference";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
-import { AGENT_SECTIONS } from "../src/components/agent/sections";
+import { loadingSection } from "../src/components/agent/frame";
+import { AGENT_SECTIONS, READ_ONLY_FIELDS, SECTION_FIELDS } from "../src/components/agent/sections";
 import { agentFormDefaults, renderEditAgent } from "./support/agents";
 import { bodyOf, json, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
@@ -167,6 +170,24 @@ describe("the agent page by section (agent profile design §3)", () => {
     expect(current()).toBe(P_.sections.basics);
   });
 
+  it("read-only quick actions load as item rows in a flush card, as they are drawn", () => {
+    const shape = READ_ONLY_FIELDS["quick-actions"] ?? SECTION_FIELDS["quick-actions"];
+    render(
+      <DesignProvider locale="en">
+        <SettingsPage
+          header={{ path: [], title: "Helper" }}
+          nav={[]}
+          activeNav="quick-actions"
+          loading={{ sections: [loadingSection("quick-actions", shape, (k) => k)] }}
+        />
+      </DesignProvider>,
+    );
+    const card = document.querySelector('[data-part="form-card"]') as HTMLElement;
+    expect(card.getAttribute("data-flush")).toBe("true");
+    expect(card.querySelectorAll('[data-part="loading-item-row"]')).toHaveLength(2);
+    expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
+  });
+
   it("a non-editor sees only basics, quick actions and model, read-only", async () => {
     const browser = expectNoFirstPaintFetch();
     const a = agent({ owner: "someone", quickActions: [{ title: "Summarize", body: "Sum it." }] });
@@ -191,6 +212,16 @@ describe("the agent page by section (agent profile design §3)", () => {
     await view.navigate("/agents/ag1?s=quick-actions");
     expect(screen.getByText("Summarize")).toBeTruthy();
     expect(screen.queryByRole("button", { name: P_.quickActions.add })).toBeNull();
+    // one box (acceptance item AB): a flush card of item rows, the action's body in its row
+    const qa = screen.getByRole("region", { name: P_.sections["quick-actions"] });
+    expect(qa.querySelector('[data-part="form-card"]')?.getAttribute("data-flush")).toBe("true");
+    expect(qa.querySelector('[data-part="card"]')).toBeNull();
+    const list = within(qa).getByRole("list", { name: P_.quickActions.list });
+    expect(list.getAttribute("data-inset")).toBe("flush");
+    expect(
+      within(screen.getByRole("group", { name: "Summarize" })).getByText("Sum it."),
+    ).toBeTruthy();
+    expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
     await view.navigate("/agents/ag1?s=model");
     expect(screen.getByText("model-fake / fake-1")).toBeTruthy();
     // a hidden section opens basics
