@@ -19,9 +19,12 @@ export type OrgExtensionPutResult =
  * {@link OrgExtensionConfigs.put}. Lives in the catalog module because the catalog depends on the
  * extensions, not the other way round. No in-process state.
  *
- * Order: a `config` is validated first (`validateOnly`: no side effect), so an invalid config fails
- * before the plugin switches. A config write that fails for another reason after the switch
- * succeeded returns that error with the switch done (the two writes are separate transactions).
+ * Order: the config is validated first (`validateOnly`: no side effect), so an invalid config fails
+ * before the plugin switches with the plain 400 `extension.config_invalid`. Switching on validates
+ * the effective config (the stored one with its secrets, or the given `config` merged with them),
+ * and the install receives the given `config` as its `extensionConfig`, so the extension is enabled
+ * with it. A config write that fails for another reason after the switch succeeded returns that
+ * error with the switch done (the two writes are separate transactions).
  */
 @Injectable()
 export class OrgExtensionSwitch {
@@ -63,19 +66,35 @@ export class OrgExtensionSwitch {
       };
     }
     const { enabled } = input;
-    // Fail before the switch when the config would be refused
-    if (input.config !== undefined) {
-      await this.configs.put(orgId, extension, { config: input.config }, actor, actorTokenId, {
-        validateOnly: true,
-      });
+    const config = input.config !== undefined ? { config: input.config } : {};
+    // Fail before the switch when the config would be refused: switching on checks the effective
+    // config (a required field never saved is refused here, not as a failed install)
+    if (enabled || input.config !== undefined) {
+      await this.configs.put(
+        orgId,
+        extension,
+        { ...config, ...(enabled && { enabled: true }) },
+        actor,
+        actorTokenId,
+        { validateOnly: true },
+      );
     }
-    const r = await this.catalog.setSwitch(
-      orgId,
-      actor,
-      plan.itemId,
-      enabled ? { enabled: true } : { enabled: false, ...(confirm !== undefined && { confirm }) },
-      actorTokenId,
-    );
+    const r = await this.catalog
+      .setSwitch(
+        orgId,
+        actor,
+        plan.itemId,
+        enabled
+          ? {
+              enabled: true,
+              ...(input.config !== undefined && { inputs: { extensionConfig: input.config } }),
+            }
+          : { enabled: false, ...(confirm !== undefined && { confirm }) },
+        actorTokenId,
+      )
+      .catch((e: unknown) => {
+        throw configInvalidOf(e) ?? e;
+      });
     if (r.kind === "preview") return r;
     if (input.config === undefined) {
       if (!enabled) {
@@ -101,4 +120,28 @@ export class OrgExtensionSwitch {
       ),
     };
   }
+}
+
+/**
+ * An install that failed only at its own extension step on the org config (it was valid when
+ * checked, then changed concurrently): the plain 400 `extension.config_invalid` with the field
+ * issues, as when saving the config; the install was rolled back. Anything else: undefined.
+ */
+function configInvalidOf(e: unknown): ApiError | undefined {
+  if (!(e instanceof ApiError) || e.code !== "plugin.install_failed") return undefined;
+  const [d] = (e.details ?? []) as {
+    step?: string;
+    code?: string;
+    dependency?: string;
+    message?: string;
+    causeDetails?: unknown[];
+    rolledBack?: boolean;
+  }[];
+  if (d?.step !== "extension" || d.code !== "extension.config_invalid") return undefined;
+  if (d.dependency !== undefined || d.rolledBack !== true) return undefined;
+  return new ApiError(
+    "extension.config_invalid",
+    d.message ?? "Invalid organization config",
+    d.causeDetails,
+  );
 }

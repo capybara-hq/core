@@ -71,6 +71,8 @@ const FAKE_IM = {
     required: ["url"],
   },
 };
+/** fake-im with its required org config saved: switchable. */
+const FAKE_IM_SET = { ...FAKE_IM, config: { url: "http://dir.test" } };
 const CORE = {
   plugin: "core-dir",
   version: "1.0.0",
@@ -101,9 +103,9 @@ describe("/extensions (ListPage)", () => {
     async (locale) => {
       const m = msgs[locale].extensions;
       const calls = api({
-        [`GET ${BASE}/extensions`]: () => json(200, { extensions: [FAKE_IM, CORE] }),
+        [`GET ${BASE}/extensions`]: () => json(200, { extensions: [FAKE_IM_SET, CORE] }),
         [`PUT ${BASE}/extensions/fake-im`]: (c) =>
-          json(200, { extension: { ...FAKE_IM, ...(bodyOf(c) as object) } }),
+          json(200, { extension: { ...FAKE_IM_SET, ...(bodyOf(c) as object) } }),
       });
       const { container } = await renderRouteWithCache("/extensions", lastStubRoutes(), {
         locale,
@@ -239,7 +241,7 @@ describe("/extensions (ListPage)", () => {
 
   it("missing dependency (extension.dependency_missing) lists the missing extension points", async () => {
     api({
-      [`GET ${BASE}/extensions`]: () => json(200, { extensions: [FAKE_IM] }),
+      [`GET ${BASE}/extensions`]: () => json(200, { extensions: [FAKE_IM_SET] }),
       [`PUT ${BASE}/extensions/fake-im`]: () =>
         json(409, {
           error: {
@@ -307,6 +309,91 @@ describe("/extensions (ListPage)", () => {
       }),
     );
   });
+
+  it.each(["zh", "en"] as const)(
+    "off with a required org field unset: the switch waits for the config; 保存并启用 sends both in one PUT (%s)",
+    async (locale) => {
+      const m = msgs[locale].extensions;
+      const calls = api({
+        [`GET ${BASE}/extensions`]: () => json(200, { extensions: [FAKE_IM] }),
+        [`PUT ${BASE}/extensions/fake-im`]: () =>
+          json(200, { extension: { ...FAKE_IM_SET, enabled: true } }),
+      });
+      await renderRouteWithCache("/extensions", lastStubRoutes(), { locale });
+      const toggle = await screen.findByRole("switch", {
+        name: m.enableLabel.replace("{plugin}", "fake-im"),
+      });
+      await vi.waitFor(() =>
+        expect(
+          toggle.hasAttribute("disabled") || toggle.getAttribute("aria-disabled") === "true",
+        ).toBe(true),
+      );
+      expect(screen.getByText(m.configFirstHint)).toBeTruthy();
+      const user = userEvent.setup();
+      await user.click(toggle);
+      expect(calls.some((c) => c.method === "PUT")).toBe(false);
+      const saveEnable = screen.getByRole("button", {
+        name: m.saveAndEnableLabel.replace("{plugin}", "fake-im"),
+      });
+      expect(saveEnable.textContent).toBe(m.saveAndEnable);
+      expect(
+        screen.getByRole("button", { name: m.saveLabel.replace("{plugin}", "fake-im") }),
+      ).toBeTruthy();
+      await user.type(screen.getByRole("textbox", { name: /^url/ }), "http://dir.test");
+      await user.click(saveEnable);
+      await vi.waitFor(() =>
+        expect(bodyOf(calls.find((c) => c.method === "PUT"))).toEqual({
+          enabled: true,
+          config: { url: "http://dir.test" },
+        }),
+      );
+      expect(await screen.findByText(m.enabledToast.replace("{plugin}", "fake-im"))).toBeTruthy();
+      expect(screen.queryByText(m.configFirstHint)).toBeNull();
+    },
+  );
+
+  it("a saved config with its required fields: the switch is on offer, no hint", async () => {
+    api({ [`GET ${BASE}/extensions`]: () => json(200, { extensions: [FAKE_IM_SET] }) });
+    await renderRouteWithCache("/extensions", lastStubRoutes());
+    const toggle = await screen.findByRole("switch", { name: "Enable fake-im" });
+    await screen.findByRole("button", { name: "Save config of fake-im and enable" });
+    expect(toggle.hasAttribute("disabled") || toggle.getAttribute("aria-disabled") === "true").toBe(
+      false,
+    );
+    expect(screen.queryByText(en.extensions.configFirstHint)).toBeNull();
+  });
+
+  it.each(["switch", "saveAndEnable"] as const)(
+    "extension.config_invalid on enabling (%s) marks the form's fields, not the install callout",
+    async (via) => {
+      const calls = api({
+        [`GET ${BASE}/extensions`]: () => json(200, { extensions: [FAKE_IM_SET] }),
+        [`PUT ${BASE}/extensions/fake-im`]: () =>
+          json(400, {
+            error: {
+              code: "extension.config_invalid",
+              message: "Invalid organization config for extension fake-im",
+              details: [{ path: "url", segments: ["url"], message: "url is not reachable" }],
+            },
+          }),
+      });
+      await renderRouteWithCache("/extensions", lastStubRoutes());
+      const user = userEvent.setup();
+      if (via === "switch") {
+        await user.click(await screen.findByRole("switch", { name: "Enable fake-im" }));
+      } else {
+        await user.click(
+          await screen.findByRole("button", { name: "Save config of fake-im and enable" }),
+        );
+      }
+      await vi.waitFor(() => expect(calls.some((c) => c.method === "PUT")).toBe(true));
+      expect(await screen.findByText("url is not reachable")).toBeTruthy();
+      expect(screen.queryByText(en.errors.plugin.install_failed)).toBeNull();
+      expect(screen.getByRole("textbox", { name: /^url/ }).getAttribute("aria-invalid")).toBe(
+        "true",
+      );
+    },
+  );
 
   it("通讯录插件已启用：立即同步 → POST directory/sync", async () => {
     const calls = api({

@@ -33,7 +33,7 @@ import { StorageService } from "../../src/storage/storage.service.js";
 import { truncateTables } from "../helpers/db.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
-import { pluginTgz } from "../helpers/plugin-packages.js";
+import { type ExtensionTgzOpts, pluginTgz } from "../helpers/plugin-packages.js";
 import {
   createOrg,
   enableConnectorExtensions,
@@ -308,13 +308,14 @@ export async function importTemplate(
 /**
  * The real path end to end: an extension-only plugin imported into the catalog, whose confirm
  * installs its extension on the deployment (`extension_installs.catalog_item_id` and the source
- * table) and enables it; waits for this replica to load it.
+ * table) and enables it; waits for this replica to load it. `extension`: {@link pluginTgz}'s.
  */
 export async function importDeployedPlugin(
   env: OrgEnv,
   name: string,
+  extension: ExtensionTgzOpts = {},
 ): Promise<{ itemId: string; sha256: string }> {
-  const bytes = await pluginTgz({ manifest: { name }, extension: {} });
+  const bytes = await pluginTgz({ manifest: { name }, extension });
   const itemId = await importPlugin(env, bytes);
   await waitFor(async () => env.k.app.get(ExtensionHost).current(name) !== undefined, 15_000, name);
   return { itemId, sha256: createHash("sha256").update(bytes).digest("hex") };

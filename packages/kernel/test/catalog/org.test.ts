@@ -1,7 +1,10 @@
 import { createHash, randomUUID } from "node:crypto";
+import { defineExtension, secret, staticManifestOf } from "@capybara-hq/plugin-sdk";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { z } from "zod";
 import { ExtensionAdminOps } from "../../src/extensions/admin-ops.js";
 import { ExtensionHost } from "../../src/extensions/host.js";
+import { OrgExtensionConfigs } from "../../src/extensions/org-config.js";
 import { SkillsService } from "../../src/skills/skills.service.js";
 import { usableSkills } from "../../src/skills/usable.js";
 import { StorageService } from "../../src/storage/storage.service.js";
@@ -1075,6 +1078,88 @@ describe("the org switch (plugin scope)", { timeout: 60_000 }, () => {
         .where("item_id", "=", itemId)
         .execute(),
     ).toHaveLength(0);
+  });
+
+  describe("an extension whose org config has a required secret", () => {
+    /** Deploys a plugin whose extension's org config needs the secret `apiKey`. */
+    const deploy = async (name: string) => {
+      const real = defineExtension({
+        name,
+        version: "1.0.0",
+        sdk: "^0.1.0-rc.0",
+        provides: [],
+        permissions: {},
+        config: { org: z.object({ apiKey: secret(z.string()), region: z.string().optional() }) },
+        setup() {},
+      });
+      const entry = [
+        'import { defineExtension, secret } from "@capybara-hq/plugin-sdk";',
+        'import { z } from "zod";',
+        `export default defineExtension({ name: "${name}", version: "1.0.0", sdk: "^0.1.0-rc.0", provides: [], permissions: {}, config: { org: z.object({ apiKey: secret(z.string()), region: z.string().optional() }) }, setup() {} });`,
+      ].join("\n");
+      const { itemId } = await importDeployedPlugin(env, name, {
+        manifest: { ...staticManifestOf(real) },
+        entry,
+      });
+      return { itemId, url: `/api/v1/orgs/${env.orgId}/extensions/${name}` };
+    };
+
+    it("switching on without the required config: 400 extension.config_invalid with its issues, nothing installed", async () => {
+      const name = "needs-key1";
+      const { itemId, url } = await deploy(name);
+      const r = await env.boss({ method: "PUT", url, payload: { enabled: true } });
+      expect(r.statusCode, r.body).toBe(400);
+      const error = r.json().error as { code: string; details: { path: string }[] };
+      expect(error.code).toBe("extension.config_invalid");
+      expect(error.details.map((d) => d.path)).toEqual(["apiKey"]);
+      expect(await env.db.selectFrom("plugin_installs").select("id").execute()).toHaveLength(0);
+      expect(
+        await env.db
+          .selectFrom("catalog_item_org_switches")
+          .select("enabled")
+          .where("item_id", "=", itemId)
+          .execute(),
+      ).toHaveLength(0);
+      expect(
+        await env.db
+          .selectFrom("extension_org_configs")
+          .select("enabled")
+          .where("plugin", "=", name)
+          .execute(),
+      ).toHaveLength(0);
+    });
+
+    it("switching on with the config in the same PUT installs and saves it", async () => {
+      const name = "needs-key2";
+      const { url } = await deploy(name);
+      const r = await env.boss({
+        method: "PUT",
+        url,
+        payload: { enabled: true, config: { apiKey: "k-1" } },
+      });
+      expect(r.statusCode, r.body).toBe(200);
+      expect(r.json().extension).toMatchObject({ plugin: name, enabled: true });
+      expect(await env.db.selectFrom("plugin_installs").select("id").execute()).toHaveLength(1);
+      expect(await env.k.app.get(OrgExtensionConfigs).get(env.orgId, name)).toEqual({
+        enabled: true,
+        config: { apiKey: "k-1" },
+      });
+    });
+
+    it("switching on after the config was saved installs", async () => {
+      const name = "needs-key3";
+      const { url } = await deploy(name);
+      const saved = await env.boss({
+        method: "PUT",
+        url,
+        payload: { config: { apiKey: "k-2" } },
+      });
+      expect(saved.statusCode, saved.body).toBe(200);
+      const r = await env.boss({ method: "PUT", url, payload: { enabled: true } });
+      expect(r.statusCode, r.body).toBe(200);
+      expect(r.json().extension).toMatchObject({ plugin: name, enabled: true });
+      expect(await env.db.selectFrom("plugin_installs").select("id").execute()).toHaveLength(1);
+    });
   });
 
   it("all and builtin: not switchable, switching off is 409 plugin.scope_locked; a builtin is on without an install", async () => {

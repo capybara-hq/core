@@ -54,8 +54,12 @@ import NotFound from "../not-found";
  * agents that use it), confirmed in a dialog with the preview's hash; with the reason when a
  * dependency is missing or dependents remain (the latter can be force-disabled); the permission
  * list (read-only, sensitive categories highlighted), the org config form, and "Sync now" for
- * directory-sync extensions. An extension of an `all` or builtin plugin reads 已启用 · 平台统一
- * and its switch is read-only (on in every org); its org config can still be set. One the
+ * directory-sync extensions. An extension that is off and whose saved org config lacks a required
+ * field cannot be switched on (the switch is read-only with the hint 先填写组织级配置再启用): the
+ * form's 保存并启用 saves the config and enables it in one PUT. A refused config
+ * (`extension.config_invalid`), from either, marks the form's fields. An extension of an `all` or
+ * builtin plugin reads 已启用 · 平台统一 and its switch is read-only (on in every org); its org
+ * config can still be set. One the
  * deployment cannot run now (e.g. stopped by a super admin) shows "Unavailable": the switch is
  * read-only (the org's setting is kept). Below the extensions, the org's default providers of the
  * points several extensions provide (web tools spec §6), and the org's file previewers
@@ -157,7 +161,7 @@ function ExtensionSection({ orgId, plugin }: { orgId: string; plugin: OrgExtensi
   );
   const toast = useToast();
   const errorMessage = useErrorMessage();
-  const [busy, setBusy] = useState<"toggle" | "save" | "sync">();
+  const [busy, setBusy] = useState<"toggle" | "save" | "saveEnable" | "sync">();
   const [problem, setProblem] = useState<ToggleProblem>();
   const schema = plugin.orgConfigSchema;
   // Bumped after a save: the form starts again from the saved config.
@@ -173,6 +177,9 @@ function ExtensionSection({ orgId, plugin }: { orgId: string; plugin: OrgExtensi
     issues: ConfigIssue[];
   }>();
   const hasFields = hasConfigFields(schema);
+  // The saved config (the form before any edit) has no client problem, e.g. no required field
+  // left unset: read from the form's first report after each (re)mount.
+  const [savedOk, setSavedOk] = useState(true);
   const directory = provides(plugin, "directory");
   // Stopped on the deployment (or not loaded yet): only the org's enable setting is shown, read-only
   const unavailable = plugin.available === false;
@@ -180,6 +187,10 @@ function ExtensionSection({ orgId, plugin }: { orgId: string; plugin: OrgExtensi
   // On in every org (a builtin or `all` plugin): the switch is the platform's
   const platform = required || plugin.catalogItem?.scope === "all";
   const locked = platform || plugin.switchable === false;
+  const configForm = !unavailable && plugin.configurable && hasFields;
+  // Off and the saved config is incomplete: enabling would be refused, so the switch waits for
+  // the config (保存并启用 does both)
+  const needsConfig = !plugin.enabled && configForm && !savedOk;
   const qc = useQueryClient();
   // The answer is the extension as it is now: it replaces that one in the cached list.
   const onSaved = (next: OrgExtension) =>
@@ -240,27 +251,48 @@ function ExtensionSection({ orgId, plugin }: { orgId: string; plugin: OrgExtensi
         return;
       }
       setOff(null);
-      if (e instanceof ApiClientError && e.code === "extension.dependency_missing")
-        setProblem({
-          kind: "dependency_missing",
-          extensionPoints: strings(e.rawDetails, "extensionPoint"),
-        });
-      else if (e instanceof ApiClientError && e.code === "extension.has_dependents")
-        setProblem({ kind: "has_dependents", extensions: strings(e.rawDetails, "plugin") });
-      else
-        setProblem({
-          kind: "other",
-          message: errorMessage(e),
-          extra: issueLines(e),
-          // Refused by its plugin (stopped by the platform, not offered to this org): link to
-          // the 插件 page to request it
-          catalog:
-            e instanceof ApiClientError &&
-            (e.code === "plugin.disabled" || e.code === "catalog.approval_required"),
-        });
+      refused(e);
     } finally {
       setBusy(undefined);
     }
+  }
+
+  /**
+   * Why a switch (or 保存并启用) was refused: a refused config marks the form's fields (as when
+   * saving), the rest shows under the switch.
+   */
+  function refused(e: unknown) {
+    if (configForm && e instanceof ApiClientError && e.code === "extension.config_invalid") {
+      configRefused(e);
+      return;
+    }
+    if (e instanceof ApiClientError && e.code === "extension.dependency_missing")
+      setProblem({
+        kind: "dependency_missing",
+        extensionPoints: strings(e.rawDetails, "extensionPoint"),
+      });
+    else if (e instanceof ApiClientError && e.code === "extension.has_dependents")
+      setProblem({ kind: "has_dependents", extensions: strings(e.rawDetails, "plugin") });
+    else
+      setProblem({
+        kind: "other",
+        message: errorMessage(e),
+        extra: issueLines(e),
+        // Refused by its plugin (stopped by the platform, not offered to this org): link to
+        // the 插件 page to request it
+        catalog:
+          e instanceof ApiClientError &&
+          (e.code === "plugin.disabled" || e.code === "catalog.approval_required"),
+      });
+  }
+
+  function configRefused(e: unknown) {
+    const issues = configIssues(e);
+    setSaveError({
+      message: errorMessage(e),
+      extra: issues.length > 0 ? [] : issueLines(e),
+      issues,
+    });
   }
 
   async function save() {
@@ -271,12 +303,23 @@ function ExtensionSection({ orgId, plugin }: { orgId: string; plugin: OrgExtensi
       setRound((r) => r + 1);
       toast.success(t("configSaved", { plugin: label }));
     } catch (e) {
-      const issues = configIssues(e);
-      setSaveError({
-        message: errorMessage(e),
-        extra: issues.length > 0 ? [] : issueLines(e),
-        issues,
-      });
+      configRefused(e);
+    } finally {
+      setBusy(undefined);
+    }
+  }
+
+  /** 保存并启用: the config and the switch in one PUT (the kernel validates before installing). */
+  async function saveAndEnable() {
+    setBusy("saveEnable");
+    setSaveError(undefined);
+    setProblem(undefined);
+    try {
+      await put.mutateAsync({ enabled: true, config: form.config });
+      setRound((r) => r + 1);
+      toast.success(t("enabledToast", { plugin: label }));
+    } catch (e) {
+      refused(e);
     } finally {
       setBusy(undefined);
     }
@@ -306,7 +349,7 @@ function ExtensionSection({ orgId, plugin }: { orgId: string; plugin: OrgExtensi
         <Switch
           label={t("enableLabel", { plugin: label })}
           checked={plugin.enabled}
-          disabled={busy !== undefined || unavailable || locked}
+          disabled={busy !== undefined || unavailable || locked || needsConfig}
           onChange={(on) => void toggle(on)}
         />
         <Text>
@@ -322,6 +365,11 @@ function ExtensionSection({ orgId, plugin }: { orgId: string; plugin: OrgExtensi
       {unavailable && (
         <Text variant="prose" tone="muted">
           {t("unavailableHint")}
+        </Text>
+      )}
+      {needsConfig && (
+        <Text variant="prose" tone="muted">
+          {t("configFirstHint")}
         </Text>
       )}
       {problem?.kind === "dependency_missing" && (
@@ -353,7 +401,7 @@ function ExtensionSection({ orgId, plugin }: { orgId: string; plugin: OrgExtensi
         </Stack>
       )}
       <Permissions groups={plugin.permissions} plugin={plugin.plugin} />
-      {!unavailable && plugin.configurable && hasFields && (
+      {configForm && (
         <Stack gap={12}>
           <Text variant="small" tone="muted">
             {t("configTitle")}
@@ -365,13 +413,14 @@ function ExtensionSection({ orgId, plugin }: { orgId: string; plugin: OrgExtensi
             meta={orgFormMeta(plugin.secrets)}
             issues={saveError?.issues ?? []}
             disabled={busy !== undefined}
-            onChange={(value, _entries, state) =>
+            onChange={(value, _entries, state) => {
               setForm({
                 config: orgConfig(value),
                 ok: state.problems.length === 0,
                 dirty: state.dirty,
-              })
-            }
+              });
+              if (!state.dirty) setSavedOk(state.problems.length === 0);
+            }}
           />
           {saveError !== undefined && (
             <FormError message={saveError.message} extra={saveError.extra} />
@@ -387,6 +436,17 @@ function ExtensionSection({ orgId, plugin }: { orgId: string; plugin: OrgExtensi
             >
               {t("save")}
             </Button>
+            {!plugin.enabled && !locked && (
+              <Button
+                variant="secondary"
+                loading={busy === "saveEnable"}
+                disabled={busy !== undefined || !form.ok}
+                aria-label={t("saveAndEnableLabel", { plugin: label })}
+                onClick={() => void saveAndEnable()}
+              >
+                {t("saveAndEnable")}
+              </Button>
+            )}
           </Stack>
         </Stack>
       )}

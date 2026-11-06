@@ -102,8 +102,10 @@ export interface OrgExtensionPutOptions {
    */
   ifDisabled?: { skipped: boolean };
   /**
-   * Check everything (role, rules, the `config` against the schema merged with the stored secrets)
-   * and write nothing: lets a caller that must do another write first fail without a side effect.
+   * Check the role and the config (the given `config`, or with `enabled: true` the stored one,
+   * merged with the stored secrets, against the schema) and write nothing: lets a caller that must
+   * do another write first fail without a side effect. The rules for newly enabling (catalog policy,
+   * dependencies) are left to that write: the plugin install that enables it checks them.
    */
   validateOnly?: boolean;
 }
@@ -373,19 +375,9 @@ export class OrgExtensionConfigs {
     }
     // A required plugin is enabled whatever the row said (it may predate `required`)
     const enabled = required || (input.enabled ?? row?.enabled ?? false);
-    // 新启用来自平台目录的插件：按条目策略与授予复核（C22；已启用的不受影响）
-    if (input.enabled === true && row?.enabled !== true && !required) {
-      // 插件自己的条目 disabled 是总开关，任何途径都不能新启用（裁决 M-5）
-      const killed = await disabledPluginItems(t, [plugin]);
-      if (killed.length > 0) throw pluginItemDisabled(killed);
-      // 经某个条目安装：只看该条目（应用里的插件按应用条目，C22）；直接启用：全部来源里最严格的生效
-      if (opts.viaItem !== undefined) {
-        await assertItemInstallable(t, orgId, opts.viaItem, opts.approvedBy ?? opts.viaItem);
-      } else await assertPluginSourcesInstallable(t, orgId, plugin);
-    }
-    if (input.enabled === true) await this.assertDependenciesEnabled(t, orgId, manifest);
-    else if (input.enabled === false && !input.force) {
-      await this.assertNoEnabledDependents(t, orgId, manifest);
+    // validateOnly: the rules for (newly) enabling and disabling belong to the write that follows
+    if (!opts.validateOnly) {
+      await this.assertSwitchRules(t, orgId, manifest, input, row, required, opts);
     }
     let plain: Obj | null = row?.config ?? null;
     let changed: string[] = [];
@@ -423,10 +415,7 @@ export class OrgExtensionConfigs {
         next = r.data as Obj;
       }
       seen = { schema, config: next };
-      if (opts.validateOnly) {
-        return this.view(manifest, row, await this.setSecretKeys(t, orgId), required, item);
-      }
-      if (input.config !== undefined) {
+      if (!opts.validateOnly && input.config !== undefined) {
         changed = changedPaths(schema, before, next);
         plain = structuredClone(next);
         for (const p of paths) {
@@ -436,6 +425,10 @@ export class OrgExtensionConfigs {
           else await secrets.set(orgId, secretKey(plugin, p), JSON.stringify(v));
         }
       }
+    }
+    // Also without an org config schema: nothing is written
+    if (opts.validateOnly) {
+      return this.view(manifest, row, await this.setSecretKeys(t, orgId), required, item);
     }
     // 当前 schema 中已不存在的密钥路径：同一事务内清掉遗留的密文行
     const live = new Set((schema ? secretPaths(schema) : []).map((p) => secretKey(plugin, p)));
@@ -489,6 +482,36 @@ export class OrgExtensionConfigs {
       await this.afterPut(orgId, plugin, view.enabled);
     });
     return view;
+  }
+
+  /**
+   * The rules of a write that switches: newly enabling an extension from the platform catalog
+   * re-checks the item policy and grants (C22; one already enabled is unaffected), enabling needs
+   * the dependencies enabled, disabling (without `force`) no enabled dependents.
+   */
+  private async assertSwitchRules(
+    t: KernelSchemaDb,
+    orgId: string,
+    manifest: ExtensionManifest,
+    input: OrgExtensionInput,
+    row: { enabled: boolean } | undefined,
+    required: boolean,
+    opts: OrgExtensionPutOptions,
+  ): Promise<void> {
+    const plugin = manifest.name;
+    if (input.enabled === true && row?.enabled !== true && !required) {
+      // 插件自己的条目 disabled 是总开关，任何途径都不能新启用（裁决 M-5）
+      const killed = await disabledPluginItems(t, [plugin]);
+      if (killed.length > 0) throw pluginItemDisabled(killed);
+      // 经某个条目安装：只看该条目（应用里的插件按应用条目，C22）；直接启用：全部来源里最严格的生效
+      if (opts.viaItem !== undefined) {
+        await assertItemInstallable(t, orgId, opts.viaItem, opts.approvedBy ?? opts.viaItem);
+      } else await assertPluginSourcesInstallable(t, orgId, plugin);
+    }
+    if (input.enabled === true) await this.assertDependenciesEnabled(t, orgId, manifest);
+    else if (input.enabled === false && !input.force) {
+      await this.assertNoEnabledDependents(t, orgId, manifest);
+    }
   }
 
   /**
