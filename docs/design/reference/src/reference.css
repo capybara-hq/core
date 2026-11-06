@@ -1474,6 +1474,11 @@ textarea {
 .r-tline > .r-tlabel {
   flex: 0 1 auto;
 }
+/* A tool line's link button (the sub-agent group's "智能体图"): after the label, never shrunk. */
+.r-tline > .r-tlink {
+  flex: none;
+  white-space: nowrap;
+}
 /* Visually hidden, read by assistive tech (the working line's live region). */
 .r-sr-only {
   position: absolute;

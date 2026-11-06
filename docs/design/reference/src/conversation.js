@@ -545,7 +545,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
   function subGroup(o) {
     const failed = S.done.filter((s) => s.status === "failed").length;
     const doneHead = (open) =>
-      `<div class="r-tline" role="button" aria-expanded="${open}"><span class="r-tlabel">${S.done.length} 个子 agent 已完成<span class="r-fail-word">（${failed} 个失败）</span><span class="r-faint"> · 共 ${S.totals.calls} 次调用 · ${esc(S.totals.duration)}</span></span>${chev(open)}</div>`;
+      `<div class="r-tline" role="button" aria-expanded="${open}"><span class="r-tlabel">${S.done.length} 个子智能体已完成<span class="r-fail-word">（${failed} 个失败）</span><span class="r-faint"> · 共 ${S.totals.calls} 次调用 · ${esc(S.totals.duration)}</span></span>${chev(open)}</div>`;
     if (o.state === "done") return doneHead(false);
     if (o.state === "failed" || o.state === "expanded" || o.state === "stopped") {
       const status = (s, i) =>
@@ -554,9 +554,11 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
       return `${doneHead(true)}<div class="r-acalls">${calls}</div>`;
     }
     const waiting = o.state === "waiting";
+    // with onOpenMap the header ends with the agent map link (§6.16.15)
+    const link = o.mapLink ? '<button class="r-linkbtn r-tlink">智能体图</button>' : "";
     const head = waiting
-      ? '<div class="r-tline"><span class="r-tlabel"><span class="r-accent-word">等待批准</span></span></div>'
-      : `<div class="r-tline">${spin(16)}<span class="r-tlabel">正在运行 ${S.running.length} 个子 agent</span></div>`;
+      ? `<div class="r-tline"><span class="r-tlabel"><span class="r-accent-word">等待批准</span></span>${link}</div>`
+      : `<div class="r-tline">${spin(16)}<span class="r-tlabel">正在运行 ${S.running.length} 个子智能体</span>${link}</div>`;
     const calls = S.running.map((s) => agentCall(s, waiting ? "waiting" : "running")).join("");
     return `${head}<div class="r-acalls">${calls}</div>`;
   }
@@ -657,7 +659,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
 
   function subPanelBody() {
     const SP = S.panel;
-    return `<div class="r-panel-body r-subpanel"><div class="r-task"><div class="r-task-label">任务 · 主 agent 派出</div>${esc(SP.task)}</div><div class="r-tline"><span class="r-tlabel">${esc(SP.meta)}</span></div>${toolGroup(T.expanded.slice(0, 3), { forceGroup: true })}${prose(`<p>${esc(SP.prose)}</p>`)}<div class="r-tline">${spin(16)}<span class="r-tlabel">已使用 Acme 文档: 搜索文件 <span class="r-em">${esc(SP.current)}</span></span></div></div><footer class="r-status r-panel-status"><div class="r-status-left"><span class="r-ellipsis">${esc(SP.footer)}</span></div><div class="r-status-right"><span>上下文 ${esc(SP.context)}</span></div></footer>`;
+    return `<div class="r-panel-body r-subpanel"><div class="r-task"><div class="r-task-label">任务 · 上级智能体派出</div>${esc(SP.task)}</div><div class="r-tline"><span class="r-tlabel">${esc(SP.meta)}</span></div>${toolGroup(T.expanded.slice(0, 3), { forceGroup: true })}${prose(`<p>${esc(SP.prose)}</p>`)}<div class="r-tline">${spin(16)}<span class="r-tlabel">已使用 Acme 文档: 搜索文件 <span class="r-em">${esc(SP.current)}</span></span></div></div><footer class="r-status r-panel-status"><div class="r-status-left"><span class="r-ellipsis">${esc(SP.footer)}</span></div><div class="r-status-right"><span>上下文 ${esc(SP.context)}</span></div></footer>`;
   }
 
   function filePanelBody(kind) {
@@ -799,7 +801,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
   /** The main thread of the template blocks (canvas "Refined" conversation). */
   function thread(kind) {
     if (kind === "subagent")
-      return `<div class="r-ucol"><div class="r-bubble">有需要规整的吗？</div></div>${prose("<p>文件较多，我先让子 agent 列出完整目录树，同时对照流程实际读写的文件。</p>")}<div class="r-chatcol">${subGroup({ state: "running" })}</div>${prose("<p>目录树还在生成，我先整理当前版本流程引用的文件和文件夹 ID……</p>")}`;
+      return `<div class="r-ucol"><div class="r-bubble">有需要规整的吗？</div></div>${prose("<p>文件较多，我先让子智能体列出完整目录树，同时对照流程实际读写的文件。</p>")}<div class="r-chatcol">${subGroup({ state: "running" })}</div>${prose("<p>目录树还在生成，我先整理当前版本流程引用的文件和文件夹 ID……</p>")}`;
     if (kind === "file")
       return `<div class="r-ucol"><div class="r-bubble">把差异整理成表格</div></div>${toolGroup(T.done.slice(0, 3))}${prose("<p>整理好了，一共 14 行差异，按收款人汇总在第二个工作表：</p>")}${fileCard(FI.outputs[0])}`;
     return `<div class="r-ucol"><div class="r-bubble">${esc(C.user.text)}</div></div>${toolGroup(T.doneFailed.slice(0, 3))}${prose(`<p>${esc(F.PROSE_FIXTURE.streaming)}。明细整理成了表格：</p>`)}${fileCard(FI.outputs[0])}<div class="r-tline">${spin(16)}<span class="r-tlabel">正在核对总账<span class="r-faint"> · ${esc(C.stats.elapsed)}</span></span></div>`;

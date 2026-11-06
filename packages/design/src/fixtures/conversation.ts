@@ -697,11 +697,11 @@ export const SUBAGENT_FIXTURE: {
   totals: { calls: 21, duration: "2分40秒" },
   panel: {
     task: "只读地列出文档文件夹「示例项目」下的完整目录树。不要移动、改名、删除、共享或修改任何文件。输出：写成 JSON 到 docs/tree.json；最终回复给出文件总数、目录深度，以及一、二级目录名称。",
-    meta: "研究助手 · 子 agent · opus 5.5 · 只读工具",
+    meta: "研究助手 · 子智能体 · opus 5.5 · 只读工具",
     tools: "Acme 文档 6 个",
     prose: "已展开 6 层，共 214 个文件夹。正在处理「02 流程 / 10 现金预算」下的子目录……",
     current: "parentId = 1sEaKw6E…",
-    footer: "子 agent 只读 · 不能和它对话",
+    footer: "子智能体只读 · 不能和它对话",
     context: "31%",
   },
 };

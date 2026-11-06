@@ -510,7 +510,7 @@ export function SubagentGroup({
 // ── Right panel and properties pieces ───────────────────────────────────────
 
 /**
- * The task a sub-agent was given (gray block) and the "agent · 子 agent · model · tools" line.
+ * The task a sub-agent was given (gray block) and the "agent · 子智能体 · model · tools" line.
  * `agentHref`: an org agent's page; its name becomes a link (a template's name stays plain).
  */
 export function SubagentTask({

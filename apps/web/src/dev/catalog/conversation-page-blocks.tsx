@@ -168,6 +168,9 @@ function subagentGroupBlocks(): ReactNode {
           defaultExpanded={[S.done[0]?.id ?? ""]}
         />
       </Block>
+      <Block id="subagent-group-map-link">
+        <SubagentGroup rows={S.running.map(running)} onOpen={noop} onOpenMap={noop} />
+      </Block>
     </>
   );
 }
@@ -947,7 +950,7 @@ function thread(kind: "main" | "file" | "subagent"): ReactNode {
     return (
       <>
         <UserBubble text="有需要规整的吗？" />
-        <Prose markdown="文件较多，我先让子 agent 列出完整目录树，同时对照流程实际读写的文件。" />
+        <Prose markdown="文件较多，我先让子智能体列出完整目录树，同时对照流程实际读写的文件。" />
         <SubagentGroup rows={S.running.map(running)} onOpen={noop} />
         <Prose markdown="目录树还在生成，我先整理当前版本流程引用的文件和文件夹 ID……" />
       </>

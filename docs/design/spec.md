@@ -1601,7 +1601,7 @@ States: `default`, `hover`, `editing`, `paused`
 - **Status line** under the box (`row.dense`, padding 0 `pad.default.x`, `small`, `muted`, gap `space.2`): the status dot of the agent map (§6.16.28: 8, round, `role="img"` with the status word; running `accent` pulsing every `motion.pulse`, waiting `warn`, completed `ok`, failed `fail`, stopped `faint`), the state (one line, ellipsis) and at the end the link button "在智能体图中查看" / "View in agent map" (`onOpen`: that agent's level 2). While the child works: "后台运行中：<current tool summary>" / "Working in the background: <summary>" ("后台运行中" alone before the first summary; a queued child counts as working); waiting for a person: "后台等待中：<summary>" / "Waiting in the background: <summary>". A foreground child (a fork skill's, or one in a log written before background sub-agents) has the neutral copy: "运行中：<summary>" / "Working: <summary>", "等待中：<summary>" / "Waiting: <summary>" (`background: false`). Once it has ended: "完成" / "Completed", "失败" / "Failed" (in `fail`) or "已停止" / "Stopped", then " · <time> · <tokens>" (each left out when unknown; tokens as the agent map writes them). The action stays after the end. A call refused before any child ran says "失败 · <the refusal's first line>" (the whole text as the tooltip) and has no action: there is nothing to open. The line is not a live region (the summary changes with every tool call).
 
 <!-- states: subagent-group -->
-States: `running`, `waiting`, `done`, `failed`, `stopped`, `expanded`
+States: `running`, `waiting`, `done`, `failed`, `stopped`, `expanded`, `map-link`
 
 <!-- size-table: subagent-group -->
 | Part | State | Property | Value |
@@ -1631,6 +1631,8 @@ States: `running`, `waiting`, `done`, `failed`, `stopped`, `expanded`
 | agent-dot[data-status=aborted] | stopped | background-color | color.faint |
 | agent-call-more | expanded | color | color.muted |
 | agent-call-prompt[data-expanded=true] | expanded | color | color.ink |
+| subagent-map-link | map-link | color | color.muted |
+| subagent-map-link | map-link | font-size | type.small |
 
 #### 6.16.16 Inline card
 
