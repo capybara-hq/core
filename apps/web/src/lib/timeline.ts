@@ -204,7 +204,11 @@ export type RunData = {
   runId: string | null;
   /** The run's last model call, else the model it started with; null when the log has neither. */
   model: ModelRef | null;
-  /** From `run_started` to the terminal event (waits for a person included); null without a start. */
+  /**
+   * The run's working time: from `run_started` to the terminal event without its waits for a
+   * person (an approval or a question, until answered), the same derivation as the status bar's
+   * elapsed time ({@link runStats}), so the two agree; null without a start.
+   */
   durationMs: number | null;
   /** Null when the run reported no usage. */
   tokens: RunTokens | null;
@@ -606,15 +610,20 @@ export function buildEventTimeline(
   const forks = new Map<number, { label: string; dispatched: boolean; reported: boolean }>();
   /** The highest user seq a model call took in (`model_call.request.absorbedUpToSeq`). */
   let absorbed = 0;
-  /** What the log says so far of each run (its row's model, start and tokens). */
+  /** What the log says so far of each run (its row's model, working time and tokens). */
   const runs = new Map<
     string,
-    { startedAt: number | null; model: ModelRef | null; tokens: RunTokens | null }
+    {
+      /** Its working time (waits for a person left out); null before its start. */
+      clock: RunClock | null;
+      model: ModelRef | null;
+      tokens: RunTokens | null;
+    }
   >();
   const runOf = (runId: string) => {
     let r = runs.get(runId);
     if (r === undefined) {
-      r = { startedAt: null, model: null, tokens: null };
+      r = { clock: null, model: null, tokens: null };
       runs.set(runId, r);
     }
     return r;
@@ -623,10 +632,12 @@ export function buildEventTimeline(
     e: ConversationEvent,
   ): Pick<RunData, "runId" | "model" | "durationMs" | "tokens" | "at"> => {
     const r = e.runId === null ? undefined : runs.get(e.runId);
+    // the run's working time, as the status bar counts it (waits for a person left out)
+    r?.clock?.end(Date.parse(e.createdAt));
     return {
       runId: e.runId,
       model: r?.model ?? null,
-      durationMs: r?.startedAt == null ? null : Math.max(0, Date.parse(e.createdAt) - r.startedAt),
+      durationMs: r?.clock == null ? null : Math.max(0, r.clock.workedMs),
       tokens: r?.tokens ?? null,
       at: e.createdAt,
     };
@@ -675,12 +686,16 @@ export function buildEventTimeline(
 
   for (const e of events) {
     const key = `e${e.seq}`;
+    // a wait for a person stops the run's clock until it is answered
+    if (e.runId !== null) runs.get(e.runId)?.clock?.apply(e, Date.parse(e.createdAt));
     switch (e.type) {
       case "run_started":
         if (e.runId !== null) {
           const r = runOf(e.runId);
           // A resumed run writes no second run_started; keep the first start.
-          if (r.startedAt === null) r.startedAt = Date.parse(e.createdAt);
+          const at = Date.parse(e.createdAt);
+          if (r.clock === null) r.clock = new RunClock(at);
+          else r.clock.restart(at);
           if (r.model === null) r.model = e.payload.model;
           models.set(e.runId, e.payload.model);
           if (e.payload.triggerAccountId !== undefined)
@@ -1275,49 +1290,84 @@ export interface RunStats {
 export const workedMsAt = (s: RunStats, now: number): number | null =>
   s.startedAt === null ? null : s.workedMs + (s.resumedAt === null ? 0 : now - s.resumedAt);
 
+/**
+ * One run's working time: from its start to its end without its waits for a person (an approval,
+ * a question; {@link PersonWaits}). The status bar's elapsed time and the run row's duration both
+ * read it, so the two agree.
+ */
+class RunClock {
+  /** Working time before {@link resumedAt}. */
+  workedMs = 0;
+  /** When the run last started working; null while it waits and after it ended. */
+  resumedAt: number | null;
+  private readonly waits = new PersonWaits();
+
+  constructor(at: number) {
+    this.resumedAt = at;
+  }
+
+  /** A repeated `run_started` of the same run (a resumed run writes none, but be safe). */
+  restart(at: number): void {
+    if (!this.waits.waiting) this.resumedAt ??= at;
+  }
+
+  /** An event of the run: a wait starts or its last open wait ends. */
+  apply(e: ConversationEvent, at: number): void {
+    const change = this.waits.apply(e);
+    if (change === "start") {
+      if (this.resumedAt !== null) this.workedMs += at - this.resumedAt;
+      this.resumedAt = null;
+    } else if (change === "end") {
+      this.resumedAt = at;
+    }
+  }
+
+  /** The run's terminal event. */
+  end(at: number): void {
+    if (this.resumedAt !== null) this.workedMs += at - this.resumedAt;
+    this.resumedAt = null;
+    this.waits.clear();
+  }
+}
+
 export function runStats(events: readonly ConversationEvent[]): RunStats {
   let turns = 0;
   let startedAt: number | null = null;
   let endedAt: number | null = null;
   let last: RunStats["last"] = null;
   let active: string | null = null;
-  let workedMs = 0;
-  let resumedAt: number | null = null;
-  const waits = new PersonWaits();
+  let clock: RunClock | null = null;
   for (const e of events) {
     const at = Date.parse(e.createdAt);
     if (e.type === "run_started") {
       // A resumed run writes no second run_started; a new runId is a new turn.
-      if (e.runId !== active) {
+      if (e.runId !== active || clock === null) {
         turns += 1;
-        workedMs = 0;
-        waits.clear();
-        resumedAt = at;
-      } else if (!waits.waiting) resumedAt ??= at;
+        clock = new RunClock(at);
+      } else clock.restart(at);
       active = e.runId;
       startedAt = at;
       endedAt = null;
       last = null;
     } else if (e.runId === null || e.runId !== active) {
     } else if (TERMINAL.has(e.type)) {
-      if (resumedAt !== null) workedMs += at - resumedAt;
-      resumedAt = null;
-      waits.clear();
+      clock?.end(at);
       endedAt = at;
       last =
         e.type === "run_finished" ? "finished" : e.type === "run_failed" ? "failed" : "aborted";
       active = null;
     } else {
-      const change = waits.apply(e);
-      if (change === "start") {
-        if (resumedAt !== null) workedMs += at - resumedAt;
-        resumedAt = null;
-      } else if (change === "end") {
-        resumedAt = at;
-      }
+      clock?.apply(e, at);
     }
   }
-  return { turns, startedAt, endedAt, last, workedMs: Math.max(0, workedMs), resumedAt };
+  return {
+    turns,
+    startedAt,
+    endedAt,
+    last,
+    workedMs: Math.max(0, clock?.workedMs ?? 0),
+    resumedAt: clock?.resumedAt ?? null,
+  };
 }
 
 export { toolKeysOf } from "./tool-keys";

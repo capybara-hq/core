@@ -532,6 +532,27 @@ describe("run rows (spec §6.16.23)", () => {
   });
 });
 
+describe("the run row's duration", () => {
+  it("is the run's working time: a wait for a person is left out, as the status bar counts it", () => {
+    const at = (e: ConversationEvent, s: number) => ({
+      ...e,
+      createdAt: new Date(Date.UTC(2026, 10, 7) + s * 1000).toISOString(),
+    });
+    const events = [
+      at(ev(1, "run_started", { agentVersion: 1, model: { provider: "p", model: "m" } }), 0),
+      at(ev(2, "question_asked", { callId: "c", questionId: "q1" }), 4),
+      at(ev(3, "question_answered", { questionId: "q1" }), 304),
+      at(ev(4, "approval_requested", { callId: "x", approvalId: "a1" }), 306),
+      at(ev(5, "approval_decided", { approvalId: "a1" }), 406),
+      at(ev(6, "run_finished", { reason: "end_turn", consumedUpToSeq: 0 }), 409),
+    ];
+    const row = buildEventTimeline(events, new Map(), "en").entries.find((e) => e.kind === "run");
+    // 4 s + 2 s + 3 s of work; the 400 s of waiting are not counted
+    expect(row?.kind === "run" ? row.durationMs : undefined).toBe(9000);
+    expect(runStats(events).workedMs).toBe(9000);
+  });
+});
+
 describe("runStats", () => {
   it("counts runs and keeps the last run's span", () => {
     const events = [
