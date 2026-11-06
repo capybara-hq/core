@@ -2524,6 +2524,25 @@
         "items": "失败的插件",
         "hintStuck": "最近一次迁移开始一小时后仍未结束，运行它的 worker 可能已停止。下次 worker 启动或每日运行时会重新执行。",
         "hintFailed": "最近一次迁移没能写入这些插件的平台组件，下次运行会再次尝试。原因见内核日志。"
+      },
+      "orgUpload": {
+        "label": "上传待确认",
+        "title": "{org} 上传了 {name}，等待确认",
+        "hint": "这次上传包含扩展。在插件页的待确认中审阅权限后确认或拒绝，确认前它什么都不能用。",
+        "newPlugin": "新插件"
+      },
+      "transferred": {
+        "label": "已转为平台所有",
+        "title": "{name} 已转为平台所有（{why}）",
+        "reason": {
+          "owner_deleted": "{org} 已删除它",
+          "org_deleted": "{org} 已被删除"
+        },
+        "usedBy": "仍有 {count} 个组织在使用。",
+        "hint": "它的范围和在用的组织都保留，可以像其他平台条目一样管理。",
+        "dismiss": "知道了",
+        "view": "查看",
+        "dismissed": "已处理。"
       }
     },
     "accounts": {
@@ -3002,7 +3021,8 @@
           "origin": "出处",
           "scope": "范围",
           "orgs": "在用组织",
-          "permissions": "权限"
+          "permissions": "权限",
+          "owner": "归属"
         },
         "delete": "删除插件",
         "deleteConfirm": {
@@ -3062,7 +3082,11 @@
         "orgsEmpty": "还没有组织。",
         "enabledToast": "已启用「{name}」。",
         "disabledToast": "已停用「{name}」。",
-        "disabledNote": "已在整个部署停用，范围保留；启用后按原范围恢复。"
+        "disabledNote": "已在整个部署停用，范围保留；启用后按原范围恢复。",
+        "notShareableNote": "该组织未开放共享：可以缩小范围或停用，不能向其他组织显示或关联给其他组织。",
+        "ownerNote": "它归 {org} 所有，新版本由该组织上传。",
+        "awaitingNote": "它的第一个版本在待确认中等待超级管理员确认，确认前什么都不能用。",
+        "pendingVersionNote": "该组织上传的版本 {version} 在待确认中等待超级管理员确认。"
       },
       "review": {
         "title": "导入插件",
@@ -3336,7 +3360,9 @@
       "description": "插件是一包扩展、技能、连接器模板和智能体模板。从市场引入或上传，确认权限后即装好。",
       "chips": {
         "builtin": "内置",
-        "claudeCode": "Claude Code"
+        "claudeCode": "Claude Code",
+        "owner": "归属：{org}",
+        "notShareable": "该组织未开放共享"
       },
       "meta": {
         "orgsUsing": "{n} 个组织在用",
@@ -3373,7 +3399,9 @@
         "cancel": "取消",
         "confirm": "确认",
         "saved": "已设置「{name}」的范围。",
-        "stale": "影响已变化，请再看一遍后确认。"
+        "stale": "影响已变化，请再看一遍后确认。",
+        "narrowOnly": "该组织未开放共享：只能取消已关联的组织，归属组织始终保留。",
+        "ownerKept": "归属组织始终保留。"
       },
       "impact": {
         "none": "没有组织会失去访问。",
@@ -3416,7 +3444,18 @@
         "rejected": "已拒绝",
         "rejectTitle": "拒绝 {org} 的申请",
         "reason": "原因",
-        "reasonHelp": "可选；申请人会看到。"
+        "reasonHelp": "可选；申请人会看到。",
+        "upload": {
+          "by": "{org} 上传",
+          "newPlugin": "新插件",
+          "update": "更新 {from} → {to}",
+          "extension": "包含扩展：确认后它的代码会在内核进程里运行，作用于整个部署。",
+          "confirm": "确认",
+          "confirmHint": "这个版本由 {org} 上传。扩展的代码在内核进程里运行，作用于整个部署，与范围无关。",
+          "rejectTitle": "拒绝 {org} 上传的 {name}",
+          "reasonHelp": "可选；上传的组织会看到。",
+          "rejected": "已拒绝「{name}」。"
+        }
       }
     },
     "org": {
@@ -3974,7 +4013,7 @@
         "optional": "组织自选：{n} 个组织已启用。",
         "named": "指定组织：只有下面的组织能用。"
       },
-      "orgOwnedNote": "这是组织自己的，在这里只能查看；把它关联给其他组织之后才能在这里管理。",
+      "orgOwnedNote": "它归 {org} 所有，新版本由该组织上传。",
       "builtinNote": "它来自内置插件：在所有组织启用，范围不能改，也不能停用。"
     },
     "scopeDialog": {
@@ -3997,6 +4036,13 @@
       "confirm": "上传",
       "cancel": "取消",
       "done": "已上传「{name}」的 {version}。"
+    },
+    "share": {
+      "show": "向其他组织显示",
+      "shownToast": "已向其他组织显示「{name}」。",
+      "notShareable": "该组织未开放共享",
+      "templateNotShareable": "智能体模板暂不支持共享",
+      "notOwned": "来自插件，不能共享"
     }
   },
   "orgComponents": {

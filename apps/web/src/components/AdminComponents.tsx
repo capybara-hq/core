@@ -15,13 +15,17 @@ import {
 import { useQuery } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { type ReactNode, useState } from "react";
-import { Link } from "../i18n/navigation";
+import { Link, useRouter } from "../i18n/navigation";
 import {
   COMPONENT_ROUTES,
   type ComponentVersion,
+  isOrgRow,
+  moveTo,
   type PlatformComponent,
   type PlatformComponentKind,
   setComponentDisabled,
+  setComponentShown,
+  shareBlockOf,
 } from "../lib/components";
 import { adminOrgsQuery } from "../lib/query/admin";
 import { retryOnMountOf } from "../lib/query/client";
@@ -65,8 +69,17 @@ export function ComponentFrom({ c }: { c: PlatformComponent }) {
   return <Link href={`/admin/plugins/${encodeURIComponent(c.itemId)}`}>{c.plugin}</Link>;
 }
 
-/** Whether the platform owns it (an org's own item is read-only in the admin console). */
+/** Whether the platform owns it (else an org: its own item, promoted or of a plugin it uploaded). */
 export const platformOwned = (c: PlatformComponent): boolean => c.owner.kind === "platform";
+
+/** The reason text of a share block. */
+export function useShareBlockText(): (c: PlatformComponent) => string | null {
+  const t = useTranslations("adminComponents.share");
+  return (c) => {
+    const b = shareBlockOf(c);
+    return b === null ? null : t(b);
+  };
+}
 
 /** The 归属 text: 平台, or the owning org's name. */
 export function useOwnerText(): (c: PlatformComponent) => string {
@@ -100,6 +113,7 @@ export function ComponentsTable({
   const t = useTranslations("adminComponents");
   const scopeText = useComponentScopeText();
   const ownerText = useOwnerText();
+  const blockText = useShareBlockText();
   const columns: Column<PlatformComponent>[] = [
     {
       key: "name",
@@ -112,7 +126,23 @@ export function ComponentsTable({
       ),
     },
     { key: "from", header: t("columns.from"), tone: "muted", cell: (c) => <ComponentFrom c={c} /> },
-    { key: "owner", header: t("columns.owner"), cell: (c) => ownerText(c) },
+    {
+      key: "owner",
+      header: t("columns.owner"),
+      cell: (c) => {
+        const blocked = blockText(c);
+        return blocked === null ? (
+          ownerText(c)
+        ) : (
+          <Stack gap={0}>
+            <Text>{ownerText(c)}</Text>
+            <Text variant="small" tone="muted">
+              {blocked}
+            </Text>
+          </Stack>
+        );
+      },
+    },
     { key: "scope", header: t("columns.scope"), cell: (c) => scopeText(c) },
     {
       key: "version",
@@ -218,19 +248,28 @@ export function ComponentOrgs({ c }: { c: PlatformComponent }) {
 }
 
 /**
- * The detail head's actions (设置范围, 停用 / 启用, 上传新版本 for a skill or agent template) and
- * the dialog they open.
+ * The detail head's actions and the dialog they open: 设置范围, 停用 / 启用 and 上传新版本 (a skill
+ * or agent template) of a platform component. An org-owned one (phase 3): 设置范围 and 向其他组织显示
+ * when its org shares it (showing or associating an org row promotes it, and the page moves to the
+ * platform id it answers with, ruling P3-23); otherwise 设置范围 only narrows (ruling P3-16); 停用
+ * stays for a platform row (ruling P3-49); never 上传新版本, its org uploads versions (P3-48).
  */
 export function useComponentActions(
   c: PlatformComponent,
   orgId: string | null,
 ): { actions: HeaderAction[]; dialog: ReactNode } {
   const t = useTranslations("adminComponents.detail");
+  const ts = useTranslations("adminComponents.share");
   const toast = useToast();
+  const router = useRouter();
   const errorMessage = useErrorMessage();
   const [open, setOpen] = useState<"scope" | "disable" | "upload" | null>(null);
   const enable = useAppMutation({
     fn: () => setComponentDisabled(c.kind, c.id, { disabled: false }),
+    invalidates: () => componentChangeKeys(orgId),
+  });
+  const show = useAppMutation({
+    fn: () => setComponentShown(c.kind, c.id, true),
     invalidates: () => componentChangeKeys(orgId),
   });
   const close = () => setOpen(null);
@@ -256,12 +295,29 @@ export function useComponentActions(
     variant: "primary",
     onSelect: () => setOpen("upload"),
   };
-  // An org's own item is read-only here; a builtin plugin's component keeps its scope and stays
-  // on (the kernel refuses both with 409 plugin.builtin), though it takes a new version
-  const manage = platformOwned(c) && !c.builtin;
+  const showAction: HeaderAction = {
+    label: ts("show"),
+    variant: "default",
+    onSelect: () =>
+      void show.mutateAsync(undefined).then(
+        (r) => {
+          toast.success(ts("shownToast", { name: c.name }));
+          moveTo(router, c, r);
+        },
+        (e: unknown) => toast.error(errorMessage(e)),
+      ),
+  };
+  const platform = platformOwned(c);
+  const shared = !platform && shareBlockOf(c) === null;
+  // A builtin plugin's component keeps its scope and stays on (the kernel refuses both with 409
+  // plugin.builtin), though it takes a new version; an org row has no deployment disable
+  const scope = !c.builtin && (platform || shared || !isOrgRow(c));
+  const disable = !c.builtin && !isOrgRow(c);
   const actions: HeaderAction[] = [
-    ...(manage ? [scopeAction, disableAction] : []),
-    ...(platformOwned(c) && c.kind !== "connector_template" ? [uploadAction] : []),
+    ...(shared && c.scope === "named" && !c.shownToOthers ? [showAction] : []),
+    ...(scope ? [scopeAction] : []),
+    ...(disable ? [disableAction] : []),
+    ...(platform && c.kind !== "connector_template" ? [uploadAction] : []),
   ];
   const dialog =
     open === "scope" ? (
@@ -301,16 +357,18 @@ export function useOwnerTabs(rows: PlatformComponent[] | null): {
   };
 }
 
-/** The detail's notes: disabled, plugin stopped, builtin, org-owned. */
+/** The detail's notes: org-owned (and why it is not shared), disabled, plugin stopped, builtin. */
 export function ComponentNotes({ c }: { c: PlatformComponent }) {
   const t = useTranslations("adminComponents.detail");
+  const blocked = useShareBlockText()(c);
   return (
     <>
-      {!platformOwned(c) && (
+      {c.owner.kind === "org" && (
         <Text variant="prose" tone="muted">
-          {t("orgOwnedNote")}
+          {t("orgOwnedNote", { org: c.owner.name })}
         </Text>
       )}
+      {blocked !== null && <Text tone="warn">{blocked}</Text>}
       {c.builtin && (
         <Text variant="prose" tone="muted">
           {t("builtinNote")}

@@ -64,6 +64,43 @@ export interface PlatformComponent {
   onIn: string[];
 }
 
+/**
+ * An org's own skill or agent template not promoted yet (the org row's id, ruling P3-23): not a
+ * platform row, so it has no deployment disable; showing or associating it promotes it first.
+ */
+export const isOrgRow = (c: PlatformComponent): boolean =>
+  c.owner.kind === "org" && !c.promoted && c.itemId === null;
+
+/** Why the super admin cannot show an org-owned component to or associate it with other orgs. */
+export type ShareBlock = "notShareable" | "templateNotShareable" | "notOwned";
+
+/**
+ * The share gate of an org-owned component (rulings P3-1, P3-16, P3-46), null when the super
+ * admin may show and associate it (and always for the platform's): agent templates are not shared
+ * in phase 3, an org row must be a skill its org created itself (no plugin), and its owner must
+ * share it.
+ */
+export function shareBlockOf(c: PlatformComponent): ShareBlock | null {
+  if (c.owner.kind === "platform") return null;
+  if (c.kind === "agent_template") return "templateNotShareable";
+  if (isOrgRow(c) && c.plugin !== null) return "notOwned";
+  return c.shareable ? null : "notShareable";
+}
+
+/**
+ * After a change that promoted an org row (ruling P3-23: the answer carries the platform id), the
+ * detail moves to the new id; the list was read again by the mutation's invalidation.
+ */
+export function moveTo(
+  router: { replace(href: string): void },
+  before: PlatformComponent,
+  after: PlatformComponent,
+): void {
+  if (after.id !== before.id) {
+    router.replace(`${COMPONENT_ROUTES[before.kind]}/${encodeURIComponent(after.id)}`);
+  }
+}
+
 /** One version of a platform component (kernel `ComponentVersionView`). */
 export interface ComponentVersion {
   version: string;

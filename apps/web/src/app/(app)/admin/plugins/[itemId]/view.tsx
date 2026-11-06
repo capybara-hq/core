@@ -50,9 +50,11 @@ import {
   displayNameOf,
   importMarketplaceEntry,
   importPageHref,
+  ownerOrgOf,
   type PluginManifest,
   removeCatalogItem,
   setDisabled,
+  shareGated,
   skillNameOf,
   templateIdOf,
 } from "../../../../../lib/catalog";
@@ -86,7 +88,9 @@ type Tab = (typeof TABS)[number];
  * dialog with its impact preview), 停用 (with the same preview) or 启用, and 更新到 <version>
  * when the catalog has a newer version than the platform's (the platform update preview, spec
  * §7.1), else 导入 <version> when its marketplace has a newer compatible version (stages it and
- * opens the import review). A built-in plugin has neither 设置范围 nor 停用. Tabs: 组件 (the
+ * opens the import review). A built-in plugin has neither 设置范围 nor 停用. An org's upload
+ * (phase 3) names its owner org, takes no 更新到 / 导入 (its org uploads its versions), only narrows
+ * when its org does not share it, and takes no scope change while its first version waits. Tabs: 组件 (the
  * platform version's extension, skills, connector templates and agent templates with kind,
  * version and scope (跟随插件 or the component's own, linking to the component); its
  * dependencies; the translation report, the license; delete), 组织 (the scope and the orgs it names, or how many
@@ -143,6 +147,7 @@ function PluginDetail({ detail, orgId }: { detail: CatalogItemDetail; orgId: str
   const qc = useQueryClient();
   const errorMessage = useErrorMessage();
   const scopeLabel = useScopeLabel();
+  const tc = useTranslations("adminComponents");
   // Sections: no data while they load or when they failed (not read again on mount).
   const mq = marketplacesQuery();
   const marketplaces = useQuery({ ...mq, retryOnMount: retryOnMountOf(mq.queryKey) }).data?.items;
@@ -194,8 +199,12 @@ function PluginDetail({ detail, orgId }: { detail: CatalogItemDetail; orgId: str
     }
   };
 
+  const owner = ownerOrgOf(item);
+  // An org's upload: its org uploads its versions (ruling P3-12); a first version waiting for the
+  // confirmation takes no scope change or disable (409 catalog.item_pending, ruling P3-9)
+  const awaiting = item.awaitingConfirmation === true;
   const actions = [
-    ...(item.builtin || deleted
+    ...(item.builtin || deleted || awaiting
       ? []
       : [
           {
@@ -219,7 +228,7 @@ function PluginDetail({ detail, orgId }: { detail: CatalogItemDetail; orgId: str
                 onSelect: () => setDialog("disable"),
               },
         ]),
-    ...(updateTo !== null && !deleted && !item.disabled
+    ...(updateTo !== null && owner === null && !deleted && !item.disabled
       ? [
           {
             label: t("detail.actions.update", { version: versionLabel(updateTo) }),
@@ -228,7 +237,7 @@ function PluginDetail({ detail, orgId }: { detail: CatalogItemDetail; orgId: str
           },
         ]
       : []),
-    ...(fetchable !== null && !deleted
+    ...(fetchable !== null && owner === null && !deleted
       ? [
           {
             label: t("detail.actions.import", { version: versionLabel(fetchable.version) }),
@@ -253,6 +262,7 @@ function PluginDetail({ detail, orgId }: { detail: CatalogItemDetail; orgId: str
           status: (
             <Stack direction="row" gap={8} align="center">
               {item.builtin && <Badge>{t("chips.builtin")}</Badge>}
+              {owner !== null && <Badge>{t("chips.owner", { org: owner.name })}</Badge>}
               {claudeCode && <Badge>{t("chips.claudeCode")}</Badge>}
               <ScopeBadge item={item} />
             </Stack>
@@ -284,6 +294,10 @@ function PluginDetail({ detail, orgId }: { detail: CatalogItemDetail; orgId: str
                   ? [{ k: t("detail.fields.origin"), v: origin(latest.sourceDetail) }]
                   : []),
                 { k: t("detail.fields.publisher"), v: item.publisher || "—" },
+                {
+                  k: t("detail.fields.owner"),
+                  v: owner === null ? tc("owner.platform") : owner.name,
+                },
                 { k: t("detail.fields.scope"), v: scopeLabel(item) },
                 { k: t("detail.fields.orgs"), v: String(item.enabledOrgs) },
                 {
@@ -301,6 +315,22 @@ function PluginDetail({ detail, orgId }: { detail: CatalogItemDetail; orgId: str
           </Stack>
         }
       >
+        {owner !== null && (
+          <Text variant="prose" tone="muted">
+            {t("detail.ownerNote", { org: owner.name })}
+          </Text>
+        )}
+        {shareGated(item) && <Text tone="warn">{t("detail.notShareableNote")}</Text>}
+        {awaiting ? (
+          <Text tone="warn">{t("detail.awaitingNote")}</Text>
+        ) : (
+          item.pendingVersion !== null &&
+          item.pendingVersion !== undefined && (
+            <Text tone="warn">
+              {t("detail.pendingVersionNote", { version: versionLabel(item.pendingVersion) })}
+            </Text>
+          )
+        )}
         {item.disabled && <Text tone="warn">{t("detail.disabledNote")}</Text>}
         {item.contentChanged && <Text tone="warn">{t("detail.contentChanged")}</Text>}
         {tab === "components" ? (

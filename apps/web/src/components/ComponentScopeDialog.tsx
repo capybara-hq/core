@@ -13,15 +13,18 @@ import {
 } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
 import { useState } from "react";
+import { useRouter } from "../i18n/navigation";
 import { ApiClientError } from "../lib/api";
 import type { PluginScope } from "../lib/catalog";
 import {
   type ComponentScopePreview,
+  moveTo,
   type PlatformComponent,
   previewComponentScope,
   setComponentDisabled,
   setComponentScope,
   setComponentShown,
+  shareBlockOf,
   uploadAgentTemplateVersion,
   uploadSkillVersion,
 } from "../lib/components";
@@ -35,6 +38,7 @@ import {
   type ScopeChoice,
   ScopeFields,
   ScopeImpact,
+  withOwner,
 } from "./PluginScopeDialog";
 
 /** A component scope change: its own scope (`orgs` only with 指定组织) or following its plugin. */
@@ -47,7 +51,8 @@ const sameSet = (a: string[], b: string[]) =>
  * 设置范围 of a platform component (spec §5 rules 2, 8, 10): 跟随插件 (a component of a plugin)
  * or its own scope with the orgs of 指定组织 and 对其他组织显示, then the impact preview (agents
  * losing it, connectors kept, name clashes, which refuse the change), then confirm with its
- * `scopeHash` (409 `plugin.scope_stale`: preview again).
+ * `scopeHash` (409 `plugin.scope_stale`: preview again). An org-owned component keeps its owner
+ * listed; one its org does not share only narrows (ruling P3-16).
  */
 export function ComponentScopeDialog({
   component: c,
@@ -63,11 +68,15 @@ export function ComponentScopeDialog({
   const tr = useTranslations("catalog.admin.review");
   const toast = useToast();
   const errorMessage = useErrorMessage();
-  const canFollow = c.itemId !== null;
+  const router = useRouter();
+  const owner = c.owner.kind === "org" ? c.owner.orgId : undefined;
+  // An org-owned component its org does not share (or may not share) only narrows (P3-16, P3-46)
+  const narrow = shareBlockOf(c) !== null;
+  const canFollow = c.itemId !== null && !narrow;
   const [choice, setChoice] = useState<ScopeChoice>(
-    c.scopeMode === "follow" && canFollow ? "follow" : c.scope,
+    narrow ? "named" : c.scopeMode === "follow" && canFollow ? "follow" : c.scope,
   );
-  const [orgs, setOrgs] = useState<string[]>(c.scope === "named" ? c.orgs : []);
+  const [orgs, setOrgs] = useState<string[]>(withOwner(c.scope === "named" ? c.orgs : [], owner));
   const [shown, setShown] = useState(c.shownToOthers);
   const [preview, setPreview] = useState<ComponentScopePreview | null>(null);
   const [error, setError] = useState<string>();
@@ -88,7 +97,7 @@ export function ComponentScopeDialog({
     invalidates: () => componentChangeKeys(orgId),
   });
   const saveShown = useAppMutation({
-    fn: (next: boolean) => setComponentShown(c.kind, c.id, next),
+    fn: (v: { id: string; next: boolean }) => setComponentShown(c.kind, v.id, v.next),
     invalidates: () => componentChangeKeys(orgId),
   });
   const own = c.scopeMode === "own" || !canFollow;
@@ -96,7 +105,7 @@ export function ComponentScopeDialog({
     choice === "follow"
       ? own
       : !own || choice !== c.scope || (choice === "named" && !sameSet(orgs, c.orgs));
-  const shownChanged = choice === "named" && shown !== c.shownToOthers;
+  const shownChanged = !narrow && choice === "named" && shown !== c.shownToOthers;
   const unchanged = !scopeChanged && !shownChanged;
   const invalid = choice === "named" && orgs.length === 0;
   const saving = saveScope.isPending || saveShown.isPending || previewIt.isPending;
@@ -115,13 +124,17 @@ export function ComponentScopeDialog({
     setError(undefined);
     setNotice(undefined);
     try {
+      // An org row is promoted by a change that shows or associates it: later calls and the page
+      // use the platform id it answers with (ruling P3-23)
+      let now = c;
       if (scopeChanged && !scopeSaved) {
-        await saveScope.mutateAsync({ ...target(), scopeHash: preview.scopeHash });
+        now = await saveScope.mutateAsync({ ...target(), scopeHash: preview.scopeHash });
         setScopeSaved(true);
       }
-      if (shownChanged) await saveShown.mutateAsync(shown);
+      if (shownChanged) now = await saveShown.mutateAsync({ id: now.id, next: shown });
       toast.success(t("saved", { name: c.name }));
       onClose();
+      moveTo(router, c, now);
     } catch (e) {
       if (e instanceof ApiClientError && e.code === "plugin.scope_stale") {
         await next();
@@ -186,6 +199,8 @@ export function ComponentScopeDialog({
               orgs={orgs}
               onScope={setChoice}
               onOrgs={setOrgs}
+              {...(owner !== undefined ? { owner } : {})}
+              {...(narrow ? { narrowTo: c.orgs } : {})}
               {...(canFollow
                 ? {
                     follow: {
@@ -196,7 +211,7 @@ export function ComponentScopeDialog({
                   }
                 : {})}
             />
-            {choice === "named" && (
+            {choice === "named" && !narrow && (
               <Stack gap={4}>
                 <SwitchField label={ts("shown")} checked={shown} onChange={setShown} />
                 <Text variant="small" tone="muted">

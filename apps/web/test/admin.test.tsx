@@ -1,4 +1,4 @@
-import { cleanup, screen, within } from "@testing-library/react";
+import { cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
@@ -476,5 +476,303 @@ describe("/admin/settings（FormPage）", () => {
       true,
     );
     expect(calls.filter((c) => c.method === "PUT")).toEqual([]);
+  });
+});
+
+describe("org-owned plugins in the admin console (phase 3)", () => {
+  const P = en.catalog.admin;
+  const T = "2026-11-06T00:00:00.000Z";
+  const ACME = { kind: "org", orgId: "o1", name: "Acme" };
+  const ID = "55555555-5555-4555-8555-555555555555";
+  const NEW_ID = "66666666-6666-4666-8666-666666666666";
+  const item = (over: Record<string, unknown> = {}) => ({
+    id: ID,
+    name: "acme-crm",
+    publisher: "Acme",
+    displayName: null,
+    description: "CRM tools",
+    descriptionZh: null,
+    policy: "allow",
+    scope: "named",
+    scopeOrgs: ["o1"],
+    builtin: false,
+    disabled: false,
+    shownToOthers: false,
+    owner: ACME,
+    shareable: false,
+    awaitingConfirmation: false,
+    pendingVersion: null,
+    enabledOrgs: 1,
+    pending: false,
+    permissionsHash: null,
+    latestVersion: "1.0.0",
+    platformVersion: "1.0.0",
+    versions: ["1.0.0"],
+    installs: 1,
+    source: "file",
+    marketplaceId: null,
+    latestMarketplaceVersion: null,
+    newerInMarketplace: false,
+    contentChanged: false,
+    componentCounts: { extension: 1, skills: 1, connectorTemplates: 0, agentTemplates: 0 },
+    sourceFormat: "capybara",
+    updatedAt: T,
+    ...over,
+  });
+  const manifest = (version: string, tools: string[]) => ({
+    name: "acme-crm",
+    version,
+    publisher: "Acme",
+    description: "",
+    extension: {
+      entry: "dist/index.js",
+      manifest: {
+        name: "acme-crm",
+        version,
+        sdk: "^0.1.0",
+        provides: [],
+        requires: [],
+        optional: [],
+        permissions: { tools },
+      },
+    },
+  });
+  const version = (v: string, tools: string[]) => ({
+    version: v,
+    source: "file",
+    sourceRef: null,
+    integrity: null,
+    contentDigest: null,
+    sourceDetail: null,
+    manifest: manifest(v, tools),
+    size: 1024,
+    extensionSha256: "a".repeat(64),
+    importedAt: T,
+  });
+  const detail = (i: ReturnType<typeof item>, versions = [version("1.0.0", ["search"])]) => ({
+    item: { ...i, packageName: "@acme/crm", deletedAt: null },
+    versions,
+    hasIcon: false,
+  });
+  // a new version waiting, and a first upload waiting
+  const UPDATE = item({
+    pending: true,
+    permissionsHash: "pd1",
+    pendingVersion: "1.1.0",
+    versions: ["1.1.0", "1.0.0"],
+  });
+  const FIRST = item({
+    id: NEW_ID,
+    name: "acme-files",
+    awaitingConfirmation: true,
+    pending: true,
+    permissionsHash: "pd2",
+    pendingVersion: "0.1.0",
+    latestVersion: "0.1.0",
+    versions: ["0.1.0"],
+    enabledOrgs: 0,
+    owner: { kind: "org", orgId: "o2", name: "Beta" },
+    scopeOrgs: ["o2"],
+  });
+  const ORGS = {
+    orgs: [
+      { id: "o1", slug: "acme", name: "Acme", memberCount: 3, createdAt: T },
+      { id: "o2", slug: "beta", name: "Beta", memberCount: 4, createdAt: T },
+    ],
+  };
+  const routes = (items: ReturnType<typeof item>[], pending: ReturnType<typeof item>[] = []) => ({
+    "GET /api/v1/admin/catalog/items": () => json(200, { items, nextOffset: null }),
+    "GET /api/v1/admin/catalog/items?pending=true": () =>
+      json(200, { items: pending, nextOffset: null }),
+    "GET /api/v1/admin/catalog/requests": () => json(200, { requests: [] }),
+    "GET /api/v1/admin/marketplaces": () => json(200, { items: [], offline: false }),
+    "GET /api/v1/admin/orgs": () => json(200, ORGS),
+    "GET /api/v1/admin/components?kind=skill": () => json(200, { components: [] }),
+    "GET /api/v1/admin/components?kind=connector_template": () => json(200, { components: [] }),
+    "GET /api/v1/admin/components?kind=agent_template": () => json(200, { components: [] }),
+  });
+
+  it("the plugin list shows the owner org and when its org does not share it", async () => {
+    stubApi(
+      routes([item(), item({ id: NEW_ID, name: "acme-docs", shareable: true }), FIRST], [FIRST]),
+    );
+    await renderRouteWithCache("/admin/plugins", lastStubRoutes());
+    const list = await screen.findByRole("list", { name: P.title });
+    const row = (name: string) => within(list).getAllByText(name)[0]?.closest("li") as HTMLElement;
+    expect(within(row("acme-crm")).getByText(fill(P.chips.owner, { org: "Acme" }))).toBeTruthy();
+    expect(within(row("acme-crm")).getByText(P.chips.notShareable)).toBeTruthy();
+    expect(within(row("acme-docs")).queryByText(P.chips.notShareable)).toBeNull();
+    expect(within(row("acme-files")).getByText(fill(P.chips.owner, { org: "Beta" }))).toBeTruthy();
+  });
+
+  it("detail of a plugin its org does not share: the owner, the reason, 设置范围 only narrows", async () => {
+    const listed = item({ scopeOrgs: ["o1", "o2"] });
+    stubApi({
+      ...routes([listed]),
+      [`GET /api/v1/admin/catalog/items/${ID}`]: () => json(200, detail(listed)),
+    });
+    await renderRouteWithCache(`/admin/plugins/${ID}`, lastStubRoutes());
+    expect(await screen.findByRole("heading", { name: "acme-crm" })).toBeTruthy();
+    expect(screen.getAllByText("Acme").length).toBeGreaterThan(0);
+    expect(screen.getByText(P.detail.notShareableNote)).toBeTruthy();
+    expect(screen.getByRole("button", { name: P.detail.actions.disable })).toBeTruthy();
+    await userEvent.setup().click(screen.getByRole("button", { name: P.detail.actions.scope }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText(P.scopeDialog.narrowOnly)).toBeTruthy();
+    expect(within(dialog).queryByRole("radio")).toBeNull();
+    expect(within(dialog).queryByRole("switch")).toBeNull();
+    const owner = (await within(dialog).findByRole("checkbox", {
+      name: "Acme",
+    })) as HTMLInputElement;
+    expect(owner.disabled).toBe(true);
+    expect(
+      (within(dialog).getByRole("checkbox", { name: "Beta" }) as HTMLInputElement).disabled,
+    ).toBe(false);
+  });
+
+  it("detail of a shared org plugin: the full scope dialog, the owner kept; no 更新到 a pending version", async () => {
+    const shared = item({
+      shareable: true,
+      pending: true,
+      pendingVersion: "1.1.0",
+      versions: ["1.1.0", "1.0.0"],
+    });
+    stubApi({
+      ...routes([shared]),
+      [`GET /api/v1/admin/catalog/items/${ID}`]: () => json(200, detail(shared)),
+    });
+    await renderRouteWithCache(`/admin/plugins/${ID}`, lastStubRoutes());
+    expect(await screen.findByRole("heading", { name: "acme-crm" })).toBeTruthy();
+    expect(screen.queryByText(P.detail.notShareableNote)).toBeNull();
+    // the owner uploads versions; the waiting one is confirmed in 待确认
+    expect(
+      screen.queryByRole("button", { name: fill(P.detail.actions.update, { version: "v1.1.0" }) }),
+    ).toBeNull();
+    await userEvent.setup().click(screen.getByRole("button", { name: P.detail.actions.scope }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getAllByRole("radio").length).toBe(3);
+    const owner = (await within(dialog).findByRole("checkbox", {
+      name: "Acme",
+    })) as HTMLInputElement;
+    expect(owner.disabled).toBe(true);
+  });
+
+  it("待确认: an org upload shows the owner org, new plugin or from → to, the extension notice; 确认 sends the digest", async () => {
+    const calls = stubApi({
+      ...routes([UPDATE, FIRST], [UPDATE, FIRST]),
+      [`GET /api/v1/admin/catalog/items/${ID}`]: () =>
+        json(200, detail(UPDATE, [version("1.1.0", ["crm.write"]), version("1.0.0", ["search"])])),
+      [`POST /api/v1/admin/catalog/items/${ID}/confirm`]: () =>
+        json(200, { ...UPDATE, pending: false, pendingVersion: null }),
+    });
+    await renderRouteWithCache("/admin/plugins/pending", lastStubRoutes());
+    const list = await screen.findByRole("list", { name: P.pending.listLabel });
+    const row = (name: string) => within(list).getAllByText(name)[0]?.closest("li") as HTMLElement;
+    const upd = row("acme-crm");
+    expect(within(upd).getByText(fill(P.pending.upload.by, { org: "Acme" }))).toBeTruthy();
+    // the meta line joins its parts
+    const meta = (row: HTMLElement, text: string) =>
+      within(row).getByText(
+        (_, el) => el?.children.length === 0 && (el.textContent ?? "").includes(text),
+      );
+    expect(meta(upd, fill(P.pending.upload.update, { from: "v1.0.0", to: "v1.1.0" }))).toBeTruthy();
+    expect(within(upd).getByText(P.pending.upload.extension)).toBeTruthy();
+    const first = row("acme-files");
+    expect(within(first).getByText(fill(P.pending.upload.by, { org: "Beta" }))).toBeTruthy();
+    expect(meta(first, P.pending.upload.newPlugin)).toBeTruthy();
+    const user = userEvent.setup();
+    await user.click(within(upd).getByRole("button", { name: P.pending.upload.confirm }));
+    const dialog = await screen.findByRole("dialog");
+    // the permission review of the waiting version, not the running one
+    expect(await within(dialog).findByText(/crm\.write/)).toBeTruthy();
+    await user.click(within(dialog).getByRole("button", { name: P.pending.confirm }));
+    await waitFor(() => expect(calls.some((c) => c.url.endsWith("/confirm"))).toBe(true));
+    expect(bodyOf(calls.find((c) => c.url.endsWith("/confirm")))).toEqual({
+      permissionsHash: "pd1",
+    });
+  });
+
+  it("待确认: 拒绝 an org upload posts the reason", async () => {
+    const calls = stubApi({
+      ...routes([FIRST], [FIRST]),
+      [`POST /api/v1/admin/catalog/items/${NEW_ID}/reject`]: () =>
+        new Response(null, { status: 204 }),
+    });
+    await renderRouteWithCache("/admin/plugins/pending", lastStubRoutes());
+    const list = await screen.findByRole("list", { name: P.pending.listLabel });
+    const first = within(list).getAllByText("acme-files")[0]?.closest("li") as HTMLElement;
+    const user = userEvent.setup();
+    await user.click(within(first).getByRole("button", { name: P.pending.reject }));
+    const dialog = await screen.findByRole("dialog");
+    expect(
+      within(dialog).getByText(
+        fill(P.pending.upload.rejectTitle, { org: "Beta", name: "acme-files" }),
+      ),
+    ).toBeTruthy();
+    await user.type(within(dialog).getByRole("textbox"), "Too broad");
+    await user.click(within(dialog).getByRole("button", { name: P.pending.reject }));
+    await waitFor(() => expect(calls.some((c) => c.url.endsWith("/reject"))).toBe(true));
+    expect(bodyOf(calls.find((c) => c.url.endsWith("/reject")))).toEqual({ reason: "Too broad" });
+    expect(
+      await screen.findByText(fill(P.pending.upload.rejected, { name: "acme-files" })),
+    ).toBeTruthy();
+  });
+
+  it("the platform inbox: an org upload waiting and an ownership transfer, which 知道了 dismisses", async () => {
+    const I = en.admin.inbox;
+    const calls = stubApi({
+      "GET /api/v1/admin/inbox": () =>
+        json(200, {
+          items: [
+            { type: "org_upload_pending", id: NEW_ID, createdAt: T, item: FIRST },
+            {
+              type: "ownership_transferred",
+              id: "n1",
+              createdAt: T,
+              notice: {
+                id: "n1",
+                kind: "ownership_transferred",
+                createdAt: T,
+                detail: {
+                  ref: { kind: "skill", id: "p7" },
+                  name: "brand-voice",
+                  fromOrg: { id: "o1", name: "Acme" },
+                  reason: "org_deleted",
+                  usedBy: 2,
+                },
+              },
+            },
+          ],
+          truncated: false,
+          total: 2,
+        }),
+      "GET /api/v1/admin/inbox/count": () => json(200, { total: 2 }),
+      "POST /api/v1/admin/inbox/notices/n1/dismiss": () => new Response(null, { status: 204 }),
+    });
+    await renderRouteWithCache("/admin/inbox", lastStubRoutes());
+    expect(
+      (await screen.findAllByText(fill(I.orgUpload.title, { org: "Beta", name: "acme-files" })))
+        .length,
+    ).toBeGreaterThan(0);
+    const transferred = fill(I.transferred.title, {
+      name: "brand-voice",
+      why: fill(I.transferred.reason.org_deleted, { org: "Acme" }),
+    });
+    const user = userEvent.setup();
+    await user.click(screen.getAllByText(transferred)[0] as HTMLElement);
+    expect(await screen.findByText("2 organizations still use it.")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: I.transferred.dismiss }));
+    await waitFor(() =>
+      expect(calls.some((c) => c.url.endsWith("/notices/n1/dismiss"))).toBe(true),
+    );
+  });
+
+  it("zh copy of the owner, the share gate and the inbox", () => {
+    expect(zh.catalog.admin.chips.owner).toBe("归属：{org}");
+    expect(zh.adminComponents.share.notShareable).toBe("该组织未开放共享");
+    expect(zh.catalog.admin.pending.upload.by).toBe("{org} 上传");
+    expect(zh.catalog.admin.pending.upload.update).toBe("更新 {from} → {to}");
+    expect(zh.admin.inbox.orgUpload.title).toBe("{org} 上传了 {name}，等待确认");
+    expect(zh.admin.inbox.transferred.dismiss).toBe("知道了");
   });
 });

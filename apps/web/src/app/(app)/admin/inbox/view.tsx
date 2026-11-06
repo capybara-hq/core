@@ -12,6 +12,7 @@ import {
   StatusMark,
   Text,
   useStatusBar,
+  useToast,
   versionLabel,
 } from "@capybara-hq/design";
 import { useLocale, useTranslations } from "next-intl";
@@ -21,26 +22,34 @@ import { NoAccess } from "../../../../components/NoAccess";
 import { usePagePath } from "../../../../components/shell/path";
 import { useRouter } from "../../../../i18n/navigation";
 import {
+  dismissPlatformNotice,
   type PlatformInboxItem,
   type PlatformInboxView,
+  type PlatformNotice,
   platformInboxHref,
 } from "../../../../lib/admin-inbox";
 import {
   displayNameOf,
+  ownerOrgOf,
   requesterOf,
   requestSubject,
   requestVersion,
 } from "../../../../lib/catalog";
 import { adminInboxQuery } from "../../../../lib/query/admin";
+import { keys } from "../../../../lib/query/keys";
+import { useAppMutation } from "../../../../lib/query/mutation";
 import { usePageQuery } from "../../../../lib/query/page-query";
 import { useAdmin } from "../../../../lib/query/workspace";
+import { useErrorMessage } from "../../../../lib/use-error-message";
 import NotFound from "../../not-found";
 
 /**
  * `/admin/inbox`: what waits on the platform (InboxPage, spec §5.1 rule 5, §13.5): the orgs'
  * requests (`access` / `import`), plugins whose extension permissions wait for a confirmation,
- * failed scope syncs, and a platform components migration run that failed plugins or is stuck.
- * Nothing is decided here: the selected item's 前往处理 opens the page where it is acted on. From
+ * failed scope syncs, a platform components migration run that failed plugins or is stuck, org
+ * uploads waiting in 待确认 and shared items now owned by the platform (phase 3). Nothing is
+ * decided here: the selected item's 前往处理 opens the page where it is acted on; a transfer is a
+ * notice, which 知道了 dismisses for every super admin. From
  * the query cache (the layout prefetched the inbox on a first load).
  */
 export default function AdminInboxView() {
@@ -69,6 +78,8 @@ function AdminInbox({
   const t = useTranslations("admin.inbox");
   const locale = useLocale();
   const router = useRouter();
+  const toast = useToast();
+  const errorMessage = useErrorMessage();
   const rows = inbox?.items ?? [];
   const [activeId, setActiveId] = useState<string>();
   const active = rows.find((i) => i.id === activeId) ?? rows[0];
@@ -96,9 +107,30 @@ function AdminInbox({
       cell: (item) => <DateTime value={item.createdAt} />,
     },
   ];
-  const open = (item: PlatformInboxItem): ActionRowProps => ({
-    primary: { label: t("open"), onSelect: () => router.push(platformInboxHref(item)) },
+  // Dismissing a platform notice changes only the inbox and its count
+  const dismiss = useAppMutation({
+    fn: (id: string) => dismissPlatformNotice(id),
+    invalidates: () => [keys.deployment().adminInbox(), keys.deployment().adminInboxCount()],
   });
+  const open = (item: PlatformInboxItem): ActionRowProps =>
+    item.type === "ownership_transferred"
+      ? {
+          secondary: {
+            label: t("transferred.view"),
+            onSelect: () => router.push(platformInboxHref(item)),
+          },
+          primary: {
+            label: t("transferred.dismiss"),
+            loading: dismiss.isPending,
+            disabled: dismiss.isPending,
+            onSelect: () =>
+              void dismiss.mutateAsync(item.id).then(
+                () => toast.success(t("transferred.dismissed")),
+                (e: unknown) => toast.error(errorMessage(e)),
+              ),
+          },
+        }
+      : { primary: { label: t("open"), onSelect: () => router.push(platformInboxHref(item)) } };
   const header = { path: [...scope, { label: "inbox" }], title: t("title") };
 
   if (inbox === null) {
@@ -170,7 +202,22 @@ function titleOf(item: PlatformInboxItem, t: Translate, locale: string): string 
       return `${t("sync.label")} · ${displayNameOf(item.failure.item, locale)}`;
     case "platform_migration":
       return t("migration.label");
+    case "org_upload_pending":
+      return t("orgUpload.title", {
+        org: ownerOrgOf(item.item)?.name ?? "",
+        name: displayNameOf(item.item, locale),
+      });
+    case "ownership_transferred":
+      return transferredTitle(item.notice, t);
   }
+}
+
+/** 「{name} 已转为平台所有（{org} 已删除它 / {org} 已被删除）」. */
+function transferredTitle(n: PlatformNotice, t: Translate): string {
+  return t("transferred.title", {
+    name: n.detail.name,
+    why: t(`transferred.reason.${n.detail.reason}`, { org: n.detail.fromOrg.name }),
+  });
 }
 
 /** A row's second line: the org, the version, or what went wrong with the run. */
@@ -186,6 +233,10 @@ function subtitleOf(item: PlatformInboxItem, t: Translate): string {
       return item.run.stuck
         ? t("migration.stuck")
         : t("migration.failed", { n: item.run.itemsFailed.length });
+    case "org_upload_pending":
+      return `${t("orgUpload.label")} · ${versionLabel(item.item.pendingVersion ?? item.item.latestVersion)}`;
+    case "ownership_transferred":
+      return `${t("transferred.label")} · ${t("transferred.usedBy", { count: item.notice.detail.usedBy })}`;
   }
 }
 
@@ -282,6 +333,60 @@ function detailOf(
                 </Text>
                 <Text variant="prose">{f.message}</Text>
               </Stack>
+            </Stack>
+          </Card>
+        ),
+      };
+    }
+    case "org_upload_pending": {
+      const i = item.item;
+      const version = i.pendingVersion ?? i.latestVersion;
+      return {
+        inspector: (
+          <KeyValue
+            keyWidth="10ch"
+            rows={[
+              { k: t("org"), v: ownerOrgOf(i)?.name ?? "—" },
+              { k: t("plugin"), v: i.name },
+              {
+                k: t("permission.version"),
+                v: i.awaitingConfirmation
+                  ? `${versionLabel(version)} · ${t("orgUpload.newPlugin")}`
+                  : `${versionLabel(i.latestVersion)} → ${versionLabel(version)}`,
+              },
+              { k: t("time"), v: <DateTime value={item.createdAt} /> },
+            ]}
+          />
+        ),
+        content: (
+          <Card
+            title={titleOf(item, t, locale)}
+            actions={<StatusMark status="waiting" label={t("waiting")} />}
+          >
+            <Text variant="prose">{t("orgUpload.hint")}</Text>
+          </Card>
+        ),
+      };
+    }
+    case "ownership_transferred": {
+      const d = item.notice.detail;
+      return {
+        inspector: (
+          <KeyValue
+            keyWidth="10ch"
+            rows={[
+              { k: t("org"), v: d.fromOrg.name },
+              { k: t("time"), v: <DateTime value={item.createdAt} /> },
+            ]}
+          />
+        ),
+        content: (
+          <Card title={transferredTitle(item.notice, t)}>
+            <Stack gap={8}>
+              <Text variant="prose">{t("transferred.usedBy", { count: d.usedBy })}</Text>
+              <Text variant="prose" tone="muted">
+                {t("transferred.hint")}
+              </Text>
             </Stack>
           </Card>
         ),

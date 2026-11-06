@@ -1004,6 +1004,16 @@ export const updatePlatformPlugin = (id: string, body: { version: string; diffHa
 export const confirmPending = (id: string, body: { permissionsHash: string }) =>
   apiFetch<CatalogItem>(`${admin}/items/${enc(id)}/confirm`, post(body));
 
+/**
+ * Rejects an org upload's pending version (ruling P3-10; 204): a first version is removed, a new
+ * version's pending state cleared. `reason` (optional) is told to the owner org.
+ */
+export const rejectPending = (id: string, reason?: string) =>
+  apiFetch<void>(
+    `${admin}/items/${enc(id)}/reject`,
+    post(reason !== undefined && reason !== "" ? { reason } : {}),
+  );
+
 export const removeCatalogItem = (id: string) =>
   apiFetch<void>(`${admin}/items/${enc(id)}`, { method: "DELETE" });
 
@@ -1201,6 +1211,17 @@ export const withdrawPending = (orgId: string, itemId: string) =>
 /** Whether the org owns the item (it uploaded it). */
 export const ownedBy = (item: { owner?: Owner }, orgId: string): boolean =>
   item.owner?.kind === "org" && item.owner.orgId === orgId;
+
+/** The org that owns the item, null for the platform's (older answers carry no owner). */
+export const ownerOrgOf = (item: { owner?: Owner }): { orgId: string; name: string } | null =>
+  item.owner?.kind === "org" ? item.owner : null;
+
+/**
+ * The share gate of an org-owned item (ruling P3-1, P3-16): its owner does not share it, so it is
+ * not shown to or associated with other orgs and its scope only narrows. False for the platform's.
+ */
+export const shareGated = (item: { owner?: Owner; shareable?: boolean }): boolean =>
+  ownerOrgOf(item) !== null && item.shareable !== true;
 
 export const orgIconUrl = (orgId: string, itemId: string) =>
   `${org(orgId)}/catalog/${enc(itemId)}/icon`;

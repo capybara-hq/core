@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
 import { bodyOf, type Call, json, stubApi } from "./support/api";
-import { resetNavigation } from "./support/navigation";
+import { resetNavigation, router } from "./support/navigation";
 import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
 import { ME } from "./support/render";
 import { expectNoFirstPaintFetch, type Routes } from "./support/server";
@@ -470,12 +470,18 @@ describe("admin component detail", () => {
     expect(screen.getByRole("button", { name: C.detail.actions.upload })).toBeTruthy();
   });
 
-  it("an org's own skill is read-only: its org as the owner, no actions", async () => {
+  it("an org's own skill that its org does not share: its org as the owner, the reason, no actions", async () => {
     await open("/admin/skills/s4");
     expect(await screen.findByRole("heading", { name: "house-style" })).toBeTruthy();
     expect(screen.getAllByText("Acme").length).toBeGreaterThan(0);
-    expect(screen.getByText(C.detail.orgOwnedNote)).toBeTruthy();
-    for (const a of [C.detail.actions.scope, C.detail.actions.disable, C.detail.actions.upload]) {
+    expect(screen.getByText(fill(C.detail.orgOwnedNote, { org: "Acme" }))).toBeTruthy();
+    expect(screen.getAllByText(C.share.notShareable).length).toBeGreaterThan(0);
+    for (const a of [
+      C.share.show,
+      C.detail.actions.scope,
+      C.detail.actions.disable,
+      C.detail.actions.upload,
+    ]) {
       expect(screen.queryByRole("button", { name: a })).toBeNull();
     }
   });
@@ -874,5 +880,147 @@ describe("admin plugin detail: components and the platform update", () => {
         }) as HTMLButtonElement
       ).disabled,
     ).toBe(true);
+  });
+});
+
+describe("org-owned components in the admin console (phase 3)", () => {
+  const ACME = { kind: "org", orgId: "o1", name: "Acme" };
+  // an org-created skill its org shares, not promoted yet (the org row's id)
+  const SHARED = comp({
+    id: "s6",
+    name: "house-tone",
+    plugin: null,
+    itemId: null,
+    owner: ACME,
+    shareable: true,
+    scopeMode: "own",
+    scope: "named",
+    orgs: ["o1"],
+    shownToOthers: false,
+    version: "2",
+    onIn: ["o1"],
+  });
+  // promoted: a platform row owned by Acme, listed to Acme and Beta
+  const PROMOTED = comp({
+    id: "p7",
+    name: "brand-voice",
+    plugin: null,
+    itemId: null,
+    owner: ACME,
+    shareable: true,
+    promoted: true,
+    scopeMode: "own",
+    scope: "named",
+    orgs: ["o1", "o2"],
+    shownToOthers: false,
+    onIn: ["o1", "o2"],
+  });
+  const LOCKED = comp({ ...PROMOTED, id: "p8", name: "legal-voice", shareable: false });
+  const ORG_TEMPLATE = comp({
+    kind: "agent_template",
+    id: "a2",
+    name: "house-agent",
+    plugin: "acme-kit",
+    itemId: null,
+    owner: ACME,
+    shareable: true,
+    scopeMode: "own",
+    scope: "named",
+    orgs: ["o1"],
+    shownToOthers: false,
+    onIn: ["o1"],
+  });
+  const routes: Routes = {
+    "GET /api/v1/admin/components?kind=skill": () =>
+      json(200, { components: [...SKILLS, SHARED, PROMOTED, LOCKED] }),
+    "GET /api/v1/admin/components?kind=agent_template": () =>
+      json(200, { components: [...AGENTS, ORG_TEMPLATE] }),
+    "GET /api/v1/admin/components/skill/s6/versions": () => json(200, { versions: [] }),
+    "GET /api/v1/admin/components/skill/p7/versions": () => json(200, { versions: [] }),
+    "GET /api/v1/admin/components/skill/p8/versions": () => json(200, { versions: [] }),
+    "GET /api/v1/admin/components/agent_template/a2/versions": () => json(200, { versions: [] }),
+  };
+
+  it("the list says which org-owned rows their org does not share", async () => {
+    await open("/admin/skills", routes);
+    const table = await screen.findByRole("table", { name: C.titles.skill });
+    const row = (name: string) => within(table).getByText(name).closest("tr") as HTMLElement;
+    expect(within(row("house-style")).getByText(C.share.notShareable)).toBeTruthy();
+    expect(within(row("legal-voice")).getByText(C.share.notShareable)).toBeTruthy();
+    expect(within(row("house-tone")).queryByText(C.share.notShareable)).toBeNull();
+    expect(within(row("web-research")).queryByText(C.share.notShareable)).toBeNull();
+    // 组织创建 counts every org-owned row, promoted ones too
+    const tab = screen.getByRole("tab", { name: new RegExp(`^${C.tabs.org}`) });
+    expect(tab.textContent).toMatch(/4/);
+  });
+
+  it("a shared org skill: 向其他组织显示 promotes it, reads the list again and moves to the platform id", async () => {
+    const calls = await open("/admin/skills/s6", {
+      ...routes,
+      "PUT /api/v1/admin/components/skill/s6/shown": () =>
+        json(200, { ...SHARED, id: "p6", promoted: true, shownToOthers: true }),
+    });
+    expect(await screen.findByRole("heading", { name: "house-tone" })).toBeTruthy();
+    expect(screen.queryByText(C.share.notShareable)).toBeNull();
+    // the owner controls its versions; an org row is not a platform row to disable
+    expect(screen.queryByRole("button", { name: C.detail.actions.upload })).toBeNull();
+    expect(screen.queryByRole("button", { name: C.detail.actions.disable })).toBeNull();
+    expect(screen.getByRole("button", { name: C.detail.actions.scope })).toBeTruthy();
+    const before = calls.filter((c) => c.url.endsWith("/components?kind=skill")).length;
+    await userEvent.setup().click(screen.getByRole("button", { name: C.share.show }));
+    await waitFor(() => expect(put(calls, "/shown")).toHaveLength(1));
+    expect(bodyOf(put(calls, "/shown")[0])).toEqual({ shownToOthers: true });
+    await waitFor(() =>
+      expect(calls.filter((c) => c.url.endsWith("/components?kind=skill")).length).toBeGreaterThan(
+        before,
+      ),
+    );
+    await waitFor(() => expect(router.replace).toHaveBeenCalledWith("/admin/skills/p6"));
+    expect(await screen.findByText(fill(C.share.shownToast, { name: "house-tone" }))).toBeTruthy();
+  });
+
+  it("a promoted org skill: no 上传新版本 (its org uploads versions); 停用 stays", async () => {
+    await open("/admin/skills/p7", routes);
+    expect(await screen.findByRole("heading", { name: "brand-voice" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: C.detail.actions.upload })).toBeNull();
+    expect(screen.getByRole("button", { name: C.detail.actions.disable })).toBeTruthy();
+    expect(screen.getByRole("button", { name: C.detail.actions.scope })).toBeTruthy();
+    expect(screen.getByRole("button", { name: C.share.show })).toBeTruthy();
+  });
+
+  it("a promoted skill its org no longer shares: 设置范围 only narrows (no other scopes, no new orgs, the owner kept)", async () => {
+    await open("/admin/skills/p8", {
+      ...routes,
+      "GET /api/v1/admin/orgs": () =>
+        json(200, {
+          orgs: [
+            ...ORGS.orgs,
+            { id: "o3", slug: "gamma", name: "Gamma", memberCount: 1, createdAt: T },
+          ],
+        }),
+    });
+    expect(await screen.findByRole("heading", { name: "legal-voice" })).toBeTruthy();
+    expect(screen.getAllByText(C.share.notShareable).length).toBeGreaterThan(0);
+    expect(screen.queryByRole("button", { name: C.share.show })).toBeNull();
+    expect(screen.getByRole("button", { name: C.detail.actions.disable })).toBeTruthy();
+    await userEvent.setup().click(screen.getByRole("button", { name: C.detail.actions.scope }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText(en.catalog.admin.scopeDialog.narrowOnly)).toBeTruthy();
+    expect(within(dialog).queryByRole("radio")).toBeNull();
+    expect(within(dialog).queryByRole("switch")).toBeNull();
+    await within(dialog).findByRole("checkbox", { name: "Beta" });
+    expect(within(dialog).queryByRole("checkbox", { name: "Gamma" })).toBeNull();
+    const owner = within(dialog).getByRole("checkbox", { name: "Acme" }) as HTMLInputElement;
+    expect(owner.checked).toBe(true);
+    expect(owner.disabled).toBe(true);
+  });
+
+  it("an org's agent template is never shared in this phase, even when marked shareable", async () => {
+    await open("/admin/agent-templates/a2", routes);
+    expect(await screen.findByRole("heading", { name: "house-agent" })).toBeTruthy();
+    expect(screen.getAllByText(C.share.templateNotShareable).length).toBeGreaterThan(0);
+    for (const a of [C.share.show, C.detail.actions.scope, C.detail.actions.upload]) {
+      expect(screen.queryByRole("button", { name: a })).toBeNull();
+    }
   });
 });

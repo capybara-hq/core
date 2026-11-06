@@ -30,6 +30,8 @@ import {
   declaredPermissions,
   displayNameOf,
   importPageHref,
+  ownerOrgOf,
+  rejectPending,
   requesterOf,
   requestSubject,
   requestVersion,
@@ -57,7 +59,9 @@ import NotFound from "../../../not-found";
  * organizations' requests (`access`: use a plugin shown to them; `import`: bring in a marketplace
  * entry): 批准 takes effect at once, except an `import` request, whose approval stages the entry
  * and opens its import review (the scope defaults to the requesting org there); 拒绝 asks for an
- * optional reason the requester sees. From the query cache (the layout prefetched both reads on a
+ * optional reason the requester sees. An org's upload carrying an extension (phase 3) names its
+ * org and new plugin or 更新 from -> to; 确认 reviews the waiting version's permissions and sends
+ * its digest, 拒绝 asks for an optional reason the org sees. From the query cache (the layout prefetched both reads on a
  * first load); the requests are a section of the page.
  */
 export default function PendingView() {
@@ -111,6 +115,13 @@ function Pending({
   const errorMessage = useErrorMessage();
   const [reviewing, setReviewing] = useState<CatalogItem | null>(null);
   const [rejecting, setRejecting] = useState<CatalogRequest | null>(null);
+  const [rejectingUpload, setRejectingUpload] = useState<CatalogItem | null>(null);
+  // Rejecting an org's upload removes a first version or clears the waiting one: the lists, the
+  // inbox and the counts are read again
+  const rejectUpload = useAppMutation({
+    fn: (v: { id: string; reason: string }) => rejectPending(v.id, v.reason),
+    invalidates: () => pluginScopeChangeKeys(orgId),
+  });
   const [busy, setBusy] = useState<string>();
   // A decision ends the request (an approval may grant the plugin to the org): the requests, the
   // catalog and the overview's count are read again.
@@ -153,6 +164,34 @@ function Pending({
       >
         {items.map((i) => {
           const name = displayNameOf(i, locale);
+          const owner = ownerOrgOf(i);
+          if (owner !== null && i.pendingVersion !== null && i.pendingVersion !== undefined) {
+            // An org's upload carrying an extension (rulings P3-9, P3-10): its org, new or
+            // from -> to, the extension notice; 确认 reviews the waiting version's permissions
+            return (
+              <ObjectRow
+                key={i.id}
+                mark={{ text: name, tone: "warn" }}
+                name={name}
+                href={`/admin/plugins/${encodeURIComponent(i.id)}`}
+                chips={[{ label: t("upload.by", { org: owner.name }) }]}
+                description={t("upload.extension")}
+                meta={[
+                  i.awaitingConfirmation
+                    ? t("upload.newPlugin")
+                    : t("upload.update", {
+                        from: versionLabel(i.latestVersion),
+                        to: versionLabel(i.pendingVersion),
+                      }),
+                  i.name,
+                  componentsLabel(i.componentCounts),
+                ]}
+                state={{ label: t("waiting"), tone: "warn" }}
+                action={{ label: t("upload.confirm"), onSelect: () => setReviewing(i) }}
+                menu={[{ label: t("reject"), onSelect: () => setRejectingUpload(i) }]}
+              />
+            );
+          }
           return (
             <ObjectRow
               key={i.id}
@@ -203,9 +242,25 @@ function Pending({
           onClose={() => setReviewing(null)}
         />
       )}
+      {rejectingUpload !== null && (
+        <RejectDialog
+          title={t("upload.rejectTitle", {
+            org: ownerOrgOf(rejectingUpload)?.name ?? "",
+            name: displayNameOf(rejectingUpload, locale),
+          })}
+          help={t("upload.reasonHelp")}
+          onReject={async (reason) => {
+            await rejectUpload.mutateAsync({ id: rejectingUpload.id, reason });
+            toast.success(t("upload.rejected", { name: displayNameOf(rejectingUpload, locale) }));
+            setRejectingUpload(null);
+          }}
+          onClose={() => setRejectingUpload(null)}
+        />
+      )}
       {rejecting !== null && (
         <RejectDialog
-          request={rejecting}
+          title={t("rejectTitle", { org: rejecting.orgName })}
+          help={t("reasonHelp")}
           onReject={async (reason) => {
             await decide.mutateAsync({ id: rejecting.id, approve: false, reason });
             toast.success(t("rejected"));
@@ -241,7 +296,10 @@ function ConfirmPermissionsDialog({
   const name = displayNameOf(item, locale);
   const dq = catalogItemQuery(item.id);
   const detail = useQuery({ ...dq, retryOnMount: retryOnMountOf(dq.queryKey) }).data;
-  const latest = detail?.versions.find((v) => v.version === item.latestVersion);
+  // An org's upload: the waiting version's permissions, not the running one's (ruling P3-10)
+  const owner = ownerOrgOf(item);
+  const reviewed = item.pendingVersion ?? item.latestVersion;
+  const latest = detail?.versions.find((v) => v.version === reviewed);
   const ext = latest?.manifest.extension?.manifest;
   const [error, setError] = useState<string>();
   const confirm = useAppMutation({
@@ -287,7 +345,9 @@ function ConfirmPermissionsDialog({
       }
     >
       <Stack gap={12}>
-        <Text variant="prose">{t("confirmHint")}</Text>
+        <Text variant="prose">
+          {owner === null ? t("confirmHint") : t("upload.confirmHint", { org: owner.name })}
+        </Text>
         {ext !== undefined && (
           <Stack gap={8}>
             <Text>
@@ -313,13 +373,15 @@ function ConfirmPermissionsDialog({
   );
 }
 
-/** 拒绝: an optional reason the requester sees. */
+/** 拒绝: an optional reason the requester (or the uploading org) sees. */
 function RejectDialog({
-  request,
+  title,
+  help,
   onReject,
   onClose,
 }: {
-  request: CatalogRequest;
+  title: string;
+  help: string;
   onReject(reason: string): Promise<void>;
   onClose(): void;
 }) {
@@ -346,7 +408,7 @@ function RejectDialog({
       onOpenChange={(open) => {
         if (!open) onClose();
       }}
-      title={t("rejectTitle", { org: request.orgName })}
+      title={title}
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>
@@ -359,7 +421,7 @@ function RejectDialog({
       }
     >
       <Stack gap={12}>
-        <Field label={t("reason")} help={t("reasonHelp")} optional>
+        <Field label={t("reason")} help={help} optional>
           <Textarea value={reason} onChange={(e) => setReason(e.target.value)} />
         </Field>
         {error !== undefined && <FormError message={error} />}

@@ -2536,6 +2536,25 @@
         "items": "Failed plugins",
         "hintStuck": "The latest run has not finished an hour after it started; its worker may have stopped. It runs again at the next worker start or daily run.",
         "hintFailed": "The latest run could not write these plugins' platform components; the next run tries again. See the kernel log for the cause."
+      },
+      "orgUpload": {
+        "label": "Upload to confirm",
+        "title": "{org} uploaded {name}, waiting for confirmation",
+        "hint": "The upload carries an extension. Review its permissions in the Pending tab of the Plugins page, then confirm or reject it; nothing of it is usable until then.",
+        "newPlugin": "New plugin"
+      },
+      "transferred": {
+        "label": "Now owned by the platform",
+        "title": "{name} now belongs to the platform ({why})",
+        "reason": {
+          "owner_deleted": "{org} deleted it",
+          "org_deleted": "{org} was deleted"
+        },
+        "usedBy": "{count, plural, one {# organization still uses it.} other {# organizations still use it.}}",
+        "hint": "Its scope and the organizations using it are kept. Manage it like any platform item.",
+        "dismiss": "Got it",
+        "view": "View",
+        "dismissed": "Dismissed."
       }
     },
     "accounts": {
@@ -3014,7 +3033,8 @@
           "origin": "Origin",
           "scope": "Scope",
           "orgs": "Organizations using it",
-          "permissions": "Permissions"
+          "permissions": "Permissions",
+          "owner": "Owner"
         },
         "delete": "Delete plugin",
         "deleteConfirm": {
@@ -3074,7 +3094,11 @@
         "orgsEmpty": "No organizations yet.",
         "enabledToast": "Enabled \"{name}\".",
         "disabledToast": "Disabled \"{name}\".",
-        "disabledNote": "Disabled on the whole deployment; its scope is kept and applies again once it is enabled."
+        "disabledNote": "Disabled on the whole deployment; its scope is kept and applies again once it is enabled.",
+        "notShareableNote": "Its organization does not share it: you can narrow its scope or disable it, but not show it to or associate it with other organizations.",
+        "ownerNote": "It belongs to {org}; new versions come from that organization.",
+        "awaitingNote": "Its first version waits for a super admin's confirmation in the Pending tab; nothing of it is usable until then.",
+        "pendingVersionNote": "Version {version} uploaded by its organization waits for a super admin's confirmation in the Pending tab."
       },
       "review": {
         "title": "Import plugin",
@@ -3348,7 +3372,9 @@
       "description": "A plugin bundles an extension, skills, connector templates and agent templates. Bring one in from a marketplace or upload it; it is installed once its permissions are confirmed.",
       "chips": {
         "builtin": "Built-in",
-        "claudeCode": "Claude Code"
+        "claudeCode": "Claude Code",
+        "owner": "Owner: {org}",
+        "notShareable": "Not shared by its organization"
       },
       "meta": {
         "orgsUsing": "{n, plural, one {# org using it} other {# orgs using it}}",
@@ -3385,7 +3411,9 @@
         "cancel": "Cancel",
         "confirm": "Confirm",
         "saved": "Scope of \"{name}\" saved.",
-        "stale": "The impact changed; review it again, then confirm."
+        "stale": "The impact changed; review it again, then confirm.",
+        "narrowOnly": "Its organization does not share it: you can only remove organizations it is associated with. The owner organization stays.",
+        "ownerKept": "The owner organization always keeps it."
       },
       "impact": {
         "none": "No organization loses access.",
@@ -3428,7 +3456,18 @@
         "rejected": "Rejected",
         "rejectTitle": "Reject the request of {org}",
         "reason": "Reason",
-        "reasonHelp": "Optional; the requester sees it."
+        "reasonHelp": "Optional; the requester sees it.",
+        "upload": {
+          "by": "Uploaded by {org}",
+          "newPlugin": "New plugin",
+          "update": "Update {from} → {to}",
+          "extension": "It carries an extension: once confirmed, its code runs in the kernel process for the whole deployment.",
+          "confirm": "Confirm",
+          "confirmHint": "{org} uploaded this version. The extension's code runs in the kernel process for the whole deployment, whatever its scope.",
+          "rejectTitle": "Reject {name} uploaded by {org}",
+          "reasonHelp": "Optional; the uploading organization sees it.",
+          "rejected": "Rejected \"{name}\"."
+        }
       }
     },
     "org": {
@@ -3986,7 +4025,7 @@
         "optional": "Organizations choose: {n, plural, one {# organization has} other {# organizations have}} turned it on.",
         "named": "Named organizations: only the organizations below can use it."
       },
-      "orgOwnedNote": "It belongs to its organization and is read-only here; associating it with other organizations comes later.",
+      "orgOwnedNote": "It belongs to {org}; new versions come from that organization.",
       "builtinNote": "It comes from a built-in plugin: on in every organization; its scope cannot be changed and it cannot be disabled."
     },
     "scopeDialog": {
@@ -4009,6 +4048,13 @@
       "confirm": "Upload",
       "cancel": "Cancel",
       "done": "Uploaded {version} of \"{name}\"."
+    },
+    "share": {
+      "show": "Show to other organizations",
+      "shownToast": "\"{name}\" is now shown to other organizations.",
+      "notShareable": "Not shared by its organization",
+      "templateNotShareable": "Agent templates cannot be shared yet",
+      "notOwned": "It came from a plugin and cannot be shared"
     }
   },
   "orgComponents": {

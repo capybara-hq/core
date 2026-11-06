@@ -19,6 +19,7 @@ import { ApiClientError } from "../lib/api";
 import {
   type CatalogItem,
   displayNameOf,
+  ownerOrgOf,
   PLUGIN_SCOPES,
   type PluginScope,
   previewScope,
@@ -27,6 +28,7 @@ import {
   setDisabled,
   setScope,
   setShownToOthers,
+  shareGated,
 } from "../lib/catalog";
 import { adminOrgsQuery } from "../lib/query/admin";
 import { pluginScopeChangeKeys } from "../lib/query/catalog";
@@ -47,7 +49,10 @@ export type ScopeChoice = PluginScope | "follow";
 /**
  * The scope picker (spec §5): 全部组织启用 / 组织自选 / 指定组织, and for 指定组织 one checkbox
  * per org. Shared by the 设置范围 dialogs (plugins and components) and the import review's confirm
- * step. `follow` adds 跟随插件 first (a component of a plugin, spec §5 rule 2).
+ * step. `follow` adds 跟随插件 first (a component of a plugin, spec §5 rule 2). `owner`: the org
+ * that owns the item, always listed (409 `catalog.owner_required`, ruling P3-17). `narrowTo`: an
+ * org-owned item its org does not share (ruling P3-16): 指定组织 only, and only these orgs, so the
+ * change can only remove orgs.
  */
 export function ScopeFields({
   scope,
@@ -56,6 +61,8 @@ export function ScopeFields({
   onOrgs,
   disabled,
   follow,
+  owner,
+  narrowTo,
 }: {
   scope: ScopeChoice;
   orgs: string[];
@@ -63,9 +70,29 @@ export function ScopeFields({
   onOrgs(next: string[]): void;
   disabled?: boolean;
   follow?: { label: string; description: string; onSelect(): void };
+  owner?: string;
+  narrowTo?: string[];
 }) {
   const t = useTranslations("catalog");
-  const all = useOrgs();
+  const deployment = useOrgs();
+  const all =
+    narrowTo === undefined ? deployment : deployment.filter((o) => narrowTo.includes(o.id));
+  if (narrowTo !== undefined) {
+    return (
+      <Stack gap={12}>
+        <Text variant="prose" tone="muted">
+          {t("admin.scopeDialog.narrowOnly")}
+        </Text>
+        <OrgChecks
+          all={all}
+          orgs={orgs}
+          onOrgs={onOrgs}
+          {...(disabled ? { disabled } : {})}
+          {...(owner !== undefined ? { owner } : {})}
+        />
+      </Stack>
+    );
+  }
   return (
     <Stack gap={12}>
       <RadioGroup
@@ -85,26 +112,55 @@ export function ScopeFields({
         ]}
       />
       {scope === "named" && (
-        <Field label={t("admin.scopeDialog.orgsLabel")}>
-          <Stack gap={8}>
-            {all.length === 0 && (
-              <Text variant="small" tone="muted">
-                {t("admin.scopeDialog.orgsNone")}
-              </Text>
-            )}
-            {all.map((o) => (
-              <Checkbox
-                key={o.id}
-                label={o.name}
-                checked={orgs.includes(o.id)}
-                {...(disabled ? { disabled } : {})}
-                onChange={(on) => onOrgs(on ? [...orgs, o.id] : orgs.filter((id) => id !== o.id))}
-              />
-            ))}
-          </Stack>
-        </Field>
+        <OrgChecks
+          all={all}
+          orgs={orgs}
+          onOrgs={onOrgs}
+          {...(disabled ? { disabled } : {})}
+          {...(owner !== undefined ? { owner } : {})}
+        />
       )}
     </Stack>
+  );
+}
+
+/** 指定组织's checkboxes: one per org; the owner org's is checked and cannot be cleared. */
+function OrgChecks({
+  all,
+  orgs,
+  onOrgs,
+  disabled,
+  owner,
+}: {
+  all: AdminOrg[];
+  orgs: string[];
+  onOrgs(next: string[]): void;
+  disabled?: boolean;
+  owner?: string;
+}) {
+  const t = useTranslations("catalog");
+  return (
+    <Field
+      label={t("admin.scopeDialog.orgsLabel")}
+      {...(owner !== undefined ? { help: t("admin.scopeDialog.ownerKept") } : {})}
+    >
+      <Stack gap={8}>
+        {all.length === 0 && (
+          <Text variant="small" tone="muted">
+            {t("admin.scopeDialog.orgsNone")}
+          </Text>
+        )}
+        {all.map((o) => (
+          <Checkbox
+            key={o.id}
+            label={o.name}
+            checked={o.id === owner || orgs.includes(o.id)}
+            {...(disabled || o.id === owner ? { disabled: true } : {})}
+            onChange={(on) => onOrgs(on ? [...orgs, o.id] : orgs.filter((id) => id !== o.id))}
+          />
+        ))}
+      </Stack>
+    </Field>
   );
 }
 
@@ -191,6 +247,10 @@ type ScopeChange = { scope: PluginScope; orgs?: string[] };
 const sameSet = (a: string[], b: string[]) =>
   a.length === b.length && a.every((x) => b.includes(x));
 
+/** The `named` list with the owner org first in it (it is never removed, ruling P3-17). */
+export const withOwner = (orgs: string[], owner: string | undefined): string[] =>
+  owner === undefined || orgs.includes(owner) ? orgs : [owner, ...orgs];
+
 /**
  * 设置范围 (spec §5, §9): pick the scope (and the orgs of 指定组织, with 对其他组织显示), then the
  * impact preview (`previewScope`), then confirm with its `scopeHash` (a changed impact meanwhile is
@@ -211,8 +271,11 @@ export function PluginScopeDialog({
   const locale = useLocale();
   const toast = useToast();
   const errorMessage = useErrorMessage();
-  const [scope, setScopeChoice] = useState<PluginScope>(item.scope);
-  const [orgs, setOrgs] = useState<string[]>(item.scopeOrgs);
+  const owner = ownerOrgOf(item)?.orgId;
+  // An org-owned item its org does not share only narrows (ruling P3-16)
+  const narrow = shareGated(item);
+  const [scope, setScopeChoice] = useState<PluginScope>(narrow ? "named" : item.scope);
+  const [orgs, setOrgs] = useState<string[]>(withOwner(item.scopeOrgs, owner));
   const [shown, setShown] = useState(item.shownToOthers);
   const [preview, setPreview] = useState<ScopePreview | null>(null);
   const [error, setError] = useState<string>();
@@ -234,7 +297,7 @@ export function PluginScopeDialog({
   });
   const scopeChanged =
     scope !== item.scope || (scope === "named" && !sameSet(orgs, item.scopeOrgs));
-  const shownChanged = scope === "named" && shown !== item.shownToOthers;
+  const shownChanged = !narrow && scope === "named" && shown !== item.shownToOthers;
   const unchanged = !scopeChanged && !shownChanged;
   const invalid = scope === "named" && orgs.length === 0;
   const saving = saveScope.isPending || saveShown.isPending || previewIt.isPending;
@@ -320,8 +383,15 @@ export function PluginScopeDialog({
       <Stack gap={16}>
         {preview === null ? (
           <>
-            <ScopeFields scope={scope} orgs={orgs} onScope={setScopeChoice} onOrgs={setOrgs} />
-            {scope === "named" && (
+            <ScopeFields
+              scope={scope}
+              orgs={orgs}
+              onScope={setScopeChoice}
+              onOrgs={setOrgs}
+              {...(owner !== undefined ? { owner } : {})}
+              {...(narrow ? { narrowTo: item.scopeOrgs } : {})}
+            />
+            {scope === "named" && !narrow && (
               <Stack gap={4}>
                 <SwitchField label={t("shown")} checked={shown} onChange={setShown} />
                 <Text variant="small" tone="muted">

@@ -14,7 +14,13 @@ import {
   useScopeLabel,
 } from "../../../../components/PluginsHead";
 import { usePagePath } from "../../../../components/shell/path";
-import { type CatalogItem, descriptionOf, displayNameOf } from "../../../../lib/catalog";
+import {
+  type CatalogItem,
+  descriptionOf,
+  displayNameOf,
+  ownerOrgOf,
+  shareGated,
+} from "../../../../lib/catalog";
 import { catalogItemsQuery, marketplacesQuery } from "../../../../lib/query/admin";
 import { retryOnMountOf } from "../../../../lib/query/client";
 import { usePageQuery } from "../../../../lib/query/page-query";
@@ -23,7 +29,8 @@ import NotFound from "../../not-found";
 
 /**
  * `/admin/plugins`: the deployment's plugins (super admins, ListPage, tab 已安装). A row: the
- * name with the 内置 chip for a built-in plugin, the description, a meta line (version, source,
+ * name with the 内置 chip for a built-in plugin, 归属：<org> for an org's upload (and 该组织未开放共享
+ * when its org does not share it), the description, a meta line (version, source,
  * scope with the named orgs, how many orgs use it) and the state: 已停用, 权限待确认 (with
  * 确认权限 leading to the 待确认 tab), 可更新 <version> when its marketplace has a newer
  * compatible version, else 运行中. The head (shared by the three tabs) holds 添加市场源 and
@@ -68,6 +75,16 @@ function AdminPlugins({ all }: { all: CatalogItem[] }) {
   const scopeLabel = useScopeLabel();
   const componentsLabel = useComponentsLabel();
   const [q, setQ] = useState("");
+  // An org's upload: its owner, and whether its org shares it (rulings P3-1, P3-16)
+  const ownerChips = (i: CatalogItem) => {
+    const owner = ownerOrgOf(i);
+    return owner === null
+      ? []
+      : [
+          { label: t("chips.owner", { org: owner.name }) },
+          ...(shareGated(i) ? [{ label: t("chips.notShareable") }] : []),
+        ];
+  };
   const needle = q.trim().toLowerCase();
   const rows = all.filter(
     (i) =>
@@ -112,6 +129,7 @@ function AdminPlugins({ all }: { all: CatalogItem[] }) {
             href={`/admin/plugins/${encodeURIComponent(i.id)}`}
             chips={[
               ...(i.builtin ? [{ label: t("chips.builtin") }] : []),
+              ...ownerChips(i),
               ...(i.sourceFormat === "claude-code" ? [{ label: t("chips.claudeCode") }] : []),
               ...(i.contentChanged ? [{ label: td("contentChanged"), tone: "warn" as const }] : []),
             ]}
