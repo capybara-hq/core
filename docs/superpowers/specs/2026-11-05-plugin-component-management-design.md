@@ -9,7 +9,8 @@
   changes of §13.5 (§6-§8; migrations 0081-0083; decisions in §13.6). Phase 3 implemented (§14: org
   uploads with super admin confirmation, 可共享 and sharing org items, ownership transfer, 新建技能;
   migration 0084; plan `docs/superpowers/plans/2026-11-06-plugin-scope-phase-3.md`; rulings made
-  during implementation at the end of §14.2). Creating agents from templates is phase 4.
+  during implementation at the end of §14.2). Phase 4 (agent templates: creating agents from
+  templates, org templates from 另存为模板, one agents page with cards) is specified in §15.
 - Markers: **(decided)** is the maintainer's answer during brainstorming (2026-11-05);
   **(designer's call)** is decided here on the maintainer's behalf and may be overturned in review.
   Items without a marker restate current code.
@@ -771,3 +772,178 @@ Rulings made during implementation (2026-11-06)
 
 Editing a skill's text after creation, files for 新建技能, org-created agent templates and
 用它创建智能体 (phase 4), an org changing who it shares with, and per-org versions of shared items.
+
+## 15. Phase 4: agent templates (2026-11-07)
+
+Phase 4 builds §8 (creating agents from templates, templates that describe what an agent needs, org
+templates) and the template rows of §9, with the decisions below. The rulings of §13.5, §13.6 and §14
+stay binding. Cited in code and docs as "ruling P4-<n>". Where this section and §8 or §9 disagree,
+this section wins.
+
+### 15.1 Decided by the maintainer (2026-11-07)
+
+1. **用它创建智能体.** Any member creates an agent from a template; the agent is **private** by
+   default. An org admin may create it org-shared (可见范围 全组织 / 指定成员).
+2. **A connector the template needs is missing.** The agent is still created; the missing connector
+   is marked **待配置** on the agent. A person allowed to configure connectors configures it;
+   otherwise a request goes to the org admins automatically.
+3. **No link after creation.** The agent is a copy, independent of the template from then on. The
+   agent page shows only its provenance ("由模板 X v3 创建"); there is no update prompt and no apply.
+   (This replaces the earlier "来源模板有新版本" idea, withdrawn the same day.)
+4. **另存为模板** is for org admins only. The template is owned by the org and can be shared under the
+   phase 3 rules (可共享, promotion on share). P3-46 opens for org-created agent templates.
+5. **Sub-agents** a template describes are **not** created as separate agents: they go into the new
+   agent's sub-agent roster.
+6. **Org templates come only from 另存为模板.** There is no "new template from scratch" in phase 4;
+   a template is edited afterwards with the same editor as an agent.
+7. **A hand-configured connector** (an org's own MCP / OpenAPI connector, not made from a connector
+   template) is recorded in a template as **"needs a connector"**: protocol, endpoint and the tools it
+   offers, never credentials. Creating an agent from the template shows it 待配置.
+8. **One page, cards.** The workspace 智能体 and 智能体模板 pages merge into one page with the tabs
+   智能体 / 模板; both lists are **cards**, not tables. The admin 智能体模板 list becomes the same
+   cards.
+9. **No agents in the admin console.** The super admin does not see or manage orgs' agents; the
+   platform layer keeps templates and the per-org sub-agent limits only.
+
+### 15.2 Designer's calls
+
+The template definition
+
+- **P4-1** The template definition grows additively (SDK `AgentTemplate`, `agents/<name>.md`
+  frontmatter; unknown keys stay ignored, existing files stay valid):
+  - `skills` keeps its meaning: at most 3 **preloaded** skill names (they become the agent's pinned
+    skills). New `selectedSkills`: further skill names the agent uses (not preloaded).
+  - New `connectors`: a list of entries, each `{ template: "<connector template id>" }` (a
+    connector template of the same plugin by its id, or a qualified `<plugin>:<id>`) or
+    `{ needs: { protocol: "mcp" | "openapi", endpoint, tools: [names], label } }` (P4-11). An entry
+    may name the tools to enable (`tools: [names]`; absent = all its tools).
+  - New `subagents`: `{ general?: boolean, types?: [<type names>], inline?: [{ name, description,
+    instructions, tools, skills (names), model (tier) }] }`; `types` are template types as the roster
+    writes them (`<plugin>:<name>` or a bare `<name>`).
+  - New optional `modelRef` (`provider/model`): the concrete model an org template was saved with
+    (P4-4). New optional `quickActions` (the agent profile's 常用任务) and `instructionFiles` (the
+    agent's instruction files, P4-12); `description` already exists.
+  - Limits: `selectedSkills` ≤ 32, `connectors` ≤ 16, `subagents.types` + `inline` ≤ 16 (the agent
+    limits), inline instructions ≤ 100 000 characters each. The JSON Schema and the SDK API report
+    are regenerated; a changeset bumps the SDK.
+- **P4-2** The template keeps working as a sub-agent type (roster unchanged): its new fields are
+  ignored there except `selectedSkills`, which are read like `skills` for name resolution in a
+  dispatch (`definition.ts` resolves names against the parent's selected skills).
+
+Creating an agent from a template
+
+- **P4-3** Route `POST /api/v1/orgs/:orgId/agents/from-template` (`agents.create`, member+) with
+  `{ templateId, name, visibility?, members?, model? }`. Visibility other than `private` needs
+  `agents.manage` (403 `agent.visibility_forbidden` otherwise). The template must be usable in the
+  org (`usableTemplates`: org row, platform template on in the org, or another org's shared template
+  on in the org). A preview route `POST …/agents/from-template/preview` with `{ templateId }` returns
+  what will carry over (P4-5) and a `previewHash`; the create takes the hash and answers 409
+  `agent.template_preview_stale` when the template's version or the org's state changed.
+- **P4-4** Model: `modelRef` when the org can use that model; otherwise the model the org maps for the
+  tier's purpose (`subagent_fast` / `subagent_standard` / `subagent_capable`; `inherit` = the org's
+  default chat model); otherwise the org's default chat model. The dialog preselects it and the person
+  may change it. `effort` becomes the model parameter `effort` when the model declares it; `maxSteps`
+  has no agent field and is dropped (listed in the preview).
+- **P4-5** What carries over, resolved at preview and again at create:
+  - Instructions (and `instructionFiles` when present), description, quick actions.
+  - Tools: builtin and plugin tool keys usable in the org become `AgentToolRef`s; keys of plugins not
+    usable in the org are dropped and listed (不可用). `toolPolicies` and `disallowedTools` carry over
+    for kept tools.
+  - Skills: `skills` and `selectedSkills` resolve by name against the skills usable in the org (the
+    org's own, linked copies, platform skills on in the org); found ones become `orgSkills` (and
+    `pinned` for `skills`, ≤ 3); missing ones are listed and left out (no request: a skill comes with
+    its plugin, which has its own request flow).
+  - Connectors: a `template` entry binds the org's connector made from that platform connector
+    template (`connectors.platform_template_id`) when exactly one exists; several → the first by
+    creation, listed so the person can switch later; none → a **pending connector** (P4-6). A `needs`
+    entry is always pending.
+  - Sub-agents: `types` resolve with `findType` against the org's usable templates into
+    `subagents.templates`; unresolved types are listed and left out; `inline` entries become inline
+    definitions, their skill names resolved like the agent's and added to `orgSkills` when missing
+    (`skill_not_selected` never fires).
+  - The preview lists each item as 带入 / 待配置 / 不可用 with the reason.
+- **P4-6** Pending connectors live in the agent definition: `pendingConnectors: [{ key, label,
+  source: { template: <platform connector template id> } | { needs: {…} }, tools?: [names] }]`
+  (`key` stable per entry). They are model-invisible (no tools until configured); the run never
+  fails because of them. Resolving one (binding a connector) writes a new agent version that adds the
+  connector's tools and removes the entry.
+- **P4-7** Who resolves a pending connector, from the agent page's 待配置 notice (Tools section):
+  - A person with `connectors.manage` (org admin+): for a `template` entry, create the connector from
+    that template (the existing 补充配置 flow extended to "one more connector from this template",
+    `POST /orgs/:orgId/connector-templates/:templateId/connectors`) or pick an existing connector;
+    for a `needs` entry, open the custom connector form prefilled (protocol, endpoint), refused as
+    today under `customConnectors = deny` (then the notice says a super admin must allow custom
+    connectors). Binding is `POST /orgs/:orgId/agents/:agentId/pending-connectors/:key/bind
+    { connectorId }` (agent editors: the owner or an admin+).
+  - Anyone else (the agent's owner who is a member): the create writes **one org inbox request per
+    agent** listing its pending connectors (new request kind `connector_setup` in `catalog_requests`,
+    with `agent_id` and the keys; item and marketplace columns null), visible to org admins; deciding
+    it means configuring (binding resolves the keys; the request closes when none are left) or
+    rejecting with a reason (the owner gets the decision in the inbox, as for other requests).
+    Requests are created automatically only at create; the notice offers 重新申请 after a rejection.
+- **P4-8** Provenance: new columns on `agents`: `created_from_template_id text`,
+  `created_from_template_version int`, `created_from_template_name text` (a snapshot for display after
+  the template is gone); set once at create, never changed, not versioned. The agent page shows "由模板
+  <name> v<version> 创建" in its basics; the template name links to the template while it exists and
+  is usable.
+
+Org templates
+
+- **P4-9** 另存为模板 (`agents.manage`, from the agent page's ⋯ menu): `POST
+  /orgs/:orgId/agents/:agentId/save-as-template { name, description }` writes an **org row**
+  (`agent_templates`, `plugin_name` null, a bare `<name>`, version 1) like an org skill (P3-3: it stays
+  an org row until promoted on share). The bare name must not clash with a type in the org's usable
+  set (rule 10; 409 `agent_template.name_taken`, naming the owner). `putTemplateVersionIn` takes an
+  optional `catalogItemId` (null for org templates).
+- **P4-10** What 另存为模板 writes: instructions and `instructionFiles`, description, quick actions,
+  `modelRef` (and `model: standard`), `effort` from the model params, builtin / plugin tool keys,
+  `toolPolicies`, `skills` (the pinned ones' names) and `selectedSkills` (the other selected skills'
+  names), connector tools → `connectors` entries (P4-11), `subagents` (template ids → their types,
+  inline definitions with skill ids → names, `general`); allowlisted **org agents** in the roster are
+  not templates and are left out (listed in the dialog). Pending connectors of the agent are carried
+  as they are.
+- **P4-11** Connector entries on save: a connector made from a platform connector template →
+  `{ template: <id> }`; any other connector → `{ needs: { protocol, endpoint, tools, label } }` where
+  `endpoint` is the connector's URL with userinfo, query and fragment removed, `tools` the enabled
+  tool names, `label` the connector's name; no credentials, headers or OAuth data ever enter a
+  template.
+- **P4-12** Editing an org template uses the agent editor's sections (basics, prompt, model, tools,
+  skills, connectors, sub-agents) on the template page; each save writes a new template version.
+  The model section offers the tier and, optionally, a concrete model (`modelRef`). Only org admins of
+  the owner org edit, delete, or set 可共享 (P3 rules); deleting follows P3 (a shared, used template
+  becomes platform-owned). Agents created earlier are never touched.
+- **P4-13** Sharing: P3-46 is lifted for org templates: `PUT /orgs/:orgId/agent-templates/:id/shareable`
+  accepts org templates (owner org admins); promotion on share (P3-3) already handles
+  `agent_template`. A promoted template keeps the bare name; P3-5 and rule 10 apply in other orgs.
+  `customSkills = deny` does not gate org templates (a template carries no code).
+
+Pages
+
+- **P4-14** The workspace 智能体 page (`/agents`, nav 智能体) has the tabs **智能体** and **模板**
+  (`?tab=templates`). The agent filters 全部 / 我的 / 共享 become a filter in the toolbar of the 智能体
+  tab. 智能体模板 leaves 更多; `/agent-templates` redirects to `/agents?tab=templates` (and its
+  detail to the new template page). Template detail: `/agents/templates/<id>` (read view for
+  members, the editor for owner-org admins, 用它创建 as the primary).
+- **P4-15** Cards: a new design component `CardGrid` (+ `ObjectCard`): a responsive grid
+  (`auto-fill`, min card width from a token), each card: avatar or icon, name, a two-line description,
+  one meta line (agents: owner · 可见范围; templates: source (平台 / 本组织 / 组织名 / 插件) · v),
+  one primary action and a ⋯ menu; the whole card opens the detail. Loading and empty states, keyboard
+  (roving focus by row), and the spec / reference block / accepted.ts entries as for any design
+  component. It is a single box per card on the page ground (no box around the grid: the one-box rule of `docs/design/spec.md`, acceptance item AB).
+- **P4-16** Card actions: an agent card's primary is 开始会话; ⋯ holds 设置, 运行记录, 更改所有者
+  (as the agent page's menu), 另存为模板 (org admins). A template card's primary is 用它创建; ⋯
+  holds 查看, 编辑 / 可共享 / 删除 (owner-org admins), and the component switch for platform
+  templates (org admins; the existing switch).
+- **P4-17** The admin 智能体模板 list (`/admin/agent-templates`) uses the same cards with its tabs 全部 /
+  平台 / 组织创建; card meta: source · owner · scope · v; primary 查看; ⋯ the existing scope, disable
+  and 对其他组织显示 actions. 技能 and 连接器模板 keep their tables.
+- **P4-18** 用它创建 opens a dialog: name (default: the template name), avatar, 可见范围 (shown to org
+  admins; members always 仅自己), model (P4-4), then the preview groups (P4-5) with 带入 / 待配置 /
+  不可用 counts and details; 创建 lands on the new agent's page, its 待配置 notice in view.
+
+### 15.3 Not in phase 4
+
+Creating a template from scratch, linking agents to templates after creation, the super admin seeing
+orgs' agents, a member-visible restriction on ordinary agent creation (today any member may create an
+org-visible agent; only the template flow gates it), per-org versions of shared templates, and
+template files beyond instructions (attachments).
