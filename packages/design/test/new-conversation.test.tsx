@@ -369,7 +369,7 @@ describe("AgentRow and AgentPanel (spec §6.16.26)", () => {
       resolve(import.meta.dirname, "../src/styles/conversation-page.css"),
       "utf8",
     );
-    const m = page.indexOf('.cb-cmenu[data-bounded="true"] {');
+    const m = page.indexOf('.cb-cmenu[data-anchored="true"] {');
     expect(page.slice(m, page.indexOf("}", m))).toContain("min(320px, calc(100vw - 16px))");
   });
 

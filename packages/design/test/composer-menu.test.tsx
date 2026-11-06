@@ -1,4 +1,6 @@
-import { act, cleanup, render, screen, within } from "@testing-library/react";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -120,20 +122,39 @@ function models(onPick = vi.fn(), checked = "p2/model-80"): PickerProps {
 }
 
 let rect = { top: 100, bottom: 132 };
-let innerHeight = 900;
+const proto = HTMLElement.prototype;
+const PROPS = ["scrollHeight", "offsetTop", "offsetHeight", "clientHeight", "scrollTop"] as const;
 const original = {
-  rect: HTMLElement.prototype.getBoundingClientRect,
-  scrollHeight: Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollHeight"),
-  scrollIntoView: (HTMLElement.prototype as { scrollIntoView?: unknown }).scrollIntoView,
+  rect: proto.getBoundingClientRect,
+  props: Object.fromEntries(
+    PROPS.map((k) => [
+      k,
+      Object.getOwnPropertyDescriptor(Element.prototype, k) ??
+        Object.getOwnPropertyDescriptor(proto, k),
+    ]),
+  ),
 };
-const scrolled = vi.fn();
+/** What the menu set as the list's scrollTop. */
+const scrolledTo = vi.fn();
+
+/** A viewport `height` px high: jsdom has none, floating-ui (Radix) reads it from <html>. */
+function viewport(height: number) {
+  vi.stubGlobal("innerHeight", height);
+  Object.defineProperty(document.documentElement, "clientHeight", {
+    configurable: true,
+    value: height,
+  });
+  Object.defineProperty(document.documentElement, "clientWidth", {
+    configurable: true,
+    value: 1024,
+  });
+}
 
 beforeEach(() => {
   rect = { top: 100, bottom: 132 };
-  innerHeight = 900;
-  vi.stubGlobal("innerHeight", innerHeight);
-  // the trigger's box, and a list whose whole height is 100 rows
-  HTMLElement.prototype.getBoundingClientRect = function (this: HTMLElement) {
+  viewport(900);
+  // the trigger's box; a list 100 rows (3200 px) long showing 300 px; the checked row at 2560
+  proto.getBoundingClientRect = function (this: HTMLElement) {
     return {
       top: rect.top,
       bottom: rect.bottom,
@@ -146,43 +167,76 @@ beforeEach(() => {
       toJSON: () => ({}),
     } as DOMRect;
   };
-  Object.defineProperty(HTMLElement.prototype, "scrollHeight", {
+  const isList = (el: HTMLElement) => el.classList.contains("cb-cmenu-list");
+  Object.defineProperty(proto, "scrollHeight", {
     configurable: true,
     get(this: HTMLElement) {
-      return this.classList.contains("cb-cmenu-list") ? 3200 : 0;
+      return isList(this) ? 3200 : 0;
     },
   });
-  scrolled.mockReset();
-  (HTMLElement.prototype as { scrollIntoView?: unknown }).scrollIntoView = function (
-    this: HTMLElement,
-  ) {
-    scrolled(this.textContent);
-  };
+  Object.defineProperty(proto, "clientHeight", {
+    configurable: true,
+    get(this: HTMLElement) {
+      return isList(this) ? 300 : 0;
+    },
+  });
+  Object.defineProperty(proto, "offsetHeight", {
+    configurable: true,
+    get(this: HTMLElement) {
+      return this.getAttribute("data-part") === "menu-item" ? 32 : 0;
+    },
+  });
+  Object.defineProperty(proto, "offsetTop", {
+    configurable: true,
+    get(this: HTMLElement) {
+      return this.getAttribute("aria-checked") === "true" ? 2560 : 0;
+    },
+  });
+  scrolledTo.mockReset();
+  Object.defineProperty(proto, "scrollTop", {
+    configurable: true,
+    get: () => 0,
+    set(this: HTMLElement, v: number) {
+      if (isList(this)) scrolledTo(v);
+    },
+  });
 });
 
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
-  HTMLElement.prototype.getBoundingClientRect = original.rect;
-  if (original.scrollHeight)
-    Object.defineProperty(HTMLElement.prototype, "scrollHeight", original.scrollHeight);
-  (HTMLElement.prototype as { scrollIntoView?: unknown }).scrollIntoView = original.scrollIntoView;
+  proto.getBoundingClientRect = original.rect;
+  for (const k of PROPS) {
+    const d = original.props[k];
+    if (d) Object.defineProperty(proto, k, d);
+    else delete (proto as unknown as Record<string, unknown>)[k];
+  }
+  delete (document.documentElement as unknown as Record<string, unknown>).clientHeight;
+  delete (document.documentElement as unknown as Record<string, unknown>).clientWidth;
 });
 
 // Radix names the menu by its trigger (aria-labelledby)
 const menu = () => screen.getByRole("menu", { name: "切换模型: model-80" });
+/** The room Radix measured on the menu's side (what the CSS cap reads, live). */
+const room = (m: HTMLElement) =>
+  (m.parentElement as HTMLElement).style.getPropertyValue("--radix-popper-available-height");
 
 describe("an anchored picker menu with 100 models", () => {
-  it("opens below with its height capped, the checked model scrolled into view and the note kept", async () => {
+  it("opens below, its height capped in CSS by the token and Radix's live room, the checked model scrolled into view, the note kept", async () => {
     const user = userEvent.setup();
     wrap(<Picker {...models()} />);
     await user.click(screen.getByRole("button", { name: "切换模型: model-80" }));
     const m = menu();
     expect(m.getAttribute("data-anchored")).toBe("true");
-    expect(m.getAttribute("data-placement")).toBe("bottom");
-    expect(m.style.maxHeight).toBe(`${CAP}px`);
-    // the checked model is brought into view on open
-    expect(scrolled).toHaveBeenCalledWith(expect.stringContaining("model-80"));
+    await vi.waitFor(() => expect(m.getAttribute("data-side")).toBe("bottom"));
+    // no fixed height of its own: CSS takes min(token, Radix's room), so it follows a resize
+    expect(m.style.maxHeight).toBe("");
+    expect(m.style.getPropertyValue("--radix-dropdown-menu-content-available-height")).toBe(
+      "var(--radix-popper-available-height)",
+    );
+    await vi.waitFor(() => expect(room(m)).toBe(`${900 - 132 - 4 - 8}px`));
+    // the checked model (at 2560, 32 high) is brought to the list's view (300 high)
+    expect(scrolledTo).toHaveBeenCalledWith(2560 + 32 - 300);
     // the list scrolls; the note stays outside it, visible
     const list = m.querySelector('[data-part="menu-list"]') as HTMLElement;
     expect(within(list).getAllByRole("menuitemradio")).toHaveLength(100);
@@ -192,24 +246,36 @@ describe("an anchored picker menu with 100 models", () => {
     expect(within(list).getAllByRole("menuitemradio")[0]?.getAttribute("title")).toBe("model-1");
   });
 
-  it("flips above when the trigger sits near the bottom (the conversation page)", async () => {
-    rect = { top: 700, bottom: 732 };
-    vi.stubGlobal("innerHeight", 768);
-    const user = userEvent.setup();
-    wrap(<Picker {...models()} />);
-    await user.click(screen.getByRole("button", { name: "切换模型: model-80" }));
-    expect(menu().getAttribute("data-placement")).toBe("top");
-    expect(menu().style.maxHeight).toBe(`${CAP}px`);
+  it("the CSS cap is min(layout.menu-max-height, Radix's available height)", () => {
+    const css = readFileSync(
+      resolve(import.meta.dirname, "../src/styles/conversation-page.css"),
+      "utf8",
+    );
+    const at = css.indexOf('.cb-cmenu[data-anchored="true"] {');
+    const rule = css.slice(at, css.indexOf("}", at)).replace(/\s+/g, " ");
+    expect(rule).toContain(
+      "max-height: min( var(--cb-layout-menu-max-height), var(--radix-dropdown-menu-content-available-height, var(--cb-layout-menu-max-height)) );",
+    );
   });
 
-  it("caps to the larger side's room when neither side fits", async () => {
-    rect = { top: 180, bottom: 212 };
-    vi.stubGlobal("innerHeight", 400);
+  it("flips above when the trigger sits near the bottom (the conversation page)", async () => {
+    rect = { top: 700, bottom: 732 };
+    viewport(768);
     const user = userEvent.setup();
     wrap(<Picker {...models()} />);
     await user.click(screen.getByRole("button", { name: "切换模型: model-80" }));
-    expect(menu().getAttribute("data-placement")).toBe("bottom");
-    expect(menu().style.maxHeight).toBe(`${400 - 212 - 12}px`);
+    await vi.waitFor(() => expect(menu().getAttribute("data-side")).toBe("top"));
+    await vi.waitFor(() => expect(room(menu())).toBe(`${700 - 4 - 8}px`));
+  });
+
+  it("when neither side fits, the side with more room, capped to it", async () => {
+    rect = { top: 180, bottom: 212 };
+    viewport(400);
+    const user = userEvent.setup();
+    wrap(<Picker {...models()} />);
+    await user.click(screen.getByRole("button", { name: "切换模型: model-80" }));
+    await vi.waitFor(() => expect(menu().getAttribute("data-side")).toBe("bottom"));
+    await vi.waitFor(() => expect(room(menu())).toBe(`${400 - 212 - 4 - 8}px`));
   });
 
   it("has a filter: focus starts there, typing narrows (group labels stay), ↓ moves into the matches, Enter picks", async () => {
@@ -219,6 +285,11 @@ describe("an anchored picker menu with 100 models", () => {
     await user.click(screen.getByRole("button", { name: "切换模型: model-80" }));
     const filter = await screen.findByRole("textbox", { name: "筛选" });
     await vi.waitFor(() => expect(document.activeElement).toBe(filter));
+    // the field drives the list and is described by the live count
+    const list = menu().querySelector('[data-part="menu-list"]') as HTMLElement;
+    expect(filter.getAttribute("aria-controls")).toBe(list.id);
+    const count = document.getElementById(filter.getAttribute("aria-describedby") ?? "");
+    expect(count?.getAttribute("role")).toBe("status");
     await user.keyboard("model-7");
     const items = () =>
       within(menu())
@@ -229,6 +300,7 @@ describe("an anchored picker menu with 100 models", () => {
       "model-7",
       ...Array.from({ length: 10 }, (_, i) => `model-${70 + i}`),
     ]);
+    expect(count?.textContent).toBe("11 项匹配");
     const labels = [...menu().querySelectorAll('[data-part="menu-label"]')].map(
       (l) => l.textContent,
     );
@@ -241,12 +313,63 @@ describe("an anchored picker menu with 100 models", () => {
     await user.clear(filter);
     await user.keyboard("zzz");
     expect(within(menu()).queryAllByRole("menuitemradio")).toHaveLength(0);
-    expect(within(menu()).getByText("没有匹配项")).toBeTruthy();
+    expect(within(menu()).getAllByText("没有匹配项").length).toBeGreaterThan(0);
+    expect(count?.textContent).toBe("没有匹配项");
     // Enter picks the first match and closes
     await user.clear(filter);
     await user.keyboard("model-42{Enter}");
     expect(onPick).toHaveBeenCalledWith("p1/model-42");
     expect(screen.queryByRole("menu")).toBeNull();
+  });
+
+  it("after the pointer moved the focus onto an item, typing and Backspace land in the filter again", async () => {
+    const user = userEvent.setup();
+    wrap(<Picker {...models()} />);
+    await user.click(screen.getByRole("button", { name: "切换模型: model-80" }));
+    const filter = (await screen.findByRole("textbox", { name: "筛选" })) as HTMLInputElement;
+    await vi.waitFor(() => expect(document.activeElement).toBe(filter));
+    await user.keyboard("model-1");
+    // the pointer grazes the list: Radix focuses the item under it
+    const item = within(menu()).getAllByRole("menuitemradio")[2] as HTMLElement;
+    await user.hover(item);
+    item.focus();
+    expect(document.activeElement).toBe(item);
+    await user.keyboard("5");
+    expect(document.activeElement).toBe(filter);
+    expect(filter.value).toBe("model-15");
+    // Backspace from the menu itself (the pointer left it) goes back to the filter too
+    menu().focus();
+    await user.keyboard("{Backspace}");
+    expect(document.activeElement).toBe(filter);
+    expect(filter.value).toBe("model-1");
+  });
+
+  it("↑ on the first item returns to the filter", async () => {
+    const user = userEvent.setup();
+    wrap(<Picker {...models()} />);
+    await user.click(screen.getByRole("button", { name: "切换模型: model-80" }));
+    const filter = await screen.findByRole("textbox", { name: "筛选" });
+    await vi.waitFor(() => expect(document.activeElement).toBe(filter));
+    await user.keyboard("{ArrowDown}");
+    expect(document.activeElement?.textContent).toContain("model-1");
+    await user.keyboard("{ArrowUp}");
+    expect(document.activeElement).toBe(filter);
+  });
+
+  it("an IME composition's Enter neither picks nor closes", async () => {
+    const onPick = vi.fn();
+    const user = userEvent.setup();
+    wrap(<Picker {...models(onPick)} />);
+    await user.click(screen.getByRole("button", { name: "切换模型: model-80" }));
+    const filter = await screen.findByRole("textbox", { name: "筛选" });
+    await vi.waitFor(() => expect(document.activeElement).toBe(filter));
+    fireEvent.keyDown(filter, { key: "Enter", isComposing: true });
+    fireEvent.keyDown(filter, { key: "ArrowDown", isComposing: true });
+    expect(onPick).not.toHaveBeenCalled();
+    expect(screen.queryByRole("menu")).not.toBeNull();
+    expect(document.activeElement).toBe(filter);
+    fireEvent.keyDown(filter, { key: "Enter" });
+    expect(onPick).toHaveBeenCalledWith("p1/model-1");
   });
 
   it(`ten items or fewer: no filter (the threshold is ${MENU_FILTER_THRESHOLD})`, async () => {
@@ -269,7 +392,7 @@ describe("the quick actions menu with 100 items", () => {
     await user.click(screen.getByRole("button", { name: "常用任务" }));
     const m = screen.getByRole("menu", { name: "常用任务" });
     expect(m.getAttribute("data-anchored")).toBe("true");
-    expect(m.style.maxHeight).toBe(`${CAP}px`);
+    await vi.waitFor(() => expect(room(m)).toBe(`${900 - 132 - 4 - 8}px`));
     const filter = await screen.findByRole("textbox", { name: "筛选" });
     await vi.waitFor(() => expect(document.activeElement).toBe(filter));
     await user.keyboard("任务 9");

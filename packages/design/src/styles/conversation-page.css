@@ -204,22 +204,24 @@ span.cb-title-btn {
 .cb-cmenu[data-size="wide"] {
   min-width: 260px;
 }
-/* A menu of free-text labels (the quick actions' 更多): long labels end in an ellipsis. */
-.cb-cmenu[data-bounded="true"] {
-  max-width: min(320px, calc(100vw - 16px));
-}
 /* A composer toolbar menu (§6.16.3): anchored to its trigger, at least its width and at most
-   min(320px, 100vw − 16px); the height capped (inline max-height: layout.menu-max-height and
-   the room on its side); the filter and the notes stay while the list scrolls between them. */
+   min(320px, 100vw − 16px); the height capped by layout.menu-max-height and Radix's live room on
+   its side (it follows a resize, a zoom or a phone keyboard); the filter and the notes stay while
+   the list scrolls between them. */
 .cb-cmenu[data-anchored="true"] {
   display: flex;
   flex-direction: column;
   box-sizing: border-box;
   min-width: var(--radix-dropdown-menu-trigger-width, 0);
   max-width: min(320px, calc(100vw - 16px));
+  max-height: min(
+    var(--cb-layout-menu-max-height),
+    var(--radix-dropdown-menu-content-available-height, var(--cb-layout-menu-max-height))
+  );
   overflow: hidden;
 }
 .cb-cmenu-list {
+  position: relative;
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;

@@ -4,6 +4,7 @@ import {
   type KeyboardEvent,
   type ReactElement,
   type ReactNode,
+  type RefObject,
   useEffect,
   useId,
   useLayoutEffect,
@@ -54,8 +55,6 @@ export type ConvMenuProps = {
   sideOffset?: number;
   align?: "start" | "end";
   size?: "narrow" | "default" | "wide";
-  /** At most `min(320px, 100vw − 16px)` wide, long labels cut with an ellipsis (quick actions). */
-  bounded?: boolean;
   /**
    * A composer toolbar menu (§6.16.3): anchored to its trigger, below it unless the space below
    * is short (then above), its start edge on the trigger's, at least the trigger's width; its
@@ -103,7 +102,9 @@ export type MenuPlacementInput = {
  * Where an anchored menu opens and how tall it may be (spec §6.16.3): its height is the smaller of
  * the design cap and the room from the trigger to the viewport edge on its side, minus the gap and
  * the collision padding. It opens below when the menu (up to the cap) fits there, else above when
- * it fits there; when neither side fits it, on the side with more room, capped to it.
+ * it fits there; when neither side fits it, on the side with more room, capped to it. The menu
+ * takes `side` from it when it opens; its height is then CSS's (the same min, with Radix's live
+ * room on that side), so `maxHeight` is what that CSS comes to at the moment of opening.
  */
 export function menuPlacement(i: MenuPlacementInput): {
   side: "top" | "bottom";
@@ -217,7 +218,6 @@ export function ConvMenu({
   sideOffset = 4,
   align = "start",
   size = "default",
-  bounded,
   anchored,
   open,
   onOpenChange,
@@ -228,6 +228,7 @@ export function ConvMenu({
   const noteId = useId();
   const notes = entries.flatMap((e, i) => (e.kind === "note" ? [`${noteId}-${i}`] : []));
   const [own, setOwn] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const isOpen = open ?? own;
   const setOpen = (o: boolean) => {
     if (open === undefined) setOwn(o);
@@ -249,13 +250,13 @@ export function ConvMenu({
       inline={inline === true}
       inlineSide={side}
       sideOffset={sideOffset}
+      triggerRef={triggerRef}
       onClose={() => setOpen(false)}
     />
   ) : (
     <RM.Content
       className="cb-cmenu"
       data-size={size === "default" ? undefined : size}
-      data-bounded={bounded ? "true" : undefined}
       side={side}
       avoidCollisions={!inline}
       {...shared}
@@ -271,11 +272,17 @@ export function ConvMenu({
         ? { open: true, modal: false, onOpenChange: () => {} }
         : { open: isOpen, onOpenChange: setOpen })}
     >
-      <RM.Trigger asChild>{trigger}</RM.Trigger>
+      <RM.Trigger ref={triggerRef} asChild>
+        {trigger}
+      </RM.Trigger>
       {inline ? content : <RM.Portal>{content}</RM.Portal>}
     </RM.Root>
   );
 }
+
+/** Printable keys and Backspace: typing that belongs in the filter field. */
+const typesIntoFilter = (e: KeyboardEvent): boolean =>
+  !e.ctrlKey && !e.metaKey && !e.altKey && (e.key.length === 1 || e.key === "Backspace");
 
 /** The content of an anchored menu: placement, the height cap, the filter and the scrolling list. */
 function AnchoredContent({
@@ -285,6 +292,7 @@ function AnchoredContent({
   inline,
   inlineSide,
   sideOffset,
+  triggerRef,
   onClose,
 }: {
   shared: Record<string, unknown>;
@@ -293,17 +301,19 @@ function AnchoredContent({
   inline: boolean;
   inlineSide: "top" | "bottom";
   sideOffset: number;
+  triggerRef: RefObject<HTMLButtonElement | null>;
   onClose(): void;
 }): JSX.Element {
   const t = useDesignT();
   const ref = useRef<HTMLDivElement>(null);
   const filterRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const listId = useId();
+  const countId = useId();
   const [query, setQuery] = useState("");
-  const [place, setPlace] = useState<{ side: "top" | "bottom"; maxHeight: number }>(() => ({
-    side: inline ? inlineSide : "bottom",
-    maxHeight: SIZES.layout["menu-max-height"],
-  }));
+  // The side it opens on (menuPlacement, once); the height is CSS's, from Radix's live room on
+  // that side, so it stays right after a resize, a zoom or a phone keyboard.
+  const [side, setSide] = useState<"top" | "bottom">(inline ? inlineSide : "bottom");
   const filterable = itemCount(entries) > MENU_FILTER_THRESHOLD;
   const shown = filterable ? filterMenuEntries(entries, query) : entries;
   const body = shown.filter((e) => e.kind !== "note");
@@ -312,34 +322,28 @@ function AnchoredContent({
     (e): e is Extract<ConvMenuEntry, { kind: "item" }> => e.kind === "item",
   );
 
-  // Before the first paint: measure the natural height, pick the side and the cap, and bring
-  // the checked item into view.
+  // Before the first paint: measure the natural height, pick the side, and scroll the list to
+  // the checked item.
   useLayoutEffect(() => {
     const el = ref.current;
-    if (!el) return;
-    if (!inline) {
-      const id = el.id;
-      const triggerEl = id ? document.querySelector(`[aria-controls="${id}"]`) : null;
-      const r = triggerEl?.getBoundingClientRect();
-      if (r)
-        setPlace(
-          menuPlacement({
-            triggerTop: r.top,
-            triggerBottom: r.bottom,
-            viewportHeight: window.innerHeight,
-            // the list's whole height in place of its capped one
-            contentHeight:
-              el.offsetHeight -
-              (listRef.current?.clientHeight ?? 0) +
-              (listRef.current?.scrollHeight ?? 0),
-            gap: sideOffset,
-          }),
-        );
-    }
-    listRef.current
-      ?.querySelector<HTMLElement>('[aria-checked="true"]')
-      ?.scrollIntoView?.({ block: "nearest" });
-  }, [inline, sideOffset]);
+    const list = listRef.current;
+    if (!el || !list) return;
+    const r = inline ? undefined : triggerRef.current?.getBoundingClientRect();
+    if (r)
+      setSide(
+        menuPlacement({
+          triggerTop: r.top,
+          triggerBottom: r.bottom,
+          viewportHeight: window.innerHeight,
+          // the list's whole height in place of its capped one
+          contentHeight: el.offsetHeight - list.clientHeight + list.scrollHeight,
+          gap: sideOffset,
+        }).side,
+      );
+    const item = list.querySelector<HTMLElement>('[aria-checked="true"]');
+    if (item && item.offsetTop + item.offsetHeight > list.clientHeight)
+      list.scrollTop = item.offsetTop + item.offsetHeight - list.clientHeight;
+  }, [inline, sideOffset, triggerRef]);
   // After Radix has focused the menu: typing starts in the filter.
   useEffect(() => {
     if (!filterable || inline) return;
@@ -347,14 +351,28 @@ function AnchoredContent({
     return () => clearTimeout(id);
   }, [filterable, inline]);
 
+  const focusFilter = () => {
+    const f = filterRef.current;
+    if (!f) return;
+    f.focus();
+    f.setSelectionRange(f.value.length, f.value.length);
+  };
+  const firstItem = () =>
+    listRef.current?.querySelector<HTMLElement>('[role^="menuitem"]:not([data-disabled])') ?? null;
+
   const onFilterKey = (e: KeyboardEvent<HTMLInputElement>) => {
+    // an IME composition owns its keys (Enter confirms the text, it never picks)
+    if (e.nativeEvent.isComposing) {
+      e.stopPropagation();
+      return;
+    }
     if (e.key === "ArrowDown") {
       e.preventDefault();
-      listRef.current
-        ?.querySelector<HTMLElement>('[role^="menuitem"]:not([data-disabled])')
-        ?.focus();
+      e.stopPropagation();
+      firstItem()?.focus();
     } else if (e.key === "Enter") {
       e.preventDefault();
+      e.stopPropagation();
       const first = matches.find((m) => !m.disabled);
       if (first) {
         first.onSelect();
@@ -365,18 +383,35 @@ function AnchoredContent({
       e.stopPropagation();
     }
   };
+  // Radix moves the focus to an item on hover and to the menu when the pointer leaves: typing
+  // and Backspace from there go back to the filter, and ↑ on the first item returns to it.
+  const onContentKeyCapture = (e: KeyboardEvent<HTMLDivElement>) => {
+    if (!filterable || e.target === filterRef.current || e.nativeEvent.isComposing) return;
+    if (typesIntoFilter(e)) {
+      e.stopPropagation();
+      // a character lands in the field once it has the focus; Backspace has no such second
+      // event everywhere, so it edits the query here
+      if (e.key === "Backspace") {
+        e.preventDefault();
+        setQuery((q) => q.slice(0, -1));
+      }
+      focusFilter();
+    } else if (e.key === "ArrowUp" && e.target === firstItem()) {
+      e.preventDefault();
+      e.stopPropagation();
+      focusFilter();
+    }
+  };
 
   return (
     <RM.Content
       ref={ref}
       className="cb-cmenu"
       data-anchored="true"
-      // the side chosen by menuPlacement (Radix's data-side is where it ended up)
-      data-placement={place.side}
-      side={place.side}
+      side={side}
       avoidCollisions={!inline}
       collisionPadding={MENU_COLLISION_PADDING}
-      style={{ maxHeight: `${place.maxHeight}px` }}
+      onKeyDownCapture={onContentKeyCapture}
       {...shared}
     >
       {filterable ? (
@@ -388,18 +423,30 @@ function AnchoredContent({
           value={query}
           placeholder={t("menu.filter")}
           aria-label={t("menu.filter")}
+          aria-controls={listId}
+          aria-describedby={countId}
           autoComplete="off"
           spellCheck={false}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={onFilterKey}
         />
       ) : null}
-      <div ref={listRef} className="cb-cmenu-list" data-part="menu-list">
+      {filterable ? (
+        // always mounted, so a change of the count is announced
+        <div id={countId} className="cb-sr-only" role="status" data-part="menu-count">
+          {query.trim() === ""
+            ? ""
+            : matches.length === 0
+              ? t("menu.noMatch")
+              : t("menu.count").replace("{n}", String(matches.length))}
+        </div>
+      ) : null}
+      <div ref={listRef} id={listId} className="cb-cmenu-list" data-part="menu-list">
         {body.map((e, i) => (
           <Entry key={entryKey(e, i)} e={e} i={i} noteId={noteId} title />
         ))}
         {matches.length === 0 ? (
-          <div className="cb-cmenu-empty" data-part="menu-empty" role="status">
+          <div className="cb-cmenu-empty" data-part="menu-empty">
             {t("menu.noMatch")}
           </div>
         ) : null}

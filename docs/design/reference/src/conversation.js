@@ -465,7 +465,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
       .join("");
     const bar = composer({ state: "new", noAgent: true, quick: true, ...(o.open ? { menu: "quick" } : { quickState: o.state }) });
     return o.open
-      ? `<div class="r-menu-stage">${bar}<div class="r-menu r-anchored-menu r-quick-menu" data-part="menu" role="menu" aria-label="${esc(QUICK_LABEL)}">${items}</div></div>`
+      ? `<div class="r-menu-stage">${bar}<div class="r-menu r-anchored-menu" data-part="menu" role="menu" aria-label="${esc(QUICK_LABEL)}">${items}</div></div>`
       : bar;
   }
 
