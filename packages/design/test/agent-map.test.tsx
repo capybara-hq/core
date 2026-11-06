@@ -207,8 +207,8 @@ describe("AgentMapDialog (§6.16.28)", () => {
     const dialog = screen.getByRole("dialog", { name: "智能体图" });
     expect(dialog.getAttribute("data-size")).toBe("1100");
     for (const [level, size] of [
-      ["detail", "760"],
-      ["transcript", "1060"],
+      ["detail", "chat"],
+      ["transcript", "chat"],
     ] as const) {
       rerender(
         <DesignProvider locale="zh">
@@ -322,10 +322,22 @@ describe("AgentMapDialog (§6.16.28)", () => {
       resolve(import.meta.dirname, "../src/styles/overlays.css"),
       "utf8",
     );
-    for (const w of [760, 1060, 1100]) {
-      expect(overlays).toContain(`.cb-dialog[data-size="${w}"]`);
-      expect(overlays).toContain(`width: min(${w}px, calc(100vw - 32px));`);
-    }
+    expect(overlays).toContain('.cb-dialog[data-size="1100"]');
+    expect(overlays).toContain("width: min(1100px, calc(100vw - 32px));");
+    // Levels 2 and 3: the conversation's column plus the body padding and the border (AC2).
+    expect(rule('.cb-amap-dialog[data-size="chat"]')).toContain(
+      "width: min(calc(var(--cb-layout-chat) + 2 * var(--cb-space-4) + 2px), calc(100vw - 32px));",
+    );
+  });
+
+  it("pads in the compact dialog rhythm: head space.2 space.4, body space.4, footer space.3 space.4 (AC6)", () => {
+    expect(rule(".cb-amap-dialog")).toMatch(/padding: 0;/);
+    expect(rule(".cb-amap-head")).toMatch(/padding: var\(--cb-space-2\) var\(--cb-space-4\);/);
+    expect(rule(".cb-amap")).toMatch(/padding: var\(--cb-space-4\);/);
+    expect(rule(".cb-amap-detail")).toMatch(/padding: var\(--cb-space-4\);/);
+    expect(rule(".cb-amap-foot")).toMatch(/padding: var\(--cb-space-3\) var\(--cb-space-4\);/);
+    // the transcript's thread fills the dialog: no layout gutter on either side
+    expect(rule(".cb-amap-transcript")).toMatch(/padding: var\(--cb-space-4\);/);
   });
 });
 
@@ -434,6 +446,22 @@ describe("AgentDetail (§6.16.28, level 2)", () => {
     expect(onStop).toHaveBeenCalled();
   });
 
+  it("stopping: Stop stays in the Button's loading state, disabled and busy, and cannot be pressed", async () => {
+    const onStop = vi.fn();
+    const { rerender } = wrap(detail({ onStop, stopping: true }));
+    const stop = screen.getByRole("button", { name: "停止" });
+    expect(stop.hasAttribute("disabled")).toBe(true);
+    expect(stop.getAttribute("aria-busy")).toBe("true");
+    expect(stop.getAttribute("data-state")).toBe("loading");
+    await userEvent.click(stop);
+    expect(onStop).not.toHaveBeenCalled();
+    // without onStop (the status already reads stopped elsewhere) a stop under way still shows
+    rerender(
+      <DesignProvider locale="zh">{detail({ stopping: true }, { stop: false })}</DesignProvider>,
+    );
+    expect(screen.getByRole("button", { name: "停止" }).getAttribute("aria-busy")).toBe("true");
+  });
+
   it("a finished agent has no stop button", () => {
     const done: AgentMapNode = { ...invoice, status: "completed" };
     wrap(detail({ node: done }, { stop: false }));
@@ -506,13 +534,12 @@ describe("TranscriptFrame (§6.16.28, level 3)", () => {
     </TranscriptFrame>
   );
 
-  it('shows the read-only line "子智能体只读 · 不能和它对话，请让 <parent> 转达" and no composer', async () => {
+  it("the status line holds the context use and Stop, no read-only copy, and no composer (AC1)", async () => {
     const onStop = vi.fn();
     wrap(frame({ onStop }));
     const status = document.querySelector('[data-part="agent-transcript-status"]') as HTMLElement;
-    expect(
-      within(status).getByText("子智能体只读 · 不能和它对话，请让 整理季度经营报告 转达"),
-    ).toBeTruthy();
+    expect(status.textContent).toBe("上下文 31%停止");
+    expect(status.textContent).not.toMatch(/只读|转达/);
     expect(within(status).getByText("上下文 31%")).toBeTruthy();
     await userEvent.click(within(status).getByRole("button", { name: "停止" }));
     expect(onStop).toHaveBeenCalled();
@@ -533,18 +560,27 @@ describe("TranscriptFrame (§6.16.28, level 3)", () => {
     );
     expect(screen.queryByRole("button", { name: "停止" })).toBeNull();
     expect(screen.queryByText(/上下文/)).toBeNull();
+    // nothing to show: no status line at all
+    expect(document.querySelector('[data-part="agent-transcript-status"]')).toBeNull();
     await userEvent.click(screen.getByRole("button", { name: "返回智能体图" }));
     expect(onBack).toHaveBeenCalled();
   });
 
   it("speaks English", () => {
     wrap(frame(), "en");
-    expect(
-      screen.getByText(
-        "Read-only sub-agent · You can't talk to it; ask 整理季度经营报告 to pass it on",
-      ),
-    ).toBeTruthy();
+    expect(screen.queryByText(/Read-only|pass it on/)).toBeNull();
     expect(screen.getByText("Context 31%")).toBeTruthy();
+  });
+
+  it("stopping: the dense Stop stays in its loading state", async () => {
+    const onStop = vi.fn();
+    wrap(frame({ onStop, stopping: true }));
+    const status = document.querySelector('[data-part="agent-transcript-status"]') as HTMLElement;
+    const stop = within(status).getByRole("button", { name: "停止" });
+    expect(stop.getAttribute("aria-busy")).toBe("true");
+    expect(stop.getAttribute("data-density")).toBe("dense");
+    await userEvent.click(stop);
+    expect(onStop).not.toHaveBeenCalled();
   });
 
   it("the spawning agent is a link when onOpenParent is given", async () => {

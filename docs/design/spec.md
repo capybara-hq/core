@@ -896,7 +896,7 @@ States: `default`, `row-hover`, `row-selected`, `loading`, `empty`, `narrow`
 
 Selection rules: the user needs to decide → Dialog; view / edit one object without leaving the list → Sheet; in-place options / filters → Popover / Menu; feedback on an operation result → Toast (a Dialog must not be used); creating something with more than 6 fields → a form page (T4).
 
-- **Dialog**: width 480 / 640 (the agent map's levels are 1100 / 760 / 1060, §6.16.28), `panel` background + `line-strong` border + radius `md` + `shadow-2` + `scrim`. Header (h2 title + close `x`) / body (padding 16) / footer (right-aligned: ghost Cancel + primary action, the primary action carries `↵`), with 1px `line` separating header and footer. Esc closes; focus is trapped and returned after closing. Default focus: on the first field for a dialog that asks for input (新建组织, 新建令牌), else on the primary action (a `LinkButton` primary too); on Cancel for a dangerous dialog. A create dialog's primary is disabled until it is valid. A dialog that only explains why something cannot be done (退出组织 as the only owner) is not dangerous: plain title, one default button "知道了" / "Got it", and a link to where it can be fixed. A dialog whose next step lives elsewhere (加入评测集 with no eval set) says so and offers that step as its primary (`LinkButton`), never a disabled dead end.
+- **Dialog**: width 480 / 640 (the agent map's tree is 1100 and its levels 2 and 3 the conversation's column plus the body padding, §6.16.28), `panel` background + `line-strong` border + radius `md` + `shadow-2` + `scrim`. Header (h2 title + close `x`) / body (padding 16) / footer (right-aligned: ghost Cancel + primary action, the primary action carries `↵`), with 1px `line` separating header and footer. Esc closes; focus is trapped and returned after closing. Default focus: on the first field for a dialog that asks for input (新建组织, 新建令牌), else on the primary action (a `LinkButton` primary too); on Cancel for a dangerous dialog. A create dialog's primary is disabled until it is valid. A dialog that only explains why something cannot be done (退出组织 as the only owner) is not dangerous: plain title, one default button "知道了" / "Got it", and a link to where it can be fixed. A dialog whose next step lives elsewhere (加入评测集 with no eval set) says so and offers that step as its primary (`LinkButton`), never a disabled dead end.
 - **Dangerous confirmation**: the ordinary frame and title (`line-strong`, `ink`): the red is only on the destructive button; explains the consequences and recoverability; the object name must be typed, the confirm button is disabled until it matches, and is danger-solid once it matches. A caller that must read something first (what a delete does, ruling P3-19) passes `confirmDisabled`: the button then stays disabled and `danger` while the read is pending or failed, even with the name typed.
 - **Sheet**: slides out from the right, width 480 / 720, `panel` background + `line-strong` left line + `shadow-sheet`; no scrim by default (the list is still operable). Header: name + version + open in a new page `external-link` + close `x`; may contain Tabs; footer: actions. Closing with unsaved changes needs a second confirmation.
 - **Inside an overlay** (§1 "One box is enough"): a Dialog or a Sheet is the box. Its body groups with `ContentSection` headings (§6.31), `Subsection`s (§6.32) and hairline-divided `ItemList` rows (§6.33), never Cards or FormSections; tables, code blocks and repeaters inside draw their unboxed forms by themselves. Choosing between sources in a dialog is a card `RadioGroup` straight in the body (no Card around it), and its one `FilePicker` drop zone is allowed (§6.25).
@@ -2195,17 +2195,22 @@ States: `default`, `hover`, `menu`
 #### 6.16.28 Agent map
 
 `AgentMapDialog({ open, onOpenChange, level, onBack?, view?, children })` is a dialog over the conversation page
-(agent map spec §9) whose width follows its level: the tree 1100, one agent's summary 760, the
-transcript 1060, and levels 2 and 3 have fixed heights, 600 and 640 (at most the window less 32),
-so the dialog does not jump while an agent works (the §6.7 frame: `panel`, `line-strong`, radius `md`, `shadow-2`, `scrim`; at
-level 1 padding `space.5` `space.6`). Level 1's head is the title "智能体图" / "Agent map" (`h2`,
-prose, 500) and close; levels 2 and 3 draw their own head with the same parts (one shared head:
-back, status dot, title, close, then meta lines). Esc closes the tree and goes back one level
+(agent map spec §9) whose width follows its level: the tree 1100 (three columns of nodes and
+their gaps, with room for a scrollbar), and one agent's summary and its transcript the
+conversation's column plus the body padding and the border (`layout.chat` + 2 × `space.4` + 2 =
+754, at most the window less 32), so the transcript's thread fills the dialog with no empty side
+gutters and levels 2 and 3 are one width. Levels 2 and 3 have fixed heights, 600 and 640 (at most
+the window less 32), so the dialog does not jump while an agent works (the §6.7 frame: `panel`,
+`line-strong`, radius `md`, `shadow-2`, `scrim`). The frame has no padding at any level: the head,
+body and footer pad themselves in the compact dialog rhythm of §6.7 (head `space.2` `space.4` with
+1px `line-soft` below, body `space.4`, footer `space.3` `space.4`). Level 1's head is the title
+"智能体图" / "Agent map" (`h2`, prose, 500) and close; levels 2 and 3 draw their own head with the
+same parts (one shared head: back, status dot, title, close, then meta lines). Esc closes the tree and goes back one level
 from levels 2 and 3 (`onBack`); focus is trapped and returned, and when the view changes (another
 level or agent, `view`) it moves to the new head's back button, else its title.
 `AgentMapTree({ root, background, selectedId, onOpen })` is level 1:
 
-- **Count line** under the title (prose, `muted`): "N 个智能体 · M 个运行中 · 点击查看详情" /
+- **Count line** at the top of the body (prose, `muted`, `space.3` above the tree): "N 个智能体 · M 个运行中 · 点击查看详情" /
   "N agents · M running · Click a node for details"; N counts every node with the root, M the
   running ones.
 - **Tree**: columns left to right by depth, `space.6` apart; a parent is vertically centred on its
@@ -2236,18 +2241,18 @@ level or agent, `view`) it moves to the new head's back button, else its title.
   scrolls without a pointer.
 
 `AgentDetail({ node, agentType, inBackground?, spawnedBy, latestText, task, background, toolCalls,
-onBack, onClose, onOpenParent, onOpenTranscript, onStop?, now? })` is level 2, one agent's summary, live at
-the granularity of tool summaries. The dialog has no padding and is 600 high (at most the window
-less 32), so it does not jump while the agent works; head, body and footer pad themselves:
+onBack, onClose, onOpenParent, onOpenTranscript, onStop?, stopping?, now? })` is level 2, one agent's summary, live at
+the granularity of tool summaries. The dialog is 600 high (at most the window less 32), so it does
+not jump while the agent works; head, body and footer pad themselves:
 
-- **Head** (padding `space.5` `space.6` `space.3`, 1px `line-soft` below): a dense back button
+- **Head** (padding `space.2` `space.4`, 1px `line-soft` below): a dense back button
   (`arrow-left`, "返回智能体图" / "Back to the agent map"), the status dot, the description (`h2`,
   one line with an ellipsis) and close. Under it, indented past the back button (`control.dense` +
   `space.2`), three meta lines (`small`, `muted`): "运行中 · <agent type> · <model> · 后台" ("后台" only while `inBackground`, the
 default: a fork skill's child runs in the foreground and has none);
   "由 <parent> 派出" / "Spawned by <parent>", the parent an underlined `ink` link that opens its
   node (`onOpenParent`); "<time> · <tokens>".
-- **Body** (scrolls, padding `space.3` `space.6`): the latest text (prose), then three collapsible
+- **Body** (scrolls, padding `space.4`): the latest text (prose), then three collapsible
   sections, each a button (chevron, title 500, count `faint`) with `aria-expanded`: **任务 / Task**
   (the dispatch prompt, prose small `muted`, closed at first), **后台任务 / Background tasks · N**
   (the agent's own tasks, level 1's rows, closed at first) and **工具调用 / Tool calls · N** (open):
@@ -2255,23 +2260,29 @@ default: a fork skill's child runs in the foreground and has none);
   pulses), the tool name (500, at least 44 wide), its display summary (`muted`; the running one
   `ink`) with an ellipsis, and at the end in `faint` a range ("第 1–180 行") or the running call's
   clock. The section content starts under its title.
-- **Footer** (padding `space.3` `space.6`, 1px `line-soft` above): "打开完整记录" / "Open transcript"
+- **Footer** (padding `space.3` `space.4`, 1px `line-soft` above): "打开完整记录" / "Open transcript"
   and, while the agent runs (`onStop` given), "停止" / "Stop" (`danger`; stops its descendants too).
   The buttons share the row; a finished agent's "Open transcript" fills it.
+- **Stopping** (`stopping`): from the click until the agent's terminal event arrives, or until the
+  request fails, Stop stays in its place in the Button's loading state (spinner, `disabled`,
+  `aria-busy`, label unchanged, §6.1), even when `onStop` is absent; it
+  never disappears and cannot be pressed again while the stop is under way.
 
 `TranscriptFrame({ node, agentType, inBackground?, spawnedBy, onOpenParent?, contextPercent?,
-onBack, onClose, onStop?, children })` is level 3: the same head with one meta line ("<status> ·
+onBack, onClose, onStop?, stopping?, children })` is level 3: the same head with one meta line ("<status> ·
 <agent type> · <model> · 后台 · 由 <parent> 派出 · <time> · <tokens>"; "后台" as at level 2, the
 parent the same link as at level 2 when `onOpenParent` is given), the thread (`children`: the conversation page's own
 timeline components, built from `apps/web/src/lib/timeline.ts`) in the conversation's thread column
-(`.cb-conv-thread`, padding `space.4` `layout.gutter`, scrolling), and instead of a composer a
-read-only status line (`row.dense`, 1px `line-soft` above, `small`, `faint`): "子智能体只读 ·
-不能和它对话，请让 <parent> 转达" / "Read-only sub-agent · You can't talk to it; ask <parent> to
-pass it on", then "上下文 N%" / "Context N%" when known and a dense `danger` Stop while running. The
+(`.cb-conv-thread`, at most `layout.chat`, inside padding `space.4`, scrolling; the dialog is
+exactly that wide, so there are no side gutters), and instead of a composer a status line
+(`row.dense`, padding 0 `space.4`, 1px `line-soft` above, `small`, `faint`): "上下文 N%" /
+"Context N%" when known and, at the end of the line, a dense `danger` Stop while running (in its
+loading state while `stopping`, as at level 2). No read-only copy: the missing composer says it. A
+transcript with neither (a finished agent whose context use is unknown) has no status line. The
 dialog is 640 high.
 
 <!-- states: agent-map -->
-States: `tree`, `deep`, `detail`, `finished`, `transcript`
+States: `tree`, `deep`, `detail`, `finished`, `stopping`, `transcript`
 
 <!-- size-table: agent-map -->
 | Part | State | Property | Value |
@@ -2280,7 +2291,12 @@ States: `tree`, `deep`, `detail`, `finished`, `transcript`
 | agent-map-dialog | tree | background-color | color.panel |
 | agent-map-dialog | tree | border-top-color | color.line-strong |
 | agent-map-dialog | tree | border-radius | radius.md |
+| agent-map-head | tree | padding-top | space.2 |
+| agent-map-head | tree | padding-left | space.4 |
+| agent-map-head | tree | border-bottom-color | color.line-soft |
 | agent-map-title | tree | font-size | type.h2 |
+| agent-map-body | tree | padding-left | space.4 |
+| agent-map-body | tree | padding-top | space.4 |
 | agent-map-count | tree | color | color.muted |
 | agent-node | tree | width | 320 |
 | agent-node | tree | height | 62 |
@@ -2305,8 +2321,10 @@ States: `tree`, `deep`, `detail`, `finished`, `transcript`
 | agent-legend | tree | color | color.faint |
 | agent-node | deep | height | 62 |
 | agent-node[data-depth=3] | deep | width | 320 |
-| agent-map-dialog | detail | width | 760 |
+| agent-map-dialog | detail | width | 754 |
 | agent-map-dialog | detail | height | 600 |
+| agent-map-head | detail | padding-top | space.2 |
+| agent-map-head | detail | padding-left | space.4 |
 | agent-map-head | detail | border-bottom-color | color.line-soft |
 | agent-map-title | detail | font-size | type.h2 |
 | agent-meta | detail | font-size | type.small |
@@ -2319,17 +2337,25 @@ States: `tree`, `deep`, `detail`, `finished`, `transcript`
 | agent-call[data-running=true] | detail | height | row.dense |
 | agent-call-clock | detail | color | color.faint |
 | agent-call-range | detail | color | color.faint |
+| agent-detail | detail | padding-left | space.4 |
+| agent-detail | detail | padding-top | space.4 |
+| agent-detail-foot | detail | padding-left | space.4 |
+| agent-detail-foot | detail | padding-top | space.3 |
 | agent-detail-foot | detail | border-top-color | color.line-soft |
 | button[data-variant=danger] | detail | height | control.default |
 | agent-detail-foot | finished | border-top-color | color.line-soft |
 | agent-call-summary | finished | color | color.muted |
-| button | finished | width | 710 |
-| agent-map-dialog | transcript | width | 1060 |
+| button | finished | width | 720 |
+| button[data-state=loading] | stopping | height | control.default |
+| button[data-state=loading] | stopping | width | 354 |
+| agent-map-dialog | transcript | width | 754 |
 | agent-map-dialog | transcript | height | 640 |
+| agent-transcript | transcript | padding-left | space.4 |
 | thread | transcript | max-width | layout.chat |
 | agent-transcript-status | transcript | height | row.dense |
 | agent-transcript-status | transcript | color | color.faint |
 | agent-transcript-status | transcript | border-top-color | color.line-soft |
+| agent-transcript-status | transcript | padding-left | space.4 |
 | agent-context | transcript | font-size | type.small |
 
 ---

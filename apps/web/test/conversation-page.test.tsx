@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
@@ -210,6 +210,53 @@ describe("the conversation page (ConversationPage)", () => {
       );
     },
   );
+
+  it("a stop whose request fails says so inline, once, and logs the browser's reason (AC5)", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    api({
+      [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi"), runStarted(2)] }),
+      [`POST ${BASE}/abort`]: () => {
+        throw new TypeError("Load failed");
+      },
+    });
+    await renderChat("en");
+    await userEvent.setup().click(await screen.findByRole("button", { name: en.chat.stop }));
+    expect(
+      await screen.findByText(
+        "Couldn't stop: Cannot reach the server. Check your network connection.",
+      ),
+    ).toBeTruthy();
+    expect(String(warn.mock.calls[0]?.[2])).toContain("Load failed");
+    // the run still shows as running: Stop can be pressed again
+    expect(screen.getByRole("button", { name: en.chat.stop })).toHaveProperty("disabled", false);
+    warn.mockRestore();
+  });
+
+  it("a stop answered run.not_active reads the log again, so a stale Stop goes (AC5)", async () => {
+    let reads = 0;
+    const calls = api({
+      [`GET ${BASE}/events`]: () =>
+        json(200, {
+          events:
+            reads++ === 0
+              ? [userMsg(1, "hi"), runStarted(2)]
+              : [
+                  userMsg(1, "hi"),
+                  runStarted(2),
+                  ev(3, "run_finished", { reason: "completed", consumedUpToSeq: 1 }),
+                ],
+        }),
+      [`POST ${BASE}/abort`]: () =>
+        json(409, { error: { code: "run.not_active", message: "no active run" } }),
+    });
+    await renderChat("en");
+    await userEvent.setup().click(await screen.findByRole("button", { name: en.chat.stop }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: en.chat.stop })).toBeNull());
+    // the server's first read, then the client's read again after the 409
+    expect(reads).toBe(2);
+    expect(calls.some((c) => c.method === "GET" && c.url.startsWith(`${BASE}/events`))).toBe(true);
+    expect(screen.queryByText(/Couldn't stop/)).toBeNull();
+  });
 
   it("a run another member stopped names them; an unknown account reads another member (m8)", async () => {
     const stopped = (seq: number, by: string, run: string) => [

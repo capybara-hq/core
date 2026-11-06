@@ -865,6 +865,7 @@
     "panelExtensions": "Extensions",
     "agentMap": "Agent map",
     "agentMapFailed": "The agent map could not be loaded.",
+    "stopFailed": "Couldn't stop: {reason}",
     "fullOutput": "Full output",
     "builtinPreviewer": "Built-in preview",
     "setup": {

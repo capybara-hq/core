@@ -4354,7 +4354,6 @@ textarea {
   display: flex;
   flex-direction: column;
   width: 1100px;
-  padding: var(--cb-space-5) var(--cb-space-6);
   background: var(--cb-panel);
   border: 1px solid var(--cb-line-strong);
   border-radius: var(--cb-radius-md);
@@ -4365,6 +4364,16 @@ textarea {
   align-items: center;
   gap: var(--cb-space-2);
 }
+/* The tree's head: the dialog head's padding and rule (§6.7); the body pads itself. */
+.r-amap-dialog > .r-amap-head {
+  padding: var(--cb-space-2) var(--cb-space-4);
+  border-bottom: 1px solid var(--cb-line-soft);
+}
+.r-amap-body {
+  display: flex;
+  flex-direction: column;
+  padding: var(--cb-space-4);
+}
 .r-amap-title {
   flex: 1;
   margin: 0;
@@ -4374,7 +4383,7 @@ textarea {
   font-weight: 500;
 }
 .r-amap-count {
-  margin: var(--cb-space-1) 0 var(--cb-space-4);
+  margin: 0 0 var(--cb-space-3);
   color: var(--cb-muted);
   font-family: var(--cb-font-prose);
 }
@@ -4545,7 +4554,7 @@ textarea {
   display: flex;
   flex-wrap: wrap;
   gap: var(--cb-space-4);
-  margin-top: var(--cb-space-4);
+  margin-top: var(--cb-space-3);
   color: var(--cb-faint);
   font-size: var(--cb-type-small-size);
   line-height: var(--cb-type-small-line);
@@ -4556,22 +4565,21 @@ textarea {
   gap: var(--cb-space-2);
 }
 
-/* Agent map levels 2 and 3 (§6.16.28): one agent's summary and its transcript frame. */
+/* Agent map levels 2 and 3 (§6.16.28): one agent's summary and its transcript frame, as wide as
+   the conversation's column plus the body padding and the border. */
 .r-amap-dialog[data-level="detail"],
 .r-amap-dialog[data-level="transcript"] {
-  padding: 0;
+  width: calc(var(--cb-layout-chat) + 2 * var(--cb-space-4) + 2px);
 }
 .r-amap-dialog[data-level="detail"] {
-  width: 760px;
   height: 600px;
 }
 .r-amap-dialog[data-level="transcript"] {
-  width: 1060px;
   height: 640px;
 }
 .r-amap-dhead {
   flex: none;
-  padding: var(--cb-space-5) var(--cb-space-6) var(--cb-space-3);
+  padding: var(--cb-space-2) var(--cb-space-4);
   border-bottom: 1px solid var(--cb-line-soft);
 }
 .r-amap-dhead .r-amap-title {
@@ -4606,7 +4614,7 @@ textarea {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
-  padding: var(--cb-space-3) var(--cb-space-6);
+  padding: var(--cb-space-4);
 }
 .r-amap-latest {
   margin: 0 0 var(--cb-space-3);
@@ -4675,7 +4683,7 @@ textarea {
   display: flex;
   flex: none;
   gap: var(--cb-space-3);
-  padding: var(--cb-space-3) var(--cb-space-6);
+  padding: var(--cb-space-3) var(--cb-space-4);
   border-top: 1px solid var(--cb-line-soft);
 }
 .r-amap-dfoot > .r-btn {
@@ -4685,7 +4693,7 @@ textarea {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
-  padding: var(--cb-space-4) var(--cb-layout-gutter);
+  padding: var(--cb-space-4);
 }
 .r-amap-thread {
   display: flex;
@@ -4706,12 +4714,8 @@ textarea {
   font-size: var(--cb-type-small-size);
   line-height: var(--cb-type-small-line);
 }
-.r-amap-status-text {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
+.r-amap-status > .r-btn {
+  margin-left: auto;
 }
 
 /* ── One box is enough (spec §1 principle 7): the groupings inside a box ── */

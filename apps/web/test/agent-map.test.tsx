@@ -2,7 +2,7 @@ import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
-import { agentTreeNodes } from "../src/components/conversation/AgentMap";
+import { agentTreeNodes, liveStatus, logWord } from "../src/components/conversation/AgentMap";
 import type { AgentTreeNode, ConversationEvent } from "../src/lib/conversations";
 import { TREE_PROGRESS_MS } from "../src/lib/subagents";
 import { type Call, json, stubApi } from "./support/api";
@@ -536,9 +536,10 @@ describe("the agent map's levels 2 and 3", () => {
     // read-only: no composer, the child's own stream, one live thread on the page
     expect(within(dialog).queryByRole("textbox")).toBeNull();
     expect(log.getAttribute("aria-live")).toBe("off");
-    expect(dialog.querySelector('[data-part="agent-transcript-status"]')?.textContent).toContain(
-      "ask Release notes to pass it on",
-    );
+    // no read-only copy in the status line (AC1): the missing composer says it; Stop stays
+    const status = dialog.querySelector('[data-part="agent-transcript-status"]') as HTMLElement;
+    expect(status.textContent).not.toMatch(/Read-only|pass it on/);
+    expect(within(status).getByRole("button", { name: "Stop" })).toBeTruthy();
     expect(childStream()).toBeTruthy();
     // back returns to level 2
     await user.click(within(dialog).getByRole("button", { name: "Back to the agent map" }));
@@ -886,5 +887,188 @@ describe("the agent map's statuses and keys (final review)", () => {
     });
     await userEvent.setup().click(within(notice).getByRole("button", { name: "Open" }));
     expect(window.location.hash).toBe("#bg-t1");
+  });
+});
+
+describe("stopping a sub-agent from the map (AC5)", () => {
+  const c = (seq: number, type: string, payload: unknown, runId: string | null = "run-ch1") =>
+    ev(seq, type, payload, runId, "ch1");
+  const ended = (reason = "completed") => [
+    ...childEvents().slice(0, 5),
+    c(6, "run_finished", { reason, consumedUpToSeq: 2 }),
+  ];
+  const abortCalls = (calls: Call[]) =>
+    calls.filter((x) => x.method === "POST" && x.url === `${CHILD}/abort`).length;
+  const toasts = () => [...document.querySelectorAll(".cb-toast-msg")].map((t) => t.textContent);
+  const headStatus = (dialog: HTMLElement) =>
+    dialog
+      .querySelector('[data-part="agent-map-head"] [data-part="agent-dot"]')
+      ?.getAttribute("data-status");
+
+  it("Stop stays rendered, busy and disabled while the stop is pending, until the terminal event", async () => {
+    let answer: (r: Response) => void = () => {};
+    const calls = api(parentEvents(), undefined, {
+      [`POST ${CHILD}/abort`]: () =>
+        new Promise<Response>((resolve) => {
+          answer = resolve;
+        }),
+    });
+    window.history.replaceState(null, "", "/chat/c1#agents=ch1");
+    await renderChatRoute();
+    const dialog = await detailDialog();
+    const user = userEvent.setup();
+    await user.click(await within(dialog).findByRole("button", { name: "Stop" }));
+    const busy = await within(dialog).findByRole("button", { name: "Stop" });
+    expect(busy.getAttribute("aria-busy")).toBe("true");
+    expect(busy.hasAttribute("disabled")).toBe(true);
+    await user.click(busy);
+    expect(abortCalls(calls)).toBe(1);
+    // the kernel took it: still stopping until the agent's terminal event arrives
+    await act(async () => answer(json(202, { runId: "run-ch1" })));
+    expect(within(dialog).getByRole("button", { name: "Stop" }).getAttribute("aria-busy")).toBe(
+      "true",
+    );
+    await waitFor(() => expect(childStream()).toBeTruthy());
+    act(() => {
+      childStream()?.emit(
+        "event",
+        ev(9, "run_aborted", { byAccountId: "a1", reason: "user" }, "run-ch1", "ch1"),
+      );
+    });
+    await waitFor(() => expect(within(dialog).queryByRole("button", { name: "Stop" })).toBeNull());
+    expect(headStatus(dialog)).toBe("aborted");
+  });
+
+  it("a failed request shows one stop-specific toast, logs the browser's reason, and frees Stop", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const calls = api(parentEvents(), undefined, {
+      [`POST ${CHILD}/abort`]: () => {
+        throw new TypeError("Load failed");
+      },
+    });
+    window.history.replaceState(null, "", "/chat/c1#agents=ch1");
+    await renderChatRoute();
+    const dialog = await detailDialog();
+    await userEvent.setup().click(await within(dialog).findByRole("button", { name: "Stop" }));
+    await waitFor(() => expect(toasts()).toHaveLength(1));
+    expect(toasts()[0]).toBe(
+      "Couldn't stop: Cannot reach the server. Check your network connection.",
+    );
+    expect(abortCalls(calls)).toBe(1);
+    // the browser's own message goes to the console, not the UI
+    expect(warn).toHaveBeenCalled();
+    expect(String(warn.mock.calls[0]?.[2])).toContain("Load failed");
+    const stop = within(dialog).getByRole("button", { name: "Stop" });
+    expect(stop.getAttribute("aria-busy")).toBeNull();
+    expect(stop.hasAttribute("disabled")).toBe(false);
+    warn.mockRestore();
+  });
+
+  it("409 run.not_active reads the tree, the child's row and its log again, and Stop goes", async () => {
+    let logReads = 0;
+    const calls = api(parentEvents(), undefined, {
+      // the page holds a stale running log; the kernel's says the run ended
+      [`GET ${CHILD}/events`]: () =>
+        json(200, { events: logReads++ === 0 ? childEvents() : ended() }),
+      [`POST ${CHILD}/abort`]: () =>
+        json(409, { error: { code: "run.not_active", message: "no active run" } }),
+    });
+    window.history.replaceState(null, "", "/chat/c1#agents=ch1");
+    await renderChatRoute();
+    const dialog = await detailDialog();
+    const stop = await within(dialog).findByRole("button", { name: "Stop" });
+    const before = {
+      tree: treeReads(calls),
+      row: calls.filter((x) => x.method === "GET" && x.url === CHILD).length,
+    };
+    await userEvent.setup().click(stop);
+    await waitFor(() => expect(within(dialog).queryByRole("button", { name: "Stop" })).toBeNull());
+    expect(headStatus(dialog)).toBe("completed");
+    expect(treeReads(calls)).toBeGreaterThan(before.tree);
+    expect(calls.filter((x) => x.method === "GET" && x.url === CHILD).length).toBeGreaterThan(
+      before.row,
+    );
+    expect(logReads).toBeGreaterThan(1);
+    // the kernel's answer is no failure to report
+    expect(toasts()).toHaveLength(0);
+  });
+
+  // The head's status and Stop come from one status, settled from the log first: a tree read
+  // before the run's end never brings Stop back (rows: the child's log tail, the tree's status).
+  const restart = (seq: number): ConversationEvent =>
+    c(
+      seq,
+      "user_message",
+      {
+        content: [{ type: "text", text: "One more thing" }],
+        authorAccountId: "a1",
+        dispatch: { parentConversationId: "c1", parentRunId: "r1", callId: "s1", kind: "message" },
+      },
+      null,
+    );
+  it.each([
+    ["an open run, tree running", childEvents(), "running", "running"],
+    ["an open run, tree idle (read before it started)", childEvents(), "idle", "running"],
+    ["run finished, tree still running (stale)", ended(), "running", "completed"],
+    [
+      "run aborted, tree still running (stale)",
+      [...childEvents(), c(9, "run_aborted", { byAccountId: "a1", reason: "user" })],
+      "running",
+      "aborted",
+    ],
+    ["run out of steps, tree still running", ended("max_steps"), "running", "failed"],
+    ["a queued restart after the end, tree queued", [...ended(), restart(7)], "queued", "running"],
+    ["a message after the end, tree idle", [...ended(), restart(7)], "idle", "completed"],
+  ] as const)("%s: head %s", async (_, log, treeStatus, expected) => {
+    api(parentEvents(), () => json(200, tree(treeStatus)), {
+      [`GET ${CHILD}/events`]: () => json(200, { events: log }),
+    });
+    window.history.replaceState(null, "", "/chat/c1#agents=ch1");
+    await renderChatRoute();
+    const dialog = await detailDialog();
+    await within(dialog).findByText("Reading the docs first.");
+    await waitFor(() => expect(headStatus(dialog)).toBe(expected));
+    const active = expected === "running" || expected === "waiting";
+    await waitFor(() =>
+      expect(within(dialog).queryByRole("button", { name: "Stop" }) !== null).toBe(active),
+    );
+    // settled: both still agree once every read has landed
+    await act(async () => await new Promise((r) => setTimeout(r, 50)));
+    expect(headStatus(dialog)).toBe(expected);
+    expect(within(dialog).queryByRole("button", { name: "Stop" }) !== null).toBe(active);
+  });
+
+  it("a message after the end with a tree read before it: the tree is read again and Stop never shows", async () => {
+    let reads = 0;
+    // the map's first tree read predates the run's end (running); the kernel's next says idle
+    const calls = api(parentEvents(), () => json(200, tree(reads++ === 0 ? "running" : "idle")), {
+      [`GET ${CHILD}/events`]: () => json(200, { events: [...ended(), restart(7)] }),
+    });
+    window.history.replaceState(null, "", "/chat/c1#agents");
+    await renderChatRoute();
+    await userEvent.setup().click(await within(await mapDialog()).findByText("Scan docs"));
+    const dialog = await detailDialog();
+    await within(dialog).findByText("Reading the docs first.");
+    await waitFor(() => expect(treeReads(calls)).toBeGreaterThan(1));
+    await waitFor(() => expect(headStatus(dialog)).toBe("completed"));
+    expect(within(dialog).queryByRole("button", { name: "Stop" })).toBeNull();
+  });
+
+  it("liveStatus never takes an active tree word after the log's end, unless the tree is fresh", () => {
+    const log = (events: ConversationEvent[]) => ({
+      loading: false,
+      running: false,
+      waiting: false,
+      events,
+    });
+    expect(liveStatus("running", logWord({ ...log([]), loading: true }), false)).toBe("running");
+    expect(liveStatus("running", logWord(log(ended())), false)).toBe("completed");
+    expect(liveStatus("running", logWord(log(ended())), true)).toBe("completed");
+    const restarted = logWord(log([...ended(), restart(7)]));
+    expect(restarted).toEqual({ kind: "restart", seq: 7, ended: "completed" });
+    expect(liveStatus("running", restarted, false)).toBe("completed");
+    expect(liveStatus("running", restarted, true)).toBe("running");
+    expect(liveStatus("completed", logWord({ ...log([]), running: true }), false)).toBe("running");
+    expect(liveStatus("running", logWord({ ...log([]), waiting: true }), false)).toBe("waiting");
   });
 });

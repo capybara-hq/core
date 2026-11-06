@@ -335,13 +335,21 @@ export function useConversation(orgId: string, conversationId: string): Conversa
     try {
       await abort.mutateAsync(undefined);
     } catch (e) {
-      // The run just ended: its terminal event arrives through the stream.
-      if (!(e instanceof ApiClientError && e.code === "run.not_active"))
-        setErrorText(errorMessage(e));
+      if (e instanceof ApiClientError && e.code === "run.not_active") {
+        // Nothing runs: its terminal event arrives through the stream, or the log shown is stale
+        // (an event the stream missed): read it again, so a stale Stop goes (AC5).
+        void qc.invalidateQueries({
+          queryKey: keys.org(orgId).conversation(conversationId).events(),
+        });
+      } else {
+        // The browser's own reason (a failed fetch: "Load failed", net::ERR_…) for diagnosis.
+        console.warn("conversation: stop failed", e instanceof ApiClientError ? e.code : "", e);
+        setErrorText(t("stopFailed", { reason: errorMessage(e) }));
+      }
     } finally {
       setStopping(false);
     }
-  }, [abort.mutateAsync, errorMessage]);
+  }, [abort.mutateAsync, errorMessage, t, qc, orgId, conversationId]);
 
   // A row the caller got from a write (a rename) is the new state: it replaces the cached one.
   const replaceConversation = useCallback(
