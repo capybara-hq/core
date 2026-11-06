@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  AgentsChip,
   type ConversationPageProps,
   elapsed,
   RenameDialog,
@@ -25,6 +26,7 @@ import { useAppMutation } from "../../lib/query/mutation";
 import { useWhoWaits } from "../../lib/query/who-waits";
 import { runParts } from "../../lib/run-row";
 import {
+  type AgentsSummary,
   usageTotal,
   useSubagents,
   useTreeLookup,
@@ -113,6 +115,11 @@ export type RightAreaSlot = {
   panelNode?: ReactNode;
   /** The agent map dialog while the hash names it (agent map spec §9). */
   agentMap?: ReactNode;
+  /**
+   * The composer's agents chip (design spec §6.16.29, AC3): every sub-agent of the tree, how many
+   * run and wait, and the map's opener; absent until the conversation has a sub-agent.
+   */
+  agents?: AgentsSummary & { onOpen(): void };
   onCloseRight(): void;
   /** The open area's read is on its way (its loading state; `title`: the open panel's). */
   loading?: true | { title: string };
@@ -411,6 +418,18 @@ export function useConversationPage(
             ...(selection.effortPicker ? { effort: selection.effortPicker } : {}),
           }}
           placeholder={t("placeholder")}
+          {...(slot?.agents
+            ? {
+                agents: (
+                  <AgentsChip
+                    count={slot.agents.count}
+                    running={slot.agents.running}
+                    waiting={slot.agents.waiting}
+                    onOpen={slot.agents.onOpen}
+                  />
+                ),
+              }
+            : {})}
         />
       </Stack>
     ),

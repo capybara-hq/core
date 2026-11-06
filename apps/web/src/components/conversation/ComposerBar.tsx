@@ -195,6 +195,7 @@ export function ComposerBar({
   onSend,
   pickers,
   quickActions,
+  agents,
   placeholder,
   sendDisabled,
   initialDraft,
@@ -220,6 +221,8 @@ export function ComposerBar({
   pickers: { agent?: PickerProps; model: PickerProps; effort?: PickerProps };
   /** The selected agent's quick actions (`QuickActions`), after the effort picker. */
   quickActions?: ReactNode;
+  /** The agent map's entry (`AgentsChip`, AC3), after the quick actions; a conversation's only. */
+  agents?: ReactNode;
   placeholder: string;
   /** Nothing can be sent yet (a new conversation whose agent, or a thread, is still loading). */
   sendDisabled?: boolean;
@@ -676,6 +679,7 @@ export function ComposerBar({
           attachDisabled={!drafts.limits.available}
           pickers={pickers}
           {...(quickActions !== undefined ? { quickActions } : {})}
+          {...(agents !== undefined ? { agents } : {})}
           send={
             running && stop
               ? { mode: "stop", busy: stop.stopping, onClick: stop.onStop }

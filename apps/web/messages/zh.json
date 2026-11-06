@@ -870,7 +870,6 @@
     "fileRemoved": "已不可用",
     "noAgents": "没有可用的智能体。请先新建一个智能体。",
     "panelExtensions": "扩展",
-    "agentMap": "智能体图",
     "agentMapFailed": "智能体图加载失败。",
     "stopFailed": "停止失败：{reason}",
     "fullOutput": "完整输出",

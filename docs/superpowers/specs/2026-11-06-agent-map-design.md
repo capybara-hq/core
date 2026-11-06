@@ -367,8 +367,10 @@ The builder's choices for §11 and the rulings of the build that change behaviou
 - A run restarted by `SendMessage` acts for the sender's trigger account (§7), and holds a
   concurrency slot like a dispatched one.
 - The agent tree API carries no per-node latest text; level 2 reads it from the child's own events.
-- Map entry points: an "智能体图 / Agent map" action in the `SubagentGroup` header and a title-bar
-  icon while the conversation has sub-agents; the state lives in the URL hash (`#agents`,
+- Map entry points: an "智能体图 / Agent map" action in the `SubagentGroup` header and, while the
+  conversation has sub-agents, the composer's agents chip "N 个智能体" (acceptance item AC3,
+  2026-11-07, design spec §6.16.29; it replaced the title-bar icon); the state lives in the URL
+  hash (`#agents`,
   `#agents=<id>`, `#agents=<id>/transcript`); the sub-agent right panel stays for now.
 - The map's tree scrolls horizontally inside the 1100 px dialog at four columns (depth 3), keeping
   the node width.

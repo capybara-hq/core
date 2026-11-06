@@ -166,6 +166,104 @@ export function useTreeLookup(
   }, [root, nested, tree]);
 }
 
+/** What the composer's agents chip shows (design spec §6.16.29, acceptance item AC3). */
+export type AgentsSummary = {
+  /** Every sub-agent the page knows of, at any depth (the root not counted). */
+  count: number;
+  /** Those that run (queued included). */
+  running: number;
+  /** Those that wait for a person. */
+  waiting: number;
+};
+
+/**
+ * The agents chip's numbers from what the page already reads, without a read of its own (AC3
+ * ruling 3): the conversation's own sub-agents from its log and its sub-agent list (live: the list
+ * is read again on every `subagent_*` event), deeper ones from the agent tree when the page has
+ * read it (the map was open, or a deep wait needed it), the root log's waits (their `path` names
+ * every agent down to the waiting one) and the stream's progress (any agent of the tree).
+ *
+ * Activity follows the agent map's dot rules. A child of the conversation that waits with no
+ * approval or question of its own waits for its own sub-agents: what they do counts (the tree's
+ * descendants when it has them; else an open deep wait under it is a wait, and otherwise the
+ * branch is working, counted once). Deeper statuses count only while their branch's top child is
+ * active by the live list: the tree read last may be older than a deep agent's end, which reaches
+ * no event of the root's log.
+ */
+export function agentsSummary(input: {
+  events: readonly ConversationEvent[];
+  views: readonly SubagentView[] | undefined;
+  progress: Readonly<Record<string, unknown>>;
+  tree: AgentTreeNode | undefined;
+}): AgentsSummary {
+  const ids = new Set<string>();
+  /** The conversation's own children: their status, and whether they wait for a person. */
+  const direct = new Map<string, { status: string; person: boolean }>();
+  /** Open waits of deeper agents by the branch's top child (closed when that child finishes). */
+  const deepWaits = new Map<string, Set<string>>();
+  for (const e of input.events) {
+    if (e.type === "subagent_dispatched") {
+      ids.add(e.payload.subagentId);
+      direct.set(e.payload.subagentId, { status: "running", person: false });
+    } else if (e.type === "subagent_waiting") {
+      const path = e.payload.path ?? [e.payload.subagentId];
+      for (const id of path) ids.add(id);
+      ids.add(e.payload.subagentId);
+      const top = path[0] ?? e.payload.subagentId;
+      if (path.length <= 1) direct.set(top, { status: "waiting", person: true });
+      else deepWaits.set(top, (deepWaits.get(top) ?? new Set()).add(e.payload.subagentId));
+    } else if (e.type === "subagent_finished") {
+      direct.set(e.payload.subagentId, { status: e.payload.status, person: false });
+      deepWaits.delete(e.payload.subagentId);
+    }
+  }
+  for (const v of input.views ?? []) {
+    ids.add(v.id);
+    direct.set(v.id, {
+      status: v.status,
+      person: v.pendingApprovalIds.length + v.pendingQuestionIds.length > 0,
+    });
+  }
+  for (const id of Object.keys(input.progress)) ids.add(id);
+  /** The tree's agents below each of the root's children. */
+  const below = new Map<string, AgentTreeNode[]>();
+  const collect = (n: AgentTreeNode, into: AgentTreeNode[]) => {
+    for (const c of n.children) {
+      ids.add(c.id);
+      into.push(c);
+      collect(c, into);
+    }
+  };
+  for (const child of input.tree?.children ?? []) {
+    ids.add(child.id);
+    if (!direct.has(child.id)) direct.set(child.id, { status: child.status, person: false });
+    const nodes: AgentTreeNode[] = [];
+    collect(child, nodes);
+    below.set(child.id, nodes);
+  }
+  ids.delete(input.tree?.id ?? "");
+
+  const runs = (s: string) => s === "running" || s === "queued";
+  let running = 0;
+  let waiting = 0;
+  for (const [id, d] of direct) {
+    if (!isActiveStatus(d.status)) continue;
+    const deep = below.get(id) ?? [];
+    const deepRunning = deep.filter((n) => runs(n.status)).length;
+    // a deep agent that waits with nothing active below it waits for a person
+    const deepPerson = deep.filter(
+      (n) => n.status === "waiting" && !n.children.some((c) => isActiveStatus(c.status)),
+    ).length;
+    const openWaits = deepWaits.get(id)?.size ?? 0;
+    if (runs(d.status)) running += 1;
+    else if (d.person) waiting += 1;
+    else if (deep.length === 0 && openWaits === 0) running += 1;
+    running += deepRunning;
+    waiting += deep.length > 0 ? deepPerson : openWaits;
+  }
+  return { count: ids.size, running, waiting };
+}
+
 /** The most often stream progress reads the agent tree again (a trailing throttle window). */
 export const TREE_PROGRESS_MS = 1500;
 
