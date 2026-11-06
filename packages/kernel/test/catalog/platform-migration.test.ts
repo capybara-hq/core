@@ -1,10 +1,15 @@
+import { getQueueToken } from "@nestjs/bullmq";
+import type { Queue } from "bullmq";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { PlatformComponents } from "../../src/catalog/platform-components.js";
 import {
+  PLATFORM_MIGRATION_JOB,
   PlatformMigration,
   type PlatformMigrationStats,
   renamedSkillName,
 } from "../../src/catalog/platform-migration.js";
 import { skillsChangeText } from "../../src/runtime/context/skills.js";
+import { MAINTENANCE_QUEUE_NAME } from "../../src/runtime/maintenance-queue.js";
 import { skillVersionsById, usableSkills } from "../../src/skills/usable.js";
 import { createOrg, enableConnectorExtensions } from "../helpers/runs.js";
 import { SKILL_MD } from "../skills/zip.js";
@@ -260,6 +265,25 @@ describe("platform components migration", () => {
     expect(await env.db.selectFrom("platform_migration_runs").select("id").execute()).toEqual([]);
     // the next run does the work
     expect(await run()).toMatchObject({ itemsSynced: ["kit@1.0.0"], skillsLinked: 2 });
+  });
+
+  it("a failed sync after an import enqueues a run of the job soon (one per item), which writes the rows", async () => {
+    const sync = vi
+      .spyOn(PlatformComponents.prototype, "syncFromVersion")
+      .mockRejectedValueOnce(new Error("storage blip"));
+    try {
+      const itemId = await importPlugin(env, await kit("1.0.0"));
+      const queue = env.k.app.get<Queue>(getQueueToken(MAINTENANCE_QUEUE_NAME));
+      const job = await queue.getJob(`${PLATFORM_MIGRATION_JOB}-retry-${itemId}`);
+      expect(job?.name).toBe(PLATFORM_MIGRATION_JOB);
+      expect(job?.opts.delay).toBeGreaterThan(0);
+      expect(job?.opts.delay).toBeLessThanOrEqual(15 * 60_000);
+      await job?.remove();
+      expect(await env.db.selectFrom("platform_skills").select("id").execute()).toEqual([]);
+      expect(await run()).toMatchObject({ itemsSynced: ["kit@1.0.0"] });
+    } finally {
+      sync.mockRestore();
+    }
   });
 
   it("orgs on different versions: the platform takes the highest installed one; a copy whose content differs is pinned to its version", async () => {

@@ -3,6 +3,7 @@ import { ExtensionsModule } from "../extensions/extensions.module.js";
 import { SuperAdminLockModule } from "../identity/super-admin.js";
 import { QueueModule } from "../infra/queue/queue.module.js";
 import { OrgLockModule } from "../orgs/org-lock.js";
+import { MAINTENANCE_QUEUE_NAME } from "../runtime/maintenance-queue.js";
 import { SkillsModule } from "../skills/skills.module.js";
 import { StorageModule } from "../storage/storage.module.js";
 import { ToolsModule } from "../tools/tools.module.js";
@@ -26,7 +27,13 @@ import { PLUGIN_SCOPE_QUEUE, PluginScopeSync } from "./scope-sync.js";
  * part alone.
  */
 @Module({
-  imports: [ExtensionsModule, SuperAdminLockModule, StorageModule],
+  imports: [
+    ExtensionsModule,
+    SuperAdminLockModule,
+    StorageModule,
+    // a failed post-import platform sync enqueues the migration job (`PluginImport.syncPlatform`)
+    QueueModule.registerQueue(MAINTENANCE_QUEUE_NAME),
+  ],
   providers: [
     CatalogSourceLock,
     CatalogItemLock,

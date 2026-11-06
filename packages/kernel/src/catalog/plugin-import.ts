@@ -11,7 +11,9 @@ import {
   SDK_VERSION,
   SKILL_ENTRY_FILE,
 } from "@capybara-hq/plugin-sdk";
+import { getQueueToken } from "@nestjs/bullmq";
 import { Inject, Injectable } from "@nestjs/common";
+import type { Queue } from "bullmq";
 import { sql } from "kysely";
 import semver from "semver";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
@@ -55,6 +57,7 @@ import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import type { ProvenanceResult } from "../packages/provenance.js";
 import { packPackageTgz } from "../packages/tgz.js";
+import { MAINTENANCE_QUEUE_NAME } from "../runtime/maintenance-queue.js";
 import { checkSkillFiles, SkillArchiveError, type SkillPackageFile } from "../skills/package.js";
 import { type PrefixedStorage, StorageService } from "../storage/storage.service.js";
 import { canonicalJson } from "../tools/canonical-json.js";
@@ -94,6 +97,7 @@ import {
 import { isClaudePluginTree, translateClaudePlugin } from "./claude/translate.js";
 import { CatalogItemLock } from "./locks.js";
 import { PlatformComponents } from "./platform-components.js";
+import { PLATFORM_MIGRATION_JOB } from "./platform-migration.js";
 import {
   type PluginContents,
   PluginPackageError,
@@ -105,6 +109,9 @@ import { importRequestOf, resolveImportRequests } from "./request-rules.js";
 import type { PluginScope } from "./scope.js";
 import { addScopeOrg } from "./scope-orgs.js";
 import { maxSatisfying, satisfiesRange } from "./versions.js";
+
+/** How long after a failed post-import platform sync the migration job runs for the item. */
+export const PLATFORM_SYNC_RETRY_MS = 60_000;
 
 /**
  * Platform import of a plugin (package ecosystem spec §4.3): one review for every plugin, whatever
@@ -482,6 +489,8 @@ export class PluginImport {
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     /** The platform rows of a new item's components, written after the confirm's commit. */
     @Inject(PlatformComponents) private readonly platform: PlatformComponents,
+    /** A failed platform sync enqueues a run of the migration job here (it heals the item). */
+    @Inject(getQueueToken(MAINTENANCE_QUEUE_NAME)) private readonly maintenance: Pick<Queue, "add">,
   ) {
     this.files = storage;
   }
@@ -1173,8 +1182,11 @@ export class PluginImport {
 
   /**
    * The platform components of a new item. The item is committed already, so a failure is logged
-   * and not thrown (like a failed deploy, the import itself succeeded); running
-   * `PlatformComponents.syncFromVersion` again for the version writes what is missing.
+   * and not thrown (like a failed deploy, the import itself succeeded); a run of the platform
+   * components migration job (which writes what is missing) is enqueued on `cap-kernel-maintenance`
+   * after {@link PLATFORM_SYNC_RETRY_MS}, one per item (deterministic job id). If that run fails
+   * too, its `itemsFailed` shows in the super admin's inbox; the daily run and every worker start
+   * try again.
    */
   private async syncPlatform(itemId: string, version: string): Promise<void> {
     try {
@@ -1185,6 +1197,21 @@ export class PluginImport {
         version,
         err,
       });
+      try {
+        await this.maintenance.add(
+          PLATFORM_MIGRATION_JOB,
+          {},
+          {
+            jobId: `${PLATFORM_MIGRATION_JOB}-retry-${itemId}`,
+            delay: PLATFORM_SYNC_RETRY_MS,
+            attempts: 1,
+            removeOnComplete: true,
+            removeOnFail: { age: 86_400 },
+          },
+        );
+      } catch (e) {
+        this.log.warn("cannot enqueue the platform components migration", { itemId, err: e });
+      }
     }
   }
 
