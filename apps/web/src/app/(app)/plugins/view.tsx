@@ -179,7 +179,8 @@ const keyOf = (e: MarketplaceEntry) => `${e.sourceId}/${e.name}/${e.version ?? "
  * latest in (approving runs the import review with this org as the scope), and the row menu's
  * 其他版本 asks for another version (a deprecated one reads 已废弃 and cannot be asked for;
  * prereleases sit there while a stable version can be asked for). A version asked for in this
- * visit reads 已申请，等待处理 (the latest) or 已申请 <version>，等待处理; a plugin the deployment has imported reads 已引入.
+ * visit reads 已申请，等待处理 (the latest) or 已申请 <version>，等待处理; a plugin the deployment
+ * has imported reads 已引入.
  */
 function Market({
   orgId,

@@ -543,8 +543,9 @@ export const sourceEffective = (
 /**
  * Reads a marketplace entry for import: `version` given -> the entry listing that version; omitted
  * -> the newest compatible, importable versioned entry that is not deprecated, a stable version
- * before a prerelease, else the entry without a version (not deprecated first), else the newest versioned
- * one (refused later as incompatible or deprecated). Marketplace missing -> `marketplace.not_found`;
+ * before a prerelease, else the entry without a version (not deprecated first), else the newest
+ * versioned one (refused later as incompatible or deprecated). Marketplace missing ->
+ * `marketplace.not_found`;
  * marketplace disabled (official offline included), entry or version missing ->
  * `marketplace.entry_not_found`.
  */
