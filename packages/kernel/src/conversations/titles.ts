@@ -58,8 +58,10 @@ export const titleJobId = (conversationId: string, attempt: number): string =>
 export const TITLE_MAX_ATTEMPTS = 3;
 /** Output cap of the title call. */
 export const TITLE_MAX_OUTPUT_TOKENS = 32;
-/** The longest generated title (characters); a rename has the same limit. */
+/** The longest title a person can give by renaming (characters). */
 export const TITLE_MAX_CHARS = 120;
+/** The longest generated title by display width (CJK and emoji count 2: ~24 CJK / 48 Latin). */
+export const TITLE_MAX_WIDTH = 48;
 /** Each side of the excerpt is cut to this many characters. */
 export const TITLE_EXCERPT_CHARS = 1000;
 /**
@@ -76,8 +78,16 @@ const JOB = "title";
 
 /** The system prompt of the title call (model-facing, English). */
 export const TITLE_PROMPT =
-  "Write a title of at most 8 words for this conversation, in the language the user writes in. " +
+  "Write a short topic of what the user asked, not the reply, as a title for this conversation, " +
+  "in the language the user writes in. Use a noun phrase of at most 6 words or about 16 CJK " +
+  "characters: no sentence, no list. " +
   "Reply with the title only, no quotes or punctuation at the end.";
+
+const WIDE_RE =
+  /[\u1100-\u115F\u2E80-\u303E\u3041-\u33FF\u3400-\u4DBF\u4E00-\u9FFF\uA000-\uA4CF\uAC00-\uD7A3\uF900-\uFAFF\uFE30-\uFE6F\uFF00-\uFF60\uFFE0-\uFFE6]|\p{Extended_Pictographic}|[\u{20000}-\u{3FFFD}]/u;
+
+/** Display width of a character: 2 for CJK, fullwidth forms and emoji, else 1. */
+const widthOf = (ch: string): number => (WIDE_RE.test(ch) ? 2 : 1);
 
 const cut = (s: string): string => {
   const cps = Array.from(s);
@@ -91,8 +101,8 @@ export function titleExcerpt(firstUser: string, firstReply: string): string {
 
 /**
  * The title from a model reply: the first non-empty line, without control or format characters,
- * wrapping quotes or trailing punctuation, at most {@link TITLE_MAX_CHARS} characters; null when
- * nothing is left.
+ * wrapping quotes or trailing punctuation, at most {@link TITLE_MAX_WIDTH} display width (cut on a
+ * character boundary, no ellipsis); null when nothing is left.
  */
 export function cleanTitle(reply: string): string | null {
   const line =
@@ -110,9 +120,15 @@ export function cleanTitle(reply: string): string | null {
     .replace(/^["'“”‘’「」《》`*]+|["'“”‘’「」《》`*]+$/gu, "")
     .replace(/[.。!！?？,，;；:：]+$/u, "")
     .trim();
-  // counted in code points, so a cut never splits a surrogate pair
-  const cps = Array.from(t);
-  if (cps.length > TITLE_MAX_CHARS) t = cps.slice(0, TITLE_MAX_CHARS).join("").trimEnd();
+  // cut by display width over code points, so a cut never splits a surrogate pair
+  let width = 0;
+  let out = "";
+  for (const ch of t) {
+    width += widthOf(ch);
+    if (width > TITLE_MAX_WIDTH) break;
+    out += ch;
+  }
+  t = out.trimEnd();
   return t === "" ? null : t;
 }
 
