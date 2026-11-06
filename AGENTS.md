@@ -88,7 +88,9 @@ Each line is the rule you must not miss; the skill has the rest.
   (`pnpm check:kernel-conventions`). [writing-kernel-api](.agents/skills/writing-kernel-api/SKILL.md)
 - **Web UI:** page = template + design components; apps/web writes no styles; every read is a
   TanStack Query `defineQuery`, every write `useAppMutation`; thin server `page.tsx` + client
-  `view.tsx` (`pnpm check:web-ui`). [writing-web-ui](.agents/skills/writing-web-ui/SKILL.md)
+  `view.tsx`; one box is enough: never a box inside a box (`web-ui-box-in-box` and the jsdom guard
+  `findNestedBoxes`, both in [tools/checks/README.md](tools/checks/README.md))
+  (`pnpm check:web-ui`). [writing-web-ui](.agents/skills/writing-web-ui/SKILL.md)
 - **Runtime and replay:** the conversation event log is the single source of truth; everything the
   model sees goes into the log, and history sent to the model is append-only; new model-visible
   input needs a `DriftReason`. Run the zero-drift fixture tests before and after changing request

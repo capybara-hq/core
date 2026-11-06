@@ -1,4 +1,4 @@
-import { type ReactNode, useId } from "react";
+import { Children, type ReactNode, useId } from "react";
 import { LinkPendingMark, useDesignLink } from "../provider";
 import { EmptyState } from "./empty-state";
 
@@ -46,9 +46,7 @@ export type ItemListProps = {
  */
 export function ItemList({ label, rows, children, empty, inset = "card" }: ItemListProps) {
   const Link = useDesignLink();
-  const hasChildren = Array.isArray(children)
-    ? children.some((c) => c !== null && c !== undefined && c !== false)
-    : children !== null && children !== undefined && children !== false;
+  const hasChildren = Children.toArray(children).length > 0;
   if ((rows ?? []).length === 0 && !hasChildren) {
     return empty ? <EmptyState size="compact" text={empty} /> : null;
   }
@@ -130,7 +128,9 @@ export function ItemListItem({
 }: ItemListItemProps) {
   const Link = useDesignLink();
   const id = useId();
-  const body = children !== undefined && children !== null && children !== false;
+  // Empty nodes (null, false, an empty array) draw no lines and no body.
+  const body = Children.toArray(children).length > 0;
+  const lines = Children.toArray(meta).length > 0;
   return (
     <li
       className="cb-item-list-row"
@@ -168,7 +168,7 @@ export function ItemListItem({
           </span>
           {actions ? <span className="cb-item-list-actions">{actions}</span> : null}
         </div>
-        {meta ? (
+        {lines ? (
           <div className="cb-item-list-lines" data-part="item-list-meta">
             {meta}
           </div>

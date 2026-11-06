@@ -1,4 +1,6 @@
-import { cleanup, render } from "@testing-library/react";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterEach, describe, expect, it } from "vitest";
 import {
@@ -6,16 +8,21 @@ import {
   Card,
   CodeBlock,
   type Column,
+  DangerZone,
   DataTable,
   DesignProvider,
   Dialog,
   EmbedFrame,
   FilePicker,
+  FilePreviewFrame,
   FormPage,
   FormSection,
   InlineCard,
   ItemList,
   ItemListItem,
+  ObjectList,
+  Popover,
+  PropertiesPanel,
   PropertySection,
   RadioGroup,
   Repeater,
@@ -318,6 +325,99 @@ describe("the in-box groupings and loading shapes hold no second box", () => {
         />
       </>,
     );
+    expect(nested()).toEqual([]);
+  });
+});
+
+describe("full-height panes and the narrow properties sheet", () => {
+  it("a FilePreviewFrame is a pane: in the properties sheet its CodeBlock and table keep their box", () => {
+    zh(
+      <BoxScope kind="properties-sheet">
+        <FilePreviewFrame
+          header={{
+            badge: "MD",
+            name: "README.md",
+            onDownload: noop,
+            onFullscreen: noop,
+            onClose: noop,
+          }}
+          state="ready"
+        >
+          <CodeBlock text="x" />
+          {table}
+        </FilePreviewFrame>
+      </BoxScope>,
+    );
+    expect(document.querySelector(".cb-code")?.getAttribute("data-framed")).toBe("true");
+    expect(document.querySelector(".cb-table")?.getAttribute("data-framed")).toBe("true");
+    expect(nested()).toEqual([]);
+  });
+
+  it("the sheet splits every child of the panel, an extension section in its wrapper too", () => {
+    // jsdom does not resolve `var()` borders, so the hairline rules are read from the stylesheet
+    // and matched against the rendered panel's children.
+    const css = readFileSync(
+      resolve(import.meta.dirname, "../src/styles/conversation-page.css"),
+      "utf8",
+    ).replace(/\/\*[\s\S]*?\*\//g, "");
+    const hairlines = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+      .filter((m) => /border-top:\s*1px solid var\(--cb-line-soft\)/.test(m[2] ?? ""))
+      .flatMap((m) => (m[1] ?? "").split(",").map((x) => x.trim()));
+    zh(
+      <div className="cb-conv-sheet">
+        <BoxScope kind="properties-sheet">
+          <PropertiesPanel>
+            <PropertySection title="上下文">一</PropertySection>
+            {/* the app wraps an extension section (ExtensionBlocks' data-extension-section) */}
+            <div data-extension-section="todo/tasks">
+              <PropertySection title="待办">二</PropertySection>
+            </div>
+            <PropertySection title="文件">三</PropertySection>
+          </PropertiesPanel>
+        </BoxScope>
+      </div>,
+    );
+    const kids = [...(document.querySelector(".cb-properties")?.children ?? [])];
+    const split = (el: Element) => hairlines.some((sel) => el.matches(sel));
+    expect(kids.map(split)).toEqual([false, true, true]);
+    expect(
+      [...document.querySelectorAll(".cb-property-section")].map((x) =>
+        x.getAttribute("data-inset"),
+      ),
+    ).toEqual(["box", "box", "box"]);
+  });
+});
+
+describe("every box the static rule knows provides the box context", () => {
+  it("a Callout, a DangerZone and an ObjectList", () => {
+    zh(
+      <>
+        <Callout tone="warn">
+          <CodeBlock text="a" />
+        </Callout>
+        <DangerZone title="危险区">
+          <CodeBlock text="b" />
+        </DangerZone>
+        <ObjectList label="对象">
+          <li>
+            <CodeBlock text="c" />
+          </li>
+        </ObjectList>
+      </>,
+    );
+    expect(
+      [...document.querySelectorAll(".cb-code")].map((c) => c.getAttribute("data-framed")),
+    ).toEqual(["false", "false", "false"]);
+  });
+
+  it("a Popover", () => {
+    zh(
+      <Popover trigger={<button type="button">筛选</button>}>
+        <CodeBlock text="x" />
+      </Popover>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "筛选" }));
+    expect(document.querySelector(".cb-code")?.getAttribute("data-framed")).toBe("false");
     expect(nested()).toEqual([]);
   });
 });

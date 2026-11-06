@@ -16,6 +16,7 @@ export const BOXES: readonly BoxRule[] = [
   { name: "FormSection card", selector: ".cb-form-section-fields" },
   { name: "Dialog", selector: ".cb-dialog" },
   { name: "Sheet", selector: ".cb-sheet" },
+  { name: "Popover", selector: ".cb-popover" },
   { name: "properties sheet", selector: ".cb-conv-sheet" },
   { name: "InlineCard", selector: ".cb-icard" },
   { name: "PropertySection", selector: '.cb-property-section:not([data-inset="box"])' },
