@@ -544,6 +544,45 @@ describe("runStats", () => {
     expect(s.endedAt).toBeNull();
     expect(s.startedAt).toBe(Date.parse((events[2] as ConversationEvent).createdAt));
   });
+
+  it("a wait for a person is not working time: the count stops at the wait and resumes after it", () => {
+    const at = (e: ConversationEvent, s: number) => ({
+      ...e,
+      createdAt: new Date(Date.UTC(2026, 10, 7) + s * 1000).toISOString(),
+    });
+    const start = at(ev(1, "run_started", { agentVersion: 1, model: null }), 0);
+    const ask = at(ev(2, "question_asked", { callId: "c", questionId: "q1" }), 5);
+    // two approvals at once: the run works again only when both are decided
+    const a1 = at(ev(3, "approval_requested", { callId: "x", approvalId: "a1" }), 5);
+    const answered = at(ev(4, "question_answered", { questionId: "q1" }), 60);
+    const d1 = at(ev(5, "approval_decided", { approvalId: "a1" }), 100);
+    const end = at(ev(6, "run_finished", { reason: "end_turn", consumedUpToSeq: 0 }), 103);
+    const t0 = Date.UTC(2026, 10, 7);
+
+    expect(runStats([start])).toMatchObject({ workedMs: 0, resumedAt: t0 });
+    // waiting: nothing ticks, the worked time is the log's
+    expect(runStats([start, ask])).toMatchObject({ workedMs: 5000, resumedAt: null });
+    expect(runStats([start, ask, a1, answered])).toMatchObject({
+      workedMs: 5000,
+      resumedAt: null,
+    });
+    expect(runStats([start, ask, a1, answered, d1])).toMatchObject({
+      workedMs: 5000,
+      resumedAt: t0 + 100_000,
+    });
+    expect(runStats([start, ask, a1, answered, d1, end])).toMatchObject({
+      workedMs: 8000,
+      resumedAt: null,
+      last: "finished",
+    });
+    // a new run starts its own count
+    const next = at(ev(7, "run_started", { agentVersion: 1, model: null }, "r2"), 200);
+    expect(runStats([start, ask, a1, answered, d1, end, next])).toMatchObject({
+      turns: 2,
+      workedMs: 0,
+      resumedAt: t0 + 200_000,
+    });
+  });
 });
 
 describe("final review fixes", () => {

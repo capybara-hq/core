@@ -1258,7 +1258,33 @@ export interface RunStats {
   endedAt: number | null;
   /** How the last run ended (null while active or before any run). */
   last: "finished" | "failed" | "aborted" | null;
+  /**
+   * The current or last run's working time up to {@link resumedAt} (ms): its span without the
+   * time it waited for a person (an approval, a question), which is not working.
+   */
+  workedMs: number;
+  /**
+   * When the current run last started working (ms): its start, or the end of its last wait. Null
+   * while it waits for a person, after it ended and before any run, so nothing ticks then.
+   */
+  resumedAt: number | null;
 }
+
+/** A person's wait in a run: its start and end events and the id that pairs them. */
+const WAIT_ID: Partial<Record<ConversationEvent["type"], "start" | "end">> = {
+  approval_requested: "start",
+  question_asked: "start",
+  approval_decided: "end",
+  question_answered: "end",
+};
+const waitId = (e: ConversationEvent): string | undefined => {
+  const p = e.payload as { approvalId?: string; questionId?: string };
+  return p.approvalId ?? p.questionId;
+};
+
+/** The running time the status bar shows: worked time, plus the open working stretch. */
+export const workedMsAt = (s: RunStats, now: number): number | null =>
+  s.startedAt === null ? null : s.workedMs + (s.resumedAt === null ? 0 : now - s.resumedAt);
 
 export function runStats(events: readonly ConversationEvent[]): RunStats {
   let turns = 0;
@@ -1266,22 +1292,46 @@ export function runStats(events: readonly ConversationEvent[]): RunStats {
   let endedAt: number | null = null;
   let last: RunStats["last"] = null;
   let active: string | null = null;
+  let workedMs = 0;
+  let resumedAt: number | null = null;
+  const waits = new Set<string>();
   for (const e of events) {
+    const at = Date.parse(e.createdAt);
     if (e.type === "run_started") {
       // A resumed run writes no second run_started; a new runId is a new turn.
-      if (e.runId !== active) turns += 1;
+      if (e.runId !== active) {
+        turns += 1;
+        workedMs = 0;
+        waits.clear();
+        resumedAt = at;
+      } else if (waits.size === 0) resumedAt ??= at;
       active = e.runId;
-      startedAt = Date.parse(e.createdAt);
+      startedAt = at;
       endedAt = null;
       last = null;
-    } else if (TERMINAL.has(e.type) && e.runId !== null && e.runId === active) {
-      endedAt = Date.parse(e.createdAt);
+    } else if (e.runId === null || e.runId !== active) {
+    } else if (TERMINAL.has(e.type)) {
+      if (resumedAt !== null) workedMs += at - resumedAt;
+      resumedAt = null;
+      waits.clear();
+      endedAt = at;
       last =
         e.type === "run_finished" ? "finished" : e.type === "run_failed" ? "failed" : "aborted";
       active = null;
+    } else {
+      const kind = WAIT_ID[e.type];
+      const id = kind === undefined ? undefined : waitId(e);
+      if (id === undefined) continue;
+      if (kind === "start") {
+        if (waits.size === 0 && resumedAt !== null) workedMs += at - resumedAt;
+        resumedAt = null;
+        waits.add(id);
+      } else if (waits.delete(id) && waits.size === 0) {
+        resumedAt = at;
+      }
     }
   }
-  return { turns, startedAt, endedAt, last };
+  return { turns, startedAt, endedAt, last, workedMs: Math.max(0, workedMs), resumedAt };
 }
 
 export { toolKeysOf } from "./tool-keys";

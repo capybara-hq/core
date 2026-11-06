@@ -34,10 +34,12 @@ import {
   type FailedRun,
   latestModel,
   latestUsage,
+  type RunStats,
   runStats,
   toolKeysOf,
   usedTokens,
   withDrafts,
+  workedMsAt,
   workingLineVisible,
 } from "../../lib/timeline";
 import { useToolInfo } from "../../lib/tool-info";
@@ -68,26 +70,18 @@ export function useStatusSignature(path: string): { context: string; timeZone?: 
 }
 
 /**
- * "第 N 轮 · 已用 <elapsed>" in the status bar. It ticks each second on its own, only while a run
- * is going (not while it waits for a person), so the page does not re-render each second (I3).
+ * "第 N 轮 · 已用 <elapsed>" in the status bar: the run's working time. It ticks each second on its
+ * own only while the run works, so the page does not re-render each second (I3); while the run
+ * waits for a person it stops at the wait's start and reads the log alone (the status says
+ * 等待处理), and it counts on from there once the run continues.
  */
-function RunStatsText({
-  turns,
-  startedAt,
-  endedAt,
-  ticking,
-}: {
-  turns: number;
-  startedAt: number | null;
-  endedAt: number | null;
-  ticking: boolean;
-}) {
+function RunStatsText({ stats }: { stats: RunStats }) {
   const t = useTranslations("chat");
   const locale = useLocale() === "zh" ? "zh" : "en";
   // the server's time while hydrating (a running run's elapsed time then matches its render)
-  const now = useNow(ticking ? 1000 : 0);
-  const ms = startedAt === null ? null : (endedAt ?? now) - startedAt;
-  return <>{t("stats", { n: turns, elapsed: ms === null ? "—" : elapsed(ms, locale) })}</>;
+  const now = useNow(stats.resumedAt !== null ? 1000 : 0);
+  const ms = workedMsAt(stats, now);
+  return <>{t("stats", { n: stats.turns, elapsed: ms === null ? "—" : elapsed(ms, locale) })}</>;
 }
 
 /**
@@ -428,14 +422,7 @@ export function useConversationPage(
       ...signature,
       ...(stats.turns > 0
         ? {
-            stats: (
-              <RunStatsText
-                turns={stats.turns}
-                startedAt={stats.startedAt}
-                endedAt={stats.endedAt}
-                ticking={conv.running}
-              />
-            ),
+            stats: <RunStatsText stats={stats} />,
           }
         : {}),
       right: [statusText, ...(contextPct !== null ? [t("contextPct", { n: contextPct })] : [])],

@@ -835,6 +835,41 @@ describe("the conversation page (ConversationPage)", () => {
     expect(await screen.findByText(en.errors.internal)).toBeTruthy();
   });
 
+  it("while the run waits for a person the status bar's elapsed time stops at the wait (no running timer)", async () => {
+    const at = (e: ReturnType<typeof ev>, s: number) => ({
+      ...e,
+      createdAt: new Date(Date.UTC(2026, 9, 26, 6, 0, 0) + s * 1000).toISOString(),
+    });
+    api({
+      [`GET ${BASE}/events`]: () =>
+        json(200, {
+          events: [
+            at(userMsg(1, "hi"), 0),
+            at(runStarted(2), 1),
+            at(
+              ev(3, "question_asked", {
+                step: 0,
+                callId: "c2",
+                questionId: "q1",
+                form: { title: "t", fields: [] },
+                expiresAt: "2026-10-27T00:00:00.000Z",
+              }),
+              8,
+            ),
+          ],
+        }),
+    });
+    await renderChat("en");
+    await screen.findByText("hi");
+    // 7 s of work before the question; the days since then are waiting, not working
+    expect(screen.getByText("Turn 1 · 7s elapsed")).toBeTruthy();
+    expect(screen.getAllByText(en.chat.status.waiting).length).toBeGreaterThan(0);
+    // a later render (the answer typed, a refetch) reads the same: the wait never ticks
+    await act(() => new Promise((r) => setTimeout(r, 1100)));
+    act(() => FakeEventSource.instances[0]?.emit("changed", { what: "queue" }));
+    expect(screen.getByText("Turn 1 · 7s elapsed")).toBeTruthy();
+  });
+
   it("a run starting, waiting and ending tells the sidebar (its state dot follows)", async () => {
     api({
       [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
