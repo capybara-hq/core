@@ -125,7 +125,10 @@
       "version_conflict": "你编辑期间有人保存了这个智能体。请刷新页面后重新修改。",
       "profile_conflict": "你编辑期间有人修改了这个智能体的资料。请刷新查看最新内容后重新修改。",
       "instructions_mismatch": "指令与提示词文件不一致。请编辑提示词文件，或刷新后重试。",
-      "profile_unloaded": "资料尚未加载完成。请刷新页面后重试。"
+      "profile_unloaded": "资料尚未加载完成。请刷新页面后重试。",
+      "template_not_found": "模板不存在，或在本组织不可用。",
+      "visibility_forbidden": "只有组织管理员可以用模板创建给他人使用的智能体。请把可见范围设为仅自己。",
+      "template_preview_stale": "预览之后模板或组织的配置有变化。请重新预览后再创建。"
     },
     "conversation": {
       "not_found": "会话不存在或你无权访问。",

@@ -113,6 +113,43 @@ export const SubagentsSchema = z
   .strict();
 export type Subagents = z.infer<typeof SubagentsSchema>;
 
+/** The key rule of a pending connector (`[a-z0-9-]`, URL-safe: it names the bind route). */
+export const PENDING_CONNECTOR_KEY_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
+
+/** Pending connectors an agent may carry (the template's `connectors` limit). */
+export const PENDING_CONNECTORS_MAX = 16;
+
+/**
+ * A connector the template the agent was created from needs and the org has not bound yet
+ * (ruling P4-6): `source.template` is the platform connector template's id, `source.needs` a
+ * hand-configured connector described by protocol, endpoint and tools (P4-11). `tools` are the
+ * tool names to enable once bound (absent = all of a template's tools). Never model-visible:
+ * tools are built from `tools` only, and a pending connector has none.
+ */
+export const PendingConnectorSchema = z
+  .object({
+    key: z.string().regex(PENDING_CONNECTOR_KEY_RE),
+    label: z.string().min(1).max(80),
+    source: z.union([
+      z.object({ template: z.string().min(1).max(100) }).strict(),
+      z
+        .object({
+          needs: z
+            .object({
+              protocol: z.enum(["mcp", "openapi"]),
+              endpoint: z.string().min(1).max(2048),
+              tools: z.array(z.string().min(1).max(128)).max(200),
+              label: z.string().min(1).max(80),
+            })
+            .strict(),
+        })
+        .strict(),
+    ]),
+    tools: z.array(z.string().min(1).max(128)).max(200).optional(),
+  })
+  .strict();
+export type PendingConnector = z.infer<typeof PendingConnectorSchema>;
+
 /** Agent 定义：每次变化写一个新版本（`capybara.agent_versions`）。 */
 export const AgentDefinitionSchema = z.object({
   name: z.string().min(1).max(80),
@@ -164,6 +201,11 @@ export const AgentDefinitionSchema = z.object({
     .optional(),
   /** Sub-agents (phase C); offered only when the builtin `Agent` tool is in `tools`. */
   subagents: SubagentsSchema.optional(),
+  /**
+   * Connectors still to configure (ruling P4-6), written only by creating from a template. No
+   * default: definitions without it are unchanged. Model-invisible.
+   */
+  pendingConnectors: z.array(PendingConnectorSchema).max(PENDING_CONNECTORS_MAX).optional(),
 });
 export type AgentDefinition = z.infer<typeof AgentDefinitionSchema>;
 
