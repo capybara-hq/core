@@ -130,34 +130,36 @@ export type TreeLookup = {
  * only while the log holds a nested agent's wait whose branch has not ended since
  * ({@link hasUnresolvedNestedWait}); its name and whether it still waits are in the tree, not in
  * the root's log. The map's own refresh ({@link useAgentTree}) keeps it current meanwhile; after
- * that the last answer still names the agents of the log's older waits.
+ * that the last answer still names the agents of the log's older waits. Only a root conversation
+ * (`root`) has a tree: a sub-agent's page never reads it (the API answers 404).
  */
 export function useTreeLookup(
   orgId: string,
   conversationId: string,
   events: readonly ConversationEvent[],
+  root: boolean,
 ): TreeLookup | undefined {
   const nested = useMemo(() => hasNestedWait(events), [events]);
   const unresolved = useMemo(() => hasUnresolvedNestedWait(events), [events]);
   const query = agentTreeQuery(orgId, conversationId);
-  const root = useQuery({
+  const tree = useQuery({
     ...query,
-    enabled: unresolved,
+    enabled: root && unresolved,
     retryOnMount: retryOnMountOf(query.queryKey),
   }).data;
   return useMemo(() => {
-    if (!nested || root === undefined) return undefined;
+    if (!root || !nested || tree === undefined) return undefined;
     const nodes = new Map<string, AgentTreeNode>();
     const walk = (n: AgentTreeNode) => {
       nodes.set(n.id, n);
       n.children.forEach(walk);
     };
-    walk(root);
+    walk(tree);
     return {
       agentName: (id) => nodes.get(id)?.description || nodes.get(id)?.agentType || undefined,
       agentStatus: (id) => nodes.get(id)?.status,
     };
-  }, [nested, root]);
+  }, [root, nested, tree]);
 }
 
 /** The most often stream progress reads the agent tree again (a trailing throttle window). */

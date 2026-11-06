@@ -629,6 +629,64 @@ describe("sub-agents on the conversation page", () => {
     await userEvent.setup().click(within(line).getByRole("button", { name: en.subagents.open }));
     expect(window.location.hash).toBe("#subagent=ch2");
   });
+
+  it("a sub-agent's own page never reads an agent tree, even with a nested wait in its log", async () => {
+    params.conversationId = "ch2";
+    resetNavigation("/chat/ch2");
+    window.history.replaceState(null, "", "/chat/ch2");
+    // the child's own child (gc1) waits: a nested wait the root's page would name from the tree
+    const child = [
+      ...childEvents(true),
+      ev(
+        7,
+        "subagent_dispatched",
+        {
+          step: 2,
+          callId: "g1",
+          subagentId: "gc1",
+          childRunId: "run-gc1",
+          agentType: "general-purpose",
+          description: "Grandchild",
+        },
+        "run-ch2",
+        "ch2",
+      ),
+      ev(
+        8,
+        "subagent_waiting",
+        {
+          subagentId: "gg1",
+          childRunId: "run-gg1",
+          path: ["gc1", "gg1"],
+          kind: "approval",
+          toolKey: "Bash",
+        },
+        null,
+        "ch2",
+      ),
+    ];
+    const calls = api(
+      {
+        [`GET ${CHILD}/agent-tree`]: () =>
+          json(404, { error: { code: "conversation.not_found", message: "x" } }),
+        [`GET ${CHILD}/queue`]: () => json(200, { items: [], paused: false }),
+        [`GET ${CHILD}/files`]: () => json(200, { files: [], next: null }),
+        [`GET ${CHILD}/subagents`]: () => json(200, { subagents: [], next: null }),
+        [`GET ${CHILD}/usage`]: () =>
+          json(200, {
+            usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
+          }),
+        [`GET ${CHILD}/sandbox`]: () =>
+          json(404, { error: { code: "sandbox.not_found", message: "x" } }),
+      },
+      { child },
+    );
+    const { calls: server } = await renderChatRoute({ id: "ch2" });
+    expect(await screen.findByText("All tests pass.")).toBeTruthy();
+    await new Promise((r) => setTimeout(r, 50));
+    const tree = (cs: Call[]) => cs.filter((x) => x.url.startsWith(`${CHILD}/agent-tree`));
+    expect([...tree(server), ...tree(calls)]).toEqual([]);
+  });
 });
 
 describe("the conversation page's server snapshot (web-SSR spec §6.2)", () => {

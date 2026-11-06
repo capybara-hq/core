@@ -197,7 +197,9 @@ export function useConversationPage(
     [subagents.views],
   );
   const whoWaits = useWhoWaits(orgId, conv.events);
-  const tree = useTreeLookup(orgId, conversationId, conv.events);
+  // the tree is a root's (a sub-agent's page, or one still loading, reads none)
+  const isRoot = conv.conversation !== undefined && !conv.conversation.parentConversationId;
+  const tree = useTreeLookup(orgId, conversationId, conv.events, isRoot);
   // The log's timeline is rebuilt when the log changes; a delta frame only adds the drafts (I3).
   const base = useMemo(
     () =>

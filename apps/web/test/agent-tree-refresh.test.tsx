@@ -161,7 +161,7 @@ describe("useTreeLookup", () => {
       <QueryClientProvider client={qc}>{children}</QueryClientProvider>
     );
     const { result, rerender } = renderHook(
-      (p: { events: readonly ConversationEvent[] }) => useTreeLookup("o1", "c1", p.events),
+      (p: { events: readonly ConversationEvent[] }) => useTreeLookup("o1", "c1", p.events, true),
       { wrapper, initialProps: { events: [dispatched, deepWait] } },
     );
     await settle();
@@ -177,5 +177,22 @@ describe("useTreeLookup", () => {
     expect(reads()).toBe(1);
     // what it read still names the agents
     expect(result.current?.agentStatus("gc1")).toBe("waiting");
+  });
+
+  it("never reads the tree of a conversation that is not a root (the API answers 404)", async () => {
+    calls = stubApi({
+      [`GET ${TREE}`]: () => json(404, { error: { code: "conversation.not_found" } }),
+    });
+    const qc = makeQueryClient();
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={qc}>{children}</QueryClientProvider>
+    );
+    const { result } = renderHook(
+      (p: { events: readonly ConversationEvent[] }) => useTreeLookup("o1", "c1", p.events, false),
+      { wrapper, initialProps: { events: [dispatched, deepWait] } },
+    );
+    await settle();
+    expect(reads()).toBe(0);
+    expect(result.current).toBeUndefined();
   });
 });
