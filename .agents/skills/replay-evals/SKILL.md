@@ -27,6 +27,8 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   or "it can't be fetched at reconstruction", and add a case to the "drift reasons" group in `reconstruct.test.ts`. Existing reasons: `system_hash`,
   `tools_changed` (baseline check only), `tool_spec_missing`, `definition_missing`, `pinned_changed` (step replay, see "Pinned skills and the tool map"),
   `subagent_changed` (child cases, see "Sub-agents"), `legacy_event`, `params_changed`, `model_switched` (see below), `media_missing`, `media_changed` (baseline check only), `tool_unmatched` (full-run replay).
+- The runtime (request building, the loop, waits) lives in `packages/kernel/src/runtime`. An agent's `instructions` is derived from its
+  `instructionFiles` on save.
 - The history sent to the model is append-only; model-visible text that appears in replay (such as `REPLAY_NO_RECORDING`) is always English.
 - Display-only `tool_result` fields: request building reads only `callId` / `content` / `isError` (plus `loadedTools` for the loaded set),
   so `display` (the bilingual summary) and `view` (UI refresh B: `command` exit code and description, `edit` line diff, `read` range)
@@ -244,6 +246,8 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   `DriftReason`, and replays never run it (eval conversations have `kind = 'eval'`; seed events
   copy it as data only). Step consumers skip every `usage` with a `purpose`; it belongs to no run,
   so run totals never see it; `usage.report` delivers it with `purpose: "title"` and `runId: ""`.
+  Titles are generated after a completed run; a rename always wins (the generated title is written only while
+  `title_source IS NULL`), and titles reject control, bidi and other format characters (ZWJ / ZWNJ allowed; `packages/kernel/src/text.ts`).
 
 ## Hooks and replays
 
