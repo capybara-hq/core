@@ -354,6 +354,8 @@ describe("the agent page's Sub-agents section", () => {
     expect(unsaved?.textContent ?? "").toBe("");
     // one box (acceptance item AB): the inline template is a row of the form card, not a card
     const list = within(s).getByRole("list", { name: S.inlineLabel });
+    // the list alone carries the name: no group of the same name around it
+    expect(within(s).queryByRole("group", { name: S.inlineLabel })).toBeNull();
     const row = within(list).getByRole("group", { name: "helper" });
     expect(row.closest('[data-part="item-list-row"]')).not.toBeNull();
     expect(within(row).getByRole("textbox", { name: S.inlineName })).toBeTruthy();

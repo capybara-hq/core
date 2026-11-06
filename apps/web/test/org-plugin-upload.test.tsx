@@ -215,7 +215,8 @@ describe("/plugins: 上传插件包", () => {
     await renderPlugins({ locale: "zh" });
     const { user, dialog } = await uploadIn(tgz());
     expect(await within(dialog).findByText(m.scope)).toBeTruthy();
-    expect(within(dialog).getByText(m.extensionNotice)).toBeTruthy();
+    // a notice in a Dialog is a warn line with its icon (spec §6.19)
+    expect(within(dialog).getByText(m.extensionNotice).querySelector("svg")).not.toBeNull();
     // One box (acceptance item AB): the Dialog holds headings and rows, never a card
     expect(dialog.querySelector('[data-part="card"]')).toBeNull();
     expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
@@ -246,9 +247,11 @@ describe("/plugins: 上传插件包", () => {
     const { dialog } = await uploadIn(tgz(), "en");
     const ext = await within(dialog).findByRole("region", { name: "crm" });
     expect(ext.getAttribute("data-part")).toBe("subsection");
-    const perms = within(ext).getByRole("list", {
+    // the review's region keeps its name; the list inside it is named apart (no duplicate)
+    const region = within(ext).getByRole("region", {
       name: fill(tp.permissionsLabel, { plugin: "crm" }),
     });
+    const perms = within(region).getByRole("list", { name: tp.permissions });
     const db = within(perms).getByRole("group", { name: tp.category.tables });
     expect(within(db).getByText(tp.sensitive)).toBeTruthy();
     expect(within(db).getByText("· crm_contacts")).toBeTruthy();

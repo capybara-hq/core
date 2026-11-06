@@ -913,9 +913,11 @@ describe("/admin/plugins/import (WizardPage)", () => {
       const sub = within(ext).getByRole("region", { name: REVIEW.extension.name });
       expect(sub.getAttribute("data-part")).toBe("subsection");
       expect(
-        within(sub).getByRole("list", {
-          name: fill(msgs[locale].extensions.permissionsLabel, { plugin: REVIEW.extension.name }),
-        }),
+        within(
+          within(sub).getByRole("region", {
+            name: fill(msgs[locale].extensions.permissionsLabel, { plugin: REVIEW.extension.name }),
+          }),
+        ).getByRole("list", { name: msgs[locale].extensions.permissions }),
       ).toBeTruthy();
       expect(within(templates).getByRole("list", { name: c.templates })).toBeTruthy();
       expect(document.querySelector('[data-part="card"]')).toBeNull();
@@ -968,6 +970,10 @@ describe("/admin/plugins/import (WizardPage)", () => {
     // The marketplace's permission mismatch comes with the staged review
     expect(screen.getByText(fill(r.mismatchMissing, { keys: "tools, secrets" }))).toBeTruthy();
     expect(screen.getByText(fill(r.mismatchExtra, { keys: "storage" }))).toBeTruthy();
+    // on the import page (no box around the review) the mismatch is the tinted warn callout
+    const mismatch = screen.getByText(r.mismatch).closest('[data-part="callout"]') as HTMLElement;
+    expect(mismatch.getAttribute("data-tone")).toBe("warn");
+    expect(mismatch.hasAttribute("data-framed")).toBe(false);
     // Prepared elsewhere: no way back to the source step
     expect(screen.queryByRole("button", { name: en.admin.extensions.wizard.back })).toBeNull();
     const user = userEvent.setup();

@@ -17,7 +17,7 @@ const P = M.purpose;
 const fill = (s: string, vars: Record<string, string | number>) =>
   s.replace(/\{(\w+)\}/g, (_, k: string) => String(vars[k]));
 
-/** The page's one save: the ActionRow's primary (the purpose cards have no save of their own). */
+/** The page's one save: the ActionRow's primary (the purpose rows have no save of their own). */
 const saveAll = (page: import("@playwright/test").Page) =>
   page.locator('[data-part="action-row"]').getByRole("button", { name: P.save }).click();
 
@@ -27,6 +27,13 @@ const saveAll = (page: import("@playwright/test").Page) =>
  */
 /** model-fake's display name (zh, its plugin.json): each provider's table is named by it. */
 const MODEL_FAKE = "模拟模型";
+
+/**
+ * The eval purpose's row (an ItemListItem, never a card): a group named by the purpose's label,
+ * the kernel's `KERNEL_PURPOSES` zh label.
+ */
+const evalRow = (page: import("@playwright/test").Page) =>
+  page.getByRole("group", { name: "评测评委", exact: true });
 
 test("后台定价与 eval 部署默认 → 组织设置页覆盖并恢复默认", async ({ page }) => {
   await signIn(page);
@@ -50,7 +57,7 @@ test("后台定价与 eval 部署默认 → 组织设置页覆盖并恢复默认
 
   // 2. eval 未映射 → 设部署默认为 fake-1，提示消失
   await expect(page.getByText(M.evalUnmapped)).toBeVisible();
-  const evalCard = page.locator('[data-purpose="eval"]');
+  const evalCard = evalRow(page);
   await selectOption(evalCard.getByRole("combobox", { name: P.model }), "model-fake/fake-1");
   await saveAll(page);
   await expect(page.getByText(fill(P.savedAll, { n: 1 }))).toBeVisible();
@@ -73,7 +80,7 @@ test("后台定价与 eval 部署默认 → 组织设置页覆盖并恢复默认
   // 3. 组织设置 → 模型用途（评测向导的「去设置」链到这里）：显示部署默认，覆盖后恢复默认
   await page.goto("/settings/models");
   await hydrated(page);
-  const orgCard = page.locator('[data-purpose="eval"]');
+  const orgCard = evalRow(page);
   const defText = fill(P.deploymentDefault, { target: `${MODEL_FAKE} / fake-1` });
   await expect(orgCard.getByText(defText)).toBeVisible();
   await expect(orgCard.getByText(P.overridden)).toHaveCount(0);
@@ -89,10 +96,7 @@ test("后台定价与 eval 部署默认 → 组织设置页覆盖并恢复默认
   // 4. 清理：清除 eval 部署默认与 fake-1 的价格
   await page.goto("/admin/models");
   await hydrated(page);
-  await selectOption(
-    page.locator('[data-purpose="eval"]').getByRole("combobox", { name: P.model }),
-    "",
-  );
+  await selectOption(evalRow(page).getByRole("combobox", { name: P.model }), "");
   await saveAll(page);
   await expect(page.getByText(M.evalUnmapped)).toBeVisible();
   const priced = page

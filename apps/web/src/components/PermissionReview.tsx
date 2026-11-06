@@ -55,7 +55,9 @@ export function PermissionReview({
         {/* One row per category, split by hairlines, never a card (spec §6.33 "A review row"):
             the review sits in a card, a Sheet or a Dialog, which is the one box */}
         {(groups.length > 0 || warnings.length > 0) && (
-          <ItemList label={t("permissionsLabel", { plugin })}>
+          // The section is named "<plugin> 的权限"; the list inside it is just "权限" (no
+          // duplicate accessible name).
+          <ItemList label={t("permissions")}>
             {groups.map((g) => {
               const meta = [
                 ...reasonsOf(g),

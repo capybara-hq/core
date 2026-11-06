@@ -2,6 +2,7 @@
 
 import {
   Button,
+  Callout,
   Checkbox,
   type Column,
   DangerConfirm,
@@ -313,30 +314,33 @@ export function AdminExtensionOverview({
           </Button>
         </Stack>
       )}
-      {/* Failure lines, not a danger card: the overview sits in the list's Sheet too (spec §6.7) */}
+      {/* A fail Callout: the tinted bar on the extension's page, the fail line in the list's
+          Sheet (it reads the box it sits in, spec §6.19) */}
       {failed.length > 0 && (
-        <Stack gap={8}>
-          {failed.map((r) => (
-            <Stack key={r.replicaId} gap={4}>
-              <Text tone="fail" icon="circle-x">
-                {t("detail.failedReplica", {
-                  replica: r.replicaId,
-                  reason: reasonText(r.reason) ?? "—",
-                })}
-              </Text>
-              {r.servingVersion && (
-                <Text variant="small" tone="muted">
-                  {t("detail.stillServing", { version: versionLabel(r.servingVersion) })}
+        <Callout tone="fail">
+          <Stack gap={8}>
+            {failed.map((r) => (
+              <Stack key={r.replicaId} gap={4}>
+                <Text tone="fail">
+                  {t("detail.failedReplica", {
+                    replica: r.replicaId,
+                    reason: reasonText(r.reason) ?? "—",
+                  })}
                 </Text>
-              )}
-              {r.detail !== null && r.detail !== "" && (
-                <Text variant="small" tone="fail">
-                  {r.detail}
-                </Text>
-              )}
-            </Stack>
-          ))}
-        </Stack>
+                {r.servingVersion && (
+                  <Text variant="small" tone="muted">
+                    {t("detail.stillServing", { version: versionLabel(r.servingVersion) })}
+                  </Text>
+                )}
+                {r.detail !== null && r.detail !== "" && (
+                  <Text variant="small" tone="fail">
+                    {r.detail}
+                  </Text>
+                )}
+              </Stack>
+            ))}
+          </Stack>
+        </Callout>
       )}
       <Stack gap={8}>
         <Text variant="small" tone="muted">

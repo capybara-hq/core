@@ -271,6 +271,78 @@ describe("/admin/extensions (ListPage + DataTable by capability, details in a Sh
     },
   );
 
+  it("in the Sheet the failed replicas are the fail line, not the tinted callout (spec §6.19)", async () => {
+    const split = plugin({
+      status: "failed",
+      replicas: [
+        { ...(plugin().replicas as View[])[0], state: "loaded" },
+        {
+          ...(plugin().replicas as View[])[1],
+          state: "failed",
+          reason: "setup_failed",
+          detail: "boom",
+        },
+      ],
+    });
+    listRoutes([split]);
+    await renderRouteWithCache("/admin/extensions", lastStubRoutes());
+    const user = userEvent.setup();
+    await user.click(screen.getByText("demo", { selector: ".cb-cell-title-name" }));
+    const sheet = await screen.findByRole("dialog", { name: "demo" });
+    const p = en.admin.extensions;
+    const line = within(sheet).getByText(
+      fill(p.detail.failedReplica, {
+        replica: "web-2-222-bbbbbb",
+        reason: p.detail.replicaReason.setup_failed,
+      }),
+    );
+    const callout = line.closest('[data-part="callout"]') as HTMLElement;
+    expect(callout.getAttribute("data-framed")).toBe("false");
+    expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
+  });
+
+  it("the config in the Sheet: a nested object is a subsection, the Sheet the one box (acceptance item AB)", async () => {
+    stubApi({
+      "GET /api/v1/admin/extensions": () => json(200, { extensions: [plugin()], drainSeconds: 30 }),
+      "GET /api/v1/admin/extensions/demo/config": () =>
+        json(200, {
+          plugin: "demo",
+          version: "1.0.0",
+          configurable: true,
+          schema: {
+            type: "object",
+            properties: {
+              region: { type: "string" },
+              limits: { type: "object", properties: { burst: { type: "integer" } } },
+            },
+          },
+          fields: [
+            {
+              path: "region",
+              secret: false,
+              hot: false,
+              source: "db",
+              readonly: false,
+              value: "eu",
+            },
+            { path: "limits.burst", secret: false, hot: false, source: "unset", readonly: false },
+          ],
+          valid: true,
+          validated: true,
+          issues: [],
+        }),
+    });
+    await renderRouteWithCache("/admin/extensions", lastStubRoutes());
+    const user = userEvent.setup();
+    await user.click(screen.getByText("demo", { selector: ".cb-cell-title-name" }));
+    const sheet = await screen.findByRole("dialog", { name: "demo" });
+    const limits = await within(sheet).findByRole("region", { name: "limits" });
+    expect(limits.getAttribute("data-part")).toBe("subsection");
+    expect(within(limits).getByLabelText(/^burst/)).toBeTruthy();
+    expect(sheet.querySelector('[data-part="card"]')).toBeNull();
+    expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
+  });
+
   it("an approval waiting: the permissions open by themselves in the Sheet; approving POSTs", async () => {
     const pending = plugin({
       status: "pending_approval",
@@ -465,6 +537,10 @@ describe("/admin/extensions/[name] (DetailPage)", () => {
         fill(p.detail.failedReplica, { replica: "web-2-222-bbbbbb", reason }),
       );
       expect(alert).toBeTruthy();
+      // On the extension's page (no box around it) the failures are the tinted fail callout
+      const callout = alert.closest('[data-part="callout"]') as HTMLElement;
+      expect(callout.getAttribute("data-tone")).toBe("fail");
+      expect(callout.hasAttribute("data-framed")).toBe(false);
       expect(screen.getAllByText(/connect ECONNREFUSED/).length).toBeGreaterThan(0);
       const serving = fill(p.detail.stillServing, { version: "v1.0.0" });
       expect(screen.getAllByText(serving).length).toBeGreaterThan(0);

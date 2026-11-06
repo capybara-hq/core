@@ -382,112 +382,110 @@ export function useSubagentsForm(
               {listProblems("subagents.templates")}
             </Stack>
           </div>
-          {/* biome-ignore lint/a11y/useSemanticElements: fieldset has browser default styles; apps/web writes none */}
-          <div role="group" aria-label={t("inlineLabel")}>
-            <Stack gap={8}>
-              <Text variant="small" tone="muted">
-                {t("inlineLabel")}
-              </Text>
-              {/* Rows inside the form card, not cards (spec §1 "One box is enough") */}
-              <ItemList label={t("inlineLabel")}>
-                {inline.map((x, i) => (
-                  <ItemListItem
-                    // biome-ignore lint/suspicious/noArrayIndexKey: drafts have no id; order is the roster order
-                    key={i}
-                    title={x.name || t("inlineNew")}
-                    actions={
-                      <Button
-                        variant="ghost"
-                        density="dense"
-                        aria-label={t("removeInline", { name: x.name || t("inlineNew") })}
-                        onClick={() => setInline((cur) => cur.filter((_, j) => j !== i))}
-                      >
-                        {t("remove")}
-                      </Button>
-                    }
-                  >
-                    <Stack gap={8}>
-                      <Field
-                        label={t("inlineName")}
-                        help={t("inlineNameHelp")}
-                        {...fieldError(`subagents.inline.${i}.name`)}
-                      >
-                        <Input
-                          value={x.name}
-                          maxLength={64}
-                          onChange={(e) => updateInline(i, { name: e.target.value })}
-                        />
-                      </Field>
-                      <Field
-                        label={t("inlineDescription")}
-                        {...fieldError(`subagents.inline.${i}.description`)}
-                      >
-                        <Textarea
-                          rows={2}
-                          maxLength={4096}
-                          value={x.description}
-                          onChange={(e) => updateInline(i, { description: e.target.value })}
-                        />
-                      </Field>
-                      <Field
-                        label={t("inlineInstructions")}
-                        {...fieldError(`subagents.inline.${i}.instructions`)}
-                      >
-                        <Textarea
-                          code
-                          rows={4}
-                          maxLength={100_000}
-                          value={x.instructions}
-                          onChange={(e) => updateInline(i, { instructions: e.target.value })}
-                        />
-                      </Field>
-                      <Field label={t("inlineModel")}>
-                        <Select
-                          value={x.model ?? "inherit"}
-                          onChange={(e) => {
-                            const v = e.target.value as AgentTier;
-                            setInline((cur) =>
-                              cur.map((y, k) => {
-                                if (k !== i) return y;
-                                const { model: _old, ...rest } = y;
-                                return v === "inherit" ? rest : { ...rest, model: v };
-                              }),
-                            );
-                          }}
-                          options={AGENT_TIERS.map((tier) => ({
-                            value: tier,
-                            label: tierLabel(tier),
-                          }))}
-                        />
-                      </Field>
-                      {problemsAt(`subagents.inline.${i}`)
-                        .filter(
-                          (p) =>
-                            !["name", "description", "instructions"].some(
-                              (f) => p.path === `subagents.inline.${i}.${f}`,
-                            ),
-                        )
-                        .map((p) => (
-                          <Text key={`${p.path}:${p.reason}`} variant="small" tone="fail">
-                            {problemText(p)}
-                          </Text>
-                        ))}
-                    </Stack>
-                  </ItemListItem>
-                ))}
-              </ItemList>
-              <Stack direction="row" gap={8}>
-                <Button
-                  disabled={inline.length >= INLINE_MAX}
-                  onClick={() =>
-                    setInline((cur) => [...cur, { name: "", description: "", instructions: "" }])
+          {/* The inline templates' list carries their name (no group of the same name around it) */}
+          <Stack gap={8}>
+            <Text variant="small" tone="muted">
+              {t("inlineLabel")}
+            </Text>
+            {/* Rows inside the form card, not cards (spec §1 "One box is enough") */}
+            <ItemList label={t("inlineLabel")}>
+              {inline.map((x, i) => (
+                <ItemListItem
+                  // biome-ignore lint/suspicious/noArrayIndexKey: drafts have no id; order is the roster order
+                  key={i}
+                  title={x.name || t("inlineNew")}
+                  actions={
+                    <Button
+                      variant="ghost"
+                      density="dense"
+                      aria-label={t("removeInline", { name: x.name || t("inlineNew") })}
+                      onClick={() => setInline((cur) => cur.filter((_, j) => j !== i))}
+                    >
+                      {t("remove")}
+                    </Button>
                   }
                 >
-                  {t("addInline")}
-                </Button>
-              </Stack>
+                  <Stack gap={8}>
+                    <Field
+                      label={t("inlineName")}
+                      help={t("inlineNameHelp")}
+                      {...fieldError(`subagents.inline.${i}.name`)}
+                    >
+                      <Input
+                        value={x.name}
+                        maxLength={64}
+                        onChange={(e) => updateInline(i, { name: e.target.value })}
+                      />
+                    </Field>
+                    <Field
+                      label={t("inlineDescription")}
+                      {...fieldError(`subagents.inline.${i}.description`)}
+                    >
+                      <Textarea
+                        rows={2}
+                        maxLength={4096}
+                        value={x.description}
+                        onChange={(e) => updateInline(i, { description: e.target.value })}
+                      />
+                    </Field>
+                    <Field
+                      label={t("inlineInstructions")}
+                      {...fieldError(`subagents.inline.${i}.instructions`)}
+                    >
+                      <Textarea
+                        code
+                        rows={4}
+                        maxLength={100_000}
+                        value={x.instructions}
+                        onChange={(e) => updateInline(i, { instructions: e.target.value })}
+                      />
+                    </Field>
+                    <Field label={t("inlineModel")}>
+                      <Select
+                        value={x.model ?? "inherit"}
+                        onChange={(e) => {
+                          const v = e.target.value as AgentTier;
+                          setInline((cur) =>
+                            cur.map((y, k) => {
+                              if (k !== i) return y;
+                              const { model: _old, ...rest } = y;
+                              return v === "inherit" ? rest : { ...rest, model: v };
+                            }),
+                          );
+                        }}
+                        options={AGENT_TIERS.map((tier) => ({
+                          value: tier,
+                          label: tierLabel(tier),
+                        }))}
+                      />
+                    </Field>
+                    {problemsAt(`subagents.inline.${i}`)
+                      .filter(
+                        (p) =>
+                          !["name", "description", "instructions"].some(
+                            (f) => p.path === `subagents.inline.${i}.${f}`,
+                          ),
+                      )
+                      .map((p) => (
+                        <Text key={`${p.path}:${p.reason}`} variant="small" tone="fail">
+                          {problemText(p)}
+                        </Text>
+                      ))}
+                  </Stack>
+                </ItemListItem>
+              ))}
+            </ItemList>
+            <Stack direction="row" gap={8}>
+              <Button
+                disabled={inline.length >= INLINE_MAX}
+                onClick={() =>
+                  setInline((cur) => [...cur, { name: "", description: "", instructions: "" }])
+                }
+              >
+                {t("addInline")}
+              </Button>
             </Stack>
-          </div>
+          </Stack>
           {/* biome-ignore lint/a11y/useSemanticElements: fieldset has browser default styles; apps/web writes none */}
           <div role="group" aria-label={t("agentsLabel")}>
             <Stack gap={8}>

@@ -9,6 +9,7 @@ import {
   FormSection,
   Input,
   ListPage,
+  LoadingSubsection,
   Stack,
   Subsection,
   Text,
@@ -16,7 +17,7 @@ import {
 } from "@capybara-hq/design";
 import { useQueryClient } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
-import { Fragment, useState } from "react";
+import { useState } from "react";
 import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { FormError } from "../../../../components/form-error";
 import { NoAccess } from "../../../../components/NoAccess";
@@ -112,24 +113,27 @@ function AdminModelsRead({ me }: { me: Me }) {
               : t("admin.providers.description", { currency: "…" })
           }
         >
-          <DataTable<AdminModelInfo>
-            label={t("admin.providers.title")}
-            // The loaded table's header (its cells come with the data).
-            columns={(
-              [
-                "model",
-                "capabilities",
-                "context",
-                "input",
-                "output",
-                "cacheRead",
-                "cacheWrite",
-              ] as const
-            ).map((key) => ({ key, header: t(`admin.columns.${key}`), cell: () => null }))}
-            rows={[]}
-            rowKey={(m) => m.id}
-            state="loading"
-          />
+          {/* The heading row is there too (its title comes with the data): nothing jumps */}
+          <LoadingSubsection variant="flush">
+            <DataTable<AdminModelInfo>
+              label={t("admin.providers.title")}
+              // The loaded table's header (its cells come with the data).
+              columns={(
+                [
+                  "model",
+                  "capabilities",
+                  "context",
+                  "input",
+                  "output",
+                  "cacheRead",
+                  "cacheWrite",
+                ] as const
+              ).map((key) => ({ key, header: t(`admin.columns.${key}`), cell: () => null }))}
+              rows={[]}
+              rowKey={(m) => m.id}
+              state="loading"
+            />
+          </LoadingSubsection>
         </FormSection>
         <FormSection
           id="purposes"
@@ -315,33 +319,27 @@ function ProviderModels({ provider: p, data }: { provider: AdminProvider; data: 
   ];
 
   // The provider's id under its name when the name is not the id (plain metadata, mono muted);
-  // a provider that failed to list its models says so there too, in place of its table.
+  // a provider that failed to list its models shows its error there, in place of its table (a
+  // block: the message in body size, each detail on its own row).
   const id = p.displayName ? p.provider : p.plugin !== p.provider ? p.plugin : undefined;
-  const description =
-    id === undefined && p.status !== "error" ? undefined : (
-      <>
-        {id !== undefined ? (
-          <Text variant="small" tone="muted">
-            {id}
-          </Text>
-        ) : null}
-        {p.status === "error" ? (
-          <span role="alert">
-            {[
-              t("admin.providerError", { provider: providerName }),
-              ...(p.error ? [p.error] : []),
-            ].map((line) => (
-              <Fragment key={line}>
-                {" "}
-                <Text variant="small" tone="fail" icon="circle-x">
-                  {line}
-                </Text>
-              </Fragment>
-            ))}
-          </span>
-        ) : null}
-      </>
-    );
+  const failed = p.status === "error";
+  const description = failed ? (
+    <Stack gap={4}>
+      {id !== undefined ? (
+        <Text variant="small" tone="muted">
+          {id}
+        </Text>
+      ) : null}
+      <FormError
+        message={t("admin.providerError", { provider: providerName })}
+        extra={p.error === undefined ? [] : [p.error]}
+      />
+    </Stack>
+  ) : id !== undefined ? (
+    <Text variant="small" tone="muted">
+      {id}
+    </Text>
+  ) : undefined;
 
   return (
     <Subsection
@@ -349,7 +347,7 @@ function ProviderModels({ provider: p, data }: { provider: AdminProvider; data: 
       title={providerName}
       {...(description !== undefined ? { description } : {})}
     >
-      {p.status === "error" ? null : (
+      {failed ? null : (
         <DataTable
           label={providerName}
           columns={columns}
