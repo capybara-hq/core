@@ -507,7 +507,14 @@ describe("creating an agent from a template", () => {
       enabledPlugins: new Set(),
       resolveModel: async (r) =>
         usable.has(`${r.provider}/${r.model}`)
-          ? [{ key: "effort", standard: "effort", schema: { type: "string", enum: ["low"] } }]
+          ? [
+              {
+                key: "effort",
+                standard: "effort",
+                schema: { type: "string", enum: ["low"] },
+                label: { zh: "思考深度", en: "Effort" },
+              },
+            ]
           : null,
       purpose: async (p) =>
         p === "subagent_capable" ? { model: { provider: "p", model: "tier" }, params: {} } : null,
