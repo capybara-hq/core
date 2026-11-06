@@ -480,6 +480,12 @@
       "connectorsLabel": "Connectors",
       "connectorTools": "All tools of {name}",
       "noConnectors": "No connectors are installed.",
+      "extensionToolsLabel": "Extension tools",
+      "noExtensionTools": "No extension enabled in this organization provides tools.",
+      "extensionToolsUnreadable": "The extension tools could not be read. Refresh the page to retry.",
+      "extensionToolUnavailable": "Unavailable: {reason}",
+      "extensionNotEnabled": "The extension {extension} is not enabled in this organization, or was uninstalled.",
+      "extensionToolGone": "The extension {extension} no longer provides this tool.",
       "policiesLabel": "Policies",
       "policy": {
         "default": "Default",

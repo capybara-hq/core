@@ -71,6 +71,7 @@ import { StorageModule } from "../storage/storage.module.js";
 import { ApprovalsController, ToolGrantsController } from "../tools/approvals.controller.js";
 import { ConnectorContentController } from "../tools/connector-content.controller.js";
 import { ConnectorsController } from "../tools/connectors.controller.js";
+import { ExtensionToolsController } from "../tools/extension-tools.controller.js";
 import {
   OAuthCallbackController,
   OAuthConnectController,
@@ -114,6 +115,7 @@ const CONTROLLERS: Type[] = [
   ApprovalsController,
   ToolGrantsController,
   QuestionsController,
+  ExtensionToolsController,
   OAuthConnectController,
   OAuthCallbackController,
   SsoController,

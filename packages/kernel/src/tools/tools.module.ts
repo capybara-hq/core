@@ -22,7 +22,7 @@ import { ConnectorContent } from "./connector-content.js";
 import { ConnectorsService } from "./connectors.service.js";
 import { Credentials } from "./credentials.js";
 import { ToolDrift } from "./drift.js";
-import { ConversationToolInfo } from "./info.js";
+import { ConversationToolInfo, OrgExtensionTools } from "./info.js";
 import { OAuthFlow } from "./oauth/flow.js";
 import { ToolOutputs } from "./outputs.js";
 import { ToolPipeline } from "./pipeline.js";
@@ -74,6 +74,7 @@ import { ToolRegistry } from "./registry.js";
     ConnectorsService,
     OAuthFlow,
     ConversationToolInfo,
+    OrgExtensionTools,
   ],
   exports: [
     Credentials,
@@ -89,6 +90,7 @@ import { ToolRegistry } from "./registry.js";
     ConnectorsService,
     OAuthFlow,
     ConversationToolInfo,
+    OrgExtensionTools,
   ],
 })
 export class ToolsModule {}

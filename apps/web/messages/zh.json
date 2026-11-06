@@ -480,6 +480,12 @@
       "connectorsLabel": "连接器",
       "connectorTools": "{name} 的全部工具",
       "noConnectors": "还没有安装连接器。",
+      "extensionToolsLabel": "扩展工具",
+      "noExtensionTools": "本组织启用的扩展没有提供工具。",
+      "extensionToolsUnreadable": "暂时读不到扩展工具列表，刷新页面重试。",
+      "extensionToolUnavailable": "不可用：{reason}",
+      "extensionNotEnabled": "扩展 {extension} 没有在本组织启用，或已卸载。",
+      "extensionToolGone": "扩展 {extension} 不再提供这个工具。",
       "policiesLabel": "策略",
       "policy": {
         "default": "默认",

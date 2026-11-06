@@ -12,9 +12,11 @@ import {
   WEB_TOOL_POINTS,
 } from "../../lib/agents";
 import type { ConnectorDetail } from "../../lib/connectors";
-import { availableExtensionPointsQuery } from "../../lib/query/agents";
+import type { ExtensionToolOffer, ExtensionToolsOffer } from "../../lib/extensions";
+import { availableExtensionPointsQuery, extensionToolsQuery } from "../../lib/query/agents";
 import { retryOnMountOf } from "../../lib/query/client";
 import { connectorQuery } from "../../lib/query/conversation";
+import { extensionToolKey, parseToolKey } from "../../lib/tool-key";
 import { toolLabel, toolLabelText } from "../../lib/tool-label";
 import { BUILTIN_SET, replaceToolRefs, sameJson, savedDefinition } from "./definition-parts";
 import {
@@ -27,21 +29,29 @@ import type { AgentFormData } from "./form-data";
 import { AgentSectionFrame, useAgentPage } from "./frame";
 import { useSectionDraft } from "./useSectionDraft";
 
-/** The references this section switches: the listed builtins and whole connectors. */
+/** The references this section switches: the listed builtins, extension tools, whole connectors. */
 const isSectionTool = (r: AgentToolRef) =>
   (r.kind === "builtin" && BUILTIN_SET.has(r.name)) ||
+  r.kind === "plugin" ||
   (r.kind === "connector" && r.tools === "all");
 
+type ExtensionRef = { plugin: string; name: string };
 type Draft = {
   builtins: string[];
+  /** The selected extension tools (`{kind:"plugin"}` references), in saved order. */
+  extensionTools: ExtensionRef[];
   connectors: string[];
   policies: Record<string, TightenedPolicy>;
 };
+const refKeyOf = (r: ExtensionRef) => extensionToolKey(r.plugin, r.name);
 const draftOf = (a: Agent): Draft => {
   const tools = a.definition.tools ?? [];
   return {
     builtins: tools.flatMap((r) =>
       r.kind === "builtin" && BUILTIN_SET.has(r.name) ? [r.name] : [],
+    ),
+    extensionTools: tools.flatMap((r) =>
+      r.kind === "plugin" ? [{ plugin: r.plugin, name: r.name }] : [],
     ),
     connectors: tools.flatMap((r) =>
       r.kind === "connector" && r.tools === "all" ? [r.connectorId] : [],
@@ -52,10 +62,13 @@ const draftOf = (a: Agent): Draft => {
 const sorted = (xs: string[]) => [...xs].sort();
 
 /**
- * 工具 Tools (agent profile design §3.2): the builtin tools, the active connectors (all their
- * enabled tools) and a tightened policy per referenced tool. Its save sends the saved definition
- * with only `tools` and `toolPolicies` changed: references it does not switch (plugin tools,
- * connectors picked by name, the `Agent` tool of Sub-agents) and their policies stay as saved.
+ * 工具 Tools (agent profile design §3.2): the builtin tools, the tools of the extensions enabled in
+ * the org (`GET …/tools/extensions`, one `{kind:"plugin"}` reference each), the active connectors
+ * (all their enabled tools) and a tightened policy per referenced tool. Its save sends the saved
+ * definition with only `tools` and `toolPolicies` changed: references it does not switch
+ * (connectors picked by name, the `Agent` tool of Sub-agents) and their policies stay as saved.
+ * A selected extension tool the org cannot serve now (extension off or uninstalled) stays listed
+ * and ticked as unavailable, with the reason; unticking it is the only way to drop it.
  * A web tool (`WebSearch` / `WebFetch`) is listed only while its point has a provider for the org
  * (`GET …/extension-points/available`) or when the agent selected it, with a hint when a selected
  * one cannot be served now (web tools spec §3.4).
@@ -115,14 +128,65 @@ function ToolsEdit({ data }: { data: AgentFormData }) {
     const point = WEB_TOOL_POINTS[name];
     return point !== undefined && availablePoints !== undefined && !availablePoints.has(point);
   });
+  // the tools of the extensions enabled in the org (unreadable: only the selected ones are listed)
+  const extQ = extensionToolsQuery(orgId);
+  const extQuery = useQuery({ ...extQ, retryOnMount: retryOnMountOf(extQ.queryKey) });
+  const offers: ExtensionToolsOffer[] | undefined = extQuery.data?.extensions;
+  const offered = new Map<string, { ext: ExtensionToolsOffer; tool: ExtensionToolOffer }>(
+    (offers ?? []).flatMap((ext) =>
+      ext.tools.map((tool) => [extensionToolKey(ext.plugin, tool.name), { ext, tool }] as const),
+    ),
+  );
+  const lang = locale.startsWith("zh") ? "zh" : "en";
+  /** Why a selected extension tool cannot be used now; null while the offer is unknown. */
+  const unavailableReason = (r: ExtensionRef): string | null => {
+    if (offers === undefined || offered.has(refKeyOf(r))) return null;
+    return offers.some((e) => e.plugin === r.plugin)
+      ? t("form.extensionToolGone", { extension: r.plugin })
+      : t("form.extensionNotEnabled", { extension: r.plugin });
+  };
+  /** The selected extension tools not on offer now, grouped under their extension's name. */
+  const missing = [...saved.extensionTools, ...d.extensionTools]
+    .filter((r, i, all) => all.findIndex((x) => refKeyOf(x) === refKeyOf(r)) === i)
+    .filter((r) => !offered.has(refKeyOf(r)));
+  const extensionGroups: {
+    plugin: string;
+    name: string;
+    tools: { ref: ExtensionRef; label: string; description: string | null }[];
+  }[] = [
+    ...(offers ?? []).map((ext) => ({
+      plugin: ext.plugin,
+      name: ext.displayName[lang],
+      tools: ext.tools.map((tool) => ({
+        ref: { plugin: ext.plugin, name: tool.name },
+        label: tool.title ?? tool.name,
+        description: tool.description === "" ? null : tool.description,
+      })),
+    })),
+  ];
+  for (const r of missing) {
+    let g = extensionGroups.find((x) => x.plugin === r.plugin);
+    if (!g) {
+      g = { plugin: r.plugin, name: r.plugin, tools: [] };
+      extensionGroups.push(g);
+    }
+    g.tools.push({ ref: r, label: r.name, description: null });
+  }
+  const extensionSelected = (r: ExtensionRef) =>
+    d.extensionTools.some((x) => refKeyOf(x) === refKeyOf(r));
+
   const edit = (fn: (cur: Draft) => Draft) => {
     save.begin();
     draft.set(fn);
   };
 
-  /** The referenced tool keys (for tightening): the builtins and the selected connectors' tools. */
+  /**
+   * The referenced tool keys (for tightening): the builtins, the selected extension tools and the
+   * selected connectors' tools.
+   */
   const toolKeys = [
     ...d.builtins,
+    ...d.extensionTools.map(refKeyOf),
     ...d.connectors.flatMap((id) =>
       (connectorDetails[id]?.tools ?? []).filter((x) => x.status === "enabled").map((x) => x.key),
     ),
@@ -130,6 +194,25 @@ function ToolsEdit({ data }: { data: AgentFormData }) {
 
   /** How the policy rows name a tool: builtins by name, connector tools as "<connector> [<tool>]". */
   const policyLabel = (key: string): string => {
+    const ext = d.extensionTools.find((r) => refKeyOf(r) === key);
+    if (ext) {
+      const o = offered.get(key);
+      return toolLabelText(
+        toolLabel(
+          {
+            key,
+            title: o?.tool.title ?? null,
+            tool: ext.name,
+            source: {
+              kind: "extension",
+              name: ext.plugin,
+              displayName: o?.ext.displayName ?? { zh: ext.plugin, en: ext.plugin },
+            },
+          },
+          locale,
+        ),
+      );
+    }
     for (const id of d.connectors) {
       const c = connectorDetails[id];
       const x = c?.tools.find((x) => x.key === key);
@@ -146,6 +229,7 @@ function ToolsEdit({ data }: { data: AgentFormData }) {
 
   const unsaved = [
     !sameJson(sorted(d.builtins), sorted(saved.builtins)),
+    !sameJson(sorted(d.extensionTools.map(refKeyOf)), sorted(saved.extensionTools.map(refKeyOf))),
     !sameJson(sorted(d.connectors), sorted(saved.connectors)),
     !sameJson(d.policies, saved.policies),
   ].filter(Boolean).length;
@@ -154,6 +238,7 @@ function ToolsEdit({ data }: { data: AgentFormData }) {
     if (save.pending) return;
     const picked: AgentToolRef[] = [
       ...d.builtins.map((name) => ({ kind: "builtin" as const, name })),
+      ...d.extensionTools.map((r) => ({ kind: "plugin" as const, plugin: r.plugin, name: r.name })),
       ...d.connectors.map((connectorId) => ({
         kind: "connector" as const,
         connectorId,
@@ -163,6 +248,7 @@ function ToolsEdit({ data }: { data: AgentFormData }) {
     // a policy of a tool this section manages goes with it; the others stay as saved
     const managed = (k: string) =>
       BUILTIN_SET.has(k) ||
+      parseToolKey(k)?.kind === "extension" ||
       Object.values(connectorDetails).some((a) => a.tools.some((x) => x.key === k));
     const r = await save.send({
       ...savedDefinition(agent),
@@ -224,6 +310,62 @@ function ToolsEdit({ data }: { data: AgentFormData }) {
                   {t("form.webUnavailable")}
                 </Text>
               )}
+            </Stack>
+          </div>
+          {/* biome-ignore lint/a11y/useSemanticElements: a fieldset brings the browser's border and padding, and apps/web writes no styles: role=group groups it */}
+          <div role="group" aria-label={t("form.extensionToolsLabel")}>
+            <Stack gap={4}>
+              <Text variant="small" tone="muted">
+                {t("form.extensionToolsLabel")}
+              </Text>
+              {extensionGroups.length === 0 && offers !== undefined && (
+                <Text variant="small" tone="faint">
+                  {t("form.noExtensionTools")}
+                </Text>
+              )}
+              {extQuery.isError && (
+                <Text variant="small" tone="faint">
+                  {t("form.extensionToolsUnreadable")}
+                </Text>
+              )}
+              {extensionGroups.map((g) => (
+                // biome-ignore lint/a11y/useSemanticElements: as above, role=group instead of a fieldset
+                <div key={g.plugin} role="group" aria-label={g.name} data-extension={g.plugin}>
+                  <Stack gap={4}>
+                    <Text variant="small">{g.name}</Text>
+                    {g.tools.map(({ ref, label, description }) => {
+                      const why = extensionSelected(ref) ? unavailableReason(ref) : null;
+                      return (
+                        <Stack key={ref.name} gap={0}>
+                          <Checkbox
+                            label={label}
+                            checked={extensionSelected(ref)}
+                            disabled={save.pending}
+                            onChange={(on) =>
+                              edit((cur) => ({
+                                ...cur,
+                                extensionTools: on
+                                  ? [...cur.extensionTools, ref]
+                                  : cur.extensionTools.filter((x) => refKeyOf(x) !== refKeyOf(ref)),
+                              }))
+                            }
+                          />
+                          {description !== null && (
+                            <Text variant="small" tone="faint">
+                              {description}
+                            </Text>
+                          )}
+                          {why !== null && (
+                            <Text variant="small" tone="warn">
+                              {t("form.extensionToolUnavailable", { reason: why })}
+                            </Text>
+                          )}
+                        </Stack>
+                      );
+                    })}
+                  </Stack>
+                </div>
+              ))}
             </Stack>
           </div>
           {/* biome-ignore lint/a11y/useSemanticElements: fieldset 带浏览器默认边框与内边距，apps/web 不能写样式；用 role=group 分组 */}

@@ -653,6 +653,11 @@ export class ToolRegistry {
     return (await subagentLimits(this.db.db, config, orgId)).maxConcurrentPerRun;
   }
 
+  /** The extensions enabled in the org (`extensions/enabled.ts`, through the host). */
+  async enabledExtensions(orgId: string): Promise<Set<string>> {
+    return this.host.enabledPlugins(orgId);
+  }
+
   /** Plugins the organization enabled (built-in plugins always count as enabled, C14). */
   private async enabledPlugins(orgId: string): Promise<Set<string>> {
     return this.host.enabledPlugins(orgId);

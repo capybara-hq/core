@@ -126,6 +126,32 @@ export const putExtensionPointDefault = (orgId: string, point: string, extension
     body: JSON.stringify({ extension }),
   });
 
+/** One tool of an extension enabled in the org (kernel `ExtensionToolOffer`). Display only. */
+export interface ExtensionToolOffer {
+  /** The registered name: the `name` of a `{kind:"plugin"}` reference. */
+  name: string;
+  /** The model-visible key `plugin__<plugin>__<name>`, also the `toolPolicies` key. */
+  key: string;
+  title: string | null;
+  /** The first line of the tool's (English) description. */
+  description: string;
+  annotations: Record<string, boolean>;
+  defaultPolicy: "allow" | "ask";
+}
+
+/** An extension enabled in the org with the tools it registered (kernel `ExtensionToolsOffer`). */
+export interface ExtensionToolsOffer {
+  plugin: string;
+  displayName: LocalizedName;
+  tools: ExtensionToolOffer[];
+}
+
+/** The tools of the extensions enabled in the org (`agents.use`), grouped by extension. */
+export const listExtensionTools = (orgId: string) =>
+  apiFetch<{ extensions: ExtensionToolsOffer[] }>(
+    `/api/v1/orgs/${encodeURIComponent(orgId)}/tools/extensions`,
+  );
+
 /** Whether each `org-default` point has a provider for the org now (`agents.use`; no names). */
 export const listAvailableExtensionPoints = (orgId: string) =>
   apiFetch<{ points: { point: string; available: boolean }[] }>(`${pointsBase(orgId)}/available`);

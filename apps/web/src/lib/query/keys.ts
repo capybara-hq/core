@@ -50,6 +50,8 @@ export const keys = {
       extensionPointDefaults: (): readonly unknown[] => [...all, "extensionPointDefaults"],
       /** Whether each `org-default` point has a provider for the org now (the web tools). */
       extensionPointsAvailable: (): readonly unknown[] => [...all, "extensionPointsAvailable"],
+      /** The tools of the extensions enabled in the org (the agent form's extension tools). */
+      extensionTools: (): readonly unknown[] => [...all, "extensionTools"],
       /** The catalog from the org's view (the items it may install). */
       catalog: (): readonly unknown[] => [...all, "catalog"],
       /** Every catalog item read (an invalidation prefix). */
