@@ -12,6 +12,7 @@ import {
 import { createZodDto } from "../infra/validation/create-zod-dto.js";
 import { ZBody } from "../infra/validation/zod-params.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
+import { roleAtLeast } from "../orgs/roles.js";
 import { OrgExtensionSwitch } from "./org-extension-switch.js";
 import type { UninstallPreview } from "./plugin-install.js";
 
@@ -31,6 +32,15 @@ class OrgExtensionPutBody extends createZodDto(PutBody, "OrgExtensionPutBody") {
 export type OrgExtensionItem = OrgExtensionView & { displayName: LocalizedName | null };
 
 /**
+ * What a member sees of an extension: its state, never the org config, the secrets' state, the config
+ * schema or the permission list.
+ */
+export type OrgExtensionMemberItem = Omit<
+  OrgExtensionItem,
+  "config" | "secrets" | "orgConfigSchema" | "permissions"
+>;
+
+/**
  * Org-level extension enablement and config (`/api/v1/orgs/:orgId/extensions`); responses echo only
  * non-secret config and whether each secret is set.
  */
@@ -42,14 +52,23 @@ export class OrgExtensionConfigsController {
     @Inject(OrgExtensionSwitch) private readonly extSwitch: OrgExtensionSwitch,
   ) {}
 
-  /** The org's extensions (also the channel plugin options: those providing `channel@1`). */
+  /**
+   * The org's extensions (also the channel plugin options: those providing `channel@1`). Members
+   * get the projection {@link OrgExtensionMemberItem}; admins the full view.
+   */
   @Get()
-  @OrgAction("org.extensions.manage")
-  async list(@CurrentOrg() org: OrgContext): Promise<{ extensions: OrgExtensionItem[] }> {
+  @OrgAction("org.extensions.read")
+  async list(
+    @CurrentOrg() org: OrgContext,
+  ): Promise<{ extensions: OrgExtensionItem[] | OrgExtensionMemberItem[] }> {
     const views = await this.configs.list(org.orgId);
     const names = await this.displayNames.many(views.map((v) => v.plugin));
+    const items = views.map((v) => ({ ...v, displayName: names.get(v.plugin) ?? null }));
+    if (roleAtLeast(org.role, "admin")) return { extensions: items };
     return {
-      extensions: views.map((v) => ({ ...v, displayName: names.get(v.plugin) ?? null })),
+      extensions: items.map(
+        ({ config: _c, secrets: _s, orgConfigSchema: _o, permissions: _p, ...rest }) => rest,
+      ),
     };
   }
 

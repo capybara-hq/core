@@ -53,13 +53,13 @@ const NAV: readonly {
     icon: "catalog",
     section: "more",
   },
-  // Extensions with their org switch and org config: org admins (the kernel's
-  // org.extensions.manage reads them)
+  // Extensions: members see their state (the kernel's org.extensions.read projection), org admins
+  // also switch and configure them (org.extensions.manage)
   {
     id: "extensions",
     key: "extensions",
     href: "/extensions",
-    audience: "admin",
+    audience: "member",
     icon: "extension",
     section: "more",
   },

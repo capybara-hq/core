@@ -69,7 +69,16 @@ export interface PutOrgExtensionInput {
 const base = (orgId: string) => `/api/v1/orgs/${encodeURIComponent(orgId)}/extensions`;
 
 export const listOrgExtensions = (orgId: string) =>
-  apiFetch<{ extensions: OrgExtension[] }>(base(orgId));
+  apiFetch<{ extensions: OrgExtension[] }>(base(orgId)).then((r) => ({
+    // A member's list omits config, secrets, schema and permissions: fill the admin shape's empties
+    extensions: r.extensions.map((e) => ({
+      ...e,
+      config: e.config ?? null,
+      secrets: e.secrets ?? [],
+      orgConfigSchema: e.orgConfigSchema ?? null,
+      permissions: e.permissions ?? [],
+    })),
+  }));
 
 export const putOrgExtension = (orgId: string, plugin: string, input: PutOrgExtensionInput) =>
   apiFetch<{ extension: OrgExtension } | SwitchPreview>(

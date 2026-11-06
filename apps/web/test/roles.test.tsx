@@ -197,7 +197,7 @@ const PAGES: [string, ComponentType | RoutePage, "member" | "admin", string][] =
     "admin",
     zh.roles.need.admin,
   ],
-  ["/extensions", route("/extensions", () => ExtensionsPage()), "admin", zh.roles.need.admin],
+  ["/extensions", route("/extensions", () => ExtensionsPage()), "member", zh.roles.need.member],
   ["/settings/tokens", route("/settings/tokens", () => TokensPage()), "admin", zh.roles.need.admin],
   [
     "/settings/organization",

@@ -17,6 +17,7 @@ export type OrgAction =
   | "org.members.manage"
   | "org.invitations.manage"
   | "org.tokens.manage"
+  | "org.extensions.read"
   | "org.extensions.manage"
   | "agents.create"
   | "agents.use"
@@ -43,6 +44,8 @@ export const ACTION_MIN_ROLE: Record<OrgAction, OrgRole> = {
   "org.members.manage": "admin",
   "org.invitations.manage": "admin",
   "org.tokens.manage": "admin",
+  // the 扩展 page for members: state only, no config / secrets / schema (the list projects by role)
+  "org.extensions.read": "member",
   "org.extensions.manage": "admin",
   "org.delete": "owner",
   "org.transfer": "owner",

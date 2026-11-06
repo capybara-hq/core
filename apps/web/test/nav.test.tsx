@@ -66,10 +66,9 @@ describe("nav by level (role hiding is cosmetic; the kernel decides)", () => {
   const primary = ["overview", "agents"];
   const guest = ["connectors"];
   // 组织设置 is shown to members too (read-only for them; user decision, role pass item 8)
-  // 插件 for members up (read-only for members); 扩展 for org admins (the kernel's
-  // org.extensions.manage reads them)
+  // 插件 and 扩展 for members up (read-only for members; the kernel's org.extensions.read)
   // 智能体模板 for members up (read-only for members)
-  const member = ["plugins", "skills", "connectors", "agent-templates", "settings"];
+  const member = ["plugins", "extensions", "skills", "connectors", "agent-templates", "settings"];
   const admin = [
     "plugins",
     "extensions",
@@ -123,6 +122,7 @@ describe("nav by level (role hiding is cosmetic; the kernel decides)", () => {
       ],
       more: [
         ["插件", "catalog", "/plugins"],
+        ["扩展", "extension", "/extensions"],
         ["技能", "skills", "/skills"],
         ["连接器", "connector", "/connectors"],
         ["智能体模板", "agent", "/agent-templates"],

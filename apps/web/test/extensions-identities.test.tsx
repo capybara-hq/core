@@ -137,6 +137,30 @@ describe("/extensions (ListPage)", () => {
   );
 
   it.each(["zh", "en"] as const)(
+    "a member sees each extension's state only: no switch, permissions, config, sync or sections (%s)",
+    async (locale) => {
+      const m = msgs[locale].extensions;
+      const {
+        config: _c,
+        secrets: _s,
+        orgConfigSchema: _o,
+        permissions: _p,
+        ...memberView
+      } = FAKE_IM;
+      const calls = api({
+        [`GET ${BASE}/extensions`]: () => json(200, { extensions: [memberView] }),
+      });
+      await renderRouteWithCache("/extensions", lastStubRoutes(), { locale, me: MEMBER });
+      expect(await screen.findByText(m.disabled)).toBeTruthy();
+      expect(screen.queryByRole("switch")).toBeNull();
+      expect(screen.queryByRole("button")).toBeNull();
+      expect(screen.queryByText(m.permissions)).toBeNull();
+      expect(screen.queryByText(m.configTitle)).toBeNull();
+      expect(calls.some((c) => String(c.url).includes("file-previewers"))).toBe(false);
+    },
+  );
+
+  it.each(["zh", "en"] as const)(
     "部署上停用的插件：显示「不可用」，开关只读、保留组织的启用设置，没有配置与同步（%s）",
     async (locale) => {
       const m = msgs[locale].extensions;

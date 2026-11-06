@@ -37,6 +37,7 @@ import {
   syncDirectory,
 } from "../../../lib/extensions";
 import type { ConfigIssue } from "../../../lib/json-schema";
+import { roleAtLeast } from "../../../lib/members";
 import { orgExtensionChangeKeys } from "../../../lib/query/admin";
 import { orgExtensionsQuery } from "../../../lib/query/channels";
 import { keys } from "../../../lib/query/keys";
@@ -64,13 +65,13 @@ import NotFound from "../not-found";
  * the default providers' candidates) and the plugin's view.
  */
 export default function ExtensionsView() {
-  const ws = useWorkspace({ min: "admin" });
+  const ws = useWorkspace({ min: "member" });
   if (ws.kind === "pending" || ws.kind === "noOrg") return null;
   if (ws.kind === "noAccess") return <NoAccess need={ws.need} />;
-  return <Extensions orgId={ws.orgId} />;
+  return <Extensions orgId={ws.orgId} canEdit={roleAtLeast(ws.role, "admin")} />;
 }
 
-function Extensions({ orgId }: { orgId: string }) {
+function Extensions({ orgId, canEdit }: { orgId: string; canEdit: boolean }) {
   const scope = usePagePath("org");
   const t = useTranslations("extensions");
   const read = usePageQuery(orgExtensionsQuery(orgId));
@@ -89,10 +90,16 @@ function Extensions({ orgId }: { orgId: string }) {
         {extensions.length === 0 ? (
           <Text tone="muted">{t("empty")}</Text>
         ) : (
-          extensions.map((p) => <ExtensionSection key={p.plugin} orgId={orgId} plugin={p} />)
+          extensions.map((p) =>
+            canEdit ? (
+              <ExtensionSection key={p.plugin} orgId={orgId} plugin={p} />
+            ) : (
+              <ExtensionReadOnly key={p.plugin} plugin={p} />
+            ),
+          )
         )}
-        <PointDefaultsSection orgId={orgId} />
-        <FilePreviewersSection orgId={orgId} />
+        {canEdit && <PointDefaultsSection orgId={orgId} />}
+        {canEdit && <FilePreviewersSection orgId={orgId} />}
       </Stack>
     </ListPage>
   );
@@ -113,6 +120,33 @@ const strings = (raw: unknown[], key: string): string[] => [
     ),
   ),
 ];
+
+/** A member's view of an extension: name, version and state; no switch, config or permissions. */
+function ExtensionReadOnly({ plugin }: { plugin: OrgExtension }) {
+  const t = useTranslations("extensions");
+  const tp = useTranslations("plugins");
+  const label = extensionLabel(
+    { name: plugin.plugin, displayName: plugin.displayName },
+    labelLocale(useLocale()),
+  );
+  const platform = plugin.required === true || plugin.catalogItem?.scope === "all";
+  return (
+    <FormSection
+      id={`plugin-${plugin.plugin}`}
+      title={label}
+      description={[plugin.displayName ? plugin.plugin : null, versionLabel(plugin.version)]
+        .filter((x): x is string => x !== null)
+        .join(" · ")}
+    >
+      <Stack direction="row" gap={12} align="center">
+        <Text>
+          {plugin.enabled ? (platform ? tp("state.platform") : t("enabled")) : t("disabled")}
+        </Text>
+        {plugin.available === false && <Text tone="warn">{t("unavailable")}</Text>}
+      </Stack>
+    </FormSection>
+  );
+}
 
 function ExtensionSection({ orgId, plugin }: { orgId: string; plugin: OrgExtension }) {
   const t = useTranslations("extensions");

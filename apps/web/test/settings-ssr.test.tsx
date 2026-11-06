@@ -502,7 +502,7 @@ const ROUTE_GATES: [string, "member" | "admin", boolean][] = [
   ["/settings/sandbox", "member", false],
   ["/settings/members", "member", true],
   ["/settings/models", "admin", true],
-  ["/extensions", "admin", false],
+  ["/extensions", "member", false],
   ["/settings/tokens", "admin", false],
 ];
 

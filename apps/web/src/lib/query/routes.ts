@@ -563,15 +563,18 @@ export const ROUTES: readonly RouteEntry[] = [
   },
   {
     pattern: "/extensions",
-    // Org admins: the extensions, the default providers and the file previewers (sections).
+    // Members: the extensions' state; org admins also the default providers and the file
+    // previewers (sections).
     queries: ({ orgId, me }) =>
-      orgId === null || !atLeast(me, "admin")
+      orgId === null || !atLeast(me, "member")
         ? []
-        : [
-            q(orgExtensionsQuery(orgId)),
-            q(extensionPointDefaultsQuery(orgId)),
-            q(orgFilePreviewersQuery(orgId)),
-          ],
+        : !atLeast(me, "admin")
+          ? [q(orgExtensionsQuery(orgId))]
+          : [
+              q(orgExtensionsQuery(orgId)),
+              q(extensionPointDefaultsQuery(orgId)),
+              q(orgFilePreviewersQuery(orgId)),
+            ],
   },
   {
     pattern: "/inbox",

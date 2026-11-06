@@ -157,14 +157,46 @@ describe("组织插件配置 HTTP", () => {
     expect(lines.join("\n")).not.toContain(SECRET);
   });
 
-  it("member → 403；非成员 → 404；服务令牌（admin 角色）→ 403", async () => {
+  it("member reads the list without config, secrets, schema or permissions; guest 403; PUT 403", async () => {
     const ownerReq = await session("owner");
     const orgId = await createOrg(ownerReq);
+    const put = await ownerReq({
+      method: "PUT",
+      url: `/api/v1/orgs/${orgId}/extensions/orgcfg`,
+      payload: body,
+    });
+    expect(put.statusCode).toBe(200);
     const m = await accounts.createLocal({ login: "mem", password: PW, displayName: "M" });
     await members.add(orgId, m.id, "member", owner.id);
     const memReq = await session("mem");
     const a = await memReq({ method: "GET", url: `/api/v1/orgs/${orgId}/extensions` });
-    expect(a.statusCode).toBe(403);
+    expect(a.statusCode).toBe(200);
+    const list = (a.json() as { extensions: Record<string, unknown>[] }).extensions;
+    expect(list.map((e) => e.plugin)).toEqual(["fixture", "orgcfg"]);
+    for (const e of list) {
+      for (const f of ["config", "secrets", "orgConfigSchema", "permissions"])
+        expect(e).not.toHaveProperty(f);
+      expect(e).toMatchObject({ enabled: expect.any(Boolean), version: expect.any(String) });
+    }
+    expect(a.body).not.toContain(SECRET);
+    expect(a.body).not.toContain("app-1");
+    // the admin keeps the full view
+    const adminList = await ownerReq({ method: "GET", url: `/api/v1/orgs/${orgId}/extensions` });
+    const full = (adminList.json() as { extensions: Record<string, unknown>[] }).extensions;
+    expect(full.find((e) => e.plugin === "orgcfg")).toMatchObject({
+      config: { appId: "app-1" },
+      secrets: expect.any(Array),
+      orgConfigSchema: expect.any(Object),
+    });
+
+    // guests read nothing of the catalog or skills either: member is the floor
+    const g = await accounts.createLocal({ login: "gst", password: PW, displayName: "G" });
+    await members.add(orgId, g.id, "guest", owner.id);
+    const gReq = await session("gst");
+    expect(
+      (await gReq({ method: "GET", url: `/api/v1/orgs/${orgId}/extensions` })).statusCode,
+    ).toBe(403);
+
     const b = await memReq({
       method: "PUT",
       url: `/api/v1/orgs/${orgId}/extensions/orgcfg`,
