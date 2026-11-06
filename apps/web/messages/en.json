@@ -126,7 +126,6 @@
       "profile_conflict": "Someone else changed this agent's profile while you were editing. Reload to see the latest, then apply your changes again.",
       "instructions_mismatch": "The instructions do not match the prompt files. Edit the prompt files, or reload and try again.",
       "profile_unloaded": "The profile has not loaded yet. Reload the page and try again.",
-      "template_not_found": "The template does not exist or is not available in this organization.",
       "visibility_forbidden": "Only an org admin can create an agent from a template for others. Set the visibility to Only me.",
       "template_preview_stale": "The template or the organization changed after the preview. Preview it again, then create."
     },

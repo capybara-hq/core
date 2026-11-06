@@ -24,7 +24,7 @@ import { loadTemplates, type TemplateRow } from "./templates.js";
 /** The preview of creating an agent from a template (`POST …/agents/from-template/preview`). */
 export interface TemplatePreview {
   items: PlanItem[];
-  /** The model the dialog preselects (P4-4); null when the org has no usable model. */
+  /** The automatic choice the dialog preselects (P4-4); null when the org has no usable model. */
   model: (ModelRef & { source: ModelSource }) | null;
   dropped: string[];
   previewHash: string;
@@ -43,7 +43,8 @@ export interface CreateFromTemplateRequest {
 /**
  * Creating agents from templates (rulings P4-3…P4-8): the preview and the create both resolve the
  * template with {@link planFromTemplate}; the create refuses a plan whose hash differs from the
- * preview's (409 `agent.template_preview_stale`), writes the agent through
+ * preview's (409 `agent.template_preview_stale`: the base part, and the automatic model's part when
+ * no model is chosen), writes the agent through
  * {@link AgentsService.createFromTemplate}, and after the commit opens the pending connector request
  * when the creator cannot configure connectors.
  */
@@ -62,12 +63,12 @@ export class AgentsFromTemplate {
     @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "warn">,
   ) {}
 
-  /** The template, when usable in the org (P4-3); otherwise 404 `agent.template_not_found`. */
+  /** The template, when usable in the org (P4-3); otherwise 404 `component.not_found`. */
   private async template(orgId: string, templateId: string): Promise<TemplateRow> {
     const row = (await loadTemplates(this.db.db, orgId, [templateId])).get(templateId);
     if (!row) {
       throw new ApiError(
-        "agent.template_not_found",
+        "component.not_found",
         "The agent template does not exist or is not available in this organization",
       );
     }
@@ -109,7 +110,7 @@ export class AgentsFromTemplate {
     const plan = await this.plan(orgId, await this.template(orgId, templateId));
     return {
       items: plan.items,
-      model: plan.model === null ? null : { ...plan.model.ref, source: plan.model.source },
+      model: plan.auto === null ? null : { ...plan.auto.ref, source: plan.auto.source },
       dropped: plan.dropped,
       previewHash: plan.hash,
     };
@@ -123,7 +124,10 @@ export class AgentsFromTemplate {
   ): Promise<{ agent: AgentView }> {
     const row = await this.template(orgId, req.templateId);
     const plan = await this.plan(orgId, row, req.model);
-    if (plan.hash !== req.previewHash) {
+    // the base part always; the automatic model's part only when the person chose none, so a
+    // silently changed choice is stale while an explicit one never is
+    const [base, auto] = req.previewHash.split(".");
+    if (base !== plan.baseHash || (req.model === undefined && auto !== plan.modelHash)) {
       throw new ApiError(
         "agent.template_preview_stale",
         "The template or the organization changed since the preview; preview it again",
