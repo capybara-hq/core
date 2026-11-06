@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
@@ -20,6 +20,7 @@ import {
   Tabs,
   Tooltip,
 } from "../src/index";
+import { pickOption } from "./support/select";
 
 afterEach(cleanup);
 
@@ -94,7 +95,7 @@ describe("Pagination", () => {
       true,
     );
   });
-  it("per-page select when page sizes are given; English copy", () => {
+  it("per-page select when page sizes are given; English copy", async () => {
     const onPageSize = vi.fn();
     wrap(
       <Pagination
@@ -108,7 +109,7 @@ describe("Pagination", () => {
       "en",
     );
     expect(screen.getByText("1,284 total · page 2 / 26")).toBeTruthy();
-    fireEvent.change(screen.getByRole("combobox"), { target: { value: "25" } });
+    await pickOption(screen.getByRole("combobox"), "25");
     expect(onPageSize).toHaveBeenCalledWith(25);
   });
   it("total=0: page 1 / 1, both buttons disabled", () => {

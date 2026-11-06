@@ -10,6 +10,7 @@ import { json, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
 import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
 import { ME } from "./support/render";
+import { fieldOptionLabels, pickOption } from "./support/select";
 import { expectNoFirstPaintFetch, type Routes } from "./support/server";
 import { NOT_READY } from "./support/shell";
 
@@ -146,11 +147,8 @@ describe("/trajectories", () => {
     const table = screen.getByRole("table", { name: en.trajectories.title });
     expect(within(table).getByText("Clean up")).toBeTruthy();
     expect(
-      within(screen.getByRole("combobox", { name: en.trajectories.filters.agent })).getByRole(
-        "option",
-        { name: "Helper" },
-      ),
-    ).toBeTruthy();
+      fieldOptionLabels(screen.getByRole("combobox", { name: en.trajectories.filters.agent })),
+    ).toContain("Helper");
     expect(calls.find((c) => c.url.startsWith(`${O}/trajectories`))?.url).toBe(
       `${O}/trajectories?limit=50`,
     );
@@ -189,9 +187,7 @@ describe("/trajectories", () => {
   it("changing a filter is a navigation", async () => {
     expectNoFirstPaintFetch();
     await renderRouteWithCache("/trajectories?status=failed", ROUTES);
-    await userEvent
-      .setup()
-      .selectOptions(screen.getByRole("combobox", { name: en.trajectories.filters.agent }), "ag1");
+    await pickOption(screen.getByRole("combobox", { name: en.trajectories.filters.agent }), "ag1");
     expect(router.replace).toHaveBeenCalledWith("/trajectories?agentId=ag1&status=failed");
   });
 

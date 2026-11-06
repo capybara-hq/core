@@ -55,6 +55,7 @@ export const REFERENCE_COMPONENTS = [
   "template-auth",
   "button",
   "input",
+  "select",
   "switch",
   "segmented",
   "table",

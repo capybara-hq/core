@@ -627,4 +627,21 @@ export const CONTROLS_FIXTURE = {
   switchOff: "已关闭",
 };
 
+/**
+ * The form Select's reference blocks (spec §6.2): one field with three options; the long list
+ * (`long`) is LONG_MODELS_FIXTURE's 100 models with its selected one.
+ */
+export const SELECT_FIXTURE = {
+  label: "可见范围",
+  options: [
+    { value: "private", label: "仅自己" },
+    { value: "org", label: "组织内所有成员" },
+    { value: "public", label: "公开" },
+  ],
+  value: "org",
+  placeholder: "选择可见范围",
+  error: "请选择可见范围。",
+  longLabel: "模型",
+};
+
 export * from "./conversation";

@@ -485,6 +485,7 @@
 }
 .cb-input:focus-within,
 .cb-select:focus-within,
+.cb-select[aria-expanded="true"],
 .cb-textarea:focus-within,
 .cb-stepper:focus-within {
   border-color: var(--cb-accent);
@@ -503,7 +504,6 @@
   color: var(--cb-disabled);
 }
 .cb-input input,
-.cb-select select,
 .cb-textarea textarea,
 .cb-stepper input {
   flex: 1;
@@ -531,14 +531,53 @@
 .cb-input-affix:first-child {
   padding-right: 0;
 }
-.cb-select select {
-  appearance: none;
-  padding-right: 0;
-  cursor: pointer;
+/* Select (spec §6.2): a field-like button opening the anchored listbox (§6.16.3). Its root keeps
+   the old wrapper's layout (block-level flex: full width in a block, its content's width in a
+   row), the button fills it, so the list anchors to the bordered box itself. */
+.cb-select-root {
+  display: flex;
+  min-width: 0;
 }
-.cb-select select option {
-  background: var(--cb-panel);
-  color: var(--cb-ink);
+.cb-select {
+  flex: 1 1 auto;
+  box-sizing: border-box;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+  outline: none;
+}
+.cb-select[data-state="disabled"] {
+  cursor: not-allowed;
+}
+/* every option's label in one grid cell, only the current one visible: as wide as the widest
+   option, the current one cut with an ellipsis when the field is narrower */
+.cb-select-value {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  flex: 1 1 auto;
+  min-width: 0;
+  height: calc(var(--cb-field-height) - 2px);
+  align-items: center;
+  padding: 0 0 0 var(--cb-space-2);
+  color: inherit;
+  font-variant-numeric: tabular-nums;
+}
+.cb-select-label {
+  grid-area: 1 / 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  visibility: hidden;
+}
+.cb-select-label[data-current="true"] {
+  visibility: visible;
+}
+.cb-select-label[data-placeholder="true"] {
+  color: var(--cb-faint);
 }
 
 .cb-textarea {

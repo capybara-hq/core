@@ -9,6 +9,7 @@ import {
   startChat,
   zh,
 } from "./support/chat";
+import { selectOption } from "./support/select";
 import { signIn } from "./support/sign-in";
 
 const LONG_TEXT = "Capybaras are the largest living rodents and very calm swimmers. "
@@ -38,9 +39,10 @@ test("登录 → 新建 agent → 流式回复、停止、插话、刷新后历�
   await page
     .getByRole("textbox", { name: zh.agents.form.nameLabel, exact: true })
     .fill("Echo agent");
-  await page
-    .getByRole("combobox", { name: zh.agents.form.modelLabel, exact: true })
-    .selectOption("model-fake/fake-1");
+  await selectOption(
+    page.getByRole("combobox", { name: zh.agents.form.modelLabel, exact: true }),
+    "model-fake/fake-1",
+  );
   await page.getByRole("button", { name: zh.agents.form.submit }).click();
   // a new agent lands on its page's prompt section (agent profile design §2.4)
   await expect(page).toHaveURL(/\/agents\/[^/?#]+\?s=prompt$/);
@@ -128,15 +130,16 @@ test("登录 → 新建 agent → 流式回复、停止、插话、刷新后历�
   await page
     .getByRole("textbox", { name: zh.agents.form.nameLabel, exact: true })
     .fill("Shout agent");
-  await page
-    .getByRole("combobox", { name: zh.agents.form.modelLabel, exact: true })
-    .selectOption("model-fake/fake-1");
+  await selectOption(
+    page.getByRole("combobox", { name: zh.agents.form.modelLabel, exact: true }),
+    "model-fake/fake-1",
+  );
   await page.getByRole("button", { name: zh.agents.form.submit }).click();
   await expect(page).toHaveURL(/\/agents\/[^/?#]+\?s=prompt$/);
   await openAgentSection(page, "model");
   const params = page.getByRole("region", { name: zh.agents.form.modelParamsTitle, exact: true });
   // 文案来自插件声明（zh）
-  await params.getByRole("combobox", { name: "回复风格" }).selectOption("shout");
+  await selectOption(params.getByRole("combobox", { name: "回复风格" }), "shout");
   await saveSection(page);
   await startChat(page, "Shout agent");
   await send(page, "echo:quiet please");

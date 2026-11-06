@@ -75,6 +75,14 @@ export type ConvMenuProps = {
    * catalog only.
    */
   inline?: boolean;
+  /**
+   * A form `Select`'s list (spec §6.2): with `anchored`, the content is a `listbox` and the items
+   * are `option`s (`aria-selected`, `data-value` = the item id); without a filter the focus
+   * starts on the selected option.
+   */
+  listbox?: boolean;
+  /** The id of the element that names the menu, in place of `label`. */
+  labelledBy?: string;
 };
 
 /** An anchored menu with more items than this has a filter field at its top. */
@@ -152,12 +160,15 @@ function Entry({
   i,
   noteId,
   title,
+  listbox,
 }: {
   e: ConvMenuEntry;
   i: number;
   noteId: string;
   /** The full label on hover (an anchored menu cuts long ones). */
   title?: boolean;
+  /** An option of a listbox (a Select) rather than a menu item. */
+  listbox?: boolean;
 }): JSX.Element {
   switch (e.kind) {
     case "label":
@@ -183,7 +194,11 @@ function Entry({
           disabled={e.disabled}
           onSelect={() => e.onSelect()}
           {...(title ? { title: e.label } : {})}
-          {...(e.checked !== undefined ? { role: "menuitemradio", "aria-checked": e.checked } : {})}
+          {...(listbox
+            ? { role: "option", "aria-selected": e.checked === true, "data-value": e.id }
+            : e.checked !== undefined
+              ? { role: "menuitemradio", "aria-checked": e.checked }
+              : {})}
         >
           {e.icon === undefined ? null : isIconName(e.icon) ? (
             <Icon name={e.icon} size={14} />
@@ -223,6 +238,8 @@ export function ConvMenu({
   onOpenChange,
   onCloseAutoFocus,
   inline,
+  listbox,
+  labelledBy,
 }: ConvMenuProps): JSX.Element {
   // Notes are not items, so screen readers skip them inside a menu: they describe the menu (m14).
   const noteId = useId();
@@ -237,6 +254,8 @@ export function ConvMenu({
   const shared = {
     "data-part": "menu",
     "aria-label": label,
+    // a menu is named by its trigger (Radix's aria-labelledby); a listbox by its field's label
+    ...(listbox || labelledBy ? { "aria-labelledby": labelledBy } : {}),
     ...(notes.length > 0 ? { "aria-describedby": notes.join(" ") } : {}),
     align,
     sideOffset,
@@ -251,6 +270,7 @@ export function ConvMenu({
       inlineSide={side}
       sideOffset={sideOffset}
       triggerRef={triggerRef}
+      listbox={listbox === true}
       onClose={() => setOpen(false)}
     />
   ) : (
@@ -282,6 +302,10 @@ export function ConvMenu({
 
 /** The items of an anchored menu: menu items, or a Select's options. */
 const ITEM_SELECTOR = '[role^="menuitem"], [role="option"]';
+const ENABLED_ITEM_SELECTOR =
+  '[role^="menuitem"]:not([data-disabled]), [role="option"]:not([data-disabled])';
+/** The chosen item: a checked menu item or a selected option. */
+const CHECKED_SELECTOR = '[aria-checked="true"], [aria-selected="true"]';
 
 /**
  * Printable keys and Backspace: typing that belongs in the filter field. Space on a focused item
@@ -303,6 +327,7 @@ function AnchoredContent({
   inlineSide,
   sideOffset,
   triggerRef,
+  listbox,
   onClose,
 }: {
   shared: Record<string, unknown>;
@@ -312,6 +337,7 @@ function AnchoredContent({
   inlineSide: "top" | "bottom";
   sideOffset: number;
   triggerRef: RefObject<HTMLButtonElement | null>;
+  listbox: boolean;
   onClose(): void;
 }): JSX.Element {
   const t = useDesignT();
@@ -350,10 +376,23 @@ function AnchoredContent({
           gap: sideOffset,
         }).side,
       );
-    const item = list.querySelector<HTMLElement>('[aria-checked="true"]');
+    const item = list.querySelector<HTMLElement>(CHECKED_SELECTOR);
     if (item && item.offsetTop + item.offsetHeight > list.clientHeight)
       list.scrollTop = item.offsetTop + item.offsetHeight - list.clientHeight;
   }, [inline, sideOffset, triggerRef]);
+  // After Radix has focused the menu: a listbox without a filter starts on its selected option
+  // (else its first), as a native select does.
+  useEffect(() => {
+    if (!listbox || filterable || inline) return;
+    const id = setTimeout(() => {
+      const list = listRef.current;
+      const start =
+        list?.querySelector<HTMLElement>('[aria-selected="true"]:not([data-disabled])') ??
+        list?.querySelector<HTMLElement>(ENABLED_ITEM_SELECTOR);
+      start?.focus({ preventScroll: true });
+    }, 0);
+    return () => clearTimeout(id);
+  }, [listbox, filterable, inline]);
   // After Radix has focused the menu: typing starts in the filter.
   useEffect(() => {
     if (!filterable || inline) return;
@@ -368,7 +407,7 @@ function AnchoredContent({
     f.setSelectionRange(f.value.length, f.value.length);
   };
   const firstItem = () =>
-    listRef.current?.querySelector<HTMLElement>('[role^="menuitem"]:not([data-disabled])') ?? null;
+    listRef.current?.querySelector<HTMLElement>(ENABLED_ITEM_SELECTOR) ?? null;
 
   const onFilterKey = (e: KeyboardEvent<HTMLInputElement>) => {
     // an IME composition owns its keys (Enter confirms the text, it never picks)
@@ -422,6 +461,7 @@ function AnchoredContent({
       avoidCollisions={!inline}
       collisionPadding={MENU_COLLISION_PADDING}
       onKeyDownCapture={onContentKeyCapture}
+      {...(listbox ? { role: "listbox" } : {})}
       {...shared}
     >
       {filterable ? (
@@ -453,7 +493,7 @@ function AnchoredContent({
       ) : null}
       <div ref={listRef} id={listId} className="cb-cmenu-list" data-part="menu-list">
         {body.map((e, i) => (
-          <Entry key={entryKey(e, i)} e={e} i={i} noteId={noteId} title />
+          <Entry key={entryKey(e, i)} e={e} i={i} noteId={noteId} title listbox={listbox} />
         ))}
         {matches.length === 0 ? (
           <div className="cb-cmenu-empty" data-part="menu-empty">

@@ -40,6 +40,7 @@ import { agentFormDefaults } from "./support/agents";
 import { resetNavigation } from "./support/navigation";
 import { renderRouteWithCache } from "./support/query";
 import { ME, renderPage } from "./support/render";
+import { pickOption } from "./support/select";
 import type { Routes } from "./support/server";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
@@ -468,7 +469,7 @@ describe("agents: edit, read-only and 更改所有者", () => {
     const dialog = await screen.findByRole("dialog", { name: zh.agents.reassign.title });
     const select = await within(dialog).findByRole("combobox", { name: zh.agents.reassign.owner });
     expect(within(select).queryByRole("option", { name: /Anonymous/ })).toBeNull();
-    await user.selectOptions(select, "a2");
+    await pickOption(select, "a2", user);
     await user.click(within(dialog).getByRole("button", { name: zh.agents.reassign.submit }));
     await vi.waitFor(() => expect(calls).toContain(`POST ${O}/agents/x1/owner`));
     expect(await screen.findByText(zh.agents.reassign.done)).toBeTruthy();

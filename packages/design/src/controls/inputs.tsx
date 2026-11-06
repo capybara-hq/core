@@ -1,10 +1,4 @@
-import type {
-  InputHTMLAttributes,
-  ReactNode,
-  SelectHTMLAttributes,
-  TextareaHTMLAttributes,
-} from "react";
-import { Icon } from "../icons/icon";
+import type { InputHTMLAttributes, ReactNode, TextareaHTMLAttributes } from "react";
 import { useDesignT } from "../provider";
 import type { ControlA11y } from "./a11y";
 import { type Density, useDensity } from "./density";
@@ -59,36 +53,6 @@ export function Textarea({
       data-state={rest.disabled ? "disabled" : rest["aria-invalid"] ? "error" : undefined}
     >
       <textarea {...rest} data-code={code ? "true" : undefined} />
-    </div>
-  );
-}
-
-export function Select({
-  options,
-  density,
-  ...rest
-}: SelectHTMLAttributes<HTMLSelectElement> & {
-  options: { value: string; label: string }[];
-  density?: Density;
-}) {
-  const step = useDensity(density);
-  return (
-    <div
-      className="cb-select"
-      data-part="select"
-      data-density={step}
-      data-state={rest.disabled ? "disabled" : rest["aria-invalid"] ? "error" : undefined}
-    >
-      <select {...rest} data-part="input-control">
-        {options.map((o) => (
-          <option key={o.value} value={o.value}>
-            {o.label}
-          </option>
-        ))}
-      </select>
-      <span className="cb-input-affix" aria-hidden="true">
-        <Icon name="chevron-down" size={14} />
-      </span>
     </div>
   );
 }

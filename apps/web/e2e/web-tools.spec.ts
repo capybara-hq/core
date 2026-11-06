@@ -10,6 +10,7 @@ import {
   toolGroup,
   zh,
 } from "./support/chat";
+import { selectOption } from "./support/select";
 import { signIn } from "./support/sign-in";
 
 /**
@@ -54,18 +55,18 @@ test("web tools: two providers → default provider per point → WebFetch in th
   const defaults = page.getByRole("region", { name: pd.title, exact: true });
   const search = defaults.getByRole("combobox", { name: pd.points.webSearch, exact: true });
   const fetch = defaults.getByRole("combobox", { name: pd.points.webFetch, exact: true });
-  await expect(search).toHaveValue("");
-  await expect(fetch).toHaveValue("");
+  await expect(search).toHaveAttribute("value", "");
+  await expect(fetch).toHaveAttribute("value", "");
   await expect(
     defaults.getByText(pd.noneHint.replace("{point}", pd.points.webFetch)),
   ).toBeVisible();
-  await search.selectOption("fake-web-2");
+  await selectOption(search, "fake-web-2");
   await expect(
     page.getByText(
       pd.saved.replace("{point}", pd.points.webSearch).replace("{extension}", "fake-web-2"),
     ),
   ).toBeVisible();
-  await fetch.selectOption("fake-web");
+  await selectOption(fetch, "fake-web");
   await expect(
     page.getByText(
       pd.saved.replace("{point}", pd.points.webFetch).replace("{extension}", "fake-web"),
@@ -73,8 +74,8 @@ test("web tools: two providers → default provider per point → WebFetch in th
   ).toBeVisible();
   // Stored: a reload reads them back
   await page.reload();
-  await expect(search).toHaveValue("fake-web-2");
-  await expect(fetch).toHaveValue("fake-web");
+  await expect(search).toHaveAttribute("value", "fake-web-2");
+  await expect(fetch).toHaveAttribute("value", "fake-web");
   await expect(defaults.getByText(pd.noneHint.replace("{point}", pd.points.webFetch))).toHaveCount(
     0,
   );

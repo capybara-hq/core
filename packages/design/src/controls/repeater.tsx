@@ -80,7 +80,9 @@ function firstField(body: HTMLElement | null | undefined): HTMLElement | null {
       (f.getAttribute("aria-required") === "true" || f.hasAttribute("required")) &&
       (f instanceof HTMLInputElement ||
         f instanceof HTMLTextAreaElement ||
-        f instanceof HTMLSelectElement) &&
+        f instanceof HTMLSelectElement ||
+        // a Select's combobox button carries its value
+        f instanceof HTMLButtonElement) &&
       f.value === "",
   );
   return empty ?? fields[0] ?? null;

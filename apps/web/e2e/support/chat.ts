@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { expect, type Locator, type Page } from "@playwright/test";
+import { selectOption } from "./select";
 
 /** 界面文案取自 zh 文案文件，避免与实现重复硬编码。 */
 export const zh = JSON.parse(
@@ -66,9 +67,10 @@ export async function newAgent(page: Page, name: string): Promise<string> {
   await page.goto("/agents/new");
   await expect(page.locator('[data-template="FormPage"]')).toBeVisible();
   await page.getByRole("textbox", { name: zh.agents.form.nameLabel, exact: true }).fill(name);
-  await page
-    .getByRole("combobox", { name: zh.agents.form.modelLabel, exact: true })
-    .selectOption("model-fake/fake-1");
+  await selectOption(
+    page.getByRole("combobox", { name: zh.agents.form.modelLabel, exact: true }),
+    "model-fake/fake-1",
+  );
   await page.getByRole("button", { name: zh.agents.form.submit }).click();
   await expect(page).toHaveURL(/\/agents\/[^/?#]+\?s=prompt$/);
   await expect(page.locator('[data-template="SettingsPage"]')).toBeVisible();

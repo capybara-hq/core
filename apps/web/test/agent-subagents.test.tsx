@@ -6,6 +6,7 @@ import zh from "../messages/zh.json";
 import { renderEditAgent } from "./support/agents";
 import { bodyOf, json, stubApi } from "./support/api";
 import { resetNavigation } from "./support/navigation";
+import { pickOption } from "./support/select";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 vi.mock("next/navigation", () => ({
@@ -154,7 +155,7 @@ describe("the agent page's Sub-agents section", () => {
     await user.type(within(s).getByRole("textbox", { name: S.inlineName }), "helper");
     await user.type(within(s).getByRole("textbox", { name: S.inlineDescription }), "Helps.");
     await user.type(within(s).getByRole("textbox", { name: S.inlineInstructions }), "Help out.");
-    await user.selectOptions(within(s).getByRole("combobox", { name: S.inlineModel }), "fast");
+    await pickOption(within(s).getByRole("combobox", { name: S.inlineModel }), "fast", user);
     await user.click(screen.getByRole("button", { name: en.agents.form.submit }));
     await vi.waitFor(() => expect(calls.some((c) => c.method === "PATCH")).toBe(true));
     const body = bodyOf(calls.find((c) => c.method === "PATCH")) as {

@@ -33,7 +33,7 @@ export function Field({
   return (
     <div className="cb-field" data-part="field" data-state={error ? "error" : undefined}>
       <div className="cb-field-head">
-        <label className="cb-field-label" data-part="field-label" htmlFor={id}>
+        <label id={`${base}-label`} className="cb-field-label" data-part="field-label" htmlFor={id}>
           {label}
           {required ? (
             <span className="cb-field-req" aria-hidden="true">

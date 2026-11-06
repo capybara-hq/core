@@ -535,6 +535,41 @@
       .join("")}</div>`;
   }
 
+  // ── Select (§6.2): a field-like button opening the anchored listbox (§6.16.3) ──
+
+  function selectField(o) {
+    const S = F.SELECT_FIXTURE;
+    const L = F.LONG_MODELS_FIXTURE;
+    const long = o.state === "long";
+    const open = long || o.state === "open";
+    const options = long
+      ? L.groups.flatMap((g) => g.models.map((m) => ({ value: m.id, label: m.label })))
+      : S.options;
+    const value = long ? L.selected : o.state === "placeholder" ? "" : S.value;
+    const chosen = options.find((x) => x.value === value);
+    const shown = chosen
+      ? `<span class="r-ellipsis" data-part="select-label">${esc(chosen.label)}</span>`
+      : `<span class="r-ellipsis r-faint" data-part="select-label" data-placeholder="true">${esc(S.placeholder)}</span>`;
+    const st = o.state === "error" ? ' data-state="error"' : open ? ' data-state="focus"' : "";
+    const field = `<button class="r-input r-select-field" data-part="select" role="combobox" aria-haspopup="listbox" aria-expanded="${open}"${st}${o.state === "disabled" ? " disabled" : ""}><span class="r-select-value" data-part="input-control">${shown}</span>${icon("chevron-down", 14)}</button>`;
+    const error = o.state === "error" ? `<span class="r-field-error">${icon("circle-alert", 12)}${esc(S.error)}</span>` : "";
+    let list = "";
+    if (open) {
+      // the long list is scrolled to the selected option: the rows in view end on it
+      const at = options.findIndex((x) => x.value === value);
+      const view = long ? options.slice(Math.max(0, at - 8), at + 1) : options;
+      const rows = view
+        .map((x) => {
+          const sel = x.value === value;
+          return `<div class="r-menu-item" data-part="menu-item" role="option" aria-selected="${sel}"><span class="r-ellipsis">${esc(x.label)}</span><span class="r-grow"></span>${sel ? icon("check", 14) : ""}</div>`;
+        })
+        .join("");
+      const filter = long ? '<input class="r-menu-filter" data-part="menu-filter" placeholder="筛选" aria-label="筛选">' : "";
+      list = `<div class="r-menu r-select-list${long ? " r-menu-capped" : ""}" data-part="menu" role="listbox">${filter}<div class="r-menu-list">${rows}</div></div>`;
+    }
+    return `<div class="r-field"><label class="r-label">${esc(long ? S.longLabel : S.label)}</label><div class="r-select-stage">${field}${list}</div>${error}</div>`;
+  }
+
   const RENDER = {
     sidebar,
     rail,
@@ -553,6 +588,7 @@
     "trace-loading": traceLoading,
     "form-page": formPage,
     "icon-grid": iconGrid,
+    select: selectField,
   };
 
   // The conversation-page renderers (conversation.js, UI refresh B) when the page loads them.

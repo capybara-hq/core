@@ -24,6 +24,7 @@ import {
   Textarea,
   useDensity,
 } from "../src/index";
+import { optionLabels } from "./support/select";
 
 /** The field error element (it carries the id; the text sits in a span after the icon). */
 const fieldError = (msg: string) =>
@@ -149,7 +150,7 @@ describe("density and parts of the refined controls", () => {
     expect(err?.getAttribute("data-part")).toBe("field-error");
     expect(err?.querySelector("svg.cb-icon")).toBeTruthy();
     const select = screen.getByRole("combobox", { name: "模型" });
-    expect(select.parentElement?.getAttribute("data-density")).toBe("default");
+    expect(select.getAttribute("data-density")).toBe("default");
     const group = screen.getByRole("radiogroup", { name: "范围" });
     expect(group.getAttribute("data-part")).toBe("segmented");
     expect(group.getAttribute("data-density")).toBe("dense");
@@ -236,7 +237,7 @@ describe("其他输入", () => {
       </>,
     );
     expect(screen.getByRole("textbox", { name: "提示词" }).getAttribute("data-code")).toBe("true");
-    expect(screen.getByRole("option", { name: "X 模型" })).toBeTruthy();
+    expect(await optionLabels(screen.getByRole("combobox", { name: "模型" }))).toEqual(["X 模型"]);
     await userEvent.click(screen.getByRole("button", { name: "增加" }));
     expect(onChange).toHaveBeenCalledWith(3);
   });

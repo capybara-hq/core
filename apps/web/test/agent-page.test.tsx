@@ -8,6 +8,7 @@ import { bodyOf, json, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
 import { renderRouteEmptyCache } from "./support/query";
 import { ME } from "./support/render";
+import { pickOption } from "./support/select";
 import { expectNoFirstPaintFetch, sessionRoutes } from "./support/server";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
@@ -510,9 +511,10 @@ describe("the agent page by section (agent profile design §3)", () => {
     );
     await renderEditAgent();
     const user = userEvent.setup();
-    await user.selectOptions(
+    await pickOption(
       screen.getByRole("combobox", { name: en.agents.form.visibilityLabel }),
       "private",
+      user,
     );
     calls.length = 0;
     await user.click(screen.getByRole("button", { name: en.agents.form.submit }));

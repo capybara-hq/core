@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { expect, test } from "@playwright/test";
 import { designZh } from "./support/chat";
 import { hydrated } from "./support/nav";
+import { selectOption } from "./support/select";
 import { LOGIN, ORG_NAME, PASSWORD } from "./support/sign-in";
 
 /** 界面文案取自 zh 文案文件，避免与实现重复硬编码。 */
@@ -50,9 +51,10 @@ test("初始化向导：未初始化的部署打开首页 → 初始化页（可
   await page
     .getByRole("textbox", { name: zh.agents.form.nameLabel, exact: true })
     .fill("Setup agent");
-  await page
-    .getByRole("combobox", { name: zh.agents.form.modelLabel, exact: true })
-    .selectOption("model-fake/fake-1");
+  await selectOption(
+    page.getByRole("combobox", { name: zh.agents.form.modelLabel, exact: true }),
+    "model-fake/fake-1",
+  );
   await page.getByRole("button", { name: zh.agents.form.submit }).click();
   // the new agent makes the org ready: a new conversation with it, in the shell
   await expect(page).toHaveURL(/\/chat\?agent=[^&]+$/);

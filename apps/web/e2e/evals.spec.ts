@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { expect, type Page, test } from "@playwright/test";
 import { newAgent, replies, send, startChat } from "./support/chat";
 import { mainNavLink } from "./support/nav";
+import { selectOption } from "./support/select";
 import { signIn } from "./support/sign-in";
 
 /** 界面文案取自 zh 文案文件，避免与实现重复硬编码。 */
@@ -35,7 +36,7 @@ test("建评测集 → 从对话抽样 → 单步运行 → 标注，汇总随�
   await expect(page.getByRole("link", { name: E.runHistory })).toBeVisible();
   await page.getByRole("link", { name: E.new }).click();
   await expect(page.locator('[data-template="FormPage"]')).toBeVisible();
-  await page.getByRole("combobox", { name: E.form.agentLabel }).selectOption({ label: agentName });
+  await selectOption(page.getByRole("combobox", { name: E.form.agentLabel }), { label: agentName });
   await page.getByRole("textbox", { name: E.form.nameLabel }).fill("E2E set");
   await page.getByRole("button", { name: E.form.submit, exact: true }).click();
   await expect(page).toHaveURL(/\/evals\/[^/]+$/);

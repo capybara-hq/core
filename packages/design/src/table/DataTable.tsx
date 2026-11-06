@@ -10,7 +10,7 @@ import {
 } from "react";
 import { Button, IconButton } from "../controls/button";
 import { DensityContext } from "../controls/density";
-import { Select } from "../controls/inputs";
+import { Select } from "../controls/select";
 import { Checkbox } from "../controls/toggles";
 import { Pagination } from "../display/pagination";
 import { Icon } from "../icons/icon";

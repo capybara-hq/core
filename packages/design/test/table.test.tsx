@@ -5,6 +5,7 @@ import { userEvent } from "@testing-library/user-event";
 import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Button, CellTitle, type Column, DataTable, DesignProvider } from "../src/index";
+import { optionLabels, pickOption } from "./support/select";
 
 afterEach(cleanup);
 
@@ -652,10 +653,10 @@ describe("DataTable semantics and the narrow controls (spec §6.6)", () => {
     await user.click(within(bar).getByRole("checkbox", { name: "全选" }));
     expect(screen.getByText("已选 3 项")).toBeTruthy();
     // sort: the sortable columns, each way
-    const select = within(bar).getByRole("combobox", { name: "排序" }) as HTMLSelectElement;
-    expect([...select.options].map((o) => o.textContent)).toEqual(["名称 升序", "名称 降序"]);
+    const select = within(bar).getByRole("combobox", { name: "排序" }) as HTMLButtonElement;
+    expect(await optionLabels(select, user)).toEqual(["名称 升序", "名称 降序"]);
     expect(select.value).toBe("name:asc");
-    await user.selectOptions(select, "name:desc");
+    await pickOption(select, "name:desc", user);
     expect(onChange).toHaveBeenCalledWith("name", "desc");
   });
 

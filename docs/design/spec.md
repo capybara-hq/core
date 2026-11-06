@@ -658,6 +658,7 @@ States: `default-step`, `dense-step`, `prominent-step`, `hover`, `focus`, `disab
 - A Textarea is two lines high unless `rows` asks for more. A Textarea with a character count shows `n / max` (muted) at the bottom right. Prose textareas (descriptions) use `prose-small`; prompts and code use the mono font.
 - Textareas are plain, as the signed reference: no line-number gutter and no resize grip (`resize: none`). Code-like input (prompts, JSON) keeps lines unwrapped in the mono font (`code`); read-only code is shown by CodeBlock (§6.9).
 - Stepper: `− value +`, with square buttons at the step's height on both sides.
+- **Select** (maintainer decision R, 2026-11-07): the field looks like an input (the rules above, `chevron-down` 14 `muted` at its end) but is a button (`role="combobox"`, `aria-haspopup="listbox"`, `aria-expanded`; a `Field`'s `label[for]` names it) that opens the design system's own list, never the browser's popup: the composer's anchored menu (§6.16.3, the same code) as a `listbox` of `option`s (`aria-selected`), named like the field. It hangs `space.1` under the field (above it when the room below is short), its start edge on the field's, at least the field's width, its height `min(layout.menu-max-height, the live room on its side)`; the selected option has the `selected` ground and a `check` 14 at its end and is scrolled into view; a long label is cut with an ellipsis and whole in its tooltip. With more than ten options the menu's filter field heads it (focus starts there, the IME guard, typing on an option goes back to it, Space on an option picks it); otherwise focus starts on the selected option and typing jumps to the option it starts (typeahead). ↓, ↑, Enter and Space open it; the arrows move, Enter or Space picks (the change fires only for another option), Escape closes; focus returns to the field. The field is as wide as its widest option (every label sits in it, only the current one shown) and cuts the current one with an ellipsis when narrower; a value matching no option shows the `placeholder` in `faint`. Disabled: the input's disabled look, it never opens. In a form it carries a hidden native copy (`name`, `required`, `form`) so the form submits and validates it; the copy is hidden from assistive tech and never focused (a failed validation sends the focus to the field).
 - Slider: a discrete block track (20 cells by default, cell width adaptive, 2 between cells, 8 high); the selected part is `accent` and the rest `line`; the thumb is a 4×16 `ink` vertical bar; keyboard ←→ by step, PageUp/PageDown by 10 steps; can be linked with a value input box on the right (8ch wide). When no value is set, the thumb is centered and the track is all `line`, so it doesn't pretend to be some value.
 - Reset to default: when a field has been set by the user, a ghost small link "Reset to default" with the `refresh` icon appears on the right of the label row; clicking clears the value and returns to the default display.
 
@@ -683,6 +684,35 @@ States: `default`, `focus`, `error`, `disabled`
 | input | disabled | background-color | color.hover |
 | input | disabled | border-top-color | color.line |
 | input-control | disabled | color | color.disabled |
+
+<!-- states: select -->
+States: `default`, `placeholder`, `open`, `long`, `disabled`, `error`
+
+<!-- size-table: select -->
+| Part | State | Property | Value |
+|---|---|---|---|
+| select | default | height | control.default |
+| select | default | border-radius | radius.sm |
+| select | default | border-top-color | color.line |
+| input-control | default | padding-left | space.2 |
+| input-control | default | font-size | type.body |
+| input-control | default | color | color.ink |
+| select-label[data-placeholder=true] | placeholder | color | color.faint |
+| select | open | border-top-color | color.accent |
+| menu | open | background-color | color.panel |
+| menu | open | border-top-color | color.line-strong |
+| menu | open | border-radius | radius.md |
+| menu-item | open | height | row.default |
+| menu-item | open | padding-left | pad.default.x |
+| menu-item[aria-selected=true] | open | background-color | color.selected |
+| menu | long | max-height | layout.menu-max-height |
+| menu-filter | long | height | control.dense |
+| menu-filter | long | font-size | type.small |
+| menu-item | long | height | row.default |
+| select | disabled | background-color | color.hover |
+| select | disabled | border-top-color | color.line |
+| select | disabled | color | color.disabled |
+| select | error | border-top-color | color.fail |
 
 ### 6.3 Checkbox / Radio / Switch / option card
 - Checkbox and radio are 14×14 with radius `sm` (radio round). Checkbox checked: `accent` ground + `on-accent` `check` icon; indeterminate `minus`. Radio checked: `accent` border + a 6×6 `accent` inner dot.
@@ -1235,6 +1265,7 @@ States: `idle`, `new`, `running`, `attachments`, `focus`, `no-effort`, `skill`
   - **Size**: as wide as its content, at least the trigger's width and at most `min(320px, 100vw − 16px)`, a long label cut with an ellipsis and the whole label in its tooltip. Its height is the smaller of `layout.menu-max-height` (328: ten `row.default` items and the padding) and the room from the trigger to the viewport edge on its side minus the gap and the 8 px; it is set in CSS from Radix's live available height, so it stays right after a resize, a zoom or a phone keyboard (the side is chosen once, on open). The list scrolls inside it while the filter field above and the note below stay in view.
   - **Filter**: with more than ten items a filter field heads the menu (`menu-filter`: `control.dense` high, 1px `line` border, `accent` when focused, radius `sm`, `bg` ground, `small`, placeholder "筛选" / "Filter" in `faint`). Focus starts in it; typing narrows the items to those whose label contains the text (case-insensitive) and keeps the group label over each group that still has a match; ↓ moves to the first match and the arrows go on through the matches, ↑ on the first match returns to the field; Enter picks the first match (never while an IME composes); no match is the line "没有匹配项" / "No matches" (`menu-empty`, prose `small` `muted`). When the pointer has moved the focus onto an item or the menu, typing and Backspace go back to the field; Space on a focused item is not typing: it picks the item, as Enter does (Space in the field stays text). The field controls the list (`aria-controls`) and is described by an always-mounted live region with the match count ("N 项匹配" / "N matches") or the no-match line.
   - **Open**: the list is scrolled so the checked item is in view.
+  - **Form selects**: the form `Select` (§6.2) opens this same anchored menu as a `listbox` (options with `aria-selected`; without a filter the focus starts on the selected option).
 - Items are `menuitemradio`, `row.default` high, padding 0 `pad.default.x`, radius `sm`, `ink`; the selected item has `aria-checked="true"`, the `selected` ground and a `check` 14 at its end.
 - **Model**: grouped by provider, each group under a label (`micro` `muted`, padding `space.2` `pad.default.x` `space.1`); the chat models of the org's enabled providers (`GET /orgs/:orgId/models`), the agent's own model first and tagged "agent 默认" / "agent default" (`micro` `muted` on the `selected` ground, radius `sm`, padding 0 `space.1`). The agent's fallback model is never listed.
 - **Effort**: exactly the values the selected model declares, in the order low, medium, high, xhigh, max.

@@ -11,6 +11,7 @@ import type { ModelParameter, ParamValue } from "../src/lib/agents";
 import { agentFormDefaults, renderEditAgent } from "./support/agents";
 import { bodyOf, type Call, json, stubApi } from "./support/api";
 import { resetNavigation } from "./support/navigation";
+import { optionValues, pickOption } from "./support/select";
 import { sessionRoutes } from "./support/server";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
@@ -265,11 +266,7 @@ describe("ModelParams", () => {
       <Harness parameters={[STYLE, SEARCH, TOP_K, ODD, EN_ONLY]} locale="zh" onChange={onChange} />,
     );
     const style = screen.getByRole("combobox", { name: "回复风格" });
-    expect(
-      within(style)
-        .getAllByRole("option")
-        .map((o) => (o as HTMLOptionElement).value),
-    ).toEqual(["", "plain", "shout"]);
+    expect(await optionValues(style)).toEqual(["", "plain", "shout"]);
     expect(screen.getByText("shout 时回复全部转大写")).toBeTruthy();
     expect(screen.getByRole("switch", { name: "联网搜索" })).toBeTruthy();
     expect(screen.getByRole("slider", { name: "Top K" })).toBeTruthy();
@@ -278,7 +275,7 @@ describe("ModelParams", () => {
     expect(screen.getByRole("textbox", { name: "Tag" })).toBeTruthy();
 
     const user = userEvent.setup();
-    await user.selectOptions(style, "shout");
+    await pickOption(style, "shout", user);
     expect(onChange).toHaveBeenLastCalledWith({ "model-fake.style": "shout" });
     await user.click(screen.getByRole("switch", { name: "联网搜索" }));
     expect(onChange).toHaveBeenLastCalledWith({
@@ -286,7 +283,7 @@ describe("ModelParams", () => {
       "model-fake.search": true,
     });
     // 选回「默认」即不再提交该键
-    await user.selectOptions(style, "");
+    await pickOption(style, "", user);
     expect(onChange).toHaveBeenLastCalledWith({ "model-fake.search": true });
   });
 
@@ -408,10 +405,10 @@ describe("the Model section's parameters (/agents/<id>?s=model)", () => {
     const user = userEvent.setup();
     const main = await screen.findByRole("region", { name: en.agents.form.modelParamsTitle });
     await user.click(within(main).getByRole("radio", { name: en.agents.params.effort.high }));
-    await user.selectOptions(within(main).getByRole("combobox", { name: "Reply style" }), "shout");
+    await pickOption(within(main).getByRole("combobox", { name: "Reply style" }), "shout", user);
 
     // o-1 declares only effort (low | high): style is dropped, effort=high stays
-    await user.selectOptions(modelBox("en"), "other/o-1");
+    await pickOption(modelBox("en"), "other/o-1", user);
     expect(within(main).queryByRole("combobox", { name: "Reply style" })).toBeNull();
     await user.click(saveButton("en"));
     await vi.waitFor(() => expect(patches(calls)).toHaveLength(1));
@@ -429,8 +426,8 @@ describe("the Model section's parameters (/agents/<id>?s=model)", () => {
     const main = await screen.findByRole("region", { name: en.agents.form.modelParamsTitle });
     await user.click(within(main).getByRole("radio", { name: en.agents.params.effort.medium }));
     // o-1 allows only low | high: medium is no longer legal
-    await user.selectOptions(modelBox("en"), "other/o-1");
-    await user.selectOptions(modelBox("en"), "other/o-2");
+    await pickOption(modelBox("en"), "other/o-1", user);
+    await pickOption(modelBox("en"), "other/o-2", user);
     expect(screen.queryByRole("region", { name: en.agents.form.modelParamsTitle })).toBeNull();
     await user.click(saveButton("en"));
     await vi.waitFor(() => expect(patches(calls)).toHaveLength(1));
@@ -447,14 +444,14 @@ describe("the Model section's parameters (/agents/<id>?s=model)", () => {
     const user = userEvent.setup();
     await screen.findByRole("region", { name: en.agents.form.modelParamsTitle });
     expect(screen.queryByRole("region", { name: en.agents.form.fallbackParamsTitle })).toBeNull();
-    await user.selectOptions(fallbackBox("en"), "other/o-1");
+    await pickOption(fallbackBox("en"), "other/o-1", user);
     const fb = screen.getByRole("region", { name: en.agents.form.fallbackParamsTitle });
     await user.click(within(fb).getByRole("radio", { name: en.agents.params.effort.low }));
-    await user.selectOptions(fallbackBox("en"), "");
+    await pickOption(fallbackBox("en"), "", user);
     expect(screen.queryByRole("region", { name: en.agents.form.fallbackParamsTitle })).toBeNull();
 
     // pick the fallback again: the earlier value was cleared
-    await user.selectOptions(fallbackBox("en"), "other/o-1");
+    await pickOption(fallbackBox("en"), "other/o-1", user);
     await user.click(saveButton("en"));
     await vi.waitFor(() => expect(patches(calls)).toHaveLength(1));
     expect(patches(calls)[0]?.definition.fallback).toEqual({ provider: "other", model: "o-1" });
@@ -466,7 +463,7 @@ describe("the Model section's parameters (/agents/<id>?s=model)", () => {
     await renderEditAgent({ locale: "en", section: "model" });
     const user = userEvent.setup();
     await screen.findByRole("region", { name: en.agents.form.modelParamsTitle });
-    await user.selectOptions(fallbackBox("en"), "other/o-1");
+    await pickOption(fallbackBox("en"), "other/o-1", user);
     const fb = screen.getByRole("region", { name: en.agents.form.fallbackParamsTitle });
     await user.click(within(fb).getByRole("radio", { name: en.agents.params.effort.low }));
     await user.click(saveButton("en"));
@@ -494,7 +491,7 @@ describe("the Model section's parameters (/agents/<id>?s=model)", () => {
       await renderEditAgent({ locale, section: "model" });
       const user = userEvent.setup();
       const main = await screen.findByRole("region", { name: m.agents.form.modelParamsTitle });
-      await user.selectOptions(fallbackBox(locale), "other/o-1");
+      await pickOption(fallbackBox(locale), "other/o-1", user);
       await user.click(saveButton(locale));
 
       const style = within(main).getByRole("combobox", { name: STYLE.label[locale] });

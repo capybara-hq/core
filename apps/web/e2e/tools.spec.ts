@@ -11,6 +11,7 @@ import {
   zh,
 } from "./support/chat";
 import { mainNavLink } from "./support/nav";
+import { selectOption } from "./support/select";
 import { signIn } from "./support/sign-in";
 
 /** 安装向导的 ActionRow（主操作 / 上一步都在这里）。 */
@@ -30,7 +31,7 @@ async function installMcp(page: Page, name: string, slug: string, url: string) {
   await actionRow(page).getByRole("button", { name: w.next }).click();
   await expect(
     page.getByRole("combobox", { name: zh.connectors.form.authTypeLabel, exact: true }),
-  ).toHaveValue("none");
+  ).toHaveAttribute("value", "none");
   await actionRow(page).getByRole("button", { name: w.next }).click();
   await expect(page.getByRole("table", { name: w.toolsTitle })).toBeVisible();
   await actionRow(page).getByRole("button", { name: w.install }).click();
@@ -71,7 +72,7 @@ test("MCP 连接器 → agent 引用 → destructive 工具触发审批 → 批�
   const policy = page.getByRole("combobox", {
     name: zh.connectors.tools.policyLabel.replace("{tool}", "mcp__fixture__delete_item"),
   });
-  await expect(policy).toHaveValue("ask");
+  await expect(policy).toHaveAttribute("value", "ask");
 
   // 2. 新建 agent，在 agent 页面的「工具」分组里引用该连接器的全部工具
   await newAgent(page, "Tool agent");
@@ -184,16 +185,16 @@ test("带工具的对话结束后，管理员打开运行记录：瀑布里有�
   await page.getByRole("link", { name: zh.evals.runHistory }).click();
   await expect(page).toHaveURL(/\/trajectories$/);
   await expect(page.locator('[data-template="ListPage"]')).toBeVisible();
-  await page
-    .getByRole("combobox", { name: zh.trajectories.filters.agent })
-    .selectOption({ label: "Trace agent" });
+  await selectOption(page.getByRole("combobox", { name: zh.trajectories.filters.agent }), {
+    label: "Trace agent",
+  });
   const table = page.getByRole("table", { name: zh.trajectories.title });
   await expect(table.getByRole("row")).toHaveCount(2); // 表头 + 一个对话
   await expect(async () => {
     await page.reload();
-    await page
-      .getByRole("combobox", { name: zh.trajectories.filters.agent })
-      .selectOption({ label: "Trace agent" });
+    await selectOption(page.getByRole("combobox", { name: zh.trajectories.filters.agent }), {
+      label: "Trace agent",
+    });
     await expect(table.getByText(`${zh.trajectories.status.completed}`)).toBeVisible({
       timeout: 2000,
     });

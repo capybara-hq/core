@@ -3,9 +3,10 @@ export { type Density, DensityContext, useDensity } from "./density";
 export { Field } from "./field";
 export { FieldRow, FieldRowGroup } from "./field-row";
 export { FilterChip } from "./filter-chip";
-export { Input, Select, Stepper, Textarea } from "./inputs";
+export { Input, Stepper, Textarea } from "./inputs";
 export { KeyValueEditor } from "./key-value-editor";
 export { Repeater, type RepeaterItem, type RepeaterPreset, type RepeaterProps } from "./repeater";
+export { Select, type SelectChangeEvent, type SelectOption, type SelectProps } from "./select";
 export { Slider } from "./slider";
 export {
   Checkbox,

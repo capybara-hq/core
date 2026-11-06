@@ -10,6 +10,7 @@ import { bodyOf, json, lastStubRoutes, noContent, stubApi } from "./support/api"
 import { resetNavigation, router } from "./support/navigation";
 import { renderRouteWithCache } from "./support/query";
 import { ME } from "./support/render";
+import { optionValues, pickOption } from "./support/select";
 import { renderFrame, shellOf } from "./support/shell";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
@@ -308,13 +309,9 @@ describe("服务令牌", () => {
       await user.click(screen.getByRole("button", { name: zh.tokens.create }));
       const dialog = await screen.findByRole("dialog", { name: zh.tokens.createTitle });
       const roleSelect = within(dialog).getByRole("combobox", { name: zh.tokens.role });
-      expect(
-        within(roleSelect)
-          .getAllByRole("option")
-          .map((o) => o.getAttribute("value")),
-      ).toEqual(["guest", "member", "admin"]);
+      expect(await optionValues(roleSelect, user)).toEqual(["guest", "member", "admin"]);
       await user.type(within(dialog).getByRole("textbox", { name: zh.tokens.name }), "deploy");
-      await user.selectOptions(roleSelect, "admin");
+      await pickOption(roleSelect, "admin", user);
       await user.click(within(dialog).getByRole("button", { name: zh.tokens.createSubmit }));
       const field = (await within(dialog).findByRole("textbox", {
         name: zh.tokens.value,

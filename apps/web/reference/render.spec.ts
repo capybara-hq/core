@@ -13,6 +13,8 @@ const PAGES = [
   "status-bar",
   "action-row",
   "controls",
+  // the form select: the design system's own list (maintainer decision R)
+  "select",
   "table",
   "icon",
   "template-list",

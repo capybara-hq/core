@@ -7,6 +7,7 @@ import { bodyOf, type Call, json, lastStubRoutes, stubApi } from "./support/api"
 import { resetNavigation, router } from "./support/navigation";
 import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
 import { ME } from "./support/render";
+import { pickOption } from "./support/select";
 import { expectNoFirstPaintFetch } from "./support/server";
 import { NOT_READY } from "./support/shell";
 
@@ -240,9 +241,10 @@ describe("安装向导（WizardPage）", () => {
         endpoint: { url: "https://mcp.example.com/mcp" },
       });
 
-      await user.selectOptions(
+      await pickOption(
         screen.getByRole("combobox", { name: m.connectors.form.authTypeLabel }),
         "bearer",
+        user,
       );
       // 静态认证安装时要用凭据列出工具：没填不发请求
       await clickAction(user, locale, w.next);
@@ -399,9 +401,10 @@ describe("安装向导（WizardPage）", () => {
       "https://mcp.example.com/mcp",
     );
     await clickAction(user, "en", w.next);
-    await user.selectOptions(
+    await pickOption(
       await screen.findByRole("combobox", { name: m.connectors.form.authTypeLabel }),
       "basic",
+      user,
     );
     await user.type(screen.getByLabelText(m.connectors.form.usernameLabel), "alice");
     await clickAction(user, "en", w.next);
@@ -446,7 +449,7 @@ describe("安装向导（WizardPage）", () => {
     );
     await clickAction(user, "en", w.next);
     const hint = await screen.findByRole("combobox", { name: w.hintLabel });
-    await user.selectOptions(hint, "1");
+    await pickOption(hint, "1", user);
     expect(screen.getByRole("combobox", { name: m.connectors.form.authTypeLabel })).toHaveProperty(
       "value",
       "bearer",
@@ -556,9 +559,10 @@ describe("安装向导（WizardPage）", () => {
         "https://mcp.example.com/mcp",
       );
       await clickAction(user, locale, w.next);
-      await user.selectOptions(
+      await pickOption(
         await screen.findByRole("combobox", { name: m.connectors.form.authTypeLabel }),
         "oauth_code",
+        user,
       );
       expect(
         screen.getByRole("combobox", { name: m.connectors.oauth.discoveryLabel }),
@@ -594,9 +598,10 @@ describe("安装向导（WizardPage）", () => {
       const secret = screen.getByLabelText(new RegExp(`^${m.connectors.oauth.clientSecretLabel}`));
       expect(secret.getAttribute("type")).toBe("password");
       await user.type(secret, "shh");
-      await user.selectOptions(
+      await pickOption(
         screen.getByRole("combobox", { name: m.connectors.oauth.tokenAuthMethodLabel }),
         "client_secret_post",
+        user,
       );
       await clickAction(user, locale, w.next);
       await screen.findByText(w.toolsAfterConnect);
@@ -733,9 +738,10 @@ describe("安装向导（WizardPage）", () => {
       "https://x/mcp",
     );
     await clickAction(user, "en", w.next);
-    await user.selectOptions(
+    await pickOption(
       await screen.findByRole("combobox", { name: en.connectors.form.authTypeLabel }),
       "oauth_code",
+      user,
     );
     await clickAction(user, "en", w.next);
     await screen.findByText(w.toolsAfterConnect);

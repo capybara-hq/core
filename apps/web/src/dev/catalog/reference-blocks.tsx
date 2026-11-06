@@ -61,7 +61,9 @@ import {
   type FixtureFormField,
   FORM_PAGE_FIXTURE,
   LIST_PAGE_FIXTURE,
+  LONG_MODELS_FIXTURE,
   PAGE_HEADER_FIXTURE,
+  SELECT_FIXTURE,
   STATUS_FIXTURE,
   TABLE_HOVER_ROW,
   TABLE_SELECTED_ROW,
@@ -203,6 +205,55 @@ function inputBlocks(): ReactNode {
       </RefBlock>
       <RefBlock id="input-disabled" width={720} pad itemWidth={320}>
         <NameField value="研究助手" disabled />
+      </RefBlock>
+    </>
+  );
+}
+
+// ── Select ──────────────────────────────────────────────────────────────────
+
+const LONG_OPTIONS = LONG_MODELS_FIXTURE.groups.flatMap((g) =>
+  g.models.map((m) => ({ value: m.id, label: m.label })),
+);
+
+function SelectField({
+  state,
+}: {
+  state: "default" | "placeholder" | "open" | "long" | "disabled" | "error";
+}) {
+  const S = SELECT_FIXTURE;
+  const long = state === "long";
+  return (
+    <Field label={long ? S.longLabel : S.label} {...(state === "error" ? { error: S.error } : {})}>
+      <Select
+        options={long ? LONG_OPTIONS : S.options}
+        value={long ? LONG_MODELS_FIXTURE.selected : state === "placeholder" ? "" : S.value}
+        placeholder={S.placeholder}
+        onChange={noop}
+        disabled={state === "disabled"}
+        referenceOpen={state === "open" || long}
+      />
+    </Field>
+  );
+}
+
+/** The form Select (spec §6.2): closed, placeholder, the open list, a long list, disabled, error. */
+function selectBlocks(): ReactNode {
+  return (
+    <>
+      {(["default", "placeholder", "disabled", "error"] as const).map((s) => (
+        <RefBlock key={s} id={`select-${s}`} width={720} pad itemWidth={320}>
+          <SelectField state={s} />
+        </RefBlock>
+      ))}
+      {/* the list drawn open under the field: three options, the selected one checked */}
+      <RefBlock id="select-open" width={720} height={220} pad itemWidth={320}>
+        <SelectField state="open" />
+      </RefBlock>
+      {/* 100 models: the filter, the list capped at layout.menu-max-height, scrolled to the
+          selected one */}
+      <RefBlock id="select-long" width={720} height={440} pad itemWidth={320}>
+        <SelectField state="long" />
       </RefBlock>
     </>
   );
@@ -1247,6 +1298,7 @@ function avatarBlocks(): ReactNode {
 export const REFERENCE_BLOCKS = {
   button: buttonBlocks,
   input: inputBlocks,
+  select: selectBlocks,
   segmented: segmentedBlocks,
   switch: switchBlocks,
   "filter-chip": filterChipBlocks,

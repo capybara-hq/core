@@ -79,7 +79,7 @@ test("OpenAPI 连接器经安装向导接入（文档认证提示预填 API key�
   // 2. 认证：按文档的 securitySchemes 预填 API key（请求头 X-API-Key），填入 key
   await expect(
     page.getByRole("combobox", { name: zh.connectors.form.authTypeLabel, exact: true }),
-  ).toHaveValue("api_key");
+  ).toHaveAttribute("value", "api_key");
   await expect(page.getByRole("textbox", { name: zh.connectors.form.keyNameLabel })).toHaveValue(
     "X-API-Key",
   );
@@ -104,7 +104,7 @@ test("OpenAPI 连接器经安装向导接入（文档认证提示预填 API key�
     page.getByRole("combobox", {
       name: zh.connectors.tools.policyLabel.replace("{tool}", "mcp__pets__createPet"),
     }),
-  ).toHaveValue("ask");
+  ).toHaveAttribute("value", "ask");
   await expect(page.getByText("mcp__pets__deletePet")).toHaveCount(0);
 
   // 4. agent 调 POST 操作 → 审批 → 批准 → 回复含接口返回

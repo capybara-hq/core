@@ -8,6 +8,7 @@ import { bodyOf, json, lastStubRoutes, noContent, stubApi } from "./support/api"
 import { resetNavigation } from "./support/navigation";
 import { renderRouteWithCache } from "./support/query";
 import { ME } from "./support/render";
+import { pickOption } from "./support/select";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 
@@ -114,7 +115,7 @@ describe("成员页（SettingsPage）", () => {
     const select = within(rowOf("Bob")).getByRole("combobox", {
       name: m.roleOf.replace("{name}", "Bob"),
     }) as HTMLSelectElement;
-    await userEvent.setup().selectOptions(select, "guest");
+    await pickOption(select, "guest");
     await vi.waitFor(() =>
       expect(bodyOf(calls.find((c) => c.method === "PATCH"))).toEqual({ role: "guest" }),
     );
@@ -322,13 +323,15 @@ describe("成员页（SettingsPage）", () => {
       const user = userEvent.setup();
       await user.click(screen.getByRole("button", { name: m.invite }));
       const dialog = await screen.findByRole("dialog", { name: m.inviteDialog.title });
-      await user.selectOptions(
+      await pickOption(
         within(dialog).getByRole("combobox", { name: m.inviteDialog.role }),
         "guest",
+        user,
       );
-      await user.selectOptions(
+      await pickOption(
         within(dialog).getByRole("combobox", { name: m.inviteDialog.expires }),
         "24",
+        user,
       );
       await user.click(within(dialog).getByRole("button", { name: m.inviteDialog.create }));
       const link = (await within(dialog).findByRole("textbox", {

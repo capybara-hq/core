@@ -15,6 +15,7 @@ import type { Me } from "../src/lib/session";
 import { resetNavigation, router } from "./support/navigation";
 import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
 import { ME, renderPage } from "./support/render";
+import { fieldOptionLabels } from "./support/select";
 import { expectNoFirstPaintFetch, renderRoute } from "./support/server";
 import { frameElement, NOT_READY, renderFrame, shellOf } from "./support/shell";
 
@@ -522,12 +523,9 @@ describe("(auth) 页面模板", () => {
     // the auth pages switch language and theme too: a language dropdown and the theme radio
     const language = screen.getByRole("combobox", {
       name: zh.common.language,
-    }) as HTMLSelectElement;
+    }) as HTMLButtonElement;
     expect(language.value).toBe("zh");
-    expect([...language.options].map((o) => o.textContent)).toEqual([
-      zh.common.localeName.zh,
-      zh.common.localeName.en,
-    ]);
+    expect(fieldOptionLabels(language)).toEqual([zh.common.localeName.zh, zh.common.localeName.en]);
     expect(screen.getByRole("radiogroup", { name: zh.common.theme })).toBeTruthy();
   });
 

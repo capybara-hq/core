@@ -9,6 +9,7 @@ import { bodyOf, type Call, json, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
 import { renderRouteEmptyCache } from "./support/query";
 import { ME } from "./support/render";
+import { pickOption } from "./support/select";
 import { expectNoFirstPaintFetch, sessionRoutes } from "./support/server";
 import { NOT_READY } from "./support/shell";
 
@@ -342,9 +343,10 @@ describe("the agent page's sections with their own saves (agent profile design Â
     const user = userEvent.setup();
     const base = sent(saved);
 
-    await user.selectOptions(
+    await pickOption(
       screen.getByRole("combobox", { name: (n) => n.startsWith(F.fallbackLabel) }),
       "other/o-1",
+      user,
     );
     await user.click(save());
     await vi.waitFor(() => expect(patches(calls)).toHaveLength(1));
@@ -430,9 +432,10 @@ describe("the agent page's sections with their own saves (agent profile design Â
     );
     await renderEditAgent({ section: "model" });
     const user = userEvent.setup();
-    await user.selectOptions(
+    await pickOption(
       screen.getByRole("combobox", { name: (n) => n.startsWith(F.fallbackLabel) }),
       "other/o-1",
+      user,
     );
     // someone else saves version 2 meanwhile
     current = agent({ version: 2, definition: { model: { provider: "other", model: "o-1" } } });
@@ -521,7 +524,7 @@ describe("the agent page's sections with their own saves (agent profile design Â
     await screen.findByRole("combobox", { name: (n) => n.startsWith(F.fallbackLabel) });
     expect(hint()).toBeNull();
     // editing the fallback to the model's provider shows it before any save
-    await userEvent.selectOptions(
+    await pickOption(
       screen.getByRole("combobox", { name: (n) => n.startsWith(F.fallbackLabel) }),
       "model-fake/fake-1",
     );

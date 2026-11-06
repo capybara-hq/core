@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { expect, test } from "@playwright/test";
 import { hydrated } from "./support/nav";
+import { selectOption } from "./support/select";
 import { ORG_NAME, signIn } from "./support/sign-in";
 
 /** 界面文案取自 zh 文案文件，避免与实现重复硬编码。 */
@@ -42,7 +43,7 @@ test("成员页：管理员生成邀请链接 → 新用户凭链接注册加入
   // 生成邀请（成员、7 天）并取链接
   await page.getByRole("button", { name: M.invite }).click();
   const dialog = page.getByRole("dialog", { name: M.inviteDialog.title });
-  await dialog.getByRole("combobox", { name: M.inviteDialog.role }).selectOption("member");
+  await selectOption(dialog.getByRole("combobox", { name: M.inviteDialog.role }), "member");
   await dialog.getByRole("button", { name: M.inviteDialog.create }).click();
   const link = await dialog.getByRole("textbox", { name: M.inviteDialog.link }).inputValue();
   expect(link).toMatch(/\/invite\/cap_inv_/);
@@ -88,8 +89,8 @@ test("成员页：管理员生成邀请链接 → 新用户凭链接注册加入
     .getByRole("row")
     .filter({ hasText: invitee })
     .getByRole("combobox", { name: fill(M.roleOf, { name: invitee }) });
-  await expect(role).toHaveValue("member");
-  await role.selectOption("guest");
+  await expect(role).toHaveAttribute("value", "member");
+  await selectOption(role, "guest");
   await expect(
     page.getByText(fill(M.roleChanged, { name: invitee, role: M.roles.guest })),
   ).toBeVisible();
@@ -99,5 +100,5 @@ test("成员页：管理员生成邀请链接 → 新用户凭链接注册加入
       .getByRole("row")
       .filter({ hasText: invitee })
       .getByRole("combobox", { name: fill(M.roleOf, { name: invitee }) }),
-  ).toHaveValue("guest");
+  ).toHaveAttribute("value", "guest");
 });

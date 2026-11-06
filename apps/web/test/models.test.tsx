@@ -9,6 +9,7 @@ import { bodyOf, type Call, json, lastStubRoutes, stubApi } from "./support/api"
 import { resetNavigation } from "./support/navigation";
 import { renderRouteWithCache } from "./support/query";
 import { ME } from "./support/render";
+import { pickOption } from "./support/select";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 
@@ -306,9 +307,10 @@ describe("/admin/models（ListPage）", () => {
       expect(ev.queryByRole("button")).toBeNull();
       expect(document.querySelector('[data-part="action-row"]')).toBeNull();
       const user = userEvent.setup();
-      await user.selectOptions(
+      await pickOption(
         ev.getByRole("combobox", { name: m.models.purpose.model }),
         "alpha/alpha-large",
+        user,
       );
       // 选中模型后出现它的参数（复用 ModelParams）
       const effort = ev.getByRole("radiogroup", { name: locale === "zh" ? "思考深度" : "Effort" });
@@ -342,9 +344,10 @@ describe("/admin/models（ListPage）", () => {
     await renderRouteWithCache("/admin/models", lastStubRoutes());
     const ev = await purposeBox("eval");
     const user = userEvent.setup();
-    await user.selectOptions(
+    await pickOption(
       ev.getByRole("combobox", { name: en.models.purpose.model }),
       "alpha/alpha-large",
+      user,
     );
     await user.click(
       within(ev.getByRole("radiogroup", { name: "Effort" })).getByRole("radio", { name: "Low" }),
@@ -429,9 +432,10 @@ describe("/settings/models（组织管理员）", () => {
       expect(ev.queryByText(m.models.purpose.overridden)).toBeNull();
       expect(ev.queryByRole("button")).toBeNull();
       const user = userEvent.setup();
-      await user.selectOptions(
+      await pickOption(
         ev.getByRole("combobox", { name: m.models.purpose.model }),
         "alpha/alpha-large",
+        user,
       );
       await user.click(actionRow().getByRole("button", { name: m.models.purpose.save }));
       await vi.waitFor(() =>
@@ -445,7 +449,7 @@ describe("/settings/models（组织管理员）", () => {
       // A state reads as muted text, never an accent badge
       expect(overridden.closest(".cb-badge")).toBeNull();
       // Restoring the default is choosing 「使用部署默认」 and saving
-      await user.selectOptions(ev.getByRole("combobox", { name: m.models.purpose.model }), "");
+      await pickOption(ev.getByRole("combobox", { name: m.models.purpose.model }), "", user);
       await user.click(actionRow().getByRole("button", { name: m.models.purpose.save }));
       await vi.waitFor(() =>
         expect(bodyOf(calls.filter((c) => c.method === "PUT")[1])).toEqual({ target: null }),

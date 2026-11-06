@@ -337,6 +337,34 @@ textarea {
   color: var(--cb-muted);
   pointer-events: none;
 }
+/* Select (§6.2): the field is a button; its list hangs space.1 under it, at least its width. */
+.r-select-stage {
+  position: relative;
+}
+.r-select-field {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-2);
+  text-align: start;
+  cursor: pointer;
+}
+.r-select-field .cb-icon {
+  color: var(--cb-muted);
+}
+.r-select-value {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+}
+.r-select-list {
+  top: calc(100% + var(--cb-space-1));
+  left: 0;
+  box-sizing: border-box;
+  min-width: 100%;
+}
+.r-menu-item[aria-selected="true"] {
+  background: var(--cb-selected);
+}
 .r-field-pair {
   display: grid;
   grid-template-columns: 1fr 1fr;

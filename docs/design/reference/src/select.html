@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<title>Select · reference</title>
+<link rel="stylesheet" href="/design/styles/fonts.css">
+<link rel="stylesheet" href="/design/styles/tokens.css">
+<link rel="stylesheet" href="reference.css">
+</head>
+<body>
+<main class="r-page">
+<h1>Select</h1>
+<p>The form select (spec §6.2): a field-like button that opens the design system's own list, the composer's anchored menu as a listbox (§6.16.3): below the field, at least its width, the selected option checked; a long list (100 models) capped at layout.menu-max-height with the filter on top, scrolled to the selected one; the placeholder, disabled and error states of the field.</p>
+<div class="r-blocks">
+<section data-ref-block="select-default" style="width:720px" data-pad>
+  <div style="width:320px"><template data-fixture="select" data-opts='{"state": "default"}'></template></div>
+</section>
+<section data-ref-block="select-placeholder" style="width:720px" data-pad>
+  <div style="width:320px"><template data-fixture="select" data-opts='{"state": "placeholder"}'></template></div>
+</section>
+<section data-ref-block="select-disabled" style="width:720px" data-pad>
+  <div style="width:320px"><template data-fixture="select" data-opts='{"state": "disabled"}'></template></div>
+</section>
+<section data-ref-block="select-error" style="width:720px" data-pad>
+  <div style="width:320px"><template data-fixture="select" data-opts='{"state": "error"}'></template></div>
+</section>
+<section data-ref-block="select-open" style="width:720px;height:220px" data-pad>
+  <div style="width:320px"><template data-fixture="select" data-opts='{"state": "open"}'></template></div>
+</section>
+<section data-ref-block="select-long" style="width:720px;height:440px" data-pad>
+  <div style="width:320px"><template data-fixture="select" data-opts='{"state": "long"}'></template></div>
+</section>
+</div>
+</main>
+<script src="fill.js"></script>
+</body>
+</html>

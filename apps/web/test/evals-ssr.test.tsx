@@ -9,6 +9,7 @@ import { json, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
 import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
 import { ME } from "./support/render";
+import { fieldOptionLabels } from "./support/select";
 import { expectNoFirstPaintFetch, type Routes } from "./support/server";
 import { NOT_READY } from "./support/shell";
 
@@ -370,9 +371,9 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     const browser = expectNoFirstPaintFetch();
     await renderRouteWithCache("/evals/s1/run", ROUTES);
     const model = screen.getByRole("combobox", { name: E.wizard.model });
-    expect(within(model).getByRole("option", { name: "model-fake / Fake 1" })).toBeTruthy();
+    expect(fieldOptionLabels(model)).toContain("model-fake / Fake 1");
     const version = screen.getByRole("combobox", { name: E.wizard.version });
-    expect(within(version).getAllByRole("option").length).toBe(4);
+    expect(fieldOptionLabels(version)).toHaveLength(4);
     await settle();
     expect(browser).toEqual([]);
   });

@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
 import { newAgent } from "./support/chat";
 import { mainNavLink } from "./support/nav";
+import { selectOption } from "./support/select";
 import { signIn } from "./support/sign-in";
 
 /** 界面文案取自 zh 文案文件，避免与实现重复硬编码。 */
@@ -91,16 +92,17 @@ test("假渠道：启用插件 → 建渠道连接 → IM 里未绑定的人收�
   await page.getByRole("link", { name: zh.channels.new }).click();
   await expect(page.locator('[data-template="FormPage"]')).toBeVisible();
   const f = zh.channels.form;
-  await page
-    .getByRole("combobox", { name: new RegExp(`^${f.pluginLabel}`) })
-    .selectOption("fake-im");
+  await selectOption(
+    page.getByRole("combobox", { name: new RegExp(`^${f.pluginLabel}`) }),
+    "fake-im",
+  );
   await page.getByRole("textbox", { name: new RegExp(`^${f.nameLabel}`) }).fill("E2E Bot");
   await page.getByRole("textbox", { name: /^platformUrl/ }).fill(im.url);
   await page.getByRole("textbox", { name: /^appId/ }).fill("cli_e2e");
   await page.getByLabel(/^appSecret/).fill("e2e-app-secret-1234");
-  await page
-    .getByRole("combobox", { name: new RegExp(`^${f.agentLabel}`) })
-    .selectOption({ label: "IM agent" });
+  await selectOption(page.getByRole("combobox", { name: new RegExp(`^${f.agentLabel}`) }), {
+    label: "IM agent",
+  });
   await page.getByRole("button", { name: f.submit }).click();
   await expect(page).toHaveURL(/\/channels\/[^/]+$/);
   await expect(page.locator('[data-template="DetailPage"]')).toBeVisible();

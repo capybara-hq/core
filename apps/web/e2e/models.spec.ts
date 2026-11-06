@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { expect, test } from "@playwright/test";
 import { RECORD_ROW_MENU } from "./support/chat";
 import { hydrated } from "./support/nav";
+import { selectOption } from "./support/select";
 import { signIn } from "./support/sign-in";
 
 /** 界面文案取自 zh 文案文件，避免与实现重复硬编码。 */
@@ -50,7 +51,7 @@ test("后台定价与 eval 部署默认 → 组织设置页覆盖并恢复默认
   // 2. eval 未映射 → 设部署默认为 fake-1，提示消失
   await expect(page.getByText(M.evalUnmapped)).toBeVisible();
   const evalCard = page.locator('[data-purpose="eval"]');
-  await evalCard.getByRole("combobox", { name: P.model }).selectOption("model-fake/fake-1");
+  await selectOption(evalCard.getByRole("combobox", { name: P.model }), "model-fake/fake-1");
   await saveAll(page);
   await expect(page.getByText(fill(P.savedAll, { n: 1 }))).toBeVisible();
   await expect(page.getByText(M.evalUnmapped)).toHaveCount(0);
@@ -64,7 +65,10 @@ test("后台定价与 eval 部署默认 → 组织设置页覆盖并恢复默认
       .filter({ hasText: "fake-1" })
       .getByRole("cell", { name: "8", exact: true }),
   ).toBeVisible();
-  await expect(evalCard.getByRole("combobox", { name: P.model })).toHaveValue("model-fake/fake-1");
+  await expect(evalCard.getByRole("combobox", { name: P.model })).toHaveAttribute(
+    "value",
+    "model-fake/fake-1",
+  );
 
   // 3. 组织设置 → 模型用途（评测向导的「去设置」链到这里）：显示部署默认，覆盖后恢复默认
   await page.goto("/settings/models");
@@ -73,22 +77,22 @@ test("后台定价与 eval 部署默认 → 组织设置页覆盖并恢复默认
   const defText = fill(P.deploymentDefault, { target: `${MODEL_FAKE} / fake-1` });
   await expect(orgCard.getByText(defText)).toBeVisible();
   await expect(orgCard.getByText(P.overridden)).toHaveCount(0);
-  await orgCard.getByRole("combobox", { name: P.model }).selectOption("model-fake/fake-1");
+  await selectOption(orgCard.getByRole("combobox", { name: P.model }), "model-fake/fake-1");
   await saveAll(page);
   await expect(orgCard.getByText(P.overridden)).toBeVisible();
   // Restoring the default: choose 「使用部署默认」 and save
-  await orgCard.getByRole("combobox", { name: P.model }).selectOption("");
+  await selectOption(orgCard.getByRole("combobox", { name: P.model }), "");
   await saveAll(page);
   await expect(orgCard.getByText(P.overridden)).toHaveCount(0);
-  await expect(orgCard.getByRole("combobox", { name: P.model })).toHaveValue("");
+  await expect(orgCard.getByRole("combobox", { name: P.model })).toHaveAttribute("value", "");
 
   // 4. 清理：清除 eval 部署默认与 fake-1 的价格
   await page.goto("/admin/models");
   await hydrated(page);
-  await page
-    .locator('[data-purpose="eval"]')
-    .getByRole("combobox", { name: P.model })
-    .selectOption("");
+  await selectOption(
+    page.locator('[data-purpose="eval"]').getByRole("combobox", { name: P.model }),
+    "",
+  );
   await saveAll(page);
   await expect(page.getByText(M.evalUnmapped)).toBeVisible();
   const priced = page

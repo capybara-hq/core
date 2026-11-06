@@ -1,7 +1,12 @@
 import { Field, Grid, Input, Kbd, Select, Slider, Stepper, Textarea } from "@capybara-hq/design";
+import { LONG_MODELS_FIXTURE } from "@capybara-hq/design/fixtures";
 import { useState } from "react";
 import { FORM_MODELS, FORM_PROMPT } from "../fixtures";
 import { Section } from "../frame";
+
+const LONG_OPTIONS = LONG_MODELS_FIXTURE.groups.flatMap((g) =>
+  g.models.map((m) => ({ value: m.id, label: m.label })),
+);
 
 /** spec §6.2：Input / Select / Textarea / Stepper / Slider 与 Field 的各状态。 */
 export function InputsSection() {
@@ -30,6 +35,12 @@ export function InputsSection() {
         </Field>
         <Field label="模型" help="Select · 禁用">
           <Select options={FORM_MODELS} defaultValue="claude-opus-5-5" disabled />
+        </Field>
+        <Field label="模型" help="Select · 100 项：筛选、限高">
+          <Select options={LONG_OPTIONS} defaultValue={LONG_MODELS_FIXTURE.selected} />
+        </Field>
+        <Field label="备用模型" help="Select · 占位">
+          <Select options={FORM_MODELS} value="" placeholder="选择一个模型" onChange={() => {}} />
         </Field>
         <Field label="搜索" help="带前缀 / 快捷键">
           <Input placeholder="搜索或执行命令" prefix=">" suffix={<Kbd>⌘K</Kbd>} />

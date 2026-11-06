@@ -279,7 +279,12 @@ span.cb-title-btn {
 .cb-cmenu-item[data-highlighted] {
   background: var(--cb-hover);
 }
-.cb-cmenu-item[aria-checked="true"] {
+.cb-cmenu-item[data-disabled] {
+  color: var(--cb-disabled);
+  cursor: not-allowed;
+}
+.cb-cmenu-item[aria-checked="true"],
+.cb-cmenu-item[aria-selected="true"] {
   background: var(--cb-selected);
 }
 .cb-cmenu-item > .cb-icon {

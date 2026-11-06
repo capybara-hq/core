@@ -9,6 +9,7 @@ import type { TrajectoryRun } from "../src/lib/trajectories";
 import { bodyOf, type Call, json, lastStubRoutes, noContent, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
 import { renderRouteWithCache } from "./support/query";
+import { fieldOptionLabels, optionLabels, pickOption } from "./support/select";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 vi.mock("next/navigation", () => ({
@@ -391,9 +392,10 @@ describe("评测集详情（DetailPage）", () => {
     const count = within(dialog).getByRole("spinbutton", { name: E.sample.count });
     await user.clear(count);
     await user.type(count, "5");
-    await user.selectOptions(
+    await pickOption(
       within(dialog).getByRole("combobox", { name: E.sample.status }),
       "failed",
+      user,
     );
     await user.click(within(dialog).getByRole("button", { name: E.sample.submit }));
     expect(await screen.findByText(fill(E.sample.done, { added: 3, skipped: 1 }))).toBeTruthy();
@@ -563,17 +565,13 @@ describe("运行向导（WizardPage）", () => {
       const user = userEvent.setup();
       // 1. 模式与候选
       const model = await screen.findByRole("combobox", { name: m.wizard.model });
-      await waitFor(() => expect(within(model).getAllByRole("option").length).toBeGreaterThan(1));
+      await waitFor(() => expect(fieldOptionLabels(model).length).toBeGreaterThan(1));
       await user.click(screen.getByRole("radio", { name: new RegExp(m.mode.step) }));
-      await user.selectOptions(model, "model-fake/fake-2");
+      await pickOption(model, "model-fake/fake-2", user);
       // 选了候选模型后出现它的参数（复用 ModelParams）
       expect(await screen.findByText(locale === "zh" ? "级别" : "Level")).toBeTruthy();
       const version = screen.getByRole("combobox", { name: m.wizard.version });
-      expect(
-        within(version)
-          .getAllByRole("option")
-          .map((o) => o.textContent),
-      ).toEqual([m.wizard.versionKeep, "v3", "v2", "v1"]);
+      expect(await optionLabels(version, user)).toEqual([m.wizard.versionKeep, "v3", "v2", "v1"]);
       const region = within(container.querySelector(".cb-actionrow") as HTMLElement);
       await user.click(region.getByRole("button", { name: m.wizard.next }));
       // 2. 评委与上限

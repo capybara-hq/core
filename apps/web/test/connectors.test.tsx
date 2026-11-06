@@ -10,6 +10,7 @@ import { bodyOf, json, lastStubRoutes, noContent, stubApi } from "./support/api"
 import { resetNavigation, router } from "./support/navigation";
 import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
 import { ME } from "./support/render";
+import { pickOption } from "./support/select";
 import { expectNoFirstPaintFetch, onServer, type renderRoute } from "./support/server";
 import { NOT_READY, renderFrame, shellOf } from "./support/shell";
 
@@ -145,7 +146,7 @@ describe("连接器详情（DetailPage）", () => {
       m.connectors.detail.tabs.settings,
     ]);
     const user = userEvent.setup();
-    await user.selectOptions(policy, "deny");
+    await pickOption(policy, "deny", user);
     expect(bodyOf(calls.find((c) => c.method === "PATCH"))).toEqual({
       tools: { delete_item: { defaultPolicy: "deny" } },
     });

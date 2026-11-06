@@ -9,6 +9,7 @@ import { bodyOf, json, lastStubRoutes, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
 import { renderRouteWithCache } from "./support/query";
 import { ME } from "./support/render";
+import { optionLabels, pickOption } from "./support/select";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 vi.mock("next/navigation", () => ({
@@ -662,11 +663,7 @@ describe("轨迹详情（TracePage）", () => {
     const dialog = await screen.findByRole("dialog", { name: en.trajectories.addToSet.title });
     const select = within(dialog).getByRole("combobox", { name: en.trajectories.addToSet.set });
     // 只列该 agent 的评测集
-    expect(
-      within(select)
-        .getAllByRole("option")
-        .map((o) => o.textContent),
-    ).toEqual(["Regression"]);
+    expect(await optionLabels(select, user)).toEqual(["Regression"]);
     await user.click(within(dialog).getByRole("button", { name: en.trajectories.addToSet.submit }));
     await waitFor(() =>
       expect(
@@ -748,14 +745,16 @@ describe("运行记录列表（ListPage）", () => {
 
     // A filter is a navigation; the server reads the list the query names
     const user = userEvent.setup();
-    await user.selectOptions(
+    await pickOption(
       screen.getByRole("combobox", { name: zh.trajectories.filters.agent }),
       "ag1",
+      user,
     );
     expect(router.replace).toHaveBeenLastCalledWith("/trajectories?agentId=ag1");
-    await user.selectOptions(
+    await pickOption(
       screen.getByRole("combobox", { name: zh.trajectories.filters.status }),
       "failed",
+      user,
     );
     expect(router.replace).toHaveBeenLastCalledWith("/trajectories?status=failed");
     cleanup();

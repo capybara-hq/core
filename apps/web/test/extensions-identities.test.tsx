@@ -8,6 +8,7 @@ import { bodyOf, json, lastStubRoutes, noContent, stubApi } from "./support/api"
 import { resetNavigation } from "./support/navigation";
 import { renderRouteWithCache } from "./support/query";
 import { ME } from "./support/render";
+import { pickOption } from "./support/select";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 const navigateBrowser = vi.hoisted(() => vi.fn());
@@ -622,7 +623,7 @@ describe("组织设置：IM 语言", () => {
     const select = await screen.findByRole("combobox", { name: o.locale.label });
     expect(select).toHaveProperty("value", "en");
     const user = userEvent.setup();
-    await user.selectOptions(select, "zh");
+    await pickOption(select, "zh", user);
     const row = screen.getByRole("region", {
       name: locale === "zh" ? "待提交改动" : "Pending changes",
     });

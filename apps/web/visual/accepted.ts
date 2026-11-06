@@ -6,6 +6,10 @@
 export const ACCEPTED: string[] = [
   "button",
   "input",
+  // the form Select (maintainer decision R, 2026-11-07): blocks and size table in place; the
+  // reference PNGs and the side-by-side review wait for the reference-update and visual-update
+  // workflows
+  "select",
   "segmented",
   "switch",
   "filter-chip",
