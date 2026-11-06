@@ -1,5 +1,5 @@
 import { describeNestedBox, findNestedBoxes } from "@capybara-hq/design/reference";
-import { cleanup, screen, within } from "@testing-library/react";
+import { act, cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
@@ -229,6 +229,27 @@ describe("/extensions (ListPage + DataTable by capability, details in a Sheet)",
     const user = userEvent.setup();
     await user.type(screen.getByRole("searchbox", { name: en.extensions.search }), "core");
     expect(rowNames()).toEqual(["core-dir"]);
+  });
+
+  it("the tab follows the address: a link to the bare page while 工具与界面 is open goes back to 全部", async () => {
+    api({
+      [`GET ${BASE}/extensions`]: () => json(200, { extensions: [FAKE_IM_SET, CORE, JINA, DUO] }),
+    });
+    resetNavigation("/extensions");
+    window.history.replaceState(null, "", "/extensions");
+    const { navigate } = await renderRouteWithCache("/extensions", lastStubRoutes());
+    await userEvent
+      .setup()
+      .click(screen.getByRole("tab", { name: new RegExp(`^${en.extensions.tabs.tools}`) }));
+    expect(window.location.search).toBe("?tab=tools");
+    expect(rowNames().sort()).toEqual(["core-dir", "fake-im"]);
+    // the sidebar's 扩展: Next moves the address to the bare page and renders it again
+    window.history.replaceState(null, "", "/extensions");
+    await act(async () => navigate("/extensions"));
+    expect(screen.getByRole("tab", { selected: true }).textContent).toContain(
+      en.extensions.tabs.all,
+    );
+    expect(rowNames()).toHaveLength(4);
   });
 
   it("sorting: needs attention (待配置) first, then on, then off or unavailable, by name", async () => {

@@ -58,10 +58,13 @@ export function ComponentScopeDialog({
   component: c,
   orgId,
   onClose,
+  stay = false,
 }: {
   component: PlatformComponent;
   orgId: string | null;
   onClose(): void;
+  /** Opened from a list: a promotion does not move to the detail (the list is read again). */
+  stay?: boolean;
 }) {
   const t = useTranslations("adminComponents.scopeDialog");
   const ts = useTranslations("catalog.admin.scopeDialog");
@@ -134,7 +137,7 @@ export function ComponentScopeDialog({
       if (shownChanged) now = await saveShown.mutateAsync({ id: now.id, next: shown });
       toast.success(t("saved", { name: c.name }));
       onClose();
-      moveTo(router, c, now);
+      if (!stay) moveTo(router, c, now);
     } catch (e) {
       if (e instanceof ApiClientError && e.code === "plugin.scope_stale") {
         await next();

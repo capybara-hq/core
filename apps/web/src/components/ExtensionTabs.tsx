@@ -2,25 +2,21 @@
 
 import type { PageHeaderProps } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
-import { useState } from "react";
-import { CAPABILITY_TABS, type Capability, type ExtensionTab } from "../lib/extension-capabilities";
+import {
+  CAPABILITY_TABS,
+  type Capability,
+  type ExtensionTab,
+  parseExtensionTab,
+} from "../lib/extension-capabilities";
+import { useUrlTab } from "../lib/url-tab";
 
 /**
- * The 扩展 pages' tab by capability (`lib/extension-capabilities.ts`): held in state for an instant
- * switch and written to the URL (`?tab=<id>`, none for 全部) so a reload or a shared link opens
- * the same tab. The page passes the tab its server props read.
+ * The 扩展 pages' tab by capability (`lib/extension-capabilities.ts`), kept in the address
+ * (`?tab=<id>`, none for 全部; `lib/url-tab.ts`): a reload, a shared link or a link to the bare
+ * page opens the matching tab. The page passes the tab its server props read.
  */
 export function useExtensionTab(initial: ExtensionTab): [ExtensionTab, (t: ExtensionTab) => void] {
-  const [tab, setTab] = useState<ExtensionTab>(initial);
-  const select = (next: ExtensionTab) => {
-    setTab(next);
-    // In an event handler, never during render (web-ssr-location).
-    const url = new URL(window.location.href);
-    if (next === "all") url.searchParams.delete("tab");
-    else url.searchParams.set("tab", next);
-    window.history.replaceState(window.history.state, "", url.pathname + url.search + url.hash);
-  };
-  return [tab, select];
+  return useUrlTab(initial, parseExtensionTab, "all");
 }
 
 /** The head's tabs: 全部 and the six capability tabs, each with its count (none while loading). */

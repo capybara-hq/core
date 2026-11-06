@@ -17,6 +17,11 @@ export const router = {
 export const pathname = { current: "/" };
 
 export const usePathname = () => pathname.current;
+/**
+ * The address's search params, read from the jsdom location (as Next's `useSearchParams` follows
+ * `history.replaceState` and navigations): a test changes it with `window.history.replaceState`.
+ */
+export const useSearchParams = () => new URLSearchParams(window.location.search);
 export const useRouter = () => router;
 export const redirect = vi.fn();
 export const getPathname = vi.fn();

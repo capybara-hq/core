@@ -139,23 +139,29 @@ export function TemplateCard({
     fn: () => deleteAgentTemplate(orgId, f.id),
     invalidates: () => [k.agentTemplates(), k.componentsAll(), k.agentTemplateAll()],
   });
-  const toggleShare = (next: boolean) =>
+  // One call at a time: the item is disabled while it runs and a second select does nothing
+  const toggleShare = (next: boolean) => {
+    if (share.isPending) return;
     void share.mutateAsync(next).then(
       () => toast.success(t(next ? "shareOn" : "shareOff", { name: f.name })),
       (e: unknown) => toast.error(errorMessage(e)),
     );
+  };
 
   const enable = switchActions.find((a) => a.id === "enable");
   const href = templateHref(f.id);
   const state = c !== undefined && !c.on ? stateOf(c) : undefined;
+  const shareable = detail.data?.shareable === true;
   const ownerItems: MenuItem[] = owned
     ? [
         { label: t("edit"), href },
         ...(detail.data !== undefined
           ? [
-              detail.data.shareable
-                ? { label: t("unshare"), onSelect: () => toggleShare(false) }
-                : { label: t("share"), onSelect: () => toggleShare(true) },
+              {
+                label: t(shareable ? "unshare" : "share"),
+                disabled: share.isPending,
+                onSelect: () => toggleShare(!shareable),
+              },
             ]
           : []),
       ]
@@ -207,8 +213,9 @@ export function TemplateCard({
           id={f.id}
           name={f.name}
           onClose={() => setDeleting(false)}
-          onDelete={async (outcome) => {
-            await remove.mutateAsync(undefined);
+          onDelete={async () => {
+            // the toast tells what the delete did (its answer), not what the preview foresaw
+            const { outcome } = await remove.mutateAsync(undefined);
             setDeleting(false);
             toast.success(
               outcome === "transferred"

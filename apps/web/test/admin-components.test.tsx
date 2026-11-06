@@ -1172,5 +1172,13 @@ describe("org-owned components in the admin console (phase 3)", () => {
     await vi.waitFor(() =>
       expect(calls.some((c) => c.method === "PUT" && c.url.endsWith("/a3/shown"))).toBe(true),
     );
+    // from the list a promotion moves nowhere: the list is read again instead
+    expect(await screen.findByText(fill(C.share.shownToast, { name: "sales" }))).toBeTruthy();
+    expect(router.replace).not.toHaveBeenCalled();
+    await vi.waitFor(() =>
+      expect(
+        calls.filter((c) => c.method === "GET" && c.url.includes("kind=agent_template")).length,
+      ).toBeGreaterThan(0),
+    );
   });
 });

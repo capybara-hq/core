@@ -2,12 +2,10 @@
 
 import { ObjectCard } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
-import { useState } from "react";
 import { type Agent, avatarValue } from "../lib/agents";
 import { modelLabel } from "../lib/extension-label";
-import { canEditAgent, canUpdateOrg } from "../lib/org-settings";
+import { canEditAgent } from "../lib/org-settings";
 import type { Me } from "../lib/session";
-import { ReassignOwnerDialog } from "./ReassignOwnerDialog";
 import { navLevelOf } from "./shell/nav";
 
 export type AgentScope = "all" | "mine" | "shared";
@@ -33,8 +31,9 @@ export function matchesAgent(a: Agent, query: string): boolean {
  * read-only for whoever may only use it), the description, the meta line owner · 可见范围, the
  * primary 开始会话 (`/chat?agent=`, a new conversation with that agent picked, created on the first
  * send) and the ⋯ menu as the agent page's: 设置 (whoever may change it), 运行记录 (org admins, and
- * a member who owns it), 更改所有者 (org admins, the agent page's dialog). 另存为模板 (org admins)
- * joins the menu with its dialog (phase 4 Task 9); until then it is left out rather than shown dead.
+ * a member who owns it). The owner is changed on the agent page only, never from the list
+ * (acceptance item P; ruling P4-16 as amended). 另存为模板 (org admins) joins the menu with its
+ * dialog (phase 4 Task 9).
  * `ownerName` is the owner's display name when the members list is readable (members up).
  */
 export function AgentCard({
@@ -47,9 +46,6 @@ export function AgentCard({
   ownerName: string | undefined;
 }) {
   const t = useTranslations("agents");
-  const tp = useTranslations("agents.page");
-  const [reassigning, setReassigning] = useState(false);
-  const admin = canUpdateOrg(me);
   const level = navLevelOf(me);
   const mine = agent.ownerAccountId === me.account.id;
   const editable = canEditAgent(me, agent);
@@ -60,37 +56,25 @@ export function AgentCard({
   const owner = mine ? t("ownerMe") : ownerName;
   const description = agent.profile.description;
   return (
-    <>
-      <ObjectCard
-        avatar={avatarValue(agent, agent.orgId)}
-        title={name}
-        href={page}
-        {...(description !== "" ? { description } : {})}
-        // Visibility is plain metadata, never a chip; the owner only when it can be named
-        meta={[...(owner !== undefined ? [owner] : []), t(`scope.${agent.visibility}`)]}
-        primary={{ label: t("chat"), href: `/chat?agent=${encodeURIComponent(agent.id)}` }}
-        menu={[
-          ...(editable ? [{ label: t("settings"), href: page }] : []),
-          ...(canViewRuns
-            ? [
-                {
-                  label: t("runHistory"),
-                  href: `/trajectories?agentId=${encodeURIComponent(agent.id)}`,
-                },
-              ]
-            : []),
-          ...(admin ? [{ label: tp("reassign"), onSelect: () => setReassigning(true) }] : []),
-        ]}
-      />
-      {reassigning ? (
-        <ReassignOwnerDialog
-          orgId={agent.orgId}
-          agentId={agent.id}
-          ownerAccountId={agent.ownerAccountId}
-          needsReassignment={agent.needsReassignment === true}
-          onClose={() => setReassigning(false)}
-        />
-      ) : null}
-    </>
+    <ObjectCard
+      avatar={avatarValue(agent, agent.orgId)}
+      title={name}
+      href={page}
+      {...(description !== "" ? { description } : {})}
+      // Visibility is plain metadata, never a chip; the owner only when it can be named
+      meta={[...(owner !== undefined ? [owner] : []), t(`scope.${agent.visibility}`)]}
+      primary={{ label: t("chat"), href: `/chat?agent=${encodeURIComponent(agent.id)}` }}
+      menu={[
+        ...(editable ? [{ label: t("settings"), href: page }] : []),
+        ...(canViewRuns
+          ? [
+              {
+                label: t("runHistory"),
+                href: `/trajectories?agentId=${encodeURIComponent(agent.id)}`,
+              },
+            ]
+          : []),
+      ]}
+    />
   );
 }

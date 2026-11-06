@@ -318,7 +318,11 @@ describe("/skills: own and platform skills with their org state", () => {
 
 describe("/agents?tab=templates: the 模板 tab (rulings P4-14, P4-16)", () => {
   const PATH = "/agents?tab=templates";
-  beforeEach(() => resetNavigation(PATH));
+  beforeEach(() => {
+    resetNavigation(PATH);
+    // the tab follows the address (`useSearchParams` reads the jsdom location)
+    window.history.replaceState(null, "", PATH);
+  });
   const A = en.agents.templates;
   const template = (id: string, name: string, over: Record<string, unknown> = {}) => ({
     id,
@@ -452,6 +456,32 @@ describe("/agents?tab=templates: the 模板 tab (rulings P4-14, P4-16)", () => {
     expect(await menuOf(await card("reviewer"))).toEqual([A.view, C.action.disable]);
   });
 
+  it("可共享 runs once: its item is disabled while the call is on its way", async () => {
+    let release: () => void = () => {};
+    const held = new Promise<void>((r) => {
+      release = r;
+    });
+    const r: Routes = {
+      ...routes(),
+      [`PUT ${ORG}/agent-templates/t9/shareable`]: async () => {
+        await held;
+        return json(200, { id: "t9", shareable: true });
+      },
+    };
+    const calls = stubApi(r);
+    await renderRouteWithCache(PATH, r);
+    const user = userEvent.setup();
+    const sales = await card("sales");
+    await vi.waitFor(async () => expect(await menuOf(sales)).toContain(A.share));
+    await user.click(screen.getByRole("menuitem", { name: A.share }));
+    expect(await menuOf(sales)).toContain(A.share);
+    const item = screen.getByRole("menuitem", { name: A.share });
+    expect(item.getAttribute("aria-disabled") ?? item.getAttribute("data-disabled")).toBeTruthy();
+    await user.keyboard("{Escape}");
+    await act(async () => release());
+    expect(calls.filter((c) => c.method === "PUT").length).toBe(1);
+  });
+
   it("deleting the org's own template: the preview first, the name typed, then DELETE", async () => {
     const r: Routes = {
       ...routes(),
@@ -461,7 +491,8 @@ describe("/agents?tab=templates: the 模板 tab (rulings P4-14, P4-16)", () => {
           orgs: [{ id: "o2", name: "Beta" }],
           agents: [{ id: "ag1", name: "Planner" }],
         }),
-      [`DELETE ${ORG}/agent-templates/t9`]: () => json(200, { outcome: "transferred" }),
+      // the other org stopped using it in between: the answer, not the preview, is what happened
+      [`DELETE ${ORG}/agent-templates/t9`]: () => json(200, { outcome: "removed" }),
     };
     const calls = stubApi(r);
     await renderRouteWithCache(PATH, r);
@@ -481,7 +512,8 @@ describe("/agents?tab=templates: the 模板 tab (rulings P4-14, P4-16)", () => {
         calls.some((c) => c.method === "DELETE" && c.url.endsWith("/agent-templates/t9")),
       ).toBe(true),
     );
-    expect(await screen.findByText(A.deletedTransferred.replace("{name}", "sales"))).toBeTruthy();
+    expect(await screen.findByText(A.deleted.replace("{name}", "sales"))).toBeTruthy();
+    expect(screen.queryByText(A.deletedTransferred.replace("{name}", "sales"))).toBeNull();
   });
 
   it("a plugin's template of the org is never the org's to edit, share or delete", async () => {
@@ -543,6 +575,41 @@ describe("/agents?tab=templates: the 模板 tab (rulings P4-14, P4-16)", () => {
     await user.click(screen.getByRole("tab", { name: /Templates/ }));
     expect(window.location.search).toBe("?tab=templates");
     expect(await card("sales")).toBeTruthy();
+  });
+
+  it("the tab follows the address: the sidebar's 智能体 (/agents) while 模板 is open goes back to 智能体; the filter survives", async () => {
+    resetNavigation("/agents");
+    window.history.replaceState(null, "", "/agents");
+    stubApi(routes());
+    const { navigate } = await renderRouteWithCache("/agents", routes());
+    const user = userEvent.setup();
+    const filter = await screen.findByRole("radiogroup", { name: en.agents.filter });
+    await user.click(within(filter).getByRole("radio", { name: en.agents.tabs.mine }));
+    await user.click(screen.getByRole("tab", { name: /Templates/ }));
+    expect(window.location.search).toBe("?tab=templates");
+    expect(await card("sales")).toBeTruthy();
+    // a link to the bare page: Next moves the address and renders the page again
+    window.history.replaceState(null, "", "/agents");
+    await act(async () => navigate("/agents"));
+    expect(screen.getByRole("tab", { name: /Agents/ }).getAttribute("aria-selected")).toBe("true");
+    // the agents' filter kept its choice across the switch
+    const again = screen.getByRole("radiogroup", { name: en.agents.filter });
+    expect(
+      within(again).getByRole("radio", { name: en.agents.tabs.mine }).getAttribute("aria-checked"),
+    ).toBe("true");
+  });
+
+  it("a list that fails: its open tab shows no count, never 0", async () => {
+    const r: Routes = {
+      ...routes(),
+      [`GET ${ORG}/agent-templates`]: () =>
+        json(500, { error: { code: "internal", message: "boom" } }),
+    };
+    stubApi(r);
+    await renderRouteWithCache(PATH, r);
+    await screen.findByText(en.errors.page.title);
+    const tab = screen.getByRole("tab", { name: /Templates/ });
+    expect(tab.querySelector(".cb-tab-count")).toBeNull();
   });
 
   it("no templates at all: the page empty state", async () => {

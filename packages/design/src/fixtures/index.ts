@@ -81,14 +81,6 @@ export const NAV_FIXTURE: FixtureNavItem[] = [
     place: "more",
   },
   {
-    id: "agent-templates",
-    label: "智能体模板",
-    href: "/agent-templates",
-    icon: "agent",
-    audience: "member",
-    place: "more",
-  },
-  {
     id: "channels",
     label: "渠道",
     href: "/channels",
