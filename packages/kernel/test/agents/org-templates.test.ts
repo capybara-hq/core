@@ -338,7 +338,13 @@ describe("org agent templates", { timeout: 120_000 }, () => {
           { kind: "connector", connectorId: openapi, tools: "all" },
           { kind: "connector", connectorId: gone, tools: "all" },
         ],
-        toolPolicies: { Bash: "ask", mcp__wiki__find: "deny" },
+        toolPolicies: {
+          Bash: "ask",
+          mcp__wiki__find: "deny",
+          mcp__kit__search: "ask",
+          // the Inline connector is left out: its policy cannot go anywhere
+          mcp__inline__op: "deny",
+        },
         skills: { orgSkills: [s1, s2, s3], pinned: [s1] },
         subagents: {
           general: false,
@@ -353,6 +359,9 @@ describe("org agent templates", { timeout: 120_000 }, () => {
               model: "fast",
               effort: "low",
             },
+            // no allowlist: all of the agent's tools; an empty one: none
+            { name: "solo", description: "Alone.", instructions: "Work alone." },
+            { name: "mute", description: "Talks only.", instructions: "Just talk.", tools: [] },
           ],
           agents: [{ agentId: buddy, as: "buddy", description: "A buddy." }],
         },
@@ -369,7 +378,13 @@ describe("org agent templates", { timeout: 120_000 }, () => {
               },
             },
           },
-          { key: "crm", label: "CRM", source: { template: platformTpl }, tools: ["x"] },
+          {
+            key: "crm",
+            label: "CRM",
+            source: { template: platformTpl },
+            tools: ["x"],
+            policies: { x: "deny" },
+          },
         ],
       },
       [{ title: "Weekly", body: "Write the weekly report." }],
@@ -422,7 +437,7 @@ describe("org agent templates", { timeout: 120_000 }, () => {
       skills: ["report"],
       selectedSkills: ["charts", "style"],
       connectors: [
-        { template: platformTpl, tools: ["search"] },
+        { template: platformTpl, tools: ["search"], policies: { search: "ask" } },
         {
           needs: {
             protocol: "mcp",
@@ -430,6 +445,7 @@ describe("org agent templates", { timeout: 120_000 }, () => {
             tools: ["find"],
             label: "Wiki",
           },
+          policies: { find: "deny" },
         },
         {
           needs: {
@@ -439,7 +455,7 @@ describe("org agent templates", { timeout: 120_000 }, () => {
             label: "Docs",
           },
         },
-        { template: platformTpl, tools: ["x"] },
+        { template: platformTpl, tools: ["x"], policies: { x: "deny" } },
       ],
       subagents: {
         general: false,
@@ -452,6 +468,21 @@ describe("org agent templates", { timeout: 120_000 }, () => {
             tools: ["Read"],
             skills: ["charts"],
             model: "fast",
+          },
+          {
+            name: "solo",
+            description: "Alone.",
+            instructions: "Work alone.",
+            skills: [],
+            model: "inherit",
+          },
+          {
+            name: "mute",
+            description: "Talks only.",
+            instructions: "Just talk.",
+            tools: [],
+            skills: [],
+            model: "inherit",
           },
         ],
       },
@@ -474,7 +505,7 @@ describe("org agent templates", { timeout: 120_000 }, () => {
         },
         { kind: "subagent_agent", name: "buddy", id: buddy, reason: "org_agent" },
         // nothing is dropped silently: connector-key policies and inline fields are listed
-        { kind: "tool_policy", name: "mcp__wiki__find", reason: "connector_tool" },
+        { kind: "tool_policy", name: "mcp__inline__op", reason: "connector_tool" },
         { kind: "subagent_inline", name: "helper", field: "tools", reason: "connector_tool" },
         { kind: "subagent_inline", name: "helper", field: "effort", reason: "unsupported_field" },
       ]),

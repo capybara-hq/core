@@ -65,9 +65,10 @@ export interface AgentTemplateDetail extends AgentTemplateView {
  * - `no_endpoint`: a hand-configured connector without a URL to record (an inline OpenAPI document);
  * - `unsupported_protocol`: a hand-configured connector of a kind other than MCP or OpenAPI;
  * - `limit`: past a template limit (connectors 16, sub-agent types and inline 16, tools 200);
- * - `connector_tool`: a tool policy on a connector tool (kind `tool_policy`, `name` its key), or a
- *   connector tool key in an inline sub-agent's tools (kind `subagent_inline`, `field: "tools"`,
- *   `name` the sub-agent): connector keys embed this org's connector slug;
+ * - `connector_tool`: a policy on a tool of a connector the template does not carry (kind
+ *   `tool_policy`, `name` its key; carried connectors take their policies in `policies`), or a
+ *   connector tool key in an inline sub-agent's allowlist (kind `subagent_inline`,
+ *   `field: "tools"`, `name` the sub-agent): connector keys embed this org's connector slug;
  * - `unsupported_field`: a field of an inline sub-agent a template's inline entry cannot hold
  *   (kind `subagent_inline`, `field`: `disallowedTools`, `toolPolicies`, `effort` or `maxSteps`).
  */
@@ -222,13 +223,37 @@ export async function templateFromAgent(
     }
     tools.push(key);
   }
+  // builtin / plugin keys stay keys; a connector tool's policy goes to its connector entry by
+  // tool name (`policies`), since the key embeds this org's connector slug
   const toolPolicies: Record<string, "ask" | "deny"> = {};
+  const connectorPolicies = new Map<
+    string,
+    { key: string; tool: string; policy: "ask" | "deny" }[]
+  >();
   for (const [k, v] of Object.entries(def.toolPolicies ?? {})) {
-    if (tools.includes(k)) toolPolicies[k] = v;
-    else if (parseToolKey(k)?.kind === "connector") {
-      omitted.push({ kind: "tool_policy", name: k, reason: "connector_tool" });
+    if (tools.includes(k)) {
+      toolPolicies[k] = v;
+      continue;
+    }
+    const parsed = parseToolKey(k);
+    if (parsed?.kind === "connector") {
+      const list = connectorPolicies.get(parsed.slug) ?? [];
+      list.push({ key: k, tool: parsed.tool, policy: v });
+      connectorPolicies.set(parsed.slug, list);
     }
   }
+  const usedSlugs = new Set<string>();
+  /** The `policies` of the entry of connector `slug` (tool names of at most 128 characters). */
+  const policiesOf = (slug: string): { policies?: Record<string, "ask" | "deny"> } => {
+    const list = (connectorPolicies.get(slug) ?? []).filter((p) => [...p.tool].length <= 128);
+    if (list.length === 0) return {};
+    usedSlugs.add(slug);
+    return {
+      policies: Object.fromEntries(
+        list.slice(0, L.connectorTools).map((p) => [p.tool, p.policy] as const),
+      ),
+    };
+  };
 
   // Skills: ids -> names (pinned -> `skills`, the other selected ones -> `selectedSkills`)
   const pinned = def.skills?.pinned ?? [];
@@ -292,7 +317,7 @@ export async function templateFromAgent(
           .leftJoin("platform_connector_templates as p", (j) =>
             j.onRef("p.id", "=", "c.platform_template_id").on("p.deleted_at", "is", null),
           )
-          .select(["c.id", "c.name", "c.connector", "c.endpoint", "p.id as template_id"])
+          .select(["c.id", "c.name", "c.slug", "c.connector", "c.endpoint", "p.id as template_id"])
           .where("c.org_id", "=", orgId)
           .where("c.deleted_at", "is", null)
           .where("c.id", "in", ids)
@@ -310,7 +335,11 @@ export async function templateFromAgent(
       : [...new Set(refs.flatMap((r) => r.tools as string[]))].slice(0, L.connectorTools);
     if (c.template_id !== null) {
       pushConnector(
-        { template: c.template_id, ...(named !== null && { tools: named }) },
+        {
+          template: c.template_id,
+          ...(named !== null && { tools: named }),
+          ...policiesOf(c.slug),
+        },
         c.name,
         c.id,
       );
@@ -346,10 +375,18 @@ export async function templateFromAgent(
           tools: enabled.filter((t) => t.length <= 128),
           label: [...c.name].slice(0, 80).join(""),
         },
+        ...policiesOf(c.slug),
       },
       c.name,
       c.id,
     );
+  }
+  // a policy of a connector the template does not carry (left out above) cannot go anywhere
+  for (const [slug, list] of connectorPolicies) {
+    if (usedSlugs.has(slug)) continue;
+    for (const p of list) {
+      omitted.push({ kind: "tool_policy", name: p.key, reason: "connector_tool" });
+    }
   }
   const pending = (def as { pendingConnectors?: unknown }).pendingConnectors;
   for (const p of Array.isArray(pending) ? pending : []) {
@@ -357,11 +394,20 @@ export async function templateFromAgent(
       label?: string;
       source?: { template?: string; needs?: AgentTemplateConnector & object };
       tools?: string[];
+      policies?: Record<string, "ask" | "deny">;
     };
+    const pendingPolicies =
+      e.policies !== null && typeof e.policies === "object" && Object.keys(e.policies).length > 0
+        ? { policies: { ...e.policies } }
+        : {};
     const label = typeof e.label === "string" ? e.label : "";
     if (typeof e.source?.template === "string") {
       pushConnector(
-        { template: e.source.template, ...(Array.isArray(e.tools) && { tools: e.tools }) },
+        {
+          template: e.source.template,
+          ...(Array.isArray(e.tools) && { tools: e.tools }),
+          ...pendingPolicies,
+        },
         label,
       );
     } else if (e.source?.needs !== undefined) {
@@ -376,7 +422,7 @@ export async function templateFromAgent(
         omitted.push({ kind: "connector", name: label, reason: "no_endpoint" });
         continue;
       }
-      pushConnector({ needs: { ...n, endpoint } }, label);
+      pushConnector({ needs: { ...n, endpoint }, ...pendingPolicies }, label);
     }
   }
 
@@ -407,10 +453,12 @@ export async function templateFromAgent(
         omitted.push({ kind: "subagent_inline", name: t.name, reason: "limit" });
         continue;
       }
-      const listed = t.tools ?? tools;
+      // no allowlist stays none (all of the agent's tools); a list, even `[]`, is written
+      const listed = t.tools ?? [];
       const ownTools = listed.filter(
         (k) => TOOL_KEY_RE.test(k) && parseToolKey(k)?.kind !== "connector",
       );
+      // a connector key embeds this org's slug: an allowlist cannot carry it elsewhere
       if (listed.some((k) => parseToolKey(k)?.kind === "connector")) {
         omitted.push({
           kind: "subagent_inline",
@@ -438,7 +486,7 @@ export async function templateFromAgent(
         name: t.name,
         description: t.description,
         instructions: t.instructions,
-        tools: [...new Set(ownTools)].slice(0, L.tools),
+        ...(t.tools !== undefined && { tools: [...new Set(ownTools)].slice(0, L.tools) }),
         skills: inlineSkills.slice(0, L.skills),
         model: t.model ?? "inherit",
       });
