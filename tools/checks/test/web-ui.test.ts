@@ -314,8 +314,8 @@ describe("checkWebUi", () => {
         "BOX_PENDING entry b (components/notice.tsx, <Card>) is fixed; remove it from BOX_PENDING in tools/checks/src/box-in-box.ts (the list only shrinks)",
       ]);
     });
-    it("every BOX_PENDING entry names its pattern and fix", () => {
-      for (const e of BOX_PENDING) expect(e.fix).toMatch(/^P\d/);
+    it("BOX_PENDING is empty since AB wave 2: the ratchet only shrinks and new code adds no entry", () => {
+      expect(BOX_PENDING).toEqual([]);
     });
   });
 });
