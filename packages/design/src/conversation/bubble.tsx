@@ -1,5 +1,7 @@
 import type { JSX, ReactNode } from "react";
 import { isSafeAttachmentHref } from "../display/attachments";
+import { useDesignT } from "../provider";
+import { fillCopy } from "./tool-copy";
 
 export type UserBubbleProps = {
   text: string;
@@ -14,6 +16,11 @@ export type UserBubbleProps = {
   skill?: string;
   /** Under the bubble, right-aligned: the "Skill instructions" disclosure, a waiting note. */
   details?: ReactNode;
+  /**
+   * Who sent the message when it is not the person: another agent (a parent's message in a
+   * sub-agent's transcript, agent map spec §9.4). Shown above the bubble as "来自 <sender>".
+   */
+  sender?: string;
 };
 
 /** The skill chip inside a bubble (§6.16.6): the composer's chip without its remove button. */
@@ -32,9 +39,16 @@ export function UserBubble({
   queued,
   skill,
   details,
+  sender,
 }: UserBubbleProps): JSX.Element {
+  const t = useDesignT();
   return (
     <div className="cb-user-msg">
+      {sender !== undefined ? (
+        <div className="cb-bubble-sender" data-part="bubble-sender">
+          {fillCopy(t("bubble.from"), { name: sender })}
+        </div>
+      ) : null}
       {attachments}
       <div className="cb-bubble" data-part="bubble" data-queued={queued ? "true" : undefined}>
         {skill !== undefined ? <BubbleSkill label={skill} /> : null}

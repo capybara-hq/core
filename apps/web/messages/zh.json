@@ -917,6 +917,8 @@
     "fileRemoved": "已不可用",
     "noAgents": "没有可用的智能体。请先新建一个智能体。",
     "panelExtensions": "扩展",
+    "agentMap": "智能体图",
+    "agentMapFailed": "智能体图加载失败。",
     "fullOutput": "完整输出",
     "builtinPreviewer": "内置预览",
     "setup": {
@@ -948,6 +950,16 @@
       "afternoon": ["下午好，{name}", "下午我们推进什么？", "接着干？"],
       "evening": ["晚上好，{name}", "今天收尾还差什么？"],
       "night": ["夜猫子，干点啥？", "还没睡？我陪你", "夜深了，挑件小事做"]
+    },
+    "parentAgent": "上级智能体",
+    "delivery": {
+      "report": "{name} 交回了报告",
+      "note": "{name} 发来消息",
+      "completed": "{name} 已完成",
+      "failed": "{name} 失败",
+      "aborted": "{name} 已停止",
+      "show": "查看",
+      "hide": "收起"
     }
   },
   "ui": {
@@ -2618,14 +2630,17 @@
         "newOnly": "沙箱限额只对之后新建的沙箱生效。",
         "e2bNote": "E2B 沙箱不支持按组织设置 CPU 与内存：规格由 E2B 模板决定，这两项对 E2B 不生效（运行并发照常生效）。",
         "save": "保存",
-        "subagentConcurrent": "每次运行同时运行的子智能体数",
-        "subagentConcurrentHelp": "1–20；留空使用部署默认（subagents.maxConcurrentPerRun）。",
+        "subagentConcurrent": "每个对话同时运行的子智能体数",
+        "subagentConcurrentHelp": "1–20；留空使用部署默认（subagents.maxConcurrentPerConversation）。",
         "subagentConcurrentInvalid": "请输入 1 到 20 的整数。",
-        "subagentDispatches": "每次运行的子智能体派发数",
-        "subagentDispatchesHelp": "1–500，含后续追问；留空使用部署默认。",
+        "subagentDepth": "子智能体嵌套深度",
+        "subagentDepthHelp": "1–5，从对话的智能体往下数（1 表示子智能体不能再派发）；留空使用部署默认（subagents.maxDepth）。",
+        "subagentDepthInvalid": "请输入 1 到 5 的整数。",
+        "subagentDispatches": "每条消息的子智能体派发数",
+        "subagentDispatchesHelp": "1–500，从此人最近一条消息起整棵智能体树合计，含后续追问；留空使用部署默认。",
         "subagentDispatchesInvalid": "请输入 1 到 500 的整数。",
-        "subagentTokens": "每次运行子智能体的 token 数",
-        "subagentTokensHelp": "至少 10,000；留空使用部署默认。",
+        "subagentTokens": "每条消息的子智能体 token 数",
+        "subagentTokensHelp": "至少 10,000，从此人最近一条消息起整棵智能体树合计；留空使用部署默认。",
         "subagentTokensInvalid": "请输入不小于 10,000 的整数。"
       }
     },

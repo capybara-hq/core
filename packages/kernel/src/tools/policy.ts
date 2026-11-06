@@ -73,7 +73,7 @@ const asOverride = (v: unknown): "ask" | "deny" | undefined =>
  * - a sub-agent (template or general-purpose): `agentDef` is its frozen effective definition (the
  *   parent's policies with the template's on top) and `ctx.agentId` is the parent's agent, so the
  *   parent's current version still tightens it (sub-agents spec §5.3, §9); its "this conversation"
- *   grants are the parent conversation's; an org agent sub-agent (§5.5): `ctx.agentId` is the
+ *   grants are the root conversation's (agent map spec §7); an org agent sub-agent (§5.5): `ctx.agentId` is the
  *   dispatched agent (its current version, its "always" grants) and the parent agent's current
  *   policies apply on top ({@link parentAgentOverride});
  * - 授权表（`conversation_tool_grants` / `tool_grants`），`spec_hash` 与当前定义不一致视为无效（D8），
@@ -240,7 +240,8 @@ async function parentAgentOverride(
  * A grant matching the current definition hash and source connector: this conversation's first,
  * then "always". `connectorId` is the tool's source connector (null for plugin and builtin tools,
  * which match only grants without a connector). A sub-agent's "this conversation" grants live on
- * its parent conversation (sub-agents spec §9), so parallel children are approved once.
+ * the root conversation of its tree (agent map spec §7), so the root and every sub-agent at any
+ * depth are approved once.
  */
 async function findGrant(
   db: KernelSchemaDb,
@@ -251,14 +252,14 @@ async function findGrant(
     accountId: string;
     agentId: string;
     conversationId: string;
-    parentConversationId?: string;
+    rootConversationId?: string;
   },
 ): Promise<"session" | "always" | null> {
   const sameConnector = sql<boolean>`connector_id IS NOT DISTINCT FROM ${connectorId}`;
   const session = await db
     .selectFrom("conversation_tool_grants")
     .select("spec_hash")
-    .where("conversation_id", "=", ctx.parentConversationId ?? ctx.conversationId)
+    .where("conversation_id", "=", ctx.rootConversationId ?? ctx.conversationId)
     .where("tool_key", "=", tool.key)
     .where(sameConnector)
     .executeTakeFirst();

@@ -117,6 +117,8 @@ export function pipelineFor(d: PipelineTestDeps): ToolPipeline {
     d.eventLog,
     // no sub-agent dispatch: `agent` calls are refused
     undefined,
+    // no messages between agents: `SendMessage` / `SubagentHandback` calls are refused
+    undefined,
     d.registry,
     d.credentials,
     d.breaker,

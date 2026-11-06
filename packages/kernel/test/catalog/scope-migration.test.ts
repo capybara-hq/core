@@ -9,17 +9,17 @@ import { createDb } from "../../src/db/pool.js";
 import { KERNEL_MIGRATIONS_DIR } from "../../src/kernel.js";
 
 /**
- * 0074_plugin_scope.sql: catalog policy, grants, installs and the required flag become a scope, a
+ * 0075_plugin_scope.sql: catalog policy, grants, installs and the required flag become a scope, a
  * builtin and a disabled flag, an org list and per-org switches; pending requests are withdrawn.
- * Migrates to 0073, seeds one item per old situation, then migrates up to 0074. 0077 then gives
- * the granted orgs that never installed a `needs_approval` item a switch row `off`, and 0078 switches
- * on the installs that were `installing` / `upgrading` when 0074 ran.
+ * Migrates to 0073, seeds one item per old situation, then migrates up to 0075. 0078 then gives
+ * the granted orgs that never installed a `needs_approval` item a switch row `off`, and 0079 switches
+ * on the installs that were `installing` / `upgrading` when 0075 ran.
  */
-const FILE = "0074_plugin_scope.sql";
+const FILE = "0075_plugin_scope.sql";
 const ID = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const SHA = "a".repeat(64);
 const [ALLOW, APPROVAL, DISABLED, REQUIRED] = [ID(1), ID(2), ID(3), ID(4)];
-// items installed mid-flight when 0074 ran: an upgrade (allow) and an install (needs_approval)
+// items installed mid-flight when 0075 ran: an upgrade (allow) and an install (needs_approval)
 const [UPGRADING, INSTALLING] = [ID(5), ID(6)];
 const [A, B, C] = ["oa", "ob", "oc"];
 
@@ -81,7 +81,7 @@ beforeAll(async () => {
   await install(1, A, ALLOW);
   await install(2, C, APPROVAL);
   await install(3, B, UPGRADING, "upgrading");
-  // installing without a grant (e.g. as a dependency): 0074 put no org on its named list
+  // installing without a grant (e.g. as a dependency): 0075 put no org on its named list
   await install(4, A, INSTALLING, "installing");
   await install(5, B, INSTALLING, "failed");
 
@@ -106,7 +106,7 @@ afterAll(async () => {
   for (const d of dirs) rmSync(d, { recursive: true, force: true });
 }, 120_000);
 
-describe("0074 plugin scope", () => {
+describe("0075 plugin scope", () => {
   it("allow becomes optional, with a switch on for the org that installed it", async () => {
     expect(await item(ALLOW)).toMatchObject({ scope: "optional", disabled: false, builtin: false });
     expect(await switches(ALLOW)).toEqual([{ org: A, enabled: true }]);
@@ -143,11 +143,11 @@ describe("0074 plugin scope", () => {
   });
 });
 
-describe("0077 granted but never installed", () => {
+describe("0078 granted but never installed", () => {
   beforeAll(async () => {
     await migrate(pg.url, {
       schema: "capybara",
-      dir: copyMigrations((f) => f <= "0077_scope_grant_switches.sql"),
+      dir: copyMigrations((f) => f <= "0078_scope_grant_switches.sql"),
     });
   }, 120_000);
 
@@ -163,7 +163,7 @@ describe("0077 granted but never installed", () => {
   });
 
   it("is idempotent: running its statement again changes nothing", async () => {
-    const body = readFileSync(join(KERNEL_MIGRATIONS_DIR, "0077_scope_grant_switches.sql"), "utf8");
+    const body = readFileSync(join(KERNEL_MIGRATIONS_DIR, "0078_scope_grant_switches.sql"), "utf8");
     await db.connection().execute(async (c) => {
       await sql`set search_path to capybara`.execute(c);
       await sql.raw(body).execute(c);
@@ -176,11 +176,11 @@ describe("0077 granted but never installed", () => {
   });
 });
 
-describe("0078 installs mid-flight at the scope migration", () => {
+describe("0079 installs mid-flight at the scope migration", () => {
   beforeAll(async () => {
     await migrate(pg.url, {
       schema: "capybara",
-      dir: copyMigrations((f) => f <= "0078_scope_live_install_switches.sql"),
+      dir: copyMigrations((f) => f <= "0079_scope_live_install_switches.sql"),
     });
   }, 120_000);
 
@@ -195,7 +195,7 @@ describe("0078 installs mid-flight at the scope migration", () => {
     expect(await switches(INSTALLING)).toEqual([{ org: A, enabled: true }]);
   });
 
-  it("leaves the other items as 0074 and 0077 left them", async () => {
+  it("leaves the other items as 0075 and 0078 left them", async () => {
     expect(await switches(ALLOW)).toEqual([{ org: A, enabled: true }]);
     expect(await switches(APPROVAL)).toEqual([
       { org: B, enabled: false },

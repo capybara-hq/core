@@ -6,54 +6,8 @@
   color: var(--cb-accent);
 }
 
-/* ── Sub-agents (§6.16.15) ── */
+/* ── Sub-agents (§6.16.15; the Agent call block is in agent-map.css) ── */
 
-.cb-agent-tag {
-  flex: none;
-  padding: 0 var(--cb-space-1);
-  border-radius: var(--cb-radius-sm);
-  background: var(--cb-selected);
-  color: var(--cb-muted);
-  font-size: var(--cb-type-micro-size);
-  line-height: var(--cb-type-micro-line);
-}
-.cb-subagent-row > .cb-subagent-desc {
-  flex: 1;
-  color: var(--cb-ink);
-}
-.cb-subagent-end {
-  gap: var(--cb-space-1);
-  white-space: nowrap;
-}
-.cb-subagent-row[aria-current="true"] {
-  background: var(--cb-accent-tint);
-  box-shadow: inset 2px 0 0 var(--cb-accent);
-}
-.cb-subagent-row[aria-current="true"]:hover {
-  background: var(--cb-accent-tint);
-}
-/* The reference draws no rule under an expanded sub-agent's steps. */
-.cb-tool-item[data-expanded="true"] + .cb-tool-item {
-  border-top: 0;
-}
-.cb-subagent-steps {
-  display: flex;
-  flex-direction: column;
-  gap: var(--cb-space-1);
-  margin: 0 0 var(--cb-space-3) var(--cb-space-5);
-  padding: 0 var(--cb-space-3);
-  border-left: 1px solid var(--cb-line);
-}
-.cb-subagent-result {
-  margin: var(--cb-space-1) 0 0;
-  color: var(--cb-muted);
-  font-family: var(--cb-font-prose);
-  font-size: var(--cb-type-prose-small-size);
-  line-height: var(--cb-type-prose-small-line);
-}
-.cb-subagent-steps > .cb-link-btn {
-  align-self: flex-start;
-}
 .cb-subagent-task {
   padding: var(--cb-space-3);
   border-radius: var(--cb-radius-md);

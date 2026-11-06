@@ -9,6 +9,7 @@ import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { recordToolSpecs } from "../tools/specs.js";
+import { budgetRunOf } from "./subagents/limits.js";
 
 /** An audit row written with the events (`identity/audit.ts`). */
 export type StepAuditEntry = Parameters<typeof audit>[1];
@@ -29,14 +30,16 @@ export class StepLog {
 
   /**
    * Appends events of a sub-agent's run and adds the tokens of the usage events it newly wrote to
-   * the parent run's `subagent_tokens_used` (sub-agents spec §8.3): a usage event already in the
-   * log (an idempotent hit after a crash) adds nothing, so each call counts exactly once. Returns
-   * what was written (hits included) and the highest new seq (null: nothing new).
+   * the `subagent_tokens_used` of the tree's budget run (sub-agents spec §8.3, agent map spec §6:
+   * the whole tree counts on one run): `counter.budgetRunId`, the run's own window
+   * (`SubagentParent.budgetRunId`), else the parent run's ({@link budgetRunOf}). A usage event
+   * already in the log (an idempotent hit after a crash) adds nothing, so each call counts exactly
+   * once. Returns what was written (hits included) and the highest new seq (null: nothing new).
    */
   @Transactional({ propagation: "requires_new" })
   async appendCounted(
     conversationId: string,
-    parentRunId: string,
+    counter: { parentRunId: string; budgetRunId?: string | undefined },
     events: AppendEvent[],
   ): Promise<{ written: ConversationEvent[]; toSeq: number | null }> {
     const t = this.kdb.db;
@@ -55,7 +58,7 @@ export class StepLog {
       await t
         .updateTable("runs")
         .set({ subagent_tokens_used: sql`subagent_tokens_used + ${tokens}` })
-        .where("id", "=", parentRunId)
+        .where("id", "=", counter.budgetRunId ?? (await budgetRunOf(t, counter.parentRunId)))
         .execute();
     }
     return { written, toSeq: fresh.length > 0 ? Math.max(...fresh.map((e) => e.seq)) : null };

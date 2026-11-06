@@ -105,7 +105,7 @@ describe("checkTerms", () => {
     // the rename migration, the upgrade test seeding the old column, the rename's release notes,
     // archived changesets, changelogs and historical specs
     const exempt = checkTerms(root).filter((x) =>
-      /0079_|bootstrap-from-builtin|\.changeset\/|CHANGELOG\.md|superpowers/.test(x.file),
+      /0080_|bootstrap-from-builtin|\.changeset\/|CHANGELOG\.md|superpowers/.test(x.file),
     );
     expect(exempt).toEqual([]);
   });

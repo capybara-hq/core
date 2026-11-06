@@ -3,7 +3,7 @@
 "@capybara-hq/web": minor
 ---
 
-Org admins upload plugins and share what their org owns (plugin scope phase 3, migration 0083).
+Org admins upload plugins and share what their org owns (plugin scope phase 3, migration 0084).
 
 - An org admin uploads a plugin `.tgz` from the workspace 插件 page (`POST
   /api/v1/orgs/:orgId/catalog/uploads/file`, then review and confirm). A package without an

@@ -13,7 +13,7 @@ is recorded as a ruling in the SDD ledger.
 ## Global Constraints
 
 - Everything stays local: no push, no PR, no npm publish, in core and in `capybara-hq/plugins`.
-- Migrations: next number `0079`; renames follow the precedent of `0043_rename_app_installs_to_plugin_installs.sql`
+- Migrations: next number `0080`; renames follow the precedent of `0043_rename_app_installs_to_plugin_installs.sql`
   (rename in place with an exemption comment, data updated in the same file); expand-only otherwise.
 - No compatibility aliases for renamed API fields, error codes, CLI flags or config keys (rc, as decided
   for the 2026-10-24 terminology refactor); historical specs and plans are not edited.
@@ -60,7 +60,7 @@ unchanged until the maintainer releases.
 
 DB column `is_enterprise_admin` → `is_super_admin` and stored values (`orgCreation: "enterprise_admin"`
 → `"super_admin"`, any other persisted `enterprise` value: audit actions stay as historical rows,
-new actions use the new names) in migration `0079_rename_enterprise_admin.sql`; kernel identifiers
+new actions use the new names) in migration `0080_rename_enterprise_admin.sql`; kernel identifiers
 (`EnterpriseAdmin` decorator, `EnterpriseAdminLock`, `isEnterpriseAdmin`, `countEnterpriseAdmins`,
 `createEnterpriseAdminIfNone`, error codes like `account.last_enterprise_admin`, config keys if any,
 the `/me` field); `@capybara-hq/testing` helpers. Tests updated; migration test for the column and

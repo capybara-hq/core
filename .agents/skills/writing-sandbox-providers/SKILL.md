@@ -172,6 +172,12 @@ The kernel owns it; the extension implements only primitives. **Do not do schedu
 - **Per-command** limit `sandbox.limits.maxCommandSeconds` (default 7200); `Bash` defaults to 120 seconds. A command timeout is also tightened to
   the time remaining in the owning run minus 30 seconds (`runtime.maxRunSeconds`, default 900, Ruling M20; the built-in tool context's `runDeadline`), and the result
   tells the model it was due to the run time limit. Long commands need `maxRunSeconds ≥ maxCommandSeconds`, otherwise startup logs a warn.
+- **Background task jobs** (`packages/kernel/src/background`, rows in `capybara.background_tasks`): the worker's `@LockedInterval`
+  `background-task-poll` (every `sandbox.background.pollSeconds`) checks running tasks through `SandboxService.ifRunning` and finishes each
+  with one conditional update plus its event; the daily `@LockedCron` `background-task-prune` deletes finished rows after
+  `tools.outputRetentionDays`. A stop claims its task in PG first (`stopping_at`, abandoned after 5 min, `STOP_CLAIM_TTL_MS`) so the poll
+  skips it. A wake inside the 60 s window (`WAKE_WINDOW_MS`) is the delayed job `bg-wake-<conversationId>-<windowEnd>[-r<n>]` on
+  `cap-kernel-maintenance` (`-r<n>`: re-scheduled when it fires early).
 
 ## Security
 

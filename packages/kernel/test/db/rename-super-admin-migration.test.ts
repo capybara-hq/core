@@ -9,13 +9,13 @@ import { createDb } from "../../src/db/pool.js";
 import { KERNEL_MIGRATIONS_DIR } from "../../src/kernel.js";
 
 /**
- * 0079_rename_enterprise_admin.sql: the deployment-level role "enterprise admin" becomes "super
+ * 0080_rename_enterprise_admin.sql: the deployment-level role "enterprise admin" becomes "super
  * admin". The column accounts.is_enterprise_admin becomes is_super_admin with its values, the stored
  * deployment setting orgCreation "enterprise_admin" becomes "super_admin" (other settings untouched),
- * historical audit rows are not rewritten, and a second run is a no-op. Migrates to 0078 first,
- * writes rows under the old names, then migrates up to 0079.
+ * historical audit rows are not rewritten, and a second run is a no-op. Migrates to 0079 first,
+ * writes rows under the old names, then migrates up to 0080.
  */
-const FILE = "0079_rename_enterprise_admin.sql";
+const FILE = "0080_rename_enterprise_admin.sql";
 
 let pg: Awaited<ReturnType<typeof startTestPostgres>>;
 let db: ReturnType<typeof createDb>;
@@ -71,7 +71,7 @@ afterAll(async () => {
   for (const dir of dirs) rmSync(dir, { recursive: true, force: true });
 }, 120_000);
 
-describe("0079 enterprise admin -> super admin", () => {
+describe("0080 enterprise admin -> super admin", () => {
   it("renames the column and keeps its values and default", async () => {
     expect(await columns()).toEqual(["is_super_admin"]);
     expect(await admins()).toEqual([

@@ -300,6 +300,16 @@ button.cb-tool-line:focus-visible {
   white-space: nowrap;
 }
 /* Under the bubble, right-aligned: the "Skill instructions" disclosure (§6.16.6). */
+/* Another agent's message (agent map spec §9.4): its sender above the bubble. */
+.cb-bubble-sender {
+  max-width: 75%;
+  overflow: hidden;
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .cb-bubble-details {
   display: flex;
   flex-direction: column;

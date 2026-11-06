@@ -174,8 +174,10 @@ function serveCgi(root: string, req: IncomingMessage, res: ServerResponse): void
     res.writeHead(h.status, h.headers);
     res.write(head.subarray(h.bodyStart));
   });
+  // A child that could not be spawned emits 'error' and then 'close': only the first writes a head
+  // (a second writeHead throws ERR_HTTP_HEADERS_SENT, an uncaught exception).
   p.on("close", () => {
-    if (!headDone) res.writeHead(502);
+    if (!headDone && !res.headersSent) res.writeHead(502);
     res.end();
   });
   p.on("error", () => {

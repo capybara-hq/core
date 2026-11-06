@@ -216,6 +216,10 @@ starting. Read its output with `docker compose logs init`.
   streams, may run after SIGTERM before `web` exits. To raise it, add it to the `web` service's
   environment in a `compose.override.yaml` (below) and keep it below the service's stop grace period
   (compose's default is 10 s).
+- **`CAPYBARA_WEB_KEEP_ALIVE_TIMEOUT_MS`** (default 65000) is how long `web` keeps an idle keep-alive
+  connection open. Keep it above the idle timeout of the proxy or load balancer in front (AWS ALB and
+  many nginx setups use 60 s); otherwise `web` can close a connection just as the proxy reuses it,
+  and that request fails with a 502.
 
 ### Object storage on the web origin
 

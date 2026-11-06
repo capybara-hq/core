@@ -1,0 +1,14 @@
+# The ruleset requires `issue-linked`, which community.yml sets on PR heads only. A merge group is a
+# new commit (main plus the queued PRs), so without this job the queue would wait for a status that
+# never comes. A PR enters the queue only once the ruleset's required statuses, `issue-linked`
+# included, passed on its head, so reporting it here repeats that result; it checks out nothing.
+name: merge-queue
+on:
+  merge_group:
+permissions: {}
+jobs:
+  issue-linked:
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - run: echo "Every PR in this merge group passed issue-linked on its head before it was queued."

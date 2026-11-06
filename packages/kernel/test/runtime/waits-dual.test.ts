@@ -22,7 +22,6 @@ import {
   postMessage,
   type Req,
   runConfig,
-  sleep,
   startKernel,
   type TestKernel,
   waitFor,
@@ -45,6 +44,12 @@ let rd: TestContainer;
 let raw: ReturnType<typeof createDb>;
 let db: KernelSchemaDb;
 let maint: Queue;
+/**
+ * The client `maint` uses. A queue given a client does not close it, so afterAll quits it before
+ * Redis stops: an open client without an error listener reports "[ioredis] Unhandled error event"
+ * on every reconnect, which can land after Vitest tore the worker down.
+ */
+let maintRedis: Redis;
 const kernels: TestKernel[] = [];
 
 const config = () =>
@@ -78,11 +83,13 @@ beforeAll(async () => {
   });
   raw = createDb(pgc.url, 5);
   db = kernelDb(raw);
-  maint = new Queue(MAINTENANCE_QUEUE_NAME, { connection: new Redis(rd.url) });
+  maintRedis = new Redis(rd.url);
+  maint = new Queue(MAINTENANCE_QUEUE_NAME, { connection: maintRedis });
 }, 120_000);
 
 afterAll(async () => {
   await maint?.close();
+  await maintRedis?.quit();
   for (const k of kernels) await k.close();
   await raw?.destroy();
   await Promise.all([pgc?.stop(), rd?.stop()]);
@@ -142,7 +149,11 @@ async function waitingApproval(req: Req, convId: string): Promise<{ runId: strin
 }
 
 describe("双副本续跑", () => {
-  it("A 副本暂停（随后停机），B 副本收到审批决定并从 checkpoint 续跑", async () => {
+  // Boots two kernels in turn and stops one, with a run before and after: about 3 s alone, so the
+  // default 5 s timeout fails under load; no fixed sleeps, every wait polls its real condition.
+  it("A 副本暂停（随后停机），B 副本收到审批决定并从 checkpoint 续跑", {
+    timeout: 30_000,
+  }, async () => {
     const ka = await boot();
     const jar = cookieJar();
     const reqA = await login(ka, jar);
@@ -169,23 +180,24 @@ describe("双副本续跑", () => {
     expect(ofType(evs, "model_call").map((e) => e.payload.step)).toEqual([1, 2]);
   });
 
+  // Both paths act at once in every round; where the expiry sits (set on the PG clock, which both
+  // paths compare under the approval's row lock) decides the winner, so no round sleeps for it.
+  // About 1 s alone; the 30 s timeout is for heavy load.
   it("超时任务（B）与人工决定（A）竞争同一审批：恰好一条决定事件，只续跑一次", async () => {
     const ka = await boot();
     const kb = await boot();
     const jar = cookieJar();
     const reqA = await login(ka, jar);
     await setup(reqA);
-    // 三轮分别在到期前、到期后（各留 800ms 余量，不依赖测试进程与 PG 时钟的细微差异）、到期附近动作：
-    // 人工决定与超时各至少赢一次
+    // Rounds: well before the expiry (the decision must win), past it (the timeout must win), and
+    // right at it (either may win). The expiry is an offset from PG's now().
     const outcomes: string[] = [];
-    for (const waitMs of [200, 1_800, 1_000]) {
+    for (const expiresIn of ["1 hour", "-1 second", "20 milliseconds"]) {
       const convId = await createConv(reqA, orgId, agentId);
       const { runId, id } = await waitingApproval(reqA, convId);
       const job = await waitFor(() => maint.getJob(waitTimeoutJobId(id)), 15_000, "timeout job");
-      // 到期时刻设在 1s 之后（按 PG 时钟），两边在到期前后同时动作
-      await sql`UPDATE capybara.approvals SET expires_at = now() + interval '1 second'
+      await sql`UPDATE capybara.approvals SET expires_at = now() + ${expiresIn}::interval
         WHERE id = ${id}`.execute(raw);
-      await sleep(waitMs);
       const [decision] = await Promise.all([
         reqA({
           method: "POST",
@@ -198,8 +210,18 @@ describe("双副本续跑", () => {
       ]);
       expect([200, 409]).toContain(decision.statusCode);
       await waitForTerminal(db, convId, 1);
-      // 到期前提前执行的超时任务会重新延迟到到期时刻：等它也跑完再核对
-      await sleep(1_200);
+      // A timeout job that ran before the expiry delayed itself again until it: promote it until it
+      // has run to completion (removeOnComplete), so its late run is covered by the checks below.
+      await waitFor(
+        async () => {
+          const j = await maint.getJob(waitTimeoutJobId(id));
+          if (!j) return true;
+          if (await j.isDelayed()) await j.promote().catch(() => undefined);
+          return false;
+        },
+        15_000,
+        "timeout job finished",
+      );
       const evs = await eventsOf(db, convId);
       const decided = ofType(evs, "approval_decided");
       expect(decided).toHaveLength(1);

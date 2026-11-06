@@ -15,6 +15,7 @@ import {
   type BackgroundTaskOutput,
   type Conversation,
   type ConversationEvent,
+  getAgentTree,
   getConversation,
   getConversationUsage,
   getToolInfo,
@@ -98,6 +99,14 @@ export const subagentsQuery = (orgId: string, id: string) =>
   defineQuery({
     key: keys.org(orgId).conversation(id).subagents(),
     fn: () => listSubagents(orgId, id).then((r) => r.subagents),
+    freshness: "live",
+  });
+
+/** The agent tree of a root conversation (the agent map's level 1; read while the map is open). */
+export const agentTreeQuery = (orgId: string, id: string) =>
+  defineQuery({
+    key: keys.org(orgId).conversation(id).agentTree(),
+    fn: () => getAgentTree(orgId, id).then((r) => r.root),
     freshness: "live",
   });
 
@@ -516,8 +525,9 @@ export function isFreshlySeeded(qc: QueryClient, orgId: string, id: string): boo
 
 /**
  * What a reopened stream's catch-up makes stale when it delivered events (spec §6, "Returning to
- * a conversation"): the queue, files, sandbox, sub-agents, usage, background tasks, the row, the
- * tool info and the conversation's extension views. Otherwise they follow their freshness class.
+ * a conversation"): the queue, files, sandbox, sub-agents, the agent tree, usage, background
+ * tasks, the row, the tool info and the conversation's extension views. Otherwise they follow
+ * their freshness class.
  */
 export const CONVERSATION_SIDE_KEYS = (orgId: string, id: string): (readonly unknown[])[] => {
   const c = keys.org(orgId).conversation(id);
@@ -526,6 +536,7 @@ export const CONVERSATION_SIDE_KEYS = (orgId: string, id: string): (readonly unk
     c.files(),
     c.sandbox(),
     c.subagents(),
+    c.agentTree(),
     c.usage(),
     c.background(),
     c.row(),

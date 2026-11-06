@@ -10,7 +10,7 @@ export const MAX_DESCRIPTION = 1024;
 
 /**
  * Skill frontmatter (`name`, `description`) decides when an agent loads a skill, so it must stay in
- * English (AGENTS.md "Language"). Flags CJK characters in the frontmatter block of every
+ * English (AGENTS.md, "Rules by area", Language). Flags CJK characters in the frontmatter block of every
  * `<skillsDir>/<skill>/SKILL.md`, frontmatter that is not valid YAML (strict loaders reject the skill;
  * the usual cause is an unquoted `: ` inside a plain value), a `description` longer than the Agent
  * Skills limit of 1024 characters, and a SKILL.md with no frontmatter at all. The body is not checked.

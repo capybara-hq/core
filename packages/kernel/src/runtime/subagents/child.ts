@@ -2,7 +2,8 @@ import type { AppendEvent, EventLog } from "../../conversations/event-log.js";
 import type { ConversationEvent, EventPayload } from "../../conversations/events.js";
 import type { KernelSchemaDb } from "../../db/kernel-schema.js";
 import { usageTokens } from "../../evals/budget.js";
-import { agentResultText, type SubagentStatus } from "../../tools/builtins/agent.js";
+import { agentResultText } from "../../tools/builtins/agent.js";
+import type { SubagentAbortedBy, SubagentStatus } from "./status.js";
 
 /** Idempotency key of the parent's `subagent_finished` event. */
 export const finishedIdemKey = (childRunId: string) => `subagent_finished:${childRunId}`;
@@ -14,6 +15,13 @@ export interface DispatchRow {
   parentConversationId: string;
   childConversationId: string;
   childRunId: string;
+  /** The budget run the dispatch counts against (agent map spec §6); set when read from the row. */
+  budgetRunId?: string;
+  /**
+   * A person's fork invocation (phase D, `subagent_dispatches.for_skill`): the parent run waits on
+   * it (`subagents` wait); every other dispatch runs in the background (agent map spec §5.4).
+   */
+  forSkill?: boolean;
 }
 
 const DISPATCH_COLUMNS = [
@@ -22,6 +30,8 @@ const DISPATCH_COLUMNS = [
   "parent_conversation_id",
   "child_conversation_id",
   "child_run_id",
+  "budget_run_id",
+  "for_skill",
 ] as const;
 
 const toRow = (r: {
@@ -30,12 +40,16 @@ const toRow = (r: {
   parent_conversation_id: string;
   child_conversation_id: string;
   child_run_id: string;
+  budget_run_id: string;
+  for_skill: boolean;
 }): DispatchRow => ({
   parentRunId: r.parent_run_id,
   parentCallId: r.parent_call_id,
   parentConversationId: r.parent_conversation_id,
   childConversationId: r.child_conversation_id,
   childRunId: r.child_run_id,
+  budgetRunId: r.budget_run_id,
+  forSkill: r.for_skill,
 });
 
 /** The dispatch that started `childRunId`, or null (not a sub-agent run). */
@@ -51,6 +65,42 @@ export async function dispatchOfChildRun(
   return r ? toRow(r) : null;
 }
 
+/**
+ * The dispatch row a finished child run reports through (agent map spec §5.2: every run of a child
+ * conversation that ends appends one `finished` delivery to its parent): the run's own dispatch
+ * (`Agent`, `SendMessage`), else, for a run nobody dispatched (a wake run, §5.3), the newest dispatch
+ * of its conversation with `childRunId` set to this run, `forSkill` false (a wake run of a fork's
+ * child is delivered like any background run; no parent run waits on it) and the run's own budget
+ * run. Null when the run is unknown or its conversation was never dispatched.
+ */
+export async function deliveryRowOfChildRun(
+  db: KernelSchemaDb,
+  childRunId: string,
+): Promise<DispatchRow | null> {
+  const own = await dispatchOfChildRun(db, childRunId);
+  if (own) return own;
+  const run = await db
+    .selectFrom("runs")
+    .select(["conversation_id", "budget_run_id"])
+    .where("id", "=", childRunId)
+    .executeTakeFirst();
+  if (!run) return null;
+  const latest = await db
+    .selectFrom("subagent_dispatches")
+    .select(DISPATCH_COLUMNS)
+    .where("child_conversation_id", "=", run.conversation_id)
+    .orderBy("created_at", "desc")
+    .limit(1)
+    .executeTakeFirst();
+  if (!latest) return null;
+  return {
+    ...toRow(latest),
+    childRunId,
+    forSkill: false,
+    ...(run.budget_run_id !== null && { budgetRunId: run.budget_run_id }),
+  };
+}
+
 /** The dispatch of the parent call `(runId, callId)`, or null (not dispatched yet). */
 export async function dispatchOfCall(
   db: KernelSchemaDb,
@@ -64,6 +114,83 @@ export async function dispatchOfCall(
     .where("parent_call_id", "=", callId)
     .executeTakeFirst();
   return r ? toRow(r) : null;
+}
+
+/**
+ * `conversationId` and its ancestors, nearest first, ending at the root of its tree (the first
+ * conversation without a parent); just `[conversationId]` for a root or an unknown id. Walks at
+ * most 16 levels, far above `subagents.maxDepth`'s bound of 5.
+ */
+async function ancestryOf(db: KernelSchemaDb, conversationId: string): Promise<string[]> {
+  const chain = [conversationId];
+  for (let i = 0; i < 16; i++) {
+    const row = await db
+      .selectFrom("conversations")
+      .select("parent_conversation_id")
+      .where("id", "=", chain[chain.length - 1] as string)
+      .executeTakeFirst();
+    if (!row?.parent_conversation_id) return chain;
+    chain.push(row.parent_conversation_id);
+  }
+  return chain;
+}
+
+/**
+ * The root conversation of `conversationId`'s tree (agent map spec §6): the first ancestor without
+ * a parent, or `conversationId` itself for a root (or an unknown id).
+ */
+export async function rootConversationOf(
+  db: KernelSchemaDb,
+  conversationId: string,
+): Promise<string> {
+  return (await ancestryOf(db, conversationId)).at(-1) as string;
+}
+
+/** Where a sub-agent's request for a person is shown: see {@link rootSurfaceOf}. */
+export interface RootSurface {
+  /** The root conversation of the sub-agent's tree. */
+  conversationId: string;
+  /** The root run the event is logged under: the one that last dispatched the branch. */
+  runId: string;
+  /** Child conversation ids from the root's child down to the sub-agent itself. */
+  path: string[];
+}
+
+/**
+ * Where the sub-agent conversation `conversationId`, in its run `runId`, shows a request for a
+ * person (`subagent_waiting`: an approval, a question or a connect card; agent map spec §7): the
+ * **root** conversation of its tree, the only one a person looks at, with the path from the root's
+ * child down to it, under the root run that last dispatched (or messaged) the root's child on that
+ * path (for a child of the root, the run's own dispatch first). `parent`, when the caller knows the
+ * run's dispatch and it was made by the root (`depth` 0), answers without a read. Null for a root
+ * conversation, or a branch the root never dispatched.
+ */
+export async function rootSurfaceOf(
+  db: KernelSchemaDb,
+  conversationId: string,
+  runId: string,
+  parent?: { conversationId: string; runId: string; depth: number },
+): Promise<RootSurface | null> {
+  if (parent?.depth === 0) {
+    return { conversationId: parent.conversationId, runId: parent.runId, path: [conversationId] };
+  }
+  const chain = await ancestryOf(db, conversationId);
+  if (chain.length < 2) return null;
+  const root = chain.at(-1) as string;
+  const path = chain.slice(0, -1).reverse();
+  const top = path[0] as string;
+  const own = path.length === 1 ? await dispatchOfChildRun(db, runId) : null;
+  const dispatch =
+    own ??
+    (await db
+      .selectFrom("subagent_dispatches")
+      .select(["parent_run_id as parentRunId"])
+      .where("child_conversation_id", "=", top)
+      .where("parent_conversation_id", "=", root)
+      .orderBy("created_at", "desc")
+      .limit(1)
+      .executeTakeFirst());
+  return dispatch ? { conversationId: root, runId: dispatch.parentRunId, path } : null;
 }
 
 /** All events of one run of a conversation, by seq. */
@@ -84,11 +211,13 @@ async function runEvents(
 }
 
 /**
- * The tool result of a finished child run (spec §4.4) and its `subagent_finished` payload, from
- * the child's log only: the status from its terminal event, the reply from its last
+ * The result of a finished child run (spec §4.4) and its `subagent_finished` payload, from the
+ * child's log only: the status from its terminal event, the reply from its last
  * `assistant_message` (text blocks), the tool call count from its `tool_result` events, the usage
  * from its `usage` events (compaction included) and the duration from `run_started` to the
- * terminal event. Null while the run has no terminal event.
+ * terminal event. Null while the run has no terminal event. `content` is the fork report's text
+ * (`agentResultText`); `reply`, `errorMessage` and `abortedBy` are what a background child's
+ * finished `subagent_delivery` carries.
  *
  * `modelGiven`: the parent's call named a `model`; for an org agent, which runs on its own model
  * (§5.4, §5.5), the status line then says `model: the agent's own`.
@@ -96,11 +225,14 @@ async function runEvents(
 export async function childResult(
   eventLog: EventLog,
   row: DispatchRow,
-  /** `forSkill`: a fork invocation's report (no resume hint, see `agentResultText`). */
-  opts: { modelGiven?: boolean; forSkill?: boolean } = {},
+  opts: { modelGiven?: boolean } = {},
 ): Promise<{
   content: string;
   isError: boolean;
+  /** The text of the child's last `assistant_message`. */
+  reply: string;
+  errorMessage?: string;
+  abortedBy?: SubagentAbortedBy;
   finished: EventPayload<"subagent_finished">;
 } | null> {
   const events = await runEvents(eventLog, row.childConversationId, row.childRunId);
@@ -111,7 +243,7 @@ export async function childResult(
   let status: SubagentStatus;
   let errorCode: string | undefined;
   let errorMessage: string | undefined;
-  let abortedBy: "user" | "parent" | undefined;
+  let abortedBy: SubagentAbortedBy | undefined;
   if (terminal.type === "run_finished") status = terminal.payload.reason;
   else if (terminal.type === "run_failed") {
     status = "failed";
@@ -161,10 +293,12 @@ export async function childResult(
     tokens: usageTokens(usage),
     ...(abortedBy !== undefined && { abortedBy }),
     ...(ownModel && { ownModel }),
-    ...(opts.forSkill === true && { noResumeHint: true }),
   });
   return {
     ...text,
+    reply,
+    ...(errorMessage !== undefined && { errorMessage }),
+    ...(abortedBy !== undefined && { abortedBy }),
     finished: {
       subagentId: row.childConversationId,
       childRunId: row.childRunId,

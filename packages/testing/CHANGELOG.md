@@ -1,5 +1,12 @@
 # @capybara-hq/testing
 
+## 0.1.0-rc.5
+
+### Patch Changes
+
+- 7138d68: The fake git server no longer throws `ERR_HTTP_HEADERS_SENT` (an uncaught exception) when `git http-backend` cannot be spawned: the child's `error` and `close` events no longer both write the 502 head.
+- @capybara-hq/plugin-tools@0.1.0-rc.4
+
 ## 0.1.0-rc.4
 
 ### Minor Changes

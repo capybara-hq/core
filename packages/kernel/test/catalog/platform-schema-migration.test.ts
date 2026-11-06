@@ -9,11 +9,11 @@ import { createDb } from "../../src/db/pool.js";
 import { KERNEL_MIGRATIONS_DIR } from "../../src/kernel.js";
 
 /**
- * 0080_platform_components.sql: tables for platform skills, agent templates and connector
- * templates, their scope tables, and the nullable links on the org copies. Migrates to 0079, seeds
- * an org skill and an org template, then migrates to 0080.
+ * 0081_platform_components.sql: tables for platform skills, agent templates and connector
+ * templates, their scope tables, and the nullable links on the org copies. Migrates to 0080, seeds
+ * an org skill and an org template, then migrates to 0081.
  */
-const FILE = "0080_platform_components.sql";
+const FILE = "0081_platform_components.sql";
 let pg: Awaited<ReturnType<typeof startTestPostgres>>;
 let db: ReturnType<typeof createDb>;
 const dirs: string[] = [];
@@ -46,7 +46,7 @@ afterAll(async () => {
   for (const d of dirs) rmSync(d, { recursive: true, force: true });
 }, 120_000);
 
-describe("0080 platform components", () => {
+describe("0081 platform components", () => {
   it("creates the tables", async () => {
     const rows = await q<{ t: string }>(`select table_name as t from information_schema.tables
       where table_schema = 'capybara' and (table_name like 'platform\\_%' or table_name like 'component\\_%')

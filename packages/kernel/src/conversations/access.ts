@@ -5,10 +5,33 @@ import type { KernelDatabase } from "../db/kernel-schema.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 
 /**
- * A sub-agent's conversation is reached through its parent (sub-agents spec §6.1, review m6, the
- * same rule as its trajectory): the parent is a chat conversation of the same owner whose agent is
- * not deleted and still visible to the viewer. Any other kind passes. The child's own `agent_id`
- * (the dispatched agent for an org agent, §5.5) is checked on top by the callers.
+ * The root of a sub-agent conversation's tree, as a correlated scalar subquery: walks
+ * `parent_conversation_id` up from the conversation's parent through sub-agent conversations of
+ * the same org (at most 16 levels, far above `subagents.maxDepth`'s bound of 5) to the first
+ * conversation without a parent. Null when the chain leaves the org, passes a conversation of
+ * another kind or does not end.
+ */
+const rootOfParent = () => sql<string | null>`(
+  WITH RECURSIVE up(id, parent, kind, n) AS (
+    SELECT c.id, c.parent_conversation_id, c.kind, 0 FROM capybara.conversations c
+    WHERE c.id = ${sql.ref("conversations.parent_conversation_id")}
+      AND c.org_id = ${sql.ref("conversations.org_id")}
+    UNION ALL
+    SELECT c.id, c.parent_conversation_id, c.kind, up.n + 1
+    FROM capybara.conversations c JOIN up ON c.id = up.parent
+    WHERE up.kind = 'subagent' AND up.n < 16
+      AND c.org_id = ${sql.ref("conversations.org_id")}
+  )
+  SELECT id FROM up WHERE parent IS NULL LIMIT 1
+)`;
+
+/**
+ * A sub-agent's conversation is reached through the root of its tree (sub-agents spec §6.1,
+ * review m6, the same rule as its trajectory; agent map spec §4.1: nested sub-agents at any
+ * depth): the root is a chat conversation of the same org and owner whose agent is not deleted
+ * and still visible to the viewer, and every conversation between is a sub-agent conversation of
+ * that org. Any other kind passes. The child's own `agent_id` (the dispatched agent for an org
+ * agent, §5.5) is checked on top by the callers.
  */
 export const parentReachable =
   (viewerAccountId: string) => (eb: ExpressionBuilder<KernelDatabase, "conversations">) =>
@@ -19,7 +42,7 @@ export const parentReachable =
           .selectFrom("conversations as p")
           .innerJoin("agents", "agents.id", "p.agent_id")
           .select(sql`1`.as("one"))
-          .whereRef("p.id", "=", "conversations.parent_conversation_id")
+          .where("p.id", "=", rootOfParent())
           .whereRef("p.org_id", "=", "conversations.org_id")
           .where("p.account_id", "=", viewerAccountId)
           .where("p.kind", "=", "chat")

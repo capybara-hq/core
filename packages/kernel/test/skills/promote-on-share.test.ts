@@ -766,7 +766,8 @@ describe("promote on share", { timeout: 120_000 }, () => {
       root,
       orgA,
       conv,
-      `tool:Agent:${JSON.stringify({ description: "Again", prompt: "echo:again", resume: childId })}`,
+      // a follow-up is a SendMessage to the sub-agent (agent map spec §4.2)
+      `tool:SendMessage:${JSON.stringify({ to: childId, message: "echo:again" })}`,
     );
     await waitForTerminal(db, conv, 2, 30_000);
     const req = await waitFor(
@@ -776,7 +777,8 @@ describe("promote on share", { timeout: 120_000 }, () => {
           return (
             last?.role === "user" &&
             JSON.stringify(last.content).includes("echo:again") &&
-            !JSON.stringify(last.content).includes("tool:Agent")
+            !JSON.stringify(last.content).includes("tool:Agent") &&
+            !JSON.stringify(last.content).includes("tool:SendMessage")
           );
         }),
       10_000,

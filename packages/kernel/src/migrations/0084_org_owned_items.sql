@@ -63,7 +63,7 @@ ALTER TABLE agent_templates ADD COLUMN IF NOT EXISTS shareable boolean NOT NULL 
 ALTER TABLE plugin_import_staging ADD COLUMN IF NOT EXISTS org_id text
   REFERENCES orgs(id) ON DELETE CASCADE;
 
--- New org notice kinds. 0081 declared the CHECK inline, so it is named org_notices_kind_check.
+-- New org notice kinds. 0082 declared the CHECK inline, so it is named org_notices_kind_check.
 -- capybara:allow-destructive the check is added back with the wider kind list in the next statement; existing rows (skill_renamed) satisfy it
 ALTER TABLE org_notices DROP CONSTRAINT IF EXISTS org_notices_kind_check;
 ALTER TABLE org_notices ADD CONSTRAINT org_notices_kind_check

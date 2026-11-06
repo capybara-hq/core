@@ -8,7 +8,6 @@ import {
   currentOrg,
   designZh,
   eventsOf,
-  replies,
   send,
   startChat,
   users,
@@ -17,22 +16,34 @@ import {
 import { signIn } from "./support/sign-in";
 
 /**
- * Sub-agents on the conversation page (UI refresh B Task 21, phase C): model-fake calls the tool a
- * message names, and a general-purpose child answers its prompt the same way. A finished sub-agent
- * is a row that expands to its result and opens its record on the right; a running one streams in
- * the right panel, Stop ends it and the parent goes on; the properties panel lists them.
+ * Sub-agents on the conversation page (UI refresh B Task 21, phase C; agent map spec §9.5): model-fake
+ * calls the tool a message names, and a general-purpose child answers its prompt the same way. Each
+ * `Agent` call is a call block whose status line follows the child in the background; the child's
+ * end reaches the parent as a notice line with its reply; the properties panel lists the
+ * sub-agents and opens one read-only on the right, where a running one can be stopped.
  */
 
 const group = (page: Page) => page.locator('[data-entry="subagents"]');
-const row = (page: Page, description: string) =>
-  page.locator('[data-part="subagent-row"]').filter({ hasText: description });
+const block = (page: Page, description: string) =>
+  page.locator('[data-part="agent-call-block"]').filter({ hasText: description });
 const panel = (page: Page, description: string) =>
   page.getByRole("complementary", { name: description });
+
+/** A finished group is folded: its header button ("N 个子智能体已完成 · …") opens it. */
+const unfold = async (page: Page, index: number, n: number) => {
+  const g = group(page).nth(index);
+  await g
+    .getByRole("button", {
+      name: new RegExp(`^${designZh("subagent.done").replace("{n}", `${n}`)}`),
+    })
+    .click();
+  await animationsDone(g);
+};
 
 const dispatch = (description: string, prompt: string) =>
   `tool:Agent:${JSON.stringify({ description, prompt })}`;
 
-test("sub-agents: the group, the record on the right, stop, and the properties panel", async ({
+test("sub-agents: the call block, the finish notice, the record on the right, stop, and the properties panel", async ({
   page,
 }) => {
   await signIn(page);
@@ -40,22 +51,28 @@ test("sub-agents: the group, the record on the right, stop, and the properties p
   await createAgent(page, orgId, "Lead with helpers", [{ kind: "builtin", name: "Agent" }]);
   await startChat(page, "Lead with helpers");
 
-  // 1. a sub-agent that answers at once: a done row, its result folded into the parent's reply
+  // 1. a sub-agent that answers at once: its group folds once it is done
   await send(page, dispatch("Check the docs", "echo:child says hello"));
-  await expect(group(page).first()).toContainText(designZh("subagent.done").replace("{n}", "1"));
-  // a finished group is folded: its line opens it
-  await group(page).first().locator('[data-part="tool-line"]').click();
-  await animationsDone(group(page).first());
-  const done = row(page, "Check the docs");
-  await expect(done).toHaveAttribute("data-status", "completed");
-  await expect(done).toContainText("general-purpose");
-  await expect(replies(page).last()).toContainText("child says hello");
+  await expect(group(page).first().locator('[data-part="tool-line"]')).toContainText(
+    designZh("subagent.done").replace("{n}", "1"),
+  );
+  await unfold(page, 0, 1);
+  await expect(block(page, "Check the docs")).toHaveAttribute("data-status", "completed");
+  // its end is a notice line in the parent whose text is the child's reply
+  const finished = page
+    .locator('[data-entry="delivery"]')
+    .filter({ hasText: zh.chat.delivery.completed.replace("{name}", "Check the docs") });
+  await expect(finished).toBeVisible();
+  await finished.getByRole("button", { name: zh.chat.delivery.show }).click();
+  await expect(finished).toContainText("child says hello");
 
-  // the row expands in place to the result; "open the full record" opens it on the right
-  await done.click();
-  // the record link sits in the expanding block: click it once the expand has finished
-  await animationsDone(page.locator('[data-part="subagent-steps"]'));
-  await page.getByRole("button", { name: designZh("subagent.openRecord") }).click();
+  // 2. the properties panel lists it; it opens read-only on the right
+  await page.getByRole("button", { name: designZh("titlebar.properties") }).click();
+  const props = page.getByRole("complementary", { name: designZh("props.label") });
+  await expect(props).toContainText(zh.subagents.background);
+  await props
+    .getByRole("button", { name: designZh("subagent.completed").replace("{n}", "1") })
+    .click();
   await expect(page).toHaveURL(/#subagent=/);
   const record = panel(page, "Check the docs");
   await expect(record.locator('[data-part="subagent-task"]')).toContainText(
@@ -72,30 +89,19 @@ test("sub-agents: the group, the record on the right, stop, and the properties p
     .click();
   await expect(page).not.toHaveURL(/#subagent=/);
 
-  // 2. a slow sub-agent: open it while it runs, watch it stream, stop it; the parent goes on
+  // 3. a slow sub-agent works in the background; stop it from the properties panel
   const words = Array.from({ length: 120 }, (_, i) => `w${i}`).join(" ");
-  await send(page, dispatch("Slow job", `slow:250:${words}`));
-  const slow = row(page, "Slow job");
-  await expect(slow).toHaveAttribute("data-status", "running");
-  await slow.click();
-  await expect(slow).toHaveAttribute("aria-current", "true");
-  const live = panel(page, "Slow job");
-  await expect(live.locator('[data-streaming="true"]')).toBeVisible();
-  await live.getByRole("button", { name: zh.subagents.view.stop }).click();
-  // done, its group folds; open it again to see the stopped row
-  const second = group(page).nth(1).locator('[data-part="tool-line"]');
-  await expect(second).toContainText(designZh("subagent.done").replace("{n}", "1"));
-  await second.click();
-  await expect(slow).toHaveAttribute("data-status", "aborted");
-  await expect(live.getByRole("button", { name: zh.subagents.view.stop })).toHaveCount(0);
-  await live.getByRole("button", { name: designZh("overlay.close") }).click();
-  await expect(replies(page).last()).toContainText("Tool result:");
+  await send(page, dispatch("Slow job", `slow:500:${words}`));
+  await expect(block(page, "Slow job")).toHaveAttribute("data-status", "running");
+  await expect(block(page, "Slow job")).toContainText(designZh("agentMap.call.runningIdle"));
   await expect(composer(page)).toBeEnabled();
-
-  // 3. the properties panel: no running ones, two completed; the total with sub-agents
   await page.getByRole("button", { name: designZh("titlebar.properties") }).click();
-  const props = page.getByRole("complementary", { name: designZh("props.label") });
-  await expect(props).toContainText(zh.subagents.background);
+  await props
+    .getByRole("button", { name: designZh("background.stop").replace("{name}", "Slow job") })
+    .click();
+  // done, its group folds; open it to see the stopped block
+  await unfold(page, 1, 1);
+  await expect(block(page, "Slow job")).toHaveAttribute("data-status", "aborted");
   await expect(props).toContainText(designZh("subagent.completed").replace("{n}", "2"));
   // the Context section: the meter, the model line and the tokens with sub-agents (a number)
   await expect(props.locator('[data-part="meter"]')).toBeVisible();
@@ -103,13 +109,9 @@ test("sub-agents: the group, the record on the right, stop, and the properties p
   await expect(props.locator('[data-part="context-total"]')).toHaveText(
     new RegExp(`^${zh.subagents.contextTotal.replace("{n}", "[1-9][\\d,]*")}$`),
   );
-  await props
-    .getByRole("button", { name: designZh("subagent.completed").replace("{n}", "2") })
-    .click();
-  await expect(page).toHaveURL(/#subagent=/);
 });
 
-test("a sub-agent's approval waits in the parent and is decided there; a legacy ?subagent= link opens the child", async ({
+test("a sub-agent's approval waits in the parent and is decided there; a ?subagent= link opens the child's transcript in the agent map", async ({
   page,
 }) => {
   await signIn(page);
@@ -126,17 +128,24 @@ test("a sub-agent's approval waits in the parent and is decided there; a legacy 
   await expect(wait).toContainText(zh.subagents.askedBy.replace("{name}", "Delete via child"));
   await expect(wait.getByText("c9")).toBeVisible();
   await wait.getByRole("button", { name: designZh("hitl.approve"), exact: true }).click();
-  await expect(replies(page).last()).toContainText("deleted c9");
+  // the child runs the call; its end reaches the parent as a notice with its reply
+  const done = page
+    .locator('[data-entry="delivery"]')
+    .filter({ hasText: zh.chat.delivery.completed.replace("{name}", "Delete via child") });
+  await expect(done).toBeVisible();
+  await done.getByRole("button", { name: zh.chat.delivery.show }).click();
+  await expect(done).toContainText("deleted c9");
 
-  // an inbox or IM link written before the hash routes (?subagent=) opens that child
+  // an inbox or IM link (?subagent=, any depth) opens that child's transcript in the agent map
+  // (where a pending approval's card is)
   const id = conversationIdOf(page);
   const listed = await page.request.get(`/api/v1/orgs/${orgId}/conversations/${id}/subagents`);
   expect(listed.ok(), await listed.text()).toBe(true);
   const child = ((await listed.json()) as { subagents: { id: string }[] }).subagents[0]?.id;
   expect(child).toBeTruthy();
   await page.goto(`/chat/${id}?subagent=${child}`);
-  await expect(panel(page, "Delete via child")).toBeVisible();
-  await expect(page).toHaveURL(new RegExp(`/chat/${id}#subagent=${child}$`));
+  await expect(page.getByRole("dialog", { name: "Delete via child" })).toBeVisible();
+  await expect(page).toHaveURL(new RegExp(`/chat/${id}#agents=${child}/transcript$`));
 });
 
 test("a failed run shows its notice; Retry repeats the message without a second bubble", async ({

@@ -9,11 +9,11 @@ import { createDb } from "../../src/db/pool.js";
 import { KERNEL_MIGRATIONS_DIR } from "../../src/kernel.js";
 
 /**
- * 0083_org_owned_items.sql: owners, sharing, pending uploads and platform notices. Migrates to
- * 0082, seeds a catalog item, a platform skill, an org skill and an org notice, then migrates to
- * 0083.
+ * 0084_org_owned_items.sql: owners, sharing, pending uploads and platform notices. Migrates to
+ * 0083, seeds a catalog item, a platform skill, an org skill and an org notice, then migrates to
+ * 0084.
  */
-const FILE = "0083_org_owned_items.sql";
+const FILE = "0084_org_owned_items.sql";
 let pg: Awaited<ReturnType<typeof startTestPostgres>>;
 let db: ReturnType<typeof createDb>;
 const dirs: string[] = [];
@@ -52,7 +52,7 @@ afterAll(async () => {
   for (const d of dirs) rmSync(d, { recursive: true, force: true });
 }, 120_000);
 
-describe("0083 org owned items", () => {
+describe("0084 org owned items", () => {
   it("existing rows stay platform-owned and unshared", async () => {
     expect(
       await q(`select owner_org_id, shareable, awaiting_confirmation, pending_version

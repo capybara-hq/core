@@ -971,3 +971,369 @@ describe("calls that wait for a person (design §6.16.9)", () => {
     expect(row([old], legacy)?.kind).toBe("question");
   });
 });
+
+describe("background sub-agents (agent map spec §5, §9.4)", () => {
+  const dispatch = (kind?: "task" | "message") => ({
+    dispatch: {
+      parentConversationId: "c0",
+      parentRunId: "r0",
+      callId: "k1",
+      ...(kind ? { kind } : {}),
+    },
+  });
+
+  it("a parent message in a child renders as a bubble labelled with the parent", () => {
+    const events = [
+      user(1, "Scan the docs", dispatch()),
+      ev(2, "run_started", { agentVersion: 1, model: { provider: "p", model: "m" } }),
+      user(3, "Focus on the API docs", dispatch("message")),
+    ];
+    const out = buildTimeline(events, [], new Map(), "en", {
+      agentName: (id) => (id === "c0" ? "Release notes" : undefined),
+    });
+    expect(kinds(out)).toEqual(["task", "user"]);
+    expect(out[1]).toMatchObject({
+      kind: "user",
+      text: "Focus on the API docs",
+      sender: { id: "c0", name: "Release notes" },
+    });
+    // without a name the sender is still the parent (the thread words it)
+    const bare = buildTimeline(events, [], new Map(), "en");
+    expect(bare[1]).toMatchObject({ kind: "user", sender: { id: "c0" } });
+    expect(bare[1]).not.toHaveProperty("sender.name");
+  });
+
+  it("a subagent_delivery renders in the parent", () => {
+    const delivery = (seq: number, payload: Record<string, unknown>) =>
+      ev(
+        seq,
+        "subagent_delivery",
+        {
+          subagentId: "ch1",
+          childRunId: "run-ch1",
+          description: "Scan docs",
+          triggerAccountId: "a1",
+          text: "",
+          ...payload,
+        },
+        null,
+      );
+    const events = [
+      user(1, "go"),
+      delivery(2, { kind: "report", text: "Docs are fine." }),
+      delivery(3, { kind: "note", text: "Halfway there." }),
+      delivery(4, { kind: "finished", status: "completed", handedBack: true }),
+      delivery(5, { kind: "finished", status: "max_steps", text: "out of steps" }),
+      delivery(6, { kind: "finished", status: "aborted", abortedBy: "user" }),
+    ];
+    const out = buildTimeline(events, [], new Map(), "en");
+    expect(kinds(out)).toEqual([
+      "user",
+      "delivery",
+      "delivery",
+      "delivery",
+      "delivery",
+      "delivery",
+    ]);
+    expect(out.slice(1)).toMatchObject([
+      { subagentId: "ch1", name: "Scan docs", delivery: "report", text: "Docs are fine." },
+      { delivery: "note", text: "Halfway there." },
+      { delivery: "finished", status: "completed", text: "" },
+      { delivery: "finished", status: "failed", text: "out of steps" },
+      { delivery: "finished", status: "aborted" },
+    ]);
+  });
+
+  it("SendMessage and SubagentHandback are ordinary tool rows", () => {
+    const events = [
+      user(1, "go"),
+      calls(2, [
+        { id: "a", name: "SendMessage", input: { to: "parent", message: "Halfway" } },
+        { id: "b", name: "SubagentHandback", input: { message: "All done" } },
+      ]),
+      result(3, "a", "SendMessage"),
+      result(4, "b", "SubagentHandback"),
+    ];
+    const out = buildTimeline(events, [], new Map(), "en");
+    expect(kinds(out)).toEqual(["user", "tools"]);
+    expect(tools(out)[0]?.rows.map((r) => [r.row.name, r.row.status])).toEqual([
+      ["SendMessage", "done"],
+      ["SubagentHandback", "done"],
+    ]);
+  });
+
+  it("an unfinished sub-agent's row names its current tool from subagent_progress", () => {
+    const events = [
+      user(1, "go"),
+      calls(2, [
+        {
+          id: "k1",
+          name: "Agent",
+          input: { description: "Scan docs", prompt: "Do it", subagent_type: "general-purpose" },
+        },
+      ]),
+      ev(3, "subagent_dispatched", {
+        step: 0,
+        callId: "k1",
+        subagentId: "ch1",
+        childRunId: "run-ch1",
+        agentType: "general-purpose",
+        description: "Scan docs",
+        resumed: false,
+        model: { provider: "p", model: "m" },
+      }),
+    ];
+    const out = buildTimeline(events, [], INFO, "en", {
+      progress: { ch1: { toolCalls: 2, lastToolKey: "plugin__slack__search" } },
+    });
+    const g = out.find((e) => e.kind === "subagents");
+    expect(g?.kind === "subagents" && g.rows[0]?.row.current).toBe("Slack [search]");
+  });
+});
+
+describe("waits of nested sub-agents (agent map spec §7)", () => {
+  const agentCall = calls(2, [
+    {
+      id: "k1",
+      name: "Agent",
+      input: { description: "Scan docs", prompt: "Do it", subagent_type: "general-purpose" },
+    },
+  ]);
+  const dispatched = ev(3, "subagent_dispatched", {
+    step: 0,
+    callId: "k1",
+    subagentId: "ch1",
+    childRunId: "run-ch1",
+    agentType: "general-purpose",
+    description: "Scan docs",
+    resumed: false,
+    model: { provider: "p", model: "m" },
+  });
+  const deepWait = ev(4, "subagent_waiting", {
+    subagentId: "gc1",
+    childRunId: "run-gc1",
+    path: ["ch1", "gc1"],
+    kind: "connect",
+    toolKey: "mcp__gh__issue",
+  });
+  const events = [user(1, "go"), agentCall, dispatched, deepWait];
+  const rowOf = (out: TimelineEntry[]) => {
+    const g = out.find((e) => e.kind === "subagents");
+    return g?.kind === "subagents" ? g.rows[0]?.row : undefined;
+  };
+
+  it("a deep agent's wait marks its root-level row waiting and names the waiting agent", () => {
+    const out = buildTimeline(events, [], new Map(), "en", {
+      agentName: (id) => (id === "gc1" ? "Read the changelog" : undefined),
+      // the list says the root's child itself runs: its descendant's wait still shows
+      views: new Map([
+        ["ch1", { status: "running", pendingApprovalIds: [], pendingQuestionIds: [] }],
+      ]),
+    });
+    expect(rowOf(out)).toMatchObject({ id: "ch1", status: "waiting", waiting: "connect" });
+    expect(out.at(-1)).toMatchObject({
+      kind: "subagent-wait",
+      subagent: { id: "gc1", name: "Read the changelog" },
+      deep: true,
+      wait: "connect",
+    });
+  });
+
+  it("without the agent's name a deep wait is named by its branch, never by a bare id", () => {
+    const out = buildTimeline(events, [], new Map(), "en");
+    expect(out.at(-1)).toMatchObject({ subagent: { id: "gc1", name: "Scan docs" } });
+  });
+
+  it("the tree says the deep agent goes on: the row is no longer waiting", () => {
+    const out = buildTimeline(events, [], new Map(), "en", {
+      agentStatus: (id) => (id === "gc1" ? "running" : undefined),
+    });
+    expect(rowOf(out)).toMatchObject({ status: "running" });
+    expect(rowOf(out)).not.toHaveProperty("waiting");
+  });
+
+  it("only a background row names its current tool (a fork's child is foreground)", () => {
+    const fork = [
+      user(1, "/review", {
+        skill: {
+          id: "s1",
+          version: 1,
+          source: "org",
+          name: "review",
+          arguments: "",
+          mode: "fork",
+        },
+      }),
+      ev(2, "subagent_dispatched", {
+        step: 0,
+        callId: "skill-1",
+        subagentId: "ch9",
+        childRunId: "run-ch9",
+        agentType: "general-purpose",
+        description: "review",
+        resumed: false,
+        model: { provider: "p", model: "m" },
+        invokedSeq: 1,
+      }),
+    ];
+    const out = buildTimeline(fork, [], new Map(), "en", {
+      progress: { ch9: { toolCalls: 1, lastToolKey: "Bash" } },
+    });
+    expect(rowOf(out)).toMatchObject({ id: "ch9", background: false });
+    expect(rowOf(out)).not.toHaveProperty("current");
+  });
+});
+
+describe("Agent call rows across a child's runs (final review)", () => {
+  const usage = { inputTokens: 1000, outputTokens: 200, cacheReadTokens: 300, cacheWriteTokens: 0 };
+  const agentCall = calls(2, [
+    {
+      id: "k1",
+      name: "Agent",
+      input: { description: "Scan docs", prompt: "Do it", subagent_type: "general-purpose" },
+    },
+  ]);
+  const dispatched = (seq: number, callId: string, childRunId: string, runId = "r1") =>
+    ev(
+      seq,
+      "subagent_dispatched",
+      {
+        step: 0,
+        callId,
+        subagentId: "ch1",
+        childRunId,
+        agentType: "general-purpose",
+        description: "Scan docs",
+        resumed: callId !== "k1",
+        model: { provider: "p", model: "m" },
+      },
+      runId,
+    );
+  const finished = (seq: number, childRunId: string, status = "completed", u = usage) =>
+    ev(
+      seq,
+      "subagent_finished",
+      {
+        subagentId: "ch1",
+        childRunId,
+        callId: "k1",
+        status,
+        toolCalls: 3,
+        durationMs: 41_000,
+        usage: u,
+      },
+      null,
+    );
+  const rowOf = (out: TimelineEntry[]) => {
+    const g = out.find((e) => e.kind === "subagents");
+    return g?.kind === "subagents" ? g.rows[0]?.row : undefined;
+  };
+
+  it("an ended call shows its child's tokens (the four usage fields summed)", () => {
+    const events = [user(1, "go"), agentCall, dispatched(3, "k1", "run-a"), finished(4, "run-a")];
+    expect(rowOf(buildTimeline(events, [], new Map(), "en"))).toMatchObject({
+      status: "completed",
+      durationMs: 41_000,
+      tokens: 1500,
+    });
+  });
+
+  it("a child restarted by SendMessage runs again on its Agent call's row, then ends again", () => {
+    const base = [
+      user(1, "go"),
+      agentCall,
+      dispatched(3, "k1", "run-a"),
+      result(4, "k1", "Agent"),
+      finished(5, "run-a"),
+      user(6, "tell it more"),
+      calls(7, [{ id: "sm1", name: "SendMessage", input: { to: "ch1", message: "more" } }]),
+      // the restart carries the SendMessage call's id, not the Agent call's
+      dispatched(8, "sm1", "run-b"),
+    ];
+    const running = rowOf(buildTimeline(base, [], new Map(), "en"));
+    expect(running).toMatchObject({ id: "ch1", status: "running" });
+    expect(running).not.toHaveProperty("durationMs");
+    expect(running).not.toHaveProperty("finishedAt");
+    expect(running).not.toHaveProperty("tokens");
+    const again = [
+      ...base,
+      finished(9, "run-b", "failed", {
+        inputTokens: 10,
+        outputTokens: 5,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+      }),
+    ];
+    expect(rowOf(buildTimeline(again, [], new Map(), "en"))).toMatchObject({
+      status: "failed",
+      tokens: 15,
+    });
+  });
+
+  it("a late finish of the previous run leaves the restarted run's row running", () => {
+    const events = [
+      user(1, "go"),
+      agentCall,
+      dispatched(3, "k1", "run-a"),
+      result(4, "k1", "Agent"),
+      calls(5, [{ id: "sm1", name: "SendMessage", input: { to: "ch1", message: "more" } }]),
+      // run-a ended, SendMessage restarted the child, then run-a's finish was logged
+      dispatched(6, "sm1", "run-b"),
+      finished(7, "run-a"),
+    ];
+    const row = rowOf(buildTimeline(events, [], new Map(), "en"));
+    expect(row).toMatchObject({ id: "ch1", status: "running" });
+    expect(row).not.toHaveProperty("finishedAt");
+    // run-b's own finish still ends the row
+    expect(
+      rowOf(buildTimeline([...events, finished(8, "run-b", "failed")], [], new Map(), "en")),
+    ).toMatchObject({ status: "failed" });
+  });
+
+  it("a child woken by its own background task: the list's newer run reopens the row", () => {
+    const events = [
+      user(1, "go"),
+      agentCall,
+      dispatched(3, "k1", "run-a"),
+      result(4, "k1", "Agent"),
+      finished(5, "run-a"),
+    ];
+    const endedAt = Date.parse(events[4]?.createdAt ?? "");
+    const view = (startedAt: number) =>
+      new Map([
+        [
+          "ch1",
+          {
+            status: "running",
+            startedAt: new Date(startedAt).toISOString(),
+            pendingApprovalIds: [],
+            pendingQuestionIds: [],
+          },
+        ],
+      ]);
+    // the list was read before the finish: the log wins
+    expect(
+      rowOf(buildTimeline(events, [], new Map(), "en", { views: view(endedAt - 30_000) })),
+    ).toMatchObject({ status: "completed" });
+    // a run that started after the finish (a wake writes no dispatch)
+    const woken = rowOf(
+      buildTimeline(events, [], new Map(), "en", { views: view(endedAt + 5000) }),
+    );
+    expect(woken).toMatchObject({ status: "running" });
+    expect(woken).not.toHaveProperty("durationMs");
+    // the wake run's own finish is the row's latest end
+    const after = [
+      ...events,
+      finished(6, "run-w", "completed", {
+        inputTokens: 7,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+      }),
+    ];
+    expect(rowOf(buildTimeline(after, [], new Map(), "en"))).toMatchObject({
+      status: "completed",
+      tokens: 7,
+    });
+  });
+});

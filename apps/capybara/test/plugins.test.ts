@@ -1,9 +1,7 @@
-import { spawn } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { createDb, kernelDb } from "@capybara-hq/kernel";
 import {
   type FakeGitServer,
@@ -20,9 +18,12 @@ import { skillPlugin, templatePlugin } from "../../../packages/kernel/test/catal
 import { legacyTgz, pluginTgz } from "../../../packages/kernel/test/helpers/plugin-packages.js";
 import { SKILL_MD } from "../../../packages/kernel/test/skills/zip.js";
 import { describeReview, parsePluginsImportTarget } from "../src/commands/plugins.js";
-import { type FakeBootstrapDir, packFakeBootstrapDir, runCli } from "./support/cli.js";
-
-const REPO_ROOT = fileURLToPath(new URL("../../../", import.meta.url));
+import {
+  type FakeBootstrapDir,
+  packFakeBootstrapDir,
+  runCli,
+  runCliInProcess,
+} from "./support/cli.js";
 
 let pg: TestContainer;
 let git: FakeGitServer;
@@ -44,7 +45,7 @@ beforeAll(async () => {
   work = await mkdtemp(join(tmpdir(), "capybara-plugins-"));
   // The deployment's object store is a bootstrap plugin (the fake fake-object-store standing in for
   // object-store-s3), as after compose init
-  const r = await runCli(
+  const r = await runCliInProcess(
     ["bootstrap", "--dir", boot.dir, "--manifest", boot.manifest],
     testEnv(true, []),
   );
@@ -93,30 +94,14 @@ function testEnv(withStore: boolean, extensions: string[]): NodeJS.ProcessEnv {
   };
 }
 
+/** Runs `capybara <args>` in process (`runCliInProcess`); `runCli` only where the real process matters. */
 function run(
   args: string[],
   stdin = "",
   withStore = true,
   extensions: string[] = [],
 ): Promise<{ code: number | null; stdout: string; stderr: string }> {
-  return new Promise((resolve, reject) => {
-    const child = spawn("pnpm", ["--silent", "capybara", ...args], {
-      cwd: REPO_ROOT,
-      env: testEnv(withStore, extensions),
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-    let stdout = "";
-    let stderr = "";
-    child.stdout.on("data", (d) => {
-      stdout += String(d);
-    });
-    child.stderr.on("data", (d) => {
-      stderr += String(d);
-    });
-    child.on("error", reject);
-    child.on("close", (code) => resolve({ code, stdout, stderr }));
-    child.stdin.end(stdin);
-  });
+  return runCliInProcess(args, testEnv(withStore, extensions), stdin);
 }
 
 async function query<T>(f: (db: ReturnType<typeof kernelDb>) => Promise<T>): Promise<T> {
@@ -174,7 +159,9 @@ describe("capybara plugins list / import", () => {
   it("import prints the review and asks; an interactive no imports nothing", async () => {
     const file = join(work, "notes.tgz");
     await writeFile(file, await skillPlugin("notes", { version: "1.2.0" }));
-    const r = await run(["plugins", "import", file], "n\n");
+    // The real process (`pnpm capybara`: argument parsing, the cli.ts dispatch, a piped stdin);
+    // the other cases run the same commands in process
+    const r = await runCli(["plugins", "import", file], testEnv(true, []), "n\n");
     expect(r.code).toBe(1);
     expect(r.stdout).toContain("notes 1.2.0");
     expect(r.stdout).toContain("Skill notes");

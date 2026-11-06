@@ -590,7 +590,10 @@ describe("the invocation in the thread", () => {
     const row = document.querySelector('[data-entry="subagents"]') as HTMLElement;
     const user = userEvent.setup();
     await user.click(within(row).getAllByRole("button")[0] as HTMLElement);
-    expect(row.textContent).toContain("general-purpose");
+    // the fork's child as an Agent call block: "Agent review", then its final state
+    const block = row.querySelector('[data-part="agent-call-block"]') as HTMLElement;
+    expect(block.querySelector('[data-part="agent-call-head"]')?.textContent).toBe("Agent review");
+    expect(block.dataset.status).toBe("completed");
     const report = document.querySelector('[data-entry="skill-report"]') as HTMLElement;
     expect(within(report).queryByText(/Looks good/)).toBeNull();
     await user.click(within(report).getByRole("button", { name: en.chat.skillReport }));

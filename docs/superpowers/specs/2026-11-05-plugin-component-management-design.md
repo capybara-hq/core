@@ -3,12 +3,12 @@
 - Date: 2026-11-05, written against `main` at `40d81dc1` (v0.1.0-rc.4).
 - Status: phases 1, 2 and 3 implemented. Phase 1: plugin scope, the org switch, requests, built-in
   plugins and permission confirmation, the scope sync worker, and the moved admin and workspace plugin
-  and extension pages (migrations 0074-0076). Phase 2: components at deployment level with their own
+  and extension pages (migrations 0075-0077). Phase 2: components at deployment level with their own
   scope and org switches, agent templates at deployment level, platform plugin and component updates,
   the migration of org copies, the platform inbox, the member-readable 扩展 page and the marketplace
-  changes of §13.5 (§6-§8; migrations 0080-0082; decisions in §13.6). Phase 3 implemented (§14: org
+  changes of §13.5 (§6-§8; migrations 0081-0083; decisions in §13.6). Phase 3 implemented (§14: org
   uploads with super admin confirmation, 可共享 and sharing org items, ownership transfer, 新建技能;
-  migration 0083; plan `docs/superpowers/plans/2026-11-06-plugin-scope-phase-3.md`; rulings made
+  migration 0084; plan `docs/superpowers/plans/2026-11-06-plugin-scope-phase-3.md`; rulings made
   during implementation at the end of §14.2). Creating agents from templates is phase 4.
 - Markers: **(decided)** is the maintainer's answer during brainstorming (2026-11-05);
   **(designer's call)** is decided here on the maintainer's behalf and may be overturned in review.
@@ -467,7 +467,7 @@ settings (部署设置, 部署级配置). Phase 2 code uses `platform` for the o
 "enterprise" in prose reads as "platform".
 
 Follow-up (2026-11-06, rename tasks R1-R3): the identifiers were renamed after all (no aliases):
-`isSuperAdmin`, `superAdmin`, `@SuperAdmin`, column `accounts.is_super_admin` (migration 0079), setting
+`isSuperAdmin`, `superAdmin`, `@SuperAdmin`, column `accounts.is_super_admin` (migration 0080), setting
 value `orgCreation: "super_admin"`, error `account.last_super_admin`; routes (`/admin`) keep their
 names. A non-official marketplace is a custom marketplace (自定义市场源). The prose of this spec now
 says super admin and platform; `check:terms` rejects the old identifiers.
@@ -490,7 +490,7 @@ Rulings taken while planning and building phase 2; where they refine or change t
 they win. Cited in code and docs as "ruling <id>".
 
 - **A2** New `platform_*` tables (`platform_skills`, `platform_agent_templates`,
-  `platform_connector_templates` and their version tables, migration 0080) instead of a nullable
+  `platform_connector_templates` and their version tables, migration 0081) instead of a nullable
   `org_id` on the org tables. Platform files live under `deployment/platform/{skills,agent-templates}/
   <id>/<version>/`, never under `kernel/<orgId>/`.
 - **B2** (§6 migration rule) An org copy links to its platform component (`platform_skill_id` /
@@ -524,7 +524,7 @@ they win. Cited in code and docs as "ruling <id>".
   and `POST /orgs/:orgId/catalog/:itemId/connectors` creates the missing connectors (补充配置).
 - **P2-11** (§9, goal 5) `GET admin/components` also lists org-owned skills and agent templates
   (owner = the org, read-only in the admin console), with the tabs 全部 / 平台 / 组织创建.
-- **P2-12** Scope sync failures are kept in `plugin_scope_sync_failures` (migration 0082), one row per
+- **P2-12** Scope sync failures are kept in `plugin_scope_sync_failures` (migration 0083), one row per
   plugin and org, cleared by the next sync of the pair that does not fail; the platform inbox reads it.
 - **P2-13** `GET /orgs/:orgId/extensions` is the action `org.extensions.read` (member and up); members
   get no config, secrets, org config schema or permissions; guests and service tokens are refused.
@@ -580,7 +580,7 @@ Owner model
 
 - **P3-1** `owner_org_id text NULL` (null = platform) and `shareable boolean NOT NULL DEFAULT false`
   on `catalog_items` and on `platform_skills`, `platform_agent_templates` and
-  `platform_connector_templates` (migration 0083). Existing rows are platform-owned. The **share
+  `platform_connector_templates` (migration 0084). Existing rows are platform-owned. The **share
   gate** of an item is `owner_org_id IS NULL OR shareable`.
 - **P3-2** The components of an org plugin are `platform_*` rows (written by `syncFromVersion`, as for
   platform plugins) with the plugin's owner. There is one 可共享 flag, the plugin's; it is copied to
@@ -762,7 +762,7 @@ Rulings made during implementation (2026-11-06)
   or claimed) is refused with 409 `plugin.name_taken` naming the owner; the cleanup's `referenced` and
   the confirm's existing-install check compare the catalog item and its owner, never the package name
   alone.
-- **P3-52** Version rows record `applied_at` / `rejected_at` (migration 0083); the generic update, org
+- **P3-52** Version rows record `applied_at` / `rejected_at` (migration 0084); the generic update, org
   version lists, dependency resolution and the admin item views of platform items use only applied,
   not rejected versions, whoever owns the item, so a transfer never makes an unapplied or rejected
   upload a usable platform version.

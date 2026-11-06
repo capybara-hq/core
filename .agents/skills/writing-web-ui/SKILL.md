@@ -86,6 +86,7 @@ The sidebar has three contexts (the third, setup, is drawn only by `SetupPage`):
 - Copy: "文件" / "files" for what an agent delivers, never "产出物" / "artifacts"; tool verbs per kind come from the design i18n (spec §7).
 - Extension blocks (inline card, properties section, right panel, previewer) fail alone: "Failed to load · Retry" in that block, the stream and the composer keep working.
 - The right area lives in the URL hash (`lib/right-area.ts`: `#properties`, `#panel=<plugin>/<contribution>[/<item>]`, `#file=`, `#output=`, `#subagent=`), one thing at a time, so a reload keeps it and another conversation never inherits it. Back in a sub-agent panel returns to what was open before it (e.g. the properties panel), else closes. The properties sections render in the spec §6.16.17 order (Context, extension sections, Files, Background tasks); Files includes the sub-agents' deliveries, marked with the sub-agent.
+- A new conversation (`/chat`) creates nothing on the kernel before the first send.
 
 Submit actions go in the ActionRow (built into `FormPage`, `WizardPage` etc.) and **must not** go in the PageHeader; at most one `variant: "primary"` per view, and at most 5 metrics (`PageHeader` throws in development and tests).
 
@@ -94,6 +95,8 @@ Submit actions go in the ActionRow (built into `FormPage`, `WizardPage` etc.) an
 Every network read of the web app goes through TanStack Query (`@tanstack/react-query`). A first
 load (a document request: opening a URL, a reload) is rendered on the server with its data and
 paints complete; later navigations inside the app are client-side and read from the query cache.
+A client navigation never runs the layout: a fresh entry makes no request, a stale one paints and
+refreshes in the background, an uncached one shows the template's `loading` state.
 The web-SSR spec (`2026-11-01-web-ssr-design.md`) still holds for the frame, the gates and session
 changes; this spec replaces its "server page reads, view gets `initial`" model.
 

@@ -21,9 +21,11 @@ import { ToolOutputs } from "../outputs.js";
 import type { BuiltinTool } from "../registry.js";
 import { agentTool } from "./agent.js";
 import { askUserTool } from "./ask-user.js";
+import { handbackTool } from "./handback.js";
 import { readToolOutputTool } from "./read-tool-output.js";
 import type { SandboxToolDeps } from "./sandbox/common.js";
 import { sandboxTools } from "./sandbox/index.js";
+import { sendMessageTool } from "./send-message.js";
 import { skillLoadTool } from "./skill-load.js";
 import { skillWriteTool } from "./skill-write.js";
 import { toolSearchTool } from "./tool-search.js";
@@ -75,6 +77,10 @@ export class BuiltinTools {
       toolSearchTool(),
       // dispatches sub-agents; the tool pipeline handles its calls (sub-agents spec §4, §7.1)
       agentTool,
+      // messages between the agents of one tree; the registry offers them and the tool pipeline
+      // handles their calls (agent map spec §4.2, §4.3)
+      sendMessageTool,
+      handbackTool,
       ...sandboxTools(sandboxDeps),
       // 技能加载：对话日志里有技能目录快照时由注册表自动加入（Ruling M17）
       skillLoadTool({

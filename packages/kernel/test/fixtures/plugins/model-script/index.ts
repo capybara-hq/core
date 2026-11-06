@@ -19,19 +19,24 @@ import { z } from "zod";
  * holds answers; without a match the reply is the text `done`.
  *
  * Conditions: `systemIncludes` (any system block), `lastUserIncludes` (the last user message with
- * text), `lastToolResultIncludes` (any tool result of the last message), `assistantTurns` (the
- * number of assistant messages in the request).
+ * text), `lastToolResultIncludes` (any tool result of the last message before trailing system
+ * messages), `systemMessageIncludes`
+ * (any `role: "system"` message, e.g. a sub-agent delivery), `assistantTurns` (the number of
+ * assistant messages in the request).
  *
  * Replies: `text` and / or `toolCalls` (stop reason `tool_use` when there are calls). In tool call
- * inputs, the string `{{lastAgentId}}` becomes the `agentId` of the last `agent` result in the
- * request, and `{{agentId:N}}` the `agentId` of the N-th `agent` result (1-based, request order). `barrier` makes the request wait until `count` requests reached the barrier `name` (in
- * this process; `barrier timeout` after `timeoutMs`), which proves that requests run concurrently.
+ * inputs, the string `{{lastAgentId}}` becomes the `agentId` of the last `Agent` result in the
+ * request, and `{{agentId:N}}` the `agentId` of the N-th `Agent` result (1-based, request order).
+ * `barrier` makes the request wait until `count` requests reached the barrier `name` or a test
+ * opened it ({@link openBarrier}) (in this process; `barrier timeout` after `timeoutMs`), which
+ * proves that requests run concurrently or holds one until the test lets it go.
  * `usage` overrides fields of the reported usage (default 10 input and 5 output tokens).
  */
 const When = z.object({
   systemIncludes: z.string().optional(),
   lastUserIncludes: z.string().optional(),
   lastToolResultIncludes: z.string().optional(),
+  systemMessageIncludes: z.string().optional(),
   assistantTurns: z.number().int().nonnegative().optional(),
 });
 
@@ -62,7 +67,7 @@ const ConfigSchema = z.object({ rules: z.array(ScriptRule).default([]) });
 
 interface ScriptState {
   rules: z.infer<typeof ScriptRule>[];
-  barriers: Map<string, { arrived: number; waiters: (() => void)[] }>;
+  barriers: Map<string, { arrived: number; open?: boolean; waiters: (() => void)[] }>;
 }
 
 const state = (): ScriptState => {
@@ -70,6 +75,15 @@ const state = (): ScriptState => {
   g.__modelScript ??= { rules: [], barriers: new Map() };
   return g.__modelScript;
 };
+
+/** Opens the barrier `name`: its waiting requests go on, later arrivals pass at once. */
+export function openBarrier(name: string): void {
+  const s = state();
+  const entry = s.barriers.get(name) ?? { arrived: 0, waiters: [] };
+  s.barriers.set(name, entry);
+  entry.open = true;
+  for (const w of entry.waiters.splice(0)) w();
+}
 
 /** Sets the run-time rules (tried before the config's); `[]` clears them and the barriers. */
 export function scriptRules(rules: ScriptRule[]): void {
@@ -94,7 +108,10 @@ function lastUserText(req: ModelRequestV1): string {
 }
 
 function lastToolResults(req: ModelRequestV1): string {
-  const m = req.messages.at(-1);
+  // system messages absorbed after the results (deliveries, interjection notes) are skipped
+  let i = req.messages.length - 1;
+  while (i >= 0 && req.messages[i]?.role === "system") i--;
+  const m = req.messages[i];
   if (m?.role !== "user" || typeof m.content === "string") return "";
   return m.content.flatMap((b) => (b.type === "tool_result" ? [b.content] : [])).join("\n");
 }
@@ -106,7 +123,8 @@ function agentIds(req: ModelRequestV1): string[] {
     if (m.role !== "user" || typeof m.content === "string") continue;
     for (const b of m.content) {
       if (b.type !== "tool_result") continue;
-      const id = /\[agentId: ([^ ]+) ·/.exec(b.content)?.[1];
+      // a fork report's status line (`[agentId: <id> · …`) or an `Agent` result (`agentId: <id> (…`)
+      const id = /agentId: ([^ ]+) [·(]/.exec(b.content)?.[1];
       if (id !== undefined) ids.push(id);
     }
   }
@@ -126,6 +144,17 @@ function matches(when: z.infer<typeof When>, req: ModelRequestV1): boolean {
   if (
     when.lastToolResultIncludes !== undefined &&
     !lastToolResults(req).includes(when.lastToolResultIncludes)
+  ) {
+    return false;
+  }
+  if (
+    when.systemMessageIncludes !== undefined &&
+    !req.messages.some(
+      (m) =>
+        m.role === "system" &&
+        typeof m.content === "string" &&
+        m.content.includes(when.systemMessageIncludes as string),
+    )
   ) {
     return false;
   }
@@ -158,7 +187,7 @@ function barrier(
   const entry = s.barriers.get(b.name) ?? { arrived: 0, waiters: [] };
   s.barriers.set(b.name, entry);
   entry.arrived += 1;
-  if (entry.arrived >= b.count) {
+  if (entry.open === true || entry.arrived >= b.count) {
     for (const w of entry.waiters.splice(0)) w();
     return Promise.resolve(true);
   }

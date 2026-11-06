@@ -23,8 +23,8 @@ export interface LoopContext {
   shutdown: AbortSignal;
   sink: StreamSink;
   /**
-   * 下一个步骤间隙要吸收的事件：返回 seq > afterSeq 的可吸收事件（`user_message` 与
-   * `background_task_finished`, `isAbsorbable`；且只含本轮开始时尚未被消费的，
+   * 下一个步骤间隙要吸收的事件：返回 seq > afterSeq 的可吸收事件（`user_message`、
+   * `background_task_finished` 与 `subagent_delivery`, `isAbsorbable`；且只含本轮开始时尚未被消费的，
    * 即 seq 也大于会话的 `consumed_seq`），按 seq 升序。loop 记录吸收到的最大 seq 作为 `consumedUpToSeq`。
    */
   pendingAbsorbable(afterSeq: number): Promise<AbsorbableEvent[]>;
@@ -35,10 +35,17 @@ export interface LoopContext {
    */
   conversationKind?: "chat" | "eval" | "subagent";
   /**
-   * Set for a sub-agent's run (phase C): the dispatch this run serves. Its tools use the parent
-   * conversation's sandbox (spec §10.1), and it never dispatches sub-agents itself (depth 1).
+   * Set for a sub-agent's run (phase C): the dispatch this run serves. Its tools use the root
+   * conversation's sandbox (spec §10.1), and it dispatches sub-agents only while its depth is
+   * below `subagents.maxDepth` (agent map spec §4.1).
    */
   parent?: SubagentParent;
+  /**
+   * The run is a sub-agent's without a live `parent`: a child case's eval replay. Its requests
+   * offer the message tools a sub-agent has (`SendMessage`, `SubagentHandback`), as the recorded
+   * run's did; not for a fork invocation's child (`SubagentParent.forSkill`). Implied by `parent`.
+   */
+  subagent?: boolean;
 }
 
 /** Where a sub-agent's run was dispatched from (its `subagent_dispatches` row). */
@@ -47,10 +54,31 @@ export interface SubagentParent {
   runId: string;
   callId: string;
   /**
+   * The parent conversation's depth below the root (0: the parent is the root); this run's own
+   * depth is one more (agent map spec §6, `conversations.subagent_depth`).
+   */
+  depth: number;
+  /** The root conversation of the tree: its sandbox is the one every sub-agent works in. */
+  rootConversationId: string;
+  /**
    * The child runs another org agent than its parent conversation's (§5.5, `template.source`
    * `agent`): only then the parent agent's current policies are read on top of its own.
    */
   otherAgent?: boolean;
+  /**
+   * The tree's budget run of this child run (agent map spec §6): the run's own `budget_run_id`
+   * (a dispatched run's, or a wake run's current window of the root), else its dispatch row's, read
+   * once when the run starts. The loop's budget check and the token counter (`appendCounted`) use
+   * it; absent only when unknown, then read with `budgetRunOf(runId)` (the parent run's window,
+   * stale for a wake run, whose `runId` is the first dispatch's).
+   */
+  budgetRunId?: string;
+  /**
+   * The run is a person's fork invocation's child (phase D, its dispatch's `for_skill`): its parent
+   * run waits for its final reply as the skill's report, so it gets neither `SubagentHandback` nor
+   * `SendMessage` to its parent (agent map spec §5.4: the fork's behaviour does not change).
+   */
+  forSkill?: boolean;
 }
 
 /**

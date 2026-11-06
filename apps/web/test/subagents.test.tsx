@@ -245,8 +245,16 @@ const childPanelWith = (check: (panel: HTMLElement) => unknown) =>
     return panel;
   });
 const group = () => document.querySelector('[data-entry="subagents"]') as HTMLElement | null;
-const rowOf = (name: string) =>
-  screen.findByRole("button", { name: `Open ${name} on the right` }, { timeout: 3000 });
+/** The action of the Agent call block of the sub-agent with that description. */
+const rowOf = async (name: string) => {
+  const desc = await screen.findByText(
+    name,
+    { selector: '[data-part="agent-call-desc"]' },
+    { timeout: 3000 },
+  );
+  const block = desc.closest('[data-part="agent-call-block"]') as HTMLElement;
+  return within(block).getByRole("button", { name: "View in agent map" });
+};
 
 beforeEach(() => {
   params.conversationId = "c1";
@@ -281,7 +289,6 @@ describe("the timeline's sub-agent groups", () => {
       agentType: "general-purpose",
       description: "Scan docs",
       durationMs: 41_000,
-      summary: { steps: [], result: "Docs are fine." },
     });
   });
 
@@ -309,8 +316,62 @@ describe("the timeline's sub-agent groups", () => {
       status: "failed",
       agentType: "nope",
       description: "Spy",
-      summary: { steps: [], result: 'Unknown subagent_type "nope".' },
+      refusal: 'Unknown subagent_type "nope".',
+      openable: false,
     });
+  });
+
+  it("the call's prompt is the block's IN; a dispatched row can be opened", () => {
+    const [g] = groups(build(parentEvents()));
+    expect(g?.rows.map((r) => r.row.prompt)).toEqual(["Do Scan docs", "Do Check tests"]);
+    expect(g?.rows.map((r) => r.row.openable)).toEqual([undefined, undefined]);
+  });
+
+  it("a child that finished before its call's result ran in the foreground (an older log)", () => {
+    const [g] = groups(build(parentEvents()));
+    expect(g?.rows[0]?.row.background).toBe(false);
+    // still running, no result yet: not knowable, the default (background)
+    expect(g?.rows[1]?.row.background).toBeUndefined();
+  });
+
+  it("a background call (its result logged at dispatch) stays background after the finish", () => {
+    const [g] = groups(
+      build([
+        userMsg(1, "go"),
+        runStarted(2),
+        ev(3, "assistant_message", {
+          step: 1,
+          stopReason: "tool_use",
+          content: [call("k1", "Scan docs")],
+        }),
+        dispatched(4, "k1", "ch1", "Scan docs"),
+        agentResult(5, "k1", "Started ch1 in the background."),
+        finished(6, "k1", "ch1", "completed", 3),
+      ]),
+    );
+    expect(g?.rows[0]?.row).toMatchObject({ status: "completed", id: "ch1" });
+    expect(g?.rows[0]?.row.background).toBeUndefined();
+  });
+
+  it("a person's fork invocation's child is foreground", () => {
+    const [g] = groups(
+      build([
+        userMsg(1, "/review"),
+        runStarted(2),
+        ev(3, "subagent_dispatched", {
+          step: 0,
+          callId: "skill-1",
+          subagentId: "ch9",
+          childRunId: "run-ch9",
+          agentType: "general-purpose",
+          description: "review",
+          resumed: false,
+          model: { provider: "model-fake", model: "fake-1" },
+          invokedSeq: 1,
+        }),
+      ]),
+    );
+    expect(g?.rows[0]?.row).toMatchObject({ id: "ch9", background: false });
   });
 
   it("live progress raises the calls; the list's status shows a waiting row", () => {
@@ -347,16 +408,22 @@ describe("the timeline's sub-agent groups", () => {
 });
 
 describe("sub-agents on the conversation page", () => {
-  it("renders the group; a row opens the child read-only on the right; stop aborts the child", async () => {
-    const calls = api({ [`POST ${CHILD}/abort`]: () => json(202, { runId: "run-ch2" }) });
+  it("a call block's action opens the child in the agent map (level 2)", async () => {
+    api({ [`GET ${PARENT}/agent-tree`]: () => json(404, { error: { code: "not_found" } }) });
     await renderChat();
     const row = await rowOf("Check tests");
     expect(group()?.textContent).toContain("1 subagents running");
+    await userEvent.setup().click(row);
+    expect(window.location.hash).toBe("#agents=ch2");
+    expect(screen.queryByRole("complementary", { name: "Check tests" })).toBeNull();
+  });
+
+  it("#subagent= opens the child read-only on the right; stop aborts the child", async () => {
+    const calls = api({ [`POST ${CHILD}/abort`]: () => json(202, { runId: "run-ch2" }) });
+    window.history.replaceState(null, "", "/chat/c1#subagent=ch2");
+    await renderChat();
     const user = userEvent.setup();
-    await user.click(row);
-    expect(window.location.hash).toBe("#subagent=ch2");
-    expect(row.getAttribute("aria-current")).toBe("true");
-    const panel = await screen.findByRole("complementary", { name: "Check tests" });
+    const panel = await childPanelWith((p) => within(p).getByText("Do Check tests"));
     // the task, then the agent · subagent · model · tools line
     expect(await within(panel).findByText("Do Check tests")).toBeTruthy();
     expect(panel.querySelector('[data-part="subagent-meta"]')?.textContent).toBe(
@@ -452,13 +519,13 @@ describe("sub-agents on the conversation page", () => {
     expect(link.getAttribute("href")).toContain("/agents/ag1");
   });
 
-  it("?subagent= (inbox and IM links) opens that child and becomes the hash", async () => {
-    api();
+  it("?subagent= (inbox and IM links) becomes the agent map's transcript hash, not the right panel", async () => {
+    api({ [`GET ${PARENT}/agent-tree`]: () => json(404, { error: { code: "not_found" } }) });
     window.history.replaceState(null, "", "/chat/c1?subagent=ch2");
     await renderChat();
-    await childPanelWith((p) => within(p).getByText("All tests pass."));
+    await vi.waitFor(() => expect(window.location.hash).toBe("#agents=ch2/transcript"));
     expect(window.location.search).toBe("");
-    expect(window.location.hash).toBe("#subagent=ch2");
+    expect(screen.queryByRole("complementary", { name: "Check tests" })).toBeNull();
   });
 
   it("#subagent= naming a conversation that is not a child of this one fails, with no stop", async () => {
@@ -471,15 +538,6 @@ describe("sub-agents on the conversation page", () => {
     expect(await within(panel).findByText(en.subagents.view.loadFailed)).toBeTruthy();
     expect(within(panel).queryByRole("button", { name: en.subagents.view.stop })).toBeNull();
     expect(within(panel).queryByText("All tests pass.")).toBeNull();
-  });
-
-  it("the parent's subagent_progress updates the row's calls", async () => {
-    api();
-    await renderChat();
-    const row = await rowOf("Check tests");
-    const es = FakeEventSource.instances.find((s) => s.url.startsWith(`${PARENT}/stream`));
-    act(() => es?.emit("subagent_progress", { subagentId: "ch2", step: 3, toolCalls: 5 }));
-    expect(row.textContent).toContain("5 calls");
   });
 
   it("a child's approval shows in the parent with its name and decides the child's approval", async () => {
@@ -612,6 +670,64 @@ describe("sub-agents on the conversation page", () => {
     await userEvent.setup().click(within(line).getByRole("button", { name: en.subagents.open }));
     expect(window.location.hash).toBe("#subagent=ch2");
   });
+
+  it("a sub-agent's own page never reads an agent tree, even with a nested wait in its log", async () => {
+    params.conversationId = "ch2";
+    resetNavigation("/chat/ch2");
+    window.history.replaceState(null, "", "/chat/ch2");
+    // the child's own child (gc1) waits: a nested wait the root's page would name from the tree
+    const child = [
+      ...childEvents(true),
+      ev(
+        7,
+        "subagent_dispatched",
+        {
+          step: 2,
+          callId: "g1",
+          subagentId: "gc1",
+          childRunId: "run-gc1",
+          agentType: "general-purpose",
+          description: "Grandchild",
+        },
+        "run-ch2",
+        "ch2",
+      ),
+      ev(
+        8,
+        "subagent_waiting",
+        {
+          subagentId: "gg1",
+          childRunId: "run-gg1",
+          path: ["gc1", "gg1"],
+          kind: "approval",
+          toolKey: "Bash",
+        },
+        null,
+        "ch2",
+      ),
+    ];
+    const calls = api(
+      {
+        [`GET ${CHILD}/agent-tree`]: () =>
+          json(404, { error: { code: "conversation.not_found", message: "x" } }),
+        [`GET ${CHILD}/queue`]: () => json(200, { items: [], paused: false }),
+        [`GET ${CHILD}/files`]: () => json(200, { files: [], next: null }),
+        [`GET ${CHILD}/subagents`]: () => json(200, { subagents: [], next: null }),
+        [`GET ${CHILD}/usage`]: () =>
+          json(200, {
+            usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
+          }),
+        [`GET ${CHILD}/sandbox`]: () =>
+          json(404, { error: { code: "sandbox.not_found", message: "x" } }),
+      },
+      { child },
+    );
+    const { calls: server } = await renderChatRoute({ id: "ch2" });
+    expect(await screen.findByText("All tests pass.")).toBeTruthy();
+    await new Promise((r) => setTimeout(r, 50));
+    const tree = (cs: Call[]) => cs.filter((x) => x.url.startsWith(`${CHILD}/agent-tree`));
+    expect([...tree(server), ...tree(calls)]).toEqual([]);
+  });
 });
 
 describe("the conversation page's server snapshot (web-SSR spec §6.2)", () => {
@@ -733,12 +849,12 @@ describe("the properties panel with sub-agents", () => {
     expect(window.location.hash).toBe("#properties");
   });
 
-  it("Back in a sub-agent opened from the thread closes the panel", async () => {
+  it("Back in a sub-agent opened from the hash closes the panel", async () => {
     api({}, { child: childEvents(false) });
+    window.history.replaceState(null, "", "/chat/c1#subagent=ch2");
     await renderChat();
     const user = userEvent.setup();
-    await user.click(await rowOf("Check tests"));
-    const panel = await screen.findByRole("complementary", { name: "Check tests" });
+    const panel = await childPanelWith((p) => within(p).getByText("All tests pass."));
     await user.click(within(panel).getByRole("button", { name: "Back" }));
     expect(screen.queryByRole("complementary", { name: "Check tests" })).toBeNull();
     expect(screen.queryByRole("complementary", { name: "Properties" })).toBeNull();

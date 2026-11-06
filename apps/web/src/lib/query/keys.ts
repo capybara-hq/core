@@ -230,6 +230,8 @@ export const keys = {
           files: (): readonly unknown[] => [...c, "files"],
           sandbox: (): readonly unknown[] => [...c, "sandbox"],
           subagents: (): readonly unknown[] => [...c, "subagents"],
+          /** The agent tree of a root conversation (the agent map). */
+          agentTree: (): readonly unknown[] => [...c, "agentTree"],
           usage: (): readonly unknown[] => [...c, "usage"],
           /** The background tasks (also the prefix of their outputs: a change reads both). */
           background: (): readonly unknown[] => [...c, "background"],

@@ -174,7 +174,7 @@ Every size a component uses is a step of one of these scales, stored in `tokens.
 | `shadow-float` | `0 8px 24px rgba(0,0,0,.45)` | `0 8px 24px rgba(26,26,24,.08)` | The composer, the sidebar drawer |
 
 - Layering: Sheet 40 · Dialog 50 · Popover/Menu 60 · Toast 70 (`--cb-z-*`).
-- Motion: hover background transitions `motion.hover` (120ms); expand / collapse height transitions `motion.expand` (160ms); overlays fade in with a 4px offset over `motion.overlay` (120ms), `ease-out`, no bounce; the spinner turns once per `motion.spin` (800ms), the streaming cursor blinks every `motion.cursor` (1000ms). `prefers-reduced-motion: reduce` makes all of them instant, the spinner static and the cursor steady (§6.11).
+- Motion: hover background transitions `motion.hover` (120ms); expand / collapse height transitions `motion.expand` (160ms); overlays fade in with a 4px offset over `motion.overlay` (120ms), `ease-out`, no bounce; the spinner turns once per `motion.spin` (800ms), the streaming cursor blinks every `motion.cursor` (1000ms), a running agent's dot in the agent map pulses every `motion.pulse` (1600ms, §6.16.28). `prefers-reduced-motion: reduce` makes all of them instant, the spinner static and the cursor steady (§6.11).
 - Focus: inputs, selects and textareas get an `accent` border plus a 3px `focus-ring` halo (`box-shadow: 0 0 0 3px focus-ring`); other controls use `outline: 2px solid accent; outline-offset: 2px`; table rows, list items, nav items and conversation rows use `outline: 1px solid accent; outline-offset: -1px`. `:focus-visible` only. A ring never follows a mouse click: a text field (input, textarea, stepper, the composer) keeps its halo while it has focus, since it is being typed in, but every other control, the Select's button included, draws it under `:focus-visible` (the Select also while its list is open); a tab a pointer focused carries `data-pointer-focus` and draws no ring whatever the browser's heuristics say, until a key press (a modifier alone does not count) or a blur (acceptance issue Y); the mark is set only when focus arrives from that press (or at once when the pressed tab already has focus, since Chrome keeps that focus's keyboard origin), so a press that gives no focus (WebKit and Firefox on macOS do not focus a clicked button) never hides a later keyboard ring. `packages/design/test/focus-rings.test.ts` checks the stylesheets.
 
 ### 2.6 Icons
@@ -879,7 +879,7 @@ States: `default`, `row-hover`, `row-selected`, `loading`, `empty`, `narrow`
 
 Selection rules: the user needs to decide → Dialog; view / edit one object without leaving the list → Sheet; in-place options / filters → Popover / Menu; feedback on an operation result → Toast (a Dialog must not be used); creating something with more than 6 fields → a form page (T4).
 
-- **Dialog**: width 480 / 640, `panel` background + `line-strong` border + radius `md` + `shadow-2` + `scrim`. Header (h2 title + close `x`) / body (padding 16) / footer (right-aligned: ghost Cancel + primary action, the primary action carries `↵`), with 1px `line` separating header and footer. Esc closes; focus is trapped and returned after closing. Default focus: on the first field for a dialog that asks for input (新建组织, 新建令牌), else on the primary action (a `LinkButton` primary too); on Cancel for a dangerous dialog. A create dialog's primary is disabled until it is valid. A dialog that only explains why something cannot be done (退出组织 as the only owner) is not dangerous: plain title, one default button "知道了" / "Got it", and a link to where it can be fixed. A dialog whose next step lives elsewhere (加入评测集 with no eval set) says so and offers that step as its primary (`LinkButton`), never a disabled dead end.
+- **Dialog**: width 480 / 640 (the agent map's levels are 1100 / 760 / 1060, §6.16.28), `panel` background + `line-strong` border + radius `md` + `shadow-2` + `scrim`. Header (h2 title + close `x`) / body (padding 16) / footer (right-aligned: ghost Cancel + primary action, the primary action carries `↵`), with 1px `line` separating header and footer. Esc closes; focus is trapped and returned after closing. Default focus: on the first field for a dialog that asks for input (新建组织, 新建令牌), else on the primary action (a `LinkButton` primary too); on Cancel for a dangerous dialog. A create dialog's primary is disabled until it is valid. A dialog that only explains why something cannot be done (退出组织 as the only owner) is not dangerous: plain title, one default button "知道了" / "Got it", and a link to where it can be fixed. A dialog whose next step lives elsewhere (加入评测集 with no eval set) says so and offers that step as its primary (`LinkButton`), never a disabled dead end.
 - **Dangerous confirmation**: the ordinary frame and title (`line-strong`, `ink`): the red is only on the destructive button; explains the consequences and recoverability; the object name must be typed, the confirm button is disabled until it matches, and is danger-solid once it matches. A caller that must read something first (what a delete does, ruling P3-19) passes `confirmDisabled`: the button then stays disabled and `danger` while the read is pending or failed, even with the name typed.
 - **Sheet**: slides out from the right, width 480 / 720, `panel` background + `line-strong` left line + `shadow-sheet`; no scrim by default (the list is still operable). Header: name + version + open in a new page `external-link` + close `x`; may contain Tabs; footer: actions. Closing with unsaved changes needs a second confirmation.
 - **Links**: the design package is framework-agnostic; links in the sidebar navigation, the PageHeader path, Tabs, Sheet, TextLink and LinkCard are rendered through the `link` component of `DesignProvider` (default `<a>`); `apps/web` passes next-intl's `Link` to get client-side navigation and the locale prefix. Pages should not build `<a href>` themselves for in-site navigation.
@@ -1408,8 +1408,10 @@ States: `collapsed`, `expanded`, `live`
 - Attachments sit above the bubble, right-aligned, `space.2` apart: images as `layout.thumb` square thumbnails (radius `sm`, cropped to fill), then files as attachment chips (§6.16.21, without the remove button). Each opens like today's AttachmentPreview. A thumbnail that fails to load is reported to the caller, which may refresh the session and reload it once (as AttachmentPreview's `retry`).
 - **Skill invocation** (phase D, state `skill`): the bubble starts with the skill chip, the composer's chip (§6.16.2) without its remove button: `control.dense` high, radius `sm`, padding 0 `space.2`, the `accent-tint` ground, the label ("/fix-issue") in mono `body` `accent`, centered on the first prose line, `space.2` before the text, which is the invocation's arguments (none: the chip alone). Under the bubble, right-aligned, at most 75% wide, `space.2` below it: a closed Disclosure (§6.5) "技能说明" / "Skill instructions" in `small` `muted`, a `row.dense` summary line whose chevron is `muted` too (not the Disclosure's usual `faint`), whose body is the text sent in the person's name (`small`, line breaks kept). A queued invocation (§6.16.14) shows the same chip in its dashed bubble.
 
+- **Sender** (state `sender`, agent map spec §9.4): a message another agent sent (a parent's message in a sub-agent's transcript) has, above the bubble and right-aligned, "来自 <sender>" / "From <sender>" (`small`, `muted`, one line with an ellipsis, at most 75% wide, `space.2` above the bubble). A person's own message has none.
+
 <!-- states: user-bubble -->
-States: `default`, `attachments`, `skill`
+States: `default`, `attachments`, `skill`, `sender`
 
 <!-- size-table: user-bubble -->
 | Part | State | Property | Value |
@@ -1434,6 +1436,9 @@ States: `default`, `attachments`, `skill`
 | bubble-skill | skill | font-size | type.body |
 | bubble-details | skill | font-size | type.small |
 | bubble-details | skill | color | color.muted |
+| bubble-sender | sender | font-size | type.small |
+| bubble-sender | sender | color | color.muted |
+| bubble | sender | background-color | color.selected |
 
 #### 6.16.7 Run divider
 
@@ -1691,13 +1696,12 @@ States: `default`, `hover`, `editing`, `paused`
 
 #### 6.16.15 Sub-agent group
 
-- Sub-agents group like tools (phase C runtime; B builds them on fixtures; rows in child-creation order, durations "41 秒", "1分12秒" / "41s", "1m 12s"; a waiting sub-agent says what it waits for in `accent`, a stopped one "已停止" / "Stopped" in `muted`). **Running**: a header tool line with a `spinner` (16) and "正在运行 N 个子智能体" / "N subagents running", and the rows in a tool box. **Waiting**: when every active sub-agent waits for a person, the header has no `spinner` and says what the first one waits for in `accent` ("等待批准" / "Waiting for approval"), with " · 已完成 N 个" / " · N done" in `faint` as when running (§6.16.9). **Done**: a collapsed header "N 个子智能体已完成（M 个失败）· 共 X 次调用 · <duration>" / "N subagents done (M failed) · X calls · <duration>" with the failure count in `fail` and the totals in `faint`.
-- **Row** (a tool row): a `spinner` (16) while running, none while waiting for a person; the agent type as a tag (`micro` `muted` on the `selected` ground, radius `sm`, padding 0 `space.1`); the task description in `ink` with an ellipsis; at the end in `faint` ("失败" in `fail` and " · " when failed) "N 次调用 · <duration>" (a waiting row: the waiting word, " · " and "N 次调用", no duration and no clock) and `chevron-right` 12, a button named "在右侧打开 <description>" / "Open <description> on the right". Success has no mark.
-- The row open in the right panel has `aria-current="true"`, the `accent-tint` ground and a 2px `accent` bar on its left (§2.3).
-- A row can expand in place (`aria-expanded`): the steps (`small`, gap `space.1`, indented `space.5`, padding 0 `space.3`, a 1px `line` rule on the left), the result (`prose-small` `muted`) and "在右侧打开完整记录" / "Open the full record on the right" (link button with `maximize-2` 12); no `line-soft` rule separates the steps from the next row.
+- Sub-agents group like tools (phase C runtime; durations "41 秒", "1分12秒" / "41s", "1m 12s"). **Running**: a header tool line with a `spinner` (16) and "正在运行 N 个子智能体" / "N subagents running", then one Agent call block per sub-agent, `space.2` apart. **Waiting**: when every active sub-agent waits for a person, the header has no `spinner` and says what the first one waits for in `accent` ("等待批准" / "Waiting for approval"), with " · 已完成 N 个" / " · N done" in `faint` as when running (§6.16.9). **Done**: a collapsed header "N 个子智能体已完成（M 个失败）· 共 X 次调用 · <duration>" / "N subagents done (M failed) · X calls · <duration>" with the failure count in `fail` and the totals in `faint`; opening it shows the blocks. With `onOpenMap` the header ends with the link button "智能体图" / "Agent map" (`tool-link` style, part `subagent-map-link`; agent map spec §9.2) in every state; a done header then is a toggle beside the link, never nesting it (§6.16.9).
+- **Agent call block** (`AgentCallBlock({ description, prompt, state, onOpen?, defaultExpanded? })`, agent map spec §9.5, as Claude Code draws an `Agent` call): a tool box (`panel`, radius `md`, `small`) whose header (`row.dense`, padding `pad.default`) is the tool name "Agent" (600, `ink`) and the task description (`ink`), one line with an ellipsis; the body is the IN block of an expanded tool row (§6.16.9: the label "输入" / "IN" in `micro` `faint`, 4ch) with the prompt in `ink`, line breaks kept, **two lines with an ellipsis**. When the two lines hide something (measured, again on resize) a link button "展开" / "Show more" (`aria-expanded`, `aria-controls` the prompt) opens it in full and becomes "收起" / "Show less". No prompt: no body.
+- **Status line** under the box (`row.dense`, padding 0 `pad.default.x`, `small`, `muted`, gap `space.2`): the status dot of the agent map (§6.16.28: 8, round, `role="img"` with the status word; running `accent` pulsing every `motion.pulse`, waiting `warn`, completed `ok`, failed `fail`, stopped `faint`), the state (one line, ellipsis) and at the end the link button "在智能体图中查看" / "View in agent map" (`onOpen`: that agent's level 2). While the child works: "后台运行中：<current tool summary>" / "Working in the background: <summary>" ("后台运行中" alone before the first summary; a queued child counts as working); waiting for a person: "后台等待中：<summary>" / "Waiting in the background: <summary>". A foreground child (a fork skill's, or one in a log written before background sub-agents) has the neutral copy: "运行中：<summary>" / "Working: <summary>", "等待中：<summary>" / "Waiting: <summary>" (`background: false`). Once it has ended: "完成" / "Completed", "失败" / "Failed" (in `fail`) or "已停止" / "Stopped", then " · <time> · <tokens>" (each left out when unknown; tokens as the agent map writes them). The action stays after the end. A call refused before any child ran says "失败 · <the refusal's first line>" (the whole text as the tooltip) and has no action: there is nothing to open. The line is not a live region (the summary changes with every tool call).
 
 <!-- states: subagent-group -->
-States: `running`, `waiting`, `done`, `failed`, `expanded`, `row-open`
+States: `running`, `waiting`, `done`, `failed`, `stopped`, `expanded`, `map-link`
 
 <!-- size-table: subagent-group -->
 | Part | State | Property | Value |
@@ -1707,22 +1711,28 @@ States: `running`, `waiting`, `done`, `failed`, `expanded`, `row-open`
 | spinner | running | width | space.4 |
 | tool-box | running | background-color | color.panel |
 | tool-box | running | border-radius | radius.md |
-| subagent-row | running | height | row.dense |
-| agent-tag | running | font-size | type.micro |
-| agent-tag | running | background-color | color.selected |
-| agent-tag | running | color | color.muted |
+| agent-call-head | running | height | row.dense |
+| agent-call-name | running | color | color.ink |
+| tool-io-label | running | color | color.faint |
+| agent-call-prompt | running | color | color.ink |
+| agent-call-prompt | running | font-size | type.small |
+| agent-call-status | running | height | row.dense |
+| agent-call-status | running | color | color.muted |
+| agent-dot | running | width | space.2 |
+| agent-dot | running | background-color | color.accent |
+| agent-call-open | running | color | color.muted |
 | tool-line | waiting | height | row.dense |
 | waiting-word | waiting | color | color.accent |
-| subagent-row | waiting | height | row.dense |
+| agent-dot | waiting | background-color | color.warn |
 | fail-word | done | color | color.fail |
 | tool-line | done | height | row.dense |
-| fail-word | failed | color | color.fail |
-| subagent-row | failed | height | row.dense |
-| subagent-steps | expanded | padding-left | space.3 |
-| subagent-steps | expanded | border-left-color | color.line |
-| subagent-result | expanded | font-size | type.prose-small |
-| subagent-result | expanded | color | color.muted |
-| subagent-row[aria-current=true] | row-open | background-color | color.accent-tint |
+| agent-dot[data-status=failed] | failed | background-color | color.fail |
+| agent-call-status[data-status=failed] fail-word | failed | color | color.fail |
+| agent-dot[data-status=aborted] | stopped | background-color | color.faint |
+| agent-call-more | expanded | color | color.muted |
+| agent-call-prompt[data-expanded=true] | expanded | color | color.ink |
+| subagent-map-link | map-link | color | color.muted |
+| subagent-map-link | map-link | font-size | type.small |
 
 #### 6.16.16 Inline card
 
@@ -2159,6 +2169,146 @@ States: `default`, `hover`, `menu`
 | quick-actions[data-ref-forced=true] | hover | color | color.ink |
 | menu | menu | background-color | color.panel |
 | menu-item | menu | height | row.default |
+
+#### 6.16.28 Agent map
+
+`AgentMapDialog({ open, onOpenChange, level, onBack?, view?, children })` is a dialog over the conversation page
+(agent map spec §9) whose width follows its level: the tree 1100, one agent's summary 760, the
+transcript 1060, and levels 2 and 3 have fixed heights, 600 and 640 (at most the window less 32),
+so the dialog does not jump while an agent works (the §6.7 frame: `panel`, `line-strong`, radius `md`, `shadow-2`, `scrim`; at
+level 1 padding `space.5` `space.6`). Level 1's head is the title "智能体图" / "Agent map" (`h2`,
+prose, 500) and close; levels 2 and 3 draw their own head with the same parts (one shared head:
+back, status dot, title, close, then meta lines). Esc closes the tree and goes back one level
+from levels 2 and 3 (`onBack`); focus is trapped and returned, and when the view changes (another
+level or agent, `view`) it moves to the new head's back button, else its title.
+`AgentMapTree({ root, background, selectedId, onOpen })` is level 1:
+
+- **Count line** under the title (prose, `muted`): "N 个智能体 · M 个运行中 · 点击查看详情" /
+  "N agents · M running · Click a node for details"; N counts every node with the root, M the
+  running ones.
+- **Tree**: columns left to right by depth, `space.6` apart; a parent is vertically centred on its
+  children; standard elbow connectors (1px `line-strong`) from each parent to the vertical centre of
+  each child; siblings `space.2` apart. No "main agent" or "level N" labels: position and lines
+  show the hierarchy. Four columns (three levels below the root) are wider than the dialog: the
+  tree scrolls inside it.
+- **Node**: a button 320 wide and 62 high, the same for every node (padding 0 `space.3`, `panel-2`,
+  1px `line`, radius `md`; hover `line-strong` on `hover`); line 1 the status dot and the
+  description (500, `ink`); line 2 exactly "model · time · tokens" (`small`, `muted`, "opus 5.5 ·
+  42分18秒 · 392.7k tokens"), indented past the dot. Both lines are one line with an ellipsis, and
+  the node's tooltip is the full text. The root (the conversation itself) has `line-strong` on
+  `raised`, no hover and is not a button: it has no summary to open and is never selected. The
+  node open at level 2 has an `accent` border (`aria-current="true"`). Activating a node opens it
+  (`onOpen`).
+- **Status is only the dot** (8, round, `role="img"` with the status word as its label): running
+  `accent`, pulsing every `motion.pulse` (still under reduced motion); waiting `warn`; completed
+  `ok`; failed `fail`; stopped `faint`. No status words in the tree (the exception to §2.4's icon
+  and text rule): the **legend** at the bottom (`small`, `faint`, items `space.4` apart) names the
+  five colours.
+- **Background tasks**: the root's own background tasks under the root column (320 wide, `space.4`
+  below the tree): a heading "后台任务 · N" / "Background tasks · N" (`small`, `faint`) and one row
+  per task (`row.default`, `panel-2`, 1px `line-soft`, radius `sm`, `small`): the dot, a `Bash` tag
+  (the picker-menu tag: `micro` `muted` on `selected`), the description with an ellipsis and the
+  duration in `faint`. None: nothing. A child's background tasks show only in its level 2.
+- **Canvas**: the tree's scroll region is a labelled region ("智能体树" / "Agent tree") the
+  keyboard can focus (`tabindex="0"`, the focus ring inset), so a tree wider than the dialog
+  scrolls without a pointer.
+
+`AgentDetail({ node, agentType, inBackground?, spawnedBy, latestText, task, background, toolCalls,
+onBack, onClose, onOpenParent, onOpenTranscript, onStop?, now? })` is level 2, one agent's summary, live at
+the granularity of tool summaries. The dialog has no padding and is 600 high (at most the window
+less 32), so it does not jump while the agent works; head, body and footer pad themselves:
+
+- **Head** (padding `space.5` `space.6` `space.3`, 1px `line-soft` below): a dense back button
+  (`arrow-left`, "返回智能体图" / "Back to the agent map"), the status dot, the description (`h2`,
+  one line with an ellipsis) and close. Under it, indented past the back button (`control.dense` +
+  `space.2`), three meta lines (`small`, `muted`): "运行中 · <agent type> · <model> · 后台" ("后台" only while `inBackground`, the
+default: a fork skill's child runs in the foreground and has none);
+  "由 <parent> 派出" / "Spawned by <parent>", the parent an underlined `ink` link that opens its
+  node (`onOpenParent`); "<time> · <tokens>".
+- **Body** (scrolls, padding `space.3` `space.6`): the latest text (prose), then three collapsible
+  sections, each a button (chevron, title 500, count `faint`) with `aria-expanded`: **任务 / Task**
+  (the dispatch prompt, prose small `muted`, closed at first), **后台任务 / Background tasks · N**
+  (the agent's own tasks, level 1's rows, closed at first) and **工具调用 / Tool calls · N** (open):
+  the calls newest first, each a `row.dense` line: a dot slot (`space.2`; the running call's dot
+  pulses), the tool name (500, at least 44 wide), its display summary (`muted`; the running one
+  `ink`) with an ellipsis, and at the end in `faint` a range ("第 1–180 行") or the running call's
+  clock. The section content starts under its title.
+- **Footer** (padding `space.3` `space.6`, 1px `line-soft` above): "打开完整记录" / "Open transcript"
+  and, while the agent runs (`onStop` given), "停止" / "Stop" (`danger`; stops its descendants too).
+  The buttons share the row; a finished agent's "Open transcript" fills it.
+
+`TranscriptFrame({ node, agentType, inBackground?, spawnedBy, onOpenParent?, contextPercent?,
+onBack, onClose, onStop?, children })` is level 3: the same head with one meta line ("<status> ·
+<agent type> · <model> · 后台 · 由 <parent> 派出 · <time> · <tokens>"; "后台" as at level 2, the
+parent the same link as at level 2 when `onOpenParent` is given), the thread (`children`: the conversation page's own
+timeline components, built from `apps/web/src/lib/timeline.ts`) in the conversation's thread column
+(`.cb-conv-thread`, padding `space.4` `layout.gutter`, scrolling), and instead of a composer a
+read-only status line (`row.dense`, 1px `line-soft` above, `small`, `faint`): "子智能体只读 ·
+不能和它对话，请让 <parent> 转达" / "Read-only sub-agent · You can't talk to it; ask <parent> to
+pass it on", then "上下文 N%" / "Context N%" when known and a dense `danger` Stop while running. The
+dialog is 640 high.
+
+<!-- states: agent-map -->
+States: `tree`, `deep`, `detail`, `finished`, `transcript`
+
+<!-- size-table: agent-map -->
+| Part | State | Property | Value |
+|---|---|---|---|
+| agent-map-dialog | tree | width | 1100 |
+| agent-map-dialog | tree | background-color | color.panel |
+| agent-map-dialog | tree | border-top-color | color.line-strong |
+| agent-map-dialog | tree | border-radius | radius.md |
+| agent-map-title | tree | font-size | type.h2 |
+| agent-map-count | tree | color | color.muted |
+| agent-node | tree | width | 320 |
+| agent-node | tree | height | 62 |
+| agent-node[data-depth=1] | tree | background-color | color.panel-2 |
+| agent-node[data-depth=1] | tree | border-top-color | color.line |
+| agent-node | tree | border-radius | radius.md |
+| agent-node[data-root=true] | tree | background-color | color.raised |
+| agent-node[data-root=true] | tree | border-top-color | color.line-strong |
+| agent-node[aria-current=true] | tree | border-top-color | color.accent |
+| agent-node-name | tree | font-size | type.body |
+| agent-node-meta | tree | font-size | type.small |
+| agent-node-meta | tree | color | color.muted |
+| agent-dot | tree | width | space.2 |
+| agent-dot[data-status=waiting] | tree | background-color | color.warn |
+| agent-dot[data-status=completed] | tree | background-color | color.ok |
+| agent-dot[data-status=failed] | tree | background-color | color.fail |
+| agent-task | tree | height | row.default |
+| agent-task | tree | background-color | color.panel-2 |
+| agent-task-tag | tree | font-size | type.micro |
+| agent-task-tag | tree | background-color | color.selected |
+| agent-task-time | tree | color | color.faint |
+| agent-legend | tree | color | color.faint |
+| agent-node | deep | height | 62 |
+| agent-node[data-depth=3] | deep | width | 320 |
+| agent-map-dialog | detail | width | 760 |
+| agent-map-dialog | detail | height | 600 |
+| agent-map-head | detail | border-bottom-color | color.line-soft |
+| agent-map-title | detail | font-size | type.h2 |
+| agent-meta | detail | font-size | type.small |
+| agent-meta | detail | color | color.muted |
+| agent-parent | detail | color | color.ink |
+| agent-section-head | detail | height | row.dense |
+| agent-call | detail | height | row.dense |
+| agent-call-tool | detail | font-size | type.body |
+| agent-call[data-running=true] agent-call-summary | detail | color | color.ink |
+| agent-call[data-running=true] | detail | height | row.dense |
+| agent-call-clock | detail | color | color.faint |
+| agent-call-range | detail | color | color.faint |
+| agent-detail-foot | detail | border-top-color | color.line-soft |
+| button[data-variant=danger] | detail | height | control.default |
+| agent-detail-foot | finished | border-top-color | color.line-soft |
+| agent-call-summary | finished | color | color.muted |
+| button | finished | width | 710 |
+| agent-map-dialog | transcript | width | 1060 |
+| agent-map-dialog | transcript | height | 640 |
+| thread | transcript | max-width | layout.chat |
+| agent-transcript-status | transcript | height | row.dense |
+| agent-transcript-status | transcript | color | color.faint |
+| agent-transcript-status | transcript | border-top-color | color.line-soft |
+| agent-context | transcript | font-size | type.small |
 
 ---
 
