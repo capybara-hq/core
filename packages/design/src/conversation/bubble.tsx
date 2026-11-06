@@ -30,6 +30,32 @@ export type UserBubbleProps = {
   referenceLong?: boolean;
 };
 
+/** The clamp of a long message in prose lines (`layout.bubble-clamp` = 8 × `type.prose.line`). */
+const CLAMP_LINES = 8;
+/**
+ * What one prose line of a bubble holds, in width units (a CJK or full-width character is 1, any
+ * other 0.5): the bubble is at most 75% of the 720 column less its padding, about 516 px, and a
+ * 15 px CJK character is about 15 px wide.
+ */
+const LINE_UNITS = 34;
+
+/**
+ * Whether a message likely runs past the clamp, from its text alone: the server render and
+ * hydration cannot measure, so a long message is drawn folded (the fade and "展开") from the
+ * start and the client's measurement then corrects it, instead of the line popping in after
+ * hydration (AC4 fix round 1). Counts the hard lines and estimates each one's wrapping.
+ */
+export function bubbleLooksLong(text: string): boolean {
+  let lines = 0;
+  for (const line of text.split("\n")) {
+    let units = 0;
+    for (const ch of line) units += /[\u2e80-\u9fff\uac00-\ud7af\uff00-\uffef]/.test(ch) ? 1 : 0.5;
+    lines += Math.max(1, Math.ceil(units / LINE_UNITS));
+    if (lines > CLAMP_LINES) return true;
+  }
+  return false;
+}
+
 /** The skill chip inside a bubble (§6.16.6): the composer's chip without its remove button. */
 export function BubbleSkill({ label }: { label: string }): JSX.Element {
   return (
@@ -60,7 +86,8 @@ export function UserBubble({
   const bodyRef = useRef<HTMLDivElement>(null);
   // Per bubble and local to the view (acceptance item AC4): never persisted.
   const [expanded, setExpanded] = useState(defaultExpanded === true);
-  const [overflows, setOverflows] = useState(referenceLong === true);
+  // first guessed from the text (the server render's answer), then measured
+  const [overflows, setOverflows] = useState(() => referenceLong === true || bubbleLooksLong(text));
   // The toggle shows only when the clamp (`layout.bubble-clamp`, eight prose lines) hides something:
   // measured, and again on resize; an expanded message keeps it so it can fold back.
   // biome-ignore lint/correctness/useExhaustiveDependencies: a new text or chip must be measured again

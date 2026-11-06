@@ -373,9 +373,44 @@ span.cb-title-btn {
   background: var(--cb-hover);
   color: var(--cb-ink);
 }
-/* The agents chip (§6.16.29): a picker-styled ghost button whose status dot leads the label. */
+/* The agents chip (§6.16.29): a picker-styled ghost button whose status dot leads the label;
+ * below 640 the dot (or the agent icon) and the count alone. */
 .cb-agents-chip.cb-btn .cb-btn-body {
   gap: var(--cb-space-2);
+}
+.cb-agents-chip.cb-btn {
+  flex: none;
+}
+.cb-agents-chip-icon,
+.cb-agents-chip-count {
+  display: none;
+}
+.cb-agents-chip-icon {
+  align-items: center;
+}
+/* A picker's label gives way with an ellipsis when the row is short (a phone); the icon
+ * buttons (＋, quick actions, send) keep their square. */
+.cb-composer-bar > .cb-icon-btn {
+  flex: none;
+}
+.cb-composer-bar .cb-picker.cb-btn {
+  min-width: 0;
+}
+.cb-picker-value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+@media (max-width: 639px) {
+  .cb-agents-chip-label {
+    display: none;
+  }
+  .cb-agents-chip-count {
+    display: inline;
+  }
+  .cb-agents-chip-icon {
+    display: inline-flex;
+  }
 }
 .cb-picker[data-locked="true"] {
   display: inline-flex;

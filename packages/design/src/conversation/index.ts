@@ -26,6 +26,7 @@ export {
   type BubbleAttachment,
   BubbleAttachments,
   BubbleSkill,
+  bubbleLooksLong,
   UserBubble,
   type UserBubbleProps,
 } from "./bubble";
