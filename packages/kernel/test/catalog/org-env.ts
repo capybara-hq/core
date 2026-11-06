@@ -82,10 +82,15 @@ export interface OrgEnv {
 
 /**
  * Starts the environment; `overrides` are merged into the kernel config (e.g. `packages` with a
- * fake npm registry, `marketplaces`).
+ * fake npm registry, `marketplaces`, `tools`).
  */
 export async function startOrgEnv(
-  overrides: { packages?: Record<string, unknown>; marketplaces?: Record<string, unknown> } = {},
+  overrides: {
+    packages?: Record<string, unknown>;
+    marketplaces?: Record<string, unknown>;
+    /** Replaces the `tools` config (default `{ timeoutMs: 5_000 }`). */
+    tools?: Record<string, unknown>;
+  } = {},
 ): Promise<OrgEnv> {
   let pgc: TestContainer | undefined;
   let rd: TestContainer | undefined;

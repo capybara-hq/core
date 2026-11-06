@@ -51,7 +51,6 @@ import type {
 } from "../tools/connectors.service.js";
 import { ConnectorsService } from "../tools/connectors.service.js";
 import type { ConnectorAuth } from "../tools/credentials.js";
-import { deriveSlug, isValidSlug } from "../tools/naming.js";
 import {
   type CatalogVersionFiles,
   findConnectorIn,
@@ -2238,9 +2237,9 @@ export class PluginInstaller {
    * One more connector from a platform connector template on in the org (rulings P4-7, P4-T6-8;
    * `POST …/connector-templates/:templateId/connectors`): `templateId` is the platform connector
    * template's id; `config` is an install's connector input (endpoint, credential or OAuth client,
-   * slug) and `name` its name. Without a slug the name and slug default to the first free ones
-   * ({@link freeConnectorName}; a race for it retries), and only a given slug answers 409
-   * `connector.slug_taken`. Created as at install ({@link planConnector}, then
+   * slug) and `name` its name. Without a slug the name and slug default to the first free ones,
+   * chosen by the create under the org lock after its outbound calls
+   * (`CreateConnectorInput.slugDefault`); only a given slug answers 409 `connector.slug_taken`. Created as at install ({@link planConnector}, then
    * `ConnectorsService.create`, which checks the slug before any outbound call and re-checks it,
    * `connectors.manage`, the item and the template being on under the org lock), linked to the
    * template, and recorded on the plugin's live install in the org when there is one. A template
@@ -2309,89 +2308,39 @@ export class PluginInstaller {
       );
     };
     const display = ct.file.displayName?.en ?? ct.id;
-    // a slug given by the caller is theirs (409 when taken); otherwise the first free default
+    // a slug given by the caller is theirs (409 when taken); otherwise the create picks the first
+    // free default under the org lock, after its outbound calls (no retry repeats them)
     const defaulted = input.config.slug === undefined;
-    for (let attempt = 0; ; attempt++) {
-      const named = defaulted
-        ? await this.freeConnectorName(orgId, display, input.name)
-        : { name: input.name ?? display };
-      let ci: CreateConnectorInput;
-      try {
-        ci = this.planConnector(
-          actor,
-          {
-            itemId: row.catalog_item_id,
-            version: row.version ?? row.latest_version,
-            name: row.name,
+    let ci: CreateConnectorInput;
+    try {
+      ci = this.planConnector(
+        actor,
+        { itemId: row.catalog_item_id, version: row.version ?? row.latest_version, name: row.name },
+        ct,
+        {
+          connectors: {
+            [ct.id]: { ...input.config, ...(input.name !== undefined && { name: input.name }) },
           },
-          ct,
-          {
-            connectors: {
-              [ct.id]: {
-                ...input.config,
-                name: named.name,
-                ...(named.slug !== undefined && { slug: named.slug }),
-              },
-            },
-          },
-          "",
-          undefined,
-        );
-      } catch (e) {
-        throw rebase(e);
-      }
-      ci = { ...ci, template: ci.template && { ...ci.template, mustBeOn: true } };
-      try {
-        const r = await this.connectors.create(orgId, actor, ci, opts.actorTokenId);
-        await this.recordOnLiveInstall(orgId, row.catalog_item_id, r.connector.id, ct.id);
-        return r;
-      } catch (e) {
-        // another create took the default slug meanwhile: the next free one
-        if (
-          defaulted &&
-          attempt < 2 &&
-          e instanceof ApiError &&
-          e.code === "connector.slug_taken"
-        ) {
-          continue;
-        }
-        throw rebase(e);
-      }
+        },
+        "",
+        undefined,
+      );
+    } catch (e) {
+      throw rebase(e);
     }
-  }
-
-  /**
-   * The default name and slug of one more connector (fix round 1, item 3): the name given (else the
-   * template's display name) and its slug when free among the org's live connectors, else the first
-   * free `<displayName> 2`, `3`, … (a given name is kept) with the slug suffixed `_2`, `_3`, …
-   * (cut to the 24-character slug limit). No slug when none can be derived (the create asks for
-   * one).
-   */
-  private async freeConnectorName(
-    orgId: string,
-    display: string,
-    given: string | undefined,
-  ): Promise<{ name: string; slug?: string }> {
-    const base = deriveSlug(given ?? display) ?? deriveSlug(display);
-    if (base === null) return { name: given ?? display };
-    const taken = new Set(
-      (
-        await this.db
-          .selectFrom("connectors")
-          .select("slug")
-          .where("org_id", "=", orgId)
-          .where("deleted_at", "is", null)
-          .execute()
-      ).map((r) => r.slug),
-    );
-    for (let n = 1; ; n++) {
-      const suffix = n === 1 ? "" : `_${n}`;
-      const slug = `${base.slice(0, 24 - suffix.length).replace(/_+$/, "")}${suffix}`;
-      if (!isValidSlug(slug) || taken.has(slug)) continue;
-      const nth = ` ${n}`;
-      const name =
-        given ?? (n === 1 ? display : `${[...display].slice(0, 80 - nth.length).join("")}${nth}`);
-      return { name: [...name].slice(0, 80).join(""), slug };
+    ci = {
+      ...ci,
+      template: ci.template && { ...ci.template, mustBeOn: true },
+      ...(defaulted && {
+        slugDefault: { display, ...(input.name !== undefined && { name: input.name }) },
+      }),
+    };
+    try {
+      const r = await this.connectors.create(orgId, actor, ci, opts.actorTokenId);
+      await this.recordOnLiveInstall(orgId, row.catalog_item_id, r.connector.id, ct.id);
+      return r;
+    } catch (e) {
+      throw rebase(e);
     }
   }
 
