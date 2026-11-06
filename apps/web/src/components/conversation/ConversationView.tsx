@@ -350,6 +350,7 @@ export function useConversationPage(
         : ts("contextTotal", { n: usageTotal(usageAll).toLocaleString(locale) }),
     progress: conv.state.progress,
     untitled,
+    eventsLoaded: !conv.loading,
     contextWindowOf: selection.contextWindowOf,
     reasoningOf: selection.reasoningOf,
   });

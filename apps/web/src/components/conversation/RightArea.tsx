@@ -254,6 +254,8 @@ export function useRightAreaSlot(p: {
   progress: Readonly<Record<string, { step: number }>>;
   /** The conversation's name while it has no title (the agent map's root). */
   untitled: string;
+  /** The log is loaded (`events` is the whole log, not the empty list of a pending read). */
+  eventsLoaded: boolean;
   contextWindowOf(m: ModelRef): number | undefined;
   reasoningOf(m: ModelRef): boolean | undefined;
 }): RightAreaSlot {
@@ -309,6 +311,11 @@ export function useRightAreaSlot(p: {
   const openMap = useCallback(() => open({ kind: "agents" }), [open]);
   const mapTarget = target?.kind === "agents" ? target : null;
   const tree = useAgentTree(p.orgId, p.conversationId, p.events, p.progress, mapTarget !== null);
+  // `#agents…` on a conversation without sub-agents (a pasted link): nothing to show, drop it
+  const staleMap = p.eventsLoaded && mapTarget !== null && !hasSubagents;
+  useEffect(() => {
+    if (staleMap) closeMap();
+  }, [staleMap, closeMap]);
   const tools = useMemo(() => {
     const m = new Map<string, TimelineTool>();
     for (const e of p.entries) if (e.kind === "tools") for (const r of e.rows) m.set(r.callId, r);

@@ -40,7 +40,7 @@ export const dispatchedAny = (events: readonly ConversationEvent[]) =>
  * Invalidates `queryKey` when `count` moves after the first value (the first is what the cached
  * answer stands for).
  */
-function useInvalidateOn(queryKey: readonly unknown[], count: number | string, active: boolean) {
+function useInvalidateOn(queryKey: readonly unknown[], count: number, active: boolean) {
   const qc = useQueryClient();
   const seen = useRef(count);
   useEffect(() => {
@@ -100,11 +100,16 @@ export function useSubagents(
   return { views: dispatched ? views : undefined, refresh };
 }
 
+/** The most often stream progress reads the agent tree again (a trailing throttle window). */
+export const TREE_PROGRESS_MS = 1500;
+
 /**
  * The agent tree of a root conversation (agent map spec §9.2), read while the map is `open` and
- * the conversation has dispatched a sub-agent, and again on every `subagent_*` event of its log and
- * every progress step of any agent of the tree (a descendant's progress reaches every ancestor's
- * stream with its own `subagentId`). Invalidating while the map is closed only marks it stale.
+ * the conversation has dispatched a sub-agent. A `subagent_*` event of its log (the tree's shape
+ * or a status moved) reads it again at once; progress steps of any agent (a descendant's progress
+ * reaches every ancestor's stream with its own `subagentId`) are coalesced: at most one read per
+ * {@link TREE_PROGRESS_MS}, at the end of the window. A read in flight is never cancelled for a
+ * new one (`cancelRefetch: false`). Invalidating while the map is closed only marks it stale.
  */
 export function useAgentTree(
   orgId: string,
@@ -113,6 +118,7 @@ export function useAgentTree(
   progress: Readonly<Record<string, { step: number }>>,
   open: boolean,
 ): { root: AgentTreeNode | undefined; failed: boolean } {
+  const qc = useQueryClient();
   const dispatched = useMemo(() => dispatchedAny(events), [events]);
   const count = useMemo(() => subagentEventCount(events), [events]);
   // every agent's step: it moves whenever any agent of the tree makes progress
@@ -129,7 +135,33 @@ export function useAgentTree(
     enabled: dispatched && open,
     retryOnMount: retryOnMountOf(query.queryKey),
   });
-  useInvalidateOn(query.queryKey, `${count}/${steps}`, dispatched);
+  const key = useRef(query.queryKey);
+  key.current = query.queryKey;
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const refresh = useCallback(() => {
+    if (timer.current !== null) clearTimeout(timer.current);
+    timer.current = null;
+    void qc.invalidateQueries({ queryKey: key.current }, { cancelRefetch: false });
+  }, [qc]);
+  const seenCount = useRef(count);
+  useEffect(() => {
+    if (!dispatched || seenCount.current === count) return;
+    seenCount.current = count;
+    refresh();
+  }, [count, dispatched, refresh]);
+  const seenSteps = useRef(steps);
+  useEffect(() => {
+    if (!dispatched || seenSteps.current === steps) return;
+    seenSteps.current = steps;
+    // the window's first step starts it; later ones ride along
+    if (timer.current === null) timer.current = setTimeout(refresh, TREE_PROGRESS_MS);
+  }, [steps, dispatched, refresh]);
+  useEffect(
+    () => () => {
+      if (timer.current !== null) clearTimeout(timer.current);
+    },
+    [],
+  );
   return { root: r.data, failed: r.data === undefined && r.error !== null };
 }
 

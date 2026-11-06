@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import { agentTreeNodes } from "../src/components/conversation/AgentMap";
 import type { AgentTreeNode, ConversationEvent } from "../src/lib/conversations";
+import { TREE_PROGRESS_MS } from "../src/lib/subagents";
 import { type Call, json, stubApi } from "./support/api";
 import {
   AGENTS,
@@ -212,6 +213,31 @@ describe("the agent map's entry points", () => {
     expect(pressed.getAttribute("aria-pressed")).toBe("true");
   });
 
+  it("open properties, open the map, close the map: the properties are back", async () => {
+    api(parentEvents());
+    window.history.replaceState(null, "", "/chat/c1#properties");
+    await renderChatRoute();
+    expect(await screen.findByRole("complementary", { name: "Properties" })).toBeTruthy();
+    const user = userEvent.setup();
+    await user.click(await within(titleBar()).findByRole("button", { name: MAP }));
+    expect(window.location.hash).toBe("#agents");
+    const dialog = await mapDialog();
+    await user.click(within(dialog).getByRole("button", { name: "Close" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: MAP })).toBeNull());
+    expect(window.location.hash).toBe("#properties");
+    expect(await screen.findByRole("complementary", { name: "Properties" })).toBeTruthy();
+  });
+
+  it("#agents on a conversation without sub-agents is dropped from the hash", async () => {
+    const calls = api([userMsg(1, "go"), runStarted(2)]);
+    window.history.replaceState(null, "", "/chat/c1#agents");
+    await renderChatRoute();
+    await screen.findByText("go");
+    await waitFor(() => expect(window.location.hash).toBe(""));
+    expect(screen.queryByRole("dialog", { name: MAP })).toBeNull();
+    expect(treeReads(calls)).toBe(0);
+  });
+
   it("#agents survives a reload: the map opens from the hash", async () => {
     api(parentEvents());
     window.history.replaceState(null, "", "/chat/c1#agents");
@@ -268,6 +294,9 @@ describe("the agent map's tree", () => {
         lastToolKey: "Read",
       });
     });
-    await waitFor(() => expect(treeReads(calls)).toBeGreaterThan(before));
+    // progress is coalesced: the read comes at the end of the throttle window
+    await waitFor(() => expect(treeReads(calls)).toBeGreaterThan(before), {
+      timeout: TREE_PROGRESS_MS + 1500,
+    });
   });
 });

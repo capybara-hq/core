@@ -86,7 +86,7 @@ const statusText = (b: HTMLElement) =>
 describe("SubagentGroup (§6.16.15)", () => {
   it("running: a spinner header naming the count over one Agent call block per sub-agent", () => {
     wrap(<SubagentGroup rows={running} onOpen={() => {}} />);
-    expect(screen.getByText("正在运行 2 个子 agent")).toBeTruthy();
+    expect(screen.getByText("正在运行 2 个子智能体")).toBeTruthy();
     // the header's spinner only: a running block shows the pulsing dot instead
     const spinners = screen.getAllByRole("img", { name: "进行中" });
     expect(spinners).toHaveLength(1);
@@ -123,7 +123,7 @@ describe("SubagentGroup (§6.16.15)", () => {
   it("one row running and one waiting: the header keeps its spinner and the count", () => {
     const rows = [running[0], { ...running[1], status: "waiting", waiting: "approval" }];
     wrap(<SubagentGroup rows={rows as SubagentRowData[]} onOpen={() => {}} />);
-    expect(screen.getByText("正在运行 2 个子 agent")).toBeTruthy();
+    expect(screen.getByText("正在运行 2 个子智能体")).toBeTruthy();
     expect(screen.getAllByRole("img", { name: "进行中" })).toHaveLength(1);
   });
 
@@ -143,7 +143,7 @@ describe("SubagentGroup (§6.16.15)", () => {
 
   it("done: a collapsed header with the failure count in fail and the totals", async () => {
     wrap(<SubagentGroup rows={done} onOpen={() => {}} />);
-    const head = screen.getByRole("button", { name: /3 个子 agent 已完成/ });
+    const head = screen.getByRole("button", { name: /3 个子智能体已完成/ });
     expect(head.getAttribute("aria-expanded")).toBe("false");
     const fail = within(head).getByText("（1 个失败）");
     expect(fail.getAttribute("data-part")).toBe("fail-word");
@@ -221,7 +221,7 @@ describe("SubagentGroup (§6.16.15)", () => {
     expect(onOpenMap).toHaveBeenCalledTimes(1);
     unmount();
     wrap(<SubagentGroup rows={done} onOpen={() => {}} onOpenMap={onOpenMap} />);
-    const head = screen.getByRole("button", { name: /3 个子 agent 已完成/ });
+    const head = screen.getByRole("button", { name: /3 个子智能体已完成/ });
     const link = screen.getByRole("button", { name: "智能体图" });
     // never nested in the toggle; the toggle still opens the group
     expect(head.contains(link)).toBe(false);

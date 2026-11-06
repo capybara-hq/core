@@ -6,6 +6,7 @@ import {
   type AgentMapNode,
   type AgentMapStatus,
   AgentMapTree,
+  SkeletonBars,
 } from "@capybara-hq/design";
 import { useQuery } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
@@ -84,7 +85,7 @@ export function AgentMap({
 }: {
   orgId: string;
   target: Extract<RightTarget, { kind: "agents" }>;
-  /** The tree; undefined while it loads (nothing is drawn yet). */
+  /** The tree; undefined while it loads (skeleton bars). */
   root: AgentTreeNode | undefined;
   /** The tree's read failed (and nothing is cached). */
   failed: boolean;
@@ -127,7 +128,9 @@ export function AgentMap({
         />
       ) : failed ? (
         <FormError message={t("agentMapFailed")} />
-      ) : null}
+      ) : (
+        <SkeletonBars />
+      )}
     </AgentMapDialog>
   );
 }
