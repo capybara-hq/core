@@ -5,6 +5,7 @@ import type { ConversationEvent } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { RunQueue } from "../../src/runtime/run-queue.js";
+import { seedQueued } from "../helpers/conversations.js";
 import { accountsFor } from "../helpers/identity.js";
 import {
   createAgent,
@@ -41,6 +42,7 @@ let ownerA: Req;
 let ownerB: Req;
 let orgId: string;
 let agentId: string;
+let ownerId: string;
 
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
@@ -50,7 +52,8 @@ beforeAll(async () => {
   const cfg = runConfig({ pg: pgc.url, redis: rd.url }, { roles: ["api", "worker"] });
   a = await startKernel(cfg);
   b = await startKernel(cfg);
-  await accountsFor(dbA).createLocal({ login: "owner", password: PW, displayName: "O" });
+  ownerId = (await accountsFor(dbA).createLocal({ login: "owner", password: PW, displayName: "O" }))
+    .id;
   ownerA = await session(a, "owner");
   ownerB = await session(b, "owner");
   orgId = await createOrg(ownerA);
@@ -88,11 +91,9 @@ describe("queued messages on two replicas", { timeout: 90_000 }, () => {
     await waitFor(async () => (await runsOf(dbA, conv)).some((r) => r.status === "running"));
     const texts = ["echo:q1", "echo:q2", "echo:q3", "echo:q4"];
     for (const [i, t] of texts.entries()) {
-      const req = i % 2 === 0 ? ownerA : ownerB;
-      const r = await req({
-        method: "POST",
-        url: base(conv),
-        payload: { text: t, clientMessageId: randomUUID() },
+      const r = await seedQueued(i % 2 === 0 ? a.app : b.app, orgId, conv, ownerId, {
+        text: t,
+        clientMessageId: randomUUID(),
       });
       expect(r.statusCode, r.body).toBe(201);
     }
@@ -125,10 +126,9 @@ describe("queued messages on two replicas", { timeout: 90_000 }, () => {
       const conv = await createConv(ownerA, orgId, agentId);
       await postMessage(ownerA, orgId, conv, "stall");
       await waitFor(async () => (await runsOf(dbA, conv)).some((r) => r.status === "running"));
-      const r = await ownerA({
-        method: "POST",
-        url: base(conv),
-        payload: { text: "echo:race", clientMessageId: randomUUID() },
+      const r = await seedQueued(a.app, orgId, conv, ownerId, {
+        text: "echo:race",
+        clientMessageId: randomUUID(),
       });
       const item = (r.json() as { item: { id: string } }).item;
       await ownerA({ method: "POST", url: `/api/v1/orgs/${orgId}/conversations/${conv}/abort` });

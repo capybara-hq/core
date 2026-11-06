@@ -188,9 +188,7 @@ const CreateBody = z
   .strict();
 
 /**
- * `POST …/queue`: the message fields that can be queued (no retry). A model / effort pick is checked
- * now and applied when the message is sent (final review I1). A skill invocation is rendered now
- * and checked again when sent (phase D Task 9).
+ * `POST …/queue` (deprecated, behaves as `POST …/messages`): the message fields (no retry).
  */
 const QueueBody = MessageFields.omit({ retryOf: true })
   .extend({ clientMessageId: z.string().min(1).max(200) })
@@ -646,30 +644,31 @@ export class ConversationsController {
   }
 
   /**
-   * Queues a message (201). The same `clientMessageId` again: 200 with the queued item, or with
-   * `item: null` and the sent `event` once it went out. An idle conversation sends it at once.
+   * Deprecated: behaves as `POST …/messages` (202 `{ event }`): an interjection while a run is
+   * active, a new run otherwise; nothing is queued any more. Kept for older clients for one release;
+   * the leftover-item routes below keep working until the queue table is dropped (contract step).
    */
   @Post(":id/queue")
+  @HttpCode(202)
   @OrgAction("agents.use")
   async enqueue(
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
     @Param("id") id: string,
     @ZBody(ConversationQueueBodyDto) body: z.infer<typeof QueueBody>,
-    @Res({ passthrough: true }) reply: FastifyReply,
-  ): Promise<{ item: QueueItem | null; event?: ConversationEvent }> {
+  ): Promise<{ event: ConversationEvent }> {
     const p = requireUser(principal);
-    const out = await this.queue.add(org.orgId, id, p.account.id, {
-      text: body.text,
-      clientMessageId: body.clientMessageId,
-      ...(body.attachments !== undefined && { attachments: body.attachments }),
-      ...(body.files !== undefined && { files: body.files }),
-      ...(body.model !== undefined && { model: body.model }),
-      ...(body.effort !== undefined && { effort: body.effort }),
-      ...(body.skill !== undefined && { skill: body.skill }),
-    });
-    reply.status(out.created ? 201 : 200);
-    return { item: out.item, ...(out.event !== undefined && { event: out.event }) };
+    return {
+      event: await this.conversations.postUserMessage(org.orgId, id, p.account.id, {
+        text: body.text,
+        clientMessageId: body.clientMessageId,
+        ...(body.attachments !== undefined && { attachments: body.attachments }),
+        ...(body.files !== undefined && { files: body.files }),
+        ...(body.model !== undefined && { model: body.model }),
+        ...(body.effort !== undefined && { effort: body.effort }),
+        ...(body.skill !== undefined && { skill: body.skill }),
+      }),
+    };
   }
 
   /** "Continue sending" after a pause (202). Declared before `:itemId` routes. */

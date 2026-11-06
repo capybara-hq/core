@@ -19,6 +19,7 @@ import { createDb } from "../../src/db/pool.js";
 import { KERNEL_MIGRATIONS_DIR } from "../../src/kernel.js";
 import { StorageService } from "../../src/storage/storage.service.js";
 import { type ScriptRule, scriptRules } from "../fixtures/plugins/model-script/index.js";
+import { seedQueued } from "../helpers/conversations.js";
 import { truncateTables } from "../helpers/db.js";
 import { seedForkedSkill } from "../helpers/forked-skills.js";
 import { asUser, cookieJar } from "../helpers/http.js";
@@ -245,11 +246,10 @@ interface Item {
 }
 const base = (conv: string) => `/api/v1/orgs/${orgId}/conversations/${conv}/queue`;
 const enqueue = (conv: string, body: Record<string, unknown>) =>
-  owner({
-    method: "POST",
-    url: base(conv),
-    payload: { clientMessageId: randomUUID(), ...body },
-  });
+  seedQueued(k.app, orgId, conv, ownerId, {
+    clientMessageId: randomUUID(),
+    ...body,
+  } as Parameters<typeof seedQueued>[4]);
 const queueOf = async (conv: string) => {
   const r = await owner({ method: "GET", url: base(conv) });
   expect(r.statusCode, r.body).toBe(200);
