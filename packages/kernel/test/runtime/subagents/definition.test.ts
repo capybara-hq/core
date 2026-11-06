@@ -594,6 +594,21 @@ describe("effectiveDefinition", { timeout: 60_000 }, () => {
     expect(r.maxSteps).toBe(12);
   });
 
+  it("plugin template: selectedSkills are resolved like skills but never pinned (P4-2)", async () => {
+    const tdd = await skill("test-driven-development");
+    const pdf = await skill("pdf-tools");
+    const t = await template("implementer", {
+      skills: ["test-driven-development"],
+      selectedSkills: ["pdf-tools", "superpowers:missing", "test-driven-development"],
+    });
+    const parent = def({ skills: { orgSkills: [tdd, pdf] }, subagents: { templates: [t] } });
+    const r = await eff(parent, "implementer");
+    expect(r.definition.skills).toEqual({ orgSkills: [tdd, pdf], pinned: [tdd] });
+    expect(r.warnings).toEqual([
+      'The skill "superpowers:missing" is not available: the agent does not select it.',
+    ]);
+  });
+
   describe("model tiers", () => {
     const map = (tier: string, model = FAKE2, params: Record<string, unknown> = {}) =>
       k.app

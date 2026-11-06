@@ -174,7 +174,8 @@ type TemplateLike = {
     | "model"
     | "effort"
     | "maxSteps"
-    | "skills"]?: AgentTemplate[K] | undefined;
+    | "skills"
+    | "selectedSkills"]?: AgentTemplate[K] | undefined;
 };
 
 interface SkillRow {
@@ -197,8 +198,10 @@ async function pinnedFor(
   a: { orgId: string; parent: AgentDefinition; parentAgentId: string },
   refs: readonly string[],
   byName: { plugin: string | undefined } | null,
+  /** Further names the template lists (`selectedSkills`): resolved the same way, never pinned. */
+  selected: readonly string[] = [],
 ): Promise<{ pinned: string[]; warnings: string[] }> {
-  if (refs.length === 0) return { pinned: [], warnings: [] };
+  if (refs.length === 0 && selected.length === 0) return { pinned: [], warnings: [] };
   // org and agent skills, linked org copies and platform skills on in the org (phase 2), by id
   const rows: SkillRow[] = (
     await selectedSkills(db, {
@@ -257,6 +260,12 @@ async function pinnedFor(
     }
     total += r.bytes;
     pinned.push(r.id);
+  }
+  for (const ref of selected) {
+    if (refs.includes(ref)) continue;
+    if (!match(ref)) {
+      warnings.push(`The skill "${ref}" is not available: the agent does not select it.`);
+    }
   }
   return { pinned, warnings };
 }
@@ -433,6 +442,7 @@ export async function effectiveDefinition(
     a,
     template?.skills ?? [],
     entry.source === "plugin" ? { plugin: entry.plugin } : null,
+    template?.selectedSkills ?? [],
   );
   const tier = a.tier ?? template?.model ?? "inherit";
   const m = await resolveTier(d, a.orgId, parent, tier);
