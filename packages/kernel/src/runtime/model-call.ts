@@ -366,6 +366,7 @@ async function runStep(
       subagents: input.agent.subagents,
       child:
         input.parent !== undefined || input.parentRunId !== undefined || input.subagent === true,
+      forkChild: input.parent?.forSkill === true,
       skillLoad: skillLoadOffered(
         events.findLast(
           (e): e is Extract<ConversationEvent, { type: "skills_catalog" }> =>

@@ -500,10 +500,11 @@ export class RunQueue {
 
   /**
    * The newest unconsumed message of an idle sub-agent (a `SendMessage` its last run did not absorb)
-   * as a run boundary, or null: none, the last run was stopped (`aborted`: the message waits for
-   * the next run), the root's queue is paused or the root deleted (the message waits for the
-   * unpause, {@link wakeHeldTree}), or its author can no longer send to the root (it waits for a
-   * later run). Called under the sub-agent's row lock.
+   * as a run boundary, or null: none; the last run was stopped (`aborted`): a message that reached
+   * a running sub-agent which was then stopped is parked, no run starts for it, and the next run
+   * (another message, a wake) absorbs it; the root's queue is paused or the root deleted (the
+   * message waits for the unpause, {@link wakeHeldTree}); or its author can no longer send to the
+   * root (it waits for a later run). Called under the sub-agent's row lock.
    */
   private async pendingMessageIn(
     conversationId: string,
@@ -526,6 +527,7 @@ export class RunQueue {
       .select("status")
       .where("conversation_id", "=", conversationId)
       .orderBy("created_at", "desc")
+      .orderBy("id", "desc")
       .limit(1)
       .executeTakeFirst();
     if (last?.status === "aborted") return null;

@@ -10,10 +10,12 @@ import { normalizeStoredDefinition } from "../../src/agents/definition.js";
 import type { ConversationEvent, EventPayload } from "../../src/conversations/events.js";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { SubagentMessages } from "../../src/runtime/subagents/messages.js";
 import { renderSubagentDelivery } from "../../src/runtime/subagents/render.js";
 import { SubagentsService } from "../../src/runtime/subagents/subagents.service.js";
-import { HANDBACK_RESULT_TEXT } from "../../src/tools/builtins/handback.js";
+import { HANDBACK_FORK_TEXT, HANDBACK_RESULT_TEXT } from "../../src/tools/builtins/handback.js";
 import type { ToolStepContext } from "../../src/tools/pipeline.js";
+import { ToolRegistry } from "../../src/tools/registry.js";
 import type { ScriptRule } from "../fixtures/plugins/model-script/index.js";
 import { legacyDbFor } from "../helpers/conversations.js";
 import { accountsFor } from "../helpers/identity.js";
@@ -251,6 +253,53 @@ describe("SubagentHandback", { timeout: 90_000 }, () => {
     expect(toolNames(childReq)).toEqual(
       expect.arrayContaining(["SendMessage", "SubagentHandback"]),
     );
+  });
+
+  it("a fork invocation's child is refused a handback: its final reply is the report", async () => {
+    const { conv, ctx } = await parentRun();
+    const out = await k.app.get(SubagentsService).dispatch({
+      ctx,
+      callId: "c1",
+      input: { description: "Forked", prompt: "plain task" },
+    });
+    if (out.kind !== "dispatched") throw new Error(out.content);
+    await finishedDeliveries(db, conv, 1);
+    // mark its dispatch a fork invocation's (phase D `for_skill`)
+    await db
+      .updateTable("subagent_dispatches")
+      .set({ for_skill: true })
+      .where("child_run_id", "=", out.childRunId)
+      .execute();
+    const before = ofType(await eventsOf(db, conv), "subagent_delivery").length;
+    const childCtx: ToolStepContext = {
+      ...ctx,
+      conversationId: out.childConversationId,
+      runId: out.childRunId,
+      parent: {
+        conversationId: conv,
+        runId: ctx.runId,
+        callId: "c1",
+        depth: 0,
+        rootConversationId: conv,
+        forSkill: true,
+      },
+    };
+    const messages = k.app.get(SubagentMessages);
+    expect(await messages.toParent(childCtx, "report", "REPORT", "h1")).toEqual({
+      content: HANDBACK_FORK_TEXT,
+      isError: true,
+    });
+    expect((await messages.toChild(childCtx, "h2", "parent", "a note")).content).toBe(
+      HANDBACK_FORK_TEXT,
+    );
+    expect(ofType(await eventsOf(db, conv), "subagent_delivery")).toHaveLength(before);
+    // and it is offered neither tool to reach its parent
+    const tools = await k.app.get(ToolRegistry).forAgent(orgId, {
+      tools: [{ kind: "builtin", name: "Read" }],
+      child: true,
+      forkChild: true,
+    });
+    expect(tools.tools.map((t) => t.key)).toEqual(["Read"]);
   });
 
   it("finish after a handback renders the one-line finished delivery", async () => {

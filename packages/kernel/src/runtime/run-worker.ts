@@ -645,6 +645,7 @@ export class RunWorker {
             rootConversationId,
             otherAgent,
             ...(row.budgetRunId !== undefined && { budgetRunId: row.budgetRunId }),
+            ...(row.forSkill === true && { forSkill: true }),
           }
         : {
             conversationId: started.payload.parent.conversationId,

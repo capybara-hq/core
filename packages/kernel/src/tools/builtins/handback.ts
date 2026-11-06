@@ -47,6 +47,10 @@ export const HANDBACK_RESULT_TEXT = "Report delivered to your caller.";
 export const HANDBACK_NOT_A_CHILD_TEXT =
   "Only sub-agents can hand back a report; reply in this conversation instead.";
 
+/** A fork invocation's child (phase D): its parent reads its final reply as the report. */
+export const HANDBACK_FORK_TEXT =
+  "You run a skill for the agent that dispatched you, which reads your final reply as the report; end your turn with the report instead.";
+
 /**
  * The builtin. `defaultPolicy: "allow"`: it only moves text inside one tree the person already
  * started. The tool pipeline handles `SubagentHandback` calls itself; `run` answers only when a

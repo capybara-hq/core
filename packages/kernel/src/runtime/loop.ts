@@ -43,7 +43,7 @@ export interface LoopContext {
   /**
    * The run is a sub-agent's without a live `parent`: a child case's eval replay. Its requests
    * offer the message tools a sub-agent has (`SendMessage`, `SubagentHandback`), as the recorded
-   * run's did. Implied by `parent`.
+   * run's did; not for a fork invocation's child (`SubagentParent.forSkill`). Implied by `parent`.
    */
   subagent?: boolean;
 }
@@ -70,6 +70,12 @@ export interface SubagentParent {
    * run starts); absent when unknown, then read with `budgetRunOf(runId)` where it is needed.
    */
   budgetRunId?: string;
+  /**
+   * The run is a person's fork invocation's child (phase D, its dispatch's `for_skill`): its parent
+   * run waits for its final reply as the skill's report, so it gets neither `SubagentHandback` nor
+   * `SendMessage` to its parent (agent map spec §5.4: the fork's behaviour does not change).
+   */
+  forSkill?: boolean;
 }
 
 /**

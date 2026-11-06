@@ -77,11 +77,11 @@ export interface DispatchArgs {
   sent?: { content: string; refusals: LimitRefusals };
 }
 
-/** The texts of the limit refusals of a dispatch (§4.5, agent map spec §6). */
+/** The texts of the limit refusals of a dispatch (§4.5, agent map spec §6), and of a stopped run. */
 export type LimitRefusals = Pick<
   typeof AGENT_REFUSALS,
   "depthLimit" | "budget" | "tooManyDispatches" | "tooManyConcurrent"
->;
+> & { notAvailableHere: string };
 
 /**
  * Writes the child's events in the dispatch's transaction (`db` is its handle); `checked` is the
@@ -667,7 +667,9 @@ export async function commit(
     };
   }
   // the result is never read: the run is over
-  if (out.kind === "stopped") return refused(AGENT_REFUSALS.notAvailableHere);
+  if (out.kind === "stopped") {
+    return refused((a.sent?.refusals ?? AGENT_REFUSALS).notAvailableHere);
+  }
   if (out.kind === "limit") return refused(out.content);
   if (out.kind === "gate") return out.outcome;
   await d.eventLog.notify(plan.childConversationId, out.childSeq);
@@ -697,8 +699,8 @@ export async function commit(
  * parent conversation's, the parent run's and the budget run's row locks; `tokensUsed` is the
  * budget run's counter read with its lock. A dispatch from a run at `maxDepth` is refused (the
  * limit may have been lowered since the call's definition was frozen); tokens and dispatches
- * (follow-ups included) count the whole tree on its budget run; concurrency counts the active
- * children of the parent conversation, whichever of its runs dispatched them.
+ * (follow-ups included) count the whole tree on its budget run; concurrency counts the child
+ * conversations of the parent conversation that have an active run, whatever started that run.
  */
 async function limitRefusal(
   t: KernelSchemaDb,
@@ -721,12 +723,22 @@ async function limitRefusal(
   if (Number(total.n) >= limits.maxDispatchesPerRun) {
     return texts.tooManyDispatches(limits.maxDispatchesPerRun);
   }
+  // every child conversation with an active run of any origin: a dispatch, a message it never
+  // absorbed (a continuation run) or a wake run all hold its slot
   const active = await t
-    .selectFrom("subagent_dispatches as sd")
-    .innerJoin("runs as cr", "cr.id", "sd.child_run_id")
+    .selectFrom("conversations as c")
     .select(sql<string>`count(*)`.as("n"))
-    .where("sd.parent_conversation_id", "=", ctx.conversationId)
-    .where("cr.status", "in", ACTIVE_RUN_STATUSES)
+    .where("c.parent_conversation_id", "=", ctx.conversationId)
+    .where("c.kind", "=", "subagent")
+    .where("c.deleted_at", "is", null)
+    .where(({ exists, selectFrom }) =>
+      exists(
+        selectFrom("runs as cr")
+          .select(sql`1`.as("one"))
+          .whereRef("cr.conversation_id", "=", "c.id")
+          .where("cr.status", "in", ACTIVE_RUN_STATUSES),
+      ),
+    )
     .executeTakeFirstOrThrow();
   if (Number(active.n) >= limits.maxConcurrentPerConversation) {
     return texts.tooManyConcurrent(limits.maxConcurrentPerConversation);

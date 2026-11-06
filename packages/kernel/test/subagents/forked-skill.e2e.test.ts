@@ -311,6 +311,12 @@ describe("forked skills (phase D Task 6)", { timeout: 90_000 }, () => {
         ],
       },
     ]);
+    // a fork child reports by its final reply (agent map spec §5.4): no SubagentHandback, and no
+    // SendMessage to its parent (it has no Agent, so no SendMessage at all)
+    const childTools = childReqs[0]?.tools?.map((t) => t.name) ?? [];
+    expect(childTools).not.toContain("Agent");
+    expect(childTools).not.toContain("SubagentHandback");
+    expect(childTools).not.toContain("SendMessage");
     const report = ofType(events, "skill_fork_result");
     expect(report).toHaveLength(1);
     expect(report[0]?.payload).toMatchObject({

@@ -476,6 +476,12 @@ export async function replayRun(
           modelParams: candidate.params,
         };
 
+  const triggerEvent = s.events.find((e) => e.seq === trigger);
+  const forkRun =
+    triggerEvent?.type === "user_message" &&
+    (triggerEvent.payload as { skill?: unknown; dispatch?: unknown }).skill !== undefined &&
+    (triggerEvent.payload as { dispatch?: unknown }).dispatch !== undefined;
+
   const conversationId = randomUUID();
   const runId = randomUUID();
   await d.seeder.seed(
@@ -690,8 +696,9 @@ export async function replayRun(
       },
       // replays never fire plugin hooks (the loop deps omit them too, P-18)
       conversationKind: "eval",
-      // a child case offers a sub-agent's message tools, as its recorded requests did
-      ...(subagent !== undefined && { subagent: true }),
+      // a child case offers a sub-agent's message tools, as its recorded requests did (a fork
+      // invocation's child, whose run a task with the invocation record started, has none)
+      ...(subagent !== undefined && !forkRun && { subagent: true }),
     });
   } catch (e) {
     const err =

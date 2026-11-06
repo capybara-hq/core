@@ -10,7 +10,11 @@ import { KERNEL_LOGGER } from "../../infra/tokens.js";
 import type { KernelLogger } from "../../log.js";
 import { SEND_MESSAGE } from "../../tools/builtin-names.js";
 import { AGENT_REFUSALS } from "../../tools/builtins/agent.js";
-import { HANDBACK_NOT_A_CHILD_TEXT, HANDBACK_RESULT_TEXT } from "../../tools/builtins/handback.js";
+import {
+  HANDBACK_FORK_TEXT,
+  HANDBACK_NOT_A_CHILD_TEXT,
+  HANDBACK_RESULT_TEXT,
+} from "../../tools/builtins/handback.js";
 import {
   PARENT_TARGET,
   SEND_MESSAGE_REFUSALS,
@@ -257,6 +261,8 @@ export class SubagentMessages {
     if (ctx.parent === undefined) return refused(HANDBACK_NOT_A_CHILD_TEXT);
     const row = await deliveryRowOfChildRun(this.db, ctx.runId);
     if (!row) return refused(SEND_MESSAGE_REFUSALS.notAvailableHere);
+    // a fork invocation's parent run waits for the final reply (phase D, agent map spec §5.4)
+    if (row.forSkill === true) return refused(HANDBACK_FORK_TEXT);
     await this.deliveries.deliverIn(
       row,
       { kind, text },

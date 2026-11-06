@@ -13,9 +13,11 @@ import { BackgroundTaskStore } from "../../src/background/store.js";
 import type { ConversationEvent, EventPayload } from "../../src/conversations/events.js";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { RUN_HOOKS } from "../../src/runtime/run-worker.js";
 import { SUBAGENT_MESSAGES_HOOKS, SubagentMessages } from "../../src/runtime/subagents/messages.js";
 import { SubagentsService } from "../../src/runtime/subagents/subagents.service.js";
 import { Waits } from "../../src/runtime/waits.js";
+import { AGENT_REFUSALS } from "../../src/tools/builtins/agent.js";
 import {
   SEND_MESSAGE_REFUSALS,
   SENT_TO_PARENT_TEXT,
@@ -64,6 +66,10 @@ const RULES: ScriptRule[] = [
   { when: { systemIncludes: CHILD, lastUserIncludes: "PING-STEP" }, reply: { text: "absorbed" } },
   { when: { systemIncludes: CHILD, lastUserIncludes: "FOLLOW-UP" }, reply: { text: "followed" } },
   { when: { systemIncludes: CHILD, lastUserIncludes: "LATE-MSG" }, reply: { text: "late seen" } },
+  {
+    when: { systemIncludes: CHILD, lastUserIncludes: "LATE-HOLD" },
+    reply: { text: "late held", barrier: held("late-hold") },
+  },
   { when: { systemIncludes: CHILD, lastUserIncludes: "RACE-MSG" }, reply: { text: "race seen" } },
   {
     when: { systemIncludes: CHILD, lastUserIncludes: "AFTER-STOP" },
@@ -102,6 +108,10 @@ const release = (name: string) => {
   for (const w of barriers()?.get(name)?.waiters.splice(0) ?? []) w();
 };
 
+/** Post-run `ensureRun` attempts per conversation; those in `dropEnsure` fail (a lost replica). */
+const ensureAttempts = new Map<string, number>();
+const dropEnsure = new Set<string>();
+
 /** The race seam: called once by the next send after its status read, then cleared. */
 let afterStatusRead: ((childId: string) => Promise<void>) | undefined;
 
@@ -136,6 +146,15 @@ beforeAll(async () => {
     ),
     {
       overrides: [
+        {
+          provide: RUN_HOOKS,
+          useValue: {
+            beforeEnsureRun: async (conversationId: string) => {
+              ensureAttempts.set(conversationId, (ensureAttempts.get(conversationId) ?? 0) + 1);
+              if (dropEnsure.has(conversationId)) throw new Error("replica lost");
+            },
+          },
+        },
         {
           provide: SUBAGENT_MESSAGES_HOOKS,
           useValue: {
@@ -624,7 +643,55 @@ describe("SendMessage to a sub-agent", { timeout: 90_000 }, () => {
     ]);
   });
 
-  it("a late finish of a stopped run leaves the tasks of the run a message started", async () => {
+  it("the wait sweep starts a parked message no run took (a lost post-run ensureRun)", async () => {
+    const { ctx } = await parentRun();
+    const { childId } = await dispatch(ctx, "c1", "end-hold: go", "Parked");
+    await waiting("end");
+    // the message reaches the run in its last model call; every post-run ensureRun then fails
+    // (the replica died after the terminal commit)
+    expect((await send(ctx, "s1", childId, "LATE-MSG: parked")).isError).toBe(false);
+    dropEnsure.add(childId);
+    release("end");
+    await waitFor(
+      async () => (ensureAttempts.get(childId) ?? 0) >= 4,
+      20_000,
+      "the post-run ensureRun given up",
+    );
+    expect((await runRows(childId)).map((r) => r.status)).toEqual(["completed"]);
+    const message = ofType(await eventsOf(db, childId), "user_message").find(
+      (m) => m.payload.dispatch?.callId === "s1",
+    );
+    // not before the grace period
+    expect((await k.app.get(Waits).sweep()).restarted).toBe(0);
+    await sql`UPDATE capybara.conversation_events SET created_at = now() - interval '5 minutes'
+      WHERE conversation_id = ${childId} AND seq = ${message?.seq}`.execute(raw);
+    expect((await k.app.get(Waits).sweep()).restarted).toBe(1);
+    const rows = await settled(childId, 2);
+    expect(Number(rows[1]?.trigger_seq)).toBe(message?.seq);
+    expect(finalText(await eventsOf(db, childId), rows[1]?.id as string)).toBe("late seen");
+    // consumed now: the next sweep starts nothing
+    expect((await k.app.get(Waits).sweep()).restarted).toBe(0);
+  });
+
+  it("a run started from a message holds its sub-agent's concurrency slot", async () => {
+    await limits({ maxConcurrentPerConversation: 1 });
+    const { ctx } = await parentRun();
+    const { childId } = await dispatch(ctx, "c1", "end-hold: go", "Busy");
+    await waiting("end");
+    expect((await send(ctx, "s1", childId, "LATE-HOLD: one more")).isError).toBe(false);
+    release("end");
+    // the message's run (no dispatch row of its own) is working now
+    await waiting("late-hold");
+    expect((await runRows(childId)).map((r) => r.status)).toEqual(["completed", "running"]);
+    const out = await k.app
+      .get(SubagentsService)
+      .dispatch({ ctx, callId: "c2", input: { description: "Another", prompt: "quick-task: x" } });
+    expect(out).toEqual({ kind: "refused", content: AGENT_REFUSALS.tooManyConcurrent(1) });
+    release("late-hold");
+    await settled(childId, 2);
+  });
+
+  it("a late finish of a stopped run stops its own tasks and leaves those of the run a message started", async () => {
     const { ctx } = await parentRun();
     const { childId, childRunId } = await dispatch(ctx, "c1", "hold-task: go", "Stopped");
     await waiting("hold");
@@ -640,28 +707,34 @@ describe("SendMessage to a sub-agent", { timeout: 90_000 }, () => {
     expect(out.content).toBe(sentToIdleText({ id: childId, description: "Stopped" }));
     await waiting("after-stop");
     const later = (await runRows(childId))[1] as RunRow;
-    // a task of the new run, then the old run's finish handling arrives late
+    // a task of each run, then the old run's finish handling arrives late
     const store = k.app.get(BackgroundTaskStore);
-    const taskId = newTaskId();
-    const startedAt = new Date();
-    await store.insert({
-      id: taskId,
-      orgId,
-      conversationId: childId,
-      sandboxConversationId: ctx.conversationId,
-      runId: later.id,
-      callId: "call-x",
-      triggerAccountId: ownerId,
-      description: "Task of the new run",
-      command: "true",
-      sid: "4242",
-      outputPath: taskOutputPath(taskId),
-      startedAt,
-      deadlineAt: new Date(startedAt.getTime() + 3_600_000),
-      sandboxCreatedAt: new Date(),
-    });
+    const task = async (runId: string) => {
+      const id = newTaskId();
+      const startedAt = new Date();
+      await store.insert({
+        id,
+        orgId,
+        conversationId: childId,
+        sandboxConversationId: ctx.conversationId,
+        runId,
+        callId: `call-${id}`,
+        triggerAccountId: ownerId,
+        description: `Task of ${runId}`,
+        command: "true",
+        sid: "4242",
+        outputPath: taskOutputPath(id),
+        startedAt,
+        deadlineAt: new Date(startedAt.getTime() + 3_600_000),
+        sandboxCreatedAt: new Date(),
+      });
+      return id;
+    };
+    const ofNew = await task(later.id);
+    const ofStopped = await task(childRunId);
     await k.app.get(Waits).childFinished(childRunId);
-    expect((await store.get(taskId))?.status).toBe("running");
+    expect((await store.get(ofNew))?.status).toBe("running");
+    expect((await store.get(ofStopped))?.status).not.toBe("running");
     release("after-stop");
     await settled(childId, 2);
   });

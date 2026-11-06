@@ -208,7 +208,14 @@ async function loseResume(approvalId: string, runId: string, waitedMinutes = 2):
 }
 
 /** No sub-agents in these tests: the sub-agent repairs of the sweep stay at zero. */
-const NO_SUBAGENT_REPAIRS = { repaired: 0, requeued: 0, orphaned: 0, stopped: 0, delivered: 0 };
+const NO_SUBAGENT_REPAIRS = {
+  repaired: 0,
+  requeued: 0,
+  orphaned: 0,
+  stopped: 0,
+  delivered: 0,
+  restarted: 0,
+};
 
 const sum = (rs: WaitSweepResult[]): WaitSweepResult =>
   rs.reduce(
@@ -221,6 +228,7 @@ const sum = (rs: WaitSweepResult[]): WaitSweepResult =>
       orphaned: a.orphaned + r.orphaned,
       stopped: a.stopped + r.stopped,
       delivered: a.delivered + r.delivered,
+      restarted: a.restarted + r.restarted,
     }),
     { expired: 0, resumed: 0, cancelled: 0, ...NO_SUBAGENT_REPAIRS },
   );

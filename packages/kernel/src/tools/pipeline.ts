@@ -503,6 +503,7 @@ export class ToolPipeline {
           skillLoad,
           subagents: ctx.agent.subagents,
           child: ctx.parent !== undefined,
+          forkChild: ctx.parent?.forSkill === true,
         });
       }
       return resolved;

@@ -82,6 +82,11 @@ export interface WaitSweepResult {
    * died after the child's terminal commit), delivered (agent map spec §10).
    */
   delivered: number;
+  /**
+   * Idle sub-agents with a parked message no run took (a `SendMessage` that reached a run after
+   * its last model call, whose replica died before the post-run `ensureRun`), started again.
+   */
+  restarted: number;
 }
 
 const TERMINAL_RUN_STATUSES = ["completed", "failed", "aborted"] as const;
@@ -122,7 +127,10 @@ export class Waits implements OnApplicationShutdown {
     @Inject(QuestionsService)
     private readonly questions: Pick<QuestionsService, "expire" | "cancelPendingIn">,
     @Inject(RunQueue)
-    private readonly runQueue: Pick<RunQueue, "enqueue" | "repairOrphan" | "abortIfOrphaned">,
+    private readonly runQueue: Pick<
+      RunQueue,
+      "enqueue" | "repairOrphan" | "abortIfOrphaned" | "ensureRun"
+    >,
     /**
      * Writes, in the caller's transaction, the results of a stopped run's open `Agent` calls;
      * `fire` runs their observe hooks after the commit.
@@ -188,6 +196,7 @@ export class Waits implements OnApplicationShutdown {
       orphaned: 0,
       stopped: 0,
       delivered: 0,
+      restarted: 0,
     };
     out.cancelled = await this.sweepFinishedRuns();
     out.expired = await this.sweepOverdue();
@@ -196,6 +205,7 @@ export class Waits implements OnApplicationShutdown {
     out.stopped =
       (await this.sweepForkChildrenOfFinished()) + (await this.sweepTreesOfDeletedRoots());
     out.delivered = await this.sweepUndelivered();
+    out.restarted = await this.sweepParkedMessages();
     out.resumed = await this.sweepStuckRuns();
     return out;
   }
@@ -754,6 +764,63 @@ export class Waits implements OnApplicationShutdown {
   }
 
   /**
+   * Idle sub-agent conversations (no active run, not deleted) with a message newer than what they
+   * consumed, written past the grace period and within the last day: a `SendMessage` that reached a
+   * run after its last model call is started by that run's post-job `ensureRun`
+   * (`RunQueue.childWakeIn`), which a replica dying after the terminal commit skips. Re-derived with
+   * the same `ensureRun` (its rules decide: a stopped last run or a paused root starts nothing).
+   * Returns how many runs started.
+   */
+  private async sweepParkedMessages(): Promise<number> {
+    const rows = await this.db
+      .selectFrom("conversations as c")
+      .select("c.id")
+      .where("c.kind", "=", "subagent")
+      .where("c.deleted_at", "is", null)
+      .where(({ exists, selectFrom }) =>
+        exists(
+          selectFrom("conversation_events as e")
+            .select(sql`1`.as("one"))
+            .whereRef("e.conversation_id", "=", "c.id")
+            .where("e.type", "=", "user_message")
+            .whereRef("e.seq", ">", "c.consumed_seq")
+            .where(
+              "e.created_at",
+              "<",
+              sql<Date>`now() - ${WAIT_SWEEP_GRACE_MS}::integer * interval '1 millisecond'`,
+            )
+            .where("e.created_at", ">", sql<Date>`now() - interval '1 day'`),
+        ),
+      )
+      .where(({ not, exists, selectFrom }) =>
+        not(
+          exists(
+            selectFrom("runs as r")
+              .select(sql`1`.as("one"))
+              .whereRef("r.conversation_id", "=", "c.id")
+              .where("r.status", "in", ACTIVE_RUN_STATUSES),
+          ),
+        ),
+      )
+      .limit(WAIT_SWEEP_BATCH)
+      .execute();
+    let n = 0;
+    for (const c of rows) {
+      try {
+        if ((await this.runQueue.ensureRun(c.id)) === null) continue;
+        n++;
+        this.log.warn("wait sweep: started a sub-agent's parked message", { conversationId: c.id });
+      } catch (err) {
+        this.log.error("wait sweep: cannot start a sub-agent's parked message", {
+          conversationId: c.id,
+          err,
+        });
+      }
+    }
+    return n;
+  }
+
+  /**
    * Finished runs (past the grace period, within the last day) triggered by a fork invocation that
    * has no report ({@link unreportedForkRuns}): a terminal path that skipped
    * `stopOpenAgentCalls`, such as an old replica's abort, would otherwise leave a fork lead without
@@ -1244,13 +1311,15 @@ export class Waits implements OnApplicationShutdown {
       } finally {
         // a background child that ended on its own keeps its tasks: their finish wakes it (agent
         // map spec §5.3); a stopped one's tasks all stop with it, also those an earlier run of it
-        // started, so none of them wakes it. Not once a later run of it exists (a `SendMessage`
-        // started it again before this late call): the tasks are that run's now. Never throws.
-        if (
-          run.status === "aborted" &&
-          !(await this.hasLaterRun(row.childConversationId, childRunId))
-        ) {
-          await this.background.stopSubagentTasks(row.childConversationId);
+        // started, so none of them wakes it. Once a later run of it exists (a `SendMessage`
+        // started it again before this late call), only the stopped run's own tasks stop: the
+        // others may be the new run's. Never throws.
+        if (run.status === "aborted") {
+          const later = await this.hasLaterRun(row.childConversationId, childRunId);
+          await this.background.stopSubagentTasks(
+            row.childConversationId,
+            later ? childRunId : undefined,
+          );
         }
       }
     }

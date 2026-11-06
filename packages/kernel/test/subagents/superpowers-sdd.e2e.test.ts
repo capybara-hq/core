@@ -586,10 +586,13 @@ describe("phase C acceptance: superpowers subagent-driven-development", {
     expect(r?.status, JSON.stringify(r?.error)).toBe("done");
     expect(r?.drift).toEqual([]);
     expect((r?.candidate as RunReplayResult | undefined)?.unmatched).toBe(0);
-    // the replay sends exactly the parent's requests, none of a child's (at least 16 steps: a
-    // finish check of the implementer may loop)
+    // the replay sends exactly the parent's requests, none of a child's: 16 steps plus one per
+    // finish check of the implementer that had to wait (the sleep loop before the fix)
     const parentRequests = (state.original as ModelRequest[]).filter((q) => !isChildRequest(q));
-    expect(parentRequests.length).toBeGreaterThanOrEqual(16);
+    const checks = ofType(await eventsOf(db, conv), "tool_result").filter((r) =>
+      r.payload.content.startsWith("IMPL-1 FINISH CHECK"),
+    ).length;
+    expect(parentRequests).toHaveLength(16 + checks);
     expect(normalizeIds(sent)).toEqual(normalizeIds(parentRequests));
     expect(await countKids()).toBe(kidsBefore);
   });

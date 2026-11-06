@@ -431,14 +431,20 @@ export class ToolRegistry {
        * and `SubagentHandback` whatever its definition names (agent map spec §4.2, §4.3).
        */
       child?: boolean;
+      /**
+       * The run is a fork invocation's child (phase D): its final reply is the skill's report, so
+       * it reaches its parent with neither tool (`SendMessage` only to its own sub-agents).
+       */
+      forkChild?: boolean;
     },
   ): Promise<AgentTools> {
     const { tools, unavailable, hidden } = await this.resolve(orgId, def);
     // `SendMessage` to an agent that has `Agent` (to reach its sub-agents) or a parent;
-    // `SubagentHandback` to a sub-agent only
+    // `SubagentHandback` to a sub-agent only; a fork invocation's child reports by its reply
+    const toParent = def.child === true && def.forkChild !== true;
     const messageTools = [
-      ...(def.child === true || tools.some((t) => t.key === AGENT_TOOL) ? [SEND_MESSAGE] : []),
-      ...(def.child === true ? [SUBAGENT_HANDBACK] : []),
+      ...(toParent || tools.some((t) => t.key === AGENT_TOOL) ? [SEND_MESSAGE] : []),
+      ...(toParent ? [SUBAGENT_HANDBACK] : []),
     ];
     for (const name of messageTools) {
       const b = this.builtins.find((x) => x.spec.name === name);
