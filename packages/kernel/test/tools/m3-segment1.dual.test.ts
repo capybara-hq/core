@@ -127,8 +127,13 @@ describe("M3 第一段双副本验收", () => {
     const raw = createDb(harness.dbUrl, 3);
     cleanups.push(() => raw.destroy());
     const db: KernelSchemaDb = kernelDb(raw);
-    const maint = new Queue(MAINTENANCE_QUEUE_NAME, { connection: new Redis(rdc.url) });
-    cleanups.push(() => maint.close());
+    // a queue does not close a client it was given: quit it after the queue, before Redis stops
+    const maintConn = new Redis(rdc.url);
+    const maint = new Queue(MAINTENANCE_QUEUE_NAME, { connection: maintConn });
+    cleanups.push(async () => {
+      await maint.close();
+      await maintConn.quit();
+    });
 
     let cookie = "";
     const init = (method: string, body?: unknown): RequestInit => ({

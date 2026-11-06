@@ -65,6 +65,17 @@ let h: Harness;
 let raw: ReturnType<typeof createDb>;
 let db: KernelSchemaDb;
 let maint: Queue;
+/**
+ * The client the queue above uses. A queue given a client does not close it, so afterAll quits it
+ * before Redis stops: an open client without an error listener reports "[ioredis] Unhandled error
+ * event" on every reconnect, which can land after Vitest tore the worker down.
+ */
+const redisClients: Redis[] = [];
+const redisClient = (): Redis => {
+  const c = new Redis(rdc.url);
+  redisClients.push(c);
+  return c;
+};
 let petsMcp: FakeMcpServer;
 let as: FakeOAuthServer;
 let oauthMcp: FakeMcpServer;
@@ -288,7 +299,7 @@ beforeAll(async () => {
   });
   raw = createDb(h.dbUrl, 3);
   db = kernelDb(raw);
-  maint = new Queue(MAINTENANCE_QUEUE_NAME, { connection: new Redis(rdc.url) });
+  maint = new Queue(MAINTENANCE_QUEUE_NAME, { connection: redisClient() });
 
   await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" });
   expect((await at(0, "POST", "/api/v1/auth/login", { login: "owner", password: PW })).status).toBe(
@@ -302,6 +313,7 @@ beforeAll(async () => {
 afterAll(async () => {
   await h?.stop();
   await maint?.close();
+  await Promise.all(redisClients.splice(0).map((c) => c.quit()));
   await raw?.destroy();
   await Promise.all([
     petsMcp?.stop(),

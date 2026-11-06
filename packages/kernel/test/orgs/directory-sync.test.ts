@@ -65,6 +65,12 @@ let accounts: AccountsService;
 let owner: Account;
 let ownerReq: Req;
 let queue: Queue;
+/**
+ * The client the queue above uses. A queue given a client does not close it, so afterAll quits it
+ * before Redis stops: an open client without an error listener reports "[ioredis] Unhandled error
+ * event" on every reconnect, which can land after Vitest tore the worker down.
+ */
+let queueConn: Redis | undefined;
 
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
@@ -78,9 +84,8 @@ beforeAll(async () => {
   raw = createDb(pgc.url, 5);
   db = kernelDb(raw);
   redis = new Redis(rd.url);
-  queue = new Queue(MAINTENANCE_QUEUE_NAME, {
-    connection: new Redis(rd.url, { maxRetriesPerRequest: null }),
-  });
+  queueConn = new Redis(rd.url, { maxRetriesPerRequest: null });
+  queue = new Queue(MAINTENANCE_QUEUE_NAME, { connection: queueConn });
   accounts = accountsFor(db);
   owner = await accounts.createLocal({ login: "owner", password: PW, displayName: "Owner" });
   ownerReq = await session(k, "owner");
@@ -88,6 +93,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await queue?.close();
+  await queueConn?.quit();
   await k?.close();
   redis?.disconnect();
   await raw?.destroy();

@@ -61,6 +61,17 @@ let raw: ReturnType<typeof createDb>;
 let db: KernelSchemaDb;
 let maint: Queue;
 let runQueue: Queue;
+/**
+ * The clients the queues above use. A queue given a client does not close it, so afterAll quits
+ * them before Redis stops: an open client without an error listener reports "[ioredis] Unhandled
+ * error event" on every reconnect, which can land after Vitest tore the worker down.
+ */
+const redisClients: Redis[] = [];
+const redisClient = (): Redis => {
+  const c = new Redis(rd.url);
+  redisClients.push(c);
+  return c;
+};
 let kA: TestKernel;
 let kB: TestKernel;
 /** 两个副本各自的 warn 日志（只收扫描写的行）。 */
@@ -98,8 +109,8 @@ beforeAll(async () => {
   });
   raw = createDb(pgc.url, 5);
   db = kernelDb(raw);
-  maint = new Queue(MAINTENANCE_QUEUE_NAME, { connection: new Redis(rd.url) });
-  runQueue = new Queue(RUN_QUEUE_NAME, { connection: new Redis(rd.url) });
+  maint = new Queue(MAINTENANCE_QUEUE_NAME, { connection: redisClient() });
+  runQueue = new Queue(RUN_QUEUE_NAME, { connection: redisClient() });
   kA = await boot("A");
   kB = await boot("B");
 }, 120_000);
@@ -107,6 +118,7 @@ beforeAll(async () => {
 afterAll(async () => {
   await maint?.close();
   await runQueue?.close();
+  await Promise.all(redisClients.splice(0).map((c) => c.quit()));
   await kA?.close();
   await kB?.close();
   await raw?.destroy();

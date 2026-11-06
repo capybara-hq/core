@@ -89,6 +89,17 @@ let destroyDb: () => Promise<void>;
 let k: TestKernel;
 let root: string;
 let subQueue: Queue;
+/**
+ * The client the queue above uses. A queue given a client does not close it, so afterAll quits it
+ * before Redis stops: an open client without an error listener reports "[ioredis] Unhandled error
+ * event" on every reconnect, which can land after Vitest tore the worker down.
+ */
+const redisClients: Redis[] = [];
+const redisClient = (): Redis => {
+  const c = new Redis(rd.url);
+  redisClients.push(c);
+  return c;
+};
 
 beforeAll(async () => {
   capture.install();
@@ -118,13 +129,14 @@ beforeAll(async () => {
       },
     ),
   );
-  subQueue = new Queue(SUBAGENT_RUN_QUEUE_NAME, { connection: new Redis(rd.url) });
+  subQueue = new Queue(SUBAGENT_RUN_QUEUE_NAME, { connection: redisClient() });
 }, 180_000);
 
 afterAll(async () => {
   capture.restore();
   await k?.close();
   await subQueue?.close();
+  await Promise.all(redisClients.splice(0).map((c) => c.quit()));
   await destroyDb?.();
   await Promise.all([pgc?.stop(), rd?.stop(), s3?.stop()]);
   if (root) await rm(root, { recursive: true, force: true });

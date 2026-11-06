@@ -381,7 +381,8 @@ describe("出站投递：流式回复", { timeout: 40_000 }, () => {
 
   it("I2：投递锁丢失 → 任务推迟后重试（不是直接结束），回复照常定稿", async () => {
     const chat = "grp-lease";
-    const q = new Queue(CHANNEL_QUEUE_NAME, { connection: new Redis(rd.url) });
+    const connection = new Redis(rd.url);
+    const q = new Queue(CHANNEL_QUEUE_NAME, { connection });
     try {
       im.push(connId, group("l1", "u-owner", `slow:100:${LONG}`, { chatId: chat }));
       const conv = await convOf(connId, chat);
@@ -401,6 +402,7 @@ describe("出站投递：流式回复", { timeout: 40_000 }, () => {
       expect(sentTo("cli_out", chat)).toHaveLength(1);
     } finally {
       await q.close();
+      await connection.quit();
     }
   });
 
