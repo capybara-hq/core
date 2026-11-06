@@ -5,13 +5,11 @@ import {
   Card,
   CodeBlock,
   type Column,
+  DangerConfirm,
   DataTable,
   DateTime,
   DetailPage,
-  Dialog,
-  Field,
   formatBytes,
-  Input,
   KeyValue,
   Stack,
   SwitchField,
@@ -271,8 +269,9 @@ function ContentTab({ orgId, skill }: { orgId: string; skill: SkillDetail }) {
 /**
  * The delete confirmation (ruling P3-19): it reads what the delete does first and says it (one
  * another org uses is transferred to the platform, the orgs named; the org's agents that lose it).
- * 删除技能 stays disabled until that preview is read and the name typed; a preview that cannot be
- * read says so with 重试. The outcome passed to `onDelete` is the preview the person saw.
+ * 删除技能 stays disabled until that preview is read (`confirmDisabled`) and the name typed; a
+ * preview that cannot be read says so with 重试. The outcome passed to `onDelete` is the preview the
+ * person saw.
  */
 function SkillDeleteDialog({
   orgId,
@@ -287,93 +286,69 @@ function SkillDeleteDialog({
 }) {
   const t = useTranslations("skills.detail");
   const td = useTranslations("plugins.delete");
-  const tc = useTranslations("common");
   const sep = useLocale() === "zh" ? "、" : ", ";
   const errorMessage = useErrorMessage();
-  const [typed, setTyped] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string>();
   const preview = useQuery({
     ...skillDeletePreviewQuery(orgId, skill.id),
     refetchOnMount: "always",
   });
   // the preview shown, unless a read is in flight (a retry): only a settled preview is confirmed
   const p = preview.isFetching ? undefined : preview.data;
-  const ready = p !== undefined && typed === skill.name && !busy;
-  const confirm = async () => {
-    if (!ready) return;
-    setBusy(true);
-    setError(undefined);
-    try {
-      await onDelete(p.outcome);
-    } catch (e) {
-      setError(errorMessage(e));
-      setBusy(false);
-    }
-  };
   return (
-    <Dialog
+    <DangerConfirm
       open
       onOpenChange={(open) => {
-        if (!open && !busy) onClose();
+        if (!open) onClose();
       }}
       title={t("deleteTitle", { name: skill.name })}
-      danger
-      initialFocus="cancel"
-      footer={
-        <>
-          <Button variant="ghost" onClick={onClose} disabled={busy}>
-            {tc("cancel")}
-          </Button>
-          <Button
-            variant={ready ? "danger-solid" : "danger"}
-            disabled={!ready}
-            loading={busy}
-            onClick={() => void confirm()}
-          >
-            {t("delete")}
-          </Button>
-        </>
-      }
-    >
-      <Stack gap={12}>
-        {p !== undefined && p.outcome === "transferred" && (
-          <Text variant="prose" tone="warn">
-            {td("transferred", { orgs: p.orgs.map((o) => o.name).join(sep) })}
-          </Text>
-        )}
-        <Text variant="prose">{t("deleteHint")}</Text>
-        {p === undefined && !preview.isError && (
-          <Text variant="small" tone="muted">
-            {td("loading")}
-          </Text>
-        )}
-        {preview.isError && !preview.isFetching && (
-          <Stack direction="row" gap={8} align="center" wrap>
-            <Text variant="small" tone="fail">
-              {t("previewFailed")}
+      confirmName={skill.name}
+      confirmLabel={t("delete")}
+      confirmDisabled={p === undefined}
+      onConfirm={async () => {
+        if (p === undefined) return;
+        try {
+          await onDelete(p.outcome);
+        } catch (e) {
+          // DangerConfirm shows the message: the localized one, never the kernel's English
+          throw new Error(errorMessage(e));
+        }
+      }}
+      description={
+        <Stack gap={12}>
+          {p !== undefined && p.outcome === "transferred" && (
+            <Text variant="prose" tone="warn">
+              {td("transferred", { orgs: p.orgs.map((o) => o.name).join(sep) })}
             </Text>
-            <Button onClick={() => void preview.refetch()}>{t("previewRetry")}</Button>
-          </Stack>
-        )}
-        {p !== undefined && p.agents.length > 0 && (
-          <Stack gap={4}>
-            <Text variant="small" tone="warn">
-              {td("agents")}
+          )}
+          <Text variant="prose">{t("deleteHint")}</Text>
+          {p === undefined && !preview.isError && (
+            <Text variant="small" tone="muted">
+              {td("loading")}
             </Text>
-            {p.agents.map((a) => (
-              <Text key={a.id} variant="small">
-                {`· ${a.name}`}
+          )}
+          {preview.isError && !preview.isFetching && (
+            <Stack direction="row" gap={8} align="center" wrap>
+              <Text variant="small" tone="fail">
+                {t("previewFailed")}
               </Text>
-            ))}
-          </Stack>
-        )}
-        <Field label={t("deleteTypeName", { name: skill.name })}>
-          <Input value={typed} autoComplete="off" onChange={(e) => setTyped(e.target.value)} />
-        </Field>
-        {error !== undefined && <FormError message={error} />}
-      </Stack>
-    </Dialog>
+              <Button onClick={() => void preview.refetch()}>{t("previewRetry")}</Button>
+            </Stack>
+          )}
+          {p !== undefined && p.agents.length > 0 && (
+            <Stack gap={4}>
+              <Text variant="small" tone="warn">
+                {td("agents")}
+              </Text>
+              {p.agents.map((a) => (
+                <Text key={a.id} variant="small">
+                  {`· ${a.name}`}
+                </Text>
+              ))}
+            </Stack>
+          )}
+        </Stack>
+      }
+    />
   );
 }
 

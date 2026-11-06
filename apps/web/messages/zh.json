@@ -470,7 +470,6 @@
       },
       "submit": "保存",
       "noModels": "没有可用的模型，请先安装并配置模型供应商扩展。",
-      "warningsTitle": "已保存，但请注意：",
       "continue": "继续",
       "modelParamsTitle": "模型参数",
       "fallbackParamsTitle": "兜底模型参数",
@@ -801,8 +800,7 @@
       "shareOn": "「{name}」已设为可共享。",
       "shareOff": "「{name}」已取消共享。",
       "previewFailed": "读不到删除的影响，确认前请重试。",
-      "previewRetry": "重试",
-      "deleteTypeName": "输入「{name}」以确认"
+      "previewRetry": "重试"
     },
     "description": "本组织能用的技能。平台统一启用的不能停用；其他平台技能由组织管理员启用或停用。",
     "create": {

@@ -507,7 +507,6 @@ describe("the agent page's sections with their own saves (agent profile design Â
     await user.click(save());
     await vi.waitFor(() => expect(document.querySelector('[data-part="action-row"]')).toBeNull());
     expect(hint()).toBeNull();
-    expect(screen.queryByText(F.warningsTitle)).toBeNull();
   });
 
   it("the Model section shows the same-provider hint persistently, live and only then", async () => {

@@ -104,6 +104,11 @@ export type DangerConfirmProps = {
   description: ReactNode;
   confirmName: string;
   confirmLabel: string;
+  /**
+   * Keeps the confirm button disabled even once the name matches: the caller is not ready to
+   * confirm yet (what the action does is still being read, or that read failed).
+   */
+  confirmDisabled?: boolean;
   onConfirm(): void | Promise<void>;
 };
 
@@ -114,6 +119,7 @@ export function DangerConfirm({
   description,
   confirmName,
   confirmLabel,
+  confirmDisabled = false,
   onConfirm,
 }: DangerConfirmProps) {
   const t = useDesignT();
@@ -131,7 +137,7 @@ export function DangerConfirm({
     setBusy(false);
     setError(null);
   }, [open]);
-  const matched = typed === confirmName;
+  const ready = typed === confirmName && !confirmDisabled;
   return (
     <Dialog
       open={open}
@@ -146,8 +152,8 @@ export function DangerConfirm({
             {t("overlay.cancel")}
           </Button>
           <Button
-            variant={matched ? "danger-solid" : "danger"}
-            disabled={!matched}
+            variant={ready ? "danger-solid" : "danger"}
+            disabled={!ready}
             loading={busy}
             onClick={async () => {
               const current = session.current;

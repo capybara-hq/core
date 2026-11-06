@@ -470,7 +470,6 @@
       },
       "submit": "Save",
       "noModels": "No models are available. Install and configure a model provider extension first.",
-      "warningsTitle": "Saved, but please note:",
       "continue": "Continue",
       "modelParamsTitle": "Model parameters",
       "fallbackParamsTitle": "Fallback model parameters",
@@ -801,8 +800,7 @@
       "shareOn": "\"{name}\" is now shareable.",
       "shareOff": "\"{name}\" is no longer shareable.",
       "previewFailed": "What deleting it does could not be read; retry before confirming.",
-      "previewRetry": "Retry",
-      "deleteTypeName": "Type \"{name}\" to confirm"
+      "previewRetry": "Retry"
     },
     "description": "The skills this organization can use. Skills the platform turns on for everyone cannot be turned off; org admins turn the other platform skills on or off.",
     "create": {

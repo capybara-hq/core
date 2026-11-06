@@ -169,6 +169,37 @@ describe("DangerConfirm", () => {
   });
 });
 
+describe("DangerConfirm confirmDisabled", () => {
+  it("keeps confirm disabled while the caller is not ready, even with the name typed", async () => {
+    const user = userEvent.setup();
+    const onConfirm = vi.fn();
+    const ui = (confirmDisabled: boolean) => (
+      <DesignProvider locale="zh">
+        <DangerConfirm
+          open
+          onOpenChange={() => {}}
+          title="删除技能"
+          description="x"
+          confirmName="abc"
+          confirmLabel="删除"
+          confirmDisabled={confirmDisabled}
+          onConfirm={onConfirm}
+        />
+      </DesignProvider>
+    );
+    const { rerender } = render(ui(true));
+    await user.type(screen.getByRole("textbox"), "abc");
+    const confirm = screen.getByRole("button", { name: /删除$/ }) as HTMLButtonElement;
+    expect(confirm.disabled).toBe(true);
+    expect(confirm.getAttribute("data-variant")).toBe("danger");
+    rerender(ui(false));
+    expect(confirm.disabled).toBe(false);
+    expect(confirm.getAttribute("data-variant")).toBe("danger-solid");
+    await user.click(confirm);
+    expect(onConfirm).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("DangerConfirm reset", () => {
   it("取消后重开，确认按钮重新禁用", async () => {
     const user = userEvent.setup();
