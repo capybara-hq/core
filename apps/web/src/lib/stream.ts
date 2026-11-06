@@ -12,9 +12,10 @@ import { parseUiRefresh, type UiRefresh } from "./ui";
  *   the characters of that channel before it (per channel, from 0 at each step and `step_reset`).
  * - `step_reset`: the step starts over (its draft is dropped).
  * - `draft`: a step's draft so far, for each channel given (`text`, `thinking`; one left out is
- *   kept). With `replace` it sets those channels (an `event: draft` frame, or a channel starting
- *   over at offset 0); without, the longer of what is held and what it carries wins (a draft read
- *   after a gap never shrinks what is shown). Produced by the stream opener's live drafts
+ *   kept). With `replace` it sets those channels (a channel starting over at offset 0); with
+ *   `resync` (an `event: draft` frame) a channel that is a prefix of what is shown keeps the longer
+ *   (the stored draft can lag the screen) and any other replaces it (a reset, a new attempt);
+ *   with neither, the longer wins (a draft read after a gap never shrinks what is shown). Produced by the stream opener's live drafts
  *   (`lib/live-drafts.ts`, spec 2026-11-07-run-input-and-live-drafts §4).
  */
 export interface StreamDelta {
@@ -27,6 +28,8 @@ export interface StreamDelta {
   offset?: number;
   /** `draft` only: set the channels given instead of keeping the longer. */
   replace?: boolean;
+  /** `draft` only: keep what is shown where the channel given is a prefix of it, else set it. */
+  resync?: boolean;
 }
 
 /** What `event: changed` names (kernel `CONVERSATION_CHANGES`). */
@@ -319,9 +322,13 @@ function applyDelta(state: ChatState, d: StreamDelta): ChatState {
   let next: Draft;
   if (d.delta === "draft") {
     const prev = i >= 0 ? (state.drafts[i] as Draft) : undefined;
-    // a channel left out is kept; without `replace` a shorter one never shrinks what is shown
-    const pick = (have: string, got: string | undefined) =>
-      got === undefined || (!d.replace && got.length < have.length) ? have : got;
+    // a channel left out is kept; a merge never shrinks what is shown; a resync keeps what is
+    // shown when the stored draft is only behind it (a prefix), and replaces anything else
+    const pick = (have: string, got: string | undefined) => {
+      if (got === undefined) return have;
+      if (d.resync) return have.startsWith(got) ? have : got;
+      return !d.replace && got.length < have.length ? have : got;
+    };
     next = {
       runId: d.runId,
       step: d.step,
@@ -352,7 +359,7 @@ function applyDelta(state: ChatState, d: StreamDelta): ChatState {
  * 会话状态归约（纯函数）：
  * - 事件按 seq 合入，重复的忽略（乱序到达也按 seq 排列）；
  * - `delta` 累积到 `(runId, step)` 的流式草稿；`step_reset` 清空该步草稿；a `draft` sets its channels
- *   (`replace`) or keeps the longer of each;
+ *   (`replace`), keeps a longer channel it is a prefix of (`resync`) or keeps the longer of each;
  *   a delta with an `offset` adds only what the draft does not hold yet;
  *   该步的 `assistant_message` 到达后草稿被它替换，之后再到的增量忽略（回放期间排队的增量可能晚到）；
  * - 运行到终态后丢弃其草稿、忽略其增量；`run_started` 之后、终态之前 `running` 为 true。

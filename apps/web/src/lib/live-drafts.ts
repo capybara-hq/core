@@ -62,9 +62,11 @@ function applyHeld(c: ChannelDraft): boolean {
  * while it reads the run's drafts again: {@link DRAFT_RETRY_MS}, then every
  * {@link DRAFT_SLOW_RETRY_MS} until the gap is covered or the step is finalized, reset or its run
  * ends. A read never shrinks what is shown: it is handed on only when it lengthened the step, as a
- * `draft` the reducer merges (the longer of each channel wins). Only an `event: draft` frame
- * replaces both channels; a channel's delta at offset 0 while this connection holds nothing of it
- * replaces that channel alone (it starts over: whatever an earlier connection left is stale).
+ * `draft` the reducer merges (the longer of each channel wins). An `event: draft` frame resyncs
+ * both channels (`resync`: a channel that is a prefix of what the page shows keeps the longer,
+ * since the store lags the screen by up to its coalescing window; any other replaces it); a
+ * channel's delta at offset 0 while this connection holds nothing of it replaces that channel
+ * alone (it starts over: whatever an earlier connection left is stale).
  * Client state of one browser connection only (nothing shared across requests).
  */
 export class LiveDrafts {
@@ -102,7 +104,7 @@ export class LiveDrafts {
     }
   }
 
-  /** `event: draft`: the step's draft at the open, replacing both channels. */
+  /** `event: draft`: the step's draft at the open, resyncing both channels. */
   draft(d: { runId: string; step: number; text: string; thinking: string }): void {
     const key = stepKey(d.runId, d.step);
     if (this.ignored(d.runId, key)) return;
@@ -121,7 +123,7 @@ export class LiveDrafts {
       delta: "draft",
       text: s.text.value,
       thinking: s.thinking.value,
-      replace: true,
+      resync: true,
     });
     this.readAgain(d.runId, d.step, s);
   }

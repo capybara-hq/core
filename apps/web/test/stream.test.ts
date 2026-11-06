@@ -495,6 +495,25 @@ describe("reduceChat: live drafts", () => {
     expect(texts(s)).toEqual(["prose:final"]);
   });
 
+  it("a resync keeps a channel it is a prefix of, and replaces one it is not", () => {
+    const resync = (text: string, thinking: string): StreamDelta => ({
+      runId: RUN,
+      step: 0,
+      delta: "draft",
+      text,
+      thinking,
+      resync: true,
+    });
+    const s = apply(initialChatState, [started(1)], draft("Hello world", "deep"));
+    expect(apply(s, resync("Hello wor", "de")).drafts[0]).toMatchObject({
+      text: "Hello world",
+      thinking: "deep",
+    });
+    expect(apply(s, resync("Hi", "de")).drafts[0]).toMatchObject({ text: "Hi", thinking: "deep" });
+    expect(apply(s, resync("Hello world!", "deep")).drafts[0]?.text).toBe("Hello world!");
+    expect(apply(initialChatState, [started(1)], resync("abc", "")).drafts[0]?.text).toBe("abc");
+  });
+
   it("an empty replacing draft leaves no draft", () => {
     const s = apply(initialChatState, [started(1)], at("abc", 0), draft(""));
     expect(s.drafts).toEqual([]);
@@ -569,7 +588,7 @@ describe("openConversationStream: live drafts", () => {
     es.emit("delta", at("!", 11));
     es.emit("delta", at("ing", 5, "thinking"));
     expect(out).toEqual([
-      { runId: RUN, step: 0, delta: "draft", text: "Hello wor", thinking: "think", replace: true },
+      { runId: RUN, step: 0, delta: "draft", text: "Hello wor", thinking: "think", resync: true },
       { runId: RUN, step: 0, delta: "text", text: "ld", offset: 9 },
       { runId: RUN, step: 0, delta: "text", text: "!", offset: 11 },
       { runId: RUN, step: 0, delta: "thinking", text: "ing", offset: 5 },
@@ -707,6 +726,25 @@ describe("openConversationStream: live drafts", () => {
     read.mockResolvedValueOnce([{ step: 0, text: "Hello wor", thinking: "hmm" }]);
     await vi.advanceTimersByTimeAsync(DRAFT_RETRY_MS[2] ?? 0);
     expect(shown().drafts).toEqual([{ runId: RUN, step: 0, text: "Hello world", thinking: "hmm" }]);
+  });
+
+  it("a reconnect's frame that lags the screen keeps the longer text; another one replaces", () => {
+    es.emit("draft", frame("Hello wor", "hmm"));
+    es.emit("delta", at("ld", 9));
+    es.emit("delta", at("mmm", 3, "thinking"));
+    // the browser reconnects within the page: the store is up to 200 ms behind the screen
+    es.emit("open");
+    es.emit("draft", frame("Hello wor", "hmm"));
+    expect(shown().drafts).toEqual([
+      { runId: RUN, step: 0, text: "Hello world", thinking: "hmmmmm" },
+    ]);
+    es.emit("delta", at("ld", 9));
+    expect(shown().drafts[0]?.text).toBe("Hello world");
+    // not a prefix (a new attempt of the step): it replaces that channel, the other stays longer
+    es.emit("open");
+    es.emit("draft", frame("Bonjour", "hmm"));
+    expect(shown().drafts).toEqual([{ runId: RUN, step: 0, text: "Bonjour", thinking: "hmmmmm" }]);
+    expect(read).not.toHaveBeenCalled();
   });
 
   it("a channel starting at offset 0 on a reconnect replaces that channel only", () => {
