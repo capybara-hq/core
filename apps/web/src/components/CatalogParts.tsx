@@ -18,6 +18,7 @@ import {
   gitLocation,
   hasHiddenCharacters,
   type Marketplace,
+  ownerOfError,
   type SourceDetail,
   shortCommit,
   skillConflictsOfError,
@@ -274,7 +275,17 @@ export function useCatalogErrorLines(): (e: unknown) => string[] {
                 : `${c.source.name} ${versionLabel(c.source.version)}`,
           }),
     );
-    return [...dependency, ...skills, ...detailLines(e)];
+    // A taken plugin or extension name names its owner (ruling P3-14)
+    const owner = ownerOfError(e);
+    const taken =
+      owner === null
+        ? []
+        : [
+            t("nameTakenBy", {
+              owner: owner.kind === "platform" ? t("ownerPlatform") : owner.name,
+            }),
+          ];
+    return [...dependency, ...skills, ...taken, ...detailLines(e)];
   };
 }
 

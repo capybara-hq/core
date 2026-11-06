@@ -1,5 +1,6 @@
 import type { PackageWarning } from "./admin-extensions";
 import { ApiClientError, apiFetch, CSRF_HEADER, ensureSession, toError } from "./api";
+import type { Owner } from "./components";
 import type { PermissionGroup, PermissionItem } from "./extensions";
 
 /**
@@ -49,6 +50,14 @@ export interface CatalogItem {
   disabled: boolean;
   /** Orgs outside a `named` item's list see it as requestable (`not_offered`). */
   shownToOthers: boolean;
+  /** The platform, or the org that uploaded it (ruling P3-1). */
+  owner: Owner;
+  /** An org-owned item's owner shares it with other orgs (false for platform items). */
+  shareable: boolean;
+  /** An org's upload with an extension waits for the super admin's confirmation (P3-9). */
+  awaitingConfirmation: boolean;
+  /** The org-uploaded version that waits for that confirmation (null: none). */
+  pendingVersion: string | null;
   /** Orgs it is on in. */
   enabledOrgs: number;
   /** Its extension waits for a person's confirmation (`POST items/:id/confirm`). */
@@ -436,6 +445,30 @@ export interface PluginPrepared {
   permissionsMismatch?: PermissionsMismatch;
 }
 
+/**
+ * An org's prepared upload (kernel `OrgUploadReview`): the review and, for a new version of the
+ * org's own plugin without an extension, the platform update it applies at once (ruling P3-12;
+ * the review's `reviewHash` covers both).
+ */
+export interface OrgUploadReview {
+  stagingId: string;
+  review: PluginReview;
+  update: PlatformUpdatePreview | null;
+}
+
+/** What an org's confirmed upload did (kernel `OrgUploadOutcome`). */
+export type OrgUploadOutcome = "installed" | "pending" | "updated";
+
+/** What deleting an org's own plugin does (kernel `OwnedDeletePreview`, ruling P3-19). */
+export interface OwnedDeletePreview {
+  outcome: "removed" | "transferred";
+  /** The other orgs using it (it is transferred to the platform). */
+  orgs: { id: string; name: string }[];
+  /** The org's agents that lose it. */
+  agents: { id: string; name: string }[];
+  previewHash: string;
+}
+
 /** Deploying the plugin's extension after confirm (kernel `ExtensionDeployResult`). */
 export interface PluginDeployResult {
   name: string;
@@ -686,7 +719,13 @@ export interface OrgCatalogItem
     | "pending"
     | "permissionsHash"
     | "shownToOthers"
+    | "awaitingConfirmation"
+    | "pendingVersion"
   > {
+  /** The owner org only (absent for other orgs): its upload waits for the super admin (P3-9). */
+  awaitingConfirmation?: boolean;
+  /** The owner org only (absent for other orgs): the version waiting for that confirmation. */
+  pendingVersion?: string | null;
   /** Who the plugin is offered to (`all` for a builtin plugin). */
   scope: PluginScope;
   /** Shipped with the deployment: on in every org, never switchable. */
@@ -1106,6 +1145,58 @@ export const listOrgCatalog = (orgId: string) =>
 export const getOrgCatalogItem = (orgId: string, itemId: string) =>
   apiFetch<OrgCatalogDetail>(`${org(orgId)}/catalog/${enc(itemId)}`);
 
+/**
+ * Prepares an org admin's upload of a plugin package (raw bytes, streamed by the kernel; spec
+ * §14, ruling P3-7). Checks the session first (a stream cannot be replayed).
+ */
+export async function uploadOrgPluginPackage(orgId: string, file: Blob): Promise<OrgUploadReview> {
+  await ensureSession();
+  const res = await fetch(`${org(orgId)}/catalog/uploads/file`, {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { [CSRF_HEADER]: "1", "content-type": "application/octet-stream" },
+    body: file,
+  }).catch((e: unknown) => {
+    throw new ApiClientError(0, "network", e instanceof Error ? e.message : String(e));
+  });
+  if (!res.ok) throw await toError(res);
+  return (await res.json()) as OrgUploadReview;
+}
+
+/**
+ * Confirms the org's staged upload: `shareable` only for a new plugin (default false). Never
+ * `pinnedSuggestions`: a new version keeps the plugin's own (the kernel refuses them, 400).
+ */
+export const confirmOrgUpload = (
+  orgId: string,
+  stagingId: string,
+  body: { reviewHash: string; shareable?: boolean },
+) =>
+  apiFetch<{ item: OrgCatalogItem; outcome: OrgUploadOutcome }>(
+    `${org(orgId)}/catalog/uploads/${enc(stagingId)}/confirm`,
+    post(body),
+  );
+
+/** Sets 可共享 on the org's own plugin (P3-17). */
+export const setOwnedShareable = (orgId: string, itemId: string, shareable: boolean) =>
+  apiFetch<void>(`${org(orgId)}/owned-plugins/${enc(itemId)}/shareable`, put({ shareable }));
+
+/** What deleting the org's own plugin does (nothing written). */
+export const previewOwnedDelete = (orgId: string, itemId: string) =>
+  apiFetch<OwnedDeletePreview>(`${org(orgId)}/owned-plugins/${enc(itemId)}/delete/preview`, post());
+
+/** Deletes the org's own plugin after its preview (409 `catalog.preview_stale` once it changed). */
+export const deleteOwned = (orgId: string, itemId: string, previewHash: string) =>
+  apiFetch<void>(`${org(orgId)}/owned-plugins/${enc(itemId)}/delete`, post({ previewHash }));
+
+/** Withdraws the org's pending upload of its plugin (ruling P3-10). */
+export const withdrawPending = (orgId: string, itemId: string) =>
+  apiFetch<void>(`${org(orgId)}/owned-plugins/${enc(itemId)}/pending`, { method: "DELETE" });
+
+/** Whether the org owns the item (it uploaded it). */
+export const ownedBy = (item: { owner?: Owner }, orgId: string): boolean =>
+  item.owner?.kind === "org" && item.owner.orgId === orgId;
+
 export const orgIconUrl = (orgId: string, itemId: string) =>
   `${org(orgId)}/catalog/${enc(itemId)}/icon`;
 
@@ -1375,6 +1466,26 @@ export function skillConflictsOfError(e: unknown): SkillConflict[] {
     }
     return [{ skill, source: { kind: "org" } }];
   });
+}
+
+/**
+ * The owner a `plugin.name_taken` or `extension.name_conflict` error names (its envelope details
+ * `[{ owner }]`, ruling P3-14), else null.
+ */
+export function ownerOfError(e: unknown): Owner | null {
+  if (!(e instanceof ApiClientError)) return null;
+  if (e.code !== "plugin.name_taken" && e.code !== "extension.name_conflict") return null;
+  for (const d of e.rawDetails) {
+    if (typeof d !== "object" || d === null) continue;
+    const o = (d as Record<string, unknown>).owner;
+    if (typeof o !== "object" || o === null) continue;
+    const x = o as Record<string, unknown>;
+    if (x.kind === "platform") return { kind: "platform" };
+    if (x.kind === "org" && typeof x.orgId === "string" && typeof x.name === "string") {
+      return { kind: "org", orgId: x.orgId, name: x.name };
+    }
+  }
+  return null;
 }
 
 /**

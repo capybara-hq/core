@@ -2963,7 +2963,9 @@
       "agentTools": "Tools: {tools}",
       "agentToolsInherit": "Tools: those of the agent that dispatches it",
       "agentToolsRemoved": "Removed tools: {tools}",
-      "agentInstructions": "Instructions of {name}"
+      "agentInstructions": "Instructions of {name}",
+      "nameTakenBy": "The name is used by {owner}",
+      "ownerPlatform": "the platform"
     },
     "admin": {
       "title": "Plugins",
@@ -3783,7 +3785,8 @@
       "not_offered": "Not offered, can be requested",
       "requested": "Requested, waiting",
       "unavailable": "Stopped by the platform",
-      "notDeployed": "Extension not deployed"
+      "notDeployed": "Extension not deployed",
+      "awaiting": "Waiting for the super admin's confirmation"
     },
     "action": {
       "enable": "Turn on",
@@ -3792,10 +3795,14 @@
       "request": "Request",
       "requestEnable": "Ask to turn on",
       "requestImport": "Request import",
-      "connectors": "Complete setup"
+      "connectors": "Complete setup",
+      "withdraw": "Withdraw",
+      "delete": "Delete"
     },
     "chips": {
-      "upgrade": "Update {version}"
+      "upgrade": "Update {version}",
+      "pendingVersion": "New version {version} waiting for the super admin's confirmation",
+      "ownUpload": "Uploaded by this organization"
     },
     "meta": {
       "platform": "Platform · {scope}"
@@ -3803,7 +3810,10 @@
     "toast": {
       "enabled": "\"{name}\" turned on.",
       "disabled": "\"{name}\" turned off.",
-      "requested": "Request submitted."
+      "requested": "Request submitted.",
+      "withdrawn": "Upload of \"{name}\" withdrawn.",
+      "shareOn": "\"{name}\" is now shareable.",
+      "shareOff": "\"{name}\" is no longer shareable."
     },
     "switchOff": {
       "title": "Turn off {name}",
@@ -3829,6 +3839,45 @@
     },
     "detail": {
       "installs": "This organization's install"
+    },
+    "upload": {
+      "action": "Upload plugin package",
+      "title": "Upload plugin package",
+      "choose": "Choose a plugin package",
+      "chooseHint": "A plugin package (.tgz); a single skill's .zip is uploaded to Skills.",
+      "drop": "Drop the file here",
+      "reading": "Reading \"{name}\"…",
+      "scope": "Scope: this organization only",
+      "shareable": "Shareable",
+      "newVersion": "This is a new version of this organization's plugin \"{name}\"; it keeps the plugin's shareable setting.",
+      "extensionNotice": "This plugin contains an extension, whose code runs in the platform's kernel process. It is turned on only after the super admin confirms it.",
+      "updateTitle": "Update preview",
+      "confirm": "Confirm upload",
+      "cancel": "Cancel",
+      "back": "Choose again",
+      "pending": "Submitted, waiting for the super admin's confirmation",
+      "installed": "\"{name}\" uploaded.",
+      "updated": "\"{name}\" updated to {version}.",
+      "skillUploaded": "Skill \"{name}\" uploaded.",
+      "stale": "The review of this package is out of date. Choose the file again."
+    },
+    "owned": {
+      "title": "This organization's plugin",
+      "shareable": "Shareable",
+      "shareableHelp": "When on, the super admin can show or offer this plugin to other organizations. Turning it off does not affect organizations it is already offered to.",
+      "pendingWithdraw": "Withdrawing deletes the version waiting for confirmation."
+    },
+    "delete": {
+      "title": "Delete {name}",
+      "loading": "Reading what deleting it does…",
+      "transferred": "Other organizations still use it; after deletion it becomes platform-owned: {orgs}",
+      "removed": "This cannot be undone",
+      "agents": "These agents will lose it:",
+      "stale": "What deleting it does has changed; review it again before confirming.",
+      "confirm": "Delete",
+      "cancel": "Cancel",
+      "done": "\"{name}\" deleted.",
+      "doneTransferred": "\"{name}\" deleted; other organizations still use it, so it is now platform-owned."
     }
   },
   "adminComponents": {

@@ -8,10 +8,12 @@ import { ApiClientError, issueLines } from "../lib/api";
 import {
   displayNameOf,
   type OrgCatalogItem,
+  ownedBy,
   requestCatalogItem,
   type SwitchPreview,
   setOrgPluginSwitch,
   type UninstallPreview,
+  withdrawPending,
 } from "../lib/catalog";
 import type { OrgExtension } from "../lib/extensions";
 import { pluginChangeKeys } from "../lib/query/catalog";
@@ -35,6 +37,8 @@ export type PluginStateLabel = { label: string; tone: "ok" | "warn" | "muted" };
 export function usePluginState(): (item: OrgCatalogItem) => PluginStateLabel {
   const t = useTranslations("plugins.state");
   return (i) => {
+    // The org's own upload waiting for the super admin (P3-9): nothing of it is usable yet
+    if (i.awaitingConfirmation === true) return { label: t("awaiting"), tone: "warn" };
     if (i.request !== null) return { label: t("requested"), tone: "muted" };
     switch (i.state) {
       case "unavailable":
@@ -77,20 +81,27 @@ export function needsInput(item: OrgCatalogItem, extensions: OrgExtension[] | un
 
 /** One action on a plugin: a link, or a call. `danger` (停用) belongs in a row's menu. */
 export interface PluginAction {
-  id: "enable" | "configure" | "connectors" | "disable" | "request" | "requestEnable";
+  id: "enable" | "configure" | "connectors" | "disable" | "request" | "requestEnable" | "withdraw";
   label: string;
   href?: string;
   onSelect?(): void;
   danger?: boolean;
 }
 
-/** A row's actions as ObjectRow wants them: the first safe one as its action, 停用 in its menu. */
+/**
+ * A row's actions as ObjectRow wants them: the first safe one as its action, the others (停用
+ * last) in its menu.
+ */
 export function rowActions(actions: readonly Omit<PluginAction, "id">[]): {
   action?: { label: string; href?: string; onSelect?(): void };
   menu?: MenuItem[];
 } {
   const safe = actions.find((a) => a.danger !== true);
-  const danger = actions.filter((a) => a.danger === true);
+  // The other actions sit in the menu: more safe ones (撤回 of a pending version), then 停用
+  const danger = [
+    ...actions.filter((a) => a.danger !== true && a !== safe),
+    ...actions.filter((a) => a.danger === true),
+  ];
   return {
     ...(safe !== undefined && {
       action: {
@@ -102,7 +113,7 @@ export function rowActions(actions: readonly Omit<PluginAction, "id">[]): {
     ...(danger.length > 0 && {
       menu: danger.map((a) => ({
         label: a.label,
-        danger: true,
+        ...(a.danger === true && { danger: true }),
         onSelect: a.onSelect ?? (() => {}),
       })),
     }),
@@ -152,6 +163,10 @@ export function usePluginActions({
           ? { enabled: true }
           : { enabled: false, ...(v.confirm !== undefined && { confirm: v.confirm }) },
       ),
+    invalidates: () => pluginChangeKeys(orgId),
+  });
+  const pull = useAppMutation({
+    fn: (itemId: string) => withdrawPending(orgId, itemId),
     invalidates: () => pluginChangeKeys(orgId),
   });
   const ask = useAppMutation({
@@ -231,7 +246,24 @@ export function usePluginActions({
       return t("toast.requested");
     });
 
+  const withdraw = (i: OrgCatalogItem) =>
+    run(async () => {
+      await pull.mutateAsync(i.id);
+      return t("toast.withdrawn", { name: nameOf(i) });
+    });
+
   const actionsOf = (i: OrgCatalogItem): PluginAction[] => {
+    // The org's own upload waiting for the super admin: 撤回 (org admins), nothing else while
+    // its first version waits (P3-10)
+    const pending =
+      admin && ownedBy(i, orgId) && (i.awaitingConfirmation === true || i.pendingVersion != null);
+    const withdrawAction: PluginAction[] = pending
+      ? [{ id: "withdraw", label: t("action.withdraw"), onSelect: () => void withdraw(i) }]
+      : [];
+    if (i.awaitingConfirmation === true) return withdrawAction;
+    return [...stateActions(i), ...withdrawAction];
+  };
+  const stateActions = (i: OrgCatalogItem): PluginAction[] => {
     if (i.request !== null || i.state === "unavailable") return [];
     if (!admin) {
       return i.state === "off" && i.scope === "optional" && !i.builtin

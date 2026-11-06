@@ -7,6 +7,7 @@ import { useState } from "react";
 import { useCatalogErrorLines } from "../../../components/CatalogParts";
 import { ErrorFrame } from "../../../components/ErrorFrame";
 import { NoAccess } from "../../../components/NoAccess";
+import { OrgPluginUploadDialog } from "../../../components/OrgPluginUploadDialog";
 import { rowActions, usePluginActions, usePluginState } from "../../../components/PluginSwitch";
 import { useComponentsLabel } from "../../../components/PluginsHead";
 import { usePagePath } from "../../../components/shell/path";
@@ -19,6 +20,7 @@ import {
   type MarketplaceEntry,
   type MarketplacePlugin,
   type OrgCatalogItem,
+  ownedBy,
   requestMarketplaceEntry,
 } from "../../../lib/catalog";
 import { canUpdateOrg } from "../../../lib/org-settings";
@@ -38,7 +40,10 @@ import NotFound from "../not-found";
  * the state in the org (已启用 / 未启用 / 需要配置 / 已启用 · 平台统一 / 未开放，可申请 / 已申请，
  * 等待处理) and the actions of {@link usePluginActions}. Org admins also get the 市场 tab (spec
  * §5.1): the marketplaces' entries, read-only, with 申请引入; it is left out while the entries
- * cannot be read (the deployment turned `orgMarketplaceBrowse` off: a 404). From the query cache
+ * cannot be read (the deployment turned `orgMarketplaceBrowse` off: a 404), and the head's
+ * 上传插件包 (a `.tgz` plugin package, or a skill `.zip`; see OrgPluginUploadDialog). The org's own
+ * uploads carry 本组织上传; one waiting for the super admin reads 等待超级管理员确认 (a pending new
+ * version: 新版本 x 等待超级管理员确认) and org admins can 撤回 it. From the query cache
  * (the layout prefetched the catalog, and for org admins the extensions and the entries, on a
  * first load).
  */
@@ -58,6 +63,7 @@ function Plugins({ orgId, me }: { orgId: string; me: Me }) {
   const stateOf = usePluginState();
   const componentsLabel = useComponentsLabel();
   const [tab, setTab] = useState<"plugins" | "market">("plugins");
+  const [uploading, setUploading] = useState(false);
   const list = usePageQuery(orgCatalogQuery(orgId));
   // Org admins: the extensions (a row's 组织配置, whether 启用 asks for input) and the entries
   // (the 市场 tab), both sections
@@ -88,6 +94,18 @@ function Plugins({ orgId, me }: { orgId: string; me: Me }) {
     path: [...scope, { label: "plugins" }],
     title: t("title"),
     description: t("description"),
+    // 上传插件包 (org admins, spec §14): a .tgz plugin package, or a skill .zip
+    ...(admin
+      ? {
+          actions: [
+            {
+              label: t("upload.action"),
+              variant: "primary" as const,
+              onSelect: () => setUploading(true),
+            },
+          ],
+        }
+      : {}),
     ...(showMarket
       ? {
           tabs: [
@@ -109,8 +127,16 @@ function Plugins({ orgId, me }: { orgId: string; me: Me }) {
       : {}),
   };
   if (list.kind === "loading") return <ListPage header={header} variant="objects" loading />;
+  const upload = uploading && (
+    <OrgPluginUploadDialog orgId={orgId} me={me} onClose={() => setUploading(false)} />
+  );
   if (active === "market") {
-    return <Market orgId={orgId} header={header} entries={entries ?? []} />;
+    return (
+      <>
+        <Market orgId={orgId} header={header} entries={entries ?? []} />
+        {upload}
+      </>
+    );
   }
   const callout =
     error !== undefined
@@ -156,6 +182,16 @@ function Plugins({ orgId, me }: { orgId: string; me: Me }) {
                 ...(upgrade !== null
                   ? [{ label: t("chips.upgrade", { version: versionLabel(upgrade) }) }]
                   : []),
+                ...(ownedBy(i, orgId) ? [{ label: t("chips.ownUpload") }] : []),
+                ...(i.awaitingConfirmation !== true && i.pendingVersion != null
+                  ? [
+                      {
+                        label: t("chips.pendingVersion", {
+                          version: versionLabel(i.pendingVersion),
+                        }),
+                      },
+                    ]
+                  : []),
               ]}
               description={descriptionOf(i, locale)}
               meta={[componentsLabel(i.componentCounts), scopeText(i)]}
@@ -166,6 +202,7 @@ function Plugins({ orgId, me }: { orgId: string; me: Me }) {
         })}
       </ListPage>
       {dialog}
+      {upload}
     </>
   );
 }

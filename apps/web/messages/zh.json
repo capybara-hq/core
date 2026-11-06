@@ -2951,7 +2951,9 @@
       "agentTools": "工具：{tools}",
       "agentToolsInherit": "工具：沿用派发它的智能体的工具",
       "agentToolsRemoved": "移除的工具：{tools}",
-      "agentInstructions": "{name} 的指令"
+      "agentInstructions": "{name} 的指令",
+      "nameTakenBy": "名称已被 {owner} 使用",
+      "ownerPlatform": "平台"
     },
     "admin": {
       "title": "插件",
@@ -3771,7 +3773,8 @@
       "not_offered": "未开放，可申请",
       "requested": "已申请，等待处理",
       "unavailable": "平台已停用",
-      "notDeployed": "扩展未部署"
+      "notDeployed": "扩展未部署",
+      "awaiting": "等待超级管理员确认"
     },
     "action": {
       "enable": "启用",
@@ -3780,10 +3783,14 @@
       "request": "申请",
       "requestEnable": "申请启用",
       "requestImport": "申请引入",
-      "connectors": "补充配置"
+      "connectors": "补充配置",
+      "withdraw": "撤回",
+      "delete": "删除"
     },
     "chips": {
-      "upgrade": "可更新 {version}"
+      "upgrade": "可更新 {version}",
+      "pendingVersion": "新版本 {version} 等待超级管理员确认",
+      "ownUpload": "本组织上传"
     },
     "meta": {
       "platform": "平台 · {scope}"
@@ -3791,7 +3798,10 @@
     "toast": {
       "enabled": "已启用「{name}」。",
       "disabled": "已停用「{name}」。",
-      "requested": "申请已提交。"
+      "requested": "申请已提交。",
+      "withdrawn": "已撤回「{name}」的上传。",
+      "shareOn": "「{name}」已设为可共享。",
+      "shareOff": "「{name}」已关闭可共享。"
     },
     "switchOff": {
       "title": "停用 {name}",
@@ -3817,6 +3827,45 @@
     },
     "detail": {
       "installs": "本组织的安装"
+    },
+    "upload": {
+      "action": "上传插件包",
+      "title": "上传插件包",
+      "choose": "选择插件包",
+      "chooseHint": "插件包（.tgz）；单个技能的 .zip 会上传到技能。",
+      "drop": "把文件拖到这里",
+      "reading": "正在读取「{name}」…",
+      "scope": "范围：仅本组织",
+      "shareable": "可共享",
+      "newVersion": "这是本组织插件「{name}」的新版本，可共享沿用插件现在的设置。",
+      "extensionNotice": "此插件包含扩展，扩展代码在平台内核进程中运行。超级管理员确认后才会启用。",
+      "updateTitle": "更新预览",
+      "confirm": "确认上传",
+      "cancel": "取消",
+      "back": "重新选择",
+      "pending": "已提交，等待超级管理员确认",
+      "installed": "已上传「{name}」。",
+      "updated": "已将「{name}」更新到 {version}。",
+      "skillUploaded": "已上传技能「{name}」。",
+      "stale": "插件包的审阅已过期，请重新选择文件。"
+    },
+    "owned": {
+      "title": "本组织的插件",
+      "shareable": "可共享",
+      "shareableHelp": "开启后，超级管理员可以向其他组织展示或开放此插件。关闭不影响已开放的组织。",
+      "pendingWithdraw": "撤回会删除等待确认的版本。"
+    },
+    "delete": {
+      "title": "删除 {name}",
+      "loading": "正在读取删除的影响…",
+      "transferred": "其他组织仍在使用，删除后将转为平台所有：{orgs}",
+      "removed": "删除后不可恢复",
+      "agents": "这些智能体会失去它：",
+      "stale": "删除的影响已变化，请再看一遍后确认。",
+      "confirm": "删除",
+      "cancel": "取消",
+      "done": "已删除「{name}」。",
+      "doneTransferred": "已删除「{name}」，其他组织仍在使用，它已转为平台所有。"
     }
   },
   "adminComponents": {
