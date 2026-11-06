@@ -13,6 +13,7 @@ import { ZBody, ZQuery } from "../infra/validation/zod-params.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
 import { roleAtLeast } from "../orgs/roles.js";
 import { CredentialValue } from "../tools/connectors.controller.js";
+import type { ConnectorDetail, ToolIssue } from "../tools/connectors.service.js";
 import type { MarketplaceImportResult } from "./catalog.service.js";
 import type {
   CatalogIcon,
@@ -80,6 +81,17 @@ const ConnectorsBody = z
   })
   .strict();
 
+/**
+ * One more connector from a platform connector template (ruling P4-T6-8): its name and an
+ * install's connector input (`config`).
+ */
+const TemplateConnectorBody = z
+  .object({
+    name: z.string().trim().min(1).max(80).optional(),
+    config: ConnectorInput.omit({ name: true }),
+  })
+  .strict();
+
 /** The switch body: on (with the install inputs), or off (with the preview's hash to confirm). */
 const SwitchBody = z
   .object({
@@ -118,6 +130,10 @@ class CatalogDecideBody extends createZodDto(DecideBody, "CatalogDecideBody") {}
 class OrgPluginInstallBody extends createZodDto(InstallBody, "OrgPluginInstallBody") {}
 class OrgPluginConnectorsBody extends createZodDto(ConnectorsBody, "OrgPluginConnectorsBody") {}
 class OrgPluginSwitchBody extends createZodDto(SwitchBody, "OrgPluginSwitchBody") {}
+class OrgTemplateConnectorBody extends createZodDto(
+  TemplateConnectorBody,
+  "OrgTemplateConnectorBody",
+) {}
 class CatalogRequestBody extends createZodDto(RequestBody, "CatalogRequestBody") {}
 class CatalogMarketplaceRequestBody extends createZodDto(
   MarketplaceRequestBody,
@@ -140,8 +156,12 @@ class CatalogMarketplaceRequestBody extends createZodDto(
  *   plugin's component actions in the service);
  * - no per-org upgrade: a platform plugin has one version for the deployment, updated by the super
  *   admin (`PUT /admin/catalog/items/:id/update`, ruling F2);
- * - `POST catalog-requests/:id/decide` (`catalog.decide`, org admins; `enable` requests only,
- *   `{ approve, reason? }`), `POST catalog-requests/:id/dismiss` (the requester, a decided request).
+ * - `POST connector-templates/:templateId/connectors` (`connectors.manage`): one more connector
+ *   from a platform connector template on in the org (ruling P4-T6-8);
+ * - `POST catalog-requests/:id/decide` (`catalog.decide`, org admins; `enable` and
+ *   `connector_setup` requests, `{ approve, reason? }`; a `connector_setup` request is only
+ *   rejected here, ruling P4-T6-6), `POST catalog-requests/:id/dismiss` (the requester, a decided
+ *   request).
  */
 @Controller("api/v1/orgs/:orgId")
 export class OrgCatalogController {
@@ -316,6 +336,34 @@ export class OrgCatalogController {
         tokenId !== undefined ? { actorTokenId: tokenId } : {},
       ),
     };
+  }
+
+  /**
+   * One more connector from a platform connector template on in the org (rulings P4-7, P4-T6-8):
+   * `{ name?, config: { slug?, endpoint?, credential?, client? } }` with the checks of an install
+   * -> 201 `{ connector, issues }` (as `POST connectors`). A template not usable in the org -> 404
+   * `component.not_found`; off there -> 409 `component.off`; input errors -> 400 at `config.*`.
+   */
+  @Post("connector-templates/:templateId/connectors")
+  @OrgAction("connectors.manage")
+  async templateConnector(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @Param("templateId") templateId: string,
+    @ZBody(OrgTemplateConnectorBody) body: z.infer<typeof TemplateConnectorBody>,
+  ): Promise<{ connector: ConnectorDetail; issues: ToolIssue[] }> {
+    const p = requireUser(principal);
+    const tokenId = patTokenId(p);
+    return this.pluginInstaller.addTemplateConnector(
+      org.orgId,
+      p.account.id,
+      templateId,
+      {
+        config: body.config as Parameters<PluginInstaller["addTemplateConnector"]>[3]["config"],
+        ...(body.name !== undefined && { name: body.name }),
+      },
+      tokenId !== undefined ? { actorTokenId: tokenId } : {},
+    );
   }
 
   @Get("plugin-installs")

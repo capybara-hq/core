@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { LocalizedName } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
+import type { AgentDefinition } from "../agents/definition.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
@@ -26,11 +27,22 @@ import { itemsSeenBy } from "./scope-state.js";
 export type CatalogRequestKind = "access" | "import" | "enable" | "connector_setup";
 export type CatalogRequestStatus = "pending" | "approved" | "rejected" | "cancelled";
 
+/** A pending connector a `connector_setup` request waits for (ruling P4-T6-5). */
+export interface SetupRequestConnector {
+  /** The agent's `pendingConnectors[].key`. */
+  key: string;
+  label: string;
+  /** `template`: made from a platform connector template; `needs`: a hand-configured one. */
+  kind: "template" | "needs";
+}
+
 /**
- * A catalog request (spec §5.1): the inbox's `catalog_request` (pending `enable` requests, for the
- * org admins) and `catalog_request_decided` (the requester's decided requests), and the super
- * admin's list (`access` and `import`). `item` is null for an `import` request until its confirm
- * writes the item; `entry` is the marketplace entry of an `import` request.
+ * A catalog request (spec §5.1): the inbox's `catalog_request` (pending `enable` and
+ * `connector_setup` requests, for the org admins) and `catalog_request_decided` (the requester's
+ * decided requests), and the super admin's list (`access` and `import`). `item` is null for an
+ * `import` request until its confirm writes the item, and always for `connector_setup`; `entry` is
+ * the marketplace entry of an `import` request. A `connector_setup` request (ruling P4-7) names its
+ * agent (`agent`) and what it still waits for (`connectors`); both are null for other kinds.
  */
 export interface CatalogRequestView {
   id: string;
@@ -39,6 +51,17 @@ export interface CatalogRequestView {
   kind: CatalogRequestKind;
   item: { id: string; name: string; displayName: LocalizedName | null } | null;
   entry: { marketplaceId: string | null; name: string; version: string | null } | null;
+  /**
+   * The agent of a `connector_setup` request: its current name, `deleted` once soft-deleted (the
+   * request is then cancelled). Null for other kinds.
+   */
+  agent: { id: string; name: string; deleted: boolean } | null;
+  /**
+   * The pending connectors a `connector_setup` request waits for, with their labels from the
+   * agent's current version (keys it no longer has are left out; empty once closed). Null for
+   * other kinds.
+   */
+  connectors: SetupRequestConnector[] | null;
   status: CatalogRequestStatus;
   note: string;
   /** The optional reason of a rejection. */
@@ -87,6 +110,9 @@ const isUniqueViolation = (e: unknown) =>
 /** The deployment-level kinds (decided by the super admin). */
 const DEPLOYMENT_KINDS = ["access", "import"] as const;
 
+/** The org-level kinds (decided by the org admins). */
+const ORG_KINDS = ["enable", "connector_setup"] as const;
+
 /**
  * Catalog requests under plugin scope (spec §5.1). Three kinds, one pending request per (org,
  * kind, item or entry) (partial unique indexes; org-side writes run inside the org row lock):
@@ -97,7 +123,11 @@ const DEPLOYMENT_KINDS = ["access", "import"] as const;
  *   installs it;
  * - `import`: an org admin asks for a marketplace entry not in the catalog (deployment setting
  *   `orgMarketplaceBrowse`); approving prepares the import and returns its staging, the request
- *   resolves when the super admin confirms it (scope default `named` = the requesting org).
+ *   resolves when the super admin confirms it (scope default `named` = the requesting org);
+ * - `connector_setup` (ruling P4-7): one per agent (`agent_id`, `pending_keys`), asking the org
+ *   admins to set up an agent's pending connectors; written by the agents module
+ *   (`PendingConnectorRequests`), closed by binding (`approved`) or the agent's deletion
+ *   (`cancelled`); here it is listed and rejected.
  * A rejection stores an optional reason. Decided requests show in the requester's inbox until
  * dismissed. No in-process state.
  */
@@ -326,11 +356,14 @@ export class CatalogRequestsService {
   }
 
   /**
-   * An org admin decides a member's `enable` request (`catalog.decide`). Not this org's `enable`
-   * request -> `catalog.request_not_found`; decided -> `catalog.request_decided`. Approving
-   * switches the item on in the org as the deciding admin ({@link OrgCatalogService.setSwitch}: its
-   * errors, e.g. inputs the install needs, leave the request pending); the install itself resolves
-   * the request. Rejecting stores the reason. Audits `catalog.request_decided`.
+   * An org admin decides a member's `enable` or `connector_setup` request (`catalog.decide`). Not
+   * this org's request of those kinds -> `catalog.request_not_found`; decided ->
+   * `catalog.request_decided`. Approving an `enable` request switches the item on in the org as the
+   * deciding admin ({@link OrgCatalogService.setSwitch}: its errors, e.g. inputs the install
+   * needs, leave the request pending); the install itself resolves the request. A
+   * `connector_setup` request is approved only by binding its connectors (ruling P4-T6-6):
+   * approving it -> `catalog.request_invalid`. Rejecting stores the reason. Audits
+   * `catalog.request_decided`.
    */
   async decideOrg(
     orgId: string,
@@ -354,13 +387,20 @@ export class CatalogRequestsService {
     await this.orgLock.lockAndAuthorize(orgId, actor, "catalog.decide");
     const row = await this.db
       .selectFrom("catalog_requests")
-      .select(["item_id", "status"])
+      .select(["item_id", "status", "kind"])
       .where("id", "=", requestId)
       .where("org_id", "=", orgId)
-      .where("kind", "=", "enable")
+      .where("kind", "in", [...ORG_KINDS])
       .executeTakeFirst();
-    if (!row || row.item_id === null) throw requestNotFound();
+    if (!row) throw requestNotFound();
     if (row.status !== "pending") throw alreadyDecided();
+    if (row.kind === "connector_setup") {
+      throw new ApiError(
+        "catalog.request_invalid",
+        "A connector setup request is resolved by binding the agent's connectors; reject it to refuse",
+      );
+    }
+    if (row.item_id === null) throw requestNotFound();
     return row.item_id;
   }
 
@@ -519,7 +559,7 @@ export class CatalogRequestsService {
       .where("id", "=", requestId);
     q =
       "orgId" in side
-        ? q.where("org_id", "=", side.orgId).where("kind", "=", "enable")
+        ? q.where("org_id", "=", side.orgId).where("kind", "in", [...ORG_KINDS])
         : q.where("kind", "in", [...DEPLOYMENT_KINDS]);
     const row = await q.forUpdate().executeTakeFirst();
     if (!row) throw requestNotFound();
@@ -620,7 +660,9 @@ export class CatalogRequestsService {
   }
 
   /**
-   * 收件箱：当前用户是本组织管理员（实时读角色）时，返回待他处理的成员 `enable` 申请，新的在前；否则为空。
+   * The inbox: when the account is an org admin of the org (the role read live), the members'
+   * pending `enable` requests and the pending `connector_setup` requests, newest first; otherwise
+   * none.
    */
   async listForOrgAdmin(orgId: string, accountId: string): Promise<CatalogRequestView[]> {
     const m = await this.db
@@ -632,17 +674,23 @@ export class CatalogRequestsService {
     if (!m || !roleAtLeast(m.role, "admin")) return [];
     const rows = await this.baseQuery()
       .where("r.org_id", "=", orgId)
-      .where("r.kind", "=", "enable")
+      .where("r.kind", "in", [...ORG_KINDS])
       .where("r.status", "=", "pending")
       .orderBy("r.created_at", "desc")
       .orderBy("r.id")
       .limit(CATALOG_REQUESTS_LIST_MAX)
       .execute();
     // A request on an item the org can no longer see (its scope hid it since) is left out, so
-    // nothing reveals the item's name to the org
+    // nothing reveals the item's name to the org; a setup request of a deleted agent too
     const ids = [...new Set(rows.flatMap((r) => (r.item_id !== null ? [r.item_id] : [])))];
     const seen = await itemsSeenBy(this.db, orgId, ids);
-    return rows.filter((r) => r.item_id !== null && seen.has(r.item_id)).map(toView);
+    return rows
+      .filter((r) =>
+        r.kind === "connector_setup"
+          ? r.agent_id !== null && r.agent_deleted_at === null
+          : r.item_id !== null && seen.has(r.item_id),
+      )
+      .map(toView);
   }
 
   /** The inbox: the account's decided requests in the org it has not dismissed, newest first. */
@@ -666,33 +714,70 @@ export class CatalogRequestsService {
   }
 
   private baseQuery() {
-    return this.db
-      .selectFrom("catalog_requests as r")
-      .leftJoin("catalog_items as i", "i.id", "r.item_id")
-      .innerJoin("orgs as o", "o.id", "r.org_id")
-      .leftJoin("accounts as a", "a.id", "r.requested_by")
-      .select([
-        "r.id",
-        "r.org_id",
-        "o.name as org_name",
-        "r.kind",
-        "r.item_id",
-        "i.name",
-        "i.display_name",
-        "r.marketplace_id",
-        "r.entry_name",
-        "r.entry_version",
-        "r.status",
-        "r.note",
-        "r.reason",
-        "r.requested_by",
-        "a.display_name as requested_by_name",
-        "r.decided_by",
-        "r.decided_at",
-        "r.staging_id",
-        "r.created_at",
-      ]);
+    return (
+      this.db
+        .selectFrom("catalog_requests as r")
+        .leftJoin("catalog_items as i", "i.id", "r.item_id")
+        .innerJoin("orgs as o", "o.id", "r.org_id")
+        .leftJoin("accounts as a", "a.id", "r.requested_by")
+        // a connector_setup request's agent and its current version (name, pending connectors)
+        .leftJoin("agents as ag", "ag.id", "r.agent_id")
+        .leftJoin("agent_versions as av", (j) =>
+          j.onRef("av.agent_id", "=", "ag.id").onRef("av.version", "=", "ag.current_version"),
+        )
+        .select([
+          "r.agent_id",
+          "r.pending_keys",
+          "ag.deleted_at as agent_deleted_at",
+          "av.definition as agent_definition",
+          "r.id",
+          "r.org_id",
+          "o.name as org_name",
+          "r.kind",
+          "r.item_id",
+          "i.name",
+          "i.display_name",
+          "r.marketplace_id",
+          "r.entry_name",
+          "r.entry_version",
+          "r.status",
+          "r.note",
+          "r.reason",
+          "r.requested_by",
+          "a.display_name as requested_by_name",
+          "r.decided_by",
+          "r.decided_at",
+          "r.staging_id",
+          "r.created_at",
+        ])
+    );
   }
+}
+
+/** The view fields of a `connector_setup` request (ruling P4-T6-5); null for other kinds. */
+function setupFields(r: {
+  kind: CatalogRequestKind;
+  agent_id: string | null;
+  pending_keys: string[] | null;
+  agent_deleted_at: Date | null;
+  agent_definition: unknown;
+}): Pick<CatalogRequestView, "agent" | "connectors"> {
+  if (r.kind !== "connector_setup" || r.agent_id === null) return { agent: null, connectors: null };
+  const def = (r.agent_definition ?? null) as Pick<
+    AgentDefinition,
+    "name" | "pendingConnectors"
+  > | null;
+  const pending = new Map((def?.pendingConnectors ?? []).map((c) => [c.key, c]));
+  const connectors: SetupRequestConnector[] = [];
+  for (const key of r.pending_keys ?? []) {
+    const c = pending.get(key);
+    if (c === undefined) continue;
+    connectors.push({ key, label: c.label, kind: "template" in c.source ? "template" : "needs" });
+  }
+  return {
+    agent: { id: r.agent_id, name: def?.name ?? "", deleted: r.agent_deleted_at !== null },
+    connectors,
+  };
 }
 
 function toView(r: {
@@ -700,6 +785,10 @@ function toView(r: {
   org_id: string;
   org_name: string;
   kind: CatalogRequestKind;
+  agent_id: string | null;
+  pending_keys: string[] | null;
+  agent_deleted_at: Date | null;
+  agent_definition: unknown;
   item_id: string | null;
   name: string | null;
   display_name: LocalizedName | null;
@@ -729,6 +818,7 @@ function toView(r: {
       r.entry_name !== null
         ? { marketplaceId: r.marketplace_id, name: r.entry_name, version: r.entry_version }
         : null,
+    ...setupFields(r),
     status: r.status,
     note: r.note,
     reason: r.reason,

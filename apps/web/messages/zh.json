@@ -127,7 +127,10 @@
       "instructions_mismatch": "指令与提示词文件不一致。请编辑提示词文件，或刷新后重试。",
       "profile_unloaded": "资料尚未加载完成。请刷新页面后重试。",
       "visibility_forbidden": "只有组织管理员可以用模板创建给他人使用的智能体。请把可见范围设为仅自己。",
-      "template_preview_stale": "预览之后模板或组织的配置有变化。请重新预览后再创建。"
+      "template_preview_stale": "预览之后模板或组织的配置有变化。请重新预览后再创建。",
+      "pending_connector_not_found": "这个连接器已不在智能体的待配置列表里，请刷新页面。",
+      "pending_connector_mismatch": "这个连接器不匹配：请选择由同一连接器模板创建、协议相同且提供智能体所需工具的连接器。",
+      "no_pending_connectors": "这个智能体没有待配置的连接器。"
     },
     "agent_template": {
       "name_taken": "该组织已有同名的智能体模板，同一名称不能在一个组织中出现两次。请换一个名称。",
@@ -161,7 +164,8 @@
     },
     "component": {
       "not_found": "这个组件不存在或已被移除。",
-      "version_stale": "这个组件在此期间已被更改，请重新上传。"
+      "version_stale": "这个组件在此期间已被更改，请重新上传。",
+      "off": "这个组件在本组织已关闭，请先开启。"
     },
     "connector": {
       "not_found": "连接器不存在或已被删除。",
