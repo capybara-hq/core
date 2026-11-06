@@ -352,8 +352,9 @@ function orgAgentDefinition(
   const own = a.orgAgent.definition;
   // prompt files are authoring data: the child's model sees only `instructions` (their join), and
   // `subagent_started.definition` keeps its shape (spec 2026-11-04 §3.3); its own `subagents`
-  // block stays: it is the roster the child dispatches from (agent map spec §4.1)
-  const { skills, instructionFiles: _files, ...rest } = own;
+  // block stays: it is the roster the child dispatches from (agent map spec §4.1); pending
+  // connectors are authoring data too (ruling P4-6)
+  const { skills, instructionFiles: _files, pendingConnectors: _pending, ...rest } = own;
   const definition: AgentDefinition = {
     ...rest,
     // its own tools, not intersected with the parent's; only the child-removed ones go

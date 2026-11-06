@@ -12,7 +12,7 @@ import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import { rejectAnonymousGuest } from "../orgs/members.service.js";
 import { OrgLock } from "../orgs/org-lock.js";
-import { roleAtLeast } from "../orgs/roles.js";
+import { can, type OrgRole, roleAtLeast } from "../orgs/roles.js";
 import { ProviderRegistry } from "../runtime/providers.js";
 import { SandboxJobs } from "../sandbox/jobs.js";
 import { SkillChangesService } from "../skills/changes.service.js";
@@ -29,6 +29,7 @@ import {
 import {
   type AgentDefinition,
   normalizeStoredDefinition,
+  type PendingConnector,
   paramIssues,
   SUBAGENT_NAME_RE,
   SUBAGENT_ROSTER_MAX,
@@ -83,6 +84,45 @@ function canonical(v: unknown): string {
     return `{${entries.map(([k, x]) => `${JSON.stringify(k)}:${canonical(x)}`).join(",")}}`;
   }
   return JSON.stringify(v);
+}
+
+/**
+ * The pending connectors of a saved definition (ruling P4-6): absent from the request = the current
+ * version's (an editor that does not know them never drops them); given = a subset of the current
+ * ones, unchanged (only creating from a template adds them, only binding resolves them); `[]`
+ * removes them all. Another entry → 400 `validation_failed` at `pendingConnectors.<i>`.
+ */
+export function keepPendingConnectors(
+  definition: AgentDefinition,
+  given: readonly PendingConnector[] | undefined,
+  current: readonly PendingConnector[] | undefined,
+): AgentDefinition {
+  const { pendingConnectors: _given, ...rest } = definition;
+  const next = given ?? current ?? [];
+  if (given !== undefined) {
+    const known = new Map((current ?? []).map((c) => [c.key, canonical(c)]));
+    const details = given.flatMap((c, i) =>
+      known.get(c.key) === canonical(c)
+        ? []
+        : [
+            {
+              path: `pendingConnectors.${i}`,
+              message: "pending connectors come only from a template; keep or remove them",
+            },
+          ],
+    );
+    if (details.length > 0) {
+      throw new ApiError("validation_failed", "Invalid pending connectors", details);
+    }
+  }
+  return next.length > 0 ? { ...rest, pendingConnectors: [...next] } : rest;
+}
+
+/** Where an agent created from a template came from (ruling P4-8; set once, never versioned). */
+export interface TemplateProvenance {
+  id: string;
+  version: number;
+  name: string;
 }
 
 /** Why a `subagents` block is refused (`agent.subagents_invalid` details). */
@@ -392,6 +432,50 @@ export class AgentsService {
     },
     actorTokenId?: string,
   ): Promise<{ agent: AgentView; warnings: AgentWarning[] }> {
+    const { agent, warnings } = await this.createChecked(
+      orgId,
+      actorAccountId,
+      request,
+      null,
+      actorTokenId,
+    );
+    return { agent, warnings };
+  }
+
+  /**
+   * Creates an agent from a planned template definition (rulings P4-3, P4-8): {@link create}'s
+   * checks, plus, under the org row lock, 403 `agent.visibility_forbidden` when the visibility is
+   * not `private` and the creator lacks `agents.manage`; the provenance columns are written once.
+   * Returns the creator's role read under the lock (the caller decides on the pending connector
+   * request after the commit).
+   */
+  createFromTemplate(
+    orgId: string,
+    actorAccountId: string,
+    request: {
+      definition: AgentDefinitionInput;
+      visibility: AgentVisibility;
+      memberIds?: string[];
+      profile?: ProfileInput;
+    },
+    template: TemplateProvenance,
+    actorTokenId?: string,
+  ): Promise<{ agent: AgentView; warnings: AgentWarning[]; role: OrgRole }> {
+    return this.createChecked(orgId, actorAccountId, request, template, actorTokenId);
+  }
+
+  private async createChecked(
+    orgId: string,
+    actorAccountId: string,
+    request: {
+      definition: AgentDefinitionInput;
+      visibility: AgentVisibility;
+      memberIds?: string[];
+      profile?: ProfileInput;
+    },
+    template: TemplateProvenance | null,
+    actorTokenId: string | undefined,
+  ): Promise<{ agent: AgentView; warnings: AgentWarning[]; role: OrgRole }> {
     const input = { ...request, definition: deriveInstructions(request.definition, null) };
     // 先解析模型（可能访问供应商），不在持有组织行锁时做
     const warnings = await this.checkModels(input.definition);
@@ -400,8 +484,15 @@ export class AgentsService {
       throw new ApiError("validation_failed", "memberIds requires visibility 'members'");
     }
     assertProfileWritable(input.profile);
-    const agent = await this.createIn(orgId, actorAccountId, input, toolKeys, actorTokenId);
-    return { agent, warnings };
+    const { agent, role } = await this.createIn(
+      orgId,
+      actorAccountId,
+      input,
+      toolKeys,
+      template,
+      actorTokenId,
+    );
+    return { agent, warnings, role };
   }
 
   @Transactional()
@@ -415,10 +506,18 @@ export class AgentsService {
       profile?: ProfileInput;
     },
     toolKeys: Set<string>,
+    template: TemplateProvenance | null,
     actorTokenId: string | undefined,
-  ): Promise<AgentView> {
+  ): Promise<{ agent: AgentView; role: OrgRole }> {
     const t = this.db.db;
-    await this.orgLock.lockAndAuthorize(orgId, actorAccountId, "agents.create");
+    const { role } = await this.orgLock.lockAndAuthorize(orgId, actorAccountId, "agents.create");
+    // ruling P4-3: a member creates a template agent for themself; sharing it is an admin's call
+    if (template !== null && input.visibility !== "private" && !can(role, "agents.manage")) {
+      throw new ApiError(
+        "agent.visibility_forbidden",
+        "Only an organization admin can create an agent from a template for others; create it private",
+      );
+    }
     await assertOrgSkills(t, orgId, input.definition.skills?.orgSkills ?? []);
     await assertPinnedSkills(t, orgId, null, input.definition.skills);
     await assertSubagents(t, {
@@ -446,6 +545,11 @@ export class AgentsService {
         ),
         profile_description: input.profile?.description ?? "",
         profile_quick_actions: JSON.stringify(input.profile?.quickActions ?? []),
+        ...(template !== null && {
+          created_from_template_id: template.id,
+          created_from_template_version: template.version,
+          created_from_template_name: template.name,
+        }),
       })
       .execute();
     await t
@@ -464,9 +568,13 @@ export class AgentsService {
       orgId,
       action: "agent.created",
       target: id,
-      detail: { version: 1, visibility: input.visibility },
+      detail: {
+        version: 1,
+        visibility: input.visibility,
+        ...(template !== null && { template: { id: template.id, version: template.version } }),
+      },
     });
-    return this.lookup.view(id);
+    return { agent: await this.lookup.view(id), role };
   }
 
   /**
@@ -573,9 +681,11 @@ export class AgentsService {
         .where("version", "=", before.current_version)
         .executeTakeFirstOrThrow();
       // the prompt: instructionFiles give instructions; a save given neither keeps the current one
-      const definition = deriveInstructions(
-        patch.definition,
-        normalizeStoredDefinition(current.definition),
+      const currentDefinition = normalizeStoredDefinition(current.definition);
+      const definition = keepPendingConnectors(
+        deriveInstructions(patch.definition, currentDefinition),
+        patch.definition.pendingConnectors,
+        currentDefinition.pendingConnectors,
       );
       // 当前版本已有的技能引用保存时合法，不再核对（被删的技能不挡住其他改动）；新加的照常核对
       const kept = new Set((current.definition as AgentDefinition).skills?.orgSkills ?? []);

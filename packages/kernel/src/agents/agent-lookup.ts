@@ -7,6 +7,7 @@ import { loadLegacyScope } from "../tools/legacy-data.js";
 import type { LegacyScope } from "../tools/legacy-keys.js";
 import { type AgentDefinition, needsLegacyScope, normalizeStoredDefinition } from "./definition.js";
 import type { AgentAvatar, AgentProfile, QuickAction } from "./profile.js";
+import { loadTemplates } from "./templates.js";
 
 export const AGENT_VISIBILITIES = ["private", "org", "members"] as const;
 export type AgentVisibility = (typeof AGENT_VISIBILITIES)[number];
@@ -24,8 +25,22 @@ export interface AgentView {
   memberIds: string[] | null;
   /** 负责人离职后被转给组织所有者、等待管理员重新指派。 */
   needsReassignment: boolean;
+  /**
+   * The template the agent was created from (ruling P4-8; set once, never versioned), null for an
+   * agent created otherwise. `name` and `version` are the snapshot taken at create; `available`
+   * says whether the template is still usable in the org (the agent page links it only then).
+   */
+  createdFrom: AgentProvenance | null;
   createdAt: Date;
   updatedAt: Date;
+}
+
+/** {@link AgentView.createdFrom}. */
+export interface AgentProvenance {
+  templateId: string;
+  version: number;
+  name: string;
+  available: boolean;
 }
 
 const notFound = () => new ApiError("agent.not_found", "Agent not found");
@@ -164,6 +179,9 @@ export class AgentLookup {
         "agents.profile_description",
         "agents.profile_quick_actions",
         "agents.profile_updated_at",
+        "agents.created_from_template_id",
+        "agents.created_from_template_version",
+        "agents.created_from_template_name",
         "agent_versions.definition",
       ])
       .where("agents.id", "in", ids)
@@ -182,9 +200,22 @@ export class AgentLookup {
         scopes.set(r.org_id, await loadLegacyScope(this.db.db, r.org_id));
       }
     }
+    // provenance links: whether each recorded template is still usable in its org
+    const usableTemplates = new Set<string>();
+    const byOrg = new Map<string, string[]>();
+    for (const r of rows) {
+      if (r.created_from_template_id === null) continue;
+      byOrg.set(r.org_id, [...(byOrg.get(r.org_id) ?? []), r.created_from_template_id]);
+    }
+    for (const [orgId, templateIds] of byOrg) {
+      for (const key of (await loadTemplates(this.db.db, orgId, templateIds)).keys()) {
+        usableTemplates.add(`${orgId}/${key}`);
+      }
+    }
     return ids.flatMap((id) => {
       const r = byId.get(id);
       if (!r) return [];
+      const fromId = r.created_from_template_id;
       return [
         {
           id: r.id,
@@ -204,6 +235,15 @@ export class AgentLookup {
               ? memberRows.filter((m) => m.agent_id === id).map((m) => m.account_id)
               : null,
           needsReassignment: r.needs_reassignment,
+          createdFrom:
+            fromId === null
+              ? null
+              : {
+                  templateId: fromId,
+                  version: r.created_from_template_version ?? 1,
+                  name: r.created_from_template_name ?? "",
+                  available: usableTemplates.has(`${r.org_id}/${fromId}`),
+                },
           createdAt: r.created_at,
           updatedAt: r.updated_at,
         },
