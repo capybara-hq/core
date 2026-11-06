@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
+import { templateTypeClashes, templateTypeOf } from "../agents/templates.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
@@ -68,7 +69,10 @@ export interface ComponentScopePreview {
     /** A connector template: the org's connectors made from it, which stay as the org's own. */
     connectorsKept: number;
   }[];
-  /** `skills`: the clashing skill ids (org skills, other platform skills); `plugins`: theirs. */
+  /**
+   * `skills`: the clashing skill ids (org skills, other platform skills; for an agent template the
+   * clashing template ids, `name` its roster type, ruling P4-13); `plugins`: theirs.
+   */
   conflicts: {
     orgId: string;
     orgName: string;
@@ -211,8 +215,35 @@ const ACTION: Record<ComponentKind, OrgAction> = {
   connector_template: "connectors.manage",
 };
 
-/** 409 `plugin.skill_conflict` listing the orgs whose own skills use a component's name (rule 10). */
-export function nameConflictError(conflicts: ComponentScopePreview["conflicts"]): ApiError {
+/**
+ * 409 `plugin.skill_conflict` listing the orgs whose own skills use a component's name (rule 10);
+ * for an agent template 409 `agent_template.name_taken` listing the orgs that already use its
+ * roster type (ruling P4-13; details `[{ type, orgId, templates, source }]`).
+ */
+export function nameConflictError(
+  conflicts: ComponentScopePreview["conflicts"],
+  kind: ComponentKind = "skill",
+): ApiError {
+  if (kind === "agent_template") {
+    return new ApiError(
+      "agent_template.name_taken",
+      conflicts
+        .map(
+          (c) =>
+            `Agent template type "${c.name}" is already used in organization ${c.orgName} (${c.plugins.length > 0 ? `from "${c.plugins.join('", "')}"` : "its own template"}); it would be offered there twice.`,
+        )
+        .join("\n"),
+      conflicts.map((c) => ({
+        type: c.name,
+        orgId: c.orgId,
+        templates: c.skills,
+        source:
+          c.plugins.length > 0
+            ? { kind: "plugin", name: c.plugins[0], version: "" }
+            : { kind: "org" },
+      })),
+    );
+  }
   return new ApiError(
     "plugin.skill_conflict",
     conflicts
@@ -595,7 +626,7 @@ export class ComponentScopeService {
     assertShareable(gateRow(v));
     const p = await this.compute(v, t, { hashId: id, listed });
     if (p.scopeHash !== scopeHash) throw staleError();
-    if (p.conflicts.length > 0) throw nameConflictError(p.conflicts);
+    if (p.conflicts.length > 0) throw nameConflictError(p.conflicts, kind);
     const promotable = kind as "skill" | "agent_template";
     const written = await this.withPromotion(promotable, id, (prepared) =>
       this.writeScope(actor, kind, prepared.platformId, target, scopeHash, opts, {
@@ -698,11 +729,15 @@ export class ComponentScopeService {
       );
     }
     if (body.enabled) {
-      if (kind === "skill" && !on) {
-        const clash = await skillNameClashes(this.db, orgId, c, c.name);
+      if (kind !== "connector_template" && !on) {
+        const clash =
+          kind === "skill"
+            ? await skillNameClashes(this.db, orgId, c, c.name)
+            : await templateTypeClashes(this.db, orgId, c);
         if (clash.skills.length > 0) {
           const [org] = await this.liveOrgs(orgId);
-          throw nameConflictError([{ orgId, orgName: org?.name ?? orgId, name: c.name, ...clash }]);
+          const name = kind === "skill" ? c.name : templateTypeOf(c.plugin, c.name);
+          throw nameConflictError([{ orgId, orgName: org?.name ?? orgId, name, ...clash }], kind);
         }
       }
     } else {
@@ -796,7 +831,7 @@ export class ComponentScopeService {
     }
     const p = await this.compute(c, t, { hashId: x.hashId });
     if (p.scopeHash !== hash) throw staleError();
-    if (p.conflicts.length > 0) throw nameConflictError(p.conflicts);
+    if (p.conflicts.length > 0) throw nameConflictError(p.conflicts, kind);
     if (c.scopeMode === t.scopeMode && c.scope === t.scope && from.join() === t.orgs.join()) {
       return id;
     }
@@ -859,7 +894,7 @@ export class ComponentScopeService {
     if (c.disabled === disabled) return;
     const p = await this.compute(c, await this.targetOf(c, { disabled }));
     if (disabled && p.scopeHash !== hash) throw staleError();
-    if (p.conflicts.length > 0) throw nameConflictError(p.conflicts);
+    if (p.conflicts.length > 0) throw nameConflictError(p.conflicts, kind);
     await this.db
       .updateTable(TABLE[kind] as "platform_skills")
       .set({
@@ -1138,13 +1173,18 @@ export class ComponentScopeService {
         });
       }
       if (
-        c.kind === "skill" &&
+        c.kind !== "connector_template" &&
         componentOffered(after, p, listedAfter.has(org.id)) &&
         !componentOffered(c, p, listed)
       ) {
-        const clash = await skillNameClashes(this.db, org.id, c, c.name);
+        // rule 10: a skill by its name, an agent template by its roster type (ruling P4-13)
+        const clash =
+          c.kind === "skill"
+            ? await skillNameClashes(this.db, org.id, c, c.name)
+            : await templateTypeClashes(this.db, org.id, c);
         if (clash.skills.length > 0) {
-          conflicts.push({ orgId: org.id, orgName: org.name, name: c.name, ...clash });
+          const name = c.kind === "skill" ? c.name : templateTypeOf(c.plugin, c.name);
+          conflicts.push({ orgId: org.id, orgName: org.name, name, ...clash });
         }
       }
     }
@@ -1181,10 +1221,10 @@ const virtualOf = (o: OrgRow): ComponentRow => ({
 
 /**
  * 409 `catalog.not_owned` unless the org row is content its org created itself (ruling P3-46): a
- * skill without plugin provenance; no agent template in phase 3 (all come from plugins).
+ * skill without plugin provenance, an org template (no plugin, no catalog item; ruling P4-13).
  */
 function assertPromotable(o: OrgRow): void {
-  if (o.kind === "agent_template" || !o.ownable) throw notOwnedError(o.name);
+  if (!o.ownable) throw notOwnedError(o.name);
 }
 
 /** The share gate's view of a component row. */

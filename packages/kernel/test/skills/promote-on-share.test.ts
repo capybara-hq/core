@@ -670,7 +670,8 @@ describe("promote on share", { timeout: 120_000 }, () => {
     const tplId = randomUUID();
     await db
       .insertInto("agent_templates")
-      .values({ id: tplId, org_id: orgA, name: "reviewer", plugin_name: "crm", current_version: 1 })
+      // an org template (no plugin, a bare type; plugin scope phase 4, ruling P4-13)
+      .values({ id: tplId, org_id: orgA, name: "reviewer", plugin_name: null, current_version: 1 })
       .execute();
     await db
       .insertInto("agent_template_versions")
@@ -706,7 +707,7 @@ describe("promote on share", { timeout: 120_000 }, () => {
       root,
       orgA,
       conv,
-      `tool:Agent:${JSON.stringify({ description: "Review", prompt: "echo:first", subagent_type: "crm:reviewer" })}`,
+      `tool:Agent:${JSON.stringify({ description: "Review", prompt: "echo:first", subagent_type: "reviewer" })}`,
     );
     await waitForTerminal(db, conv, 1, 30_000);
     const dispatched = (await eventsOf(db, conv)).find(
@@ -716,24 +717,16 @@ describe("promote on share", { timeout: 120_000 }, () => {
     const started = (await eventsOf(db, childId)).find((e) => e.type === "subagent_started") as
       | Extract<ConversationEvent, { type: "subagent_started" }>
       | undefined;
-    const recorded = { source: "plugin", id: tplId, version: 1, plugin: "crm" };
+    const recorded = { source: "plugin", id: tplId, version: 1 };
     expect(started?.payload.template).toEqual(recorded);
 
-    // every agent template is a plugin's in phase 3: not shareable, not promotable (ruling P3-46)
-    expect(errorOf(await setShareable(orgA, "agent-templates", tplId))).toEqual([
-      409,
-      "catalog.not_owned",
-    ]);
+    // an org template is the org's own (ruling P4-13, lifting P3-46): not shown before the owner
+    // makes it shareable, then promoted (here at service level)
     expect(errorOf(await showToOthers("agent_template", tplId))).toEqual([
       409,
-      "catalog.not_owned",
+      "catalog.not_shareable",
     ]);
-    // the promotion branch kept for phase 4, at service level
-    await db
-      .updateTable("agent_templates")
-      .set({ shareable: true })
-      .where("id", "=", tplId)
-      .execute();
+    expect((await setShareable(orgA, "agent-templates", tplId)).statusCode).toBe(200);
     const promotion = k.app.get(ComponentPromotion);
     const prepared = await promotion.prepare("agent_template", tplId);
     const pid = await promotion.txHost.run(() => promotion.promote(prepared, rootId));
@@ -747,7 +740,7 @@ describe("promote on share", { timeout: 120_000 }, () => {
     ).toEqual({
       current_version: 1,
       owner_org_id: orgA,
-      plugin_name: "crm",
+      plugin_name: null,
       shown_to_others: false,
     });
     expect(
@@ -790,18 +783,33 @@ describe("promote on share", { timeout: 120_000 }, () => {
       root,
       orgA,
       conv,
-      `tool:Agent:${JSON.stringify({ description: "New", prompt: "echo:new", subagent_type: "crm:reviewer" })}`,
+      `tool:Agent:${JSON.stringify({ description: "New", prompt: "echo:new", subagent_type: "reviewer" })}`,
     );
-    await waitForTerminal(db, conv, 3, 30_000);
-    const all = (await eventsOf(db, conv)).filter(
-      (e) => e.type === "subagent_dispatched",
-    ) as Extract<ConversationEvent, { type: "subagent_dispatched" }>[];
-    const second = all.at(-1)?.payload.subagentId as string;
+    // the resumed child's report may wake the parent in a run of its own first, so wait for the
+    // second new dispatch itself rather than for a run count
+    const second = await waitFor(
+      async () => {
+        const fresh = (
+          (await eventsOf(db, conv)).filter((e) => e.type === "subagent_dispatched") as Extract<
+            ConversationEvent,
+            { type: "subagent_dispatched" }
+          >[]
+        ).filter((e) => !e.payload.resumed);
+        return fresh.length >= 2 ? (fresh.at(-1)?.payload.subagentId as string) : undefined;
+      },
+      30_000,
+      "the second dispatch",
+    );
     expect(second).not.toBe(childId);
-    const started2 = (await eventsOf(db, second)).find((e) => e.type === "subagent_started") as
-      | Extract<ConversationEvent, { type: "subagent_started" }>
-      | undefined;
-    expect(started2?.payload.template).toEqual(recorded);
+    const started2 = await waitFor(
+      async () =>
+        (await eventsOf(db, second)).find((e) => e.type === "subagent_started") as
+          | Extract<ConversationEvent, { type: "subagent_started" }>
+          | undefined,
+      30_000,
+      "the second child's start",
+    );
+    expect(started2.payload.template).toEqual(recorded);
 
     // the org's template list shows it once, under the org row's id
     const list = await root({ method: "GET", url: `/api/v1/orgs/${orgA}/agent-templates` });

@@ -41,9 +41,9 @@ export interface OrgRow {
   link: string | null;
   /**
    * Content the org created itself (ruling P3-46): a skill without plugin provenance
-   * (`catalog_item_id` null). Anything else is refused with 409 `catalog.not_owned`. Agent
-   * templates are all plugin content in phase 3: their routes refuse them (phase 4 adds
-   * org-created ones), this provider keeps their branch.
+   * (`catalog_item_id` null); an agent template without a plugin and a catalog item (an org
+   * template saved from an agent, ruling P4-13). Anything else is refused with 409
+   * `catalog.not_owned`.
    */
   ownable: boolean;
 }
@@ -392,6 +392,7 @@ export async function readOrgRow(
       "t.shareable",
       "t.platform_template_id as platform_skill_id",
       "t.pinned_version",
+      "t.catalog_item_id",
       "p.owner_org_id",
       "p.deleted_at as p_deleted_at",
     ])
@@ -412,7 +413,8 @@ export async function readOrgRow(
     version: r.current_version,
     shareable: r.shareable,
     link,
-    ownable: true,
+    // an org template (ruling P4-13); a plugin's template keeps its roster type and is not
+    ownable: r.catalog_item_id === null && r.plugin_name === null,
   };
 }
 

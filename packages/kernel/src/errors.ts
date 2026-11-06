@@ -163,6 +163,13 @@ export const ERROR_CODES = {
   "agent.visibility_forbidden": 403,
   /** Creating from a template: the template or the org changed since the preview (P4-3). */
   "agent.template_preview_stale": 409,
+  /**
+   * An org template's bare name is a type the org can already use (spec §5 rule 10, ruling
+   * P4-9; details `[{ owner, templateId }]`, `owner` as `plugin.name_taken`'s).
+   */
+  "agent_template.name_taken": 409,
+  /** An org template was saved since the editor read it (`expectedVersion` is stale, P4-12). */
+  "agent_template.version_conflict": 409,
   "conversation.not_found": 404,
   "conversation.output_not_found": 404,
   "conversation.artifact_not_found": 404,
