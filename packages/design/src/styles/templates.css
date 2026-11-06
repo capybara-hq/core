@@ -742,6 +742,37 @@ a.cb-object-name:hover {
   font-family: var(--cb-font-prose);
   min-width: 0;
 }
+/* Inside a box (spec §6.19, §1 "One box is enough"): the warn / fail line with its icon, no tint
+   and no padding of its own; the action stays at the right. */
+.cb-callout[data-framed="false"] {
+  align-items: flex-start;
+  gap: var(--cb-space-1);
+  padding: 0;
+  border-radius: 0;
+  background: none;
+}
+/* The line reads as a prose Text line (prose-small 13 / 20); the 12 px icon on its first line. */
+.cb-callout[data-framed="false"] > .cb-callout-text {
+  font-size: var(--cb-type-prose-small-size);
+  line-height: var(--cb-type-prose-small-line);
+}
+.cb-callout[data-framed="false"] > svg {
+  margin-top: calc((var(--cb-type-prose-small-line) - 12px) / 2);
+}
+.cb-callout[data-framed="false"] > .cb-btn,
+.cb-callout[data-framed="false"] > a {
+  align-self: center;
+}
+.cb-callout[data-framed="false"][data-tone="warn"] {
+  color: var(--cb-warn);
+}
+.cb-callout[data-framed="false"][data-tone="fail"] {
+  color: var(--cb-fail);
+}
+.cb-callout[data-framed="false"] > .cb-btn,
+.cb-callout[data-framed="false"] > a {
+  margin-left: var(--cb-space-2);
+}
 
 /* PendingState (spec §6.20): only the background, then quiet bars in a centered column. */
 .cb-pending {

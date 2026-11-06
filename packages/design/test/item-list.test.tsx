@@ -10,6 +10,7 @@ import {
   Input,
   ItemList,
   ItemListItem,
+  LoadingSubsection,
   StepList,
   Subsection,
   Text,
@@ -215,6 +216,45 @@ describe("Subsection (a group inside one box, spec §6.32)", () => {
     expect(
       within(region).getByText("字段").closest('[data-part="subsection-body"]'),
     ).not.toBeNull();
+  });
+
+  it("a node description is a block in the help's place (lines of its own, valid markup)", () => {
+    zh(
+      <Subsection
+        title="broken"
+        variant="flush"
+        description={
+          <div role="alert">
+            <Text tone="fail" icon="circle-x">
+              列模型失败
+            </Text>
+            <Text variant="small" tone="fail">
+              connection refused
+            </Text>
+          </div>
+        }
+      />,
+    );
+    const region = screen.getByRole("region", { name: "broken" });
+    const help = region.querySelector('[data-part="subsection-description"]') as HTMLElement;
+    expect(help.tagName).toBe("DIV");
+    expect(help.getAttribute("data-block")).toBe("true");
+    expect(within(help).getByRole("alert").textContent).toContain("connection refused");
+  });
+
+  it("LoadingSubsection: the frame with a skeleton bar in the title's slot, then the content", () => {
+    zh(
+      <LoadingSubsection variant="flush">
+        <span>表</span>
+      </LoadingSubsection>,
+    );
+    const el = document.querySelector('[data-part="subsection"]') as HTMLElement;
+    expect(el.getAttribute("data-variant")).toBe("flush");
+    expect(el.querySelector("h3")).toBeNull();
+    expect(
+      el.querySelector('[data-part="subsection-title"] [data-part="skeleton-text"]'),
+    ).not.toBeNull();
+    expect(within(el).getByText("表").closest('[data-part="subsection-body"]')).not.toBeNull();
   });
 
   it("the stylesheet: a 1px line guide, and flush subsections split by line-soft", () => {

@@ -74,6 +74,7 @@ const repeater = (
 );
 const adaptive = (
   <>
+    <Callout tone="warn">没有可用模型。</Callout>
     <CodeBlock language="sql" text="DROP TABLE x;" />
     <EmbedFrame src="https://example.com" title="看板" onMessage={noop} />
     {table}
@@ -141,11 +142,11 @@ describe("findNestedBoxes (the guard itself, red first)", () => {
     ]);
   });
 
-  it("finds a Callout inside a form card and a framed CodeBlock forced into a Card", () => {
+  it("finds a DangerZone inside a form card and a framed CodeBlock forced into a Card", () => {
     zh(
       <>
         <FormSection id="m" title="模型">
-          <Callout tone="warn">没有可用模型。</Callout>
+          <DangerZone title="危险区">删除</DangerZone>
         </FormSection>
         <Card>
           <CodeBlock text="x" framed />
@@ -153,9 +154,21 @@ describe("findNestedBoxes (the guard itself, red first)", () => {
       </>,
     );
     expect(nested()).toEqual([
-      "Callout inside FormSection card: 没有可用模型。",
+      "DangerZone inside FormSection card: 危险区删除",
       "CodeBlock inside Card: x",
     ]);
+  });
+
+  it("a Callout inside a form card draws its line form and nests nothing (spec §6.19)", () => {
+    zh(
+      <FormSection id="m" title="模型">
+        <Callout tone="warn">没有可用模型。</Callout>
+      </FormSection>,
+    );
+    expect(nested()).toEqual([]);
+    const callout = document.querySelector(".cb-callout") as HTMLElement;
+    expect(callout.getAttribute("data-framed")).toBe("false");
+    expect(callout.getAttribute("role")).toBe("status");
   });
 
   it("finds a FilePicker inside a Card (it is allowed only in a Dialog)", () => {
@@ -169,17 +182,23 @@ describe("findNestedBoxes (the guard itself, red first)", () => {
 });
 
 describe("boxed pieces draw their unboxed form inside a box", () => {
-  it.each(CONTAINERS)("inside a %s: CodeBlock, EmbedFrame, DataTable and Repeater", (_, wrap) => {
-    zh(wrap(adaptive));
-    expect(nested()).toEqual([]);
-    expect(document.querySelector(".cb-code")?.getAttribute("data-framed")).toBe("false");
-    expect(document.querySelector(".cb-embed")?.getAttribute("data-framed")).toBe("false");
-    expect(document.querySelector(".cb-table")?.getAttribute("data-framed")).toBe("false");
-    expect(document.querySelector(".cb-repeater")?.getAttribute("data-variant")).toBe("divided");
-  });
+  it.each(CONTAINERS)(
+    "inside a %s: Callout, CodeBlock, EmbedFrame, DataTable and Repeater",
+    (_, wrap) => {
+      zh(wrap(adaptive));
+      expect(nested()).toEqual([]);
+      // the Callout is the warn line with its icon (spec §6.19), no tint of its own
+      expect(document.querySelector(".cb-callout")?.getAttribute("data-framed")).toBe("false");
+      expect(document.querySelector(".cb-code")?.getAttribute("data-framed")).toBe("false");
+      expect(document.querySelector(".cb-embed")?.getAttribute("data-framed")).toBe("false");
+      expect(document.querySelector(".cb-table")?.getAttribute("data-framed")).toBe("false");
+      expect(document.querySelector(".cb-repeater")?.getAttribute("data-variant")).toBe("divided");
+    },
+  );
 
   it("on the page ground they keep their box", () => {
     zh(adaptive);
+    expect(document.querySelector(".cb-callout")?.hasAttribute("data-framed")).toBe(false);
     expect(document.querySelector(".cb-code")?.getAttribute("data-framed")).toBe("true");
     expect(document.querySelector(".cb-embed")?.getAttribute("data-framed")).toBe("true");
     expect(document.querySelector(".cb-table")?.getAttribute("data-framed")).toBe("true");

@@ -4966,3 +4966,52 @@ textarea {
   grid-template-columns: minmax(0, 1fr);
   gap: var(--cb-space-3);
 }
+
+/* Callout (spec §6.19): the tinted bar on the page ground; inside a box the warn / fail line. */
+.r-callout {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-3);
+  padding: var(--cb-space-3) var(--cb-space-4);
+  border-radius: var(--cb-radius-md);
+  color: var(--cb-ink);
+}
+.r-callout[data-tone="warn"] {
+  background: color-mix(in srgb, var(--cb-warn) 15%, transparent);
+}
+.r-callout[data-tone="info"] {
+  background: var(--cb-panel);
+  color: var(--cb-muted);
+}
+.r-callout[data-tone="warn"] > i {
+  color: var(--cb-warn);
+}
+.r-callout[data-tone="info"] > i {
+  color: var(--cb-faint);
+}
+.r-callout-text {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--cb-font-prose);
+}
+.r-callout[data-framed="false"] {
+  align-items: flex-start;
+  gap: var(--cb-space-1);
+  padding: 0;
+  border-radius: 0;
+  background: none;
+}
+.r-callout[data-framed="false"][data-tone="warn"] {
+  color: var(--cb-warn);
+}
+.r-callout[data-framed="false"] > .r-callout-text {
+  font-size: var(--cb-type-prose-small-size);
+  line-height: var(--cb-type-prose-small-line);
+}
+.r-callout[data-framed="false"] > i {
+  margin-top: 4px;
+}
+.r-callout[data-framed="false"] > .r-btn {
+  align-self: center;
+  margin-left: var(--cb-space-2);
+}

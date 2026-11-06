@@ -1,11 +1,16 @@
 import { type ReactNode, useId } from "react";
+import { SkeletonText } from "./skeleton";
 
 export type SubsectionProps = {
   /** The heading (an `h3` in the `body` step, 500). */
   title: string;
   /** How many items it holds, in `faint` after the title. */
   count?: number;
-  /** One help line under the heading (`small`, `muted`, prose). */
+  /**
+   * One help line under the heading (`small`, `muted`, prose). A string is a paragraph; any other
+   * node is a block in the same place (a `div`), for content with lines of its own: a provider's
+   * listing error with its detail rows, which keep their own type step.
+   */
   description?: ReactNode;
   /** Controls at the right of the heading row (dense buttons, a status word). */
   actions?: ReactNode;
@@ -53,10 +58,48 @@ export function Subsection({
           {actions ? <div className="cb-subsection-actions">{actions}</div> : null}
         </div>
         {description ? (
-          <p className="cb-subsection-description" data-part="subsection-description">
-            {description}
-          </p>
+          typeof description === "string" ? (
+            <p className="cb-subsection-description" data-part="subsection-description">
+              {description}
+            </p>
+          ) : (
+            <div
+              className="cb-subsection-description"
+              data-part="subsection-description"
+              data-block="true"
+            >
+              {description}
+            </div>
+          )
         ) : null}
+      </div>
+      <div className="cb-subsection-body" data-part="subsection-body">
+        {children}
+      </div>
+    </section>
+  );
+}
+
+/**
+ * A subsection whose heading is not known yet (spec §6.32): the same frame with a skeleton bar in
+ * the title's slot (one `body` line, so the loaded heading row does not move the content), then
+ * the content (a loading table).
+ */
+export function LoadingSubsection({
+  variant = "guide",
+  children,
+}: {
+  variant?: "guide" | "flush";
+  children?: ReactNode;
+}) {
+  return (
+    <section className="cb-subsection" data-part="subsection" data-variant={variant}>
+      <div className="cb-subsection-head" data-part="subsection-head">
+        <div className="cb-subsection-heading" data-loading="true">
+          <span className="cb-subsection-title" data-part="subsection-title">
+            <SkeletonText width={120} />
+          </span>
+        </div>
       </div>
       <div className="cb-subsection-body" data-part="subsection-body">
         {children}

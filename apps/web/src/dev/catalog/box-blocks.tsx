@@ -1,6 +1,7 @@
 import {
   Badge,
   Button,
+  Callout,
   Card,
   CodeBlock,
   type Column,
@@ -19,7 +20,7 @@ import { RefBlock } from "./ref-block";
 
 // "One box is enough" (spec §1 principle 7, acceptance item AB): the groupings inside a box. The
 // blocks have the same ids (and boxes) as docs/design/reference/src/item-list.html and
-// subsection.html.
+// subsection.html (and callout.html: the Callout's line form inside a box).
 
 const noop = () => {};
 const MODELS = [
@@ -171,7 +172,35 @@ function subsectionBlocks(): ReactNode {
   );
 }
 
+function calloutBlocks(): ReactNode {
+  return (
+    <>
+      {/* On the page ground: the tinted bar, its icon, the sentence and one dense button. */}
+      <RefBlock id="callout-warn" width={720} pad>
+        <Callout tone="warn" action={{ label: "去配置", onSelect: noop }}>
+          扩展 demo 还缺配置：endpoints。
+        </Callout>
+      </RefBlock>
+      <RefBlock id="callout-info" width={720} pad>
+        <Callout tone="info">超级管理员不能查看会话内容。</Callout>
+      </RefBlock>
+      {/* Inside a box it draws the warn line with its icon by itself, its action kept. */}
+      <RefBlock id="callout-in-box" width={720} pad>
+        <Card title="配置">
+          <Callout tone="warn" action={{ label: "去配置", onSelect: noop }}>
+            扩展 demo 还缺配置：endpoints。
+          </Callout>
+          <Field label="endpoints">
+            <Input defaultValue="" placeholder="https://" />
+          </Field>
+        </Card>
+      </RefBlock>
+    </>
+  );
+}
+
 export const BOX_BLOCKS = {
+  callout: calloutBlocks,
   "item-list": itemListBlocks,
   subsection: subsectionBlocks,
 } as const;
