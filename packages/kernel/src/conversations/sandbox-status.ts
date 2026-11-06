@@ -36,7 +36,7 @@ export class ConversationSandboxStatus {
     ) {
       throw new ApiError("conversation.not_found", "Conversation not found");
     }
-    // a sub-agent works in its parent conversation's sandbox (sub-agents spec §10.1)
+    // a sub-agent works in its root conversation's sandbox (sub-agents spec §10.1, at every depth)
     const sandboxConv = await this.conversations.sandboxConversationOf(orgId, conversationId);
     const s = await this.sandbox.status(orgId, sandboxConv);
     if (!s) throw new ApiError("sandbox.not_found", "This conversation has no sandbox");

@@ -636,14 +636,17 @@ export type FixtureSubagent = {
   status: "running" | "done" | "failed";
   toolCalls: number;
   duration: string;
-  steps?: string[];
-  result?: string;
+  /** The dispatch prompt, the call block's IN. */
+  prompt: string;
+  /** The current tool summary of a running sub-agent. */
+  current?: string;
+  tokens: number;
 };
 
 export const SUBAGENT_FIXTURE: {
   running: FixtureSubagent[];
   done: FixtureSubagent[];
-  /** The id of the row open in the right panel. */
+  /** The id of the sub-agent open in the right panel. */
   open: string;
   totals: { calls: number; duration: string };
   panel: {
@@ -664,6 +667,10 @@ export const SUBAGENT_FIXTURE: {
       status: "running",
       toolCalls: 20,
       duration: "2分28秒",
+      prompt:
+        "只读地列出文档文件夹「示例项目」下的完整目录树。不要移动、改名、删除、共享或修改任何文件。输出：写成 JSON 到 docs/tree.json；最终回复给出文件总数、目录深度，以及一、二级目录名称。",
+      current: "Bash 列出「02 流程 / 10 现金预算」下的子目录",
+      tokens: 48_200,
     },
     {
       id: "sa_dedupe",
@@ -672,6 +679,10 @@ export const SUBAGENT_FIXTURE: {
       status: "running",
       toolCalls: 5,
       duration: "48 秒",
+      prompt:
+        "读流程 v12 里处理重复收款人的代码，说明去重规则：按哪些字段判重、重复时保留哪一行。只读，不要改代码。",
+      current: "Read flows/v12/dedupe.py",
+      tokens: 21_300,
     },
   ],
   done: [
@@ -682,9 +693,9 @@ export const SUBAGENT_FIXTURE: {
       status: "done",
       toolCalls: 8,
       duration: "1分12秒",
-      steps: ["已使用 Acme 表格: 读取区域 映射表!A1:F240", "已运行 4 个命令", "已读取 示例表.xlsx"],
-      result:
-        "结论：示例供应商 A、B、C 属于「同收款人同科目」，流程取第一行；示例供应商 D 属于「同收款人不同科目」，取最后一行。",
+      prompt:
+        "核对映射表里收款人重复的行：按收款人和科目分组，说明流程遇到重复时取哪一行，并列出受影响的供应商。只读，不要改表。",
+      tokens: 63_400,
     },
     {
       id: "sa_ids",
@@ -693,6 +704,8 @@ export const SUBAGENT_FIXTURE: {
       status: "done",
       toolCalls: 9,
       duration: "41 秒",
+      prompt: "收集流程 v12 引用的全部文档和文件夹 ID，按引用位置列出。",
+      tokens: 30_100,
     },
     {
       id: "sa_draft",
@@ -701,6 +714,8 @@ export const SUBAGENT_FIXTURE: {
       status: "failed",
       toolCalls: 4,
       duration: "1分07秒",
+      prompt: "起草一条给财务的确认消息，说明重复收款人的处理规则，请他们确认。",
+      tokens: 12_800,
     },
   ],
   open: "sa_tree",
@@ -953,4 +968,117 @@ export const NEW_CONVERSATION_FIXTURE: {
     { id: "q6", title: "翻译一份合同" },
   ],
   noMatch: "报销",
+};
+
+// ── Agent map (§6.16.28) ────────────────────────────────────────────────────
+
+export type FixtureAgentNode = {
+  id: string;
+  description: string;
+  model: string;
+  durationMs: number;
+  tokens: number;
+  status: "running" | "waiting" | "completed" | "failed" | "aborted";
+  children: FixtureAgentNode[];
+};
+
+export type FixtureAgentTask = {
+  id: string;
+  description: string;
+  status: "running" | "completed";
+  /** How long it has run (running) or ran (finished). */
+  durationMs: number;
+};
+
+const agentNode = (
+  id: string,
+  description: string,
+  model: string,
+  durationMs: number,
+  tokens: number,
+  status: FixtureAgentNode["status"],
+  children: FixtureAgentNode[] = [],
+): FixtureAgentNode => ({ id, description, model, durationMs, tokens, status, children });
+
+export type FixtureAgentCall = {
+  id: string;
+  tool: string;
+  summary: string;
+  running: boolean;
+  /** How long the running call has run. */
+  durationMs?: number;
+  range?: string;
+};
+
+export type FixtureAgentDetail = {
+  agentType: string;
+  spawnedBy: { id: string; label: string };
+  latestText: string;
+  task: string;
+  /** A message the parent sent the agent while it worked (a bubble labelled with the parent). */
+  message: string;
+  background: FixtureAgentTask[];
+  /** In call order, oldest first (the component lists them newest first). */
+  toolCalls: FixtureAgentCall[];
+  contextPercent: number;
+};
+
+/** The agent map: a root with four children, one of them with a child, and two background tasks. */
+export const AGENT_MAP_FIXTURE: {
+  root: FixtureAgentNode;
+  /** The node open at level 2 (drawn selected). */
+  selected: string;
+  background: FixtureAgentTask[];
+  /** Three levels below the root: four columns. */
+  deep: FixtureAgentNode;
+  /** Level 2 and 3 of the selected node (`am_invoice`). */
+  detail: FixtureAgentDetail;
+} = {
+  root: agentNode("am_root", "整理季度经营报告", "opus 5.5", 2_538_000, 392_700, "running", [
+    agentNode("am_sales", "汇总各区域销售数据", "opus 5.5", 724_000, 188_200, "completed"),
+    agentNode("am_invoice", "核对供应商发票与付款记录", "opus 5.5", 985_000, 266_500, "running", [
+      agentNode("am_review", "复查发票核对结果", "sonnet 5.5", 67_000, 108_800, "running"),
+    ]),
+    agentNode("am_summary", "起草管理层摘要", "opus 5.5", 280_000, 41_000, "waiting"),
+    agentNode("am_appendix", "翻译附录表格", "haiku 5.5", 192_000, 30_400, "failed"),
+  ]),
+  selected: "am_invoice",
+  background: [
+    { id: "bg_dev", description: "启动本地预览服务", status: "running", durationMs: 482_000 },
+    { id: "bg_test", description: "跑全量数据校验", status: "completed", durationMs: 221_000 },
+  ],
+  deep: agentNode("am_d0", "整理季度经营报告", "opus 5.5", 2_538_000, 392_700, "running", [
+    agentNode("am_d1", "核对供应商发票与付款记录", "opus 5.5", 985_000, 266_500, "running", [
+      agentNode("am_d2", "复查发票核对结果", "sonnet 5.5", 312_000, 108_800, "running", [
+        agentNode("am_d3", "抽查十张大额发票", "haiku 5.5", 41_000, 12_300, "running"),
+      ]),
+    ]),
+    agentNode("am_d1b", "汇总各区域销售数据", "opus 5.5", 724_000, 188_200, "completed"),
+  ]),
+  detail: {
+    agentType: "财务助手",
+    spawnedBy: { id: "am_root", label: "整理季度经营报告" },
+    latestText: "三月份还差 4 笔付款没对上，现在跑一遍核对脚本。",
+    task: "核对第一季度供应商发票与付款记录：以 ERP 导出的付款流水为准，逐笔匹配发票号、金额和收款方，列出未匹配和金额不一致的记录，按供应商汇总后交回。",
+    message: "先核对三月份，一二月的已经由财务确认过。",
+    background: [
+      { id: "bg_sync", description: "同步 ERP 付款流水", status: "running", durationMs: 95_000 },
+    ],
+    toolCalls: [
+      { id: "tc1", tool: "Read", summary: "finance/q1/README.md", running: false },
+      { id: "tc2", tool: "Bash", summary: "列出一季度发票文件", running: false },
+      { id: "tc3", tool: "Grep", summary: "invoice_no", running: false },
+      {
+        id: "tc4",
+        tool: "Read",
+        summary: "finance/q1/payments-2026-03.csv",
+        running: false,
+        range: "第 1–180 行",
+      },
+      { id: "tc5", tool: "Bash", summary: "按供应商汇总付款金额", running: false },
+      { id: "tc6", tool: "Edit", summary: "finance/q1/reconcile.py", running: false },
+      { id: "tc7", tool: "Bash", summary: "运行核对脚本", running: true, durationMs: 12_000 },
+    ],
+    contextPercent: 31,
+  },
 };

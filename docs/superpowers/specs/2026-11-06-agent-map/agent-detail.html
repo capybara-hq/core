@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>Agent Map · 放在哪里</title>
+<style>
+:root{
+  --bg:#0A0A0A;--panel:#111110;--panel2:#0E0E0D;--raised:#141413;--selected:#1F1F1D;--hover:#171716;
+  --line-soft:#1C1C1A;--line:#2A2A28;--line-strong:#3A3A37;--card:rgba(255,255,255,.08);
+  --ink:#E6E6E3;--muted:#8E8E89;--faint:#5A5A56;--accent:#FF6A13;--tint:rgba(255,106,19,.12);
+  --ok:#3FD483;--fail:#FF5C52;--warn:#F2C14B;--scrim:rgba(0,0,0,.6);
+  --mono:"Sarasa Mono SC",ui-monospace,SFMono-Regular,Menlo,monospace;
+  --prose:"Inter","Source Han Sans SC","PingFang SC",system-ui,sans-serif;
+}
+*{box-sizing:border-box}
+body{margin:0;background:#050505;color:var(--ink);font:13px/20px var(--mono);padding:28px 32px 60px}
+h1{font:600 20px/28px var(--prose);margin:0 0 4px}
+.sub{color:var(--muted);margin:0 0 24px;font-family:var(--prose)}
+.opt{margin:0 0 40px;border:1px solid var(--line);border-radius:12px;overflow:hidden;cursor:pointer;transition:border-color .12s}
+.opt:hover{border-color:var(--line-strong)}
+.opt.selected{border-color:var(--accent);box-shadow:0 0 0 3px rgba(255,106,19,.25)}
+.opt-head{display:flex;gap:12px;align-items:baseline;padding:14px 18px;background:var(--panel);border-bottom:1px solid var(--line)}
+.opt-head b{font:600 16px/24px var(--prose)}
+.opt-head span{color:var(--muted);font-family:var(--prose)}
+.letter{display:inline-grid;place-items:center;width:24px;height:24px;border-radius:6px;background:var(--tint);color:var(--accent);font-weight:700}
+
+/* app frame */
+.app{display:flex;height:720px;background:var(--bg);position:relative;overflow:hidden}
+.side{width:220px;background:var(--panel);border-right:1px solid var(--line-soft);padding:14px 12px;flex:none}
+.brand{color:var(--accent);font-weight:700;letter-spacing:.08em;margin-bottom:18px}
+.side .it{padding:5px 8px;border-radius:6px;color:var(--ink)}
+.side .it.on{background:#1A1A18}
+.side .grp{color:var(--faint);margin:14px 8px 6px;font-size:12px}
+.dot{display:inline-block;width:6px;height:6px;border-radius:50%;margin-right:6px;vertical-align:middle}
+.main{flex:1;display:flex;flex-direction:column;min-width:0}
+.titlebar{height:48px;display:flex;align-items:center;padding:0 16px;border-bottom:1px solid var(--line-soft);gap:14px}
+.titlebar .t{font-weight:600;flex:1}
+.tb-ico{width:28px;height:28px;border-radius:6px;display:grid;place-items:center;color:var(--muted);position:relative}
+.tb-ico.on{background:var(--selected);color:var(--ink)}
+.tb-ico .badge{position:absolute;top:-3px;right:-5px;background:var(--accent);color:#0A0A0A;font-size:10px;line-height:14px;border-radius:7px;padding:0 4px;font-weight:700}
+.chat{flex:1;padding:22px 28px;overflow:hidden;font-family:var(--prose);font-size:15px;line-height:26px}
+.bubble{margin-left:auto;width:max-content;max-width:70%;background:var(--raised);border-radius:10px;padding:8px 14px;margin-bottom:18px}
+.group-h{font:13px/20px var(--mono);color:var(--muted);margin:16px 0 8px;display:flex;gap:8px;align-items:center}
+.rows{background:var(--panel);border-radius:8px;font:13px/20px var(--mono)}
+.row{display:flex;align-items:center;gap:10px;height:40px;padding:0 14px;border-top:1px solid var(--line-soft)}
+.row:first-child{border-top:0}
+.row .tag{background:var(--selected);color:var(--muted);border-radius:4px;padding:0 6px;font-size:12px}
+.row .d{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row .m{color:var(--faint)}
+.composer{margin:0 28px 14px;border:1px solid var(--line);border-radius:10px;padding:12px 14px;color:var(--faint);height:84px;background:var(--panel2)}
+.status{height:24px;border-top:1px solid var(--line-soft);color:var(--faint);font-size:12px;display:flex;align-items:center;padding:0 16px;gap:16px}
+
+.spin{width:14px;height:14px;border-radius:50%;border:2px solid rgba(255,106,19,.25);border-top-color:var(--accent);flex:none;animation:sp .8s linear infinite}
+@keyframes sp{to{transform:rotate(360deg)}}
+.ok{width:14px;height:14px;flex:none;color:var(--ok)}
+.st{width:8px;height:8px;border-radius:50%;flex:none}
+.st.run{background:var(--accent)} .st.done{background:var(--ok)} .st.fail{background:var(--fail)} .st.stop{background:var(--faint)} .st.wait{background:var(--warn)}
+
+/* ---- Option A: modal, columns ---- */
+.scrim{position:absolute;inset:0;background:var(--scrim)}
+.dialog{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:940px;max-height:640px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:22px 26px;box-shadow:0 20px 60px rgba(0,0,0,.6)}
+.dialog h3{margin:0;font:600 18px/26px var(--prose);display:flex}
+.dialog h3 .x{margin-left:auto;color:var(--muted);font-weight:400}
+.dialog .count{color:var(--muted);margin:4px 0 18px;font-family:var(--prose)}
+.cols{display:grid;grid-template-columns:240px 26px 290px 26px 260px;align-items:start}
+.node{border:1px solid var(--line);border-radius:8px;padding:9px 12px;background:var(--panel2)}
+.node:hover{border-color:var(--line-strong);background:var(--hover)}
+.node .n{display:flex;gap:8px;align-items:center;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.node .n span{overflow:hidden;text-overflow:ellipsis}
+.node .k{color:var(--muted);font-size:12px;margin-top:2px;padding-left:16px}
+.node.root{border-color:var(--line-strong);background:var(--raised)}
+.node.sel{border-color:var(--accent)}
+.stack{display:flex;flex-direction:column;gap:10px}
+.conn{align-self:stretch;position:relative}
+.conn:before{content:"";position:absolute;left:12px;top:22px;bottom:22px;border-left:1px solid var(--line-strong)}
+.conn.one:before{top:22px;bottom:auto;height:0;left:0;right:0;border-left:0;border-top:1px solid var(--line-strong)}
+.legend{display:flex;gap:16px;color:var(--faint);font-size:12px;margin-top:18px}
+.legend i{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px}
+
+/* ---- Option B: right panel, indented tree ---- */
+.rp{width:440px;flex:none;border-left:1px solid var(--line-soft);background:var(--bg);display:flex;flex-direction:column}
+.rp-h{height:48px;display:flex;align-items:center;gap:10px;padding:0 14px;border-bottom:1px solid var(--line-soft)}
+.rp-h .t{font-weight:600;flex:1}
+.rp-h .c{color:var(--muted)}
+.btn{border:1px solid var(--line);border-radius:6px;padding:3px 10px;color:var(--ink);background:var(--panel)}
+.btn.danger{color:var(--fail)}
+.tree{padding:10px 8px;font-size:13px}
+.tr{display:flex;align-items:center;gap:8px;height:44px;padding:0 10px;border-radius:6px;position:relative}
+.tr:hover{background:var(--hover)}
+.tr.sel{background:var(--selected)}
+.tr .body{flex:1;min-width:0}
+.tr .l1{display:flex;gap:8px;align-items:center}
+.tr .l1 .d{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tr .l2{color:var(--faint);font-size:12px;line-height:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tr .tag{background:var(--selected);color:var(--muted);border-radius:4px;padding:0 6px;font-size:12px;flex:none}
+.tr .chev{color:var(--faint)}
+.ind1{margin-left:22px}.ind2{margin-left:44px}
+.ind1:before,.ind2:before{content:"";position:absolute;left:-12px;top:0;bottom:50%;width:10px;border-left:1px solid var(--line);border-bottom:1px solid var(--line);border-bottom-left-radius:4px}
+.tree .foot{color:var(--faint);font-size:12px;padding:10px 10px 0;border-top:1px solid var(--line-soft);margin-top:8px}
+.rp-status{margin-top:auto;height:24px;border-top:1px solid var(--line-soft);color:var(--faint);font-size:12px;display:flex;align-items:center;padding:0 14px}
+.note{padding:12px 18px;background:var(--panel2);border-top:1px solid var(--line);color:var(--muted);font-family:var(--prose);line-height:22px}
+.note b{color:var(--ink)}
+
+.dialog{width:1100px}
+.tree2{display:flex;align-items:center}
+.branch{display:flex;align-items:center}
+.kids{display:flex;flex-direction:column;padding-left:28px;position:relative}
+.kids:before{content:"";position:absolute;left:0;width:14px;top:50%;border-top:1px solid var(--line-strong)}
+.kid{position:relative;padding:5px 0}
+.kid:before{content:"";position:absolute;left:-14px;width:14px;top:50%;border-top:1px solid var(--line-strong)}
+.kid:after{content:"";position:absolute;left:-14px;top:0;bottom:0;border-left:1px solid var(--line-strong)}
+.kid:first-child:after{top:50%}.kid:last-child:after{bottom:50%}.kid:only-child:after{display:none}
+.node{height:62px;width:320px;display:flex;flex-direction:column;justify-content:center;cursor:pointer}
+.node.root{width:320px}
+.node .k{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pulse{animation:pu 1.6s ease-in-out infinite}@keyframes pu{50%{opacity:.35}}
+.rootcol{display:flex;flex-direction:column;gap:12px;align-self:stretch;justify-content:center;position:relative}
+.bg{position:absolute;left:0;bottom:0;width:320px}
+.bg .h{color:var(--faint);font-size:12px;margin-bottom:6px}
+.bgr{display:flex;align-items:center;gap:8px;height:32px;padding:0 10px;border:1px solid var(--line-soft);border-radius:6px;margin-top:6px;background:var(--panel2);font-size:12px}
+.bgr .c{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bgr .m{color:var(--faint);white-space:nowrap}
+.bgr .tagb{color:var(--muted);background:var(--selected);border-radius:4px;padding:0 5px}
+
+.dialog{width:760px;max-height:none;padding:0;display:flex;flex-direction:column}
+.dl{height:640px}
+.d-head{padding:20px 24px 14px;border-bottom:1px solid var(--line-soft)}
+.d-title{display:flex;align-items:center;gap:10px;font:600 17px/26px var(--prose)}
+.d-title .back{color:var(--muted);font-weight:400;font-size:18px}
+.d-title .ttl{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1}
+.d-title .x{color:var(--muted);font-weight:400}
+.meta{color:var(--muted);font-size:12px;line-height:20px;padding-left:28px}
+.meta a{color:var(--ink);text-decoration:underline;text-decoration-color:var(--line-strong)}
+.d-body{flex:1;overflow:hidden;padding:14px 24px;position:relative}
+.d-body:after{content:"";position:absolute;left:0;right:0;bottom:0;height:40px;background:linear-gradient(transparent,var(--panel))}
+.latest{font:15px/24px var(--prose);margin:2px 0 14px;display:flex;gap:10px;align-items:flex-start}
+.sec{display:flex;gap:8px;align-items:center;color:var(--ink);font-weight:600;margin:10px 0 6px}
+.sec .cv{color:var(--faint);font-weight:400;width:12px}
+.sec .n{color:var(--faint);font-weight:400}
+.tc{display:flex;gap:12px;height:28px;align-items:center;padding-left:20px}
+.tc b{width:44px;flex:none}
+.tc span{color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tc.live span{color:var(--ink)}
+.tc .r{margin-left:auto;color:var(--faint);flex:none;padding-left:8px}
+.d-foot{display:flex;gap:12px;padding:14px 24px;border-top:1px solid var(--line-soft)}
+.d-foot .b{flex:1;text-align:center;height:36px;line-height:34px;border:1px solid var(--line);border-radius:8px;background:var(--panel2)}
+.d-foot .b.danger{color:var(--fail)}
+/* transcript */
+.big{width:1060px}
+.tl{height:660px}
+.tx{flex:1;overflow:hidden;padding:18px 28px;position:relative;font:15px/26px var(--prose)}
+.ts{color:var(--faint);font:12px/16px var(--mono);text-align:right;margin-bottom:6px}
+.ubub{background:var(--raised);border:1px solid var(--line-soft);border-radius:10px;padding:10px 14px;margin-bottom:16px}
+.ubub .from{font:12px/16px var(--mono);color:var(--muted);margin-bottom:4px}
+.ubub.msg{border-color:rgba(255,106,19,.35);background:var(--tint)}
+.tool{border:1px solid var(--line-soft);border-radius:8px;margin:8px 0 14px;font:13px/20px var(--mono);overflow:hidden}
+.tool .th{display:flex;gap:10px;align-items:center;height:34px;padding:0 12px;background:var(--panel2)}
+.tool .th b{font-weight:600}
+.tool .th span{color:var(--muted)}
+.tool .io{display:flex;gap:14px;padding:8px 12px;border-top:1px solid var(--line-soft)}
+.tool .io i{font-style:normal;color:var(--faint);width:28px;flex:none}
+.tool .io pre{margin:0;font:inherit;white-space:pre-wrap;color:var(--ink)}
+.ro{height:28px;border-top:1px solid var(--line-soft);color:var(--faint);font-size:12px;display:flex;align-items:center;padding:0 16px;gap:16px}
+.ro .sp{flex:1}
+</style></head><body><h1>点开节点后：第 2 层和第 3 层</h1><p class="sub">深色主题；文案按「智能体」。</p>
+<div class="opt" style="cursor:default"><div class="opt-head"><span class="letter">2</span><b>第 2 层 · 点击节点后</b><span>替换弹窗内容，← 回到智能体图；内容实时推送，只到工具概要粒度</span></div>
+<div class="app dl"><div class="side"></div><div class="main"></div><div class="scrim"></div>
+<div class="dialog">
+ <div class="d-head">
+  <div class="d-title"><span class="back">←</span><span class="st run pulse"></span><span class="ttl">Task 4: org upload without extension</span><span class="x">✕</span></div>
+  <div class="meta">运行中 · 实现 · opus 5.5 · 后台</div>
+  <div class="meta">由 <a>插件与组件管理</a> 派出</div>
+  <div class="meta">16分25秒 · 266.5k tokens</div>
+ </div>
+ <div class="d-body">
+  <div class="latest"><span>现在跑相关的 vitest。</span></div>
+  <div class="sec"><span class="cv">›</span>任务</div>
+  <div class="sec"><span class="cv">›</span>后台任务 <span class="n">1</span></div>
+  <div class="sec"><span class="cv">⌄</span>工具调用 <span class="n">104</span></div>
+  <div class="tc live"><span class="st run pulse"></span><b>Bash</b><span>运行 focused vitest</span><span class="r">12 秒</span></div>
+  <div class="tc"><b>Edit</b><span>packages/kernel/src/catalog/plugin-import.ts</span></div>
+  <div class="tc"><b>Bash</b><span>View scope computation</span></div>
+  <div class="tc"><b>Read</b><span>packages/kernel/src/catalog/ownership.ts</span><span class="r">第 1–180 行</span></div>
+  <div class="tc"><b>Bash</b><span>Find raw body handling for uploads</span></div>
+  <div class="tc"><b>Bash</b><span>Read upload route handling in app.ts</span></div>
+  <div class="tc"><b>Grep</b><span>authorizeSuperAdmin</span></div>
+  <div class="tc"><b>Bash</b><span>Inspect ApiError and registry</span></div>
+  <div class="tc"><b>Read</b><span>docs/superpowers/specs/2026-11-05-plugin-component-management-design.md</span></div>
+  <div class="tc"><b>Bash</b><span>Read task brief and constraints</span></div>
+ </div>
+ <div class="d-foot"><span class="b">打开完整记录</span><span class="b danger">停止</span></div>
+</div></div>
+<div class="note"><b>说明：</b>最新工具调用排在最上面，正在跑的带呼吸点和计时。「任务」展开是派发时的 prompt；「后台任务」只列这个智能体自己启动的。已结束的智能体没有「停止」，只有「打开完整记录」（占满一行）。停止会连同它的子智能体一起停。</div></div>
+
+<div class="opt" style="cursor:default"><div class="opt-head"><span class="letter">3</span><b>第 3 层 · 打开完整记录</b><span>像普通会话一样渲染（复用会话页的消息、工具块），只读，实时追加</span></div>
+<div class="app tl"><div class="side"></div><div class="main"></div><div class="scrim"></div>
+<div class="dialog big">
+ <div class="d-head">
+  <div class="d-title"><span class="back">←</span><span class="st run pulse"></span><span class="ttl">Task 4: org upload without extension</span><span class="x">✕</span></div>
+  <div class="meta">运行中 · 实现 · opus 5.5 · 后台 · 由 <a>插件与组件管理</a> 派出 · 16分25秒 · 266.5k tokens</div>
+ </div>
+ <div class="tx">
+  <div class="ts">14:17</div>
+  <div class="ubub"><div class="from">任务 · 来自 插件与组件管理</div>你在实现 Capybara「plugin scope phase 3」的 Task 4：org 上传不带 extension 的插件（kernel 的 org 作用域路由，加上 web 代理入口）……</div>
+  <div>先读任务说明和约束。</div>
+  <div class="tool"><div class="th"><span class="st done"></span><b>Bash</b><span>Read task brief and constraints</span></div></div>
+  <div class="ts">14:29</div>
+  <div class="ubub msg"><div class="from">消息 · 来自 插件与组件管理</div>先别管上传大小限制，优先保证 org 隔离：GET review 和 confirm 都要校验 staging 的 org_id。</div>
+  <div>收到，先补 org_id 校验，再补跨 org 的测试。</div>
+  <div class="tool"><div class="th"><span class="st done"></span><b>SubagentHandback</b><span>交回中间报告</span></div>
+   <div class="io"><i>IN</i><pre>状态：完成第一版。提交 478402c6 feat: org admins upload plugins without an extension……</pre></div>
+   <div class="io"><i>OUT</i><pre>报告已交给 插件与组件管理</pre></div></div>
+  <div class="tool"><div class="th"><span class="st run pulse"></span><b>Bash</b><span>运行 focused vitest</span><span style="margin-left:auto;color:var(--faint)">12 秒</span></div>
+   <div class="io"><i>IN</i><pre>pnpm exec vitest run packages/kernel/test/catalog/org-upload.test.ts</pre></div></div>
+ </div>
+ <div class="ro"><span>子智能体只读 · 不能和它对话，请让 插件与组件管理 转达</span><span class="sp"></span><span>上下文 31%</span><span class="b danger" style="color:var(--fail)">停止</span></div>
+</div></div>
+<div class="note"><b>说明：</b>和普通会话一样的时间线；父智能体发来的消息用 accent 色气泡标明来源，<code>SubagentHandback</code> 作为普通工具块出现。没有输入框，底部状态栏说明为什么。宽度比第 2 层大（1060），也可以考虑直接跳到子会话页面 /chat/&lt;子会话 id&gt;。</div></div>
+</body></html>

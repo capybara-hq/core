@@ -484,15 +484,21 @@ describe("waking an idle conversation", { timeout: 60_000 }, () => {
 });
 
 describe("no wake", { timeout: 60_000 }, () => {
-  it("for a sub-agent's task: the finish is in the child's log and nothing runs", async () => {
+  it("for the parent, on a sub-agent's task: the finish wakes the sub-agent, never its parent", async () => {
     const conv = await idleConversation("SCENARIO child");
     const child = randomUUID();
     await sql`INSERT INTO capybara.conversations
       (id, org_id, agent_id, account_id, kind, parent_conversation_id)
       VALUES (${child}, ${orgId}, ${agentId}, ${ownerId}, 'subagent', ${conv})`.execute(raw);
     const f = await finishTask(child);
-    expect(f).toBeDefined();
-    await expectNoWake(child, 0);
+    // the child's wake run (agent map spec §5.3; its run is covered by the sub-agent wake tests)
+    const wake = await waitFor(
+      async () => (await runRows(child))[0] ?? null,
+      15_000,
+      "the child's wake run",
+    );
+    expect(Number(wake.trigger_seq)).toBe(f.seq);
+    expect(wake.trigger_account_id).toBe(ownerId);
     await expectNoWake(conv, 1);
   });
 

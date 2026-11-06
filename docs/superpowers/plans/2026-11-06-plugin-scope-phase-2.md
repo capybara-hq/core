@@ -23,7 +23,7 @@ marked **(ruling)** here and recorded in the ledger.
 
 ## Global Constraints
 
-- Everything local: no push, PR, publish. Next migration number `0080`.
+- Everything local: no push, PR, publish. Next migration number `0081`.
 - Replay invariant (AGENTS.md, `replay-evals`): no rewrite of agent definitions or logged events; ids
   referenced by `agent_versions.definition`, `skills_catalog`, `user_message.skill`,
   `subagent_started` (template id, definition) and `conversation_queue.skill` keep resolving. Run the
@@ -78,7 +78,7 @@ marked **(ruling)** here and recorded in the ledger.
 
 ### Task 1: Schema for platform components
 
-**Files:** create `packages/kernel/src/migrations/0080_platform_components.sql`; modify
+**Files:** create `packages/kernel/src/migrations/0081_platform_components.sql`; modify
 `packages/kernel/src/db/kernel-schema.ts`; test `packages/kernel/test/catalog/platform-schema-migration.test.ts`.
 
 **Interfaces — produces:**
@@ -104,7 +104,7 @@ marked **(ruling)** here and recorded in the ledger.
   `connectors.platform_template_id text null → platform_connector_templates set null`.
 - Kysely types for all of the above.
 
-- [ ] Test (RED first): migrate to 0079, seed a skill and template, migrate to 0080: tables exist,
+- [ ] Test (RED first): migrate to 0080, seed a skill and template, migrate to 0081: tables exist,
   links null, `agent_templates.plugin_name` nullable, re-run is a no-op.
 - [ ] Migration + types; `pnpm check:migrations`; commit `feat(kernel): platform component tables`.
 
@@ -178,7 +178,7 @@ for both kinds; `GET orgs/:orgId/agent-templates` lists the usable set with `ori
 
 **Files:** `packages/kernel/src/catalog/platform-migration.ts` (a one-shot `@LockedInterval runOnStart`
 worker job `platform-components-migrate`, idempotent, recorded in a `platform_migration_runs` row or
-`bootstrap_runs`-like table created in 0080 if needed — builder's call, ledgered), tests
+`bootstrap_runs`-like table created in 0081 if needed — builder's call, ledgered), tests
 `packages/kernel/test/catalog/platform-migration.test.ts`.
 
 Rules (spec §6 migration + §13.5):

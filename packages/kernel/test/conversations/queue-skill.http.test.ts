@@ -58,21 +58,35 @@ const SANDBOX_FAKE = fileURLToPath(
 );
 
 const CHILD = "You are a sub-agent";
+const LEAD = "Lead the work.";
 const RULES: ScriptRule[] = [
   { when: { systemIncludes: CHILD }, reply: { text: "child report" } },
   {
-    when: { lastUserIncludes: "HOLD" },
+    // only the agent's own request: the conversation title call quotes "HOLD" too, and a title
+    // request at the barrier would take the release meant for the run (or arrive in a later test)
+    when: { systemIncludes: LEAD, lastUserIncludes: "HOLD" },
     reply: { text: "held", barrier: { name: "hold", count: 99, timeoutMs: 60_000 } },
   },
   { when: {}, reply: { text: "answer" } },
 ];
 
+const holdBarrier = () =>
+  (
+    globalThis as { __modelScript?: { barriers: Map<string, { waiters: (() => void)[] }> } }
+  ).__modelScript?.barriers.get("hold");
+
 /** Releases the run waiting at the `hold` barrier (the kernel runs in this process). */
 function release(): void {
-  const s = (
-    globalThis as { __modelScript?: { barriers: Map<string, { waiters: (() => void)[] }> } }
-  ).__modelScript;
-  for (const w of s?.barriers.get("hold")?.waiters.splice(0) ?? []) w();
+  for (const w of holdBarrier()?.waiters.splice(0) ?? []) w();
+}
+
+/**
+ * Waits until a model request is waiting at the `hold` barrier. A run is `running` before its
+ * model request reaches the barrier; a `release()` in between frees nobody, and the request then
+ * waits out the barrier's 60 s timeout.
+ */
+async function held(): Promise<void> {
+  await waitFor(async () => (holdBarrier()?.waiters.length ?? 0) > 0, 15_000, "a request held");
 }
 
 let pgc: TestContainer;
@@ -210,7 +224,7 @@ async function seedSkill(
 
 const definition = (skills: string[], tools: { kind: "builtin"; name: string }[] = []) => ({
   name: "Lead",
-  instructions: "Lead the work.",
+  instructions: LEAD,
   model: { provider: "model-script", model: "script-1" },
   tools,
   skills: { orgSkills: skills },
@@ -280,6 +294,7 @@ async function holdRun(conv: string): Promise<void> {
     15_000,
     "the held run running",
   );
+  await held();
 }
 
 const FIX = "Fix GitHub issue $ARGUMENTS.";
@@ -526,7 +541,7 @@ describe("queued skill invocations: more cases (batch 5 review m5)", { timeout: 
     expect(ofType(await eventsOf(db, conv), "user_message")).toHaveLength(1);
   });
 
-  it("a queued fork waits while the parent waits on its own sub-agent, then runs after it", async () => {
+  it("a queued fork does not wait for the parent's background sub-agent: it goes out once the run ended", async () => {
     const review = await seedForkedSkill(
       { db, storage: k.app.get(StorageService), orgId, ownerId },
       "review",
@@ -558,14 +573,22 @@ describe("queued skill invocations: more cases (batch 5 review m5)", { timeout: 
       20_000,
       "the parent's sub-agent dispatched",
     );
+    // the parent's run ends at once (agent map spec §5.4): its sub-agent works in the background
+    await waitForTerminal(db, conv, 1, 20_000);
+    await held();
     const q = await enqueue(conv, { text: "src", skill: { name: "review" } });
     expect(q.statusCode, q.body).toBe(201);
-    await sleep(1_000);
-    // held: the parent waits on its sub-agent, so the queue does not move
-    expect(ofType(await eventsOf(db, conv), "user_message")).toHaveLength(1);
-    expect((await queueOf(conv)).items).toHaveLength(1);
-    release();
+    // the queue moves although the background sub-agent is still held
     await waitForTerminal(db, conv, 2, 60_000);
+    const kid = await db
+      .selectFrom("subagent_dispatches as sd")
+      .innerJoin("runs as r", "r.id", "sd.child_run_id")
+      .select("r.status")
+      .where("sd.parent_conversation_id", "=", conv)
+      .where("sd.for_skill", "=", false)
+      .executeTakeFirstOrThrow();
+    expect(kid.status).toBe("running");
+    release();
     const events = await eventsOf(db, conv);
     const msgs = ofType(events, "user_message");
     expect(msgs).toHaveLength(2);

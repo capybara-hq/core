@@ -234,6 +234,8 @@ export interface ConversationsTable {
   archived_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
   /** 0065: when the owner deleted it (soft delete: hidden everywhere for the owner); null = live. */
   deleted_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
+  /** 0074: levels below the root conversation (0 = a root; a sub-agent's is its parent's + 1). */
+  subagent_depth: ColumnType<number, number | undefined, number>;
 }
 
 /** 0060: an org's order of file-preview@1 previewers (UI refresh B Task 11). */
@@ -319,6 +321,11 @@ export interface RunsTable {
   subagent_tokens_used: Int8;
   /** 0054: when this run's `subagents` wait expires (set while it waits on sub-agents). */
   wait_expires_at: TsNullable;
+  /**
+   * 0074: the person-triggered root run whose budget window this run counts against (dispatches
+   * and its descendants' tokens, agent map spec §6); null = the run is its own budget run.
+   */
+  budget_run_id: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
 /** 0053: one row per sub-agent dispatch (an `Agent` call of a parent run). */
@@ -332,25 +339,29 @@ export interface SubagentDispatchesTable {
   /** A follow-up to an existing sub-agent, not a new one. */
   resumed: ColumnType<boolean, boolean | undefined, boolean>;
   created_at: Ts;
+  /** 0074: the budget run the dispatch counts against (`runs.budget_run_id` of the tree). */
+  budget_run_id: string;
+  /** 0074: the dispatch of a `context: fork` skill invocation (phase D). */
+  for_skill: ColumnType<boolean, boolean | undefined, boolean>;
 }
 
 /** 0053: an agent template installed in an org from a plugin. */
 export interface AgentTemplatesTable {
   id: string;
-  /** 0083: the owner shares this template with other orgs. */
+  /** 0084: the owner shares this template with other orgs. */
   shareable: Dflt<boolean>;
   org_id: string;
   name: string;
   catalog_item_id: ColumnType<string | null, string | null | undefined, string | null>;
-  /** The plugin that installed it: the roster type is `<plugin>:<name>`; null (0080, nullable) = the bare `<name>`. */
+  /** The plugin that installed it: the roster type is `<plugin>:<name>`; null (0081, nullable) = the bare `<name>`. */
   plugin_name: ColumnType<string | null, string | null | undefined, string | null>;
   current_version: number;
   deleted_at: TsNullable;
   created_at: Ts;
   updated_at: Ts;
-  /** 0080: the platform template this copy links to (null = none). */
+  /** 0081: the platform template this copy links to (null = none). */
   platform_template_id: ColumnType<string | null, string | null | undefined, string | null>;
-  /** 0080: a pin keeps the copy on its own stored version (ruling B2). */
+  /** 0081: a pin keeps the copy on its own stored version (ruling B2). */
   pinned_version: ColumnType<number | null, number | null | undefined, number | null>;
 }
 
@@ -398,7 +409,7 @@ export interface ConnectorsTable {
     string | null | undefined,
     string | null
   >;
-  /** 0080: the platform connector template this connector was made from (null = none). */
+  /** 0081: the platform connector template this connector was made from (null = none). */
   platform_template_id: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
@@ -654,7 +665,7 @@ export interface SkillManifest {
 /** 0024_skills.sql：技能（组织技能库 / agent 自己的技能）。 */
 export interface SkillsTable {
   id: string;
-  /** 0083: the owner shares this copy with other orgs. */
+  /** 0084: the owner shares this copy with other orgs. */
   shareable: Dflt<boolean>;
   org_id: string;
   scope: "org" | "agent";
@@ -662,7 +673,7 @@ export interface SkillsTable {
   name: string;
   description: string;
   current_version: number;
-  /** 0075: null for a skill the kernel created (the plugin scope sync). */
+  /** 0076: null for a skill the kernel created (the plugin scope sync). */
   created_by: string | null;
   created_at: Ts;
   updated_at: Ts;
@@ -673,9 +684,9 @@ export interface SkillsTable {
    */
   catalog_item_id: ColumnType<string | null, string | null | undefined, string | null>;
   catalog_version: ColumnType<string | null, string | null | undefined, string | null>;
-  /** 0080: the platform skill this copy links to (null = none). */
+  /** 0081: the platform skill this copy links to (null = none). */
   platform_skill_id: ColumnType<string | null, string | null | undefined, string | null>;
-  /** 0080: a pin keeps the copy on its own stored version (ruling B2). */
+  /** 0081: a pin keeps the copy on its own stored version (ruling B2). */
   pinned_version: ColumnType<number | null, number | null | undefined, number | null>;
 }
 
@@ -685,7 +696,7 @@ export interface SkillVersionsTable {
   version: number;
   manifest: Json<SkillManifest>;
   object_prefix: string;
-  /** 0075: null for a version the kernel created (the plugin scope sync). */
+  /** 0076: null for a version the kernel created (the plugin scope sync). */
   created_by: string | null;
   created_at: Ts;
   /**
@@ -1093,7 +1104,7 @@ export interface KernelDatabase {
   plugin_scope_sync_failures: PluginScopeSyncFailuresTable;
 }
 
-/** 0081: one run of the platform components migration job (`catalog/platform-migration.ts`). */
+/** 0082: one run of the platform components migration job (`catalog/platform-migration.ts`). */
 export interface PlatformMigrationRunsTable {
   id: string;
   started_at: Ts;
@@ -1101,7 +1112,7 @@ export interface PlatformMigrationRunsTable {
   stats: Json<Record<string, unknown>>;
 }
 
-/** 0081: the kinds of {@link OrgNoticesTable}. */
+/** 0082: the kinds of {@link OrgNoticesTable}. */
 export type OrgNoticeKind =
   | "skill_renamed"
   | "item_shared"
@@ -1109,7 +1120,7 @@ export type OrgNoticeKind =
   | "upload_confirmed"
   | "upload_rejected";
 
-/** 0081: a notice for an org's admins (an inbox item), until one of them dismisses it. */
+/** 0082: a notice for an org's admins (an inbox item), until one of them dismisses it. */
 export interface OrgNoticesTable {
   id: string;
   org_id: string;
@@ -1121,7 +1132,7 @@ export interface OrgNoticesTable {
   dismissed_by: NullableCol<string>;
 }
 
-/** 0083: a notice for the super admins (platform inbox), until one of them dismisses it. */
+/** 0084: a notice for the super admins (platform inbox), until one of them dismisses it. */
 export interface PlatformNoticesTable {
   id: string;
   kind: "ownership_transferred";
@@ -1132,13 +1143,13 @@ export interface PlatformNoticesTable {
 }
 
 /**
- * 0082: what a failed scope sync attempt was doing: turning the plugin on, off, or installing the
+ * 0083: what a failed scope sync attempt was doing: turning the plugin on, off, or installing the
  * dependencies a platform update added to a live install.
  */
 export type ScopeSyncOp = "install" | "uninstall" | "dependencies";
 
 /**
- * 0082: an open failure of the plugin scope sync for one (item, org): its last attempt failed; the
+ * 0083: an open failure of the plugin scope sync for one (item, org): its last attempt failed; the
  * next sync of the pair that does not fail deletes the row.
  */
 export interface PluginScopeSyncFailuresTable {
@@ -1185,41 +1196,41 @@ export interface CatalogItemsTable {
   deleted_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
   /** 0035, renamed in 0042: the marketplace it was imported from (null once that is deleted). */
   marketplace_id: ColumnType<string | null, string | null | undefined, string | null>;
-  /** 0074: who the plugin is offered to (`named`: the rows of `catalog_item_scope_orgs`). */
+  /** 0075: who the plugin is offered to (`named`: the rows of `catalog_item_scope_orgs`). */
   scope: ColumnType<
     "all" | "optional" | "named",
     "all" | "optional" | "named" | undefined,
     "all" | "optional" | "named"
   >;
-  /** 0074: shipped with the deployment (required bootstrap plugins); always scope `all`. */
+  /** 0075: shipped with the deployment (required bootstrap plugins); always scope `all`. */
   builtin: ColumnType<boolean, boolean | undefined, boolean>;
-  /** 0074: switched off for every org by the super admin. */
+  /** 0075: switched off for every org by the super admin. */
   disabled: ColumnType<boolean, boolean | undefined, boolean>;
-  /** 0074: bumped on every scope change. */
+  /** 0075: bumped on every scope change. */
   scope_version: ColumnType<number, number | undefined, number>;
-  /** 0076: orgs outside a `named` item's list see it as requestable (never usable). */
+  /** 0077: orgs outside a `named` item's list see it as requestable (never usable). */
   shown_to_others: ColumnType<boolean, boolean | undefined, boolean>;
-  /** 0081: the version its platform components were last written from (null: never). */
+  /** 0082: the version its platform components were last written from (null: never). */
   platform_synced_version: NullableCol<string>;
-  /** 0083: the owning org (null = the platform). */
+  /** 0084: the owning org (null = the platform). */
   owner_org_id: NullableDflt<string>;
-  /** 0083: the owner shares it with other orgs (the gate is `owner_org_id IS NULL OR shareable`). */
+  /** 0084: the owner shares it with other orgs (the gate is `owner_org_id IS NULL OR shareable`). */
   shareable: Dflt<boolean>;
-  /** 0083: an upload waits for the super admin's confirmation of its permission digest. */
+  /** 0084: an upload waits for the super admin's confirmation of its permission digest. */
   awaiting_confirmation: Dflt<boolean>;
-  /** 0083: the uploaded version not yet confirmed. */
+  /** 0084: the uploaded version not yet confirmed. */
   pending_version: NullableDflt<string>;
   pending_by: NullableDflt<string>;
   pending_at: NullableDflt<Date | string>;
 }
 
-/** 0074: the orgs a `named` item is offered to. */
+/** 0075: the orgs a `named` item is offered to. */
 export interface CatalogItemScopeOrgsTable {
   item_id: string;
   org_id: string;
 }
 
-/** 0074: an org's on / off switch of an item's components. */
+/** 0075: an org's on / off switch of an item's components. */
 export interface CatalogItemOrgSwitchesTable {
   item_id: string;
   org_id: string;
@@ -1234,7 +1245,7 @@ type ComponentKind = "skill" | "agent_template" | "connector_template";
 type Dflt<T> = ColumnType<T, T | undefined, T>;
 type NullableDflt<T> = ColumnType<T | null, T | null | undefined, T | null>;
 
-/** 0080: the scope columns every platform component carries (ruling C2). */
+/** 0081: the scope columns every platform component carries (ruling C2). */
 interface PlatformScopeColumns {
   scope_mode: Dflt<ScopeMode>;
   scope: Dflt<ComponentScope>;
@@ -1243,14 +1254,14 @@ interface PlatformScopeColumns {
   scope_version: Dflt<number>;
 }
 
-/** 0080: a skill owned by the deployment (ruling A2). */
+/** 0081: a skill owned by the deployment (ruling A2). */
 export interface PlatformSkillsTable extends PlatformScopeColumns {
   id: string;
-  /** 0083: the owning org (null = the platform). */
+  /** 0084: the owning org (null = the platform). */
   owner_org_id: NullableDflt<string>;
-  /** 0083: the org it was created in; never changed (F27). */
+  /** 0084: the org it was created in; never changed (F27). */
   origin_org_id: NullableDflt<string>;
-  /** 0083: the owner shares it with other orgs. */
+  /** 0084: the owner shares it with other orgs. */
   shareable: Dflt<boolean>;
   catalog_item_id: NullableDflt<string>;
   plugin_name: NullableDflt<string>;
@@ -1263,7 +1274,7 @@ export interface PlatformSkillsTable extends PlatformScopeColumns {
   deleted_at: TsNullable;
 }
 
-/** 0080: one version of a platform skill; files live under `object_prefix` in `deployment/`. */
+/** 0081: one version of a platform skill; files live under `object_prefix` in `deployment/`. */
 export interface PlatformSkillVersionsTable {
   skill_id: string;
   version: number;
@@ -1277,14 +1288,14 @@ export interface PlatformSkillVersionsTable {
   created_at: Ts;
 }
 
-/** 0080: an agent template owned by the deployment. */
+/** 0081: an agent template owned by the deployment. */
 export interface PlatformAgentTemplatesTable extends PlatformScopeColumns {
   id: string;
-  /** 0083: the owning org (null = the platform). */
+  /** 0084: the owning org (null = the platform). */
   owner_org_id: NullableDflt<string>;
-  /** 0083: the org it was created in; never changed (F27). */
+  /** 0084: the org it was created in; never changed (F27). */
   origin_org_id: NullableDflt<string>;
-  /** 0083: the owner shares it with other orgs. */
+  /** 0084: the owner shares it with other orgs. */
   shareable: Dflt<boolean>;
   catalog_item_id: NullableDflt<string>;
   plugin_name: NullableDflt<string>;
@@ -1297,7 +1308,7 @@ export interface PlatformAgentTemplatesTable extends PlatformScopeColumns {
   deleted_at: TsNullable;
 }
 
-/** 0080: one version of a platform agent template. */
+/** 0081: one version of a platform agent template. */
 export interface PlatformAgentTemplateVersionsTable {
   template_id: string;
   version: number;
@@ -1311,12 +1322,12 @@ export interface PlatformAgentTemplateVersionsTable {
   created_at: Ts;
 }
 
-/** 0080: a connector template of a catalog item, with its own scope; connectors stay per org. */
+/** 0081: a connector template of a catalog item, with its own scope; connectors stay per org. */
 export interface PlatformConnectorTemplatesTable extends PlatformScopeColumns {
   id: string;
-  /** 0083: the owning org (null = the platform). */
+  /** 0084: the owning org (null = the platform). */
   owner_org_id: NullableDflt<string>;
-  /** 0083: the owner shares it with other orgs. */
+  /** 0084: the owner shares it with other orgs. */
   shareable: Dflt<boolean>;
   catalog_item_id: string;
   template_id: string;
@@ -1327,14 +1338,14 @@ export interface PlatformConnectorTemplatesTable extends PlatformScopeColumns {
   deleted_at: TsNullable;
 }
 
-/** 0080: the orgs an own-scope `named` component is offered to. */
+/** 0081: the orgs an own-scope `named` component is offered to. */
 export interface ComponentScopeOrgsTable {
   kind: ComponentKind;
   component_id: string;
   org_id: string;
 }
 
-/** 0080: an org's on / off switch of a component. */
+/** 0081: an org's on / off switch of a component. */
 export interface ComponentOrgSwitchesTable {
   kind: ComponentKind;
   component_id: string;
@@ -1380,11 +1391,11 @@ export interface CatalogItemVersionsTable {
   /** 0051: the root LICENSE was too long (or not UTF-8) to store. */
   license_truncated: ColumnType<boolean, boolean | undefined, boolean>;
   /**
-   * 0083 (ruling P3-52): when the version was applied or confirmed (default: written; an org's
+   * 0084 (ruling P3-52): when the version was applied or confirmed (default: written; an org's
    * upload writes null until applied). Only applied, not rejected versions serve other orgs.
    */
   applied_at: TsNullable;
-  /** 0083 (ruling P3-52): when the super admin rejected this pending org version. */
+  /** 0084 (ruling P3-52): when the super admin rejected this pending org version. */
   rejected_at: TsNullable;
 }
 
@@ -1448,7 +1459,7 @@ export interface MarketplaceEntriesTable {
  */
 export interface PluginImportStagingTable {
   id: string;
-  /** 0083: the org whose upload this is (null: the super admin's import). */
+  /** 0084: the org whose upload this is (null: the super admin's import). */
   org_id: NullableDflt<string>;
   review: Json<unknown>;
   manifest: Json<unknown>;
@@ -1462,30 +1473,30 @@ export interface PluginImportStagingTable {
 type NullableCol<T> = ColumnType<T | null, T | null | undefined, T | null>;
 
 /**
- * 0037, renamed in 0042, kinds since 0076: an org's catalog requests. `stage` (org / deployment) is
+ * 0037, renamed in 0042, kinds since 0077: an org's catalog requests. `stage` (org / deployment) is
  * still written (`enable` -> org, else deployment) but no longer read.
  */
 export interface CatalogRequestsTable {
   id: string;
   org_id: string;
-  /** 0076: null for an `import` request until its confirm writes the item. */
+  /** 0077: null for an `import` request until its confirm writes the item. */
   item_id: NullableCol<string>;
   version: NullableCol<string>;
-  /** 0076: what the request asks for (spec §5.1). */
+  /** 0077: what the request asks for (spec §5.1). */
   kind: ColumnType<
     "access" | "import" | "enable",
     "access" | "import" | "enable" | undefined,
     "access" | "import" | "enable"
   >;
-  /** 0076: the marketplace entry of an `import` request (null once the marketplace is deleted). */
+  /** 0077: the marketplace entry of an `import` request (null once the marketplace is deleted). */
   marketplace_id: NullableCol<string>;
   entry_name: NullableCol<string>;
   entry_version: NullableCol<string>;
-  /** 0076: the optional reason of a rejection. */
+  /** 0077: the optional reason of a rejection. */
   reason: NullableCol<string>;
-  /** 0076: the prepared import of an approved `import` request. */
+  /** 0077: the prepared import of an approved `import` request. */
   staging_id: NullableCol<string>;
-  /** 0076: the requester dismissed the decision from the inbox. */
+  /** 0077: the requester dismissed the decision from the inbox. */
   dismissed_at: NullableCol<Date>;
   stage: "org" | "deployment";
   requested_by: string | null;

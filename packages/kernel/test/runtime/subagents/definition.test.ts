@@ -245,7 +245,12 @@ const deps = () => ({
   config: { get: () => cfg },
 });
 
-const eff = async (parent: AgentDefinition, type: string, tier?: string) => {
+const eff = async (
+  parent: AgentDefinition,
+  type: string,
+  tier?: string,
+  depth: { childDepth: number; maxDepth: number } = { childDepth: 1, maxDepth: 3 },
+) => {
   const roster = await resolveRoster(db, orgId, parent);
   const entry = findType(roster, type);
   if (!entry) throw new Error(`no ${type}`);
@@ -265,6 +270,7 @@ const eff = async (parent: AgentDefinition, type: string, tier?: string) => {
     parent,
     parentAgentId,
     entry,
+    ...depth,
     ...(tier !== undefined && { tier: tier as "inherit" }),
     ...(orgAgent !== undefined && { orgAgent }),
   });
@@ -391,7 +397,7 @@ describe("effectiveDefinition", { timeout: 60_000 }, () => {
       subagents: { inline: [inline("scout")] },
     });
     const r = await eff(parent, "general-purpose");
-    expect(CHILD_REMOVED_TOOLS).toEqual(["Agent", "AskUserQuestion", "Deliver", "SkillWrite"]);
+    expect(CHILD_REMOVED_TOOLS).toEqual(["AskUserQuestion", "Deliver", "SkillWrite"]);
     expect(r.definition).toEqual({
       name: "Lead › general-purpose",
       avatarUrl: "https://example.com/a.png",
@@ -403,9 +409,11 @@ describe("effectiveDefinition", { timeout: 60_000 }, () => {
       tools: [
         { kind: "builtin", name: "ReadToolOutput" },
         { kind: "builtin", name: "Bash" },
+        { kind: "builtin", name: "Agent" },
       ],
       toolPolicies: { Bash: "ask", SkillWrite: "deny" },
       skills: { orgSkills: [s] },
+      subagents: { inline: [inline("scout")] },
     });
     expect(r.template).toEqual({ source: "general" });
     expect(r.maxSteps).toBe(30);
@@ -463,8 +471,10 @@ describe("effectiveDefinition", { timeout: 60_000 }, () => {
     expect(scout.maxSteps).toBe(30);
 
     const writer = await eff(parent, "writer");
+    // no allowlist: the parent's Agent stays below maxDepth
     expect(writer.definition.tools).toEqual([
       { kind: "builtin", name: "ReadToolOutput" },
+      { kind: "builtin", name: "Agent" },
       { kind: "connector", connectorId: jira, tools: ["create", "search"] },
       { kind: "connector", connectorId: wiki, tools: ["read"] },
     ]);
@@ -631,6 +641,74 @@ describe("effectiveDefinition", { timeout: 60_000 }, () => {
     });
   });
 
+  describe("nested dispatch (agent map spec §4.1)", () => {
+    it("an org-agent child keeps its own subagents block", async () => {
+      const own = {
+        dispatchable: true,
+        general: false,
+        inline: [inline("digger")],
+      };
+      const a = await orgAgent(
+        def({ name: "Researcher", tools: [{ kind: "builtin", name: "Agent" }], subagents: own }),
+      );
+      const parent = def({
+        tools: [{ kind: "builtin", name: "Agent" }],
+        subagents: {
+          inline: [inline("scout")],
+          agents: [{ agentId: a, as: "researcher", description: "Research." }],
+        },
+      });
+      const r = await eff(parent, "researcher");
+      expect(r.definition.subagents).toEqual(own);
+      expect(r.definition.tools).toEqual([{ kind: "builtin", name: "Agent" }]);
+    });
+
+    it("a general-purpose child inherits the parent's roster", async () => {
+      const sub = { general: true, inline: [inline("scout")] };
+      const parent = def({ tools: parentTools, subagents: sub });
+      expect((await eff(parent, "general-purpose")).definition.subagents).toEqual(sub);
+      // an inline template child dispatches from its parent's roster too
+      expect((await eff(parent, "scout")).definition.subagents).toEqual(sub);
+      // a parent without a block gives none (its children get general-purpose only)
+      expect(
+        (await eff(def({ tools: parentTools }), "general-purpose")).definition,
+      ).not.toHaveProperty("subagents");
+    });
+
+    it("Agent is removed at maxDepth only", async () => {
+      const parent = def({ tools: parentTools, subagents: { inline: [inline("scout")] } });
+      const names = (r: Awaited<ReturnType<typeof eff>>) =>
+        r.definition.tools.map((t) => (t as { name: string }).name);
+      for (const childDepth of [1, 2]) {
+        const r = await eff(parent, "general-purpose", undefined, { childDepth, maxDepth: 3 });
+        expect(names(r), `depth ${childDepth}`).toEqual(["ReadToolOutput", "Bash", "Agent"]);
+      }
+      const atMax = await eff(parent, "scout", undefined, { childDepth: 3, maxDepth: 3 });
+      expect(names(atMax)).toEqual(["ReadToolOutput", "Bash"]);
+      // maxDepth 1: no nesting at all
+      const flat = await eff(parent, "general-purpose", undefined, { childDepth: 1, maxDepth: 1 });
+      expect(names(flat)).toEqual(["ReadToolOutput", "Bash"]);
+      // an org agent's own Agent goes at the limit too
+      const a = await orgAgent(
+        def({
+          name: "Researcher",
+          tools: [
+            { kind: "builtin", name: "Agent" },
+            { kind: "builtin", name: "Bash" },
+          ],
+          subagents: { dispatchable: true },
+        }),
+      );
+      const withAgent = def({
+        subagents: { agents: [{ agentId: a, as: "researcher", description: "Research." }] },
+      });
+      const deep = await eff(withAgent, "researcher", undefined, { childDepth: 2, maxDepth: 2 });
+      expect(names(deep)).toEqual(["Bash"]);
+      const shallow = await eff(withAgent, "researcher", undefined, { childDepth: 1, maxDepth: 2 });
+      expect(names(shallow)).toEqual(["Agent", "Bash"]);
+    });
+  });
+
   describe("org agents (§5.5)", () => {
     it("checkOrgAgent: deleted, allowlist, dispatchable and visibility gates, else the checked version", async () => {
       const a = await orgAgent(def({ name: "Data Analyst", subagents: { dispatchable: true } }), 2);
@@ -719,9 +797,8 @@ describe("effectiveDefinition", { timeout: 60_000 }, () => {
           mcp__jira__search: "deny",
           ReadToolOutput: "ask",
         },
-        subagents: undefined,
+        subagents: { dispatchable: true },
       });
-      expect(r.definition.subagents).toBeUndefined();
       expect(r.model).toEqual(FAKE2);
       expect(r.tierFallback).toBe(false);
       expect(r.maxSteps).toBe(30);

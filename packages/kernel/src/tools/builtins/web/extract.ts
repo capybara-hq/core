@@ -302,7 +302,11 @@ async function logUsage(
   };
   const written = await appendCounted(
     deps,
-    { conversationId: ctx.conversationId, parentRunId: ctx.parentRunId },
+    {
+      conversationId: ctx.conversationId,
+      parentRunId: ctx.parentRunId,
+      budgetRunId: ctx.budgetRunId,
+    },
     [event],
   );
   const usage = written.find((e) => e.type === "usage");

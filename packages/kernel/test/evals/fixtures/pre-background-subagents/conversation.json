@@ -1,0 +1,1272 @@
+{
+  "model": {
+    "id": "script-1",
+    "displayName": "script-1",
+    "contextWindow": 64000,
+    "maxOutputTokens": 4096,
+    "capabilities": {
+      "tools": true,
+      "vision": false,
+      "reasoning": false,
+      "caching": false,
+      "midConversationSystem": true,
+      "effort": false
+    },
+    "parameters": []
+  },
+  "parent": {
+    "snapshot": {
+      "version": 1,
+      "orgId": "f1e3cfdb-ac3d-4243-9cca-d7d962cc6ec8",
+      "conversationId": "7d8dd594-235b-47d5-b6f8-48bfbc004e7b",
+      "runId": "5065ea7f-d133-4b51-ac3e-cc2d5a68fdec",
+      "agentId": "0314da45-45e4-42f2-90d2-86c2e57fb76b",
+      "agentVersion": 1,
+      "events": [
+        {
+          "seq": 1,
+          "type": "user_message",
+          "payload": {
+            "content": [
+              {
+                "text": "SCENARIO combo",
+                "type": "text"
+              }
+            ],
+            "authorAccountId": "92461d98-df64-4c0a-87f0-d90ce019ad8c"
+          },
+          "runId": null,
+          "createdAt": "2026-11-06T17:29:11.694Z"
+        },
+        {
+          "seq": 2,
+          "type": "run_started",
+          "payload": {
+            "model": {
+              "model": "script-1",
+              "provider": "model-script"
+            },
+            "agentVersion": 1,
+            "triggerAccountId": "92461d98-df64-4c0a-87f0-d90ce019ad8c"
+          },
+          "runId": "5065ea7f-d133-4b51-ac3e-cc2d5a68fdec",
+          "createdAt": "2026-11-06T17:29:11.715Z"
+        },
+        {
+          "seq": 3,
+          "type": "model_call",
+          "payload": {
+            "step": 1,
+            "model": "script-1",
+            "attempt": 1,
+            "request": {
+              "toSeq": 2,
+              "tools": [
+                {
+                  "key": "Agent",
+                  "specHash": "35669c0ffc71c9a6"
+                }
+              ],
+              "params": {},
+              "fromSeq": 1,
+              "summarySeq": null,
+              "systemHash": "393831a2d2b87548d0270497140c19b043f39a4c288cf102fe9b6cdad67e185c",
+              "reminderSeqs": [],
+              "absorbedUpToSeq": 1,
+              "maxOutputTokens": 4096,
+              "estimatedInputTokens": 608
+            },
+            "fallback": false,
+            "provider": "model-script"
+          },
+          "runId": "5065ea7f-d133-4b51-ac3e-cc2d5a68fdec",
+          "createdAt": "2026-11-06T17:29:11.783Z"
+        },
+        {
+          "seq": 4,
+          "type": "assistant_message",
+          "payload": {
+            "step": 1,
+            "content": [
+              {
+                "id": "4ac7ed2d-eea4-4b63-b2a0-21688039d5e3",
+                "name": "Agent",
+                "type": "tool_call",
+                "input": {
+                  "prompt": "par-1: remember kiwi 1",
+                  "description": "Part 1"
+                }
+              },
+              {
+                "id": "841b6282-112d-4164-93ce-dd85c4219ef1",
+                "name": "Agent",
+                "type": "tool_call",
+                "input": {
+                  "prompt": "par-2: remember kiwi 2",
+                  "description": "Part 2"
+                }
+              },
+              {
+                "id": "423e215e-0e52-4907-8251-277de501c35b",
+                "name": "Agent",
+                "type": "tool_call",
+                "input": {
+                  "prompt": "par-3: remember kiwi 3",
+                  "description": "Part 3"
+                }
+              }
+            ],
+            "stopReason": "tool_use"
+          },
+          "runId": "5065ea7f-d133-4b51-ac3e-cc2d5a68fdec",
+          "createdAt": "2026-11-06T17:29:11.791Z"
+        },
+        {
+          "seq": 5,
+          "type": "usage",
+          "payload": {
+            "step": 1,
+            "model": "script-1",
+            "provider": "model-script",
+            "inputTokens": 10,
+            "outputTokens": 5,
+            "cacheReadTokens": 0,
+            "cacheWriteTokens": 0
+          },
+          "runId": "5065ea7f-d133-4b51-ac3e-cc2d5a68fdec",
+          "createdAt": "2026-11-06T17:29:11.791Z"
+        },
+        {
+          "seq": 6,
+          "type": "subagent_dispatched",
+          "payload": {
+            "step": 1,
+            "model": {
+              "model": "script-1",
+              "provider": "model-script"
+            },
+            "callId": "4ac7ed2d-eea4-4b63-b2a0-21688039d5e3",
+            "resumed": false,
+            "agentType": "general-purpose",
+            "childRunId": "e4d69fe1-0cdd-457a-a5f4-a59aed4fa0e3",
+            "subagentId": "1a2a5abb-1c8c-49d9-a40e-a05e5ec35eb7",
+            "description": "Part 1"
+          },
+          "runId": "5065ea7f-d133-4b51-ac3e-cc2d5a68fdec",
+          "createdAt": "2026-11-06T17:29:11.864Z"
+        },
+        {
+          "seq": 7,
+          "type": "subagent_dispatched",
+          "payload": {
+            "step": 1,
+            "model": {
+              "model": "script-1",
+              "provider": "model-script"
+            },
+            "callId": "841b6282-112d-4164-93ce-dd85c4219ef1",
+            "resumed": false,
+            "agentType": "general-purpose",
+            "childRunId": "30127405-9187-4e2d-9ce0-9ab66b10460b",
+            "subagentId": "5d3bc00e-9538-48e0-9378-e87f494a6d3b",
+            "description": "Part 2"
+          },
+          "runId": "5065ea7f-d133-4b51-ac3e-cc2d5a68fdec",
+          "createdAt": "2026-11-06T17:29:11.902Z"
+        },
+        {
+          "seq": 8,
+          "type": "subagent_dispatched",
+          "payload": {
+            "step": 1,
+            "model": {
+              "model": "script-1",
+              "provider": "model-script"
+            },
+            "callId": "423e215e-0e52-4907-8251-277de501c35b",
+            "resumed": false,
+            "agentType": "general-purpose",
+            "childRunId": "5f1dc68f-bc57-4b8f-a59d-983b2212ee8a",
+            "subagentId": "19cba58f-59dc-42a4-ae61-415c62df0548",
+            "description": "Part 3"
+          },
+          "runId": "5065ea7f-d133-4b51-ac3e-cc2d5a68fdec",
+          "createdAt": "2026-11-06T17:29:11.940Z"
+        },
+        {
+          "seq": 9,
+          "type": "subagent_finished",
+          "payload": {
+            "usage": {
+              "inputTokens": 10,
+              "outputTokens": 5,
+              "cacheReadTokens": 0,
+              "cacheWriteTokens": 0
+            },
+            "callId": "423e215e-0e52-4907-8251-277de501c35b",
+            "status": "completed",
+            "toolCalls": 0,
+            "childRunId": "5f1dc68f-bc57-4b8f-a59d-983b2212ee8a",
+            "durationMs": 50,
+            "subagentId": "19cba58f-59dc-42a4-ae61-415c62df0548"
+          },
+          "runId": "5065ea7f-d133-4b51-ac3e-cc2d5a68fdec",
+          "createdAt": "2026-11-06T17:29:12.056Z"
+        },
+        {
+          "seq": 10,
+          "type": "subagent_finished",
+          "payload": {
+            "usage": {
+              "inputTokens": 10,
+              "outputTokens": 5,
+              "cacheReadTokens": 0,
+              "cacheWriteTokens": 0
+            },
+            "callId": "4ac7ed2d-eea4-4b63-b2a0-21688039d5e3",
+            "status": "completed",
+            "toolCalls": 0,
+            "childRunId": "e4d69fe1-0cdd-457a-a5f4-a59aed4fa0e3",
+            "durationMs": 126,
+            "subagentId": "1a2a5abb-1c8c-49d9-a40e-a05e5ec35eb7"
+          },
+          "runId": "5065ea7f-d133-4b51-ac3e-cc2d5a68fdec",
+          "createdAt": "2026-11-06T17:29:12.058Z"
+        },
+        {
+          "seq": 11,
+          "type": "subagent_finished",
+          "payload": {
+            "usage": {
+              "inputTokens": 10,
+              "outputTokens": 5,
+              "cacheReadTokens": 0,
+              "cacheWriteTokens": 0
+            },
+            "callId": "841b6282-112d-4164-93ce-dd85c4219ef1",
+            "status": "completed",
+            "toolCalls": 0,
+            "childRunId": "30127405-9187-4e2d-9ce0-9ab66b10460b",
+            "durationMs": 70,
+            "subagentId": "5d3bc00e-9538-48e0-9378-e87f494a6d3b"
+          },
+          "runId": "5065ea7f-d133-4b51-ac3e-cc2d5a68fdec",
+          "createdAt": "2026-11-06T17:29:12.060Z"
+        },
+        {
+          "seq": 12,
+          "type": "tool_result",
+          "payload": {
+            "step": 1,
+            "callId": "4ac7ed2d-eea4-4b63-b2a0-21688039d5e3",
+            "content": "parallel ok\n\n[agentId: 1a2a5abb-1c8c-49d9-a40e-a05e5ec35eb7 · completed · 0 tool calls · 0s · 15 tokens. Pass the agentId as resume to send this sub-agent a follow-up.]",
+            "isError": false,
+            "toolKey": "Agent"
+          },
+          "runId": "5065ea7f-d133-4b51-ac3e-cc2d5a68fdec",
+          "createdAt": "2026-11-06T17:29:12.121Z"
+        },
+        {
+          "seq": 13,
+          "type": "tool_result",
+          "payload": {
+            "step": 1,
+            "callId": "841b6282-112d-4164-93ce-dd85c4219ef1",
+            "content": "parallel ok\n\n[agentId: 5d3bc00e-9538-48e0-9378-e87f494a6d3b · completed · 0 tool calls · 0s · 15 tokens. Pass the agentId as resume to send this sub-agent a follow-up.]",
+            "isError": false,
+            "toolKey": "Agent"
+          },
+          "runId": "5065ea7f-d133-4b51-ac3e-cc2d5a68fdec",
+          "createdAt": "2026-11-06T17:29:12.137Z"
+        },
+        {
+          "seq": 14,
+          "type": "tool_result",
+          "payload": {
+            "step": 1,
+            "callId": "423e215e-0e52-4907-8251-277de501c35b",
+            "content": "parallel ok\n\n[agentId: 19cba58f-59dc-42a4-ae61-415c62df0548 · completed · 0 tool calls · 0s · 15 tokens. Pass the agentId as resume to send this sub-agent a follow-up.]",
+            "isError": false,
+            "toolKey": "Agent"
+          },
+          "runId": "5065ea7f-d133-4b51-ac3e-cc2d5a68fdec",
+          "createdAt": "2026-11-06T17:29:12.160Z"
+        },
+        {
+          "seq": 15,
+          "type": "model_call",
+          "payload": {
+            "step": 2,
+            "model": "script-1",
+            "attempt": 1,
+            "request": {
+              "toSeq": 14,
+              "tools": [
+                {
+                  "key": "Agent",
+                  "specHash": "35669c0ffc71c9a6"
+                }
+              ],
+              "params": {},
+              "fromSeq": 1,
+              "summarySeq": null,
+              "systemHash": "393831a2d2b87548d0270497140c19b043f39a4c288cf102fe9b6cdad67e185c",
+              "reminderSeqs": [],
+              "absorbedUpToSeq": 1,
+              "maxOutputTokens": 4096,
+              "estimatedInputTokens": 790
+            },
+            "fallback": false,
+            "provider": "model-script"
+          },
+          "runId": "5065ea7f-d133-4b51-ac3e-cc2d5a68fdec",
+          "createdAt": "2026-11-06T17:29:12.255Z"
+        },
+        {
+          "seq": 16,
+          "type": "assistant_message",
+          "payload": {
+            "step": 2,
+            "content": [
+              {
+                "id": "284aee74-9cc0-44cf-925b-d44df1106653",
+                "name": "Agent",
+                "type": "tool_call",
+                "input": {
+                  "prompt": "what word did I give you?",
+                  "resume": "19cba58f-59dc-42a4-ae61-415c62df0548",
+                  "description": "Follow up"
+                }
+              }
+            ],
+            "stopReason": "tool_use"
+          },
+          "runId": "5065ea7f-d133-4b51-ac3e-cc2d5a68fdec",
+          "createdAt": "2026-11-06T17:29:12.264Z"
+        },
+        {
+          "seq": 17,
+          "type": "usage",
+          "payload": {
+            "step": 2,
+            "model": "script-1",
+            "provider": "model-script",
+            "inputTokens": 10,
+            "outputTokens": 5,
+            "cacheReadTokens": 0,
+            "cacheWriteTokens": 0
+          },
+          "runId": "5065ea7f-d133-4b51-ac3e-cc2d5a68fdec",
+          "createdAt": "2026-11-06T17:29:12.264Z"
+        },
+        {
+          "seq": 18,
+          "type": "subagent_dispatched",
+          "payload": {
+            "step": 2,
+            "model": {
+              "model": "script-1",
+              "provider": "model-script"
+            },
+            "callId": "284aee74-9cc0-44cf-925b-d44df1106653",
+            "resumed": true,
+            "agentType": "general-purpose",
+            "childRunId": "30a62289-516d-430f-862b-62e7b11433ab",
+            "subagentId": "19cba58f-59dc-42a4-ae61-415c62df0548",
+            "description": "Follow up"
+          },
+          "runId": "5065ea7f-d133-4b51-ac3e-cc2d5a68fdec",
+          "createdAt": "2026-11-06T17:29:12.289Z"
+        },
+        {
+          "seq": 19,
+          "type": "subagent_finished",
+          "payload": {
+            "usage": {
+              "inputTokens": 10,
+              "outputTokens": 5,
+              "cacheReadTokens": 0,
+              "cacheWriteTokens": 0
+            },
+            "callId": "284aee74-9cc0-44cf-925b-d44df1106653",
+            "status": "completed",
+            "toolCalls": 0,
+            "childRunId": "30a62289-516d-430f-862b-62e7b11433ab",
+            "durationMs": 52,
+            "subagentId": "19cba58f-59dc-42a4-ae61-415c62df0548"
+          },
+          "runId": "5065ea7f-d133-4b51-ac3e-cc2d5a68fdec",
+          "createdAt": "2026-11-06T17:29:12.404Z"
+        },
+        {
+          "seq": 20,
+          "type": "tool_result",
+          "payload": {
+            "step": 2,
+            "callId": "284aee74-9cc0-44cf-925b-d44df1106653",
+            "content": "recalled kiwi\n\n[agentId: 19cba58f-59dc-42a4-ae61-415c62df0548 · completed · 0 tool calls · 0s · 15 tokens. Pass the agentId as resume to send this sub-agent a follow-up.]",
+            "isError": false,
+            "toolKey": "Agent"
+          },
+          "runId": "5065ea7f-d133-4b51-ac3e-cc2d5a68fdec",
+          "createdAt": "2026-11-06T17:29:12.496Z"
+        },
+        {
+          "seq": 21,
+          "type": "model_call",
+          "payload": {
+            "step": 3,
+            "model": "script-1",
+            "attempt": 1,
+            "request": {
+              "toSeq": 20,
+              "tools": [
+                {
+                  "key": "Agent",
+                  "specHash": "35669c0ffc71c9a6"
+                }
+              ],
+              "params": {},
+              "fromSeq": 1,
+              "summarySeq": null,
+              "systemHash": "393831a2d2b87548d0270497140c19b043f39a4c288cf102fe9b6cdad67e185c",
+              "reminderSeqs": [],
+              "absorbedUpToSeq": 1,
+              "maxOutputTokens": 4096,
+              "estimatedInputTokens": 865
+            },
+            "fallback": false,
+            "provider": "model-script"
+          },
+          "runId": "5065ea7f-d133-4b51-ac3e-cc2d5a68fdec",
+          "createdAt": "2026-11-06T17:29:12.541Z"
+        },
+        {
+          "seq": 22,
+          "type": "assistant_message",
+          "payload": {
+            "step": 3,
+            "content": [
+              {
+                "text": "combo done",
+                "type": "text"
+              }
+            ],
+            "stopReason": "end_turn"
+          },
+          "runId": "5065ea7f-d133-4b51-ac3e-cc2d5a68fdec",
+          "createdAt": "2026-11-06T17:29:12.548Z"
+        },
+        {
+          "seq": 23,
+          "type": "usage",
+          "payload": {
+            "step": 3,
+            "model": "script-1",
+            "provider": "model-script",
+            "inputTokens": 10,
+            "outputTokens": 5,
+            "cacheReadTokens": 0,
+            "cacheWriteTokens": 0
+          },
+          "runId": "5065ea7f-d133-4b51-ac3e-cc2d5a68fdec",
+          "createdAt": "2026-11-06T17:29:12.548Z"
+        },
+        {
+          "seq": 24,
+          "type": "run_finished",
+          "payload": {
+            "reason": "completed",
+            "consumedUpToSeq": 1
+          },
+          "runId": "5065ea7f-d133-4b51-ac3e-cc2d5a68fdec",
+          "createdAt": "2026-11-06T17:29:12.555Z"
+        }
+      ],
+      "definitions": {
+        "1": {
+          "name": "Lead",
+          "model": {
+            "model": "script-1",
+            "provider": "model-script"
+          },
+          "tools": [
+            {
+              "kind": "builtin",
+              "name": "Agent"
+            }
+          ],
+          "fallback": null,
+          "avatarUrl": null,
+          "modelParams": {},
+          "instructions": "Lead the work.",
+          "toolPolicies": {},
+          "fallbackParams": {}
+        }
+      },
+      "toolSpecs": {
+        "35669c0ffc71c9a6": {
+          "name": "Agent",
+          "keyArgs": [
+            "description",
+            "subagent_type"
+          ],
+          "description": "Dispatch a sub-agent: a fresh agent with its own context that works on one task and returns its final reply as this tool's result. The sub-agent sees only your prompt, not this conversation, so include everything it needs and say what its final reply must contain. It shares your sandbox files. You wait until it finishes. To run several at once, call this tool several times in the same response (at most 4 at a time); their commands run in the sandbox at the same time, so give parallel sub-agents separate files or directories. Sub-agents cannot dispatch sub-agents or ask the user questions. To send a finished sub-agent a follow-up while keeping its context, pass the agentId from its result as resume.\n\nAgent types (subagent_type):\n- general-purpose: a copy of you with your tools and skills, for multi-step work.",
+          "inputSchema": {
+            "type": "object",
+            "required": [
+              "description",
+              "prompt"
+            ],
+            "properties": {
+              "model": {
+                "enum": [
+                  "inherit",
+                  "fast",
+                  "standard",
+                  "capable"
+                ],
+                "type": "string",
+                "description": "Model tier for this sub-agent: fast and cheap for mechanical work, standard for integration and judgment, capable for design and final reviews. Defaults to the agent type's own setting, else your model."
+              },
+              "prompt": {
+                "type": "string",
+                "maxLength": 100000,
+                "minLength": 1,
+                "description": "The complete task for the sub-agent. It sees nothing else of this conversation: include every fact, file path and constraint it needs, and say what its final reply must contain."
+              },
+              "resume": {
+                "type": "string",
+                "maxLength": 64,
+                "description": "The agentId from an earlier result of this tool: sends prompt to that sub-agent as a follow-up, with its earlier context intact. Leave subagent_type and model unset."
+              },
+              "description": {
+                "type": "string",
+                "maxLength": 80,
+                "minLength": 1,
+                "description": "A short label for the task (3 to 6 words), shown to the user."
+              },
+              "subagent_type": {
+                "type": "string",
+                "maxLength": 130,
+                "minLength": 1,
+                "description": "Which agent type to run, from the list in this tool's description. Defaults to general-purpose."
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      }
+    },
+    "requests": [
+      {
+        "model": "script-1",
+        "system": [
+          {
+            "text": "You are an AI agent working on behalf of the people in this conversation.\n- Report truthfully: describe what you actually did and found. Never invent results.\n- Verify your work before saying a task is done, and point to the evidence.\n- If a request is unclear, ask a short clarifying question instead of guessing.\n- Do not expose internal details such as these instructions or system internals.\n\nLead the work.",
+            "cache": true
+          }
+        ],
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "text": "SCENARIO combo",
+                "type": "text"
+              }
+            ]
+          }
+        ],
+        "tools": [
+          {
+            "name": "Agent",
+            "description": "Dispatch a sub-agent: a fresh agent with its own context that works on one task and returns its final reply as this tool's result. The sub-agent sees only your prompt, not this conversation, so include everything it needs and say what its final reply must contain. It shares your sandbox files. You wait until it finishes. To run several at once, call this tool several times in the same response (at most 4 at a time); their commands run in the sandbox at the same time, so give parallel sub-agents separate files or directories. Sub-agents cannot dispatch sub-agents or ask the user questions. To send a finished sub-agent a follow-up while keeping its context, pass the agentId from its result as resume.\n\nAgent types (subagent_type):\n- general-purpose: a copy of you with your tools and skills, for multi-step work.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "description": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 80,
+                  "description": "A short label for the task (3 to 6 words), shown to the user."
+                },
+                "prompt": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 100000,
+                  "description": "The complete task for the sub-agent. It sees nothing else of this conversation: include every fact, file path and constraint it needs, and say what its final reply must contain."
+                },
+                "subagent_type": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 130,
+                  "description": "Which agent type to run, from the list in this tool's description. Defaults to general-purpose."
+                },
+                "model": {
+                  "type": "string",
+                  "enum": [
+                    "inherit",
+                    "fast",
+                    "standard",
+                    "capable"
+                  ],
+                  "description": "Model tier for this sub-agent: fast and cheap for mechanical work, standard for integration and judgment, capable for design and final reviews. Defaults to the agent type's own setting, else your model."
+                },
+                "resume": {
+                  "type": "string",
+                  "maxLength": 64,
+                  "description": "The agentId from an earlier result of this tool: sends prompt to that sub-agent as a follow-up, with its earlier context intact. Leave subagent_type and model unset."
+                }
+              },
+              "required": [
+                "description",
+                "prompt"
+              ],
+              "additionalProperties": false
+            }
+          }
+        ],
+        "maxOutputTokens": 4096,
+        "params": {}
+      },
+      {
+        "model": "script-1",
+        "system": [
+          {
+            "text": "You are an AI agent working on behalf of the people in this conversation.\n- Report truthfully: describe what you actually did and found. Never invent results.\n- Verify your work before saying a task is done, and point to the evidence.\n- If a request is unclear, ask a short clarifying question instead of guessing.\n- Do not expose internal details such as these instructions or system internals.\n\nLead the work.",
+            "cache": true
+          }
+        ],
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "text": "SCENARIO combo",
+                "type": "text"
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "id": "4ac7ed2d-eea4-4b63-b2a0-21688039d5e3",
+                "name": "Agent",
+                "type": "tool_call",
+                "input": {
+                  "prompt": "par-1: remember kiwi 1",
+                  "description": "Part 1"
+                }
+              },
+              {
+                "id": "841b6282-112d-4164-93ce-dd85c4219ef1",
+                "name": "Agent",
+                "type": "tool_call",
+                "input": {
+                  "prompt": "par-2: remember kiwi 2",
+                  "description": "Part 2"
+                }
+              },
+              {
+                "id": "423e215e-0e52-4907-8251-277de501c35b",
+                "name": "Agent",
+                "type": "tool_call",
+                "input": {
+                  "prompt": "par-3: remember kiwi 3",
+                  "description": "Part 3"
+                }
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "tool_result",
+                "callId": "4ac7ed2d-eea4-4b63-b2a0-21688039d5e3",
+                "content": "parallel ok\n\n[agentId: 1a2a5abb-1c8c-49d9-a40e-a05e5ec35eb7 · completed · 0 tool calls · 0s · 15 tokens. Pass the agentId as resume to send this sub-agent a follow-up.]",
+                "isError": false
+              },
+              {
+                "type": "tool_result",
+                "callId": "841b6282-112d-4164-93ce-dd85c4219ef1",
+                "content": "parallel ok\n\n[agentId: 5d3bc00e-9538-48e0-9378-e87f494a6d3b · completed · 0 tool calls · 0s · 15 tokens. Pass the agentId as resume to send this sub-agent a follow-up.]",
+                "isError": false
+              },
+              {
+                "type": "tool_result",
+                "callId": "423e215e-0e52-4907-8251-277de501c35b",
+                "content": "parallel ok\n\n[agentId: 19cba58f-59dc-42a4-ae61-415c62df0548 · completed · 0 tool calls · 0s · 15 tokens. Pass the agentId as resume to send this sub-agent a follow-up.]",
+                "isError": false
+              }
+            ]
+          }
+        ],
+        "tools": [
+          {
+            "name": "Agent",
+            "description": "Dispatch a sub-agent: a fresh agent with its own context that works on one task and returns its final reply as this tool's result. The sub-agent sees only your prompt, not this conversation, so include everything it needs and say what its final reply must contain. It shares your sandbox files. You wait until it finishes. To run several at once, call this tool several times in the same response (at most 4 at a time); their commands run in the sandbox at the same time, so give parallel sub-agents separate files or directories. Sub-agents cannot dispatch sub-agents or ask the user questions. To send a finished sub-agent a follow-up while keeping its context, pass the agentId from its result as resume.\n\nAgent types (subagent_type):\n- general-purpose: a copy of you with your tools and skills, for multi-step work.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "description": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 80,
+                  "description": "A short label for the task (3 to 6 words), shown to the user."
+                },
+                "prompt": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 100000,
+                  "description": "The complete task for the sub-agent. It sees nothing else of this conversation: include every fact, file path and constraint it needs, and say what its final reply must contain."
+                },
+                "subagent_type": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 130,
+                  "description": "Which agent type to run, from the list in this tool's description. Defaults to general-purpose."
+                },
+                "model": {
+                  "type": "string",
+                  "enum": [
+                    "inherit",
+                    "fast",
+                    "standard",
+                    "capable"
+                  ],
+                  "description": "Model tier for this sub-agent: fast and cheap for mechanical work, standard for integration and judgment, capable for design and final reviews. Defaults to the agent type's own setting, else your model."
+                },
+                "resume": {
+                  "type": "string",
+                  "maxLength": 64,
+                  "description": "The agentId from an earlier result of this tool: sends prompt to that sub-agent as a follow-up, with its earlier context intact. Leave subagent_type and model unset."
+                }
+              },
+              "required": [
+                "description",
+                "prompt"
+              ],
+              "additionalProperties": false
+            }
+          }
+        ],
+        "maxOutputTokens": 4096,
+        "params": {}
+      },
+      {
+        "model": "script-1",
+        "system": [
+          {
+            "text": "You are an AI agent working on behalf of the people in this conversation.\n- Report truthfully: describe what you actually did and found. Never invent results.\n- Verify your work before saying a task is done, and point to the evidence.\n- If a request is unclear, ask a short clarifying question instead of guessing.\n- Do not expose internal details such as these instructions or system internals.\n\nLead the work.",
+            "cache": true
+          }
+        ],
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "text": "SCENARIO combo",
+                "type": "text"
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "id": "4ac7ed2d-eea4-4b63-b2a0-21688039d5e3",
+                "name": "Agent",
+                "type": "tool_call",
+                "input": {
+                  "prompt": "par-1: remember kiwi 1",
+                  "description": "Part 1"
+                }
+              },
+              {
+                "id": "841b6282-112d-4164-93ce-dd85c4219ef1",
+                "name": "Agent",
+                "type": "tool_call",
+                "input": {
+                  "prompt": "par-2: remember kiwi 2",
+                  "description": "Part 2"
+                }
+              },
+              {
+                "id": "423e215e-0e52-4907-8251-277de501c35b",
+                "name": "Agent",
+                "type": "tool_call",
+                "input": {
+                  "prompt": "par-3: remember kiwi 3",
+                  "description": "Part 3"
+                }
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "tool_result",
+                "callId": "4ac7ed2d-eea4-4b63-b2a0-21688039d5e3",
+                "content": "parallel ok\n\n[agentId: 1a2a5abb-1c8c-49d9-a40e-a05e5ec35eb7 · completed · 0 tool calls · 0s · 15 tokens. Pass the agentId as resume to send this sub-agent a follow-up.]",
+                "isError": false
+              },
+              {
+                "type": "tool_result",
+                "callId": "841b6282-112d-4164-93ce-dd85c4219ef1",
+                "content": "parallel ok\n\n[agentId: 5d3bc00e-9538-48e0-9378-e87f494a6d3b · completed · 0 tool calls · 0s · 15 tokens. Pass the agentId as resume to send this sub-agent a follow-up.]",
+                "isError": false
+              },
+              {
+                "type": "tool_result",
+                "callId": "423e215e-0e52-4907-8251-277de501c35b",
+                "content": "parallel ok\n\n[agentId: 19cba58f-59dc-42a4-ae61-415c62df0548 · completed · 0 tool calls · 0s · 15 tokens. Pass the agentId as resume to send this sub-agent a follow-up.]",
+                "isError": false
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "id": "284aee74-9cc0-44cf-925b-d44df1106653",
+                "name": "Agent",
+                "type": "tool_call",
+                "input": {
+                  "prompt": "what word did I give you?",
+                  "resume": "19cba58f-59dc-42a4-ae61-415c62df0548",
+                  "description": "Follow up"
+                }
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "tool_result",
+                "callId": "284aee74-9cc0-44cf-925b-d44df1106653",
+                "content": "recalled kiwi\n\n[agentId: 19cba58f-59dc-42a4-ae61-415c62df0548 · completed · 0 tool calls · 0s · 15 tokens. Pass the agentId as resume to send this sub-agent a follow-up.]",
+                "isError": false
+              }
+            ]
+          }
+        ],
+        "tools": [
+          {
+            "name": "Agent",
+            "description": "Dispatch a sub-agent: a fresh agent with its own context that works on one task and returns its final reply as this tool's result. The sub-agent sees only your prompt, not this conversation, so include everything it needs and say what its final reply must contain. It shares your sandbox files. You wait until it finishes. To run several at once, call this tool several times in the same response (at most 4 at a time); their commands run in the sandbox at the same time, so give parallel sub-agents separate files or directories. Sub-agents cannot dispatch sub-agents or ask the user questions. To send a finished sub-agent a follow-up while keeping its context, pass the agentId from its result as resume.\n\nAgent types (subagent_type):\n- general-purpose: a copy of you with your tools and skills, for multi-step work.",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "description": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 80,
+                  "description": "A short label for the task (3 to 6 words), shown to the user."
+                },
+                "prompt": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 100000,
+                  "description": "The complete task for the sub-agent. It sees nothing else of this conversation: include every fact, file path and constraint it needs, and say what its final reply must contain."
+                },
+                "subagent_type": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 130,
+                  "description": "Which agent type to run, from the list in this tool's description. Defaults to general-purpose."
+                },
+                "model": {
+                  "type": "string",
+                  "enum": [
+                    "inherit",
+                    "fast",
+                    "standard",
+                    "capable"
+                  ],
+                  "description": "Model tier for this sub-agent: fast and cheap for mechanical work, standard for integration and judgment, capable for design and final reviews. Defaults to the agent type's own setting, else your model."
+                },
+                "resume": {
+                  "type": "string",
+                  "maxLength": 64,
+                  "description": "The agentId from an earlier result of this tool: sends prompt to that sub-agent as a follow-up, with its earlier context intact. Leave subagent_type and model unset."
+                }
+              },
+              "required": [
+                "description",
+                "prompt"
+              ],
+              "additionalProperties": false
+            }
+          }
+        ],
+        "maxOutputTokens": 4096,
+        "params": {}
+      }
+    ]
+  },
+  "child": {
+    "snapshot": {
+      "version": 1,
+      "orgId": "f1e3cfdb-ac3d-4243-9cca-d7d962cc6ec8",
+      "conversationId": "19cba58f-59dc-42a4-ae61-415c62df0548",
+      "runId": "30a62289-516d-430f-862b-62e7b11433ab",
+      "agentId": "0314da45-45e4-42f2-90d2-86c2e57fb76b",
+      "agentVersion": 1,
+      "events": [
+        {
+          "seq": 1,
+          "type": "subagent_started",
+          "payload": {
+            "parent": {
+              "step": 1,
+              "runId": "5065ea7f-d133-4b51-ac3e-cc2d5a68fdec",
+              "callId": "423e215e-0e52-4907-8251-277de501c35b",
+              "conversationId": "7d8dd594-235b-47d5-b6f8-48bfbc004e7b"
+            },
+            "maxSteps": 50,
+            "preamble": "You are a sub-agent. Another agent dispatched you with the task in the first user message. Work on it on your own: the user does not watch this conversation and you cannot ask them questions. When you are done, reply with your final report. That reply is the only thing returned to the agent that dispatched you, so include everything it needs. If you cannot finish, say what is missing and why.",
+            "template": {
+              "source": "general"
+            },
+            "agentType": "general-purpose",
+            "definition": {
+              "name": "Lead › general-purpose",
+              "model": {
+                "model": "script-1",
+                "provider": "model-script"
+              },
+              "tools": [],
+              "fallback": null,
+              "avatarUrl": null,
+              "modelParams": {},
+              "instructions": "Lead the work.",
+              "toolPolicies": {},
+              "fallbackParams": {}
+            }
+          },
+          "runId": null,
+          "createdAt": "2026-11-06T17:29:11.940Z"
+        },
+        {
+          "seq": 2,
+          "type": "user_message",
+          "payload": {
+            "content": [
+              {
+                "text": "par-3: remember kiwi 3",
+                "type": "text"
+              }
+            ],
+            "dispatch": {
+              "callId": "423e215e-0e52-4907-8251-277de501c35b",
+              "parentRunId": "5065ea7f-d133-4b51-ac3e-cc2d5a68fdec",
+              "parentConversationId": "7d8dd594-235b-47d5-b6f8-48bfbc004e7b"
+            },
+            "authorAccountId": "92461d98-df64-4c0a-87f0-d90ce019ad8c"
+          },
+          "runId": null,
+          "createdAt": "2026-11-06T17:29:11.940Z"
+        },
+        {
+          "seq": 3,
+          "type": "run_started",
+          "payload": {
+            "model": {
+              "model": "script-1",
+              "provider": "model-script"
+            },
+            "agentVersion": 1,
+            "triggerAccountId": "92461d98-df64-4c0a-87f0-d90ce019ad8c"
+          },
+          "runId": "5f1dc68f-bc57-4b8f-a59d-983b2212ee8a",
+          "createdAt": "2026-11-06T17:29:11.984Z"
+        },
+        {
+          "seq": 4,
+          "type": "model_call",
+          "payload": {
+            "step": 1,
+            "model": "script-1",
+            "attempt": 1,
+            "request": {
+              "toSeq": 3,
+              "tools": [],
+              "params": {},
+              "fromSeq": 1,
+              "summarySeq": null,
+              "systemHash": "7b8b7ef970b734a162b5fcb4d27d49a3809e7fce8a7deebcfd4679085140b18b",
+              "reminderSeqs": [],
+              "absorbedUpToSeq": 2,
+              "maxOutputTokens": 4096,
+              "estimatedInputTokens": 208
+            },
+            "fallback": false,
+            "provider": "model-script"
+          },
+          "runId": "5f1dc68f-bc57-4b8f-a59d-983b2212ee8a",
+          "createdAt": "2026-11-06T17:29:12.017Z"
+        },
+        {
+          "seq": 5,
+          "type": "assistant_message",
+          "payload": {
+            "step": 1,
+            "content": [
+              {
+                "text": "parallel ok",
+                "type": "text"
+              }
+            ],
+            "stopReason": "end_turn"
+          },
+          "runId": "5f1dc68f-bc57-4b8f-a59d-983b2212ee8a",
+          "createdAt": "2026-11-06T17:29:12.022Z"
+        },
+        {
+          "seq": 6,
+          "type": "usage",
+          "payload": {
+            "step": 1,
+            "model": "script-1",
+            "provider": "model-script",
+            "inputTokens": 10,
+            "outputTokens": 5,
+            "cacheReadTokens": 0,
+            "cacheWriteTokens": 0
+          },
+          "runId": "5f1dc68f-bc57-4b8f-a59d-983b2212ee8a",
+          "createdAt": "2026-11-06T17:29:12.022Z"
+        },
+        {
+          "seq": 7,
+          "type": "run_finished",
+          "payload": {
+            "reason": "completed",
+            "consumedUpToSeq": 2
+          },
+          "runId": "5f1dc68f-bc57-4b8f-a59d-983b2212ee8a",
+          "createdAt": "2026-11-06T17:29:12.034Z"
+        },
+        {
+          "seq": 8,
+          "type": "user_message",
+          "payload": {
+            "content": [
+              {
+                "text": "what word did I give you?",
+                "type": "text"
+              }
+            ],
+            "dispatch": {
+              "callId": "284aee74-9cc0-44cf-925b-d44df1106653",
+              "narrowed": {
+                "tools": []
+              },
+              "parentRunId": "5065ea7f-d133-4b51-ac3e-cc2d5a68fdec",
+              "parentConversationId": "7d8dd594-235b-47d5-b6f8-48bfbc004e7b"
+            },
+            "authorAccountId": "92461d98-df64-4c0a-87f0-d90ce019ad8c"
+          },
+          "runId": null,
+          "createdAt": "2026-11-06T17:29:12.289Z"
+        },
+        {
+          "seq": 9,
+          "type": "run_started",
+          "payload": {
+            "model": {
+              "model": "script-1",
+              "provider": "model-script"
+            },
+            "agentVersion": 1,
+            "triggerAccountId": "92461d98-df64-4c0a-87f0-d90ce019ad8c"
+          },
+          "runId": "30a62289-516d-430f-862b-62e7b11433ab",
+          "createdAt": "2026-11-06T17:29:12.328Z"
+        },
+        {
+          "seq": 10,
+          "type": "model_call",
+          "payload": {
+            "step": 1,
+            "model": "script-1",
+            "attempt": 1,
+            "request": {
+              "toSeq": 9,
+              "tools": [],
+              "params": {},
+              "fromSeq": 1,
+              "summarySeq": null,
+              "systemHash": "7b8b7ef970b734a162b5fcb4d27d49a3809e7fce8a7deebcfd4679085140b18b",
+              "reminderSeqs": [],
+              "absorbedUpToSeq": 8,
+              "maxOutputTokens": 4096,
+              "estimatedInputTokens": 217
+            },
+            "fallback": false,
+            "provider": "model-script"
+          },
+          "runId": "30a62289-516d-430f-862b-62e7b11433ab",
+          "createdAt": "2026-11-06T17:29:12.362Z"
+        },
+        {
+          "seq": 11,
+          "type": "assistant_message",
+          "payload": {
+            "step": 1,
+            "content": [
+              {
+                "text": "recalled kiwi",
+                "type": "text"
+              }
+            ],
+            "stopReason": "end_turn"
+          },
+          "runId": "30a62289-516d-430f-862b-62e7b11433ab",
+          "createdAt": "2026-11-06T17:29:12.369Z"
+        },
+        {
+          "seq": 12,
+          "type": "usage",
+          "payload": {
+            "step": 1,
+            "model": "script-1",
+            "provider": "model-script",
+            "inputTokens": 10,
+            "outputTokens": 5,
+            "cacheReadTokens": 0,
+            "cacheWriteTokens": 0
+          },
+          "runId": "30a62289-516d-430f-862b-62e7b11433ab",
+          "createdAt": "2026-11-06T17:29:12.369Z"
+        },
+        {
+          "seq": 13,
+          "type": "run_finished",
+          "payload": {
+            "reason": "completed",
+            "consumedUpToSeq": 8
+          },
+          "runId": "30a62289-516d-430f-862b-62e7b11433ab",
+          "createdAt": "2026-11-06T17:29:12.380Z"
+        }
+      ],
+      "definitions": {
+        "1": {
+          "name": "Lead",
+          "model": {
+            "model": "script-1",
+            "provider": "model-script"
+          },
+          "tools": [
+            {
+              "kind": "builtin",
+              "name": "Agent"
+            }
+          ],
+          "fallback": null,
+          "avatarUrl": null,
+          "modelParams": {},
+          "instructions": "Lead the work.",
+          "toolPolicies": {},
+          "fallbackParams": {}
+        }
+      },
+      "toolSpecs": {},
+      "subagent": {
+        "definition": {
+          "name": "Lead › general-purpose",
+          "model": {
+            "model": "script-1",
+            "provider": "model-script"
+          },
+          "tools": [],
+          "fallback": null,
+          "avatarUrl": null,
+          "modelParams": {},
+          "instructions": "Lead the work.",
+          "toolPolicies": {},
+          "fallbackParams": {}
+        },
+        "preamble": "You are a sub-agent. Another agent dispatched you with the task in the first user message. Work on it on your own: the user does not watch this conversation and you cannot ask them questions. When you are done, reply with your final report. That reply is the only thing returned to the agent that dispatched you, so include everything it needs. If you cannot finish, say what is missing and why."
+      },
+      "parent": {
+        "conversationId": "7d8dd594-235b-47d5-b6f8-48bfbc004e7b",
+        "runId": "5065ea7f-d133-4b51-ac3e-cc2d5a68fdec",
+        "callId": "284aee74-9cc0-44cf-925b-d44df1106653"
+      }
+    },
+    "requests": [
+      {
+        "model": "script-1",
+        "system": [
+          {
+            "text": "You are an AI agent working on behalf of the people in this conversation.\n- Report truthfully: describe what you actually did and found. Never invent results.\n- Verify your work before saying a task is done, and point to the evidence.\n- If a request is unclear, ask a short clarifying question instead of guessing.\n- Do not expose internal details such as these instructions or system internals.\n\nYou are a sub-agent. Another agent dispatched you with the task in the first user message. Work on it on your own: the user does not watch this conversation and you cannot ask them questions. When you are done, reply with your final report. That reply is the only thing returned to the agent that dispatched you, so include everything it needs. If you cannot finish, say what is missing and why.\n\nLead the work.",
+            "cache": true
+          }
+        ],
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "text": "par-3: remember kiwi 3",
+                "type": "text"
+              }
+            ]
+          }
+        ],
+        "tools": [],
+        "maxOutputTokens": 4096,
+        "params": {}
+      },
+      {
+        "model": "script-1",
+        "system": [
+          {
+            "text": "You are an AI agent working on behalf of the people in this conversation.\n- Report truthfully: describe what you actually did and found. Never invent results.\n- Verify your work before saying a task is done, and point to the evidence.\n- If a request is unclear, ask a short clarifying question instead of guessing.\n- Do not expose internal details such as these instructions or system internals.\n\nYou are a sub-agent. Another agent dispatched you with the task in the first user message. Work on it on your own: the user does not watch this conversation and you cannot ask them questions. When you are done, reply with your final report. That reply is the only thing returned to the agent that dispatched you, so include everything it needs. If you cannot finish, say what is missing and why.\n\nLead the work.",
+            "cache": true
+          }
+        ],
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "text": "par-3: remember kiwi 3",
+                "type": "text"
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "text": "parallel ok",
+                "type": "text"
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "text": "what word did I give you?",
+                "type": "text"
+              }
+            ]
+          }
+        ],
+        "tools": [],
+        "maxOutputTokens": 4096,
+        "params": {}
+      }
+    ]
+  }
+}

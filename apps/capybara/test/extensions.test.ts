@@ -1,4 +1,3 @@
-import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -17,8 +16,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 // 内核测试的插件包夹具（生命周期用的 life 插件）
 import { legacyTgz, lifePkg } from "../../../packages/kernel/test/helpers/plugin-packages.js";
 import { parseInstallTarget } from "../src/commands/extensions.js";
+import { runCli, runCliInProcess } from "./support/cli.js";
 
-const REPO_ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 /** Core fakes: an extension with a tool and its own table, and a `counter@1` provider. */
 const TOOLS_UI = fakeExtensionEntry("fake-tools-ui");
 const COUNTER = fakeExtensionEntry("fake-dep-provider");
@@ -63,31 +62,16 @@ function testEnv(
   };
 }
 
-/** 以子进程执行 `pnpm capybara <args>`，stdin 写入给定内容后关闭。 */
+type CliResult = { code: number | null; stdout: string; stderr: string };
+
+/** Runs `capybara <args>` in process (`runCliInProcess`) with the test env. */
 function run(
   args: string[],
   stdin = "",
   plugins?: string[],
   redisUrl?: string,
-): Promise<{ code: number | null; stdout: string; stderr: string }> {
-  return new Promise((resolve, reject) => {
-    const child = spawn("pnpm", ["--silent", "capybara", ...args], {
-      cwd: REPO_ROOT,
-      env: testEnv(plugins, redisUrl),
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-    let stdout = "";
-    let stderr = "";
-    child.stdout.on("data", (d) => {
-      stdout += String(d);
-    });
-    child.stderr.on("data", (d) => {
-      stderr += String(d);
-    });
-    child.on("error", reject);
-    child.on("close", (code) => resolve({ code, stdout, stderr }));
-    child.stdin.end(stdin);
-  });
+): Promise<CliResult> {
+  return runCliInProcess(args, testEnv(plugins, redisUrl), stdin);
 }
 
 async function snapshots() {
@@ -138,7 +122,9 @@ describe("capybara extensions review / approve", () => {
   }, 60_000);
 
   it("approve 交互确认回答 y → 写快照（source cli）与审计（无 actor），提示重启", async () => {
-    const r = await run(["extensions", "approve", "fake-tools-ui"], "y\n");
+    // The real process (`pnpm capybara`: argument parsing, the cli.ts dispatch, a piped stdin);
+    // the other cases run the same commands in process
+    const r = await runCli(["extensions", "approve", "fake-tools-ui"], testEnv(), "y\n");
     expect(r.code, r.stderr).toBe(0);
     // Redis 不可达：只告警，运行中的副本等下一个周期 reconcile（不需要重启）
     expect(r.stdout).toMatch(/next periodic reconcile/i);

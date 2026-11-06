@@ -14,14 +14,17 @@ import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import { ProviderRegistry } from "../runtime/providers.js";
 import { RunControl as RunControlService } from "../runtime/run-control.js";
+import { rootConversationOf } from "../runtime/subagents/child.js";
 import { type RenderedInvocation, SkillInvoker } from "../skills/invoke.js";
 import { ConnectorContent } from "../tools/connector-content.js";
 import { ConversationAccess, parentReachable } from "./access.js";
+import { type AgentTreeNode, readAgentTree } from "./agent-tree.js";
 import { AttachmentsService } from "./attachments.service.js";
 import { type AppendEvent, EventLog } from "./event-log.js";
 import type { ConversationEvent, LogContentBlock } from "./events.js";
 import { userMessageIdemKey } from "./idem-keys.js";
 import { NO_SELECTION, planSelection, readSelection, type Selection } from "./selection.js";
+import { conversationTree } from "./tree.js";
 
 /** 对外的会话视图。 */
 export interface ConversationView {
@@ -119,6 +122,8 @@ const notFound = () => new ApiError("conversation.not_found", "Conversation not 
 export interface RunControl {
   /** 有未消费的消息且没有进行中的运行时投递一轮运行；返回 runId 或 null。 */
   ensureRun(conversationId: string): Promise<string | null>;
+  /** After a root's queue was unpaused: the wakes it held for its tree (agent map spec §5.3). */
+  wakeHeldTree(rootId: string): Promise<void>;
   /**
    * 运行是孤儿（会话锁空闲、任务已不存在，没有 worker 会收到中止广播）时直接把它写成 aborted，返回 true；
    * 否则返回 false。
@@ -131,6 +136,15 @@ export interface RunControl {
   abortWaiting(conversationId: string, runId: string, byAccountId: string): Promise<boolean>;
   /** 请求中止运行（广播到所有副本）。 */
   requestAbort(runId: string, byAccountId: string): Promise<void>;
+  /**
+   * Stops a sub-agent with its descendants (with `includeSelf: false` only the sub-agent
+   * conversations below); the number of runs asked to stop (agent map spec §6).
+   */
+  stopTree(
+    conversationId: string,
+    byAccountId: string,
+    opts?: { includeSelf?: boolean },
+  ): Promise<number>;
 }
 
 /** 消息附件引用（连接器 + 资源 URI）。 */
@@ -469,9 +483,10 @@ export class ConversationsService {
   /**
    * Soft-deletes a conversation (owner only; a sub-agent's conversation is `conversation.read_only`):
    * stops an active run, hides the conversation everywhere for its owner and drops its channel
-   * bindings, then stops every running background task in its sandbox (its sub-agents' too;
-   * outside the delete's transaction, a task whose sandbox cannot be reached ends `lost` with
-   * `kill_pending`). The tasks are stopped after the conversation is marked deleted, so no finish
+   * bindings, stops every running background task in its sandbox (its sub-agents' too; outside
+   * the delete's transaction, a task whose sandbox cannot be reached ends `lost` with
+   * `kill_pending`), then every active run of its sub-agent tree (agent map spec §10). The tasks
+   * are stopped after the conversation is marked deleted, so no finish
    * (the stops' own, or one the poller writes meanwhile) can wake a run on it: `ensureRun` refuses a
    * deleted conversation (the stops' finishes carry `stoppedBy: "deletion"` as well). The event
    * log, runs and trajectory stay (super admins still see them).
@@ -484,7 +499,13 @@ export class ConversationsService {
       if (!(e instanceof ApiError && e.code === "run.not_active")) throw e;
     }
     await this.markDeleted(conversationId);
+    // after the mark, so no finish or delivery of the stops below can start a run on the deleted
+    // root (`ensureRun` refuses it). The sandbox's tasks stop first, so the sub-agents' tasks end
+    // as a deletion; the tree stop then only stops a task a sub-agent started in between
+    // (`stoppedBy: "subagent_end"`, which never wakes either)
     await this.background.stopForDeletedConversation(conversationId);
+    // the whole tree stops (agent map spec §10)
+    await this.runs.stopTree(conversationId, accountId, { includeSelf: false });
     await this.eventLog.publishChanged(conversationId, "deleted");
   }
 
@@ -840,8 +861,26 @@ export class ConversationsService {
   }
 
   /**
-   * A conversation's token usage: its own `usage` events (compaction included) plus those of its
-   * sub-agents (sub-agents spec §8.3), whose logs keep their own. Owner only, as {@link get}.
+   * The agent tree of a root conversation (agent map spec §8, §9.2): the root and every sub-agent
+   * below it with status, model, time, tokens and tool calls. Owner only, as {@link isAccessible};
+   * a sub-agent's id (not a root) is `conversation.not_found` too.
+   */
+  async agentTree(
+    orgId: string,
+    conversationId: string,
+    viewerAccountId: string,
+  ): Promise<{ root: AgentTreeNode }> {
+    if (!(await this.isAccessible(orgId, conversationId, viewerAccountId))) throw notFound();
+    const root = await readAgentTree(this.db.db, orgId, conversationId);
+    if (!root) throw notFound();
+    return { root };
+  }
+
+  /**
+   * A conversation's token usage: its own `usage` events (compaction included) plus those of every
+   * sub-agent below it, at any depth (sub-agents spec §8.3, agent map spec §6: every descendant
+   * counts toward the root; `conversationTree`), whose logs keep their own. Owner only, as
+   * {@link get}.
    */
   async usage(
     orgId: string,
@@ -849,13 +888,9 @@ export class ConversationsService {
     viewerAccountId: string,
   ): Promise<UsageTotals> {
     if (!(await this.isAccessible(orgId, conversationId, viewerAccountId))) throw notFound();
+    const ids = (await conversationTree(this.db.db, conversationId)).map((c) => c.id);
     const { rows } = await sql<UsageRow>`${usageSums(
-      sql`e.conversation_id IN (
-        SELECT ${conversationId}::text
-        UNION ALL
-        SELECT c.id FROM capybara.conversations c
-        WHERE c.parent_conversation_id = ${conversationId} AND c.kind = 'subagent'
-      )`,
+      sql`e.conversation_id IN (${sql.join(ids.length > 0 ? ids : [conversationId])})`,
     )}`.execute(this.db.db);
     const row = rows[0];
     return row
@@ -864,8 +899,9 @@ export class ConversationsService {
   }
 
   /**
-   * The conversation whose sandbox `conversationId` works in: a sub-agent's is its parent's
-   * (sub-agents spec §10.1), any other its own. Call only after an access check.
+   * The conversation whose sandbox `conversationId` works in: a sub-agent's is its root
+   * conversation's at any depth (sub-agents spec §10.1, agent map spec §6), any other its own. Call
+   * only after an access check.
    */
   async sandboxConversationOf(orgId: string, conversationId: string): Promise<string> {
     const row = await this.db
@@ -874,7 +910,8 @@ export class ConversationsService {
       .where("id", "=", conversationId)
       .where("org_id", "=", orgId)
       .executeTakeFirst();
-    return row?.parent_conversation_id ?? conversationId;
+    if (!row?.parent_conversation_id) return conversationId;
+    return rootConversationOf(this.db.db, row.parent_conversation_id);
   }
 
   /** 读事件（先做 `get` 的可见性判定）；顺带不阻塞地 {@link kickRun}。 */
@@ -1171,9 +1208,25 @@ export class ConversationsService {
    * 中止会话当前的运行（queued / running / waiting）：返回 runId；没有 → `run.not_active`。
    * 等人处理的运行没有 worker：直接取消等待并写终态。其余经 Redis 广播，运行所在的任意副本都会收到；
    * 运行已是孤儿（没有任何 worker 在执行）时直接写终态。
+   *
+   * A root conversation's stop stops only its own run: its background sub-agents keep working
+   * (agent map spec §6). A sub-agent's conversation (its owner, from the agent map) stops that
+   * sub-agent with every descendant (`RunControl.stopTree`); `run.not_active` when nothing in that
+   * subtree runs, else the sub-agent's latest run id.
    */
   async abort(orgId: string, conversationId: string, accountId: string): Promise<string> {
-    await this.get(orgId, conversationId, accountId);
+    const conv = await this.get(orgId, conversationId, accountId);
+    if (conv.parentConversationId !== null) {
+      const latest = await this.db
+        .selectFrom("runs")
+        .select("id")
+        .where("conversation_id", "=", conversationId)
+        .orderBy("created_at", "desc")
+        .executeTakeFirst();
+      const n = await this.runs.stopTree(conversationId, accountId);
+      if (n === 0 || !latest) throw new ApiError("run.not_active", "No active run to abort");
+      return latest.id;
+    }
     const run = await this.db
       .selectFrom("runs")
       .select(["id", "status"])

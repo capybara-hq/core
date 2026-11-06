@@ -199,7 +199,8 @@ async function childSystem(marker: string): Promise<string> {
         return (
           last?.role === "user" &&
           JSON.stringify(last.content).includes(marker) &&
-          !JSON.stringify(last.content).includes("tool:Agent")
+          !JSON.stringify(last.content).includes("tool:Agent") &&
+          !JSON.stringify(last.content).includes("tool:SendMessage")
         );
       }),
     10_000,
@@ -387,7 +388,8 @@ describe("agent templates from platform components", () => {
       env.boss,
       env.orgId,
       first.conv,
-      `tool:Agent:${JSON.stringify({ description: "Again", prompt: "echo:again", resume: first.subagentId })}`,
+      // a follow-up is a SendMessage to the sub-agent (agent map spec §4.2)
+      `tool:SendMessage:${JSON.stringify({ to: first.subagentId, message: "echo:again" })}`,
     );
     await waitForTerminal(env.db, first.conv, 2, 30_000);
     const again = await childSystem("echo:again");
@@ -467,7 +469,8 @@ describe("agent templates from platform components", () => {
       env.boss,
       env.orgId,
       first.conv,
-      `tool:Agent:${JSON.stringify({ description: "Again", prompt: "echo:again", resume: first.subagentId })}`,
+      // a follow-up is a SendMessage to the sub-agent (agent map spec §4.2)
+      `tool:SendMessage:${JSON.stringify({ to: first.subagentId, message: "echo:again" })}`,
     );
     await waitForTerminal(env.db, first.conv, 2, 30_000);
     expect(await childSystem("echo:again")).toContain("Review P1.");

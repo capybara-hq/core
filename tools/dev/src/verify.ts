@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { type Plan, planAll, type Workspace } from "@capybara-hq/ci/affected";
+import { type Plan, planAll, planFromFiles, type Workspace } from "@capybara-hq/ci/affected";
 import type { Check } from "./report.ts";
 
 export type VerifyStep = { id: string; title: string; cmd: string[] | null; note?: string };
@@ -29,8 +29,44 @@ export function changedFiles(cwd: string, base: string): string[] {
   return [...out].sort();
 }
 
+/**
+ * The tests worth running locally when CI's plan runs everything: the plan of the diff without its
+ * run-everything triggers (the packages the change touches and what depends on them), plus the own
+ * tests of a package a trigger belongs to (`tools/ci`, `packages/testing`). CI runs the full suite
+ * anyway, and locally it takes several times as long (`pnpm verify --full` still runs it here).
+ */
+export function localTestPlan(files: string[], ws: Workspace): Plan {
+  const triggers = files.filter((f) => planFromFiles([f], ws).all);
+  const plan = planFromFiles(
+    files.filter((f) => !triggers.includes(f)),
+    ws,
+  );
+  const owners = new Set<string>();
+  for (const f of triggers) {
+    const owner = ws.packages
+      .filter((p) => p.hasTests && f.startsWith(`${p.dir}/`))
+      .sort((a, b) => b.dir.length - a.dir.length)[0];
+    if (owner !== undefined) owners.add(owner.dir);
+  }
+  if (owners.size === 0) return plan;
+  const testDirs = [...new Set([...plan.testDirs, ...owners])].sort();
+  return {
+    ...plan,
+    test: true,
+    testDirs,
+    reason: `${plan.reason}; trigger packages: ${[...owners].sort().join(", ")}`,
+  };
+}
+
+export type VerifyOptions = {
+  /** Run the full suite when the plan runs everything (`--full`). */
+  full?: boolean;
+  /** For a run-everything plan without `full`: the tests to run instead ({@link localTestPlan}). */
+  local?: Plan | null;
+};
+
 /** The local equivalent of CI's required jobs for this plan, in run order. */
-export function verifySteps(plan: Plan, base: string): VerifyStep[] {
+export function verifySteps(plan: Plan, base: string, opts: VerifyOptions = {}): VerifyStep[] {
   const steps: VerifyStep[] = [
     { id: "lint", title: "Lint", cmd: ["pnpm", "lint"] },
     { id: "typecheck", title: "Typecheck", cmd: ["pnpm", "typecheck"] },
@@ -51,13 +87,21 @@ export function verifySteps(plan: Plan, base: string): VerifyStep[] {
       cmd: ["pnpm", "exec", "commitlint", "--from", base, "--to", "HEAD"],
     },
   ];
-  if (plan.all) steps.push({ id: "test", title: "Tests", cmd: ["pnpm", "test"] });
-  else if (plan.test) {
-    steps.push({
-      id: "test",
-      title: "Tests",
-      cmd: ["pnpm", "exec", "vitest", "run", ...plan.testDirs.map((d) => `${d}/`)],
-    });
+  const vitest = (dirs: string[]) => ["pnpm", "exec", "vitest", "run", ...dirs.map((d) => `${d}/`)];
+  const fullNote = "CI runs the full suite; pnpm verify --full runs it here";
+  if (plan.all && opts.full) steps.push({ id: "test", title: "Tests", cmd: ["pnpm", "test"] });
+  else if (plan.all) {
+    const local = opts.local;
+    if (local?.test && local.testDirs.length > 0)
+      steps.push({
+        id: "test",
+        title: "Tests (affected packages)",
+        cmd: vitest(local.testDirs),
+        note: fullNote,
+      });
+    else steps.push({ id: "test", title: "Tests", cmd: null, note: fullNote });
+  } else if (plan.test) {
+    steps.push({ id: "test", title: "Tests", cmd: vitest(plan.testDirs) });
   } else steps.push({ id: "test", title: "Tests", cmd: null, note: "no affected tests" });
   for (const id of ["web", "visual", "e2e", "docker"] as const) {
     if (plan[id]) steps.push({ id, title: id, cmd: null, note: "CI runs this" });

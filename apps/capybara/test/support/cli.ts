@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Readable, Writable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { fakeExtensionDir, packFixture } from "@capybara-hq/testing";
 
@@ -41,6 +42,46 @@ export function runCli(
     child.on("close", (code) => resolve({ code, stdout, stderr }));
     child.stdin.end(stdin);
   });
+}
+
+/**
+ * Runs `capybara <args>` in process: the same `main` the process entry runs (env file, argument
+ * parsing and exit code 2 on a usage error, the dispatch, the CLI logger), with a copy of `env`,
+ * `stdin` as a piped (non-TTY) input, the repository root as the working directory and captured
+ * stdout / stderr; logger records go to stdout, as in a spawned CLI. A spawned CLI (`runCli`)
+ * loads the kernel sources through tsx first, seconds of CPU per call, so tests use this and keep
+ * `runCli` for the cases about the real process. Not for `capybara start` (it keeps running, and
+ * installs signal handlers on this process).
+ */
+export async function runCliInProcess(
+  args: string[],
+  env: NodeJS.ProcessEnv,
+  stdin = "",
+): Promise<{ code: number | null; stdout: string; stderr: string }> {
+  // Imported here: tests that only spawn the CLI (tracing.test.ts) don't load the kernel
+  const { main } = await import("../../src/cli.js");
+  let stdout = "";
+  let stderr = "";
+  const sink = (append: (s: string) => void) =>
+    new Writable({
+      write(chunk, _enc, cb) {
+        append(String(chunk));
+        cb();
+      },
+    });
+  const code = await main(args, {
+    stdin: Readable.from(stdin === "" ? [] : [stdin]),
+    stdout: sink((s) => {
+      stdout += s;
+    }),
+    stderr: sink((s) => {
+      stderr += s;
+    }),
+    env: { ...env },
+    cwd: REPO_ROOT,
+  });
+  if (code === undefined) throw new Error(`runCliInProcess: no exit code for ${args.join(" ")}`);
+  return { code, stdout, stderr };
 }
 
 /** An npm entry of a bootstrap manifest (the CLI depends on the kernel only, not on the SDK). */

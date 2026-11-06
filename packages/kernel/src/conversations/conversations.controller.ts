@@ -25,6 +25,7 @@ import {
   TOOL_INFO_MAX_KEYS,
   type ToolInfo,
 } from "../tools/info.js";
+import type { AgentTreeNode } from "./agent-tree.js";
 import {
   ARTIFACT_DOWNLOAD_CACHE_SECONDS,
   type ArtifactPreview,
@@ -449,6 +450,23 @@ export class ConversationsController {
   }
 
   /**
+   * The agent tree of a root conversation (agent map spec §8, §9.2): `{ root }`, each node with its
+   * status, model, time, tokens, tool calls and children. Owner only; a sub-agent's id is
+   * `conversation.not_found`.
+   */
+  @Get(":id/agent-tree")
+  @Header("cache-control", "private, no-store")
+  @OrgAction("agents.use")
+  async agentTree(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @ZParam(ConversationIdParamsDto) { id }: z.infer<typeof IdParams>,
+  ): Promise<{ root: AgentTreeNode }> {
+    const p = requireUser(principal);
+    return this.conversations.agentTree(org.orgId, id, p.account.id);
+  }
+
+  /**
    * The conversation's token usage, its sub-agents' included (sub-agents spec §8.3):
    * `{ usage: { inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens } }`. Owner only.
    */
@@ -725,7 +743,13 @@ export class ConversationsController {
     return { event: await this.queue.sendNow(org.orgId, id, p.account.id, itemId) };
   }
 
-  /** 中止当前运行（会话所有者）：202 `{ runId }`；没有活跃运行 → 409 `run.not_active`。 */
+  /**
+   * Stops the current run (the conversation's owner): 202 `{ runId }`; nothing active → 409
+   * `run.not_active`. On a root conversation `runId` is the stopped run, and its background
+   * sub-agents keep working. On a sub-agent's conversation (the root's owner, at any depth) the
+   * sub-agent stops with every sub-agent below it, and `runId` is the sub-agent's latest run,
+   * which may already be finished when only its descendants were working (agent map spec §6).
+   */
   @Post(":id/abort")
   @HttpCode(202)
   @OrgAction("agents.use")

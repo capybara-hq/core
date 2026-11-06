@@ -44,14 +44,49 @@
         "assistantTurns": 2
       },
       "reply": {
-        "text": "Status: DONE. Committed greeting.txt (feat: greeting file)."
+        "toolCalls": [
+          {
+            "name": "SubagentHandback",
+            "input": {
+              "message": "Status: DONE. Committed greeting.txt (feat: greeting file)."
+            }
+          }
+        ]
+      }
+    },
+    {
+      "when": {
+        "systemIncludes": "You are a sub-agent",
+        "lastUserIncludes": "IMPL-1",
+        "assistantTurns": 3
+      },
+      "reply": {
+        "toolCalls": [
+          {
+            "name": "Bash",
+            "input": {
+              "description": "Test step",
+              "command": "touch /workspace/.superpowers/sdd/plan/done-IMPL-1"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "when": {
+        "systemIncludes": "You are a sub-agent",
+        "lastUserIncludes": "IMPL-1",
+        "assistantTurns": 4
+      },
+      "reply": {
+        "text": "Handed back."
       }
     },
     {
       "when": {
         "systemIncludes": "You are a sub-agent",
         "lastUserIncludes": "FIX-1",
-        "assistantTurns": 3
+        "assistantTurns": 5
       },
       "reply": {
         "toolCalls": [
@@ -69,24 +104,14 @@
       "when": {
         "systemIncludes": "You are a sub-agent",
         "lastUserIncludes": "FIX-1",
-        "assistantTurns": 4
-      },
-      "reply": {
-        "text": "Status: DONE. greeting.txt now ends with a newline (fix commit)."
-      }
-    },
-    {
-      "when": {
-        "systemIncludes": "You are a sub-agent",
-        "lastUserIncludes": "REVIEW-1",
-        "assistantTurns": 0
+        "assistantTurns": 6
       },
       "reply": {
         "toolCalls": [
           {
-            "name": "Read",
+            "name": "SubagentHandback",
             "input": {
-              "file_path": "/workspace/.superpowers/sdd/plan/review-1.diff"
+              "message": "Status: DONE. greeting.txt now ends with a newline (fix commit)."
             }
           }
         ]
@@ -95,11 +120,29 @@
     {
       "when": {
         "systemIncludes": "You are a sub-agent",
-        "lastUserIncludes": "REVIEW-1",
-        "assistantTurns": 1
+        "lastUserIncludes": "FIX-1",
+        "assistantTurns": 7
       },
       "reply": {
-        "text": "Spec compliance: ✅. Important: greeting.txt has no trailing newline. Verdict: changes needed."
+        "toolCalls": [
+          {
+            "name": "Bash",
+            "input": {
+              "description": "Test step",
+              "command": "touch /workspace/.superpowers/sdd/plan/done-FIX-1"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "when": {
+        "systemIncludes": "You are a sub-agent",
+        "lastUserIncludes": "FIX-1",
+        "assistantTurns": 8
+      },
+      "reply": {
+        "text": "Handed back."
       }
     },
     {
@@ -127,7 +170,104 @@
         "assistantTurns": 1
       },
       "reply": {
-        "text": "The newline fix is in place. Verdict: approved."
+        "toolCalls": [
+          {
+            "name": "SubagentHandback",
+            "input": {
+              "message": "The newline fix is in place. Verdict: approved."
+            }
+          }
+        ]
+      }
+    },
+    {
+      "when": {
+        "systemIncludes": "You are a sub-agent",
+        "lastUserIncludes": "REREVIEW-1",
+        "assistantTurns": 2
+      },
+      "reply": {
+        "toolCalls": [
+          {
+            "name": "Bash",
+            "input": {
+              "description": "Test step",
+              "command": "touch /workspace/.superpowers/sdd/plan/done-REREVIEW-1"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "when": {
+        "systemIncludes": "You are a sub-agent",
+        "lastUserIncludes": "REREVIEW-1",
+        "assistantTurns": 3
+      },
+      "reply": {
+        "text": "Handed back."
+      }
+    },
+    {
+      "when": {
+        "systemIncludes": "You are a sub-agent",
+        "lastUserIncludes": "REVIEW-1",
+        "assistantTurns": 0
+      },
+      "reply": {
+        "toolCalls": [
+          {
+            "name": "Read",
+            "input": {
+              "file_path": "/workspace/.superpowers/sdd/plan/review-1.diff"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "when": {
+        "systemIncludes": "You are a sub-agent",
+        "lastUserIncludes": "REVIEW-1",
+        "assistantTurns": 1
+      },
+      "reply": {
+        "toolCalls": [
+          {
+            "name": "SubagentHandback",
+            "input": {
+              "message": "Spec compliance: ✅. Important: greeting.txt has no trailing newline. Verdict: changes needed."
+            }
+          }
+        ]
+      }
+    },
+    {
+      "when": {
+        "systemIncludes": "You are a sub-agent",
+        "lastUserIncludes": "REVIEW-1",
+        "assistantTurns": 2
+      },
+      "reply": {
+        "toolCalls": [
+          {
+            "name": "Bash",
+            "input": {
+              "description": "Test step",
+              "command": "touch /workspace/.superpowers/sdd/plan/done-REVIEW-1"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "when": {
+        "systemIncludes": "You are a sub-agent",
+        "lastUserIncludes": "REVIEW-1",
+        "assistantTurns": 3
+      },
+      "reply": {
+        "text": "Handed back."
       }
     },
     {
@@ -173,7 +313,42 @@
         "assistantTurns": 2
       },
       "reply": {
-        "text": "Status: DONE. Committed farewell.txt (feat: farewell file)."
+        "toolCalls": [
+          {
+            "name": "SubagentHandback",
+            "input": {
+              "message": "Status: DONE. Committed farewell.txt (feat: farewell file)."
+            }
+          }
+        ]
+      }
+    },
+    {
+      "when": {
+        "systemIncludes": "You are a sub-agent",
+        "lastUserIncludes": "IMPL-2",
+        "assistantTurns": 3
+      },
+      "reply": {
+        "toolCalls": [
+          {
+            "name": "Bash",
+            "input": {
+              "description": "Test step",
+              "command": "touch /workspace/.superpowers/sdd/plan/done-IMPL-2"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "when": {
+        "systemIncludes": "You are a sub-agent",
+        "lastUserIncludes": "IMPL-2",
+        "assistantTurns": 4
+      },
+      "reply": {
+        "text": "Handed back."
       }
     },
     {
@@ -200,7 +375,42 @@
         "assistantTurns": 1
       },
       "reply": {
-        "text": "Spec compliance: ✅. No issues. Verdict: approved."
+        "toolCalls": [
+          {
+            "name": "SubagentHandback",
+            "input": {
+              "message": "Spec compliance: ✅. No issues. Verdict: approved."
+            }
+          }
+        ]
+      }
+    },
+    {
+      "when": {
+        "systemIncludes": "You are a sub-agent",
+        "lastUserIncludes": "REVIEW-2",
+        "assistantTurns": 2
+      },
+      "reply": {
+        "toolCalls": [
+          {
+            "name": "Bash",
+            "input": {
+              "description": "Test step",
+              "command": "touch /workspace/.superpowers/sdd/plan/done-REVIEW-2"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "when": {
+        "systemIncludes": "You are a sub-agent",
+        "lastUserIncludes": "REVIEW-2",
+        "assistantTurns": 3
+      },
+      "reply": {
+        "text": "Handed back."
       }
     },
     {
@@ -232,7 +442,42 @@
         "assistantTurns": 1
       },
       "reply": {
-        "text": "Both tasks match the plan. Ready to merge."
+        "toolCalls": [
+          {
+            "name": "SubagentHandback",
+            "input": {
+              "message": "Both tasks match the plan. Ready to merge."
+            }
+          }
+        ]
+      }
+    },
+    {
+      "when": {
+        "systemIncludes": "Senior Code Reviewer",
+        "lastUserIncludes": "FINAL-REVIEW",
+        "assistantTurns": 2
+      },
+      "reply": {
+        "toolCalls": [
+          {
+            "name": "Bash",
+            "input": {
+              "description": "Test step",
+              "command": "touch /workspace/.superpowers/sdd/plan/done-FINAL-REVIEW"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "when": {
+        "systemIncludes": "Senior Code Reviewer",
+        "lastUserIncludes": "FINAL-REVIEW",
+        "assistantTurns": 3
+      },
+      "reply": {
+        "text": "Handed back."
       }
     },
     {
@@ -265,7 +510,42 @@
         "assistantTurns": 1
       },
       "reply": {
-        "text": "Both files are present with the planned content."
+        "toolCalls": [
+          {
+            "name": "SubagentHandback",
+            "input": {
+              "message": "Both files are present with the planned content."
+            }
+          }
+        ]
+      }
+    },
+    {
+      "when": {
+        "systemIncludes": "You are a sub-agent",
+        "lastUserIncludes": "CHECK-FILES",
+        "assistantTurns": 2
+      },
+      "reply": {
+        "toolCalls": [
+          {
+            "name": "Bash",
+            "input": {
+              "description": "Test step",
+              "command": "touch /workspace/.superpowers/sdd/plan/done-CHECK-FILES"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "when": {
+        "systemIncludes": "You are a sub-agent",
+        "lastUserIncludes": "CHECK-FILES",
+        "assistantTurns": 3
+      },
+      "reply": {
+        "text": "Handed back."
       }
     },
     {
@@ -332,6 +612,14 @@
               "model": "fast",
               "prompt": "IMPL-1: You are implementing Task 1 of /workspace/plan.md in the git repository /workspace; read /workspace/.superpowers/sdd/plan/task-1-brief.md first; it is your requirements. Implement it, commit, and report your status."
             }
+          },
+          {
+            "name": "Bash",
+            "input": {
+              "description": "Test step",
+              "command": "until [ -f /workspace/.superpowers/sdd/plan/done-IMPL-1 ]; do sleep 0.05; done; echo WAITED IMPL-1",
+              "timeout": 60000
+            }
           }
         ]
       }
@@ -339,7 +627,7 @@
     {
       "when": {
         "lastUserIncludes": "SDD-RUN",
-        "assistantTurns": 4
+        "lastToolResultIncludes": "WAITED IMPL-1"
       },
       "reply": {
         "toolCalls": [
@@ -356,7 +644,7 @@
     {
       "when": {
         "lastUserIncludes": "SDD-RUN",
-        "assistantTurns": 5
+        "lastToolResultIncludes": "review-1.diff: 1 commit"
       },
       "reply": {
         "toolCalls": [
@@ -366,23 +654,13 @@
               "description": "Review Task 1",
               "prompt": "REVIEW-1: You are reviewing Task 1 of /workspace/plan.md. The review package is /workspace/.superpowers/sdd/plan/review-1.diff. Report spec compliance and any issues with their severity."
             }
-          }
-        ]
-      }
-    },
-    {
-      "when": {
-        "lastUserIncludes": "SDD-RUN",
-        "assistantTurns": 6
-      },
-      "reply": {
-        "toolCalls": [
+          },
           {
-            "name": "Agent",
+            "name": "Bash",
             "input": {
-              "description": "Fix Task 1",
-              "resume": "{{agentId:1}}",
-              "prompt": "FIX-1: The task review found one Important issue: greeting.txt has no trailing newline. Fix it, commit, and report."
+              "description": "Test step",
+              "command": "until [ -f /workspace/.superpowers/sdd/plan/done-REVIEW-1 ]; do sleep 0.05; done; echo WAITED REVIEW-1",
+              "timeout": 60000
             }
           }
         ]
@@ -391,7 +669,93 @@
     {
       "when": {
         "lastUserIncludes": "SDD-RUN",
-        "assistantTurns": 7
+        "lastToolResultIncludes": "WAITED REVIEW-1",
+        "systemMessageIncludes": "(\"Implement Task 1\") completed"
+      },
+      "reply": {
+        "toolCalls": [
+          {
+            "name": "SendMessage",
+            "input": {
+              "to": "{{agentId:1}}",
+              "message": "FIX-1: The task review found one Important issue: greeting.txt has no trailing newline. Fix it, commit, and report."
+            }
+          },
+          {
+            "name": "Bash",
+            "input": {
+              "description": "Test step",
+              "command": "until [ -f /workspace/.superpowers/sdd/plan/done-FIX-1 ]; do sleep 0.05; done; echo WAITED FIX-1",
+              "timeout": 60000
+            }
+          }
+        ]
+      }
+    },
+    {
+      "when": {
+        "lastUserIncludes": "SDD-RUN",
+        "lastToolResultIncludes": "WAITED REVIEW-1"
+      },
+      "reply": {
+        "toolCalls": [
+          {
+            "name": "Bash",
+            "input": {
+              "description": "Test step",
+              "command": "sleep 0.2; echo IMPL-1 FINISH CHECK"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "when": {
+        "lastUserIncludes": "SDD-RUN",
+        "lastToolResultIncludes": "IMPL-1 FINISH CHECK",
+        "systemMessageIncludes": "(\"Implement Task 1\") completed"
+      },
+      "reply": {
+        "toolCalls": [
+          {
+            "name": "SendMessage",
+            "input": {
+              "to": "{{agentId:1}}",
+              "message": "FIX-1: The task review found one Important issue: greeting.txt has no trailing newline. Fix it, commit, and report."
+            }
+          },
+          {
+            "name": "Bash",
+            "input": {
+              "description": "Test step",
+              "command": "until [ -f /workspace/.superpowers/sdd/plan/done-FIX-1 ]; do sleep 0.05; done; echo WAITED FIX-1",
+              "timeout": 60000
+            }
+          }
+        ]
+      }
+    },
+    {
+      "when": {
+        "lastUserIncludes": "SDD-RUN",
+        "lastToolResultIncludes": "IMPL-1 FINISH CHECK"
+      },
+      "reply": {
+        "toolCalls": [
+          {
+            "name": "Bash",
+            "input": {
+              "description": "Test step",
+              "command": "sleep 0.2; echo IMPL-1 FINISH CHECK"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "when": {
+        "lastUserIncludes": "SDD-RUN",
+        "lastToolResultIncludes": "WAITED FIX-1"
       },
       "reply": {
         "toolCalls": [
@@ -402,6 +766,14 @@
               "model": "fast",
               "prompt": "REREVIEW-1: Scoped re-review. The fix for 'greeting.txt has no trailing newline' is the HEAD commit of /workspace. Verify only that fix."
             }
+          },
+          {
+            "name": "Bash",
+            "input": {
+              "description": "Test step",
+              "command": "until [ -f /workspace/.superpowers/sdd/plan/done-REREVIEW-1 ]; do sleep 0.05; done; echo WAITED REREVIEW-1",
+              "timeout": 60000
+            }
           }
         ]
       }
@@ -409,7 +781,7 @@
     {
       "when": {
         "lastUserIncludes": "SDD-RUN",
-        "assistantTurns": 8
+        "lastToolResultIncludes": "WAITED REREVIEW-1"
       },
       "reply": {
         "toolCalls": [
@@ -426,7 +798,7 @@
     {
       "when": {
         "lastUserIncludes": "SDD-RUN",
-        "assistantTurns": 9
+        "lastToolResultIncludes": "task-2-brief.md"
       },
       "reply": {
         "toolCalls": [
@@ -437,6 +809,14 @@
               "model": "fast",
               "prompt": "IMPL-2: You are implementing Task 2 of /workspace/plan.md in the git repository /workspace; read /workspace/.superpowers/sdd/plan/task-2-brief.md first; it is your requirements. Implement it, commit, and report your status."
             }
+          },
+          {
+            "name": "Bash",
+            "input": {
+              "description": "Test step",
+              "command": "until [ -f /workspace/.superpowers/sdd/plan/done-IMPL-2 ]; do sleep 0.05; done; echo WAITED IMPL-2",
+              "timeout": 60000
+            }
           }
         ]
       }
@@ -444,7 +824,7 @@
     {
       "when": {
         "lastUserIncludes": "SDD-RUN",
-        "assistantTurns": 10
+        "lastToolResultIncludes": "WAITED IMPL-2"
       },
       "reply": {
         "toolCalls": [
@@ -461,7 +841,7 @@
     {
       "when": {
         "lastUserIncludes": "SDD-RUN",
-        "assistantTurns": 11
+        "lastToolResultIncludes": "review-2.diff: 1 commit"
       },
       "reply": {
         "toolCalls": [
@@ -471,6 +851,14 @@
               "description": "Review Task 2",
               "prompt": "REVIEW-2: You are reviewing Task 2 of /workspace/plan.md. The review package is /workspace/.superpowers/sdd/plan/review-2.diff. Report spec compliance and any issues with their severity."
             }
+          },
+          {
+            "name": "Bash",
+            "input": {
+              "description": "Test step",
+              "command": "until [ -f /workspace/.superpowers/sdd/plan/done-REVIEW-2 ]; do sleep 0.05; done; echo WAITED REVIEW-2",
+              "timeout": 60000
+            }
           }
         ]
       }
@@ -478,7 +866,7 @@
     {
       "when": {
         "lastUserIncludes": "SDD-RUN",
-        "assistantTurns": 12
+        "lastToolResultIncludes": "WAITED REVIEW-2"
       },
       "reply": {
         "toolCalls": [
@@ -494,7 +882,7 @@
     {
       "when": {
         "lastUserIncludes": "SDD-RUN",
-        "assistantTurns": 13
+        "lastToolResultIncludes": "Loaded skill \"dispatching-parallel-agents\""
       },
       "reply": {
         "toolCalls": [
@@ -511,7 +899,7 @@
     {
       "when": {
         "lastUserIncludes": "SDD-RUN",
-        "assistantTurns": 14
+        "lastToolResultIncludes": "final.diff: 3 commit"
       },
       "reply": {
         "toolCalls": [
@@ -531,6 +919,14 @@
               "model": "fast",
               "prompt": "CHECK-FILES: Check that /workspace/greeting.txt and /workspace/farewell.txt hold the planned content."
             }
+          },
+          {
+            "name": "Bash",
+            "input": {
+              "description": "Test step",
+              "command": "until [ -f /workspace/.superpowers/sdd/plan/done-FINAL-REVIEW ] && [ -f /workspace/.superpowers/sdd/plan/done-CHECK-FILES ]; do sleep 0.05; done; echo WAITED FINAL-REVIEW CHECK-FILES",
+              "timeout": 60000
+            }
           }
         ]
       }
@@ -538,7 +934,7 @@
     {
       "when": {
         "lastUserIncludes": "SDD-RUN",
-        "assistantTurns": 15
+        "lastToolResultIncludes": "WAITED FINAL-REVIEW CHECK-FILES"
       },
       "reply": {
         "text": "Plan complete: both tasks are implemented, reviewed and committed."

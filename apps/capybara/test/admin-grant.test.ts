@@ -1,5 +1,3 @@
-import { spawn } from "node:child_process";
-import { fileURLToPath } from "node:url";
 import {
   AccountsModule,
   AccountsService,
@@ -13,8 +11,8 @@ import {
 } from "@capybara-hq/kernel";
 import { startTestPostgres, type TestContainer } from "@capybara-hq/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { runCli, runCliInProcess } from "./support/cli.js";
 
-const REPO_ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 const PW = "correct horse battery";
 
 let pg: TestContainer;
@@ -59,25 +57,11 @@ function testEnv(): NodeJS.ProcessEnv {
   };
 }
 
-/** 以子进程执行 `pnpm capybara <args>`。 */
-function run(args: string[]): Promise<{ code: number | null; stdout: string; stderr: string }> {
-  return new Promise((resolve, reject) => {
-    const child = spawn("pnpm", ["--silent", "capybara", ...args], {
-      cwd: REPO_ROOT,
-      env: testEnv(),
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    let stdout = "";
-    let stderr = "";
-    child.stdout.on("data", (d) => {
-      stdout += String(d);
-    });
-    child.stderr.on("data", (d) => {
-      stderr += String(d);
-    });
-    child.on("error", reject);
-    child.on("close", (code) => resolve({ code, stdout, stderr }));
-  });
+type CliResult = { code: number | null; stdout: string; stderr: string };
+
+/** Runs `capybara <args>` in process (`runCliInProcess`: the CLI's own `main`). */
+function run(args: string[]): Promise<CliResult> {
+  return runCliInProcess(args, testEnv());
 }
 
 const isAdmin = async (login: string) => {
@@ -131,7 +115,9 @@ describe("capybara admin grant / revoke", () => {
   }, 60_000);
 
   it("缺登录名 → 退出码 2", async () => {
-    const r = await run(["admin", "grant"]);
+    // The real process (`pnpm capybara`: bin, tsx, the process entry and its exit code); the other
+    // cases run the same `main` in process
+    const r = await runCli(["admin", "grant"], testEnv());
     expect(r.code).toBe(2);
   }, 60_000);
 });

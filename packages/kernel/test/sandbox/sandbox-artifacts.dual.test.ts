@@ -362,7 +362,13 @@ describe("sandbox and artifacts (dual replica, fake sandbox)", () => {
     expect(r4b.result.content).toContain("attachments");
     expect(r4b.result.content).not.toContain("step4-finished");
     expect(reuseMs).toBeLessThan(SANDBOX_LOCK_TTL_MS);
-    // after the dead replica's lease expired, the next acquirer kills its command by its tag
+    // after the dead replica's lease expired, the next acquirer kills its command by its tag.
+    // The wait below is longer than suspendAfterIdleMinutes (1 min, needed by step 5): once the
+    // dead lease is gone, a replica's minute idle sweep could suspend the sandbox first (killing
+    // every command) and the next call would resume it with killAll instead. Keep it in use until
+    // step 5 moves last_used_at back (leave keeps the later of last_used_at and now()).
+    await sql`UPDATE capybara.sandboxes SET last_used_at = now() + interval '10 minutes'
+      WHERE conversation_id = ${convId}`.execute(raw);
     await new Promise((r) =>
       setTimeout(r, Math.max(0, killedAt + SANDBOX_LOCK_TTL_MS + 2000 - Date.now())),
     );

@@ -1,9 +1,11 @@
+import { randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { EventLog } from "../../src/conversations/event-log.js";
 import type { ConversationEvent, EventPayload } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
@@ -27,7 +29,7 @@ import {
   waitForTerminal,
 } from "../helpers/runs.js";
 import { openSse } from "../helpers/sse.js";
-import { childRunsOf, parentWaiting } from "../helpers/subagents.js";
+import { childRunsOf, finishedDeliveries } from "../helpers/subagents.js";
 
 /**
  * Phase C Task 14 (spec §14.2, §14.3): `GET /conversations/:id/subagents`, child conversations
@@ -77,7 +79,7 @@ const RULES: ScriptRule[] = [
     when: { lastUserIncludes: "SCENARIO one", assistantTurns: 0 },
     reply: { toolCalls: [agentCall("Tool task", "task-tool")] },
   },
-  { when: { lastToolResultIncludes: "[agentId:" }, reply: { text: "parent done" } },
+  { when: { lastToolResultIncludes: "in the background" }, reply: { text: "parent done" } },
 ];
 
 let pgc: TestContainer;
@@ -233,6 +235,7 @@ async function oneChild(): Promise<{ conv: string; child: string }> {
   const conv = await createConv(owner, orgId, agentId);
   await postMessage(owner, orgId, conv, "SCENARIO one");
   await waitForTerminal(db, conv, 1, 30_000);
+  await finishedDeliveries(db, conv);
   await waitFor(
     async () =>
       (await eventsOf(db, conv)).some((e) => e.type === "usage" && e.payload.purpose === "title"),
@@ -248,7 +251,9 @@ describe("GET /conversations/:id/subagents", () => {
   it("the list shows each sub-agent with status and counts; another user gets 404", async () => {
     const conv = await createConv(owner, orgId, agentId);
     await postMessage(owner, orgId, conv, "SCENARIO two");
-    const { children } = await parentWaiting(db, conv, 2);
+    // the parent's run ends at once; its two children work in the background
+    await waitForTerminal(db, conv, 1, 30_000);
+    const children = await childRunsOf(db, conv);
     // which child is which: by the dispatched description in the parent log
     const dispatched = (await eventsOf(db, conv)).filter((e) => e.type === "subagent_dispatched");
     const idOf = (description: string) =>
@@ -333,9 +338,9 @@ describe("GET /conversations/:id/subagents", () => {
     expect(JSON.stringify(other.body)).toContain("conversation.not_found");
     expect(JSON.stringify(other.body)).not.toContain(tool.subagentId);
 
-    const stop = await owner({ method: "POST", url: `${base()}/${conv}/abort` });
+    const stop = await owner({ method: "POST", url: `${base()}/${write.subagentId}/abort` });
     expect(stop.statusCode, stop.body).toBe(202);
-    await waitForTerminal(db, conv, 1, 30_000);
+    await finishedDeliveries(db, conv, 2);
   }, 90_000);
 });
 
@@ -471,5 +476,57 @@ describe("progress and usage", () => {
     expect(cr.json()).toEqual({ usage: await usageOf(child) });
     // owner only
     expect((await member({ method: "GET", url: `${base()}/${conv}/usage` })).statusCode).toBe(404);
+  }, 60_000);
+
+  it("conversation usage sums every descendant (depth 3), and a sub-agent's covers its subtree", async () => {
+    const { conv, child } = await oneChild();
+    const owner0 = await db
+      .selectFrom("conversations")
+      .select(["account_id"])
+      .where("id", "=", conv)
+      .executeTakeFirstOrThrow();
+    // a grandchild and a great-grandchild below the child, each with a usage event of its own
+    const below: string[] = [];
+    let parent = child;
+    for (const [depth, tokens] of [
+      [2, 70],
+      [3, 900],
+    ] as const) {
+      const id = randomUUID();
+      await db
+        .insertInto("conversations")
+        .values({
+          id,
+          org_id: orgId,
+          agent_id: agentId,
+          account_id: owner0.account_id,
+          kind: "subagent",
+          parent_conversation_id: parent,
+          subagent_depth: depth,
+          title: `Depth ${depth}`,
+        })
+        .execute();
+      await k.app.get(EventLog).append(id, [
+        {
+          type: "usage",
+          payload: {
+            step: 0,
+            provider: "model-script",
+            model: "script-1",
+            inputTokens: tokens,
+            outputTokens: 1,
+            cacheReadTokens: 0,
+            cacheWriteTokens: 0,
+          },
+        },
+      ]);
+      below.push(id);
+      parent = id;
+    }
+    const r = await owner({ method: "GET", url: `${base()}/${conv}/usage` });
+    expect(r.statusCode, r.body).toBe(200);
+    expect(r.json()).toEqual({ usage: await usageOf(conv, child, ...below) });
+    const cr = await owner({ method: "GET", url: `${base()}/${child}/usage` });
+    expect(cr.json()).toEqual({ usage: await usageOf(child, ...below) });
   }, 60_000);
 });

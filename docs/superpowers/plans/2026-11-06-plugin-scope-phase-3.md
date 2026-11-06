@@ -10,7 +10,7 @@ admin shows and associates shareable org items; shared items follow their owner'
 their owner (transferred to the platform).
 
 **Architecture:** an owner (`owner_org_id`, null = platform) and a `shareable` flag on catalog items
-and platform components (migration 0083). An org upload goes through the existing import
+and platform components (migration 0084). An org upload goes through the existing import
 (`PluginImport` prepare → review → confirm with `reviewHash`) in an owner mode: org-scoped routes,
 staging rows carrying the org, a commit that writes the item owned by the org with scope
 `named: [org]`. An extension-bearing upload is committed in a pending state with nothing deployed or
@@ -31,8 +31,8 @@ P3-24, cited below as "P3-n"). §13.5 and §13.6 (rulings A2-F2, P2-*) are bindi
 
 ## Global Constraints
 
-- Everything local: no push, PR or publish. Next migration number `0083`; one migration file for the
-  phase: `packages/kernel/src/migrations/0083_org_owned_items.sql`. Expand-only; `IF NOT EXISTS` /
+- Everything local: no push, PR or publish. Next migration number `0084`; one migration file for the
+  phase: `packages/kernel/src/migrations/0084_org_owned_items.sql`. Expand-only; `IF NOT EXISTS` /
   `IF EXISTS`; a dropped index or constraint carries `-- capybara:allow-destructive <reason>`.
 - Owner values: `platform` (null `owner_org_id`) / an org id. API shape
   `Owner = { kind: "platform" } | { kind: "org"; orgId: string; name: string }`. UI: 平台 / Platform;
@@ -92,7 +92,7 @@ P3-24, cited below as "P3-n"). §13.5 and §13.6 (rulings A2-F2, P2-*) are bindi
 ### Task 1: Schema for owners, sharing, pending uploads and notices
 
 **Files:**
-- Create: `packages/kernel/src/migrations/0083_org_owned_items.sql`
+- Create: `packages/kernel/src/migrations/0084_org_owned_items.sql`
 - Modify: `packages/kernel/src/db/kernel-schema.ts` (`CatalogItemsTable`, `PluginImportStagingTable`,
   the `platform_*` tables, `SkillsTable`, `AgentTemplatesTable`, `OrgNoticesTable`, new
   `PlatformNoticesTable`, the `KernelSchema` map)
@@ -118,16 +118,16 @@ P3-24, cited below as "P3-n"). §13.5 and §13.6 (rulings A2-F2, P2-*) are bindi
   dismissed_by text NULL REFERENCES accounts(id) ON DELETE SET NULL)`, index on `created_at DESC
   WHERE dismissed_at IS NULL`.
 
-- [ ] **Step 1: Write the failing test** `owner-schema-migration.test.ts`: migrate to 0082, seed a
-  catalog item, a platform skill named `report`, an org skill and an org notice; migrate to 0083.
+- [ ] **Step 1: Write the failing test** `owner-schema-migration.test.ts`: migrate to 0083, seed a
+  catalog item, a platform skill named `report`, an org skill and an org notice; migrate to 0084.
   Assert: the item has `owner_org_id = null`, `shareable = false`, `awaiting_confirmation = false`;
   a second platform skill `report` with `origin_org_id = 'org-a'` inserts, a third with
   `origin_org_id = 'org-a'` violates the unique index; inserting an `org_notices` row of kind
-  `item_shared` succeeds and kind `bogus` fails; re-running 0083's SQL is a no-op.
+  `item_shared` succeeds and kind `bogus` fails; re-running 0084's SQL is a no-op.
 - [ ] **Step 2: Run** `pnpm exec vitest run packages/kernel/test/catalog/owner-schema-migration.test.ts`;
   expected FAIL (column `owner_org_id` does not exist).
 - [ ] **Step 3: Write the migration and the Kysely types** listed above, each column commented with
-  `0083` and its ruling, as 0080 does.
+  `0084` and its ruling, as 0081 does.
 - [ ] **Step 4: Run** the test and `pnpm check:migrations`; expected PASS.
 - [ ] **Step 5: Commit** `feat(kernel): owners, sharing and pending uploads in the schema`.
 
@@ -666,7 +666,7 @@ confirmation, transfer), `.agents/skills/writing-plugins/SKILL.md` (org upload r
 pending state, P3-10 to P3-14), `.agents/skills/writing-kernel-api/SKILL.md` only if a convention
 changed, `.agents/skills/replay-evals/SKILL.md` (promotion keeps id and version: no drift),
 `docs/superpowers/specs/2026-11-05-plugin-component-management-design.md` (status: phase 3
-implemented, migration 0083; rulings added during implementation appended to §14.2),
+implemented, migration 0084; rulings added during implementation appended to §14.2),
 `.changeset/org-uploads-sharing.md` (`@capybara-hq/kernel` minor, `@capybara-hq/web` minor).
 
 - [ ] **Step 1:** Update the docs; keep `check:skills-frontmatter` and `check:terms` green.

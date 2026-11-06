@@ -3,13 +3,14 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import type {
+  AgentTreeNode,
   ConversationEvent,
   ConversationUsage,
   SubagentToolRef,
   SubagentView,
 } from "./conversations";
 import { retryOnMountOf } from "./query/client";
-import { subagentsQuery, usageQuery } from "./query/conversation";
+import { agentTreeQuery, subagentsQuery, usageQuery } from "./query/conversation";
 import { extensionToolKey } from "./tool-key";
 import { toolLabelOfKey, toolLabelText } from "./tool-label";
 
@@ -31,7 +32,8 @@ const subagentEventCount = (events: readonly ConversationEvent[]) =>
       e.type === "subagent_finished",
   ).length;
 
-const dispatchedAny = (events: readonly ConversationEvent[]) =>
+/** Whether the conversation has dispatched a sub-agent (the agent map's entries show then). */
+export const dispatchedAny = (events: readonly ConversationEvent[]) =>
   events.some((e) => e.type === "subagent_dispatched");
 
 /**
@@ -96,6 +98,162 @@ export function useSubagents(
     [qc, query.queryKey],
   );
   return { views: dispatched ? views : undefined, refresh };
+}
+
+/** Whether the log holds a wait of an agent below the conversation's own children (§7). */
+export const hasNestedWait = (events: readonly ConversationEvent[]) =>
+  events.some((e) => e.type === "subagent_waiting" && (e.payload.path?.length ?? 1) > 1);
+
+/**
+ * Whether the log holds a nested agent's wait whose branch (the root's child on its path) has
+ * not ended since: whether it still waits, and its name, are only in the agent tree.
+ */
+export function hasUnresolvedNestedWait(events: readonly ConversationEvent[]): boolean {
+  const open = new Set<string>();
+  for (const e of events) {
+    if (e.type === "subagent_waiting" && (e.payload.path?.length ?? 1) > 1) {
+      const top = e.payload.path?.[0];
+      if (top !== undefined) open.add(top);
+    } else if (e.type === "subagent_finished") open.delete(e.payload.subagentId);
+  }
+  return open.size > 0;
+}
+
+/** What the timeline reads of the agent tree: each agent's name and own status. */
+export type TreeLookup = {
+  agentName(id: string): string | undefined;
+  agentStatus(id: string): string | undefined;
+};
+
+/**
+ * The agent tree as names and statuses for the conversation's timeline (agent map spec §7): read
+ * only while the log holds a nested agent's wait whose branch has not ended since
+ * ({@link hasUnresolvedNestedWait}); its name and whether it still waits are in the tree, not in
+ * the root's log. The map's own refresh ({@link useAgentTree}) keeps it current meanwhile; after
+ * that the last answer still names the agents of the log's older waits. Only a root conversation
+ * (`root`) has a tree: a sub-agent's page never reads it (the API answers 404).
+ */
+export function useTreeLookup(
+  orgId: string,
+  conversationId: string,
+  events: readonly ConversationEvent[],
+  root: boolean,
+): TreeLookup | undefined {
+  const nested = useMemo(() => hasNestedWait(events), [events]);
+  const unresolved = useMemo(() => hasUnresolvedNestedWait(events), [events]);
+  const query = agentTreeQuery(orgId, conversationId);
+  const tree = useQuery({
+    ...query,
+    enabled: root && unresolved,
+    retryOnMount: retryOnMountOf(query.queryKey),
+  }).data;
+  return useMemo(() => {
+    if (!root || !nested || tree === undefined) return undefined;
+    const nodes = new Map<string, AgentTreeNode>();
+    const walk = (n: AgentTreeNode) => {
+      nodes.set(n.id, n);
+      n.children.forEach(walk);
+    };
+    walk(tree);
+    return {
+      agentName: (id) => nodes.get(id)?.description || nodes.get(id)?.agentType || undefined,
+      agentStatus: (id) => nodes.get(id)?.status,
+    };
+  }, [root, nested, tree]);
+}
+
+/** The most often stream progress reads the agent tree again (a trailing throttle window). */
+export const TREE_PROGRESS_MS = 1500;
+
+/**
+ * Reads of the agent tree, one per {@link TREE_PROGRESS_MS}, after a read that shows an agent
+ * below the root's children still active, without new progress or events in between (its end
+ * reaches no event of the root's log).
+ */
+export const TREE_TRAILING_READS = 3;
+
+/** Whether an agent below the root's own children is still going (the root has depth 0). */
+function deepActive(n: AgentTreeNode, depth = 0): boolean {
+  if (depth >= 2 && isActiveStatus(n.status)) return true;
+  return n.children.some((c) => deepActive(c, depth + 1));
+}
+
+/**
+ * The agent tree of a root conversation (agent map spec §9.2), read while the map is `open` and
+ * the conversation has dispatched a sub-agent. A `subagent_*` event of its log (the tree's shape
+ * or a status moved) reads it again at once; progress steps of any agent (a descendant's progress
+ * reaches every ancestor's stream with its own `subagentId`) are coalesced: at most one read per
+ * {@link TREE_PROGRESS_MS}, at the end of the window. A read in flight is never cancelled for a
+ * new one (`cancelRefetch: false`). Invalidating while the map is closed only marks it stale.
+ * An agent below the root's children ends with no event in the root's log, and its last progress
+ * may be read before its run's end commits: while the open map's tree shows one still active, one
+ * more read follows each read at the end of a window, at most {@link TREE_TRAILING_READS} in a row
+ * without new progress or events (no polling once nothing below is active).
+ */
+export function useAgentTree(
+  orgId: string,
+  conversationId: string,
+  events: readonly ConversationEvent[],
+  progress: Readonly<Record<string, { step: number }>>,
+  open: boolean,
+): { root: AgentTreeNode | undefined; failed: boolean } {
+  const qc = useQueryClient();
+  const dispatched = useMemo(() => dispatchedAny(events), [events]);
+  const count = useMemo(() => subagentEventCount(events), [events]);
+  // every agent's step: it moves whenever any agent of the tree makes progress
+  const steps = useMemo(
+    () =>
+      Object.entries(progress)
+        .map(([id, p]) => `${id}:${p.step}`)
+        .join(","),
+    [progress],
+  );
+  const query = agentTreeQuery(orgId, conversationId);
+  const r = useQuery({
+    ...query,
+    enabled: dispatched && open,
+    retryOnMount: retryOnMountOf(query.queryKey),
+  });
+  const key = useRef(query.queryKey);
+  key.current = query.queryKey;
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const refresh = useCallback(() => {
+    if (timer.current !== null) clearTimeout(timer.current);
+    timer.current = null;
+    void qc.invalidateQueries({ queryKey: key.current }, { cancelRefetch: false });
+  }, [qc]);
+  /** Trailing reads since the last progress step or event. */
+  const trailing = useRef(0);
+  const seenCount = useRef(count);
+  useEffect(() => {
+    if (!dispatched || seenCount.current === count) return;
+    seenCount.current = count;
+    trailing.current = 0;
+    refresh();
+  }, [count, dispatched, refresh]);
+  const seenSteps = useRef(steps);
+  useEffect(() => {
+    if (!dispatched || seenSteps.current === steps) return;
+    seenSteps.current = steps;
+    trailing.current = 0;
+    // the window's first step starts it; later ones ride along
+    if (timer.current === null) timer.current = setTimeout(refresh, TREE_PROGRESS_MS);
+  }, [steps, dispatched, refresh]);
+  // every answer (also an equal one: `dataUpdatedAt` moves) of the open map
+  const { data, dataUpdatedAt } = r;
+  useEffect(() => {
+    if (!open || dataUpdatedAt === 0 || data === undefined || !deepActive(data)) return;
+    if (timer.current !== null || trailing.current >= TREE_TRAILING_READS) return;
+    trailing.current += 1;
+    timer.current = setTimeout(refresh, TREE_PROGRESS_MS);
+  }, [open, data, dataUpdatedAt, refresh]);
+  useEffect(
+    () => () => {
+      if (timer.current !== null) clearTimeout(timer.current);
+    },
+    [],
+  );
+  return { root: r.data, failed: r.data === undefined && r.error !== null };
 }
 
 /**

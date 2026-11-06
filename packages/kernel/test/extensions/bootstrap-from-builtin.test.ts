@@ -84,7 +84,7 @@ beforeAll(async () => {
     INSERT INTO capybara.extension_deployment_configs (plugin, config, updated_at) VALUES
       ('fake-bootstrap-b', ${JSON.stringify({ bucket: BUCKET })}::jsonb, now())
   `.execute(db);
-  // Raw SQL: this schema predates 0079, which renames is_enterprise_admin to is_super_admin.
+  // Raw SQL: this schema predates 0080, which renames is_enterprise_admin to is_super_admin.
   const hash = await accountsFor(db).hashNewPassword(PW);
   await sql`
     INSERT INTO capybara.accounts (id, display_name, is_enterprise_admin) VALUES ('root-id', 'R', true)

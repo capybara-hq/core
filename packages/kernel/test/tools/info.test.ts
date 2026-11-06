@@ -164,6 +164,8 @@ describe("tool kinds", () => {
       SkillWrite: "meta",
       ReadToolOutput: "meta",
       AskUserQuestion: "meta",
+      SendMessage: "meta",
+      SubagentHandback: "meta",
       WebSearch: "search",
       WebFetch: "read",
     });

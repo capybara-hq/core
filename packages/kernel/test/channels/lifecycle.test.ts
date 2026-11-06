@@ -58,6 +58,17 @@ let redis: Redis;
 let owner: Req;
 let ownerId: string;
 let queue: Queue;
+/**
+ * The client the queue above uses. A queue given a client does not close it, so afterAll quits it
+ * before Redis stops: an open client without an error listener reports "[ioredis] Unhandled error
+ * event" on every reconnect, which can land after Vitest tore the worker down.
+ */
+const redisClients: Redis[] = [];
+const redisClient = (): Redis => {
+  const c = new Redis(rd.url);
+  redisClients.push(c);
+  return c;
+};
 
 const cfg = (plugins: string[], scanIntervalMs = SCAN, leaseTtlMs = TTL) =>
   runConfig(
@@ -77,7 +88,7 @@ beforeAll(async () => {
   raw = createDb(pgc.url, 3);
   db = kernelDb(raw);
   redis = new Redis(rd.url);
-  queue = new Queue(CHANNEL_QUEUE_NAME, { connection: new Redis(rd.url) });
+  queue = new Queue(CHANNEL_QUEUE_NAME, { connection: redisClient() });
   ownerId = (await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" }))
     .id;
   owner = await session(a, "owner");
@@ -85,6 +96,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await queue?.close();
+  await Promise.all(redisClients.splice(0).map((c) => c.quit()));
   await a?.close();
   await im?.stop();
   redis?.disconnect();

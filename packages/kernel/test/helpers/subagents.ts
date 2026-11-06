@@ -1,6 +1,7 @@
 import type { Queue } from "bullmq";
 import { sql } from "kysely";
 import type { EventLog } from "../../src/conversations/event-log.js";
+import type { EventPayload } from "../../src/conversations/events.js";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { type FinishRunArgs, RunFinish } from "../../src/runtime/run-finish.js";
 import { handlesFor } from "./identity.js";
@@ -128,4 +129,33 @@ export async function finishChildByHand(
     consumed: null,
     event: { type: "run_finished", payload: { reason: "completed", consumedUpToSeq: 0 } },
   });
+}
+
+/**
+ * Waits until the parent conversation holds `n` finished `subagent_delivery` events (agent map
+ * spec §4.5: each background child's finish); returns their payloads in log order.
+ */
+export async function finishedDeliveries(
+  db: KernelSchemaDb,
+  parentConv: string,
+  n = 1,
+  timeoutMs = 30_000,
+): Promise<EventPayload<"subagent_delivery">[]> {
+  return waitFor(
+    async () => {
+      const rows = await db
+        .selectFrom("conversation_events")
+        .select("payload")
+        .where("conversation_id", "=", parentConv)
+        .where("type", "=", "subagent_delivery")
+        .orderBy("seq")
+        .execute();
+      const out = rows
+        .map((r) => r.payload as EventPayload<"subagent_delivery">)
+        .filter((p) => p.kind === "finished");
+      return out.length >= n ? out : null;
+    },
+    timeoutMs,
+    `${n} finished sub-agent deliveries`,
+  );
 }

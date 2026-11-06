@@ -1,6 +1,7 @@
 import type { ModelInfo, ModelRequest } from "@capybara-hq/plugin-sdk";
 import { renderBackgroundFinished } from "../../background/render.js";
 import type { ConversationEvent, EventPayload } from "../../conversations/events.js";
+import { renderSubagentDelivery } from "../subagents/render.js";
 import { latestSummary } from "./build.js";
 
 /** 压缩请求的标记：放在 system 中，便于识别（model-fake 据此返回摘要）。 */
@@ -125,6 +126,9 @@ function transcriptLine(e: ConversationEvent): string | null {
     // a finished background task is a system message of the request (build.ts)
     case "background_task_finished":
       return `System reminder: ${renderBackgroundFinished(e.payload)}`;
+    // a sub-agent's delivery is a system message of the request (build.ts)
+    case "subagent_delivery":
+      return `System reminder: ${renderSubagentDelivery(e.payload)}`;
     // phase D: a forked skill's report is user content of the request (build.ts)
     case "skill_fork_result":
       return `User: ${e.payload.text}`;

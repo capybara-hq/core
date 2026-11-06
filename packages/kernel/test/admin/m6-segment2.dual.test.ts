@@ -391,13 +391,15 @@ describe("M6 第二段双副本验收（管理后台与免重启插件生命周�
         50,
       );
       // The handler blocks on the lock; a call that ended first (or never reached the table) is a
-      // different failure, and says what the conversation logged instead of a bare timeout
+      // different failure, and says what the conversation logged instead of a bare timeout.
+      // pg_stat_activity is read through the pool, never on `lock`: inside a transaction PostgreSQL
+      // keeps the view's snapshot of its first read until the transaction ends, so polling it on the
+      // locking connection would repeat a read taken before the handler reached the table
       const blocked = await waitFor(
         async () => {
-          const r = await lock.query<{ n: number }>(
-            `SELECT count(*)::int AS n FROM pg_stat_activity
-             WHERE wait_event_type = 'Lock' AND query ILIKE '%"items"%' AND datname = current_database()`,
-          );
+          const r = await sql<{ n: number }>`SELECT count(*)::int AS n FROM pg_stat_activity
+            WHERE wait_event_type = 'Lock' AND query ILIKE '%"items"%'
+              AND datname = current_database()`.execute(db);
           if ((r.rows[0]?.n ?? 0) > 0) return "blocked";
           const ended = (await eventsOf(db, convId)).find((e) => e.type === "tool_result");
           return ended === undefined ? null : `ended: ${JSON.stringify(ended.payload)}`;
@@ -407,9 +409,10 @@ describe("M6 第二段双副本验收（管理后台与免重启插件生命周�
         50,
       ).catch(async (err: unknown) => {
         const types = (await eventsOf(db, convId)).map((e) => e.type).join(", ");
-        const act = await lock.query<{ state: string; wait: string | null; query: string }>(
-          `SELECT state, wait_event_type AS wait, left(query, 120) AS query FROM pg_stat_activity
-           WHERE datname = current_database() AND state <> 'idle' AND pid <> pg_backend_pid()`,
+        const act = await sql<{ state: string; wait: string | null; query: string }>`
+          SELECT state, wait_event_type AS wait, left(query, 120) AS query FROM pg_stat_activity
+          WHERE datname = current_database() AND state <> 'idle' AND pid <> pg_backend_pid()`.execute(
+          db,
         );
         throw new Error(`${String(err)}; events: ${types}; active: ${JSON.stringify(act.rows)}`);
       });

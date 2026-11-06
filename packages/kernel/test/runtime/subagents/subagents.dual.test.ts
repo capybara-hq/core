@@ -15,7 +15,11 @@ import {
   SUBAGENT_RUN_QUEUE_NAME,
 } from "../../../src/runtime/run-queue.js";
 import { Waits } from "../../../src/runtime/waits.js";
-import { type ScriptRule, scriptRules } from "../../fixtures/plugins/model-script/index.js";
+import {
+  openBarrier,
+  type ScriptRule,
+  scriptRules,
+} from "../../fixtures/plugins/model-script/index.js";
 import { eventLogFor, legacyDbFor } from "../../helpers/conversations.js";
 import { truncateTables } from "../../helpers/db.js";
 import { asUser, cookieJar } from "../../helpers/http.js";
@@ -38,20 +42,21 @@ import {
 } from "../../helpers/runs.js";
 import {
   backdateRun,
+  type ChildRun,
   childRunsOf,
   dropChildJobs,
   finishChildByHand,
-  parentWaiting,
+  finishedDeliveries,
 } from "../../helpers/subagents.js";
 
 /**
- * Phase C Task 9, two replicas (two in-process kernels sharing PG and Redis, each with its own
- * pool, HTTP app and workers):
- * - the parent suspends on A, A goes away, the children run on B and B resumes the parent;
- * - a child whose job stalls too often fails `run.stalled` and the parent gets that result;
- * - both replicas sweep at once: a lost resume resumes the parent once, a lost enqueue runs the
+ * Phase C Task 9 with background sub-agents (agent map spec §5.4, §10), two replicas (two
+ * in-process kernels sharing PG and Redis, each with its own pool, HTTP app and workers):
+ * - the parent dispatches on A and ends, A goes away, the children run on B and deliver;
+ * - a child whose job stalls too often fails `run.stalled` and delivers that failure;
+ * - both replicas sweep at once: a lost finish delivery is written once, a lost enqueue runs the
  *   child once;
- * - stopping the parent on one replica stops its children running on the other (Task 13).
+ * - stopping a child on one replica stops it running on the other (Task 13).
  */
 
 const MODEL_SCRIPT = fileURLToPath(
@@ -88,7 +93,7 @@ const RULES: ScriptRule[] = [
     when: { lastUserIncludes: "SCENARIO one", assistantTurns: 0 },
     reply: { toolCalls: [{ name: "Agent", input: { description: "Task", prompt: "task-one" } }] },
   },
-  { when: { lastToolResultIncludes: "[agentId:" }, reply: { text: "parent done" } },
+  { when: { lastToolResultIncludes: "in the background" }, reply: { text: "parent done" } },
 ];
 
 let pgc: TestContainer;
@@ -98,6 +103,17 @@ let db: KernelSchemaDb;
 let redis: Redis;
 let subQueue: Queue;
 let runQueue: Queue;
+/**
+ * The clients the queues above use. A queue given a client does not close it, so afterAll quits
+ * them before Redis stops: an open client without an error listener reports "[ioredis] Unhandled
+ * error event" on every reconnect, which can land after Vitest tore the worker down.
+ */
+const redisClients: Redis[] = [];
+const redisClient = (): Redis => {
+  const c = new Redis(rd.url);
+  redisClients.push(c);
+  return c;
+};
 const kernels: TestKernel[] = [];
 
 const config = (roles: ("api" | "worker")[] = ["api", "worker"]) =>
@@ -141,14 +157,15 @@ beforeAll(async () => {
   raw = createDb(pgc.url, 5);
   db = legacyDbFor(raw);
   redis = new Redis(rd.url);
-  subQueue = new Queue(SUBAGENT_RUN_QUEUE_NAME, { connection: new Redis(rd.url) });
-  runQueue = new Queue(RUN_QUEUE_NAME, { connection: new Redis(rd.url) });
+  subQueue = new Queue(SUBAGENT_RUN_QUEUE_NAME, { connection: redisClient() });
+  runQueue = new Queue(RUN_QUEUE_NAME, { connection: redisClient() });
 }, 120_000);
 
 afterAll(async () => {
   for (const k of kernels.splice(0)) await k.close();
   await subQueue?.close();
   await runQueue?.close();
+  await Promise.all(redisClients.splice(0).map((c) => c.quit()));
   redis?.disconnect();
   await raw?.destroy();
   await Promise.all([pgc?.stop(), rd?.stop()]);
@@ -196,18 +213,28 @@ const finalText = (events: ConversationEvent[]) =>
     ?.payload.content.flatMap((b) => (b.type === "text" ? [b.text] : []))
     .join("");
 
-/** Posts `text` with the sub-agent queue paused; returns once the parent is idle in `waiting`. */
+/**
+ * Posts `text` with the sub-agent queue paused; returns once the parent's run ended (it never
+ * waits on its children) with its `n` children queued.
+ */
 async function startPaused(req: Req, text: string, n: number) {
   await subQueue.pause();
   const conv = await createConv(req, orgId, agentId);
   await postMessage(req, orgId, conv, text);
-  const w = await parentWaiting(db, conv, n);
-  await waitForRunJobDone(db, runQueue, w.runId);
-  return { conv, ...w };
+  await waitForTerminal(db, conv, 1, 30_000);
+  const run = await db
+    .selectFrom("runs")
+    .select("id")
+    .where("conversation_id", "=", conv)
+    .executeTakeFirstOrThrow();
+  await waitForRunJobDone(db, runQueue, run.id);
+  const children = await childRunsOf(db, conv);
+  expect(children).toHaveLength(n);
+  return { conv, runId: run.id, children };
 }
 
 describe("sub-agents across two replicas", () => {
-  it("the parent suspends on A; with A gone, the children run on B and B resumes the parent", async () => {
+  it("the parent dispatches on A and ends; with A gone, the children run on B and deliver", async () => {
     const a = await boot();
     const jar = cookieJar();
     const reqA = await login(a, jar);
@@ -216,18 +243,19 @@ describe("sub-agents across two replicas", () => {
     await stopKernel(a);
     const b = await boot();
     await subQueue.resume();
-    await waitForTerminal(db, conv, 1, 30_000);
+    const ds = await finishedDeliveries(db, conv, 2);
+    expect(ds.map((d) => d.text)).toEqual(["child ok", "child ok"]);
     const events = await eventsOf(db, conv);
     expect(finalText(events)).toBe("parent done");
     expect(ofType(events, "run_finished").map((e) => e.runId)).toEqual([runId]);
     expect(ofType(events, "subagent_finished")).toHaveLength(2);
-    // step 1 ran on A, step 2 (after the resume) on B: each step's model call once
+    // both of the parent's steps ran on A, before the children
     expect(ofType(events, "model_call").map((e) => e.payload.step)).toEqual([1, 2]);
     expect((await childRunsOf(db, conv)).map((c) => c.status)).toEqual(["completed", "completed"]);
     expect(b).toBeDefined();
   }, 90_000);
 
-  it("a child whose job stalls too often fails run.stalled and the parent gets that result", async () => {
+  it("a child whose job stalls too often fails run.stalled and delivers that failure", async () => {
     const a = await boot();
     await boot();
     const reqA = await login(a);
@@ -250,50 +278,63 @@ describe("sub-agents across two replicas", () => {
       "job stalled more than allowable limit",
     );
     await subQueue.resume();
-    await waitForTerminal(db, conv, 1, 30_000);
+    const [d] = await finishedDeliveries(db, conv, 1);
     const cev = await eventsOf(db, child.conversationId);
     expect(ofType(cev, "run_failed")[0]?.payload.error.code).toBe("run.stalled");
-    const events = await eventsOf(db, conv);
-    const result = ofType(events, "tool_result").find((r) => r.payload.toolKey === "Agent");
-    expect(result?.payload.isError).toBe(true);
-    expect(result?.payload.content).toContain("failed (run.stalled)");
-    expect(ofType(events, "subagent_finished")[0]?.payload).toMatchObject({
+    expect(d).toMatchObject({ status: "failed", errorCode: "run.stalled" });
+    expect(ofType(await eventsOf(db, conv), "subagent_finished")[0]?.payload).toMatchObject({
       status: "failed",
       errorCode: "run.stalled",
     });
-    expect(finalText(events)).toBe("parent done");
   }, 90_000);
 
-  it("a child finished while its resume was lost: both replicas sweep, the parent resumes once", async () => {
+  it("children finished while their deliveries were lost: both replicas sweep, each delivered once, one wake", async () => {
     const a = await boot();
     const b = await boot();
     const reqA = await login(a);
     await setup(reqA);
-    const { conv, runId, children } = await startPaused(reqA, "SCENARIO two", 2);
+    const { conv, children } = await startPaused(reqA, "SCENARIO two", 2);
     await dropChildJobs(
       subQueue,
       children.map((c) => c.conversationId),
     );
-    for (const c of children)
+    for (const c of children) {
       await finishChildByHand(
         db,
         eventLogFor(db, a.app.get<ExtensionContext["bus"]>(KERNEL_BUS)),
         c,
         `by hand ${c.runId}`,
       );
-    await backdateRun(db, runId);
+      await backdateRun(db, c.runId);
+    }
     const [ra, rb] = await Promise.all([a.app.get(Waits).sweep(), b.app.get(Waits).sweep()]);
-    expect(ra.resumed + rb.resumed).toBe(1);
-    await waitForTerminal(db, conv, 1, 30_000);
+    expect(ra.delivered + rb.delivered).toBeGreaterThanOrEqual(2);
     await sleep(500);
     const events = await eventsOf(db, conv);
-    expect(finalText(events)).toBe("parent done");
-    expect(ofType(events, "run_finished")).toHaveLength(1);
+    const ds = ofType(events, "subagent_delivery");
+    expect(ds.map((d) => d.payload.text).sort()).toEqual(
+      children.map((c) => `by hand ${c.runId}`).sort(),
+    );
     expect(ofType(events, "subagent_finished")).toHaveLength(2);
-    expect(ofType(events, "model_call").map((e) => e.payload.step)).toEqual([1, 2]);
+    // the idle parent is woken once (agent map spec §5.3): both replicas' deliveries reach
+    // ensureRun, which the conversation row lock and the 60 s window serialize
+    await waitForTerminal(db, conv, 2, 30_000);
+    await sleep(500);
+    const parentRuns = await db
+      .selectFrom("runs")
+      .select("id")
+      .where("conversation_id", "=", conv)
+      .orderBy("created_at")
+      .execute();
+    expect(parentRuns).toHaveLength(2);
+    const after = await eventsOf(db, conv);
+    expect(ofType(after, "run_finished")).toHaveLength(2);
+    const wakeStart = ofType(after, "run_started").find((e) => e.runId === parentRuns[1]?.id);
+    expect(wakeStart?.payload.trigger).toBe("subagent");
+    expect(ds.map((d) => d.seq)).toContain(wakeStart?.payload.triggerSeq);
   }, 90_000);
 
-  it("a lost enqueue: both replicas sweep, the child runs once and the parent resumes once", async () => {
+  it("a lost enqueue: both replicas sweep, the child runs once and delivers once", async () => {
     const a = await boot();
     const b = await boot();
     const reqA = await login(a);
@@ -306,18 +347,17 @@ describe("sub-agents across two replicas", () => {
     const [ra, rb] = await Promise.all([a.app.get(Waits).sweep(), b.app.get(Waits).sweep()]);
     // both may see the orphan; BullMQ keeps one job per id, so the child still runs once
     expect(ra.requeued + rb.requeued).toBeGreaterThanOrEqual(1);
-    await waitForTerminal(db, conv, 1, 30_000);
+    await finishedDeliveries(db, conv, 1);
     await sleep(500);
     const cev = await eventsOf(db, child.conversationId);
     expect(ofType(cev, "run_started")).toHaveLength(1);
     expect(ofType(cev, "assistant_message")).toHaveLength(1);
     const events = await eventsOf(db, conv);
-    expect(finalText(events)).toBe("parent done");
     expect(ofType(events, "subagent_dispatched")).toHaveLength(1);
-    expect(ofType(events, "run_finished")).toHaveLength(1);
+    expect(ofType(events, "subagent_delivery")).toHaveLength(1);
   }, 90_000);
 
-  it("stopping the parent on A stops its children running on B (Task 13)", async () => {
+  it("stopping a child on A stops it running on B (Task 13)", async () => {
     // A takes HTTP only; every run, the children included, runs on B
     const a = await boot(["api"]);
     await boot();
@@ -325,42 +365,30 @@ describe("sub-agents across two replicas", () => {
     await setup(reqA);
     const conv = await createConv(reqA, orgId, agentId);
     await postMessage(reqA, orgId, conv, "SCENARIO hang");
-    const { runId, children } = await parentWaiting(db, conv, 2);
-    await waitFor(
+    await waitForTerminal(db, conv, 1, 30_000);
+    const children = await waitFor(
       async () => {
         const all = await childRunsOf(db, conv);
-        return all.every((c) => c.status === "running") || null;
+        return all.length === 2 && all.every((c) => c.status === "running") ? all : null;
       },
       20_000,
       "children running on B",
     );
+    const [first, second] = children as [ChildRun, ChildRun];
     const res = await reqA({
       method: "POST",
-      url: `/api/v1/orgs/${orgId}/conversations/${conv}/abort`,
+      url: `/api/v1/orgs/${orgId}/conversations/${first.conversationId}/abort`,
     });
     expect(res.statusCode, res.body).toBe(202);
-    await waitFor(
-      async () => {
-        const all = await childRunsOf(db, conv);
-        return all.every((c) => c.status === "aborted") || null;
-      },
-      10_000,
-      "children aborted",
+    const [d] = await finishedDeliveries(db, conv, 1);
+    expect(d).toMatchObject({ subagentId: first.conversationId, status: "aborted" });
+    const cev = await eventsOf(db, first.conversationId);
+    expect(ofType(cev, "run_aborted").length).toBe(1);
+    // its sibling keeps running
+    expect((await childRunsOf(db, conv)).find((c) => c.runId === second.runId)?.status).toBe(
+      "running",
     );
-    const events = await eventsOf(db, conv);
-    expect(ofType(events, "run_aborted")).toHaveLength(1);
-    const results = ofType(events, "tool_result").filter((r) => r.payload.toolKey === "Agent");
-    expect(results.map((r) => r.payload.content)).toEqual([
-      "The run was stopped while this sub-agent was working; it was stopped too.",
-      "The run was stopped while this sub-agent was working; it was stopped too.",
-    ]);
-    for (const c of children) {
-      const cev = await eventsOf(db, c.conversationId);
-      expect(ofType(cev, "run_aborted").map((e) => e.payload.byAccountId)).toEqual([null]);
-    }
-    expect(
-      (await db.selectFrom("runs").select("status").where("id", "=", runId).executeTakeFirst())
-        ?.status,
-    ).toBe("aborted");
+    openBarrier("hang");
+    await finishedDeliveries(db, conv, 2);
   }, 60_000);
 });

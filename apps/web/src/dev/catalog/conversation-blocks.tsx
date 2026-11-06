@@ -40,6 +40,7 @@ import {
   WorkingLine,
 } from "@capybara-hq/design";
 import {
+  AGENT_MAP_FIXTURE,
   CONV_FIXTURE,
   DIVIDER_FIXTURE,
   FILE_FIXTURE,
@@ -158,6 +159,12 @@ function userBubbleBlocks(): ReactNode {
           text={SKILL_FIXTURE.bubble.arguments}
           skill={SKILL_FIXTURE.chip.label}
           details={<Disclosure summary={SKILL_FIXTURE.bubble.details}>{null}</Disclosure>}
+        />
+      </Block>
+      <Block id="user-bubble-sender">
+        <UserBubble
+          text={AGENT_MAP_FIXTURE.detail.message}
+          sender={AGENT_MAP_FIXTURE.detail.spawnedBy.label}
         />
       </Block>
     </>

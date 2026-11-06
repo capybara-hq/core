@@ -576,7 +576,7 @@ export class BootstrapService {
 
   /**
    * The catalog item of a bootstrap entry follows `required`: a required entry is builtin, offered
-   * to every org (scope `all`) and not disabled (migration 0074 could leave a required plugin
+   * to every org (scope `all`) and not disabled (migration 0075 could leave a required plugin
    * disabled); an entry that stops being required is no longer builtin and keeps scope `all` (the
    * admin may change it from then on).
    */

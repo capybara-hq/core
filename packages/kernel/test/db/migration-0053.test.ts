@@ -70,9 +70,11 @@ describe("0053_subagents", () => {
     const tokens = await sql<{ n: string }>`
       select subagent_tokens_used::text as n from capybara.runs where id = 'rp'`.execute(db);
     expect(tokens.rows[0]?.n).toBe("0");
+    // budget_run_id: required since 0074 (this test migrates to the latest file)
     await sql`insert into capybara.subagent_dispatches
-      (parent_run_id, parent_call_id, parent_conversation_id, step, child_conversation_id, child_run_id)
-      values ('rp', 'call-1', 'p1', 0, 's1', 'rs')`.execute(db);
+      (parent_run_id, parent_call_id, parent_conversation_id, step, child_conversation_id, child_run_id,
+        budget_run_id)
+      values ('rp', 'call-1', 'p1', 0, 's1', 'rs', 'rp')`.execute(db);
     const resumed = await sql<{ resumed: boolean }>`
       select resumed from capybara.subagent_dispatches where parent_call_id = 'call-1'`.execute(db);
     expect(resumed.rows[0]?.resumed).toBe(false);
@@ -96,7 +98,7 @@ describe("0053_subagents", () => {
       sql`insert into capybara.agent_template_versions (template_id, version, definition, source_format)
         values ('t1', 2, '{}'::jsonb, 'x')`.execute(db),
     ).rejects.toThrow(/source_format/);
-    // 0053 required a plugin; 0080 (platform components) allows a template without one (bare type)
+    // 0053 required a plugin; 0081 (platform components) allows a template without one (bare type)
     await sql`insert into capybara.agent_templates (id, org_id, name, current_version)
       values ('t0', 'o1', 'no-plugin', 1)`.execute(db);
     // one live template per (org, plugin, name)

@@ -35,18 +35,19 @@ export const SANDBOX_LIMIT_OVERRIDE = z
 export type SandboxLimitOverride = z.infer<typeof SANDBOX_LIMIT_OVERRIDE>;
 
 /**
- * One organization's sub-agent limits (sub-agents spec §8.2): any of the three `subagents.*`
- * values, within the same bounds; the ones not given use the deployment's config.
+ * One organization's sub-agent limits (sub-agents spec §8.2, agent map spec §6): any of the
+ * `subagents.*` values, within the same bounds; the ones not given use the deployment's config.
  */
 export const SUBAGENT_LIMIT_OVERRIDE = z
   .object({
-    maxConcurrentPerRun: z.number().int().min(1).max(20).optional(),
+    maxDepth: z.number().int().min(1).max(5).optional(),
+    maxConcurrentPerConversation: z.number().int().min(1).max(20).optional(),
     maxDispatchesPerRun: z.number().int().min(1).max(500).optional(),
     maxTokensPerRun: z.number().int().min(10_000).optional(),
   })
   .strict()
   .refine((o) => Object.values(o).some((v) => v !== undefined), {
-    message: "give maxConcurrentPerRun, maxDispatchesPerRun or maxTokensPerRun",
+    message: "give maxDepth, maxConcurrentPerConversation, maxDispatchesPerRun or maxTokensPerRun",
   });
 export type SubagentLimitOverride = z.infer<typeof SUBAGENT_LIMIT_OVERRIDE>;
 

@@ -41,6 +41,17 @@ let rd: TestContainer;
 let raw: ReturnType<typeof createDb>;
 let db: KernelSchemaDb;
 let probe: Queue;
+/**
+ * The client the queue above uses. A queue given a client does not close it, so afterAll quits it
+ * before Redis stops: an open client without an error listener reports "[ioredis] Unhandled error
+ * event" on every reconnect, which can land after Vitest tore the worker down.
+ */
+const redisClients: Redis[] = [];
+const redisClient = (): Redis => {
+  const c = new Redis(rd.url);
+  redisClients.push(c);
+  return c;
+};
 let seed: Awaited<ReturnType<typeof seedConversation>>;
 const log = createLogger("error", { write: () => {} });
 
@@ -52,10 +63,11 @@ beforeAll(async () => {
   });
   raw = createDb(pgc.url, 5);
   db = kernelDb(raw);
-  probe = new Queue(MAINTENANCE_QUEUE_NAME, { connection: new Redis(rd.url) });
+  probe = new Queue(MAINTENANCE_QUEUE_NAME, { connection: redisClient() });
 }, 120_000);
 afterAll(async () => {
   await probe?.close();
+  await Promise.all(redisClients.splice(0).map((c) => c.quit()));
   await raw?.destroy();
   await Promise.all([pgc?.stop(), rd?.stop()]);
 });

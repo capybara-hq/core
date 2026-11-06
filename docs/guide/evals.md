@@ -1,0 +1,8 @@
+# Evals and trajectories
+
+Org admins work under "Evals" in the top bar (agent owners get to the run records of their own agents from the agent detail page):
+
+- **Trajectory viewer** (`/trajectories`): the event timeline and span waterfall of a conversation, the tokens, latency and cost of every model call (estimated at read time from the price table under "Admin → Models", with the currency taken from the deployment setting `priceCurrency`, and "—" shown when there is no price), tool calls and the approval chain. Only org admins and the agent's owner can view it, and anyone without permission always gets 404; every view records the audit entry `trajectory.viewed`.
+- **Eval sets** (`/evals`): add cases from real conversations or by sampling (one eval set belongs to one agent; a case stores a log snapshot, ≤ `evals.maxCaseBytes`), switch the model / params / instructions / agent version to make candidates, and choose **step replay** (resend that moment's model requests one by one and compare) or **full-run replay** (rerun the whole run in a hidden conversation, using the tool results recorded at the time and **executing no tools**). Before a run, the expected request count and tokens are shown, and it stops at the token cap (`evals.defaultTokenCap` / `evals.maxTokenCap`); the number of cases an org executes at once is limited by `evals.orgConcurrency`. Results include the structural diff, an optional LLM judge (first pick a model for the purpose `eval` under "Settings → Model purposes" or "Admin → Models"), and manual pass / fail. Eval data stays inside the org, and there is no export.
+
+To write eval and replay code, see [.agents/skills/replay-evals](../../.agents/skills/replay-evals/SKILL.md).

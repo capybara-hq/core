@@ -238,12 +238,14 @@ export class TrajectoryService {
       .where("id", "=", conversationId)
       .where("org_id", "=", orgId)
       .executeTakeFirst();
-    // A sub-agent's trajectory is part of its parent conversation's: authorized by the parent
-    // conversation's agent, never by the dispatched agent (an org agent's owner must not read a
-    // child drawn from someone else's conversation; batch 9 review I1)
+    // A sub-agent's trajectory is part of its tree's: authorized by the ROOT conversation's agent
+    // (the rule `parentReachable` applies to the conversation itself), never by the dispatched
+    // agent nor by the direct parent's, which below an org agent's child is that org agent (an org
+    // agent's owner must not read work drawn from someone else's conversation; batch 9 review I1,
+    // agent map final review: depth 2 and below)
     const authAgentId =
       conv?.kind === "subagent"
-        ? await this.parentAgentId(orgId, conv.parent_conversation_id)
+        ? await this.rootAgentId(orgId, conv.parent_conversation_id)
         : conv?.agent_id;
     if (!conv || authAgentId === null || authAgentId === undefined) throw notFound();
     if (!(await this.canView(orgId, accountId, authAgentId))) throw notFound();
@@ -335,16 +337,26 @@ export class TrajectoryService {
         };
   }
 
-  /** The agent of a sub-agent conversation's parent conversation, or null. */
-  private async parentAgentId(orgId: string, parentId: string | null): Promise<string | null> {
+  /**
+   * The agent of the root conversation of a sub-agent conversation's tree, from its parent `parentId`
+   * up (the same walk as `conversations/access.ts`: at most 16 levels, every conversation between
+   * a sub-agent conversation of the org, ending at one without a parent), or null when the chain
+   * leaves the org, passes another kind or does not end.
+   */
+  private async rootAgentId(orgId: string, parentId: string | null): Promise<string | null> {
     if (parentId === null) return null;
-    const p = await this.db
-      .selectFrom("conversations")
-      .select("agent_id")
-      .where("id", "=", parentId)
-      .where("org_id", "=", orgId)
-      .executeTakeFirst();
-    return p?.agent_id ?? null;
+    const row = await sql<{ agent_id: string }>`
+      WITH RECURSIVE up(id, parent, kind, agent_id, n) AS (
+        SELECT c.id, c.parent_conversation_id, c.kind, c.agent_id, 0
+        FROM capybara.conversations c
+        WHERE c.id = ${parentId} AND c.org_id = ${orgId}
+        UNION ALL
+        SELECT c.id, c.parent_conversation_id, c.kind, c.agent_id, up.n + 1
+        FROM capybara.conversations c JOIN up ON c.id = up.parent
+        WHERE up.kind = 'subagent' AND up.n < 16 AND c.org_id = ${orgId}
+      )
+      SELECT agent_id FROM up WHERE parent IS NULL LIMIT 1`.execute(this.db.db);
+    return row.rows[0]?.agent_id ?? null;
   }
 
   /**

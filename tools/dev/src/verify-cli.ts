@@ -1,17 +1,28 @@
 /**
  * Runs locally what CI's required checks run for this branch's diff (`pnpm verify`).
  *
- *   tsx tools/dev/src/verify-cli.ts [--json]
+ *   tsx tools/dev/src/verify-cli.ts [--json] [--full]
+ *
+ * When CI's plan runs everything, only the tests of the packages the diff touches run here (CI
+ * runs the full suite); `--full` runs the full suite locally too.
  */
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { loadWorkspace, planFromFiles, type Workspace } from "@capybara-hq/ci/affected";
 import { findUpstream, readRemotes } from "./remotes.ts";
 import { type Check, printReport } from "./report.ts";
-import { baseChecks, changesetWarning, safePlan, tryChangedFiles, verifySteps } from "./verify.ts";
+import {
+  baseChecks,
+  changesetWarning,
+  localTestPlan,
+  safePlan,
+  tryChangedFiles,
+  verifySteps,
+} from "./verify.ts";
 
 const root = fileURLToPath(new URL("../../../", import.meta.url)).replace(/\/$/, "");
 const json = process.argv.includes("--json");
+const full = process.argv.includes("--full");
 // In --json mode stdout carries only the report; progress goes to stderr.
 const say = (s: string) => (json ? console.error(s) : console.log(s));
 
@@ -59,8 +70,13 @@ if (upstream === null) {
     say(`changed files: ${files.length}`);
     say(`plan: ${plan.reason}`);
 
+    const loaded = ws as Workspace | null;
+    const local = plan.all && !full && loaded !== null ? localTestPlan(files, loaded) : null;
+    if (local !== null)
+      say(`local tests: ${local.reason}${local.test ? `: ${local.testDirs.join(", ")}` : ""}`);
+
     const checks: Check[] = [...resolved.checks];
-    for (const step of verifySteps(plan, base)) {
+    for (const step of verifySteps(plan, base, { full, local })) {
       if (step.cmd === null) {
         checks.push({ id: step.id, title: step.title, status: "skip", detail: step.note ?? "" });
         continue;
@@ -81,7 +97,9 @@ if (upstream === null) {
         id: step.id,
         title: step.title,
         status: ok ? "pass" : "fail",
-        detail: ok ? step.cmd.join(" ") : `exit ${r.status ?? "signal"}${tail ? `\n${tail}` : ""}`,
+        detail: ok
+          ? `${step.cmd.join(" ")}${step.note ? ` (${step.note})` : ""}`
+          : `exit ${r.status ?? "signal"}${tail ? `\n${tail}` : ""}`,
       });
     }
     const warning = ws === null ? null : changesetWarning(files, ws, root);

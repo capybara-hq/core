@@ -917,6 +917,8 @@
     "fileRemoved": "No longer available",
     "noAgents": "No agent is available. Create an agent first.",
     "panelExtensions": "Extensions",
+    "agentMap": "Agent map",
+    "agentMapFailed": "The agent map could not be loaded.",
     "fullOutput": "Full output",
     "builtinPreviewer": "Built-in preview",
     "setup": {
@@ -960,6 +962,16 @@
         "Still up? I'll keep you company",
         "It's late. Pick one small thing"
       ]
+    },
+    "parentAgent": "Parent agent",
+    "delivery": {
+      "report": "{name} handed back a report",
+      "note": "{name} sent a message",
+      "completed": "{name} finished",
+      "failed": "{name} failed",
+      "aborted": "{name} was stopped",
+      "show": "Show",
+      "hide": "Hide"
     }
   },
   "ui": {
@@ -2630,14 +2642,17 @@
         "newOnly": "Sandbox limits apply to sandboxes created from now on.",
         "e2bNote": "E2B sandboxes ignore the CPU and memory overrides: their size comes from the E2B template (the run concurrency limit still applies).",
         "save": "Save",
-        "subagentConcurrent": "Sub-agents running at once per run",
-        "subagentConcurrentHelp": "1–20; empty uses the deployment default (subagents.maxConcurrentPerRun).",
+        "subagentConcurrent": "Sub-agents running at once per conversation",
+        "subagentConcurrentHelp": "1–20; empty uses the deployment default (subagents.maxConcurrentPerConversation).",
         "subagentConcurrentInvalid": "Enter a whole number from 1 to 20.",
-        "subagentDispatches": "Sub-agent dispatches per run",
-        "subagentDispatchesHelp": "1–500, follow-ups included; empty uses the deployment default.",
+        "subagentDepth": "Sub-agent nesting depth",
+        "subagentDepthHelp": "1–5 levels below the conversation's agent (1: sub-agents dispatch none of their own); empty uses the deployment default (subagents.maxDepth).",
+        "subagentDepthInvalid": "Enter a whole number from 1 to 5.",
+        "subagentDispatches": "Sub-agent dispatches per message",
+        "subagentDispatchesHelp": "1–500, counted over the whole agent tree since the person's latest message, follow-ups included; empty uses the deployment default.",
         "subagentDispatchesInvalid": "Enter a whole number from 1 to 500.",
-        "subagentTokens": "Sub-agent tokens per run",
-        "subagentTokensHelp": "At least 10,000; empty uses the deployment default.",
+        "subagentTokens": "Sub-agent tokens per message",
+        "subagentTokensHelp": "At least 10,000, counted over the whole agent tree since the person's latest message; empty uses the deployment default.",
         "subagentTokensInvalid": "Enter a whole number of at least 10,000."
       }
     },

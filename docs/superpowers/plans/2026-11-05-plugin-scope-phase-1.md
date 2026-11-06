@@ -40,7 +40,7 @@ extension rows of §9.
   `@Transactional()` writes, enqueues after commit (`afterCommit`), consumers only under
   `WorkerModule`, BullMQ queue names and job ids without `:`.
 - Migrations: `NNNN_<snake>.sql`, `IF NOT EXISTS`, expand-only (old columns stay, code stops reading
-  them); the next number is `0074`.
+  them); the next number is `0075`.
 - Web: pages from design templates only, reads through `defineQuery` with keys from
   `lib/query/keys.ts`, writes through `useAppMutation`, every page in `lib/query/routes.ts`, zh and
   en messages for every string (`check:web-ui`, `check:i18n`).
@@ -66,7 +66,7 @@ extension rows of §9.
 ### Task 1: Migration and schema types
 
 **Files:**
-- Create: `packages/kernel/src/migrations/0074_plugin_scope.sql`
+- Create: `packages/kernel/src/migrations/0075_plugin_scope.sql`
 - Modify: `packages/kernel/src/db/kernel-schema.ts` (`CatalogItemsTable`, two new tables in `KernelDatabase`)
 - Test: `packages/kernel/test/catalog/scope-migration.test.ts`
 
@@ -83,7 +83,7 @@ extension rows of §9.
 - [ ] **Step 1: Write the failing test** `scope-migration.test.ts`: seed (with the SQL as of 0073)
   four items: policy `allow` with an install in org A; `needs_approval` granted to org B and installed
   in org C; `disabled`; one whose `extension_installs` row has `required = true`. Run the migrator to
-  0074 and assert:
+  0075 and assert:
   ```ts
   expect(allow).toMatchObject({ scope: "optional", disabled: false, builtin: false });
   expect(switches(allow)).toEqual([{ org: A, enabled: true }]);
@@ -95,7 +95,7 @@ extension rows of §9.
   expect(await pendingRequests()).toBe(0);
   ```
 - [ ] **Step 2: Run it to verify it fails**: `pnpm exec vitest run packages/kernel/test/catalog/scope-migration.test.ts` → FAIL (column `scope` does not exist).
-- [ ] **Step 3: Write `0074_plugin_scope.sql`**: the columns and tables above, then the backfill of
+- [ ] **Step 3: Write `0075_plugin_scope.sql`**: the columns and tables above, then the backfill of
   the Global Constraints mapping. Pending requests: `UPDATE catalog_requests SET status = 'cancelled'`
   for pending rows, using the existing terminal status the `catalog_requests` check constraint
   allows for withdrawn requests (read it in its migration; add a note `superseded by scope`).
@@ -103,7 +103,7 @@ extension rows of §9.
   `required = true`. Do not drop `policy`, `catalog_org_grants` or `catalog_requests` (expand-only).
 - [ ] **Step 4: Update `kernel-schema.ts`** with the new columns and tables.
 - [ ] **Step 5: Run the test** → PASS; `pnpm typecheck` → no errors.
-- [ ] **Step 6: Commit** `feat(kernel): plugin scope columns and org switches (migration 0074)`.
+- [ ] **Step 6: Commit** `feat(kernel): plugin scope columns and org switches (migration 0075)`.
 
 ### Task 2: Scope model: effective state of a plugin in an org
 
@@ -287,7 +287,7 @@ extension rows of §9.
 ### Task 5b: Requests under scope (spec §5.1)
 
 **Files:**
-- Create: `packages/kernel/src/migrations/0075_scope_requests.sql`
+- Create: `packages/kernel/src/migrations/0076_scope_requests.sql`
 - Modify: `packages/kernel/src/db/kernel-schema.ts`, `packages/kernel/src/catalog/requests.service.ts`,
   `packages/kernel/src/catalog/org-catalog.controller.ts`, `packages/kernel/src/catalog/org-catalog.service.ts`
   (`list`), `packages/kernel/src/identity/settings.ts` (deployment setting), the marketplaces
@@ -297,7 +297,7 @@ extension rows of §9.
 **Interfaces:**
 - Consumes: Task 3 `setSwitch`, Task 4 `enqueueItem`, Task 5 import confirm with `scope` / `orgs`.
 - Produces:
-  - `catalog_items.shown_to_others boolean NOT NULL DEFAULT true` (0075; org-owned items arrive in
+  - `catalog_items.shown_to_others boolean NOT NULL DEFAULT true` (0076; org-owned items arrive in
     phase 3 with default false); `catalog_requests.kind text NOT NULL DEFAULT 'access' CHECK (kind IN
     ('access','import','enable'))`, nullable `item_id` plus `marketplace_id`, `entry_name`,
     `entry_version` for `import`; `reason text` for rejections. One pending request per (org, kind,
@@ -329,7 +329,7 @@ extension rows of §9.
   the request `approved`; `orgMarketplaceBrowse = false` → entries route 404 and marketplace request
   409; a second pending request of the same kind → 409; rejection reason visible to the requester.
 - [ ] **Step 2: Run** `pnpm exec vitest run packages/kernel/test/catalog/requests.test.ts` → FAIL.
-- [ ] **Step 3: Implement** (migration 0075 with types; expand-only: the old `stage` column stays and
+- [ ] **Step 3: Implement** (migration 0076 with types; expand-only: the old `stage` column stays and
   is no longer read).
 - [ ] **Step 4: Run** → PASS; `pnpm check:kernel-conventions`.
 - [ ] **Step 5: Commit** `feat(kernel): requests under plugin scope`.

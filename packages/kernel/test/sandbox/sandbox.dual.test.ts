@@ -122,9 +122,8 @@ describe("沙箱（两个副本）", () => {
     expect(RETIRED_SCHEDULER_IDS).toEqual(
       expect.arrayContaining([SANDBOX_SUSPEND_SCHEDULER_ID, SANDBOX_DESTROY_SCHEDULER_ID]),
     );
-    const q = new Queue(MAINTENANCE_QUEUE_NAME, {
-      connection: new Redis(rdc.url, { maxRetriesPerRequest: null }),
-    });
+    const connection = new Redis(rdc.url, { maxRetriesPerRequest: null });
+    const q = new Queue(MAINTENANCE_QUEUE_NAME, { connection });
     try {
       const ids = (await q.getJobSchedulers()).map((s) => s.key);
       expect(ids).not.toContain(SANDBOX_SUSPEND_SCHEDULER_ID);
@@ -139,6 +138,7 @@ describe("沙箱（两个副本）", () => {
       }
     } finally {
       await q.close();
+      await connection.quit();
     }
   });
 
