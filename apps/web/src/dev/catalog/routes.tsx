@@ -120,6 +120,7 @@ export const REFERENCE_COMPONENTS = [
   // one box is enough (acceptance item AB): the groupings inside a box
   "item-list",
   "subsection",
+  "callout",
 ] as const;
 
 export type ReferenceComponent = (typeof REFERENCE_COMPONENTS)[number];

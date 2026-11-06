@@ -1327,6 +1327,14 @@ a.cb-attachment:hover {
   gap: var(--cb-space-3);
   min-width: 0;
 }
+/* A loading heading (LoadingSubsection): the title's slot holds one body-line skeleton bar. */
+.cb-subsection-heading[data-loading="true"] {
+  align-items: center;
+}
+.cb-subsection-heading[data-loading="true"] > .cb-subsection-title {
+  display: flex;
+  flex: 1;
+}
 .cb-subsection[data-variant="guide"] > .cb-subsection-body {
   padding-left: var(--cb-space-2);
   border-left: 1px solid var(--cb-line);

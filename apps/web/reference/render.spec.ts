@@ -81,6 +81,7 @@ const PAGES = [
   // one box is enough (acceptance item AB): the groupings inside a box
   "item-list",
   "subsection",
+  "callout",
 ];
 const THEMES = ["dark", "light"] as const;
 const BLOCK_ID = /^[a-z-]+-[a-z0-9-]+$/;

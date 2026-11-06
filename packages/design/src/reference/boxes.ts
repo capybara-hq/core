@@ -22,7 +22,7 @@ export const BOXES: readonly BoxRule[] = [
   { name: "PropertySection", selector: '.cb-property-section:not([data-inset="box"])' },
   { name: "DataTable frame", selector: '.cb-table[data-framed="true"] .cb-table-panel' },
   { name: "ObjectList", selector: ".cb-object-list" },
-  { name: "Callout", selector: ".cb-callout" },
+  { name: "Callout", selector: '.cb-callout:not([data-framed="false"])' },
   { name: "DangerZone", selector: ".cb-danger-zone" },
   { name: "LinkCard", selector: ".cb-link-card" },
   { name: "StatCard", selector: ".cb-stat-card" },

@@ -123,6 +123,10 @@ export const ACCEPTED: string[] = [
   // workflows
   "item-list",
   "subsection",
+  // the Callout adapts to the box it sits in (acceptance item AB, wave 2 fix round 1): states
+  // `warn`, `info`, `in-box`; the reference PNGs and the side-by-side review wait for the
+  // reference-update and visual-update workflows
+  "callout",
 ];
 
 /**

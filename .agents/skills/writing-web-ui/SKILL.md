@@ -18,8 +18,7 @@ Tokens: `docs/design/tokens.json` is the source; `pnpm gen:tokens` writes `token
 
 **One box is enough** (spec §1 principle 7, §2.5; acceptance item AB). Inside a box (a `Card`, a
 `FormSection`'s card, a `Sheet`, a `Dialog`, an `InlineCard`, a `PropertySection`) group with
-headings, hairlines and space, never a second `Card`, `FormSection`, `Callout`, `ObjectList` or
-`StatCards`:
+headings, hairlines and space, never a second `Card`, `FormSection`, `ObjectList` or `StatCards`:
 
 | Inside a box you want | Use |
 |---|---|
@@ -27,11 +26,12 @@ headings, hairlines and space, never a second `Card`, `FormSection`, `Callout`, 
 | A nested group of fields (a config object, an advanced group) | `<Subsection title description?>` (h3, help, fields under the 1px guide) |
 | Several tables in one card | `<FormSection flush>` + one `<Subsection variant="flush" title>` per table, each holding a `DataTable` (unframed by itself) |
 | A list beside the open item's fields | `<Grid columns="list-detail" divided>`, the open item's name as `<Text variant="h3">` over its fields, no Card |
-| A notice about the section | the `Callout` above the section, never inside it; in a Dialog or Sheet a `Text tone="warn" icon="circle-alert"` line |
+| A notice about the section | the `Callout` above the section card; a `Callout` inside a box (a Dialog, a Sheet, a panel shared by a page and a Sheet) draws the warn / fail line with its icon by itself |
 | A choice of sources in a Dialog | `RadioGroup variant="card"` and the one `FilePicker` straight in the body, no Card |
 
-`DataTable`, `CodeBlock`, `EmbedFrame` and `Repeater` draw their unboxed form inside a box by
-themselves (unframed, borderless, divided rows); don't pass `framed` there. Option cards, form
+`DataTable`, `CodeBlock`, `EmbedFrame`, `Repeater` and `Callout` draw their unboxed form inside a
+box by themselves (unframed, borderless, divided rows, a warn / fail line); don't pass `framed`
+there. Option cards, form
 controls, the FilePicker in a Dialog and a `RightPanel` are the exceptions. `pnpm check:web-ui`
 (`web-ui-box-in-box`) enforces it on apps/web's JSX (components, consts, helpers, hook render
 functions and slot props are followed; `BOX_PENDING` in `tools/checks/src/box-in-box.ts` is empty
@@ -373,7 +373,7 @@ Rule implementation: `tools/checks/src/web-ui.ts`; every rule has a violating-fi
 | `web-ui-page-path` | a `header` of a page template (all but `ConversationPage`, `AuthPage`, `OnboardingPage`, `StatusPage`, `TracePage`, `InboxPage`) in a `src/app/(app)/**/page.tsx` without a `path` property, or one the rule cannot follow (reported as "cannot be confirmed statically"): no literal `path` beside a spread, an imported or called value, a spread element without `header` | Pass `header={{ path: [...scope, { label }], title }}` inline or as a same-file const object literal; a page that builds its header elsewhere passes `path` and `title` through and writes the literal itself (see `WizardView`) |
 | `design-char-icon` | A character used as an icon (`▾ ▴ ▸ ◂ ✓ ✗ ✕ ◐ › ‹ « » ● ○ ⠿ ▤ ⋯ ↻ ↗ ↕ ▲ ▼ ‖ ⊘ ◆ □ ■ ▶ ∅ ☰ ⚙ ⌕ ▦`) in a string, template literal or JSX text of non-test code in `apps/web/src` or `packages/design/src`, or in a value of `apps/web/messages/*.json`; the message names the icon to use. Box-drawing (`─ │ └`), `⌘`, `↵`, `→`, `·` and `…` are text and allowed | `<Icon name="chevron-down">` (or an `IconButton` with an `Icon`, `Text icon="circle-x"`, `MenuItem.checked`); keep the accessible name in text or `aria-label` |
 | `web-ui-extension-label` | A provider / extension label built by hand that shows the extension id: a template literal that puts `<…>.provider` (or `provider`) before ` / `, or one holding such an expression as the value of a `label` property or JSX attribute (spaced or not), outside `lib/extension-label.ts`; option values (`value:`, encode helpers) stay allowed | `extensionLabel(x, locale)` / `modelLabel(provider, model, locale)` from `apps/web/src/lib/extension-label.ts` (the display name in the page locale, else the id) |
-| `web-ui-box-in-box` | A boxed design component (`Card`, `FormSection`, `Callout`, `DangerZone`, `ObjectList`, `LinkCard`, `StatCards`, `InlineCard`, `FilePicker` outside a Dialog) inside a box (`Card`, `FormSection`, `Dialog`, `Sheet`, `Popover`, `InlineCard`, `PropertySection`, `Callout`, `DangerZone`, `ObjectList`), directly, in an attribute or through an apps/web component, a `const`, a helper, a hook's render function or a wrapper's slot prop that draws one (portals reset the box); a `DataTable` in a non-`flush` FormSection; a `framed` CodeBlock / EmbedFrame / DataTable inside a box. `web-ui-box-stale-pending`: a `BOX_PENDING` entry (`{ path, inner, max }`, empty since AB wave 2) with fewer findings than its `max` | `ItemList` / `ItemListItem` rows, `Subsection`, a `flush` FormSection, the Callout above the box (see "One box is enough") |
+| `web-ui-box-in-box` | A boxed design component (`Card`, `FormSection`, `DangerZone`, `ObjectList`, `LinkCard`, `StatCards`, `InlineCard`, `FilePicker` outside a Dialog) inside a box (`Card`, `FormSection`, `Dialog`, `Sheet`, `Popover`, `InlineCard`, `PropertySection`, `Callout`, `DangerZone`, `ObjectList`), directly, in an attribute or through an apps/web component, a `const`, a helper, a hook's render function or a wrapper's slot prop that draws one (portals reset the box); a `DataTable` in a non-`flush` FormSection; a `framed` CodeBlock / EmbedFrame / DataTable inside a box. `web-ui-box-stale-pending`: a `BOX_PENDING` entry (`{ path, inner, max }`, empty since AB wave 2) with fewer findings than its `max` | `ItemList` / `ItemListItem` rows, `Subsection`, a `flush` FormSection, the Callout above the box (see "One box is enough") |
 | `design-color-literal` | `#hex` / `rgb()` / `hsl()` in `packages/design/src` outside `styles/tokens.css` (both CSS and TS strings are checked; `color-mix()` referencing tokens is allowed) | Define a token in `tokens.css` and use `var(--cb-…)` |
 
 `web-ui-template` has two exemptions: `app/dev/**` (the development catalog page; the other rules still apply), and pages that only handle 404 -- containing no JSX and calling `notFound()` imported from `next/navigation` (e.g. `(app)/[...rest]/page.tsx`), where the page is rendered by the `StatusPage` in the `not-found.tsx` of the same segment. Don't use this exemption to write other pages.

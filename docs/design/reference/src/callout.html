@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<title>Callout · reference</title>
+<link rel="stylesheet" href="/design/styles/fonts.css">
+<link rel="stylesheet" href="/design/styles/tokens.css">
+<link rel="stylesheet" href="reference.css">
+</head>
+<body>
+<main class="r-page">
+<h1>Callout</h1>
+<p>What needs action (spec §6.19): on the page ground a tinted bar with its icon, sentence and one dense button; info is the quiet note on the panel ground. Inside a box (a card, a form card, a Dialog or Sheet) it draws its unboxed form by itself: the warn / fail line with its 12 px icon, no tint, no padding, the action at the right (spec §1 "One box is enough").</p>
+<div class="r-blocks">
+<section data-ref-block="callout-warn" style="width:720px" data-pad>
+  <section class="r-callout" data-part="callout" data-tone="warn" role="status"><i data-icon="circle-alert" data-size="16"></i><span class="r-callout-text" data-part="callout-text">扩展 demo 还缺配置：endpoints。</span><button class="r-btn" data-part="button" data-variant="default" data-step="dense">去配置</button></section>
+</section>
+<section data-ref-block="callout-info" style="width:720px" data-pad>
+  <section class="r-callout" data-part="callout" data-tone="info" role="note"><i data-icon="circle-alert" data-size="16"></i><span class="r-callout-text" data-part="callout-text">超级管理员不能查看会话内容。</span></section>
+</section>
+<section data-ref-block="callout-in-box" style="width:720px" data-pad>
+  <section class="r-boxcard"><div class="r-boxcard-head">配置</div><div class="r-boxcard-body">
+    <section class="r-callout" data-part="callout" data-tone="warn" data-framed="false" role="status"><i data-icon="circle-alert" data-size="12"></i><span class="r-callout-text" data-part="callout-text">扩展 demo 还缺配置：endpoints。</span><button class="r-btn" data-part="button" data-variant="default" data-step="dense">去配置</button></section>
+    <div class="r-field"><span class="r-label">endpoints</span><input class="r-input" placeholder="https://"></div>
+  </div></section>
+</section>
+</div>
+</main>
+<script src="fill.js"></script>
+</body>
+</html>

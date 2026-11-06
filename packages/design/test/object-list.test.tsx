@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   Callout,
+  Card,
   DesignProvider,
   EmptyState,
   ListPage,
@@ -218,6 +219,29 @@ describe("EmptyState and Callout", () => {
     const el = screen.getByRole("status");
     expect(el.getAttribute("data-tone")).toBe("warn");
     expect(within(el).getByRole("link", { name: "去配置" })).toBeTruthy();
+  });
+
+  it("Callout on the page ground is the tinted bar, a box for what it holds", () => {
+    zh(<Callout tone="fail">副本启动失败</Callout>);
+    const el = screen.getByRole("status");
+    expect(el.hasAttribute("data-framed")).toBe(false);
+    expect(el.querySelector("svg")?.getAttribute("width")).toBe("16");
+  });
+
+  it("Callout inside a box is the line with its icon (spec §6.19), its action kept", () => {
+    const onSelect = vi.fn();
+    zh(
+      <Card title="扩展">
+        <Callout tone="fail" action={{ label: "刷新", onSelect }}>
+          副本启动失败
+        </Callout>
+      </Card>,
+    );
+    const el = screen.getByRole("status");
+    expect(el.getAttribute("data-framed")).toBe("false");
+    expect(el.getAttribute("data-tone")).toBe("fail");
+    expect(el.querySelector("svg")?.getAttribute("width")).toBe("12");
+    expect(within(el).getByRole("button", { name: "刷新" })).toBeTruthy();
   });
 
   it("Callout info is a quiet note without an action", () => {
