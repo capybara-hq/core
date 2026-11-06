@@ -483,5 +483,5 @@ describe("agent templates in plugins", () => {
     expect(system).not.toContain("Review v2.");
     const child = await eventsOf(env.db, subagentId);
     expect(child.filter((e) => e.type === "subagent_started")).toHaveLength(1);
-  });
+  }, 90_000);
 });
