@@ -257,6 +257,85 @@ describe("Select: the list", () => {
   });
 });
 
+describe("Select: Tab leaves the list like a native select (review fix 1)", () => {
+  function Form({ onChange, options = MODELS }: { onChange: () => void; options?: typeof MODELS }) {
+    return (
+      <form>
+        <input aria-label="前一个" />
+        <Select
+          aria-label="模型"
+          name="model"
+          value={options[1]?.value}
+          options={options}
+          onChange={onChange}
+        />
+        <input aria-label="后一个" />
+      </form>
+    );
+  }
+
+  it("Tab closes it without a change and moves on to the next field; Shift+Tab to the previous", async () => {
+    const onChange = vi.fn();
+    zh(<Form onChange={onChange} />);
+    const user = userEvent.setup();
+    const box = screen.getByRole("combobox", { name: "模型" });
+    await user.click(box);
+    await screen.findByRole("listbox");
+    await vi.waitFor(() => expect(document.activeElement?.textContent).toBe("均衡"));
+    await user.keyboard("{ArrowDown}{Tab}");
+    await vi.waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole("textbox", { name: "后一个" })),
+    );
+    expect(screen.queryByRole("listbox")).toBeNull();
+    expect(onChange).not.toHaveBeenCalled();
+    expect((box as HTMLButtonElement).value).toBe("balanced");
+    expect(box.getAttribute("aria-expanded")).toBe("false");
+    await user.click(box);
+    await screen.findByRole("listbox");
+    await user.keyboard("{Shift>}{Tab}{/Shift}");
+    await vi.waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole("textbox", { name: "前一个" })),
+    );
+    expect(screen.queryByRole("listbox")).toBeNull();
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("from the filter of a long list too", async () => {
+    const onChange = vi.fn();
+    zh(<Form onChange={onChange} options={MANY} />);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("combobox", { name: "模型" }));
+    const filter = within(await screen.findByRole("listbox")).getByRole("textbox", {
+      name: "筛选",
+    });
+    await vi.waitFor(() => expect(document.activeElement).toBe(filter));
+    await user.keyboard("model-2{Tab}");
+    await vi.waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole("textbox", { name: "后一个" })),
+    );
+    expect(screen.queryByRole("listbox")).toBeNull();
+    expect(onChange).not.toHaveBeenCalled();
+  });
+});
+
+describe("Select: its Field label (review fix 3)", () => {
+  it("a click on the label focuses the field without opening it", () => {
+    zh(<Controlled />);
+    // the label's activation clicks the button with no pointer (detail 0); browsers do not focus it
+    fireEvent.click(screen.getByText("模型"));
+    expect(document.activeElement).toBe(screen.getByRole("combobox", { name: "模型" }));
+    expect(screen.queryByRole("listbox")).toBeNull();
+  });
+
+  it("a click without a pointer on the button (a label's activation) focuses it too", () => {
+    zh(<Select aria-label="档位" value="fast" options={MODELS} />);
+    const box = screen.getByRole("combobox", { name: "档位" });
+    fireEvent.click(box, { detail: 0 });
+    expect(document.activeElement).toBe(box);
+    expect(screen.queryByRole("listbox")).toBeNull();
+  });
+});
+
 describe(`Select: a long list (more than ${MENU_FILTER_THRESHOLD} options)`, () => {
   it("has the menu's filter: focus starts there, typing narrows, Enter picks the first match", async () => {
     const onChange = vi.fn();

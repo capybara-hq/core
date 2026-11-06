@@ -114,7 +114,7 @@ describe("成员页（SettingsPage）", () => {
     await screen.findByText("Bob");
     const select = within(rowOf("Bob")).getByRole("combobox", {
       name: m.roleOf.replace("{name}", "Bob"),
-    }) as HTMLSelectElement;
+    }) as HTMLButtonElement;
     await pickOption(select, "guest");
     await vi.waitFor(() =>
       expect(bodyOf(calls.find((c) => c.method === "PATCH"))).toEqual({ role: "guest" }),
@@ -220,7 +220,7 @@ describe("成员页（SettingsPage）", () => {
         (
           within(rowOf("Bob")).getByRole("combobox", {
             name: m.roleOf.replace("{name}", "Bob"),
-          }) as HTMLSelectElement
+          }) as HTMLButtonElement
         ).value,
       ).toBe("owner"),
     );
@@ -267,13 +267,13 @@ describe("成员页（SettingsPage）", () => {
     await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     const bob = within(rowOf("Bob")).getByRole("combobox", {
       name: m.roleOf.replace("{name}", "Bob"),
-    }) as HTMLSelectElement;
+    }) as HTMLButtonElement;
     expect(bob.value).toBe("owner");
     // an admin may not change an owner's role, nor grant owner
     expect(bob.disabled).toBe(true);
     const mine = within(rowOf(`Grant (${m.you})`)).getByRole("combobox", {
       name: m.roleOf.replace("{name}", "Grant"),
-    }) as HTMLSelectElement;
+    }) as HTMLButtonElement;
     expect(mine.value).toBe("admin");
     // Bob is an owner now: no row menu for an admin (no transfer, no remove)
     expect(within(rowOf("Bob")).queryByRole("button", { name: ROW_ACTIONS.en })).toBeNull();

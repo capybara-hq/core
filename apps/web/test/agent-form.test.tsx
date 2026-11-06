@@ -187,7 +187,7 @@ describe("the agent pages render on the server (web-SSR spec §6)", () => {
     const browser = expectNoFirstPaintFetch();
     await renderNewAgent({ routes: formRoutes });
     expect(
-      (screen.getByRole("combobox", { name: en.agents.form.modelLabel }) as HTMLSelectElement)
+      (screen.getByRole("combobox", { name: en.agents.form.modelLabel }) as HTMLButtonElement)
         .value,
     ).toBe("model-fake/fake-1");
     expect(screen.queryByRole("checkbox", { name: /Tracker/ })).toBeNull();

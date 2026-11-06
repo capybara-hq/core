@@ -246,10 +246,24 @@ export function ConvMenu({
   const notes = entries.flatMap((e, i) => (e.kind === "note" ? [`${noteId}-${i}`] : []));
   const [own, setOwn] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
+  // A listbox left with Tab / Shift+Tab: where the focus goes once it has closed.
+  const tabOut = useRef<1 | -1 | 0>(0);
   const isOpen = open ?? own;
   const setOpen = (o: boolean) => {
     if (open === undefined) setOwn(o);
     onOpenChange?.(o);
+  };
+  const closeAutoFocus = (e: Event) => {
+    const dir = tabOut.current;
+    tabOut.current = 0;
+    const from = triggerRef.current;
+    if (dir !== 0 && from) {
+      // as from a native select: the field after (or before) the trigger in the tab order
+      e.preventDefault();
+      (tabbableFrom(from, dir) ?? from).focus();
+      return;
+    }
+    onCloseAutoFocus?.(e);
   };
   const shared = {
     "data-part": "menu",
@@ -259,7 +273,7 @@ export function ConvMenu({
     ...(notes.length > 0 ? { "aria-describedby": notes.join(" ") } : {}),
     align,
     sideOffset,
-    ...(onCloseAutoFocus ? { onCloseAutoFocus } : {}),
+    onCloseAutoFocus: closeAutoFocus,
   } as const;
   const content = anchored ? (
     <AnchoredContent
@@ -272,6 +286,10 @@ export function ConvMenu({
       triggerRef={triggerRef}
       listbox={listbox === true}
       onClose={() => setOpen(false)}
+      onTabOut={(dir) => {
+        tabOut.current = dir;
+        setOpen(false);
+      }}
     />
   ) : (
     <RM.Content
@@ -298,6 +316,21 @@ export function ConvMenu({
       {inline ? content : <RM.Portal>{content}</RM.Portal>}
     </RM.Root>
   );
+}
+
+const FOCUSABLE = "a[href], button, input, select, textarea, [tabindex]";
+
+/** The element before or after `from` in the document's tab order (tabindex ≥ 0, enabled). */
+function tabbableFrom(from: HTMLElement, dir: 1 | -1): HTMLElement | null {
+  const all = [...from.ownerDocument.querySelectorAll<HTMLElement>(FOCUSABLE)].filter(
+    (el) =>
+      el === from ||
+      (el.tabIndex >= 0 &&
+        !(el as HTMLButtonElement).disabled &&
+        (el as HTMLInputElement).type !== "hidden" &&
+        el.closest("[hidden], [inert]") === null),
+  );
+  return all[all.indexOf(from) + dir] ?? null;
 }
 
 /** The items of an anchored menu: menu items, or a Select's options. */
@@ -329,6 +362,7 @@ function AnchoredContent({
   triggerRef,
   listbox,
   onClose,
+  onTabOut,
 }: {
   shared: Record<string, unknown>;
   entries: ConvMenuEntry[];
@@ -339,6 +373,8 @@ function AnchoredContent({
   triggerRef: RefObject<HTMLButtonElement | null>;
   listbox: boolean;
   onClose(): void;
+  /** A listbox's Tab / Shift+Tab: close without a pick, the focus moving on from the trigger. */
+  onTabOut(dir: 1 | -1): void;
 }): JSX.Element {
   const t = useDesignT();
   const ref = useRef<HTMLDivElement>(null);
@@ -435,6 +471,14 @@ function AnchoredContent({
   // Radix moves the focus to an item on hover and to the menu when the pointer leaves: typing
   // and Backspace from there go back to the filter, and ↑ on the first item returns to it.
   const onContentKeyCapture = (e: KeyboardEvent<HTMLDivElement>) => {
+    // A Select's list does not trap Tab (Radix menus do): it closes, the value unchanged, and the
+    // focus moves on to the next field (Shift+Tab: the previous one), as a native select.
+    if (listbox && e.key === "Tab" && !e.nativeEvent.isComposing) {
+      e.preventDefault();
+      e.stopPropagation();
+      onTabOut(e.shiftKey ? -1 : 1);
+      return;
+    }
     if (!filterable || e.target === filterRef.current || e.nativeEvent.isComposing) return;
     if (typesIntoFilter(e)) {
       e.stopPropagation();

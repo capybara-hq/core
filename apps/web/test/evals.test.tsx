@@ -294,7 +294,7 @@ describe("新建评测集（FormPage）", () => {
     expect(container.querySelector('[data-template="FormPage"]')).not.toBeNull();
     const user = userEvent.setup();
     const agent = await screen.findByRole("combobox", { name: E.form.agentLabel });
-    await waitFor(() => expect((agent as HTMLSelectElement).value).toBe("ag1"));
+    await waitFor(() => expect((agent as HTMLButtonElement).value).toBe("ag1"));
     await user.type(
       screen.getByRole("textbox", { name: new RegExp(E.form.nameLabel) }),
       "Regression",
@@ -341,7 +341,7 @@ describe("新建评测集: a create form", () => {
     await renderRouteWithCache("/evals/new?agentId=ag2", lastStubRoutes());
     const agent = (await screen.findByRole("combobox", {
       name: E.form.agentLabel,
-    })) as HTMLSelectElement;
+    })) as HTMLButtonElement;
     expect(agent.value).toBe("ag2");
   });
 });

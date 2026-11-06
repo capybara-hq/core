@@ -48,6 +48,20 @@ describe("the owner's name (maintainer decision V, 2026-11-07)", () => {
     expect(zh).not.toContain("负责人");
     expect(zh).not.toContain("你负责的");
   });
+
+  it("the sample data of the catalog and the design fixtures says 所有者 too", () => {
+    const files = [
+      "../src/dev/catalog/fixtures.tsx",
+      "../src/dev/catalog/stress.tsx",
+      "../src/dev/catalog/templates/list.tsx",
+      "../../../packages/design/src/fixtures/index.ts",
+    ];
+    for (const f of files) {
+      const text = readFileSync(new URL(f, import.meta.url), "utf8");
+      // string literals only: comments may keep the old word (no bulk translation)
+      expect(text, f).not.toMatch(/"[^"\n]*负责人[^"\n]*"/);
+    }
+  });
 });
 
 describe("eval drift labels (final review m5)", () => {

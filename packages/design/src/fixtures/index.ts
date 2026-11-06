@@ -378,7 +378,7 @@ export const LIST_PAGE_FIXTURE: {
     status: "状态",
     tools: "工具",
     calls7d: "7 天调用",
-    owner: "负责人",
+    owner: "所有者",
   },
   rows: [
     {

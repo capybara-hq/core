@@ -446,14 +446,14 @@ describe("the agent page's sections with their own saves (agent profile design Â
     // the section starts over from the newer version
     await vi.waitFor(() =>
       expect(
-        (screen.getByRole("combobox", { name: F.modelLabel }) as HTMLSelectElement).value,
+        (screen.getByRole("combobox", { name: F.modelLabel }) as HTMLButtonElement).value,
       ).toBe("other/o-1"),
     );
     expect(
       (
         screen.getByRole("combobox", {
           name: (n) => n.startsWith(F.fallbackLabel),
-        }) as HTMLSelectElement
+        }) as HTMLButtonElement
       ).value,
     ).toBe("");
     expect(document.querySelector('[data-part="action-row"]')).toBeNull();
@@ -489,7 +489,7 @@ describe("the agent page's sections with their own saves (agent profile design Â
       (
         screen.getByRole("combobox", {
           name: (n) => n.startsWith(F.fallbackLabel),
-        }) as HTMLSelectElement
+        }) as HTMLButtonElement
       ).value,
     ).toBe("other/o-1");
   });

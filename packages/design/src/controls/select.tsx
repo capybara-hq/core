@@ -115,6 +115,11 @@ export function Select({
       data-part="select"
       data-density={step}
       data-state={disabled ? "disabled" : isInvalid ? "error" : undefined}
+      // a click on the Field's label reaches the button as a click without a pointer (detail 0):
+      // it focuses the field, as a native select's label does (Radix opens on pointerdown)
+      onClick={(e) => {
+        if (e.detail === 0 && !open) triggerRef.current?.focus();
+      }}
       onKeyDown={(e: KeyboardEvent<HTMLButtonElement>) => {
         // ↓, Enter and Space open it (Radix); ↑ too, as a native select
         if (e.key === "ArrowUp" && !open) {

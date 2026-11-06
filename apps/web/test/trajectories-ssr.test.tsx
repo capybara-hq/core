@@ -163,11 +163,11 @@ describe("/trajectories", () => {
       `${O}/trajectories?limit=50&agentId=ag1&status=failed`,
     );
     expect(
-      (screen.getByRole("combobox", { name: en.trajectories.filters.agent }) as HTMLSelectElement)
+      (screen.getByRole("combobox", { name: en.trajectories.filters.agent }) as HTMLButtonElement)
         .value,
     ).toBe("ag1");
     expect(
-      (screen.getByRole("combobox", { name: en.trajectories.filters.status }) as HTMLSelectElement)
+      (screen.getByRole("combobox", { name: en.trajectories.filters.status }) as HTMLButtonElement)
         .value,
     ).toBe("failed");
     await settle();
@@ -260,7 +260,7 @@ describe("/trajectories", () => {
     });
     expect(screen.getByRole("table", { name: en.trajectories.title })).toBeTruthy();
     expect(
-      (screen.getByRole("combobox", { name: en.trajectories.filters.agent }) as HTMLSelectElement)
+      (screen.getByRole("combobox", { name: en.trajectories.filters.agent }) as HTMLButtonElement)
         .value,
     ).toBe("ag9");
     await settle();

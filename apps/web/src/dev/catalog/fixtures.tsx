@@ -62,7 +62,7 @@ export const LIST_FACETS: Facet[] = [
     ],
   },
   {
-    name: "负责人",
+    name: "所有者",
     items: [
       { label: "张琳", count: 7, on: false },
       { label: "grant", count: 6, on: false },
@@ -251,7 +251,7 @@ export const DETAIL_PROPS: { title: string; rows: [string, string][] }[] = [
   {
     title: "归属",
     rows: [
-      ["负责人", "张琳"],
+      ["所有者", "张琳"],
       ["创建", "2026-08-02 grant"],
       ["环境", "生产环境"],
     ],
@@ -451,7 +451,7 @@ export const SHEET_PROPS: [string, string][] = [
   ["工具", "kb.search · crm.get_order · ticket.reply"],
   ["触发", "webhook · /hooks/support"],
   ["24h", "412 次 · 成功率 98.1%"],
-  ["负责人", "张琳"],
+  ["所有者", "张琳"],
 ];
 
 // ── 组件（e-components）──────────────────────────────────────────────────

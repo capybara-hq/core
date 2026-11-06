@@ -215,7 +215,7 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
   it("/evals/new: a first render from the hydrated cache makes no browser read (the agents to choose from)", async () => {
     const browser = expectNoFirstPaintFetch();
     await renderRouteWithCache("/evals/new", ROUTES);
-    const agent = screen.getByRole("combobox", { name: E.form.agentLabel }) as HTMLSelectElement;
+    const agent = screen.getByRole("combobox", { name: E.form.agentLabel }) as HTMLButtonElement;
     expect(agent.value).toBe("ag1");
     await settle();
     expect(browser).toEqual([]);

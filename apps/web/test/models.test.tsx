@@ -456,7 +456,7 @@ describe("/settings/models（组织管理员）", () => {
       );
       await vi.waitFor(() => expect(ev.queryByText(m.models.purpose.overridden)).toBeNull());
       expect(
-        (ev.getByRole("combobox", { name: m.models.purpose.model }) as HTMLSelectElement).value,
+        (ev.getByRole("combobox", { name: m.models.purpose.model }) as HTMLButtonElement).value,
       ).toBe("");
       expect(ev.getByText(defText)).toBeTruthy();
     },

@@ -326,7 +326,7 @@ describe("the channel form opened from an agent page", () => {
     await fill(user, true);
     const agent = screen.getByRole("combobox", {
       name: new RegExp(`^${en.channels.form.agentLabel}`),
-    }) as HTMLSelectElement;
+    }) as HTMLButtonElement;
     expect(agent.value).toBe("ag1");
     await user.click(screen.getByRole("button", { name: en.channels.form.submit }));
     await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/agents/ag1"));
@@ -369,6 +369,13 @@ describe("渠道连接详情（DetailPage）", () => {
     expect(container.querySelector('[data-template="DetailPage"]')).not.toBeNull();
     const d = en.channels.detail;
     expect(await screen.findByText("connect failed with status 503")).toBeTruthy();
+    // the facts are the column's first block (no right pane); the extension is the head's count
+    expect(screen.queryByRole("complementary")).toBeNull();
+    const facts = container.querySelector('[data-part="detail-facts"]') as HTMLElement;
+    expect(container.querySelector('[data-part="content"]')?.firstElementChild).toBe(facts);
+    expect(facts.querySelectorAll('[data-part="key-value-row"]')).toHaveLength(5);
+    expect(within(facts).getByText("bot-cli_acme")).toBeTruthy();
+    expect(within(facts).queryByText("fake-im")).toBeNull();
     await userEvent.setup().click(screen.getByRole("button", { name: d.disable }));
     expect(bodyOf(calls.find((c) => c.method === "PATCH"))).toEqual({ status: "disabled" });
     expect(await screen.findByRole("button", { name: d.enable })).toBeTruthy();
@@ -522,7 +529,7 @@ describe("the channel pages read from the query cache (web query cache spec §3)
       (
         screen.getByRole("combobox", {
           name: new RegExp(`^${en.channels.form.agentLabel}`),
-        }) as HTMLSelectElement
+        }) as HTMLButtonElement
       ).value,
     ).toBe("ag1");
     expect(
@@ -611,8 +618,11 @@ describe("the channel pages read from the query cache (web query cache spec §3)
       "/channels/ch1",
       "DetailPage",
       (page: HTMLElement) => {
-        // the inspector's six facts
-        expect(page.querySelectorAll('[data-part="loading-inspector-row"]')).toHaveLength(6);
+        // the facts block's five rows, first in the one column (no right pane)
+        expect(page.querySelector(".cb-body-inspector")).toBeNull();
+        const facts = page.querySelector('[data-part="detail-facts"]') as HTMLElement;
+        expect(page.querySelector('[data-part="content"]')?.firstElementChild).toBe(facts);
+        expect(facts.querySelectorAll('[data-part="key-value-row"]')).toHaveLength(5);
       },
     ],
   ] as const)("%s: the loading state has the loaded page's shape", async (path, name, check) => {

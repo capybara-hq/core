@@ -25,7 +25,7 @@ const ROWS: Row[] = [
 
 const COLUMNS: Column<Row>[] = [
   { key: "name", header: "名称", cell: (r) => r.name },
-  { key: "owner", header: "负责人", cell: (r) => r.owner },
+  { key: "owner", header: "所有者", cell: (r) => r.owner },
   { key: "runs", header: "24H 运行", align: "right", cell: (r) => r.runs },
   { key: "note", header: "备注", tone: "muted", cell: (r) => r.note },
 ];

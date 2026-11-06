@@ -47,7 +47,7 @@ const COLUMNS: Column<AgentRow>[] = [
     align: "right",
     cell: (a) => <Text tone={rateTone(a.rate)}>{a.rate}</Text>,
   },
-  { key: "owner", header: "负责人", cell: (a) => a.owner },
+  { key: "owner", header: "所有者", cell: (a) => a.owner },
   { key: "updated", header: "更新", tone: "muted", sortable: true, cell: (a) => a.updated },
 ];
 
