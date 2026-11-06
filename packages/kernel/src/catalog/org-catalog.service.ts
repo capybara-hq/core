@@ -550,9 +550,9 @@ export class OrgCatalogService {
   }
 
   /**
-   * Writes the org's switch row of the item under the org row lock. Switching on locks the item row
-   * FOR SHARE first (exclusive with a scope change or an unshare, ruling P3-25) and re-checks that
-   * the org may still see it; the install path re-checks the same in `assertItemInstallable`.
+   * Writes the org's switch row of the item under the org row lock. The item row is locked FOR
+   * SHARE first (exclusive with a scope change, an unshare, ruling P3-25, and an owner's delete or
+   * transfer); switching on re-checks that the org may still see it; the install path re-checks the same in `assertItemInstallable`.
    */
   @Transactional()
   private async recordSwitch(
@@ -562,14 +562,16 @@ export class OrgCatalogService {
     enabled: boolean,
   ): Promise<void> {
     await this.orgLock.lock(orgId);
+    // Both directions lock the item row FOR SHARE: an owner's delete or transfer (FOR UPDATE)
+    // decides on who uses it, so a switch-off racing it must not change that answer meanwhile
+    const item = await this.db
+      .selectFrom("catalog_items")
+      .select(["scope", "builtin"])
+      .where("id", "=", itemId)
+      .where("deleted_at", "is", null)
+      .forShare()
+      .executeTakeFirst();
     if (enabled) {
-      const item = await this.db
-        .selectFrom("catalog_items")
-        .select(["scope", "builtin"])
-        .where("id", "=", itemId)
-        .where("deleted_at", "is", null)
-        .forShare()
-        .executeTakeFirst();
       if (!item) throw itemNotFound();
       const listed = await this.db
         .selectFrom("catalog_item_scope_orgs")

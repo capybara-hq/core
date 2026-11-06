@@ -820,6 +820,8 @@ export class CatalogService {
     await audit(t, {
       actorAccountId: actor,
       ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
+      // an org-owned item's removal shows in its owner org's audit log too
+      ...(row.owner_org_id !== null && { orgId: row.owner_org_id }),
       action: "catalog.removed",
       target: itemId,
       detail: {

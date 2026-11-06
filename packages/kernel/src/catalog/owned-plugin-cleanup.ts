@@ -15,7 +15,9 @@ import { LockService } from "../infra/lock/lock.service.js";
 import { LockedCron } from "../infra/schedule/locked-cron.decorator.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
+import { CatalogImportModule } from "./catalog.module.js";
 import { OWNED_PLUGIN_CLEANUP_SWEEP_JOB } from "./job-ids.js";
+import { CatalogItemLock } from "./locks.js";
 import { releaseExtensionClaim } from "./ownership.js";
 
 /** Codes that mean another run (or the confirmation's own take-out) got there first. */
@@ -24,7 +26,8 @@ const GONE = new Set(["extension.not_found", "extension.not_disabled"]);
 /**
  * The cleanup of a removed org-owned plugin: {@link run} disables and uninstalls its extension (an
  * install of the item's name from the item's package) when no live catalog item of that package
- * references it any more, then releases the extension name claim (pre-flight F10: the claim of an
+ * references it any more, then releases the extension name claim, in one transaction under the import's item name lock
+ * (pre-flight F10: the claim of an
  * installed extension is released here, never at the removal). Idempotent: a live item (a
  * transferred one), a platform item or nothing installed changes nothing but the claim. The
  * extension's data, secrets and configs stay, as with every uninstall. {@link sweep} runs it daily
@@ -35,6 +38,8 @@ export class OwnedPluginCleanup {
   constructor(
     @Inject(KernelDb) private readonly kdb: KernelDb,
     @Inject(ExtensionAdminOps) private readonly ops: ExtensionAdminOps,
+    /** The import's item name lock (M5: no uninstall racing a re-import of the package). */
+    @Inject(CatalogItemLock) private readonly itemLock: CatalogItemLock,
     @Inject(LockService) readonly lockService: LockService,
     @Inject(KERNEL_LOGGER) readonly log: KernelLogger,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
@@ -52,50 +57,76 @@ export class OwnedPluginCleanup {
       .where("id", "=", itemId)
       .executeTakeFirst();
     if (!item || item.deleted_at === null || item.owner_org_id === null) return;
-    const pkg = item.package_name;
-    if (pkg === null || (await this.referenced(this.db, pkg))) return;
+    if (item.package_name === null) return;
+    await this.takeOut(itemId, item.name, item.package_name);
+  }
+
+  /**
+   * {@link run}'s one transaction, under the catalog item name lock an import of that name takes
+   * to write its item: a re-import of the package either committed first (a live item: nothing
+   * is taken out) or waits until this commits, so a newly imported extension is never uninstalled.
+   */
+  @Transactional()
+  private async takeOut(itemId: string, name: string, pkg: string): Promise<void> {
+    await this.itemLock.lock(name);
+    if (await this.referenced(this.db, pkg)) return;
     const install = await this.db
       .selectFrom("extension_installs as x")
       .innerJoin("extension_packages as p", "p.sha256", "x.sha256")
       .select(["x.desired_state", "p.package_name"])
-      .where("x.name", "=", item.name)
+      .where("x.name", "=", name)
       .executeTakeFirst();
     if (install !== undefined && install.package_name === pkg) {
       try {
-        if (install.desired_state !== "disabled") await this.ops.disable(item.name, null);
-        await this.ops.uninstall(item.name, null);
-        this.log.info("extension of a removed org plugin uninstalled", {
-          itemId,
-          name: item.name,
-        });
+        if (install.desired_state !== "disabled") await this.ops.disable(name, null);
+        await this.ops.uninstall(name, null);
+        this.log.info("extension of a removed org plugin uninstalled", { itemId, name });
       } catch (e) {
         if (!(e instanceof ApiError && GONE.has(e.code))) throw e;
       }
     }
-    await this.release(item.name, pkg);
+    await releaseExtensionClaim(this.db, name, pkg);
   }
 
-  /** Daily: {@link run} for every removed org-owned item whose extension is still installed. */
+  /**
+   * Daily: {@link run} for every removed org-owned item no live item of its package references
+   * whose extension is still installed, or whose name claim is still held (a lost enqueue, or a
+   * run that uninstalled and failed before releasing the claim).
+   */
   @LockedCron("40 3 * * *", { name: OWNED_PLUGIN_CLEANUP_SWEEP_JOB })
   async sweep(): Promise<void> {
     const rows = await this.db
       .selectFrom("catalog_items as ci")
-      .innerJoin("extension_installs as x", "x.name", "ci.name")
-      .innerJoin("extension_packages as p", (j) =>
-        j.onRef("p.sha256", "=", "x.sha256").onRef("p.package_name", "=", "ci.package_name"),
-      )
       .select("ci.id")
       .where("ci.deleted_at", "is not", null)
       .where("ci.owner_org_id", "is not", null)
-      .where(({ not, exists, selectFrom }) =>
-        not(
-          exists(
-            selectFrom("catalog_items as live")
-              .select("live.id")
-              .whereRef("live.package_name", "=", "ci.package_name")
-              .where("live.deleted_at", "is", null),
+      .where("ci.package_name", "is not", null)
+      .where(({ and, or, not, exists, selectFrom }) =>
+        and([
+          not(
+            exists(
+              selectFrom("catalog_items as live")
+                .select("live.id")
+                .whereRef("live.package_name", "=", "ci.package_name")
+                .where("live.deleted_at", "is", null),
+            ),
           ),
-        ),
+          or([
+            exists(
+              selectFrom("extension_installs as x")
+                .innerJoin("extension_packages as p", "p.sha256", "x.sha256")
+                .select("x.name")
+                .whereRef("x.name", "=", "ci.name")
+                .whereRef("p.package_name", "=", "ci.package_name"),
+            ),
+            exists(
+              selectFrom("extension_name_owners as o")
+                .select("o.name")
+                .whereRef("o.name", "=", "ci.name")
+                .whereRef("o.package_name", "=", "ci.package_name"),
+            ),
+          ]),
+        ]),
       )
       .execute();
     for (const r of rows) {
@@ -117,13 +148,6 @@ export class OwnedPluginCleanup {
       .executeTakeFirst();
     return live !== undefined;
   }
-
-  /** Releases the name claim when still unreferenced and nothing is installed under it. */
-  @Transactional()
-  private async release(name: string, packageName: string): Promise<void> {
-    if (await this.referenced(this.db, packageName)) return;
-    await releaseExtensionClaim(this.db, name, packageName);
-  }
 }
 
 /**
@@ -131,7 +155,7 @@ export class OwnedPluginCleanup {
  * only the worker role imports, so the sweep runs on worker replicas only.
  */
 @Module({
-  imports: [ExtensionsModule],
+  imports: [ExtensionsModule, CatalogImportModule],
   providers: [OwnedPluginCleanup],
   exports: [OwnedPluginCleanup],
 })

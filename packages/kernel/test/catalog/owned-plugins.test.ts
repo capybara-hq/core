@@ -2,10 +2,12 @@ import { randomUUID } from "node:crypto";
 import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { CatalogScopeService } from "../../src/catalog/catalog-scope.service.js";
+import { OwnedItems } from "../../src/catalog/owned-items.js";
 import { OwnedPluginCleanup } from "../../src/catalog/owned-plugin-cleanup.js";
 import { usableSkills } from "../../src/skills/usable.js";
+import { accountsFor } from "../helpers/identity.js";
 import { lifePkg } from "../helpers/plugin-packages.js";
-import { createOrg, type Req, waitFor } from "../helpers/runs.js";
+import { createOrg, PW, type Req, session, waitFor } from "../helpers/runs.js";
 import { type OrgEnv, resetOrgCatalog, setScope, startOrgEnv } from "./org-env.js";
 import { skillPlugin } from "./packages.js";
 
@@ -23,12 +25,16 @@ let orgA: string;
 let orgB: string;
 /** Org C ("C"; root is its owner). */
 let orgC: string;
+/** An account in no org. */
+let guest: Req;
 
 beforeAll(async () => {
   env = await startOrgEnv();
   orgA = env.orgId;
   orgB = await createOrg(env.root, "B");
   orgC = await createOrg(env.root, "C");
+  await accountsFor(env.db).createLocal({ login: "guest", password: PW, displayName: "G" });
+  guest = await session(env.k, "guest");
 }, 240_000);
 
 afterAll(async () => {
@@ -212,10 +218,21 @@ describe("org-owned plugins", { timeout: 180_000 }, () => {
   it("delete an unshared plugin removes it", async () => {
     const itemId = await confirmedV1("own-rm");
     const agentId = await agentUsingSkill(orgA, itemId, "Helper");
-    // another org or a member cannot preview it
+    // another org's admin, a member and a guest cannot preview or delete it
     const other = await env.root({ method: "POST", url: `${owned(orgB, itemId)}/delete/preview` });
     expect(errorOf(other)).toEqual([404, "catalog.item_not_found"]);
     const p = await preview(env.boss, orgA, itemId);
+    for (const req of [env.mem, guest]) {
+      const pre = await req({ method: "POST", url: `${owned(orgA, itemId)}/delete/preview` });
+      expect([403, 404], pre.body).toContain(pre.statusCode);
+      const d = await del(req, orgA, itemId, p.previewHash);
+      expect([403, 404], d.body).toContain(d.statusCode);
+    }
+    expect((await del(env.mem, orgA, itemId, p.previewHash)).statusCode).toBe(403);
+    expect(errorOf(await del(env.root, orgB, itemId, p.previewHash))).toEqual([
+      404,
+      "catalog.item_not_found",
+    ]);
     expect(p).toMatchObject({
       outcome: "removed",
       orgs: [],
@@ -231,6 +248,26 @@ describe("org-owned plugins", { timeout: 180_000 }, () => {
     expect(row.deleted_at).not.toBeNull();
     expect(row.owner_org_id).toBe(orgA);
     expect(await usable(orgA)).not.toContain("own-rm-notes");
+    // the owner org's install is uninstalled through the normal path (ruling P3-41), and the
+    // owner org's audit log shows the removal (M6)
+    expect(
+      await env.db
+        .selectFrom("plugin_installs")
+        .select("id")
+        .where("item_id", "=", itemId)
+        .execute(),
+    ).toEqual([]);
+    const audits = await env.db
+      .selectFrom("audit_events")
+      .select(["action", "org_id"])
+      .where("action", "in", ["plugin.org_uninstalled", "catalog.removed"])
+      .execute();
+    expect(audits).toEqual(
+      expect.arrayContaining([
+        { action: "plugin.org_uninstalled", org_id: orgA },
+        { action: "catalog.removed", org_id: orgA },
+      ]),
+    );
     // the cleanup job enqueued after the commit takes its extension out; running it again is a
     // no-op
     await waitFor(
@@ -258,6 +295,9 @@ describe("org-owned plugins", { timeout: 180_000 }, () => {
   it("delete a shared plugin transfers it", async () => {
     const itemId = await confirmedV1("own-tx");
     await sharedWithB(itemId, "own-tx-notes");
+    expect(await env.k.app.get(OwnedItems).usedByOthers({ kind: "plugin", id: itemId })).toEqual([
+      { id: orgB, name: "B" },
+    ]);
     const p = await preview(env.boss, orgA, itemId);
     expect(p).toMatchObject({ outcome: "transferred", orgs: [{ id: orgB, name: "B" }] });
     const d = await del(env.boss, orgA, itemId, p.previewHash);
@@ -307,6 +347,73 @@ describe("org-owned plugins", { timeout: 180_000 }, () => {
     expect(
       errorOf(await env.boss({ method: "POST", url: `${owned(orgA, itemId)}/delete/preview` })),
     ).toEqual([404, "catalog.item_not_found"]);
+  });
+
+  it("a transfer narrows an `all` item and an own-scope `all` component", async () => {
+    const itemId = await uploaded(env.boss, orgA, await skillPlugin("own-all"), "installed");
+    const s = await env.boss({
+      method: "PUT",
+      url: `${owned(orgA, itemId)}/shareable`,
+      payload: { shareable: true },
+    });
+    expect(s.statusCode, s.body).toBe(204);
+    await env.db
+      .updateTable("catalog_items")
+      .set({ scope: "all", shown_to_others: true, scope_version: sql<number>`scope_version + 1` })
+      .where("id", "=", itemId)
+      .execute();
+    await env.db
+      .updateTable("platform_skills")
+      .set({ scope_mode: "own", scope: "all" })
+      .where("catalog_item_id", "=", itemId)
+      .execute();
+    await env.k.app.get(CatalogScopeService).enqueueSync(itemId);
+    for (const org of [orgB, orgC]) {
+      await waitFor(
+        async () => (await usable(org)).includes("own-all"),
+        30_000,
+        `own-all in ${org}`,
+      );
+    }
+    expect(
+      (await env.k.app.get(OwnedItems).usedByOthers({ kind: "plugin", id: itemId })).map(
+        (o) => o.id,
+      ),
+    ).toEqual([orgB, orgC]);
+    const p = await preview(env.boss, orgA, itemId);
+    expect(p.outcome).toBe("transferred");
+    expect((await del(env.boss, orgA, itemId, p.previewHash)).statusCode).toBe(204);
+    const item = await env.db
+      .selectFrom("catalog_items")
+      .select(["scope", "owner_org_id"])
+      .where("id", "=", itemId)
+      .executeTakeFirstOrThrow();
+    expect(item).toEqual({ scope: "named", owner_org_id: null });
+    const listed = await env.db
+      .selectFrom("catalog_item_scope_orgs")
+      .select("org_id")
+      .where("item_id", "=", itemId)
+      .execute();
+    expect(listed.map((l) => l.org_id).sort()).toEqual([orgB, orgC].sort());
+    const skill = await env.db
+      .selectFrom("platform_skills")
+      .select(["id", "scope_mode", "scope", "owner_org_id"])
+      .where("catalog_item_id", "=", itemId)
+      .executeTakeFirstOrThrow();
+    expect(skill).toMatchObject({ scope_mode: "own", scope: "named", owner_org_id: null });
+    const compOrgs = await env.db
+      .selectFrom("component_scope_orgs")
+      .select("org_id")
+      .where("component_id", "=", skill.id)
+      .execute();
+    expect(compOrgs.map((c) => c.org_id).sort()).toEqual([orgB, orgC].sort());
+    await waitFor(
+      async () => !(await usable(orgA)).includes("own-all"),
+      30_000,
+      "own-all gone from A",
+    );
+    expect(await usable(orgB)).toContain("own-all");
+    expect(await usable(orgC)).toContain("own-all");
   });
 
   it("stale preview", async () => {

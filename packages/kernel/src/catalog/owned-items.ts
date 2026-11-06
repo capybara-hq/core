@@ -21,9 +21,22 @@ import { OrgLock } from "../orgs/org-lock.js";
 import { MAINTENANCE_QUEUE_NAME } from "../runtime/maintenance-queue.js";
 import { type ActorOpts, CatalogService } from "./catalog.service.js";
 import { CatalogScopeService } from "./catalog-scope.service.js";
-import { agentsUsing, COMPONENT_KINDS, loadComponents } from "./component-state.js";
+import {
+  agentsUsing,
+  COMPONENT_KINDS,
+  type ComponentKind,
+  type ComponentRow,
+  componentOn,
+  listedIn,
+  loadComponents,
+  loadScopeState,
+  pluginFactsOf,
+  switchOf,
+} from "./component-state.js";
 import { ownedPluginCleanupJob } from "./job-ids.js";
 import { type OwnedRef, orgsUsing } from "./ownership.js";
+import { PluginInstaller } from "./plugin-install.js";
+import { ScopeStillWanted } from "./scope-state.js";
 
 /**
  * What deleting an owned plugin does (P3-19): `removed` when no other org uses it, else
@@ -56,6 +69,12 @@ const COMPONENT_TABLES = [
   "platform_agent_templates",
   "platform_connector_templates",
 ] as const;
+
+const TABLE_OF: Record<ComponentKind, (typeof COMPONENT_TABLES)[number]> = {
+  skill: "platform_skills",
+  agent_template: "platform_agent_templates",
+  connector_template: "platform_connector_templates",
+};
 
 interface OwnedRow {
   id: string;
@@ -92,6 +111,8 @@ export class OwnedItems {
     @Inject(OrgLock) private readonly orgLock: OrgLock,
     @Inject(CatalogService) private readonly catalog: CatalogService,
     @Inject(CatalogScopeService) private readonly scope: CatalogScopeService,
+    /** The owner org's own uninstall of a removed plugin (ruling P3-41). */
+    @Inject(PluginInstaller) private readonly installer: PluginInstaller,
     /** The removed plugin's cleanup job (`owned-plugin-cleanup-<itemId>`, P3-20). */
     @Inject(getQueueToken(MAINTENANCE_QUEUE_NAME)) private readonly queue: Pick<Queue, "add">,
     @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
@@ -171,13 +192,18 @@ export class OwnedItems {
    * Another live org uses it ({@link orgsUsing}) -> `transferred`: the item and its components
    * become platform-owned, a pending version is cleared, `shown_to_others` is turned off when the
    * owner had not made it shareable (no exposure the owner switched off), the former owner leaves
-   * the list and its switches (an `all` scope is narrowed to `named` = the orgs using it), written
+   * the list and its switches (an `all` scope, the item's or a component's own, is narrowed to
+   * `named` = the orgs using it, ruling P3-39; an `optional` item stays `optional`, ruling P3-40:
+   * it passed the share gate already, so every org could see it, and the former owner is then an
+   * ordinary org that may switch it on again), written
    * directly rather than through the guarded scope writer (ruling P3-27); platform notice
    * `ownership_transferred`, audit `catalog.ownership_transferred`, the scope sync enqueued after
    * the commit (it uninstalls the former owner's install). Otherwise -> `removed`: the soft delete
    * of `catalog.remove` ({@link CatalogService.removeIn}) and, after the commit, the cleanup job
-   * `owned-plugin-cleanup-<itemId>` that takes its extension out. A first upload still waiting is
-   * never transferred. A gone or platform item -> 404.
+   * `owned-plugin-cleanup-<itemId>` that takes its extension out; an owner delete
+   * (`owner_deleted`) also uninstalls it in the owner org through the normal uninstall, keeping the
+   * connectors it created as the org's own (ruling P3-41). A first upload still waiting is never
+   * transferred. A gone or platform item -> 404.
    */
   @Transactional({ propagation: "mandatory" })
   async transferOrRemove(
@@ -200,8 +226,18 @@ export class OwnedItems {
     const others = item.awaiting_confirmation ? [] : await orgsUsing(t, ref, { except: owner });
     if (others.length === 0) {
       await this.catalog.removeIn(actor, item.id, { ...opts, reason });
+      if (reason === "owner_deleted") await this.uninstallInOwner(owner, actor, item.id, opts);
       afterCommit(() => this.enqueueCleanup(item.id));
       return "removed";
+    }
+    // Read before anything changes: where each own-scope `all` component is on (P3-39)
+    const narrow: { c: ComponentRow; orgs: string[] }[] = [];
+    for (const kind of COMPONENT_KINDS) {
+      for (const c of await loadComponents(t, kind, { itemId: item.id, forUpdate: true })) {
+        if (c.scopeMode === "own" && c.scope === "all") {
+          narrow.push({ c, orgs: await this.componentOrgsOn(c, owner) });
+        }
+      }
     }
     const now = sql<Date>`now()` as unknown as Date;
     await t
@@ -255,6 +291,37 @@ export class OwnedItems {
           .execute();
       }
     }
+    for (const { c, orgs } of narrow) {
+      await t
+        .updateTable(TABLE_OF[c.kind] as "platform_skills")
+        .set({ scope: "named", scope_version: sql<number>`scope_version + 1`, updated_at: now })
+        .where("id", "=", c.id)
+        .execute();
+      await t
+        .deleteFrom("component_scope_orgs")
+        .where("kind", "=", c.kind)
+        .where("component_id", "=", c.id)
+        .execute();
+      if (orgs.length > 0) {
+        await t
+          .insertInto("component_scope_orgs")
+          .values(orgs.map((org_id) => ({ kind: c.kind, component_id: c.id, org_id })))
+          .execute();
+      }
+      await audit(t, {
+        actorAccountId: actor,
+        action: "component.scope_changed",
+        target: c.id,
+        detail: {
+          kind: c.kind,
+          name: c.name,
+          plugin: c.plugin,
+          from: { scopeMode: "own", scope: "all", orgs: [] },
+          to: { scopeMode: "own", scope: "named", orgs },
+          reason: "ownership_transferred",
+        },
+      });
+    }
     const from = await t
       .selectFrom("orgs")
       .select(["id", "name"])
@@ -277,6 +344,62 @@ export class OwnedItems {
     });
     afterCommit(() => this.scope.enqueueSync(item.id));
     return "transferred";
+  }
+
+  /** The live orgs other than `except` where component `c` is on now ({@link componentOn}). */
+  private async componentOrgsOn(c: ComponentRow, except: string): Promise<string[]> {
+    const st = await loadScopeState(this.db, c.kind, [c]);
+    const orgs = await this.db
+      .selectFrom("orgs")
+      .select("id")
+      .where("deleted_at", "is", null)
+      .where("id", "!=", except)
+      .orderBy("id")
+      .execute();
+    return orgs
+      .map((o) => o.id)
+      .filter((o) =>
+        componentOn(
+          c,
+          pluginFactsOf(st, c.itemId, o),
+          listedIn(st, c.id, o),
+          switchOf(st, c.id, o),
+        ),
+      );
+  }
+
+  /**
+   * The owner org's live install of a removed plugin, uninstalled in the caller's transaction
+   * through the normal uninstall (ruling P3-41): `via: "scope"` (the item is gone, so no scope
+   * wants it), which keeps the connectors it created as the org's own. One that another install
+   * still depends on, or one still installing, stays (logged).
+   */
+  private async uninstallInOwner(
+    owner: string,
+    actor: string | null,
+    itemId: string,
+    opts: ActorOpts,
+  ): Promise<void> {
+    const live = await this.db
+      .selectFrom("plugin_installs")
+      .select("id")
+      .where("org_id", "=", owner)
+      .where("item_id", "=", itemId)
+      .where("status", "=", "installed")
+      .executeTakeFirst();
+    if (live === undefined) return;
+    try {
+      await this.installer.uninstall(owner, actor, live.id, {
+        ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
+        via: "scope",
+      });
+    } catch (e) {
+      if (!(e instanceof ScopeStillWanted)) throw e;
+      this.log.info("the removed plugin's install stays: another install depends on it", {
+        orgId: owner,
+        itemId,
+      });
+    }
   }
 
   /** Enqueues the removed plugin's cleanup; a failure only warns (the daily sweep repairs it). */

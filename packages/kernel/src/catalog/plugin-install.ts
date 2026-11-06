@@ -1557,6 +1557,16 @@ export class PluginInstaller {
         .where("org_id", "=", orgId)
         .executeTakeFirst();
       itemId = row?.item_id;
+      // The item row FOR SHARE, as a switch without an uninstall takes it: an owner's delete or
+      // transfer (FOR UPDATE) decides on who uses it
+      if (itemId !== undefined) {
+        await this.db
+          .selectFrom("catalog_items")
+          .select("id")
+          .where("id", "=", itemId)
+          .forShare()
+          .executeTakeFirst();
+      }
       if (sw.expectHash !== undefined && row !== undefined) {
         const now = uninstallPreviewHash(await this.previewUninstall(orgId, installId));
         if (now !== sw.expectHash) {
