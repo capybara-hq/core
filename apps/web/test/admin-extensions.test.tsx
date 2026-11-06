@@ -124,6 +124,8 @@ const S3 = plugin({
 
 beforeEach(() => {
   resetNavigation("/admin/extensions");
+  // The tab is written to the URL (`?tab=`): every test starts on a clean one.
+  window.history.replaceState(null, "", "/");
   params.current = { name: "demo" };
 });
 afterEach(() => {
@@ -131,11 +133,44 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("/admin/extensions (ListPage, object rows)", () => {
+/** The table's rows (the header row left out), as their first cell's name. */
+const rowNames = () =>
+  screen
+    .getAllByRole("row")
+    .slice(1)
+    .map((r) => r.querySelector(".cb-cell-title-name")?.textContent);
+const tableRow = (name: string) => screen.getByRole("row", { name: new RegExp(name) });
+
+/** The extension list and, for a Sheet, the deployment config of each. */
+function listRoutes(extensions: View[]) {
+  return stubApi({
+    "GET /api/v1/admin/extensions": () => json(200, { extensions, drainSeconds: 30 }),
+    ...Object.fromEntries(
+      extensions.map((v) => [
+        `GET /api/v1/admin/extensions/${String(v.name)}/config`,
+        () =>
+          json(200, {
+            plugin: v.name,
+            version: "1.0.0",
+            configurable: false,
+            schema: null,
+            fields: [],
+            valid: true,
+            validated: true,
+            issues: [],
+          }),
+      ]),
+    ),
+  });
+}
+
+describe("/admin/extensions (ListPage + DataTable by capability, details in a Sheet)", () => {
   it.each(LOCALES)(
-    "warn callout first, tabs with counts, rows with chips, meta, state and one action (%s)",
+    "warn callout first; tabs by capability with counts; attention sorts first; rows with state, source, scope, replicas (%s)",
     async (locale) => {
       const p = msgs[locale].admin.extensions;
+      const m = msgs[locale].extensions;
+      const c = msgs[locale].catalog.scope;
       const diverged = plugin({
         name: "split",
         status: "failed",
@@ -154,133 +189,151 @@ describe("/admin/extensions (ListPage, object rows)", () => {
         status: "disabled",
         desired: { version: "1.0.0", sha256: SHA, state: "disabled" },
       });
-      stubApi({
-        "GET /api/v1/admin/extensions": () =>
-          json(200, { extensions: [plugin(), diverged, S3, off], drainSeconds: 30 }),
-      });
+      listRoutes([plugin({ scope: "optional", enabledOrgs: 3 }), diverged, S3, off]);
       await renderRouteWithCache("/admin/extensions", lastStubRoutes(), { locale });
       expect(template("ListPage")).not.toBeNull();
-      const list = await screen.findByRole("list", { name: p.title });
-      const row = (name: string) => within(list).getByText(name).closest("li") as HTMLElement;
+      expect(screen.getByRole("table", { name: p.title })).toBeTruthy();
       // The callout names the two extensions that need attention, above the tabs
       const callout = document.querySelector(".cb-callout") as HTMLElement;
       expect(callout.textContent).toContain("split");
       expect(callout.textContent).toContain("object-store-s3");
       expect(callout.textContent).not.toContain("quiet");
-      // Tabs with counts: all 4, needs attention 2, enabled 1, disabled 1
+      // Needs attention first, then enabled, then disabled; by name within each
+      expect(rowNames()).toEqual(["object-store-s3", "split", "demo", "quiet"]);
       const tabs = screen.getByRole("tablist");
+      const tab = (id: keyof typeof m.tabs) =>
+        within(tabs).getByRole("tab", { name: new RegExp(`^${m.tabs[id]}`) });
       for (const [id, n] of [
         ["all", 4],
-        ["attention", 2],
-        ["enabled", 1],
-        ["disabled", 1],
+        ["storage", 1],
+        ["tools", 3],
+        ["model", 0],
       ] as const) {
-        const tab = within(tabs).getByRole("tab", { name: new RegExp(`^${p.tabs[id]}`) });
-        expect(tab.textContent).toContain(String(n));
+        expect(tab(id).textContent).toContain(String(n));
       }
-      // Rows: the version and "required" are meta text (no badge), state label, one secondary
-      // action (configure when pending; the page head keeps the one primary)
-      const s3Meta = within(row("object-store-s3")).getByText(
-        new RegExp(`^v\\d.* · ${escapeRe(p.required)} · `),
-      );
-      expect(s3Meta.closest(".cb-object-chip")).toBeNull();
-      // Only "sensitive" is still a badge.
-      for (const r of [row("object-store-s3"), row("demo")]) {
-        const chips = [...r.querySelectorAll(".cb-object-chip")].map((c) => c.textContent);
-        expect(chips.filter((c) => c !== p.sensitive)).toEqual([]);
-      }
-      expect(within(row("object-store-s3")).getByText(p.status.pending_config)).toBeTruthy();
-      expect(
-        within(row("object-store-s3"))
-          .getByRole("link", { name: p.configure })
-          .getAttribute("href"),
-      ).toBe("/admin/extensions/object-store-s3");
-      expect(
-        within(row("object-store-s3")).getByRole("link", { name: p.configure }).className,
-      ).toContain("cb-btn-link-default");
-      expect(within(row("demo")).getByText(p.status.enabled)).toBeTruthy();
-      expect(within(row("demo")).getByRole("link", { name: p.settings })).toBeTruthy();
-      expect(
-        within(row("demo")).queryByText(new RegExp(` · ${escapeRe(p.required)} · `)),
-      ).toBeNull();
-      expect(within(row("demo")).getByText(new RegExp(escapeRe(p.source.install)))).toBeTruthy();
-      expect(
-        within(row("split")).getByText(
-          new RegExp(escapeRe(fill(p.replicas.diverged, { ok: 1, n: 2 }))),
-        ),
-      ).toBeTruthy();
-      // 「副本一致 2/2」: the replicas that agree out of all of them
-      expect(
-        within(row("demo")).getByText(
-          new RegExp(escapeRe(fill(p.replicas.consistent, { ok: 2, n: 2 }))),
-        ),
-      ).toBeTruthy();
-      expect(
-        within(row("object-store-s3")).getByText(new RegExp(escapeRe(p.source.bootstrap))),
-      ).toBeTruthy();
-
+      const s3 = tableRow("object-store-s3");
+      expect(within(s3).getByText(p.status.pending_config)).toBeTruthy();
+      expect(s3.textContent).toContain(m.capability.objectStore);
+      expect(s3.textContent).toContain(`${p.source.bootstrap} · ${p.required}`);
+      const demo = tableRow("demo");
+      expect(within(demo).getByText(p.status.enabled)).toBeTruthy();
+      expect(within(demo).getByText(p.sensitive).getAttribute("data-tone")).toBe("warn");
+      expect(demo.textContent).toContain(m.capability.tools);
+      expect(demo.textContent).toContain(p.source.install);
+      expect(demo.textContent).not.toContain(p.required);
+      expect(demo.textContent).toContain(`${c.optional} · ${fill(p.meta.orgs, { n: 3 })}`);
+      expect(demo.textContent).toContain(fill(p.replicas.consistent, { ok: 2, n: 2 }));
+      expect(tableRow("split").textContent).toContain(fill(p.replicas.diverged, { ok: 1, n: 2 }));
       const user = userEvent.setup();
-      await user.click(within(tabs).getByRole("tab", { name: new RegExp(`^${p.tabs.disabled}`) }));
-      expect(within(list).queryByText("demo")).toBeNull();
-      expect(within(list).getByText("quiet")).toBeTruthy();
+      await user.click(tab("storage"));
+      expect(rowNames()).toEqual(["object-store-s3"]);
+      expect(window.location.search).toBe("?tab=storage");
     },
   );
-
-  it("row actions: no 详情 (the name and the action open it); 升级 alone is a button, no menu of one", async () => {
-    const p = msgs.zh.admin.extensions;
-    stubApi({
-      "GET /api/v1/admin/extensions": () =>
-        json(200, { extensions: [plugin(), S3], drainSeconds: 30 }),
-    });
-    await renderRouteWithCache("/admin/extensions", lastStubRoutes(), { locale: "zh" });
-    const list = await screen.findByRole("list", { name: p.title });
-    const row = (name: string) => within(list).getByText(name).closest("li") as HTMLElement;
-    expect(within(list).queryByRole("button", { name: "更多操作" })).toBeNull();
-    expect(within(list).queryByText("查看详情")).toBeNull();
-    expect(within(row("demo")).getByRole("link", { name: p.upgrade }).getAttribute("href")).toBe(
-      "/admin/plugins/import",
-    );
-    expect(
-      within(row("object-store-s3"))
-        .getAllByRole("link")
-        .map((l) => l.textContent),
-    ).toEqual(["object-store-s3", p.configure, p.upgrade]);
-  });
 
   it.each(LOCALES)(
-    "meta ends with the plugin scope and the org count, a builtin chip, no install action, the description (%s)",
+    "a row opens a Sheet: config, state, the actions and replicas, permissions folded (%s)",
     async (locale) => {
       const p = msgs[locale].admin.extensions;
-      const c = msgs[locale].catalog.scope;
-      stubApi({
-        "GET /api/v1/admin/extensions": () =>
-          json(200, {
-            extensions: [
-              plugin({ scope: "optional", enabledOrgs: 3 }),
-              plugin({ name: "core-ext", scope: "all", enabledOrgs: 6, builtin: true }),
-            ],
-            drainSeconds: 30,
-          }),
-      });
+      const m = msgs[locale].extensions;
+      listRoutes([plugin(), plugin({ name: "core-ext", scope: "all", builtin: true })]);
       await renderRouteWithCache("/admin/extensions", lastStubRoutes(), { locale });
-      const list = await screen.findByRole("list", { name: p.title });
-      const row = (name: string) => within(list).getByText(name).closest("li") as HTMLElement;
+      expect(tableRow("core-ext").textContent).toContain(p.builtin);
+      const user = userEvent.setup();
+      await user.click(screen.getByText("demo", { selector: ".cb-cell-title-name" }));
+      const sheet = await screen.findByRole("dialog", { name: "demo" });
+      expect(tableRow("demo").getAttribute("aria-current")).toBe("true");
+      // Its page opens from the Sheet's head
       expect(
-        within(row("demo")).getByText(
-          new RegExp(`${escapeRe(`${c.optional} · ${fill(p.meta.orgs, { n: 3 })}`)}$`),
-        ),
-      ).toBeTruthy();
+        within(sheet)
+          .getAllByRole("link")
+          .some((l) => l.getAttribute("href") === "/admin/extensions/demo"),
+      ).toBe(true);
+      expect(within(sheet).getByText(m.stateTitle, { selector: "dt" })).toBeTruthy();
+      expect(within(sheet).getAllByText(p.detail.replicasTitle).length).toBeGreaterThan(0);
+      expect(within(sheet).getByRole("button", { name: p.detail.actions.disable })).toBeTruthy();
       expect(
-        within(row("core-ext")).getByText(
-          new RegExp(`${escapeRe(`${c.all} · ${fill(p.meta.orgs, { n: 6 })}`)}$`),
-        ),
+        within(sheet).getByRole("link", { name: p.detail.actions.upgrade }).getAttribute("href"),
+      ).toBe("/admin/plugins/import");
+      // Folded until opened
+      const summary = within(sheet).getByRole("button", { expanded: false });
+      expect(summary.textContent).toContain(`${m.category.tools} 1`);
+      expect(summary.textContent).toContain(m.sensitive);
+      expect(within(sheet).queryByText(p.approve.notApproved)).toBeNull();
+      await user.click(summary);
+      expect(
+        within(sheet).getByRole("region", { name: m.permissionsLabel.replace("{plugin}", "demo") }),
       ).toBeTruthy();
-      expect(within(row("core-ext")).getByText(p.builtin)).toBeTruthy();
-      expect(within(row("demo")).queryByText(p.builtin)).toBeNull();
-      expect(document.querySelector('a[href="/admin/extensions/install"]')).toBeNull();
-      expect(screen.getByText(p.description)).toBeTruthy();
     },
   );
+
+  it("an approval waiting: the permissions open by themselves in the Sheet; approving POSTs", async () => {
+    const pending = plugin({
+      status: "pending_approval",
+      snapshot: null,
+      ...addedOf(["echo"], { echo: "tools" }),
+    });
+    const calls = stubApi({
+      "GET /api/v1/admin/extensions": () => json(200, { extensions: [pending], drainSeconds: 30 }),
+      "GET /api/v1/admin/extensions/demo/config": () =>
+        json(200, {
+          plugin: "demo",
+          version: "1.0.0",
+          configurable: false,
+          schema: null,
+          fields: [],
+          valid: true,
+          validated: true,
+          issues: [],
+        }),
+      "POST /api/v1/admin/extensions/demo/approve": () => json(200, plugin({ status: "enabled" })),
+    });
+    await renderRouteWithCache("/admin/extensions", lastStubRoutes());
+    const user = userEvent.setup();
+    await user.click(screen.getByText("demo", { selector: ".cb-cell-title-name" }));
+    const sheet = await screen.findByRole("dialog", { name: "demo" });
+    expect(within(sheet).getByText(en.admin.extensions.approve.notApproved)).toBeTruthy();
+    const submit = within(sheet).getByRole("button", { name: en.admin.extensions.approve.submit });
+    expect(submit).toHaveProperty("disabled", true);
+    await user.click(
+      within(sheet).getByRole("checkbox", { name: en.admin.extensions.approve.ack }),
+    );
+    await user.click(submit);
+    await vi.waitFor(() =>
+      expect(bodyOf(calls.find((c) => c.method === "POST"))).toEqual({
+        sha256: SHA,
+        reviewHash: "0123456789abcdef",
+      }),
+    );
+    // The answer replaces the row: it no longer needs attention
+    expect(
+      await within(tableRow("demo")).findByText(en.admin.extensions.status.enabled),
+    ).toBeTruthy();
+  });
+
+  it("one extension needs attention: the callout's action opens its Sheet", async () => {
+    listRoutes([plugin(), S3]);
+    await renderRouteWithCache("/admin/extensions", lastStubRoutes(), { locale: "zh" });
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: zh.admin.extensions.calloutFix }));
+    expect(await screen.findByRole("dialog", { name: "object-store-s3" })).toBeTruthy();
+  });
+
+  it("row menu: 升级 for an installed extension; no menu for one from the startup config", async () => {
+    const p = msgs.zh.admin.extensions;
+    listRoutes([plugin(), plugin({ name: "cfg", source: "config", installSource: null })]);
+    await renderRouteWithCache("/admin/extensions", lastStubRoutes(), { locale: "zh" });
+    const user = userEvent.setup();
+    expect(within(tableRow("cfg")).queryByRole("button", { name: "行操作" })).toBeNull();
+    await user.click(within(tableRow("demo")).getByRole("button", { name: "行操作" }));
+    expect((await screen.findByRole("menuitem", { name: p.upgrade })).getAttribute("href")).toBe(
+      "/admin/plugins/import",
+    );
+    // The menu does not open the Sheet
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
   it("zh copy is exactly the accepted wording", () => {
     expect(zh.admin.extensions.description).toBe(
       "插件里在部署上运行的代码。部署级配置、权限和运行状态在这里。",
@@ -288,15 +341,13 @@ describe("/admin/extensions (ListPage, object rows)", () => {
     expect(zh.admin.extensions.meta.orgs.replace("{n}", "3")).toBe("3 个组织启用");
   });
 
-  it("nothing needs attention: no callout, no tab that equals All", async () => {
-    stubApi({
-      "GET /api/v1/admin/extensions": () =>
-        json(200, { extensions: [plugin(), plugin({ name: "other" })], drainSeconds: 30 }),
-    });
+  it("nothing needs attention: no callout; the description is shown", async () => {
+    listRoutes([plugin(), plugin({ name: "other" })]);
     await renderRouteWithCache("/admin/extensions", lastStubRoutes());
-    await screen.findByRole("list", { name: en.admin.extensions.title });
+    await screen.findByRole("table", { name: en.admin.extensions.title });
     expect(document.querySelector(".cb-callout")).toBeNull();
-    expect(screen.queryByRole("tablist")).toBeNull();
+    expect(screen.getByText(en.admin.extensions.description)).toBeTruthy();
+    expect(document.querySelector('a[href="/admin/extensions/install"]')).toBeNull();
   });
 });
 

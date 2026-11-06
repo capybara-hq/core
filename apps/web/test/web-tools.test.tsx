@@ -148,7 +148,7 @@ describe("org extensions page: default providers (web tools spec §6)", () => {
         }),
     });
     await renderRouteWithCache("/extensions", lastStubRoutes(), { locale: "en" });
-    await screen.findByRole("region", { name: "fake-web" });
+    await screen.findByRole("row", { name: /fake-web/ });
     await vi.waitFor(() =>
       expect(screen.queryByRole("region", { name: en.extensions.pointDefaults.title })).toBeNull(),
     );

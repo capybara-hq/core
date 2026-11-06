@@ -1676,7 +1676,7 @@
     "title": "扩展",
     "empty": "没有安装任何扩展。",
     "enableLabel": "启用 {plugin}",
-    "enabled": "已在该组织启用",
+    "enabled": "已启用",
     "disabled": "未启用",
     "unavailable": "不可用",
     "unavailableHint": "此扩展在部署上当前不可用；组织的启用设置会保留。",
@@ -1756,7 +1756,50 @@
     },
     "description": "本组织能用的扩展。组织级配置（例如本组织自己的 API Key）在这里填。",
     "platformHint": "平台为所有组织统一启用了这个扩展，组织不能停用；组织级配置仍可在这里填写。",
-    "openPlugins": "去插件页查看或申请"
+    "openPlugins": "去插件页查看或申请",
+    "needsConfig": "待配置",
+    "enableFailed": "启用失败",
+    "disableFailed": "停用失败",
+    "search": "搜索扩展",
+    "emptyTab": "这一类没有扩展",
+    "noResults": "没有名称包含「{query}」的扩展。",
+    "stateTitle": "状态",
+    "capabilitiesTitle": "能力",
+    "permissionsNone": "无",
+    "tabs": {
+      "all": "全部",
+      "model": "模型",
+      "web": "网页",
+      "connector": "连接器",
+      "sandbox": "沙箱",
+      "storage": "存储",
+      "tools": "工具与界面"
+    },
+    "columns": {
+      "name": "扩展",
+      "capabilities": "能力",
+      "state": "状态",
+      "switch": "启用"
+    },
+    "capability": {
+      "model": "模型",
+      "webSearch": "网页搜索",
+      "webFetch": "网页读取",
+      "connector": "连接器",
+      "sandbox": "沙箱",
+      "objectStore": "对象存储",
+      "channel": "渠道",
+      "directory": "通讯录",
+      "identity": "第三方登录",
+      "filePreview": "文件预览",
+      "tools": "智能体工具",
+      "ui": "界面"
+    },
+    "categoryShort": {
+      "ui": "界面",
+      "publicRoutes": "公开路由",
+      "provides": "扩展点"
+    }
   },
   "identities": {
     "title": "IM 身份",
@@ -2563,7 +2606,9 @@
         "source": "来源",
         "status": "状态",
         "sensitive": "敏感",
-        "replicas": "副本"
+        "replicas": "副本",
+        "capabilities": "能力",
+        "scope": "范围"
       },
       "filters": {
         "status": "状态",
@@ -2701,12 +2746,6 @@
         "willReload": "保存后扩展会重新加载，最多约需 {seconds} 秒。",
         "appliesNow": "这些改动保存后立即生效。",
         "noChanges": "还没有改动。"
-      },
-      "tabs": {
-        "all": "全部",
-        "attention": "需要处理",
-        "enabled": "已启用",
-        "disabled": "已停用"
       },
       "callout": "{n} 个扩展需要处理：{names}",
       "calloutFix": "去处理",

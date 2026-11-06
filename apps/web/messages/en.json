@@ -1688,7 +1688,7 @@
     "title": "Extensions",
     "empty": "No extensions are installed.",
     "enableLabel": "Enable {plugin}",
-    "enabled": "Enabled for this organization",
+    "enabled": "Enabled",
     "disabled": "Not enabled",
     "unavailable": "Unavailable",
     "unavailableHint": "This extension is currently unavailable on this deployment. The organization setting is kept.",
@@ -1768,7 +1768,50 @@
     },
     "description": "The extensions this organization can use. Fill in organization-level config (such as this organization's own API key) here.",
     "platformHint": "The platform turned this extension on for every organization; it cannot be turned off here. Its organization config can still be set.",
-    "openPlugins": "Open Plugins to view or request it"
+    "openPlugins": "Open Plugins to view or request it",
+    "needsConfig": "Needs config",
+    "enableFailed": "Enable failed",
+    "disableFailed": "Disable failed",
+    "search": "Search extensions",
+    "emptyTab": "No extensions of this kind",
+    "noResults": "No extension name contains \"{query}\".",
+    "stateTitle": "State",
+    "capabilitiesTitle": "Capabilities",
+    "permissionsNone": "None",
+    "tabs": {
+      "all": "All",
+      "model": "Models",
+      "web": "Web",
+      "connector": "Connectors",
+      "sandbox": "Sandboxes",
+      "storage": "Storage",
+      "tools": "Tools and UI"
+    },
+    "columns": {
+      "name": "Extension",
+      "capabilities": "Capabilities",
+      "state": "State",
+      "switch": "On"
+    },
+    "capability": {
+      "model": "Models",
+      "webSearch": "Web search",
+      "webFetch": "Web fetch",
+      "connector": "Connectors",
+      "sandbox": "Sandbox",
+      "objectStore": "Object storage",
+      "channel": "Channel",
+      "directory": "Directory",
+      "identity": "Third-party sign-in",
+      "filePreview": "File preview",
+      "tools": "Agent tools",
+      "ui": "UI"
+    },
+    "categoryShort": {
+      "ui": "UI",
+      "publicRoutes": "Public routes",
+      "provides": "Extension points"
+    }
   },
   "identities": {
     "title": "IM identities",
@@ -2575,7 +2618,9 @@
         "source": "Source",
         "status": "Status",
         "sensitive": "Sensitive",
-        "replicas": "Replicas"
+        "replicas": "Replicas",
+        "capabilities": "Capabilities",
+        "scope": "Scope"
       },
       "filters": {
         "status": "Status",
@@ -2713,12 +2758,6 @@
         "willReload": "Saving reloads the extension, which can take up to about {seconds} seconds.",
         "appliesNow": "These changes apply as soon as they are saved.",
         "noChanges": "No changes yet."
-      },
-      "tabs": {
-        "all": "All",
-        "attention": "Needs attention",
-        "enabled": "Enabled",
-        "disabled": "Disabled"
       },
       "callout": "{n, plural, one {# extension needs attention} other {# extensions need attention}}: {names}",
       "calloutFix": "Fix now",

@@ -42,7 +42,7 @@ The sidebar has three contexts (the third, setup, is drawn only by `SetupPage`):
 
 | Frame | Template | Use |
 |---|---|---|
-| Object list | `ListPage` with `variant="objects"`: `ObjectRow` children inside one `ObjectList` (mark, name + chips, description, mono meta, state, one action, row menu) | Things a person picks and opens: agents, skills, connectors, channels, evals, catalog, admin extensions / catalog, marketplace entries |
+| Object list | `ListPage` with `variant="objects"`: `ObjectRow` children inside one `ObjectList` (mark, name + chips, description, mono meta, state, one action, row menu) | Things a person picks and opens: agents, skills, connectors, channels, evals, catalog, admin catalog, marketplace entries (the 扩展 pages are a record list by capability with a Sheet, spec §5.1) |
 | Record list | `ListPage` with `variant="records"` (default): a `DataTable` | Tabular records: members, accounts, orgs, trajectories |
 | Detail / form | `DetailPage` (Content + Inspector, `PageTabs`) / `FormPage` / `WizardPage` | One object; create or edit; multi-step setup |
 | Settings | `SettingsPage` with the grouped secondary nav | Org settings, personal settings, deployment settings |
@@ -59,7 +59,7 @@ The sidebar has three contexts (the third, setup, is drawn only by `SetupPage`):
 | Page | Route | Template |
 |---|---|---|
 | Admin console overview | `/admin` | `OverviewPage` |
-| Accounts, orgs, extensions, plugins (one head with the tabs 已安装 / 市场 / 待确认: installed plugins, marketplace entries, permission confirmations and org requests), marketplace sources | `/admin/accounts`, `/admin/orgs`, `/admin/extensions`, `/admin/plugins`, `/admin/plugins/market`, `/admin/plugins/pending`, `/admin/plugins/sources` | `ListPage` |
+| Accounts, orgs, extensions (tabs by capability, a Sheet per extension with its deployment config, actions and folded permissions; spec §5.1), plugins (one head with the tabs 已安装 / 市场 / 待确认: installed plugins, marketplace entries, permission confirmations and org requests), marketplace sources | `/admin/accounts`, `/admin/orgs`, `/admin/extensions`, `/admin/plugins`, `/admin/plugins/market`, `/admin/plugins/pending`, `/admin/plugins/sources` | `ListPage` |
 | Extension detail, plugin detail (tabs 组件 / 组织 / 版本; 设置范围 and 停用 open `PluginScopeDialog` / `PluginDisableDialog` with the impact preview) | `/admin/extensions/[name]`, `/admin/plugins/[itemId]` | `DetailPage` (summary / permissions / config etc. use PageTabs) |
 | Platform components: 技能 / 连接器模板 / 智能体模板 lists (来自, 归属, 范围, 版本, orgs using it) and details (tabs 版本 / 组织; 设置范围 opens `ComponentScopeDialog` with 跟随插件, 停用, 上传新版本 for skills and agent templates); the plugin detail's 更新到 x opens `PlatformUpdateDialog` (the per-component update preview, confirmed with `diffHash`) | `/admin/skills`, `/admin/connector-templates`, `/admin/agent-templates` and their `[id]` | `ListPage` / `DetailPage` |
 | Install an extension, plugin import review (上传插件包; its confirm step asks for the scope) | `/admin/extensions/install`, `/admin/plugins/import` | `WizardPage` |
@@ -69,7 +69,7 @@ The sidebar has three contexts (the third, setup, is drawn only by `SetupPage`):
 | Eval set, eval run | `/evals/[setId]`, `/evals/runs/[runId]` | `DetailPage` |
 | Create an eval set / start a run | `/evals/new`, `/evals/[setId]/run` | `FormPage` / `WizardPage` |
 | Workspace 插件 (state, 启用 / 组织配置 / 停用 with the switch-off preview, requests, the 市场 tab for org admins), plugin detail (this org's installs: clean-up; a platform plugin moves only with the admin update), the input wizard 启用 opens | `/plugins`, `/plugins/[itemId]`, `/plugins/[itemId]/enable` | `ListPage` / `DetailPage` / `WizardPage` |
-| Workspace 扩展 (each extension's switch, which is its plugin's, permissions, org config; default providers; file previewers; members read the states only, without config, secrets or permissions) | `/extensions` | `ListPage` |
+| Workspace 扩展 (a DataTable with tabs by capability, `?tab=`, and a search; each row's switch, which is its plugin's; a row opens a Sheet with the org config, the state and the folded permissions; default providers; file previewers; members read the states only, without config, secrets or permissions; spec §5.1 "The 扩展 pages") | `/extensions` | `ListPage` + `Sheet` |
 | Workspace 技能 / 智能体模板 (the org's own rows and the platform components offered to the org, with state and the org admin's per-component switch; members read only) | `/skills`, `/agent-templates` | `ListPage` |
 | Platform inbox (org requests, permission confirmations, scope sync failures, a failed migration run; each links to the page where it is acted on; sidebar count) | `/admin/inbox` | `InboxPage` |
 

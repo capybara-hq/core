@@ -250,6 +250,47 @@ describe("DataTable rows", () => {
     expect(onOpen).toHaveBeenCalledTimes(1);
   });
 
+  it("an interactive column's control works without opening the row", async () => {
+    const user = userEvent.setup();
+    const onOpen = vi.fn();
+    const onSwitch = vi.fn();
+    plain({
+      onOpen,
+      columns: [
+        ...columns,
+        {
+          key: "on",
+          header: "开关",
+          interactive: true,
+          cell: (r) => (
+            <button type="button" onClick={() => onSwitch(r.id)}>
+              {`switch ${r.id}`}
+            </button>
+          ),
+        },
+      ],
+    });
+    await user.click(screen.getByRole("button", { name: "switch a" }));
+    expect(onSwitch).toHaveBeenCalledWith("a");
+    expect(onOpen).not.toHaveBeenCalled();
+    await user.click(screen.getByText("Alpha"));
+    expect(onOpen).toHaveBeenCalledTimes(1);
+  });
+
+  it("CellTitle mono: the description is mono (an id or a version)", () => {
+    plain({
+      columns: [
+        {
+          key: "name",
+          header: "名称",
+          cell: (r) => <CellTitle title={r.name} description={`${r.id} · v1.0.0`} mono />,
+        },
+      ],
+    });
+    expect(screen.getByText("a · v1.0.0").getAttribute("data-mono")).toBe("true");
+    expect(screen.getByRole("row", { name: /Alpha/ })).toBeTruthy();
+  });
+
   it("勾选行 data-state 含 checked", () => {
     render(<Harness initial={["a"]} />);
     const r1 = screen.getByText("Alpha").closest("tr") as HTMLElement;

@@ -402,6 +402,7 @@ export function DataTable<T>({
                                 data-wrap={c.wrap ? "true" : undefined}
                                 data-lead={lead ? "true" : undefined}
                                 data-label={!lead && c.header ? c.header : undefined}
+                                data-no-open={c.interactive ? "true" : undefined}
                               >
                                 <span
                                   className="cb-table-cell"

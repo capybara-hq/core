@@ -1,8 +1,9 @@
 "use client";
 
 import {
-  Button,
-  FormSection,
+  CellTitle,
+  type Column,
+  DataTable,
   ListPage,
   Stack,
   Switch,
@@ -13,30 +14,41 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
-import { ConfigForm } from "../../../components/config-form/ConfigForm";
 import { hasConfigFields } from "../../../components/config-form/model";
-import { orgConfig, orgFormMeta } from "../../../components/config-form/org";
+import { savedConfigComplete } from "../../../components/config-form/org";
 import { ErrorFrame } from "../../../components/ErrorFrame";
+import {
+  useCapabilityLabel,
+  useExtensionTab,
+  useExtensionTabItems,
+} from "../../../components/ExtensionTabs";
 import { FilePreviewersSection } from "../../../components/FilePreviewersSection";
-import { FormError } from "../../../components/form-error";
 import { NoAccess } from "../../../components/NoAccess";
-import { PermissionReview } from "../../../components/PermissionReview";
+import {
+  OrgExtensionSheet,
+  type SaveError,
+  type ToggleProblem,
+} from "../../../components/OrgExtensionSheet";
 import { SwitchOffDialog } from "../../../components/PluginSwitch";
 import { PointDefaultsSection } from "../../../components/PointDefaultsSection";
 import { usePagePath } from "../../../components/shell/path";
-import { Link } from "../../../i18n/navigation";
 import { ApiClientError, configIssues, issueLines } from "../../../lib/api";
 import type { SwitchPreview } from "../../../lib/catalog";
+import {
+  capabilitiesIn,
+  type ExtensionTab,
+  inTab,
+  matchesSearch,
+  sortExtensions,
+  tabCounts,
+} from "../../../lib/extension-capabilities";
 import { extensionLabel, labelLocale } from "../../../lib/extension-label";
 import {
   type OrgExtension,
-  type PermissionGroup,
   type PutOrgExtensionInput,
-  provides,
   putOrgExtension,
   syncDirectory,
 } from "../../../lib/extensions";
-import type { ConfigIssue } from "../../../lib/json-schema";
 import { roleAtLeast } from "../../../lib/members";
 import { orgExtensionChangeKeys } from "../../../lib/query/admin";
 import { orgExtensionsQuery } from "../../../lib/query/channels";
@@ -48,72 +60,61 @@ import { useErrorMessage } from "../../../lib/use-error-message";
 import NotFound from "../not-found";
 
 /**
- * `/extensions`: the org's 扩展 page (spec §9; org admins, who read the org's extensions). One
- * group per extension (in a ListPage): the enable switch, which is its plugin's switch (spec §5
- * rule 7): switching it off answers the plugin's switch-off preview first (what it takes away, the
- * agents that use it), confirmed in a dialog with the preview's hash; with the reason when a
- * dependency is missing or dependents remain (the latter can be force-disabled); the permission
- * list (read-only, sensitive categories highlighted), the org config form, and "Sync now" for
- * directory-sync extensions. An extension that is off and whose saved org config lacks a required
- * field cannot be switched on (the switch is read-only with the hint 先填写组织级配置再启用): the
- * form's 保存并启用 saves the config and enables it in one PUT. A refused config
- * (`extension.config_invalid`), from either, marks the form's fields. An extension of an `all` or
- * builtin plugin reads 已启用 · 平台统一 and its switch is read-only (on in every org); its org
- * config can still be set. One the
- * deployment cannot run now (e.g. stopped by a super admin) shows "Unavailable": the switch is
- * read-only (the org's setting is kept). Below the extensions, the org's default providers of the
- * points several extensions provide (web tools spec §6), and the org's file previewers
- * (`file-preview@1`) in order, when any is provided. From the query cache (the layout prefetched
- * all three on a first load); a change writes the answer into the cached extensions, and enabling or
- * disabling one also invalidates what an extension brings (its UI, its pages, its file previewers,
- * the default providers' candidates) and the plugin's view.
+ * `/extensions`: the org's 扩展 page, an object list by capability (a ListPage with one DataTable).
+ * The head's tabs (全部, 模型, 网页, 连接器, 沙箱, 存储, 工具与界面; `lib/extension-capabilities.ts`
+ * maps the extension points to them, `?tab=` keeps the open one) carry counts, with a search by
+ * name. A row: the display name over `plugin · version`, what it can do under that tab, its state
+ * (已启用 / 未启用 / 已启用 · 平台统一 / 待配置 / 不可用, or a failed switch) and, for org admins,
+ * the enable switch, which is its plugin's switch (spec §5 rule 7): switching it off answers the
+ * plugin's switch-off preview first (what it takes away, the agents that use it), confirmed in a
+ * dialog with the preview's hash. Rows needing attention (待配置, a refused switch) come first,
+ * then those on, then the rest, by name. An extension that is off and whose saved org config lacks
+ * a required field cannot be switched on (待配置: the switch is read-only, the Sheet says why and
+ * its 保存并启用 saves the config and enables it in one PUT). An `all` or builtin plugin's
+ * extension is on in every org (read-only switch); one the deployment cannot run now is 不可用.
+ *
+ * A row opens a Sheet: the org config form on top (保存配置 / 保存并启用), the state line (with why a
+ * switch was refused: a missing dependency, dependents that remain, which can be force-disabled, or
+ * the kernel's reason; a refused switch opens the Sheet by itself), 立即同步 for directory-sync
+ * extensions, and the permissions folded into one line that opens the full blocks. Members read the
+ * same list without the switch, and a Sheet with the capabilities and the state only (the kernel
+ * gives them no config, secrets or permissions, P2-13; so their rows carry no capabilities and
+ * the page shows no capability tabs).
+ *
+ * Under the list, for org admins: the org's default providers of the points several extensions
+ * provide (web tools spec §6; in 全部 and 网页) and the org's file previewers (`file-preview@1`; in
+ * 全部 and 工具与界面). From the query cache (the layout prefetched all three on a first load); a
+ * change writes the answer into the cached extensions, and enabling or disabling one also
+ * invalidates what an extension brings (its UI, its pages, its file previewers, the default
+ * providers' candidates) and the plugin's view.
  */
-export default function ExtensionsView() {
+export default function ExtensionsView({ tab }: { tab: ExtensionTab }) {
   const ws = useWorkspace({ min: "member" });
   if (ws.kind === "pending" || ws.kind === "noOrg") return null;
   if (ws.kind === "noAccess") return <NoAccess need={ws.need} />;
-  return <Extensions orgId={ws.orgId} canEdit={roleAtLeast(ws.role, "admin")} />;
+  return <Extensions orgId={ws.orgId} canEdit={roleAtLeast(ws.role, "admin")} initialTab={tab} />;
 }
 
-function Extensions({ orgId, canEdit }: { orgId: string; canEdit: boolean }) {
-  const scope = usePagePath("org");
-  const t = useTranslations("extensions");
-  const read = usePageQuery(orgExtensionsQuery(orgId));
-  const header = {
-    path: [...scope, { label: "extensions" }],
-    title: t("title"),
-    description: t("description"),
-  };
-  if (read.kind === "notFound") return <NotFound />;
-  if (read.kind === "error") return <ErrorFrame reset={read.retry} />;
-  if (read.kind === "loading") return <ListPage header={header} loading />;
-  const extensions = read.data.extensions;
-  return (
-    <ListPage header={header}>
-      <Stack gap={24}>
-        {extensions.length === 0 ? (
-          <Text tone="muted">{t("empty")}</Text>
-        ) : (
-          extensions.map((p) =>
-            canEdit ? (
-              <ExtensionSection key={p.plugin} orgId={orgId} plugin={p} />
-            ) : (
-              <ExtensionReadOnly key={p.plugin} plugin={p} />
-            ),
-          )
-        )}
-        {canEdit && <PointDefaultsSection orgId={orgId} />}
-        {canEdit && <FilePreviewersSection orgId={orgId} />}
-      </Stack>
-    </ListPage>
-  );
-}
+type Busy = "toggle" | "save" | "saveEnable" | "sync";
 
-/** Why enabling / disabling failed (missing dependency / dependents remain), from the error envelope's details. */
-type ToggleProblem =
-  | { kind: "dependency_missing"; extensionPoints: string[] }
-  | { kind: "has_dependents"; extensions: string[] }
-  | { kind: "other"; message: string; extra: string[]; catalog?: boolean };
+/** One row: the extension and what the page decided about it. */
+interface Row {
+  ext: OrgExtension;
+  label: string;
+  /** Platform-wide (`all` / builtin): on in every org, the switch is the platform's. */
+  platform: boolean;
+  /** The switch cannot be used (platform, unavailable, not switchable or waiting for config). */
+  locked: boolean;
+  unavailable: boolean;
+  /** The org config form is shown (an admin, an available extension with fields). */
+  configForm: boolean;
+  /** 待配置: off, and the saved config lacks a required field. */
+  needsConfig: boolean;
+  problem: ToggleProblem | undefined;
+  state: { label: string; tone: "ok" | "warn" | "fail" | "muted" };
+  /** 0 needs attention, 1 on, 2 off or unavailable. */
+  rank: 0 | 1 | 2;
+}
 
 const strings = (raw: unknown[], key: string): string[] => [
   ...new Set(
@@ -125,73 +126,118 @@ const strings = (raw: unknown[], key: string): string[] => [
   ),
 ];
 
-/** A member's view of an extension: name, version and state; no switch, config or permissions. */
-function ExtensionReadOnly({ plugin }: { plugin: OrgExtension }) {
+function Extensions({
+  orgId,
+  canEdit,
+  initialTab,
+}: {
+  orgId: string;
+  canEdit: boolean;
+  initialTab: ExtensionTab;
+}) {
+  const scope = usePagePath("org");
   const t = useTranslations("extensions");
-  const tp = useTranslations("plugins");
-  const label = extensionLabel(
-    { name: plugin.plugin, displayName: plugin.displayName },
-    labelLocale(useLocale()),
-  );
-  const platform = plugin.required === true || plugin.catalogItem?.scope === "all";
+  const read = usePageQuery(orgExtensionsQuery(orgId));
+  const [tab, setTab] = useExtensionTab(canEdit ? initialTab : "all");
+  const [search, setSearch] = useState("");
+  const extensions = read.kind === "ready" ? read.data.extensions : null;
+  const counts = extensions === null ? null : tabCounts(extensions, (e) => e.permissions);
+  const tabItems = useExtensionTabItems(counts, setTab);
+  // Members get no permissions from the kernel, so nothing to sort by capability: no tabs.
+  const header = {
+    path: [...scope, { label: "extensions" }],
+    title: t("title"),
+    description: t("description"),
+    ...(canEdit ? { tabs: tabItems, activeTab: tab } : {}),
+    search: { label: t("search"), value: search, onChange: setSearch },
+  };
+  const columns = useColumnHeaders(canEdit);
+  if (read.kind === "notFound") return <NotFound />;
+  if (read.kind === "error") return <ErrorFrame reset={read.retry} />;
+  if (read.kind === "loading" || extensions === null)
+    return (
+      <ListPage
+        header={header}
+        loading={{ table: { label: t("title"), columns, rowHeight: "roomy" } }}
+      />
+    );
   return (
-    <FormSection
-      id={`plugin-${plugin.plugin}`}
-      title={label}
-      description={[plugin.displayName ? plugin.plugin : null, versionLabel(plugin.version)]
-        .filter((x): x is string => x !== null)
-        .join(" · ")}
-    >
-      <Stack direction="row" gap={12} align="center">
-        <Text>
-          {plugin.enabled ? (platform ? tp("state.platform") : t("enabled")) : t("disabled")}
-        </Text>
-        {plugin.available === false && <Text tone="warn">{t("unavailable")}</Text>}
-      </Stack>
-    </FormSection>
+    <ExtensionList
+      orgId={orgId}
+      canEdit={canEdit}
+      extensions={extensions}
+      header={header}
+      tab={canEdit ? tab : "all"}
+      search={search}
+      clearSearch={() => setSearch("")}
+    />
   );
 }
 
-function ExtensionSection({ orgId, plugin }: { orgId: string; plugin: OrgExtension }) {
+/** The table's column headers (the loading shape draws the same ones). */
+function useColumnHeaders(canEdit: boolean): Column<never>[] {
+  const t = useTranslations("extensions.columns");
+  return [
+    { key: "name", header: t("name"), cell: () => null },
+    { key: "capabilities", header: t("capabilities"), cell: () => null },
+    { key: "state", header: t("state"), cell: () => null },
+    ...(canEdit ? [{ key: "switch", header: t("switch"), cell: () => null }] : []),
+  ];
+}
+
+function ExtensionList({
+  orgId,
+  canEdit,
+  extensions,
+  header,
+  tab,
+  search,
+  clearSearch,
+}: {
+  orgId: string;
+  canEdit: boolean;
+  extensions: OrgExtension[];
+  header: Parameters<typeof ListPage>[0]["header"];
+  tab: ExtensionTab;
+  search: string;
+  clearSearch(): void;
+}) {
   const t = useTranslations("extensions");
+  const tc = useTranslations("extensions.columns");
   const tp = useTranslations("plugins");
-  const label = extensionLabel(
-    { name: plugin.plugin, displayName: plugin.displayName },
-    labelLocale(useLocale()),
-  );
+  const locale = useLocale();
+  const lang = labelLocale(locale);
+  const capabilityLabel = useCapabilityLabel();
   const toast = useToast();
   const errorMessage = useErrorMessage();
-  const [busy, setBusy] = useState<"toggle" | "save" | "saveEnable" | "sync">();
-  const [problem, setProblem] = useState<ToggleProblem>();
-  const schema = plugin.orgConfigSchema;
-  // Bumped after a save: the form starts again from the saved config.
-  const [round, setRound] = useState(0);
-  const [form, setForm] = useState<{
-    config: Record<string, unknown>;
-    ok: boolean;
-    dirty: boolean;
-  }>({ config: orgConfig(plugin.config), ok: true, dirty: false });
-  const [saveError, setSaveError] = useState<{
-    message: string;
-    extra: string[];
-    issues: ConfigIssue[];
-  }>();
-  const hasFields = hasConfigFields(schema);
-  // The saved config (the form before any edit) has no client problem, e.g. no required field
-  // left unset: read from the form's first report after each (re)mount.
-  const [savedOk, setSavedOk] = useState(true);
-  const directory = provides(plugin, "directory");
-  // Stopped on the deployment (or not loaded yet): only the org's enable setting is shown, read-only
-  const unavailable = plugin.available === false;
-  const required = plugin.required === true;
-  // On in every org (a builtin or `all` plugin): the switch is the platform's
-  const platform = required || plugin.catalogItem?.scope === "all";
-  const locked = platform || plugin.switchable === false;
-  const configForm = !unavailable && plugin.configurable && hasFields;
-  // Off and the saved config is incomplete: enabling would be refused, so the switch waits for
-  // the config (保存并启用 does both)
-  const needsConfig = !plugin.enabled && configForm && !savedOk;
   const qc = useQueryClient();
+  // Per extension: what is in flight, why a switch was refused, a refused config, and the form's
+  // round (bumped after a save: the form starts again from the saved config).
+  const [busy, setBusy] = useState<Record<string, Busy>>({});
+  const [problems, setProblems] = useState<Record<string, ToggleProblem>>({});
+  const [saveErrors, setSaveErrors] = useState<Record<string, SaveError>>({});
+  const [rounds, setRounds] = useState<Record<string, number>>({});
+  const [open, setOpen] = useState<string | null>(null);
+  // Switching an extension's plugin off answers its switch-off preview first: shown in a dialog,
+  // then confirmed with the preview's hash.
+  const [off, setOff] = useState<{
+    plugin: string;
+    label: string;
+    input: PutOrgExtensionInput;
+    preview: SwitchPreview;
+  } | null>(null);
+  const [offNotice, setOffNotice] = useState<string>();
+
+  const setOne = <V,>(
+    set: (f: (m: Record<string, V>) => Record<string, V>) => void,
+    plugin: string,
+    v: V | undefined,
+  ) =>
+    set((m) => {
+      const { [plugin]: _, ...rest } = m;
+      return v === undefined ? rest : { ...rest, [plugin]: v };
+    });
+
   // The answer is the extension as it is now: it replaces that one in the cached list.
   const onSaved = (next: OrgExtension) =>
     qc.setQueryData<{ extensions: OrgExtension[] }>(orgExtensionsQuery(orgId).queryKey, (d) =>
@@ -201,14 +247,9 @@ function ExtensionSection({ orgId, plugin }: { orgId: string; plugin: OrgExtensi
     );
   // Enabling, disabling or configuring also changes what the extension brings to the org (its
   // readiness, UI, models and purposes); the list itself takes the answer.
-  // Switching the extension's plugin off answers its switch-off preview first: shown in a dialog,
-  // then confirmed with the preview's hash.
-  const [off, setOff] = useState<{ input: PutOrgExtensionInput; preview: SwitchPreview } | null>(
-    null,
-  );
-  const [offNotice, setOffNotice] = useState<string>();
   const put = useAppMutation({
-    fn: (v: PutOrgExtensionInput) => putOrgExtension(orgId, plugin.plugin, v),
+    fn: (v: { plugin: string; input: PutOrgExtensionInput }) =>
+      putOrgExtension(orgId, v.plugin, v.input),
     // (a plugin switch also changes the catalog's view and the installed plugins)
     invalidates: () => [
       ...orgExtensionChangeKeys(orgId),
@@ -221,60 +262,129 @@ function ExtensionSection({ orgId, plugin }: { orgId: string; plugin: OrgExtensi
     },
   });
   const startSync = useAppMutation({
-    fn: () => syncDirectory(orgId, plugin.plugin),
+    fn: (plugin: string) => syncDirectory(orgId, plugin),
     invalidates: () => [],
   });
 
-  async function toggle(enabled: boolean, force = false, confirm?: string, keepNotice = false) {
-    setBusy("toggle");
-    setProblem(undefined);
+  const rows: Row[] = extensions.map((ext) => {
+    const label = extensionLabel({ name: ext.plugin, displayName: ext.displayName }, lang);
+    const unavailable = ext.available === false;
+    const platform = ext.required === true || ext.catalogItem?.scope === "all";
+    const configForm =
+      canEdit && !unavailable && ext.configurable && hasConfigFields(ext.orgConfigSchema);
+    const needsConfig =
+      !ext.enabled &&
+      configForm &&
+      !savedConfigComplete(ext.orgConfigSchema, ext.config, ext.secrets, lang);
+    const problem = problems[ext.plugin];
+    const state: Row["state"] = unavailable
+      ? { label: t("unavailable"), tone: "warn" }
+      : problem !== undefined
+        ? { label: t(ext.enabled ? "disableFailed" : "enableFailed"), tone: "fail" }
+        : needsConfig
+          ? { label: t("needsConfig"), tone: "warn" }
+          : ext.enabled
+            ? { label: platform ? tp("state.platform") : t("enabled"), tone: "ok" }
+            : { label: t("disabled"), tone: "muted" };
+    const rank: Row["rank"] =
+      !unavailable && (problem !== undefined || needsConfig)
+        ? 0
+        : !unavailable && ext.enabled
+          ? 1
+          : 2;
+    return {
+      ext,
+      label,
+      platform,
+      locked: platform || ext.switchable === false || unavailable || needsConfig,
+      unavailable,
+      configForm,
+      needsConfig,
+      problem,
+      state,
+      rank,
+    };
+  });
+  const sorted = sortExtensions(
+    rows,
+    (r) => r.rank,
+    (r) => r.label,
+    locale,
+  );
+  const shown = inTab(sorted, tab, (r) => r.ext.permissions).filter((r) =>
+    matchesSearch(search, r.label, r.ext.plugin),
+  );
+  const current = open === null ? undefined : rows.find((r) => r.ext.plugin === open);
+
+  async function toggle(
+    row: Row,
+    enabled: boolean,
+    force = false,
+    confirm?: string,
+    keepNotice = false,
+  ) {
+    const plugin = row.ext.plugin;
+    setOne(setBusy, plugin, "toggle" as Busy);
+    setOne<ToggleProblem>(setProblems, plugin, undefined);
     const input: PutOrgExtensionInput = {
       enabled,
       ...(force ? { force } : {}),
       ...(confirm !== undefined ? { confirm } : {}),
     };
     try {
-      const r = await put.mutateAsync(input);
+      const r = await put.mutateAsync({ plugin, input });
       if ("preview" in r) {
-        setOff({ input: { enabled, ...(force ? { force } : {}) }, preview: r });
+        setOff({
+          plugin,
+          label: row.label,
+          input: { enabled, ...(force ? { force } : {}) },
+          preview: r,
+        });
         if (!keepNotice) setOffNotice(undefined);
         return;
       }
       setOff(null);
       setOffNotice(undefined);
-      toast.success(t(enabled ? "enabledToast" : "disabledToast", { plugin: label }));
+      toast.success(t(enabled ? "enabledToast" : "disabledToast", { plugin: row.label }));
     } catch (e) {
       // The preview moved on before the confirm: read it again and show it
-      if (off !== null && e instanceof ApiClientError && e.code === "plugin.switch_stale") {
+      if (
+        confirm !== undefined &&
+        e instanceof ApiClientError &&
+        e.code === "plugin.switch_stale"
+      ) {
         setOffNotice(tp("switchOff.stale"));
-        await toggle(enabled, force, undefined, true);
+        await toggle(row, enabled, force, undefined, true);
         return;
       }
       setOff(null);
-      refused(e);
+      refused(row, e);
     } finally {
-      setBusy(undefined);
+      setOne<Busy>(setBusy, plugin, undefined);
     }
   }
 
   /**
-   * Why a switch (or 保存并启用) was refused: a refused config marks the form's fields (as when
-   * saving), the rest shows under the switch.
+   * Why a switch (or 保存并启用) was refused, shown in the extension's Sheet (opened for it): a
+   * refused config marks the form's fields (as when saving), the rest shows under the state.
    */
-  function refused(e: unknown) {
-    if (configForm && e instanceof ApiClientError && e.code === "extension.config_invalid") {
-      configRefused(e);
+  function refused(row: Row, e: unknown) {
+    const plugin = row.ext.plugin;
+    setOpen(plugin);
+    if (row.configForm && e instanceof ApiClientError && e.code === "extension.config_invalid") {
+      configRefused(plugin, e);
       return;
     }
+    let problem: ToggleProblem;
     if (e instanceof ApiClientError && e.code === "extension.dependency_missing")
-      setProblem({
+      problem = {
         kind: "dependency_missing",
         extensionPoints: strings(e.rawDetails, "extensionPoint"),
-      });
+      };
     else if (e instanceof ApiClientError && e.code === "extension.has_dependents")
-      setProblem({ kind: "has_dependents", extensions: strings(e.rawDetails, "plugin") });
+      problem = { kind: "has_dependents", extensions: strings(e.rawDetails, "plugin") };
     else
-      setProblem({
+      problem = {
         kind: "other",
         message: errorMessage(e),
         extra: issueLines(e),
@@ -283,218 +393,184 @@ function ExtensionSection({ orgId, plugin }: { orgId: string; plugin: OrgExtensi
         catalog:
           e instanceof ApiClientError &&
           (e.code === "plugin.disabled" || e.code === "catalog.approval_required"),
-      });
+      };
+    setOne(setProblems, plugin, problem);
   }
 
-  function configRefused(e: unknown) {
+  function configRefused(plugin: string, e: unknown) {
     const issues = configIssues(e);
-    setSaveError({
+    setOne<SaveError>(setSaveErrors, plugin, {
       message: errorMessage(e),
       extra: issues.length > 0 ? [] : issueLines(e),
       issues,
     });
   }
 
-  async function save() {
-    setBusy("save");
-    setSaveError(undefined);
+  async function save(row: Row, config: Record<string, unknown>) {
+    const plugin = row.ext.plugin;
+    setOne(setBusy, plugin, "save" as Busy);
+    setOne<SaveError>(setSaveErrors, plugin, undefined);
     try {
-      await put.mutateAsync({ config: form.config });
-      setRound((r) => r + 1);
-      toast.success(t("configSaved", { plugin: label }));
+      await put.mutateAsync({ plugin, input: { config } });
+      setRounds((m) => ({ ...m, [plugin]: (m[plugin] ?? 0) + 1 }));
+      toast.success(t("configSaved", { plugin: row.label }));
     } catch (e) {
-      configRefused(e);
+      configRefused(plugin, e);
     } finally {
-      setBusy(undefined);
+      setOne<Busy>(setBusy, plugin, undefined);
     }
   }
 
   /** 保存并启用: the config and the switch in one PUT (the kernel validates before installing). */
-  async function saveAndEnable() {
-    setBusy("saveEnable");
-    setSaveError(undefined);
-    setProblem(undefined);
+  async function saveAndEnable(row: Row, config: Record<string, unknown>) {
+    const plugin = row.ext.plugin;
+    setOne(setBusy, plugin, "saveEnable" as Busy);
+    setOne<SaveError>(setSaveErrors, plugin, undefined);
+    setOne<ToggleProblem>(setProblems, plugin, undefined);
     try {
-      await put.mutateAsync({ enabled: true, config: form.config });
-      setRound((r) => r + 1);
-      toast.success(t("enabledToast", { plugin: label }));
+      await put.mutateAsync({ plugin, input: { enabled: true, config } });
+      setRounds((m) => ({ ...m, [plugin]: (m[plugin] ?? 0) + 1 }));
+      toast.success(t("enabledToast", { plugin: row.label }));
     } catch (e) {
-      refused(e);
+      refused(row, e);
     } finally {
-      setBusy(undefined);
+      setOne<Busy>(setBusy, plugin, undefined);
     }
   }
 
-  async function sync() {
-    setBusy("sync");
+  async function sync(row: Row) {
+    const plugin = row.ext.plugin;
+    setOne(setBusy, plugin, "sync" as Busy);
     try {
-      await startSync.mutateAsync(undefined);
+      await startSync.mutateAsync(plugin);
       toast.success(t("syncStarted"));
     } catch (e) {
       toast.error(errorMessage(e));
     } finally {
-      setBusy(undefined);
+      setOne<Busy>(setBusy, plugin, undefined);
     }
   }
 
-  return (
-    <FormSection
-      id={`plugin-${plugin.plugin}`}
-      title={label}
-      description={[plugin.displayName ? plugin.plugin : null, versionLabel(plugin.version)]
-        .filter((x): x is string => x !== null)
-        .join(" · ")}
-    >
-      <Stack direction="row" gap={12} align="center">
-        <Switch
-          label={t("enableLabel", { plugin: label })}
-          checked={plugin.enabled}
-          disabled={busy !== undefined || unavailable || locked || needsConfig}
-          onChange={(on) => void toggle(on)}
+  const columns: Column<Row>[] = [
+    {
+      key: "name",
+      header: tc("name"),
+      cell: (r) => (
+        <CellTitle
+          title={r.label}
+          description={[r.ext.displayName ? r.ext.plugin : null, versionLabel(r.ext.version)]
+            .filter((x): x is string => x !== null)
+            .join(" · ")}
+          mono
         />
-        <Text>
-          {plugin.enabled ? (platform ? tp("state.platform") : t("enabled")) : t("disabled")}
-        </Text>
-        {unavailable && <Text tone="warn">{t("unavailable")}</Text>}
+      ),
+    },
+    {
+      key: "capabilities",
+      header: tc("capabilities"),
+      wrap: true,
+      tone: "muted",
+      cell: (r) => {
+        const caps = capabilitiesIn(r.ext.permissions, tab).map(capabilityLabel);
+        return caps.length > 0 ? caps : "—";
+      },
+    },
+    {
+      key: "state",
+      header: tc("state"),
+      cell: (r) => <Text tone={r.state.tone}>{r.state.label}</Text>,
+    },
+    ...(canEdit
+      ? [
+          {
+            key: "switch",
+            header: tc("switch"),
+            interactive: true,
+            cell: (r: Row) => (
+              <Switch
+                label={t("enableLabel", { plugin: r.label })}
+                checked={r.ext.enabled}
+                disabled={busy[r.ext.plugin] !== undefined || r.locked}
+                onChange={(on) => void toggle(r, on)}
+              />
+            ),
+          } satisfies Column<Row>,
+        ]
+      : []),
+  ];
+
+  const section = (id: "defaults" | "previewers") =>
+    canEdit &&
+    (tab === "all" || (id === "defaults" ? tab === "web" : tab === "tools")) &&
+    search.trim() === "";
+
+  return (
+    <ListPage header={header}>
+      <Stack gap={24}>
+        <DataTable<Row>
+          label={t("title")}
+          columns={columns}
+          rows={shown}
+          rowKey={(r) => r.ext.plugin}
+          rowLabel={(r) => r.label}
+          rowHeight="roomy"
+          {...(open === null ? {} : { activeKey: open })}
+          onOpen={(r) => setOpen(r.ext.plugin)}
+          empty={{ title: extensions.length === 0 ? t("empty") : t("emptyTab") }}
+          {...(search.trim() !== "" && extensions.length > 0
+            ? {
+                noResults: {
+                  description: t("noResults", { query: search.trim() }),
+                  onClear: clearSearch,
+                },
+              }
+            : {})}
+        />
+        {section("defaults") && <PointDefaultsSection orgId={orgId} />}
+        {section("previewers") && <FilePreviewersSection orgId={orgId} />}
       </Stack>
-      {platform && (
-        <Text variant="prose" tone="muted">
-          {t("platformHint")}
-        </Text>
-      )}
-      {unavailable && (
-        <Text variant="prose" tone="muted">
-          {t("unavailableHint")}
-        </Text>
-      )}
-      {needsConfig && (
-        <Text variant="prose" tone="muted">
-          {t("configFirstHint")}
-        </Text>
-      )}
-      {problem?.kind === "dependency_missing" && (
-        <FormError message={t("dependencyMissing")} extra={problem.extensionPoints} />
-      )}
-      {problem?.kind === "has_dependents" && (
-        <Stack gap={8}>
-          <FormError message={t("hasDependents")} extra={problem.extensions} />
-          <Stack direction="row">
-            <Button
-              density="dense"
-              variant="danger"
-              disabled={busy !== undefined}
-              onClick={() => void toggle(false, true)}
-            >
-              {t("forceDisable")}
-            </Button>
-          </Stack>
-        </Stack>
-      )}
-      {problem?.kind === "other" && (
-        <Stack gap={4}>
-          <FormError message={problem.message} extra={problem.extra} />
-          {problem.catalog === true && (
-            <Text>
-              <Link href="/plugins">{t("openPlugins")}</Link>
-            </Text>
-          )}
-        </Stack>
-      )}
-      <Permissions groups={plugin.permissions} plugin={plugin.plugin} />
-      {configForm && (
-        <Stack gap={12}>
-          <Text variant="small" tone="muted">
-            {t("configTitle")}
-          </Text>
-          <ConfigForm
-            key={round}
-            schema={schema}
-            value={plugin.config ?? {}}
-            meta={orgFormMeta(plugin.secrets)}
-            issues={saveError?.issues ?? []}
-            disabled={busy !== undefined}
-            onChange={(value, _entries, state) => {
-              setForm({
-                config: orgConfig(value),
-                ok: state.problems.length === 0,
-                dirty: state.dirty,
-              });
-              if (!state.dirty) setSavedOk(state.problems.length === 0);
-            }}
-          />
-          {saveError !== undefined && (
-            <FormError message={saveError.message} extra={saveError.extra} />
-          )}
-          <Stack direction="row" gap={8}>
-            {/* One group per plugin: saving uses the secondary style, so the page has no several primary actions */}
-            <Button
-              variant="secondary"
-              loading={busy === "save"}
-              disabled={busy !== undefined || !form.dirty || !form.ok}
-              aria-label={t("saveLabel", { plugin: label })}
-              onClick={() => void save()}
-            >
-              {t("save")}
-            </Button>
-            {!plugin.enabled && !locked && (
-              <Button
-                variant="secondary"
-                loading={busy === "saveEnable"}
-                disabled={busy !== undefined || !form.ok}
-                aria-label={t("saveAndEnableLabel", { plugin: label })}
-                onClick={() => void saveAndEnable()}
-              >
-                {t("saveAndEnable")}
-              </Button>
-            )}
-          </Stack>
-        </Stack>
-      )}
-      {!unavailable && directory && plugin.enabled && (
-        <Stack gap={8}>
-          <Text variant="small" tone="muted">
-            {t("syncHint")}
-          </Text>
-          <Stack direction="row">
-            <Button
-              loading={busy === "sync"}
-              disabled={busy !== undefined}
-              aria-label={t("syncLabel", { plugin: label })}
-              onClick={() => void sync()}
-            >
-              {t("sync")}
-            </Button>
-          </Stack>
-        </Stack>
+      {current !== undefined && (
+        <OrgExtensionSheet
+          key={current.ext.plugin}
+          extension={current.ext}
+          label={current.label}
+          canEdit={canEdit}
+          capabilities={capabilitiesIn(current.ext.permissions, "all").map(capabilityLabel)}
+          state={current.state}
+          platform={current.platform}
+          unavailable={current.unavailable}
+          configForm={current.configForm}
+          needsConfig={current.needsConfig}
+          locked={current.platform || current.ext.switchable === false || current.unavailable}
+          problem={current.problem}
+          saveError={saveErrors[current.ext.plugin]}
+          round={rounds[current.ext.plugin] ?? 0}
+          busy={busy[current.ext.plugin]}
+          onClose={() => setOpen(null)}
+          onSave={(config) => void save(current, config)}
+          onSaveAndEnable={(config) => void saveAndEnable(current, config)}
+          onForceDisable={() => void toggle(current, false, true)}
+          onSync={() => void sync(current)}
+        />
       )}
       {off !== null && (
         <SwitchOffDialog
           orgId={orgId}
-          name={label}
+          name={off.label}
           preview={off.preview.preview}
-          busy={busy === "toggle"}
+          busy={busy[off.plugin] === "toggle"}
           notice={offNotice}
-          onConfirm={() => void toggle(false, off.input.force === true, off.preview.confirm)}
+          onConfirm={() => {
+            const row = rows.find((r) => r.ext.plugin === off.plugin);
+            if (row !== undefined)
+              void toggle(row, false, off.input.force === true, off.preview.confirm);
+          }}
           onCancel={() => {
             setOff(null);
             setOffNotice(undefined);
           }}
         />
       )}
-    </FormSection>
-  );
-}
-
-/** The permission list (read-only, shared with the admin review's PermissionReview): grouped by category, sensitive categories highlighted with their reason. */
-function Permissions({ groups, plugin }: { groups: PermissionGroup[]; plugin: string }) {
-  const t = useTranslations("extensions");
-  if (groups.length === 0) return null;
-  return (
-    <Stack gap={8}>
-      <Text variant="small" tone="muted">
-        {t("permissions")}
-      </Text>
-      <PermissionReview plugin={plugin} groups={groups} />
-    </Stack>
+    </ListPage>
   );
 }

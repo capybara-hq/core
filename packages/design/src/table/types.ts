@@ -15,6 +15,11 @@ export type Column<T> = {
    * stay readable (a model's capabilities), never for names or ids.
    */
   wrap?: boolean;
+  /**
+   * The cell holds its own control (a switch): a click inside it does not open the row
+   * (`onOpen`), so the control works without opening the row's Sheet.
+   */
+  interactive?: boolean;
 };
 
 export type SortDir = "asc" | "desc";

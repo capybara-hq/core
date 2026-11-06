@@ -14,6 +14,8 @@ const navigateBrowser = vi.hoisted(() => vi.fn());
 vi.mock("../src/lib/browser", () => ({ navigateBrowser }));
 
 const msgs = { zh, en } as const;
+/** A message with `{plugin}` filled in with fake-im. */
+const fill = (s: string, plugin = "fake-im") => s.replace("{plugin}", plugin);
 const BASE = "/api/v1/orgs/o1";
 
 /**
@@ -91,31 +93,186 @@ const CORE = {
   orgConfigSchema: null,
 };
 
-beforeEach(() => resetNavigation("/extensions"));
+beforeEach(() => {
+  resetNavigation("/extensions");
+  // The tab is written to the URL (`?tab=`): every test starts on a clean one.
+  window.history.replaceState(null, "", "/");
+});
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
 });
 
-describe("/extensions (ListPage)", () => {
+/** A web extension providing both web points: in 网页 once. */
+const JINA = {
+  ...CORE,
+  plugin: "jina",
+  displayName: { zh: "Jina", en: "Jina" },
+  enabled: false,
+  permissions: [
+    {
+      category: "provides",
+      sensitive: false,
+      items: ["web-search@1", "web-fetch@1"],
+      entries: [
+        { value: "web-search@1", sensitive: false },
+        { value: "web-fetch@1", sensitive: false },
+      ],
+    },
+  ],
+};
+/** Spans two tabs: a model provider and a sandbox, plus agent tools. */
+const DUO = {
+  ...CORE,
+  plugin: "duo",
+  enabled: true,
+  permissions: [
+    {
+      category: "provides",
+      sensitive: false,
+      items: ["model-provider@2", "sandbox@1"],
+      entries: [
+        { value: "model-provider@2", sensitive: false },
+        { value: "sandbox@1", sensitive: false },
+      ],
+    },
+    {
+      category: "tools",
+      sensitive: true,
+      items: ["run"],
+      entries: [{ value: "run", sensitive: true, reason: "tools" }],
+    },
+  ],
+};
+
+const isDisabled = (el: HTMLElement) =>
+  el.hasAttribute("disabled") || el.getAttribute("aria-disabled") === "true";
+/** The table's rows (the header row left out), as their first cell's name. */
+const rowNames = () =>
+  screen
+    .getAllByRole("row")
+    .slice(1)
+    .map((r) => r.querySelector(".cb-cell-title-name")?.textContent);
+/** Opens an extension's Sheet by clicking its row (its name). */
+async function openSheet(user: ReturnType<typeof userEvent.setup>, name: string) {
+  await user.click(await screen.findByText(name, { selector: ".cb-cell-title-name" }));
+  return screen.findByRole("dialog", { name });
+}
+
+describe("/extensions (ListPage + DataTable by capability, details in a Sheet)", () => {
   it.each(["zh", "en"] as const)(
-    "the permission list is read-only, a sensitive group carries the mark; enable PUTs enabled (%s)",
+    "tabs carry counts; an extension spanning two tabs is in both and once in 全部; Jina once in 网页 (%s)",
     async (locale) => {
       const m = msgs[locale].extensions;
-      const calls = api({
-        [`GET ${BASE}/extensions`]: () => json(200, { extensions: [FAKE_IM_SET, CORE] }),
-        [`PUT ${BASE}/extensions/fake-im`]: (c) =>
-          json(200, { extension: { ...FAKE_IM_SET, ...(bodyOf(c) as object) } }),
+      api({
+        [`GET ${BASE}/extensions`]: () => json(200, { extensions: [FAKE_IM_SET, CORE, JINA, DUO] }),
       });
       const { container } = await renderRouteWithCache("/extensions", lastStubRoutes(), {
         locale,
       });
       expect(container.querySelector('[data-template="ListPage"]')).not.toBeNull();
-      const perms = await screen.findByRole("region", {
-        name: m.permissionsLabel.replace("{plugin}", "fake-im"),
+      const tabs = screen.getByRole("tablist");
+      const tab = (id: keyof typeof m.tabs) =>
+        within(tabs).getByRole("tab", { name: new RegExp(`^${m.tabs[id]}`) });
+      for (const [id, n] of [
+        ["all", 4],
+        ["model", 1],
+        ["web", 1],
+        ["connector", 0],
+        ["sandbox", 1],
+        ["storage", 0],
+        // fake-im (channel, directory, tools) and core-dir (an unknown point) fall to the catch-all
+        ["tools", 2],
+      ] as const) {
+        expect(tab(id).textContent).toContain(String(n));
+      }
+      expect(rowNames()).toHaveLength(4);
+      // In 全部 duo shows everything it can do
+      const duo = screen.getByRole("row", { name: /duo/ });
+      expect(duo.textContent).toContain(m.capability.model);
+      expect(duo.textContent).toContain(m.capability.sandbox);
+      expect(duo.textContent).toContain(m.capability.tools);
+      const user = userEvent.setup();
+      // Under 沙箱 its row shows only what it provides there
+      await user.click(tab("sandbox"));
+      expect(rowNames()).toEqual(["duo"]);
+      const sandboxRow = screen.getByRole("row", { name: /duo/ });
+      expect(sandboxRow.textContent).toContain(m.capability.sandbox);
+      expect(sandboxRow.textContent).not.toContain(m.capability.model);
+      expect(window.location.search).toBe("?tab=sandbox");
+      await user.click(tab("model"));
+      expect(rowNames()).toEqual(["duo"]);
+      await user.click(tab("web"));
+      expect(rowNames()).toEqual(["Jina"]);
+      const jina = screen.getByRole("row", { name: /Jina/ });
+      expect(jina.textContent).toContain(m.capability.webSearch);
+      expect(jina.textContent).toContain(m.capability.webFetch);
+      await user.click(tab("connector"));
+      expect(screen.getByText(m.emptyTab)).toBeTruthy();
+      await user.click(tab("all"));
+      expect(window.location.search).toBe("");
+    },
+  );
+
+  it("?tab= opens that tab; search filters by name and id", async () => {
+    api({
+      [`GET ${BASE}/extensions`]: () => json(200, { extensions: [FAKE_IM_SET, CORE, JINA, DUO] }),
+    });
+    resetNavigation("/extensions?tab=tools");
+    await renderRouteWithCache("/extensions?tab=tools", lastStubRoutes());
+    expect(screen.getByRole("tab", { selected: true }).textContent).toContain(
+      en.extensions.tabs.tools,
+    );
+    expect(rowNames().sort()).toEqual(["core-dir", "fake-im"]);
+    const user = userEvent.setup();
+    await user.type(screen.getByRole("searchbox", { name: en.extensions.search }), "core");
+    expect(rowNames()).toEqual(["core-dir"]);
+  });
+
+  it("sorting: needs attention (待配置) first, then on, then off or unavailable, by name", async () => {
+    const m = zh.extensions;
+    api({
+      [`GET ${BASE}/extensions`]: () =>
+        json(200, {
+          extensions: [
+            { ...CORE, plugin: "zeta-off", enabled: false },
+            { ...CORE, plugin: "beta-on" },
+            { ...CORE, plugin: "gone", available: false },
+            FAKE_IM,
+            { ...CORE, plugin: "alpha-on" },
+            { ...CORE, plugin: "alpha-off", enabled: false },
+          ],
+        }),
+    });
+    await renderRouteWithCache("/extensions", lastStubRoutes(), { locale: "zh" });
+    expect(rowNames()).toEqual(["fake-im", "alpha-on", "beta-on", "alpha-off", "gone", "zeta-off"]);
+    const fakeIm = screen.getByRole("row", { name: /fake-im/ });
+    expect(within(fakeIm).getByText(m.needsConfig).getAttribute("data-tone")).toBe("warn");
+  });
+
+  it.each(["zh", "en"] as const)(
+    "a row opens its Sheet: the config form on top, the state, the permissions folded into one line (%s)",
+    async (locale) => {
+      const m = msgs[locale].extensions;
+      api({
+        [`GET ${BASE}/extensions`]: () => json(200, { extensions: [FAKE_IM_SET, CORE] }),
       });
+      await renderRouteWithCache("/extensions", lastStubRoutes(), { locale });
+      const user = userEvent.setup();
+      const sheet = await openSheet(user, "fake-im");
+      expect(within(sheet).getByText(m.configTitle)).toBeTruthy();
+      expect(within(sheet).getByRole("textbox", { name: /^url/ })).toBeTruthy();
+      expect(within(sheet).getByRole("button", { name: fill(m.saveLabel) })).toBeTruthy();
+      expect(within(sheet).getByText(m.stateTitle)).toBeTruthy();
+      // Folded: one line with the categories' counts and the 「敏感」 mark
+      const summary = within(sheet).getByRole("button", { expanded: false });
+      expect(summary.textContent).toContain(`${m.category.secrets} 1`);
+      expect(summary.textContent).toContain(`${m.category.tools} 1`);
+      expect(summary.textContent).toContain(m.sensitive);
+      expect(within(sheet).queryByRole("region", { name: fill(m.permissionsLabel) })).toBeNull();
+      await user.click(summary);
+      const perms = within(sheet).getByRole("region", { name: fill(m.permissionsLabel) });
       expect(within(perms).getAllByText(m.sensitive)).toHaveLength(2);
-      expect(within(perms).getByText(m.category.tools)).toBeTruthy();
       // Only the 「敏感」 mark is yellow; a sensitive item is the plain muted list colour.
       expect(within(perms).getByText("· post_announcement").getAttribute("data-tone")).toBe(
         "muted",
@@ -124,22 +281,36 @@ describe("/extensions (ListPage)", () => {
         expect(mark.getAttribute("data-tone")).toBe("warn");
       }
       expect(within(perms).getByText("· channel@1").getAttribute("data-tone")).toBe("muted");
-      const user = userEvent.setup();
-      await user.click(
-        screen.getByRole("switch", { name: m.enableLabel.replace("{plugin}", "fake-im") }),
-      );
-      await vi.waitFor(() =>
-        expect(bodyOf(calls.find((c) => c.method === "PUT"))).toEqual({ enabled: true }),
-      );
-      // 未启用时不显示「立即同步」，启用后出现
-      expect(
-        await screen.findByRole("button", { name: m.syncLabel.replace("{plugin}", "fake-im") }),
-      ).toBeTruthy();
     },
   );
 
   it.each(["zh", "en"] as const)(
-    "a member sees each extension's state only: no switch, permissions, config, sync or sections (%s)",
+    "the row's switch PUTs enabled without opening the Sheet; then 立即同步 is in the Sheet (%s)",
+    async (locale) => {
+      const m = msgs[locale].extensions;
+      const calls = api({
+        [`GET ${BASE}/extensions`]: () => json(200, { extensions: [FAKE_IM_SET, CORE] }),
+        [`PUT ${BASE}/extensions/fake-im`]: (c) =>
+          json(200, { extension: { ...FAKE_IM_SET, ...(bodyOf(c) as object) } }),
+        [`POST ${BASE}/extensions/fake-im/directory/sync`]: () => json(202, { jobId: "j1" }),
+      });
+      await renderRouteWithCache("/extensions", lastStubRoutes(), { locale });
+      const user = userEvent.setup();
+      await user.click(screen.getByRole("switch", { name: fill(m.enableLabel) }));
+      await vi.waitFor(() =>
+        expect(bodyOf(calls.find((c) => c.method === "PUT"))).toEqual({ enabled: true }),
+      );
+      expect(await screen.findByText(fill(m.enabledToast))).toBeTruthy();
+      expect(screen.queryByRole("dialog")).toBeNull();
+      const sheet = await openSheet(user, "fake-im");
+      await user.click(within(sheet).getByRole("button", { name: fill(m.syncLabel) }));
+      expect(await screen.findByText(m.syncStarted)).toBeTruthy();
+      expect(calls.some((c) => c.method === "POST")).toBe(true);
+    },
+  );
+
+  it.each(["zh", "en"] as const)(
+    "a member reads the same list: states, no switch; the Sheet has no config or permissions (%s)",
     async (locale) => {
       const m = msgs[locale].extensions;
       const {
@@ -150,14 +321,22 @@ describe("/extensions (ListPage)", () => {
         ...memberView
       } = FAKE_IM;
       const calls = api({
-        [`GET ${BASE}/extensions`]: () => json(200, { extensions: [memberView] }),
+        [`GET ${BASE}/extensions`]: () =>
+          json(200, { extensions: [memberView, { ...memberView, plugin: "on", enabled: true }] }),
       });
       await renderRouteWithCache("/extensions", lastStubRoutes(), { locale, me: MEMBER });
       expect(await screen.findByText(m.disabled)).toBeTruthy();
+      expect(screen.getByText(m.enabled)).toBeTruthy();
       expect(screen.queryByRole("switch")).toBeNull();
-      expect(screen.queryByRole("button")).toBeNull();
-      expect(screen.queryByText(m.permissions)).toBeNull();
-      expect(screen.queryByText(m.configTitle)).toBeNull();
+      // No capability tabs: the kernel gives members no permissions to sort them by
+      expect(screen.queryByRole("tablist")).toBeNull();
+      const sheet = await openSheet(userEvent.setup(), "fake-im");
+      expect(within(sheet).getByText(m.stateTitle)).toBeTruthy();
+      expect(within(sheet).getByText(m.capabilitiesTitle)).toBeTruthy();
+      expect(within(sheet).queryByText(m.configTitle)).toBeNull();
+      expect(within(sheet).queryByText(m.permissions)).toBeNull();
+      expect(within(sheet).queryByRole("textbox")).toBeNull();
+      expect(within(sheet).queryByRole("button", { name: fill(m.saveLabel) })).toBeNull();
       expect(calls.some((c) => String(c.url).includes("file-previewers"))).toBe(false);
     },
   );
@@ -183,23 +362,18 @@ describe("/extensions (ListPage)", () => {
           }),
       });
       await renderRouteWithCache("/extensions", lastStubRoutes(), { locale });
-      const toggle = await screen.findByRole("switch", {
-        name: m.enableLabel.replace("{plugin}", "fake-im"),
-      });
-      expect(
-        toggle.hasAttribute("disabled") || toggle.getAttribute("aria-disabled") === "true",
-      ).toBe(true);
+      const toggle = await screen.findByRole("switch", { name: fill(m.enableLabel) });
+      expect(isDisabled(toggle)).toBe(true);
       // A state, not a badge: attention text (warn), never orange.
       const state = screen.getByText(m.unavailable);
       expect(state.closest(".cb-badge")).toBeNull();
       expect(state.getAttribute("data-tone")).toBe("warn");
-      expect(screen.getByText(m.unavailableHint)).toBeTruthy();
-      expect(screen.getByText(m.enabled)).toBeTruthy();
-      expect(
-        screen.queryByRole("button", { name: m.syncLabel.replace("{plugin}", "fake-im") }),
-      ).toBeNull();
-      await userEvent.setup().click(toggle);
+      const user = userEvent.setup();
+      await user.click(toggle);
       expect(calls.some((c) => c.method === "PUT")).toBe(false);
+      const sheet = await openSheet(user, "fake-im");
+      expect(within(sheet).getByText(m.unavailableHint)).toBeTruthy();
+      expect(within(sheet).queryByRole("button", { name: fill(m.syncLabel) })).toBeNull();
     },
   );
 
@@ -224,22 +398,20 @@ describe("/extensions (ListPage)", () => {
           }),
       });
       await renderRouteWithCache("/extensions", lastStubRoutes(), { locale });
-      const toggle = await screen.findByRole("switch", {
-        name: m.enableLabel.replace("{plugin}", "fake-im"),
-      });
-      expect(
-        toggle.hasAttribute("disabled") || toggle.getAttribute("aria-disabled") === "true",
-      ).toBe(true);
+      const toggle = await screen.findByRole("switch", { name: fill(m.enableLabel) });
+      expect(isDisabled(toggle)).toBe(true);
       // On in every org: 已启用 · 平台统一 with the hint, no badge
       const state = screen.getByText(msgs[locale].plugins.state.platform);
       expect(state.closest(".cb-badge")).toBeNull();
-      expect(screen.getByText(m.platformHint)).toBeTruthy();
-      await userEvent.setup().click(toggle);
+      const user = userEvent.setup();
+      await user.click(toggle);
       expect(calls.some((c) => c.method === "PUT")).toBe(false);
+      const sheet = await openSheet(user, "fake-im");
+      expect(within(sheet).getByText(m.platformHint)).toBeTruthy();
     },
   );
 
-  it("missing dependency (extension.dependency_missing) lists the missing extension points", async () => {
+  it("missing dependency (extension.dependency_missing): the Sheet opens with the missing points", async () => {
     api({
       [`GET ${BASE}/extensions`]: () => json(200, { extensions: [FAKE_IM_SET] }),
       [`PUT ${BASE}/extensions/fake-im`]: () =>
@@ -253,9 +425,15 @@ describe("/extensions (ListPage)", () => {
     });
     await renderRouteWithCache("/extensions", lastStubRoutes());
     await userEvent.setup().click(await screen.findByRole("switch", { name: "Enable fake-im" }));
-    const alert = await screen.findByRole("alert");
+    const sheet = await screen.findByRole("dialog", { name: "fake-im" });
+    const alert = await within(sheet).findByRole("alert");
     expect(alert.textContent).toContain(en.extensions.dependencyMissing);
     expect(alert.textContent).toContain("knowledge@1");
+    // The refused switch needs attention: its row says so and sorts first
+    const row = screen.getByRole("row", { name: /fake-im/ });
+    expect(within(row).getByText(en.extensions.enableFailed).getAttribute("data-tone")).toBe(
+      "fail",
+    );
   });
 
   it("still has dependents (extension.has_dependents): lists them and offers a forced disable", async () => {
@@ -278,11 +456,12 @@ describe("/extensions (ListPage)", () => {
     await renderRouteWithCache("/extensions", lastStubRoutes(), { locale: "zh" });
     const user = userEvent.setup();
     await user.click(await screen.findByRole("switch", { name: "启用 core-dir" }));
-    const alert = await screen.findByRole("alert");
+    const sheet = await screen.findByRole("dialog", { name: "core-dir" });
+    const alert = await within(sheet).findByRole("alert");
     expect(alert.textContent).toContain(zh.extensions.hasDependents);
     expect(alert.textContent).toContain("fake-im");
     expect(alert.textContent).toContain("lark");
-    await user.click(screen.getByRole("button", { name: zh.extensions.forceDisable }));
+    await user.click(within(sheet).getByRole("button", { name: zh.extensions.forceDisable }));
     await vi.waitFor(() =>
       expect(bodyOf(calls.filter((c) => c.method === "PUT")[1])).toEqual({
         enabled: false,
@@ -299,19 +478,21 @@ describe("/extensions (ListPage)", () => {
     });
     await renderRouteWithCache("/extensions", lastStubRoutes());
     const user = userEvent.setup();
-    const save = await screen.findByRole("button", { name: "Save config of fake-im" });
+    const sheet = await openSheet(user, "fake-im");
+    const save = within(sheet).getByRole("button", { name: "Save config of fake-im" });
     expect(save).toHaveProperty("disabled", true);
-    await user.type(screen.getByRole("textbox", { name: /^url/ }), "http://dir.test");
+    await user.type(within(sheet).getByRole("textbox", { name: /^url/ }), "http://dir.test");
     await user.click(save);
     await vi.waitFor(() =>
       expect(bodyOf(calls.find((c) => c.method === "PUT"))).toEqual({
         config: { url: "http://dir.test" },
       }),
     );
+    expect(await screen.findByText(fill(en.extensions.configSaved))).toBeTruthy();
   });
 
   it.each(["zh", "en"] as const)(
-    "off with a required org field unset: the switch waits for the config; 保存并启用 sends both in one PUT (%s)",
+    "off with a required org field unset: 待配置, the switch waits for the config; 保存并启用 sends both in one PUT (%s)",
     async (locale) => {
       const m = msgs[locale].extensions;
       const calls = api({
@@ -320,26 +501,20 @@ describe("/extensions (ListPage)", () => {
           json(200, { extension: { ...FAKE_IM_SET, enabled: true } }),
       });
       await renderRouteWithCache("/extensions", lastStubRoutes(), { locale });
-      const toggle = await screen.findByRole("switch", {
-        name: m.enableLabel.replace("{plugin}", "fake-im"),
-      });
-      await vi.waitFor(() =>
-        expect(
-          toggle.hasAttribute("disabled") || toggle.getAttribute("aria-disabled") === "true",
-        ).toBe(true),
-      );
-      expect(screen.getByText(m.configFirstHint)).toBeTruthy();
+      const toggle = await screen.findByRole("switch", { name: fill(m.enableLabel) });
+      expect(isDisabled(toggle)).toBe(true);
+      expect(screen.getByText(m.needsConfig)).toBeTruthy();
       const user = userEvent.setup();
       await user.click(toggle);
       expect(calls.some((c) => c.method === "PUT")).toBe(false);
-      const saveEnable = screen.getByRole("button", {
-        name: m.saveAndEnableLabel.replace("{plugin}", "fake-im"),
+      const sheet = await openSheet(user, "fake-im");
+      expect(within(sheet).getByText(m.configFirstHint)).toBeTruthy();
+      const saveEnable = within(sheet).getByRole("button", {
+        name: fill(m.saveAndEnableLabel),
       });
       expect(saveEnable.textContent).toBe(m.saveAndEnable);
-      expect(
-        screen.getByRole("button", { name: m.saveLabel.replace("{plugin}", "fake-im") }),
-      ).toBeTruthy();
-      await user.type(screen.getByRole("textbox", { name: /^url/ }), "http://dir.test");
+      expect(within(sheet).getByRole("button", { name: fill(m.saveLabel) })).toBeTruthy();
+      await user.type(within(sheet).getByRole("textbox", { name: /^url/ }), "http://dir.test");
       await user.click(saveEnable);
       await vi.waitFor(() =>
         expect(bodyOf(calls.find((c) => c.method === "PUT"))).toEqual({
@@ -347,8 +522,9 @@ describe("/extensions (ListPage)", () => {
           config: { url: "http://dir.test" },
         }),
       );
-      expect(await screen.findByText(m.enabledToast.replace("{plugin}", "fake-im"))).toBeTruthy();
+      expect(await screen.findByText(fill(m.enabledToast))).toBeTruthy();
       expect(screen.queryByText(m.configFirstHint)).toBeNull();
+      expect(isDisabled(screen.getByRole("switch", { name: fill(m.enableLabel) }))).toBe(false);
     },
   );
 
@@ -356,11 +532,13 @@ describe("/extensions (ListPage)", () => {
     api({ [`GET ${BASE}/extensions`]: () => json(200, { extensions: [FAKE_IM_SET] }) });
     await renderRouteWithCache("/extensions", lastStubRoutes());
     const toggle = await screen.findByRole("switch", { name: "Enable fake-im" });
-    await screen.findByRole("button", { name: "Save config of fake-im and enable" });
-    expect(toggle.hasAttribute("disabled") || toggle.getAttribute("aria-disabled") === "true").toBe(
-      false,
-    );
-    expect(screen.queryByText(en.extensions.configFirstHint)).toBeNull();
+    expect(isDisabled(toggle)).toBe(false);
+    expect(screen.queryByText(en.extensions.needsConfig)).toBeNull();
+    const sheet = await openSheet(userEvent.setup(), "fake-im");
+    expect(
+      within(sheet).getByRole("button", { name: "Save config of fake-im and enable" }),
+    ).toBeTruthy();
+    expect(within(sheet).queryByText(en.extensions.configFirstHint)).toBeNull();
   });
 
   it.each(["switch", "saveAndEnable"] as const)(
@@ -382,31 +560,21 @@ describe("/extensions (ListPage)", () => {
       if (via === "switch") {
         await user.click(await screen.findByRole("switch", { name: "Enable fake-im" }));
       } else {
+        const sheet = await openSheet(user, "fake-im");
         await user.click(
-          await screen.findByRole("button", { name: "Save config of fake-im and enable" }),
+          within(sheet).getByRole("button", { name: "Save config of fake-im and enable" }),
         );
       }
       await vi.waitFor(() => expect(calls.some((c) => c.method === "PUT")).toBe(true));
-      expect(await screen.findByText("url is not reachable")).toBeTruthy();
+      // The switch's refusal opens the Sheet by itself
+      const sheet = await screen.findByRole("dialog", { name: "fake-im" });
+      expect(await within(sheet).findByText("url is not reachable")).toBeTruthy();
       expect(screen.queryByText(en.errors.plugin.install_failed)).toBeNull();
-      expect(screen.getByRole("textbox", { name: /^url/ }).getAttribute("aria-invalid")).toBe(
-        "true",
-      );
+      expect(
+        within(sheet).getByRole("textbox", { name: /^url/ }).getAttribute("aria-invalid"),
+      ).toBe("true");
     },
   );
-
-  it("通讯录插件已启用：立即同步 → POST directory/sync", async () => {
-    const calls = api({
-      [`GET ${BASE}/extensions`]: () => json(200, { extensions: [{ ...FAKE_IM, enabled: true }] }),
-      [`POST ${BASE}/extensions/fake-im/directory/sync`]: () => json(202, { jobId: "j1" }),
-    });
-    await renderRouteWithCache("/extensions", lastStubRoutes());
-    await userEvent
-      .setup()
-      .click(await screen.findByRole("button", { name: "Sync directory of fake-im now" }));
-    expect(await screen.findByText(en.extensions.syncStarted)).toBeTruthy();
-    expect(calls.some((c) => c.method === "POST")).toBe(true);
-  });
 
   it("the org settings nav has no 扩展 (it is the workspace page)", async () => {
     api({ [`GET ${BASE}/settings`]: () => json(200, { settings: { toolSearch: "on" } }) });

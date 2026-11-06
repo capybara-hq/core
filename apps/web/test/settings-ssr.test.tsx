@@ -436,7 +436,7 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
       [`GET ${O}/extensions`]: () => json(200, { extensions: [EXTENSION] }),
       [`GET ${O}/file-previewers`]: () => json(200, { items: [PREVIEWER] }),
     });
-    expect(screen.getByRole("region", { name: "Todo" })).toBeTruthy();
+    expect(screen.getByRole("row", { name: /Todo/ })).toBeTruthy();
     expect(screen.getByRole("switch", { name: /Markdown/ })).toBeTruthy();
     await settle();
     expect(browser).toEqual([]);

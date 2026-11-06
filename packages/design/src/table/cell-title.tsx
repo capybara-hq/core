@@ -6,9 +6,12 @@ export function CellTitle({
   title,
   description,
   initial,
+  mono = false,
 }: {
   title: string;
   description?: string;
+  /** The description is an id or a version (`plugin · v1.0.0`): mono instead of prose. */
+  mono?: boolean;
   /** One character drawn on a `selected` tile before the text (e.g. the name's first letter). */
   initial?: string;
 }) {
@@ -24,7 +27,11 @@ export function CellTitle({
           {title}
         </span>
         {description ? (
-          <span className="cb-cell-title-desc" title={description}>
+          <span
+            className="cb-cell-title-desc"
+            data-mono={mono ? "true" : undefined}
+            title={description}
+          >
             {description}
           </span>
         ) : null}
