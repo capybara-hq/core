@@ -54,6 +54,13 @@ import { toolLabel, toolLabelOfKey } from "./tool-label";
  * - Background Bash (background Bash spec §5): a `Bash` call with `run_in_background: true` is a
  *   row with `background` (its task id from the result), `TaskOutput` / `TaskStop` rows name the
  *   task's description, and `background_task_finished` is a `background` notice entry.
+ * - Interjections (run input spec D4): a person's message logged while a run is going stands where
+ *   the model took it in, not at its `seq`: right before the first `model_call` whose
+ *   `request.absorbedUpToSeq` covers it (a call without the field covers everything before it), so
+ *   it sits below the step that was streaming when it was sent. Not taken in yet while the run goes
+ *   on, it is `pending` and stands after the streaming drafts; a run that ends without taking it in
+ *   leaves it after the run's row, where it starts the next run. A fork invocation stands before its
+ *   dispatch.
  */
 
 export type ApprovalDecision = Extract<ConversationEvent, { type: "approval_decided" }>["payload"];
@@ -242,6 +249,11 @@ export type TimelineEntry =
       instructions?: string;
       /** A plain message a later fork's run took in: answered after that sub-agent ("/review"). */
       waitsFor?: string;
+      /**
+       * Sent while a run is going and not taken in yet (spec D4: 待处理): the entry stands after the
+       * streaming drafts, at the bottom, until a model call takes it in or the run ends.
+       */
+      pending?: true;
     }
   | {
       /** The report of the sub-agent that ran a person's fork invocation (phase D). */
@@ -417,13 +429,20 @@ export interface EventTimeline {
   modelOf(runId: string | null, step: number): ModelRef | null;
 }
 
+const isPending = (e: TimelineEntry | undefined): boolean =>
+  e?.kind === "user" && e.pending === true;
+
 /**
- * The streaming drafts after the log's entries (they always come last). Cheap: the page memoizes
+ * The streaming drafts after the log's entries, before the pending interjections (spec D4: a
+ * message the streaming step never saw stands below it). Cheap: the page memoizes
  * {@link buildEventTimeline} over the events and adds the drafts on each delta frame, so a token
  * does not rebuild the timeline (final review I3); the log's entry objects stay the same.
  */
 export function withDrafts(base: EventTimeline, drafts: readonly TimelineDraft[]): TimelineEntry[] {
-  const out = base.entries.slice();
+  // the pending interjections are the log's last entries (buildEventTimeline puts them there)
+  let tail = base.entries.length;
+  while (tail > 0 && isPending(base.entries[tail - 1])) tail--;
+  const out = base.entries.slice(0, tail);
   let added = false;
   for (const d of drafts) {
     if (d.text === "" && d.thinking === "") continue;
@@ -442,7 +461,9 @@ export function withDrafts(base: EventTimeline, drafts: readonly TimelineDraft[]
       out.push({ kind: "prose", key: `d${d.runId}:${d.step}`, text: d.text, streaming: true });
     }
   }
-  return added ? out : base.entries;
+  if (!added) return base.entries;
+  for (let i = tail; i < base.entries.length; i++) out.push(base.entries[i] as TimelineEntry);
+  return out;
 }
 
 /** Events of a run that are its output (what replaces the working line, spec §2.2). */
@@ -610,6 +631,21 @@ export function buildEventTimeline(
   const forks = new Map<number, { label: string; dispatched: boolean; reported: boolean }>();
   /** The highest user seq a model call took in (`model_call.request.absorbedUpToSeq`). */
   let absorbed = 0;
+  /** The run going at this point of the log (started, not ended), or null. */
+  let current: string | null = null;
+  /**
+   * Interjections (spec D4) not placed yet, in seq order: a person's bubble logged while
+   * {@link current} was going, held until a model call takes it in or its run ends.
+   */
+  const held: Extract<TimelineEntry, { kind: "user" }>[] = [];
+  /** Places the held interjections with a seq up to `upTo` (taken in there). */
+  const placeHeld = (upTo: number) => {
+    let n = 0;
+    while (n < held.length && (held[n] as (typeof held)[number]).seq <= upTo) n++;
+    if (n > 0) out.push(...held.splice(0, n));
+  };
+  /** Places every held interjection (its run ended without taking it in: it starts the next). */
+  const placeAllHeld = () => placeHeld(Number.POSITIVE_INFINITY);
   /** What the log says so far of each run (its row's model, working time and tokens). */
   const runs = new Map<
     string,
@@ -691,6 +727,9 @@ export function buildEventTimeline(
     switch (e.type) {
       case "run_started":
         if (e.runId !== null) {
+          // a new run: what an earlier run (ended without a terminal event) left stands before it
+          if (e.runId !== current) placeAllHeld();
+          current = e.runId;
           const r = runOf(e.runId);
           // A resumed run writes no second run_started; keep the first start.
           const at = Date.parse(e.createdAt);
@@ -706,6 +745,9 @@ export function buildEventTimeline(
         }
         break;
       case "model_call":
+        // the interjections this request took in stand before its output (a call logged before
+        // the field took in everything before it, as the kernel reads it)
+        placeHeld(e.payload.request?.absorbedUpToSeq ?? e.seq);
         absorbed = Math.max(absorbed, e.payload.request?.absorbedUpToSeq ?? 0);
         if (e.runId !== null) {
           const k = stepKey(e.runId, e.payload.step);
@@ -756,7 +798,9 @@ export function buildEventTimeline(
           } else {
             plainUsers.push(entry);
           }
-          out.push(entry);
+          // sent while a run goes: it stands where a model call takes it in (spec D4)
+          if (current !== null) held.push(entry);
+          else out.push(entry);
         }
         if (skill?.mode === "fork") {
           forks.set(e.seq, { label: `/${skill.name}`, dispatched: false, reported: false });
@@ -993,6 +1037,8 @@ export function buildEventTimeline(
       case "subagent_dispatched": {
         const invokedSeq = e.payload.invokedSeq;
         if (invokedSeq !== undefined) {
+          // its run took the invocation in: the bubble (and what came before it) stands above
+          placeHeld(invokedSeq);
           // a person's fork invocation: no `agent` call, the row stands at the dispatch
           const f = forks.get(invokedSeq);
           if (f) f.dispatched = true;
@@ -1212,6 +1258,16 @@ export function buildEventTimeline(
       default:
         break;
     }
+    if (TERMINAL.has(e.type) && e.runId !== null && e.runId === current) {
+      // the run ended without taking them in: they stand after its row and start the next run
+      current = null;
+      placeAllHeld();
+    }
+  }
+  // Not taken in yet while their run goes on: pending, at the bottom (after the drafts).
+  for (const h of held) {
+    h.pending = true;
+    out.push(h);
   }
 
   // A plain message not sent to the model yet, before a fork whose sub-agent is working: the

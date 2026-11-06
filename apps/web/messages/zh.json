@@ -855,6 +855,7 @@
     "skillInstructions": "技能说明",
     "skillReport": "报告",
     "skillWaits": "运行 {skill} 的子智能体完成后一起回复。",
+    "interjectionPending": "待处理",
     "queuePaused": {
       "author_cannot_send": "队列已暂停：第一条消息的发送人已不能使用这个会话。",
       "skill_not_invocable": "队列已暂停：第一条消息调用的技能已不能在这个智能体上使用。可以删除它或继续发送。"

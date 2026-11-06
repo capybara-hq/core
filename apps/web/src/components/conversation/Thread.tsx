@@ -613,7 +613,7 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
           ),
         ];
         const details =
-          e.instructions !== undefined || e.waitsFor !== undefined ? (
+          e.instructions !== undefined || e.waitsFor !== undefined || e.pending ? (
             <>
               {e.instructions !== undefined ? (
                 <Disclosure summary={t("skillInstructions")}>
@@ -627,11 +627,17 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
                   {t("skillWaits", { skill: e.waitsFor })}
                 </Text>
               ) : null}
+              {e.pending && e.waitsFor === undefined ? (
+                <Text variant="small" tone="faint">
+                  {t("interjectionPending")}
+                </Text>
+              ) : null}
             </>
           ) : undefined;
         return (
           <UserBubble
             text={e.text}
+            {...(e.pending ? { queued: true } : {})}
             {...(e.skill ? { skill: e.skill.label } : {})}
             {...(details !== undefined ? { details } : {})}
             {...(atts.length > 0

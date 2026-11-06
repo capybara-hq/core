@@ -855,6 +855,7 @@
     "skillInstructions": "Skill instructions",
     "skillReport": "Report",
     "skillWaits": "Answered after the sub-agent running {skill} finishes.",
+    "interjectionPending": "Pending",
     "queuePaused": {
       "author_cannot_send": "Queue paused: the first message's author can no longer use this conversation.",
       "skill_not_invocable": "Queue paused: the first message's skill can no longer be used with this agent. Delete it or continue sending."
