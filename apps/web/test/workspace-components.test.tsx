@@ -402,16 +402,14 @@ describe("/agents?tab=templates: the 模板 tab (rulings P4-14, P4-16)", () => {
       "/agents/templates/t1",
     );
     expect(within(reviewer).getByText("Plugin · docs · v1")).toBeTruthy();
-    // 用它创建 goes to the template page until its dialog lands (phase 4 Task 8)
-    expect(within(reviewer).getByRole("link", { name: A.create }).getAttribute("href")).toBe(
-      "/agents/templates/t1",
-    );
+    // 用它创建 opens the create dialog (phase 4 Task 8, P4-18)
+    expect(within(reviewer).getByRole("button", { name: A.create })).toBeTruthy();
     const sales = await card("sales");
     expect(within(sales).getByText("This org · v3")).toBeTruthy();
     // an off platform template: no 用它创建; the org admin's 启用 is its primary
     const writer = await card("writer");
     expect(within(writer).getByText(C.state.off)).toBeTruthy();
-    expect(within(writer).queryByRole("link", { name: A.create })).toBeNull();
+    expect(within(writer).queryByRole("button", { name: A.create })).toBeNull();
     expect(within(writer).getByRole("button", { name: C.action.enable })).toBeTruthy();
     // the head counts both tabs
     expect(screen.getByRole("tab", { name: /Templates/ }).textContent).toContain("3");
@@ -424,11 +422,15 @@ describe("/agents?tab=templates: the 模板 tab (rulings P4-14, P4-16)", () => {
     const calls = stubApi(r);
     await renderRouteWithCache(PATH, r, { me: MEMBER });
     const sales = await card("sales");
-    expect(within(sales).getByRole("link", { name: A.create })).toBeTruthy();
     expect(within(sales).getByRole("link", { name: A.view }).getAttribute("href")).toBe(
       "/agents/templates/t9",
     );
-    expect(within(sales).queryByRole("button")).toBeNull();
+    // the one button is 用它创建 (it opens the create dialog)
+    expect(
+      within(sales)
+        .getAllByRole("button")
+        .map((b) => b.textContent),
+    ).toEqual([A.create]);
     const writer = await card("writer");
     expect(within(writer).queryByRole("button")).toBeNull();
     await settle();
@@ -527,7 +529,11 @@ describe("/agents?tab=templates: the 模板 tab (rulings P4-14, P4-16)", () => {
     await renderRouteWithCache(PATH, r);
     const helper = await card("helper");
     expect(within(helper).getByRole("link", { name: A.view })).toBeTruthy();
-    expect(within(helper).queryByRole("button")).toBeNull();
+    expect(
+      within(helper)
+        .getAllByRole("button")
+        .map((b) => b.textContent),
+    ).toEqual([A.create]);
     await settle();
     expect(calls.some((c) => c.url.endsWith("/agent-templates/t5"))).toBe(false);
   });

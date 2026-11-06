@@ -899,3 +899,42 @@ describe("/connectors/install reads from the query cache", () => {
     await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/chat"));
   });
 });
+
+describe("the wizard prefilled for an agent's pending connector (ruling P4-7)", () => {
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
+
+  it("starts from the protocol, endpoint and name; a deployment denying custom connectors says so", async () => {
+    const w = en.connectors.wizard;
+    const routes = {
+      ...BOTH_KINDS,
+      [PREVIEW]: () =>
+        json(403, { error: { code: "catalog.custom_disabled", message: "custom off" } }),
+    };
+    const calls = stubApi(routes);
+    await renderRouteWithCache(
+      "/connectors/install?kind=openapi&endpoint=https%3A%2F%2Fdocs.example%2Fspec.json&name=Docs&pending=1",
+      routes,
+    );
+    const user = userEvent.setup();
+    expect(
+      (screen.getByRole("radio", { name: new RegExp(w.connector.openapi) }) as HTMLInputElement)
+        .checked,
+    ).toBe(true);
+    await clickAction(user, "en", w.next);
+    expect(
+      (screen.getByRole("textbox", { name: en.connectors.form.nameLabel }) as HTMLInputElement)
+        .value,
+    ).toBe("Docs");
+    expect((screen.getByRole("textbox", { name: w.specUrlLabel }) as HTMLInputElement).value).toBe(
+      "https://docs.example/spec.json",
+    );
+    await clickAction(user, "en", w.next);
+    expect(await screen.findByText(w.customDeniedPending)).toBeTruthy();
+    expect(calls.some((c) => c.method === "POST" && c.url.endsWith("/connectors/preview"))).toBe(
+      true,
+    );
+  });
+});

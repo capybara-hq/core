@@ -237,8 +237,40 @@ export interface Agent {
   /** The owner left the org and the agent went to an owner of the org until an admin reassigns it. */
   needsReassignment?: boolean;
   /** 定义里可能还有界面不认识的字段：修改时原样带回。 */
-  definition: AgentDefinitionInput & { fallback: ModelRef | null } & Record<string, unknown>;
+  definition: AgentDefinitionInput & { fallback: ModelRef | null } & {
+    /** Connectors the template needed and the org lacked (ruling P4-6); model-invisible. */
+    pendingConnectors?: PendingConnector[];
+  } & Record<string, unknown>;
+  /** The template it was created from (ruling P4-8); null (older kernels: absent) otherwise. */
+  createdFrom?: AgentProvenance | null;
   updatedAt: string;
+}
+
+/**
+ * Where an agent came from (kernel `AgentProvenance`, ruling P4-8): set once at create, never
+ * changed. `available`: the template is still usable in the org (the page links it only then).
+ */
+export interface AgentProvenance {
+  templateId: string;
+  version: number;
+  name: string;
+  available?: boolean;
+}
+
+/**
+ * A connector the template needed and the org lacked (kernel `PendingConnector`, ruling P4-6):
+ * made from a platform connector template (`source.template`, its id), or any connector of a
+ * protocol (`source.needs`); binding one (`POST …/pending-connectors/:key/bind`) resolves it.
+ */
+export interface PendingConnector {
+  key: string;
+  label: string;
+  source:
+    | { template: string }
+    | { needs: { protocol: "mcp" | "openapi"; endpoint: string; tools: string[]; label: string } };
+  /** The tools the agent takes once bound; absent = all. */
+  tools?: string[];
+  policies?: Record<string, TightenedPolicy>;
 }
 
 /** 内核返回的保存警告码（界面以 `agents.warnings.<code>` 翻译）。 */

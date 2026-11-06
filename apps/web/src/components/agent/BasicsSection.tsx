@@ -14,11 +14,12 @@ import {
   Stack,
   Text,
   Textarea,
+  versionLabel,
 } from "@capybara-hq/design";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { useEffect, useState } from "react";
-import { useRouter } from "../../i18n/navigation";
+import { Link, useRouter } from "../../i18n/navigation";
 import {
   type Agent,
   type AgentAvatar,
@@ -40,6 +41,7 @@ import { useErrorMessage } from "../../lib/use-error-message";
 import { FormError } from "../form-error";
 import { savedDefinition } from "./definition-parts";
 import { AgentSectionFrame, useAgentPage } from "./frame";
+import { PendingConnectorsPlain } from "./PendingConnectorsNotice";
 import { useSectionDraft } from "./useSectionDraft";
 
 const NAME_MAX = 80;
@@ -96,6 +98,36 @@ export function BasicsSection() {
   return editable ? <BasicsEdit /> : <BasicsReadOnly />;
 }
 
+/** The template page (phase 4 Task 9), linked from the provenance line while it is usable. */
+const templateHref = (id: string) => `/agents/templates/${encodeURIComponent(id)}`;
+
+/**
+ * 「由模板 <name> v<version> 创建」 (ruling P4-8): the template's name links to it while it is
+ * still usable in the org (`available`), else it is plain text; nothing for an agent made
+ * otherwise.
+ */
+export function Provenance({ agent }: { agent: Agent }) {
+  const t = useTranslations("agents.page");
+  const from = agent.createdFrom;
+  if (from === undefined || from === null) return null;
+  return (
+    <span data-provenance="">
+      <Text variant="small" tone="muted">
+        {t.rich("provenance", {
+          name: from.name,
+          version: versionLabel(String(from.version)),
+          template: (chunks) =>
+            from.available === true ? (
+              <Link href={templateHref(from.templateId)}>{chunks}</Link>
+            ) : (
+              chunks
+            ),
+        })}
+      </Text>
+    </span>
+  );
+}
+
 function BasicsReadOnly() {
   const t = useTranslations("agents");
   const { agent } = useAgentPage();
@@ -103,6 +135,8 @@ function BasicsReadOnly() {
     <AgentSectionFrame>
       <FormSection id="basics" title={t("page.sections.basics")}>
         <Text tone="muted">{t("readOnly")}</Text>
+        <Provenance agent={agent} />
+        <PendingConnectorsPlain agent={agent} />
         <KeyValue
           rows={[
             { k: t("form.nameLabel"), v: agent.definition.name },
@@ -325,6 +359,7 @@ function BasicsEdit() {
         {profileError ? <SaveError error={profileError} onReload={() => void reload()} /> : null}
         {agentError ? <SaveError error={agentError} onReload={() => void reload()} /> : null}
         <FormSection id="basics" title={t("page.sections.basics")}>
+          <Provenance agent={agent} />
           <Stack gap={4}>
             <AvatarPicker
               value={pickerValue}

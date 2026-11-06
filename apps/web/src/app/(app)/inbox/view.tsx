@@ -8,11 +8,14 @@ import {
   type Column,
   DataTable,
   DateTime,
+  Field,
   InboxPage,
+  ItemList,
   KeyValue,
   Stack,
   StatusMark,
   Text,
+  Textarea,
   useStatusBar,
   useToast,
   versionLabel,
@@ -21,6 +24,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { type ReactNode, useEffect, useState } from "react";
 import { ApprovalInput, ScopePicker, useDecide } from "../../../components/ApprovalCard";
+import { PendingConnectorDialog } from "../../../components/agent/PendingConnectorDialog";
 import { ErrorFrame } from "../../../components/ErrorFrame";
 import { NoAccess } from "../../../components/NoAccess";
 import {
@@ -37,6 +41,7 @@ import {
   requesterOf as directoryRequester,
   dismissOrgRequest,
   displayNameOf,
+  isSetupRequest,
   requestSubject,
   requestVersion,
 } from "../../../lib/catalog";
@@ -47,6 +52,7 @@ import {
   isShowable,
   type OrgNotice,
 } from "../../../lib/inbox";
+import { entryOfRequest } from "../../../lib/pending-connectors";
 import { inboxChangeKeys, inboxQuery } from "../../../lib/query/inbox";
 import { keys } from "../../../lib/query/keys";
 import { useAppMutation } from "../../../lib/query/mutation";
@@ -105,6 +111,10 @@ function Inbox({
   const td = useTranslations("catalog.inbox");
   const errorMessage = useErrorMessage();
   const [requestPending, setRequestPending] = useState<"approve" | "reject">();
+  // A connector setup request (ruling P4-7): the reason a rejection sends, and the configure dialog
+  const [rejectReason, setRejectReason] = useState("");
+  const [configuring, setConfiguring] = useState<CatalogRequest | null>(null);
+  const ts = useTranslations("inbox.setup");
   const tn = useTranslations("inbox.skillRenamed");
   const tnn = useTranslations("inbox.orgNotice");
   const [noticePending, setNoticePending] = useState(false);
@@ -122,8 +132,11 @@ function Inbox({
   // A catalog request decision changes the catalog's view of the item and the inbox (a failure
   // reads the inbox again through `handled`).
   const decideRequestMutation = useAppMutation({
-    fn: (v: { id: string; decision: "approve" | "reject" }) =>
-      decideOrgRequest(orgId, v.id, { approve: v.decision === "approve" }),
+    fn: (v: { id: string; decision: "approve" | "reject"; reason?: string }) =>
+      decideOrgRequest(orgId, v.id, {
+        approve: v.decision === "approve",
+        ...(v.reason !== undefined && v.reason !== "" ? { reason: v.reason } : {}),
+      }),
     invalidates: () => [
       keys.org(orgId).catalog(),
       keys.org(orgId).catalogItemsAll(),
@@ -135,12 +148,17 @@ function Inbox({
 
   // 换一项时审批范围回到「仅本次」
   // biome-ignore lint/correctness/useExhaustiveDependencies: 只在选中项变化时重置
-  useEffect(() => setScope("once"), [active?.id]);
+  useEffect(() => {
+    setScope("once");
+    setRejectReason("");
+  }, [active?.id]);
 
   const labels: Labels = {
     skillChange: t("skillChange.label"),
     request: td("label"),
     skillRenamed: tn("label"),
+    setup: ts("label"),
+    setupDecided: ts("decidedLabel"),
     notice: tnn,
     decided: tdd("label"),
     approved: tdd("approved"),
@@ -198,11 +216,26 @@ function Inbox({
     );
   }
 
-  async function decideRequest(request: CatalogRequest, decision: "approve" | "reject") {
+  async function decideRequest(
+    request: CatalogRequest,
+    decision: "approve" | "reject",
+    reason?: string,
+  ) {
     setRequestPending(decision);
     try {
-      await decideRequestMutation.mutateAsync({ id: request.id, decision });
-      handled(request.id, decision === "approve" ? td("approved") : td("rejected"));
+      await decideRequestMutation.mutateAsync({
+        id: request.id,
+        decision,
+        ...(reason !== undefined ? { reason: reason.trim() } : {}),
+      });
+      handled(
+        request.id,
+        isSetupRequest(request)
+          ? ts("rejected")
+          : decision === "approve"
+            ? td("approved")
+            : td("rejected"),
+      );
     } catch (e) {
       toast.error(errorMessage(e));
       handled(request.id, null);
@@ -250,43 +283,64 @@ function Inbox({
             t,
             locale,
           })
-        : active.type === "catalog_request_decided"
-          ? decidedRequestDetail({
+        : active.type === "catalog_request_decided" && isSetupRequest(active.request)
+          ? setupDecidedDetail({
               request: active.request,
               pending: noticePending,
               onDismiss: () => void dismissDecided(active.request),
+              ts,
               tdd,
               t,
-              locale,
             })
-          : active.type === "catalog_request"
-            ? directoryRequestDetail({
+          : active.type === "catalog_request" && isSetupRequest(active.request)
+            ? setupRequestDetail({
                 request: active.request,
                 pending: requestPending,
-                onDecide: (d) => void decideRequest(active.request, d),
+                reason: rejectReason,
+                setReason: setRejectReason,
+                onConfigure: () => setConfiguring(active.request),
+                onReject: () => void decideRequest(active.request, "reject", rejectReason),
+                ts,
                 td,
                 t,
-                locale,
               })
-            : active.type === "tool_approval"
-              ? toolApprovalDetail({
-                  approval: active.approval,
-                  scope,
-                  setScope,
-                  pending: approvals.pending,
-                  onDecide: (d) => void decideApproval(active.approval, d),
-                  openConversation: () => router.push(active.approval.conversationPath),
+            : active.type === "catalog_request_decided"
+              ? decidedRequestDetail({
+                  request: active.request,
+                  pending: noticePending,
+                  onDismiss: () => void dismissDecided(active.request),
+                  tdd,
+                  t,
                   locale,
-                  t,
-                  ta,
                 })
-              : skillChangeDetail({
-                  orgId,
-                  change: active.skillChange,
-                  pending: changes.pending,
-                  onDecide: (d) => void decideChange(active.skillChange, d),
-                  t,
-                });
+              : active.type === "catalog_request"
+                ? directoryRequestDetail({
+                    request: active.request,
+                    pending: requestPending,
+                    onDecide: (d) => void decideRequest(active.request, d),
+                    td,
+                    t,
+                    locale,
+                  })
+                : active.type === "tool_approval"
+                  ? toolApprovalDetail({
+                      approval: active.approval,
+                      scope,
+                      setScope,
+                      pending: approvals.pending,
+                      onDecide: (d) => void decideApproval(active.approval, d),
+                      openConversation: () => router.push(active.approval.conversationPath),
+                      locale,
+                      t,
+                      ta,
+                    })
+                  : skillChangeDetail({
+                      orgId,
+                      change: active.skillChange,
+                      pending: changes.pending,
+                      onDecide: (d) => void decideChange(active.skillChange, d),
+                      t,
+                    });
 
   if (inbox === null) {
     return (
@@ -306,46 +360,59 @@ function Inbox({
       />
     );
   }
+  const setupAgent = configuring?.agent ?? null;
   return (
-    <InboxPage
-      header={{
-        path: [...here, { label: "inbox" }],
-        title: t("title"),
-        count: `${rows.length}${truncated ? "+" : ""}`,
-      }}
-      {...(rows.length === 0 ? { empty: { text: t("empty"), hint: t("emptyHint") } } : {})}
-      list={
-        <DataTable<InboxItem>
-          label={t("listLabel")}
-          rowHeight="dense"
-          framed={false}
-          columns={columns}
-          rows={rows}
-          rowKey={(a) => a.id}
-          rowLabel={(a) => rowOf(a, labels, locale).title}
-          {...(active ? { activeKey: active.id } : {})}
-          onOpen={(a) => setActiveId(a.id)}
-          state="ready"
-          empty={{ title: t("empty"), hint: t("emptyHint") }}
+    <>
+      {configuring !== null && setupAgent !== null && (
+        <PendingConnectorDialog
+          orgId={orgId}
+          agentId={setupAgent.id}
+          agentName={setupAgent.name}
+          entries={(configuring.connectors ?? []).map(entryOfRequest)}
+          onClose={() => setConfiguring(null)}
+          onDone={() => handled(configuring.id, ts("configured"))}
         />
-      }
-      {...(detail
-        ? {
-            inspectorTitle: t("inspectorTitle"),
-            inspector: detail.inspector,
-            actionRow: detail.actionRow,
-          }
-        : {})}
-    >
-      <Stack gap={12}>
-        {truncated && (
-          <Text variant="small" tone="warn">
-            {t("truncated")}
-          </Text>
-        )}
-        {detail ? detail.content : rows.length > 0 ? <Text tone="muted">{t("pick")}</Text> : null}
-      </Stack>
-    </InboxPage>
+      )}
+      <InboxPage
+        header={{
+          path: [...here, { label: "inbox" }],
+          title: t("title"),
+          count: `${rows.length}${truncated ? "+" : ""}`,
+        }}
+        {...(rows.length === 0 ? { empty: { text: t("empty"), hint: t("emptyHint") } } : {})}
+        list={
+          <DataTable<InboxItem>
+            label={t("listLabel")}
+            rowHeight="dense"
+            framed={false}
+            columns={columns}
+            rows={rows}
+            rowKey={(a) => a.id}
+            rowLabel={(a) => rowOf(a, labels, locale).title}
+            {...(active ? { activeKey: active.id } : {})}
+            onOpen={(a) => setActiveId(a.id)}
+            state="ready"
+            empty={{ title: t("empty"), hint: t("emptyHint") }}
+          />
+        }
+        {...(detail
+          ? {
+              inspectorTitle: t("inspectorTitle"),
+              inspector: detail.inspector,
+              actionRow: detail.actionRow,
+            }
+          : {})}
+      >
+        <Stack gap={12}>
+          {truncated && (
+            <Text variant="small" tone="warn">
+              {t("truncated")}
+            </Text>
+          )}
+          {detail ? detail.content : rows.length > 0 ? <Text tone="muted">{t("pick")}</Text> : null}
+        </Stack>
+      </InboxPage>
+    </>
   );
 }
 
@@ -364,6 +431,8 @@ interface Labels {
   skillChange: string;
   request: string;
   skillRenamed: string;
+  setup: string;
+  setupDecided: string;
   notice: Translate;
   decided: string;
   approved: string;
@@ -384,6 +453,23 @@ function rowOf(
   if (item.type === "skill_change") {
     const c = item.skillChange;
     return { title: c.name, trailing: null, description: joined(labels.skillChange, c.agent.name) };
+  }
+  if (
+    (item.type === "catalog_request" || item.type === "catalog_request_decided") &&
+    isSetupRequest(item.request)
+  ) {
+    const r = item.request;
+    return {
+      title: r.agent?.name ?? "—",
+      trailing: null,
+      description:
+        item.type === "catalog_request"
+          ? labels.setup
+          : joined(
+              labels.setupDecided,
+              r.status === "approved" ? labels.approved : labels.rejected,
+            ),
+    };
   }
   if (item.type === "catalog_request") {
     const version = requestVersion(item.request);
@@ -631,6 +717,167 @@ function directoryRequestDetail({
           {subject.id !== null && (
             <Text>
               <Link href={`/plugins/${subject.id}`}>{td("openItem")}</Link>
+            </Text>
+          )}
+        </Stack>
+      </Card>
+    ),
+  };
+}
+
+/**
+ * A connector setup request (org admins, ruling P4-7): the agent, the requester and the connectors
+ * it still needs; 配置 opens the configure dialog (per connector: pick or create, then bind; the
+ * request closes on the last bind), 驳回 sends the optional reason typed here.
+ */
+function setupRequestDetail({
+  request,
+  pending,
+  reason,
+  setReason,
+  onConfigure,
+  onReject,
+  ts,
+  td,
+  t,
+}: {
+  request: CatalogRequest;
+  pending: "approve" | "reject" | undefined;
+  reason: string;
+  setReason(v: string): void;
+  onConfigure(): void;
+  onReject(): void;
+  ts: Translate;
+  td: Translate;
+  t: Translate;
+}): Detail {
+  const connectors = request.connectors ?? [];
+  const agent = request.agent?.name ?? "—";
+  return {
+    inspector: (
+      <KeyValue
+        keyWidth="10ch"
+        rows={[
+          { k: td("requester"), v: directoryRequester(request) },
+          { k: ts("agent"), v: agent },
+          { k: ts("count"), v: String(connectors.length) },
+          { k: t("requested"), v: <DateTime value={request.createdAt} /> },
+        ]}
+      />
+    ),
+    actionRow: {
+      secondary: {
+        label: ts("reject"),
+        onSelect: onReject,
+        loading: pending === "reject",
+        disabled: pending !== undefined,
+      },
+      primary: {
+        label: ts("configure"),
+        onSelect: onConfigure,
+        disabled: pending !== undefined || connectors.length === 0,
+      },
+    },
+    content: (
+      <Card
+        title={ts("title", { agent })}
+        actions={<StatusMark status="waiting" label={ts("label")} />}
+      >
+        <Stack gap={12}>
+          <Text variant="prose">{ts("hint")}</Text>
+          <ItemList
+            label={ts("connectors")}
+            rows={connectors.map((c) => ({
+              id: c.key,
+              title: c.label,
+              meta:
+                "template" in c.source
+                  ? ts("fromTemplate")
+                  : ts("needs", {
+                      protocol: c.source.needs.protocol.toUpperCase(),
+                      endpoint: c.source.needs.endpoint,
+                    }),
+            }))}
+          />
+          <Field label={ts("reasonLabel")} optional help={ts("reasonHelp")}>
+            <Textarea
+              name="reason"
+              rows={2}
+              maxLength={500}
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+            />
+          </Field>
+        </Stack>
+      </Card>
+    ),
+  };
+}
+
+/**
+ * My connector setup request, decided (the agent's owner): every connector configured
+ * (`approved`), or rejected with the reason; a link to the agent's Tools section; dismiss.
+ */
+function setupDecidedDetail({
+  request,
+  pending,
+  onDismiss,
+  ts,
+  tdd,
+  t,
+}: {
+  request: CatalogRequest;
+  pending: boolean;
+  onDismiss(): void;
+  ts: Translate;
+  tdd: Translate;
+  t: Translate;
+}): Detail {
+  const approved = request.status === "approved";
+  const agent = request.agent;
+  const name = agent?.name ?? "—";
+  return {
+    inspector: (
+      <KeyValue
+        keyWidth="10ch"
+        rows={[
+          { k: tdd("status"), v: approved ? tdd("approved") : tdd("rejected") },
+          { k: ts("agent"), v: name },
+          { k: t("requested"), v: <DateTime value={request.createdAt} /> },
+          ...(request.decidedAt !== null
+            ? [{ k: tdd("decidedAt"), v: <DateTime value={request.decidedAt} /> }]
+            : []),
+        ]}
+      />
+    ),
+    actionRow: {
+      primary: { label: tdd("dismiss"), onSelect: onDismiss, loading: pending, disabled: pending },
+    },
+    content: (
+      <Card
+        title={ts(approved ? "titleApproved" : "titleRejected", { agent: name })}
+        actions={
+          <StatusMark
+            status={approved ? "success" : "failed"}
+            label={approved ? tdd("approved") : tdd("rejected")}
+          />
+        }
+      >
+        <Stack gap={8}>
+          <Text variant="prose">{approved ? ts("hintApproved") : ts("hintRejected")}</Text>
+          {!approved && request.reason !== null && request.reason !== "" && (
+            <Stack gap={4}>
+              <Text variant="small" tone="muted">
+                {tdd("reason")}
+              </Text>
+              <Text variant="prose">{request.reason}</Text>
+            </Stack>
+          )}
+          {agent !== null && agent !== undefined && !agent.deleted && (
+            <Text>
+              <Link href={`/agents/${encodeURIComponent(agent.id)}?s=tools`}>
+                {ts("openAgent")}
+              </Link>
             </Text>
           )}
         </Stack>

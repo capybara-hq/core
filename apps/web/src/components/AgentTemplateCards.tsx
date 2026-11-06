@@ -24,6 +24,7 @@ import { agentTemplateDeletePreviewQuery, agentTemplateQuery } from "../lib/quer
 import { keys } from "../lib/query/keys";
 import { useAppMutation } from "../lib/query/mutation";
 import { useErrorMessage } from "../lib/use-error-message";
+import { CreateFromTemplateDialog } from "./agent/CreateFromTemplateDialog";
 import type { ComponentAction } from "./ComponentSwitch";
 import type { PluginStateLabel } from "./PluginSwitch";
 
@@ -93,9 +94,8 @@ export function useTemplateSource(): (plugin: string | null, owner: OwnerSide) =
  * One template as a card (rulings P4-15, P4-16): the initial square, the name (the whole card
  * opens the template page), the description, the meta line source · v<version> (and the state in
  * `warn` when a platform template is off here), then:
- * - the primary 用它创建 on a template usable in the org (until the create dialog of phase 4 Task 8
- *   lands it goes to the template page, whose primary it is); on one that is off, an org admin's
- *   启用 (the existing switch) instead, else none;
+ * - the primary 用它创建 on a template usable in the org, opening the create dialog (P4-18); on one
+ *   that is off, an org admin's 启用 (the existing switch) instead, else none;
  * - ⋯: 查看; for owner-org admins (the detail says `owned`) 编辑 instead (the template page is the
  *   editor for them), 设为可共享 / 取消共享 and 删除 (previewed, the name typed); the org admin's
  *   other switch actions on a platform template (停用 with its preview, 查看插件).
@@ -120,6 +120,7 @@ export function TemplateCard({
   const errorMessage = useErrorMessage();
   const sourceOf = useTemplateSource();
   const [deleting, setDeleting] = useState(false);
+  const [creating, setCreating] = useState(false);
   const f = templateFacts(row);
   const c = row.kind === "platform" ? row.component : undefined;
   const owner: OwnerSide = row.kind === "own" ? { kind: "self" } : ownerSide(c?.owner, orgId);
@@ -195,7 +196,7 @@ export function TemplateCard({
           ...(state !== undefined ? [{ label: state.label, tone: "warn" as const }] : []),
         ]}
         {...(usable
-          ? { primary: { label: t("create"), href } }
+          ? { primary: { label: t("create"), onSelect: () => setCreating(true) } }
           : enable?.onSelect !== undefined
             ? {
                 primary: {
@@ -207,6 +208,13 @@ export function TemplateCard({
             : {})}
         menu={menu}
       />
+      {creating ? (
+        <CreateFromTemplateDialog
+          orgId={orgId}
+          template={{ id: f.id, name: f.name }}
+          onClose={() => setCreating(false)}
+        />
+      ) : null}
       {owned && deleting ? (
         <TemplateDeleteDialog
           orgId={orgId}
