@@ -287,9 +287,14 @@ export function AgentMapTree({
     background.some((b) => b.status === "running"),
     now,
   );
+  // the sub-agents only, the root (the conversation) not counted: the same number as the
+  // composer's agents chip (§6.16.29, AC3 ruling 4)
+  const agents = countNodes(root) - 1;
   const count = [
-    fillCopy(t("agentMap.count"), { n: countNodes(root) }),
-    fillCopy(t("agentMap.running"), { n: countRunning(root) }),
+    fillCopy(t(agents === 1 ? "agentsChip.one" : "agentsChip.many"), { n: agents }),
+    fillCopy(t("agentMap.running"), {
+      n: root.children.reduce((s, c) => s + countRunning(c), 0),
+    }),
     t("agentMap.hint"),
   ].join(" · ");
 

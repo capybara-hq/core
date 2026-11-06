@@ -12,6 +12,7 @@ const wrap = (ui: React.ReactElement, locale: "zh" | "en" = "zh") =>
 
 const chip = () => document.querySelector('[data-part="agents-chip"]') as HTMLElement | null;
 const dot = () => chip()?.querySelector('[data-part="agent-dot"]') ?? null;
+const label = () => chip()?.querySelector('[data-part="agents-chip-label"]')?.textContent;
 
 describe("AgentsChip (§6.16.29, acceptance item AC3)", () => {
   it("is nothing without sub-agents", () => {
@@ -22,18 +23,18 @@ describe("AgentsChip (§6.16.29, acceptance item AC3)", () => {
   it("names the total; the accessible name and tooltip add the running count", () => {
     wrap(<AgentsChip count={3} running={1} onOpen={() => {}} />);
     const c = chip() as HTMLElement;
-    expect(c.textContent).toBe("3 个智能体");
+    expect(label()).toBe("3 个智能体");
     expect(c.getAttribute("aria-label")).toBe("3 个智能体，1 个运行中");
     expect(c.getAttribute("title")).toBe("3 个智能体，1 个运行中");
     expect(c.getAttribute("aria-haspopup")).toBe("dialog");
     expect(screen.getByRole("button", { name: "3 个智能体，1 个运行中" })).toBe(c);
     cleanup();
     wrap(<AgentsChip count={1} running={0} onOpen={() => {}} />, "en");
-    expect(chip()?.textContent).toBe("1 agent");
+    expect(label()).toBe("1 agent");
     expect(chip()?.getAttribute("aria-label")).toBe("1 agent, 0 running");
     cleanup();
     wrap(<AgentsChip count={4} running={0} waiting={2} onOpen={() => {}} />, "en");
-    expect(chip()?.textContent).toBe("4 agents");
+    expect(label()).toBe("4 agents");
     expect(chip()?.getAttribute("aria-label")).toBe("4 agents, 0 running, 2 waiting");
   });
 
@@ -57,6 +58,36 @@ describe("AgentsChip (§6.16.29, acceptance item AC3)", () => {
       </DesignProvider>,
     );
     expect(dot()).toBeNull();
+  });
+
+  it("below 640 it is the dot (or the agent icon) and the count; the full text stays its name", () => {
+    const { rerender } = wrap(<AgentsChip count={3} running={1} onOpen={() => {}} />);
+    const count = chip()?.querySelector('[data-part="agents-chip-count"]') as HTMLElement;
+    expect(count.textContent).toBe("3");
+    expect(count.getAttribute("aria-hidden")).toBe("true");
+    // a running chip leads with the dot, never the icon
+    expect(chip()?.querySelector('[data-part="agents-chip-icon"]')).toBeNull();
+    rerender(
+      <DesignProvider locale="zh">
+        <AgentsChip count={3} running={0} onOpen={() => {}} />
+      </DesignProvider>,
+    );
+    const icon = chip()?.querySelector('[data-part="agents-chip-icon"]') as HTMLElement;
+    expect(icon.getAttribute("aria-hidden")).toBe("true");
+    expect(chip()?.getAttribute("aria-label")).toBe("3 个智能体，0 个运行中");
+    const css = readFileSync(
+      resolve(import.meta.dirname, "../src/styles/conversation-page.css"),
+      "utf8",
+    );
+    const phone = css.slice(css.indexOf("@media (max-width: 639px) {\n  .cb-agents-chip-label"));
+    expect(phone).toMatch(/\.cb-agents-chip-label \{\s*display: none;/);
+    expect(phone).toMatch(/\.cb-agents-chip-count \{\s*display: inline;/);
+    // wide: the count and the icon are hidden
+    expect(css).toMatch(/\.cb-agents-chip-icon,\n\.cb-agents-chip-count \{\s*display: none;/);
+    // the pickers' labels give way with an ellipsis; the icon buttons and the chip keep their size
+    expect(css).toMatch(/\.cb-picker-value \{\s*overflow: hidden;\s*text-overflow: ellipsis;/);
+    expect(css).toMatch(/\.cb-composer-bar > \.cb-icon-btn \{\s*flex: none;/);
+    expect(css).toMatch(/\.cb-agents-chip\.cb-btn \{\s*flex: none;/);
   });
 
   it("opens on click and from the keyboard", async () => {

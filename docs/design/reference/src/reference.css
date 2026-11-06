@@ -2567,9 +2567,26 @@ textarea {
   gap: var(--cb-space-1);
   padding: 0 var(--cb-space-2);
 }
-/* The agents chip (§6.16.29): a picker whose status dot leads the label, space.2 before it. */
+/* The agents chip (§6.16.29): a picker whose status dot leads the label, space.2 before it;
+ * below 640 the dot (or the agent icon) and the count alone. */
 .r-agents-chip {
   gap: var(--cb-space-2);
+  flex: none;
+}
+.r-agents-chip-icon,
+.r-agents-chip-count {
+  display: none;
+}
+@media (max-width: 639px) {
+  .r-agents-chip-label {
+    display: none;
+  }
+  .r-agents-chip-count {
+    display: inline;
+  }
+  .r-agents-chip-icon {
+    display: inline-flex;
+  }
 }
 .r-picker[data-locked] {
   display: inline-flex;

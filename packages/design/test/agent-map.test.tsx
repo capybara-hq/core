@@ -94,7 +94,7 @@ describe("AgentMapTree (§6.16.28)", () => {
     ).toEqual(words);
   });
 
-  it('the header counts agents and running ones ("6 个智能体 · 2 个运行中")', () => {
+  it('the header counts the sub-agents and running ones, the root not counted ("5 个智能体 · 1 个运行中")', () => {
     // Three of the six run in the fixture; drop the review to match the mockup's count.
     const two: AgentMapNode = {
       ...root,
@@ -105,10 +105,15 @@ describe("AgentMapTree (§6.16.28)", () => {
       ),
     };
     wrap(<AgentMapTree root={two} background={[]} onOpen={() => {}} now={NOW} />);
-    expect(screen.getByText("6 个智能体 · 2 个运行中 · 点击查看详情")).toBeTruthy();
+    expect(screen.getByText("5 个智能体 · 1 个运行中 · 点击查看详情")).toBeTruthy();
     cleanup();
     wrap(<AgentMapTree root={two} background={[]} onOpen={() => {}} now={NOW} />, "en");
-    expect(screen.getByText("6 agents · 2 running · Click a node for details")).toBeTruthy();
+    expect(screen.getByText("5 agents · 1 running · Click a node for details")).toBeTruthy();
+    cleanup();
+    // one sub-agent: the chip's singular
+    const one: AgentMapNode = { ...root, children: [{ ...(root.children[0] as AgentMapNode) }] };
+    wrap(<AgentMapTree root={one} background={[]} onOpen={() => {}} now={NOW} />, "en");
+    expect(screen.getByText("1 agent · 0 running · Click a node for details")).toBeTruthy();
   });
 
   it("background tasks render under the root column", () => {

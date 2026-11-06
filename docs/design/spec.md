@@ -1269,7 +1269,7 @@ States: `default`, `untitled`, `rename-menu`, `panel-active`, `overflow`, `long-
 - `raised` ground, 1px `line` border, radius `md`, `shadow-float`, padding `space.2` `space.2` `space.2` `space.3`. While its textarea has focus: an `accent` border plus the 3px `focus-ring` halo (the input focus rule of §2.5) over the same shadow.
 - Top to bottom: the attachment strip (§6.16.21) when there are attachments; the textarea (no border or ground, `prose` 15 / 26 `ink`, placeholder `faint`, one line high when empty, growing with its content up to 8 lines and then scrolling, `space.2` below it); the control row.
 - **Control row**, gap `space.1`, pulled left by `space.2` so the ＋ lines up with the text: ＋ (ghost `IconButton`, `plus`, "添加附件" / "Attach files") · agent picker · model picker · effort picker · quick actions · agents chip · flexible space · send. The agent picker is optional (`pickers.agent`) and neither page passes it: the new conversation page's agents row chooses the agent (§5.4), and on a conversation the title bar's path names it (§6.16.1; maintainer decision U, 2026-11-07), so the control row repeats no agent label. The quick actions (`quickActions`, §6.16.27) are a ghost `zap` icon button, given only when the agent has some. The agents chip (`agents`, §6.16.29) is the agent map's entry, given once the conversation has a sub-agent (never on the new conversation page).
-  - Pickers are ghost `default`-step buttons in `muted`: label + `chevron-down` 12, padding 0 `space.2`, opening a picker menu (§6.16.3) anchored to them (below, or above when the room below is short).
+  - Pickers are ghost `default`-step buttons in `muted`: label + `chevron-down` 12, padding 0 `space.2`, opening a picker menu (§6.16.3) anchored to them (below, or above when the room below is short). When the row is short (a phone) a picker's label gives way with an ellipsis, the whole value in its tooltip; the icon buttons and the agents chip keep their size (AC3 fix round 1).
   - Where a page passes the agent picker it is a picker only before the first message; a `locked` one is plain `muted` text with no chevron (`data-locked="true"`, `title` "发送第一条消息后不能再换 agent" / "The agent can't change after the first message").
   - The effort picker is hidden when the selected model declares no `effort` values.
   - Send: a `control.default` square icon button with `arrow-up` 16 on the `accent` ground, `on-accent` icon; disabled (no text and no files) it is the `selected` ground with a `faint` icon. While a run is going it becomes Stop (`square` 14, `selected` ground, `ink` icon, "停止" / "Stop").
@@ -1423,7 +1423,7 @@ States: `collapsed`, `expanded`, `live`
 #### 6.16.6 User bubble
 
 - Right-aligned, at most 75% of the thread width: `selected` ground, radius `bubble`, padding `pad.default`, a 1px transparent border (the queued form draws it dashed), prose font `prose` 15 / 26 `ink`, line breaks kept.
-- **Long** (states `long`, `expanded`; acceptance item AC4, 2026-11-07, Claude's "Show more"): the bubble's text (`bubble-body`, the skill chip and the text) is clamped at `layout.bubble-clamp` (208, eight prose lines) and its last line fades out (a mask from opaque to transparent over the last `type.prose.line`, like the text output's fade, §6.16.20). Only when the clamp hides something (measured, and again on resize) a link button "展开" / "Show more" (`small`, the §6.16 link button: `muted`, underlined in `line-strong`) sits under the bubble, right-aligned, `space.2` below it and before the details; it has `aria-expanded` and `aria-controls` the text, opens it in full and becomes "收起" / "Show less". The attachments above, the skill chip on the first line and the details below always show. The open state is the bubble's own, local to the view and never kept (a reload or another conversation starts folded). A pending bubble (the queued form) and the transcript's bubbles behave the same.
+- **Long** (states `long`, `expanded`; acceptance item AC4, 2026-11-07, Claude's "Show more"): the bubble's text (`bubble-body`, the skill chip and the text) is clamped at `layout.bubble-clamp` (208, eight prose lines) and its last line fades out (a mask from opaque to transparent over the last `type.prose.line`, like the text output's fade, §6.16.20). Only when the clamp hides something (measured, and again on resize; the server render and hydration, which cannot measure, guess from the text: more than eight lines, counting the hard lines and each line's wrapping at about 34 CJK or 68 other characters, so a long message is folded from the first paint and the measurement then corrects it) a link button "展开" / "Show more" (`small`, the §6.16 link button: `muted`, underlined in `line-strong`) sits under the bubble, right-aligned, `space.2` below it and before the details; it has `aria-expanded` and `aria-controls` the text, opens it in full and becomes "收起" / "Show less". The attachments above, the skill chip on the first line and the details below always show. The open state is the bubble's own, local to the view and never kept (a reload or another conversation starts folded). A pending bubble (the queued form) and the transcript's bubbles behave the same.
 - **Pending** (the queued form, `queued`): a message on its way, or an interjection the run has not taken in yet, or a leftover queued message (§6.11 "No queue"): the dashed bubble of §6.16.14 at opacity .6, and for an interjection or a leftover "待处理" / "Pending" under it in `small` `faint`; no actions.
 - Attachments sit above the bubble, right-aligned, `space.2` apart: images as `layout.thumb` square thumbnails (radius `sm`, cropped to fill), then files as attachment chips (§6.16.21, without the remove button). Each opens like today's AttachmentPreview. A thumbnail that fails to load is reported to the caller, which may refresh the session and reload it once (as AttachmentPreview's `retry`).
 - **Skill invocation** (phase D, state `skill`): the bubble starts with the skill chip, the composer's chip (§6.16.2) without its remove button: `control.dense` high, radius `sm`, padding 0 `space.2`, the `accent-tint` ground, the label ("/fix-issue") in mono `body` `accent`, centered on the first prose line, `space.2` before the text, which is the invocation's arguments (none: the chip alone). Under the bubble, right-aligned, at most 75% wide, `space.2` below it: a closed Disclosure (§6.5) "技能说明" / "Skill instructions" in `small` `muted`, a `row.dense` summary line whose chevron is `muted` too (not the Disclosure's usual `faint`), whose body is the text sent in the person's name (`small`, line breaks kept). A queued invocation (§6.16.14) shows the same chip in its dashed bubble.
@@ -2223,8 +2223,9 @@ level or agent, `view`) it moves to the new head's back button, else its title.
 `AgentMapTree({ root, background, selectedId, onOpen })` is level 1:
 
 - **Count line** at the top of the body (prose, `muted`, `space.3` above the tree): "N 个智能体 · M 个运行中 · 点击查看详情" /
-  "N agents · M running · Click a node for details"; N counts every node with the root, M the
-  running ones.
+  "N agents · M running · Click a node for details" ("1 agent"); N counts the sub-agents, every
+  node but the root (the conversation itself), M the running ones among them: the same number
+  as the composer's agents chip (§6.16.29; AC3 ruling 4, 2026-11-07).
 - **Tree**: columns left to right by depth, `space.6` apart; a parent is vertically centred on its
   children; standard elbow connectors (1px `line-strong`) from each parent to the vertical centre of
   each child; siblings `space.2` apart. No "main agent" or "level N" labels: position and lines
@@ -2393,16 +2394,25 @@ title bar's agent map icon (§6.16.1).
   `space.2` before it while a sub-agent is active: running (queued included) the `accent` dot
   pulsing every `motion.pulse`; else, while one waits for a person, `warn`; with nothing active
   no dot. It draws no box of its own inside the composer (one box is enough, §1).
-- **Count**: N is every sub-agent of the conversation's tree (every depth; the root is not counted,
-  so the map's count line, which counts the root, reads N + 1). The dot says whether any runs; the
-  running count goes into the accessible name and the tooltip: "3 个智能体，1 个运行中" / "3 agents,
-  1 running", then "，N 个等待中" / ", N waiting" while some wait.
+- **Count**: N is every sub-agent of the conversation's tree, at every depth, at all times (the
+  root is not counted; the map's count line shows the same N, §6.16.28). The page reads the agent
+  tree with the conversation (the server prefetches it for the first paint) and again on every
+  sub-agent event of the root's log and on the progress of an agent the tree lacks; the stream's
+  progress and the log's waits count an agent at once. The dot says whether any runs; the running
+  count goes into the accessible name and the tooltip: "3 个智能体，1 个运行中" / "3 agents,
+  1 running", then "，N 个等待中" / ", N waiting" while some wait. A child of the conversation that
+  is active with nothing below it that counts is working itself (a stale tree never drops the
+  dot).
+- **Below 640** (state `narrow`): the dot, or the `agent` icon 14 when nothing is active, and the
+  count alone ("● 3"); the full text stays its accessible name and tooltip. The chip and the icon
+  buttons keep their size; a picker's label gives way with an ellipsis (§6.16.2), so the send
+  button stays inside the composer with the model, effort, quick actions and the chip.
 - **Open**: activating it (click, Enter, Space) opens the agent map at its root level (`#agents`;
   `aria-haspopup="dialog"`); the map keeps its keyboard and Esc behaviour, and focus returns to the
   chip when it closes. The sub-agent group's "智能体图" / "Agent map" link (§6.16.15) stays.
 
 <!-- states: agents-chip -->
-States: `default`, `running`, `waiting`, `hover`
+States: `default`, `running`, `waiting`, `hover`, `narrow`
 
 <!-- size-table: agents-chip -->
 | Part | State | Property | Value |
@@ -2417,6 +2427,11 @@ States: `default`, `running`, `waiting`, `hover`
 | agent-dot | waiting | background-color | color.warn |
 | agents-chip[data-ref-forced=true] | hover | background-color | color.hover |
 | agents-chip[data-ref-forced=true] | hover | color | color.ink |
+| agents-chip | narrow | height | control.default |
+| agents-chip-count | narrow | font-size | type.body |
+| agents-chip-count | narrow | color | color.muted |
+| agent-dot | narrow | width | space.2 |
+| agent-dot | narrow | background-color | color.accent |
 
 ---
 

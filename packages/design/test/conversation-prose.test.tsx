@@ -1,10 +1,12 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { cleanup, render, screen } from "@testing-library/react";
+import { renderToString } from "react-dom/server";
 import { userEvent } from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   BubbleAttachments,
+  bubbleLooksLong,
   DesignProvider,
   Prose,
   RunDivider,
@@ -177,6 +179,33 @@ describe("UserBubble (§6.16.6)", () => {
       expect(b.firstElementChild?.getAttribute("data-part")).toBe("bubble-skill");
       expect(screen.getByRole("button", { name: "Show more" })).toBeTruthy();
       expect(container.querySelector('[data-queued="true"]')).not.toBeNull();
+    });
+
+    it("the server render guesses from the text, the client measurement corrects it", () => {
+      const long = "第一行\n".repeat(12);
+      const wide = "这是一段没有换行但非常长的消息".repeat(30);
+      const short = "核对三月份\n再看四月";
+      expect(bubbleLooksLong(long)).toBe(true);
+      expect(bubbleLooksLong(wide)).toBe(true);
+      expect(bubbleLooksLong(short)).toBe(false);
+      expect(bubbleLooksLong("a".repeat(400))).toBe(false);
+      const html = (text: string) =>
+        renderToString(
+          <DesignProvider locale="zh">
+            <UserBubble text={text} />
+          </DesignProvider>,
+        );
+      // a long message is folded in the server's HTML: the fade and 展开 from the first paint
+      expect(html(long)).toContain('data-overflows="true"');
+      expect(html(long)).toContain('aria-expanded="false"');
+      expect(html(long)).toContain(">展开<");
+      expect(html(short)).not.toContain("data-overflows");
+      expect(html(short)).not.toContain("展开");
+      // on the client the measurement wins: jsdom measures no overflow, so the guess goes
+      overflowing(false);
+      const { container } = wrap(<UserBubble text={long} />);
+      expect(container.querySelector('[data-part="bubble-more"]')).toBeNull();
+      expect(body(container).dataset.overflows).toBeUndefined();
     });
 
     it("the clamp is layout.bubble-clamp with the last prose line fading", () => {

@@ -124,9 +124,13 @@ export function Picker({
           className="cb-picker"
           part="picker"
           aria-label={`${label}: ${value}`}
+          title={value}
           disabled={disabled}
         >
-          {value}
+          {/* a long label (the model's) gives way with an ellipsis on a phone (AC3 fix round 1) */}
+          <span className="cb-picker-value" data-part="picker-value">
+            {value}
+          </span>
           <Icon name="chevron-down" size={12} />
         </Button>
       }

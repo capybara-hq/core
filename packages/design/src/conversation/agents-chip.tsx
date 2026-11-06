@@ -1,5 +1,6 @@
 import type { JSX } from "react";
 import { Button } from "../controls/button";
+import { Icon } from "../icons/icon";
 import { useDesignT } from "../provider";
 import { StatusDot } from "./agent-status";
 import { fillCopy } from "./tool-copy";
@@ -19,7 +20,8 @@ export type AgentsChipProps = {
  * The agent map's entry in the composer's control row (§6.16.29, acceptance item AC3), as Claude
  * Code's "0 agents": a ghost chip like the pickers, "N 个智能体" / "N agents", led by the agent
  * map's status dot while a sub-agent runs (`accent`, pulsing) or waits for a person (`warn`).
- * Its accessible name and tooltip add the running count ("3 个智能体，1 个运行中").
+ * Its accessible name and tooltip add the running count ("3 个智能体，1 个运行中"). Below 640 it
+ * shrinks to the dot (or the `agent` icon when nothing is active) and the count.
  */
 export function AgentsChip({
   count,
@@ -47,8 +49,21 @@ export function AgentsChip({
       data-status={status}
       onClick={onOpen}
     >
-      {status !== undefined ? <StatusDot status={status} /> : null}
-      {label}
+      {status !== undefined ? (
+        <StatusDot status={status} />
+      ) : (
+        // below 640 the count alone needs a mark when no dot leads it
+        <span className="cb-agents-chip-icon" data-part="agents-chip-icon" aria-hidden="true">
+          <Icon name="agent" size={14} />
+        </span>
+      )}
+      <span className="cb-agents-chip-label" data-part="agents-chip-label">
+        {label}
+      </span>
+      {/* below 640: the count alone (the full label stays the name and the tooltip) */}
+      <span className="cb-agents-chip-count" data-part="agents-chip-count" aria-hidden="true">
+        {count}
+      </span>
     </Button>
   );
 }

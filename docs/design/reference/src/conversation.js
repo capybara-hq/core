@@ -422,8 +422,11 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
     const dot = a.running > 0 ? "running" : a.waiting > 0 ? "waiting" : null;
     const word = { running: "运行中", waiting: "等待" };
     const name = `${a.count} 个智能体，${a.running} 个运行中${a.waiting > 0 ? `，${a.waiting} 个等待中` : ""}`;
-    const lead = dot ? `<span class="r-amap-dot" data-part="agent-dot" data-status="${dot}" role="img" aria-label="${word[dot]}"></span>` : "";
-    return `<button class="r-btn r-picker r-agents-chip" data-variant="ghost" data-part="agents-chip"${state(a.state)} aria-haspopup="dialog" aria-label="${esc(name)}" title="${esc(name)}">${lead}${a.count} 个智能体</button>`;
+    // below 640 (the narrow state) the dot, or the agent icon when nothing is active, and the count
+    const lead = dot
+      ? `<span class="r-amap-dot" data-part="agent-dot" data-status="${dot}" role="img" aria-label="${word[dot]}"></span>`
+      : `<span class="r-agents-chip-icon" data-part="agents-chip-icon" aria-hidden="true">${icon("agent", 14)}</span>`;
+    return `<button class="r-btn r-picker r-agents-chip" data-variant="ghost" data-part="agents-chip"${state(a.state)} aria-haspopup="dialog" aria-label="${esc(name)}" title="${esc(name)}">${lead}<span class="r-agents-chip-label" data-part="agents-chip-label">${a.count} 个智能体</span><span class="r-agents-chip-count" data-part="agents-chip-count" aria-hidden="true">${a.count}</span></button>`;
   }
 
   function pickerMenu(o) {
@@ -905,8 +908,9 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
     "quick-actions": (o) => col(quickMenu({ open: o.state === "menu", state: o.state === "hover" ? "hover" : undefined })),
     "agents-chip": (o) => {
       const A = F.AGENTS_CHIP_FIXTURE;
-      const active = { running: [A.running, A.waiting], waiting: [0, A.waiting] }[o.state] ?? [0, 0];
-      return col(composer({ state: "idle", agents: { count: A.count, running: active[0], waiting: active[1], state: o.state === "hover" ? "hover" : undefined } }));
+      const active = { running: [A.running, A.waiting], waiting: [0, A.waiting], narrow: [A.running, A.waiting] }[o.state] ?? [0, 0];
+      // narrow: the fullest control row (with the quick actions) in a 390 window
+      return col(composer({ state: "idle", quick: o.state === "narrow", agents: { count: A.count, running: active[0], waiting: active[1], state: o.state === "hover" ? "hover" : undefined } }));
     },
     "command-palette": (o) => col(palette(o)),
     prose: (o) => col(proseBlock(o)),

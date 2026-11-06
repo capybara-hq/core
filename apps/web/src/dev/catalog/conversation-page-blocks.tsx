@@ -613,10 +613,26 @@ function quickActionsBlocks(): ReactNode {
 }
 
 /** A conversation's composer with the agents chip after the effort picker (§6.16.29, AC3). */
-function AgentsChipComposer({ running, waiting }: { running: number; waiting: number }) {
+function AgentsChipComposer({
+  running,
+  waiting,
+  quick,
+}: {
+  running: number;
+  waiting: number;
+  /** The quick actions too (the narrow block's fullest control row). */
+  quick?: boolean;
+}) {
   return (
     <ComposerBox
       {...composerProps("idle")}
+      {...(quick
+        ? {
+            quickActions: (
+              <QuickActions items={NEW_CONVERSATION_FIXTURE.quickActions} onPick={noop} />
+            ),
+          }
+        : {})}
       agents={
         <AgentsChip
           count={AGENTS_CHIP_FIXTURE.count}
@@ -649,6 +665,11 @@ function agentsChipBlocks(): ReactNode {
       >
         <AgentsChipComposer running={0} waiting={0} />
       </Block>
+      {/* Phones: measured in a 390 window; the chip is the dot and the count, the model label
+          gives way with an ellipsis, the send button stays inside (AC3 fix round 1). */}
+      <RefBlock id="agents-chip-narrow" width={390} pad>
+        <AgentsChipComposer running={A.running} waiting={A.waiting} quick />
+      </RefBlock>
     </>
   );
 }
