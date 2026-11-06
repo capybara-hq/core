@@ -51,7 +51,8 @@ test("成员页：管理员生成邀请链接 → 新用户凭链接注册加入
   await expect(dialog).toHaveCount(0);
   await expect(pending).toHaveCount(pendingBefore + 1);
 
-  // 另一个浏览器上下文（没有登录）：打开链接 → 新建账号并加入 → 进入首页，当前组织就是 Acme
+  // Another browser context (signed out): open the link → create an account and join → home (the
+  // new conversation), with Acme as the current org
   const other = await browser.newContext();
   try {
     const guestPage = await other.newPage();
@@ -62,7 +63,7 @@ test("成员页：管理员生成邀请链接 → 新用户凭链接注册加入
     await guestPage.getByLabel(zh.invite.passwordLabel).fill("invitee-password-123");
     await guestPage.getByLabel(zh.invite.displayNameLabel).fill(invitee);
     await guestPage.getByRole("button", { name: zh.invite.signup }).click();
-    await expect(guestPage).toHaveURL(/\/$/);
+    await expect(guestPage).toHaveURL(/\/chat$/);
     await expect
       .poll(async () => {
         const me = await guestPage.request.get("/api/v1/me");

@@ -5,7 +5,9 @@ import { signIn } from "./support/sign-in";
 
 /**
  * Server-rendered times hydrate without a mismatch (CI failure of `ssr.spec.ts`, 2026-11-04: the
- * overview's 「接着上次的会话」 meta said 现在 on the server and 1分钟前 in the browser). The browser
+ * old home overview's 「接着上次的会话」 meta said 现在 on the server and 1分钟前 in the browser; the
+ * home page is gone, the new conversation is the home, and its sidebar row of an untitled
+ * conversation reads `未命名会话 · MM-DD HH:mm` in the server's zone, then the browser's). The browser
  * runs 61 s ahead of the server, then also in a time zone no server uses (Pacific/Chatham,
  * UTC+12:45 / +13:45), so a relative age and an absolute `MM-DD HH:mm` differ between the two;
  * until it has mounted the page renders with the server's clock and zone, then with its own.
@@ -27,7 +29,7 @@ async function hydratesTimes(page: Page): Promise<void> {
   await signIn(page);
   const orgId = await currentOrg(page);
   const agentId = await createAgent(page, orgId, `Clock agent ${Date.now()}`);
-  // an untitled conversation updated just now: the overview's recent list says 现在 on the server
+  // an untitled conversation started just now: the sidebar's row reads its start time
   const conv = await page.request.post(`/api/v1/orgs/${orgId}/conversations`, {
     headers: CSRF,
     data: { agentId },
@@ -38,12 +40,11 @@ async function hydratesTimes(page: Page): Promise<void> {
   const errors = hydrationErrors(page);
   await page.clock.install({ time: Date.now() + 61_000 });
 
-  await page.goto("/");
+  // the home: the new conversation, with the sidebar's conversation rows
+  await page.goto("/chat");
   await hydrated(page);
-  const recent = page.getByRole("list", { name: "接着上次的会话" });
-  const row = recent.getByRole("listitem").filter({ has: page.locator(`a[href$="/chat/${id}"]`) });
-  // after mount the browser's own clock: a minute has passed
-  await expect(row).toContainText("1分钟前");
+  const row = page.getByRole("region", { name: "会话" }).locator(`a[href$="/chat/${id}"]`);
+  await expect(row).toContainText("未命名会话");
 
   await page.goto(`/chat/${id}`);
   await expect(page.locator('[data-template="ConversationPage"]')).toBeVisible();

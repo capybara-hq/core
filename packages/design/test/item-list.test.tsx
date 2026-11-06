@@ -1,6 +1,6 @@
 import { cleanup, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
-import { DesignProvider, Grid, ItemList, StepList } from "../src/index";
+import { DesignProvider, ItemList, StepList } from "../src/index";
 
 afterEach(cleanup);
 const zh = (ui: React.ReactElement) => render(<DesignProvider locale="zh">{ui}</DesignProvider>);
@@ -70,26 +70,22 @@ describe("StepList: one thing at the right of a step", () => {
   });
 });
 
-describe("StepList and the main-side grid", () => {
-  it("a card-inset step list marks done and to-do steps; the grid names its layout", () => {
+describe("StepList inset in a card", () => {
+  it("a card-inset step list marks done and to-do steps", () => {
     const { container } = zh(
-      <Grid columns="main-side">
-        <StepList
-          inset="card"
-          steps={[
-            { label: "组织已建好", description: "Acme", done: true },
-            {
-              label: "配置模型",
-              description: "x",
-              done: false,
-              action: <button type="button">去配置</button>,
-            },
-          ]}
-        />
-        <div />
-      </Grid>,
+      <StepList
+        inset="card"
+        steps={[
+          { label: "组织已建好", description: "Acme", done: true },
+          {
+            label: "配置模型",
+            description: "x",
+            done: false,
+            action: <button type="button">去配置</button>,
+          },
+        ]}
+      />,
     );
-    expect(container.querySelector(".cb-grid")?.getAttribute("data-columns")).toBe("main-side");
     expect(container.querySelector(".cb-checklist")?.getAttribute("data-inset")).toBe("card");
     const items = screen.getAllByRole("listitem");
     expect(items.map((i) => i.getAttribute("data-state"))).toEqual(["done", "todo"]);

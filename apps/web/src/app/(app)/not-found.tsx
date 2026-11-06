@@ -4,6 +4,7 @@ import { Button, StatusPage } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
 import { useRoutePath } from "../../components/shell/path";
 import { useRouter } from "../../i18n/navigation";
+import { HOME_PATH } from "../../lib/routes";
 
 /** (app) 内 `notFound()` 的页面：StatusPage 404（在 App Shell 内）。 */
 export default function NotFound() {
@@ -18,7 +19,7 @@ export default function NotFound() {
       title={t("title")}
       description={t("description")}
       action={
-        <Button variant="primary" onClick={() => router.push("/")}>
+        <Button variant="primary" onClick={() => router.push(HOME_PATH)}>
           {t("back")}
         </Button>
       }

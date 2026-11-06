@@ -1,28 +1,25 @@
 // Server-rendered times hydrate with the server's clock and zone, then follow the browser's (CI
-// failure of e2e/ssr.spec.ts, 2026-11-04: the overview's 「接着上次的会话」 meta was 现在 on the
-// server and 1分钟前 in the browser, and Next's error overlay then covered the page).
-import { formatDateTime } from "@capybara-hq/design";
-import { cleanup, render, within } from "@testing-library/react";
+// failure of e2e/ssr.spec.ts, 2026-11-04: the old home overview's 「接着上次的会话」 meta was 现在 on
+// the server and 1分钟前 in the browser, and Next's error overlay then covered the page). The home
+// page is gone (the new conversation is the home); the probe below renders the same two kinds of
+// time a page renders: a relative age (`useNow`) and an untitled conversation's `MM-DD HH:mm`
+// (`useTimeZone`), under the app's DesignRoot as the root layout passes it the server's clock.
+import {
+  formatDateTime,
+  formatRelative,
+  type ServerClock,
+  untitledLabel,
+  useNow,
+  useTimeZone,
+} from "@capybara-hq/design";
+import { act, cleanup, render } from "@testing-library/react";
+import { hydrateRoot, type Root } from "react-dom/client";
+import { renderToString } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import zh from "../messages/zh.json";
 import { DesignRoot } from "../src/components/design-root";
-import { navigateBrowser } from "../src/lib/browser";
 import { parseTimeZone, shortTime } from "../src/lib/time";
-import { json } from "./support/api";
-import { resetNavigation } from "./support/navigation";
-import { hydrateRouteWithCache } from "./support/query";
-import { expectNoFirstPaintFetch, type Routes } from "./support/server";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
-vi.mock("../src/lib/browser", () => ({ navigateBrowser: vi.fn() }));
-vi.mock("next/navigation", () => ({
-  notFound: () => {
-    throw new Error("NEXT_NOT_FOUND");
-  },
-  redirect: (to: string) => {
-    throw new Error(`REDIRECT ${to}`);
-  },
-}));
 
 /** The server's render time: 10:00:30 UTC, so 61 s later the age has crossed a minute. */
 const T = Date.parse("2026-11-04T10:00:30.000Z");
@@ -30,99 +27,92 @@ const T = Date.parse("2026-11-04T10:00:30.000Z");
 const FAR_ZONE = "Pacific/Chatham";
 const browserZone = new Intl.DateTimeFormat().resolvedOptions().timeZone;
 
-/** The overview's reads: one conversation updated at the server's render time, untitled. */
-function overviewRoutes(): Routes {
-  const at = new Date(T).toISOString();
-  return {
-    "GET /api/v1/orgs/o1/agents": () =>
-      json(200, {
-        agents: [
-          { id: "ag1", definition: { name: "研究助手", model: { provider: "f", model: "m" } } },
-        ],
-      }),
-    "GET /api/v1/orgs/o1/models": () =>
-      json(200, { providers: [{ provider: "f", models: [{ id: "m" }] }] }),
-    "GET /api/v1/orgs/o1/inbox": () => json(200, { truncated: false, items: [] }),
-    "GET /api/v1/orgs/o1/conversations/groups": () =>
-      json(200, {
-        next: null,
-        groups: [
-          {
-            agent: { id: "ag1", name: "研究助手" },
-            latestAt: at,
-            more: false,
-            conversations: [
-              { id: "c1", agentId: "ag1", title: null, createdAt: at, updatedAt: at },
-            ],
-          },
-        ],
-      }),
-    "GET /api/v1/orgs/o1/skills": () => json(200, { skills: [] }),
-    "GET /api/v1/orgs/o1/connectors": () => json(200, { connectors: [] }),
-    "GET /api/v1/orgs/o1/members": () => json(200, { members: [{}] }),
-  };
+/** A conversation updated at the server's render time, untitled: its age and its label. */
+function Probe() {
+  const now = useNow();
+  const timeZone = useTimeZone();
+  return (
+    <p data-testid="probe">
+      {`研究助手 · ${formatRelative(new Date(T).toISOString(), "zh", now)}`}
+      {" | "}
+      {untitledLabel(new Date(T), "zh", timeZone)}
+    </p>
+  );
 }
 
-/** The overview's 「接着上次的会话」 row of c1. */
-function recentRow(container: HTMLElement): HTMLElement {
-  const list = within(container).getByRole("list", { name: zh.home.recent.title });
-  return within(list).getAllByRole("listitem")[0] as HTMLElement;
+/** Renders the probe on the "server" at T, then hydrates it in the "browser". */
+async function hydrateProbe(opts: { clock?: ServerClock; beforeHydrate?: () => void }) {
+  const tree = (
+    <DesignRoot locale="zh" {...(opts.clock !== undefined && { clock: opts.clock })}>
+      <Probe />
+    </DesignRoot>
+  );
+  const html = renderToString(tree);
+  const container = document.createElement("div");
+  container.innerHTML = html;
+  document.body.append(container);
+  opts.beforeHydrate?.();
+  const errors: string[] = [];
+  const consoleError = vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+    const text = args.map(String).join(" ");
+    if (/hydrat|didn't match/i.test(text)) errors.push(text);
+  });
+  let root: Root | undefined;
+  try {
+    await act(async () => {
+      root = hydrateRoot(container, tree, { onRecoverableError: (e) => errors.push(String(e)) });
+    });
+  } finally {
+    consoleError.mockRestore();
+  }
+  const text = () => container.querySelector('[data-testid="probe"]')?.textContent ?? "";
+  const unmount = () => {
+    act(() => root?.unmount());
+    container.remove();
+  };
+  return { html, errors, text, unmount };
 }
 
 beforeEach(() => {
-  resetNavigation("/");
-  vi.mocked(navigateBrowser).mockReset();
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(T);
 });
 afterEach(() => {
   cleanup();
   vi.useRealTimers();
-  vi.unstubAllGlobals();
 });
 
-describe("the overview's server-rendered times", () => {
+describe("server-rendered times", () => {
   it("a browser clock 61 s ahead hydrates the server's age (现在), then shows its own (1分钟前)", async () => {
-    expectNoFirstPaintFetch();
-    const { container, errors, html, unmount } = await hydrateRouteWithCache(
-      "/",
-      overviewRoutes(),
-      {
-        locale: "zh",
-        clock: { now: T, timeZone: browserZone },
-        beforeHydrate: () => vi.setSystemTime(T + 61_000),
-      },
-    );
+    const { html, errors, text, unmount } = await hydrateProbe({
+      clock: { now: T, timeZone: browserZone },
+      beforeHydrate: () => vi.setSystemTime(T + 61_000),
+    });
     expect(html).toContain("研究助手 · 现在");
     expect(errors).toEqual([]);
     // right after hydration the browser's clock
-    expect(recentRow(container).textContent).toContain("研究助手 · 1分钟前");
+    expect(text()).toContain("研究助手 · 1分钟前");
     unmount();
   });
 
   it("control: without the server's clock the same load mismatches (the CI failure)", async () => {
-    expectNoFirstPaintFetch();
-    const { errors, unmount } = await hydrateRouteWithCache("/", overviewRoutes(), {
-      locale: "zh",
+    const { errors, unmount } = await hydrateProbe({
       beforeHydrate: () => vi.setSystemTime(T + 61_000),
     });
-    expect(errors.join("\n")).toMatch(/Hydration failed/);
+    expect(errors.join("\n")).toMatch(/Hydration failed|didn't match/);
     unmount();
   });
 
   it("a browser in another zone hydrates the server's MM-DD HH:mm, then writes its own", async () => {
-    expectNoFirstPaintFetch();
-    const { container, errors, html, unmount } = await hydrateRouteWithCache(
-      "/",
-      overviewRoutes(),
-      { locale: "zh", clock: { now: T, timeZone: FAR_ZONE } },
-    );
+    const { html, errors, text, unmount } = await hydrateProbe({
+      clock: { now: T, timeZone: FAR_ZONE },
+    });
     const server = formatDateTime(new Date(T), "compact", FAR_ZONE);
     const local = formatDateTime(new Date(T), "compact");
     expect(server).not.toBe(local);
     expect(html).toContain(`未命名会话 · ${server}`);
     expect(errors).toEqual([]);
-    expect(recentRow(container).textContent).toContain(`未命名会话 · ${local}`);
+    expect(text()).toContain(`未命名会话 · ${local}`);
     unmount();
   });
 });

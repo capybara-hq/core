@@ -25,9 +25,12 @@ export type FixtureNavItem = {
   place: "primary" | "more" | "brand";
 };
 
-/** The work context's navigation in the web-order spec §2.1 order (extension pages follow 更多's). */
+/**
+ * The work context's navigation in the web-order spec §2.1 order, as apps/web draws it (acceptance
+ * 2026-11-07: no home item; 智能体, 技能, 连接器 after New conversation, the rest in the 更多 flyout,
+ * extension pages after 更多's).
+ */
 export const NAV_FIXTURE: FixtureNavItem[] = [
-  { id: "overview", label: "首页", href: "/", icon: "home", audience: "all", place: "primary" },
   {
     id: "inbox",
     label: "收件箱",
@@ -51,7 +54,7 @@ export const NAV_FIXTURE: FixtureNavItem[] = [
     href: "/skills",
     icon: "skills",
     audience: "member",
-    place: "more",
+    place: "primary",
   },
   {
     id: "connectors",
@@ -59,13 +62,29 @@ export const NAV_FIXTURE: FixtureNavItem[] = [
     href: "/connectors",
     icon: "connector",
     audience: "all",
+    place: "primary",
+  },
+  {
+    id: "plugins",
+    label: "插件",
+    href: "/plugins",
+    icon: "catalog",
+    audience: "member",
     place: "more",
   },
   {
-    id: "catalog",
-    label: "插件",
-    href: "/catalog",
-    icon: "catalog",
+    id: "extensions",
+    label: "扩展",
+    href: "/extensions",
+    icon: "extension",
+    audience: "member",
+    place: "more",
+  },
+  {
+    id: "agent-templates",
+    label: "智能体模板",
+    href: "/agent-templates",
+    icon: "agent",
     audience: "member",
     place: "more",
   },
@@ -90,7 +109,7 @@ export const NAV_FIXTURE: FixtureNavItem[] = [
     label: "组织设置",
     href: "/settings/organization",
     icon: "settings",
-    audience: "admin",
+    audience: "member",
     place: "more",
   },
 ];

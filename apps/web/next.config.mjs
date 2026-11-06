@@ -26,6 +26,9 @@ const nextConfig = {
   outputFileTracingRoot: monorepoRoot,
   // 第一段的安装表单已由向导取代（否则 /apps/new 会落到应用详情的动态路由）
   redirects: async () => [
+    // There is no home page: the new conversation is the home (acceptance 2026-11-07). Temporary,
+    // so the browser keeps asking `/` should a home page come back. The query passes through.
+    { source: "/", destination: "/chat", permanent: false },
     { source: "/:locale(zh|en)/apps/new", destination: "/:locale/apps/install", permanent: false },
     // Personal settings moved from /settings/* to /account/* (old links, bookmarks, return URLs)
     ...["connections", "grants", "identities"].flatMap((page) => [

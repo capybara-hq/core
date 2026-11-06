@@ -146,7 +146,7 @@ describe("the agent pages render on the server (web-SSR spec §6)", () => {
       { [`GET ${ORG}/agents`]: ok({ agents: [] }) },
       { readiness: NOT_READY },
     );
-    await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/"));
+    await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/chat"));
     expect(template("ListPage")).toBeNull();
   });
 

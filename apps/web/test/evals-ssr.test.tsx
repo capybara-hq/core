@@ -680,7 +680,7 @@ describe("the gates (org admins)", () => {
       cleanup();
       expectNoFirstPaintFetch();
       await renderRouteWithCache(path, ROUTES, { readiness: NOT_READY });
-      await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/"));
+      await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/chat"));
     },
   );
 });

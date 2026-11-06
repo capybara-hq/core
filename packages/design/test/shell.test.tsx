@@ -42,8 +42,8 @@ const sidebar = {
     kind: "work" as const,
     org: { name: "Acme", initial: "A", slug: "acme", role: "所有者", menu: [] },
     primary: [
-      { id: "overview", label: "首页", href: "/", icon: "home" as const },
       { id: "agents", label: "Agents", href: "/agents", icon: "agent" as const },
+      { id: "skills", label: "技能", href: "/skills", icon: "skills" as const },
     ],
     more: [{ id: "settings", label: "组织设置", href: "/settings", icon: "settings" as const }],
   },

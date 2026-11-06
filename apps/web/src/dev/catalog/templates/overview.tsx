@@ -69,10 +69,10 @@ function OverviewBody() {
   );
 }
 
-/** T1 概览：组织首页。 */
+/** T1 Overview: a summary page (the agent summary, the admin overview); the workspace has no home page. */
 export function OverviewTemplate() {
   return (
-    <FixtureShell nav="overview" context="overview">
+    <FixtureShell nav="agents" context="overview">
       <OverviewBody />
     </FixtureShell>
   );

@@ -35,6 +35,7 @@ import { keys } from "../../lib/query/keys";
 import { useAppMutation } from "../../lib/query/mutation";
 import { meQuery, readinessQuery } from "../../lib/query/shell";
 import { markSigningOut, resetSession } from "../../lib/query/workspace";
+import { HOME_PATH } from "../../lib/routes";
 import { logout, type Me, type Membership, setCurrentOrg } from "../../lib/session";
 import { broadcastSession, useSessionSync } from "../../lib/session-sync";
 import { useErrorMessage } from "../../lib/use-error-message";
@@ -100,8 +101,8 @@ const under = (pathname: string, prefix: string) =>
  * 3. otherwise the App Shell: the sidebar in its work or admin context (web order §2.1–§2.2), the
  *    account menu and the status bar (`<login>@<slug>:<path>` · version · time zone).
  *
- * It provides the session to pages ({@link SessionContext}). An org change is a full navigation to
- * `/` (ruling R4), so the current page stays until the new document arrives; `reload()` re-renders
+ * It provides the session to pages ({@link SessionContext}). An org change is a full navigation
+ * home, the new conversation (ruling R4), so the current page stays until the new document arrives; `reload()` re-renders
  * the route on the server (`router.refresh()`), which hydrates fresh shell data. The conversation
  * list, the pending count and the extension pages read their queries directly; the frame stays
  * mounted across navigations, so on each path change it refetches the stale ones of the list and
@@ -252,7 +253,7 @@ function ShellFrame({
    */
   const openHome = useCallback(() => {
     setSwitching(true);
-    void resetSession(qc, () => navigateBrowser("/"));
+    void resetSession(qc, () => navigateBrowser(HOME_PATH));
   }, [qc]);
   const reload = useCallback(async () => startRefresh(() => router.refresh()), [router]);
   // Both end the cache's session themselves (`resetSession`): nothing to invalidate.
@@ -281,9 +282,9 @@ function ShellFrame({
   // A failed switch from a menu says why (the menu has closed).
   const selectOrg = (next: string) =>
     void switchOrg(next).catch((e: unknown) => toast.error(errorMessage(e)));
-  // Another tab signed in or out: start over from `/`; it switched org: follow (the current org
+  // Another tab signed in or out: start over from home; it switched org: follow (the current org
   // belongs to the session the tabs share).
-  useSessionSync(() => void resetSession(qc, () => navigateBrowser("/")), openHome);
+  useSessionSync(() => void resetSession(qc, () => navigateBrowser(HOME_PATH)), openHome);
 
   const session = useMemo<Session>(
     () => ({
@@ -458,7 +459,7 @@ function ShellFrame({
           <SetupPage
             sidebar={{
               org: sidebarOrg(multiOrg ? orgItems : []),
-              home: { href: "/" },
+              home: { href: HOME_PATH },
               steps,
               activeNav: activeStepOf(pathname, steps),
               // The org has its own menu in the switcher.
@@ -509,7 +510,11 @@ function ShellFrame({
   // for a super admin: anyone else gets the 403 beside the workspace sidebar.
   const inAdmin = adminContext;
   const context: SidebarContext = inAdmin
-    ? { kind: "admin", back: { href: "/", slug: currentOrg?.slug ?? null }, items: adminItems }
+    ? {
+        kind: "admin",
+        back: { href: HOME_PATH, slug: currentOrg?.slug ?? null },
+        items: adminItems,
+      }
     : {
         kind: "work",
         org: sidebarOrg(orgItems),

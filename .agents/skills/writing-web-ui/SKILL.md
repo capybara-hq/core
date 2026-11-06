@@ -22,7 +22,7 @@ Tokens: `docs/design/tokens.json` is the source; `pnpm gen:tokens` writes `token
 
 | Page | Template | Notes |
 |---|---|---|
-| Org home, Agent summary | `OverviewPage` | Single |
+| Agent summary, admin overview | `OverviewPage` | Single (the workspace has no home page: the new conversation `/chat` is the home, `/` redirects there) |
 | Agents / knowledge bases / extensions / members lists | `ListPage` | Rail (optional facet filters) + one `DataTable` |
 | Agent / knowledge base / extension detail | `DetailPage` | Content + Inspector, with PageTabs |
 | Create / edit an object | `FormPage` | Centered, grouped by `FormSection`, always has an ActionRow |
@@ -38,7 +38,7 @@ Tokens: `docs/design/tokens.json` is the source; `pnpm gen:tokens` writes `token
 
 ### The web order: contexts and frames (spec `docs/superpowers/specs/2026-10-31-web-order-design.md`)
 
-The sidebar has three contexts (the third, setup, is drawn only by `SetupPage`): the workspace (conversations, Agents, 更多 with connectors / channels / skills / evals / catalog, org settings) and the admin console (`/admin/*`, entered from the account row, super admins only). Personal settings are `/account/*` (connections, grants, IM identities), org settings `/settings/*`. Every page uses one of three frames and one page head (`PageHeader`: `path` required, `title`, optional `description` / `actions` / `tabs` + `activeTab` / `search`).
+The sidebar has three contexts (the third, setup, is drawn only by `SetupPage`): the workspace (新会话, which is the home, then 智能体 / 技能 / 连接器; 更多 with plugins / extensions / agent templates / channels / evals / org settings; the conversations) and the admin console (`/admin/*`, entered from the account row, super admins only). Personal settings are `/account/*` (connections, grants, IM identities), org settings `/settings/*`. Every page uses one of three frames and one page head (`PageHeader`: `path` required, `title`, optional `description` / `actions` / `tabs` + `activeTab` / `search`).
 
 | Frame | Template | Use |
 |---|---|---|
@@ -171,8 +171,8 @@ function Agents({ orgId }: { orgId: string }) {
   Secondary sections are their own `useQuery` with their own section state (`retryOnMountOf`
   keeps a hydrated error from being read again on mount).
 - `workspace.ts`: `useWorkspace({ min?, setup? })` / `useAdmin()` are the client gates, decided
-  from the cached `/me` and readiness (`pending` until they answer; a route without `setup` goes to
-  `/` while the org is not ready). `resetSession(qc, then)` cancels every read in flight, clears
+  from the cached `/me` and readiness (`pending` until they answer; a route without `setup` goes home,
+  `/chat`, while the org is not ready). `resetSession(qc, then)` cancels every read in flight, clears
   the cache and navigates in the same task: an org switch, create or leave and a sign-out go
   through it, then a full navigation (ruling R4), so nothing of the old org or account paints.
 - **Mutations** are `useAppMutation({ fn, invalidates: (v, r) => [keys…], forgetsOnLeave?, onSuccess? })`
@@ -225,8 +225,8 @@ moves when the data lands. Pass the shape the page knows statically; a template 
 - `SettingsPage loading={{ sections?: [{ fields?, cards?, title?, description? }], cards? }}`.
 - `DetailPage loading={{ inspector?: true | { rows?, keyWidth? }, blocks?, content?: BlockShape[] }}`
   and `WizardPage loading={{ fields }} | {{ content: BlockShape[] }}`.
-- `OverviewPage loading={{ stats?, sections?, mainSide?: { main, side }, keep? }}` (`mainSide`:
-  the content is a main-side grid of card stacks; `keep`: the children don't depend on the data).
+- `OverviewPage loading={{ stats?, sections?, keep? }}` (`keep`: the children don't depend on the
+  data).
 - `InboxPage loading`, `TracePage loading={{ spans?, stats? }}`, `AuthPage loading={{ fields }}`,
   `ConversationPage loading={{ thread?, title?, rightArea? }}`, `PageHeader loading`.
 - Shapes (`templates/frame.tsx`): `FieldShape` (`control`: `input` / `textarea` / `select` /

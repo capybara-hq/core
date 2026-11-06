@@ -245,20 +245,6 @@ describe("OverviewPage loading", () => {
     expect(count('[data-part="loading-card"]')).toBe(1);
   });
 
-  it("mainSide draws the placeholders in the main-side grid the loaded page uses", () => {
-    zh(<OverviewPage header={header} loading={{ stats: 0, mainSide: { main: 2, side: 1 } }} />);
-    const grid = document.querySelector('[data-template="OverviewPage"] .cb-grid');
-    expect(grid?.getAttribute("data-columns")).toBe("main-side");
-    const columns = [...(grid?.children ?? [])];
-    expect(columns.map((c) => c.className)).toEqual(["cb-stack", "cb-stack"]);
-    expect(columns.map((c) => c.getAttribute("data-gap"))).toEqual(["16", "16"]);
-    expect(columns.map((c) => c.querySelectorAll('[data-part="loading-card"]').length)).toEqual([
-      2, 1,
-    ]);
-    expect(count('[data-part="loading-card"]')).toBe(3);
-    expect(parts("stat-card")).toHaveLength(0);
-  });
-
   it("keep renders the children as they are under the stat slots, without blocks", () => {
     zh(
       <OverviewPage header={header} loading={{ stats: 4, keep: true }}>
@@ -271,7 +257,7 @@ describe("OverviewPage loading", () => {
     expect(screen.getAllByRole("status")).toHaveLength(1);
   });
 
-  it("without mainSide the sections stack in one column", () => {
+  it("the sections stack in one column", () => {
     zh(<OverviewPage header={header} loading={{ sections: 2 }} />);
     expect(document.querySelector('[data-template="OverviewPage"] .cb-grid')).toBeNull();
   });

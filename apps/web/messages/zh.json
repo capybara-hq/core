@@ -60,13 +60,6 @@
     "setupTokenHint": "仅当部署配置了初始化令牌时需要。"
   },
   "home": {
-    "title": "首页",
-    "noMemberships": "还没有加入任何组织。",
-    "agents": "智能体",
-    "noMembershipsHint": "请联系组织管理员邀请你加入。",
-    "role": "角色",
-    "slug": "标识",
-    "noMembershipsCreateHint": "新建一个组织开始使用，或者请组织管理员邀请你加入。",
     "createOrg": {
       "open": "新建组织",
       "title": "新建组织",
@@ -76,17 +69,7 @@
       "submit": "新建",
       "cancel": "取消"
     },
-    "orgSettings": "组织设置",
-    "skills": "技能",
-    "connectors": "连接器",
-    "members": "成员",
-    "models": "可用模型",
-    "newAgent": "新建智能体",
-    "newConversation": "新会话",
-    "dailyDescription": "{org} · {role}",
-    "dailyDescriptionPending": "{org} · {role} · {count, plural, other {# 件事等你处理}}",
     "setup": {
-      "description": "{org} 刚建好。完成下面几步，团队就能开始用智能体干活。",
       "progress": "已完成 {done} / {total}",
       "later": "可以稍后再做",
       "laterHint": {
@@ -95,41 +78,6 @@
         "catalog": "从平台目录添加技能和连接器。",
         "connections": "连接你自己的账号，供智能体代你操作。"
       }
-    },
-    "inbox": {
-      "title": "等你处理",
-      "titleCount": "等你处理 · {count}",
-      "open": "打开收件箱",
-      "empty": "没有要你处理的事。",
-      "unavailable": "暂时读不到待处理的事项，刷新页面重试。",
-      "toolApproval": "工具审批",
-      "toolApprovalTitle": "{agent} 想调用 {tool}",
-      "view": "查看",
-      "approveOnce": "允许一次",
-      "approved": "已允许，这一次调用会继续。",
-      "skillChange": "技能变更",
-      "skillNew": "{agent} 想新建技能 {skill}",
-      "skillUpdate": "{agent} 想更新技能 {skill}",
-      "catalogRequest": "目录申请",
-      "catalogRequestTitle": "申请安装 {item}",
-      "notice": "通知",
-      "noticeTitle": "你有一条新通知",
-      "skillRenamed": "技能改名",
-      "skillRenamedTitle": "技能 {from} 已改名为 {to}",
-      "requestDecided": "申请结果",
-      "requestApprovedTitle": "申请已批准：{item}",
-      "requestRejectedTitle": "申请被拒绝：{item}"
-    },
-    "recent": {
-      "title": "接着上次的会话",
-      "empty": "还没有会话。从右边选一个智能体开始。",
-      "unavailable": "暂时读不到会话列表，刷新页面重试。",
-      "waiting": "等你处理"
-    },
-    "agentsCard": {
-      "title": "常用智能体",
-      "all": "全部",
-      "chat": "会话"
     }
   },
   "errors": {
@@ -457,7 +405,6 @@
     "empty": "暂无智能体。",
     "starting": "正在新建会话…",
     "noOrg": "还没有选择当前组织。",
-    "backHome": "返回首页",
     "form": {
       "title": "新建智能体",
       "nameLabel": "名称",
@@ -637,7 +584,6 @@
       "model": "模型"
     },
     "emptyHint": "新建一个智能体，然后开始对话。",
-    "noOrgHint": "请在首页或侧栏底部的账户菜单中选择组织。",
     "edit": "编辑",
     "runHistory": "运行记录",
     "tabs": {
@@ -1006,7 +952,6 @@
     "liveLost": "实时刷新已断开，刷新页面以获取最新内容。"
   },
   "nav": {
-    "overview": "首页",
     "agents": "智能体",
     "goto": "跳转",
     "actions": "操作",
@@ -1031,7 +976,7 @@
   "notFound": {
     "title": "页面不存在",
     "description": "链接可能已失效，或该页面已被移除。",
-    "back": "返回首页"
+    "back": "开始新会话"
   },
   "tools": {
     "outputId": "完整结果已存档：{id}。",

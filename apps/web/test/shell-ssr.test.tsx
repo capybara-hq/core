@@ -147,7 +147,7 @@ describe("session-changing actions", () => {
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "当前组织：Acme，切换组织" }));
     await user.click(await screen.findByRole("menuitemradio", { name: "Beta" }));
-    await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledWith("/"));
+    await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledWith("/chat"));
     expect(router.push).not.toHaveBeenCalled();
     expect(bodyOf(calls.find((c) => c.method === "PUT"))).toEqual({ orgId: "o2" });
     expect(posted).toEqual([expect.objectContaining({ kind: "org-switched" })]);
@@ -184,7 +184,7 @@ describe("session-changing actions", () => {
     await user.type(within(dialog).getByRole("textbox"), "New");
     expect(submit.disabled).toBe(false);
     await user.click(submit);
-    await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledWith("/"));
+    await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledWith("/chat"));
     expect(calls.map((c) => [c.method, c.url])).toEqual([
       ["POST", "/api/v1/orgs"],
       ["PUT", "/api/v1/me/current-org"],
@@ -445,7 +445,7 @@ describe("cross-tab session sync", () => {
     const other = new Bus("capybara-session");
     act(() => other.postMessage({ kind: "org-switched", from: "another-tab", at: 1 }));
     await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledTimes(1));
-    expect(navigateBrowser).toHaveBeenCalledWith("/");
+    expect(navigateBrowser).toHaveBeenCalledWith("/chat");
     expect(router.push).not.toHaveBeenCalled();
     act(() => other.postMessage({ kind: "signed-out", from: "another-tab", at: 2 }));
     await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledTimes(2));

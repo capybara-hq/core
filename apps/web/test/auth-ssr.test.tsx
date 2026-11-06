@@ -173,7 +173,7 @@ describe("/setup", () => {
     );
     await user.type(screen.getByRole("textbox", { name: en.setup.displayNameLabel }), "Admin");
     await user.click(screen.getByRole("button", { name: en.setup.submit }));
-    await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledWith("/"));
+    await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledWith("/chat"));
     expect(cachedAtNavigation).toBe(0);
     expect(broadcastSession).toHaveBeenCalledWith("signed-in");
     expect(before(broadcastSession, navigateBrowser)).toBe(true);
@@ -316,7 +316,7 @@ describe("/invite/[token]", () => {
     await user.type(screen.getByLabelText(en.invite.passwordLabel), "a-very-long-password");
     await user.type(screen.getByLabelText(en.invite.displayNameLabel), "Carol");
     await user.click(screen.getByRole("button", { name: en.invite.signup }));
-    await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledWith("/"));
+    await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledWith("/chat"));
     expect(cachedAtNavigation).toBe(0);
     expect(broadcastSession).toHaveBeenCalledWith("signed-in");
     expect(before(broadcastSession, navigateBrowser)).toBe(true);
@@ -337,7 +337,7 @@ describe("/invite/[token]", () => {
       cachedAtNavigation = client.getQueryCache().getAll().length;
     });
     await userEvent.setup().click(screen.getByRole("button", { name: en.invite.accept }));
-    await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledWith("/"));
+    await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledWith("/chat"));
     expect(cachedAtNavigation).toBe(0);
     expect(broadcastSession).toHaveBeenCalledWith("org-switched");
     expect(router.replace).not.toHaveBeenCalled();

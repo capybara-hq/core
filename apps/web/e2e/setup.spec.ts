@@ -14,9 +14,10 @@ const zh = JSON.parse(
  * `setup` 项目（playwright.config.ts）：在全新内核上走一遍初始化向导，其余用例都依赖它先跑完
  * （之后它们用 `support/sign-in.ts` 登录）。初始化页的断言只在这里。
  */
-test("初始化向导：未初始化的部署打开首页 → 初始化页（可切换语言）→ 建超级管理员与组织 → 引导设置 → 新建 agent → 对话", async ({
+test("setup wizard: a fresh deployment opens / → the setup page (language switch) → super admin and org → guided setup → new agent → conversation", async ({
   page,
 }) => {
+  // `/` redirects to the home (the new conversation), which sends a fresh deployment to /setup
   await page.goto("/");
   await expect(page).toHaveURL(/\/setup$/);
   // the auth pages switch language and theme too
@@ -28,9 +29,9 @@ test("初始化向导：未初始化的部署打开首页 → 初始化页（可
   await page.getByLabel(zh.setup.orgNameLabel).fill(ORG_NAME);
   await page.getByRole("button", { name: zh.setup.submit }).click();
 
-  await expect(page).toHaveURL(/\/$/);
-  // a new org has no agent: the setup layout (the setup sidebar, not the workspace's), not the
-  // overview (web-order §3.8, web-SSR §4)
+  // setting up lands home, the new conversation; a new org has no agent: the setup layout there
+  // (the setup sidebar, not the workspace's; web-order §3.8, web-SSR §4)
+  await expect(page).toHaveURL(/\/chat$/);
   const setup = page.locator('[data-template="SetupPage"]');
   await expect(setup).toBeVisible();
   await expect(page.locator('[data-part="sidebar"][data-context="work"]')).toHaveCount(0);

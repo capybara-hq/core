@@ -62,41 +62,44 @@ function ids(level: NavLevel, superAdmin: boolean) {
 }
 
 describe("nav by level (role hiding is cosmetic; the kernel decides)", () => {
-  // the inbox is the brand row's button (acceptance round 2, B2)
-  const primary = ["overview", "agents"];
-  const guest = ["connectors"];
+  // The inbox is the brand row's button (acceptance round 2, B2). No home item: 新会话 is the home;
+  // 技能 and 连接器 sit under 智能体 (acceptance 2026-11-07). 技能 is for members up.
+  const primaryGuest = ["agents", "connectors"];
+  const primary = ["agents", "skills", "connectors"];
   // 组织设置 is shown to members too (read-only for them; user decision, role pass item 8)
   // 插件 and 扩展 for members up (read-only for members; the kernel's org.extensions.read)
   // 智能体模板 for members up (read-only for members)
-  const member = ["plugins", "extensions", "skills", "connectors", "agent-templates", "settings"];
-  const admin = [
-    "plugins",
-    "extensions",
-    "skills",
-    "connectors",
-    "agent-templates",
-    "channels",
-    "evals",
-    "settings",
+  const member = ["plugins", "extensions", "agent-templates", "settings"];
+  const admin = ["plugins", "extensions", "agent-templates", "channels", "evals", "settings"];
+  const cases: [NavLevel, boolean, string[], string[]][] = [
+    ["guest", false, primaryGuest, []],
+    ["member", false, primary, member],
+    ["admin", false, primary, admin],
+    ["guest", true, primaryGuest, []],
+    ["admin", true, primary, admin],
   ];
-  const cases: [NavLevel, boolean, string[]][] = [
-    ["guest", false, guest],
-    ["member", false, member],
-    ["admin", false, admin],
-    ["guest", true, guest],
-    ["admin", true, admin],
-  ];
-  for (const [level, superAdmin, more] of cases) {
+  for (const [level, superAdmin, top, more] of cases) {
     it(`${level}${superAdmin ? " + super admin" : ""}`, () => {
       expect(ids(level, superAdmin)).toEqual({
-        primary,
+        primary: top,
         more,
         adminHref: superAdmin ? "/admin" : null,
       });
     });
   }
 
-  it("members see 插件 技能 连接器 智能体模板 组织设置 under 更多; org admins also 扩展 渠道 评测与运行", () => {
+  it("no item is the home page; 技能 and 连接器 are never in the 更多 flyout", () => {
+    for (const level of ["guest", "member", "admin"] as const) {
+      const { primary: top, more } = ids(level, true);
+      cleanup();
+      expect(top).not.toContain("overview");
+      expect(more).not.toContain("overview");
+      expect(more).not.toContain("skills");
+      expect(more).not.toContain("connectors");
+    }
+  });
+
+  it("the nav reads 智能体 技能 连接器 after 新会话; members see 插件 扩展 智能体模板 组织设置 under 更多; org admins also 渠道 评测与运行", () => {
     function Labels({ level }: { level: NavLevel }) {
       const { primary, more } = useNav(0, level, false, false);
       return (
@@ -115,25 +118,24 @@ describe("nav by level (role hiding is cosmetic; the kernel decides)", () => {
       </NextIntlClientProvider>,
     );
     const read = (id: string) => JSON.parse(screen.getByTestId(id).textContent ?? "{}");
+    // 技能 and 连接器 keep the icons they had in the flyout
     expect(read("member")).toEqual({
       primary: [
-        ["首页", "home", "/"],
         ["智能体", "agent", "/agents"],
+        ["技能", "skills", "/skills"],
+        ["连接器", "connector", "/connectors"],
       ],
       more: [
         ["插件", "catalog", "/plugins"],
         ["扩展", "extension", "/extensions"],
-        ["技能", "skills", "/skills"],
-        ["连接器", "connector", "/connectors"],
         ["智能体模板", "agent", "/agent-templates"],
         ["组织设置", "settings", "/settings/organization"],
       ],
     });
+    expect(read("admin").primary).toEqual(read("member").primary);
     expect(read("admin").more).toEqual([
       ["插件", "catalog", "/plugins"],
       ["扩展", "extension", "/extensions"],
-      ["技能", "skills", "/skills"],
-      ["连接器", "connector", "/connectors"],
       ["智能体模板", "agent", "/agent-templates"],
       ["渠道", "channel", "/channels"],
       ["评测与运行", "evals", "/evals"],
@@ -246,7 +248,9 @@ describe("activeNavOf", () => {
     ["/extensions", "extensions"],
     ["/trajectories/x", "evals"],
     ["/account/connections", ""],
-    ["/", "overview"],
+    // the new conversation is the home: 新会话 is current; `/` redirects there before rendering
+    ["/chat", "new"],
+    ["/", ""],
     // an extension page is its sidebar item (m1), decoded like the item ids
     ["/p/example-board/board", "ext:example-board/board"],
     ["/p/%40acme%2Fboard/main%20view", "ext:@acme/board/main view"],
@@ -287,7 +291,7 @@ describe("AppFrame contexts", () => {
     expect(plugins.getAttribute("href")).toBe("/admin/plugins");
     expect(plugins.getAttribute("aria-current")).toBe("page");
     expect(within(nav).queryByRole("link", { name: /平台目录|^市场/ })).toBeNull();
-    expect(screen.getByRole("link", { name: /~\/acme/ }).getAttribute("href")).toBe("/");
+    expect(screen.getByRole("link", { name: /~\/acme/ }).getAttribute("href")).toBe("/chat");
     expect(screen.queryByRole("region", { name: "会话" })).toBeNull();
     expect(within(screen.getByRole("contentinfo")).getByText("grant@acme:/admin/plugins/market"));
   });
@@ -304,6 +308,19 @@ describe("AppFrame contexts", () => {
     const nav = screen.getByRole("navigation", { name: "主导航" });
     const plugins = await within(nav).findByRole("link", { name: /^插件.*3/ });
     expect(plugins.getAttribute("href")).toBe("/admin/plugins");
+  });
+
+  it("the new conversation is the home: on /chat 新会话 is the current nav item", () => {
+    resetNavigation("/chat");
+    renderFrame();
+    const nav = screen.getByRole("navigation", { name: "主导航" });
+    const current = within(nav)
+      .getAllByRole("link")
+      .filter((l) => l.getAttribute("aria-current") === "page");
+    expect(current.map((l) => [l.textContent, l.getAttribute("href")])).toEqual([
+      ["新会话", "/chat"],
+    ]);
+    expect(within(nav).queryByRole("link", { name: "首页" })).toBeNull();
   });
 
   it("the workspace status bar prompt is <login>@<slug>:~<path>", async () => {

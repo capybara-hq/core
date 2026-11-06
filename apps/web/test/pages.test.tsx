@@ -1,4 +1,4 @@
-import { act, cleanup, screen, within } from "@testing-library/react";
+import { cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderToString } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -13,11 +13,11 @@ import { activeNavOf } from "../src/components/shell/nav";
 import { navigateBrowser } from "../src/lib/browser";
 import type { Me } from "../src/lib/session";
 import { resetNavigation, router } from "./support/navigation";
-import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
+import { renderRouteWithCache } from "./support/query";
 import { ME, renderPage } from "./support/render";
 import { fieldOptionLabels } from "./support/select";
 import { expectNoFirstPaintFetch, renderRoute } from "./support/server";
-import { frameElement, NOT_READY, renderFrame, shellOf } from "./support/shell";
+import { frameElement, renderFrame, shellOf } from "./support/shell";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 vi.mock("../src/lib/browser", () => ({ navigateBrowser: vi.fn() }));
@@ -65,338 +65,6 @@ afterEach(() => {
 });
 
 describe("(app) 页面模板", () => {
-  const MODELS_READY = { providers: [{ provider: "model-fake", models: [{ id: "fake-1" }] }] };
-  const AGENT = (id: string, name: string) => ({
-    id,
-    definition: { name, model: { provider: "model-fake", model: "fake-1" } },
-  });
-  const ago = (min: number) => new Date(Date.now() - min * 60_000).toISOString();
-  function overviewRoutes(over: Record<string, () => Response> = {}) {
-    return {
-      "GET /api/v1/orgs/o1/agents": () =>
-        json(200, {
-          agents: [AGENT("ag1", "研究助手"), AGENT("ag2", "客服分流"), AGENT("ag3", "写作助手")],
-        }),
-      "GET /api/v1/orgs/o1/models": () => json(200, MODELS_READY),
-      "GET /api/v1/orgs/o1/inbox": () =>
-        json(200, {
-          truncated: false,
-          items: [
-            {
-              type: "tool_approval",
-              id: "ap1",
-              createdAt: ago(2),
-              approval: {
-                id: "ap1",
-                conversationId: "c1",
-                toolName: "Bash",
-                agent: { id: "ag1", name: "研究助手" },
-                requestedFor: "a1",
-                conversationPath: "/chat/c1",
-              },
-            },
-            {
-              type: "skill_change",
-              id: "sc1",
-              createdAt: ago(60),
-              skillChange: {
-                id: "sc1",
-                agent: { id: "ag2", name: "客服分流" },
-                skillId: "s1",
-                name: "refund-policy",
-              },
-            },
-          ],
-        }),
-      "GET /api/v1/orgs/o1/conversations/groups": () =>
-        json(200, {
-          next: null,
-          groups: [
-            {
-              agent: { id: "ag2", name: "客服分流" },
-              latestAt: ago(1),
-              more: false,
-              conversations: [
-                {
-                  id: "c2",
-                  agentId: "ag2",
-                  title: "订单 8841 退款",
-                  createdAt: ago(30),
-                  updatedAt: ago(1),
-                },
-              ],
-            },
-            {
-              agent: { id: "ag1", name: "研究助手" },
-              latestAt: ago(2),
-              more: false,
-              conversations: [
-                {
-                  id: "c1",
-                  agentId: "ag1",
-                  title: "季度报告数据核对",
-                  createdAt: ago(90),
-                  updatedAt: ago(2),
-                },
-              ],
-            },
-          ],
-        }),
-      "GET /api/v1/orgs/o1/skills": () => json(200, { skills: [{}, {}, {}] }),
-      "GET /api/v1/orgs/o1/connectors": () => json(200, { connectors: [{}] }),
-      "GET /api/v1/orgs/o1/members": () => json(200, { members: [{}, {}] }),
-      ...over,
-    };
-  }
-
-  it("the overview: what waits on me (allow once in place), conversations to pick up, the org, my agents", async () => {
-    const routes = overviewRoutes();
-    let decided = false;
-    const inboxAfter = () =>
-      json(200, {
-        truncated: false,
-        items: [
-          {
-            type: "skill_change",
-            id: "sc1",
-            createdAt: ago(60),
-            skillChange: {
-              id: "sc1",
-              agent: { id: "ag2", name: "客服分流" },
-              skillId: "s1",
-              name: "refund-policy",
-            },
-          },
-        ],
-      });
-    // the first paint is the cache's: the browser only sends the decision and the invalidated reads
-    const calls = stubApi({
-      ...routes,
-      "GET /api/v1/orgs/o1/inbox": () =>
-        decided ? inboxAfter() : routes["GET /api/v1/orgs/o1/inbox"](),
-      "POST /api/v1/orgs/o1/approvals/ap1/decision": () => {
-        decided = true;
-        return json(200, { approval: { id: "ap1" } });
-      },
-    });
-    await renderRouteWithCache("/", overviewRoutes(), { locale: "zh" });
-    expect(template("OverviewPage")).not.toBeNull();
-    const h = zh.home;
-    expect(screen.getByRole("heading", { level: 1, name: h.title })).toBeTruthy();
-    const inbox = screen.getByRole("list", { name: h.inbox.title });
-    const rows = within(inbox).getAllByRole("listitem");
-    expect(rows.map((r) => r.textContent)).toEqual([
-      expect.stringContaining("研究助手 想调用 Bash"),
-      expect.stringContaining("客服分流 想更新技能 refund-policy"),
-    ]);
-    expect(screen.getByText("Acme · 组织所有者 · 2 件事等你处理")).toBeTruthy();
-    // the conversations to pick up, newest first; the one with an approval is marked
-    const recent = within(screen.getByRole("list", { name: h.recent.title })).getAllByRole(
-      "listitem",
-    );
-    expect(recent.map((r) => within(r).getByRole("link").textContent)).toEqual([
-      "订单 8841 退款",
-      "季度报告数据核对",
-    ]);
-    expect(within(recent[1] as HTMLElement).getByText(h.recent.waiting)).toBeTruthy();
-    expect(
-      within(recent[1] as HTMLElement)
-        .getByRole("link")
-        .getAttribute("href"),
-    ).toBe("/chat/c1");
-    // the org at a glance
-    for (const [k, v] of [
-      [h.agents, "3"],
-      [h.skills, "3"],
-      [h.connectors, "1"],
-      [h.members, "2"],
-      [h.models, "1"],
-    ]) {
-      expect(screen.getByText(k as string).nextElementSibling?.textContent).toBe(v);
-    }
-    // my agents, the most recently used first
-    const agents = within(screen.getByRole("list", { name: h.agentsCard.title })).getAllByRole(
-      "listitem",
-    );
-    expect(agents.map((r) => within(r).getByRole("link").textContent)).toEqual([
-      "客服分流",
-      "研究助手",
-      "写作助手",
-    ]);
-    const user = userEvent.setup();
-    await user.click(
-      within(agents[0] as HTMLElement).getByRole("button", { name: h.agentsCard.chat }),
-    );
-    expect(router.push).toHaveBeenCalledWith("/chat?agent=ag2");
-    expect(screen.getByRole("link", { name: h.newConversation }).getAttribute("href")).toBe(
-      "/chat",
-    );
-    expect(calls).toEqual([]);
-    // allowing an approval in place sends "approve once"; the inbox is read again, no refresh
-    await user.click(
-      within(rows[0] as HTMLElement).getByRole("button", { name: h.inbox.approveOnce }),
-    );
-    await vi.waitFor(() =>
-      expect(calls.find((c) => c.method === "POST")?.body).toEqual({
-        decision: "approve",
-        scope: "once",
-      }),
-    );
-    await vi.waitFor(() =>
-      expect(
-        within(screen.getByRole("list", { name: h.inbox.title }))
-          .getAllByRole("listitem")
-          .map((r) => r.textContent),
-      ).toEqual([expect.stringContaining("客服分流 想更新技能 refund-policy")]),
-    );
-    expect(router.refresh).not.toHaveBeenCalled();
-  });
-
-  it("approving in place invalidates inbox, inboxCount, conversationGroups and the approval", async () => {
-    const routes = overviewRoutes();
-    const calls = stubApi({
-      ...routes,
-      "POST /api/v1/orgs/o1/approvals/ap1/decision": () => json(200, { approval: { id: "ap1" } }),
-    });
-    const { client } = await renderRouteWithCache("/", routes, { locale: "zh" });
-    // the sidebar's count is cached too (the shell reads it)
-    client.setQueryData(["org", "o1", "inboxCount"], { count: 2, more: false });
-    const rows = within(screen.getByRole("list", { name: zh.home.inbox.title })).getAllByRole(
-      "listitem",
-    );
-    await userEvent
-      .setup()
-      .click(
-        within(rows[0] as HTMLElement).getByRole("button", { name: zh.home.inbox.approveOnce }),
-      );
-    await vi.waitFor(() => expect(screen.getByText(zh.home.inbox.approved)).toBeTruthy());
-    // the active ones are read again: the inbox and the conversation groups
-    const reads = calls.filter((c) => c.method === "GET").map((c) => c.url);
-    expect(new Set(reads)).toEqual(
-      new Set(["/api/v1/orgs/o1/inbox", "/api/v1/orgs/o1/conversations/groups"]),
-    );
-    expect(client.getQueryState(["org", "o1", "inboxCount"])?.isInvalidated).toBe(true);
-  });
-
-  it("/: a first render from the hydrated cache makes no browser read", async () => {
-    const browser = expectNoFirstPaintFetch();
-    const { calls } = await renderRouteWithCache("/", overviewRoutes());
-    expect(screen.getByRole("list", { name: en.home.agentsCard.title })).toBeTruthy();
-    // the conversations to pick up share the sidebar's read: one groups read on the server
-    expect(calls.filter((c) => c.url.startsWith("/api/v1/orgs/o1/conversations/groups"))).toEqual([
-      expect.objectContaining({ url: "/api/v1/orgs/o1/conversations/groups" }),
-    ]);
-    await new Promise((r) => setTimeout(r, 20));
-    expect(browser).toEqual([]);
-  });
-
-  it("/: an empty cache shows the template's loading state, then the data", async () => {
-    let release: () => void = () => {};
-    const held = new Promise<void>((r) => {
-      release = r;
-    });
-    const routes = overviewRoutes();
-    const later = Object.fromEntries(
-      Object.entries(routes).map(([k, f]) => [
-        k,
-        async () => {
-          await held;
-          return f();
-        },
-      ]),
-    );
-    await renderRouteEmptyCache("/", later);
-    const page = await vi.waitFor(() => {
-      const el = template("OverviewPage");
-      if (el === null) throw new Error("no page yet");
-      return el as HTMLElement;
-    });
-    expect(document.querySelector("[aria-busy='true']")).not.toBeNull();
-    // the loaded page's main-side grid with its real cards (two in each column), their static
-    // titles and links real and three placeholder rows for each body
-    const grid = page.querySelector('[data-columns="main-side"]');
-    const columns = [...(grid?.children ?? [])];
-    expect(columns.map((c) => c.querySelectorAll('[data-part="card"]').length)).toEqual([2, 2]);
-    expect(page.querySelectorAll('[data-part="loading-card"]')).toHaveLength(0);
-    for (const card of page.querySelectorAll('[data-part="card"]')) {
-      expect(card.querySelectorAll('.cb-skeleton [data-part="skeleton-text"]')).toHaveLength(3);
-    }
-    expect(within(page).getByText(en.home.inbox.title)).toBeTruthy();
-    expect(within(page).getByText(en.home.recent.title)).toBeTruthy();
-    expect(within(page).getByText(en.home.agentsCard.title)).toBeTruthy();
-    expect(within(page).getByRole("link", { name: en.home.inbox.open })).toBeTruthy();
-    expect(within(page).getByRole("link", { name: en.home.agentsCard.all })).toBeTruthy();
-    // no stat slots: the overview has no metrics
-    expect(page.querySelectorAll('[data-part="stat-card"]')).toHaveLength(0);
-    expect(screen.queryByText("研究助手")).toBeNull();
-    await act(async () => release());
-    expect((await screen.findAllByText("研究助手")).length).toBeGreaterThan(0);
-    await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
-    expect(page).toBeTruthy();
-  });
-
-  it("the overview hides counts this role may not read", async () => {
-    const browser = expectNoFirstPaintFetch();
-    await renderRouteWithCache(
-      "/",
-      overviewRoutes({
-        "GET /api/v1/orgs/o1/members": () => json(403, { error: { code: "forbidden" } }),
-      }),
-    );
-    screen.getByRole("list", { name: en.home.inbox.title });
-    expect(screen.queryByText(en.home.members)).toBeNull();
-    expect(screen.getByText(en.home.skills)).toBeTruthy();
-    await new Promise((r) => setTimeout(r, 20));
-    expect(browser).toEqual([]);
-  });
-
-  it("without a current org or while the org is in setup, the page reads and draws nothing (the frame draws it)", async () => {
-    const browser = expectNoFirstPaintFetch();
-    const none = await renderRouteWithCache("/", {}, { me: { ...ME, currentOrgId: null } });
-    expect(none.calls.map((c) => c.url)).toEqual(["/api/v1/me"]);
-    expect(template("OverviewPage")).toBeNull();
-    cleanup();
-    const setup = await renderRouteWithCache("/", {}, { readiness: NOT_READY });
-    expect(new Set(setup.calls.map((c) => c.url))).toEqual(
-      new Set(["/api/v1/me", "/api/v1/orgs/o1/readiness"]),
-    );
-    expect(template("OverviewPage")).toBeNull();
-    await new Promise((r) => setTimeout(r, 20));
-    // the frame draws from the cached readiness: no re-render of the layout, no browser read
-    expect(router.refresh).not.toHaveBeenCalled();
-    expect(router.replace).not.toHaveBeenCalled();
-    expect(browser).toEqual([]);
-  });
-
-  it("the org stops being ready while the overview shows: the view draws nothing (the frame draws the setup home)", async () => {
-    expectNoFirstPaintFetch();
-    const { client } = await renderRouteWithCache("/", overviewRoutes());
-    expect(template("OverviewPage")).not.toBeNull();
-    await act(async () => client.setQueryData(["org", "o1", "readiness"], NOT_READY));
-    expect(template("OverviewPage")).toBeNull();
-    expect(router.refresh).not.toHaveBeenCalled();
-  });
-
-  it("the inbox and the conversations are sections: a failed read draws that panel's own state", async () => {
-    const browser = expectNoFirstPaintFetch();
-    await renderRouteWithCache(
-      "/",
-      overviewRoutes({
-        "GET /api/v1/orgs/o1/inbox": () => json(500, { error: { code: "internal" } }),
-        "GET /api/v1/orgs/o1/conversations/groups": () =>
-          json(503, { error: { code: "unavailable" } }),
-      }),
-    );
-    expect(template("OverviewPage")).not.toBeNull();
-    expect(screen.getByText(en.home.inbox.unavailable)).toBeTruthy();
-    expect(screen.getByText(en.home.recent.unavailable)).toBeTruthy();
-    // the agents card still renders
-    expect(screen.getByRole("list", { name: en.home.agentsCard.title })).toBeTruthy();
-    await new Promise((r) => setTimeout(r, 20));
-    // a section that failed on the first load is not read again on mount
-    expect(browser).toEqual([]);
-  });
-
   const agentRow = (id: string, name: string, over: Record<string, unknown> = {}) => ({
     id,
     ownerAccountId: "someone-else",
@@ -480,10 +148,12 @@ describe("(app) 页面模板", () => {
     expect(notFound).toHaveBeenCalled();
   });
 
-  it("not-found：StatusPage 404", () => {
+  it("not-found：StatusPage 404; its action goes home, the new conversation", async () => {
     renderPage(<NotFound />, { locale: "zh" });
     expect(template("StatusPage")?.getAttribute("data-kind")).toBe("404");
     expect(screen.getByText(zh.notFound.description)).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: zh.notFound.back }));
+    expect(router.push).toHaveBeenCalledWith("/chat");
   });
 
   it("not-found keeps the page's path in the head, not ~", () => {
@@ -491,6 +161,8 @@ describe("(app) 页面模板", () => {
     renderPage(<NotFound />, { locale: "zh" });
     const nav = screen.getByRole("navigation", { name: "路径" });
     expect(nav.textContent).toBe("acme/trajectories/9f60c1e6");
+    // the org scope links home (the new conversation; there is no home page)
+    expect(within(nav).getByRole("link", { name: "acme" }).getAttribute("href")).toBe("/chat");
     expect(within(nav).getByRole("link", { name: "trajectories" }).getAttribute("href")).toBe(
       "/trajectories",
     );
@@ -553,7 +225,7 @@ describe("(auth) 页面模板", () => {
     );
     await user.type(screen.getByRole("textbox", { name: en.setup.displayNameLabel }), "Admin");
     await user.click(screen.getByRole("button", { name: en.setup.submit }));
-    await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledWith("/"));
+    await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledWith("/chat"));
     expect(calls.find((c) => c.method === "POST")?.body).toEqual({
       login: "admin",
       password: "correct-horse-battery",
@@ -583,8 +255,10 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
     expect(links.map((l) => [l.textContent, l.getAttribute("href")])).toEqual([
       // A new conversation starts at the composer (UI refresh B)
       ["新会话", "/chat"],
-      [zh.nav.overview, "/"],
+      // no home item; 技能 and 连接器 sit under 智能体 (acceptance 2026-11-07)
       [zh.nav.agents, "/agents"],
+      [zh.nav.skills, "/skills"],
+      [zh.nav.connectors, "/connectors"],
     ]);
     // the inbox is the brand row's icon button
     expect(screen.getByRole("link", { name: zh.nav.inbox }).getAttribute("href")).toBe("/inbox");
@@ -594,8 +268,6 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
       // 更多: plugins (members and up), extensions (org admins)
       [zh.nav.plugins, "/plugins"],
       [zh.nav.extensions, "/extensions"],
-      [zh.nav.skills, "/skills"],
-      [zh.nav.connectors, "/connectors"],
       [zh.nav.agentTemplates, "/agent-templates"],
       // org admins (owner) see channels, evals and organization settings
       [zh.nav.channels, "/channels"],
@@ -617,12 +289,14 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
   it("普通成员的顶栏不显示管理员才能用的「渠道」", async () => {
     renderFrame(shellOf(as("member")));
     const nav = screen.getByRole("navigation", { name: "主导航" });
+    expect(within(nav).getByRole("link", { name: zh.nav.connectors })).toBeTruthy();
+    expect(within(nav).getByRole("link", { name: zh.nav.skills })).toBeTruthy();
     const menu = await openMore(nav);
     expect(within(menu).queryByRole("menuitem", { name: zh.nav.channels })).toBeNull();
     expect(within(menu).queryByRole("menuitem", { name: zh.nav.evals })).toBeNull();
-    expect(within(menu).getByRole("menuitem", { name: zh.nav.connectors })).toBeTruthy();
-    // 成员能浏览技能库
-    expect(within(menu).getByRole("menuitem", { name: zh.nav.skills })).toBeTruthy();
+    // 技能 and 连接器 are top-level items, not in the flyout; members browse skills
+    expect(within(menu).queryByRole("menuitem", { name: zh.nav.connectors })).toBeNull();
+    expect(within(menu).queryByRole("menuitem", { name: zh.nav.skills })).toBeNull();
   });
 
   it("a failed conversation read on the server: the section's error state with 重试", () => {
@@ -655,7 +329,7 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
     expect(screen.getByRole("button", { name: c.create })).toBeTruthy();
     expect(screen.getByRole("link", { name: c.admin }).getAttribute("href")).toBe("/admin");
     await userEvent.click(within(orgs[1] as HTMLElement).getByRole("button", { name: c.enter }));
-    await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledWith("/"));
+    await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledWith("/chat"));
     expect(calls.find((x) => x.method === "PUT")?.body).toEqual({ orgId: "o2" });
     // the button stays pending until the server's new frame arrives
     expect(
@@ -744,6 +418,9 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
     const nav = screen.getByRole("navigation", { name: "主导航" });
     expect(within(nav).queryByRole("link", { name: zh.nav.skills })).toBeNull();
     expect(within(nav).getByRole("link", { name: zh.nav.agents })).toBeTruthy();
+    expect(within(nav).getByRole("link", { name: zh.nav.connectors })).toBeTruthy();
+    // nothing of the 更多 flyout is a guest's (no extension pages here): no 更多 row
+    expect(within(nav).queryByRole("button", { name: "更多" })).toBeNull();
   });
 
   it.each(["zh", "en"] as const)(
@@ -760,7 +437,7 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
         }),
       ).toBeTruthy();
       const menu = await openMore(nav, locale === "zh" ? "更多" : "More");
-      expect(within(menu).getByRole("menuitem", { name: m.nav.connectors })).toBeTruthy();
+      expect(within(menu).getByRole("menuitem", { name: m.nav.plugins })).toBeTruthy();
     },
   );
 
@@ -858,6 +535,9 @@ describe("activeNavOf", () => {
     expect(activeNavOf("/channels")).toBe("channels");
     expect(activeNavOf("/channels/new")).toBe("channels");
     expect(activeNavOf("/chat/c1")).toBe("");
+    // the new conversation is the home: 新会话 is current there
+    expect(activeNavOf("/chat")).toBe("new");
+    expect(activeNavOf("/")).toBe("");
     expect(activeNavOf("/skills")).toBe("skills");
     expect(activeNavOf("/skills/s1")).toBe("skills");
     expect(activeNavOf("/plugins")).toBe("plugins");

@@ -22,9 +22,10 @@ type NavAudience = "all" | "member" | "admin";
 export type NavLevel = "guest" | "member" | "admin";
 
 /**
- * The work context's navigation (web order §2.1): only routes that exist. `primary` items follow
- * New conversation; `more` items sit in the 更多 flyout (then the extension pages). Search and the
- * inbox are icon buttons in the brand row. Items are hidden by the current org role through `audience` (cosmetic only; the kernel
+ * The work context's navigation (web order §2.1, acceptance 2026-11-07): only routes that exist.
+ * `primary` items follow New conversation (智能体, 技能, 连接器; there is no home page: the new
+ * conversation is the home, and `/` redirects to `/chat`); `more` items sit in the 更多 flyout (then
+ * the extension pages). Search and the inbox are icon buttons in the brand row. Items are hidden by the current org role through `audience` (cosmetic only; the kernel
  * decides). The admin console is the entry above the account row, for super admins.
  */
 const NAV: readonly {
@@ -35,13 +36,29 @@ const NAV: readonly {
   icon: IconName;
   section: "primary" | "more";
 }[] = [
-  { id: "overview", key: "overview", href: "/", audience: "all", icon: "home", section: "primary" },
   {
     id: "agents",
     key: "agents",
     href: "/agents",
     audience: "all",
     icon: "agent",
+    section: "primary",
+  },
+  // Skills: members browse them, guests don't
+  {
+    id: "skills",
+    key: "skills",
+    href: "/skills",
+    audience: "member",
+    icon: "skills",
+    section: "primary",
+  },
+  {
+    id: "connectors",
+    key: "connectors",
+    href: "/connectors",
+    audience: "all",
+    icon: "connector",
     section: "primary",
   },
   // Plugins (what the platform offers this org): members browse and ask, org admins switch them
@@ -61,23 +78,6 @@ const NAV: readonly {
     href: "/extensions",
     audience: "member",
     icon: "extension",
-    section: "more",
-  },
-  // Skills: members browse them, guests don't
-  {
-    id: "skills",
-    key: "skills",
-    href: "/skills",
-    audience: "member",
-    icon: "skills",
-    section: "more",
-  },
-  {
-    id: "connectors",
-    key: "connectors",
-    href: "/connectors",
-    audience: "all",
-    icon: "connector",
     section: "more",
   },
   // Agent templates: members browse them (sub-agent types; org admins switch platform ones)
@@ -142,11 +142,13 @@ const decode = (s: string) => {
 };
 
 /**
- * The nav item the route belongs to: `/settings/*` is Organization settings, trajectories are Evals, an
- * extension page `/p/<plugin>/<id>` is its Extensions item `ext:<plugin>/<id>`; a conversation
- * (`/chat/*`) is none (its sidebar row is current instead).
+ * The nav item the route belongs to: the new conversation (`/chat`, the home) is New conversation
+ * (`new`), `/settings/*` is Organization settings, trajectories are Evals, an extension page
+ * `/p/<plugin>/<id>` is its Extensions item `ext:<plugin>/<id>`; a conversation (`/chat/<id>`) is
+ * none (its sidebar row is current instead).
  */
 export function activeNavOf(pathname: string): string {
+  if (pathname === "/chat") return "new";
   if (under(pathname, "/chat")) return "";
   const ext = /^\/p\/([^/]+)\/([^/]+)/.exec(pathname);
   if (ext?.[1] !== undefined && ext[2] !== undefined)
@@ -162,7 +164,7 @@ export function activeNavOf(pathname: string): string {
   if (under(pathname, "/plugins")) return "plugins";
   if (under(pathname, "/extensions")) return "extensions";
   if (under(pathname, "/connectors")) return "connectors";
-  return pathname === "/" ? "overview" : "";
+  return "";
 }
 
 /**

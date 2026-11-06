@@ -588,23 +588,18 @@ function sidebarBlocks(): ReactNode {
       <SidebarBlock
         id="sidebar-item-hover"
         {...base}
-        force={{ pseudo: ["hover"], selector: navAt("overview") }}
+        force={{ pseudo: ["hover"], selector: navAt("connectors") }}
       />
       <SidebarBlock
         id="sidebar-item-focus"
         {...base}
-        // The inbox left the nav items for the brand row (an icon button): the focus ring is shown
-        // on 首页, a nav item every sidebar has.
-        force={{ pseudo: ["focus", "focus-visible"], selector: navAt("overview") }}
+        // The inbox left the nav items for the brand row (an icon button) and there is no home item:
+        // the focus ring is shown on 连接器, a nav item every sidebar has (guests' too).
+        force={{ pseudo: ["focus", "focus-visible"], selector: navAt("connectors") }}
       />
       <SidebarBlock id="sidebar-conversation-active" activeConversation="cnv_r2" />
       <SidebarBlock id="sidebar-group-collapsed" {...base} collapsed={["agt_research"]} />
-      <SidebarBlock
-        id="sidebar-more-open"
-        active="connectors"
-        activeConversation="cnv_r2"
-        moreOpen
-      />
+      <SidebarBlock id="sidebar-more-open" active="plugins" activeConversation="cnv_r2" moreOpen />
       <SidebarBlock id="sidebar-filter" {...base} filter={{ q: "", state: "waiting" }} />
       <SidebarBlock id="sidebar-filter-empty" {...base} filter={{ q: "发票", state: "all" }} />
       <SidebarBlock id="sidebar-archived" {...base} archived />

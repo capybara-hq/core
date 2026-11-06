@@ -526,7 +526,7 @@ describe("the gates", () => {
         await settle();
         expect(router.replace).not.toHaveBeenCalled();
       } else {
-        await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/"));
+        await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/chat"));
       }
     },
   );
