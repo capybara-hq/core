@@ -9,6 +9,7 @@ import { getQueueToken } from "@nestjs/bullmq";
 import { Inject, Injectable } from "@nestjs/common";
 import type { Queue } from "bullmq";
 import { sql } from "kysely";
+import { softDeleteTemplateIn } from "../agents/templates.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
@@ -303,6 +304,67 @@ export class OwnedItems {
   }
 
   /**
+   * What deleting the org's own agent template `id` does (ruling P4-12, as
+   * {@link previewSkillDelete}): one it promoted that another org uses is `transferred` (`orgs`:
+   * those orgs), else `removed`; `agents`: the org's agents whose roster loses it. Not the org's
+   * own -> 409 `catalog.not_owned`; missing -> 404 `component.not_found`.
+   */
+  async previewAgentTemplateDelete(orgId: string, id: string): Promise<OwnedSkillDeletePreview> {
+    const row = await this.ownedComponent(orgId, "agent_template", id, false);
+    const orgs =
+      row.link === null
+        ? []
+        : await orgsUsing(this.db, { kind: "agent_template", id: row.link }, { except: orgId });
+    const agents = await agentsUsing(this.db, orgId, "agent_template", [row.link ?? row.id]);
+    return {
+      outcome: orgs.length > 0 ? "transferred" : "removed",
+      orgs,
+      agents: agents
+        .map((a) => ({ id: a.id, name: a.name }))
+        .sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id)),
+    };
+  }
+
+  /**
+   * The owner deletes its org template (`DELETE orgs/:orgId/agent-templates/:id`, ruling P4-12;
+   * `agents.manage` re-checked under the org row lock), by the P3 owner rules: one it promoted
+   * goes through {@link transferOrRemove} with reason `owner_deleted` (another org using it keeps
+   * it, now the platform's, ruling P3-19), then the org row is soft-deleted (sub-agents already
+   * started keep their frozen definition; the roster skips it). Agents created from it are never
+   * touched (ruling P4-3). Audits `agent_template.deleted`. Not the org's own -> 409
+   * `catalog.not_owned`; missing -> 404.
+   */
+  @Transactional()
+  async deleteAgentTemplate(
+    orgId: string,
+    actor: string,
+    id: string,
+    opts: ActorOpts = {},
+  ): Promise<"transferred" | "removed"> {
+    await this.orgLock.lockAndAuthorize(orgId, actor, "agents.manage");
+    const row = await this.ownedComponent(orgId, "agent_template", id, true);
+    const outcome =
+      row.link === null
+        ? "removed"
+        : await this.transferOrRemove(
+            { kind: "agent_template", id: row.link },
+            "owner_deleted",
+            actor,
+            opts,
+          );
+    await softDeleteTemplateIn(this.db, orgId, row.id);
+    await audit(this.db, {
+      actorAccountId: actor,
+      ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
+      orgId,
+      action: "agent_template.deleted",
+      target: row.id,
+      detail: { name: row.name, outcome, ...(row.link !== null && { platformId: row.link }) },
+    });
+    return outcome;
+  }
+
+  /**
    * The org-scope skill `skillId` of the org (`forUpdate`: row locked), with the platform row it
    * promoted (`link`; a copy of another owner's platform skill has none here). Missing -> 404.
    */
@@ -351,6 +413,7 @@ export class OwnedItems {
                 "s.platform_skill_id as link",
                 "s.pinned_version",
                 "s.catalog_item_id",
+                sql<string | null>`null`.as("plugin_name"),
                 "p.owner_org_id",
               ])
               .where("s.id", "=", id)
@@ -370,6 +433,7 @@ export class OwnedItems {
                 "t.platform_template_id as link",
                 "t.pinned_version",
                 "t.catalog_item_id",
+                "t.plugin_name",
                 "p.owner_org_id",
               ])
               .where("t.id", "=", id)
@@ -380,9 +444,9 @@ export class OwnedItems {
           })();
     if (!r) throw kind === "skill" ? skillNotFound() : componentNotFound();
     if (r.scope !== "org") throw notOwnedError(`Skill ${r.name} belongs to an agent and`);
-    // only content the org created itself (ruling P3-46): no plugin provenance; every agent
-    // template is a plugin's in phase 3 (org-created templates come with phase 4)
-    if (kind === "agent_template" || r.catalog_item_id !== null) throw notOwnedError(r.name);
+    // only content the org created itself (ruling P3-46): no plugin provenance; an agent
+    // template also no plugin (an org template saved from an agent, ruling P4-13)
+    if (r.catalog_item_id !== null || r.plugin_name !== null) throw notOwnedError(r.name);
     if (r.link === null) return { id: r.id, name: r.name, link: null };
     if (r.pinned_version !== null || r.owner_org_id !== orgId) throw notOwnedError(r.name);
     return { id: r.id, name: r.name, link: r.link };

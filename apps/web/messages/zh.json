@@ -130,6 +130,10 @@
       "visibility_forbidden": "只有组织管理员可以用模板创建给他人使用的智能体。请把可见范围设为仅自己。",
       "template_preview_stale": "预览之后模板或组织的配置有变化。请重新预览后再创建。"
     },
+    "agent_template": {
+      "name_taken": "该组织已有同名的智能体模板，同一名称不能在一个组织中出现两次。请换一个名称。",
+      "version_conflict": "你编辑期间有人保存了这个模板。请刷新页面后重新修改。"
+    },
     "conversation": {
       "not_found": "会话不存在或你无权访问。",
       "output_not_found": "完整输出已过期或不存在。",

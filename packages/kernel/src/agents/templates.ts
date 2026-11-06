@@ -258,6 +258,65 @@ export async function platformTemplatesOn(
 }
 
 /**
+ * Rule 10 for platform agent template `component` (`plugin` / `name`: its roster type) newly
+ * offered to the org (ruling P4-13, as `skillNameClashes` for skills): the org's own live rows of
+ * that type (unlinked, or pinned) that are no copy of it (linked to it, or from its plugin), and
+ * the other platform templates of that type on in the org (two orgs' shared templates of one bare
+ * name, P3-5). `skills`: the clashing template ids; `plugins`: the clashing platform templates'
+ * plugins (`platform` for none).
+ */
+export async function templateTypeClashes(
+  db: KernelSchemaDb,
+  orgId: string,
+  component: { id: string; itemId: string | null; plugin: string | null; name: string },
+): Promise<{ skills: string[]; plugins: string[] }> {
+  const own = await db
+    .selectFrom("agent_templates")
+    .select(["id", "platform_template_id", "catalog_item_id"])
+    .where("org_id", "=", orgId)
+    .where("deleted_at", "is", null)
+    .where("name", "=", component.name)
+    .where((eb) =>
+      component.plugin === null
+        ? eb("plugin_name", "is", null)
+        : eb("plugin_name", "=", component.plugin),
+    )
+    .where((eb) =>
+      eb.or([eb("platform_template_id", "is", null), eb("pinned_version", "is not", null)]),
+    )
+    .execute();
+  const ownIds = own
+    .filter(
+      (r) =>
+        r.platform_template_id !== component.id &&
+        (component.itemId === null || r.catalog_item_id !== component.itemId),
+    )
+    .map((r) => r.id);
+  const others = await db
+    .selectFrom("platform_agent_templates")
+    .select(["id", "plugin_name"])
+    .where("name", "=", component.name)
+    .where((eb) =>
+      component.plugin === null
+        ? eb("plugin_name", "is", null)
+        : eb("plugin_name", "=", component.plugin),
+    )
+    .where("deleted_at", "is", null)
+    .where("id", "!=", component.id)
+    .execute();
+  const on = await platformTemplatesOn(
+    db,
+    orgId,
+    others.map((o) => o.id),
+  );
+  const platform = others.filter((o) => on.has(o.id));
+  return {
+    skills: [...ownIds, ...platform.map((o) => o.id)],
+    plugins: platform.map((o) => o.plugin_name ?? "platform"),
+  };
+}
+
+/**
  * The ids among `ids` (platform templates that org copies are pinned to) whose pinned copies the
  * org may use (ruling P2-18): the platform template is on in the org, or it was removed by a
  * plugin update (soft-deleted, ruling P2-7: a pinned copy then keeps its own version as the org's).
@@ -505,6 +564,28 @@ export async function usableTemplates(
   });
 }
 
+/**
+ * The listing view of a usable template; `linkedIds`: the org's unpinned copies linked to it (a
+ * platform template only).
+ */
+export function templateViewOf(t: TemplateRow, linkedIds: string[]): AgentTemplateView {
+  return {
+    id: t.id,
+    name: t.name,
+    plugin: t.plugin,
+    type: templateTypeOf(t.plugin, t.name),
+    description: typeof t.template.description === "string" ? t.template.description : "",
+    model: t.template.model ?? "inherit",
+    version: t.version,
+    sourceFormat: t.sourceFormat,
+    catalogItemId: t.catalogItemId,
+    catalogVersion: t.catalogVersion,
+    // the org's own template it promoted is the org's own, whatever version it serves
+    origin: t.ownedCopy ? "org" : t.origin,
+    ...(t.origin === "platform" && !t.ownedCopy && { linkedIds }),
+  };
+}
+
 /** Reads the org's agent templates (consumed by the roster, the agent page and Task 19's API). */
 @Injectable()
 export class AgentTemplatesService {
@@ -534,21 +615,7 @@ export class AgentTemplatesService {
       const k = l.platform_template_id as string;
       linked.set(k, [...(linked.get(k) ?? []), l.id]);
     }
-    return usable.map((t) => ({
-      id: t.id,
-      name: t.name,
-      plugin: t.plugin,
-      type: templateTypeOf(t.plugin, t.name),
-      description: typeof t.template.description === "string" ? t.template.description : "",
-      model: t.template.model ?? "inherit",
-      version: t.version,
-      sourceFormat: t.sourceFormat,
-      catalogItemId: t.catalogItemId,
-      catalogVersion: t.catalogVersion,
-      // the org's own template it promoted is the org's own, whatever version it serves
-      origin: t.ownedCopy ? "org" : t.origin,
-      ...(t.origin === "platform" && !t.ownedCopy && { linkedIds: linked.get(t.id) ?? [] }),
-    }));
+    return usable.map((t) => templateViewOf(t, linked.get(t.id) ?? []));
   }
 
   /** A usable template by id or by its roster type; null when there is none. */
@@ -571,19 +638,25 @@ export class AgentTemplatesService {
   }
 }
 
-/** Where a template version comes from (a plugin version of the catalog). */
+/**
+ * Where a template version comes from: a plugin version of the catalog, or (ruling P4-9) the org
+ * itself (另存为模板, an edit of an org template): `plugin`, `catalogItemId` and `catalogVersion`
+ * null.
+ */
 export interface TemplateSource {
   orgId: string;
   plugin: string | null;
-  catalogItemId: string;
-  catalogVersion: string;
+  /** The catalog item of the plugin; absent or null for an org template (ruling P4-9). */
+  catalogItemId?: string | null;
+  catalogVersion: string | null;
   sourceFormat: SourceFormat;
 }
 
 /**
- * Writes `template` as the org's live template `<plugin>:<name>` in the caller's transaction (the
- * caller holds the org row lock): a new template (version 1, `created`), a new version of the live
- * one when its definition differs (`changed`, the version added), or nothing when it is equal.
+ * Writes `template` as the org's live template `<plugin>:<name>` (the bare `<name>` when `plugin`
+ * is null) in the caller's transaction (the caller holds the org row lock): a new template
+ * (version 1, `created`), a new version of the live one when its definition differs (`changed`,
+ * the version added), or nothing when it is equal.
  */
 export async function putTemplateVersionIn(
   t: KernelSchemaDb,
@@ -597,7 +670,9 @@ export async function putTemplateVersionIn(
     )
     .select(["a.id", "a.current_version", "v.definition"])
     .where("a.org_id", "=", s.orgId)
-    .where("a.plugin_name", "=", s.plugin)
+    .where((eb) =>
+      s.plugin === null ? eb("a.plugin_name", "is", null) : eb("a.plugin_name", "=", s.plugin),
+    )
     .where("a.name", "=", template.name)
     .where("a.deleted_at", "is", null)
     .forUpdate("a")
@@ -614,7 +689,7 @@ export async function putTemplateVersionIn(
         id,
         org_id: s.orgId,
         name: template.name,
-        catalog_item_id: s.catalogItemId,
+        catalog_item_id: s.catalogItemId ?? null,
         plugin_name: s.plugin,
         current_version: 1,
       })
@@ -633,7 +708,11 @@ export async function putTemplateVersionIn(
   if (live) {
     await t
       .updateTable("agent_templates")
-      .set({ current_version: version, catalog_item_id: s.catalogItemId, updated_at: new Date() })
+      .set({
+        current_version: version,
+        catalog_item_id: s.catalogItemId ?? null,
+        updated_at: new Date(),
+      })
       .where("id", "=", id)
       .execute();
   }

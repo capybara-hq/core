@@ -8,7 +8,10 @@ import { AgentsController } from "../agents/agents.controller.js";
 import { AgentsModule } from "../agents/agents.module.js";
 import { ModelsController } from "../agents/models.controller.js";
 import { ReadinessController } from "../agents/readiness.controller.js";
-import { AgentTemplatesController } from "../agents/templates.controller.js";
+import {
+  AgentSaveAsTemplateController,
+  AgentTemplatesController,
+} from "../agents/templates.controller.js";
 import { BackgroundController } from "../background/background.controller.js";
 import { BackgroundModule } from "../background/background.module.js";
 import { AdminCatalogController } from "../catalog/admin-catalog.controller.js";
@@ -102,6 +105,7 @@ const CONTROLLERS: Type[] = [
   OrgExtensionConfigsController,
   AgentsController,
   AgentTemplatesController,
+  AgentSaveAsTemplateController,
   ModelsController,
   ReadinessController,
   ConversationsController,

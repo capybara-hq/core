@@ -12,14 +12,15 @@ import { AgentLookupModule } from "./agent-lookup.js";
 import { AgentProfileService } from "./agent-profile.service.js";
 import { AgentsService } from "./agents.service.js";
 import { AgentsFromTemplate } from "./from-template.service.js";
+import { OrgAgentTemplates } from "./org-templates.js";
 import { PendingConnectorRequests } from "./pending-connector-requests.js";
 import { AgentTemplatesService } from "./templates.js";
 
 /**
  * Agents: the one {@link AgentsService} (definitions, versions, visibility; writes under the org
- * row lock), the plugin agent templates, creating agents from templates (`AgentsFromTemplate`)
- * with its pending connector request seam (`PendingConnectorRequests`, ruling P4-7). Reads for a
- * viewer are {@link AgentLookupModule}'s
+ * row lock), the agent templates (the plugin ones, and the org's own: `OrgAgentTemplates`),
+ * creating agents from templates (`AgentsFromTemplate`) with its pending connector request seam
+ * (`PendingConnectorRequests`, ruling P4-7). Reads for a viewer are {@link AgentLookupModule}'s
  * (re-exported), which the conversations and the skill invoker use without this module.
  */
 @Module({
@@ -43,6 +44,7 @@ import { AgentTemplatesService } from "./templates.js";
     AgentsService,
     AgentProfileService,
     AgentTemplatesService,
+    OrgAgentTemplates,
     AgentsFromTemplate,
     PendingConnectorRequests,
   ],
@@ -51,6 +53,7 @@ import { AgentTemplatesService } from "./templates.js";
     AgentsService,
     AgentProfileService,
     AgentTemplatesService,
+    OrgAgentTemplates,
     AgentsFromTemplate,
     PendingConnectorRequests,
   ],

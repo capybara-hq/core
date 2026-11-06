@@ -130,6 +130,10 @@
       "visibility_forbidden": "Only an org admin can create an agent from a template for others. Set the visibility to Only me.",
       "template_preview_stale": "The template or the organization changed after the preview. Preview it again, then create."
     },
+    "agent_template": {
+      "name_taken": "The organization already has an agent template of this name; one name cannot be offered in an organization twice. Choose another name.",
+      "version_conflict": "Someone else saved this template while you were editing it. Reload the page and apply your changes again."
+    },
     "conversation": {
       "not_found": "The conversation does not exist or you cannot access it.",
       "output_not_found": "The full output has expired or doesn't exist.",
