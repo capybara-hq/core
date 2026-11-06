@@ -243,7 +243,9 @@ describe("Bash run_in_background", { timeout: 30_000 }, () => {
       },
       c,
     );
-    expect(Date.now() - t0).toBeLessThan(2000);
+    // "at once" means without waiting for the 30 s command: the launch itself spawns node shims,
+    // which take seconds under a loaded full run, so a tight bound here only measures load
+    expect(Date.now() - t0).toBeLessThan(15_000);
     const [row] = await store.runningIn(seed.conversationId);
     expect(row).toBeDefined();
     if (!row) return;

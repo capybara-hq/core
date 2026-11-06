@@ -5,7 +5,7 @@ description: 'Use when adding or changing kernel code wired into its Nest applic
 
 # Writing kernel code and the kernel HTTP API
 
-The kernel is **one standard NestJS application on Fastify** (spec `docs/superpowers/specs/2026-10-28-nest-kernel-design.md`; the decisions made during its implementation, cited below as "decision R<n>", are the spec's appendix "Decisions made during implementation"). Only the kernel uses Nest: **extensions never see Nest**; they get the SDK `ctx`, and extension routes are still `ctx.http.route(method, path, (req: Request) => Promise<Response>)` (see `.agents/skills/writing-extensions`).
+The kernel is **one standard NestJS application on Fastify** (spec `docs/superpowers/specs/2026-10-28-nest-kernel-design.md`; the decisions made during its implementation, cited below as "decision R<n>", are the spec's appendix "Decisions made during implementation", R1–R26 and N1–N10; the spec's status is implemented). Only the kernel uses Nest: **extensions never see Nest**; they get the SDK `ctx`, and extension routes are still `ctx.http.route(method, path, (req: Request) => Promise<Response>)` (see `.agents/skills/writing-extensions`).
 
 Reference implementation: `packages/kernel/src/orgs/` (`orgs.module.ts`, `orgs.controller.ts`, `members.service.ts`, `org.guard.ts`, `org-lock.ts`).
 
@@ -51,7 +51,7 @@ Reason: the repo enables `experimentalDecorators` but **not `emitDecoratorMetada
 
 ## One convention per concern
 
-Each concern is done one way; `pnpm check:kernel-conventions` (rules `kc-*`, listed in `AGENTS.md`) rejects the removed patterns.
+Each concern is done one way; `pnpm check:kernel-conventions` (rules `kc-*`, listed in [tools/checks/README.md](../../../tools/checks/README.md)) rejects the removed patterns.
 
 | Concern | Do | Never (rule) |
 |---|---|---|
@@ -61,7 +61,7 @@ Each concern is done one way; `pnpm check:kernel-conventions` (rules `kc-*`, lis
 | Transaction-scoped advisory locks (decision R9) | `pg_advisory_xact_lock` is transaction semantics, like `FOR UPDATE`: only through `XactLock.lock(key)` inside a `@Transactional({ propagation: "mandatory" })` method of one small `*Lock` provider per lock (`OrgLock`, `EnterpriseAdminLock`, `SetupLock`, `CatalogItemLock`, …) | session-level `pg_advisory_lock` / `pg_try_advisory_lock` outside the migration runners (`kc-lock`) |
 | Distributed mutual exclusion | `LockService` (`acquire` / `run` / `lease` / `hold` / shared leases, Redis, renewed every TTL/3) or `@WithLock`; `acquire`, `run`, `hold`, `lease`, `tryShared` and `tryExclusive` throw inside a transaction; `lock.acquire_failed` (409, key in `details[0].lockKey`) when the wait runs out | hand-written `SET NX`, renewal timers (`kc-lock`) |
 | Fixed-period jobs | `@LockedCron(expression, { name })`, or `@LockedInterval(name, (config) => ms, { runOnStart? })` for a config-driven period; the class has `lockService` and `log` (and `config` for intervals) and is provided only under `WorkerModule` | bare `@Cron` / `@Interval` (`kc-cron`), BullMQ repeatable schedulers, a job provider outside `WorkerModule` (`kc-worker-only`) |
-| One-off and delayed jobs | `QueueModule.registerQueue(name)` + `@Inject(getQueueToken(name))`, deterministic job ids without `:`; `cap-kernel-maintenance` has one consumer, `MaintenanceProcessor`, which dispatches by name and also runs a periodic job's name once (`ScheduledRuns.runNow`, decision R23) | `new Queue` / `new Worker` (`kc-queue`; extension queues behind `ctx.queue` are the exception) |
+| One-off and delayed jobs | `QueueModule.registerQueue(name)` + `@Inject(getQueueToken(name))`, deterministic job ids without `:`; `cap-kernel-maintenance` has one consumer, `MaintenanceProcessor`, which dispatches by name and also runs a periodic job's name once (`ScheduledRuns.runNow`, decision R23: no tick marker, no run lock) | `new Queue` / `new Worker` (`kc-queue`; extension queues behind `ctx.queue` are the exception) |
 | Queue consumers | a `WorkerHost` with `@Processor(queue)` (or `configuredProcessor(Base, …)` when its options come from the config), provided only under `WorkerModule`; every job runs inside `runJob(queue, job, fn)` (fresh async context, log context) | `kc-queue`, `kc-worker-only` |
 | Cache | `@Cacheable` / `@CacheEvict` (Redis, fail-open, keys prefixed `cache:`); inside a transaction `@CacheEvict` evicts after the COMMIT (nothing on rollback) and `@Cacheable` is bypassed (no read, no write: a cached value may be older than the transaction's own writes) | ad-hoc read-through Redis caches (`kc-cache`) |
 | Rate limits | `@Throttled(...)` per route; credential routes `CredentialThrottler` (below) | hand-written counters (`kc-rate-limit`) |
@@ -69,6 +69,7 @@ Each concern is done one way; `pnpm check:kernel-conventions` (rules `kc-*`, lis
 | Logging | inject `KERNEL_LOGGER` (transient: each class gets a child with `context` = its class name) | module-level loggers (`kc-logger`) |
 | Process handlers | only in `src/infra/lifecycle` | `process.on` anywhere else (`kc-process`) |
 | Health | `HealthModule` (`/healthz`, `/readyz`, terminus) | other health routes (`kc-health`) |
+| Entry point | `createKernelApp` / `startKernelApp`, services via `app.get(Class)` | a facade: `createKernel`, the `Kernel` type (`kc-facade`) |
 
 Code ported from octok-platform starts with `// Ported from octok-platform <path> (owner-approved, 2026-10-28).` (`kc-ported-header`).
 
@@ -76,7 +77,7 @@ Code ported from octok-platform starts with `// Ported from octok-platform <path
 
 - `roles` selects the role modules: `ApiModule` (controllers, `AuthGuard`), `WorkerModule` (the schedulers, every `@LockedCron` / `@LockedInterval` job, every `@Processor`, `WorkerRole`), `GatewayModule` (channel supervisor, webhook inbound, `GatewayRole`). An `api`-only or `gateway`-only process builds no BullMQ worker and no scheduler; queue producers exist on every role. Health and the error filter are on every role.
 - **Start** (`KernelLifecycle.onApplicationBootstrap`, spec §4): Redis, kernel migrations, the official marketplace, the bootstrap step (`LockService` lock `lock:bootstrap`, also taken by `capybara bootstrap`), the extension load, the worker parts (queue consumers, then the schedule gate opens), the gateway parts, extension routes, the lifecycle reconcile, the config watch. `listen()` runs only after `app.init()` resolved.
-- **Start gate (decision R21)**: no scheduled tick (cron, interval, `runOnStart`) runs before `WorkerRole.start` opened the gate after the extension load; a tick that fires earlier logs INFO `cron skipped: the scheduler is not started` and claims nothing; `runOnStart` jobs run when the gate opens; the stop closes it again. Each tick runs once across replicas (a per-tick Redis marker plus the renewed run lock; another replica's tick logs INFO, not ERROR) in a fresh async context.
+- **Start gate (decision R21)**: no scheduled tick (cron, interval, `runOnStart`) runs before `WorkerRole.start` opened the gate after the extension load; a tick that fires earlier logs INFO `cron skipped: the scheduler is not started` and claims nothing; `runOnStart` jobs run when the gate opens; the stop closes it again. Each tick runs once across replicas (a per-tick Redis marker plus the renewed run lock; another replica's tick logs INFO, not ERROR) in a fresh async context. A job body gets a `signal` that aborts at the stop or when its run lock is lost; only bodies that read it stop (the others are idempotent sweeps).
 - **Stop**: `startKernelApp` installs its own `handleShutdownSignals` (`src/infra/lifecycle/shutdown-signals.ts`) instead of Nest's `enableShutdownHooks()`: the first SIGTERM / SIGINT starts the stop at once (readiness 503, a start in progress aborts at its next checkpoint), runs the stop phases (schedules, webhooks, runs, evals, channels, scheduled jobs, maintenance, titles, usage, channel outbound, extensions), closes the queues and workers (`QueueShutdown`: within what is left of the 30 s budget, `STOP_TIMEOUT_MS`, minus a 2 s reserve; one that cannot close, e.g. Redis down, is abandoned) and finally Redis and the pool, then exits 0 (1 on failure); a second signal exits 1 at once. `createKernelApp` installs no process-wide handler; stop it with `closeKernelApp(app)`.
 - **Lost locks and leases (decisions R17 / R19)**: a `LockService` holder gives up at a deadline, the send time of its last successful renewal (or acquire) + TTL − TTL/3, even with a renewal in flight; `handle.lost` aborts and `LockService` logs one `lock lost: <key>` WARN. A lost conversation run lease aborts the run at the next step boundary (re-queued); a lost channel lease drops the connection. A failed release is logged at WARN (`lock release failed`; the key expires within its TTL).
 

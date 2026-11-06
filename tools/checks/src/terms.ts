@@ -294,7 +294,7 @@ export const REFERENCE_EXEMPT_LINES: { path: string; line: RegExp; reason: strin
     reason: "the test pins that the old env var is ignored",
   },
   {
-    path: "AGENTS.md",
+    path: "tools/checks/README.md",
     line: /^\s*- `terms-tool-key`/,
     reason: "the bullet describing the rule lists the old keys it guards",
   },
