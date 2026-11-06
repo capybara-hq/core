@@ -104,7 +104,10 @@ Each line is the rule you must not miss; the skill has the rest.
   `packages/kernel/src/net`. A platform item's scope (`all` / `optional` / `named`) decides where it
   is on; its skills, agent templates and connector templates are platform components, one version per
   deployment, never copied into orgs; an org-owned item reaches another org only through the share
-  gate (`owner_org_id IS NULL OR shareable`). [writing-plugins](.agents/skills/writing-plugins/SKILL.md)
+  gate (`owner_org_id IS NULL OR shareable`). An agent template describes a whole agent: any member
+  creates a private copy from it (a missing connector becomes a pending entry, a setup request goes
+  to the org admins), org admins save agents as org templates; spec §15 of
+  `docs/superpowers/specs/2026-11-05-plugin-component-management-design.md`. [writing-plugins](.agents/skills/writing-plugins/SKILL.md)
 - **Tools, sub-agents, web tools, skills:** English descriptions and actionable errors; tool keys
   contain no dots. [writing-tools](.agents/skills/writing-tools/SKILL.md)
 - **Model providers:** no retries inside the extension; media limits and placeholders are the
