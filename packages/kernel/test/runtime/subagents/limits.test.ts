@@ -569,7 +569,7 @@ describe("tree budget", () => {
     }
 
     // the grandchild's usage is counted on the root run, not on the child run that dispatched it
-    await k.app.get(StepLog).appendCounted(fromChild.childConv, child.run, [
+    await k.app.get(StepLog).appendCounted(fromChild.childConv, { parentRunId: child.run }, [
       {
         type: "usage",
         payload: {

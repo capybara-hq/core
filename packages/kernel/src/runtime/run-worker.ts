@@ -443,6 +443,7 @@ export class RunWorker {
         "trigger_seq",
         "started_at",
         "waited_ms",
+        "budget_run_id",
       ])
       .where("id", "=", runId)
       .executeTakeFirst();
@@ -587,6 +588,7 @@ export class RunWorker {
       trigger_seq: string;
       started_at: Date | null;
       waited_ms: string;
+      budget_run_id: string | null;
     },
     conv: {
       id: string;
@@ -636,6 +638,10 @@ export class RunWorker {
         depth === 0
           ? parentConversationId
           : await rootConversationOf(this.db, parentConversationId);
+      // the tree's budget window of THIS run (agent map spec §6): its own `budget_run_id`, set when
+      // it was created (a dispatch, or a wake run from the root's current window), else its
+      // dispatch's; never derived from the parent run, which for a wake run is the first dispatch's
+      const budgetRunId = run.budget_run_id ?? row?.budgetRunId;
       parent = row
         ? {
             conversationId: row.parentConversationId,
@@ -644,7 +650,7 @@ export class RunWorker {
             depth,
             rootConversationId,
             otherAgent,
-            ...(row.budgetRunId !== undefined && { budgetRunId: row.budgetRunId }),
+            ...(budgetRunId !== undefined && { budgetRunId }),
             ...(row.forSkill === true && { forSkill: true }),
           }
         : {
@@ -654,6 +660,7 @@ export class RunWorker {
             depth,
             rootConversationId,
             otherAgent,
+            ...(budgetRunId !== undefined && { budgetRunId }),
           };
     } else {
       const version = await this.db

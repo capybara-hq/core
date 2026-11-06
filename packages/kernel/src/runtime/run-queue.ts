@@ -427,9 +427,10 @@ export class RunQueue {
    * Its runs from a task, or from a message to an idle sub-agent, are started by the dispatch
    * (`Agent`, `SendMessage`), which also records the dispatch. Here it is started from a parent's
    * message that reached its run after that run's last model call (agent map spec §10: a message
-   * racing the run's end starts a new run, never lost), unless that run was stopped; and it is
-   * woken by its own background task's finish or a delivery from its own sub-agent, under the same
-   * rules as a chat conversation. Both read the queue and the trigger account's access on the root
+   * racing the run's end starts a new run, never lost); and it is woken by its own background
+   * task's finish or a delivery from its own sub-agent, under the same rules as a chat
+   * conversation. Neither happens once its last run was stopped (`aborted`): a stopped sub-agent is
+   * started again only by its parent. Both read the queue and the trigger account's access on the root
    * of its tree; a message needs no wake setting and has no wake window. The run counts against
    * the root's budget window and runs on the sub-agent queue under `runJobId(child, boundary
    * seq)`. An active run is left to the orphan repair after the commit (`repairRunId`), never
@@ -446,6 +447,20 @@ export class RunQueue {
       if (active.status !== "waiting") st.repairRunId = active.id;
       return null;
     }
+    // a stopped sub-agent (its last run `aborted`: a person's or a tree stop) stays stopped: no
+    // message, task finish or delivery that reached it before or during the stop wakes it (a
+    // descendant's report that landed just before the stop would otherwise restart the stopped
+    // branch); they are parked for its next run, which only its parent starts (`Agent`,
+    // `SendMessage`)
+    const last = await t
+      .selectFrom("runs")
+      .select("status")
+      .where("conversation_id", "=", conversationId)
+      .orderBy("created_at", "desc")
+      .orderBy("id", "desc")
+      .limit(1)
+      .executeTakeFirst();
+    if (last?.status === "aborted") return null;
     const rootId = await rootConversationOf(t, conversationId);
     const wake =
       (await this.pendingMessageIn(conversationId, Number(conv.consumed_seq), rootId)) ??
@@ -500,11 +515,11 @@ export class RunQueue {
 
   /**
    * The newest unconsumed message of an idle sub-agent (a `SendMessage` its last run did not absorb)
-   * as a run boundary, or null: none; the last run was stopped (`aborted`): a message that reached
-   * a running sub-agent which was then stopped is parked, no run starts for it, and the next run
-   * (another message, a wake) absorbs it; the root's queue is paused or the root deleted (the
+   * as a run boundary, or null: none; the root's queue is paused or the root deleted (the
    * message waits for the unpause, {@link wakeHeldTree}); or its author can no longer send to the
-   * root (it waits for a later run). Called under the sub-agent's row lock.
+   * root (it waits for a later run). The caller already refused a stopped sub-agent (last run
+   * `aborted`): a message that reached it while running and then stopped is parked, and the next
+   * run its parent starts absorbs it. Called under the sub-agent's row lock.
    */
   private async pendingMessageIn(
     conversationId: string,
@@ -522,15 +537,6 @@ export class RunQueue {
       .limit(1)
       .executeTakeFirst();
     if (!message) return null;
-    const last = await t
-      .selectFrom("runs")
-      .select("status")
-      .where("conversation_id", "=", conversationId)
-      .orderBy("created_at", "desc")
-      .orderBy("id", "desc")
-      .limit(1)
-      .executeTakeFirst();
-    if (last?.status === "aborted") return null;
     const root = await t
       .selectFrom("conversations")
       .select(["queue_paused", "deleted_at"])

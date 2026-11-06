@@ -16,7 +16,7 @@ import { createDb } from "../../src/db/pool.js";
 import { RUN_HOOKS } from "../../src/runtime/run-worker.js";
 import { SUBAGENT_MESSAGES_HOOKS, SubagentMessages } from "../../src/runtime/subagents/messages.js";
 import { SubagentsService } from "../../src/runtime/subagents/subagents.service.js";
-import { Waits } from "../../src/runtime/waits.js";
+import { WAIT_SWEEP_BATCH, Waits } from "../../src/runtime/waits.js";
 import { AGENT_REFUSALS } from "../../src/tools/builtins/agent.js";
 import {
   SEND_MESSAGE_REFUSALS,
@@ -712,6 +712,48 @@ describe("SendMessage to a sub-agent", { timeout: 90_000 }, () => {
     expect(finalText(await eventsOf(db, childId), rows[1]?.id as string)).toBe("late seen");
     // consumed now: the next sweep starts nothing
     expect((await k.app.get(Waits).sweep()).restarted).toBe(0);
+  });
+
+  it("stopped sub-agents' parked messages never fill the sweep's batch: they cannot start", async () => {
+    const { conv, ctx } = await parentRun();
+    // four batches of stopped sub-agents, each with an old message no run will take
+    const payload = JSON.stringify({
+      content: [{ type: "text", text: "parked for good" }],
+      authorAccountId: ownerId,
+    });
+    await sql`
+      WITH c AS (
+        INSERT INTO capybara.conversations
+          (id, org_id, agent_id, account_id, kind, parent_conversation_id, title, last_seq,
+           subagent_depth)
+        SELECT gen_random_uuid()::text, ${orgId}, ${agentId}, ${ownerId}, 'subagent', ${conv},
+          'Stopped', 1, 1
+        FROM generate_series(1, ${4 * WAIT_SWEEP_BATCH})
+        RETURNING id
+      ), r AS (
+        INSERT INTO capybara.runs
+          (id, conversation_id, status, agent_version, trigger_account_id, trigger_seq)
+        SELECT gen_random_uuid()::text, id, 'aborted', 1, ${ownerId}, 1 FROM c
+        RETURNING conversation_id
+      )
+      INSERT INTO capybara.conversation_events (conversation_id, seq, type, payload, created_at)
+      SELECT conversation_id, 1, 'user_message', ${payload}::jsonb, now() - interval '5 minutes'
+      FROM r`.execute(raw);
+    // then one parked message that can start (a lost post-run ensureRun)
+    const { childId } = await dispatch(ctx, "c1", "end-hold: go", "Parked late");
+    await waiting("end");
+    expect((await send(ctx, "s1", childId, "LATE-MSG: parked")).isError).toBe(false);
+    dropEnsure.add(childId);
+    release("end");
+    await waitFor(
+      async () => (ensureAttempts.get(childId) ?? 0) >= 4,
+      20_000,
+      "the post-run ensureRun given up",
+    );
+    await sql`UPDATE capybara.conversation_events SET created_at = now() - interval '5 minutes'
+      WHERE conversation_id = ${childId} AND type = 'user_message'`.execute(raw);
+    expect((await k.app.get(Waits).sweep()).restarted).toBe(1);
+    await settled(childId, 2);
   });
 
   it("a run started from a message holds its sub-agent's concurrency slot", async () => {

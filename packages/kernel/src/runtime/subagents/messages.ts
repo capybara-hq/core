@@ -338,6 +338,14 @@ export class SubagentMessages {
       // an active sub-agent is not waited for here: its token append locks its row and then the
       // sender's run row, which this transaction already holds (review I1 of phase C)
       if (await activeRun()) return null;
+      // A brief inverted-order window remains: this transaction holds the tree's budget run
+      // (`commit`) and now takes the child's row, while a run of the child that started between the
+      // check above and this lock (a wake run, `RunQueue.childWakeIn`) takes the child's row and
+      // then the budget run in its token append (`StepLog.appendCounted`). PostgreSQL's deadlock
+      // detection aborts one of the two transactions and the other goes on: either this
+      // `SendMessage` call errors (nothing written; a repeat finds the running sub-agent and
+      // appends to it) or that step's append errors as any database error of a step does. Accepted
+      // rather than a lock reordering, for a window of a few statements.
       await t
         .selectFrom("conversations")
         .select("id")

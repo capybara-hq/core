@@ -1,9 +1,11 @@
+import { randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { EventLog } from "../../src/conversations/event-log.js";
 import type { ConversationEvent, EventPayload } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
@@ -474,5 +476,57 @@ describe("progress and usage", () => {
     expect(cr.json()).toEqual({ usage: await usageOf(child) });
     // owner only
     expect((await member({ method: "GET", url: `${base()}/${conv}/usage` })).statusCode).toBe(404);
+  }, 60_000);
+
+  it("conversation usage sums every descendant (depth 3), and a sub-agent's covers its subtree", async () => {
+    const { conv, child } = await oneChild();
+    const owner0 = await db
+      .selectFrom("conversations")
+      .select(["account_id"])
+      .where("id", "=", conv)
+      .executeTakeFirstOrThrow();
+    // a grandchild and a great-grandchild below the child, each with a usage event of its own
+    const below: string[] = [];
+    let parent = child;
+    for (const [depth, tokens] of [
+      [2, 70],
+      [3, 900],
+    ] as const) {
+      const id = randomUUID();
+      await db
+        .insertInto("conversations")
+        .values({
+          id,
+          org_id: orgId,
+          agent_id: agentId,
+          account_id: owner0.account_id,
+          kind: "subagent",
+          parent_conversation_id: parent,
+          subagent_depth: depth,
+          title: `Depth ${depth}`,
+        })
+        .execute();
+      await k.app.get(EventLog).append(id, [
+        {
+          type: "usage",
+          payload: {
+            step: 0,
+            provider: "model-script",
+            model: "script-1",
+            inputTokens: tokens,
+            outputTokens: 1,
+            cacheReadTokens: 0,
+            cacheWriteTokens: 0,
+          },
+        },
+      ]);
+      below.push(id);
+      parent = id;
+    }
+    const r = await owner({ method: "GET", url: `${base()}/${conv}/usage` });
+    expect(r.statusCode, r.body).toBe(200);
+    expect(r.json()).toEqual({ usage: await usageOf(conv, child, ...below) });
+    const cr = await owner({ method: "GET", url: `${base()}/${child}/usage` });
+    expect(cr.json()).toEqual({ usage: await usageOf(child, ...below) });
   }, 60_000);
 });

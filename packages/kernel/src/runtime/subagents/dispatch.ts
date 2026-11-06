@@ -19,6 +19,7 @@ import {
 import type { ToolStepContext } from "../../tools/pipeline.js";
 import type { ProviderRegistry } from "../providers.js";
 import { ACTIVE_RUN_STATUSES, type RunJobData, runJobId } from "../run-jobs.js";
+import { childResult, type DispatchRow, finishedEvent } from "./child.js";
 import {
   type CheckedOrgAgent,
   effectiveDefinition,
@@ -409,6 +410,36 @@ export type DispatchCommit =
   | { kind: "gate"; outcome: DispatchOutcome }
   | { kind: "written"; childRunId: string; childSeq: number; parentSeq: number; content: string };
 
+const isActiveStatus = (status: string): boolean =>
+  (ACTIVE_RUN_STATUSES as readonly string[]).includes(status);
+
+/**
+ * The result text of a child run that ended before its parent's call got a result and was never
+ * delivered (agent map spec, rc upgrade: a foreground-era dispatch whose rc finisher wrote
+ * `subagent_finished` and resumed the parent): the child's report (`childResult`), with the
+ * parent's `subagent_finished` appended in this transaction when it is missing (idempotent by its
+ * key), so the undelivered sweep never delivers it a second time. Null when the parent already
+ * has a delivery for the run (it carries the result) or the run has no terminal event yet.
+ */
+async function rcFinishedResult(
+  d: Pick<DispatchDeps, "db" | "eventLog">,
+  row: DispatchRow,
+): Promise<string | null> {
+  const delivered = await d.db
+    .selectFrom("conversation_events")
+    .select("seq")
+    .where("conversation_id", "=", row.parentConversationId)
+    .where("type", "=", "subagent_delivery")
+    .where(sql<string>`payload ->> 'childRunId'`, "=", row.childRunId)
+    .limit(1)
+    .executeTakeFirst();
+  if (delivered) return null;
+  const r = await childResult(d.eventLog, row);
+  if (!r) return null;
+  await d.eventLog.appendIn(row.parentConversationId, [finishedEvent(row, r.finished)]);
+  return r.content;
+}
+
 /**
  * {@link commit}'s transaction (run by `SubagentsService.commitDispatch`, `d.db` its handle).
  * Null when `child` refused.
@@ -451,12 +482,25 @@ export async function commitDispatchIn(
     // reaches here again through the pipeline's policy stages, so it may ask for approval again.
     let result: { content: string; seq: number } | null = null;
     if (a.forSkill === undefined) {
+      // an rc child that already ended under the foreground wait, whose rc finisher wrote
+      // `subagent_finished` and resumed this run (no delivery; the sweep never delivers a run with
+      // `subagent_finished`): its report is this call's result, as the rc gave it, or it is lost
+      const finished =
+        a.sent === undefined && existing.status !== null && !isActiveStatus(existing.status)
+          ? await rcFinishedResult(d, {
+              parentRunId: ctx.runId,
+              parentCallId: callId,
+              parentConversationId: ctx.conversationId,
+              childConversationId: existing.child_conversation_id,
+              childRunId: existing.child_run_id,
+            })
+          : null;
       const [ev] = await d.eventLog.appendIn(ctx.conversationId, [
         resultEvent(
           ctx,
           callId,
           a.call?.toolKey ?? AGENT_TOOL,
-          a.sent?.content ?? agentStartedText(existing.child_conversation_id),
+          finished ?? a.sent?.content ?? agentStartedText(existing.child_conversation_id),
         ),
       ]);
       if (ev?.type === "tool_result") result = { content: ev.payload.content, seq: ev.seq };

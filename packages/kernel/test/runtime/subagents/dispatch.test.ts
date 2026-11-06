@@ -8,7 +8,7 @@ import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara
 import { sql } from "kysely";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { normalizeStoredDefinition } from "../../../src/agents/definition.js";
-import { EventLog } from "../../../src/conversations/event-log.js";
+import { type AppendEvent, EventLog } from "../../../src/conversations/event-log.js";
 import type { ConversationEvent, EventPayload } from "../../../src/conversations/events.js";
 import type { KernelSchemaDb } from "../../../src/db/kernel-schema.js";
 import { createDb } from "../../../src/db/pool.js";
@@ -16,6 +16,7 @@ import { KernelConfigService } from "../../../src/infra/config/kernel-config.ser
 import { ModelPurposesService } from "../../../src/models/purposes.js";
 import { BEHAVIOR_RULES } from "../../../src/runtime/context/build.js";
 import { ProviderRegistry } from "../../../src/runtime/providers.js";
+import { childResult, finishedEvent } from "../../../src/runtime/subagents/child.js";
 import { type DispatchDeps, dispatchSubagent } from "../../../src/runtime/subagents/dispatch.js";
 import { SubagentMessages } from "../../../src/runtime/subagents/messages.js";
 import { SUBAGENT_PREAMBLE } from "../../../src/runtime/subagents/preamble.js";
@@ -715,6 +716,100 @@ describe("dispatch idempotency under the parent run lock", () => {
     ]);
     // nothing new was dispatched
     expect(await children(conv)).toHaveLength(1);
+  }, 60_000);
+
+  it("an rc child that ended under the foreground wait, finished but never delivered, gives its report as the call's result", async () => {
+    const { conv, runId, ctx } = await parentRun();
+    const childConv = randomUUID();
+    const childRun = randomUUID();
+    await db
+      .insertInto("conversations")
+      .values({
+        id: childConv,
+        org_id: orgId,
+        agent_id: agentId,
+        account_id: ownerId,
+        kind: "subagent",
+        parent_conversation_id: conv,
+        subagent_type: "general-purpose",
+        subagent_depth: 1,
+      })
+      .execute();
+    await db
+      .insertInto("runs")
+      .values({
+        id: childRun,
+        conversation_id: childConv,
+        status: "completed",
+        agent_version: 1,
+        trigger_account_id: ownerId,
+        trigger_seq: 1,
+        budget_run_id: runId,
+      })
+      .execute();
+    const row = {
+      parentRunId: runId,
+      parentCallId: "old-2",
+      parentConversationId: conv,
+      childConversationId: childConv,
+      childRunId: childRun,
+    };
+    await db
+      .insertInto("subagent_dispatches")
+      .values({
+        parent_run_id: runId,
+        parent_call_id: "old-2",
+        parent_conversation_id: conv,
+        step: 1,
+        child_conversation_id: childConv,
+        child_run_id: childRun,
+        resumed: false,
+        budget_run_id: runId,
+      })
+      .execute();
+    // the child's log as the rc wrote it, and the rc finisher's subagent_finished in the parent
+    const log = k.app.get(EventLog);
+    await log.append(childConv, [
+      {
+        type: "user_message",
+        payload: { content: [{ type: "text", text: "task" }], authorAccountId: ownerId },
+      },
+      {
+        type: "run_started",
+        runId: childRun,
+        payload: {
+          agentVersion: 1,
+          model: { provider: "model-script", model: "script-1" },
+          triggerAccountId: ownerId,
+        },
+      },
+      {
+        type: "assistant_message",
+        runId: childRun,
+        payload: {
+          step: 1,
+          content: [{ type: "text", text: "the rc child's report" }],
+          stopReason: "end_turn",
+        },
+      },
+      {
+        type: "run_finished",
+        runId: childRun,
+        payload: { reason: "completed", consumedUpToSeq: 1 },
+      },
+    ] as AppendEvent[]);
+    const r = await childResult(log, row);
+    if (!r) throw new Error("no child result");
+    await log.append(conv, [finishedEvent(row, r.finished)]);
+    const call = { toolKey: "agent", authorization: { policy: "allow" }, startedAt: Date.now() };
+    const out = await dispatchSubagent(deps(), { ctx, callId: "old-2", input, call });
+    expect(out).toMatchObject({ kind: "dispatched", childRunId: childRun, content: r.content });
+    expect(r.content).toContain("the rc child's report");
+    expect(await dispatchSubagent(deps(), { ctx, callId: "old-2", input, call })).toEqual(out);
+    const events = await eventsOf(db, conv);
+    expect(toolResults(events).map((e) => e.payload.content)).toEqual([r.content]);
+    expect(ofType(events, "subagent_finished")).toHaveLength(1);
+    expect(ofType(events, "subagent_delivery")).toEqual([]);
   }, 60_000);
 
   it("the dispatch locks the parent conversation before the parent run (final review m2)", async () => {

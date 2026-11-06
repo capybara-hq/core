@@ -1136,6 +1136,8 @@ export class ToolPipeline {
         ctx.parent !== undefined && { sandboxConversationId: ctx.parent.rootConversationId }),
       ...(tool.source.kind === "builtin" &&
         ctx.parent !== undefined && { parentRunId: ctx.parent.runId }),
+      ...(tool.source.kind === "builtin" &&
+        ctx.parent?.budgetRunId !== undefined && { budgetRunId: ctx.parent.budgetRunId }),
       // the hook scope of a builtin's own model call (the WebFetch extraction)
       ...(tool.source.kind === "builtin" && {
         step: ctx.step,

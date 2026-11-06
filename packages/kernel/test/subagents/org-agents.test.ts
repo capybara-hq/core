@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -476,6 +477,46 @@ describe("dispatching an org agent", () => {
       url: `/api/v1/orgs/${orgId}/trajectories/${conv}`,
     });
     expect(parent.statusCode, parent.body).toBe(200);
+  }, 60_000);
+
+  it("a grandchild under the analyst's child is authorized by the root's agent: the analyst's owner 404 (depth 2)", async () => {
+    await db
+      .updateTable("agents")
+      .set({ owner_account_id: ids.member })
+      .where("id", "=", leadId)
+      .execute();
+    await db
+      .updateTable("memberships")
+      .set({ role: "admin" })
+      .where("org_id", "=", orgId)
+      .where("account_id", "=", ids.outsider)
+      .execute();
+    const { conv } = await converse(member, "SCENARIO cred");
+    const [child] = await childrenOf(conv);
+    if (!child) throw new Error("no child dispatched");
+    // a general-purpose grandchild the analyst dispatched: it inherits the analyst's agent_id
+    const grandchild = randomUUID();
+    await db
+      .insertInto("conversations")
+      .values({
+        id: grandchild,
+        org_id: orgId,
+        agent_id: analystId,
+        account_id: ids.member,
+        kind: "subagent",
+        parent_conversation_id: child.id,
+        subagent_depth: 2,
+        title: "Grandchild",
+      })
+      .execute();
+    const trajectory = (req: Req) =>
+      req({ method: "GET", url: `/api/v1/orgs/${orgId}/trajectories/${grandchild}` });
+    // the analyst's owner is neither the root's owner nor an admin: the member's private work
+    expect((await trajectory(ana)).statusCode).toBe(404);
+    // the root agent's owner and an admin read it, as at depth 1
+    const lead = await trajectory(member);
+    expect(lead.statusCode, lead.body).toBe(200);
+    expect((await trajectory(outsider)).statusCode).toBe(200);
   }, 60_000);
 
   it("its own ask and the parent's deny give the stricter result; the approval goes to the starter and an always grant is stored for the analyst", async () => {

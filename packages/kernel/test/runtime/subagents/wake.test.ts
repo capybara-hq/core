@@ -145,6 +145,8 @@ const RULES: ScriptRule[] = [
 type Barriers = Map<string, { arrived: number; waiters: (() => void)[] }>;
 const barriers = (): Barriers | undefined =>
   (globalThis as { __modelScript?: { barriers: Barriers } }).__modelScript?.barriers;
+/** How many model calls arrived at barrier `name` so far. */
+const arrivals = (name: string) => barriers()?.get(name)?.arrived ?? 0;
 const arrived = (name: string) =>
   waitFor(async () => (barriers()?.get(name)?.arrived ?? 0) >= 1, 20_000, `barrier ${name}`);
 /** Waits until `n` model calls are held at barrier `name` right now. */
@@ -563,6 +565,65 @@ describe("waking on sub-agent deliveries", { timeout: 90_000 }, () => {
     expect(await ofWake()).toHaveLength(1);
   });
 
+  /**
+   * A child that finished, its root woken by the delivery, then a second message to the root that
+   * opened a new budget window; `exhaustOld` uses up the first window first. Then the child's
+   * background task wakes it: its wake run, the windows and their token counters.
+   */
+  async function childWokenAfterNewWindow(marker: string, exhaustOld: boolean) {
+    const conv = await dispatched(`SCENARIO quick ${marker}`);
+    const [child] = await childRunsOf(db, conv);
+    if (!child) throw new Error("no child dispatched");
+    await waitForTerminal(db, child.conversationId, 1, 30_000);
+    await waitForTerminal(db, conv, 2, 30_000);
+    const [oldWindow] = await runRows(conv);
+    if (!oldWindow) throw new Error("no root run");
+    await postMessage(owner, orgId, conv, "second window");
+    await waitForTerminal(db, conv, 3, 30_000);
+    const newWindow = (await runRows(conv))[2] as RunRow;
+    expect(newWindow.budget_run_id).toBeNull();
+    if (exhaustOld) {
+      await sql`UPDATE capybara.runs SET subagent_tokens_used = 1000000000
+        WHERE id = ${oldWindow.id}`.execute(raw);
+    }
+    const tokensOf = async (runId: string) =>
+      Number(
+        (
+          await db
+            .selectFrom("runs")
+            .select("subagent_tokens_used")
+            .where("id", "=", runId)
+            .executeTakeFirstOrThrow()
+        ).subagent_tokens_used,
+      );
+    const before = { old: await tokensOf(oldWindow.id), current: await tokensOf(newWindow.id) };
+    await finishChildTask(conv, child);
+    await waitForTerminal(db, child.conversationId, 2, 30_000);
+    const wake = (await runRows(child.conversationId))[1] as RunRow;
+    expect(wake.budget_run_id).toBe(newWindow.id);
+    return {
+      wake,
+      terminal: (await eventsOf(db, child.conversationId)).at(-1),
+      old: { before: before.old, after: await tokensOf(oldWindow.id) },
+      current: { before: before.current, after: await tokensOf(newWindow.id) },
+    };
+  }
+
+  it("a child's wake run counts its tokens on the root's current budget window", async () => {
+    const r = await childWokenAfterNewWindow("budget counted", false);
+    expect(r.wake.status).toBe("completed");
+    // one model call of 10 + 5 tokens, on the window of the second message only
+    expect(r.current.after).toBe(r.current.before + 15);
+    expect(r.old.after).toBe(r.old.before);
+  });
+
+  it("a child's wake run is not refused by a used-up earlier budget window", async () => {
+    const r = await childWokenAfterNewWindow("budget refused", true);
+    expect(r.terminal).toMatchObject({ type: "run_finished", payload: { reason: "completed" } });
+    expect(r.current.after).toBe(r.current.before + 15);
+    expect(r.old.after).toBe(1_000_000_000);
+  });
+
   it("a grandchild's delivery wakes the intermediate child, whose wake run reaches the root", async () => {
     const conv = await dispatched("SCENARIO deep");
     const [mid] = await childRunsOf(db, conv);
@@ -640,6 +701,76 @@ describe("waking on sub-agent deliveries", { timeout: 90_000 }, () => {
       "the earlier task stopped",
     );
     expect(stopped.payload).toMatchObject({ stoppedBy: "subagent_end" });
+  });
+
+  /** The task's `background_task_finished` in `conversationId`'s log, once it was written. */
+  const taskFinish = (conversationId: string, taskId: string) =>
+    waitFor(
+      async () =>
+        (await eventsOf(db, conversationId)).find(
+          (e) => e.type === "background_task_finished" && e.payload.taskId === taskId,
+        ) ?? null,
+      15_000,
+      `task ${taskId} stopped`,
+    );
+
+  it("a tree stop stops an idle descendant's background tasks, so their finish wakes nobody", async () => {
+    // (earlier tests leave aborted waiters at the barriers: wait for new arrivals instead)
+    const before = { mid: arrivals("tree-mid"), leaf: arrivals("child") };
+    const conv = await dispatched("SCENARIO tree idle leaf");
+    const [mid] = await childRunsOf(db, conv);
+    if (!mid) throw new Error("no child dispatched");
+    await waitFor(
+      async () => arrivals("tree-mid") > before.mid && arrivals("child") > before.leaf,
+      20_000,
+      "the mid and the leaf held",
+    );
+    const [leaf] = await childRunsOf(db, mid.conversationId);
+    if (!leaf) throw new Error("no grandchild dispatched");
+    // the leaf ends on its own (idle) and keeps a running task its run started
+    release("child");
+    await waitForTerminal(db, leaf.conversationId, 1, 30_000);
+    const task = await finishChildTask(conv, leaf, { finish: false });
+    const res = await owner({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/conversations/${mid.conversationId}/abort`,
+    });
+    expect(res.statusCode, res.body).toBe(202);
+    const stopped = await taskFinish(leaf.conversationId, task.taskId);
+    expect(stopped.payload).toMatchObject({ stoppedBy: "subagent_end" });
+    await waitForTerminal(db, mid.conversationId, 1, 30_000);
+    await new Promise((r) => setTimeout(r, 500));
+    await expectNoWake(leaf.conversationId, 1);
+    await expectNoWake(mid.conversationId, 1);
+  });
+
+  it("stopping an idle agent with a running descendant also stops its own background tasks", async () => {
+    const before = arrivals("child");
+    const conv = await dispatched("SCENARIO deep idle mid");
+    const [mid] = await childRunsOf(db, conv);
+    if (!mid) throw new Error("no child dispatched");
+    // the mid dispatched a held leaf and ended its run: idle, its leaf still running
+    await waitForTerminal(db, mid.conversationId, 1, 30_000);
+    const [leaf] = await childRunsOf(db, mid.conversationId);
+    if (!leaf) throw new Error("no grandchild dispatched");
+    await waitFor(async () => arrivals("child") > before, 20_000, "the leaf held");
+    const task = await finishChildTask(conv, mid, { finish: false });
+    const res = await owner({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/conversations/${mid.conversationId}/abort`,
+    });
+    expect(res.statusCode, res.body).toBe(202);
+    const stopped = await taskFinish(mid.conversationId, task.taskId);
+    expect(stopped.payload).toMatchObject({ stoppedBy: "subagent_end" });
+    await waitFor(
+      async () =>
+        (await deliveriesOf(mid.conversationId)).find((d) => d.payload.childRunId === leaf.runId) ??
+        null,
+      30_000,
+      "the leaf's aborted delivery",
+    );
+    await new Promise((r) => setTimeout(r, 500));
+    await expectNoWake(mid.conversationId, 1);
   });
 
   it("unpausing the root wakes the sub-agents whose wake it held", async () => {

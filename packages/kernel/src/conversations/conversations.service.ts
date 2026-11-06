@@ -24,6 +24,7 @@ import { type AppendEvent, EventLog } from "./event-log.js";
 import type { ConversationEvent, LogContentBlock } from "./events.js";
 import { userMessageIdemKey } from "./idem-keys.js";
 import { NO_SELECTION, planSelection, readSelection, type Selection } from "./selection.js";
+import { conversationTree } from "./tree.js";
 
 /** 对外的会话视图。 */
 export interface ConversationView {
@@ -872,8 +873,10 @@ export class ConversationsService {
   }
 
   /**
-   * A conversation's token usage: its own `usage` events (compaction included) plus those of its
-   * sub-agents (sub-agents spec §8.3), whose logs keep their own. Owner only, as {@link get}.
+   * A conversation's token usage: its own `usage` events (compaction included) plus those of every
+   * sub-agent below it, at any depth (sub-agents spec §8.3, agent map spec §6: every descendant
+   * counts toward the root; `conversationTree`), whose logs keep their own. Owner only, as
+   * {@link get}.
    */
   async usage(
     orgId: string,
@@ -881,13 +884,9 @@ export class ConversationsService {
     viewerAccountId: string,
   ): Promise<UsageTotals> {
     if (!(await this.isAccessible(orgId, conversationId, viewerAccountId))) throw notFound();
+    const ids = (await conversationTree(this.db.db, conversationId)).map((c) => c.id);
     const { rows } = await sql<UsageRow>`${usageSums(
-      sql`e.conversation_id IN (
-        SELECT ${conversationId}::text
-        UNION ALL
-        SELECT c.id FROM capybara.conversations c
-        WHERE c.parent_conversation_id = ${conversationId} AND c.kind = 'subagent'
-      )`,
+      sql`e.conversation_id IN (${sql.join(ids.length > 0 ? ids : [conversationId])})`,
     )}`.execute(this.db.db);
     const row = rows[0];
     return row

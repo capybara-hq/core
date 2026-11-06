@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,9 +11,11 @@ import type {
 } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { EventLog } from "../../../src/conversations/event-log.js";
 import type { ConversationEvent, EventPayload } from "../../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../../src/db/kernel-schema.js";
 import { createDb } from "../../../src/db/pool.js";
+import { UsageReporter } from "../../../src/runtime/usage-report.js";
 import {
   openBarrier,
   type ScriptRule,
@@ -736,5 +739,70 @@ describe("hooks and usage reports of a sub-agent", () => {
       "parent usage report",
     );
     expect(p).not.toHaveProperty("parent");
+  }, 60_000);
+
+  it("a child's wake run's usage.report has parent: the child's latest dispatch", async () => {
+    const conv = await createConv(owner, orgId, agentId);
+    await postMessage(owner, orgId, conv, "SCENARIO hooks");
+    await waitForTerminal(db, conv, 1, 30_000);
+    await finishedDeliveries(db, conv);
+    const [child] = await childrenOf(conv);
+    if (!child) throw new Error("no child dispatched");
+    const run = await db
+      .selectFrom("runs")
+      .select("id")
+      .where("conversation_id", "=", conv)
+      .executeTakeFirstOrThrow();
+    const call = ofType(await eventsOf(db, conv), "subagent_dispatched")[0]?.payload
+      .callId as string;
+    // a wake run of the child (nobody dispatched it: no dispatch row of its own) with a usage event
+    const wakeRun = randomUUID();
+    await db
+      .insertInto("runs")
+      .values({
+        id: wakeRun,
+        conversation_id: child,
+        status: "completed",
+        agent_version: 1,
+        trigger_account_id: ownerId,
+        trigger_seq: 1,
+        budget_run_id: run.id,
+      })
+      .execute();
+    const [usage] = await k.app.get(EventLog).append(child, [
+      {
+        type: "usage",
+        runId: wakeRun,
+        payload: {
+          step: 1,
+          provider: "model-script",
+          model: "script-1",
+          inputTokens: 3,
+          outputTokens: 1,
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0,
+        },
+      },
+    ]);
+    if (!usage) throw new Error("usage not appended");
+    await k.app.get(UsageReporter).enqueue(child, usage.seq);
+    const id = `${child}/${usage.seq}`;
+    type Delivery = { calls: number; last: UsageReportPayload | null };
+    const got = await waitFor(
+      async () => {
+        const res = await owner({
+          method: "GET",
+          url: `/plugins/hooks-probe/usage?eventIds=${id}`,
+        });
+        return (res.json() as Record<string, Delivery>)[id]?.last ?? null;
+      },
+      20_000,
+      "the wake run's usage report",
+    );
+    expect(got).toMatchObject({
+      conversationId: child,
+      runId: wakeRun,
+      parent: { conversationId: conv, runId: run.id, callId: call },
+    });
   }, 60_000);
 });

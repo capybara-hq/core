@@ -776,8 +776,10 @@ export class Waits implements OnApplicationShutdown {
    * consumed, written past the grace period and within the last day: a `SendMessage` that reached a
    * run after its last model call is started by that run's post-job `ensureRun`
    * (`RunQueue.childWakeIn`), which a replica dying after the terminal commit skips. Re-derived with
-   * the same `ensureRun` (its rules decide: a stopped last run or a paused root starts nothing).
-   * Returns how many runs started.
+   * the same `ensureRun` (its rules decide: a paused root starts nothing). A sub-agent whose last
+   * run was stopped (`aborted`) can never start from a message, so it is left out here, and the
+   * newest conversations come first (active within the last day), so parked messages that cannot
+   * start never fill the batch. Returns how many runs started.
    */
   private async sweepParkedMessages(): Promise<number> {
     const rows = await this.db
@@ -785,6 +787,16 @@ export class Waits implements OnApplicationShutdown {
       .select("c.id")
       .where("c.kind", "=", "subagent")
       .where("c.deleted_at", "is", null)
+      // every append bumps `updated_at`: a message of the last day implies it (an index-friendly
+      // bound before the event lookups)
+      .where("c.updated_at", ">", sql<Date>`now() - interval '1 day'`)
+      .where(
+        (eb) =>
+          sql<boolean>`(
+            SELECT r.status FROM capybara.runs r WHERE r.conversation_id = ${eb.ref("c.id")}
+            ORDER BY r.created_at DESC, r.id DESC LIMIT 1
+          ) IS DISTINCT FROM 'aborted'`,
+      )
       .where(({ exists, selectFrom }) =>
         exists(
           selectFrom("conversation_events as e")
@@ -810,6 +822,8 @@ export class Waits implements OnApplicationShutdown {
           ),
         ),
       )
+      .orderBy("c.updated_at", "desc")
+      .orderBy("c.id")
       .limit(WAIT_SWEEP_BATCH)
       .execute();
     let n = 0;
@@ -1419,8 +1433,9 @@ export class Waits implements OnApplicationShutdown {
    * `conversationId` (unless `includeSelf` is false) and of each sub-agent conversation below it,
    * shallowest first, each the way {@link stopChildren} stops a child (a stopped agent delivers its
    * finish to its own parent as `aborted`). A run a worker holds ends later; its worker's
-   * {@link stopDescendantsOfStopped} stops what it dispatched after this read. Returns the number
-   * of runs asked to stop.
+   * {@link stopDescendantsOfStopped} stops what it dispatched after this read. Then the running
+   * background tasks of every covered sub-agent conversation stop, whether it was running or idle.
+   * Returns the number of runs asked to stop.
    *
    * Lock order: nothing is held across runs. Each run's stop is its own transaction (or none), and
    * one that writes the terminal state locks that run's conversation row, then its run row, the
@@ -1458,6 +1473,12 @@ export class Waits implements OnApplicationShutdown {
         this.log.error("cannot stop a sub-agent run of the tree", { runId: r.id, err });
       }
     }
+    // every running background task of the covered sub-agents stops with them, idle ones too
+    // (their finish would wake the idle agent, whose delivery would restart the stopped branch):
+    // all of each conversation's tasks, as a stopped child's run end does (`childFinished`), with
+    // which this is idempotent (only running tasks are stopped; `stoppedBy: "subagent_end"`
+    // never wakes). A root conversation is skipped (`stopSubagentTasks`); never throws.
+    await Promise.all(ids.map((id) => this.background.stopSubagentTasks(id)));
     return runs.length;
   }
 

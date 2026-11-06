@@ -66,8 +66,11 @@ export interface SubagentParent {
    */
   otherAgent?: boolean;
   /**
-   * The tree's budget run (agent map spec §6: the child run's `budget_run_id`, read once when the
-   * run starts); absent when unknown, then read with `budgetRunOf(runId)` where it is needed.
+   * The tree's budget run of this child run (agent map spec §6): the run's own `budget_run_id`
+   * (a dispatched run's, or a wake run's current window of the root), else its dispatch row's, read
+   * once when the run starts. The loop's budget check and the token counter (`appendCounted`) use
+   * it; absent only when unknown, then read with `budgetRunOf(runId)` (the parent run's window,
+   * stale for a wake run, whose `runId` is the first dispatch's).
    */
   budgetRunId?: string;
   /**

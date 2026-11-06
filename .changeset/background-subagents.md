@@ -23,4 +23,8 @@ still rebuild with zero drift. The Claude Code tool map names `SendMessage` as a
 
 Upgrade note: do not mix replicas across this change. A worker without it stops a finished run's
 children (all of them are background children now) and reports a child's finish without the
-delivery; stop every old worker before new ones take sub-agent jobs.
+delivery; stop every old worker before new ones take sub-agent jobs. A parent run left in a
+(non-fork) `subagents` wait by the old version is resumed by the wait sweep (`sweepStuckRuns`,
+after its grace period); a child still running then delivers its finish in the background, and one
+that already finished under the old version gives its report as that `Agent` call's result, since
+the old finisher wrote no delivery for it.

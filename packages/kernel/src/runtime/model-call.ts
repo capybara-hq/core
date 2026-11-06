@@ -488,12 +488,23 @@ export async function appendCounted(
     eventLog: Pick<EventLog, "append" | "notify">;
     stepLog: Pick<StepLog, "appendCounted">;
   },
-  input: { conversationId: string; parentRunId?: string | undefined },
+  input: {
+    conversationId: string;
+    parentRunId?: string | undefined;
+    /** The run's budget window (agent map spec §6), when known; else the parent run's. */
+    budgetRunId?: string | undefined;
+    parent?: { budgetRunId?: string | undefined } | undefined;
+  },
   events: AppendEvent[],
 ): Promise<ConversationEvent[]> {
   const { conversationId, parentRunId } = input;
   if (parentRunId === undefined) return deps.eventLog.append(conversationId, events);
-  const out = await deps.stepLog.appendCounted(conversationId, parentRunId, events);
+  const budgetRunId = input.budgetRunId ?? input.parent?.budgetRunId;
+  const out = await deps.stepLog.appendCounted(
+    conversationId,
+    { parentRunId, ...(budgetRunId !== undefined && { budgetRunId }) },
+    events,
+  );
   if (out.toSeq !== null) await deps.eventLog.notify(conversationId, out.toSeq);
   return out.written;
 }

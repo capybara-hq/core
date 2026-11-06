@@ -70,6 +70,11 @@ export interface BuiltinCallContext extends ToolCallContext {
   /** The parent run of a sub-agent's run (absent for a top-level run). */
   parentRunId?: string;
   /**
+   * A sub-agent's run: the tree's budget window of this run (`SubagentParent.budgetRunId`), which
+   * a builtin's own model call (the `WebFetch` extraction) counts its tokens on.
+   */
+  budgetRunId?: string;
+  /**
    * The rest of the run's hook scope, for a builtin that makes a model call of its own (the
    * `WebFetch` extraction fires `model.request` / `model.response`): the step of the call, the
    * agent version of the run, the conversation kind (hooks fire for `chat` and `subagent` only)
