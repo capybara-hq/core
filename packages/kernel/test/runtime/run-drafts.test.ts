@@ -42,6 +42,10 @@ afterEach(() => {
 
 describe("RunDrafts", () => {
   it("writes the first delta at once, holds the next ones within the window, then writes all", async () => {
+    // The trailing timer is faked too: a real 1 ms timer armed by the held delta fires during the
+    // Redis round trip under load and writes early, so the delta past the window is held again.
+    vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+    vi.setSystemTime(1_000_000);
     const d = draftsOn(redis);
     d.append("r1", 1, "text", "Hel");
     expect(await stored("r1", 1)).toEqual({ text: "Hel", thinking: "" });
