@@ -186,6 +186,12 @@ function Agents({ orgId }: { orgId: string }) {
   queries on each path change themselves. The conversation's SSE stream appends to the cached
   events (`appendEvents`, unique and ordered by `seq`) and its `changed` frames invalidate the
   matching keys; on return it reopens from the cached last seq.
+- **Live drafts and the composer** (run input spec 2026-11-07). Sending while a run is active is an
+  interjection (`POST …/messages`, ↵ or ⌘↵); there is no queue UI, the bubble is placed where the run
+  absorbed it (`待处理` until then) and only paused leftovers from before keep 继续发送. A streaming
+  reply is a draft: the stream sends `event: draft` after the catch-up, the page resumes from it and
+  refetches a gap (`lib/stream.ts`, `lib/live-drafts.ts`), and a reload or switching conversations
+  shows the current draft from `GET …/runs/:runId/draft`, never the draft and its final message both.
 
 **Status codes.** A missing object (a 404 read) is the page's not-found state inside the shell
 with HTTP 200; an unknown route keeps `notFound()` and its 404 (`(app)/[...rest]/page.tsx`); the

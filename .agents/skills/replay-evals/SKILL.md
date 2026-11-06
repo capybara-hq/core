@@ -41,6 +41,12 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   when the conversation is idle and the queue not paused) or by "send now". Replay therefore needs
   nothing: the log holds exactly what the model saw, and an edit to a queued text never touches it.
 
+- Run input and live drafts (run input spec 2026-11-07): `POST …/queue` is now an alias of `…/messages`
+  and queues nothing new. A message sent during a run is an ordinary logged `user_message` that a
+  `model_call` absorbs (`absorbedUpToSeq`), so replay needs nothing. Live drafts (partial text and
+  thinking of the step in progress, Redis keys `capk:run-draft:*` plus the bus) are display only:
+  never in the log, never in a replay, no `DriftReason`; a resumed step resets its draft (`step_reset`).
+
 ## Model and effort switches (UI refresh B)
 
 - A person switches model or effort with a message (`POST …/messages` or the first message of
