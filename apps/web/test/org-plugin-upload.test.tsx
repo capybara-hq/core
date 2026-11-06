@@ -429,7 +429,7 @@ describe("/plugins/<id>: the org's own plugin", () => {
     await renderItem({ locale: "zh" });
     const user = userEvent.setup();
     // 删除 is the head's ⋯ menu item (destructive)
-    await user.click(await screen.findByRole("button", { name: zh.catalog.admin.detail.more }));
+    await user.click(await screen.findByRole("button", { name: zh.common.moreActions }));
     const item = await screen.findByRole("menuitem", { name: zh.plugins.action.delete });
     expect(item.getAttribute("data-danger")).toBe("true");
     await user.click(item);
@@ -455,7 +455,7 @@ describe("/plugins/<id>: the org's own plugin", () => {
     });
     await renderItem({ locale: "en" });
     const user = userEvent.setup();
-    await user.click(await screen.findByRole("button", { name: en.catalog.admin.detail.more }));
+    await user.click(await screen.findByRole("button", { name: en.common.moreActions }));
     await user.click(await screen.findByRole("menuitem", { name: en.plugins.action.delete }));
     const dialog = await screen.findByRole("dialog");
     expect(await within(dialog).findByText(en.plugins.delete.removed)).toBeTruthy();
@@ -471,7 +471,7 @@ describe("/plugins/<id>: the org's own plugin", () => {
     const sw = screen.getByRole("switch", { name: zh.plugins.owned.shareable });
     expect(sw.hasAttribute("disabled")).toBe(true);
     expect(screen.queryByRole("button", { name: zh.plugins.action.delete })).toBeNull();
-    expect(screen.queryByRole("button", { name: zh.catalog.admin.detail.more })).toBeNull();
+    expect(screen.queryByRole("button", { name: zh.common.moreActions })).toBeNull();
   });
 
   it("while 启用 runs from the head, its other buttons are disabled (never a dead click)", async () => {

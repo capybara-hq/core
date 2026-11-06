@@ -116,7 +116,7 @@ function SkillDetailView({
 }) {
   const scope = usePagePath("org");
   const t = useTranslations("skills");
-  const tc = useTranslations("catalog.admin.detail");
+  const tcm = useTranslations("common");
   const td = useTranslations("plugins.delete");
   const router = useRouter();
   const toast = useToast();
@@ -141,7 +141,7 @@ function SkillDetailView({
             ? {
                 actions: [
                   {
-                    label: tc("more"),
+                    label: tcm("moreActions"),
                     menu: [
                       { label: t("detail.delete"), danger: true, onSelect: () => setConfirm(true) },
                     ],

@@ -127,7 +127,7 @@ function CatalogItemDetail({
   const { actionsOf, dialog, error, busy } = usePluginActions({ orgId, admin, extensions });
   const actions = actionsOf(item);
   const owned = ownedBy(item, orgId);
-  const tm = useTranslations("catalog.admin.detail");
+  const tcm = useTranslations("common");
   const router = useRouter();
   const [deleting, setDeleting] = useState(false);
   const ownerLabel = useOwnerLabel(orgId);
@@ -160,7 +160,7 @@ function CatalogItemDetail({
               onSelect: () => a.onSelect?.(),
             },
       ),
-    ...(menu.length > 0 ? [{ label: tm("more"), menu }] : []),
+    ...(menu.length > 0 ? [{ label: tcm("moreActions"), menu }] : []),
   ];
   const description = descriptionOf(item, locale);
   const state = stateOf(item);

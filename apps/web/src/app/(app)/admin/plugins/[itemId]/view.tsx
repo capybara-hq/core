@@ -153,6 +153,7 @@ function PluginDetail({ detail, orgId }: { detail: CatalogItemDetail; orgId: str
   const errorMessage = useErrorMessage();
   const scopeLabel = useScopeLabel();
   const tc = useTranslations("adminComponents");
+  const tcm = useTranslations("common");
   // Sections: no data while they load or when they failed (not read again on mount).
   const mq = marketplacesQuery();
   const marketplaces = useQuery({ ...mq, retryOnMount: retryOnMountOf(mq.queryKey) }).data?.items;
@@ -276,7 +277,7 @@ function PluginDetail({ detail, orgId }: { detail: CatalogItemDetail; orgId: str
     ...(deletable
       ? [
           {
-            label: t("detail.more"),
+            label: tcm("moreActions"),
             menu: [{ label: t("detail.delete"), danger: true, onSelect: () => setConfirm(true) }],
           },
         ]

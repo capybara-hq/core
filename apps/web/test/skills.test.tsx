@@ -339,7 +339,7 @@ const detail = (over: Record<string, unknown> = {}) => ({
 /** 删除 sits in the detail head's ⋯ menu (a destructive item): opens it and picks 删除技能. */
 async function openDelete(user: ReturnType<typeof userEvent.setup>, locale: "zh" | "en") {
   const m = msgs[locale];
-  await user.click(await screen.findByRole("button", { name: m.catalog.admin.detail.more }));
+  await user.click(await screen.findByRole("button", { name: m.common.moreActions }));
   await user.click(await screen.findByRole("menuitem", { name: m.skills.detail.delete }));
 }
 
@@ -401,7 +401,7 @@ describe("技能详情（DetailPage）", () => {
     await renderSkill({ me: MEMBER });
     await screen.findByText("# PDF tools", { exact: false });
     expect(screen.queryByRole("button", { name: en.skills.detail.delete })).toBeNull();
-    expect(screen.queryByRole("button", { name: en.catalog.admin.detail.more })).toBeNull();
+    expect(screen.queryByRole("button", { name: en.common.moreActions })).toBeNull();
   });
 
   it("one centred column: the full description first, the facts as a KeyValue, 删除 in the head's menu", async () => {
@@ -418,9 +418,17 @@ describe("技能详情（DetailPage）", () => {
     expect(facts?.textContent).toContain(en.skills.detail.owner);
     expect(facts?.textContent).toContain(en.skills.detail.version);
     // no danger card in the page: 删除 is the head menu's destructive item
-    expect(screen.queryByText(en.skills.detail.dangerTitle)).toBeNull();
+    // no danger card in the page (its hint was the card's text)
+    expect(screen.queryByText(en.skills.detail.deleteHint)).toBeNull();
+    // the inspector and danger card copy left with them, in both locales
+    for (const m of [zh, en]) {
+      for (const k of ["inspectorTitle", "name", "dangerTitle", "description"]) {
+        expect(k in m.skills.detail).toBe(false);
+      }
+      expect("more" in m.catalog.admin.detail).toBe(false);
+    }
     const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: en.catalog.admin.detail.more }));
+    await user.click(screen.getByRole("button", { name: en.common.moreActions }));
     const del = await screen.findByRole("menuitem", { name: en.skills.detail.delete });
     expect(del.getAttribute("data-danger")).toBe("true");
   });

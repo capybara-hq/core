@@ -17,7 +17,8 @@
     "theme": "Theme",
     "themeLight": "Light",
     "themeDark": "Dark",
-    "back": "Back"
+    "back": "Back",
+    "moreActions": "More actions"
   },
   "login": {
     "title": "Sign in",
@@ -769,12 +770,9 @@
         "versions": "Versions"
       },
       "bodyUnavailable": "The SKILL.md text cannot be shown (it is too large or unavailable).",
-      "inspectorTitle": "Details",
-      "name": "Name",
       "version": "Version",
       "files": "Files",
       "updated": "Updated",
-      "description": "Description",
       "filesLabel": "Files of the current version",
       "versionsLabel": "Versions",
       "columns": {
@@ -785,7 +783,6 @@
         "files": "Files",
         "created": "Created"
       },
-      "dangerTitle": "Danger zone",
       "delete": "Delete skill",
       "deleteTitle": "Delete {name}?",
       "deleteHint": "Agents stop loading this skill. Agent definitions keep the reference, which shows as deleted until their owners remove it.",
@@ -3101,8 +3098,7 @@
         "notShareableNote": "Its organization does not share it: you can narrow its scope or disable it, but not show it to or associate it with other organizations.",
         "ownerNote": "It belongs to {org}; new versions come from that organization.",
         "awaitingNote": "Its first version waits for a super admin's confirmation in the Pending tab; nothing of it is usable until then.",
-        "pendingVersionNote": "Version {version} uploaded by its organization waits for a super admin's confirmation in the Pending tab.",
-        "more": "More actions"
+        "pendingVersionNote": "Version {version} uploaded by its organization waits for a super admin's confirmation in the Pending tab."
       },
       "review": {
         "title": "Import plugin",

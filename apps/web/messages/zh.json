@@ -17,7 +17,8 @@
     "theme": "主题",
     "themeLight": "浅色",
     "themeDark": "深色",
-    "back": "返回"
+    "back": "返回",
+    "moreActions": "更多操作"
   },
   "login": {
     "title": "登录",
@@ -769,12 +770,9 @@
         "versions": "版本"
       },
       "bodyUnavailable": "无法显示 SKILL.md 的内容（文件过大或暂时读不到）。",
-      "inspectorTitle": "详情",
-      "name": "名称",
       "version": "版本",
       "files": "文件数",
       "updated": "更新时间",
-      "description": "描述",
       "filesLabel": "当前版本的文件",
       "versionsLabel": "版本",
       "columns": {
@@ -785,7 +783,6 @@
         "files": "文件数",
         "created": "创建时间"
       },
-      "dangerTitle": "危险操作",
       "delete": "删除技能",
       "deleteTitle": "删除 {name}？",
       "deleteHint": "智能体将不再加载这个技能。智能体定义里的引用会保留并显示为「已删除」，直到负责人移除。",
@@ -3089,8 +3086,7 @@
         "notShareableNote": "该组织未开放共享：可以缩小范围或停用，不能向其他组织显示或关联给其他组织。",
         "ownerNote": "它归 {org} 所有，新版本由该组织上传。",
         "awaitingNote": "它的第一个版本在待确认中等待超级管理员确认，确认前什么都不能用。",
-        "pendingVersionNote": "该组织上传的版本 {version} 在待确认中等待超级管理员确认。",
-        "more": "更多操作"
+        "pendingVersionNote": "该组织上传的版本 {version} 在待确认中等待超级管理员确认。"
       },
       "review": {
         "title": "导入插件",
