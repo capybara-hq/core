@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { CatalogScopeService } from "../../src/catalog/catalog-scope.service.js";
+import { PlatformComponents } from "../../src/catalog/platform-components.js";
 import { PlatformPluginUpdater } from "../../src/catalog/plugin-upgrade.js";
 import { SkillsService } from "../../src/skills/skills.service.js";
 import { usableSkills } from "../../src/skills/usable.js";
@@ -81,6 +82,41 @@ const itemRow = (name: string) =>
     .where("name", "=", name)
     .where("deleted_at", "is", null)
     .executeTakeFirstOrThrow();
+
+const installRow = (name: string) =>
+  env.db
+    .selectFrom("extension_installs")
+    .select(["sha256", "version", "desired_state"])
+    .where("name", "=", name)
+    .executeTakeFirst();
+
+/** The `extension.*` audit rows of an extension written by org A's admin, oldest first. */
+async function extensionAudits(name: string) {
+  const rows = await env.db
+    .selectFrom("audit_events")
+    .select(["action", "actor_account_id", "detail"])
+    .where("target", "=", name)
+    .where("action", "like", "extension.%")
+    .where("actor_account_id", "=", env.bossId)
+    .orderBy("at")
+    .orderBy("id")
+    .execute();
+  return rows.map((r) => ({
+    action: r.action,
+    actor: r.actor_account_id,
+    ownerOrgId: (r.detail as { ownerOrgId?: string }).ownerOrgId,
+  }));
+}
+
+/** Makes an item imported by the super admin org A's own (pre-flight F6). */
+async function ownedByA(itemId: string): Promise<void> {
+  await env.db
+    .updateTable("catalog_items")
+    .set({ owner_org_id: orgA, shareable: false, shown_to_others: false })
+    .where("id", "=", itemId)
+    .execute();
+  await setScope(env, itemId, "named", [orgA]);
+}
 
 const usable = async (orgId: string) => (await usableSkills(env.db, orgId)).map((s) => s.name);
 
@@ -192,6 +228,78 @@ describe("owner updates without an extension", { timeout: 120_000 }, () => {
         .where("name", "=", "own-ext")
         .executeTakeFirst(),
     ).toBeUndefined();
+    // the extension steps are audited as the org admin acting for the owner org
+    expect(await extensionAudits("own-ext")).toEqual([
+      { action: "extension.disabled", actor: env.bossId, ownerOrgId: orgA },
+      { action: "extension.uninstalled", actor: env.bossId, ownerOrgId: orgA },
+    ]);
+  });
+
+  it("a failed update that removed the extension puts it back as it was", async () => {
+    const itemId = await importPlugin(env, await lifePkg({ name: "own-rb", version: "1.0.0" }));
+    await ownedByA(itemId);
+    const before = await installRow("own-rb");
+    expect(before).toMatchObject({ desired_state: "enabled" });
+    const v2 = await pluginTgz({
+      manifest: { name: "own-rb", version: "2.0.0", skills: [{ path: "./skills/rb-notes" }] },
+      files: { "skills/rb-notes/SKILL.md": SKILL_MD("rb-notes") },
+    });
+    const p = await prepared(env.boss, orgA, v2);
+    expect(p.update?.extension).toMatchObject({ from: "1.0.0", to: null });
+    // the commit fails after the extension was disabled and uninstalled
+    vi.spyOn(PlatformComponents.prototype, "applySyncIn").mockRejectedValueOnce(
+      new Error("injected sync failure"),
+    );
+    const c = await confirm(env.boss, orgA, p);
+    expect(c.statusCode, c.body).toBe(502);
+    expect(
+      (c.json() as { error: { code: string; details: unknown[] } }).error.details[0],
+    ).toMatchObject({ step: "components", rolledBack: true });
+    // back at its package and state; the item still at 1.0.0 (2.0.0 imported)
+    expect(await installRow("own-rb")).toEqual(before);
+    expect(await itemRow("own-rb")).toMatchObject({
+      platform_synced_version: "1.0.0",
+      latest_version: "2.0.0",
+    });
+    expect(await extensionAudits("own-rb")).toEqual([
+      { action: "extension.disabled", actor: env.bossId, ownerOrgId: orgA },
+      { action: "extension.uninstalled", actor: env.bossId, ownerOrgId: orgA },
+      { action: "extension.installed", actor: env.bossId, ownerOrgId: orgA },
+      { action: "extension.enabled", actor: env.bossId, ownerOrgId: orgA },
+    ]);
+  });
+
+  it("the owner moves its plugin to a lower version (ruling P3-30)", async () => {
+    const itemId = await sharedCrm();
+    const v2 = await skillPlugin("crm", {
+      skill: "crm-notes",
+      version: "2.0.0",
+      skillMd: SKILL_MD("crm-notes", "Updated notes."),
+    });
+    const up = await prepared(env.boss, orgA, v2);
+    expect((await confirm(env.boss, orgA, up)).statusCode).toBe(201);
+    expect((await itemRow("crm")).platform_synced_version).toBe("2.0.0");
+    // the 1.0.0 tgz again: the review shows the downgrade, the confirm applies it
+    const down = await prepared(env.boss, orgA, await skillPlugin("crm", { skill: "crm-notes" }));
+    expect(down.review.version).toBe("1.0.0");
+    expect(down.update).toMatchObject({ from: "2.0.0", to: "1.0.0" });
+    expect(down.update?.components).toContainEqual(
+      expect.objectContaining({ kind: "skill", name: "crm-notes", change: "downgrade" }),
+    );
+    const c = await confirm(env.boss, orgA, down);
+    expect(c.statusCode, c.body).toBe(201);
+    expect((c.json() as { outcome: string }).outcome).toBe("updated");
+    expect((await itemRow("crm")).platform_synced_version).toBe("1.0.0");
+    const notices = await env.db
+      .selectFrom("org_notices")
+      .select(["org_id", "detail"])
+      .where("kind", "=", "shared_item_updated")
+      .execute();
+    expect(notices.map((n) => [n.org_id, (n.detail as { to: string }).to])).toEqual([
+      [orgB, "2.0.0"],
+      [orgB, "1.0.0"],
+    ]);
+    expect(itemId).toBeTruthy();
   });
 
   it("a no-extension upload clears a pending version (pre-flight F7)", async () => {

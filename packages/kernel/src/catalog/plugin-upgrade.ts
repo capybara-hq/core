@@ -346,8 +346,12 @@ export class PlatformPluginUpdater {
     version: string,
     staged?: UpdateTarget,
   ): Promise<PlatformUpdatePreview> {
+    // An internal invariant, not reachable from input: the only caller (OrgPluginUploads) passes
+    // the staged target together with its own version (PluginImport.stagedTarget)
     if (staged !== undefined && staged.version !== version) {
-      throw new Error("the staged target is another version");
+      throw new Error(
+        `internal: previewForOwner got the staged target of version ${staged.version} for version ${version}`,
+      );
     }
     return previewOf(
       await this.diff(itemId, version, {
@@ -427,9 +431,9 @@ export class PlatformPluginUpdater {
     if (checked.diffHash !== input.diffHash) throw stale();
     const prepared = await this.platform.prepareSync(itemId, input.version);
     const ext = checked.extension;
-    // The extension admin re-checks a super admin for an account: an owner update was authorized
-    // as the owner org's admin instead, so the extension steps run for the kernel (no account)
-    const opsActor = owner === undefined ? actor : null;
+    // The extension admin re-checks the actor: a super admin, or for an owner update the owner
+    // org's admin (and audits it with `ownerOrgId`)
+    const opsOwner = owner && { orgId: owner.orgId };
     let step: "extension" | "components" = "extension";
     let extensionMoved = false;
     let enabledHere = false;
@@ -444,16 +448,17 @@ export class PlatformPluginUpdater {
           .where("name", "=", checked.name)
           .executeTakeFirst();
         removedEnabled = row?.desired_state === "enabled";
-        await this.ops.disable(checked.name, opsActor, opts.actorTokenId);
+        await this.ops.disable(checked.name, actor, opts.actorTokenId, opsOwner);
         extensionMoved = true;
-        await this.ops.uninstall(checked.name, opsActor, opts.actorTokenId);
+        await this.ops.uninstall(checked.name, actor, opts.actorTokenId, opsOwner);
       } else if (ext) {
-        await this.ops.install(checked.name, ext.sha256, opsActor, opts.actorTokenId, {
+        await this.ops.install(checked.name, ext.sha256, actor, opts.actorTokenId, {
           catalogItemId: itemId,
+          ...(opsOwner && { owner: opsOwner }),
         });
         extensionMoved = true;
         if (ext.previous === null) {
-          await this.ops.enable(checked.name, opsActor, opts.actorTokenId);
+          await this.ops.enable(checked.name, actor, opts.actorTokenId, opsOwner);
           enabledHere = true;
         }
       }
@@ -480,22 +485,21 @@ export class PlatformPluginUpdater {
         try {
           if (ext.sha256 === null) {
             // Removed by this update: the previous package reinstalled (as it was)
-            await this.ops.install(
-              checked.name,
-              ext.previous as string,
-              opsActor,
-              opts.actorTokenId,
-              {
-                catalogItemId: itemId,
-              },
-            );
-            if (removedEnabled) await this.ops.enable(checked.name, opsActor, opts.actorTokenId);
+            await this.ops.install(checked.name, ext.previous as string, actor, opts.actorTokenId, {
+              catalogItemId: itemId,
+              ...(opsOwner && { owner: opsOwner }),
+            });
+            if (removedEnabled)
+              await this.ops.enable(checked.name, actor, opts.actorTokenId, opsOwner);
           } else if (ext.previous !== null) {
-            await this.ops.install(checked.name, ext.previous, opsActor, opts.actorTokenId);
+            await this.ops.install(checked.name, ext.previous, actor, opts.actorTokenId, {
+              ...(opsOwner && { owner: opsOwner }),
+            });
           } else {
             // Installed by this update: an uninstall needs it disabled first
-            if (enabledHere) await this.ops.disable(checked.name, opsActor, opts.actorTokenId);
-            await this.ops.uninstall(checked.name, opsActor, opts.actorTokenId);
+            if (enabledHere)
+              await this.ops.disable(checked.name, actor, opts.actorTokenId, opsOwner);
+            await this.ops.uninstall(checked.name, actor, opts.actorTokenId, opsOwner);
           }
         } catch (u) {
           rolledBack = false;
