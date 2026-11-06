@@ -1064,6 +1064,29 @@ describe("stopping a sub-agent from the map (AC5)", () => {
     expect(toasts()).toHaveLength(0);
   });
 
+  it("409 with a failing re-read: a warning, no unhandled rejection, Stop free again", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    api(parentEvents(), undefined, {
+      [`GET ${CHILD}/events`]: (x) =>
+        afterOf(x) === 0
+          ? json(200, { events: childEvents() })
+          : json(500, { error: { code: "internal", message: "down" } }),
+      [`POST ${CHILD}/abort`]: () =>
+        json(409, { error: { code: "run.not_active", message: "no active run" } }),
+    });
+    window.history.replaceState(null, "", "/chat/c1#agents=ch1");
+    await renderChatRoute();
+    const dialog = await detailDialog();
+    await userEvent.setup().click(await within(dialog).findByRole("button", { name: "Stop" }));
+    await waitFor(() =>
+      expect(warn.mock.calls.some((c) => String(c[0]).includes("re-read"))).toBe(true),
+    );
+    const stop = within(dialog).getByRole("button", { name: "Stop" });
+    expect(stop.getAttribute("aria-busy")).toBeNull();
+    expect(toasts()).toHaveLength(0);
+    warn.mockRestore();
+  });
+
   it("409: an event the stream delivers while the re-read is pending survives it", async () => {
     let answer: (r: Response) => void = () => {};
     api(parentEvents(), undefined, {

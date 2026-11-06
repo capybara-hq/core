@@ -333,7 +333,7 @@ export function useConversation(orgId: string, conversationId: string): Conversa
     () => catchUpEvents(qc, orgId, conversationId),
     [qc, orgId, conversationId],
   );
-  const stopState = useStopUnderWay(state.events, catchUp);
+  const stopState = useStopUnderWay(conversationId, state.events, catchUp);
   const { begin: beginStop, release: releaseStop } = stopState;
   // The run's terminal event arrives through the stream: nothing to invalidate.
   const abort = useAppMutation({
@@ -344,7 +344,9 @@ export function useConversation(orgId: string, conversationId: string): Conversa
       if (e.code === "run.not_active") {
         // Nothing runs: its terminal event arrives through the stream, or the log shown is stale
         // (an event the stream missed): read what it lacks, so a stale Stop goes (AC5).
-        void catchUp();
+        catchUp().catch((err: unknown) =>
+          console.warn("conversation: re-read after run.not_active failed", err),
+        );
         return;
       }
       // The browser's own reason ("Failed to fetch", "Load failed") for diagnosis.
