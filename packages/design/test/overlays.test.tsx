@@ -317,6 +317,44 @@ describe("Menu", () => {
     expect(onSelect).toHaveBeenCalledTimes(1);
   });
 
+  it("a lone danger item draws no separator above it", async () => {
+    const user = userEvent.setup();
+    zh(
+      <Menu
+        trigger={<button type="button">更多</button>}
+        items={[{ label: "停用", danger: true, onSelect: () => {} }]}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "更多" }));
+    const menu = await screen.findByRole("menu");
+    const roles = Array.from(menu.children).map((k) => k.getAttribute("role"));
+    expect(roles).toEqual(["menuitem"]);
+  });
+
+  it("never draws a leading, trailing or double separator", async () => {
+    const user = userEvent.setup();
+    const onSelect = vi.fn();
+    zh(
+      <Menu
+        trigger={<button type="button">更多</button>}
+        items={[
+          "separator",
+          { label: "重命名", onSelect },
+          "separator",
+          "separator",
+          { label: "复制", onSelect },
+          "separator",
+          { label: "删除", danger: true, onSelect },
+          "separator",
+        ]}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "更多" }));
+    const menu = await screen.findByRole("menu");
+    const roles = Array.from(menu.children).map((k) => k.getAttribute("role"));
+    expect(roles).toEqual(["menuitem", "separator", "menuitem", "separator", "menuitem"]);
+  });
+
   it("checked items: a single choice, menuitemradio with aria-checked and a check icon", async () => {
     const user = userEvent.setup();
     const onSelect = vi.fn();

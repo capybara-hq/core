@@ -144,13 +144,28 @@ export function Menu({
 /** Menus keep this far from the viewport's edges (spec §6.7). */
 export const COLLISION_PADDING = 8;
 
+/**
+ * The order a menu draws its items in (spec §6.7): danger items last, after a separator, and no
+ * empty group: a separator never leads, trails or follows another separator, so a menu whose
+ * only item is dangerous (a row's ⋯ → 停用) draws no line above it.
+ */
+export function menuOrder(items: readonly MenuItem[]): MenuItem[] {
+  const normal = items.filter((i) => i === "separator" || !i.danger);
+  const danger = items.filter((i) => i !== "separator" && i.danger);
+  const ordered: MenuItem[] = [...normal, "separator", ...danger];
+  const out: MenuItem[] = [];
+  for (const item of ordered) {
+    if (item === "separator" && (out.length === 0 || out[out.length - 1] === "separator")) continue;
+    out.push(item);
+  }
+  if (out[out.length - 1] === "separator") out.pop();
+  return out;
+}
+
 /** One level of items; danger items go last, after a separator. */
 function MenuItems({ items }: { items: MenuItem[] }) {
   const Link = useDesignLink();
-  const normal = items.filter((i) => i === "separator" || !i.danger);
-  const danger = items.filter((i) => i !== "separator" && i.danger);
-  const ordered: MenuItem[] = danger.length > 0 ? [...normal, "separator", ...danger] : normal;
-  return ordered.map((item, i) => {
+  return menuOrder(items).map((item, i) => {
     if (item === "separator") {
       // biome-ignore lint/suspicious/noArrayIndexKey: 分隔线无标识，顺序固定
       return <RM.Separator key={`sep-${i}`} className="cb-menu-sep" />;
