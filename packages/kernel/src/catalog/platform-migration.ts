@@ -155,12 +155,16 @@ export class PlatformMigration {
     runOnStart: true,
     ttl: LOCK_TTL_MS,
   })
-  async migrate(): Promise<void> {
-    await this.runOnce();
+  async migrate(signal?: AbortSignal): Promise<void> {
+    await this.runOnce(signal);
   }
 
-  /** One run of every step; returns what it changed. */
-  async runOnce(): Promise<PlatformMigrationStats> {
+  /**
+   * One run of every step; returns what it changed. `signal` (the stop, or a lost run lock) is
+   * read between items and orgs: an aborted run stops there and its row is deleted (every step is
+   * idempotent, so the next run carries on; an unfinished run never counts as the first one).
+   */
+  async runOnce(signal?: AbortSignal): Promise<PlatformMigrationStats> {
     const runId = randomUUID();
     await this.db.insertInto("platform_migration_runs").values({ id: runId }).execute();
     const first = await this.db
@@ -171,11 +175,21 @@ export class PlatformMigration {
       .limit(1)
       .executeTakeFirst();
     const stats = emptyStats();
-    await this.syncItems(stats);
-    await this.linkSkills(stats);
-    await this.renameClashes(stats, first === undefined);
-    await this.linkTemplates(stats);
-    await this.linkConnectors(stats);
+    const steps = [
+      () => this.syncItems(stats, signal),
+      () => this.linkSkills(stats, signal),
+      () => this.renameClashes(stats, first === undefined, signal),
+      () => this.linkTemplates(stats, signal),
+      () => this.linkConnectors(stats),
+    ];
+    for (const step of steps) {
+      if (signal?.aborted) {
+        await this.db.deleteFrom("platform_migration_runs").where("id", "=", runId).execute();
+        this.log.info("platform components migration stopped early", { runId, ...stats });
+        return stats;
+      }
+      await step();
+    }
     await this.db
       .updateTable("platform_migration_runs")
       .set({ finished_at: new Date(), stats: JSON.stringify(stats) })
@@ -210,7 +224,7 @@ export class PlatformMigration {
    * (`platform_synced_version` null; `syncFromVersion` sets it). An item whose components were
    * removed since is not synced again.
    */
-  private async syncItems(stats: PlatformMigrationStats): Promise<void> {
+  private async syncItems(stats: PlatformMigrationStats, signal?: AbortSignal): Promise<void> {
     const items = await this.db
       .selectFrom("catalog_items as i")
       .select(["i.id", "i.name", "i.latest_version"])
@@ -219,6 +233,7 @@ export class PlatformMigration {
       .orderBy("i.name")
       .execute();
     for (const item of items) {
+      if (signal?.aborted) return;
       const version = await this.platformVersion(item.id, item.latest_version);
       try {
         const r = await this.platform.syncFromVersion(item.id, version, { initial: false });
@@ -258,7 +273,7 @@ export class PlatformMigration {
   }
 
   /** Step 2: org skill copies with plugin provenance, not linked yet. */
-  private async linkSkills(stats: PlatformMigrationStats): Promise<void> {
+  private async linkSkills(stats: PlatformMigrationStats, signal?: AbortSignal): Promise<void> {
     const rows = await this.db
       .selectFrom("skills as s")
       .innerJoin("skill_versions as v", (j) =>
@@ -288,6 +303,7 @@ export class PlatformMigration {
       .orderBy("s.id")
       .execute();
     for (const [orgId, list] of groupBy(rows, (r) => r.org_id)) {
+      if (signal?.aborted) return;
       const on = await platformSkillsOn(
         this.db,
         orgId,
@@ -348,7 +364,11 @@ export class PlatformMigration {
    * Step 3 (one-shot): org skills of the org's own whose name a platform skill on in their org has,
    * renamed only in the first run (`rename`: no run has finished yet); later ones are only logged.
    */
-  private async renameClashes(stats: PlatformMigrationStats, rename: boolean): Promise<void> {
+  private async renameClashes(
+    stats: PlatformMigrationStats,
+    rename: boolean,
+    signal?: AbortSignal,
+  ): Promise<void> {
     const rows = await this.db
       .selectFrom("skills as s")
       .innerJoin("skill_versions as v", (j) =>
@@ -368,6 +388,7 @@ export class PlatformMigration {
       .orderBy("p.id")
       .execute();
     for (const [orgId, list] of groupBy(rows, (r) => r.org_id)) {
+      if (signal?.aborted) return;
       const on = await platformSkillsOn(
         this.db,
         orgId,
@@ -483,7 +504,7 @@ export class PlatformMigration {
   }
 
   /** Step 4: org agent templates not linked yet, by plugin and name. */
-  private async linkTemplates(stats: PlatformMigrationStats): Promise<void> {
+  private async linkTemplates(stats: PlatformMigrationStats, signal?: AbortSignal): Promise<void> {
     const rows = await this.db
       .selectFrom("agent_templates as a")
       .innerJoin("agent_template_versions as v", (j) =>
@@ -510,6 +531,7 @@ export class PlatformMigration {
       .orderBy("a.id")
       .execute();
     for (const [orgId, list] of groupBy(rows, (r) => r.org_id)) {
+      if (signal?.aborted) return;
       const on = await platformTemplatesOn(
         this.db,
         orgId,

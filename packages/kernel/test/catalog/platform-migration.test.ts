@@ -249,6 +249,19 @@ describe("platform components migration", () => {
     expect(runs.every((r) => r.finished_at !== null)).toBe(true);
   });
 
+  it("a run stops early when its signal aborts (the stop, or a lost run lock) and records no run", async () => {
+    const itemId = await importPlugin(env, await kit("1.0.0"));
+    await installIn(env.orgId, itemId, "1.0.0");
+    await dropPlatformRows();
+    const stopped = new AbortController();
+    stopped.abort();
+    const stats = await env.k.app.get(PlatformMigration).runOnce(stopped.signal);
+    expect(stats).toEqual({ ...noChange, itemsSynced: [] });
+    expect(await env.db.selectFrom("platform_migration_runs").select("id").execute()).toEqual([]);
+    // the next run does the work
+    expect(await run()).toMatchObject({ itemsSynced: ["kit@1.0.0"], skillsLinked: 2 });
+  });
+
   it("orgs on different versions: the platform takes the highest installed one; a copy whose content differs is pinned to its version", async () => {
     const itemId = await importPlugin(env, await kit("1.0.0"));
     await importPlugin(env, await kit("1.1.0", { alpha: "Alpha 1.1.", reviewer: "Review v2." }));
