@@ -1844,7 +1844,7 @@ States: `running`, `finished`, `unavailable`, `stopping`
 - **Width**: default `layout.panel`, at least `layout.panel-min`, at most the content width minus `layout.chat-min` (so wide screens may go past 600, and at a 1280 window with the full sidebar it is 544). Resizable by a handle on its left edge (§6.11); the width is a per-viewer preference in `localStorage["cap.chat.panelWidth"]` (read and written in try/catch, clamped on read). Below a 1280 window the right area is a Sheet (§5.4).
 - **Header**: `layout.title-bar` high, padding 0 `space.2` 0 `space.4`, a `line-soft` bottom line, gap `space.1`: back (`chevron-left`, optional), the type badge (files), the title as a ghost button with `chevron-down` 14 that opens the switcher (a Menu: extension panels, a separator, the conversation's files, each group under a `micro` label; the open item has the `selected` ground and no check; the title keeps the `hover` ground while it is open), or plain text when there is nothing to switch to (a sub-agent); meta in `small` `faint` ("v2 · 10-26 14:20", "2 / 5", a `spinner` and the duration); actions; full screen (`maximize-2`); close (`x`).
 - **Body**: padding `space.4` (flush for tables), scrolls on its own. A failing extension panel shows the load-failure line in its body.
-- **Sub-agent panel**: header back (returns to what the right area showed before, e.g. the properties panel it was opened from; otherwise closes), description, spinner and duration, "停止" / "Stop" (default), full screen, close; body padding `space.4` `space.5`: the task as a block (`selected` ground, radius `md`, padding `space.3`, `prose-small`; label "任务 · 主 agent 派出" / "Task · from the main agent" in `micro` `muted`), a tool line naming its agent (an org agent's name is a link to that agent, styled as a link button), model and tool scope, then its tool groups and prose like the main thread; read-only; its own status bar at the bottom.
+- **Sub-agent panel**: header back (returns to what the right area showed before, e.g. the properties panel it was opened from; otherwise closes), description, spinner and duration, "停止" / "Stop" (default), full screen, close; body padding `space.4` `space.5`: the task as a block (`selected` ground, radius `md`, padding `space.3`, `prose-small`; label "任务 · 主 agent 派出" / "Task · from the main agent" in `micro` `muted`), a tool line naming its agent (an org agent's name is a link to that agent, styled as a link button), model and tool scope, then its tool groups and prose like the main thread; no composer and no read-only copy (the missing composer says it); its own status bar at the bottom (context use only).
 
 <!-- states: right-panel -->
 States: `extension`, `file`, `subagent`, `switcher`, `failed`
@@ -2204,8 +2204,12 @@ the window less 32), so the dialog does not jump while an agent works (the §6.7
 `line-strong`, radius `md`, `shadow-2`, `scrim`). The frame has no padding at any level: the head,
 body and footer pad themselves in the compact dialog rhythm of §6.7 (head `space.2` `space.4` with
 1px `line-soft` below, body `space.4`, footer `space.3` `space.4`). Level 1's head is the title
-"智能体图" / "Agent map" (`h2`, prose, 500) and close; levels 2 and 3 draw their own head with the
-same parts (one shared head: back, status dot, title, close, then meta lines). Esc closes the tree and goes back one level
+"智能体图" / "Agent map" (`h2`, prose, 500) and close, over a body padded `space.4`
+(`agent-map-content`) that holds the tree, or, while the page reads it, the page's loading bars
+(`SkeletonBars`, state `loading`) or its error line (state `failed`); levels 2 and 3 draw their own
+head with the same parts (one shared head: back, status dot, title, close, then meta lines).
+Levels 1 and 2 are a dialog box (§1: what they hold draws its unboxed form); level 3's thread is a
+pane, like `RightPanel`, so it renders exactly as in the main chat. Esc closes the tree and goes back one level
 from levels 2 and 3 (`onBack`); focus is trapped and returned, and when the view changes (another
 level or agent, `view`) it moves to the new head's back button, else its title.
 `AgentMapTree({ root, background, selectedId, onOpen })` is level 1:
@@ -2263,8 +2267,9 @@ default: a fork skill's child runs in the foreground and has none);
 - **Footer** (padding `space.3` `space.4`, 1px `line-soft` above): "打开完整记录" / "Open transcript"
   and, while the agent runs (`onStop` given), "停止" / "Stop" (`danger`; stops its descendants too).
   The buttons share the row; a finished agent's "Open transcript" fills it.
-- **Stopping** (`stopping`): from the click until the agent's terminal event arrives, or until the
-  request fails, Stop stays in its place in the Button's loading state (spinner, `disabled`,
+- **Stopping** (`stopping`): from the click until the agent's terminal event arrives, until the
+  request fails, or at most about 15 s (the page then reads the agent's log and the tree once more
+  and lets Stop be pressed again; the stop is idempotent), Stop stays in its place in the Button's loading state (spinner, `disabled`,
   `aria-busy`, label unchanged, §6.1), even when `onStop` is absent; it
   never disappears and cannot be pressed again while the stop is under way.
 
@@ -2282,7 +2287,7 @@ transcript with neither (a finished agent whose context use is unknown) has no s
 dialog is 640 high.
 
 <!-- states: agent-map -->
-States: `tree`, `deep`, `detail`, `finished`, `stopping`, `transcript`
+States: `tree`, `deep`, `loading`, `failed`, `detail`, `finished`, `stopping`, `transcript`
 
 <!-- size-table: agent-map -->
 | Part | State | Property | Value |
@@ -2295,8 +2300,8 @@ States: `tree`, `deep`, `detail`, `finished`, `stopping`, `transcript`
 | agent-map-head | tree | padding-left | space.4 |
 | agent-map-head | tree | border-bottom-color | color.line-soft |
 | agent-map-title | tree | font-size | type.h2 |
-| agent-map-body | tree | padding-left | space.4 |
-| agent-map-body | tree | padding-top | space.4 |
+| agent-map-content | tree | padding-left | space.4 |
+| agent-map-content | tree | padding-top | space.4 |
 | agent-map-count | tree | color | color.muted |
 | agent-node | tree | width | 320 |
 | agent-node | tree | height | 62 |
@@ -2321,6 +2326,12 @@ States: `tree`, `deep`, `detail`, `finished`, `stopping`, `transcript`
 | agent-legend | tree | color | color.faint |
 | agent-node | deep | height | 62 |
 | agent-node[data-depth=3] | deep | width | 320 |
+| agent-map-head | loading | border-bottom-color | color.line-soft |
+| agent-map-content | loading | padding-left | space.4 |
+| agent-map-content | loading | padding-top | space.4 |
+| skeleton-bar | loading | height | space.3 |
+| agent-map-content | failed | padding-left | space.4 |
+| agent-map-content | failed | padding-top | space.4 |
 | agent-map-dialog | detail | width | 754 |
 | agent-map-dialog | detail | height | 600 |
 | agent-map-head | detail | padding-top | space.2 |

@@ -386,3 +386,9 @@ The builder's choices for §11 and the rulings of the build that change behaviou
   log again; after a run's end the status takes the tree's word only from a tree read after the
   restart or wake event was seen; a failed stop says "停止失败：<reason>" (map: one toast; composer:
   inline) and logs the browser's reason to the console.
+- Acceptance fix round 1: a stop (map and composer) ends when the run's end reaches the log, when
+  the request fails, or after about 15 s, when one merged re-read (the log from its cached end,
+  never a wholesale refetch; the tree) lets Stop be pressed again; the 409 resync merges the same
+  way. The stop's failure report runs at the hook level, so it survives closing the level. The
+  transcript (level 3) is a pane like the right panel (its thread renders as in the main chat);
+  levels 1 and 2 are a dialog box. The sub-agent right panel drops its read-only copy too (AC1).

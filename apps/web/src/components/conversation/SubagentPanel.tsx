@@ -161,7 +161,8 @@ function ChildRecord({
       body="subagent"
       footer={
         <StatusBar
-          context={t("readOnly")}
+          // no read-only copy (AC1): the missing composer says it
+          context=""
           version=""
           system={pct === null ? [] : [tc("contextPct", { n: pct })]}
         />

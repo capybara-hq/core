@@ -3659,7 +3659,6 @@
       "title": "Sub-agent",
       "stop": "Stop sub-agent",
       "toolsNone": "None",
-      "readOnly": "Sub-agents are read-only · you can't message them",
       "loadFailed": "The sub-agent cannot be opened."
     },
     "contextTotal": "Total tokens with sub-agents {n}",

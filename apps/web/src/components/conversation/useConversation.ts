@@ -16,6 +16,7 @@ import { retryOnMountOf } from "../../lib/query/client";
 import {
   appendEvents,
   CONVERSATION_SIDE_KEYS,
+  catchUpEvents,
   conversationQuery,
   eventsQuery,
   isFreshlySeeded,
@@ -23,6 +24,7 @@ import {
 import { keys } from "../../lib/query/keys";
 import { useAppMutation } from "../../lib/query/mutation";
 import { refreshUiViews } from "../../lib/query/ui";
+import { useStopUnderWay } from "../../lib/stop";
 import {
   type ChatState,
   type ConversationChange,
@@ -156,7 +158,6 @@ export function useConversation(orgId: string, conversationId: string): Conversa
   const state = useMemo(() => ({ ...drafted, progress }), [drafted, progress]);
 
   const [error, setErrorText] = useState<string>();
-  const [stopping, setStopping] = useState(false);
   const setError = useCallback((e: unknown) => setErrorText(errorMessage(e)), [errorMessage]);
   const loaded = events !== undefined;
   /**
@@ -325,31 +326,37 @@ export function useConversation(orgId: string, conversationId: string): Conversa
     [sendMutation.mutateAsync, errorMessage],
   );
 
+  // A stop under way ends when the run's end reaches the log (not at the HTTP answer), when the
+  // request fails, or after the bounded fallback: a re-read of the log from its cached end (a
+  // merge, never a wholesale refetch) lets Stop be pressed again (AC5 fix round 1).
+  const catchUp = useCallback(
+    () => catchUpEvents(qc, orgId, conversationId),
+    [qc, orgId, conversationId],
+  );
+  const stopState = useStopUnderWay(state.events, catchUp);
+  const { begin: beginStop, release: releaseStop } = stopState;
   // The run's terminal event arrives through the stream: nothing to invalidate.
   const abort = useAppMutation({
     fn: () => abortRun(orgId, conversationId),
     invalidates: () => [],
-  });
-  const stop = useCallback(async () => {
-    setStopping(true);
-    try {
-      await abort.mutateAsync(undefined);
-    } catch (e) {
-      if (e instanceof ApiClientError && e.code === "run.not_active") {
+    onError: (e) => {
+      releaseStop();
+      if (e.code === "run.not_active") {
         // Nothing runs: its terminal event arrives through the stream, or the log shown is stale
-        // (an event the stream missed): read it again, so a stale Stop goes (AC5).
-        void qc.invalidateQueries({
-          queryKey: keys.org(orgId).conversation(conversationId).events(),
-        });
-      } else {
-        // The browser's own reason (a failed fetch: "Load failed", net::ERR_…) for diagnosis.
-        console.warn("conversation: stop failed", e instanceof ApiClientError ? e.code : "", e);
-        setErrorText(t("stopFailed", { reason: errorMessage(e) }));
+        // (an event the stream missed): read what it lacks, so a stale Stop goes (AC5).
+        void catchUp();
+        return;
       }
-    } finally {
-      setStopping(false);
-    }
-  }, [abort.mutateAsync, errorMessage, t, qc, orgId, conversationId]);
+      // The browser's own reason ("Failed to fetch", "Load failed") for diagnosis.
+      console.warn("conversation: stop failed", e.code, e);
+      setErrorText(t("stopFailed", { reason: errorMessage(e) }));
+    },
+  });
+  const { mutate: mutateAbort } = abort;
+  const stop = useCallback(() => {
+    beginStop();
+    mutateAbort(undefined);
+  }, [beginStop, mutateAbort]);
 
   // A row the caller got from a write (a rename) is the new state: it replaces the cached one.
   const replaceConversation = useCallback(
@@ -396,8 +403,8 @@ export function useConversation(orgId: string, conversationId: string): Conversa
     conversation: row.data,
     running: state.running,
     waiting: state.waiting,
-    stopping,
-    stop: () => void stop(),
+    stopping: stopState.requested,
+    stop,
     send,
     merge,
     error: error ?? logError,

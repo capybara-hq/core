@@ -42,9 +42,10 @@ export const BOXES: readonly BoxRule[] = [
 
 /**
  * Full-height panes (spec §1): a pane holds content like a page, so a box inside it is on its
- * ground, not inside a box, even when the narrow layout puts the pane in a Sheet.
+ * ground, not inside a box, even when the narrow layout puts the pane in a Sheet. The agent map's
+ * transcript (level 3) is one: its thread renders as in the main chat.
  */
-export const PANES: readonly string[] = [".cb-rpanel"];
+export const PANES: readonly string[] = [".cb-rpanel", ".cb-amap-transcript"];
 
 /** An allowed box inside a box, with the reason the rule makes an exception for it. */
 export type BoxException = {

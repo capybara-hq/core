@@ -11,6 +11,7 @@ import {
 } from "react";
 import { Button, IconButton } from "../controls/button";
 import { Icon } from "../icons/icon";
+import { BoxScope } from "../layout/box";
 import { useFocusReturn } from "../overlays/focus-return";
 import { useDesignLocale, useDesignT } from "../provider";
 import { type AgentMapStatus, agentMapTokens, StatusDot } from "./agent-status";
@@ -168,13 +169,21 @@ export function AgentMapDialog({
     const title = head?.querySelector<HTMLElement>('[data-part="agent-map-title"]');
     (back ?? title)?.focus();
   }, [current, t]);
+  // Levels 1 and 2 are a dialog box (spec §1); level 3's thread is a pane ({@link TranscriptFrame}).
+  // The tree level pads what it shows (the tree, or a page's loading bars or error line).
   const body = (
-    <>
+    <BoxScope kind="dialog">
       {level === "tree" ? (
-        <AgentMapHead title={t("agentMap.title")} onClose={() => onOpenChange(false)} />
-      ) : null}
-      {children}
-    </>
+        <>
+          <AgentMapHead title={t("agentMap.title")} onClose={() => onOpenChange(false)} />
+          <div className="cb-amap-content" data-part="agent-map-content">
+            {children}
+          </div>
+        </>
+      ) : (
+        children
+      )}
+    </BoxScope>
   );
   if (inline) {
     if (!open) return null;
@@ -753,10 +762,13 @@ export function TranscriptFrame({
           </p>
         }
       />
+      {/* a pane, like RightPanel: the thread renders exactly as in the main chat (spec §1) */}
       <div className="cb-amap-transcript" data-part="agent-transcript">
-        <div className="cb-conv-thread" data-part="thread">
-          {children}
-        </div>
+        <BoxScope kind={null}>
+          <div className="cb-conv-thread" data-part="thread">
+            {children}
+          </div>
+        </BoxScope>
       </div>
       {contextPercent !== undefined || stop ? (
         <div className="cb-amap-status" data-part="agent-transcript-status">

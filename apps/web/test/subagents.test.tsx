@@ -435,8 +435,8 @@ describe("sub-agents on the conversation page", () => {
     expect(panel.querySelector('[data-entry="tools"]')?.getAttribute("data-tool-keys")).toBe(
       "Bash",
     );
-    expect(panel.textContent).toContain(en.subagents.view.readOnly);
-    // read-only: no composer inside, the child's own stream
+    // no read-only copy (AC1); no composer inside, the child's own stream
+    expect(panel.textContent).not.toMatch(/read-only|can't message/i);
     expect(within(panel).queryByRole("textbox")).toBeNull();
     expect(FakeEventSource.instances.some((s) => s.url.startsWith(`${CHILD}/stream`))).toBe(true);
     await user.click(within(panel).getByRole("button", { name: en.subagents.view.stop }));

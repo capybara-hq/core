@@ -55,12 +55,19 @@
   font-weight: 500;
 }
 
-.cb-amap {
+/* The tree level's body: the tree, or the page's loading bars or error line, padded space.4. */
+.cb-amap-content {
   display: flex;
   flex: 1 1 auto;
   flex-direction: column;
   min-height: 0;
   padding: var(--cb-space-4);
+}
+.cb-amap {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
 }
 .cb-amap-count {
   margin: 0 0 var(--cb-space-3);

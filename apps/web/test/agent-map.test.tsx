@@ -964,12 +964,22 @@ describe("stopping a sub-agent from the map (AC5)", () => {
     warn.mockRestore();
   });
 
+  /** The `after` of a log read (0: the first read; else a catch-up from the cached end). */
+  const afterOf = (x: Call) => Number(new URL(x.url, "http://x").searchParams.get("after") ?? 0);
+  const finishedAt = (seq: number) =>
+    c(seq, "run_finished", { reason: "completed", consumedUpToSeq: 2 });
+
   it("409 run.not_active reads the tree, the child's row and its log again, and Stop goes", async () => {
     let logReads = 0;
+    const catchUps: number[] = [];
     const calls = api(parentEvents(), undefined, {
-      // the page holds a stale running log; the kernel's says the run ended
-      [`GET ${CHILD}/events`]: () =>
-        json(200, { events: logReads++ === 0 ? childEvents() : ended() }),
+      // the page holds a stale running log (the stream missed the end); the kernel has the end
+      [`GET ${CHILD}/events`]: (x) => {
+        logReads++;
+        if (afterOf(x) === 0) return json(200, { events: childEvents() });
+        catchUps.push(afterOf(x));
+        return json(200, { events: [finishedAt(9)] });
+      },
       [`POST ${CHILD}/abort`]: () =>
         json(409, { error: { code: "run.not_active", message: "no active run" } }),
     });
@@ -989,8 +999,92 @@ describe("stopping a sub-agent from the map (AC5)", () => {
       before.row,
     );
     expect(logReads).toBeGreaterThan(1);
+    // read from the cached end and merged, never the whole log again
+    expect(catchUps).toEqual([8]);
     // the kernel's answer is no failure to report
     expect(toasts()).toHaveLength(0);
+  });
+
+  it("409: an event the stream delivers while the re-read is pending survives it", async () => {
+    let answer: (r: Response) => void = () => {};
+    api(parentEvents(), undefined, {
+      [`GET ${CHILD}/events`]: (x) =>
+        afterOf(x) === 0
+          ? json(200, { events: childEvents() })
+          : // served before the end was written: it holds nothing new
+            new Promise<Response>((resolve) => {
+              answer = resolve;
+            }),
+      [`POST ${CHILD}/abort`]: () =>
+        json(409, { error: { code: "run.not_active", message: "no active run" } }),
+    });
+    window.history.replaceState(null, "", "/chat/c1#agents=ch1");
+    await renderChatRoute();
+    const dialog = await detailDialog();
+    await userEvent.setup().click(await within(dialog).findByRole("button", { name: "Stop" }));
+    await waitFor(() => expect(childStream()).toBeTruthy());
+    act(() => {
+      childStream()?.emit("event", finishedAt(9));
+    });
+    await act(async () => answer(json(200, { events: [] })));
+    await waitFor(() => expect(headStatus(dialog)).toBe("completed"));
+    expect(within(dialog).queryByRole("button", { name: "Stop" })).toBeNull();
+  });
+
+  it("a failed stop is reported even when the level was left while the request ran", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    let fail: (e: Error) => void = () => {};
+    api(parentEvents(), undefined, {
+      [`POST ${CHILD}/abort`]: () =>
+        new Promise<Response>((_, reject) => {
+          fail = reject;
+        }),
+    });
+    window.history.replaceState(null, "", "/chat/c1#agents=ch1");
+    await renderChatRoute();
+    const dialog = await detailDialog();
+    const user = userEvent.setup();
+    await user.click(await within(dialog).findByRole("button", { name: "Stop" }));
+    // back to the tree: the level (and its mutation's observer) unmounts
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(window.location.hash).toBe("#agents"));
+    await act(async () => fail(new TypeError("Failed to fetch")));
+    await waitFor(() => expect(toasts()).toHaveLength(1));
+    expect(String(warn.mock.calls[0]?.[2])).toContain("Failed to fetch");
+    warn.mockRestore();
+  });
+
+  it("an end followed at once by a restart leaves the new run's Stop free", async () => {
+    api(parentEvents(), undefined, {
+      [`POST ${CHILD}/abort`]: () => json(202, { runId: "run-ch1" }),
+    });
+    window.history.replaceState(null, "", "/chat/c1#agents=ch1");
+    await renderChatRoute();
+    const dialog = await detailDialog();
+    await userEvent.setup().click(await within(dialog).findByRole("button", { name: "Stop" }));
+    await waitFor(() =>
+      expect(within(dialog).getByRole("button", { name: "Stop" }).getAttribute("aria-busy")).toBe(
+        "true",
+      ),
+    );
+    // one batch: the stopped run's end, a parent's message and the new run's start
+    act(() => {
+      childStream()?.emit("event", c(9, "run_aborted", { byAccountId: "a1", reason: "user" }));
+      childStream()?.emit("event", restart(10));
+      childStream()?.emit(
+        "event",
+        c(
+          11,
+          "run_started",
+          { agentVersion: 1, model: { provider: "model-fake", model: "fake-1" } },
+          "run-ch1-2",
+        ),
+      );
+    });
+    await waitFor(() => expect(headStatus(dialog)).toBe("running"));
+    const stop = within(dialog).getByRole("button", { name: "Stop" });
+    expect(stop.getAttribute("aria-busy")).toBeNull();
+    expect(stop.hasAttribute("disabled")).toBe(false);
   });
 
   const ACTIVE_STATUSES: ReadonlySet<string> = new Set(["running", "waiting"]);
@@ -1020,6 +1114,21 @@ describe("stopping a sub-agent from the map (AC5)", () => {
     ["run out of steps, tree still running", ended("max_steps"), "running", "failed"],
     ["a queued restart after the end, tree queued", [...ended(), restart(7)], "queued", "running"],
     ["a message after the end, tree idle", [...ended(), restart(7)], "idle", "completed"],
+    [
+      "a restart that started (its run_started in the log), tree idle",
+      [
+        ...ended(),
+        restart(7),
+        c(
+          8,
+          "run_started",
+          { agentVersion: 1, model: { provider: "model-fake", model: "fake-1" } },
+          "run-ch1-2",
+        ),
+      ],
+      "idle",
+      "running",
+    ],
   ] as const)("%s: head %s", async (_, log, treeStatus, expected) => {
     api(parentEvents(), () => json(200, tree(treeStatus)), {
       [`GET ${CHILD}/events`]: () => json(200, { events: log }),
