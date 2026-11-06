@@ -532,3 +532,12 @@ they win. Cited in code and docs as "ruling <id>".
   at an org import request; confirm does not re-read the marketplace.
 - **P2-16** Prereleases fold into 其他版本 unless no stable version can be imported; a deprecated
   version is never newer, the latest or the default pick.
+- **P2-17** (F2) An org install or switch takes no version: it installs the platform version. A
+  dependency resolves to its platform version, which must satisfy the range; only while it has none
+  yet, to the highest imported, non-deprecated version satisfying it (stable before prerelease).
+  Platform updates move installs still installing, and an install records the platform version
+  current when it is marked installed.
+- **P2-18** A version-pinned linked copy follows its platform component's availability (deployment
+  disable, org switch-off, scope removal, uninstall); the pin fixes the version only. A component a
+  platform update removed leaves its pinned copies to the org (P2-7). The previews count pinned copies;
+  the migration leaves a copy whose component is off in its org unlinked until it is on.

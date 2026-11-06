@@ -22,3 +22,8 @@ its extension, components and every org install; connectors follow their templat
 `POST /api/v1/orgs/:orgId/catalog/:itemId/connectors`. The admin console gets 技能, 连接器模板 and
 智能体模板 pages with scope dialogs and version history, and the plugin detail's platform update
 preview.
+An org install or switch takes no `version` any more (400): an org installs the platform version, and
+dependencies resolve to their platform version (refused when it does not satisfy the range). A
+version-pinned org copy follows its platform component's availability (disable, switch-off, scope
+removal, uninstall) and counts in the previews' affected agents. The marketplace import default and
+the market row's version use one order.
