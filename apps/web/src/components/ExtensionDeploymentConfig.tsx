@@ -1,6 +1,6 @@
 "use client";
 
-import { Button, Skeleton, Stack, Text, useToast } from "@capybara-hq/design";
+import { Button, Callout, Skeleton, Stack, Text, useToast } from "@capybara-hq/design";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { useMemo, useState } from "react";
@@ -31,7 +31,7 @@ export function ExtensionDeploymentConfig({
 }: {
   name: string;
   drainSeconds: number;
-  /** The extension waits for config: a warn line lists the missing fields. */
+  /** The extension waits for config: a callout lists the missing fields. */
   pending?: boolean;
   /** The config was saved (the extension's state and the org's readiness may have changed). */
   onChanged(): void;
@@ -142,11 +142,10 @@ function DeploymentConfigForm({
 
   return (
     <Stack gap={16}>
-      {/* A warn line, not a Callout: the config sits in the list's Sheet too (spec §6.7) */}
+      {/* The tinted bar on the extension's page, the warn line in the list's Sheet: the Callout
+          reads the box it sits in (spec §6.19) */}
       {pending && missing.length > 0 && (
-        <Text variant="prose" tone="warn" icon="circle-alert">
-          {t("pendingMissing", { fields: missing.join(t("listSep")) })}
-        </Text>
+        <Callout tone="warn">{t("pendingMissing", { fields: missing.join(t("listSep")) })}</Callout>
       )}
       <Text variant="prose" tone="muted">
         {t("hint")}

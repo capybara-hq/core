@@ -2,6 +2,7 @@
 
 import {
   Badge,
+  Callout,
   Checkbox,
   CodeBlock,
   Disclosure,
@@ -136,23 +137,24 @@ export function PluginReviewBody({
         )}
         <LicenseView text={review.licenseText} truncated={review.licenseTruncated === true} />
       </Stack>
-      {/* Warn lines, not a card: the review sits in a Dialog too (spec §6.7) */}
+      {/* A warn Callout: the tinted bar on the import page, the warn line in the org's upload
+          Dialog (it reads the box it sits in, spec §6.19) */}
       {mismatch !== null && (
-        <Stack gap={4}>
-          <Text tone="warn" icon="circle-alert">
-            {t("mismatch")}
-          </Text>
-          {mismatch.missing.length > 0 && (
-            <Text variant="small" tone="warn">
-              {t("mismatchMissing", { keys: mismatch.missing.join(", ") })}
-            </Text>
-          )}
-          {mismatch.extra.length > 0 && (
-            <Text variant="small" tone="muted">
-              {t("mismatchExtra", { keys: mismatch.extra.join(", ") })}
-            </Text>
-          )}
-        </Stack>
+        <Callout tone="warn">
+          <Stack gap={4}>
+            <Text tone="warn">{t("mismatch")}</Text>
+            {mismatch.missing.length > 0 && (
+              <Text variant="small" tone="warn">
+                {t("mismatchMissing", { keys: mismatch.missing.join(", ") })}
+              </Text>
+            )}
+            {mismatch.extra.length > 0 && (
+              <Text variant="small" tone="muted">
+                {t("mismatchExtra", { keys: mismatch.extra.join(", ") })}
+              </Text>
+            )}
+          </Stack>
+        </Callout>
       )}
       {review.translation !== undefined && <TranslationReportView report={review.translation} />}
       <ComponentSection

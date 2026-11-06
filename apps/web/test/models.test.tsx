@@ -8,7 +8,7 @@ import { activeNavOf } from "../src/components/shell/nav";
 import type { Me } from "../src/lib/session";
 import { bodyOf, type Call, json, lastStubRoutes, stubApi } from "./support/api";
 import { resetNavigation } from "./support/navigation";
-import { renderRouteWithCache } from "./support/query";
+import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
 import { ME } from "./support/render";
 import { pickOption } from "./support/select";
 
@@ -405,8 +405,34 @@ describe("one box is enough (acceptance item AB)", () => {
     expect(within(alpha).getByRole("table", { name: "alpha" })).toBeTruthy();
     // the failed provider says so under its heading, with no table
     const broken = within(pcard).getByRole("region", { name: "broken" });
-    expect(within(broken).getByRole("alert").textContent).toContain(BROKEN.error);
+    // the error is a block under the heading: the message in body size, the detail on its own row
+    const alert = within(broken).getByRole("alert");
+    expect(alert.closest('[data-part="subsection-description"]')?.tagName).toBe("DIV");
+    const lines = [...alert.querySelectorAll(".cb-text")];
+    expect(lines.map((l) => l.getAttribute("data-variant"))).toEqual(["body", "small"]);
+    expect(lines[1]?.textContent).toBe(BROKEN.error);
     expect(within(broken).queryByRole("table")).toBeNull();
+    noNested();
+  });
+
+  it("/admin/models while loading: the providers card holds a heading row over the table", async () => {
+    stubApi({
+      "GET /api/v1/admin/models": () => new Promise<Response>(() => {}),
+      "GET /api/v1/admin/model-purposes": () => new Promise<Response>(() => {}),
+    });
+    await renderRouteEmptyCache("/admin/models", lastStubRoutes());
+    const card = await vi.waitFor(() => {
+      const el = document.querySelector('#providers [data-part="form-card"]');
+      if (el === null) throw new Error("no loading card yet");
+      return el as HTMLElement;
+    });
+    expect(card.getAttribute("data-flush")).toBe("true");
+    const sub = card.querySelector('[data-part="subsection"]') as HTMLElement;
+    expect(sub.getAttribute("data-variant")).toBe("flush");
+    expect(
+      sub.querySelector('[data-part="subsection-title"] [data-part="skeleton-text"]'),
+    ).not.toBeNull();
+    expect(sub.querySelector('[data-part="table"]')).not.toBeNull();
     noNested();
   });
 

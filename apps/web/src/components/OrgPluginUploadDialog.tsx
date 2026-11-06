@@ -221,20 +221,18 @@ export function OrgPluginUploadDialog({
                   </Text>
                 )}
                 {review.extension !== undefined && (
-                  <Text variant="prose" tone="warn">
+                  <Text variant="prose" tone="warn" icon="circle-alert">
                     {t("extensionNotice")}
                   </Text>
                 )}
               </Stack>
               {staged.update !== null && (
                 <ContentSection title={t("updateTitle")}>
-                  <Stack gap={8}>
-                    <PlatformUpdatePreviewBody
-                      preview={staged.update}
-                      orgName={nameOrg}
-                      hideUnknown
-                    />
-                  </Stack>
+                  <PlatformUpdatePreviewBody
+                    preview={staged.update}
+                    orgName={nameOrg}
+                    hideUnknown
+                  />
                 </ContentSection>
               )}
               <PluginReviewBody review={review} />
