@@ -652,7 +652,7 @@ function decidedRequestDetail({
           )}
           {subject.id !== null && (
             <Text>
-              <Link href={`/plugins/${subject.id}`}>{tdd("openItem")}</Link>
+              <Link href={`/plugins/${encodeURIComponent(subject.id)}`}>{tdd("openItem")}</Link>
             </Text>
           )}
         </Stack>

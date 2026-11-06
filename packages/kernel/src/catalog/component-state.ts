@@ -59,10 +59,18 @@ export function componentOn(
   sw: boolean | null,
 ): boolean {
   if (stopped(c, p)) return false;
-  if (c.scopeMode === "follow") {
-    return p !== null && (p.installed || p.builtin) && sw !== false;
-  }
+  if (c.scopeMode === "follow") return componentPluginOn(c, p) && sw !== false;
   return wantedOn({ scope: c.scope, disabled: false, builtin: false }, listed, sw);
+}
+
+/**
+ * Whether the plugin a component follows is on in the org (a live install there, or builtin); a
+ * component with its own scope does not depend on it (true). A `follow` component comes on and off
+ * with its plugin (spec §5 rule 5), so its own switch only matters while this holds.
+ */
+export function componentPluginOn(c: ComponentScopeFacts, p: PluginFacts | null): boolean {
+  if (c.scopeMode === "own") return true;
+  return p !== null && p.live && (p.installed || p.builtin);
 }
 
 /**

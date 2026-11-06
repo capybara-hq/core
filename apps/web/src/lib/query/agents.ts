@@ -3,6 +3,7 @@ import { type Agent, getAgent, listAgents, listAgentTemplates } from "../agents"
 import type { ApiClientError } from "../api";
 import { listAvailableExtensionPoints } from "../extensions";
 import { listAgentSkills } from "../skills";
+import { orgComponentsQuery } from "./components";
 import { connectorQuery, connectorsQuery, modelsQuery } from "./conversation";
 import { defineQuery } from "./define";
 import { keys } from "./keys";
@@ -72,6 +73,8 @@ export const agentFormQueries = (
   any(agentTemplatesQuery(orgId)),
   any(agentsQuery(orgId)),
   any(membersQuery(orgId)),
+  // the platform components offered to the org: an off one's id reads as unavailable
+  any(orgComponentsQuery(orgId, {})),
   ...(agentId === undefined
     ? []
     : [any(agentSkillsQuery(orgId, agentId)), any(availableExtensionPointsQuery(orgId))]),

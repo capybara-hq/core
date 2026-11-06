@@ -351,6 +351,73 @@ describe("platform skills in the editor (plugin scope phase 2)", () => {
   });
 });
 
+describe("a platform skill switched off in the org (spec §5 rule 8)", () => {
+  beforeEach(() => resetNavigation("/agents/ag1"));
+
+  it("reads as unavailable, not deleted, in both pickers; unticking drops the reference", async () => {
+    const calls = stubApi({
+      [`GET ${ORG}/agents/ag1`]: () =>
+        json(200, {
+          agent: agent({
+            definition: {
+              ...agent().definition,
+              // the platform skill p2 and a copy linked to it; `gone` is really deleted
+              skills: { orgSkills: ["p2", "copy2", "gone"], pinned: ["copy2"] },
+            },
+          }),
+        }),
+      [`GET ${ORG}/models`]: () => json(200, MODELS),
+      [`GET ${ORG}/connectors`]: () => json(200, { connectors: [] }),
+      [`GET ${ORG}/skills`]: () => json(200, { skills: [] }),
+      [`GET ${ORG}/agents/ag1/skills`]: () => json(200, { skills: [] }),
+      [`GET ${ORG}/components`]: () =>
+        json(200, {
+          components: [
+            {
+              kind: "skill",
+              id: "p2",
+              name: "notes",
+              description: null,
+              plugin: "docs",
+              itemId: null,
+              version: "1",
+              scopeMode: "own",
+              switch: false,
+              on: false,
+              locked: false,
+              pluginOn: true,
+              switchable: true,
+              linkedIds: ["copy2"],
+            },
+          ],
+        }),
+      [`PATCH ${ORG}/agents/ag1`]: () => json(200, { agent: agent(), warnings: [] }),
+    });
+    await renderEditAgent({ section: "skills" });
+    const group = await screen.findByRole("group", { name: en.agents.form.orgSkillsLabel });
+    const label = en.agents.form.unavailableSkill.replace("{name}", "notes");
+    const boxes = within(group).getAllByRole("checkbox", { name: label });
+    expect(boxes).toHaveLength(2);
+    expect(within(group).getByText(en.agents.form.unavailableSkillHint)).toBeTruthy();
+    expect(
+      within(group).getByRole("checkbox", {
+        name: en.agents.form.deletedSkill.replace("{id}", "gone"),
+      }),
+    ).toBeTruthy();
+    expect(within(group).queryByText(en.agents.form.deletedSkill.replace("{id}", "p2"))).toBeNull();
+    const pinned = screen.getByRole("group", { name: en.agents.form.pinnedLabel });
+    expect(within(pinned).getByRole("checkbox", { name: label })).toHaveProperty("checked", true);
+    const user = userEvent.setup();
+    await user.click(boxes[0] as HTMLElement);
+    await user.click(screen.getByRole("button", { name: en.agents.form.submit }));
+    await vi.waitFor(() => expect(calls.some((c) => c.method === "PATCH")).toBe(true));
+    const body = bodyOf(calls.find((c) => c.method === "PATCH")) as {
+      definition: { skills: Record<string, unknown> };
+    };
+    expect(body.definition.skills.orgSkills).toEqual(["copy2", "gone"]);
+  });
+});
+
 describe("pinned skills (skills.pinned)", () => {
   const fill = (s: string, vars: Record<string, string | number>) =>
     s.replace(/\{(\w+)\}/g, (_, k: string) => String(vars[k]));

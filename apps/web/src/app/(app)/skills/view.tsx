@@ -108,7 +108,17 @@ function Skills({ orgId }: { orgId: string }) {
                 children: <FormError message={error.message} extra={error.extra} />,
               },
             }
-          : {})}
+          : offered.data === undefined && offered.error !== null
+            ? // the offered components could not be read: the platform ones that are off and
+              // their switches are missing until a retry
+              {
+                callout: {
+                  tone: "warn" as const,
+                  children: tc("listUnavailable"),
+                  action: { label: tc("retry"), onSelect: () => void offered.refetch() },
+                },
+              }
+            : {})}
         {...(list.kind === "loading" ? { loading: true } : empty ? { empty } : {})}
       >
         {rows.map((r) => {

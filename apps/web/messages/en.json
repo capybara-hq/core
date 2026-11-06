@@ -581,9 +581,12 @@
           "too_many": "Too many sub-agents: at most 20 in total.",
           "required": "This field is required."
         },
-        "platform": "Platform"
+        "platform": "Platform",
+        "templateUnavailable": "Unavailable: {name} (a platform template turned off in this organization; untick to remove it)"
       },
-      "webUnavailable": "This organization has no usable web provider: an org admin needs to enable and configure one, or, when several are enabled, choose a default provider in the extension settings, before the selected web tools can be used."
+      "webUnavailable": "This organization has no usable web provider: an org admin needs to enable and configure one, or, when several are enabled, choose a default provider in the extension settings, before the selected web tools can be used.",
+      "unavailableSkill": "Unavailable: {name}",
+      "unavailableSkillHint": "These platform skills are off in this organization, so the agent does not load them; they come back when an org admin turns them on again. Untick one to remove the reference."
     },
     "params": {
       "default": "Default",
@@ -3802,7 +3805,11 @@
       "disabled": "{name} is off."
     },
     "error": {
-      "conflict": "This organization already has a skill named {name}; skill names are unique in an organization. Remove or rename that skill, then turn this one on.",
+      "conflict": {
+        "skill": "This organization already has a skill named {name}; skill names are unique in an organization. Remove or rename that skill, then turn this one on.",
+        "agent_template": "This organization already has an agent template of type {name}; agent template types are unique in an organization.",
+        "connector_template": "This organization already has a connector template named {name}; another one of that name cannot be turned on."
+      },
       "locked": "{name} is on for every organization by the platform and cannot be turned off here."
     },
     "switchOff": {
@@ -3826,7 +3833,9 @@
     },
     "unavailable": "The components' state in this organization could not be read.",
     "inOrg": "In this organization",
-    "noneInOrg": "This plugin offers no component to this organization."
+    "noneInOrg": "This plugin offers no component to this organization.",
+    "listUnavailable": "The platform components' state in this organization could not be read: the ones that are off and their switches are not shown.",
+    "retry": "Retry"
   },
   "agentTemplates": {
     "title": "Agent templates",

@@ -21,6 +21,7 @@ import {
   componentLocked,
   componentOffered,
   componentOn,
+  componentPluginOn,
   connectorsMadeFrom,
   listedIn,
   loadComponents,
@@ -139,6 +140,11 @@ export interface OrgOfferedComponentView extends OrgComponentView {
    * component of a plugin that is off is switched on with the plugin, spec §5 rule 5).
    */
   switchable: boolean;
+  /**
+   * The org's copies linked to it without a pin (skills, agent templates): agents that select one
+   * of these ids use this component, and lose it while it is off (spec §5 rule 8).
+   */
+  linkedIds: string[];
 }
 
 /** The result of an org switch: the component, or (switching off without `confirm`) the preview. */
@@ -318,6 +324,7 @@ export class ComponentScopeService {
         filter.itemId !== undefined ? { itemId: filter.itemId } : {},
       );
       const st = await loadScopeState(this.db, kind, comps);
+      const linked = await this.linkedCopies(orgId, kind);
       const rows: OrgOfferedComponentView[] = [];
       for (const c of comps) {
         const p = pluginFactsOf(st, c.itemId, orgId);
@@ -326,7 +333,7 @@ export class ComponentScopeService {
         const on = componentOn(c, p, listed, sw);
         if (!on && !componentOffered(c, p, listed)) continue;
         const locked = componentLocked(c, p);
-        const pluginOn = c.scopeMode === "own" || (p?.live === true && (p.installed || p.builtin));
+        const pluginOn = componentPluginOn(c, p);
         rows.push({
           kind,
           id: c.id,
@@ -341,12 +348,49 @@ export class ComponentScopeService {
           locked,
           pluginOn,
           switchable: !locked && pluginOn,
+          linkedIds: linked.get(c.id) ?? [],
         });
       }
       rows.sort((a, b) =>
         a.name < b.name ? -1 : a.name > b.name ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0,
       );
       out.push(...rows);
+    }
+    return out;
+  }
+
+  /**
+   * The org's copies of platform skills or agent templates linked without a pin (ruling B2), by
+   * platform id: they resolve to it, so agents that select them use it (none for connector
+   * templates).
+   */
+  private async linkedCopies(orgId: string, kind: ComponentKind): Promise<Map<string, string[]>> {
+    const out = new Map<string, string[]>();
+    if (kind === "connector_template") return out;
+    const rows =
+      kind === "skill"
+        ? await this.db
+            .selectFrom("skills")
+            .select(["id", "platform_skill_id as link"])
+            .where("org_id", "=", orgId)
+            .where("scope", "=", "org")
+            .where("deleted_at", "is", null)
+            .where("pinned_version", "is", null)
+            .where("platform_skill_id", "is not", null)
+            .orderBy("id")
+            .execute()
+        : await this.db
+            .selectFrom("agent_templates")
+            .select(["id", "platform_template_id as link"])
+            .where("org_id", "=", orgId)
+            .where("deleted_at", "is", null)
+            .where("pinned_version", "is", null)
+            .where("platform_template_id", "is not", null)
+            .orderBy("id")
+            .execute();
+    for (const r of rows) {
+      const k = r.link as string;
+      out.set(k, [...(out.get(k) ?? []), r.id]);
     }
     return out;
   }

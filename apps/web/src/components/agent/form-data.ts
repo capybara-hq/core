@@ -3,9 +3,11 @@
 import { type UseQueryResult, useQuery } from "@tanstack/react-query";
 import type { ProviderModels } from "../../lib/agents";
 import type { ApiClientError } from "../../lib/api";
+import type { OrgComponent } from "../../lib/components";
 import type { ConnectorSummary } from "../../lib/connectors";
 import { agentSkillsQuery, agentsQuery, agentTemplatesQuery } from "../../lib/query/agents";
 import { retryOnMountOf } from "../../lib/query/client";
+import { orgComponentsQuery } from "../../lib/query/components";
 import { connectorsQuery, modelsQuery } from "../../lib/query/conversation";
 import { membersQuery } from "../../lib/query/members";
 import { skillsQuery } from "../../lib/query/skills";
@@ -23,6 +25,11 @@ export interface AgentFormData {
   orgSkills: SkillSummary[] | null;
   /** The agent's own skills (`[]` for a new agent). */
   ownSkills: SkillSummary[] | null;
+  /**
+   * The platform components offered to the org (on or off), so an id of one that is off reads as
+   * unavailable, not deleted (spec §5 rule 8); null when it could not be read.
+   */
+  offered: OrgComponent[] | null;
   subagents: SubagentsFormData;
 }
 
@@ -52,6 +59,7 @@ export function useAgentFormData(orgId: string, agentId?: string): AgentFormStat
   const templatesQ = agentTemplatesQuery(orgId);
   const agentsQ = agentsQuery(orgId);
   const membersQ = membersQuery(orgId);
+  const offeredQ = orgComponentsQuery(orgId, {});
   // A query of no agent is disabled; the key's agent id is then never read.
   const ownQ = agentSkillsQuery(orgId, agentId ?? "");
   const models = useQuery({ ...modelsQ, retryOnMount: retryOnMountOf(modelsQ.queryKey) });
@@ -63,6 +71,7 @@ export function useAgentFormData(orgId: string, agentId?: string): AgentFormStat
   const templates = useQuery({ ...templatesQ, retryOnMount: retryOnMountOf(templatesQ.queryKey) });
   const agents = useQuery({ ...agentsQ, retryOnMount: retryOnMountOf(agentsQ.queryKey) });
   const members = useQuery({ ...membersQ, retryOnMount: retryOnMountOf(membersQ.queryKey) });
+  const offered = useQuery({ ...offeredQ, retryOnMount: retryOnMountOf(offeredQ.queryKey) });
   const own = useQuery({
     ...ownQ,
     retryOnMount: retryOnMountOf(ownQ.queryKey),
@@ -75,6 +84,7 @@ export function useAgentFormData(orgId: string, agentId?: string): AgentFormStat
     [members, OPTIONAL],
     [templates, SECTION],
     [agents, SECTION],
+    [offered, SECTION],
     ...(agentId === undefined ? [] : ([[own, SECTION]] as [typeof own, string][])),
   ];
   if (all.some(([q]) => q.data === undefined && q.error === null)) return { kind: "loading" };
@@ -101,7 +111,9 @@ export function useAgentFormData(orgId: string, agentId?: string): AgentFormStat
       connectors: connectors.data?.connectors ?? null,
       orgSkills: skills.data?.skills ?? null,
       ownSkills: agentId === undefined ? [] : (own.data?.skills ?? null),
+      offered: offered.data?.components ?? null,
       subagents: {
+        offered: offered.data?.components ?? null,
         templates: templates.data?.templates ?? null,
         agents: agents.data?.agents ?? null,
         members: members.data?.members ?? null,

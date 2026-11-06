@@ -863,5 +863,17 @@ describe("the org component list and linked copies (Task 10)", { timeout: 60_000
     expect(r.json().description).not.toBe("Copy.");
     await env.db.updateTable("skills").set({ pinned_version: 1 }).where("id", "=", copy).execute();
     expect((await get()).json()).toMatchObject({ id: copy, origin: "org", description: "Copy." });
+    // the component list names unpinned copies only (the agent editor's unavailable ids)
+    const listed = async () =>
+      (
+        await env.mem({ method: "GET", url: `/api/v1/orgs/${env.orgId}/components?kind=skill` })
+      ).json().components[0].linkedIds;
+    expect(await listed()).toEqual([]);
+    await env.db
+      .updateTable("skills")
+      .set({ pinned_version: null })
+      .where("id", "=", copy)
+      .execute();
+    expect(await listed()).toEqual([copy]);
   });
 });

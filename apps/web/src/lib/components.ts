@@ -186,7 +186,23 @@ export interface OrgComponent {
   pluginOn: boolean;
   /** An org admin may switch it now (not locked; its plugin on when it follows it). */
   switchable: boolean;
+  /** The org's copies linked to it (older agents select them; absent from older kernels). */
+  linkedIds?: string[];
 }
+
+/**
+ * The platform component an id stands for (its own id or a linked copy's) while it is offered to
+ * the org but off there: an agent that selects it lists it as unavailable (spec §5 rule 8), never
+ * as deleted; turning it on again brings it back.
+ */
+export const unavailableComponent = (
+  offered: readonly OrgComponent[] | null | undefined,
+  kind: PlatformComponentKind,
+  id: string,
+): OrgComponent | undefined =>
+  offered?.find(
+    (c) => c.kind === kind && !c.on && (c.id === id || (c.linkedIds ?? []).includes(id)),
+  );
 
 /** What switching a component off in the org takes away: the agents using it, connectors kept. */
 export interface ComponentSwitchPreview {

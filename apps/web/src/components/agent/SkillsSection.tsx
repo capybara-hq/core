@@ -154,11 +154,13 @@ function SkillsEdit({ data }: { data: AgentFormData }) {
         >
           <OrgSkillsPicker
             skills={orgList.skills}
+            offered={data.offered}
             value={d.orgSkills}
             onChange={onOrgSkillsChange}
           />
           <PinnedSkillsPicker
             skills={pinnable}
+            offered={data.offered}
             selected={[...d.orgSkills, ...own.skills.map((s) => s.id)]}
             value={d.pinned}
             onChange={(pinned) => edit((cur) => ({ ...cur, pinned }))}

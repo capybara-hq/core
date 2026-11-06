@@ -37,13 +37,16 @@ export function useComponentState(): (c: OrgComponent) => PluginStateLabel {
         : { label: t("pluginOff"), tone: "muted" };
 }
 
-/** What switching a component changes in the org: its lists, the usable sets, its plugin's view. */
-export const componentSwitchKeys = (orgId: string, c: Pick<OrgComponent, "id">) => {
+/**
+ * What switching a component changes in the org: its lists, the usable sets, every skill detail
+ * (the platform skill's and its linked copies', cached under their own ids), its plugin's view.
+ */
+export const componentSwitchKeys = (orgId: string) => {
   const k = keys.org(orgId);
   return [
     k.componentsAll(),
     k.skills(),
-    k.skill(c.id),
+    k.skillAll(),
     k.agentTemplates(),
     k.connectors(),
     k.catalog(),
@@ -77,13 +80,13 @@ export function useComponentSwitch({ orgId, admin }: { orgId: string; admin: boo
         enabled: v.enabled,
         ...(v.confirm !== undefined && { confirm: v.confirm }),
       }),
-    invalidates: (v) => componentSwitchKeys(orgId, v.c),
+    invalidates: () => componentSwitchKeys(orgId),
   });
 
   /** A refusal in the component's words (a name taken, `all`), else the code's own copy. */
   const messageOf = (c: OrgComponent, e: unknown): string => {
     if (e instanceof ApiClientError && e.code === "plugin.skill_conflict") {
-      return t("error.conflict", { name: c.name });
+      return t(`error.conflict.${c.kind}`, { name: c.name });
     }
     if (e instanceof ApiClientError && e.code === "plugin.scope_locked") {
       return t("error.locked", { name: c.name });

@@ -3,6 +3,7 @@
 import { Badge, Button, Checkbox, DangerConfirm, Stack, Text, useToast } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
 import { useState } from "react";
+import { type OrgComponent, unavailableComponent } from "../lib/components";
 import { keys } from "../lib/query/keys";
 import { useAppMutation } from "../lib/query/mutation";
 import {
@@ -22,10 +23,13 @@ import { useErrorMessage } from "../lib/use-error-message";
  */
 export function OrgSkillsPicker({
   skills,
+  offered,
   value,
   onChange,
 }: {
   skills: SkillSummary[] | undefined;
+  /** The platform components offered to the org: an id of one that is off reads as unavailable. */
+  offered?: OrgComponent[] | null;
   value: string[];
   onChange(next: string[]): void;
 }) {
@@ -35,7 +39,13 @@ export function OrgSkillsPicker({
     onChange(on ? [...value, s.id] : value.filter((x) => !aliases.includes(x)));
   };
   const known = new Set((skills ?? []).flatMap(skillAliases));
-  const deleted = skills === undefined ? [] : value.filter((id) => !known.has(id));
+  const missing = skills === undefined ? [] : value.filter((id) => !known.has(id));
+  // a platform skill off in the org (spec §5 rule 8): unavailable, back when it is on again
+  const unavailable = missing.flatMap((id) => {
+    const c = unavailableComponent(offered, "skill", id);
+    return c === undefined ? [] : [{ id, name: c.name }];
+  });
+  const deleted = missing.filter((id) => !unavailable.some((u) => u.id === id));
   return (
     // biome-ignore lint/a11y/useSemanticElements: fieldset 带浏览器默认边框与内边距，apps/web 不能写样式；用 role=group 分组
     <div role="group" aria-label={t("orgSkillsLabel")}>
@@ -43,7 +53,7 @@ export function OrgSkillsPicker({
         <Text variant="small" tone="muted">
           {t("orgSkillsLabel")}
         </Text>
-        {skills !== undefined && skills.length === 0 && deleted.length === 0 && (
+        {skills !== undefined && skills.length === 0 && missing.length === 0 && (
           <Text variant="small" tone="faint">
             {t("noOrgSkills")}
           </Text>
@@ -61,6 +71,19 @@ export function OrgSkillsPicker({
         {(skills ?? []).some((s) => s.manual === true) && (
           <Text variant="small" tone="faint">
             {t("manualHint")}
+          </Text>
+        )}
+        {unavailable.map((u) => (
+          <Checkbox
+            key={u.id}
+            label={t("unavailableSkill", { name: u.name })}
+            checked
+            onChange={(on) => onChange(on ? value : value.filter((x) => x !== u.id))}
+          />
+        ))}
+        {unavailable.length > 0 && (
+          <Text variant="small" tone="warn">
+            {t("unavailableSkillHint")}
           </Text>
         )}
         {deleted.map((id) => (
@@ -131,6 +154,7 @@ export function SkillWriteSwitch({
  */
 export function PinnedSkillsPicker({
   skills,
+  offered,
   selected,
   value,
   onChange,
@@ -138,6 +162,8 @@ export function PinnedSkillsPicker({
 }: {
   /** Undefined when a skill list could not be read. */
   skills: SkillSummary[] | undefined;
+  /** The platform components offered to the org: a pin of one that is off reads as unavailable. */
+  offered?: OrgComponent[] | null;
   /** Ids of the selected skills (org skills in `orgSkills`, then the agent's own). */
   selected: string[];
   value: string[];
@@ -223,7 +249,12 @@ export function PinnedSkillsPicker({
         {stale.map((id) => (
           <Checkbox
             key={id}
-            label={t("deletedSkill", { id })}
+            label={(() => {
+              const off = unavailableComponent(offered, "skill", id);
+              return off !== undefined
+                ? t("unavailableSkill", { name: off.name })
+                : t("deletedSkill", { id });
+            })()}
             checked
             onChange={(next) => toggle(id, next)}
           />

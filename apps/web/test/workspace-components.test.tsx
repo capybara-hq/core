@@ -222,7 +222,19 @@ describe("/skills: own and platform skills with their org state", () => {
     await userEvent
       .setup()
       .click(within(await rowOf("notes")).getByRole("button", { name: C.action.enable }));
-    expect(await screen.findByText(C.error.conflict.replace("{name}", "notes"))).toBeTruthy();
+    expect(await screen.findByText(C.error.conflict.skill.replace("{name}", "notes"))).toBeTruthy();
+  });
+
+  it("an offered-components read that fails says so above the list, with a retry", async () => {
+    const routes = skillRoutes({
+      [`GET ${ORG}/components?kind=skill`]: () =>
+        json(500, { error: { code: "internal", message: "x" } }),
+    });
+    stubApi(routes);
+    await renderRouteWithCache("/skills", routes);
+    expect(await screen.findByText(C.listUnavailable)).toBeTruthy();
+    expect(screen.getByRole("button", { name: C.retry })).toBeTruthy();
+    expect(await rowOf("mine")).toBeTruthy();
   });
 
   it("an empty cache shows the template's loading state, then the data", async () => {

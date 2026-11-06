@@ -36,6 +36,8 @@ export const keys = {
       skills: (): readonly unknown[] => [...all, "skills"],
       /** One org skill (its body, files and versions). */
       skill: (skillId: string): readonly unknown[] => [...all, "skill", skillId],
+      /** Every skill detail read (an invalidation prefix: a linked copy's detail too). */
+      skillAll: (): readonly unknown[] => [...all, "skill"],
       /** The org's channel connections. */
       channels: (): readonly unknown[] => [...all, "channels"],
       /** One channel connection. */

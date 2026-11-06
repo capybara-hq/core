@@ -28,6 +28,7 @@ import {
   type SubagentsInvalidReason,
 } from "../lib/agents";
 import { ApiClientError } from "../lib/api";
+import { type OrgComponent, unavailableComponent } from "../lib/components";
 import type { Member } from "../lib/members";
 import { useSectionDraft } from "./agent/useSectionDraft";
 
@@ -152,6 +153,8 @@ function buildSubagents(
  * the plugin agent templates, the org agents and the members (for the owners' names).
  */
 export interface SubagentsFormData {
+  /** The platform components offered to the org (an off template reads as unavailable). */
+  offered?: OrgComponent[] | null;
   templates: AgentTemplateView[] | null;
   agents: Agent[] | null;
   members: Member[] | null;
@@ -359,14 +362,22 @@ export function useSubagentsForm(
               })}
               {templates
                 .filter((id) => !templateList.some((x) => x.id === id || x.linkedIds?.includes(id)))
-                .map((id) => (
-                  <Checkbox
-                    key={id}
-                    checked
-                    onChange={() => setTemplates((cur) => cur.filter((x) => x !== id))}
-                    label={t("templateGone", { id })}
-                  />
-                ))}
+                .map((id) => {
+                  // a platform template off in the org (or its copy) is unavailable, not gone
+                  const off = unavailableComponent(data.offered, "agent_template", id);
+                  return (
+                    <Checkbox
+                      key={id}
+                      checked
+                      onChange={() => setTemplates((cur) => cur.filter((x) => x !== id))}
+                      label={
+                        off !== undefined
+                          ? t("templateUnavailable", { name: off.name })
+                          : t("templateGone", { id })
+                      }
+                    />
+                  );
+                })}
               {listProblems("subagents.templates")}
             </Stack>
           </div>
