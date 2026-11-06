@@ -200,6 +200,34 @@ describe("reduceChat", () => {
     expect(s).toMatchObject({ running: false, waiting: false });
   });
 
+  it("overlapping waits: the run waits until every open approval / question is answered (as runStats counts)", () => {
+    const ask = (seq: number, approvalId: string) =>
+      ev(seq, "approval_requested", {
+        step: 0,
+        callId: `c-${approvalId}`,
+        approvalId,
+        toolKey: "mcp__x__y",
+        expiresAt: "2026-10-19T00:00:00.000Z",
+      });
+    const decide = (seq: number, approvalId: string) =>
+      ev(seq, "approval_decided", {
+        approvalId,
+        callId: `c-${approvalId}`,
+        decision: "approved",
+        byAccountId: "u1",
+      });
+    let s = apply(initialChatState, [started(1), ask(2, "a1"), ask(3, "a2")]);
+    expect(s).toMatchObject({ running: false, waiting: true });
+    // one of two decided: still waiting for the other
+    s = apply(s, [decide(4, "a1")]);
+    expect(s).toMatchObject({ running: false, waiting: true });
+    // a decision for a wait that is not open changes nothing
+    s = apply(s, [decide(5, "a1")]);
+    expect(s).toMatchObject({ running: false, waiting: true });
+    s = apply(s, [decide(6, "a2")]);
+    expect(s).toMatchObject({ running: true, waiting: false });
+  });
+
   it("乱序：终态先于 run_started 到达仍判定为未运行", () => {
     const s = apply(initialChatState, [finished(3)], [started(2)]);
     expect(s.running).toBe(false);

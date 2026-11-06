@@ -18,6 +18,7 @@ import type {
   ToolInfo,
 } from "./conversations";
 import type { OrgRole } from "./members";
+import { PersonWaits } from "./person-waits";
 import { toolLabel, toolLabelOfKey } from "./tool-label";
 
 /**
@@ -1270,18 +1271,6 @@ export interface RunStats {
   resumedAt: number | null;
 }
 
-/** A person's wait in a run: its start and end events and the id that pairs them. */
-const WAIT_ID: Partial<Record<ConversationEvent["type"], "start" | "end">> = {
-  approval_requested: "start",
-  question_asked: "start",
-  approval_decided: "end",
-  question_answered: "end",
-};
-const waitId = (e: ConversationEvent): string | undefined => {
-  const p = e.payload as { approvalId?: string; questionId?: string };
-  return p.approvalId ?? p.questionId;
-};
-
 /** The running time the status bar shows: worked time, plus the open working stretch. */
 export const workedMsAt = (s: RunStats, now: number): number | null =>
   s.startedAt === null ? null : s.workedMs + (s.resumedAt === null ? 0 : now - s.resumedAt);
@@ -1294,7 +1283,7 @@ export function runStats(events: readonly ConversationEvent[]): RunStats {
   let active: string | null = null;
   let workedMs = 0;
   let resumedAt: number | null = null;
-  const waits = new Set<string>();
+  const waits = new PersonWaits();
   for (const e of events) {
     const at = Date.parse(e.createdAt);
     if (e.type === "run_started") {
@@ -1304,7 +1293,7 @@ export function runStats(events: readonly ConversationEvent[]): RunStats {
         workedMs = 0;
         waits.clear();
         resumedAt = at;
-      } else if (waits.size === 0) resumedAt ??= at;
+      } else if (!waits.waiting) resumedAt ??= at;
       active = e.runId;
       startedAt = at;
       endedAt = null;
@@ -1319,14 +1308,11 @@ export function runStats(events: readonly ConversationEvent[]): RunStats {
         e.type === "run_finished" ? "finished" : e.type === "run_failed" ? "failed" : "aborted";
       active = null;
     } else {
-      const kind = WAIT_ID[e.type];
-      const id = kind === undefined ? undefined : waitId(e);
-      if (id === undefined) continue;
-      if (kind === "start") {
-        if (waits.size === 0 && resumedAt !== null) workedMs += at - resumedAt;
+      const change = waits.apply(e);
+      if (change === "start") {
+        if (resumedAt !== null) workedMs += at - resumedAt;
         resumedAt = null;
-        waits.add(id);
-      } else if (waits.delete(id) && waits.size === 0) {
+      } else if (change === "end") {
         resumedAt = at;
       }
     }

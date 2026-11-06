@@ -1,4 +1,5 @@
 import { type ConversationEvent, streamUrl } from "./conversations";
+import { PersonWaits } from "./person-waits";
 import { parseUiRefresh, type UiRefresh } from "./ui";
 
 /** SSE `event: delta` 帧：运行的流式增量（只是草稿，最终内容以日志中的 assistant_message 为准）。 */
@@ -202,28 +203,26 @@ function locate(events: ConversationEvent[], seq: number): { at: number; found: 
   return { at: lo, found: false };
 }
 
-/** 等人处理的开始 / 结束事件（`waiting` 不是终态：处理后运行继续）。 */
-const WAIT_START = new Set<ConversationEvent["type"]>(["approval_requested", "question_asked"]);
-const WAIT_END = new Set<ConversationEvent["type"]>(["approval_decided", "question_answered"]);
-
+/** The run in progress and whether it waits for a person (`waiting` is not terminal: it goes on). */
 function runPhase(events: ConversationEvent[]): { running: boolean; waiting: boolean } {
   let active: string | null = null;
-  let waiting = false;
+  const waits = new PersonWaits();
   for (const e of events) {
     if (e.type === "run_started") {
       active = e.runId;
-      waiting = false;
+      waits.clear();
     } else if (e.runId === null || e.runId !== active) {
     } else if (TERMINAL.has(e.type)) {
       active = null;
-      waiting = false;
-    } else if (WAIT_START.has(e.type)) {
-      waiting = true;
-    } else if (WAIT_END.has(e.type)) {
-      waiting = false;
+      waits.clear();
+    } else {
+      waits.apply(e);
     }
   }
-  return { running: active !== null && !waiting, waiting: active !== null && waiting };
+  return {
+    running: active !== null && !waits.waiting,
+    waiting: active !== null && waits.waiting,
+  };
 }
 
 function mergeEvents(state: ChatState, incoming: ConversationEvent[]): ChatState {
