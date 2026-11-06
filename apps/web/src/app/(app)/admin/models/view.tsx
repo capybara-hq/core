@@ -4,17 +4,19 @@ import {
   Button,
   type Column,
   DataTable,
+  EmptyState,
   Field,
   FormSection,
   Input,
   ListPage,
   Stack,
+  Subsection,
   Text,
   useToast,
 } from "@capybara-hq/design";
 import { useQueryClient } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { FormError } from "../../../../components/form-error";
 import { NoAccess } from "../../../../components/NoAccess";
@@ -25,7 +27,6 @@ import {
   type AdminModelInfo,
   type AdminModels,
   type AdminProvider,
-  EVAL_PURPOSE,
   encodeModel,
   findPrice,
   type ModelPrice,
@@ -62,7 +63,7 @@ function usePutPrice() {
 
 /**
  * The purposes while they load, as PurposeEditor draws them at the deployment scope: the kernel's
- * five (eval, title and the three sub-agent tiers), each a card with who declares it (and a
+ * five (eval, title and the three sub-agent tiers), each a row with who declares it (and a
  * sub-agent tier's hint) over the model select.
  */
 const LOADING_PURPOSES = [1, 1, 2, 2, 2].map((lines) => ({
@@ -75,8 +76,8 @@ const LOADING_PURPOSES = [1, 1, 2, 2, 2].map((lines) => ({
  * `/admin/models`：模型（超级管理员，ListPage，no inner nav：the sidebar's admin context navigates）。
  * - 供应商与模型：每个供应商一张表（能力、上下文长度、每百万 token 的价格，行内编辑 / 清除价格）；
  *   列模型失败的供应商只显示错误，不影响其他供应商；
- * - 用途默认映射：每个用途一张卡片（部署默认，各组织可在 `/settings/models` 覆盖）；插件声明的用途旁注
- *   「插件调用模型尚未开放」；`eval` 未映射时提示评测不能开评委。
+ * - 用途默认映射：每个用途一行（部署默认，各组织可在 `/settings/models` 覆盖）；插件声明的用途旁注
+ *   「插件调用模型尚未开放」；`eval` 未映射时它那一行提示评测不能开评委。
  * From the query cache (the layout prefetched both reads on a first load); a saved price or purpose
  * is written into the cache.
  */
@@ -97,12 +98,13 @@ function AdminModelsRead({ me }: { me: Me }) {
   if (models.kind === "error") return <ErrorFrame reset={models.retry} />;
   if (purposes.kind === "error") return <ErrorFrame reset={purposes.retry} />;
   if (models.kind === "loading" || purposes.kind === "loading") {
-    // The two sections are static: the providers (one provider's table while it loads; the
-    // provider names come with the data) and the kernel's purposes as cards.
+    // The two sections are static: the providers (one provider's table while it loads, running to
+    // the card's edges; the provider names come with the data) and the kernel's purposes as rows.
     return (
       <ListPage header={header} loading={{ keep: true }}>
         <FormSection
           id="providers"
+          flush
           title={t("admin.providers.title")}
           description={
             models.kind === "ready"
@@ -159,7 +161,6 @@ function ModelsBody({
   const t = useTranslations("models");
   const qc = useQueryClient();
   const okProviders = data.providers.filter((p) => p.status === "ok");
-  const evalView = data.purposes.find((p) => p.purpose === EVAL_PURPOSE);
   // The answer is the saved purpose: it replaces that purpose in the cache (a functional update:
   // the ActionRow saves several purposes at once). The current org's purposes show the deployment
   // default, so they are read again.
@@ -174,7 +175,7 @@ function ModelsBody({
         ? d
         : { ...d, purposes: d.purposes.map((p) => (p.purpose === v.purpose ? v : p)) },
     );
-  const { editor, actionRow } = usePurposeDrafts({
+  const { list, actionRow } = usePurposeDrafts({
     purposes: data.purposes,
     providers: okProviders,
     scope: "deployment",
@@ -183,13 +184,15 @@ function ModelsBody({
   });
   const body = (
     <>
+      {/* One card of providers (spec §6.6): each provider a flush Subsection over its table */}
       <FormSection
         id="providers"
+        flush
         title={t("admin.providers.title")}
         description={t("admin.providers.description", { currency: data.currency })}
       >
         {data.providers.length === 0 ? (
-          <Text tone="muted">{t("admin.noProviders")}</Text>
+          <EmptyState size="compact" text={t("admin.noProviders")} />
         ) : (
           data.providers.map((p) => <ProviderModels key={p.provider} provider={p} data={data} />)
         )}
@@ -198,11 +201,9 @@ function ModelsBody({
         id="purposes"
         title={t("admin.purposes.title")}
         description={t("admin.purposes.description")}
+        flush
       >
-        {evalView !== undefined && evalView.default === null ? (
-          <Text tone="warn">{t("evalUnmapped")}</Text>
-        ) : null}
-        {data.purposes.map(editor)}
+        {list(t("admin.purposes.title"))}
       </FormSection>
     </>
   );
@@ -214,7 +215,7 @@ function ModelsBody({
   );
 }
 
-/** 一个供应商：标题 + 模型表（或列模型失败的错误）。 */
+/** 一个供应商：一个 flush Subsection，标题 + 模型表（或列模型失败的错误）。 */
 function ProviderModels({ provider: p, data }: { provider: AdminProvider; data: AdminModels }) {
   const t = useTranslations("models");
   const locale = useLocale();
@@ -313,24 +314,42 @@ function ProviderModels({ provider: p, data }: { provider: AdminProvider; data: 
     ),
   ];
 
-  return (
-    <Stack gap={8}>
-      <Stack direction="row" gap={8} align="center">
-        <Text variant="h2" as="h3">
-          {providerName}
-        </Text>
-        {p.displayName || p.plugin !== p.provider ? (
+  // The provider's id under its name when the name is not the id (plain metadata, mono muted);
+  // a provider that failed to list its models says so there too, in place of its table.
+  const id = p.displayName ? p.provider : p.plugin !== p.provider ? p.plugin : undefined;
+  const description =
+    id === undefined && p.status !== "error" ? undefined : (
+      <>
+        {id !== undefined ? (
           <Text variant="small" tone="muted">
-            {p.displayName ? p.provider : p.plugin}
+            {id}
           </Text>
         ) : null}
-      </Stack>
-      {p.status === "error" ? (
-        <FormError
-          message={t("admin.providerError", { provider: providerName })}
-          extra={p.error === undefined ? [] : [p.error]}
-        />
-      ) : (
+        {p.status === "error" ? (
+          <span role="alert">
+            {[
+              t("admin.providerError", { provider: providerName }),
+              ...(p.error ? [p.error] : []),
+            ].map((line) => (
+              <Fragment key={line}>
+                {" "}
+                <Text variant="small" tone="fail" icon="circle-x">
+                  {line}
+                </Text>
+              </Fragment>
+            ))}
+          </span>
+        ) : null}
+      </>
+    );
+
+  return (
+    <Subsection
+      variant="flush"
+      title={providerName}
+      {...(description !== undefined ? { description } : {})}
+    >
+      {p.status === "error" ? null : (
         <DataTable
           label={providerName}
           columns={columns}
@@ -366,7 +385,7 @@ function ProviderModels({ provider: p, data }: { provider: AdminProvider; data: 
           }
         />
       )}
-    </Stack>
+    </Subsection>
   );
 }
 

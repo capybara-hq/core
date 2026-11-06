@@ -1,3 +1,4 @@
+import { describeNestedBox, findNestedBoxes } from "@capybara-hq/design/reference";
 import { cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -129,12 +130,20 @@ const actionRow = () =>
     })(),
   );
 
+/** A purpose's row (an ItemListItem, never a card): the row whose mono id is `purpose`. */
+const purposeRow = (purpose: string): HTMLElement | null => {
+  const code = [...document.querySelectorAll('[data-part="item-list-code"]')].find(
+    (el) => el.textContent === purpose,
+  );
+  return (code?.closest('[data-part="item-list-row"]') as HTMLElement | null) ?? null;
+};
+
 const purposeBox = async (purpose: string) =>
   within(
     await vi.waitFor(() => {
-      const el = document.querySelector(`[data-purpose="${purpose}"]`);
+      const el = purposeRow(purpose);
       if (!el) throw new Error(`no purpose ${purpose}`);
-      return el as HTMLElement;
+      return el;
     }),
   );
 
@@ -296,6 +305,8 @@ describe("/admin/models（ListPage）", () => {
       });
       await renderRouteWithCache("/admin/models", lastStubRoutes(), { locale });
       expect(await screen.findByText(m.models.evalUnmapped)).toBeTruthy();
+      // The eval row carries the warning (a warn line with its icon), not a line above the rows
+      expect((await purposeBox("eval")).getByText(m.models.evalUnmapped)).toBeTruthy();
       const plugin = await purposeBox("notes.summarize");
       expect(plugin.getByText(m.models.purpose.pluginNote)).toBeTruthy();
       expect(
@@ -366,6 +377,55 @@ describe("/admin/models（ListPage）", () => {
   });
 });
 
+describe("one box is enough (acceptance item AB)", () => {
+  const noNested = () => expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
+
+  it("/admin/models: the purposes are rows of one flush card; each provider a flush subsection over its unframed table", async () => {
+    adminRoutes();
+    await renderRouteWithCache("/admin/models", lastStubRoutes());
+    await purposeBox("eval");
+    const purposes = document.getElementById("purposes") as HTMLElement;
+    const card = purposes.querySelector('[data-part="form-card"]') as HTMLElement;
+    expect(card.getAttribute("data-flush")).toBe("true");
+    // rows, not cards: one flush ItemList holding a row per purpose
+    expect(card.querySelector('[data-part="card"]')).toBeNull();
+    const list = within(card).getByRole("list", { name: en.models.admin.purposes.title });
+    expect(list.getAttribute("data-inset")).toBe("flush");
+    expect(list.querySelectorAll(':scope > [data-part="item-list-row"]')).toHaveLength(2);
+    // the purpose's row is a group named by its title, the model select one of its fields
+    const row = screen.getByRole("group", { name: "Eval judge" });
+    expect(within(row).getByRole("combobox", { name: en.models.purpose.model })).toBeTruthy();
+    // the providers: a flush card, one flush subsection (an h3) per provider
+    const providers = document.getElementById("providers") as HTMLElement;
+    const pcard = providers.querySelector('[data-part="form-card"]') as HTMLElement;
+    expect(pcard.getAttribute("data-flush")).toBe("true");
+    const alpha = within(pcard).getByRole("region", { name: "alpha" });
+    expect(alpha.getAttribute("data-variant")).toBe("flush");
+    expect(within(alpha).getByRole("heading", { level: 3, name: "alpha" })).toBeTruthy();
+    expect(within(alpha).getByRole("table", { name: "alpha" })).toBeTruthy();
+    // the failed provider says so under its heading, with no table
+    const broken = within(pcard).getByRole("region", { name: "broken" });
+    expect(within(broken).getByRole("alert").textContent).toContain(BROKEN.error);
+    expect(within(broken).queryByRole("table")).toBeNull();
+    noNested();
+  });
+
+  it("/settings/models: the purposes are rows of one flush card", async () => {
+    resetNavigation("/settings/models");
+    stubApi({
+      "GET /api/v1/orgs/o1/model-purposes": () => json(200, { purposes: [evalView()] }),
+      "GET /api/v1/orgs/o1/models": () => json(200, { providers: [ALPHA] }),
+    });
+    await renderRouteWithCache("/settings/models", lastStubRoutes());
+    const ev = await purposeBox("eval");
+    expect(ev.getByText(en.models.evalUnmapped)).toBeTruthy();
+    const card = document.querySelector('#purposes [data-part="form-card"]') as HTMLElement;
+    expect(card.getAttribute("data-flush")).toBe("true");
+    expect(card.querySelector('[data-part="card"]')).toBeNull();
+    noNested();
+  });
+});
+
 describe("sub-agent model tiers on the purposes page", () => {
   it.each(LOCALES)("the three tiers are listed with the fallback hint (%s)", async (locale) => {
     const m = msgs[locale];
@@ -386,7 +446,7 @@ describe("sub-agent model tiers on the purposes page", () => {
     await renderRouteWithCache("/settings/models", lastStubRoutes(), { locale });
     const box = (p: string) =>
       vi.waitFor(() => {
-        const el = document.querySelector(`[data-purpose="${p}"]`);
+        const el = purposeRow(p);
         if (!el) throw new Error(`no purpose ${p}`);
         return el;
       });
