@@ -210,6 +210,8 @@ export const ERROR_CODES = {
    * (`details: [{ reason: "not_found" }]`) or is hidden from the menu (`not_user_invocable`).
    */
   "skill.not_invocable": 400,
+  /** Creating a skill from text (P3-24, F18): an org-level skill with this name already exists in the org. */
+  "skill.name_exists": 409,
   "skill_change.not_found": 404,
   "skill_change.not_owner": 403,
   "skill_change.already_decided": 409,

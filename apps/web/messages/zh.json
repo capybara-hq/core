@@ -275,7 +275,11 @@
       "dependency_cycle": "该插件的依赖形成循环，无法安装。",
       "request_pending": "已经有一个待处理的同类申请。",
       "request_invalid": "这个申请已无法处理（例如它的市场已删除），请拒绝它。",
-      "marketplace_browse_disabled": "部署设置关闭了组织浏览市场。"
+      "marketplace_browse_disabled": "部署设置关闭了组织浏览市场。",
+      "not_shareable": "所属组织没有把它设为可共享，不能展示或关联给其他组织。",
+      "owner_required": "不能把所属组织从它自己的列表中移除。",
+      "item_pending": "这个插件正在等待超级管理员确认，暂时不能修改。",
+      "item_removed": "这个插件已被删除。"
     },
     "directory": {
       "not_configured": "该扩展的通讯录尚未配置，请先在组织配置中填写通讯录设置。"
@@ -326,7 +330,8 @@
     "skill": {
       "not_found": "技能不存在或已删除。",
       "invalid_package": "技能包不合法：",
-      "not_invocable": "这个智能体不能调用该技能，请从 / 菜单中选择。"
+      "not_invocable": "这个智能体不能调用该技能，请从 / 菜单中选择。",
+      "name_exists": "本组织已有同名技能，请换一个名字。"
     },
     "skill_change": {
       "not_found": "该技能改动不存在或你无权查看。",
@@ -414,7 +419,8 @@
       "scope_locked": "这个插件的范围由超级管理员决定，组织里不能开关。",
       "switch_stale": "影响在你确认前变了，请重新查看后再确认。",
       "builtin": "内置插件的范围不能更改，也不能停用。",
-      "scope_stale": "影响在你确认前变了，请重新预览后再确认。"
+      "scope_stale": "影响在你确认前变了，请重新预览后再确认。",
+      "extension_upload_pending": "这个插件带扩展，已提交，等待超级管理员确认后才能使用。"
     },
     "lock": {
       "acquire_failed": "该资源上有其他操作正在进行，请稍后再试。"
