@@ -292,7 +292,7 @@ describe("the agent map's entry points", () => {
     cleanup();
 
     const calls = api(parentEvents());
-    await renderChatRoute();
+    const { calls: server } = await renderChatRoute();
     const chip = await waitFor(() => {
       const c = agentsChip();
       expect(c).not.toBeNull();
@@ -300,7 +300,8 @@ describe("the agent map's entry points", () => {
     });
     // the agent map has no title-bar icon any more (AC3)
     expect(within(titleBar()).queryByRole("button", { name: MAP })).toBeNull();
-    // the tree is read only once the map opens: the chip reads nothing of its own
+    // the server read the tree for the first paint; the browser has not read it again
+    expect(treeReads(server)).toBe(1);
     expect(treeReads(calls)).toBe(0);
     const user = userEvent.setup();
     await user.click(chip);
@@ -322,20 +323,23 @@ describe("the agent map's entry points", () => {
       expect(c).not.toBeNull();
       return c as HTMLButtonElement;
     });
-    // before the tree is read: the conversation's own child from its log
-    expect(chip.textContent).toBe("1 agent");
-    expect(chip.getAttribute("aria-label")).toBe("1 agent, 1 running");
-    expect(chip.title).toBe("1 agent, 1 running");
+    // the whole tree from the first paint (the grandchild too), before any open of the map
+    const label = () => agentsChip()?.querySelector('[data-part="agents-chip-label"]')?.textContent;
+    expect(label()).toBe("2 agents");
+    expect(chip.getAttribute("aria-label")).toBe("2 agents, 2 running");
+    expect(chip.title).toBe("2 agents, 2 running");
     expect(chip.querySelector('[data-part="agent-dot"]')?.getAttribute("data-status")).toBe(
       "running",
     );
-    // the map's tree read adds the grandchild
+    // the map's count line names the same number (the root not counted, AC3 ruling 4)
     const user = userEvent.setup();
     await user.click(chip);
-    expect(await within(await mapDialog()).findByText("Read the changelog")).toBeTruthy();
+    const dialog = await mapDialog();
+    expect(await within(dialog).findByText("Read the changelog")).toBeTruthy();
+    expect(within(dialog).getByText(/^2 agents · /)).toBeTruthy();
     await user.keyboard("{Escape}");
-    await waitFor(() => expect(agentsChip()?.textContent).toBe("2 agents"));
-    expect(agentsChip()?.getAttribute("aria-label")).toBe("2 agents, 2 running");
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: MAP })).toBeNull());
+    expect(label()).toBe("2 agents");
     // the child ends: nothing below it counts as running any more, the dot goes
     act(() => {
       FakeEventSource.instances[0]?.emit(
@@ -356,6 +360,53 @@ describe("the agent map's entry points", () => {
     );
     expect(agentsChip()?.querySelector('[data-part="agent-dot"]')).toBeNull();
   });
+
+  it("the chip's tree reads stay bounded: re-renders and known agents' progress read nothing", async () => {
+    const calls = api(parentEvents());
+    await renderChatRoute();
+    await waitFor(() => expect(agentsChip()).not.toBeNull());
+    await act(async () => await new Promise((r) => setTimeout(r, 50)));
+    expect(treeReads(calls)).toBe(0);
+    // progress of agents the tree already has, many steps: the closed map reads nothing
+    for (let step = 1; step <= 12; step++) {
+      act(() => {
+        FakeEventSource.instances[0]?.emit("subagent_progress", {
+          subagentId: step % 2 === 0 ? "ch1" : "gc1",
+          step,
+          toolCalls: step,
+          lastToolKey: "Read",
+        });
+      });
+    }
+    await act(async () => await new Promise((r) => setTimeout(r, TREE_PROGRESS_MS + 300)));
+    expect(treeReads(calls)).toBe(0);
+    // an agent the tree lacks (a new grandchild): one read, once, however many steps it makes
+    for (let step = 1; step <= 6; step++) {
+      act(() => {
+        FakeEventSource.instances[0]?.emit("subagent_progress", {
+          subagentId: "gc2",
+          step,
+          toolCalls: step,
+          lastToolKey: "Bash",
+        });
+      });
+    }
+    await waitFor(() => expect(treeReads(calls)).toBe(1), { timeout: TREE_PROGRESS_MS + 1500 });
+    for (let step = 7; step <= 10; step++) {
+      act(() => {
+        FakeEventSource.instances[0]?.emit("subagent_progress", {
+          subagentId: "gc2",
+          step,
+          toolCalls: step,
+          lastToolKey: "Bash",
+        });
+      });
+    }
+    await act(async () => await new Promise((r) => setTimeout(r, TREE_PROGRESS_MS + 300)));
+    expect(treeReads(calls)).toBe(1);
+    // the stream's progress counts the new agent at once
+    expect(agentsChip()?.getAttribute("aria-label")).toMatch(/^3 agents, /);
+  }, 15_000);
 
   it("open properties, open the map, close the map: the properties are back", async () => {
     api(parentEvents());
@@ -736,7 +787,7 @@ describe("nested agents (agent map spec §7)", () => {
         toolKey: "mcp__gh__issue",
       }),
     ]);
-    await renderChatRoute();
+    const { calls: server } = await renderChatRoute();
     const line = await waitFor(() => {
       const c = document.querySelector('[data-role="subagent-connect"]');
       expect(c?.textContent).toContain(
@@ -744,8 +795,10 @@ describe("nested agents (agent map spec §7)", () => {
       );
       return c as HTMLElement;
     });
-    // the tree is read for the name while the map is closed
-    expect(treeReads(calls)).toBeGreaterThan(0);
+    // the tree that names it was read with the page while the map is closed (AC3 fix round 1:
+    // the server prefetches it), and the browser reads it no more for the name
+    expect(treeReads(server)).toBe(1);
+    expect(treeReads(calls)).toBe(0);
     // its transcript: the thread there holds the card to decide or connect
     await userEvent.setup().click(within(line).getByRole("button", { name: en.subagents.open }));
     expect(window.location.hash).toBe("#agents=gc1/transcript");

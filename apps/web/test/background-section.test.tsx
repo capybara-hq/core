@@ -133,6 +133,34 @@ const childTask = task({
   command: "pnpm test --watch",
 });
 
+/** The agent tree the page reads with sub-agents (AC3 fix round 1: the agents chip counts it). */
+const treeOf = (id: string, children: { id: string; status: string }[]) => ({
+  root: {
+    id,
+    description: "",
+    agentType: null,
+    status: "running",
+    model: null,
+    startedAt: null,
+    finishedAt: null,
+    durationMs: 0,
+    tokens: 0,
+    toolCalls: 0,
+    children: children.map((c) => ({
+      ...c,
+      description: c.id,
+      agentType: "general-purpose",
+      model: null,
+      startedAt: null,
+      finishedAt: null,
+      durationMs: 0,
+      tokens: 0,
+      toolCalls: 0,
+      children: [],
+    })),
+  },
+});
+
 const subagent = {
   id: "ch2",
   agentType: "general-purpose",
@@ -164,6 +192,7 @@ function api(
       json(200, {
         usage: { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0 },
       }),
+    [`GET ${PARENT}/agent-tree`]: () => json(200, treeOf("c1", [{ id: "ch2", status: "running" }])),
     [`GET ${TASKS}`]: () => json(200, { tasks: state.tasks }),
     [`GET ${TASKS}/${TASK}/output`]: () =>
       json(200, { text: "ready in 412 ms", truncated: false, source: "live" }),

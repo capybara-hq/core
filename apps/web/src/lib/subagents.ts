@@ -177,18 +177,20 @@ export type AgentsSummary = {
 };
 
 /**
- * The agents chip's numbers from what the page already reads, without a read of its own (AC3
- * ruling 3): the conversation's own sub-agents from its log and its sub-agent list (live: the list
- * is read again on every `subagent_*` event), deeper ones from the agent tree when the page has
- * read it (the map was open, or a deep wait needed it), the root log's waits (their `path` names
- * every agent down to the waiting one) and the stream's progress (any agent of the tree).
+ * The agents chip's numbers (AC3) from what the page reads: the conversation's own sub-agents
+ * from its log and its sub-agent list (live: the list is read again on every `subagent_*` event),
+ * every depth from the agent tree ({@link useAgentTree}: prefetched with the page and read again
+ * on every `subagent_*` event and on a new agent's progress), the root log's waits (their `path`
+ * names every agent down to the waiting one) and the stream's progress (any agent of the tree),
+ * so the count never waits for a read.
  *
  * Activity follows the agent map's dot rules. A child of the conversation that waits with no
  * approval or question of its own waits for its own sub-agents: what they do counts (the tree's
- * descendants when it has them; else an open deep wait under it is a wait, and otherwise the
- * branch is working, counted once). Deeper statuses count only while their branch's top child is
- * active by the live list: the tree read last may be older than a deep agent's end, which reaches
- * no event of the root's log.
+ * descendants when it has them, else an open deep wait under it). An active child with nothing
+ * below it that counts is working itself, counted once (fix round 1: a stale tree must not drop
+ * the dot). Deeper statuses count only while their branch's top child is active by the live list:
+ * the tree read last may be older than a deep agent's end, which reaches no event of the root's
+ * log.
  */
 export function agentsSummary(input: {
   events: readonly ConversationEvent[];
@@ -199,7 +201,13 @@ export function agentsSummary(input: {
   const ids = new Set<string>();
   /** The conversation's own children: their status, and whether they wait for a person. */
   const direct = new Map<string, { status: string; person: boolean }>();
-  /** Open waits of deeper agents by the branch's top child (closed when that child finishes). */
+  /**
+   * Open waits of deeper agents by the branch's top child. The root's log holds no event for a
+   * deep wait's answer or for a deep agent's end, so a wait stays open until the branch's top
+   * child finishes (the same rule as `hasUnresolvedNestedWait`, which `useTreeLookup` masks with
+   * the tree's statuses). Here too the tree's statuses win once the page has the branch in it:
+   * the tree is read again on every `subagent_*` event, so it is never older than the wait.
+   */
   const deepWaits = new Map<string, Set<string>>();
   for (const e of input.events) {
     if (e.type === "subagent_dispatched") {
@@ -255,11 +263,15 @@ export function agentsSummary(input: {
       (n) => n.status === "waiting" && !n.children.some((c) => isActiveStatus(c.status)),
     ).length;
     const openWaits = deepWaits.get(id)?.size ?? 0;
+    // the tree, read again on every `subagent_*` event (a deep wait's too), masks the log's waits
+    const deepWaiting = deep.length > 0 ? deepPerson : openWaits;
     if (runs(d.status)) running += 1;
     else if (d.person) waiting += 1;
-    else if (deep.length === 0 && openWaits === 0) running += 1;
+    // an active child with nothing below it that counts (no tree yet, or a stale one whose deep
+    // agents all read as ended): its branch is working, counted once
+    else if (deepRunning + deepWaiting === 0) running += 1;
     running += deepRunning;
-    waiting += deep.length > 0 ? deepPerson : openWaits;
+    waiting += deepWaiting;
   }
   return { count: ids.size, running, waiting };
 }
@@ -281,23 +293,28 @@ function deepActive(n: AgentTreeNode, depth = 0): boolean {
 }
 
 /**
- * The agent tree of a root conversation (agent map spec §9.2), read while the map is `open` and
- * the conversation has dispatched a sub-agent. A `subagent_*` event of its log (the tree's shape
- * or a status moved) reads it again at once; progress steps of any agent (a descendant's progress
- * reaches every ancestor's stream with its own `subagentId`) are coalesced: at most one read per
- * {@link TREE_PROGRESS_MS}, at the end of the window. A read in flight is never cancelled for a
- * new one (`cancelRefetch: false`). Invalidating while the map is closed only marks it stale.
+ * The agent tree of a root conversation (agent map spec §9.2), read whenever it is `enabled` (a
+ * root conversation's page that has dispatched a sub-agent: the composer's agents chip counts the
+ * whole tree, AC3 fix round 1; the server prefetches it for the first paint) and kept closer while
+ * the map is `open`. A `subagent_*` event of its log (the tree's shape or a status moved) reads it
+ * again at once. Progress steps of any agent (a descendant's progress reaches every ancestor's
+ * stream with its own `subagentId`) are coalesced, at most one read per {@link TREE_PROGRESS_MS}
+ * at the end of the window: while the map is open every step counts; while it is closed only a
+ * step of an agent the cached tree lacks (a new grandchild), once per agent, or of one it shows
+ * waiting, once per answer (it moved on) — the chip needs the count and the dot, not each step.
+ * Opening the map reads it once more. A read in flight is never cancelled for a new one
+ * (`cancelRefetch: false`).
  * An agent below the root's children ends with no event in the root's log, and its last progress
  * may be read before its run's end commits: while the open map's tree shows one still active, one
  * more read follows each read at the end of a window, at most {@link TREE_TRAILING_READS} in a row
- * without new progress or events (no polling once nothing below is active).
+ * without new progress or events (no polling once nothing below is active, none while closed).
  */
 export function useAgentTree(
   orgId: string,
   conversationId: string,
   events: readonly ConversationEvent[],
   progress: Readonly<Record<string, { step: number }>>,
-  open: boolean,
+  { enabled, open }: { enabled: boolean; open: boolean },
 ): { root: AgentTreeNode | undefined; failed: boolean } {
   const qc = useQueryClient();
   const dispatched = useMemo(() => dispatchedAny(events), [events]);
@@ -311,9 +328,10 @@ export function useAgentTree(
     [progress],
   );
   const query = agentTreeQuery(orgId, conversationId);
+  const active = dispatched && enabled;
   const r = useQuery({
     ...query,
-    enabled: dispatched && open,
+    enabled: active,
     retryOnMount: retryOnMountOf(query.queryKey),
   });
   const key = useRef(query.queryKey);
@@ -333,16 +351,51 @@ export function useAgentTree(
     trailing.current = 0;
     refresh();
   }, [count, dispatched, refresh]);
+  // opening the map reads it once more (closed, progress steps did not)
+  const wasOpen = useRef(open);
+  useEffect(() => {
+    if (open && !wasOpen.current && active) refresh();
+    wasOpen.current = open;
+  }, [open, active, refresh]);
+  const { data, dataUpdatedAt } = r;
+  /** What a closed map's steps already asked a read for: `<id>` (missing), `<id>@<answer>`. */
+  const asked = useRef(new Set<string>());
   const seenSteps = useRef(steps);
+  /** Each agent's step at the last change: a closed map looks only at the agents that moved. */
+  const lastStep = useRef<Map<string, number> | null>(null);
+  lastStep.current ??= new Map(Object.entries(progress).map(([id, p]) => [id, p.step]));
   useEffect(() => {
     if (!dispatched || seenSteps.current === steps) return;
     seenSteps.current = steps;
     trailing.current = 0;
+    const moved: string[] = [];
+    for (const [id, p] of Object.entries(progress)) {
+      if (lastStep.current?.get(id) !== p.step) moved.push(id);
+      lastStep.current?.set(id, p.step);
+    }
+    if (!open) {
+      if (!active || data === undefined) return;
+      const nodes = new Map<string, AgentTreeNode>();
+      const walk = (n: AgentTreeNode) => {
+        nodes.set(n.id, n);
+        n.children.forEach(walk);
+      };
+      walk(data);
+      let ask = false;
+      for (const id of moved) {
+        const n = nodes.get(id);
+        const reason =
+          n === undefined ? id : n.status === "waiting" ? `${id}@${dataUpdatedAt}` : null;
+        if (reason === null || asked.current.has(reason)) continue;
+        asked.current.add(reason);
+        ask = true;
+      }
+      if (!ask) return;
+    }
     // the window's first step starts it; later ones ride along
     if (timer.current === null) timer.current = setTimeout(refresh, TREE_PROGRESS_MS);
-  }, [steps, dispatched, refresh]);
+  }, [steps, dispatched, open, active, data, dataUpdatedAt, progress, refresh]);
   // every answer (also an equal one: `dataUpdatedAt` moves) of the open map
-  const { data, dataUpdatedAt } = r;
   useEffect(() => {
     if (!open || dataUpdatedAt === 0 || data === undefined || !deepActive(data)) return;
     if (timer.current !== null || trailing.current >= TREE_TRAILING_READS) return;
