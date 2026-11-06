@@ -5,6 +5,7 @@ import en from "../messages/en.json";
 import zh from "../messages/zh.json";
 import {
   LOGIN_ERROR_CODES,
+  loginPathFor,
   parseLoginError,
   safeReturnTo,
   ssoStartUrl,
@@ -129,5 +130,12 @@ describe("第三方登录按钮", () => {
     expect(safeReturnTo("/\\evil")).toBe("/chat");
     expect(safeReturnTo(null)).toBe("/chat");
     expect(ssoStartUrl("a b", "/x")).toBe("/api/v1/auth/sso/a%20b/start?returnTo=%2Fx");
+  });
+
+  it("loginPathFor: home (/chat, or / which redirects there) needs no returnTo", () => {
+    expect(loginPathFor("/chat")).toBe("/login");
+    expect(loginPathFor("/")).toBe("/login");
+    expect(loginPathFor("/chat?agent=a1")).toBe("/login?returnTo=%2Fchat%3Fagent%3Da1");
+    expect(loginPathFor("/chat/c1")).toBe("/login?returnTo=%2Fchat%2Fc1");
   });
 });

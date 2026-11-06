@@ -4,13 +4,14 @@ import { hydrated } from "./support/nav";
 import { signIn } from "./support/sign-in";
 
 /**
- * Server-rendered times hydrate without a mismatch (CI failure of `ssr.spec.ts`, 2026-11-04: the
- * old home overview's 「接着上次的会话」 meta said 现在 on the server and 1分钟前 in the browser; the
- * home page is gone, the new conversation is the home, and its sidebar row of an untitled
- * conversation reads `未命名会话 · MM-DD HH:mm` in the server's zone, then the browser's). The browser
+ * Server-rendered times hydrate without a mismatch, then follow the browser (CI failure of
+ * `ssr.spec.ts`, 2026-11-04: the old home overview's 「接着上次的会话」 meta said 现在 on the server
+ * and 1分钟前 in the browser; the home page is gone, the new conversation is the home). The browser
  * runs 61 s ahead of the server, then also in a time zone no server uses (Pacific/Chatham,
  * UTC+12:45 / +13:45), so a relative age and an absolute `MM-DD HH:mm` differ between the two;
- * until it has mounted the page renders with the server's clock and zone, then with its own.
+ * until it has mounted the page renders with the server's clock and zone, then with its own: the
+ * sidebar's untitled row reads the start time in the browser's zone, and a service token's created
+ * time on `/settings/tokens` has the browser's age as its tooltip.
  */
 
 /** Hydration errors and warnings the page logs (Next's dev overlay shows them too). */
@@ -35,7 +36,14 @@ async function hydratesTimes(page: Page): Promise<void> {
     data: { agentId },
   });
   expect(conv.status(), await conv.text()).toBe(201);
-  const id = ((await conv.json()) as { conversation: { id: string } }).conversation.id;
+  const created = (await conv.json()) as { conversation: { id: string; createdAt: string } };
+  const id = created.conversation.id;
+  const tok = await page.request.post(`/api/v1/orgs/${orgId}/service-tokens`, {
+    headers: CSRF,
+    data: { name: `clock-${Date.now()}`, role: "member" },
+  });
+  expect(tok.status(), await tok.text()).toBeLessThan(300);
+  const tokenAt = ((await tok.json()) as { record: { createdAt: string } }).record.createdAt;
 
   const errors = hydrationErrors(page);
   await page.clock.install({ time: Date.now() + 61_000 });
@@ -44,7 +52,21 @@ async function hydratesTimes(page: Page): Promise<void> {
   await page.goto("/chat");
   await hydrated(page);
   const row = page.getByRole("region", { name: "会话" }).locator(`a[href$="/chat/${id}"]`);
-  await expect(row).toContainText("未命名会话");
+  // after mount the browser's own zone: the start time as this browser writes it
+  const local = await page.evaluate((iso) => {
+    const d = new Date(iso);
+    const p = (n: number) => String(n).padStart(2, "0");
+    return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  }, created.conversation.createdAt);
+  await expect(row).toContainText(`未命名会话 · ${local}`);
+
+  // after mount the browser's own clock: the token was created a minute ago
+  await page.goto("/settings/tokens");
+  await hydrated(page);
+  await expect(page.locator(`time[datetime="${tokenAt}"]`).first()).toHaveAttribute(
+    "title",
+    "1分钟前",
+  );
 
   await page.goto(`/chat/${id}`);
   await expect(page.locator('[data-template="ConversationPage"]')).toBeVisible();

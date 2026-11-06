@@ -57,6 +57,8 @@ above its divider and 8 px below):
    `~/<slug> · <role>` in mono; the chevrons open the org menu (the user's orgs as radio items, then
    "创建组织…" when allowed). This is the only place the current org is shown and switched.
 3. **Primary items**: 新会话, 首页, Agents, 更多 (search and the inbox moved to the brand row).
+   *Amended (maintainer decision AA, 2026-11-07): the new conversation is the home; `/` redirects to
+   `/chat`. The items are 新会话, 智能体, 技能, 连接器, 更多 (技能 and 连接器 left 更多; no 首页).*
 4. **更多** opens a **flyout menu to the right of the sidebar**, anchored to its row: 技能, 连接器, 插件,
    渠道, 评测与运行, 组织设置, then the org's extension pages after a separator. 渠道 and 评测与运行
    are shown to org admins only; members see 技能, 连接器, 插件 and 组织设置 (read-only for them,
@@ -263,6 +265,7 @@ pages through `SetupContext`; pages never read it themselves.
 | Today | Context · place | Frame | Route |
 |---|---|---|---|
 | 概览 `/` | work · 首页 | overview | `/` |
+| *Amended (maintainer decision AA, 2026-11-07): the new conversation is the home; `/` redirects to `/chat`; no 首页* | | | |
 | 新会话 `/chat`, `/chat/:id` | work · 新会话 / conversations | conversation | unchanged |
 | 收件箱 `/inbox` | work · 收件箱 | inbox | unchanged |
 | Agents | work · Agents | object list / detail | unchanged |

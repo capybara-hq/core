@@ -8,7 +8,10 @@ import { SessionContext } from "./session";
 /** One segment of the page head's path line (design `PageHeaderProps.path`). */
 export type PathSegment = { label: string; href?: string };
 
-/** Where a page lives: a workspace page (the org slug), a personal page (`~`), or the admin console. */
+/**
+ * Where a page lives: a workspace page (the org slug), a personal page (`~`), or the admin
+ * console.
+ */
 export type PathScope = "org" | "home" | "admin";
 
 /**

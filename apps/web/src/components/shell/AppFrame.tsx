@@ -102,8 +102,9 @@ const under = (pathname: string, prefix: string) =>
  *    account menu and the status bar (`<login>@<slug>:<path>` · version · time zone).
  *
  * It provides the session to pages ({@link SessionContext}). An org change is a full navigation
- * home, the new conversation (ruling R4), so the current page stays until the new document arrives; `reload()` re-renders
- * the route on the server (`router.refresh()`), which hydrates fresh shell data. The conversation
+ * home, the new conversation (ruling R4), so the current page stays until the new document
+ * arrives; `reload()` re-renders the route on the server (`router.refresh()`), which hydrates
+ * fresh shell data. The conversation
  * list, the pending count and the extension pages read their queries directly; the frame stays
  * mounted across navigations, so on each path change it refetches the stale ones of the list and
  * the count (web query cache spec §6, "Persistent components").
