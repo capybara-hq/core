@@ -337,6 +337,8 @@ export interface SubagentDispatchesTable {
 /** 0053: an agent template installed in an org from a plugin. */
 export interface AgentTemplatesTable {
   id: string;
+  /** 0083: the owner shares this template with other orgs. */
+  shareable: Dflt<boolean>;
   org_id: string;
   name: string;
   catalog_item_id: ColumnType<string | null, string | null | undefined, string | null>;
@@ -652,6 +654,8 @@ export interface SkillManifest {
 /** 0024_skills.sql：技能（组织技能库 / agent 自己的技能）。 */
 export interface SkillsTable {
   id: string;
+  /** 0083: the owner shares this copy with other orgs. */
+  shareable: Dflt<boolean>;
   org_id: string;
   scope: "org" | "agent";
   agent_id: string | null;
@@ -1085,6 +1089,7 @@ export interface KernelDatabase {
   bootstrap_runs: BootstrapRunsTable;
   platform_migration_runs: PlatformMigrationRunsTable;
   org_notices: OrgNoticesTable;
+  platform_notices: PlatformNoticesTable;
   plugin_scope_sync_failures: PluginScopeSyncFailuresTable;
 }
 
@@ -1097,7 +1102,12 @@ export interface PlatformMigrationRunsTable {
 }
 
 /** 0081: the kinds of {@link OrgNoticesTable}. */
-export type OrgNoticeKind = "skill_renamed";
+export type OrgNoticeKind =
+  | "skill_renamed"
+  | "item_shared"
+  | "shared_item_updated"
+  | "upload_confirmed"
+  | "upload_rejected";
 
 /** 0081: a notice for an org's admins (an inbox item), until one of them dismisses it. */
 export interface OrgNoticesTable {
@@ -1105,6 +1115,16 @@ export interface OrgNoticesTable {
   org_id: string;
   kind: OrgNoticeKind;
   /** `skill_renamed`: `{ skillId, from, to, platformSkillId, plugin }`. */
+  detail: Json<Record<string, unknown>>;
+  created_at: Ts;
+  dismissed_at: TsNullable;
+  dismissed_by: NullableCol<string>;
+}
+
+/** 0083: a notice for the super admins (platform inbox), until one of them dismisses it. */
+export interface PlatformNoticesTable {
+  id: string;
+  kind: "ownership_transferred";
   detail: Json<Record<string, unknown>>;
   created_at: Ts;
   dismissed_at: TsNullable;
@@ -1181,6 +1201,16 @@ export interface CatalogItemsTable {
   shown_to_others: ColumnType<boolean, boolean | undefined, boolean>;
   /** 0081: the version its platform components were last written from (null: never). */
   platform_synced_version: NullableCol<string>;
+  /** 0083: the owning org (null = the platform). */
+  owner_org_id: NullableDflt<string>;
+  /** 0083: the owner shares it with other orgs (the gate is `owner_org_id IS NULL OR shareable`). */
+  shareable: Dflt<boolean>;
+  /** 0083: an upload waits for the super admin's confirmation of its permission digest. */
+  awaiting_confirmation: Dflt<boolean>;
+  /** 0083: the uploaded version not yet confirmed. */
+  pending_version: NullableDflt<string>;
+  pending_by: NullableDflt<string>;
+  pending_at: NullableDflt<Date | string>;
 }
 
 /** 0074: the orgs a `named` item is offered to. */
@@ -1216,6 +1246,12 @@ interface PlatformScopeColumns {
 /** 0080: a skill owned by the deployment (ruling A2). */
 export interface PlatformSkillsTable extends PlatformScopeColumns {
   id: string;
+  /** 0083: the owning org (null = the platform). */
+  owner_org_id: NullableDflt<string>;
+  /** 0083: the org it was created in; never changed (F27). */
+  origin_org_id: NullableDflt<string>;
+  /** 0083: the owner shares it with other orgs. */
+  shareable: Dflt<boolean>;
   catalog_item_id: NullableDflt<string>;
   plugin_name: NullableDflt<string>;
   name: string;
@@ -1244,6 +1280,12 @@ export interface PlatformSkillVersionsTable {
 /** 0080: an agent template owned by the deployment. */
 export interface PlatformAgentTemplatesTable extends PlatformScopeColumns {
   id: string;
+  /** 0083: the owning org (null = the platform). */
+  owner_org_id: NullableDflt<string>;
+  /** 0083: the org it was created in; never changed (F27). */
+  origin_org_id: NullableDflt<string>;
+  /** 0083: the owner shares it with other orgs. */
+  shareable: Dflt<boolean>;
   catalog_item_id: NullableDflt<string>;
   plugin_name: NullableDflt<string>;
   name: string;
@@ -1272,6 +1314,10 @@ export interface PlatformAgentTemplateVersionsTable {
 /** 0080: a connector template of a catalog item, with its own scope; connectors stay per org. */
 export interface PlatformConnectorTemplatesTable extends PlatformScopeColumns {
   id: string;
+  /** 0083: the owning org (null = the platform). */
+  owner_org_id: NullableDflt<string>;
+  /** 0083: the owner shares it with other orgs. */
+  shareable: Dflt<boolean>;
   catalog_item_id: string;
   template_id: string;
   current_version: string;
@@ -1395,6 +1441,8 @@ export interface MarketplaceEntriesTable {
  */
 export interface PluginImportStagingTable {
   id: string;
+  /** 0083: the org whose upload this is (null: the super admin's import). */
+  org_id: NullableDflt<string>;
   review: Json<unknown>;
   manifest: Json<unknown>;
   object_prefix: string | null;

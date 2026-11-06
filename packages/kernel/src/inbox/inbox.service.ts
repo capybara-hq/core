@@ -165,6 +165,8 @@ export class InboxService {
       .selectFrom("org_notices")
       .select(["id", "kind", "detail", "created_at"])
       .where("org_id", "=", orgId)
+      // 0083 added kinds this view does not render yet (phase 3 Task 3 does).
+      .where("kind", "=", "skill_renamed")
       .where("dismissed_at", "is", null)
       .orderBy("created_at", "desc")
       .orderBy("id")
@@ -172,7 +174,7 @@ export class InboxService {
       .execute();
     return rows.map((r) => ({
       id: r.id,
-      kind: r.kind,
+      kind: "skill_renamed" as const,
       createdAt: r.created_at.toISOString(),
       skillRenamed: r.detail as OrgNoticeView["skillRenamed"],
     }));
