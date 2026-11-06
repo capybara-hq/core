@@ -300,7 +300,7 @@
   padding: 0 var(--cb-space-1);
 }
 /* The list: agent groups at the section's gap (space.1), so collapsed groups, the filter row, the
-   list and 已归档 share one rhythm; a group's rows stay contiguous. */
+   list and the archived back row share one rhythm; a group's rows stay contiguous. */
 .cb-sidebar-convs-body {
   display: flex;
   flex-direction: column;

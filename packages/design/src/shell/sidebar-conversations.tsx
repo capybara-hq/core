@@ -199,8 +199,8 @@ const fill = (s: string, vars: Record<string, string | number>) =>
 
 /**
  * The sidebar's conversation section (spec §6.13): a `会话` label with the filter, the groups by
- * agent (collapse, ＋, rows with a state dot and the `⋯` menu, "Show more"), and the archived
- * entry, which swaps the list in place for the archived conversations.
+ * agent (collapse, ＋, rows with a state dot and the `⋯` menu, "Show more"); the archive button
+ * in the header swaps the list in place for the archived conversations.
  */
 export function Conversations({
   c,
@@ -262,7 +262,6 @@ export function Conversations({
       }
     }
     if (c.moreGroups && !filtering) keys.push("mg");
-    if (!archivedList && c.archived.count > 0) keys.push("ae");
   }
   const roving = useRoving(c.activeId === undefined ? undefined : `c:${c.activeId}`);
   const tab = (key: string) => roving.tabIndexOf(key, keys);
@@ -383,6 +382,15 @@ export function Conversations({
         <span className="cb-sidebar-section-label" aria-hidden="true">
           {t("sidebar.conversations")}
         </span>
+        {!archivedList && count > 0 && c.state === "ready" ? (
+          <IconButton
+            density="dense"
+            label={fill(t("sidebar.archived"), { n: count })}
+            icon={<Icon name="archive" size={14} />}
+            part="archived-entry"
+            onClick={() => c.archived.onOpenChange(true)}
+          />
+        ) : null}
         <IconButton
           density="dense"
           label={t("sidebar.filter")}
@@ -439,19 +447,6 @@ export function Conversations({
       <div className="cb-sidebar-convs-body" data-part="conversation-list">
         {body}
       </div>
-      {!archivedList && count > 0 && c.state === "ready" ? (
-        <button
-          type="button"
-          className="cb-sidebar-archived"
-          data-part="archived-entry"
-          data-rove="ae"
-          tabIndex={tab("ae")}
-          onClick={() => c.archived.onOpenChange(true)}
-        >
-          <Icon name="archive" size={14} />
-          <span className="cb-sidebar-label">{fill(t("sidebar.archived"), { n: count })}</span>
-        </button>
-      ) : null}
       <DeleteConfirm
         target={deleting}
         text={deleting ? textOf(deleting) : ""}

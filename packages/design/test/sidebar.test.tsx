@@ -742,7 +742,13 @@ describe("Sidebar conversations", () => {
         conversations={{ ...p.conversations, archived: { count: 7, open: false, onOpenChange } }}
       />,
     );
-    const entry = within(convSection()).getByRole("button", { name: "已归档 · 7" });
+    const sec0 = convSection();
+    const entry = within(sec0).getByRole("button", { name: "已归档 · 7" });
+    // in the section header, next to the filter; no bottom entry
+    const head = sec0.querySelector(".cb-sidebar-convs-head");
+    expect(head?.contains(entry)).toBe(true);
+    expect(head?.contains(within(sec0).getByRole("button", { name: "筛选会话" }))).toBe(true);
+    expect(sec0.querySelectorAll('[data-part="archived-entry"]')).toHaveLength(1);
     await user.click(entry);
     expect(onOpenChange).toHaveBeenCalledWith(true);
     cleanup();
@@ -774,6 +780,11 @@ describe("Sidebar conversations", () => {
     expect(p.conversations.onArchive).toHaveBeenCalledWith("agt_x-c1", false);
     await user.click(back);
     expect(onOpenChange).toHaveBeenLastCalledWith(false);
+  });
+
+  it("the archive button is absent with nothing archived", () => {
+    zh(<Sidebar {...props()} />);
+    expect(within(convSection()).queryByRole("button", { name: /已归档/ })).toBeNull();
   });
 
   it("the archived list keeps its way back while loading or on error", async () => {
