@@ -54,6 +54,8 @@ export const componentSwitchKeys = (orgId: string) => {
   ];
 };
 
+const keyOf = (c: OrgComponent) => `${c.kind}:${c.id}`;
+
 /**
  * The org admin's switch of one platform component (spec §5 rule 5, §13.5): 启用 on one that is
  * off (a skill whose name the org already uses is refused, rule 10), 停用 on one that is on unless
@@ -71,6 +73,8 @@ export function useComponentSwitch({ orgId, admin }: { orgId: string; admin: boo
   const errorMessage = useErrorMessage();
   const catalogLines = useCatalogErrorLines();
   const [busy, setBusy] = useState(false);
+  /** The component whose switch call is running (its action is drawn pending). */
+  const [running, setRunning] = useState<string>();
   const [error, setError] = useState<{ message: string; extra: string[] }>();
   const [off, setOff] = useState<{ c: OrgComponent; preview: ComponentSwitchPreview } | null>(null);
   const [notice, setNotice] = useState<string>();
@@ -97,6 +101,7 @@ export function useComponentSwitch({ orgId, admin }: { orgId: string; admin: boo
   const enable = async (c: OrgComponent) => {
     if (busy) return;
     setBusy(true);
+    setRunning(keyOf(c));
     setError(undefined);
     try {
       await sw.mutateAsync({ c, enabled: true });
@@ -105,12 +110,14 @@ export function useComponentSwitch({ orgId, admin }: { orgId: string; admin: boo
       setError({ message: messageOf(c, e), extra: [...issueLines(e), ...catalogLines(e)] });
     } finally {
       setBusy(false);
+      setRunning(undefined);
     }
   };
   // The first off call answers the preview (or switches off at once when it was off already)
   const disable = async (c: OrgComponent) => {
     if (busy) return;
     setBusy(true);
+    setRunning(keyOf(c));
     setError(undefined);
     try {
       const r = await sw.mutateAsync({ c, enabled: false });
@@ -124,6 +131,7 @@ export function useComponentSwitch({ orgId, admin }: { orgId: string; admin: boo
       setError({ message: messageOf(c, e), extra: [...issueLines(e), ...catalogLines(e)] });
     } finally {
       setBusy(false);
+      setRunning(undefined);
     }
   };
   const confirmOff = async () => {
@@ -158,7 +166,11 @@ export function useComponentSwitch({ orgId, admin }: { orgId: string; admin: boo
     }
   };
 
-  const actionsOf = (c: OrgComponent): ComponentAction[] => {
+  const actionsOf = (c: OrgComponent): ComponentAction[] =>
+    baseActions(c).map((a) =>
+      running === keyOf(c) && a.onSelect !== undefined ? { ...a, loading: true } : a,
+    );
+  const baseActions = (c: OrgComponent): ComponentAction[] => {
     if (!admin || c.locked) return [];
     if (!c.pluginOn) {
       return c.itemId === null
@@ -309,6 +321,7 @@ export function ComponentSwitchList({
                   density="dense"
                   {...(a.danger === true ? { variant: "danger" as const } : {})}
                   aria-label={`${a.label} ${c.name}`}
+                  loading={a.loading === true}
                   disabled={busy}
                   onClick={a.onSelect}
                 >

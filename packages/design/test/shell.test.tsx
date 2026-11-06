@@ -179,6 +179,25 @@ describe("AppShell", () => {
 });
 
 describe("PageHeader", () => {
+  it("an action whose call is running shows the Button's loading state and is disabled", () => {
+    zh(
+      <PageHeader
+        path={[{ label: "admin" }]}
+        title="pdf"
+        actions={[
+          { label: "启用", variant: "default", onSelect: () => {}, loading: true },
+          { label: "设置范围", variant: "default", onSelect: () => {} },
+        ]}
+      />,
+    );
+    const on = screen.getByRole("button", { name: "启用" }) as HTMLButtonElement;
+    expect(on.getAttribute("aria-busy")).toBe("true");
+    expect(on.disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "设置范围" }) as HTMLButtonElement).disabled).toBe(
+      false,
+    );
+  });
+
   it("renders the path with separators and marks the last segment current", () => {
     zh(
       <PageHeader

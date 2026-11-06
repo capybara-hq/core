@@ -34,6 +34,29 @@ export function ObjectsSection() {
           </ObjectList>
         </Grid>
       </Row>
+      <Row label="ObjectRow · 进行中（行操作的加载态；菜单项进行中时菜单按钮转圈）">
+        <Grid columns={1}>
+          <ObjectList label="插件列表（进行中）">
+            <ObjectRow
+              mark={{ text: "会" }}
+              name="会议纪要"
+              description="整理会议录音，生成纪要和待办。"
+              meta={["2 技能", "本组织 · 组织自选"]}
+              state={{ label: "未启用", tone: "muted" }}
+              action={{ label: "启用", onSelect: noop, loading: true }}
+            />
+            <ObjectRow
+              mark={{ text: "你" }}
+              name="你好"
+              description="打个招呼。"
+              meta={["1 技能", "平台 · 组织自选"]}
+              state={{ label: "已启用", tone: "ok" }}
+              busy
+              menu={[{ label: "停用", danger: true, onSelect: noop }]}
+            />
+          </ObjectList>
+        </Grid>
+      </Row>
       <Row label="ObjectRow · 状态标签（待配置 / 已启用）与图标标记">
         <Grid columns={1}>
           <ObjectList label="扩展列表">

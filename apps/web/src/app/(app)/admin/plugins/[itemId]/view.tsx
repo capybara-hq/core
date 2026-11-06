@@ -216,6 +216,7 @@ function PluginDetail({ detail, orgId }: { detail: CatalogItemDetail; orgId: str
             ? {
                 label: t("detail.actions.enable"),
                 variant: "default" as const,
+                loading: enable.isPending,
                 onSelect: () =>
                   void run(async () => {
                     await enable.mutateAsync(undefined);
@@ -242,6 +243,7 @@ function PluginDetail({ detail, orgId }: { detail: CatalogItemDetail; orgId: str
           {
             label: t("detail.actions.import", { version: versionLabel(fetchable.version) }),
             variant: "primary" as const,
+            loading: stage.isPending,
             onSelect: () =>
               void run(async () => {
                 const p = await stage.mutateAsync(fetchable);

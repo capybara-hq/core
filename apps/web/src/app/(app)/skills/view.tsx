@@ -67,7 +67,7 @@ function Skills({ orgId }: { orgId: string }) {
   const cq = orgComponentsQuery(orgId, { kind: "skill" });
   const offered = useQuery({ ...cq, retryOnMount: retryOnMountOf(cq.queryKey) });
   const stateOf = useComponentState();
-  const { actionsOf, dialog, error, busy } = useComponentSwitch({ orgId, admin });
+  const { actionsOf, dialog, error } = useComponentSwitch({ orgId, admin });
   if (list.kind === "notFound") return <NotFound />;
   if (list.kind === "error") return <ErrorFrame reset={list.retry} />;
   const rows = list.kind === "ready" ? usableRows(list.data.skills, offered.data?.components) : [];
@@ -171,7 +171,7 @@ function Skills({ orgId }: { orgId: string }) {
                 t("version", { version: s?.currentVersion ?? c?.version ?? "" }),
               ]}
               state={c !== undefined ? stateOf(c) : { label: tc("state.on"), tone: "ok" }}
-              {...(c !== undefined && !busy ? rowActions(actionsOf(c)) : {})}
+              {...(c !== undefined ? rowActions(actionsOf(c)) : {})}
             />
           );
         })}

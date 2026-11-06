@@ -20,6 +20,8 @@ type HeaderButton = {
   icon?: IconName;
   variant: "primary" | "secondary" | "default";
   shortcut?: string;
+  /** Its call is running: the Button's loading state (spinner, `aria-busy`, disabled). */
+  loading?: boolean;
 };
 
 /** A button (onSelect) or a link (href), never both; a `more-horizontal` menu is its own kind. */
@@ -123,7 +125,13 @@ export function PageHeader(p: PageHeaderProps) {
     if (isPrimary(a)) continue;
     if ("menu" in a) folded.push(...a.menu);
     else if (a.href !== undefined) folded.push({ label: a.label, href: a.href });
-    else folded.push({ label: a.label, onSelect: () => a.onSelect?.() });
+    else {
+      folded.push({
+        label: a.label,
+        onSelect: () => a.onSelect?.(),
+        ...(a.loading ? { disabled: true } : {}),
+      });
+    }
   }
   // One action besides the primary stays a button below 640 too.
   const more: HeaderAction | null =
@@ -170,6 +178,7 @@ export function PageHeader(p: PageHeaderProps) {
         variant={a.variant}
         density="default"
         {...(a.shortcut !== undefined ? { shortcut: a.shortcut } : {})}
+        {...(a.loading ? { loading: true } : {})}
         {...(a.onSelect ? { onClick: a.onSelect } : {})}
       >
         {a.icon ? <Icon name={a.icon} size={14} /> : null}

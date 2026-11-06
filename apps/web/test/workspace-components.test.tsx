@@ -176,6 +176,32 @@ describe("/skills: own and platform skills with their org state", () => {
     expect(within(await rowOf("notes")).getByText(C.state.on)).toBeTruthy();
   });
 
+  it("启用 shows its pending state and cannot be pressed again until the switch answers", async () => {
+    let answer: () => void = () => {};
+    const held = new Promise<void>((r) => {
+      answer = r;
+    });
+    const routes = skillRoutes({
+      [`PUT ${ORG}/components/skill/p2/switch`]: async () => {
+        await held;
+        return json(200, { component: { ...component("p2", "notes"), on: true } });
+      },
+    });
+    const calls = stubApi(routes);
+    await renderRouteWithCache("/skills", routes);
+    const user = userEvent.setup();
+    const button = within(await rowOf("notes")).getByRole("button", { name: C.action.enable });
+    await user.click(button);
+    // The row keeps its button, drawn pending (not removed while the switch runs)
+    const pending = within(await rowOf("notes")).getByRole("button", { name: C.action.enable });
+    await vi.waitFor(() => expect(pending.getAttribute("aria-busy")).toBe("true"));
+    expect((pending as HTMLButtonElement).disabled).toBe(true);
+    await user.click(pending);
+    expect(calls.filter((c) => c.method === "PUT")).toHaveLength(1);
+    await act(async () => answer());
+    expect(await screen.findByText(C.toast.enabled.replace("{name}", "notes"))).toBeTruthy();
+  });
+
   it("switching off previews the agents that use it, then confirms with its hash", async () => {
     const hash = "a".repeat(64);
     const routes = skillRoutes({

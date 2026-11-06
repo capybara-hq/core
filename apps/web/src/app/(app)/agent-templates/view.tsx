@@ -45,7 +45,7 @@ function AgentTemplates({ orgId }: { orgId: string }) {
   const cq = orgComponentsQuery(orgId, { kind: "agent_template" });
   const offered = useQuery({ ...cq, retryOnMount: retryOnMountOf(cq.queryKey) });
   const stateOf = useComponentState();
-  const { actionsOf, dialog, error, busy } = useComponentSwitch({ orgId, admin });
+  const { actionsOf, dialog, error } = useComponentSwitch({ orgId, admin });
   if (list.kind === "notFound") return <NotFound />;
   if (list.kind === "error") return <ErrorFrame reset={list.retry} />;
   const rows =
@@ -125,7 +125,7 @@ function AgentTemplates({ orgId }: { orgId: string }) {
                 t("version", { version: x?.version ?? c?.version ?? "" }),
               ]}
               state={c !== undefined ? stateOf(c) : { label: tc("state.on"), tone: "ok" }}
-              {...(c !== undefined && !busy ? rowActions(actionsOf(c)) : {})}
+              {...(c !== undefined ? rowActions(actionsOf(c)) : {})}
             />
           );
         })}

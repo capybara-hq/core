@@ -182,6 +182,7 @@ function CatalogItemDetail({
                 <Button
                   key={a.id}
                   {...(a.danger === true ? { variant: "danger" as const } : {})}
+                  loading={a.loading === true}
                   disabled={busy}
                   onClick={a.onSelect}
                 >

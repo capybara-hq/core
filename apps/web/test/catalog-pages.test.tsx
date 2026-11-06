@@ -307,6 +307,70 @@ describe("/plugins: states and actions follow the scope and the switch", () => {
     expect(await within(rowOf(list, "notes")).findByText(p.state.on)).toBeTruthy();
   });
 
+  it("启用 shows its pending state and cannot be pressed again until the switch answers", async () => {
+    const p = zh.plugins;
+    let answer: () => void = () => {};
+    const held = new Promise<void>((r) => {
+      answer = r;
+    });
+    let on = false;
+    const calls = stubApi({
+      [`GET ${ORG}/catalog`]: () =>
+        json(200, { items: [orgItem({ state: on ? "on" : "off", name: "notes" })] }),
+      [`PUT ${ORG}/catalog/${ID}/switch`]: async () => {
+        await held;
+        on = true;
+        return json(200, { item: orgItem({ state: "on", name: "notes" }) });
+      },
+    });
+    await renderPlugins({ locale: "zh" });
+    const list = await screen.findByRole("list", { name: p.title });
+    const user = userEvent.setup();
+    const button = within(rowOf(list, "notes")).getByRole("button", { name: p.action.enable });
+    await user.click(button);
+    await waitFor(() => expect(button.getAttribute("aria-busy")).toBe("true"));
+    expect((button as HTMLButtonElement).disabled).toBe(true);
+    await user.click(button);
+    expect(calls.filter((c) => c.method === "PUT")).toHaveLength(1);
+    await act(async () => answer());
+    expect(await within(rowOf(list, "notes")).findByText(p.state.on)).toBeTruthy();
+  });
+
+  it("停用 from the row menu shows the pending state on the menu button while the preview loads", async () => {
+    const p = zh.plugins;
+    let answer: () => void = () => {};
+    const held = new Promise<void>((r) => {
+      answer = r;
+    });
+    stubApi({
+      [`GET ${ORG}/catalog`]: () =>
+        json(200, {
+          items: [
+            orgItem({
+              state: "on",
+              name: "crm",
+              installed: { pluginInstallId: "i1", version: "1.0.0", upgradeAvailable: null },
+            }),
+          ],
+        }),
+      [`PUT ${ORG}/catalog/${ID}/switch`]: async () => {
+        await held;
+        return json(200, { preview: PREVIEW, confirm: "h".repeat(64) });
+      },
+    });
+    await renderPlugins({ locale: "zh" });
+    const list = await screen.findByRole("list", { name: p.title });
+    const user = userEvent.setup();
+    const more = within(rowOf(list, "crm")).getByRole("button", { name: RAW_MORE.zh });
+    await user.click(more);
+    await user.click(await screen.findByRole("menuitem", { name: p.action.disable }));
+    await waitFor(() => expect(more.getAttribute("aria-busy")).toBe("true"));
+    expect((more as HTMLButtonElement).disabled).toBe(true);
+    await act(async () => answer());
+    expect(await screen.findByRole("dialog")).toBeTruthy();
+    await waitFor(() => expect(more.getAttribute("aria-busy")).toBeNull());
+  });
+
   it("停用 shows what the switch-off takes away, the agents included, then confirms with its hash", async () => {
     const p = en.plugins;
     const calls = stubApi({

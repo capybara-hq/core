@@ -86,15 +86,19 @@ export interface PluginAction {
   href?: string;
   onSelect?(): void;
   danger?: boolean;
+  /** Its call is running: drawn pending (the Button's loading state), not pressable again. */
+  loading?: boolean;
 }
 
 /**
  * A row's actions as ObjectRow wants them: the first safe one as its action, the others (停用
- * last) in its menu.
+ * last) in its menu. A running action keeps its place: the row action draws its loading state, a
+ * running menu item makes the row `busy` (the menu button draws the spinner).
  */
 export function rowActions(actions: readonly Omit<PluginAction, "id">[]): {
-  action?: { label: string; href?: string; onSelect?(): void };
+  action?: { label: string; href?: string; onSelect?(): void; loading?: boolean };
   menu?: MenuItem[];
+  busy?: boolean;
 } {
   const safe = actions.find((a) => a.danger !== true);
   // The other actions sit in the menu: more safe ones (撤回 of a pending version), then 停用
@@ -108,8 +112,10 @@ export function rowActions(actions: readonly Omit<PluginAction, "id">[]): {
         label: safe.label,
         ...(safe.href !== undefined ? { href: safe.href } : {}),
         ...(safe.onSelect !== undefined ? { onSelect: safe.onSelect } : {}),
+        ...(safe.loading === true && { loading: true }),
       },
     }),
+    ...(danger.some((a) => a.loading === true) && { busy: true }),
     ...(danger.length > 0 && {
       menu: danger.map((a) => ({
         label: a.label,
@@ -151,6 +157,8 @@ export function usePluginActions({
   const errorMessage = useErrorMessage();
   const catalogLines = useCatalogErrorLines();
   const [busy, setBusy] = useState(false);
+  /** The action whose call is running (drawn pending on its row). */
+  const [running, setRunning] = useState<{ itemId: string; id: PluginAction["id"] }>();
   const [error, setError] = useState<{ message: string; extra: string[] }>();
   const [off, setOff] = useState<{ item: OrgCatalogItem; preview: SwitchPreview } | null>(null);
   const [notice, setNotice] = useState<string>();
@@ -175,9 +183,13 @@ export function usePluginActions({
     invalidates: () => [keys.org(orgId).catalog(), keys.org(orgId).catalogItemsAll()],
   });
 
-  const run = async (op: () => Promise<string | undefined>) => {
+  const run = async (
+    action: { itemId: string; id: PluginAction["id"] },
+    op: () => Promise<string | undefined>,
+  ) => {
     if (busy) return;
     setBusy(true);
+    setRunning(action);
     setError(undefined);
     try {
       const done = await op();
@@ -186,18 +198,19 @@ export function usePluginActions({
       setError({ message: errorMessage(e), extra: [...issueLines(e), ...catalogLines(e)] });
     } finally {
       setBusy(false);
+      setRunning(undefined);
     }
   };
   const nameOf = (i: OrgCatalogItem) => displayNameOf(i, locale);
 
   const enable = (i: OrgCatalogItem) =>
-    run(async () => {
+    run({ itemId: i.id, id: "enable" }, async () => {
       await sw.mutateAsync({ itemId: i.id, enabled: true });
       return t("toast.enabled", { name: nameOf(i) });
     });
   // The first off call answers the preview (or switches off at once when nothing is installed)
   const disable = (i: OrgCatalogItem) =>
-    run(async () => {
+    run({ itemId: i.id, id: "disable" }, async () => {
       const r = await sw.mutateAsync({ itemId: i.id, enabled: false });
       if ("preview" in r) {
         setNotice(undefined);
@@ -241,18 +254,22 @@ export function usePluginActions({
     }
   };
   const request = (i: OrgCatalogItem, kind: "access" | "enable") =>
-    run(async () => {
+    run({ itemId: i.id, id: kind === "access" ? "request" : "requestEnable" }, async () => {
       await ask.mutateAsync({ itemId: i.id, kind });
       return t("toast.requested");
     });
 
   const withdraw = (i: OrgCatalogItem) =>
-    run(async () => {
+    run({ itemId: i.id, id: "withdraw" }, async () => {
       await pull.mutateAsync(i.id);
       return t("toast.withdrawn", { name: nameOf(i) });
     });
 
-  const actionsOf = (i: OrgCatalogItem): PluginAction[] => {
+  const actionsOf = (i: OrgCatalogItem): PluginAction[] =>
+    baseActions(i).map((a) =>
+      running?.itemId === i.id && running.id === a.id ? { ...a, loading: true } : a,
+    );
+  const baseActions = (i: OrgCatalogItem): PluginAction[] => {
     // The org's own upload waiting for the super admin: 撤回 (org admins), nothing else while
     // its first version waits (P3-10)
     const pending =

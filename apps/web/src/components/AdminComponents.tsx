@@ -282,6 +282,7 @@ export function useComponentActions(
     ? {
         label: t("actions.enable"),
         variant: "default",
+        loading: enable.isPending,
         onSelect: () =>
           void enable.mutateAsync(undefined).then(
             () => toast.success(t("enabledToast", { name: c.name })),
@@ -298,6 +299,7 @@ export function useComponentActions(
   const showAction: HeaderAction = {
     label: ts("show"),
     variant: "default",
+    loading: show.isPending,
     onSelect: () =>
       void show.mutateAsync(undefined).then(
         (r) => {
