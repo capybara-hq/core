@@ -684,7 +684,8 @@
         "count": "{chars, number} / {maxChars, number} characters · {files} / {maxFiles} files",
         "tooLong": "Together the files are longer than {max, number} characters. Shorten them to save."
       },
-      "createUploadFailed": "The agent was created, but its picture could not be uploaded. Pick it again here."
+      "createUploadFailed": "The agent was created, but its picture could not be uploaded. Pick it again here.",
+      "provenance": "Created from template <template>{name}</template> {version}"
     },
     "pageTabs": {
       "agents": "Agents",
@@ -719,6 +720,154 @@
         "org": "This org",
         "orgNamed": "{org}",
         "plugin": "Plugin · {plugin}"
+      }
+    },
+    "fromTemplate": {
+      "title": "Create an agent from {name}",
+      "submit": "Create",
+      "gone": "This template is no longer available in this organization (switched off, deleted or no longer shared), so no agent can be created from it.",
+      "uploadLater": "You can upload an image on the agent page after creating it.",
+      "retry": "Retry",
+      "previewLoading": "Reading what the template brings",
+      "previewTitle": "What the template brings",
+      "modelSource": {
+        "modelRef": "The model the template was saved with.",
+        "tier": "The model your organization maps to the template's tier.",
+        "default": "Your organization's default model.",
+        "chosen": "The model you picked."
+      },
+      "groups": {
+        "carried": "Carried over · {n}",
+        "pending": "To configure · {n}",
+        "unavailable": "Unavailable · {n}"
+      },
+      "emptyGroup": {
+        "carried": "Nothing to carry over.",
+        "pending": "No connector to configure.",
+        "unavailable": "Nothing unavailable."
+      },
+      "pendingHint": "The agent is still created; these connectors' tools are unavailable until they are configured.",
+      "droppedTitle": "Settings not carried over · {n}",
+      "dropped": {
+        "maxSteps": "Step limit: agents have no such setting.",
+        "effort": "Reasoning effort: the chosen model doesn't support it.",
+        "description": "The description was too long and was cut.",
+        "instructions": "The instructions were too long and were cut.",
+        "quickAction_title": "Quick action {n}'s title was too long and was cut.",
+        "quickAction_body": "Quick action {n}'s text was too long and was cut.",
+        "instructionFile": "Instruction file {n} was too long and was cut.",
+        "subagent_description": "Sub-agent {name}'s description was too long and was cut.",
+        "subagent_instructions": "Sub-agent {name}'s instructions were too long and were cut.",
+        "subagentTool": "Sub-agent {name}'s tool {tool}: the agent doesn't have it.",
+        "connectorTool": "Connector {connector}'s tool {tool}: the connector doesn't offer it.",
+        "connectorPolicy": "The policy of connector {connector}'s tool {tool}: the connector doesn't offer that tool.",
+        "other": "{path}"
+      },
+      "kinds": {
+        "instruction_file": "Instruction file",
+        "description": "Description",
+        "quick_action": "Quick action",
+        "tool": "Tool",
+        "skill": "Skill",
+        "connector": "Connector",
+        "subagent": "Sub-agent"
+      },
+      "reasons": {
+        "instruction_file_invalid_name": "The file name is not valid.",
+        "instruction_file_duplicate": "Another file has the same name.",
+        "instruction_file_too_many": "Too many files.",
+        "instruction_file_too_long": "The files together are too long.",
+        "tool_default": "The template names no tools: a new agent's defaults.",
+        "tool_subagents": "Added because the template describes sub-agents.",
+        "tool_plugin_unavailable": "Its plugin is not enabled in this organization.",
+        "tool_unknown_tool": "No such tool.",
+        "tool_connector_key": "Connector tools carry over only with their connector.",
+        "skill_pinned": "Preloaded.",
+        "skill_not_pinned_manual_only": "Manual only: not preloaded.",
+        "skill_not_pinned_too_large": "Over the preload limit: not preloaded.",
+        "skill_subagent": "Used by a sub-agent.",
+        "skill_not_found": "This organization has no such skill.",
+        "connector_several": "Several connectors were made from this template; the oldest was picked, you can switch later.",
+        "connector_no_connector": "No connector has been made from this template in this organization yet.",
+        "connector_tools_missing": "The organization's connector doesn't offer the tools needed.",
+        "connector_needs": "Needs a custom connector.",
+        "connector_template_not_found": "The connector template doesn't exist or isn't available here.",
+        "connector_disallowed": "The template disallows every tool of this connector.",
+        "subagent_type_not_found": "This organization has no such agent template.",
+        "subagent_type_taken": "A sub-agent with this name already exists.",
+        "subagent_too_many": "Too many sub-agents."
+      },
+      "state": {
+        "carried": "carried over",
+        "pending": "to configure",
+        "unavailable": "unavailable"
+      },
+      "stale": "The template or your organization changed since the preview, so it was read again. Check the changes, then create.",
+      "changes": {
+        "added": "New {kind} {name}: {state}.",
+        "removed": "{kind} {name} is no longer carried over.",
+        "moved": "{kind} {name}: {from} → {to}.",
+        "droppedAdded": "Not carried over: {what}",
+        "model": "The automatically chosen model changed."
+      }
+    },
+    "pending": {
+      "title": "Connectors to configure · {n}",
+      "hintManager": "The template needs these connectors and your organization doesn't have them yet. Once configured, their tools join the agent; until then the agent runs as usual.",
+      "hintOwner": "The template needs these connectors and your organization doesn't have them yet; an organization admin configures them. Until then the agent runs as usual, without these tools.",
+      "listLabel": "Connectors to configure",
+      "state": "To configure",
+      "configure": "Configure",
+      "fromTemplate": "Made from a connector template",
+      "fromTemplateNamed": "Made from the connector template {name}",
+      "needs": "Needs a {protocol} connector: {endpoint}",
+      "toolsAll": "Takes all its tools",
+      "tools": "Takes the tools: {tools}",
+      "plain": "This agent has {n, plural, one {# connector} other {# connectors}} to configure; their tools are unavailable until then.",
+      "listTitle": "Configure connectors for {agent}",
+      "listHint": "For each one, pick an existing connector or create one, then bind it to the agent. The request closes after the last bind.",
+      "listEmpty": "All configured.",
+      "back": "Back",
+      "close": "Close",
+      "bound": "Connector bound for {name}",
+      "boundDropped": "Connector bound for {name}; {n, plural, one {# item it doesn't offer was} other {# items it doesn't offer were}} left out",
+      "entryTitle": "Configure {name}",
+      "modeLabel": "Connector source",
+      "modeExisting": "Use an existing connector",
+      "modeExistingHint": "Pick one of your organization's connectors.",
+      "modeCreate": "Create one from the template",
+      "modeCreateHint": "Create a connector from the connector template, then bind it.",
+      "modeCustom": "Create a custom connector",
+      "modeCustomHint": "Open the custom connector form with the protocol and address filled in.",
+      "connectorsFailed": "Couldn't read the connectors. Try again later.",
+      "noCandidatesTemplate": "No connector has been made from this template yet; create one from the template.",
+      "noCandidatesNeeds": "Your organization has no connector of this protocol yet; create a custom one.",
+      "connectorLabel": "Connector",
+      "customHint": "Create it in the custom connector form, then come back here to pick and bind it. If a super admin has turned off custom connectors, a super admin must allow them first.",
+      "openCustom": "Open the custom connector form",
+      "bind": "Bind",
+      "createAndBind": "Create and bind",
+      "templateGone": "This connector template is no longer available in this organization, so no connector can be made from it.",
+      "templateOff": "This connector template is switched off in this organization; switch it on first.",
+      "createdRetryBind": "The connector was created but binding it failed. Fix the problem above and bind again.",
+      "autoNameHint": "Leave the name and identifier empty to get a free one automatically.",
+      "bindError": {
+        "template": "This connector wasn't made from the connector template needed.",
+        "protocol": "This connector's protocol doesn't match.",
+        "tools": "This connector offers none of the tools the agent needs.",
+        "not_synced": "This connector isn't authorized yet, so its tools can't be read. Authorize it first, then bind it.",
+        "openConnector": "Open the connector to authorize it"
+      },
+      "request": {
+        "sent": "Requested from the organization admins",
+        "retry": "Retry",
+        "failed": "Couldn't read the request.",
+        "pending": "Requested · waiting for an organization admin.",
+        "again": "Request again",
+        "rejected": "An organization admin rejected the request.",
+        "rejectedReason": "An organization admin rejected the request: {reason}",
+        "ask": "Request",
+        "none": "No request has been sent to the organization admins to configure these connectors."
       }
     }
   },
@@ -1223,6 +1372,28 @@
       "hintRejected": "Your request was not approved.",
       "reason": "Reason",
       "openItem": "View plugin"
+    },
+    "setup": {
+      "label": "Connector setup request",
+      "decidedLabel": "Connector setup",
+      "rejected": "Rejected",
+      "configured": "All connectors configured; the request is closed",
+      "agent": "Agent",
+      "count": "To configure",
+      "reject": "Reject",
+      "configure": "Configure",
+      "title": "Configure connectors for {agent}",
+      "hint": "This agent was created from a template that needs connectors your organization doesn't have yet. Configuring binds a connector to the agent; the request closes after the last one.",
+      "connectors": "Connectors needed",
+      "fromTemplate": "Made from a connector template",
+      "needs": "Needs a {protocol} connector: {endpoint}",
+      "reasonLabel": "Reason for rejecting",
+      "reasonHelp": "Sent to the requester when you reject.",
+      "titleApproved": "{agent}'s connectors are configured",
+      "titleRejected": "Connector setup for {agent} was rejected",
+      "hintApproved": "An organization admin configured every connector; their tools have joined the agent.",
+      "hintRejected": "An organization admin didn't configure these connectors. You can request again on the agent's Tools section.",
+      "openAgent": "Open the agent's Tools section"
     }
   },
   "connectors": {
@@ -1454,7 +1625,8 @@
       "credentialHint": {
         "org": "Organization credential: shared by everyone and used to list the tools when installing.",
         "personal": "Your own credential: used to list the tools when installing; other members set theirs in My connections later."
-      }
+      },
+      "customDeniedPending": "A super admin has turned off custom connectors, so this connector can't be created. Ask a super admin to allow custom connectors."
     },
     "review": {
       "title": "Review",

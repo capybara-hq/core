@@ -115,6 +115,14 @@ export const keys = {
       inboxCount: (): readonly unknown[] => [...all, "inboxCount"],
       /** One skill change with its files and the skill's current version (the inbox's detail). */
       skillChange: (changeId: string): readonly unknown[] => [...all, "skillChange", changeId],
+      /** What creating an agent from a template carries over (the 用它创建 dialog's preview). */
+      templatePreview: (templateId: string): readonly unknown[] => [
+        ...all,
+        "templatePreview",
+        templateId,
+      ],
+      /** An agent's latest connector setup request (its 待配置 notice). */
+      setupRequest: (agentId: string): readonly unknown[] => [...all, "setupRequest", agentId],
       extensionPages: (): readonly unknown[] => [...all, "extensionPages"],
       /** The org's members. */
       members: (): readonly unknown[] => [...all, "members"],

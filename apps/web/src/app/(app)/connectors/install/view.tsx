@@ -7,7 +7,11 @@ import {
   useCatalogInstall,
   type WizardView,
 } from "../../../../components/CatalogInstallWizard";
-import { useConnectorWizard, WIZARD_STEPS } from "../../../../components/ConnectorWizard";
+import {
+  useConnectorWizard,
+  WIZARD_STEPS,
+  type WizardPrefill,
+} from "../../../../components/ConnectorWizard";
 import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { NoAccess } from "../../../../components/NoAccess";
 import { usePagePath } from "../../../../components/shell/path";
@@ -28,14 +32,21 @@ import NotFound from "../../not-found";
  * `/plugins/<id>/enable`. The template's item comes from the query cache (the layout prefetched it
  * on a first load); a missing one is the not-found state.
  */
-export default function InstallConnectorView({ template }: { template: string | null }) {
+export default function InstallConnectorView({
+  template,
+  prefill = null,
+}: {
+  template: string | null;
+  /** Prefilled for an agent's pending connector (`?kind=&endpoint=&name=`, ruling P4-7). */
+  prefill?: WizardPrefill | null;
+}) {
   const ws = useWorkspace({ min: "admin" });
   if (ws.kind === "pending" || ws.kind === "noOrg") return null;
   if (ws.kind === "noAccess") return <NoAccess need={ws.need} />;
   return template !== null ? (
     <InstallTemplate key={template} orgId={ws.orgId} itemId={template} />
   ) : (
-    <InstallApp orgId={ws.orgId} />
+    <InstallApp orgId={ws.orgId} prefill={prefill} />
   );
 }
 
@@ -63,7 +74,7 @@ function InstallTemplate({ orgId, itemId }: { orgId: string; itemId: string }) {
   );
 }
 
-function InstallApp({ orgId }: { orgId: string }) {
+function InstallApp({ orgId, prefill }: { orgId: string; prefill: WizardPrefill | null }) {
   const scope = usePagePath("org");
   const t = useTranslations("connectors");
   const read = usePageQuery(connectorKindsQuery(orgId));
@@ -84,19 +95,28 @@ function InstallApp({ orgId }: { orgId: string }) {
       />
     );
   }
-  return <InstallWizard orgId={orgId} header={header} kinds={wizardKinds(read.data.kinds)} />;
+  return (
+    <InstallWizard
+      orgId={orgId}
+      header={header}
+      kinds={wizardKinds(read.data.kinds)}
+      prefill={prefill}
+    />
+  );
 }
 
 function InstallWizard({
   orgId,
   header,
   kinds,
+  prefill,
 }: {
   orgId: string;
   header: { path: { label: string; href?: string }[]; title: string };
   kinds: ConnectorKind[];
+  prefill: WizardPrefill | null;
 }) {
-  const wizard = useConnectorWizard(orgId, kinds);
+  const wizard = useConnectorWizard(orgId, kinds, prefill ?? undefined);
   return (
     <WizardPage
       header={header}

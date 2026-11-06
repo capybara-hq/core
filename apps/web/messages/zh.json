@@ -684,7 +684,8 @@
         "count": "{chars, number} / {maxChars, number} 字符 · {files} / {maxFiles} 个文件",
         "tooLong": "文件合计超过 {max, number} 个字符，缩短后才能保存。"
       },
-      "createUploadFailed": "智能体已创建，但头像没有上传成功。请在这里重新选择。"
+      "createUploadFailed": "智能体已创建，但头像没有上传成功。请在这里重新选择。",
+      "provenance": "由模板 <template>{name}</template> {version} 创建"
     },
     "pageTabs": {
       "agents": "智能体",
@@ -719,6 +720,154 @@
         "org": "本组织",
         "orgNamed": "{org}",
         "plugin": "插件 · {plugin}"
+      }
+    },
+    "fromTemplate": {
+      "title": "用「{name}」创建智能体",
+      "submit": "创建",
+      "gone": "这个模板在本组织已不可用（已关闭、删除或不再共享），无法用它创建智能体。",
+      "uploadLater": "创建后可以在智能体页上传图片。",
+      "retry": "重试",
+      "previewLoading": "正在读取模板会带入的内容",
+      "previewTitle": "模板会带入的内容",
+      "modelSource": {
+        "modelRef": "模板保存时用的模型。",
+        "tier": "组织为模板的模型档位指定的模型。",
+        "default": "组织的默认模型。",
+        "chosen": "你选择的模型。"
+      },
+      "groups": {
+        "carried": "带入 · {n}",
+        "pending": "待配置 · {n}",
+        "unavailable": "不可用 · {n}"
+      },
+      "emptyGroup": {
+        "carried": "没有可带入的内容。",
+        "pending": "没有待配置的连接器。",
+        "unavailable": "没有不可用的内容。"
+      },
+      "pendingHint": "智能体仍会创建；这些连接器配置好之前，它们的工具不可用。",
+      "droppedTitle": "不会带入的设置 · {n}",
+      "dropped": {
+        "maxSteps": "步数上限：智能体没有这项设置。",
+        "effort": "推理强度：所选模型不支持。",
+        "description": "描述超出长度，已截断。",
+        "instructions": "指令超出长度，已截断。",
+        "quickAction_title": "常用任务 {n} 的标题超出长度，已截断。",
+        "quickAction_body": "常用任务 {n} 的内容超出长度，已截断。",
+        "instructionFile": "指令文件 {n} 超出长度，已截断。",
+        "subagent_description": "子智能体 {name} 的描述超出长度，已截断。",
+        "subagent_instructions": "子智能体 {name} 的指令超出长度，已截断。",
+        "subagentTool": "子智能体 {name} 的工具 {tool}：智能体没有这个工具。",
+        "connectorTool": "连接器 {connector} 的工具 {tool}：连接器没有提供。",
+        "connectorPolicy": "连接器 {connector} 的工具 {tool} 的策略：连接器没有提供这个工具。",
+        "other": "{path}"
+      },
+      "kinds": {
+        "instruction_file": "指令文件",
+        "description": "描述",
+        "quick_action": "常用任务",
+        "tool": "工具",
+        "skill": "技能",
+        "connector": "连接器",
+        "subagent": "子智能体"
+      },
+      "reasons": {
+        "instruction_file_invalid_name": "文件名不合法。",
+        "instruction_file_duplicate": "与另一个文件重名。",
+        "instruction_file_too_many": "文件数超过上限。",
+        "instruction_file_too_long": "所有文件合起来超出长度。",
+        "tool_default": "模板没有指定工具，用新智能体的默认工具。",
+        "tool_subagents": "模板描述了子智能体，自动加入。",
+        "tool_plugin_unavailable": "所属插件在本组织未启用。",
+        "tool_unknown_tool": "没有这个工具。",
+        "tool_connector_key": "连接器工具只能通过连接器带入。",
+        "skill_pinned": "预加载。",
+        "skill_not_pinned_manual_only": "只能手动调用，不预加载。",
+        "skill_not_pinned_too_large": "超出预加载上限，不预加载。",
+        "skill_subagent": "子智能体使用。",
+        "skill_not_found": "本组织没有这个技能。",
+        "connector_several": "本组织有多个由该模板创建的连接器，用了最早的一个，之后可以更换。",
+        "connector_no_connector": "本组织还没有由该模板创建的连接器。",
+        "connector_tools_missing": "本组织的连接器没有提供所需的工具。",
+        "connector_needs": "需要一个自建连接器。",
+        "connector_template_not_found": "连接器模板不存在或在本组织不可用。",
+        "connector_disallowed": "模板禁用了这个连接器的全部工具。",
+        "subagent_type_not_found": "本组织没有这个智能体模板。",
+        "subagent_type_taken": "已有同名的子智能体。",
+        "subagent_too_many": "子智能体数量超过上限。"
+      },
+      "state": {
+        "carried": "带入",
+        "pending": "待配置",
+        "unavailable": "不可用"
+      },
+      "stale": "预览之后模板或组织的配置有变化，已重新预览。请看过变化后再创建。",
+      "changes": {
+        "added": "新增 {kind}「{name}」：{state}。",
+        "removed": "{kind}「{name}」不再带入。",
+        "moved": "{kind}「{name}」：{from} → {to}。",
+        "droppedAdded": "不会带入：{what}",
+        "model": "自动选择的模型变了。"
+      }
+    },
+    "pending": {
+      "title": "待配置的连接器 · {n}",
+      "hintManager": "模板需要这些连接器，组织里还没有。配置后它们的工具会加入智能体；在此之前智能体照常运行。",
+      "hintOwner": "模板需要这些连接器，组织里还没有，需要组织管理员配置。在此之前智能体照常运行，只是没有这些工具。",
+      "listLabel": "待配置的连接器",
+      "state": "待配置",
+      "configure": "配置",
+      "fromTemplate": "由连接器模板创建",
+      "fromTemplateNamed": "由连接器模板「{name}」创建",
+      "needs": "需要一个 {protocol} 连接器：{endpoint}",
+      "toolsAll": "带入它的全部工具",
+      "tools": "带入工具：{tools}",
+      "plain": "这个智能体有 {n} 个连接器待配置，配置好之前相关工具不可用。",
+      "listTitle": "为「{agent}」配置连接器",
+      "listHint": "逐个选择已有的连接器或新建一个，然后绑定到智能体。最后一个绑定后，申请自动关闭。",
+      "listEmpty": "已全部配置。",
+      "back": "返回",
+      "close": "关闭",
+      "bound": "已为「{name}」绑定连接器",
+      "boundDropped": "已为「{name}」绑定连接器，有 {n} 项该连接器没有提供，未带入",
+      "entryTitle": "配置「{name}」",
+      "modeLabel": "连接器来源",
+      "modeExisting": "使用已有连接器",
+      "modeExistingHint": "从组织现有的连接器里选一个。",
+      "modeCreate": "用模板新建一个",
+      "modeCreateHint": "按连接器模板新建一个连接器，然后绑定。",
+      "modeCustom": "新建自定义连接器",
+      "modeCustomHint": "打开自定义连接器表单，已填好协议和地址。",
+      "connectorsFailed": "读取连接器失败，请稍后重试。",
+      "noCandidatesTemplate": "组织里还没有由这个模板创建的连接器，可以用模板新建一个。",
+      "noCandidatesNeeds": "组织里还没有这种协议的连接器，可以新建一个自定义连接器。",
+      "connectorLabel": "连接器",
+      "customHint": "在自定义连接器表单里创建好后，回到这里选择它并绑定。如果超级管理员关闭了自建连接器，需要先由超级管理员允许。",
+      "openCustom": "打开自定义连接器表单",
+      "bind": "绑定",
+      "createAndBind": "创建并绑定",
+      "templateGone": "这个连接器模板在本组织已不可用，无法用它新建连接器。",
+      "templateOff": "这个连接器模板在本组织已关闭，请先在插件或组件里开启。",
+      "createdRetryBind": "连接器已创建，但绑定没有成功。处理上面的问题后再绑定一次。",
+      "autoNameHint": "名称和标识留空时，自动取一个不重复的。",
+      "bindError": {
+        "template": "这个连接器不是由所需的连接器模板创建的。",
+        "protocol": "这个连接器的协议不符合要求。",
+        "tools": "这个连接器没有提供智能体所需的任何工具。",
+        "not_synced": "这个连接器还没有授权，读不到它的工具。请先完成授权，再回来绑定。",
+        "openConnector": "打开连接器去授权"
+      },
+      "request": {
+        "sent": "已向组织管理员申请",
+        "retry": "重试",
+        "failed": "读取申请状态失败。",
+        "pending": "已申请 · 等待组织管理员配置。",
+        "again": "重新申请",
+        "rejected": "组织管理员驳回了申请。",
+        "rejectedReason": "组织管理员驳回了申请：{reason}",
+        "ask": "申请",
+        "none": "还没有向组织管理员申请配置这些连接器。"
       }
     }
   },
@@ -1211,6 +1360,28 @@
       "hintRejected": "你的申请没有被批准。",
       "reason": "原因",
       "openItem": "查看插件"
+    },
+    "setup": {
+      "label": "连接器配置申请",
+      "decidedLabel": "连接器配置",
+      "rejected": "已驳回",
+      "configured": "连接器已全部配置，申请已关闭",
+      "agent": "智能体",
+      "count": "待配置",
+      "reject": "驳回",
+      "configure": "配置",
+      "title": "为「{agent}」配置连接器",
+      "hint": "这个智能体由模板创建，模板需要的连接器组织里还没有。配置会把连接器绑定到智能体；全部绑定后申请自动关闭。",
+      "connectors": "需要的连接器",
+      "fromTemplate": "由连接器模板创建",
+      "needs": "需要一个 {protocol} 连接器：{endpoint}",
+      "reasonLabel": "驳回理由",
+      "reasonHelp": "驳回时发给申请人。",
+      "titleApproved": "「{agent}」的连接器已配置好",
+      "titleRejected": "「{agent}」的连接器配置申请被驳回",
+      "hintApproved": "组织管理员已配置好全部连接器，它们的工具已加入智能体。",
+      "hintRejected": "组织管理员没有配置这些连接器。可以在智能体的工具页重新申请。",
+      "openAgent": "打开智能体的工具页"
     }
   },
   "connectors": {
@@ -1442,7 +1613,8 @@
       "credentialHint": {
         "org": "组织凭据：所有人共用，安装时用它列出工具。",
         "personal": "你自己的凭据：安装时用它列出工具；其他成员之后在「我的连接」中各自填写。"
-      }
+      },
+      "customDeniedPending": "超级管理员关闭了自建连接器，这个连接器无法创建。请联系超级管理员允许自建连接器。"
     },
     "review": {
       "title": "复核",

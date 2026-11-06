@@ -675,7 +675,25 @@ export function groupMarketplaceEntries(entries: readonly MarketplaceEntry[]): M
 }
 
 /** What a request asks for (kernel `CatalogRequestKind`). */
-export type CatalogRequestKind = "access" | "import" | "enable";
+export type CatalogRequestKind = "access" | "import" | "enable" | "connector_setup";
+
+/**
+ * One connector a `connector_setup` request still needs (kernel `SetupRequestConnector`, ruling
+ * P4-7): `key` is the bind route's key; `source` the platform connector template (its id and
+ * display name) or the protocol, endpoint and tools a custom connector must offer.
+ */
+export interface SetupRequestConnector {
+  key: string;
+  label: string;
+  kind: "template" | "needs";
+  source:
+    | { template: { id: string; displayName: LocalizedName | null } }
+    | { needs: { protocol: "mcp" | "openapi"; endpoint: string; tools: string[] } };
+  /** The tools the agent takes once bound; null = all. */
+  tools: string[] | null;
+  /** Tool names with a tightened policy. */
+  policies: string[];
+}
 
 /** A catalog request (kernel `CatalogRequestView`). */
 export interface CatalogRequest {
@@ -697,8 +715,16 @@ export interface CatalogRequest {
   decidedAt: string | null;
   /** The prepared import of an approved `import` request that is not confirmed yet. */
   stagingId: string | null;
+  /** A `connector_setup` request's agent (null for the other kinds; older kernels: absent). */
+  agent?: { id: string; name: string; deleted: boolean } | null;
+  /** A `connector_setup` request's remaining connectors (`[]` once closed; null otherwise). */
+  connectors?: SetupRequestConnector[] | null;
   createdAt: string;
 }
+
+/** A `connector_setup` request (ruling P4-7): `item` and `entry` are null, `agent` is set. */
+export const isSetupRequest = (r: Pick<CatalogRequest, "kind">): boolean =>
+  r.kind === "connector_setup";
 
 /** The decision body of a request: approve, or reject with an optional reason. */
 export interface RequestDecision {

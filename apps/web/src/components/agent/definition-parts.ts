@@ -11,13 +11,16 @@ export const BUILTIN_SET = new Set<string>(BUILTIN_TOOLS);
 
 /**
  * The saved definition a section's save starts from: every field as saved, without the prompt
- * files and the retired `avatarUrl`. The kernel keeps the prompt files while `instructions` is
- * their join (it is, as saved), and the profile owns avatars.
+ * files, the retired `avatarUrl` and the pending connectors. The kernel keeps the prompt files
+ * while `instructions` is their join (it is, as saved), the profile owns avatars, and a save
+ * without `pendingConnectors` keeps the current ones (ruling P4-T3-11: only a template create adds
+ * them, only a bind resolves them; a stale copy sent back could only be refused).
  */
 export function savedDefinition(agent: Agent): Omit<AgentDefinitionInput, "instructionFiles"> {
   const {
     instructionFiles: _files,
     avatarUrl: _avatarUrl,
+    pendingConnectors: _pending,
     ...kept
   }: Record<string, unknown> = agent.definition;
   return kept as unknown as Omit<AgentDefinitionInput, "instructionFiles">;

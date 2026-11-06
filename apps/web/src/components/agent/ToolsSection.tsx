@@ -27,6 +27,7 @@ import {
 } from "./definition-save";
 import type { AgentFormData } from "./form-data";
 import { AgentSectionFrame, useAgentPage } from "./frame";
+import { PendingConnectorsNotice } from "./PendingConnectorsNotice";
 import { useSectionDraft } from "./useSectionDraft";
 
 /** The references this section switches: the listed builtins, extension tools, whole connectors. */
@@ -71,7 +72,8 @@ const sorted = (xs: string[]) => [...xs].sort();
  * and ticked as unavailable, with the reason; unticking it is the only way to drop it.
  * A web tool (`WebSearch` / `WebFetch`) is listed only while its point has a provider for the org
  * (`GET …/extension-points/available`) or when the agent selected it, with a hint when a selected
- * one cannot be served now (web tools spec §3.4).
+ * one cannot be served now (web tools spec §3.4). Connectors a template needed and the org lacked
+ * come first, as the 待配置 notice (ruling P4-7).
  */
 export function ToolsSection() {
   return <WithFormData>{(data) => <ToolsEdit data={data} />}</WithFormData>;
@@ -278,6 +280,7 @@ function ToolsEdit({ data }: { data: AgentFormData }) {
     >
       <Stack gap={16}>
         <SaveFeedback save={save} onReload={() => void save.reload(discard)} />
+        <PendingConnectorsNotice orgId={orgId} agent={agent} />
         <FormSection
           id="tools"
           title={t("form.toolsSection")}

@@ -101,6 +101,8 @@ export interface ConnectorSummary {
   endpoint: { url?: string } & Record<string, unknown>;
   auth: ConnectorAuth;
   status: "active" | "disabled";
+  /** The platform connector template it was made from; null for a custom one (older: absent). */
+  platformTemplateId?: string | null;
   createdAt: string;
   updatedAt: string;
 }

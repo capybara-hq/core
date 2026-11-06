@@ -3,7 +3,7 @@ import { type Agent, type AgentTemplateView, setupReady } from "../agents";
 import type { ApiClientError } from "../api";
 import type { ChannelConnection } from "../channels";
 import { maybeOwnTemplate, type OrgComponent, usableRows } from "../components";
-import { type ConnectorSummary, personalConnectors } from "../connectors";
+import { type ConnectorSummary, canManageConnectors, personalConnectors } from "../connectors";
 import type { Conversation, ConversationEvent } from "../conversations";
 import type { EvalSetDetail } from "../evals";
 import type { InboxItem } from "../inbox";
@@ -64,6 +64,7 @@ import {
   evalSetQuery,
   evalSetsQuery,
 } from "./evals";
+import { setupRequestQuery } from "./from-template";
 import { inboxQuery, skillChangeQuery } from "./inbox";
 import { membersQuery } from "./members";
 import {
@@ -366,12 +367,16 @@ export const ROUTES: readonly RouteEntry[] = [
       if (orgId === null || id === undefined || me === null) return;
       const agent = qc.getQueryData<Agent>(agentQuery(orgId, id).queryKey);
       if (agent === undefined || !canEditAgent(me, agent)) return;
+      // the owner who may not configure connectors sees the setup request's state (ruling P4-7)
+      const asksAdmins =
+        (agent.definition.pendingConnectors ?? []).length > 0 && !canManageConnectors(me);
       await Promise.all(
         [
           ...agentFormQueries(orgId, id),
           ...agentConnectorQueries(orgId, agent),
           q(channelsQuery(orgId)),
           q(attachmentLimitsQuery(orgId)),
+          ...(asksAdmins ? [q(setupRequestQuery(orgId, id))] : []),
         ].map((o) => qc.prefetchQuery({ ...o, retry: false })),
       );
     },

@@ -118,6 +118,18 @@ const annotationHint = (t: ToolPreview): "readOnly" | "destructive" | "none" =>
 
 type WizardError = { message: string; extra: string[] };
 
+/**
+ * What the wizard starts from for a pending connector of an agent (ruling P4-7): the protocol,
+ * the endpoint (MCP url or OpenAPI document url) and the name; `pending` words a refusal under
+ * `customConnectors = deny` for that case (a super admin must allow custom connectors).
+ */
+export interface WizardPrefill {
+  kind: ConnectorKind;
+  endpoint: string;
+  name: string;
+  pending: boolean;
+}
+
 /** {@link useConnectorWizard} 的结果：页面把它们放进 WizardPage。 */
 export type ConnectorWizardView = {
   steps: string[];
@@ -137,6 +149,7 @@ export type ConnectorWizardView = {
 export function useConnectorWizard(
   orgId: string,
   kinds: readonly ConnectorKind[],
+  prefill?: WizardPrefill,
 ): ConnectorWizardView {
   const t = useTranslations("connectors");
   const tc = useTranslations("common");
@@ -149,15 +162,15 @@ export function useConnectorWizard(
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
 
   // 1. 端点类型
-  const [chosen, setConnector] = useState<ConnectorKind>(kinds[0] ?? "mcp");
+  const [chosen, setConnector] = useState<ConnectorKind>(prefill?.kind ?? kinds[0] ?? "mcp");
   // A kind that stopped being available (its plugin switched off meanwhile) is not kept
   const connector = kinds.includes(chosen) ? chosen : (kinds[0] ?? chosen);
   // 2. 端点与文档
-  const [name, setName] = useState("");
+  const [name, setName] = useState(prefill?.name ?? "");
   const [slug, setSlug] = useState("");
-  const [url, setUrl] = useState("");
+  const [url, setUrl] = useState(prefill?.kind === "mcp" ? prefill.endpoint : "");
   const [specSource, setSpecSource] = useState<"url" | "file">("url");
-  const [specUrl, setSpecUrl] = useState("");
+  const [specUrl, setSpecUrl] = useState(prefill?.kind === "openapi" ? prefill.endpoint : "");
   const [specFile, setSpecFile] = useState<{ name: string; text: string }>();
   const [baseUrl, setBaseUrl] = useState("");
   const [inspected, setInspected] = useState<ConnectorPreview>();
@@ -269,7 +282,15 @@ export function useConnectorWizard(
         extra.push(e.message);
       }
     }
-    setError({ message: errorMessage(e), extra });
+    setError({
+      message:
+        prefill?.pending === true &&
+        e instanceof ApiClientError &&
+        e.code === "catalog.custom_disabled"
+          ? t("wizard.customDeniedPending")
+          : errorMessage(e),
+      extra,
+    });
   }
 
   /** OAuth 连接器要求内核配置 `http.publicUrl`（回调地址），没配时 400 落在 `auth` 上。 */
