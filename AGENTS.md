@@ -132,7 +132,7 @@ pnpm dev:kernel  # capybara start, pretty logs, copied to /tmp/capybara-dev-kern
 pnpm dev:web     # the web app, output copied to /tmp/capybara-dev-web.log
 pnpm wt:new <branch>   # start a task worktree
 pnpm doctor:env  # check your environment
-pnpm verify      # run the required checks locally for the current branch
+pnpm verify      # the required checks for this branch; full-suite diffs run only the touched packages' tests (--full: all)
 docker compose -f docker/compose.dev.yaml up -d   # local postgres + valkey
 ```
 
@@ -162,8 +162,9 @@ docker compose -f docker/compose.dev.yaml up -d   # local postgres + valkey
 
 - Required statuses: `ci-ok` (aggregates every job in `.github/workflows/ci.yml`) and `issue-linked`.
 - PRs run what the diff affects; pushes to `main` run everything. The plan is
-  `tools/ci/src/affected.ts`, described in [tools/ci/README.md](tools/ci/README.md); keep that page,
-  `affected.ts` and the comments in `ci.yml` in sync.
+  `tools/ci/src/affected.ts`, described in [tools/ci/README.md](tools/ci/README.md); keep that page
+  and `affected.ts` in sync. Don't describe the plan or the checks in `ci.yml`: every edit to it
+  reruns the whole suite.
 - A new check states whether it runs in full or by diff on PRs, with the reason in the PR
   description, and goes into [tools/checks/README.md](tools/checks/README.md).
 - **Flaky tests get fixed, not hidden behind retries.** Reproduce locally first (inject a delay, or
