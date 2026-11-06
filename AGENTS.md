@@ -142,6 +142,10 @@ docker compose -f docker/compose.dev.yaml up -d   # local postgres + valkey
   or a behavior change starts with a design doc in `docs/superpowers/specs/`, reviewed by a
   maintainer; then a plan in `docs/superpowers/plans/`, also reviewed; then implementation. Small
   fixes skip this.
+- **Executing a plan with subagents:** plan the execution before the first dispatch (waves of tasks
+  with disjoint files in parallel, batched review and fixes per wave, trust-boundary / migration /
+  multi-replica / cross-tenant tasks reviewed alone on the most capable model): the
+  `wave-planned-subagent-development` skill, a layer on superpowers' subagent-driven-development.
 - Changes reach `main` only through pull requests; a maintainer merges. The workflow is in the
   `contributing` skill and the [org guide](https://github.com/capybara-hq/.github/blob/main/CONTRIBUTING.md).
 
