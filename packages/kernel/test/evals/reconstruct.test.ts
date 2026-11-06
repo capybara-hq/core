@@ -563,6 +563,20 @@ describe("reconstructRequest：基线零漂移", { timeout: 120_000 }, () => {
           triggerAccountId: ownerId,
         },
       },
+      {
+        type: "subagent_delivery",
+        idemKey: `test_delivery_failed:${conv}`,
+        payload: {
+          subagentId: "sa_other",
+          childRunId: randomUUID(),
+          description: "Check the build",
+          kind: "finished",
+          status: "failed",
+          errorCode: "model.unavailable",
+          text: "The model provider is unavailable.",
+          triggerAccountId: ownerId,
+        },
+      },
     ]);
     await waitForTerminal(db, conv, 1, 30_000);
 
@@ -574,6 +588,11 @@ describe("reconstructRequest：基线零漂移", { timeout: 120_000 }, () => {
     expect(sent[absorbing]?.messages).toContainEqual({
       role: "system",
       content: 'Sub-agent sa_child ("Survey the module") handed back a report:\nThree call sites.',
+    });
+    expect(sent[absorbing]?.messages).toContainEqual({
+      role: "system",
+      content:
+        'Sub-agent sa_other ("Check the build") failed (model.unavailable): The model provider is unavailable.',
     });
     await expectZeroDrift(conv, await snapshotOf(conv));
   });

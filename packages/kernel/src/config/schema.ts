@@ -1309,7 +1309,7 @@ export const KernelConfigSchema = z.object({
           meta({
             hot: true,
             description:
-              "Sandbox commands and file operations that may run at the same time in one conversation's sandbox (parallel sub-agents share their parent conversation's sandbox); 1 runs them one at a time. Providers that do not declare concurrent exec always get 1",
+              "Sandbox commands and file operations that may run at the same time in one conversation's sandbox (sub-agents share their root conversation's sandbox); 1 runs them one at a time. Providers that do not declare concurrent exec always get 1",
           }),
         ),
       deliverMaxBytes: z

@@ -2,7 +2,6 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { ExtensionContext, ToolPostHookPayload } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Queue } from "bullmq";
 import { Redis } from "ioredis";
@@ -10,12 +9,15 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import type { ConversationEvent, EventPayload } from "../../../src/conversations/events.js";
 import type { KernelSchemaDb } from "../../../src/db/kernel-schema.js";
 import { createDb } from "../../../src/db/pool.js";
-import { KERNEL_BUS } from "../../../src/infra/tokens.js";
 import { Offboarding } from "../../../src/orgs/offboarding.js";
 import { SUBAGENT_RUN_QUEUE_NAME } from "../../../src/runtime/run-queue.js";
-import { type ScriptRule, scriptRules } from "../../fixtures/plugins/model-script/index.js";
+import {
+  openBarrier,
+  type ScriptRule,
+  scriptRules,
+} from "../../fixtures/plugins/model-script/index.js";
 import { setFakeSandboxDelays } from "../../fixtures/plugins/sandbox-fake/index.js";
-import { eventLogFor, legacyDbFor } from "../../helpers/conversations.js";
+import { legacyDbFor } from "../../helpers/conversations.js";
 import { truncateTables } from "../../helpers/db.js";
 import { accountsFor } from "../../helpers/identity.js";
 import { testMembers } from "../../helpers/members.js";
@@ -38,16 +40,15 @@ import {
 import {
   type ChildRun,
   childRunsOf,
-  finishRun,
-  parentWaiting,
+  finishedDeliveries,
   runStatus,
 } from "../../helpers/subagents.js";
 
 /**
- * Phase C Task 13 (spec §12): stopping a parent stops its children and writes its open `agent`
- * results; stopping one child lets the parent go on; every terminal state of a parent (here its
- * deadline) stops its children; offboarding stops a removed member's sub-agents. One kernel with
- * model-script, sandbox-fake and hooks-probe.
+ * Phase C Task 13 (spec §12) with background sub-agents (agent map spec §5.4, §6): a parent run
+ * that ends (stopped by a person, at its deadline, as an orphan) leaves its children running;
+ * stopping one child delivers its finish as `aborted`; offboarding stops a removed member's
+ * sub-agents. One kernel with model-script, sandbox-fake and hooks-probe.
  */
 
 const fixture = (name: string) =>
@@ -56,7 +57,6 @@ const MODEL_SCRIPT = fixture("model-script");
 const SANDBOX_FAKE = fixture("sandbox-fake");
 const HOOKS_PROBE = fixture("hooks-probe");
 
-const STOPPED = "The run was stopped while this sub-agent was working; it was stopped too.";
 const CHILD = "You are a sub-agent";
 const agentCall = (prompt: string) => ({
   name: "Agent",
@@ -70,7 +70,7 @@ const RULES: ScriptRule[] = [
       toolCalls: [{ name: "Write", input: { file_path: "/workspace/c.txt", content: "c" } }],
     },
   },
-  // a child that keeps running until it is stopped (the barrier is never reached)
+  // a child that keeps running until it is stopped or the test opens the barrier
   {
     when: { systemIncludes: CHILD, lastUserIncludes: "task-hang" },
     reply: { text: "hung", barrier: { name: "hang", count: 99, timeoutMs: 60_000 } },
@@ -81,6 +81,11 @@ const RULES: ScriptRule[] = [
     reply: {
       toolCalls: [agentCall("task-write"), agentCall("task-hang-1"), agentCall("task-hang-2")],
     },
+  },
+  {
+    // the parent's next step holds until the test stops the parent run
+    when: { lastUserIncludes: "SCENARIO stop-all", assistantTurns: 1 },
+    reply: { text: "never", barrier: { name: "parent-hold", count: 99, timeoutMs: 60_000 } },
   },
   {
     when: { lastUserIncludes: "SCENARIO stop-one", assistantTurns: 0 },
@@ -101,7 +106,7 @@ const RULES: ScriptRule[] = [
     },
   },
   { when: { lastUserIncludes: "after orphan" }, reply: { text: "after orphan done" } },
-  { when: { lastToolResultIncludes: "[agentId:" }, reply: { text: "parent done" } },
+  { when: { lastToolResultIncludes: "in the background" }, reply: { text: "parent done" } },
 ];
 
 let pgc: TestContainer;
@@ -190,6 +195,9 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  // children held at a barrier go on, so no test leaves running work behind
+  openBarrier("hang");
+  openBarrier("parent-hold");
   await setFakeSandboxDelays(root, {});
   await subQueue.resume();
   scriptRules([]);
@@ -245,137 +253,58 @@ async function allStopped(runIds: string[]) {
   );
 }
 
-/** Every child ended `run_aborted` by nobody, and the parent recorded each as `aborted`. */
-async function expectStoppedWithParent(conv: string, children: ChildRun[]) {
-  for (const c of children) {
-    const cev = await eventsOf(db, c.conversationId);
-    expect(ofType(cev, "run_aborted").map((e) => e.payload.byAccountId)).toEqual([null]);
-  }
-  await waitFor(
-    async () =>
-      ofType(await eventsOf(db, conv), "subagent_finished").length === children.length || null,
-    10_000,
-    "subagent_finished for every child",
-  );
-  const finished = ofType(await eventsOf(db, conv), "subagent_finished");
-  expect(finished.map((e) => e.payload.status)).toEqual(children.map(() => "aborted"));
+/** Waits for the parent's finished deliveries of `children`; their payloads by child. */
+async function deliveredFor(conv: string, children: ChildRun[]) {
+  const ds = await finishedDeliveries(db, conv, children.length);
+  return new Map(ds.map((d) => [d.subagentId, d]));
 }
 
-describe("stopping a parent that waits on sub-agents", () => {
-  it("leaves the parent and its three children (one waiting for approval) aborted, with the stop text in the parent's calls", async () => {
+describe("a parent run that ends leaves its background children running", () => {
+  it("stopping the parent run while its children work: the children keep running", async () => {
     const conv = await createConv(owner, orgId, agentId);
     await postMessage(owner, orgId, conv, "SCENARIO stop-all");
-    const { runId, children } = await parentWaiting(db, conv, 3);
+    const children = await waitFor(
+      async () => {
+        const c = await childRunsOf(db, conv);
+        return c.length === 3 ? c : null;
+      },
+      20_000,
+      "three children",
+    );
     const writer = await childWithTask(children, "task-write");
     await childrenIn(children, { [writer.runId]: "waiting" });
-
+    const parentRun = await db
+      .selectFrom("runs")
+      .select("id")
+      .where("conversation_id", "=", conv)
+      .executeTakeFirstOrThrow();
     const res = await owner({
       method: "POST",
       url: `/api/v1/orgs/${orgId}/conversations/${conv}/abort`,
     });
     expect(res.statusCode, res.body).toBe(202);
-    await allStopped([runId, ...children.map((c) => c.runId)]);
-
+    await allStopped([parentRun.id]);
+    // the dispatches' results were written with them: nothing to pair at the stop
     const events = await eventsOf(db, conv);
-    expect(ofType(events, "run_aborted").map((e) => e.payload.byAccountId)).toEqual([ownerId]);
-    const results = agentResults(events);
-    const calls = ofType(events, "subagent_dispatched").map((e) => e.payload.callId);
-    expect(results.map((r) => r.payload.callId).sort()).toEqual([...calls].sort());
-    for (const r of results) {
-      expect(r.payload).toMatchObject({ content: STOPPED, isError: true, step: 1 });
-    }
-    // a person stopped the parent; its children were stopped with it (§4.4 "stopped with this run")
-    await expectStoppedWithParent(conv, children);
-    // the child's approval was cancelled with it
+    expect(agentResults(events).map((r) => r.payload.isError)).toEqual([false, false, false]);
+    // nothing stopped the children, nor cancelled the writer's approval
+    await new Promise((r) => setTimeout(r, 500));
+    await childrenIn(children, { [writer.runId]: "waiting" });
     const approvals = await db.selectFrom("approvals").select("status").execute();
-    expect(approvals).toEqual([{ status: "cancelled" }]);
-    // nothing resumed the stopped parent
-    expect(await runStatus(db, runId)).toBe("aborted");
-    expect(ofType(events, "model_call").filter((e) => e.payload.step === 2)).toEqual([]);
-
-    // the stop results are audited and fire tool.postExecute like any agent result (Task 11)
-    const audits = await db
-      .selectFrom("audit_events")
-      .select(["actor_account_id", "detail"])
-      .where("action", "=", "tool.called")
-      .execute();
-    const agentAudits = audits.filter(
-      (a) => (a.detail as { toolKey?: string }).toolKey === "Agent",
+    expect(approvals).toEqual([{ status: "pending" }]);
+    openBarrier("hang");
+    const hung = children.filter((c) => c.runId !== writer.runId);
+    const ds = await finishedDeliveries(db, conv, 2);
+    expect(ds.map((d) => [d.status, d.text])).toEqual([
+      ["completed", "hung"],
+      ["completed", "hung"],
+    ]);
+    expect(new Set(ds.map((d) => d.subagentId))).toEqual(
+      new Set(hung.map((c) => c.conversationId)),
     );
-    expect(agentAudits.map((a) => (a.detail as { callId: string }).callId).sort()).toEqual(
-      [...calls].sort(),
-    );
-    for (const a of agentAudits) {
-      expect(a.actor_account_id).toBe(ownerId);
-      expect(a.detail).toMatchObject({ conversationId: conv, runId, isError: true });
-    }
-    const post = await waitFor(
-      async () => {
-        const r = await owner({
-          method: "GET",
-          url: `/plugins/hooks-probe/counts?orgId=${orgId}&conversationId=${conv}`,
-        });
-        const last = (r.json() as { last: Record<string, unknown> }).last;
-        return (last["tool.postExecute"] as ToolPostHookPayload | undefined) ?? null;
-      },
-      10_000,
-      "parent postExecute",
-    );
-    expect(post).toMatchObject({ toolKey: "Agent", content: STOPPED, isError: true, runId });
-    expect(calls).toContain(post.callId);
-    // once per call: three agent results, three tool.postExecute (review m7); the cancelled
-    // approval of the writer child fires none
-    const postCount = async () => {
-      const r = await owner({ method: "GET", url: `/plugins/hooks-probe/counts?orgId=${orgId}` });
-      return (r.json() as { counts: Record<string, number> }).counts["tool.postExecute"] ?? 0;
-    };
-    await waitFor(async () => (await postCount()) >= 3 || null, 10_000, "3 postExecute");
-    expect(await postCount()).toBe(3);
   }, 60_000);
-});
 
-describe("stopping one sub-agent", () => {
-  it("gives the parent 'stopped by the user' for it; the parent completes after the others", async () => {
-    const conv = await createConv(owner, orgId, agentId);
-    await postMessage(owner, orgId, conv, "SCENARIO stop-one");
-    const { runId, children } = await parentWaiting(db, conv, 3);
-    const hang = await childWithTask(children, "task-hang");
-    await childrenIn(
-      children,
-      Object.fromEntries(
-        children.map((c) => [c.runId, c.runId === hang.runId ? "running" : "completed"]),
-      ),
-    );
-    expect(await runStatus(db, runId)).toBe("waiting");
-    const res = await owner({
-      method: "POST",
-      url: `/api/v1/orgs/${orgId}/conversations/${hang.conversationId}/abort`,
-    });
-    expect(res.statusCode, res.body).toBe(202);
-    await waitForTerminal(db, conv, 1, 20_000);
-    const events = await eventsOf(db, conv);
-    expect(finalText(events)).toBe("parent done");
-    const byChild = new Map(
-      ofType(events, "subagent_dispatched").map((d) => [d.payload.callId, d.payload.subagentId]),
-    );
-    for (const r of agentResults(events)) {
-      const child = byChild.get(r.payload.callId);
-      if (child === hang.conversationId) {
-        expect(r.payload.isError).toBe(true);
-        expect(r.payload.content).toMatch(
-          /^The user stopped this sub-agent\.\n\n\[agentId: [^ ]+ · stopped by the user · /,
-        );
-      } else {
-        expect(r.payload.content).toMatch(/^child ok\n\n/);
-      }
-    }
-    const cev = await eventsOf(db, hang.conversationId);
-    expect(ofType(cev, "run_aborted").map((e) => e.payload.byAccountId)).toEqual([ownerId]);
-  }, 60_000);
-});
-
-describe("a parent's terminal state stops its children", () => {
-  it("the parent's deadline ends it and its children stop", async () => {
+  it("the parent's deadline ends it; its child keeps running and delivers its reply", async () => {
     // the child stays queued (as if its replica were slow) while the parent runs into its deadline
     // in a slow sandbox command
     await subQueue.pause();
@@ -388,9 +317,12 @@ describe("a parent's terminal state stops its children", () => {
     const children = await childRunsOf(db, conv);
     expect(children).toHaveLength(1);
     await subQueue.resume();
-    await allStopped(children.map((c) => c.runId));
-    await expectStoppedWithParent(conv, children);
-    // the finished parent is not resumed by its child's report
+    const ds = await deliveredFor(conv, children);
+    expect(ds.get(children[0]?.conversationId as string)).toMatchObject({
+      status: "completed",
+      text: "child ok",
+    });
+    // the finished parent run is not resumed by the delivery
     const runs = await db
       .selectFrom("runs")
       .select("status")
@@ -398,59 +330,65 @@ describe("a parent's terminal state stops its children", () => {
       .execute();
     expect(runs).toEqual([{ status: "completed" }]);
   }, 60_000);
-});
 
-describe("a parent that ends as an orphan (review m1, m2)", () => {
-  /**
-   * A parent waiting on a hanging child whose run is then lost: `running` again (as after a resume)
-   * with no job and no lock holder, the state the orphan repairs look for.
-   */
-  async function orphanedParent(): Promise<{ conv: string; runId: string; child: ChildRun }> {
+  it("ensureRun's orphan repair of the parent run leaves its child running", async () => {
     const conv = await createConv(owner, orgId, agentId);
     await postMessage(owner, orgId, conv, "SCENARIO hang-one");
-    const { runId, children } = await parentWaiting(db, conv, 1);
-    const [child] = children as [ChildRun];
-    await childrenIn(children, {});
-    await db
-      .updateTable("runs")
-      .set({ status: "running", waiting_since: null, wait_expires_at: null })
-      .where("id", "=", runId)
-      .execute();
-    return { conv, runId, child };
-  }
-
-  async function expectStopped(conv: string, child: ChildRun) {
-    await allStopped([child.runId]);
-    const results = agentResults(await eventsOf(db, conv));
-    expect(results.map((r) => r.payload)).toEqual([
-      expect.objectContaining({ content: STOPPED, isError: true, step: 1 }),
-    ]);
-    await expectStoppedWithParent(conv, [child]);
-  }
-
-  it("a stop of an orphaned parent writes its open agent call's result and stops the child", async () => {
-    const { conv, runId, child } = await orphanedParent();
-    const res = await owner({
-      method: "POST",
-      url: `/api/v1/orgs/${orgId}/conversations/${conv}/abort`,
-    });
-    expect(res.statusCode, res.body).toBe(202);
-    expect(await runStatus(db, runId)).toBe("aborted");
-    await expectStopped(conv, child);
-  }, 60_000);
-
-  it("ensureRun's orphan repair writes the open agent call's result and stops the child at once", async () => {
-    const { conv, runId, child } = await orphanedParent();
+    await waitForTerminal(db, conv, 1, 20_000);
+    const [child] = (await childRunsOf(db, conv)) as [ChildRun];
+    await childrenIn([child], {});
+    // the parent run is lost: `running` with no job and no lock holder
+    const run = await db
+      .selectFrom("runs")
+      .select("id")
+      .where("conversation_id", "=", conv)
+      .executeTakeFirstOrThrow();
+    await db.updateTable("runs").set({ status: "running" }).where("id", "=", run.id).execute();
     await postMessage(owner, orgId, conv, "after orphan");
     await waitFor(
-      async () => ((await runStatus(db, runId)) === "failed" ? true : null),
+      async () => ((await runStatus(db, run.id)) === "failed" ? true : null),
       10_000,
       "orphan marked failed",
     );
-    // stopped now, not by the 10-minute sweep
-    await expectStopped(conv, child);
-    await waitForTerminal(db, conv, 2, 30_000);
+    // the orphan's run_failed, then the new run's end
+    await waitForTerminal(db, conv, 3, 30_000);
     expect(finalText(await eventsOf(db, conv))).toBe("after orphan done");
+    expect(await runStatus(db, child.runId)).toBe("running");
+    openBarrier("hang");
+    expect((await deliveredFor(conv, [child])).get(child.conversationId)?.text).toBe("hung");
+  }, 60_000);
+});
+
+describe("stopping one sub-agent", () => {
+  it("delivers 'stopped by the user' for it; the others deliver their replies", async () => {
+    const conv = await createConv(owner, orgId, agentId);
+    await postMessage(owner, orgId, conv, "SCENARIO stop-one");
+    await waitForTerminal(db, conv, 1, 20_000);
+    expect(finalText(await eventsOf(db, conv))).toBe("parent done");
+    const children = await childRunsOf(db, conv);
+    const hang = await childWithTask(children, "task-hang");
+    await childrenIn(
+      children,
+      Object.fromEntries(
+        children.map((c) => [c.runId, c.runId === hang.runId ? "running" : "completed"]),
+      ),
+    );
+    const res = await owner({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/conversations/${hang.conversationId}/abort`,
+    });
+    expect(res.statusCode, res.body).toBe(202);
+    const ds = await deliveredFor(conv, children);
+    for (const c of children) {
+      const d = ds.get(c.conversationId);
+      if (c.runId === hang.runId) {
+        expect(d).toMatchObject({ status: "aborted", abortedBy: "user", text: "" });
+      } else {
+        expect(d).toMatchObject({ status: "completed", text: "child ok" });
+      }
+    }
+    const cev = await eventsOf(db, hang.conversationId);
+    expect(ofType(cev, "run_aborted").map((e) => e.payload.byAccountId)).toEqual([ownerId]);
   }, 60_000);
 });
 
@@ -458,30 +396,24 @@ describe("offboarding", () => {
   it("an offboarded member's sub-agents stop", async () => {
     const conv = await createConv(member, orgId, agentId);
     await postMessage(member, orgId, conv, "SCENARIO hang-one");
-    const { runId, children } = await parentWaiting(db, conv, 1);
+    await waitForTerminal(db, conv, 1, 20_000);
+    const children = await childRunsOf(db, conv);
     await childrenIn(children, {});
     const res = await owner({ method: "DELETE", url: `/api/v1/orgs/${orgId}/members/${memberId}` });
     expect(res.statusCode, res.body).toBeLessThan(300);
-    await allStopped([runId, ...children.map((c) => c.runId)]);
-    const events = await eventsOf(db, conv);
-    expect(agentResults(events).map((r) => r.payload.content)).toEqual([STOPPED]);
-    await expectStoppedWithParent(conv, children);
+    await allStopped(children.map((c) => c.runId));
+    const ds = await deliveredFor(conv, children);
+    expect([...ds.values()].map((d) => d.status)).toEqual(["aborted"]);
   }, 60_000);
 
   it("the offboarding sweep stops a former member's sub-agent runs", async () => {
     await subQueue.pause();
     const conv = await createConv(member, orgId, agentId);
     await postMessage(member, orgId, conv, "SCENARIO hang-one");
-    const { runId, children } = await parentWaiting(db, conv, 1);
-    // the parent ended without stopping its child, and the membership went away without the
-    // offboarding steps (a crash between the two): only the offboarding sweep catches the child
-    await finishRun(db, eventLogFor(db, k.app.get<ExtensionContext["bus"]>(KERNEL_BUS)), {
-      conversationId: conv,
-      runId,
-      status: "aborted",
-      consumed: null,
-      event: { type: "run_aborted", payload: { byAccountId: null, reason: "user" } },
-    });
+    await waitForTerminal(db, conv, 1, 20_000);
+    const children = await childRunsOf(db, conv);
+    // the membership went away without the offboarding steps (a crash): only the offboarding
+    // sweep catches the child
     await db.deleteFrom("memberships").where("account_id", "=", memberId).execute();
     expect(await k.app.get(Offboarding).sweep()).toBe(1);
     await subQueue.resume();

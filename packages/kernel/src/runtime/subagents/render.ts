@@ -1,5 +1,5 @@
 import type { EventPayload } from "../../conversations/events.js";
-import { subagentStatusText } from "../../tools/builtins/agent.js";
+import { subagentStatusText } from "./status.js";
 
 type Delivery = EventPayload<"subagent_delivery">;
 
@@ -15,11 +15,14 @@ type Delivery = EventPayload<"subagent_delivery">;
  * Sub-agent <id> ("<description>") completed; its report was already delivered.
  * Sub-agent <id> ("<description>") completed. Final reply:
  * <text>
+ * Sub-agent <id> ("<description>") failed (<code>): <message>
+ * Sub-agent <id> ("<description>") stopped by the user.
  * ```
  *
- * A finish uses `agentResultText`'s status wording (`subagentStatusText`); after a handback only
- * the status itself (up to its first `;`), and without a reply `It produced no reply.` Read only
- * from the payload, so a replay renders it identically.
+ * A finish uses `agentResultText`'s status wording (`subagentStatusText`, with the error code and
+ * who stopped it); after a handback only the status itself (up to its first `;`), and without a
+ * reply `It produced no reply.` A failed finish's `text` is the error message, an aborted one has
+ * none. Read only from the payload, so a replay renders it identically.
  */
 export function renderSubagentDelivery(p: Delivery): string {
   const head = `Sub-agent ${p.subagentId} (${JSON.stringify(p.description)})`;
@@ -29,11 +32,18 @@ export function renderSubagentDelivery(p: Delivery): string {
     case "note":
       return `${head} sent a message:\n${p.text}`;
     case "finished": {
-      const status = subagentStatusText(p.status ?? "completed");
+      const status = subagentStatusText(p.status ?? "completed", {
+        errorCode: p.errorCode,
+        abortedBy: p.abortedBy,
+      });
       if (p.handedBack === true) {
         return `${head} ${status.split(";")[0]}; its report was already delivered.`;
       }
-      return p.text.trim() === ""
+      const text = p.text.trim();
+      if (p.status === "failed")
+        return text === "" ? `${head} ${status}.` : `${head} ${status}: ${text}`;
+      if (p.status === "aborted" || p.status === "timed_out") return `${head} ${status}.`;
+      return text === ""
         ? `${head} ${status}. It produced no reply.`
         : `${head} ${status}. Final reply:\n${p.text}`;
     }

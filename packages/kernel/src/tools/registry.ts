@@ -59,8 +59,9 @@ export interface BuiltinCallContext extends ToolCallContext {
    */
   runDeadline?: number;
   /**
-   * The conversation whose sandbox this call uses (sub-agents spec §10.1): the parent conversation
-   * for a sub-agent's call, the conversation itself otherwise (the default when absent).
+   * The conversation whose sandbox this call uses (sub-agents spec §10.1, agent map spec §6): the
+   * root conversation for a sub-agent's call at any depth, the conversation itself otherwise (the
+   * default when absent).
    */
   sandboxConversationId?: string;
   /** The parent run of a sub-agent's run (absent for a top-level run). */

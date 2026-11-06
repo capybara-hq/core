@@ -2,7 +2,8 @@ import type { AppendEvent, EventLog } from "../../conversations/event-log.js";
 import type { ConversationEvent, EventPayload } from "../../conversations/events.js";
 import type { KernelSchemaDb } from "../../db/kernel-schema.js";
 import { usageTokens } from "../../evals/budget.js";
-import { agentResultText, type SubagentStatus } from "../../tools/builtins/agent.js";
+import { agentResultText } from "../../tools/builtins/agent.js";
+import type { SubagentAbortedBy, SubagentStatus } from "./status.js";
 
 /** Idempotency key of the parent's `subagent_finished` event. */
 export const finishedIdemKey = (childRunId: string) => `subagent_finished:${childRunId}`;
@@ -16,6 +17,11 @@ export interface DispatchRow {
   childRunId: string;
   /** The budget run the dispatch counts against (agent map spec §6); set when read from the row. */
   budgetRunId?: string;
+  /**
+   * A person's fork invocation (phase D, `subagent_dispatches.for_skill`): the parent run waits on
+   * it (`subagents` wait); every other dispatch runs in the background (agent map spec §5.4).
+   */
+  forSkill?: boolean;
 }
 
 const DISPATCH_COLUMNS = [
@@ -25,6 +31,7 @@ const DISPATCH_COLUMNS = [
   "child_conversation_id",
   "child_run_id",
   "budget_run_id",
+  "for_skill",
 ] as const;
 
 const toRow = (r: {
@@ -34,6 +41,7 @@ const toRow = (r: {
   child_conversation_id: string;
   child_run_id: string;
   budget_run_id: string;
+  for_skill: boolean;
 }): DispatchRow => ({
   parentRunId: r.parent_run_id,
   parentCallId: r.parent_call_id,
@@ -41,6 +49,7 @@ const toRow = (r: {
   childConversationId: r.child_conversation_id,
   childRunId: r.child_run_id,
   budgetRunId: r.budget_run_id,
+  forSkill: r.for_skill,
 });
 
 /** The dispatch that started `childRunId`, or null (not a sub-agent run). */
@@ -111,11 +120,13 @@ async function runEvents(
 }
 
 /**
- * The tool result of a finished child run (spec §4.4) and its `subagent_finished` payload, from
- * the child's log only: the status from its terminal event, the reply from its last
+ * The result of a finished child run (spec §4.4) and its `subagent_finished` payload, from the
+ * child's log only: the status from its terminal event, the reply from its last
  * `assistant_message` (text blocks), the tool call count from its `tool_result` events, the usage
  * from its `usage` events (compaction included) and the duration from `run_started` to the
- * terminal event. Null while the run has no terminal event.
+ * terminal event. Null while the run has no terminal event. `content` is the fork report's text
+ * (`agentResultText`); `reply`, `errorMessage` and `abortedBy` are what a background child's
+ * finished `subagent_delivery` carries.
  *
  * `modelGiven`: the parent's call named a `model`; for an org agent, which runs on its own model
  * (§5.4, §5.5), the status line then says `model: the agent's own`.
@@ -123,11 +134,14 @@ async function runEvents(
 export async function childResult(
   eventLog: EventLog,
   row: DispatchRow,
-  /** `forSkill`: a fork invocation's report (no resume hint, see `agentResultText`). */
-  opts: { modelGiven?: boolean; forSkill?: boolean } = {},
+  opts: { modelGiven?: boolean } = {},
 ): Promise<{
   content: string;
   isError: boolean;
+  /** The text of the child's last `assistant_message`. */
+  reply: string;
+  errorMessage?: string;
+  abortedBy?: SubagentAbortedBy;
   finished: EventPayload<"subagent_finished">;
 } | null> {
   const events = await runEvents(eventLog, row.childConversationId, row.childRunId);
@@ -138,7 +152,7 @@ export async function childResult(
   let status: SubagentStatus;
   let errorCode: string | undefined;
   let errorMessage: string | undefined;
-  let abortedBy: "user" | "parent" | undefined;
+  let abortedBy: SubagentAbortedBy | undefined;
   if (terminal.type === "run_finished") status = terminal.payload.reason;
   else if (terminal.type === "run_failed") {
     status = "failed";
@@ -188,10 +202,12 @@ export async function childResult(
     tokens: usageTokens(usage),
     ...(abortedBy !== undefined && { abortedBy }),
     ...(ownModel && { ownModel }),
-    ...(opts.forSkill === true && { noResumeHint: true }),
   });
   return {
     ...text,
+    reply,
+    ...(errorMessage !== undefined && { errorMessage }),
+    ...(abortedBy !== undefined && { abortedBy }),
     finished: {
       subagentId: row.childConversationId,
       childRunId: row.childRunId,

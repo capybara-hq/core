@@ -32,6 +32,7 @@ import {
   waitForEvent,
   waitForTerminal,
 } from "../../helpers/runs.js";
+import { finishedDeliveries } from "../../helpers/subagents.js";
 
 /**
  * Phase C Task 11: sub-agent policies (the parent's current version, then the frozen overlay),
@@ -71,6 +72,15 @@ const RULES: ScriptRule[] = [
     reply: { toolCalls: [{ name: ECHO, input: { text: "same" } }] },
   },
   {
+    // the first child's last step lets the parent dispatch the second one (after the grant)
+    when: {
+      systemIncludes: CHILD,
+      lastUserIncludes: "asker-s1",
+      lastToolResultIncludes: "echo: same",
+    },
+    reply: { text: "sibling done", barrier: { name: "s1", count: 2, timeoutMs: 15_000 } },
+  },
+  {
     when: { systemIncludes: CHILD, lastToolResultIncludes: "echo: same" },
     reply: { text: "sibling done" },
   },
@@ -91,7 +101,10 @@ const RULES: ScriptRule[] = [
       ],
     },
   },
-  { when: { lastToolResultIncludes: "asker done" }, reply: { text: "policy done" } },
+  {
+    when: { lastUserIncludes: "SCENARIO policy", lastToolResultIncludes: "in the background" },
+    reply: { text: "policy done" },
+  },
   {
     when: { lastUserIncludes: "SCENARIO session", assistantTurns: 0 },
     reply: {
@@ -106,6 +119,7 @@ const RULES: ScriptRule[] = [
       toolCalls: [
         agentCall({ description: "Second", prompt: "asker-s2: go", subagent_type: "asker" }),
       ],
+      barrier: { name: "s1", count: 2, timeoutMs: 15_000 },
     },
   },
   { when: { lastUserIncludes: "SCENARIO session", assistantTurns: 2 }, reply: { text: "s done" } },
@@ -113,7 +127,10 @@ const RULES: ScriptRule[] = [
     when: { lastUserIncludes: "SCENARIO hooks", assistantTurns: 0 },
     reply: { toolCalls: [agentCall({ description: "Hooked", prompt: "gp-hooks: echo" })] },
   },
-  { when: { lastToolResultIncludes: "hooks child done" }, reply: { text: "hooks done" } },
+  {
+    when: { lastUserIncludes: "SCENARIO hooks", lastToolResultIncludes: "in the background" },
+    reply: { text: "hooks done" },
+  },
 ];
 
 let pgc: TestContainer;
@@ -280,6 +297,7 @@ describe("policies and approvals of a sub-agent", () => {
     await decide(owner, approval.id);
     await waitForTerminal(db, conv, 1, 30_000);
     expect(finalText(await eventsOf(db, conv))).toBe("policy done");
+    expect((await finishedDeliveries(db, conv)).map((d) => d.text)).toEqual(["asker done"]);
   }, 60_000);
 
   it("a child's approval goes to the starter, appears as subagent_waiting in the parent log and in GET /inbox with parentConversationId", async () => {
@@ -341,6 +359,10 @@ describe("policies and approvals of a sub-agent", () => {
     await decide(member, approval.id);
     await waitForTerminal(db, conv, 1, 30_000);
     expect(finalText(await eventsOf(db, conv))).toBe("policy done");
+    // the child runs as the member who started the parent run (§7)
+    expect(await finishedDeliveries(db, conv)).toMatchObject([
+      { text: "asker done", triggerAccountId: memberId },
+    ]);
   }, 60_000);
 
   it("approve for this conversation on one child covers a sibling's identical call", async () => {
@@ -351,6 +373,7 @@ describe("policies and approvals of a sub-agent", () => {
     await decide(owner, approval.id, "session");
     await waitForTerminal(db, conv, 1, 30_000);
     expect(finalText(await eventsOf(db, conv))).toBe("s done");
+    await finishedDeliveries(db, conv, 2);
 
     const kids = await childrenOf(conv);
     expect(kids).toHaveLength(2);
@@ -383,6 +406,7 @@ describe("hooks and usage reports of a sub-agent", () => {
     const conv = await createConv(owner, orgId, agentId);
     await postMessage(owner, orgId, conv, "SCENARIO hooks");
     await waitForTerminal(db, conv, 1, 30_000);
+    await finishedDeliveries(db, conv);
     const events = await eventsOf(db, conv);
     expect(finalText(events)).toBe("hooks done");
     const [child] = await childrenOf(conv);
@@ -426,7 +450,8 @@ describe("hooks and usage reports of a sub-agent", () => {
     const post = parentLast["tool.postExecute"] as ToolPostHookPayload;
     expect(post).toMatchObject({ conversationId: conv, toolKey: "Agent", callId: call });
     expect(post).not.toHaveProperty("parent");
-    expect(post.content).toContain("hooks child done");
+    // the immediate result of a background dispatch (agent map spec §4.1)
+    expect(post.content).toContain("(running in the background)");
     expect(post.durationMs).toBeGreaterThanOrEqual(0);
 
     const audits = await db
@@ -444,6 +469,7 @@ describe("hooks and usage reports of a sub-agent", () => {
     const conv = await createConv(owner, orgId, agentId);
     await postMessage(owner, orgId, conv, "SCENARIO hooks");
     await waitForTerminal(db, conv, 1, 30_000);
+    await finishedDeliveries(db, conv);
     const [child] = await childrenOf(conv);
     const run = await db
       .selectFrom("runs")

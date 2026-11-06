@@ -41,9 +41,10 @@ import {
   session,
   startKernel,
   type TestKernel,
+  waitFor,
   waitForTerminal,
 } from "../../helpers/runs.js";
-import { childRunsOf, parentWaiting } from "../../helpers/subagents.js";
+import { childRunsOf, finishedDeliveries } from "../../helpers/subagents.js";
 
 /**
  * Phase C Task 10: the per-run sub-agent limits (concurrency, dispatch count, tokens), the
@@ -98,15 +99,11 @@ const RULES: ScriptRule[] = [
   },
   {
     when: { lastUserIncludes: "SCENARIO many", assistantTurns: 0 },
-    reply: { toolCalls: calls("m1-", 20) },
+    reply: { toolCalls: calls("m1-", 3) },
   },
   {
     when: { lastUserIncludes: "SCENARIO many", assistantTurns: 1 },
-    reply: { toolCalls: calls("m2-", 20) },
-  },
-  {
-    when: { lastUserIncludes: "SCENARIO many", assistantTurns: 2 },
-    reply: { toolCalls: calls("m3-", 11) },
+    reply: { toolCalls: calls("m2-", 3) },
   },
   {
     when: { lastUserIncludes: "SCENARIO usage", assistantTurns: 0 },
@@ -121,7 +118,14 @@ const RULES: ScriptRule[] = [
     reply: { toolCalls: [call("big-1")] },
   },
   {
+    // a call that asks: the parent waits on its approval while the child finishes
     when: { lastUserIncludes: "SCENARIO cap", assistantTurns: 1 },
+    reply: {
+      toolCalls: [{ name: "Write", input: { file_path: "/workspace/p.txt", content: "p" } }],
+    },
+  },
+  {
+    when: { lastUserIncludes: "SCENARIO cap", assistantTurns: 2 },
     reply: { toolCalls: [call("big-2")] },
   },
   { when: { lastToolResultIncludes: "agentId" }, reply: { text: "parent done" } },
@@ -237,6 +241,9 @@ async function converse(text: string, timeoutMs = 30_000) {
   const conv = await createConv(owner, orgId, agentId);
   await postMessage(owner, orgId, conv, text);
   await waitForTerminal(db, conv, 1, timeoutMs);
+  // the children run in the background: wait for every one's finished delivery
+  const dispatched = ofType(await eventsOf(db, conv), "subagent_dispatched").length;
+  if (dispatched > 0) await finishedDeliveries(db, conv, dispatched, timeoutMs);
   const run = await db
     .selectFrom("runs")
     .select(["id", "subagent_tokens_used"])
@@ -449,15 +456,16 @@ describe("concurrency", () => {
     await subQueue.pause();
     const conv = await createConv(owner, orgId, agentId);
     await postMessage(owner, orgId, conv, "SCENARIO five");
-    await parentWaiting(db, conv, 3);
-    // the refusals are written before the wait, the dispatched calls stay open
-    const waiting = agentResults(await eventsOf(db, conv));
-    expect(waiting.map((r) => [r.payload.content, r.payload.isError])).toEqual([
-      [AGENT_REFUSALS.tooManyConcurrent(3), true],
-      [AGENT_REFUSALS.tooManyConcurrent(3), true],
+    // the parent never waits: its run ends while its three children are still queued
+    await waitForTerminal(db, conv, 1, 30_000);
+    const queued = agentResults(await eventsOf(db, conv));
+    expect(queued.map((r) => r.payload.isError)).toEqual([false, false, false, true, true]);
+    expect(queued.slice(3).map((r) => r.payload.content)).toEqual([
+      AGENT_REFUSALS.tooManyConcurrent(3),
+      AGENT_REFUSALS.tooManyConcurrent(3),
     ]);
     await subQueue.resume();
-    await waitForTerminal(db, conv, 1, 30_000);
+    await finishedDeliveries(db, conv, 3);
     const events = await eventsOf(db, conv);
     expect(finalText(events)).toBe("parent done");
     expect(ofType(events, "subagent_dispatched")).toHaveLength(3);
@@ -472,7 +480,7 @@ describe("concurrency", () => {
     // the description names the limit
     const req = capture.sent.find((r) => !isChildRequest(r)) as ModelRequest;
     expect(req.tools?.find((t) => t.name === "Agent")?.description).toContain(
-      "(at most 3 at a time)",
+      "(at most 3 of your sub-agents run at a time)",
     );
   }, 60_000);
 
@@ -481,40 +489,41 @@ describe("concurrency", () => {
     expect(agentResults(before.events).every((r) => !r.payload.isError)).toBe(true);
     const first = capture.sent.find((r) => !isChildRequest(r)) as ModelRequest;
     expect(first.tools?.find((t) => t.name === "Agent")?.description).toContain(
-      "(at most 4 at a time)",
+      "(at most 4 of your sub-agents run at a time)",
     );
     await override({ maxConcurrentPerConversation: 1 });
     capture.reset();
     await subQueue.pause();
     const conv = await createConv(owner, orgId, agentId);
     await postMessage(owner, orgId, conv, "SCENARIO two");
-    await parentWaiting(db, conv, 1);
-    await subQueue.resume();
     await waitForTerminal(db, conv, 1, 30_000);
+    await subQueue.resume();
+    await finishedDeliveries(db, conv, 1);
     const events = await eventsOf(db, conv);
-    expect(agentResults(events).map((r) => r.payload.isError)).toEqual([true, false]);
-    expect(agentResults(events)[0]?.payload.content).toBe(AGENT_REFUSALS.tooManyConcurrent(1));
+    expect(agentResults(events).map((r) => r.payload.isError)).toEqual([false, true]);
+    expect(agentResults(events)[1]?.payload.content).toBe(AGENT_REFUSALS.tooManyConcurrent(1));
     const req = capture.sent.find((r) => !isChildRequest(r)) as ModelRequest;
     expect(req.tools?.find((t) => t.name === "Agent")?.description).toContain(
-      "(at most 1 at a time)",
+      "(at most 1 of your sub-agents run at a time)",
     );
   }, 60_000);
 });
 
 describe("dispatch count", () => {
-  it("the 51st dispatch of a run is refused", async () => {
-    await override({ maxConcurrentPerConversation: 20 });
-    const { conv, events } = await converse("SCENARIO many", 120_000);
+  it("the dispatch past maxDispatchesPerRun is refused", async () => {
+    // children of the first response may still run during the second: concurrency allows both
+    await override({ maxConcurrentPerConversation: 20, maxDispatchesPerRun: 5 });
+    const { conv, events } = await converse("SCENARIO many", 60_000);
     expect(finalText(events)).toBe("parent done");
-    expect(await childRunsOf(db, conv)).toHaveLength(50);
-    // exactly one refusal: the last call of the third response
+    expect(await childRunsOf(db, conv)).toHaveLength(5);
+    // exactly one refusal: the last call of the second response
     const refused = agentResults(events).filter((r) => r.payload.isError);
-    expect(refused.map((r) => r.payload.content)).toEqual([AGENT_REFUSALS.tooManyDispatches(50)]);
-    const third = ofType(events, "assistant_message")[2]?.payload.content.flatMap((b) =>
+    expect(refused.map((r) => r.payload.content)).toEqual([AGENT_REFUSALS.tooManyDispatches(5)]);
+    const second = ofType(events, "assistant_message")[1]?.payload.content.flatMap((b) =>
       b.type === "tool_call" ? [b.id] : [],
     );
-    expect(refused[0]?.payload.callId).toBe(third?.at(-1));
-  }, 180_000);
+    expect(refused[0]?.payload.callId).toBe(second?.at(-1));
+  }, 90_000);
 });
 
 describe("tree budget", () => {
@@ -615,20 +624,56 @@ describe("tokens", () => {
     // no request after the cap
     expect(ofType(cev, "model_call")).toHaveLength(1);
     expect(ofType(events, "subagent_finished")[0]?.payload.status).toBe("budget");
-    const [result] = agentResults(events);
-    expect(result?.payload.isError).toBe(true);
-    expect(result?.payload.content).toMatch(
-      /^working\n\n\[agentId: [^ ]+ · stopped: token budget used up · 1 tool call · /,
-    );
+    // its finish reaches the parent as a delivery with what it replied before the cap
+    expect(ofType(events, "subagent_delivery").map((d) => d.payload)).toMatchObject([
+      { kind: "finished", status: "budget", text: "working" },
+    ]);
   }, 60_000);
 
   it("a dispatch at the cap is refused", async () => {
     await override({ maxTokensPerRun: 10_000 });
-    const { conv, events } = await converse("SCENARIO cap");
+    const save = await owner({
+      method: "PATCH",
+      url: `/api/v1/orgs/${orgId}/agents/${agentId}`,
+      payload: {
+        definition: {
+          name: "Lead",
+          instructions: "Lead the work.",
+          model: { provider: "model-script", model: "script-1" },
+          tools: ["Agent", "Write"].map((name) => ({ kind: "builtin", name })),
+          toolPolicies: { Write: "ask" },
+        },
+      },
+    });
+    expect(save.statusCode, save.body).toBe(200);
+    const conv = await createConv(owner, orgId, agentId);
+    await postMessage(owner, orgId, conv, "SCENARIO cap");
+    // the first child finishes (its tokens counted) while the parent waits on its approval
+    await finishedDeliveries(db, conv, 1);
+    const approval = await waitFor(
+      () =>
+        db
+          .selectFrom("approvals")
+          .select("id")
+          .where("conversation_id", "=", conv)
+          .where("status", "=", "pending")
+          .executeTakeFirst(),
+      20_000,
+      "the parent's approval",
+    );
+    const decided = await owner({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/approvals/${approval.id}/decision`,
+      payload: { decision: "approve", scope: "once" },
+    });
+    expect(decided.statusCode, decided.body).toBe(200);
+    await waitForTerminal(db, conv, 1, 30_000);
+    const events = await eventsOf(db, conv);
     expect(finalText(events)).toBe("parent done");
     expect(await childRunsOf(db, conv)).toHaveLength(1);
     const results = agentResults(events);
-    expect(results[0]?.payload.content).toMatch(/^big done\n\n/);
+    expect(results[0]?.payload.content).toContain("(running in the background)");
+    expect(ofType(events, "subagent_delivery").map((d) => d.payload.text)).toEqual(["big done"]);
     expect(results[1]?.payload).toMatchObject({
       isError: true,
       content: AGENT_REFUSALS.budget(10_000),

@@ -45,6 +45,7 @@ import {
   waitFor,
   waitForTerminal,
 } from "../helpers/runs.js";
+import { finishedDeliveries } from "../helpers/subagents.js";
 import { seedConversation } from "../helpers/tool-fixtures.js";
 
 /**
@@ -85,7 +86,7 @@ const RULES: ScriptRule[] = [
       ],
     },
   },
-  { when: { lastToolResultIncludes: "launched" }, reply: { text: "parent done" } },
+  { when: { lastToolResultIncludes: "in the background" }, reply: { text: "parent done" } },
   // a child that starts a task, then waits for the approval of a Write
   {
     when: { systemIncludes: CHILD, lastUserIncludes: "bg-wait", assistantTurns: 0 },
@@ -755,6 +756,8 @@ describe("stopping", () => {
       used.push(conv);
       await postMessage(owner, orgId, conv, "SCENARIO bg");
       await waitForTerminal(db, conv, 1, 30_000);
+      // the child runs in the background (agent map spec §4.1): wait for its finish
+      await finishedDeliveries(db, conv, 1);
       const child = await db
         .selectFrom("conversations")
         .select("id")
@@ -775,7 +778,7 @@ describe("stopping", () => {
       expect(await alive({ orgId, conversationId: conv }, row)).toBe(false);
     }, 60_000);
 
-    it("a parent stop that aborts a child waiting for approval stops the child's task", async () => {
+    it("stopping a child waiting for approval stops the child's task", async () => {
       const conv = await createConv(owner, orgId, agentId);
       used.push(conv);
       await postMessage(owner, orgId, conv, "SCENARIO wait");
@@ -803,9 +806,10 @@ describe("stopping", () => {
       );
       const [task] = await store.listFor([child.id]);
       expect(task?.status).toBe("running");
+      // the parent's run ended after the dispatch; the child is stopped on its own
       const res = await owner({
         method: "POST",
-        url: `/api/v1/orgs/${orgId}/conversations/${conv}/abort`,
+        url: `/api/v1/orgs/${orgId}/conversations/${child.id}/abort`,
       });
       expect(res.statusCode, res.body).toBe(202);
       const row = await waitFor(

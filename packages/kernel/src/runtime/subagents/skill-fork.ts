@@ -12,8 +12,9 @@ import { type DispatchDeps, dispatchSubagent } from "./dispatch.js";
 /**
  * Forked skills (phase D spec §6): a person's invocation of a `context: fork` skill starts its own
  * run (the run boundary, {@link forkBoundary}), whose `prepare` node dispatches the sub-agent
- * through phase C's `dispatchSubagent` before any model call and waits on it like an `Agent` call
- * (`subagents` wait `sa-<runId>-0`). When the child has ended, `prepare` appends the model-visible
+ * through phase C's `dispatchSubagent` before any model call and waits on it (`subagents` wait
+ * `sa-<runId>-0`; the dispatch row has `for_skill`, agent map spec §5.4: a fork stays in the
+ * foreground while `Agent` calls run in the background). When the child has ended, `prepare` appends the model-visible
  * `skill_fork_result` and the parent's model answers. Every terminal path of the run (and the wait
  * sweep) pairs a fork invocation without a report ({@link pairStoppedForks}), so the log never holds
  * a fork lead whose report is missing before the next model call.
@@ -156,7 +157,7 @@ export async function advanceSkillForks(
   const callId = skillCallId(seq);
   const row = await dispatchOfCall(d.db, ctx.runId, callId);
   if (row) {
-    const r = await childResult(d.eventLog, row, { forSkill: true });
+    const r = await childResult(d.eventLog, row);
     if (!r) return ctx.signal.aborted ? { kind: "aborted" } : suspend(d, ctx);
     await report(r.content, row, [finishedEvent(row, r.finished)]);
     return ready;
@@ -305,6 +306,7 @@ export async function pairStoppedForks(
       "parent_conversation_id",
       "child_conversation_id",
       "child_run_id",
+      "budget_run_id",
     ])
     .where("parent_run_id", "=", runId)
     .where("parent_call_id", "=", callId)
@@ -319,6 +321,8 @@ export async function pairStoppedForks(
       parentConversationId: d.parent_conversation_id,
       childConversationId: d.child_conversation_id,
       childRunId: d.child_run_id,
+      budgetRunId: d.budget_run_id,
+      forSkill: true,
     };
     const child = await t
       .selectFrom("runs")
@@ -328,7 +332,7 @@ export async function pairStoppedForks(
     // a child that already ended keeps its own result (its log is committed)
     const ended =
       child !== undefined && TERMINAL_STATUSES.has(child.status)
-        ? await childResult(eventLog, row, { forSkill: true })
+        ? await childResult(eventLog, row)
         : null;
     if (ended) events.push(finishedEvent(row, ended.finished));
     events.push(

@@ -14,6 +14,7 @@ import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import { ProviderRegistry } from "../runtime/providers.js";
 import { RunControl as RunControlService } from "../runtime/run-control.js";
+import { rootConversationOf } from "../runtime/subagents/child.js";
 import { type RenderedInvocation, SkillInvoker } from "../skills/invoke.js";
 import { ConnectorContent } from "../tools/connector-content.js";
 import { ConversationAccess, parentReachable } from "./access.js";
@@ -864,8 +865,9 @@ export class ConversationsService {
   }
 
   /**
-   * The conversation whose sandbox `conversationId` works in: a sub-agent's is its parent's
-   * (sub-agents spec §10.1), any other its own. Call only after an access check.
+   * The conversation whose sandbox `conversationId` works in: a sub-agent's is its root
+   * conversation's at any depth (sub-agents spec §10.1, agent map spec §6), any other its own. Call
+   * only after an access check.
    */
   async sandboxConversationOf(orgId: string, conversationId: string): Promise<string> {
     const row = await this.db
@@ -874,7 +876,8 @@ export class ConversationsService {
       .where("id", "=", conversationId)
       .where("org_id", "=", orgId)
       .executeTakeFirst();
-    return row?.parent_conversation_id ?? conversationId;
+    if (!row?.parent_conversation_id) return conversationId;
+    return rootConversationOf(this.db.db, row.parent_conversation_id);
   }
 
   /** 读事件（先做 `get` 的可见性判定）；顺带不阻塞地 {@link kickRun}。 */

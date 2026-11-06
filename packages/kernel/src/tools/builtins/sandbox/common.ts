@@ -398,7 +398,7 @@ export async function inSandbox<T>(
   }
 }
 
-/** The conversation whose sandbox a call uses (the parent's for a sub-agent). */
+/** The conversation whose sandbox a call uses (the root conversation's for a sub-agent). */
 export const sandboxConversationOf = (ctx: BuiltinCallContext): string =>
   ctx.sandboxConversationId ?? ctx.conversationId;
 

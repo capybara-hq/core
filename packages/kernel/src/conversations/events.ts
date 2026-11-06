@@ -772,22 +772,39 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
    * `childRunId` finished. **Model-visible**: absorbed like an interjection and rendered as a system
    * message (`renderSubagentDelivery`). A finish after a handback carries `text: ""` and
    * `handedBack: true` and renders as one status line; a finish without one carries the child's
-   * final reply. `triggerAccountId`: the child run's trigger account, the one a wake runs as (§7).
+   * final reply, a failed finish its error message (`errorCode` the code), an aborted one no text
+   * (`abortedBy` who stopped it), with `subagent_finished`'s vocabulary. `status` is present exactly
+   * on `kind: "finished"`. `triggerAccountId`: the child run's trigger account, the one a wake runs
+   * as (§7).
    */
   ev(
     "subagent_delivery",
-    z.object({
-      subagentId: z.string(),
-      childRunId: z.string(),
-      description: z.string(),
-      kind: z.enum(["report", "note", "finished"]),
-      text: z.string().max(200_000),
-      /** `kind: "finished"` only. */
-      status: SubagentFinishStatusSchema.optional(),
-      /** `kind: "finished"` only: a report was handed back before the run finished. */
-      handedBack: z.boolean().optional(),
-      triggerAccountId: z.string(),
-    }),
+    z
+      .object({
+        subagentId: z.string(),
+        childRunId: z.string(),
+        description: z.string(),
+        kind: z.enum(["report", "note", "finished"]),
+        text: z.string().max(200_000),
+        /** `kind: "finished"` only (required there). */
+        status: SubagentFinishStatusSchema.optional(),
+        /** `kind: "finished"` only: a report was handed back before the run finished. */
+        handedBack: z.boolean().optional(),
+        /** `status: "failed"` only: the child run's error code. */
+        errorCode: z.string().optional(),
+        /** `status: "aborted"` only: a person stopped it, or the kernel on its parent's behalf. */
+        abortedBy: z.enum(["user", "parent"]).optional(),
+        triggerAccountId: z.string(),
+      })
+      .superRefine((p, ctx) => {
+        if ((p.kind === "finished") !== (p.status !== undefined)) {
+          ctx.addIssue({
+            code: "custom",
+            path: ["status"],
+            message: "status is required on a finished delivery and allowed only there",
+          });
+        }
+      }),
   ),
   /**
    * Phase D (spec §6.3): the report of the sub-agent that ran a person's fork invocation

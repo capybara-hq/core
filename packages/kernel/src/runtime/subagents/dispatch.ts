@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Logger } from "@capybara-hq/plugin-sdk";
 import { sql } from "kysely";
-import { type AgentDefinition, normalizeStoredDefinition } from "../../agents/definition.js";
+import type { AgentDefinition } from "../../agents/definition.js";
 import type { EventLog } from "../../conversations/event-log.js";
 import type { ConversationEvent, EventPayload } from "../../conversations/events.js";
 import type { ConversationKind, KernelSchemaDb } from "../../db/kernel-schema.js";
@@ -9,7 +9,12 @@ import { audit } from "../../identity/audit.js";
 import type { KernelConfigService } from "../../infra/config/kernel-config.service.js";
 import type { ModelPurposesService } from "../../models/purposes.js";
 import { forkAgentUnknownText } from "../../skills/invoke.js";
-import { AGENT_REFUSALS, type AgentToolInputT } from "../../tools/builtins/agent.js";
+import {
+  AGENT_REFUSALS,
+  AGENT_TOOL,
+  type AgentToolInputT,
+  agentStartedText,
+} from "../../tools/builtins/agent.js";
 import type { ToolStepContext } from "../../tools/pipeline.js";
 import type { ProviderRegistry } from "../providers.js";
 import { ACTIVE_RUN_STATUSES, type RunJobData, runJobId } from "../run-jobs.js";
@@ -17,7 +22,6 @@ import {
   type CheckedOrgAgent,
   effectiveDefinition,
   type FollowUpNarrowing,
-  narrowFollowUp,
   SubagentTypeGoneError,
 } from "./definition.js";
 import { subagentLimits } from "./limits.js";
@@ -57,6 +61,12 @@ export interface DispatchArgs {
   callId: string;
   input: AgentToolInputT;
   forSkill?: SkillForkDispatch;
+  /**
+   * The `Agent` call's own record (not for a fork invocation): the logged key its `tool_result`
+   * keeps (the rc `agent` for a call logged before the rename), the `tool.called` audit's
+   * authorization fields, and when the pipeline started it (the audit's duration).
+   */
+  call?: { toolKey: string; authorization: Record<string, unknown>; startedAt: number };
 }
 
 /**
@@ -69,7 +79,13 @@ export type ChildWriter = (
 ) => Promise<ConversationEvent | null>;
 
 export type DispatchOutcome =
-  | { kind: "dispatched"; childRunId: string }
+  | {
+      kind: "dispatched";
+      childRunId: string;
+      childConversationId: string;
+      /** The call's immediate result (`agentStartedText`). */
+      content: string;
+    }
   | { kind: "refused"; content: string };
 
 const refused = (content: string): DispatchOutcome => ({ kind: "refused", content });
@@ -126,21 +142,21 @@ export interface DispatchPlan {
 }
 
 /**
- * Dispatches the sub-agent of one `Agent` call (spec §7.1), after the pipeline's validation,
- * policy, approval and `tool.preExecute` stages. A new sub-agent: resolves its type and effective
- * definition, then in one transaction (holding the parent run's row lock, so the dispatches of one
- * run serialize) inserts the child conversation, appends `subagent_started` and the task message,
- * inserts the child run (`queued`) and the `subagent_dispatches` row, appends `subagent_dispatched`
- * to the parent and audits `subagent.dispatched`. A `resume` appends the follow-up message and
- * starts the child's next run the same way. After commit the child run is enqueued; a failed
- * enqueue only logs (the dispatch is durable, the wait sweep re-enqueues it).
+ * Dispatches the sub-agent of one `Agent` call (spec §7.1, agent map spec §4.1), after the
+ * pipeline's validation, policy, approval and `tool.preExecute` stages: resolves its type and
+ * effective definition, then in one transaction (holding the parent run's row lock, so the
+ * dispatches of one run serialize) inserts the child conversation, appends `subagent_started` and
+ * the task message, inserts the child run (`queued`) and the `subagent_dispatches` row, appends
+ * `subagent_dispatched` and the call's `tool_result` ({@link agentStartedText}: the sub-agent runs
+ * in the background) to the parent and audits `subagent.dispatched` and `tool.called`. After
+ * commit the child run is enqueued; a failed enqueue only logs (the dispatch is durable, the wait
+ * sweep re-enqueues it). A fork invocation (`forSkill`) writes no `tool_result`: its run waits on
+ * the child (`advanceSkillForks`).
  *
  * Refusals (§4.5) start nothing: a call from a run at `subagents.maxDepth` (agent map spec §4.1:
  * its definition has no `Agent`, so only a forged call or a lowered limit gets here), an unknown
- * type, an org agent that fails one of its gates ({@link orgAgentGates}, checked at every level,
- * dispatch and follow-up; audited `subagent.refused`), `resume` with `subagent_type` / `model`, a `resume` id that is not a
- * sub-agent of this conversation (whatever it is otherwise: no detail about other conversations),
- * or one whose run is still active.
+ * type, or an org agent that fails one of its gates ({@link orgAgentGates}, checked at every
+ * level; audited `subagent.refused`).
  */
 export async function dispatchSubagent(
   d: DispatchDeps,
@@ -156,12 +172,6 @@ export async function dispatchSubagent(
   const { maxDepth } = await subagentLimits(d.db, d.config, ctx.orgId);
   const childDepth = runDepth(ctx) + 1;
   if (childDepth > maxDepth) return refused(AGENT_REFUSALS.depthLimit(maxDepth));
-  if (input.resume !== undefined) {
-    if (input.subagent_type !== undefined || input.model !== undefined) {
-      return refused(AGENT_REFUSALS.resumeWithType);
-    }
-    return resume(d, { ...a, id: input.resume });
-  }
   const requested = input.subagent_type ?? "general-purpose";
   const unknown = (types: RosterEntry[]) =>
     refused(
@@ -288,96 +298,6 @@ export async function dispatchSubagent(
 }
 
 /**
- * A follow-up to an existing sub-agent of this conversation (§4.2 `resume`). It keeps the frozen
- * definition's instructions and model (replay), but is checked against what the parent may use
- * now (final review I1): a `general` / inline / plugin child's type must still be in the roster
- * of the dispatching run's version (a plugin template by its template id), else the call is
- * refused as an unknown type; an org agent child passes its gates. Its tools and org skills are
- * intersected with the current version ({@link narrowFollowUp}: the dispatching run's version,
- * or the org agent's current version as the gates read it under the lock), and the result is
- * recorded on the follow-up's task message for the run and for replay.
- */
-async function resume(
-  d: DispatchDeps,
-  a: { ctx: ToolStepContext; callId: string; input: AgentToolInputT; id: string },
-): Promise<DispatchOutcome> {
-  const { ctx } = a;
-  const child = await d.db
-    .selectFrom("conversations")
-    .select(["id", "subagent_type"])
-    .where("id", "=", a.id)
-    .where("org_id", "=", ctx.orgId)
-    .where("kind", "=", "subagent")
-    .where("parent_conversation_id", "=", ctx.conversationId)
-    .executeTakeFirst();
-  if (!child) return refused(AGENT_REFUSALS.noSuchAgent(a.id));
-  const started = await d.eventLog.findByIdem(child.id, "subagent_started");
-  if (started?.type !== "subagent_started") return refused(AGENT_REFUSALS.noSuchAgent(a.id));
-  const { template } = started.payload;
-  const agentType = child.subagent_type ?? started.payload.agentType;
-  // an org agent's gates hold for every follow-up too (§5.5); it keeps its frozen version
-  if (template.source === "agent") {
-    const gates = await orgAgentGates(d.db, a, template.id ?? "", agentType, true);
-    if ("refused" in gates) return gates.refused;
-  } else {
-    const roster = await resolveRoster(d.db, ctx.orgId, ctx.agent);
-    const entry =
-      template.source === "plugin"
-        ? roster.find((e) => e.source === "plugin" && e.templateId === template.id)
-        : findType(roster, agentType);
-    if (entry?.source !== template.source) {
-      return refused(
-        AGENT_REFUSALS.unknownType(
-          agentType,
-          roster.map((e) => e.type),
-        ),
-      );
-    }
-  }
-  const frozen = normalizeStoredDefinition(started.payload.definition);
-  const plan: DispatchPlan = {
-    childConversationId: child.id,
-    agentType,
-    source: template.source,
-    agentId: template.source === "agent" ? (template.id ?? "") : ctx.agentId,
-    agentVersion:
-      template.source === "agent" ? (template.version ?? ctx.agentVersion) : ctx.agentVersion,
-    resumed: true,
-    model: started.payload.definition.model,
-    tierFallback: false,
-  };
-  return commit(d, a, plan, async (t, checked) => {
-    const current = template.source === "agent" ? checked?.definition : ctx.agent;
-    if (current === undefined) throw new Error("org agent follow-up without its checked version");
-    const activeRun = () =>
-      t
-        .selectFrom("runs")
-        .select("id")
-        .where("conversation_id", "=", child.id)
-        .where("status", "in", ACTIVE_RUN_STATUSES)
-        .executeTakeFirst();
-    // An active child is refused before its row is locked: a running child's token append locks
-    // its conversation row and then this parent run's row, which `commit` already holds, so
-    // waiting for the child's row here would be a lock-order cycle (review I1). The parent row
-    // lock serializes this parent's dispatches, so an earlier follow-up's run is visible here.
-    if (await activeRun()) return null;
-    // the child's row lock serializes follow-ups to one sub-agent; no run holds it now, so it is
-    // never held by an append waiting for the parent row
-    await t
-      .selectFrom("conversations")
-      .select("id")
-      .where("id", "=", child.id)
-      .forUpdate()
-      .executeTakeFirst();
-    if (await activeRun()) return null;
-    const [task] = await d.eventLog.appendIn(child.id, [
-      taskMessage(ctx, a.callId, a.input.prompt, narrowFollowUp(frozen, current)),
-    ]);
-    return task as ConversationEvent;
-  }).then((r) => r ?? refused(AGENT_REFUSALS.stillRunning(a.id)));
-}
-
-/**
  * The gates of an org agent sub-agent (§5.5) for this call: the allowlist of the parent agent's
  * **current** version (R5), the agent's `dispatchable`, its visibility to the person who started
  * the parent run, and not deleted. A refusal is audited `subagent.refused` and answers with the
@@ -462,12 +382,13 @@ export type DispatchCommit =
   | {
       kind: "existing";
       childRunId: string;
+      childConversationId: string;
       requeue: { conversationId: string; seq: number } | null;
     }
   | { kind: "stopped" }
   | { kind: "limit"; content: string }
   | { kind: "gate"; outcome: DispatchOutcome }
-  | { kind: "written"; childRunId: string; childSeq: number; parentSeq: number };
+  | { kind: "written"; childRunId: string; childSeq: number; parentSeq: number; content: string };
 
 /**
  * {@link commit}'s transaction (run by `SubagentsService.commitDispatch`, `d.db` its handle).
@@ -505,9 +426,17 @@ export async function commitDispatchIn(
     .where("sd.parent_call_id", "=", callId)
     .executeTakeFirst();
   if (existing) {
+    if (a.forSkill === undefined) {
+      // written with the first dispatch; a call dispatched before `Agent` ran in the background
+      // (a foreground wait) gets its result now, so the log never keeps it unpaired
+      await d.eventLog.appendIn(ctx.conversationId, [
+        agentResultEvent(ctx, callId, a.call?.toolKey, existing.child_conversation_id),
+      ]);
+    }
     return {
       kind: "existing" as const,
       childRunId: existing.child_run_id,
+      childConversationId: existing.child_conversation_id,
       // still queued: the first holder may have died before its enqueue (review M4)
       requeue:
         existing.status === "queued" && existing.trigger_seq !== null
@@ -575,9 +504,12 @@ export async function commitDispatchIn(
       child_run_id: childRunId,
       resumed: plan.resumed,
       budget_run_id: budgetRunId,
+      for_skill: a.forSkill !== undefined,
     })
     .execute();
-  const [dispatched] = await d.eventLog.appendIn(ctx.conversationId, [
+  // an org agent runs on its own model (§5.4): a `model` on the call was ignored
+  const ownModel = plan.source === "agent" && input.model !== undefined;
+  const parentEvents = await d.eventLog.appendIn(ctx.conversationId, [
     {
       type: "subagent_dispatched",
       runId: ctx.runId,
@@ -595,6 +527,11 @@ export async function commitDispatchIn(
         ...(a.forSkill !== undefined && { invokedSeq: a.forSkill.seq }),
       },
     },
+    // an `Agent` call's result is immediate (agent map spec §4.1): the sub-agent works in the
+    // background and reports through `subagent_delivery`; a fork invocation has no tool call
+    ...(a.forSkill === undefined
+      ? [agentResultEvent(ctx, callId, a.call?.toolKey, plan.childConversationId, ownModel)]
+      : []),
   ]);
   await audit(t, {
     actorAccountId: ctx.accountId,
@@ -615,13 +552,53 @@ export async function commitDispatchIn(
       childRunId,
     },
   });
+  if (a.forSkill === undefined) {
+    await audit(t, {
+      actorAccountId: ctx.accountId,
+      orgId: ctx.orgId,
+      action: "tool.called",
+      target: ctx.conversationId,
+      detail: {
+        toolKey: AGENT_TOOL,
+        isError: false,
+        durationMs: a.call === undefined ? null : Math.max(0, Date.now() - a.call.startedAt),
+        agentId: ctx.agentId,
+        agentVersion: ctx.agentVersion,
+        conversationId: ctx.conversationId,
+        runId: ctx.runId,
+        callId,
+        ...a.call?.authorization,
+      },
+    });
+  }
   return {
     kind: "written" as const,
     childRunId,
     childSeq: task.seq,
-    parentSeq: (dispatched as ConversationEvent).seq,
+    parentSeq: Math.max(...parentEvents.map((e) => e.seq)),
+    content: agentStartedText(plan.childConversationId, { ownModel }),
   };
 }
+
+/** An `Agent` call's immediate `tool_result` ({@link agentStartedText}), idempotent by the call. */
+const agentResultEvent = (
+  ctx: ToolStepContext,
+  callId: string,
+  toolKey: string | undefined,
+  childConversationId: string,
+  ownModel = false,
+) => ({
+  type: "tool_result" as const,
+  runId: ctx.runId,
+  idemKey: `tool_result:${ctx.runId}:${callId}`,
+  payload: {
+    step: ctx.step,
+    callId,
+    toolKey: toolKey ?? AGENT_TOOL,
+    content: agentStartedText(childConversationId, { ownModel }),
+    isError: false,
+  },
+});
 
 async function commit(
   d: DispatchDeps,
@@ -653,7 +630,12 @@ async function commit(
           }),
         );
     }
-    return { kind: "dispatched", childRunId: out.childRunId };
+    return {
+      kind: "dispatched",
+      childRunId: out.childRunId,
+      childConversationId: out.childConversationId,
+      content: agentStartedText(out.childConversationId),
+    };
   }
   // the result is never read: the run is over
   if (out.kind === "stopped") return refused(AGENT_REFUSALS.notAvailableHere);
@@ -673,7 +655,12 @@ async function commit(
     // the dispatch is committed: the wait sweep re-enqueues the queued child run
     d.log.error("cannot enqueue sub-agent run; the sweep retries", { childRunId, jobId, err });
   }
-  return { kind: "dispatched", childRunId };
+  return {
+    kind: "dispatched",
+    childRunId,
+    childConversationId: plan.childConversationId,
+    content: out.content,
+  };
 }
 
 /**

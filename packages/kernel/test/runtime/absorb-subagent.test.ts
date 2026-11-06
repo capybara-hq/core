@@ -2,6 +2,7 @@ import type { ModelMessage } from "@capybara-hq/plugin-sdk";
 import { describe, expect, it } from "vitest";
 import {
   type ConversationEvent,
+  ConversationEventSchema,
   type EventPayload,
   isAbsorbable,
 } from "../../src/conversations/events.js";
@@ -114,9 +115,9 @@ describe("renderSubagentDelivery", () => {
     expect(fin("max_steps")).toContain(statusOf("max_steps"));
     expect(fin("budget")).toBe(`${head} stopped: token budget used up. Final reply:\npartial`);
     expect(fin("budget")).toContain(statusOf("budget"));
-    expect(fin("aborted", "")).toBe(`${head} stopped by the user. It produced no reply.`);
+    expect(fin("aborted", "")).toBe(`${head} stopped by the user.`);
     expect(fin("aborted", "")).toContain(statusOf("aborted"));
-    expect(fin("failed", "")).toBe(`${head} failed. It produced no reply.`);
+    expect(fin("failed", "")).toBe(`${head} failed.`);
     expect(fin("failed", "")).toContain(statusOf("failed"));
     // after a handback only the status itself, without the partial-reply caveat
     expect(
@@ -128,6 +129,54 @@ describe("renderSubagentDelivery", () => {
         handedBack: true,
       }),
     ).toBe(`${head} stopped at the step limit; its report was already delivered.`);
+  });
+
+  it("a failed finish shows the error code and message; an abort names who stopped it", () => {
+    const head = 'Sub-agent sa_7f3k ("Survey the auth module")';
+    expect(
+      renderSubagentDelivery({
+        ...REPORT,
+        kind: "finished",
+        status: "failed",
+        errorCode: "model.unavailable",
+        text: "The model provider is unavailable.",
+      }),
+    ).toBe(`${head} failed (model.unavailable): The model provider is unavailable.`);
+    expect(
+      renderSubagentDelivery({ ...REPORT, kind: "finished", status: "aborted", text: "" }),
+    ).toBe(`${head} stopped by the user.`);
+    expect(
+      renderSubagentDelivery({
+        ...REPORT,
+        kind: "finished",
+        status: "aborted",
+        abortedBy: "parent",
+        text: "",
+      }),
+    ).toBe(`${head} stopped with this run.`);
+    // the same wording as a fork report's status line
+    const line = agentResultText({
+      reply: "",
+      agentId: "x",
+      status: "failed",
+      errorCode: "model.unavailable",
+      toolCalls: 0,
+      durationMs: 0,
+      tokens: 0,
+    }).content;
+    expect(line).toContain("· failed (model.unavailable) ·");
+  });
+
+  it("status is required on a finished delivery and allowed only there", () => {
+    const parse = (payload: unknown) =>
+      ConversationEventSchema.safeParse({ type: "subagent_delivery", payload }).success;
+    expect(parse(REPORT)).toBe(true);
+    expect(parse({ ...REPORT, kind: "finished", status: "completed" })).toBe(true);
+    expect(parse({ ...REPORT, kind: "finished" })).toBe(false);
+    expect(parse({ ...REPORT, status: "completed" })).toBe(false);
+    expect(parse({ ...REPORT, kind: "finished", status: "aborted", abortedBy: "someone" })).toBe(
+      false,
+    );
   });
 
   it("quotes a description holding quotes", () => {

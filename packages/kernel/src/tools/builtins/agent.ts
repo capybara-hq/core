@@ -1,19 +1,23 @@
 import type { AgentTemplateTier, ToolSpec } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
-import type { EventPayload } from "../../conversations/events.js";
 import { ROSTER_DESCRIPTION_MAX, type RosterEntry } from "../../runtime/subagents/roster.js";
+import {
+  type SubagentAbortedBy,
+  type SubagentStatus,
+  subagentStatusText,
+} from "../../runtime/subagents/status.js";
 import { AGENT_TOOL } from "../builtin-names.js";
 import type { BuiltinTool } from "../registry.js";
 
 export { AGENT_TOOL } from "../builtin-names.js";
 
 /**
- * The `Agent` builtin tool (sub-agents spec §4): dispatches a sub-agent. Its description is built
- * per parent agent version from the roster ({@link agentToolSpec}); the tool pipeline handles the
- * call itself (dispatch, suspend, resume), so {@link agentTool}'s `run` is only a guard.
+ * The `Agent` builtin tool (sub-agents spec §4, agent map spec §4.1): dispatches a sub-agent in
+ * the background. Its description is built per parent agent version from the roster
+ * ({@link agentToolSpec}); the tool pipeline handles the call itself (the dispatch writes the
+ * call's result, {@link agentStartedText}), so {@link agentTool}'s `run` is only a guard. The
+ * sub-agent's reports and its finish reach the parent as `subagent_delivery` events.
  */
-/** How a sub-agent's run ended (`subagent_finished.status`). */
-export type SubagentStatus = EventPayload<"subagent_finished">["status"];
 
 /** The input of an `Agent` call (§4.2). */
 export const AgentToolInput = z
@@ -22,14 +26,12 @@ export const AgentToolInput = z
     prompt: z.string().min(1).max(100_000),
     subagent_type: z.string().min(1).max(130).optional(),
     model: z.enum(["inherit", "fast", "standard", "capable"]).optional(),
-    resume: z.string().max(64).optional(),
   })
   .strict() satisfies z.ZodType<{
   description: string;
   prompt: string;
   subagent_type?: string | undefined;
   model?: AgentTemplateTier | undefined;
-  resume?: string | undefined;
 }>;
 export type AgentToolInputT = z.infer<typeof AgentToolInput>;
 
@@ -51,7 +53,7 @@ const INPUT_SCHEMA: ToolSpec["inputSchema"] = {
       maxLength: 100000,
       description:
         "The complete task for the sub-agent. It sees nothing else of this conversation: include " +
-        "every fact, file path and constraint it needs, and say what its final reply must contain.",
+        "every fact, file path and constraint it needs, and say what its report must contain.",
     },
     subagent_type: {
       type: "string",
@@ -69,28 +71,24 @@ const INPUT_SCHEMA: ToolSpec["inputSchema"] = {
         "integration and judgment, capable for design and final reviews. Defaults to the agent " +
         "type's own setting, else your model.",
     },
-    resume: {
-      type: "string",
-      maxLength: 64,
-      description:
-        "The agentId from an earlier result of this tool: sends prompt to that sub-agent as a " +
-        "follow-up, with its earlier context intact. Leave subagent_type and model unset.",
-    },
   },
   required: ["description", "prompt"],
   additionalProperties: false,
 };
 
-/** The text before the roster (§4.3), with the concurrency limit. */
+/** The text before the roster (§4.3, agent map spec §4.1), with the concurrency limit. */
 const head = (maxConcurrent: number): string =>
-  "Dispatch a sub-agent: a fresh agent with its own context that works on one task and returns its " +
-  "final reply as this tool's result. The sub-agent sees only your prompt, not this conversation, so " +
-  "include everything it needs and say what its final reply must contain. It shares your sandbox " +
-  "files. You wait until it finishes. To run several at once, call this tool several times in the " +
-  `same response (at most ${maxConcurrent} at a time); their commands run in the sandbox at the ` +
-  "same time, so give parallel sub-agents separate files or directories. Sub-agents cannot " +
-  "dispatch sub-agents or ask the user questions. To send a finished sub-agent a follow-up while " +
-  "keeping its context, pass the agentId from its result as resume.\n" +
+  "Dispatch a sub-agent: a fresh agent with its own context that works on one task in the " +
+  "background. This tool returns at once with the sub-agent's agentId; keep working or end your " +
+  "turn, and do not wait for it. When the sub-agent hands back a report or finishes, its result " +
+  "arrives in this conversation as a notification. The sub-agent sees only your prompt, not this " +
+  "conversation, so include everything it needs and say what its report must contain. It shares " +
+  "your sandbox files. To run several at once, call this tool several times (at most " +
+  `${maxConcurrent} of your sub-agents run at a time); their commands run in the sandbox at the ` +
+  "same time, so give parallel sub-agents separate files or directories. To give a sub-agent more " +
+  "instructions while it works, or a follow-up after it finished, use SendMessage with its " +
+  "agentId. Sub-agents can dispatch sub-agents of their own up to the nesting limit; they cannot " +
+  "ask the user questions.\n" +
   "\n" +
   "Agent types (subagent_type):\n";
 
@@ -135,14 +133,17 @@ export function agentToolSpec(roster: readonly RosterEntry[], maxConcurrent: num
 const SPEC: ToolSpec = {
   name: "Agent",
   description:
-    "Dispatch a sub-agent: a fresh agent with its own context that works on one task and returns its " +
-    "final reply as this tool's result. The sub-agent sees only your prompt, not this conversation, so " +
-    "include everything it needs and say what its final reply must contain. It shares your sandbox " +
-    "files. You wait until it finishes. To run several at once, call this tool several times in the " +
-    "same response (at most 4 at a time); their commands run in the sandbox at the same time, so give " +
-    "parallel sub-agents separate files or directories. Sub-agents cannot dispatch sub-agents or ask " +
-    "the user questions. To send a finished sub-agent a follow-up while keeping its context, pass the " +
-    "agentId from its result as resume.\n" +
+    "Dispatch a sub-agent: a fresh agent with its own context that works on one task in the " +
+    "background. This tool returns at once with the sub-agent's agentId; keep working or end your " +
+    "turn, and do not wait for it. When the sub-agent hands back a report or finishes, its result " +
+    "arrives in this conversation as a notification. The sub-agent sees only your prompt, not this " +
+    "conversation, so include everything it needs and say what its report must contain. It shares " +
+    "your sandbox files. To run several at once, call this tool several times (at most 4 of your " +
+    "sub-agents run at a time); their commands run in the sandbox at the same time, so give " +
+    "parallel sub-agents separate files or directories. To give a sub-agent more instructions " +
+    "while it works, or a follow-up after it finished, use SendMessage with its agentId. " +
+    "Sub-agents can dispatch sub-agents of their own up to the nesting limit; they cannot ask the " +
+    "user questions.\n" +
     "\n" +
     "Agent types (subagent_type):\n" +
     "- general-purpose: a copy of you with your tools and skills, for multi-step work.",
@@ -162,18 +163,14 @@ export const AGENT_REFUSALS = {
     `Sub-agents have used their token budget since the user's latest message (${count(n)} tokens, counted across all levels of sub-agents); do the remaining work yourself.`,
   depthLimit: (maxDepth: number): string =>
     `Sub-agents can be nested at most ${maxDepth} levels deep, and you are at the deepest level; do this task yourself.`,
-  noSuchAgent: (id: string): string => `No sub-agent with agentId "${id}" in this conversation.`,
-  stillRunning: (id: string): string =>
-    `Sub-agent "${id}" is still running; wait for its result before sending a follow-up.`,
-  resumeWithType: "resume cannot be combined with subagent_type or model.",
   notAvailableHere: "Sub-agents are not available in this conversation.",
   agentNotAvailable: (name: string): string =>
     `The agent "${name}" is not available to the person who started this conversation; do this task yourself or use another agent type.`,
 } as const;
 
 /**
- * The parent run was stopped while this sub-agent worked (§4.4, §12): the result of a stopped
- * parent's open `Agent` call, and the text of a child stopped with its parent.
+ * The run was stopped while this sub-agent worked (§4.4, §12): the report of a stopped run's fork
+ * invocation whose sub-agent was still active (it is stopped with the run).
  */
 export const AGENT_STOPPED_WITH_RUN_TEXT =
   "The run was stopped while this sub-agent was working; it was stopped too.";
@@ -190,35 +187,23 @@ function duration(ms: number): string {
 }
 
 /**
- * How a sub-agent's run ended, as the model reads it: the status of `agentResultText`'s bracket
- * line, also the status of a finished `subagent_delivery` (`renderSubagentDelivery`).
+ * The immediate result of an `Agent` call (agent map spec §4.1): the sub-agent runs in the
+ * background, its reports and its finish arrive later as notifications (`subagent_delivery`).
+ * `ownModel`: an org agent dispatched with a `model`, which runs on its own model instead.
  */
-export function subagentStatusText(
-  status: SubagentStatus,
-  opts: { errorCode?: string | undefined; abortedBy?: "user" | "parent" | undefined } = {},
-): string {
-  switch (status) {
-    case "completed":
-      return "completed";
-    case "max_steps":
-      return "stopped at the step limit; the reply may be partial";
-    case "max_duration":
-      return "stopped at the time limit; the reply may be partial";
-    case "budget":
-      return "stopped: token budget used up";
-    case "aborted":
-      return opts.abortedBy === "parent" ? "stopped with this run" : "stopped by the user";
-    case "timed_out":
-      return "timed out";
-    case "failed":
-      return opts.errorCode === undefined ? "failed" : `failed (${opts.errorCode})`;
-  }
-}
+export const agentStartedText = (agentId: string, opts: { ownModel?: boolean } = {}): string =>
+  `agentId: ${agentId} (running in the background)\n` +
+  "The sub-agent is working on the task. Its result arrives in this conversation as a " +
+  "notification when it hands back a report or finishes; keep working or end your turn. To send " +
+  "it more instructions, use SendMessage with this agentId." +
+  (opts.ownModel === true ? " It runs on its own model; the model you passed was ignored." : "");
 
 /**
- * The tool result of a finished sub-agent (§4.4): the text for how its run ended, a blank line, and
- * the status line with its `agentId`. `ownModel`: an org agent dispatched with a `model` that was
- * ignored. `abortedBy: "parent"`: stopped together with the parent run (seen only in logs).
+ * The result text of a finished sub-agent (§4.4): the text for how its run ended, a blank line, and
+ * the status line with its `agentId`. Used for a fork invocation's report (phase D); a background
+ * `Agent` call's sub-agent reports through `subagent_delivery` instead. `ownModel`: an org agent
+ * dispatched with a `model` that was ignored. `abortedBy: "parent"`: stopped together with the
+ * parent run.
  */
 export function agentResultText(r: {
   reply: string;
@@ -230,12 +215,7 @@ export function agentResultText(r: {
   durationMs: number;
   tokens: number;
   ownModel?: boolean;
-  abortedBy?: "user" | "parent";
-  /**
-   * Phase D: the report of a person's fork invocation, whose parent need not have the `Agent`
-   * tool: the status line leaves out the resume hint (batch 3 review m2).
-   */
-  noResumeHint?: boolean;
+  abortedBy?: SubagentAbortedBy;
 }): { content: string; isError: boolean } {
   const reply = r.reply.trim();
   const status = subagentStatusText(r.status, r);
@@ -276,9 +256,7 @@ export function agentResultText(r: {
     ...(r.ownModel === true ? ["model: the agent's own"] : []),
     `${r.toolCalls} tool ${r.toolCalls === 1 ? "call" : "calls"}`,
     duration(r.durationMs),
-    r.noResumeHint === true
-      ? `${count(r.tokens)} tokens.`
-      : `${count(r.tokens)} tokens. Pass the agentId as resume to send this sub-agent a follow-up.`,
+    `${count(r.tokens)} tokens.`,
   ];
   const line = `[${parts.join(" · ")}]`;
   return { content: text === "" ? line : `${text}\n\n${line}`, isError };

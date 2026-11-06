@@ -204,7 +204,11 @@ async function childConversations(parent: string) {
     .execute();
 }
 
-describe("phase C acceptance: superpowers subagent-driven-development", {
+// Skipped while `Agent` runs in the background without SendMessage (agent map plan Task A6) and
+// wake runs (Task A5): the controller reads each sub-agent's report as its `Agent` result and
+// resumes the implementer with `resume`, neither of which exists any more. Task A6 rewrites the
+// script on deliveries, wakes and SendMessage and turns the suite back on.
+describe.skip("phase C acceptance: superpowers subagent-driven-development", {
   timeout: 180_000,
 }, () => {
   it("superpowers is imported from a git marketplace and installed; an agent gets the SDD skills, the agent tool and the code-reviewer template", async () => {

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { SchedulerRegistry } from "@nestjs/schedule";
@@ -206,7 +207,7 @@ async function loseResume(approvalId: string, runId: string, waitedMinutes = 2):
 }
 
 /** No sub-agents in these tests: the sub-agent repairs of the sweep stay at zero. */
-const NO_SUBAGENT_REPAIRS = { repaired: 0, requeued: 0, orphaned: 0, stopped: 0 };
+const NO_SUBAGENT_REPAIRS = { repaired: 0, requeued: 0, orphaned: 0, stopped: 0, delivered: 0 };
 
 const sum = (rs: WaitSweepResult[]): WaitSweepResult =>
   rs.reduce(
@@ -218,6 +219,7 @@ const sum = (rs: WaitSweepResult[]): WaitSweepResult =>
       requeued: a.requeued + r.requeued,
       orphaned: a.orphaned + r.orphaned,
       stopped: a.stopped + r.stopped,
+      delivered: a.delivered + r.delivered,
     }),
     { expired: 0, resumed: 0, cancelled: 0, ...NO_SUBAGENT_REPAIRS },
   );
@@ -414,5 +416,101 @@ describe("等待兜底扫描（双副本）", () => {
       "wait sweep: expired overdue wait",
       "wait sweep: resumed stuck waiting run",
     ]);
+  });
+});
+
+describe("wait sweep and sub-agents (agent map spec §5.4)", () => {
+  /**
+   * A parent run of a new conversation in `status`, one child conversation whose run `running`
+   * was created just now (so the orphan repair leaves it alone) and the dispatch row between them.
+   */
+  async function dispatched(
+    status: "completed" | "waiting",
+    forSkill: boolean,
+  ): Promise<{ convId: string; runId: string; childConv: string; childRun: string }> {
+    const convId = await createConv(req, orgId, agentId);
+    const runId = randomUUID();
+    await db
+      .insertInto("runs")
+      .values({
+        id: runId,
+        conversation_id: convId,
+        status,
+        agent_version: 1,
+        trigger_account_id: ownerId,
+        trigger_seq: 0,
+        ...(status === "waiting"
+          ? {
+              waiting_since: sql<Date>`now() - interval '5 minutes'`,
+              wait_expires_at: sql<Date>`now() - interval '1 minute'`,
+            }
+          : { finished_at: sql<Date>`now() - interval '5 minutes'` }),
+      })
+      .execute();
+    const childConv = randomUUID();
+    await db
+      .insertInto("conversations")
+      .values({
+        id: childConv,
+        org_id: orgId,
+        agent_id: agentId,
+        account_id: ownerId,
+        title: "Child",
+        kind: "subagent",
+        parent_conversation_id: convId,
+        subagent_type: "general-purpose",
+        subagent_depth: 1,
+      })
+      .execute();
+    const childRun = randomUUID();
+    await db
+      .insertInto("runs")
+      .values({
+        id: childRun,
+        conversation_id: childConv,
+        status: "running",
+        agent_version: 1,
+        trigger_account_id: ownerId,
+        trigger_seq: 0,
+        budget_run_id: runId,
+      })
+      .execute();
+    await db
+      .insertInto("subagent_dispatches")
+      .values({
+        parent_run_id: runId,
+        parent_call_id: forSkill ? "skill-1" : "call-1",
+        parent_conversation_id: convId,
+        step: forSkill ? 0 : 1,
+        child_conversation_id: childConv,
+        child_run_id: childRun,
+        resumed: false,
+        budget_run_id: runId,
+        for_skill: forSkill,
+      })
+      .execute();
+    return { convId, runId, childConv, childRun };
+  }
+
+  it("a finished parent run with an active background child is left alone", async () => {
+    const d = await dispatched("completed", false);
+    const r = await kA.app.get(Waits).sweep();
+    expect(r).toMatchObject({ stopped: 0, orphaned: 0, repaired: 0 });
+    expect(await runStatus(d.childRun)).toBe("running");
+    expect(ofType(await eventsOf(db, d.childConv), "run_aborted")).toEqual([]);
+    expect(logs.A.map((l) => l.msg)).toEqual([]);
+  });
+
+  it("fork dispatches still time out with timed_out", async () => {
+    const d = await dispatched("waiting", true);
+    const r = await kA.app.get(Waits).sweep();
+    expect(r.expired).toBe(1);
+    expect(await runStatus(d.childRun)).toBe("aborted");
+    const aborted = ofType(await eventsOf(db, d.childConv), "run_aborted");
+    expect(aborted.map((e) => e.payload.detail)).toEqual(["wait_timeout"]);
+    const finished = ofType(await eventsOf(db, d.convId), "subagent_finished");
+    expect(finished.map((e) => e.payload.status)).toEqual(["timed_out"]);
+    // a fork's child is never delivered: its waiting run writes the report itself
+    expect(ofType(await eventsOf(db, d.convId), "subagent_delivery")).toEqual([]);
   });
 });

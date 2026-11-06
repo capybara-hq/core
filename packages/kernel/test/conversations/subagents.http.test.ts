@@ -27,7 +27,7 @@ import {
   waitForTerminal,
 } from "../helpers/runs.js";
 import { openSse } from "../helpers/sse.js";
-import { childRunsOf, parentWaiting } from "../helpers/subagents.js";
+import { childRunsOf, finishedDeliveries } from "../helpers/subagents.js";
 
 /**
  * Phase C Task 14 (spec §14.2, §14.3): `GET /conversations/:id/subagents`, child conversations
@@ -77,7 +77,7 @@ const RULES: ScriptRule[] = [
     when: { lastUserIncludes: "SCENARIO one", assistantTurns: 0 },
     reply: { toolCalls: [agentCall("Tool task", "task-tool")] },
   },
-  { when: { lastToolResultIncludes: "[agentId:" }, reply: { text: "parent done" } },
+  { when: { lastToolResultIncludes: "in the background" }, reply: { text: "parent done" } },
 ];
 
 let pgc: TestContainer;
@@ -233,6 +233,7 @@ async function oneChild(): Promise<{ conv: string; child: string }> {
   const conv = await createConv(owner, orgId, agentId);
   await postMessage(owner, orgId, conv, "SCENARIO one");
   await waitForTerminal(db, conv, 1, 30_000);
+  await finishedDeliveries(db, conv);
   await waitFor(
     async () =>
       (await eventsOf(db, conv)).some((e) => e.type === "usage" && e.payload.purpose === "title"),
@@ -248,7 +249,9 @@ describe("GET /conversations/:id/subagents", () => {
   it("the list shows each sub-agent with status and counts; another user gets 404", async () => {
     const conv = await createConv(owner, orgId, agentId);
     await postMessage(owner, orgId, conv, "SCENARIO two");
-    const { children } = await parentWaiting(db, conv, 2);
+    // the parent's run ends at once; its two children work in the background
+    await waitForTerminal(db, conv, 1, 30_000);
+    const children = await childRunsOf(db, conv);
     // which child is which: by the dispatched description in the parent log
     const dispatched = (await eventsOf(db, conv)).filter((e) => e.type === "subagent_dispatched");
     const idOf = (description: string) =>
@@ -333,9 +336,9 @@ describe("GET /conversations/:id/subagents", () => {
     expect(JSON.stringify(other.body)).toContain("conversation.not_found");
     expect(JSON.stringify(other.body)).not.toContain(tool.subagentId);
 
-    const stop = await owner({ method: "POST", url: `${base()}/${conv}/abort` });
+    const stop = await owner({ method: "POST", url: `${base()}/${write.subagentId}/abort` });
     expect(stop.statusCode, stop.body).toBe(202);
-    await waitForTerminal(db, conv, 1, 30_000);
+    await finishedDeliveries(db, conv, 2);
   }, 90_000);
 });
 

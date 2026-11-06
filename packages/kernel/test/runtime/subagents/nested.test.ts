@@ -37,6 +37,7 @@ import {
   type TestKernel,
   waitForTerminal,
 } from "../../helpers/runs.js";
+import { finishedDeliveries } from "../../helpers/subagents.js";
 
 /**
  * Agent map Task A3 (spec §4.1, §6): nested sub-agents up to `subagents.maxDepth` on one kernel
@@ -60,7 +61,7 @@ const RULES: ScriptRule[] = [
   { when: { systemIncludes: CHILD, lastUserIncludes: "gc-go" }, reply: { text: "gc reply" } },
   // the researcher (an org agent child at depth 1)
   {
-    when: { systemIncludes: RESEARCHER, lastToolResultIncludes: "gc reply" },
+    when: { systemIncludes: RESEARCHER, lastToolResultIncludes: "in the background" },
     reply: { text: "research done" },
   },
   {
@@ -73,16 +74,27 @@ const RULES: ScriptRule[] = [
       ],
     },
   },
-  // the chain root → L1 → L2 → L3: results bubble up first
+  // the chain root → L1 → L2 → L3: each level goes on after its immediate `Agent` result
   {
-    when: { systemIncludes: CHILD, lastToolResultIncludes: "L3 reply" },
+    when: {
+      systemIncludes: CHILD,
+      lastUserIncludes: "L2-go",
+      lastToolResultIncludes: "background",
+    },
     reply: { text: "L2 reply" },
   },
   {
-    when: { systemIncludes: CHILD, lastToolResultIncludes: "L2 reply" },
+    when: {
+      systemIncludes: CHILD,
+      lastUserIncludes: "L1-go",
+      lastToolResultIncludes: "background",
+    },
     reply: { text: "L1 reply" },
   },
-  { when: { lastToolResultIncludes: "L1 reply" }, reply: { text: "chain done" } },
+  {
+    when: { lastUserIncludes: "SCENARIO chain", lastToolResultIncludes: "background" },
+    reply: { text: "chain done" },
+  },
   {
     when: { systemIncludes: CHILD, lastUserIncludes: "L3-go", assistantTurns: 0 },
     reply: {
@@ -106,7 +118,10 @@ const RULES: ScriptRule[] = [
     reply: { toolCalls: [agentCall({ description: "Level 1", prompt: "L1-go" })] },
   },
   // the gates scenario's root
-  { when: { lastToolResultIncludes: "research done" }, reply: { text: "gates done" } },
+  {
+    when: { lastUserIncludes: "SCENARIO gates", lastToolResultIncludes: "background" },
+    reply: { text: "gates done" },
+  },
   {
     when: { lastUserIncludes: "SCENARIO gates", assistantTurns: 0 },
     reply: {
@@ -243,8 +258,16 @@ describe("nested sub-agents", () => {
   it("root → child → grandchild → great-grandchild dispatch with the default maxDepth", async () => {
     const { conv, events } = await converse(owner, leadId, "SCENARIO chain");
     expect(finalText(events)).toBe("chain done");
+    // every level's finish is delivered to the level above it
+    expect((await finishedDeliveries(db, conv)).map((d) => d.text)).toEqual(["L1 reply"]);
     const [l1] = await childOf(conv);
+    expect((await finishedDeliveries(db, l1?.id as string)).map((d) => d.text)).toEqual([
+      "L2 reply",
+    ]);
     const [l2] = await childOf(l1?.id as string);
+    expect((await finishedDeliveries(db, l2?.id as string)).map((d) => d.text)).toEqual([
+      "L3 reply",
+    ]);
     const [l3] = await childOf(l2?.id as string);
     expect([l1, l2, l3].map((c) => c?.subagent_depth)).toEqual([1, 2, 3]);
     expect(await childOf(l3?.id as string)).toEqual([]);
@@ -327,7 +350,11 @@ describe("nested sub-agents", () => {
 
     const { conv, events } = await converse(member, lead, "SCENARIO gates");
     expect(finalText(events)).toBe("gates done");
+    expect((await finishedDeliveries(db, conv)).map((d) => d.text)).toEqual(["research done"]);
     const [r] = await childOf(conv);
+    expect((await finishedDeliveries(db, r?.id as string)).map((d) => d.text)).toEqual([
+      "gc reply",
+    ]);
     expect(r).toMatchObject({ subagent_depth: 1, agent_id: researcher });
     const rEvents = await eventsOf(db, r?.id as string);
     // the researcher child froze its own roster
