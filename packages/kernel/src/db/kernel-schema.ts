@@ -176,6 +176,10 @@ export interface AgentsTable {
   profile_description: Generated<string>;
   profile_quick_actions: ColumnType<unknown[], string | undefined, string>;
   profile_updated_at: Ts;
+  /** 0085: the template the agent was created from (display only, no FK). */
+  created_from_template_id: NullableCol<string>;
+  created_from_template_version: NullableCol<number>;
+  created_from_template_name: NullableCol<string>;
   created_at: Ts;
   updated_at: Ts;
   deleted_at: TsNullable;
@@ -1484,10 +1488,14 @@ export interface CatalogRequestsTable {
   version: NullableCol<string>;
   /** 0077: what the request asks for (spec §5.1). */
   kind: ColumnType<
-    "access" | "import" | "enable",
-    "access" | "import" | "enable" | undefined,
-    "access" | "import" | "enable"
+    "access" | "import" | "enable" | "connector_setup",
+    "access" | "import" | "enable" | "connector_setup" | undefined,
+    "access" | "import" | "enable" | "connector_setup"
   >;
+  /** 0085: the agent of a `connector_setup` request (cascades with the agent). */
+  agent_id: NullableCol<string>;
+  /** 0085: the template connector keys a `connector_setup` request still waits for. */
+  pending_keys: ColumnType<string[] | null, string | null | undefined, string | null>;
   /** 0077: the marketplace entry of an `import` request (null once the marketplace is deleted). */
   marketplace_id: NullableCol<string>;
   entry_name: NullableCol<string>;

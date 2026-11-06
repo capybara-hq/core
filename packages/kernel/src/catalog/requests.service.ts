@@ -23,7 +23,7 @@ import { PluginImport } from "./plugin-import.js";
 import type { RequestActorOpts } from "./request-rules.js";
 import { itemsSeenBy } from "./scope-state.js";
 
-export type CatalogRequestKind = "access" | "import" | "enable";
+export type CatalogRequestKind = "access" | "import" | "enable" | "connector_setup";
 export type CatalogRequestStatus = "pending" | "approved" | "rejected" | "cancelled";
 
 /**
