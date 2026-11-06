@@ -865,6 +865,7 @@
     "panelExtensions": "扩展",
     "agentMap": "智能体图",
     "agentMapFailed": "智能体图加载失败。",
+    "stopFailed": "停止失败：{reason}",
     "fullOutput": "完整输出",
     "builtinPreviewer": "内置预览",
     "setup": {

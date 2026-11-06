@@ -207,7 +207,7 @@ const agentMapDetailBackground: AgentMapBackground[] = AD.background.map((b) => 
   startedAt: NOW - b.durationMs,
 }));
 
-function AgentMapDetailBlock({ finished }: { finished?: boolean }) {
+function AgentMapDetailBlock({ finished, stopping }: { finished?: boolean; stopping?: boolean }) {
   const node: AgentMapNode = finished
     ? { ...agentMapSelected, status: "completed" }
     : agentMapSelected;
@@ -226,7 +226,8 @@ function AgentMapDetailBlock({ finished }: { finished?: boolean }) {
         onClose={noop}
         onOpenParent={noop}
         onOpenTranscript={noop}
-        {...(finished ? {} : { onStop: noop })}
+        {...(finished || stopping ? {} : { onStop: noop })}
+        {...(stopping ? { stopping: true } : {})}
         now={NOW}
       />
     </AgentMapDialog>
@@ -289,13 +290,16 @@ function agentMapBlocks(): ReactNode {
           <AgentMapTree root={AM.deep} background={[]} onOpen={noop} now={NOW} />
         </AgentMapDialog>
       </RefBlock>
-      <RefBlock id="agent-map-detail" width={792} height={632} pad>
+      <RefBlock id="agent-map-detail" width={786} height={632} pad>
         <AgentMapDetailBlock />
       </RefBlock>
-      <RefBlock id="agent-map-finished" width={792} height={632} pad>
+      <RefBlock id="agent-map-finished" width={786} height={632} pad>
         <AgentMapDetailBlock finished />
       </RefBlock>
-      <RefBlock id="agent-map-transcript" width={1092} height={672} pad>
+      <RefBlock id="agent-map-stopping" width={786} height={632} pad>
+        <AgentMapDetailBlock stopping />
+      </RefBlock>
+      <RefBlock id="agent-map-transcript" width={786} height={672} pad>
         <AgentMapDialog open inline onOpenChange={noop} level="transcript">
           <TranscriptFrame
             node={agentMapSelected}

@@ -282,8 +282,9 @@ Replaces the dialog content; ← returns to the tree. Live, at the granularity o
 
 The **same timeline component** as the conversation page, inside the dialog, without the composer
 **(decided)**: the task as the first bubble, messages from the parent as bubbles labelled with their
-sender, `SubagentHandback` and other tools as ordinary tool blocks, live. The footer is a read-only
-status line ("子智能体只读 · 不能和它对话，请让 <parent> 转达"), context use and Stop while running.
+sender, `SubagentHandback` and other tools as ordinary tool blocks, live. The footer is a status line
+with the context use and Stop while running (the read-only copy was dropped in acceptance, AC1:
+the missing composer says it).
 Built from `apps/web/src/lib/timeline.ts` like every timeline, with the conversation page's
 collapsed Thread for tool calls, not IN / OUT blocks shown open (N4 is withdrawn).
 
@@ -375,3 +376,13 @@ The builder's choices for §11 and the rulings of the build that change behaviou
 - The design `UserBubble` takes an optional sender label (a parent's message in a transcript), and
   the sub-agent row's "后台" label is omitted for a fork invocation's (foreground) child.
 - N4 is withdrawn (see §2): level 3 uses the collapsed Thread.
+- Acceptance (AC2, AC6): levels 2 and 3 are as wide as the conversation's column plus the dialog's
+  body padding (754 px), so the transcript has no empty side gutters; every level pads its head,
+  body and footer in the compact dialog rhythm (design spec §6.7); the tree stays 1100 px.
+- Acceptance (AC1): the transcript's status line drops "子智能体只读 · 不能和它对话，请让 <parent>
+  转达"; it keeps the context use and Stop, and is absent when it has neither.
+- Acceptance (AC5): Stop stays, in the Button's loading state, from the click until the agent's
+  terminal event or a failed request; a 409 `run.not_active` reads the tree, the child's row and its
+  log again; after a run's end the status takes the tree's word only from a tree read after the
+  restart or wake event was seen; a failed stop says "停止失败：<reason>" (map: one toast; composer:
+  inline) and logs the browser's reason to the console.
