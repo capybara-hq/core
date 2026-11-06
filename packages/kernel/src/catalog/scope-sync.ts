@@ -4,6 +4,7 @@ import { Inject, Injectable } from "@nestjs/common";
 import type { Job, Queue, Worker } from "bullmq";
 import type { KernelSchemaDb, ScopeSyncOp } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
+import { ExtensionLifecycle } from "../extensions/lifecycle.js";
 import { ExtensionRegistry } from "../extensions/registry.js";
 import { audit } from "../identity/audit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
@@ -61,9 +62,51 @@ export const scopeItemJobId = (itemId: string, version: number): string =>
   `scope-item-${itemId}-${version}`;
 /** One org job at a time per org. */
 export const scopeOrgJobId = (orgId: string): string => `scope-org-${orgId}`;
+/**
+ * The delayed retry `n` of an item job whose extension this replica had not loaded yet (ruling
+ * P3-38); deterministic, so replicas deferring the same item add it once.
+ */
+export const scopeRetryJobId = (itemId: string, version: number, n: number): string =>
+  `scope-item-${itemId}-${version}-r${n}`;
+/** How many delayed retries an item job gets while its extension is not loaded here (P3-38). */
+export const SCOPE_LOAD_RETRIES = 6;
+/** The delay of each such retry. */
+export const SCOPE_LOAD_RETRY_DELAY_MS = 5_000;
+/** How long a pair waits for this replica's reconcile before deferring (P3-38). */
+export const SCOPE_RECONCILE_WAIT_MS = 10_000;
 
-/** The job's data. */
-export type ScopeJob = { kind: "item"; itemId: string } | { kind: "org"; orgId: string };
+/**
+ * The job's data. `retry`: the item job's delayed retry number (P3-38); at
+ * {@link SCOPE_LOAD_RETRIES} an extension still not loaded is a failure as before.
+ */
+export type ScopeJob =
+  | { kind: "item"; itemId: string; retry?: number }
+  | { kind: "org"; orgId: string };
+
+/**
+ * Awaits this replica's extension reconcile for at most `ms` (a slower one carries on in the
+ * background); a failure only warns.
+ */
+export async function reconcileWithin(
+  lifecycle: Pick<ExtensionLifecycle, "reconcile">,
+  reason: string,
+  ms: number,
+  log: Pick<KernelLogger, "warn">,
+): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      lifecycle.reconcile(reason),
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, ms);
+      }),
+    ]);
+  } catch (err) {
+    log.warn("reconciling extensions on this replica failed", { reason, err });
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
 
 /** The item job of a scope version (what {@link PluginScopeSync.enqueueItem} adds). */
 export function scopeItemJob(itemId: string, version: number): OneJob<ScopeJob> {
@@ -79,8 +122,11 @@ export function scopeItemJob(itemId: string, version: number): OneJob<ScopeJob> 
   };
 }
 
-/** What a sync of one (item, org) did. */
-export type ScopeSyncResult = "installed" | "removed" | "needs_config" | "unchanged";
+/**
+ * What a sync of one (item, org) did. `deferred`: the plugin's extension is enabled on the
+ * deployment but not loaded on this replica yet (P3-38); the item job retries later.
+ */
+export type ScopeSyncResult = "installed" | "removed" | "needs_config" | "unchanged" | "deferred";
 
 /** How long one org's pairs wait for each other (an install can take a while). */
 const ORG_LOCK_TTL_MS = 60_000;
@@ -97,6 +143,8 @@ export class PluginScopeSync {
     @Inject(getQueueToken(PLUGIN_SCOPE_QUEUE)) private readonly queue: Queue<ScopeJob>,
     @Inject(PluginInstaller) private readonly installer: PluginInstaller,
     @Inject(ExtensionRegistry) private readonly registry: ExtensionRegistry,
+    /** This replica's reconcile, awaited (bounded) before deferring an install (P3-38). */
+    @Inject(ExtensionLifecycle) private readonly lifecycle: ExtensionLifecycle,
     @Inject(LockService) private readonly locks: LockService,
     @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
@@ -164,18 +212,92 @@ export class PluginScopeSync {
               .orderBy("id")
               .execute()
           ).map((i) => [i.id, data.orgId]);
+    const retry = data.kind === "item" ? (data.retry ?? 0) : 0;
+    const finalTry = data.kind === "item" && retry >= SCOPE_LOAD_RETRIES;
+    const deferred = new Set<string>();
     for (const [itemId, orgId] of pairs) {
       if (signal?.aborted) return;
       try {
-        await this.syncPair(itemId, orgId, signal);
+        const r = await this.syncPair(itemId, orgId, signal, { finalTry });
+        if (r === "deferred") deferred.add(itemId);
       } catch (err) {
         this.log.warn("plugin scope sync of a pair failed", { itemId, orgId, err });
       }
     }
+    // An extension this replica had not loaded yet: the item again after a delay (P3-38)
+    for (const itemId of deferred) {
+      try {
+        await this.enqueueRetry(itemId, retry + 1);
+      } catch (err) {
+        this.log.warn("enqueueing a delayed plugin scope sync failed", { itemId, err });
+      }
+    }
+  }
+
+  /** The delayed retry `n` of an item job (deterministic id, P3-38). */
+  private async enqueueRetry(itemId: string, n: number): Promise<void> {
+    const row = await this.db
+      .selectFrom("catalog_items")
+      .select("scope_version")
+      .where("id", "=", itemId)
+      .executeTakeFirst();
+    if (!row) return;
+    await this.queue.add(
+      SCOPE_ITEM_JOB,
+      { kind: "item", itemId, retry: n },
+      {
+        jobId: scopeRetryJobId(itemId, row.scope_version, n),
+        delay: SCOPE_LOAD_RETRY_DELAY_MS,
+        attempts: 1,
+        removeOnComplete: true,
+        removeOnFail: true,
+      },
+    );
+  }
+
+  /**
+   * Whether the install of the item's `version` may go ahead on this replica (P3-38): its
+   * extension is loaded here, or it is not enabled on the deployment (the install reports
+   * `catalog.not_deployed` as before). Enabled but not loaded here: this replica's reconcile is
+   * awaited (bounded); still not loaded -> false, unless this is the last try.
+   */
+  private async extensionReady(
+    itemId: string,
+    version: string,
+    finalTry: boolean,
+  ): Promise<boolean> {
+    const v = await this.db
+      .selectFrom("catalog_item_versions")
+      .select("manifest")
+      .where("item_id", "=", itemId)
+      .where("version", "=", version)
+      .executeTakeFirst();
+    const m = v?.manifest as PluginManifest | undefined;
+    if (!m?.extension) return true;
+    const loaded = () => this.registry.manifests().some((x) => x.name === m.name);
+    if (loaded()) return true;
+    const install = await this.db
+      .selectFrom("extension_installs")
+      .select("desired_state")
+      .where("name", "=", m.name)
+      .executeTakeFirst();
+    if (install?.desired_state !== "enabled") return true;
+    await reconcileWithin(
+      this.lifecycle,
+      `scope-sync:${m.name}`,
+      SCOPE_RECONCILE_WAIT_MS,
+      this.log,
+    );
+    return loaded() || finalTry;
   }
 
   /** Converges one (item, org), under the org's sync lock; `signal` ends the wait for it. */
-  syncPair(itemId: string, orgId: string, signal?: AbortSignal): Promise<ScopeSyncResult> {
+  syncPair(
+    itemId: string,
+    orgId: string,
+    signal?: AbortSignal,
+    opts: { finalTry?: boolean } = {},
+  ): Promise<ScopeSyncResult> {
     return this.locks.run(
       `plugin-scope-org-${orgId}`,
       {
@@ -183,7 +305,7 @@ export class PluginScopeSync {
         waitMs: ORG_LOCK_WAIT_MS,
         ...(signal !== undefined && { signal }),
       },
-      () => this.syncRecorded(itemId, orgId),
+      () => this.syncRecorded(itemId, orgId, opts.finalTry === true),
     );
   }
 
@@ -192,10 +314,15 @@ export class PluginScopeSync {
    * admin's inbox): an attempt that failed records it, any other attempt clears it. An attempt
    * that throws (outside the recorded steps) leaves the row as it was.
    */
-  private async syncRecorded(itemId: string, orgId: string): Promise<ScopeSyncResult> {
-    const attempt = { failed: false };
+  private async syncRecorded(
+    itemId: string,
+    orgId: string,
+    finalTry = false,
+  ): Promise<ScopeSyncResult> {
+    const attempt = { failed: false, finalTry };
     const result = await this.syncLocked(itemId, orgId, attempt);
-    if (!attempt.failed) {
+    // a deferred pair changed nothing: an older failure stays open
+    if (!attempt.failed && result !== "deferred") {
       await this.db
         .deleteFrom("plugin_scope_sync_failures")
         .where("item_id", "=", itemId)
@@ -208,7 +335,7 @@ export class PluginScopeSync {
   private async syncLocked(
     itemId: string,
     orgId: string,
-    attempt: { failed: boolean },
+    attempt: { failed: boolean; finalTry: boolean },
   ): Promise<ScopeSyncResult> {
     const item = await this.db
       .selectFrom("catalog_items")
@@ -274,6 +401,7 @@ export class PluginScopeSync {
       // The platform's version (one per deployment, Task 7); the latest import before the first sync
       const version = item.platform_synced_version ?? item.latest_version;
       try {
+        if (!(await this.extensionReady(itemId, version, attempt.finalTry))) return "deferred";
         if (await this.needsInput(orgId, itemId, version)) return "needs_config";
         await this.installer.install(orgId, null, itemId, version, {}, { via: "scope" });
         return "installed";

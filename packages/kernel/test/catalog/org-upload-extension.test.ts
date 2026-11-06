@@ -1,9 +1,16 @@
+import { getQueueToken } from "@nestjs/bullmq";
+import type { Queue } from "bullmq";
 import { sql } from "kysely";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { CatalogScopeService } from "../../src/catalog/catalog-scope.service.js";
 import { PlatformComponents } from "../../src/catalog/platform-components.js";
 import { PlatformMigration } from "../../src/catalog/platform-migration.js";
-import { PluginScopeSync } from "../../src/catalog/scope-sync.js";
+import {
+  PLUGIN_SCOPE_QUEUE,
+  PluginScopeSync,
+  SCOPE_LOAD_RETRIES,
+  scopeRetryJobId,
+} from "../../src/catalog/scope-sync.js";
 import { ExtensionAdmin } from "../../src/extensions/admin-view.js";
 import { ExtensionInstalls } from "../../src/extensions/installs.js";
 import { ExtensionRegistry } from "../../src/extensions/registry.js";
@@ -756,5 +763,73 @@ describe("fix round 1: applied versions only, the confirm lock (P3-34 to P3-37)"
     const r = await env.root({ method: "DELETE", url: `/api/v1/admin/catalog/items/${itemId}` });
     expect(r.statusCode, r.body).toBe(204);
     expect(await claim("ext-del")).toBeUndefined();
+  });
+});
+
+describe("fix round 2: the scope sync waits for its replica to load the extension (P3-38)", {
+  timeout: 180_000,
+}, () => {
+  it("a replica that has not loaded the confirmed extension yet retries, then converges", async () => {
+    const registry = env.k.app.get(ExtensionRegistry);
+    const real = registry.manifests.bind(registry);
+    // this replica's host has not loaded ext-late yet (another replica confirmed it)
+    let hidden = true;
+    vi.spyOn(registry, "manifests").mockImplementation(() =>
+      real().filter((m) => !hidden || m.name !== "ext-late"),
+    );
+    const itemId = await uploaded(
+      env.boss,
+      orgA,
+      await lifePkg({ name: "ext-late", version: "1.0.0", skills: ["ext-late-notes"] }),
+      "pending",
+    );
+    const c = await superConfirm(itemId, await digestOf(itemId));
+    expect(c.statusCode, c.body).toBe(200);
+    // the sync defers (no install, no failure) and queues a delayed retry of the item
+    const row = await itemRow("ext-late");
+    await waitFor(
+      async () =>
+        (await env.k.app
+          .get<Queue>(getQueueToken(PLUGIN_SCOPE_QUEUE))
+          .getJob(scopeRetryJobId(itemId, row?.scope_version ?? 0, 1))) !== undefined,
+      15_000,
+      "retry job queued",
+    );
+    expect(
+      await env.db
+        .selectFrom("plugin_scope_sync_failures")
+        .select("code")
+        .where("item_id", "=", itemId)
+        .execute(),
+    ).toEqual([]);
+    expect(await usable(orgA)).not.toContain("ext-late-notes");
+    // the replica loads it: the retry installs it
+    hidden = false;
+    await waitFor(
+      async () => (await usable(orgA)).includes("ext-late-notes"),
+      30_000,
+      "ext-late-notes usable in A after the retry",
+    );
+  });
+
+  it("once the retries are used up the failure is recorded as before", async () => {
+    const itemId = await confirmedV1("ext-gone");
+    // uninstalled in org A by the test, then the replica never loads the extension again
+    await env.db.deleteFrom("plugin_install_components").execute();
+    await env.db.deleteFrom("plugin_installs").where("item_id", "=", itemId).execute();
+    const registry = env.k.app.get(ExtensionRegistry);
+    const real = registry.manifests.bind(registry);
+    vi.spyOn(registry, "manifests").mockImplementation(() =>
+      real().filter((m) => m.name !== "ext-gone"),
+    );
+    await env.k.app
+      .get(PluginScopeSync)
+      .process({ kind: "item", itemId, retry: SCOPE_LOAD_RETRIES });
+    const failures = await env.db
+      .selectFrom("plugin_scope_sync_failures")
+      .select(["org_id", "code"])
+      .where("item_id", "=", itemId)
+      .execute();
+    expect(failures).toEqual([{ org_id: orgA, code: "catalog.not_deployed" }]);
   });
 });

@@ -49,7 +49,7 @@ import { PlatformPluginUpdater } from "./plugin-upgrade.js";
 import { cancelPendingRequests } from "./request-rules.js";
 import { type PluginScope, wantedOn } from "./scope.js";
 import { addScopeOrg } from "./scope-orgs.js";
-import { PluginScopeSync } from "./scope-sync.js";
+import { PluginScopeSync, reconcileWithin } from "./scope-sync.js";
 import { narrowComponentOnUnshare, narrowItemOnUnshare } from "./unshare.js";
 
 /**
@@ -112,6 +112,8 @@ interface ItemRow {
   shareable: boolean;
 }
 
+/** How long the super admin's confirmation waits for this replica to load the extension. */
+const CONFIRM_RECONCILE_WAIT_MS = 5_000;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const LIVE = ["installing", "installed", "upgrading"] as const;
 const notFound = () => new ApiError("catalog.item_not_found", "Catalog item not found");
@@ -318,16 +320,15 @@ export class CatalogScopeService {
       this.confirmLocked(actor, item.id, item.name, permissionsHash, opts),
     );
     if (first !== null) {
-      // Loaded here before the scope sync plans its install (the enable does not wait for the
-      // reconcile; other replicas converge through the bus)
-      try {
-        await this.lifecycle.reconcile(`confirmed:${item.name}`);
-      } catch (err) {
-        this.log.error("loading a confirmed extension on this replica failed", {
-          plugin: item.name,
-          err,
-        });
-      }
+      // Loaded here before the scope sync plans its install, waited for at most a few seconds
+      // (the enable does not wait for the reconcile); a sync on a replica that has not loaded it
+      // yet defers and retries (ruling P3-38)
+      await reconcileWithin(
+        this.lifecycle,
+        `confirmed:${item.name}`,
+        CONFIRM_RECONCILE_WAIT_MS,
+        this.log,
+      );
       await this.pluginImport.writePlatformComponents(item.id, first);
       await this.enqueue(item.id);
     }
