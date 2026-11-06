@@ -127,9 +127,11 @@ const FRONTMATTER_MAX_CHARS = 2 * 1024 * 1024;
 /** The kernel's tool key rule (model-visible keys): no dots, no whitespace, at most 64 chars. */
 const TOOL_KEY_RE = /^[a-zA-Z0-9_-]{1,64}$/;
 
+const distinct = (v: readonly unknown[]) => new Set(v).size === v.length;
 const NAME_REF_RE = /^[a-z0-9][a-z0-9-]{0,63}(:[a-z0-9][a-z0-9-]{0,63})?$/;
 const MODEL_REF_RE = /^[^/\s]+\/\S+$/;
-const INSTRUCTION_FILE_NAME_RE = /^[^/\\]{1,64}\.md$/;
+/** The name rule of an instruction file (the agent's rule, mirrored). */
+export const AGENT_TEMPLATE_INSTRUCTION_FILE_NAME_RE = /^[^/\\]{1,64}\.md$/;
 
 const chars = (s: string) => [...s].length;
 const isToolKey = (v: unknown): v is string => typeof v === "string" && TOOL_KEY_RE.test(v);
@@ -212,13 +214,14 @@ export function parseAgentTemplate(
   }
   if (fm.skills !== undefined) {
     const s = fm.skills;
-    if (Array.isArray(s) && s.length <= L.skills && s.every(isSkillName)) out.skills = s;
+    if (Array.isArray(s) && s.length <= L.skills && s.every(isSkillName) && distinct(s))
+      out.skills = s;
     else errors.push(`skills must list at most ${L.skills} skill names`);
   }
 
   if (fm.selectedSkills !== undefined) {
     const s = fm.selectedSkills;
-    if (Array.isArray(s) && s.length <= L.selectedSkills && s.every(isSkillName)) {
+    if (Array.isArray(s) && s.length <= L.selectedSkills && s.every(isSkillName) && distinct(s)) {
       out.selectedSkills = s;
     } else errors.push(`selectedSkills must list at most ${L.selectedSkills} skill names`);
   }
@@ -335,7 +338,8 @@ function readSubagents(v: unknown, errors: string[]): AgentTemplateSubagents | u
   if (v.types !== undefined) {
     if (
       Array.isArray(v.types) &&
-      v.types.every((t) => typeof t === "string" && NAME_REF_RE.test(t))
+      v.types.every((t) => typeof t === "string" && NAME_REF_RE.test(t)) &&
+      distinct(v.types)
     ) {
       out.types = v.types as string[];
     } else errors.push("subagents.types must list sub-agent type names");
@@ -361,15 +365,21 @@ function readSubagents(v: unknown, errors: string[]): AgentTemplateSubagents | u
         }
         if (
           typeof e.instructions !== "string" ||
+          e.instructions.trim() === "" ||
           chars(e.instructions) > L.inlineInstructionsChars
         ) {
           errors.push(
-            `${at}.instructions must be a string of at most ${L.inlineInstructionsChars} characters`,
+            `${at}.instructions must be a non-empty string of at most ${L.inlineInstructionsChars} characters`,
           );
         }
         if (!toolList(e.tools)) errors.push(`${at}.tools must be ${toolListRule}`);
         if (
-          !(Array.isArray(e.skills) && e.skills.length <= L.skills && e.skills.every(isSkillName))
+          !(
+            Array.isArray(e.skills) &&
+            e.skills.length <= L.skills &&
+            e.skills.every(isSkillName) &&
+            distinct(e.skills)
+          )
         ) {
           errors.push(`${at}.skills must list at most ${L.skills} skill names`);
         }
@@ -427,7 +437,7 @@ function readInstructionFiles(
     if (
       isObj(e) &&
       typeof e.name === "string" &&
-      INSTRUCTION_FILE_NAME_RE.test(e.name) &&
+      AGENT_TEMPLATE_INSTRUCTION_FILE_NAME_RE.test(e.name) &&
       typeof e.content === "string"
     ) {
       total += chars(e.content);

@@ -286,4 +286,49 @@ describe("parseAgentTemplate: phase 4 fields (P4-1)", () => {
       expect.stringContaining("instructionFiles[0]"),
     ]);
   });
+
+  it("rejects over-limit quick actions and instruction files", () => {
+    const qa = (n: number) =>
+      Array.from({ length: n }, () => "  - title: t\n    body: b").join("\n");
+    expect(errorsOf(md(`${base}\nquickActions:\n${qa(10)}`))).toEqual([
+      expect.stringContaining("quickActions"),
+    ]);
+    expect(
+      errorsOf(md(`${base}\nquickActions:\n  - title: ${"x".repeat(41)}\n    body: b`)),
+    ).toEqual([expect.stringContaining("quickActions[0]")]);
+    const files = [0, 1]
+      .map((i) => `  - name: f${i}.md\n    content: ${"x".repeat(60_000)}`)
+      .join("\n");
+    expect(errorsOf(md(`${base}\ninstructionFiles:\n${files}`))).toEqual([
+      expect.stringContaining("instructionFiles must total"),
+    ]);
+    expect(errorsOf(md(`${base}\ninstructionFiles:\n  - name: a/b.md\n    content: c`))).toEqual([
+      expect.stringContaining("instructionFiles[0]"),
+    ]);
+  });
+
+  it("enforces the frontmatter cap at 2 MiB", () => {
+    const pad = (n: number) => `${base}\nx: ${"a".repeat(n)}`;
+    const cap = 2 * 1024 * 1024;
+    const over = errorsOf(md(pad(cap)));
+    expect(over).toEqual([expect.stringContaining("frontmatter must be at most")]);
+    expect(errorsOf(md(pad(cap - base.length - 10)))).toEqual([]);
+  });
+
+  it("rejects empty inline instructions and duplicate names", () => {
+    expect(
+      errorsOf(
+        md(
+          `${base}\nsubagents:\n  inline:\n    - name: a\n      description: d\n      instructions: "  "\n      tools: []\n      skills: []\n      model: fast`,
+        ),
+      ),
+    ).toEqual([expect.stringContaining("subagents.inline[0].instructions")]);
+    expect(errorsOf(md(`${base}\nselectedSkills: [a, a]`))).toEqual([
+      expect.stringContaining("selectedSkills"),
+    ]);
+    expect(errorsOf(md(`${base}\nskills: [a, a]`))).toEqual([expect.stringContaining("skills")]);
+    expect(errorsOf(md(`${base}\nsubagents:\n  types: [a, a]`))).toEqual([
+      expect.stringContaining("subagents.types"),
+    ]);
+  });
 });

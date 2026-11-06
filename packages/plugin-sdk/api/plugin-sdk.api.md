@@ -9,6 +9,9 @@ import { z } from 'zod';
 import type { ZodTypeAny } from 'zod';
 
 // @public
+export const AGENT_TEMPLATE_INSTRUCTION_FILE_NAME_RE: RegExp;
+
+// @public
 export const AGENT_TEMPLATE_LIMITS: {
     readonly bodyChars: 100000;
     readonly descriptionChars: 4096;
