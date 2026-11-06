@@ -25,11 +25,19 @@ export const orgCatalogItemQuery = (orgId: string, itemId: string) =>
  * (connectors, skills, agent templates, extensions and what they change: readiness, UI, models and
  * purposes, see {@link orgExtensionChangeKeys}).
  */
-export const pluginChangeKeys = (orgId: string): (readonly unknown[])[] => {
+export const pluginChangeKeys = (orgId: string): (readonly unknown[])[] => [
+  keys.org(orgId).catalogItemsAll(),
+  ...pluginChangeKeysButDetail(orgId),
+];
+
+/**
+ * {@link pluginChangeKeys} without the catalog item reads: what a delete invalidates while its
+ * detail page is still showing (reading the deleted item again would flash the not-found state).
+ */
+export const pluginChangeKeysButDetail = (orgId: string): (readonly unknown[])[] => {
   const k = keys.org(orgId);
   return [
     k.catalog(),
-    k.catalogItemsAll(),
     k.pluginInstalls(),
     k.connectors(),
     k.orgExtensions(),

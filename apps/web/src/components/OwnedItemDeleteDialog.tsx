@@ -5,7 +5,7 @@ import { useLocale, useTranslations } from "next-intl";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiClientError } from "../lib/api";
 import { deleteOwned, type OwnedDeletePreview, previewOwnedDelete } from "../lib/catalog";
-import { pluginChangeKeys } from "../lib/query/catalog";
+import { pluginChangeKeysButDetail } from "../lib/query/catalog";
 import { keys } from "../lib/query/keys";
 import { useAppMutation } from "../lib/query/mutation";
 import { useErrorMessage } from "../lib/use-error-message";
@@ -48,7 +48,7 @@ export function OwnedItemDeleteDialog({
   const remove = useAppMutation({
     fn: (previewHash: string) => deleteOwned(orgId, itemId, previewHash),
     // The detail being left is not read again (a 404 would flash the not-found state first)
-    invalidates: () => pluginChangeKeys(orgId).filter((k) => k[2] !== "catalogItem"),
+    invalidates: () => pluginChangeKeysButDetail(orgId),
     forgetsOnLeave: () => [keys.org(orgId).catalogItem(itemId)],
   });
   const { mutateAsync: ask } = previewIt;

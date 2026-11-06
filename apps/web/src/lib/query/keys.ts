@@ -38,6 +38,12 @@ export const keys = {
       skill: (skillId: string): readonly unknown[] => [...all, "skill", skillId],
       /** Every skill detail read (an invalidation prefix: a linked copy's detail too). */
       skillAll: (): readonly unknown[] => [...all, "skill"],
+      /** What deleting the org's skill does (transferred to the platform or removed). */
+      skillDeletePreview: (skillId: string): readonly unknown[] => [
+        ...all,
+        "skillDeletePreview",
+        skillId,
+      ],
       /** The org's channel connections. */
       channels: (): readonly unknown[] => [...all, "channels"],
       /** One channel connection. */

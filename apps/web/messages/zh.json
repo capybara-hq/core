@@ -795,9 +795,28 @@
       "ownerPlatform": "平台",
       "ownerOrg": "本组织",
       "plugin": "插件",
-      "platformHint": "这是平台提供的技能，本组织不能修改或删除它；组织管理员可以在技能页面启用或停用。"
+      "platformHint": "这是平台提供的技能，本组织不能修改或删除它；组织管理员可以在技能页面启用或停用。",
+      "shareable": "可共享",
+      "shareableHelp": "开启后，超级管理员可以向其他组织展示或开放此技能。关闭不影响已开放的组织。",
+      "shareOn": "「{name}」已设为可共享。",
+      "shareOff": "「{name}」已取消共享。"
     },
-    "description": "本组织能用的技能。平台统一启用的不能停用；其他平台技能由组织管理员启用或停用。"
+    "description": "本组织能用的技能。平台统一启用的不能停用；其他平台技能由组织管理员启用或停用。",
+    "create": {
+      "open": "新建",
+      "title": "新建技能",
+      "name": "名称",
+      "nameHelp": "小写字母、数字和单个连字符，最多 64 个字符。同一组织里技能名称不能重复。",
+      "nameInvalid": "名称只能包含小写字母、数字和单个连字符。",
+      "description": "描述",
+      "descriptionHelp": "写清这个技能做什么、什么时候用，智能体据此决定何时加载它。",
+      "body": "内容",
+      "bodyHelp": "SKILL.md 的正文。SKILL.md 由名称和描述生成：正文开头的 --- frontmatter 会被去掉，只保留调用相关的键（例如 disable-model-invocation、context）。",
+      "shareable": "可共享",
+      "submit": "创建",
+      "cancel": "取消",
+      "created": "已创建技能「{name}」。"
+    }
   },
   "chat": {
     "waitingFor": {
@@ -1155,17 +1174,17 @@
     },
     "orgNotice": {
       "itemSharedLabel": "已共享",
-      "itemSharedTitle": "{name} 已共享给 {org}",
-      "itemSharedAllTitle": "{name} 已共享给全部组织",
+      "itemSharedTitle": "{org} 现在可以使用 {name}",
+      "itemSharedAllTitle": "所有组织现在可以使用 {name}",
       "itemSharedHint": "该组织的管理员现在可以使用它。",
       "sharedItemUpdatedLabel": "共享项更新",
-      "sharedItemUpdatedTitle": "{name} 已从 {from} 更新到 {to}",
+      "sharedItemUpdatedTitle": "{owner} 更新了 {name}：{from} → {to}",
       "sharedItemUpdatedHint": "所有者更新了本组织正在使用的项目。",
       "uploadConfirmedLabel": "上传已确认",
-      "uploadConfirmedTitle": "{name} {version} 已确认",
+      "uploadConfirmedTitle": "超级管理员已确认 {name} {version}",
       "uploadConfirmedHint": "超级管理员已确认该版本。",
       "uploadRejectedLabel": "上传被拒绝",
-      "uploadRejectedTitle": "{name} {version} 被拒绝",
+      "uploadRejectedTitle": "超级管理员未通过 {name} {version}",
       "uploadRejectedHint": "超级管理员拒绝了该版本。",
       "unknownLabel": "通知",
       "unknownTitle": "来自平台的通知",
@@ -1178,7 +1197,6 @@
       "to": "新版本",
       "version": "版本",
       "reason": "原因",
-      "noReason": "未说明原因",
       "dismiss": "知道了",
       "dismissed": "已移除通知"
     },
@@ -3578,7 +3596,10 @@
       "confirm": "更新",
       "cancel": "取消",
       "done": "已把「{name}」更新到 {version}。",
-      "stale": "更新的内容已变化，请再看一遍后确认。"
+      "stale": "更新的内容已变化，请再看一遍后确认。",
+      "orgCount": "{count} 个组织",
+      "otherOrgs": "其他 {count} 个组织",
+      "otherOrg": "另一个组织"
     },
     "errorDetail": {
       "host": "主机：{host}",
@@ -4042,6 +4063,13 @@
     "listLabel": "智能体模板",
     "empty": "还没有智能体模板。插件可以带来智能体模板。",
     "type": "类型 {type}",
-    "version": "v{version}"
+    "version": "v{version}",
+    "share": {
+      "chip": "可共享",
+      "on": "设为可共享",
+      "off": "取消共享",
+      "doneOn": "「{name}」已设为可共享。",
+      "doneOff": "「{name}」已取消共享。"
+    }
   }
 }

@@ -21,6 +21,7 @@ import { ErrorFrame } from "../../../components/ErrorFrame";
 import { FormError } from "../../../components/form-error";
 import { NoAccess } from "../../../components/NoAccess";
 import { rowActions } from "../../../components/PluginSwitch";
+import { SkillCreateDialog } from "../../../components/SkillCreateDialog";
 import { usePagePath } from "../../../components/shell/path";
 import { useSession } from "../../../components/shell/session";
 import { ApiClientError, issueLines } from "../../../lib/api";
@@ -39,11 +40,12 @@ import NotFound from "../not-found";
 
 /**
  * `/skills` (spec §9): the skills the org can use and the platform skills offered to it (object
- * list). Org-own rows carry 本组织, platform rows 平台 with their state in the org (已启用 · 平台统一
- * for `all`, 已启用, 未启用, 插件未启用); org admins switch platform skills (启用, 停用 with the
- * preview of the agents using it) and upload a .zip (a name a platform skill offered here already
- * has is refused, rule 10). Members read the page. From the query cache (the layout prefetched the
- * library and the offered components on a first load); a switch or an upload invalidates them.
+ * list). Org-own rows carry 本组织, platform rows 平台 with their state in the org (已启用 · 平台统一 for
+ * `all`, 已启用, 未启用, 插件未启用); org admins switch platform skills (启用, 停用 with the preview of the agents
+ * using it), upload a .zip (a name a platform skill offered here already has is refused, rule 10)
+ * or write one with 新建 (plugin scope phase 3). Members read the page. From the query cache (the
+ * layout prefetched the library and the offered components on a first load); a switch or an upload
+ * invalidates them.
  */
 export default function SkillsView() {
   const ws = useWorkspace({ min: "member" });
@@ -60,6 +62,7 @@ function Skills({ orgId }: { orgId: string }) {
   const { me } = useSession();
   const admin = canUpdateOrg(me);
   const [uploading, setUploading] = useState(false);
+  const [creating, setCreating] = useState(false);
   const list = usePageQuery(skillsQuery(orgId));
   const cq = orgComponentsQuery(orgId, { kind: "skill" });
   const offered = useQuery({ ...cq, retryOnMount: retryOnMountOf(cq.queryKey) });
@@ -72,6 +75,13 @@ function Skills({ orgId }: { orgId: string }) {
     label: t("upload.open"),
     icon: "upload" as const,
     onSelect: () => setUploading(true),
+  };
+  // 新建 writes a skill from text (plugin scope phase 3), next to 上传
+  const create = {
+    label: t("create.open"),
+    icon: "plus" as const,
+    variant: "default" as const,
+    onSelect: () => setCreating(true),
   };
   const empty =
     rows.length === 0
@@ -97,7 +107,7 @@ function Skills({ orgId }: { orgId: string }) {
           path: [...scope, { label: "skills" }],
           title: t("title"),
           description: t("description"),
-          ...(admin ? { actions: [{ ...upload, variant: "primary" as const }] } : {}),
+          ...(admin ? { actions: [create, { ...upload, variant: "primary" as const }] } : {}),
         }}
         variant="objects"
         listLabel={t("listLabel")}
@@ -167,6 +177,7 @@ function Skills({ orgId }: { orgId: string }) {
         })}
       </ListPage>
       {dialog}
+      {admin && creating && <SkillCreateDialog orgId={orgId} onClose={() => setCreating(false)} />}
       {admin && (
         <Dialog
           open={uploading}

@@ -795,9 +795,28 @@
       "ownerPlatform": "Platform",
       "ownerOrg": "This org",
       "plugin": "Plugin",
-      "platformHint": "The platform provides this skill: this organization cannot change or delete it; org admins turn it on or off on the Skills page."
+      "platformHint": "The platform provides this skill: this organization cannot change or delete it; org admins turn it on or off on the Skills page.",
+      "shareable": "Shareable",
+      "shareableHelp": "When on, the super admin can show or offer this skill to other organizations. Turning it off does not affect organizations it is already offered to.",
+      "shareOn": "\"{name}\" is now shareable.",
+      "shareOff": "\"{name}\" is no longer shareable."
     },
-    "description": "The skills this organization can use. Skills the platform turns on for everyone cannot be turned off; org admins turn the other platform skills on or off."
+    "description": "The skills this organization can use. Skills the platform turns on for everyone cannot be turned off; org admins turn the other platform skills on or off.",
+    "create": {
+      "open": "New",
+      "title": "New skill",
+      "name": "Name",
+      "nameHelp": "Lowercase letters, digits and single hyphens, up to 64 characters. Skill names are unique in an organization.",
+      "nameInvalid": "Use only lowercase letters, digits and single hyphens.",
+      "description": "Description",
+      "descriptionHelp": "Say what the skill does and when to use it: agents decide when to load it from this.",
+      "body": "Content",
+      "bodyHelp": "The body of SKILL.md. SKILL.md is generated from the name and the description: a leading --- frontmatter in the body is dropped, except the invocation keys (such as disable-model-invocation and context).",
+      "shareable": "Shareable",
+      "submit": "Create",
+      "cancel": "Cancel",
+      "created": "Skill \"{name}\" created."
+    }
   },
   "chat": {
     "waitingFor": {
@@ -1167,17 +1186,17 @@
     },
     "orgNotice": {
       "itemSharedLabel": "Item shared",
-      "itemSharedTitle": "{name} is now shared with {org}",
-      "itemSharedAllTitle": "{name} is now shared with all organizations",
+      "itemSharedTitle": "{org} can now use {name}",
+      "itemSharedAllTitle": "All organizations can now use {name}",
       "itemSharedHint": "Admins of that organization can use it now.",
       "sharedItemUpdatedLabel": "Shared item updated",
-      "sharedItemUpdatedTitle": "{name} was updated from {from} to {to}",
+      "sharedItemUpdatedTitle": "{owner} updated {name}: {from} → {to}",
       "sharedItemUpdatedHint": "The owner updated an item your organization uses.",
       "uploadConfirmedLabel": "Upload confirmed",
-      "uploadConfirmedTitle": "{name} {version} was confirmed",
+      "uploadConfirmedTitle": "The super admin confirmed {name} {version}",
       "uploadConfirmedHint": "A super admin confirmed this version.",
       "uploadRejectedLabel": "Upload rejected",
-      "uploadRejectedTitle": "{name} {version} was rejected",
+      "uploadRejectedTitle": "The super admin did not approve {name} {version}",
       "uploadRejectedHint": "A super admin rejected this version.",
       "unknownLabel": "Notice",
       "unknownTitle": "A notice from the platform",
@@ -1190,7 +1209,6 @@
       "to": "To version",
       "version": "Version",
       "reason": "Reason",
-      "noReason": "No reason given",
       "dismiss": "Got it",
       "dismissed": "Notice dismissed"
     },
@@ -3590,7 +3608,10 @@
       "confirm": "Update",
       "cancel": "Cancel",
       "done": "Updated \"{name}\" to {version}.",
-      "stale": "What the update does has changed. Review it again, then confirm."
+      "stale": "What the update does has changed. Review it again, then confirm.",
+      "orgCount": "{count, plural, one {# organization} other {# organizations}}",
+      "otherOrgs": "{count, plural, one {# other organization} other {# other organizations}}",
+      "otherOrg": "another organization"
     },
     "errorDetail": {
       "host": "Host: {host}",
@@ -4054,6 +4075,13 @@
     "listLabel": "Agent templates",
     "empty": "No agent templates yet. Plugins can bring agent templates.",
     "type": "type {type}",
-    "version": "v{version}"
+    "version": "v{version}",
+    "share": {
+      "chip": "Shareable",
+      "on": "Make shareable",
+      "off": "Stop sharing",
+      "doneOn": "\"{name}\" is now shareable.",
+      "doneOff": "\"{name}\" is no longer shareable."
+    }
   }
 }

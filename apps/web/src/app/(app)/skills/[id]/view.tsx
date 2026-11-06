@@ -12,12 +12,15 @@ import {
   formatBytes,
   KeyValue,
   Stack,
+  SwitchField,
   Text,
   useToast,
 } from "@capybara-hq/design";
-import { useTranslations } from "next-intl";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
 import { ErrorFrame } from "../../../../components/ErrorFrame";
+import { FormError } from "../../../../components/form-error";
 import { NoAccess } from "../../../../components/NoAccess";
 import { usePagePath } from "../../../../components/shell/path";
 import { useSession } from "../../../../components/shell/session";
@@ -26,13 +29,15 @@ import { canUpdateOrg } from "../../../../lib/org-settings";
 import { keys } from "../../../../lib/query/keys";
 import { useAppMutation } from "../../../../lib/query/mutation";
 import { usePageQuery } from "../../../../lib/query/page-query";
-import { skillQuery } from "../../../../lib/query/skills";
+import { skillDeletePreviewQuery, skillQuery } from "../../../../lib/query/skills";
 import { useWorkspace } from "../../../../lib/query/workspace";
 import {
   deleteSkill,
+  type SkillDeletePreview,
   type SkillDetail,
   type SkillFile,
   type SkillVersion,
+  setSkillShareable,
 } from "../../../../lib/skills";
 import { useErrorMessage } from "../../../../lib/use-error-message";
 import NotFound from "../../not-found";
@@ -42,10 +47,12 @@ type Tab = (typeof TABS)[number];
 
 /**
  * `/skills/[id]`：组织技能详情（DetailPage）：SKILL.md 正文（纯文本，不渲染 HTML / Markdown）、
- * 当前版本的文件、各版本；管理员可删除本组织自己的技能（输入技能名二次确认）。A platform skill on in
- * the org (or an org copy linked to one, which the kernel answers with the platform skill) is read
- * only: the org switches it on the 技能 page. From the query cache (the layout prefetched it on a
- * first load); a skill the kernel does not find is the not-found state.
+ * 当前版本的文件、各版本；管理员可删除本组织自己的技能（输入技能名二次确认；the confirmation says what the delete does: one another org
+ * uses is transferred to the platform, ruling P3-19). The org's own skill carries the 可共享 switch in
+ * the inspector (plugin scope phase 3; members see it disabled). A platform skill on in the org (or
+ * an org copy linked to one, which the kernel answers with the platform skill) is read only: the
+ * org switches it on the 技能 page. From the query cache (the layout prefetched it on a first load);
+ * a skill the kernel does not find is the not-found state.
  */
 export default function SkillView({ skillId }: { skillId: string }) {
   const ws = useWorkspace({ min: "member" });
@@ -98,7 +105,7 @@ function Skill({ orgId, skillId }: { orgId: string; skillId: string }) {
       }}
       tabs={tabs}
       inspectorTitle={t("detail.inspectorTitle")}
-      inspector={<Inspector skill={skill} />}
+      inspector={<Inspector orgId={orgId} skill={skill} />}
     >
       {tab === "content" ? (
         <ContentTab orgId={orgId} skill={skill} />
@@ -111,7 +118,14 @@ function Skill({ orgId, skillId }: { orgId: string; skillId: string }) {
   );
 }
 
-function Inspector({ skill }: { skill: SkillDetail }) {
+/**
+ * 可共享 is offered on the org's own org-scope skill only (ruling P3-6): not on a platform skill (or
+ * a copy linked to one), and not on a plugin's skill, which is shared with its plugin.
+ */
+const ownSkill = (s: SkillDetail) =>
+  s.origin !== "platform" && s.scope === "org" && (s.plugin ?? null) === null;
+
+function Inspector({ orgId, skill }: { orgId: string; skill: SkillDetail }) {
   const t = useTranslations("skills.detail");
   const tv = useTranslations("skills");
   return (
@@ -138,6 +152,51 @@ function Inspector({ skill }: { skill: SkillDetail }) {
           {skill.description}
         </Text>
       </Stack>
+      {ownSkill(skill) && <ShareSwitch orgId={orgId} skill={skill} />}
+    </Stack>
+  );
+}
+
+/** The 可共享 switch of the org's own skill (org admins switch it; members read it). */
+function ShareSwitch({ orgId, skill }: { orgId: string; skill: SkillDetail }) {
+  const t = useTranslations("skills.detail");
+  const toast = useToast();
+  const errorMessage = useErrorMessage();
+  const { me } = useSession();
+  const [error, setError] = useState<string>();
+  // 可共享 changes the skill and what the platform may offer: the skill, the library and the
+  // offered components read again
+  const share = useAppMutation({
+    fn: (shareable: boolean) => setSkillShareable(orgId, skill.id, shareable),
+    invalidates: () => [
+      keys.org(orgId).skill(skill.id),
+      keys.org(orgId).skills(),
+      keys.org(orgId).componentsAll(),
+    ],
+  });
+  const toggle = async (next: boolean) => {
+    setError(undefined);
+    try {
+      await share.mutateAsync(next);
+      toast.success(
+        next ? t("shareOn", { name: skill.name }) : t("shareOff", { name: skill.name }),
+      );
+    } catch (e) {
+      setError(errorMessage(e));
+    }
+  };
+  return (
+    <Stack gap={4}>
+      <SwitchField
+        label={t("shareable")}
+        checked={skill.shareable === true}
+        onChange={(next) => void toggle(next)}
+        disabled={!canUpdateOrg(me) || share.isPending}
+      />
+      <Text variant="small" tone="muted">
+        {t("shareableHelp")}
+      </Text>
+      {error !== undefined && <FormError message={error} />}
     </Stack>
   );
 }
@@ -149,13 +208,16 @@ function ContentTab({ orgId, skill }: { orgId: string; skill: SkillDetail }) {
   const toast = useToast();
   const errorMessage = useErrorMessage();
   const { me } = useSession();
+  const td = useTranslations("plugins.delete");
+  const qc = useQueryClient();
+  const previewKey = keys.org(orgId).skillDeletePreview(skill.id);
   const [confirm, setConfirm] = useState(false);
   // A delete invalidates the library (the list this page goes back to) and forgets the skill once
   // this page is left.
   const remove = useAppMutation({
     fn: () => deleteSkill(orgId, skill.id),
     invalidates: () => [keys.org(orgId).skills()],
-    forgetsOnLeave: () => [keys.org(orgId).skill(skill.id)],
+    forgetsOnLeave: () => [keys.org(orgId).skill(skill.id), previewKey],
   });
   return (
     <Stack gap={16}>
@@ -187,21 +249,75 @@ function ContentTab({ orgId, skill }: { orgId: string; skill: SkillDetail }) {
             open={confirm}
             onOpenChange={setConfirm}
             title={t("deleteTitle", { name: skill.name })}
-            description={t("deleteHint")}
+            description={
+              confirm ? <DeleteImpact orgId={orgId} skillId={skill.id} /> : t("deleteHint")
+            }
             confirmName={skill.name}
             confirmLabel={t("delete")}
             onConfirm={async () => {
+              let outcome: "transferred" | "removed" = "removed";
               try {
                 await remove.mutateAsync(undefined);
+                outcome = transferred(qc.getQueryData(previewKey)) ? "transferred" : "removed";
               } catch (e) {
                 throw new Error(errorMessage(e));
               }
               setConfirm(false);
-              toast.success(t("deleted", { name: skill.name }));
+              toast.success(
+                outcome === "transferred"
+                  ? td("doneTransferred", { name: skill.name })
+                  : t("deleted", { name: skill.name }),
+              );
               router.push("/skills");
             }}
           />
         </>
+      )}
+    </Stack>
+  );
+}
+
+const transferred = (p: unknown): boolean =>
+  (p as SkillDeletePreview | undefined)?.outcome === "transferred";
+
+/**
+ * What deleting the skill does, read when the confirmation opens (ruling P3-19): one another org
+ * uses is transferred to the platform (the orgs are named), and the org's agents that lose it are
+ * listed. While it reads, or when it cannot be read, the plain delete hint stands.
+ */
+function DeleteImpact({ orgId, skillId }: { orgId: string; skillId: string }) {
+  const t = useTranslations("skills.detail");
+  const td = useTranslations("plugins.delete");
+  const sep = useLocale() === "zh" ? "、" : ", ";
+  const preview = useQuery({
+    ...skillDeletePreviewQuery(orgId, skillId),
+    refetchOnMount: "always",
+  });
+  const p = preview.data;
+  return (
+    <Stack gap={8}>
+      {p !== undefined && p.outcome === "transferred" && (
+        <Text variant="prose" tone="warn">
+          {td("transferred", { orgs: p.orgs.map((o) => o.name).join(sep) })}
+        </Text>
+      )}
+      <Text variant="prose">{t("deleteHint")}</Text>
+      {p === undefined && preview.isPending && (
+        <Text variant="small" tone="muted">
+          {td("loading")}
+        </Text>
+      )}
+      {p !== undefined && p.agents.length > 0 && (
+        <Stack gap={4}>
+          <Text variant="small" tone="warn">
+            {td("agents")}
+          </Text>
+          {p.agents.map((a) => (
+            <Text key={a.id} variant="small">
+              {`· ${a.name}`}
+            </Text>
+          ))}
+        </Stack>
       )}
     </Stack>
   );

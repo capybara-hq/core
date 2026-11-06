@@ -631,6 +631,7 @@ describe("inbox: org notices of phase 3 (org admins)", () => {
       row: "crm",
       title: (n) =>
         n.sharedItemUpdatedTitle
+          .replace("{owner}", "Acme")
           .replace("{name}", "crm")
           .replace("{from}", "1.0.0")
           .replace("{to}", "1.1.0"),
@@ -685,6 +686,86 @@ describe("inbox: org notices of phase 3 (org admins)", () => {
       );
     },
   );
+
+  it.each([
+    [
+      "zh",
+      "item_shared",
+      { ref, name: "crm", org: { id: "o2", name: "Beta" } },
+      "Beta 现在可以使用 crm",
+      null,
+    ],
+    ["zh", "item_shared", { ref, name: "crm", org: "all_orgs" }, "所有组织现在可以使用 crm", null],
+    [
+      "zh",
+      "shared_item_updated",
+      {
+        ref,
+        name: "crm",
+        from: "1.0.0",
+        to: "1.1.0",
+        owner: { kind: "org", orgId: "o9", name: "Acme" },
+      },
+      "Acme 更新了 crm：1.0.0 → 1.1.0",
+      null,
+    ],
+    [
+      "zh",
+      "shared_item_updated",
+      { ref, name: "crm", from: "1", to: "2", owner: { kind: "platform" } },
+      "平台 更新了 crm：1 → 2",
+      null,
+    ],
+    [
+      "zh",
+      "upload_confirmed",
+      { itemId: "i1", name: "crm", version: "2.0.0" },
+      "超级管理员已确认 crm 2.0.0",
+      null,
+    ],
+    [
+      "zh",
+      "upload_rejected",
+      { itemId: "i1", name: "crm", version: "2.0.0", reason: "权限太宽" },
+      "超级管理员未通过 crm 2.0.0",
+      "权限太宽",
+    ],
+    [
+      "en",
+      "item_shared",
+      { ref, name: "crm", org: { id: "o2", name: "Beta" } },
+      "Beta can now use crm",
+      null,
+    ],
+    [
+      "en",
+      "item_shared",
+      { ref, name: "crm", org: "all_orgs" },
+      "All organizations can now use crm",
+      null,
+    ],
+    [
+      "en",
+      "upload_rejected",
+      { itemId: "i1", name: "crm", version: "2.0.0", reason: null },
+      "The super admin did not approve crm 2.0.0",
+      null,
+    ],
+  ] as const)("%s %s reads as the spec says (%s)", async (locale, kind, detail, title, reason) => {
+    const n = msgs[locale].inbox.orgNotice;
+    const notice = { id: "n1", kind, createdAt: T, detail };
+    await renderInbox(
+      {
+        [LIST]: () =>
+          json(200, { items: [{ type: kind, id: "n1", createdAt: T, notice }], truncated: false }),
+      },
+      { locale },
+    );
+    expect(await screen.findByText(title)).toBeTruthy();
+    if (reason !== null) expect(screen.getAllByText(reason).length).toBeGreaterThan(0);
+    if (kind === "upload_rejected" && reason === null)
+      expect(screen.queryByText(n.reason)).toBeNull();
+  });
 
   it("an unknown notice kind renders a generic notice and an unknown item type is skipped", async () => {
     const n = msgs.en.inbox.orgNotice;

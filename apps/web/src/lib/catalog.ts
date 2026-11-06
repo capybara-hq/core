@@ -917,6 +917,11 @@ export interface PlatformUpdatePreview {
     needsApproval: boolean;
   } | null;
   connectorOrgs: PlatformUpdateConnectorOrg[];
+  /**
+   * The names of the orgs the preview mentions, by id (an owner's update preview, Task 9: an org
+   * admin cannot read other orgs' names); absent from kernels that do not send it.
+   */
+  orgNames?: Record<string, string>;
   /** Confirm with it; 409 `plugin.upgrade_stale` once what the update does changed. */
   diffHash: string;
 }

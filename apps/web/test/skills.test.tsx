@@ -369,6 +369,8 @@ describe("技能详情（DetailPage）", () => {
   it("管理员删除：二次确认（输入技能名）→ DELETE → 回到列表", async () => {
     const calls = stubApi({
       [`GET ${BASE}/s1`]: () => json(200, detail()),
+      [`GET ${BASE}/s1/delete-preview`]: () =>
+        json(200, { outcome: "removed", orgs: [], agents: [] }),
       [`DELETE ${BASE}/s1`]: () => noContent(),
     });
     await renderSkill();
@@ -402,6 +404,8 @@ describe("技能详情（DetailPage）", () => {
     const calls = stubApi({
       [`GET ${BASE}`]: () => json(200, { skills: [] }),
       [`GET ${BASE}/s1`]: () => json(200, detail()),
+      [`GET ${BASE}/s1/delete-preview`]: () =>
+        json(200, { outcome: "removed", orgs: [], agents: [] }),
       [`DELETE ${BASE}/s1`]: () => noContent(),
     });
     const { client, unmount } = await renderSkill();
@@ -413,7 +417,9 @@ describe("技能详情（DetailPage）", () => {
     await user.type(within(dialog).getByRole("textbox"), "pdf-tools");
     await user.click(within(dialog).getByRole("button", { name: en.skills.detail.delete }));
     await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/skills"));
-    expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([`DELETE ${BASE}/s1`]);
+    const writes = () => calls.filter((c) => c.method !== "GET").map((c) => `${c.method} ${c.url}`);
+    expect(writes()).toEqual([`DELETE ${BASE}/s1`]);
+    expect(calls.some((c) => c.url === `${BASE}`)).toBe(false);
     expect(client.getQueryState(["org", "o1", "skills"])?.isInvalidated).toBe(true);
     // still cached while the page shows (no read, no not-found flash before the navigation) ...
     expect(client.getQueryData(["org", "o1", "skill", "s1"])).toBeDefined();
@@ -421,7 +427,10 @@ describe("技能详情（DetailPage）", () => {
     // ... and gone once the page is left: Back reads it instead of painting the deleted skill
     unmount();
     expect(client.getQueryState(["org", "o1", "skill", "s1"])).toBeUndefined();
-    expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([`DELETE ${BASE}/s1`]);
+    expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([
+      `GET ${BASE}/s1/delete-preview`,
+      `DELETE ${BASE}/s1`,
+    ]);
   });
 });
 
@@ -524,6 +533,177 @@ describe("the skills pages render on the server (web-SSR spec §6)", () => {
       expectNoFirstPaintFetch();
       await renderRouteWithCache(path, routes, { readiness: NOT_READY });
       await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/"));
+    },
+  );
+});
+
+describe("plugin scope phase 3: 新建技能, 可共享 and the delete preview", () => {
+  const GUEST = {
+    ...ME,
+    account: { ...ME.account, isSuperAdmin: false },
+    memberships: [{ orgId: "o1", slug: "acme", name: "Acme", role: "guest" }],
+  };
+  const fill = (s: string, vars: Record<string, string>) =>
+    s.replace(/\{(\w+)\}/g, (_, k: string) => vars[k] ?? "");
+  const c = (locale: "zh" | "en") => msgs[locale].skills.create;
+
+  it.each(LOCALES)("org admins get 新建 next to 上传 (%s)", async (locale) => {
+    stubApi({ [`GET ${BASE}`]: () => json(200, { skills: [skill("s1", "pdf-tools")] }) });
+    await renderSkills({ locale });
+    await screen.findByText("pdf-tools");
+    expect(screen.getByRole("button", { name: c(locale).open })).toBeTruthy();
+    expect(screen.getByRole("button", { name: msgs[locale].skills.upload.open })).toBeTruthy();
+  });
+
+  it("members and guests do not get 新建", async () => {
+    stubApi({ [`GET ${BASE}`]: () => json(200, { skills: [skill("s1", "pdf-tools")] }) });
+    await renderSkills({ me: MEMBER });
+    await screen.findByText("pdf-tools");
+    expect(screen.queryByRole("button", { name: en.skills.create.open })).toBeNull();
+    cleanup();
+    stubApi({ [`GET ${BASE}`]: () => json(200, { skills: [skill("s1", "pdf-tools")] }) });
+    await renderSkills({ me: GUEST });
+    await settle();
+    expect(screen.queryByRole("button", { name: en.skills.create.open })).toBeNull();
+    expect(screen.queryByText("pdf-tools")).toBeNull();
+  });
+
+  it("the dialog posts { name, description, body, shareable } and opens the new skill", async () => {
+    const m = en.skills.create;
+    const calls = stubApi({
+      [`GET ${BASE}`]: () => json(200, { skills: [] }),
+      [`POST ${BASE}`]: () =>
+        json(201, { skill: skill("s9", "notes", { shareable: true }), version: 1, created: true }),
+    });
+    await renderSkills();
+    const user = userEvent.setup();
+    await user.click((await screen.findAllByRole("button", { name: m.open }))[0] as HTMLElement);
+    const dialog = await screen.findByRole("dialog", { name: m.title });
+    // the body's frontmatter rule is said where the body is written
+    expect(within(dialog).getByText(m.bodyHelp)).toBeTruthy();
+    const submit = within(dialog).getByRole("button", { name: m.submit });
+    expect(submit).toHaveProperty("disabled", true);
+    await user.type(within(dialog).getByRole("textbox", { name: m.name }), "Notes");
+    await user.type(within(dialog).getByRole("textbox", { name: m.description }), "Take notes.");
+    await user.type(within(dialog).getByRole("textbox", { name: m.body }), "# Notes");
+    // an invalid name keeps the primary disabled
+    expect(submit).toHaveProperty("disabled", true);
+    expect(within(dialog).getByText(m.nameInvalid)).toBeTruthy();
+    await user.clear(within(dialog).getByRole("textbox", { name: m.name }));
+    await user.type(within(dialog).getByRole("textbox", { name: m.name }), "notes");
+    const share = within(dialog).getByRole("switch", { name: m.shareable });
+    expect(share.getAttribute("aria-checked")).toBe("false");
+    await user.click(share);
+    await user.click(submit);
+    await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/skills/s9"));
+    expect(bodyOf(calls.find((x) => x.method === "POST" && x.url === BASE))).toEqual({
+      name: "notes",
+      description: "Take notes.",
+      body: "# Notes",
+      shareable: true,
+    });
+    expect(await screen.findByText(fill(m.created, { name: "notes" }))).toBeTruthy();
+  });
+
+  it("409 skill.name_exists keeps the dialog open with its copy", async () => {
+    const m = zh.skills.create;
+    stubApi({
+      [`GET ${BASE}`]: () => json(200, { skills: [] }),
+      [`POST ${BASE}`]: () => json(409, { error: { code: "skill.name_exists", message: "x" } }),
+    });
+    await renderSkills({ locale: "zh" });
+    const user = userEvent.setup();
+    await user.click((await screen.findAllByRole("button", { name: m.open }))[0] as HTMLElement);
+    const dialog = await screen.findByRole("dialog", { name: m.title });
+    await user.type(within(dialog).getByRole("textbox", { name: m.name }), "notes");
+    await user.type(within(dialog).getByRole("textbox", { name: m.description }), "记笔记。");
+    await user.type(within(dialog).getByRole("textbox", { name: m.body }), "# Notes");
+    await user.click(within(dialog).getByRole("button", { name: m.submit }));
+    expect(await within(dialog).findByText(zh.errors.skill.name_exists)).toBeTruthy();
+    expect(router.push).not.toHaveBeenCalled();
+  });
+
+  it.each(LOCALES)(
+    "an own skill shows the 可共享 switch, which sets it and reads the skill again (%s)",
+    async (locale) => {
+      const m = msgs[locale].skills.detail;
+      let shared = false;
+      const calls = stubApi({
+        [`GET ${BASE}/s1`]: () =>
+          json(200, detail({ origin: "org", plugin: null, shareable: shared })),
+        [`PUT ${BASE}/s1/shareable`]: () => {
+          shared = true;
+          return json(200, { id: "s1", shareable: true });
+        },
+      });
+      await renderSkill({ locale });
+      const share = await screen.findByRole("switch", { name: m.shareable });
+      expect(share.getAttribute("aria-checked")).toBe("false");
+      expect(screen.getByText(m.shareableHelp)).toBeTruthy();
+      await userEvent.setup().click(share);
+      await vi.waitFor(() =>
+        expect(bodyOf(calls.find((x) => x.method === "PUT"))).toEqual({ shareable: true }),
+      );
+      await vi.waitFor(() =>
+        expect(screen.getByRole("switch", { name: m.shareable }).getAttribute("aria-checked")).toBe(
+          "true",
+        ),
+      );
+    },
+  );
+
+  it("no 可共享 on a platform skill, a plugin's skill, or for members", async () => {
+    stubApi({ [`GET ${BASE}/s1`]: () => json(200, detail({ origin: "platform" })) });
+    await renderSkill();
+    await screen.findByText(en.skills.detail.platformHint);
+    expect(screen.queryByRole("switch", { name: en.skills.detail.shareable })).toBeNull();
+    cleanup();
+    stubApi({ [`GET ${BASE}/s1`]: () => json(200, detail({ origin: "org", plugin: "docs" })) });
+    await renderSkill();
+    await screen.findByText("# PDF tools", { exact: false });
+    expect(screen.queryByRole("switch", { name: en.skills.detail.shareable })).toBeNull();
+    cleanup();
+    stubApi({ [`GET ${BASE}/s1`]: () => json(200, detail({ origin: "org", shareable: true })) });
+    await renderSkill({ me: MEMBER });
+    const share = await screen.findByRole("switch", { name: en.skills.detail.shareable });
+    expect(share.getAttribute("aria-checked")).toBe("true");
+    expect(share).toHaveProperty("disabled", true);
+  });
+
+  it.each(LOCALES)(
+    "deleting a shared skill another org uses says it is transferred, naming the orgs and agents (%s)",
+    async (locale) => {
+      const m = msgs[locale];
+      const sep = locale === "zh" ? "、" : ", ";
+      stubApi({
+        [`GET ${BASE}/s1`]: () => json(200, detail({ origin: "org", shareable: true })),
+        [`GET ${BASE}/s1/delete-preview`]: () =>
+          json(200, {
+            outcome: "transferred",
+            orgs: [
+              { id: "o2", name: "Beta" },
+              { id: "o3", name: "Gamma" },
+            ],
+            agents: [{ id: "ag1", name: "Writer" }],
+          }),
+        [`DELETE ${BASE}/s1`]: () => noContent(),
+      });
+      await renderSkill({ locale });
+      const user = userEvent.setup();
+      await user.click(await screen.findByRole("button", { name: m.skills.detail.delete }));
+      const dialog = await screen.findByRole("dialog");
+      expect(
+        await within(dialog).findByText(
+          fill(m.plugins.delete.transferred, { orgs: `Beta${sep}Gamma` }),
+        ),
+      ).toBeTruthy();
+      expect(within(dialog).getByText("· Writer")).toBeTruthy();
+      await user.type(within(dialog).getByRole("textbox"), "pdf-tools");
+      await user.click(within(dialog).getByRole("button", { name: m.skills.detail.delete }));
+      await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/skills"));
+      expect(
+        await screen.findByText(fill(m.plugins.delete.doneTransferred, { name: "pdf-tools" })),
+      ).toBeTruthy();
     },
   );
 });

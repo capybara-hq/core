@@ -42,6 +42,11 @@ export interface SkillSummary {
    * to this skill, so an agent that selected one of them has this skill selected.
    */
   linkedIds?: string[];
+  /**
+   * Plugin scope phase 3: the org's own org-scope skill is 可共享 (the super admin may show or offer
+   * it to other orgs); false for platform skills and agents' skills (absent from older kernels).
+   */
+  shareable?: boolean;
 }
 
 /** The skill's id and the ids of the org copies linked to it (they all select the same skill). */
@@ -175,6 +180,51 @@ export const getSkill = (orgId: string, id: string) =>
 
 export const deleteSkill = (orgId: string, id: string) =>
   apiFetch<void>(`${org(orgId)}/skills/${enc(id)}`, { method: "DELETE" });
+
+/** Skill name rule (SDK `isSkillName`): 1-64 lowercase letters, digits and single hyphens. */
+export const isSkillName = (s: string): boolean =>
+  s.length <= 64 && /^[a-z0-9]+(-[a-z0-9]+)*$/.test(s);
+
+/** Description limit of a skill (SDK `SKILL_LIMITS.descriptionMaxChars`). */
+export const SKILL_DESCRIPTION_MAX_CHARS = 1024;
+
+/**
+ * 新建技能 from text (`POST /skills { name, description, body, shareable? }`, plugin scope phase 3):
+ * the kernel writes SKILL.md from them; a leading `---` frontmatter in `body` is dropped except the
+ * invocation keys. A live org skill of that name -> 409 `skill.name_exists`.
+ */
+export const createSkillFromText = (
+  orgId: string,
+  input: { name: string; description: string; body: string; shareable?: boolean },
+) =>
+  apiFetch<UploadedSkill>(`${org(orgId)}/skills`, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+
+/**
+ * Sets 可共享 on the org's own skill (`PUT /skills/:id/shareable`; others -> 409
+ * `catalog.not_owned`).
+ */
+export const setSkillShareable = (orgId: string, id: string, shareable: boolean) =>
+  apiFetch<{ id: string; shareable: boolean }>(`${org(orgId)}/skills/${enc(id)}/shareable`, {
+    method: "PUT",
+    body: JSON.stringify({ shareable }),
+  });
+
+/**
+ * What deleting the org's skill does (`GET /skills/:id/delete-preview`, ruling P3-19; nothing
+ * written): `transferred` when it was shared and other orgs use it (`orgs`; it becomes the
+ * platform's), else `removed`; `agents`: the org's agents that lose it.
+ */
+export interface SkillDeletePreview {
+  outcome: "removed" | "transferred";
+  orgs: { id: string; name: string }[];
+  agents: { id: string; name: string }[];
+}
+
+export const previewSkillDelete = (orgId: string, id: string) =>
+  apiFetch<SkillDeletePreview>(`${org(orgId)}/skills/${enc(id)}/delete-preview`);
 
 /**
  * 上传技能包：`POST /skills/uploads` 登记 → 浏览器直传预签名表单 → `POST /skills {uploadId}`

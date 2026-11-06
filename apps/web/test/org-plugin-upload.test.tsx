@@ -3,11 +3,12 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
+import { OrgPluginUploadDialog } from "../src/components/OrgPluginUploadDialog";
 import type { Me } from "../src/lib/session";
 import { bodyOf, json, lastStubRoutes, noContent, stubApi as stubApiOnly } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
 import { renderRouteWithCache } from "./support/query";
-import { ME } from "./support/render";
+import { ME, renderPage } from "./support/render";
 import type { Routes } from "./support/server";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
@@ -223,6 +224,85 @@ describe("/plugins: 上传插件包", () => {
         reviewHash: "h2",
       }),
     );
+  });
+
+  it("confirm waits for the org catalog: a new version of an own plugin never sends shareable", async () => {
+    const m = en.plugins.upload;
+    let release: () => void = () => {};
+    const held = new Promise<void>((r) => {
+      release = r;
+    });
+    const calls = stubApi({
+      // the dialog opened before the catalog was read (nothing cached): its read is held
+      [`GET ${ORG}/catalog`]: async () => {
+        await held;
+        return json(200, { items: [orgItem({ owner: ACME, shareable: true })] });
+      },
+      [`POST ${ORG}/catalog/uploads/file`]: () =>
+        json(200, {
+          stagingId: "st3",
+          review: { ...REVIEW, version: "1.2.0", extension: undefined, reviewHash: "h3" },
+          update: null,
+        }),
+      [`POST ${ORG}/catalog/uploads/st3/confirm`]: () =>
+        json(201, { item: orgItem({ owner: ACME }), outcome: "updated" }),
+      "GET /api/v1/me": () => json(200, ME),
+    });
+    renderPage(<OrgPluginUploadDialog orgId="o1" me={ME} onClose={() => {}} />);
+    const dialog = await screen.findByRole("dialog");
+    const user = userEvent.setup();
+    await user.upload(dialog.querySelector('input[type="file"]') as HTMLInputElement, tgz());
+    await within(dialog).findByText(m.scope);
+    const confirm = within(dialog).getByRole("button", { name: m.confirm });
+    expect(confirm).toHaveProperty("disabled", true);
+    expect(within(dialog).queryByRole("switch", { name: m.shareable })).toBeNull();
+    release();
+    await waitFor(() => expect(confirm).toHaveProperty("disabled", false));
+    expect(within(dialog).queryByRole("switch", { name: m.shareable })).toBeNull();
+    await user.click(confirm);
+    await waitFor(() =>
+      expect(bodyOf(calls.find((c) => c.url.endsWith("/st3/confirm")))).toEqual({
+        reviewHash: "h3",
+      }),
+    );
+  });
+
+  it("the update preview names other orgs by the kernel's names, else as a count, never as ids", async () => {
+    const preview = (orgNames?: Record<string, string>) => ({
+      itemId: ID,
+      name: "crm",
+      from: "1.0.0",
+      to: "1.1.0",
+      components: [],
+      extension: { from: "1.0.0", to: null, orgs: ["o1", "o7", "o8"], needsApproval: false },
+      connectorOrgs: [],
+      diffHash: "d4",
+      ...(orgNames !== undefined && { orgNames }),
+    });
+    for (const [names, expected] of [
+      [undefined, "Acme, 2 other organizations"],
+      [{ o7: "Beta", o8: "Gamma" }, "Acme, Beta, Gamma"],
+    ] as const) {
+      stubApi({
+        [`GET ${ORG}/catalog`]: () =>
+          json(200, { items: [orgItem({ owner: ACME, shareable: true })] }),
+        [`POST ${ORG}/catalog/uploads/file`]: () =>
+          json(200, {
+            stagingId: "st4",
+            review: { ...REVIEW, version: "1.1.0", extension: undefined, reviewHash: "h4" },
+            update: preview(names),
+          }),
+        "GET /api/v1/me": () => json(200, ME),
+      });
+      await renderPlugins({ locale: "en" });
+      const { dialog } = await uploadIn(tgz(), "en");
+      const line = await within(dialog).findByText(
+        fill(en.catalog.update.extension, { from: "v1.0.0", to: "—", orgs: expected }),
+        { exact: false },
+      );
+      expect(line.textContent).not.toContain("o7");
+      cleanup();
+    }
   });
 
   it("plugin.name_taken names the owner", async () => {

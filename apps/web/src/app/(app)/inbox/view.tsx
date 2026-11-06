@@ -811,7 +811,7 @@ function noticeLine(
         label: tnn("sharedItemUpdatedLabel"),
         name,
         subtitle: `${from} → ${to}`,
-        title: tnn("sharedItemUpdatedTitle", { name, from, to }),
+        title: tnn("sharedItemUpdatedTitle", { owner, name, from, to }),
         hint: tnn("sharedItemUpdatedHint"),
         rows: [
           { k: tnn("item"), v: name },
@@ -837,6 +837,8 @@ function noticeLine(
     }
     case "upload_rejected": {
       const version = text(d.version);
+      // the reason is said only when the super admin gave one
+      const reason = typeof d.reason === "string" && d.reason.trim() !== "" ? d.reason : null;
       return {
         label: tnn("uploadRejectedLabel"),
         name,
@@ -846,7 +848,7 @@ function noticeLine(
         rows: [
           { k: tnn("item"), v: name },
           { k: tnn("version"), v: version },
-          { k: tnn("reason"), v: text(d.reason, tnn("noReason")) },
+          ...(reason !== null ? [{ k: tnn("reason"), v: reason }] : []),
         ],
       };
     }

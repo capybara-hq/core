@@ -118,10 +118,14 @@ export function OrgPluginUploadDialog({
   // new item)
   const existing =
     review === null ? undefined : items?.find((i) => i.name === review.name && ownedBy(i, orgId));
-  const nameOrg = (id: string) => me.memberships.find((m) => m.orgId === id)?.name ?? id;
+  // Other orgs are named only by the kernel (the preview's `orgNames`) or the viewer's memberships
+  const nameOrg = (id: string) => me.memberships.find((m) => m.orgId === id)?.name;
+  // Confirm waits for the org's catalog: only then is a new version of an own plugin known (and
+  // `shareable`, which the kernel sets only on a new plugin, left out)
+  const known = items !== undefined;
 
   const submit = async () => {
-    if (staged === null) return;
+    if (staged === null || !known) return;
     setError(undefined);
     try {
       const r = await confirm.mutateAsync({
@@ -175,7 +179,7 @@ export function OrgPluginUploadDialog({
           <Button
             variant="primary"
             loading={confirm.isPending}
-            disabled={staged === null || busy}
+            disabled={staged === null || busy || !known}
             onClick={() => void submit()}
           >
             {t("confirm")}
@@ -203,7 +207,7 @@ export function OrgPluginUploadDialog({
               <Card>
                 <Stack gap={8}>
                   <Text>{t("scope")}</Text>
-                  {existing === undefined ? (
+                  {!known ? null : existing === undefined ? (
                     <SwitchField
                       label={t("shareable")}
                       checked={shareable}
@@ -224,7 +228,11 @@ export function OrgPluginUploadDialog({
               </Card>
               {staged.update !== null && (
                 <Card title={t("updateTitle")}>
-                  <PlatformUpdatePreviewBody preview={staged.update} orgName={nameOrg} />
+                  <PlatformUpdatePreviewBody
+                    preview={staged.update}
+                    orgName={nameOrg}
+                    hideUnknown
+                  />
                 </Card>
               )}
               <PluginReviewBody review={review} />

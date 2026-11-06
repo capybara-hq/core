@@ -59,7 +59,7 @@ export function PlatformUpdateDialog({
   const errorMessage = useErrorMessage();
   const oq = adminOrgsQuery();
   const orgs = useQuery({ ...oq, retryOnMount: retryOnMountOf(oq.queryKey) }).data?.orgs ?? [];
-  const orgName = (id: string) => orgs.find((o) => o.id === id)?.name ?? id;
+  const orgName = (id: string) => orgs.find((o) => o.id === id)?.name;
   const name = displayNameOf(item, locale);
   const [preview, setPreview] = useState<PlatformUpdatePreview | null>(null);
   const catalogLines = useCatalogErrorLines();
@@ -159,19 +159,36 @@ export function PlatformUpdateDialog({
  * new version of its own plugin, ruling P3-12): the versions, every component with its change and
  * marks, the pinned copies, the components kept for agents, the extension's move and, per org,
  * the connectors updated, those whose credentials are cleared and the templates needing input.
- * `orgName` names an org id (its id when unknown).
+ * `orgName` names an org id (its id when unknown). An org's own upload (`hideUnknown`, ruling
+ * P3-19: an org admin cannot read other orgs) names the orgs the kernel named in `orgNames` or the
+ * viewer belongs to, and counts the others ("N 个组织"), never showing an id.
  */
 export function PlatformUpdatePreviewBody({
   preview,
   orgName,
+  hideUnknown = false,
 }: {
   preview: PlatformUpdatePreview;
-  orgName(id: string): string;
+  /** The org's name, or undefined when unknown (then its id, or a count with `hideUnknown`). */
+  orgName(id: string): string | undefined;
+  hideUnknown?: boolean;
 }) {
   const t = useTranslations("catalog.update");
   const locale = useLocale();
   const sep = locale === "zh" ? "、" : ", ";
-  const names = (ids: string[]) => ids.map(orgName).join(sep);
+  const nameOf = (id: string) => preview.orgNames?.[id] ?? orgName(id);
+  const one = (id: string) => nameOf(id) ?? (hideUnknown ? t("otherOrg") : id);
+  const names = (ids: string[]) => {
+    if (!hideUnknown) return ids.map(one).join(sep);
+    const known = ids.flatMap((id) => {
+      const n = nameOf(id);
+      return n === undefined ? [] : [n];
+    });
+    const unknown = ids.length - known.length;
+    if (unknown === 0) return known.join(sep);
+    if (known.length === 0) return t("orgCount", { count: unknown });
+    return [...known, t("otherOrgs", { count: unknown })].join(sep);
+  };
   const columns: Column<PlatformUpdateComponent>[] = [
     { key: "name", header: t("columns.name"), cell: (c) => c.name },
     { key: "kind", header: t("columns.kind"), tone: "muted", cell: (c) => t(`kind.${c.kind}`) },
@@ -279,7 +296,7 @@ export function PlatformUpdatePreviewBody({
             {kept.length > 0 && (
               <Text variant="small">
                 {t("connectors", {
-                  org: orgName(o.orgId),
+                  org: one(o.orgId),
                   names: kept.map((c) => c.name).join(sep),
                 })}
               </Text>
@@ -287,14 +304,14 @@ export function PlatformUpdatePreviewBody({
             {reset.length > 0 && (
               <Text variant="small" tone="warn">
                 {t("credentialsReset", {
-                  org: orgName(o.orgId),
+                  org: one(o.orgId),
                   names: reset.map((c) => c.name).join(sep),
                 })}
               </Text>
             )}
             {o.needsConfig.length > 0 && (
               <Text variant="small" tone="warn">
-                {t("needsConfig", { org: orgName(o.orgId), ids: o.needsConfig.join(sep) })}
+                {t("needsConfig", { org: one(o.orgId), ids: o.needsConfig.join(sep) })}
               </Text>
             )}
           </Stack>
