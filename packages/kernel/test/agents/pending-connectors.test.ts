@@ -108,7 +108,14 @@ async function connectorTemplate(itemId: string, templateId: string): Promise<st
 async function connector(
   slug: string,
   tools: string[],
-  o: { platformTemplateId?: string; kind?: string; orgId?: string; deleted?: boolean } = {},
+  o: {
+    platformTemplateId?: string;
+    kind?: string;
+    orgId?: string;
+    deleted?: boolean;
+    /** false: no tool snapshot yet (an authorization-code connector nobody authorized). */
+    synced?: boolean;
+  } = {},
 ): Promise<string> {
   const id = randomUUID();
   await env.db
@@ -123,6 +130,7 @@ async function connector(
       auth: JSON.stringify({}),
       created_by: env.bossId,
       platform_template_id: o.platformTemplateId ?? null,
+      ...(o.synced !== false && { tools_synced_at: new Date() }),
       ...(o.deleted && { deleted_at: new Date() }),
     })
     .execute();
@@ -152,6 +160,7 @@ const tpl = (over: Partial<AgentTemplate> = {}): AgentTemplate => ({
 });
 
 let mem2Session: Req | undefined;
+let mem2Id = "";
 
 /** Another member of the org (not the owner of the test agents). */
 async function secondMember(): Promise<Req> {
@@ -159,6 +168,7 @@ async function secondMember(): Promise<Req> {
   const id = (
     await accountsFor(env.db).createLocal({ login: "mem2", password: PW, displayName: "M2" })
   ).id;
+  mem2Id = id;
   await env.db
     .insertInto("memberships")
     .values({ org_id: env.orgId, account_id: id, role: "member" })
@@ -300,7 +310,13 @@ describe("binding a pending connector (P4-6)", { timeout: 60_000 }, () => {
       pending_keys: ["connector-2"],
     });
 
-    // an org admin binds the hand-configured one with an MCP connector of the org
+    // an org admin binds the hand-configured one with an MCP connector of the org, although the
+    // member's private agent is not visible to them
+    const hiddenToAdmin = await env.boss({
+      method: "GET",
+      url: `/api/v1/orgs/${env.orgId}/agents/${agent.id}`,
+    });
+    expect(errCode(hiddenToAdmin)).toBe("agent.not_found");
     const docs = await connector("docs", ["q", "r"], { kind: "mcp" });
     const r2 = await bind(env.boss, agent.id, "connector-2", docs);
     expect(r2.statusCode, r2.body).toBe(200);
@@ -403,6 +419,51 @@ describe("binding a pending connector (P4-6)", { timeout: 60_000 }, () => {
   });
 });
 
+describe("binding an OAuth connector before its first snapshot", { timeout: 60_000 }, () => {
+  it("is refused (not_synced) and keeps the entry pending", async () => {
+    const itemId = await catalogItem("crm");
+    const platformGh = await connectorTemplate(itemId, "gh");
+    const templateId = await platformTemplate(
+      tpl({ connectors: [{ template: "crm:gh", policies: { search: "ask" } }] }),
+    );
+    const agent = await createFrom(env.mem, templateId);
+    const oauth = await connector("gh", [], { platformTemplateId: platformGh, synced: false });
+    const r = await bind(env.boss, agent.id, "connector-1", oauth);
+    expect(r.statusCode).toBe(400);
+    expect(errCode(r)).toBe("agent.pending_connector_mismatch");
+    expect(r.json().error.details).toEqual([{ reason: "not_synced" }]);
+    const a = await env.mem({ method: "GET", url: `/api/v1/orgs/${env.orgId}/agents/${agent.id}` });
+    const view = (a.json() as { agent: AgentView }).agent;
+    expect(view.currentVersion).toBe(1);
+    expect(view.definition.pendingConnectors?.map((c) => c.key)).toEqual(["connector-1"]);
+    expect((await requestsOf(agent.id))[0]?.status).toBe("pending");
+    // once authorized (a snapshot taken), it binds with the entry's policies
+    await env.db
+      .updateTable("connectors")
+      .set({ tools_synced_at: new Date() })
+      .where("id", "=", oauth)
+      .execute();
+    await env.db
+      .insertInto("connector_tools")
+      .values({
+        connector_id: oauth,
+        name: "search",
+        spec: JSON.stringify({ name: "search", description: "d", inputSchema: { type: "object" } }),
+        spec_hash: "h",
+        status: "enabled",
+        default_policy: "allow",
+      })
+      .execute();
+    const ok = await bind(env.boss, agent.id, "connector-1", oauth);
+    expect(ok.statusCode, ok.body).toBe(200);
+    expect(
+      (ok.json() as { agent: AgentView }).agent.definition.toolPolicies[
+        connectorToolKey("gh", "search")
+      ],
+    ).toBe("ask");
+  });
+});
+
 describe("connector setup requests (P4-7)", { timeout: 60_000 }, () => {
   it("opens one request per agent, only for a creator without connectors.manage", async () => {
     const { templateId } = await twoPending();
@@ -443,11 +504,31 @@ describe("connector setup requests (P4-7)", { timeout: 60_000 }, () => {
       status: "pending",
       item: null,
       agent: { id: byMember.id, name: "From tpl", deleted: false },
-      connectors: [
-        { key: "connector-1", label: "GH", kind: "template" },
-        { key: "connector-2", label: "Docs", kind: "needs" },
-      ],
     });
+    // what an admin needs to configure it from the inbox, without opening the agent
+    const platformGh = (
+      await env.db.selectFrom("platform_connector_templates").select("id").executeTakeFirstOrThrow()
+    ).id;
+    expect(item?.request?.connectors).toEqual([
+      {
+        key: "connector-1",
+        label: "GH",
+        kind: "template",
+        source: { template: { id: platformGh, displayName: { zh: "GH", en: "GH" } } },
+        tools: ["search", "gone"],
+        policies: ["gone", "search"],
+      },
+      {
+        key: "connector-2",
+        label: "Docs",
+        kind: "needs",
+        source: {
+          needs: { protocol: "mcp", endpoint: "https://docs.example.com/mcp", tools: ["q"] },
+        },
+        tools: ["q"],
+        policies: [],
+      },
+    ]);
     // members do not see others' requests
     expect((await inbox(env.mem)).some((i) => i.id === rows[0]?.id)).toBe(false);
   });
@@ -497,6 +578,14 @@ describe("connector setup requests (P4-7)", { timeout: 60_000 }, () => {
     const seen = await env.mem({ method: "GET", url: requestUrl(agent.id) });
     expect(seen.statusCode, seen.body).toBe(200);
     expect(seen.json().request).toMatchObject({ id: first?.id, status: "rejected" });
+    // read as writes are authorized: an org admin reads it although the agent is private
+    const byAdmin = await env.boss({ method: "GET", url: requestUrl(agent.id) });
+    expect(byAdmin.statusCode, byAdmin.body).toBe(200);
+    expect(byAdmin.json().request.id).toBe(first?.id);
+    const mem2 = await secondMember();
+    expect(errCode(await mem2({ method: "GET", url: requestUrl(agent.id) }))).toBe(
+      "agent.not_found",
+    );
 
     const again = await env.mem({ method: "POST", url: requestUrl(agent.id) });
     expect(again.statusCode, again.body).toBe(201);
@@ -532,11 +621,100 @@ describe("connector setup requests (P4-7)", { timeout: 60_000 }, () => {
       pending_keys: ["connector-1", "connector-2"],
     });
 
+    // a member who sees a shared agent but does not own it: 403
+    const shared = await createFrom(env.boss, templateId, { visibility: "org" });
+    const sharedRead = await mem2({ method: "GET", url: requestUrl(shared.id) });
+    expect(sharedRead.statusCode).toBe(403);
+    expect(errCode(sharedRead)).toBe("forbidden");
+
     // nothing pending: refused
     const plain = await createFrom(env.mem, await platformTemplate(tpl({ name: "plain" })));
     const nothing = await env.mem({ method: "POST", url: requestUrl(plain.id) });
     expect(nothing.statusCode).toBe(409);
     expect(errCode(nothing)).toBe("agent.no_pending_connectors");
+  });
+
+  it("two concurrent opens make one request", async () => {
+    const { templateId } = await twoPending();
+    const agent = await createFrom(env.boss, templateId);
+    const [a, b] = await Promise.all([
+      env.boss({ method: "POST", url: requestUrl(agent.id) }),
+      env.boss({ method: "POST", url: requestUrl(agent.id) }),
+    ]);
+    expect([a.statusCode, b.statusCode].sort()).toEqual([200, 201]);
+    expect(a.json().request.id).toBe(b.json().request.id);
+    expect(await requestsOf(agent.id)).toHaveLength(1);
+    // and through the create's seam, raced against the route
+    const other = await createFrom(env.boss, templateId);
+    const seam = env.k.app.get(PendingConnectorRequests);
+    await Promise.all([
+      seam.openFor({ orgId: env.orgId, agentId: other.id, ownerAccountId: env.bossId, keys: [] }),
+      seam.openFor({ orgId: env.orgId, agentId: other.id, ownerAccountId: env.bossId, keys: [] }),
+      env.boss({ method: "POST", url: requestUrl(other.id) }),
+    ]);
+    expect(await requestsOf(other.id)).toHaveLength(1);
+    // the seam opens nothing for an agent without pending connectors or a deleted one
+    const plain = await createFrom(env.boss, await platformTemplate(tpl({ name: "plain" })));
+    await seam.openFor({
+      orgId: env.orgId,
+      agentId: plain.id,
+      ownerAccountId: env.bossId,
+      keys: [],
+    });
+    expect(await requestsOf(plain.id)).toEqual([]);
+    const gone = await createFrom(env.boss, templateId);
+    await env.boss({ method: "DELETE", url: `/api/v1/orgs/${env.orgId}/agents/${gone.id}` });
+    await seam.openFor({
+      orgId: env.orgId,
+      agentId: gone.id,
+      ownerAccountId: env.bossId,
+      keys: [],
+    });
+    expect(await requestsOf(gone.id)).toEqual([]);
+  });
+
+  it("an owner change moves the request and its undismissed decision to the new owner", async () => {
+    const { templateId } = await twoPending();
+    const mem2 = await secondMember();
+    const rejected = await createFrom(env.mem, templateId);
+    const [r1] = await requestsOf(rejected.id);
+    await decide(env.boss, r1?.id as string, { approve: false, reason: "no" });
+    const pending = await createFrom(env.mem, templateId);
+    for (const a of [rejected, pending]) {
+      const r = await env.boss({
+        method: "POST",
+        url: `/api/v1/orgs/${env.orgId}/agents/${a.id}/owner`,
+        payload: { accountId: mem2Id },
+      });
+      expect(r.statusCode, r.body).toBe(200);
+    }
+    expect((await requestsOf(rejected.id))[0]?.requested_by).toBe(mem2Id);
+    expect((await requestsOf(pending.id))[0]?.requested_by).toBe(mem2Id);
+    expect((await inbox(mem2)).some((i) => i.id === r1?.id)).toBe(true);
+    expect((await inbox(env.mem)).some((i) => i.id === r1?.id)).toBe(false);
+
+    // offboarding hands the member's agents, and their requests, to the org owner
+    const mem3Id = (
+      await accountsFor(env.db).createLocal({ login: "mem3", password: PW, displayName: "M3" })
+    ).id;
+    await env.db
+      .insertInto("memberships")
+      .values({ org_id: env.orgId, account_id: mem3Id, role: "member" })
+      .execute();
+    const mem3 = await session(env.k, "mem3");
+    const leaving = await createFrom(mem3, templateId);
+    const removed = await env.boss({
+      method: "DELETE",
+      url: `/api/v1/orgs/${env.orgId}/members/${mem3Id}`,
+    });
+    expect(removed.statusCode, removed.body).toBeLessThan(300);
+    const owner = await env.db
+      .selectFrom("agents")
+      .select("owner_account_id")
+      .where("id", "=", leaving.id)
+      .executeTakeFirstOrThrow();
+    expect(owner.owner_account_id).not.toBe(mem3Id);
+    expect((await requestsOf(leaving.id))[0]?.requested_by).toBe(owner.owner_account_id);
   });
 
   it("deleting the agent closes its request; an edit removing entries narrows or cancels it", async () => {
@@ -622,20 +800,28 @@ describe("one more connector from a connector template (P4-7)", { timeout: 120_0
     expect(installed.statusCode, installed.body).toBe(201);
     const installId = installed.json().installed.pluginInstallId as string;
     expect((await create(env.mem, platformGh, { config: tokenInput() })).statusCode).toBe(403);
-    // the default name's slug is the first connector's
-    const taken = await create(env.boss, platformGh, { config: tokenInput() });
-    expect(errCode(taken)).toBe("connector.slug_taken");
+    // input errors sit under `config`
     const missing = await create(env.boss, platformGh, {
-      name: "GitHub 2",
       config: { endpoint: { url: env.mcp.url } },
     });
     expect(missing.statusCode).toBe(400);
     expect(missing.json().error.details[0].path).toBe("config.credential");
+    const badSlug = await create(env.boss, platformGh, {
+      config: { ...tokenInput(), slug: "Bad Slug" },
+    });
+    expect(badSlug.statusCode).toBe(400);
+    expect(badSlug.json().error.details[0].path).toBe("config.slug");
 
-    const r = await create(env.boss, platformGh, { name: "GitHub 2", config: tokenInput() });
+    // without a name: the first free `GitHub <n>` and `github_<n>` (the first one is `github`)
+    const r = await create(env.boss, platformGh, { config: tokenInput() });
     expect(r.statusCode, r.body).toBe(201);
-    const made = r.json().connector as { id: string; name: string; tools: { name: string }[] };
-    expect(made.name).toBe("GitHub 2");
+    const made = r.json().connector as {
+      id: string;
+      name: string;
+      slug: string;
+      tools: { name: string }[];
+    };
+    expect([made.name, made.slug]).toEqual(["GitHub 2", "github_2"]);
     expect(made.tools.map((t) => t.name).sort()).toEqual(["delete_all", "search"]);
     const row = await env.db
       .selectFrom("connectors")
@@ -651,6 +837,23 @@ describe("one more connector from a connector template (P4-7)", { timeout: 120_0
       .where("ref", "=", made.id)
       .execute();
     expect(ledger).toEqual([{ ref: made.id, template_id: "gh" }]);
+    const third = await create(env.boss, platformGh, { config: tokenInput() });
+    expect([third.json().connector.name, third.json().connector.slug]).toEqual([
+      "GitHub 3",
+      "github_3",
+    ]);
+    // a given name is kept, its slug made free; a given slug that is taken answers 409
+    const named = await create(env.boss, platformGh, { name: "GitHub", config: tokenInput() });
+    expect(named.statusCode, named.body).toBe(201);
+    expect([named.json().connector.name, named.json().connector.slug]).toEqual([
+      "GitHub",
+      "github_4",
+    ]);
+    const taken = await create(env.boss, platformGh, {
+      config: { ...tokenInput(), slug: "github_2" },
+    });
+    expect(taken.statusCode).toBe(409);
+    expect(errCode(taken)).toBe("connector.slug_taken");
 
     // the org admin switches the template off: refused again
     const sw = await env.boss({
@@ -668,7 +871,7 @@ describe("one more connector from a connector template (P4-7)", { timeout: 120_0
       });
       expect(c.statusCode, c.body).toBe(200);
     }
-    const afterOff = await create(env.boss, platformGh, { name: "GitHub 3", config: tokenInput() });
+    const afterOff = await create(env.boss, platformGh, { config: tokenInput() });
     expect(errCode(afterOff)).toBe("component.off");
   });
 
@@ -694,7 +897,8 @@ describe("one more connector from a connector template (P4-7)", { timeout: 120_0
       },
     });
     expect(errCode(custom)).toBe("catalog.custom_disabled");
-    // the admin installs the plugin with its connector and binds it
+    // the admin installs the plugin with its connector; one more from the template is allowed too
+    // (it is not a custom connector), and either binds
     const installed = await install(env.boss, env, item, { connectors: { gh: tokenInput() } });
     expect(installed.statusCode, installed.body).toBe(201);
     const gh = (
@@ -706,7 +910,10 @@ describe("one more connector from a connector template (P4-7)", { timeout: 120_0
         .where("deleted_at", "is", null)
         .executeTakeFirstOrThrow()
     ).id;
-    const r = await bind(env.boss, agent.id, "connector-1", gh);
+    const more = await create(env.boss, platformGh, { config: tokenInput() });
+    expect(more.statusCode, more.body).toBe(201);
+    expect(more.json().connector.id).not.toBe(gh);
+    const r = await bind(env.boss, agent.id, "connector-1", more.json().connector.id);
     expect(r.statusCode, r.body).toBe(200);
     expect((await requestsOf(agent.id))[0]?.status).toBe("approved");
   });

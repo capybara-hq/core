@@ -349,7 +349,7 @@ export class AgentsService {
     @Inject(EvalBudget) private readonly evalBudget: Pick<EvalBudget, "cancelRuns">,
     /** Settles the agent's connector setup request when its pending connectors change (P4-7). */
     @Inject(PendingConnectorRequests)
-    private readonly setupRequests: Pick<PendingConnectorRequests, "settleIn">,
+    private readonly setupRequests: Pick<PendingConnectorRequests, "settleIn" | "retargetIn">,
   ) {}
 
   /**
@@ -888,6 +888,8 @@ export class AgentsService {
       .set({ owner_account_id: newOwnerId, needs_reassignment: false, updated_at: sql`now()` })
       .where("id", "=", agentId)
       .execute();
+    // the new owner hears about the agent's connector setup request (P4-T6-4)
+    await this.setupRequests.retargetIn([agentId], newOwnerId);
     await audit(t, {
       actorAccountId,
       ...(actorTokenId !== undefined && { actorTokenId }),

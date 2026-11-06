@@ -589,3 +589,23 @@ export async function connectorsMadeFrom(
     .executeTakeFirstOrThrow();
   return Number(r.n);
 }
+
+/**
+ * Whether platform connector template `id` is on in the org (`on`), offered to it but off
+ * (`off`: its plugin not installed for a `follow` template, or switched off there), or neither
+ * (`absent`: missing, deleted, without a plugin, stopped or not offered). One more connector from a
+ * template needs `on` (ruling P4-T6-8), read before and again under the org lock.
+ */
+export async function connectorTemplateState(
+  db: KernelSchemaDb,
+  orgId: string,
+  id: string,
+): Promise<"on" | "off" | "absent"> {
+  const [c] = await loadComponents(db, "connector_template", { ids: [id] });
+  if (!c || c.itemId === null) return "absent";
+  const st = await loadScopeState(db, "connector_template", [c]);
+  const p = pluginFactsOf(st, c.itemId, orgId);
+  const listed = listedIn(st, c.id, orgId);
+  if (componentOn(c, p, listed, switchOf(st, c.id, orgId))) return "on";
+  return componentOffered(c, p, listed) ? "off" : "absent";
+}

@@ -29,11 +29,25 @@ export type CatalogRequestStatus = "pending" | "approved" | "rejected" | "cancel
 
 /** A pending connector a `connector_setup` request waits for (ruling P4-T6-5). */
 export interface SetupRequestConnector {
-  /** The agent's `pendingConnectors[].key`. */
+  /** The agent's `pendingConnectors[].key` (the bind route's `:key`). */
   key: string;
   label: string;
   /** `template`: made from a platform connector template; `needs`: a hand-configured one. */
   kind: "template" | "needs";
+  /**
+   * What configures it, so an org admin acts from the request without opening the agent (fix
+   * round 1): `template.id` is the platform connector template's id (pick an org connector made
+   * from it, or `POST connector-templates/:id/connectors`), `displayName` its display name (null
+   * once the template row is gone); `needs` the protocol (the connector kind to pick), the endpoint
+   * and the tools of the hand-configured connector the template recorded.
+   */
+  source:
+    | { template: { id: string; displayName: LocalizedName | null } }
+    | { needs: { protocol: "mcp" | "openapi"; endpoint: string; tools: string[] } };
+  /** The tool names the agent takes once bound; null = all of the connector's tools. */
+  tools: string[] | null;
+  /** The tool names the entry tightens a policy for (names only, sorted). */
+  policies: string[];
 }
 
 /**
@@ -643,7 +657,7 @@ export class CatalogRequestsService {
       .orderBy("r.id")
       .limit(CATALOG_REQUESTS_LIST_MAX)
       .execute();
-    return rows.map(toView);
+    return this.toViews(rows);
   }
 
   /** 待超级管理员处理的申请数（后台概览）。 */
@@ -684,13 +698,13 @@ export class CatalogRequestsService {
     // nothing reveals the item's name to the org; a setup request of a deleted agent too
     const ids = [...new Set(rows.flatMap((r) => (r.item_id !== null ? [r.item_id] : [])))];
     const seen = await itemsSeenBy(this.db, orgId, ids);
-    return rows
-      .filter((r) =>
+    return this.toViews(
+      rows.filter((r) =>
         r.kind === "connector_setup"
           ? r.agent_id !== null && r.agent_deleted_at === null
           : r.item_id !== null && seen.has(r.item_id),
-      )
-      .map(toView);
+      ),
+    );
   }
 
   /** The inbox: the account's decided requests in the org it has not dismissed, newest first. */
@@ -704,13 +718,38 @@ export class CatalogRequestsService {
       .orderBy("r.id")
       .limit(CATALOG_REQUESTS_LIST_MAX)
       .execute();
-    return rows.map(toView);
+    return this.toViews(rows);
   }
 
   async view(id: string): Promise<CatalogRequestView> {
     const row = await this.baseQuery().where("r.id", "=", id).executeTakeFirst();
     if (!row) throw requestNotFound();
-    return toView(row);
+    return (await this.toViews([row]))[0] as CatalogRequestView;
+  }
+
+  /** The views of `rows`, with the display names of the connector templates setup requests name. */
+  private async toViews(rows: RequestRow[]): Promise<CatalogRequestView[]> {
+    const ids = new Set<string>();
+    for (const r of rows) {
+      if (r.kind !== "connector_setup") continue;
+      const def = r.agent_definition as Pick<AgentDefinition, "pendingConnectors"> | null;
+      for (const c of def?.pendingConnectors ?? []) {
+        if ("template" in c.source && UUID_RE.test(c.source.template)) ids.add(c.source.template);
+      }
+    }
+    const names = new Map<string, LocalizedName | null>();
+    if (ids.size > 0) {
+      const found = await this.db
+        .selectFrom("platform_connector_templates")
+        .select(["id", "file"])
+        .where("id", "in", [...ids])
+        .execute();
+      for (const t of found) {
+        const dn = (t.file as { displayName?: LocalizedName } | null)?.displayName;
+        names.set(t.id, dn ?? null);
+      }
+    }
+    return rows.map((r) => toView(r, names));
   }
 
   private baseQuery() {
@@ -755,13 +794,16 @@ export class CatalogRequestsService {
 }
 
 /** The view fields of a `connector_setup` request (ruling P4-T6-5); null for other kinds. */
-function setupFields(r: {
-  kind: CatalogRequestKind;
-  agent_id: string | null;
-  pending_keys: string[] | null;
-  agent_deleted_at: Date | null;
-  agent_definition: unknown;
-}): Pick<CatalogRequestView, "agent" | "connectors"> {
+function setupFields(
+  r: {
+    kind: CatalogRequestKind;
+    agent_id: string | null;
+    pending_keys: string[] | null;
+    agent_deleted_at: Date | null;
+    agent_definition: unknown;
+  },
+  templateNames: ReadonlyMap<string, LocalizedName | null>,
+): Pick<CatalogRequestView, "agent" | "connectors"> {
   if (r.kind !== "connector_setup" || r.agent_id === null) return { agent: null, connectors: null };
   const def = (r.agent_definition ?? null) as Pick<
     AgentDefinition,
@@ -772,7 +814,25 @@ function setupFields(r: {
   for (const key of r.pending_keys ?? []) {
     const c = pending.get(key);
     if (c === undefined) continue;
-    connectors.push({ key, label: c.label, kind: "template" in c.source ? "template" : "needs" });
+    const src = c.source;
+    connectors.push({
+      key,
+      label: c.label,
+      kind: "template" in src ? "template" : "needs",
+      source:
+        "template" in src
+          ? { template: { id: src.template, displayName: templateNames.get(src.template) ?? null } }
+          : {
+              needs: {
+                protocol: src.needs.protocol,
+                endpoint: src.needs.endpoint,
+                tools: [...src.needs.tools],
+              },
+            },
+      tools: c.tools !== undefined && c.tools.length > 0 ? [...c.tools] : null,
+      // jsonb keeps no key order: sorted
+      policies: Object.keys(c.policies ?? {}).sort(),
+    });
   }
   return {
     agent: { id: r.agent_id, name: def?.name ?? "", deleted: r.agent_deleted_at !== null },
@@ -780,7 +840,7 @@ function setupFields(r: {
   };
 }
 
-function toView(r: {
+type RequestRow = {
   id: string;
   org_id: string;
   org_name: string;
@@ -804,7 +864,12 @@ function toView(r: {
   decided_at: Date | null;
   staging_id: string | null;
   created_at: Date;
-}): CatalogRequestView {
+};
+
+function toView(
+  r: RequestRow,
+  templateNames: ReadonlyMap<string, LocalizedName | null>,
+): CatalogRequestView {
   return {
     id: r.id,
     orgId: r.org_id,
@@ -818,7 +883,7 @@ function toView(r: {
       r.entry_name !== null
         ? { marketplaceId: r.marketplace_id, name: r.entry_name, version: r.entry_version }
         : null,
-    ...setupFields(r),
+    ...setupFields(r, templateNames),
     status: r.status,
     note: r.note,
     reason: r.reason,

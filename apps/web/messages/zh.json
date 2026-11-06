@@ -129,7 +129,7 @@
       "visibility_forbidden": "只有组织管理员可以用模板创建给他人使用的智能体。请把可见范围设为仅自己。",
       "template_preview_stale": "预览之后模板或组织的配置有变化。请重新预览后再创建。",
       "pending_connector_not_found": "这个连接器已不在智能体的待配置列表里，请刷新页面。",
-      "pending_connector_mismatch": "这个连接器不匹配：请选择由同一连接器模板创建、协议相同且提供智能体所需工具的连接器。",
+      "pending_connector_mismatch": "这个连接器不匹配：请选择由同一连接器模板创建、协议相同且提供智能体所需工具的连接器；OAuth 连接器需先完成授权。",
       "no_pending_connectors": "这个智能体没有待配置的连接器。"
     },
     "agent_template": {

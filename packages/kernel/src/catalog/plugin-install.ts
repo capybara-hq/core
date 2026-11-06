@@ -51,6 +51,7 @@ import type {
 } from "../tools/connectors.service.js";
 import { ConnectorsService } from "../tools/connectors.service.js";
 import type { ConnectorAuth } from "../tools/credentials.js";
+import { deriveSlug, isValidSlug } from "../tools/naming.js";
 import {
   type CatalogVersionFiles,
   findConnectorIn,
@@ -66,8 +67,8 @@ import {
 import { versionUsable } from "./catalog-items.js";
 import {
   agentDefinitionRefs,
-  componentOffered,
   componentOn,
+  connectorTemplateState,
   connectorTemplatesOn,
   type DefinitionRefs,
   listedIn,
@@ -2237,12 +2238,15 @@ export class PluginInstaller {
    * One more connector from a platform connector template on in the org (rulings P4-7, P4-T6-8;
    * `POST …/connector-templates/:templateId/connectors`): `templateId` is the platform connector
    * template's id; `config` is an install's connector input (endpoint, credential or OAuth client,
-   * slug) and `name` its name. Created as at install ({@link planConnector}, then
-   * `ConnectorsService.create`, which re-checks `connectors.manage` and the item in the org lock),
-   * linked to the template, and recorded on the plugin's live install in the org when there is one.
-   * A template that is missing, deleted or not offered to the org -> 404 `component.not_found`;
-   * offered but off there (its plugin not installed, or switched off) -> 409 `component.off`;
-   * input errors -> 400 `validation_failed` at `config.<field>`.
+   * slug) and `name` its name. Without a slug the name and slug default to the first free ones
+   * ({@link freeConnectorName}; a race for it retries), and only a given slug answers 409
+   * `connector.slug_taken`. Created as at install ({@link planConnector}, then
+   * `ConnectorsService.create`, which checks the slug before any outbound call and re-checks it,
+   * `connectors.manage`, the item and the template being on under the org lock), linked to the
+   * template, and recorded on the plugin's live install in the org when there is one. A template
+   * that is missing, deleted or not offered to the org -> 404 `component.not_found`; offered but
+   * off there (its plugin not installed, or switched off) -> 409 `component.off`; input errors ->
+   * 400 `validation_failed` at `config.<field>`.
    */
   async addTemplateConnector(
     orgId: string,
@@ -2257,13 +2261,10 @@ export class PluginInstaller {
         "The connector template does not exist or is not available in this organization",
       );
     if (!UUID_RE.test(templateId)) throw notFound();
-    const [c] = await loadComponents(this.db, "connector_template", { ids: [templateId] });
-    if (!c || c.itemId === null) throw notFound();
-    const st = await loadScopeState(this.db, "connector_template", [c]);
-    const p = pluginFactsOf(st, c.itemId, orgId);
-    const listed = listedIn(st, c.id, orgId);
-    if (!componentOn(c, p, listed, switchOf(st, c.id, orgId))) {
-      if (!componentOffered(c, p, listed)) throw notFound();
+    // read here to fail early, and again under the org lock by the create (`mustBeOn`)
+    const state = await connectorTemplateState(this.db, orgId, templateId);
+    if (state === "absent") throw notFound();
+    if (state === "off") {
       throw new ApiError(
         "component.off",
         "This connector template is off in this organization; switch it (or its plugin) on first",
@@ -2278,12 +2279,19 @@ export class PluginInstaller {
           .on("a.org_id", "=", orgId)
           .on("a.status", "=", "installed"),
       )
-      .select(["t.file", "i.name", "i.latest_version", "a.id as install_id", "a.version"])
+      .select([
+        "t.template_id",
+        "t.catalog_item_id",
+        "t.file",
+        "i.name",
+        "i.latest_version",
+        "a.version",
+      ])
       .where("t.id", "=", templateId)
       .executeTakeFirstOrThrow();
-    const ct = { id: c.name, file: row.file as ConnectorTemplateFile };
+    const ct = { id: row.template_id, file: row.file as ConnectorTemplateFile };
     const at = `connectors.${ct.id}`;
-    // the paths of an install's input, under `config` here
+    // the paths of an install's input and of the create, under `config` here (`name` stays)
     const rebase = (e: unknown): unknown => {
       if (!(e instanceof ApiError) || e.code !== "validation_failed" || !e.details) return e;
       return new ApiError(
@@ -2291,33 +2299,134 @@ export class PluginInstaller {
         e.message,
         e.details.map((d) => {
           const path = (d as { path?: unknown }).path;
-          if (typeof path !== "string" || !(path === at || path.startsWith(`${at}.`))) return d;
-          return { ...(d as object), path: `config${path.slice(at.length)}` };
+          if (typeof path !== "string") return d;
+          const rest = path === at || path.startsWith(`${at}.`) ? path.slice(at.length + 1) : path;
+          if (!/^(slug|credential|endpoint|client)(\.|$)/.test(rest)) {
+            return rest === path ? d : { ...(d as object), path: rest };
+          }
+          return { ...(d as object), path: `config.${rest}` };
         }),
       );
     };
-    let ci: CreateConnectorInput;
-    try {
-      ci = this.planConnector(
-        actor,
-        { itemId: c.itemId, version: row.version ?? row.latest_version, name: row.name },
-        ct,
-        {
-          connectors: {
-            [ct.id]: { ...input.config, ...(input.name !== undefined && { name: input.name }) },
+    const display = ct.file.displayName?.en ?? ct.id;
+    // a slug given by the caller is theirs (409 when taken); otherwise the first free default
+    const defaulted = input.config.slug === undefined;
+    for (let attempt = 0; ; attempt++) {
+      const named = defaulted
+        ? await this.freeConnectorName(orgId, display, input.name)
+        : { name: input.name ?? display };
+      let ci: CreateConnectorInput;
+      try {
+        ci = this.planConnector(
+          actor,
+          {
+            itemId: row.catalog_item_id,
+            version: row.version ?? row.latest_version,
+            name: row.name,
           },
-        },
-        "",
-        undefined,
-      );
-    } catch (e) {
-      throw rebase(e);
+          ct,
+          {
+            connectors: {
+              [ct.id]: {
+                ...input.config,
+                name: named.name,
+                ...(named.slug !== undefined && { slug: named.slug }),
+              },
+            },
+          },
+          "",
+          undefined,
+        );
+      } catch (e) {
+        throw rebase(e);
+      }
+      ci = { ...ci, template: ci.template && { ...ci.template, mustBeOn: true } };
+      try {
+        const r = await this.connectors.create(orgId, actor, ci, opts.actorTokenId);
+        await this.recordOnLiveInstall(orgId, row.catalog_item_id, r.connector.id, ct.id);
+        return r;
+      } catch (e) {
+        // another create took the default slug meanwhile: the next free one
+        if (
+          defaulted &&
+          attempt < 2 &&
+          e instanceof ApiError &&
+          e.code === "connector.slug_taken"
+        ) {
+          continue;
+        }
+        throw rebase(e);
+      }
     }
-    const r = await this.connectors.create(orgId, actor, ci, opts.actorTokenId).catch((e) => {
-      throw rebase(e);
-    });
-    if (row.install_id !== null) await this.recordConnector(row.install_id, r.connector.id, ct.id);
-    return r;
+  }
+
+  /**
+   * The default name and slug of one more connector (fix round 1, item 3): the name given (else the
+   * template's display name) and its slug when free among the org's live connectors, else the first
+   * free `<displayName> 2`, `3`, … (a given name is kept) with the slug suffixed `_2`, `_3`, …
+   * (cut to the 24-character slug limit). No slug when none can be derived (the create asks for
+   * one).
+   */
+  private async freeConnectorName(
+    orgId: string,
+    display: string,
+    given: string | undefined,
+  ): Promise<{ name: string; slug?: string }> {
+    const base = deriveSlug(given ?? display) ?? deriveSlug(display);
+    if (base === null) return { name: given ?? display };
+    const taken = new Set(
+      (
+        await this.db
+          .selectFrom("connectors")
+          .select("slug")
+          .where("org_id", "=", orgId)
+          .where("deleted_at", "is", null)
+          .execute()
+      ).map((r) => r.slug),
+    );
+    for (let n = 1; ; n++) {
+      const suffix = n === 1 ? "" : `_${n}`;
+      const slug = `${base.slice(0, 24 - suffix.length).replace(/_+$/, "")}${suffix}`;
+      if (!isValidSlug(slug) || taken.has(slug)) continue;
+      const nth = ` ${n}`;
+      const name =
+        given ?? (n === 1 ? display : `${[...display].slice(0, 80 - nth.length).join("")}${nth}`);
+      return { name: [...name].slice(0, 80).join(""), slug };
+    }
+  }
+
+  /**
+   * Records a connector made from a plugin's template on the org's live install of that plugin,
+   * when there is one, under the org lock (so an uninstall in between is seen).
+   */
+  @Transactional()
+  private async recordOnLiveInstall(
+    orgId: string,
+    itemId: string,
+    connectorId: string,
+    templateId: string,
+  ): Promise<void> {
+    await this.orgLock.lock(orgId);
+    const install = await this.db
+      .selectFrom("plugin_installs")
+      .select("id")
+      .where("org_id", "=", orgId)
+      .where("item_id", "=", itemId)
+      .where("status", "=", "installed")
+      .executeTakeFirst();
+    if (!install) return;
+    await this.db
+      .insertInto("plugin_install_components")
+      .values({
+        install_id: install.id,
+        kind: "connector",
+        ref: connectorId,
+        created: true,
+        skill_version: null,
+        template_id: templateId,
+      })
+      .onConflict((oc) => oc.columns(["install_id", "kind", "ref"]).doNothing())
+      .execute();
   }
 
   /** The connector kinds an extension provides (the `connector@1` implementations loaded on this replica). */

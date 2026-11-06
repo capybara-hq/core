@@ -168,7 +168,7 @@ export const ERROR_CODES = {
   /**
    * The connector does not fit the pending entry (ruling P4-T6-1; details `[{ reason }]`:
    * `template` another or no connector template, `protocol` another kind, `tools` none of the
-   * entry's tools).
+   * entry's tools, `not_synced` no tool snapshot yet: an OAuth connector to authorize first).
    */
   "agent.pending_connector_mismatch": 400,
   /** Requesting connector setup for an agent with no pending connectors (ruling P4-T6-7). */

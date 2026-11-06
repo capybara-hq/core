@@ -11,6 +11,7 @@ import {
 import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
 import { z } from "zod";
+import { connectorTemplateState } from "../catalog/component-state.js";
 import { assertItemInstallable } from "../catalog/request-rules.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
@@ -153,6 +154,11 @@ export interface ConnectorTemplateRef {
   defaultToolPolicies?: Record<string, ToolPolicy> | undefined;
   /** The item whose policy approves this install (a dependency's template: the installed plugin). */
   approvedBy?: string | undefined;
+  /**
+   * One more connector from a platform connector template (ruling P4-T6-8): the template must be
+   * on in the org, re-checked under the org lock (`component.off` / `component.not_found`).
+   */
+  mustBeOn?: boolean | undefined;
 }
 
 /**
@@ -662,6 +668,24 @@ export class ConnectorsService {
             .where("deleted_at", "is", null)
             .executeTakeFirst()
         : undefined;
+    if (tpl?.mustBeOn) {
+      const state =
+        platformTemplate === undefined
+          ? "absent"
+          : await connectorTemplateState(t, orgId, platformTemplate.id);
+      if (state === "absent") {
+        throw new ApiError(
+          "component.not_found",
+          "The connector template does not exist or is not available in this organization",
+        );
+      }
+      if (state === "off") {
+        throw new ApiError(
+          "component.off",
+          "This connector template is off in this organization; switch it (or its plugin) on first",
+        );
+      }
+    }
     await t
       .insertInto("connectors")
       .values({

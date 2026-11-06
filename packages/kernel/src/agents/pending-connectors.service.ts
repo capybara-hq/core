@@ -6,7 +6,8 @@ import { audit } from "../identity/audit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
-import { AgentLookup, type AgentView } from "./agent-lookup.js";
+import { roleAtLeast } from "../orgs/roles.js";
+import { AgentLookup, type AgentView, isAgentVisibleTo } from "./agent-lookup.js";
 import { AgentsService } from "./agents.service.js";
 import {
   type AgentDefinition,
@@ -20,12 +21,14 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 const RANK = { ask: 1, deny: 2 } as const;
 
 /** Why a connector does not fit a pending entry (ruling P4-T6-1). */
-export type PendingMismatch = "template" | "protocol" | "tools";
+export type PendingMismatch = "template" | "protocol" | "tools" | "not_synced";
 
 const MISMATCH: Record<PendingMismatch, string> = {
   template: "The connector was not made from the connector template this entry needs",
   protocol: "The connector's protocol is not the one this entry needs",
   tools: "The connector offers none of the tools this entry needs",
+  not_synced:
+    "The connector has not listed its tools yet; authorize the connector first, then bind it",
 };
 
 const mismatch = (reason: PendingMismatch) =>
@@ -54,7 +57,7 @@ export class PendingConnectorsService {
   constructor(
     @Inject(KernelDb) private readonly kdb: KernelDb,
     @Inject(AgentsService) private readonly agents: Pick<AgentsService, "lockForWrite">,
-    @Inject(AgentLookup) private readonly lookup: Pick<AgentLookup, "view" | "get">,
+    @Inject(AgentLookup) private readonly lookup: Pick<AgentLookup, "view">,
     @Inject(PendingConnectorRequests)
     private readonly requests: Pick<PendingConnectorRequests, "open" | "settleIn">,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
@@ -79,7 +82,8 @@ export class PendingConnectorsService {
    * setup request narrows or closes (`approved`). Refused: no entry `key` -> 404
    * `agent.pending_connector_not_found`; a connector that is missing, deleted or of another org ->
    * 404 `connector.not_found`; another connector template (a `template` entry), another protocol
-   * (a `needs` entry) or none of the entry's tools -> 400 `agent.pending_connector_mismatch`.
+   * (a `needs` entry), no tool snapshot yet (`not_synced`: an authorization-code connector nobody
+   * authorized) or none of the entry's tools -> 400 `agent.pending_connector_mismatch`.
    * Audits `agent.pending_connector_bound`.
    */
   @Transactional()
@@ -105,7 +109,7 @@ export class PendingConnectorsService {
     if (!UUID_RE.test(connectorId)) throw connectorNotFound();
     const c = await t
       .selectFrom("connectors")
-      .select(["id", "slug", "connector", "platform_template_id"])
+      .select(["id", "slug", "connector", "platform_template_id", "tools_synced_at"])
       .where("id", "=", connectorId)
       .where("org_id", "=", orgId)
       .where("deleted_at", "is", null)
@@ -116,6 +120,9 @@ export class PendingConnectorsService {
     } else if (c.connector !== entry.source.needs.protocol) {
       throw mismatch("protocol");
     }
+    // an authorization-code connector before its first snapshot has no tools to pick from: never
+    // bind "all" blind and drop the entry's policies; the entry stays pending (fix round 1)
+    if (c.tools_synced_at === null) throw mismatch("not_synced");
     const offered = (
       await t
         .selectFrom("connector_tools")
@@ -224,22 +231,51 @@ export class PendingConnectorsService {
       .select("owner_account_id")
       .where("id", "=", agentId)
       .executeTakeFirstOrThrow();
-    return this.requests.open({
+    const r = await this.requests.open({
       orgId,
       agentId,
       requestedBy: owner.owner_account_id,
-      keys,
       actor,
       actorTokenId,
     });
+    // the agent row is locked above, so the keys read there are still pending
+    if (r === null) throw new Error(`agent ${agentId} lost its pending connectors under its lock`);
+    return r;
   }
 
   /**
-   * The id of the agent's latest connector setup request (any status), or null; the agent must be
-   * visible to `viewer` (else 404 `agent.not_found`).
+   * The id of the agent's latest connector setup request (any status), or null. Authorized as the
+   * writes are (fix round 1): the agent's owner or an org admin+, whether or not the agent is
+   * visible to them; a member who sees the agent otherwise -> 403 `forbidden`; anyone else, or a
+   * deleted agent -> 404 `agent.not_found`.
    */
   async latestRequest(orgId: string, agentId: string, viewer: string): Promise<string | null> {
-    await this.lookup.get(orgId, agentId, viewer);
+    const t = this.kdb.db;
+    const [agent, member] = await Promise.all([
+      t
+        .selectFrom("agents")
+        .select("owner_account_id")
+        .where("id", "=", agentId)
+        .where("org_id", "=", orgId)
+        .where("deleted_at", "is", null)
+        .executeTakeFirst(),
+      t
+        .selectFrom("memberships")
+        .select("role")
+        .where("org_id", "=", orgId)
+        .where("account_id", "=", viewer)
+        .executeTakeFirst(),
+    ]);
+    if (!agent || !member) throw new ApiError("agent.not_found", "Agent not found");
+    if (agent.owner_account_id !== viewer && !roleAtLeast(member.role, "admin")) {
+      if (await isAgentVisibleTo(t, agentId, viewer)) {
+        throw new ApiError(
+          "forbidden",
+          "Only the agent owner or an organization admin can see its connector setup request",
+        );
+      }
+      throw new ApiError("agent.not_found", "Agent not found");
+    }
     const row = await this.kdb.db
       .selectFrom("catalog_requests")
       .select("id")
