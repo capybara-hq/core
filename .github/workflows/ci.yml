@@ -225,11 +225,15 @@ jobs:
       # install-deps adds a few font packages (about 22 MB) on the runner image; a slow apt mirror once
       # took 9 minutes for them, in one of the three e2e shards. Their .deb files are cached (per runner
       # image, whose apt sources decide the versions), so a hit installs them without downloading.
+      # ImageVersion is the runner's shell variable, not in the expression `env` context
+      - name: Read the runner image version
+        id: runner-image
+        run: echo "version=${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
       - name: Cache the .deb files of Chromium's system dependencies
         uses: actions/cache@v4
         with:
           path: ~/apt-archives
-          key: apt-playwright-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageVersion }}-${{ steps.playwright.outputs.version }}
+          key: apt-playwright-${{ runner.os }}-${{ runner.arch }}-${{ steps.runner-image.outputs.version }}-${{ steps.playwright.outputs.version }}
       - name: Point apt's package cache at the cached directory and keep what it downloads
         run: |
           mkdir -p "$HOME/apt-archives/partial"
