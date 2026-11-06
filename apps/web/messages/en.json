@@ -1016,7 +1016,8 @@
         "removed": "{kind} {name} is no longer carried over.",
         "moved": "{kind} {name}: {from} → {to}.",
         "droppedAdded": "Not carried over: {what}",
-        "model": "The automatically chosen model changed."
+        "model": "The automatically chosen model changed.",
+        "droppedRemoved": "Now carried over: {what}"
       }
     },
     "pending": {
@@ -1026,9 +1027,8 @@
       "listLabel": "Connectors to configure",
       "state": "To configure",
       "configure": "Configure",
-      "fromTemplate": "Made from a connector template",
       "fromTemplateNamed": "Made from the connector template {name}",
-      "needs": "Needs a {protocol} connector: {endpoint}",
+      "needs": "Needs {protocol, select, mcp {an MCP} openapi {an OpenAPI} other {a {protocol}}} connector: {endpoint}",
       "toolsAll": "Takes all its tools",
       "tools": "Takes the tools: {tools}",
       "plain": "This agent has {n, plural, one {# connector} other {# connectors}} to configure; their tools are unavailable until then.",
@@ -1076,7 +1076,10 @@
         "rejectedReason": "An organization admin rejected the request: {reason}",
         "ask": "Request",
         "none": "No request has been sent to the organization admins to configure these connectors."
-      }
+      },
+      "modeCreateOff": "This connector template is switched off or unavailable in this organization, so no connector can be made from it.",
+      "alreadyBound": "{name} was already configured elsewhere",
+      "noCandidatesOff": "No connector has been made from this template, and the template is switched off or unavailable in this organization. Switch it on first."
     }
   },
   "skills": {
@@ -1593,8 +1596,8 @@
       "title": "Configure connectors for {agent}",
       "hint": "This agent was created from a template that needs connectors your organization doesn't have yet. Configuring binds a connector to the agent; the request closes after the last one.",
       "connectors": "Connectors needed",
-      "fromTemplate": "Made from a connector template",
-      "needs": "Needs a {protocol} connector: {endpoint}",
+      "fromTemplate": "Made from the connector template {name}",
+      "needs": "Needs {protocol, select, mcp {an MCP} openapi {an OpenAPI} other {a {protocol}}} connector: {endpoint}",
       "reasonLabel": "Reason for rejecting",
       "reasonHelp": "Sent to the requester when you reject.",
       "titleApproved": "{agent}'s connectors are configured",

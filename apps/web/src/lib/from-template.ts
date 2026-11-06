@@ -71,8 +71,19 @@ export function groupItems(items: readonly PlanItem[]): Record<PlanItemState, Pl
   return out;
 }
 
-/** An item's identity across two previews. */
-const itemKey = (i: PlanItem) => `${i.kind}\u0000${i.name}`;
+/**
+ * Each item with its identity across two previews: kind, name and its occurrence among items of
+ * the same kind and name (two connectors with one label stay two items).
+ */
+function keyed(items: readonly PlanItem[]): [string, PlanItem][] {
+  const seen = new Map<string, number>();
+  return items.map((i) => {
+    const base = `${i.kind}\u0000${i.name}`;
+    const n = seen.get(base) ?? 0;
+    seen.set(base, n + 1);
+    return [`${base}\u0000${n}`, i];
+  });
+}
 
 /**
  * What changed between the preview the person saw and a fresh one (after a 409 stale): items that
@@ -89,12 +100,14 @@ export interface PreviewChange {
 }
 
 export function previewChanges(before: TemplatePreview, after: TemplatePreview): PreviewChange {
-  const old = new Map(before.items.map((i) => [itemKey(i), i]));
-  const now = new Map(after.items.map((i) => [itemKey(i), i]));
-  const added = after.items.filter((i) => !old.has(itemKey(i)));
-  const removed = before.items.filter((i) => !now.has(itemKey(i)));
-  const moved = after.items.flatMap((i) => {
-    const o = old.get(itemKey(i));
+  const beforeKeyed = keyed(before.items);
+  const afterKeyed = keyed(after.items);
+  const old = new Map(beforeKeyed);
+  const now = new Map(afterKeyed);
+  const added = afterKeyed.filter(([k]) => !old.has(k)).map(([, i]) => i);
+  const removed = beforeKeyed.filter(([k]) => !now.has(k)).map(([, i]) => i);
+  const moved = afterKeyed.flatMap(([k, i]) => {
+    const o = old.get(k);
     return o !== undefined && o.state !== i.state ? [{ item: i, from: o.state }] : [];
   });
   const m = (p: TemplatePreview) =>
@@ -119,9 +132,13 @@ export const hasChanges = (c: PreviewChange): boolean =>
  * kernel's paths (`maxSteps`, `effort`, `description`, `instructions`, `quickActions.<i>.title`,
  * `instructionFiles.<i>.content`, `subagents.inline.<name>.description|instructions`,
  * `subagents.inline.<name>.tools.<key>`, `connectors.<key>.tools|policies.<name>`); anything else
- * is `other` with the path.
+ * is `other` with the path. A connector is named by `connectorName` (its key `connector-<n>` is
+ * the kernel's, never shown).
  */
-export function droppedLine(path: string): { key: string; values: Record<string, string> } {
+export function droppedLine(
+  path: string,
+  connectorName: (key: string) => string = (k) => k,
+): { key: string; values: Record<string, string> } {
   if (path === "maxSteps" || path === "effort" || path === "description") {
     return { key: path, values: {} };
   }
@@ -138,10 +155,24 @@ export function droppedLine(path: string): { key: string; values: Record<string,
   if (m) {
     return {
       key: m[2] === "tools" ? "connectorTool" : "connectorPolicy",
-      values: { connector: m[1] as string, tool: m[3] as string },
+      values: { connector: connectorName(m[1] as string), tool: m[3] as string },
     };
   }
   return { key: "other", values: { path } };
+}
+
+/**
+ * The name of a template's connector entry by its pending key `connector-<n>`: the kernel lists one
+ * `connector` item per entry, in the template's order, so the n-th one names it; the key itself
+ * only when the preview has no such item.
+ */
+export function connectorNamer(items: readonly PlanItem[]): (key: string) => string {
+  const connectors = items.filter((i) => i.kind === "connector");
+  return (key) => {
+    const m = /^connector-(\d+)$/.exec(key);
+    const item = m ? connectors[Number(m[1]) - 1] : undefined;
+    return item?.name ?? key;
+  };
 }
 
 /** The reason codes the dialog words (`agents.fromTemplate.reasons.<kind>_<reason>`). */

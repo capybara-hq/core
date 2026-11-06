@@ -303,6 +303,7 @@ function Inbox({
                 ts,
                 td,
                 t,
+                locale,
               })
             : active.type === "catalog_request_decided"
               ? decidedRequestDetail({
@@ -740,6 +741,7 @@ function setupRequestDetail({
   ts,
   td,
   t,
+  locale,
 }: {
   request: CatalogRequest;
   pending: "approve" | "reject" | undefined;
@@ -750,6 +752,7 @@ function setupRequestDetail({
   ts: Translate;
   td: Translate;
   t: Translate;
+  locale: string;
 }): Detail {
   const connectors = request.connectors ?? [];
   const agent = request.agent?.name ?? "—";
@@ -792,9 +795,17 @@ function setupRequestDetail({
               title: c.label,
               meta:
                 "template" in c.source
-                  ? ts("fromTemplate")
+                  ? ts("fromTemplate", {
+                      name:
+                        c.source.template.displayName !== null
+                          ? displayNameOf(
+                              { name: c.label, displayName: c.source.template.displayName },
+                              locale,
+                            )
+                          : c.label,
+                    })
                   : ts("needs", {
-                      protocol: c.source.needs.protocol.toUpperCase(),
+                      protocol: c.source.needs.protocol,
                       endpoint: c.source.needs.endpoint,
                     }),
             }))}

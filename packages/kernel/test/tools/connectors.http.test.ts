@@ -363,6 +363,14 @@ describe("连接器 HTTP", () => {
     await enableConnectorExtensions(k, orgId);
     const ok = await req({ method: "POST", url, payload: docsConnector });
     expect(ok.statusCode, ok.body).toBe(201);
+    // a custom connector names no platform connector template (ruling P4-7), in the list too
+    expect(ok.json().connector.platformTemplateId).toBeNull();
+    const listed = await req({ method: "GET", url });
+    expect(
+      (listed.json().connectors as { platformTemplateId: string | null }[]).map(
+        (c) => c.platformTemplateId,
+      ),
+    ).toEqual([null]);
   });
 
   it("A4：连接失败 → 502 connector.connect_failed，什么都不写（含凭据）", async () => {
