@@ -127,7 +127,10 @@
       "instructions_mismatch": "The instructions do not match the prompt files. Edit the prompt files, or reload and try again.",
       "profile_unloaded": "The profile has not loaded yet. Reload the page and try again.",
       "visibility_forbidden": "Only an org admin can create an agent from a template for others. Set the visibility to Only me.",
-      "template_preview_stale": "The template or the organization changed after the preview. Preview it again, then create."
+      "template_preview_stale": "The template or the organization changed after the preview. Preview it again, then create.",
+      "pending_connector_not_found": "This connector is no longer waiting to be configured on the agent. Reload the page.",
+      "pending_connector_mismatch": "This connector does not fit: pick one made from the same connector template, of the same protocol, offering the tools the agent needs.",
+      "no_pending_connectors": "The agent has no connectors waiting to be configured."
     },
     "agent_template": {
       "name_taken": "The organization already has an agent template of this name; one name cannot be offered in an organization twice. Choose another name.",
@@ -161,7 +164,8 @@
     },
     "component": {
       "not_found": "The component does not exist or was removed.",
-      "version_stale": "The component changed meanwhile. Upload it again."
+      "version_stale": "The component changed meanwhile. Upload it again.",
+      "off": "This component is off in this organization. Switch it on first."
     },
     "connector": {
       "not_found": "The connector does not exist or has been removed.",

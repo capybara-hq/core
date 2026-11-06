@@ -97,6 +97,8 @@ export const ERROR_CODES = {
   "plugin.scope_stale": 409,
   "component.not_found": 404,
   "component.version_stale": 409,
+  /** A platform component offered to the org but off there (one more connector from a template). */
+  "component.off": 409,
   "catalog.approval_required": 403,
   "catalog.request_not_found": 404,
   /** No open org notice with that id for an admin of the org (inbox). */
@@ -161,6 +163,16 @@ export const ERROR_CODES = {
   "agent.visibility_forbidden": 403,
   /** Creating from a template: the template or the org changed since the preview (P4-3). */
   "agent.template_preview_stale": 409,
+  /** The agent has no pending connector with that key (ruling P4-6). */
+  "agent.pending_connector_not_found": 404,
+  /**
+   * The connector does not fit the pending entry (ruling P4-T6-1; details `[{ reason }]`:
+   * `template` another or no connector template, `protocol` another kind, `tools` none of the
+   * entry's tools).
+   */
+  "agent.pending_connector_mismatch": 400,
+  /** Requesting connector setup for an agent with no pending connectors (ruling P4-T6-7). */
+  "agent.no_pending_connectors": 409,
   /**
    * An org template's bare name is a type the org can already use (spec §5 rule 10, ruling
    * P4-9; details `[{ owner, templateId }]`, `owner` as `plugin.name_taken`'s).

@@ -35,6 +35,7 @@ import {
   SUBAGENT_ROSTER_MAX,
 } from "./definition.js";
 import { type AgentDefinitionInput, deriveInstructions } from "./instruction-files.js";
+import { PendingConnectorRequests } from "./pending-connector-requests.js";
 import { type ProfileInput, randomPreset } from "./profile.js";
 import { loadTemplates, templateTypeOf } from "./templates.js";
 
@@ -346,6 +347,9 @@ export class AgentsService {
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     /** Cancels the deleted agent's running eval runs (in the delete's transaction). */
     @Inject(EvalBudget) private readonly evalBudget: Pick<EvalBudget, "cancelRuns">,
+    /** Settles the agent's connector setup request when its pending connectors change (P4-7). */
+    @Inject(PendingConnectorRequests)
+    private readonly setupRequests: Pick<PendingConnectorRequests, "settleIn">,
   ) {}
 
   /**
@@ -706,6 +710,21 @@ export class AgentsService {
         kept: (current.definition as AgentDefinition).subagents,
       });
       if (canonical(current.definition) !== canonical(definition)) {
+        // removing pending connectors in the editor narrows or cancels the setup request (P4-T6-3)
+        const keys = (definition.pendingConnectors ?? []).map((c) => c.key);
+        if (
+          canonical((currentDefinition.pendingConnectors ?? []).map((c) => c.key)) !==
+          canonical(keys)
+        ) {
+          await this.setupRequests.settleIn({
+            orgId,
+            agentId,
+            keys,
+            close: "cancelled",
+            actor: actorAccountId,
+            actorTokenId,
+          });
+        }
         toVersion = before.current_version + 1;
         await t
           .insertInto("agent_versions")
@@ -786,6 +805,15 @@ export class AgentsService {
       orgId,
       action: "agent.deleted",
       target: agentId,
+    });
+    // the agent row stays (soft delete), so its setup request is closed here (P4-T6-3)
+    await this.setupRequests.settleIn({
+      orgId,
+      agentId,
+      keys: [],
+      close: "cancelled",
+      actor: actorAccountId,
+      actorTokenId,
     });
     // 评测集的 agent 删除后其评测运行不再花钱：显式取消（审计带原因）
     await this.evalBudget.cancelRuns(
