@@ -643,6 +643,33 @@ describe("AgentCallBlock (§6.16.15)", () => {
     expect(onOpen).toHaveBeenCalledTimes(2);
   });
 
+  it("a foreground child (a fork skill's) has the neutral running copy", () => {
+    const { rerender } = wrap(
+      call({ status: "running", current: "Bash 运行核对脚本", background: false }),
+    );
+    expect(status()?.querySelector('[data-part="agent-call-text"]')?.textContent).toBe(
+      "运行中：Bash 运行核对脚本",
+    );
+    rerender(
+      <DesignProvider locale="zh">{call({ status: "waiting", background: false })}</DesignProvider>,
+    );
+    expect(status()?.querySelector('[data-part="agent-call-text"]')?.textContent).toBe("等待中");
+  });
+
+  it("a refused call shows its reason and, with no child, no action", () => {
+    wrap(
+      <AgentCallBlock
+        description="Spy"
+        prompt="look"
+        state={{ status: "failed", refusal: 'Unknown subagent_type "nope".\nMore detail' }}
+      />,
+    );
+    const text = status()?.querySelector('[data-part="agent-call-text"]') as HTMLElement;
+    expect(text.textContent).toBe('失败 · Unknown subagent_type "nope".');
+    expect(text.getAttribute("title")).toBe('Unknown subagent_type "nope".\nMore detail');
+    expect(screen.queryByRole("button", { name: "在智能体图中查看" })).toBeNull();
+  });
+
   it("speaks English", () => {
     overflowing(true);
     wrap(call({ status: "running", current: "Bash 运行核对脚本" }), "en");

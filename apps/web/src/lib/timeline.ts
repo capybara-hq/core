@@ -637,6 +637,8 @@ export function buildEventTimeline(
   let compactionUsage: number | null = null;
   /** `agent` calls by (runId, callId). */
   const agentCalls = new Map<string, { sub: TimelineSubagent; runId: string | null }>();
+  /** `agent` calls whose tool result is in the log. */
+  const agentResults = new Set<TimelineSubagent>();
   /** Background task id → its description (from its launch, else its finish). */
   const taskDescriptions = new Map<string, string>();
   /** Sub-agent id → its latest dispatch's row and child run. */
@@ -790,8 +792,11 @@ export function buildEventTimeline(
                 agentType:
                   typeof rec.subagent_type === "string" ? rec.subagent_type : "general-purpose",
                 description: typeof rec.description === "string" ? rec.description : "",
+                ...(typeof rec.prompt === "string" ? { prompt: rec.prompt } : {}),
                 status: "queued",
                 toolCalls: 0,
+                // no child yet: the id is the call key until `subagent_dispatched`
+                openable: false,
               },
               callId: b.id,
               input: b.input,
@@ -859,8 +864,12 @@ export function buildEventTimeline(
         const a = agentCalls.get(callKey(e.runId, e.payload.callId));
         if (a) {
           const row = a.sub.row;
-          // Refused before any dispatch (unknown type, limits): nothing ran.
-          if (row.status === "queued") row.status = e.payload.isError ? "failed" : "completed";
+          agentResults.add(a.sub);
+          // Refused before any dispatch (unknown type, limits): nothing ran; keep the reason.
+          if (row.status === "queued") {
+            row.status = e.payload.isError ? "failed" : "completed";
+            if (e.payload.isError && e.payload.content !== "") row.refusal = e.payload.content;
+          }
           break;
         }
         const c = calls.get(callKey(e.runId, e.payload.callId));
@@ -977,6 +986,8 @@ export function buildEventTimeline(
               description: e.payload.description,
               status: "running",
               toolCalls: 0,
+              // a person's fork invocation waits for its child: foreground
+              background: false,
               ...(Number.isNaN(at) ? {} : { startedAt: at }),
             },
             callId: e.payload.callId,
@@ -994,6 +1005,7 @@ export function buildEventTimeline(
         if (!a) break;
         const row = a.sub.row;
         row.id = e.payload.subagentId;
+        delete row.openable;
         row.agentType = e.payload.agentType;
         if (e.payload.description !== "") row.description = e.payload.description;
         row.status = "running";
@@ -1011,6 +1023,9 @@ export function buildEventTimeline(
         if (!s || s.childRunId !== e.payload.childRunId) break;
         s.finished = true;
         const row = s.sub.row;
+        // A background call's result is logged at dispatch; a child that finished before its
+        // call's result was a foreground one (a log written before background sub-agents).
+        if (s.sub.input !== undefined && !agentResults.has(s.sub)) row.background = false;
         row.status = subagentStatusOfFinish(e.payload.status as SubagentFinishStatus);
         delete row.waiting;
         row.toolCalls = e.payload.toolCalls;

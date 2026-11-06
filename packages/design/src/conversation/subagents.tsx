@@ -10,10 +10,11 @@ import { Spinner } from "./prose";
 import { fillCopy } from "./tool-copy";
 
 // Sub-agents in the stream (spec §6.16.15: the group and its Agent call blocks, agent map spec
-// §9.5) and their pieces in the right panel and the properties panel. The data mirrors phase C (sub-agents spec §14): `SubagentView` from
-// `GET /conversations/:id/subagents`, the parent-log events `subagent_dispatched` /
-// `subagent_waiting` / `subagent_finished`, and the ephemeral `event: subagent_progress`. The
-// components take plain rows; the mappers below turn the API shapes into rows.
+// §9.5) and their pieces in the right panel and the properties panel. The data mirrors phase C
+// (sub-agents spec §14): `SubagentView` from `GET /conversations/:id/subagents`, the parent-log
+// events `subagent_dispatched` / `subagent_waiting` / `subagent_finished`, and the ephemeral
+// `event: subagent_progress`. The components take plain rows; the mappers below turn the API
+// shapes into rows.
 
 /** `SubagentView.status`: the latest child run's status. */
 export type SubagentStatus = "queued" | "running" | "waiting" | "completed" | "failed" | "aborted";
@@ -44,6 +45,18 @@ export type SubagentRowData = {
   current?: string;
   /** Tokens the child used, when known. */
   tokens?: number;
+  /**
+   * The child runs in the background (absent: it does). A fork skill's child, and a child of a
+   * log written before background sub-agents, ran in the foreground: no "后台" in its line.
+   */
+  background?: boolean;
+  /**
+   * There is a child to open (absent: there is). False for a call refused before any dispatch,
+   * whose id is still the call key: its block has no open action.
+   */
+  openable?: boolean;
+  /** Why the call was refused before any dispatch (the tool result), shown in its line. */
+  refusal?: string;
   status: SubagentStatus;
   toolCalls: number;
   /** Epoch ms of the latest run's start. */
@@ -158,6 +171,10 @@ export type AgentCallState = {
   durationMs?: number;
   /** The child's tokens, shown once it has ended. */
   tokens?: number;
+  /** The child runs in the background (default); false: the neutral "运行中" copy. */
+  background?: boolean;
+  /** Why the call was refused before any child ran: shown after "失败" instead of time. */
+  refusal?: string;
 };
 
 export type AgentCallBlockProps = {
@@ -166,8 +183,8 @@ export type AgentCallBlockProps = {
   /** The dispatch prompt, the body's IN (none: no body). */
   prompt: string;
   state: AgentCallState;
-  /** Opens the child in the agent map (level 2). */
-  onOpen(): void;
+  /** Opens the child in the agent map (level 2); absent (no child): no action. */
+  onOpen?: () => void;
   /** The prompt starts expanded (uncontrolled). */
   defaultExpanded?: boolean;
 };
@@ -209,10 +226,11 @@ export function AgentCallBlock({
   const { status } = state;
   let text: ReactNode;
   if (status === "running" || status === "waiting") {
+    const key = state.background === false ? (`${status}Fg` as const) : status;
     text =
       state.current !== undefined && state.current !== ""
-        ? fillCopy(t(`agentMap.call.${status}`), { current: state.current })
-        : t(`agentMap.call.${status}Idle`);
+        ? fillCopy(t(`agentMap.call.${key}`), { current: state.current })
+        : t(`agentMap.call.${key}Idle`);
   } else {
     const word =
       status === "failed" ? (
@@ -224,10 +242,13 @@ export function AgentCallBlock({
       ) : (
         t("agentMap.status.completed")
       );
-    const rest = [
-      ...(state.durationMs !== undefined ? [subagentDuration(state.durationMs, locale)] : []),
-      ...(state.tokens !== undefined ? [agentMapTokens(state.tokens, locale)] : []),
-    ];
+    const rest =
+      state.refusal !== undefined
+        ? [state.refusal.split("\n")[0] ?? ""]
+        : [
+            ...(state.durationMs !== undefined ? [subagentDuration(state.durationMs, locale)] : []),
+            ...(state.tokens !== undefined ? [agentMapTokens(state.tokens, locale)] : []),
+          ];
     text = (
       <>
         {word}
@@ -282,17 +303,23 @@ export function AgentCallBlock({
       </div>
       <div className="cb-agent-call-status" data-part="agent-call-status" data-status={status}>
         <StatusDot status={status} />
-        <span className="cb-agent-call-text" data-part="agent-call-text">
+        <span
+          className="cb-agent-call-text"
+          data-part="agent-call-text"
+          {...(state.refusal !== undefined ? { title: state.refusal } : {})}
+        >
           {text}
         </span>
-        <button
-          type="button"
-          className="cb-link-btn cb-agent-call-open"
-          data-part="agent-call-open"
-          onClick={onOpen}
-        >
-          {t("agentMap.call.open")}
-        </button>
+        {onOpen ? (
+          <button
+            type="button"
+            className="cb-link-btn cb-agent-call-open"
+            data-part="agent-call-open"
+            onClick={onOpen}
+          >
+            {t("agentMap.call.open")}
+          </button>
+        ) : null}
       </div>
     </div>
   );
@@ -300,10 +327,12 @@ export function AgentCallBlock({
 
 /** A sub-agent row as its call block's state: a queued child already works in the background. */
 function callState(r: SubagentRowData): AgentCallState {
+  const background = r.background === false ? { background: false } : {};
   if (active(r)) {
     return {
       status: r.status === "waiting" ? "waiting" : "running",
       ...(r.current !== undefined ? { current: r.current } : {}),
+      ...background,
     };
   }
   const ms = endedMs(r);
@@ -311,6 +340,8 @@ function callState(r: SubagentRowData): AgentCallState {
     status: r.status as Exclude<SubagentStatus, "queued" | "running" | "waiting">,
     ...(ms !== undefined ? { durationMs: ms } : {}),
     ...(r.tokens !== undefined ? { tokens: r.tokens } : {}),
+    ...(r.refusal !== undefined ? { refusal: r.refusal } : {}),
+    ...background,
   };
 }
 
@@ -358,7 +389,7 @@ export function SubagentGroup({
           prompt={r.prompt ?? ""}
           state={callState(r)}
           defaultExpanded={defaultExpanded?.includes(r.id) === true}
-          onOpen={() => onOpen(r.id)}
+          {...(r.openable === false ? {} : { onOpen: () => onOpen(r.id) })}
         />
       ))}
     </div>

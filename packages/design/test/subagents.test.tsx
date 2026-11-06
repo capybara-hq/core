@@ -188,6 +188,29 @@ describe("SubagentGroup (§6.16.15)", () => {
     expect(onOpen).toHaveBeenCalledWith("sa_dedupe");
   });
 
+  it("a refused row (no child) has its reason and no open action; a foreground row no 后台", () => {
+    wrap(
+      <SubagentGroup
+        rows={[
+          {
+            ...(done[2] as SubagentRowData),
+            openable: false,
+            refusal: "Subagent limit reached.",
+          },
+          { ...(running[0] as SubagentRowData), background: false },
+        ]}
+        onOpen={() => {}}
+        defaultOpen
+      />,
+    );
+    const [refused, fg] = blocks();
+    expect(statusText(refused as HTMLElement)).toBe("失败 · Subagent limit reached.");
+    expect(
+      within(refused as HTMLElement).queryByRole("button", { name: "在智能体图中查看" }),
+    ).toBeNull();
+    expect(statusText(fg as HTMLElement)).toBe("运行中：Bash 列出「02 流程」下的子目录");
+  });
+
   it("prompts listed in defaultExpanded start expanded", () => {
     wrap(<SubagentGroup rows={running} onOpen={() => {}} defaultExpanded={["sa_dedupe"]} />);
     const prompts = document.querySelectorAll('[data-part="agent-call-prompt"]');

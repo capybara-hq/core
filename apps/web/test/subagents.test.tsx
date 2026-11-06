@@ -316,7 +316,62 @@ describe("the timeline's sub-agent groups", () => {
       status: "failed",
       agentType: "nope",
       description: "Spy",
+      refusal: 'Unknown subagent_type "nope".',
+      openable: false,
     });
+  });
+
+  it("the call's prompt is the block's IN; a dispatched row can be opened", () => {
+    const [g] = groups(build(parentEvents()));
+    expect(g?.rows.map((r) => r.row.prompt)).toEqual(["Do Scan docs", "Do Check tests"]);
+    expect(g?.rows.map((r) => r.row.openable)).toEqual([undefined, undefined]);
+  });
+
+  it("a child that finished before its call's result ran in the foreground (an older log)", () => {
+    const [g] = groups(build(parentEvents()));
+    expect(g?.rows[0]?.row.background).toBe(false);
+    // still running, no result yet: not knowable, the default (background)
+    expect(g?.rows[1]?.row.background).toBeUndefined();
+  });
+
+  it("a background call (its result logged at dispatch) stays background after the finish", () => {
+    const [g] = groups(
+      build([
+        userMsg(1, "go"),
+        runStarted(2),
+        ev(3, "assistant_message", {
+          step: 1,
+          stopReason: "tool_use",
+          content: [call("k1", "Scan docs")],
+        }),
+        dispatched(4, "k1", "ch1", "Scan docs"),
+        agentResult(5, "k1", "Started ch1 in the background."),
+        finished(6, "k1", "ch1", "completed", 3),
+      ]),
+    );
+    expect(g?.rows[0]?.row).toMatchObject({ status: "completed", id: "ch1" });
+    expect(g?.rows[0]?.row.background).toBeUndefined();
+  });
+
+  it("a person's fork invocation's child is foreground", () => {
+    const [g] = groups(
+      build([
+        userMsg(1, "/review"),
+        runStarted(2),
+        ev(3, "subagent_dispatched", {
+          step: 0,
+          callId: "skill-1",
+          subagentId: "ch9",
+          childRunId: "run-ch9",
+          agentType: "general-purpose",
+          description: "review",
+          resumed: false,
+          model: { provider: "model-fake", model: "fake-1" },
+          invokedSeq: 1,
+        }),
+      ]),
+    );
+    expect(g?.rows[0]?.row).toMatchObject({ id: "ch9", background: false });
   });
 
   it("live progress raises the calls; the list's status shows a waiting row", () => {
