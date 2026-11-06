@@ -132,6 +132,15 @@ export interface RunControl {
   abortWaiting(conversationId: string, runId: string, byAccountId: string): Promise<boolean>;
   /** 请求中止运行（广播到所有副本）。 */
   requestAbort(runId: string, byAccountId: string): Promise<void>;
+  /**
+   * Stops a sub-agent with its descendants (with `includeSelf: false` only the sub-agent
+   * conversations below); the number of runs asked to stop (agent map spec §6).
+   */
+  stopTree(
+    conversationId: string,
+    byAccountId: string,
+    opts?: { includeSelf?: boolean },
+  ): Promise<number>;
 }
 
 /** 消息附件引用（连接器 + 资源 URI）。 */
@@ -470,7 +479,7 @@ export class ConversationsService {
   /**
    * Soft-deletes a conversation (owner only; a sub-agent's conversation is `conversation.read_only`):
    * stops an active run, hides the conversation everywhere for its owner and drops its channel
-   * bindings, then stops every running background task in its sandbox (its sub-agents' too;
+   * bindings, stops every active run of its sub-agent tree (agent map spec §10), then stops every running background task in its sandbox (its sub-agents' too;
    * outside the delete's transaction, a task whose sandbox cannot be reached ends `lost` with
    * `kill_pending`). The tasks are stopped after the conversation is marked deleted, so no finish
    * (the stops' own, or one the poller writes meanwhile) can wake a run on it: `ensureRun` refuses a
@@ -485,6 +494,9 @@ export class ConversationsService {
       if (!(e instanceof ApiError && e.code === "run.not_active")) throw e;
     }
     await this.markDeleted(conversationId);
+    // the whole tree stops (agent map spec §10), after the mark, so a stopped agent's delivery
+    // cannot start a run on the deleted root (`ensureRun` refuses it)
+    await this.runs.stopTree(conversationId, accountId, { includeSelf: false });
     await this.background.stopForDeletedConversation(conversationId);
     await this.eventLog.publishChanged(conversationId, "deleted");
   }
@@ -1174,9 +1186,25 @@ export class ConversationsService {
    * 中止会话当前的运行（queued / running / waiting）：返回 runId；没有 → `run.not_active`。
    * 等人处理的运行没有 worker：直接取消等待并写终态。其余经 Redis 广播，运行所在的任意副本都会收到；
    * 运行已是孤儿（没有任何 worker 在执行）时直接写终态。
+   *
+   * A root conversation's stop stops only its own run: its background sub-agents keep working
+   * (agent map spec §6). A sub-agent's conversation (its owner, from the agent map) stops that
+   * sub-agent with every descendant (`RunControl.stopTree`); `run.not_active` when nothing in that
+   * subtree runs, else the sub-agent's latest run id.
    */
   async abort(orgId: string, conversationId: string, accountId: string): Promise<string> {
-    await this.get(orgId, conversationId, accountId);
+    const conv = await this.get(orgId, conversationId, accountId);
+    if (conv.parentConversationId !== null) {
+      const latest = await this.db
+        .selectFrom("runs")
+        .select("id")
+        .where("conversation_id", "=", conversationId)
+        .orderBy("created_at", "desc")
+        .executeTakeFirst();
+      const n = await this.runs.stopTree(conversationId, accountId);
+      if (n === 0 || !latest) throw new ApiError("run.not_active", "No active run to abort");
+      return latest.id;
+    }
     const run = await this.db
       .selectFrom("runs")
       .select(["id", "status"])

@@ -80,6 +80,7 @@ const noRuns: RunControl = {
   abortIfOrphaned: async () => false,
   abortWaiting: async () => false,
   requestAbort: async () => {},
+  stopTree: async () => 0,
 };
 
 /**

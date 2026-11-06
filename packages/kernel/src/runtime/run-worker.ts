@@ -153,7 +153,10 @@ export class RunWorker {
     private readonly checkpoints: Pick<KyselyCheckpointSaver, "deleteThread">,
     /** loop 返回 `suspended` 后把运行置为 waiting（释放会话锁与配额之后）; the child lifecycle. */
     @Inject(Waits)
-    private readonly waits: Pick<Waits, "suspend" | "childFinished" | "stopChildren">,
+    private readonly waits: Pick<
+      Waits,
+      "suspend" | "childFinished" | "stopChildren" | "stopDescendantsOfStopped"
+    >,
     /** `run.started` (the channel outbound enqueues the conversation's IM delivery). */
     @Inject(KernelEvents) private readonly events: KernelEvents,
     /** A completed run enqueues the conversation's title job. */
@@ -273,6 +276,13 @@ export class RunWorker {
       await this.waits.childFinished(runId);
     } catch (err) {
       this.log.error("cannot report finished sub-agent run to its parent", { runId, err });
+    }
+    // a sub-agent a person stopped stops its descendants too, also one it dispatched after the
+    // tree stop read the tree (agent map spec §6); any other end leaves them running
+    try {
+      await this.waits.stopDescendantsOfStopped(runId);
+    } catch (err) {
+      this.log.error("cannot stop the descendants of a stopped sub-agent", { runId, err });
     }
   }
 

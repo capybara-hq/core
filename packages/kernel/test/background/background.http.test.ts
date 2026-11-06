@@ -264,6 +264,20 @@ describe("background task routes", { timeout: 90_000 }, () => {
     expect(own2.map((t) => [t.id, t.subagentId])).toEqual([[sub.id, null]]);
   });
 
+  it("lists and stops a grandchild's task through the root and through its parent", async () => {
+    const c = await conversation();
+    const kid = await child(c.conversationId);
+    const grandkid = await child(kid);
+    const deep = await launch(c, "sleep 327", grandkid);
+    const fromRoot = await listOf(c.conversationId);
+    expect(fromRoot.map((t) => [t.id, t.subagentId])).toEqual([[deep.id, grandkid]]);
+    const fromKid = await listOf(kid);
+    expect(fromKid.map((t) => [t.id, t.subagentId])).toEqual([[deep.id, grandkid]]);
+    const r = await owner({ method: "POST", url: `${base(c.conversationId)}/${deep.id}/stop` });
+    expect(r.statusCode, r.body).toBe(200);
+    expect((r.json() as { task: View }).task).toMatchObject({ id: deep.id, status: "stopped" });
+  });
+
   it("hides a conversation from anyone who cannot see it (404), and needs a login", async () => {
     const c = await conversation();
     const t = await launch(c, "sleep 323");

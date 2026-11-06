@@ -15,7 +15,10 @@ export class RunControl {
   constructor(
     @Inject(RunQueue) private readonly queue: Pick<RunQueue, "ensureRun" | "abortIfOrphaned">,
     @Inject(Waits)
-    private readonly waits: Pick<Waits, "abortWaiting" | "childFinished" | "stopChildren">,
+    private readonly waits: Pick<
+      Waits,
+      "abortWaiting" | "childFinished" | "stopChildren" | "stopTree"
+    >,
     @Inject(RunAbort) private readonly abort: Pick<RunAbort, "request">,
     @Inject(KernelEvents) private readonly events: KernelEvents,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "error">,
@@ -63,6 +66,19 @@ export class RunControl {
     const r = await this.waits.abortWaiting(conversationId, runId, byAccountId);
     await this.events.emit("run.wait-stopped", { conversationId, runId });
     return r;
+  }
+
+  /**
+   * Stops a sub-agent with its descendants, or with `includeSelf: false` only the sub-agent
+   * conversations below `conversationId` (agent map spec §6; {@link Waits.stopTree}). Returns
+   * the number of runs asked to stop.
+   */
+  stopTree(
+    conversationId: string,
+    byAccountId: string | null,
+    opts: { includeSelf?: boolean } = {},
+  ): Promise<number> {
+    return this.waits.stopTree(conversationId, byAccountId, opts);
   }
 
   /** 请求中止运行（广播到所有副本）。 */

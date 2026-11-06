@@ -10,7 +10,9 @@ import type { ConversationEvent, EventPayload } from "../../../src/conversations
 import type { KernelSchemaDb } from "../../../src/db/kernel-schema.js";
 import { createDb } from "../../../src/db/pool.js";
 import { Offboarding } from "../../../src/orgs/offboarding.js";
+import { RunAbort } from "../../../src/runtime/abort.js";
 import { SUBAGENT_RUN_QUEUE_NAME } from "../../../src/runtime/run-queue.js";
+import { Waits } from "../../../src/runtime/waits.js";
 import {
   openBarrier,
   type ScriptRule,
@@ -64,6 +66,53 @@ const agentCall = (prompt: string) => ({
 });
 
 const RULES: ScriptRule[] = [
+  // the tree root → T1 → T2 → T3 (plus a sibling of T1): each level dispatches the next, then holds
+  // until it is stopped
+  {
+    when: {
+      systemIncludes: CHILD,
+      lastUserIncludes: "tree-T",
+      lastToolResultIncludes: "background",
+    },
+    reply: { text: "held", barrier: { name: "hang", count: 99, timeoutMs: 60_000 } },
+  },
+  {
+    when: { systemIncludes: CHILD, lastUserIncludes: "tree-T1", assistantTurns: 0 },
+    reply: { toolCalls: [agentCall("tree-T2")] },
+  },
+  {
+    when: { systemIncludes: CHILD, lastUserIncludes: "tree-T2", assistantTurns: 0 },
+    reply: { toolCalls: [agentCall("tree-T3")] },
+  },
+  {
+    when: { systemIncludes: CHILD, lastUserIncludes: "tree-T3" },
+    reply: { text: "deep", barrier: { name: "hang", count: 99, timeoutMs: 60_000 } },
+  },
+  {
+    when: { lastUserIncludes: "SCENARIO tree", assistantTurns: 0 },
+    reply: { toolCalls: [agentCall("tree-T1"), agentCall("task-hang-sibling")] },
+  },
+  // root → D1 → D2 → D3: D1 and D2 finish after dispatching, D3 works on
+  {
+    when: {
+      systemIncludes: CHILD,
+      lastUserIncludes: "deep-D",
+      lastToolResultIncludes: "background",
+    },
+    reply: { text: "level done" },
+  },
+  {
+    when: { systemIncludes: CHILD, lastUserIncludes: "deep-D1", assistantTurns: 0 },
+    reply: { toolCalls: [agentCall("deep-D2")] },
+  },
+  {
+    when: { systemIncludes: CHILD, lastUserIncludes: "deep-D2", assistantTurns: 0 },
+    reply: { toolCalls: [agentCall("task-hang-D3")] },
+  },
+  {
+    when: { lastUserIncludes: "SCENARIO deep", assistantTurns: 0 },
+    reply: { toolCalls: [agentCall("deep-D1")] },
+  },
   {
     when: { systemIncludes: CHILD, lastUserIncludes: "task-write", assistantTurns: 0 },
     reply: {
@@ -259,8 +308,142 @@ async function deliveredFor(conv: string, children: ChildRun[]) {
   return new Map(ds.map((d) => [d.subagentId, d]));
 }
 
+/** The single child run of a conversation, once it is `running`. */
+async function onlyChild(conv: string, label: string): Promise<ChildRun> {
+  return waitFor(
+    async () => {
+      const [c] = await childRunsOf(db, conv);
+      return c && (await runStatus(db, c.runId)) === "running" ? c : null;
+    },
+    20_000,
+    label,
+  );
+}
+
+/** Starts `SCENARIO tree`: the root's children T1 and a sibling, T1's child T2, T2's child T3. */
+async function startTree() {
+  const conv = await createConv(owner, orgId, agentId);
+  await postMessage(owner, orgId, conv, "SCENARIO tree");
+  await waitForTerminal(db, conv, 1, 20_000);
+  const top = await waitFor(
+    async () => {
+      const c = await childRunsOf(db, conv);
+      return c.length === 2 ? c : null;
+    },
+    20_000,
+    "the root's two children",
+  );
+  const t1 = await childWithTask(top, "tree-T1");
+  const sibling = await childWithTask(top, "task-hang-sibling");
+  const t2 = await onlyChild(t1.conversationId, "T2");
+  const t3 = await onlyChild(t2.conversationId, "T3");
+  await childrenIn([t1, t2, t3, sibling], {});
+  return { conv, t1, t2, t3, sibling };
+}
+
+/** The `run_aborted` accounts of a conversation's log. */
+async function abortedBy(conv: string) {
+  return ofType(await eventsOf(db, conv), "run_aborted").map((e) => e.payload.byAccountId);
+}
+
+describe("stopping a sub-agent stops its descendants", () => {
+  it("stopping a child stops its grandchildren and great-grandchildren", async () => {
+    const { conv, t1, t2, t3, sibling } = await startTree();
+    const res = await owner({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/conversations/${t1.conversationId}/abort`,
+    });
+    expect(res.statusCode, res.body).toBe(202);
+    expect((res.json() as { runId: string }).runId).toBe(t1.runId);
+    await allStopped([t1.runId, t2.runId, t3.runId]);
+    for (const c of [t1, t2, t3]) expect(await abortedBy(c.conversationId)).toEqual([ownerId]);
+    // each stopped agent delivers its finish to its own parent as stopped by the user
+    for (const [parent, c] of [
+      [conv, t1],
+      [t1.conversationId, t2],
+      [t2.conversationId, t3],
+    ] as const) {
+      expect((await deliveredFor(parent, [c])).get(c.conversationId)).toMatchObject({
+        status: "aborted",
+        abortedBy: "user",
+      });
+    }
+    // the sibling outside the stopped subtree keeps working
+    expect(await runStatus(db, sibling.runId)).toBe("running");
+  }, 60_000);
+
+  it("a child that only has working descendants: its stop stops them", async () => {
+    const conv = await createConv(owner, orgId, agentId);
+    await postMessage(owner, orgId, conv, "SCENARIO deep");
+    await waitForTerminal(db, conv, 1, 20_000);
+    const d1 = await waitFor(async () => (await childRunsOf(db, conv))[0], 20_000, "D1");
+    const d2 = await waitFor(
+      async () => (await childRunsOf(db, d1.conversationId))[0],
+      20_000,
+      "D2",
+    );
+    const d3 = await onlyChild(d2.conversationId, "D3");
+    await childrenIn([d1, d2, d3], { [d1.runId]: "completed", [d2.runId]: "completed" });
+    const res = await owner({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/conversations/${d1.conversationId}/abort`,
+    });
+    expect(res.statusCode, res.body).toBe(202);
+    await allStopped([d3.runId]);
+    expect(await abortedBy(d3.conversationId)).toEqual([ownerId]);
+    // a subtree with nothing working answers run.not_active
+    const again = await owner({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/conversations/${d1.conversationId}/abort`,
+    });
+    expect([again.statusCode, (again.json() as { error: { code: string } }).error.code]).toEqual([
+      409,
+      "run.not_active",
+    ]);
+  }, 60_000);
+
+  it("a child stopped by a person mid-dispatch: its end stops the descendants it dispatched", async () => {
+    const { t1, t2, t3, sibling } = await startTree();
+    // only T1's run is asked to stop, as if T2 were dispatched after the tree stop read the tree
+    await k.app.get(RunAbort).request(t1.runId, ownerId);
+    await allStopped([t1.runId, t2.runId, t3.runId]);
+    expect(await abortedBy(t3.conversationId)).toEqual([ownerId]);
+    expect(await runStatus(db, sibling.runId)).toBe("running");
+  }, 60_000);
+
+  it("deleting the root conversation stops the whole tree", async () => {
+    const { conv, t1, t2, t3, sibling } = await startTree();
+    const res = await owner({
+      method: "DELETE",
+      url: `/api/v1/orgs/${orgId}/conversations/${conv}`,
+    });
+    expect(res.statusCode, res.body).toBe(204);
+    await allStopped([t1.runId, t2.runId, t3.runId, sibling.runId]);
+    // nothing woke the deleted root
+    const runs = await db
+      .selectFrom("runs")
+      .select("status")
+      .where("conversation_id", "=", conv)
+      .execute();
+    expect(runs).toEqual([{ status: "completed" }]);
+  }, 60_000);
+
+  it("the wait sweep stops the working tree of a deleted root", async () => {
+    const { conv, t1, t2, t3, sibling } = await startTree();
+    // the root was marked deleted without the tree stop (a crash in between)
+    await db
+      .updateTable("conversations")
+      .set({ deleted_at: new Date() })
+      .where("id", "=", conv)
+      .execute();
+    const r = await k.app.get(Waits).sweep();
+    expect(r.stopped).toBe(4);
+    await allStopped([t1.runId, t2.runId, t3.runId, sibling.runId]);
+  }, 60_000);
+});
+
 describe("a parent run that ends leaves its background children running", () => {
-  it("stopping the parent run while its children work: the children keep running", async () => {
+  it("stopping the root run leaves background children running", async () => {
     const conv = await createConv(owner, orgId, agentId);
     await postMessage(owner, orgId, conv, "SCENARIO stop-all");
     const children = await waitFor(
@@ -363,7 +546,7 @@ describe("a parent run that ends leaves its background children running", () => 
 });
 
 describe("stopping one sub-agent", () => {
-  it("delivers 'stopped by the user' for it; the others deliver their replies", async () => {
+  it("a stopped child delivers a finished delivery with status aborted", async () => {
     const conv = await createConv(owner, orgId, agentId);
     await postMessage(owner, orgId, conv, "SCENARIO stop-one");
     await waitForTerminal(db, conv, 1, 20_000);
