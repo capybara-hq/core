@@ -616,6 +616,7 @@ export class RunWorker {
             runId: row.parentRunId,
             callId: row.parentCallId,
             otherAgent,
+            ...(row.budgetRunId !== undefined && { budgetRunId: row.budgetRunId }),
           }
         : {
             conversationId: started.payload.parent.conversationId,

@@ -18,3 +18,27 @@ ALTER TABLE subagent_dispatches ALTER COLUMN budget_run_id SET NOT NULL;
 ALTER TABLE subagent_dispatches ADD COLUMN IF NOT EXISTS for_skill boolean NOT NULL DEFAULT false;
 CREATE INDEX IF NOT EXISTS subagent_dispatches_budget_run_idx
   ON subagent_dispatches (budget_run_id);
+
+-- Org overrides stored in deployment_settings.subagentLimitOverrides ({orgId: {...}}): the limit
+-- maxConcurrentPerRun is now maxConcurrentPerConversation (per conversation, §6). Each org entry
+-- holding the old key gets the new key with its value instead; an entry that already has the new
+-- key keeps it. Rows without the old key are left as they are, so a second run changes nothing.
+UPDATE deployment_settings AS ds
+SET value = (
+  SELECT jsonb_object_agg(
+    e.org,
+    CASE
+      WHEN jsonb_typeof(e.entry) = 'object' AND e.entry ? 'maxConcurrentPerRun'
+        THEN jsonb_build_object('maxConcurrentPerConversation', e.entry -> 'maxConcurrentPerRun')
+          || (e.entry - 'maxConcurrentPerRun')
+      ELSE e.entry
+    END
+  )
+  FROM jsonb_each(ds.value) AS e(org, entry)
+)
+WHERE ds.key = 'subagentLimitOverrides'
+  AND jsonb_typeof(ds.value) = 'object'
+  AND EXISTS (
+    SELECT 1 FROM jsonb_each(ds.value) AS e(org, entry)
+    WHERE jsonb_typeof(e.entry) = 'object' AND e.entry ? 'maxConcurrentPerRun'
+  );

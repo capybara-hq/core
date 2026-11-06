@@ -391,7 +391,7 @@ async function runStep(
         deps.db,
         deps.config,
         input.orgId,
-        await budgetRunOf(deps.db, input.parentRunId),
+        input.parent?.budgetRunId ?? (await budgetRunOf(deps.db, input.parentRunId)),
       ))
     ) {
       return {

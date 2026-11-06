@@ -51,6 +51,11 @@ export interface SubagentParent {
    * `agent`): only then the parent agent's current policies are read on top of its own.
    */
   otherAgent?: boolean;
+  /**
+   * The tree's budget run (agent map spec §6: the child run's `budget_run_id`, read once when the
+   * run starts); absent when unknown, then read with `budgetRunOf(runId)` where it is needed.
+   */
+  budgetRunId?: string;
 }
 
 /**

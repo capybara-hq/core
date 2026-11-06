@@ -14,6 +14,8 @@ export interface DispatchRow {
   parentConversationId: string;
   childConversationId: string;
   childRunId: string;
+  /** The budget run the dispatch counts against (agent map spec §6); set when read from the row. */
+  budgetRunId?: string;
 }
 
 const DISPATCH_COLUMNS = [
@@ -22,6 +24,7 @@ const DISPATCH_COLUMNS = [
   "parent_conversation_id",
   "child_conversation_id",
   "child_run_id",
+  "budget_run_id",
 ] as const;
 
 const toRow = (r: {
@@ -30,12 +33,14 @@ const toRow = (r: {
   parent_conversation_id: string;
   child_conversation_id: string;
   child_run_id: string;
+  budget_run_id: string;
 }): DispatchRow => ({
   parentRunId: r.parent_run_id,
   parentCallId: r.parent_call_id,
   parentConversationId: r.parent_conversation_id,
   childConversationId: r.child_conversation_id,
   childRunId: r.child_run_id,
+  budgetRunId: r.budget_run_id,
 });
 
 /** The dispatch that started `childRunId`, or null (not a sub-agent run). */

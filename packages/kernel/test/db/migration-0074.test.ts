@@ -11,10 +11,27 @@ import { KERNEL_MIGRATIONS_DIR } from "../../src/kernel.js";
 /**
  * 0074_subagent_tree.sql (agent map spec §6): `conversations.subagent_depth`, `runs.budget_run_id`,
  * `subagent_dispatches.budget_run_id` (backfilled with the dispatching run) and `for_skill`, with
- * an index on both budget columns. Migrates to 0073 first and writes a phase C tree, then runs
+ * an index on both budget columns; stored org overrides of `subagentLimitOverrides` get
+ * `maxConcurrentPerConversation` in place of `maxConcurrentPerRun`. Migrates to 0073 first and writes a phase C tree, then runs
  * 0074, then runs the file a second time.
  */
 const FILE = "0074_subagent_tree.sql";
+
+const OVERRIDES_BEFORE = {
+  o1: { maxConcurrentPerRun: 2, maxDispatchesPerRun: 9, maxTokensPerRun: 20_000 },
+  o2: { maxTokensPerRun: 30_000 },
+};
+const OVERRIDES_AFTER = {
+  o1: { maxConcurrentPerConversation: 2, maxDispatchesPerRun: 9, maxTokensPerRun: 20_000 },
+  o2: { maxTokensPerRun: 30_000 },
+};
+const SANDBOX = { o1: { cpu: 2 } };
+
+const setting = async (key: string) =>
+  (
+    await sql<{ value: unknown }>`
+      select value from capybara.deployment_settings where key = ${key}`.execute(db)
+  ).rows[0]?.value;
 
 let pg: Awaited<ReturnType<typeof startTestPostgres>>;
 let db: ReturnType<typeof createDb>;
@@ -75,6 +92,9 @@ beforeAll(async () => {
   await sql`insert into capybara.subagent_dispatches
     (parent_run_id, parent_call_id, parent_conversation_id, step, child_conversation_id, child_run_id)
     values ('rp', 'call-1', 'p1', 0, 's1', 'rs')`.execute(db);
+  await sql`insert into capybara.deployment_settings (key, value) values
+    ('subagentLimitOverrides', ${JSON.stringify(OVERRIDES_BEFORE)}::jsonb),
+    ('sandboxLimitOverrides', ${JSON.stringify(SANDBOX)}::jsonb)`.execute(db);
   await migrate(pg.url, { schema: "capybara", dir: upTo });
 }, 120_000);
 
@@ -133,8 +153,14 @@ describe("0074_subagent_tree", () => {
     expect(dispatches.rows).toEqual([{ budget_run_id: "rp", for_skill: false }]);
   });
 
+  it("stored org overrides carry maxConcurrentPerConversation, other keys and settings intact", async () => {
+    expect(await setting("subagentLimitOverrides")).toEqual(OVERRIDES_AFTER);
+    expect(await setting("sandboxLimitOverrides")).toEqual(SANDBOX);
+  });
+
   it("applies a second time without error or change", async () => {
     await rerun();
+    expect(await setting("subagentLimitOverrides")).toEqual(OVERRIDES_AFTER);
     const dispatches = await sql<{ budget_run_id: string }>`
       select budget_run_id from capybara.subagent_dispatches`.execute(db);
     expect(dispatches.rows).toEqual([{ budget_run_id: "rp" }]);

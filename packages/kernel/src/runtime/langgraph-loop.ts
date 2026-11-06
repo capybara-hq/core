@@ -186,7 +186,7 @@ export class LangGraphLoop implements AgentLoop {
           deps.db,
           deps.config,
           ctx.orgId,
-          await budgetRunOf(deps.db, ctx.parent.runId),
+          ctx.parent.budgetRunId ?? (await budgetRunOf(deps.db, ctx.parent.runId)),
         ))
       ) {
         return { outcome: "budget" };
