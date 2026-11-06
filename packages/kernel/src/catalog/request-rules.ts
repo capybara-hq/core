@@ -218,6 +218,18 @@ export async function importRequestOf(
   return r && { id: r.id, orgId: r.org_id };
 }
 
+/** Whether pending `import` requests are linked to the staging (its confirm resolves them). */
+export async function hasImportRequests(db: KernelSchemaDb, stagingId: string): Promise<boolean> {
+  const r = await db
+    .selectFrom("catalog_requests")
+    .select("id")
+    .where("staging_id", "=", stagingId)
+    .where("kind", "=", "import")
+    .where("status", "=", "pending")
+    .executeTakeFirst();
+  return r !== undefined;
+}
+
 /**
  * The confirm of a staged import, in its transaction: the pending `import` requests linked to the
  * staging are approved (decider: the confirming admin) and point at the item. Audits

@@ -1,7 +1,7 @@
 import { sql } from "kysely";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { audit } from "../identity/audit.js";
-import { assertShareable } from "./ownership.js";
+import { assertShareable, shareGate } from "./ownership.js";
 
 /**
  * Adds one org to a `named` item's list in the caller's transaction (the caller holds the item row
@@ -27,7 +27,7 @@ export async function addScopeOrg(
   opts: { actorTokenId?: string; requestId?: string } = {},
 ): Promise<boolean> {
   if (item.builtin || item.scope !== "named") return false;
-  if (orgId !== item.owner_org_id) {
+  if (!shareGate(item) && orgId !== item.owner_org_id) {
     const listed = await db
       .selectFrom("catalog_item_scope_orgs")
       .select("org_id")

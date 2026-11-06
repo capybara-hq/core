@@ -96,7 +96,7 @@ import {
 } from "./claude/report.js";
 import { isClaudePluginTree, translateClaudePlugin } from "./claude/translate.js";
 import { CatalogItemLock } from "./locks.js";
-import { shareGate } from "./ownership.js";
+import { assertShareable, shareGate } from "./ownership.js";
 import { PlatformComponents } from "./platform-components.js";
 import { PLATFORM_MIGRATION_JOB } from "./platform-migration.js";
 import {
@@ -106,7 +106,7 @@ import {
   readPluginFiles,
   readPluginPackage,
 } from "./plugin-package.js";
-import { importRequestOf, resolveImportRequests } from "./request-rules.js";
+import { hasImportRequests, importRequestOf, resolveImportRequests } from "./request-rules.js";
 import type { PluginScope } from "./scope.js";
 import { addScopeOrg } from "./scope-orgs.js";
 import { maxSatisfying, satisfiesRange } from "./versions.js";
@@ -1167,19 +1167,23 @@ export class PluginImport {
       }
     }
     // The org requests this staging answers resolve with the confirm; on an item that existed
-    // already (imported meanwhile) a `named` scope gains their orgs
+    // already (imported meanwhile) a `named` scope gains their orgs. An org-owned item held back by
+    // the share gate fails closed before any request is marked (ruling P3-26; P3-14 refuses a
+    // super admin import of an org-owned name, so this should not be reached)
+    const item = created
+      ? undefined
+      : await t
+          .selectFrom("catalog_items")
+          .select(["id", "name", "scope", "builtin", "owner_org_id", "shareable"])
+          .where("id", "=", itemId)
+          .forUpdate()
+          .executeTakeFirstOrThrow();
+    if (item !== undefined && !shareGate(item) && (await hasImportRequests(t, stagingId))) {
+      assertShareable(item);
+    }
     const requestOrgs = await resolveImportRequests(t, stagingId, itemId, actor, opts);
-    if (!created && requestOrgs.length > 0) {
-      const item = await t
-        .selectFrom("catalog_items")
-        .select(["id", "name", "scope", "builtin", "owner_org_id", "shareable"])
-        .where("id", "=", itemId)
-        .forUpdate()
-        .executeTakeFirstOrThrow();
-      // An org-owned item held back by the share gate (P3-16) gains no org from an import
-      if (shareGate(item)) {
-        for (const org of requestOrgs) await addScopeOrg(t, actor, item, org, opts);
-      }
+    if (item !== undefined) {
+      for (const org of requestOrgs) await addScopeOrg(t, actor, item, org, opts);
     }
     return { itemId, created, now, previous };
   }

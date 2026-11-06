@@ -46,7 +46,13 @@ export interface OrgCatalogItem
     | "enabledOrgs"
     | "pending"
     | "shownToOthers"
+    | "awaitingConfirmation"
+    | "pendingVersion"
   > {
+  /** The owner org only (absent for other orgs): its upload waits for the super admin (P3-9). */
+  awaitingConfirmation?: boolean;
+  /** The owner org only (absent for other orgs): the version waiting for that confirmation. */
+  pendingVersion?: string | null;
   scope: PluginScope;
   /** Shipped with the deployment (a required bootstrap plugin): on in every org, never switchable. */
   builtin: boolean;

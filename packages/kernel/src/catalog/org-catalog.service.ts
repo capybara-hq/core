@@ -196,6 +196,8 @@ export class OrgCatalogService {
         enabledOrgs: _enabledOrgs,
         pending: _pending,
         shownToOthers: _shown,
+        awaitingConfirmation,
+        pendingVersion,
         ...view
       } = itemView(i, vs, 0, undefined, ownerOnlyFacts(ownerOf(i.owner_org_id, owners)));
       const latest = vs.find((v) => v.version === i.latest_version);
@@ -228,6 +230,8 @@ export class OrgCatalogService {
       }
       out.push({
         ...view,
+        // A pending upload is the owner's business only (other orgs never learn of it)
+        ...(i.owner_org_id === orgId && { awaitingConfirmation, pendingVersion }),
         scope,
         builtin: i.builtin,
         state,

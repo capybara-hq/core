@@ -35,6 +35,7 @@ import { PluginInstaller } from "./plugin-install.js";
 import { type PluginScope, wantedOn } from "./scope.js";
 import { addScopeOrg } from "./scope-orgs.js";
 import { PluginScopeSync } from "./scope-sync.js";
+import { narrowComponentOnUnshare, narrowItemOnUnshare } from "./unshare.js";
 
 /**
  * What a scope change or a deployment-level disable would take away (spec §5 rule 8): the orgs
@@ -419,6 +420,51 @@ export class CatalogScopeService {
       detail: { name: item.name, disabled: { from: item.disabled, to: disabled } },
     });
     afterCommit(() => this.enqueue(itemId));
+  }
+
+  /**
+   * Writes an org-owned plugin's 可共享 flag and copies it to its component rows (ruling P3-2).
+   * Turning it off narrows an `optional` / `all` plugin, and each component with its own such
+   * scope, to the owner plus the orgs where it is on now (ruling P3-25), and enqueues the item's
+   * scope sync after the commit. The caller authorizes (the owner org's admin, Task 7). A platform
+   * item (no owner) or a missing one -> 404.
+   */
+  @Transactional()
+  async setShareable(itemId: string, shareable: boolean, actor: string | null = null) {
+    if (!UUID_RE.test(itemId)) throw notFound();
+    const item = await this.db
+      .selectFrom("catalog_items")
+      .select(["id", "name", "scope", "builtin", "owner_org_id", "shareable"])
+      .where("id", "=", itemId)
+      .where("deleted_at", "is", null)
+      .forUpdate()
+      .executeTakeFirst();
+    if (!item || item.owner_org_id === null) throw notFound();
+    await this.db
+      .updateTable("catalog_items")
+      .set({ shareable })
+      .where("id", "=", itemId)
+      .execute();
+    for (const table of [
+      "platform_skills",
+      "platform_agent_templates",
+      "platform_connector_templates",
+    ] as const) {
+      await this.db
+        .updateTable(table as "platform_skills")
+        .set({ shareable })
+        .where("catalog_item_id", "=", itemId)
+        .where("deleted_at", "is", null)
+        .execute();
+    }
+    if (shareable) return;
+    const narrowed = await narrowItemOnUnshare(this.db, actor, item);
+    for (const kind of COMPONENT_KINDS) {
+      for (const c of await loadComponents(this.db, kind, { itemId, forUpdate: true })) {
+        await narrowComponentOnUnshare(this.db, actor, c);
+      }
+    }
+    if (narrowed) afterCommit(() => this.enqueue(itemId));
   }
 
   /**

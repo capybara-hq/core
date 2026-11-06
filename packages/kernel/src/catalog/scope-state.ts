@@ -68,7 +68,8 @@ export class ScopeStillWanted extends Error {
 /**
  * The items among `itemIds` (live ones) the org can see in its catalog: offered to it (`all`,
  * `optional`, builtin, or `named` with the org listed) or requestable (`named`, shown to other
- * orgs, through the share gate). A hidden `named` item outside its list is left out, so nothing reveals it to the org.
+ * orgs, through the share gate). A hidden `named` item outside its list is left out, so nothing
+ * reveals it to the org.
  */
 export async function itemsSeenBy(
   db: KernelSchemaDb,
