@@ -12,9 +12,12 @@ import {
   type TestS3,
 } from "@capybara-hq/testing";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { ComponentPromotion } from "../../src/catalog/component-promotion.js";
+import { PluginInstaller } from "../../src/catalog/plugin-install.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { SkillsService } from "../../src/skills/skills.service.js";
 import { usableSkills } from "../../src/skills/usable.js";
 import { StorageService } from "../../src/storage/storage.service.js";
 import { truncateTables } from "../helpers/db.js";
@@ -384,11 +387,19 @@ describe("promote on share", { timeout: 120_000 }, () => {
       .select(["version", "object_prefix"])
       .where("skill_id", "=", r.platformId)
       .execute();
-    expect(versions).toEqual([{ version: 3, object_prefix: `platform/skills/${r.platformId}/3/` }]);
+    // a fresh prefix per prepared version (ruling P3-45)
+    expect(versions).toEqual([
+      {
+        version: 3,
+        object_prefix: expect.stringMatching(
+          new RegExp(`^platform/skills/${r.platformId}/3-[0-9a-f-]{36}/$`),
+        ),
+      },
+    ]);
     const copied = await k.app
       .get(StorageService)
       .deployment()
-      .get(`platform/skills/${r.platformId}/3/SKILL.md`);
+      .get(`${versions[0]?.object_prefix}SKILL.md`);
     expect(copied).not.toBeNull();
     expect(await new Response(copied?.body).text()).toContain("Report v3.");
     const row = await db
@@ -522,7 +533,9 @@ describe("promote on share", { timeout: 120_000 }, () => {
       expect.objectContaining({
         id: r.id,
         version: 4,
-        source: `platform:platform/skills/${r.platformId}/4/`,
+        source: expect.stringMatching(
+          new RegExp(`^platform:platform/skills/${r.platformId}/4-[0-9a-f-]{36}/$`),
+        ),
       }),
     ]);
     await say(orgB, convB, 2);
@@ -706,11 +719,24 @@ describe("promote on share", { timeout: 120_000 }, () => {
     const recorded = { source: "plugin", id: tplId, version: 1, plugin: "crm" };
     expect(started?.payload.template).toEqual(recorded);
 
-    // only the owner's rows; then the super admin shows it: promoted
-    expect((await setShareable(orgA, "agent-templates", tplId)).statusCode).toBe(200);
-    const shown = await showToOthers("agent_template", tplId);
-    expect(shown.statusCode, shown.body).toBe(200);
-    const pid = shown.json().id as string;
+    // every agent template is a plugin's in phase 3: not shareable, not promotable (ruling P3-46)
+    expect(errorOf(await setShareable(orgA, "agent-templates", tplId))).toEqual([
+      409,
+      "catalog.not_owned",
+    ]);
+    expect(errorOf(await showToOthers("agent_template", tplId))).toEqual([
+      409,
+      "catalog.not_owned",
+    ]);
+    // the promotion branch kept for phase 4, at service level
+    await db
+      .updateTable("agent_templates")
+      .set({ shareable: true })
+      .where("id", "=", tplId)
+      .execute();
+    const promotion = k.app.get(ComponentPromotion);
+    const prepared = await promotion.prepare("agent_template", tplId);
+    const pid = await promotion.txHost.run(() => promotion.promote(prepared, rootId));
     expect(pid).not.toBe(tplId);
     expect(
       await db
@@ -722,7 +748,7 @@ describe("promote on share", { timeout: 120_000 }, () => {
       current_version: 1,
       owner_org_id: orgA,
       plugin_name: "crm",
-      shown_to_others: true,
+      shown_to_others: false,
     });
     expect(
       (
@@ -780,5 +806,119 @@ describe("promote on share", { timeout: 120_000 }, () => {
     expect(
       (list.json().templates as { id: string; origin: string }[]).map((t) => [t.id, t.origin]),
     ).toEqual([[tplId, "org"]]);
+  });
+  it("plugin content is not the org's own (ruling P3-46)", async () => {
+    const item = randomUUID();
+    await db
+      .insertInto("catalog_items")
+      .values({
+        id: item,
+        name: "kit",
+        package_name: "@acme/plugin-kit",
+        publisher: "Acme",
+        description: "d",
+        latest_version: "1.0.0",
+        policy: "allow",
+      })
+      .execute();
+    const copy = await seedOrgSkill(orgA, "from-kit", ["From kit."]);
+    await db
+      .updateTable("skills")
+      .set({ catalog_item_id: item, catalog_version: "1.0.0", shareable: true })
+      .where("id", "=", copy.id)
+      .execute();
+    expect(errorOf(await setShareable(orgA, "skills", copy.id))).toEqual([
+      409,
+      "catalog.not_owned",
+    ]);
+    expect(errorOf(await showToOthers("skill", copy.id))).toEqual([409, "catalog.not_owned"]);
+    const preview = await root({
+      method: "POST",
+      url: `/api/v1/admin/components/skill/${copy.id}/scope/preview`,
+      payload: { scope: "named", orgs: [orgA, orgB] },
+    });
+    const put = await root({
+      method: "PUT",
+      url: `/api/v1/admin/components/skill/${copy.id}/scope`,
+      payload: { scope: "named", orgs: [orgA, orgB], scopeHash: preview.json().scopeHash },
+    });
+    expect(errorOf(put)).toEqual([409, "catalog.not_owned"]);
+    expect(await db.selectFrom("platform_skills").select("id").execute()).toEqual([]);
+  });
+
+  it("a legacy uninstall never touches a promoted row (ruling P3-47)", async () => {
+    const r = await promotedReport();
+    const installer = k.app.get(PluginInstaller);
+    const removed = await installer.txHost.run(() =>
+      installer.removeComponent(
+        orgA,
+        rootId,
+        { kind: "skill", ref: r.id, created: true, skillVersion: null },
+        "plugin_install_cleanup",
+      ),
+    );
+    expect(removed).toBe(false);
+    const row = await db
+      .selectFrom("skills")
+      .select(["deleted_at", "current_version", "platform_skill_id"])
+      .where("id", "=", r.id)
+      .executeTakeFirstOrThrow();
+    expect(row).toEqual({ deleted_at: null, current_version: 3, platform_skill_id: r.platformId });
+  });
+
+  it("the super admin cannot upload a version of an org's promoted skill (ruling P3-48)", async () => {
+    const r = await promotedReport();
+    const zip = makeZip([{ name: "SKILL.md", data: skillMd("report", "Admin v4.") }]);
+    const res = await root({
+      method: "POST",
+      url: `/api/v1/admin/components/skill/${r.platformId}/versions`,
+      headers: { "content-type": "application/octet-stream" },
+      payload: zip,
+    });
+    expect(errorOf(res)).toEqual([409, "catalog.not_owned"]);
+    const p = await db
+      .selectFrom("platform_skills")
+      .select("current_version")
+      .where("id", "=", r.platformId)
+      .executeTakeFirstOrThrow();
+    expect(p.current_version).toBe(3);
+  });
+
+  it("two racing owner versions never overwrite committed files (ruling P3-45)", async () => {
+    const r = await promotedReport();
+    const skills = k.app.get(SkillsService);
+    const pkg = (body: string) => {
+      const data = new TextEncoder().encode(skillMd("report", body));
+      return {
+        name: "report",
+        description: "Use for report work.",
+        files: [{ path: "SKILL.md", size: data.byteLength, sha256: sha(data), data }],
+      };
+    };
+    const results = await Promise.allSettled([
+      skills.createVersionFromFiles(orgA, rootId, pkg("Racer one.")),
+      skills.createVersionFromFiles(orgA, rootId, pkg("Racer two, longer.")),
+    ]);
+    expect(results.some((x) => x.status === "fulfilled")).toBe(true);
+    const p = await db
+      .selectFrom("platform_skills as p")
+      .innerJoin("platform_skill_versions as v", (j) =>
+        j.onRef("v.skill_id", "=", "p.id").onRef("v.version", "=", "p.current_version"),
+      )
+      .select(["v.manifest", "v.object_prefix", "p.current_version"])
+      .where("p.id", "=", r.platformId)
+      .executeTakeFirstOrThrow();
+    expect(p.current_version).toBeGreaterThanOrEqual(4);
+    const store = k.app.get(StorageService).deployment();
+    for (const f of p.manifest.files) {
+      const got = await store.get(`${p.object_prefix}${f.path}`);
+      expect(got).not.toBeNull();
+      const data = new Uint8Array(await new Response(got?.body).arrayBuffer());
+      expect(sha(data)).toBe(f.sha256);
+    }
+    // a loser's objects are deleted (best effort)
+    const listed = await store.list(`platform/skills/${r.platformId}/4`);
+    const prefixes = new Set(listed.items.map((o) => o.key.split("/").slice(0, 4).join("/")));
+    expect(prefixes.size).toBe(1);
   });
 });

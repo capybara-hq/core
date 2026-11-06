@@ -71,6 +71,21 @@ export const platformSkillPrefix = (id: string, version: number): string =>
 export const platformAgentTemplatePrefix = (id: string, version: number): string =>
   `platform/agent-templates/${id}/${version}/`;
 
+/**
+ * A fresh prefix (in `deployment/`) for a version written before its transaction (ruling P3-45):
+ * `<id>/<version>-<uuid>/`, so two writers racing for one version number never overwrite each
+ * other's objects, and the loser's are deleted after its transaction failed.
+ */
+export const uniqueVersionPrefix = (base: string): string =>
+  `${base.slice(0, -1)}-${randomUUID()}/`;
+
+/** 409 `catalog.not_owned`: an org's own promoted item is versioned by its owner only (P3-48). */
+const ownedByOrg = (what: string, name: string): ApiError =>
+  new ApiError(
+    "catalog.not_owned",
+    `The ${what} ${name} belongs to an organization that shared it: only that organization uploads its versions`,
+  );
+
 /** The live component a plan was made against (absent: the plan creates it). */
 interface Base<V> {
   id: string;
@@ -270,11 +285,17 @@ export class PlatformComponents {
     const pkg = await readSkillPackage(zip);
     this.files.assertAvailable();
     const live = await this.liveSkill(id);
+    if (live.promoted) throw ownedByOrg("skill", live.name);
     if (pkg.name !== live.name) throw nameChanged("skill", live.name, pkg.name);
     const to = live.current_version + 1;
-    const prefix = platformSkillPrefix(id, to);
+    const prefix = uniqueVersionPrefix(platformSkillPrefix(id, to));
     await putCatalogFiles(this.files, prefix, pkg.files);
-    await this.writeSkillVersionIn(actor, live, to, prefix, pkg);
+    try {
+      await this.writeSkillVersionIn(actor, live, to, prefix, pkg);
+    } catch (e) {
+      await this.discardPrefix(prefix);
+      throw e;
+    }
     return { kind: "skill", id, name: live.name, version: to };
   }
 
@@ -297,11 +318,12 @@ export class PlatformComponents {
     }
     this.files.assertAvailable();
     const live = await this.liveTemplate(id);
+    if (live.promoted) throw ownedByOrg("agent template", live.name);
     if (parsed.template.name !== live.name) {
       throw nameChanged("agent template", live.name, parsed.template.name);
     }
     const to = live.current_version + 1;
-    const prefix = platformAgentTemplatePrefix(id, to);
+    const prefix = uniqueVersionPrefix(platformAgentTemplatePrefix(id, to));
     const data = new TextEncoder().encode(text);
     const file: SkillPackageFile = {
       path: `${live.name}.md`,
@@ -310,21 +332,27 @@ export class PlatformComponents {
       data,
     };
     await putCatalogFiles(this.files, prefix, [file]);
-    await this.writeTemplateVersionIn(actor, live, to, prefix, parsed.template);
+    try {
+      await this.writeTemplateVersionIn(actor, live, to, prefix, parsed.template);
+    } catch (e) {
+      await this.discardPrefix(prefix);
+      throw e;
+    }
     return { kind: "agent_template", id, name: live.name, version: to };
   }
 
   /**
    * The first phase of the owner's new version of platform skill `platformId` (ruling P3-4: an org
    * that promoted its skill writes later versions to the platform row, never a pin on its copy):
-   * the files go to `deployment/platform/skills/<id>/<current + 1>/`, outside any transaction.
-   * Missing -> 404 `component.not_found`.
+   * the files go to a fresh `deployment/platform/skills/<id>/<current + 1>-<uuid>/` (ruling
+   * P3-45), outside any transaction; a caller whose transaction then fails calls
+   * {@link discardPrefix}. Missing -> 404 `component.not_found`.
    */
   async prepareOwnerVersion(platformId: string, files: SkillPackageFile[]): Promise<OwnerVersion> {
     this.files.assertAvailable();
     const live = await this.liveSkill(platformId);
     const to = live.current_version + 1;
-    const prefix = platformSkillPrefix(platformId, to);
+    const prefix = uniqueVersionPrefix(platformSkillPrefix(platformId, to));
     await putCatalogFiles(this.files, prefix, files);
     return { platformId, to, prefix };
   }
@@ -377,26 +405,38 @@ export class PlatformComponents {
     return v.to;
   }
 
+  /**
+   * Deletes the objects a version wrote before its transaction failed (ruling P3-45), best effort:
+   * nothing references them; a failure is logged.
+   */
+  async discardPrefix(prefix: string): Promise<void> {
+    try {
+      await this.files.deployment().deletePrefix(prefix);
+    } catch (err) {
+      this.log.warn("deleting an unused platform version's files failed", { prefix, err });
+    }
+  }
+
   private async liveSkill(id: string) {
     const live = await this.db
       .selectFrom("platform_skills")
-      .select(["id", "name", "plugin_name", "current_version"])
+      .select(["id", "name", "plugin_name", "current_version", "owner_org_id", "catalog_item_id"])
       .where("id", "=", id)
       .where("deleted_at", "is", null)
       .executeTakeFirst();
     if (!live) throw new ApiError("component.not_found", `Platform skill ${id} not found`);
-    return live;
+    return { ...live, promoted: isPromoted(live) };
   }
 
   private async liveTemplate(id: string) {
     const live = await this.db
       .selectFrom("platform_agent_templates")
-      .select(["id", "name", "plugin_name", "current_version"])
+      .select(["id", "name", "plugin_name", "current_version", "owner_org_id", "catalog_item_id"])
       .where("id", "=", id)
       .where("deleted_at", "is", null)
       .executeTakeFirst();
     if (!live) throw new ApiError("component.not_found", `Platform agent template ${id} not found`);
-    return live;
+    return { ...live, promoted: isPromoted(live) };
   }
 
   @Transactional()
@@ -412,12 +452,13 @@ export class PlatformComponents {
     const t = this.db;
     const row = await t
       .selectFrom("platform_skills")
-      .select(["current_version"])
+      .select(["current_version", "owner_org_id", "catalog_item_id"])
       .where("id", "=", live.id)
       .where("deleted_at", "is", null)
       .forUpdate()
       .executeTakeFirst();
     if (row?.current_version !== live.current_version) throw versionStale();
+    if (isPromoted(row)) throw ownedByOrg("skill", live.name);
     const cur = await t
       .selectFrom("platform_skill_versions")
       .select(["source_format", "suggest_pinned"])
@@ -471,12 +512,13 @@ export class PlatformComponents {
     const t = this.db;
     const row = await t
       .selectFrom("platform_agent_templates")
-      .select(["current_version"])
+      .select(["current_version", "owner_org_id", "catalog_item_id"])
       .where("id", "=", live.id)
       .where("deleted_at", "is", null)
       .forUpdate()
       .executeTakeFirst();
     if (row?.current_version !== live.current_version) throw versionStale();
+    if (isPromoted(row)) throw ownedByOrg("agent template", live.name);
     const cur = await t
       .selectFrom("platform_agent_template_versions")
       .select(["source_format", "suggest_pinned"])
@@ -850,6 +892,10 @@ export class PlatformComponents {
     return out;
   }
 }
+
+/** An org's own item it promoted (ruling P3-3): owned by an org, from no plugin. */
+const isPromoted = (r: { owner_org_id: string | null; catalog_item_id: string | null }): boolean =>
+  r.owner_org_id !== null && r.catalog_item_id === null;
 
 /** The live row must still be the one the plan was made against. */
 function assertBase<V>(live: Base<V> | undefined, base: Base<V> | undefined): void {

@@ -608,17 +608,25 @@ export class SkillsService {
     await assertCustomAllowed(this.db.db, "customSkills");
     const zip = await this.attachments.readSkillPackage(orgId, actorAccountId, uploadId);
     const pkg = await readSkillPackage(zip);
+    // A skill the org promoted gets its version on the platform row (ruling P3-4). Its retry after
+    // a lost response is not recognized above (the lookup is by the org prefix): the consumed
+    // upload is refused and the owner sees the version in the library (accepted, review M6)
     const owner = await this.putVersionFiles(orgId, pkg, prefix, false);
-    return this.createUploadedVersionIn(
-      orgId,
-      actorAccountId,
-      uploadId,
-      pkg,
-      prefix,
-      actorTokenId,
-      shareable,
-      owner,
-    );
+    try {
+      return await this.createUploadedVersionIn(
+        orgId,
+        actorAccountId,
+        uploadId,
+        pkg,
+        prefix,
+        actorTokenId,
+        shareable,
+        owner,
+      );
+    } catch (e) {
+      if (owner !== undefined) await this.platform.discardPrefix(owner.prefix);
+      throw e;
+    }
   }
 
   /**
@@ -726,10 +734,16 @@ export class SkillsService {
     this.storage.assertAvailable();
     const prefix = opts.prefix ?? skillFilesPrefix(randomUUID());
     const owner = await this.putVersionFiles(orgId, pkg, prefix, opts.catalog !== undefined);
-    return this.createVersionIn(orgId, actorAccountId, pkg, skillManifest(pkg), prefix, {
-      ...opts,
-      ...(owner !== undefined && { owner }),
-    });
+    try {
+      return await this.createVersionIn(orgId, actorAccountId, pkg, skillManifest(pkg), prefix, {
+        ...opts,
+        ...(owner !== undefined && { owner }),
+      });
+    } catch (e) {
+      // the loser of two owner versions racing for one number: its objects go (ruling P3-45)
+      if (owner !== undefined) await this.platform.discardPrefix(owner.prefix);
+      throw e;
+    }
   }
 
   /** Writes a skill package's files to `kernel/<orgId>/<prefix>` (a few at a time). */

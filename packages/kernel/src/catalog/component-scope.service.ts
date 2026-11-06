@@ -15,6 +15,7 @@ import type { ActorOpts } from "./catalog.service.js";
 import { assertOrgsExist } from "./catalog-items.js";
 import {
   ComponentPromotion,
+  notOwnedError,
   type OrgRow,
   PROMOTION_ATTEMPTS,
   type PreparedPromotion,
@@ -322,6 +323,7 @@ export class ComponentScopeService {
       try {
         return await write(prepared);
       } catch (e) {
+        await this.promotion.discard(prepared);
         if (!(e instanceof PromotionStale)) throw e;
         if (attempt >= PROMOTION_ATTEMPTS) throw promotionStaleError();
       }
@@ -578,6 +580,7 @@ export class ComponentScopeService {
     if (t.scopeMode === "own" && t.scope === "named" && t.orgs.join() === listed.join()) {
       return this.view(kind, id);
     }
+    assertPromotable(r.org);
     assertOwnerListed(gateRow(v), t);
     assertShareable(gateRow(v));
     const p = await this.compute(v, t, { hashId: id, listed });
@@ -631,6 +634,7 @@ export class ComponentScopeService {
     // An org row not promoted yet is shown to nobody: hiding it changes nothing; showing it goes
     // through the share gate on the org row, then promotes it (rulings P3-3, P3-23)
     if (!shown) return this.view(kind, id);
+    assertPromotable(r.org);
     assertShareable(gateRow(virtualOf(r.org)));
     const written = await this.withPromotion(kind as "skill" | "agent_template", id, (prepared) =>
       this.writeShown(actor, kind, prepared.platformId, true, opts, prepared),
@@ -1164,6 +1168,14 @@ const virtualOf = (o: OrgRow): ComponentRow => ({
   originOrgId: o.orgId,
   shareable: o.shareable,
 });
+
+/**
+ * 409 `catalog.not_owned` unless the org row is content its org created itself (ruling P3-46): a
+ * skill without plugin provenance; no agent template in phase 3 (all come from plugins).
+ */
+function assertPromotable(o: OrgRow): void {
+  if (o.kind === "agent_template" || !o.ownable) throw notOwnedError(o.name);
+}
 
 /** The share gate's view of a component row. */
 const gateRow = (c: ComponentRow) => ({

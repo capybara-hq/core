@@ -4,6 +4,8 @@
 // read from `deployment/` and their snapshot `source` is `platform:<object prefix>` (ruling D2).
 // A copy linked to a platform skill its own org owns (promote on share, ruling P3-3) serves its own
 // stored version while that is the platform skill's current one, and is listed instead of it.
+// Like any linked copy it is served only while its platform skill is on in the org: a super admin
+// disable of that platform row applies to the owner org too (platform governance, ruling P3-49).
 import type { Logger, ObjectStore } from "@capybara-hq/plugin-sdk";
 import { componentOn } from "../catalog/component-state.js";
 import type { KernelSchemaDb, SkillManifest, SourceFormat } from "../db/kernel-schema.js";

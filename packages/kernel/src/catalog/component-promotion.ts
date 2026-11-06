@@ -18,7 +18,7 @@ import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { StorageService } from "../storage/storage.service.js";
 import { putCatalogFiles } from "./catalog-items.js";
-import { platformSkillPrefix } from "./platform-components.js";
+import { platformSkillPrefix, uniqueVersionPrefix } from "./platform-components.js";
 
 /** The kinds an org owns as rows of its own (connector templates have none). */
 export type PromotableKind = "skill" | "agent_template";
@@ -39,6 +39,13 @@ export interface OrgRow {
   shareable: boolean;
   /** The platform row the org promoted it to, or null while it is an org row only. */
   link: string | null;
+  /**
+   * Content the org created itself (ruling P3-46): a skill without plugin provenance
+   * (`catalog_item_id` null). Anything else is refused with 409 `catalog.not_owned`. Agent
+   * templates are all plugin content in phase 3: their routes refuse them (phase 4 adds
+   * org-created ones), this provider keeps their branch.
+   */
+  ownable: boolean;
 }
 
 /** A promotion whose files are copied ({@link ComponentPromotion.prepare}), waiting for its rows. */
@@ -51,6 +58,8 @@ export interface PreparedPromotion {
   /** The org row's version the files were copied from. */
   readonly version: number;
   readonly already: boolean;
+  /** Where the files were copied (a fresh prefix, ruling P3-45); null: nothing copied. */
+  readonly prefix: string | null;
 }
 
 /** The org row changed between {@link ComponentPromotion.prepare} and its transaction: prepare again. */
@@ -124,11 +133,33 @@ export class ComponentPromotion {
         platformId: row.link,
         version: row.version,
         already: true,
+        prefix: null,
       };
     }
+    if (!row.ownable) throw notOwnedError(row.name);
     const platformId = randomUUID();
-    if (kind === "skill") await this.copySkillFiles(row, platformId);
-    return { kind, orgRowId, orgId: row.orgId, platformId, version: row.version, already: false };
+    const prefix =
+      kind === "skill" ? uniqueVersionPrefix(platformSkillPrefix(platformId, row.version)) : null;
+    if (prefix !== null) await this.copySkillFiles(row, prefix);
+    return {
+      kind,
+      orgRowId,
+      orgId: row.orgId,
+      platformId,
+      version: row.version,
+      already: false,
+      prefix,
+    };
+  }
+
+  /** Deletes a prepared promotion's files after its transaction failed (best effort, P3-45). */
+  async discard(p: PreparedPromotion): Promise<void> {
+    if (p.prefix === null) return;
+    try {
+      await this.files.deployment().deletePrefix(p.prefix);
+    } catch {
+      // unreferenced objects only: nothing reads them
+    }
   }
 
   /**
@@ -154,6 +185,7 @@ export class ComponentPromotion {
     const row = await this.orgRow(p.kind, p.orgRowId, true);
     if (!row) throw notFound();
     if (row.link !== null) return row.link;
+    if (!row.ownable) throw notOwnedError(row.name);
     if (!row.shareable) {
       throw new ApiError(
         "catalog.not_shareable",
@@ -211,7 +243,7 @@ export class ComponentPromotion {
           skill_id: p.platformId,
           version: row.version,
           manifest: JSON.stringify(v.manifest),
-          object_prefix: platformSkillPrefix(p.platformId, row.version),
+          object_prefix: p.prefix as string,
           catalog_version: null,
           source_format: v.source_format,
           suggest_pinned: v.suggest_pinned,
@@ -278,7 +310,7 @@ export class ComponentPromotion {
   }
 
   /** Copies the skill's current version files to its platform prefix (outside any transaction). */
-  private async copySkillFiles(row: OrgRow, platformId: string): Promise<void> {
+  private async copySkillFiles(row: OrgRow, prefix: string): Promise<void> {
     const v = await this.db
       .selectFrom("skill_versions")
       .select(["manifest", "object_prefix"])
@@ -298,7 +330,7 @@ export class ComponentPromotion {
       }
       out.push({ path: f.path, size: data.byteLength, data });
     }
-    await putCatalogFiles(this.files, platformSkillPrefix(platformId, row.version), out);
+    await putCatalogFiles(this.files, prefix, out);
   }
 }
 
@@ -322,6 +354,7 @@ export async function readOrgRow(
         "s.shareable",
         "s.platform_skill_id",
         "s.pinned_version",
+        "s.catalog_item_id",
         "p.owner_org_id",
         "p.deleted_at as p_deleted_at",
       ])
@@ -343,6 +376,7 @@ export async function readOrgRow(
       version: r.current_version,
       shareable: r.shareable,
       link,
+      ownable: r.catalog_item_id === null,
     };
   }
   let q = db
@@ -378,6 +412,7 @@ export async function readOrgRow(
     version: r.current_version,
     shareable: r.shareable,
     link,
+    ownable: true,
   };
 }
 

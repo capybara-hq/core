@@ -1465,6 +1465,15 @@ export class PluginInstaller {
       return true;
     }
     if (c.kind === "plugin") return false;
+    // A row the org promoted is the org's own shared item (ruling P3-47): an install never
+    // removes or reverts it (P3-46 keeps plugin content from being promoted; this guards rows
+    // recorded before that or by a legacy install)
+    if (
+      (c.kind === "agent_template" || c.kind === "skill") &&
+      (await promotedOrgRow(t, orgId, c.kind, c.ref))
+    ) {
+      return false;
+    }
     if (c.kind === "agent_template") {
       if (c.created) return softDeleteTemplateIn(t, orgId, c.ref);
       if (c.skillVersion !== null) {
@@ -2518,4 +2527,39 @@ function orderByRequires(set: ExtensionManifest[]): string[] {
     placed.push((next as ExtensionManifest).name);
   }
   return placed;
+}
+
+/**
+ * Whether org row `id` (a skill or an agent template of the org) is linked without a pin to a live
+ * platform row the org owns: promoted when shared (ruling P3-3).
+ */
+async function promotedOrgRow(
+  db: KernelSchemaDb,
+  orgId: string,
+  kind: "skill" | "agent_template",
+  id: string,
+): Promise<boolean> {
+  const row =
+    kind === "skill"
+      ? await db
+          .selectFrom("skills as s")
+          .innerJoin("platform_skills as p", "p.id", "s.platform_skill_id")
+          .select("s.id")
+          .where("s.id", "=", id)
+          .where("s.org_id", "=", orgId)
+          .where("s.pinned_version", "is", null)
+          .where("p.owner_org_id", "=", orgId)
+          .where("p.deleted_at", "is", null)
+          .executeTakeFirst()
+      : await db
+          .selectFrom("agent_templates as a")
+          .innerJoin("platform_agent_templates as p", "p.id", "a.platform_template_id")
+          .select("a.id")
+          .where("a.id", "=", id)
+          .where("a.org_id", "=", orgId)
+          .where("a.pinned_version", "is", null)
+          .where("p.owner_org_id", "=", orgId)
+          .where("p.deleted_at", "is", null)
+          .executeTakeFirst();
+  return row !== undefined;
 }

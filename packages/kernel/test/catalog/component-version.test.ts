@@ -151,7 +151,10 @@ describe("a platform component updated on its own (spec §7.2)", { timeout: 120_
       updated_on_own: true,
       catalog_version: null,
       created_by: env.rootId,
-      object_prefix: `platform/skills/${alpha.id}/2/`,
+      // a fresh prefix per uploaded version (ruling P3-45)
+      object_prefix: expect.stringMatching(
+        new RegExp(`^platform/skills/${alpha.id}/2-[0-9a-f-]{36}/$`),
+      ),
     });
     expect(await readText(`${v2.object_prefix}notes.txt`)).toBe("hello\n");
     // version 1 is untouched

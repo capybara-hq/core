@@ -350,6 +350,7 @@ export class OwnedItems {
                 "s.scope",
                 "s.platform_skill_id as link",
                 "s.pinned_version",
+                "s.catalog_item_id",
                 "p.owner_org_id",
               ])
               .where("s.id", "=", id)
@@ -368,6 +369,7 @@ export class OwnedItems {
                 sql<"org">`'org'`.as("scope"),
                 "t.platform_template_id as link",
                 "t.pinned_version",
+                "t.catalog_item_id",
                 "p.owner_org_id",
               ])
               .where("t.id", "=", id)
@@ -378,6 +380,9 @@ export class OwnedItems {
           })();
     if (!r) throw kind === "skill" ? skillNotFound() : componentNotFound();
     if (r.scope !== "org") throw notOwnedError(`Skill ${r.name} belongs to an agent and`);
+    // only content the org created itself (ruling P3-46): no plugin provenance; every agent
+    // template is a plugin's in phase 3 (org-created templates come with phase 4)
+    if (kind === "agent_template" || r.catalog_item_id !== null) throw notOwnedError(r.name);
     if (r.link === null) return { id: r.id, name: r.name, link: null };
     if (r.pinned_version !== null || r.owner_org_id !== orgId) throw notOwnedError(r.name);
     return { id: r.id, name: r.name, link: r.link };
