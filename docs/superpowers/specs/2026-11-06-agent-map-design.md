@@ -1,7 +1,7 @@
 # Background sub-agents, `SendMessage` and the agent map
 
-Status: kernel built (2026-11-07; see "Decisions made during implementation" at the end), the web
-agent map in progress; was: design, 2026-11-06. Amends the sub-agents spec (`2026-10-26-subagents-design.md`, "phase C")
+Status: implemented, kernel and web agent map (2026-11-07; see "Decisions made during
+implementation" at the end); was: design, 2026-11-06. Amends the sub-agents spec (`2026-10-26-subagents-design.md`, "phase C")
 and reuses the wake rules of the background Bash spec (`2026-11-05-background-bash-design.md` §3).
 Decisions taken with the user in the brainstorm of 2026-11-06 are marked **(decided)**; calls made by
 the designer are marked **(designer's call)**; everything else is left to the builder (§11).
@@ -341,8 +341,21 @@ The builder's choices for §11 and the rulings of the build that change behaviou
 - Every terminal run of a child (dispatched, restarted by `SendMessage`, or a wake run) delivers a
   `finished` delivery with that run's final reply, keyed on the child run.
 - A tree stop never wakes the stopped ancestors: the `aborted` delivery is still written (marked)
-  and absorbed at that conversation's next run.
-- Stopping a child conversation stops all its active background tasks, not only the stopped run's.
+  and absorbed at that conversation's next run. A stopped sub-agent (last run `aborted`) is never
+  woken at all: a message, task finish or delivery that reached it before or during the stop is
+  parked until its parent starts it again (`Agent`, `SendMessage`), so a descendant's report that
+  landed just before the stop cannot restart the stopped branch.
+- Stopping a child conversation stops all its active background tasks, not only the stopped run's;
+  a tree stop stops those of every sub-agent it covers, idle ones included.
+- A run's budget window is its own `runs.budget_run_id`: a wake run of a sub-agent checks and counts
+  its tokens on the root's current window, not on the window of the run that first dispatched it.
+- A sub-agent's trajectory is authorized by its root conversation's agent at every depth (never by
+  the direct parent's, which below an org agent's child is that org agent).
+- Wake runs and continuation runs (a resumed or restarted run) start without a concurrency check: a
+  continuation keeps the slot it already holds, and refusing a wake would lose the event that woke
+  it.
+- A fork child's later runs (restarted by `SendMessage`) behave as a background child's: they
+  deliver their finish and get the message tools; only the fork's own dispatched run is foreground.
 - Background-task listing and stop cover the whole tree (grandchildren's tasks run in the root's
   sandbox).
 - Unpausing the root's queue re-evaluates pending wakes of the whole tree.
