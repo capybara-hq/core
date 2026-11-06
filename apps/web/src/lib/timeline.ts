@@ -1118,7 +1118,9 @@ export function buildEventTimeline(
       case "subagent_finished": {
         const s = subagentRows.get(e.payload.subagentId);
         if (!s) break;
-        // another run's end is the child's latest (a wake run writes no dispatch)
+        // a late end of an earlier run while a newer one (a restart) is going
+        if (!s.finished && s.childRunId !== e.payload.childRunId) break;
+        // after an end, another run's end is the child's latest (a wake run writes no dispatch)
         s.childRunId = e.payload.childRunId;
         s.finished = true;
         deepWaits.delete(e.payload.subagentId);

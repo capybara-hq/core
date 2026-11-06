@@ -1216,6 +1216,26 @@ describe("Agent call rows across a child's runs (final review)", () => {
     });
   });
 
+  it("a late finish of the previous run leaves the restarted run's row running", () => {
+    const events = [
+      user(1, "go"),
+      agentCall,
+      dispatched(3, "k1", "run-a"),
+      result(4, "k1", "Agent"),
+      calls(5, [{ id: "sm1", name: "SendMessage", input: { to: "ch1", message: "more" } }]),
+      // run-a ended, SendMessage restarted the child, then run-a's finish was logged
+      dispatched(6, "sm1", "run-b"),
+      finished(7, "run-a"),
+    ];
+    const row = rowOf(buildTimeline(events, [], new Map(), "en"));
+    expect(row).toMatchObject({ id: "ch1", status: "running" });
+    expect(row).not.toHaveProperty("finishedAt");
+    // run-b's own finish still ends the row
+    expect(
+      rowOf(buildTimeline([...events, finished(8, "run-b", "failed")], [], new Map(), "en")),
+    ).toMatchObject({ status: "failed" });
+  });
+
   it("a child woken by its own background task: the list's newer run reopens the row", () => {
     const events = [
       user(1, "go"),
