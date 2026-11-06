@@ -1,7 +1,13 @@
 # Plugins and components: one model for bringing in, scoping and managing capabilities
 
 - Date: 2026-11-05, written against `main` at `40d81dc1` (v0.1.0-rc.4).
-- Status: phase 1 implemented (plugin scope, the org switch, requests, built-in plugins and permission confirmation, the scope sync worker, and the moved admin and workspace plugin and extension pages; migrations 0074-0076). Components with their own scope, agent templates at deployment level and updates (§6-§8) are later phases.
+- Status: phases 1 and 2 implemented. Phase 1: plugin scope, the org switch, requests, built-in
+  plugins and permission confirmation, the scope sync worker, and the moved admin and workspace plugin
+  and extension pages (migrations 0074-0076). Phase 2: components at deployment level with their own
+  scope and org switches, agent templates at deployment level, platform plugin and component updates,
+  the migration of org copies, the platform inbox, the member-readable 扩展 page and the marketplace
+  changes of §13.5 (§6-§8; migrations 0080-0082; decisions in §13.6). Sharing org components (可共享)
+  and creating agents from templates are later phases.
 - Markers: **(decided)** is the maintainer's answer during brainstorming (2026-11-05);
   **(designer's call)** is decided here on the maintainer's behalf and may be overturned in review.
   Items without a marker restate current code.
@@ -475,3 +481,54 @@ says super admin and platform; `check:terms` rejects the old identifiers.
   confirmations), a member-readable 扩展 page without config or secrets, prerelease versions folded
   into 其他版本 once a stable version exists, and a `deprecated` marker for marketplace versions (SDK
   format, plugin-tools, the plugins repository).
+
+### 13.6 Phase 2 decisions made during implementation (2026-11-06)
+
+Rulings taken while planning and building phase 2; where they refine or change the sections above,
+they win. Cited in code and docs as "ruling <id>".
+
+- **A2** New `platform_*` tables (`platform_skills`, `platform_agent_templates`,
+  `platform_connector_templates` and their version tables, migration 0080) instead of a nullable
+  `org_id` on the org tables. Platform files live under `deployment/platform/{skills,agent-templates}/
+  <id>/<version>/`, never under `kernel/<orgId>/`.
+- **B2** (§6 migration rule) An org copy links to its platform component (`platform_skill_id` /
+  `platform_template_id`) and keeps its id: without a pin it serves the platform's current version under
+  that id (one "Updated skills" notice, no definition rewrite); with `pinned_version` it serves its own
+  stored version until an update clears the pin.
+- **C2** Component scope lives on the platform rows (`scope_mode` `follow` | `own` plus the phase 1
+  scope fields); org lists and switches are generic tables keyed by `(kind, component_id)`.
+- **D2** The snapshot `source` of a platform skill is `platform:<object prefix>`, read from
+  `deployment/`; model-visible names do not change.
+- **E2** Connectors stay per org; a connector made from a platform template stores
+  `platform_template_id`, and template updates fan out by it.
+- **F2** (§7) The per-org plugin upgrade routes are retired: one version per deployment, moved by the
+  super admin's platform update; the org upgrade dialog is gone.
+- **P2-2** The migration job `platform-components-migrate` runs at every worker start and daily; it
+  also heals a failed post-import component sync.
+- **P2-3** (rule 10) An org skill upload or creation named like a platform skill offered to the org is
+  refused (409 `plugin.skill_conflict`); the same check covers platform-vs-platform clashes on switch-on
+  and scope changes.
+- **P2-4** An org upload to the name of a linked copy pins the copy at the new version; the next update
+  preview shows it as changed in the org.
+- **P2-5** (§13.5) Clashing org skills are renamed `<name>-org` only during the first migration run;
+  later clashes are only logged (P2-3 prevents new ones).
+- **P2-6** Connector templates honour component state: installs and scope syncs create connectors only
+  from templates on in the org; a template switched off later leaves existing connectors as the org's.
+- **P2-7** (§7.3) An update that drops a component soft-deletes it unless agents in any org use it; a
+  used one stays and is listed as kept.
+- **P2-8** An update clears the pins of linked copies only in orgs where the component is on.
+- **P2-9** An update creates no connector for an added template; the org needs its input.
+- **P2-10** An installed plugin with an on template lacking a connector is `needs_config` in the org,
+  and `POST /orgs/:orgId/catalog/:itemId/connectors` creates the missing connectors (补充配置).
+- **P2-11** (§9, goal 5) `GET admin/components` also lists org-owned skills and agent templates
+  (owner = the org, read-only in the admin console), with the tabs 全部 / 平台 / 组织创建.
+- **P2-12** Scope sync failures are kept in `plugin_scope_sync_failures` (migration 0082), one row per
+  plugin and org, cleared by the next sync of the pair that does not fail; the platform inbox reads it.
+- **P2-13** `GET /orgs/:orgId/extensions` is the action `org.extensions.read` (member and up); members
+  get no config, secrets, org config schema or permissions; guests and service tokens are refused.
+- **P2-14** `deprecated` is set by hand on a marketplace entry, never in `plugin.json`; `--write` keeps
+  it, a new version's entry does not inherit it and `--base` ignores it.
+- **P2-15** A deprecated version is refused (409 `marketplace.entry_deprecated`) at import prepare and
+  at an org import request; confirm does not re-read the marketplace.
+- **P2-16** Prereleases fold into 其他版本 unless no stable version can be imported; a deprecated
+  version is never newer, the latest or the default pick.
