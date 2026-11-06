@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ConversationEvent } from "../src/lib/conversations";
+import { DRAFT_RETRY_MS, DRAFT_SLOW_RETRY_MS } from "../src/lib/live-drafts";
 import { fetchRunDrafts } from "../src/lib/run-drafts";
 import {
   type ChatState,
-  DRAFT_RETRY_MS,
   initialChatState,
   openConversationStream,
   reduceChat,
@@ -441,15 +441,16 @@ describe("reduceChat: live drafts", () => {
     text,
     offset,
   });
-  const draft = (text: string, thinking = ""): StreamDelta => ({
+  const draft = (text: string, thinking = "", replace = true): StreamDelta => ({
     runId: RUN,
     step: 0,
     delta: "draft",
     text,
     thinking,
+    replace,
   });
 
-  it("a draft replaces the step's draft; deltas then add only what it does not hold", () => {
+  it("a replacing draft sets the step's draft; deltas then add only what it does not hold", () => {
     const s = apply(
       initialChatState,
       [started(1)],
@@ -494,9 +495,29 @@ describe("reduceChat: live drafts", () => {
     expect(texts(s)).toEqual(["prose:final"]);
   });
 
-  it("an empty draft leaves no draft", () => {
+  it("an empty replacing draft leaves no draft", () => {
     const s = apply(initialChatState, [started(1)], at("abc", 0), draft(""));
     expect(s.drafts).toEqual([]);
+  });
+
+  it("a merging draft never shrinks a channel; a channel left out is kept", () => {
+    const s = apply(
+      initialChatState,
+      [started(1)],
+      draft("Hello wor", "deep"),
+      draft("Hel", "", false),
+    );
+    expect(s.drafts[0]).toMatchObject({ text: "Hello wor", thinking: "deep" });
+    const longer = apply(s, draft("Hello world", "de", false));
+    expect(longer.drafts[0]).toMatchObject({ text: "Hello world", thinking: "deep" });
+    const one = apply(longer, {
+      runId: RUN,
+      step: 0,
+      delta: "draft",
+      thinking: "new",
+      replace: true,
+    });
+    expect(one.drafts[0]).toMatchObject({ text: "Hello world", thinking: "new" });
   });
 });
 
@@ -548,7 +569,7 @@ describe("openConversationStream: live drafts", () => {
     es.emit("delta", at("!", 11));
     es.emit("delta", at("ing", 5, "thinking"));
     expect(out).toEqual([
-      { runId: RUN, step: 0, delta: "draft", text: "Hello wor", thinking: "think" },
+      { runId: RUN, step: 0, delta: "draft", text: "Hello wor", thinking: "think", replace: true },
       { runId: RUN, step: 0, delta: "text", text: "ld", offset: 9 },
       { runId: RUN, step: 0, delta: "text", text: "!", offset: 11 },
       { runId: RUN, step: 0, delta: "thinking", text: "ing", offset: 5 },
@@ -561,7 +582,7 @@ describe("openConversationStream: live drafts", () => {
 
   it("a step's first delta on a connection replaces what an earlier connection left", () => {
     es.emit("delta", at("new", 0));
-    expect(out).toEqual([{ runId: RUN, step: 0, delta: "draft", text: "new", thinking: "" }]);
+    expect(out).toEqual([{ runId: RUN, step: 0, delta: "draft", text: "new", replace: true }]);
     es.emit("delta", at(" text", 3));
     const before = reduceChat(apply(initialChatState, [started(1)]), {
       kind: "delta",
@@ -628,20 +649,79 @@ describe("openConversationStream: live drafts", () => {
     expect(shown().drafts[0]).toMatchObject({ text: "abcd", thinking: "xyz" });
   });
 
-  it("the reads give up after the last retry: the draft stays without a hole", async () => {
+  it("after the quick reads, a slow read every few seconds recovers while the step streams", async () => {
     read.mockResolvedValue([{ step: 0, text: "ab", thinking: "" }]);
     es.emit("draft", frame("ab"));
     es.emit("delta", at("zz", 9));
-    await vi.advanceTimersByTimeAsync(DRAFT_RETRY_MS.reduce((a, b) => a + b, 0) + 100);
+    const quick = DRAFT_RETRY_MS.reduce((a, b) => a + b, 0);
+    await vi.advanceTimersByTimeAsync(quick + 100);
     expect(read).toHaveBeenCalledTimes(DRAFT_RETRY_MS.length);
     es.emit("delta", at("zzz", 11));
-    await vi.advanceTimersByTimeAsync(5000);
+    await vi.advanceTimersByTimeAsync(DRAFT_SLOW_RETRY_MS - 200);
     expect(read).toHaveBeenCalledTimes(DRAFT_RETRY_MS.length);
     expect(shown().drafts[0]?.text).toBe("ab");
-    // a reconnect's draft replaces it again
+    read.mockResolvedValue([{ step: 0, text: "abcdefghi", thinking: "" }]);
+    await vi.advanceTimersByTimeAsync(200);
+    expect(read).toHaveBeenCalledTimes(DRAFT_RETRY_MS.length + 1);
+    expect(shown().drafts[0]?.text).toBe("abcdefghizzzzz");
+    await vi.advanceTimersByTimeAsync(DRAFT_SLOW_RETRY_MS * 3);
+    expect(read).toHaveBeenCalledTimes(DRAFT_RETRY_MS.length + 1);
+  });
+
+  it("the slow reads stop when the run ends", async () => {
+    read.mockResolvedValue([]);
+    es.emit("draft", frame("ab"));
+    es.emit("delta", at("zz", 9));
+    await vi.advanceTimersByTimeAsync(DRAFT_RETRY_MS.reduce((a, b) => a + b, 0) + 100);
+    es.emit("event", aborted(2));
+    const n = read.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(DRAFT_SLOW_RETRY_MS * 3);
+    expect(read).toHaveBeenCalledTimes(n);
+  });
+
+  it("a gap in one channel holds only that channel: the other's deltas go on", async () => {
+    let answer: (v: { step: number; text: string; thinking: string }[]) => void = () => {};
+    read.mockReturnValueOnce(new Promise((r) => (answer = r)));
+    es.emit("draft", frame("ab", "x"));
+    es.emit("delta", at("zz", 5));
+    es.emit("delta", at("y", 1, "thinking"));
+    es.emit("delta", at("q", 7));
+    es.emit("delta", at("z", 2, "thinking"));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(shown().drafts[0]).toMatchObject({ text: "ab", thinking: "xyz" });
+    answer([{ step: 0, text: "abcde", thinking: "xy" }]);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(shown().drafts[0]).toMatchObject({ text: "abcdezzq", thinking: "xyz" });
+  });
+
+  it("a reconnect whose draft read fails or comes back empty keeps the draft shown", async () => {
+    es.emit("draft", frame("Hello wor", "hmm"));
+    // the browser reconnects; this time the server sends no `event: draft`
     es.emit("open");
-    es.emit("draft", frame("ab".padEnd(14, "z")));
-    expect(shown().drafts[0]?.text).toBe("ab".padEnd(14, "z"));
+    read.mockRejectedValueOnce(new Error("offline")).mockResolvedValueOnce([]);
+    es.emit("delta", at("ld", 9));
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(DRAFT_RETRY_MS[1] ?? 0);
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(shown().drafts).toEqual([{ runId: RUN, step: 0, text: "Hello wor", thinking: "hmm" }]);
+    read.mockResolvedValueOnce([{ step: 0, text: "Hello wor", thinking: "hmm" }]);
+    await vi.advanceTimersByTimeAsync(DRAFT_RETRY_MS[2] ?? 0);
+    expect(shown().drafts).toEqual([{ runId: RUN, step: 0, text: "Hello world", thinking: "hmm" }]);
+  });
+
+  it("a channel starting at offset 0 on a reconnect replaces that channel only", () => {
+    es.emit("draft", frame("answer so far", "old thought"));
+    es.emit("open");
+    es.emit("delta", at("new", 0, "thinking"));
+    expect(out.at(-1)).toEqual({
+      runId: RUN,
+      step: 0,
+      delta: "draft",
+      thinking: "new",
+      replace: true,
+    });
+    expect(shown().drafts[0]).toMatchObject({ text: "answer so far", thinking: "new" });
+    expect(read).not.toHaveBeenCalled();
   });
 
   it("step_reset drops the step; its next delta starts over from offset 0", () => {
