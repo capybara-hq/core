@@ -52,6 +52,11 @@ export interface AgentTemplateDetail extends AgentTemplateView {
   shareable: boolean;
   /** Shared already: the platform row it was promoted to on share (ruling P3-3). */
   promoted: boolean;
+  /**
+   * In the org's usable set (agents can be created from it here). False only when the owner reads
+   * its own template while it is not usable in its org (a promoted one switched off there).
+   */
+  usable: boolean;
 }
 
 /**
@@ -703,8 +708,8 @@ export class OrgAgentTemplates {
     const own = await this.ownRow(orgId, id, false);
     // the owner opens its own template even while it is switched off in its own org (a promoted
     // one whose platform row the org switched off is not in its usable set)
-    const t =
-      (await loadTemplates(this.db, orgId, [id])).get(id) ?? (own && (await this.ownServed(own)));
+    const inSet = (await loadTemplates(this.db, orgId, [id])).get(id);
+    const t = inSet ?? (own && (await this.ownServed(own)));
     if (!t) throw notFound();
     let linked: string[] = [];
     if (t.origin === "platform" && !t.ownedCopy && t.id === t.platformTemplateId) {
@@ -729,6 +734,7 @@ export class OrgAgentTemplates {
       owned: own !== undefined,
       shareable: own?.shareable ?? false,
       promoted: own !== undefined && own.link !== null,
+      usable: inSet !== undefined,
     };
   }
 
