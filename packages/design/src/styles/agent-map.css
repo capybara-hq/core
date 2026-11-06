@@ -1,0 +1,257 @@
+/* The agent map (spec §6.16.28): the dialog frame at its level's width (overlays.css), level 1's
+   tree with elbow connectors, the root's background tasks and the legend. */
+
+.cb-amap-dialog {
+  padding: var(--cb-space-5) var(--cb-space-6);
+}
+.cb-amap-dialog[data-inline="true"] {
+  position: static;
+  translate: none;
+  z-index: auto;
+  max-height: none;
+  animation: none;
+}
+.cb-amap-head {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-2);
+}
+.cb-amap-title {
+  flex: 1;
+  margin: 0;
+  font-family: var(--cb-font-prose);
+  font-size: var(--cb-type-h2-size);
+  line-height: var(--cb-type-h2-line);
+  font-weight: 500;
+}
+
+.cb-amap {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+}
+.cb-amap-count {
+  margin: var(--cb-space-1) 0 var(--cb-space-4);
+  color: var(--cb-muted);
+  font-family: var(--cb-font-prose);
+}
+
+/* Columns by depth: a branch is a node then its children's column, centred on it. */
+.cb-amap-canvas {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--cb-space-4);
+  min-height: 0;
+  overflow: auto;
+}
+.cb-amap-branch {
+  display: flex;
+  align-items: center;
+  width: max-content;
+}
+.cb-amap-kids {
+  position: relative;
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  padding-left: var(--cb-space-6);
+}
+/* The stub from the parent to the children's vertical line. */
+.cb-amap-kids::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: var(--cb-space-3);
+  border-top: 1px solid var(--cb-line-strong);
+}
+.cb-amap-kid {
+  position: relative;
+  padding: var(--cb-space-1) 0;
+}
+/* The stub from the vertical line to the child's vertical centre. */
+.cb-amap-kid::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: calc(-1 * var(--cb-space-3));
+  width: var(--cb-space-3);
+  border-top: 1px solid var(--cb-line-strong);
+}
+/* The vertical line, from the first child's centre to the last's. */
+.cb-amap-kid::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: calc(-1 * var(--cb-space-3));
+  border-left: 1px solid var(--cb-line-strong);
+}
+.cb-amap-kid:first-child::after {
+  top: 50%;
+}
+.cb-amap-kid:last-child::after {
+  bottom: 50%;
+}
+.cb-amap-kid:only-child::after {
+  display: none;
+}
+
+/* Every node one height: two lines of one line each (body 20 + small 16), padding space.3. */
+.cb-amap-node {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  justify-content: center;
+  width: 320px;
+  height: 62px;
+  padding: 0 var(--cb-space-3);
+  border: 1px solid var(--cb-line);
+  border-radius: var(--cb-radius-md);
+  background: var(--cb-panel-2);
+  color: var(--cb-ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background-color var(--cb-motion-hover),
+    border-color var(--cb-motion-hover);
+}
+.cb-amap-node:hover {
+  border-color: var(--cb-line-strong);
+  background: var(--cb-hover);
+}
+.cb-amap-node[data-root="true"] {
+  border-color: var(--cb-line-strong);
+  background: var(--cb-raised);
+}
+.cb-amap-node[aria-current="true"] {
+  border-color: var(--cb-accent);
+}
+.cb-amap-node-line {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-2);
+  min-width: 0;
+}
+.cb-amap-node-name {
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--cb-type-body-size);
+  line-height: var(--cb-type-body-line);
+  font-weight: 500;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.cb-amap-node-meta {
+  padding-left: var(--cb-space-4);
+  overflow: hidden;
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* Status is only the dot's colour (§6.16.28: no status words; the legend names them). */
+.cb-amap-dot {
+  flex: none;
+  width: var(--cb-space-2);
+  height: var(--cb-space-2);
+  border-radius: 50%;
+  background: var(--cb-faint);
+}
+.cb-amap-dot[data-status="running"] {
+  background: var(--cb-accent);
+}
+.cb-amap-dot[data-status="waiting"] {
+  background: var(--cb-warn);
+}
+.cb-amap-dot[data-status="completed"] {
+  background: var(--cb-ok);
+}
+.cb-amap-dot[data-status="failed"] {
+  background: var(--cb-fail);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .cb-amap-dot[data-status="running"][role="img"] {
+    animation: cb-amap-pulse var(--cb-motion-pulse) ease-in-out infinite;
+  }
+}
+@keyframes cb-amap-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+/* The root's background tasks, under the root column. */
+.cb-amap-background {
+  width: 320px;
+}
+.cb-amap-background-head {
+  margin: 0;
+  color: var(--cb-faint);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+  font-weight: 400;
+}
+.cb-amap-background-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-1);
+  margin: var(--cb-space-1) 0 0;
+  padding: 0;
+  list-style: none;
+}
+.cb-amap-task {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-2);
+  height: var(--cb-row-default);
+  padding: 0 var(--cb-space-2);
+  border: 1px solid var(--cb-line-soft);
+  border-radius: var(--cb-radius-sm);
+  background: var(--cb-panel-2);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.cb-amap-task-tag {
+  flex: none;
+  padding: 0 var(--cb-space-1);
+  border-radius: var(--cb-radius-sm);
+  background: var(--cb-selected);
+  color: var(--cb-muted);
+  font-size: var(--cb-type-micro-size);
+  line-height: var(--cb-type-micro-line);
+}
+.cb-amap-task-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.cb-amap-task-time {
+  flex: none;
+  color: var(--cb-faint);
+  white-space: nowrap;
+}
+
+.cb-amap-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--cb-space-4);
+  margin: var(--cb-space-4) 0 0;
+  padding: 0;
+  list-style: none;
+  color: var(--cb-faint);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.cb-amap-legend-item {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-2);
+}

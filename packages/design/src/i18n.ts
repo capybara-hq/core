@@ -372,6 +372,18 @@ const zh = {
   "composer.nextMessage": "从下一条消息起生效",
   "composer.agentDefault": "agent 默认",
   "composer.removeToken": "移除 {name}",
+  "agentMap.title": "智能体图",
+  "agentMap.count": "{n} 个智能体",
+  "agentMap.running": "{n} 个运行中",
+  "agentMap.hint": "点击查看详情",
+  "agentMap.tokens": "{n} tokens",
+  "agentMap.background": "后台任务 · {n}",
+  "agentMap.legend": "图例",
+  "agentMap.status.running": "运行中",
+  "agentMap.status.waiting": "等待",
+  "agentMap.status.completed": "完成",
+  "agentMap.status.failed": "失败",
+  "agentMap.status.aborted": "已停止",
 };
 
 export type DesignKey = keyof typeof zh;
@@ -749,6 +761,18 @@ const en: Record<DesignKey, string> = {
   "composer.nextMessage": "Applies from the next message",
   "composer.agentDefault": "agent default",
   "composer.removeToken": "Remove {name}",
+  "agentMap.title": "Agent map",
+  "agentMap.count": "{n} agents",
+  "agentMap.running": "{n} running",
+  "agentMap.hint": "Click a node for details",
+  "agentMap.tokens": "{n} tokens",
+  "agentMap.background": "Background tasks · {n}",
+  "agentMap.legend": "Legend",
+  "agentMap.status.running": "Running",
+  "agentMap.status.waiting": "Waiting",
+  "agentMap.status.completed": "Completed",
+  "agentMap.status.failed": "Failed",
+  "agentMap.status.aborted": "Stopped",
 };
 
 export const messages: Record<Locale, Record<DesignKey, string>> = { zh, en };

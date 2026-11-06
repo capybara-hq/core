@@ -1,4 +1,14 @@
 export {
+  type AgentMapBackground,
+  AgentMapDialog,
+  type AgentMapDialogProps,
+  type AgentMapNode,
+  type AgentMapStatus,
+  AgentMapTree,
+  type AgentMapTreeProps,
+  agentMapTokens,
+} from "./agent-map";
+export {
   AGENT_PANEL_COLUMNS,
   AgentPanel,
   type AgentPanelProps,

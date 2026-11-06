@@ -1,6 +1,9 @@
 "use client";
 
 import {
+  type AgentMapBackground,
+  AgentMapDialog,
+  AgentMapTree,
   AgentRow,
   AppShell,
   AttachmentStrip,
@@ -47,6 +50,7 @@ import {
   useDesignLocale,
 } from "@capybara-hq/design";
 import {
+  AGENT_MAP_FIXTURE,
   CONV_COPY,
   CONV_FIXTURE,
   FILE_FIXTURE,
@@ -155,6 +159,42 @@ function subagentGroupBlocks(): ReactNode {
       <Block id="subagent-group-row-open">
         <SubagentGroup rows={S.running.map(running)} openId={S.open} onOpen={noop} now={NOW} />
       </Block>
+    </>
+  );
+}
+
+// ── Agent map ───────────────────────────────────────────────────────────────
+
+const AM = AGENT_MAP_FIXTURE;
+
+const agentMapBackground: AgentMapBackground[] = AM.background.map((b) => ({
+  kind: "task",
+  id: b.id,
+  description: b.description,
+  status: b.status,
+  startedAt: NOW - b.durationMs,
+  ...(b.status === "running" ? {} : { finishedAt: NOW }),
+}));
+
+function agentMapBlocks(): ReactNode {
+  return (
+    <>
+      <RefBlock id="agent-map-tree" width={1132} height={580} pad>
+        <AgentMapDialog open inline onOpenChange={noop} level="tree">
+          <AgentMapTree
+            root={AM.root}
+            background={agentMapBackground}
+            selectedId={AM.selected}
+            onOpen={noop}
+            now={NOW}
+          />
+        </AgentMapDialog>
+      </RefBlock>
+      <RefBlock id="agent-map-deep" width={1132} height={320} pad>
+        <AgentMapDialog open inline onOpenChange={noop} level="tree">
+          <AgentMapTree root={AM.deep} background={[]} onOpen={noop} now={NOW} />
+        </AgentMapDialog>
+      </RefBlock>
     </>
   );
 }
@@ -999,6 +1039,7 @@ export function ConversationTemplateDemo() {
 
 export const CONVERSATION_PAGE_BLOCKS = {
   "subagent-group": subagentGroupBlocks,
+  "agent-map": agentMapBlocks,
   "title-bar": titleBarBlocks,
   composer: composerBlocks,
   "command-palette": commandPaletteBlocks,

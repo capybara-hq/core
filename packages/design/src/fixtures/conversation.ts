@@ -929,3 +929,65 @@ export const NEW_CONVERSATION_FIXTURE: {
   ],
   noMatch: "报销",
 };
+
+// ── Agent map (§6.16.28) ────────────────────────────────────────────────────
+
+export type FixtureAgentNode = {
+  id: string;
+  description: string;
+  model: string;
+  durationMs: number;
+  tokens: number;
+  status: "running" | "waiting" | "completed" | "failed" | "aborted";
+  children: FixtureAgentNode[];
+};
+
+export type FixtureAgentTask = {
+  id: string;
+  description: string;
+  status: "running" | "completed";
+  /** How long it has run (running) or ran (finished). */
+  durationMs: number;
+};
+
+const agentNode = (
+  id: string,
+  description: string,
+  model: string,
+  durationMs: number,
+  tokens: number,
+  status: FixtureAgentNode["status"],
+  children: FixtureAgentNode[] = [],
+): FixtureAgentNode => ({ id, description, model, durationMs, tokens, status, children });
+
+/** The agent map: a root with four children, one of them with a child, and two background tasks. */
+export const AGENT_MAP_FIXTURE: {
+  root: FixtureAgentNode;
+  /** The node open at level 2 (drawn selected). */
+  selected: string;
+  background: FixtureAgentTask[];
+  /** Three levels below the root: four columns. */
+  deep: FixtureAgentNode;
+} = {
+  root: agentNode("am_root", "整理季度经营报告", "opus 5.5", 2_538_000, 392_700, "running", [
+    agentNode("am_sales", "汇总各区域销售数据", "opus 5.5", 724_000, 188_200, "completed"),
+    agentNode("am_invoice", "核对供应商发票与付款记录", "opus 5.5", 985_000, 266_500, "running", [
+      agentNode("am_review", "复查发票核对结果", "sonnet 5.5", 67_000, 108_800, "running"),
+    ]),
+    agentNode("am_summary", "起草管理层摘要", "opus 5.5", 280_000, 41_000, "waiting"),
+    agentNode("am_appendix", "翻译附录表格", "haiku 5.5", 192_000, 30_400, "failed"),
+  ]),
+  selected: "am_invoice",
+  background: [
+    { id: "bg_dev", description: "启动本地预览服务", status: "running", durationMs: 482_000 },
+    { id: "bg_test", description: "跑全量数据校验", status: "completed", durationMs: 221_000 },
+  ],
+  deep: agentNode("am_d0", "整理季度经营报告", "opus 5.5", 2_538_000, 392_700, "running", [
+    agentNode("am_d1", "核对供应商发票与付款记录", "opus 5.5", 985_000, 266_500, "running", [
+      agentNode("am_d2", "复查发票核对结果", "sonnet 5.5", 312_000, 108_800, "running", [
+        agentNode("am_d3", "抽查十张大额发票", "haiku 5.5", 41_000, 12_300, "running"),
+      ]),
+    ]),
+    agentNode("am_d1b", "汇总各区域销售数据", "opus 5.5", 724_000, 188_200, "completed"),
+  ]),
+};

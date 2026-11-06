@@ -173,7 +173,7 @@ Every size a component uses is a step of one of these scales, stored in `tokens.
 | `shadow-float` | `0 8px 24px rgba(0,0,0,.45)` | `0 8px 24px rgba(26,26,24,.08)` | The composer, the sidebar drawer |
 
 - Layering: Sheet 40 · Dialog 50 · Popover/Menu 60 · Toast 70 (`--cb-z-*`).
-- Motion: hover background transitions `motion.hover` (120ms); expand / collapse height transitions `motion.expand` (160ms); overlays fade in with a 4px offset over `motion.overlay` (120ms), `ease-out`, no bounce; the spinner turns once per `motion.spin` (800ms), the streaming cursor blinks every `motion.cursor` (1000ms). `prefers-reduced-motion: reduce` makes all of them instant, the spinner static and the cursor steady (§6.11).
+- Motion: hover background transitions `motion.hover` (120ms); expand / collapse height transitions `motion.expand` (160ms); overlays fade in with a 4px offset over `motion.overlay` (120ms), `ease-out`, no bounce; the spinner turns once per `motion.spin` (800ms), the streaming cursor blinks every `motion.cursor` (1000ms), a running agent's dot in the agent map pulses every `motion.pulse` (1600ms, §6.16.28). `prefers-reduced-motion: reduce` makes all of them instant, the spinner static and the cursor steady (§6.11).
 - Focus: inputs, selects and textareas get an `accent` border plus a 3px `focus-ring` halo (`box-shadow: 0 0 0 3px focus-ring`); other controls use `outline: 2px solid accent; outline-offset: 2px`; table rows, list items, nav items and conversation rows use `outline: 1px solid accent; outline-offset: -1px`. `:focus-visible` only.
 
 ### 2.6 Icons
@@ -802,7 +802,7 @@ States: `default`, `row-hover`, `row-selected`, `loading`, `empty`, `narrow`
 
 Selection rules: the user needs to decide → Dialog; view / edit one object without leaving the list → Sheet; in-place options / filters → Popover / Menu; feedback on an operation result → Toast (a Dialog must not be used); creating something with more than 6 fields → a form page (T4).
 
-- **Dialog**: width 480 / 640, `panel` background + `line-strong` border + radius `md` + `shadow-2` + `scrim`. Header (h2 title + close `x`) / body (padding 16) / footer (right-aligned: ghost Cancel + primary action, the primary action carries `↵`), with 1px `line` separating header and footer. Esc closes; focus is trapped and returned after closing. Default focus: on the first field for a dialog that asks for input (新建组织, 新建令牌), else on the primary action (a `LinkButton` primary too); on Cancel for a dangerous dialog. A create dialog's primary is disabled until it is valid. A dialog that only explains why something cannot be done (退出组织 as the only owner) is not dangerous: plain title, one default button "知道了" / "Got it", and a link to where it can be fixed. A dialog whose next step lives elsewhere (加入评测集 with no eval set) says so and offers that step as its primary (`LinkButton`), never a disabled dead end.
+- **Dialog**: width 480 / 640 (the agent map's levels are 1100 / 760 / 1060, §6.16.28), `panel` background + `line-strong` border + radius `md` + `shadow-2` + `scrim`. Header (h2 title + close `x`) / body (padding 16) / footer (right-aligned: ghost Cancel + primary action, the primary action carries `↵`), with 1px `line` separating header and footer. Esc closes; focus is trapped and returned after closing. Default focus: on the first field for a dialog that asks for input (新建组织, 新建令牌), else on the primary action (a `LinkButton` primary too); on Cancel for a dangerous dialog. A create dialog's primary is disabled until it is valid. A dialog that only explains why something cannot be done (退出组织 as the only owner) is not dangerous: plain title, one default button "知道了" / "Got it", and a link to where it can be fixed. A dialog whose next step lives elsewhere (加入评测集 with no eval set) says so and offers that step as its primary (`LinkButton`), never a disabled dead end.
 - **Dangerous confirmation**: the ordinary frame and title (`line-strong`, `ink`): the red is only on the destructive button; explains the consequences and recoverability; the object name must be typed, the confirm button is disabled until it matches, and is danger-solid once it matches.
 - **Sheet**: slides out from the right, width 480 / 720, `panel` background + `line-strong` left line + `shadow-sheet`; no scrim by default (the list is still operable). Header: name + version + open in a new page `external-link` + close `x`; may contain Tabs; footer: actions. Closing with unsaved changes needs a second confirmation.
 - **Links**: the design package is framework-agnostic; links in the sidebar navigation, the PageHeader path, Tabs, Sheet, TextLink and LinkCard are rendered through the `link` component of `DesignProvider` (default `<a>`); `apps/web` passes next-intl's `Link` to get client-side navigation and the locale prefix. Pages should not build `<a href>` themselves for in-site navigation.
@@ -2057,6 +2057,76 @@ States: `default`, `hover`, `menu`
 | quick-action[data-ref-forced=true] | hover | color | color.ink |
 | menu | menu | background-color | color.panel |
 | menu-item | menu | height | row.default |
+
+#### 6.16.28 Agent map
+
+`AgentMapDialog({ open, onOpenChange, level, children })` is a dialog over the conversation page
+(agent map spec §9) whose width follows its level: the tree 1100, one agent's summary 760, the
+transcript 1060 (the §6.7 frame: `panel`, `line-strong`, radius `md`, `shadow-2`, `scrim`; padding
+`space.5` `space.6`). The head is the title "智能体图" / "Agent map" (`h2`, prose, 500) and close;
+Esc closes, focus is trapped and returned. `AgentMapTree({ root, background, selectedId, onOpen })`
+is level 1:
+
+- **Count line** under the title (prose, `muted`): "N 个智能体 · M 个运行中 · 点击查看详情" /
+  "N agents · M running · Click a node for details"; N counts every node with the root, M the
+  running ones.
+- **Tree**: columns left to right by depth, `space.6` apart; a parent is vertically centred on its
+  children; standard elbow connectors (1px `line-strong`) from each parent to the vertical centre of
+  each child; siblings `space.2` apart. No "main agent" or "level N" labels: position and lines
+  show the hierarchy. Four columns (three levels below the root) are wider than the dialog: the
+  tree scrolls inside it.
+- **Node**: a button 320 wide and 62 high, the same for every node (padding 0 `space.3`, `panel-2`,
+  1px `line`, radius `md`; hover `line-strong` on `hover`); line 1 the status dot and the
+  description (500, `ink`); line 2 exactly "model · time · tokens" (`small`, `muted`, "opus 5.5 ·
+  42分18秒 · 392.7k tokens"), indented past the dot. Both lines are one line with an ellipsis, and
+  the node's tooltip is the full text. The root has `line-strong` on `raised`; the node open at
+  level 2 has an `accent` border (`aria-current="true"`). Activating a node opens it (`onOpen`).
+- **Status is only the dot** (8, round, `role="img"` with the status word as its label): running
+  `accent`, pulsing every `motion.pulse` (still under reduced motion); waiting `warn`; completed
+  `ok`; failed `fail`; stopped `faint`. No status words in the tree (the exception to §2.4's icon
+  and text rule): the **legend** at the bottom (`small`, `faint`, items `space.4` apart) names the
+  five colours.
+- **Background tasks**: the root's own background tasks under the root column (320 wide, `space.4`
+  below the tree): a heading "后台任务 · N" / "Background tasks · N" (`small`, `faint`) and one row
+  per task (`row.default`, `panel-2`, 1px `line-soft`, radius `sm`, `small`): the dot, a `Bash` tag
+  (the picker-menu tag: `micro` `muted` on `selected`), the description with an ellipsis and the
+  duration in `faint`. None: nothing. A child's background tasks show only in its level 2.
+
+<!-- states: agent-map -->
+States: `tree`, `deep`
+
+<!-- size-table: agent-map -->
+| Part | State | Property | Value |
+|---|---|---|---|
+| agent-map-dialog | tree | width | 1100 |
+| agent-map-dialog | tree | background-color | color.panel |
+| agent-map-dialog | tree | border-top-color | color.line-strong |
+| agent-map-dialog | tree | border-radius | radius.md |
+| agent-map-title | tree | font-size | type.h2 |
+| agent-map-count | tree | color | color.muted |
+| agent-node | tree | width | 320 |
+| agent-node | tree | height | 62 |
+| agent-node[data-depth=1] | tree | background-color | color.panel-2 |
+| agent-node[data-depth=1] | tree | border-top-color | color.line |
+| agent-node | tree | border-radius | radius.md |
+| agent-node[data-root=true] | tree | background-color | color.raised |
+| agent-node[data-root=true] | tree | border-top-color | color.line-strong |
+| agent-node[aria-current=true] | tree | border-top-color | color.accent |
+| agent-node-name | tree | font-size | type.body |
+| agent-node-meta | tree | font-size | type.small |
+| agent-node-meta | tree | color | color.muted |
+| agent-dot | tree | width | space.2 |
+| agent-dot[data-status=waiting] | tree | background-color | color.warn |
+| agent-dot[data-status=completed] | tree | background-color | color.ok |
+| agent-dot[data-status=failed] | tree | background-color | color.fail |
+| agent-task | tree | height | row.default |
+| agent-task | tree | background-color | color.panel-2 |
+| agent-task-tag | tree | font-size | type.micro |
+| agent-task-tag | tree | background-color | color.selected |
+| agent-task-time | tree | color | color.faint |
+| agent-legend | tree | color | color.faint |
+| agent-node | deep | height | 62 |
+| agent-node[data-depth=3] | deep | width | 320 |
 
 ---
 
