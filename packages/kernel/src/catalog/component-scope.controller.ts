@@ -18,6 +18,7 @@ import {
   type ComponentVersionView,
   type ComponentView,
   type OrgComponentView,
+  type OrgOfferedComponentView,
 } from "./component-scope.service.js";
 import { COMPONENT_KINDS, type ComponentKind } from "./component-state.js";
 import { PlatformComponents, type UploadedComponentVersion } from "./platform-components.js";
@@ -29,6 +30,9 @@ const Hash = z.string().min(1).max(128);
 
 const ComponentParams = z.object({ kind: Kind, id: z.string().min(1).max(128) });
 const ListQuery = z.object({ kind: Kind }).strict();
+const OrgListQuery = z
+  .object({ kind: Kind.optional(), itemId: z.string().uuid().optional() })
+  .strict();
 
 /** `{ scope, orgs? }`, `{ disabled: true }` or `{ follow: true }`: exactly one. */
 const PreviewBody = z
@@ -85,6 +89,7 @@ class TemplateVersionDto extends createZodDto(TemplateVersionBody, "TemplateVers
 
 class ComponentParamsDto extends createZodDto(ComponentParams, "ComponentParams") {}
 class ComponentListQuery extends createZodDto(ListQuery, "ComponentListQuery") {}
+class OrgComponentListQuery extends createZodDto(OrgListQuery, "OrgComponentListQuery") {}
 class ComponentScopePreviewBody extends createZodDto(PreviewBody, "ComponentScopePreviewBody") {}
 class ComponentScopeBody extends createZodDto(ScopeBody, "ComponentScopeBody") {}
 class ComponentDisabledBody extends createZodDto(DisabledBody, "ComponentDisabledBody") {}
@@ -273,6 +278,25 @@ export class AdminComponentsController {
 @Controller("api/v1/orgs/:orgId/components")
 export class OrgComponentsController {
   constructor(@Inject(ComponentScopeService) private readonly scope: ComponentScopeService) {}
+
+  /**
+   * The platform components offered to the org (`?kind=`, `?itemId=`: only those; Task 10): each
+   * with its state in the org (`on`, `locked` for `all`, the org's `switch`) and whether an org
+   * admin may switch it. Members read it (the workspace pages are read-only for them).
+   */
+  @Get()
+  @OrgAction("catalog.read")
+  async list(
+    @CurrentOrg() org: OrgContext,
+    @ZQuery(OrgComponentListQuery) q: z.infer<typeof OrgListQuery>,
+  ): Promise<{ components: OrgOfferedComponentView[] }> {
+    return {
+      components: await this.scope.orgList(org.orgId, {
+        ...(q.kind !== undefined && { kind: q.kind }),
+        ...(q.itemId !== undefined && { itemId: q.itemId }),
+      }),
+    };
+  }
 
   @Put(":kind/:id/switch")
   @OrgAction("catalog.read")

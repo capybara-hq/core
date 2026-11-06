@@ -14,6 +14,7 @@ import type { ActorOpts } from "./catalog.service.js";
 import { assertOrgsExist } from "./catalog-items.js";
 import {
   agentsUsing,
+  COMPONENT_KINDS,
   type ComponentKind,
   type ComponentRow,
   type ComponentScopeFacts,
@@ -119,6 +120,25 @@ export interface OrgComponentView {
   on: boolean;
   /** Its effective scope is `all`: it cannot be switched off. */
   locked: boolean;
+}
+
+/**
+ * A platform component offered to an org (`GET orgs/:orgId/components`, Task 10): on there, or one
+ * an org admin could switch on; what the workspace 技能 / 智能体模板 pages and the plugin detail
+ * show with their switches. Never a component the org cannot see.
+ */
+export interface OrgOfferedComponentView extends OrgComponentView {
+  description: string | null;
+  itemId: string | null;
+  version: string;
+  scopeMode: "follow" | "own";
+  /** A `follow` component's plugin is on in the org (always true for `own`). */
+  pluginOn: boolean;
+  /**
+   * An org admin may switch it now: not locked, and (`follow`) its plugin is on in the org (a
+   * component of a plugin that is off is switched on with the plugin, spec §5 rule 5).
+   */
+  switchable: boolean;
 }
 
 /** The result of an org switch: the component, or (switching off without `confirm`) the preview. */
@@ -280,6 +300,55 @@ export class ComponentScopeService {
     return [...platform, ...owned].sort((a, b) =>
       a.name < b.name ? -1 : a.name > b.name ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0,
     );
+  }
+
+  /**
+   * The platform components offered to the org (`kind` / `itemId`: only those), by kind then name:
+   * on there, or visible to it and not stopped on the deployment (spec §5 rules 5, 11, §13.5).
+   */
+  async orgList(
+    orgId: string,
+    filter: { kind?: ComponentKind; itemId?: string },
+  ): Promise<OrgOfferedComponentView[]> {
+    const out: OrgOfferedComponentView[] = [];
+    for (const kind of filter.kind !== undefined ? [filter.kind] : COMPONENT_KINDS) {
+      const comps = await loadComponents(
+        this.db,
+        kind,
+        filter.itemId !== undefined ? { itemId: filter.itemId } : {},
+      );
+      const st = await loadScopeState(this.db, kind, comps);
+      const rows: OrgOfferedComponentView[] = [];
+      for (const c of comps) {
+        const p = pluginFactsOf(st, c.itemId, orgId);
+        const listed = listedIn(st, c.id, orgId);
+        const sw = switchOf(st, c.id, orgId);
+        const on = componentOn(c, p, listed, sw);
+        if (!on && !componentOffered(c, p, listed)) continue;
+        const locked = componentLocked(c, p);
+        const pluginOn = c.scopeMode === "own" || (p?.live === true && (p.installed || p.builtin));
+        rows.push({
+          kind,
+          id: c.id,
+          name: c.name,
+          description: c.description,
+          plugin: c.plugin,
+          itemId: c.itemId,
+          version: c.version,
+          scopeMode: c.scopeMode,
+          switch: sw,
+          on,
+          locked,
+          pluginOn,
+          switchable: !locked && pluginOn,
+        });
+      }
+      rows.sort((a, b) =>
+        a.name < b.name ? -1 : a.name > b.name ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0,
+      );
+      out.push(...rows);
+    }
+    return out;
   }
 
   /**

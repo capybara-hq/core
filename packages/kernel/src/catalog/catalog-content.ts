@@ -105,6 +105,12 @@ export interface OrgCatalogDetail {
   skills: string[];
   /** The agent template files (`agents/<name>.md`, sub-agents spec §16). */
   agents: string[];
+  /**
+   * An installed plugin whose connector templates on in the org miss a connector there
+   * (`needs_config`, ruling P2-10): those templates, for `POST …/catalog/:itemId/connectors`;
+   * empty otherwise (Task 10).
+   */
+  missingTemplates: OrgCatalogTemplate[];
 }
 
 /**

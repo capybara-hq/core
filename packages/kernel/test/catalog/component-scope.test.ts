@@ -763,3 +763,105 @@ describe("the admin component list: builtin and org-owned (Task 9 fix round 1)",
     expect(pv.statusCode).toBe(404);
   });
 });
+
+/**
+ * Task 10: what the workspace pages read. The org's component list (offered platform components
+ * with their state in the org, members included) and the detail of a linked copy.
+ */
+describe("the org component list and linked copies (Task 10)", { timeout: 60_000 }, () => {
+  const list = (req: OrgEnv["boss"], query: string) =>
+    req({ method: "GET", url: `/api/v1/orgs/${env.orgId}/components?${query}` });
+
+  it("lists offered components with their state; members read it; `all` is locked; a plugin that is off is not switchable", async () => {
+    const { itemId, skillId } = await crmInBoth();
+    const other = await seedPlugin(env, { name: "docs", skills: ["notes"], templates: false });
+    const notes = (
+      await env.db
+        .selectFrom("platform_skills")
+        .select("id")
+        .where("name", "=", "notes")
+        .executeTakeFirstOrThrow()
+    ).id;
+    const r = await list(env.mem, "kind=skill");
+    expect(r.statusCode, r.body).toBe(200);
+    expect(r.json().components).toEqual([
+      expect.objectContaining({
+        id: notes,
+        name: "notes",
+        itemId: other,
+        on: false,
+        switchable: false,
+        pluginOn: false,
+      }),
+      expect.objectContaining({
+        kind: "skill",
+        id: skillId,
+        name: "pdf-tools",
+        plugin: "crm",
+        itemId,
+        on: true,
+        locked: false,
+        switchable: true,
+        pluginOn: true,
+      }),
+    ]);
+    // by plugin, every kind
+    const byItem = await list(env.mem, `itemId=${itemId}`);
+    expect(byItem.statusCode, byItem.body).toBe(200);
+    expect(byItem.json().components.map((c: { id: string }) => c.id)).toEqual([skillId]);
+    // switched off in the org: still listed, off, switchable
+    const p = await sw(env.orgId, env.boss, skillId, { enabled: false });
+    await sw(env.orgId, env.boss, skillId, { enabled: false, confirm: p.json().confirm });
+    const pdf = async () =>
+      (await list(env.boss, "kind=skill"))
+        .json()
+        .components.find((c: { id: string }) => c.id === skillId);
+    const off = await pdf();
+    expect(off).toMatchObject({ id: skillId, on: false, switch: false, switchable: true });
+    await sw(env.orgId, env.boss, skillId, { enabled: true });
+    await setScope(env, itemId, "all");
+    const locked = await pdf();
+    expect(locked).toMatchObject({ id: skillId, on: true, locked: true, switchable: false });
+    // a component not offered to the org is not listed
+    await setScope(env, other, "named", [org2]);
+    expect(
+      (await list(env.boss, "kind=skill")).json().components.map((c: { id: string }) => c.id),
+    ).toEqual([skillId]);
+    // a bad kind is refused
+    expect((await list(env.boss, "kind=nope")).statusCode).toBe(400);
+  });
+
+  it("an unpinned linked copy's detail is its platform skill's; a pinned copy keeps its own", async () => {
+    const { skillId } = await crmInBoth();
+    const copy = "00000000-0000-4000-8000-000000000010";
+    await env.db
+      .insertInto("skills")
+      .values({
+        id: copy,
+        org_id: env.orgId,
+        scope: "org",
+        agent_id: null,
+        name: "pdf-tools",
+        description: "Copy.",
+        current_version: 1,
+        platform_skill_id: skillId,
+      })
+      .execute();
+    await env.db
+      .insertInto("skill_versions")
+      .values({
+        skill_id: copy,
+        version: 1,
+        manifest: JSON.stringify({ name: "pdf-tools", description: "Copy.", files: [] }),
+        object_prefix: "skills/copy10/",
+      })
+      .execute();
+    const get = () => env.mem({ method: "GET", url: `/api/v1/orgs/${env.orgId}/skills/${copy}` });
+    const r = await get();
+    expect(r.statusCode, r.body).toBe(200);
+    expect(r.json()).toMatchObject({ id: skillId, origin: "platform" });
+    expect(r.json().description).not.toBe("Copy.");
+    await env.db.updateTable("skills").set({ pinned_version: 1 }).where("id", "=", copy).execute();
+    expect((await get()).json()).toMatchObject({ id: copy, origin: "org", description: "Copy." });
+  });
+});

@@ -891,8 +891,24 @@ export class SkillsService {
     return rows.map(summary);
   }
 
-  /** 组织技能详情：各版本与文件清单。不存在 / 已删除 / 不是组织技能 → `skill.not_found`。 */
+  /**
+   * 组织技能详情：各版本与文件清单。不存在 / 已删除 / 不是组织技能 → `skill.not_found`。
+   * An org copy linked to a platform skill without a pin (ruling B2) serves the platform skill's
+   * content under its own id, so its detail is the platform skill's (its id, versions and body;
+   * 404 while that skill is off in the org); a pinned copy keeps its own (Task 10).
+   */
   async get(orgId: string, skillId: string): Promise<SkillDetail> {
+    const link = await this.db
+      .selectFrom("skills")
+      .select("platform_skill_id")
+      .where("id", "=", skillId)
+      .where("org_id", "=", orgId)
+      .where("scope", "=", "org")
+      .where("deleted_at", "is", null)
+      .where("platform_skill_id", "is not", null)
+      .where("pinned_version", "is", null)
+      .executeTakeFirst();
+    if (link?.platform_skill_id) return this.getPlatform(orgId, link.platform_skill_id);
     const row = await summaryQuery(this.db.db)
       .where("s.id", "=", skillId)
       .where("s.org_id", "=", orgId)

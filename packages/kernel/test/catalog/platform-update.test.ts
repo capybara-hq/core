@@ -963,6 +963,11 @@ describe("platform plugin update: storage, dependencies, missing connectors (fix
     expect(await state()).toBe("on");
     await updateTo(item, "2.0.0");
     expect(await state()).toBe("needs_config");
+    // the detail names the templates that miss a connector, for the 补充配置 wizard (Task 10)
+    const missing = async () =>
+      (await env.mem({ method: "GET", url: `/api/v1/orgs/${env.orgId}/catalog/${item}` })).json()
+        .missingTemplates as { id: string }[];
+    expect((await missing()).map((t) => t.id)).toEqual(["docs"]);
     const url = `/api/v1/orgs/${env.orgId}/catalog/${item}/connectors`;
     const member = await env.mem({
       method: "POST",
@@ -1000,5 +1005,6 @@ describe("platform plugin update: storage, dependencies, missing connectors (fix
       .execute();
     expect(recorded).toEqual([{ ref: docs.id, template_id: "docs", created: true }]);
     expect(await state()).toBe("on");
+    expect(await missing()).toEqual([]);
   });
 });

@@ -279,6 +279,12 @@ export class OrgCatalogService {
       ],
       skills: (m.skills ?? []).map((s) => packagePath(s.path)),
       agents: (m.agents ?? []).map((a) => packagePath(a.path)),
+      missingTemplates:
+        item.installed !== null && item.state === "needs_config"
+          ? ((await this.pluginInstaller.missingConnectors(orgId, itemId))?.templates ?? []).map(
+              (t) => orgTemplateView(t.id, t.file),
+            )
+          : [],
     };
   }
 
