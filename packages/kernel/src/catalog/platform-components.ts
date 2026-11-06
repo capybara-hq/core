@@ -79,6 +79,15 @@ export const platformAgentTemplatePrefix = (id: string, version: number): string
 export const uniqueVersionPrefix = (base: string): string =>
   `${base.slice(0, -1)}-${randomUUID()}/`;
 
+/**
+ * The prefix of a version a plugin sync writes: `<id>/<version>-<catalog version>/` (the catalog
+ * version made key-safe), so syncs of two catalog versions racing for one number never overwrite
+ * each other. Stored on the version row; readers use the stored prefix, so rows written before keep
+ * theirs.
+ */
+export const syncVersionPrefix = (base: string, catalogVersion: string): string =>
+  `${base.slice(0, -1)}-${catalogVersion.replace(/[^0-9A-Za-z.-]/g, "_")}/`;
+
 /** 409 `catalog.not_owned`: an org's own promoted item is versioned by its owner only (P3-48). */
 const ownedByOrg = (what: string, name: string): ApiError =>
   new ApiError(
@@ -631,7 +640,8 @@ export class PlatformComponents {
         base: live && { id: live.id, version: live.current_version },
         id,
         to,
-        prefix: platformSkillPrefix(id, to),
+        // the catalog version in the prefix: two syncs of different versions never write one key
+        prefix: syncVersionPrefix(platformSkillPrefix(id, to), version),
         files,
         manifest: skillManifest(pkg),
         suggestPinned: s.pinned === true,
@@ -668,7 +678,7 @@ export class PlatformComponents {
         base: live && { id: live.id, version: live.current_version },
         id,
         to,
-        prefix: platformAgentTemplatePrefix(id, to),
+        prefix: syncVersionPrefix(platformAgentTemplatePrefix(id, to), version),
         file: { ...file, path: file.path.split("/").pop() as string },
         template: a.template,
       });

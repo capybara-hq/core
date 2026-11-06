@@ -81,7 +81,7 @@ describe("platform components from a plugin version", () => {
         current_version: 1,
         scope_mode: "follow",
         catalog_version: "1.0.0",
-        object_prefix: `platform/skills/${s.id}/1/`,
+        object_prefix: `platform/skills/${s.id}/1-1.0.0/`,
       });
       expect(await readText(`${s.object_prefix}SKILL.md`)).toContain(`name: ${s.name}`);
       expect(await readText(`${s.object_prefix}scripts/run.py`)).toBe("print(1)\n");
@@ -121,7 +121,7 @@ describe("platform components from a plugin version", () => {
       current_version: 1,
       scope_mode: "follow",
       catalog_version: "1.0.0",
-      object_prefix: `platform/agent-templates/${tpl?.id}/1/`,
+      object_prefix: `platform/agent-templates/${tpl?.id}/1-1.0.0/`,
       definition: expect.objectContaining({
         name: "reviewer",
         instructions: "Review the change.\n",
@@ -182,11 +182,13 @@ describe("platform components from a plugin version", () => {
       current_version: 2,
       description: "Alpha, changed.",
       catalog_version: "1.1.0",
-      object_prefix: `platform/skills/${alpha?.id}/2/`,
+      object_prefix: `platform/skills/${alpha?.id}/2-1.1.0/`,
     });
     expect(await readText(`${alpha?.object_prefix}SKILL.md`)).toContain("Alpha, changed.");
     // the first version's files stay
-    expect(await readText(`platform/skills/${alpha?.id}/1/SKILL.md`)).toContain("Alpha things.");
+    expect(await readText(`platform/skills/${alpha?.id}/1-1.0.0/SKILL.md`)).toContain(
+      "Alpha things.",
+    );
     const beta = (await skillRows()).find((s) => s.name === "beta");
     expect(beta?.current_version).toBe(1);
 

@@ -866,6 +866,61 @@ describe("promote on share", { timeout: 120_000 }, () => {
     expect(row).toEqual({ deleted_at: null, current_version: 3, platform_skill_id: r.platformId });
   });
 
+  it("an org's own plugin's copies are still removed by its uninstall (ruling P3-47)", async () => {
+    // an org-uploaded plugin's skill: a platform row owned by the org but from a plugin, with the
+    // org's install copy linked to it (as the platform migration links copies)
+    const item = randomUUID();
+    await db
+      .insertInto("catalog_items")
+      .values({
+        id: item,
+        name: "own-kit",
+        package_name: "@acme/plugin-own-kit",
+        publisher: "Acme",
+        description: "d",
+        latest_version: "1.0.0",
+        policy: "allow",
+        owner_org_id: orgA,
+      })
+      .execute();
+    const pid = randomUUID();
+    await db
+      .insertInto("platform_skills")
+      .values({
+        id: pid,
+        catalog_item_id: item,
+        plugin_name: "own-kit",
+        name: "kit-notes",
+        description: "d",
+        current_version: 1,
+        owner_org_id: orgA,
+        origin_org_id: orgA,
+      })
+      .execute();
+    const copy = await seedOrgSkill(orgA, "kit-notes", ["Kit notes."]);
+    await db
+      .updateTable("skills")
+      .set({ platform_skill_id: pid, catalog_item_id: item, catalog_version: "1.0.0" })
+      .where("id", "=", copy.id)
+      .execute();
+    const installer = k.app.get(PluginInstaller);
+    const removed = await installer.txHost.run(() =>
+      installer.removeComponent(
+        orgA,
+        rootId,
+        { kind: "skill", ref: copy.id, created: true, skillVersion: null },
+        "plugin_install_cleanup",
+      ),
+    );
+    expect(removed).toBe(true);
+    const row = await db
+      .selectFrom("skills")
+      .select("deleted_at")
+      .where("id", "=", copy.id)
+      .executeTakeFirstOrThrow();
+    expect(row.deleted_at).not.toBeNull();
+  });
+
   it("the super admin cannot upload a version of an org's promoted skill (ruling P3-48)", async () => {
     const r = await promotedReport();
     const zip = makeZip([{ name: "SKILL.md", data: skillMd("report", "Admin v4.") }]);

@@ -2531,7 +2531,9 @@ function orderByRequires(set: ExtensionManifest[]): string[] {
 
 /**
  * Whether org row `id` (a skill or an agent template of the org) is linked without a pin to a live
- * platform row the org owns: promoted when shared (ruling P3-3).
+ * platform row the org promoted when sharing it (ruling P3-3): owned by the org and from no plugin
+ * (`catalog_item_id` null). A component of the org's own uploaded plugin is a plugin's, so its
+ * install copies are removed and reverted as any plugin's.
  */
 async function promotedOrgRow(
   db: KernelSchemaDb,
@@ -2549,6 +2551,8 @@ async function promotedOrgRow(
           .where("s.org_id", "=", orgId)
           .where("s.pinned_version", "is", null)
           .where("p.owner_org_id", "=", orgId)
+          // promoted, not an org plugin's component (which has its plugin, P3-2)
+          .where("p.catalog_item_id", "is", null)
           .where("p.deleted_at", "is", null)
           .executeTakeFirst()
       : await db
@@ -2559,6 +2563,7 @@ async function promotedOrgRow(
           .where("a.org_id", "=", orgId)
           .where("a.pinned_version", "is", null)
           .where("p.owner_org_id", "=", orgId)
+          .where("p.catalog_item_id", "is", null)
           .where("p.deleted_at", "is", null)
           .executeTakeFirst();
   return row !== undefined;
