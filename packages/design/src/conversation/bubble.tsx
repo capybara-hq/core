@@ -1,4 +1,4 @@
-import type { JSX, ReactNode } from "react";
+import { type JSX, type ReactNode, useId, useLayoutEffect, useRef, useState } from "react";
 import { isSafeAttachmentHref } from "../display/attachments";
 import { useDesignT } from "../provider";
 import { fillCopy } from "./tool-copy";
@@ -21,6 +21,13 @@ export type UserBubbleProps = {
    * sub-agent's transcript, agent map spec §9.4). Shown above the bubble as "来自 <sender>".
    */
   sender?: string;
+  /** A long message starts open (uncontrolled; the reference set's `expanded` state). */
+  defaultExpanded?: boolean;
+  /**
+   * The reference set only: the text counts as taller than the clamp before it is measured
+   * (jsdom lays nothing out).
+   */
+  referenceLong?: boolean;
 };
 
 /** The skill chip inside a bubble (§6.16.6): the composer's chip without its remove button. */
@@ -32,7 +39,12 @@ export function BubbleSkill({ label }: { label: string }): JSX.Element {
   );
 }
 
-/** A user message (§6.16.6): right-aligned `selected` bubble, at most 75% of the thread. */
+/**
+ * A user message (§6.16.6): right-aligned `selected` bubble, at most 75% of the thread. A message
+ * taller than `layout.bubble-clamp` (eight prose lines) is clamped with its last line fading out,
+ * and "展开" / "Show more" under it opens it in full ("收起" / "Show less" folds it back); the
+ * attachments above and the skill chip on its first line always show.
+ */
 export function UserBubble({
   text,
   attachments,
@@ -40,8 +52,29 @@ export function UserBubble({
   skill,
   details,
   sender,
+  defaultExpanded,
+  referenceLong,
 }: UserBubbleProps): JSX.Element {
   const t = useDesignT();
+  const bodyId = useId();
+  const bodyRef = useRef<HTMLDivElement>(null);
+  // Per bubble and local to the view (acceptance item AC4): never persisted.
+  const [expanded, setExpanded] = useState(defaultExpanded === true);
+  const [overflows, setOverflows] = useState(referenceLong === true);
+  // The toggle shows only when the clamp (`layout.bubble-clamp`, eight prose lines) hides something:
+  // measured, and again on resize; an expanded message keeps it so it can fold back.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a new text or chip must be measured again
+  useLayoutEffect(() => {
+    const el = bodyRef.current;
+    if (!el || expanded) return;
+    const measure = () =>
+      setOverflows(referenceLong === true || el.scrollHeight > el.clientHeight + 1);
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [text, skill, expanded, referenceLong]);
   return (
     <div className="cb-user-msg">
       {sender !== undefined ? (
@@ -51,9 +84,30 @@ export function UserBubble({
       ) : null}
       {attachments}
       <div className="cb-bubble" data-part="bubble" data-queued={queued ? "true" : undefined}>
-        {skill !== undefined ? <BubbleSkill label={skill} /> : null}
-        {text}
+        <div
+          ref={bodyRef}
+          id={bodyId}
+          className="cb-bubble-body"
+          data-part="bubble-body"
+          data-expanded={expanded ? "true" : "false"}
+          data-overflows={overflows && !expanded ? "true" : undefined}
+        >
+          {skill !== undefined ? <BubbleSkill label={skill} /> : null}
+          {text}
+        </div>
       </div>
+      {expanded || overflows ? (
+        <button
+          type="button"
+          className="cb-link-btn cb-bubble-more"
+          data-part="bubble-more"
+          aria-expanded={expanded}
+          aria-controls={bodyId}
+          onClick={() => setExpanded((e) => !e)}
+        >
+          {expanded ? t("bubble.less") : t("bubble.more")}
+        </button>
+      ) : null}
       {details !== undefined ? (
         <div className="cb-bubble-details" data-part="bubble-details">
           {details}

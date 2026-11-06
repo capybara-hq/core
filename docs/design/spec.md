@@ -144,7 +144,7 @@ Every size a component uses is a step of one of these scales, stored in `tokens.
 | Radius | `sm` / `md` / `bubble` | 4 / 8 / 10 | `--cb-radius-<step>` |
 | Layout | `sidebar` / `sidebar-rail` / `content` / `content-pad` / `chat` / `status-bar` / `action-row` / `gutter` | 256 / 48 / 1120 / 32 / 720 / 24 / 40 / 20 | `--cb-layout-<name>` |
 | Layout, page head (§4.2 "Head rhythm") | `head-path` / `head-description` / `head-tabs` / `head-tabs-content` / `head-content` | 12 / 4 / 16 / 16 / 24 | `--cb-layout-<name>` |
-| Layout, conversation page | `title-bar` / `properties` / `panel-min` / `panel` / `chat-min` / `tool-output` / `file-card` / `thumb` / `inline-image` / `menu-max-height` | 48 / 300 / 520 / 560 / 480 / 120 / 240 / 56 / 360 / 328 (ten `row.default` items and the menu's padding) | `--cb-layout-<name>` |
+| Layout, conversation page | `title-bar` / `properties` / `panel-min` / `panel` / `chat-min` / `tool-output` / `file-card` / `thumb` / `inline-image` / `menu-max-height` / `bubble-clamp` | 48 / 300 / 520 / 560 / 480 / 120 / 240 / 56 / 360 / 328 (ten `row.default` items and the menu's padding) / 208 (eight `type.prose.line` lines: a long user message's clamp, §6.16.6) | `--cb-layout-<name>` |
 
 **Density steps.** Controls and rows come in three steps, chosen by context, never by taste:
 
@@ -1227,7 +1227,7 @@ The components of the conversation page (T7, §5.4; UI refresh spec §5), signed
 - Belongs to the middle column only and never spans the right panel. Height `layout.title-bar`, padding 0 `space.3` 0 `space.5`, no ground, no bottom line.
 - Left: the path `<org slug> / <agent> /` (mono `small`, `faint`, the agent a link led by its `Avatar` 16 and `space.1`, §6.30; the name takes the ellipsis), spaced like the page head's path (`space.2` on both sides of every `/`), then the title button (`control.default` high, radius `sm`, padding 0 `space.2`, pulled left by `space.2`, `body` `ink`, one line with an ellipsis and the full title in `title`, then `chevron-down` 14 `muted`; `hover` ground on hover and while its menu is open). It opens a menu: Rename (`square-pen`), Copy link (`link`), a separator, Delete (`trash-2`, `fail`). Rename opens a dialog; a manual rename stops title generation for good.
 - Untitled: the title reads "未命名会话 · MM-DD HH:mm" / "Untitled conversation · MM-DD HH:mm" (the start time) in `muted` until a generated or manual title exists. The new-conversation page shows only the `muted` label "新会话" / "New conversation".
-- Right, two groups of ghost icon buttons (`control.default` square, radius `sm`, icon 16): group 1 is the properties toggle (`panel-right`); then a 1px × `space.4` `line` separator with `space.1` on each side; group 2 is Files (`file-text`, once the conversation has a file; it opens the newest file in the right panel, whose switcher reaches the others) and the panel icons of the extensions enabled in the org, in contribution order, then More (`more-vertical`). Icons that don't fit move into More, a menu of icon + label items; More exists only while two or more icons don't fit (one that doesn't fit takes More's slot, §6.7), and never repeats an icon on the bar. With no icon in group 2 the separator goes too. Each button's name is the panel it opens. The title and More menus hang 2px below their button. The open item's button has `aria-pressed="true"`, the `selected` ground and an `ink` icon; More is pressed while its menu is open.
+- Right, two groups of ghost icon buttons (`control.default` square, radius `sm`, icon 16): group 1 is the properties toggle (`panel-right`); then a 1px × `space.4` `line` separator with `space.1` on each side; group 2 is Files (`file-text`, once the conversation has a file; it opens the newest file in the right panel, whose switcher reaches the others) and the panel icons of the extensions enabled in the org, in contribution order, then More (`more-vertical`). The agent map has no icon here: its entry is the composer's agents chip (§6.16.29; acceptance item AC3, 2026-11-07). Icons that don't fit move into More, a menu of icon + label items; More exists only while two or more icons don't fit (one that doesn't fit takes More's slot, §6.7), and never repeats an icon on the bar. With no icon in group 2 the separator goes too. Each button's name is the panel it opens. The title and More menus hang 2px below their button. The open item's button has `aria-pressed="true"`, the `selected` ground and an `ink` icon; More is pressed while its menu is open.
 - **Below 640** the bar is padded 0 `space.1` 0 `space.4` (the path on the 16 px content edge, the last icon's glyph near it), the title button is 40 high and the icon buttons 40 square (tap targets); fewer panel icons fit, and the rest go into More as above.
 
 <!-- states: title-bar -->
@@ -1268,7 +1268,7 @@ States: `default`, `untitled`, `rename-menu`, `panel-active`, `overflow`, `long-
 
 - `raised` ground, 1px `line` border, radius `md`, `shadow-float`, padding `space.2` `space.2` `space.2` `space.3`. While its textarea has focus: an `accent` border plus the 3px `focus-ring` halo (the input focus rule of §2.5) over the same shadow.
 - Top to bottom: the attachment strip (§6.16.21) when there are attachments; the textarea (no border or ground, `prose` 15 / 26 `ink`, placeholder `faint`, one line high when empty, growing with its content up to 8 lines and then scrolling, `space.2` below it); the control row.
-- **Control row**, gap `space.1`, pulled left by `space.2` so the ＋ lines up with the text: ＋ (ghost `IconButton`, `plus`, "添加附件" / "Attach files") · agent picker · model picker · effort picker · quick actions · flexible space · send. The agent picker is optional (`pickers.agent`) and neither page passes it: the new conversation page's agents row chooses the agent (§5.4), and on a conversation the title bar's path names it (§6.16.1; maintainer decision U, 2026-11-07), so the control row repeats no agent label. The quick actions (`quickActions`, §6.16.27) are a ghost `zap` icon button, given only when the agent has some.
+- **Control row**, gap `space.1`, pulled left by `space.2` so the ＋ lines up with the text: ＋ (ghost `IconButton`, `plus`, "添加附件" / "Attach files") · agent picker · model picker · effort picker · quick actions · agents chip · flexible space · send. The agent picker is optional (`pickers.agent`) and neither page passes it: the new conversation page's agents row chooses the agent (§5.4), and on a conversation the title bar's path names it (§6.16.1; maintainer decision U, 2026-11-07), so the control row repeats no agent label. The quick actions (`quickActions`, §6.16.27) are a ghost `zap` icon button, given only when the agent has some. The agents chip (`agents`, §6.16.29) is the agent map's entry, given once the conversation has a sub-agent (never on the new conversation page).
   - Pickers are ghost `default`-step buttons in `muted`: label + `chevron-down` 12, padding 0 `space.2`, opening a picker menu (§6.16.3) anchored to them (below, or above when the room below is short).
   - Where a page passes the agent picker it is a picker only before the first message; a `locked` one is plain `muted` text with no chevron (`data-locked="true"`, `title` "发送第一条消息后不能再换 agent" / "The agent can't change after the first message").
   - The effort picker is hidden when the selected model declares no `effort` values.
@@ -1423,6 +1423,7 @@ States: `collapsed`, `expanded`, `live`
 #### 6.16.6 User bubble
 
 - Right-aligned, at most 75% of the thread width: `selected` ground, radius `bubble`, padding `pad.default`, a 1px transparent border (the queued form draws it dashed), prose font `prose` 15 / 26 `ink`, line breaks kept.
+- **Long** (states `long`, `expanded`; acceptance item AC4, 2026-11-07, Claude's "Show more"): the bubble's text (`bubble-body`, the skill chip and the text) is clamped at `layout.bubble-clamp` (208, eight prose lines) and its last line fades out (a mask from opaque to transparent over the last `type.prose.line`, like the text output's fade, §6.16.20). Only when the clamp hides something (measured, and again on resize) a link button "展开" / "Show more" (`small`, the §6.16 link button: `muted`, underlined in `line-strong`) sits under the bubble, right-aligned, `space.2` below it and before the details; it has `aria-expanded` and `aria-controls` the text, opens it in full and becomes "收起" / "Show less". The attachments above, the skill chip on the first line and the details below always show. The open state is the bubble's own, local to the view and never kept (a reload or another conversation starts folded). A pending bubble (the queued form) and the transcript's bubbles behave the same.
 - **Pending** (the queued form, `queued`): a message on its way, or an interjection the run has not taken in yet, or a leftover queued message (§6.11 "No queue"): the dashed bubble of §6.16.14 at opacity .6, and for an interjection or a leftover "待处理" / "Pending" under it in `small` `faint`; no actions.
 - Attachments sit above the bubble, right-aligned, `space.2` apart: images as `layout.thumb` square thumbnails (radius `sm`, cropped to fill), then files as attachment chips (§6.16.21, without the remove button). Each opens like today's AttachmentPreview. A thumbnail that fails to load is reported to the caller, which may refresh the session and reload it once (as AttachmentPreview's `retry`).
 - **Skill invocation** (phase D, state `skill`): the bubble starts with the skill chip, the composer's chip (§6.16.2) without its remove button: `control.dense` high, radius `sm`, padding 0 `space.2`, the `accent-tint` ground, the label ("/fix-issue") in mono `body` `accent`, centered on the first prose line, `space.2` before the text, which is the invocation's arguments (none: the chip alone). Under the bubble, right-aligned, at most 75% wide, `space.2` below it: a closed Disclosure (§6.5) "技能说明" / "Skill instructions" in `small` `muted`, a `row.dense` summary line whose chevron is `muted` too (not the Disclosure's usual `faint`), whose body is the text sent in the person's name (`small`, line breaks kept). A queued invocation (§6.16.14) shows the same chip in its dashed bubble.
@@ -1430,7 +1431,7 @@ States: `collapsed`, `expanded`, `live`
 - **Sender** (state `sender`, agent map spec §9.4): a message another agent sent (a parent's message in a sub-agent's transcript) has, above the bubble and right-aligned, "来自 <sender>" / "From <sender>" (`small`, `muted`, one line with an ellipsis, at most 75% wide, `space.2` above the bubble). A person's own message has none.
 
 <!-- states: user-bubble -->
-States: `default`, `attachments`, `skill`, `sender`
+States: `default`, `attachments`, `skill`, `sender`, `long`, `expanded`
 
 <!-- size-table: user-bubble -->
 | Part | State | Property | Value |
@@ -1458,6 +1459,13 @@ States: `default`, `attachments`, `skill`, `sender`
 | bubble-sender | sender | font-size | type.small |
 | bubble-sender | sender | color | color.muted |
 | bubble | sender | background-color | color.selected |
+| bubble-body | long | max-height | layout.bubble-clamp |
+| bubble-body | long | height | layout.bubble-clamp |
+| bubble-more | long | font-size | type.small |
+| bubble-more | long | color | color.muted |
+| bubble | long | background-color | color.selected |
+| bubble-more | expanded | font-size | type.small |
+| bubble-more | expanded | color | color.muted |
 
 #### 6.16.7 Run divider
 
@@ -2368,6 +2376,47 @@ States: `tree`, `deep`, `loading`, `failed`, `detail`, `finished`, `stopping`, `
 | agent-transcript-status | transcript | border-top-color | color.line-soft |
 | agent-transcript-status | transcript | padding-left | space.4 |
 | agent-context | transcript | font-size | type.small |
+
+#### 6.16.29 Agents chip
+
+`AgentsChip({ count, running, waiting?, onOpen })` is the agent map's entry (acceptance item AC3,
+maintainer ruling 2026-11-07, like Claude Code's "0 agents" chip). It sits in the composer's control
+row (`ComposerBox.agents`, §6.16.2) after the effort picker and the quick actions, and replaces the
+title bar's agent map icon (§6.16.1).
+
+- **Shown** once the conversation has a sub-agent (a root conversation whose log dispatched one);
+  never on the new conversation page or a sub-agent's own page (the tree is its root's). `count`
+  0: nothing, and nothing takes its place.
+- **Look**: a ghost picker (§6.16.2: `default`-step button, padding 0 `space.2`, `muted`, `hover`
+  ground and `ink` on hover), no chevron (it opens a dialog, not a menu): the label "N 个智能体" /
+  "N agents" ("1 agent"), led by the agent map's status dot (§6.16.28: 8, round, `role="img"`)
+  `space.2` before it while a sub-agent is active: running (queued included) the `accent` dot
+  pulsing every `motion.pulse`; else, while one waits for a person, `warn`; with nothing active
+  no dot. It draws no box of its own inside the composer (one box is enough, §1).
+- **Count**: N is every sub-agent of the conversation's tree (every depth; the root is not counted,
+  so the map's count line, which counts the root, reads N + 1). The dot says whether any runs; the
+  running count goes into the accessible name and the tooltip: "3 个智能体，1 个运行中" / "3 agents,
+  1 running", then "，N 个等待中" / ", N waiting" while some wait.
+- **Open**: activating it (click, Enter, Space) opens the agent map at its root level (`#agents`;
+  `aria-haspopup="dialog"`); the map keeps its keyboard and Esc behaviour, and focus returns to the
+  chip when it closes. The sub-agent group's "智能体图" / "Agent map" link (§6.16.15) stays.
+
+<!-- states: agents-chip -->
+States: `default`, `running`, `waiting`, `hover`
+
+<!-- size-table: agents-chip -->
+| Part | State | Property | Value |
+|---|---|---|---|
+| agents-chip | default | height | control.default |
+| agents-chip | default | padding-left | space.2 |
+| agents-chip | default | color | color.muted |
+| agents-chip | running | height | control.default |
+| agent-dot | running | width | space.2 |
+| agent-dot | running | background-color | color.accent |
+| agent-dot | waiting | width | space.2 |
+| agent-dot | waiting | background-color | color.warn |
+| agents-chip[data-ref-forced=true] | hover | background-color | color.hover |
+| agents-chip[data-ref-forced=true] | hover | color | color.ink |
 
 ---
 

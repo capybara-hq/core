@@ -2101,6 +2101,21 @@ textarea {
   font-size: var(--cb-type-small-size);
   line-height: var(--cb-type-small-line);
 }
+/* A long message (§6.16.6 states long / expanded, AC4): clamped at layout.bubble-clamp, the last
+ * line fading; 展开 / 收起 under the bubble. */
+.r-bubble-body {
+  white-space: pre-wrap;
+}
+.r-bubble-body[data-expanded="false"] {
+  max-height: var(--cb-layout-bubble-clamp);
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(black calc(100% - var(--cb-type-prose-line)), transparent);
+  mask-image: linear-gradient(black calc(100% - var(--cb-type-prose-line)), transparent);
+}
+.r-bubble-more {
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
 .r-bubble[data-queued] {
   border: 1px dashed var(--cb-line);
   opacity: 0.6;
@@ -2551,6 +2566,10 @@ textarea {
   color: var(--cb-muted);
   gap: var(--cb-space-1);
   padding: 0 var(--cb-space-2);
+}
+/* The agents chip (§6.16.29): a picker whose status dot leads the label, space.2 before it. */
+.r-agents-chip {
+  gap: var(--cb-space-2);
 }
 .r-picker[data-locked] {
   display: inline-flex;

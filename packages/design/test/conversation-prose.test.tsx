@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { cleanup, render, screen } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -100,10 +102,100 @@ describe("UserBubble (§6.16.6)", () => {
     expect(chip?.textContent).toBe("/fix-issue");
     expect(b.textContent).toBe("/fix-issue123");
     // the chip comes first, the arguments after it
-    expect(b.firstElementChild).toBe(chip);
+    expect(b.querySelector('[data-part="bubble-body"]')?.firstElementChild).toBe(chip);
     const d = screen.getByTestId("d");
     expect(b.compareDocumentPosition(d)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
     expect(b.contains(d)).toBe(false);
+  });
+
+  describe("a long message collapses (acceptance item AC4)", () => {
+    /** jsdom lays nothing out: every element reports a box `on` taller than its clamp. */
+    const overflowing = (on: boolean) => {
+      const proto = HTMLElement.prototype as unknown as Record<string, unknown>;
+      for (const [key, value] of [
+        ["scrollHeight", on ? 520 : 52],
+        ["clientHeight", on ? 208 : 52],
+      ] as const) {
+        Object.defineProperty(proto, key, { configurable: true, get: () => value });
+      }
+    };
+    afterEach(() => {
+      const proto = HTMLElement.prototype as unknown as Record<string, unknown>;
+      delete proto.scrollHeight;
+      delete proto.clientHeight;
+    });
+    const body = (c: Element) => c.querySelector('[data-part="bubble-body"]') as HTMLElement;
+
+    it("a short message has no control and no fade", () => {
+      overflowing(false);
+      const { container } = wrap(<UserBubble text="核对三月份" />);
+      expect(screen.queryByRole("button", { name: "展开" })).toBeNull();
+      expect(container.querySelector('[data-part="bubble-more"]')).toBeNull();
+      expect(body(container).dataset.overflows).toBeUndefined();
+    });
+
+    it("a long one is clamped and toggles with aria-expanded, by keyboard too", async () => {
+      overflowing(true);
+      const { container } = wrap(<UserBubble text={"一行\n".repeat(20)} />);
+      const b = body(container);
+      expect(b.dataset.expanded).toBe("false");
+      expect(b.dataset.overflows).toBe("true");
+      const more = screen.getByRole("button", { name: "展开" });
+      expect(more.getAttribute("aria-expanded")).toBe("false");
+      expect(more.getAttribute("aria-controls")).toBe(b.id);
+      // under the bubble, never inside it
+      const bubble = container.querySelector('[data-part="bubble"]') as Element;
+      expect(bubble.contains(more)).toBe(false);
+      expect(bubble.compareDocumentPosition(more)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+      more.focus();
+      await userEvent.keyboard("{Enter}");
+      expect(b.dataset.expanded).toBe("true");
+      expect(b.dataset.overflows).toBeUndefined();
+      const less = screen.getByRole("button", { name: "收起" });
+      expect(less.getAttribute("aria-expanded")).toBe("true");
+      await userEvent.click(less);
+      expect(b.dataset.expanded).toBe("false");
+      expect(screen.getByRole("button", { name: "展开" })).toBeTruthy();
+    });
+
+    it("the clamp keeps attachments, the skill chip and details visible; pending bubbles too", () => {
+      overflowing(true);
+      const { container } = wrap(
+        <UserBubble
+          text={"参数\n".repeat(20)}
+          skill="/fix-issue"
+          queued
+          attachments={<span data-testid="att">a.pdf</span>}
+          details={<span data-testid="d">待处理</span>}
+        />,
+        "en",
+      );
+      const b = body(container);
+      // the attachments and details live outside the clamped body; the chip leads it
+      expect(b.contains(screen.getByTestId("att"))).toBe(false);
+      expect(b.contains(screen.getByTestId("d"))).toBe(false);
+      expect(b.firstElementChild?.getAttribute("data-part")).toBe("bubble-skill");
+      expect(screen.getByRole("button", { name: "Show more" })).toBeTruthy();
+      expect(container.querySelector('[data-queued="true"]')).not.toBeNull();
+    });
+
+    it("the clamp is layout.bubble-clamp with the last prose line fading", () => {
+      const css = readFileSync(
+        resolve(import.meta.dirname, "../src/styles/conversation.css"),
+        "utf8",
+      );
+      const rule = (sel: string) => {
+        const at = css.indexOf(`${sel} {`);
+        return at < 0 ? "" : css.slice(at, css.indexOf("}", at));
+      };
+      expect(rule('.cb-bubble-body[data-expanded="false"]')).toMatch(
+        /max-height: var\(--cb-layout-bubble-clamp\);/,
+      );
+      expect(rule('.cb-bubble-body[data-expanded="false"]')).toMatch(/overflow: hidden;/);
+      expect(rule('.cb-bubble-body[data-overflows="true"]')).toMatch(
+        /mask-image: linear-gradient\(black calc\(100% - var\(--cb-type-prose-line\)\), transparent\);/,
+      );
+    });
   });
 
   it("sender: a message another agent sent is labelled with its sender above the bubble", () => {

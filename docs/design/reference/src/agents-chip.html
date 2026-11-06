@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<title>Agents chip · reference</title>
+<link rel="stylesheet" href="/design/styles/fonts.css">
+<link rel="stylesheet" href="/design/styles/tokens.css">
+<link rel="stylesheet" href="reference.css">
+</head>
+<body>
+<main class="r-page">
+<h1>Agents chip</h1>
+<p>The agent map's entry (spec §6.16.29, acceptance item AC3): a ghost picker-styled chip in the composer's control row after the effort picker and the quick actions, "N 个智能体", led by the agent map's status dot while a sub-agent runs (accent, pulsing) or waits for a person (warn); no dot when nothing is active. It replaces the title bar's agent map icon.</p>
+<div class="r-blocks">
+<section data-ref-block="agents-chip-default" style="width:752px" data-pad>
+  <template data-fixture="agents-chip" data-opts='{"state": "default"}'></template>
+</section>
+<section data-ref-block="agents-chip-running" style="width:752px" data-pad>
+  <template data-fixture="agents-chip" data-opts='{"state": "running"}'></template>
+</section>
+<section data-ref-block="agents-chip-waiting" style="width:752px" data-pad>
+  <template data-fixture="agents-chip" data-opts='{"state": "waiting"}'></template>
+</section>
+<section data-ref-block="agents-chip-hover" style="width:752px" data-pad>
+  <template data-fixture="agents-chip" data-opts='{"state": "hover"}'></template>
+</section>
+</div>
+</main>
+<script src="conversation.js"></script>
+<script src="fill.js"></script>
+</body>
+</html>

@@ -267,6 +267,13 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
       const AD = F.AGENT_MAP_FIXTURE.detail;
       return `<div class="r-ucol"><div class="r-bubble-sender">来自 ${esc(AD.spawnedBy.label)}</div><div class="r-bubble">${esc(AD.message)}</div></div>`;
     }
+    if (o.state === "long" || o.state === "expanded") {
+      // AC4: clamped at layout.bubble-clamp with the last line fading, 展开 / 收起 under it
+      const open = o.state === "expanded";
+      const body = `<div class="r-bubble-body" id="long-msg" data-expanded="${open}">${esc(F.LONG_MESSAGE_FIXTURE.text)}</div>`;
+      const more = `<button class="r-linkbtn r-bubble-more" data-part="bubble-more" aria-expanded="${open}" aria-controls="long-msg">${open ? "收起" : "展开"}</button>`;
+      return `<div class="r-ucol"><div class="r-bubble">${body}</div>${more}</div>`;
+    }
     const text = withAtts ? "帮我对一下这几个文件" : C.user.text;
     return `<div class="r-ucol">${atts}<div class="r-bubble">${esc(text)}</div></div>`;
   }
@@ -404,7 +411,19 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
     const quick = o.quick
       ? `<button class="r-icon-btn" data-part="quick-actions"${o.menu === "quick" ? ' aria-expanded="true" data-state="hover" style="anchor-name: --r-open-trigger"' : state(o.quickState)} aria-label="${esc(QUICK_LABEL)}">${icon("zap", 16)}</button>`
       : "";
-    return `<div class="r-composer"${o.state === "focus" ? ' data-state="focus"' : ""}>${strip}<label class="r-sr" for="msg">消息</label>${line}<div class="r-composer-bar">${iconBtn("plus", K.attach)}${o.noAgent || !isNew ? "" : picker(C.agent.name, { open: o.menu === "agent" })}${picker(o.modelValue ?? modelLabel(model.provider, model.model), { open: o.menu === "model" })}${effort}${quick}<span class="r-grow"></span>${action}</div></div>`;
+    // the agent map's entry (§6.16.29, AC3): "N 个智能体" after the effort picker and the quick
+    // actions, led by the status dot while a sub-agent runs or waits
+    const agents = o.agents ? agentsChip(o.agents) : "";
+    return `<div class="r-composer"${o.state === "focus" ? ' data-state="focus"' : ""}>${strip}<label class="r-sr" for="msg">消息</label>${line}<div class="r-composer-bar">${iconBtn("plus", K.attach)}${o.noAgent || !isNew ? "" : picker(C.agent.name, { open: o.menu === "agent" })}${picker(o.modelValue ?? modelLabel(model.provider, model.model), { open: o.menu === "model" })}${effort}${quick}${agents}<span class="r-grow"></span>${action}</div></div>`;
+  }
+
+  /** The agents chip (§6.16.29): a ghost picker without a chevron, the dot before the label. */
+  function agentsChip(a) {
+    const dot = a.running > 0 ? "running" : a.waiting > 0 ? "waiting" : null;
+    const word = { running: "运行中", waiting: "等待" };
+    const name = `${a.count} 个智能体，${a.running} 个运行中${a.waiting > 0 ? `，${a.waiting} 个等待中` : ""}`;
+    const lead = dot ? `<span class="r-amap-dot" data-part="agent-dot" data-status="${dot}" role="img" aria-label="${word[dot]}"></span>` : "";
+    return `<button class="r-btn r-picker r-agents-chip" data-variant="ghost" data-part="agents-chip"${state(a.state)} aria-haspopup="dialog" aria-label="${esc(name)}" title="${esc(name)}">${lead}${a.count} 个智能体</button>`;
   }
 
   function pickerMenu(o) {
@@ -884,6 +903,11 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
     composer: (o) => col(composer(o)),
     "picker-menu": (o) => col(pickerMenu({ menu: o.state })),
     "quick-actions": (o) => col(quickMenu({ open: o.state === "menu", state: o.state === "hover" ? "hover" : undefined })),
+    "agents-chip": (o) => {
+      const A = F.AGENTS_CHIP_FIXTURE;
+      const active = { running: [A.running, A.waiting], waiting: [0, A.waiting] }[o.state] ?? [0, 0];
+      return col(composer({ state: "idle", agents: { count: A.count, running: active[0], waiting: active[1], state: o.state === "hover" ? "hover" : undefined } }));
+    },
     "command-palette": (o) => col(palette(o)),
     prose: (o) => col(proseBlock(o)),
     "thinking-row": (o) => col(thinking(o)),

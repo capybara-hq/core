@@ -157,6 +157,11 @@ export type ComposerBoxProps = {
    * effort picker, given only when the agent has some.
    */
   quickActions?: ReactNode;
+  /**
+   * The agent map's entry (`AgentsChip`, §6.16.29): "N 个智能体" after the effort picker and the
+   * quick actions, given once the conversation has a sub-agent.
+   */
+  agents?: ReactNode;
   send: { mode: "send" | "stop"; disabled?: boolean; busy?: boolean; onClick(): void };
   textareaRef?: Ref<HTMLTextAreaElement>;
   /** The reference set only: draw the focused frame (`:focus-within` is forced there). */
@@ -205,7 +210,7 @@ function ComposerTokenChip({
 /**
  * The composer (§6.16.2): the frame, the attachment strip, the textarea (grows to 8 lines) and the
  * control row: ＋ · agent · model · effort (hidden without efforts) · quick actions (only when the
- * agent has some) · send / stop.
+ * agent has some) · the agents chip (once the conversation has a sub-agent) · send / stop.
  */
 export function ComposerBox({
   value,
@@ -219,6 +224,7 @@ export function ComposerBox({
   attachDisabled,
   pickers,
   quickActions,
+  agents,
   send,
   textareaRef,
   autoFocus,
@@ -305,6 +311,7 @@ export function ComposerBox({
         <Picker {...pickers.model} />
         {pickers.effort ? <Picker {...pickers.effort} /> : null}
         {quickActions ?? null}
+        {agents ?? null}
         <span className="cb-grow" />
         {send.mode === "stop" ? (
           <IconButton

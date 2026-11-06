@@ -970,6 +970,30 @@ export const NEW_CONVERSATION_FIXTURE: {
   noMatch: "报销",
 };
 
+/** A long user message (§6.16.6 states `long` / `expanded`): taller than eight prose lines. */
+export const LONG_MESSAGE_FIXTURE: { text: string } = {
+  text: [
+    "请按下面的步骤核对 9 月的示例表：",
+    "1. 先读 finance/q3/summary.csv，按事业部汇总收入和成本；",
+    "2. 再和总账导出的 ledger-2026-09.xlsx 逐行比对；",
+    "3. 差异超过 500 元的行单独列出，写明可能的原因；",
+    "4. 每个差异找到对应的凭证号；",
+    "5. 汇总成一张表：事业部、科目、账面金额、表内金额、差异、原因；",
+    "6. 表下写三条改进建议；",
+    "7. 结果存成 reports/2026-09-diff.md；",
+    "8. 最后用三句话总结这个月的整体情况。",
+    "金额保留两位小数，日期统一写成 YYYY-MM-DD。",
+    "拿不准的地方先列出来，不要猜。",
+  ].join("\n"),
+};
+
+/** The composer's agents chip (§6.16.29): the tree's sub-agents, how many run and wait. */
+export const AGENTS_CHIP_FIXTURE: { count: number; running: number; waiting: number } = {
+  count: 3,
+  running: 1,
+  waiting: 1,
+};
+
 // ── Agent map (§6.16.28) ────────────────────────────────────────────────────
 
 export type FixtureAgentNode = {

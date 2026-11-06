@@ -7,6 +7,7 @@ import {
   type AgentMapNode,
   AgentMapTree,
   AgentRow,
+  AgentsChip,
   type AgentToolCallRow,
   AppShell,
   AttachmentStrip,
@@ -56,6 +57,7 @@ import {
 } from "@capybara-hq/design";
 import {
   AGENT_MAP_FIXTURE,
+  AGENTS_CHIP_FIXTURE,
   CONV_COPY,
   CONV_FIXTURE,
   FILE_FIXTURE,
@@ -605,6 +607,47 @@ function quickActionsBlocks(): ReactNode {
       {/* room above the composer for the menu, as the picker menus are staged */}
       <Block id="quick-actions-menu" offsetTop={220}>
         <QuickActionsComposer open />
+      </Block>
+    </>
+  );
+}
+
+/** A conversation's composer with the agents chip after the effort picker (§6.16.29, AC3). */
+function AgentsChipComposer({ running, waiting }: { running: number; waiting: number }) {
+  return (
+    <ComposerBox
+      {...composerProps("idle")}
+      agents={
+        <AgentsChip
+          count={AGENTS_CHIP_FIXTURE.count}
+          running={running}
+          waiting={waiting}
+          onOpen={noop}
+        />
+      }
+    />
+  );
+}
+
+/** The agents chip (§6.16.29): settled, a sub-agent running, one waiting, and hover. */
+function agentsChipBlocks(): ReactNode {
+  const A = AGENTS_CHIP_FIXTURE;
+  return (
+    <>
+      <Block id="agents-chip-default">
+        <AgentsChipComposer running={0} waiting={0} />
+      </Block>
+      <Block id="agents-chip-running">
+        <AgentsChipComposer running={A.running} waiting={A.waiting} />
+      </Block>
+      <Block id="agents-chip-waiting">
+        <AgentsChipComposer running={0} waiting={A.waiting} />
+      </Block>
+      <Block
+        id="agents-chip-hover"
+        force={{ pseudo: ["hover"], selector: '[data-part="agents-chip"]' }}
+      >
+        <AgentsChipComposer running={0} waiting={0} />
       </Block>
     </>
   );
@@ -1262,6 +1305,7 @@ export const CONVERSATION_PAGE_BLOCKS = {
   "command-palette": commandPaletteBlocks,
   "picker-menu": pickerMenuBlocks,
   "quick-actions": quickActionsBlocks,
+  "agents-chip": agentsChipBlocks,
   "inline-card": inlineCardBlocks,
   "property-section": propertySectionBlocks,
   "background-task": backgroundTaskBlocks,

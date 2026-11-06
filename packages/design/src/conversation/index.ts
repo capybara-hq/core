@@ -21,6 +21,7 @@ export {
   gridStep,
 } from "./agent-row";
 export { type AgentMapStatus, agentMapTokens } from "./agent-status";
+export { AgentsChip, type AgentsChipProps } from "./agents-chip";
 export {
   type BubbleAttachment,
   BubbleAttachments,
