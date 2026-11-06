@@ -79,6 +79,8 @@ export interface ComponentScopePreview {
     name: string;
     skills: string[];
     plugins: string[];
+    /** An agent template's: the owner of each clashing template, in `skills`' order. */
+    owners?: Owner[];
   }[];
   scopeHash: string;
 }
@@ -218,30 +220,37 @@ const ACTION: Record<ComponentKind, OrgAction> = {
 /**
  * 409 `plugin.skill_conflict` listing the orgs whose own skills use a component's name (rule 10);
  * for an agent template 409 `agent_template.name_taken` listing the orgs that already use its
- * roster type (ruling P4-13; details `[{ type, orgId, templates, source }]`).
+ * roster type (ruling P4-13; details `[{ orgId, type, templateId, owner }]`, one per clashing
+ * template, `owner` as save-as names it).
  */
 export function nameConflictError(
   conflicts: ComponentScopePreview["conflicts"],
   kind: ComponentKind = "skill",
 ): ApiError {
   if (kind === "agent_template") {
+    // the save-as wording (ruling P4-9), naming each clashing template's owner
+    const whose = (o: Owner | undefined, orgId: string) =>
+      o === undefined || o.kind === "platform"
+        ? "the platform's"
+        : o.orgId === orgId
+          ? "its own"
+          : `from organization ${o.name}`;
     return new ApiError(
       "agent_template.name_taken",
       conflicts
         .map(
           (c) =>
-            `Agent template type "${c.name}" is already used in organization ${c.orgName} (${c.plugins.length > 0 ? `from "${c.plugins.join('", "')}"` : "its own template"}); it would be offered there twice.`,
+            `An agent template named ${c.name} is already used in organization ${c.orgName} (${c.skills.map((_, i) => whose(c.owners?.[i], c.orgId)).join(", ")}); one name cannot be offered there twice.`,
         )
         .join("\n"),
-      conflicts.map((c) => ({
-        type: c.name,
-        orgId: c.orgId,
-        templates: c.skills,
-        source:
-          c.plugins.length > 0
-            ? { kind: "plugin", name: c.plugins[0], version: "" }
-            : { kind: "org" },
-      })),
+      conflicts.flatMap((c) =>
+        c.skills.map((templateId, i) => ({
+          orgId: c.orgId,
+          type: c.name,
+          templateId,
+          owner: c.owners?.[i] ?? { kind: "platform" },
+        })),
+      ),
     );
   }
   return new ApiError(

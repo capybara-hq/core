@@ -213,6 +213,27 @@ async function putScope(id: string, body: Record<string, unknown>) {
   });
 }
 
+/** `lead` saved in `org` by `as`, made shareable and associated with `orgs`; ids of both rows. */
+async function sharedLead(
+  as: Req,
+  org: string,
+  orgs: string[],
+  name = "lead",
+): Promise<{ id: string; pid: string; definition: Record<string, unknown> }> {
+  const saved = await saveAs(as, org, await simpleAgent(org), name);
+  expect(saved.statusCode, saved.body).toBe(201);
+  const id = saved.json().template.id as string;
+  const share = await as({
+    method: "PUT",
+    url: `/api/v1/orgs/${org}/agent-templates/${id}/shareable`,
+    payload: { shareable: true },
+  });
+  expect(share.statusCode, share.body).toBe(200);
+  const scoped = await putScope(id, { scope: "named", orgs });
+  expect(scoped.statusCode, scoped.body).toBe(200);
+  return { id, pid: scoped.json().id as string, definition: saved.json().template.definition };
+}
+
 describe("org agent templates", { timeout: 120_000 }, () => {
   it("save-as maps every field without credentials (P4-10, P4-11)", async () => {
     // a platform connector template (of a catalog item) and a connector made from it
@@ -330,6 +351,7 @@ describe("org agent templates", { timeout: 120_000 }, () => {
               tools: ["Read", "mcp__wiki__find"],
               skills: [s2],
               model: "fast",
+              effort: "low",
             },
           ],
           agents: [{ agentId: buddy, as: "buddy", description: "A buddy." }],
@@ -451,9 +473,13 @@ describe("org agent templates", { timeout: 120_000 }, () => {
           reason: "unavailable",
         },
         { kind: "subagent_agent", name: "buddy", id: buddy, reason: "org_agent" },
+        // nothing is dropped silently: connector-key policies and inline fields are listed
+        { kind: "tool_policy", name: "mcp__wiki__find", reason: "connector_tool" },
+        { kind: "subagent_inline", name: "helper", field: "tools", reason: "connector_tool" },
+        { kind: "subagent_inline", name: "helper", field: "effort", reason: "unsupported_field" },
       ]),
     );
-    expect(body.omitted).toHaveLength(5);
+    expect(body.omitted).toHaveLength(8);
 
     // no credential, header or secret query ever enters the stored template
     const stored = await db
@@ -573,6 +599,20 @@ describe("org agent templates", { timeout: 120_000 }, () => {
     expect(taken.json().error.details).toEqual([
       { owner: { kind: "org", orgId: orgB, name: "B" }, templateId: pid },
     ]);
+    // switched off in A, it is still offered there: switching it on would clash (P2-3)
+    await db
+      .insertInto("component_org_switches")
+      .values({ kind: "agent_template", component_id: pid, org_id: orgA, enabled: false })
+      .execute();
+    const offered = await saveAs(boss, orgA, agentId, "shared");
+    expect(errorOf(offered)).toEqual([409, "agent_template.name_taken"]);
+    expect(offered.json().error.details).toEqual([
+      { owner: { kind: "org", orgId: orgB, name: "B" }, templateId: pid },
+    ]);
+    // the roster's built-in type is reserved
+    const reserved = await saveAs(boss, orgA, agentId, "general-purpose");
+    expect(errorOf(reserved)).toEqual([409, "agent_template.name_taken"]);
+    expect(reserved.json().error.details).toEqual([{ reserved: true }]);
     // a plugin type `<plugin>:<name>` is another type: the bare name stays free
     await db
       .insertInto("agent_templates")
@@ -819,7 +859,14 @@ describe("org agent templates", { timeout: 120_000 }, () => {
       payload: { scope: "named", orgs: [orgA, orgB] },
     });
     expect(preview.json().conflicts).toEqual([
-      { orgId: orgB, orgName: "B", name: "lead", skills: [inB], plugins: [] },
+      {
+        orgId: orgB,
+        orgName: "B",
+        name: "lead",
+        skills: [inB],
+        plugins: [],
+        owners: [{ kind: "org", orgId: orgB, name: "B" }],
+      },
     ]);
     const put = await root({
       method: "PUT",
@@ -828,9 +875,185 @@ describe("org agent templates", { timeout: 120_000 }, () => {
     });
     expect(errorOf(put)).toEqual([409, "agent_template.name_taken"]);
     expect(put.json().error.details).toEqual([
-      { type: "lead", orgId: orgB, templates: [inB], source: { kind: "org" } },
+      {
+        orgId: orgB,
+        type: "lead",
+        templateId: inB,
+        owner: { kind: "org", orgId: orgB, name: "B" },
+      },
     ]);
     // nothing was promoted
     expect(await db.selectFrom("platform_agent_templates").select("id").execute()).toEqual([]);
+  });
+
+  it("an edit never carries credentials in a needs endpoint (P4-11)", async () => {
+    const id = (await saveAs(boss, orgA, await simpleAgent(orgA), "lead")).json().template
+      .id as string;
+    const definition = (
+      await mem({ method: "GET", url: `/api/v1/orgs/${orgA}/agent-templates/${id}` })
+    ).json().template.definition as Record<string, unknown>;
+    const needs = (endpoint: string) => ({
+      ...definition,
+      connectors: [{ needs: { protocol: "mcp", endpoint, tools: ["find"], label: "Wiki" } }],
+    });
+    const put = (def: Record<string, unknown>) =>
+      boss({
+        method: "PUT",
+        url: `/api/v1/orgs/${orgA}/agent-templates/${id}`,
+        payload: { definition: def, expectedVersion: 1 },
+      });
+    for (const endpoint of [
+      "https://alice:hunter2@wiki.example.com/mcp",
+      "https://wiki.example.com/mcp?token=sekrit",
+      "https://wiki.example.com/mcp#frag",
+      "ftp://wiki.example.com/mcp",
+      "not a url",
+    ]) {
+      const r = await put(needs(endpoint));
+      expect(errorOf(r), endpoint).toEqual([400, "validation_failed"]);
+      expect(r.json().error.details).toEqual([
+        { path: "definition.connectors.0.needs.endpoint", message: expect.any(String) },
+      ]);
+    }
+    const ok = await put(needs("https://wiki.example.com/mcp"));
+    expect(ok.statusCode, ok.body).toBe(200);
+    expect(ok.json().template.version).toBe(2);
+  });
+
+  it("the owner opens and edits its promoted template while switched off in its own org", async () => {
+    const { id, pid, definition } = await sharedLead(boss, orgA, [orgA, orgB]);
+    await db
+      .insertInto("component_org_switches")
+      .values({ kind: "agent_template", component_id: pid, org_id: orgA, enabled: false })
+      .execute();
+    const got = await boss({ method: "GET", url: `/api/v1/orgs/${orgA}/agent-templates/${id}` });
+    expect(got.statusCode, got.body).toBe(200);
+    expect(got.json().template).toMatchObject({ id, owned: true, promoted: true, version: 1 });
+    const v2 = await boss({
+      method: "PUT",
+      url: `/api/v1/orgs/${orgA}/agent-templates/${id}`,
+      payload: {
+        definition: { ...definition, description: "Off but edited." },
+        expectedVersion: 1,
+      },
+    });
+    expect(v2.statusCode, v2.body).toBe(200);
+    expect(v2.json().template).toMatchObject({ version: 2, description: "Off but edited." });
+  });
+
+  it("another org cannot change a template it only uses", async () => {
+    const { pid, definition } = await sharedLead(boss, orgA, [orgA, orgB]);
+    const base = `/api/v1/orgs/${orgB}/agent-templates/${pid}`;
+    expect(
+      errorOf(
+        await root({ method: "PUT", url: base, payload: { definition, expectedVersion: 1 } }),
+      ),
+    ).toEqual([409, "catalog.not_owned"]);
+    expect(errorOf(await root({ method: "DELETE", url: base }))).toEqual([
+      409,
+      "catalog.not_owned",
+    ]);
+    expect(
+      errorOf(
+        await root({ method: "PUT", url: `${base}/shareable`, payload: { shareable: false } }),
+      ),
+    ).toEqual([409, "catalog.not_owned"]);
+    expect(errorOf(await root({ method: "GET", url: `${base}/delete-preview` }))).toEqual([
+      409,
+      "catalog.not_owned",
+    ]);
+  });
+
+  it("the super admin cannot share a plugin's template; members cannot preview a delete", async () => {
+    const plugin = randomUUID();
+    await db
+      .insertInto("agent_templates")
+      .values({
+        id: plugin,
+        org_id: orgA,
+        name: "reviewer",
+        plugin_name: "crm",
+        current_version: 1,
+        shareable: true,
+      })
+      .execute();
+    await db
+      .insertInto("agent_template_versions")
+      .values({
+        template_id: plugin,
+        version: 1,
+        definition: JSON.stringify({ name: "reviewer", description: "R.", instructions: "R." }),
+      })
+      .execute();
+    const shown = await root({
+      method: "PUT",
+      url: `/api/v1/admin/components/agent_template/${plugin}/shown`,
+      payload: { shownToOthers: true },
+    });
+    expect(errorOf(shown)).toEqual([409, "catalog.not_owned"]);
+    const preview = await root({
+      method: "POST",
+      url: `/api/v1/admin/components/agent_template/${plugin}/scope/preview`,
+      payload: { scope: "named", orgs: [orgA, orgB] },
+    });
+    const scoped = await root({
+      method: "PUT",
+      url: `/api/v1/admin/components/agent_template/${plugin}/scope`,
+      payload: { scope: "named", orgs: [orgA, orgB], scopeHash: preview.json().scopeHash },
+    });
+    expect(errorOf(scoped)).toEqual([409, "catalog.not_owned"]);
+    expect(await db.selectFrom("platform_agent_templates").select("id").execute()).toEqual([]);
+
+    const id = (await saveAs(boss, orgA, await simpleAgent(orgA), "lead")).json().template
+      .id as string;
+    expect(
+      errorOf(
+        await mem({
+          method: "GET",
+          url: `/api/v1/orgs/${orgA}/agent-templates/${id}/delete-preview`,
+        }),
+      ),
+    ).toEqual([403, "forbidden"]);
+  });
+
+  it("a promoted template no other org uses is removed with its platform row", async () => {
+    const { id, pid } = await sharedLead(boss, orgA, [orgA, orgB]);
+    // narrowed back to the owner: nobody else uses it
+    expect((await putScope(pid, { scope: "named", orgs: [orgA] })).statusCode).toBe(200);
+    const del = await boss({ method: "DELETE", url: `/api/v1/orgs/${orgA}/agent-templates/${id}` });
+    expect(del.json()).toEqual({ outcome: "removed" });
+    const row = await db
+      .selectFrom("platform_agent_templates")
+      .select(["owner_org_id", "deleted_at"])
+      .where("id", "=", pid)
+      .executeTakeFirstOrThrow();
+    expect(row.owner_org_id).toBe(orgA);
+    expect(row.deleted_at).not.toBeNull();
+    expect(await db.selectFrom("platform_notices").select("kind").execute()).toEqual([]);
+  });
+
+  it("deleting the owner org transfers its used promoted template and removes the unused one", async () => {
+    const orgC = await createOrg(root, "C");
+    const used = await sharedLead(root, orgC, [orgC, orgB], "c-used");
+    const unused = await sharedLead(root, orgC, [orgC, orgB], "c-unused");
+    expect((await putScope(unused.pid, { scope: "named", orgs: [orgC] })).statusCode).toBe(200);
+    const d = await root({ method: "DELETE", url: `/api/v1/orgs/${orgC}` });
+    expect(d.statusCode, d.body).toBe(204);
+    const rows = await db
+      .selectFrom("platform_agent_templates")
+      .select(["id", "owner_org_id", "deleted_at"])
+      .where("id", "in", [used.pid, unused.pid])
+      .execute();
+    const byId = new Map(rows.map((r) => [r.id, r]));
+    expect(byId.get(used.pid)).toMatchObject({ owner_org_id: null, deleted_at: null });
+    expect(byId.get(unused.pid)?.deleted_at).not.toBeNull();
+    const inB = await root({
+      method: "GET",
+      url: `/api/v1/orgs/${orgB}/agent-templates/${used.pid}`,
+    });
+    expect(inB.json().template).toMatchObject({ owner: { kind: "platform" }, type: "c-used" });
+    expect(await db.selectFrom("platform_notices").select("kind").execute()).toEqual([
+      { kind: "ownership_transferred" },
+    ]);
   });
 });
