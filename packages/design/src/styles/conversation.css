@@ -282,6 +282,20 @@ button.cb-tool-line:focus-visible {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+/* A long message (§6.16.6, state `long`): clamped at `layout.bubble-clamp` (eight prose lines),
+ * the last line fading out once something is hidden; "展开" / "Show more" opens it in full. */
+.cb-bubble-body[data-expanded="false"] {
+  max-height: var(--cb-layout-bubble-clamp);
+  overflow: hidden;
+}
+.cb-bubble-body[data-overflows="true"] {
+  -webkit-mask-image: linear-gradient(black calc(100% - var(--cb-type-prose-line)), transparent);
+  mask-image: linear-gradient(black calc(100% - var(--cb-type-prose-line)), transparent);
+}
+.cb-bubble-more {
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
 /* A skill invocation's chip (§6.16.6, state `skill`): the composer's chip without its remove
  * button, at the start of the bubble's first line, centered on the prose line. */
 .cb-bubble-skill {

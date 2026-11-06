@@ -373,6 +373,10 @@ span.cb-title-btn {
   background: var(--cb-hover);
   color: var(--cb-ink);
 }
+/* The agents chip (§6.16.29): a picker-styled ghost button whose status dot leads the label. */
+.cb-agents-chip.cb-btn .cb-btn-body {
+  gap: var(--cb-space-2);
+}
 .cb-picker[data-locked="true"] {
   display: inline-flex;
   align-items: center;

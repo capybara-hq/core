@@ -93,6 +93,10 @@ export const ACCEPTED: string[] = [
   // the agent map (agent map spec §9, plan Task B1): blocks and size table in place; the reference
   // PNGs and the side-by-side review wait for the reference-update and visual-update workflows
   "agent-map",
+  // the agents chip (acceptance item AC3) and the user bubble's long / expanded states (AC4):
+  // blocks and size tables in place; the reference PNGs and the side-by-side review wait for the
+  // reference-update and visual-update workflows
+  "agents-chip",
   // agent avatars (agent profile design §2.3): blocks and size table in place; the reference PNGs
   // and the side-by-side review wait for the reference-update and visual-update workflows
   "avatar",

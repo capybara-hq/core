@@ -107,6 +107,7 @@ export const SIZES = {
     thumb: 56,
     "inline-image": 360,
     "menu-max-height": 328,
+    "bubble-clamp": 208,
     "head-path": 12,
     "head-description": 4,
     "head-tabs": 16,

@@ -47,6 +47,7 @@ import {
   type FixtureFile,
   type FixtureTool,
   HITL_FIXTURE,
+  LONG_MESSAGE_FIXTURE,
   NEW_CONVERSATION_FIXTURE,
   PANEL_FIXTURE,
   PROSE_FIXTURE,
@@ -166,6 +167,13 @@ function userBubbleBlocks(): ReactNode {
           text={AGENT_MAP_FIXTURE.detail.message}
           sender={AGENT_MAP_FIXTURE.detail.spawnedBy.label}
         />
+      </Block>
+      {/* AC4: clamped at layout.bubble-clamp with 展开 under it, and opened with 收起 */}
+      <Block id="user-bubble-long">
+        <UserBubble text={LONG_MESSAGE_FIXTURE.text} referenceLong />
+      </Block>
+      <Block id="user-bubble-expanded">
+        <UserBubble text={LONG_MESSAGE_FIXTURE.text} referenceLong defaultExpanded />
       </Block>
     </>
   );

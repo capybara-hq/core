@@ -106,8 +106,9 @@ export const REFERENCE_COMPONENTS = [
   "greeting",
   "agent-row",
   "quick-actions",
-  // the agent map (agent map spec §9)
+  // the agent map (agent map spec §9) and its entry in the composer (AC3)
   "agent-map",
+  "agents-chip",
   // agent avatars (agent profile design §2.3)
   "avatar",
   // config forms

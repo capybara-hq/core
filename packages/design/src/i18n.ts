@@ -405,6 +405,13 @@ const zh = {
   "agentMap.call.more": "展开",
   "agentMap.call.less": "收起",
   "bubble.from": "来自 {name}",
+  "bubble.more": "展开",
+  "bubble.less": "收起",
+  "agentsChip.many": "{n} 个智能体",
+  "agentsChip.one": "{n} 个智能体",
+  "agentsChip.running": "{n} 个运行中",
+  "agentsChip.waiting": "{n} 个等待中",
+  "agentsChip.separator": "，",
 };
 
 export type DesignKey = keyof typeof zh;
@@ -815,6 +822,13 @@ const en: Record<DesignKey, string> = {
   "agentMap.call.more": "Show more",
   "agentMap.call.less": "Show less",
   "bubble.from": "From {name}",
+  "bubble.more": "Show more",
+  "bubble.less": "Show less",
+  "agentsChip.many": "{n} agents",
+  "agentsChip.one": "{n} agent",
+  "agentsChip.running": "{n} running",
+  "agentsChip.waiting": "{n} waiting",
+  "agentsChip.separator": ", ",
 };
 
 export const messages: Record<Locale, Record<DesignKey, string>> = { zh, en };
