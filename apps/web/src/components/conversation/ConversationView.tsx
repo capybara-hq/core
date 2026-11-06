@@ -113,6 +113,8 @@ export type RightAreaSlot = {
   right: "none" | "properties" | "panel";
   propertiesNode?: ReactNode;
   panelNode?: ReactNode;
+  /** The agent map dialog while the hash names it (agent map spec §9). */
+  agentMap?: ReactNode;
   onCloseRight(): void;
   /** The open area's read is on its way (its loading state; `title`: the open panel's). */
   loading?: true | { title: string };
@@ -127,6 +129,7 @@ export type RightAreaSlot = {
     | "renderCard"
     | "openSubagent"
     | "onOpenSubagent"
+    | "onOpenAgentMap"
     | "onOpenTask"
   >;
 };
@@ -328,6 +331,10 @@ export function useConversationPage(
     return parts.length > 0 ? tp("lastRun", { parts: parts.join(" · ") }) : undefined;
   }, [base, locale, t, tp]);
 
+  const now = useNow(0);
+  const timeZone = useTimeZone();
+  const createdAt = conv.conversation ? new Date(conv.conversation.createdAt) : new Date(now);
+  const untitled = untitledLabel(createdAt, locale, timeZone);
   const slot: RightAreaSlot | undefined = useRightAreaSlot({
     orgId,
     conversationId,
@@ -341,6 +348,8 @@ export function useConversationPage(
       usageAll === undefined
         ? undefined
         : ts("contextTotal", { n: usageTotal(usageAll).toLocaleString(locale) }),
+    progress: conv.state.progress,
+    untitled,
     contextWindowOf: selection.contextWindowOf,
     reasoningOf: selection.reasoningOf,
   });
@@ -353,14 +362,11 @@ export function useConversationPage(
     onPick: () => {},
   };
 
-  const now = useNow(0);
-  const timeZone = useTimeZone();
-  const createdAt = conv.conversation ? new Date(conv.conversation.createdAt) : new Date(now);
   const page: ConversationPageProps = {
     titleBar: {
       path: titlePath,
       title: conv.conversation?.title ?? null,
-      untitled: untitledLabel(createdAt, locale, timeZone),
+      untitled,
       menu,
       properties: slot?.properties ?? { pressed: false, onToggle: () => {} },
       panels: slot?.titleBarPanels ?? [],
@@ -449,13 +455,18 @@ export function useConversationPage(
     ...(slot.loading !== undefined ? { rightArea: slot.loading } : {}),
   };
   if (Object.keys(loading).length > 0) page.loading = loading;
-  const dialogs = renaming ? (
-    <RenameDialog
-      value={conv.conversation?.title ?? ""}
-      busy={renameBusy}
-      onSave={(v) => void rename(v)}
-      onCancel={() => setRenaming(false)}
-    />
-  ) : null;
+  const dialogs = (
+    <>
+      {renaming ? (
+        <RenameDialog
+          value={conv.conversation?.title ?? ""}
+          busy={renameBusy}
+          onSave={(v) => void rename(v)}
+          onCancel={() => setRenaming(false)}
+        />
+      ) : null}
+      {slot.agentMap}
+    </>
+  );
   return { page, dialogs };
 }

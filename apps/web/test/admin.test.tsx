@@ -392,11 +392,17 @@ describe("/admin/orgs（ListPage）", () => {
         within(dialog).getByRole("textbox", { name: o.dialog.subagentTokens }),
         "200000",
       );
+      const depth = within(dialog).getByRole("textbox", { name: o.dialog.subagentDepth });
+      await user.type(depth, "6");
+      expect(within(dialog).getByText(o.dialog.subagentDepthInvalid)).toBeTruthy();
+      await user.clear(depth);
+      await user.type(depth, "2");
       await user.click(within(dialog).getByRole("button", { name: o.dialog.save }));
       await vi.waitFor(() =>
         expect(bodyOf(calls.find((c) => c.method === "PUT"))).toMatchObject({
           subagentLimitOverrides: {
             o2: {
+              maxDepth: 2,
               maxConcurrentPerConversation: 2,
               maxDispatchesPerRun: 9,
               maxTokensPerRun: 200000,

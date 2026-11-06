@@ -2,6 +2,7 @@
 
 import {
   type BackgroundItem,
+  type BackgroundTaskItem,
   type BackgroundTaskStatus,
   BackgroundTasks,
   PropertySection,
@@ -40,7 +41,8 @@ const ms = (iso: string | null): number | undefined => {
   return Number.isNaN(n) ? undefined : n;
 };
 
-function taskItem(t: BackgroundTaskView, stopping: ReadonlySet<string>): BackgroundItem {
+/** A kernel task as the design's row (also the agent map's background rows). */
+export function taskItem(t: BackgroundTaskView, stopping: ReadonlySet<string>): BackgroundTaskItem {
   const finishedAt = ms(t.finishedAt);
   return {
     kind: "task",

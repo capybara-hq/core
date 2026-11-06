@@ -3,13 +3,14 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import type {
+  AgentTreeNode,
   ConversationEvent,
   ConversationUsage,
   SubagentToolRef,
   SubagentView,
 } from "./conversations";
 import { retryOnMountOf } from "./query/client";
-import { subagentsQuery, usageQuery } from "./query/conversation";
+import { agentTreeQuery, subagentsQuery, usageQuery } from "./query/conversation";
 import { extensionToolKey } from "./tool-key";
 import { toolLabelOfKey, toolLabelText } from "./tool-label";
 
@@ -31,14 +32,15 @@ const subagentEventCount = (events: readonly ConversationEvent[]) =>
       e.type === "subagent_finished",
   ).length;
 
-const dispatchedAny = (events: readonly ConversationEvent[]) =>
+/** Whether the conversation has dispatched a sub-agent (the agent map's entries show then). */
+export const dispatchedAny = (events: readonly ConversationEvent[]) =>
   events.some((e) => e.type === "subagent_dispatched");
 
 /**
  * Invalidates `queryKey` when `count` moves after the first value (the first is what the cached
  * answer stands for).
  */
-function useInvalidateOn(queryKey: readonly unknown[], count: number, active: boolean) {
+function useInvalidateOn(queryKey: readonly unknown[], count: number | string, active: boolean) {
   const qc = useQueryClient();
   const seen = useRef(count);
   useEffect(() => {
@@ -96,6 +98,39 @@ export function useSubagents(
     [qc, query.queryKey],
   );
   return { views: dispatched ? views : undefined, refresh };
+}
+
+/**
+ * The agent tree of a root conversation (agent map spec §9.2), read while the map is `open` and
+ * the conversation has dispatched a sub-agent, and again on every `subagent_*` event of its log and
+ * every progress step of any agent of the tree (a descendant's progress reaches every ancestor's
+ * stream with its own `subagentId`). Invalidating while the map is closed only marks it stale.
+ */
+export function useAgentTree(
+  orgId: string,
+  conversationId: string,
+  events: readonly ConversationEvent[],
+  progress: Readonly<Record<string, { step: number }>>,
+  open: boolean,
+): { root: AgentTreeNode | undefined; failed: boolean } {
+  const dispatched = useMemo(() => dispatchedAny(events), [events]);
+  const count = useMemo(() => subagentEventCount(events), [events]);
+  // every agent's step: it moves whenever any agent of the tree makes progress
+  const steps = useMemo(
+    () =>
+      Object.entries(progress)
+        .map(([id, p]) => `${id}:${p.step}`)
+        .join(","),
+    [progress],
+  );
+  const query = agentTreeQuery(orgId, conversationId);
+  const r = useQuery({
+    ...query,
+    enabled: dispatched && open,
+    retryOnMount: retryOnMountOf(query.queryKey),
+  });
+  useInvalidateOn(query.queryKey, `${count}/${steps}`, dispatched);
+  return { root: r.data, failed: r.data === undefined && r.error !== null };
 }
 
 /**

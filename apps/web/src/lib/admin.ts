@@ -40,12 +40,15 @@ export interface SandboxLimitOverride {
 
 /** One organization's sub-agent limits; values left out use the deployment's `subagents.*`. */
 export interface SubagentLimitOverride {
+  /** Levels of sub-agents below the root (1: no nesting). */
+  maxDepth?: number;
   maxConcurrentPerConversation?: number;
   maxDispatchesPerRun?: number;
   maxTokensPerRun?: number;
 }
 
 /** Bounds of the kernel's `SUBAGENT_LIMIT_OVERRIDE`. */
+export const SUBAGENT_DEPTH = { min: 1, max: 5 } as const;
 export const SUBAGENT_CONCURRENT = { min: 1, max: 20 } as const;
 export const SUBAGENT_DISPATCHES = { min: 1, max: 500 } as const;
 export const SUBAGENT_TOKENS = { min: 10_000, max: Number.MAX_SAFE_INTEGER } as const;

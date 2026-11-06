@@ -127,6 +127,8 @@ export type ThreadProps = {
   openSubagent?: string;
   /** Opens a sub-agent in the right panel (`#subagent=`). */
   onOpenSubagent?(id: string): void;
+  /** Opens the agent map (`#agents`): the sub-agent groups' header action. */
+  onOpenAgentMap?(): void;
   /** Opens a background task's output in the right panel (`#bg-<taskId>`). */
   onOpenTask?(taskId: string): void;
   /** Renders a sub-agent's task message (the sub-agent panel); nothing without it. */
@@ -146,6 +148,7 @@ type EntryCallbacks = {
     | "onMoreFiles"
     | "onOpenOutput"
     | "onOpenSubagent"
+    | "onOpenAgentMap"
     | "onOpenTask"
     | "renderCard"
     | "renderTask"]?: ThreadProps[K] | undefined;
@@ -178,6 +181,7 @@ type EntryContext = {
     openFile: boolean;
     moreFiles: boolean;
     openSubagent: boolean;
+    openAgentMap: boolean;
     openTask: boolean;
   };
   cb: { readonly current: EntryCallbacks };
@@ -205,6 +209,7 @@ export function Thread({
   renderCard,
   openSubagent,
   onOpenSubagent,
+  onOpenAgentMap,
   onOpenTask,
   live = true,
   renderTask,
@@ -268,6 +273,7 @@ export function Thread({
     onMoreFiles,
     onOpenOutput,
     onOpenSubagent,
+    onOpenAgentMap,
     onOpenTask,
     renderCard,
     renderTask,
@@ -281,6 +287,7 @@ export function Thread({
   const hasOpenFile = onOpenFile !== undefined;
   const hasMoreFiles = onMoreFiles !== undefined;
   const hasOpenSubagent = onOpenSubagent !== undefined;
+  const hasOpenAgentMap = onOpenAgentMap !== undefined;
   const hasOpenTask = onOpenTask !== undefined;
   const ctx = useMemo<EntryContext>(
     () => ({
@@ -306,6 +313,7 @@ export function Thread({
         openFile: hasOpenFile,
         moreFiles: hasMoreFiles,
         openSubagent: hasOpenSubagent,
+        openAgentMap: hasOpenAgentMap,
         openTask: hasOpenTask,
       },
       cb,
@@ -333,6 +341,7 @@ export function Thread({
       hasOpenFile,
       hasMoreFiles,
       hasOpenSubagent,
+      hasOpenAgentMap,
       hasOpenTask,
     ],
   );
@@ -415,6 +424,7 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
   const onOpenSubagent = c.has.openSubagent
     ? (id: string) => cb.current.onOpenSubagent?.(id)
     : undefined;
+  const onOpenAgentMap = c.has.openAgentMap ? () => cb.current.onOpenAgentMap?.() : undefined;
   const onOpenTask = c.has.openTask
     ? (taskId: string) => cb.current.onOpenTask?.(taskId)
     : undefined;
@@ -695,6 +705,7 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
               // A call refused before any dispatch keeps its call key as id: no record to open.
               if (!isCallKey(id)) onOpenSubagent?.(id);
             }}
+            {...(onOpenAgentMap ? { onOpenMap: onOpenAgentMap } : {})}
           />
         );
       case "subagent-wait":

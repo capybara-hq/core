@@ -358,6 +358,8 @@ export type SubagentGroupProps = {
   onToggle?(): void;
   /** Sub-agents whose prompt starts expanded (uncontrolled). */
   defaultExpanded?: string[];
+  /** Opens the agent map (agent map spec §9.2): a link button at the end of the header. */
+  onOpenMap?: () => void;
 };
 
 /**
@@ -371,6 +373,7 @@ export function SubagentGroup({
   defaultOpen,
   onToggle,
   defaultExpanded,
+  onOpenMap,
 }: SubagentGroupProps): JSX.Element {
   const t = useDesignT();
   const locale = useDesignLocale();
@@ -380,6 +383,17 @@ export function SubagentGroup({
   const running = rows.filter(active);
   // every active row waits for a person: the header says so instead of the spinner and the verb
   const waitingFor = running.every((r) => r.status === "waiting") ? running[0]?.waiting : null;
+  // the header's link (§6.16.9: beside the toggle, never inside it)
+  const mapLink = onOpenMap ? (
+    <button
+      type="button"
+      className="cb-link-btn cb-tool-link"
+      data-part="subagent-map-link"
+      onClick={onOpenMap}
+    >
+      {t("agentMap.title")}
+    </button>
+  ) : null;
   const calls = (
     <div className="cb-agent-calls" data-part="agent-calls">
       {rows.map((r) => (
@@ -414,6 +428,7 @@ export function SubagentGroup({
               </span>
             ) : null}
           </span>
+          {mapLink}
         </div>
         {calls}
       </div>
@@ -432,36 +447,57 @@ export function SubagentGroup({
   const span =
     starts.length > 0 && ends.length > 0 ? Math.max(...ends) - Math.min(...starts) : undefined;
   const isOpen = open ?? own;
+  const toggle = () => {
+    setAnimate(true);
+    if (open === undefined) setOwn((o) => !o);
+    onToggle?.();
+  };
+  const label = (
+    <span className="cb-tool-label">
+      {fillCopy(t("subagent.done"), { n: rows.length })}
+      {failed > 0 ? (
+        <span className="cb-fail-word" data-part="fail-word">
+          {fillCopy(t("tool.failedCount"), { n: failed })}
+        </span>
+      ) : null}
+      <span className="cb-faint">
+        {` · ${[
+          fillCopy(t("subagent.totalCalls"), { n: totalCalls }),
+          ...(span === undefined ? [] : [subagentDuration(span, locale)]),
+        ].join(" · ")}`}
+      </span>
+    </span>
+  );
+  const chevron = <Icon name={isOpen ? "chevron-down" : "chevron-right"} size={12} />;
   return (
     <div className="cb-tool-group" data-part="subagent-group">
-      <button
-        type="button"
-        className="cb-tool-line"
-        data-part="tool-line"
-        aria-expanded={isOpen}
-        aria-controls={isOpen ? id : undefined}
-        onClick={() => {
-          setAnimate(true);
-          if (open === undefined) setOwn((o) => !o);
-          onToggle?.();
-        }}
-      >
-        <span className="cb-tool-label">
-          {fillCopy(t("subagent.done"), { n: rows.length })}
-          {failed > 0 ? (
-            <span className="cb-fail-word" data-part="fail-word">
-              {fillCopy(t("tool.failedCount"), { n: failed })}
-            </span>
-          ) : null}
-          <span className="cb-faint">
-            {` · ${[
-              fillCopy(t("subagent.totalCalls"), { n: totalCalls }),
-              ...(span === undefined ? [] : [subagentDuration(span, locale)]),
-            ].join(" · ")}`}
-          </span>
-        </span>
-        <Icon name={isOpen ? "chevron-down" : "chevron-right"} size={12} />
-      </button>
+      {mapLink ? (
+        <div className="cb-tool-line" data-part="tool-line" data-linked="true">
+          <button
+            type="button"
+            className="cb-tool-toggle"
+            aria-expanded={isOpen}
+            aria-controls={isOpen ? id : undefined}
+            onClick={toggle}
+          >
+            {label}
+            {chevron}
+          </button>
+          {mapLink}
+        </div>
+      ) : (
+        <button
+          type="button"
+          className="cb-tool-line"
+          data-part="tool-line"
+          aria-expanded={isOpen}
+          aria-controls={isOpen ? id : undefined}
+          onClick={toggle}
+        >
+          {label}
+          {chevron}
+        </button>
+      )}
       {isOpen ? (
         <div id={id} className="cb-expand" data-animate={animate ? "true" : undefined}>
           {calls}

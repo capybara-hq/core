@@ -211,6 +211,32 @@ describe("SubagentGroup (§6.16.15)", () => {
     expect(statusText(fg as HTMLElement)).toBe("运行中：Bash 列出「02 流程」下的子目录");
   });
 
+  it("onOpenMap: an Agent map link at the end of the header, beside the toggle", async () => {
+    const onOpenMap = vi.fn();
+    const { unmount } = wrap(
+      <SubagentGroup rows={running} onOpen={() => {}} onOpenMap={onOpenMap} />,
+    );
+    const line = document.querySelector('[data-part="tool-line"]') as HTMLElement;
+    await userEvent.click(within(line).getByRole("button", { name: "智能体图" }));
+    expect(onOpenMap).toHaveBeenCalledTimes(1);
+    unmount();
+    wrap(<SubagentGroup rows={done} onOpen={() => {}} onOpenMap={onOpenMap} />);
+    const head = screen.getByRole("button", { name: /3 个子 agent 已完成/ });
+    const link = screen.getByRole("button", { name: "智能体图" });
+    // never nested in the toggle; the toggle still opens the group
+    expect(head.contains(link)).toBe(false);
+    await userEvent.click(link);
+    expect(onOpenMap).toHaveBeenCalledTimes(2);
+    expect(head.getAttribute("aria-expanded")).toBe("false");
+    await userEvent.click(head);
+    expect(head.getAttribute("aria-expanded")).toBe("true");
+  });
+
+  it("without onOpenMap there is no map link", () => {
+    wrap(<SubagentGroup rows={done} onOpen={() => {}} />);
+    expect(screen.queryByRole("button", { name: "智能体图" })).toBeNull();
+  });
+
   it("prompts listed in defaultExpanded start expanded", () => {
     wrap(<SubagentGroup rows={running} onOpen={() => {}} defaultExpanded={["sa_dedupe"]} />);
     const prompts = document.querySelectorAll('[data-part="agent-call-prompt"]');

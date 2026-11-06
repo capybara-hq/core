@@ -27,6 +27,7 @@ import {
   SANDBOX_MEMORY_MB,
   type SandboxLimitOverride,
   SUBAGENT_CONCURRENT,
+  SUBAGENT_DEPTH,
   SUBAGENT_DISPATCHES,
   SUBAGENT_TOKENS,
   type SubagentLimitOverride,
@@ -175,6 +176,7 @@ function LimitsDialog({
   const [cpu, setCpu] = useState(text(sandbox?.cpu));
   const [memory, setMemory] = useState(text(sandbox?.memoryMb));
   const subagent = settings.subagentLimitOverrides?.[org.id];
+  const [depth, setDepth] = useState(text(subagent?.maxDepth));
   const [concurrent, setConcurrent] = useState(text(subagent?.maxConcurrentPerConversation));
   const [dispatches, setDispatches] = useState(text(subagent?.maxDispatchesPerRun));
   const [tokens, setTokens] = useState(text(subagent?.maxTokensPerRun));
@@ -191,6 +193,7 @@ function LimitsDialog({
   const runValue = parseLimit(run, RUN_RANGE, true);
   const cpuValue = parseLimit(cpu, SANDBOX_CPU, false);
   const memoryValue = parseLimit(memory, SANDBOX_MEMORY_MB, true);
+  const depthValue = parseLimit(depth, SUBAGENT_DEPTH, true);
   const concurrentValue = parseLimit(concurrent, SUBAGENT_CONCURRENT, true);
   const dispatchesValue = parseLimit(dispatches, SUBAGENT_DISPATCHES, true);
   const tokensValue = parseLimit(tokens, SUBAGENT_TOKENS, true);
@@ -198,6 +201,7 @@ function LimitsDialog({
     runValue !== "invalid" &&
     cpuValue !== "invalid" &&
     memoryValue !== "invalid" &&
+    depthValue !== "invalid" &&
     concurrentValue !== "invalid" &&
     dispatchesValue !== "invalid" &&
     tokensValue !== "invalid";
@@ -209,6 +213,7 @@ function LimitsDialog({
       ...(memoryValue !== null && { memoryMb: memoryValue }),
     };
     const subagentLimits: SubagentLimitOverride = {
+      ...(depthValue !== null && { maxDepth: depthValue }),
       ...(concurrentValue !== null && { maxConcurrentPerConversation: concurrentValue }),
       ...(dispatchesValue !== null && { maxDispatchesPerRun: dispatchesValue }),
       ...(tokensValue !== null && { maxTokensPerRun: tokensValue }),
@@ -279,6 +284,13 @@ function LimitsDialog({
         <Text variant="small" tone="muted">
           {t("newOnly")}
         </Text>
+        <Field
+          label={t("subagentDepth")}
+          help={t("subagentDepthHelp")}
+          {...(depthValue === "invalid" && { error: t("subagentDepthInvalid") })}
+        >
+          <Input inputMode="numeric" value={depth} onChange={(e) => setDepth(e.target.value)} />
+        </Field>
         <Field
           label={t("subagentConcurrent")}
           help={t("subagentConcurrentHelp")}
