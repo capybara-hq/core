@@ -249,6 +249,35 @@ describe("the background section", () => {
     expect(within(section).getByRole("button", { name: /1 completed/ })).toBeTruthy();
   });
 
+  it("a changed frame during the first read reads the list again (the read may predate the task)", async () => {
+    // the launch's tool call reaches the page, which reads the list at once; the kernel inserts the
+    // task's row and announces `changed: background` while that first read is still on its way
+    const first = held({ tasks: [] });
+    let reads = 0;
+    const calls = api(
+      { tasks: [], events: launch().slice(0, 2) },
+      {
+        [`GET ${TASKS}`]: () => {
+          reads += 1;
+          return reads === 1 ? first.response : json(200, { tasks: [task()] });
+        },
+      },
+    );
+    window.history.replaceState(null, "", "/chat/c1#properties");
+    await renderChatRoute();
+    await screen.findByRole("complementary", { name: "Properties" });
+    const [, , call] = launch();
+    act(() => stream().emit("event", call));
+    await vi.waitFor(() => expect(reads).toBe(1));
+    act(() => stream().emit("changed", { what: "background" }));
+    await act(async () => first.release());
+    const section = await backgroundSection();
+    expect(
+      await within(section).findByRole("button", { name: "Stop Start the dev server" }),
+    ).toBeTruthy();
+    expect(calls.filter((c) => c.method === "GET" && c.url === TASKS)).toHaveLength(2);
+  });
+
   it("is not read before the log shows a background task", async () => {
     const calls = api({ tasks: [], events: [userMsg(1, "hi")] });
     window.history.replaceState(null, "", "/chat/c1#properties");

@@ -168,7 +168,17 @@ export function useConversation(orgId: string, conversationId: string): Conversa
   useEffect(() => {
     if (!loaded) return;
     const c = keys.org(orgId).conversation(conversationId);
-    const invalidate = (queryKey: readonly unknown[]) => void qc.invalidateQueries({ queryKey });
+    // A hint that the server's data changed: read it again. A read in flight may have started
+    // before the change, and `invalidateQueries` joins a first read (it cancels only a refetch of
+    // data the query already has), so the hint would be lost: e.g. the background list read on the
+    // launch's tool call answers empty after the kernel announced the task. A first read in flight
+    // is cancelled first, then read again.
+    const invalidate = (queryKey: readonly unknown[]) => {
+      const firstRead =
+        qc.isFetching({ queryKey, predicate: (q) => q.state.data === undefined }) > 0;
+      if (!firstRead) void qc.invalidateQueries({ queryKey });
+      else void qc.cancelQueries({ queryKey }).then(() => qc.invalidateQueries({ queryKey }));
+    };
     const groups = keys.org(orgId).conversationGroupsAll();
     let disposed = false;
     let close: (() => void) | undefined;
