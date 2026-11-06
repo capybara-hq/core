@@ -89,8 +89,12 @@ async function boot(
   await k.start();
   return k;
 }
-/** A short `lock:bootstrap` TTL, so a run outlives it several times over. */
-const shortLock: KernelOverride[] = [{ provide: BOOTSTRAP_LOCK_TTL, useValue: 300 }];
+/**
+ * A short `lock:bootstrap` TTL, so a run outlives it several times over. It renews every 500 ms and
+ * gives up 1 s after its last good renewal: a loaded test worker's event-loop stalls stay far below
+ * that (300 ms failed on stalls of about 100 ms).
+ */
+const shortLock: KernelOverride[] = [{ provide: BOOTSTRAP_LOCK_TTL, useValue: 1_500 }];
 
 async function stopAll(): Promise<void> {
   while (kernels.length > 0) await kernels.pop()?.close();
@@ -157,7 +161,7 @@ afterAll(async () => {
   await Promise.all([pgc?.stop(), rd?.stop()]);
 });
 
-describe("a fresh deployment", () => {
+describe("a fresh deployment", { timeout: 30_000 }, () => {
   let fx: Awaited<ReturnType<typeof bootstrapFixture>>;
   let k: TestKernel;
   beforeAll(async () => {
@@ -381,7 +385,7 @@ describe("a fresh deployment", () => {
   });
 });
 
-describe("a core upgrade (Review Focus 3)", () => {
+describe("a core upgrade (Review Focus 3)", { timeout: 30_000 }, () => {
   it("raises a pinned version, keeps a hand-upgraded plugin, clears required from a removed entry", async () => {
     await reset();
     const v1 = await fixture([
@@ -511,7 +515,7 @@ describe("a core upgrade (Review Focus 3)", () => {
   });
 });
 
-describe("same version, different bytes", () => {
+describe("same version, different bytes", { timeout: 30_000 }, () => {
   it("keeps the installed package and warns naming the plugin", async () => {
     await reset();
     const v1 = await fixture([{ bytes: await lifePkg({ name: "alpha", version: "1.0.0" }) }]);
@@ -551,7 +555,7 @@ describe("same version, different bytes", () => {
   });
 });
 
-describe("the confirm's catalog view during bootstrap", () => {
+describe("the confirm's catalog view during bootstrap", { timeout: 30_000 }, () => {
   it("reads only the confirmed plugin's package: another unreadable package logs no admin-view warning", async () => {
     await reset();
     const v1 = await fixture([
@@ -595,7 +599,7 @@ describe("the confirm's catalog view during bootstrap", () => {
   });
 });
 
-describe("tampered and missing packages (Review Focus 2)", () => {
+describe("tampered and missing packages (Review Focus 2)", { timeout: 30_000 }, () => {
   const tampered = async (): Promise<{ dir: string; manifest: BootstrapManifest }> => {
     const fx = await fixture([
       { bytes: await lifePkg({ name: "alpha", version: "1.0.0" }) },
@@ -681,7 +685,9 @@ describe("tampered and missing packages (Review Focus 2)", () => {
   });
 });
 
-describe("obtaining the packages: offline directory, else npm (startup bootstrap spec)", () => {
+describe("obtaining the packages: offline directory, else npm (startup bootstrap spec)", {
+  timeout: 30_000,
+}, () => {
   let reg: FakeNpmRegistry | undefined;
   const tarballs = () => (reg?.requests ?? []).filter((r) => r.includes("/-/"));
   const npmFixture = async () =>
@@ -832,7 +838,7 @@ describe("obtaining the packages: offline directory, else npm (startup bootstrap
   });
 });
 
-describe("a declarative entry", () => {
+describe("a declarative entry", { timeout: 30_000 }, () => {
   afterAll(stopAll);
 
   it("goes to the catalog only, once the object store (a bootstrap plugin itself) has loaded", async () => {
@@ -884,7 +890,7 @@ describe("a declarative entry", () => {
   });
 });
 
-describe("config-declared names and the lock", () => {
+describe("config-declared names and the lock", { timeout: 30_000 }, () => {
   beforeEach(reset);
 
   it("an entry also declared in the config extensions list is kept: config wins, no install record", async () => {
@@ -899,44 +905,49 @@ describe("config-declared names and the lock", () => {
 
   it("a run longer than the lock's TTL keeps lock:bootstrap by renewal; another holder cannot take it", async () => {
     const fx = await fixture([{ bytes: await lifePkg({ name: "alpha", version: "1.0.0" }) }]);
-    // the lock's TTL is 300 ms (BOOTSTRAP_LOCK_TTL)
+    // the lock's TTL is 1.5 s (BOOTSTRAP_LOCK_TTL)
     const k = await boot(undefined, {}, createLogger("error"), shortLock);
     const probe = new Redis(rd.url);
     const bootstrap = k.app.get(BootstrapService);
+    let running: Promise<unknown> | undefined;
     try {
       const imports = {
         prepare: async (...a: Parameters<PluginImport["prepare"]>) => {
           // the run outlives the TTL several times over
-          await new Promise((r) => setTimeout(r, 1_200));
+          await new Promise((r) => setTimeout(r, 6_000));
           return k.app.get(PluginImport).prepare(...a);
         },
         confirm: (...a: Parameters<PluginImport["confirm"]>) =>
           k.app.get(PluginImport).confirm(...a),
       };
-      const running = bootstrap.run({ manifest: fx.manifest, dir: fx.dir, imports });
-      await new Promise((r) => setTimeout(r, 900));
+      const run = bootstrap.run({ manifest: fx.manifest, dir: fx.dir, imports });
+      running = run;
+      // twice the TTL: the key is still there only because it was renewed
+      await new Promise((r) => setTimeout(r, 3_000));
       expect(await probe.exists("lock:bootstrap")).toBe(1);
       expect(await probe.set("lock:bootstrap", "other", "PX", 1_000, "NX")).toBeNull();
-      const r = await running;
+      const r = await run;
       expect(r.results).toEqual([{ name: "alpha", action: "installed", version: "1.0.0" }]);
       expect(await probe.exists("lock:bootstrap")).toBe(0);
     } finally {
+      // a failed assertion must not leave the run writing after the kernel closes
+      await running?.catch(() => {});
       probe.disconnect();
     }
   });
 
   it("a run that loses lock:bootstrap mid-run rejects naming the lock and records nothing as done", async () => {
     const fx = await fixture([{ bytes: await lifePkg({ name: "alpha", version: "1.0.0" }) }]);
-    // the lock's TTL is 300 ms (BOOTSTRAP_LOCK_TTL)
+    // the lock's TTL is 1.5 s (BOOTSTRAP_LOCK_TTL)
     const k = await boot(undefined, {}, createLogger("error"), shortLock);
     const probe = new Redis(rd.url);
     const bootstrap = k.app.get(BootstrapService);
     try {
       const imports = {
         prepare: async (...a: Parameters<PluginImport["prepare"]>) => {
-          // another holder takes the key while the run is busy: the next renewal fails
-          await probe.set("lock:bootstrap", "another-replica", "PX", 5_000);
-          await new Promise((r) => setTimeout(r, 600));
+          // another holder takes the key while the run is busy: the next renewal (500 ms) fails
+          await probe.set("lock:bootstrap", "another-replica", "PX", 10_000);
+          await new Promise((r) => setTimeout(r, 1_500));
           return k.app.get(PluginImport).prepare(...a);
         },
         confirm: (...a: Parameters<PluginImport["confirm"]>) =>

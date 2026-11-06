@@ -143,7 +143,9 @@ async function lead(templateIds: string[]): Promise<{ id: string; definition: Ag
   return { id: r.json().agent?.id ?? r.json().id, definition: definition as AgentDefinition };
 }
 
-describe("agent templates in plugins", () => {
+// Each case imports plugins through the object store and the kernel end to end: about 1 s alone,
+// several times that in a full parallel run, past the local 5 s default (CI has 30 s).
+describe("agent templates in plugins", { timeout: 30_000 }, () => {
   it("a plugin with agents/reviewer.md imports with the template in the review and reviewHash", async () => {
     const one = await prepare(
       await agentPlugin("1.0.0", {
