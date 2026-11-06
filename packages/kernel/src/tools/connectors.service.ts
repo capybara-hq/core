@@ -116,6 +116,11 @@ export interface ConnectorSummary {
   endpoint: unknown;
   auth: ConnectorAuth;
   status: "active" | "disabled";
+  /**
+   * The platform connector template it was made from (`connectors.platform_template_id`), null for
+   * a custom one: the web offers it for a pending connector of that template (ruling P4-7).
+   */
+  platformTemplateId: string | null;
   createdBy: string;
   createdAt: Date;
   updatedAt: Date;
@@ -1103,6 +1108,7 @@ export class ConnectorsService {
       endpoint: endpointView(r.endpoint),
       auth: r.auth as unknown as ConnectorAuth,
       status: r.status,
+      platformTemplateId: r.platform_template_id ?? null,
       createdBy: r.created_by,
       createdAt: r.created_at,
       updatedAt: r.updated_at,
