@@ -39,6 +39,9 @@ beforeEach(async () => {
 
 const items = "/api/v1/admin/catalog/items";
 
+/** The owned plugin's display name: plugin notices carry it (the inbox names it by it). */
+const CRM_NAME = { zh: "客户管理", en: "CRM" };
+
 async function ownedPlugin(shareable: boolean, scope: "named" | "optional" = "named") {
   const itemId = await seedPlugin(env, {
     name: "owned-crm",
@@ -48,7 +51,12 @@ async function ownedPlugin(shareable: boolean, scope: "named" | "optional" = "na
   await setScope(env, itemId, scope, scope === "named" ? [orgA] : []);
   await env.db
     .updateTable("catalog_items")
-    .set({ owner_org_id: orgA, shareable, shown_to_others: true })
+    .set({
+      owner_org_id: orgA,
+      shareable,
+      shown_to_others: true,
+      display_name: JSON.stringify(CRM_NAME),
+    })
     .where("id", "=", itemId)
     .execute();
   await env.db
@@ -118,7 +126,9 @@ describe("owner notices", { timeout: 90_000 }, () => {
     expect(all[0]?.notice.detail).toMatchObject({
       ref: { kind: "plugin", id: itemId },
       name: "owned-crm",
+      displayName: CRM_NAME,
     });
+    expect(all.every((i) => i.notice.detail.displayName !== undefined)).toBe(true);
   });
 
   it("a platform item writes none", async () => {
@@ -176,6 +186,7 @@ describe("owner notices", { timeout: 90_000 }, () => {
       detail: {
         ref,
         name: "owned-crm",
+        displayName: CRM_NAME,
         from: "1.0.0",
         to: "1.1.0",
         owner: { kind: "org", orgId: orgA, name: "A" },

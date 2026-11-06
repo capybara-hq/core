@@ -11,7 +11,8 @@ Plugin and component management acceptance fixes.
   org's name for another org's shared item, 平台 only for the platform's.
 - Row and page head actions show their pending state until the call settles; menus never draw an
   empty group or a stray separator.
-- Upload notices (`upload_confirmed`, `upload_rejected`) carry the plugin's `displayName`; the
+- Plugin notices (`upload_confirmed`, `upload_rejected`, `item_shared`,
+  `shared_item_updated`) carry the plugin's `displayName`; the
   inboxes lead each row with the item's display name, keep its version whole beside it
   (`v0.1.0`) and give the list column more room.
 - Plugin and component details are one centred column (facts as a KeyValue, actions and 删除 in

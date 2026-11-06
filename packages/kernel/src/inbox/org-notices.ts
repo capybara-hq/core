@@ -10,9 +10,22 @@ export type { OrgNoticeKind };
 /** The `detail` of each notice kind except `skill_renamed` (written by the platform migration). */
 export interface OrgNoticeDetails {
   /** An org was added to the item's list, or its scope widened (`all_orgs`). */
-  item_shared: { ref: OwnedRef; name: string; org: { id: string; name: string } | "all_orgs" };
+  /** `displayName`: a plugin's display name, which the inbox names it by (null otherwise). */
+  item_shared: {
+    ref: OwnedRef;
+    name: string;
+    displayName: LocalizedName;
+    org: { id: string; name: string } | "all_orgs";
+  };
   /** A shared org-owned item changed version, for the orgs it is on in. */
-  shared_item_updated: { ref: OwnedRef; name: string; from: string; to: string; owner: Owner };
+  shared_item_updated: {
+    ref: OwnedRef;
+    name: string;
+    displayName: LocalizedName;
+    from: string;
+    to: string;
+    owner: Owner;
+  };
   /** `displayName`: the plugin's display name, which the inbox names it by (null without one). */
   upload_confirmed: { itemId: string; name: string; displayName: LocalizedName; version: string };
   upload_rejected: {
@@ -25,6 +38,10 @@ export interface OrgNoticeDetails {
 }
 
 type LocalizedName = { zh: string; en: string } | null;
+
+/** An owned ref's display name: a plugin's (skills and agent templates have none). */
+const refDisplayName = (db: KernelSchemaDb, ref: OwnedRef): Promise<LocalizedName> =>
+  ref.kind === "plugin" ? itemDisplayName(db, ref.id) : Promise.resolve(null);
 
 /** A catalog item's display name for an upload notice (null without one, or for an unknown id). */
 export async function itemDisplayName(db: KernelSchemaDb, itemId: string): Promise<LocalizedName> {
@@ -67,8 +84,14 @@ export async function notifyItemShared(
   orgs: readonly string[] | "all_orgs",
 ): Promise<void> {
   if (ownerOrgId === null) return;
+  const displayName = await refDisplayName(db, ref);
   if (orgs === "all_orgs") {
-    await addOrgNotice(db, ownerOrgId, "item_shared", { ref, name, org: "all_orgs" });
+    await addOrgNotice(db, ownerOrgId, "item_shared", {
+      ref,
+      name,
+      displayName,
+      org: "all_orgs",
+    });
     return;
   }
   const targets = [...new Set(orgs)].filter((o) => o !== ownerOrgId);
@@ -83,6 +106,7 @@ export async function notifyItemShared(
     await addOrgNotice(db, ownerOrgId, "item_shared", {
       ref,
       name,
+      displayName,
       org: { id, name: names.get(id) ?? id },
     });
   }
@@ -106,10 +130,12 @@ export async function notifySharedUpdate(
   if (!row || row.owner_org_id === null) return 0;
   const owner = ownerOf(row.owner_org_id, await ownersOf(db, [row.owner_org_id]));
   const using = await orgsUsing(db, ref, { except: row.owner_org_id });
+  const displayName = await refDisplayName(db, ref);
   for (const o of using) {
     await addOrgNotice(db, o.id, "shared_item_updated", {
       ref,
       name: change.name,
+      displayName,
       from: change.from,
       to: change.to,
       owner,

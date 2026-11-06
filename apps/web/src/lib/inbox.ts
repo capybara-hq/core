@@ -1,3 +1,6 @@
+/** A plugin's display name in both UI languages (plugin.json `displayName`). */
+type LocalizedName = { zh: string; en: string };
+
 import { apiFetch } from "./api";
 import type { Approval } from "./approvals";
 import type { CatalogRequest } from "./catalog";
@@ -37,16 +40,34 @@ export type OrgNotice = { id: string; createdAt: string } & (
     }
   | {
       kind: "item_shared";
-      detail: { name: string; org: { id: string; name: string } | "all_orgs" };
+      detail: {
+        name: string;
+        displayName?: LocalizedName | null;
+        org: { id: string; name: string } | "all_orgs";
+      };
     }
   | {
       kind: "shared_item_updated";
-      detail: { name: string; from: string; to: string; owner: NoticeOwner };
+      detail: {
+        name: string;
+        displayName?: LocalizedName | null;
+        from: string;
+        to: string;
+        owner: NoticeOwner;
+      };
     }
-  | { kind: "upload_confirmed"; detail: { name: string; version: string } }
+  | {
+      kind: "upload_confirmed";
+      detail: { name: string; displayName?: LocalizedName | null; version: string };
+    }
   | {
       kind: "upload_rejected";
-      detail: { name: string; version: string; reason: string | null };
+      detail: {
+        name: string;
+        displayName?: LocalizedName | null;
+        version: string;
+        reason: string | null;
+      };
     }
 );
 

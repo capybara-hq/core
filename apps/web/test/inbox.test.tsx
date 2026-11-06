@@ -817,6 +817,58 @@ describe("inbox: org notices of phase 3 (org admins)", () => {
     },
   );
 
+  it.each(LOCALES)(
+    "item_shared and shared_item_updated name a plugin by its display name (%s)",
+    async (locale) => {
+      const n = msgs[locale].inbox.orgNotice;
+      const displayName = { zh: "客户管理", en: "CRM suite" };
+      const shared = {
+        id: "n1",
+        kind: "item_shared",
+        createdAt: T,
+        detail: { ref, name: "acc-crm", displayName, org: { id: "o2", name: "Beta" } },
+      };
+      const updated = {
+        id: "n2",
+        kind: "shared_item_updated",
+        createdAt: T,
+        detail: {
+          ref,
+          name: "acc-crm",
+          displayName,
+          from: "1.0.0",
+          to: "1.1.0",
+          owner: { kind: "org", orgId: "o9", name: "Acme" },
+        },
+      };
+      await renderInbox(
+        {
+          [LIST]: () =>
+            json(200, {
+              items: [
+                { type: "item_shared", id: "n1", createdAt: T, notice: shared },
+                { type: "shared_item_updated", id: "n2", createdAt: T, notice: updated },
+              ],
+              truncated: false,
+            }),
+        },
+        { locale },
+      );
+      const table = await screen.findByRole("table", { name: msgs[locale].inbox.listLabel });
+      const names = within(table).getAllByText(displayName[locale], {
+        selector: ".cb-cell-title-name",
+      });
+      expect(names).toHaveLength(2);
+      expect(within(table).queryByText("acc-crm", { exact: false })).toBeNull();
+      expect(within(names[1]?.closest("tr") as HTMLElement).getByText("v1.1.0")).toBeTruthy();
+      expect(
+        await screen.findByText(
+          n.itemSharedTitle.replace("{name}", displayName[locale]).replace("{org}", "Beta"),
+        ),
+      ).toBeTruthy();
+    },
+  );
+
   it("an unknown notice kind renders a generic notice and an unknown item type is skipped", async () => {
     const n = msgs.en.inbox.orgNotice;
     await renderInbox({
