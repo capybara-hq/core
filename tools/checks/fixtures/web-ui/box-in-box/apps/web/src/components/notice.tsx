@@ -1,5 +1,5 @@
-import { Callout } from "@capybara-hq/design";
+import { ObjectList } from "@capybara-hq/design";
 
 export function Notice() {
-  return <Callout tone="warn">没有模型。</Callout>;
+  return <ObjectList label="模型" />;
 }
