@@ -143,6 +143,14 @@ export interface CreateConnectorInput {
    * (`catalog.custom_disabled`).
    */
   template?: ConnectorTemplateRef | undefined;
+  /**
+   * The name and slug are chosen under the org lock (one more connector from a template, ruling
+   * P4-T6-10; not accepted over HTTP; `slug` must be absent): the first free of `name` (else
+   * `display`) with its derived slug, then `<display> 2` with `_2`, `3` with `_3`, … (a given
+   * `name` is kept, only its slug suffixed), among the org's live connectors and the installed
+   * plugins' names. Chosen after the outbound calls, so a race never repeats them.
+   */
+  slugDefault?: { display: string; name?: string | undefined } | undefined;
 }
 
 /** 连接器来自哪个目录条目的哪个模板。 */
@@ -384,6 +392,42 @@ export class ConnectorsService {
     return row !== undefined;
   }
 
+  /**
+   * The first free default name and slug ({@link CreateConnectorInput.slugDefault}), read in the
+   * caller's transaction under the org lock.
+   */
+  private async freeName(
+    t: KernelSchemaDb,
+    orgId: string,
+    d: { display: string; name?: string | undefined },
+  ): Promise<{ name: string; slug: string }> {
+    const base = deriveSlug(d.name ?? d.display) ?? deriveSlug(d.display);
+    if (base === null) {
+      throw fail("slug", `Cannot derive a slug from the name; provide one. ${SLUG_RULE}`);
+    }
+    const taken = new Set(
+      (
+        await t
+          .selectFrom("connectors")
+          .select("slug")
+          .where("org_id", "=", orgId)
+          .where("deleted_at", "is", null)
+          .execute()
+      ).map((r) => r.slug),
+    );
+    for (const m of this.extensions.manifests()) taken.add(m.name);
+    for (let n = 1; ; n++) {
+      const suffix = n === 1 ? "" : `_${n}`;
+      const slug = `${base.slice(0, 24 - suffix.length).replace(/_+$/, "")}${suffix}`;
+      if (!isValidSlug(slug) || taken.has(slug)) continue;
+      const nth = ` ${n}`;
+      const name =
+        d.name ??
+        (n === 1 ? d.display : `${[...d.display].slice(0, 80 - nth.length).join("")}${nth}`);
+      return { name: [...name].slice(0, 80).join(""), slug };
+    }
+  }
+
   private resolveSlug(input: CreateConnectorInput): string {
     if (input.slug !== undefined) {
       if (!isValidSlug(input.slug)) throw fail("slug", SLUG_RULE);
@@ -518,7 +562,8 @@ export class ConnectorsService {
   ): { slug: string; endpoint: unknown; owner?: CredentialOwner; secret?: StaticSecret } {
     const slug = this.resolveSlug(input);
     const endpoint = this.parseEndpoint(input.connector, input.endpoint);
-    if (this.extensions.manifests().some((m) => m.name === slug)) {
+    // a defaulted slug skips plugin names itself (`freeName`)
+    if (!input.slugDefault && this.extensions.manifests().some((m) => m.name === slug)) {
       throw fail("slug", `Slug "${slug}" is the name of an installed plugin; choose another`);
     }
     const auth = input.auth;
@@ -585,17 +630,16 @@ export class ConnectorsService {
     const id = randomUUID();
     const auth = input.auth;
     const publicUrl = this.config.get().http.publicUrl;
-    // 先做不需要连接的检查：冲突的 slug 不该触发一次外连
-    if (await this.slugTaken(this.db, orgId, slug)) {
+    // 先做不需要连接的检查：冲突的 slug 不该触发一次外连 (a defaulted slug is chosen under the lock)
+    if (!input.slugDefault && (await this.slugTaken(this.db, orgId, slug))) {
       throw new ApiError("connector.slug_taken", "Connector slug is already taken");
     }
     const oauth = isOAuth(auth)
       ? await this.prepareOAuth(auth, endpoint, input.credential, publicUrl as string)
       : undefined;
-    let rows: SnapshotRow[] = [];
-    let issues: ToolIssue[] = [];
+    let listed: { specs: unknown; resources: boolean } | undefined;
     if (auth.type !== "oauth_code") {
-      const listed = await this.drift.listTools(
+      listed = await this.drift.listTools(
         input.connector,
         endpoint,
         async () => {
@@ -608,7 +652,6 @@ export class ConnectorsService {
         },
         { orgId, slug },
       );
-      ({ rows, issues } = snapshot(slug, listed.specs, listed.resources));
     }
 
     return this.createIn(orgId, actorAccountId, input, actorTokenId, {
@@ -618,8 +661,7 @@ export class ConnectorsService {
       owner,
       secret,
       oauth,
-      rows,
-      issues,
+      listed,
     });
   }
 
@@ -637,11 +679,11 @@ export class ConnectorsService {
       owner: CredentialOwner | undefined;
       secret: StaticSecret | undefined;
       oauth: OAuthSetup | undefined;
-      rows: SnapshotRow[];
-      issues: ToolIssue[];
+      /** The tool listing (none for an authorization-code connector). */
+      listed: { specs: unknown; resources: boolean } | undefined;
     },
   ): Promise<{ connector: ConnectorDetail; issues: ToolIssue[] }> {
-    const { id, slug, endpoint, owner, secret, oauth, rows, issues } = c;
+    const { id, endpoint, owner, secret, oauth } = c;
     const auth = input.auth;
     const t = this.db;
     await this.orgLock.lockAndAuthorize(orgId, actorAccountId, "connectors.manage");
@@ -653,9 +695,17 @@ export class ConnectorsService {
         input.template.approvedBy ?? input.template.itemId,
       );
     } else await assertCustomAllowed(t, "customConnectors");
-    if (await this.slugTaken(t, orgId, slug)) {
+    let slug = c.slug;
+    let name = input.name;
+    if (input.slugDefault) ({ slug, name } = await this.freeName(t, orgId, input.slugDefault));
+    else if (await this.slugTaken(t, orgId, slug)) {
       throw new ApiError("connector.slug_taken", "Connector slug is already taken");
     }
+    // the snapshot's keys name the final slug
+    const { rows, issues } =
+      c.listed === undefined
+        ? { rows: [] as SnapshotRow[], issues: [] as ToolIssue[] }
+        : snapshot(slug, c.listed.specs, c.listed.resources);
     // A connector made from a platform connector template stays linked to it (ruling E2)
     const tpl = input.template;
     const platformTemplate =
@@ -692,7 +742,7 @@ export class ConnectorsService {
         id,
         org_id: orgId,
         slug,
-        name: input.name,
+        name,
         connector: input.connector,
         endpoint: JSON.stringify(endpoint),
         auth: JSON.stringify(auth),

@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { type AgentTemplate, connectorToolKey } from "@capybara-hq/plugin-sdk";
+import { startFakeMcpServer, startFakeOAuthServer } from "@capybara-hq/testing";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { AgentView } from "../../src/agents/agents.service.js";
 import { PendingConnectorRequests } from "../../src/agents/pending-connector-requests.js";
@@ -28,7 +29,7 @@ let env: OrgEnv;
 let otherOrg: string;
 
 beforeAll(async () => {
-  env = await startOrgEnv();
+  env = await startOrgEnv({ tools: { timeoutMs: 5_000, oauthAllowInsecureLoopback: true } });
   otherOrg = await createOrg(env.root, "other-org");
 }, 240_000);
 
@@ -873,6 +874,57 @@ describe("one more connector from a connector template (P4-7)", { timeout: 120_0
     }
     const afterOff = await create(env.boss, platformGh, { config: tokenInput() });
     expect(errCode(afterOff)).toBe("component.off");
+  });
+
+  it("two concurrent creates from an OAuth template register one client each, distinct slugs", async () => {
+    const as = await startFakeOAuthServer();
+    const mcp = await startFakeMcpServer({
+      verifyBearer: (t) => as.verify(t),
+      protectedResource: { authorizationServers: [as.issuer], advertise: "header" },
+      tools: [
+        {
+          name: "whoami",
+          description: "Echo the caller",
+          annotations: { readOnlyHint: true },
+          handler: () => ({ content: [{ type: "text", text: "you" }] }),
+        },
+      ],
+    });
+    try {
+      const item = await seedPlugin(env, {
+        name: "crm",
+        skills: [],
+        templates: {
+          gh: {
+            auth: { type: "oauth_code", ownership: "personal", discovery: "mcp", client: "dcr" },
+          },
+        },
+      });
+      const platformGh = await platformIdOf(item);
+      const endpoint = { url: mcp.url };
+      const installed = await install(env.boss, env, item, { connectors: { gh: { endpoint } } });
+      expect(installed.statusCode, installed.body).toBe(201);
+      expect(as.registrations).toHaveLength(1);
+      const [a, b] = await Promise.all([
+        create(env.boss, platformGh, { config: { endpoint } }),
+        create(env.boss, platformGh, { config: { endpoint } }),
+      ]);
+      expect(a.statusCode, a.body).toBe(201);
+      expect(b.statusCode, b.body).toBe(201);
+      // the slug is chosen under the org lock after the registration: no retry registers again
+      expect(as.registrations).toHaveLength(3);
+      expect([a.json().connector.slug, b.json().connector.slug].sort()).toEqual([
+        "github_2",
+        "github_3",
+      ]);
+      expect([a.json().connector.name, b.json().connector.name].sort()).toEqual([
+        "GitHub 2",
+        "GitHub 3",
+      ]);
+    } finally {
+      await mcp.stop();
+      await as.stop();
+    }
   });
 
   it("with customConnectors = deny the request flow still ends in a bound template connector", async () => {
