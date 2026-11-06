@@ -17,6 +17,7 @@ import { blockingKeys, diffPermissions } from "../extensions/permission-set.js";
 import { ExtensionRegistry } from "../extensions/registry.js";
 import { audit } from "../identity/audit.js";
 import { SuperAdminLock } from "../identity/super-admin.js";
+import { notifySharedUpdate } from "../inbox/org-notices.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { afterCommit } from "../infra/database/after-commit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
@@ -121,7 +122,13 @@ export interface PlatformUpdatePreview {
    * `needsApproval`: the new version asks for permissions the approved snapshot does not cover,
    * so it waits as `pending_approval` until the super admin approves them.
    */
-  extension: { from: string | null; to: string; orgs: string[]; needsApproval: boolean } | null;
+  extension: {
+    from: string | null;
+    /** null: the target drops the extension (an owner update only, ruling P3-12'). */
+    to: string | null;
+    orgs: string[];
+    needsApproval: boolean;
+  } | null;
   connectorOrgs: PlatformUpdateConnectorOrg[];
   /** Confirm with it; recomputed under the item lock at the confirm. */
   diffHash: string;
@@ -142,11 +149,25 @@ interface VersionRow extends CatalogVersionFiles {
   extension_sha256: string | null;
 }
 
+/**
+ * An update's target read from somewhere other than `catalog_item_versions`: an org upload's
+ * staging (pre-flight F3), so the org's review can show the update before the version is imported.
+ * Its files are at `object_prefix`, where the confirm's version row will point too.
+ */
+export type UpdateTarget = VersionRow;
+
+/** The owner org an update acts for (ruling P3-12): its admin instead of the super admin. */
+interface OwnerMode {
+  orgId: string;
+}
+
 /** The deployment's extension step of an update. */
 interface ExtensionStep {
   from: string | null;
-  to: string;
-  sha256: string;
+  /** null: the target drops the extension; the update disables and uninstalls it (P3-12'). */
+  to: string | null;
+  /** The package to install; null for a removal. */
+  sha256: string | null;
   /** The install record's package before the update (null: none, the update installs it). */
   previous: string | null;
   needsApproval: boolean;
@@ -311,14 +332,62 @@ export class PlatformPluginUpdater {
     return previewOf(await this.diff(itemId, version));
   }
 
-  /** Runs an update confirmed with the preview's `diffHash` (see the class comment). */
-  async update(
+  /**
+   * The update preview of a new version of an org's own plugin (ruling P3-12): the item must be
+   * owned by `orgId` (else 404, as for any item the org cannot see), the target carries no
+   * extension (an extension-bearing version waits for the super admin, plan Task 6), and a target
+   * dropping the deployment's extension is allowed (P3-12'). `staged` is the target read from the
+   * org's staging (pre-flight F3); without it the imported version `version` is read. The route
+   * authorizes the org admin; writes nothing.
+   */
+  async previewForOwner(
+    orgId: string,
+    itemId: string,
+    version: string,
+    staged?: UpdateTarget,
+  ): Promise<PlatformUpdatePreview> {
+    if (staged !== undefined && staged.version !== version) {
+      throw new Error("the staged target is another version");
+    }
+    return previewOf(
+      await this.diff(itemId, version, {
+        owner: { orgId },
+        ...(staged !== undefined && { target: staged }),
+      }),
+    );
+  }
+
+  /**
+   * Applies a new version of an org's own plugin for its owner (ruling P3-12, see
+   * {@link previewForOwner}): the actor must be an admin of the owner org (`catalog.upload`,
+   * re-checked under the org row lock in the transaction), then the platform update as
+   * {@link update} does, also removing the extension when the target drops it. In the update's
+   * transaction the orgs using the shared plugin are told (`shared_item_updated`, one notice per
+   * plugin) and a pending version is cleared (pre-flight F7: the new version replaces it).
+   */
+  async updateAsOwner(
+    orgId: string,
     actor: string,
     itemId: string,
-    input: { version: string; diffHash: string },
+    version: string,
+    diffHash: string,
     opts: { actorTokenId?: string } = {},
   ): Promise<PlatformUpdateResult> {
     if (!UUID_RE.test(itemId)) throw itemNotFound();
+    await this.authorizeOwner(orgId, actor);
+    return this.locked(itemId, () =>
+      this.updateLocked(actor, itemId, { version, diffHash }, opts, { orgId }),
+    );
+  }
+
+  /** The actor is an admin of the owner org (a read of the membership under the org row lock). */
+  @Transactional()
+  private async authorizeOwner(orgId: string, actor: string): Promise<void> {
+    await this.orgLock.lockAndAuthorize(orgId, actor, "catalog.upload");
+  }
+
+  /** Runs `f` holding the item's update lock (another update -> `plugin.install_in_progress`). */
+  private async locked<T>(itemId: string, f: () => Promise<T>): Promise<T> {
     const handle = await this.locks.acquire(`plugin-update-${itemId}`, {
       ttlMs: UPDATE_LOCK_TTL_MS,
     });
@@ -329,10 +398,21 @@ export class PlatformPluginUpdater {
       );
     }
     try {
-      return await this.updateLocked(actor, itemId, input, opts);
+      return await f();
     } finally {
       await handle.release();
     }
+  }
+
+  /** Runs an update confirmed with the preview's `diffHash` (see the class comment). */
+  async update(
+    actor: string,
+    itemId: string,
+    input: { version: string; diffHash: string },
+    opts: { actorTokenId?: string } = {},
+  ): Promise<PlatformUpdateResult> {
+    if (!UUID_RE.test(itemId)) throw itemNotFound();
+    return this.locked(itemId, () => this.updateLocked(actor, itemId, input, opts));
   }
 
   private async updateLocked(
@@ -340,23 +420,40 @@ export class PlatformPluginUpdater {
     itemId: string,
     input: { version: string; diffHash: string },
     opts: { actorTokenId?: string },
+    owner?: OwnerMode,
   ): Promise<PlatformUpdateResult> {
     // Storage is read and written here, before any transaction (see the class comment)
-    const checked = await this.diff(itemId, input.version);
+    const checked = await this.diff(itemId, input.version, owner && { owner });
     if (checked.diffHash !== input.diffHash) throw stale();
     const prepared = await this.platform.prepareSync(itemId, input.version);
     const ext = checked.extension;
+    // The extension admin re-checks a super admin for an account: an owner update was authorized
+    // as the owner org's admin instead, so the extension steps run for the kernel (no account)
+    const opsActor = owner === undefined ? actor : null;
     let step: "extension" | "components" = "extension";
     let extensionMoved = false;
     let enabledHere = false;
+    /** A removal: the extension was enabled before it (put back enabled on failure). */
+    let removedEnabled = false;
     try {
-      if (ext) {
-        await this.ops.install(checked.name, ext.sha256, actor, opts.actorTokenId, {
+      if (ext?.sha256 === null) {
+        // The target drops the extension (P3-12'): disabled (drained), then uninstalled
+        const row = await this.db
+          .selectFrom("extension_installs")
+          .select("desired_state")
+          .where("name", "=", checked.name)
+          .executeTakeFirst();
+        removedEnabled = row?.desired_state === "enabled";
+        await this.ops.disable(checked.name, opsActor, opts.actorTokenId);
+        extensionMoved = true;
+        await this.ops.uninstall(checked.name, opsActor, opts.actorTokenId);
+      } else if (ext) {
+        await this.ops.install(checked.name, ext.sha256, opsActor, opts.actorTokenId, {
           catalogItemId: itemId,
         });
         extensionMoved = true;
         if (ext.previous === null) {
-          await this.ops.enable(checked.name, actor, opts.actorTokenId);
+          await this.ops.enable(checked.name, opsActor, opts.actorTokenId);
           enabledHere = true;
         }
       }
@@ -368,6 +465,7 @@ export class PlatformPluginUpdater {
         opts,
         { contents: checked.contents, extension: ext },
         prepared,
+        owner,
       );
       return {
         itemId,
@@ -380,12 +478,24 @@ export class PlatformPluginUpdater {
       let rolledBack = true;
       if (extensionMoved && ext) {
         try {
-          if (ext.previous !== null) {
-            await this.ops.install(checked.name, ext.previous, actor, opts.actorTokenId);
+          if (ext.sha256 === null) {
+            // Removed by this update: the previous package reinstalled (as it was)
+            await this.ops.install(
+              checked.name,
+              ext.previous as string,
+              opsActor,
+              opts.actorTokenId,
+              {
+                catalogItemId: itemId,
+              },
+            );
+            if (removedEnabled) await this.ops.enable(checked.name, opsActor, opts.actorTokenId);
+          } else if (ext.previous !== null) {
+            await this.ops.install(checked.name, ext.previous, opsActor, opts.actorTokenId);
           } else {
             // Installed by this update: an uninstall needs it disabled first
-            if (enabledHere) await this.ops.disable(checked.name, actor, opts.actorTokenId);
-            await this.ops.uninstall(checked.name, actor, opts.actorTokenId);
+            if (enabledHere) await this.ops.disable(checked.name, opsActor, opts.actorTokenId);
+            await this.ops.uninstall(checked.name, opsActor, opts.actorTokenId);
           }
         } catch (u) {
           rolledBack = false;
@@ -448,8 +558,10 @@ export class PlatformPluginUpdater {
     opts: { actorTokenId?: string },
     pre: Pre,
     prepared: PreparedSync,
+    owner?: OwnerMode,
   ): Promise<UpdateDiff> {
-    await this.adminLock.lockAndAuthorize(actor);
+    if (owner === undefined) await this.adminLock.lockAndAuthorize(actor);
+    else await this.orgLock.lockAndAuthorize(owner.orgId, actor, "catalog.upload");
     const named = await this.db
       .selectFrom("catalog_items")
       .select("name")
@@ -457,7 +569,7 @@ export class PlatformPluginUpdater {
       .executeTakeFirst();
     if (!named) throw itemNotFound();
     await this.itemLock.lock(named.name);
-    const diff = await this.diff(itemId, input.version, { pre });
+    const diff = await this.diff(itemId, input.version, { pre, ...(owner && { owner }) });
     if (diff.diffHash !== input.diffHash) throw stale();
     const t = this.db;
 
@@ -537,6 +649,25 @@ export class PlatformPluginUpdater {
       .where("item_id", "=", itemId)
       .where("status", "in", ["installing", "installed", "upgrading"])
       .execute();
+    if (owner !== undefined) {
+      // The new version replaces a version waiting for the super admin (pre-flight F7): their
+      // confirmation of it is then refused (409 extension.not_pending)
+      await t
+        .updateTable("catalog_items")
+        .set({ pending_version: null, pending_by: null, pending_at: null })
+        .where("id", "=", itemId)
+        .where("pending_version", "is not", null)
+        .execute();
+    }
+    // The orgs using a shared org-owned plugin are told, one notice per plugin (a platform-owned
+    // plugin tells nobody); a plugin never synced before has no version to come from
+    if (diff.from !== null) {
+      await notifySharedUpdate(
+        t,
+        { kind: "plugin", id: itemId },
+        { name: diff.name, from: diff.from, to: diff.to.version },
+      );
+    }
     await audit(t, {
       actorAccountId: actor,
       ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
@@ -546,6 +677,7 @@ export class PlatformPluginUpdater {
         name: diff.name,
         from: diff.from,
         to: diff.to.version,
+        ...(owner !== undefined && { ownerOrgId: owner.orgId }),
         components: diff.components.map((c) => ({
           kind: c.kind,
           name: c.name,
@@ -614,16 +746,34 @@ export class PlatformPluginUpdater {
       : prepared;
   }
 
-  /** Computes an update (see the class comment). */
-  private async diff(itemId: string, version: string, o: { pre?: Pre } = {}): Promise<UpdateDiff> {
+  /**
+   * Computes an update (see the class comment). `target`: the target read from an org's staging
+   * instead of `catalog_item_versions` (pre-flight F3). `owner`: an owner update (P3-12): the item
+   * must be the org's, an extension-bearing target is refused, and a target dropping the
+   * extension removes it.
+   */
+  private async diff(
+    itemId: string,
+    version: string,
+    o: { pre?: Pre; target?: UpdateTarget; owner?: OwnerMode } = {},
+  ): Promise<UpdateDiff> {
     const db = this.db;
     if (!UUID_RE.test(itemId)) throw itemNotFound();
     const item = await db
       .selectFrom("catalog_items")
-      .select(["id", "name", "disabled", "builtin", "deleted_at", "platform_synced_version"])
+      .select([
+        "id",
+        "name",
+        "disabled",
+        "builtin",
+        "deleted_at",
+        "platform_synced_version",
+        "owner_org_id",
+      ])
       .where("id", "=", itemId)
       .executeTakeFirst();
     if (!item || item.deleted_at !== null) throw itemNotFound();
+    if (o.owner !== undefined && item.owner_org_id !== o.owner.orgId) throw itemNotFound();
     if (item.disabled) {
       throw new ApiError(
         "catalog.item_disabled",
@@ -636,9 +786,16 @@ export class PlatformPluginUpdater {
       .select(["version", "manifest", "object_prefix", "files", "extension_sha256"])
       .where("item_id", "=", itemId)
       .execute()) as VersionRow[];
-    const to = versions.find((v) => v.version === version);
+    const to = o.target ?? versions.find((v) => v.version === version);
     if (!to)
       throw new ApiError("catalog.item_not_found", `Version ${version} of this item not found`);
+    if (o.owner !== undefined && to.manifest.extension) {
+      // An org's version with an extension waits for the super admin's confirmation (plan Task 6)
+      throw new ApiError(
+        "plugin.extension_upload_pending",
+        `Version ${to.version} of plugin ${item.name} has an extension; it applies once a super admin confirms it`,
+      );
+    }
     const from = item.platform_synced_version;
     const fromRow = versions.find((v) => v.version === from);
     if (from === to.version) {
@@ -649,17 +806,18 @@ export class PlatformPluginUpdater {
       ]);
     }
 
-    const target = await this.extensionTarget(name, fromRow, to);
+    const target = await this.extensionTarget(name, fromRow, to, o.owner !== undefined);
     let extension: ExtensionStep | null;
     if (o.pre) {
-      // The confirm's transaction: the extension this update moved is expected in place
+      // The confirm's transaction: the extension this update moved is expected in place (a
+      // removed one gone)
       if (o.pre.extension) {
         const row = await db
           .selectFrom("extension_installs")
           .select("sha256")
           .where("name", "=", name)
           .executeTakeFirst();
-        if (row?.sha256 !== o.pre.extension.sha256) throw stale();
+        if ((row?.sha256 ?? null) !== o.pre.extension.sha256) throw stale();
         extension = o.pre.extension;
       } else {
         if (target !== null) throw stale();
@@ -668,7 +826,7 @@ export class PlatformPluginUpdater {
     } else {
       extension = target && {
         ...target,
-        needsApproval: await this.needsApproval(name, target.sha256),
+        needsApproval: target.sha256 !== null && (await this.needsApproval(name, target.sha256)),
         orgs: [],
       };
     }
@@ -1057,13 +1215,15 @@ export class PlatformPluginUpdater {
 
   /**
    * The deployment's extension step: none when the target carries the extension the deployment
-   * runs; a version without the extension the deployment runs for the plugin, or a move of a
-   * config-declared extension, is refused.
+   * runs; a version without the extension the deployment runs for the plugin is refused, except
+   * for an owner update (`allowRemove`, ruling P3-12': removing code runs none), which removes an
+   * installed one; a move of a config-declared extension is refused.
    */
   private async extensionTarget(
     name: string,
     from: VersionRow | undefined,
     to: VersionRow,
+    allowRemove = false,
   ): Promise<Omit<ExtensionStep, "needsApproval" | "orgs"> | null> {
     const want = to.manifest.extension;
     const row = await this.db
@@ -1076,6 +1236,9 @@ export class PlatformPluginUpdater {
     const declared = this.registry.declared().get(name) === "config";
     const loaded = declared ? this.registry.manifests().find((m) => m.name === name) : undefined;
     if (!want) {
+      if (allowRemove && from?.manifest.extension && row && !declared) {
+        return { from: row.version, to: null, sha256: null, previous: row.sha256 };
+      }
       if (from?.manifest.extension && (row || declared)) {
         throw targetInvalid(
           `Version ${to.version} of plugin ${name} has no extension, but the deployment runs it; uninstall the extension first`,

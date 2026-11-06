@@ -230,6 +230,41 @@ async function itemVersions(db: KernelSchemaDb, itemId: string) {
     .execute();
 }
 
+/**
+ * An org's own version imported but not applied (pre-flight F4, ruling P3-12): the live item named
+ * `name` owned by `ownerOrgId` (same package) has a version of the release of `p.version` with the
+ * same content digest and no extension, other than the platform's version. Uploading it again
+ * retries its update instead of `catalog.version_exists`. undefined otherwise.
+ */
+export async function unappliedOwnVersion(
+  db: KernelSchemaDb,
+  name: string,
+  ownerOrgId: string,
+  p: Pick<ImportIdentity, "packageName" | "version" | "contentDigest">,
+): Promise<{ itemId: string; version: string } | undefined> {
+  const item = await db
+    .selectFrom("catalog_items")
+    .select(["id", "package_name", "platform_synced_version"])
+    .where("name", "=", name)
+    .where("deleted_at", "is", null)
+    .where("owner_org_id", "=", ownerOrgId)
+    .executeTakeFirst();
+  if (!item || item.package_name !== p.packageName) return undefined;
+  const rows = await db
+    .selectFrom("catalog_item_versions")
+    .select(["version", "content_digest", "extension_sha256"])
+    .where("item_id", "=", item.id)
+    .where("content_digest", "=", p.contentDigest)
+    .execute();
+  const same = rows.find(
+    (v) =>
+      sameRelease(v.version, p.version) &&
+      v.extension_sha256 === null &&
+      v.version !== item.platform_synced_version,
+  );
+  return same && { itemId: item.id, version: same.version };
+}
+
 /** What is being imported, as far as the version conflict rules need it. */
 export interface ImportIdentity {
   packageName: string | null;

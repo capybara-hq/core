@@ -224,7 +224,7 @@ export function PlatformUpdateDialog({
                 <Text variant="prose">
                   {preview.extension.from === null
                     ? t("extensionNew", {
-                        to: versionLabel(preview.extension.to),
+                        to: optVersion(preview.extension.to),
                         orgs:
                           preview.extension.orgs.length === 0
                             ? t("extensionNoOrgs")
@@ -232,7 +232,7 @@ export function PlatformUpdateDialog({
                       })
                     : t("extension", {
                         from: versionLabel(preview.extension.from),
-                        to: versionLabel(preview.extension.to),
+                        to: optVersion(preview.extension.to),
                         orgs:
                           preview.extension.orgs.length === 0
                             ? t("extensionNoOrgs")

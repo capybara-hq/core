@@ -83,6 +83,7 @@ import {
   precheckCatalogImport,
   putCatalogFiles,
   templateProblems,
+  unappliedOwnVersion,
   writeCatalogVersion,
 } from "./catalog-items.js";
 import {
@@ -415,6 +416,33 @@ interface StagedPlugin {
   translation?: TranslationReport;
   licenseText?: string;
   licenseTruncated?: true;
+  /**
+   * An org's own version already imported but not applied (pre-flight F4): the confirm writes no
+   * version (the caller retries the update); no files are staged.
+   */
+  retry?: true;
+}
+
+/** What an org's staged upload targets (see {@link PluginImport.stagedTarget}). */
+export interface StagedTarget {
+  itemId: string;
+  version: string;
+  /** The review's own hash (an org's review of an update shows a combined one, P3-12). */
+  reviewHash: string;
+  /** The review has an extension. */
+  extension: boolean;
+  /** The live item exists already (a new version), owned by the staging's org. */
+  existing: boolean;
+  /** The version is imported already (pre-flight F4). */
+  retry: boolean;
+  /** The target as the platform updater reads it (the staged manifest and files). */
+  target: {
+    version: string;
+    manifest: PluginManifest;
+    object_prefix: string | null;
+    files: { path: string; size: number; sha256: string }[];
+    extension_sha256: string | null;
+  };
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -734,14 +762,26 @@ export class PluginImport {
       await assertNameNotReserved(this.db, m.name);
       await assertCustomContent(this.db, content);
     }
-    const { existing, version } = await precheckCatalogImport(this.db, m.name, {
-      packageName,
-      version: m.version,
-      contentDigest: pkg.contentDigest,
-      ...(source.integrity !== undefined && { integrity: source.integrity }),
-      ...(source.detail !== undefined && { detail: source.detail }),
-      ...(source.marketplaceId !== undefined && { marketplaceId: source.marketplaceId }),
-    });
+    // An org's own version imported but not applied: its update is retried (pre-flight F4)
+    const retry =
+      owner !== undefined && !m.extension
+        ? await unappliedOwnVersion(this.db, m.name, owner.orgId, {
+            packageName,
+            version: m.version,
+            contentDigest: pkg.contentDigest,
+          })
+        : undefined;
+    const { existing, version } =
+      retry !== undefined
+        ? { existing: { id: retry.itemId }, version: retry.version }
+        : await precheckCatalogImport(this.db, m.name, {
+            packageName,
+            version: m.version,
+            contentDigest: pkg.contentDigest,
+            ...(source.integrity !== undefined && { integrity: source.integrity }),
+            ...(source.detail !== undefined && { detail: source.detail }),
+            ...(source.marketplaceId !== undefined && { marketplaceId: source.marketplaceId }),
+          });
     // The catalog name space is the extension name space: a declarative plugin cannot take a
     // config-declared or another package's extension name either
     this.assertNotDeclared(m.name);
@@ -840,7 +880,7 @@ export class PluginImport {
       );
     }
     let objectPrefix: string | null = null;
-    if (content.files.length > 0) {
+    if (content.files.length > 0 && retry === undefined) {
       objectPrefix = catalogObjectPrefix(itemId, version, stagingId);
       await putCatalogFiles(this.files, objectPrefix, content.files);
     }
@@ -866,6 +906,7 @@ export class PluginImport {
       ...(translation !== undefined && { translation }),
       ...(license.text !== undefined && { licenseText: license.text }),
       ...(license.truncated && { licenseTruncated: true as const }),
+      ...(retry !== undefined && { retry: true as const }),
     };
     await this.writeStaging(actor, stagingId, review, staged, objectPrefix, src, opts, owner);
     return { stagingId, review, permissionKeys: keys, permissionsMismatch: mismatch };
@@ -977,6 +1018,71 @@ export class PluginImport {
       review: row.review as PluginReview,
       ...(mismatch !== undefined && mismatch !== null && { permissionsMismatch: mismatch }),
     };
+  }
+
+  /**
+   * What an org's staged upload targets (P3-12, pre-flight F3): its item, version and review hash,
+   * whether the item exists (a new version of the org's own plugin) or the version is imported
+   * already (F4), and the target as the platform updater reads it: the staged manifest and files,
+   * or the imported version's for a retry. Another org's staging -> 404 `plugin.staging_not_found`.
+   */
+  async stagedTarget(stagingId: string, owner: ImportOwner): Promise<StagedTarget> {
+    if (!UUID_RE.test(stagingId)) throw notFound();
+    const row = await this.db
+      .selectFrom("plugin_import_staging")
+      .select(["review", "manifest", "object_prefix"])
+      .where("id", "=", stagingId)
+      .where("expires_at", ">", sql<Date>`now()`)
+      .where(ownStaging(owner))
+      .executeTakeFirst();
+    if (!row) throw notFound();
+    const review = row.review as PluginReview;
+    const staged = row.manifest as StagedPlugin;
+    const item = await this.db
+      .selectFrom("catalog_items")
+      .select("id")
+      .where("id", "=", staged.itemId)
+      .where("deleted_at", "is", null)
+      .where("owner_org_id", "=", owner.orgId)
+      .executeTakeFirst();
+    const imported =
+      staged.retry === true
+        ? await this.db
+            .selectFrom("catalog_item_versions")
+            .select(["version", "manifest", "object_prefix", "files", "extension_sha256"])
+            .where("item_id", "=", staged.itemId)
+            .where("version", "=", staged.version)
+            .executeTakeFirst()
+        : undefined;
+    return {
+      itemId: staged.itemId,
+      version: staged.version,
+      reviewHash: review.reviewHash,
+      extension: review.extension !== undefined,
+      existing: item !== undefined,
+      retry: staged.retry === true,
+      target:
+        imported !== undefined
+          ? {
+              version: imported.version,
+              manifest: imported.manifest as PluginManifest,
+              object_prefix: imported.object_prefix,
+              files: imported.files as StagedTarget["target"]["files"],
+              extension_sha256: imported.extension_sha256,
+            }
+          : {
+              version: staged.version,
+              manifest: staged.manifest,
+              object_prefix: row.object_prefix,
+              files: staged.files,
+              extension_sha256: review.extension?.sha256 ?? null,
+            },
+    };
+  }
+
+  /** The catalog item's view (as a confirm returns it). */
+  async view(itemId: string): Promise<CatalogItemView> {
+    return this.itemView(itemId);
   }
 
   /**
@@ -1210,6 +1316,22 @@ export class PluginImport {
                 .execute()
             ).map((r) => r.org_id),
           };
+    if (staged.retry === true) {
+      // An org's own version imported already (pre-flight F4): nothing to write, the caller
+      // retries its update; it must still be there as reviewed
+      const v =
+        existing === undefined
+          ? undefined
+          : await t
+              .selectFrom("catalog_item_versions")
+              .select("version")
+              .where("item_id", "=", existing.id)
+              .where("version", "=", staged.version)
+              .where("content_digest", "=", staged.contentDigest)
+              .executeTakeFirst();
+      if (existing === undefined || existing.id !== staged.itemId || v === undefined) throw stale();
+      return { itemId: existing.id, created: false, now, previous };
+    }
     const { id: itemId, created } = await writeCatalogVersion(t, {
       actor,
       ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),

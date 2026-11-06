@@ -867,8 +867,16 @@ export interface PlatformUpdatePreview {
   from: string | null;
   to: string;
   components: PlatformUpdateComponent[];
-  /** The deployment's extension moves (one version for every org using it); null: unchanged. */
-  extension: { from: string | null; to: string; orgs: string[]; needsApproval: boolean } | null;
+  /**
+   * The deployment's extension moves (one version for every org using it); null: unchanged. `to`
+   * null: the version drops the extension (an owner update only).
+   */
+  extension: {
+    from: string | null;
+    to: string | null;
+    orgs: string[];
+    needsApproval: boolean;
+  } | null;
   connectorOrgs: PlatformUpdateConnectorOrg[];
   /** Confirm with it; 409 `plugin.upgrade_stale` once what the update does changed. */
   diffHash: string;
