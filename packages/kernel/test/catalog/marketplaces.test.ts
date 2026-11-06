@@ -886,6 +886,61 @@ describe("从清单引入", () => {
     await nothingImported();
   });
 
+  it("a deprecated version: shown with its reason, never newer, refused at import with 409 marketplace.entry_deprecated", async () => {
+    cat.setManifest({
+      ...marketplaceManifest(),
+      plugins: [
+        entry("cat-a", pkgs["cat-a"] as Uint8Array),
+        entry(
+          "cat-a",
+          pkgs["cat-a@2"] as Uint8Array,
+          { deprecated: { reason: "broken" } },
+          "2.0.0",
+        ),
+        entry("cat-b", pkgs["cat-a"] as Uint8Array, { deprecated: true }),
+      ],
+    });
+    expect((await refresh(admin, id)).json().lastStatus).toBe("ok");
+    const refused = await importEntry(admin, id, "cat-a", "2.0.0");
+    expect(refused.statusCode, refused.body).toBe(409);
+    expect(refused.json().error.code).toBe("marketplace.entry_deprecated");
+    expect(refused.json().error.message).toContain("broken");
+    // without a version: the newest version that is not deprecated
+    const only = await importEntry(admin, id, "cat-b");
+    expect(only.statusCode, only.body).toBe(409);
+    expect(only.json().error.code).toBe("marketplace.entry_deprecated");
+    await nothingImported();
+    const { prepared } = await importAndConfirm(id, "cat-a");
+    expect(prepared.review.version).toBe("1.0.0");
+
+    const entries = await admin({
+      method: "GET",
+      url: `/api/v1/admin/marketplaces/entries?sourceId=${id}`,
+    });
+    expect(
+      entries
+        .json()
+        .items.map(
+          (e: { name: string; version: string; deprecated: unknown; newerAvailable: boolean }) => [
+            e.name,
+            e.version,
+            e.deprecated,
+            e.newerAvailable,
+          ],
+        ),
+    ).toEqual([
+      ["cat-a", "2.0.0", { reason: "broken" }, false],
+      ["cat-a", "1.0.0", null, false],
+      ["cat-b", "1.0.0", { reason: null }, false],
+    ]);
+    const items = await admin({ method: "GET", url: "/api/v1/admin/catalog/items" });
+    expect(items.json().items[0]).toMatchObject({
+      name: "cat-a",
+      latestMarketplaceVersion: "1.0.0",
+      newerInMarketplace: false,
+    });
+  });
+
   it("条目 / 版本 / 来源不存在 404", async () => {
     const noEntry = await importEntry(admin, id, "nope");
     expect(noEntry.statusCode).toBe(404);

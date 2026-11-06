@@ -41,6 +41,7 @@ import {
   marketplaceUrlProblem,
 } from "./marketplace-fetch.js";
 import {
+  assertEntryNotDeprecated,
   entryCompatible,
   entrySourceHost,
   HOST_VERSIONS,
@@ -335,7 +336,8 @@ export class CatalogService {
   /**
    * Prepares the import of one marketplace entry (C25 / C26, spec §5.2): `version` defaults to the
    * newest compatible version the marketplace lists for `name`; the entry must be compatible with
-   * the host (`marketplace.incompatible`); an npm source is downloaded from the configured registry
+   * the host (`marketplace.incompatible`) and not deprecated (`marketplace.entry_deprecated`, 409; the
+   * confirm does not read the marketplace again); an npm source is downloaded from the configured registry
    * and an archive source from its URL, both always verified against the marketplace's integrity
    * (`marketplace.integrity_mismatch`, nothing written). A `path` source is read from the git
    * marketplace's repository at its last refreshed commit (an http marketplace has none:
@@ -370,6 +372,7 @@ export class CatalogService {
         `${entry.name}${version !== null ? `@${version}` : ""} needs kernel >= ${entry.minKernel}; this deployment runs kernel ${HOST_VERSIONS.kernel}`,
       );
     }
+    assertEntryNotDeprecated(entry);
     const src = entry.source;
     const host = entrySourceHost(entry);
     if (host !== undefined && !hostAllowed(host, config)) {

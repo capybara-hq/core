@@ -537,6 +537,12 @@ export interface MarketplaceEntry {
   homepage: string | null;
   permissions: { keys: string[]; sensitive: string[] } | null;
   source: MarketplaceSource;
+  /**
+   * The marketplace deprecates this version (its reason, null without one): shown under 其他版本
+   * with 已废弃, never imported (the kernel refuses with `marketplace.entry_deprecated`). Older
+   * kernels leave it out.
+   */
+  deprecated?: { reason: string | null } | null;
   compatible: boolean;
   /** The kernel can import this entry (see `reason` when it cannot). */
   importable: boolean;
@@ -583,6 +589,14 @@ export function compareSemver(a: string, b: string): number | null {
   return 0;
 }
 
+/** Whether the marketplace deprecates the entry. */
+export const entryDeprecated = (e: MarketplaceEntry): boolean =>
+  e.deprecated !== undefined && e.deprecated !== null;
+
+/** A semver prerelease (`1.0.0-rc.0`); an entry without a version is not one. */
+const isPrerelease = (version: string | null): boolean =>
+  version !== null && SEMVER.exec(version)?.[4] !== undefined;
+
 /** One plugin of one marketplace: its entries, newest first; `latest` is the row's version. */
 export interface MarketplacePlugin {
   key: string;
@@ -594,8 +608,10 @@ export interface MarketplacePlugin {
 /**
  * Groups marketplace entries (one per version) into one row per (marketplace, plugin), in the order
  * the plugins first appear. Versions are ordered by semver, newest first; a version that is not
- * semver keeps its place in the kernel's order (newest first). The latest is the newest version
- * that can be imported (compatible and importable), else the newest.
+ * semver keeps its place in the kernel's order (newest first). The latest is the newest stable
+ * version that can be imported (compatible, importable, not deprecated), else the newest
+ * prerelease that can be (prereleases fold into 其他版本 while a stable one can be imported), else
+ * the newest version that is not deprecated, else the newest.
  */
 export function groupMarketplaceEntries(entries: readonly MarketplaceEntry[]): MarketplacePlugin[] {
   const groups = new Map<string, MarketplaceEntry[]>();
@@ -609,8 +625,12 @@ export function groupMarketplaceEntries(entries: readonly MarketplaceEntry[]): M
     const sorted = [...list].sort((a, b) =>
       a.version === null || b.version === null ? 0 : (compareSemver(b.version, a.version) ?? 0),
     );
+    const usable = (e: MarketplaceEntry) => e.compatible && e.importable && !entryDeprecated(e);
     const latest =
-      sorted.find((e) => e.compatible && e.importable) ?? (sorted[0] as MarketplaceEntry);
+      sorted.find((e) => usable(e) && !isPrerelease(e.version)) ??
+      sorted.find(usable) ??
+      sorted.find((e) => !entryDeprecated(e)) ??
+      (sorted[0] as MarketplaceEntry);
     return { key, latest, others: sorted.filter((e) => e !== latest) };
   });
 }

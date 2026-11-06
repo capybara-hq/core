@@ -17,7 +17,7 @@ import { OrgLock } from "../orgs/org-lock.js";
 import { roleAtLeast } from "../orgs/roles.js";
 import { CatalogService, type MarketplaceImportResult } from "./catalog.service.js";
 import { CatalogScopeService } from "./catalog-scope.service.js";
-import { loadMarketplaceEntry } from "./marketplaces.service.js";
+import { assertEntryNotDeprecated, loadMarketplaceEntry } from "./marketplaces.service.js";
 import { OrgCatalogService } from "./org-catalog.service.js";
 import { PluginImport } from "./plugin-import.js";
 import type { RequestActorOpts } from "./request-rules.js";
@@ -225,7 +225,8 @@ export class CatalogRequestsService {
    * An org admin asks for a marketplace entry to be imported (`POST /orgs/:orgId/
    * marketplace-requests`, `catalog.decide`). The deployment setting `orgMarketplaceBrowse` off ->
    * `catalog.marketplace_browse_disabled`; the marketplace or the entry / version missing ->
-   * `marketplace.not_found` / `marketplace.entry_not_found`; a live item of that name ->
+   * `marketplace.not_found` / `marketplace.entry_not_found`; a deprecated version ->
+   * `marketplace.entry_deprecated`; a live item of that name ->
    * `catalog.request_invalid` (ask for access instead) when the org can see or request that item
    * (a hidden one is not revealed: the request is accepted); a pending request for the entry ->
    * `catalog.request_pending`. Audits `catalog.requested`.
@@ -255,13 +256,14 @@ export class CatalogRequestsService {
         "Organizations cannot browse the marketplaces or request imports in this deployment",
       );
     }
-    await loadMarketplaceEntry(
+    const { entry } = await loadMarketplaceEntry(
       t,
       this.config.get(),
       input.marketplaceId,
       input.name,
       input.version,
     );
+    assertEntryNotDeprecated(entry);
     const live = await t
       .selectFrom("catalog_items")
       .select("id")

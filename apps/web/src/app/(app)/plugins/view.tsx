@@ -14,6 +14,7 @@ import { issueLines } from "../../../lib/api";
 import {
   descriptionOf,
   displayNameOf,
+  entryDeprecated,
   groupMarketplaceEntries,
   type MarketplaceEntry,
   type MarketplacePlugin,
@@ -176,7 +177,8 @@ const keyOf = (e: MarketplaceEntry) => `${e.sourceId}/${e.name}/${e.version ?? "
  * The 市场 tab (org admins, spec §5.1 rule 3): the marketplaces' plugins, one row per plugin of a
  * marketplace at its latest version, read-only; 申请引入 asks the super admin to bring the
  * latest in (approving runs the import review with this org as the scope), and the row menu's
- * 其他版本 asks for another version. A version asked for in this visit reads 已申请，等待处理 (the
+ * 其他版本 asks for another version (a deprecated one reads 已废弃 and cannot be asked for;
+ * prereleases sit there while a stable version can be asked for). A version asked for in this visit reads 已申请，等待处理 (the
  * latest) or 已申请 <version>，等待处理; a plugin the deployment has imported reads 已引入.
  */
 function Market({
@@ -219,6 +221,14 @@ function Market({
   };
   const summaryOf = (e: MarketplaceEntry) =>
     locale === "zh" && e.summary.zh !== undefined ? e.summary.zh : e.summary.en;
+  /** 已废弃 with the marketplace's reason when it gives one. */
+  const deprecatedLabel = (e: MarketplaceEntry) => {
+    const version = e.version === null ? "" : versionLabel(e.version);
+    const reason = e.deprecated?.reason ?? null;
+    return reason !== null
+      ? t("market.deprecatedReason", { version, reason })
+      : t("market.deprecated", { version });
+  };
   const stateOf = ({ latest: e, others }: MarketplacePlugin) => {
     if (asked.has(keyOf(e))) return { label: t("state.requested"), tone: "muted" as const };
     const other = others.find((o) => asked.has(keyOf(o)));
@@ -230,21 +240,30 @@ function Market({
     }
     return e.adopted !== null
       ? { label: t("market.adopted"), tone: "ok" as const }
-      : !e.compatible || !e.importable
-        ? { label: t("market.unavailable"), tone: "muted" as const }
-        : undefined;
+      : entryDeprecated(e)
+        ? { label: deprecatedLabel(e), tone: "warn" as const }
+        : !e.compatible || !e.importable
+          ? { label: t("market.unavailable"), tone: "muted" as const }
+          : undefined;
   };
   const requestable = (e: MarketplaceEntry) =>
     !asked.has(keyOf(e)) &&
     e.adopted === null &&
     e.compatible &&
     e.importable &&
+    !entryDeprecated(e) &&
     e.version !== null;
-  /** 其他版本: 申请引入 each other version that can be asked for (asked ones read 已申请). */
+  /**
+   * 其他版本: 申请引入 each other version that can be asked for (asked ones read 已申请); a
+   * deprecated version reads 已废弃 (with the reason) and cannot be asked for.
+   */
   const menuOf = ({ others }: MarketplacePlugin): MenuItem[] => {
     const items = others.flatMap((o): MenuItem[] => {
       if (o.version === null) return [];
       const version = versionLabel(o.version);
+      if (entryDeprecated(o)) {
+        return [{ label: deprecatedLabel(o), disabled: true, onSelect: () => {} }];
+      }
       if (asked.has(keyOf(o))) {
         return [
           {

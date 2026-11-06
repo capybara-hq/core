@@ -104,6 +104,7 @@ export const ERROR_CODES = {
   "marketplace.private_address": 422,
   "marketplace.redirect": 422,
   "marketplace.incompatible": 409,
+  "marketplace.entry_deprecated": 409,
   "marketplace.package_mismatch": 409,
   "marketplace.builtin": 409,
   "marketplace.git_failed": 502,

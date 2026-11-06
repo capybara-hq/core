@@ -21,6 +21,7 @@ import { issueLines } from "../../../../../lib/api";
 import {
   compareSemver,
   displayNameOf,
+  entryDeprecated,
   entryHost,
   groupMarketplaceEntries,
   importMarketplaceEntry,
@@ -61,7 +62,9 @@ const keyOf = (e: MarketplaceEntry) => `${e.sourceId}/${e.name}/${e.version ?? "
  * one action and a menu. The action 引入 <latest> (更新 when an older version is imported; when the
  * content changed, "Import the changed content") downloads, verifies and stages the plugin, then
  * opens the import review (`/admin/plugins/import?staging=<id>`); a plugin imported at the latest
- * opens its plugin. The menu's 其他版本 imports another version the same way. The
+ * opens its plugin. The menu's 其他版本 imports another version the same way; a version the
+ * marketplace deprecates reads 已废弃 (with its reason) there and is never imported, and
+ * prereleases sit there while a stable version can be imported. The
  * search sits in the page head (the 插件 head with its tabs and counts); the marketplaces become
  * tabs above the list when there is more than one. Errors such as `marketplace.integrity_mismatch` are a fail callout (with the kernel's
  * line naming the host for network and git codes); a warn callout when the entries are truncated.
@@ -190,6 +193,14 @@ function Catalog({ initial }: { initial: { sourceId: string; q: string } }) {
       : e.version === null
         ? t("import")
         : t("importVersion", { version: versionLabel(e.version) });
+  /** 已废弃 with the marketplace's reason when it gives one. */
+  const deprecatedLabel = (e: MarketplaceEntry) => {
+    const version = e.version === null ? t("noVersion") : versionLabel(e.version);
+    const reason = e.deprecated?.reason ?? null;
+    return reason !== null
+      ? t("deprecatedReason", { version, reason })
+      : t("deprecated", { version });
+  };
   /** The newest imported version of the plugin (undefined when none is imported). */
   const importedTop = (e: MarketplaceEntry) => e.adopted?.versions[0] ?? undefined;
   /**
@@ -199,11 +210,11 @@ function Catalog({ initial }: { initial: { sourceId: string; q: string } }) {
   const updatable = (e: MarketplaceEntry) => {
     const top = importedTop(e);
     if (top === undefined || e.version === null || imported(e)) return undefined;
-    if (!e.compatible || !e.importable) return undefined;
+    if (!e.compatible || !e.importable || entryDeprecated(e)) return undefined;
     return (compareSemver(top, e.version) ?? -1) < 0 ? top : undefined;
   };
   const canImport = (e: MarketplaceEntry) =>
-    e.importable && e.compatible && (!imported(e) || e.contentChanged);
+    e.importable && e.compatible && !entryDeprecated(e) && (!imported(e) || e.contentChanged);
   const viewHref = (itemId: string) => `/admin/plugins/${encodeURIComponent(itemId)}`;
   /**
    * The row's one action: 引入 the latest (更新 when an older version is imported; again when the
@@ -221,9 +232,14 @@ function Catalog({ initial }: { initial: { sourceId: string; q: string } }) {
     if (e.adopted !== null) return { label: t("view"), href: viewHref(e.adopted.itemId) };
     return undefined;
   };
-  /** One other version in 其他版本: import it, or why not (imported, incompatible, unimportable). */
+  /**
+   * One other version in 其他版本: import it, or why not (deprecated, with the reason; imported,
+   * incompatible, unimportable).
+   */
   const otherItem = (o: MarketplaceEntry): MenuItem => {
     const v = o.version === null ? t("noVersion") : versionLabel(o.version);
+    if (entryDeprecated(o))
+      return { label: deprecatedLabel(o), disabled: true, onSelect: () => {} };
     if (canImport(o)) {
       return {
         label: importLabel(o),
@@ -256,6 +272,8 @@ function Catalog({ initial }: { initial: { sourceId: string; q: string } }) {
   };
   const stateOf = (e: MarketplaceEntry) => {
     if (!e.importable) return { label: reasonOf(e), tone: "warn" as const };
+    // every version is deprecated: the row's says so
+    if (entryDeprecated(e)) return { label: deprecatedLabel(e), tone: "warn" as const };
     const top = importedTop(e);
     if (e.adopted === null) return { label: t("notAdopted"), tone: "muted" as const };
     const older = updatable(e);

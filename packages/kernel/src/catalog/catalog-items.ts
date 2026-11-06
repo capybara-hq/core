@@ -32,6 +32,7 @@ import { gitLocationIdentity } from "./git-source.js";
 import {
   entryCompatible,
   entryContentChanged,
+  entryDeprecated,
   type ImportedAs,
   sourceEffective,
 } from "./marketplaces.service.js";
@@ -519,8 +520,9 @@ export async function marketplaceLatest(
         sourceEffective(r, config) &&
         entryCompatible(r.entry as MarketplaceEntry),
     );
+    // a deprecated version is never the one to update to
     const [best] = listed
-      .filter((r) => r.version !== "")
+      .filter((r) => r.version !== "" && !entryDeprecated(r.entry as MarketplaceEntry))
       .map((r) => r.version)
       .sort(newestFirst);
     const recorded = versions.get(i.id) ?? [];

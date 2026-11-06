@@ -1208,6 +1208,7 @@ export const MARKETPLACE_LIMITS: {
     readonly nameChars: 100;
     readonly summaryChars: 280;
     readonly displayNameChars: 100;
+    readonly deprecationReasonChars: 280;
     readonly plugins: 5000;
     readonly permissionKeys: 500;
     readonly urlChars: 2000;
@@ -1218,6 +1219,9 @@ export const MARKETPLACE_MANIFEST_SCHEMA_VERSION = 1;
 
 // @public
 export interface MarketplaceEntry {
+    deprecated?: boolean | {
+        reason?: string;
+    };
     displayName?: {
         zh: string;
         en: string;
@@ -1236,6 +1240,11 @@ export interface MarketplaceEntry {
     };
     version?: string;
 }
+
+// @public
+export function marketplaceEntryDeprecation(e: MarketplaceEntry): {
+    reason: string | null;
+} | null;
 
 // @public
 export function marketplaceEntryVersion(e: MarketplaceEntry): string | null;

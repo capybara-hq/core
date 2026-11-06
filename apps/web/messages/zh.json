@@ -385,6 +385,7 @@
       "private_address": "下载被拒绝：该主机解析到私有或保留地址。如需访问内部主机，请在部署配置的 marketplaces.allowPrivateHosts 中加入它。",
       "redirect": "下载被拒绝：服务器返回了重定向，重定向不会被跟随。请改用最终地址。",
       "incompatible": "这个版本与本部署的内核 / SDK 不兼容。",
+      "entry_deprecated": "这个版本已被市场标为废弃，不能引入，请选择其他版本。",
       "package_mismatch": "下载的包与市场条目不一致。",
       "builtin": "官方市场由部署配置决定，这里只能启用或停用。",
       "git_failed": "读取 git 仓库失败（服务器、分支或提交有问题），具体原因见错误信息。",
@@ -3146,7 +3147,9 @@
         "retry": "重试",
         "adoptedUpdate": "已引入 {version} · 可更新到 {latest}",
         "update": "更新",
-        "otherVersions": "其他版本"
+        "otherVersions": "其他版本",
+        "deprecated": "{version} 已废弃",
+        "deprecatedReason": "{version} 已废弃：{reason}"
       },
       "marketplaces": {
         "title": "市场源",
@@ -3718,6 +3721,8 @@
       "adopted": "已引入",
       "unavailable": "不能引入",
       "otherVersions": "其他版本",
+      "deprecated": "{version} 已废弃",
+      "deprecatedReason": "{version} 已废弃：{reason}",
       "requestVersion": "申请引入 {version}",
       "requestedVersion": "已申请 {version}，等待处理"
     },

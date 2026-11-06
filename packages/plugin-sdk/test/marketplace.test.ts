@@ -6,6 +6,7 @@ import {
   type MarketplaceEntry,
   type MarketplaceManifest,
   MarketplaceManifestSchema,
+  marketplaceEntryDeprecation,
   marketplaceEntryVersion,
   parseMarketplaceManifest,
 } from "../src/index.js";
@@ -202,6 +203,43 @@ describe("marketplaceEntryVersion", () => {
   });
 });
 
+describe("deprecated", () => {
+  const parsedEntry = (over: Record<string, unknown>) => {
+    const r = parseMarketplaceManifest(manifest([entry(over)]));
+    if ("errors" in r) throw new Error(r.errors.join("; "));
+    return r.plugins[0] as MarketplaceEntry;
+  };
+
+  it("true, false and an object with or without a reason parse and are kept", () => {
+    expect(parsedEntry({ deprecated: true }).deprecated).toBe(true);
+    expect(parsedEntry({ deprecated: false }).deprecated).toBe(false);
+    expect(parsedEntry({ deprecated: {} }).deprecated).toEqual({});
+    expect(parsedEntry({ deprecated: { reason: "Use 2.x" } }).deprecated).toEqual({
+      reason: "Use 2.x",
+    });
+    expect(parsedEntry({}).deprecated).toBeUndefined();
+  });
+
+  it("other values, an empty or an over-long reason are refused", () => {
+    expect(errorsOf(manifest([entry({ deprecated: "yes" })]))).not.toEqual([]);
+    expect(errorsOf(manifest([entry({ deprecated: { reason: "" } })]))).not.toEqual([]);
+    expect(errorsOf(manifest([entry({ deprecated: { reason: "x".repeat(281) } })]))).not.toEqual(
+      [],
+    );
+  });
+
+  it("marketplaceEntryDeprecation normalizes the forms", () => {
+    const e = (over: Record<string, unknown>) => entry(over) as unknown as MarketplaceEntry;
+    expect(marketplaceEntryDeprecation(e({}))).toBeNull();
+    expect(marketplaceEntryDeprecation(e({ deprecated: false }))).toBeNull();
+    expect(marketplaceEntryDeprecation(e({ deprecated: true }))).toEqual({ reason: null });
+    expect(marketplaceEntryDeprecation(e({ deprecated: {} }))).toEqual({ reason: null });
+    expect(marketplaceEntryDeprecation(e({ deprecated: { reason: "Use 2.x" } }))).toEqual({
+      reason: "Use 2.x",
+    });
+  });
+});
+
 describe("JSON Schema (ajv) agrees with zod", () => {
   const schema = JSON.parse(
     readFileSync(new URL("../schemas/marketplace.v1.schema.json", import.meta.url), "utf8"),
@@ -219,6 +257,10 @@ describe("JSON Schema (ajv) agrees with zod", () => {
     ["schemaVersion 2", manifest([], { schemaVersion: 2 })],
     ["bad name", manifest([entry({ name: "Bad" })])],
     ["displayName", manifest([entry({ displayName: { zh: "超能力", en: "Superpowers" } })])],
+    ["deprecated true", manifest([entry({ deprecated: true })])],
+    ["deprecated reason", manifest([entry({ deprecated: { reason: "Use 2.x" } })])],
+    ["deprecated empty reason", manifest([entry({ deprecated: { reason: "" } })])],
+    ["deprecated string", manifest([entry({ deprecated: "yes" })])],
     ["displayName without zh", manifest([entry({ displayName: { en: "Superpowers" } })])],
     [
       "npm without integrity",

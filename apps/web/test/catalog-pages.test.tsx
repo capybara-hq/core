@@ -543,6 +543,55 @@ describe("/plugins: states and actions follow the scope and the switch", () => {
     );
   });
 
+  it("org admins: a deprecated version reads 已废弃 in 其他版本 and cannot be requested; prereleases fold there", async () => {
+    const p = en.plugins;
+    const entry = (version: string, deprecated: { reason: string | null } | null = null) => ({
+      sourceId: "official",
+      sourceName: "Official",
+      name: "jina",
+      version,
+      summary: { en: "Web tools" },
+      minKernel: null,
+      homepage: null,
+      permissions: null,
+      source: { npm: { package: "@x/jina", version, integrity: "sha512-x" } },
+      deprecated,
+      compatible: true,
+      importable: true,
+      adopted: null,
+      newerAvailable: false,
+      contentChanged: false,
+    });
+    const calls = stubApi({
+      [`GET ${ORG}/catalog`]: () => json(200, { items: [orgItem()] }),
+      [`GET ${ORG}/marketplaces/entries`]: () =>
+        json(200, {
+          items: [entry("2.0.0", { reason: "use 1.x" }), entry("1.1.0-rc.0"), entry("1.0.0")],
+        }),
+      [`POST ${ORG}/marketplace-requests`]: () => json(201, { request: { id: "r1" } }),
+    });
+    await renderPlugins();
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("tab", { name: new RegExp(p.tabs.market) }));
+    const list = await screen.findByRole("list", { name: p.market.title });
+    expect(within(list).getByText(/v1\.0\.0/)).toBeTruthy();
+    await user.click(within(list).getByRole("button", { name: "More actions" }));
+    await user.click(await screen.findByRole("menuitem", { name: p.market.otherVersions }));
+    const gone = await screen.findByRole("menuitem", {
+      name: fill(p.market.deprecatedReason, { version: "v2.0.0", reason: "use 1.x" }),
+    });
+    expect(gone.getAttribute("aria-disabled")).toBe("true");
+    expect(
+      screen.getByRole("menuitem", {
+        name: fill(p.market.requestVersion, { version: "v1.1.0-rc.0" }),
+      }),
+    ).toBeTruthy();
+    gone.focus();
+    await user.keyboard("{Enter}");
+    await settle();
+    expect(calls.some((c) => c.method === "POST")).toBe(false);
+  });
+
   it("members get no 市场 tab and read no entries", async () => {
     const calls = stubApi({ [`GET ${ORG}/catalog`]: () => json(200, { items: [orgItem()] }) });
     await renderPlugins({ me: MEMBER });
@@ -1830,6 +1879,67 @@ describe("/admin/plugins and marketplace entries", () => {
         version: "1.0.0-rc.2",
       }),
     );
+  });
+
+  it("entries: the newest stable version is the row's; prereleases and deprecated versions sit in 其他版本, deprecated ones not importable", async () => {
+    const c = en.catalog.admin.entries;
+    const at = (v: string, over: Record<string, unknown> = {}) =>
+      entry({ name: "cat-a", version: v, adopted: null, newerAvailable: false, ...over });
+    const calls = stubApi({
+      "GET /api/v1/admin/marketplaces": () => json(200, SOURCES),
+      "GET /api/v1/admin/marketplaces/entries": () =>
+        json(200, {
+          items: [
+            at("3.0.0", { deprecated: { reason: "broken release" } }),
+            at("2.1.0-rc.0", { deprecated: null }),
+            at("2.0.0", { deprecated: null }),
+            at("1.0.0", { deprecated: { reason: null } }),
+          ],
+          truncated: false,
+        }),
+    });
+    await renderRouteWithCache(entriesPath(), lastStubRoutes());
+    const list = await screen.findByRole("list", { name: c.title });
+    const cat = within(list).getByText("cat-a").closest("li") as HTMLElement;
+    expect(
+      within(cat).getByRole("button", { name: fill(c.importVersion, { version: "v2.0.0" }) }),
+    ).toBeTruthy();
+    const user = userEvent.setup();
+    await user.click(within(cat).getByRole("button", { name: "More actions" }));
+    await user.click(await screen.findByRole("menuitem", { name: c.otherVersions }));
+    const rc = await screen.findByRole("menuitem", {
+      name: fill(c.importVersion, { version: "v2.1.0-rc.0" }),
+    });
+    expect(rc.getAttribute("aria-disabled")).not.toBe("true");
+    const three = screen.getByRole("menuitem", {
+      name: fill(c.deprecatedReason, { version: "v3.0.0", reason: "broken release" }),
+    });
+    const one = screen.getByRole("menuitem", { name: fill(c.deprecated, { version: "v1.0.0" }) });
+    expect(three.getAttribute("aria-disabled")).toBe("true");
+    expect(one.getAttribute("aria-disabled")).toBe("true");
+    three.focus();
+    await user.keyboard("{Enter}");
+    await settle();
+    expect(calls.some((x) => x.method === "POST")).toBe(false);
+  });
+
+  it("entries: a plugin whose every version is deprecated reads 已废弃 and offers no import", async () => {
+    const c = zh.catalog.admin.entries;
+    stubApi({
+      "GET /api/v1/admin/marketplaces": () => json(200, SOURCES),
+      "GET /api/v1/admin/marketplaces/entries": () =>
+        json(200, {
+          items: [entry({ version: "2.0.0", adopted: null, deprecated: { reason: "停止维护" } })],
+          truncated: false,
+        }),
+    });
+    await renderRouteWithCache(entriesPath(), lastStubRoutes(), { locale: "zh" });
+    const list = await screen.findByRole("list", { name: c.title });
+    const cat = within(list).getByText("cat-a").closest("li") as HTMLElement;
+    expect(
+      within(cat).getByText(fill(c.deprecatedReason, { version: "v2.0.0", reason: "停止维护" })),
+    ).toBeTruthy();
+    expect(within(cat).queryByRole("button", { name: /v2\.0\.0/ })).toBeNull();
   });
 
   it("item detail: the agent templates of the latest version", async () => {

@@ -216,6 +216,42 @@ describe("capybara-plugin marketplace", () => {
     expect((await sync(false)).findings).toEqual([]);
   }, 60_000);
 
+  it("deprecated is set by hand on an entry: --write and --check keep it, a new version has none", async () => {
+    await sync(true);
+    const m = readManifest();
+    const marked = structuredClone(m);
+    const first = marked.plugins[0] as Record<string, unknown>;
+    first.deprecated = { reason: "Use fixture-declarative 2.x" };
+    (marked.plugins[1] as Record<string, unknown>).deprecated = true;
+    writeManifest(marked);
+    expect((await sync(false)).findings).toEqual([]);
+    // a display refresh rewrites the entry: deprecated stays where it was
+    first.summary = { en: "old summary" };
+    writeManifest(marked);
+    const r = await sync(true);
+    expect(r.refreshed).toEqual(["fixture-declarative@0.1.0"]);
+    const after = readManifest();
+    expect(after.plugins[0]?.deprecated).toEqual({ reason: "Use fixture-declarative 2.x" });
+    expect(after.plugins[1]?.deprecated).toBe(true);
+    expect(after.plugins[0]?.summary).toEqual(m.plugins[0]?.summary);
+    const parsed = parseMarketplaceManifest(after);
+    expect("errors" in parsed ? parsed.errors : parsed.plugins.map((e) => e.deprecated)).toEqual([
+      { reason: "Use fixture-declarative 2.x" },
+      true,
+    ]);
+    // the plugin moved on from a deprecated version: the new version's entry is not deprecated
+    const moved = structuredClone(after);
+    const old = moved.plugins[0] as Record<string, unknown> & {
+      source: { npm: { version: string } };
+    };
+    old.version = "0.0.9";
+    old.source.npm.version = "0.0.9";
+    writeManifest(moved);
+    await sync(true);
+    expect(readManifest().plugins[0]?.version).toBe("0.1.0");
+    expect(readManifest().plugins[0]?.deprecated).toBeUndefined();
+  }, 60_000);
+
   it("an already listed version is not compared with the tree's pack (the publish gate owns it)", async () => {
     // after a release, a source or toolchain change packs other bytes at the same version: an
     // ordinary PR must stay green, and other plugins' new entries must still be written
@@ -277,6 +313,14 @@ describe("capybara-plugin marketplace", () => {
       (edited.plugins[0] as { summary: { en: string } }).summary.en = "changed";
       writeManifest(edited);
       expect((await check()).findings.map((f) => f.rule)).toEqual(["marketplace-display-stale"]);
+    }, 60_000);
+
+    it("deprecating a published version is not an integrity change", async () => {
+      const m = readManifest();
+      const marked = structuredClone(m);
+      (marked.plugins[0] as Record<string, unknown>).deprecated = { reason: "broken" };
+      writeManifest(marked);
+      expect((await check()).findings).toEqual([]);
     }, 60_000);
 
     it("marketplace-version-decrease: an entry's version may only increase", async () => {

@@ -33,6 +33,8 @@ export const MARKETPLACE_LIMITS = {
   summaryChars: 280,
   /** Characters of each `displayName` language (as `plugin.json`'s). */
   displayNameChars: 100,
+  /** Characters of a `deprecated.reason`. */
+  deprecationReasonChars: 280,
   plugins: 5000,
   permissionKeys: 500,
   urlChars: 2000,
@@ -60,6 +62,13 @@ export interface MarketplaceEntry {
   permissions?: { keys: string[]; sensitive: string[] };
   /** https URL. */
   homepage?: string;
+  /**
+   * This version is deprecated (`true`, or with a reason shown to admins): browsing lists it under
+   * the plugin's other versions, never as the one to import, and the kernel refuses importing it
+   * (`marketplace.entry_deprecated`). Set by hand on the entry by the marketplace maintainer;
+   * `capybara-plugin marketplace --write` keeps it. `false` is the same as absent.
+   */
+  deprecated?: boolean | { reason?: string };
   source: MarketplaceSource;
 }
 
@@ -202,6 +211,12 @@ function buildSchema(opts: MarketplaceParseOptions) {
       })
       .optional(),
     homepage: urlString(HTTPS_URL_RE).optional(),
+    deprecated: z
+      .union([
+        z.boolean(),
+        z.object({ reason: z.string().min(1).max(M.deprecationReasonChars).optional() }),
+      ])
+      .optional(),
     source,
   });
   return z
@@ -341,4 +356,14 @@ export function marketplaceEntryVersion(e: MarketplaceEntry): string | null {
   if (e.version !== undefined) return e.version;
   if ("npm" in e.source) return e.source.npm.version;
   return null;
+}
+
+/**
+ * The entry's deprecation (see {@link MarketplaceEntry.deprecated}): `null` when it is not
+ * deprecated (absent or `false`), else its reason (`null` without one).
+ */
+export function marketplaceEntryDeprecation(e: MarketplaceEntry): { reason: string | null } | null {
+  const d = e.deprecated;
+  if (d === undefined || d === false) return null;
+  return { reason: d === true ? null : (d.reason ?? null) };
 }

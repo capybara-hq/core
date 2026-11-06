@@ -4,6 +4,7 @@ import {
   type MarketplaceEntry,
   type MarketplaceManifest,
   type MarketplaceSource,
+  marketplaceEntryDeprecation,
   marketplaceEntryVersion,
   PLUGIN_MANIFEST_FILE,
   parseMarketplaceManifest,
@@ -139,6 +140,11 @@ export interface MarketplaceEntryView {
   source: MarketplaceSource;
   /** `claude-code` for an entry of a Claude Code marketplace (`.claude-plugin/marketplace.json`). */
   format: "capybara" | "claude-code";
+  /**
+   * The marketplace deprecates this version (`deprecated`, spec ruling Task 13): its reason, `null`
+   * without one; `null` when not deprecated. Importing it is refused (`marketplace.entry_deprecated`).
+   */
+  deprecated: { reason: string | null } | null;
   /** `minKernel` is satisfied by this deployment. */
   compatible: boolean;
   /** The kernel can import this entry's source now. */
@@ -146,7 +152,10 @@ export interface MarketplaceEntryView {
   reason?: MarketplaceEntryUnimportable;
   /** Imported as a catalog item (a non-deleted item with the same name) and its versions. */
   adopted: { itemId: string; versions: string[] } | null;
-  /** Adopted, and this compatible entry is newer than the newest imported version (never automatic). */
+  /**
+   * Adopted, and this compatible entry, not deprecated, is newer than the newest imported version
+   * (never automatic).
+   */
   newerAvailable: boolean;
   /**
    * "Content changed at the same version" (spec §5.3): a version of this entry's release is
@@ -444,6 +453,26 @@ export const HOST_VERSIONS = { kernel: KERNEL_VERSION, sdk: SDK_VERSION } as con
 export const entryCompatible = (e: Pick<MarketplaceEntry, "minKernel">): boolean =>
   e.minKernel === undefined || semver.gte(HOST_VERSIONS.kernel, e.minKernel);
 
+/** Whether the marketplace marks the entry deprecated (`deprecated: true` or with a reason). */
+export const entryDeprecated = (e: MarketplaceEntry): boolean =>
+  marketplaceEntryDeprecation(e) !== null;
+
+/**
+ * Refuses importing (or requesting) a deprecated marketplace entry: 409
+ * `marketplace.entry_deprecated`, its reason in the message and details.
+ */
+export function assertEntryNotDeprecated(e: MarketplaceEntry): void {
+  const d = marketplaceEntryDeprecation(e);
+  if (d === null) return;
+  const version = marketplaceEntryVersion(e);
+  throw new ApiError(
+    "marketplace.entry_deprecated",
+    `${e.name}${version !== null ? `@${version}` : ""} is deprecated by its marketplace` +
+      `${d.reason !== null ? `: ${d.reason}` : ""}; import another version`,
+    [{ entry: e.name, version, reason: d.reason }],
+  );
+}
+
 /**
  * The form of a marketplace address (spec §5.1): `owner/repo` (expanded to GitHub), an https URL
  * whose path ends in `.git`, or any URL with `form: "git"` is a git repository; anything else
@@ -513,8 +542,9 @@ export const sourceEffective = (
 
 /**
  * Reads a marketplace entry for import: `version` given -> the entry listing that version; omitted
- * -> the newest compatible versioned entry, else the entry without a version, else the newest
- * versioned one (refused later as incompatible). Marketplace missing -> `marketplace.not_found`;
+ * -> the newest compatible versioned entry that is not deprecated, a stable version before a
+ * prerelease, else the entry without a version (not deprecated first), else the newest versioned
+ * one (refused later as incompatible or deprecated). Marketplace missing -> `marketplace.not_found`;
  * marketplace disabled (official offline included), entry or version missing ->
  * `marketplace.entry_not_found`.
  */
@@ -556,8 +586,12 @@ export async function loadMarketplaceEntry(
     const versioned = entries
       .filter((e) => e.version !== "")
       .sort((a, b) => newestFirst(a.version, b.version));
+    const usable = (e: (typeof entries)[number]) =>
+      entryCompatible(e.entry) && !entryDeprecated(e.entry);
     pickedRow =
-      versioned.find((e) => entryCompatible(e.entry)) ??
+      versioned.find((e) => usable(e) && semver.prerelease(e.version) === null) ??
+      versioned.find(usable) ??
+      entries.find((e) => e.version === "" && !entryDeprecated(e.entry)) ??
       entries.find((e) => e.version === "") ??
       versioned[0];
   }
@@ -1427,13 +1461,18 @@ export class MarketplacesService {
         homepage: e.homepage ?? null,
         permissions: e.permissions ?? null,
         source: e.source,
+        deprecated: marketplaceEntryDeprecation(e),
         format: r.claude === null ? "capybara" : "claude-code",
         compatible,
         importable,
         ...(reason !== undefined && { reason }),
         adopted: adopted ? { itemId: adopted.itemId, versions: [...adopted.versions] } : null,
         newerAvailable:
-          compatible && version !== null && top !== undefined && compareVersions(version, top) > 0,
+          compatible &&
+          !entryDeprecated(e) &&
+          version !== null &&
+          top !== undefined &&
+          compareVersions(version, top) > 0,
         contentChanged:
           adopted !== null &&
           entryContentChanged(

@@ -385,6 +385,7 @@
       "private_address": "The download was refused: the host resolves to a private or reserved address. To use an internal host, add it to marketplaces.allowPrivateHosts in the deployment config.",
       "redirect": "The download was refused: the server responded with a redirect, and redirects are not followed. Use the final URL instead.",
       "incompatible": "This version is not compatible with this deployment's kernel / SDK.",
+      "entry_deprecated": "The marketplace marks this version as deprecated, so it cannot be imported. Choose another version.",
       "package_mismatch": "The downloaded package does not match the marketplace entry.",
       "builtin": "The official marketplace comes from the deployment config; it can only be enabled or disabled here.",
       "git_failed": "Reading the git repository failed (the server, the ref or the commit). The message says which.",
@@ -3158,7 +3159,9 @@
         "retry": "Retry",
         "adoptedUpdate": "Imported {version} · update to {latest} available",
         "update": "Update",
-        "otherVersions": "Other versions"
+        "otherVersions": "Other versions",
+        "deprecated": "{version} (deprecated)",
+        "deprecatedReason": "{version} (deprecated: {reason})"
       },
       "marketplaces": {
         "title": "Marketplace sources",
@@ -3730,6 +3733,8 @@
       "adopted": "Imported",
       "unavailable": "Cannot be imported",
       "otherVersions": "Other versions",
+      "deprecated": "{version} (deprecated)",
+      "deprecatedReason": "{version} (deprecated: {reason})",
       "requestVersion": "Request import of {version}",
       "requestedVersion": "Requested {version}, waiting"
     },

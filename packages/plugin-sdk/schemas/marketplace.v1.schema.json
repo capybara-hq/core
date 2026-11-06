@@ -129,6 +129,23 @@
             "maxLength": 2000,
             "pattern": "^https:\\/\\/\\S+$"
           },
+          "deprecated": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "reason": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 280
+                  }
+                }
+              }
+            ]
+          },
           "source": {
             "anyOf": [
               {

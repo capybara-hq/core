@@ -31,6 +31,8 @@ let env: OrgEnv;
 let reg: FakeNpmRegistry;
 let market: FakeMarketplace;
 let marketplaceId: string;
+/** The marketplace's manifest as the tests start from it. */
+let baseManifest: { plugins: Record<string, unknown>[] } & Record<string, unknown>;
 
 beforeAll(async () => {
   const tgz = await skillPlugin("mkt-tools");
@@ -41,30 +43,29 @@ beforeAll(async () => {
       { name: "@acme/plugin-mkt-tools", version: "2.0.0", tgz: tgz2 },
     ],
   });
-  market = await startFakeMarketplace({
-    manifest: {
-      schemaVersion: 1,
-      name: "Acme",
-      plugins: [
-        {
-          name: "mkt-tools",
-          summary: { en: "Marketplace tools" },
-          minKernel: KERNEL_VERSION,
-          source: {
-            npm: { package: "@acme/plugin-mkt-tools", version: "1.0.0", integrity: sri(tgz) },
-          },
+  baseManifest = {
+    schemaVersion: 1,
+    name: "Acme",
+    plugins: [
+      {
+        name: "mkt-tools",
+        summary: { en: "Marketplace tools" },
+        minKernel: KERNEL_VERSION,
+        source: {
+          npm: { package: "@acme/plugin-mkt-tools", version: "1.0.0", integrity: sri(tgz) },
         },
-        {
-          name: "mkt-tools",
-          summary: { en: "Marketplace tools" },
-          minKernel: KERNEL_VERSION,
-          source: {
-            npm: { package: "@acme/plugin-mkt-tools", version: "2.0.0", integrity: sri(tgz2) },
-          },
+      },
+      {
+        name: "mkt-tools",
+        summary: { en: "Marketplace tools" },
+        minKernel: KERNEL_VERSION,
+        source: {
+          npm: { package: "@acme/plugin-mkt-tools", version: "2.0.0", integrity: sri(tgz2) },
         },
-      ],
-    },
-  });
+      },
+    ],
+  };
+  market = await startFakeMarketplace({ manifest: baseManifest });
   env = await startOrgEnv({
     packages: { npmRegistry: reg.url },
     marketplaces: { allowInsecureLoopback: true },
@@ -464,6 +465,31 @@ describe("import: org admin -> super admin", { timeout: 90_000 }, () => {
     expect(r.json().error.code).toBe("catalog.marketplace_browse_disabled");
     const s = await env.root({ method: "GET", url: "/api/v1/admin/settings" });
     expect(s.json()).toMatchObject({ orgMarketplaceBrowse: false });
+  });
+
+  it("a request for a deprecated version is 409 marketplace.entry_deprecated", async () => {
+    const manifest = baseManifest;
+    const refreshMarket = async () => {
+      const r = await env.root({
+        method: "POST",
+        url: `/api/v1/admin/marketplaces/${marketplaceId}/refresh`,
+      });
+      expect(r.statusCode, r.body).toBe(200);
+    };
+    market.setManifest({
+      ...manifest,
+      plugins: manifest.plugins.map((e, i) => (i === 1 ? { ...e, deprecated: true } : e)),
+    });
+    try {
+      await refreshMarket();
+      const r = await marketplaceRequest(env.boss, undefined, "2.0.0");
+      expect(r.statusCode, r.body).toBe(409);
+      expect(r.json().error.code).toBe("marketplace.entry_deprecated");
+      expect((await marketplaceRequest(env.boss)).statusCode).toBe(201);
+    } finally {
+      market.setManifest(manifest);
+      await refreshMarket();
+    }
   });
 
   it("rejection stores the reason", async () => {

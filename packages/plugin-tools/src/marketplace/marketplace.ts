@@ -173,7 +173,10 @@ function refreshDisplay(raw: unknown, d: Display): Record<string, unknown> | und
  * appended. Entries of plugins not in the tree are kept. A version already listed is not packed or
  * compared: once published, its bytes are the release gate's business (`release --marketplace`),
  * so a later source or toolchain change at the same version is not a finding; only its display
- * fields (`summary`, `displayName`) are refreshed from the source plugin.json. With `base`, see
+ * fields (`summary`, `displayName`) are refreshed from the source plugin.json. Every other field
+ * of a kept entry stays as written, among them `deprecated`, which the maintainer sets by hand on
+ * a published version's entry (not in plugin.json: that would change the packed bytes); a new
+ * version's entry has none, and no rule compares it with the base. With `base`, see
  * {@link SyncMarketplaceOptions.base}. The file is written formatted as Biome formats it
  * ({@link formatMarketplaceJson}); nothing is written when there is any other finding.
  */
