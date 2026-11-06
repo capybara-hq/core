@@ -94,6 +94,9 @@ export const ACCEPTED: string[] = [
   // workflows
   "background-task",
   "task-output-panel",
+  // plugin and component management acceptance (fix batch 1): blocks and size table in place;
+  // the reference PNGs and the side-by-side review wait for the reference-update workflow
+  "content-section",
 ];
 
 /**

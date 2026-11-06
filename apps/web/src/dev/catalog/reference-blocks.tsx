@@ -10,6 +10,7 @@ import {
   Button,
   CellTitle,
   type Column,
+  ContentSection,
   DangerZone,
   DangerZoneItem,
   DataTable,
@@ -1096,6 +1097,22 @@ function dangerZoneBlocks(): ReactNode {
   );
 }
 
+function contentSectionBlocks(): ReactNode {
+  return (
+    <>
+      <RefBlock id="content-section-default" width={720} pad>
+        <ContentSection title="技能" count={2} description="插件自带的技能，随插件启用。">
+          <Text>· pdf-tools</Text>
+          <Text>· meeting-notes</Text>
+        </ContentSection>
+      </RefBlock>
+      <RefBlock id="content-section-empty" width={720} pad>
+        <ContentSection title="扩展" empty="没有扩展。" />
+      </RefBlock>
+    </>
+  );
+}
+
 function secretRevealBlocks(): ReactNode {
   return (
     <>
@@ -1247,6 +1264,7 @@ export const REFERENCE_BLOCKS = {
   ...CONVERSATION_PAGE_BLOCKS,
   "no-access": noAccessBlocks,
   "danger-zone": dangerZoneBlocks,
+  "content-section": contentSectionBlocks,
   "secret-reveal": secretRevealBlocks,
   "error-detail": errorDetailBlocks,
   "file-picker": filePickerBlocks,

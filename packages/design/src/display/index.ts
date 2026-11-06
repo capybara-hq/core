@@ -50,6 +50,7 @@ export {
   type ToolCallRowProps,
   type ToolCallStatus,
 } from "./chat";
+export { ContentSection, type ContentSectionProps } from "./content-section";
 export { DangerZone, DangerZoneItem, type DangerZoneItemProps } from "./danger-zone";
 export { DateTime, formatDateTime, formatRelative, versionLabel } from "./date-time";
 export { Disclosure, type DisclosureProps } from "./disclosure";

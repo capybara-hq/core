@@ -70,7 +70,7 @@ const GROUPS = [
   },
   {
     title: "Role pass: no access, danger zone, secret reveal",
-    components: ["no-access", "danger-zone", "secret-reveal"],
+    components: ["no-access", "danger-zone", "secret-reveal", "content-section"],
   },
   {
     title: "Config forms: repeater, field row, key / value editor",

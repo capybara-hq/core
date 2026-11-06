@@ -92,6 +92,8 @@ export const REFERENCE_COMPONENTS = [
   "no-access",
   "danger-zone",
   "secret-reveal",
+  // plugin and component management acceptance: the detail / review section
+  "content-section",
   // unslop fixes
   "error-detail",
   "file-picker",

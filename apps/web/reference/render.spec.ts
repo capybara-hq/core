@@ -47,6 +47,8 @@ const PAGES = [
   "roles",
   // unslop fixes: a failure sentence with its raw text behind a toggle
   "error-detail",
+  // detail and review sections: a heading over its content, muted help and empty lines
+  "content-section",
   // forms and flows: the one file pick
   "file-picker",
   // the run row: a run's model, duration, tokens and outcome

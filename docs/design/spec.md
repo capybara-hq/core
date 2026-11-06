@@ -2356,6 +2356,31 @@ States: `presets`, `sizes`, `initial`, `title-bar`, `sidebar-row`, `list-row`, `
 | avatar-upload-reason | picker-upload-off | color | color.muted |
 | avatar-upload-reason | picker-upload-off | font-size | type.small |
 
+### 6.31 ContentSection
+
+`ContentSection({ title, count?, description?, actions?, empty?, children })`: one section of a detail page's single column or a review (a plugin's components: 扩展, 技能, 连接器模板, 依赖; 许可证 …). A `region` named by its heading, the parts `space.2` apart:
+
+- **Heading row**: the title as an `h2` in the `h2` step (16 / 24, 500, `ink`), so it reads as a heading over the lines under it, then the optional `count` (`small`, `faint`, tabular), then optional `actions` at the right (dense buttons or links).
+- **Help** (`description`): one line in the prose font, `small`, `muted`.
+- **Content**: the children; or, when the section holds nothing, the `empty` line instead (prose font, `small`, `muted`: "没有扩展。"). Secondary text under a heading is always this muted small style, never the heading's size and color.
+
+<!-- states: content-section -->
+States: `default`, `empty`
+
+<!-- size-table: content-section -->
+| Part | State | Property | Value |
+|---|---|---|---|
+| content-section | default | row-gap | space.2 |
+| content-section-title | default | font-size | type.h2 |
+| content-section-title | default | line-height | type.h2.line |
+| content-section-title | default | color | color.ink |
+| content-section-count | default | color | color.faint |
+| content-section-description | default | font-size | type.small |
+| content-section-description | default | color | color.muted |
+| content-section-title | empty | font-size | type.h2 |
+| content-section-empty | empty | font-size | type.small |
+| content-section-empty | empty | color | color.muted |
+
 ## 7. Copy and internationalization
 - All UI text goes through next-intl, in both Chinese and English. Text shown to the model (prompts, tool descriptions) is always English, and the prompt field in a form must say so.
 - Thousands separators for numbers; durations `6.8s` / `41.2s` / `00:00:18`; amounts `¥412.80`; relative time ("2 hours ago") for lists, absolute time (`10-18 14:02:11`) for records and logs.

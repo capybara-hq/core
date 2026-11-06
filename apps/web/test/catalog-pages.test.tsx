@@ -941,6 +941,13 @@ describe("/admin/plugins/import (WizardPage)", () => {
     await renderRouteWithCache(importPath(), lastStubRoutes());
     const ext = await screen.findByRole("region", { name: en.catalog.components.extension });
     expect(within(ext).getByText(en.catalog.components.extensionNone)).toBeTruthy();
+    // The section's title is a heading; the empty line under it is the muted secondary text
+    expect(
+      within(ext).getByRole("heading", { name: en.catalog.components.extension }).tagName,
+    ).toBe("H2");
+    expect(
+      within(ext).getByText(en.catalog.components.extensionNone).getAttribute("data-part"),
+    ).toBe("content-section-empty");
     // The marketplace's permission mismatch comes with the staged review
     expect(screen.getByText(fill(r.mismatchMissing, { keys: "tools, secrets" }))).toBeTruthy();
     expect(screen.getByText(fill(r.mismatchExtra, { keys: "storage" }))).toBeTruthy();

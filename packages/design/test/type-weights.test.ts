@@ -35,6 +35,7 @@ describe("type weights", () => {
     expect(weightOf("display.css", ".cb-link-card-title")).toBe("500");
     expect(weightOf("overlays.css", ".cb-dialog-title,")).toBe("500");
     expect(weightOf("templates.css", ".cb-danger-zone-title")).toBe("500");
+    expect(weightOf("display.css", ".cb-content-section-title")).toBe("500");
     expect(weightOf("sidebar.css", ".cb-sidebar-group-toggle")).toBe("500");
   });
 });

@@ -3,6 +3,7 @@
 import {
   Badge,
   CodeBlock,
+  ContentSection,
   Disclosure,
   ImageBlock,
   Stack,
@@ -61,13 +62,11 @@ export function ComponentSection({
   empty: string;
   children?: ReactNode;
 }) {
+  // The design ContentSection (spec §6.31): the title a heading, the empty line muted and small
   return (
-    <section aria-label={title}>
-      <Stack gap={8}>
-        <Text>{title}</Text>
-        {count === 0 ? <Text tone="muted">{empty}</Text> : children}
-      </Stack>
-    </section>
+    <ContentSection title={title} {...(count === 0 ? { empty } : {})}>
+      {children}
+    </ContentSection>
   );
 }
 

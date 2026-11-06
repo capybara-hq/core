@@ -1201,3 +1201,50 @@ a.cb-attachment:hover {
   font-size: var(--cb-type-small-size);
   line-height: var(--cb-type-small-line);
 }
+
+/* ContentSection (spec §6.31): a heading in the h2 step over its content; help and empty lines
+   small and muted, so a heading never reads like the text under it. */
+.cb-content-section {
+  display: flex;
+  flex-direction: column;
+  row-gap: var(--cb-space-2);
+  min-width: 0;
+}
+.cb-content-section-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--cb-space-2);
+  min-width: 0;
+}
+.cb-content-section-title {
+  margin: 0;
+  color: var(--cb-ink);
+  font-size: var(--cb-type-h2-size);
+  font-weight: 500;
+  line-height: var(--cb-type-h2-line);
+}
+.cb-content-section-count {
+  color: var(--cb-faint);
+  font-size: var(--cb-type-small-size);
+  font-variant-numeric: tabular-nums;
+  line-height: var(--cb-type-small-line);
+}
+.cb-content-section-actions {
+  display: flex;
+  gap: var(--cb-space-2);
+  margin-left: auto;
+}
+.cb-content-section-description {
+  margin: 0;
+  color: var(--cb-muted);
+  font-family: var(--cb-font-prose);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.cb-content-section-empty {
+  margin: 0;
+  color: var(--cb-muted);
+  font-family: var(--cb-font-prose);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
