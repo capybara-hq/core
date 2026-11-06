@@ -1,5 +1,13 @@
 import { expect, test } from "@playwright/test";
-import { composer, createAgent, currentOrg, replies, send, users } from "./support/chat";
+import {
+  composer,
+  conversationIdOf,
+  createAgent,
+  currentOrg,
+  replies,
+  send,
+  users,
+} from "./support/chat";
 import { signIn } from "./support/sign-in";
 
 /**
@@ -72,40 +80,49 @@ test("a reload mid-stream resumes the draft with no gap and no duplicate", async
   await expect(users(page)).toHaveCount(1);
 });
 
-test("two running conversations switched back and forth keep complete drafts", async ({ page }) => {
+test("two running conversations switched in the app keep complete drafts", async ({ page }) => {
   await signIn(page);
   const orgId = await currentOrg(page);
   const agentId = await createAgent(page, orgId, "Live switch");
   await page.goto(`/chat?agent=${agentId}`);
   await send(page, `slow:200:${A_TEXT}`);
-  const urlA = page.url();
+  const idA = conversationIdOf(page);
   await expect.poll(() => lastReply(page), { intervals: [50] }).not.toBe("");
+  // a second conversation starts from the sidebar's new-conversation flow of the same agent
   await page.goto(`/chat?agent=${agentId}`);
   await send(page, `slow:200:${B_TEXT}`);
-  const urlB = page.url();
-  expect(urlB).not.toBe(urlA);
-  for (const [url, expected] of [
-    [urlA, A_TEXT],
-    [urlB, B_TEXT],
-    [urlA, A_TEXT],
-  ] as const) {
-    await page.goto(url);
-    await expect(page.locator('[data-template="ConversationPage"]')).toBeVisible();
+  const idB = conversationIdOf(page);
+  expect(idB).not.toBe(idA);
+  // switching is in-app (the sidebar's links), so the query cache keeps the old state
+  const sidebar = page.getByRole("region", { name: "会话" });
+  const open = async (id: string, expected: string): Promise<void> => {
+    await sidebar.locator(`a[href$="/chat/${id}"]`).click();
+    await expect(page).toHaveURL(new RegExp(`/chat/${id}(#.*)?$`));
     await expect
       .poll(
         async () => {
           const text = await lastReply(page);
+          // the draft is a prefix of the whole reply, never another conversation's text
           expect(expected.startsWith(text), `unexpected text: ${text}`).toBe(true);
           return text.length;
         },
         { intervals: [50] },
       )
       .toBeGreaterThan(0);
-  }
-  // both finish whole
-  await page.goto(urlB);
-  await expect(replies(page).first()).toHaveText(B_TEXT, { timeout: 30_000 });
-  await page.goto(urlA);
+  };
+  await open(idA, A_TEXT);
+  await open(idB, B_TEXT);
+  await open(idA, A_TEXT);
+  await open(idB, B_TEXT);
+  await open(idA, A_TEXT);
+  // both finish whole, one reply each
   await expect(replies(page).first()).toHaveText(A_TEXT, { timeout: 30_000 });
+  await expect(replies(page)).toHaveCount(1);
+  await open(idB, B_TEXT);
+  await expect(replies(page).first()).toHaveText(B_TEXT, { timeout: 30_000 });
+  await expect(replies(page)).toHaveCount(1);
+  // a full load of either shows the same whole replies
+  await page.goto(`/chat/${idA}`);
+  await expect(replies(page).first()).toHaveText(A_TEXT);
   await expect(replies(page)).toHaveCount(1);
 });
