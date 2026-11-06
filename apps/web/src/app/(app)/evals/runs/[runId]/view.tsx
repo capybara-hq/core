@@ -420,17 +420,15 @@ function EvalRunView({
         width={720}
       >
         {current !== undefined ? (
-          <section aria-label={t("run.inspector.title")}>
-            <ResultPanel
-              key={current.id}
-              orgId={orgId}
-              runId={run.id}
-              mode={run.mode}
-              row={current}
-              title={title(current)}
-              onLabeled={labeled}
-            />
-          </section>
+          <ResultPanel
+            key={current.id}
+            orgId={orgId}
+            runId={run.id}
+            mode={run.mode}
+            row={current}
+            title={title(current)}
+            onLabeled={labeled}
+          />
         ) : null}
       </Sheet>
     </>

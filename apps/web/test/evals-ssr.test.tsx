@@ -316,6 +316,8 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     expect(
       page.querySelectorAll('[data-part="detail-facts"] [data-part="key-value-row"]'),
     ).toHaveLength(3);
+    // the description's line is held over the rows, as the loaded facts put it first
+    expect(page.querySelector('[data-part="detail-facts"] [data-size="prose"]')).not.toBeNull();
     await release();
     expect(await screen.findByText("Delete the stale item")).toBeTruthy();
     // loaded, the facts block keeps its three rows (agent, created, the default rubric)

@@ -88,6 +88,17 @@ describe("DetailPage loading", () => {
     expect(content?.firstElementChild).toBe(facts);
   });
 
+  it("lead draws a prose line over the rows, gap 12, as a description-first facts block", () => {
+    zh(<DetailPage header={header} tabs={tabs} loading={{ facts: { rows: 2, lead: true } }} />);
+    const facts = document.querySelector('[data-part="detail-facts"]') as HTMLElement;
+    const stack = facts.firstElementChild as HTMLElement;
+    expect(stack.getAttribute("data-gap")).toBe("12");
+    const [lead, kv] = Array.from(stack.children) as HTMLElement[];
+    expect(lead?.getAttribute("data-size")).toBe("prose");
+    expect(kv?.getAttribute("data-part")).toBe("loading-key-value");
+    expect(kv?.querySelectorAll('[data-part="key-value-row"]')).toHaveLength(2);
+  });
+
   it("a real facts block stays while loading unless it is flagged", () => {
     zh(<DetailPage header={header} tabs={tabs} facts={<p>REAL FACTS</p>} loading={{}} />);
     expect(screen.getByText("REAL FACTS")).toBeTruthy();

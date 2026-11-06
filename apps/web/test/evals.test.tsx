@@ -838,7 +838,9 @@ describe("评测运行（DetailPage）", () => {
       expect(
         within(sheet).getByText("Delete the stale item", { selector: ".cb-sheet-meta" }),
       ).toBeTruthy();
-      const region = within(sheet).getByRole("region", { name: m.run.inspector.title });
+      // the Sheet is the one named landmark: no region of the same name inside it
+      expect(within(sheet).queryByRole("region")).toBeNull();
+      const region = sheet;
       const inspector = within(region);
       // 文本差异：lineDiff + CodeBlock（标注走 i18n）；工具差异的代码块不带标注
       const blocks = region.querySelectorAll("figure");
@@ -898,7 +900,7 @@ describe("评测运行（DetailPage）", () => {
     const table = await screen.findByRole("table", { name: E.run.resultsLabel });
     const user = userEvent.setup();
     await user.click(await within(table).findByText("Delete the stale item"));
-    const inspector = within(await screen.findByRole("region", { name: E.run.inspector.title }));
+    const inspector = within(await screen.findByRole("dialog", { name: E.run.inspector.title }));
     await user.type(
       inspector.getByRole("textbox", { name: new RegExp(E.run.inspector.note) }),
       "Looks right",
@@ -1135,7 +1137,7 @@ describe("评测运行（DetailPage）", () => {
     const row = await within(table).findByRole("row", { name: /Delete the stale item/ });
     expect(within(row).getByText(E.run.wholeRun)).toBeTruthy();
     await userEvent.setup().click(within(row).getByText(E.run.wholeRun));
-    const inspector = within(await screen.findByRole("region", { name: E.run.inspector.title }));
+    const inspector = within(await screen.findByRole("dialog", { name: E.run.inspector.title }));
     expect(inspector.getByText(E.run.inspector.noTextDiff)).toBeTruthy();
     expect(inspector.getByText(E.run.inspector.noToolCalls)).toBeTruthy();
     expect(
@@ -1149,7 +1151,7 @@ describe("评测运行（DetailPage）", () => {
     await renderRouteWithCache("/evals/runs/er1", lastStubRoutes(), { locale });
     const table = await screen.findByRole("table", { name: m.run.resultsLabel });
     await userEvent.setup().click(await within(table).findByText(m.run.mismatch));
-    const inspector = within(await screen.findByRole("region", { name: m.run.inspector.title }));
+    const inspector = within(await screen.findByRole("dialog", { name: m.run.inspector.title }));
     expect(
       await inspector.findByText(
         `${m.drift.system_hash}${m.run.inspector.driftSeparator}brand_new_reason`,
@@ -1199,7 +1201,7 @@ describe("评测运行（DetailPage）", () => {
     await userEvent
       .setup({ advanceTimers: vi.advanceTimersByTime })
       .click(within(table).getByRole("row", { name: /Delete the stale item/ }));
-    const inspector = within(await screen.findByRole("region", { name: E.run.inspector.title }));
+    const inspector = within(await screen.findByRole("dialog", { name: E.run.inspector.title }));
     await waitFor(() =>
       expect(calls.filter((c) => c.url === `${RUN}/results/res1`)).toHaveLength(1),
     );

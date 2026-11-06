@@ -114,9 +114,10 @@ function EvalSet({ orgId, setId }: { orgId: string; setId: string }) {
           value: tab,
           onChange: (x) => setTab(x as Tab),
         }}
-        // The facts (agent, created, the rubric), then the cases tab (its table)
+        // The facts (the description's line, then agent, created, the rubric), then the cases
+        // tab (its table)
         loading={{
-          facts: { rows: 3, keyWidth: "10ch" },
+          facts: { rows: 3, keyWidth: "10ch", lead: true },
           content: [
             {
               kind: "table",

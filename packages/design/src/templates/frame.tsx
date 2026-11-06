@@ -329,18 +329,28 @@ function LoadingKeyValue({
 
 /**
  * A detail page's facts while they load (spec §5.2): KeyValue's own `dl` with `rows` rows (default
- * 4), a `keyWidth` key slot (default 8ch) and a 55% value slot, one or two `columns`.
+ * 4), a `keyWidth` key slot (default 8ch) and a 55% value slot, one or two `columns`. `lead` puts a
+ * `prose` line over the rows (gap 12), for a facts block that starts with the object's description.
  */
 export function LoadingFacts({
   rows = 4,
   keyWidth = "8ch",
   columns = 1,
+  lead,
 }: {
   rows?: number;
   keyWidth?: string;
   columns?: 1 | 2;
+  lead?: boolean;
 }) {
-  return <LoadingKeyValue rows={rows} keyWidth={keyWidth} columns={columns} />;
+  const kv = <LoadingKeyValue rows={rows} keyWidth={keyWidth} columns={columns} />;
+  if (!lead) return kv;
+  return (
+    <Stack gap={12}>
+      <SkeletonText width="70%" size="prose" />
+      {kv}
+    </Stack>
+  );
 }
 
 /** A list beside the open item's editor (`list-editor`, see {@link FieldShape}). */
