@@ -271,7 +271,7 @@ describe("a lone /", () => {
     expect(posts(calls, `${BASE}/messages`)).toHaveLength(0);
   });
 
-  it("with no skills and no prompts the menu says the agent has nothing to run", async () => {
+  it("with no skills and no prompts the menu explains why and links an editor to the agent's skills", async () => {
     api({
       [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
       [`GET ${INVOCABLE}`]: () => json(200, { skills: [] }),
@@ -282,7 +282,38 @@ describe("a lone /", () => {
     await userEvent.setup().type(input(), "/");
     const dialog = await screen.findByRole("dialog");
     expect(await within(dialog).findByText(en.chat.noInvocable)).toBeTruthy();
+    // The owner of the agent can edit it: the next step is its skills section
+    const link = within(dialog).getByRole("link", { name: en.chat.noInvocableAction });
+    expect(link.getAttribute("href")).toBe("/agents/ag1?s=skills");
   });
+
+  it.each(["en"] as const)(
+    "someone who cannot edit the agent reads the explanation without a link (%s)",
+    async (locale) => {
+      const m = { zh, en }[locale].chat;
+      api({
+        [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
+        [`GET ${INVOCABLE}`]: () => json(200, { skills: [] }),
+        [`GET ${ORG}/connectors/prompts`]: () => json(200, { prompts: [], unavailable: [] }),
+      });
+      // a member who does not own the agent (owned by a1)
+      await renderChatRoute({
+        locale,
+        me: {
+          account: { id: "a2", displayName: "Mia", email: null, isSuperAdmin: false },
+          via: "session",
+          currentOrgId: "o1",
+          memberships: [{ orgId: "o1", slug: "acme", name: "Acme", role: "member" }],
+          canCreateOrg: true,
+        },
+      });
+      await screen.findByText("hi");
+      await userEvent.setup().type(input(), "/");
+      const dialog = await screen.findByRole("dialog");
+      expect(await within(dialog).findByText(m.noInvocableReadOnly)).toBeTruthy();
+      expect(within(dialog).queryByRole("link")).toBeNull();
+    },
+  );
 });
 
 describe("typed /name", () => {

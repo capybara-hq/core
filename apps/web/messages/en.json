@@ -848,7 +848,9 @@
     "attachments": "Attachments",
     "removeAttachment": "Remove {name}",
     "attachLimit": "At most {max} attachments per message.",
-    "noInvocable": "This agent has no skills to run.",
+    "noInvocable": "This agent has no skills selected to invoke. A skill the organization turned on must be selected in the agent's skills before you can invoke it with /.",
+    "noInvocableAction": "Choose skills",
+    "noInvocableReadOnly": "This agent has no skills selected to invoke. A skill the organization turned on must be selected in the agent's skills first; ask its owner or an org admin.",
     "skillsGroup": "Skills",
     "skillTag": {
       "manual": "manual",

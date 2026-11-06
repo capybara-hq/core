@@ -193,6 +193,7 @@ function useObjectUrls(files: DraftFile[]): ReadonlyMap<string, string> {
 export function ComposerBar({
   orgId,
   agentId,
+  skillsHref,
   conversationId,
   running,
   stop,
@@ -208,6 +209,12 @@ export function ComposerBar({
   orgId: string;
   /** The conversation's agent (the `/` menu lists its skills); undefined while loading. */
   agentId?: string | undefined;
+  /**
+   * The agent's skills section, for someone who can edit the agent: the `/` menu with nothing to
+   * invoke links it (spec §5 rule 11: an org skill must be selected on the agent). Undefined for
+   * someone who cannot edit it (the menu only explains).
+   */
+  skillsHref?: string | undefined;
   /** The conversation, once it exists and is the caller's (its trial drafts apply). */
   conversationId?: string | undefined;
   /** A run is going (or waiting for a person): ↵ queues, ⌘↵ interjects, send becomes stop. */
@@ -716,7 +723,14 @@ export function ComposerBar({
           }
         }}
         groups={groups}
-        {...(palette === "prompts" && groups.length === 0 ? { emptyText: t("noInvocable") } : {})}
+        {...(palette === "prompts" && groups.length === 0
+          ? skillsHref !== undefined
+            ? {
+                emptyText: t("noInvocable"),
+                emptyAction: { label: t("noInvocableAction"), href: skillsHref },
+              }
+            : { emptyText: t("noInvocableReadOnly") }
+          : {})}
       />
       <Dialog
         open={argsFor !== null}

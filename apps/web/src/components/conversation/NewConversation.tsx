@@ -21,6 +21,7 @@ import {
   type MessageInput,
 } from "../../lib/conversations";
 import { type GreetingLines, greetingBucket, pickGreeting } from "../../lib/greeting";
+import { canEditAgent } from "../../lib/org-settings";
 import { agentsQuery } from "../../lib/query/agents";
 import { retryOnMountOf } from "../../lib/query/client";
 import { modelsQuery, seedNewConversation } from "../../lib/query/conversation";
@@ -226,6 +227,9 @@ export function useNewConversationPage(
           key={`${sent ? "sent" : "new"}:${restore.n}`}
           orgId={orgId}
           agentId={agent?.id}
+          {...(agent !== undefined && canEditAgent(session.me, agent)
+            ? { skillsHref: `/agents/${encodeURIComponent(agent.id)}?s=skills` }
+            : {})}
           initialDraft={sent ? undefined : restore.draft}
           running={false}
           // one message at a time until the conversation exists (it has no queue yet)

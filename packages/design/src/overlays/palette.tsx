@@ -2,7 +2,7 @@ import * as RD from "@radix-ui/react-dialog";
 import { Command } from "cmdk";
 import { useState } from "react";
 import { Kbd } from "../display/index";
-import { useDesignT } from "../provider";
+import { useDesignLink, useDesignT } from "../provider";
 import { useFocusReturn } from "./focus-return";
 
 /** One palette item (§6.7). */
@@ -71,6 +71,7 @@ export function CommandPalette({
   inline,
   defaultSearch,
   emptyText,
+  emptyAction,
 }: {
   open: boolean;
   onOpenChange(open: boolean): void;
@@ -81,6 +82,11 @@ export function CommandPalette({
   defaultSearch?: string;
   /** What the list says when nothing matches (default: "No matches"). */
   emptyText?: string;
+  /**
+   * The next step under the empty text (spec §6.7): a link (through the DesignProvider's `link`)
+   * that closes the palette, such as the agent's skills section when it has none to invoke.
+   */
+  emptyAction?: { label: string; href: string };
 }) {
   const t = useDesignT();
   const focusReturn = useFocusReturn();
@@ -90,6 +96,7 @@ export function CommandPalette({
       onOpenChange={onOpenChange}
       {...(defaultSearch !== undefined ? { defaultSearch } : {})}
       {...(emptyText !== undefined ? { emptyText } : {})}
+      {...(emptyAction !== undefined ? { emptyAction } : {})}
     />
   );
   if (inline) {
@@ -124,13 +131,16 @@ function PaletteBody({
   onOpenChange,
   defaultSearch,
   emptyText,
+  emptyAction,
 }: {
   groups: CommandGroup[];
   onOpenChange(open: boolean): void;
   defaultSearch?: string;
   emptyText?: string;
+  emptyAction?: { label: string; href: string };
 }) {
   const t = useDesignT();
+  const Link = useDesignLink();
   const [query, setQuery] = useState(defaultSearch ?? "");
   return (
     <Command className="cb-palette-cmd" label={t("palette.title")} loop filter={filter}>
@@ -143,8 +153,22 @@ function PaletteBody({
         />
       </div>
       <Command.List className="cb-palette-list">
-        <Command.Empty className="cb-palette-empty">
-          {emptyText ?? t("palette.empty")}
+        <Command.Empty className="cb-palette-empty" data-part="palette-empty">
+          <span>{emptyText ?? t("palette.empty")}</span>
+          {emptyAction ? (
+            // The link (a keyboard Enter clicks it too) closes the palette as it navigates
+            // biome-ignore lint/a11y/noStaticElementInteractions: the click comes from the link inside
+            // biome-ignore lint/a11y/useKeyWithClickEvents: the link handles the keyboard itself
+            <span className="cb-palette-empty-action" onClick={() => onOpenChange(false)}>
+              <Link
+                href={emptyAction.href}
+                className="cb-text-link"
+                data-part="palette-empty-action"
+              >
+                {emptyAction.label}
+              </Link>
+            </span>
+          ) : null}
         </Command.Empty>
         {groups.map((g) => (
           <Command.Group key={g.label} heading={g.label} className="cb-palette-group">

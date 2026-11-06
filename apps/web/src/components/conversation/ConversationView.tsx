@@ -17,6 +17,7 @@ import { useLocale, useTranslations } from "next-intl";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { avatarValue } from "../../lib/agents";
 import type { ModelRef } from "../../lib/conversations";
+import { canEditAgent } from "../../lib/org-settings";
 import { agentsQuery } from "../../lib/query/agents";
 import { retryOnMountOf } from "../../lib/query/client";
 import { modelsQuery, renameWithRow, sentHereOf } from "../../lib/query/conversation";
@@ -400,6 +401,9 @@ export function useConversationPage(
           orgId={orgId}
           sendDisabled={sendDisabled}
           agentId={conv.conversation?.agentId}
+          {...(agent !== undefined && canEditAgent(session.me, agent)
+            ? { skillsHref: `/agents/${encodeURIComponent(agent.id)}?s=skills` }
+            : {})}
           conversationId={
             conv.conversation === undefined ||
             (conv.conversation.accountId !== undefined &&

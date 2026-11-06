@@ -848,7 +848,9 @@
     "attachments": "附件",
     "removeAttachment": "移除 {name}",
     "attachLimit": "每条消息最多 {max} 个附件。",
-    "noInvocable": "这个智能体没有可调用的技能。",
+    "noInvocable": "这个智能体还没有选中可调用的技能。组织启用的技能要先在智能体的技能设置里选中，才能用 / 调用。",
+    "noInvocableAction": "去选择技能",
+    "noInvocableReadOnly": "这个智能体还没有选中可调用的技能。组织启用的技能要先在智能体的技能设置里选中才能调用，请联系它的所有者或组织管理员。",
     "skillsGroup": "技能",
     "skillTag": {
       "manual": "手动",

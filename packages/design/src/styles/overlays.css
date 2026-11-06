@@ -464,6 +464,10 @@
   background: var(--cb-selected);
 }
 .cb-palette-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--cb-space-2);
   padding: 8px 12px;
   color: var(--cb-muted);
 }
