@@ -140,6 +140,18 @@ async changeRole(@CurrentPrincipal() p: Principal, @CurrentOrg() org: OrgContext
 | `catalog.request` | member | a member requests a catalog item |
 | `catalog.decide` | admin | an org admin decides a member's request |
 
+Agent templates and pending connectors (phase 4, spec §15; all human-only, no new action: the routes reuse these):
+
+| Route | Action (minimum role) | Notes |
+|---|---|---|
+| `GET /agent-templates`, `GET /agent-templates/:id` | `agents.create` (member) | the templates usable in the org; one not usable -> 404 `component.not_found` |
+| `POST /agents/from-template/preview`, `POST /agents/from-template` | `agents.create` (member) | a visibility other than `private` needs `agents.manage` (403 `agent.visibility_forbidden`); the create takes the `previewHash` (409 `agent.template_preview_stale`) |
+| `POST /agents/:agentId/save-as-template`, `PUT` / `DELETE /agent-templates/:id`, `GET …/:id/delete-preview`, `PUT …/:id/shareable` | `agents.manage` (admin) | org templates only; owner-org admins; 409 `agent_template.name_taken` |
+| `POST /agents/:agentId/pending-connectors/:key/bind`, `POST …/request` | `agents.create` (member) | the service then allows only the agent's owner or an org admin+ (re-read in the transaction) |
+| `GET /agents/:agentId/pending-connectors/request` | `agents.use` (guest) | the agent must be visible to the reader |
+| `POST /connector-templates/:templateId/connectors` | `connectors.manage` (admin) | one more connector from a platform connector template |
+| `POST /catalog-requests/:id/decide` on a `connector_setup` request | `catalog.decide` (admin) | rejecting only; configuring is a bind, and the request closes with the last one |
+
 All of the above are in `HUMAN_ONLY` (403 for service tokens). Register new actions in `roles.ts` the same way and add a one-line comment stating the purpose.
 
 Old audit records `app.*` are not rewritten; when querying audit by action use the explicit mapping in `auditActionAliases` (`identity/audit.ts`) to treat the old and new names as synonyms (do not guess by prefix). The 2026-10-24 terminology rename (`plugin.*` -> `extension.*`, `directory.*` -> `catalog.*`, `catalog.*` -> `marketplace.*`, bundle `app.*` -> `plugin.*`) has no aliases: rows written before it keep their old names.
