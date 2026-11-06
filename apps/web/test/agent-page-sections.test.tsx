@@ -1,3 +1,4 @@
+import { describeNestedBox, findNestedBoxes } from "@capybara-hq/design/reference";
 import { act, cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -165,6 +166,19 @@ describe("the agent page's sections with their own saves (agent profile design Â
     expect(contentBox().value).toBe("Be helpful.");
     // nothing changed: no action row
     expect(document.querySelector('[data-part="action-row"]')).toBeNull();
+  });
+
+  it("prompt: list + editor without an editor card (one box is enough, acceptance item AB)", async () => {
+    stubApi(routes(agent({ files: null })));
+    await renderEditAgent({ section: "prompt" });
+    const section = screen.getByRole("region", { name: en.agents.page.sections.prompt });
+    // the columns split by a hairline; the open file's name is an h3 over its fields
+    expect(
+      section.querySelector('[data-columns="list-detail"]')?.getAttribute("data-divided"),
+    ).toBe("true");
+    expect(within(section).getByRole("heading", { level: 3, name: "AGENTS.md" })).toBeTruthy();
+    expect(section.querySelector('[data-part="card"]')).toBeNull();
+    expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
   });
 
   it("prompt: add WORKFLOW.md, reorder, save sends instructionFiles in order", async () => {

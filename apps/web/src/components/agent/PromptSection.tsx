@@ -2,7 +2,6 @@
 
 import {
   Button,
-  Card,
   Field,
   FormSection,
   Grid,
@@ -129,7 +128,9 @@ export function PromptSection() {
           title={tp("sections.prompt")}
           description={t("hint")}
         >
-          <Grid columns="list-detail">
+          {/* List + editor (spec §5.8): the form card is the one box; the open file's name is an
+              h3 over its fields, the columns split by a hairline, no editor card */}
+          <Grid columns="list-detail" divided>
             <Stack gap={8}>
               <Repeater
                 variant="rows"
@@ -195,53 +196,50 @@ export function PromptSection() {
               ) : null}
             </Stack>
             {current ? (
-              <Card title={current.name}>
-                <Stack gap={12}>
-                  <Field
-                    label={t("nameLabel")}
-                    required
-                    help={t("nameHelp")}
-                    {...(problem === "duplicate"
-                      ? { error: t("nameDuplicate") }
-                      : problem === "invalid"
-                        ? { error: t("nameInvalid") }
-                        : {})}
-                  >
-                    <Input
-                      name="file-name"
-                      disabled={save.pending}
-                      maxLength={67}
-                      value={current.name}
-                      onBlur={() => show(current.key, true)}
-                      onChange={(e) => {
-                        const name = e.target.value;
-                        show(current.key, false);
-                        edit((d) => ({
-                          files: d.files.map((f) => (f.key === current.key ? { ...f, name } : f)),
-                        }));
-                      }}
-                    />
-                  </Field>
-                  <Field label={t("contentLabel")} help={t("contentHelp")}>
-                    <Textarea
-                      code
-                      name="file-content"
-                      disabled={save.pending}
-                      rows={16}
-                      maxLength={INSTRUCTION_FILE_LIMITS.joinedChars}
-                      value={current.content}
-                      onChange={(e) => {
-                        const content = e.target.value;
-                        edit((d) => ({
-                          files: d.files.map((f) =>
-                            f.key === current.key ? { ...f, content } : f,
-                          ),
-                        }));
-                      }}
-                    />
-                  </Field>
-                </Stack>
-              </Card>
+              <Stack gap={12}>
+                <Text variant="h3">{current.name}</Text>
+                <Field
+                  label={t("nameLabel")}
+                  required
+                  help={t("nameHelp")}
+                  {...(problem === "duplicate"
+                    ? { error: t("nameDuplicate") }
+                    : problem === "invalid"
+                      ? { error: t("nameInvalid") }
+                      : {})}
+                >
+                  <Input
+                    name="file-name"
+                    disabled={save.pending}
+                    maxLength={67}
+                    value={current.name}
+                    onBlur={() => show(current.key, true)}
+                    onChange={(e) => {
+                      const name = e.target.value;
+                      show(current.key, false);
+                      edit((d) => ({
+                        files: d.files.map((f) => (f.key === current.key ? { ...f, name } : f)),
+                      }));
+                    }}
+                  />
+                </Field>
+                <Field label={t("contentLabel")} help={t("contentHelp")}>
+                  <Textarea
+                    code
+                    name="file-content"
+                    disabled={save.pending}
+                    rows={16}
+                    maxLength={INSTRUCTION_FILE_LIMITS.joinedChars}
+                    value={current.content}
+                    onChange={(e) => {
+                      const content = e.target.value;
+                      edit((d) => ({
+                        files: d.files.map((f) => (f.key === current.key ? { ...f, content } : f)),
+                      }));
+                    }}
+                  />
+                </Field>
+              </Stack>
             ) : null}
           </Grid>
         </FormSection>

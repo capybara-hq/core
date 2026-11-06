@@ -170,6 +170,12 @@ function ModelEdit({ data }: { data: AgentFormData }) {
     >
       <Stack gap={16}>
         <SaveFeedback save={save} onReload={() => void save.reload(discard)} extra={otherErrors} />
+        {/* The model's warnings above the section card, never inside it (spec §6.19) */}
+        {[...hints].map((w) => (
+          <Callout key={w} tone="warn">
+            {t.has(`warnings.${w}`) ? t(`warnings.${w}`) : t("warnings.unknown", { code: w })}
+          </Callout>
+        ))}
         <div>
           <FormSection
             id="model"
@@ -215,11 +221,6 @@ function ModelEdit({ data }: { data: AgentFormData }) {
                 options={[{ value: "", label: t("form.fallbackNone") }, ...options]}
               />
             </Field>
-            {[...hints].map((w) => (
-              <Callout key={w} tone="warn">
-                {t.has(`warnings.${w}`) ? t(`warnings.${w}`) : t("warnings.unknown", { code: w })}
-              </Callout>
-            ))}
           </FormSection>
           {modelDecl.length > 0 && (
             <FormSection

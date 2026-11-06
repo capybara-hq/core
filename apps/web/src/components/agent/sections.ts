@@ -1,4 +1,4 @@
-import type { FieldShape, FormSectionLayout } from "@capybara-hq/design";
+import type { FieldShape, FormSectionLayout, ItemShape } from "@capybara-hq/design";
 
 /**
  * The agent page's sections (agent profile design §3.2), in nav order. The URL keeps the open one
@@ -63,10 +63,19 @@ export const SECTION_FIELDS: Record<AgentSection, FieldShape[]> = {
   channels: [{ control: "item-group", options: 1 }],
 };
 
-/** The read-only variant's field layout (key-value rows, or the quick-action cards). */
-export const READ_ONLY_FIELDS: Partial<Record<AgentSection, FieldShape[]>> = {
+/**
+ * A section's loading layout: its fields, or, for a section whose card is a flush list of item
+ * rows (FormSection `flush` + ItemList `inset="flush"`), those rows (`items`: the card goes flush).
+ */
+export type SectionShape = FieldShape[] | { items: ItemShape[] };
+
+/**
+ * The read-only variant's layout (key-value rows, or the quick actions: a flush card of item rows,
+ * each a title over its body, as `QuickActionsReadOnly` draws them).
+ */
+export const READ_ONLY_FIELDS: Partial<Record<AgentSection, SectionShape>> = {
   basics: [{ control: "text" }, { control: "key-value" }],
-  "quick-actions": [{ control: "item-group", options: 2 }],
+  "quick-actions": { items: [{ lines: 2 }, { lines: 2 }] },
   model: [{ control: "key-value" }],
 };
 
