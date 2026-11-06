@@ -31,7 +31,7 @@ import type { ApiClientError } from "../../lib/api";
 import { decideApproval } from "../../lib/approvals";
 import { requestSubject } from "../../lib/catalog";
 import type { Conversation } from "../../lib/conversations";
-import type { InboxItem } from "../../lib/inbox";
+import { hasNotice, type InboxItem, isShowable } from "../../lib/inbox";
 import { agentsQuery } from "../../lib/query/agents";
 import { retryOnMountOf } from "../../lib/query/client";
 import { connectorsQuery, modelsQuery } from "../../lib/query/conversation";
@@ -288,7 +288,7 @@ function DailyOverview({
       keys.org(orgId).approval(id),
     ],
   });
-  const inbox = data.inbox ?? [];
+  const inbox = (data.inbox ?? []).filter(isShowable);
 
   async function approve(id: string) {
     setApproving(id);
@@ -345,7 +345,16 @@ function DailyOverview({
         href: "/inbox",
       };
     }
-    if (item.type === "skill_renamed") {
+    if (hasNotice(item) && item.notice.kind !== "skill_renamed") {
+      return {
+        id: item.id,
+        tag: { label: t("inbox.notice") },
+        title: t("inbox.noticeTitle"),
+        meta: when,
+        href: "/inbox",
+      };
+    }
+    if (hasNotice(item) && item.notice.kind === "skill_renamed") {
       const r = item.notice.skillRenamed;
       return {
         id: item.id,
@@ -373,6 +382,8 @@ function DailyOverview({
         href: "/inbox",
       };
     }
+    if (!("request" in item))
+      return { id: item.id, title: t("inbox.noticeTitle"), meta: when, href: "/inbox" };
     return {
       id: item.id,
       tag: { label: t("inbox.catalogRequest") },

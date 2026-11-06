@@ -13,25 +13,54 @@ export type InboxItem =
   | { type: "catalog_request"; id: string; createdAt: string; request: CatalogRequest }
   /** My own request in this org, approved or rejected (with the reason); `createdAt`: decided. */
   | { type: "catalog_request_decided"; id: string; createdAt: string; request: CatalogRequest }
-  | { type: "skill_renamed"; id: string; createdAt: string; notice: OrgNotice };
+  | { type: OrgNotice["kind"]; id: string; createdAt: string; notice: OrgNotice };
+
+/** Who owns an item (kernel `Owner`). */
+export type NoticeOwner = { kind: "platform" } | { kind: "org"; orgId: string; name: string };
 
 /**
- * A notice for the org's admins until one of them dismisses it: `skill_renamed`, an org skill the
- * platform components migration renamed because a platform skill on in the org has its name
- * (agents keep it: they select skills by id).
+ * A notice for the org's admins until one of them dismisses it: `skill_renamed` (an org skill the
+ * platform components migration renamed; agents keep it, they select skills by id) and the phase 3
+ * kinds with their `detail`. A kind this app does not know arrives as `{ kind: string; detail }`
+ * and is shown generically.
  */
-export interface OrgNotice {
-  id: string;
-  kind: "skill_renamed";
-  createdAt: string;
-  skillRenamed: {
-    skillId: string;
-    from: string;
-    to: string;
-    platformSkillId: string;
-    plugin: string | null;
-  };
-}
+export type OrgNotice = { id: string; createdAt: string } & (
+  | {
+      kind: "skill_renamed";
+      skillRenamed: {
+        skillId: string;
+        from: string;
+        to: string;
+        platformSkillId: string;
+        plugin: string | null;
+      };
+    }
+  | {
+      kind: "item_shared";
+      detail: { name: string; org: { id: string; name: string } | "all_orgs" };
+    }
+  | {
+      kind: "shared_item_updated";
+      detail: { name: string; from: string; to: string; owner: NoticeOwner };
+    }
+  | { kind: "upload_confirmed"; detail: { name: string; version: string } }
+  | {
+      kind: "upload_rejected";
+      detail: { name: string; version: string; reason: string | null };
+    }
+);
+
+/** An item carrying an org notice (every kind of {@link OrgNotice}, also one this app does not know). */
+export const hasNotice = (i: InboxItem): i is Extract<InboxItem, { notice: OrgNotice }> =>
+  "notice" in i && typeof i.notice === "object" && i.notice !== null;
+
+/** Whether this app can show the item: a known type, or any notice (shown generically). */
+export const isShowable = (i: InboxItem): boolean =>
+  hasNotice(i) ||
+  i.type === "tool_approval" ||
+  i.type === "skill_change" ||
+  i.type === "catalog_request" ||
+  i.type === "catalog_request_decided";
 
 export interface InboxView {
   items: InboxItem[];

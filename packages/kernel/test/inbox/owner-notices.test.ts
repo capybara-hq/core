@@ -9,7 +9,7 @@ import {
   setScope,
   startOrgEnv,
 } from "../catalog/org-env.js";
-import { createOrg } from "../helpers/runs.js";
+import { createOrg, waitFor } from "../helpers/runs.js";
 
 /**
  * Plugin scope phase 3, Task 3 (spec §14, P3-18, P3-22): org notices (`item_shared`,
@@ -129,6 +129,19 @@ describe("owner notices", { timeout: 90_000 }, () => {
     });
     await setScope(env, itemId, "named", []);
     await putScope(itemId, { scope: "named", orgs: [env.orgId] });
+    // the scope sync installs the item in org B and changes what the next preview covers
+    await waitFor(
+      async () =>
+        (await env.db
+          .selectFrom("plugin_installs")
+          .select("id")
+          .where("item_id", "=", itemId)
+          .where("org_id", "=", env.orgId)
+          .where("status", "=", "installed")
+          .executeTakeFirst()) !== undefined,
+      30_000,
+      "the scope sync installs the item in org B",
+    );
     await putScope(itemId, { scope: "optional" });
     const n = await env.db.selectFrom("org_notices").select("id").execute();
     expect(n).toEqual([]);
@@ -183,6 +196,91 @@ describe("owner notices", { timeout: 90_000 }, () => {
         { name: "plain", from: "1", to: "2" },
       ),
     ).toBe(0);
+  });
+
+  it("a component's own scope writes item_shared, and orgsUsing covers skills, deleted orgs and disabled items", async () => {
+    const itemId = await ownedPlugin(true);
+    const skill = await env.db
+      .selectFrom("platform_skills")
+      .select("id")
+      .where("catalog_item_id", "=", itemId)
+      .executeTakeFirstOrThrow();
+    const comps = `/api/v1/admin/components/skill/${skill.id}`;
+    const put = async (body: Record<string, unknown>) => {
+      const p = await env.root({ method: "POST", url: `${comps}/scope/preview`, payload: body });
+      expect(p.statusCode, p.body).toBe(200);
+      const r = await env.root({
+        method: "PUT",
+        url: `${comps}/scope`,
+        payload: { ...body, scopeHash: p.json().scopeHash },
+      });
+      expect(r.statusCode, r.body).toBe(200);
+    };
+    await put({ scope: "named", orgs: [orgA, env.orgId] });
+    const first = await ownerInbox(orgA, "item_shared");
+    expect(first).toHaveLength(1);
+    expect(first[0]?.notice.detail).toMatchObject({
+      ref: { kind: "skill", id: skill.id },
+      name: "owned-skill",
+      org: { id: env.orgId },
+    });
+    // the skill branch of orgsUsing: B is listed, C is not
+    const ref = { kind: "skill", id: skill.id } as const;
+    expect((await orgsUsing(env.db, ref, { except: orgA })).map((o) => o.id)).toEqual([env.orgId]);
+    // switched off in B: nobody
+    await env.db
+      .insertInto("component_org_switches")
+      .values({ kind: "skill", component_id: skill.id, org_id: env.orgId, enabled: false })
+      .execute();
+    expect(await orgsUsing(env.db, ref, { except: orgA })).toEqual([]);
+    await put({ scope: "optional" });
+    expect(
+      (await ownerInbox(orgA, "item_shared")).filter((i) => i.notice.detail.org === "all_orgs"),
+    ).toHaveLength(1);
+    // a deleted org is not "using": plugin scope all, org C soft-deleted
+    const plugin = { kind: "plugin", id: itemId } as const;
+    await env.db
+      .updateTable("catalog_items")
+      .set({ scope: "all" })
+      .where("id", "=", itemId)
+      .execute();
+    const ids = async () => (await orgsUsing(env.db, plugin, { except: orgA })).map((o) => o.id);
+    expect(await ids()).toContain(orgC);
+    await env.db
+      .updateTable("orgs")
+      .set({ deleted_at: new Date() })
+      .where("id", "=", orgC)
+      .execute();
+    try {
+      expect(await ids()).not.toContain(orgC);
+    } finally {
+      await env.db.updateTable("orgs").set({ deleted_at: null }).where("id", "=", orgC).execute();
+    }
+    // a disabled item is on nowhere
+    await env.db
+      .updateTable("catalog_items")
+      .set({ disabled: true })
+      .where("id", "=", itemId)
+      .execute();
+    expect(await ids()).toEqual([]);
+  });
+
+  it("the platform inbox total counts every open notice, as the count route does", async () => {
+    for (let i = 0; i < 103; i++) {
+      await addPlatformNotice(env.db, "ownership_transferred", {
+        ref: { kind: "skill", id: `00000000-0000-4000-8000-${String(i).padStart(12, "0")}` },
+        name: `s${i}`,
+        fromOrg: { id: orgA, name: "A" },
+        reason: "org_deleted",
+        usedBy: 1,
+      });
+    }
+    const list = (await env.root({ method: "GET", url: "/api/v1/admin/inbox" })).json();
+    const count = (await env.root({ method: "GET", url: "/api/v1/admin/inbox/count" })).json();
+    expect(list.items).toHaveLength(100);
+    expect(list.truncated).toBe(true);
+    expect(list.total).toBe(count.total);
+    expect(list.total).toBeGreaterThanOrEqual(103);
   });
 
   it("platform notice", async () => {

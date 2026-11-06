@@ -39,7 +39,13 @@ import {
   requestSubject,
   requestVersion,
 } from "../../../lib/catalog";
-import { dismissNotice, type InboxItem, type OrgNotice } from "../../../lib/inbox";
+import {
+  dismissNotice,
+  hasNotice,
+  type InboxItem,
+  isShowable,
+  type OrgNotice,
+} from "../../../lib/inbox";
 import { inboxChangeKeys, inboxQuery } from "../../../lib/query/inbox";
 import { keys } from "../../../lib/query/keys";
 import { useAppMutation } from "../../../lib/query/mutation";
@@ -88,7 +94,7 @@ function Inbox({
   // Items decided here: hidden at once, before the inbox is read again (their actions can't be
   // pressed twice meanwhile).
   const [decided, setDecided] = useState<ReadonlySet<string>>(new Set());
-  const rows = (inbox?.items ?? []).filter((i) => !decided.has(subjectOf(i)));
+  const rows = (inbox?.items ?? []).filter((i) => isShowable(i) && !decided.has(subjectOf(i)));
   const truncated = inbox?.truncated === true;
   const [activeId, setActiveId] = useState<string>();
   const active = rows.find((a) => a.id === activeId) ?? rows[0];
@@ -99,6 +105,7 @@ function Inbox({
   const errorMessage = useErrorMessage();
   const [requestPending, setRequestPending] = useState<"approve" | "reject">();
   const tn = useTranslations("inbox.skillRenamed");
+  const tnn = useTranslations("inbox.orgNotice");
   const [noticePending, setNoticePending] = useState(false);
   // Dismissing a notice changes only the inbox
   const dismissMutation = useAppMutation({
@@ -133,6 +140,7 @@ function Inbox({
     skillChange: t("skillChange.label"),
     request: td("label"),
     skillRenamed: tn("label"),
+    notice: tnn,
     decided: tdd("label"),
     approved: tdd("approved"),
     rejected: tdd("rejected"),
@@ -228,12 +236,13 @@ function Inbox({
   const detail: Detail | null =
     active === undefined
       ? null
-      : active.type === "skill_renamed"
+      : hasNotice(active)
         ? noticeDetail({
             notice: active.notice,
             pending: noticePending,
             onDismiss: () => void dismiss(active.notice),
             tn,
+            tnn,
             t,
           })
         : active.type === "catalog_request_decided"
@@ -341,7 +350,7 @@ const subjectOf = (i: InboxItem): string =>
     ? i.approval.id
     : i.type === "skill_change"
       ? i.skillChange.id
-      : i.type === "skill_renamed"
+      : hasNotice(i)
         ? i.notice.id
         : i.request.id;
 
@@ -350,6 +359,7 @@ interface Labels {
   skillChange: string;
   request: string;
   skillRenamed: string;
+  notice: Translate;
   decided: string;
   approved: string;
   rejected: string;
@@ -364,8 +374,11 @@ function titleOf(item: InboxItem, labels: Labels, locale: string): string {
   if (item.type === "catalog_request") {
     return `${labels.request} · ${displayNameOf(requestSubject(item.request), locale)}`;
   }
-  if (item.type === "skill_renamed") {
-    return `${labels.skillRenamed} · ${item.notice.skillRenamed.to}`;
+  if (hasNotice(item)) {
+    const n = item.notice;
+    if (n.kind === "skill_renamed") return `${labels.skillRenamed} · ${n.skillRenamed.to}`;
+    const line = noticeLine(n, labels.notice);
+    return line.name === null ? line.label : `${line.label} · ${line.name}`;
   }
   if (item.type === "catalog_request_decided") {
     return `${labels.decided} · ${displayNameOf(requestSubject(item.request), locale)}`;
@@ -380,7 +393,11 @@ function subtitleOf(item: InboxItem, labels: Labels): string {
   }
   if (item.type === "tool_approval") return item.approval.agent.name;
   if (item.type === "skill_change") return item.skillChange.agent.name;
-  if (item.type === "skill_renamed") return item.notice.skillRenamed.from;
+  if (hasNotice(item)) {
+    return item.notice.kind === "skill_renamed"
+      ? item.notice.skillRenamed.from
+      : noticeLine(item.notice, labels.notice).subtitle;
+  }
   return requestSubject(item.request).name;
 }
 
@@ -667,14 +684,40 @@ function noticeDetail({
   pending,
   onDismiss,
   tn,
+  tnn,
   t,
 }: {
   notice: OrgNotice;
   pending: boolean;
   onDismiss(): void;
   tn: Translate;
+  tnn: Translate;
   t: Translate;
 }): Detail {
+  if (notice.kind !== "skill_renamed") {
+    const line = noticeLine(notice, tnn);
+    return {
+      inspector: (
+        <KeyValue
+          keyWidth="10ch"
+          rows={[...line.rows, { k: t("requested"), v: <DateTime value={notice.createdAt} /> }]}
+        />
+      ),
+      actionRow: {
+        primary: {
+          label: tnn("dismiss"),
+          onSelect: onDismiss,
+          loading: pending,
+          disabled: pending,
+        },
+      },
+      content: (
+        <Card title={line.title}>
+          <Text variant="prose">{line.hint}</Text>
+        </Card>
+      ),
+    };
+  }
   const r = notice.skillRenamed;
   return {
     inspector: (
@@ -702,4 +745,112 @@ function noticeDetail({
       </Card>
     ),
   };
+}
+
+/**
+ * The texts of an org notice other than `skill_renamed`: the row label, the item name (null for a
+ * kind this app does not know), the row's second line, the detail's title, hint and key rows. A
+ * kind or a detail it does not know reads generically.
+ */
+function noticeLine(
+  notice: OrgNotice,
+  tnn: Translate,
+): {
+  label: string;
+  name: string | null;
+  subtitle: string;
+  title: string;
+  hint: string;
+  rows: { k: string; v: string }[];
+} {
+  const unknown = {
+    label: tnn("unknownLabel"),
+    name: null,
+    subtitle: "",
+    title: tnn("unknownTitle"),
+    hint: "",
+    rows: [],
+  };
+  const d: Record<string, unknown> =
+    "detail" in notice && typeof notice.detail === "object" && notice.detail !== null
+      ? (notice.detail as unknown as Record<string, unknown>)
+      : {};
+  const name = typeof d.name === "string" ? d.name : null;
+  if (name === null) return unknown;
+  const text = (v: unknown, fallback = ""): string => (typeof v === "string" ? v : fallback);
+  switch (notice.kind) {
+    case "item_shared": {
+      const org = d.org;
+      const orgName =
+        org === "all_orgs"
+          ? tnn("allOrgs")
+          : typeof org === "object" && org !== null
+            ? text((org as { name?: unknown }).name)
+            : "";
+      return {
+        label: tnn("itemSharedLabel"),
+        name,
+        subtitle: orgName,
+        title:
+          org === "all_orgs"
+            ? tnn("itemSharedAllTitle", { name })
+            : tnn("itemSharedTitle", { name, org: orgName }),
+        hint: tnn("itemSharedHint"),
+        rows: [
+          { k: tnn("item"), v: name },
+          { k: tnn("org"), v: orgName },
+        ],
+      };
+    }
+    case "shared_item_updated": {
+      const from = text(d.from);
+      const to = text(d.to);
+      const o = d.owner as { kind?: string; name?: string } | undefined;
+      const owner = o?.kind === "org" ? text(o.name) : tnn("ownerPlatform");
+      return {
+        label: tnn("sharedItemUpdatedLabel"),
+        name,
+        subtitle: `${from} → ${to}`,
+        title: tnn("sharedItemUpdatedTitle", { name, from, to }),
+        hint: tnn("sharedItemUpdatedHint"),
+        rows: [
+          { k: tnn("item"), v: name },
+          { k: tnn("owner"), v: owner },
+          { k: tnn("from"), v: from },
+          { k: tnn("to"), v: to },
+        ],
+      };
+    }
+    case "upload_confirmed": {
+      const version = text(d.version);
+      return {
+        label: tnn("uploadConfirmedLabel"),
+        name,
+        subtitle: version,
+        title: tnn("uploadConfirmedTitle", { name, version }),
+        hint: tnn("uploadConfirmedHint"),
+        rows: [
+          { k: tnn("item"), v: name },
+          { k: tnn("version"), v: version },
+        ],
+      };
+    }
+    case "upload_rejected": {
+      const version = text(d.version);
+      return {
+        label: tnn("uploadRejectedLabel"),
+        name,
+        subtitle: version,
+        title: tnn("uploadRejectedTitle", { name, version }),
+        hint: tnn("uploadRejectedHint"),
+        rows: [
+          { k: tnn("item"), v: name },
+          { k: tnn("version"), v: version },
+          { k: tnn("reason"), v: text(d.reason, tnn("noReason")) },
+        ],
+      };
+    }
+    default:
+      return unknown;
+  }
 }

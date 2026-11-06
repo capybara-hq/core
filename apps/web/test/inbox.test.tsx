@@ -590,3 +590,121 @@ describe("已记住的授权（SettingsPage）", () => {
     expect(await screen.findByText(m.connections.grants.empty)).toBeTruthy();
   });
 });
+
+type N = (typeof msgs)["en"]["inbox"]["orgNotice"];
+
+describe("inbox: org notices of phase 3 (org admins)", () => {
+  type Case = {
+    kind: string;
+    detail: Record<string, unknown>;
+    label: (n: N) => string;
+    row: string;
+    title: (n: N, a: string) => string;
+    extra?: (n: N) => string;
+  };
+  const ref = { kind: "plugin", id: "i1" };
+  const cases: Case[] = [
+    {
+      kind: "item_shared",
+      detail: { ref, name: "crm", org: { id: "o2", name: "Beta" } },
+      label: (n) => n.itemSharedLabel,
+      row: "crm",
+      title: (n) => n.itemSharedTitle.replace("{name}", "crm").replace("{org}", "Beta"),
+    },
+    {
+      kind: "item_shared",
+      detail: { ref, name: "crm", org: "all_orgs" },
+      label: (n) => n.itemSharedLabel,
+      row: "crm",
+      title: (n) => n.itemSharedAllTitle.replace("{name}", "crm"),
+    },
+    {
+      kind: "shared_item_updated",
+      detail: {
+        ref,
+        name: "crm",
+        from: "1.0.0",
+        to: "1.1.0",
+        owner: { kind: "org", orgId: "o9", name: "Acme" },
+      },
+      label: (n) => n.sharedItemUpdatedLabel,
+      row: "crm",
+      title: (n) =>
+        n.sharedItemUpdatedTitle
+          .replace("{name}", "crm")
+          .replace("{from}", "1.0.0")
+          .replace("{to}", "1.1.0"),
+      extra: () => "Acme",
+    },
+    {
+      kind: "upload_confirmed",
+      detail: { itemId: "i1", name: "crm", version: "2.0.0" },
+      label: (n) => n.uploadConfirmedLabel,
+      row: "crm",
+      title: (n) => n.uploadConfirmedTitle.replace("{name}", "crm").replace("{version}", "2.0.0"),
+    },
+    {
+      kind: "upload_rejected",
+      detail: { itemId: "i1", name: "crm", version: "2.0.0", reason: "too broad" },
+      label: (n) => n.uploadRejectedLabel,
+      row: "crm",
+      title: (n) => n.uploadRejectedTitle.replace("{name}", "crm").replace("{version}", "2.0.0"),
+      extra: () => "too broad",
+    },
+  ];
+
+  it.each(LOCALES.flatMap((locale) => cases.map((c, i) => [locale, c.kind, i] as const)))(
+    "shows %s %s (case %i) and dismisses it",
+    async (locale, _kind, i) => {
+      const c = cases[i] as Case;
+      const n = msgs[locale].inbox.orgNotice;
+      let open = true;
+      const notice = { id: "n1", kind: c.kind, createdAt: T, detail: c.detail };
+      const { calls } = await renderInbox(
+        {
+          [LIST]: () =>
+            json(200, {
+              items: open ? [{ type: c.kind, id: "n1", createdAt: T, notice }] : [],
+              truncated: false,
+            }),
+          "POST /api/v1/orgs/o1/inbox/notices/n1/dismiss": () => {
+            open = false;
+            return noContent();
+          },
+        },
+        { locale },
+      );
+      const table = await screen.findByRole("table", { name: msgs[locale].inbox.listLabel });
+      expect(within(table).getByText(`${c.label(n)} · ${c.row}`)).toBeTruthy();
+      expect(await screen.findByText(c.title(n, ""))).toBeTruthy();
+      if (c.extra) expect(screen.getAllByText(c.extra(n)).length).toBeGreaterThan(0);
+      await userEvent.setup().click(screen.getByRole("button", { name: n.dismiss }));
+      expect(await screen.findByText(n.dismissed)).toBeTruthy();
+      expect(calls.map((x) => `${x.method} ${x.url}`)[0]).toBe(
+        "POST /api/v1/orgs/o1/inbox/notices/n1/dismiss",
+      );
+    },
+  );
+
+  it("an unknown notice kind renders a generic notice and an unknown item type is skipped", async () => {
+    const n = msgs.en.inbox.orgNotice;
+    await renderInbox({
+      [LIST]: () =>
+        json(200, {
+          items: [
+            {
+              type: "future_kind",
+              id: "n1",
+              createdAt: T,
+              notice: { id: "n1", kind: "future_kind", createdAt: T, detail: {} },
+            },
+            { type: "mystery", id: "x1", createdAt: T },
+          ],
+          truncated: false,
+        }),
+    });
+    const table = await screen.findByRole("table", { name: msgs.en.inbox.listLabel });
+    expect(within(table).getByText(n.unknownLabel)).toBeTruthy();
+    expect(within(table).getAllByRole("row")).toHaveLength(2);
+  });
+});

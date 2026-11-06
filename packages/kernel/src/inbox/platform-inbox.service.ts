@@ -110,7 +110,7 @@ export class PlatformInboxService {
   ) {}
 
   async list(): Promise<PlatformInboxView> {
-    const [requests, requestCount, pending, failures, failureCount, run, notices] =
+    const [requests, requestCount, pending, failures, failureCount, run, notices, noticeCount] =
       await Promise.all([
         this.requests.listDeployment(),
         this.requests.countPendingDeployment(),
@@ -119,6 +119,7 @@ export class PlatformInboxService {
         this.countScopeSyncFailures(),
         this.migrationRun(),
         this.notices(),
+        this.countNotices(),
       ]);
     const all: PlatformInboxItem[] = [
       ...requests.map(
@@ -177,7 +178,7 @@ export class PlatformInboxService {
             : 0,
     );
     const total =
-      requestCount + pending.length + failureCount + (run === null ? 0 : 1) + notices.length;
+      requestCount + pending.length + failureCount + (run === null ? 0 : 1) + noticeCount;
     const items = all.slice(0, PLATFORM_INBOX_MAX_ITEMS);
     return { items, truncated: total > items.length, total };
   }
