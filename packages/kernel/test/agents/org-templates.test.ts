@@ -424,6 +424,7 @@ describe("org agent templates", { timeout: 120_000 }, () => {
       owned: true,
       shareable: false,
       promoted: false,
+      usable: true,
     });
     expect(body.template.definition).toEqual({
       name: "lead",
@@ -811,6 +812,7 @@ describe("org agent templates", { timeout: 120_000 }, () => {
       shareable: true,
       promoted: true,
       version: 1,
+      usable: true,
     });
     const inB = await root({ method: "GET", url: `/api/v1/orgs/${orgB}/agent-templates/${pid}` });
     expect(inB.statusCode, inB.body).toBe(200);
@@ -1017,7 +1019,14 @@ describe("org agent templates", { timeout: 120_000 }, () => {
       .execute();
     const got = await boss({ method: "GET", url: `/api/v1/orgs/${orgA}/agent-templates/${id}` });
     expect(got.statusCode, got.body).toBe(200);
-    expect(got.json().template).toMatchObject({ id, owned: true, promoted: true, version: 1 });
+    // served by the owner fallback: not usable in its own org
+    expect(got.json().template).toMatchObject({
+      id,
+      owned: true,
+      promoted: true,
+      version: 1,
+      usable: false,
+    });
     const v2 = await boss({
       method: "PUT",
       url: `/api/v1/orgs/${orgA}/agent-templates/${id}`,
