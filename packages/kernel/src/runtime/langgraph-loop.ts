@@ -45,8 +45,9 @@ type EndKind = Exclude<LoopOutcome["kind"], "interrupted" | "suspended">;
 /**
  * 图状态：只记录进度，消息每步从事件日志重建（runModelStep 自己读日志），checkpoint 很小。
  * - `step`：当前（最近一次进入的）步骤编号，prepare 节点 +1；
- * - `consumedUpToSeq`：已吸收的最大可吸收事件 seq（user_message / background_task_finished; a
- *   finish TaskOutput or TaskStop already reported is absorbed like any other, rendered short）；
+ * - `consumedUpToSeq`：已吸收的最大可吸收事件 seq（user_message / background_task_finished /
+ *   subagent_delivery; a finish TaskOutput or TaskStop already reported is absorbed like any
+ *   other, rendered short）；
  * - `lastStopReason`：最近一步模型调用的停止原因；
  * - `outcome`：图的结束方式（在决定结束的节点里写入，续跑已结束的图时直接读出，不依赖当前时间）。
  *

@@ -540,6 +540,44 @@ describe("reconstructRequest：基线零漂移", { timeout: 120_000 }, () => {
     expect(replayableCalls(snap).length).toBe(5);
   });
 
+  it("a parent request with a subagent_delivery rebuilds with zero drift", async () => {
+    reset();
+    const agentId = await createAgent(
+      { provider: "model-looper", model: "loop-1" },
+      { tools: PROBE_TOOLS },
+    );
+    const conv = await createConv(owner, orgId, agentId);
+    await postMessage(owner, orgId, conv, "loop:400");
+    await waitForEvent(db, conv, (e) => e.type === "model_call");
+    // a child's report lands while the parent's step 1 runs (agent map spec §5.2)
+    const [delivery] = await k.app.get(EventLog).append(conv, [
+      {
+        type: "subagent_delivery",
+        idemKey: `test_delivery:${conv}`,
+        payload: {
+          subagentId: "sa_child",
+          childRunId: randomUUID(),
+          description: "Survey the module",
+          kind: "report",
+          text: "Three call sites.",
+          triggerAccountId: ownerId,
+        },
+      },
+    ]);
+    await waitForTerminal(db, conv, 1, 30_000);
+
+    const calls = modelCalls(await eventsOf(db, conv));
+    const absorbing = calls.findIndex(
+      (c) => (c.payload.request.absorbedUpToSeq ?? 0) >= (delivery?.seq ?? Infinity),
+    );
+    expect(absorbing).toBeGreaterThan(0);
+    expect(sent[absorbing]?.messages).toContainEqual({
+      role: "system",
+      content: 'Sub-agent sa_child ("Survey the module") handed back a report:\nThree call sites.',
+    });
+    await expectZeroDrift(conv, await snapshotOf(conv));
+  });
+
   it("压缩摘要之后的请求", async () => {
     reset();
     const agentId = await createAgent({ provider: "model-fake", model: "fake-small" });

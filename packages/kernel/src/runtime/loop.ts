@@ -23,8 +23,8 @@ export interface LoopContext {
   shutdown: AbortSignal;
   sink: StreamSink;
   /**
-   * 下一个步骤间隙要吸收的事件：返回 seq > afterSeq 的可吸收事件（`user_message` 与
-   * `background_task_finished`, `isAbsorbable`；且只含本轮开始时尚未被消费的，
+   * 下一个步骤间隙要吸收的事件：返回 seq > afterSeq 的可吸收事件（`user_message`、
+   * `background_task_finished` 与 `subagent_delivery`, `isAbsorbable`；且只含本轮开始时尚未被消费的，
    * 即 seq 也大于会话的 `consumed_seq`），按 seq 升序。loop 记录吸收到的最大 seq 作为 `consumedUpToSeq`。
    */
   pendingAbsorbable(afterSeq: number): Promise<AbsorbableEvent[]>;

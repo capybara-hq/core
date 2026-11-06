@@ -188,6 +188,32 @@ function duration(ms: number): string {
 }
 
 /**
+ * How a sub-agent's run ended, as the model reads it: the status of `agentResultText`'s bracket
+ * line, also the status of a finished `subagent_delivery` (`renderSubagentDelivery`).
+ */
+export function subagentStatusText(
+  status: SubagentStatus,
+  opts: { errorCode?: string | undefined; abortedBy?: "user" | "parent" | undefined } = {},
+): string {
+  switch (status) {
+    case "completed":
+      return "completed";
+    case "max_steps":
+      return "stopped at the step limit; the reply may be partial";
+    case "max_duration":
+      return "stopped at the time limit; the reply may be partial";
+    case "budget":
+      return "stopped: token budget used up";
+    case "aborted":
+      return opts.abortedBy === "parent" ? "stopped with this run" : "stopped by the user";
+    case "timed_out":
+      return "timed out";
+    case "failed":
+      return opts.errorCode === undefined ? "failed" : `failed (${opts.errorCode})`;
+  }
+}
+
+/**
  * The tool result of a finished sub-agent (§4.4): the text for how its run ended, a blank line, and
  * the status line with its `agentId`. `ownModel`: an org agent dispatched with a `model` that was
  * ignored. `abortedBy: "parent"`: stopped together with the parent run (seen only in logs).
@@ -210,40 +236,32 @@ export function agentResultText(r: {
   noResumeHint?: boolean;
 }): { content: string; isError: boolean } {
   const reply = r.reply.trim();
-  let status: string;
+  const status = subagentStatusText(r.status, r);
   let text: string;
   let isError = true;
   switch (r.status) {
     case "completed":
-      [status, text, isError] = ["completed", reply, false];
+      [text, isError] = [reply, false];
       break;
     case "max_steps":
-      [status, text, isError] = [
-        "stopped at the step limit; the reply may be partial",
-        reply,
-        false,
-      ];
+      [text, isError] = [reply, false];
       break;
     case "max_duration":
-      status = "stopped at the time limit; the reply may be partial";
       text = reply === "" ? "The sub-agent produced no reply before the time limit." : reply;
       isError = false;
       break;
     case "budget":
-      [status, text] = ["stopped: token budget used up", reply];
+      text = reply;
       break;
     case "aborted":
-      [status, text] =
-        r.abortedBy === "parent"
-          ? ["stopped with this run", AGENT_STOPPED_WITH_RUN_TEXT]
-          : ["stopped by the user", "The user stopped this sub-agent."];
+      text =
+        r.abortedBy === "parent" ? AGENT_STOPPED_WITH_RUN_TEXT : "The user stopped this sub-agent.";
       break;
     case "timed_out":
       // the parent's sub-agents wait timed out (§7.2) and stopped it; the parent goes on
-      [status, text] = ["timed out", "stopped: the sub-agent wait timed out"];
+      text = "stopped: the sub-agent wait timed out";
       break;
     case "failed":
-      status = r.errorCode === undefined ? "failed" : `failed (${r.errorCode})`;
       text =
         r.errorMessage === undefined
           ? "The sub-agent failed."

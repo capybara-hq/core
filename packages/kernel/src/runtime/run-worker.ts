@@ -916,7 +916,8 @@ export class RunWorker {
       saved !== undefined
         ? effectiveDefinition(saved, await readSelection(t, conversationId))
         : current;
-    // a wake run's boundary is a finished background task, not a message (background Bash §3)
+    // a wake run's boundary is a finished background task (background Bash §3) or a sub-agent's
+    // delivery (agent map spec §5.3), not a message
     const boundary = await t
       .selectFrom("conversation_events")
       .select("type")
@@ -934,6 +935,10 @@ export class RunWorker {
           triggerAccountId: run.trigger_account_id,
           ...(boundary?.type === "background_task_finished" && {
             trigger: "background_task" as const,
+            triggerSeq: Number(run.trigger_seq),
+          }),
+          ...(boundary?.type === "subagent_delivery" && {
+            trigger: "subagent" as const,
             triggerSeq: Number(run.trigger_seq),
           }),
         },

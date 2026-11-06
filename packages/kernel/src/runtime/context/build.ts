@@ -18,6 +18,7 @@ import {
 } from "../../conversations/events.js";
 import { catalogText, isAlwaysLoaded } from "../../tools/builtins/tool-search.js";
 import type { ResolvedTool } from "../../tools/registry.js";
+import { renderSubagentDelivery } from "../subagents/render.js";
 import { LEGACY_CATALOG_HEADER, LEGACY_SKILL_TEXTS, usesLegacyToolNames } from "./legacy-text.js";
 import {
   invokedSkillNames,
@@ -86,8 +87,8 @@ export interface BuildModelRequestInput {
   model: ModelInfo;
   step: number;
   /**
-   * loop 已吸收到的位置（R31）：the largest seq of the absorbable events (`user_message` and
-   * `background_task_finished`, {@link isAbsorbable}) the loop took. 提供时：
+   * loop 已吸收到的位置（R31）：the largest seq of the absorbable events (`user_message`,
+   * `background_task_finished` and `subagent_delivery`, {@link isAbsorbable}) the loop took. 提供时：
    * - seq 大于它的可吸收事件不进请求（运行中途到达、尚未被吸收的插话或后台任务结束，由后续步骤吸收或触发下一轮）；
    * - 每个可吸收事件放在**吸收它的那次模型调用**的位置：日志里第一个 `request.absorbedUpToSeq`
    *   不小于它的 `model_call` 之前（没有该字段的旧 model_call 视为吸收了它之前的全部消息），
@@ -535,7 +536,8 @@ export function summaryText(summary: string): string {
  *   `user_message` / `assistant_message`（content 原样，含 opaque；aborted 的也回放；媒体引用按
  *   {@link resolveMedia} 换成 base64 或文字占位）/ `reminder`
  *   （`role: "system"`，放在它所在的位置）/ `background_task_finished`（`role: "system"`, the text of
- *   {@link renderBackgroundFinished}, placed like a user_message）；`tool_result` 事件还原为紧随其 assistant 消息之后的一条 user 消息
+ *   {@link renderBackgroundFinished}, placed like a user_message）/ `subagent_delivery` (likewise,
+ *   the text of {@link renderSubagentDelivery})；`tool_result` 事件还原为紧随其 assistant 消息之后的一条 user 消息
  *   （同一步的多个结果合并，按该 assistant 消息里 tool_call 的顺序；找不到对应调用的结果不进请求）。
  *   其他事件不进请求。提供 `absorbedUpToSeq` 时，
  *   尚未被吸收的可吸收事件不进请求，运行中途到达的放在吸收它的调用处（见 BuildModelRequestInput）。
@@ -587,7 +589,7 @@ export function buildModelRequest(input: BuildModelRequestInput): {
     if (e.type === "model_call") lastCall = absorbedBy(e);
   }
   /**
-   * 第 i 个事件（可吸收事件：user_message / background_task_finished）的放置方式：
+   * 第 i 个事件（可吸收事件：user_message / background_task_finished / subagent_delivery）的放置方式：
    * - `inline`：在吸收它的调用（之后第一个 `absorbedBy ≥ seq` 的 model_call，或本次请求）之前，
    *   没有「由未吸收它的调用生成的回复」→ 按 seq 原位回放（常规情况，与不提供 absorbedUpToSeq 时一致）；
    * - `deferred`：它之后有非空 assistant_message 是由一次没有吸收它的 model_call 生成的（它在那一步
@@ -668,11 +670,20 @@ export function buildModelRequest(input: BuildModelRequestInput): {
   };
   /** 被某次模型调用跳过（运行中途到达）、尚未被吸收的可吸收事件，按 seq 升序。 */
   let deferred: AbsorbableEvent[] = [];
-  /** An absorbable event as a request message: a user turn, or a finished task's system text. */
-  const absorbableMessage = (e: AbsorbableEvent): ModelMessage =>
-    e.type === "user_message"
-      ? { role: "user", content: userBlocks(e) }
-      : { role: "system", content: renderBackgroundFinished(e.payload) };
+  /**
+   * An absorbable event as a request message: a user turn, or the system text of a finished task
+   * or a sub-agent's delivery.
+   */
+  const absorbableMessage = (e: AbsorbableEvent): ModelMessage => {
+    switch (e.type) {
+      case "user_message":
+        return { role: "user", content: userBlocks(e) };
+      case "background_task_finished":
+        return { role: "system", content: renderBackgroundFinished(e.payload) };
+      case "subagent_delivery":
+        return { role: "system", content: renderSubagentDelivery(e.payload) };
+    }
+  };
   /**
    * 把已被吸收（seq ≤ upTo）的延后消息按 seq 顺序放进 messages，插在末尾连续的 system 提醒之前
    * （若有）。这样某一步自己写在 model_call 之前的提醒（含收尾提醒）仍排在它所跟随的用户消息之后，

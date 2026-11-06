@@ -256,8 +256,8 @@ export class RunQueue {
         : undefined;
     if (idleActive && Number(idleActive.trigger_seq) > Number(conv.consumed_seq)) {
       // No unconsumed message, but a run whose boundary is not consumed yet (a wake run, whose
-      // boundary is a finished background task): it goes through the orphan check below with
-      // that boundary, as a message's run does
+      // boundary is a finished background task or a sub-agent's delivery): it goes through the
+      // orphan check below with that boundary, as a message's run does
       last = { seq: idleActive.trigger_seq, accountId: idleActive.trigger_account_id };
     } else if (!last || Number(last.seq) <= Number(conv.consumed_seq)) {
       // Nothing unconsumed: the queue's head goes out when the conversation is idle (no active
