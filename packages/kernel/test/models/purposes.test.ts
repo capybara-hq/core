@@ -139,17 +139,17 @@ describe("purpose list", () => {
       {
         purpose: "subagent_fast",
         kind: "chat",
-        label: { zh: "子代理：快速", en: "Sub-agent: fast" },
+        label: { zh: "子智能体：快速", en: "Sub-agent: fast" },
       },
       {
         purpose: "subagent_standard",
         kind: "chat",
-        label: { zh: "子代理：标准", en: "Sub-agent: standard" },
+        label: { zh: "子智能体：标准", en: "Sub-agent: standard" },
       },
       {
         purpose: "subagent_capable",
         kind: "chat",
-        label: { zh: "子代理：最强", en: "Sub-agent: capable" },
+        label: { zh: "子智能体：最强", en: "Sub-agent: capable" },
       },
     ]);
     const views = await list(ent, adminUrl());
