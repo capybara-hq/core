@@ -3351,7 +3351,7 @@
   },
   "catalog": {
     "scope": {
-      "all": "All organizations",
+      "all": "All orgs",
       "optional": "Organizations choose",
       "named": "Selected organizations",
       "disabled": "Disabled"
@@ -3477,7 +3477,7 @@
         },
         "componentsEmpty": "This version has no components.",
         "orgsHint": {
-          "all": "All organizations: on in every organization; org admins cannot turn it off.",
+          "all": "All orgs: on by default in every organization; org admins can turn it off in their own.",
           "optional": "Organizations choose: {n, plural, one {# organization has} other {# organizations have}} turned it on.",
           "named": "Selected organizations: only the organizations below can use it."
         },
@@ -3773,6 +3773,7 @@
       "meta": {
         "orgsUsing": "{n, plural, one {# org using it} other {# orgs using it}}",
         "named": "Selected: {orgs}",
+        "allOff": "All orgs · {n} turned off",
         "components": {
           "extension": "{n, plural, one {# extension} other {# extensions}}",
           "skills": "{n, plural, one {# skill} other {# skills}}",
@@ -3792,7 +3793,7 @@
         "title": "Set the scope of {name}",
         "scopeLabel": "Scope",
         "hints": {
-          "all": "On in every organization, including new ones; org admins cannot turn it off.",
+          "all": "On by default in every organization, including new ones; org admins can turn it off in their own.",
           "optional": "Off by default; each org admin turns it on.",
           "named": "On only in the organizations you choose."
         },
@@ -4241,6 +4242,7 @@
       "off": "Off",
       "needs_config": "Needs configuration",
       "platform": "On · set by the platform",
+      "platformDefault": "On by default for all orgs",
       "not_offered": "Not offered, can be requested",
       "requested": "Requested, waiting",
       "unavailable": "Stopped by the platform",
@@ -4424,7 +4426,7 @@
       "disabledNote": "Disabled on the whole deployment; its scope is kept and applies again when it is enabled.",
       "pluginStoppedNote": "Its plugin is disabled or deleted, so it is off in every organization.",
       "orgsHint": {
-        "all": "All organizations: every organization uses it and org admins cannot turn it off.",
+        "all": "All orgs: on by default in every organization; org admins can turn it off in their own.",
         "optional": "Organizations choose: {n, plural, one {# organization has} other {# organizations have}} turned it on.",
         "named": "Named organizations: only the organizations below can use it."
       },

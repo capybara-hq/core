@@ -270,7 +270,7 @@ function ExtensionList({
   const rows: Row[] = extensions.map((ext) => {
     const label = extensionLabel({ name: ext.plugin, displayName: ext.displayName }, lang);
     const unavailable = ext.available === false;
-    const platform = ext.required === true || ext.catalogItem?.scope === "all";
+    const platform = ext.required === true;
     const configForm =
       canEdit && !unavailable && ext.configurable && hasConfigFields(ext.orgConfigSchema);
     const needsConfig =
