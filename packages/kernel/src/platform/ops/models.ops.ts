@@ -103,21 +103,15 @@ export class ModelsOperations implements OnModuleInit {
             next: "The model is of another kind than the purpose, or a param is invalid; fix it as the message says.",
           },
         ],
-        precheck: async (i, ctx) => {
-          let known = false;
-          const r = await precheckBy(async () => {
-            known = (await this.purposes.list(ctx.orgId)).some((p) => p.purpose === i.purpose);
-          });
-          if (!r.ok) return r;
-          if (!known) {
-            return {
-              ok: false,
-              code: "model.purpose_unknown",
-              message: `Model purpose ${i.purpose} is not declared`,
-            };
-          }
-          return i.target === null ? { ok: true } : this.providerPrecheck(i.target.model.provider);
-        },
+        // the service's own checks (purpose, model usable in the org, kind, params), read-only
+        precheck: (i, ctx) =>
+          precheckBy(() =>
+            this.purposes.validate(
+              ctx.orgId,
+              i.purpose,
+              i.target === null ? null : { model: i.target.model, params: i.target.params ?? {} },
+            ),
+          ),
         summary: async (i, ctx) => {
           const p = (await this.purposes.list(ctx.orgId)).find((x) => x.purpose === i.purpose);
           const label = p?.label ?? { zh: i.purpose, en: i.purpose };

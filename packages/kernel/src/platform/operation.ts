@@ -50,7 +50,8 @@ export interface OperationError {
  *
  * Some codes exist only in the tool, never answered by a route: `marketplace.already_added` (the
  * `marketplaces.add` duplicate check is tool policy; the web accepts a duplicate source),
- * `plugin.needs_input` (input only a person enters on the web) and `agent.visibility_web_only`.
+ * `plugin.needs_input` (input only a person enters on the web), `agent.visibility_web_only` and
+ * `catalog.org_owned` (`plugins.set-shown` leaves an org's own plugin to that org).
  */
 export type PrecheckResult =
   | { ok: true }

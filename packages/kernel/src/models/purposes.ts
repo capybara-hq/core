@@ -295,6 +295,20 @@ export class ModelPurposesService {
     return view as PurposeView;
   }
 
+  /**
+   * The checks {@link set} runs before writing, nothing written: an unknown purpose, and a target
+   * model the scope cannot use, of another kind, or with invalid params (the Platform tool's
+   * precheck, so a known failure never reaches the confirmation card).
+   */
+  async validate(
+    orgId: string | null,
+    purpose: string,
+    target: PurposeTarget | null,
+  ): Promise<void> {
+    const decl = this.find(purpose);
+    if (target) await this.check(orgId, target, decl.kind);
+  }
+
   /** The mapping write of {@link set}, under the super admin or org lock. */
   @Transactional()
   private async write(

@@ -309,8 +309,9 @@ no domain module). `defineOperation({...})` fields:
 - `run(input, ctx)`: call the controller's service, never new logic, as `ctx.actorAccountId`; a write passes
   `auditDetail: viaAgent("<id>", ctx)` so the audit event carries `{ via: "agent", conversationId, runId,
   operation }`. Results hold no secrets or secret config; a list that can exceed 50 entries pages itself
-  (`pageOf`, `params.cursor`, result `{ items, next }`). Super admin operations give other orgs as counts only
-  (`redactOrgs`).
+  (`pageOf`, `params.cursor`, result `{ items, next }`). Super admin operations return the admin console's data
+  in full for platform items and the conversation org's own (spec §14.5 item 1); an item another org owns is
+  only counted and refused (`assertNotOtherOrgs` / `assertExtensionNotOtherOrgs` in `platform/ops/other-orgs.ts`).
 
 **Exclusions.** `PLATFORM_EXCLUSIONS` entries have a category (`human-only`, `secret`, `transport`,
 `internal`, `later`) and a reason; `later` also needs an `issue` URL. Routes that need credentials or secret

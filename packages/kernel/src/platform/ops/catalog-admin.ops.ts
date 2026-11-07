@@ -1,3 +1,4 @@
+import { ToolError } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable, type OnModuleInit } from "@nestjs/common";
 import { z } from "zod";
 import {
@@ -16,7 +17,6 @@ import { CatalogScopeService, type ScopePreview } from "../../catalog/catalog-sc
 import { PluginImport, type PluginReview } from "../../catalog/plugin-import.js";
 import { KernelDb } from "../../infra/database/kernel-db.js";
 import { defineOperation, type PrecheckResult } from "../operation.js";
-import { redactOrgs } from "../redact-orgs.js";
 import { PlatformOperations } from "../registry.js";
 import { precheckBy, viaAgent } from "./errors.js";
 import { assertNotOtherOrgs, OTHER_ORG } from "./other-orgs.js";
@@ -25,6 +25,10 @@ import { localized, orElse } from "./summary.js";
 /** A platform catalog item id (`:id` of the admin routes), named `itemId` like the org's. */
 const ItemId = CatalogIdPathParams.shape.id.max(100);
 const StagingId = CatalogStagingPathParams.shape.stagingId.max(100);
+
+/** `plugins.set-shown` on a plugin an org owns. */
+export const ORG_OWNED =
+  "An org owns this plugin and manages who sees it; the super admin changes that in the admin console, not here.";
 
 /** Where the person confirms a staged import (the admin console's import review). */
 export const reviewUrl = (stagingId: string) => `/admin/plugins/import?staging=${stagingId}`;
@@ -61,23 +65,42 @@ export const reviewBrief = (r: PluginReview) => ({
   dependencies: r.dependencies,
 });
 
-/** A scope preview for one org's log: orgs as counts (spec §6.1). */
-const previewBrief = (p: ScopePreview) =>
-  redactOrgs({
-    affected: p.affected,
-    agentsAffected: p.affected.reduce((n, a) => n + a.agents.length, 0),
-    needsConfig: p.needsConfig,
-    replaced: p.replaced,
-    conflicts: p.conflicts.map((c) => ({ name: c.name, skills: c.skills, plugins: c.plugins })),
-    scopeHash: p.scopeHash,
-  });
+/**
+ * Skills the change would offer twice, one line per org (the org named: platform data, spec §14.5
+ * item 1); the plugins already using a name are counted, never named (they may be another org's
+ * own plugins).
+ */
+const conflictText = (cs: ScopePreview["conflicts"]): string =>
+  cs
+    .map(
+      (c) =>
+        `skill "${c.name}" is already used in org ${c.orgName} (${c.plugins.length > 0 ? `${c.plugins.length} plugin(s)` : "its own skill"})`,
+    )
+    .join("; ");
+
+/** A scope preview as the admin console shows it (orgs named); conflicting plugins counted. */
+const previewBrief = (p: ScopePreview) => ({
+  affected: p.affected,
+  agentsAffected: p.affected.reduce((n, a) => n + a.agents.length, 0),
+  needsConfig: p.needsConfig,
+  replaced: p.replaced,
+  conflicts: p.conflicts.map((c) => ({
+    orgId: c.orgId,
+    orgName: c.orgName,
+    name: c.name,
+    skills: c.skills,
+    plugins: c.plugins.length,
+  })),
+  scopeHash: p.scopeHash,
+});
 
 /**
  * The super admin's platform catalog operations of the `Platform` tool (spec §14.2, §14.5 item
  * 1): prepare an import from npm or git and read its review (a person confirms it on the web: the
  * confirm approves extension permissions), preview and change a plugin's scope, disable or enable
- * it on the platform, show or hide it, and delete it. Another org's private plugin is refused
- * (counts only, the phase-1 rule); orgs appear as counts.
+ * it on the platform, show or hide it, and delete it. Platform plugins and the org's own come with
+ * the admin console's data in full (orgs named); another org's own plugin is refused (the phase-1
+ * rule), and the plugins in a name conflict are counted, never named.
  */
 @Injectable()
 export class CatalogAdminOperations implements OnModuleInit {
@@ -97,6 +120,17 @@ export class CatalogAdminOperations implements OnModuleInit {
     } catch {
       return { ok: false, code: "catalog.item_not_found", message: OTHER_ORG };
     }
+  }
+
+  /** Whether an org owns the item (its owner org manages it, not the super admin's agent). */
+  private async orgOwned(itemId: string): Promise<boolean> {
+    if (!/^[0-9a-f-]{36}$/i.test(itemId)) return false;
+    const row = await this.kdb.db
+      .selectFrom("catalog_items")
+      .select("owner_org_id")
+      .where("id", "=", itemId)
+      .executeTakeFirst();
+    return row?.owner_org_id != null;
   }
 
   /** The precheck refusal of an unknown or deleted item (`catalog.get` includes deleted ones). */
@@ -252,7 +286,7 @@ export class CatalogAdminOperations implements OnModuleInit {
       defineOperation({
         id: "plugins.scope-preview",
         description:
-          "Preview changing where a platform plugin is on (super admin): a scope (all: every org; optional: orgs switch it on; named: only the orgs listed, with orgs) or disabled: true (off everywhere). Returns how many orgs and agents lose it, the components it takes back, name conflicts, and the scopeHash plugins.set-scope or plugins.set-disabled needs. Nothing is written; show the preview to the person first.",
+          "Preview changing where a platform plugin is on (super admin): a scope (all: every org; optional: orgs switch it on; named: only the orgs listed, with orgs) or disabled: true (off everywhere). Returns the orgs that lose it (with the agents there), the components it takes back, name conflicts, and the scopeHash plugins.set-scope or plugins.set-disabled needs. Nothing is written; show the preview to the person first.",
         input: z
           .object({
             itemId: ItemId,
@@ -329,20 +363,32 @@ export class CatalogAdminOperations implements OnModuleInit {
             code: "catalog.item_pending",
             next: "The plugin's first version waits for the super admin's confirmation in the admin console (Plugins → 待确认); confirm or reject it there first.",
           },
+          {
+            code: "plugin.skill_conflict",
+            next: "Those orgs already have a skill of that name: narrow the target (scope named without them) or have the name resolved in those orgs, then preview again.",
+          },
         ],
         precheck: async (i, ctx) => {
           const other = await this.otherOrgs(i.itemId, ctx.orgId);
           if (other !== null) return other;
           let hash = "";
+          let conflicts: ScopePreview["conflicts"] = [];
           const r = await precheckBy(async () => {
-            hash = (
-              await this.scope.preview(i.itemId, {
-                scope: i.scope,
-                ...(i.orgs !== undefined && { orgs: i.orgs }),
-              })
-            ).scopeHash;
+            const p = await this.scope.preview(i.itemId, {
+              scope: i.scope,
+              ...(i.orgs !== undefined && { orgs: i.orgs }),
+            });
+            hash = p.scopeHash;
+            conflicts = p.conflicts;
           });
           if (!r.ok) return r;
+          if (conflicts.length > 0) {
+            return {
+              ok: false,
+              code: "plugin.skill_conflict",
+              message: `The change would offer a skill twice: ${conflictText(conflicts)}`,
+            };
+          }
           return hash === i.scopeHash
             ? { ok: true }
             : {
@@ -369,17 +415,15 @@ export class CatalogAdminOperations implements OnModuleInit {
         run: async (input, ctx) => {
           await assertNotOtherOrgs(this.kdb.db, input.itemId, ctx.orgId);
           return {
-            item: redactOrgs(
-              await this.scope.setScope(
-                ctx.actorAccountId,
-                input.itemId,
-                {
-                  scope: input.scope,
-                  scopeHash: input.scopeHash,
-                  ...(input.orgs !== undefined && { orgs: input.orgs }),
-                },
-                { auditDetail: viaAgent("plugins.set-scope", ctx) },
-              ),
+            item: await this.scope.setScope(
+              ctx.actorAccountId,
+              input.itemId,
+              {
+                scope: input.scope,
+                scopeHash: input.scopeHash,
+                ...(input.orgs !== undefined && { orgs: input.orgs }),
+              },
+              { auditDetail: viaAgent("plugins.set-scope", ctx) },
             ),
           };
         },
@@ -449,16 +493,14 @@ export class CatalogAdminOperations implements OnModuleInit {
         run: async (input, ctx) => {
           await assertNotOtherOrgs(this.kdb.db, input.itemId, ctx.orgId);
           return {
-            item: redactOrgs(
-              await this.scope.setDisabled(
-                ctx.actorAccountId,
-                input.itemId,
-                {
-                  disabled: input.disabled,
-                  ...(input.scopeHash !== undefined && { scopeHash: input.scopeHash }),
-                },
-                { auditDetail: viaAgent("plugins.set-disabled", ctx) },
-              ),
+            item: await this.scope.setDisabled(
+              ctx.actorAccountId,
+              input.itemId,
+              {
+                disabled: input.disabled,
+                ...(input.scopeHash !== undefined && { scopeHash: input.scopeHash }),
+              },
+              { auditDetail: viaAgent("plugins.set-disabled", ctx) },
             ),
           };
         },
@@ -466,7 +508,7 @@ export class CatalogAdminOperations implements OnModuleInit {
       defineOperation({
         id: "plugins.set-shown",
         description:
-          "Show or hide a named platform plugin to the orgs outside its list (super admin): shown, they see it and can request it; hidden, they do not (pending requests stay). Never makes it usable anywhere.",
+          "Show or hide a named platform plugin to the orgs outside its list (super admin): shown, they see it and can request it; hidden, they do not (pending requests stay). Never makes it usable anywhere. A plugin an org owns (shared or not) is managed by that org and refused here (the admin console still can).",
         input: z.object({ itemId: ItemId, ...CatalogShownBody.shape }).strict(),
         example: { itemId: "3f1c2a9e-5b7d-4e21-9c0a-1d2e3f4a5b6c", shownToOthers: true },
         authz: { superAdmin: true },
@@ -483,12 +525,18 @@ export class CatalogAdminOperations implements OnModuleInit {
             next: "The plugin's first version waits for the super admin's confirmation in the admin console (Plugins → 待确认); confirm or reject it there first.",
           },
           {
-            code: "catalog.not_shareable",
-            next: "The owner org does not share this plugin, so it cannot be shown to other orgs.",
+            code: "catalog.org_owned",
+            next: "An org owns this plugin and manages who sees it; leave it to that org, or use the admin console.",
           },
         ],
-        precheck: async (i, ctx) =>
-          (await this.otherOrgs(i.itemId, ctx.orgId)) ?? this.live(i.itemId),
+        precheck: async (i, ctx) => {
+          const other = await this.otherOrgs(i.itemId, ctx.orgId);
+          if (other !== null) return other;
+          if (await this.orgOwned(i.itemId)) {
+            return { ok: false, code: "catalog.org_owned", message: ORG_OWNED };
+          }
+          return this.live(i.itemId);
+        },
         summary: async (i) => {
           const n = await this.names(i.itemId);
           return i.shownToOthers
@@ -503,12 +551,11 @@ export class CatalogAdminOperations implements OnModuleInit {
         },
         run: async (input, ctx) => {
           await assertNotOtherOrgs(this.kdb.db, input.itemId, ctx.orgId);
+          if (await this.orgOwned(input.itemId)) throw new ToolError(ORG_OWNED);
           return {
-            item: redactOrgs(
-              await this.scope.setShown(ctx.actorAccountId, input.itemId, input.shownToOthers, {
-                auditDetail: viaAgent("plugins.set-shown", ctx),
-              }),
-            ),
+            item: await this.scope.setShown(ctx.actorAccountId, input.itemId, input.shownToOthers, {
+              auditDetail: viaAgent("plugins.set-shown", ctx),
+            }),
           };
         },
       }),

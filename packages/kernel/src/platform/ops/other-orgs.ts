@@ -35,3 +35,47 @@ export async function otherOrgItems(db: KernelSchemaDb, orgId: string): Promise<
     .executeTakeFirstOrThrow();
   return Number(r.n);
 }
+
+/**
+ * The extensions (by name) that only other orgs' own plugins bring: an org upload's extension the
+ * super admin confirmed is installed on the deployment, but it is that org's private plugin
+ * (spec §14.5 item 1): counted, never described or changed through this org's agent. An extension
+ * that a platform plugin or the conversation org's own plugin also brings is not one of them.
+ */
+export async function otherOrgExtensions(
+  db: KernelSchemaDb,
+  orgId: string,
+  names?: readonly string[],
+): Promise<Set<string>> {
+  if (names !== undefined && names.length === 0) return new Set();
+  let sources = db
+    .selectFrom("extension_catalog_sources as s")
+    .innerJoin("catalog_items as i", "i.id", "s.item_id")
+    .select(["s.plugin as plugin", "i.owner_org_id as owner"]);
+  let installs = db
+    .selectFrom("extension_installs as e")
+    .innerJoin("catalog_items as i", "i.id", "e.catalog_item_id")
+    .select(["e.name as plugin", "i.owner_org_id as owner"]);
+  if (names !== undefined) {
+    sources = sources.where("s.plugin", "in", names);
+    installs = installs.where("e.name", "in", names);
+  }
+  const rows = await sources.unionAll(installs).execute();
+  const theirs = new Set<string>();
+  const ours = new Set<string>();
+  for (const r of rows) {
+    if (r.owner === null || r.owner === orgId) ours.add(r.plugin);
+    else theirs.add(r.plugin);
+  }
+  for (const n of ours) theirs.delete(n);
+  return theirs;
+}
+
+/** Refuses an extension only other orgs' own plugins bring ({@link otherOrgExtensions}). */
+export async function assertExtensionNotOtherOrgs(
+  db: KernelSchemaDb,
+  name: string,
+  orgId: string,
+): Promise<void> {
+  if ((await otherOrgExtensions(db, orgId, [name])).has(name)) throw new ToolError(OTHER_ORG);
+}

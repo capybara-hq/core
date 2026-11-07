@@ -6,6 +6,7 @@ import type { ActorFacts } from "../../src/platform/actor.js";
 import { availability } from "../../src/platform/availability.js";
 import { nextStepFor, toToolError } from "../../src/platform/errors.js";
 import type { OperationContext } from "../../src/platform/operation.js";
+import { ORG_OWNED } from "../../src/platform/ops/catalog-admin.ops.js";
 import { OTHER_ORG } from "../../src/platform/ops/other-orgs.js";
 import { PlatformOperations } from "../../src/platform/registry.js";
 import {
@@ -13,6 +14,7 @@ import {
   importSkill,
   type OrgEnv,
   resetOrgCatalog,
+  setScope,
   startOrgEnv,
 } from "../catalog/org-env.js";
 import { skillPlugin } from "../catalog/packages.js";
@@ -198,9 +200,8 @@ describe("the platform catalog (super admin)", () => {
       "plugins.scope-preview",
       { itemId: item, scope: "named", orgs: [org2] },
       c,
-    )) as { scopeHash: string; affected: { count: number } };
-    expect(p.affected).toEqual({ count: 0 });
-    expect(JSON.stringify(p)).not.toContain(ORG2_NAME);
+    )) as { scopeHash: string; affected: unknown[] };
+    expect(p.affected).toEqual([]);
     const input = { itemId: item, scope: "named", orgs: [org2], scopeHash: p.scopeHash };
     expect(await precheck("plugins.set-scope", input, c)).toEqual({ ok: true });
     expect(
@@ -213,7 +214,8 @@ describe("the platform catalog (super admin)", () => {
     const out = (await run("plugins.set-scope", input, c)) as {
       item: { scope: string; scopeOrgs: unknown };
     };
-    expect(out.item).toMatchObject({ scope: "named", scopeOrgs: { count: 1 } });
+    // a platform plugin: its orgs are named (spec §14.5 item 1)
+    expect(out.item).toMatchObject({ scope: "named", scopeOrgs: [org2] });
     await expectViaAgent("catalog.scope_changed", "plugins.set-scope", c);
   });
 
@@ -270,6 +272,70 @@ describe("the platform catalog (super admin)", () => {
           .executeTakeFirstOrThrow()
       ).deleted_at,
     ).toBeNull();
+  });
+
+  it("set-scope: a skill name conflict is refused before the card, naming the org but not the plugins", async () => {
+    const item = await importSkill(env);
+    // offered only to this org first, so org2 can have its own skill of that name
+    await setScope(env, item, "named", [env.orgId]);
+    const made = await env.root({
+      method: "POST",
+      url: `/api/v1/orgs/${org2}/skills`,
+      payload: { name: "pdf-tools", description: "Their own", body: "# Theirs" },
+    });
+    expect(made.statusCode, made.body).toBe(201);
+    const c = ctxOf(env.rootId);
+    const p = (await run(
+      "plugins.scope-preview",
+      { itemId: item, scope: "named", orgs: [org2] },
+      c,
+    )) as { scopeHash: string; conflicts: { orgName: string; plugins: number }[] };
+    expect(p.conflicts).toMatchObject([{ orgName: ORG2_NAME, plugins: 0 }]);
+    const r = await precheck(
+      "plugins.set-scope",
+      { itemId: item, scope: "named", orgs: [org2], scopeHash: p.scopeHash },
+      c,
+    );
+    expect(r).toMatchObject({ ok: false, code: "plugin.skill_conflict" });
+    expect(r.ok ? "" : r.message).toContain(
+      `skill "pdf-tools" is already used in org ${ORG2_NAME}`,
+    );
+    expect(
+      nextStepFor(op("plugins.set-scope").errors, "plugin.skill_conflict", "superAdmin"),
+    ).toMatch(/preview again/);
+  });
+
+  it("set-shown refuses a plugin an org owns, the conversation org's own included", async () => {
+    const item = await importSkill(env, { name: "own-shown" });
+    await env.db
+      .updateTable("catalog_items")
+      .set({ owner_org_id: env.orgId })
+      .where("id", "=", item)
+      .execute();
+    const c = ctxOf(env.rootId);
+    expect(
+      await precheck("plugins.set-shown", { itemId: item, shownToOthers: true }, c),
+    ).toMatchObject({ ok: false, code: "catalog.org_owned" });
+    expect(
+      (await failure(run("plugins.set-shown", { itemId: item, shownToOthers: true }, c))).message,
+    ).toBe(ORG_OWNED);
+  });
+
+  it("import-npm and import-git cards name what is fetched and say a person confirms", async () => {
+    const c = ctxOf(env.rootId);
+    expect(
+      await summarize("plugins.import-npm", { package: "@acme/crm", version: "1.2.0" }, c),
+    ).toEqual({
+      zh: "从 npm 准备导入插件 @acme/crm@1.2.0（确认在网页上进行）",
+      en: "Prepare importing plugin @acme/crm@1.2.0 from npm (confirmed on the web)",
+    });
+    expect(
+      await summarize("plugins.import-git", { url: "acme/crm", ref: "v1", path: "plugin" }, c),
+    ).toEqual({
+      zh: "从 git 准备导入插件 acme/crm#v1 plugin（确认在网页上进行）",
+      en: "Prepare importing plugin acme/crm#v1 plugin from git (confirmed on the web)",
+    });
+    expect(op("plugins.import-npm").confirm).toBe("platform");
   });
 
   it("import-review reads a staged import with a reviewUrl and never its reviewHash", async () => {
@@ -361,6 +427,46 @@ describe("platform extensions (super admin)", () => {
       ok: false,
       code: "extension.not_found",
     });
+  });
+
+  it("an extension only another org's own plugin brings is counted, never listed, read or changed", async () => {
+    const { itemId } = await importDeployedPlugin(env, "gamma-private-ext");
+    await env.db
+      .updateTable("catalog_items")
+      .set({ owner_org_id: org2 })
+      .where("id", "=", itemId)
+      .execute();
+    const c = ctxOf(env.rootId);
+    const list = (await run("extensions.platform-list", {}, c)) as {
+      items: { id: string }[];
+      otherOrgExtensions: number;
+    };
+    expect(list.items.map((x) => x.id)).not.toContain("gamma-private-ext");
+    expect(list.otherOrgExtensions).toBe(1);
+    expect(JSON.stringify(list)).not.toContain("gamma-private-ext");
+    const e = await failure(run("extensions.platform-get", { name: "gamma-private-ext" }, c));
+    expect(e.message).toBe(OTHER_ORG);
+    for (const id of [
+      "extensions.platform-enable",
+      "extensions.platform-disable",
+      "extensions.uninstall",
+    ]) {
+      expect(await precheck(id, { name: "gamma-private-ext" }, c), id).toEqual({
+        ok: false,
+        code: "extension.not_found",
+        message: OTHER_ORG,
+      });
+      expect((await failure(run(id, { name: "gamma-private-ext" }, c))).message).toBe(OTHER_ORG);
+    }
+    // the conversation org's own plugin is its own: listed
+    await env.db
+      .updateTable("catalog_items")
+      .set({ owner_org_id: env.orgId })
+      .where("id", "=", itemId)
+      .execute();
+    const mine = (await run("extensions.platform-list", {}, c)) as { items: { id: string }[] };
+    expect(mine.items.map((x) => x.id)).toContain("gamma-private-ext");
+    await run("extensions.platform-disable", { name: "gamma-private-ext" }, c);
   });
 });
 
@@ -477,6 +583,60 @@ describe("marketplaces (super admin)", () => {
     await run("marketplaces.remove", { marketplaceId: id }, c);
     await expectViaAgent("marketplace.removed", "marketplaces.remove", c);
   });
+
+  it("marketplaces.import: prechecks a missing, incompatible or deprecated entry; the card names it", async () => {
+    const c = ctxOf(env.rootId);
+    const added = (await run(
+      "marketplaces.add",
+      { name: "Import src", url: "https://import.example.com/marketplace.json" },
+      c,
+    )) as { marketplace: { id: string } };
+    const id = added.marketplace.id;
+    const row = (name: string, over: Record<string, unknown>) => ({
+      source_id: id,
+      name,
+      version: "1.0.0",
+      npm: `@acme/plugin-${name}`,
+      entry: JSON.stringify({
+        name,
+        version: "1.0.0",
+        summary: { en: name },
+        permissions: { keys: [], sensitive: [] },
+        source: { npm: { package: `@acme/plugin-${name}`, version: "1.0.0" } },
+        ...over,
+      }),
+    });
+    await env.db
+      .insertInto("marketplace_entries")
+      .values([row("future", { minKernel: "99.0.0" }), row("old", { deprecated: "use v2" })])
+      .execute();
+    expect(
+      await precheck("marketplaces.import", { marketplaceId: id, name: "none" }, c),
+    ).toMatchObject({
+      ok: false,
+      code: "marketplace.entry_not_found",
+    });
+    expect(
+      await precheck("marketplaces.import", { marketplaceId: id, name: "future" }, c),
+    ).toMatchObject({ ok: false, code: "marketplace.incompatible" });
+    expect(
+      await precheck("marketplaces.import", { marketplaceId: id, name: "old" }, c),
+    ).toMatchObject({ ok: false, code: "marketplace.entry_deprecated" });
+    expect(
+      await summarize(
+        "marketplaces.import",
+        { marketplaceId: id, name: "future", version: "1.0.0" },
+        c,
+      ),
+    ).toEqual({
+      zh: "从市场源「Import src」准备导入插件 future@1.0.0（确认在网页上进行）",
+      en: 'Prepare importing plugin future@1.0.0 from marketplace source "Import src" (confirmed on the web)',
+    });
+    for (const code of ["marketplace.path_unsupported", "marketplace.entry_deprecated"]) {
+      expect(nextStepFor(op("marketplaces.import").errors, code, "superAdmin"), code).toBeDefined();
+    }
+    await run("marketplaces.remove", { marketplaceId: id }, c);
+  });
 });
 
 describe("the org's models", () => {
@@ -488,6 +648,21 @@ describe("the org's models", () => {
     expect(
       await precheck("models.set-purpose", { purpose: "no-such-purpose", target: null }, boss),
     ).toMatchObject({ ok: false, code: "model.purpose_unknown" });
+    // the service's own target checks run before the card
+    expect(
+      await precheck(
+        "models.set-purpose",
+        { purpose, target: { model: { provider: "model-fake", model: "no-such-model" } } },
+        boss,
+      ),
+    ).toMatchObject({ ok: false });
+    expect(
+      await precheck(
+        "models.set-purpose",
+        { purpose, target: { model: { provider: "no-provider", model: "x" } } },
+        boss,
+      ),
+    ).toMatchObject({ ok: false });
     await run("models.set-purpose", { purpose, target: null }, boss);
     await expectViaAgent("model.purpose_mapped", "models.set-purpose", boss);
 

@@ -28,7 +28,7 @@ const PAGE = 50;
 
 /** A marketplace source id (`:id` of the admin routes), named as the entries name it. */
 const MarketplaceId = MarketplaceIdPathParams.shape.id.max(100);
-/** 手动刷新的总时限（与路由一致）。 */
+/** The manual refresh's overall deadline (the route's). */
 const REFRESH_DEADLINE_MS = 300_000;
 
 /** A marketplace source as the list shows it: no token, etag or skip list. */
@@ -425,6 +425,14 @@ export class MarketplacesOperations implements OnModuleInit {
             code: "catalog.version_exists",
             next: "This version is in the catalog already: update the plugin to it with plugins.update-preview.",
           },
+          {
+            code: "marketplace.path_unsupported",
+            next: "The entry is a path inside a marketplace fetched over http, which cannot be read; the marketplace must be added as a git source (marketplaces.add with its repository URL).",
+          },
+          {
+            code: "marketplace.entry_deprecated",
+            next: "The marketplace deprecates this version; import another version (marketplaces.platform-entries lists them).",
+          },
         ],
         precheck: async (i) => {
           const r = await this.marketplaces.entries({ marketplaceId: i.marketplaceId });
@@ -440,17 +448,35 @@ export class MarketplacesOperations implements OnModuleInit {
                   message: `The marketplace has no entry ${i.name}${i.version !== undefined ? `@${i.version}` : ""}`,
                 };
           }
-          const blocked = found.every((e) => !e.importable);
-          return blocked
-            ? {
-                ok: false,
-                code:
-                  found[0]?.reason === "host_not_allowed"
-                    ? "marketplace.host_not_allowed"
-                    : "marketplace.path_unsupported",
-                message: `Entry ${i.name} cannot be imported (${found[0]?.reason ?? "not importable"})`,
-              }
-            : { ok: true };
+          // as the import picks: a compatible, not deprecated, importable version
+          if (found.some((e) => e.compatible && e.deprecated === null && e.importable)) {
+            return { ok: true };
+          }
+          const what = `${i.name}${i.version !== undefined ? `@${i.version}` : ""}`;
+          if (!found.some((e) => e.compatible)) {
+            return {
+              ok: false,
+              code: "marketplace.incompatible",
+              message: `${what} needs a newer kernel than this platform runs`,
+            };
+          }
+          const live = found.filter((e) => e.compatible && e.deprecated === null);
+          if (live.length === 0) {
+            const reason = found.find((e) => e.deprecated !== null)?.deprecated?.reason ?? null;
+            return {
+              ok: false,
+              code: "marketplace.entry_deprecated",
+              message: `${what} is deprecated by its marketplace${reason !== null ? `: ${reason}` : ""}`,
+            };
+          }
+          return {
+            ok: false,
+            code:
+              live[0]?.reason === "host_not_allowed"
+                ? "marketplace.host_not_allowed"
+                : "marketplace.path_unsupported",
+            message: `Entry ${what} cannot be imported (${live[0]?.reason ?? "not importable"})`,
+          };
         },
         summary: async (i) => {
           const name = (await this.sourceOf(i.marketplaceId))?.name ?? i.marketplaceId;

@@ -6,9 +6,11 @@ import { ExtensionAdmin } from "../../extensions/admin-view.js";
 import type { AdminExtensionView } from "../../extensions/permission-view.js";
 import { unavailableReason } from "../../extensions/unavailable.js";
 import { KernelConfigService } from "../../infra/config/kernel-config.service.js";
+import { KernelDb } from "../../infra/database/kernel-db.js";
 import { defineOperation, type PrecheckResult } from "../operation.js";
 import { PlatformOperations } from "../registry.js";
 import { precheckBy, viaAgent } from "./errors.js";
+import { assertExtensionNotOtherOrgs, OTHER_ORG, otherOrgExtensions } from "./other-orgs.js";
 import { Cursor, pageOf, startOf } from "./paging.js";
 import { localized } from "./summary.js";
 import { unavailableFields } from "./unavailable.js";
@@ -62,12 +64,17 @@ export class ExtensionsAdminOperations implements OnModuleInit {
     @Inject(ExtensionAdmin) private readonly admin: ExtensionAdmin,
     @Inject(ExtensionAdminOps) private readonly ops: ExtensionAdminOps,
     @Inject(KernelConfigService) private readonly config: KernelConfigService,
+    @Inject(KernelDb) private readonly kdb: KernelDb,
   ) {}
 
   /** The view of `name` for a precheck, or the refusal (unknown, startup-declared). */
   private async viewFor(
     name: string,
+    orgId: string,
   ): Promise<{ ok: true; view: AdminExtensionView } | Exclude<PrecheckResult, { ok: true }>> {
+    if ((await otherOrgExtensions(this.kdb.db, orgId, [name])).has(name)) {
+      return { ok: false, code: "extension.not_found", message: OTHER_ORG };
+    }
     let view: AdminExtensionView | undefined;
     const r = await precheckBy(async () => {
       view = await this.admin.get(name, { allowUnreadable: true });
@@ -89,17 +96,22 @@ export class ExtensionsAdminOperations implements OnModuleInit {
       defineOperation({
         id: "extensions.platform-list",
         description:
-          "List the extensions on the platform (super admin), one compact row each: the deployment status (enabled, disabled, pending_approval, pending_config, pending_migration, converging, failed, dependency, legacy_format), why one does not run (reason) and your next step (next), its version, how many orgs have it on and whether it is required. Details come from extensions.platform-get. Pages by 50: pass the returned next as params.cursor.",
+          "List the extensions on the platform (super admin), one compact row each: the deployment status (enabled, disabled, pending_approval, pending_config, pending_migration, converging, failed, dependency, legacy_format), why one does not run (reason) and your next step (next), its version, how many orgs have it on and whether it is required. Extensions only other orgs' own plugins bring are counted (otherOrgExtensions), never listed. Details come from extensions.platform-get. Pages by 50: pass the returned next as params.cursor.",
         input: z.object({ cursor: Cursor.optional() }).strict(),
         example: {},
         authz: { superAdmin: true },
         mirrors: ["GET /api/v1/admin/extensions"],
         extras: ["cursor"],
         confirm: "read",
-        run: async (input) => ({
-          ...pageOf((await this.admin.list()).map(row), startOf(input.cursor), 50),
-          drainSeconds: this.config.get().extensionHost.drainSeconds,
-        }),
+        run: async (input, ctx) => {
+          const theirs = await otherOrgExtensions(this.kdb.db, ctx.orgId);
+          const all = (await this.admin.list()).filter((v) => !theirs.has(v.name));
+          return {
+            ...pageOf(all.map(row), startOf(input.cursor), 50),
+            otherOrgExtensions: theirs.size,
+            drainSeconds: this.config.get().extensionHost.drainSeconds,
+          };
+        },
       }),
       defineOperation({
         id: "extensions.platform-get",
@@ -120,7 +132,10 @@ export class ExtensionsAdminOperations implements OnModuleInit {
             next: "Its package cannot be read on the platform; the admin console shows why, where it can be reinstalled.",
           },
         ],
-        run: async (input) => detail(await this.admin.get(input.name)),
+        run: async (input, ctx) => {
+          await assertExtensionNotOtherOrgs(this.kdb.db, input.name, ctx.orgId);
+          return detail(await this.admin.get(input.name));
+        },
       }),
       defineOperation({
         id: "extensions.platform-enable",
@@ -141,8 +156,8 @@ export class ExtensionsAdminOperations implements OnModuleInit {
             next: "This extension is declared in the startup config (extensions list): the deployment's config changes it, then a restart.",
           },
         ],
-        precheck: async (i) => {
-          const r = await this.viewFor(i.name);
+        precheck: async (i, ctx) => {
+          const r = await this.viewFor(i.name, ctx.orgId);
           return r.ok ? { ok: true } : r;
         },
         summary: async (i) => {
@@ -153,18 +168,20 @@ export class ExtensionsAdminOperations implements OnModuleInit {
             en: `Enable extension "${n.en}" ${v.version} on the platform`,
           };
         },
-        run: async (input, ctx) => ({
-          extension: row(
-            await this.ops.enable(
-              input.name,
-              ctx.actorAccountId,
-              undefined,
-              undefined,
-              viaAgent("extensions.platform-enable", ctx),
-            ),
-          ),
-          next: "Replicas load it in the background; check its state with extensions.platform-get.",
-        }),
+        run: async (input, ctx) => {
+          await assertExtensionNotOtherOrgs(this.kdb.db, input.name, ctx.orgId);
+          const v = await this.ops.enable(
+            input.name,
+            ctx.actorAccountId,
+            undefined,
+            undefined,
+            viaAgent("extensions.platform-enable", ctx),
+          );
+          return {
+            extension: row(v),
+            next: "Replicas load it in the background; check its state with extensions.platform-get.",
+          };
+        },
       }),
       defineOperation({
         id: "extensions.platform-disable",
@@ -189,8 +206,8 @@ export class ExtensionsAdminOperations implements OnModuleInit {
             next: "A required extension shipped with the platform cannot be disabled or uninstalled.",
           },
         ],
-        precheck: async (i) => {
-          const r = await this.viewFor(i.name);
+        precheck: async (i, ctx) => {
+          const r = await this.viewFor(i.name, ctx.orgId);
           if (!r.ok) return r;
           return r.view.required
             ? { ok: false, code: "extension.required", message: `Extension ${i.name} is required` }
@@ -205,17 +222,17 @@ export class ExtensionsAdminOperations implements OnModuleInit {
             en: `Disable extension "${n.en}" on the platform: unavailable in the ${v.enabledOrgs} orgs that have it on (in-flight calls drain up to ${s}s)`,
           };
         },
-        run: async (input, ctx) => ({
-          extension: row(
-            await this.ops.disable(
-              input.name,
-              ctx.actorAccountId,
-              undefined,
-              undefined,
-              viaAgent("extensions.platform-disable", ctx),
-            ),
-          ),
-        }),
+        run: async (input, ctx) => {
+          await assertExtensionNotOtherOrgs(this.kdb.db, input.name, ctx.orgId);
+          const v = await this.ops.disable(
+            input.name,
+            ctx.actorAccountId,
+            undefined,
+            undefined,
+            viaAgent("extensions.platform-disable", ctx),
+          );
+          return { extension: row(v) };
+        },
       }),
       defineOperation({
         id: "extensions.uninstall",
@@ -244,8 +261,8 @@ export class ExtensionsAdminOperations implements OnModuleInit {
             next: "Disable it first with extensions.platform-disable, then uninstall.",
           },
         ],
-        precheck: async (i) => {
-          const r = await this.viewFor(i.name);
+        precheck: async (i, ctx) => {
+          const r = await this.viewFor(i.name, ctx.orgId);
           if (!r.ok) return r;
           if (r.view.required) {
             return {
@@ -272,6 +289,7 @@ export class ExtensionsAdminOperations implements OnModuleInit {
           };
         },
         run: async (input, ctx) => {
+          await assertExtensionNotOtherOrgs(this.kdb.db, input.name, ctx.orgId);
           await this.ops.uninstall(
             input.name,
             ctx.actorAccountId,

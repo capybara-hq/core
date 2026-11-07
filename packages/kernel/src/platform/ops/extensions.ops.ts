@@ -26,7 +26,7 @@ import { PlatformOperations } from "../registry.js";
 import { precheckBy, viaAgent } from "./errors.js";
 import { Cursor, pageOf, startOf } from "./paging.js";
 import { roleOf } from "./role.js";
-import { localized } from "./summary.js";
+import { localized, named, orElse } from "./summary.js";
 import { roleFor, unavailableFields } from "./unavailable.js";
 
 const NoInput = z.object({}).strict();
@@ -64,6 +64,14 @@ export class ExtensionsOperations implements OnModuleInit {
     @Inject(OrgToolSwitches) private readonly switches: OrgToolSwitches,
     @Inject(ExtensionPointDefaults) private readonly pointDefaults: ExtensionPointDefaults,
   ) {}
+
+  /** An extension's display name for a card (its plugin's), else the name, clipped. */
+  private async nameOf(name: string): Promise<{ zh: string; en: string }> {
+    return orElse(
+      async () => localized((await this.displayNames.many([name])).get(name), name),
+      localized(null, name),
+    );
+  }
 
   onModuleInit(): void {
     this.registry.register([
@@ -208,17 +216,18 @@ export class ExtensionsOperations implements OnModuleInit {
               };
         },
         summary: async (i, ctx) => {
+          const x = await this.nameOf(i.extension);
           if (i.enabled) {
             return {
-              zh: `在本组织开启扩展「${i.extension}」的工具 ${i.tool}`,
-              en: `Turn on tool ${i.tool} of extension "${i.extension}" in the org`,
+              zh: `在本组织开启扩展「${x.zh}」的工具 ${named(i.tool)}`,
+              en: `Turn on tool ${named(i.tool)} of extension "${x.en}" in the org`,
             };
           }
           const p = await this.switches.previewOff(ctx.orgId, i.extension, i.tool);
           const n = p?.affectedAgents.length ?? 0;
           return {
-            zh: `在本组织关闭扩展「${i.extension}」的工具 ${i.tool}：${n} 个智能体选用了它`,
-            en: `Turn off tool ${i.tool} of extension "${i.extension}" in the org: ${n} agents selected it`,
+            zh: `在本组织关闭扩展「${x.zh}」的工具 ${named(i.tool)}：${n} 个智能体选用了它`,
+            en: `Turn off tool ${named(i.tool)} of extension "${x.en}" in the org: ${n} agents selected it`,
           };
         },
         run: async (input, ctx) =>
@@ -293,10 +302,13 @@ export class ExtensionsOperations implements OnModuleInit {
                 message: `Extension ${i.extension} does not provide ${i.point} or is not enabled in this organization`,
               };
         },
-        summary: (i) => ({
-          zh: `把本组织 ${i.point} 的默认提供者设为扩展「${i.extension}」`,
-          en: `Set the org's default provider of ${i.point} to extension "${i.extension}"`,
-        }),
+        summary: async (i) => {
+          const x = await this.nameOf(i.extension);
+          return {
+            zh: `把本组织 ${named(i.point)} 的默认提供者设为扩展「${x.zh}」`,
+            en: `Set the org's default provider of ${named(i.point)} to extension "${x.en}"`,
+          };
+        },
         run: async (input, ctx) => {
           await this.pointDefaults.setDefault(
             ctx.orgId,

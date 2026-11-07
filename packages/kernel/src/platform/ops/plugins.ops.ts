@@ -13,7 +13,6 @@ import { ExtensionAvailability } from "../../extensions/unavailable.js";
 import { KernelDb } from "../../infra/database/kernel-db.js";
 import type { ErrorRole } from "../errors.js";
 import { defineOperation } from "../operation.js";
-import { redactOrgs } from "../redact-orgs.js";
 import { PlatformOperations } from "../registry.js";
 import { viaAgent } from "./errors.js";
 import { assertNotOtherOrgs, otherOrgItems } from "./other-orgs.js";
@@ -111,7 +110,8 @@ function needsInput(item: OrgCatalogItem, extensions: readonly OrgExtensionView[
 /**
  * Plugin operations of the `Platform` tool (spec §7): the org's view (list, get, switch on or off)
  * and the super admin's platform view (list, get, update with its preview). Every platform result
- * goes through {@link redactOrgs}: other orgs only as counts (spec §6.1).
+ * shows the admin console's data in full for platform items and the org's own (spec §14.5 item 1);
+ * plugins other orgs own are only counted, and reading or updating one is refused.
  */
 @Injectable()
 export class PluginsOperations implements OnModuleInit {
@@ -362,7 +362,7 @@ export class PluginsOperations implements OnModuleInit {
       defineOperation({
         id: "plugins.platform-list",
         description:
-          "List the platform's plugins and this org's own (super admin): scope, disabled, versions, pending confirmation and how many orgs use it. Plugins other orgs own are only counted (otherOrgItems); orgs are given as counts. Pages by 50: pass the returned next as params.cursor.",
+          "List the platform's plugins and this org's own (super admin): scope, disabled, versions, pending confirmation and how many orgs use it. Plugins other orgs own are only counted (otherOrgItems). Pages by 50: pass the returned next as params.cursor.",
         input: z.object({ cursor: Cursor.optional() }).strict(),
         example: {},
         authz: { superAdmin: true },
@@ -373,17 +373,17 @@ export class PluginsOperations implements OnModuleInit {
         confirm: "read",
         run: async (input, ctx) => {
           const p = await this.catalog.page({ limit: PAGE, offset: startOf(input.cursor) });
-          return redactOrgs({
+          return {
             items: p.items.filter((i) => i.owner.kind !== "org" || i.owner.orgId === ctx.orgId),
             otherOrgItems: await otherOrgItems(this.kdb.db, ctx.orgId),
             next: p.nextOffset === null ? null : String(p.nextOffset),
-          });
+          };
         },
       }),
       defineOperation({
         id: "plugins.platform-get",
         description:
-          "Read one platform catalog plugin (super admin): the item, its platform version and every version with its source. Orgs are given as counts only.",
+          "Read one platform catalog plugin (super admin): the item, its platform version and every version with its source, and the orgs it is offered to. Another org's own plugin is refused.",
         input: z.object({ itemId: PlatformItemId }).strict(),
         example: { itemId: "3f1c2a9e-5b7d-4e21-9c0a-1d2e3f4a5b6c" },
         authz: { superAdmin: true },
@@ -399,7 +399,7 @@ export class PluginsOperations implements OnModuleInit {
         run: async (input, ctx) => {
           await assertNotOtherOrgs(this.kdb.db, input.itemId, ctx.orgId);
           const d = await this.catalog.get(input.itemId);
-          return redactOrgs({
+          return {
             item: d.item,
             versions: d.versions.map((v) => ({
               version: v.version,
@@ -409,13 +409,13 @@ export class PluginsOperations implements OnModuleInit {
               importedAt: v.importedAt,
               ...(v.version === d.item.platformVersion && { manifest: v.manifest }),
             })),
-          });
+          };
         },
       }),
       defineOperation({
         id: "plugins.update-preview",
         description:
-          "Preview updating a platform plugin to another imported version (super admin): every component's change, the extension step and the org connectors it touches, with the diffHash plugins.update takes. Orgs are given as counts only; the admin console shows which.",
+          "Preview updating a platform plugin to another imported version (super admin): every component's change, the extension step and the org connectors it touches, with the diffHash plugins.update takes. Another org's own plugin is refused.",
         input: z.object({ itemId: PlatformItemId, version: Version }).strict(),
         example: { itemId: "3f1c2a9e-5b7d-4e21-9c0a-1d2e3f4a5b6c", version: "1.2.0" },
         authz: { superAdmin: true },
@@ -430,7 +430,7 @@ export class PluginsOperations implements OnModuleInit {
         ],
         run: async (input, ctx) => {
           await assertNotOtherOrgs(this.kdb.db, input.itemId, ctx.orgId);
-          return redactOrgs(await this.updater.preview(input.itemId, input.version));
+          return this.updater.preview(input.itemId, input.version);
         },
       }),
       defineOperation({
@@ -475,7 +475,7 @@ export class PluginsOperations implements OnModuleInit {
           const changed = count("upgrade", "downgrade");
           const added = count("added");
           const removed = count("removed");
-          // one version for every org: the orgs it is on in, as a count (spec §6.1)
+          // one version for every org: how many orgs it is on in
           const orgs = item.enabledOrgs;
           return {
             zh: `把平台插件「${n.zh}」从 ${p.from ?? "无"} 更新到 ${p.to}：组件 ${changed} 个更新、${added} 个新增、${removed} 个移除，影响 ${orgs} 个组织`,
@@ -484,13 +484,11 @@ export class PluginsOperations implements OnModuleInit {
         },
         run: async (input, ctx) => {
           await assertNotOtherOrgs(this.kdb.db, input.itemId, ctx.orgId);
-          return redactOrgs(
-            await this.updater.update(
-              ctx.actorAccountId,
-              input.itemId,
-              { version: input.version, diffHash: input.diffHash },
-              { auditDetail: viaAgent("plugins.update", ctx) },
-            ),
+          return this.updater.update(
+            ctx.actorAccountId,
+            input.itemId,
+            { version: input.version, diffHash: input.diffHash },
+            { auditDetail: viaAgent("plugins.update", ctx) },
           );
         },
       }),

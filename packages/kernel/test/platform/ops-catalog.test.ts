@@ -8,7 +8,6 @@ import { availability } from "../../src/platform/availability.js";
 import { nextStepFor, toToolError } from "../../src/platform/errors.js";
 import type { OperationContext } from "../../src/platform/operation.js";
 import { NEEDS_INPUT, OTHER_ORG } from "../../src/platform/ops/plugins.ops.js";
-import { redactOrgs } from "../../src/platform/redact-orgs.js";
 import { PlatformOperations } from "../../src/platform/registry.js";
 import { platformTool } from "../../src/tools/builtins/platform.js";
 import {
@@ -185,7 +184,7 @@ describe("super admin operations (Review Focus 4)", () => {
     ).toEqual({ ok: true });
   });
 
-  it("plugins.update-preview gives the orgs as counts and names no other org", async () => {
+  it("plugins.update-preview of a platform plugin gives the admin console's data in full (spec §14.5 item 1)", async () => {
     const item = await seedPlugin(env, { name: "crm", skills: [], templates: { gh: {} } });
     await seedPlugin(env, {
       name: "crm",
@@ -211,14 +210,13 @@ describe("super admin operations (Review Focus 4)", () => {
       { itemId: item, version: "1.1.0" },
       ctxOf(env.rootId),
     )) as { connectorOrgs: unknown; diffHash: string };
-    expect(out.connectorOrgs).toEqual({ count: 1 });
+    // a platform plugin: the orgs and their connectors are named, as the admin console names them
+    expect(out.connectorOrgs).toMatchObject([
+      { orgId: org2, connectors: [{ id: connector.id, name: connector.name }] },
+    ]);
     expect(out.diffHash).toMatch(/\S/);
-    const json = JSON.stringify(out);
-    for (const secret of [org2, ORG2_NAME, connector.id, connector.name]) {
-      expect(json).not.toContain(secret);
-    }
 
-    // the card names the plugin and counts the preview, never another org (finding 2)
+    // the card names the plugin and counts the preview
     const card = await summarize(
       "plugins.update",
       { itemId: item, version: "1.1.0", diffHash: out.diffHash },
@@ -230,31 +228,28 @@ describe("super admin operations (Review Focus 4)", () => {
     });
     expect(JSON.stringify(card)).not.toContain(ORG2_NAME);
 
-    // the update itself: redacted too, audited as made through the agent
+    // the update itself: audited as made through the agent
     const done = await run(
       "plugins.update",
       { itemId: item, version: "1.1.0", diffHash: out.diffHash },
       ctxOf(env.rootId),
     );
-    expect(JSON.stringify(done)).not.toContain(org2);
+    expect(done).toBeDefined();
     const [row] = await audits("plugin.platform_updated");
     expect(row?.detail).toMatchObject({ via: "agent", operation: "plugins.update" });
   });
 
-  it("plugins.platform-list and platform-get give a named scope's orgs as a count", async () => {
+  it("plugins.platform-list and platform-get name a platform plugin's scope orgs", async () => {
     const item = await importSkill(env);
     await setScope(env, item, "named", [org2]);
     const list = await run("plugins.platform-list", {}, ctxOf(env.rootId));
     expect(list).toMatchObject({
-      items: [{ id: item, scopeOrgs: { count: 1 } }],
+      items: [{ id: item, scopeOrgs: [org2] }],
       otherOrgItems: 0,
       next: null,
     });
     const got = await run("plugins.platform-get", { itemId: item }, ctxOf(env.rootId));
-    expect(got).toMatchObject({ item: { id: item, scopeOrgs: { count: 1 } } });
-    for (const v of [list, got]) {
-      expect(JSON.stringify(v)).not.toContain(org2);
-    }
+    expect(got).toMatchObject({ item: { id: item, scopeOrgs: [org2] } });
   });
 
   it("another org's own plugin is only counted in platform-list and refused by platform-get and update", async () => {
@@ -281,26 +276,6 @@ describe("super admin operations (Review Focus 4)", () => {
       expect(e.message).toBe(OTHER_ORG);
       expect(e.message).not.toContain("beta-secret-tool");
     }
-  });
-
-  it("redactOrgs: org lists become counts, org ids and names and an org owner's details go", () => {
-    expect(
-      redactOrgs({
-        owner: { kind: "org", orgId: org2, name: ORG2_NAME },
-        scopeOrgs: [org2],
-        extension: { from: "1.0.0", to: "2.0.0", orgs: [org2, env.orgId], needsApproval: false },
-        components: [{ name: "a", pinnedOrgs: [org2], kept: [{ orgId: org2, agents: [] }] }],
-        orgNames: { [org2]: ORG2_NAME },
-        orgId: org2,
-        enabledOrgs: 2,
-      }),
-    ).toEqual({
-      owner: { kind: "org" },
-      scopeOrgs: { count: 1 },
-      extension: { from: "1.0.0", to: "2.0.0", orgs: { count: 2 }, needsApproval: false },
-      components: [{ name: "a", pinnedOrgs: { count: 1 }, kept: { count: 1 } }],
-      enabledOrgs: 2,
-    });
   });
 });
 
