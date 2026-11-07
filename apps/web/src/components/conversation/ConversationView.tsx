@@ -61,6 +61,7 @@ import { usePagePath } from "../shell/path";
 import { useSession } from "../shell/session";
 import { ComposerBar, type ComposerMessage, newClientMessageId } from "./ComposerBar";
 import { LeftoverBubbles, PendingBubbles, usePendingSends } from "./PendingBubbles";
+import { useEnvironmentRefresh } from "./PropertiesSections";
 import { useRightAreaSlot } from "./RightArea";
 import { Thread, type ThreadProps } from "./Thread";
 import { type SendResult, useConversation } from "./useConversation";
@@ -208,6 +209,7 @@ export function useConversationPage(
   );
   const keys = useMemo(() => toolKeysOf(conv.events), [conv.events]);
   const info = useToolInfo(orgId, conversationId, keys);
+  useEnvironmentRefresh(orgId, conversationId, conv.events);
   const subagents = useSubagents(
     orgId,
     conversationId,

@@ -85,8 +85,42 @@ const sandboxUses = (
 };
 
 /**
+ * Reads the conversation's environment again whenever the number of sandbox tool results changes:
+ * a result may have started, stopped or suspended the instance. It lives in the conversation page,
+ * which is mounted from the start, not in the properties panel: a panel opened after the tools ran
+ * would take the current count as its baseline and keep showing a fresh but outdated state.
+ */
+export function useEnvironmentRefresh(
+  orgId: string,
+  conversationId: string,
+  events: readonly ConversationEvent[],
+): void {
+  const qc = useQueryClient();
+  const resultKeys = useMemo(
+    () => [
+      ...new Set(events.flatMap((e) => (e.type === "tool_result" ? [e.payload.toolKey] : []))),
+    ],
+    [events],
+  );
+  const info = useToolInfo(orgId, conversationId, resultKeys);
+  const uses = useMemo(() => sandboxUses(events, info), [events, info]);
+  const seenUses = useRef<number | null>(null);
+  useEffect(() => {
+    if (uses === null) return;
+    const prev = seenUses.current;
+    seenUses.current = uses;
+    // The first resolved count is the baseline, not a change.
+    if (prev !== null && uses !== prev)
+      void qc.invalidateQueries({
+        queryKey: conversationEnvironmentQuery(orgId, conversationId).queryKey,
+      });
+  }, [uses, qc, orgId, conversationId]);
+}
+
+/**
  * The built-in Context section (the old Context tab): the context ratio of the latest step's usage,
- * the model, the environment and its state (read again after each sandbox tool result) and the connectors used.
+ * the model, the environment and its state (kept current by {@link useEnvironmentRefresh}) and the
+ * connectors used.
  * A connectors read the role is refused (R5: not read again on mount) names no connectors.
  */
 export function ContextSection({
@@ -109,7 +143,6 @@ export function ContextSection({
   total?: string | undefined;
 }) {
   const t = useTranslations("chatPanel");
-  const qc = useQueryClient();
   const connectorsQ = connectorsQuery(orgId);
   const connectors = useQuery({
     ...connectorsQ,
@@ -128,24 +161,6 @@ export function ContextSection({
     ...environmentQ,
     retryOnMount: retryOnMountOf(environmentQ.queryKey),
   });
-  const resultKeys = useMemo(
-    () => [
-      ...new Set(events.flatMap((e) => (e.type === "tool_result" ? [e.payload.toolKey] : []))),
-    ],
-    [events],
-  );
-  const toolInfo = useToolInfo(orgId, conversationId, resultKeys);
-  const uses = useMemo(() => sandboxUses(events, toolInfo), [events, toolInfo]);
-  // A sandbox tool result since the last look may have started, stopped or suspended the instance.
-  const seenUses = useRef<number | null>(null);
-  useEffect(() => {
-    if (uses === null) return;
-    const prev = seenUses.current;
-    seenUses.current = uses;
-    // The first resolved count is the baseline, not a change.
-    if (prev !== null && uses !== prev)
-      void qc.invalidateQueries({ queryKey: environmentQ.queryKey });
-  }, [uses, qc, environmentQ.queryKey]);
   // The route answers null both for "none bound" and "the bound one was deleted": the
   // conversation's own environmentId tells them apart.
   const environmentText =

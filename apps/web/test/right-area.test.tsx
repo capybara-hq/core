@@ -407,6 +407,34 @@ describe("the Context section's sandbox status", () => {
     });
     await waitFor(() => expect(sandboxGets()).toBe(before + 1));
   });
+
+  it("a sandbox result while the properties panel is closed still rereads the environment", async () => {
+    const calls = api("c1", {
+      [`GET ${conv("c1")}/events`]: () => json(200, { events: [userMsg(1, "go")] }),
+      [`GET ${conv("c1")}/tools`]: (c) => {
+        const keys = (new URL(c.url, "http://x").searchParams.get("keys") ?? "").split(",");
+        return json(200, { tools: keys.map((k) => toolInfo(k, k === "Write")) });
+      },
+    });
+    const sandboxGets = () => calls.filter((c) => c.url.endsWith("/c1/environment")).length;
+    await renderChatRoute();
+    expect(screen.queryByRole("complementary", { name: "Properties" })).toBeNull();
+    // the first delivered event ends the catch-up, which rereads everything outside the log once
+    act(() => {
+      FakeEventSource.instances[0]?.emit("event", userMsg(2, "again"));
+    });
+    await waitFor(() => expect(sandboxGets()).toBe(1));
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50));
+    });
+    const before = sandboxGets();
+    act(() => {
+      FakeEventSource.instances[0]?.emit("event", result(3, "Write"));
+    });
+    // the panel is not open: the conversation page itself keeps the environment current, so a
+    // panel opened later shows the started instance instead of a fresh but outdated state
+    await waitFor(() => expect(sandboxGets()).toBe(before + 1));
+  });
 });
 
 describe("the conversation's environment (environments design §4.1 item 2)", () => {
