@@ -7,6 +7,7 @@ import {
   patTokenId,
   requireUser,
 } from "../identity/principal.js";
+import { InboxNoticeParams } from "../inbox/inbox.schemas.js";
 import { InboxService, type InboxView } from "../inbox/inbox.service.js";
 import { createZodDto } from "../infra/validation/create-zod-dto.js";
 import { ZBody, ZParam } from "../infra/validation/zod-params.js";
@@ -26,7 +27,7 @@ const DecideBody = z
   .strict();
 class SkillChangeDecideBody extends createZodDto(DecideBody, "SkillChangeDecideBody") {}
 
-const NoticeParamsSchema = z.object({ id: z.string().min(1).max(100) });
+const NoticeParamsSchema = InboxNoticeParams;
 class NoticeParams extends createZodDto(NoticeParamsSchema, "InboxNoticeParams") {}
 
 /**

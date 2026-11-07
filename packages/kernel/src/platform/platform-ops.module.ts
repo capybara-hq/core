@@ -4,6 +4,7 @@ import { CatalogModule } from "../catalog/catalog.module.js";
 import { ConversationsModule } from "../conversations/conversations.module.js";
 import { ExtensionsModule } from "../extensions/extensions.module.js";
 import { IdentityModule } from "../identity/identity.module.js";
+import { InboxModule } from "../inbox/inbox.module.js";
 import { ModelsModule } from "../models/models.module.js";
 import { OrgsModule } from "../orgs/orgs.module.js";
 import { ProvidersModule } from "../runtime/providers.js";
@@ -13,12 +14,14 @@ import { AccountsOperations } from "./ops/accounts.ops.js";
 import { AdminOperations } from "./ops/admin.ops.js";
 import { AgentTemplatesOperations } from "./ops/agent-templates.ops.js";
 import { AgentsOperations } from "./ops/agents.ops.js";
+import { ApprovalsOperations } from "./ops/approvals.ops.js";
 import { CatalogAdminOperations } from "./ops/catalog-admin.ops.js";
 import { ComponentsOperations } from "./ops/components.ops.js";
 import { ConnectorsOperations } from "./ops/connectors.ops.js";
 import { ConversationsOperations } from "./ops/conversations.ops.js";
 import { ExtensionsOperations } from "./ops/extensions.ops.js";
 import { ExtensionsAdminOperations } from "./ops/extensions-admin.ops.js";
+import { InboxOperations } from "./ops/inbox.ops.js";
 import { MarketplacesOperations } from "./ops/marketplaces.ops.js";
 import { ModelsOperations } from "./ops/models.ops.js";
 import { OrgPluginsOperations } from "./ops/org-plugins.ops.js";
@@ -54,6 +57,9 @@ export const PLATFORM_OPERATION_PROVIDERS = [
   OrgPluginsOperations,
   ExtensionsAdminOperations,
   ModelsOperations,
+  // Task 9: inbox and pending reads
+  InboxOperations,
+  ApprovalsOperations,
 ] as const;
 
 /**
@@ -74,6 +80,7 @@ export const PLATFORM_OPERATION_PROVIDERS = [
     IdentityModule,
     ModelsModule,
     ProvidersModule,
+    InboxModule,
   ],
   providers: [...PLATFORM_OPERATION_PROVIDERS],
 })

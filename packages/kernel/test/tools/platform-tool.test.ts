@@ -287,6 +287,8 @@ describe("browse, search, describe, read", () => {
       "accounts",
       "admin",
       "models",
+      "inbox",
+      "approvals",
     ]);
     expect(domains.find((d) => d.id === "skills")?.operations).toBe(2);
     expect(out.method).toContain("describe");

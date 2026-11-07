@@ -664,25 +664,6 @@ export const PLATFORM_EXCLUSIONS: readonly {
     category: "human-only",
     reason: "Unlinks a login identity",
   },
-  // inbox
-  {
-    route: "GET /api/v1/admin/inbox",
-    category: "later",
-    reason: "Platform inbox list an agent could read later",
-    issue: "https://github.com/capybara-hq/core/issues/91",
-  },
-  {
-    route: "GET /api/v1/admin/inbox/count",
-    category: "later",
-    reason: "Platform inbox badge count, readable later",
-    issue: "https://github.com/capybara-hq/core/issues/91",
-  },
-  {
-    route: "POST /api/v1/admin/inbox/notices/:id/dismiss",
-    category: "later",
-    reason: "Dismissing a platform notice, mirrored later",
-    issue: "https://github.com/capybara-hq/core/issues/91",
-  },
   // health
   { route: "GET /healthz", category: "transport", reason: "Liveness probe for the orchestrator" },
   { route: "GET /readyz", category: "transport", reason: "Readiness probe for the orchestrator" },
@@ -813,18 +794,6 @@ export const PLATFORM_EXCLUSIONS: readonly {
     issue: "https://github.com/capybara-hq/core/issues/91",
   },
   {
-    route: "GET /api/v1/orgs/:orgId/inbox",
-    category: "later",
-    reason: "Org inbox list an agent could read later",
-    issue: "https://github.com/capybara-hq/core/issues/91",
-  },
-  {
-    route: "POST /api/v1/orgs/:orgId/inbox/notices/:id/dismiss",
-    category: "later",
-    reason: "Dismissing an org notice, mirrored later",
-    issue: "https://github.com/capybara-hq/core/issues/91",
-  },
-  {
     route: "GET /api/v1/orgs/:orgId/agents/:agentId/invocable-skills",
     category: "later",
     reason: "Invocable skill list an agent could read later",
@@ -837,19 +806,10 @@ export const PLATFORM_EXCLUSIONS: readonly {
   },
   // approvals
   {
-    route: "GET /api/v1/orgs/:orgId/approvals",
-    category: "human-only",
-    reason: "Lists approvals awaiting a person's decision",
-  },
-  {
-    route: "GET /api/v1/orgs/:orgId/approvals/:id",
-    category: "human-only",
-    reason: "Shows an approval awaiting a person's decision",
-  },
-  {
     route: "POST /api/v1/orgs/:orgId/approvals/:id/decision",
     category: "human-only",
-    reason: "Decides a tool permission approval",
+    reason:
+      "Decides a tool permission approval; only the person decides (spec §6.4); reading what waits is approvals.waiting / approvals.get",
   },
   {
     route: "GET /api/v1/orgs/:orgId/me/tool-grants",

@@ -122,6 +122,7 @@ describe("registration", () => {
       "connectors.template-disable-preview",
       "connectors.templates",
       "extensions.list",
+      "extensions.pending-permissions",
       "extensions.platform-disable",
       "extensions.platform-enable",
       "extensions.platform-get",
@@ -175,6 +176,7 @@ describe("registration", () => {
       "requests.create",
       "requests.create-import",
       "requests.list-mine",
+      "requests.pending",
       "requests.platform-list",
     ]);
   });

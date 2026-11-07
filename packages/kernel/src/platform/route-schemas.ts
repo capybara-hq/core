@@ -11,9 +11,11 @@ import { ORG_EXTENSION_ROUTES } from "../catalog/org-extension.schemas.js";
 import { ORG_PLUGIN_UPLOAD_ROUTES } from "../catalog/org-plugin-uploads.schemas.js";
 import { CONVERSATION_ROUTES } from "../conversations/conversations.schemas.js";
 import { EXTENSION_POINT_ROUTES } from "../extensions/point-defaults.schemas.js";
+import { INBOX_ROUTES } from "../inbox/inbox.schemas.js";
 import { ORG_MODEL_ROUTES } from "../models/org-models.schemas.js";
 import { ORG_ROUTES } from "../orgs/orgs.schemas.js";
 import { SKILL_ROUTES } from "../skills/skills.schemas.js";
+import { APPROVAL_ROUTES } from "../tools/approvals.schemas.js";
 import { CONNECTOR_ROUTES } from "../tools/connectors.schemas.js";
 
 /**
@@ -52,4 +54,7 @@ export const ROUTE_SCHEMAS: readonly RouteSchemas[] = [
   ...ORG_PLUGIN_UPLOAD_ROUTES,
   ...EXTENSION_POINT_ROUTES,
   ...ORG_MODEL_ROUTES,
+  // Task 9: inbox and pending reads
+  ...INBOX_ROUTES,
+  ...APPROVAL_ROUTES,
 ];

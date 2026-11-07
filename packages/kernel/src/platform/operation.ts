@@ -182,13 +182,13 @@ export const PLATFORM_DOMAINS: readonly { id: string; description: string }[] = 
   {
     id: "requests",
     description:
-      "Requests to admins: list yours, create one; the super admin lists the platform's.",
+      "Requests to admins: list yours, create one; org admins list the members' pending ones; the super admin lists the platform's.",
   },
   { id: "connectors", description: "Connectors and connector templates: list and read." },
   {
     id: "extensions",
     description:
-      "Extensions in the org (state, tool switches, extension point defaults) and, for the super admin, on the platform (state, enable, disable, uninstall).",
+      "Extensions in the org (state, tool switches, extension point defaults) and, for the super admin, on the platform (state, pending permission confirmations, enable, disable, uninstall).",
   },
   {
     id: "conversations",
@@ -211,6 +211,16 @@ export const PLATFORM_DOMAINS: readonly { id: string; description: string }[] = 
     id: "models",
     description:
       "The org's model per purpose and the models it switched off; for the super admin, the platform's models: catalog and disabled list, prices, default model per purpose.",
+  },
+  {
+    id: "inbox",
+    description:
+      "Your inbox (what waits for you, as summaries; dismiss notices) and, for the super admin, the platform inbox. Deciding is done on the web.",
+  },
+  {
+    id: "approvals",
+    description:
+      "Tool call approvals you can decide: list and read them as summaries, never the call's input. Deciding is done on the web.",
   },
 ];
 

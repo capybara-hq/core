@@ -10,6 +10,7 @@ import { createZodDto } from "../infra/validation/create-zod-dto.js";
 import { ZBody, ZQuery } from "../infra/validation/zod-params.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
 import { CONTROL_OR_HIDDEN_RE } from "../text.js";
+import { ApprovalsListQuerySchema } from "./approvals.schemas.js";
 import {
   APPROVAL_DENY_REASON_MAX_CHARS,
   type ApprovalRecord,
@@ -18,9 +19,7 @@ import {
   type ToolGrantView,
 } from "./approvals.service.js";
 
-const ListQuery = z
-  .object({ status: z.enum(["pending", "approved", "denied", "expired", "cancelled"]).optional() })
-  .strict();
+const ListQuery = ApprovalsListQuerySchema;
 
 const DecisionBody = z
   .object({

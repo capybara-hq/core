@@ -54,6 +54,8 @@ describe("PlatformOperations", () => {
       "accounts",
       "admin",
       "models",
+      "inbox",
+      "approvals",
     ]);
   });
 
