@@ -7,6 +7,8 @@ import { promisify } from "node:util";
 import {
   defineExtension,
   type ExecResult,
+  FileSystemGoneError,
+  type FileSystemHandle,
   SANDBOX_EXTENSION_POINT,
   SANDBOX_TAG_RE,
   SandboxGoneError,
@@ -18,6 +20,18 @@ import {
 import { z } from "zod";
 
 /**
+ * Test `sandbox@2` (for tests only, never for production). Layout under `root`:
+ * - `root/filesystems/<fsId>/{workspace,skills}` and `meta.json` (`{ name, limits }`): an
+ *   environment's files, kept until `destroyFileSystem`; `createFileSystem` on a name that exists
+ *   returns the existing one; `create` on a missing file system throws `FileSystemGoneError`;
+ * - `root/instances/<id>/{state,meta.json,tmp,procs,sessions}`: an instance mounts its file system's
+ *   `workspace` / `skills` as `/workspace` / `/skills`; `meta.json` = `{ name, image | null,
+ *   fileSystem, limits }`; `destroy` drops the instance and keeps the file system;
+ * - `ops.log` also records `create-fs <fsId> <name>`, `destroy-fs <fsId>`,
+ *   `destroy-fs-by-name <name>`, and `exec <id> <tag> <startMs> <endMs> <accountId> <conversationId>`.
+ *
+ * Original notes (the old `sandbox@1` layout mentioned below no longer holds for `fs/`):
+ *
  * 测试用 `sandbox@1`（只用于测试，绝不能用于生产）。
  *
  * 「提供方那边」的状态全在部署配置 `root` 目录里（像 Docker 守护进程，多个内核副本共用一个 root 即共用同一批实例）：
@@ -68,11 +82,25 @@ export interface FakeSandboxDelays {
 /** create 时记下的参数（`root/instances/<id>/meta.json`）。 */
 export interface FakeSandboxMeta {
   name: string;
-  image: string;
+  /** null when `create` got no image. */
+  image: string | null;
+  /** The id of the file system the instance mounts. */
+  fileSystem: string;
   limits: SandboxLimits;
 }
 
 const instanceDir = (root: string, id: string) => join(root, "instances", id);
+const fileSystemDir = (root: string, id: string) => join(root, "filesystems", id);
+
+/** Ids of the file systems that exist under `root`. */
+export async function fakeFileSystems(root: string): Promise<string[]> {
+  return (await readdir(join(root, "filesystems")).catch(() => [] as string[])).sort();
+}
+
+/** Simulates the provider losing a file system (a later `create` throws `FileSystemGoneError`). */
+export async function removeFakeFileSystem(root: string, fsId: string): Promise<void> {
+  await rm(fileSystemDir(root, fsId), { recursive: true, force: true });
+}
 
 /** The env var that tells the shims their instance directory (the session records). */
 const INSTANCE_ENV = "CAPYBARA_FAKE_SANDBOX_INSTANCE";
@@ -341,7 +369,26 @@ export function createFakeSandbox(rootDir: string): SandboxProvider {
     const raw = await readFile(join(root, "delays.json"), "utf8").catch(() => "{}");
     await sleep((JSON.parse(raw) as FakeSandboxDelays)[op] ?? 0, signal);
   };
-  const fsRoot = (h: SandboxHandle) => join(instanceDir(root, h.id), "fs");
+  /** Where `/workspace`, `/skills` and `/tmp` of the instance live on the host. */
+  const mounts = async (h: SandboxHandle): Promise<Record<string, string>> => {
+    const meta = await fakeSandboxMeta(root, h.id);
+    if (meta === null) throw new SandboxGoneError(`fake sandbox ${h.id} is gone`);
+    const fs = fileSystemDir(root, meta.fileSystem);
+    return {
+      "/workspace": join(fs, "workspace"),
+      "/skills": join(fs, "skills"),
+      "/tmp": join(instanceDir(root, h.id), "tmp"),
+    };
+  };
+  const fsIdByName = async (name: string): Promise<string | null> => {
+    for (const id of await fakeFileSystems(root)) {
+      const raw = await readFile(join(fileSystemDir(root, id), "meta.json"), "utf8").catch(
+        () => "",
+      );
+      if (raw !== "" && (JSON.parse(raw) as { name: string }).name === name) return id;
+    }
+    return null;
+  };
   const requireRunning = async (h: SandboxHandle) => {
     const s = await fakeSandboxState(root, h.id);
     if (s === null) throw new SandboxGoneError(`fake sandbox ${h.id} is gone`);
@@ -397,23 +444,57 @@ export function createFakeSandbox(rootDir: string): SandboxProvider {
       }
     }
   };
-  const real = (h: SandboxHandle, p: string) => {
+  const real = async (h: SandboxHandle, p: string) => {
     const errors = validateSandboxPath(p);
     if (errors.length > 0) throw new Error(errors.join("; "));
-    return join(fsRoot(h), p);
+    const m = await mounts(h);
+    const r = Object.keys(m).find((k) => p === k || p.startsWith(`${k}/`)) as string;
+    return join(m[r] as string, p.slice(r.length));
   };
 
   return {
-    concurrentExec: true,
+    concurrentExec: true as const,
 
-    async create({ name, image, limits, signal }) {
+    async createFileSystem({ name, limits, signal }): Promise<FileSystemHandle> {
       await delay("create", signal);
+      const existing = await fsIdByName(name);
+      if (existing !== null) return { id: existing };
+      const id = `fs-${randomUUID().slice(0, 8)}`;
+      const dir = fileSystemDir(root, id);
+      for (const r of ["workspace", "skills"]) await mkdir(join(dir, r), { recursive: true });
+      await writeFile(join(dir, "meta.json"), JSON.stringify({ name, limits }));
+      await log(`create-fs ${id} ${name}`);
+      return { id };
+    },
+
+    async destroyFileSystem(fs, signal) {
+      await delay("destroy", signal);
+      await rm(fileSystemDir(root, fs.id), { recursive: true, force: true });
+      await log(`destroy-fs ${fs.id}`);
+    },
+
+    async destroyFileSystemByName(name, signal) {
+      await delay("destroy", signal);
+      const id = await fsIdByName(name);
+      if (id !== null) await rm(fileSystemDir(root, id), { recursive: true, force: true });
+      await log(`destroy-fs-by-name ${name}`);
+    },
+
+    async create({ name, image, limits, fileSystem, signal }) {
+      await delay("create", signal);
+      if (!(await stat(fileSystemDir(root, fileSystem.id)).catch(() => null))) {
+        throw new FileSystemGoneError(`fake file system ${fileSystem.id} is gone`);
+      }
       const id = `fake-${randomUUID().slice(0, 8)}`;
       const dir = instanceDir(root, id);
-      for (const r of ["workspace", "skills", "tmp"]) {
-        await mkdir(join(dir, "fs", r), { recursive: true });
-      }
-      await writeFile(join(dir, "meta.json"), JSON.stringify({ name, image, limits }));
+      await mkdir(join(dir, "tmp"), { recursive: true });
+      const meta: FakeSandboxMeta = {
+        name,
+        image: image ?? null,
+        fileSystem: fileSystem.id,
+        limits,
+      };
+      await writeFile(join(dir, "meta.json"), JSON.stringify(meta));
       await writeFile(join(dir, "state"), "running");
       await log(`create ${id} ${name}`);
       return { id };
@@ -467,18 +548,22 @@ export function createFakeSandbox(rootDir: string): SandboxProvider {
       await requireRunning(h);
       const startedAt = Date.now();
       await delay("exec", args.signal);
-      const base = fsRoot(h);
+      const m = await mounts(h);
       const command = args.command.replace(
         ROOT_RE,
-        (_m, pre: string, r: string) => `${pre}${base}${r}`,
+        (_m, pre: string, r: string) => `${pre}${m[r] as string}`,
       );
-      const cwd = real(h, args.cwd ?? "/workspace");
-      const back = (s: string) => s.split(base).join("");
+      const cwd = await real(h, args.cwd ?? "/workspace");
+      const back = (s: string) => {
+        let out = s;
+        for (const [r, dir] of Object.entries(m)) out = out.split(dir).join(r);
+        return out;
+      };
       return new Promise<ExecResult>((resolve) => {
         const child = spawn("/bin/sh", ["-c", command], {
           cwd,
           env: {
-            HOME: join(base, "workspace"),
+            HOME: m["/workspace"],
             ...args.env,
             PATH: `${binDir}:${args.env?.PATH ?? process.env.PATH ?? "/usr/bin:/bin"}`,
             [INSTANCE_ENV]: instanceDir(root, h.id),
@@ -539,7 +624,8 @@ export function createFakeSandbox(rootDir: string): SandboxProvider {
             truncated,
             timedOut,
           };
-          void log(`exec ${h.id} ${args.tag ?? "-"} ${startedAt} ${Date.now()}`)
+          const who = `${args.actor?.accountId ?? "-"} ${args.actor?.conversationId ?? "-"}`;
+          void log(`exec ${h.id} ${args.tag ?? "-"} ${startedAt} ${Date.now()} ${who}`)
             .catch(() => {})
             .finally(() => resolve(result));
         });
@@ -581,7 +667,7 @@ export function createFakeSandbox(rootDir: string): SandboxProvider {
     async readFile(h, path, opts) {
       opts.signal.throwIfAborted();
       await requireRunning(h);
-      const p = real(h, path);
+      const p = await real(h, path);
       const data = await readFile(p).catch(() => null);
       if (data === null) return null;
       const truncated = data.byteLength > opts.maxBytes;
@@ -594,7 +680,7 @@ export function createFakeSandbox(rootDir: string): SandboxProvider {
     async writeFile(h, path, data, signal) {
       signal.throwIfAborted();
       await requireRunning(h);
-      const p = real(h, path);
+      const p = await real(h, path);
       await mkdir(dirname(p), { recursive: true });
       await writeFile(p, data);
     },
@@ -602,13 +688,13 @@ export function createFakeSandbox(rootDir: string): SandboxProvider {
     async stat(h, path, signal) {
       signal.throwIfAborted();
       await requireRunning(h);
-      const s = await stat(real(h, path)).catch(() => null);
+      const s = await stat(await real(h, path)).catch(() => null);
       return s === null ? null : { size: s.size, isDir: s.isDirectory() };
     },
   };
 }
 
-/** 测试用 `sandbox@1`：部署配置 `{ root }`，见文件头注释。 */
+/** 测试用 `sandbox@2`：部署配置 `{ root }`，见文件头注释。 */
 export default defineExtension({
   name: "sandbox-fake",
   version: "0.1.0",
