@@ -342,10 +342,16 @@ Decisions made while building, one per bullet (what, and why).
   `org.extensions.manage`, otherwise a `hasProvider` flag, as the existing routes do.
 - `plugins.disable-preview` (a read) was added, and `plugins.set-enabled` with `enabled: false`
   requires its `confirm`, so a preview-only call never prompts the person.
-- The `later` exclusions point to per-domain tracking issues; the issue URLs are recorded as
-  constants in `exclusions.ts` and opened on GitHub before the PR is merged.
-- One changeset (`.changeset/platform-tool.md`) describes the kernel side of the feature for the
-  release notes; the SDK, web and design changes keep their own.
+- Read operations never prompt: a read's per-call policy is `allow` and is not a fixed ask. A read an
+  agent tightened to `ask` (a `toolPolicies` entry on `Platform:<operation>`) asks once-only and no grant
+  applies, like an org write.
+- The `later` exclusions point to per-domain tracking issues; for now each carries an inline
+  `TODO-platform-<domain>` literal as its `issue` (the check reads literals only), replaced by the real
+  issue URLs before the PR is merged.
+- One changeset, `.changeset/platform-tool.md`, describes the feature for the release notes, covering the
+  kernel, web and design changes. `platform-agent-docs.md` stays separate because it is the only one that
+  bumps `@capybara-hq/plugin-sdk`, and `platform-inbox.md` is the unrelated platform inbox for the super
+  admin.
 - A second `Platform` call with different params while another call's approval is pending or
   approved never runs on that approval: approvals bind the exact input and each call has its own
   (`platform-e2e.test.ts`, case g).

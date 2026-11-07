@@ -281,8 +281,9 @@ describe("Platform tool end to end", { timeout: 180_000 }, () => {
       password: PW,
       displayName: "Anon",
     });
+    // an admin role, so the role check passes and only the missing person refuses the write
     await sql`INSERT INTO capybara.memberships (org_id, account_id, role)
-      VALUES (${orgId}, ${guest.id}, 'guest')`.execute(db);
+      VALUES (${orgId}, ${guest.id}, 'admin')`.execute(db);
     await sql`INSERT INTO capybara.org_anonymous_accounts (org_id, account_id)
       VALUES (${orgId}, ${guest.id})`.execute(db);
     const conv = await conversation(await session(k, "anon"));
@@ -291,6 +292,7 @@ describe("Platform tool end to end", { timeout: 180_000 }, () => {
     );
     expect(ofType(evs, "approval_requested")).toEqual([]);
     expect(lastResult(evs).isError).toBe(true);
+    expect(lastResult(evs).content).toMatch(/no person is present/);
     expect(await skillsOf(owner)).not.toContain("anon-skill");
   });
 

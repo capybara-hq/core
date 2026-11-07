@@ -363,7 +363,8 @@ section of `.agents/skills/writing-kernel-api`; this section is about how the pi
   unavailable now are denied with an actionable text naming `describe` and never reach the person.
 - **Classes.** `read` runs; `personal` asks and may be remembered; `org` / `platform` ask every time and are
   never remembered (`remember: false`; the approval stores `scopes: ["once"]`, anything else is
-  `approval.scope_not_allowed`, on the web, in IM cards and over the API).
+  `approval.scope_not_allowed`, on the web, in IM cards and over the API). A read never prompts; a read an agent tightened to `ask` (`toolPolicies` on
+  `Platform:<operation>`) asks once-only and no grant applies.
 - **The card.** The kernel renders `summary` (zh and en) from the operation and its params; the approval
   stores it with the exact input and runs only with that input (approvals bound to input: a re-call with other
   params asks again).
