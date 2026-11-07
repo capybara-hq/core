@@ -3,7 +3,7 @@
   "schemaVersion": 1,
   "marketplace": {
     "url": "https://github.com/capybara-hq/plugins.git",
-    "commit": "755d7575f62b56becbeda993e06df70ceaa4535f"
+    "commit": "77f0ac0c0bbb1e7e3ea66ae3bd7931f0ed06b777"
   },
   "plugins": [
     {
