@@ -29,7 +29,7 @@ import { useAppMutation } from "../lib/query/mutation";
 import { useWaiterWords } from "../lib/query/who-waits";
 import { shortTime } from "../lib/time";
 import type { ApprovalDecision, ApprovalItem } from "../lib/timeline";
-import { toolLabel, toolLabelOfKey, toolLabelText } from "../lib/tool-label";
+import { lang, PLATFORM_PREFIX, toolLabel, toolLabelOfKey, toolLabelText } from "../lib/tool-label";
 import { useErrorMessage } from "../lib/use-error-message";
 import { useSession } from "./shell/session";
 
@@ -62,7 +62,7 @@ export function ScopePicker({
   onChange,
   disabled,
 }: {
-  approval: Pick<Approval, "requestedFor">;
+  approval: Pick<Approval, "requestedFor" | "scopes">;
   value: ApprovalScope;
   onChange(scope: ApprovalScope): void;
   disabled?: boolean;
@@ -224,7 +224,7 @@ export function ApprovalCard({
   }
 
   // a Platform call's approval is keyed `Platform:<operation>` (the conversation item's key is the tool's)
-  const platformKey = view?.toolKey?.startsWith("Platform:") ? view.toolKey : undefined;
+  const platformKey = view?.toolKey?.startsWith(PLATFORM_PREFIX) ? view.toolKey : undefined;
   const tool = toolLabelText(
     info && platformKey === undefined
       ? toolLabel(info, locale)
@@ -264,7 +264,7 @@ export function ApprovalCard({
       <ApprovalBlock
         tool={tool}
         toolKey={platformKey ?? item.toolKey}
-        {...(view?.summary ? { summary: view.summary[locale.startsWith("zh") ? "zh" : "en"] } : {})}
+        {...(view?.summary ? { summary: view.summary[lang(locale)] } : {})}
         input={input}
         keyArgs={info?.keyArgs ?? []}
         scopes={view ? scopesFor(view) : ["once"]}

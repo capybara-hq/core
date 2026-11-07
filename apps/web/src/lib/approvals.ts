@@ -55,7 +55,7 @@ export interface ToolGrant {
 
 /** 可选的批准范围：按角色升级的审批只能「仅本次」。 */
 export const scopesFor = (a: Pick<Approval, "requestedFor" | "scopes">): ApprovalScope[] =>
-  a.scopes ? [...a.scopes] : a.requestedFor === null ? ["once"] : [...APPROVAL_SCOPES];
+  a.scopes ? [...a.scopes] : ["once"];
 
 /** 参数的 JSON 展示（两空格缩进；无法序列化时退回 String）。 */
 export function formatInput(input: unknown): string {

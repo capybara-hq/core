@@ -96,7 +96,9 @@ function previewWithSummary(
 ): string {
   const params = inputPreview(v.input, redact);
   if (v.summary === null) return params;
-  const summary = redact ? redact(v.summary[locale]) : v.summary[locale];
+  const text = redact ? redact(v.summary[locale]) : v.summary[locale];
+  const summary =
+    text.length <= INPUT_PREVIEW_MAX ? text : `${text.slice(0, INPUT_PREVIEW_MAX - 1)}…`;
   return `${summary}\n${params}`;
 }
 

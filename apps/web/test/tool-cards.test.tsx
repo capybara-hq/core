@@ -28,6 +28,7 @@ const APPROVAL = {
   agent: { id: "ag1", name: "Echo agent" },
   input: { id: "x1" },
   requestedFor: "a1",
+  scopes: ["once", "session", "always"],
   approverRole: null,
   status: "pending",
   scope: null,
@@ -147,7 +148,9 @@ describe("ApprovalCard (design ApprovalBlock)", () => {
   it("a role escalation offers only once; deny sends the reason", async () => {
     const calls = stubApi({
       "GET /api/v1/orgs/o1/approvals/ap1": () =>
-        json(200, { approval: { ...APPROVAL, requestedFor: null, approverRole: "admin" } }),
+        json(200, {
+          approval: { ...APPROVAL, requestedFor: null, scopes: ["once"], approverRole: "admin" },
+        }),
       "POST /api/v1/orgs/o1/approvals/ap1/decision": () =>
         json(200, { approval: { ...APPROVAL, status: "denied", decidedBy: "a1" } }),
     });
