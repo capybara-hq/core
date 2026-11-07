@@ -527,7 +527,9 @@ describe("phase C acceptance: superpowers subagent-driven-development", {
         for (const call of calls) {
           const p = call.payload as EventPayload<"model_call">;
           const info = (
-            await k.app.get(ProviderRegistry).resolve({ provider: p.provider, model: p.model })
+            await k.app
+              .get(ProviderRegistry)
+              .resolve(snap.orgId, { provider: p.provider, model: p.model })
           ).info;
           const r = reconstructRequest(snap, call.seq, { model: info });
           expect(r.drift, `${c.id} seq ${call.seq}`).toEqual([]);

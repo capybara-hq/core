@@ -134,6 +134,8 @@ export function testHost(
     loggerOf(deps.log, opts.onSecrets),
     opts.resolveFrom !== undefined ? { resolveFrom: opts.resolveFrom } : {},
     { get: effectiveConfig },
+    // no ctx.models broker in a hand-built host: ctx.models calls reject
+    undefined as never,
   );
 }
 

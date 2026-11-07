@@ -297,6 +297,7 @@ describe("ExtensionHost.load: an extension upgrade adds a view / embed (review f
       redisUrl: rd.url,
       keyring: createKeyring(Buffer.alloc(32, 1), []),
       embedTokens: new EmbedTokens(createKeyring(Buffer.alloc(32, 1), [])),
+      hooks: undefined,
       runWorkers: false,
       log: { info: at("info"), warn: at("warn"), error: at("error") },
     };

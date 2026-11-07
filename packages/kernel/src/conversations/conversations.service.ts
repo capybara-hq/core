@@ -376,7 +376,7 @@ export class ConversationsService {
     const prior = await this.findCreated(orgId, accountId, agentId, input.clientMessageId);
     if (prior) return prior;
     const environmentId = await this.environments.forNew(orgId, accountId, pick);
-    const next = await this.planSwitch(agent.definition, NO_SELECTION, input);
+    const next = await this.planSwitch(orgId, agent.definition, NO_SELECTION, input);
     const extra = await this.resolveExtra(orgId, accountId, input);
     const invoked = await this.prepareSkill(orgId, agentId, undefined, agent.definition, input);
     const id = randomUUID();
@@ -1041,7 +1041,7 @@ export class ConversationsService {
     const next =
       agent === undefined || (input.model === undefined && input.effort === undefined)
         ? null
-        : await this.planSwitch(agent, conv.selection, input);
+        : await this.planSwitch(orgId, agent, conv.selection, input);
     const extra = await this.resolveExtra(orgId, accountId, input);
     const invoked =
       agent === undefined
@@ -1099,11 +1099,13 @@ export class ConversationsService {
    * The selection a message switches to, or null when it changes nothing. A model equal to the
    * agent's means "back to the agent's model" (null); a model change without `effort` resets the
    * effort. The target model must resolve (`agent.model_unavailable`) and declare the effort
-   * (`validation_failed`). Resolving is the agent editor's check: providers are deployment-scoped
-   * and serve chat models only. If per-org provider enablement is added, this check and the run
-   * worker's `fallBackIfUnavailable` must follow it.
+   * (`validation_failed`). Resolving is the agent editor's check, for the org (its effective
+   * provider config, spec B §5.5) and its disabled lists: a model the platform or the org disabled,
+   * or a non-chat model, is refused (spec B §5.3), as the run worker's `fallBackIfUnavailable` falls
+   * back from it.
    */
   private async planSwitch(
+    orgId: string,
     agent: AgentDefinition,
     current: Selection,
     input: Pick<UserMessageInput, "model" | "effort">,
@@ -1111,7 +1113,7 @@ export class ConversationsService {
     const next = planSelection(agent.model, current, input);
     if (next === null) return null;
     const { model, effort } = next;
-    const { info } = await this.providers.resolve(model ?? agent.model);
+    const { info } = await this.providers.resolve(orgId, model ?? agent.model);
     if (effort !== null) {
       const knob = info.parameters.find((p) => p.key === "effort");
       const values = (knob?.schema as { enum?: unknown[] } | undefined)?.enum ?? [];
@@ -1137,7 +1139,7 @@ export class ConversationsService {
   ): Promise<void> {
     if (pick.model === undefined && pick.effort === undefined) return;
     const agent = await this.agents.get(orgId, conv.agentId, accountId);
-    await this.planSwitch(agent.definition, conv.selection, pick);
+    await this.planSwitch(orgId, agent.definition, conv.selection, pick);
   }
 
   /**

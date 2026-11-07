@@ -81,7 +81,7 @@ export class AgentsFromTemplate {
       enabledPlugins: await this.host.enabledPlugins(orgId),
       resolveModel: async (ref): Promise<ModelParameter[] | null> => {
         try {
-          return (await this.providers.resolve(ref)).info.parameters;
+          return (await this.providers.resolve(orgId, ref)).info.parameters;
         } catch {
           return null;
         }
@@ -95,8 +95,8 @@ export class AgentsFromTemplate {
         }
       },
       defaultModel: async () => {
-        for (const p of await this.providers.list()) {
-          const m = p.models[0];
+        for (const p of await this.providers.list(orgId)) {
+          const m = p.models.find((x) => x.kind === "chat");
           if (m) return { provider: p.provider, model: m.id };
         }
         return null;

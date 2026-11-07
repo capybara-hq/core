@@ -1,7 +1,7 @@
 import { listPluginInstalls } from "../catalog";
 import { listExtensionPointDefaults } from "../extensions";
 import { listInvitations } from "../members";
-import { listOrgPurposes } from "../models";
+import { getModelsCatalog, listOrgPurposes } from "../models";
 import { getOrgSettings } from "../org-settings";
 import { listServiceTokens } from "../orgs";
 import { getOrgFilePreviewers } from "../previewers";
@@ -62,4 +62,12 @@ export const serviceTokensQuery = (orgId: string) =>
     key: keys.org(orgId).serviceTokens(),
     fn: () => listServiceTokens(orgId),
     freshness: "mine",
+  });
+
+/** The org's model catalog (`{ providers }`, org admins): every model with the org's switch. */
+export const modelsCatalogQuery = (orgId: string) =>
+  defineQuery({
+    key: keys.org(orgId).modelsCatalog(),
+    fn: () => getModelsCatalog(orgId),
+    freshness: "orgConfig",
   });

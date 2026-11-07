@@ -342,6 +342,8 @@
     "model": {
       "unconfigured": "这个用途还没有映射模型。",
       "purpose_unknown": "没有这个模型用途。",
+      "hook_denied": "组织策略拒绝了这次模型调用",
+      "provider_not_found": "没有这个模型供应商",
       "rate_limited": "模型供应商限流。",
       "overloaded": "模型供应商繁忙。",
       "server": "模型供应商出错。",
@@ -3006,6 +3008,35 @@
         "titles": "为新会话生成标题。未设置时，使用会话最近一次运行的模型。",
         "webFetch": "网页读取工具用它从抓到的网页里提取需要的内容。未设置时，使用调用它的会话最近一次运行的模型（子智能体调用时用子智能体的）。"
       }
+    },
+    "catalog": {
+      "title": "模型",
+      "orgDescription": "本组织可以使用的模型。关闭的模型不会出现在智能体和用途的选择里。",
+      "search": "搜索模型",
+      "publisher": "发布方",
+      "allPublishers": "全部发布方",
+      "turnAllOff": "全部关闭",
+      "turnAllOn": "全部开启",
+      "retiring": "即将下线",
+      "following": "跟随平台",
+      "orgConfigured": "本组织配置",
+      "orgsConfigure": "组织各自配置",
+      "configure": "配置",
+      "enabled": "启用",
+      "none": "这个供应商没有可用的模型。",
+      "noMatch": "没有符合的模型。",
+      "undo": "撤销",
+      "affected": "以下智能体或用途正在使用这些模型："
+    },
+    "kind": {
+      "chat": "对话模型",
+      "embedding": "向量模型",
+      "rerank": "重排模型",
+      "image_generation": "图像生成",
+      "video_generation": "视频生成",
+      "speech_to_text": "语音识别",
+      "text_to_speech": "语音合成",
+      "other": "其他"
     }
   },
   "admin": {

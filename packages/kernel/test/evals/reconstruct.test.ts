@@ -339,7 +339,7 @@ async function lastRunId(convId: string): Promise<string> {
 }
 
 async function modelInfo(provider: string, model: string): Promise<ModelInfo> {
-  return (await k.app.get(ProviderRegistry).resolve({ provider, model })).info;
+  return (await k.app.get(ProviderRegistry).resolve(orgId, { provider, model })).info;
 }
 
 /** 还原用的媒体：按快照里的引用取当前的附件行与字节（与运行时一样，只取该模型用得到的）。 */

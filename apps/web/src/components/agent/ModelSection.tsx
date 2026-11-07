@@ -12,7 +12,8 @@ import {
   warningsOf,
 } from "../../lib/agents";
 import { ApiClientError } from "../../lib/api";
-import { labelLocale, modelLabel } from "../../lib/extension-label";
+import { labelLocale } from "../../lib/extension-label";
+import { pickerOptions } from "../../lib/models";
 import { ModelParams } from "../ModelParams";
 import { decodeModel, encodeModel, sameJson, savedDefinition } from "./definition-parts";
 import {
@@ -78,16 +79,8 @@ function ModelEdit({ data }: { data: AgentFormData }) {
     draft.set(fn);
   };
 
-  const options = providers.flatMap((p) =>
-    p.models.map((m) => ({
-      value: encodeModel({ provider: p.provider, model: m.id }),
-      label: modelLabel(
-        { name: p.provider, displayName: p.displayName },
-        m.displayName || m.id,
-        lang,
-      ),
-    })),
-  );
+  // Chat models only (the kernel refuses another kind), grouped by provider and publisher
+  const options = pickerOptions(providers, lang);
   const noModels = options.length === 0;
   // Persistent hints, live while editing: the draft's fallback against the draft's model. With
   // the model and fallback untouched, the last save's warnings of this section count as well.

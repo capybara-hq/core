@@ -29,7 +29,9 @@ import { ProviderListError, ProviderRegistry } from "../runtime/providers.js";
  * - 用途 = 内核用途 {@link KERNEL_PURPOSES}（目前只有评委 `eval`），或已加载插件 `permissions.models` 声明的；
  * - 映射 = 部署默认（`org_id` 为 null，超级管理员设）+ 组织覆盖（组织管理员设，`org.models.manage`）；
  *   生效的映射先取组织覆盖、再取部署默认，都没有 → `model.unconfigured`；
- * - 目标模型按部署范围解析（与运行时一致），参数按目标模型自己的声明严格校验；不做模型白名单；
+ * - a target's kind must equal the purpose's kind; an org's override must be enabled in the org on
+ *   save (a deployment default: not disabled on the platform), and an effective target disabled in
+ *   the org (by either layer) counts as unconfigured there (spec B §5.3)；参数按目标模型自己的声明严格校验；
  * - 每次都查 PG，不在进程内缓存（多副本下改映射立即生效）。`ctx.models` 仍预留，插件暂不能调用。
  */
 
@@ -173,7 +175,8 @@ export class ModelPurposesService {
     @Inject(KernelDb) private readonly db: KernelDb,
     @Inject(ExtensionRegistry) private readonly extensions: ExtensionRegistry,
     @Inject(KernelConfigService) private readonly config: KernelConfigService,
-    @Inject(ProviderRegistry) private readonly providers: Pick<ProviderRegistry, "resolve">,
+    @Inject(ProviderRegistry)
+    private readonly providers: Pick<ProviderRegistry, "resolve" | "platformInfo">,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     @Inject(SuperAdminLock) private readonly adminLock: SuperAdminLock,
     @Inject(OrgLock) private readonly orgLock: OrgLock,
@@ -243,17 +246,35 @@ export class ModelPurposesService {
     return this.views(this.declared(), orgId);
   }
 
-  /** 校验目标：模型可解析（部署范围）、参数按它的声明严格通过。 */
-  private async check(target: PurposeTarget): Promise<void> {
+  /**
+   * 校验目标：模型可解析且启用（an org's override for the org, a deployment default in the
+   * platform view）、its kind is the purpose's `kind`、参数按它的声明严格通过。
+   */
+  private async check(
+    orgId: string | null,
+    target: PurposeTarget,
+    kind: "chat" | "embedding",
+  ): Promise<void> {
     let info: Awaited<ReturnType<ProviderRegistry["resolve"]>>["info"];
     try {
-      ({ info } = await this.providers.resolve(target.model));
+      info =
+        orgId === null
+          ? await this.providers.platformInfo(target.model, { kind: "callable" })
+          : (await this.providers.resolve(orgId, target.model, { kind: "callable" })).info;
     } catch (e) {
       if (e instanceof ProviderListError) throw e;
       if (e instanceof ApiError && e.code === "agent.model_unavailable") {
         throw invalid([{ path: "target.model", message: "model is not available" }]);
       }
       throw e;
+    }
+    if (info.kind !== kind) {
+      throw invalid([
+        {
+          path: "target.model",
+          message: `this purpose needs ${kind === "embedding" ? "an" : "a"} ${kind} model, not ${info.kind}`,
+        },
+      ]);
     }
     const issues = paramIssues("target.params", info.parameters, target.params);
     if (issues.length > 0) throw invalid(issues);
@@ -267,7 +288,7 @@ export class ModelPurposesService {
     actorTokenId: string | undefined,
   ): Promise<PurposeView> {
     const decl = this.find(purpose);
-    if (target) await this.check(target);
+    if (target) await this.check(orgId, target, decl.kind);
     await this.write(orgId, purpose, target, actor, actorTokenId);
     const [view] = await this.views([decl], orgId ?? undefined);
     return view as PurposeView;
@@ -338,14 +359,36 @@ export class ModelPurposesService {
     return this.set(orgId, purpose, target, actor, actorTokenId);
   }
 
-  /** 生效的映射：组织覆盖，否则部署默认；都没有 → `model.unconfigured`；用途未声明 → `model.purpose_unknown`。 */
+  /**
+   * 生效的映射：组织覆盖，否则部署默认；都没有 → `model.unconfigured`；用途未声明 → `model.purpose_unknown`。
+   * An effective target the org cannot use counts as unconfigured there (spec B §5.3): checked in
+   * the registry's org view, so a model the platform or the org disabled, a provider off or needing
+   * configuration in the org, a model gone from the org's list or of another kind than the purpose
+   * all give `model.unconfigured`. A provider whose list fails (`ProviderListError`) keeps the
+   * mapping: the call that follows resolves the model again and fails there, retryably, so paths
+   * that only read the mapping (sub-agent tiers, eval start, `ctx.models.describe`) do not fail on
+   * a transient list error.
+   */
   async resolve(orgId: string, purpose: string): Promise<PurposeTarget> {
-    const [view] = await this.views([this.find(purpose)], orgId);
+    const decl = this.find(purpose);
+    const [view] = await this.views([decl], orgId);
     if (!view?.effective) {
       throw new ApiError(
         "model.unconfigured",
         `No model is configured for the "${purpose}" purpose`,
       );
+    }
+    try {
+      await this.providers.resolve(orgId, view.effective.model, { kind: decl.kind });
+    } catch (e) {
+      if (e instanceof ProviderListError) return view.effective;
+      if (e instanceof ApiError && e.code === "agent.model_unavailable") {
+        throw new ApiError(
+          "model.unconfigured",
+          `The model configured for the "${purpose}" purpose is not available in this organization`,
+        );
+      }
+      throw e;
     }
     return view.effective;
   }
@@ -375,7 +418,7 @@ export class ModelPurposesService {
     opts: { fallback?: PurposeTarget } = {},
   ): Promise<{ contextWindow: number; maxOutputTokens: number }> {
     const target = await this.chatTarget(orgId, purpose, opts.fallback);
-    const { info } = await this.providers.resolve(target.model);
+    const { info } = await this.providers.resolve(orgId, target.model);
     return { contextWindow: info.contextWindow, maxOutputTokens: info.maxOutputTokens };
   }
 
@@ -407,7 +450,7 @@ export class ModelPurposesService {
     model: string;
   }> {
     const target = await this.chatTarget(orgId, purpose, opts.fallback);
-    const { provider, info } = await this.providers.resolve(target.model);
+    const { provider, info } = await this.providers.resolve(orgId, target.model);
     const request: ModelRequest = {
       ...req,
       model: info.id,

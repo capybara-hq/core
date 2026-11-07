@@ -12,6 +12,7 @@ import {
   type ModelStreamEvent,
   type ParamValue,
   sanitizeParams,
+  validateEmbedResult,
   validateParams,
 } from "@capybara-hq/plugin-sdk";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -19,7 +20,12 @@ import { pdfBase64, redPngBase64 } from "./media-samples.js";
 
 interface TargetCommon {
   model: string;
-  expect: { thinking: boolean; caching: boolean };
+  expect: {
+    thinking: boolean;
+    caching: boolean;
+    /** Set when the provider lists an embedding model: runs the embedding cases. */
+    embedding?: { model: string; dimensions: number };
+  };
   /** caching 用例的稳定前缀大小（约 token 数），默认 5000。 */
   cachePrefixTokens?: number;
   teardown(): Promise<void>;
@@ -344,6 +350,37 @@ export function describeModelProviderConformance(
       );
       expect(done.stopReason).toBe("end_turn");
       expect(textOf(done.content).toUpperCase()).toContain(s.word);
+    });
+
+    describe("embedding", () => {
+      const inputs = ["alpha", "bravo", "charlie"];
+      const run = async () => {
+        const emb = t.expect.embedding;
+        const provider = t.provider as ModelProvider;
+        if (!emb || !provider.embed)
+          throw new Error("the target declares embedding but has no embed");
+        const req = { model: emb.model, input: inputs, dimensions: emb.dimensions };
+        const res = await provider.embed(req, { signal: new AbortController().signal });
+        const models = await provider.listModels();
+        const info = models.find((m) => m.id === emb.model)?.embedding;
+        return { req, res, info };
+      };
+
+      it("embeds a batch in order", async (ctx) => {
+        if (!t.expect.embedding) return ctx.skip();
+        const { res } = await run();
+        expect(res.vectors).toHaveLength(inputs.length);
+        for (const v of res.vectors) expect(v).toHaveLength(t.expect.embedding.dimensions);
+        expect(res.usage.inputTokens).toBeGreaterThanOrEqual(0);
+      });
+
+      it("embed result passes validateEmbedResult", async (ctx) => {
+        if (!t.expect.embedding) return ctx.skip();
+        const { req, res, info } = await run();
+        expect(info).toBeDefined();
+        if (!info) return;
+        expect(validateEmbedResult(req, info, res)).toBeNull();
+      });
     });
 
     it("abort", async () => {

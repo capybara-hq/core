@@ -1,18 +1,15 @@
 import { Module } from "@nestjs/common";
 import { SuperAdminLockModule } from "../identity/super-admin.js";
+import { ModelsModule } from "../models/models.module.js";
 import { OrgLockModule } from "../orgs/org-lock.js";
 import { StorageModule } from "../storage/storage.module.js";
 import { EmbedTokensModule } from "../ui/embed-token.js";
 import { ExtensionAdminOps } from "./admin-ops.js";
 import { ExtensionAdmin } from "./admin-view.js";
-import { ExtensionApprovals } from "./approvals.js";
-import { ExtensionBlobs } from "./blobs.js";
 import { BootstrapService } from "./bootstrap.js";
 import { ExtensionDeploymentConfigService } from "./deployment-config.js";
 import { ExtensionDisplayNames } from "./display-name.js";
-import { EffectiveConfigs } from "./effective-config.js";
 import { ExtensionHost } from "./host.js";
-import { ExtensionInstalls } from "./installs.js";
 import { ExtensionLifecycle } from "./lifecycle.js";
 import { PluginApproveLock, PluginDeploymentConfigLock, PluginInstallLock } from "./locks.js";
 import { OrgExtensionConfigs } from "./org-config.js";
@@ -20,6 +17,7 @@ import { OrgOverrides } from "./org-overrides.js";
 import { ExtensionPointDefaults } from "./point-defaults.js";
 import { ExtensionRegistryModule } from "./registry.js";
 import { ReplicaStatusStore } from "./sources.js";
+import { ExtensionStateModule } from "./state.module.js";
 
 /**
  * The extensions domain: the extension host (it builds each `ctx` from the injected kernel
@@ -35,14 +33,14 @@ import { ReplicaStatusStore } from "./sources.js";
     StorageModule,
     // ctx.ui verifies embed tokens with the one provider the UI routes issue them with
     EmbedTokensModule,
+    ExtensionStateModule,
+    // ctx.models: the embeddings broker (models domain, below the host through ExtensionStateModule)
+    ModelsModule,
   ],
   providers: [
     PluginInstallLock,
     PluginApproveLock,
     PluginDeploymentConfigLock,
-    ExtensionApprovals,
-    ExtensionBlobs,
-    ExtensionInstalls,
     ReplicaStatusStore,
     ExtensionHost,
     ExtensionLifecycle,
@@ -50,7 +48,6 @@ import { ReplicaStatusStore } from "./sources.js";
     ExtensionAdminOps,
     ExtensionDisplayNames,
     ExtensionDeploymentConfigService,
-    EffectiveConfigs,
     OrgExtensionConfigs,
     OrgOverrides,
     ExtensionPointDefaults,
@@ -58,11 +55,9 @@ import { ReplicaStatusStore } from "./sources.js";
   ],
   exports: [
     ExtensionRegistryModule,
+    ExtensionStateModule,
     PluginInstallLock,
     PluginApproveLock,
-    ExtensionApprovals,
-    ExtensionBlobs,
-    ExtensionInstalls,
     ReplicaStatusStore,
     ExtensionHost,
     ExtensionLifecycle,
@@ -70,7 +65,6 @@ import { ReplicaStatusStore } from "./sources.js";
     ExtensionAdminOps,
     ExtensionDisplayNames,
     ExtensionDeploymentConfigService,
-    EffectiveConfigs,
     OrgExtensionConfigs,
     OrgOverrides,
     ExtensionPointDefaults,

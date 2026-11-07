@@ -1,4 +1,4 @@
-import type { ModelInfo, ModelParameter, ParamValue, ProviderModels } from "./agents";
+import type { ModelInfo, ModelKind, ModelParameter, ParamValue, ProviderModels } from "./agents";
 import { ApiClientError, apiFetch } from "./api";
 import type { LocalizedName } from "./catalog";
 import type { ModelRef } from "./conversations";
@@ -33,7 +33,8 @@ export interface AdminProvider {
   provider: string;
   displayName?: LocalizedName | null;
   plugin: string;
-  status: "ok" | "error";
+  /** `org_configured`: the platform config leaves a required field empty, each org configures it. */
+  status: "ok" | "error" | "org_configured" | "switched_off";
   /** 内核给的英文说明（不含上游错误原文）。 */
   error?: string;
   models: AdminModelInfo[];
@@ -169,4 +170,107 @@ export function targetIssues(
     } else out.other.push(d.path === "" ? d.message : `${d.path}: ${d.message}`);
   }
   return out;
+}
+
+/** The kinds in the order the catalog groups them (`other` last). */
+export const MODEL_KINDS: readonly ModelKind[] = [
+  "chat",
+  "embedding",
+  "rerank",
+  "image_generation",
+  "video_generation",
+  "speech_to_text",
+  "text_to_speech",
+  "other",
+];
+
+/** A model's kind: an older kernel leaves it out, which means chat. */
+export const kindOf = (m: { kind?: ModelKind }): ModelKind => m.kind ?? "chat";
+
+/** The providers with only the enabled models of one kind (a purpose's, a picker's). */
+export function providersOfKind<P extends { models: ModelInfo[] }>(
+  providers: P[],
+  kind: ModelKind,
+): P[] {
+  return providers.map((p) => ({
+    ...p,
+    models: p.models.filter((m) => kindOf(m) === kind && m.disabled !== true),
+  }));
+}
+
+/** An agent or purpose that points at a model a disabling just turned off. */
+export interface ModelDisableResult {
+  affected: {
+    agents: { id: string; name: string; orgId: string }[];
+    purposes: { purpose: string; orgId: string | null }[];
+  };
+}
+
+export const getModelsCatalog = (orgId: string) =>
+  apiFetch<{ providers: AdminProvider[] }>(`/api/v1/orgs/${enc(orgId)}/models/catalog`);
+
+/**
+ * A change to a provider's disabled list: the ids to turn off and the ids to turn on. Ids in
+ * neither list keep their stored state, so a page never drops ids it does not show (a model the
+ * platform disabled, one the provider stopped listing).
+ */
+export interface ModelDisableChange {
+  disable: string[];
+  enable: string[];
+}
+
+/** The change that undoes `c`. */
+export const invertDisableChange = (c: ModelDisableChange): ModelDisableChange => ({
+  disable: c.enable,
+  enable: c.disable,
+});
+
+/** Changes the org's disabled ids of a provider; the answer lists what now uses a disabled model. */
+export const patchOrgDisabledModels = (
+  orgId: string,
+  provider: string,
+  change: ModelDisableChange,
+) =>
+  apiFetch<ModelDisableResult>(
+    `/api/v1/orgs/${enc(orgId)}/models/${enc(provider)}/disabled`,
+    json("PATCH", change),
+  );
+
+/** Changes the platform's disabled ids of a provider (super admin). */
+export const patchAdminDisabledModels = (provider: string, change: ModelDisableChange) =>
+  apiFetch<ModelDisableResult>(
+    `/api/v1/admin/models/${enc(provider)}/disabled`,
+    json("PATCH", change),
+  );
+
+/**
+ * A model picker's options: grouped by provider, then by publisher (a provider that lists several
+ * publishers puts the publisher in the label, so the select's filter finds `anthropic` too),
+ * models in the provider's order within a group. Disabled models are never offered.
+ */
+export function pickerOptions(
+  providers: ProviderModels[],
+  locale: "zh" | "en",
+): { value: string; label: string }[] {
+  return providers.flatMap((p) => {
+    const models = p.models.filter((m) => m.disabled !== true);
+    const publishers = new Set(models.map((m) => m.publisher ?? ""));
+    const rank = [...publishers].sort((a, b) =>
+      a === "" ? 1 : b === "" ? -1 : a.localeCompare(b),
+    );
+    return rank.flatMap((pub) =>
+      models
+        .filter((m) => (m.publisher ?? "") === pub)
+        .map((m) => ({
+          value: encodeModel({ provider: p.provider, model: m.id }),
+          label: modelLabel(
+            { name: p.provider, displayName: p.displayName },
+            publishers.size > 1 && pub !== ""
+              ? `${pub} / ${m.displayName || m.id}`
+              : m.displayName || m.id,
+            locale,
+          ),
+        })),
+    );
+  });
 }

@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { fileURLToPath } from "node:url";
+import { ModelError } from "@capybara-hq/plugin-sdk";
 import {
   openSse,
   startTestPostgres,
@@ -24,15 +26,18 @@ import { LockService } from "../../src/infra/lock/lock.service.js";
 import { createLogger } from "../../src/log.js";
 import { type ModelPurposesService, PurposeAttemptError } from "../../src/models/purposes.js";
 import type { HookRunner } from "../../src/runtime/hook-calls.js";
+import { evalModelState, resetEvalModel } from "../fixtures/plugins/model-eval/index.js";
 import { eventLogFor, legacyDbFor } from "../helpers/conversations.js";
 import { truncateTables } from "../helpers/db.js";
 import { asUser, cookieJar } from "../helpers/http.js";
 import { accountsFor, handlesFor } from "../helpers/identity.js";
+import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createAgent,
   createConv,
   createOrg,
   eventsOf,
+  MODEL_LOOPER,
   PW,
   postMessage,
   type Req,
@@ -46,6 +51,10 @@ import {
 import { runTitleJob } from "../helpers/runtime.js";
 
 /** UI refresh B Task 7: model-generated titles through `cap-kernel-titles` and the `title` purpose. */
+
+const MODEL_EVAL = fileURLToPath(
+  new URL("../fixtures/plugins/model-eval/index.ts", import.meta.url),
+);
 
 let pgc: TestContainer;
 let rd: TestContainer;
@@ -66,6 +75,7 @@ beforeAll(async () => {
       { pg: pgc.url, redis: rd.url },
       {
         roles: ["api", "worker"],
+        extensions: [MODEL_FAKE, MODEL_LOOPER, MODEL_EVAL],
         extensionConfig: { "model-fake": { models: [{ id: "fake-1" }, { id: "fake-2" }] } },
       },
     ),
@@ -78,6 +88,7 @@ afterAll(async () => {
 });
 beforeEach(async () => {
   await truncateTables(raw, "capybara.accounts, capybara.orgs, capybara.model_purpose_mappings");
+  resetEvalModel();
   ownerId = (await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" }))
     .id;
   const jar = cookieJar();
@@ -105,10 +116,10 @@ const titleUsage = async (id: string) =>
     (e) => e.type === "usage" && (e.payload as { purpose?: string }).purpose === "title",
   );
 
-async function mapTitle(model: string): Promise<void> {
+async function mapTitle(model: string, provider = "model-fake"): Promise<void> {
   await db
     .insertInto("model_purpose_mappings")
-    .values({ org_id: null, purpose: "title", provider: "model-fake", model, params: "{}" })
+    .values({ org_id: null, purpose: "title", provider, model, params: "{}" })
     .execute();
 }
 
@@ -216,8 +227,23 @@ describe("title job (kernel, fake model)", { timeout: 60_000 }, () => {
     expect(usage[0]?.payload).toMatchObject({ provider: "model-fake", model: "fake-2" });
   });
 
-  it("the title model failing 3 times leaves the title null and stops", async () => {
+  it("a mapped model gone from the list counts as unmapped: the conversation's model titles it", async () => {
     await mapTitle("gone");
+    const conv = await createConv(owner.req, orgId, agentId);
+    await postMessage(owner.req, orgId, conv, "echo:hello");
+    const usage = await waitFor(async () => {
+      const u = await titleUsage(conv);
+      return u.length === 1 ? u : null;
+    }, 20_000);
+    expect(usage[0]?.payload).toMatchObject({ provider: "model-fake", model: "fake-1" });
+  });
+
+  it("the title model failing 3 times leaves the title null and stops", async () => {
+    await mapTitle("eval-1", "model-eval");
+    evalModelState().failures = Array.from(
+      { length: TITLE_MAX_ATTEMPTS },
+      () => new ModelError("server", "title model down"),
+    );
     const conv = await createConv(owner.req, orgId, agentId);
     for (let i = 1; i <= TITLE_MAX_ATTEMPTS + 1; i++) {
       await postMessage(owner.req, orgId, conv, `echo:turn ${i}`);
@@ -235,7 +261,10 @@ describe("title job (kernel, fake model)", { timeout: 60_000 }, () => {
       title_source: null,
       title_attempts: TITLE_MAX_ATTEMPTS,
     });
-    expect(await titleUsage(conv)).toEqual([]);
+    // each sent attempt is charged (its estimated usage), none after the last
+    expect((await titleUsage(conv)).map((u) => (u.payload as { model?: string }).model)).toEqual(
+      Array(TITLE_MAX_ATTEMPTS).fill("eval-1"),
+    );
     expect(await titleAttemptDue(db, conv)).toBeNull();
   });
 

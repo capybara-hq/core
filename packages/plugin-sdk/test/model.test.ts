@@ -8,7 +8,10 @@ import {
   ModelError,
   type ModelErrorKind,
   type ModelParameter,
+  type ModelProvider,
   sanitizeParams,
+  type UsageReportPayload,
+  validateEmbedResult,
   validateParams,
 } from "../src/index.js";
 
@@ -341,5 +344,62 @@ describe("assertValidDeclarations", () => {
     expect(() => assertValidDeclarations("p", undefined as unknown as ModelParameter[])).toThrow(
       /parameters/,
     );
+  });
+});
+
+describe("validateEmbedResult", () => {
+  const info = { dimensions: [8, 16], defaultDimensions: 8, maxInputTokens: 512, maxBatch: 16 };
+  const vec = (n: number) => Array.from({ length: n }, () => 0.5);
+  const req = { model: "e", input: ["a", "b", "c"], dimensions: 8 };
+  const usage = { inputTokens: 3 };
+
+  it("accepts a valid result", () => {
+    expect(validateEmbedResult(req, info, { vectors: [vec(8), vec(8), vec(8)], usage })).toBeNull();
+  });
+  it("uses the default dimensions when none is requested", () => {
+    const { dimensions: _d, ...noDim } = req;
+    expect(
+      validateEmbedResult(noDim, info, { vectors: [vec(8), vec(8), vec(8)], usage }),
+    ).toBeNull();
+  });
+  it("rejects a count mismatch", () => {
+    expect(validateEmbedResult(req, info, { vectors: [vec(8), vec(8)], usage })).toMatch(/count/);
+  });
+  it("rejects a dimension mismatch", () => {
+    expect(validateEmbedResult(req, info, { vectors: [vec(8), vec(7), vec(8)], usage })).toMatch(
+      /dimension/,
+    );
+  });
+  it("rejects a non-finite number", () => {
+    const bad = vec(8);
+    bad[3] = Number.NaN;
+    expect(validateEmbedResult(req, info, { vectors: [vec(8), bad, vec(8)], usage })).toMatch(
+      /finite/,
+    );
+  });
+});
+
+describe("model platform types", () => {
+  it("a provider without embed and with a no-argument listModels is a ModelProvider", () => {
+    const p: ModelProvider = {
+      async listModels() {
+        return [];
+      },
+      async *stream() {},
+    };
+    expect(typeof p.listModels).toBe("function");
+    expect(p.embed).toBeUndefined();
+  });
+  it("UsageReportPayload accepts an embedding report without conversation fields", () => {
+    const u: UsageReportPayload = {
+      eventId: "e1",
+      purpose: "embedding",
+      orgId: "o",
+      provider: "p",
+      model: "m",
+      usage: { inputTokens: 1, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
+      occurredAt: "2026-11-07T00:00:00Z",
+    };
+    expect(u.purpose).toBe("embedding");
   });
 });
