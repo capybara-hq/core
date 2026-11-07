@@ -34,7 +34,7 @@ machine keeps working from the web or an IM channel while the machine is online.
 
 ## 2. Terms
 
-- **Desktop app**: the installable application (`apps/desktop`).
+- **Desktop app**: the installable application, in its own repository `capybara-hq/desktop`.
 - **Shell**: the desktop app's window that loads a deployment's web app.
 - **Start page**: a local page bundled in the app that asks for a deployment address.
 - **Deployment profile**: one deployment the app knows. It holds the address, the display name and
@@ -117,14 +117,18 @@ None of this changes the wire protocol or the kernel.
                         web tier ─▶ kernel api          kernel gateway role
 ```
 
-- **Electron** **(designer's call)**. The device package and `@anthropic-ai/sandbox-runtime` are
+- **Electron** **(decided)**. The device package and `@anthropic-ai/sandbox-runtime` are
   Node, and Electron runs them in-process with no sidecar binary. Tauri would need a bundled Node
   runtime next to a Rust shell. Electron's size cost is acceptable for a desktop app.
 - **The embedded device runs in an Electron `utilityProcess`** **(designer's call)**, not in the
   main process. A device crash then leaves the windows alive, and the main process restarts it.
-- **Package**: `apps/desktop` in core (private, released as an application, not on npm). It depends
-  on `@capybara-hq/device` and `@capybara-hq/design` (start page and local settings only) and never
-  on the kernel. `docs/architecture.md` gains these edges.
+- **Repository**: its own, `capybara-hq/desktop` **(decided)**, so native build tooling, signing
+  and three-OS CI stay out of core. It is released as an application, not on npm. It depends only
+  on published packages: `@capybara-hq/device` and `@capybara-hq/design` (start page and local
+  settings only), never the kernel. **`@capybara-hq/design` is private today and must be published
+  to npm before D1** (§15). Its version range is pinned in the desktop repository and upgraded
+  deliberately, like any external dependency. `docs/architecture.md` in core lists the desktop app
+  as an external app (HTTP only) in the capybara-hq organization.
 
 ## 6. Connecting to a deployment
 
@@ -306,18 +310,25 @@ the machine. The desktop can add a middle ground, as an opt-in per policy rule: 
 
 ## 11. Distribution and updates
 
-- Builds: macOS (universal, signed and notarized), Windows (signed), Linux (AppImage and deb).
+- Platforms: **macOS first** (universal, signed and notarized) **(decided)**. Windows (signed) and
+  Linux (AppImage and deb) follow in a later phase. The design keeps them in mind: no macOS-only
+  API is used where a cross-platform one exists, and the embedded device already supports Linux and
+  WSL (environments §6.4).
+- Signing certificates (Apple Developer ID, later Windows code signing) and the app id are arranged
+  by the maintainer **(decided)**; the working app id is `com.capybarahq.desktop`.
 - Updates: automatic from GitHub Releases by default. A managed configuration can turn automatic
   updates off or point them at an internal feed.
 - Compatibility comes from discovery (§6.2): the app refuses deployments outside its desktop
   protocol range, and the device refuses gateway protocols it does not speak (environments §6.3).
-- CI builds `apps/desktop` only when it or its dependencies change (`tools/ci/src/affected.ts` and
-  its README). Releases get their own workflow. The app follows the core version line.
+- CI and releases live in the desktop repository. It follows the repository conventions of the
+  capybara-hq organization (Conventional Commits, changesets, `issue-linked`, the shared skills from
+  `capybara-hq/.github`). The app has its own version line; compatibility with deployments is
+  carried by the protocol ranges, not by matching versions.
 
 ## 12. Internationalization
 
-zh and en. The app's local pages have their own small message catalog, covered by
-`pnpm check:i18n` the same way as apps/web. The zh UI follows the repository terms: 平台,
+zh and en. The app's local pages have their own small message catalog, with a key-sync
+check in the desktop repository like core's `check:i18n`. The zh UI follows the repository terms: 平台,
 超级管理员 and 智能体, never 企业 or the Latin word `agent`.
 
 ## 13. Security summary
@@ -337,32 +348,38 @@ zh and en. The app's local pages have their own small message catalog, covered b
 
 | Phase | Content | Depends on |
 |---|---|---|
-| **D1 Shell** | Start page, discovery endpoint, profiles, shell security, navigation rules, notifications, deep links, managed configuration, signing and updates | Only the discovery endpoint; can start any time |
+| **D1 Shell** (macOS) | Start page, discovery endpoint, profiles, shell security, navigation rules, notifications, deep links, managed configuration, signing and updates | The discovery endpoint and a published `@capybara-hq/design` |
 | **D2 Embedded device** | Library integration, one-click authorization, attach mode, lifecycle and service, local settings, tray and activity, the web adapter's 「连接这台电脑」 and 「本机」 | Environments phase 2 shipped, with the library API of §4 |
 | **D3 Local confirmation** | §10 | D2 and the outside-policy hook |
+| D4 Windows and Linux | Builds, signing, installers, the WSL / Docker device modes in the app | D2 |
 | Later | A virtual-machine sandbox mode (Apple Virtualization, WSL2 / Hyper-V); local MCP servers on the device (needs its own design) | — |
 
 The maintainer has decided that the desktop work waits until the environments work is done
 **(decided)**. D1 does not technically need to wait, but it is scheduled after environments phase 2
 with D2.
 
-## 15. Changes outside `apps/desktop`
+## 15. Changes in core
 
 | Where | Change |
 |---|---|
 | `packages/kernel` | `GET /api/v1/meta` (§6.2), public, with an error-code-free response and a test through the web proxy |
 | `@capybara-hq/device` (environments phase 2) | Library plus thin CLI, with the API of §4 |
 | `apps/web` | `desktop` adapter: bridge detection, 「连接这台电脑」, 「本机」, notifications (§7.3) |
-| `docs/architecture.md`, AGENTS.md repository map | `apps/desktop` and its dependency edges |
-| `tools/ci` | Desktop builds by diff; release workflow |
+| `packages/design` | Published to npm (drop `private`, add it to the release workflow and changesets) |
+| `docs/architecture.md` | The desktop app as an external app in its own repository |
 
-## 16. Open questions
+## 16. Resolved and open questions
 
-1. Electron rather than Tauri (§5)?
-2. `apps/desktop` in core, or its own repository? Core keeps it next to `design` and `device`; its
-   own repository keeps native build tooling out of core CI.
-3. Who holds the Apple Developer ID and Windows code-signing certificates, and which app id to use
-   (`com.capybarahq.desktop`)?
-4. Should `/api/v1/meta` expose the platform's display name before sign-in, or should the start
-   page show only the address until the person signs in?
-5. Platform order: macOS first, then Windows and Linux, or all three at D1?
+Answered by the maintainer on 2026-11-07:
+
+1. Electron (§5).
+2. Its own repository, `capybara-hq/desktop` (§5).
+3. The maintainer arranges the signing certificates and the app id (§11).
+4. macOS first; Windows and Linux in D4 (§11, §14).
+
+Open:
+
+1. Should `/api/v1/meta` return the platform's display name before sign-in, or should the start
+   page show only the address until the person signs in (§6.2)?
+2. Publishing `@capybara-hq/design`: as a supported public package with semver guarantees, or as
+   an unstable `0.x` package documented as "for Capybara's own apps" (§5)?
