@@ -1,3 +1,4 @@
+import { formatDateTime } from "@capybara-hq/design";
 import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -575,6 +576,7 @@ describe("运行向导（WizardPage）", () => {
   ) => ({
     [`GET ${SETS}/s1`]: () => json(200, { set: { ...SET, cases: CASES } }),
     [`GET ${ORG}/agents/ag1`]: () => json(200, { agent: AGENT }),
+    [`GET ${ORG}/agents/ag1/versions`]: () => json(200, { versions: VERSIONS }),
     [`GET ${ORG}/models`]: () => json(200, MODELS),
     [`GET ${ORG}/model-purposes`]: () => json(200, purposes(mapped)),
     [`POST ${SETS}/s1/runs/estimate`]: (c: Call) => json(200, estimated(c)),
@@ -584,6 +586,13 @@ describe("运行向导（WizardPage）", () => {
   });
 
   const actionRow = () => document.querySelector(".cb-actionrow") as HTMLElement;
+
+  /** v3 is the agent's current version; v1 has no saved time in the read (none shows). */
+  const VERSIONS = [
+    { version: 3, createdBy: "u1", createdAt: "2026-11-07T13:30:00.000Z" },
+    { version: 2, createdBy: "u1", createdAt: "2026-11-07T12:12:00.000Z" },
+  ];
+  const at = (iso: string) => formatDateTime(iso, "full");
 
   it.each(["zh", "en"] as const)(
     "三步：候选 → 评委与上限 → 估算数字与上限，确认后开始运行（%s）",
@@ -603,7 +612,15 @@ describe("运行向导（WizardPage）", () => {
       // 选了候选模型后出现它的参数（复用 ModelParams）
       expect(await screen.findByText(locale === "zh" ? "级别" : "Level")).toBeTruthy();
       const version = screen.getByRole("combobox", { name: m.wizard.version });
-      expect(await optionLabels(version, user)).toEqual([m.wizard.versionKeep, "v3", "v2", "v1"]);
+      // Each version shows its saved time; the agent's current one is marked
+      const expected = [
+        m.wizard.versionKeep,
+        `v3 · ${m.wizard.versionCurrent} · ${at("2026-11-07T13:30:00.000Z")}`,
+        `v2 · ${at("2026-11-07T12:12:00.000Z")}`,
+        "v1",
+      ];
+      await waitFor(() => expect(fieldOptionLabels(version)).toEqual(expected));
+      expect(await optionLabels(version, user)).toEqual(expected);
       const region = within(container.querySelector(".cb-actionrow") as HTMLElement);
       await user.click(region.getByRole("button", { name: m.wizard.next }));
       // 2. 评委与上限

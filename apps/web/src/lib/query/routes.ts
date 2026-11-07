@@ -37,6 +37,7 @@ import {
   agentsQuery,
   agentTemplateQuery,
   agentTemplatesQuery,
+  agentVersionsQuery,
   availableExtensionPointsQuery,
   extensionToolsQuery,
 } from "./agents";
@@ -573,7 +574,8 @@ export const ROUTES: readonly RouteEntry[] = [
   },
   {
     pattern: "/evals/[setId]/run",
-    // Org admins: the set, the models and the purposes (a section), then the set's agent.
+    // Org admins: the set, the models and the purposes (a section), then the set's agent and its
+    // versions (a section: the version options' saved times).
     queries: ({ orgId, me, params }) =>
       orgId === null || params.setId === undefined || !atLeast(me, "admin")
         ? []
@@ -584,7 +586,10 @@ export const ROUTES: readonly RouteEntry[] = [
       if (orgId === null || setId === undefined || !atLeast(me, "admin")) return;
       const set = qc.getQueryData<EvalSetDetail>(evalSetQuery(orgId, setId).queryKey);
       if (set === undefined) return;
-      await qc.prefetchQuery({ ...agentQuery(orgId, set.agentId), retry: false });
+      await Promise.all([
+        qc.prefetchQuery({ ...agentQuery(orgId, set.agentId), retry: false }),
+        qc.prefetchQuery({ ...agentVersionsQuery(orgId, set.agentId), retry: false }),
+      ]);
     },
   },
   {

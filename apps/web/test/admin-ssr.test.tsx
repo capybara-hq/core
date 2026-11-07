@@ -407,14 +407,14 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     },
   );
 
-  it("/admin/models: the purposes load as the kernel's five item rows", async () => {
+  it("/admin/models: the purposes load as the kernel's six item rows", async () => {
     const { release } = await renderHeld("/admin/models", "GET /api/v1/admin/model-purposes");
     await vi.waitFor(() => {
       if (document.querySelector("[aria-busy='true']") === null) throw new Error("not loading");
     });
     expect(
       document.querySelectorAll('[data-part="loading-item-list"] > [data-part="loading-item-row"]'),
-    ).toHaveLength(5);
+    ).toHaveLength(6);
     await release();
   });
 

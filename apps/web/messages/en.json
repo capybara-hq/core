@@ -2602,19 +2602,20 @@
       "start": "Start run",
       "mode": "Replay mode",
       "candidate": "Candidate",
-      "candidateHint": "Anything you leave unchanged keeps each case's original setting.",
+      "candidateHint": "Whatever you leave unchanged, each case uses its recorded setting.",
       "version": "Agent version",
-      "versionKeep": "Keep the case's version",
+      "versionKeep": "Each case's recorded version",
+      "versionCurrent": "current",
       "versionValue": "v{n}",
       "model": "Model",
-      "modelKeep": "Keep the case's model",
+      "modelKeep": "Each case's recorded model",
       "params": "Model parameters",
       "instructionsOverride": "Override instructions",
       "instructions": "Instructions",
       "instructionsHint": "System instructions shown to the model; write them in English.",
       "judge": "LLM judge",
-      "judgeHint": "The judge (the model mapped to the eval purpose) compares baseline and candidate and gives pass / fail with a reason; judge requests count towards tokens.",
-      "judgeUnmapped": "No model is mapped to the judge purpose (eval), so the judge can't be turned on.",
+      "judgeHint": "The judge (the model set for the eval judge in model purposes) compares baseline and candidate and gives pass / fail with a reason; judge requests count towards tokens.",
+      "judgeUnmapped": "No model is set for the eval judge, so the judge can't be turned on.",
       "judgeConfigure": "Configure model purposes",
       "tokenCap": "Token cap",
       "tokenCapHint": "Leave empty for the deployment default. Once reached, no new requests are sent and the run ends as \"Cap reached\".",
@@ -2829,7 +2830,7 @@
       "title": "Model purposes",
       "description": "The kernel and extensions pick models by purpose. Each purpose uses the deployment default set by the super admins; you can override it for this org or restore the default."
     },
-    "evalUnmapped": "The eval purpose has no model mapped, so evals cannot use a judge.",
+    "evalUnmapped": "No model is set for the eval judge, so evals cannot use a judge.",
     "capability": {
       "tools": "Tools",
       "vision": "Images",
@@ -2838,20 +2839,23 @@
       "caching": "Caching"
     },
     "purpose": {
-      "declaredByKernel": "Kernel purpose",
-      "declaredByPlugin": "Extension {plugin}",
+      "declaredByPlugin": "From {plugin}",
       "pluginNote": "Extensions cannot call models yet. You can configure this in advance.",
       "model": "Model",
       "modelInvalid": "The selected model is not available.",
       "unset": "Not set",
-      "useDefault": "Use deployment default",
-      "deploymentDefault": "Deployment default: {target}",
+      "useDefault": "Use deployment default ({target})",
       "overridden": "Overridden",
       "unavailable": "{target} (unavailable)",
       "params": "Parameters",
       "save": "Save",
       "savedAll": "{n, plural, one {Saved # purpose.} other {Saved # purposes.}}",
-      "subagentHint": "Used by sub-agents dispatched on this tier. When it is not set, they run on the model of the agent that dispatches them."
+      "subagentHint": "Used by sub-agents dispatched on this tier. When it is not set, they run on the model of the agent that dispatches them.",
+      "hint": {
+        "eval": "The eval judge uses it to compare baseline and candidate and give pass / fail. When it is not set, evals cannot use a judge.",
+        "titles": "Generates titles for new conversations. When it is not set, the model of the conversation's latest run is used.",
+        "webFetch": "The web fetch tool uses it to extract what is asked from a fetched page. When it is not set, the model of the calling conversation's latest run is used (for a sub-agent's call, the sub-agent's)."
+      }
     }
   },
   "admin": {

@@ -204,7 +204,7 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     // the tool policy and egress radios, the resources' key-value
     ["/settings/sandbox", `GET ${O}/settings`, { radios: 2, kv: 1, items: 0, switches: 0 }],
     // the kernel's five purposes as cards, each with its model select
-    ["/settings/models", `GET ${O}/model-purposes`, { radios: 0, kv: 0, items: 5, switches: 0 }],
+    ["/settings/models", `GET ${O}/model-purposes`, { radios: 0, kv: 0, items: 6, switches: 0 }],
   ] as const)(
     "%s: the loading state draws the page's static shapes (Q6)",
     async (path, held, shapes) => {

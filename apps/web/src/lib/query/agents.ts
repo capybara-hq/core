@@ -5,6 +5,7 @@ import {
   getAgentTemplate,
   listAgents,
   listAgentTemplates,
+  listAgentVersions,
   previewAgentTemplateDelete,
 } from "../agents";
 import type { ApiClientError } from "../api";
@@ -30,6 +31,14 @@ export const agentQuery = (orgId: string, agentId: string) =>
   defineQuery({
     key: keys.org(orgId).agent(agentId),
     fn: () => getAgent(orgId, agentId).then((r) => r.agent),
+    freshness: "orgConfig",
+  });
+
+/** An agent's saved versions (`{ versions }`, newest first: number and saved time). */
+export const agentVersionsQuery = (orgId: string, agentId: string) =>
+  defineQuery({
+    key: keys.org(orgId).agentVersions(agentId),
+    fn: () => listAgentVersions(orgId, agentId),
     freshness: "orgConfig",
   });
 

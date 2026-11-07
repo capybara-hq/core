@@ -81,8 +81,8 @@ test("后台定价与 eval 部署默认 → 组织设置页覆盖并恢复默认
   await page.goto("/settings/models");
   await hydrated(page);
   const orgCard = evalRow(page);
-  const defText = fill(P.deploymentDefault, { target: `${MODEL_FAKE} / fake-1` });
-  await expect(orgCard.getByText(defText)).toBeVisible();
+  const defText = fill(P.useDefault, { target: `${MODEL_FAKE} / fake-1` });
+  await expect(orgCard.getByRole("combobox", { name: P.model })).toContainText(defText);
   await expect(orgCard.getByText(P.overridden)).toHaveCount(0);
   await selectOption(orgCard.getByRole("combobox", { name: P.model }), "model-fake/fake-1");
   await saveAll(page);

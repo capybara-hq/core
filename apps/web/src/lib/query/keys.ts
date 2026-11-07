@@ -28,6 +28,13 @@ export const keys = {
       agents: (): readonly unknown[] => [...all, "agents"],
       /** One agent. */
       agent: (agentId: string): readonly unknown[] => [...all, "agent", agentId],
+      /** An agent's saved versions (under the agent: invalidating the agent refreshes them). */
+      agentVersions: (agentId: string): readonly unknown[] => [
+        ...all,
+        "agent",
+        agentId,
+        "versions",
+      ],
       /** The skills an agent wrote itself. */
       agentSkills: (agentId: string): readonly unknown[] => [...all, "agentSkills", agentId],
       /** The org's agent templates (from plugins). */

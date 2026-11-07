@@ -2590,19 +2590,20 @@
       "start": "开始运行",
       "mode": "回放模式",
       "candidate": "候选",
-      "candidateHint": "各项不改表示沿用用例原来的设置。",
+      "candidateHint": "不改的项，每个用例用它当时记录的设置。",
       "version": "智能体版本",
-      "versionKeep": "沿用用例的版本",
+      "versionKeep": "各用例当时的版本",
+      "versionCurrent": "当前",
       "versionValue": "v{n}",
       "model": "模型",
-      "modelKeep": "沿用用例的模型",
+      "modelKeep": "各用例当时的模型",
       "params": "模型参数",
       "instructionsOverride": "覆盖指令",
       "instructions": "指令",
       "instructionsHint": "给模型看的系统指令，请用英文。",
       "judge": "LLM 评委",
-      "judgeHint": "评委（用途 eval 映射的模型）比较基线与候选，给出通过 / 不通过与理由；评委请求也计入 token。",
-      "judgeUnmapped": "评委用途（eval）还没有映射模型，不能开评委。",
+      "judgeHint": "评委（模型用途里给评测评委配的模型）比较基线与候选，给出通过 / 不通过与理由；评委请求也计入 token。",
+      "judgeUnmapped": "还没有给评测评委配模型，不能开评委。",
       "judgeConfigure": "去配置模型用途",
       "tokenCap": "token 上限",
       "tokenCapHint": "留空用部署默认上限。达到上限后不再发新请求，运行记为「已达上限」。",
@@ -2817,7 +2818,7 @@
       "title": "模型用途",
       "description": "内核与扩展按用途取模型。每个用途默认使用超级管理员设的部署默认；你可以为本组织覆盖，或恢复默认。"
     },
-    "evalUnmapped": "评测用途 eval 还没有映射模型：评测不能开评委。",
+    "evalUnmapped": "还没有给评测评委配模型：评测不能开评委。",
     "capability": {
       "tools": "工具",
       "vision": "图片",
@@ -2826,20 +2827,23 @@
       "caching": "缓存"
     },
     "purpose": {
-      "declaredByKernel": "内核用途",
-      "declaredByPlugin": "扩展 {plugin}",
+      "declaredByPlugin": "来自 {plugin}",
       "pluginNote": "扩展调用模型尚未开放，可先配置。",
       "model": "模型",
       "modelInvalid": "所选模型不可用。",
       "unset": "未设置",
-      "useDefault": "使用部署默认",
-      "deploymentDefault": "部署默认：{target}",
+      "useDefault": "使用部署默认（{target}）",
       "overridden": "已覆盖",
       "unavailable": "{target}（不可用）",
       "params": "参数",
       "save": "保存",
       "savedAll": "已保存 {n} 个用途。",
-      "subagentHint": "按此档位派发的子智能体使用它。未设置时，子智能体使用派发它的智能体的模型。"
+      "subagentHint": "按此档位派发的子智能体使用它。未设置时，子智能体使用派发它的智能体的模型。",
+      "hint": {
+        "eval": "评测的评委用它比较基线与候选，给出通过 / 不通过。未设置时，评测不能开评委。",
+        "titles": "为新会话生成标题。未设置时，使用会话最近一次运行的模型。",
+        "webFetch": "网页读取工具用它从抓到的网页里提取需要的内容。未设置时，使用调用它的会话最近一次运行的模型（子智能体调用时用子智能体的）。"
+      }
     }
   },
   "admin": {
