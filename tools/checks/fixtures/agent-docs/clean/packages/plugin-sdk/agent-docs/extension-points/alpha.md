@@ -1,4 +1,4 @@
-# Extension point: alpha
+# Authoring: alpha
 
 <!-- generated:extension-point -->
 - Name: `alpha` (a ref is `alpha@<major>`)

@@ -1,4 +1,4 @@
-# Plugin format
+# Authoring: plugin-format
 
 <!-- generated:plugin-manifest -->
 | Field | Type | Required |

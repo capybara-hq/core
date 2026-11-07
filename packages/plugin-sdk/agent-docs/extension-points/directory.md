@@ -1,4 +1,4 @@
-# Extension point: directory
+# Authoring: extension point directory
 
 <!-- generated:extension-point -->
 - Name: `directory` (a ref is `directory@<major>`)

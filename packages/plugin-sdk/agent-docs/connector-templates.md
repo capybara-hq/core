@@ -1,4 +1,4 @@
-# Connector templates
+# Authoring: connector templates
 
 A connector template is a ready-made connection to an external system: a protocol connector
 (`connector-mcp`, `connector-openapi`), a preset endpoint and the auth shape. An org installs it

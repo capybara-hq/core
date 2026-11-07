@@ -1,4 +1,4 @@
-# Extension point: model-provider
+# Authoring: extension point model-provider
 
 <!-- generated:extension-point -->
 - Name: `model-provider` (a ref is `model-provider@<major>`)

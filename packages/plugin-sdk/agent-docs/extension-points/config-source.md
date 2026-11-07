@@ -1,4 +1,4 @@
-# Extension point: config-source
+# Authoring: extension point config-source
 
 <!-- generated:extension-point -->
 - Name: `config-source` (a ref is `config-source@<major>`)

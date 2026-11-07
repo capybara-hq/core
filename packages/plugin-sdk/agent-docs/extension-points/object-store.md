@@ -1,4 +1,4 @@
-# Extension point: object-store
+# Authoring: extension point object-store
 
 <!-- generated:extension-point -->
 - Name: `object-store` (a ref is `object-store@<major>`)

@@ -1,4 +1,4 @@
-# Extensions
+# Authoring: extensions
 
 <!-- generated:extension-points -->
 | Extension point | Providers | Per org | What it is |

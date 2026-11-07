@@ -1,4 +1,4 @@
-# Extension point: sandbox
+# Authoring: extension point sandbox
 
 <!-- generated:extension-point -->
 - Name: `sandbox` (a ref is `sandbox@<major>`)

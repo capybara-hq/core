@@ -1,3 +1,3 @@
-# tool-naming
+# Authoring: tool-naming
 
 Hand-written.

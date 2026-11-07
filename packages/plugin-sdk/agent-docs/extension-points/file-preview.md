@@ -1,4 +1,4 @@
-# Extension point: file-preview
+# Authoring: extension point file-preview
 
 <!-- generated:extension-point -->
 - Name: `file-preview` (a ref is `file-preview@<major>`)

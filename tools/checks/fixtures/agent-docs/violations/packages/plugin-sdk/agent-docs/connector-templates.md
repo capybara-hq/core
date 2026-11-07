@@ -1,3 +1,3 @@
-# Connector templates
+# Authoring: connector-templates
 
 No section.

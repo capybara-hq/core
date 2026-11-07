@@ -1,0 +1,14 @@
+{
+  "type": "object",
+  "properties": {
+    "displayName": {
+      "type": "object"
+    },
+    "template": {
+      "type": "object"
+    }
+  },
+  "required": [
+    "template"
+  ]
+}

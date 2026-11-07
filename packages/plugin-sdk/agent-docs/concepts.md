@@ -2,6 +2,10 @@
 
 Read this first. It explains the vocabulary the other topics use.
 
+The other topics are for *authoring*: writing an extension, building a plugin, skills, templates,
+connector templates, tool naming and extension points. To *use* the platform (install, switch on,
+configure, manage), use the operations: `browse`, `search`, `describe` and `call`.
+
 ## Platform and org
 
 - The **platform** is one deployment. The **super admin** runs it: imports plugins into the
