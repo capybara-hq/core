@@ -40,10 +40,11 @@ export type AgentMapNode = {
 export type AgentMapBackground = BackgroundTaskItem;
 
 /**
- * The dialog width of each level: the tree 1100; one agent's summary and its transcript the
- * conversation's column (`layout.chat`) plus the dialog's own padding (`chat`, agent-map.css).
+ * The dialog width of each level (agent-map.css): the tree as wide as its tree (`tree`, between
+ * the `chat` width and 1100); one agent's summary and its transcript the conversation's column
+ * (`layout.chat`) plus the dialog's own padding (`chat`).
  */
-const LEVEL_SIZE = { tree: "1100", detail: "chat", transcript: "chat" } as const;
+const LEVEL_SIZE = { tree: "tree", detail: "chat", transcript: "chat" } as const;
 
 const STATUSES: AgentMapStatus[] = [
   "running",
@@ -74,8 +75,8 @@ export type AgentMapDialogProps = {
   open: boolean;
   onOpenChange(open: boolean): void;
   /**
-   * The level shown: the width follows it (the tree 1100; levels 2 and 3 the conversation's column
-   * plus the dialog's padding). The tree's head (title, close) is
+   * The level shown: the width follows it (the tree as wide as its tree, at least levels 2 and 3's
+   * width and at most 1100; levels 2 and 3 the conversation's column plus the dialog's padding). The tree's head (title, close) is
    * the frame's; levels 2 and 3 draw their own ({@link AgentDetail}, {@link TranscriptFrame}).
    */
   level: "tree" | "detail" | "transcript";

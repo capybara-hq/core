@@ -389,15 +389,18 @@ The builder's choices for §11 and the rulings of the build that change behaviou
   `#agents=<id>`, `#agents=<id>/transcript`); the sub-agent right panel stays for now. The map is
   a dialog over the page, not a right-area target: whatever the right area showed (properties, a
   panel, a file) stays drawn under it and is the same after it closes (acceptance, 2026-11-07).
-- The map's tree scrolls horizontally inside the 1100 px dialog at four columns (depth 3), keeping
-  the node width.
+- The map's tree scrolls horizontally inside the dialog once the tree is wider than 1100 px (four
+  columns, depth 3), keeping the node width.
 - The admin sub-agent limits dialog gains a `maxDepth` field, and its "per run" labels are corrected.
 - The design `UserBubble` takes an optional sender label (a parent's message in a transcript), and
   the sub-agent row's "后台" label is omitted for a fork invocation's (foreground) child.
 - N4 is withdrawn (see §2): level 3 uses the collapsed Thread.
 - Acceptance (AC2, AC6): levels 2 and 3 are as wide as the conversation's column plus the dialog's
   body padding (754 px), so the transcript has no empty side gutters; every level pads its head,
-  body and footer in the compact dialog rhythm (design spec §6.7); the tree stays 1100 px.
+  body and footer in the compact dialog rhythm (design spec §6.7). Later acceptance (2026-11-07):
+  the tree level is as wide as its tree (plus the body padding, the border and the scrollbar
+  gutter), at least 754 px and at most min(1100 px, the window less 32), instead of always 1100 px,
+  which left most of a two-column tree's dialog empty.
 - Acceptance (AC1): the transcript's status line drops "子智能体只读 · 不能和它对话，请让 <parent>
   转达"; it keeps the context use and Stop, and is absent when it has neither.
 - Acceptance (AC5): Stop stays, in the Button's loading state, from the click until the agent's

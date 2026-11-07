@@ -20,6 +20,14 @@
 .cb-amap-dialog[data-size="chat"] {
   width: min(calc(var(--cb-layout-chat) + 2 * var(--cb-space-4) + 2px), calc(100vw - 32px));
 }
+/* Level 1: as wide as its tree (the canvas reserves the scrollbar's gutter, so a tall tree never
+   scrolls sideways), at least levels 2 and 3's width (the head and legend fit, and going back does
+   not jump narrower), at most 1100; a wider tree scrolls inside the canvas. */
+.cb-amap-dialog[data-size="tree"] {
+  width: max-content;
+  min-width: min(calc(var(--cb-layout-chat) + 2 * var(--cb-space-4) + 2px), calc(100vw - 32px));
+  max-width: min(1100px, calc(100vw - 32px));
+}
 .cb-amap-dialog[data-level="detail"] {
   height: min(600px, calc(100vh - 32px));
 }
@@ -83,6 +91,7 @@
   gap: var(--cb-space-4);
   min-height: 0;
   overflow: auto;
+  scrollbar-gutter: stable;
 }
 /* The ring inside the scroll region, which would clip an outer one. */
 .cb-amap-canvas:focus-visible {
@@ -368,7 +377,6 @@
 }
 .cb-amap-prompt {
   margin: 0;
-  white-space: pre-wrap;
   padding-left: var(--cb-space-5);
   color: var(--cb-muted);
   font-family: var(--cb-font-prose);

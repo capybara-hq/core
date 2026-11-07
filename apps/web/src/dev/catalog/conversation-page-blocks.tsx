@@ -285,7 +285,7 @@ function agentMapThread(): ReactNode {
 function agentMapBlocks(): ReactNode {
   return (
     <>
-      <RefBlock id="agent-map-tree" width={1132} height={580} pad>
+      <RefBlock id="agent-map-tree" width={1089} height={580} pad>
         <AgentMapDialog open inline onOpenChange={noop} level="tree">
           <AgentMapTree
             root={AM.root}
@@ -302,12 +302,12 @@ function agentMapBlocks(): ReactNode {
         </AgentMapDialog>
       </RefBlock>
       {/* the page's own loading bars and error line, in the tree level's padded body */}
-      <RefBlock id="agent-map-loading" width={1132} height={200} pad>
+      <RefBlock id="agent-map-loading" width={786} height={200} pad>
         <AgentMapDialog open inline onOpenChange={noop} level="tree">
           <SkeletonBars />
         </AgentMapDialog>
       </RefBlock>
-      <RefBlock id="agent-map-failed" width={1132} height={140} pad>
+      <RefBlock id="agent-map-failed" width={786} height={140} pad>
         <AgentMapDialog open inline onOpenChange={noop} level="tree">
           <FormError message="智能体图加载失败。" />
         </AgentMapDialog>

@@ -909,7 +909,7 @@ States: `default`, `row-hover`, `row-selected`, `loading`, `empty`, `narrow`
 
 Selection rules: the user needs to decide → Dialog; view / edit one object without leaving the list → Sheet; in-place options / filters → Popover / Menu; feedback on an operation result → Toast (a Dialog must not be used); creating something with more than 6 fields → a form page (T4).
 
-- **Dialog**: width 480 / 640 (the agent map's tree is 1100 and its levels 2 and 3 the conversation's column plus the body padding, §6.16.28), `panel` background + `line-strong` border + radius `md` + `shadow-2` + `scrim`. Header (h2 title + close `x`) / body (padding 16) / footer (right-aligned: ghost Cancel + primary action, the primary action carries `↵`), with 1px `line` separating header and footer. Esc closes; focus is trapped and returned after closing. Default focus: on the first field for a dialog that asks for input (新建组织, 新建令牌), else on the primary action (a `LinkButton` primary too); on Cancel for a dangerous dialog. A create dialog's primary is disabled until it is valid. A dialog that only explains why something cannot be done (退出组织 as the only owner) is not dangerous: plain title, one default button "知道了" / "Got it", and a link to where it can be fixed. A dialog whose next step lives elsewhere (加入评测集 with no eval set) says so and offers that step as its primary (`LinkButton`), never a disabled dead end.
+- **Dialog**: width 480 / 640 (the agent map's tree is as wide as its tree, from its levels 2 and 3's width up to 1100, and those levels the conversation's column plus the body padding, §6.16.28), `panel` background + `line-strong` border + radius `md` + `shadow-2` + `scrim`. Header (h2 title + close `x`) / body (padding 16) / footer (right-aligned: ghost Cancel + primary action, the primary action carries `↵`), with 1px `line` separating header and footer. Esc closes; focus is trapped and returned after closing. Default focus: on the first field for a dialog that asks for input (新建组织, 新建令牌), else on the primary action (a `LinkButton` primary too); on Cancel for a dangerous dialog. A create dialog's primary is disabled until it is valid. A dialog that only explains why something cannot be done (退出组织 as the only owner) is not dangerous: plain title, one default button "知道了" / "Got it", and a link to where it can be fixed. A dialog whose next step lives elsewhere (加入评测集 with no eval set) says so and offers that step as its primary (`LinkButton`), never a disabled dead end.
 - **Dangerous confirmation**: the ordinary frame and title (`line-strong`, `ink`): the red is only on the destructive button; explains the consequences and recoverability; the object name must be typed, the confirm button is disabled until it matches, and is danger-solid once it matches. A caller that must read something first (what a delete does, ruling P3-19) passes `confirmDisabled`: the button then stays disabled and `danger` while the read is pending or failed, even with the name typed.
 - **Sheet**: slides out from the right, width 480 / 720, `panel` background + `line-strong` left line + `shadow-sheet`; no scrim by default (the list is still operable). Header: name + version + open in a new page `external-link` + close `x`; may contain Tabs; footer: actions, a bar under a `line-soft` hairline that stays at the bottom while the body scrolls (a form's save goes there, never into the body; the primary save is enabled only while there are changes). Closing with unsaved changes needs a second confirmation. A body with several kinds of content groups them into titled regions, `Subsection variant="divided"` (§6.32): one optional status line on top (no title), then the regions split by hairlines (the extension Sheets: 部署配置 or 组织配置, 状态, 副本, 权限); a region with nothing to show is left out.
 - **Inside an overlay** (§1 "One box is enough"): a Dialog or a Sheet is the box. Its body groups with `ContentSection` headings (§6.31), `Subsection`s (§6.32) and hairline-divided `ItemList` rows (§6.33), never Cards or FormSections; a confirmation that previews a change's consequences draws them with `ImpactPreview` (§6.35); tables, code blocks and repeaters inside draw their unboxed forms by themselves. Choosing between sources in a dialog is a card `RadioGroup` straight in the body (no Card around it), and its one `FilePicker` drop zone is allowed (§6.25).
@@ -2225,11 +2225,15 @@ States: `default`, `hover`, `menu`
 #### 6.16.28 Agent map
 
 `AgentMapDialog({ open, onOpenChange, level, onBack?, view?, children })` is a dialog over the conversation page
-(agent map spec §9) whose width follows its level: the tree 1100 (three columns of nodes and
-their gaps, with room for a scrollbar), and one agent's summary and its transcript the
+(agent map spec §9) whose width follows its level: one agent's summary and its transcript the
 conversation's column plus the body padding and the border (`layout.chat` + 2 × `space.4` + 2 =
 754, at most the window less 32), so the transcript's thread fills the dialog with no empty side
-gutters and levels 2 and 3 are one width. Levels 2 and 3 have fixed heights, 600 and 640 (at most
+gutters and levels 2 and 3 are one width; the tree as wide as its tree needs (its columns of
+nodes and their gaps, the body padding, the border and the canvas's reserved scrollbar gutter:
+1042 + the gutter at three columns, 1057 with Chromium's 15 px classic scrollbars, 1042 with
+overlay scrollbars), at least the width of levels 2 and 3 (the
+head and legend fit, going back and forth does not jump narrower) and at most 1100 (and the window
+less 32); a wider tree (four columns) scrolls sideways inside the canvas. Levels 2 and 3 have fixed heights, 600 and 640 (at most
 the window less 32), so the dialog does not jump while an agent works (the §6.7 frame: `panel`,
 `line-strong`, radius `md`, `shadow-2`, `scrim`). The frame has no padding at any level: the head,
 body and footer pad themselves in the compact dialog rhythm of §6.7 (head `space.2` `space.4` with
@@ -2324,7 +2328,11 @@ States: `tree`, `deep`, `loading`, `failed`, `detail`, `finished`, `stopping`, `
 <!-- size-table: agent-map -->
 | Part | State | Property | Value |
 |---|---|---|---|
-| agent-map-dialog | tree | width | 1100 |
+| agent-map-dialog | tree | width | 1057 |
+| agent-map-dialog | tree | min-width | 754 |
+| agent-map-dialog | tree | max-width | 1100 |
+| agent-map-dialog | deep | width | 1100 |
+| agent-map-dialog | loading | width | 754 |
 | agent-map-dialog | tree | background-color | color.panel |
 | agent-map-dialog | tree | border-top-color | color.line-strong |
 | agent-map-dialog | tree | border-radius | radius.md |
