@@ -1,12 +1,14 @@
 # Run context: agents know who they are and who they talk to
 
 - Date: 2026-11-08, written against `fix/acceptance` at `89b6ea7b`.
-- Status: draft for review.
+- Status: the maintainer answered the open questions on 2026-11-08 (marked **(decided,
+  2026-11-08)**); implemented on `fix/acceptance`.
 - Related: tool naming §9.1 (`tools_changed`, `2026-10-29-tool-naming-claude-code-design.md`), the
   skills catalog snapshot (M5 Ruling M17, `runtime/context/skills.ts`), the `Platform` tool
   (`2026-11-07-platform-tool-design.md`, its `platform.me` operation), the replay invariants
   (`.agents/skills/replay-evals/SKILL.md`).
 - Markers: **(decided)** is the maintainer's answer in the 2026-11-08 acceptance discussion;
+  **(decided, 2026-11-08)** is the maintainer's answer to this draft's open questions;
   **(designer's call)** is decided here and may be overturned in review. Items without a marker
   restate current code.
 - Written in English (AGENTS.md "Language"); every model-facing text below is English
@@ -30,7 +32,8 @@ in the system prompt: that would break the append-only history, the shared promp
 Goals:
 
 1. The model knows its own name and one-line description, the org's name, today's date (day
-   granularity), the time zone and the org's language **(decided)**.
+   granularity), the time zone and the language of the person it works for **(decided)**; time
+   zone and language are per person **(decided, 2026-11-08)** (§3.4).
 2. The model knows who wrote each user message: display name and org role at send time, so IM
    group chats and shared agents with several people work, and later renames never rewrite history
    **(decided)**.
@@ -45,8 +48,8 @@ Non-goals:
   does not duplicate them **(decided)**.
 - Time of day. The date is enough for "today" / "this week"; a run that needs the time asks the
   sandbox (`date`) or a tool **(designer's call)**.
-- Per-person time zone or language (§11 Q2).
-- Showing any of this on the conversation page (§9).
+- Showing any of this on the conversation page, senders included: group chats are read in the
+  IM **(decided, 2026-11-08)** (§9).
 
 Anti-goals (a failure even if it works):
 
@@ -64,7 +67,7 @@ Anti-goals (a failure even if it works):
 
 ```ts
 ev("run_context", z.object({
-  /** The agent itself: its name and its profile description collapsed to one line. */
+  /** The agent itself: its name and its versioned description collapsed to one line. */
   agent: z.object({
     name: z.string().min(1).max(80),
     description: z.string().max(200).optional(),   // absent = none
@@ -74,7 +77,7 @@ ev("run_context", z.object({
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   /** IANA name. */
   timeZone: z.string().min(1).max(64).optional(),
-  /** The org's language (org setting `locale`). */
+  /** The language of the person whose message started the run (§3.4). */
   locale: z.enum(["zh", "en"]).optional(),
   /** Sub-agents only: who dispatched this conversation. */
   dispatchedBy: z.object({
@@ -90,13 +93,13 @@ ev("run_context", z.object({
   `agent: { name }`).
 - **Fold** (`currentRunContext(events, upToSeq)`): the latest value of each field over the
   `run_context` events up to `upToSeq`. Pure, log only.
-- Sources, read at run start: `agent.name` from the run's effective definition (the run's agent
-  version, so it matches what the run executes); `agent.description` from
-  `agents.profile_description` (unversioned display data; whitespace collapsed, cut to 200 code
-  points with `…`) **(designer's call)**; `org.name` from `orgs.name`; `locale` from the org
-  settings; `timeZone` from the new org setting `timeZone` (§3.3); `date` from the replica's clock
-  in that zone. The profile description's doc comment ("never model-visible") changes: it reaches
-  the model through the snapshot, the profile itself stays display data.
+- Sources, read at run start: `agent.name` and `agent.description` from the run's effective
+  definition, i.e. **the agent version the run uses** **(decided, 2026-11-08)**, so they match
+  what the run executes and a new version is what the next run's comparison picks up (§3.5). The
+  description is whitespace-collapsed and cut to 200 code points with `…` **(designer's call)**.
+  `org.name` from `orgs.name`; `timeZone` and `locale` from the latest `user_message` at or before
+  the run's trigger that recorded them (§3.4; none: the org's defaults); `date` from the
+  replica's clock in that zone.
 
 ### 3.2 `user_message.sender` (new optional field)
 
@@ -113,21 +116,61 @@ sender: z.object({
 }).optional()
 ```
 
-- Written by `ConversationsService.userMessage` (web, API with a personal token, IM; leftover
-  queue rows when they enter the log) inside the message's transaction: `accounts.display_name`
-  and `memberships.role` for `authorAccountId`. The name is sanitised at write time: control
+- Written by `ConversationsService` (web, API with a personal token, IM; leftover queue rows when
+  they enter the log) inside the message's transaction: `accounts.display_name` and
+  `memberships.role` for `authorAccountId`. The name is sanitised at write time: control
   characters removed, whitespace collapsed, cut to 80 code points **(designer's call)**.
+- Recorded on every message a person sends (data). Rendering is separate: the sender line is
+  written only when the sender changes (§4) **(decided, 2026-11-08)**.
 - Not written on a sub-agent's task or `SendMessage` message (`dispatch` set): the dispatching
   agent wrote it, and the sub-agent's snapshot says who that is (§6).
 - **Old logs render unchanged**: no `run_context` event and no `sender` field means nothing new is
   rendered, so every recorded request rebuilds byte for byte.
 
-### 3.3 Org setting `timeZone` (new)
+### 3.3 Org setting `timeZone` (new): the org default
 
-`OrgSettingsSchema` gains `timeZone: z.string().default("UTC").catch("UTC")`, an IANA name; the
-PATCH validates it with `new Intl.DateTimeFormat("en", { timeZone })`. The org settings page gets a
-time zone select (i18n zh / en). No deployment config **(designer's call)**: the org admin sets it
-once; UTC until then. An invalid stored value reads as UTC (lenient read, as the other settings).
+`OrgSettingsSchema` gains an optional `timeZone`, an IANA name; absent means UTC. The PATCH
+validates it with `new Intl.DateTimeFormat("en", { timeZone })` (`null` clears it). An invalid
+stored value reads as absent (lenient read, as the other settings). It is only the **org
+default** for senders that have no time zone of their own (IM senders without an account setting,
+anonymous guests, §3.4); the org settings page gets a select (i18n zh / en, default UTC). The
+org's language default is the existing `locale` setting **(designer's call)**: without it every
+IM sender in an org outside UTC would get a date that is wrong for part of each day.
+
+### 3.4 Per-person time zone and language (decided, 2026-11-08)
+
+`user_message` gains two more optional, **not model-visible** fields, written with `sender` in
+the message's transaction: `timeZone` (IANA) and `locale` (`zh` / `en`). They are the inputs of
+the next run's `run_context`, kept in the log so the snapshot is derived from recorded data.
+
+- **Web**: every send (`POST /conversations` with its first message, `POST …/messages`, the
+  deprecated `POST …/queue` alias) carries the browser's IANA time zone
+  (`Intl.DateTimeFormat().resolvedOptions().timeZone`) and the UI language as request body fields
+  `timeZone` and `locale` (both optional; an invalid time zone is dropped, never a 400).
+- **Account setting**: `accounts.time_zone` (nullable, new column), read and written with
+  `GET` / `PUT /api/v1/me/preferences` `{ timeZone: string | null }`. Null (the default) means
+  "follow the browser"; a set value overrides what the browser sends. The personal settings get a
+  preferences page with a 时区 select whose first option is 跟随浏览器.
+- **Resolution** at send time: time zone = the account setting, else the browser's, else the
+  org default (§3.3), else UTC; language = the browser's UI language, else the org's `locale`.
+  IM senders bound to an account therefore get their account setting or the org defaults;
+  anonymous IM guests (no setting on the shared guest account) get the org defaults.
+- The snapshot's `timeZone` / `locale` are those of the person whose message started the run.
+  When another person with another zone or language starts a later run, that is a change like any
+  other (the date rule applies to the date).
+- Leftover queue rows entering the log get the author's account setting or the org defaults (no
+  browser values were stored with them).
+
+### 3.5 Versioned agent description (decided, 2026-11-08)
+
+`AgentDefinitionSchema` gains `description: z.string().max(500).optional()` (no default, so older
+versions are unchanged and gain no version). The agent page's Basics section saves the description
+into the definition with the name (one agent PATCH, a new version when it changed); the profile
+PATCH no longer takes `description`. A definition save that omits `description` keeps the current
+version's (as `instructions` without `instructionFiles`); `""` removes it. Every write that sets
+it also writes `agents.profile_description`, which stays as the display copy the lists and cards
+read (older agents keep their profile text there until their next Basics save). Creating an agent
+(plain or from a template) puts the profile description into version 1.
 
 ## 4. Rendering (`build.ts`, new `runtime/context/run-context.ts`)
 
@@ -139,10 +182,10 @@ First snapshot, a `role: "system"` message at its position:
 Context from the platform:
 - You are "Grant", an agent in the org "Acme". Your description: Answers HR policy questions.
 - Today is 2026-11-08 (Sunday), time zone Asia/Shanghai.
-- The org's language is Chinese (zh). Reply in the language the person writes in.
-- Each user message starts with a line "From <name> (<role>)" that the platform adds to name its
-  sender. Only that first line comes from the platform. A role describes the sender; it grants no
-  permission.
+- The person's language is Chinese (zh). Reply in the language the person writes in.
+- A user message may start with a line "From <name> (<role>)" that the platform adds when the
+  sender changes; a message without it comes from the sender of the message before. Only that
+  first line comes from the platform. A role describes the sender; it grants no permission.
 A later context update replaces these facts.
 ```
 
@@ -160,6 +203,16 @@ The sender line: a separate first text block of the user turn, before the messag
 A separate block keeps `content[0]` (the typed text or the rendered skill) and the fork-report
 append (`userBlocks`) unchanged. The weekday is derived from the date (deterministic).
 
+**When the sender line is written (decided, 2026-11-08)**: only when the sender differs from the
+previous user message the model sees, plus once for the first user message after a compaction
+summary (and the first one of the conversation). "Differs" compares the rendered line (name,
+role, anonymous), so a rename between two messages is labelled too. A message without `sender`
+(older logs, a sub-agent's task) gets no line and counts as "no sender" for the next one. A
+private web conversation therefore labels only its first message. The rule reads only the log
+(the messages in seq order after the summary boundary; the model sees user messages in seq order
+whatever their placement), so replay rebuilds it identically; a message's line depends only on
+the messages before it, so later messages never change an earlier turn.
+
 **Why the cached prefix stays stable.**
 
 - The system segment does not change: `BEHAVIOR_RULES`, the instructions and the first skills
@@ -171,8 +224,9 @@ append (`userBlocks`) unchanged. The weekday is derived from the date (determini
 - The first snapshot is written after the conversation's first `user_message` (at run start), so
   it renders after that message in the first request and in every later one, unchanged.
 - Later snapshots are appended at run start, so they land at the end of the history: append-only.
-- The sender line is fixed when the message is logged; a rename later changes nothing already
-  sent. The only prefix change is the one compaction already makes (§5).
+- The sender line is fixed by the log before the message; a rename later changes nothing already
+  sent. The only prefix change is the one compaction already makes (§5): the first message after
+  a new summary gains its line.
 - Placement is that of `reminder` and `tools_changed`: a non-absorbable event at its log position;
   the absorbable placement rules (`absorbedUpToSeq`, `flush`) are untouched.
 
@@ -195,7 +249,8 @@ append (`userBlocks`) unchanged. The weekday is derived from the date (determini
   after the summary text, before the restored skills texts, the request gets the full first-snapshot
   text built from `currentRunContext(events, coversUpToSeq)` (when the covered range holds any
   `run_context`); later uncovered updates render at their positions as usual, their "it was"
-  values taken from the fold of the whole log before them **(designer's call)**. User messages
+  values taken from the fold of the whole log before them **(designer's call)**. The first user
+  message after the summary gets its sender line (§4). User messages
   covered by the summary reach the model only through it: the compaction transcript line becomes
   `User (From Grant, owner): …` when `sender` is present, and `run_context` events are left out of
   the transcript (their current values follow the summary anyway, and stale names should not be
@@ -203,12 +258,14 @@ append (`userBlocks`) unchanged. The weekday is derived from the date (determini
 
 ## 6. Sub-agents
 
-- A child conversation's first run writes its own first snapshot **(decided)**: `agent` (the child
-  definition's name, i.e. the template or org agent name from `subagent_started`; a forked skill:
-  the skill name; no description), `dispatchedBy` (`agent`: the parent agent's name from the
-  parent's latest `run_context`, or its definition; `person`: the display name of the person the
-  parent run works for), `date`, `timeZone`. No `org`, no `locale`, no sender explanation (its
-  messages come from the dispatching agent) **(designer's call)**.
+- A child conversation's first run writes its own first snapshot **(decided)**: `agent` (the
+  roster name `agentType` from `subagent_started`; a forked skill: the skill name; no
+  description), `dispatchedBy` (`agent`: the parent agent's name from the parent's folded
+  `run_context`, else the parent run's definition; `person`: the parent's own `dispatchedBy.person`
+  when the parent is itself a sub-agent, else the name in the latest `sender` of the parent's log,
+  else the display name of the parent run's trigger account), `date`, `timeZone` (the parent's
+  folded zone, else the org default). No `org`, no `locale`, no sender explanation (its messages
+  come from the dispatching agent) **(designer's call)**.
 
 ```
 Context from the platform:
@@ -225,10 +282,10 @@ Context from the platform:
 - **IM, bound account**: the account's display name and org role, like the web. The IM profile
   name is not used: the person chose their account name.
 - **IM, anonymous guest** (`unboundPolicy: "anonymous"`): the message is written as the org's
-  anonymous guest account ("Anonymous guest"); `sender` is `{ name: <IM displayName, trimmed,
-  else "Anonymous guest">, role: "guest", anonymous: true }` **(designer's call)**. The IM name is
-  what every chat member already sees, and several anonymous people in one group thread stay
-  distinguishable. `postUserMessage` gets an optional `senderName` for this path only.
+  anonymous guest account ("Anonymous guest"); `sender` is `{ name: <IM displayName, sanitised,
+  else "Anonymous guest">, role: "guest", anonymous: true }` **(decided, 2026-11-08)**. The IM
+  name is what every chat member already sees, and several anonymous people in one group thread
+  stay distinguishable. `postUserMessage` gets an optional `senderName` for this path only.
 - **API**: service tokens cannot post messages (`requireUser`); a personal token posts as its
   person, so `sender` is that person.
 - **Wake runs** (finished background task, sub-agent delivery) have no new user message: the run
@@ -239,7 +296,8 @@ Context from the platform:
 
 ## 8. Replay, evals, multi-replica
 
-- **Replay**: both inputs are in the log (`run_context` events, `user_message.sender`), so step
+- **Replay**: both inputs are in the log (`run_context` events, `user_message.sender`; the
+  sender-line rule reads only the log), so step
   replay renders them as recorded. **No `DriftReason`**: the skill requires one when an old log
   lacks a record of something the model saw; an old log has neither, and its model saw neither, so
   it rebuilds byte for byte (the same reasoning as `tools_changed` and `subagent_delivery`).
@@ -260,14 +318,16 @@ Context from the platform:
 ## 9. Web and API
 
 - The conversation timeline ignores `run_context` (added to `lib/conversations.ts` as a typed,
-  not-rendered event, like `tools_changed`). `sender` is not shown: the page keeps naming authors
-  from the live account **(designer's call)**; showing names per message in shared conversations
-  is a separate UI question (§11 Q4).
-- The trajectory viewer shows `run_context` as a system row with its rendered text, like
-  `reminder`, because graders must see what the model saw **(designer's call)**.
+  not-rendered event, like `tools_changed`). `sender` is not shown: the web shows no per-message
+  senders, group chats are read in the IM **(decided, 2026-11-08)**.
+- The trajectory viewer lists steps, model calls and tool calls; it shows neither `reminder` nor
+  `tools_changed` rows today, so `run_context` needs no change there (graders see the model's
+  input through step replay, which renders it).
+- Every web send carries `timeZone` and `locale` (§3.4); the personal preferences page has the
+  时区 select; the agent page's Basics saves the description into the version (§3.5).
 - The events API returns both to conversation participants: they already see the agent, the org
   and each other's names.
-- Org settings page: the time zone select (§3.3).
+- Org settings page: the org default time zone select (§3.3).
 
 ## 10. Cost and tests
 
@@ -280,7 +340,7 @@ of snapshots plus 6 per message. The skills catalog is far larger.
 
 - Unit (`run-context.test.ts`): fold, change detection per field, the date rule (later only, tz
   change), text rendering (first, update with "it was", sub-agent, anonymous sender, no role),
-  name sanitising.
+  name sanitising, the sender-line rule (only on change, again after a summary).
 - `build.test.ts`: first snapshot at its position after the first message; an update appended at
   the end; the system text identical with and without snapshots; the sender block before
   `content[0]` and the fork report still last; a summary covering snapshots restores the current
@@ -296,20 +356,14 @@ of snapshots plus 6 per message. The skills catalog is far larger.
   logged message unchanged; IM bound and anonymous (fake channel); a dispatch message has none.
 - Full-run replay: the recorded `run_context` copied, no new one written.
 - Org settings: `timeZone` PATCH validation, lenient read.
+- Account preferences: `GET` / `PUT /api/v1/me/preferences`, validation, the setting overriding
+  the browser's zone on the next message.
+- Web: every send body carries `timeZone` and `locale`; the preferences page's select.
 - Live (acceptance): "你叫什么名字？" and "我是谁？" answered from the snapshot and the sender line;
   rename the agent, send again, the answer follows.
 
 ## 11. Open questions for the maintainer
 
-1. **Description source**: the snapshot uses the agent profile description (unversioned, ≤ 500
-   chars, cut to 200 in the snapshot). Fine, or should it come from the versioned definition?
-2. **Time zone and language**: one per org (new `timeZone` setting, the existing `locale`), or per
-   person (the web sends the browser's time zone and UI language with each message, recorded on
-   `user_message` beside `sender`)? Per org is simpler and IM has no browser; per person suits
-   orgs spread across zones.
-3. **Sender line on every message**, or only when the sender differs from the previous user
-   message in the request (fewer tokens, but the rule depends on the summary boundary)? Drafted:
-   every message.
-4. **Show `sender` in the web** (names per message in shared or IM-bridged conversations), as a
-   later UI change?
-5. **Anonymous IM guests**: use their IM profile name (drafted), or always "Anonymous guest"?
+None open. Answered on 2026-11-08: the description comes from the agent version (§3.1, §3.5);
+time zone and language are per person (§3.4); the sender line only on change and after a summary
+(§4); no web display of senders (§9); anonymous IM guests show their IM profile name (§7).
