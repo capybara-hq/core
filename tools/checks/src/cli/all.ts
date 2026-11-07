@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import { type NamedCheck, pluginChecks, runChecks } from "@capybara-hq/plugin-tools";
+import { checkAgentDocs } from "../agent-docs.js";
 import { BOOTSTRAP_COMPOSE_FILES, checkBootstrap } from "../bootstrap.js";
 import { checkComposeHaproxy } from "../compose-haproxy.js";
 import { checkConfigDocs } from "../config-docs.js";
@@ -50,6 +51,7 @@ const checks: (NamedCheck & { pending?: boolean })[] = [
   { name: "Skills frontmatter", run: () => checkSkillsFrontmatter(join(root, ".agents/skills")) },
   { name: "release metadata", run: () => checkReleaseMetadata(root) },
   { name: "SDK API snapshot", run: () => checkSdkApi({ update: false }) },
+  { name: "Agent docs", run: () => checkAgentDocs(root) },
   { name: "Terms", run: () => checkTerms(root) },
   { name: "Kernel conventions", run: () => checkKernelConventions(root) },
   { name: "Platform operations", pending: true, run: () => checkPlatformOps(root) },

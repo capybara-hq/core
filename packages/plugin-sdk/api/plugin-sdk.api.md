@@ -920,6 +920,7 @@ export interface ExtensionPermissions {
 export interface ExtensionPointInfo {
     brokered: boolean;
     cardinality: Cardinality;
+    description: string;
     orgScoped: boolean;
     selection?: "org-default";
 }
