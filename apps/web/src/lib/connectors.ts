@@ -79,6 +79,8 @@ export interface ToolDefinition {
 export interface ConnectorTool extends ToolDefinition {
   name: string;
   key: string;
+  /** The reviewed definition's display title (a human one, e.g. the MCP `title`), or null. */
+  title?: string | null;
   status: "enabled" | "disabled" | "pending_review";
   defaultPolicy: ToolPolicy;
   /** 定义不合规时的英文原因（此时工具只能停用）。 */

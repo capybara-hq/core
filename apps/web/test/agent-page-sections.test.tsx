@@ -634,7 +634,7 @@ describe("the agent page renders on the server (web-SSR spec §6)", () => {
     id: "cn1",
     name: "Tracker",
     status: "active",
-    tools: [{ key: "mcp__tracker__find", status: "enabled" }],
+    tools: [{ name: "find", key: "mcp__tracker__find", status: "enabled" }],
   };
   const formRoutes = {
     [`GET ${ORG}/models`]: ok(MODELS),
@@ -652,7 +652,8 @@ describe("the agent page renders on the server (web-SSR spec §6)", () => {
       section: "tools",
     });
     expect(screen.getByRole("heading", { level: 1, name: "Helper" })).toBeTruthy();
-    expect(document.querySelector('[data-policy="mcp__tracker__find"]')).not.toBeNull();
+    // the connector's row sums up its tools, read on the server
+    expect(screen.getByText("1 of 1 tools on")).toBeTruthy();
     // another section paints from what the first load prefetched
     await view.navigate("/agents/ag1?s=channels");
     expect(screen.getByRole("region", { name: en.agents.channels.title })).toBeTruthy();
@@ -723,9 +724,9 @@ describe("the agent page renders on the server (web-SSR spec §6)", () => {
     // the open section's static frame, as a placeholder; the head is the agent's already
     expect(page.querySelectorAll('[data-part="form-section"]').length).toBe(1);
     expect(screen.getByRole("heading", { level: 1, name: "Helper" })).toBeTruthy();
-    expect(screen.queryByRole("group", { name: F.builtinLabel })).toBeNull();
+    expect(screen.queryByRole("list", { name: F.builtinLabel })).toBeNull();
     await act(async () => release());
-    expect(await screen.findByRole("group", { name: F.builtinLabel })).toBeTruthy();
+    expect(await screen.findByRole("list", { name: F.builtinLabel })).toBeTruthy();
     await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
   });
 

@@ -91,6 +91,24 @@ export async function openAgentSection(
 }
 
 /**
+ * In the agent page's 工具 section, takes every tool of the connector or extension `name`: its
+ * row's 配置 opens the Sheet, 全选 ticks the tools, 完成 closes it (the section's save persists).
+ * `on: false` checks that none is taken instead.
+ */
+export async function takeAllGroupTools(page: Page, name: string, on = true): Promise<void> {
+  const f = zh.agents.form;
+  await page
+    .getByRole("button", { name: f.configureGroup.replace("{name}", name), exact: true })
+    .click();
+  const sheet = page.getByRole("dialog", { name });
+  const all = sheet.getByRole("checkbox", { name: designZh("toolPolicy.selectAll"), exact: true });
+  if (on) await all.check();
+  else await expect(all).not.toBeChecked();
+  await sheet.getByRole("button", { name: f.sheetDone, exact: true }).click();
+  await expect(sheet).toBeHidden();
+}
+
+/**
  * Saves the open section of the agent page (its ActionRow's 保存) and waits until the save went
  * through: the row goes once nothing is unsaved, failed or pending.
  */

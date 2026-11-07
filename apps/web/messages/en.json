@@ -442,14 +442,13 @@
       "toolsSectionHint": "Tools the agent may call. A policy can only be tightened: ask for approval, or deny.",
       "builtinLabel": "Built-in tools",
       "builtin": {
-        "AskUserQuestion": "Ask the user (AskUserQuestion)",
-        "ReadToolOutput": "Read archived tool output (ReadToolOutput)",
-        "SkillWrite": "Write skills (SkillWrite)",
-        "WebSearch": "Search the web (WebSearch)",
-        "WebFetch": "Read web pages (WebFetch)"
+        "AskUserQuestion": "Ask the user",
+        "ReadToolOutput": "Read archived tool output",
+        "SkillWrite": "Write skills",
+        "WebSearch": "Search the web",
+        "WebFetch": "Read web pages"
       },
       "connectorsLabel": "Connectors",
-      "connectorTools": "All tools of {name}",
       "noConnectors": "No connectors are installed.",
       "extensionToolsLabel": "Extension tools",
       "noExtensionTools": "No extension enabled in this organization provides tools.",
@@ -565,7 +564,28 @@
       },
       "webUnavailable": "This organization has no usable web provider: an org admin needs to enable and configure one, or, when several are enabled, choose a default provider in the extension settings, before the selected web tools can be used.",
       "unavailableSkill": "Unavailable: {name}",
-      "unavailableSkillHint": "These platform skills are off in this organization, so the agent does not load them; they come back when an org admin turns them on again. Untick one to remove the reference."
+      "unavailableSkillHint": "These platform skills are off in this organization, so the agent does not load them; they come back when an org admin turns them on again. Untick one to remove the reference.",
+      "groupsLabel": "Extensions and connectors",
+      "groupKind": {
+        "extension": "Extension",
+        "connector": "Connector"
+      },
+      "groupSummary": "{on} of {total} tools on",
+      "groupAsk": "{count} need approval",
+      "groupDeny": "{count} denied",
+      "groupUnused": "Not used",
+      "groupUsed": "In use",
+      "groupUnavailable": "Some tools unavailable",
+      "groupNoTools": "There are no usable tools here.",
+      "noGroups": "No extension or connector in this organization provides tools yet.",
+      "configure": "Configure",
+      "configureGroup": "Configure {name}",
+      "sheetTools": "Tools of {name}",
+      "sheetDone": "Done",
+      "sheetHint": "Tick the tools the agent may call; a policy can only be tightened. The changes are saved with this page.",
+      "loadingTools": "Reading the tools…",
+      "connectorToolsUnreadable": "This connector's tools could not be read. Try again later.",
+      "connectorToolUnavailable": "Unavailable: this tool is off, waiting for review, or gone from the connector."
     },
     "params": {
       "default": "Default",

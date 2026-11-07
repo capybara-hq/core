@@ -165,7 +165,7 @@ describe("the agent page by section (agent profile design §3)", () => {
     expect(current()).toBe(P_.sections["quick-actions"]);
     expect(screen.getByRole("region", { name: P_.sections["quick-actions"] })).toBeTruthy();
     await view.navigate("/agents/ag1?s=tools");
-    expect(screen.getByRole("group", { name: en.agents.form.builtinLabel })).toBeTruthy();
+    expect(screen.getByRole("list", { name: en.agents.form.builtinLabel })).toBeTruthy();
     await view.navigate("/agents/ag1?s=nonsense");
     expect(current()).toBe(P_.sections.basics);
   });
@@ -796,7 +796,7 @@ describe("the agent page by section (agent profile design §3)", () => {
   it("/agents/<id>?s=tools: a first render from the hydrated cache makes no browser read", async () => {
     const browser = stubApi({});
     await renderEditAgent({ routes: routes(), section: "tools" });
-    expect(screen.getByRole("group", { name: en.agents.form.builtinLabel })).toBeTruthy();
+    expect(screen.getByRole("list", { name: en.agents.form.builtinLabel })).toBeTruthy();
     await settle();
     expect(browser.filter((c) => c.method === "GET")).toEqual([]);
   });

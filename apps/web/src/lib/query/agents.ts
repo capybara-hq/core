@@ -127,11 +127,15 @@ export const agentFormQueries = (
       ]),
 ];
 
-/** The ids of the connectors whose tools `agent` takes as a whole (the form lists their tools). */
-export const selectedConnectors = (agent: Agent | undefined): string[] =>
-  (agent?.definition.tools ?? []).flatMap((r) =>
-    r.kind === "connector" && r.tools === "all" ? [r.connectorId] : [],
-  );
+/**
+ * The ids of the connectors `agent` uses, whole or by tool name (the Tools section lists their
+ * tools).
+ */
+export const selectedConnectors = (agent: Agent | undefined): string[] => [
+  ...new Set(
+    (agent?.definition.tools ?? []).flatMap((r) => (r.kind === "connector" ? [r.connectorId] : [])),
+  ),
+];
 
 /** The details (tools) of the connectors the edited agent uses. */
 export const agentConnectorQueries = (orgId: string, agent: Agent) =>

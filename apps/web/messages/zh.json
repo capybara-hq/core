@@ -442,14 +442,13 @@
       "toolsSectionHint": "智能体可以调用的工具。策略只能收紧：改为需审批，或禁止。",
       "builtinLabel": "内置工具",
       "builtin": {
-        "AskUserQuestion": "向用户提问（AskUserQuestion）",
-        "ReadToolOutput": "读取存档的工具结果（ReadToolOutput）",
-        "SkillWrite": "编写技能（SkillWrite）",
-        "WebSearch": "搜索网页（WebSearch）",
-        "WebFetch": "读取网页（WebFetch）"
+        "AskUserQuestion": "向用户提问",
+        "ReadToolOutput": "读取存档的工具结果",
+        "SkillWrite": "编写技能",
+        "WebSearch": "搜索网页",
+        "WebFetch": "读取网页"
       },
       "connectorsLabel": "连接器",
-      "connectorTools": "{name} 的全部工具",
       "noConnectors": "还没有安装连接器。",
       "extensionToolsLabel": "扩展工具",
       "noExtensionTools": "本组织启用的扩展没有提供工具。",
@@ -565,7 +564,28 @@
       },
       "webUnavailable": "本组织没有可用的网页提供方：需要组织管理员在扩展设置里启用并配置一个；如果已启用多个，则选择一个默认提供方。之后选中的网页工具才能使用。",
       "unavailableSkill": "不可用：{name}",
-      "unavailableSkillHint": "这些平台技能在本组织已停用，智能体运行时不会加载；组织管理员重新启用后即可恢复。取消勾选才会移除引用。"
+      "unavailableSkillHint": "这些平台技能在本组织已停用，智能体运行时不会加载；组织管理员重新启用后即可恢复。取消勾选才会移除引用。",
+      "groupsLabel": "扩展和连接器",
+      "groupKind": {
+        "extension": "扩展",
+        "connector": "连接器"
+      },
+      "groupSummary": "已启用 {on}/{total} 个工具",
+      "groupAsk": "{count} 个需审批",
+      "groupDeny": "{count} 个禁止",
+      "groupUnused": "未启用",
+      "groupUsed": "已启用",
+      "groupUnavailable": "有工具不可用",
+      "groupNoTools": "这里没有可用的工具。",
+      "noGroups": "本组织还没有提供工具的扩展或连接器。",
+      "configure": "配置",
+      "configureGroup": "配置 {name}",
+      "sheetTools": "{name} 的工具",
+      "sheetDone": "完成",
+      "sheetHint": "勾选智能体可以调用的工具；策略只能收紧。修改随本页的保存一起生效。",
+      "loadingTools": "正在读取工具…",
+      "connectorToolsUnreadable": "暂时读不到这个连接器的工具，稍后重试。",
+      "connectorToolUnavailable": "不可用：这个工具已停用、待复核或已不在连接器里。"
     },
     "params": {
       "default": "默认",
