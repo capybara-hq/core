@@ -61,7 +61,8 @@ export const PLATFORM_EXCLUSIONS: readonly {
   {
     route: "PATCH /api/v1/admin/models/:provider/disabled",
     category: "later",
-    reason: "Platform model disabled list write that an agent could mirror later behind confirmation",
+    reason:
+      "Platform model disabled list write that an agent could mirror later behind confirmation",
     issue: "https://github.com/capybara-hq/core/issues/91",
   },
   {

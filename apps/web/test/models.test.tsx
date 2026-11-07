@@ -518,6 +518,8 @@ describe("sub-agent model tiers on the purposes page", () => {
           ],
         }),
       "GET /api/v1/orgs/o1/models": () => json(200, { providers: [ALPHA] }),
+      "GET /api/v1/orgs/o1/models/catalog": () => json(200, { providers: [ALPHA] }),
+      "GET /api/v1/orgs/o1/extensions": () => json(200, { extensions: [] }),
     });
     await renderRouteWithCache("/settings/models", lastStubRoutes(), { locale });
     expect((await purposeBox("title")).getByText(m.models.purpose.hint.titles)).toBeTruthy();

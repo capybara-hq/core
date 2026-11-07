@@ -337,9 +337,11 @@ describe("/settings/models: the org's catalog", () => {
     orgRoutes("following");
     await renderRouteWithCache("/settings/models", lastStubRoutes());
     await screen.findByRole("switch", { name: "Alpha Large" });
+    // rows are found by their title (purpose ids never show)
+    const TITLES: Record<string, string> = { eval: "Eval judge", "embed.docs": "Embeddings" };
     const rowOf = (purpose: string) =>
-      [...document.querySelectorAll('[data-part="item-list-code"]')]
-        .find((el) => el.textContent === purpose)
+      [...document.querySelectorAll('[data-part="item-list-title"]')]
+        .find((el) => el.textContent === TITLES[purpose])
         ?.closest('[data-part="item-list-row"]') as HTMLElement;
     const evalBox = within(rowOf("eval"));
     expect(
