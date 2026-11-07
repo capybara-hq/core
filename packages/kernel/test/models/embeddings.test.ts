@@ -186,9 +186,9 @@ describe("ctx.models.embed", { timeout: 60_000 }, () => {
     expect((unmapped as ApiError).code).toBe("model.unconfigured");
     await map(PROBE);
     const res = await owner({
-      method: "PUT",
+      method: "PATCH",
       url: `/api/v1/orgs/${orgId}/models/model-embed-probe/disabled`,
-      payload: { models: ["probe-embed"] },
+      payload: { disable: ["probe-embed"] },
     });
     expect(res.statusCode, res.body).toBe(200);
     const e = await rejection(ctx().models.embed({ orgId, purpose: PURPOSE, input: ["t1"] }));

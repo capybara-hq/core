@@ -15,6 +15,7 @@ import type { ProviderModels } from "../../../../lib/agents";
 import { extensionLabel, labelLocale } from "../../../../lib/extension-label";
 import {
   type AdminProvider,
+  type ModelDisableChange,
   type PurposeTarget,
   type PurposeView,
   putOrgPurpose,
@@ -188,7 +189,7 @@ function OrgProvider({
   orgId: string;
   provider: AdminProvider;
   pending: boolean;
-  onChange(provider: string, previous: string[], next: string[]): void;
+  onChange(provider: string, change: ModelDisableChange): void;
 }) {
   const t = useTranslations("models");
   const locale = useLocale();
@@ -243,13 +244,7 @@ function OrgProvider({
       models={p.status === "ok" ? p.models : []}
       failed={p.status !== "ok"}
       pending={pending}
-      onChange={(next) =>
-        onChange(
-          p.provider,
-          p.models.filter((m) => m.disabled === true).map((m) => m.id),
-          next,
-        )
-      }
+      onChange={(change) => onChange(p.provider, change)}
     />
   );
 }

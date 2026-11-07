@@ -4,21 +4,24 @@ import { Callout, useToast } from "@capybara-hq/design";
 import { useLocale, useTranslations } from "next-intl";
 import { type ReactNode, useState } from "react";
 import {
+  invertDisableChange,
+  type ModelDisableChange,
   type ModelDisableResult,
   type PurposeView,
-  putAdminDisabledModels,
-  putOrgDisabledModels,
+  patchAdminDisabledModels,
+  patchOrgDisabledModels,
 } from "../lib/models";
 import { useAppMutation } from "../lib/query/mutation";
 import { useErrorMessage } from "../lib/use-error-message";
 
-type Notice = { provider: string; previous: string[]; result: ModelDisableResult };
+type Notice = { provider: string; change: ModelDisableChange; result: ModelDisableResult };
 
 /**
- * Writes a provider's disabled list (spec B §5.3) and keeps what the kernel answers: a disabling is
+ * Changes a provider's disabled list (spec B §5.3) and keeps what the kernel answers: a disabling is
  * never refused, so when agents or purposes already use a model it turned off, `notice` is a warn
- * Callout (drawn above the section) that names them and offers 「撤销」, which writes the list
- * from before. `change(provider, previous, next)` is the catalog's `onChange` with its context.
+ * Callout (drawn above the section) that names them and offers 「撤销」, which sends the inverse
+ * change (only the ids the change named). `change(provider, change)` is the catalog's `onChange`
+ * with its provider.
  */
 export function useModelDisabling({
   scope,
@@ -31,7 +34,7 @@ export function useModelDisabling({
   purposes?: PurposeView[];
   invalidates(): (readonly unknown[])[];
 }): {
-  change(provider: string, previous: string[], next: string[]): void;
+  change(provider: string, change: ModelDisableChange): void;
   pending: boolean;
   notice: ReactNode;
 } {
@@ -41,20 +44,20 @@ export function useModelDisabling({
   const errorMessage = useErrorMessage();
   const [notice, setNotice] = useState<Notice | null>(null);
   const write = useAppMutation({
-    fn: (v: { provider: string; models: string[] }) =>
+    fn: (v: { provider: string; change: ModelDisableChange }) =>
       scope === "platform"
-        ? putAdminDisabledModels(v.provider, v.models)
-        : putOrgDisabledModels(scope.orgId, v.provider, v.models),
+        ? patchAdminDisabledModels(v.provider, v.change)
+        : patchOrgDisabledModels(scope.orgId, v.provider, v.change),
     invalidates,
   });
 
-  const run = (provider: string, models: string[], previous: string[] | null) =>
+  const run = (provider: string, change: ModelDisableChange, undoable: boolean) =>
     write.mutate(
-      { provider, models },
+      { provider, change },
       {
         onSuccess: (result) => {
           const used = result.affected.agents.length + result.affected.purposes.length;
-          setNotice(previous !== null && used > 0 ? { provider, previous, result } : null);
+          setNotice(undoable && used > 0 ? { provider, change, result } : null);
         },
         onError: (e) => toast.error(errorMessage(e)),
       },
@@ -73,7 +76,7 @@ export function useModelDisabling({
     ].join(locale === "zh" ? "、" : ", ");
 
   return {
-    change: (provider, previous, next) => run(provider, next, previous),
+    change: (provider, change) => run(provider, change, true),
     pending: write.isPending,
     notice:
       notice === null ? null : (
@@ -82,7 +85,7 @@ export function useModelDisabling({
           action={{
             label: t("undo"),
             onSelect: () => {
-              run(notice.provider, notice.previous, null);
+              run(notice.provider, invertDisableChange(notice.change), false);
             },
           }}
         >

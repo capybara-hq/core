@@ -19,7 +19,7 @@ import { useLocale, useTranslations } from "next-intl";
 import { type ReactNode, useMemo, useState } from "react";
 import type { ModelInfo, ModelKind } from "../lib/agents";
 import { labelLocale } from "../lib/extension-label";
-import { kindOf, MODEL_KINDS } from "../lib/models";
+import { kindOf, MODEL_KINDS, type ModelDisableChange } from "../lib/models";
 
 /** Rows per page of a kind's table: a provider can list hundreds of models. */
 export const CATALOG_PAGE_SIZE = 50;
@@ -35,7 +35,8 @@ function describe(d: ModelInfo["description"], lang: "zh" | "en"): string | unde
  * when the models have several publishers, the publisher filter; below it one table per kind
  * (counts in each table's toolbar, 「全部关闭」 / 「全部开启」 for the kind's models of the chosen
  * publisher) with a switch per model. The switches change the provider's disabled list: `onChange`
- * gets the whole list after the change (the kernel replaces the provider's list with it). Used by
+ * gets only the ids whose state changes (`disable` / `enable`); ids the page does not show keep
+ * their stored state. Used by
  * `/settings/models` (the org's list) and `/admin/models` (the platform's, with price columns).
  */
 export function ModelCatalog<M extends ModelInfo>({
@@ -62,7 +63,7 @@ export function ModelCatalog<M extends ModelInfo>({
   failed?: boolean;
   /** A change is being saved: the switches wait. */
   pending?: boolean;
-  onChange(disabled: string[]): void;
+  onChange(change: ModelDisableChange): void;
   /** Columns between the model and the switch (capabilities, prices). */
   columns?: Column<M>[];
   rowMenu?: (m: M) => MenuItem[];
@@ -78,10 +79,6 @@ export function ModelCatalog<M extends ModelInfo>({
 
   const publishers = useMemo(
     () => [...new Set(models.flatMap((m) => (m.publisher ? [m.publisher] : [])))].sort(),
-    [models],
-  );
-  const disabled = useMemo(
-    () => models.filter((m) => m.disabled === true).map((m) => m.id),
     [models],
   );
   const q = search.trim().toLowerCase();
@@ -100,16 +97,18 @@ export function ModelCatalog<M extends ModelInfo>({
     .map((g) => ({ ...g, rows: g.all.filter((m) => matchesSearch(m) && inPublisher(m)) }))
     .filter((g) => g.rows.length > 0);
 
+  // Only the rows on screen whose state changes are sent
   const bulk = (kind: ModelKind, off: boolean) => {
     const ids = models
-      .filter((m) => kindOf(m) === kind && inPublisher(m) && matchesSearch(m))
+      .filter(
+        (m) =>
+          kindOf(m) === kind && inPublisher(m) && matchesSearch(m) && (m.disabled === true) !== off,
+      )
       .map((m) => m.id);
-    onChange(
-      off ? [...new Set([...disabled, ...ids])] : disabled.filter((id) => !ids.includes(id)),
-    );
+    onChange(off ? { disable: ids, enable: [] } : { disable: [], enable: ids });
   };
   const toggle = (m: M, on: boolean) =>
-    onChange(on ? disabled.filter((id) => id !== m.id) : [...new Set([...disabled, m.id])]);
+    onChange(on ? { disable: [], enable: [m.id] } : { disable: [m.id], enable: [] });
 
   const modelColumn: Column<M> = {
     key: "model",

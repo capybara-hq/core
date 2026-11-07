@@ -253,9 +253,9 @@ describe("Agent HTTP", () => {
     const fake2 = { provider: "model-fake", model: "fake-2" };
     const agent = await createAgent(req, orgId, { definition: { ...definition, model: fake2 } });
     const off = await req({
-      method: "PUT",
+      method: "PATCH",
       url: `/api/v1/orgs/${orgId}/models/model-fake/disabled`,
-      payload: { models: ["fake-2"] },
+      payload: { disable: ["fake-2"] },
     });
     expect(off.statusCode, off.body).toBe(200);
     const url = `/api/v1/orgs/${orgId}/agents/${agent.id}`;

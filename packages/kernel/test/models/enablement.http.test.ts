@@ -151,18 +151,31 @@ async function catalog(req: Req, orgId: string): Promise<ProviderView[]> {
   return (res.json() as { providers: ProviderView[] }).providers;
 }
 
-const orgDisable = (req: Req, orgId: string, provider: string, list: string[]) =>
+/** A disabled-list change: ids to disable and to enable; an id in neither keeps its state. */
+type Change = { disable?: string[]; enable?: string[] };
+const orgDisable = (req: Req, orgId: string, provider: string, change: Change) =>
   req({
-    method: "PUT",
+    method: "PATCH",
     url: `/api/v1/orgs/${orgId}/models/${provider}/disabled`,
-    payload: { models: list },
+    payload: change,
   });
-const platformDisable = (provider: string, list: string[]) =>
+const platformDisable = (provider: string, change: Change) =>
   ent({
-    method: "PUT",
+    method: "PATCH",
     url: `/api/v1/admin/models/${provider}/disabled`,
-    payload: { models: list },
+    payload: change,
   });
+/** The stored disabled ids of `provider` on one layer (`null` = the platform). */
+const storedIds = async (orgId: string | null, provider = "model-fake") =>
+  (
+    await db
+      .selectFrom("model_disabled")
+      .select("model")
+      .where((eb) => (orgId === null ? eb("org_id", "is", null) : eb("org_id", "=", orgId)))
+      .where("provider", "=", provider)
+      .orderBy("model")
+      .execute()
+  ).map((r) => r.model);
 
 type Affected = {
   affected: {
@@ -227,7 +240,7 @@ describe("the org's disabled list", () => {
     });
 
     expect(await fakeIds(admin, org1)).toEqual(["fake-1", "fake-2", "fake-embed"]);
-    const res = await orgDisable(admin, org1, "model-fake", ["fake-2"]);
+    const res = await orgDisable(admin, org1, "model-fake", { disable: ["fake-2"] });
     expect(res.statusCode, res.body).toBe(200);
     const body = res.json() as Affected;
     expect(body.affected.agents.map((a) => [a.id, a.name, a.orgId]).sort()).toEqual(
@@ -266,33 +279,110 @@ describe("the org's disabled list", () => {
     ]);
 
     // the same list again changes nothing and lists nothing new
-    const again = (await orgDisable(admin, org1, "model-fake", ["fake-2"])).json() as Affected;
+    const again = (
+      await orgDisable(admin, org1, "model-fake", { disable: ["fake-2"] })
+    ).json() as Affected;
     expect(again.affected).toEqual({ agents: [], purposes: [] });
     // an id the provider does not list is kept harmlessly
-    expect((await orgDisable(admin, org1, "model-fake", ["fake-2", "nope"])).statusCode).toBe(200);
+    expect(
+      (await orgDisable(admin, org1, "model-fake", { disable: ["fake-2", "nope"] })).statusCode,
+    ).toBe(200);
     expect(await fakeIds(admin, org1)).toEqual(["fake-1", "fake-embed"]);
 
     // enabling again: back in the list
-    expect((await orgDisable(admin, org1, "model-fake", [])).statusCode).toBe(200);
+    expect((await orgDisable(admin, org1, "model-fake", { enable: ["fake-2"] })).statusCode).toBe(
+      200,
+    );
     expect(await fakeIds(admin, org1)).toEqual(["fake-1", "fake-2", "fake-embed"]);
   });
 
-  it("only org admins: a member's PUT and catalog are 403; an unknown provider is 404", async () => {
-    const res = await orgDisable(alice, org1, "model-fake", ["fake-2"]);
+  it("only org admins: a member's PATCH and catalog are 403; an unknown provider is 404", async () => {
+    const res = await orgDisable(alice, org1, "model-fake", { disable: ["fake-2"] });
     expect(res.statusCode).toBe(403);
     expect(
       (await alice({ method: "GET", url: `/api/v1/orgs/${org1}/models/catalog` })).statusCode,
     ).toBe(403);
-    const unknown = await orgDisable(admin, org1, "no-such-provider", ["x"]);
+    const unknown = await orgDisable(admin, org1, "no-such-provider", { disable: ["x"] });
     expect(unknown.statusCode).toBe(404);
     expect(errCode(unknown)).toBe("model.provider_not_found");
-    const bad = await admin({
-      method: "PUT",
-      url: `/api/v1/orgs/${org1}/models/model-fake/disabled`,
-      payload: { models: "fake-2" },
-    });
-    expect(bad.statusCode).toBe(400);
+    // the old whole-list body and an id in both lists are refused; nothing is written
+    for (const payload of [
+      { models: ["fake-2"] },
+      { disable: "fake-2" },
+      { disable: ["fake-2"], enable: ["fake-2"] },
+    ]) {
+      const bad = await admin({
+        method: "PATCH",
+        url: `/api/v1/orgs/${org1}/models/model-fake/disabled`,
+        payload,
+      });
+      expect(bad.statusCode, JSON.stringify(payload)).toBe(400);
+      expect(errCode(bad)).toBe("validation_failed");
+    }
     expect(await fakeIds(admin, org1)).toEqual(["fake-1", "fake-2", "fake-embed"]);
+  });
+});
+
+describe("a change never drops ids the caller did not name", () => {
+  it("an org row for a platform-disabled model survives an org toggle of another model", async () => {
+    expect((await orgDisable(admin, org1, "model-fake", { disable: ["fake-1"] })).statusCode).toBe(
+      200,
+    );
+    expect((await platformDisable("model-fake", { disable: ["fake-1"] })).statusCode).toBe(200);
+    // the org's page no longer shows fake-1; it toggles fake-2 off and on
+    const cat = (await catalog(admin, org1)).find((p) => p.provider === "model-fake");
+    expect(cat?.models.map((m) => m.id)).not.toContain("fake-1");
+    expect((await orgDisable(admin, org1, "model-fake", { disable: ["fake-2"] })).statusCode).toBe(
+      200,
+    );
+    expect((await orgDisable(admin, org1, "model-fake", { enable: ["fake-2"] })).statusCode).toBe(
+      200,
+    );
+    expect(await storedIds(org1)).toEqual(["fake-1"]);
+    // the platform re-enables fake-1: the org's own switch-off still holds
+    expect((await platformDisable("model-fake", { enable: ["fake-1"] })).statusCode).toBe(200);
+    expect(await fakeIds(admin, org1)).toEqual(["fake-2", "fake-embed"]);
+    expect(await fakeIds(owner, org2)).toEqual(["fake-1", "fake-2", "fake-embed"]);
+  });
+
+  it("an org id the provider no longer lists survives a change of another model", async () => {
+    expect((await orgDisable(admin, org1, "model-fake", { disable: ["gone"] })).statusCode).toBe(
+      200,
+    );
+    expect(
+      (await orgDisable(admin, org1, "model-fake", { disable: ["fake-2"], enable: [] })).statusCode,
+    ).toBe(200);
+    expect(await storedIds(org1)).toEqual(["fake-2", "gone"]);
+    expect((await orgDisable(admin, org1, "model-fake", { enable: ["fake-2"] })).statusCode).toBe(
+      200,
+    );
+    expect(await storedIds(org1)).toEqual(["gone"]);
+  });
+
+  it("the platform list likewise keeps the ids a change does not name", async () => {
+    expect((await platformDisable("model-fake", { disable: ["gone", "fake-1"] })).statusCode).toBe(
+      200,
+    );
+    expect((await platformDisable("model-fake", { disable: ["fake-2"] })).statusCode).toBe(200);
+    expect((await platformDisable("model-fake", { enable: ["fake-2"] })).statusCode).toBe(200);
+    expect(await storedIds(null)).toEqual(["fake-1", "gone"]);
+    // an id in both lists is refused and changes nothing
+    const both = await platformDisable("model-fake", { disable: ["fake-2"], enable: ["fake-2"] });
+    expect(both.statusCode).toBe(400);
+    expect(errCode(both)).toBe("validation_failed");
+    expect(await storedIds(null)).toEqual(["fake-1", "gone"]);
+    // only the changed ids are audited
+    const audit = await db
+      .selectFrom("audit_events")
+      .select("detail")
+      .where("action", "=", "model.disabled_set")
+      .orderBy("at")
+      .execute();
+    expect(audit.map((a) => a.detail)).toEqual([
+      { scope: "platform", disabled: ["fake-1", "gone"], enabled: [] },
+      { scope: "platform", disabled: ["fake-2"], enabled: [] },
+      { scope: "platform", disabled: [], enabled: ["fake-2"] },
+    ]);
   });
 });
 
@@ -300,7 +390,7 @@ describe("the platform's disabled list", () => {
   it("the super admin disables fake-1: no org sees it, not even in the catalog; the admin view flags it", async () => {
     const a1 = await agentId(owner, org1, "A1", FAKE_1);
     const a2 = await agentId(owner, org2, "A2", FAKE_2, FAKE_1);
-    const res = await platformDisable("model-fake", ["fake-1"]);
+    const res = await platformDisable("model-fake", { disable: ["fake-1"] });
     expect(res.statusCode, res.body).toBe(200);
     expect((res.json() as Affected).affected.agents.map((a) => [a.id, a.orgId]).sort()).toEqual(
       [
@@ -323,7 +413,9 @@ describe("the platform's disabled list", () => {
       ["fake-embed", false],
     ]);
     // an org's disabled list does not show in the platform view
-    expect((await orgDisable(admin, org1, "model-fake", ["fake-2"])).statusCode).toBe(200);
+    expect((await orgDisable(admin, org1, "model-fake", { disable: ["fake-2"] })).statusCode).toBe(
+      200,
+    );
     const view2 = await ent({ method: "GET", url: "/api/v1/admin/models" });
     expect(
       (view2.json() as { providers: ProviderView[] }).providers
@@ -332,9 +424,9 @@ describe("the platform's disabled list", () => {
     ).toEqual([true, false, false]);
     // only the super admin
     const denied = await owner({
-      method: "PUT",
+      method: "PATCH",
       url: "/api/v1/admin/models/model-fake/disabled",
-      payload: { models: [] },
+      payload: { enable: ["fake-1"] },
     });
     expect(denied.statusCode).toBe(403);
     // a deployment default cannot be set to a platform-disabled model
@@ -379,7 +471,9 @@ describe("agent save", () => {
       400,
       "agent.model_unavailable",
     ]);
-    expect((await orgDisable(admin, org1, "model-fake", ["fake-2"])).statusCode).toBe(200);
+    expect((await orgDisable(admin, org1, "model-fake", { disable: ["fake-2"] })).statusCode).toBe(
+      200,
+    );
     for (const [model, fallback] of [
       [FAKE_2, null],
       [FAKE_1, FAKE_2],
@@ -395,7 +489,9 @@ describe("agent save", () => {
 describe("runs and the switch plan", { timeout: 60_000 }, () => {
   it("a model disabled after the agent was saved: the step falls back to the enabled fallback", async () => {
     const id = await agentId(owner, org1, "Saved", FAKE_2, FAKE_1);
-    expect((await orgDisable(admin, org1, "model-fake", ["fake-2"])).statusCode).toBe(200);
+    expect((await orgDisable(admin, org1, "model-fake", { disable: ["fake-2"] })).statusCode).toBe(
+      200,
+    );
     const conv = await createConv(owner, org1, id);
     const res = await owner({
       method: "POST",
@@ -415,7 +511,7 @@ describe("runs and the switch plan", { timeout: 60_000 }, () => {
 
   it("without a fallback the run ends run.model_unavailable", async () => {
     const id = await agentId(owner, org1, "Saved", FAKE_2);
-    expect((await platformDisable("model-fake", ["fake-2"])).statusCode).toBe(200);
+    expect((await platformDisable("model-fake", { disable: ["fake-2"] })).statusCode).toBe(200);
     const conv = await createConv(owner, org1, id);
     await ok(owner, "POST", `/api/v1/orgs/${org1}/conversations/${conv}/messages`, {
       text: "echo:hello",
@@ -449,7 +545,9 @@ describe("runs and the switch plan", { timeout: 60_000 }, () => {
   it("the switch plan refuses a disabled model and an embedding model", async () => {
     const id = await agentId(owner, org1, "Switch", FAKE_1);
     const conv = await createConv(owner, org1, id);
-    expect((await orgDisable(admin, org1, "model-fake", ["fake-2"])).statusCode).toBe(200);
+    expect((await orgDisable(admin, org1, "model-fake", { disable: ["fake-2"] })).statusCode).toBe(
+      200,
+    );
     for (const model of [FAKE_2, FAKE_EMBED]) {
       const res = await owner({
         method: "POST",

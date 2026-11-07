@@ -313,8 +313,8 @@ describe("effective 与解析", () => {
 describe("kinds and disabled models (spec B §5.3)", () => {
   const FAKE_1 = { model: { provider: "model-fake", model: "fake-1" }, params: {} };
   const EMBED = { model: { provider: "model-fake", model: "fake-embed" }, params: {} };
-  const disable = (req: Req, url: string, models: string[]) =>
-    req({ method: "PUT", url, payload: { models } });
+  const disable = (req: Req, url: string, change: { disable?: string[]; enable?: string[] }) =>
+    req({ method: "PATCH", url, payload: change });
   const orgDisabledUrl = () => `/api/v1/orgs/${orgId}/models/model-fake/disabled`;
 
   it("a target's kind must equal the purpose's kind", async () => {
@@ -339,7 +339,7 @@ describe("kinds and disabled models (spec B §5.3)", () => {
   });
 
   it("an org override on a model disabled in the org is refused", async () => {
-    expect((await disable(admin, orgDisabledUrl(), ["fake-1"])).statusCode).toBe(200);
+    expect((await disable(admin, orgDisabledUrl(), { disable: ["fake-1"] })).statusCode).toBe(200);
     const res = await admin({ method: "PUT", url: orgUrl("title"), payload: { target: FAKE_1 } });
     expect(res.statusCode, res.body).toBe(400);
     expect(errCode(res)).toBe("validation_failed");
@@ -351,7 +351,7 @@ describe("kinds and disabled models (spec B §5.3)", () => {
     await put(ent, adminUrl("title"), FAKE_1);
     const other = await createOrg(owner, "Other");
     const purposes = k.app.get(ModelPurposesService);
-    expect((await disable(admin, orgDisabledUrl(), ["fake-1"])).statusCode).toBe(200);
+    expect((await disable(admin, orgDisabledUrl(), { disable: ["fake-1"] })).statusCode).toBe(200);
     await expect(purposes.resolve(orgId, "title")).rejects.toMatchObject({
       code: "model.unconfigured",
     });
@@ -359,10 +359,11 @@ describe("kinds and disabled models (spec B §5.3)", () => {
     // the org's view still shows the mapping; only resolving treats it as unconfigured
     expect(find(await list(admin, orgUrl()), "title")).toMatchObject({ effective: FAKE_1 });
     // an override disabled later is unconfigured too (no silent fall back to the default)
-    expect((await disable(admin, orgDisabledUrl(), [])).statusCode).toBe(200);
+    expect((await disable(admin, orgDisabledUrl(), { enable: ["fake-1"] })).statusCode).toBe(200);
     await put(admin, orgUrl("title"), FAKE_1);
     expect(
-      (await disable(ent, "/api/v1/admin/models/model-fake/disabled", ["fake-1"])).statusCode,
+      (await disable(ent, "/api/v1/admin/models/model-fake/disabled", { disable: ["fake-1"] }))
+        .statusCode,
     ).toBe(200);
     await expect(purposes.resolve(orgId, "title")).rejects.toMatchObject({
       code: "model.unconfigured",

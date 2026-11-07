@@ -687,11 +687,11 @@ describe("整轮回放", { timeout: 60_000 }, () => {
       .execute();
     const setId = await createSet();
     await addCase(setId, conv, src?.id as string);
-    const disable = (models: string[]) =>
+    const disable = (models: string[], enable: string[] = []) =>
       admin({
-        method: "PUT",
+        method: "PATCH",
         url: `/api/v1/orgs/${orgId}/models/model-fake/disabled`,
-        payload: { models },
+        payload: { disable: models, enable },
       });
     // the run's candidate check passes (fake-2 enabled), then the org disables it
     onSeeded = async () => {
@@ -707,7 +707,7 @@ describe("整轮回放", { timeout: 60_000 }, () => {
       expect(JSON.stringify(r?.error)).toContain("fake-2 is disabled");
     } finally {
       onSeeded = undefined;
-      expect((await disable([])).statusCode).toBe(200);
+      expect((await disable([], ["fake-2"])).statusCode).toBe(200);
     }
   });
 

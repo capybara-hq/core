@@ -224,11 +224,11 @@ describe("replayStep", () => {
   });
 
   it("a candidate model disabled in the snapshot's org is refused before any request (spec B §5.3)", async () => {
-    const disable = (models: string[]) =>
+    const disable = (models: string[], enable: string[] = []) =>
       owner({
-        method: "PUT",
+        method: "PATCH",
         url: `/api/v1/orgs/${orgId}/models/model-eval/disabled`,
-        payload: { models },
+        payload: { disable: models, enable },
       });
     expect((await disable(["eval-1"])).statusCode).toBe(200);
     try {
@@ -242,7 +242,7 @@ describe("replayStep", () => {
       expect(err).toMatchObject({ code: "agent.model_unavailable" });
       expect(evalModelState().requests).toHaveLength(0);
     } finally {
-      expect((await disable([])).statusCode).toBe(200);
+      expect((await disable([], ["eval-1"])).statusCode).toBe(200);
     }
   });
 

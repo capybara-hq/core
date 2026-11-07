@@ -156,11 +156,11 @@ describe("GET /admin/models", () => {
     expect(body.currency).toBe("USD");
   });
 
-  it("PUT models/:provider/disabled: the platform list flags models in the view; audited", async () => {
+  it("PATCH models/:provider/disabled: the platform list flags models in the view; audited", async () => {
     const res = await ent({
-      method: "PUT",
+      method: "PATCH",
       url: "/api/v1/admin/models/model-eval/disabled",
-      payload: { models: ["eval-2", "eval-v"] },
+      payload: { disable: ["eval-2", "eval-v"] },
     });
     expect(res.statusCode, res.body).toBe(200);
     expect(res.json()).toEqual({ affected: { agents: [], purposes: [] } });
@@ -190,15 +190,15 @@ describe("GET /admin/models", () => {
       },
     ]);
     const unknown = await ent({
-      method: "PUT",
+      method: "PATCH",
       url: "/api/v1/admin/models/nope/disabled",
-      payload: { models: [] },
+      payload: { disable: [] },
     });
     expect(unknown.statusCode).toBe(404);
     const denied = await owner({
-      method: "PUT",
+      method: "PATCH",
       url: "/api/v1/admin/models/model-eval/disabled",
-      payload: { models: [] },
+      payload: { enable: ["eval-2"] },
     });
     expect(denied.statusCode).toBe(403);
   });

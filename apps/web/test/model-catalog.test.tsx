@@ -108,7 +108,7 @@ describe("ModelCatalog", () => {
     expect(screen.queryByRole("combobox", { name: en.models.catalog.publisher })).toBeNull();
   });
 
-  it("turn all off for a kind sends the kind's ids plus the ones already disabled, once", async () => {
+  it("turn all off for a kind sends only the kind's ids that are on, once", async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
     renderPage(
@@ -118,12 +118,13 @@ describe("ModelCatalog", () => {
       regionOf(en.models.kind.chat).getByRole("button", { name: en.models.catalog.turnAllOff }),
     );
     expect(onChange).toHaveBeenCalledTimes(1);
-    const sent = onChange.mock.calls[0]?.[0] as string[];
+    const sent = onChange.mock.calls[0]?.[0] as { disable: string[]; enable: string[] };
     const chatIds = Array.from({ length: 120 }, (_, i) => `chat-${i}`);
-    expect([...sent].sort()).toEqual([...chatIds, "emb-3"].sort());
+    expect([...sent.disable].sort()).toEqual([...chatIds].sort());
+    expect(sent.enable).toEqual([]);
   });
 
-  it("bulk follows the publisher filter; turn all on removes only that kind's ids", async () => {
+  it("bulk follows the publisher filter; turn all on enables only that kind's disabled ids", async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
     const off = ["chat-0", "chat-1", "emb-3"];
@@ -139,7 +140,7 @@ describe("ModelCatalog", () => {
       regionOf(en.models.kind.chat).getByRole("button", { name: en.models.catalog.turnAllOn }),
     );
     // chat-0 is acme (even index), chat-1 is zeta: only chat-0 comes back on
-    expect(onChange).toHaveBeenCalledWith(["chat-1", "emb-3"]);
+    expect(onChange).toHaveBeenCalledWith({ disable: [], enable: ["chat-0"] });
   });
 
   it("a switch changes one model; the retiring marker is shown", async () => {
@@ -161,7 +162,7 @@ describe("ModelCatalog", () => {
     );
     expect(screen.getByText(en.models.catalog.retiring)).toBeTruthy();
     await user.click(screen.getByRole("switch", { name: "Old Model" }));
-    expect(onChange).toHaveBeenCalledWith(["old"]);
+    expect(onChange).toHaveBeenCalledWith({ disable: ["old"], enable: [] });
   });
 });
 
@@ -176,9 +177,11 @@ describe("bulk follows the rows on screen", () => {
     const chat = regionOf(en.models.kind.chat);
     expect(chat.getByText("11")).toBeTruthy();
     await user.click(chat.getByRole("button", { name: en.models.catalog.turnAllOff }));
-    const want = ["chat-7", ...Array.from({ length: 10 }, (_, i) => `chat-7${i}`), "emb-3"];
-    const sent = (onChange.mock.calls[0] ?? [])[0] as string[];
-    expect([...sent].sort()).toEqual(want.sort());
+    const want = ["chat-7", ...Array.from({ length: 10 }, (_, i) => `chat-7${i}`)];
+    const sent = (onChange.mock.calls[0] ?? [])[0] as { disable: string[]; enable: string[] };
+    expect([...sent.disable].sort()).toEqual(want.sort());
+    // emb-3 (off, not on screen) is not named: it keeps its stored state
+    expect(sent.enable).toEqual([]);
   });
 });
 
@@ -301,10 +304,10 @@ describe("/settings/models: the org's catalog", () => {
     },
   );
 
-  it("a switch sends the org's whole list; the affected agents are listed and undo restores it", async () => {
+  it("a switch sends only its model; the affected agents are listed and undo sends the inverse", async () => {
     const calls = orgRoutes("following", {
-      "PUT /api/v1/orgs/o1/models/alpha/disabled": (c) =>
-        (bodyOf(c) as { models: string[] }).models.includes("alpha-large")
+      "PATCH /api/v1/orgs/o1/models/alpha/disabled": (c) =>
+        (bodyOf(c) as { disable: string[] }).disable.includes("alpha-large")
           ? json(200, {
               affected: {
                 agents: [{ id: "ag1", name: "Support bot", orgId: "o1" }],
@@ -316,18 +319,15 @@ describe("/settings/models: the org's catalog", () => {
     await renderRouteWithCache("/settings/models", lastStubRoutes());
     const user = userEvent.setup();
     await user.click(await screen.findByRole("switch", { name: "Alpha Large" }));
-    const puts = () => calls.filter((c) => c.method === "PUT");
+    const puts = () => calls.filter((c) => c.method === "PATCH");
     await vi.waitFor(() => expect(puts()).toHaveLength(1));
-    // alpha-small was already off
-    expect([...(bodyOf(puts()[0]) as { models: string[] }).models].sort()).toEqual([
-      "alpha-large",
-      "alpha-small",
-    ]);
+    // alpha-small was already off: it is not named, so it keeps its state
+    expect(bodyOf(puts()[0])).toEqual({ disable: ["alpha-large"], enable: [] });
     expect(await screen.findByText(/These agents or purposes use these models:/)).toBeTruthy();
     expect(screen.getByText(/Support bot, Eval judge/)).toBeTruthy();
     await user.click(screen.getByRole("button", { name: en.models.catalog.undo }));
     await vi.waitFor(() => expect(puts()).toHaveLength(2));
-    expect(bodyOf(puts()[1])).toEqual({ models: ["alpha-small"] });
+    expect(bodyOf(puts()[1])).toEqual({ disable: [], enable: ["alpha-large"] });
     await vi.waitFor(() =>
       expect(screen.queryByText(/These agents or purposes use these models:/)).toBeNull(),
     );
@@ -353,7 +353,7 @@ describe("/settings/models: the org's catalog", () => {
 });
 
 describe("/admin/models: the platform's switches", () => {
-  it("a switch sends the platform's whole list to the admin route; an org-configured provider says so", async () => {
+  it("a switch sends its model to the admin route; an org-configured provider says so", async () => {
     resetNavigation("/admin/models");
     const calls = stubApi({
       "GET /api/v1/admin/models": () =>
@@ -366,19 +366,16 @@ describe("/admin/models: the platform's switches", () => {
           currency: "EUR",
         }),
       "GET /api/v1/admin/model-purposes": () => json(200, { purposes: [] }),
-      "PUT /api/v1/admin/models/alpha/disabled": () =>
+      "PATCH /api/v1/admin/models/alpha/disabled": () =>
         json(200, { affected: { agents: [], purposes: [] } }),
     });
     await renderRouteWithCache("/admin/models", lastStubRoutes());
     expect(await screen.findByText(en.models.catalog.orgsConfigure)).toBeTruthy();
     const user = userEvent.setup();
     await user.click(await screen.findByRole("switch", { name: "Alpha Large" }));
-    await vi.waitFor(() => expect(calls.some((c) => c.method === "PUT")).toBe(true));
-    const put = calls.find((c) => c.method === "PUT");
-    expect(put?.url).toBe("/api/v1/admin/models/alpha/disabled");
-    expect([...(bodyOf(put) as { models: string[] }).models].sort()).toEqual([
-      "alpha-large",
-      "alpha-small",
-    ]);
+    await vi.waitFor(() => expect(calls.some((c) => c.method === "PATCH")).toBe(true));
+    const patch = calls.find((c) => c.method === "PATCH");
+    expect(patch?.url).toBe("/api/v1/admin/models/alpha/disabled");
+    expect(bodyOf(patch)).toEqual({ disable: ["alpha-large"], enable: [] });
   });
 });

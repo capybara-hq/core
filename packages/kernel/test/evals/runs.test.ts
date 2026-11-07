@@ -996,9 +996,9 @@ describe("校验与权限", () => {
     expect(JSON.stringify(badParams.json())).toContain("model-eval.level");
     // a candidate on a model disabled in the org (spec B §5.3)
     const off = await admin({
-      method: "PUT",
+      method: "PATCH",
       url: `/api/v1/orgs/${orgId}/models/model-eval/disabled`,
-      payload: { models: ["eval-1"] },
+      payload: { disable: ["eval-1"] },
     });
     expect(off.statusCode, off.body).toBe(200);
     const disabled = await post({ mode: "step", candidate: { model: EVAL_1 } });

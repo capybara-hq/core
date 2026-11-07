@@ -207,18 +207,38 @@ export interface ModelDisableResult {
 export const getModelsCatalog = (orgId: string) =>
   apiFetch<{ providers: AdminProvider[] }>(`/api/v1/orgs/${enc(orgId)}/models/catalog`);
 
-/** Replaces the org's disabled ids of a provider; the answer lists what now uses a disabled model. */
-export const putOrgDisabledModels = (orgId: string, provider: string, models: string[]) =>
+/**
+ * A change to a provider's disabled list: the ids to turn off and the ids to turn on. Ids in
+ * neither list keep their stored state, so a page never drops ids it does not show (a model the
+ * platform disabled, one the provider stopped listing).
+ */
+export interface ModelDisableChange {
+  disable: string[];
+  enable: string[];
+}
+
+/** The change that undoes `c`. */
+export const invertDisableChange = (c: ModelDisableChange): ModelDisableChange => ({
+  disable: c.enable,
+  enable: c.disable,
+});
+
+/** Changes the org's disabled ids of a provider; the answer lists what now uses a disabled model. */
+export const patchOrgDisabledModels = (
+  orgId: string,
+  provider: string,
+  change: ModelDisableChange,
+) =>
   apiFetch<ModelDisableResult>(
     `/api/v1/orgs/${enc(orgId)}/models/${enc(provider)}/disabled`,
-    json("PUT", { models }),
+    json("PATCH", change),
   );
 
-/** Replaces the platform's disabled ids of a provider (super admin). */
-export const putAdminDisabledModels = (provider: string, models: string[]) =>
+/** Changes the platform's disabled ids of a provider (super admin). */
+export const patchAdminDisabledModels = (provider: string, change: ModelDisableChange) =>
   apiFetch<ModelDisableResult>(
     `/api/v1/admin/models/${enc(provider)}/disabled`,
-    json("PUT", { models }),
+    json("PATCH", change),
   );
 
 /**

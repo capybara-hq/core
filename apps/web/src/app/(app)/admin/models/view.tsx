@@ -31,6 +31,7 @@ import {
   type AdminProvider,
   encodeModel,
   findPrice,
+  type ModelDisableChange,
   type ModelPrice,
   type PurposeTarget,
   type PurposeView,
@@ -249,7 +250,7 @@ function ProviderModels({
   provider: AdminProvider;
   data: AdminModels;
   pending: boolean;
-  onDisable(provider: string, previous: string[], next: string[]): void;
+  onDisable(provider: string, change: ModelDisableChange): void;
 }) {
   const t = useTranslations("models");
   const locale = useLocale();
@@ -372,13 +373,7 @@ function ProviderModels({
       models={p.status === "ok" ? p.models : []}
       failed={p.status !== "ok"}
       pending={pending}
-      onChange={(next) =>
-        onDisable(
-          p.provider,
-          p.models.filter((m) => m.disabled === true).map((m) => m.id),
-          next,
-        )
-      }
+      onChange={(change) => onDisable(p.provider, change)}
       columns={columns}
       rowMenu={(m) => [
         {

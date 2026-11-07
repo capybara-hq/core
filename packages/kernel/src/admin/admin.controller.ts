@@ -24,8 +24,8 @@ import { KERNEL_LOGGER } from "../infra/tokens.js";
 import { createZodDto } from "../infra/validation/create-zod-dto.js";
 import { ZBody, ZParam, ZQuery } from "../infra/validation/zod-params.js";
 import {
-  type ModelDisabledPut,
-  ModelDisabledPutDto,
+  type ModelDisabledPatch,
+  ModelDisabledPatchDto,
   type ModelProviderParams,
   ModelProviderParamsDto,
 } from "../models/enablement.controller.js";
@@ -242,18 +242,18 @@ export class AdminController {
   }
 
   /**
-   * The platform's disabled models of one provider (spec B §5.3): replaces the list; such a model is
-   * invisible to every org. The response lists the agents and purposes, across orgs, that now point
+   * The platform's disabled models of one provider (spec B §5.3): disables and enables the ids the
+   * body names (others keep their state); such a model is invisible to every org. The response lists the agents and purposes, across orgs, that now point
    * at a newly disabled model (the disable is not refused for them).
    */
-  @Put("models/:provider/disabled")
-  async putModelsDisabled(
+  @Patch("models/:provider/disabled")
+  async patchModelsDisabled(
     @CurrentPrincipal() principal: Principal,
     @ZParam(ModelProviderParamsDto) params: z.infer<typeof ModelProviderParams>,
-    @ZBody(ModelDisabledPutDto) body: z.infer<typeof ModelDisabledPut>,
+    @ZBody(ModelDisabledPatchDto) body: z.infer<typeof ModelDisabledPatch>,
   ): Promise<ModelDisableResult> {
     const actor = requireUser(principal);
-    return this.enablement.setPlatform(params.provider, body.models, {
+    return this.enablement.setPlatform(params.provider, body, {
       accountId: actor.account.id,
       tokenId: patTokenId(actor),
     });

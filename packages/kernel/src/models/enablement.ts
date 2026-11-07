@@ -38,6 +38,15 @@ export interface ModelDisableResult {
   affected: { agents: AffectedModelAgent[]; purposes: AffectedModelPurpose[] };
 }
 
+/**
+ * A change to one layer's disabled list of a provider: ids to disable and ids to enable. An id in
+ * neither list keeps its stored state; an id in both is refused.
+ */
+export interface ModelDisableChange {
+  disable: string[];
+  enable: string[];
+}
+
 /** The acting person of a write. */
 export interface ModelDisableActor {
   accountId: string;
@@ -120,50 +129,59 @@ export class ModelEnablement {
   }
 
   /**
-   * Replaces the platform's disabled ids of `provider` with `models` (super admin, re-checked under
-   * the lock). Returns what now points at a newly disabled model, across orgs.
+   * Changes the platform's disabled ids of `provider` by `change` (super admin, re-checked under
+   * the lock): ids in neither list keep their stored state. Returns what now points at a newly
+   * disabled model, across orgs.
    */
   @Transactional()
   @CacheEvict({ key: `capk:model-disabled:${PLATFORM_SCOPE}` })
   async setPlatform(
     provider: string,
-    models: string[],
+    change: ModelDisableChange,
     actor: ModelDisableActor,
   ): Promise<ModelDisableResult> {
     await this.adminLock.lockAndAuthorize(actor.accountId);
-    return this.replace(null, provider, models, actor);
+    return this.apply(null, provider, change, actor);
   }
 
   /**
-   * Replaces the org's disabled ids of `provider` with `models` (`org.models.manage`, re-checked
-   * under the org lock). Returns what in the org now points at a newly disabled model (its agents,
-   * its overrides and the deployment defaults it uses).
+   * Changes the org's disabled ids of `provider` by `change` (`org.models.manage`, re-checked under
+   * the org lock): ids in neither list keep their stored state, so rows for models the org's page
+   * does not show (platform-disabled, or no longer listed) survive. Returns what in the org now
+   * points at a newly disabled model (its agents, its overrides and the deployment defaults it uses).
    */
   @Transactional()
   @CacheEvict({ key: "capk:model-disabled:org.#{0}" })
   async setOrg(
     orgId: string,
     provider: string,
-    models: string[],
+    change: ModelDisableChange,
     actor: ModelDisableActor,
   ): Promise<ModelDisableResult> {
     await this.orgLock.lockAndAuthorize(orgId, actor.accountId, "org.models.manage");
-    return this.replace(orgId, provider, models, actor);
+    return this.apply(orgId, provider, change, actor);
   }
 
-  private async replace(
+  private async apply(
     orgId: string | null,
     provider: string,
-    models: string[],
+    change: ModelDisableChange,
     actor: ModelDisableActor,
   ): Promise<ModelDisableResult> {
     if (!this.extensions.list("model-provider").some((e) => e.plugin === provider)) {
       throw new ApiError("model.provider_not_found", `Model provider ${provider} is not installed`);
     }
-    const want = [...new Set(models)].sort();
+    const disable = new Set(change.disable);
+    const both = change.enable.filter((m) => disable.has(m));
+    if (both.length > 0) {
+      throw new ApiError(
+        "validation_failed",
+        `A model cannot be both disabled and enabled: ${[...new Set(both)].join(", ")}`,
+      );
+    }
     const had = new Set((await this.rowsOf(orgId, provider)).map((r) => r.model));
-    const added = want.filter((m) => !had.has(m));
-    const removed = [...had].filter((m) => !want.includes(m)).sort();
+    const added = [...disable].filter((m) => !had.has(m)).sort();
+    const removed = [...new Set(change.enable)].filter((m) => had.has(m)).sort();
     if (removed.length > 0) {
       await this.db
         .deleteFrom("model_disabled")
