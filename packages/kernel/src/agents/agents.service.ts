@@ -449,6 +449,7 @@ export class AgentsService {
       profile?: ProfileInput;
     },
     actorTokenId?: string,
+    auditDetail?: Record<string, unknown>,
   ): Promise<{ agent: AgentView; warnings: AgentWarning[] }> {
     const { agent, warnings } = await this.createChecked(
       orgId,
@@ -456,6 +457,7 @@ export class AgentsService {
       request,
       null,
       actorTokenId,
+      auditDetail,
     );
     return { agent, warnings };
   }
@@ -478,8 +480,9 @@ export class AgentsService {
     },
     template: TemplateProvenance,
     actorTokenId?: string,
+    auditDetail?: Record<string, unknown>,
   ): Promise<{ agent: AgentView; warnings: AgentWarning[]; role: OrgRole }> {
-    return this.createChecked(orgId, actorAccountId, request, template, actorTokenId);
+    return this.createChecked(orgId, actorAccountId, request, template, actorTokenId, auditDetail);
   }
 
   private async createChecked(
@@ -493,6 +496,7 @@ export class AgentsService {
     },
     template: TemplateProvenance | null,
     actorTokenId: string | undefined,
+    auditDetail: Record<string, unknown> | undefined,
   ): Promise<{ agent: AgentView; warnings: AgentWarning[]; role: OrgRole }> {
     const input = { ...request, definition: deriveInstructions(request.definition, null) };
     // 先解析模型（可能访问供应商），不在持有组织行锁时做
@@ -509,6 +513,7 @@ export class AgentsService {
       toolKeys,
       template,
       actorTokenId,
+      auditDetail,
     );
     return { agent, warnings, role };
   }
@@ -526,6 +531,7 @@ export class AgentsService {
     toolKeys: Set<string>,
     template: TemplateProvenance | null,
     actorTokenId: string | undefined,
+    auditDetail: Record<string, unknown> | undefined,
   ): Promise<{ agent: AgentView; role: OrgRole }> {
     const t = this.db.db;
     const { role } = await this.orgLock.lockAndAuthorize(orgId, actorAccountId, "agents.create");
@@ -590,6 +596,7 @@ export class AgentsService {
         version: 1,
         visibility: input.visibility,
         ...(template !== null && { template: { id: template.id, version: template.version } }),
+        ...auditDetail,
       },
     });
     return { agent: await this.lookup.view(id), role };
@@ -648,6 +655,7 @@ export class AgentsService {
       expectedVersion?: number | undefined;
     },
     actorTokenId?: string,
+    auditDetail?: Record<string, unknown>,
   ): Promise<{ agent: AgentView; warnings: AgentWarning[] }> {
     const patch = request;
     const warnings = patch.definition ? await this.checkModels(patch.definition) : [];
@@ -659,6 +667,7 @@ export class AgentsService {
       patch,
       toolKeys,
       actorTokenId,
+      auditDetail,
     );
     return { agent, warnings };
   }
@@ -676,6 +685,7 @@ export class AgentsService {
     },
     toolKeys: Set<string> | null,
     actorTokenId: string | undefined,
+    auditDetail: Record<string, unknown> | undefined,
   ): Promise<AgentView> {
     const t = this.db.db;
     const before = await this.lockForWrite(orgId, agentId, actorAccountId);
@@ -775,6 +785,7 @@ export class AgentsService {
         ...(visibility !== before.visibility && {
           visibility: { from: before.visibility, to: visibility },
         }),
+        ...auditDetail,
       },
     });
     return this.lookup.view(agentId);
