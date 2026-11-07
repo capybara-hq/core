@@ -289,7 +289,7 @@ describe("agent page Tools section: one row per tool, groups in a Sheet", () => 
   );
 
   it.each(["zh", "en"] as const)(
-    "a selected tool the org turned off shows the switched-off reason (%s)",
+    "a selected tool the org turned off shows the switched-off reason on its row (%s)",
     async (locale) => {
       const m = msgs[locale].agents.form;
       const ref = { kind: "plugin", plugin: "todo", name: "write" };
@@ -303,8 +303,11 @@ describe("agent page Tools section: one row per tool, groups in a Sheet", () => 
           }),
       });
       await renderEditAgent({ section: "tools", locale });
-      const ext = await screen.findByRole("group", { name: TODO.displayName[locale] });
-      expect(within(ext).getByText(m.extensionToolOffInOrg)).toBeTruthy();
+      // the group row warns, the tool's row in the Sheet says why
+      const groups = await screen.findByRole("list", { name: m.groupsLabel });
+      expect(within(groups).getByText(m.groupUnavailable)).toBeTruthy();
+      const sheet = await openGroup(TODO.displayName[locale], locale);
+      expect(within(sheet).getByText(m.extensionToolOffInOrg)).toBeTruthy();
     },
   );
 
