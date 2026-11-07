@@ -46,7 +46,7 @@ export const MAINTENANCE_CONCURRENCY = 5;
 export class MaintenanceProcessor extends WorkerHost<Worker> {
   constructor(
     @Inject(Waits) private readonly waits: Pick<Waits, "processTimeout">,
-    @Inject(SandboxService) private readonly sandbox: Pick<SandboxService, "destroyFor">,
+    @Inject(SandboxService) private readonly sandbox: Pick<SandboxService, "destroyEnvironment">,
     @Inject(ToolDrift) private readonly drift: Pick<ToolDrift, "check">,
     @Inject(DirectorySync) private readonly directory: Pick<DirectorySync, "runSyncJob">,
     @Inject(RunQueue) private readonly runs: Pick<RunQueue, "ensureRun">,

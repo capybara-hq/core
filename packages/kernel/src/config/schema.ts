@@ -1282,11 +1282,11 @@ export const KernelConfigSchema = z.object({
       image: z
         .string()
         .min(1)
-        .default("capybara-sandbox:latest")
+        .optional()
         .meta(
           meta({
             description:
-              "Image for conversation sandboxes, used by the Docker sandbox extension (built from plugins/sandbox-docker/image of capybara-hq/plugins, e.g. by the compose sandbox profile; pre-pull it on every Docker node). The E2B extension ignores it and uses its own template setting",
+              "Image for environment instances, passed to the sandbox extension; unset (the default), each extension uses the image published with its own version (ghcr.io/capybara-hq/capybara-sandbox). Set it to a locally built or mirrored image for offline deployments",
           }),
         ),
       lockWaitSeconds: z
@@ -1296,7 +1296,7 @@ export const KernelConfigSchema = z.object({
         .meta(
           meta({
             description:
-              "Seconds a sandbox call waits while another command in the same conversation holds the sandbox before failing with sandbox.busy; keep it above the 60-second sandbox lock TTL so a call after a replica crash waits for the dead replica's lock to expire",
+              "Seconds a sandbox call waits for the environment's instance (while it is being created, resumed or suspended, or all its concurrent command slots are taken) before failing with sandbox.busy; keep it above the 60-second sandbox lock TTL so a call after a replica crash waits for the dead replica's lock to expire",
           }),
         ),
       maxConcurrentCommands: z
@@ -1309,7 +1309,7 @@ export const KernelConfigSchema = z.object({
           meta({
             hot: true,
             description:
-              "Sandbox commands and file operations that may run at the same time in one conversation's sandbox (sub-agents share their root conversation's sandbox); 1 runs them one at a time. Providers that do not declare concurrent exec always get 1",
+              "Sandbox commands and file operations that may run at the same time in one environment, shared by all its conversations and their sub-agents; 1 runs them one at a time",
           }),
         ),
       deliverMaxBytes: z
@@ -1334,7 +1334,7 @@ export const KernelConfigSchema = z.object({
             .meta(
               meta({
                 description:
-                  "Most background Bash tasks (run_in_background) that may run at once in one conversation's sandbox, sub-agents included; a launch beyond it is refused",
+                  "Most background Bash tasks (run_in_background) that may run at once in one environment, all its conversations and sub-agents included; a launch beyond it is refused",
               }),
             ),
           maxSeconds: z
@@ -1356,7 +1356,7 @@ export const KernelConfigSchema = z.object({
             .meta(
               meta({
                 description:
-                  "How often the worker checks the running background Bash tasks of every sandbox for a finish, in seconds; read when the worker starts",
+                  "How often the worker checks the running background Bash tasks of every environment for a finish, in seconds; read when the worker starts",
               }),
             ),
         })
@@ -1370,7 +1370,7 @@ export const KernelConfigSchema = z.object({
             .meta(
               meta({
                 description:
-                  "CPU cores for each sandbox; applies to sandboxes created after the change (E2B: set in the template)",
+                  "CPU cores for each environment instance; applies to instances created after the change (E2B: set in the template)",
               }),
             ),
           memoryMb: z
@@ -1381,7 +1381,7 @@ export const KernelConfigSchema = z.object({
             .meta(
               meta({
                 description:
-                  "Memory limit of each sandbox in MiB; applies to sandboxes created after the change (E2B: set in the template)",
+                  "Memory limit of each environment instance in MiB; applies to instances created after the change (E2B: set in the template)",
               }),
             ),
           diskMb: z
@@ -1392,7 +1392,7 @@ export const KernelConfigSchema = z.object({
             .meta(
               meta({
                 description:
-                  "Disk limit of each sandbox in MiB; applies to sandboxes created after the change (Docker: only with a volume driver that supports size; E2B: set by the template / plan)",
+                  "Disk limit of each environment's file system in MiB; applies to file systems created after the change (Docker: only with a volume driver that supports size; E2B: set by the template / plan)",
               }),
             ),
           maxCommandSeconds: z
@@ -1414,7 +1414,7 @@ export const KernelConfigSchema = z.object({
             .meta(
               meta({
                 description:
-                  "Minutes without use before a running sandbox is suspended (files are kept)",
+                  "Minutes without a command from any conversation of the environment before its running instance is suspended (files are kept, processes end)",
               }),
             ),
           destroyAfterInactiveDays: z
@@ -1425,7 +1425,7 @@ export const KernelConfigSchema = z.object({
             .meta(
               meta({
                 description:
-                  "Days without use before a sandbox is destroyed with its files; the next use starts an empty one",
+                  "Days without use before an environment's instance is destroyed; its files are kept until the environment is deleted, and the next use starts a new instance on them",
               }),
             ),
           maxRunningMinutes: z
@@ -1436,7 +1436,7 @@ export const KernelConfigSchema = z.object({
             .meta(
               meta({
                 description:
-                  "Minutes a sandbox may run continuously before it is suspended even while in use (skipped while a command is running)",
+                  "Minutes an environment's instance may run continuously before it is suspended even while in use (skipped while a command is running)",
               }),
             ),
           egress: z
@@ -1445,7 +1445,7 @@ export const KernelConfigSchema = z.object({
             .meta(
               meta({
                 description:
-                  "Outbound network from sandboxes: none, allowlist (only allowHosts) or open; applies to sandboxes created after the change, existing ones keep theirs until destroyed",
+                  "Outbound network from environment instances: none, allowlist (only allowHosts) or open; applies to instances created after the change, existing ones keep theirs until destroyed",
               }),
             ),
           allowHosts: z
@@ -1461,11 +1461,27 @@ export const KernelConfigSchema = z.object({
             .meta(
               meta({
                 description:
-                  "Hosts sandboxes may reach when egress is allowlist: lowercase hostnames, optional leading '*.', no IPs, ports or internal-only names; applies to sandboxes created after the change",
+                  "Hosts environment instances may reach when egress is allowlist: lowercase hostnames, optional leading '*.', no IPs, ports or internal-only names; applies to instances created after the change",
               }),
             ),
         })
         .prefault({} as never),
+    })
+    .prefault({} as never),
+  environments: z
+    .object({
+      maxPersonal: z
+        .number()
+        .int()
+        .min(1)
+        .default(10)
+        .meta(
+          meta({
+            hot: true,
+            description:
+              "Most personal environments a member may have in one org, the default one included; creating one more fails with environment.limit_reached",
+          }),
+        ),
     })
     .prefault({} as never),
   evals: z

@@ -7,7 +7,7 @@ import {
 } from "../../src/sandbox/jobs.js";
 import type { SandboxService } from "../../src/sandbox/sandbox.service.js";
 
-/** 成员离职后的一次性销毁任务（fix wave S2 minor 5）：投递与 worker 上的处理。 */
+/** The one-off destruction of environments (deleted environments, offboarding): enqueue and worker side. */
 
 /** A stand-in for the maintenance queue's producer side (`SandboxJobs`). */
 function stubQueue() {
@@ -22,34 +22,34 @@ function stubQueue() {
 const job = (data: unknown) => ({ data }) as Job;
 
 describe("sandbox-destroy-for", () => {
-  it("投递：任务名、对话 id、失败重试", async () => {
+  it("enqueue: job name, environment ids, retries on failure", async () => {
     const { jobs, added } = stubQueue();
     await jobs.destroy(["c1", "c2"]);
     expect(added).toEqual([
       {
         name: SANDBOX_DESTROY_FOR_JOB,
-        data: { conversationIds: ["c1", "c2"] },
+        data: { environmentIds: ["c1", "c2"] },
         opts: expect.objectContaining({ attempts: expect.any(Number) }),
       },
     ]);
     expect(SANDBOX_DESTROY_FOR_JOB).not.toContain(":");
   });
 
-  it("worker：逐个 destroyFor；有失败的记 warn 并让任务失败（整批重试），其余照常销毁", async () => {
+  it("worker: destroyEnvironment one by one; a failure is warned and fails the job (the batch is retried) after the others were destroyed", async () => {
     const called: string[] = [];
     const warns: string[] = [];
     const sandbox = {
-      destroyFor: async (id: string) => {
+      destroyEnvironment: async (id: string) => {
         called.push(id);
         if (id === "bad") throw new Error("provider down");
       },
     } as unknown as SandboxService;
     const log = { warn: (msg: string) => void warns.push(msg) };
     const run = (j: Job) => runSandboxDestroyFor(sandbox, log, j);
-    await run(job({ conversationIds: ["a", "b"] }));
+    await run(job({ environmentIds: ["a", "b"] }));
     expect(called).toEqual(["a", "b"]);
-    await expect(run(job({ conversationIds: ["c", "bad", "d"] }))).rejects.toThrow(/1 of 3/);
+    await expect(run(job({ environmentIds: ["c", "bad", "d"] }))).rejects.toThrow(/1 of 3/);
     expect(called).toEqual(["a", "b", "c", "bad", "d"]);
-    expect(warns).toEqual(["cannot destroy sandbox of an offboarded member; will retry"]);
+    expect(warns).toEqual(["cannot destroy environment; will retry"]);
   });
 });

@@ -18,7 +18,7 @@ import type { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { createFakeSandbox, fakeSandboxMeta } from "../fixtures/plugins/sandbox-fake/index.js";
 import { truncateTables } from "../helpers/db.js";
 import { orgSettingsFor } from "../helpers/identity.js";
-import { sandboxServiceFor } from "../helpers/sandbox.js";
+import { sandboxServiceFor, seedEnvironment } from "../helpers/sandbox.js";
 
 /**
  * 组织级沙箱 cpu / 内存（C19 / Ruling M16）：超级管理员在部署设置 `sandboxLimitOverrides` 里按组织覆盖，
@@ -98,13 +98,7 @@ async function newOrg(): Promise<string> {
   return id;
 }
 
-async function newConversation(org = orgId): Promise<string> {
-  const id = randomUUID();
-  await sql`INSERT INTO capybara.conversations (id, org_id, agent_id, account_id)
-    SELECT ${id}, o.id, (SELECT a.id FROM capybara.agents a WHERE a.org_id = o.id LIMIT 1), o.created_by
-    FROM capybara.orgs o WHERE o.id = ${org}`.execute(raw);
-  return id;
-}
+const newEnvironment = (org = orgId) => seedEnvironment(raw, org);
 
 /** 直接写部署设置（等同超级管理员 PUT /admin/settings 的结果）。 */
 const setOverrides = (value: unknown) =>
@@ -122,16 +116,25 @@ const service = () =>
     lockPollMs: 20,
   });
 
-const use = (s: SandboxService, conversationId: string, org = orgId) =>
-  s.withSandbox({ orgId: org, conversationId }, async (h) => h, signal());
-const limitsOf = async (s: SandboxService, conversationId: string, org = orgId) =>
-  (await fakeSandboxMeta(root, (await use(s, conversationId, org)).id))?.limits;
+const use = (s: SandboxService, environmentId: string, org = orgId) =>
+  s.withSandbox(
+    {
+      orgId: org,
+      environmentId,
+      holderConversationId: randomUUID(),
+      actor: { accountId: randomUUID(), conversationId: randomUUID() },
+    },
+    async (h) => h,
+    signal(),
+  );
+const limitsOf = async (s: SandboxService, environmentId: string, org = orgId) =>
+  (await fakeSandboxMeta(root, (await use(s, environmentId, org)).id))?.limits;
 
 beforeEach(async () => {
   await redis.flushdb();
   await truncateTables(
     raw,
-    "capybara.sandboxes, capybara.accounts, capybara.orgs, capybara.deployment_settings",
+    "capybara.environment_instances, capybara.environments, capybara.accounts, capybara.orgs, capybara.deployment_settings",
   );
   if (root) await rm(root, { recursive: true, force: true });
   root = await mkdtemp(join(tmpdir(), "cap-sandbox-limits-"));
@@ -168,13 +171,13 @@ describe("创建沙箱时按组织覆盖 cpu / memoryMb", () => {
     const other = await newOrg();
     await setOverrides({ [orgId]: { cpu: 2.5, memoryMb: 3072 } });
     const s = service();
-    expect(await limitsOf(s, await newConversation())).toMatchObject({
+    expect(await limitsOf(s, await newEnvironment())).toMatchObject({
       cpu: 2.5,
       memoryMb: 3072,
       diskMb: config.sandbox.limits.diskMb,
       egress: config.sandbox.limits.egress,
     });
-    expect(await limitsOf(s, await newConversation(other), other)).toMatchObject({
+    expect(await limitsOf(s, await newEnvironment(other), other)).toMatchObject({
       cpu: config.sandbox.limits.cpu,
       memoryMb: config.sandbox.limits.memoryMb,
     });
@@ -182,7 +185,7 @@ describe("创建沙箱时按组织覆盖 cpu / memoryMb", () => {
 
   it("只覆盖 memoryMb：cpu 用部署默认", async () => {
     await setOverrides({ [orgId]: { memoryMb: 8192 } });
-    expect(await limitsOf(service(), await newConversation())).toMatchObject({
+    expect(await limitsOf(service(), await newEnvironment())).toMatchObject({
       cpu: config.sandbox.limits.cpu,
       memoryMb: 8192,
     });
@@ -190,13 +193,13 @@ describe("创建沙箱时按组织覆盖 cpu / memoryMb", () => {
 
   it("只对之后新建的沙箱生效：已有的沿用创建时的限额", async () => {
     const s = service();
-    const conv = await newConversation();
-    const first = await use(s, conv);
+    const env = await newEnvironment();
+    const first = await use(s, env);
     await setOverrides({ [orgId]: { cpu: 4 } });
-    const again = await use(s, conv);
+    const again = await use(s, env);
     expect(again).toEqual(first);
     expect((await fakeSandboxMeta(root, again.id))?.limits.cpu).toBe(config.sandbox.limits.cpu);
-    expect(await limitsOf(s, await newConversation())).toMatchObject({ cpu: 4 });
+    expect(await limitsOf(s, await newEnvironment())).toMatchObject({ cpu: 4 });
   });
 });
 

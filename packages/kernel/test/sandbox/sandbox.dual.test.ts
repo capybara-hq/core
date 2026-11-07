@@ -70,7 +70,13 @@ afterAll(async () => {
   await Promise.all([pgc?.stop(), rdc?.stop()]);
 });
 
-async function seedConversation(): Promise<{ orgId: string; conversationId: string }> {
+/** An org, an account, a conversation and the account's environment: a `withSandbox` context. */
+async function seedConversation(): Promise<{
+  orgId: string;
+  environmentId: string;
+  holderConversationId: string;
+  actor: { accountId: string; conversationId: string };
+}> {
   const accountId = randomUUID();
   const orgId = randomUUID();
   const agentId = randomUUID();
@@ -84,11 +90,19 @@ async function seedConversation(): Promise<{ orgId: string; conversationId: stri
     VALUES (${agentId}, ${orgId}, ${accountId}, 'org', 1)`.execute(raw);
   await sql`INSERT INTO capybara.conversations (id, org_id, agent_id, account_id)
     VALUES (${conversationId}, ${orgId}, ${agentId}, ${accountId})`.execute(raw);
-  return { orgId, conversationId };
+  const environmentId = randomUUID();
+  await sql`INSERT INTO capybara.environments (id, org_id, owner_kind, owner_account_id, source)
+    VALUES (${environmentId}, ${orgId}, 'personal', ${accountId}, 'cloud')`.execute(raw);
+  return {
+    orgId,
+    environmentId,
+    holderConversationId: conversationId,
+    actor: { accountId, conversationId },
+  };
 }
 
 describe("沙箱（两个副本）", () => {
-  it("两个副本同时首次使用同一对话：只创建一个沙箱，两边拿到同一个句柄", async () => {
+  it("two replicas using one environment for the first time at once: one file system and one instance, both get the same handle", async () => {
     const [k1, k2] = await Promise.all([
       startKernel(cfg([SANDBOX_FAKE], ["api", "worker"])),
       startKernel(cfg([SANDBOX_FAKE])),
@@ -106,10 +120,12 @@ describe("沙箱（两个副本）", () => {
     const [a, b] = await Promise.all([use(k1), use(k2)]);
     expect(a.h).toEqual(b.h);
     expect([a.info.fresh, b.info.fresh].sort()).toEqual([false, true]);
-    expect((await readFakeSandboxOps(root)).filter((o) => o[0] === "create")).toHaveLength(1);
+    const ops = await readFakeSandboxOps(root);
+    expect(ops.filter((o) => o[0] === "create")).toHaveLength(1);
+    expect(ops.filter((o) => o[0] === "create-fs")).toHaveLength(1);
     const rows = await sql<{
       n: number;
-    }>`SELECT count(*)::int AS n FROM capybara.sandboxes`.execute(raw);
+    }>`SELECT count(*)::int AS n FROM capybara.environment_instances`.execute(raw);
     expect(rows.rows[0]?.n).toBe(1);
   });
 

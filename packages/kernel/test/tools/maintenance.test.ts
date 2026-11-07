@@ -173,7 +173,7 @@ describe("MaintenanceProcessor (the one consumer)", () => {
     const warned: unknown[][] = [];
     const processor = new MaintenanceProcessor(
       { processTimeout: async (job, token) => void calls.push(["wait", job.data, token]) },
-      { destroyFor: async (id) => void calls.push(["sandbox", id]) },
+      { destroyEnvironment: async (id) => void calls.push(["sandbox", id]) },
       {
         check: async (...a) => {
           calls.push(["drift", ...a]);
@@ -200,7 +200,7 @@ describe("MaintenanceProcessor (the one consumer)", () => {
     );
     const job = (name: string, data: unknown) => ({ name, data, id: `${name}-1` }) as never;
     await processor.process(job("wait-timeout", { waitId: "w" }), "tok");
-    await processor.process(job("sandbox-destroy-for", { conversationIds: ["c1"] }));
+    await processor.process(job("sandbox-destroy-for", { environmentIds: ["c1"] }));
     await processor.process(
       job("drift-connector", { orgId: "o", connectorId: "k", trigger: "schedule" }),
     );

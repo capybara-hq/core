@@ -1,5 +1,7 @@
+import { randomUUID } from "node:crypto";
 import type { Logger, SandboxProvider } from "@capybara-hq/plugin-sdk";
 import type { Redis } from "ioredis";
+import { type Kysely, sql } from "kysely";
 import type { BackgroundLaunchLock } from "../../src/background/launch-lock.js";
 import { BackgroundTaskStore } from "../../src/background/store.js";
 import type { KernelConfig } from "../../src/config/schema.js";
@@ -92,4 +94,21 @@ export function sandboxServiceFor(d: SandboxServiceDeps): SandboxService {
         {} as BackgroundLaunchLock,
       ),
   );
+}
+
+/**
+ * Inserts a personal cloud environment in `orgId`, owned by `accountId` (default: the org's
+ * creator); returns its id.
+ */
+export async function seedEnvironment(
+  // biome-ignore lint/suspicious/noExplicitAny: test databases have no schema types
+  raw: Kysely<any>,
+  orgId: string,
+  accountId?: string,
+): Promise<string> {
+  const id = randomUUID();
+  await sql`INSERT INTO capybara.environments (id, org_id, owner_kind, owner_account_id, source)
+    SELECT ${id}, o.id, 'personal', COALESCE(${accountId ?? null}::text, o.created_by), 'cloud'
+    FROM capybara.orgs o WHERE o.id = ${orgId}`.execute(raw);
+  return id;
 }

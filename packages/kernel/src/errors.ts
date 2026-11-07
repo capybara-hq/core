@@ -234,6 +234,8 @@ export const ERROR_CODES = {
   "sandbox.unavailable": 503,
   "sandbox.busy": 409,
   "sandbox.not_found": 404,
+  /** The environment's file system is gone at the provider; reset its files to start empty. */
+  "environment.files_lost": 409,
   "skill.not_found": 404,
   /** Also a skill neither the model nor a person could use (phase D: both invocation flags off). */
   "skill.invalid_package": 400,

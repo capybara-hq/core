@@ -1,4 +1,4 @@
-import type { SkillInvocation } from "@capybara-hq/plugin-sdk";
+import type { FileSystemHandle, SkillInvocation } from "@capybara-hq/plugin-sdk";
 import type { ColumnType, Generated, Kysely } from "kysely";
 
 /** 带默认值的时间戳列：插入可省略，读出为 Date。 */
@@ -836,7 +836,8 @@ export interface EnvironmentInstancesTable {
   environment_id: string;
   org_id: string;
   provider: ColumnType<string | null, string | null | undefined, string | null>;
-  fs_handle: ColumnType<unknown | null, string | null | undefined, string | null>;
+  /** The provider's `FileSystemHandle`; null before the file system exists or after a reset. */
+  fs_handle: ColumnType<FileSystemHandle | null, string | null | undefined, string | null>;
   fs_status: ColumnType<
     "none" | "ready" | "lost",
     "none" | "ready" | "lost" | undefined,

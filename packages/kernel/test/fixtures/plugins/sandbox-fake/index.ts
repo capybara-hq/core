@@ -1,6 +1,6 @@
 import { execFile, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdirSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { appendFile, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
@@ -20,34 +20,31 @@ import {
 import { z } from "zod";
 
 /**
- * Test `sandbox@2` (for tests only, never for production). Layout under `root`:
+ * Test `sandbox@2` (for tests only, never for production: it has **no isolation** and runs the
+ * commands tests write on the host).
+ *
+ * The "provider side" lives under the deployment config `root` (like a Docker daemon: kernel
+ * replicas sharing one root share the same file systems and instances):
  * - `root/filesystems/<fsId>/{workspace,skills}` and `meta.json` (`{ name, limits }`): an
  *   environment's files, kept until `destroyFileSystem`; `createFileSystem` on a name that exists
- *   returns the existing one; `create` on a missing file system throws `FileSystemGoneError`;
- * - `root/instances/<id>/{state,meta.json,tmp,procs,sessions}`: an instance mounts its file system's
- *   `workspace` / `skills` as `/workspace` / `/skills`; `meta.json` = `{ name, image | null,
- *   fileSystem, limits }`; `destroy` drops the instance and keeps the file system;
- * - `ops.log` also records `create-fs <fsId> <name>`, `destroy-fs <fsId>`,
- *   `destroy-fs-by-name <name>`, and `exec <id> <tag> <startMs> <endMs> <accountId> <conversationId>`.
- *
- * Original notes (the old `sandbox@1` layout mentioned below no longer holds for `fs/`):
- *
- * 测试用 `sandbox@1`（只用于测试，绝不能用于生产）。
- *
- * 「提供方那边」的状态全在部署配置 `root` 目录里（像 Docker 守护进程，多个内核副本共用一个 root 即共用同一批实例）：
- * - `root/instances/<id>/state`：`running` / `suspended`；`meta.json`：create 收到的 name、image、limits；
- * - `root/instances/<id>/fs/{workspace,skills,tmp}`：沙箱内 `/workspace`、`/skills`、`/tmp` 的内容（休眠后保留）；
- * - `root/ops.log`：每个操作一行 `<op> <id> [name]`（create / resume / resume-gone / suspend / destroy /
- *   destroy-by-name `<name>`），测试据此计数；
- * - 实例目录不在时 exec / readFile / writeFile / stat / killAll 抛 `SandboxGoneError`；实例在但 `suspended` 时
- *   它们先把它启动起来（契约的自动启动，ops.log 记 `autostart <id>`）；
+ *   returns the existing one; `create` on a missing file system throws `FileSystemGoneError`
+ *   ({@link removeFakeFileSystem} simulates the loss);
+ * - `root/instances/<id>/{state,meta.json,tmp,procs,sessions,groups}`: an instance mounts its file
+ *   system's `workspace` / `skills` as `/workspace` / `/skills` and its own `tmp` as `/tmp`;
+ *   `state` is `running` / `suspended`; `meta.json` = `{ name, image | null, fileSystem, limits }`
+ *   as `create` got them; `destroy` drops the instance and keeps the file system;
+ * - `root/ops.log`: one line per operation, `<op> <id> [...]`: `create <id> <name>`, `resume`,
+ *   `resume-gone`, `suspend`, `destroy`, `destroy-by-name <name>`, `autostart`, `create-fs <fsId>
+ *   <name>`, `destroy-fs <fsId>`, `destroy-fs-by-name <name>`, `kill-all <id>`, `kill-tagged <id>
+ *   <tag,…>`, and for every finished exec `exec <id> <tag> <startMs> <endMs> <accountId>
+ *   <conversationId>` (tests count operations and check overlaps and actors);
+ * - a missing instance makes exec / readFile / writeFile / stat / killAll / killTagged throw
+ *   `SandboxGoneError` and `resume` return `gone` ({@link removeFakeSandbox}); a suspended one is
+ *   started first (the contract's auto-start, logged as `autostart`);
  * - `root/instances/<id>/procs/<pid>`: running exec commands (process group id), content = the
- *   holder tag (empty without one); `killAll` kills them all (ops.log `kill-all <id>`),
- *   `killTagged` only those with one of the tags (ops.log `kill-tagged <id> <tag,…>`);
- * - every finished exec logs `exec <id> <tag or -> <startMs> <endMs>` (tests check overlap);
- * - concurrent use is declared (`concurrentExec`, `killTagged`);
+ *   holder tag; `killAll` kills them all, `killTagged` only those with one of the tags;
  * - `root/delays.json` (optional): `{ create?, resume?, suspend?, destroy?, exec? }` in ms, slow
- *   operations (read at each operation); `exec` holds the command open before it starts.
+ *   operations (read at each operation, abortable); `exec` holds the command open before it starts;
  * - `root/bin`: node shims for `setsid`, `timeout`, `pgrep -s` and `pkill -s` (background tasks,
  *   spec 2026-11-05-background-bash-design §4.2), first on every exec's PATH, so the tests also run
  *   on macOS, which has no `setsid` or `timeout`. A shim session is a process group: `setsid` starts
@@ -60,11 +57,11 @@ import { z } from "zod";
  *   carries only the entry.
  * - `suspend` and `destroy` kill every process the instance started (exec commands and sessions),
  *   as stopping a container does.
- * 模拟 `gone`：测试删掉 `root/instances/<id>`（{@link removeFakeSandbox}），之后 resume 返回 `gone`。
  *
- * `exec` 用 `/bin/sh -c` 在实例目录里真的执行命令：命令里的 `/workspace`、`/skills`、`/tmp` 换成实例目录下的对应目录，
- * 输出里再换回来；超时或中止时杀掉整个进程组（SIGKILL）。每个操作开始前已中止的 signal 让它立即失败，慢操作的延迟也响应中止。
- * 只执行测试自己写的命令，**没有任何隔离**。
+ * `exec` runs the command with `/bin/sh -c` in the instance's directories: `/workspace`, `/skills`
+ * and `/tmp` in the command are replaced by their host directories and mapped back in the output;
+ * a timeout or an abort kills the whole process group (SIGKILL). An already aborted signal fails an
+ * operation at once.
  */
 
 const Deployment = z.object({ root: z.string().min(1) });
@@ -95,6 +92,17 @@ const fileSystemDir = (root: string, id: string) => join(root, "filesystems", id
 /** Ids of the file systems that exist under `root`. */
 export async function fakeFileSystems(root: string): Promise<string[]> {
   return (await readdir(join(root, "filesystems")).catch(() => [] as string[])).sort();
+}
+
+/**
+ * The host directory of `/workspace` of an instance (its file system's `workspace`), for tests
+ * that read files directly. Throws when the instance is missing.
+ */
+export function fakeWorkspaceDir(root: string, instanceId: string): string {
+  const meta = JSON.parse(
+    readFileSync(join(instanceDir(root, instanceId), "meta.json"), "utf8"),
+  ) as FakeSandboxMeta;
+  return join(fileSystemDir(root, meta.fileSystem), "workspace");
 }
 
 /** Simulates the provider losing a file system (a later `create` throws `FileSystemGoneError`). */

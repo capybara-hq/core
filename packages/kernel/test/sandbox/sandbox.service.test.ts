@@ -25,9 +25,11 @@ import {
 } from "../../src/sandbox/sandbox.service.js";
 import {
   createFakeSandbox,
+  fakeFileSystems,
   fakeSandboxMeta,
   fakeSandboxState,
   readFakeSandboxOps,
+  removeFakeFileSystem,
   removeFakeSandbox,
   setFakeSandboxDelays,
 } from "../fixtures/plugins/sandbox-fake/index.js";
@@ -36,11 +38,14 @@ import {
   type SandboxServiceDeps,
   sandboxLeasesFor,
   sandboxServiceFor,
+  seedEnvironment,
 } from "../helpers/sandbox.js";
 
 /**
- * 内核沙箱服务（M5 T7）：按对话懒创建、Redis 锁下串行、空闲休眠 / 超时强制休眠、不活跃销毁、
- * 提供方返回 gone 时重建（审查重点 2、3）。
+ * The kernel sandbox service keyed by environment (spec 2026-11-07-environments-design §4.2, §5.1):
+ * a lazily created file system plus instance per environment, leases, idle suspension, forced
+ * suspension, destruction of the instance after inactivity (files kept), rebuild on `gone`, lost
+ * files, file reset and environment deletion.
  */
 
 let pgc: TestContainer;
@@ -95,37 +100,40 @@ afterAll(async () => {
 });
 
 let orgId: string;
+/** The org creator: owner of the environments and of the holder conversation. */
+let accountId: string;
+let envId: string;
+/** The agent conversation holding the sandbox (the actor of its commands). */
 let conversationId: string;
 
 async function newConversation(org = orgId): Promise<string> {
   const id = randomUUID();
-  const { account_id, agent_id } = await sql<{ account_id: string; agent_id: string }>`
-    SELECT created_by AS account_id, (SELECT id FROM capybara.agents WHERE org_id = ${org} LIMIT 1) AS agent_id
-    FROM capybara.orgs WHERE id = ${org}`
-    .execute(raw)
-    .then((r) => r.rows[0] as { account_id: string; agent_id: string });
   await sql`INSERT INTO capybara.conversations (id, org_id, agent_id, account_id)
-    VALUES (${id}, ${org}, ${agent_id}, ${account_id})`.execute(raw);
+    SELECT ${id}, o.id, (SELECT a.id FROM capybara.agents a WHERE a.org_id = o.id LIMIT 1), o.created_by
+    FROM capybara.orgs o WHERE o.id = ${org}`.execute(raw);
   return id;
 }
 
+const newEnvironment = (org = orgId) => seedEnvironment(raw, org);
+
 async function newOrg(): Promise<string> {
-  const accountId = randomUUID();
+  const owner = randomUUID();
   const id = randomUUID();
-  await sql`INSERT INTO capybara.accounts (id, display_name) VALUES (${accountId}, 'U')`.execute(
-    raw,
-  );
+  await sql`INSERT INTO capybara.accounts (id, display_name) VALUES (${owner}, 'U')`.execute(raw);
   await sql`INSERT INTO capybara.orgs (id, slug, name, created_by)
-    VALUES (${id}, ${`o-${id.slice(0, 8)}`}, 'O', ${accountId})`.execute(raw);
+    VALUES (${id}, ${`o-${id.slice(0, 8)}`}, 'O', ${owner})`.execute(raw);
   await sql`INSERT INTO capybara.agents (id, org_id, owner_account_id, visibility, current_version)
-    VALUES (${randomUUID()}, ${id}, ${accountId}, 'org', 1)`.execute(raw);
+    VALUES (${randomUUID()}, ${id}, ${owner}, 'org', 1)`.execute(raw);
   return id;
 }
 
 beforeEach(async () => {
   warned.length = 0;
   await redis.flushdb();
-  await truncateTables(raw, "capybara.sandboxes, capybara.accounts, capybara.orgs");
+  await truncateTables(
+    raw,
+    "capybara.environment_instances, capybara.environments, capybara.accounts, capybara.orgs",
+  );
   if (root) await rm(root, { recursive: true, force: true });
   root = await mkdtemp(join(tmpdir(), "cap-sandbox-"));
   provider = createFakeSandbox(root);
@@ -135,12 +143,30 @@ beforeEach(async () => {
     masterKey: Buffer.alloc(32, 7).toString("base64"),
   });
   orgId = await newOrg();
+  accountId = (
+    await sql<{
+      created_by: string;
+    }>`SELECT created_by FROM capybara.orgs WHERE id = ${orgId}`.execute(raw)
+  ).rows[0]?.created_by as string;
+  envId = await newEnvironment();
   conversationId = await newConversation();
 });
 
-const row = (id = conversationId) =>
-  db.selectFrom("sandboxes").selectAll().where("conversation_id", "=", id).executeTakeFirst();
-/** 等假沙箱登记下正在跑的命令（`instances/<id>/procs/<pid>`），代替固定的等待。 */
+/** The `withSandbox` context of the holder conversation in an environment. */
+const at = (env = envId, org = orgId, holder = conversationId) => ({
+  orgId: org,
+  environmentId: env,
+  holderConversationId: holder,
+  actor: { accountId, conversationId: holder },
+});
+
+const row = (id = envId) =>
+  db
+    .selectFrom("environment_instances")
+    .selectAll()
+    .where("environment_id", "=", id)
+    .executeTakeFirst();
+/** Waits until the fake records a running command (`instances/<id>/procs/<pid>`), instead of a fixed wait. */
 async function waitForProc(id: string, timeoutMs = 10_000): Promise<void> {
   const dir = join(root, "instances", id, "procs");
   const until = Date.now() + timeoutMs;
@@ -158,9 +184,28 @@ const oneAtATime = () => {
 const ops = async (op?: string) =>
   (await readFakeSandboxOps(root)).filter((o) => op === undefined || o[0] === op);
 
-/** 用一次沙箱：返回句柄与 info。 */
-const use = (s: SandboxService, id = conversationId, org = orgId) =>
-  s.withSandbox({ orgId: org, conversationId: id }, async (h, _p, info) => ({ h, info }), signal());
+/** Uses the sandbox once: returns the handle and the use info. */
+const use = (s: SandboxService, env = envId, org = orgId) =>
+  s.withSandbox(at(env, org), async (h, _p, info) => ({ h, info }), signal());
+
+const text = (s: string) => new TextEncoder().encode(s);
+/** Writes `/workspace/<name>` through the sandbox. */
+const writeIn = (s: SandboxService, name: string, body: string, env = envId) =>
+  s.withSandbox(
+    at(env),
+    (h, p, _i, sig) => p.writeFile(h, `/workspace/${name}`, text(body), sig),
+    signal(),
+  );
+/** Reads `/workspace/<name>` through the sandbox (null when missing) with the use info. */
+const readIn = (s: SandboxService, name: string, env = envId) =>
+  s.withSandbox(
+    at(env),
+    async (h, p, info, sig) => {
+      const r = await p.readFile(h, `/workspace/${name}`, { maxBytes: 1000, signal: sig });
+      return { info, h, body: r === null ? null : new TextDecoder().decode(r.data) };
+    },
+    signal(),
+  );
 
 describe("没有提供方", () => {
   it("available 为 false；withSandbox 以 sandbox.unavailable（503）失败；扫描什么也不做", async () => {
@@ -180,7 +225,7 @@ describe("组织出站设置（Ruling M19）", () => {
   const setEgress = (value: unknown, org = orgId) =>
     sql`UPDATE capybara.orgs SET settings = ${JSON.stringify({ sandboxEgress: value })}::jsonb
       WHERE id = ${org}`.execute(raw);
-  const limitsOf = async (s: SandboxService, id = conversationId) =>
+  const limitsOf = async (s: SandboxService, id = envId) =>
     (await fakeSandboxMeta(root, (await use(s, id)).h.id))?.limits;
 
   it("组织 none → 创建时 egress none；allowlist + 主机 → 替换部署白名单；省略主机 → 沿用部署的", async () => {
@@ -189,13 +234,13 @@ describe("组织出站设置（Ruling M19）", () => {
     expect(await limitsOf(s)).toMatchObject({ egress: "none", allowHosts: [] });
 
     await setEgress({ mode: "allowlist", allowHosts: ["example.com", "*.corp.example.org"] });
-    expect(await limitsOf(s, await newConversation())).toMatchObject({
+    expect(await limitsOf(s, await newEnvironment())).toMatchObject({
       egress: "allowlist",
       allowHosts: ["example.com", "*.corp.example.org"],
     });
 
     await setEgress({ mode: "allowlist" });
-    expect(await limitsOf(s, await newConversation())).toMatchObject({
+    expect(await limitsOf(s, await newEnvironment())).toMatchObject({
       egress: "allowlist",
       allowHosts: config.sandbox.limits.allowHosts,
     });
@@ -207,12 +252,12 @@ describe("组织出站设置（Ruling M19）", () => {
     config.sandbox.limits.egress = "none";
     expect(await limitsOf(s)).toMatchObject({ egress: "none", allowHosts: [] });
     config.sandbox.limits.egress = "open";
-    expect(await limitsOf(s, await newConversation())).toMatchObject({
+    expect(await limitsOf(s, await newEnvironment())).toMatchObject({
       egress: "allowlist",
       allowHosts: ["example.com"],
     });
     await setEgress({ mode: "open" });
-    expect(await limitsOf(s, await newConversation())).toMatchObject({
+    expect(await limitsOf(s, await newEnvironment())).toMatchObject({
       egress: "none",
       allowHosts: [],
     });
@@ -228,33 +273,58 @@ describe("组织出站设置（Ruling M19）", () => {
   });
 });
 
-describe("懒创建", () => {
-  it("首次使用才创建（名字 cap-<对话>、镜像与限制取配置）；之后复用同一个", async () => {
+describe("lazy creation", () => {
+  it("the first use creates the file system, then the instance on it (name cap-env-<environment>, no image by default, limits from config); later uses reuse them", async () => {
     const s = service();
     expect(s.available).toBe(true);
     expect(await ops()).toEqual([]);
     const a = await use(s);
-    expect(a.info).toEqual({ fresh: true, recreated: false });
+    expect(a.info).toEqual({ fresh: true, restarted: false });
+    const limits = {
+      cpu: 1,
+      memoryMb: 2048,
+      diskMb: 5120,
+      egress: "allowlist",
+      allowHosts: config.sandbox.limits.allowHosts,
+    };
     const meta = await fakeSandboxMeta(root, a.h.id);
     expect(meta).toEqual({
-      name: `cap-${conversationId}`,
-      image: config.sandbox.image,
-      limits: {
-        cpu: 1,
-        memoryMb: 2048,
-        diskMb: 5120,
-        egress: "allowlist",
-        allowHosts: config.sandbox.limits.allowHosts,
-      },
+      name: `cap-env-${envId}`,
+      image: null,
+      fileSystem: expect.any(String),
+      limits,
     });
+    expect(await ops("create-fs")).toEqual([["create-fs", meta?.fileSystem, `cap-env-${envId}`]]);
     const r = await row();
-    expect(r).toMatchObject({ org_id: orgId, provider: "sandbox-fake", status: "running" });
+    expect(r).toMatchObject({
+      org_id: orgId,
+      provider: "sandbox-fake",
+      status: "running",
+      fs_status: "ready",
+      fs_handle: { id: meta?.fileSystem },
+    });
     expect(r?.handle).toEqual(a.h);
 
     const b = await use(s);
-    expect(b.info).toEqual({ fresh: false, recreated: false });
+    expect(b.info).toEqual({ fresh: false, restarted: false });
     expect(b.h).toEqual(a.h);
     expect(await ops("create")).toHaveLength(1);
+    expect(await ops("create-fs")).toHaveLength(1);
+  });
+
+  it("passes sandbox.image to the provider when it is set", async () => {
+    config = { ...config, sandbox: { ...config.sandbox, image: "custom:1" } };
+    const a = await use(service());
+    expect((await fakeSandboxMeta(root, a.h.id))?.image).toBe("custom:1");
+  });
+
+  it("environments are separate: each gets its own file system and instance", async () => {
+    const s = service();
+    const other = await newEnvironment();
+    const a = await use(s);
+    const b = await use(s, other);
+    expect(b.h).not.toEqual(a.h);
+    expect((await fakeFileSystems(root)).length).toBe(2);
   });
 
   it("with maxConcurrentCommands 1, concurrent calls of one conversation queue: one create, no overlap", async () => {
@@ -266,7 +336,7 @@ describe("懒创建", () => {
     const results = await Promise.all(
       [0, 1, 2].map(() =>
         s.withSandbox(
-          { orgId, conversationId },
+          at(),
           async (h, _p, info) => {
             active++;
             if (active > 1) overlap = true;
@@ -287,10 +357,12 @@ describe("懒创建", () => {
   it("执行完更新 last_used_at（fn 抛错也更新），fn 的错误原样抛出", async () => {
     const s = service();
     await use(s);
-    await sql`UPDATE capybara.sandboxes SET last_used_at = now() - interval '1 hour'`.execute(raw);
+    await sql`UPDATE capybara.environment_instances SET last_used_at = now() - interval '1 hour'`.execute(
+      raw,
+    );
     const err = await s
       .withSandbox(
-        { orgId, conversationId },
+        at(),
         async () => {
           throw new Error("boom");
         },
@@ -302,7 +374,7 @@ describe("懒创建", () => {
     expect(Date.now() - (r as { last_used_at: Date }).last_used_at.getTime()).toBeLessThan(MIN);
   });
 
-  it("create 失败：错误抛给调用方，下一次调用重新创建", async () => {
+  it("a failed create is thrown to the caller; the next call creates the instance on the file system already made", async () => {
     let fail = true;
     const base = createFakeSandbox(root);
     const flaky: SandboxProvider = {
@@ -316,8 +388,9 @@ describe("懒创建", () => {
     await expect(use(s)).rejects.toThrow("docker down");
     fail = false;
     const a = await use(s);
-    expect(a.info).toEqual({ fresh: true, recreated: false });
+    expect(a.info).toEqual({ fresh: true, restarted: false });
     expect((await row())?.status).toBe("running");
+    expect(await ops("create-fs")).toHaveLength(1);
   });
 
   it("a caller aborted while waiting fails with the abort reason and creates nothing", async () => {
@@ -332,7 +405,7 @@ describe("懒创建", () => {
       entered = r;
     });
     const holder = s.withSandbox(
-      { orgId, conversationId },
+      at(),
       async () => {
         entered();
         await gate;
@@ -341,7 +414,7 @@ describe("懒创建", () => {
     );
     await inside;
     const ac = new AbortController();
-    const waiting = s.withSandbox({ orgId, conversationId }, async () => "x", ac.signal);
+    const waiting = s.withSandbox(at(), async () => "x", ac.signal);
     ac.abort(new Error("run aborted"));
     await expect(waiting).rejects.toThrow("run aborted");
     release();
@@ -360,7 +433,7 @@ describe("空闲休眠（审查重点 3）", () => {
     expect(await fakeSandboxState(root, a.h.id)).toBe("suspended");
 
     const b = await use(s);
-    expect(b.info).toEqual({ fresh: false, recreated: false });
+    expect(b.info).toEqual({ fresh: false, restarted: false });
     expect(b.h).toEqual(a.h);
     expect(await ops("resume")).toEqual([["resume", a.h.id]]);
     expect((await row())?.status).toBe("running");
@@ -370,13 +443,13 @@ describe("空闲休眠（审查重点 3）", () => {
   it("休眠后文件保留", async () => {
     const s = service();
     await s.withSandbox(
-      { orgId, conversationId },
+      at(),
       (h, p) => p.writeFile(h, "/workspace/a.txt", new TextEncoder().encode("hi"), signal()),
       signal(),
     );
     await s.suspendIdle(later(11 * MIN));
     const text = await s.withSandbox(
-      { orgId, conversationId },
+      at(),
       async (h, p) => {
         const r = await p.readFile(h, "/workspace/a.txt", { maxBytes: 100, signal: signal() });
         return new TextDecoder().decode(r?.data);
@@ -390,7 +463,7 @@ describe("空闲休眠（审查重点 3）", () => {
     const s = service();
     await use(s);
     // 一直在用（last_used_at 刚更新），但已连续运行 3 小时
-    await sql`UPDATE capybara.sandboxes SET running_since = now() - interval '3 hours'`.execute(
+    await sql`UPDATE capybara.environment_instances SET running_since = now() - interval '3 hours'`.execute(
       raw,
     );
     expect(await s.suspendIdle(new Date())).toBe(1);
@@ -408,7 +481,7 @@ describe("空闲休眠（审查重点 3）", () => {
       entered = r;
     });
     const running = s.withSandbox(
-      { orgId, conversationId },
+      at(),
       async () => {
         entered();
         await gate;
@@ -416,7 +489,7 @@ describe("空闲休眠（审查重点 3）", () => {
       signal(),
     );
     await inside;
-    await sql`UPDATE capybara.sandboxes SET running_since = now() - interval '3 hours',
+    await sql`UPDATE capybara.environment_instances SET running_since = now() - interval '3 hours',
       last_used_at = now() - interval '1 hour'`.execute(raw);
     expect(await s.suspendIdle(new Date())).toBe(0);
     expect(await s.destroyInactive(later(30 * DAY))).toBe(0);
@@ -426,96 +499,150 @@ describe("空闲休眠（审查重点 3）", () => {
   });
 });
 
-describe("提供方返回 gone（审查重点 3）", () => {
-  it("休眠后实例不在了：重建一个空沙箱，recreated 为 true", async () => {
+describe("the provider reports the instance gone", () => {
+  it("an instance gone while suspended is rebuilt on the same files: restarted is true", async () => {
     const s = service();
-    const a = await s.withSandbox(
-      { orgId, conversationId },
-      async (h, p) => {
-        await p.writeFile(h, "/workspace/a.txt", new TextEncoder().encode("hi"), signal());
-        return h;
-      },
-      signal(),
-    );
+    await writeIn(s, "a.txt", "hi");
+    const a = (await use(s)).h;
     await s.suspendIdle(later(11 * MIN));
     await removeFakeSandbox(root, a.id);
 
-    const b = await s.withSandbox(
-      { orgId, conversationId },
-      async (h, p, info) => ({
-        h,
-        info,
-        file: await p.stat(h, "/workspace/a.txt", signal()),
-      }),
-      signal(),
-    );
-    expect(b.info).toEqual({ fresh: true, recreated: true });
+    const b = await readIn(s, "a.txt");
+    expect(b.info).toEqual({ fresh: true, restarted: true });
     expect(b.h.id).not.toBe(a.id);
-    expect(b.file).toBeNull();
+    expect(b.body).toBe("hi");
     expect((await ops("resume-gone")).map((o) => o[1])).toEqual([a.id]);
     expect(await ops("create")).toHaveLength(2);
-    expect(await row()).toMatchObject({ status: "running", handle: b.h });
+    expect(await ops("create-fs")).toHaveLength(1);
+    expect(await row()).toMatchObject({ status: "running", handle: b.h, fs_status: "ready" });
   });
 
-  it("记录的提供方不是当前提供方：当作已不在，重建（recreated）", async () => {
+  it("files kept by another provider than the current one: sandbox.unavailable, nothing changes", async () => {
     await use(service(() => provider, "sandbox-old"));
-    const b = await use(service());
-    expect(b.info).toEqual({ fresh: true, recreated: true });
-    expect((await row())?.provider).toBe("sandbox-fake");
+    const before = await row();
+    const err = await use(service()).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect((err as ApiError).code).toBe("sandbox.unavailable");
+    expect((err as ApiError).message).toContain("sandbox-old");
+    expect(await row()).toMatchObject({
+      provider: "sandbox-old",
+      status: "running",
+      handle: before?.handle,
+      fs_handle: before?.fs_handle,
+    });
+    expect(await ops("create")).toHaveLength(1);
   });
 });
 
-describe("不活跃销毁（审查重点 3）", () => {
-  it("超过 destroyAfterInactiveDays 后被销毁；下次调用得到全新沙箱（recreated）", async () => {
+describe("destruction after inactivity", () => {
+  it("destroys only the instance after destroyAfterInactiveDays; the file system is kept", async () => {
     const s = service();
     const a = await use(s);
     await s.suspendIdle(later(11 * MIN));
     expect(await s.destroyInactive(later(6 * DAY))).toBe(0);
     expect(await s.destroyInactive(later(8 * DAY))).toBe(1);
-    expect(await row()).toMatchObject({ status: "destroyed" });
-    expect((await row())?.destroyed_at).not.toBeNull();
+    const r = await row();
+    expect(r).toMatchObject({ status: "destroyed", fs_status: "ready" });
+    expect(r?.destroyed_at).not.toBeNull();
+    expect(r?.fs_handle).not.toBeNull();
     expect(await fakeSandboxState(root, a.h.id)).toBeNull();
     expect((await ops("destroy")).map((o) => o[1])).toEqual([a.h.id]);
-
-    const b = await use(s);
-    expect(b.info).toEqual({ fresh: true, recreated: true });
-    expect(b.h.id).not.toBe(a.h.id);
-    expect((await row())?.status).toBe("running");
+    expect(await ops("destroy-fs")).toEqual([]);
+    expect(await fakeFileSystems(root)).toEqual([r?.fs_handle?.id]);
+    // nothing left to destroy: a later sweep does nothing
+    expect(await s.destroyInactive(later(30 * DAY))).toBe(0);
   });
 
-  it("组织已删除、对话已删除：不论多久没用都销毁；对话已删除的记录一并删掉", async () => {
+  it("inactive environment keeps files across rebuild", async () => {
+    const s = service();
+    await writeIn(s, "notes.txt", "kept");
+    const first = (await use(s)).h;
+    expect(await s.destroyInactive(later(8 * DAY))).toBe(1);
+    const next = await readIn(s, "notes.txt");
+    expect(next.body).toBe("kept");
+    expect(next.info).toEqual({ fresh: true, restarted: true });
+    expect(next.h.id).not.toBe(first.id);
+    expect((await row())?.status).toBe("running");
+    expect(await ops("create-fs")).toHaveLength(1);
+  });
+
+  it("an environment that was deleted, or whose org was deleted, is destroyed with its files whenever it was last used; its row is deleted", async () => {
     const s = service();
     const deletedOrg = await newOrg();
-    const c1 = await newConversation(deletedOrg);
-    const c2 = await newConversation();
-    const a = await use(s, c1, deletedOrg);
-    const b = await use(s, c2);
+    const e1 = await newEnvironment(deletedOrg);
+    const e2 = await newEnvironment();
+    const a = await use(s, e1, deletedOrg);
+    const b = await use(s, e2);
     const keep = await use(s);
     await sql`UPDATE capybara.orgs SET deleted_at = now() WHERE id = ${deletedOrg}`.execute(raw);
-    await sql`DELETE FROM capybara.conversations WHERE id = ${c2}`.execute(raw);
+    await sql`UPDATE capybara.environments SET deleted_at = now() WHERE id = ${e2}`.execute(raw);
+    const fsOf = async (h: { id: string }) => (await fakeSandboxMeta(root, h.id))?.fileSystem;
+    const doomedFs = [await fsOf(a.h), await fsOf(b.h)];
+    const keptFs = await fsOf(keep.h);
 
     expect(await s.destroyInactive(new Date())).toBe(2);
-    expect((await row(c1))?.status).toBe("destroyed");
-    expect(await row(c2)).toBeUndefined();
+    expect(await row(e1)).toBeUndefined();
+    expect(await row(e2)).toBeUndefined();
     expect((await row())?.status).toBe("running");
     expect(new Set((await ops("destroy")).map((o) => o[1]))).toEqual(new Set([a.h.id, b.h.id]));
+    expect(new Set((await ops("destroy-fs")).map((o) => o[1]))).toEqual(new Set(doomedFs));
+    expect(await fakeFileSystems(root)).toEqual([keptFs]);
     expect(await fakeSandboxState(root, keep.h.id)).toBe("running");
   });
 
-  it("destroyFor：立即销毁该对话的沙箱；没有沙箱时什么也不做", async () => {
+  it("a deleted environment whose instance was already destroyed still loses its files", async () => {
     const s = service();
+    await use(s);
+    expect(await s.destroyInactive(later(8 * DAY))).toBe(1);
+    await sql`UPDATE capybara.environments SET deleted_at = now() WHERE id = ${envId}`.execute(raw);
+    expect(await s.destroyInactive(new Date())).toBe(1);
+    expect(await row()).toBeUndefined();
+    expect(await fakeFileSystems(root)).toEqual([]);
+  });
+
+  it("destroyEnvironment removes instance and file system; without a row it does nothing", async () => {
+    const s = service();
+    await writeIn(s, "a.txt", "x");
     const a = await use(s);
-    await s.destroyFor(conversationId);
-    expect((await row())?.status).toBe("destroyed");
+    await s.destroyEnvironment(envId);
+    expect(await row()).toBeUndefined();
     expect(await fakeSandboxState(root, a.h.id)).toBeNull();
-    await s.destroyFor(randomUUID());
+    expect(await fakeFileSystems(root)).toEqual([]);
+    expect(await ops("destroy")).toHaveLength(1);
+    expect(await ops("destroy-fs")).toHaveLength(1);
+    await s.destroyEnvironment(randomUUID());
     expect(await ops("destroy")).toHaveLength(1);
   });
 
-  it("两个实例（副本）同时扫描：每个沙箱只休眠 / 销毁一次", async () => {
+  it("destroyEnvironment waits for a running command to finish", async () => {
+    const s = service();
+    await use(s);
+    const g = gates();
+    let finished = false;
+    const holder = s.withSandbox(
+      at(),
+      async () => {
+        g.entered();
+        await g.gate;
+        finished = true;
+      },
+      signal(),
+    );
+    await g.inside;
+    const destroying = s.destroyEnvironment(envId);
+    await new Promise((r) => setTimeout(r, 150));
+    expect(await ops("destroy")).toHaveLength(0);
+    g.release();
+    await holder;
+    await destroying;
+    expect(finished).toBe(true);
+    expect(await row()).toBeUndefined();
+  });
+
+  it("two replicas sweeping at once suspend / destroy each instance once", async () => {
     const s1 = service();
     const s2 = service();
-    const ids = [conversationId, await newConversation(), await newConversation()];
+    const ids = [envId, await newEnvironment(), await newEnvironment()];
     for (const id of ids) await use(s1, id);
     await setFakeSandboxDelays(root, { suspend: 50, destroy: 50 });
     const [x, y] = await Promise.all([
@@ -533,19 +660,89 @@ describe("不活跃销毁（审查重点 3）", () => {
   });
 });
 
+describe("lost files", () => {
+  it("missing file system raises files_lost", async () => {
+    const s = service();
+    const a = await use(s);
+    await removeFakeFileSystem(root, (await fakeSandboxMeta(root, a.h.id))?.fileSystem as string);
+    expect(await s.destroyInactive(later(8 * DAY))).toBe(1);
+    const err = await use(s).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect((err as ApiError).code).toBe("environment.files_lost");
+    expect((err as ApiError).status).toBe(409);
+    expect((await row())?.fs_status).toBe("lost");
+    // no silent empty workspace: no new file system was made
+    expect(await ops("create-fs")).toHaveLength(1);
+    // later uses fail the same way without calling the provider
+    const before = (await ops()).length;
+    const again = await use(s).catch((e: unknown) => e);
+    expect((again as ApiError).code).toBe("environment.files_lost");
+    expect(await ops()).toHaveLength(before);
+  });
+
+  it("resetFileSystem starts an empty workspace", async () => {
+    const s = service();
+    await writeIn(s, "a.txt", "old");
+    const a = await use(s);
+    const oldFs = (await fakeSandboxMeta(root, a.h.id))?.fileSystem;
+    await s.resetFileSystem(envId);
+    expect(await row()).toMatchObject({
+      fs_status: "none",
+      fs_handle: null,
+      handle: null,
+      status: "none",
+    });
+    expect(await fakeSandboxState(root, a.h.id)).toBeNull();
+    expect(await fakeFileSystems(root)).toEqual([]);
+    expect((await ops("destroy-fs")).map((o) => o[1])).toEqual([oldFs]);
+    const next = await readIn(s, "a.txt");
+    expect(next.body).toBeNull();
+    expect(next.info.fresh).toBe(true);
+    expect(await ops("create-fs")).toHaveLength(2);
+    expect((await row())?.fs_status).toBe("ready");
+  });
+
+  it("resetFileSystem after files_lost makes the environment usable again", async () => {
+    const s = service();
+    const a = await use(s);
+    await removeFakeFileSystem(root, (await fakeSandboxMeta(root, a.h.id))?.fileSystem as string);
+    await s.destroyInactive(later(8 * DAY));
+    await expect(use(s)).rejects.toMatchObject({ code: "environment.files_lost" });
+    await s.resetFileSystem(envId);
+    const next = await use(s);
+    expect(next.info.fresh).toBe(true);
+    expect(await row()).toMatchObject({ status: "running", fs_status: "ready" });
+  });
+});
+
+describe("actor", () => {
+  it("exec carries the actor", async () => {
+    const s = service();
+    await s.withSandbox(
+      at(),
+      (h, p, _i, sig) =>
+        p.exec(h, { command: "true", timeoutMs: 5000, maxOutputBytes: 100, signal: sig }),
+      signal(),
+    );
+    const last = (await ops("exec")).at(-1);
+    expect(last?.[2]).not.toBe("-");
+    expect(last?.slice(5)).toEqual([accountId, conversationId]);
+  });
+});
+
 describe("锁", () => {
-  it("锁键是 capk:sandbox:<对话>，执行期间持有、结束后释放", async () => {
+  it("the lock key is capk:sandbox:<environment>, held while running and released after", async () => {
     const s = service();
     let seen: string | null = null;
     await s.withSandbox(
-      { orgId, conversationId },
+      at(),
       async (_h: SandboxHandle) => {
-        seen = await redis.get(`capk:sandbox:${conversationId}`);
+        seen = await redis.get(`capk:sandbox:${envId}`);
       },
       signal(),
     );
     expect(seen).not.toBeNull();
-    expect(await redis.get(`capk:sandbox:${conversationId}`)).toBeNull();
+    expect(await redis.get(`capk:sandbox:${envId}`)).toBeNull();
   });
 });
 
@@ -562,7 +759,7 @@ function gates() {
   return { gate, release, inside, entered };
 }
 
-const lockKey = () => `capk:sandbox:${conversationId}`;
+const lockKey = () => `capk:sandbox:${envId}`;
 const waitAborted = (sig: AbortSignal) =>
   new Promise<void>((r) => {
     if (sig.aborted) r();
@@ -573,7 +770,7 @@ describe("锁的防护（fix round 1）", () => {
   it("锁丢失：传给 fn 的 signal 被中止", async () => {
     const s = service(undefined, undefined, { lockTtlMs: 300 });
     const reason = await s.withSandbox(
-      { orgId, conversationId },
+      at(),
       async (_h, _p, _info, sig) => {
         expect(sig.aborted).toBe(false);
         // 模拟锁过期后被别人拿走：下一次续租发现锁已不属于自己
@@ -596,7 +793,7 @@ describe("锁的防护（fix round 1）", () => {
     const pending = use(s);
     await new Promise((r) => setTimeout(r, 100));
     // 恢复进行中，另一个持有者（锁丢失后）已经改了记录
-    await sql`UPDATE capybara.sandboxes SET status = 'destroyed', generation = generation + 1`.execute(
+    await sql`UPDATE capybara.environment_instances SET status = 'destroyed', generation = generation + 1`.execute(
       raw,
     );
     await expect(pending).rejects.toThrow(/changed|lost/);
@@ -607,10 +804,10 @@ describe("锁的防护（fix round 1）", () => {
     const s = service(undefined, undefined, { lockTtlMs: 300 });
     await use(s);
     const a = s.withSandbox(
-      { orgId, conversationId },
+      at(),
       async (_h, _p, _info, sig) => {
         // the lease expires: its lock and users keys are gone
-        await redis.del(lockKey(), `capk:sandbox-users:${conversationId}`);
+        await redis.del(lockKey(), `capk:sandbox-users:${envId}`);
         await waitAborted(sig);
       },
       signal(),
@@ -618,7 +815,7 @@ describe("锁的防护（fix round 1）", () => {
     await a;
     const b = gates();
     const holderB = s.withSandbox(
-      { orgId, conversationId },
+      at(),
       async () => {
         b.entered();
         await b.gate;
@@ -626,7 +823,7 @@ describe("锁的防护（fix round 1）", () => {
       signal(),
     );
     await b.inside;
-    await sql`UPDATE capybara.sandboxes SET running_since = now() - interval '3 hours',
+    await sql`UPDATE capybara.environment_instances SET running_since = now() - interval '3 hours',
       last_used_at = now() - interval '1 hour'`.execute(raw);
     expect(await s.suspendIdle(new Date())).toBe(0);
     expect((await row())?.status).toBe("running");
@@ -642,7 +839,7 @@ describe("锁的防护（fix round 1）", () => {
     const s = service();
     const g = gates();
     const holder = s.withSandbox(
-      { orgId, conversationId },
+      at(),
       async () => {
         g.entered();
         await g.gate;
@@ -661,13 +858,13 @@ describe("锁的防护（fix round 1）", () => {
   it("记录属于别的组织：ApiError", async () => {
     const s = service();
     await use(s);
-    const err = await use(s, conversationId, await newOrg()).catch((e: unknown) => e);
+    const err = await use(s, envId, await newOrg()).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ApiError);
   });
 });
 
-describe("recreated 粘性（fix round 1）", () => {
-  it("销毁后重建失败，再下一次使用仍报 recreated", async () => {
+describe("restarted is sticky (fix round 1)", () => {
+  it("after the instance was destroyed and its rebuild failed, the next use still reports restarted", async () => {
     let fail = false;
     const base = createFakeSandbox(root);
     const flaky: SandboxProvider = {
@@ -679,22 +876,22 @@ describe("recreated 粘性（fix round 1）", () => {
     };
     const s = service(() => flaky);
     await use(s);
-    await s.destroyFor(conversationId);
+    expect(await s.destroyInactive(later(8 * DAY))).toBe(1);
     fail = true;
     await expect(use(s)).rejects.toThrow("docker down");
     fail = false;
-    expect((await use(s)).info).toEqual({ fresh: true, recreated: true });
+    expect((await use(s)).info).toEqual({ fresh: true, restarted: true });
   });
 });
 
 describe("执行中发现实例已不在（SandboxGoneError，fix round 1）", () => {
-  it("运行中的沙箱实例消失：fn 抛 SandboxGoneError 后原地重建重试一次，recreated 为 true", async () => {
+  it("a running instance vanishes: after fn throws SandboxGoneError it is rebuilt in place and retried once, restarted is true", async () => {
     const s = service();
     const a = await use(s);
     await removeFakeSandbox(root, a.h.id);
     const infos: unknown[] = [];
     const out = await s.withSandbox(
-      { orgId, conversationId },
+      at(),
       async (h, p, info, sig) => {
         infos.push(info);
         const r = await p.exec(h, {
@@ -708,8 +905,8 @@ describe("执行中发现实例已不在（SandboxGoneError，fix round 1）", (
       signal(),
     );
     expect(infos).toEqual([
-      { fresh: false, recreated: false },
-      { fresh: true, recreated: true },
+      { fresh: false, restarted: false },
+      { fresh: true, restarted: true },
     ]);
     expect(out.stdout).toBe("ok\n");
     expect(out.h.id).not.toBe(a.h.id);
@@ -722,7 +919,7 @@ describe("执行中发现实例已不在（SandboxGoneError，fix round 1）", (
     let calls = 0;
     const err = await s
       .withSandbox(
-        { orgId, conversationId },
+        at(),
         async (h, p, _info, sig) => {
           calls++;
           await removeFakeSandbox(root, h.id);
@@ -737,78 +934,104 @@ describe("执行中发现实例已不在（SandboxGoneError，fix round 1）", (
 });
 
 describe("another holder rebuilt the sandbox (final review m5)", () => {
-  it("a holder whose last instance was rebuilt by another holder gets recreated: true, once", async () => {
+  it("a holder whose last instance was rebuilt by another holder gets restarted: true, once", async () => {
     const s = service();
     const child = randomUUID();
     const useAs = (holder?: string) =>
       s.withSandbox(
-        { orgId, conversationId, ...(holder !== undefined && { holderConversationId: holder }) },
+        at(envId, orgId, holder ?? conversationId),
         async (h, _p, info) => ({ h, info }),
         signal(),
       );
     const first = await useAs();
-    expect(first.info).toEqual({ fresh: true, recreated: false });
+    expect(first.info).toEqual({ fresh: true, restarted: false });
     // a sub-agent joins the running sandbox: nothing was lost for it
-    expect((await useAs(child)).info).toEqual({ fresh: false, recreated: false });
+    expect((await useAs(child)).info).toEqual({ fresh: false, restarted: false });
     // the instance is gone during the sub-agent's command: it rebuilds and is told
     await removeFakeSandbox(root, first.h.id);
     const infos: unknown[] = [];
     await s.withSandbox(
-      { orgId, conversationId, holderConversationId: child },
+      at(envId, orgId, child),
       async (h, p, info, sig) => {
         infos.push(info);
         return p.exec(h, { command: "true", timeoutMs: 5000, maxOutputBytes: 100, signal: sig });
       },
       signal(),
     );
-    expect(infos.at(-1)).toEqual({ fresh: true, recreated: true });
-    // the parent's next use learns its files are gone too, then not again
-    expect((await useAs()).info).toEqual({ fresh: false, recreated: true });
-    expect((await useAs()).info).toEqual({ fresh: false, recreated: false });
-    expect((await useAs(child)).info).toEqual({ fresh: false, recreated: false });
+    expect(infos.at(-1)).toEqual({ fresh: true, restarted: true });
+    // the parent's next use learns its processes are gone too, then not again
+    expect((await useAs()).info).toEqual({ fresh: false, restarted: true });
+    expect((await useAs()).info).toEqual({ fresh: false, restarted: false });
+    expect((await useAs(child)).info).toEqual({ fresh: false, restarted: false });
   });
 });
 
-describe("清理遗留实例（fix round 1）", () => {
-  it("创建中途崩溃（handle 为空）：销毁时按名字 destroyByName", async () => {
+describe("leftovers of interrupted creates and of other providers (fix round 1)", () => {
+  const tiny = { cpu: 1, memoryMb: 1, diskMb: 1, egress: "none", allowHosts: [] } as const;
+  const name = () => `cap-env-${envId}`;
+
+  it("a create that crashed before its handle was recorded is destroyed by name; the file system stays", async () => {
     const s = service();
-    // 提供方那边已经建好了，但记录还停在 creating（内核在写 handle 前退出）
-    const h = await (provider as SandboxProvider).create({
-      name: `cap-${conversationId}`,
-      image: "i",
-      limits: { cpu: 1, memoryMb: 1, diskMb: 1, egress: "none", allowHosts: [] },
+    // the provider built the instance, but the row is still creating (the kernel exited first)
+    const p = provider as SandboxProvider;
+    const fs = await p.createFileSystem({
+      name: name(),
+      limits: { ...tiny, allowHosts: [] },
       signal: signal(),
     });
-    await sql`INSERT INTO capybara.sandboxes (conversation_id, org_id, provider, status, last_used_at)
-      VALUES (${conversationId}, ${orgId}, 'sandbox-fake', 'creating', now() - interval '30 days')`.execute(
-      raw,
-    );
+    const h = await p.create({
+      name: name(),
+      limits: { ...tiny, allowHosts: [] },
+      fileSystem: fs,
+      signal: signal(),
+    });
+    await sql`INSERT INTO capybara.environment_instances (environment_id, org_id, provider, status,
+        fs_handle, fs_status, last_used_at)
+      VALUES (${envId}, ${orgId}, 'sandbox-fake', 'creating', ${JSON.stringify(fs)}::jsonb, 'ready',
+        now() - interval '30 days')`.execute(raw);
     expect(await s.destroyInactive(new Date())).toBe(1);
     expect(await fakeSandboxState(root, h.id)).toBeNull();
-    expect((await ops("destroy-by-name")).map((o) => o[1])).toEqual([`cap-${conversationId}`]);
+    expect((await ops("destroy-by-name")).map((o) => o[1])).toEqual([name()]);
+    expect(await fakeFileSystems(root)).toEqual([fs.id]);
   });
 
-  it("换了提供方：旧提供方仍加载时用它销毁旧实例；否则记下 prev_provider / prev_handle 并 warn", async () => {
+  it("a file system whose handle was never recorded is destroyed by name when the environment is deleted", async () => {
+    const s = service();
+    const p = provider as SandboxProvider;
+    await p.createFileSystem({
+      name: name(),
+      limits: { ...tiny, allowHosts: [] },
+      signal: signal(),
+    });
+    await sql`INSERT INTO capybara.environment_instances (environment_id, org_id, provider, status)
+      VALUES (${envId}, ${orgId}, 'sandbox-fake', 'creating')`.execute(raw);
+    await s.destroyEnvironment(envId);
+    expect((await ops("destroy-fs-by-name")).map((o) => o[1])).toEqual([name()]);
+    expect(await fakeFileSystems(root)).toEqual([]);
+    expect(await row()).toBeUndefined();
+  });
+
+  it("an environment of another provider is destroyed with that provider while it is loaded; otherwise the deletion fails and the row stays for a retry", async () => {
     const oldRoot = await mkdtemp(join(tmpdir(), "cap-sandbox-old-"));
     const old = createFakeSandbox(oldRoot);
     const a = await use(service(() => old, "sandbox-old"));
-    // 旧提供方还在：新服务能按名字找到它
     const s = service(undefined, undefined, {
-      lookup: (name) => (name === "sandbox-old" ? old : undefined),
+      lookup: (n) => (n === "sandbox-old" ? old : undefined),
     });
-    expect((await use(s)).info.recreated).toBe(true);
+    await s.destroyEnvironment(envId);
     expect(await fakeSandboxState(oldRoot, a.h.id)).toBeNull();
-    expect(await row()).toMatchObject({ prev_provider: null, prev_handle: null });
+    expect(await fakeFileSystems(oldRoot)).toEqual([]);
+    expect(await row()).toBeUndefined();
 
-    // 旧提供方不在了：记下来、warn
-    const c2 = await newConversation();
+    // the old provider is gone: its instance is recorded as leaked, the files cannot be deleted
+    const e2 = await newEnvironment();
     const b = await use(
       service(() => old, "sandbox-old"),
-      c2,
+      e2,
     );
     warned.length = 0;
-    await use(service(), c2);
-    expect(await row(c2)).toMatchObject({ prev_provider: "sandbox-old", prev_handle: b.h });
+    await expect(service().destroyEnvironment(e2)).rejects.toThrow(/sandbox-old/);
+    expect(await row(e2)).toMatchObject({ provider: "sandbox-old" });
     expect(warned.some((w) => /another provider/.test(w))).toBe(true);
     expect(await fakeSandboxState(oldRoot, b.h.id)).toBe("running");
     await rm(oldRoot, { recursive: true, force: true });
@@ -912,7 +1135,7 @@ describe("锁的防护（fix round 2）", () => {
     // the sweeper's lease expires; B takes a lease and uses the running sandbox
     await redis.del(lockKey());
     const b = await use(s);
-    expect(b.info).toEqual({ fresh: false, recreated: false });
+    expect(b.info).toEqual({ fresh: false, restarted: false });
     started.release();
     expect(await sweep).toBe(0);
     expect(failures).toHaveLength(1);
@@ -948,7 +1171,7 @@ describe("锁的防护（fix round 2）", () => {
   it("续租一直报错：超过 TTL 没有成功续租即视为锁丢失，中止 fn 的 signal", async () => {
     const s = service(undefined, undefined, { leases: renewThrows(300) });
     const reason = await s.withSandbox(
-      { orgId, conversationId },
+      at(),
       async (_h, _p, _info, sig) => {
         await waitAborted(sig);
         return sig.reason;
@@ -962,7 +1185,7 @@ describe("锁的防护（fix round 2）", () => {
     const ttl = 1500;
     const s = service(undefined, undefined, { leases: renewThrows(ttl) });
     const elapsed = await s.withSandbox(
-      { orgId, conversationId },
+      at(),
       async (_h, _p, _info, sig) => {
         const t0 = Date.now();
         await waitAborted(sig);
@@ -978,7 +1201,7 @@ describe("锁的防护（fix round 2）", () => {
     const s = service();
     await use(s);
     const other = await newOrg();
-    const err = (await use(s, conversationId, other).catch((e: unknown) => e)) as ApiError;
+    const err = (await use(s, envId, other).catch((e: unknown) => e)) as ApiError;
     expect(err.code).toBe("forbidden");
     expect(err.message).not.toContain(orgId);
   });
@@ -989,7 +1212,7 @@ describe("被内核之外的原因停掉（fix wave S2 I1）", () => {
     const s = service();
     const { h } = await use(s);
     await s.withSandbox(
-      { orgId, conversationId },
+      at(),
       (hh, p, _i, sig) => p.writeFile(hh, "/workspace/a.txt", new TextEncoder().encode("a"), sig),
       signal(),
     );
@@ -997,7 +1220,7 @@ describe("被内核之外的原因停掉（fix wave S2 I1）", () => {
     await provider?.suspend(h, signal());
     expect((await row())?.status).toBe("running");
     const out = await s.withSandbox(
-      { orgId, conversationId },
+      at(),
       async (hh, p, info, sig) => ({
         info,
         r: await p.exec(hh, {
@@ -1009,7 +1232,7 @@ describe("被内核之外的原因停掉（fix wave S2 I1）", () => {
       }),
       signal(),
     );
-    expect(out.info).toEqual({ fresh: false, recreated: false });
+    expect(out.info).toEqual({ fresh: false, restarted: false });
     expect(out.r.stdout).toBe("a");
     expect(await ops("autostart")).toHaveLength(1);
     expect(await ops("create")).toHaveLength(1);
@@ -1017,14 +1240,14 @@ describe("被内核之外的原因停掉（fix wave S2 I1）", () => {
 });
 
 describe("接手崩溃的前任（fix wave S2 I2）", () => {
-  const busyKey = () => `${SANDBOX_BUSY_PREFIX}${conversationId}`;
+  const busyKey = () => `${SANDBOX_BUSY_PREFIX}${envId}`;
 
   it("a holder records itself in capk:sandbox-holders:<conv> (with a TTL) while it runs and removes the record after; a normal handover kills nothing", async () => {
     const s = service();
-    const holdersKey = `capk:sandbox-holders:${conversationId}`;
+    const holdersKey = `capk:sandbox-holders:${envId}`;
     let seen: { n: number; ttl: number } = { n: 0, ttl: 0 };
     await s.withSandbox(
-      { orgId, conversationId },
+      at(),
       async () => {
         seen = { n: await redis.hlen(holdersKey), ttl: await redis.pttl(holdersKey) };
       },
@@ -1049,13 +1272,15 @@ describe("接手崩溃的前任（fix wave S2 I2）", () => {
       timeoutMs: 60_000,
       maxOutputBytes: 100,
       signal: signal(),
+      tag: "dead-holder",
+      actor: at().actor,
     });
     await redis.set(busyKey(), "dead-holder", "PX", 60_000);
     await waitForProc(h.id);
     const started = Date.now();
     const order: string[] = [];
     await s.withSandbox(
-      { orgId, conversationId },
+      at(),
       async () => {
         order.push(`fn after ${(await ops("kill-all")).length} kill-all`);
       },
@@ -1086,7 +1311,7 @@ describe("接手崩溃的前任（fix wave S2 I2）", () => {
     const s = service(() => failing);
     await use(s);
     await redis.set(busyKey(), "dead-holder", "PX", 60_000);
-    const r = await s.withSandbox({ orgId, conversationId }, async () => "ran", signal());
+    const r = await s.withSandbox(at(), async () => "ran", signal());
     expect(r).toBe("ran");
     expect(warned).toContain("cannot kill leftover sandbox commands");
   });
@@ -1102,13 +1327,15 @@ describe("恢复休眠的沙箱时清掉遗留命令（fix round 2）", () => {
       timeoutMs: 60_000,
       maxOutputBytes: 100,
       signal: signal(),
+      tag: "dead-holder",
+      actor: at().actor,
     });
     await waitForProc(h.id);
     expect(await s.suspendIdle(later(DAY))).toBe(1);
-    expect(await redis.get(`${SANDBOX_BUSY_PREFIX}${conversationId}`)).toBeNull();
+    expect(await redis.get(`${SANDBOX_BUSY_PREFIX}${envId}`)).toBeNull();
     const order: string[] = [];
     await s.withSandbox(
-      { orgId, conversationId },
+      at(),
       async () => {
         order.push(`fn after ${(await ops("kill-all")).length} kill-all`);
       },

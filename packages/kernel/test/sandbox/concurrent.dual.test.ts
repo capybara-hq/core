@@ -68,6 +68,8 @@ const replica = (impl: SandboxProvider, o: { ttlMs?: number } = {}) => {
 
 let orgId: string;
 let conversationId: string;
+let accountId: string;
+let envId: string;
 
 beforeEach(async () => {
   const raw = createDb(pgc.url, 1);
@@ -75,8 +77,11 @@ beforeEach(async () => {
     const r = new Redis(rdc.url);
     await r.flushdb();
     r.disconnect();
-    await truncateTables(raw, "capybara.sandboxes, capybara.accounts, capybara.orgs");
-    const accountId = randomUUID();
+    await truncateTables(
+      raw,
+      "capybara.environment_instances, capybara.environments, capybara.accounts, capybara.orgs",
+    );
+    accountId = randomUUID();
     orgId = randomUUID();
     const agentId = randomUUID();
     conversationId = randomUUID();
@@ -89,6 +94,9 @@ beforeEach(async () => {
       VALUES (${agentId}, ${orgId}, ${accountId}, 'org', 1)`.execute(raw);
     await sql`INSERT INTO capybara.conversations (id, org_id, agent_id, account_id)
       VALUES (${conversationId}, ${orgId}, ${agentId}, ${accountId})`.execute(raw);
+    envId = randomUUID();
+    await sql`INSERT INTO capybara.environments (id, org_id, owner_kind, owner_account_id, source)
+      VALUES (${envId}, ${orgId}, 'personal', ${accountId}, 'cloud')`.execute(raw);
   } finally {
     await raw.destroy();
   }
@@ -102,7 +110,12 @@ beforeEach(async () => {
   });
 });
 
-const ctx = () => ({ orgId, conversationId });
+const ctx = () => ({
+  orgId,
+  environmentId: envId,
+  holderConversationId: conversationId,
+  actor: { accountId, conversationId },
+});
 const signal = () => AbortSignal.timeout(50_000);
 const run = (s: SandboxService, command: string) =>
   s.withSandbox(
@@ -133,13 +146,13 @@ describe("concurrent sandbox holders (two replicas)", () => {
     const a = replica(deaf, { ttlMs: 1500 });
     const b = replica(fake);
     await run(b.s, "true");
-    const holders = `capk:sandbox-holders:${conversationId}`;
+    const holders = `capk:sandbox-holders:${envId}`;
 
     const aCall = run(a.s, "sleep 30");
     const bCall = run(b.s, "sleep 4; echo b-done");
     await until(async () => (await b.redis.hlen(holders)) === 2);
     // both commands run at the same time
-    expect(await b.redis.zcard(`capk:sandbox-users:${conversationId}`)).toBe(2);
+    expect(await b.redis.zcard(`capk:sandbox-users:${envId}`)).toBe(2);
 
     // replica A crashes: no renewals, no unregister, its lease expires after its TTL
     a.redis.disconnect();

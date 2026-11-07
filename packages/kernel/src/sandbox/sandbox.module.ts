@@ -9,8 +9,9 @@ import { SandboxProviders } from "./providers.js";
 import { SandboxService } from "./sandbox.service.js";
 
 /**
- * Sandboxes: the one {@link SandboxService} (a conversation's sandbox over the `sandbox@1`
- * provider, with the shared / exclusive leases of {@link SandboxLeases}) and the producer of the
+ * Sandboxes: the one {@link SandboxService} (an environment's file system and instance over the
+ * `sandbox@2` provider, with the shared / exclusive leases of {@link SandboxLeases}) and the
+ * producer of the
  * one-off `sandbox-destroy-for` jobs (`MaintenanceProcessor` consumes them). The sweeps
  * (`SandboxSweepJobs`) are the worker role's (`WorkerModule`).
  */

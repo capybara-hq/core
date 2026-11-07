@@ -183,8 +183,8 @@ The kernel owns it; the extension implements only primitives. **Do not do schedu
   gets the intent for about a second so new commands wait briefly and the suspension can get in when the running ones end. `last_used_at` is set when each
   holder leaves, so the idle clock starts when the last concurrent holder finishes.
 - **Destruction**: a `@LockedCron` (`sandbox-destroy-inactive`, hourly); instances inactive longer than `destroyAfterInactiveDays` (default 7) get `destroy` (instance only; the files stay); a deleted environment or org gets `destroy` and `destroyFileSystem`;
-  a departing member's (or a deleted agent's) are destroyed immediately through the one-off maintenance job `sandbox-destroy-for` (producer
-  `SandboxJobs`).
+  a deleted environment (also a departing member's) is destroyed immediately, instance and file system, through the one-off maintenance job
+  `sandbox-destroy-for` (producer `SandboxJobs.destroy(environmentIds)`, data `{ environmentIds }`, consumer `SandboxService.destroyEnvironment`).
 - **Legacy cleanup**: the one-off job `environments-legacy-cleanup` destroys every old per-conversation instance and file system (`destroyByName` and `destroyFileSystemByName` on `cap-<conversationId>`) listed in `sandboxes` and deletes the row; nothing else reads that table.
 - **Transparent recovery**: a suspended sandbox is `resume`d on next use; on `gone`, destroyed, or a recorded provider that is not the current provider, an empty sandbox is rebuilt and the tool result carries
   an English notice. Switching providers leaks old instances (the new provider cannot destroy them; they are recorded in the `prev_*` columns and cleaned up only while the old extension is still loaded).
