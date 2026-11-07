@@ -2,6 +2,7 @@ import { randomInt } from "node:crypto";
 import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
 import type { Keyring } from "../ctx/secrets.js";
+import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
@@ -37,6 +38,8 @@ const aadOf = (accountId: string) => `capybara:initial-password:${accountId}`;
 /** Where a generated password is delivered: the approved tool call and the person who approved. */
 export interface InitialPasswordDelivery {
   conversationId: string;
+  /** The run of the call: a call id is unique only within its run. */
+  runId: string;
   callId: string;
   /** The account that may read it: the actor who confirmed the call. */
   recipientAccountId: string;
@@ -79,16 +82,12 @@ export class InitialPasswords {
     );
   }
 
-  /** Stores the sealed password in the creation's transaction; drops expired ones on the way. */
+  /** Stores the sealed password in the creation's transaction (the hourly job drops expired ones). */
   private async seal(
     accountId: string,
     password: string,
     to: InitialPasswordDelivery,
   ): Promise<void> {
-    await this.db
-      .deleteFrom("account_initial_passwords")
-      .where("expires_at", "<", sql<Date>`now()`)
-      .execute();
     const { data, masterKeyId } = this.keyring.wrap(
       Buffer.from(password, "utf8"),
       aadOf(accountId),
@@ -99,6 +98,7 @@ export class InitialPasswords {
         account_id: accountId,
         recipient_account_id: to.recipientAccountId,
         conversation_id: to.conversationId,
+        run_id: to.runId,
         call_id: to.callId,
         master_key_id: masterKeyId,
         ciphertext: data,
@@ -127,7 +127,7 @@ export class InitialPasswords {
       );
     const approval = await this.db
       .selectFrom("approvals")
-      .select(["conversation_id", "call_id", "tool_key", "status", "decided_by"])
+      .select(["conversation_id", "run_id", "call_id", "tool_key", "status", "decided_by"])
       .where("id", "=", approvalId)
       .where("org_id", "=", orgId)
       .executeTakeFirst();
@@ -139,12 +139,22 @@ export class InitialPasswords {
     ) {
       throw unavailable();
     }
-    const row = await this.db
-      .deleteFrom("account_initial_passwords")
+    // exactly the row of this approval's call: locked, then deleted by its key
+    const found = await this.db
+      .selectFrom("account_initial_passwords")
+      .select("account_id")
       .where("conversation_id", "=", approval.conversation_id)
+      .where("run_id", "=", approval.run_id)
       .where("call_id", "=", approval.call_id)
       .where("recipient_account_id", "=", accountId)
       .where("expires_at", ">", sql<Date>`now()`)
+      .limit(1)
+      .forUpdate()
+      .executeTakeFirst();
+    if (found === undefined) throw unavailable();
+    const row = await this.db
+      .deleteFrom("account_initial_passwords")
+      .where("account_id", "=", found.account_id)
       .returning(["account_id", "master_key_id", "ciphertext"])
       .executeTakeFirst();
     if (row === undefined) throw unavailable();
@@ -161,4 +171,13 @@ export class InitialPasswords {
     });
     return { accountId: row.account_id, login, password };
   }
+}
+
+/** Deletes the sealed passwords past `expires_at`; returns how many. */
+export async function deleteExpiredInitialPasswords(db: KernelSchemaDb): Promise<number> {
+  const r = await db
+    .deleteFrom("account_initial_passwords")
+    .where("expires_at", "<=", sql<Date>`now()`)
+    .executeTakeFirst();
+  return Number(r.numDeletedRows);
 }

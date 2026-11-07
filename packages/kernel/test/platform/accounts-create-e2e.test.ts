@@ -11,6 +11,11 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { InitialPasswordCleanupJob } from "../../src/identity/initial-passwords.job.js";
+import {
+  deleteExpiredInitialPasswords,
+  InitialPasswords,
+} from "../../src/identity/initial-passwords.js";
 import { createLogger } from "../../src/log.js";
 import { INITIAL_PASSWORD_NOTE } from "../../src/platform/ops/accounts.ops.js";
 import { asUser, cookieJar } from "../helpers/http.js";
@@ -47,6 +52,7 @@ let db: KernelSchemaDb;
 let destroyDb: () => Promise<void>;
 let k: TestKernel;
 let root: Req;
+let rootId: string;
 let other: Req;
 let orgId: string;
 let agentId: string;
@@ -78,12 +84,14 @@ beforeAll(async () => {
     ),
     { logger: createLogger("debug", { write: (line) => lines.push(line) }) },
   );
-  await accountsFor(db).createLocal({
-    login: "root",
-    password: PW,
-    displayName: "Root",
-    superAdmin: true,
-  });
+  rootId = (
+    await accountsFor(db).createLocal({
+      login: "root",
+      password: PW,
+      displayName: "Root",
+      superAdmin: true,
+    })
+  ).id;
   const otherId = (
     await accountsFor(db).createLocal({
       login: "root2",
@@ -264,5 +272,56 @@ describe("accounts.create through the super admin's private agent", { timeout: 1
     const result = ofType(evs, "tool_result").at(-1)?.payload;
     expect(result?.isError).toBe(true);
     expect(result?.content).toContain("account.login_taken");
+  });
+
+  it("two creates with the same call id in one conversation but different runs each reach their own approval", async () => {
+    const convId = await createConv(root, orgId, agentId);
+    const passwords = k.app.get(InitialPasswords);
+    const ids: string[] = [];
+    for (const [i, runId] of ["run-a", "run-b"].entries()) {
+      await sql`INSERT INTO capybara.runs (id, conversation_id, status, agent_version, trigger_account_id)
+        VALUES (${runId}, ${convId}, 'completed', 1, ${rootId})`.execute(db);
+      await sql`INSERT INTO capybara.approvals (id, org_id, conversation_id, run_id, call_id, tool_key,
+          requested_for, status, scope, decided_by, decided_at, expires_at, spec_hash)
+        VALUES (${`ap-${runId}`}, ${orgId}, ${convId}, ${runId}, 'call_1', 'Platform:accounts.create',
+          ${rootId}, 'approved', 'once', ${rootId}, now(), now() + interval '1 hour', 'h')`.execute(
+        db,
+      );
+      const a = await passwords.createAccount(
+        { login: `twin${i}`, displayName: `Twin ${i}` },
+        rootId,
+        { conversationId: convId, runId, callId: "call_1", recipientAccountId: rootId },
+      );
+      ids.push(a.id);
+    }
+    const b = await reveal(root, "ap-run-b");
+    expect(b.statusCode, b.body).toBe(200);
+    expect(b.json()).toMatchObject({ accountId: ids[1], login: "twin1" });
+    const a = await reveal(root, "ap-run-a");
+    expect(a.json()).toMatchObject({ accountId: ids[0], login: "twin0" });
+    expect((await reveal(root, "ap-run-b")).statusCode).toBe(404);
+  });
+
+  it("the cleanup job's delete removes only expired sealed passwords", async () => {
+    const convId = await createConv(root, orgId, agentId);
+    const passwords = k.app.get(InitialPasswords);
+    for (const login of ["old1", "new1"]) {
+      await passwords.createAccount({ login, displayName: login }, rootId, {
+        conversationId: convId,
+        runId: `run-${login}`,
+        callId: "call_x",
+        recipientAccountId: rootId,
+      });
+    }
+    await sql`UPDATE capybara.account_initial_passwords SET expires_at = now() - interval '1 minute'
+      WHERE run_id = 'run-old1'`.execute(db);
+    await k.app.get(InitialPasswordCleanupJob).cleanup();
+    const left = await db
+      .selectFrom("account_initial_passwords")
+      .select("run_id")
+      .where("conversation_id", "=", convId)
+      .execute();
+    expect(left).toEqual([{ run_id: "run-new1" }]);
+    expect(await deleteExpiredInitialPasswords(db)).toBe(0);
   });
 });

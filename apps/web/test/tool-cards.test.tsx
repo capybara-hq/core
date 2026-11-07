@@ -111,7 +111,13 @@ describe("ApprovalCard (design ApprovalBlock)", () => {
       params: { login: "alice", displayName: "Alice" },
     };
     const createItem = (byAccountId: string): ApprovalItem => ({
-      ...item({ decision: "approved", scope: "once", byAccountId }),
+      ...item({
+        approvalId: "ap1",
+        callId: "call_1",
+        decision: "approved",
+        scope: "once",
+        byAccountId,
+      }),
       toolKey: "Platform:accounts.create",
       input: createInput,
     });
@@ -130,7 +136,7 @@ describe("ApprovalCard (design ApprovalBlock)", () => {
       expect(screen.queryByRole("button", { name: zh.approval.initialPassword.show })).toBeNull();
     });
 
-    it("read already: the error says so, nothing is shown", async () => {
+    it("read already: the error says so, the button goes, nothing is shown", async () => {
       stubApi({
         "POST /api/v1/orgs/o1/approvals/ap1/initial-password": () =>
           json(404, {
@@ -142,6 +148,7 @@ describe("ApprovalCard (design ApprovalBlock)", () => {
         .setup()
         .click(await screen.findByRole("button", { name: en.approval.initialPassword.show }));
       expect(await screen.findByText(en.errors.account.initial_password_unavailable)).toBeTruthy();
+      expect(screen.queryByRole("button", { name: en.approval.initialPassword.show })).toBeNull();
     });
 
     it("someone else's approval, or another operation, offers nothing", async () => {

@@ -115,7 +115,8 @@
       "login_taken": "This username is already taken.",
       "not_found": "The account does not exist.",
       "last_super_admin": "The last super admin cannot be revoked or deactivated.",
-      "initial_password_unavailable": "There is no initial password to show: it was shown already, has expired, or the account was not created by a call you approved."
+      "initial_password_unavailable": "There is no initial password to show: it was shown already, has expired, or the account was not created by a call you approved.",
+      "create_needs_approval": "Create the account from a conversation where you approve the call yourself, or on the web."
     },
     "org": {
       "not_found": "The organization does not exist or you are no longer a member.",

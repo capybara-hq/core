@@ -3,6 +3,7 @@
 import { Button, SecretReveal, Stack, Text } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
 import { useState } from "react";
+import { ApiClientError } from "../lib/api";
 import { revealInitialPassword } from "../lib/approvals";
 import { useAppMutation } from "../lib/query/mutation";
 import { useErrorMessage } from "../lib/use-error-message";
@@ -25,6 +26,8 @@ export function InitialPasswordReveal({
   const errorMessage = useErrorMessage();
   const [shown, setShown] = useState<{ login: string | null; password: string } | null>(null);
   const [error, setError] = useState<string>();
+  // read already or expired (404): nothing left to show, so the button goes
+  const [gone, setGone] = useState(false);
   // nothing cached reads the password: there is nothing to invalidate
   const { mutateAsync, isPending } = useAppMutation({
     fn: () => revealInitialPassword(orgId, approvalId),
@@ -38,6 +41,7 @@ export function InitialPasswordReveal({
       setShown({ login: r.login, password: r.password });
     } catch (e) {
       setError(errorMessage(e));
+      if (e instanceof ApiClientError && e.status === 404) setGone(true);
     }
   }
 
@@ -53,9 +57,11 @@ export function InitialPasswordReveal({
   }
   return (
     <Stack gap={8} align="start">
-      <Button onClick={() => void onShow()} loading={isPending}>
-        {t("show")}
-      </Button>
+      {!gone && (
+        <Button onClick={() => void onShow()} loading={isPending}>
+          {t("show")}
+        </Button>
+      )}
       {error !== undefined && <FormError message={error} />}
     </Stack>
   );

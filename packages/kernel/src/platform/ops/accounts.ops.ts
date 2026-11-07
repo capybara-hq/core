@@ -19,7 +19,7 @@ const AccountId = AccountParams.shape.accountId.describe("The account id (accoun
 
 /** What the tool result says instead of the password (model-visible English). */
 export const INITIAL_PASSWORD_NOTE =
-  "The kernel generated a one-time initial password. It is shown once, on the web, to the person who approved this call (the approval card in this conversation); it is not available to you, so never ask for it or make one up. The account must change it at first sign-in.";
+  "The kernel generated a one-time initial password. It is shown once, on the web, to the person who approved this call (the approval card in this conversation); it is not available to you, so never ask for it or make one up. If it is not read within 24 hours it is lost: disable the account and create it again. The account must change it at first sign-in.";
 
 /** An account as a detail returns it (the admin console's account fields). */
 const accountView = (a: Account, login: string | null) => ({
@@ -198,7 +198,7 @@ export class AccountsOperations implements OnModuleInit {
       defineOperation({
         id: "accounts.create",
         description:
-          "Create a local sign-in account (super admin): a login (3-64 characters: letters, digits, . _ @ + -), a display name and an optional email. You pass no password: the kernel generates a one-time initial password, shows it once to the person who approves this call on the web, and the account must change it at first sign-in. The account is never a super admin; that and org memberships are set by a person on the web (add it to an org with an invitation).",
+          "Create a local sign-in account (super admin): a login (3-64 characters: letters, digits, . _ @ + -), a display name and an optional email. You pass no password: the kernel generates a one-time initial password, shows it once to the person who approves this call, on the web (the approval card); it is lost if not read within 24 hours (then disable the account and create it again). The account must change it at first sign-in. The account is never a super admin; that and org memberships are set by a person on the web (add it to an org with an invitation).",
         input: CreateAccountBody.pick({ login: true, displayName: true, email: true }).strict(),
         example: { login: "alice", displayName: "Alice Chen", email: "alice@example.com" },
         authz: { superAdmin: true },
@@ -212,6 +212,10 @@ export class AccountsOperations implements OnModuleInit {
             next: "Choose another login, or use the existing account (accounts.list).",
           },
           {
+            code: "account.create_needs_approval",
+            next: "Call it from a conversation with your private agent, where you approve the call yourself, or create the account on the web (admin console, Accounts).",
+          },
+          {
             code: "validation_failed",
             next: "Fix the login, display name or email as the message says, then call again.",
           },
@@ -222,10 +226,13 @@ export class AccountsOperations implements OnModuleInit {
           en: `Create account "${quoted(i, i.login)}"; the platform generates the initial password and shows it once to you after approval`,
         }),
         run: async (input, ctx) => {
-          if (ctx.callId === undefined) {
+          if (ctx.callId === undefined || ctx.runId === null) {
             // the password reaches the approver through the approved call; without one it could
             // never be shown, so nothing is created
-            throw new Error("accounts.create runs only as an approved Platform tool call");
+            throw new ApiError(
+              "account.create_needs_approval",
+              "accounts.create runs only as a Platform call you approve in a conversation",
+            );
           }
           const account = await this.passwords.createAccount(
             {
@@ -236,6 +243,7 @@ export class AccountsOperations implements OnModuleInit {
             ctx.actorAccountId,
             {
               conversationId: ctx.conversationId,
+              runId: ctx.runId,
               callId: ctx.callId,
               recipientAccountId: ctx.actorAccountId,
             },

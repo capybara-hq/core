@@ -30,6 +30,7 @@ export interface AccountInitialPasswordsTable {
   account_id: string;
   recipient_account_id: string;
   conversation_id: string;
+  run_id: string;
   call_id: string;
   master_key_id: string;
   ciphertext: Buffer;

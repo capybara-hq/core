@@ -244,6 +244,21 @@ describe("accounts", () => {
     expect(missing.message).toContain("accounts.list");
   });
 
+  it("accounts.create outside an approved call creates nothing and says where to do it", async () => {
+    const e = (await run("accounts.create", { login: "nocall", displayName: "No call" }).catch(
+      (x: unknown) => x,
+    )) as ToolError;
+    expect(e.message).toContain("account.create_needs_approval");
+    expect(e.message).toContain("private agent");
+    expect(
+      await db
+        .selectFrom("identities")
+        .select("account_id")
+        .where("external_id", "=", "nocall")
+        .execute(),
+    ).toEqual([]);
+  });
+
   it("the precheck refuses disabling yourself and enabling an active account, before the card", async () => {
     expect(await precheck("accounts.disable", { accountId: rootId })).toMatchObject({
       ok: false,

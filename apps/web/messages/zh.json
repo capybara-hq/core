@@ -115,7 +115,8 @@
       "login_taken": "用户名已被占用。",
       "not_found": "账号不存在。",
       "last_super_admin": "不能撤销或停用最后一个超级管理员。",
-      "initial_password_unavailable": "没有可显示的初始密码：已经显示过、已过期，或这个账号不是由你批准的调用创建的。"
+      "initial_password_unavailable": "没有可显示的初始密码：已经显示过、已过期，或这个账号不是由你批准的调用创建的。",
+      "create_needs_approval": "请在你自己批准调用的会话中创建账号，或在网页上创建。"
     },
     "org": {
       "not_found": "组织不存在或你已不是成员。",

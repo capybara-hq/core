@@ -16,6 +16,7 @@ export const ERROR_CODES = {
   "account.not_found": 404,
   "account.last_super_admin": 409,
   "account.initial_password_unavailable": 404,
+  "account.create_needs_approval": 409,
   "auth.account_disabled": 403,
   "auth.required": 401,
   "auth.token_expired": 401,
