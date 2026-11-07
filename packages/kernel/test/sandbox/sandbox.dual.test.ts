@@ -66,7 +66,7 @@ beforeAll(async () => {
 afterAll(async () => {
   for (const k of kernels) await k.close();
   await raw?.destroy();
-  await rm(root, { recursive: true, force: true });
+  if (root) await rm(root, { recursive: true, force: true });
   await Promise.all([pgc?.stop(), rdc?.stop()]);
 });
 
