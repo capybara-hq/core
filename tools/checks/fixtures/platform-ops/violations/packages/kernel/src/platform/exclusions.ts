@@ -5,4 +5,6 @@ export const PLATFORM_EXCLUSIONS = [
   { route: "GET /api/v1/orgs/:orgId/skills/b", category: "later", reason: "Later." },
   // platform-op-orphan: no such route
   { route: "GET /api/v1/orgs/:orgId/ghost", category: "internal", reason: "Gone." },
+  // platform-op-literal: route is not a literal
+  { route: ROUTE, category: "internal", reason: "Dynamic." },
 ];

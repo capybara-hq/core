@@ -110,7 +110,8 @@ const describeAuthz = (a: Authz | undefined): string =>
         ? "superAdmin"
         : "public";
 
-function controllerPrefix(cls: Node): string | undefined {
+/** The `@Controller` prefix; `null` when it is not a string literal, `undefined` for a non-controller. */
+function controllerPrefix(cls: Node): string | null | undefined {
   const d = decoratorsOf(cls).find((x) => decoratorName(x) === "Controller");
   if (!d) return undefined;
   const arg = callArgs(d)[0];
@@ -119,12 +120,13 @@ function controllerPrefix(cls: Node): string | undefined {
     const p = (arg.properties as Node[]).find(
       (q) => q.type === "Property" && nameOf(q.key) === "path",
     );
-    return stringValue(p?.value) ?? "";
+    if (!p) return "";
+    return stringValue(p.value) ?? null;
   }
-  return stringValue(arg) ?? "";
+  return stringValue(arg) ?? null;
 }
 
-function readRoutes(p: ParsedFile): Route[] {
+function readRoutes(p: ParsedFile, findings: Finding[]): Route[] {
   const out: Route[] = [];
   walk(p.program, (cls) => {
     if (cls.type !== "ClassDeclaration" && cls.type !== "ClassExpression") return;
@@ -134,16 +136,27 @@ function readRoutes(p: ParsedFile): Route[] {
     for (const m of ((cls.body as Node).body as Node[]) ?? []) {
       if (m.type !== "MethodDefinition") continue;
       const ds = decoratorsOf(m);
-      const route = ds.find((d) => HTTP.has(decoratorName(d) ?? ""));
-      if (!route) continue;
-      const method = HTTP.get(decoratorName(route) as string) as string;
-      const path = callArgs(route)[0] ? (stringValue(callArgs(route)[0]) ?? "") : "";
-      out.push({
-        key: `${method} ${joinPath(prefix, path)}`,
-        file: p.file,
-        line: p.lineOf(route.start),
-        authz: authzOf(ds) ?? classAuthz,
-      });
+      for (const route of ds.filter((d) => HTTP.has(decoratorName(d) ?? ""))) {
+        const line = p.lineOf(route.start);
+        const arg = callArgs(route)[0];
+        const path = arg ? stringValue(arg) : "";
+        if (prefix === null || path === undefined) {
+          findings.push({
+            file: p.file,
+            line,
+            rule: "platform-op-literal",
+            message: `${prefix === null ? "controller prefix" : "route path"} must be a string literal, so the route cannot be matched to an operation`,
+          });
+          continue;
+        }
+        const method = HTTP.get(decoratorName(route) as string) as string;
+        out.push({
+          key: `${method} ${joinPath(prefix, path)}`,
+          file: p.file,
+          line,
+          authz: authzOf(ds) ?? classAuthz,
+        });
+      }
     }
   });
   return out;
@@ -182,7 +195,15 @@ function readOps(p: ParsedFile, out: Finding[]): Op[] {
   walk(p.program, (n) => {
     if (n.type !== "CallExpression" || nameOf(n.callee) !== "defineOperation") return;
     const obj = (n.arguments as Node[])[0];
-    if (obj?.type !== "ObjectExpression") return;
+    if (obj?.type !== "ObjectExpression") {
+      out.push({
+        file: p.file,
+        line: p.lineOf(n.start),
+        rule: "platform-op-literal",
+        message: "defineOperation takes an object literal, so the check cannot read the operation",
+      });
+      return;
+    }
     const line = p.lineOf((prop(obj, "id") ?? obj).start);
     const add = (rule: string, message: string) => out.push({ file: p.file, line, rule, message });
     const id = stringValue(prop(obj, "id")?.value) ?? "<unknown>";
@@ -229,7 +250,7 @@ interface Exclusion {
   line: number;
 }
 
-function readExclusions(p: ParsedFile): Exclusion[] {
+function readExclusions(p: ParsedFile, findings: Finding[]): Exclusion[] {
   const out: Exclusion[] = [];
   walk(p.program, (n) => {
     if (n.type !== "VariableDeclarator" || nameOf(n.id) !== "PLATFORM_EXCLUSIONS") return;
@@ -241,7 +262,15 @@ function readExclusions(p: ParsedFile): Exclusion[] {
     for (const e of init.elements as Node[]) {
       if (e?.type !== "ObjectExpression") continue;
       const route = stringValue(prop(e, "route")?.value);
-      if (route === undefined) continue;
+      if (route === undefined) {
+        findings.push({
+          file: p.file,
+          line: p.lineOf(e.start),
+          rule: "platform-op-literal",
+          message: "an exclusion's `route` must be a string literal",
+        });
+        continue;
+      }
       out.push({
         route,
         category: stringValue(prop(e, "category")?.value),
@@ -282,7 +311,7 @@ export function checkPlatformOps(root: string): Finding[] {
   const routes = new Map<string, Route>();
   const ops: Op[] = [];
   let exclusions: Exclusion[] = [];
-  let exclusionsFile = join(src, "platform/exclusions.ts");
+  const exclusionsFile = join(src, "platform/exclusions.ts");
 
   for (const { file, isTest } of listSourceFiles(src)) {
     if (isTest) continue;
@@ -296,10 +325,9 @@ export function checkPlatformOps(root: string): Finding[] {
       continue;
     }
     if (isOps) ops.push(...readOps(p, out));
-    if (isExclusions) exclusions = readExclusions(p);
-    for (const r of readRoutes(p)) routes.set(r.key, r);
+    if (isExclusions) exclusions = readExclusions(p, out);
+    for (const r of readRoutes(p, out)) routes.set(r.key, r);
   }
-  exclusionsFile = join(src, "platform/exclusions.ts");
 
   const roles = readRoles(join(src, "orgs/roles.ts"));
   const rank = (a: Authz | undefined): number | undefined => {

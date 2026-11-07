@@ -59,4 +59,17 @@ export const ops = [
     confirm: "read",
     run: async () => ({}),
   }),
+  // platform-op-literal: not an object literal
+  defineOperation(someOperation),
+  // platform-op-literal: authz is not a literal
+  defineOperation({
+    id: "skills.other",
+    description: "Other.",
+    input: z.object({}),
+    example: {},
+    authz: someAuthz,
+    mirrors: [],
+    confirm: "read",
+    run: async () => ({}),
+  }),
 ];

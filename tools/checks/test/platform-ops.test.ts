@@ -39,6 +39,11 @@ describe("checkPlatformOps", () => {
         "platform-op-exclusion-reason",
         "platform-op-exclusion-reason",
         "platform-op-literal",
+        "platform-op-literal",
+        "platform-op-literal",
+        "platform-op-literal",
+        "platform-op-literal",
+        "platform-op-literal",
         "platform-op-missing",
         "platform-op-missing",
         "platform-op-orphan",
@@ -67,6 +72,17 @@ describe("checkPlatformOps", () => {
     has("platform-op-describe", ops, lineOf(ops, 'id: "skills.remove"'), "example");
     has("platform-op-describe", ops, lineOf(ops, 'id: "skills.remove"'), "summary");
     has("platform-op-literal", ops, lineOf(ops, 'id: "skills.patch"'), "mirrors");
+    has("platform-op-literal", ops, lineOf(ops, 'id: "skills.other"'), "authz");
+    has(
+      "platform-op-literal",
+      ops,
+      lineOf(ops, "defineOperation(someOperation)"),
+      "object literal",
+    );
+    has("platform-op-literal", exc, lineOf(exc, "route: ROUTE"), "route");
+    const dyn = join(root, SRC, "skills/dynamic.controller.ts");
+    has("platform-op-literal", dyn, lineOf(dyn, "@Get(PATH)"), "route path");
+    has("platform-op-literal", dyn, lineOf(dyn, '@Get("y")'), "controller prefix");
     has("platform-op-exclusion-reason", exc, lineOf(exc, 'skills/a"'), "reason");
     has("platform-op-exclusion-reason", exc, lineOf(exc, 'skills/b"'), "issue");
   });
