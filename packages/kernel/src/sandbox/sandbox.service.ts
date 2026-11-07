@@ -253,7 +253,7 @@ export const sandboxUnavailable = (): ApiError =>
  */
 const otherProvider = (provider: string): ApiError =>
   new ApiError(
-    "sandbox.unavailable",
+    "environment.unavailable",
     `This environment's files are kept by the sandbox provider ${provider}, which is not the current provider; it can be used again once ${provider} is the deployment's sandbox provider`,
   );
 
@@ -337,8 +337,8 @@ async function inPool<T>(items: T[], limit: number, fn: (x: T) => Promise<void>)
  *   after a rebuild on providers whose handle is the instance name (sandbox-docker).
  *
  * Files kept by another provider than the current one make the environment unusable
- * (`sandbox.unavailable`) until that provider is back; deleting it still works while that provider
- * is loaded ({@link SandboxProviders.lookup}). Without a provider {@link available} is false and
+ * (`environment.unavailable`) until that provider is back; deleting it still works while that
+ * provider is loaded ({@link SandboxProviders.lookup}). Without a provider {@link available} is false and
  * uses throw `sandbox.unavailable` (503). No in-process state: replicas share it through PG and
  * Redis.
  */
@@ -372,6 +372,31 @@ export class SandboxService {
   /** Concurrent holders of one environment (`sandbox.maxConcurrentCommands`, read at every use). */
   private get cap(): number {
     return this.config.get().sandbox.maxConcurrentCommands;
+  }
+
+  /**
+   * The org's effective sandbox limits (spec §8.4): the deployment's `sandbox.limits`, egress
+   * narrowed by the org setting `sandboxEgress` (Ruling M19), cpu / memory per the super admin's
+   * org override (C19 / Ruling M16). Instances are created with them; phase 1 environments use
+   * them unchanged.
+   */
+  async orgLimits(orgId: string): Promise<SandboxLimits> {
+    const cfg = this.config.get().sandbox;
+    const egress = effectiveSandboxEgress(
+      cfg.limits,
+      (await readOrgSettings(this.db.db, orgId)).sandboxEgress,
+    );
+    const sized = effectiveSandboxLimits(
+      { ...cfg.limits, ...egress },
+      await readSandboxLimitOverride(this.db.db, orgId),
+    );
+    return {
+      cpu: sized.cpu,
+      memoryMb: sized.memoryMb,
+      diskMb: sized.diskMb,
+      egress: sized.egress,
+      allowHosts: sized.allowHosts,
+    };
   }
 
   /**
@@ -1321,25 +1346,10 @@ export class SandboxService {
       destroyed_at: null,
       sweep_failed_at: null,
     });
+    // the org's effective limits apply at creation only, so a changed setting reaches only
+    // instances created afterwards
+    const limits = await this.orgLimits(ctx.orgId);
     const cfg = this.config.get().sandbox;
-    // egress narrowed by the org setting (Ruling M19); applies at creation only, so a changed
-    // setting reaches only instances created afterwards
-    const egress = effectiveSandboxEgress(
-      cfg.limits,
-      (await readOrgSettings(this.db.db, ctx.orgId)).sandboxEgress,
-    );
-    // cpu / memory per the super admin's org override (C19 / Ruling M16), likewise at creation
-    const sized = effectiveSandboxLimits(
-      { ...cfg.limits, ...egress },
-      await readSandboxLimitOverride(this.db.db, ctx.orgId),
-    );
-    const limits: SandboxLimits = {
-      cpu: sized.cpu,
-      memoryMb: sized.memoryMb,
-      diskMb: sized.diskMb,
-      egress: sized.egress,
-      allowHosts: sized.allowHosts,
-    };
     let fs: FileSystemHandle | null =
       row.fs_status === "ready" && (row.provider === null || row.provider === p.plugin)
         ? row.fs_handle

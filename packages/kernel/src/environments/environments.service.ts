@@ -1,0 +1,453 @@
+import { randomUUID } from "node:crypto";
+import type { SandboxLimits } from "@capybara-hq/plugin-sdk";
+import { Inject, Injectable } from "@nestjs/common";
+import { sql } from "kysely";
+import { ApiError } from "../errors.js";
+import { audit } from "../identity/audit.js";
+import { KernelConfigService } from "../infra/config/kernel-config.service.js";
+import { afterCommit } from "../infra/database/after-commit.js";
+import { KernelDb } from "../infra/database/kernel-db.js";
+import { TransactionHost } from "../infra/database/transaction-host.js";
+import { Transactional } from "../infra/database/transactional.decorator.js";
+import { KERNEL_LOGGER } from "../infra/tokens.js";
+import type { KernelLogger } from "../log.js";
+import { SandboxJobs } from "../sandbox/jobs.js";
+import { SandboxProviders } from "../sandbox/providers.js";
+import { environmentNotFound, SandboxService } from "../sandbox/sandbox.service.js";
+import { EnvironmentAccess, environmentProvider, environmentUnavailable } from "./access.js";
+
+/** An environment as its owner sees it (`GET /orgs/:orgId/environments`). */
+export interface EnvironmentView {
+  id: string;
+  /** null for the default environment (shown as 「个人环境」 / "Personal"). */
+  name: string | null;
+  isDefault: boolean;
+  ownerKind: "personal";
+  source: "cloud";
+  /** The provider keeping its files, or the one its first use will create them with. */
+  provider: string | null;
+  /** Its provider is the deployment's current sandbox provider. */
+  available: boolean;
+  sessionIsolation: boolean;
+  /** Its file system is gone at the provider; reset the files to use it again. */
+  filesLost: boolean;
+  instance: { status: "running" | "suspended"; lastUsedAt: string } | null;
+  /** The org's effective sandbox limits (phase 1 environments use them unchanged, spec §8.4). */
+  limits: SandboxLimits;
+  createdAt: string;
+}
+
+/** The list response: the person's live environments in the org. */
+export interface EnvironmentList {
+  items: EnvironmentView[];
+  /** The person's default environment; null when there is none (no sandbox provider to make it). */
+  defaultId: string | null;
+  /** The environment of the person's most recently updated conversation that has a live one. */
+  lastUsedId: string | null;
+  /** There is a current sandbox provider (new cloud environments can be made; ruling R4). */
+  cloudAvailable: boolean;
+}
+
+const isUniqueViolation = (e: unknown, constraint: string): boolean =>
+  typeof e === "object" &&
+  e !== null &&
+  (e as { code?: unknown }).code === "23505" &&
+  (e as { constraint?: unknown }).constraint === constraint;
+
+const nameTaken = (): ApiError =>
+  new ApiError("environment.name_taken", "You already have an environment with this name");
+
+/**
+ * Personal cloud environments (spec 2026-11-07-environments-design §4.2 items 7, 12, 13; §9): a
+ * person's environments in an org, visible and usable only by their owner (anyone else gets
+ * `environment.not_found`). Deleting one soft-deletes it and destroys its instance and files in a
+ * `sandbox-destroy-for` job after the commit.
+ */
+@Injectable()
+export class EnvironmentsService {
+  constructor(
+    @Inject(KernelDb) private readonly db: KernelDb,
+    @Inject(TransactionHost) readonly txHost: TransactionHost,
+    @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
+    @Inject(SandboxProviders) private readonly providers: Pick<SandboxProviders, "current">,
+    @Inject(SandboxService)
+    private readonly sandbox: Pick<SandboxService, "orgLimits" | "resetFileSystem">,
+    @Inject(SandboxJobs) private readonly sandboxJobs: Pick<SandboxJobs, "destroy">,
+    @Inject(EnvironmentAccess) private readonly access: Pick<EnvironmentAccess, "usable">,
+    @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "warn">,
+  ) {}
+
+  /**
+   * The person's live environments in the org, the default first, then by creation. With a
+   * current sandbox provider the default environment is created first if missing (its first need,
+   * spec §4.2 item 7).
+   */
+  async list(orgId: string, accountId: string): Promise<EnvironmentList> {
+    const cloudAvailable = this.providers.current() !== undefined;
+    const defaultId = cloudAvailable ? await this.ensureDefault(orgId, accountId) : null;
+    const items = await this.views(orgId, accountId);
+    const last = await this.db
+      .selectFrom("conversations as c")
+      .innerJoin("environments as e", "e.id", "c.environment_id")
+      .select("c.environment_id")
+      .where("c.org_id", "=", orgId)
+      .where("c.account_id", "=", accountId)
+      .where("e.owner_account_id", "=", accountId)
+      .where("e.deleted_at", "is", null)
+      .orderBy("c.updated_at", "desc")
+      .limit(1)
+      .executeTakeFirst();
+    return {
+      items,
+      defaultId: defaultId ?? items.find((v) => v.isDefault)?.id ?? null,
+      lastUsedId: last?.environment_id ?? null,
+      cloudAvailable,
+    };
+  }
+
+  /** One of the person's live environments; anyone else's (or a missing one) → `not_found`. */
+  async get(orgId: string, accountId: string, id: string): Promise<EnvironmentView> {
+    const [view] = await this.views(orgId, accountId, id);
+    if (!view) throw environmentNotFound();
+    return view;
+  }
+
+  /**
+   * A new personal cloud environment, ready at once (its instance and files are made on first
+   * use). Needs a current sandbox provider (`environment.unavailable`); a live name of the person's
+   * (case-insensitive) → `environment.name_taken`; `environments.maxPersonal` live ones (the
+   * default counts) → `environment.limit_reached`. Serialized per person by their membership row.
+   */
+  async create(
+    orgId: string,
+    accountId: string,
+    input: { name: string },
+    actorTokenId?: string,
+  ): Promise<EnvironmentView> {
+    const id = await this.insert(orgId, accountId, input.name, actorTokenId);
+    return this.get(orgId, accountId, id);
+  }
+
+  @Transactional()
+  private async insert(
+    orgId: string,
+    accountId: string,
+    name: string,
+    actorTokenId: string | undefined,
+  ): Promise<string> {
+    const current = this.providers.current();
+    if (!current) throw environmentUnavailable(null);
+    await this.lockMember(orgId, accountId);
+    const { n } = await this.db
+      .selectFrom("environments")
+      .select((eb) => eb.fn.countAll<string>().as("n"))
+      .where("org_id", "=", orgId)
+      .where("owner_kind", "=", "personal")
+      .where("owner_account_id", "=", accountId)
+      .where("deleted_at", "is", null)
+      .executeTakeFirstOrThrow();
+    const max = this.config.get().environments.maxPersonal;
+    if (Number(n) >= max) {
+      throw new ApiError(
+        "environment.limit_reached",
+        `You already have ${max} environments in this organization; delete one to create another`,
+      );
+    }
+    await this.assertNameFree(orgId, accountId, name);
+    const id = randomUUID();
+    try {
+      await this.db
+        .insertInto("environments")
+        .values({
+          id,
+          org_id: orgId,
+          owner_kind: "personal",
+          owner_account_id: accountId,
+          name,
+          source: "cloud",
+          provider: current.plugin,
+        })
+        .execute();
+    } catch (e) {
+      if (isUniqueViolation(e, "environments_name_uq")) throw nameTaken();
+      throw e;
+    }
+    await audit(this.db.db, {
+      actorAccountId: accountId,
+      ...(actorTokenId !== undefined && { actorTokenId }),
+      orgId,
+      action: "environment.created",
+      target: id,
+      detail: { name },
+    });
+    return id;
+  }
+
+  /** Renames one of the person's live environments (the default too); see {@link create}. */
+  async rename(
+    orgId: string,
+    accountId: string,
+    id: string,
+    name: string,
+    actorTokenId?: string,
+  ): Promise<EnvironmentView> {
+    await this.renameIn(orgId, accountId, id, name, actorTokenId);
+    return this.get(orgId, accountId, id);
+  }
+
+  @Transactional()
+  private async renameIn(
+    orgId: string,
+    accountId: string,
+    id: string,
+    name: string,
+    actorTokenId: string | undefined,
+  ): Promise<void> {
+    const before = await this.lockOwn(orgId, accountId, id);
+    if (before.name === name) return;
+    // the same name in another case is this environment's own: the index allows it
+    if (before.name?.toLowerCase() !== name.toLowerCase()) {
+      await this.assertNameFree(orgId, accountId, name);
+    }
+    try {
+      await this.db
+        .updateTable("environments")
+        .set({ name, updated_at: sql<Date>`now()` })
+        .where("id", "=", id)
+        .execute();
+    } catch (e) {
+      if (isUniqueViolation(e, "environments_name_uq")) throw nameTaken();
+      throw e;
+    }
+    await audit(this.db.db, {
+      actorAccountId: accountId,
+      ...(actorTokenId !== undefined && { actorTokenId }),
+      orgId,
+      action: "environment.renamed",
+      target: id,
+      detail: { from: before.name, to: name },
+    });
+  }
+
+  /**
+   * Deletes one of the person's live environments: soft delete, its IM default row cleared, and
+   * after the commit a `sandbox-destroy-for` job (the worker waits for running commands, then
+   * destroys the instance and the files). Conversations bound to it keep pointing at it; their
+   * sandbox tools then fail with `environment.not_found`.
+   */
+  @Transactional()
+  async remove(orgId: string, accountId: string, id: string, actorTokenId?: string): Promise<void> {
+    const before = await this.lockOwn(orgId, accountId, id);
+    await this.db
+      .updateTable("environments")
+      .set({ deleted_at: sql<Date>`now()`, updated_at: sql<Date>`now()` })
+      .where("id", "=", id)
+      .execute();
+    await this.db
+      .deleteFrom("environment_defaults")
+      .where("org_id", "=", orgId)
+      .where("account_id", "=", accountId)
+      .where("environment_id", "=", id)
+      .execute();
+    await audit(this.db.db, {
+      actorAccountId: accountId,
+      ...(actorTokenId !== undefined && { actorTokenId }),
+      orgId,
+      action: "environment.deleted",
+      target: id,
+      detail: { name: before.name, isDefault: before.is_default },
+    });
+    afterCommit(async () => {
+      try {
+        await this.sandboxJobs.destroy([id]);
+      } catch (err) {
+        // the hourly destruction sweep destroys deleted environments too
+        this.log.warn("cannot schedule environment destruction", { environmentId: id, err });
+      }
+    });
+  }
+
+  /**
+   * Starts one of the person's environments over with empty files (after
+   * `environment.files_lost`): waits for running commands, destroys any instance and the file
+   * system; the next use creates new ones. Its provider must be the current one
+   * (`environment.unavailable`).
+   */
+  async resetFiles(
+    orgId: string,
+    accountId: string,
+    id: string,
+    actorTokenId?: string,
+  ): Promise<void> {
+    await this.access.usable(orgId, accountId, id);
+    await this.sandbox.resetFileSystem(id);
+    await audit(this.db.db, {
+      actorAccountId: accountId,
+      ...(actorTokenId !== undefined && { actorTokenId }),
+      orgId,
+      action: "environment.files_reset",
+      target: id,
+    });
+  }
+
+  /**
+   * The person's default environment in the org, created when missing (named by the UI, `name`
+   * NULL). Idempotent under concurrency: the partial unique index on the live default makes a
+   * racing insert do nothing, and the select that follows reads the winner. Needs a current
+   * sandbox provider (`environment.unavailable`). It is the person's baseline, so it is created
+   * even at `environments.maxPersonal`.
+   */
+  @Transactional()
+  async ensureDefault(orgId: string, accountId: string): Promise<string> {
+    const current = this.providers.current();
+    if (!current) throw environmentUnavailable(null);
+    await this.db
+      .insertInto("environments")
+      .values({
+        id: randomUUID(),
+        org_id: orgId,
+        owner_kind: "personal",
+        owner_account_id: accountId,
+        name: null,
+        is_default: true,
+        source: "cloud",
+        provider: current.plugin,
+      })
+      .onConflict((oc) =>
+        oc
+          .columns(["org_id", "owner_account_id"])
+          .where(sql<boolean>`is_default AND deleted_at IS NULL`)
+          .doNothing(),
+      )
+      .execute();
+    const row = await this.db
+      .selectFrom("environments")
+      .select("id")
+      .where("org_id", "=", orgId)
+      .where("owner_account_id", "=", accountId)
+      .where("is_default", "=", true)
+      .where("deleted_at", "is", null)
+      .executeTakeFirstOrThrow();
+    return row.id;
+  }
+
+  /** The person's live environments (or the one `id`) as views. */
+  private async views(orgId: string, accountId: string, id?: string): Promise<EnvironmentView[]> {
+    const rows = await this.db
+      .selectFrom("environments as e")
+      .leftJoin("environment_instances as i", "i.environment_id", "e.id")
+      .select([
+        "e.id",
+        "e.name",
+        "e.is_default",
+        "e.provider",
+        "e.created_at",
+        "i.provider as instance_provider",
+        "i.fs_status",
+        "i.handle",
+        "i.status",
+        "i.last_used_at",
+      ])
+      .where("e.org_id", "=", orgId)
+      .where("e.owner_kind", "=", "personal")
+      .where("e.owner_account_id", "=", accountId)
+      .where("e.deleted_at", "is", null)
+      .$if(id !== undefined, (q) => q.where("e.id", "=", id as string))
+      .orderBy("e.is_default", "desc")
+      .orderBy("e.created_at")
+      .orderBy("e.id")
+      .execute();
+    if (rows.length === 0) return [];
+    const limits = await this.sandbox.orgLimits(orgId);
+    const current = this.providers.current()?.plugin;
+    return rows.map((r) => {
+      const provider = environmentProvider(
+        {
+          provider: r.provider,
+          instanceProvider: r.instance_provider,
+          fsStatus: r.fs_status,
+          hasInstance: r.handle !== null,
+        },
+        current,
+      );
+      const live = (r.status === "running" || r.status === "suspended") && r.last_used_at;
+      return {
+        id: r.id,
+        name: r.name,
+        isDefault: r.is_default,
+        ownerKind: "personal",
+        source: "cloud",
+        provider,
+        available: current !== undefined && provider === current,
+        sessionIsolation: false,
+        filesLost: r.fs_status === "lost",
+        instance: live
+          ? {
+              status: r.status as "running" | "suspended",
+              lastUsedAt: (r.last_used_at as Date).toISOString(),
+            }
+          : null,
+        limits: { ...limits, allowHosts: [...limits.allowHosts] },
+        createdAt: r.created_at.toISOString(),
+      };
+    });
+  }
+
+  /**
+   * Serializes the person's environment writes in the org: the org row (`FOR SHARE`), then their
+   * membership row (`FOR NO KEY UPDATE`), the order member removal locks them in. Not a member (any
+   * more) → `org.not_found`, as the org guard answers.
+   */
+  private async lockMember(orgId: string, accountId: string): Promise<void> {
+    const org = await this.db
+      .selectFrom("orgs")
+      .select("id")
+      .where("id", "=", orgId)
+      .where("deleted_at", "is", null)
+      .forShare()
+      .executeTakeFirst();
+    const m =
+      org &&
+      (await this.db
+        .selectFrom("memberships")
+        .select("account_id")
+        .where("org_id", "=", orgId)
+        .where("account_id", "=", accountId)
+        .forNoKeyUpdate()
+        .executeTakeFirst());
+    if (!m) throw new ApiError("org.not_found", "Organization not found");
+  }
+
+  /** Locks one of the person's live environments (after their membership); else `not_found`. */
+  private async lockOwn(
+    orgId: string,
+    accountId: string,
+    id: string,
+  ): Promise<{ name: string | null; is_default: boolean }> {
+    await this.lockMember(orgId, accountId);
+    const row = await this.db
+      .selectFrom("environments")
+      .select(["name", "is_default"])
+      .where("id", "=", id)
+      .where("org_id", "=", orgId)
+      .where("owner_kind", "=", "personal")
+      .where("owner_account_id", "=", accountId)
+      .where("deleted_at", "is", null)
+      .forNoKeyUpdate()
+      .executeTakeFirst();
+    if (!row) throw environmentNotFound();
+    return row;
+  }
+
+  private async assertNameFree(orgId: string, accountId: string, name: string): Promise<void> {
+    const clash = await this.db
+      .selectFrom("environments")
+      .select("id")
+      .where("org_id", "=", orgId)
+      .where("owner_account_id", "=", accountId)
+      .where("deleted_at", "is", null)
+      .where(sql<boolean>`lower(name) = lower(${name})`)
+      .executeTakeFirst();
+    if (clash) throw nameTaken();
+  }
+}

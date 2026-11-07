@@ -238,6 +238,14 @@ export const ERROR_CODES = {
   "environment.not_found": 404,
   /** The environment's file system is gone at the provider; reset its files to start empty. */
   "environment.files_lost": 409,
+  /** The caller may see the environment but not use it (project environments, later phases). */
+  "environment.forbidden": 403,
+  /** The environment's provider is not the deployment's current one, or there is none. */
+  "environment.unavailable": 503,
+  /** The person already has a live environment with this name (case-insensitive). */
+  "environment.name_taken": 409,
+  /** The person already has `environments.maxPersonal` live personal environments. */
+  "environment.limit_reached": 409,
   "skill.not_found": 404,
   /** Also a skill neither the model nor a person could use (phase D: both invocation flags off). */
   "skill.invalid_package": 400,

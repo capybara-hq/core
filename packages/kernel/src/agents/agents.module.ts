@@ -5,7 +5,6 @@ import { ExtensionsModule } from "../extensions/extensions.module.js";
 import { ModelsModule } from "../models/models.module.js";
 import { OrgLockModule } from "../orgs/org-lock.js";
 import { ProvidersModule } from "../runtime/providers.js";
-import { SandboxModule } from "../sandbox/sandbox.module.js";
 import { SkillsModule } from "../skills/skills.module.js";
 import { ToolsModule } from "../tools/tools.module.js";
 import { AgentLookupModule } from "./agent-lookup.js";
@@ -34,8 +33,6 @@ import { AgentTemplatesService } from "./templates.js";
     ProvidersModule,
     SkillsModule,
     ToolsModule,
-    // the producer of sandbox-destroy-for jobs after a delete
-    SandboxModule,
     // cancels the deleted agent's eval runs
     EvalBudgetModule,
     // creating from a template: the extension tools and the tier purposes (rulings P4-4, P4-5)

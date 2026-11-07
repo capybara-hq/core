@@ -81,27 +81,60 @@ describe("0086_environments", () => {
   });
 
   it("gives an instance row its defaults and cascades with the environment", async () => {
+    await insertEnv("c-env", null, false);
     await sql`insert into capybara.environment_instances (environment_id, org_id)
-      values ('e5', 'o1')`.execute(db);
+      values ('c-env', 'o1')`.execute(db);
     const row = (
       await sql<{ status: string; fs_status: string; generation: number; had_instance: boolean }>`
         select status, fs_status, generation, had_instance
-        from capybara.environment_instances where environment_id = 'e5'`.execute(db)
+        from capybara.environment_instances where environment_id = 'c-env'`.execute(db)
     ).rows[0];
     expect(row).toEqual({ status: "none", fs_status: "none", generation: 0, had_instance: false });
     await sql`insert into capybara.environment_defaults (org_id, account_id, environment_id)
-      values ('o1', 'a1', 'e5')`.execute(db);
-    await sql`update capybara.conversations set environment_id = 'e5' where id = 'c1'`.execute(db);
+      values ('o1', 'a1', 'c-env')`.execute(db);
+
+    await sql`delete from capybara.environments where id = 'c-env'`.execute(db);
+    const left = (
+      await sql<{ n: number }>`
+        select (select count(*) from capybara.environment_instances
+                  where environment_id = 'c-env')::int
+             + (select count(*) from capybara.environment_defaults
+                  where environment_id = 'c-env')::int as n`.execute(db)
+    ).rows[0];
+    expect(left?.n).toBe(0);
+  });
+
+  it("lets a conversation point at an environment", async () => {
+    await insertEnv("conv-env", "Conv", false);
+    await sql`update capybara.conversations set environment_id = 'conv-env' where id = 'c1'`.execute(
+      db,
+    );
+    await expect(
+      sql`update capybara.conversations set environment_id = 'missing' where id = 'c1'`.execute(db),
+    ).rejects.toThrow(/foreign key/);
   });
 
   it("sets running background tasks to lost and leaves finished ones", async () => {
     const rows = (
-      await sql<{ id: string; status: string; environment_id: string | null }>`
-        select id, status, environment_id from capybara.background_tasks order by id`.execute(db)
+      await sql<{
+        id: string;
+        status: string;
+        environment_id: string | null;
+        lost_reason: string | null;
+        finished: boolean;
+      }>`
+        select id, status, environment_id, lost_reason, finished_at is not null as finished
+        from capybara.background_tasks order by id`.execute(db)
     ).rows;
     expect(rows).toEqual([
-      { id: "t1", status: "lost", environment_id: null },
-      { id: "t2", status: "completed", environment_id: null },
+      {
+        id: "t1",
+        status: "lost",
+        environment_id: null,
+        lost_reason: "sandbox_replaced_by_environment",
+        finished: true,
+      },
+      expect.objectContaining({ id: "t2", status: "completed", environment_id: null }),
     ]);
   });
 });

@@ -513,12 +513,12 @@ describe("the provider reports the instance gone", () => {
     expect(await row()).toMatchObject({ status: "running", handle: b.h, fs_status: "ready" });
   });
 
-  it("files kept by another provider than the current one: sandbox.unavailable, nothing changes", async () => {
+  it("files kept by another provider than the current one: environment.unavailable, nothing changes", async () => {
     await use(service(() => provider, "sandbox-old"));
     const before = await row();
     const err = await use(service()).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ApiError);
-    expect((err as ApiError).code).toBe("sandbox.unavailable");
+    expect((err as ApiError).code).toBe("environment.unavailable");
     expect((err as ApiError).message).toContain("sandbox-old");
     expect(await row()).toMatchObject({
       provider: "sandbox-old",

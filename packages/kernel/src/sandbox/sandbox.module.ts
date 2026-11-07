@@ -22,6 +22,6 @@ import { SandboxService } from "./sandbox.service.js";
     QueueModule.registerQueue(MAINTENANCE_QUEUE_NAME),
   ],
   providers: [SandboxProviders, SandboxLeases, SandboxService, SandboxJobs],
-  exports: [SandboxService, SandboxJobs],
+  exports: [SandboxService, SandboxJobs, SandboxProviders],
 })
 export class SandboxModule {}
