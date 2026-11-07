@@ -264,8 +264,7 @@ test("switching org never shows the old org", async ({ page }) => {
     await page.evaluate((key) => sessionStorage.removeItem(key), PROBE_KEY);
 
     const sidebar = page.locator('[data-part="sidebar"][data-context="work"]');
-    await sidebar.locator('button[data-part="account"]').click();
-    await page.getByRole("menuitem", { name: zh.shell.orgMenu }).click();
+    await sidebar.locator('[data-part="org-switcher"]').click();
     await page.getByRole("menuitemradio", { name: otherName }).click();
     await expect(page).toHaveURL(HOME_URL);
     await hydrated(page);

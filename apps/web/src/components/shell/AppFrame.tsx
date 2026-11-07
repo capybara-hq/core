@@ -362,13 +362,13 @@ function ShellFrame({
     else router.refresh();
   }, [pathname, inSetup, setupRoute, router]);
 
-  // The account menu (web order §2.1): Organization ▸ (the current one checked), Language ▸,
-  // Personal settings, sign out; the theme is the switch after the account.
+  // The account menu (web order §2.1): Language ▸, Personal settings, sign out; the theme is the
+  // switch after the account. The org is shown and switched only in the sidebar's org switcher.
   const createOrgItem: MenuItem[] = me.canCreateOrg
     ? [{ label: t("shell.createOrg"), onSelect: () => setCreatingOrg(true) }]
     : [];
-  // The user's orgs as radio items, then "Create organization…": the org switcher's menu and the
-  // account menu's Organization submenu.
+  // The org switcher's menu: the user's orgs as radio items, then "Create organization…" and
+  // "Leave organization…".
   const orgItems: MenuItem[] = [
     // The current org reads as the current choice (primary text and a check), not as disabled;
     // choosing it again does nothing.
@@ -390,10 +390,6 @@ function ShellFrame({
         ]
       : []),
   ];
-  const orgMenu: MenuItem[] =
-    me.memberships.length === 0 && !me.canCreateOrg
-      ? []
-      : [{ label: t("shell.orgMenu"), submenu: orgItems }];
   const languageMenu: MenuItem = {
     label: preferences.language.label,
     submenu: preferences.language.options.map((o) => ({
@@ -543,7 +539,7 @@ function ShellFrame({
         newConversation: { href: HOME_PATH },
         activeNav: inAdmin ? activeAdminOf(pathname, adminItems) : activeNavOf(pathname),
         conversations,
-        account: { name: me.account.displayName, menu: [...orgMenu, ...personalMenu] },
+        account: { name: me.account.displayName, menu: personalMenu },
         theme: preferences.theme,
       }}
       commands={commands}

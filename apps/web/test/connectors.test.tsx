@@ -675,9 +675,10 @@ describe("连接器详情切换组织", () => {
     });
     expect(await screen.findByRole("heading", { name: "Fixture" })).toBeTruthy();
     const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: /^Account: / }));
-    await user.click(await screen.findByRole("menuitem", { name: "Organization" }));
-    // jsdom has no layout: pick the submenu item with the keyboard (see design menu-submenu tests)
+    await user.click(
+      screen.getByRole("button", { name: /^Current organization: .*, switch organization$/ }),
+    );
+    // jsdom has no layout: pick the item with the keyboard (see design menu-submenu tests)
     (await screen.findByRole("menuitemradio", { name: "Beta" })).focus();
     await user.keyboard("{Enter}");
     await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledWith("/"));

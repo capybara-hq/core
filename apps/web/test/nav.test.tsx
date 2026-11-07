@@ -334,18 +334,19 @@ describe("AppFrame contexts", () => {
     expect(screen.queryByRole("menuitem", { name: "设置" })).toBeNull();
   });
 
-  it("account menu has 切换组织 ▸, 语言 ▸, 个人设置 → /account/connections, 退出登录", async () => {
+  it("account menu has 语言 ▸, 个人设置 → /account/connections, 退出登录", async () => {
     resetNavigation("/");
     renderFrame();
     screen.getByText("page body");
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: /^账户: Grant/ }));
     expect(screen.getAllByRole("menuitem").map((i) => i.textContent)).toEqual([
-      zh.shell.orgMenu,
       zh.common.language,
       zh.shell.accountSettings,
       zh.common.logout,
     ]);
+    // the org is shown and switched only by the sidebar's org switcher
+    expect(screen.queryByRole("menuitem", { name: /组织/ })).toBeNull();
     const item = screen.getByRole("menuitem", { name: zh.shell.accountSettings });
     expect(item.getAttribute("href")).toBe("/account/connections");
   });

@@ -1402,7 +1402,6 @@
   },
   "shell": {
     "noOrg": "Select organization",
-    "orgMenu": "Organization",
     "createOrg": "Create organization…",
     "accountSettings": "Personal settings",
     "noCurrentOrg": "There is no current organization to act on."

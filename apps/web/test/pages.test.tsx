@@ -378,12 +378,11 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
     expect(screen.getByRole("button", { name: zh.orgChooser.logout })).toBeTruthy();
   });
 
-  it("the account menu's Organization submenu ends with Create organization", async () => {
+  it("the org switcher's menu ends with Create organization", async () => {
     renderFrame(shellOf(ME));
     const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: /^账户: Grant/ }));
-    await user.click(screen.getByRole("menuitem", { name: zh.shell.orgMenu }));
-    // jsdom has no layout: pick submenu items with the keyboard (see design menu-submenu tests)
+    await user.click(screen.getByRole("button", { name: "当前组织：Acme，切换组织" }));
+    // jsdom has no layout: pick items with the keyboard (see design menu-submenu tests)
     (await screen.findByRole("menuitem", { name: zh.shell.createOrg })).focus();
     await user.keyboard("{Enter}");
     expect(await screen.findByRole("dialog", { name: zh.home.createOrg.title })).toBeTruthy();
@@ -473,7 +472,7 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
     expect(within(link).getByText("2+")).toBeTruthy();
   });
 
-  it("the account menu holds Organization ▸ and Language ▸ above sign-out; the theme switch follows the account", async () => {
+  it("the account menu holds Language ▸ above sign-out, the org switcher switches orgs; the theme switch follows the account", async () => {
     const me = {
       ...ME,
       memberships: [...ME.memberships, { orgId: "o2", slug: "b", name: "Beta", role: "member" }],
@@ -485,22 +484,22 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
     renderFrame(shellOf(me));
     const user = userEvent.setup();
     const account = () => screen.getByRole("button", { name: `账户: ${ME.account.displayName}` });
-    // the account menu: Organization ▸ and Language ▸ above sign-out
+    // the account menu: Language ▸ above sign-out, no org entry
     await user.click(account());
     expect(screen.getAllByRole("menuitem").map((i) => i.textContent)).toEqual([
-      zh.shell.orgMenu,
       zh.common.language,
       zh.shell.accountSettings,
       zh.common.logout,
     ]);
-    await user.click(screen.getByRole("menuitem", { name: zh.shell.orgMenu }));
+    await user.keyboard("{Escape}");
+    // the org switcher's menu: the orgs as radio items directly
+    await user.click(screen.getByRole("button", { name: "当前组织：Acme，切换组织" }));
     const current = await screen.findByRole("menuitemradio", { name: "Acme" });
     expect(current.getAttribute("aria-checked")).toBe("true");
     expect(current.querySelector("svg")).toBeTruthy();
     expect(current.textContent).toBe("Acme");
     // the current org is the current choice, in primary text: not disabled
     expect(current.getAttribute("aria-disabled")).toBeNull();
-    // jsdom has no layout: pick submenu items with the keyboard (see design menu-submenu tests)
     (await screen.findByRole("menuitemradio", { name: "Beta" })).focus();
     await user.keyboard("{Enter}");
     await vi.waitFor(() =>

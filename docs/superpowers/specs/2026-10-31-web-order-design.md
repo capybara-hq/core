@@ -80,9 +80,9 @@ above its divider and 8 px below):
      for the archived conversations (a header "← 已归档 · N" returns; rows offer 取消归档 and 删除; the
      filter applies to it too). No separate page.
 6. **管理后台** (enterprise admins only), with an outward arrow: enters the admin context.
-7. **Account row**: avatar + name (opens the account menu: 切换组织 ▸, 语言 ▸, 个人设置, 退出登录) and the
-   theme toggle (light / dark radio) after it. The org menu (the switcher's and 切换组织 ▸) ends
-   with "退出组织…" (§9).
+7. **Account row**: avatar + name (opens the account menu: 语言 ▸, 个人设置, 退出登录) and the
+   theme toggle (light / dark radio) after it. The org menu (the switcher's, the only place the org
+   is switched) ends with "退出组织…" (§9).
 
 In the rail (below 1280) the brand row is the logo alone; search and the inbox are rail icons at
 the top of the rail; 更多 opens the same flyout.

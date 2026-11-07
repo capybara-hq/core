@@ -1390,7 +1390,6 @@
   },
   "shell": {
     "noOrg": "选择组织",
-    "orgMenu": "切换组织",
     "createOrg": "新建组织…",
     "accountSettings": "个人设置",
     "noCurrentOrg": "当前没有组织，无法操作会话。"

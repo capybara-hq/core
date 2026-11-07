@@ -88,9 +88,9 @@ const workSidebar = (page: Page) => page.locator('[data-part="sidebar"][data-con
 
 const setupSidebar = (page: Page) => page.locator('[data-part="sidebar"][data-context="setup"]');
 
-/** Opens the account menu (the sidebar's account row) of the workspace shell. */
-async function openAccountMenu(page: Page): Promise<void> {
-  await workSidebar(page).locator('button[data-part="account"]').click();
+/** Opens the org switcher's menu (the top of the workspace shell's sidebar). */
+async function openOrgSwitcher(page: Page): Promise<void> {
+  await workSidebar(page).locator('[data-part="org-switcher"]').click();
 }
 
 test.afterEach(async ({ page }) => {
@@ -131,8 +131,7 @@ test("creating an org lands on its setup frame with the setup steps; its shell n
   await resetProbe(page);
   const name = `SSR org ${Date.now()}`;
 
-  await openAccountMenu(page);
-  await page.getByRole("menuitem", { name: zh.shell.orgMenu }).click();
+  await openOrgSwitcher(page);
   await page.getByRole("menuitem", { name: zh.shell.createOrg }).click();
   const dialog = page.getByRole("dialog", { name: zh.home.createOrg.title });
   await dialog.getByRole("textbox", { name: zh.home.createOrg.nameLabel }).fill(name);
@@ -183,8 +182,7 @@ test("switching org from the account menu loads the other org's frame whole, at 
   await expect(page.locator('[data-template="ListPage"]')).toBeVisible();
   await resetProbe(page);
 
-  await openAccountMenu(page);
-  await page.getByRole("menuitem", { name: zh.shell.orgMenu }).click();
+  await openOrgSwitcher(page);
   await page.getByRole("menuitemradio", { name: otherName }).click();
   await expect(page).toHaveURL(HOME_URL);
   await expect(setupSidebar(page).first()).toBeVisible();
