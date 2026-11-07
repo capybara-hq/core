@@ -11,6 +11,8 @@ import {
   Repeater,
   type RepeaterItem,
   Select,
+  Stack,
+  Text,
 } from "@capybara-hq/design";
 import { type ReactNode, useState } from "react";
 import { RefBlock } from "./ref-block";
@@ -248,6 +250,103 @@ function ModelsDemo({ invalid }: { invalid?: string }) {
   );
 }
 
+type NestedEndpoint = { id: string; name: string; models: { key: string; id: string }[] };
+
+/**
+ * Inside a box, an endpoint's models: a Repeater nested in an item's body, drawn one level in
+ * under its guide (spec §6.26). Both lists collapse (the config form's shape), so every title sits
+ * one lead past its chevron and the fields line up with it.
+ */
+function NestedDemo() {
+  const [list, setList] = useState<NestedEndpoint[]>(() => [
+    {
+      id: "e0",
+      name: "deepseek",
+      models: [
+        { key: "m0", id: "deepseek-chat" },
+        { key: "m1", id: "deepseek-reasoner" },
+      ],
+    },
+  ]);
+  const [closed, setClosed] = useState<ReadonlySet<string>>(new Set());
+  const [next, setNext] = useState(10);
+  const toggle = (key: string) =>
+    setClosed((s) => {
+      const n = new Set(s);
+      if (n.has(key)) n.delete(key);
+      else n.add(key);
+      return n;
+    });
+  const keyOf = (e: { id: string }) => e.id;
+  const setModels = (eid: string, f: (l: NestedEndpoint["models"]) => NestedEndpoint["models"]) =>
+    setList((l) => l.map((e) => (e.id === eid ? { ...e, models: f(e.models) } : e)));
+  return (
+    <Repeater
+      label="端点"
+      addLabel="添加端点"
+      items={list.map((e) => ({
+        key: e.id,
+        title: e.name || "未命名端点",
+        collapsed: closed.has(e.id),
+        body: (
+          <>
+            <Field label="名称">
+              <Input
+                value={e.name}
+                onChange={(ev) =>
+                  setList((l) =>
+                    l.map((x) => (x.id === e.id ? { ...x, name: ev.target.value } : x)),
+                  )
+                }
+              />
+            </Field>
+            <Stack gap={8}>
+              <Text>模型</Text>
+              <Repeater
+                label="模型"
+                addLabel="添加模型"
+                items={e.models.map((m, i) => ({
+                  key: m.key,
+                  title: m.id || `第 ${i + 1} 项`,
+                  collapsed: closed.has(m.key),
+                  body: (
+                    <Field label="模型 ID">
+                      <Input
+                        value={m.id}
+                        onChange={(ev) =>
+                          setModels(e.id, (ms) =>
+                            ms.map((x) => (x.key === m.key ? { ...x, id: ev.target.value } : x)),
+                          )
+                        }
+                      />
+                    </Field>
+                  ),
+                }))}
+                onAdd={() => {
+                  setModels(e.id, (ms) => [...ms, { key: `m${next}`, id: "" }]);
+                  setNext((n) => n + 1);
+                }}
+                onRemove={(key) => {
+                  const before = e.models;
+                  setModels(e.id, (ms) => ms.filter((x) => x.key !== key));
+                  return () => setModels(e.id, () => before);
+                }}
+                onToggle={toggle}
+              />
+            </Stack>
+          </>
+        ),
+      }))}
+      onAdd={() => {
+        setList((l) => [...l, { id: `e${next}`, name: "", models: [] }]);
+        setNext((n) => n + 1);
+      }}
+      onRemove={(key) => removing(setList, keyOf, key)}
+      onToggle={toggle}
+    />
+  );
+}
+
 function repeaterBlocks(): ReactNode {
   return (
     <>
@@ -267,6 +366,12 @@ function repeaterBlocks(): ReactNode {
       <RefBlock id="repeater-divided" width={720} pad>
         <FormSection id="endpoints" title="端点" layout="stacked">
           <EndpointsDemo initial={ENDPOINTS} />
+        </FormSection>
+      </RefBlock>
+      {/* A list nested in an item's body, inside a box: one level in, under a guide. */}
+      <RefBlock id="repeater-nested" width={720} pad>
+        <FormSection id="endpoints-nested" title="端点" layout="stacked">
+          <NestedDemo />
         </FormSection>
       </RefBlock>
     </>

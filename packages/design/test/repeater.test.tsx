@@ -1,8 +1,11 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { type ReactElement, useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  Card,
   DesignProvider,
   Field,
   Input,
@@ -339,5 +342,92 @@ describe("Repeater (spec §6.26)", () => {
     expect(
       addInner.closest('[data-part="repeater-foot"]')?.closest('[data-part="repeater-body"]'),
     ).toBe(item.querySelector('[data-part="repeater-body"]'));
+  });
+});
+
+/**
+ * Nesting inside a box (spec §6.26): jsdom lays nothing out, so the indents are read from the
+ * stylesheet's rules and the structure from the rendered DOM.
+ */
+const css = readFileSync(resolve(import.meta.dirname, "../src/styles/repeater.css"), "utf8");
+
+/** The declarations of the rules whose selector list has `sel` (whitespace normalized), joined. */
+function decls(sel: string): string {
+  const out: string[] = [];
+  const text = css.replace(/\/\*[\s\S]*?\*\//g, "");
+  for (const m of text.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    const selectors = (m[1] ?? "").split(/,(?![^(]*\))/).map((x) => x.trim().replace(/\s+/g, " "));
+    if (selectors.includes(sel)) out.push(m[2] ?? "");
+  }
+  return out.join("\n");
+}
+
+const ITEM =
+  '.cb-repeater[data-variant="divided"] > .cb-repeater-list > .cb-repeater-li > .cb-repeater-item';
+const LEAD = "calc(var(--cb-control-dense) + var(--cb-space-2))";
+
+describe("Repeater nested inside a box (spec §6.26)", () => {
+  it("indents a divided item's body by its head's leading controls, so fields start at the title", () => {
+    expect(decls(`${ITEM} > .cb-repeater-body`)).toContain(
+      "padding: var(--cb-space-2) 0 0 var(--cb-repeater-lead);",
+    );
+    expect(decls(ITEM)).toContain("--cb-repeater-lead: 0px;");
+    expect(decls(`${ITEM}:has(> .cb-repeater-head > .cb-repeater-handle)`)).toContain(
+      `--cb-repeater-lead: ${LEAD};`,
+    );
+    expect(decls(`${ITEM}:has(> .cb-repeater-head > [data-part="repeater-toggle"])`)).toContain(
+      `--cb-repeater-lead: ${LEAD};`,
+    );
+    // the handle takes the same control.dense slot as the chevron, so one lead fits either
+    expect(decls(`${ITEM} > .cb-repeater-head > .cb-repeater-handle`)).toContain(
+      "width: var(--cb-control-dense);",
+    );
+    // the page-ground cards keep their own padding: the frame already nests
+    expect(decls(".cb-repeater-body")).toContain("padding: var(--cb-space-3);");
+  });
+
+  it("draws a list nested in a divided item's body one level in, under a line guide", () => {
+    const guide = decls('.cb-repeater[data-variant="divided"] .cb-repeater-body .cb-repeater');
+    expect(guide).toContain("padding-left: var(--cb-space-2);");
+    expect(guide).toContain("border-left: 1px solid var(--cb-line);");
+    // no box inside the box: no border around items, no radius on the nested list
+    expect(guide).not.toMatch(/border:|border-radius|border-top|border-right|border-bottom/);
+  });
+
+  it("puts the nested add button inside the guide, right of the outer add button", () => {
+    const inner = (
+      <Repeater
+        label="Models"
+        addLabel="Add model"
+        items={[{ key: "m1", title: "m1", body: <span>m1</span> }]}
+        onAdd={() => {}}
+        onRemove={() => () => {}}
+        onToggle={() => {}}
+      />
+    );
+    wrap(
+      <Card>
+        <Repeater {...base} items={[{ key: "a", title: "a", body: inner }]} onToggle={() => {}} />
+      </Card>,
+    );
+    const outer = screen.getByRole("group", { name: "Endpoints" });
+    const nested = screen.getByRole("group", { name: "Models" });
+    expect(outer.getAttribute("data-variant")).toBe("divided");
+    expect(nested.getAttribute("data-variant")).toBe("divided");
+    const addOuter = within(outer).getByRole("button", { name: "Add endpoint" });
+    const addInner = within(nested).getByRole("button", { name: "Add model" });
+    // the outer button sits on the outer list's left edge (its footer, no indent of its own) ...
+    expect(addOuter.closest('[data-part="repeater-foot"]')?.parentElement).toBe(outer);
+    // ... the nested one inside the nested list (the guide, padding-left space.2), which sits in
+    // the item's body (padding-left one lead): space.2 + 1px + one lead to the right
+    expect(addInner.closest('[data-part="repeater"]')).toBe(nested);
+    const body = nested.parentElement?.closest('[data-part="repeater-body"]');
+    expect(body?.parentElement?.querySelector('[data-part="repeater-toggle"]')).not.toBeNull();
+    expect(
+      nested.matches('.cb-repeater[data-variant="divided"] .cb-repeater-body .cb-repeater'),
+    ).toBe(true);
+    expect(
+      outer.matches('.cb-repeater[data-variant="divided"] .cb-repeater-body .cb-repeater'),
+    ).toBe(false);
   });
 });

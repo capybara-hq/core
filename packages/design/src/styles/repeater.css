@@ -241,6 +241,56 @@
   .cb-repeater-head:has(> .cb-repeater-handle:first-child, > .cb-icon-btn:first-child) {
   padding-left: 0;
 }
-.cb-repeater[data-variant="divided"] .cb-repeater-body {
-  padding: var(--cb-space-2) 0 0;
+/*
+ * The body lines up with the title: it is indented by the head's leading controls, one lead
+ * (control.dense + space.2, the head's gap) for the handle (a control.dense slot here) and one for
+ * the collapse chevron, so an item's fields start where its title starts.
+ */
+.cb-repeater[data-variant="divided"] > .cb-repeater-list > .cb-repeater-li > .cb-repeater-item {
+  --cb-repeater-lead: 0px;
+}
+.cb-repeater[data-variant="divided"]
+  > .cb-repeater-list
+  > .cb-repeater-li
+  > .cb-repeater-item:has(> .cb-repeater-head > .cb-repeater-handle) {
+  --cb-repeater-lead: calc(var(--cb-control-dense) + var(--cb-space-2));
+}
+.cb-repeater[data-variant="divided"]
+  > .cb-repeater-list
+  > .cb-repeater-li
+  > .cb-repeater-item:has(> .cb-repeater-head > [data-part="repeater-toggle"]) {
+  --cb-repeater-lead: calc(var(--cb-control-dense) + var(--cb-space-2));
+}
+.cb-repeater[data-variant="divided"]
+  > .cb-repeater-list
+  > .cb-repeater-li
+  > .cb-repeater-item:has(> .cb-repeater-head > .cb-repeater-handle):has(
+    > .cb-repeater-head > [data-part="repeater-toggle"]
+  ) {
+  --cb-repeater-lead: calc(2 * (var(--cb-control-dense) + var(--cb-space-2)));
+}
+.cb-repeater[data-variant="divided"]
+  > .cb-repeater-list
+  > .cb-repeater-li
+  > .cb-repeater-item
+  > .cb-repeater-head
+  > .cb-repeater-handle {
+  justify-content: center;
+  width: var(--cb-control-dense);
+}
+.cb-repeater[data-variant="divided"]
+  > .cb-repeater-list
+  > .cb-repeater-li
+  > .cb-repeater-item
+  > .cb-repeater-body {
+  padding: var(--cb-space-2) 0 0 var(--cb-repeater-lead);
+}
+/*
+ * A list nested in a divided item's body (an endpoint's models) is a nested group like a
+ * Subsection's content (spec §6.32): a 1px line guide on its left, indented space.2, so its
+ * items, their fields and its add button sit one level in from the outer list's.
+ */
+.cb-repeater[data-variant="divided"] .cb-repeater-body .cb-repeater {
+  padding-left: var(--cb-space-2);
+  border-left: 1px solid var(--cb-line);
 }

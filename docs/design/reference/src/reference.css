@@ -4989,8 +4989,30 @@ textarea {
   padding: 0;
   border-bottom: 0;
 }
-.r-rep[data-variant="divided"] .r-rep-body {
+.r-rep[data-variant="divided"] > .r-rep-list > li > .r-rep-item > .r-rep-body {
   padding: var(--cb-space-2) 0 0;
+}
+/* The body lines up with the title: one lead (control.dense + space.2) per leading control. */
+.r-rep[data-variant="divided"] > .r-rep-list > li > .r-rep-item > .r-rep-head > .r-rep-handle {
+  justify-content: center;
+  width: var(--cb-control-dense);
+}
+.r-rep[data-variant="divided"]
+  > .r-rep-list
+  > li
+  > .r-rep-item:has(> .r-rep-head > :is(.r-rep-handle, [data-part="repeater-toggle"]))
+  > .r-rep-body {
+  padding-left: calc(var(--cb-control-dense) + var(--cb-space-2));
+}
+/* A list nested in a divided item's body: one level in, under a 1px line guide (spec §6.32). */
+.r-rep[data-variant="divided"] .r-rep-body .r-rep {
+  padding-left: var(--cb-space-2);
+  border-left: 1px solid var(--cb-line);
+}
+.r-rep-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-2);
 }
 .r-item-lines .r-ink {
   color: var(--cb-ink);
