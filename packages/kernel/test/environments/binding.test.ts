@@ -11,6 +11,7 @@ import { ConversationsService } from "../../src/conversations/conversations.serv
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { ConversationEnvironments } from "../../src/environments/conversation-environments.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { legacyDbFor } from "../helpers/conversations.js";
 import { accountsFor } from "../helpers/identity.js";
@@ -227,6 +228,34 @@ describe("conversations bound to environments", () => {
     expect(other.isError).toBe(true);
   });
 
+  it("two first sandbox calls racing on an unbound conversation bind one environment", async () => {
+    const m = await member();
+    const conv = await newConversation(m.req);
+    const first = conv.environmentId as string;
+    // as if created before environments existed, by a person without a default environment yet
+    await db
+      .updateTable("conversations")
+      .set({ environment_id: null })
+      .where("id", "=", conv.id)
+      .execute();
+    await db.deleteFrom("environments").where("id", "=", first).execute();
+    expect(await defaultOf(m.id)).toBeUndefined();
+
+    const envs = k.app.get(ConversationEnvironments);
+    const [a, b] = await Promise.all([envs.forTool(orgId, conv.id), envs.forTool(orgId, conv.id)]);
+    expect(a).toBe(b);
+    expect(await boundTo(conv.id)).toBe(a);
+    expect(await defaultOf(m.id)).toBe(a);
+    const live = await db
+      .selectFrom("environments")
+      .select("id")
+      .where("org_id", "=", orgId)
+      .where("owner_account_id", "=", m.id)
+      .where("deleted_at", "is", null)
+      .execute();
+    expect(live.map((r) => r.id)).toEqual([a]);
+  });
+
   it("sub-agent uses the root's environment", async () => {
     const m = await member();
     const conv = await newConversation(m.req);
@@ -292,6 +321,26 @@ describe("conversations bound to environments", () => {
       payload: { agentId, environmentId: gone },
     });
     expect(res.statusCode).toBe(404);
+  });
+
+  it("create with one's own environment of another org is not_found", async () => {
+    const m = await member();
+    const otherOrg = await createOrg(owner, `Other ${randomUUID().slice(0, 6)}`);
+    await testMembers(db).add(otherOrg, m.id, "member", ownerId);
+    const res = await m.req({
+      method: "POST",
+      url: `/api/v1/orgs/${otherOrg}/environments`,
+      payload: { name: "Elsewhere" },
+    });
+    expect(res.statusCode, res.body).toBe(201);
+    const elsewhere = (res.json() as { environment: { id: string } }).environment.id;
+    const create = await m.req({
+      method: "POST",
+      url: conversations(),
+      payload: { agentId, environmentId: elsewhere },
+    });
+    expect(create.statusCode, create.body).toBe(404);
+    expect((create.json() as { error: { code: string } }).error.code).toBe("environment.not_found");
   });
 
   it("a conversation whose environment was deleted fails its sandbox tools", async () => {

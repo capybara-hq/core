@@ -451,6 +451,58 @@ describe("background task routes", { timeout: 90_000 }, () => {
     expect(row.status).toBe("suspended");
   });
 
+  it("without access to the environment any more answers from the finished event or 409, never live", async () => {
+    const env = await owner({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/environments`,
+      payload: { name: `Revoked ${randomUUID().slice(0, 6)}` },
+    });
+    expect(env.statusCode, env.body).toBe(201);
+    const environmentId = (env.json() as { environment: { id: string } }).environment.id;
+    used.push(environmentId);
+    const inEnv = async () => {
+      const res = await owner({
+        method: "POST",
+        url: `/api/v1/orgs/${orgId}/conversations`,
+        payload: { agentId, environmentId },
+      });
+      expect(res.statusCode, res.body).toBe(201);
+      const conversationId = (res.json() as { conversation: { id: string } }).conversation.id;
+      return { orgId, conversationId, accountId: ownerId, environmentId };
+    };
+    const c = await inEnv();
+    const c2 = await inEnv();
+    const done = await launch(c, "echo finished-line");
+    const running = await launch(c2, "sleep 329");
+    await waitFor(
+      async () => {
+        await job.pollOnce();
+        return (await store.get(done.id))?.status === "completed";
+      },
+      15_000,
+      "the finished task",
+      200,
+    );
+    // the owner loses the environment (deleted) while its instance still runs
+    await sql`UPDATE capybara.environments SET deleted_at = now()
+      WHERE id = ${environmentId}`.execute(raw);
+    const ev = await owner({ method: "GET", url: `${base(c.conversationId)}/${done.id}/output` });
+    expect(ev.statusCode, ev.body).toBe(200);
+    expect(ev.json()).toEqual({ text: "finished-line\n", truncated: true, source: "event" });
+    const no = await owner({
+      method: "GET",
+      url: `${base(c2.conversationId)}/${running.id}/output`,
+    });
+    expect([no.statusCode, code(no)]).toEqual([409, "background_task.output_unavailable"]);
+    // the instance was running all along: the access check, not the sandbox, refused the live read
+    const row = await db
+      .selectFrom("environment_instances")
+      .select("status")
+      .where("environment_id", "=", environmentId)
+      .executeTakeFirstOrThrow();
+    expect(row.status).toBe("running");
+  });
+
   it("sends changed: background when a task starts and when it finishes", async () => {
     const { conversationId: conv } = await conversation();
     const sse = await openSse(
