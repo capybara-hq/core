@@ -107,6 +107,16 @@ describe("checkWebUi", () => {
     one("create-element-style", "web-ui-style", 7));
   it("JSX class 属性 -> web-ui-class-name", () => one("class-attr", "web-ui-class-name", 6));
   it("<style> 元素 -> web-ui-style", () => one("style-element", "web-ui-style", 6));
+  it('a <form> without method="post" -> web-ui-form-method (web and design)', () => {
+    const f = run("form-method");
+    expect(f.map((x) => [x.rule, x.file.split("/").at(-1), x.line])).toEqual([
+      ["web-ui-form-method", "sign-in.tsx", 7],
+      ["web-ui-form-method", "sign-in.tsx", 10],
+      ["web-ui-form-method", "sign-in.tsx", 19],
+      ["web-ui-form-method", "form.tsx", 3],
+    ]);
+    expect(f[0]?.message).toContain('method="post"');
+  });
   it("<iframe> 元素 -> web-ui-iframe", () => one("iframe-element", "web-ui-iframe", 6));
   it('createElement("iframe") -> web-ui-iframe', () =>
     one("create-element-iframe", "web-ui-iframe", 7));

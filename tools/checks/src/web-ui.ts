@@ -409,6 +409,7 @@ function checkWebFile(
     ),
   );
   out.push(...charIconFindings(p));
+  out.push(...formMethodFindings(p));
 
   const segs = relative(webSrcDir, file).split(sep);
   if (segs.join("/") !== EXTENSION_LABEL_FILE) out.push(...extensionLabelFindings(p));
@@ -1177,6 +1178,61 @@ export const ICON_CHARS: Readonly<Record<string, string>> = {
   "▦": "catalog",
 };
 const ICON_CHAR_RE = new RegExp(`[${Object.keys(ICON_CHARS).join("")}]`, "u");
+/**
+ * `web-ui-form-method`: every `<form>` (JSX or `createElement("form", …)`) says `method="post"` as a
+ * literal. When the client JS does not load (a blocked dev origin, a script error, JS turned off)
+ * the browser submits the form natively, and a form without a method is a GET: every field,
+ * passwords included, lands in the URL (history, server logs, Referer). Which component inside a
+ * form draws a password input cannot be followed statically, so the rule asks it of every form.
+ */
+function formMethodFindings(p: ParsedFile): Finding[] {
+  const out: Finding[] = [];
+  const message =
+    'a <form> needs method="post": without it a native submission (client JS not loaded) is a GET that puts every field, passwords included, in the URL; add method="post" and a POST handler for the page (apps/web/src/lib/form-post.ts)';
+  const isPost = (v: unknown) => typeof v === "string" && v.toLowerCase() === "post";
+  const flag = (at: Node) =>
+    out.push({ file: p.file, line: p.lineOf(at.start), rule: "web-ui-form-method", message });
+  walk(p.program, (n) => {
+    if (n.type === "JSXOpeningElement") {
+      const name = n.name as Node;
+      if (name.type !== "JSXIdentifier" || name.name !== "form") return;
+      const method = (n.attributes as Node[]).find(
+        (a) =>
+          a.type === "JSXAttribute" &&
+          (a.name as Node).type === "JSXIdentifier" &&
+          (a.name as Node).name === "method",
+      );
+      const v = method?.value as Node | null | undefined;
+      const literal =
+        v?.type === "Literal"
+          ? v.value
+          : v?.type === "JSXExpressionContainer" && (v.expression as Node).type === "Literal"
+            ? (v.expression as Node).value
+            : undefined;
+      if (!isPost(literal)) flag(n);
+    } else if (n.type === "CallExpression") {
+      const callee = n.callee as Node;
+      const fn =
+        callee.type === "Identifier"
+          ? (callee.name as string)
+          : callee.type === "MemberExpression"
+            ? ((callee.property as Node).name as string | undefined)
+            : undefined;
+      if (fn === undefined || !CREATE_ELEMENT.has(fn)) return;
+      const args = n.arguments as Node[];
+      if (args[0]?.type !== "Literal" || args[0].value !== "form") return;
+      const props = args[1];
+      const prop =
+        props?.type === "ObjectExpression"
+          ? (props.properties as Node[]).find((x) => propKey(x) === "method")
+          : undefined;
+      const v = prop?.value as Node | undefined;
+      if (!(v?.type === "Literal" && isPost(v.value))) flag(n);
+    }
+  });
+  return out;
+}
+
 const CHAR_ICON_RULE = "design-char-icon";
 
 function charIconMessage(ch: string): string {
@@ -1245,7 +1301,7 @@ function checkDesign(designSrcDir: string): Finding[] {
     if (isParseError(p)) out.push(p);
     else {
       out.push(...colorFindings(p, rule, message));
-      if (!isTest) out.push(...charIconFindings(p));
+      if (!isTest) out.push(...charIconFindings(p), ...formMethodFindings(p));
     }
   }
   return out;
