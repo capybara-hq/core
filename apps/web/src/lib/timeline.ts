@@ -47,7 +47,9 @@ import { toolLabel, toolLabelOfKey, toolLabelText } from "./tool-label";
  * - Background sub-agents (agent map spec §5, §9.4): an unfinished row names the child's current
  *   tool (`subagent_progress.lastToolKey`); a parent's `SendMessage` in the child's log
  *   (`dispatch.kind: "message"`) is a user bubble with its `sender`; a `subagent_delivery` (a
- *   report, a note or the child's end) is a compact `delivery` entry in the parent; `SendMessage`
+ *   report, a note or the child's end) is a compact `delivery` entry in the parent (a run that
+ *   handed back a report logs no finished delivery when it completes, so its end entry comes from
+ *   `subagent_finished`, once per run with an older log's delivery); `SendMessage`
  *   and `SubagentHandback` are ordinary tool rows. A child that runs again after an end stays on
  *   its `Agent` call's row: a restart (`subagent_dispatched` carrying the `SendMessage` call's id),
  *   a wake (no dispatch: the list's run started after the last end, or a later run's
@@ -742,6 +744,10 @@ export function buildEventTimeline(
   const taskDescriptions = new Map<string, string>();
   /** Root-level sub-agent id → the latest wait of an agent below it (agent map spec §7). */
   const deepWaits = new Map<string, { id: string; kind: SubagentWaitKind }>();
+  /** Child runs that handed back a report: the description their end entry is named by. */
+  const reported = new Map<string, string>();
+  /** Child runs (of `reported`) whose end entry is in `out`. */
+  const endShown = new Set<string>();
   /** Sub-agent id → its latest dispatch's row and child run. */
   const subagentRows = new Map<
     string,
@@ -1176,6 +1182,23 @@ export function buildEventTimeline(
         break;
       }
       case "subagent_finished": {
+        // a run that handed back logs no finished delivery when it completes (acceptance
+        // 2026-11-07): its end entry comes from here, once (an older log's delivery follows)
+        const name = reported.get(e.payload.childRunId);
+        if (name !== undefined && !endShown.has(e.payload.childRunId)) {
+          endShown.add(e.payload.childRunId);
+          out.push({
+            kind: "delivery",
+            key,
+            subagentId: e.payload.subagentId,
+            name,
+            delivery: "finished",
+            status: subagentStatusOfFinish(
+              e.payload.status as SubagentFinishStatus,
+            ) as DeliveryStatus,
+            text: "",
+          });
+        }
         const s = subagentRows.get(e.payload.subagentId);
         if (!s) break;
         // a late end of an earlier run while a newer one (a restart) is going
@@ -1236,6 +1259,12 @@ export function buildEventTimeline(
       }
       case "subagent_delivery": {
         const p = e.payload;
+        if (p.kind === "report") reported.set(p.childRunId, p.description);
+        if (p.kind === "finished" && p.handedBack === true) {
+          // shown from `subagent_finished`, which the same transaction wrote just before
+          if (endShown.has(p.childRunId)) break;
+          endShown.add(p.childRunId);
+        }
         out.push({
           kind: "delivery",
           key,

@@ -23,6 +23,11 @@ type Delivery = EventPayload<"subagent_delivery">;
  * who stopped it); after a handback only the status itself (up to its first `;`), and without a
  * reply `It produced no reply.` A failed finish's `text` is the error message, an aborted one has
  * none. Read only from the payload, so a replay renders it identically.
+ *
+ * A run that handed back and then `completed` no longer gets a finished delivery (acceptance
+ * 2026-11-07, `SubagentDeliveries.finishIn`); the "already delivered" line stays for the other
+ * statuses after a handback and for the completed ones older logs recorded, which rebuild byte for
+ * byte. The switch is the delivery's absence in the log, so it needs no `DriftReason`.
  */
 export function renderSubagentDelivery(p: Delivery): string {
   const head = `Sub-agent ${p.subagentId} (${JSON.stringify(p.description)})`;

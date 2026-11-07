@@ -793,7 +793,9 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
    * handed back a report (`SubagentHandback`), sent a note (`SendMessage to: "parent"`) or its run
    * `childRunId` finished. **Model-visible**: absorbed like an interjection and rendered as a system
    * message (`renderSubagentDelivery`). A finish after a handback carries `text: ""` and
-   * `handedBack: true` and renders as one status line; a finish without one carries the child's
+   * `handedBack: true` and renders as one status line, except that a run that handed back and
+   * `completed` writes no finished delivery at all (acceptance 2026-11-07; older logs have one and
+   * keep rendering it); a finish without a handback carries the child's
    * final reply, a failed finish its error message (`errorCode` the code), an aborted one no text
    * (`abortedBy` who stopped it), with `subagent_finished`'s vocabulary. `status` is present exactly
    * on `kind: "finished"`. `triggerAccountId`: the child run's trigger account, the one a wake runs

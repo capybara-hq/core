@@ -36,7 +36,9 @@ const DELIVERY_TEXT_MAX = 200_000;
  * A background child's run reaching a terminal state ({@link childFinished}) writes the
  * display-only `subagent_finished` and a `finished` delivery in one transaction, both idempotent by
  * the child run, so of two finishers (the worker and a stop, the orphan sweep) exactly one writes
- * them. Fork invocations (phase D, `for_skill`) do not deliver: their parent run waits on the child
+ * them. A run that handed back a report and then completed writes no delivery (acceptance
+ * 2026-11-07): the report already told the parent everything, and a content-free "completed" line
+ * only woke an idle parent for nothing and pushed the report away from the end of its request. Fork invocations (phase D, `for_skill`) do not deliver: their parent run waits on the child
  * and writes the report itself (`advanceSkillForks`).
  */
 @Injectable()
@@ -119,9 +121,10 @@ export class SubagentDeliveries {
    * every run of a child conversation (dispatched, sent a message or woken;
    * {@link deliveryRowOfChildRun}), each once by its run. The delivery
    * carries the final reply when the run handed back no report, else no text and `handedBack`; a
-   * failed run's error message and code, an aborted run who stopped it. A run of a conversation
-   * never dispatched, a fork invocation's child, or not terminal yet is left alone. True when this
-   * call wrote the delivery.
+   * failed run's error message and code, an aborted run who stopped it. A run that handed back and
+   * then `completed` gets only `subagent_finished` (not model-visible, wakes nothing); the log's
+   * notify still announces it to viewers. A run of a conversation never dispatched, a fork
+   * invocation's child, or not terminal yet is left alone. True when this call wrote the finish.
    */
   async childFinished(childRunId: string): Promise<boolean> {
     const row = await deliveryRowOfChildRun(this.db, childRunId);
@@ -146,9 +149,10 @@ export class SubagentDeliveries {
     row: DispatchRow,
     r: NonNullable<Awaited<ReturnType<typeof childResult>>>,
   ): Promise<boolean> {
-    await this.eventLog.appendIn(row.parentConversationId, [finishedEvent(row, r.finished)]);
     const { status, errorCode } = r.finished;
     const handedBack = await this.handedBack(row);
+    if (handedBack && status === "completed") return this.finishSilentlyIn(row, r.finished);
+    await this.eventLog.appendIn(row.parentConversationId, [finishedEvent(row, r.finished)]);
     const text = handedBack
       ? ""
       : status === "failed"
@@ -165,6 +169,32 @@ export class SubagentDeliveries {
       ...(r.abortedBy !== undefined && { abortedBy: r.abortedBy }),
     });
     return seq !== null;
+  }
+
+  /**
+   * {@link finishIn} for a run that handed back and completed: only `subagent_finished`, written
+   * once under the parent conversation's row lock (idempotent by the child run), then the log's
+   * notify after the commit. No `subagent.delivered`: nothing model-visible arrived, so no wake.
+   * True when this call wrote it.
+   */
+  private async finishSilentlyIn(
+    row: DispatchRow,
+    finished: EventPayload<"subagent_finished">,
+  ): Promise<boolean> {
+    const parent = row.parentConversationId;
+    const event = finishedEvent(row, finished);
+    await this.db
+      .selectFrom("conversations")
+      .select("id")
+      .where("id", "=", parent)
+      .forUpdate()
+      .executeTakeFirst();
+    if (event.idemKey !== undefined && (await this.eventLog.findByIdem(parent, event.idemKey)))
+      return false;
+    const [written] = await this.eventLog.appendIn(parent, [event]);
+    if (!written) return false;
+    afterCommit(() => this.eventLog.notify(parent, written.seq));
+    return true;
   }
 
   /** Whether the child run handed back a report (`SubagentHandback`) before it finished. */

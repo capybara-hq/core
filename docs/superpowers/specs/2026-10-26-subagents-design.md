@@ -4,7 +4,8 @@
 - Status: built (see "Phase C as built" at the end); was: draft for maintainer review.
   **Amended by `2026-11-06-agent-map-design.md`** (background sub-agents): `Agent` dispatches in the
   background and `resume` is replaced by `SendMessage`; children hand back with `SubagentHandback`
-  and their reports and finishes reach the parent as `subagent_delivery` events that wake it; nesting
+  and their reports and finishes reach the parent as `subagent_delivery` events that wake it (a run
+  that handed back and completed delivers no finish, agent map spec decisions); nesting
   goes to `subagents.maxDepth` (default 3); concurrency is per conversation and the dispatch and token
   caps count per tree; the `subagents` wait remains only for `context: fork` skills. Where the two
   disagree, the newer spec wins.

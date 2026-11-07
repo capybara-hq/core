@@ -138,7 +138,9 @@ child should hand back with `SubagentHandback` when done, may send notes to its 
 Each delivery to a parent is one model-visible event in the parent's log, rendered like an
 interjection: who sent it (agent id and description), the kind (report, note, finished with status)
 and the text. On finish: if the child handed back at least once, only a short status line (no
-repeated report); if it never did, its final reply is the report **(designer's call)**. Today's
+repeated report); if it never did, its final reply is the report **(designer's call)**. Amended
+(acceptance 2026-11-07): a run that handed back and then **completed** writes no finished delivery
+at all (see "Decisions made during implementation"). Today's
 `subagent_finished` is not model-visible (the reply was the `Agent` call's `tool_result`); the
 delivery is a **new** model-visible event, and `subagent_finished` stays a display-only event, so old
 logs keep replaying unchanged (the reconstruct fixtures prove it).
@@ -355,7 +357,15 @@ The builder's choices for §11 and the rulings of the build that change behaviou
 - Wakes (§5.3): children wake on their parent's messages and on their own background Bash finishes,
   under the one switch `runtime.wakeOnBackgroundTask`, with the queue and access checks on the root.
 - Every terminal run of a child (dispatched, restarted by `SendMessage`, or a wake run) delivers a
-  `finished` delivery with that run's final reply, keyed on the child run.
+  `finished` delivery with that run's final reply, keyed on the child run, except a run that
+  handed back a report and then `completed` (acceptance 2026-11-07): it writes only the display-only
+  `subagent_finished` (with the log's notify), so it is not model-visible and wakes nobody. The
+  content-free "completed; its report was already delivered" line had woken idle parents for empty
+  runs and pushed the report away from the end of the request. A run that ends otherwise after a
+  handback (a limit, failed, stopped) still delivers that line. Old logs keep their delivery and
+  rebuild byte for byte; the switch is the delivery's absence in the log, so no `DriftReason`. The
+  web shows the "<name> 已完成" entry of a handed-back run from `subagent_finished` (once per child
+  run, also when an older log's delivery follows).
 - A tree stop never wakes the stopped ancestors: the `aborted` delivery is still written (marked)
   and absorbed at that conversation's next run. A stopped sub-agent (last run `aborted`) is never
   woken at all: a message, task finish or delivery that reached it before or during the stop is
