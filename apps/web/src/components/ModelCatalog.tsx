@@ -36,8 +36,8 @@ function describe(d: ModelInfo["description"], lang: "zh" | "en"): string | unde
  * (counts in each table's toolbar, 「全部关闭」 / 「全部开启」 for the kind's models of the chosen
  * publisher) with a switch per model. The switches change the provider's disabled list: `onChange`
  * gets only the ids whose state changes (`disable` / `enable`); ids the page does not show keep
- * their stored state. Used by
- * `/settings/models` (the org's list) and `/admin/models` (the platform's, with price columns).
+ * their stored state. Used by `/settings/models` (the org's list) and `/admin/models` (the
+ * platform's, with price columns).
  */
 export function ModelCatalog<M extends ModelInfo>({
   provider,

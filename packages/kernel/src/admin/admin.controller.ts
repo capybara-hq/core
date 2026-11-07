@@ -243,8 +243,9 @@ export class AdminController {
 
   /**
    * The platform's disabled models of one provider (spec B §5.3): disables and enables the ids the
-   * body names (others keep their state); such a model is invisible to every org. The response lists the agents and purposes, across orgs, that now point
-   * at a newly disabled model (the disable is not refused for them).
+   * body names (others keep their state); such a model is invisible to every org. The response
+   * lists the agents and purposes, across orgs, that now point at a newly disabled model (the
+   * disable is not refused for them).
    */
   @Patch("models/:provider/disabled")
   async patchModelsDisabled(
