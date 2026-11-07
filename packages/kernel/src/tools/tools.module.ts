@@ -25,6 +25,7 @@ import { Credentials } from "./credentials.js";
 import { ToolDrift } from "./drift.js";
 import { ConversationToolInfo, OrgExtensionTools } from "./info.js";
 import { OAuthFlow } from "./oauth/flow.js";
+import { OrgToolSwitches } from "./org-tool-switches.js";
 import { ToolOutputs } from "./outputs.js";
 import { ToolPipeline } from "./pipeline.js";
 import { QuestionsService } from "./questions.service.js";
@@ -77,6 +78,7 @@ import { ToolRegistry } from "./registry.js";
     OAuthFlow,
     ConversationToolInfo,
     OrgExtensionTools,
+    OrgToolSwitches,
   ],
   exports: [
     Credentials,
@@ -93,6 +95,7 @@ import { ToolRegistry } from "./registry.js";
     OAuthFlow,
     ConversationToolInfo,
     OrgExtensionTools,
+    OrgToolSwitches,
   ],
 })
 export class ToolsModule {}

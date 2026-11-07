@@ -1,8 +1,4 @@
-import type {
-  DeploymentConfigField,
-  DeploymentConfigView,
-  SecretEntry,
-} from "../../lib/admin-extensions";
+import type { DeploymentConfigView, SecretEntry } from "../../lib/admin-extensions";
 import type { JsonSchema } from "../../lib/json-schema";
 import {
   allItemSecretPaths,
@@ -24,7 +20,7 @@ import {
 type Obj = Record<string, unknown>;
 
 /** A field without a schema (an old package not loaded here): its type from its current value. */
-function inferred(f: DeploymentConfigField): Obj {
+function inferred(f: { secret: boolean; value?: unknown }): Obj {
   if (f.secret) return { type: "string", "x-secret": true };
   switch (typeof f.value) {
     case "string":
@@ -38,16 +34,24 @@ function inferred(f: DeploymentConfigField): Obj {
   }
 }
 
-/** A schema built from the field list alone (dot paths become nested objects). */
-function fieldsSchema(fields: DeploymentConfigField[]): JsonSchema {
+/**
+ * A schema built from the field list alone (dot paths become nested objects); the paths in
+ * `required` are required in their object.
+ */
+export function fieldsSchema(
+  fields: { path: string; secret: boolean; value?: unknown }[],
+  required: ReadonlySet<string> = new Set(),
+): JsonSchema {
   const root: Obj = { type: "object", properties: {} };
   for (const f of fields) {
     let at = root;
     const segs = f.path.split(".");
     segs.forEach((seg, i) => {
       const props = at.properties as Obj;
-      if (i === segs.length - 1) props[seg] = inferred(f);
-      else {
+      if (i === segs.length - 1) {
+        props[seg] = inferred(f);
+        if (required.has(f.path)) at.required = [...((at.required as string[]) ?? []), seg];
+      } else {
         const next = (props[seg] as Obj | undefined) ?? { type: "object", properties: {} };
         props[seg] = next;
         at = next;
@@ -74,6 +78,7 @@ export function deploymentForm(view: DeploymentConfigView): DeploymentForm {
       ...(f.secret && { secretSet: f.set === true }),
       ...(f.keys !== undefined && { secretKeys: f.keys }),
       hot: f.hot,
+      level: f.org ?? "hidden",
     };
   }
   return { schema: view.schema ?? fieldsSchema(view.fields), value, meta };

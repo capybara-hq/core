@@ -233,7 +233,7 @@ describe("/plugins: states and actions follow the scope and the switch", () => {
         state: "on",
         switchable: false,
       }),
-      orgItem({ id: "c", name: "everyone", scope: "all", state: "on", switchable: false }),
+      orgItem({ id: "c", name: "everyone", scope: "all", state: "on", switchable: true }),
       orgItem({
         id: "d",
         name: "on",
@@ -269,11 +269,13 @@ describe("/plugins: states and actions follow the scope and the switch", () => {
     const row = (name: string) => rowOf(list, name);
     expect(within(row("off")).getByText(p.state.off)).toBeTruthy();
     expect(actionsOf(row("off"), "off")).toEqual([p.action.enable]);
-    // An `all` or builtin plugin: on for every org, no switch
-    for (const name of ["builtin", "everyone"]) {
-      expect(within(row(name)).getByText(p.state.platform)).toBeTruthy();
-      expect(actionsOf(row(name), name)).toEqual([]);
-    }
+    // A builtin plugin: on for every org, no switch
+    expect(within(row("builtin")).getByText(p.state.platform)).toBeTruthy();
+    expect(actionsOf(row("builtin"), "builtin")).toEqual([]);
+    // An `all` plugin is on by default and the org may turn it off (the 停用 menu, like any on one)
+    expect(within(row("everyone")).getByText(p.state.platformDefault)).toBeTruthy();
+    expect(within(row("everyone")).queryByText(p.state.platform)).toBeNull();
+    expect(within(row("everyone")).getByRole("button", { name: RAW_MORE[locale] })).toBeTruthy();
     expect(within(row("builtin")).getByText(msgs[locale].catalog.admin.chips.builtin)).toBeTruthy();
     expect(within(row("on")).getByText(p.state.on)).toBeTruthy();
     // 停用 sits in the row's menu (a destructive action)
@@ -739,12 +741,19 @@ describe("/extensions: the switch follows the plugin", () => {
   });
 
   it.each(LOCALES)(
-    "an extension of an `all` plugin reads 已启用 · 平台统一 and its switch is read-only (%s)",
+    "a required extension reads 已启用 · 平台统一 and its switch is read-only (%s)",
     async (locale) => {
       const calls = stubApi({
         [`GET ${ORG}/extensions`]: () =>
           json(200, {
-            extensions: [{ ...EXT, catalogItem: { itemId: ID, scope: "all" }, switchable: false }],
+            extensions: [
+              {
+                ...EXT,
+                required: true,
+                catalogItem: { itemId: ID, scope: "all" },
+                switchable: false,
+              },
+            ],
           }),
         [`GET ${ORG}/extension-points`]: () => json(200, { points: [] }),
         [`GET ${ORG}/file-previewers`]: () => json(200, { items: [] }),
@@ -757,6 +766,24 @@ describe("/extensions: the switch follows the plugin", () => {
       ).toBe(true);
       await userEvent.setup().click(toggle);
       expect(calls.some((c) => c.method === "PUT")).toBe(false);
+    },
+  );
+
+  it.each(LOCALES)(
+    "an extension of an `all` plugin that is not builtin has a working switch (%s)",
+    async (locale) => {
+      stubApi({
+        [`GET ${ORG}/extensions`]: () =>
+          json(200, {
+            extensions: [{ ...EXT, catalogItem: { itemId: ID, scope: "all" }, switchable: true }],
+          }),
+        [`GET ${ORG}/extension-points`]: () => json(200, { points: [] }),
+        [`GET ${ORG}/file-previewers`]: () => json(200, { items: [] }),
+      });
+      await renderRouteWithCache("/extensions", lastStubRoutes(), { locale });
+      const toggle = await screen.findByRole("switch");
+      expect(toggle.hasAttribute("disabled")).toBe(false);
+      expect(toggle.getAttribute("aria-disabled")).not.toBe("true");
     },
   );
 });

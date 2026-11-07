@@ -149,7 +149,12 @@ function Detail({
         title: label,
         ...(plugin && {
           count: versionLabel(plugin.version),
-          status: <ExtensionStatusMark status={plugin.status} />,
+          status: (
+            <ExtensionStatusMark
+              status={plugin.status}
+              orgsNeedingConfig={plugin.orgsNeedingConfig}
+            />
+          ),
         }),
       }}
       tabs={tabs(tab, setTab, plugin?.status === "pending_approval")}

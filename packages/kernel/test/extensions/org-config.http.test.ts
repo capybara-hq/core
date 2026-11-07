@@ -337,10 +337,35 @@ describe("组织插件配置 HTTP", () => {
       expect((await list()).map((e) => e.plugin)).toEqual(["fixture", "orgcfg"]);
     });
 
-    it("enabled:false on an all plugin is plugin.scope_locked; an extension without an item is unchanged", async () => {
+    it("enabled:false on an all plugin records the switch off, on a builtin one is plugin.scope_locked; an extension without an item is unchanged", async () => {
       const req = await session("owner");
       const orgId = await createOrg(req);
-      await seedItem("orgcfg", "all");
+      const itemId = await seedItem("orgcfg", "all");
+      const view = await req({ method: "GET", url: `/api/v1/orgs/${orgId}/extensions` });
+      expect(
+        (view.json() as { extensions: { plugin: string }[] }).extensions.find(
+          (e) => e.plugin === "orgcfg",
+        ),
+      ).toMatchObject({ catalogItem: { scope: "all" }, switchable: true });
+      const off = await req({
+        method: "PUT",
+        url: `/api/v1/orgs/${orgId}/extensions/orgcfg`,
+        payload: { enabled: false },
+      });
+      expect(off.statusCode, off.body).toBe(200);
+      expect(
+        await db
+          .selectFrom("catalog_item_org_switches")
+          .select("enabled")
+          .where("item_id", "=", itemId)
+          .where("org_id", "=", orgId)
+          .executeTakeFirst(),
+      ).toEqual({ enabled: false });
+      await db
+        .updateTable("catalog_items")
+        .set({ builtin: true })
+        .where("id", "=", itemId)
+        .execute();
       const locked = await req({
         method: "PUT",
         url: `/api/v1/orgs/${orgId}/extensions/orgcfg`,
@@ -359,11 +384,23 @@ describe("组织插件配置 HTTP", () => {
       });
     });
 
-    it("an extension sourced from several items: an all item locks it on; any item offered makes it visible", async () => {
+    it("an extension sourced from several items: a builtin item locks it on, an all one does not; any item offered makes it visible", async () => {
       const req = await session("owner");
       const orgId = await createOrg(req);
       await seedItem("orgcfg", "optional", [], false, "orgcfg-a");
-      await seedItem("orgcfg", "all", [], false, "orgcfg-b");
+      const allId = await seedItem("orgcfg", "all", [], false, "orgcfg-b");
+      const entry = async () =>
+        (
+          (await req({ method: "GET", url: `/api/v1/orgs/${orgId}/extensions` })).json() as {
+            extensions: Record<string, unknown>[];
+          }
+        ).extensions.find((e) => e.plugin === "orgcfg");
+      expect(await entry()).toMatchObject({ switchable: true });
+      await db
+        .updateTable("catalog_items")
+        .set({ builtin: true })
+        .where("id", "=", allId)
+        .execute();
       const locked = await req({
         method: "PUT",
         url: `/api/v1/orgs/${orgId}/extensions/orgcfg`,
@@ -371,12 +408,7 @@ describe("组织插件配置 HTTP", () => {
       });
       expect(locked.statusCode).toBe(409);
       expect(errCode(locked)).toBe("plugin.scope_locked");
-      const list = await req({ method: "GET", url: `/api/v1/orgs/${orgId}/extensions` });
-      expect(
-        (list.json() as { extensions: Record<string, unknown>[] }).extensions.find(
-          (e) => e.plugin === "orgcfg",
-        ),
-      ).toMatchObject({ switchable: false, catalogItem: { scope: "all" } });
+      expect(await entry()).toMatchObject({ switchable: false, catalogItem: { scope: "all" } });
       // named without the org + optional: visible through the optional one
       await seedItem("fixture", "named", [], false, "fixture-a");
       await seedItem("fixture", "optional", [], false, "fixture-b");

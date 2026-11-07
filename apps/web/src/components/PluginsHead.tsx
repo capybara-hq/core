@@ -82,19 +82,23 @@ export function pluginState(
  * A plugin's scope as text: 全部组织启用, 组织自选, or 指定：<org names> (the ids when the orgs
  * could not be read).
  */
-export function useScopeLabel(): (i: Pick<CatalogItem, "scope" | "scopeOrgs">) => string {
+export function useScopeLabel(): (
+  i: Pick<CatalogItem, "scope" | "scopeOrgs" | "offCount">,
+) => string {
   const t = useTranslations("catalog");
   const locale = useLocale();
   const oq = adminOrgsQuery();
   const orgs = useQuery({ ...oq, retryOnMount: retryOnMountOf(oq.queryKey) }).data?.orgs;
   return (i) =>
-    i.scope === "named" && i.scopeOrgs.length > 0
-      ? t("admin.meta.named", {
-          orgs: i.scopeOrgs
-            .map((id) => orgs?.find((o) => o.id === id)?.name ?? id)
-            .join(locale === "zh" ? "、" : ", "),
-        })
-      : t(`scope.${i.scope}`);
+    i.scope === "all" && (i.offCount ?? 0) > 0
+      ? t("admin.meta.allOff", { n: i.offCount ?? 0 })
+      : i.scope === "named" && i.scopeOrgs.length > 0
+        ? t("admin.meta.named", {
+            orgs: i.scopeOrgs
+              .map((id) => orgs?.find((o) => o.id === id)?.name ?? id)
+              .join(locale === "zh" ? "、" : ", "),
+          })
+        : t(`scope.${i.scope}`);
 }
 
 /** A plugin's components as text: 1 个扩展 · 2 个技能 · … (kinds it has none of are left out). */

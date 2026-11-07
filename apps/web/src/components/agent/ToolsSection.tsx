@@ -358,6 +358,13 @@ function ToolsEdit({ data }: { data: AgentFormData }) {
                               {description}
                             </Text>
                           )}
+                          {why === null &&
+                            extensionSelected(ref) &&
+                            offered.get(refKeyOf(ref))?.tool.switchedOff === true && (
+                              <Text variant="small" tone="warn">
+                                {t("form.extensionToolOffInOrg")}
+                              </Text>
+                            )}
                           {why !== null && (
                             <Text variant="small" tone="warn">
                               {t("form.extensionToolUnavailable", { reason: why })}

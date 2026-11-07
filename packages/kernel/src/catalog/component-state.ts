@@ -92,12 +92,12 @@ export function componentOffered(
 }
 
 /**
- * Whether the component's effective scope is `all` (its plugin's for `follow`; builtin plugins
- * are `all`): an org admin cannot switch it off (`plugin.scope_locked`, spec §13.5).
+ * Whether the component belongs to a builtin plugin: an org admin cannot switch it off
+ * (`plugin.scope_locked`, spec §13.5 as amended by the layering spec §4; an effective scope of
+ * `all`, its own or its plugin's, is switchable like a listed `named` one).
  */
-export function componentLocked(c: ComponentScopeFacts, p: PluginFacts | null): boolean {
-  if (c.scopeMode === "own") return c.scope === "all";
-  return p !== null && (p.builtin || p.scope === "all");
+export function componentLocked(_c: ComponentScopeFacts, p: PluginFacts | null): boolean {
+  return p?.builtin === true;
 }
 
 /** A live platform component with its scope settings. */

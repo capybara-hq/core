@@ -75,7 +75,14 @@ const SKILLS = [
     version: "1",
     onIn: ["o1"],
   }),
-  comp({ id: "s3", name: "summarize", scopeMode: "own", scope: "all", onIn: ["o1", "o2"] }),
+  comp({
+    id: "s3",
+    name: "summarize",
+    scopeMode: "own",
+    scope: "all",
+    offCount: 2,
+    onIn: ["o1", "o2"],
+  }),
   // an org's own skill (ruling P2-11): read-only here
   comp({
     id: "s4",
@@ -186,6 +193,12 @@ describe("admin component lists", () => {
     expect(
       within(notes).getByText(
         fill(C.scopeOwn, { scope: fill(en.catalog.admin.meta.named, { orgs: "Acme" }) }),
+      ),
+    ).toBeTruthy();
+    // `all` with two orgs having turned it off says so (the row's cell)
+    expect(
+      within(row("summarize")).getByText(
+        fill(C.scopeOwn, { scope: fill(en.catalog.admin.meta.allOff, { n: 2 }) }),
       ),
     ).toBeTruthy();
     await settle();
@@ -727,7 +740,9 @@ describe("admin plugin detail: components and the platform update", () => {
     expect(within(row("jina-web")).getByText(C.follow)).toBeTruthy();
     expect(within(row("web-research")).getByText(C.follow)).toBeTruthy();
     expect(
-      within(row("summarize")).getByText(fill(C.scopeOwn, { scope: en.catalog.scope.all })),
+      within(row("summarize")).getByText(
+        fill(C.scopeOwn, { scope: fill(en.catalog.admin.meta.allOff, { n: 2 }) }),
+      ),
     ).toBeTruthy();
     expect(
       within(row("summarize")).getByRole("link", { name: "summarize" }).getAttribute("href"),

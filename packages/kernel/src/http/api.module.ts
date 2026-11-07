@@ -29,7 +29,11 @@ import {
   AdminCatalogRequestsController,
   OrgCatalogController,
 } from "../catalog/org-catalog.controller.js";
-import { OrgExtensionConfigsController } from "../catalog/org-extension.controller.js";
+import {
+  OrgExtensionConfigsController,
+  OrgExtensionOverridesController,
+  OrgExtensionToolSwitchesController,
+} from "../catalog/org-extension.controller.js";
 import {
   OrgOwnedPluginsController,
   OrgPluginUploadsController,
@@ -106,6 +110,8 @@ const CONTROLLERS: Type[] = [
   MarketplacesController,
   OrgMarketplacesController,
   OrgExtensionConfigsController,
+  OrgExtensionOverridesController,
+  OrgExtensionToolSwitchesController,
   AgentsController,
   AgentTemplatesController,
   AgentSaveAsTemplateController,

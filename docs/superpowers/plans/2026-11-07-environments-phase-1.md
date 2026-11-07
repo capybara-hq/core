@@ -75,7 +75,7 @@ Waves inside PR A (tasks in one wave touch disjoint files):
   for environments; `pnpm gen:config-docs` regenerates `docs/config.md` (`check:config-docs`).
 - Default environment: `name` is NULL and `is_default` true; the UI renders 「个人环境」 / "Personal",
   the IM phrases do the same. At most one live default per (org, account).
-- Migrations: next number `0086`; `IF NOT EXISTS`; expand-only (the `sandboxes` table is not
+- Migrations: number `0088` (0086 was taken by the platform-org layering on main, 0087 is planned by the model-platform work); `IF NOT EXISTS`; expand-only (the `sandboxes` table is not
   dropped in this plan).
 - Kernel conventions (`check:kernel-conventions`): `@Injectable` with explicit `@Inject`,
   `@Transactional()` writes, enqueues in `afterCommit`, consumers under `WorkerModule`, queue names
@@ -214,7 +214,7 @@ Waves inside PR A (tasks in one wave touch disjoint files):
 ### Task 4: Migration and schema types
 
 **Files:**
-- Create: `packages/kernel/src/migrations/0086_environments.sql`
+- Create: `packages/kernel/src/migrations/0088_environments.sql`
 - Modify: `packages/kernel/src/db/kernel-schema.ts` (three tables, `ConversationsTable`,
   `BackgroundTasksTable`; `SandboxesTable` renamed `LegacySandboxesTable`, kept in
   `KernelDatabase` as `sandboxes` for the cleanup job only)
@@ -252,7 +252,7 @@ Waves inside PR A (tasks in one wave touch disjoint files):
 - [ ] **Step 1: Failing test** `migration creates the environment tables and constraints`:
   migrate a test database; insert two live defaults for one account → unique violation; insert two
   environments named `Repo` and `repo` for one account → unique violation; a deleted default plus
-  a live default → allowed; a `running` background task present before 0086 is `lost` after.
+  a live default → allowed; a `running` background task present before 0088 is `lost` after.
 - [ ] **Step 2:** `pnpm exec vitest run packages/kernel/test/environments/migration.test.ts` → FAIL.
 - [ ] **Step 3:** Write the migration (follow the writing-migrations skill; the `UPDATE … SET status
   = 'lost'` needs no exemption, it is not destructive DDL) and the Kysely types.

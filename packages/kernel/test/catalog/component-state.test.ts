@@ -42,6 +42,7 @@ describe("component scope predicates", () => {
     const own = (scope: "all" | "optional" | "named") => comp({ scopeMode: "own", scope });
     const off = plugin({ installed: false });
     expect(componentOn(own("all"), off, false, null)).toBe(true);
+    expect(componentOn(own("all"), off, false, false)).toBe(false);
     expect(componentOn(own("optional"), off, false, null)).toBe(false);
     expect(componentOn(own("optional"), off, false, true)).toBe(true);
     expect(componentOn(own("named"), off, true, null)).toBe(true);
@@ -65,12 +66,13 @@ describe("component scope predicates", () => {
     expect(componentOffered(comp({ disabled: true }), plugin(), false)).toBe(false);
   });
 
-  it("locked: an effective scope of all (the plugin's when following it)", () => {
-    expect(componentLocked(comp(), plugin({ scope: "all" }))).toBe(true);
+  it("locked: only a component of a builtin plugin (an effective scope of all is switchable)", () => {
+    expect(componentLocked(comp(), plugin({ scope: "all" }))).toBe(false);
     expect(componentLocked(comp(), plugin({ builtin: true }))).toBe(true);
     expect(componentLocked(comp(), plugin())).toBe(false);
-    expect(componentLocked(comp({ scopeMode: "own", scope: "all" }), plugin())).toBe(true);
+    expect(componentLocked(comp({ scopeMode: "own", scope: "all" }), plugin())).toBe(false);
     expect(componentLocked(comp({ scopeMode: "own" }), plugin({ scope: "all" }))).toBe(false);
+    expect(componentLocked(comp({ itemId: null }), null)).toBe(false);
   });
 
   it("definitionRefs reads selected, pinned and inline sub-agent skills, templates and connectors", () => {

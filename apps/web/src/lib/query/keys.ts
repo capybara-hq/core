@@ -66,6 +66,18 @@ export const keys = {
       channelSchema: (plugin: string): readonly unknown[] => [...all, "channelSchema", plugin],
       /** The org's extensions (installed plugins with an extension, enabled or not). */
       orgExtensions: (): readonly unknown[] => [...all, "orgExtensions"],
+      /** One extension's two-level config in the org: following or a copy, per-field levels. */
+      orgExtensionOverrides: (name: string): readonly unknown[] => [
+        ...all,
+        "orgExtensionOverrides",
+        name,
+      ],
+      /** One extension's single-tool switches in the org. */
+      extensionToolSwitches: (name: string): readonly unknown[] => [
+        ...all,
+        "extensionToolSwitches",
+        name,
+      ],
       /** The org's `org-default` extension points: candidates, stored and effective default. */
       extensionPointDefaults: (): readonly unknown[] => [...all, "extensionPointDefaults"],
       /** Whether each `org-default` point has a provider for the org now (the web tools). */
@@ -335,6 +347,12 @@ export const keys = {
       extensionConfigsAll: (): readonly unknown[] => [...all, "extensionConfig"],
       /** One extension's deployment config. */
       extensionConfig: (name: string): readonly unknown[] => [...all, "extensionConfig", name],
+      /** The orgs holding a copy of one extension's overridable config. */
+      extensionOrgOverrides: (name: string): readonly unknown[] => [
+        ...all,
+        "extensionOrgOverrides",
+        name,
+      ],
       /** The catalog's items. */
       catalog: (): readonly unknown[] => [...all, "catalog"],
       /** Every catalog item read (an invalidation prefix). */

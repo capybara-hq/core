@@ -16,11 +16,20 @@ export interface Directory {
    * treats the directory as "not configured": the hourly scan, `directory_changed` and the
    * pre-removal recheck are skipped silently (no job, no audit, no warning), and a manual sync by an
    * admin returns 409 `directory.not_configured`. When not implemented, any config that satisfies
-   * the schema counts as configured. Must be a pure function (no requests, never throws).
+   * the schema counts as configured. Must be a pure function (no requests, never throws). `config`
+   * is the effective deployment config for the org (see `listMembers`' `config`).
    */
-  configured?(orgConfig: unknown): boolean;
+  configured?(orgConfig: unknown, config?: unknown): boolean;
   listMembers(args: {
     orgConfig: unknown;
+    /**
+     * The extension's effective deployment config for this org: the platform's deployment config
+     * with the org's copy applied to the overridable fields (`orgAccess(…, "override")`), or the
+     * platform's config (equal to `ctx.config`) while the org follows it. Use it, not `ctx.config`,
+     * for work done for this org. Optional in the type so older extensions compile; the kernel
+     * always passes it.
+     */
+    config?: unknown;
     cursor?: string;
     signal: AbortSignal;
   }): Promise<{ members: DirectoryMember[]; next?: string }>;

@@ -57,7 +57,7 @@ export function useComponentScopeText(): (c: PlatformComponent) => string {
   const t = useTranslations("adminComponents");
   const scopeLabel = useScopeLabel();
   return (c) => {
-    const scope = scopeLabel({ scope: c.scope, scopeOrgs: c.orgs });
+    const scope = scopeLabel({ scope: c.scope, scopeOrgs: c.orgs, offCount: c.offCount ?? 0 });
     return c.scopeMode === "follow" && c.itemId !== null
       ? t("scopeFollow", { scope })
       : t("scopeOwn", { scope });

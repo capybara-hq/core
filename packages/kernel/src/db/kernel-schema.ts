@@ -126,6 +126,28 @@ export interface ExtensionOrgConfigsTable {
   updated_at: Ts;
 }
 
+/** An org's copy of an extension's overridable deployment config fields (0086, spec A §5.4). */
+export interface ExtensionOrgOverridesTable {
+  plugin: string;
+  org_id: string;
+  /** The copy's non-secret values (its secrets are in `secrets`). */
+  config: ColumnType<Record<string, unknown>, string | undefined, string>;
+  created_by: string | null;
+  created_at: Ts;
+  updated_by: string | null;
+  updated_at: Ts;
+}
+
+/** An org admin's switch of one extension tool (0086, spec A §7). */
+export interface OrgToolSwitchesTable {
+  org_id: string;
+  plugin: string;
+  tool: string;
+  enabled: boolean;
+  updated_by: string | null;
+  updated_at: Ts;
+}
+
 export interface AuditEventsTable {
   id: Generated<string>;
   at: Ts;
@@ -240,7 +262,7 @@ export interface ConversationsTable {
   deleted_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
   /** 0074: levels below the root conversation (0 = a root; a sub-agent's is its parent's + 1). */
   subagent_depth: ColumnType<number, number | undefined, number>;
-  /** 0086: the environment the conversation runs in; null = not chosen yet. */
+  /** 0088: the environment the conversation runs in; null = not chosen yet. */
   environment_id: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
@@ -775,11 +797,11 @@ export interface BackgroundTasksTable {
   read_offset: ColumnType<string, number | string | undefined, number | string>;
   /** Set while a stop is under way (0072); the poller skips such a task. */
   stopping_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
-  /** 0086: the environment the task runs in. */
+  /** 0088: the environment the task runs in. */
   environment_id: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
-/** 0023_sandboxes.sql: the legacy per-conversation sandbox; kept only for the cleanup job (0086). */
+/** 0023_sandboxes.sql: the legacy per-conversation sandbox; kept only for the cleanup job (0088). */
 export interface LegacySandboxesTable {
   conversation_id: string;
   org_id: string;
@@ -816,7 +838,7 @@ type InstanceHandle = ColumnType<
   string | null
 >;
 
-/** 0086_environments.sql: a long-lived environment (one instance plus a kept file system). */
+/** 0088_environments.sql: a long-lived environment (one instance plus a kept file system). */
 export interface EnvironmentsTable {
   id: string;
   org_id: string;
@@ -831,7 +853,7 @@ export interface EnvironmentsTable {
   deleted_at: TsNullable;
 }
 
-/** 0086_environments.sql: the instance and file system of an environment (replaces sandboxes). */
+/** 0088_environments.sql: the instance and file system of an environment (replaces sandboxes). */
 export interface EnvironmentInstancesTable {
   environment_id: string;
   org_id: string;
@@ -864,7 +886,7 @@ export interface EnvironmentInstancesTable {
   sweep_failed_at: TsNullable;
 }
 
-/** 0086_environments.sql: the environment a member's new conversations use by default. */
+/** 0088_environments.sql: the environment a member's new conversations use by default. */
 export interface EnvironmentDefaultsTable {
   org_id: string;
   account_id: string;
@@ -1098,6 +1120,8 @@ export interface KernelDatabase {
   api_tokens: ApiTokensTable;
   deployment_settings: DeploymentSettingsTable;
   extension_org_configs: ExtensionOrgConfigsTable;
+  extension_org_overrides: ExtensionOrgOverridesTable;
+  org_tool_switches: OrgToolSwitchesTable;
   audit_events: AuditEventsTable;
   secrets: SecretsTable;
   agents: AgentsTable;

@@ -9,11 +9,11 @@ import { createDb } from "../../src/db/pool.js";
 import { KERNEL_MIGRATIONS_DIR } from "../../src/kernel.js";
 
 /**
- * 0086_environments.sql: the environment tables and constraints, the new conversation and
- * background-task columns, and `running` background tasks becoming `lost`. Migrates to 0085 first
- * and writes a running task, then runs 0086.
+ * 0088_environments.sql: the environment tables and constraints, the new conversation and
+ * background-task columns, and `running` background tasks becoming `lost`. Migrates to the migration before it first
+ * and writes a running task, then runs 0088.
  */
-const FILE = "0086_environments.sql";
+const FILE = "0088_environments.sql";
 
 let pg: Awaited<ReturnType<typeof startTestPostgres>>;
 let db: ReturnType<typeof createDb>;
@@ -60,7 +60,7 @@ afterAll(async () => {
   for (const d of dirs) rmSync(d, { recursive: true, force: true });
 }, 120_000);
 
-describe("0086_environments", () => {
+describe("0088_environments", () => {
   it("migration creates the environment tables and constraints", async () => {
     await insertEnv("e1", null, true);
     await expect(insertEnv("e2", null, true)).rejects.toThrow(/environments_default_uq/);

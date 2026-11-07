@@ -44,6 +44,8 @@ export interface CatalogItem {
   scope: PluginScope;
   /** The orgs of a `named` scope (empty otherwise). */
   scopeOrgs: string[];
+  /** Orgs that switched an `all` item off (admin lists only; 0 for other scopes). */
+  offCount?: number;
   /** Shipped with the deployment (a required bootstrap plugin): scope `all`, never changed. */
   builtin: boolean;
   /** Stopped on the whole deployment (its scope is kept). */
@@ -741,6 +743,7 @@ export interface OrgCatalogItem
     | "latestMarketplaceVersion"
     | "newerInMarketplace"
     | "scopeOrgs"
+    | "offCount"
     | "enabledOrgs"
     | "pending"
     | "permissionsHash"
@@ -758,7 +761,7 @@ export interface OrgCatalogItem
   builtin: boolean;
   /** The effective state in this org. */
   state: OrgPluginState;
-  /** The org admin may switch it (never for `all` and builtin items). */
+  /** The org admin may switch it (never for builtin items; `all` items are on unless switched off). */
   switchable: boolean;
   /** The plugin's extension (or a template's connector extension) is not on the deployment. */
   notDeployed: boolean;

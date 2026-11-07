@@ -148,7 +148,8 @@ const isObj = (v: unknown): v is Record<string, unknown> =>
 /**
  * An extension config schema as a JSON Schema for forms (the input side, defaults included, no
  * `$schema`):
- * - meta `secret: true` becomes `"x-secret": true`, `hot: true` becomes `"x-hot": true`, `ui`
+ * - meta `secret: true` becomes `"x-secret": true`, `hot: true` becomes `"x-hot": true`, `org`
+ *   (`orgAccess`) becomes `"x-org"`, `ui`
  *   becomes `"x-ui"` (a JSON copy of the hints); `title` / `description` are filled from
  *   `x-ui.label.en` / `x-ui.help.en` when the node has none;
  * - unrepresentable types become `{ "x-unsupported": true }` instead of throwing;
@@ -166,6 +167,8 @@ export function configJsonSchema(schema: z.ZodTypeAny): JsonSchema {
       delete js.secret;
       if (js.hot === true) js["x-hot"] = true;
       delete js.hot;
+      if (js.org !== undefined) js["x-org"] = js.org;
+      delete js.org;
       if ("ui" in js) {
         // A JSON copy: hints are data, and the scrub must never mutate the schema's meta.
         const hints = JSON.parse(JSON.stringify(js.ui ?? null)) as unknown;
@@ -379,8 +382,21 @@ export function validateConfigUi(
     return node;
   };
 
-  const visit = (node: JsonSchema, path: string, isRoot: boolean): void => {
+  const visit = (node: JsonSchema, path: string, isRoot: boolean, depth: number): void => {
     const report = (message: string) => problems.push({ path, message });
+    if (node["x-org"] !== undefined) {
+      const org = node["x-org"];
+      if (level !== "deployment")
+        report(`x-org is only allowed at the deployment level, not ${level}`);
+      else if (depth !== 1) report("x-org is only allowed on a top-level field of the config");
+      else if (org !== "readonly" && org !== "override") {
+        report(`x-org must be "readonly" or "override", not ${JSON.stringify(org)}`);
+      } else if (org === "readonly" && node["x-secret"] === true) {
+        report(
+          'x-org "readonly" on a secret field: an org never sees a secret, so there is nothing to show',
+        );
+      }
+    }
     const text = (value: unknown, what: string, max: number, plainOk = false) => {
       if (value === undefined) return;
       if (plainOk && typeof value === "string") {
@@ -413,15 +429,18 @@ export function validateConfigUi(
     const props = shape.properties;
     if (isObj(props)) {
       for (const [k, child] of Object.entries(props)) {
-        if (isObj(child)) visit(child, path === "" ? k : `${path}.${k}`, false);
+        if (isObj(child)) visit(child, path === "" ? k : `${path}.${k}`, false, depth + 1);
       }
     }
-    if (isObj(shape.items)) visit(shape.items, path === "" ? "items" : `${path}.items`, false);
+    if (isObj(shape.items)) {
+      visit(shape.items, path === "" ? "items" : `${path}.items`, false, depth + 1);
+    }
     if (isObj(shape.additionalProperties)) {
       visit(
         shape.additionalProperties,
         path === "" ? "additionalProperties" : `${path}.additionalProperties`,
         false,
+        depth + 1,
       );
     }
   };
@@ -673,7 +692,7 @@ export function validateConfigUi(
     }
   };
 
-  visit(schema, "", true);
+  visit(schema, "", true, 0);
   if (hintsBytes > L.hintsBytes) {
     problems.push({
       path: "",

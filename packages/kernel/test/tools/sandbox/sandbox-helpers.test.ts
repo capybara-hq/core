@@ -293,7 +293,16 @@ describe("registry without a sandbox provider", () => {
     });
     expect(tools.map((t) => t.spec.name)).toEqual(names);
     const host = { tools: () => [], list: () => [] } as unknown as ExtensionHost;
-    const registry = new ToolRegistry({} as KernelDb, host, host, { list: () => tools });
+    const registry = new ToolRegistry(
+      {} as KernelDb,
+      host,
+      host,
+      { list: () => tools },
+      {
+        get: async () => ({ ok: true, config: {}, source: "platform" }),
+      },
+      { offKeys: async () => new Set() },
+    );
     const got = await registry.forAgent("org", {
       tools: [{ kind: "builtin", name: "Bash" }],
     });

@@ -80,6 +80,8 @@ const mf = (over: Partial<ExtensionManifest> = {}) =>
 const stubAccess = (
   table: Partial<Record<ExtensionPointRef, { plugin: string; impl: unknown }[]>>,
   enabled: Record<string, string[]> = {},
+  /** org -> plugins whose effective config is not ok there (layering spec A §6) */
+  notOk: Record<string, string[]> = {},
 ) => {
   const calls: string[] = [];
   const access: ExtensionPointAccess = {
@@ -87,6 +89,9 @@ const stubAccess = (
     async enabledPlugins(orgId) {
       calls.push(orgId);
       return new Set(enabled[orgId] ?? []);
+    },
+    async configOk(orgId, plugin) {
+      return !(notOk[orgId] ?? []).includes(plugin);
     },
   };
   return { access, calls };
@@ -159,6 +164,43 @@ describe("ctx.extensionPoints（单元）", () => {
     // 不传 orgId：部署级视角，不查询组织启用
     expect(ctx.extensionPoints.list("channel@1")).toHaveLength(2);
     expect(calls).toHaveLength(4);
+    await ctx.close();
+  });
+
+  it("with orgId, a provider whose effective config is not ok in that org is excluded (layering A §6)", async () => {
+    const { access } = stubAccess(
+      {
+        "channel@1": [
+          { plugin: "a", impl: "A" },
+          { plugin: "b", impl: "B" },
+        ],
+        "identity-source@1": [{ plugin: "c", impl: "C" }],
+      },
+      { o1: ["a", "b"], o2: ["a", "b"] },
+      { o1: ["b", "c"] },
+    );
+    const ctx = createExtensionContext(
+      deps,
+      mf({ requires: ["channel@1", "identity-source@1"] }),
+      {},
+      access,
+    );
+    await expect(ctx.extensionPoints.list("channel@1", { orgId: "o1" })).resolves.toEqual([
+      { plugin: "a", impl: "A" },
+    ]);
+    await expect(ctx.extensionPoints.get("channel@1", "b", { orgId: "o1" })).rejects.toThrow(
+      ExtensionPointUnavailableError,
+    );
+    await expect(ctx.extensionPoints.get("channel@1", "b", { orgId: "o2" })).resolves.toBe("B");
+    // not orgScoped, but still a call on behalf of the org
+    await expect(ctx.extensionPoints.list("identity-source@1", { orgId: "o1" })).resolves.toEqual(
+      [],
+    );
+    await expect(
+      ctx.extensionPoints.get("identity-source@1", "c", { orgId: "o1" }),
+    ).rejects.toThrow(ExtensionPointUnavailableError);
+    // the deployment-level view is not filtered
+    expect(ctx.extensionPoints.list("channel@1")).toHaveLength(2);
     await ctx.close();
   });
 
