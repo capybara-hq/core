@@ -89,6 +89,8 @@ export const APP_PAGES: readonly string[] = [
   "/connectors",
   "/connectors/[connectorId]",
   "/connectors/install",
+  "/environments",
+  "/environments/[id]",
   "/evals",
   "/evals/[setId]",
   "/evals/[setId]/cases/[caseId]",

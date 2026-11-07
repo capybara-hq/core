@@ -42,6 +42,10 @@ export const keys = {
         "agentTemplateDeletePreview",
         id,
       ],
+      /** The person's environments in the org. */
+      environments: (): readonly unknown[] => [...all, "environments"],
+      /** One of the person's environments. */
+      environment: (id: string): readonly unknown[] => [...all, "environment", id],
       /** The org skill library. */
       skills: (): readonly unknown[] => [...all, "skills"],
       /** One org skill (its body, files and versions). */

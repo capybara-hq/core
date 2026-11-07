@@ -58,6 +58,7 @@ import {
   queueQuery,
   sandboxQuery,
 } from "./conversation";
+import { environmentQuery, environmentsQuery } from "./environments";
 import {
   type EvalRunState,
   evalCaseQuery,
@@ -517,6 +518,15 @@ export const ROUTES: readonly RouteEntry[] = [
       orgId === null || params.connectorId === undefined
         ? []
         : [q(connectorQuery(orgId, params.connectorId))],
+  },
+  {
+    pattern: "/environments",
+    queries: ({ orgId }) => (orgId === null ? [] : [q(environmentsQuery(orgId))]),
+  },
+  {
+    pattern: "/environments/[id]",
+    queries: ({ orgId, params }) =>
+      orgId === null || params.id === undefined ? [] : [q(environmentQuery(orgId, params.id))],
   },
   {
     pattern: "/connectors/install",
