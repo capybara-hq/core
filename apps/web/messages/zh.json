@@ -682,7 +682,7 @@
       "uploadOff": "上传图片需要对象存储，这个部署还没有配置。可以先选一只动物。",
       "uploadFailed": "读不了这张图片。请选择 png、jpg 或 webp 文件。",
       "descriptionLabel": "简介",
-      "descriptionHelp": "一句话说明这个智能体做什么。给人看的，模型看不到。",
+      "descriptionHelp": "一句话说明这个智能体做什么。会显示在智能体卡片上，智能体也会知道这是对它自己的描述。",
       "membersLabel": "可以使用的成员",
       "membersLoading": "正在加载成员…",
       "membersFailed": "成员列表加载失败。",
@@ -1914,7 +1914,8 @@
       "identities": "IM 身份",
       "models": "模型用途",
       "members": "成员",
-      "tokens": "服务令牌"
+      "tokens": "服务令牌",
+      "preferences": "偏好设置"
     },
     "empty": "没有需要你个人凭据的连接器。",
     "emptyHint": "使用个人凭据的连接器会出现在这里。",
@@ -2013,6 +2014,11 @@
         "override": "超级管理员为本组织设置"
       },
       "newOnly": "只对新建的沙箱生效；已有的沙箱沿用创建时的限额，直到被销毁。"
+    },
+    "timeZone": {
+      "title": "默认时区",
+      "description": "成员没有设置自己的时区、又不是从浏览器发消息时（如 IM 里的消息、匿名访客），智能体按这个时区判断「今天」。",
+      "label": "默认时区"
     }
   },
   "configForm": {
@@ -4663,5 +4669,17 @@
     "noneInOrg": "这个插件没有向本组织提供组件。",
     "listUnavailable": "暂时读不到平台组件在本组织的状态：未启用的平台组件和它们的开关没有显示。",
     "retry": "重试"
+  },
+  "preferences": {
+    "title": "偏好设置",
+    "save": "保存",
+    "saved": "偏好设置已保存。",
+    "timeZone": {
+      "title": "时区",
+      "description": "智能体按这个时区判断「今天」。默认跟随你的浏览器；在 IM 里发消息时没有浏览器，就用这里的设置，未设置时用组织的默认时区。",
+      "label": "时区",
+      "help": "选择一个时区后，它优先于浏览器的时区。",
+      "follow": "跟随浏览器"
+    }
   }
 }

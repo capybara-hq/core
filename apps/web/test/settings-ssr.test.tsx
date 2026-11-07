@@ -272,7 +272,7 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     await r2();
   });
 
-  it("/settings/organization: the loading page keeps its three sections and an owner's danger zone (the role is the session's)", async () => {
+  it("/settings/organization: the loading page keeps its four sections and an owner's danger zone (the role is the session's)", async () => {
     const loading = async (me: ReturnType<typeof as>) => {
       await renderRouteEmptyCache(
         "/settings/organization",
@@ -284,8 +284,9 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
       });
     };
     await loading(as("owner"));
-    expect(document.querySelectorAll('[data-part="form-section"]')).toHaveLength(3);
+    expect(document.querySelectorAll('[data-part="form-section"]')).toHaveLength(4);
     expect(screen.getByRole("heading", { name: en.orgSettings.toolSearch.title })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: en.orgSettings.timeZone.title })).toBeTruthy();
     expect(screen.getByRole("heading", { name: en.orgSettings.platformTool.title })).toBeTruthy();
     expect(document.querySelectorAll('[data-part="danger-zone"]')).toHaveLength(1);
     expect(screen.getByRole("button", { name: en.orgLifecycle.delete.action })).toBeTruthy();

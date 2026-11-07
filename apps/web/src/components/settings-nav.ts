@@ -46,6 +46,7 @@ export function useAccountNav(): NavGroup[] {
     {
       group: t("groupPersonal"),
       items: [
+        { id: "preferences", label: t("preferences"), href: "/account/preferences" },
         { id: "connections", label: t("connections"), href: "/account/connections" },
         { id: "grants", label: t("grants"), href: "/account/grants" },
         { id: "identities", label: t("identities"), href: "/account/identities" },

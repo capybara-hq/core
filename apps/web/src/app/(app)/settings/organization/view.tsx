@@ -21,6 +21,7 @@ import { NoAccess } from "../../../../components/NoAccess";
 import { useOrgSettingsNav } from "../../../../components/settings-nav";
 import { usePagePath } from "../../../../components/shell/path";
 import { useSession } from "../../../../components/shell/session";
+import { timeZoneOptions } from "../../../../lib/account-preferences";
 import { navigateBrowser } from "../../../../lib/browser";
 import { myRole } from "../../../../lib/members";
 import {
@@ -43,6 +44,7 @@ import NotFound from "../../not-found";
 
 /**
  * `/settings/organization`：组织设置（SettingsPage）——工具搜索开关、IM 语言（机器人固定话术的语言）、
+ * the org's default time zone (run context spec §3.3),
  * the Platform tool's org switch (on / read-only / off);
  * 沙箱的设置在 `/settings/sandbox`。
  * 成员可看，管理员可改；有改动时出现 ActionRow。From the query cache (the layout prefetched it on a
@@ -67,7 +69,7 @@ function OrganizationSettings({ orgId }: { orgId: string }) {
   const qc = useQueryClient();
   const read = usePageQuery(orgSettingsQuery(orgId));
   const [draft, setDraft] = useState<
-    Pick<Partial<OrgSettings>, "toolSearch" | "locale" | "platformTool">
+    Pick<Partial<OrgSettings>, "toolSearch" | "locale" | "platformTool" | "timeZone">
   >({});
   // The answer is the new settings: it replaces the cached ones (the response may leave out the
   // read-only parts the sandbox page shows, so the cached ones are kept).
@@ -114,6 +116,12 @@ function OrganizationSettings({ orgId }: { orgId: string }) {
           loading={{ fields: [{ control: "select" }] }}
         />
         <FormSection
+          id="time-zone"
+          title={t("timeZone.title")}
+          description={t("timeZone.description")}
+          loading={{ fields: [{ control: "select" }] }}
+        />
+        <FormSection
           id="platform-tool"
           title={t("platformTool.title")}
           description={t("platformTool.description")}
@@ -128,11 +136,16 @@ function OrganizationSettings({ orgId }: { orgId: string }) {
   const toolSearch = draft.toolSearch ?? saved.toolSearch ?? "on";
   const locale = draft.locale ?? saved.locale ?? "en";
   const platformTool = draft.platformTool ?? saved.platformTool ?? "on";
+  const timeZone = draft.timeZone ?? saved.timeZone ?? "UTC";
   // 只提交改过的项
   const patch: OrgSettingsPatch = {
     ...(toolSearch !== saved.toolSearch ? { toolSearch } : {}),
     ...(locale !== (saved.locale ?? "en") ? { locale } : {}),
     ...(platformTool !== (saved.platformTool ?? "on") ? { platformTool } : {}),
+    // UTC is the default: choosing it clears the setting
+    ...(timeZone !== (saved.timeZone ?? "UTC")
+      ? { timeZone: timeZone === "UTC" ? null : timeZone }
+      : {}),
   };
   const unsaved = Object.keys(patch).length;
   const dirty = unsaved > 0;
@@ -201,6 +214,21 @@ function OrganizationSettings({ orgId }: { orgId: string }) {
               value: v,
               label: tc(`localeName.${v}`),
             }))}
+          />
+        </Field>
+      </FormSection>
+      <FormSection
+        id="time-zone"
+        title={t("timeZone.title")}
+        description={t("timeZone.description")}
+      >
+        <Field label={t("timeZone.label")}>
+          <Select
+            name="timeZone"
+            value={timeZone}
+            disabled={!manage}
+            onChange={(e) => setDraft((d) => ({ ...d, timeZone: e.target.value }))}
+            options={timeZoneOptions(saved.timeZone ?? null)}
           />
         </Field>
       </FormSection>

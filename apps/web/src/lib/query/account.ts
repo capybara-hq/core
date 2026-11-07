@@ -1,3 +1,4 @@
+import { getPreferences } from "../account-preferences";
 import { listToolGrants } from "../approvals";
 import { listIdentities } from "../identities";
 import { defineQuery } from "./define";
@@ -16,5 +17,13 @@ export const identitiesQuery = (accountId: string) =>
   defineQuery({
     key: keys.account(accountId).identities(),
     fn: () => listIdentities(),
+    freshness: "mine",
+  });
+
+/** The account's preferences (`{ timeZone }`, as the kernel answers). */
+export const preferencesQuery = (accountId: string) =>
+  defineQuery({
+    key: keys.account(accountId).preferences(),
+    fn: () => getPreferences(),
     freshness: "mine",
   });

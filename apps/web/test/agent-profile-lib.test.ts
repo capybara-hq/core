@@ -54,11 +54,11 @@ describe("agent profile lib", () => {
     const { wrapper } = setup();
     const { result } = renderHook(() => useUpdateProfile("o1", "a1"), { wrapper });
     await act(async () => {
-      result.current.mutate({ description: "x" });
+      result.current.mutate({ quickActions: [] });
     });
     await waitFor(() => expect(result.current.error?.code).toBe("agent.profile_conflict"));
     expect(bodyOf(calls[0])).toEqual({
-      description: "x",
+      quickActions: [],
       expectedUpdatedAt: "2026-11-04T10:00:00.000Z",
     });
   });
@@ -71,7 +71,7 @@ describe("agent profile lib", () => {
     const { qc, wrapper } = setup();
     const { result } = renderHook(() => useUpdateProfile("o1", "a1"), { wrapper });
     await act(async () => {
-      result.current.mutate({ description: "new" });
+      result.current.mutate({ quickActions: [{ title: "new", body: "b" }] });
     });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(qc.getQueryData<Agent>(agentQuery("o1", "a1").queryKey)?.profile).toEqual(next);
@@ -93,8 +93,8 @@ describe("agent profile lib", () => {
     const { wrapper } = setup();
     const { result } = renderHook(() => useUpdateProfile("o1", "a1"), { wrapper });
     await act(async () => {
-      result.current.mutate({ description: "one" });
-      result.current.mutate({ description: "two" });
+      result.current.mutate({ quickActions: [{ title: "one", body: "b" }] });
+      result.current.mutate({ quickActions: [{ title: "two", body: "b" }] });
     });
     await waitFor(() => expect(calls).toHaveLength(2));
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
@@ -117,10 +117,10 @@ describe("agent profile lib", () => {
     const { wrapper } = setup();
     const { result } = renderHook(() => useUpdateProfile("o1", "a1"), { wrapper });
     await act(async () => {
-      await result.current.mutateAsync({ description: "one" });
+      await result.current.mutateAsync({ quickActions: [{ title: "one", body: "b" }] });
     });
     await act(async () => {
-      await result.current.mutateAsync({ description: "two" });
+      await result.current.mutateAsync({ quickActions: [{ title: "two", body: "b" }] });
     });
     expect((bodyOf(calls[1]) as { expectedUpdatedAt: string }).expectedUpdatedAt).toBe(
       "2026-11-04T11:00:00.000Z",

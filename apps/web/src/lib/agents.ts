@@ -49,6 +49,12 @@ export const WEB_TOOL_POINTS: Readonly<Record<string, string>> = {
 
 export interface AgentDefinitionInput {
   name: string;
+  /**
+   * What the agent is for (the model sees it in its run context); saved as a new version. Absent
+   * on older versions (the profile's copy is shown); a save without it keeps the current one,
+   * `""` removes it.
+   */
+  description?: string;
   /** The model-visible prompt: the kernel derives it from `instructionFiles` when they are saved. */
   instructions: string;
   /**
@@ -223,10 +229,12 @@ export interface AgentProfile {
   updatedAt: string;
 }
 
-/** What a client may write: `external` avatars are migrated data only. */
+/**
+ * What a client may write: `external` avatars are migrated data only. The description is part of
+ * the definition (saved with the agent PATCH).
+ */
 export interface ProfileInput {
   avatar?: { kind: "preset"; id: PresetId } | { kind: "upload"; uploadId: string } | null;
-  description?: string;
   quickActions?: QuickAction[];
 }
 
@@ -238,7 +246,10 @@ export interface Agent {
   /** The member list when visibility is `members` (else null; older kernels leave it out). */
   memberIds?: string[] | null;
   currentVersion: number;
-  /** Avatar, description and quick actions: not part of the definition, never model-visible. */
+  /**
+   * Avatar and quick actions: not part of the definition, never model-visible. `description` is
+   * the display copy of the definition's description (older agents: their profile text).
+   */
   profile: AgentProfile;
   /** The owner left the org and the agent went to an owner of the org until an admin reassigns it. */
   needsReassignment?: boolean;

@@ -682,7 +682,7 @@
       "uploadOff": "Uploading needs object storage, which this deployment has not configured. Pick one of the animals instead.",
       "uploadFailed": "The image could not be read. Pick a png, jpg or webp file.",
       "descriptionLabel": "Description",
-      "descriptionHelp": "One line about what this agent is for. People see it; the model does not.",
+      "descriptionHelp": "One line about what this agent is for. People see it on the agent's cards, and the agent knows it as its own description.",
       "membersLabel": "Members who can use it",
       "membersLoading": "Loading members…",
       "membersFailed": "The members could not be loaded.",
@@ -1926,7 +1926,8 @@
       "identities": "IM identities",
       "models": "Model purposes",
       "members": "Members",
-      "tokens": "Service tokens"
+      "tokens": "Service tokens",
+      "preferences": "Preferences"
     },
     "empty": "No connector needs your own credential.",
     "emptyHint": "Connectors that use personal credentials show up here.",
@@ -2025,6 +2026,11 @@
         "override": "Set for this organization by a super admin"
       },
       "newOnly": "Only applies to newly created sandboxes; existing sandboxes keep the limits they were created with until they are destroyed."
+    },
+    "timeZone": {
+      "title": "Default time zone",
+      "description": "Agents use this time zone to tell what day it is for messages without a time zone of their own: members who set none and write from an IM, and anonymous guests.",
+      "label": "Default time zone"
     }
   },
   "configForm": {
@@ -4675,5 +4681,17 @@
     "noneInOrg": "This plugin offers no component to this organization.",
     "listUnavailable": "The platform components' state in this organization could not be read: the ones that are off and their switches are not shown.",
     "retry": "Retry"
+  },
+  "preferences": {
+    "title": "Preferences",
+    "save": "Save",
+    "saved": "Preferences saved.",
+    "timeZone": {
+      "title": "Time zone",
+      "description": "Agents use this time zone to tell what day it is. By default it follows your browser; messages from an IM have no browser, so they use this setting, or the organization's default when it is not set.",
+      "label": "Time zone",
+      "help": "A time zone you choose takes precedence over your browser's.",
+      "follow": "Follow the browser"
+    }
   }
 }
