@@ -1,11 +1,14 @@
-import { cleanup, screen, within } from "@testing-library/react";
+import { cleanup, renderHook, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { NextIntlClientProvider } from "next-intl";
+import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
+import { useSelection } from "../src/components/conversation/useSelection";
 import { ModelCatalog } from "../src/components/ModelCatalog";
 import { listModels, type ModelInfo, type ModelKind } from "../src/lib/agents";
-import { pickerOptions } from "../src/lib/models";
+import { pickerOptions, targetName } from "../src/lib/models";
 import { bodyOf, type Call, json, lastStubRoutes, stubApi } from "./support/api";
 import { resetNavigation } from "./support/navigation";
 import { renderRouteWithCache } from "./support/query";
@@ -162,6 +165,52 @@ describe("ModelCatalog", () => {
   });
 });
 
+describe("bulk follows the rows on screen", () => {
+  it("with a search showing 11 of 120 chat models, turn all off disables exactly those 11", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    renderPage(
+      <ModelCatalog provider="big" title="Big" models={generated(["emb-3"])} onChange={onChange} />,
+    );
+    await user.type(screen.getByRole("textbox", { name: en.models.catalog.search }), "chat-7");
+    const chat = regionOf(en.models.kind.chat);
+    expect(chat.getByText("11")).toBeTruthy();
+    await user.click(chat.getByRole("button", { name: en.models.catalog.turnAllOff }));
+    const want = ["chat-7", ...Array.from({ length: 10 }, (_, i) => `chat-7${i}`), "emb-3"];
+    const sent = (onChange.mock.calls[0] ?? [])[0] as string[];
+    expect([...sent].sort()).toEqual(want.sort());
+  });
+});
+
+describe("a model disabled after it was saved keeps its name", () => {
+  it("the composer's picker shows the model id when the list no longer has it", () => {
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <NextIntlClientProvider locale="en" messages={en}>
+        {children}
+      </NextIntlClientProvider>
+    );
+    const ref = { provider: "alpha", model: "gone-model" };
+    const { result } = renderHook(
+      () =>
+        useSelection([{ provider: "alpha", models: [model("other") as ModelInfo] }], undefined, {
+          model: ref,
+        } as never),
+      { wrapper },
+    );
+    expect(result.current.modelPicker.value).toBe("gone-model");
+  });
+
+  it("the agent map names it by its id", () => {
+    expect(
+      targetName(
+        [{ provider: "alpha", models: [] }],
+        { provider: "alpha", model: "gone-model" },
+        "en",
+      ),
+    ).toBe("alpha / gone-model");
+  });
+});
+
 describe("pickerOptions and the chat-only read", () => {
   it("groups by provider, then publisher, skips disabled models", () => {
     const opts = pickerOptions(
@@ -257,7 +306,10 @@ describe("/settings/models: the org's catalog", () => {
       "PUT /api/v1/orgs/o1/models/alpha/disabled": (c) =>
         (bodyOf(c) as { models: string[] }).models.includes("alpha-large")
           ? json(200, {
-              affected: { agents: [{ id: "ag1", name: "Support bot", orgId: "o1" }], purposes: [] },
+              affected: {
+                agents: [{ id: "ag1", name: "Support bot", orgId: "o1" }],
+                purposes: [{ purpose: "eval", orgId: "o1" }],
+              },
             })
           : json(200, { affected: { agents: [], purposes: [] } }),
     });
@@ -272,7 +324,7 @@ describe("/settings/models: the org's catalog", () => {
       "alpha-small",
     ]);
     expect(await screen.findByText(/These agents or purposes use these models:/)).toBeTruthy();
-    expect(screen.getByText(/Support bot/)).toBeTruthy();
+    expect(screen.getByText(/Support bot, Eval judge/)).toBeTruthy();
     await user.click(screen.getByRole("button", { name: en.models.catalog.undo }));
     await vi.waitFor(() => expect(puts()).toHaveLength(2));
     expect(bodyOf(puts()[1])).toEqual({ models: ["alpha-small"] });

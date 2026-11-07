@@ -170,6 +170,7 @@ function ModelsBody({
   // (models, catalog) change with it.
   const disabling = useModelDisabling({
     scope: "platform",
+    purposes: data.purposes,
     invalidates: () => [
       keys.deployment().adminModels(),
       ...(orgId === null ? [] : [keys.org(orgId).models(), keys.org(orgId).modelsCatalog()]),

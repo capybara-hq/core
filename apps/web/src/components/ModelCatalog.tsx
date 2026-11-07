@@ -101,7 +101,9 @@ export function ModelCatalog<M extends ModelInfo>({
     .filter((g) => g.rows.length > 0);
 
   const bulk = (kind: ModelKind, off: boolean) => {
-    const ids = models.filter((m) => kindOf(m) === kind && inPublisher(m)).map((m) => m.id);
+    const ids = models
+      .filter((m) => kindOf(m) === kind && inPublisher(m) && matchesSearch(m))
+      .map((m) => m.id);
     onChange(
       off ? [...new Set([...disabled, ...ids])] : disabled.filter((id) => !ids.includes(id)),
     );
@@ -214,7 +216,7 @@ export function ModelCatalog<M extends ModelInfo>({
       ) : (
         shown.map((g) => {
           const kindLabel = tk(g.kind);
-          const scope = g.all.filter(inPublisher);
+          const scope = g.rows;
           const anyOn = scope.some((m) => m.disabled !== true);
           const anyOff = scope.some((m) => m.disabled === true);
           const page = pages[g.kind] ?? 1;

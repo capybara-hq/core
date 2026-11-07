@@ -5,6 +5,7 @@ import { useLocale, useTranslations } from "next-intl";
 import { type ReactNode, useState } from "react";
 import {
   type ModelDisableResult,
+  type PurposeView,
   putAdminDisabledModels,
   putOrgDisabledModels,
 } from "../lib/models";
@@ -21,10 +22,13 @@ type Notice = { provider: string; previous: string[]; result: ModelDisableResult
  */
 export function useModelDisabling({
   scope,
+  purposes = [],
   invalidates,
 }: {
   /** An org's own list (`org.models.manage`) or the platform's (super admin). */
   scope: { orgId: string } | "platform";
+  /** The purposes view, to name the affected purposes by their label. */
+  purposes?: PurposeView[];
   invalidates(): (readonly unknown[])[];
 }): {
   change(provider: string, previous: string[], next: string[]): void;
@@ -56,10 +60,16 @@ export function useModelDisabling({
       },
     );
 
+  const purposeName = (id: string) => {
+    const label = purposes.find((v) => v.purpose === id)?.label;
+    return (locale === "zh" ? label?.zh : label?.en) || label?.en || id;
+  };
   const names = (n: Notice) =>
     [
-      ...n.result.affected.agents.map((a) => a.name),
-      ...n.result.affected.purposes.map((p) => p.purpose),
+      ...new Set([
+        ...n.result.affected.agents.map((a) => a.name),
+        ...n.result.affected.purposes.map((p) => purposeName(p.purpose)),
+      ]),
     ].join(locale === "zh" ? "、" : ", ");
 
   return {

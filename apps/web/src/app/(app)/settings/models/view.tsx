@@ -119,6 +119,7 @@ function Purposes({
   const qc = useQueryClient();
   const disabling = useModelDisabling({
     scope: { orgId },
+    purposes,
     invalidates: () => [keys.org(orgId).models(), keys.org(orgId).modelsCatalog()],
   });
   const key = orgPurposesQuery(orgId).queryKey;
