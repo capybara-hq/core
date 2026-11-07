@@ -123,7 +123,11 @@ const unknownToolText = (
   (hint === null ? "" : ` ${hint}`);
 const unavailableText = (name: string, reason: string) =>
   `Tool "${name}" is unavailable: ${reason}.`;
-const deniedText = (key: string) => `Tool ${key} is denied by policy.`;
+/** With a per-call policy key (`Platform:<operation>`), the text names it. */
+const deniedText = (key: string, policyKey?: string) =>
+  policyKey === undefined || policyKey === key
+    ? `Tool ${key} is denied by policy.`
+    : `Tool ${key} is denied by policy for ${policyKey}.`;
 /** Longest hook reason quoted in {@link hookDeniedText}. */
 const HOOK_REASON_MAX = 500;
 /**
@@ -671,8 +675,16 @@ export class ToolPipeline {
     });
     if (invalid !== null) return fail(invalid, outKey);
 
-    // the per-call policy key (Platform tool spec §6.2), from the validated input
-    const callPolicy = tool.callPolicy?.(input) ?? null;
+    // the per-call policy key (Platform tool spec §6.2): key and summary come from the resolved
+    // input, while the approval binding below compares the raw call.input
+    const callPolicy =
+      (await tool.callPolicy?.(input, {
+        orgId: ctx.orgId,
+        accountId: ctx.accountId,
+        agentId: ctx.agentId,
+        conversationId: ctx.conversationId,
+        runId: ctx.runId,
+      })) ?? null;
     // a deny with a reason (e.g. an unavailable operation): the reason is the tool error
     if (callPolicy?.policy === "deny" && callPolicy.denyReason !== undefined) {
       return fail(callPolicy.denyReason, outKey);
@@ -692,7 +704,7 @@ export class ToolPipeline {
       }),
       callPolicy,
     });
-    if (decision === "deny") return fail(deniedText(tool.key), outKey);
+    if (decision === "deny") return fail(deniedText(tool.key, callPolicy?.key), outKey);
     if (typeof decision === "object" && "unavailable" in decision) {
       return fail(unavailableText(tool.key, decision.unavailable), outKey);
     }

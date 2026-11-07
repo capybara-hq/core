@@ -446,7 +446,8 @@
         "ReadToolOutput": "读取存档的工具结果（ReadToolOutput）",
         "SkillWrite": "编写技能（SkillWrite）",
         "WebSearch": "搜索网页（WebSearch）",
-        "WebFetch": "读取网页（WebFetch）"
+        "WebFetch": "读取网页（WebFetch）",
+        "Platform": "操作平台（Platform）"
       },
       "connectorsLabel": "连接器",
       "connectorTools": "{name} 的全部工具",

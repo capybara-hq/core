@@ -205,4 +205,22 @@ describe("PlatformActor.facts", () => {
     await sql`UPDATE capybara.accounts SET status = 'disabled' WHERE id = ${admin}`.execute(raw);
     expect((await factsFor(admin, conv, r)).isSuperAdmin).toBe(false);
   });
+
+  it("a sub-agent's private-agent fact is judged on the root conversation's agent", async () => {
+    const admin = await account({ superAdmin: true, role: "admin" });
+    // the root runs a shared agent; the child runs the admin's own private agent
+    agentId = await agent(admin, "org");
+    const root = await conversation(admin);
+    agentId = await agent(admin, "private");
+    const child = await conversation(admin, { kind: "subagent", parent: root });
+    const r = await run(child, admin, await run(root, admin));
+    expect((await factsFor(admin, child, r)).agentPrivateToActor).toBe(false);
+    // and the other way round: a private root, a shared child agent
+    agentId = await agent(admin, "private");
+    const privateRoot = await conversation(admin);
+    agentId = await agent(admin, "org");
+    const sharedChild = await conversation(admin, { kind: "subagent", parent: privateRoot });
+    const r2 = await run(sharedChild, admin, await run(privateRoot, admin));
+    expect((await factsFor(admin, sharedChild, r2)).agentPrivateToActor).toBe(true);
+  });
 });

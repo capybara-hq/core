@@ -143,10 +143,11 @@ describe("Agent HTTP", () => {
       avatarUrl: null,
       modelParams: {},
       fallbackParams: {},
-      // 创建时未给 tools → 默认工具（Ruling P7）
+      // no tools on create -> the default tools (Ruling P7; Platform tool spec §3)
       tools: [
         { kind: "builtin", name: "AskUserQuestion" },
         { kind: "builtin", name: "ReadToolOutput" },
+        { kind: "builtin", name: "Platform" },
       ],
       toolPolicies: {},
     });

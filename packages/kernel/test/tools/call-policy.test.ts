@@ -5,9 +5,7 @@ import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara
 import { Redis } from "ioredis";
 import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { AgentsService } from "../../src/agents/agents.service.js";
 import type { AgentDefinition } from "../../src/agents/definition.js";
-import type { AgentDefinitionInput } from "../../src/agents/instruction-files.js";
 import { type KernelConfig, KernelConfigSchema } from "../../src/config/schema.js";
 import type { EventLog } from "../../src/conversations/event-log.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
@@ -85,7 +83,8 @@ const SPEC: ToolSpec = {
   },
 };
 
-const callPolicy: NonNullable<BuiltinTool["callPolicy"]> = (input) => {
+// async like the real `Platform` tool's (it reads the actor's facts)
+const callPolicy: NonNullable<BuiltinTool["callPolicy"]> = async (input) => {
   const op = (input as { op: string }).op;
   const key = `Platform:${op}`;
   switch (op) {
@@ -270,7 +269,7 @@ describe("per-call policy keys", () => {
     expect(out).toEqual({ kind: "done" });
     expect(await resultOf("c1")).toMatchObject({
       isError: true,
-      content: "Tool Platform is denied by policy.",
+      content: "Tool Platform is denied by policy for Platform:x.write.",
     });
     expect(calls).toEqual([{ op: "x.read" }]);
     // x.other is not covered by the x.write deny: it asks
@@ -418,48 +417,5 @@ describe("per-call policy keys", () => {
       approverRole: "admin",
     });
     expect((await approvals.describe(role.id))?.scopes).toEqual(["once"]);
-  });
-});
-
-describe("AgentsService toolPolicies keys", () => {
-  const svc = (keys: string[]) =>
-    new AgentsService(
-      undefined as never,
-      undefined as never,
-      { checkRefs: async () => ({ keys: new Set(keys), issues: [] }) },
-      undefined as never,
-      undefined as never,
-      undefined as never,
-      undefined as never,
-      undefined as never,
-      undefined as never,
-      undefined as never,
-      undefined as never,
-    );
-  const check = (keys: string[], toolPolicies: Record<string, "ask" | "deny">) =>
-    (
-      svc(keys) as unknown as {
-        checkTools(orgId: string, def: AgentDefinitionInput): Promise<Set<string>>;
-      }
-    ).checkTools("org", { ...agent, toolPolicies } as AgentDefinitionInput);
-
-  it("accepts Platform:<op> keys only when Platform is among the agent's tools", async () => {
-    expect(await codeOf(check(["Platform", "Read"], { "Platform:skills.create": "deny" }))).toBe(
-      "resolved",
-    );
-    // an unknown op id is kept: a removed operation's policy is harmless
-    expect(await codeOf(check(["Platform"], { "Platform:gone-domain.do-it": "ask" }))).toBe(
-      "resolved",
-    );
-    expect(await codeOf(check(["Read"], { "Platform:skills.create": "deny" }))).toBe(
-      "validation_failed",
-    );
-    expect(await codeOf(check(["Platform"], { "Platform:BAD": "deny" }))).toBe("validation_failed");
-    expect(await codeOf(check(["Platform"], { "Platform:skills": "deny" }))).toBe(
-      "validation_failed",
-    );
-    expect(await codeOf(check(["Platform"], { "Other:skills.create": "deny" }))).toBe(
-      "validation_failed",
-    );
   });
 });

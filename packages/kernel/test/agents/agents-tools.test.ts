@@ -288,6 +288,33 @@ describe("agent 定义的工具", () => {
   });
 });
 
+describe("Platform per-operation policy keys (Platform tool spec §6.2)", () => {
+  it("Platform:<op> keys are accepted only with Platform selected; a malformed one is refused", async () => {
+    const withPlatform = await createAgent({
+      tools: [{ kind: "builtin", name: "Platform" }],
+      toolPolicies: { "Platform:skills.create": "deny" },
+    });
+    expect(withPlatform.statusCode, withPlatform.body).toBe(201);
+    expect((withPlatform.json() as AgentRes).agent.definition.toolPolicies).toEqual({
+      "Platform:skills.create": "deny",
+    });
+
+    const without = await createAgent({
+      tools: [{ kind: "builtin", name: "AskUserQuestion" }],
+      toolPolicies: { "Platform:skills.create": "deny" },
+    });
+    expect(without.statusCode).toBe(400);
+    expect(detailPaths(without)).toEqual(["toolPolicies.Platform:skills.create"]);
+
+    const malformed = await createAgent({
+      tools: [{ kind: "builtin", name: "Platform" }],
+      toolPolicies: { "Platform:BAD": "deny" },
+    });
+    expect(malformed.statusCode).toBe(400);
+    expect(detailPaths(malformed)).toEqual(["toolPolicies.Platform:BAD"]);
+  });
+});
+
 describe("运行时：工具带入请求，不可用工具写提醒（Review Focus 4）", () => {
   /** 建会话行并写一条用户消息；返回会话 id。 */
   async function conversation(agentId: string, text: string): Promise<string> {

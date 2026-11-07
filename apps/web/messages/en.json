@@ -446,7 +446,8 @@
         "ReadToolOutput": "Read archived tool output (ReadToolOutput)",
         "SkillWrite": "Write skills (SkillWrite)",
         "WebSearch": "Search the web (WebSearch)",
-        "WebFetch": "Read web pages (WebFetch)"
+        "WebFetch": "Read web pages (WebFetch)",
+        "Platform": "Use the platform (Platform)"
       },
       "connectorsLabel": "Connectors",
       "connectorTools": "All tools of {name}",
