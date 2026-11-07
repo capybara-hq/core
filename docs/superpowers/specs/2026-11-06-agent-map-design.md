@@ -209,6 +209,10 @@ Required with the removal, not optional:
   the window — e.g. reset when a person sends a message — and records it)**.
 - Tokens of every descendant count toward the root conversation's usage (phase C §8.3 extended
   through the chain).
+- At the token budget a running child hands back what it found in one final tool-less call before
+  it ends with `budget` (phase C §8.3); the dispatch and token caps take 0 for no limit (deployment
+  and org override), and the admin org limits dialog shows each deployment default as the empty
+  field's placeholder.
 - Stopping **(decided, 2026-11-06, as Claude Code)**: the conversation's stop button stops only the
   root's current run; background children keep working. Stopping an agent in the map (level 2 or 3)
   stops it and all its descendants. Deleting the root conversation stops the whole tree.
@@ -265,8 +269,11 @@ labels: position and lines show the hierarchy **(decided)**.
 - Every node has the **same height**; line 1: status dot + description (bold, ellipsis); line 2:
   **model · time · tokens**, nothing else, one line, ellipsis only when it truly does not fit (full
   text on hover) **(decided)**. Nodes are wide enough that the usual line 2 never truncates.
-- Status is only the dot colour (running: pulsing accent; waiting: warn; completed: ok; failed:
-  fail; stopped: faint), with a legend at the bottom **(decided: no status words)**.
+- Status is only the dot colour (running: pulsing accent; waiting: warn; completed: ok; limit
+  reached: warn; failed: fail; stopped: faint), with a legend at the bottom **(decided: no status
+  words)**. **Limit reached** ("已达上限" / "Limit reached", the run footer's word) is a run that
+  ended on its step or time limit or its tree's token budget (§6) after handing back what it had:
+  not a failure (acceptance 2026-11-07).
 - Bottom left, under the root column: the root's own background tasks (status, `Bash`, description,
   duration), as Claude Code places them **(decided)**. A child's background tasks show in its level 2
   only.
@@ -301,7 +308,8 @@ body is `IN` with the prompt (two lines, ellipsis, expandable). Under it, while 
 live status line: a pulsing dot, "后台运行中：<the child's current tool summary>" / "Working in the
 background: <summary>", and an action that opens that agent in the map (level 2), the way Claude Code
 says "type /tasks to see its transcript". When the child ends, the line becomes its final state
-(status dot, "完成 · <time> · <tokens>" / failed / stopped) and the action stays. The line is fed by
+(status dot, "完成 · <time> · <tokens>" / limit reached (`warn`) / failed / stopped) and the action
+stays. The line is fed by
 `subagent_progress` (latest tool summary) and the tree. It replaces today's per-call row inside
 `SubagentGroup`; whether the group header stays is the builder's call.
 

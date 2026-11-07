@@ -165,6 +165,13 @@ function subagentGroupBlocks(): ReactNode {
           defaultOpen
         />
       </Block>
+      <Block id="subagent-group-limit">
+        <SubagentGroup
+          rows={finished().map((r, i) => (i === 1 ? { ...r, status: "limit" } : r))}
+          onOpen={noop}
+          defaultOpen
+        />
+      </Block>
       <Block id="subagent-group-expanded">
         <SubagentGroup
           rows={finished()}

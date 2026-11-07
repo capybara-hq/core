@@ -136,7 +136,7 @@ export interface SubagentLive {
 const isActiveView = (s: string) => s === "queued" || s === "running" || s === "waiting";
 
 /** How a sub-agent's run ended, as its delivery row words it. */
-export type DeliveryStatus = "completed" | "failed" | "aborted";
+export type DeliveryStatus = "completed" | "limit" | "failed" | "aborted";
 
 /** Who has to act on a wait: a member (an approval's assignee, a run's starter) or a role. */
 export type Waiter = { kind: "account"; accountId: string } | { kind: "role"; role: OrgRole };

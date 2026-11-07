@@ -1049,7 +1049,7 @@ describe("background sub-agents (agent map spec §5, §9.4)", () => {
       { subagentId: "ch1", name: "Scan docs", delivery: "report", text: "Docs are fine." },
       { delivery: "note", text: "Halfway there." },
       { delivery: "finished", status: "completed", text: "" },
-      { delivery: "finished", status: "failed", text: "out of steps" },
+      { delivery: "finished", status: "limit", text: "out of steps" },
       { delivery: "finished", status: "aborted" },
     ]);
   });

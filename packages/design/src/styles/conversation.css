@@ -12,6 +12,10 @@
 .cb-fail-word {
   color: var(--cb-fail);
 }
+/* A sub-agent that ended on a limit: not a failure (agent map spec §9.5). */
+.cb-warn-word {
+  color: var(--cb-warn);
+}
 
 /* ── Spinner and cursor ── */
 

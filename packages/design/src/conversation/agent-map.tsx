@@ -44,7 +44,14 @@ export type AgentMapBackground = BackgroundTaskItem;
  */
 const LEVEL_SIZE = { tree: "1100", detail: "chat", transcript: "chat" } as const;
 
-const STATUSES: AgentMapStatus[] = ["running", "waiting", "completed", "failed", "aborted"];
+const STATUSES: AgentMapStatus[] = [
+  "running",
+  "waiting",
+  "completed",
+  "limit",
+  "failed",
+  "aborted",
+];
 
 /** A background task's status as a dot. */
 function taskDot(s: BackgroundTaskStatus): AgentMapStatus {

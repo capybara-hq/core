@@ -2,6 +2,7 @@
 
 import {
   Button,
+  Checkbox,
   type Column,
   DataTable,
   Dialog,
@@ -23,6 +24,7 @@ import { usePagePath } from "../../../../components/shell/path";
 import {
   type AdminOrg,
   type DeploymentSettings,
+  type LimitDefaults,
   parseLimit,
   SANDBOX_CPU,
   SANDBOX_MEMORY_MB,
@@ -55,6 +57,9 @@ import NotFound from "../../not-found";
 /** 运行并发：正整数（内核不设上限）。 */
 const RUN_RANGE = { min: 1, max: Number.MAX_SAFE_INTEGER } as const;
 
+/** Limit values are grouped the same in both languages (5,000,000), like the app's token counts. */
+const grouped = new Intl.NumberFormat("en-US");
+
 export default function AdminOrgsView() {
   const gate = useAdmin();
   if (gate.kind === "pending") return null;
@@ -74,10 +79,25 @@ function AdminOrgs() {
   if (settings.kind === "error") return <ErrorFrame reset={settings.retry} />;
   const ready = orgs.kind === "ready" && settings.kind === "ready";
   const rows = orgs.kind === "ready" ? orgs.data.orgs : [];
+  const defaults = orgs.kind === "ready" ? orgs.data.limitDefaults : null;
   const s = settings.kind === "ready" ? settings.data : null;
 
-  const orDefault = (v: number | undefined, unit = "") =>
-    v === undefined ? t("default") : `${v}${unit}`;
+  /**
+   * An org's value, or the deployment default it falls back to: 「默认（5,000,000）」. `unlimited`:
+   * the limit takes 0 for no limit (sub-agent tokens).
+   */
+  const orDefault = (
+    v: number | undefined,
+    fallback: number | undefined,
+    opts: { unit?: string; unlimited?: boolean } = {},
+  ) => {
+    const show = (n: number) =>
+      opts.unlimited === true && n === 0
+        ? t("unlimited")
+        : `${grouped.format(n)}${opts.unit ?? ""}`;
+    if (v !== undefined) return show(v);
+    return fallback === undefined ? t("default") : t("defaultValue", { value: show(fallback) });
+  };
 
   const columns: Column<AdminOrg>[] = [
     { key: "name", header: t("columns.name"), cell: (o) => o.name },
@@ -87,23 +107,37 @@ function AdminOrgs() {
       key: "run",
       header: t("columns.runConcurrency"),
       align: "right",
-      cell: (o) => orDefault(s?.runConcurrencyOverrides[o.id]),
+      cell: (o) => orDefault(s?.runConcurrencyOverrides[o.id], defaults?.runConcurrency),
     },
     {
       key: "cpu",
       header: t("columns.cpu"),
       align: "right",
-      cell: (o) => orDefault(s?.sandboxLimitOverrides[o.id]?.cpu),
+      cell: (o) => orDefault(s?.sandboxLimitOverrides[o.id]?.cpu, defaults?.sandbox.cpu),
     },
     {
       key: "memory",
       header: t("columns.memory"),
       align: "right",
-      cell: (o) => orDefault(s?.sandboxLimitOverrides[o.id]?.memoryMb, " MB"),
+      cell: (o) =>
+        orDefault(s?.sandboxLimitOverrides[o.id]?.memoryMb, defaults?.sandbox.memoryMb, {
+          unit: " MB",
+        }),
+    },
+    {
+      key: "subagentTokens",
+      header: t("columns.subagentTokens"),
+      align: "right",
+      cell: (o) =>
+        orDefault(
+          s?.subagentLimitOverrides?.[o.id]?.maxTokensPerRun,
+          defaults?.subagents.maxTokensPerRun,
+          { unlimited: true },
+        ),
     },
   ];
 
-  if (!ready || s === null) {
+  if (!ready || s === null || defaults === null) {
     // The hint is static: it stays above the table's own loading state, as the loaded page draws
     // them (the count waits for the answer).
     return (
@@ -146,6 +180,7 @@ function AdminOrgs() {
         <LimitsDialog
           org={editing}
           settings={s}
+          defaults={defaults}
           onClose={() => setEditing(null)}
           onSaved={() => setEditing(null)}
         />
@@ -154,15 +189,20 @@ function AdminOrgs() {
   );
 }
 
-/** 一个组织的运行并发与沙箱限额；留空 = 部署默认（发 null 删除覆盖）。 */
+/**
+ * 一个组织的运行并发与沙箱限额；留空 = 部署默认（发 null 删除覆盖）。Each input's placeholder is the
+ * deployment default; sub-agent dispatches and tokens also take 「不限制」 (saved as 0).
+ */
 function LimitsDialog({
   org,
   settings,
+  defaults,
   onClose,
   onSaved,
 }: {
   org: AdminOrg;
   settings: DeploymentSettings;
+  defaults: LimitDefaults;
   onClose(): void;
   onSaved(): void;
 }) {
@@ -179,8 +219,14 @@ function LimitsDialog({
   const subagent = settings.subagentLimitOverrides?.[org.id];
   const [depth, setDepth] = useState(text(subagent?.maxDepth));
   const [concurrent, setConcurrent] = useState(text(subagent?.maxConcurrentPerConversation));
-  const [dispatches, setDispatches] = useState(text(subagent?.maxDispatchesPerRun));
-  const [tokens, setTokens] = useState(text(subagent?.maxTokensPerRun));
+  // 0 is no limit: the checkbox, not the text
+  const limitText = (v: number | undefined) => (v === 0 ? "" : text(v));
+  const [dispatches, setDispatches] = useState(limitText(subagent?.maxDispatchesPerRun));
+  const [dispatchesUnlimited, setDispatchesUnlimited] = useState(
+    subagent?.maxDispatchesPerRun === 0,
+  );
+  const [tokens, setTokens] = useState(limitText(subagent?.maxTokensPerRun));
+  const [tokensUnlimited, setTokensUnlimited] = useState(subagent?.maxTokensPerRun === 0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const qc = useQueryClient();
@@ -196,8 +242,15 @@ function LimitsDialog({
   const memoryValue = parseLimit(memory, SANDBOX_MEMORY_MB, true);
   const depthValue = parseLimit(depth, SUBAGENT_DEPTH, true);
   const concurrentValue = parseLimit(concurrent, SUBAGENT_CONCURRENT, true);
-  const dispatchesValue = parseLimit(dispatches, SUBAGENT_DISPATCHES, true);
-  const tokensValue = parseLimit(tokens, SUBAGENT_TOKENS, true);
+  const dispatchesValue = dispatchesUnlimited
+    ? 0
+    : parseLimit(dispatches, SUBAGENT_DISPATCHES, true);
+  const tokensValue = tokensUnlimited ? 0 : parseLimit(tokens, SUBAGENT_TOKENS, true);
+  /** The placeholder: the deployment default the empty field falls back to. */
+  const placeholder = (n: number, unlimited = false) =>
+    t("placeholder", {
+      value: unlimited && n === 0 ? tOrgs("unlimited") : grouped.format(n),
+    });
   const valid =
     runValue !== "invalid" &&
     cpuValue !== "invalid" &&
@@ -271,7 +324,12 @@ function LimitsDialog({
             help={t("runConcurrencyHelp")}
             {...(runValue === "invalid" && { error: t("runConcurrencyInvalid") })}
           >
-            <Input inputMode="numeric" value={run} onChange={(e) => setRun(e.target.value)} />
+            <Input
+              inputMode="numeric"
+              value={run}
+              placeholder={placeholder(defaults.runConcurrency)}
+              onChange={(e) => setRun(e.target.value)}
+            />
           </Field>
         </Subsection>
         <Subsection title={t("groups.sandbox")} description={t("newOnly")} variant="divided">
@@ -280,14 +338,24 @@ function LimitsDialog({
             help={t("cpuHelp")}
             {...(cpuValue === "invalid" && { error: t("cpuInvalid") })}
           >
-            <Input inputMode="decimal" value={cpu} onChange={(e) => setCpu(e.target.value)} />
+            <Input
+              inputMode="decimal"
+              value={cpu}
+              placeholder={placeholder(defaults.sandbox.cpu)}
+              onChange={(e) => setCpu(e.target.value)}
+            />
           </Field>
           <Field
             label={t("memory")}
             help={t("memoryHelp")}
             {...(memoryValue === "invalid" && { error: t("memoryInvalid") })}
           >
-            <Input inputMode="numeric" value={memory} onChange={(e) => setMemory(e.target.value)} />
+            <Input
+              inputMode="numeric"
+              value={memory}
+              placeholder={placeholder(defaults.sandbox.memoryMb)}
+              onChange={(e) => setMemory(e.target.value)}
+            />
           </Field>
         </Subsection>
         <Subsection title={t("groups.subagents")} variant="divided">
@@ -296,7 +364,12 @@ function LimitsDialog({
             help={t("subagentDepthHelp")}
             {...(depthValue === "invalid" && { error: t("subagentDepthInvalid") })}
           >
-            <Input inputMode="numeric" value={depth} onChange={(e) => setDepth(e.target.value)} />
+            <Input
+              inputMode="numeric"
+              value={depth}
+              placeholder={placeholder(defaults.subagents.maxDepth)}
+              onChange={(e) => setDepth(e.target.value)}
+            />
           </Field>
           <Field
             label={t("subagentConcurrent")}
@@ -306,27 +379,58 @@ function LimitsDialog({
             <Input
               inputMode="numeric"
               value={concurrent}
+              placeholder={placeholder(defaults.subagents.maxConcurrentPerConversation)}
               onChange={(e) => setConcurrent(e.target.value)}
             />
           </Field>
-          <Field
-            label={t("subagentDispatches")}
-            help={t("subagentDispatchesHelp")}
-            {...(dispatchesValue === "invalid" && { error: t("subagentDispatchesInvalid") })}
-          >
-            <Input
-              inputMode="numeric"
-              value={dispatches}
-              onChange={(e) => setDispatches(e.target.value)}
+          <Stack gap={8}>
+            <Field
+              label={t("subagentDispatches")}
+              help={t("subagentDispatchesHelp")}
+              {...(dispatchesValue === "invalid" && { error: t("subagentDispatchesInvalid") })}
+            >
+              <Input
+                inputMode="numeric"
+                value={dispatchesUnlimited ? "" : dispatches}
+                disabled={dispatchesUnlimited}
+                placeholder={
+                  dispatchesUnlimited
+                    ? tOrgs("unlimited")
+                    : placeholder(defaults.subagents.maxDispatchesPerRun, true)
+                }
+                onChange={(e) => setDispatches(e.target.value)}
+              />
+            </Field>
+            <Checkbox
+              checked={dispatchesUnlimited}
+              onChange={setDispatchesUnlimited}
+              label={t("unlimited")}
             />
-          </Field>
-          <Field
-            label={t("subagentTokens")}
-            help={t("subagentTokensHelp")}
-            {...(tokensValue === "invalid" && { error: t("subagentTokensInvalid") })}
-          >
-            <Input inputMode="numeric" value={tokens} onChange={(e) => setTokens(e.target.value)} />
-          </Field>
+          </Stack>
+          <Stack gap={8}>
+            <Field
+              label={t("subagentTokens")}
+              help={t("subagentTokensHelp")}
+              {...(tokensValue === "invalid" && { error: t("subagentTokensInvalid") })}
+            >
+              <Input
+                inputMode="numeric"
+                value={tokensUnlimited ? "" : tokens}
+                disabled={tokensUnlimited}
+                placeholder={
+                  tokensUnlimited
+                    ? tOrgs("unlimited")
+                    : placeholder(defaults.subagents.maxTokensPerRun, true)
+                }
+                onChange={(e) => setTokens(e.target.value)}
+              />
+            </Field>
+            <Checkbox
+              checked={tokensUnlimited}
+              onChange={setTokensUnlimited}
+              label={t("unlimited")}
+            />
+          </Stack>
         </Subsection>
         {error !== null && <FormError message={error} />}
       </Stack>

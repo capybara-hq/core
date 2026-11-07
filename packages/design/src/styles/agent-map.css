@@ -213,7 +213,8 @@
 .cb-amap-dot[data-status="running"] {
   background: var(--cb-accent);
 }
-.cb-amap-dot[data-status="waiting"] {
+.cb-amap-dot[data-status="waiting"],
+.cb-amap-dot[data-status="limit"] {
   background: var(--cb-warn);
 }
 .cb-amap-dot[data-status="completed"] {

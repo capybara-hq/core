@@ -1325,6 +1325,7 @@
       "report": "{name} 交回了报告",
       "note": "{name} 发来消息",
       "completed": "{name} 已完成",
+      "limit": "{name} 已达上限",
       "failed": "{name} 失败",
       "aborted": "{name} 已停止",
       "show": "查看",
@@ -3010,6 +3011,8 @@
       "hint": "留空的项使用部署默认，组织管理员在组织设置里只能查看；要管理组织内的设置，需要成为组织管理员。",
       "empty": "还没有组织。",
       "default": "默认",
+      "defaultValue": "默认（{value}）",
+      "unlimited": "不限制",
       "edit": "设置限额",
       "saved": "已保存",
       "columns": {
@@ -3018,7 +3021,8 @@
         "members": "成员",
         "runConcurrency": "运行并发",
         "cpu": "沙箱 CPU",
-        "memory": "沙箱内存"
+        "memory": "沙箱内存",
+        "subagentTokens": "子智能体 token"
       },
       "dialog": {
         "title": "「{name}」的限额",
@@ -3050,7 +3054,9 @@
           "sandbox": "沙箱",
           "subagents": "子智能体"
         },
-        "emptyDefault": "留空的项使用部署默认。"
+        "emptyDefault": "留空的项使用部署默认。",
+        "placeholder": "部署默认 {value}",
+        "unlimited": "不限制"
       }
     },
     "settings": {

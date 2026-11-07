@@ -1337,6 +1337,7 @@
       "report": "{name} handed back a report",
       "note": "{name} sent a message",
       "completed": "{name} finished",
+      "limit": "{name} reached a limit",
       "failed": "{name} failed",
       "aborted": "{name} was stopped",
       "show": "Show",
@@ -3022,6 +3023,8 @@
       "hint": "Empty values use the deployment default, and org admins can only view them in their settings; to manage settings inside an organization, you need to be an org admin.",
       "empty": "No organizations yet.",
       "default": "Default",
+      "defaultValue": "Default ({value})",
+      "unlimited": "No limit",
       "edit": "Set limits",
       "saved": "Saved",
       "columns": {
@@ -3030,7 +3033,8 @@
         "members": "Members",
         "runConcurrency": "Run concurrency",
         "cpu": "Sandbox CPU",
-        "memory": "Sandbox memory"
+        "memory": "Sandbox memory",
+        "subagentTokens": "Sub-agent tokens"
       },
       "dialog": {
         "title": "Limits for {name}",
@@ -3062,7 +3066,9 @@
           "sandbox": "Sandbox",
           "subagents": "Sub-agents"
         },
-        "emptyDefault": "Empty fields use the deployment default."
+        "emptyDefault": "Empty fields use the deployment default.",
+        "placeholder": "Deployment default {value}",
+        "unlimited": "No limit"
       }
     },
     "settings": {

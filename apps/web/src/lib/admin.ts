@@ -32,6 +32,16 @@ export interface AdminOrg {
   memberCount: number;
 }
 
+/**
+ * The deployment's defaults of the per-org limits (`GET /admin/orgs`): what an org without an
+ * override gets. Sub-agent dispatches and tokens of 0 mean no limit.
+ */
+export interface LimitDefaults {
+  runConcurrency: number;
+  sandbox: { cpu: number; memoryMb: number };
+  subagents: Required<SubagentLimitOverride>;
+}
+
 /** 一个组织的沙箱限额覆盖；未给的项用部署默认，只对之后新建的沙箱生效。 */
 export interface SandboxLimitOverride {
   cpu?: number;
@@ -43,11 +53,13 @@ export interface SubagentLimitOverride {
   /** Levels of sub-agents below the root (1: no nesting). */
   maxDepth?: number;
   maxConcurrentPerConversation?: number;
+  /** 0: no limit. */
   maxDispatchesPerRun?: number;
+  /** 0: no limit. */
   maxTokensPerRun?: number;
 }
 
-/** Bounds of the kernel's `SUBAGENT_LIMIT_OVERRIDE`. */
+/** Bounds of the kernel's `SUBAGENT_LIMIT_OVERRIDE` (dispatches and tokens also take 0: no limit). */
 export const SUBAGENT_DEPTH = { min: 1, max: 5 } as const;
 export const SUBAGENT_CONCURRENT = { min: 1, max: 20 } as const;
 export const SUBAGENT_DISPATCHES = { min: 1, max: 500 } as const;
@@ -121,7 +133,8 @@ export const updateAdminAccount = (id: string, patch: AccountPatch) =>
     json("PATCH", patch),
   );
 
-export const listAdminOrgs = () => apiFetch<{ orgs: AdminOrg[] }>("/api/v1/admin/orgs");
+export const listAdminOrgs = () =>
+  apiFetch<{ orgs: AdminOrg[]; limitDefaults: LimitDefaults }>("/api/v1/admin/orgs");
 
 export const getDeploymentSettings = () => apiFetch<DeploymentSettings>("/api/v1/admin/settings");
 

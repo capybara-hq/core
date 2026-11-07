@@ -328,11 +328,12 @@ describe("the timeline's sub-agent groups", () => {
     });
   });
 
-  it("a finish status maps to the row (step and budget caps fail, aborted stops)", () => {
+  it("a finish status maps to the row (step and budget caps reach a limit, aborted stops)", () => {
     const status = (s: string) =>
       groups(build([...parentEvents(), finished(8, "k2", "ch2", s, 1)]))[0]?.rows[1]?.row.status;
-    expect(status("max_steps")).toBe("failed");
-    expect(status("budget")).toBe("failed");
+    expect(status("max_steps")).toBe("limit");
+    expect(status("budget")).toBe("limit");
+    expect(status("failed")).toBe("failed");
     expect(status("aborted")).toBe("aborted");
     expect(status("completed")).toBe("completed");
   });

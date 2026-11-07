@@ -73,7 +73,7 @@ describe("AgentMapTree (§6.16.28)", () => {
 
   it("status is a dot with an accessible label, no status word", () => {
     wrap(<AgentMapTree root={root} background={[]} onOpen={() => {}} now={NOW} />);
-    const words = ["运行中", "等待", "完成", "失败", "已停止"];
+    const words = ["运行中", "等待", "完成", "已达上限", "失败", "已停止"];
     for (const n of nodes()) {
       const dot = n.querySelector('[data-part="agent-dot"]');
       expect(dot?.getAttribute("role")).toBe("img");

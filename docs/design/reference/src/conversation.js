@@ -583,7 +583,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
   // ── Sub-agents ─────────────────────────────────────────────────────────
 
   const TOK = (n) => (n < 1000 ? `${n} tokens` : `${(Math.round(n / 100) / 10).toFixed(1)}k tokens`);
-  const STATUS_WORD = { running: "运行中", waiting: "等待", completed: "完成", failed: "失败", aborted: "已停止" };
+  const STATUS_WORD = { running: "运行中", waiting: "等待", completed: "完成", limit: "已达上限", failed: "失败", aborted: "已停止" };
 
   /** One Agent call block (§6.16.15): the tool box (Agent + task, IN prompt) and the status line. */
   function agentCall(s, status, o = {}) {
@@ -596,7 +596,12 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
     if (status === "running") text = s.current ? `后台运行中：${esc(s.current)}` : "后台运行中";
     else if (status === "waiting") text = s.current ? `后台等待中：${esc(s.current)}` : "后台等待中";
     else {
-      const word = status === "failed" ? failWord : STATUS_WORD[status];
+      const word =
+        status === "failed"
+          ? failWord
+          : status === "limit"
+            ? '<span class="r-warn-word">已达上限</span>'
+            : STATUS_WORD[status];
       text = `${word} · ${esc(s.duration)} · ${TOK(s.tokens)}`;
     }
     const line = `<div class="r-acall-status"><span class="r-amap-dot" data-status="${status}" role="img" aria-label="${STATUS_WORD[status]}"></span><span class="r-tlabel">${text}</span><button class="r-linkbtn r-acall-open">在智能体图中查看</button></div>`;
@@ -605,12 +610,21 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
 
   function subGroup(o) {
     const failed = S.done.filter((s) => s.status === "failed").length;
+    // the limit state: the second row ended on a limit (agent map spec §9.5), counted in warn
+    const limited = o.state === "limit" ? 1 : 0;
+    const limitPart = limited > 0 ? `<span class="r-warn-word">（${limited} 个已达上限）</span>` : "";
     const doneHead = (open) =>
-      `<div class="r-tline" role="button" aria-expanded="${open}"><span class="r-tlabel">${S.done.length} 个子智能体已完成<span class="r-fail-word">（${failed} 个失败）</span><span class="r-faint"> · 共 ${S.totals.calls} 次调用 · ${esc(S.totals.duration)}</span></span>${chev(open)}</div>`;
+      `<div class="r-tline" role="button" aria-expanded="${open}"><span class="r-tlabel">${S.done.length} 个子智能体已完成<span class="r-fail-word">（${failed} 个失败）</span>${limitPart}<span class="r-faint"> · 共 ${S.totals.calls} 次调用 · ${esc(S.totals.duration)}</span></span>${chev(open)}</div>`;
     if (o.state === "done") return doneHead(false);
-    if (o.state === "failed" || o.state === "expanded" || o.state === "stopped") {
+    if (o.state === "failed" || o.state === "expanded" || o.state === "stopped" || o.state === "limit") {
       const status = (s, i) =>
-        s.status === "failed" ? "failed" : o.state === "stopped" && i === 1 ? "aborted" : "completed";
+        s.status === "failed"
+          ? "failed"
+          : i === 1 && o.state === "stopped"
+            ? "aborted"
+            : i === 1 && o.state === "limit"
+              ? "limit"
+              : "completed";
       const calls = S.done.map((s, i) => agentCall(s, status(s, i), { expanded: o.state === "expanded" && i === 0 })).join("");
       return `${doneHead(true)}<div class="r-acalls">${calls}</div>`;
     }

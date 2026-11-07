@@ -1463,6 +1463,9 @@ textarea {
 .r-fail-word {
   color: var(--cb-fail);
 }
+.r-warn-word {
+  color: var(--cb-warn);
+}
 .r-spin {
   display: inline-flex;
   flex: none;
@@ -4542,7 +4545,8 @@ textarea {
 .r-amap-dot[data-status="running"] {
   background: var(--cb-accent);
 }
-.r-amap-dot[data-status="waiting"] {
+.r-amap-dot[data-status="waiting"],
+.r-amap-dot[data-status="limit"] {
   background: var(--cb-warn);
 }
 .r-amap-dot[data-status="completed"] {
