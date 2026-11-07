@@ -50,6 +50,7 @@ export function channelInboundFor(d: {
     none,
     none,
     none,
+    none,
     { warn: () => {}, info: () => {} },
   );
 }

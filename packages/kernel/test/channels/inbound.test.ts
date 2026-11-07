@@ -1,3 +1,6 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   fakeDm as dm,
@@ -40,6 +43,9 @@ import {
 } from "../helpers/runs.js";
 
 const CHAN_MINI = fileURLToPath(new URL("../fixtures/plugins/chan-mini/index.ts", import.meta.url));
+const SANDBOX_FAKE = fileURLToPath(
+  new URL("../fixtures/plugins/sandbox-fake/index.ts", import.meta.url),
+);
 const SOURCE = "chan-mini:t1";
 
 let pgc: TestContainer;
@@ -54,6 +60,7 @@ let orgId: string;
 let agentId: string;
 let connId: string;
 let queue: Queue;
+let sandboxRoot: string;
 /**
  * The client the queue above uses. A queue given a client does not close it, so afterAll quits it
  * before Redis stops: an open client without an error listener reports "[ioredis] Unhandled error
@@ -68,12 +75,14 @@ const redisClient = (): Redis => {
 
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
+  sandboxRoot = await mkdtemp(join(tmpdir(), "cap-inbound-env-"));
   im = await startFakeChannelServer({ dedupeSends: false });
   k = await startKernel(
     runConfig(
       { pg: pgc.url, redis: rd.url },
       {
-        extensions: [MODEL_FAKE, CHAN_MINI],
+        extensions: [MODEL_FAKE, CHAN_MINI, SANDBOX_FAKE],
+        extensionConfig: { "sandbox-fake": { root: sandboxRoot } },
         http: { port: 0, publicUrl: "https://cap.example" },
         auth: { cookieSecure: false },
         channels: { scanIntervalMs: 100, leaseTtlMs: 2000 },
@@ -127,6 +136,7 @@ afterAll(async () => {
   await im?.stop();
   await raw?.destroy();
   await Promise.all([pgc?.stop(), rd?.stop()]);
+  if (sandboxRoot) await rm(sandboxRoot, { recursive: true, force: true });
 });
 
 interface ThreadRow {
@@ -543,3 +553,94 @@ async function pushAndSettleAnon(e: Parameters<FakeChannelServer["push"]>[1]): P
     `message ${id}`,
   );
 }
+
+describe("/env: the IM default environment", () => {
+  const sendDm = async (id: string, text: string): Promise<string> => {
+    const n = im.sent.length;
+    im.push(connId, dm(id, "u-owner", text));
+    const s = await sentAfter(n, "dm-u-owner");
+    return s.message.text ?? "";
+  };
+  const newEnvironment = async (name: string): Promise<string> => {
+    const res = await owner({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/environments`,
+      payload: { name },
+    });
+    expect(res.statusCode, res.body).toBe(201);
+    return (res.json() as { environment: { id: string } }).environment.id;
+  };
+  const liveConversation = async () =>
+    (await threads()).filter((r) => r.thread_key === "dm:u-owner" && r.archived_at === null)[0]
+      ?.conversation_id as string;
+  const environmentOf = async (conversationId: string) =>
+    (
+      await db
+        .selectFrom("conversations")
+        .select("environment_id")
+        .where("id", "=", conversationId)
+        .executeTakeFirstOrThrow()
+    ).environment_id;
+  const defaultEnvironment = async () =>
+    (
+      await db
+        .selectFrom("environments")
+        .select("id")
+        .where("org_id", "=", orgId)
+        .where("owner_account_id", "=", ownerId)
+        .where("is_default", "=", true)
+        .where("deleted_at", "is", null)
+        .executeTakeFirstOrThrow()
+    ).id;
+
+  it("/env lists environments in a direct message", async () => {
+    await newEnvironment("Lab");
+    const text = await sendDm("env-1", "/env");
+    expect(text).toContain("Your environments:");
+    expect(text).toContain("- Personal (current)");
+    expect(text).toContain("- Lab");
+    expect(text).not.toContain("- Lab (current)");
+  });
+
+  it("/env <name> sets the IM default for the next thread", async () => {
+    const lab = (
+      await db
+        .selectFrom("environments")
+        .select("id")
+        .where("owner_account_id", "=", ownerId)
+        .where("name", "=", "Lab")
+        .executeTakeFirstOrThrow()
+    ).id;
+    expect(await sendDm("env-2", "/env lab")).toBe(
+      "Your next new conversation will use the environment \u201cLab\u201d; send /new to start one.",
+    );
+    const row = await db
+      .selectFrom("environment_defaults")
+      .select("environment_id")
+      .where("org_id", "=", orgId)
+      .where("account_id", "=", ownerId)
+      .executeTakeFirstOrThrow();
+    expect(row.environment_id).toBe(lab);
+    expect(await sendDm("env-3", "/env")).toContain("- Lab (current)");
+    // the unknown name lists what exists and changes nothing
+    expect(await sendDm("env-4", "/env nope")).toContain("No environment named \u201cnope\u201d");
+    // a new IM thread is bound to the IM default
+    await sendDm("env-5", "/new");
+    await pushAndSettle(dm("env-6", "u-owner", "hello"));
+    expect(await environmentOf(await liveConversation())).toBe(lab);
+    // the default environment answers to its display name
+    await sendDm("env-7", "/env Personal");
+    await sendDm("env-8", "/new");
+    await pushAndSettle(dm("env-9", "u-owner", "again"));
+    expect(await environmentOf(await liveConversation())).toBe(await defaultEnvironment());
+  });
+
+  it("/env in a group is posted as a normal message", async () => {
+    const before = (await threads()).length;
+    await pushAndSettle(group("g-env", "u-owner", "@bot /env lab"));
+    const t = (await threads()).find((r) => r.thread_key === "g-env");
+    expect((await threads()).length).toBe(before + 1);
+    const messages = await userMessages(t?.conversation_id as string);
+    expect(messages).toHaveLength(1);
+  });
+});

@@ -10,6 +10,7 @@ import { Inject, Injectable } from "@nestjs/common";
 import type { Redis } from "ioredis";
 import { ConversationsService } from "../conversations/conversations.service.js";
 import type { ConversationEvent } from "../conversations/events.js";
+import { EnvironmentsService } from "../environments/environments.service.js";
 import { ApiError } from "../errors.js";
 import { IdentityBinding } from "../identity/binding.js";
 import { ExternalIdentities } from "../identity/external.js";
@@ -101,6 +102,8 @@ export class ChannelInbound {
     @Inject(ApprovalsService) approvals: Pick<ApprovalsService, "decide">,
     @Inject(QuestionsService) questions: Pick<QuestionsService, "answer">,
     @Inject(AnonymousGuests) private readonly guests: Pick<AnonymousGuests, "ensure">,
+    @Inject(EnvironmentsService)
+    private readonly environments: Pick<EnvironmentsService, "list" | "imDefault" | "setImDefault">,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<Logger, "warn" | "info">,
   ) {
     this.actions = new ChannelCardActions({
@@ -207,14 +210,16 @@ export class ChannelInbound {
     const { locale } = await readOrgSettings(db, row.orgId);
     // 回复带幂等键：任务重试时平台不会重复显示（一条消息至多一句回复）
     const replyKey = idempotencyKey(`${connectionId}-${e.messageId}-reply`);
-    const reply = async (key: ChannelPhrase, cards?: ChannelCard[]) => {
+    const replyText = async (text: string, cards?: ChannelCard[]) => {
       await connections.send(
         connectionId,
         replyTarget,
-        { text: phrase(key, locale), ...(cards !== undefined && { cards }) },
+        { text, ...(cards !== undefined && { cards }) },
         replyKey,
       );
     };
+    const reply = (key: ChannelPhrase, cards?: ChannelCard[]) =>
+      replyText(phrase(key, locale), cards);
 
     const speaker = await this.resolveSpeaker(connectionId, row, e.sender, isGroup, locale, reply);
     if (speaker === undefined) return;
@@ -229,6 +234,12 @@ export class ChannelInbound {
     if (!isGroup && e.text.trim().toLowerCase() === "/new") {
       await archiveThread(db, k);
       await reply("newConversation");
+      return;
+    }
+
+    const envCommand = !isGroup && threadAccount !== null ? parseEnvCommand(e.text) : null;
+    if (envCommand !== null) {
+      await this.envCommand(row.orgId, accountId, envCommand.name, locale, replyText);
       return;
     }
 
@@ -300,6 +311,48 @@ export class ChannelInbound {
       )
       .execute();
     await this.jobs.enqueue(conversationId);
+  }
+
+  /**
+   * Direct-message `/env` (environments spec §4.2 item 8): lists the person's usable environments,
+   * or with a name sets the IM default their next new conversation is bound to. The name matches
+   * case-insensitively; the default environment (no name) answers to 个人环境 / Personal.
+   */
+  private async envCommand(
+    orgId: string,
+    accountId: string,
+    name: string | null,
+    locale: ChannelLocale,
+    replyText: (text: string) => Promise<void>,
+  ): Promise<void> {
+    const { items, defaultId } = await this.environments.list(orgId, accountId);
+    const usable = items.filter((v) => v.available);
+    const labelOf = (v: { name: string | null }) => v.name ?? phrase("envPersonal", locale);
+    const current = (await this.environments.imDefault(orgId, accountId)) ?? defaultId;
+    const list = usable
+      .map((v) => `- ${labelOf(v)}${v.id === current ? phrase("envCurrent", locale) : ""}`)
+      .join("\n");
+    const fill = (key: ChannelPhrase, vars: Record<string, string>) =>
+      phrase(key, locale).replace(/\{(\w+)\}/g, (m, k: string) => vars[k] ?? m);
+    if (usable.length === 0) return replyText(phrase("envNone", locale));
+    if (name === null) return replyText(fill("envList", { list }));
+    const wanted = name.toLowerCase();
+    const hit = usable.find((v) =>
+      v.name === null
+        ? wanted === "personal" || wanted === "个人环境"
+        : v.name.toLowerCase() === wanted,
+    );
+    if (hit === undefined) return replyText(fill("envUnknown", { name, list }));
+    try {
+      await this.environments.setImDefault(orgId, accountId, hit.id);
+    } catch (err) {
+      // deleted or made unusable since the list was read
+      if (err instanceof ApiError && err.code.startsWith("environment.")) {
+        return replyText(fill("envUnknown", { name, list }));
+      }
+      throw err;
+    }
+    return replyText(fill("envSwitched", { name: labelOf(hit) }));
   }
 
   /**
@@ -428,4 +481,12 @@ export class ChannelInbound {
       .executeTakeFirst();
     return r !== undefined;
   }
+}
+
+/** `/env` or `/env <name>` (the exact command word, case-insensitive); anything else is null. */
+function parseEnvCommand(text: string): { name: string | null } | null {
+  const m = /^\/env(?:\s+([\s\S]*))?$/i.exec(text.trim());
+  if (m === null) return null;
+  const name = m[1]?.trim();
+  return { name: name ? name : null };
 }

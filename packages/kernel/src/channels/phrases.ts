@@ -8,6 +8,30 @@ export type ChannelLocale = "zh" | "en";
 export const CHANNEL_PHRASES = {
   /** 私聊 `/new` 之后。 */
   newConversation: { zh: "已开始新对话", en: "Started a new conversation." },
+  /** 私聊 `/env`：列出可用环境（`{list}` 每行一个，当前的带标记）。 */
+  envList: {
+    zh: "你的环境：\n{list}\n发送 /env <名称> 选择下一个新对话使用的环境。",
+    en: "Your environments:\n{list}\nSend /env <name> to choose the one your next new conversation uses.",
+  },
+  /** 私聊 `/env <名称>` 之后（`{name}` 是环境名）。 */
+  envSwitched: {
+    zh: "下一个新对话将使用环境「{name}」，发送 /new 开始。",
+    en: "Your next new conversation will use the environment \u201c{name}\u201d; send /new to start one.",
+  },
+  /** 私聊 `/env <名称>` 没有匹配的可用环境（`{list}` 同 envList）。 */
+  envUnknown: {
+    zh: "没有找到名为「{name}」的环境。你的环境：\n{list}",
+    en: "No environment named \u201c{name}\u201d. Your environments:\n{list}",
+  },
+  /** 私聊 `/env` 时此人没有可用环境（部署没有云沙箱）。 */
+  envNone: {
+    zh: "你目前没有可用的环境。",
+    en: "You have no usable environments.",
+  },
+  /** 环境列表里默认环境的名字。 */
+  envPersonal: { zh: "个人环境", en: "Personal" },
+  /** 环境列表里当前 IM 默认环境的标记。 */
+  envCurrent: { zh: "（当前）", en: " (current)" },
   /** 未绑定的人在私聊里发消息：附绑定卡片。 */
   bindPrompt: {
     zh: "请先绑定你的 Capybara 账号，再与我对话。",

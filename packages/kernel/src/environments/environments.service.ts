@@ -335,6 +335,58 @@ export class EnvironmentsService {
     return id;
   }
 
+  /**
+   * The person's IM default (what `/env` set): the environment their next new IM conversation
+   * uses. Null when none was set, or the chosen one is deleted (the row is cleared with it).
+   */
+  async imDefault(orgId: string, accountId: string): Promise<string | null> {
+    const row = await this.db
+      .selectFrom("environment_defaults as d")
+      .innerJoin("environments as e", "e.id", "d.environment_id")
+      .select("e.id")
+      .where("d.org_id", "=", orgId)
+      .where("d.account_id", "=", accountId)
+      .where("e.org_id", "=", orgId)
+      .where("e.owner_kind", "=", "personal")
+      .where("e.owner_account_id", "=", accountId)
+      .where("e.deleted_at", "is", null)
+      .executeTakeFirst();
+    return row?.id ?? null;
+  }
+
+  /**
+   * Sets the person's IM default. Only one of their own live environments in the org, usable now
+   * (`environment.not_found` / `environment.unavailable` otherwise); the row is written by one
+   * statement that re-checks the environment is live, so a racing delete leaves no row behind.
+   */
+  async setImDefault(orgId: string, accountId: string, environmentId: string): Promise<void> {
+    await this.access.usable(orgId, accountId, environmentId);
+    const written = await this.db
+      .insertInto("environment_defaults")
+      .columns(["org_id", "account_id", "environment_id"])
+      .expression(
+        this.db
+          .selectFrom("environments")
+          .select([
+            sql<string>`${orgId}::uuid`.as("org_id"),
+            sql<string>`${accountId}::uuid`.as("account_id"),
+            "id",
+          ])
+          .where("id", "=", environmentId)
+          .where("org_id", "=", orgId)
+          .where("owner_kind", "=", "personal")
+          .where("owner_account_id", "=", accountId)
+          .where("deleted_at", "is", null),
+      )
+      .onConflict((oc) =>
+        oc
+          .columns(["org_id", "account_id"])
+          .doUpdateSet({ environment_id: environmentId, updated_at: new Date() }),
+      )
+      .executeTakeFirst();
+    if (Number(written.numInsertedOrUpdatedRows ?? 0) === 0) throw environmentNotFound();
+  }
+
   /** The person's live default environment in the org, if any. */
   private async defaultOf(orgId: string, accountId: string): Promise<string | undefined> {
     const row = await this.db
