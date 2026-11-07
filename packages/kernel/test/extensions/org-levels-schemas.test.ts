@@ -192,3 +192,29 @@ describe("an overridable field wrapped in .default()", () => {
     });
   });
 });
+
+describe("route parameters of the layering routes (decision R20)", () => {
+  it("an overlong extension or tool name is refused with validation_failed", async () => {
+    const long = "x".repeat(65);
+    const org = `/api/v1/orgs/${orgId}/extensions`;
+    const cases: [Req, "GET" | "PUT" | "DELETE" | "POST", string, unknown?][] = [
+      [owner, "GET", `${org}/${long}/overrides`],
+      [owner, "PUT", `${org}/${long}/overrides`, { values: {} }],
+      [owner, "DELETE", `${org}/${long}/overrides`],
+      [owner, "POST", `${org}/${long}/overrides/take`, { paths: ["a"] }],
+      [owner, "GET", `${org}/${long}/tools`],
+      [owner, "PUT", `${org}/orgwrapped/tools/${long}`, { enabled: true }],
+      [owner, "PUT", `${org}/${long}/tools/echo`, { enabled: true }],
+      [root, "GET", `/api/v1/admin/extensions/${long}/org-overrides`],
+    ];
+    for (const [req, method, url, payload] of cases) {
+      const res = await req({
+        method,
+        url,
+        ...(payload !== undefined && { payload: payload as Record<string, unknown> }),
+      });
+      expect([method, url, res.statusCode], res.body).toEqual([method, url, 400]);
+      expect(res.json().error.code).toBe("validation_failed");
+    }
+  });
+});

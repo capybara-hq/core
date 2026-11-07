@@ -11,7 +11,7 @@ import {
   requireUser,
 } from "../identity/principal.js";
 import { createZodDto } from "../infra/validation/create-zod-dto.js";
-import { ZBody } from "../infra/validation/zod-params.js";
+import { ZBody, ZParam } from "../infra/validation/zod-params.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
 import { roleAtLeast } from "../orgs/roles.js";
 import {
@@ -73,6 +73,12 @@ const ToolSwitchPut = z
   .strict();
 
 class OrgToolSwitchPutBody extends createZodDto(ToolSwitchPut, "OrgToolSwitchPutBody") {}
+
+/** Route parameters of the overrides and tool switch routes (decision R20). */
+const ExtensionParams = z.object({ extension: z.string().min(1).max(64) });
+const ToolParams = ExtensionParams.extend({ tool: z.string().min(1).max(64) });
+class OrgExtensionParamsDto extends createZodDto(ExtensionParams, "OrgExtensionParams") {}
+class OrgExtensionToolParamsDto extends createZodDto(ToolParams, "OrgExtensionToolParams") {}
 
 class OrgOverridesPutBody extends createZodDto(OverridesPut, "OrgOverridesPutBody") {}
 class OrgOverridesTakeBody extends createZodDto(OverridesTake, "OrgOverridesTakeBody") {}
@@ -169,7 +175,7 @@ export class OrgExtensionOverridesController {
   @OrgAction("org.extensions.manage")
   view(
     @CurrentOrg() org: OrgContext,
-    @Param("extension") extension: string,
+    @ZParam(OrgExtensionParamsDto) { extension }: z.infer<typeof ExtensionParams>,
   ): Promise<OrgOverrideView> {
     return this.overrides.view(org.orgId, extension);
   }
@@ -184,7 +190,7 @@ export class OrgExtensionOverridesController {
   save(
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
-    @Param("extension") extension: string,
+    @ZParam(OrgExtensionParamsDto) { extension }: z.infer<typeof ExtensionParams>,
     @ZBody(OrgOverridesPutBody) body: z.infer<typeof OverridesPut>,
   ): Promise<OrgOverrideView> {
     const p = requireUser(principal);
@@ -200,7 +206,7 @@ export class OrgExtensionOverridesController {
   reset(
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
-    @Param("extension") extension: string,
+    @ZParam(OrgExtensionParamsDto) { extension }: z.infer<typeof ExtensionParams>,
   ): Promise<OrgOverrideView> {
     const p = requireUser(principal);
     return this.overrides.reset(org.orgId, extension, {
@@ -216,7 +222,7 @@ export class OrgExtensionOverridesController {
   take(
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
-    @Param("extension") extension: string,
+    @ZParam(OrgExtensionParamsDto) { extension }: z.infer<typeof ExtensionParams>,
     @ZBody(OrgOverridesTakeBody) body: z.infer<typeof OverridesTake>,
   ): Promise<OrgOverrideView> {
     const p = requireUser(principal);
@@ -240,7 +246,7 @@ export class OrgExtensionToolSwitchesController {
   @OrgAction("org.extensions.read")
   async list(
     @CurrentOrg() org: OrgContext,
-    @Param("extension") extension: string,
+    @ZParam(OrgExtensionParamsDto) { extension }: z.infer<typeof ExtensionParams>,
   ): Promise<{ tools: OrgToolSwitch[] }> {
     return { tools: await this.switches.list(org.orgId, extension) };
   }
@@ -255,8 +261,7 @@ export class OrgExtensionToolSwitchesController {
   set(
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
-    @Param("extension") extension: string,
-    @Param("tool") tool: string,
+    @ZParam(OrgExtensionToolParamsDto) { extension, tool }: z.infer<typeof ToolParams>,
     @ZBody(OrgToolSwitchPutBody) body: z.infer<typeof ToolSwitchPut>,
   ): Promise<OrgToolSwitchResult> {
     const p = requireUser(principal);
