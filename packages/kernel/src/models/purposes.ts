@@ -286,10 +286,11 @@ export class ModelPurposesService {
     target: PurposeTarget | null,
     actor: string,
     actorTokenId: string | undefined,
+    auditDetail?: Record<string, unknown>,
   ): Promise<PurposeView> {
     const decl = this.find(purpose);
     if (target) await this.check(orgId, target, decl.kind);
-    await this.write(orgId, purpose, target, actor, actorTokenId);
+    await this.write(orgId, purpose, target, actor, actorTokenId, auditDetail);
     const [view] = await this.views([decl], orgId ?? undefined);
     return view as PurposeView;
   }
@@ -302,6 +303,7 @@ export class ModelPurposesService {
     target: PurposeTarget | null,
     actor: string,
     actorTokenId: string | undefined,
+    auditDetail?: Record<string, unknown>,
   ): Promise<void> {
     if (orgId === null) await this.adminLock.lockAndAuthorize(actor);
     else await this.orgLock.lockAndAuthorize(orgId, actor, "org.models.manage");
@@ -334,7 +336,7 @@ export class ModelPurposesService {
       ...(orgId !== null && { orgId }),
       action: "model.purpose_mapped",
       target: purpose,
-      detail: { scope: orgId === null ? "deployment" : "org", target },
+      detail: { scope: orgId === null ? "deployment" : "org", target, ...auditDetail },
     });
   }
 
@@ -355,8 +357,10 @@ export class ModelPurposesService {
     target: PurposeTarget | null,
     actor: string,
     actorTokenId?: string,
+    /** Merged into the audit detail (a write made through the Platform tool). */
+    auditDetail?: Record<string, unknown>,
   ): Promise<PurposeView> {
-    return this.set(orgId, purpose, target, actor, actorTokenId);
+    return this.set(orgId, purpose, target, actor, actorTokenId, auditDetail);
   }
 
   /**

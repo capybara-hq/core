@@ -1,5 +1,6 @@
 import type { z } from "zod";
 import type { OrgAction } from "../orgs/roles.js";
+import type { ErrorRole } from "./errors.js";
 
 /**
  * How an operation is confirmed (spec §6.2): `read` runs; `personal` asks each time and may be
@@ -19,6 +20,12 @@ export interface OperationContext {
   conversationId: string;
   runId: string | null;
   signal: AbortSignal;
+  /**
+   * The actor's role for next steps, from the facts the tool read for this call (spec §14.5
+   * item 7). Absent where no tool call is behind the context (a test running `op.run`): read it
+   * then with `roleFor` in ./ops/unavailable.ts.
+   */
+  errorRole?: ErrorRole;
 }
 
 /**
@@ -151,15 +158,29 @@ export const PLATFORM_DOMAINS: readonly { id: string; description: string }[] = 
   },
   {
     id: "plugins",
-    description: "Plugins in the org and on the platform: list, read, enable, disable, update.",
+    description:
+      "Plugins in the org and on the platform: list, read, enable, disable, update, scope, import, the org's own uploads.",
   },
   {
     id: "marketplaces",
-    description: "Marketplace sources and their entries: list, browse, add, request a plugin.",
+    description:
+      "Marketplace sources and their entries: list, browse, add, edit, refresh, remove, import, request a plugin.",
   },
-  { id: "requests", description: "Requests to admins: list yours, create one." },
+  {
+    id: "requests",
+    description:
+      "Requests to admins: list yours, create one; the super admin lists the platform's.",
+  },
   { id: "connectors", description: "Connectors and connector templates: list and read." },
-  { id: "extensions", description: "Extensions in the org (state only) and extension points." },
+  {
+    id: "extensions",
+    description:
+      "Extensions in the org (state, tool switches, extension point defaults) and, for the super admin, on the platform (state, enable, disable, uninstall).",
+  },
+  {
+    id: "models",
+    description: "The org's model per purpose and the models it switched off.",
+  },
 ];
 
 /**

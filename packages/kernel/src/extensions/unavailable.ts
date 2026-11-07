@@ -63,6 +63,16 @@ export function unavailableReason(status: DeploymentExtensionStatus): ExtensionU
  * status ({@link deriveExtensionStatus}) from the install record and the replicas' recent reports,
  * without reading packages: a pending approval and a pending config come from the replicas' rows
  * (`pending` with reason `approval` / `config`). Reads PG on every call (no in-process state).
+ *
+ * Its inputs differ slightly from the admin view's (`ExtensionAdmin`): there `pendingApproval`
+ * compares the package's permission set with the snapshot and `configValid` checks the deployment
+ * config, while here both come from what the replicas last reported. They agree once a replica
+ * has tried the current package; until then this view says `loading` where the admin view may
+ * already say `pending_approval` or `pending_config`.
+ *
+ * Which extensions count as loaded is this replica's registry: replica-local and transient. During
+ * a rollout, or right after an enable or upgrade, one replica may answer `loading` while another
+ * has it loaded; the next call (or the next reconcile) converges.
  */
 @Injectable()
 export class ExtensionAvailability {

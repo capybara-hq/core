@@ -1,7 +1,7 @@
 import type { PluginUnavailableReason } from "../../catalog/catalog-content.js";
 import type { KernelSchemaDb } from "../../db/kernel-schema.js";
 import { type ErrorRole, errorRoleOf, resolveNext } from "../errors.js";
-import type { OperationErrorNext } from "../operation.js";
+import type { OperationContext, OperationErrorNext } from "../operation.js";
 
 /**
  * What an unavailable plugin or extension tells the model (Platform tool spec §14.2 problems 1
@@ -101,7 +101,20 @@ export function unavailableFields(
   return { reason, ...(next !== undefined && { next }) };
 }
 
-/** The actor's role for next steps, read now (the super admin first, then an org admin). */
+/**
+ * The actor's role for next steps: the one the tool derived from this call's actor facts
+ * (`ctx.errorRole`), else read now with {@link errorRoleFor} (a context no tool call is behind).
+ */
+export function roleFor(db: KernelSchemaDb, ctx: OperationContext): Promise<ErrorRole> {
+  return ctx.errorRole !== undefined
+    ? Promise.resolve(ctx.errorRole)
+    : errorRoleFor(db, ctx.orgId, ctx.actorAccountId);
+}
+
+/**
+ * The actor's role for next steps, read now (the super admin first, then an org admin): the
+ * fallback of {@link roleFor}, the same rule as `errorRoleOf` over `PlatformActor` facts.
+ */
 export async function errorRoleFor(
   db: KernelSchemaDb,
   orgId: string,

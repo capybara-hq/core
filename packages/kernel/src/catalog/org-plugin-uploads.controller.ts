@@ -1,5 +1,5 @@
 import { Controller, Delete, Get, HttpCode, Inject, Post, Put, Req } from "@nestjs/common";
-import { z } from "zod";
+import type { z } from "zod";
 import { ApiError } from "../errors.js";
 import {
   CurrentPrincipal,
@@ -17,29 +17,20 @@ import {
   type OrgUploadOutcome,
   type OrgUploadReview,
 } from "./org-plugin-uploads.js";
+import {
+  OrgUploadConfirmBody as ConfirmBody,
+  OrgOwnedDeleteBody as DeleteBody,
+  OrgOwnedPluginParams as OwnedParams,
+  OrgOwnedShareableBody as ShareableBody,
+  OrgUploadStagingParams as StagingParams,
+} from "./org-plugin-uploads.schemas.js";
 import { type OwnedDeletePreview, OwnedItems } from "./owned-items.js";
 
-const StagingParams = z.object({ stagingId: z.string().min(1).max(100) });
-const OwnedParams = z.object({ id: z.string().min(1).max(100) });
-
-const ConfirmBody = z
-  .object({
-    reviewHash: z.string().min(1).max(128),
-    /** The org shares the new item with other orgs (default false, P3-16). */
-    shareable: z.boolean().optional(),
-    /** Skill names suggested as pinned (spec §9.1); omitted keeps the plugin's flags. */
-    pinnedSuggestions: z.array(z.string().min(1).max(64)).max(50).optional(),
-  })
-  .strict();
-
-class OrgUploadStagingParams extends createZodDto(StagingParams, "OrgUploadStagingParams") {}
-class OrgUploadConfirmBody extends createZodDto(ConfirmBody, "OrgUploadConfirmBody") {}
-class OrgOwnedPluginParams extends createZodDto(OwnedParams, "OrgOwnedPluginParams") {}
-
-const ShareableBody = z.object({ shareable: z.boolean() }).strict();
-const DeleteBody = z.object({ previewHash: z.string().min(1).max(128) }).strict();
-class OrgOwnedShareableBody extends createZodDto(ShareableBody, "OrgOwnedShareableBody") {}
-class OrgOwnedDeleteBody extends createZodDto(DeleteBody, "OrgOwnedDeleteBody") {}
+class OrgUploadStagingParamsDto extends createZodDto(StagingParams, "OrgUploadStagingParams") {}
+class OrgUploadConfirmBodyDto extends createZodDto(ConfirmBody, "OrgUploadConfirmBody") {}
+class OrgOwnedPluginParamsDto extends createZodDto(OwnedParams, "OrgOwnedPluginParams") {}
+class OrgOwnedShareableBodyDto extends createZodDto(ShareableBody, "OrgOwnedShareableBody") {}
+class OrgOwnedDeleteBodyDto extends createZodDto(DeleteBody, "OrgOwnedDeleteBody") {}
 
 const actorOpts = (actor: ReturnType<typeof requireUser>): ActorOpts => {
   const tokenId = patTokenId(actor);
@@ -93,7 +84,7 @@ export class OrgPluginUploadsController {
   @OrgAction("catalog.upload")
   staged(
     @CurrentOrg() org: OrgContext,
-    @ZParam(OrgUploadStagingParams) params: z.infer<typeof StagingParams>,
+    @ZParam(OrgUploadStagingParamsDto) params: z.infer<typeof StagingParams>,
   ): Promise<OrgUploadReview> {
     return this.uploads.staged(org.orgId, params.stagingId);
   }
@@ -115,8 +106,8 @@ export class OrgPluginUploadsController {
   confirm(
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
-    @ZParam(OrgUploadStagingParams) params: z.infer<typeof StagingParams>,
-    @ZBody(OrgUploadConfirmBody) body: z.infer<typeof ConfirmBody>,
+    @ZParam(OrgUploadStagingParamsDto) params: z.infer<typeof StagingParams>,
+    @ZBody(OrgUploadConfirmBodyDto) body: z.infer<typeof ConfirmBody>,
   ): Promise<{ item: CatalogItemView; outcome: OrgUploadOutcome }> {
     const actor = requireUser(principal);
     return this.uploads.confirm(
@@ -156,8 +147,8 @@ export class OrgOwnedPluginsController {
   async setShareable(
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
-    @ZParam(OrgOwnedPluginParams) params: z.infer<typeof OwnedParams>,
-    @ZBody(OrgOwnedShareableBody) body: z.infer<typeof ShareableBody>,
+    @ZParam(OrgOwnedPluginParamsDto) params: z.infer<typeof OwnedParams>,
+    @ZBody(OrgOwnedShareableBodyDto) body: z.infer<typeof ShareableBody>,
   ): Promise<void> {
     const actor = requireUser(principal);
     await this.owned.setShareable(
@@ -179,7 +170,7 @@ export class OrgOwnedPluginsController {
   @OrgAction("catalog.upload")
   previewDelete(
     @CurrentOrg() org: OrgContext,
-    @ZParam(OrgOwnedPluginParams) params: z.infer<typeof OwnedParams>,
+    @ZParam(OrgOwnedPluginParamsDto) params: z.infer<typeof OwnedParams>,
   ): Promise<OwnedDeletePreview> {
     return this.owned.previewDelete(org.orgId, params.id);
   }
@@ -195,8 +186,8 @@ export class OrgOwnedPluginsController {
   async delete(
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
-    @ZParam(OrgOwnedPluginParams) params: z.infer<typeof OwnedParams>,
-    @ZBody(OrgOwnedDeleteBody) body: z.infer<typeof DeleteBody>,
+    @ZParam(OrgOwnedPluginParamsDto) params: z.infer<typeof OwnedParams>,
+    @ZBody(OrgOwnedDeleteBodyDto) body: z.infer<typeof DeleteBody>,
   ): Promise<void> {
     const actor = requireUser(principal);
     await this.owned.delete(
@@ -220,7 +211,7 @@ export class OrgOwnedPluginsController {
   async withdraw(
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
-    @ZParam(OrgOwnedPluginParams) params: z.infer<typeof OwnedParams>,
+    @ZParam(OrgOwnedPluginParamsDto) params: z.infer<typeof OwnedParams>,
   ): Promise<void> {
     const actor = requireUser(principal);
     await this.scope.withdraw(org.orgId, actor.account.id, params.id, actorOpts(actor));

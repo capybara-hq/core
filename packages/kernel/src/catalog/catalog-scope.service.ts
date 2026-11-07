@@ -751,6 +751,7 @@ export class CatalogScopeService {
         ownerOrgId: item.owner_org_id,
         removed: item.awaiting_confirmation,
         ...(how.kind === "reject" && { reason: how.reason }),
+        ...opts.auditDetail,
       },
     });
   }
@@ -840,7 +841,7 @@ export class CatalogScopeService {
       ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
       action: "catalog.shown_changed",
       target: itemId,
-      detail: { name: item.name, from: item.shown_to_others, to: shown },
+      detail: { name: item.name, from: item.shown_to_others, to: shown, ...opts.auditDetail },
     });
   }
 
@@ -900,6 +901,7 @@ export class CatalogScopeService {
         name: item.name,
         from: { scope: item.scope, orgs: from },
         to: { scope: t.scope, orgs: t.orgs },
+        ...opts.auditDetail,
       },
     });
     afterCommit(() => this.enqueue(itemId));
@@ -938,7 +940,11 @@ export class CatalogScopeService {
       ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
       action: "catalog.scope_changed",
       target: itemId,
-      detail: { name: item.name, disabled: { from: item.disabled, to: disabled } },
+      detail: {
+        name: item.name,
+        disabled: { from: item.disabled, to: disabled },
+        ...opts.auditDetail,
+      },
     });
     afterCommit(() => this.enqueue(itemId));
   }

@@ -26,7 +26,15 @@ import {
   CatalogItemsQuery,
   CatalogUpdateBody,
   CatalogUpdatePreviewBody,
+  CatalogDisabledBody as DisabledBody,
+  CatalogGitImportBody as GitBody,
   CatalogHash as Hash,
+  CatalogNpmImportBody as NpmBody,
+  CatalogScopeOrgs as Orgs,
+  CatalogScope as Scope,
+  CatalogScopeBody as ScopeBody,
+  CatalogScopePreviewBody as ScopePreviewBody,
+  CatalogShownBody as ShownBody,
 } from "./admin-catalog.schemas.js";
 import {
   type ActorOpts,
@@ -45,22 +53,6 @@ import {
   type PlatformUpdateResult,
 } from "./plugin-upgrade.js";
 
-const NpmBody = z.object({
-  package: z.string().min(1).max(214),
-  version: z.string().min(1).max(256).optional(),
-});
-
-const GitBody = z
-  .object({
-    url: z.string().min(1).max(2000),
-    ref: z.string().min(1).max(256).optional(),
-    path: z.string().min(1).max(512).optional(),
-  })
-  .strict();
-
-const Scope = z.enum(["all", "optional", "named"]);
-const Orgs = z.array(z.string().min(1).max(128)).max(1000);
-
 const ConfirmBody = z
   .object({
     reviewHash: Hash,
@@ -71,23 +63,6 @@ const ConfirmBody = z
     pinnedSuggestions: z.array(z.string().min(1).max(64)).max(50).optional(),
   })
   .strict();
-
-/** `{ scope, orgs? }` (a scope change) or `{ disabled: true }` (a disable), not both. */
-const ScopePreviewBody = z
-  .object({ scope: Scope.optional(), orgs: Orgs.optional(), disabled: z.literal(true).optional() })
-  .strict()
-  .refine((b) => (b.disabled === true) !== (b.scope !== undefined), {
-    message: "send either scope (with orgs for named) or disabled: true",
-  })
-  .refine((b) => b.disabled === undefined || b.orgs === undefined, {
-    message: "orgs: only allowed with scope named",
-    path: ["orgs"],
-  });
-
-const ScopeBody = z.object({ scope: Scope, orgs: Orgs.optional(), scopeHash: Hash }).strict();
-
-const DisabledBody = z.object({ disabled: z.boolean(), scopeHash: Hash.optional() }).strict();
-const ShownBody = z.object({ shownToOthers: z.boolean() }).strict();
 
 const ConfirmPermissionsBody = z.object({ permissionsHash: Hash }).strict();
 /** The reason shown to the owner org in its `upload_rejected` notice (optional). */

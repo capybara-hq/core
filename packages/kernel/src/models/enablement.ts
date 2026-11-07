@@ -51,6 +51,8 @@ export interface ModelDisableChange {
 export interface ModelDisableActor {
   accountId: string;
   tokenId?: string | undefined;
+  /** Merged into the audit detail (a write made through the Platform tool). */
+  auditDetail?: Record<string, unknown>;
 }
 
 /**
@@ -214,6 +216,7 @@ export class ModelEnablement {
           scope: orgId === null ? "platform" : "org",
           disabled: added,
           enabled: removed,
+          ...actor.auditDetail,
         },
       });
     }

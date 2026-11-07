@@ -61,6 +61,14 @@ export const OrgPluginSwitchBody = z
 /** `:itemId` as the routes take it (`@Param`). */
 export const CatalogItemPathParams = z.object({ itemId: z.string().min(1) });
 
+/** `:installId` as the uninstall route takes it (`@Param`). */
+export const PluginInstallPathParams = z.object({ installId: z.string().min(1) });
+
+/** The super admin's request list filter. */
+export const CatalogRequestsListQuery = z.object({
+  status: z.enum(["pending", "approved", "rejected", "cancelled"]).optional(),
+});
+
 export const ORG_CATALOG_ROUTES: readonly RouteSchemas[] = [
   { route: "GET /api/v1/orgs/:orgId/catalog" },
   { route: "GET /api/v1/orgs/:orgId/catalog/:itemId", params: CatalogItemPathParams },
@@ -75,4 +83,10 @@ export const ORG_CATALOG_ROUTES: readonly RouteSchemas[] = [
     params: CatalogItemPathParams,
     body: OrgPluginSwitchBody,
   },
+  { route: "GET /api/v1/orgs/:orgId/plugin-installs" },
+  {
+    route: "DELETE /api/v1/orgs/:orgId/plugin-installs/:installId",
+    params: PluginInstallPathParams,
+  },
+  { route: "GET /api/v1/admin/catalog/requests", query: CatalogRequestsListQuery },
 ];

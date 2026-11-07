@@ -1,6 +1,5 @@
 import { Controller, Delete, Get, HttpCode, Inject, Param, Patch, Post } from "@nestjs/common";
-import { z } from "zod";
-import { MARKETPLACE_MAX_MIRRORS } from "../config/schema.js";
+import type { z } from "zod";
 import { ApiError } from "../errors.js";
 import {
   CurrentPrincipal,
@@ -17,11 +16,10 @@ import { ZBody, ZQuery } from "../infra/validation/zod-params.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
 import { CatalogService, type MarketplaceImportResult } from "./catalog.service.js";
 import {
-  MarketplaceForm as Form,
+  MarketplaceImportBody as ImportBody,
   MarketplaceAddBody,
   MarketplaceEntriesQuery,
-  MarketplaceRef as Ref,
-  MarketplaceUrl as Url,
+  MarketplacePatchBody as PatchBody,
 } from "./marketplaces.schemas.js";
 import {
   type ActorOpts,
@@ -30,20 +28,6 @@ import {
   type MarketplaceView,
 } from "./marketplaces.service.js";
 import { itemsSeenBy } from "./scope-state.js";
-
-const PatchBody = z
-  .object({
-    name: z.string().min(1).max(100).optional(),
-    url: Url.optional(),
-    form: Form.optional(),
-    ref: Ref.nullable().optional(),
-    mirrors: z.array(Url).max(MARKETPLACE_MAX_MIRRORS).optional(),
-    enabled: z.boolean().optional(),
-    token: z.string().min(1).max(4096).nullable().optional(),
-  })
-  .strict();
-
-const ImportBody = z.object({ version: z.string().min(1).max(256).optional() });
 
 /** 手动刷新的总时限（每个地址另有 30 秒超时）。 */
 const REFRESH_DEADLINE_MS = 300_000;
