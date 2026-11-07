@@ -338,11 +338,17 @@ button.cb-tool-line:focus-visible {
   font-size: var(--cb-type-small-size);
   line-height: var(--cb-type-small-line);
 }
+/*
+ * The summary keeps a space.2 inset so its hover ground does not touch the words; the negative
+ * margin keeps the words on the bubble's right edge (acceptance 2026-11-07).
+ */
 .cb-bubble-details .cb-row-toggle {
   align-items: center;
   min-height: var(--cb-row-dense);
   margin-left: 0;
-  padding: 0;
+  margin-right: calc(-1 * var(--cb-space-2));
+  padding: 0 var(--cb-space-2);
+  border-radius: var(--cb-radius-sm);
   color: inherit;
   white-space: nowrap;
 }
