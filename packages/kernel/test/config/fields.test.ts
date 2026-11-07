@@ -35,6 +35,8 @@ describe("configFields", () => {
       "sandbox.maxConcurrentCommands",
       "environments.maxPersonal",
       "evals.orgConcurrency",
+      "models.listTimeoutMs",
+      "models.embedTimeoutMs",
       "hooks.timeoutMs",
       "log.level",
     ]);

@@ -7,6 +7,7 @@ import {
   type HookHandler,
   type HookMediaPlaceholder,
   type HookVerdict,
+  type ModelCallRequestHookPayload,
   type ModelRequestHookPayload,
   POLICY_HOOKS,
   type ToolPreHookPayload,
@@ -58,11 +59,24 @@ describe("hook mount points", () => {
   });
 
   it("model.request payloads carry media placeholders, never media sources (I-3)", () => {
-    type Block = ModelRequestHookPayload["request"]["messages"][number]["content"];
+    type Block = ModelCallRequestHookPayload["request"]["messages"][number]["content"];
     expectTypeOf<Extract<Exclude<Block, string>[number], { type: "image" }>>().toBeNever();
     expectTypeOf<
       Extract<Exclude<Block, string>[number], { type: "media_omitted" }>
     >().toEqualTypeOf<HookMediaPlaceholder>();
+  });
+
+  it("model.request payloads of embedding calls carry texts and no conversation fields", () => {
+    type Embedding = Extract<ModelRequestHookPayload, { purpose: "embedding" }>;
+    expectTypeOf<Embedding["input"]>().toEqualTypeOf<readonly string[]>();
+    expectTypeOf<Embedding["extension"]>().toEqualTypeOf<string>();
+    expectTypeOf<Embedding["conversationId"]>().toEqualTypeOf<undefined>();
+    expectTypeOf<Embedding["runId"]>().toEqualTypeOf<undefined>();
+    // a handler reading conversation fields off the union must handle their absence
+    expectTypeOf<ModelRequestHookPayload["conversationId"]>().toEqualTypeOf<string | undefined>();
+    expectTypeOf<
+      Exclude<ModelRequestHookPayload, Embedding>
+    >().toEqualTypeOf<ModelCallRequestHookPayload>();
   });
 
   it("ctx.hooks.on types the payload by mount point", () => {

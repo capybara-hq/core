@@ -329,7 +329,7 @@ async function counts() {
 }
 
 async function modelInfo(): Promise<ModelInfo> {
-  return (await k.app.get(ProviderRegistry).resolve(SCRIPT)).info;
+  return (await k.app.get(ProviderRegistry).resolve(orgId, SCRIPT)).info;
 }
 
 const snapshotOf = (conv: string, runId: string): Promise<CaseSnapshot> =>

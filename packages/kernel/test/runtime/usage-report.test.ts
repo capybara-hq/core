@@ -14,6 +14,8 @@ import { KernelConfigService } from "../../src/infra/config/kernel-config.servic
 import { createLogger } from "../../src/log.js";
 import { RETIRED_SCHEDULER_IDS } from "../../src/runtime/retired-schedulers.js";
 import {
+  ModelUsageJobs,
+  modelUsageJobId,
   narrowPending,
   queryUnservable,
   queryUsageSubscribers,
@@ -898,5 +900,184 @@ describe("UsageReporter (standalone, own Valkey)", { timeout: 60_000 }, () => {
     expect(narrowPending(undefined, ["x", "y"])).toEqual(["x", "y"]);
     expect(narrowPending(["x"], ["x", "y"])).toEqual(["x"]);
     expect(narrowPending([], ["x"])).toEqual([]);
+  });
+});
+
+describe("usage.report for model usage outside conversations (spec B §5.4)", {
+  timeout: 60_000,
+}, () => {
+  // earlier cases move the shared watermark into the future: start each case from a fresh one
+  beforeEach(async () => {
+    await db.deleteFrom("usage_report_sweep").execute();
+  });
+
+  async function usageRow(occurredAt?: Date): Promise<string> {
+    const row = await db
+      .insertInto("model_usage")
+      .values({
+        org_id: orgId,
+        extension: "embed-consumer",
+        purpose: "embed-consumer.memory",
+        provider: "model-fake",
+        model: "fake-embed",
+        input_tokens: 12,
+        ...(occurredAt !== undefined && { occurred_at: occurredAt }),
+      })
+      .returning(["id", "occurred_at"])
+      .executeTakeFirstOrThrow();
+    return row.id;
+  }
+  const reportedAt = async (id: string) =>
+    (
+      await db
+        .selectFrom("model_usage")
+        .select("reported_at")
+        .where("id", "=", id)
+        .executeTakeFirst()
+    )?.reported_at ?? null;
+
+  it("one payload per row: purpose embedding, the extension, no conversation fields", async () => {
+    await probe({});
+    const id = await usageRow();
+    await k.app.get(ModelUsageJobs).enqueue(id);
+    const got = await waitFor(
+      async () => {
+        const d = await probeUsage([id]);
+        return d[id]?.calls === 1 && d[id]?.last != null ? d : null;
+      },
+      10_000,
+      "model usage delivered",
+    );
+    const p = got[id]?.last as UsageReportPayload;
+    const occurred = await db
+      .selectFrom("model_usage")
+      .select("occurred_at")
+      .where("id", "=", id)
+      .executeTakeFirstOrThrow();
+    expect(p).toEqual({
+      eventId: id,
+      purpose: "embedding",
+      orgId,
+      extension: "embed-consumer",
+      provider: "model-fake",
+      model: "fake-embed",
+      usage: { inputTokens: 12, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
+      occurredAt: new Date(occurred.occurred_at).toISOString(),
+    });
+    for (const f of ["accountId", "agentId", "conversationId", "conversationKind", "runId"]) {
+      expect(p).not.toHaveProperty(f);
+    }
+    await waitFor(async () => (await seenB(id)) === 1, 10_000, "usage-b delivery");
+    await waitFor(async () => (await reportedAt(id)) !== null, 10_000, "reported_at");
+    const job = await queue.getJob(modelUsageJobId(id));
+    expect(job?.id).toBe(`usage-model-${id}`);
+  });
+
+  it("a failing handler is retried with the same eventId; the row is marked once delivered", async () => {
+    await probe({ usageThrowOnce: true });
+    try {
+      const id = await usageRow();
+      await k.app.get(ModelUsageJobs).enqueue(id);
+      await waitFor(async () => (await probeUsage([id]))[id]?.calls === 2, 15_000, "retry");
+      expect((await probeUsage([id]))[id]?.last).toMatchObject({ eventId: id });
+      expect(await seenB(id)).toBe(1);
+      await waitFor(async () => (await reportedAt(id)) !== null, 10_000, "reported_at");
+    } finally {
+      await probe({});
+    }
+  });
+
+  it("the sweep re-enqueues unreported rows older than its lag, and leaves newer ones", async () => {
+    await probe({});
+    const old = await usageRow(new Date(Date.now() - 5 * 60_000));
+    const fresh = await usageRow();
+    await k.app.get(UsageReporter).sweep();
+    await waitFor(async () => (await probeUsage([old]))[old]?.calls === 1, 10_000, "swept row");
+    await waitFor(async () => (await reportedAt(old)) !== null, 10_000, "reported_at");
+    expect((await probeUsage([fresh]))[fresh]?.calls ?? 0).toBe(0);
+    expect(await reportedAt(fresh)).toBeNull();
+    await db.deleteFrom("model_usage").where("id", "=", fresh).execute();
+  });
+
+  it("the sweep leaves rows older than its window (like usage events)", async () => {
+    await probe({});
+    const old = await usageRow(new Date(Date.now() - 2 * 3600_000));
+    try {
+      expect(await k.app.get(UsageReporter).sweep()).toBe(0);
+      await sleep(500);
+      expect(await queue.getJob(modelUsageJobId(old))).toBeUndefined();
+      expect((await probeUsage([old]))[old]?.calls ?? 0).toBe(0);
+    } finally {
+      await db.deleteFrom("model_usage").where("id", "=", old).execute();
+    }
+  });
+
+  it("a job that gives up marks its row, and the sweep never offers it again", async () => {
+    const id = await usageRow(new Date(Date.now() - 2 * 60_000));
+    const r = usageReporterFor({
+      pool: raw,
+      redisUrl: rd2.url,
+      hooks: {
+        handlers: () =>
+          [
+            {
+              plugin: "x",
+              handler: async () => {
+                throw new Error("billing endpoint down");
+              },
+            },
+          ] as never,
+        has: () => true,
+      },
+      isActive: () => true,
+      subscribers: async () => new Set(["x"]),
+      config: () => k.app.get(KernelConfigService).get(),
+      log: createLogger("error", { write: () => {} }),
+      retry: { attempts: 2, backoffMs: 50 },
+    });
+    try {
+      r.startWorker();
+      await queue2.add(
+        "usage-report",
+        { usageId: id },
+        { jobId: modelUsageJobId(id), attempts: 2, backoff: { type: "fixed", delay: 50 } },
+      );
+      const failedAt = async () =>
+        (
+          await db
+            .selectFrom("model_usage")
+            .select("report_failed_at")
+            .where("id", "=", id)
+            .executeTakeFirst()
+        )?.report_failed_at ?? null;
+      await waitFor(async () => (await failedAt()) !== null, 10_000, "report_failed_at");
+      expect(await reportedAt(id)).toBeNull();
+      // the failed job leaves Redis (retention): the sweep must not create a fresh one
+      await (await queue2.getJob(modelUsageJobId(id)))?.remove();
+      await r.sweep();
+      expect(await queue2.getJob(modelUsageJobId(id))).toBeUndefined();
+    } finally {
+      await r.stop();
+      await db.deleteFrom("model_usage").where("id", "=", id).execute();
+    }
+  });
+
+  it("with no subscriber the sweep marks unreported rows without enqueueing", async () => {
+    const id = await usageRow(new Date(Date.now() - 5 * 60_000));
+    const r = usageReporterFor({
+      pool: raw,
+      redisUrl: rd2.url,
+      hooks: { handlers: () => [], has: () => true },
+      subscribers: async () => new Set(),
+      config: () => k.app.get(KernelConfigService).get(),
+      log: createLogger("error", { write: () => {} }),
+    });
+    try {
+      await r.sweep();
+    } finally {
+      await r.stop();
+    }
+    expect(await reportedAt(id)).not.toBeNull();
+    expect(await queue2.getJob(modelUsageJobId(id))).toBeUndefined();
   });
 });

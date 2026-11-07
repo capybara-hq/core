@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { dirname, isAbsolute, join, resolve as resolvePath } from "node:path";
@@ -19,14 +18,7 @@ import { Inject, Injectable } from "@nestjs/common";
 import type { Redis } from "ioredis";
 import type { core, z } from "zod";
 import type { KernelAppOptions } from "../app.js";
-import {
-  changedPaths,
-  configFields,
-  getPath,
-  secretValues,
-  setPath,
-  unreachableSecrets,
-} from "../config/fields.js";
+import { changedPaths, configFields, secretValues, unreachableSecrets } from "../config/fields.js";
 import type { BusSubscriber } from "../ctx/bus.js";
 import {
   type ExtensionPointAccess,
@@ -48,6 +40,7 @@ import { LockService } from "../infra/lock/lock.service.js";
 import { KERNEL_LOGGER, KEYRING, REDIS, REDIS_SUBSCRIBER } from "../infra/tokens.js";
 import { KERNEL_APP_OPTIONS } from "../lifecycle/tokens.js";
 import type { KernelLogger } from "../log.js";
+import { ModelEmbeddings } from "../models/embeddings.js";
 import { packagePath } from "../packages/tgz.js";
 import { EmbedTokens } from "../ui/embed-token.js";
 import type { UiActionHandler, UiRender } from "../ui/registry.js";
@@ -61,6 +54,7 @@ import {
   withPreApproved,
 } from "./approvals.js";
 import { ExtensionBlobIntegrityError } from "./blobs.js";
+import { deploymentConfigHash } from "./config-hash.js";
 import { toIssues } from "./config-issues.js";
 import { configFormSchema, describeConfigUiProblems } from "./config-json-schema.js";
 import { EffectiveConfigs } from "./effective-config.js";
@@ -95,44 +89,7 @@ import {
 } from "./sources.js";
 import { PackageShaMismatchError, packageRootOf } from "./sync.js";
 
-/** 键排序后的 JSON（对象键顺序不影响结果）；undefined 字段与 JSON.stringify 一样省略。 */
-const canonicalJson = (v: unknown): string => {
-  if (Array.isArray(v))
-    return `[${v.map((x) => (x === undefined ? "null" : canonicalJson(x))).join(",")}]`;
-  if (v !== null && typeof v === "object") {
-    const entries = Object.entries(v as Record<string, unknown>)
-      .filter(([, x]) => x !== undefined)
-      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
-    return `{${entries.map(([k, x]) => `${JSON.stringify(k)}:${canonicalJson(x)}`).join(",")}}`;
-  }
-  return JSON.stringify(v) ?? "null";
-};
-
-/** 遮蔽 secret 字段后参与摘要的固定占位值。 */
-const SECRET_PLACEHOLDER = "<secret>";
-
-/**
- * 插件部署配置（校验后）中非密钥部分的摘要：先把 schema 里所有 secret 叶子（`configFields` 可达路径，
- * 加载时 `assertSecretsReachable` 已保证密钥都在这些路径上）换成固定占位值，再取 sha256(键排序 JSON) 前 16 位十六进制。
- * 给需要「配置变了就失效」的缓存键用（如模型列表）。密钥不参与摘要：不加盐的短摘要写进 Redis 键名后，
- * 低熵密钥可被离线猜测、泄露的密钥可被确认；代价是轮换密钥不会让缓存失效（缓存内容本来就不该依赖密钥）。
- * 没有部署配置 schema 时无从得知哪些是密钥，摘要不按配置区分。同一份配置在各副本上得到同一摘要。
- * 函数自己按 schema 遮蔽，调用方不必（也不能忘记）先打码。
- */
-export function deploymentConfigHash(schema: core.$ZodType | undefined, config: unknown): string {
-  let redacted: unknown = null;
-  if (schema) {
-    redacted = structuredClone(config);
-    if (redacted !== null && typeof redacted === "object") {
-      for (const f of configFields(schema)) {
-        if (f.meta?.secret && getPath(redacted, f.path) !== undefined) {
-          setPath(redacted as Record<string, unknown>, f.path, SECRET_PLACEHOLDER);
-        }
-      }
-    }
-  }
-  return createHash("sha256").update(canonicalJson(redacted)).digest("hex").slice(0, 16);
-}
+export { deploymentConfigHash };
 
 /** One item of {@link ExtensionHost.uiContributions}: a UI contribution from the manifest with its registered view / action (embeds have none). */
 export interface LoadedUiContribution {
@@ -669,21 +626,10 @@ export class ExtensionHost {
      * org's point resolution (layering spec A §6).
      */
     @Inject(EffectiveConfigs) private readonly effective: Pick<EffectiveConfigs, "get">,
+    /** `ctx.models`: the embeddings broker (spec B §5.4). */
+    @Inject(ModelEmbeddings) models: Pick<ModelEmbeddings, "embed" | "describe">,
   ) {
     const c = config.get();
-    this.deps = {
-      db: kdb.pool,
-      dbUrl: c.db.url,
-      connectTimeoutMs: c.db.connectTimeoutMs,
-      redis,
-      busSubscriber,
-      redisUrl: c.redis.url,
-      keyring,
-      embedTokens,
-      locks,
-      runWorkers: c.roles.includes("worker"),
-      log,
-    };
     this.hooks = new HookRegistry({
       instances: () => this.registry.all(),
       current: (plugin) => this.registry.current(plugin),
@@ -694,6 +640,22 @@ export class ExtensionHost {
       config: () => ({ hooks: { timeoutMs: this.config.get().hooks.timeoutMs } }),
       log,
     });
+    this.deps = {
+      db: kdb.pool,
+      dbUrl: c.db.url,
+      connectTimeoutMs: c.db.connectTimeoutMs,
+      redis,
+      busSubscriber,
+      redisUrl: c.redis.url,
+      keyring,
+      embedTokens,
+      models,
+      // ctx.models.embed fires model.request through the same registry (spec B §5.4)
+      hooks: this.hooks,
+      locks,
+      runWorkers: c.roles.includes("worker"),
+      log,
+    };
     this.registry.onChange(() => {
       this.installedCache = undefined;
     });

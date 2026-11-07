@@ -1,5 +1,314 @@
 # @capybara-hq/kernel
 
+## 0.1.0-rc.6
+
+### Minor Changes
+
+- 4a92acb: Model kinds and display fields on `ModelInfo`, an optional `embed` on `ModelProvider`, `{ orgId, config }` call options, `validateEmbedResult`, and an `embedding` usage purpose whose conversation fields are optional.
+  
+  `ctx.models.embed` / `describe` for extensions that declare embedding purposes in
+  `permissions.models` (no longer reserved): the kernel resolves the org's model for the purpose,
+  splits batches by `maxBatch`, validates results, records a `model_usage` row per call and delivers
+  it through `usage.report` with purpose `embedding`. Each batch is limited by the new hot config
+  `models.embedTimeoutMs`; `embed` takes an optional per-call `signal`. `capybara-plugin check` reports `ctx.models`
+  without `permissions.models` as `perm-models` (was `perm-reserved`).
+  
+  `ctx.models.embed` fires the `model.request` hook once per call, before anything is sent, so policy
+  hooks (DLP) see the texts sent to embedding vendors. `ModelRequestHookPayload` is now a union:
+  `ModelCallRequestHookPayload` (steps, compaction, titles, `WebFetch`; the former interface) or
+  `EmbeddingRequestHookPayload` (`purpose: "embedding"`, `orgId`, `extension`, `embeddingPurpose`,
+  `provider`, `model`, `input`, `dimensions?`, `inputType?`, no conversation fields); narrow on
+  `purpose` before reading `request`. A policy denial rejects the call with the new error code
+  `model.hook_denied` (403; an extension route that lets it escape answers 403, not 500), writes a
+  `hook.denied` audit row and records no usage. `model.response` does not fire for embeddings.
+
+### Patch Changes
+
+- Updated dependencies [4a92acb]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.4
+
+## 0.1.0-rc.5
+
+### Minor Changes
+
+- 49ae0b5: Agents can select extension tools: the agent page's Tools section lists the tools of the extensions
+  enabled in the org (new `GET /api/v1/orgs/:orgId/tools/extensions`) and adds or removes their
+  references; a selected tool that is unavailable stays listed as unavailable with the reason.
+- d423777: Agent templates (plugin component management phase 4): any member creates a private agent from a
+  usable template (`POST /api/v1/orgs/:orgId/agents/from-template`, with `…/preview` and a `previewHash`
+  that goes stale with 409 `agent.template_preview_stale`; an org admin may choose another visibility).
+  The agent records its provenance (migration 0085: `created_from_template_id`, `_version`, `_name`) and
+  carries the connectors the org lacks as model-invisible `pendingConnectors`, bound with
+  `POST …/agents/:agentId/pending-connectors/:key/bind` or, for a member, requested through one
+  `connector_setup` inbox request per agent that the org admins configure or reject. Org admins save an
+  agent as an org template (`POST …/agents/:agentId/save-as-template`: platform connectors become
+  `{ template }` entries, others a "needs a connector" entry with no credentials) and edit, delete and
+  share org templates. Connector views name their platform connector template (`platformTemplateId`).
+- 0f383d7: `GET /api/v1/orgs/:orgId/conversations/:id/agent-tree` returns a root conversation's agent tree (each
+  node's status, model, time, tokens, tool calls and children; owner only), and `subagent_progress` now
+  reaches the stream of every ancestor of the progressing sub-agent.
+- 8f7a0a5: Background sub-agents (agent map spec `docs/superpowers/specs/2026-11-06-agent-map-design.md`).
+  `Agent` dispatches sub-agents in the background: its result is immediate (the agentId), the parent
+  run goes on or ends while the child works, and a child's finish reaches its parent as a
+  `subagent_delivery` event (the final reply when it handed back nothing). `resume` is removed from
+  the `Agent` input. A run that ends no longer stops its background children; only a forked skill's
+  sub-agent still runs in the foreground. The wait sweep writes a finish delivery its finisher never
+  wrote.
+  
+  New builtin tools: `SendMessage` (`{ to, message }`) sends to one of the caller's own sub-agents
+  by agentId (absorbed by a running one at its next step; an idle one starts again with its context,
+  counted as a dispatch and run as the sender's trigger account) or, from a sub-agent, to `"parent"`
+  (a `note` delivery); `SubagentHandback` (`{ message }`, sub-agents only) delivers a report and the
+  sub-agent keeps its turn. Sub-agents may dispatch their own sub-agents down to `subagents.maxDepth`
+  levels below the root, each with its frozen `subagents` block. `subagent_delivery` is absorbable
+  like a message (`user_message.dispatch.kind` tells a parent's message from the task); full-run
+  replays feed recorded deliveries at their step, seed a sub-agent wake run from
+  `run_started.triggerSeq` and never dispatch, send or hand back, and logs written before this change
+  still rebuild with zero drift. The Claude Code tool map names `SendMessage` as a same-name tool.
+  
+  Upgrade note: do not mix replicas across this change. A worker without it stops a finished run's
+  children (all of them are background children now) and reports a child's finish without the
+  delivery; stop every old worker before new ones take sub-agent jobs. A parent run left in a
+  (non-fork) `subagents` wait by the old version is resumed by the wait sweep (`sweepStuckRuns`,
+  after its grace period); a child still running then delivers its finish in the background, and one
+  that already finished under the old version gives its report as that `Agent` call's result, since
+  the old finisher wrote no delivery for it.
+- 90c6125: Bootstrap plugins: `openai-compatible` and `object-store-s3` move to 0.1.0-rc.1, and the manifest preinstalls `anthropic`, `openai`, `connector-mcp`, `connector-openapi`, `jina`, `sandbox-docker` and `todo` as optional entries (installed and enabled on the deployment, off in each organization until an org admin switches them on). `marketplace.commit` and the compose sandbox build contexts move to the plugins commit that lists them.
+- 16225b1: `GET /api/v1/orgs/:orgId/connectors/kinds` lists the connector kinds whose extension is enabled in the org, with the plugin providing each. The connector install wizard offers only those kinds, and with none it points to Plugins instead of failing at the end.
+- 789068d: Environments (phase 1, spec 2026-11-07-environments-design): conversations run their sandbox tools
+  in a person's environment instead of a sandbox of their own. Each member gets a default personal
+  environment per org (created on first need) and can create more, at most `environments.maxPersonal`
+  (new config, default 10, hot). A conversation is bound to one environment when it is created
+  (`environmentId` on `POST /api/v1/orgs/:orgId/conversations`, else the owner's default) and keeps
+  it; its sub-agents share it, and access is checked on every sandbox tool call. New API
+  `/api/v1/orgs/:orgId/environments`: list, create, get, rename, delete (the instance and files are
+  destroyed by a job) and `POST /:id/files/reset` (a `sandbox-reset-files` job empties lost files,
+  202). In IM, `/env` in a direct message lists the person's environments and `/env <name>` picks the
+  one the next new conversation uses. Instances are suspended and destroyed when idle; files stay
+  until the environment is deleted. Attachments go to `/workspace/attachments/<conversation>/` and
+  skill files to `/skills/<name>@<digest>/`. The kernel drives `sandbox@2` providers only (separate
+  file systems and instances; a `sandbox@1` plugin is refused). `sandbox.image` has no default any
+  more: unset, each provider uses the image published with its own version. The worker job
+  `environments-legacy-cleanup` destroys the per-conversation sandboxes of earlier versions (the
+  legacy `sandboxes` rows; rows of a provider that is not loaded are kept). The web app has an
+  environments page and an environment picker before the model in the composer.
+- 7c8d05e: Extension points list the majors the kernel accepts (`EXTENSION_POINTS[name].majors`). The kernel
+  refuses a plugin that provides an unsupported major (such as `sandbox@1`) with
+  `extension.unsupported_extension_point` and asks it to upgrade.
+- 2a12327: Marketplace entries accept `deprecated: true | { reason? }` (SDK `MarketplaceEntry.deprecated`,
+  normalized by `marketplaceEntryDeprecation`; JSON Schema regenerated). A maintainer sets it by hand
+  on a published version's entry; `capybara-plugin marketplace --write` keeps it, and the `--base`
+  integrity rules ignore it. The kernel returns `deprecated` on marketplace entries, never reports a
+  deprecated version as newer or as an item's latest marketplace version, picks the newest stable
+  non-deprecated compatible version when an import names none, and refuses importing or requesting a
+  deprecated version with 409 `marketplace.entry_deprecated`. The market lists show the newest stable
+  version on each row (prereleases fold into 其他版本 unless no stable version can be imported) and
+  list deprecated versions under 其他版本 as 已废弃, with the reason, not importable.
+- 12fd552: Marketplaces list one entry per plugin. `plugin.json` `description` accepts `{ en, zh? }` as well as a string (English; read it with the SDK's `pluginDescription`), and marketplace entries accept an optional `displayName: { zh, en }`. `capybara-plugin marketplace --write` keeps one entry per public plugin at its current version, with `summary` from the localized description and `displayName` from `plugin.json`, replacing a plugin's entry when its version moves; `--check --base` replaces `marketplace-append-only` with `marketplace-version-decrease` (an entry's version only increases) and `marketplace-integrity` (a published version keeps its integrity). `capybara-plugin check` warns, without failing, when a public plugin's description has no `zh` (`release-description-zh`; findings may now be warnings). The kernel returns an entry's `displayName` (null without one) and searches it, and a single-plugin git marketplace takes the summary and display name from `plugin.json`; a catalog item keeps the English description. The market lists show the display name, else the name. model-fake gets a Chinese description.
+  
+  `--write` also refreshes a listed entry's `summary` and `displayName` from `plugin.json` (`marketplace-display-stale` in `--check`), and `marketplace-version-decrease` also fires when a plugin moves back to an older version a base in the older form lists. Catalog item views (admin and org) and the import review carry `descriptionZh` (the latest version's Chinese description, or null), and the plugin pages show the description in the UI language.
+  
+  Release order: release core and upgrade the deployed kernels before `capybara-hq/plugins` publishes
+  plugins whose `description` is an object (older kernels reject it) and before the official
+  marketplace drops older versions.
+- 9f554a3: Org members can read the org's 扩展 page: `GET /api/v1/orgs/:orgId/extensions` is the new action
+  `org.extensions.read` (member and up); a member gets each extension's state without its config, the
+  secrets' state, the config schema or the permission list, admins keep the full view. The page
+  hides every switch and config control for members.
+- 99a00cd: Platform and org layering: org admins can switch off `all` plugins and components, deployment config
+  fields carry org levels with per-org copies and an effective config delivered to every org-bound
+  extension call, and org admins can turn off single extension tools.
+- 5ac4bba: Org admins upload plugins and share what their org owns (plugin scope phase 3, migration 0084).
+  
+  - An org admin uploads a plugin `.tgz` from the workspace 插件 page (`POST
+    /api/v1/orgs/:orgId/catalog/uploads/file`, then review and confirm). A package without an
+    extension installs at once, owned by the org; one with an extension waits until the super admin
+    confirms that exact package in 待确认 (or rejects it), and so does every later version that carries
+    an extension. Plugin and extension names stay deployment-global (`plugin.name_taken` names the
+    owner); names of bootstrap and marketplace plugins are reserved for org uploads
+    (`plugin.name_reserved`).
+  - Catalog items and platform components have an owner (平台 or an org). The owner org marks its own
+    plugins and skills 可共享; only shareable items can be shown to or associated with other orgs
+    (`catalog.not_shareable`), and turning it off keeps the orgs that use it. Shared items follow the
+    owner's versions, with inbox notices for the orgs using them.
+  - An owner deleting an item other orgs use, or an org being deleted, transfers it to the platform
+    with a notice in the platform inbox; org skills become platform rows when first shared, keeping
+    their ids, so agents and logs are unchanged (agent templates are not shareable until org-created
+    templates exist).
+  - 新建技能: `POST /api/v1/orgs/:orgId/skills` also takes `{ name, description, body }`, and the
+    workspace 技能 page creates a skill from text.
+  - The admin console shows owners, the share gate, org uploads in 待确认 and the new inbox kinds.
+- 2fb7d41: The SDK ships agent docs (`agent-docs/`: platform concepts, plugin format, skills, agent and
+  connector templates, tool naming, writing an extension, one topic per extension point), served by
+  the kernel's `AgentDocs`. `ExtensionPointInfo` gains `description`, and `package.json` is an
+  exported subpath. `check:agent-docs` keeps the generated field tables in step with the schemas.
+- 2321382: A platform inbox for the super admin: `GET /api/v1/admin/inbox` (with `total`, and `GET /api/v1/admin/inbox/count` for the sidebar) lists the orgs' requests to the platform (`access` / `import`), plugins whose extension permissions wait for a confirmation, open plugin scope sync failures, including dependencies a platform update added that could not be installed (recorded per item and org in the new table `plugin_scope_sync_failures`, migration 0083, until a later sync of the pair does not fail) and the latest platform components migration run when it failed plugins or is stuck. The admin console gets a 收件箱 page (`/admin/inbox`) and a sidebar item with its count; each item links to the page where it is acted on.
+- 3c45446: Agents gain the `Platform` builtin tool, on for new agents: an agent browses, searches and describes
+  the platform's operations, calls them as the person who started the run, and reads the agent docs.
+  Operations cover skills, agents, agent templates, plugins, marketplaces, requests, connectors and
+  extensions (`skills.*`, `agents.*`, `plugins.*`, ...); results never carry secrets, and a super admin
+  sees other orgs as counts only. Reads run; writes ask the person to confirm, and org and platform
+  writes are confirmed every time and never remembered (`approval.scope_not_allowed` for any other
+  scope). Tool policies can be keyed per call (`Platform:<operation>`); an approval stores its
+  kernel-rendered summary (zh and en) and runs only with the exact input it showed. Confirmations show
+  the operation and the summary on the web and in IM cards, and offer only the scopes the approval
+  allows. Orgs gain the `platformTool` setting (`on` / `read-only` / `off`, default on) on the
+  organization settings page; writes are unavailable when no person is present. Audit events of writes
+  made through the tool carry `{ via: "agent", conversationId, runId, operation }`. `describe` lists an
+  operation's notable errors and paged lists take `params.cursor`. `check:platform-ops` fails a kernel
+  HTTP route that has neither an operation nor a reasoned exclusion.
+- a965a1a: Plugin scope: enterprise plugins have a scope (all, optional, named orgs), built-in and disabled states, and the org switch, requests (access, import, enable) and a scope sync worker replace the catalog policy, grants and the install-deployment step. Importing a plugin installs its extension; the admin plugin and extension pages and the workspace plugin and extension pages move accordingly.
+- 7278dec: Plugin scope phase 2: a plugin's skills, agent templates and connector templates are platform
+  components, stored once for the deployment (migration 0081: `platform_skills`,
+  `platform_agent_templates`, `platform_connector_templates` and their versions, files under
+  `deployment/platform/`) and resolved at read time in each org where they are on; an org install no
+  longer copies skills or agent templates. A component follows its plugin's scope or has its own
+  (`/api/v1/admin/components/*`, preview then confirm), org admins switch single components off or on
+  (`PUT /api/v1/orgs/:orgId/components/:kind/:id/switch`), and a super admin uploads a new component
+  version on its own. The worker job `platform-components-migrate` (migration 0082) links org copies
+  made by earlier installs to their platform components under their own ids (agent definitions and
+  conversation logs are not rewritten; a copy changed in the org is pinned to its version) and renames,
+  in its first run only, an org's own skill whose name a platform skill on in the org has, with an inbox
+  notice. The per-org plugin upgrade routes are removed: the super admin updates a platform plugin once
+  (`POST /api/v1/admin/catalog/items/:id/update/preview`, `PUT …/update` with `diffHash`), which moves
+  its extension, components and every org install; connectors follow their template through
+  `platform_template_id`, and an org creates connectors for added templates with
+  `POST /api/v1/orgs/:orgId/catalog/:itemId/connectors`. The admin console gets 技能, 连接器模板 and
+  智能体模板 pages with scope dialogs and version history, and the plugin detail's platform update
+  preview.
+  An org install or switch takes no `version` any more (400): an org installs the platform version, and
+  dependencies resolve to their platform version (refused when it does not satisfy the range). A
+  version-pinned org copy follows its platform component's availability (disable, switch-off, scope
+  removal, uninstall) and counts in the previews' affected agents. The marketplace import default and
+  the market row's version use one order.
+- 77de995: A sub-agent's approval, question or connect card, at any depth, is shown in the root conversation
+  of its tree: `subagent_waiting` is appended to the root's log (no longer to the direct parent's)
+  and gains `path`, the child conversation ids from the root's child down to the waiting agent. The
+  approval still goes to the trigger account inherited down the chain. "Approve for this
+  conversation" grants of sub-agents are stored on and read from the root conversation, so every
+  agent of the tree uses them, and the inbox links a sub-agent's approval to
+  `/chat/<root>?subagent=<id>`.
+- 11f56fa: Sub-agent depth, tree budget and per-conversation concurrency (agent map spec §6). New config
+  `subagents.maxDepth` (1–5, default 3, hot) with an org override `maxDepth` in
+  `subagentLimitOverrides`; `subagents.maxConcurrentPerRun` is renamed
+  `subagents.maxConcurrentPerConversation` (config, env var and override key) and counts the active
+  children of the parent conversation across its runs. Set `CAPYBARA_SUBAGENTS__MAX_CONCURRENT_PER_CONVERSATION`
+  in place of `CAPYBARA_SUBAGENTS__MAX_CONCURRENT_PER_RUN`: the old env var and file key are ignored
+  (the default 4 applies). Stored org overrides are migrated to the new key. Dispatch and token caps count the whole tree on
+  its budget run (`runs.budget_run_id`, null for a person-triggered run). Migration 0074 adds
+  `conversations.subagent_depth`, `runs.budget_run_id`, `subagent_dispatches.budget_run_id` and
+  `subagent_dispatches.for_skill`.
+- 927fad3: Stopping a sub-agent (`POST …/conversations/:id/abort` on its conversation) stops it and every
+  sub-agent below it; the root conversation's stop still stops only its own run. Deleting a root
+  conversation stops its whole sub-agent tree, and the wait sweep stops what a crash left running in
+  a deleted tree. A conversation's background task list and stop routes include the tasks of every
+  sub-agent below it, grandchildren too.
+- 7a1e1ae: A sub-agent's delivery wakes its idle parent under the background task rules (the 60 s window,
+  the paused queue, the trigger account's access), and a sub-agent is woken by its own background
+  tasks and by deliveries from its own sub-agents; for a sub-agent the queue and the access checks
+  are read on the root conversation. A wake run runs as the trigger account of the child run that
+  delivered (or the task's), records `run_started.trigger: "subagent"` for a delivery and counts
+  against the tree's budget window. A finished background sub-agent no longer stops its running
+  background tasks. `runtime.wakeOnBackgroundTask` covers both kinds of wake.
+  Every run of a sub-agent that ends, a wake run included, delivers its finish to the parent; a
+  stopped sub-agent's finish never wakes anyone, a stopped sub-agent's background tasks all stop
+  (`stoppedBy: "subagent_end"`), and resuming a root's queue releases the wakes it held for its tree.
+- 0e38b13: The deployment-level role "enterprise admin" is now "super admin" (breaking, no compatibility
+  aliases). Migration `0080_rename_enterprise_admin.sql` renames `accounts.is_enterprise_admin` to
+  `is_super_admin` and the stored deployment setting `orgCreation: "enterprise_admin"` to
+  `"super_admin"`; historical audit rows are not rewritten. API: the account field
+  `isEnterpriseAdmin` is `isSuperAdmin` (`GET /api/v1/me`, the admin account list and
+  `PATCH /api/v1/admin/accounts/:id`), account creation takes `superAdmin`, `orgCreation` accepts
+  `"anyone" | "super_admin"`, and the error code `account.last_enterprise_admin` is
+  `account.last_super_admin`. Kernel exports: the `SuperAdmin` route decorator, `SuperAdminLock` /
+  `SuperAdminLockModule`, `AccountsService.countSuperAdmins` / `createSuperAdmin` /
+  `createSuperAdminIfNone` / `setSuperAdminByLogin`, `authorizeSuperAdmin`.
+  
+  Deploying: migration 0080 renames a column, so replace all replicas at once; a rolling upgrade
+  across this version breaks the replicas still running the old code.
+- 26e8757: Workspace platform components: the 技能 page lists the org's own skills and the platform skills offered to the org with their state and the org admin's switch (已启用 · 平台统一 for `all`), a new 智能体模板 page lists agent templates the same way, the plugin detail lists its components with per-component switches, and an installed plugin missing a connector offers 补充配置. The kernel adds `GET /orgs/:orgId/components`, serves a linked skill copy's detail as its platform skill, and names the missing connector templates in the org catalog detail. The agent editor treats linked copy ids as their platform skill or template; the inbox shows decided requests.
+
+### Patch Changes
+
+- f222ff8: Agent templates describe a whole agent: `selectedSkills`, `connectors` (a connector template of the
+  plugin, or a described need), `subagents` (general, template types, inline types), `modelRef`,
+  `quickActions` and `instructionFiles`, all optional with limits; existing files parse unchanged.
+  A connector entry may carry `policies` (tool name to `ask` / `deny`); an inline sub-agent's
+  `tools` is optional (absent = all of the agent's tools, `[]` = none).
+  A sub-agent dispatch resolves a template's `selectedSkills` names without pinning them.
+- 3a4b54b: The agent page's Tools section puts each tool's policy on its row (a new `ToolPolicyList`): the
+  built-in tools stay in the card, and each extension or connector is one row with a summary that
+  opens a Sheet with its tools, select-all and a filter. A connector can now be taken tool by tool.
+  The connector detail's tools carry their display `title`.
+- da49ebd: The catalog's pending check reads only the packages of the items it shows: a bootstrap confirm no
+  longer reads every installed extension package before the object store is loaded and no longer
+  logs a warning with a stack for each one it cannot read yet.
+- 3c0ad62: A conversation's history loads from the end: the page paints the log's last page and reads earlier
+  pages as the reader scrolls up, without moving what is on screen. `GET …/conversations/:id/events`
+  takes `before=<seq>` or `before=end` for a turn-aligned page (it starts after a run's end) with
+  `turnsBefore`, the runs started before it. Sub-agents, usage and background tasks are read from
+  the server when the loaded part may hide them.
+- abc772e: Switching on an extension whose org config has a required field that was never saved is refused
+  with the plain 400 `extension.config_invalid` and its field issues before the plugin installs
+  (no 502 `plugin.install_failed`); a `config` sent in the same PUT goes into the install. On the
+  扩展 page the switch of such an extension waits for the config (先填写组织级配置再启用), the
+  config form offers 保存并启用 (config and switch in one PUT), and a refused config marks the
+  form's fields.
+- 8ee4c6c: A streaming reply is a live draft kept in Redis (coalesced to 200 ms, 10 minute TTL) and sent on the conversation stream as `event: draft` after the catch-up, so another replica or a reload sees the current text. `GET /api/v1/orgs/:orgId/conversations/:id/runs/:runId/draft` returns the drafts of a run (`[]` on a Redis error). Drafts are never written to the event log and never replayed.
+- 3adad42: `GET /api/v1/orgs/:orgId/extensions` gives every extension's `provides` (the extension point names
+  only), also to members, whose projection still leaves out config, secrets, the config schema and
+  the permission list: the 扩展 page sorts members' lists by capability too.
+- 8fd18a1: An extension tool is unavailable in an org whose effective config of the extension is not valid
+  (reason `Plugin <name> needs configuration in this organization`), so the model never gets it.
+- 9e90494: Bootstrap plugin `openai-compatible` moves to 0.1.0-rc.2: the DeepSeek dialect sends
+  mid-conversation system notices (sub-agent reports, background notices, tool-change reminders) as
+  in-place `[system]` user turns, so DeepSeek no longer moves them ahead of the conversation.
+- e40774d: Every org-bound extension call (web search / fetch, directory sync, extension tools, UI views and actions, file previews, hooks including `usage.report`) carries the extension's effective config for the org; an org whose effective config is not valid gets no call (excluded from point resolution and directory sync, tool not dispatched, UI 409 `extension.needs_config`, previewers left out, policy hooks deny and observe hooks are skipped). The CLI context now provides `CacheService`, which `capybara extensions` commands need.
+- e0a0d60: Deployment config fields carry org levels (hidden, read-only, overridable). The platform may leave
+  required overridable fields empty: the extension still loads, its admin config view lists them in
+  `orgMustConfigure` and tags each field with `org`.
+- ffc33a2: Orgs may keep their own copy of an extension's overridable deployment config
+  (`/api/v1/orgs/:orgId/extensions/:extension/overrides`: view, save, take, reset); platform secrets
+  never enter a copy. The org extension list reports `overrideState` and `needsConfig`, and the admin
+  lists the org copies of an extension (`/api/v1/admin/extensions/:name/org-overrides`).
+- 45d7275: Org admins turn off single extension tools (`GET` / `PUT /api/v1/orgs/:orgId/extensions/:extension/tools[/:tool]`):
+  switching off is previewed with the org's agents that selected the tool and confirmed with its
+  hash; a turned-off tool is unavailable to every agent of the org, refused if called, and marked
+  `switchedOff` in the agent editor's tool list. Audit `extension.tool_switched`.
+- cc21d5c: Plugin and component management acceptance fixes.
+  
+  - The org's offered components (`GET /api/v1/orgs/:orgId/components`) and a platform skill in the
+    org's skill library and detail carry their `owner` (the platform, or the org that owns it). The
+    workspace pages name the owner from it everywhere: 本组织 for the org's own upload, the owner
+    org's name for another org's shared item, 平台 only for the platform's.
+  - Row and page head actions show their pending state until the call settles; menus never draw an
+    empty group or a stray separator.
+  - Plugin notices (`upload_confirmed`, `upload_rejected`, `item_shared`,
+    `shared_item_updated`) carry the plugin's `displayName`; the
+    inboxes lead each row with the item's display name, keep its version whole beside it
+    (`v0.1.0`) and give the list column more room.
+  - Plugin and component details are one centred column (facts as a KeyValue, actions and 删除 in
+    the head, the license folded at the end); review and detail sections have real headings.
+  - The `/` skill menu on an agent with no invocable skills explains why and links editors to the
+    agent's skills.
+- bdf5eba: `POST /api/v1/orgs/:orgId/conversations/:id/queue` is deprecated and now behaves as `POST …/messages`: the message is logged at once (an interjection while a run is active, a new run otherwise) and the route answers `202 { event }` instead of `201 { item }`. Nothing new is queued; items already queued by an earlier version are still sent by the dispatcher after each run and can still be listed, edited, deleted, sent now or resumed. The queue routes and the `conversation_queue` table are removed in a later release.
+- 703c779: Generated conversation titles are shorter: the title prompt asks for a short noun-phrase topic of
+  what the user asked (not the reply), and a generated title is capped at 48 display width (CJK counts
+  2), cut on a character boundary. Renames keep their 120-character limit.
+- cfee6f0: The model is told when its tool set changes mid-conversation: a step whose resolved tools differ
+  from the previous request's logs a `tools_changed` event (added and removed tool names) before its
+  request, rendered as a system message ("Your tools changed. Now available: … No longer available:
+  …"). Step replay rebuilds it from the log with zero drift; the web timeline ignores it.
+- Updated dependencies [f222ff8]
+- Updated dependencies [7c8d05e]
+- Updated dependencies [2a12327]
+- Updated dependencies [12fd552]
+- Updated dependencies [fddab56]
+- Updated dependencies [99a00cd]
+- Updated dependencies [2fb7d41]
+- Updated dependencies [6b4da7f]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.3
+
 ## 0.1.0-rc.4
 
 ### Minor Changes

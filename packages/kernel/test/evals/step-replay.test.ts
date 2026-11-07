@@ -223,6 +223,29 @@ describe("replayStep", () => {
     expect(out.baseline.content).toEqual([{ type: "text", text: "the answer is 42" }]);
   });
 
+  it("a candidate model disabled in the snapshot's org is refused before any request (spec B §5.3)", async () => {
+    const disable = (models: string[], enable: string[] = []) =>
+      owner({
+        method: "PATCH",
+        url: `/api/v1/orgs/${orgId}/models/model-eval/disabled`,
+        payload: { disable: models, enable },
+      });
+    expect((await disable(["eval-1"])).statusCode).toBe(200);
+    try {
+      const err = await replayStep(
+        deps(),
+        snap,
+        firstCall(),
+        resolveCandidate(base(), { model: { provider: "model-eval", model: "eval-1" } }),
+        new AbortController().signal,
+      ).catch((e: unknown) => e);
+      expect(err).toMatchObject({ code: "agent.model_unavailable" });
+      expect(evalModelState().requests).toHaveLength(0);
+    } finally {
+      expect((await disable([], ["eval-1"])).statusCode).toBe(200);
+    }
+  });
+
   it("changed instructions reach the system prompt", async () => {
     await replayStep(
       deps(),

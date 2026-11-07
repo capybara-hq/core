@@ -1,5 +1,6 @@
 import { fileURLToPath } from "node:url";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
+import { Redis } from "ioredis";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
@@ -10,6 +11,7 @@ import {
   type PurposeView,
   withDeclaredByNames,
 } from "../../src/models/purposes.js";
+import { ProviderListError, ProviderRegistry } from "../../src/runtime/providers.js";
 import { evalModelState, resetEvalModel } from "../fixtures/plugins/model-eval/index.js";
 import { truncateTables } from "../helpers/db.js";
 import { accountsFor } from "../helpers/identity.js";
@@ -33,26 +35,40 @@ import {
 const MODEL_EVAL = fileURLToPath(
   new URL("../fixtures/plugins/model-eval/index.ts", import.meta.url),
 );
+const EMBED_CONSUMER = fileURLToPath(
+  new URL("../fixtures/plugins/embed-consumer/index.ts", import.meta.url),
+);
 
 let pgc: TestContainer;
 let rd: TestContainer;
 let raw: ReturnType<typeof createDb>;
 let db: KernelSchemaDb;
 let k: TestKernel;
+let redis: Redis;
 
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
   raw = createDb(pgc.url, 3);
   db = kernelDb(raw);
+  redis = new Redis(rd.url);
   k = await startKernel(
     runConfig(
       { pg: pgc.url, redis: rd.url },
-      { roles: ["api"], extensions: [MODEL_FAKE, MODEL_EVAL] },
+      {
+        roles: ["api"],
+        extensions: [MODEL_FAKE, MODEL_EVAL, EMBED_CONSUMER],
+        extensionConfig: {
+          "model-fake": {
+            models: [{ id: "fake-1" }, { id: "fake-embed", kind: "embedding", dimensions: [4] }],
+          },
+        },
+      },
     ),
   );
 }, 120_000);
 afterAll(async () => {
   await k?.close();
+  redis?.disconnect();
   await raw?.destroy();
   await Promise.all([pgc?.stop(), rd?.stop()]);
 });
@@ -68,8 +84,11 @@ let orgId: string;
 beforeEach(async () => {
   await truncateTables(
     raw,
-    "capybara.model_purpose_mappings, capybara.audit_events, capybara.memberships, capybara.orgs, capybara.deployment_settings, capybara.sessions, capybara.local_passwords, capybara.identities, capybara.accounts",
+    "capybara.model_disabled, capybara.model_purpose_mappings, capybara.audit_events, capybara.memberships, capybara.orgs, capybara.deployment_settings, capybara.sessions, capybara.local_passwords, capybara.identities, capybara.accounts",
   );
+  // the disabled lists are cached in Redis (evicted only by writes)
+  const cached = await redis.keys("cache:capk:model-disabled:*");
+  if (cached.length > 0) await redis.del(...cached);
   resetEvalModel();
   const accounts = accountsFor(db);
   entId = (
@@ -154,7 +173,11 @@ describe("purpose list", () => {
       },
     ]);
     const views = await list(ent, adminUrl());
-    expect(views.map((v) => v.purpose)).toEqual([...KERNEL, "model-eval.summarize"]);
+    expect(views.map((v) => v.purpose)).toEqual([
+      ...KERNEL,
+      "model-eval.summarize",
+      "embed-consumer.memory",
+    ]);
     expect(find(views, "eval")).toEqual({
       purpose: "eval",
       kind: "chat",
@@ -173,9 +196,14 @@ describe("purpose list", () => {
       declaredByName: null,
       effective: null,
     });
+    expect(find(views, "embed-consumer.memory")).toMatchObject({
+      kind: "embedding",
+      declaredBy: "embed-consumer",
+    });
     expect((await list(admin, orgUrl())).map((v) => v.purpose)).toEqual([
       ...KERNEL,
       "model-eval.summarize",
+      "embed-consumer.memory",
     ]);
   });
 });
@@ -311,6 +339,118 @@ describe("effective 与解析", () => {
     expect(
       await put(ent, adminUrl("eval"), { model: { provider: "model-eval", model: "eval-j" } }),
     ).toMatchObject({ default: J });
+  });
+});
+
+describe("kinds and disabled models (spec B §5.3)", () => {
+  const FAKE_1 = { model: { provider: "model-fake", model: "fake-1" }, params: {} };
+  const EMBED = { model: { provider: "model-fake", model: "fake-embed" }, params: {} };
+  const disable = (req: Req, url: string, change: { disable?: string[]; enable?: string[] }) =>
+    req({ method: "PATCH", url, payload: change });
+  const orgDisabledUrl = () => `/api/v1/orgs/${orgId}/models/model-fake/disabled`;
+
+  it("a target's kind must equal the purpose's kind", async () => {
+    for (const [req, url] of [
+      [ent, adminUrl("embed-consumer.memory")],
+      [admin, orgUrl("embed-consumer.memory")],
+    ] as const) {
+      const res = await req({ method: "PUT", url, payload: { target: FAKE_1 } });
+      expect(res.statusCode, res.body).toBe(400);
+      expect(errCode(res)).toBe("validation_failed");
+      expect(res.body).toContain("needs an embedding model");
+    }
+    const chat = await admin({ method: "PUT", url: orgUrl("eval"), payload: { target: EMBED } });
+    expect(chat.statusCode, chat.body).toBe(400);
+    expect(chat.body).toContain("needs a chat model");
+    expect(await put(admin, orgUrl("embed-consumer.memory"), EMBED)).toMatchObject({
+      effective: EMBED,
+    });
+    expect(await k.app.get(ModelPurposesService).resolve(orgId, "embed-consumer.memory")).toEqual(
+      EMBED,
+    );
+  });
+
+  it("an org override on a model disabled in the org is refused", async () => {
+    expect((await disable(admin, orgDisabledUrl(), { disable: ["fake-1"] })).statusCode).toBe(200);
+    const res = await admin({ method: "PUT", url: orgUrl("title"), payload: { target: FAKE_1 } });
+    expect(res.statusCode, res.body).toBe(400);
+    expect(errCode(res)).toBe("validation_failed");
+    // the deployment default is checked against the platform's list only
+    expect(await put(ent, adminUrl("title"), FAKE_1)).toMatchObject({ default: FAKE_1 });
+  });
+
+  it("a default disabled in an org makes the purpose unconfigured there only", async () => {
+    await put(ent, adminUrl("title"), FAKE_1);
+    const other = await createOrg(owner, "Other");
+    const purposes = k.app.get(ModelPurposesService);
+    expect((await disable(admin, orgDisabledUrl(), { disable: ["fake-1"] })).statusCode).toBe(200);
+    await expect(purposes.resolve(orgId, "title")).rejects.toMatchObject({
+      code: "model.unconfigured",
+    });
+    expect(await purposes.resolve(other, "title")).toEqual(FAKE_1);
+    // the org's view still shows the mapping; only resolving treats it as unconfigured
+    expect(find(await list(admin, orgUrl()), "title")).toMatchObject({ effective: FAKE_1 });
+    // an override disabled later is unconfigured too (no silent fall back to the default)
+    expect((await disable(admin, orgDisabledUrl(), { enable: ["fake-1"] })).statusCode).toBe(200);
+    await put(admin, orgUrl("title"), FAKE_1);
+    expect(
+      (await disable(ent, "/api/v1/admin/models/model-fake/disabled", { disable: ["fake-1"] }))
+        .statusCode,
+    ).toBe(200);
+    await expect(purposes.resolve(orgId, "title")).rejects.toMatchObject({
+      code: "model.unconfigured",
+    });
+    await expect(purposes.resolve(other, "title")).rejects.toMatchObject({
+      code: "model.unconfigured",
+    });
+  });
+});
+
+describe("a target the org cannot use", () => {
+  it("a default missing from the org's own provider list is unconfigured there only", async () => {
+    const FAKE_1 = { model: { provider: "model-fake", model: "fake-1" }, params: {} };
+    await put(ent, adminUrl("title"), FAKE_1);
+    const other = await createOrg(owner, "Other");
+    const purposes = k.app.get(ModelPurposesService);
+    // the org keeps its own copy of model-fake's config, whose list has no fake-1
+    for (const [url, payload] of [
+      [`/api/v1/orgs/${orgId}/extensions/model-fake`, { enabled: true }],
+      [
+        `/api/v1/orgs/${orgId}/extensions/model-fake/overrides`,
+        { values: { models: [{ id: "mine" }] } },
+      ],
+    ] as const) {
+      const res = await owner({ method: "PUT", url, payload });
+      expect(res.statusCode, res.body).toBe(200);
+    }
+    await expect(purposes.resolve(orgId, "title")).rejects.toMatchObject({
+      code: "model.unconfigured",
+    });
+    expect(await purposes.resolve(other, "title")).toEqual(FAKE_1);
+  });
+
+  it("a provider whose list fails keeps the mapping; the call itself then fails retryably", async () => {
+    await put(ent, adminUrl("title"), J);
+    const purposes = k.app.get(ModelPurposesService);
+    const clear = async () => {
+      for (const pattern of ["cache:*", "capk:models-failed:*"]) {
+        const keys = await redis.keys(pattern);
+        if (keys.length > 0) await redis.del(...keys);
+      }
+    };
+    await clear();
+    evalModelState().listFails = true;
+    try {
+      expect(await purposes.resolve(orgId, "title")).toEqual(J);
+      const err = await k.app
+        .get(ProviderRegistry)
+        .resolve(orgId, J.model)
+        .catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(ProviderListError);
+    } finally {
+      evalModelState().listFails = false;
+      await clear();
+    }
   });
 });
 

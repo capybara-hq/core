@@ -730,6 +730,25 @@ export interface EmbedClaims {
 }
 
 // @public
+export interface EmbeddingRequestHookPayload {
+    accountId?: undefined;
+    agentId?: undefined;
+    agentVersion?: undefined;
+    conversationId?: undefined;
+    dimensions?: number;
+    embeddingPurpose: string;
+    extension: string;
+    input: readonly string[];
+    inputType?: "query" | "document";
+    model: string;
+    orgId: string;
+    parent?: undefined;
+    provider: string;
+    purpose: "embedding";
+    runId?: undefined;
+}
+
+// @public
 export type EmbedParentMessage = {
     protocol: typeof EMBED_PROTOCOL;
     type: "init";
@@ -763,6 +782,22 @@ export type EmbedParentMessage = {
     size: number;
     data: ArrayBuffer;
 };
+
+// @public
+export interface EmbedRequest {
+    dimensions?: number;
+    input: string[];
+    inputType?: "query" | "document";
+    model: string;
+}
+
+// @public
+export interface EmbedResult {
+    usage: {
+        inputTokens: number;
+    };
+    vectors: number[][];
+}
 
 // @public
 export interface EntryImport {
@@ -841,6 +876,7 @@ export interface ExtensionContext {
         }): Promise<Lease | null>;
     };
     log: Logger;
+    models: ExtensionModels;
     provide(extensionPoint: ExtensionPointRef, impl: unknown): void;
     queue: {
         define<T>(name: string, handler: (data: T) => Promise<void>, opts?: {
@@ -873,6 +909,26 @@ export interface ExtensionContext {
 }
 
 // @public
+export interface ExtensionEmbedRequest {
+    dimensions?: number;
+    input: string[];
+    inputType?: "query" | "document";
+    orgId: string;
+    purpose: string;
+    signal?: AbortSignal;
+}
+
+// @public
+export interface ExtensionEmbedResult {
+    dimensions: number;
+    model: {
+        provider: string;
+        id: string;
+    };
+    vectors: number[][];
+}
+
+// @public
 export interface ExtensionManifest {
     config?: {
         deployment?: z.ZodTypeAny;
@@ -894,6 +950,23 @@ export interface ExtensionManifest {
 // @public
 export class ExtensionManifestError extends Error {
     constructor(plugin: string, message: string);
+}
+
+// @public
+export interface ExtensionModels {
+    describe(req: {
+        orgId: string;
+        purpose: string;
+    }): Promise<ExtensionModelTarget | null>;
+    embed(req: ExtensionEmbedRequest): Promise<ExtensionEmbedResult>;
+}
+
+// @public
+export interface ExtensionModelTarget {
+    embedding?: ModelEmbeddingInfo;
+    id: string;
+    kind: ModelKind;
+    provider: string;
 }
 
 // @public
@@ -1419,7 +1492,31 @@ export const MODEL_PROVIDER_EXTENSION_POINT = "model-provider@1";
 export const MODEL_PROVIDER_EXTENSION_POINT_V2 = "model-provider@2";
 
 // @public
+export interface ModelCallOptions {
+    config?: unknown;
+    orgId?: string;
+}
+
+// @public
 export type ModelCallPurpose = "step" | "compaction" | "title" | "web_fetch";
+
+// @public
+export interface ModelCallRequestHookPayload extends HookScope {
+    attempt: number;
+    model: string;
+    provider: string;
+    purpose: ModelCallPurpose;
+    request: Readonly<HookModelRequest>;
+    step: number;
+}
+
+// @public
+export interface ModelEmbeddingInfo {
+    defaultDimensions: number;
+    dimensions: number[];
+    maxBatch: number;
+    maxInputTokens: number;
+}
 
 // @public
 export class ModelError extends Error {
@@ -1447,10 +1544,15 @@ export interface ModelInfo {
         effort?: boolean;
     };
     contextWindow: number;
+    description?: LocalizedName | string;
     displayName: string;
+    embedding?: ModelEmbeddingInfo;
     id: string;
+    kind?: ModelKind;
     maxOutputTokens: number;
     parameters: ModelParameter[];
+    publisher?: string;
+    retiresAt?: string;
     streamIdleTimeoutMs?: number;
 }
 
@@ -1460,6 +1562,9 @@ export type ModelInfoV1 = Omit<ModelInfo, "parameters" | "capabilities"> & {
         effort: boolean;
     };
 };
+
+// @public
+export type ModelKind = "chat" | "embedding" | "rerank" | "image_generation" | "video_generation" | "speech_to_text" | "text_to_speech";
 
 // @public
 export type ModelMessage = {
@@ -1493,10 +1598,13 @@ export interface ModelParameter {
 
 // @public
 export interface ModelProvider {
-    listModels(): Promise<ModelInfo[]>;
+    embed?(req: EmbedRequest, opts: {
+        signal: AbortSignal;
+    } & ModelCallOptions): Promise<EmbedResult>;
+    listModels(opts?: ModelCallOptions): Promise<ModelInfo[]>;
     stream(req: ModelRequest, opts: {
         signal: AbortSignal;
-    }): AsyncIterable<ModelStreamEvent>;
+    } & ModelCallOptions): AsyncIterable<ModelStreamEvent>;
 }
 
 // @public
@@ -1524,14 +1632,7 @@ export interface ModelRequest {
 }
 
 // @public
-export interface ModelRequestHookPayload extends HookScope {
-    attempt: number;
-    model: string;
-    provider: string;
-    purpose: ModelCallPurpose;
-    request: Readonly<HookModelRequest>;
-    step: number;
-}
+export type ModelRequestHookPayload = ModelCallRequestHookPayload | EmbeddingRequestHookPayload;
 
 // @public
 export type ModelRequestV1 = Omit<ModelRequest, "params" | "toolChoice">;
@@ -2006,7 +2107,7 @@ export function sanitizeParams(decl: ModelParameter[], params: Record<string, un
 };
 
 // @public
-export const SDK_VERSION = "0.1.0-rc.2";
+export const SDK_VERSION = "0.1.0-rc.4";
 
 // @public
 export function secret<T extends z.ZodTypeAny>(schema: T): T;
@@ -2370,22 +2471,23 @@ export interface UiView {
 }
 
 // @public
-export type UsagePurpose = ModelCallPurpose;
+export type UsagePurpose = ModelCallPurpose | "embedding";
 
 // @public
 export interface UsageReportPayload {
-    accountId: string;
-    agentId: string;
-    conversationId: string;
-    conversationKind: "chat" | "eval";
+    accountId?: string;
+    agentId?: string;
+    conversationId?: string;
+    conversationKind?: "chat" | "eval";
     eventId: string;
+    extension?: string;
     model: string;
     occurredAt: string;
     orgId: string;
     parent?: HookParentScope;
     provider: string;
     purpose: UsagePurpose;
-    runId: string;
+    runId?: string;
     usage: ModelUsage;
 }
 
@@ -2403,6 +2505,9 @@ export function validateConfigUi(schema: JsonSchema, level: "deployment" | "org"
 
 // @public
 export function validateConnectorTemplate(t: unknown): string[];
+
+// @public
+export function validateEmbedResult(req: EmbedRequest, info: ModelEmbeddingInfo, res: EmbedResult): string | null;
 
 // @public
 export function validateFilePreviewProvider(p: unknown): string[];

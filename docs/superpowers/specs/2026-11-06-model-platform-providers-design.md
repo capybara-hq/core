@@ -1,7 +1,14 @@
 # Model platform providers: DeepSeek, Alibaba Bailian, Volcengine Ark
 
-Status: design, 2026-11-07, waiting for review. Builds on the platform / org layering design
-(`2026-11-07-platform-org-layering-design.md`, cited as "A"): §5.3 (two-layer model disabling) and
+Status: core part implemented on `feat/model-platform-core` (plan
+`docs/superpowers/plans/2026-11-07-model-platform-core.md`, migration `0089_model_kinds_usage.sql`):
+SDK kinds / `embed` / `ModelCallOptions`, kernel enablement and `ctx.models`, web model catalog and
+disabling, conformance and model-fake changes; the three plugins (§6) are not started. Error code
+added: `model.provider_not_found` (404). Routes added: `GET /api/v1/orgs/:orgId/models/catalog` and
+`PATCH /api/v1/orgs/:orgId/models/:provider/disabled` (`org.models.manage`), and the platform's
+`PATCH /api/v1/admin/models/:provider/disabled`, both with the body `{ disable, enable }`; config
+added: `models.listTimeoutMs`, `models.embedTimeoutMs`. Design 2026-11-07. Builds on the platform /
+org layering design (`2026-11-07-platform-org-layering-design.md`, cited as "A"): §5.3 (two-layer model disabling) and
 §5.5 (org keys through A's overridable fields and per-call effective config) were revised to it on
 2026-11-07. Re-checked against `main` at `76b32e10`.
 
@@ -180,13 +187,20 @@ Errors are `ModelError` with the existing kinds; no retries inside the extension
   - Agent save and the agent model picker: only enabled `chat` models.
   - Run time (`resolve` in the org's context): a model that was enabled when the agent was saved and
     is disabled now fails the run step with `agent.model_unavailable`, through the existing
-    degradation ladder. Replays are not affected (they never call a provider).
+    degradation ladder. Conversation reconstruction never calls a provider and is not affected;
+    eval step and full-run replays do call the candidate's provider (`evals/step-replay.ts`,
+    `evals/run-replay.ts`), so they resolve in the case snapshot's org and require the candidate
+    enabled there, like eval candidate checks (`evals/runs.service.ts`) **(designer's call,
+    2026-11-07)**.
   - Purpose targets (deployment default and org override): the target's kind must equal the
     purpose's kind, and an org's effective target must be enabled in that org; a deployment default
     that the org disabled counts as unconfigured for that org (`model.unconfigured`).
   - `ctx.models` (§5.4): enabled and of the right kind.
-- Writes: an org route setting the org's disabled ids of a provider (`org.models.manage`) and an
-  admin route setting the platform's (super admin), both audited, `@Transactional`, evicting cached
+- Writes: an org route changing the org's disabled ids of a provider (`org.models.manage`) and an
+  admin route changing the platform's (super admin). Each write is a delta `{ disable: string[],
+  enable: string[] }`: ids in neither list keep their stored state (a page never drops ids it does
+  not show, such as a platform-disabled model or one the provider stopped listing), and an id in
+  both is 400 `validation_failed`. Both are audited, `@Transactional`, evicting cached
   views after commit; bulk forms (disable a whole kind or publisher) are the builder's. Disabling a
   model that an agent or a purpose override uses is allowed; the response lists the affected agents
   and purposes (for a platform disable, across orgs) so the page can warn (the builder decides
@@ -210,9 +224,21 @@ Errors are `ModelError` with the existing kinds; no retries inside the extension
   settings page shows and changes this mapping rather than storing a model id of its own; how it
   reaches the mapping from an extension page (a link to `/settings/models#<purpose>`, or a
   `ctx.models` setter) is decided in the memory design. Provider plugins never declare purposes.
-- Usage: each `embed` call writes a usage record (provider, model, purpose, org, input tokens)
-  where kernel purpose calls record usage today, and fires the `usage.report` hook; no conversation
-  event (it is not part of a conversation). Cost uses the price table's input price.
+- Usage: today usage lives only in conversation `usage` events, and the `usage.report` pipeline
+  (job id, sweeper, payload) is keyed on them; an `embed` call has no conversation. So each `embed`
+  call writes a row in a new kernel table of model usage outside conversations (org, extension,
+  purpose, provider, model, input tokens, time), and **fires `usage.report` too (decided,
+  2026-11-07)**: `UsagePurpose` gains `"embedding"`, and the payload's conversation fields
+  (`accountId`, `agentId`, `conversationId`, `conversationKind`, `runId`) become optional, absent
+  for `embedding` (an SDK type change; handlers reading them must accept their absence). The job id
+  and the sweeper cover the new table's rows (`eventId` = the row id), at least once as today. No
+  conversation event. Cost uses the price table's input price.
+- Hooks (**decided, 2026-11-08**): each `embed` call fires `model.request` once, after the target
+  resolves and before the first batch is sent (`purpose: "embedding"`, the calling extension, its
+  embedding purpose, provider, model and every text of the call, no conversation fields), so policy
+  hooks (DLP) see text sent to embedding vendors like every other kernel model call; a policy
+  denial rejects with `model.hook_denied` (403), sends nothing, records no usage and writes one
+  `hook.denied` audit row. `model.response` does not fire for embeddings.
 - Not in scope: `ctx.models` for chat (no consumer yet).
 
 ### 5.5 Credentials and OAuth
@@ -370,3 +396,41 @@ Decided 2026-11-07: every model is enabled by default and disabled on demand, on
 leave the key empty, a copy never carries the platform's key).
 
 Open: none.
+
+Rulings made while building the core part (they refine the sections above):
+
+- `ProviderRegistry.resolve` takes the expected kind: streaming needs `chat`, `embed` needs
+  `embedding`; another kind is refused (§5.1).
+- Model info is validated per model: an invalid entry is dropped, the rest of the list stays.
+- The list cache is per effective config: an org copy's key includes the org id (the config hash
+  masks secrets), orgs following the platform share the platform's key.
+- Org-level provider disabling enforces only an explicit org switch-off; a provider with no switch
+  state stays usable (optional preinstalls keep working). The switch-off read is an uncached PG read
+  per resolve. Platform deployment-default purposes still refuse `org_configured` providers.
+- When an agent's model no longer resolves (gone, disabled, provider not configured in the org) the
+  ladder goes straight to the fallback model; without one the run ends `run.model_unavailable`.
+  Titles, sub-agent tiers and `WebFetch` treat a mapped model that is gone as unmapped and fall back
+  to the conversation's model (§5.3).
+- `ctx.models` needs `permissions.models` (`perm-models`) and an org where the extension is enabled
+  (`extension.not_enabled`); purpose params are not sent to `embed`; batches answered before a later
+  batch fails are still recorded as usage.
+- Timeouts: `models.embedTimeoutMs` per embed batch, `models.listTimeoutMs` per provider list.
+- `usage.report` carries embedding usage with purpose `embedding` and no conversation fields; rows
+  are in `model_usage`, delivered at least once (`report_failed_at` marks a row whose job gave up
+  after its last attempt); each sweep re-enqueues the rows with neither `reported_at` nor
+  `report_failed_at` set whose `occurred_at` is in the bounded window `[watermark − 10 min, now −
+  30 s]` (`USAGE_SWEEP_OVERLAP_MS`, `USAGE_SWEEP_LAG_MS`), the same window as the `usage` events; a
+  row older than the window is not re-enqueued.
+- `ctx.models.embed` fires `model.request` (decided with the user 2026-11-08): the payload is a new
+  union member `EmbeddingRequestHookPayload` (`purpose: "embedding"`, `extension`,
+  `embeddingPurpose` for the declared purpose name, `input`, `dimensions?`, `inputType?`; the
+  conversation fields typed absent), so `ModelRequestHookPayload` becomes a union and handlers
+  narrow on `purpose` before reading `request`. Denials reject with the registered
+  `ApiError("model.hook_denied")` (403, so an escaped error is a 4xx, not a 500) carrying the
+  step's message (`Model request blocked by the "<plugin>" policy hook: <reason>`); uncaught, it
+  answers 403 from an extension route (generic message, nothing echoed to the unauthenticated
+  caller) and becomes the denial text in an extension tool's result;
+  the audit row has no actor and targets the calling extension. The texts are copied once at the
+  start of the call, so the hooks see exactly what is sent; an empty call fires nothing.
+- `ExtensionContext.models` is a required member; plugin test fakes need a models stub (run the
+  plugins repository's typecheck before the release).

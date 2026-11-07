@@ -23,7 +23,14 @@ import {
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import { createZodDto } from "../infra/validation/create-zod-dto.js";
-import { ZBody, ZQuery } from "../infra/validation/zod-params.js";
+import { ZBody, ZParam, ZQuery } from "../infra/validation/zod-params.js";
+import {
+  type ModelDisabledPatch,
+  ModelDisabledPatchDto,
+  type ModelProviderParams,
+  ModelProviderParamsDto,
+} from "../models/enablement.controller.js";
+import { type ModelDisableResult, ModelEnablement } from "../models/enablement.js";
 import {
   MODEL_PRICE_PUT,
   type ModelPrice,
@@ -118,6 +125,7 @@ export class AdminController {
     @Inject(ProviderRegistry) private readonly registry: ProviderRegistry,
     @Inject(CatalogRequestsService) private readonly catalogRequests: CatalogRequestsService,
     @Inject(ExtensionDisplayNames) private readonly displayNames: ExtensionDisplayNames,
+    @Inject(ModelEnablement) private readonly enablement: ModelEnablement,
     @Inject(KernelConfigService) private readonly config: KernelConfigService,
   ) {}
 
@@ -248,7 +256,8 @@ export class AdminController {
   /**
    * 模型供应商与模型（后台「模型」页）：每个供应商带状态，列模型失败的标 `error`，不影响其他供应商；
    * 一并返回价格表与币种（改价仍走 `PUT /admin/model-prices`）。Each provider carries its extension's
-   * display name (null when it has none).
+   * display name (null when it has none); every model of the platform's list carries `disabled`
+   * (the platform's disabled list, spec B §5.3).
    */
   @Get("models")
   async getModels(): Promise<{
@@ -265,6 +274,25 @@ export class AdminController {
       providers: providers.map((p) => ({ ...p, displayName: names.get(p.plugin) ?? null })),
       ...prices,
     };
+  }
+
+  /**
+   * The platform's disabled models of one provider (spec B §5.3): disables and enables the ids the
+   * body names (others keep their state); such a model is invisible to every org. The response
+   * lists the agents and purposes, across orgs, that now point at a newly disabled model (the
+   * disable is not refused for them).
+   */
+  @Patch("models/:provider/disabled")
+  async patchModelsDisabled(
+    @CurrentPrincipal() principal: Principal,
+    @ZParam(ModelProviderParamsDto) params: z.infer<typeof ModelProviderParams>,
+    @ZBody(ModelDisabledPatchDto) body: z.infer<typeof ModelDisabledPatch>,
+  ): Promise<ModelDisableResult> {
+    const actor = requireUser(principal);
+    return this.enablement.setPlatform(params.provider, body, {
+      accountId: actor.account.id,
+      tokenId: patTokenId(actor),
+    });
   }
 
   /** 模型价格表（每百万 token）与币种（部署设置 `priceCurrency`）。 */

@@ -1,6 +1,7 @@
 import type {
   AvailableHook,
   ContentBlock,
+  EmbeddingRequestHookPayload,
   HookContentBlock,
   HookMediaPlaceholder,
   HookModelMessage,
@@ -175,15 +176,54 @@ export function hookDeniedAudit(
       conversationId: at.conversationId,
       runId: at.runId,
       ...(at.agentId !== undefined && { agentId: at.agentId }),
-      // the raw hook error: audit only, never in the conversation event (Ruling R12)
-      ...(denial.detail !== undefined && { error: denial.detail }),
-      ...(denial.preflight
-        ? { preflight: true, firstPolicyPlugin: denial.plugin, causedByPlugin: false }
-        : {}),
-      // M-1: the named plugin is enabled but not loaded on the replica that handled the call
-      ...(denial.notLoaded ? { notLoaded: true } : {}),
-      // layering spec A §6: the named plugin's effective config is not valid in the organization
-      ...(denial.needsConfig ? { needsConfig: true } : {}),
+      ...denialAuditDetail(denial),
+    },
+  };
+}
+
+/** The denial's audit-only fields: the raw hook error and the R10 / M-1 / spec A §6 markers. */
+function denialAuditDetail(denial: HookDenial): Record<string, unknown> {
+  return {
+    // the raw hook error: audit only, never in the conversation event (Ruling R12)
+    ...(denial.detail !== undefined && { error: denial.detail }),
+    ...(denial.preflight
+      ? { preflight: true, firstPolicyPlugin: denial.plugin, causedByPlugin: false }
+      : {}),
+    // M-1: the named plugin is enabled but not loaded on the replica that handled the call
+    ...(denial.notLoaded ? { notLoaded: true } : {}),
+    // layering spec A §6: the named plugin's effective config is not valid in the organization
+    ...(denial.needsConfig ? { needsConfig: true } : {}),
+  };
+}
+
+/**
+ * The `hook.denied` audit entry of a denied embedding call (`ctx.models.embed`, spec B §5.4): no
+ * actor and no conversation; the target is the calling extension. The detail has the same fields
+ * as a conversation denial's (mount, plugin, sanitized reason, cause, raw error, markers) plus the
+ * call's purpose, extension, embedding purpose and model.
+ */
+export function embeddingDeniedAudit(
+  call: Pick<
+    EmbeddingRequestHookPayload,
+    "orgId" | "extension" | "embeddingPurpose" | "provider" | "model"
+  >,
+  denial: HookDenial,
+): AuditEntry {
+  return {
+    orgId: call.orgId,
+    action: "hook.denied",
+    target: call.extension,
+    detail: {
+      mount: "model.request",
+      plugin: denial.plugin,
+      reason: denial.reason,
+      cause: denial.cause,
+      purpose: "embedding",
+      extension: call.extension,
+      embeddingPurpose: call.embeddingPurpose,
+      provider: call.provider,
+      model: call.model,
+      ...denialAuditDetail(denial),
     },
   };
 }

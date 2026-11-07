@@ -46,6 +46,7 @@ import { orgCatalogItemQuery, orgCatalogQuery, orgMarketplaceEntriesQuery } from
 import { channelQuery, channelSchemaQuery, channelsQuery, orgExtensionsQuery } from "./channels";
 import { adminComponentsQuery, componentVersionsQuery, orgComponentsQuery } from "./components";
 import {
+  allModelsQuery,
   attachmentLimitsQuery,
   connectorKindsQuery,
   connectorQuery,
@@ -75,6 +76,7 @@ import { membersQuery } from "./members";
 import {
   extensionPointDefaultsQuery,
   invitationsQuery,
+  modelsCatalogQuery,
   orgFilePreviewersQuery,
   orgPurposesQuery,
   orgSettingsQuery,
@@ -739,7 +741,12 @@ export const ROUTES: readonly RouteEntry[] = [
     queries: ({ orgId, me }) =>
       orgId === null || !atLeast(me, "admin")
         ? []
-        : [q(orgPurposesQuery(orgId)), q(modelsQuery(orgId))],
+        : [
+            q(orgPurposesQuery(orgId)),
+            q(allModelsQuery(orgId)),
+            q(modelsCatalogQuery(orgId)),
+            q(orgExtensionsQuery(orgId)),
+          ],
   },
   {
     pattern: "/settings/organization",

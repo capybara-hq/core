@@ -20,7 +20,10 @@ export interface ExtensionPermissions {
    * on a replica, calls on these mount points fail closed there.
    */
   policyHooks?: PolicyHook[];
-  /** 预留：模型用途，键须为 `<插件名>.<名称>`。 */
+  /**
+   * Model purposes (`ctx.models`): each key must be `<extension name>.<name>`; an org admin maps
+   * each to a model of its `kind`. `ctx.models.embed` / `describe` accept the `embedding` ones.
+   */
   models?: { purpose: string; kind: "chat" | "embedding"; label: { zh: string; en: string } }[];
   /** ctx.storage（对象存储，键限定在 `plugins/<插件名>/<orgId>/` 下）。 */
   storage?: boolean;

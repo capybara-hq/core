@@ -342,6 +342,8 @@
     "model": {
       "unconfigured": "No model is mapped to this purpose yet.",
       "purpose_unknown": "There is no such model purpose.",
+      "hook_denied": "An organization policy denied this model call",
+      "provider_not_found": "No such model provider",
       "rate_limited": "The model provider is rate limiting.",
       "overloaded": "The model provider is overloaded.",
       "server": "The model provider returned an error.",
@@ -3036,6 +3038,35 @@
         "titles": "Generates titles for new conversations. When it is not set, the model of the conversation's latest run is used.",
         "webFetch": "The web fetch tool uses it to extract what is asked from a fetched page. When it is not set, the model of the calling conversation's latest run is used (for a sub-agent's call, the sub-agent's)."
       }
+    },
+    "catalog": {
+      "title": "Models",
+      "orgDescription": "The models this organization can use. A model that is off does not appear in agent and purpose pickers.",
+      "search": "Search models",
+      "publisher": "Publisher",
+      "allPublishers": "All publishers",
+      "turnAllOff": "Turn all off",
+      "turnAllOn": "Turn all on",
+      "retiring": "Retiring",
+      "following": "Following the platform",
+      "orgConfigured": "This org's configuration",
+      "orgsConfigure": "Orgs configure their own",
+      "configure": "Configure",
+      "enabled": "Enabled",
+      "none": "This provider has no models available.",
+      "noMatch": "No models match.",
+      "undo": "Undo",
+      "affected": "These agents or purposes use these models:"
+    },
+    "kind": {
+      "chat": "Chat",
+      "embedding": "Embedding",
+      "rerank": "Rerank",
+      "image_generation": "Image generation",
+      "video_generation": "Video generation",
+      "speech_to_text": "Speech to text",
+      "text_to_speech": "Text to speech",
+      "other": "Other"
     }
   },
   "admin": {

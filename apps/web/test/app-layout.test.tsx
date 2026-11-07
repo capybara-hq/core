@@ -66,6 +66,8 @@ function shellRoutes(readiness: typeof READY) {
     [`GET ${O}/ui/contributions`]: () => json(200, { items: [] }),
     // what the setup step /agents/new prefetches (the agent form's reads)
     [`GET ${O}/models`]: () => json(200, { providers: [] }),
+    [`GET ${O}/models/catalog`]: () => json(200, { providers: [] }),
+    [`GET ${O}/extensions`]: () => json(200, { extensions: [] }),
     [`GET ${O}/connectors`]: () => json(200, { connectors: [] }),
     [`GET ${O}/skills`]: () => json(200, { skills: [] }),
     [`GET ${O}/agent-templates`]: () => json(200, { templates: [] }),

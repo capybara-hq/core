@@ -137,6 +137,7 @@ export const orgExtensionChangeKeys = (orgId: string): (readonly unknown[])[] =>
     k.extensionPointsAvailable(),
     k.extensionTools(),
     k.models(),
+    k.modelsCatalog(),
     k.orgPurposes(),
   ];
 };
