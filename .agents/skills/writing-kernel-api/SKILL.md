@@ -148,7 +148,7 @@ Agent templates and pending connectors (phase 4, spec §15; all human-only, no n
 | `POST /agents/from-template/preview`, `POST /agents/from-template` | `agents.create` (member) | a visibility other than `private` needs `agents.manage` (403 `agent.visibility_forbidden`); the create takes the `previewHash` (409 `agent.template_preview_stale`) |
 | `POST /agents/:agentId/save-as-template`, `PUT` / `DELETE /agent-templates/:id`, `GET …/:id/delete-preview`, `PUT …/:id/shareable` | `agents.manage` (admin) | org templates only; owner-org admins; 409 `agent_template.name_taken` |
 | `POST /agents/:agentId/pending-connectors/:key/bind`, `POST …/request` | `agents.create` (member) | the service then allows only the agent's owner or an org admin+ (re-read in the transaction) |
-| `GET /agents/:agentId/pending-connectors/request` | `agents.use` (guest) | the agent must be visible to the reader |
+| `GET /agents/:agentId/pending-connectors/request` | `agents.use` (guest) | the service then allows only the agent's owner or an org admin+ (another member who sees the agent: 403 `forbidden`; anyone else: 404 `agent.not_found`) |
 | `POST /connector-templates/:templateId/connectors` | `connectors.manage` (admin) | one more connector from a platform connector template |
 | `POST /catalog-requests/:id/decide` on a `connector_setup` request | `catalog.decide` (admin) | rejecting only; configuring is a bind, and the request closes with the last one |
 
