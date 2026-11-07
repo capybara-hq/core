@@ -21,7 +21,7 @@ import NotFound from "../not-found";
  * unknown).
  */
 export default function ChannelsView() {
-  const ws = useWorkspace({ min: "admin" });
+  const ws = useWorkspace({ min: "admin", setup: "step" });
   if (ws.kind === "pending" || ws.kind === "noOrg") return null;
   if (ws.kind === "noAccess") return <NoAccess need={ws.need} />;
   return <Channels orgId={ws.orgId} />;

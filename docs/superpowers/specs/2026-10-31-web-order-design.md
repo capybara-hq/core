@@ -238,8 +238,12 @@ pages through `SetupContext`; pages never read it themselves.
     on. The org summary card of the old overview is dropped.
   - Step pages render their normal content in the setup frame (content width) under a back link
     "← 开始之前": `/settings/models`, `/settings/members`, `/agents/new`, `/agents/<id>`,
-    `/channels/new`, `/catalog`, `/catalog/<id>`, `/catalog/<id>/install`, and `/account/*`.
-  - Any other workspace route is replaced by `/`.
+    `/channels/new`, `/catalog`, `/catalog/<id>`, `/catalog/<id>/install`, and `/account/*`; since
+    the 2026-11-07 acceptance also `/extensions` and every `/channels` page (connecting a channel
+    needs its extension switched on, and creating one opens its page).
+  - Any other workspace route is replaced by `/`: the layout redirects a document request, and a
+    client navigation is replaced on the client (`router.replace("/")`), never by refreshing into
+    the layout's redirect (a server redirect inside a refresh loops in Next's router).
   - Readiness is read again on every workspace navigation while in setup (admin console
     navigations never read); once ready the next navigation draws the shell. Creating an agent in
     the setup layout navigates to `/?agent=<id>`; that navigation's re-read flips the layout to

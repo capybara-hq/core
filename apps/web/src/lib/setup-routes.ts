@@ -19,7 +19,9 @@ export function setupRouteOf(pathname: string): "outside" | "home" | "step" | "r
   if (
     pathname === "/settings/models" ||
     pathname === "/settings/members" ||
-    pathname === "/channels/new" ||
+    // connecting a channel needs its extension switched on (扩展), and creating one opens its page
+    pathname === "/extensions" ||
+    under(pathname, "/channels") ||
     under(pathname, "/agents") ||
     under(pathname, "/plugins") ||
     under(pathname, "/account")

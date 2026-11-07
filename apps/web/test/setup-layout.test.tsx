@@ -148,6 +148,9 @@ describe("setup layout scope", () => {
       "/agents/new",
       "/agents/a1",
       "/channels/new",
+      "/channels",
+      "/channels/ch1",
+      "/extensions",
       "/plugins",
       "/plugins/x",
       "/plugins/x/enable",
@@ -315,6 +318,22 @@ describe("the checklist by role", () => {
     go("/skills");
     shell.update(shellOf(ME, { readiness: READY }));
     expect(router.refresh).not.toHaveBeenCalled();
+  });
+
+  it("a navigation to a route that is no setup route goes home on the client, never refreshing into the server redirect", () => {
+    // acceptance 2026-11-07: refreshing /extensions ran the layout's redirect inside the refresh,
+    // which Next's router re-applied forever (a blank page navigating to / in a loop)
+    resetNavigation("/channels/new");
+    const view = renderFrame();
+    pathname.current = "/connectors";
+    view.update(shellOf(ME, { readiness: NOT_READY }));
+    expect(router.replace).toHaveBeenCalledWith("/");
+    expect(router.refresh).not.toHaveBeenCalled();
+    // a setup step still refreshes
+    pathname.current = "/extensions";
+    view.update(shellOf(ME, { readiness: NOT_READY }));
+    expect(router.refresh).toHaveBeenCalledTimes(1);
+    expect(router.replace).toHaveBeenCalledTimes(1);
   });
 
   it("a super admin reaches the admin console from the setup sidebar", () => {

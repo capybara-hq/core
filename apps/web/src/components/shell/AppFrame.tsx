@@ -354,8 +354,13 @@ function ShellFrame({
   useEffect(() => {
     if (lastPath.current === pathname) return;
     lastPath.current = pathname;
-    if (inSetup) router.refresh();
-  }, [pathname, inSetup, router]);
+    if (!inSetup) return;
+    // A route that is no setup route goes home here, on the client: refreshing it would run the
+    // layout's server redirect inside the refresh, which Next's router keeps re-applying (an
+    // endless navigation to `/`, acceptance 2026-11-07). The home's own navigation re-reads.
+    if (setupRoute === "redirect") router.replace(HOME_PATH);
+    else router.refresh();
+  }, [pathname, inSetup, setupRoute, router]);
 
   // The account menu (web order §2.1): Organization ▸ (the current one checked), Language ▸,
   // Personal settings, sign out; the theme is the switch after the account.

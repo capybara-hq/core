@@ -90,7 +90,7 @@ import NotFound from "../not-found";
  * providers' candidates) and the plugin's view.
  */
 export default function ExtensionsView({ tab }: { tab: ExtensionTab }) {
-  const ws = useWorkspace({ min: "member" });
+  const ws = useWorkspace({ min: "member", setup: "step" });
   if (ws.kind === "pending" || ws.kind === "noOrg") return null;
   if (ws.kind === "noAccess") return <NoAccess need={ws.need} />;
   return <Extensions orgId={ws.orgId} canEdit={roleAtLeast(ws.role, "admin")} initialTab={tab} />;

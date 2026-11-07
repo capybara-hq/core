@@ -506,7 +506,8 @@ const ROUTE_GATES: [string, "member" | "admin", boolean][] = [
   ["/settings/sandbox", "member", false],
   ["/settings/members", "member", true],
   ["/settings/models", "admin", true],
-  ["/extensions", "member", false],
+  // a setup step since the 2026-11-07 acceptance: connecting a channel needs its extension on
+  ["/extensions", "member", true],
   ["/settings/tokens", "admin", false],
 ];
 
