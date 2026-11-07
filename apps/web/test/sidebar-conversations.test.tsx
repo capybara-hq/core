@@ -249,7 +249,7 @@ describe("useConversationGroups", () => {
         <Sidebar {...base} conversations={noOrgConversations("/")} mode="full" />
       </DesignProvider>,
     );
-    expect(within(section()).getByText("还没有会话。")).toBeTruthy();
+    expect(within(section()).getByText("还没有会话")).toBeTruthy();
     expect(calls).toHaveLength(0);
   });
 });
@@ -545,7 +545,7 @@ describe("useConversationGroups filter, archived list and row actions (web order
       expect(bodyOf(calls.find((c) => c.method === "PATCH"))).toEqual({ archived: false }),
     );
     // the archived view stays open, now empty, and its count follows
-    expect(await within(section()).findByText("没有已归档的会话。")).toBeTruthy();
+    expect(await within(section()).findByText("没有已归档的会话")).toBeTruthy();
     expect(
       within(section()).getByRole("button", { name: "返回会话列表：已归档 · 0" }),
     ).toBeTruthy();

@@ -857,21 +857,15 @@ textarea {
   line-height: var(--cb-type-small-line);
   text-align: left;
 }
-/* The conversation list's compact empty state (design spec §6.18). */
+/* The conversation list's panel empty state (design spec §6.18): empty, archived empty and no
+   match alike; the art and words reuse the page empty state's parts (.r-empty-*). */
 .r-sb-empty {
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
-  gap: var(--cb-space-2);
-  padding: var(--cb-space-3) var(--cb-pad-dense-x);
-}
-.r-sb-empty-text {
-  margin: 0;
-  color: var(--cb-ink);
-}
-.r-sb-empty[data-state="no-match"] {
   align-items: center;
-  padding: var(--cb-space-8) var(--cb-pad-dense-x);
+  gap: var(--cb-space-3);
+  padding: var(--cb-space-8) var(--cb-space-2);
+  color: var(--cb-ink);
   text-align: center;
 }
 .r-sb-hint {
