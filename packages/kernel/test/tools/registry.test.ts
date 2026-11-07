@@ -6,6 +6,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { type KernelConfig, KernelConfigSchema } from "../../src/config/schema.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { EffectiveConfigs } from "../../src/extensions/effective-config.js";
 import { ExtensionHost } from "../../src/extensions/host.js";
 import { createLogger } from "../../src/log.js";
 import { toolSearchTool } from "../../src/tools/builtins/tool-search.js";
@@ -25,6 +26,7 @@ import { kernelDbFor } from "../helpers/tools.js";
 const MEM_CONNECTOR = fileURLToPath(
   new URL("../fixtures/plugins/mem-connector/index.ts", import.meta.url),
 );
+const ORGLEVELS = fileURLToPath(new URL("../fixtures/plugins/orglevels/index.ts", import.meta.url));
 
 let pgc: TestContainer;
 let rd: TestContainer;
@@ -58,7 +60,9 @@ beforeAll(async () => {
       masterKey: Buffer.alloc(32, 7).toString("base64"),
       marketplaces: { official: { enabled: false } },
       http: { port: 0 },
-      extensions: [MEM_CONNECTOR],
+      extensions: [MEM_CONNECTOR, ORGLEVELS],
+      // the platform leaves the overridable `apiKey` empty: a following org must configure it
+      extensionConfig: { orglevels: { host: "h", baseUrl: "https://platform.example" } },
       extensionPermissions: { autoApprove: true },
     }),
     { env: {}, logger: log },
@@ -66,9 +70,13 @@ beforeAll(async () => {
   raw = createDb(pgc.url, 5);
   db = kernelDb(raw);
   redis = new Redis(rd.url);
-  registry = new ToolRegistry(kernelDbFor(db), k.app.get(ExtensionHost), k.app.get(ExtensionHost), {
-    list: () => [askUser],
-  });
+  registry = new ToolRegistry(
+    kernelDbFor(db),
+    k.app.get(ExtensionHost),
+    k.app.get(ExtensionHost),
+    { list: () => [askUser] },
+    k.app.get(EffectiveConfigs),
+  );
 }, 120_000);
 afterAll(async () => {
   await k?.close();
@@ -312,6 +320,31 @@ describe("ToolRegistry", () => {
     expect(cross.unavailable).toEqual([{ ref: `app:${app2}`, reason: "App does not exist" }]);
   });
 
+  it("an extension tool is unavailable in an org that must configure the extension (spec A §6)", async () => {
+    const def = { tools: [{ kind: "plugin" as const, plugin: "orglevels", name: "echo" }] };
+    await enablePlugin("orglevels", true);
+    // following the platform, which leaves the required overridable apiKey empty
+    const following = await registry.forAgent(orgId, def);
+    expect(following.tools).toEqual([]);
+    expect(following.unavailable).toEqual([
+      {
+        ref: "plugin__orglevels__echo",
+        reason: "Plugin orglevels needs configuration in this organization",
+      },
+    ]);
+
+    // a valid copy of the org's own: the same agent gets the tool
+    const saved = await req({
+      method: "PUT",
+      url: `/api/v1/orgs/${orgId}/extensions/orglevels/overrides`,
+      payload: { values: { baseUrl: "https://org.example", apiKey: "ok-Qw72org" } },
+    });
+    expect(saved.statusCode, saved.body).toBe(200);
+    const copied = await registry.forAgent(orgId, def);
+    expect(copied.unavailable).toEqual([]);
+    expect(copied.tools.map((t) => t.key)).toEqual(["plugin__orglevels__echo"]);
+  });
+
   it("同一 key 只保留第一个，其余报重复", async () => {
     const connectorId = await installConnector("docs");
     const r = await registry.forAgent(orgId, {
@@ -347,6 +380,7 @@ describe("组织设置与 ToolSearch 启用条件", () => {
       k.app.get(ExtensionHost),
       k.app.get(ExtensionHost),
       { list: () => [askUser, toolSearchTool()] },
+      k.app.get(EffectiveConfigs),
       { get: cfg },
     );
   const settingsUrl = () => `/api/v1/orgs/${orgId}/settings`;
