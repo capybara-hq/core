@@ -178,7 +178,8 @@
     },
     "approval": {
       "not_found": "The approval does not exist or you cannot handle it.",
-      "already_decided": "This approval has already been handled or has expired."
+      "already_decided": "This approval has already been handled or has expired.",
+      "scope_not_allowed": "This approval can only be allowed once."
     },
     "question": {
       "not_found": "The question does not exist or you cannot answer it.",

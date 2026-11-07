@@ -178,7 +178,8 @@
     },
     "approval": {
       "not_found": "审批不存在，或你无权处理。",
-      "already_decided": "该审批已被处理或已过期。"
+      "already_decided": "该审批已被处理或已过期。",
+      "scope_not_allowed": "此审批只能允许本次。"
     },
     "question": {
       "not_found": "该问题不存在，或你无权回答。",

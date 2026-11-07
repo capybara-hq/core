@@ -15,11 +15,12 @@ describe("object-store@1", () => {
   it("能力引用与登记：单选、中转（插件不得 requires）", () => {
     expect(OBJECT_STORE_EXTENSION_POINT).toBe("object-store@1");
     const { name } = parseExtensionPoint(OBJECT_STORE_EXTENSION_POINT);
-    expect(EXTENSION_POINTS[name]).toEqual({
+    expect(EXTENSION_POINTS[name]).toMatchObject({
       cardinality: "single",
       brokered: true,
       orgScoped: false,
     });
+    expect(EXTENSION_POINTS[name]?.description).toMatch(/\S/);
   });
 
   it("presignGet 的选项：disposition 与 responseContentType（两种 storage 同一形状）", () => {
