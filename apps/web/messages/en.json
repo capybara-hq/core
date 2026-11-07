@@ -73,7 +73,7 @@
       "progress": "{done} of {total} done",
       "later": "Can wait",
       "laterHint": {
-        "channels": "Use agents in Lark or Slack.",
+        "channels": "Use agents in IM.",
         "members": "Bring your colleagues into this organization.",
         "catalog": "Add skills and connectors from the catalog.",
         "connections": "Connect your own accounts so agents can act for you."
@@ -1293,7 +1293,7 @@
       "title": "Before you start",
       "description": "A few steps are left before you can start a conversation.",
       "model": {
-        "description": "Configure at least one model provider (such as the openai-compatible extension) so agents can answer.",
+        "description": "Enable at least one extension that provides models so agents can answer.",
         "askAdmin": "No model is available yet. Super admins configure models under Admin → Extensions.",
         "action": "Set up",
         "waiting": "Waiting for a super admin"
@@ -2037,7 +2037,7 @@
     "title": "Channels",
     "new": "New channel",
     "empty": "No channel connections yet.",
-    "emptyHint": "Connect an IM bot (such as Slack or Lark) to an agent so people can chat with it in IM.",
+    "emptyHint": "Connect an IM bot to an agent so people can chat with it in IM.",
     "columns": {
       "name": "Name",
       "plugin": "Extension",
@@ -3033,7 +3033,6 @@
         "memoryHelp": "A whole number from 256 to 262144; leave empty for the deployment default.",
         "memoryInvalid": "Memory must be a whole number from 256 to 262144.",
         "newOnly": "Sandbox limits apply to sandboxes created from now on.",
-        "e2bNote": "E2B sandboxes ignore the CPU and memory overrides: their size comes from the E2B template (the run concurrency limit still applies).",
         "save": "Save",
         "subagentConcurrent": "Sub-agents running at once per conversation",
         "subagentConcurrentHelp": "1–20; empty uses the deployment default (subagents.maxConcurrentPerConversation).",

@@ -320,9 +320,6 @@ function LimitsDialog({
         >
           <Input inputMode="numeric" value={tokens} onChange={(e) => setTokens(e.target.value)} />
         </Field>
-        <Text variant="small" tone="muted">
-          {t("e2bNote")}
-        </Text>
         {error !== null && <FormError message={error} />}
       </Stack>
     </Dialog>

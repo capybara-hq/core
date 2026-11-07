@@ -73,7 +73,7 @@
       "progress": "已完成 {done} / {total}",
       "later": "可以稍后再做",
       "laterHint": {
-        "channels": "在飞书或 Slack 里使用智能体。",
+        "channels": "在 IM 里使用智能体。",
         "members": "让同事加入这个组织。",
         "catalog": "从平台目录添加技能和连接器。",
         "connections": "连接你自己的账号，供智能体代你操作。"
@@ -1293,7 +1293,7 @@
       "title": "开始之前",
       "description": "还差几步才能开始对话。",
       "model": {
-        "description": "至少配置一个模型提供方（例如 openai-compatible 扩展），智能体才能回答。",
+        "description": "至少启用一个提供模型的扩展，智能体才能回答。",
         "askAdmin": "还没有可用的模型。模型由超级管理员在「管理 → 扩展」里配置。",
         "action": "去配置",
         "waiting": "等待超级管理员配置"
@@ -2025,7 +2025,7 @@
     "title": "渠道",
     "new": "新建渠道",
     "empty": "还没有渠道连接。",
-    "emptyHint": "把 IM 机器人（如 Slack、飞书）接到一个智能体，大家就能在 IM 里和它对话。",
+    "emptyHint": "把 IM 机器人接到一个智能体，大家就能在 IM 里和它对话。",
     "columns": {
       "name": "名称",
       "plugin": "扩展",
@@ -3021,7 +3021,6 @@
         "memoryHelp": "256 到 262144 的整数；留空使用部署默认。",
         "memoryInvalid": "内存须是 256 到 262144 之间的整数。",
         "newOnly": "沙箱限额只对之后新建的沙箱生效。",
-        "e2bNote": "E2B 沙箱不支持按组织设置 CPU 与内存：规格由 E2B 模板决定，这两项对 E2B 不生效（运行并发照常生效）。",
         "save": "保存",
         "subagentConcurrent": "每个对话同时运行的子智能体数",
         "subagentConcurrentHelp": "1–20；留空使用部署默认（subagents.maxConcurrentPerConversation）。",

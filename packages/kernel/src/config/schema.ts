@@ -1286,7 +1286,7 @@ export const KernelConfigSchema = z.object({
         .meta(
           meta({
             description:
-              "Image for conversation sandboxes, used by the Docker sandbox extension (built from plugins/sandbox-docker/image of capybara-hq/plugins, e.g. by the compose sandbox profile; pre-pull it on every Docker node). The E2B extension ignores it and uses its own template setting",
+              "Image for conversation sandboxes, passed to the sandbox provider when it creates an instance (sandbox@1 create.image); a provider that builds instances from its own template may ignore it",
           }),
         ),
       lockWaitSeconds: z
@@ -1370,7 +1370,7 @@ export const KernelConfigSchema = z.object({
             .meta(
               meta({
                 description:
-                  "CPU cores for each sandbox; applies to sandboxes created after the change (E2B: set in the template)",
+                  "CPU cores for each sandbox; applies to sandboxes created after the change (a provider that sizes instances by its own template may not apply it)",
               }),
             ),
           memoryMb: z
@@ -1381,7 +1381,7 @@ export const KernelConfigSchema = z.object({
             .meta(
               meta({
                 description:
-                  "Memory limit of each sandbox in MiB; applies to sandboxes created after the change (E2B: set in the template)",
+                  "Memory limit of each sandbox in MiB; applies to sandboxes created after the change (a provider that sizes instances by its own template may not apply it)",
               }),
             ),
           diskMb: z
@@ -1392,7 +1392,7 @@ export const KernelConfigSchema = z.object({
             .meta(
               meta({
                 description:
-                  "Disk limit of each sandbox in MiB; applies to sandboxes created after the change (Docker: only with a volume driver that supports size; E2B: set by the template / plan)",
+                  "Disk limit of each sandbox in MiB; applies to sandboxes created after the change (a provider whose storage cannot be sized may not apply it)",
               }),
             ),
           maxCommandSeconds: z
