@@ -46,7 +46,10 @@ type DisabledToolRef =
   is dropped; names are deduplicated and sorted **(designer's call)**. Builtin names must be
   builtins (`BUILTIN_TOOL_NAMES`), extension entries must name a loaded extension (and its
   registered tools), connector entries a live connector of the org (and tools of its snapshot),
-  as the old refs were checked (`validation_failed` at `disabledTools.<i>`).
+  as the old refs were checked (`validation_failed` at `disabledTools.<i>`). An entry kept unchanged
+  from the current version is not re-checked, so a connector deleted or an extension uninstalled
+  later never blocks other edits (the pattern of `assertSubagents`) **(designer's call)**. A
+  request carrying the old `tools` field, or `subagentTools` (§4), is refused.
 - `toolPolicies` stays, tighten-only (`ask` / `deny`), keyed by tool key **(decided)**. Its keys
   are checked against every tool the agent could have (all builtins, the tools of the loaded
   extensions, the tools of the org's live connectors in any status), not only the ones on now, so
@@ -179,7 +182,10 @@ The agent's Tools section **(decided)**:
 
 - every row's checkbox means on / off, and everything is checked by default; unchecking writes to
   `disabledTools`, checking removes from it;
-- builtins: every builtin the agent can switch (web tools only while the org has a provider, or
+- builtins: every builtin the agent can switch, now including the sandbox family (`Bash`, `Read`,
+  `Write`, `Edit`, `Glob`, `Grep`, `Deliver`), since they are on by default and someone must be
+  able to turn them off; `Agent` stays in the Sub-agents section **(designer's call)** (web tools
+  only while the org has a provider, or
   when turned off), checked unless disabled;
 - extension and connector group rows: the summary reads 「全部开启」 / "All on" or
   「已关闭 N 个」 / "N off" (plus the approval counts); unchecking every tool of a group turns the
@@ -187,7 +193,18 @@ The agent's Tools section **(decided)**:
   **(designer's call)**; the Sheet lists the group's tools, all checked unless turned off;
 - the new-agent form and the agent template editor work the same way.
 
-## 10. Out of scope
+## 10. Test and fixture consequences (designer's calls)
+
+- `model-fake` used to call the first offered tool whenever a message was no script directive.
+  With every agent now holding several tools that would turn every plain message into a tool call
+  (in tests and in trials), so it calls a tool on its own only when a request offers exactly one
+  (the conformance suite's round trip still does).
+- Eval case snapshots taken before this change keep their enabled list next to the normalized
+  definition (`readSnapshot`), because rc tool keys are mapped by its extension refs
+  (`legacyScopeOf`); the runtime ignores it.
+- `createAgent` of `@capybara-hq/testing` takes `disabledTools` instead of `tools`.
+
+## 11. Out of scope
 
 - An org-level default-off list for new tools (an admin wants a tool, but not on every agent):
   the org's per-tool switch covers turning a tool off everywhere.
