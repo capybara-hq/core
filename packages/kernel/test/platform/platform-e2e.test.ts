@@ -245,7 +245,7 @@ describe("Platform tool end to end", { timeout: 180_000 }, () => {
     expect(calls.length).toBeGreaterThanOrEqual(2);
     for (const [i, c] of calls.entries()) {
       const info: ModelInfo = (
-        await k.app.get(ProviderRegistry).resolve({
+        await k.app.get(ProviderRegistry).resolve(orgId, {
           provider: c.payload.provider,
           model: c.payload.model,
         })

@@ -59,6 +59,12 @@ export const PLATFORM_EXCLUSIONS: readonly {
     issue: "https://github.com/capybara-hq/core/issues/91",
   },
   {
+    route: "PATCH /api/v1/admin/models/:provider/disabled",
+    category: "later",
+    reason: "Platform model disabled list write that an agent could mirror later behind confirmation",
+    issue: "https://github.com/capybara-hq/core/issues/91",
+  },
+  {
     route: "GET /api/v1/admin/model-prices",
     category: "later",
     reason: "Model price table read that an agent could mirror later",
@@ -199,6 +205,12 @@ export const PLATFORM_EXCLUSIONS: readonly {
     route: "GET /api/v1/orgs/:orgId/models",
     category: "later",
     reason: "Model list available to the org, readable by an agent later",
+    issue: "https://github.com/capybara-hq/core/issues/91",
+  },
+  {
+    route: "GET /api/v1/orgs/:orgId/models/catalog",
+    category: "later",
+    reason: "Org model catalog with enablement, readable by an agent later",
     issue: "https://github.com/capybara-hq/core/issues/91",
   },
   {
@@ -1057,6 +1069,12 @@ export const PLATFORM_EXCLUSIONS: readonly {
     route: "PUT /api/v1/orgs/:orgId/model-purposes/:purpose",
     category: "later",
     reason: "Org model per purpose, settable by an agent later",
+    issue: "https://github.com/capybara-hq/core/issues/91",
+  },
+  {
+    route: "PATCH /api/v1/orgs/:orgId/models/:provider/disabled",
+    category: "later",
+    reason: "Org model disabled list write that an agent could mirror later behind confirmation",
     issue: "https://github.com/capybara-hq/core/issues/91",
   },
   // orgs
