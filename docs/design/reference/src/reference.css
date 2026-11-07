@@ -5233,3 +5233,104 @@ textarea {
   font-size: var(--cb-type-small-size);
   line-height: var(--cb-type-small-line);
 }
+
+/* ── ToolPolicyList (spec §6.36) ──────────────────────────────────────────── */
+
+.r-tool-policy {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.r-tool-policy-search {
+  padding-bottom: var(--cb-space-2);
+}
+.r-tp-search {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-2);
+  color: var(--cb-muted);
+}
+.r-tool-policy-all {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-3);
+  min-height: var(--cb-row-default);
+  border-bottom: 1px solid var(--cb-line-soft);
+}
+.r-tool-policy-all > .r-tp-check {
+  flex: 1;
+}
+.r-tool-policy-count {
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.r-tool-policy-rows {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.r-tool-policy-row {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-3);
+  min-height: var(--cb-row-default);
+  padding: var(--cb-space-1) 0;
+}
+.r-tool-policy-row + .r-tool-policy-row {
+  border-top: 1px solid var(--cb-line-soft);
+}
+.r-tool-policy-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--cb-space-1);
+  min-width: 0;
+}
+.r-tp-check {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+}
+.r-tp-box {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  margin-top: 3px;
+  border: 1px solid var(--cb-line-strong);
+  border-radius: var(--cb-radius-sm);
+  color: var(--cb-on-accent);
+  font-size: var(--cb-type-small-size);
+  line-height: 1;
+}
+.r-tp-box[data-state="checked"],
+.r-tp-box[data-state="mixed"] {
+  border-color: var(--cb-accent);
+  background: var(--cb-accent);
+}
+.r-tool-policy-title {
+  overflow: hidden;
+  color: var(--cb-ink);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.r-tool-policy-note {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-1);
+  padding-left: 22px;
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.r-tool-policy-note[data-tone="warn"] {
+  color: var(--cb-warn);
+}
+.r-tool-policy-select {
+  flex: none;
+  width: var(--cb-layout-policy-select);
+}

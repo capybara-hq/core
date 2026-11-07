@@ -139,6 +139,10 @@ export const ACCEPTED: string[] = [
   // are in place; the reference PNGs and the side-by-side review wait for the reference-update
   // and visual-update workflows
   "card-grid",
+  // tools with their policy next to them (the agent page's 工具 section, 2026-11-08): blocks and
+  // size table in place; the reference PNGs and the side-by-side review wait for the
+  // reference-update and visual-update workflows
+  "tool-policy-list",
 ];
 
 /**

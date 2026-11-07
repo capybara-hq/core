@@ -942,6 +942,108 @@
   line-height: var(--cb-type-small-line);
 }
 
+/*
+ * ToolPolicyList (spec §6.36): one row per tool, the checkbox and title on the left, the dense
+ * policy select at the right, rows split by line-soft inside the one box. In a padded box (card)
+ * the rows reach its padding; `flush` pads them space.4 so the hairlines run to the card's edges.
+ */
+.cb-tool-policy {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.cb-tool-policy-search {
+  padding-bottom: var(--cb-space-2);
+}
+.cb-tool-policy-all {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-3);
+  min-height: var(--cb-row-default);
+  border-bottom: 1px solid var(--cb-line-soft);
+}
+.cb-tool-policy-all > .cb-check {
+  flex: 1;
+  min-width: 0;
+}
+.cb-tool-policy-count {
+  flex: none;
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.cb-tool-policy-rows {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.cb-tool-policy-row {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-3);
+  min-height: var(--cb-row-default);
+  padding: var(--cb-space-1) 0;
+}
+.cb-tool-policy-row + .cb-tool-policy-row {
+  border-top: 1px solid var(--cb-line-soft);
+}
+.cb-tool-policy-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--cb-space-1);
+  min-width: 0;
+}
+.cb-tool-policy-text > .cb-check {
+  min-width: 0;
+}
+.cb-tool-policy-text .cb-check-label {
+  min-width: 0;
+}
+.cb-tool-policy-title {
+  display: block;
+  overflow: hidden;
+  color: var(--cb-ink);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cb-check[data-disabled="true"] .cb-tool-policy-title {
+  color: var(--cb-disabled);
+}
+.cb-tool-policy-note {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-1);
+  padding-left: 22px;
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.cb-tool-policy-note[data-tone="warn"] {
+  color: var(--cb-warn);
+}
+.cb-tool-policy-select {
+  flex: none;
+  width: var(--cb-layout-policy-select);
+}
+.cb-tool-policy-empty {
+  margin: 0;
+  padding: var(--cb-space-2) 0;
+  color: var(--cb-muted);
+  font-family: var(--cb-font-prose);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.cb-tool-policy[data-inset="flush"] > .cb-tool-policy-search {
+  padding: var(--cb-space-3) var(--cb-space-4) var(--cb-space-2);
+}
+.cb-tool-policy[data-inset="flush"] > .cb-tool-policy-all,
+.cb-tool-policy[data-inset="flush"] > .cb-tool-policy-empty,
+.cb-tool-policy[data-inset="flush"] .cb-tool-policy-row {
+  padding-right: var(--cb-space-4);
+  padding-left: var(--cb-space-4);
+}
+
 /* After a prefix icon the text starts 2px further in, where the signed reference's search field
    (toolbar, §6.6) draws it. */
 .cb-input-affix:first-child + input {

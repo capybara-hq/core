@@ -16,8 +16,10 @@ import {
   Select,
   Subsection,
   Text,
+  ToolPolicyList,
+  type ToolPolicyRow,
 } from "@capybara-hq/design";
-import type { ReactNode } from "react";
+import { type ReactNode, useState } from "react";
 import { RefBlock } from "./ref-block";
 
 // "One box is enough" (spec §1 principle 7, acceptance item AB): the groupings inside a box. The
@@ -268,9 +270,92 @@ function impactPreviewBlocks(): ReactNode {
   );
 }
 
+const POLICIES = [
+  { value: "", label: "默认" },
+  { value: "ask", label: "需审批" },
+  { value: "deny", label: "禁止" },
+];
+
+/** A ToolPolicyList that keeps its own state (the catalog is clickable). */
+function LiveToolPolicyList({
+  label,
+  rows: initial,
+  search,
+  selectAll,
+}: {
+  label: string;
+  rows: ToolPolicyRow[];
+  search?: boolean;
+  selectAll?: boolean;
+}) {
+  const [rows, setRows] = useState(initial);
+  const check = (ids: string[], next: boolean) =>
+    setRows((cur) =>
+      cur.map((r) =>
+        ids.includes(r.id) ? { ...r, checked: next, policy: next ? r.policy : "" } : r,
+      ),
+    );
+  return (
+    <ToolPolicyList
+      label={label}
+      rows={rows}
+      policyOptions={POLICIES}
+      onCheck={(id, next) => check([id], next)}
+      onPolicy={(id, v) =>
+        setRows((cur) => cur.map((r) => (r.id === id ? { ...r, policy: v } : r)))
+      }
+      {...(selectAll ? { onCheckAll: check } : {})}
+      {...(search ? { search } : {})}
+    />
+  );
+}
+
+/** Tools with their policy next to them (spec §6.36), as the agent page's 工具 section draws them. */
+function toolPolicyListBlocks(): ReactNode {
+  return (
+    <>
+      <RefBlock id="tool-policy-list-default" width={640} pad>
+        <Card title="内置工具">
+          <LiveToolPolicyList
+            label="内置工具"
+            rows={[
+              { id: "ask", label: "向用户提问", checked: true, policy: "" },
+              { id: "read", label: "读取存档的工具结果", checked: true, policy: "ask" },
+              { id: "skill", label: "编写技能", checked: false, policy: "" },
+              {
+                id: "web",
+                label: "搜索网页",
+                checked: true,
+                policy: "deny",
+                note: { text: "不可用：本组织没有可用的网页提供方", tone: "warn" },
+              },
+            ]}
+          />
+        </Card>
+      </RefBlock>
+      <RefBlock id="tool-policy-list-select-all" width={480} pad>
+        <Card title="Docs">
+          <LiveToolPolicyList
+            label="Docs 的工具"
+            search
+            selectAll
+            rows={[
+              { id: "search", label: "Search documents", checked: true, policy: "" },
+              { id: "create", label: "Create document", checked: true, policy: "ask" },
+              { id: "delete", label: "Delete document", checked: false, policy: "" },
+              { id: "list", label: "List folders", checked: false, policy: "" },
+            ]}
+          />
+        </Card>
+      </RefBlock>
+    </>
+  );
+}
+
 export const BOX_BLOCKS = {
   callout: calloutBlocks,
   "impact-preview": impactPreviewBlocks,
   "item-list": itemListBlocks,
   subsection: subsectionBlocks,
+  "tool-policy-list": toolPolicyListBlocks,
 } as const;
