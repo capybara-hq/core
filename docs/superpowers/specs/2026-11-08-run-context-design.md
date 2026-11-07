@@ -359,6 +359,9 @@ of snapshots plus 6 per message. The skills catalog is far larger.
 - Account preferences: `GET` / `PUT /api/v1/me/preferences`, validation, the setting overriding
   the browser's zone on the next message.
 - Web: every send body carries `timeZone` and `locale`; the preferences page's select.
+- Test doubles: `model-fake` and the `model-looper` fixture read a turn's script without the
+  sender line; tests about other request contents use `test/helpers/run-context.ts`
+  (`withoutRunContext`, `isRunContextText`). The clock is the seam `RUN_CONTEXT_CLOCK`.
 - Live (acceptance): "你叫什么名字？" and "我是谁？" answered from the snapshot and the sender line;
   rename the agent, send again, the answer follows.
 
