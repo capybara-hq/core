@@ -9,6 +9,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { EnvironmentAccess } from "../../src/environments/access.js";
+import { ConversationEnvironments } from "../../src/environments/conversation-environments.js";
 import {
   EnvironmentsService,
   type EnvironmentView,
@@ -16,6 +17,7 @@ import {
 import type { ApiError } from "../../src/errors.js";
 import { legacyDbFor } from "../helpers/conversations.js";
 import { accountsFor } from "../helpers/identity.js";
+import { testMembers } from "../helpers/members.js";
 import {
   createOrg,
   PW,
@@ -160,5 +162,66 @@ describe("environment access", () => {
     expect((reset.json() as { error: { code: string } }).error.code).toBe(
       "environment.unavailable",
     );
+  });
+
+  it("a default stranded by a provider switch is demoted and replaced", async () => {
+    const service = k.app.get(EnvironmentsService);
+    const login = `sw-${randomUUID().slice(0, 8)}`;
+    const me = (await accountsFor(db).createLocal({ login, password: PW, displayName: login })).id;
+    await testMembers(db).add(orgId, me, "member", ownerId);
+    const req = await session(k, login);
+    const oldId = await service.ensureDefault(orgId, me);
+    // its files are kept by the old provider; the deployment now runs sandbox-fake
+    await sql`INSERT INTO capybara.environment_instances
+        (environment_id, org_id, provider, fs_handle, fs_status)
+      VALUES (${oldId}, ${orgId}, 'sandbox-old', '{"id":"fs-old"}'::jsonb, 'ready')`.execute(raw);
+    // the name the demoted one would get is taken: it gets the next free one
+    await sql`INSERT INTO capybara.environments
+        (id, org_id, owner_kind, owner_account_id, name, source, provider)
+      VALUES (${randomUUID()}, ${orgId}, 'personal', ${me}, 'personal (SANDBOX-OLD)', 'cloud',
+        'sandbox-fake')`.execute(raw);
+
+    const ids = await Promise.all(
+      Array.from({ length: 8 }, () => service.ensureDefault(orgId, me)),
+    );
+    expect(new Set(ids).size).toBe(1);
+    const freshId = ids[0] as string;
+    expect(freshId).not.toBe(oldId);
+
+    const res = await req({ method: "GET", url: `/api/v1/orgs/${orgId}/environments` });
+    expect(res.statusCode, res.body).toBe(200);
+    const body = res.json() as { items: EnvironmentView[]; defaultId: string };
+    expect(body.defaultId).toBe(freshId);
+    expect(body.items.find((e) => e.id === freshId)).toMatchObject({
+      isDefault: true,
+      name: null,
+      available: true,
+    });
+    expect(body.items.find((e) => e.id === oldId)).toMatchObject({
+      isDefault: false,
+      name: "Personal (sandbox-old) 2",
+      provider: "sandbox-old",
+      available: false,
+    });
+    // a new conversation without a choice gets the fresh default
+    expect(await k.app.get(ConversationEnvironments).forNew(orgId, me)).toBe(freshId);
+    // the demoted one can still be deleted
+    const del = await req({
+      method: "DELETE",
+      url: `/api/v1/orgs/${orgId}/environments/${oldId}`,
+    });
+    expect(del.statusCode, del.body).toBe(202);
+  });
+
+  it("a default that never got resources is not stranded", async () => {
+    const service = k.app.get(EnvironmentsService);
+    const login = `nr-${randomUUID().slice(0, 8)}`;
+    const me = (await accountsFor(db).createLocal({ login, password: PW, displayName: login })).id;
+    await testMembers(db).add(orgId, me, "member", ownerId);
+    const id = await service.ensureDefault(orgId, me);
+    await sql`UPDATE capybara.environments SET provider = 'sandbox-old' WHERE id = ${id}`.execute(
+      raw,
+    );
+    expect(await service.ensureDefault(orgId, me)).toBe(id);
   });
 });

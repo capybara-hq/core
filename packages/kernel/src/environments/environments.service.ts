@@ -14,7 +14,12 @@ import type { KernelLogger } from "../log.js";
 import { SandboxJobs } from "../sandbox/jobs.js";
 import { SandboxProviders } from "../sandbox/providers.js";
 import { environmentNotFound, SandboxService } from "../sandbox/sandbox.service.js";
-import { EnvironmentAccess, environmentProvider, environmentUnavailable } from "./access.js";
+import {
+  EnvironmentAccess,
+  environmentProvider,
+  environmentUnavailable,
+  type ProviderFacts,
+} from "./access.js";
 
 /** An environment as its owner sees it (`GET /orgs/:orgId/environments`). */
 export interface EnvironmentView {
@@ -306,16 +311,23 @@ export class EnvironmentsService {
 
   /**
    * The person's default environment in the org, created when missing (named by the UI, `name`
-   * NULL). An existing one is read without locking. Creating one first takes the person's
-   * membership row (`FOR SHARE`, after the org row), so an offboarding that removes them cannot
-   * leave a live default behind; not a member (any more) → `org.not_found`. Idempotent under
-   * concurrency: the partial unique index on the live default makes a racing insert do nothing,
-   * and the select that follows reads the winner. Needs a current sandbox provider
+   * NULL). An existing usable one is read without locking. A live default whose files or
+   * instance are kept by a provider that is not the current one (a provider switch, spec §4.2
+   * item 13) is stranded: it is demoted, named `Personal (<provider>)` (` 2`, ` 3`, … when that
+   * name is taken) and stays listed as unavailable and deletable, and a fresh default is created,
+   * in one transaction. Creating one first takes the person's membership row (`FOR SHARE`, after
+   * the org row), so an offboarding that removes them cannot leave a live default behind, and
+   * their creates and renames (`FOR NO KEY UPDATE`) cannot race the demoted name; not a member
+   * (any more) → `org.not_found`. Idempotent under concurrency: the demotion locks the default
+   * row and re-checks it, the partial unique index on the live default makes a racing insert do
+   * nothing, and the select that follows reads the winner. Needs a current sandbox provider
    * (`environment.unavailable`). It is the person's baseline, so it is created even at
    * `environments.maxPersonal`.
    */
   async ensureDefault(orgId: string, accountId: string): Promise<string> {
-    return (await this.defaultOf(orgId, accountId)) ?? this.insertDefault(orgId, accountId);
+    const live = await this.defaultOf(orgId, accountId);
+    if (live && !this.stranded(live)) return live.id;
+    return this.insertDefault(orgId, accountId);
   }
 
   @Transactional()
@@ -323,6 +335,12 @@ export class EnvironmentsService {
     const current = this.providers.current();
     if (!current) throw environmentUnavailable(null);
     await this.lockMember(orgId, accountId, "share");
+    const live = await this.defaultOf(orgId, accountId, true);
+    if (live && !this.stranded(live)) return live.id;
+    if (live) {
+      const held = environmentProvider(live, current.plugin) ?? "unknown";
+      await this.demote(orgId, accountId, live.id, held);
+    }
     await this.db
       .insertInto("environments")
       .values({
@@ -342,9 +360,42 @@ export class EnvironmentsService {
           .doNothing(),
       )
       .execute();
-    const id = await this.defaultOf(orgId, accountId);
-    if (id === undefined) throw new Error("the default environment was not created");
-    return id;
+    const row = await this.defaultOf(orgId, accountId);
+    if (row === undefined) throw new Error("the default environment was not created");
+    return row.id;
+  }
+
+  /**
+   * Turns a stranded default into an ordinary environment named `Personal (<provider>)`, with
+   * ` 2`, ` 3`, … appended while that name is one of the person's live names (case-insensitive).
+   * Runs under the person's membership lock and the default row's lock.
+   */
+  private async demote(
+    orgId: string,
+    accountId: string,
+    id: string,
+    provider: string,
+  ): Promise<void> {
+    const base = `Personal (${provider})`;
+    const taken = new Set(
+      (
+        await this.db
+          .selectFrom("environments")
+          .select("name")
+          .where("org_id", "=", orgId)
+          .where("owner_account_id", "=", accountId)
+          .where("deleted_at", "is", null)
+          .where("name", "is not", null)
+          .execute()
+      ).map((r) => (r.name as string).toLowerCase()),
+    );
+    let name = base;
+    for (let n = 2; taken.has(name.toLowerCase()); n++) name = `${base} ${n}`;
+    await this.db
+      .updateTable("environments")
+      .set({ is_default: false, name, updated_at: sql<Date>`now()` })
+      .where("id", "=", id)
+      .execute();
   }
 
   /**
@@ -401,18 +452,41 @@ export class EnvironmentsService {
     if (Number(written.numInsertedOrUpdatedRows ?? 0) === 0) throw environmentNotFound();
   }
 
-  /** The person's live default environment in the org, if any. */
-  private async defaultOf(orgId: string, accountId: string): Promise<string | undefined> {
+  /**
+   * The person's live default environment in the org, if any, with what decides its provider;
+   * `lock` takes its row (`FOR NO KEY UPDATE`; a racing demotion makes it read none).
+   */
+  private async defaultOf(
+    orgId: string,
+    accountId: string,
+    lock = false,
+  ): Promise<(ProviderFacts & { id: string }) | undefined> {
     const row = await this.db
-      .selectFrom("environments")
-      .select("id")
-      .where("org_id", "=", orgId)
-      .where("owner_kind", "=", "personal")
-      .where("owner_account_id", "=", accountId)
-      .where("is_default", "=", true)
-      .where("deleted_at", "is", null)
+      .selectFrom("environments as e")
+      .leftJoin("environment_instances as i", "i.environment_id", "e.id")
+      .select(["e.id", "e.provider", "i.provider as instance_provider", "i.fs_status", "i.handle"])
+      .where("e.org_id", "=", orgId)
+      .where("e.owner_kind", "=", "personal")
+      .where("e.owner_account_id", "=", accountId)
+      .where("e.is_default", "=", true)
+      .where("e.deleted_at", "is", null)
+      .$if(lock, (q) => q.forNoKeyUpdate("e"))
       .executeTakeFirst();
-    return row?.id;
+    return (
+      row && {
+        id: row.id,
+        provider: row.provider,
+        instanceProvider: row.instance_provider,
+        fsStatus: row.fs_status,
+        hasInstance: row.handle !== null,
+      }
+    );
+  }
+
+  /** Its files or instance are kept by a provider that is not the current one. */
+  private stranded(f: ProviderFacts): boolean {
+    const current = this.providers.current()?.plugin;
+    return current !== undefined && environmentProvider(f, current) !== current;
   }
 
   /** The person's live environments (or the one `id`) as views. */
