@@ -21,8 +21,7 @@ import { root } from "./report.js";
 
 requireScanTargets();
 
-/** `pending`: registered but left out of the run until its rule is satisfied (Task 9 of the Platform tool plan removes it). */
-const checks: (NamedCheck & { pending?: boolean })[] = [
+const checks: NamedCheck[] = [
   // The plugin-scoped checks are @capybara-hq/plugin-tools' (`capybara-plugin check`), on core's scope.
   ...pluginChecks(corePluginScope()),
   { name: "Config docs", run: () => checkConfigDocs() },
@@ -54,7 +53,7 @@ const checks: (NamedCheck & { pending?: boolean })[] = [
   { name: "Agent docs", run: () => checkAgentDocs(root) },
   { name: "Terms", run: () => checkTerms(root) },
   { name: "Kernel conventions", run: () => checkKernelConventions(root) },
-  { name: "Platform operations", pending: true, run: () => checkPlatformOps(root) },
+  { name: "Platform operations", run: () => checkPlatformOps(root) },
   {
     name: "compose haproxy",
     run: () =>
@@ -65,10 +64,7 @@ const checks: (NamedCheck & { pending?: boolean })[] = [
   },
 ];
 
-const failed = await runChecks(
-  checks.filter((c) => !c.pending),
-  root,
-);
+const failed = await runChecks(checks, root);
 if (failed > 0) {
   console.error(`\n${failed} check(s) failed`);
   process.exit(1);

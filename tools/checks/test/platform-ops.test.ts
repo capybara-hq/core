@@ -87,8 +87,7 @@ describe("checkPlatformOps", () => {
     has("platform-op-exclusion-reason", exc, lineOf(exc, 'skills/b"'), "issue");
   });
 
-  it("holds on the real kernel tree once Task 9 has classified it", () => {
-    // Until then the real tree is allowed to have findings, but the scan itself must not crash.
-    expect(() => checkPlatformOps(repoRoot)).not.toThrow();
+  it("holds on the real kernel tree", () => {
+    expect(checkPlatformOps(repoRoot)).toEqual([]);
   });
 });
