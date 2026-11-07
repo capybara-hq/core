@@ -378,7 +378,7 @@ describe("phase D acceptance: commands, manual-only and forked skills", {
     const calls = ofType(toEvents(snap), "model_call");
     const parentSent = sent.filter((r) => !isChild(r));
     expect(calls).toHaveLength(parentSent.length);
-    const info = (await k.app.get(ProviderRegistry).resolve(SCRIPT)).info;
+    const info = (await k.app.get(ProviderRegistry).resolve(snap.orgId, SCRIPT)).info;
     for (const [i, c] of calls.entries()) {
       const out = reconstructRequest(snap, c.seq, { model: info });
       expect(out.drift, `parent model_call seq ${c.seq}`).toEqual([]);

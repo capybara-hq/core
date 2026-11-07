@@ -380,10 +380,10 @@ export class AgentsService {
    * 校验主模型与兜底都可解析，并用各自模型的参数声明严格校验 `modelParams` / `fallbackParams`
    * （没有兜底时 `fallbackParams` 必须为空）；不合法 → `validation_failed`，details 逐键点名。返回提示。
    */
-  private async checkModels(def: AgentDefinitionInput): Promise<AgentWarning[]> {
+  private async checkModels(orgId: string, def: AgentDefinitionInput): Promise<AgentWarning[]> {
     const registry = this.providers;
-    const main = await registry.resolve(def.model);
-    const fallback = def.fallback === null ? null : await registry.resolve(def.fallback);
+    const main = await registry.resolve(orgId, def.model);
+    const fallback = def.fallback === null ? null : await registry.resolve(orgId, def.fallback);
     const details = [
       ...paramIssues("modelParams", main.info.parameters, def.modelParams),
       ...paramIssues("fallbackParams", fallback?.info.parameters ?? [], def.fallbackParams),
@@ -482,7 +482,7 @@ export class AgentsService {
   ): Promise<{ agent: AgentView; warnings: AgentWarning[]; role: OrgRole }> {
     const input = { ...request, definition: deriveInstructions(request.definition, null) };
     // 先解析模型（可能访问供应商），不在持有组织行锁时做
-    const warnings = await this.checkModels(input.definition);
+    const warnings = await this.checkModels(orgId, input.definition);
     const toolKeys = await this.checkTools(orgId, input.definition);
     if (input.visibility !== "members" && (input.memberIds?.length ?? 0) > 0) {
       throw new ApiError("validation_failed", "memberIds requires visibility 'members'");
@@ -636,7 +636,7 @@ export class AgentsService {
     actorTokenId?: string,
   ): Promise<{ agent: AgentView; warnings: AgentWarning[] }> {
     const patch = request;
-    const warnings = patch.definition ? await this.checkModels(patch.definition) : [];
+    const warnings = patch.definition ? await this.checkModels(orgId, patch.definition) : [];
     const toolKeys = patch.definition ? await this.checkTools(orgId, patch.definition) : null;
     const agent = await this.updateIn(
       orgId,

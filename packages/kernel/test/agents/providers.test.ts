@@ -15,6 +15,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { KernelConfigSchema } from "../../src/config/schema.js";
 import { ApiError } from "../../src/errors.js";
 import { ExtensionHost } from "../../src/extensions/host.js";
+import { ExtensionRegistry } from "../../src/extensions/registry.js";
 import { createLogger } from "../../src/log.js";
 import { ProviderListError, type ProviderRegistry } from "../../src/runtime/providers.js";
 import { fakeBCalls, MODEL_PLUGINS_CONFIG } from "../helpers/model-plugins.js";
@@ -41,7 +42,7 @@ beforeAll(async () => {
     { env: {}, logger: createLogger("error", { write: () => {} }) },
   );
   redis = new Redis(rd.url);
-  registry = providerRegistryFor(k.app.get(ExtensionHost), redis);
+  registry = providerRegistryFor(k.app.get(ExtensionRegistry), redis);
 }, 120_000);
 afterAll(async () => {
   await k?.close();
@@ -51,6 +52,9 @@ afterAll(async () => {
 beforeEach(async () => {
   await redis.flushdb();
 });
+
+/** Every org follows the platform here (no copies): the registry's org view equals the platform's. */
+const ORG = "org-1";
 
 const codeOf = async (p: Promise<unknown>): Promise<string | undefined> => {
   try {
@@ -64,7 +68,7 @@ const codeOf = async (p: Promise<unknown>): Promise<string | undefined> => {
 
 describe("ProviderRegistry", () => {
   it("list 列出每个供应商及其模型", async () => {
-    const providers = await registry.list();
+    const providers = await registry.list(ORG);
     expect(providers.map((p) => [p.provider, p.models.map((m) => m.id)])).toEqual([
       ["model-fake", ["fake-1", "fake-2"]],
       ["model-fake-b", ["b-1", "b-2"]],
@@ -73,8 +77,8 @@ describe("ProviderRegistry", () => {
 
   it("listModels 结果缓存在 Redis cache:capk:models:<provider>:v<契约主版本>，EX 600；第二次不再访问供应商", async () => {
     const before = fakeBCalls(k.app.get(ExtensionHost));
-    await registry.list();
-    await registry.list();
+    await registry.list(ORG);
+    await registry.list(ORG);
     expect(fakeBCalls(k.app.get(ExtensionHost)) - before).toBe(1);
     const [keyB] = await redis.keys("cache:capk:models:model-fake-b:v2:*");
     const [keyA] = await redis.keys("cache:capk:models:model-fake:v2:*");
@@ -85,7 +89,7 @@ describe("ProviderRegistry", () => {
   });
 
   it("缓存键带插件版本与部署配置摘要（cache:capk:models:<provider>:v<主版本>:<版本>:<摘要>），不含配置明文", async () => {
-    await registry.list();
+    await registry.list(ORG);
     const entry = k.app
       .get(ExtensionHost)
       .list("model-provider")
@@ -98,16 +102,17 @@ describe("ProviderRegistry", () => {
   });
 
   it("resolve 返回供应商实现与模型信息", async () => {
-    const r = await registry.resolve({ provider: "model-fake-b", model: "b-2" });
+    const r = await registry.resolve(ORG, { provider: "model-fake-b", model: "b-2" });
     expect(r.info.id).toBe("b-2");
-    expect(typeof r.provider.listModels).toBe("function");
+    expect(typeof r.provider.stream).toBe("function");
+    expect(r.info.kind).toBe("chat");
   });
 
   it("未安装的供应商或不存在的模型 → agent.model_unavailable", async () => {
-    expect(await codeOf(registry.resolve({ provider: "nope", model: "fake-1" }))).toBe(
+    expect(await codeOf(registry.resolve(ORG, { provider: "nope", model: "fake-1" }))).toBe(
       "agent.model_unavailable",
     );
-    expect(await codeOf(registry.resolve({ provider: "model-fake", model: "fake-9" }))).toBe(
+    expect(await codeOf(registry.resolve(ORG, { provider: "model-fake", model: "fake-9" }))).toBe(
       "agent.model_unavailable",
     );
   });
@@ -129,6 +134,7 @@ describe("ProviderRegistry", () => {
             ...k.app.get(ExtensionHost).list(cap),
             { plugin: "broken", capability: "model-provider@2" as const, impl: broken },
           ],
+          current: (plugin: string) => k.app.get(ExtensionRegistry).current(plugin),
         },
         redis,
         {
@@ -140,7 +146,7 @@ describe("ProviderRegistry", () => {
 
     it("list 跳过失败的供应商并记 warn，其余照常列出", async () => {
       warns.length = 0;
-      const providers = await withBroken().list();
+      const providers = await withBroken().list(ORG);
       expect(providers.map((p) => p.provider)).toEqual(["model-fake", "model-fake-b"]);
       expect(warns).toHaveLength(1);
       expect(warns[0]?.msg).toMatch(/listModels failed/);
@@ -148,7 +154,7 @@ describe("ProviderRegistry", () => {
 
     it("resolve 时供应商失败 → ProviderListError（仍是 agent.model_unavailable，带 cause）", async () => {
       const err = await withBroken()
-        .resolve({ provider: "broken", model: "x" })
+        .resolve(ORG, { provider: "broken", model: "x" })
         .catch((e: unknown) => e);
       expect(err).toBeInstanceOf(ProviderListError);
       expect(err).toBeInstanceOf(ApiError);
@@ -191,7 +197,7 @@ describe("ProviderRegistry", () => {
       expect((await reg.listWithStatus()).find((p) => p.provider === "hung")?.status).toBe("error");
       expect(calls).toBe(1);
       expect(await redis.ttl("capk:models-failed:hung:v2:-:-")).toBeGreaterThan(0);
-      const err = await reg.resolve({ provider: "hung", model: "x" }).catch((e: unknown) => e);
+      const err = await reg.resolve(ORG, { provider: "hung", model: "x" }).catch((e: unknown) => e);
       expect(err).toBeInstanceOf(ProviderListError);
       expect(calls).toBe(2);
     });
@@ -298,7 +304,7 @@ describe("model-provider@1 / @2", () => {
   it("@1 适配：capabilities.effort 为真 → parameters 含五档 effort（不给默认值），否则为空", async () => {
     const { impl } = v1([v1Info("e", true), v1Info("n", false)]);
     const r = reg([{ plugin: "old", capability: "model-provider@1", impl }]);
-    const [entry] = await r.list();
+    const [entry] = await r.list(ORG);
     const [e, n] = entry?.models ?? [];
     expect(e?.parameters).toEqual([
       {
@@ -310,14 +316,78 @@ describe("model-provider@1 / @2", () => {
     ]);
     expect(n?.parameters).toEqual([]);
     expect(() => assertValidDeclarations("old", e?.parameters ?? [])).not.toThrow();
-    const resolved = await r.resolve({ provider: "old", model: "e" });
+    const resolved = await r.resolve(ORG, { provider: "old", model: "e" });
     expect(resolved.info.parameters).toEqual(e?.parameters);
+  });
+
+  it("@1 adapter: every @1 model is a chat model (kind and embedding dropped), no embed, no per-call options", async () => {
+    const seenOpts: unknown[] = [];
+    const listed: unknown[] = [];
+    const impl: ModelProviderV1 = {
+      async listModels(...args: unknown[]) {
+        listed.push(args);
+        return [
+          {
+            ...v1Info("emb", false),
+            kind: "embedding",
+            embedding: { dimensions: [8], defaultDimensions: 8, maxInputTokens: 10, maxBatch: 2 },
+          },
+        ];
+      },
+      async *stream(_req, opts) {
+        seenOpts.push(opts);
+        yield done;
+      },
+    };
+    const r = reg([{ plugin: "old", capability: "model-provider@1", impl }]);
+    const [entry] = await r.list(ORG);
+    expect(entry?.models.map((m) => [m.id, m.kind])).toEqual([["emb", "chat"]]);
+    expect(entry?.models[0]).not.toHaveProperty("embedding");
+    expect(listed).toEqual([[]]);
+    const { provider, info } = await r.resolve(ORG, { provider: "old", model: "emb" });
+    expect(info.kind).toBe("chat");
+    expect(provider.embed).toBeUndefined();
+    await drain(provider.stream(req({}), signal()));
+    expect(Object.keys(seenOpts[0] as object)).toEqual(["signal"]);
+  });
+
+  it("@2 embedding model: listed with its kind when the provider implements embed; the bound embed carries the org", async () => {
+    const seen: unknown[] = [];
+    const { capabilities, ...rest } = v1Info("emb", false);
+    const { effort: _deprecated, ...caps } = capabilities;
+    const embedding = { dimensions: [4], defaultDimensions: 4, maxInputTokens: 10, maxBatch: 2 };
+    const base = { ...rest, capabilities: caps, parameters: [] };
+    const impl: ModelProvider = {
+      async listModels() {
+        return [{ ...base, kind: "embedding", embedding }];
+      },
+      stream() {
+        throw new Error("unused");
+      },
+      async embed(r, opts) {
+        seen.push({ orgId: opts.orgId, hasSignal: opts.signal instanceof AbortSignal });
+        return { vectors: r.input.map(() => [0, 0, 0, 0]), usage: { inputTokens: 1 } };
+      },
+    };
+    const r = reg([{ plugin: "e2", capability: "model-provider@2", impl }]);
+    const { provider, info } = await r.resolve(ORG, { provider: "e2", model: "emb" });
+    expect(info.kind).toBe("embedding");
+    expect(info.embedding).toEqual(embedding);
+    const out = await provider.embed?.({ model: "emb", input: ["a"] }, signal());
+    expect(out?.vectors).toEqual([[0, 0, 0, 0]]);
+    expect(seen).toEqual([{ orgId: ORG, hasSignal: true }]);
+    // the same model from a provider without embed is dropped
+    const { embed: _embed, ...noEmbed } = impl;
+    const warns: unknown[] = [];
+    const r2 = reg([{ plugin: "e3", capability: "model-provider@2", impl: noEmbed }], warns);
+    expect((await r2.list(ORG))[0]?.models).toEqual([]);
+    expect(warns).toEqual(["model dropped from the provider's list"]);
   });
 
   it("@1 适配：stream 把 params.effort 映射为 req.effort，其余参数丢弃", async () => {
     const { impl, seen } = v1([v1Info("e", true)]);
     const r = reg([{ plugin: "old", capability: "model-provider@1", impl }]);
-    const { provider } = await r.resolve({ provider: "old", model: "e" });
+    const { provider } = await r.resolve(ORG, { provider: "old", model: "e" });
     await drain(provider.stream(req({ effort: "low", "old.x": 1 }), signal()));
     expect(seen).toHaveLength(1);
     expect(seen[0]?.effort).toBe("low");
@@ -334,7 +404,7 @@ describe("model-provider@1 / @2", () => {
   it("@2：模型信息与请求原样透传", async () => {
     const p = v2();
     const r = reg([{ plugin: "p2", capability: "model-provider@2", impl: p.impl }]);
-    const { provider, info } = await r.resolve({ provider: "p2", model: "v2-model" });
+    const { provider, info } = await r.resolve(ORG, { provider: "p2", model: "v2-model" });
     expect(info.parameters).toEqual(v2Params);
     const sent = req({ effort: "high", "p2.style": true });
     await drain(provider.stream(sent, signal()));
@@ -348,17 +418,17 @@ describe("model-provider@1 / @2", () => {
       { plugin: "p2", capability: "model-provider@1", impl: old.impl },
       { plugin: "p2", capability: "model-provider@2", impl: p.impl },
     ]);
-    const providers = await r.list();
+    const providers = await r.list(ORG);
     expect(providers.map((x) => [x.provider, x.models.map((m) => m.id)])).toEqual([
       ["p2", ["v2-model"]],
     ]);
-    const { provider } = await r.resolve({ provider: "p2", model: "v2-model" });
+    const { provider } = await r.resolve(ORG, { provider: "p2", model: "v2-model" });
     await drain(provider.stream(req({}), signal()));
     expect(p.seen).toHaveLength(1);
     expect(old.seen).toHaveLength(0);
   });
 
-  it("@2 声明不合规：list 跳过并记 warn；resolve → agent.model_unavailable（不可重试）；不写缓存", async () => {
+  it("@2 model with invalid declarations: only that model is dropped (one warn); resolve -> agent.model_unavailable (not retryable)", async () => {
     const bad = v2([
       { key: "style", schema: { type: "boolean" }, label: { zh: "风格", en: "Style" } },
     ]);
@@ -370,14 +440,19 @@ describe("model-provider@1 / @2", () => {
       ],
       warns,
     );
-    expect((await r.list()).map((x) => x.provider)).toEqual(["old"]);
-    expect(warns).toHaveLength(1);
-    const err = await r.resolve({ provider: "p2", model: "v2-model" }).catch((e: unknown) => e);
+    expect((await r.list(ORG)).map((x) => [x.provider, x.models.map((m) => m.id)])).toEqual([
+      ["p2", []],
+      ["old", ["b"]],
+    ]);
+    expect(warns).toEqual(["model dropped from the provider's list"]);
+    const err = await r
+      .resolve(ORG, { provider: "p2", model: "v2-model" })
+      .catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ApiError);
     expect(err).not.toBeInstanceOf(ProviderListError);
     expect((err as ApiError).code).toBe("agent.model_unavailable");
-    expect(((err as ApiError).cause as Error).message).toMatch(/"style"/);
-    expect(await redis.exists("cache:capk:models:p2:v2:-:-")).toBe(0);
+    // the validated list (without the dropped model) is cached
+    expect(await redis.exists("cache:capk:models:p2:v2:-:-")).toBe(1);
   });
 
   it("an older kernel's entry under the pre-@Cacheable key is ignored: the list is cached under the new key", async () => {
@@ -385,14 +460,14 @@ describe("model-provider@1 / @2", () => {
     await redis.set("capk:models:p2:v2:-:-", JSON.stringify([{ id: "stale" }]), "EX", 600);
     const p = v2();
     const r = reg([{ plugin: "p2", capability: "model-provider@2", impl: p.impl }]);
-    const [entry] = await r.list();
+    const [entry] = await r.list(ORG);
     expect(entry?.models.map((m) => m.id)).toEqual(["v2-model"]);
     expect(p.calls()).toBe(1);
     // cached under the new key (`@Cacheable`), which the next list reads
     const cached = JSON.parse((await redis.get("cache:capk:models:p2:v2:-:-")) ?? "null");
     expect(cached.map((m: { id: string }) => m.id)).toEqual(["v2-model"]);
     expect(await redis.ttl("cache:capk:models:p2:v2:-:-")).toBeGreaterThan(0);
-    await r.list();
+    await r.list(ORG);
     expect(p.calls()).toBe(1);
     // the old key is neither read nor rewritten
     expect(JSON.parse((await redis.get("capk:models:p2:v2:-:-")) ?? "null")).toEqual([
@@ -404,12 +479,12 @@ describe("model-provider@1 / @2", () => {
     const old = reg([
       { plugin: "p2", capability: "model-provider@1", impl: v1([v1Info("v2-model", true)]).impl },
     ]);
-    const [before] = await old.list();
+    const [before] = await old.list(ORG);
     expect(before?.models[0]?.parameters.map((d) => d.key)).toEqual(["effort"]);
     expect(await redis.exists("cache:capk:models:p2:v1:-:-")).toBe(1);
     const p = v2();
     const upgraded = reg([{ plugin: "p2", capability: "model-provider@2", impl: p.impl }]);
-    const [after] = await upgraded.list();
+    const [after] = await upgraded.list(ORG);
     expect(after?.models[0]?.parameters).toEqual(v2Params);
     expect(p.calls()).toBe(1);
   });
@@ -418,22 +493,44 @@ describe("model-provider@1 / @2", () => {
     const p = v2();
     const at = (version: string, configHash: string) =>
       reg([{ plugin: "p2", capability: "model-provider@2", impl: p.impl, version, configHash }]);
-    await at("1.0.0", "aaaa").list();
+    await at("1.0.0", "aaaa").list(ORG);
     expect(p.calls()).toBe(1);
-    await at("1.0.0", "aaaa").list();
+    await at("1.0.0", "aaaa").list(ORG);
     expect(p.calls()).toBe(1);
-    await at("1.1.0", "aaaa").list();
+    await at("1.1.0", "aaaa").list(ORG);
     expect(p.calls()).toBe(2);
-    await at("1.1.0", "bbbb").list();
+    await at("1.1.0", "bbbb").list(ORG);
     expect(p.calls()).toBe(3);
+  });
+
+  it("the list time limit comes from models.listTimeoutMs", async () => {
+    const hung: ModelProvider = {
+      listModels: () => new Promise(() => {}),
+      stream() {
+        throw new Error("unused");
+      },
+    };
+    const r = providerRegistryFor(
+      { list: () => [{ plugin: "hung", capability: "model-provider@2" as const, impl: hung }] },
+      redis,
+      undefined,
+      { configListTimeoutMs: 150 },
+    );
+    const started = Date.now();
+    const err = await r.resolve(ORG, { provider: "hung", model: "x" }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ProviderListError);
+    expect(((err as ProviderListError).cause as Error).message).toBe(
+      "listModels timed out after 150ms",
+    );
+    expect(Date.now() - started).toBeLessThan(5_000);
   });
 
   it("不支持的主版本被忽略并记 warn", async () => {
     const warns: unknown[] = [];
     const r = reg([{ plugin: "future", capability: "model-provider@3", impl: v2().impl }], warns);
-    expect(await r.list()).toEqual([]);
+    expect(await r.list(ORG)).toEqual([]);
     expect(warns.length).toBeGreaterThan(0);
-    expect(await codeOf(r.resolve({ provider: "future", model: "v2-model" }))).toBe(
+    expect(await codeOf(r.resolve(ORG, { provider: "future", model: "v2-model" }))).toBe(
       "agent.model_unavailable",
     );
   });

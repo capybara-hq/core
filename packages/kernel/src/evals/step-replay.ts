@@ -260,7 +260,7 @@ export async function replayStep(
   drift: DriftReason[];
 }> {
   const baseline = baselineOf(s, call);
-  const { provider, info } = await d.registry.resolve(candidate.model);
+  const { provider, info } = await d.registry.resolve(s.orgId, candidate.model);
   let media: Awaited<ReturnType<typeof loadSnapshotMedia>> | undefined;
   if (d.media) {
     try {

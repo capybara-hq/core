@@ -5,7 +5,6 @@ import {
   type Logger,
   ModelError,
   type ModelInfo,
-  type ModelProvider,
   type ModelRequest,
   type ModelStreamEvent,
   type ModelUsage,
@@ -56,7 +55,7 @@ import {
 } from "./hook-calls.js";
 import type { SubagentParent } from "./loop.js";
 import { MediaCache } from "./media-cache.js";
-import { ProviderListError, type ProviderRegistry } from "./providers.js";
+import { type BoundProvider, ProviderListError, type ProviderRegistry } from "./providers.js";
 import type { StepLog } from "./step-log.js";
 import { budgetRunOf, subagentBudgetUsedUp } from "./subagents/limits.js";
 import type { UsageReporter } from "./usage-report.js";
@@ -827,10 +826,10 @@ async function maybeCompact(
   tools: StepTools,
 ): Promise<ConversationEvent[]> {
   if (compactionBackoff(events)) return events;
-  let provider: ModelProvider;
+  let provider: BoundProvider;
   let info: ModelInfo;
   try {
-    ({ provider, info } = await deps.registry.resolve(input.agent.model));
+    ({ provider, info } = await deps.registry.resolve(input.orgId, input.agent.model));
   } catch (err) {
     deps.log.warn("compaction skipped: model unavailable", { model: input.agent.model, err });
     return events;
@@ -1077,7 +1076,7 @@ async function ladder(
     /** When the request went out (model.response fires only for sent requests). */
     let sentAt: number | undefined;
     try {
-      const { provider, info } = await deps.registry.resolve(rung.ref);
+      const { provider, info } = await deps.registry.resolve(input.orgId, rung.ref);
       if (tools.list.length > 0 && !info.capabilities.tools) {
         evs = await appendLocal(deps.eventLog, conversationId, evs, {
           type: "reminder",
@@ -1383,7 +1382,7 @@ function abortableSleep(ms: number, signal: AbortSignal): Promise<void> {
  * 运行时与评测单步回放（`evals/step-replay.ts`）、评委共用。
  */
 export async function consumeModelStream(
-  provider: ModelProvider,
+  provider: BoundProvider,
   request: ModelRequest,
   idleMs: number,
   signal: AbortSignal,

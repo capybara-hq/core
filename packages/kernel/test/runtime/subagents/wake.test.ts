@@ -277,7 +277,7 @@ async function expectZeroDrift(conversationId: string, runId: string, marker: st
     const info = (
       await k.app
         .get(ProviderRegistry)
-        .resolve({ provider: c.payload.provider, model: c.payload.model })
+        .resolve(snap.orgId, { provider: c.payload.provider, model: c.payload.model })
     ).info;
     const out = reconstructRequest(snap, c.seq, { model: info });
     expect(out.drift, `model_call seq ${c.seq}`).toEqual([]);

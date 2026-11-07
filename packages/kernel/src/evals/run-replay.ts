@@ -3,7 +3,6 @@ import {
   type ContentBlock,
   type Logger,
   ModelError,
-  type ModelProvider,
   type ModelRequest,
   type ModelStreamEvent,
   type ModelUsage,
@@ -29,7 +28,7 @@ import { estimateTokens } from "../runtime/context/tokens.js";
 import type { LoopDeps } from "../runtime/langgraph-loop.js";
 import type { AgentLoop, LoopOutcome } from "../runtime/loop.js";
 import { type MediaSourceDeps, RunError } from "../runtime/model-call.js";
-import type { ProviderRegistry } from "../runtime/providers.js";
+import type { BoundProvider, ProviderRegistry } from "../runtime/providers.js";
 import type { RunFinish } from "../runtime/run-finish.js";
 import { recordedSkillForks } from "../runtime/subagents/skill-fork.js";
 import { skillsCatalogIdemKey } from "../skills/catalog.js";
@@ -550,8 +549,8 @@ export async function replayRun(
     void p.finally(() => charges.delete(p));
     return p;
   };
-  const meter = (provider: ModelProvider): ModelProvider => {
-    const metered = Object.create(provider) as ModelProvider;
+  const meter = (provider: BoundProvider): BoundProvider => {
+    const metered = Object.create(provider) as BoundProvider;
     metered.stream = (req: ModelRequest, opts: { signal: AbortSignal }) =>
       (async function* (): AsyncGenerator<ModelStreamEvent> {
         if (!(await allowedSafe())) {
@@ -584,8 +583,9 @@ export async function replayRun(
     return metered;
   };
   const registry: Pick<ProviderRegistry, "resolve"> = {
-    resolve: async (ref) => {
-      const r = await d.registry.resolve(ref);
+    // the case's org (its effective provider config), whatever the replayed step passes
+    resolve: async (_orgId, ref) => {
+      const r = await d.registry.resolve(s.orgId, ref);
       return { ...r, provider: meter(r.provider) };
     },
   };

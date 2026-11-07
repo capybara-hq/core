@@ -402,11 +402,12 @@ export class EvalRunsService {
 
   /**
    * 解析模型；不存在 / 不可用 → `eval.candidate_invalid`（供应商列表暂时失败照常抛出）。
-   * 按部署范围解析，与运行时一致；组织级模型准入若在第二段落地，须同样覆盖评测候选。
+   * Resolved for the org (its effective provider config), as the runtime does; per-org model
+   * admission must cover eval candidates the same way.
    */
-  private async resolveModel(ref: ModelRef) {
+  private async resolveModel(orgId: string, ref: ModelRef) {
     try {
-      return await this.d.registry.resolve(ref);
+      return await this.d.registry.resolve(orgId, ref);
     } catch (e) {
       if (e instanceof ProviderListError) throw e;
       if (e instanceof ApiError && e.code === "agent.model_unavailable") {
@@ -423,6 +424,7 @@ export class EvalRunsService {
    * 所用模型 = 候选模型，否则候选版本的模型，否则 agent 当前版本的模型。返回候选版本的定义。
    */
   private async checkCandidate(
+    orgId: string,
     agentId: string,
     c: EvalCandidate,
   ): Promise<AgentDefinition | undefined> {
@@ -445,7 +447,7 @@ export class EvalRunsService {
       model = (current?.definition as unknown as AgentDefinition | undefined)?.model;
     }
     if (model === undefined) return versionDef;
-    const { info } = await this.resolveModel(model);
+    const { info } = await this.resolveModel(orgId, model);
     if (c.modelParams !== undefined) {
       const issues = paramIssues("candidate.modelParams", info.parameters, c.modelParams);
       if (issues.length > 0) throw candidateInvalid("Invalid candidate model parameters", issues);
@@ -458,6 +460,7 @@ export class EvalRunsService {
    * 给了候选参数时按每个用例实际所用的模型严格校验（同一模型在一次调用里只解析一次）。
    */
   private async plan(
+    orgId: string,
     setId: string,
     mode: "step" | "run",
     c: EvalCandidate,
@@ -505,7 +508,7 @@ export class EvalRunsService {
         const key = priceKey(model.provider, model.model);
         if (!infos.has(key)) {
           try {
-            infos.set(key, (await this.d.registry.resolve(model)).info);
+            infos.set(key, (await this.d.registry.resolve(orgId, model)).info);
           } catch (e) {
             if (e instanceof ProviderListError) throw e;
             if (!(e instanceof ApiError && e.code === "agent.model_unavailable")) throw e;
@@ -556,7 +559,7 @@ export class EvalRunsService {
     }
     let maxOutputTokens = configured;
     try {
-      const { info } = await this.d.registry.resolve(target.model);
+      const { info } = await this.d.registry.resolve(orgId, target.model);
       maxOutputTokens = Math.min(configured, info.maxOutputTokens);
     } catch (e) {
       if (e instanceof ProviderListError) throw e;
@@ -630,8 +633,8 @@ export class EvalRunsService {
     const set = await this.liveSet(orgId, setId);
     await this.assertAgentLive(set.agent_id);
     const caps = this.tokenCaps(input.tokenCap);
-    const versionDef = await this.checkCandidate(set.agent_id, input.candidate);
-    const plans = await this.plan(setId, input.mode, input.candidate, versionDef);
+    const versionDef = await this.checkCandidate(orgId, set.agent_id, input.candidate);
+    const plans = await this.plan(orgId, setId, input.mode, input.candidate, versionDef);
     const judge = await this.judgePricing(orgId, set.rubric, input.judge);
     return { estimate: await this.summarize(plans, judge), ...caps };
   }
@@ -665,10 +668,10 @@ export class EvalRunsService {
     const set = await this.liveSet(orgId, setId);
     await this.assertAgentLive(set.agent_id);
     const tokenCap = this.tokenCaps(input.tokenCap).effectiveTokenCap;
-    const versionDef = await this.checkCandidate(set.agent_id, input.candidate);
+    const versionDef = await this.checkCandidate(orgId, set.agent_id, input.candidate);
     if (input.judge) await this.d.purposes.resolve(orgId, "eval");
     const judge = await this.judgePricing(orgId, set.rubric, input.judge);
-    const planned = await this.plan(setId, input.mode, input.candidate, versionDef);
+    const planned = await this.plan(orgId, setId, input.mode, input.candidate, versionDef);
     if (planned.length === 0) {
       throw new ApiError("eval.nothing_to_replay", "The eval set has nothing to replay");
     }

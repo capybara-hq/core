@@ -10,6 +10,7 @@ import type { Kysely } from "kysely";
 import type { KernelConfig } from "../../src/config/schema.js";
 import type { EventLog } from "../../src/conversations/event-log.js";
 import { type TitleDeps, TitleGenerator } from "../../src/conversations/titles.js";
+import type { EffectiveConfigs } from "../../src/extensions/effective-config.js";
 import type { HookRegistry } from "../../src/extensions/hooks.js";
 import { CacheService } from "../../src/infra/cache/cache.service.js";
 import { LockService } from "../../src/infra/lock/lock.service.js";
@@ -26,14 +27,45 @@ import { handlesFor } from "./identity.js";
 
 const quiet = createLogger("error", { write: () => {} });
 
-/** The model provider registry over `host`, caching in `redis` (`@Cacheable`). */
+/**
+ * Effective configs for a registry without a running kernel's copies: every org follows the
+ * platform (the host's running config when it has `current`, else no config).
+ */
+export function platformEffectiveConfigs(host: ProviderHost): Pick<EffectiveConfigs, "get"> {
+  return {
+    async get(_orgId, plugin) {
+      return { ok: true, config: host.current?.(plugin)?.config, source: "platform" };
+    },
+  };
+}
+
+/**
+ * The model provider registry over `host`, caching in `redis` (`@Cacheable`). `effective` defaults
+ * to {@link platformEffectiveConfigs}; `listTimeoutMs` to the config default (10 s).
+ */
 export function providerRegistryFor(
   host: ProviderHost,
   redis: Redis,
   log?: Pick<Logger, "warn">,
-  opts: { listTimeoutMs?: number } = {},
+  opts: {
+    listTimeoutMs?: number;
+    effective?: Pick<EffectiveConfigs, "get">;
+    /** The kernel config's `models.listTimeoutMs` (10 s by default; `listTimeoutMs` wins). */
+    configListTimeoutMs?: number;
+  } = {},
 ): ProviderRegistry {
-  return new ProviderRegistry(host, new CacheService(redis, quiet), redis, log, opts.listTimeoutMs);
+  return new ProviderRegistry(
+    host,
+    opts.effective ?? platformEffectiveConfigs(host),
+    new CacheService(redis, quiet),
+    redis,
+    {
+      get: () =>
+        ({ models: { listTimeoutMs: opts.configListTimeoutMs ?? 10_000 } }) as KernelConfig,
+    },
+    log,
+    opts.listTimeoutMs,
+  );
 }
 
 /** The LangGraph checkpoint saver over a test's pool. */

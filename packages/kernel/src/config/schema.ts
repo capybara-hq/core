@@ -1546,6 +1546,23 @@ export const KernelConfigSchema = z.object({
       path: ["defaultTokenCap"],
     })
     .prefault({} as never),
+  models: z
+    .object({
+      listTimeoutMs: z
+        .number()
+        .int()
+        .positive()
+        .max(300_000)
+        .default(10_000)
+        .meta(
+          meta({
+            hot: true,
+            description:
+              "Time limit in milliseconds for one model provider's model list (listModels, which may page through a large platform catalog); a provider that exceeds it is treated as failing to list",
+          }),
+        ),
+    })
+    .prefault({} as never),
   hooks: z
     .object({
       timeoutMs: z

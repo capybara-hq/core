@@ -273,10 +273,11 @@ async function pinnedFor(
 /** The `effort` declaration of `model`, or null (or when the model cannot be resolved). */
 async function effortDecl(
   registry: Pick<ProviderRegistry, "resolve">,
+  orgId: string,
   model: ModelRef,
 ): Promise<ModelParameter | null> {
   try {
-    const { info } = await registry.resolve(model);
+    const { info } = await registry.resolve(orgId, model);
     return info.parameters.find((p) => p.standard === "effort") ?? null;
   } catch {
     return null;
@@ -449,7 +450,7 @@ export async function effectiveDefinition(
   const m = await resolveTier(d, a.orgId, parent, tier);
   let modelParams = m.modelParams;
   if (template?.effort !== undefined) {
-    const decl = await effortDecl(d.registry, m.model);
+    const decl = await effortDecl(d.registry, a.orgId, m.model);
     if (decl) {
       const v = sanitizeParams([decl], { [decl.key]: template.effort }).value[decl.key];
       if (v !== undefined) modelParams = { ...modelParams, [decl.key]: v };

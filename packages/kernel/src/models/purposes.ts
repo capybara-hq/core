@@ -151,7 +151,8 @@ export class ModelPurposesService {
     @Inject(KernelDb) private readonly db: KernelDb,
     @Inject(ExtensionRegistry) private readonly extensions: ExtensionRegistry,
     @Inject(KernelConfigService) private readonly config: KernelConfigService,
-    @Inject(ProviderRegistry) private readonly providers: Pick<ProviderRegistry, "resolve">,
+    @Inject(ProviderRegistry)
+    private readonly providers: Pick<ProviderRegistry, "resolve" | "platformInfo">,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     @Inject(SuperAdminLock) private readonly adminLock: SuperAdminLock,
     @Inject(OrgLock) private readonly orgLock: OrgLock,
@@ -221,11 +222,17 @@ export class ModelPurposesService {
     return this.views(this.declared(), orgId);
   }
 
-  /** 校验目标：模型可解析（部署范围）、参数按它的声明严格通过。 */
-  private async check(target: PurposeTarget): Promise<void> {
+  /**
+   * 校验目标：模型可解析（an org's override for the org, a deployment default in the platform
+   * view）、参数按它的声明严格通过。
+   */
+  private async check(orgId: string | null, target: PurposeTarget): Promise<void> {
     let info: Awaited<ReturnType<ProviderRegistry["resolve"]>>["info"];
     try {
-      ({ info } = await this.providers.resolve(target.model));
+      info =
+        orgId === null
+          ? await this.providers.platformInfo(target.model)
+          : (await this.providers.resolve(orgId, target.model)).info;
     } catch (e) {
       if (e instanceof ProviderListError) throw e;
       if (e instanceof ApiError && e.code === "agent.model_unavailable") {
@@ -245,7 +252,7 @@ export class ModelPurposesService {
     actorTokenId: string | undefined,
   ): Promise<PurposeView> {
     const decl = this.find(purpose);
-    if (target) await this.check(target);
+    if (target) await this.check(orgId, target);
     await this.write(orgId, purpose, target, actor, actorTokenId);
     const [view] = await this.views([decl], orgId ?? undefined);
     return view as PurposeView;
@@ -353,7 +360,7 @@ export class ModelPurposesService {
     opts: { fallback?: PurposeTarget } = {},
   ): Promise<{ contextWindow: number; maxOutputTokens: number }> {
     const target = await this.chatTarget(orgId, purpose, opts.fallback);
-    const { info } = await this.providers.resolve(target.model);
+    const { info } = await this.providers.resolve(orgId, target.model);
     return { contextWindow: info.contextWindow, maxOutputTokens: info.maxOutputTokens };
   }
 
@@ -385,7 +392,7 @@ export class ModelPurposesService {
     model: string;
   }> {
     const target = await this.chatTarget(orgId, purpose, opts.fallback);
-    const { provider, info } = await this.providers.resolve(target.model);
+    const { provider, info } = await this.providers.resolve(orgId, target.model);
     const request: ModelRequest = {
       ...req,
       model: info.id,
