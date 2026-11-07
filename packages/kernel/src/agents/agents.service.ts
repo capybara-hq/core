@@ -75,6 +75,18 @@ export function assertProfileWritable(profile: ProfileInput | undefined): void {
 
 const notFound = () => new ApiError("agent.not_found", "Agent not found");
 
+/** A per-operation policy key of the `Platform` tool (Platform tool spec §6.2). */
+const PLATFORM_POLICY_KEY = /^Platform:[a-z][a-z-]*\.[a-z][a-z-]*$/;
+
+/**
+ * May `toolPolicies` hold this key: one of the agent's tool keys, or `Platform:<operation>` when
+ * `Platform` is among them (an unknown operation id is kept: a removed operation's policy is
+ * harmless).
+ */
+function isToolPolicyKey(key: string, toolKeys: ReadonlySet<string>): boolean {
+  return toolKeys.has(key) || (toolKeys.has("Platform") && PLATFORM_POLICY_KEY.test(key));
+}
+
 /** 键排序后的 JSON：jsonb 不保留键顺序，比较定义是否变化时用。 */
 function canonical(v: unknown): string {
   if (Array.isArray(v)) return `[${v.map(canonical).join(",")}]`;
@@ -270,7 +282,9 @@ export async function assertSubagents(
     for (const [j, key] of (x.disallowedTools ?? []).entries()) {
       tool(key, `${base}.disallowedTools.${j}`);
     }
-    for (const key of Object.keys(x.toolPolicies ?? {})) tool(key, `${base}.toolPolicies.${key}`);
+    for (const key of Object.keys(x.toolPolicies ?? {})) {
+      if (!isToolPolicyKey(key, a.toolKeys)) tool(key, `${base}.toolPolicies.${key}`);
+    }
     (x.skills ?? []).forEach((id, j) => {
       if (!selected.has(id) && !own.has(id)) add("skill_not_selected", `${base}.skills.${j}`, id);
     });
@@ -361,7 +375,7 @@ export class AgentsService {
     const { keys, issues } = await this.tools.checkRefs(orgId, def.tools);
     const details = [...issues];
     for (const key of Object.keys(def.toolPolicies)) {
-      if (!keys.has(key)) {
+      if (!isToolPolicyKey(key, keys)) {
         // an rc key (tool naming spec §8.3): saving writes current keys only, so name them
         const renamed = legacyKeySaveText(key, keys);
         details.push({

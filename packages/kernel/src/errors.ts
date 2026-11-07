@@ -207,6 +207,7 @@ export const ERROR_CODES = {
   "connector.resources_disabled": 409,
   "approval.not_found": 404,
   "approval.already_decided": 409,
+  "approval.scope_not_allowed": 409,
   "question.not_found": 404,
   "question.already_answered": 409,
   "tool_output.not_found": 404,

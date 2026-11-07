@@ -315,6 +315,51 @@ describe("决定", () => {
     expect(errCode(again)).toBe("approval.already_decided");
   });
 
+  it("an approval limited to once: the detail names its summary and scopes; session / always → 409 approval.scope_not_allowed", async () => {
+    const a = await request({
+      toolKey: "Platform:marketplaces.add",
+      connectorId: null,
+      specHash: "hash-p",
+      input: { action: "call", operation: "marketplaces.add", params: { url: "https://m.test" } },
+      summary: { zh: "添加市场源 https://m.test", en: "Add marketplace https://m.test" },
+      scopes: ["once"],
+    });
+    const plain = await request();
+    const detail = await initiator.req({ method: "GET", url: `${base()}/${a.id}` });
+    expect((detail.json() as { approval: unknown }).approval).toMatchObject({
+      toolKey: "Platform:marketplaces.add",
+      summary: { zh: "添加市场源 https://m.test", en: "Add marketplace https://m.test" },
+      scopes: ["once"],
+    });
+    const list = await initiator.req({ method: "GET", url: `${base()}?status=pending` });
+    const listed = (list.json() as { approvals: { id: string; scopes: string[] }[] }).approvals;
+    expect(listed.find((x) => x.id === plain.id)).toMatchObject({
+      summary: null,
+      scopes: ["once", "session", "always"],
+    });
+    for (const scope of ["always", "session"]) {
+      const res = await initiator.req({
+        method: "POST",
+        url: `${base()}/${a.id}/decision`,
+        payload: { decision: "approve", scope },
+      });
+      expect(res.statusCode).toBe(409);
+      expect(errCode(res)).toBe("approval.scope_not_allowed");
+    }
+    expect(await db.selectFrom("tool_grants").selectAll().execute()).toEqual([]);
+    expect(await db.selectFrom("conversation_tool_grants").selectAll().execute()).toEqual([]);
+    const once = await initiator.req({
+      method: "POST",
+      url: `${base()}/${a.id}/decision`,
+      payload: { decision: "approve", scope: "once" },
+    });
+    expect(once.statusCode).toBe(200);
+    expect((once.json() as { approval: unknown }).approval).toMatchObject({
+      status: "approved",
+      scope: "once",
+    });
+  });
+
   it("以后都允许 → tool_grants；可在 /me/tool-grants 列出与撤销", async () => {
     const a = await request();
     const res = await initiator.req({

@@ -65,6 +65,21 @@ const asOverride = (v: unknown): "ask" | "deny" | undefined =>
   v === "ask" || v === "deny" ? v : undefined;
 
 /**
+ * An agent's tightening for a call: its policy on the tool key and, for a per-call key
+ * (`Platform:<operation>`), on that key, the stricter of the two (a policy can only tighten).
+ */
+function overrideOf(
+  policies: Record<string, unknown> | undefined,
+  toolKey: string,
+  policyKey: string,
+): "ask" | "deny" | undefined {
+  const own = asOverride(policies?.[toolKey]);
+  if (policyKey === toolKey) return own;
+  const s = stricter(own ?? "allow", asOverride(policies?.[policyKey]));
+  return s === "allow" ? undefined : s;
+}
+
+/**
  * 执行时的策略判定（spec 3.6 R5：在动作执行那一刻判定）。每次调用都实时读取：
  * - 沙箱工具（bash / write / edit / deliver）的组织设置 `sandboxToolPolicy`（为 ask 时组织默认至少 ask）；
  * - 连接器工具的 `connector_tools.default_policy` / 状态 / 指纹（连接器或工具已不存在、停用、删除、待审核 →
@@ -85,7 +100,11 @@ const asOverride = (v: unknown): "ask" | "deny" | undefined =>
  */
 export function createDecidePolicy(db: KernelSchemaDb): DecidePolicy {
   return async (tool, agentDef, ctx) => {
-    let connectorDefault: ToolPolicy = tool.defaultPolicy;
+    // a per-call policy (Platform tool spec §6.2): its key replaces the tool key for policies,
+    // grants and approvals, and its policy replaces the tool's default
+    const call = ctx.callPolicy ?? null;
+    const policyKey = call?.key ?? tool.key;
+    let connectorDefault: ToolPolicy = call?.policy ?? tool.defaultPolicy;
     let connectorId: string | null = null;
     let hashCurrent = true;
     if (tool.source.kind === "connector") {
@@ -125,8 +144,10 @@ export function createDecidePolicy(db: KernelSchemaDb): DecidePolicy {
     }
 
     // 运行所用版本可能是加 toolPolicies 字段之前保存的：缺省为空
-    const runOverride = asOverride(
-      (agentDef.toolPolicies as Record<string, unknown> | undefined)?.[tool.key],
+    const runOverride = overrideOf(
+      agentDef.toolPolicies as Record<string, unknown> | undefined,
+      tool.key,
+      policyKey,
     );
     const current = await db
       .selectFrom("agents")
@@ -144,10 +165,10 @@ export function createDecidePolicy(db: KernelSchemaDb): DecidePolicy {
         ? undefined
         : await normalizeStoredDefinitionIn(db, ctx.orgId, current.definition);
     const currentPolicies = currentDef?.toolPolicies as Record<string, unknown> | undefined;
-    const currentOverride = asOverride(currentPolicies?.[tool.key]);
+    const currentOverride = overrideOf(currentPolicies, tool.key, policyKey);
     let strictest = stricter(runOverride ?? "allow", currentOverride);
     if (ctx.parentConversationId !== undefined && ctx.parentAgentDiffers !== false) {
-      strictest = stricter(strictest, await parentAgentOverride(db, tool.key, ctx));
+      strictest = stricter(strictest, await parentAgentOverride(db, tool.key, policyKey, ctx));
     }
     const agentOverride = strictest === "allow" ? undefined : strictest;
 
@@ -166,7 +187,9 @@ export function createDecidePolicy(db: KernelSchemaDb): DecidePolicy {
     // 可见性实时读（R5）：共享 agent 的 SkillWrite 固定 ask，私有 agent 不问（见 R3_SHARED_AGENT_ONLY_TOOL_KEYS）
     // 当前版本的 skills.writePolicy 同样实时读（R5）：运行中改为 ask，下一次调用即生效；固定 ask 时授权不放行
     const writePolicy = (currentDef as AgentDefinition | undefined)?.skills?.writePolicy;
-    const fixedAsk = isFixedAsk(tool, current?.visibility, writePolicy);
+    // `remember: false` (an org / platform operation): every call asks, grants never apply
+    const fixedAsk =
+      isFixedAsk(tool, current?.visibility, writePolicy) || (call !== null && !call.remember);
     const input: PolicyInput = {
       connectorDefault,
       ...(agentOverride !== undefined && { agentOverride }),
@@ -176,7 +199,7 @@ export function createDecidePolicy(db: KernelSchemaDb): DecidePolicy {
     const pre = decide(input);
     if (pre === "deny") return "deny";
     if (pre === "ask" && !fixedAsk && escalateTo === null && hashCurrent) {
-      input.grant = await findGrant(db, tool, connectorId, ctx);
+      input.grant = await findGrant(db, tool, policyKey, connectorId, ctx);
     }
     const result = decide(input);
     if (result === "allow" && escalateTo === null) {
@@ -184,7 +207,7 @@ export function createDecidePolicy(db: KernelSchemaDb): DecidePolicy {
       return pre === "ask" && input.grant !== null ? { grant: input.grant } : "allow";
     }
     const ask: AskRequest = {
-      toolKey: tool.key,
+      toolKey: policyKey,
       specHash: tool.specHash,
       connectorId,
       requestedFor: escalateTo === null ? ctx.accountId : null,
@@ -218,6 +241,7 @@ export function createDecidePolicy(db: KernelSchemaDb): DecidePolicy {
 async function parentAgentOverride(
   db: KernelSchemaDb,
   toolKey: string,
+  policyKey: string,
   ctx: { orgId: string; agentId: string; parentConversationId?: string },
 ): Promise<"ask" | "deny" | undefined> {
   const row = await db
@@ -233,11 +257,12 @@ async function parentAgentOverride(
   // stored raw: an rc version's keys read as current keys, so its deny keeps applying (§8.3)
   const policies = (await normalizeStoredDefinitionIn(db, ctx.orgId, row.definition))
     .toolPolicies as Record<string, unknown> | undefined;
-  return asOverride(policies?.[toolKey]);
+  return overrideOf(policies, toolKey, policyKey);
 }
 
 /**
- * A grant matching the current definition hash and source connector: this conversation's first,
+ * A grant matching the current definition hash and source connector, keyed by the call's policy key
+ * (the tool key, or a per-call key such as `Platform:<operation>`): this conversation's first,
  * then "always". `connectorId` is the tool's source connector (null for plugin and builtin tools,
  * which match only grants without a connector). A sub-agent's "this conversation" grants live on
  * the root conversation of its tree (agent map spec §7), so the root and every sub-agent at any
@@ -246,6 +271,7 @@ async function parentAgentOverride(
 async function findGrant(
   db: KernelSchemaDb,
   tool: ResolvedTool,
+  policyKey: string,
   connectorId: string | null,
   ctx: {
     orgId: string;
@@ -260,7 +286,7 @@ async function findGrant(
     .selectFrom("conversation_tool_grants")
     .select("spec_hash")
     .where("conversation_id", "=", ctx.rootConversationId ?? ctx.conversationId)
-    .where("tool_key", "=", tool.key)
+    .where("tool_key", "=", policyKey)
     .where(sameConnector)
     .executeTakeFirst();
   if (session?.spec_hash === tool.specHash) return "session";
@@ -270,7 +296,7 @@ async function findGrant(
     .where("org_id", "=", ctx.orgId)
     .where("account_id", "=", ctx.accountId)
     .where("agent_id", "=", ctx.agentId)
-    .where("tool_key", "=", tool.key)
+    .where("tool_key", "=", policyKey)
     .where(sameConnector)
     .executeTakeFirst();
   return always?.spec_hash === tool.specHash ? "always" : null;

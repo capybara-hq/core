@@ -51,6 +51,7 @@ import { AGENT_TOOL, AgentToolInput } from "./builtins/agent.js";
 import { HandbackInput } from "./builtins/handback.js";
 import { SendMessageInput } from "./builtins/send-message.js";
 import { isAlwaysLoaded, notLoadedText } from "./builtins/tool-search.js";
+import { canonicalJson } from "./canonical-json.js";
 import { type ConnectorAuth, CredentialMissing, Credentials } from "./credentials.js";
 import { ToolDrift } from "./drift.js";
 import { ElicitationSession } from "./elicitation.js";
@@ -62,6 +63,7 @@ import { redactDeep, redactorFor } from "./redact.js";
 import {
   type AgentTools,
   type BuiltinCallContext,
+  type CallPolicy,
   type ResolvedTool,
   ToolRegistry,
 } from "./registry.js";
@@ -198,6 +200,11 @@ export interface PolicyContext {
    * read and compare.
    */
   parentAgentDiffers?: boolean;
+  /**
+   * The call's per-call policy ({@link ResolvedTool.callPolicy} of the validated input), or
+   * null / unset: policies, grants and approvals use the tool key.
+   */
+  callPolicy?: CallPolicy | null;
 }
 
 /** 管线第 3 阶段：策略判定。 */
@@ -664,6 +671,14 @@ export class ToolPipeline {
     });
     if (invalid !== null) return fail(invalid, outKey);
 
+    // the per-call policy key (Platform tool spec §6.2), from the validated input
+    const callPolicy = tool.callPolicy?.(input) ?? null;
+    // a deny with a reason (e.g. an unavailable operation): the reason is the tool error
+    if (callPolicy?.policy === "deny" && callPolicy.denyReason !== undefined) {
+      return fail(callPolicy.denyReason, outKey);
+    }
+    const policyKey = callPolicy?.key ?? tool.key;
+
     const decision = await this.decide(tool, ctx.agent, {
       orgId: ctx.orgId,
       accountId: ctx.accountId,
@@ -675,6 +690,7 @@ export class ToolPipeline {
         rootConversationId: ctx.parent.rootConversationId,
         ...(ctx.parent.otherAgent !== undefined && { parentAgentDiffers: ctx.parent.otherAgent }),
       }),
+      callPolicy,
     });
     if (decision === "deny") return fail(deniedText(tool.key), outKey);
     if (typeof decision === "object" && "unavailable" in decision) {
@@ -687,8 +703,12 @@ export class ToolPipeline {
     // An in-flight rc call (spec §9) is the exception: its approval was asked under the rc definition
     // of the same call, and the rename changed every builtin's definition; the person approved this
     // very call, so the approval stands.
+    // An approval binds the exact input it showed (Platform tool spec §6.3): an approved record
+    // whose stored input differs from the call's is not used.
     const approvedHere =
-      approval?.status === "approved" && (legacy || approval.specHash === tool.specHash);
+      approval?.status === "approved" &&
+      (legacy || approval.specHash === tool.specHash) &&
+      canonicalJson(approval.input) === canonicalJson(call.input ?? {});
     const stale = approval?.status === "approved" && !approvedHere;
     if ((!approval || stale) && typeof decision === "object" && "ask" in decision) {
       approval = await this.deps.approvals.request({
@@ -698,13 +718,15 @@ export class ToolPipeline {
         runId: ctx.runId,
         step: ctx.step,
         callId: call.id,
-        toolKey: tool.key,
+        toolKey: policyKey,
         specHash: decision.ask.specHash,
         connectorId: decision.ask.connectorId,
         input: call.input,
         requestedFor: decision.ask.requestedFor,
         approverRole: decision.ask.approverRole,
         policy: decision.ask.policy,
+        ...(callPolicy?.summary !== undefined && { summary: callPolicy.summary }),
+        ...(callPolicy !== null && !callPolicy.remember && { scopes: ["once"] }),
       });
     }
     if (approval && approval.status !== "approved") {
