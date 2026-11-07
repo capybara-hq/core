@@ -6,6 +6,7 @@ import { availability } from "../../src/platform/availability.js";
 import { nextStepFor, toToolError } from "../../src/platform/errors.js";
 import type { OperationContext } from "../../src/platform/operation.js";
 import { PlatformOperations } from "../../src/platform/registry.js";
+import { SkillsService } from "../../src/skills/skills.service.js";
 import {
   importSkill,
   importTemplate,
@@ -352,6 +353,10 @@ describe("platform component writes", () => {
     const done = await run("plugins.set-component-scope", set, ctxOf(env.rootId));
     expect(done).toMatchObject({ component: { id, scope: "named", onIn: 1 } });
     expect(JSON.stringify([preview, done, summary])).not.toContain(org2);
+    // read back: the named scope's orgs are a count in the admin list
+    const back = await run("plugins.components", { kind: "skill" }, ctxOf(env.rootId));
+    expect(back).toMatchObject({ items: [{ id, scope: "named", onIn: 1 }] });
+    expect(JSON.stringify(back)).not.toContain(org2);
     const rows = await audits("component.scope_changed");
     expect(rows.at(-1)?.detail).toMatchObject({
       via: "agent",
@@ -411,5 +416,37 @@ describe("platform component writes", () => {
       ),
     );
     expect(e.message).not.toContain(ORG2_NAME);
+  });
+
+  it("a name clash that passes the precheck (a race) is refused without naming the other org", async () => {
+    const item = await importSkill(env, { name: "pdf-tools" });
+    await setScope(env, item, "named", [env.orgId]);
+    const id = await skillComponent("pdf-tools");
+    // the org's own skill is not offered the platform skill yet
+    await env.k.app.get(SkillsService).createFromText(org2, env.rootId, {
+      name: "pdf-tools",
+      description: "Use when testing.",
+      body: "# Steps\n\n1. Test.",
+    });
+
+    const target = { kind: "skill", componentId: id, scope: "optional" as const };
+    const p = (await run("plugins.component-scope-preview", target, ctxOf(env.rootId))) as {
+      scopeHash: string;
+    };
+    // the operation runs without its precheck here: the service's own refusal must stay count-only
+    const e = await failure(
+      run("plugins.set-component-scope", { ...target, scopeHash: p.scopeHash }, ctxOf(env.rootId)),
+    );
+    expect(e.message).not.toContain(org2);
+    expect(e.message).not.toContain(ORG2_NAME);
+    expect(e.message).toContain("Other orgs already use");
+    const d = await failure(
+      run(
+        "plugins.set-component-disabled",
+        { kind: "skill", componentId: id, disabled: true, scopeHash: p.scopeHash },
+        ctxOf(env.rootId),
+      ),
+    );
+    expect(d.message).not.toContain(ORG2_NAME);
   });
 });

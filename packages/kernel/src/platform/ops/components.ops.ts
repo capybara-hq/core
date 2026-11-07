@@ -52,6 +52,9 @@ const REFUSED: Record<string, string> = {
 const OTHER_ORG_COMPONENT =
   "This component belongs to another org; its owner manages it, and the admin console shows it.";
 
+/** The refusal text of a name clash: a count, never the clashing orgs (spec section 6.1). */
+const CLASH = "Other orgs already use this component's name, so the change is refused.";
+
 /** A platform component as the super admin's list and writes show it: orgs only as counts. */
 const brief = (c: ComponentView) => ({
   id: c.id,
@@ -124,7 +127,8 @@ function row(c: OrgOfferedComponentView) {
  * The org's switches of platform components (spec §7, rule 5): for each kind (skill, agent
  * template, connector template) the platform components offered to the org, the read-only preview
  * of switching one off, and the switch itself; plus the super admin's read-only component list and
- * version history. Scope, disable and visibility changes stay in the admin console. The operations
+ * version history, and the admin console's component writes (scope, disable, visibility, template
+ * versions; class `platform`). The operations
  * of the three kinds are written out (the `platform-op-*` checks read literals); their logic is
  * shared below.
  */
@@ -150,6 +154,24 @@ export class ComponentsOperations implements OnModuleInit {
       if (c === undefined) throw new Error("unknown");
       return named(c.name);
     }, id);
+  }
+
+  /**
+   * Runs a governance write; a name clash the service reports (it names the orgs) is rethrown
+   * as the count-only text, so a race past the precheck never puts another org in the log.
+   */
+  private async countOnly<T>(write: () => Promise<T>): Promise<T> {
+    try {
+      return await write();
+    } catch (e) {
+      if (
+        e instanceof ApiError &&
+        (e.code === "plugin.skill_conflict" || e.code === "agent_template.name_taken")
+      ) {
+        throw new ApiError(e.code, CLASH);
+      }
+      throw e;
+    }
   }
 
   /** What a scope change or disable would touch, as counts (no org is named). */
@@ -184,7 +206,7 @@ export class ComponentsOperations implements OnModuleInit {
       if (p.conflicts.length > 0) {
         throw new ApiError(
           kind === "skill" ? "plugin.skill_conflict" : "agent_template.name_taken",
-          `${p.conflicts.length} orgs already use this component's name, so the change is refused`,
+          CLASH,
         );
       }
     });
@@ -300,7 +322,7 @@ export class ComponentsOperations implements OnModuleInit {
         input: z.object({ skillId: Id }).strict(),
         example: { skillId: EXAMPLE_ID },
         authz: { orgAction: "skills.manage" },
-        // the web previews through the switch route itself (no confirm); writes nothing here
+        // a computed preview (the web gets it from the switch route's reply): no route of its own
         mirrors: [],
         confirm: "read",
         errors: [
@@ -403,7 +425,7 @@ export class ComponentsOperations implements OnModuleInit {
         input: z.object({ templateId: Id }).strict(),
         example: { templateId: EXAMPLE_ID },
         authz: { orgAction: "agents.manage" },
-        // the web previews through the switch route itself (no confirm); writes nothing here
+        // a computed preview (the web gets it from the switch route's reply): no route of its own
         mirrors: [],
         confirm: "read",
         errors: [
@@ -496,7 +518,7 @@ export class ComponentsOperations implements OnModuleInit {
         input: z.object({ templateId: Id }).strict(),
         example: { templateId: EXAMPLE_ID },
         authz: { orgAction: "connectors.manage" },
-        // the web previews through the switch route itself (no confirm); writes nothing here
+        // a computed preview (the web gets it from the switch route's reply): no route of its own
         mirrors: [],
         confirm: "read",
         errors: [
@@ -726,12 +748,14 @@ export class ComponentsOperations implements OnModuleInit {
           await this.assertNotOtherOrgs(i.kind as ComponentKind, i.componentId, ctx.orgId);
           return redactOrgs({
             component: brief(
-              await this.components.setScope(
-                ctx.actorAccountId,
-                i.kind as ComponentKind,
-                i.componentId,
-                scopeBody(i),
-                { auditDetail: viaAgent("plugins.set-component-scope", ctx) },
+              await this.countOnly(() =>
+                this.components.setScope(
+                  ctx.actorAccountId,
+                  i.kind as ComponentKind,
+                  i.componentId,
+                  scopeBody(i),
+                  { auditDetail: viaAgent("plugins.set-component-scope", ctx) },
+                ),
               ),
             ),
           });
@@ -795,15 +819,17 @@ export class ComponentsOperations implements OnModuleInit {
           await this.assertNotOtherOrgs(i.kind as ComponentKind, i.componentId, ctx.orgId);
           return redactOrgs({
             component: brief(
-              await this.components.setDisabled(
-                ctx.actorAccountId,
-                i.kind as ComponentKind,
-                i.componentId,
-                {
-                  disabled: i.disabled,
-                  ...(i.scopeHash !== undefined && { scopeHash: i.scopeHash }),
-                },
-                { auditDetail: viaAgent("plugins.set-component-disabled", ctx) },
+              await this.countOnly(() =>
+                this.components.setDisabled(
+                  ctx.actorAccountId,
+                  i.kind as ComponentKind,
+                  i.componentId,
+                  {
+                    disabled: i.disabled,
+                    ...(i.scopeHash !== undefined && { scopeHash: i.scopeHash }),
+                  },
+                  { auditDetail: viaAgent("plugins.set-component-disabled", ctx) },
+                ),
               ),
             ),
           });
