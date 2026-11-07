@@ -112,6 +112,9 @@ The sidebar has three contexts (the third, setup, is drawn only by `SetupPage`):
 - Extension blocks (inline card, properties section, right panel, previewer) fail alone: "Failed to load · Retry" in that block, the stream and the composer keep working.
 - The right area lives in the URL hash (`lib/right-area.ts`: `#properties`, `#panel=<plugin>/<contribution>[/<item>]`, `#file=`, `#output=`, `#subagent=`), one thing at a time, so a reload keeps it and another conversation never inherits it. Back in a sub-agent panel returns to what was open before it (e.g. the properties panel), else closes. The properties sections render in the spec §6.16.17 order (Context, extension sections, Files, Background tasks); Files includes the sub-agents' deliveries, marked with the sub-agent.
 - A new conversation (`/`) creates nothing on the kernel before the first send.
+- A card whose state the log does not carry (a sub-agent's approval or question, named only by id)
+  reads it before the first paint (`openWaitReads` in the route's `then`) and draws nothing until
+  that read answers (`ApprovalCard fromRead`), never a pending card first (web query cache spec §6).
 
 Submit actions go in the ActionRow (built into `FormPage`, `WizardPage` etc.) and **must not** go in the PageHeader; at most one `variant: "primary"` per view, and at most 5 metrics (`PageHeader` throws in development and tests).
 

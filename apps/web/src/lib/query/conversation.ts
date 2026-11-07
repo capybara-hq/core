@@ -369,7 +369,8 @@ export const connectorResourcesQuery = (orgId: string) =>
  * conversation's) agent tree once one was dispatched (or the window does not start at the log's
  * beginning), the background tasks once the log names one
  * ({@link hasBackgroundTasks}), the members once a run another account stopped shows, and the
- * agent's invocable skills (with the conversation's trial drafts when it is the caller's).
+ * agent's invocable skills (with the conversation's trial drafts when it is the caller's), and
+ * the approvals and questions the window names without their outcome ({@link openWaitReads}).
  */
 export function conversationFollowUps(
   orgId: string,
@@ -401,7 +402,34 @@ export function conversationFollowUps(
   if (stoppedByOther) add(membersQuery(orgId));
   const mine = row.accountId === undefined || row.accountId === accountId;
   add(invocableSkillsQuery(orgId, row.agentId, mine ? id : undefined));
+  const waits = openWaitReads(events);
+  for (const a of waits.approvals) add(approvalQuery(orgId, a));
+  for (const q of waits.questions) add(questionQuery(orgId, q));
   return out;
+}
+
+/**
+ * The approvals and questions whose state the log does not carry, so their cards read it: a
+ * sub-agent's (`subagent_waiting` names only the id; its decision is logged in the child) and an
+ * approval of this log whose `approval_decided` the window has not reached. Read before the first
+ * paint, a decided card never paints as pending first.
+ */
+export function openWaitReads(events: readonly ConversationEvent[]): {
+  approvals: string[];
+  questions: string[];
+} {
+  const approvals = new Set<string>();
+  const questions = new Set<string>();
+  for (const e of events) {
+    if (e.type === "subagent_waiting") {
+      if (e.payload.kind === "approval" && e.payload.approvalId !== undefined)
+        approvals.add(e.payload.approvalId);
+      else if (e.payload.kind === "input" && e.payload.questionId !== undefined)
+        questions.add(e.payload.questionId);
+    } else if (e.type === "approval_requested") approvals.add(e.payload.approvalId);
+    else if (e.type === "approval_decided") approvals.delete(e.payload.approvalId);
+  }
+  return { approvals: [...approvals], questions: [...questions] };
 }
 
 /** `a` and `b` merged by seq: none twice, ascending. */
