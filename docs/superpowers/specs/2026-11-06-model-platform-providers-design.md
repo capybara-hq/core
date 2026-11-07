@@ -180,7 +180,11 @@ Errors are `ModelError` with the existing kinds; no retries inside the extension
   - Agent save and the agent model picker: only enabled `chat` models.
   - Run time (`resolve` in the org's context): a model that was enabled when the agent was saved and
     is disabled now fails the run step with `agent.model_unavailable`, through the existing
-    degradation ladder. Replays are not affected (they never call a provider).
+    degradation ladder. Conversation reconstruction never calls a provider and is not affected;
+    eval step and full-run replays do call the candidate's provider (`evals/step-replay.ts`,
+    `evals/run-replay.ts`), so they resolve in the case snapshot's org and require the candidate
+    enabled there, like eval candidate checks (`evals/runs.service.ts`) **(designer's call,
+    2026-11-07)**.
   - Purpose targets (deployment default and org override): the target's kind must equal the
     purpose's kind, and an org's effective target must be enabled in that org; a deployment default
     that the org disabled counts as unconfigured for that org (`model.unconfigured`).
@@ -210,9 +214,15 @@ Errors are `ModelError` with the existing kinds; no retries inside the extension
   settings page shows and changes this mapping rather than storing a model id of its own; how it
   reaches the mapping from an extension page (a link to `/settings/models#<purpose>`, or a
   `ctx.models` setter) is decided in the memory design. Provider plugins never declare purposes.
-- Usage: each `embed` call writes a usage record (provider, model, purpose, org, input tokens)
-  where kernel purpose calls record usage today, and fires the `usage.report` hook; no conversation
-  event (it is not part of a conversation). Cost uses the price table's input price.
+- Usage: today usage lives only in conversation `usage` events, and the `usage.report` pipeline
+  (job id, sweeper, payload) is keyed on them; an `embed` call has no conversation. So each `embed`
+  call writes a row in a new kernel table of model usage outside conversations (org, extension,
+  purpose, provider, model, input tokens, time), and **fires `usage.report` too (decided,
+  2026-11-07)**: `UsagePurpose` gains `"embedding"`, and the payload's conversation fields
+  (`accountId`, `agentId`, `conversationId`, `conversationKind`, `runId`) become optional, absent
+  for `embedding` (an SDK type change; handlers reading them must accept their absence). The job id
+  and the sweeper cover the new table's rows (`eventId` = the row id), at least once as today. No
+  conversation event. Cost uses the price table's input price.
 - Not in scope: `ctx.models` for chat (no consumer yet).
 
 ### 5.5 Credentials and OAuth
