@@ -360,6 +360,37 @@ Extensions can observe or deny tool calls through `ctx.hooks` (see "Hooks" in `.
   spilling (`content` is the spilled or truncated text, not the raw output).
 - Hooks fire only for chat conversations and sub-agents (with `parent` set), never in eval replays (`RecordedToolPipeline` runs none).
 
+## The `Platform` builtin tool
+
+One tool, five actions: `browse` (domains, or one domain's operations), `search`, `describe` (input schema,
+example, errors, availability), `call`, `read` (agent docs). The definition is fixed: the root's content is a
+result, not part of the description. Operations are defined and checked as in the "Platform operations"
+section of `.agents/skills/writing-kernel-api`; this section is about how the pipeline treats them.
+
+- **Per-call policy.** `BuiltinTool.callPolicy(input, ctx)` (may be async) derives a policy key
+  `Platform:<operation>` from the input; agent `toolPolicies`, grants and approvals use that key, the agent
+  policy only tightens. Params that fail the operation's schema, an unknown operation, or an operation
+  unavailable now are denied with an actionable text naming `describe` and never reach the person.
+- **Classes.** `read` runs; `personal` asks and may be remembered; `org` / `platform` ask every time and are
+  never remembered (`remember: false`; the approval stores `scopes: ["once"]`, anything else is
+  `approval.scope_not_allowed`, on the web, in IM cards and over the API). A read never prompts; a read an agent tightened to `ask` (`toolPolicies` on
+  `Platform:<operation>`) asks once-only and no grant applies. When the class depends on the target, the
+  operation's `confirmFor(input, ctx)` decides per call (`agents.update`: `personal` only on the actor's own
+  private agent, `org` otherwise; a throw counts as `org`), so a grant never carries over to a shared target.
+- **The card.** The kernel renders `summary(input, ctx)` (zh and en, may be async) from the params and kernel
+  reads (target names, the hash-bound preview's counts), falling back to the operation id when it throws; the
+  approval stores it with the exact input and runs only with that input (approvals bound to input: a re-call
+  with other params asks again). A write whose params hold a `{"$output": id}` reference is denied (the card
+  would show the reference, not the content): `CallPolicyContext.rawInput` carries the unresolved input.
+- **The actor** is the run's trigger account; role, membership and super admin are re-read on every call,
+  also right before `run`. No person present (an eval, the org's anonymous guest account) or the org setting
+  `platformTool` = `read-only`: writes are unavailable with the reason; `off`: the tool is unavailable.
+  `@SuperAdmin` operations run only through the super admin's own private agent (judged on the root
+  conversation's agent).
+- **Errors** the model sees are English and say what to do next.
+- **Tests:** `packages/kernel/test/platform/platform-e2e.test.ts` scripts calls with model-fake
+  (`tool:Platform:{"action":"call","operation":"skills.list","params":{}}`) through approvals and replay.
+
 ## Connectors
 
 A connector (`connector@1`) connects a remote service as a connector; the tools are decided by the remote, and the policy, approval, output archiving, drift and `ToolSearch` above all apply as usual. The contract, session lifecycle, auth injection, the circuit breaker semantics of `ToolError`, `connectorData` routing, `inspect`, elicitation and test fixtures are all in **`.agents/skills/writing-connectors`**. The official connector extensions (`connector-mcp`, `connector-openapi`) live in capybara-hq/plugins.

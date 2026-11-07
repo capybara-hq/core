@@ -59,6 +59,9 @@ const builtins = () =>
     dummy,
     dummy,
     dummy,
+    dummy,
+    dummy,
+    dummy,
   ).list();
 
 const repoFile = (path: string) =>
@@ -152,6 +155,7 @@ describe("builtin names", () => {
       BUILTIN.SkillWrite,
       BUILTIN.WebSearch,
       BUILTIN.WebFetch,
+      BUILTIN.Platform,
     ]);
     for (const f of [
       "apps/web/src/lib/timeline.ts",
@@ -175,7 +179,7 @@ describe("builtin names", () => {
     expect(CLAUDE_CODE_TOOL_MAP).not.toMatch(/for example WebFetch/);
   });
 
-  it("the legacy map covers the 13 old names, one per new name (the task, web and message tools never had one)", () => {
+  it("the legacy map covers the 13 old names, one per new name (the task, web, message and Platform tools never had one)", () => {
     expect(Object.keys(LEGACY_BUILTINS)).toHaveLength(13);
     const never: readonly string[] = [
       BUILTIN.TaskOutput,
@@ -183,6 +187,7 @@ describe("builtin names", () => {
       BUILTIN.SendMessage,
       BUILTIN.SubagentHandback,
       ...WEB_TOOL_NAMES,
+      BUILTIN.Platform,
     ];
     expect(new Set(Object.values(LEGACY_BUILTINS).map((l) => l.name))).toEqual(
       new Set(BUILTIN_TOOL_NAMES.filter((n) => !never.includes(n))),

@@ -509,6 +509,14 @@ export interface ApprovalsTable {
   attempt: Generated<number>;
   /** 0056: the reason given with a denial (null without one). */
   deny_reason: Generated<string | null>;
+  /** 0086: the kernel-rendered summary of the call (per-call policies; null without one). */
+  summary: ColumnType<{ zh: string; en: string } | null, string | null | undefined, string | null>;
+  /** 0086: the scopes the person may choose (null: derived, see `approvals.service.ts`). */
+  scopes: ColumnType<
+    ("once" | "session" | "always")[] | null,
+    ("once" | "session" | "always")[] | null | undefined,
+    ("once" | "session" | "always")[] | null
+  >;
 }
 
 /** 0010_tools.sql：AskUserQuestion 提问。 */

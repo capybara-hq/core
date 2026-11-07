@@ -45,6 +45,13 @@ export interface ApprovalRecord {
   decidedAt: string | null;
   /** The reason given with a denial (null otherwise). */
   denyReason: string | null;
+  /** The kernel-rendered summary of the call (a per-call policy's; null otherwise). */
+  summary: { zh: string; en: string } | null;
+  /**
+   * The scopes the decider may choose: stored with the approval (a per-call policy that may not
+   * be remembered stores `["once"]`), else derived: only "once" for a role escalation.
+   */
+  scopes: ApprovalScope[];
   expiresAt: string;
   createdAt: string;
 }
@@ -88,6 +95,10 @@ export interface ApprovalRequestInput {
   attempt?: number;
   /** Which rule asked (written to `approval_requested.policy`; display only). */
   policy?: ApprovalPolicySource;
+  /** The kernel-rendered summary of the call (per-call policies). */
+  summary?: { zh: string; en: string };
+  /** The scopes the decider may choose; unset: derived (see {@link ApprovalRecord.scopes}). */
+  scopes?: ApprovalScope[];
 }
 
 export interface DecisionInput {
@@ -113,6 +124,10 @@ const iso = (v: Date | string): string => new Date(v).toISOString();
 const isRole = (v: string | null): v is OrgRole =>
   v !== null && (ORG_ROLES as readonly string[]).includes(v);
 
+/** The scopes of an approval without stored ones: a role escalation is approved only once. */
+const derivedScopes = (requestedFor: string | null): ApprovalScope[] =>
+  requestedFor === null ? ["once"] : ["once", "session", "always"];
+
 function toRecord(r: Selectable<ApprovalsTable>): ApprovalRecord {
   return {
     id: r.id,
@@ -132,6 +147,8 @@ function toRecord(r: Selectable<ApprovalsTable>): ApprovalRecord {
     decidedBy: r.decided_by,
     decidedAt: r.decided_at === null ? null : iso(r.decided_at),
     denyReason: r.deny_reason,
+    summary: r.summary ?? null,
+    scopes: r.scopes ?? derivedScopes(r.requested_for),
     expiresAt: iso(r.expires_at),
     createdAt: iso(r.created_at),
   };
@@ -220,6 +237,8 @@ export class ApprovalsService {
         input: JSON.stringify(input.input ?? {}),
         requested_for: input.requestedFor,
         approver_role: input.approverRole,
+        summary: input.summary === undefined ? null : JSON.stringify(input.summary),
+        scopes: input.scopes ?? null,
         scope: null,
         decided_by: null,
         expires_at: sql<Date>`now() + ${hours}::integer * interval '1 hour'`,
@@ -376,6 +395,14 @@ export class ApprovalsService {
         "validation_failed",
         'Only scope "once" is allowed for role-escalated approvals',
         [{ path: "scope", message: 'Only "once" is allowed for role-escalated approvals' }],
+      );
+    }
+    // the scopes stored with the approval (an org / platform operation: "once" only), whatever
+    // the client offered
+    if (scope !== null && !before.scopes.includes(scope)) {
+      throw new ApiError(
+        "approval.scope_not_allowed",
+        `Scope "${scope}" is not allowed for this approval; allowed: ${before.scopes.join(", ")}`,
       );
     }
     const updated = await t

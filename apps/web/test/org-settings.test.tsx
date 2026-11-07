@@ -8,6 +8,7 @@ import { bodyOf, json, lastStubRoutes, stubApi } from "./support/api";
 import { resetNavigation } from "./support/navigation";
 import { renderRouteWithCache } from "./support/query";
 import { ME } from "./support/render";
+import { pickOption } from "./support/select";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 
@@ -60,6 +61,30 @@ describe("组织设置（SettingsPage）", () => {
       expect(
         screen.getByRole("radio", { name: new RegExp(`^${o.toolSearch.off}`) }),
       ).toHaveProperty("checked", true);
+    },
+  );
+
+  it.each(LOCALES)(
+    "admin: the Platform tool select (on by default) saves read-only (%s)",
+    async (locale) => {
+      const o = msgs[locale].orgSettings;
+      const calls = stubApi({
+        [`GET ${SETTINGS}`]: () => json(200, { settings: { toolSearch: "on" } }),
+        [`PATCH ${SETTINGS}`]: (c) => json(200, { settings: bodyOf(c) }),
+      });
+      await renderRouteWithCache("/settings/organization", lastStubRoutes(), { locale });
+      const select = await screen.findByRole("combobox", { name: o.platformTool.label });
+      expect(select.textContent).toContain(o.platformTool.on);
+      expect(screen.getByText(o.platformTool.help)).toBeTruthy();
+      await pickOption(select, o.platformTool["read-only"]);
+      const row = actionRow(locale);
+      expect(row).not.toBeNull();
+      await userEvent
+        .setup()
+        .click(within(row as HTMLElement).getByRole("button", { name: o.save }));
+      expect(bodyOf(calls.find((c) => c.method === "PATCH"))).toEqual({
+        platformTool: "read-only",
+      });
     },
   );
 

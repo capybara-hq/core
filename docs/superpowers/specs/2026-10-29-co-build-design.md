@@ -352,6 +352,11 @@ the submitter, so the submitter cannot tune an injection against it **(decided, 
 
 ## 8. Self-description
 
+> **Replaced (2026-11-07):** the `Platform` tool spec (`2026-11-07-platform-tool-design.md`) replaces
+> `PlatformInfo`: its live facts are `Platform` operations (`platform.overview`, `platform.me`, …) and the
+> agent docs move to its `read` action (`packages/plugin-sdk/agent-docs/`, served by `AgentDocs`). The
+> sections below describe the original design.
+
 ### 8.1 `PlatformInfo`
 
 A builtin tool (always loaded when co-build is enabled; read-only, policy `allow`)

@@ -685,6 +685,8 @@ export class SkillsService {
       body: string;
       shareable?: boolean;
       actorTokenId?: string;
+      /** Merged into the audit event's detail (the `Platform` tool's `via: "agent"`). */
+      auditDetail?: Record<string, unknown>;
     },
   ): Promise<UploadedSkill> {
     this.storage.assertAvailable();
@@ -708,6 +710,7 @@ export class SkillsService {
       prefix,
       failIfExists: true,
       ...(input.actorTokenId !== undefined && { actorTokenId: input.actorTokenId }),
+      ...(input.auditDetail !== undefined && { auditDetail: input.auditDetail }),
       ...(input.shareable !== undefined && { shareable: input.shareable }),
     });
   }
@@ -728,6 +731,8 @@ export class SkillsService {
     opts: {
       prefix?: string;
       actorTokenId?: string;
+      /** Merged into the audit event's detail. */
+      auditDetail?: Record<string, unknown>;
       /** The owner shares a new skill with other orgs (default false). */
       shareable?: boolean;
       /** A live org skill of the name is `skill.name_exists` instead of getting a new version. */
@@ -920,6 +925,7 @@ export class SkillsService {
         version,
         files: manifest.files.length,
         ...(opts.catalog && { catalog: opts.catalog }),
+        ...opts.auditDetail,
       },
     });
     const row = await summaryQuery(this.db.db).where("s.id", "=", id).executeTakeFirstOrThrow();

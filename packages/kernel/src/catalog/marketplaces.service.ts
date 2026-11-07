@@ -182,6 +182,8 @@ type RefreshOutcome =
 
 export interface ActorOpts {
   actorTokenId?: string;
+  /** Merged into the audit detail (a write made through the Platform tool: `via`, …). */
+  auditDetail?: Record<string, unknown>;
 }
 
 /** A row of `marketplaces` (the result of selectAll). */
@@ -810,6 +812,7 @@ export class MarketplacesService {
         ...(input.ref !== undefined && { ref: input.ref }),
         mirrors: input.mirrors ?? [],
         hasToken: input.token !== undefined,
+        ...opts.auditDetail,
       },
     });
   }

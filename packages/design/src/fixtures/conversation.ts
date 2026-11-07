@@ -483,6 +483,8 @@ export const HITL_FIXTURE: {
     scopes: ("once" | "session" | "always")[];
     policy: string;
     denyReason: string;
+    /** The kernel-rendered one-sentence summary of a call (the `pending-summary` state). */
+    summary: string;
   };
   question: { question: string; options: string[]; selected: number; other: string };
   questionUrl: { question: string; url: string };
@@ -507,6 +509,7 @@ export const HITL_FIXTURE: {
     scopes: ["once", "session", "always"],
     policy: "策略：发消息需审批",
     denyReason: "先别发，等财务确认",
+    summary: "添加市场源 https://plugins.acme.example",
   },
   question: {
     question: "示例表里同一收款人有两行映射，流程应该保留哪一个类别？",

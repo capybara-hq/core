@@ -70,6 +70,18 @@ export function assertProfileWritable(profile: ProfileInput | undefined): void {
 
 const notFound = () => new ApiError("agent.not_found", "Agent not found");
 
+/** A per-operation policy key of the `Platform` tool (Platform tool spec §6.2). */
+const PLATFORM_POLICY_KEY = /^Platform:[a-z][a-z-]*\.[a-z][a-z-]*$/;
+
+/**
+ * May `toolPolicies` hold this key: one of the agent's tool keys, or `Platform:<operation>` when
+ * `Platform` is among them (an unknown operation id is kept: a removed operation's policy is
+ * harmless).
+ */
+function isToolPolicyKey(key: string, toolKeys: ReadonlySet<string>): boolean {
+  return toolKeys.has(key) || (toolKeys.has("Platform") && PLATFORM_POLICY_KEY.test(key));
+}
+
 /** 键排序后的 JSON：jsonb 不保留键顺序，比较定义是否变化时用。 */
 function canonical(v: unknown): string {
   if (Array.isArray(v)) return `[${v.map(canonical).join(",")}]`;
@@ -265,7 +277,9 @@ export async function assertSubagents(
     for (const [j, key] of (x.disallowedTools ?? []).entries()) {
       tool(key, `${base}.disallowedTools.${j}`);
     }
-    for (const key of Object.keys(x.toolPolicies ?? {})) tool(key, `${base}.toolPolicies.${key}`);
+    for (const key of Object.keys(x.toolPolicies ?? {})) {
+      if (!isToolPolicyKey(key, a.toolKeys)) tool(key, `${base}.toolPolicies.${key}`);
+    }
     (x.skills ?? []).forEach((id, j) => {
       if (!selected.has(id) && !own.has(id)) add("skill_not_selected", `${base}.skills.${j}`, id);
     });
@@ -350,7 +364,7 @@ export class AgentsService {
     const { keys, issues } = await this.tools.checkRefs(orgId, def.tools);
     const details = [...issues];
     for (const key of Object.keys(def.toolPolicies)) {
-      if (!keys.has(key)) {
+      if (!isToolPolicyKey(key, keys)) {
         // an rc key (tool naming spec §8.3): saving writes current keys only, so name them
         const renamed = legacyKeySaveText(key, keys);
         details.push({
@@ -424,6 +438,7 @@ export class AgentsService {
       profile?: ProfileInput;
     },
     actorTokenId?: string,
+    auditDetail?: Record<string, unknown>,
   ): Promise<{ agent: AgentView; warnings: AgentWarning[] }> {
     const { agent, warnings } = await this.createChecked(
       orgId,
@@ -431,6 +446,7 @@ export class AgentsService {
       request,
       null,
       actorTokenId,
+      auditDetail,
     );
     return { agent, warnings };
   }
@@ -453,8 +469,9 @@ export class AgentsService {
     },
     template: TemplateProvenance,
     actorTokenId?: string,
+    auditDetail?: Record<string, unknown>,
   ): Promise<{ agent: AgentView; warnings: AgentWarning[]; role: OrgRole }> {
-    return this.createChecked(orgId, actorAccountId, request, template, actorTokenId);
+    return this.createChecked(orgId, actorAccountId, request, template, actorTokenId, auditDetail);
   }
 
   private async createChecked(
@@ -468,6 +485,7 @@ export class AgentsService {
     },
     template: TemplateProvenance | null,
     actorTokenId: string | undefined,
+    auditDetail: Record<string, unknown> | undefined,
   ): Promise<{ agent: AgentView; warnings: AgentWarning[]; role: OrgRole }> {
     const input = { ...request, definition: deriveInstructions(request.definition, null) };
     // 先解析模型（可能访问供应商），不在持有组织行锁时做
@@ -484,6 +502,7 @@ export class AgentsService {
       toolKeys,
       template,
       actorTokenId,
+      auditDetail,
     );
     return { agent, warnings, role };
   }
@@ -501,6 +520,7 @@ export class AgentsService {
     toolKeys: Set<string>,
     template: TemplateProvenance | null,
     actorTokenId: string | undefined,
+    auditDetail: Record<string, unknown> | undefined,
   ): Promise<{ agent: AgentView; role: OrgRole }> {
     const t = this.db.db;
     const { role } = await this.orgLock.lockAndAuthorize(orgId, actorAccountId, "agents.create");
@@ -565,6 +585,7 @@ export class AgentsService {
         version: 1,
         visibility: input.visibility,
         ...(template !== null && { template: { id: template.id, version: template.version } }),
+        ...auditDetail,
       },
     });
     return { agent: await this.lookup.view(id), role };
@@ -623,6 +644,7 @@ export class AgentsService {
       expectedVersion?: number | undefined;
     },
     actorTokenId?: string,
+    auditDetail?: Record<string, unknown>,
   ): Promise<{ agent: AgentView; warnings: AgentWarning[] }> {
     const patch = request;
     const warnings = patch.definition ? await this.checkModels(patch.definition) : [];
@@ -634,6 +656,7 @@ export class AgentsService {
       patch,
       toolKeys,
       actorTokenId,
+      auditDetail,
     );
     return { agent, warnings };
   }
@@ -651,6 +674,7 @@ export class AgentsService {
     },
     toolKeys: Set<string> | null,
     actorTokenId: string | undefined,
+    auditDetail: Record<string, unknown> | undefined,
   ): Promise<AgentView> {
     const t = this.db.db;
     const before = await this.lockForWrite(orgId, agentId, actorAccountId);
@@ -750,6 +774,7 @@ export class AgentsService {
         ...(visibility !== before.visibility && {
           visibility: { from: before.visibility, to: visibility },
         }),
+        ...auditDetail,
       },
     });
     return this.lookup.view(agentId);

@@ -9,6 +9,9 @@ import { z } from 'zod';
 import type { ZodTypeAny } from 'zod';
 
 // @public
+export const AGENT_TEMPLATE_FIELDS: readonly AgentTemplateField[];
+
+// @public
 export const AGENT_TEMPLATE_INSTRUCTION_FILE_NAME_RE: RegExp;
 
 // @public
@@ -67,6 +70,14 @@ export type AgentTemplateConnector = {
     };
     policies?: Record<string, "ask" | "deny">;
 };
+
+// @public
+export interface AgentTemplateField {
+    description: string;
+    name: string;
+    required: boolean;
+    type: string;
+}
 
 // @public
 export interface AgentTemplateInlineSubagent {
@@ -921,6 +932,7 @@ export interface ExtensionPermissions {
 export interface ExtensionPointInfo {
     brokered: boolean;
     cardinality: Cardinality;
+    description: string;
     majors: readonly number[];
     orgScoped: boolean;
     selection?: "org-default";

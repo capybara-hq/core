@@ -178,7 +178,8 @@
     },
     "approval": {
       "not_found": "审批不存在，或你无权处理。",
-      "already_decided": "该审批已被处理或已过期。"
+      "already_decided": "该审批已被处理或已过期。",
+      "scope_not_allowed": "此审批只能允许本次。"
     },
     "question": {
       "not_found": "该问题不存在，或你无权回答。",
@@ -458,7 +459,8 @@
         "ReadToolOutput": "读取存档的工具结果",
         "SkillWrite": "编写技能",
         "WebSearch": "搜索网页",
-        "WebFetch": "读取网页"
+        "WebFetch": "读取网页",
+        "Platform": "操作平台"
       },
       "connectorsLabel": "连接器",
       "noConnectors": "还没有安装连接器。",
@@ -2036,6 +2038,15 @@
       "title": "IM 语言",
       "description": "机器人在 IM 中发送的固定话术（绑定提示、错误提示）所用的语言；模型回复不翻译。",
       "label": "IM 语言"
+    },
+    "platformTool": {
+      "title": "Platform 工具",
+      "description": "本组织内 Platform 工具的可用范围；每个智能体还可以单独收紧。",
+      "label": "Platform 工具",
+      "help": "智能体通过 Platform 工具了解并操作平台；写操作总要当事人确认。",
+      "on": "开启",
+      "read-only": "只读",
+      "off": "关闭"
     },
     "sandbox": {
       "title": "沙箱工具",

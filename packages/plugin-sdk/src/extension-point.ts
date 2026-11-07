@@ -6,6 +6,8 @@ export type Cardinality = "single" | "multi";
 
 /** Registry entry of an extension point. */
 export interface ExtensionPointInfo {
+  /** What the extension point is for, in one sentence (served to agents by the Platform tool). */
+  description: string;
   cardinality: Cardinality;
   /** Brokered by the platform API (extensions may not `requires` it; they use it only through `ctx`). */
   brokered: boolean;
@@ -22,12 +24,14 @@ export interface ExtensionPointInfo {
 
 const info = (
   majors: readonly number[],
+  description: string,
   cardinality: Cardinality,
   brokered = false,
   orgScoped = false,
   selection?: "org-default",
 ): ExtensionPointInfo => ({
   majors,
+  description,
   cardinality,
   brokered,
   orgScoped,
@@ -36,19 +40,84 @@ const info = (
 
 /** The registered extension points. */
 export const EXTENSION_POINTS: Record<string, ExtensionPointInfo> = {
-  sandbox: info([2], "single", true),
-  "config-source": info([1], "single"),
-  "secret-store": info([1], "single", true),
-  "object-store": info([1], "single", true),
-  channel: info([1], "multi", false, true),
-  "model-provider": info([1, 2], "multi", true),
-  "identity-source": info([1], "multi"),
-  directory: info([1], "multi", false, true),
-  counter: info([1], "multi"),
-  connector: info([1], "multi", true),
-  "file-preview": info([1], "multi", false, true),
-  "web-search": info([1], "multi", true, true, "org-default"),
-  "web-fetch": info([1], "multi", true, true, "org-default"),
+  sandbox: info(
+    [2],
+    "Runs an environment's instance and keeps its files for agents' commands (Docker, E2B).",
+    "single",
+    true,
+  ),
+  "config-source": info(
+    [1],
+    "Supplies deployment configuration from an external store such as Nacos.",
+    "single",
+  ),
+  "secret-store": info(
+    [1],
+    "Stores and resolves secrets (connector credentials, secret config) outside the database.",
+    "single",
+    true,
+  ),
+  "object-store": info(
+    [1],
+    "Stores files and artifacts in S3-compatible object storage, with presigned uploads.",
+    "single",
+    true,
+  ),
+  channel: info(
+    [1],
+    "Connects an instant-messaging platform (Slack, Lark): inbound events, replies and cards.",
+    "multi",
+    false,
+    true,
+  ),
+  "model-provider": info(
+    [1, 2],
+    "Calls a model vendor's API and streams the result back to the runtime.",
+    "multi",
+    true,
+  ),
+  "identity-source": info(
+    [1],
+    "Signs people in through an external identity provider (SSO).",
+    "multi",
+  ),
+  directory: info(
+    [1],
+    "Syncs members and departments from an external company directory.",
+    "multi",
+    false,
+    true,
+  ),
+  counter: info([1], "Counts usage so quotas and reports can be built on it.", "multi"),
+  connector: info(
+    [1],
+    "Speaks one protocol (MCP, OpenAPI) to external systems and exposes their tools to agents.",
+    "multi",
+    true,
+  ),
+  "file-preview": info(
+    [1],
+    "Renders previews of files of given types in the conversation UI.",
+    "multi",
+    false,
+    true,
+  ),
+  "web-search": info(
+    [1],
+    "Searches the web for the WebSearch tool; each org picks a default provider.",
+    "multi",
+    true,
+    true,
+    "org-default",
+  ),
+  "web-fetch": info(
+    [1],
+    "Fetches and extracts web pages for the WebFetch tool; each org picks a default provider.",
+    "multi",
+    true,
+    true,
+    "org-default",
+  ),
 };
 
 /** Cardinality of the registered extension points (derived from EXTENSION_POINTS). */

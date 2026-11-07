@@ -45,6 +45,7 @@ const REPLY_FOR: Partial<Record<ErrorCode, ChannelPhrase>> = {
   "approval.already_decided": "alreadyHandled",
   "question.already_answered": "alreadyHandled",
   validation_failed: "invalidAction",
+  "approval.scope_not_allowed": "invalidAction",
 };
 
 /**
