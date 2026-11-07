@@ -14,7 +14,7 @@ import { KERNEL_LOGGER, KEYRING } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import { OrgLock } from "../orgs/org-lock.js";
 import { type ConfigIssue, toIssues } from "./config-issues.js";
-import { configMessages, safeConfigFormSchema } from "./config-json-schema.js";
+import { configMessages, type JsonSchema, safeConfigFormSchema } from "./config-json-schema.js";
 import { applySecretEntries, type SecretEntry } from "./deployment-config.js";
 import { deleteDeep, setDeep } from "./deployment-config-store.js";
 import {
@@ -54,6 +54,13 @@ export interface OrgOverrideField {
  */
 export interface OrgOverrideView {
   state: "following" | "copy";
+  /**
+   * The deployment form JSON Schema restricted to the read-only and overridable top-level
+   * properties (as the platform form gets it, with `x-ui`, `x-secret`, `x-org`); hidden properties,
+   * their `required` entries and hints naming them are removed. Null when the extension has no
+   * deployment schema or it cannot be converted.
+   */
+  schema: JsonSchema | null;
   createdAt?: string;
   fields: OrgOverrideField[];
   valid: boolean;
@@ -450,6 +457,11 @@ export class OrgOverrides {
   }
 
   private messagesOf(plugin: string, run: Running) {
+    return configMessages(this.formSchemaOf(plugin, run));
+  }
+
+  /** The deployment form JSON Schema (hints dropped when invalid; one warning). Never throws. */
+  private formSchemaOf(plugin: string, run: Running): JsonSchema | undefined {
     if (!run.schema) return undefined;
     const r = safeConfigFormSchema(run.schema, "deployment", (err, fallback) =>
       this.log.warn(
@@ -457,7 +469,7 @@ export class OrgOverrides {
         { plugin, version: run.inst.manifest.version, schema: fallback, err },
       ),
     );
-    return configMessages(r?.schema);
+    return r?.schema;
   }
 
   private async lockedRow(orgId: string, plugin: string) {
@@ -557,8 +569,10 @@ export class OrgOverrides {
       fields.push(field);
     }
     const eff = await this.effective.get(orgId, run.inst.name);
+    const form = this.formSchemaOf(run.inst.name, run);
     return {
       state: row ? "copy" : "following",
+      schema: form ? orgFormSchema(form, run.levels) : null,
       ...(row && { createdAt: new Date(row.created_at).toISOString() }),
       fields,
       valid: eff.ok,
@@ -570,6 +584,36 @@ export class OrgOverrides {
     const prefix = overrideSecretKey(plugin, "");
     return (await this.secretKeys(orgId, plugin)).map((k) => k.slice(prefix.length));
   }
+}
+
+/**
+ * The form JSON Schema an org may see (spec A §5.6, "hidden fields are not sent to the org at
+ * all"): a copy with only the read-only and overridable top-level properties, `required` limited
+ * to them, and root `x-ui` hints naming a hidden field dropped (`secrets[]` by path; `order` lists
+ * none). Values are never in it: `configJsonSchema` already strips secret defaults and examples.
+ */
+export function orgFormSchema(js: JsonSchema, levels: Map<string, FieldLevel>): JsonSchema {
+  const out = structuredClone(js) as Record<string, unknown>;
+  const shown = (key: string) => (levels.get(key) ?? "hidden") !== "hidden";
+  const props = out.properties;
+  if (typeof props === "object" && props !== null) {
+    out.properties = Object.fromEntries(
+      Object.entries(props as Record<string, unknown>).filter(([k]) => shown(k)),
+    );
+  }
+  if (Array.isArray(out.required)) {
+    out.required = (out.required as unknown[]).filter((k) => typeof k === "string" && shown(k));
+  }
+  const ui = out["x-ui"];
+  if (typeof ui === "object" && ui !== null && !Array.isArray(ui)) {
+    const hints = ui as Record<string, unknown>;
+    if (Array.isArray(hints.secrets)) {
+      hints.secrets = (hints.secrets as { path?: unknown }[]).filter(
+        (e) => typeof e?.path === "string" && shown(e.path.split(".")[0] as string),
+      );
+    }
+  }
+  return out as JsonSchema;
 }
 
 /** Every path a save touches. */

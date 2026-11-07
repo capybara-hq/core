@@ -59,6 +59,10 @@ interface OverrideField {
 interface OverrideView {
   state: "following" | "copy";
   createdAt?: string;
+  schema: {
+    properties?: Record<string, Record<string, unknown>>;
+    required?: string[];
+  } | null;
   fields: OverrideField[];
   valid: boolean;
   issues: { path: string; message: string }[];
@@ -304,6 +308,14 @@ describe("org copies of overridable config", () => {
       platform: { set: true },
     });
     expect(v).toMatchObject({ valid: true, issues: [] });
+    // the form schema: read-only and overridable properties only, never a hidden one or a value
+    expect(Object.keys(v.schema?.properties ?? {}).sort()).toEqual(["apiKey", "baseUrl", "limit"]);
+    expect(v.schema?.required ?? []).not.toContain("host");
+    expect(v.schema?.required).toEqual(expect.arrayContaining(["baseUrl", "apiKey"]));
+    expect(v.schema?.properties?.apiKey?.["x-secret"]).toBe(true);
+    expect(v.schema?.properties?.baseUrl?.["x-org"]).toBe("override");
+    expect(JSON.stringify(v.schema)).not.toContain("host");
+    expect(JSON.stringify(v.schema)).not.toContain("p.example");
     const res = await member({ method: "GET", url: ovUrl(orgA) });
     expect(res.statusCode).toBe(403);
     for (const [method, url, payload] of [
