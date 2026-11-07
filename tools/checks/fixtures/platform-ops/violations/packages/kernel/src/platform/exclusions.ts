@@ -1,8 +1,15 @@
 export const PLATFORM_EXCLUSIONS = [
   // platform-op-exclusion-reason: empty reason
   { route: "GET /api/v1/orgs/:orgId/skills/a", category: "internal", reason: "" },
-  // platform-op-exclusion-reason: later without an issue
+  // platform-op-exclusion-reason: later without an issue (and platform-op-later)
   { route: "GET /api/v1/orgs/:orgId/skills/b", category: "later", reason: "Later." },
+  // platform-op-later: later, even with an issue URL
+  {
+    route: "GET /api/v1/orgs/:orgId/skills/c",
+    category: "later",
+    reason: "Waits.",
+    issue: "https://github.com/capybara-hq/core/issues/1",
+  },
   // platform-op-orphan: no such route
   { route: "GET /api/v1/orgs/:orgId/ghost", category: "internal", reason: "Gone." },
   // platform-op-double: mirrored by skills.list and excluded too

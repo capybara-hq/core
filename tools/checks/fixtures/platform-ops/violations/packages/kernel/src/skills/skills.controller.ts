@@ -28,4 +28,7 @@ export class SkillsController {
 
   @Get("b")
   b() {}
+
+  @Get("c")
+  c() {}
 }

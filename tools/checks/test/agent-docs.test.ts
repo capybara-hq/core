@@ -77,6 +77,9 @@ describe("checkAgentDocs", () => {
     // in the docs, gone from the code: hand-written table rows
     has("agent-docs-orphan", "plugin-format.md", '"phantom"');
     has("agent-docs-orphan", "extensions.md", '"omega"');
+    has("agent-docs-orphan", "connector-templates.md", '"vanished" has a row');
+    has("agent-docs-orphan", "agent-templates.md", '"bygone" has a row');
+    expect(got.some((g) => g.includes('"template" has a row'))).toBe(false);
     expect(got.some((g) => g.includes('"name" has a row'))).toBe(false);
     expect(got.some((g) => g.includes('"alpha" has a row'))).toBe(false);
     // a title that does not say authoring

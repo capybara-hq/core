@@ -41,6 +41,8 @@ describe("checkPlatformOps", () => {
         "platform-op-errors",
         "platform-op-exclusion-reason",
         "platform-op-exclusion-reason",
+        "platform-op-later",
+        "platform-op-later",
         "platform-op-literal",
         "platform-op-literal",
         "platform-op-literal",
@@ -96,6 +98,8 @@ describe("checkPlatformOps", () => {
     );
     has("platform-op-exclusion-reason", exc, lineOf(exc, 'skills/a"'), "reason");
     has("platform-op-exclusion-reason", exc, lineOf(exc, 'skills/b"'), "issue");
+    has("platform-op-later", exc, lineOf(exc, 'skills/b"'), "exclude it for good");
+    has("platform-op-later", exc, lineOf(exc, "even with an issue URL") + 1, "skills/c");
   });
 
   it("holds on the real kernel tree", () => {
