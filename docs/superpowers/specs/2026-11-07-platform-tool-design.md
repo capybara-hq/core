@@ -305,3 +305,47 @@ skills.
 - A scheduled run lists writes as unavailable.
 - Adding a route without an operation or exclusion fails `check:platform-ops`; adding an extension
   point without docs fails `check:agent-docs`.
+
+## 13. As built
+
+Decisions made while building, one per bullet (what, and why).
+
+- `PlatformModule` holds only the operation registry, `PlatformActor` and `AgentDocs` and imports no
+  domain module. Domain providers register their operations from `onModuleInit`
+  (`PlatformOperations.register`), which throws on a duplicate or malformed id, an unknown domain,
+  or a write without a `summary`. This keeps the dependency pointing from domains to the registry.
+- A run started with a personal access token counts as a person present: the token is the person's
+  own credential and the confirmations reach their inbox. No `trigger_kind` column was added; a
+  wake run counts as the person whose run it continues. If this turns out wrong, a migration adds
+  the column later.
+- "The super admin's own private agent" is judged on the root conversation's agent, because the log
+  tree belongs to it; a sub-agent of a shared agent's conversation never counts as private. The
+  runtime passes the agent id, never the model.
+- A kernel `callPolicy` may be async, because the actor's facts need PG.
+- For a `call` whose params fail the operation's schema, the per-call policy denies with "Invalid
+  params ... call describe". The person is never asked to confirm a call that cannot run, at the
+  cost of one extra model step.
+- `agents.update` may edit shared (org or members visible) agents the actor may edit on the web,
+  with the same rights as the web and each write confirmed; its description says visibility cannot
+  be changed (not "only private agents"). It can be narrowed to private agents later.
+- `describe` returns an operation's notable errors with what to do next: `PlatformOperation` has an
+  optional `errors: { code, next }[]`, filled for the operations that have notable failures.
+- Operations that can return more than 50 entries page themselves (`params.cursor`, result `{ items,
+  next }`); a bare list is capped at 50 with the hint "Narrow the query or pass params.cursor where
+  the operation pages".
+- Connector operations always return the public endpoint and never `connectorData`, whatever the
+  role, because the result enters a shared log; admins read full URLs on the web.
+- Super admin plugin operations omit every item owned by another org (counted only) and refuse
+  get, preview and update on them with "use the admin console", following §6.1: never other orgs'
+  names or details.
+- `extensions.points` needs `org.extensions.read`; provider names are shown only with
+  `org.extensions.manage`, otherwise a `hasProvider` flag, as the existing routes do.
+- `plugins.disable-preview` (a read) was added, and `plugins.set-enabled` with `enabled: false`
+  requires its `confirm`, so a preview-only call never prompts the person.
+- The `later` exclusions point to per-domain tracking issues; the issue URLs are recorded as
+  constants in `exclusions.ts` and opened on GitHub before the PR is merged.
+- One changeset (`.changeset/platform-tool.md`) describes the kernel side of the feature for the
+  release notes; the SDK, web and design changes keep their own.
+- A second `Platform` call with different params while another call's approval is pending or
+  approved never runs on that approval: approvals bind the exact input and each call has its own
+  (`platform-e2e.test.ts`, case g).
