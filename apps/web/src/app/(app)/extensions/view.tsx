@@ -179,7 +179,7 @@ function Extensions({
 function useColumnHeaders(canEdit: boolean): Column<never>[] {
   const t = useTranslations("extensions.columns");
   return [
-    { key: "name", header: t("name"), cell: () => null },
+    { key: "name", header: t("name"), width: 280, cell: () => null },
     { key: "capabilities", header: t("capabilities"), cell: () => null },
     { key: "state", header: t("state"), cell: () => null },
     ...(canEdit ? [{ key: "switch", header: t("switch"), cell: () => null }] : []),
@@ -456,6 +456,8 @@ function ExtensionList({
     {
       key: "name",
       header: tc("name"),
+      // wide enough for "connector-openapi · v0.1.0-rc.0"; the wrapping capabilities take the rest
+      width: 280,
       cell: (r) => (
         <CellTitle
           title={r.label}

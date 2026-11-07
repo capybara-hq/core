@@ -142,6 +142,8 @@ function useColumns(tab: ExtensionTab = "all"): Column<AdminExtension>[] {
     {
       key: "name",
       header: t("columns.name"),
+      // wide enough for "connector-openapi · v0.1.0-rc.0"; the wrapping capabilities take the rest
+      width: 280,
       cell: (p) => (
         <CellTitle
           title={extensionLabel(p, lang)}
@@ -188,6 +190,8 @@ function useColumns(tab: ExtensionTab = "all"): Column<AdminExtension>[] {
       key: "scope",
       header: t("columns.scope"),
       tone: "muted",
+      // "全部组织启用 · 12 个组织" whole
+      width: 200,
       // Who the plugin is offered to, then how many orgs run it (— without a catalog item).
       cell: (p) =>
         p.scope
