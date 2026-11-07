@@ -1,5 +1,18 @@
 # @capybara-hq/testing
 
+## 0.1.0-rc.7
+
+### Minor Changes
+
+- 4a92acb: The model-provider conformance suite runs embedding cases when the target sets `expect.embedding`.
+
+### Patch Changes
+
+- Updated dependencies [4a92acb]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.4
+  - @capybara-hq/plugin-tools@0.1.0-rc.6
+  - @capybara-hq/kernel@0.1.0-rc.6
+
 ## 0.1.0-rc.6
 
 ### Minor Changes

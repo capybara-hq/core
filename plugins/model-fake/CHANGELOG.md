@@ -1,5 +1,18 @@
 # @capybara-hq/plugin-model-fake
 
+## 0.1.0-rc.4
+
+### Minor Changes
+
+- 0faae98: model-fake lists model kinds, serves a deterministic embedding model (`kind: "embedding"`, with
+  `dimensions` and `maxBatch`) through `embed`, and reads its model list from the per-call config
+  (the `models` field is overridable by an org).
+
+### Patch Changes
+
+- Updated dependencies [4a92acb]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.4
+
 ## 0.1.0-rc.3
 
 ### Patch Changes
