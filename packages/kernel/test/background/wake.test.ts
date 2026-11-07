@@ -31,6 +31,7 @@ import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { captureProviderRequests } from "../helpers/provider-capture.js";
+import { isRunContextText } from "../helpers/run-context.js";
 import {
   consumedSeq,
   createConv,
@@ -251,9 +252,12 @@ async function finishTask(
   ) as Finished;
 }
 
+/** The request's system messages, run context snapshots left out (run context spec §4). */
 const systemTexts = (r: ModelRequest | undefined) =>
   (r?.messages ?? []).flatMap((m) =>
-    m.role === "system" && typeof m.content === "string" ? [m.content] : [],
+    m.role === "system" && typeof m.content === "string" && !isRunContextText(m.content)
+      ? [m.content]
+      : [],
   );
 /** The requests the provider received that mention `marker`, in order. */
 const requestsWith = (marker: string) =>

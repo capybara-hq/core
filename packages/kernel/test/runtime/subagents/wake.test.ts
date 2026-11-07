@@ -29,6 +29,7 @@ import { accountsFor } from "../../helpers/identity.js";
 import { testMembers } from "../../helpers/members.js";
 import { MODEL_FAKE } from "../../helpers/model-plugins.js";
 import { captureProviderRequests } from "../../helpers/provider-capture.js";
+import { isRunContextText } from "../../helpers/run-context.js";
 import {
   consumedSeq,
   createConv,
@@ -260,9 +261,12 @@ const runStarted = async (conversationId: string, runId: string) =>
     (e) => e.type === "run_started" && e.runId === runId,
   ) as Extract<ConversationEvent, { type: "run_started" }>;
 
+/** The request's system messages, run context snapshots left out (run context spec §4). */
 const systemTexts = (r: ModelRequest | undefined) =>
   (r?.messages ?? []).flatMap((m) =>
-    m.role === "system" && typeof m.content === "string" ? [m.content] : [],
+    m.role === "system" && typeof m.content === "string" && !isRunContextText(m.content)
+      ? [m.content]
+      : [],
   );
 /** The parent requests the provider received that carry `marker`, in order (children excluded). */
 const parentRequests = (marker: string) =>

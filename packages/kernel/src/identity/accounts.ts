@@ -257,6 +257,32 @@ export class AccountsService {
     return row && toAccount(row);
   }
 
+  /**
+   * A person's preferences (run context spec §3.4): `timeZone` is their time zone setting (IANA),
+   * null = follow the browser. Missing account → null.
+   */
+  async preferences(accountId: string): Promise<{ timeZone: string | null }> {
+    const row = await this.db
+      .selectFrom("accounts")
+      .select("time_zone")
+      .where("id", "=", accountId)
+      .executeTakeFirst();
+    return { timeZone: row?.time_zone ?? null };
+  }
+
+  /** Sets a person's preferences (the caller validated the time zone). */
+  async setPreferences(
+    accountId: string,
+    prefs: { timeZone: string | null },
+  ): Promise<{ timeZone: string | null }> {
+    await this.db
+      .updateTable("accounts")
+      .set({ time_zone: prefs.timeZone, updated_at: new Date() })
+      .where("id", "=", accountId)
+      .execute();
+    return this.preferences(accountId);
+  }
+
   /** 按 id 升序分页，`after` 为上一页最后一个 id。 */
   async list(opts: { limit: number; after?: string }): Promise<Account[]> {
     let q = this.db.selectFrom("accounts").selectAll().orderBy("id").limit(opts.limit);

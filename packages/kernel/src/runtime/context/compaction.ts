@@ -3,6 +3,7 @@ import { renderBackgroundFinished } from "../../background/render.js";
 import type { ConversationEvent, EventPayload } from "../../conversations/events.js";
 import { renderSubagentDelivery } from "../subagents/render.js";
 import { latestSummary } from "./build.js";
+import { senderTranscriptLabel } from "./run-context.js";
 import { toolsChangedText } from "./tool-changes.js";
 
 /** 压缩请求的标记：放在 system 中，便于识别（model-fake 据此返回摘要）。 */
@@ -116,7 +117,12 @@ function transcriptLine(e: ConversationEvent): string | null {
   switch (e.type) {
     case "user_message": {
       const text = renderBlocks(e.payload.content);
-      return text ? `User: ${text}` : null;
+      if (!text) return null;
+      // run context spec §5: the sender as logged (older logs have none: unchanged)
+      const sender = e.payload.sender;
+      return sender !== undefined
+        ? `User (${senderTranscriptLabel(sender)}): ${text}`
+        : `User: ${text}`;
     }
     case "assistant_message": {
       const text = renderBlocks(e.payload.content);
@@ -137,6 +143,8 @@ function transcriptLine(e: ConversationEvent): string | null {
     // phase D: a forked skill's report is user content of the request (build.ts)
     case "skill_fork_result":
       return `User: ${e.payload.text}`;
+    // run_context is left out: its current values follow the summary anyway (build.ts), and
+    // stale names should not be summarised as current
     case "tool_result":
       return `Tool result ${e.payload.toolKey}${e.payload.isError ? " (error)" : ""}: ${e.payload.content}`;
     default:

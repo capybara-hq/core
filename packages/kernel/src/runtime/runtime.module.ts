@@ -19,6 +19,7 @@ import { ConversationLock } from "./conversation-lock.js";
 import { MAINTENANCE_QUEUE_NAME } from "./maintenance-queue.js";
 import { ProvidersModule } from "./providers.js";
 import { EVAL_QUOTA, EVAL_QUOTA_PREFIX, OrgQuota, RUN_QUOTA, RUN_QUOTA_PREFIX } from "./quota.js";
+import { RunContextService } from "./run-context.service.js";
 import { RunControl } from "./run-control.js";
 import { RunDrafts } from "./run-drafts.js";
 import { RunFinish } from "./run-finish.js";
@@ -72,6 +73,7 @@ import { DecisionResumer, Waits } from "./waits.js";
     RunDrafts,
     AgentLoops,
     RunSteps,
+    RunContextService,
     RunWorker,
     // a finished background task wakes an idle conversation (background Bash spec §3)
     BackgroundWake,

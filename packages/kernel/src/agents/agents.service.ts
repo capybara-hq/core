@@ -62,6 +62,20 @@ export type AgentVersionSummary = Omit<AgentVersion, "definition">;
 /** 创建 / 修改的提示（不拒绝）：`fallback_same_provider` = 兜底与主模型同一供应商（spec 4.5）。 */
 export type AgentWarning = "fallback_same_provider";
 
+/**
+ * The definition with its description (run context spec §3.5): `given` when the save gives one
+ * (trimmed; empty removes it), else `kept` (the current version's).
+ */
+function withDescription(
+  definition: AgentDefinition,
+  given: string | undefined,
+  kept: string | undefined,
+): AgentDefinition {
+  const { description: _drop, ...rest } = definition;
+  const next = given !== undefined ? given.trim() : kept;
+  return next === undefined || next === "" ? rest : { ...rest, description: next };
+}
+
 /** A new agent has no id to bind an upload to yet: a client can only choose a preset on create. */
 export function assertProfileWritable(profile: ProfileInput | undefined): void {
   if (profile?.avatar?.kind === "upload") {
@@ -498,7 +512,16 @@ export class AgentsService {
     actorTokenId: string | undefined,
     auditDetail: Record<string, unknown> | undefined,
   ): Promise<{ agent: AgentView; warnings: AgentWarning[]; role: OrgRole }> {
-    const input = { ...request, definition: deriveInstructions(request.definition, null) };
+    const input = {
+      ...request,
+      // run context spec §3.5: version 1 carries the description (the profile's when the
+      // definition gives none)
+      definition: withDescription(
+        deriveInstructions(request.definition, null),
+        request.definition.description ?? request.profile?.description,
+        undefined,
+      ),
+    };
     // 先解析模型（可能访问供应商），不在持有组织行锁时做
     const warnings = await this.checkModels(input.definition);
     const toolKeys = await this.checkTools(orgId, input.definition);
@@ -567,7 +590,7 @@ export class AgentsService {
         profile_avatar: JSON.stringify(
           input.profile?.avatar ?? { kind: "preset", id: randomPreset() },
         ),
-        profile_description: input.profile?.description ?? "",
+        profile_description: input.definition.description ?? "",
         profile_quick_actions: JSON.stringify(input.profile?.quickActions ?? []),
         ...(template !== null && {
           created_from_template_id: template.id,
@@ -710,11 +733,23 @@ export class AgentsService {
         .executeTakeFirstOrThrow();
       // the prompt: instructionFiles give instructions; a save given neither keeps the current one
       const currentDefinition = normalizeStoredDefinition(current.definition);
-      const definition = keepPendingConnectors(
-        deriveInstructions(patch.definition, currentDefinition),
-        patch.definition.pendingConnectors,
-        currentDefinition.pendingConnectors,
+      const definition = withDescription(
+        keepPendingConnectors(
+          deriveInstructions(patch.definition, currentDefinition),
+          patch.definition.pendingConnectors,
+          currentDefinition.pendingConnectors,
+        ),
+        patch.definition.description,
+        currentDefinition.description,
       );
+      // the display copy follows every description the save gives (run context spec §3.5)
+      if (patch.definition.description !== undefined) {
+        await t
+          .updateTable("agents")
+          .set({ profile_description: definition.description ?? "" })
+          .where("id", "=", agentId)
+          .execute();
+      }
       // 当前版本已有的技能引用保存时合法，不再核对（被删的技能不挡住其他改动）；新加的照常核对
       const kept = new Set((current.definition as AgentDefinition).skills?.orgSkills ?? []);
       await assertOrgSkills(t, orgId, definition.skills?.orgSkills ?? [], kept);

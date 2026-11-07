@@ -137,6 +137,12 @@ function mediaSummary(req: ModelRequest): string {
   return "none";
 }
 
+/**
+ * The kernel's sender line (run context spec §4): a separate first text block `From <name>` or
+ * `From <name> (<role>)` before the message's own blocks. Scripts read the message without it.
+ */
+const SENDER_LINE = /^From [^\n]+$/;
+
 /** 最后一条 user 消息：文本，以及它是否带 tool_result。 */
 function lastUser(req: ModelRequest): { text: string; hasToolResult: boolean; result: string } {
   for (let i = req.messages.length - 1; i >= 0; i--) {
@@ -145,7 +151,12 @@ function lastUser(req: ModelRequest): { text: string; hasToolResult: boolean; re
     let text = "";
     let result = "";
     let hasToolResult = false;
-    for (const b of m.content) {
+    const first = m.content[0];
+    const blocks =
+      m.content.length > 1 && first?.type === "text" && SENDER_LINE.test(first.text)
+        ? m.content.slice(1)
+        : m.content;
+    for (const b of blocks) {
       if (b.type === "text") text += b.text;
       else if (b.type === "tool_result") {
         hasToolResult = true;

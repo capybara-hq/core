@@ -11,6 +11,7 @@ import { resolveRoster } from "../../src/runtime/subagents/roster.js";
 import { type OrgEnv, resetOrgCatalog, startOrgEnv } from "../catalog/org-env.js";
 import { truncateTables } from "../helpers/db.js";
 import { captureProviderRequests } from "../helpers/provider-capture.js";
+import { withoutRunContext } from "../helpers/run-context.js";
 import { createConv, eventsOf, postMessage, waitFor, waitForTerminal } from "../helpers/runs.js";
 
 /**
@@ -195,7 +196,8 @@ async function childSystem(marker: string): Promise<string> {
   const req = await waitFor(
     async () =>
       capture.sent.find((r) => {
-        const last = r.messages.at(-1);
+        // the last user turn (a run context system message may follow it)
+        const last = withoutRunContext(r).messages.at(-1);
         return (
           last?.role === "user" &&
           JSON.stringify(last.content).includes(marker) &&

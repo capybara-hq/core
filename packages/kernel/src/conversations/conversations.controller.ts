@@ -152,6 +152,13 @@ const MessageFields = z.object({
     })
     .strict()
     .optional(),
+  /**
+   * The browser's IANA time zone (run context spec §3.4). An unknown name is ignored, never a
+   * 400; the sender's account setting overrides it.
+   */
+  timeZone: z.string().min(1).max(64).optional(),
+  /** The sender's UI language (run context spec §3.4). */
+  locale: z.enum(["zh", "en"]).optional(),
 });
 
 // The body of `@` resource i is `content[i + 1]`, so `content[0]` must be the user's text: with
@@ -313,6 +320,8 @@ export class ConversationsController {
       ...(m.model !== undefined && { model: m.model }),
       ...(m.effort !== undefined && { effort: m.effort }),
       ...(m.skill !== undefined && { skill: m.skill }),
+      ...(m.timeZone !== undefined && { timeZone: m.timeZone }),
+      ...(m.locale !== undefined && { locale: m.locale }),
     });
     reply.status(out.created ? 201 : 200);
     return { conversation: out.conversation, event: out.event, events: out.events };
@@ -662,6 +671,8 @@ export class ConversationsController {
         ...(body.effort !== undefined && { effort: body.effort }),
         ...(body.retryOf !== undefined && { retryOf: body.retryOf }),
         ...(body.skill !== undefined && { skill: body.skill }),
+        ...(body.timeZone !== undefined && { timeZone: body.timeZone }),
+        ...(body.locale !== undefined && { locale: body.locale }),
       }),
     };
   }
@@ -706,6 +717,8 @@ export class ConversationsController {
         ...(body.model !== undefined && { model: body.model }),
         ...(body.effort !== undefined && { effort: body.effort }),
         ...(body.skill !== undefined && { skill: body.skill }),
+        ...(body.timeZone !== undefined && { timeZone: body.timeZone }),
+        ...(body.locale !== undefined && { locale: body.locale }),
       }),
     };
   }

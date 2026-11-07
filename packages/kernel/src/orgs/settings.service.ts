@@ -9,6 +9,7 @@ import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
+import { IanaTimeZone } from "../time-zone.js";
 import { OrgLock } from "./org-lock.js";
 
 /**
@@ -23,6 +24,8 @@ import { OrgLock } from "./org-lock.js";
  *   见 {@link effectiveSandboxEgress}。存量值非法时按 `none` 读（宁可断网，不悄悄放宽到部署默认）。
  * - `platformTool`: the `Platform` builtin for the whole org (Platform tool spec §3): `on`,
  *   `read-only` (writes listed as unavailable) or `off` (default `on`).
+ * - `timeZone`: the org's default time zone (IANA; absent = UTC) for senders without one of their
+ *   own (run context spec §3.3); an invalid stored value reads as absent.
  */
 
 /** 组织沙箱出站白名单的主机数上限。 */
@@ -62,6 +65,8 @@ export const OrgSettingsSchema = z.object({
   sandboxEgress: SandboxEgressSettingSchema.optional().catch({ mode: "none" }),
   /** Overrides `runtime.wakeOnBackgroundTask`; absent follows the deployment. */
   wakeOnBackgroundTask: z.boolean().optional().catch(undefined),
+  /** The org's default time zone (run context spec §3.3); absent = UTC. */
+  timeZone: IanaTimeZone.optional().catch(undefined),
 });
 
 export type OrgSettings = z.infer<typeof OrgSettingsSchema>;
@@ -77,6 +82,8 @@ export const OrgSettingsPatchSchema = z
     wakeOnBackgroundTask: z.boolean().nullable().optional(),
     /** null 清除（恢复跟随部署默认）。 */
     sandboxEgress: SandboxEgressSettingSchema.nullable().optional(),
+    /** The org's default time zone (IANA); null clears it (UTC). */
+    timeZone: IanaTimeZone.nullable().optional(),
   })
   .strict();
 
@@ -245,9 +252,15 @@ export class OrgSettingsService {
     const after: OrgSettings = { ...before, ...changes };
     if (after.sandboxEgress === undefined) delete after.sandboxEgress;
     if (after.wakeOnBackgroundTask === undefined) delete after.wakeOnBackgroundTask;
+    if (after.timeZone === undefined) delete after.timeZone;
     if (sameSettings(before, after)) return before;
     // 与存量合并：保留本版本不认识的键（清除的 sandboxEgress 不留在存量里）
-    const { sandboxEgress: _old, wakeOnBackgroundTask: _oldWake, ...rest } = stored;
+    const {
+      sandboxEgress: _old,
+      wakeOnBackgroundTask: _oldWake,
+      timeZone: _oldZone,
+      ...rest
+    } = stored;
     await this.db
       .updateTable("orgs")
       .set({ settings: JSON.stringify({ ...rest, ...after }) })

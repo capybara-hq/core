@@ -1397,6 +1397,8 @@ describe("creating an agent from a template", () => {
       expect.arrayContaining(["description", "instructions", "quickActions.0.title"]),
     );
     expect(agent.profile.description).toBe("😀".repeat(250));
+    // run context spec §3.5: version 1 carries the description too
+    expect((agent.definition as { description?: string }).description).toBe("😀".repeat(250));
     expect(agent.definition.instructions).toBe("😀".repeat(50_000));
     expect(agent.profile.quickActions[0]?.title).toBe("😀".repeat(20));
     const url = `/api/v1/orgs/${env.orgId}/agents/${agent.id}`;
@@ -1410,7 +1412,6 @@ describe("creating an agent from a template", () => {
       method: "PATCH",
       url: `${url}/profile`,
       payload: {
-        description: agent.profile.description,
         quickActions: agent.profile.quickActions,
         expectedUpdatedAt: agent.profile.updatedAt,
       },

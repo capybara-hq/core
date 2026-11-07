@@ -32,6 +32,7 @@ import {
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { captureProviderRequests } from "../helpers/provider-capture.js";
+import { withoutRunContext } from "../helpers/run-context.js";
 import {
   createConv,
   createOrg,
@@ -80,6 +81,8 @@ const RULES: ScriptRule[] = [
 ];
 
 const capture = captureProviderRequests();
+/** The captured requests without their run context (run context spec §4). */
+const sent = () => capture.sent.map(withoutRunContext);
 
 let pgc: TestContainer;
 let rd: TestContainer;
@@ -296,7 +299,7 @@ describe("forked skills (phase D Task 6)", { timeout: 90_000 }, () => {
       }),
     ]);
     expect(ofType(events, "model_call")).toEqual([]);
-    expect(capture.sent).toEqual([]);
+    expect(sent()).toEqual([]);
 
     await subQueue.resume();
     await waitForTerminal(db, conv, 1, 30_000);
@@ -311,7 +314,7 @@ describe("forked skills (phase D Task 6)", { timeout: 90_000 }, () => {
       name: "review",
     });
     // the child's first request: its system text, and the rendered skill as the only message
-    const childReqs = capture.sent.filter(isChild);
+    const childReqs = sent().filter(isChild);
     expect(childReqs[0]?.messages).toEqual([
       {
         role: "user",
@@ -344,7 +347,7 @@ describe("forked skills (phase D Task 6)", { timeout: 90_000 }, () => {
     expect(text).toMatch(/ tokens\.\]$/);
     expect(text).not.toContain("resume");
     // the parent's request: the report right after the invocation, in the same user turn
-    const parentReqs = capture.sent.filter((r) => !isChild(r));
+    const parentReqs = sent().filter((r) => !isChild(r));
     expect(parentReqs).toHaveLength(1);
     expect(parentReqs[0]?.messages).toEqual([
       {
@@ -467,7 +470,7 @@ describe("forked skills (phase D Task 6)", { timeout: 90_000 }, () => {
     await say(conv, "and now?");
     await waitForTerminal(db, conv, 2, 30_000);
     events = await eventsOf(db, conv);
-    const req = capture.sent.filter((r) => !isChild(r))[0];
+    const req = sent().filter((r) => !isChild(r))[0];
     expect(req?.messages.map((m) => texts(m.content))).toEqual([
       [LEAD("general-purpose", "now"), `${HEADER}\n\n${AGENT_STOPPED_WITH_RUN_TEXT}`],
       ["and now?"],
@@ -519,7 +522,7 @@ describe("forked skills (phase D Task 6)", { timeout: 90_000 }, () => {
     const calls = ofType(events, "model_call");
     expect((report[0]?.seq ?? Infinity) < (calls[0]?.seq ?? 0)).toBe(true);
     expect(calls[0]?.payload.request.absorbedUpToSeq).toBe(forkSeq);
-    const parent = capture.sent.filter((r) => !isChild(r));
+    const parent = sent().filter((r) => !isChild(r));
     expect(parent[0]?.messages.map((m) => texts(m.content))).toEqual([
       [LEAD("general-purpose", "src"), report[0]?.payload.text],
     ]);
@@ -569,7 +572,7 @@ describe("forked skills (phase D Task 6)", { timeout: 90_000 }, () => {
     const report = ofType(events, "skill_fork_result")[0];
     expect(report?.payload.text).toContain("child report");
     expect(report?.payload.invokedSeq).toBe(forkSeq);
-    expectAppendOnly(capture.sent.filter((r) => !isChild(r)));
+    expectAppendOnly(sent().filter((r) => !isChild(r)));
   });
 
   it("batch 4 S1: two forks and messages during the first fork's wait: append-only, each report before its run's first model call", async () => {
@@ -599,7 +602,7 @@ describe("forked skills (phase D Task 6)", { timeout: 90_000 }, () => {
       expect(first, `a model call of the run of report ${r.seq}`).toBeDefined();
       expect(r.seq).toBeLessThan(first?.seq ?? 0);
     }
-    const parent = capture.sent.filter((r) => !isChild(r));
+    const parent = sent().filter((r) => !isChild(r));
     expectAppendOnly(parent);
     const last = parent.at(-1)?.messages.map((m) => texts(m.content)) ?? [];
     expect(last.flat()).toEqual(
@@ -647,7 +650,7 @@ describe("forked skills (phase D Task 6)", { timeout: 90_000 }, () => {
       30_000,
       "Y answered",
     );
-    const parent = capture.sent.filter((r) => !isChild(r));
+    const parent = sent().filter((r) => !isChild(r));
     expectAppendOnly(parent);
     expect(parent.at(-1)?.messages.map((m) => texts(m.content))).toEqual([
       [LEAD("general-purpose", "now")],

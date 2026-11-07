@@ -326,9 +326,23 @@ describe("dispatch", () => {
     expect(first.system.map((s) => s.text)).toEqual([
       `${BEHAVIOR_RULES}\n\n${SUBAGENT_PREAMBLE}\n\n${INSTRUCTIONS}`,
     ]);
-    expect(first.messages).toEqual([
-      { role: "user", content: [{ type: "text", text: "gp-task: do it" }] },
-    ]);
+    // then its own run context (run context spec §6): its roster name, who dispatched it for whom,
+    // the day; no org, no language, no sender line
+    expect(first.messages[0]).toEqual({
+      role: "user",
+      content: [{ type: "text", text: "gp-task: do it" }],
+    });
+    expect(first.messages).toHaveLength(2);
+    expect(first.messages[1]?.role).toBe("system");
+    expect(first.messages[1]?.content).toMatch(
+      /^Context from the platform:\n- You are "general-purpose", dispatched by the agent "Lead" working for O\.\n- Today is \d{4}-\d{2}-\d{2} \(\w+day\), time zone UTC\.\nA later context update replaces these facts\.$/,
+    );
+    const ctx = cev.find((e) => e.type === "run_context") as Ev<"run_context">;
+    expect(ctx.payload).toMatchObject({
+      agent: { name: "general-purpose" },
+      dispatchedBy: { agent: "Lead", person: "O" },
+      timeZone: "UTC",
+    });
     // a child at depth 1 keeps the agent tool below maxDepth (agent map spec §4.1)
     // a child also gets the message tools (agent map spec §4.2, §4.3)
     expect(first.tools?.map((t) => t.name).sort()).toEqual([

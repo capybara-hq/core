@@ -133,14 +133,16 @@ describe("agent profile", () => {
       url: `${url}/profile`,
       payload: {
         avatar: { kind: "preset", id: "fox" },
-        description: "A fox",
         quickActions: [{ title: "Go", body: "Do it" }],
         expectedUpdatedAt: agent.profile.updatedAt,
       },
     });
     expect(res.statusCode).toBe(200);
     const { profile } = res.json() as { profile: Profile };
-    expect(profile).toMatchObject({ avatar: { kind: "preset", id: "fox" }, description: "A fox" });
+    expect(profile).toMatchObject({
+      avatar: { kind: "preset", id: "fox" },
+      quickActions: [{ title: "Go", body: "Do it" }],
+    });
     expect(profile.updatedAt).not.toBe(agent.profile.updatedAt);
     const after = (await req({ method: "GET", url })).json() as { agent: AgentJson };
     expect(after.agent.currentVersion).toBe(agent.currentVersion);
@@ -150,7 +152,8 @@ describe("agent profile", () => {
   it("profile limits", async () => {
     const { req, url, agent } = await setup();
     const bad: Record<string, unknown>[] = [
-      { description: "x".repeat(501) },
+      // the description is part of the definition (run context spec §3.5)
+      { description: "x" },
       { quickActions: Array.from({ length: 10 }, () => ({ title: "t", body: "b" })) },
       { quickActions: [{ title: "x".repeat(41), body: "b" }] },
       { quickActions: [{ title: "t", body: "x".repeat(20_001) }] },
@@ -170,7 +173,6 @@ describe("agent profile", () => {
       method: "PATCH",
       url: `${url}/profile`,
       payload: {
-        description: "x".repeat(500),
         quickActions: Array.from({ length: 9 }, () => ({
           title: "x".repeat(40),
           body: "y".repeat(20_000),
@@ -186,18 +188,24 @@ describe("agent profile", () => {
     const first = await req({
       method: "PATCH",
       url: `${url}/profile`,
-      payload: { description: "one", expectedUpdatedAt: agent.profile.updatedAt },
+      payload: {
+        quickActions: [{ title: "one", body: "1" }],
+        expectedUpdatedAt: agent.profile.updatedAt,
+      },
     });
     expect(first.statusCode).toBe(200);
     const second = await req({
       method: "PATCH",
       url: `${url}/profile`,
-      payload: { description: "two", expectedUpdatedAt: agent.profile.updatedAt },
+      payload: {
+        quickActions: [{ title: "two", body: "2" }],
+        expectedUpdatedAt: agent.profile.updatedAt,
+      },
     });
     expect(second.statusCode).toBe(409);
     expect(errCode(second)).toBe("agent.profile_conflict");
     const now = (await req({ method: "GET", url })).json() as { agent: AgentJson };
-    expect(now.agent.profile.description).toBe("one");
+    expect(now.agent.profile.quickActions).toEqual([{ title: "one", body: "1" }]);
   });
 
   it("a profile change writes agent.profile_updated with the fields", async () => {
@@ -206,7 +214,7 @@ describe("agent profile", () => {
       method: "PATCH",
       url: `${url}/profile`,
       payload: {
-        description: "d",
+        avatar: { kind: "preset", id: "fox" },
         quickActions: [],
         expectedUpdatedAt: agent.profile.updatedAt,
       },
@@ -221,7 +229,7 @@ describe("agent profile", () => {
       actor_account_id: owner.id,
       org_id: orgId,
       target: agent.id,
-      detail: { fields: ["description", "quickActions"], channel: "web" },
+      detail: { fields: ["avatar", "quickActions"], channel: "web" },
     });
   });
 
@@ -311,5 +319,46 @@ describe("agent profile", () => {
       payload: { expectedUpdatedAt: "2000-01-01T00:00:00.000Z" },
     });
     expect(stale.statusCode).toBe(409);
+  });
+});
+
+describe("versioned description (run context spec §3.5)", () => {
+  type Versioned = AgentJson & { definition: { name: string; description?: string } };
+  const patch = async (req: Req, url: string, definition: Record<string, unknown>) => {
+    const res = await req({ method: "PATCH", url, payload: { definition } });
+    expect(res.statusCode, res.body).toBe(200);
+    return (res.json() as { agent: Versioned }).agent;
+  };
+
+  it("create puts the profile's description into version 1", async () => {
+    const { agent } = await setup({ profile: { description: "  Answers HR questions. " } });
+    const a = agent as Versioned;
+    expect(a.currentVersion).toBe(1);
+    expect(a.definition.description).toBe("Answers HR questions.");
+    expect(a.profile.description).toBe("Answers HR questions.");
+  });
+
+  it("a definition save writes a new version and the display copy; omitted keeps; empty removes", async () => {
+    const { req, url, agent } = await setup();
+    const changed = await patch(req, url, { ...definition, description: "Answers HR questions." });
+    expect(changed.currentVersion).toBe(agent.currentVersion + 1);
+    expect(changed.definition.description).toBe("Answers HR questions.");
+    expect(changed.profile.description).toBe("Answers HR questions.");
+    // a save without it (another section) keeps the current description
+    const renamed = await patch(req, url, { ...definition, name: "Grant" });
+    expect(renamed.definition).toMatchObject({
+      name: "Grant",
+      description: "Answers HR questions.",
+    });
+    expect(renamed.profile.description).toBe("Answers HR questions.");
+    const removed = await patch(req, url, { ...definition, name: "Grant", description: "" });
+    expect(removed.definition.description).toBeUndefined();
+    expect(removed.profile.description).toBe("");
+    const tooLong = await req({
+      method: "PATCH",
+      url,
+      payload: { definition: { ...definition, description: "x".repeat(501) } },
+    });
+    expect(tooLong.statusCode).toBe(400);
   });
 });

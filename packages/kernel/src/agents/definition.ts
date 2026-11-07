@@ -160,6 +160,13 @@ export type PendingConnector = z.infer<typeof PendingConnectorSchema>;
 /** Agent 定义：每次变化写一个新版本（`capybara.agent_versions`）。 */
 export const AgentDefinitionSchema = z.object({
   name: z.string().min(1).max(80),
+  /**
+   * What the agent is for, one short paragraph (run context spec §3.5): shown on the agent's
+   * cards (copied to `agents.profile_description`) and given to the model in the run context. No
+   * default: older versions are unchanged and gain no version. A save without it keeps the
+   * current version's; `""` removes it.
+   */
+  description: z.string().max(500).optional(),
   avatarUrl: z.url().nullable().default(null),
   /**
    * The model-visible system prompt. Derived on save from `instructionFiles` when they are given

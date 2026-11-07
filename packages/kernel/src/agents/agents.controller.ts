@@ -61,10 +61,13 @@ const CreateBody = z
     profile: ProfileInputSchema.optional(),
   })
   .strict();
-const ProfileBody = ProfileInputSchema.extend({
-  /** The `profile.updatedAt` the client read; a different one → 409 `agent.profile_conflict`. */
-  expectedUpdatedAt: z.string().min(1).max(40),
-}).strict();
+// the description is part of the agent's definition (run context spec §3.5): saved with the agent
+const ProfileBody = ProfileInputSchema.omit({ description: true })
+  .extend({
+    /** The `profile.updatedAt` the client read; a different one → 409 `agent.profile_conflict`. */
+    expectedUpdatedAt: z.string().min(1).max(40),
+  })
+  .strict();
 const AvatarUploadBody = z
   .object({
     name: z

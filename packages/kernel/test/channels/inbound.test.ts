@@ -226,6 +226,13 @@ describe("渠道入站", () => {
       `${connId}:m1`,
       `${connId}:m2`,
     ]);
+    // run context spec §7: a bound person is named by their account, with the org's defaults
+    // for zone and language (no browser in an IM)
+    expect(msgs[0]?.payload).toMatchObject({
+      sender: { name: "Owner", role: "owner" },
+      timeZone: "UTC",
+      locale: "en",
+    });
     expect(await threads()).toHaveLength(1);
     const delivery = await sql<{ connection_id: string; target: unknown }>`
       SELECT connection_id, target FROM capybara.channel_deliveries WHERE conversation_id = ${conv}`.execute(
@@ -330,10 +337,22 @@ describe("渠道入站", () => {
       payload: { unboundPolicy: "anonymous" },
     });
     expect(p.statusCode).toBe(200);
-    await pushAndSettleAnon(dm("a1", "anon-1", "hi"));
+    await pushAndSettleAnon(dm("a1", "anon-1", "hi", "t1", { displayName: "  张三 " }));
     await pushAndSettleAnon(dm("a2", "anon-2", "hi"));
     const rows = (await threads()).filter((r) => r.chat_id.startsWith("dm-anon-"));
     expect(rows).toHaveLength(2);
+    // run context spec §7: an anonymous guest is named by their IM profile name, else generically
+    const senders = await Promise.all(
+      ["dm-anon-1", "dm-anon-2"].map(async (chat) => {
+        const row = rows.find((r) => r.chat_id === chat);
+        const [first] = await userMessages(row?.conversation_id as string);
+        return (first?.payload as { sender?: unknown } | undefined)?.sender;
+      }),
+    );
+    expect(senders).toEqual([
+      { name: "张三", role: "guest", anonymous: true },
+      { name: "Anonymous guest", role: "guest", anonymous: true },
+    ]);
     expect(rows.every((r) => r.account_id === null)).toBe(true);
     const owners = await db
       .selectFrom("conversations")

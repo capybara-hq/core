@@ -259,6 +259,10 @@ export class ChannelInbound {
       const posted = await this.post(row.orgId, conversationId, accountId, {
         text: e.text,
         clientMessageId: `${connectionId}:${e.messageId}`,
+        // run context spec §7: an anonymous guest is named by their IM profile name; a bound
+        // person by their account's name (the kernel reads it)
+        ...(threadAccount === null &&
+          e.sender.displayName !== undefined && { senderName: e.sender.displayName }),
       });
       seq = posted.event.seq;
       // best-effort (batch 5 review m4): a failed note must not fail the job before the thread
@@ -310,7 +314,7 @@ export class ChannelInbound {
     orgId: string,
     conversationId: string,
     accountId: string,
-    input: { text: string; clientMessageId: string },
+    input: { text: string; clientMessageId: string; senderName?: string },
   ): Promise<{ event: ConversationEvent; skillNotRun: boolean }> {
     const cmd = parseSlashCommand(input.text.trimStart());
     let skillNotRun = false;

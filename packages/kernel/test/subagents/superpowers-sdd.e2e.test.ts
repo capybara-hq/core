@@ -35,6 +35,7 @@ import { agentTemplatesFor } from "../helpers/conversations.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { captureProviderRequests } from "../helpers/provider-capture.js";
+import { withoutRunContext } from "../helpers/run-context.js";
 import {
   createConv,
   createOrg,
@@ -409,7 +410,8 @@ describe("phase C acceptance: superpowers subagent-driven-development", {
 
   it("each child's first request holds only its system text and the prompt", async () => {
     const conv = state.conv as string;
-    const original = state.original as ModelRequest[];
+    // run context spec §6: a child's first request also carries its run context; left out here
+    const original = (state.original as ModelRequest[]).map(withoutRunContext);
     const events = await eventsOf(db, conv);
     const prompts = ofType(events, "subagent_dispatched").map((d) => {
       const call = ofType(events, "assistant_message")

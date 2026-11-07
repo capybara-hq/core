@@ -1,0 +1,261 @@
+import { randomUUID } from "node:crypto";
+import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import type { AgentDefinition } from "../../src/agents/definition.js";
+import type { ConversationEvent, EventPayload } from "../../src/conversations/events.js";
+import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
+import { createDb } from "../../src/db/pool.js";
+import { RUN_CONTEXT_CLOCK, RunContextService } from "../../src/runtime/run-context.service.js";
+import { legacyDbFor } from "../helpers/conversations.js";
+import { truncateTables } from "../helpers/db.js";
+import { accountsFor } from "../helpers/identity.js";
+import { captureProviderRequests } from "../helpers/provider-capture.js";
+import {
+  createConv,
+  createOrg,
+  eventsOf,
+  PW,
+  type Req,
+  runConfig,
+  session,
+  startKernel,
+  type TestKernel,
+  waitForTerminal,
+} from "../helpers/runs.js";
+
+/**
+ * Run context (spec 2026-11-08-run-context-design): what a message records about its sender, the
+ * person's time zone preference, the org default, and what run start writes.
+ */
+
+const capture = captureProviderRequests();
+let pgc: TestContainer;
+let rd: TestContainer;
+let raw: ReturnType<typeof createDb>;
+let db: KernelSchemaDb;
+let k: TestKernel;
+let owner: Req;
+let ownerId: string;
+let orgId: string;
+let agentId: string;
+let clockMs: number | null = null;
+
+beforeAll(async () => {
+  capture.install();
+  [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
+  raw = createDb(pgc.url, 3);
+  db = legacyDbFor(raw);
+  k = await startKernel(runConfig({ pg: pgc.url, redis: rd.url }, { roles: ["api", "worker"] }), {
+    overrides: [{ provide: RUN_CONTEXT_CLOCK, useValue: () => clockMs ?? Date.now() }],
+  });
+}, 120_000);
+afterAll(async () => {
+  capture.restore();
+  await k?.close();
+  await raw?.destroy();
+  await Promise.all([pgc?.stop(), rd?.stop()]);
+});
+beforeEach(async () => {
+  await truncateTables(raw, "capybara.accounts, capybara.orgs");
+  ownerId = (
+    await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "Wang Fang" })
+  ).id;
+  owner = await session(k, "owner");
+  orgId = await createOrg(owner);
+  const res = await owner({
+    method: "POST",
+    url: `/api/v1/orgs/${orgId}/agents`,
+    payload: {
+      definition: {
+        name: "Grant",
+        description: "Answers HR policy questions.",
+        instructions: "Be helpful.",
+        model: { provider: "model-fake", model: "fake-1" },
+        tools: [],
+      },
+      visibility: "org",
+    },
+  });
+  expect(res.statusCode, res.body).toBe(201);
+  agentId = (res.json() as { agent: { id: string } }).agent.id;
+  clockMs = null;
+  capture.reset();
+});
+
+type UserPayload = EventPayload<"user_message">;
+
+async function send(
+  conv: string,
+  text: string,
+  extra: Record<string, unknown> = {},
+): Promise<ConversationEvent> {
+  const res = await owner({
+    method: "POST",
+    url: `/api/v1/orgs/${orgId}/conversations/${conv}/messages`,
+    payload: { text, ...extra },
+  });
+  expect(res.statusCode, res.body).toBe(202);
+  return (res.json() as { event: ConversationEvent }).event;
+}
+
+const contexts = async (conv: string) =>
+  (await eventsOf(db, conv)).filter((e) => e.type === "run_context").map((e) => e.payload);
+
+describe("message sender, time zone and language", { timeout: 60_000 }, () => {
+  it("records the sender at send time; the browser's zone and language, else the org's", async () => {
+    const conv = await createConv(owner, orgId, agentId);
+    const first = await send(conv, "echo:one", { timeZone: "Asia/Shanghai", locale: "zh" });
+    expect(first.payload as UserPayload).toMatchObject({
+      sender: { name: "Wang Fang", role: "owner" },
+      timeZone: "Asia/Shanghai",
+      locale: "zh",
+    });
+    await waitForTerminal(db, conv, 1, 30_000);
+    // an unknown zone is ignored, never a 400: the org default (UTC) and the org's language
+    const second = await send(conv, "echo:two", { timeZone: "Not/AZone" });
+    expect(second.payload as UserPayload).toMatchObject({ timeZone: "UTC", locale: "en" });
+    await waitForTerminal(db, conv, 2, 30_000);
+    // a rename afterwards leaves the logged messages unchanged
+    await db
+      .updateTable("accounts")
+      .set({ display_name: "W. Fang" })
+      .where("id", "=", ownerId)
+      .execute();
+    const logged = (await eventsOf(db, conv)).find((e) => e.seq === first.seq);
+    expect((logged?.payload as UserPayload | undefined)?.sender?.name).toBe("Wang Fang");
+  });
+
+  it("the account setting overrides the browser; null follows it again", async () => {
+    const prefs = "/api/v1/me/preferences";
+    expect((await owner({ method: "GET", url: prefs })).json()).toEqual({ timeZone: null });
+    const bad = await owner({ method: "PUT", url: prefs, payload: { timeZone: "Mars/Olympus" } });
+    expect(bad.statusCode).toBe(400);
+    const set = await owner({ method: "PUT", url: prefs, payload: { timeZone: "Europe/Berlin" } });
+    expect(set.statusCode, set.body).toBe(200);
+    expect(set.json()).toEqual({ timeZone: "Europe/Berlin" });
+    const conv = await createConv(owner, orgId, agentId);
+    const a = await send(conv, "echo:a", { timeZone: "Asia/Shanghai", locale: "zh" });
+    expect((a.payload as UserPayload).timeZone).toBe("Europe/Berlin");
+    await waitForTerminal(db, conv, 1, 30_000);
+    await owner({ method: "PUT", url: prefs, payload: { timeZone: null } });
+    const b = await send(conv, "echo:b", { timeZone: "Asia/Shanghai" });
+    expect((b.payload as UserPayload).timeZone).toBe("Asia/Shanghai");
+  });
+
+  it("the org default time zone: PATCH validation and the fallback it gives", async () => {
+    const url = `/api/v1/orgs/${orgId}/settings`;
+    const bad = await owner({ method: "PATCH", url, payload: { timeZone: "Nowhere" } });
+    expect(bad.statusCode).toBe(400);
+    const ok = await owner({ method: "PATCH", url, payload: { timeZone: "Asia/Tokyo" } });
+    expect(ok.statusCode, ok.body).toBe(200);
+    expect((ok.json() as { settings: { timeZone?: string } }).settings.timeZone).toBe("Asia/Tokyo");
+    const conv = await createConv(owner, orgId, agentId);
+    const m = await send(conv, "echo:x");
+    expect((m.payload as UserPayload).timeZone).toBe("Asia/Tokyo");
+    await waitForTerminal(db, conv, 1, 30_000);
+    // a stored value this runtime does not know reads as absent (lenient read)
+    await db
+      .updateTable("orgs")
+      .set({ settings: JSON.stringify({ timeZone: "Bad/Zone" }) })
+      .where("id", "=", orgId)
+      .execute();
+    const got = (await owner({ method: "GET", url })).json() as { settings: { timeZone?: string } };
+    expect(got.settings.timeZone).toBeUndefined();
+    const cleared = await owner({ method: "PATCH", url, payload: { timeZone: null } });
+    expect(cleared.statusCode).toBe(200);
+  });
+});
+
+describe("run start", { timeout: 90_000 }, () => {
+  it("writes the full snapshot once, then only changes: a rename, a later day, another zone", async () => {
+    clockMs = Date.parse("2026-11-08T10:00:00Z");
+    const conv = await createConv(owner, orgId, agentId);
+    await send(conv, "echo:1", { timeZone: "Asia/Shanghai", locale: "zh" });
+    await waitForTerminal(db, conv, 1, 30_000);
+    const full = {
+      agent: { name: "Grant", description: "Answers HR policy questions." },
+      org: { name: "Acme" },
+      date: "2026-11-08",
+      timeZone: "Asia/Shanghai",
+      locale: "zh",
+    };
+    expect(await contexts(conv)).toEqual([full]);
+    // the model saw it after the first message, which carries the sender line
+    const first = capture.sent[0];
+    expect(first?.messages[0]?.content).toEqual([
+      { type: "text", text: "From Wang Fang (owner)" },
+      { type: "text", text: "echo:1" },
+    ]);
+    expect(first?.messages[1]?.role).toBe("system");
+    expect(String(first?.messages[1]?.content)).toContain(
+      '- You are "Grant", an agent in the org "Acme". Your description: Answers HR policy questions.',
+    );
+
+    // nothing changed: no new snapshot, and the same sender gets no line
+    await send(conv, "echo:2", { timeZone: "Asia/Shanghai", locale: "zh" });
+    await waitForTerminal(db, conv, 2, 30_000);
+    expect(await contexts(conv)).toHaveLength(1);
+    const second = capture.sent.at(-1);
+    expect(second?.messages.at(-1)?.content).toEqual([{ type: "text", text: "echo:2" }]);
+
+    // a rename (a new version) is noticed by the next run, not before
+    const agent = (
+      await owner({ method: "GET", url: `/api/v1/orgs/${orgId}/agents/${agentId}` })
+    ).json() as { agent: { definition: Record<string, unknown> } };
+    await owner({
+      method: "PATCH",
+      url: `/api/v1/orgs/${orgId}/agents/${agentId}`,
+      payload: { definition: { ...agent.agent.definition, name: "Grant 2" } },
+    });
+    expect(await contexts(conv)).toHaveLength(1);
+    await send(conv, "echo:3", { timeZone: "Asia/Shanghai", locale: "zh" });
+    await waitForTerminal(db, conv, 3, 30_000);
+    expect((await contexts(conv)).at(-1)).toEqual({
+      agent: { name: "Grant 2", description: "Answers HR policy questions." },
+    });
+    expect(capture.sent.at(-1)?.messages.at(-1)).toEqual({
+      role: "system",
+      content:
+        'Context update (replaces the earlier values):\n- Your name is now "Grant 2" (it was "Grant").',
+    });
+
+    // a clock behind across midnight writes nothing; the next day writes the date
+    clockMs = Date.parse("2026-11-07T23:59:58Z") - 8 * 3600_000;
+    await send(conv, "echo:4", { timeZone: "Asia/Shanghai", locale: "zh" });
+    await waitForTerminal(db, conv, 4, 30_000);
+    expect(await contexts(conv)).toHaveLength(2);
+    clockMs = Date.parse("2026-11-09T01:00:00Z");
+    await send(conv, "echo:5", { timeZone: "Asia/Shanghai", locale: "zh" });
+    await waitForTerminal(db, conv, 5, 30_000);
+    expect((await contexts(conv)).at(-1)).toEqual({ date: "2026-11-09" });
+
+    // the person writes from another zone and language
+    await send(conv, "echo:6", { timeZone: "America/New_York", locale: "en" });
+    await waitForTerminal(db, conv, 6, 30_000);
+    expect((await contexts(conv)).at(-1)).toEqual({
+      timeZone: "America/New_York",
+      date: "2026-11-08",
+      locale: "en",
+    });
+  });
+
+  it("racing and retried run starts append one event; a retry with its idem key writes nothing", async () => {
+    const conv = await createConv(owner, orgId, agentId);
+    await send(conv, "echo:1", { timeZone: "UTC", locale: "en" });
+    await waitForTerminal(db, conv, 1, 30_000);
+    const service = k.app.get(RunContextService);
+    const agent = { name: "Racer", instructions: "" } as AgentDefinition;
+    const input = { orgId, conversationId: conv, triggerSeq: 1, agent };
+    const runId = randomUUID();
+    await Promise.all([
+      service.record({ ...input, runId }),
+      service.record({ ...input, runId: randomUUID() }),
+      service.record({ ...input, runId }),
+    ]);
+    const all = await contexts(conv);
+    expect(all).toHaveLength(2);
+    expect(all.at(-1)).toEqual({ agent: { name: "Racer" } });
+    await service.record({ ...input, runId, agent: { ...agent, name: "Other" } });
+    expect(await contexts(conv)).toHaveLength(2);
+  });
+});

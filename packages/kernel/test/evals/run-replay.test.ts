@@ -263,6 +263,7 @@ async function seedRun(
     | { finished: EventPayload<"background_task_finished"> }
     | { delivery: EventPayload<"subagent_delivery"> },
   catalog?: EventPayload<"skills_catalog">,
+  runContext?: EventPayload<"run_context">,
 ): Promise<{ userSeq: number; interjectionSeq: number | null }> {
   const [msg] = await eventLog.append(convId, [
     {
@@ -331,6 +332,9 @@ async function seedRun(
     },
     ...(catalog !== undefined
       ? [{ type: "skills_catalog" as const, runId, payload: catalog }]
+      : []),
+    ...(runContext !== undefined
+      ? [{ type: "run_context" as const, runId, payload: runContext }]
       : []),
     call(1, userSeq),
   ]);
@@ -880,6 +884,34 @@ describe("整轮回放", { timeout: 60_000 }, () => {
       (e) => e.type === "skills_catalog",
     );
     expect(copied.map((e) => e.payload)).toEqual([catalog]);
+  });
+
+  it("the run's run_context is copied unchanged; the replay records no new one (run context §8)", async () => {
+    const setId = await createSet();
+    const conv = await createConv(admin, orgId, agentId);
+    const runContext: EventPayload<"run_context"> = {
+      agent: { name: "Recorded name" },
+      org: { name: "Recorded org" },
+      date: "2020-01-02",
+      timeZone: "Asia/Shanghai",
+      locale: "zh",
+    };
+    await seedRun(
+      conv,
+      "ctx-copy",
+      'tool:plugin__tools-count__count:{"n":1}',
+      [{ name: "plugin__tools-count__count", input: { n: 1 }, content: "recorded count" }],
+      undefined,
+      undefined,
+      runContext,
+    );
+    await addCase(setId, conv, "ctx-copy");
+    const run = await startRun(setId, {});
+    expect((await finished(run.id)).status).toBe("completed");
+    const [r] = await results(run.id);
+    expect(r?.status, JSON.stringify(r?.error)).toBe("done");
+    const copied = (await evalEvents(r as EvalResultView)).filter((e) => e.type === "run_context");
+    expect(copied.map((e) => e.payload)).toEqual([runContext]);
   });
 
   /** A fork invocation's run (phase D) written by hand: dispatch, report (optional), one reply. */

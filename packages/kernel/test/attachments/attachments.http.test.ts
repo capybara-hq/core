@@ -193,9 +193,14 @@ async function conversationWith(model: string): Promise<string> {
   return createConv(owner, orgId, agentId);
 }
 
-/** 请求里全部 user 内容块。 */
+/** The sender line the kernel adds to the conversation's first message (run context spec §4). */
+const SENDER_LINE = "From Owner (owner)";
+
+/** 请求里全部 user 内容块 (without the sender line). */
 const userBlocks = (r: ModelRequest) =>
-  r.messages.flatMap((m) => (m.role === "user" ? m.content : []));
+  r.messages
+    .flatMap((m) => (m.role === "user" ? m.content : []))
+    .filter((b) => !(b.type === "text" && b.text === SENDER_LINE));
 
 describe("上传 → finalize → 发消息 → 模型请求", { timeout: 30_000 }, () => {
   it("支持视觉的模型收到 base64 图片与 PDF；日志里只有引用", async () => {
@@ -208,6 +213,7 @@ describe("上传 → finalize → 发消息 → 模型请求", { timeout: 30_000
 
     const reqs = agentRequests();
     expect(reqs).toHaveLength(1);
+    expect(reqs[0]?.messages[0]?.content[0]).toEqual({ type: "text", text: SENDER_LINE });
     const blocks = userBlocks(reqs[0] as ModelRequest);
     expect(blocks).toEqual([
       { type: "text", text: "look" },

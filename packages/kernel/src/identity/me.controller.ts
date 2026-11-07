@@ -20,6 +20,7 @@ import { createZodDto } from "../infra/validation/create-zod-dto.js";
 import { ZBody } from "../infra/validation/zod-params.js";
 import { OrgsService } from "../orgs/orgs.service.js";
 import type { OrgRole } from "../orgs/roles.js";
+import { IanaTimeZone } from "../time-zone.js";
 import { type Account, AccountsService } from "./accounts.js";
 import { type ApiTokenRecord, ApiTokenService, FutureIsoDate } from "./api-tokens.js";
 import { MAX_PASSWORD_LENGTH } from "./login.js";
@@ -41,6 +42,14 @@ const TokenSchema = z.object({
   expiresAt: FutureIsoDate.optional(),
 });
 class PersonalTokenBody extends createZodDto(TokenSchema, "PersonalTokenBody") {}
+
+const PreferencesSchema = z
+  .object({
+    /** The person's time zone (IANA); null = follow the browser (run context spec §3.4). */
+    timeZone: IanaTimeZone.nullable(),
+  })
+  .strict();
+class PreferencesBody extends createZodDto(PreferencesSchema, "PreferencesBody") {}
 
 const CurrentOrgSchema = z.object({ orgId: z.string().min(1).nullable() });
 class CurrentOrgBody extends createZodDto(CurrentOrgSchema, "CurrentOrgBody") {}
@@ -84,6 +93,28 @@ export class MeController {
     const { orgCreation } = await this.settings.get();
     const canCreateOrg = orgCreation === "anyone" || p.account.isSuperAdmin;
     return { account: p.account, via: p.via, currentOrgId: current, memberships, canCreateOrg };
+  }
+
+  /**
+   * The person's preferences (run context spec §3.4): `timeZone` null = follow the browser's time
+   * zone sent with each message; a set zone overrides it for the messages sent afterwards.
+   */
+  @Get("preferences")
+  async preferences(
+    @CurrentPrincipal() principal: Principal,
+  ): Promise<{ timeZone: string | null }> {
+    return this.accounts.preferences(requireUser(principal).account.id);
+  }
+
+  /** Replaces the person's preferences; an unknown time zone → 400 `validation_failed`. */
+  @Put("preferences")
+  async setPreferences(
+    @CurrentPrincipal() principal: Principal,
+    @ZBody(PreferencesBody) body: z.infer<typeof PreferencesSchema>,
+  ): Promise<{ timeZone: string | null }> {
+    return this.accounts.setPreferences(requireUser(principal).account.id, {
+      timeZone: body.timeZone,
+    });
   }
 
   /** 切换当前组织（仅 Web 会话）；`null` 清空。非成员或已软删除的组织 → `org.not_found`。 */

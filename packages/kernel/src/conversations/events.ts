@@ -235,6 +235,40 @@ const FormAnswerSchema = z.record(
   z.union([z.string(), z.number(), z.boolean(), z.array(z.string())]),
 );
 
+/** The languages a run context names (the org `locale` values). */
+export const RUN_CONTEXT_LOCALES = ["zh", "en"] as const;
+
+/** `user_message.sender` (run context spec §3.2). */
+export const MessageSenderSchema = z.object({
+  name: z.string().min(1).max(80),
+  /** Absent = no membership. */
+  role: z.enum(ORG_ROLES).optional(),
+  /** An IM sender served as the org's anonymous guest; `name` is the IM profile name. */
+  anonymous: z.literal(true).optional(),
+});
+
+/** `run_context` (run context spec §3.1): every field optional, a later event holds changes only. */
+export const RunContextSchema = z.object({
+  /** The agent itself: its name and its versioned description collapsed to one line. */
+  agent: z
+    .object({ name: z.string().min(1).max(130), description: z.string().max(200).optional() })
+    .optional(),
+  org: z.object({ name: z.string().min(1).max(200) }).optional(),
+  /** Today in `timeZone`, `YYYY-MM-DD`. */
+  date: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
+  /** IANA name. */
+  timeZone: z.string().min(1).max(64).optional(),
+  /** The language of the person whose message started the run. */
+  locale: z.enum(RUN_CONTEXT_LOCALES).optional(),
+  /** Sub-agents only: who dispatched this conversation. */
+  dispatchedBy: z
+    .object({ agent: z.string().min(1).max(130), person: z.string().min(1).max(80) })
+    .optional(),
+});
+
 const ev = <T extends string, P extends z.ZodType>(type: T, payload: P) =>
   z.object({ type: z.literal(type), payload });
 
@@ -258,6 +292,20 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
         )
         .optional(),
       authorAccountId: z.string(),
+      /**
+       * Who wrote the message, at send time (run context spec §3.2): display name and org role
+       * only (never email or ids). Absent in older logs, on a sub-agent's task or `SendMessage`
+       * message. Model-visible only through the sender line, written when the sender changes
+       * (`senderLines`, runtime/context/run-context.ts).
+       */
+      sender: MessageSenderSchema.optional(),
+      /**
+       * The sender's time zone (IANA) and language at send time (run context spec §3.4): the
+       * account setting, else the browser's, else the org defaults. Not model-visible: the next
+       * run's `run_context` is derived from them.
+       */
+      timeZone: z.string().min(1).max(64).optional(),
+      locale: z.enum(RUN_CONTEXT_LOCALES).optional(),
       clientMessageId: z.string().optional(),
       /**
        * A retry after a failed run (UI refresh B): the seq of the message it repeats. Display only
@@ -463,6 +511,13 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
     }),
   ),
   ev("reminder", z.object({ step: count, text: z.string() })),
+  /**
+   * Who the agent is and the facts of the day (run context spec §3.1), written at run start
+   * (`RunContextService.record`): the conversation's first one holds every field that applies, a
+   * later one only the fields that changed. **Model-visible**: rendered at its position as a
+   * system message (`runContextText`); a summary covering it restores the current values.
+   */
+  ev("run_context", RunContextSchema),
   /**
    * The step's resolved tool set differs from the one the conversation's previous model request
    * offered (`toolSetChange`): tool names as the model sees them, sorted. Written before that
