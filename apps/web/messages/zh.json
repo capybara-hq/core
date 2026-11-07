@@ -3024,33 +3024,34 @@
       "dialog": {
         "title": "「{name}」的限额",
         "runConcurrency": "运行并发上限",
-        "runConcurrencyHelp": "同时运行的会话数上限；留空使用部署默认。",
+        "runConcurrencyHelp": "同时运行的会话数上限。",
         "runConcurrencyInvalid": "请输入正整数，或留空使用部署默认。",
         "cpu": "沙箱 CPU（核）",
-        "cpuHelp": "0.25 到 64；留空使用部署默认。",
+        "cpuHelp": "0.25 到 64。",
         "cpuInvalid": "CPU 须在 0.25 到 64 之间。",
         "memory": "沙箱内存（MB）",
-        "memoryHelp": "256 到 262144 的整数；留空使用部署默认。",
+        "memoryHelp": "256 到 262144 的整数。",
         "memoryInvalid": "内存须是 256 到 262144 之间的整数。",
         "newOnly": "只对之后新建的沙箱生效",
         "save": "保存",
         "subagentConcurrent": "每个对话同时运行的子智能体数",
-        "subagentConcurrentHelp": "1–20；留空使用部署默认（subagents.maxConcurrentPerConversation）。",
+        "subagentConcurrentHelp": "1–20。",
         "subagentConcurrentInvalid": "请输入 1 到 20 的整数。",
         "subagentDepth": "子智能体嵌套深度",
-        "subagentDepthHelp": "1–5，从对话的智能体往下数（1 表示子智能体不能再派发）；留空使用部署默认（subagents.maxDepth）。",
+        "subagentDepthHelp": "1–5，从对话的智能体往下数（1 表示子智能体不能再派发）。",
         "subagentDepthInvalid": "请输入 1 到 5 的整数。",
         "subagentDispatches": "每条消息的子智能体派发数",
-        "subagentDispatchesHelp": "1–500，从此人最近一条消息起整棵智能体树合计，含后续追问；留空使用部署默认。",
+        "subagentDispatchesHelp": "1–500，从此人最近一条消息起整棵智能体树合计，含后续追问。",
         "subagentDispatchesInvalid": "请输入 1 到 500 的整数。",
         "subagentTokens": "每条消息的子智能体 token 数",
-        "subagentTokensHelp": "至少 10,000，从此人最近一条消息起整棵智能体树合计；留空使用部署默认。",
+        "subagentTokensHelp": "至少 10,000，从此人最近一条消息起整棵智能体树合计。",
         "subagentTokensInvalid": "请输入不小于 10,000 的整数。",
         "groups": {
           "run": "运行",
           "sandbox": "沙箱",
           "subagents": "子智能体"
-        }
+        },
+        "emptyDefault": "留空的项使用部署默认。"
       }
     },
     "settings": {

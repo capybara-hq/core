@@ -3036,33 +3036,34 @@
       "dialog": {
         "title": "Limits for {name}",
         "runConcurrency": "Run concurrency limit",
-        "runConcurrencyHelp": "How many conversations may run at once; leave empty for the deployment default.",
+        "runConcurrencyHelp": "How many conversations may run at once.",
         "runConcurrencyInvalid": "Enter a positive whole number, or leave empty for the deployment default.",
         "cpu": "Sandbox CPU (cores)",
-        "cpuHelp": "0.25 to 64; leave empty for the deployment default.",
+        "cpuHelp": "0.25 to 64.",
         "cpuInvalid": "CPU must be between 0.25 and 64.",
         "memory": "Sandbox memory (MB)",
-        "memoryHelp": "A whole number from 256 to 262144; leave empty for the deployment default.",
+        "memoryHelp": "A whole number from 256 to 262144.",
         "memoryInvalid": "Memory must be a whole number from 256 to 262144.",
         "newOnly": "Applies to sandboxes created from now on",
         "save": "Save",
         "subagentConcurrent": "Sub-agents running at once per conversation",
-        "subagentConcurrentHelp": "1–20; empty uses the deployment default (subagents.maxConcurrentPerConversation).",
+        "subagentConcurrentHelp": "1–20.",
         "subagentConcurrentInvalid": "Enter a whole number from 1 to 20.",
         "subagentDepth": "Sub-agent nesting depth",
-        "subagentDepthHelp": "1–5 levels below the conversation's agent (1: sub-agents dispatch none of their own); empty uses the deployment default (subagents.maxDepth).",
+        "subagentDepthHelp": "1–5 levels below the conversation's agent (1: sub-agents dispatch none of their own).",
         "subagentDepthInvalid": "Enter a whole number from 1 to 5.",
         "subagentDispatches": "Sub-agent dispatches per message",
-        "subagentDispatchesHelp": "1–500, counted over the whole agent tree since the person's latest message, follow-ups included; empty uses the deployment default.",
+        "subagentDispatchesHelp": "1–500, counted over the whole agent tree since the person's latest message, follow-ups included.",
         "subagentDispatchesInvalid": "Enter a whole number from 1 to 500.",
         "subagentTokens": "Sub-agent tokens per message",
-        "subagentTokensHelp": "At least 10,000, counted over the whole agent tree since the person's latest message; empty uses the deployment default.",
+        "subagentTokensHelp": "At least 10,000, counted over the whole agent tree since the person's latest message.",
         "subagentTokensInvalid": "Enter a whole number of at least 10,000.",
         "groups": {
           "run": "Runs",
           "sandbox": "Sandbox",
           "subagents": "Sub-agents"
-        }
+        },
+        "emptyDefault": "Empty fields use the deployment default."
       }
     },
     "settings": {

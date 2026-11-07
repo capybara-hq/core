@@ -262,6 +262,9 @@ function LimitsDialog({
     >
       {/* The Dialog is the one box (spec §6.7): 运行, 沙箱, 子智能体 as titled regions */}
       <Stack gap={16}>
+        <Text variant="prose" tone="muted">
+          {t("emptyDefault")}
+        </Text>
         <Subsection title={t("groups.run")} variant="divided">
           <Field
             label={t("runConcurrency")}
