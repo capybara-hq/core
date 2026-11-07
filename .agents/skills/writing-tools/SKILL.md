@@ -373,10 +373,13 @@ section of `.agents/skills/writing-kernel-api`; this section is about how the pi
   unavailable now are denied with an actionable text naming `describe` and never reach the person.
 - **Classes.** `read` runs; `personal` asks and may be remembered; `org` / `platform` ask every time and are
   never remembered (`remember: false`; the approval stores `scopes: ["once"]`, anything else is
-  `approval.scope_not_allowed`, on the web, in IM cards and over the API). A read never prompts; a read an agent tightened to `ask` (`toolPolicies` on
-  `Platform:<operation>`) asks once-only and no grant applies. When the class depends on the target, the
-  operation's `confirmFor(input, ctx)` decides per call (`agents.update`: `personal` only on the actor's own
-  private agent, `org` otherwise; a throw counts as `org`), so a grant never carries over to a shared target.
+  `approval.scope_not_allowed`, on the web, in IM cards and over the API). A `personal` operation with
+  `rememberable: false` (deleting a conversation, an agent, an agent's skill, an environment) is asked every
+  time too: `remember = class === "personal" && rememberable !== false`. A read never prompts; a read an
+  agent tightened to `ask` (`toolPolicies` on `Platform:<operation>`) asks once-only and no grant applies.
+  When the class depends on the target, the operation's `confirmFor(input, ctx)` decides per call
+  (`agents.update`: `personal` only on the actor's own private agent, `org` otherwise; a throw counts as
+  not remembered), so a grant never carries over to a shared target.
 - **The card.** The kernel renders `summary(input, ctx)` (zh and en, may be async) from the params and kernel
   reads (target names, the hash-bound preview's counts), falling back to the operation id when it throws; the
   approval stores it with the exact input and runs only with that input (approvals bound to input: a re-call
@@ -395,8 +398,30 @@ section of `.agents/skills/writing-kernel-api`; this section is about how the pi
   and message and gets the operation's `errors[]` entry for the actor's role (`superAdmin` / `orgAdmin` /
   `member`, see `platform/errors.ts`), else the generic step; `describe` shows each entry resolved for the
   actor.
-- **Tests:** `packages/kernel/test/platform/platform-e2e.test.ts` scripts calls with model-fake
-  (`tool:Platform:{"action":"call","operation":"skills.list","params":{}}`) through approvals and replay.
+- **Results** are what the operation returns, as JSON: list rows are compact (`id`, `name`, `state`,
+  `reason?`, `next?`, at most 3 domain fields; `get` has the details) and page by 50 (`params.cursor`).
+  Super admin results carry the admin console's data in full; another org's own items are only
+  counted. No secret, token, credential field, a call's input or a generated password ever appears
+  (`accounts.create` returns a note: the approver reads the password once on the web).
+- **Tests:** `packages/kernel/test/platform/platform-e2e.test.ts` and `platform-e2e-phase2.test.ts` script
+  calls with model-fake (`tool:Platform:{"action":"call","operation":"skills.list","params":{}}`) through
+  approvals and replay.
+
+### Platform operations
+
+How an operation is defined, kept in sync with its route and removed is in the "Platform operations"
+section of `.agents/skills/writing-kernel-api`; the short list for a tool change:
+
+- `defineOperation` fields: `id`, `description`, `input` (from the route's shared schemas, with `omits` /
+  `extras` / `renames` / `loosens`), `example`, `authz` (+ `authzNote`), `mirrors`, `confirm`,
+  `rememberable`, `confirmFor`, `precheck`, `summary`, `errors` (role-keyed `next`), `run`.
+- Checks: `check:platform-ops` (`platform-op-missing`, `-exclusion-reason`, `-later`, `-authz`, `-orphan`,
+  `-double`, `-describe`, `-literal`, `-errors`) and the parity test
+  `tools/checks/test/platform-parity.test.ts`.
+- Exclusion categories: `human-only`, `secret`, `transport`, `internal`; `later` is closed
+  (`LATER_ALLOWED` in the check holds what still waits).
+- A new domain: `PLATFORM_DOMAINS`, `PlatformOpsModule`, `ROUTE_SCHEMAS`, and the domain list in
+  `test/tools/platform-tool.test.ts`.
 
 ## Connectors
 

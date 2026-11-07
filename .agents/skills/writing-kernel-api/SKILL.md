@@ -272,59 +272,100 @@ Key points:
 
 ## Platform operations: a route's twin for agents
 
-The `Platform` builtin (spec `docs/superpowers/specs/2026-11-07-platform-tool-design.md`) lets an agent
-call the platform as the person who started the run. Every kernel HTTP route is either mirrored by an
-operation or listed in `packages/kernel/src/platform/exclusions.ts` with a reason; `pnpm check:platform-ops`
-fails otherwise (full run, part of `pnpm check`). So a new route in a PR needs one of the two.
+The `Platform` builtin (spec `docs/superpowers/specs/2026-11-07-platform-tool-design.md`, §14 for
+phase 2) lets an agent call the platform as the person who started the run. Every kernel HTTP route
+is either mirrored by an operation or listed in `packages/kernel/src/platform/exclusions.ts` with a
+reason; `pnpm check:platform-ops` fails otherwise (full run, part of `pnpm check`). So a new route in
+a PR needs one of the two.
+
+**Add, change, remove.**
+
+- *Add a route:* export its zod schemas from `<domain>.schemas.ts` next to the controller (the
+  controller uses them too), list the route in that file's `*_ROUTES` (registered in `ROUTE_SCHEMAS`
+  of `platform/route-schemas.ts`), and add an operation whose input is built from those schemas
+  (`pick` / `omit` / `extend`), or an exclusion with a reason.
+- *Change a route's input:* change the shared schema; the operation follows. The parity test
+  (`tools/checks/test/platform-parity.test.ts`, `inputParity` in `platform/parity.ts`) goes red when
+  the operation's input and the route drift: a type differs, a bound is looser, a pattern / format is
+  lost, a route-required field is optional, or a top-level route field is neither in the input nor in
+  `omits`.
+- *Remove a route:* its operation (or the `mirrors` entry) and its exclusion go in the same change;
+  a mirror or exclusion naming no route is `platform-op-orphan`, a route both mirrored and excluded
+  `platform-op-double`.
 
 **Defining an operation.** Operations live in `platform/ops/<domain>.ops.ts`, in a provider that calls
-`PlatformOperations.register(...)` from `onModuleInit` (listed in `PlatformOpsModule`; `PlatformModule` imports
-no domain module). `defineOperation({...})` fields:
+`PlatformOperations.register(...)` from `onModuleInit` (listed in `PlatformOpsModule`; `PlatformModule`
+imports no domain module). `defineOperation({...})` fields:
 
 - `id`: `<domain>.<verb>`, kebab-case parts, the domain one of `PLATFORM_DOMAINS`; the policy key is
   `Platform:<id>`. `description`: English, the first sentence is what `browse` / `search` show.
-- `input`: a strict zod schema, every string bounded; `example`: a valid input (`describe` shows both).
+- `input`: a strict zod schema from the route's shared schemas, every string bounded; `example`: a
+  valid input (`describe` shows both). The parity bookkeeping, each entry checked for staleness:
+  `omits` (top-level route fields the input leaves out, e.g. `uploadId`), `extras` (input fields
+  the route lacks, e.g. `cursor`), `renames` (`{ skillId: "id" }`, a flattened
+  `{ name: "definition.name" }`) and `loosens` (a field allowed to accept more than the route, with
+  the reason; never the type).
 - `authz`: `{ orgAction }` equal to the mirrored route's `@OrgAction`, or `{ superAdmin: true }`. When the
   service enforces a higher role than the decorator, name the stricter action and add
   `authzNote: "service-enforced"` (the check then requires a role at least the route's).
 - `mirrors`: the routes it corresponds to (`"POST /api/v1/orgs/:orgId/skills"`), `[]` for a synthetic read.
-  A mirror or exclusion naming no route is an orphan.
-- `confirm`: `read` runs without asking; `personal` asks each time and may be remembered; `org` and `platform`
-  ask each time and are never remembered. A route marked `HUMAN_ONLY` is not an operation (exclusion
-  `human-only`).
-- `summary(input)`: for every write, the bilingual card line rendered from the validated input, never from
-  model text (zh says 平台 / 超级管理员 / 智能体).
+- `confirm`: `read` runs without asking; `personal` asks and may be remembered; `org` and `platform`
+  ask every time and are never remembered. `rememberable: false` makes a `personal` write asked every
+  time too (destructive personal writes: `conversations.delete` / `abort`, `agents.delete`,
+  `agents.delete-skill`, `environments.delete` / `reset-files`). `confirmFor(input, ctx)` picks the class per call when it depends on the
+  target (`agents.update`: `personal` only on the actor's own private agent; a throw counts as not
+  remembered). A route marked `HUMAN_ONLY` is not an operation (exclusion `human-only`).
+- `summary(input, ctx)`: for every write, the bilingual card line rendered from the validated input and
+  kernel reads (target names, preview counts), never from model text (zh says 平台 / 超级管理员 / 智能体).
+- `precheck(input, ctx)`: for a write, the read-only preconditions known to fail (a taken name, a stale
+  preview hash, a missing deployment config, an invalid URL), returning `{ ok: true }` or
+  `{ ok: false, code, message, next? }`; the tool runs it after availability and denies a failure with
+  the message and the role's next step, so no card appears. Prefer a read-only `check…` method of the
+  service that throws the write's own `ApiError`, wrapped in `precheckBy`. It runs again when an approved
+  call resumes (a failure then returns the error and nothing runs); after 2 s or on a throw it is skipped
+  and the write's own errors speak.
 - `errors`: `{ code, next }[]` for the notable failures; `describe` shows them, and the tool appends an
   `ApiError`'s entry to its message. `next` says what to do next; where the step differs by role it is
-  `{ superAdmin?, orgAdmin?, member? }` (only the super admin gets the `superAdmin` text: the admin console
-  path; an org admin falls back to `member`, a member to `orgAdmin`). `check:platform-ops` rule
-  `platform-op-errors` requires `next` on every entry. Let a service `ApiError` propagate: the tool turns
-  it into an actionable `ToolError` (`toToolError`), never a 500.
-- `precheck(input, ctx)`: for a write, the read-only preconditions known to fail (a taken name, a stale
-  preview hash, an invalid URL), returning `{ ok: true }` or `{ ok: false, code, message }`; the tool
-  runs it after availability and denies a failure with the message and the role's next step, so no card
-  appears. Prefer a read-only `check…` method of the service that throws the write's own `ApiError`, wrapped
-  in `precheckBy`. It runs again when an approved call resumes (a failure then returns the error and
-  nothing runs); after 2 s or on a throw it is skipped and the write's own errors speak.
-- `run(input, ctx)`: call the controller's service, never new logic, as `ctx.actorAccountId`; a write passes
-  `auditDetail: viaAgent("<id>", ctx)` so the audit event carries `{ via: "agent", conversationId, runId,
-  operation }`. Results hold no secrets or secret config; a list that can exceed 50 entries pages itself
-  (`pageOf`, `params.cursor`, result `{ items, next }`). Super admin operations return the admin console's data
-  in full for platform items and the conversation org's own (spec §14.5 item 1); an item another org owns is
-  only counted and refused (`assertNotOtherOrgs` / `assertExtensionNotOtherOrgs` in `platform/ops/other-orgs.ts`).
+  `{ superAdmin?, orgAdmin?, member? }` with an `orgAdmin` or `member` step (only the super admin gets
+  the `superAdmin` text: the admin console path; an org admin falls back to `member`, a member to
+  `orgAdmin`). A member's step never names the admin console or a config field. `platform-op-errors`
+  requires `next` on every entry. Let a service `ApiError` propagate: the tool turns it into an
+  actionable `ToolError` (`toToolError`), never a 500.
+- `run(input, ctx)`: call the controller's service, never new logic, as `ctx.actorAccountId`; writes stay
+  in the service's `@Transactional()` methods and pass `auditDetail: viaAgent("<id>", ctx)` so the audit
+  event carries `{ via: "agent", conversationId, runId, operation }`. Results hold no secrets, tokens,
+  credential fields or secret config.
 
-**Exclusions.** `PLATFORM_EXCLUSIONS` entries have a category (`human-only`, `secret`, `transport`,
-`internal`, `later`) and a reason; `later` also needs an `issue` URL. Routes that need credentials or secret
-config are excluded as `secret`: the operation that touches them refuses with a pointer to the web page.
+**Results.** A list returns compact rows: `id`, `name`, `state`, `reason?`, `next?` and at most 3 domain
+fields; details come from the domain's `get`. Lists page by 50 with `pageOf(rows, startOf(cursor), 50)`
+(`params.cursor`, result `{ items, total, next }`). Super admin operations run only through the super
+admin's own private agent and return the admin console's data in full: platform items and the
+conversation org's own items are named (orgs included: previews, scope lists, the orgs a component is
+on in). An item another org owns is only counted (`otherOrg…` fields) and get / update on it is refused
+(`assertNotOtherOrgs` / `assertExtensionNotOtherOrgs` in `platform/ops/other-orgs.ts`), also on a race
+past the precheck (a service error naming that org's items is rethrown without them).
+
+**Exclusions.** `PLATFORM_EXCLUSIONS` entries have a category and a reason: `human-only` (deciding
+approvals and requests, confirming extension permissions, roles, the super-admin flag, sign-in and
+setup), `secret` (tokens, credentials, secret config values, cross-org config state), `transport`
+(uploads, downloads, streams, presigned URLs), `internal` (the web's own plumbing). `later` is closed:
+`platform-op-later` fails it, except the routes in `LATER_ALLOWED` of the check (today the agent profile
+route, until its operation lands). An operation that would touch a secret refuses with a pointer to the
+web page.
+
+**Adding a domain.** Add the id and its one-line description to `PLATFORM_DOMAINS`
+(`platform/operation.ts`), the provider to `PlatformOpsModule`, its routes to `ROUTE_SCHEMAS`, and the
+id to the domain list asserted in `test/tools/platform-tool.test.ts`; tests go in
+`test/platform/ops-<domain>.test.ts` against PG with the real services.
 
 **Docs topics.** What the agent reads with `Platform` `read` is `packages/plugin-sdk/agent-docs/` (served by
 `AgentDocs`); a new extension point needs its topic there and `pnpm gen:agent-docs` renders the field tables
-(`check:agent-docs`).
+(`check:agent-docs`; hand-written tables are checked for orphans only).
 
 **The fence.** Tests prove the actor is the run's trigger account, re-read on every call, and that params
-cannot change between an approval and the run: `test/platform/*.test.ts`, and the end-to-end run
-`test/platform/platform-e2e.test.ts` (model-fake scripts the calls through the real pipeline and the log
-replays with zero drift).
+cannot change between an approval and the run: `test/platform/*.test.ts`, and the end-to-end runs
+`test/platform/platform-e2e.test.ts` and `platform-e2e-phase2.test.ts` (model-fake scripts the calls through
+the real pipeline; the log replays with zero drift).
 
 ## Checklist
 
