@@ -2573,19 +2573,28 @@ textarea {
   gap: var(--cb-space-2);
   flex: none;
 }
-.r-agents-chip-icon,
 .r-agents-chip-count {
   display: none;
 }
+.r-agents-chip-icon {
+  display: inline-flex;
+  align-items: center;
+}
+.r-agents-chip-number {
+  color: var(--cb-ink);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+.r-agents-chip-activity {
+  white-space: nowrap;
+}
 @media (max-width: 639px) {
-  .r-agents-chip-label {
+  .r-agents-chip-label,
+  .r-agents-chip-activity {
     display: none;
   }
   .r-agents-chip-count {
     display: inline;
-  }
-  .r-agents-chip-icon {
-    display: inline-flex;
   }
 }
 .r-picker[data-locked] {

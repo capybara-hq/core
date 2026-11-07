@@ -80,14 +80,54 @@ describe("AgentsChip (§6.16.29, acceptance item AC3)", () => {
       "utf8",
     );
     const phone = css.slice(css.indexOf("@media (max-width: 639px) {\n  .cb-agents-chip-label"));
-    expect(phone).toMatch(/\.cb-agents-chip-label \{\s*display: none;/);
+    expect(phone).toMatch(
+      /\.cb-agents-chip-label,\n\s*\.cb-agents-chip-activity \{\s*display: none;/,
+    );
     expect(phone).toMatch(/\.cb-agents-chip-count \{\s*display: inline;/);
-    // wide: the count and the icon are hidden
-    expect(css).toMatch(/\.cb-agents-chip-icon,\n\.cb-agents-chip-count \{\s*display: none;/);
+    // wide: the count alone is hidden; the icon leads at every width when nothing is active
+    expect(css).toMatch(/\n\.cb-agents-chip-count \{\s*display: none;/);
+    expect(css).toMatch(/\.cb-agents-chip-icon \{\s*display: inline-flex;/);
     // the pickers' labels give way with an ellipsis; the icon buttons and the chip keep their size
     expect(css).toMatch(/\.cb-picker-value \{\s*overflow: hidden;\s*text-overflow: ellipsis;/);
     expect(css).toMatch(/\.cb-composer-bar > \.cb-icon-btn \{\s*flex: none;/);
     expect(css).toMatch(/\.cb-agents-chip\.cb-btn \{\s*flex: none;/);
+  });
+
+  it("always leads with a mark; the number is the emphasized part; an activity part follows while some are active", () => {
+    const { rerender } = wrap(<AgentsChip count={27} running={0} onOpen={() => {}} />);
+    const body = () => chip()?.querySelector(".cb-btn-body") as HTMLElement;
+    const activity = () => chip()?.querySelector('[data-part="agents-chip-activity"]') ?? null;
+    // idle: the agent icon leads, no activity part
+    expect(body().firstElementChild?.getAttribute("data-part")).toBe("agents-chip-icon");
+    expect(activity()).toBeNull();
+    const number = chip()?.querySelector('[data-part="agents-chip-number"]') as HTMLElement;
+    expect(number.textContent).toBe("27");
+    expect(number.closest('[data-part="agents-chip-label"]')).not.toBeNull();
+    rerender(
+      <DesignProvider locale="zh">
+        <AgentsChip count={27} running={3} waiting={1} onOpen={() => {}} />
+      </DesignProvider>,
+    );
+    // running wins over waiting; the part is hidden from assistive tech (the name says it)
+    expect(activity()?.textContent).toBe("· 3 个运行中");
+    expect(activity()?.getAttribute("aria-hidden")).toBe("true");
+    expect(label()).toBe("27 个智能体");
+    rerender(
+      <DesignProvider locale="en">
+        <AgentsChip count={27} running={0} waiting={2} onOpen={() => {}} />
+      </DesignProvider>,
+    );
+    expect(activity()?.textContent).toBe("· 2 waiting");
+    expect(chip()?.querySelector('[data-part="agents-chip-activity-number"]')?.textContent).toBe(
+      "2",
+    );
+    const css = readFileSync(
+      resolve(import.meta.dirname, "../src/styles/conversation-page.css"),
+      "utf8",
+    );
+    expect(css).toMatch(
+      /\.cb-agents-chip-number \{\s*color: var\(--cb-ink\);\s*font-weight: 500;\s*font-variant-numeric: tabular-nums;/,
+    );
   });
 
   it("opens on click and from the keyboard", async () => {

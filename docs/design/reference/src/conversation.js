@@ -417,16 +417,23 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
     return `<div class="r-composer"${o.state === "focus" ? ' data-state="focus"' : ""}>${strip}<label class="r-sr" for="msg">消息</label>${line}<div class="r-composer-bar">${iconBtn("plus", K.attach)}${o.noAgent || !isNew ? "" : picker(C.agent.name, { open: o.menu === "agent" })}${picker(o.modelValue ?? modelLabel(model.provider, model.model), { open: o.menu === "model" })}${effort}${quick}${agents}<span class="r-grow"></span>${action}</div></div>`;
   }
 
-  /** The agents chip (§6.16.29): a ghost picker without a chevron, the dot before the label. */
+  /**
+   * The agents chip (§6.16.29): a ghost picker without a chevron; a mark (the dot while active,
+   * else the agent icon) before the label, whose number is ink at 500; an activity part after it
+   * while some are active.
+   */
   function agentsChip(a) {
     const dot = a.running > 0 ? "running" : a.waiting > 0 ? "waiting" : null;
     const word = { running: "运行中", waiting: "等待" };
     const name = `${a.count} 个智能体，${a.running} 个运行中${a.waiting > 0 ? `，${a.waiting} 个等待中` : ""}`;
-    // below 640 (the narrow state) the dot, or the agent icon when nothing is active, and the count
     const lead = dot
       ? `<span class="r-amap-dot" data-part="agent-dot" data-status="${dot}" role="img" aria-label="${word[dot]}"></span>`
       : `<span class="r-agents-chip-icon" data-part="agents-chip-icon" aria-hidden="true">${icon("agent", 14)}</span>`;
-    return `<button class="r-btn r-picker r-agents-chip" data-variant="ghost" data-part="agents-chip"${state(a.state)} aria-haspopup="dialog" aria-label="${esc(name)}" title="${esc(name)}">${lead}<span class="r-agents-chip-label" data-part="agents-chip-label">${a.count} 个智能体</span><span class="r-agents-chip-count" data-part="agents-chip-count" aria-hidden="true">${a.count}</span></button>`;
+    const num = (n, part) => `<span class="r-agents-chip-number" data-part="${part}">${n}</span>`;
+    const activity = dot
+      ? `<span class="r-agents-chip-activity" data-part="agents-chip-activity" aria-hidden="true">· ${dot === "running" ? `${num(a.running, "agents-chip-activity-number")} 个运行中` : `${num(a.waiting, "agents-chip-activity-number")} 个等待中`}</span>`
+      : "";
+    return `<button class="r-btn r-picker r-agents-chip" data-variant="ghost" data-part="agents-chip"${state(a.state)} aria-haspopup="dialog" aria-label="${esc(name)}" title="${esc(name)}">${lead}<span class="r-agents-chip-label" data-part="agents-chip-label">${num(a.count, "agents-chip-number")} 个智能体</span>${activity}<span class="r-agents-chip-count" data-part="agents-chip-count" aria-hidden="true">${a.count}</span></button>`;
   }
 
   function pickerMenu(o) {

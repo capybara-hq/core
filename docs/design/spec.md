@@ -2403,10 +2403,16 @@ title bar's agent map icon (§6.16.1).
   0: nothing, and nothing takes its place.
 - **Look**: a ghost picker (§6.16.2: `default`-step button, padding 0 `space.2`, `muted`, `hover`
   ground and `ink` on hover), no chevron (it opens a dialog, not a menu): the label "N 个智能体" /
-  "N agents" ("1 agent"), led by the agent map's status dot (§6.16.28: 8, round, `role="img"`)
-  `space.2` before it while a sub-agent is active: running (queued included) the `accent` dot
-  pulsing every `motion.pulse`; else, while one waits for a person, `warn`; with nothing active
-  no dot. It draws no box of its own inside the composer (one box is enough, §1).
+  "N agents" ("1 agent"), its number (`agents-chip-number`) in `ink` at weight 500 with tabular
+  figures and its words `muted`, so the count is what reads first. It always leads with a mark
+  `space.2` before the label: the agent map's status dot (§6.16.28: 8, round, `role="img"`) while
+  a sub-agent is active (running, queued included: the `accent` dot pulsing every `motion.pulse`;
+  else, while one waits for a person, `warn`), else the `agent` icon 14 in the chip's `muted`.
+  While some are active an activity part follows the label `space.2` after it,
+  "· 3 个运行中" / "· 3 running" (else "· 2 个等待中" / "· 2 waiting"), its number in `ink` like the
+  label's; it repeats the accessible name, so it is `aria-hidden`, and the dot alone carries the
+  color (the `accent` text contrast is 3:1, too low for body text). It draws no box of its own
+  inside the composer (one box is enough, §1). (Maintainer, 2026-11-07: "稍微来点设计感".)
 - **Count**: N is every sub-agent of the conversation's tree, at every depth, at all times (the
   root is not counted; the map's count line shows the same N, §6.16.28). The page reads the agent
   tree with the conversation (the server prefetches it for the first paint) and again on every
@@ -2416,8 +2422,9 @@ title bar's agent map icon (§6.16.1).
   1 running", then "，N 个等待中" / ", N waiting" while some wait. A child of the conversation that
   is active with nothing below it that counts is working itself (a stale tree never drops the
   dot).
-- **Below 640** (state `narrow`): the dot, or the `agent` icon 14 when nothing is active, and the
-  count alone ("● 3"); the full text stays its accessible name and tooltip. The chip and the icon
+- **Below 640** (state `narrow`): the mark (the dot, or the `agent` icon 14 when nothing is
+  active) and the count alone ("● 3"), without the label and the activity part; the full text
+  stays its accessible name and tooltip. The chip and the icon
   buttons keep their size; a picker's label gives way with an ellipsis (§6.16.2), so the send
   button stays inside the composer with the model, effort, quick actions and the chip.
 - **Open**: activating it (click, Enter, Space) opens the agent map at its root level (`#agents`;
@@ -2433,6 +2440,8 @@ States: `default`, `running`, `waiting`, `hover`, `narrow`
 | agents-chip | default | height | control.default |
 | agents-chip | default | padding-left | space.2 |
 | agents-chip | default | color | color.muted |
+| agents-chip-number | default | color | color.ink |
+| agents-chip-icon | default | color | color.muted |
 | agents-chip | running | height | control.default |
 | agent-dot | running | width | space.2 |
 | agent-dot | running | background-color | color.accent |
