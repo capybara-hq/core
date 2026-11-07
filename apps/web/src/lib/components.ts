@@ -229,6 +229,8 @@ export interface OrgComponent {
   pluginOn: boolean;
   /** An org admin may switch it now (not locked; its plugin on when it follows it). */
   switchable: boolean;
+  /** On by platform default: effective scope `all`, not builtin (平台默认启用; the org may turn it off). */
+  platformDefault?: boolean;
   /** The org's copies linked to it (older agents select them; absent from older kernels). */
   linkedIds?: string[];
   /** The platform, or the org that owns it (an org's upload; absent from older kernels). */

@@ -175,6 +175,8 @@ export interface OrgOfferedComponentView extends OrgComponentView {
    * component of a plugin that is off is switched on with the plugin, spec §5 rule 5).
    */
   switchable: boolean;
+  /** On by platform default: the effective scope (its own, or its plugin's) is `all` and it is not builtin. */
+  platformDefault: boolean;
   /**
    * The org's copies linked to it without a pin (skills, agent templates): agents that select one
    * of these ids use this component, and lose it while it is off (spec §5 rule 8).
@@ -479,6 +481,8 @@ export class ComponentScopeService {
           locked,
           pluginOn,
           switchable: !locked && pluginOn,
+          platformDefault:
+            !locked && (c.scopeMode === "follow" ? p?.scope === "all" : c.scope === "all"),
           linkedIds: linked.get(c.id) ?? [],
           owner: ownerOf(c.ownerOrgId, owners),
         });

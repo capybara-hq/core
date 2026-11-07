@@ -4454,6 +4454,7 @@
       "on": "已启用",
       "off": "未启用",
       "platform": "已启用 · 平台统一",
+      "platformDefault": "平台默认启用",
       "pluginOff": "插件未启用"
     },
     "origin": {

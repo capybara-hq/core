@@ -285,7 +285,14 @@ function ExtensionList({
         : needsConfig
           ? { label: t("needsConfig"), tone: "warn" }
           : ext.enabled
-            ? { label: platform ? tp("state.platform") : t("enabled"), tone: "ok" }
+            ? {
+                label: platform
+                  ? tp("state.platform")
+                  : ext.catalogItem?.scope === "all"
+                    ? tp("state.platformDefault")
+                    : t("enabled"),
+                tone: "ok",
+              }
             : { label: t("disabled"), tone: "muted" };
     const rank: Row["rank"] =
       !unavailable && (problem !== undefined || needsConfig)

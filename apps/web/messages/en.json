@@ -4466,6 +4466,7 @@
       "on": "On",
       "off": "Off",
       "platform": "On · set by the platform",
+      "platformDefault": "On by default for all orgs",
       "pluginOff": "Plugin off"
     },
     "origin": {

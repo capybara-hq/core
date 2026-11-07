@@ -837,6 +837,23 @@ describe("the org component list and linked copies (Task 10)", { timeout: 60_000
         locked: false,
         switchable: true,
         pluginOn: true,
+        platformDefault: false,
+      }),
+    ]);
+    // the plugin goes to `all`: its followed skill is on by platform default, still switchable
+    await env.db
+      .updateTable("catalog_items")
+      .set({ scope: "all" })
+      .where("id", "=", itemId)
+      .execute();
+    const all = await list(env.mem, "kind=skill");
+    expect(all.json().components).toEqual([
+      expect.objectContaining({ id: notes, platformDefault: false }),
+      expect.objectContaining({
+        id: skillId,
+        platformDefault: true,
+        switchable: true,
+        locked: false,
       }),
     ]);
     // by plugin, every kind
