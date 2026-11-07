@@ -78,6 +78,35 @@ export const CONV = (id = "c1", extra: Record<string, unknown> = {}) => ({
   },
 });
 
+const ENV_LIMITS = { cpu: 2, memoryMb: 2048, diskMb: 10240, egress: "allowlist", allowHosts: [] };
+export const envView = (id: string, name: string | null, over: Record<string, unknown> = {}) => ({
+  id,
+  name,
+  isDefault: name === null,
+  ownerKind: "personal",
+  source: "cloud",
+  provider: "sandbox-docker",
+  available: true,
+  sessionIsolation: false,
+  filesLost: false,
+  instance: null,
+  limits: ENV_LIMITS,
+  createdAt: "2026-11-07T08:00:00.000Z",
+  ...over,
+});
+
+/** The person's environments as `GET /environments` answers them (the composer's picker reads it). */
+export const ENVIRONMENTS = {
+  items: [
+    envView("e1", null),
+    envView("e2", "Build box"),
+    envView("e3", "Old box", { available: false }),
+  ],
+  defaultId: "e1",
+  lastUsedId: null,
+  cloudAvailable: true,
+};
+
 /** An agent's profile as the kernel answers it for an agent created before profiles existed. */
 export const PROFILE = {
   avatar: null,
@@ -174,11 +203,7 @@ export function snapshotDefaults(id = "c1"): Parameters<typeof renderRouteWithCa
     [`GET ${base}/usage`]: ok({
       usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
     }),
-    [`GET ${base}/sandbox`]: () =>
-      new Response(JSON.stringify({ error: { code: "sandbox.not_found", message: "x" } }), {
-        status: 404,
-        headers: { "content-type": "application/json" },
-      }),
+    [`GET ${base}/environment`]: ok({ environment: null }),
     "GET /api/v1/orgs/o1/ui/contributions": ok({ items: [] }),
     "GET /api/v1/orgs/o1/connectors": ok({ connectors: [] }),
     "GET /api/v1/orgs/o1/attachments/limits": ok(LIMITS),

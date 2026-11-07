@@ -7,6 +7,7 @@ import { bodyOf, type Call, json, stubApi } from "./support/api";
 import {
   AGENTS,
   CONV,
+  ENVIRONMENTS,
   ev,
   FakeEventSource,
   LIMITS,
@@ -696,6 +697,7 @@ describe("a new conversation", () => {
     await renderRouteWithCache("/chat", {
       [`GET ${ORG}/agents`]: () => json(200, AGENTS),
       [`GET ${ORG}/models`]: () => json(200, MODELS),
+      [`GET ${ORG}/environments`]: () => json(200, ENVIRONMENTS),
       [`GET ${ORG}/conversations/groups`]: () => json(200, { groups: [] }),
       [`GET ${ORG}/attachments/limits`]: () => json(200, LIMITS),
     });
@@ -726,6 +728,7 @@ describe("a new conversation", () => {
     await renderRouteWithCache("/chat", {
       [`GET ${ORG}/agents`]: () => json(200, AGENTS),
       [`GET ${ORG}/models`]: () => json(200, MODELS),
+      [`GET ${ORG}/environments`]: () => json(200, ENVIRONMENTS),
       [`GET ${ORG}/conversations/groups`]: () => json(200, { groups: [] }),
       [`GET ${ORG}/attachments/limits`]: () => json(200, LIMITS),
     });

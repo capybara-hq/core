@@ -25,6 +25,7 @@ import { canEditAgent } from "../../lib/org-settings";
 import { agentsQuery } from "../../lib/query/agents";
 import { retryOnMountOf } from "../../lib/query/client";
 import { modelsQuery, seedNewConversation } from "../../lib/query/conversation";
+import { environmentsQuery } from "../../lib/query/environments";
 import { keys } from "../../lib/query/keys";
 import { useAppMutation } from "../../lib/query/mutation";
 import { conversationGroupsQuery } from "../../lib/query/shell";
@@ -40,7 +41,7 @@ import {
 import { useStatusSignature } from "./ConversationView";
 import { PendingBubbles, usePendingSends } from "./PendingBubbles";
 import type { SendResult } from "./useConversation";
-import { useSelection } from "./useSelection";
+import { useEnvironmentChoice, useSelection } from "./useSelection";
 
 /**
  * The agents in the row's order: by this person's most recent conversation with each (the sidebar's
@@ -128,13 +129,24 @@ export function useNewConversationPage(
   // The answer seeds the new conversation's cache; the sidebar's groups are read again without
   // the navigation waiting for them (they show the new conversation when they land).
   const create = useAppMutation({
-    fn: async (v: { agentId: string; message: MessageInput; sentAt: number }) => {
-      const r = await createConversationWithMessage(orgId, v.agentId, v.message);
+    fn: async (v: {
+      agentId: string;
+      message: MessageInput;
+      sentAt: number;
+      environmentId: string | undefined;
+    }) => {
+      const r = await createConversationWithMessage(orgId, v.agentId, v.message, v.environmentId);
       seedNewConversation(qc, orgId, r.conversation, r, v.sentAt);
       return r;
     },
     invalidates: () => [],
   });
+  const environmentsQ = environmentsQuery(orgId);
+  const environments = useQuery({
+    ...environmentsQ,
+    retryOnMount: retryOnMountOf(environmentsQ.queryKey),
+  }).data;
+  const environment = useEnvironmentChoice(environments);
   const selection = useSelection(providers, agent, undefined);
   const pending = usePendingSends(undefined);
   /** A failed create's draft, for the composer the new layout mounts again. */
@@ -150,6 +162,7 @@ export function useNewConversationPage(
       const { conversation } = await create.mutateAsync({
         agentId: agent.id,
         message: { ...m, ...selection.pending },
+        environmentId: environment.environmentId,
         // this tab's clock at the send: the working line's backstop counts from it
         sentAt: Date.now(),
       });
@@ -229,6 +242,7 @@ export function useNewConversationPage(
           onSend={send}
           control={composer}
           pickers={{
+            ...(environment.picker ? { environment: environment.picker } : {}),
             model: selection.modelPicker,
             ...(selection.effortPicker ? { effort: selection.effortPicker } : {}),
           }}

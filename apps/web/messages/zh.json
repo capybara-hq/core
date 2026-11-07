@@ -1271,6 +1271,10 @@
     "contextPct": "上下文 {n}%",
     "toolLines": "第 {from}–{to} 行",
     "pickModel": "切换模型",
+    "pickEnvironment": "环境",
+    "environmentNote": "发出第一条消息后不能更换",
+    "environmentLocked": "对话开始后环境不再更换",
+    "environmentDeleted": "环境已删除",
     "pickEffort": "思考档位",
     "nextMessage": "从下一条消息起生效",
     "agentDefault": "智能体默认",
@@ -1367,12 +1371,10 @@
     "download": "下载",
     "previewTruncated": "只显示开头部分，完整内容请下载。",
     "previewFailed": "预览加载失败。",
-    "sandbox": "沙箱",
-    "sandboxNone": "未创建",
-    "sandboxRunning": "运行中",
-    "sandboxSuspended": "已休眠",
-    "sandboxLastUsed": "最近使用",
-    "sandboxFailed": "状态读取失败",
+    "environmentLine": "环境：{name} · {state}",
+    "environmentNone": "未绑定环境",
+    "environmentDeleted": "环境已删除",
+    "environmentFailed": "环境状态读取失败",
     "lastRun": "上次运行 · {parts}"
   },
   "pluginPage": {
@@ -1401,7 +1403,8 @@
     "empty": "你还没有环境。",
     "noCloud": {
       "text": "平台没有云端沙箱。",
-      "hint": "请联系超级管理员配置沙箱提供方。"
+      "hint": "请联系超级管理员配置沙箱提供方。",
+      "notice": "平台没有云端沙箱，下列环境不可用，但仍可删除。请联系超级管理员配置沙箱提供方。"
     },
     "create": {
       "title": "新建环境",

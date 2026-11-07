@@ -250,7 +250,7 @@ export const keys = {
           events: (): readonly unknown[] => [...c, "events"],
           queue: (): readonly unknown[] => [...c, "queue"],
           files: (): readonly unknown[] => [...c, "files"],
-          sandbox: (): readonly unknown[] => [...c, "sandbox"],
+          environment: (): readonly unknown[] => [...c, "environment"],
           subagents: (): readonly unknown[] => [...c, "subagents"],
           /** The agent tree of a root conversation (the agent map). */
           agentTree: (): readonly unknown[] => [...c, "agentTree"],

@@ -2,7 +2,7 @@ import type { DehydratedState, QueryClient, UseQueryOptions } from "@tanstack/re
 import { listModels } from "../agents";
 import { ApiClientError } from "../api";
 import { getApproval } from "../approvals";
-import { getSandboxStatus } from "../artifacts";
+import { getConversationEnvironment } from "../artifacts";
 import { getAttachmentLimits } from "../attachments";
 import {
   getConnector,
@@ -41,7 +41,7 @@ import { membersQuery } from "./members";
 
 /**
  * The conversation page's reads (web query cache spec §5, §6): the row and the event log, the
- * pieces outside the log (queue, files, sandbox, sub-agents, usage, tool info) and the org's
+ * pieces outside the log (queue, files, environment, sub-agents, usage, tool info) and the org's
  * configuration the page shows (models, connectors, contributions, limits, skills).
  */
 
@@ -86,11 +86,14 @@ export const filesQuery = (orgId: string, id: string) =>
     freshness: "live",
   });
 
-/** The sandbox's status; `null` without a sandbox. */
-export const sandboxQuery = (orgId: string, id: string) =>
+/**
+ * The environment the conversation runs in (with its state); `null` when none is bound or the bound
+ * one was deleted (the conversation's `environmentId` tells which).
+ */
+export const conversationEnvironmentQuery = (orgId: string, id: string) =>
   defineQuery({
-    key: keys.org(orgId).conversation(id).sandbox(),
-    fn: () => getSandboxStatus(orgId, id),
+    key: keys.org(orgId).conversation(id).environment(),
+    fn: () => getConversationEnvironment(orgId, id),
     freshness: "live",
   });
 
@@ -494,7 +497,7 @@ export function sentHereOf(qc: QueryClient, orgId: string, id: string): Map<stri
  * A conversation just created with its first message (conversation send spec §2.1): the create's
  * answer is the row and every event the create wrote (`events`, from seq 1: a `model_switched`
  * before the message when the send switched; an older kernel answers only `event`), and a new
- * conversation has an empty queue, no files and no sandbox, so those are known answers too and
+ * conversation has an empty queue, no files and no environment, so those are known answers too and
  * `/chat/<id>` reads none of them; its stream opens after the last event's seq. A log that does
  * not start at seq 1 (an older kernel's `event` after a switch) holds events the answer did not
  * carry: it is then not seeded and the page reads it whole.
@@ -523,7 +526,8 @@ export function seedNewConversation(
   };
   empty(c.queue(), { items: [], paused: false });
   empty(c.files(), []);
-  empty(c.sandbox(), null);
+  // a conversation with no environment bound has nothing to read; a bound one is read on demand
+  if (!conversation.environmentId) empty(c.environment(), null);
   let marks = seededAt.get(qc);
   if (marks === undefined) {
     marks = new Map();
@@ -547,7 +551,7 @@ export function isFreshlySeeded(qc: QueryClient, orgId: string, id: string): boo
 
 /**
  * What a reopened stream's catch-up makes stale when it delivered events (spec §6, "Returning to
- * a conversation"): the queue, files, sandbox, sub-agents, the agent tree, usage, background
+ * a conversation"): the queue, files, environment, sub-agents, the agent tree, usage, background
  * tasks, the row, the tool info and the conversation's extension views. Otherwise they follow
  * their freshness class.
  */
@@ -556,7 +560,7 @@ export const CONVERSATION_SIDE_KEYS = (orgId: string, id: string): (readonly unk
   return [
     c.queue(),
     c.files(),
-    c.sandbox(),
+    c.environment(),
     c.subagents(),
     c.agentTree(),
     c.usage(),

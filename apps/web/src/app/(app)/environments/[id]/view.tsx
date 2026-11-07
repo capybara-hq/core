@@ -121,7 +121,7 @@ function Detail({
           title: name,
           actions: [
             { label: t("detail.rename"), variant: "default", onSelect: () => setOpen("rename") },
-            ...(e.filesLost
+            ...(e.filesLost && e.available
               ? [
                   {
                     label: t("detail.resetFiles"),

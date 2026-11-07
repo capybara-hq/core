@@ -17,7 +17,8 @@ import NotFound from "../not-found";
  * `/environments` (环境): the person's environments as cards (the default shows as 个人环境): source,
  * state (运行中 / 已暂停 / 未启动 / 文件已丢失 / 不可用) and whether sessions are isolated; a card opens
  * the environment's page. 新建环境 opens a dialog; without a sandbox provider the page says the platform
- * has no cloud sandbox and offers no 新建环境. From the query cache (the layout prefetched it on a
+ * has no cloud sandbox and offers no 新建环境; the environments it still has are listed as 不可用 under
+ * a notice (they can be deleted). From the query cache (the layout prefetched it on a
  * first load).
  */
 export default function EnvironmentsView() {
@@ -50,14 +51,26 @@ function Environments({ orgId }: { orgId: string }) {
   if (list.kind === "loading")
     return <ListPage header={header} {...common} loading={{ rows: 3 }} />;
   const items = list.data.items;
-  const empty = !list.data.cloudAvailable
-    ? { text: t("noCloud.text"), hint: t("noCloud.hint") }
-    : items.length === 0
-      ? { text: t("empty") }
+  // Without a provider the existing environments are still listed (as 不可用) and deletable; the
+  // empty state is only for a list with nothing in it.
+  const empty =
+    items.length > 0
+      ? undefined
+      : !list.data.cloudAvailable
+        ? { text: t("noCloud.text"), hint: t("noCloud.hint") }
+        : { text: t("empty") };
+  const callout =
+    items.length > 0 && !list.data.cloudAvailable
+      ? { tone: "warn" as const, children: t("noCloud.notice") }
       : undefined;
   return (
     <>
-      <ListPage header={header} {...common} {...(empty ? { empty } : {})}>
+      <ListPage
+        header={header}
+        {...common}
+        {...(empty ? { empty } : {})}
+        {...(callout ? { callout } : {})}
+      >
         {items.map((e) => (
           <EnvironmentCard key={e.id} environment={e} />
         ))}

@@ -135,6 +135,33 @@ describe("environments list", () => {
     expect(screen.queryByRole("button", { name: E.new })).toBeNull();
   });
 
+  it("without a provider the existing environments are still listed as 不可用, with a notice and no 新建环境", async () => {
+    stubApi({
+      [`GET ${BASE}`]: () =>
+        json(
+          200,
+          list([env("e1", "Old box", { available: false, provider: "sandbox-gone" })], {
+            cloudAvailable: false,
+            defaultId: null,
+          }),
+        ),
+    });
+    await renderList();
+    const card = await screen.findByRole("listitem");
+    expect(within(card).getByText("Old box")).toBeTruthy();
+    expect(within(card).getByText(E.state.unavailable, { exact: false })).toBeTruthy();
+    expect(screen.getByText(E.noCloud.notice)).toBeTruthy();
+    expect(screen.queryByText(E.noCloud.text)).toBeNull();
+    expect(screen.queryByRole("button", { name: E.new })).toBeNull();
+  });
+
+  it("an environment whose instance never started is 未启动", async () => {
+    stubApi({ [`GET ${BASE}`]: () => json(200, list([env("e1", "Fresh box")])) });
+    await renderList();
+    const card = await screen.findByRole("listitem");
+    expect(within(card).getByText(E.state.notStarted, { exact: false })).toBeTruthy();
+  });
+
   it("create invalidates environments and opens the new environment", async () => {
     const calls = stubApi({
       ...routes,
@@ -208,6 +235,31 @@ describe("environment detail", () => {
     await act(async () => release());
     expect(await screen.findByText(E.detail.filesNote)).toBeTruthy();
     await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
+  });
+
+  it("an unavailable environment shows 不可用 and offers no 重建文件 even when its files are lost", async () => {
+    stubApi({
+      [`GET ${BASE}/e1`]: () =>
+        json(200, { environment: env("e1", "Build box", { available: false, filesLost: true }) }),
+    });
+    await renderDetail();
+    expect(await screen.findByText(E.state.unavailable)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: E.detail.resetFiles })).toBeNull();
+  });
+
+  it("a usable environment that lost its files offers 重建文件", async () => {
+    stubApi({
+      [`GET ${BASE}/e1`]: () =>
+        json(200, { environment: env("e1", "Build box", { filesLost: true }) }),
+    });
+    await renderDetail();
+    expect(await screen.findByRole("button", { name: E.detail.resetFiles })).toBeTruthy();
+  });
+
+  it("a never-started environment's page says 未启动", async () => {
+    stubApi(routes);
+    await renderDetail();
+    expect(await screen.findByText(E.state.notStarted)).toBeTruthy();
   });
 
   it("a missing environment is the not-found state", async () => {

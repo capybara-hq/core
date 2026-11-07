@@ -50,13 +50,13 @@ import {
   connectorQuery,
   connectorsQuery,
   contributionsQuery,
+  conversationEnvironmentQuery,
   conversationFollowUps,
   conversationQuery,
   eventsQuery,
   filesQuery,
   modelsQuery,
   queueQuery,
-  sandboxQuery,
 } from "./conversation";
 import { environmentQuery, environmentsQuery } from "./environments";
 import {
@@ -469,9 +469,12 @@ export const ROUTES: readonly RouteEntry[] = [
       const readiness = await qc.fetchQuery({ ...readinessQuery(orgId), retry: false });
       if (!setupReady(readiness)) return;
       await Promise.all(
-        [q(agentsQuery(orgId)), q(modelsQuery(orgId)), q(attachmentLimitsQuery(orgId))].map((o) =>
-          qc.prefetchQuery({ ...o, retry: false }),
-        ),
+        [
+          q(agentsQuery(orgId)),
+          q(modelsQuery(orgId)),
+          q(attachmentLimitsQuery(orgId)),
+          q(environmentsQuery(orgId)),
+        ].map((o) => qc.prefetchQuery({ ...o, retry: false })),
       );
     },
   },
@@ -488,7 +491,7 @@ export const ROUTES: readonly RouteEntry[] = [
         q(queueQuery(orgId, id)),
         q(contributionsQuery(orgId)),
         q(filesQuery(orgId, id)),
-        q(sandboxQuery(orgId, id)),
+        q(conversationEnvironmentQuery(orgId, id)),
         q(connectorsQuery(orgId)),
         q(attachmentLimitsQuery(orgId)),
       ];
