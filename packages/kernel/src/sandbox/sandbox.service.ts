@@ -170,21 +170,12 @@ function tagged(impl: SandboxProvider, tag: string, before: () => Promise<void>)
  * - `runtime.maxRunSeconds` 小于 `sandbox.limits.maxCommandSeconds`：长命令会被运行时限截断（Ruling M20）；
  * - `sandbox.limits.egress` 为 open、但当前提供方插件没打开 `allowOpenEgress`：每次创建沙箱都会被拒。
  * 两个时限都是默认值（900 < 7200，已知的取舍）时只记 info；运维改过其中一个却仍不一致时才 warn。
- * - the provider declares only one of `concurrentExec` and `killTagged`: it is used one call at a
- *   time (spec §10.7).
  */
 export function sandboxConfigWarnings(
   cfg: Pick<KernelConfig, "runtime" | "sandbox" | "extensionConfig">,
   providerPlugin?: string,
-  impl?: Pick<SandboxProvider, "concurrentExec" | "killTagged">,
 ): { level: "info" | "warn"; message: string }[] {
   const out: { level: "info" | "warn"; message: string }[] = [];
-  if (impl && (impl.concurrentExec === true) !== (typeof impl.killTagged === "function")) {
-    out.push({
-      level: "warn",
-      message: `the sandbox plugin ${providerPlugin ?? ""} declares only one of concurrentExec and killTagged; concurrent commands need both, so its sandboxes run one command at a time`,
-    });
-  }
   if (cfg.sandbox.limits.egress === "open" && providerPlugin !== undefined) {
     const pc = cfg.extensionConfig[providerPlugin] as { allowOpenEgress?: unknown } | undefined;
     if (pc?.allowOpenEgress !== true) {

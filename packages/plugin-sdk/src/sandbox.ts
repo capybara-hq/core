@@ -158,7 +158,10 @@ export interface SandboxProvider {
    * instance (a declared capability; absent means false).
    */
   readonly sessionIsolation?: boolean;
-  /** Creates an environment's file system. `name` looks like `cap-env-<environmentId>`. */
+  /**
+   * Creates an environment's file system. `name` looks like `cap-env-<environmentId>`. If a file
+   * system with this name already exists, return it.
+   */
   createFileSystem(args: {
     name: string;
     limits: SandboxLimits;

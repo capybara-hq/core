@@ -11,6 +11,8 @@ export interface ExtensionPointInfo {
   brokered: boolean;
   /** Enabled per org (consumers may pass `orgId` to check that the org enabled the provider). */
   orgScoped: boolean;
+  /** The majors of this point the kernel accepts; a plugin providing any other major is refused. */
+  majors: readonly number[];
   /**
    * How the kernel picks one provider among several: `org-default` means each org chooses its
    * default provider (absent: no selection, every enabled provider is used).
@@ -19,11 +21,13 @@ export interface ExtensionPointInfo {
 }
 
 const info = (
+  majors: readonly number[],
   cardinality: Cardinality,
   brokered = false,
   orgScoped = false,
   selection?: "org-default",
 ): ExtensionPointInfo => ({
+  majors,
   cardinality,
   brokered,
   orgScoped,
@@ -32,19 +36,19 @@ const info = (
 
 /** The registered extension points. */
 export const EXTENSION_POINTS: Record<string, ExtensionPointInfo> = {
-  sandbox: info("single", true),
-  "config-source": info("single"),
-  "secret-store": info("single", true),
-  "object-store": info("single", true),
-  channel: info("multi", false, true),
-  "model-provider": info("multi", true),
-  "identity-source": info("multi"),
-  directory: info("multi", false, true),
-  counter: info("multi"),
-  connector: info("multi", true),
-  "file-preview": info("multi", false, true),
-  "web-search": info("multi", true, true, "org-default"),
-  "web-fetch": info("multi", true, true, "org-default"),
+  sandbox: info([2], "single", true),
+  "config-source": info([1], "single"),
+  "secret-store": info([1], "single", true),
+  "object-store": info([1], "single", true),
+  channel: info([1], "multi", false, true),
+  "model-provider": info([1, 2], "multi", true),
+  "identity-source": info([1], "multi"),
+  directory: info([1], "multi", false, true),
+  counter: info([1], "multi"),
+  connector: info([1], "multi", true),
+  "file-preview": info([1], "multi", false, true),
+  "web-search": info([1], "multi", true, true, "org-default"),
+  "web-fetch": info([1], "multi", true, true, "org-default"),
 };
 
 /** Cardinality of the registered extension points (derived from EXTENSION_POINTS). */

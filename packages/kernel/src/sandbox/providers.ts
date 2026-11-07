@@ -2,14 +2,14 @@ import { SANDBOX_EXTENSION_POINT, type SandboxProvider } from "@capybara-hq/plug
 import { Inject, Injectable } from "@nestjs/common";
 import { ExtensionRegistry } from "../extensions/registry.js";
 
-/** 当前的 `sandbox@1` 提供方：插件名与实现。 */
+/** 当前的 `sandbox@2` 提供方：插件名与实现。 */
 export interface SandboxProviderEntry {
   plugin: string;
   impl: SandboxProvider;
 }
 
 /**
- * The `sandbox@1` providers of this process, read from the {@link ExtensionRegistry} at every
+ * The `sandbox@2` providers of this process, read from the {@link ExtensionRegistry} at every
  * call: providers are ready only after the extension load, and change with installs.
  */
 @Injectable()

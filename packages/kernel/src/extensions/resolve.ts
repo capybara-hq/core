@@ -1,5 +1,6 @@
 import {
   EXTENSION_POINT_CARDINALITY,
+  EXTENSION_POINTS,
   type ExtensionManifest,
   type ExtensionPointRef,
   OBJECT_STORE_EXTENSION_POINT,
@@ -9,7 +10,11 @@ import semver from "semver";
 
 /** 插件依赖解析失败（信息列出插件名与能力名）。 */
 export class ExtensionResolveError extends Error {
-  constructor(message: string) {
+  constructor(
+    message: string,
+    /** Error code of the failure, when it has one. */
+    readonly code?: string,
+  ) {
     super(message);
     this.name = "ExtensionResolveError";
   }
@@ -34,6 +39,19 @@ export function resolveExtensions(
       throw new ExtensionResolveError(
         `plugin ${m.name}: sdk range "${m.sdk}" is not satisfied by SDK_VERSION ${sdkVersion}`,
       );
+    }
+  }
+
+  for (const m of manifests) {
+    for (const ref of m.provides) {
+      const { name, major } = parseExtensionPoint(ref);
+      const majors = EXTENSION_POINTS[name]?.majors;
+      if (majors && !majors.includes(major)) {
+        throw new ExtensionResolveError(
+          `Plugin ${m.name} provides ${ref}, which this kernel no longer supports; upgrade it to a version that provides ${name}@${Math.max(...majors)}.`,
+          "extension.unsupported_extension_point",
+        );
+      }
     }
   }
 
