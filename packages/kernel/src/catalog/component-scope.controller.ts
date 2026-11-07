@@ -1,5 +1,5 @@
 import { Controller, Get, HttpCode, Inject, Post, Put, Req } from "@nestjs/common";
-import { z } from "zod";
+import type { z } from "zod";
 import { ApiError } from "../errors.js";
 import {
   CurrentPrincipal,
@@ -12,7 +12,18 @@ import { createZodDto } from "../infra/validation/create-zod-dto.js";
 import { ZBody, ZParam, ZQuery } from "../infra/validation/zod-params.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
 import type { ActorOpts } from "./catalog.service.js";
-import { ComponentKindSchema as Kind, OrgComponentListQuery } from "./component-scope.schemas.js";
+import {
+  ComponentParams,
+  ComponentDisabledSchema as DisabledBody,
+  ComponentIdSchema as IdParams,
+  ComponentListQuery as ListQuery,
+  OrgComponentListQuery,
+  ComponentScopePreviewSchema as PreviewBody,
+  ComponentScopeSchema as ScopeBody,
+  ComponentShownSchema as ShownBody,
+  ComponentSwitchBody as SwitchBody,
+  ComponentTemplateVersionSchema as TemplateVersionBody,
+} from "./component-scope.schemas.js";
 import {
   type ComponentScopePreview,
   ComponentScopeService,
@@ -23,63 +34,6 @@ import {
 } from "./component-scope.service.js";
 import { PlatformComponents, type UploadedComponentVersion } from "./platform-components.js";
 
-const Scope = z.enum(["all", "optional", "named"]);
-const Orgs = z.array(z.string().min(1).max(128)).max(1000);
-const Hash = z.string().min(1).max(128);
-
-const ComponentParams = z.object({ kind: Kind, id: z.string().min(1).max(128) });
-const ListQuery = z.object({ kind: Kind }).strict();
-
-/** `{ scope, orgs? }`, `{ disabled: true }` or `{ follow: true }`: exactly one. */
-const PreviewBody = z
-  .object({
-    scope: Scope.optional(),
-    orgs: Orgs.optional(),
-    disabled: z.literal(true).optional(),
-    follow: z.literal(true).optional(),
-  })
-  .strict()
-  .refine(
-    (b) =>
-      [b.scope !== undefined, b.disabled === true, b.follow === true].filter(Boolean).length === 1,
-    { message: "send exactly one of scope (with orgs for named), disabled: true or follow: true" },
-  )
-  .refine((b) => b.scope !== undefined || b.orgs === undefined, {
-    message: "orgs: only allowed with scope named",
-    path: ["orgs"],
-  });
-
-/** `{ scope, orgs?, scopeHash }` or `{ follow: true, scopeHash }`. */
-const ScopeBody = z
-  .object({
-    scope: Scope.optional(),
-    orgs: Orgs.optional(),
-    follow: z.literal(true).optional(),
-    scopeHash: Hash,
-  })
-  .strict()
-  .refine((b) => (b.scope !== undefined) !== (b.follow === true), {
-    message: "send either scope (with orgs for named) or follow: true",
-  })
-  .refine((b) => b.scope !== undefined || b.orgs === undefined, {
-    message: "orgs: only allowed with scope named",
-    path: ["orgs"],
-  });
-
-const DisabledBody = z.object({ disabled: z.boolean(), scopeHash: Hash.optional() }).strict();
-const ShownBody = z.object({ shownToOthers: z.boolean() }).strict();
-const SwitchBody = z
-  .object({
-    enabled: z.boolean(),
-    confirm: z
-      .string()
-      .regex(/^[0-9a-f]{64}$/)
-      .optional(),
-  })
-  .strict();
-
-const IdParams = z.object({ id: z.string().min(1).max(128) });
-const TemplateVersionBody = z.object({ content: z.string().min(1).max(400_000) }).strict();
 class ComponentIdParams extends createZodDto(IdParams, "ComponentIdParams") {}
 class TemplateVersionDto extends createZodDto(TemplateVersionBody, "TemplateVersionBody") {}
 

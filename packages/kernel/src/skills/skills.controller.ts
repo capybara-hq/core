@@ -15,7 +15,7 @@ import {
 import { createZodDto } from "../infra/validation/create-zod-dto.js";
 import { ZBody, ZParam } from "../infra/validation/zod-params.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
-import { SkillCreateBody, SkillIdParams } from "./skills.schemas.js";
+import { SkillCreateBody, SkillIdParams, SkillShareableSchema } from "./skills.schemas.js";
 import {
   type SkillDetail,
   type SkillSummary,
@@ -35,7 +35,7 @@ const UploadBody = z
   .strict();
 class SkillUploadBody extends createZodDto(UploadBody, "SkillUploadBody") {}
 class SkillCreateBodyDto extends createZodDto(SkillCreateBody, "SkillCreateBody") {}
-const ShareableBody = z.object({ shareable: z.boolean() }).strict();
+const ShareableBody = SkillShareableSchema;
 class SkillIdParamsDto extends createZodDto(SkillIdParams, "SkillIdParams") {}
 class SkillShareableBody extends createZodDto(ShareableBody, "SkillShareableBody") {}
 

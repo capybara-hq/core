@@ -31,8 +31,17 @@ export const SkillIdParams = z.object({ id: z.string().min(1).max(100) });
 /** `:id` where the route takes it as is (`@Param`). */
 export const SkillPathParams = z.object({ id: z.string().min(1) });
 
+export const SkillShareableSchema = z.object({ shareable: z.boolean() }).strict();
+
 export const SKILL_ROUTES: readonly RouteSchemas[] = [
   { route: "GET /api/v1/orgs/:orgId/skills" },
   { route: "GET /api/v1/orgs/:orgId/skills/:id", params: SkillPathParams },
   { route: "POST /api/v1/orgs/:orgId/skills", body: SkillCreateBody },
+  {
+    route: "PUT /api/v1/orgs/:orgId/skills/:id/shareable",
+    params: SkillIdParams,
+    body: SkillShareableSchema,
+  },
+  { route: "GET /api/v1/orgs/:orgId/skills/:id/delete-preview", params: SkillIdParams },
+  { route: "DELETE /api/v1/orgs/:orgId/skills/:id", params: SkillPathParams },
 ];
